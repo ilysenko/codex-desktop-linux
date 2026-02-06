@@ -8,7 +8,7 @@ The official Codex Desktop app is macOS-only. This project provides an automated
 
 The installer:
 
-1. Extracts the macOS `.dmg` (using `7z`)
+1. Extracts the macOS `.dmg` (using system `7z`/`7zz`, with automatic fallback to bundled `7zz`)
 2. Extracts `app.asar` (the Electron app bundle)
 3. Rebuilds native Node.js modules (`node-pty`, `better-sqlite3`) for Linux
 4. Removes macOS-only modules (`sparkle` auto-updater)
@@ -17,25 +17,25 @@ The installer:
 
 ## Prerequisites
 
-**Node.js 20+**, **npm**, **Python 3**, **7z**, **curl**, and **build tools** (gcc/g++/make).
+**Node.js 20+**, **npm**, **Python 3**, **curl**, **tar**, and **build tools** (gcc/g++/make).
 
 ### Debian/Ubuntu
 
 ```bash
-sudo apt install nodejs npm python3 p7zip-full curl build-essential
+sudo apt install nodejs npm python3 curl tar build-essential
 ```
 
 ### Fedora
 
 ```bash
-sudo dnf install nodejs npm python3 p7zip curl
+sudo dnf install nodejs npm python3 curl tar
 sudo dnf groupinstall 'Development Tools'
 ```
 
 ### Arch
 
 ```bash
-sudo pacman -S nodejs npm python p7zip curl base-devel
+sudo pacman -S nodejs npm python curl tar base-devel
 ```
 
 You also need the **Codex CLI**:
@@ -43,6 +43,8 @@ You also need the **Codex CLI**:
 ```bash
 npm i -g @openai/codex
 ```
+
+`7z`/`7zz` is optional. If it's missing (or too old to open current DMGs), the installer downloads a local modern `7zz` automatically.
 
 ## Installation
 
@@ -98,10 +100,12 @@ A small Python HTTP server is used as a workaround: when `app.isPackaged` is `fa
 
 | Problem | Solution |
 |---------|----------|
+| `Open ERROR: Can not open the file as [Dmg] archive` | Re-run the installer. It now auto-falls back to a bundled modern `7zz` when system `7z` is too old. |
 | `Error: write EPIPE` | Make sure you're not piping the output — run `start.sh` directly |
 | Blank window | Check that port 5175 is not in use: `lsof -i :5175` |
 | `CODEX_CLI_PATH` error | Install CLI: `npm i -g @openai/codex` |
-| GPU/rendering issues | Try: `./codex-app/start.sh --disable-gpu` |
+| GPU/rendering issues | `start.sh` now forces opaque visuals on Linux (`--disable-transparent-visuals`). If artifacts remain, run with SwiftShader software rendering: `CODEX_DISABLE_GPU=1 ./codex-app/start.sh` |
+| Sidebar/background transparency on Wayland | `start.sh` now defaults to `--ozone-platform=x11` when `XDG_SESSION_TYPE=wayland`. To force native Wayland anyway: `CODEX_USE_WAYLAND=1 ./codex-app/start.sh` |
 | Sandbox errors | The `--no-sandbox` flag is already set in `start.sh` |
 
 ## Disclaimer
