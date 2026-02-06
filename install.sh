@@ -11,6 +11,7 @@ INSTALL_DIR="${CODEX_INSTALL_DIR:-$SCRIPT_DIR/codex-app}"
 ELECTRON_VERSION="40.0.0"
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
+SEVEN_ZIP_VERSION="${SEVEN_ZIP_VERSION:-25.01}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,15 +31,19 @@ trap 'error "Failed at line $LINENO (exit code $?)"' ERR
 # ---- Check dependencies ----
 check_deps() {
     local missing=()
-    for cmd in node npm npx python3 7z curl unzip; do
+    for cmd in node npm npx python3 curl unzip tar; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
     if [ ${#missing[@]} -ne 0 ]; then
         error "Missing dependencies: ${missing[*]}
 Install them first:
-  sudo apt install nodejs npm python3 p7zip-full curl unzip build-essential  # Debian/Ubuntu
-  sudo dnf install nodejs npm python3 p7zip curl unzip && sudo dnf groupinstall 'Development Tools'  # Fedora
-  sudo pacman -S nodejs npm python p7zip curl unzip base-devel  # Arch"
+  sudo apt install nodejs npm python3 curl unzip tar build-essential  # Debian/Ubuntu
+  sudo dnf install nodejs npm python3 curl unzip tar && sudo dnf groupinstall 'Development Tools'  # Fedora
+  sudo pacman -S nodejs npm python curl unzip tar base-devel  # Arch"
+    fi
+
+    if ! command -v 7zz &>/dev/null && ! command -v 7z &>/dev/null; then
+        warn "No system 7z/7zz found. A local 7zz binary will be downloaded automatically."
     fi
 
     NODE_MAJOR=$(node -v | cut -d. -f1 | tr -d v)
@@ -54,6 +59,45 @@ Install them first:
     fi
 
     info "All dependencies found"
+}
+
+download_7zz() {
+    local seven_zip_dir="$WORK_DIR/tools/7zip"
+    local seven_zip_archive="$seven_zip_dir/7zip.tar.xz"
+    local seven_zip_bin="$seven_zip_dir/7zz"
+
+    if [ -x "$seven_zip_bin" ]; then
+        echo "$seven_zip_bin"
+        return
+    fi
+
+    local seven_zip_arch
+    case "$ARCH" in
+        x86_64)  seven_zip_arch="x64" ;;
+        aarch64) seven_zip_arch="arm64" ;;
+        *)
+            error "Unsupported architecture for bundled 7-Zip: $ARCH (install 7zz manually)"
+            ;;
+    esac
+
+    local seven_zip_version_compact="${SEVEN_ZIP_VERSION//./}"
+    local seven_zip_url="https://www.7-zip.org/a/7z${seven_zip_version_compact}-linux-${seven_zip_arch}.tar.xz"
+
+    info "Downloading bundled 7-Zip v${SEVEN_ZIP_VERSION} (${seven_zip_arch})..."
+    mkdir -p "$seven_zip_dir"
+
+    if ! curl -L --progress-bar --fail --connect-timeout 30 --max-time 600 \
+            -o "$seven_zip_archive" "$seven_zip_url"; then
+        error "Failed to download bundled 7-Zip from: $seven_zip_url"
+    fi
+
+    tar -xf "$seven_zip_archive" -C "$seven_zip_dir" || \
+        error "Failed to unpack bundled 7-Zip"
+
+    chmod +x "$seven_zip_bin" 2>/dev/null || true
+    [ -x "$seven_zip_bin" ] || error "Bundled 7-Zip archive did not contain an executable 7zz binary"
+
+    echo "$seven_zip_bin"
 }
 
 # ---- Download or find Codex DMG ----
@@ -89,13 +133,37 @@ get_dmg() {
 # ---- Extract app from DMG ----
 extract_dmg() {
     local dmg_path="$1"
-    info "Extracting DMG with 7z..."
+    local extract_dir="$WORK_DIR/dmg-extract"
+    local -a extractors=()
+    local extractor=""
 
-    7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" >&2 || \
-        error "Failed to extract DMG"
+    command -v 7zz &>/dev/null && extractors+=("$(command -v 7zz)")
+    command -v 7z &>/dev/null && extractors+=("$(command -v 7z)")
+
+    for extractor in "${extractors[@]}"; do
+        info "Extracting DMG with $(basename "$extractor")..."
+        rm -rf "$extract_dir"
+        mkdir -p "$extract_dir"
+
+        if "$extractor" x -y "$dmg_path" -o"$extract_dir" >&2; then
+            break
+        fi
+
+        warn "$(basename "$extractor") could not extract this DMG"
+        extractor=""
+    done
+
+    if [ -z "$extractor" ]; then
+        extractor="$(download_7zz)"
+        info "Retrying DMG extraction with bundled 7zz..."
+        rm -rf "$extract_dir"
+        mkdir -p "$extract_dir"
+        "$extractor" x -y "$dmg_path" -o"$extract_dir" >&2 || \
+            error "Failed to extract DMG (system and bundled 7-Zip failed)"
+    fi
 
     local app_dir
-    app_dir=$(find "$WORK_DIR/dmg-extract" -maxdepth 3 -name "*.app" -type d | head -1)
+    app_dir=$(find "$extract_dir" -maxdepth 4 -name "*.app" -type d | head -1)
     [ -n "$app_dir" ] || error "Could not find .app bundle in DMG"
 
     info "Found: $(basename "$app_dir")"
@@ -161,6 +229,17 @@ patch_asar() {
 
     # Build native modules in clean environment and copy back
     build_native_modules "$WORK_DIR/app-extracted"
+
+    # Linux compositors can blend transparent BrowserWindow backgrounds into
+    # dark side panels. Force an opaque white window background.
+    local main_bundle=""
+    main_bundle=$(find "$WORK_DIR/app-extracted/.vite/build" -maxdepth 1 -type f -name "main-*.js" | head -1)
+    if [ -n "$main_bundle" ]; then
+        sed -i 's/#00000000/#ffffffff/g' "$main_bundle"
+        info "Patched window background to opaque white"
+    else
+        warn "Could not find main bundle for window background patch"
+    fi
 
     # Repack
     info "Repacking app.asar..."
@@ -241,7 +320,21 @@ if [ -z "$CODEX_CLI_PATH" ]; then
 fi
 
 cd "$SCRIPT_DIR"
-exec "$SCRIPT_DIR/electron" --no-sandbox "$@"
+
+ELECTRON_FLAGS=(--no-sandbox --disable-transparent-visuals)
+
+# Wayland compositors can render transparent Electron surfaces incorrectly.
+# Default to X11 backend on Wayland unless explicitly overridden.
+if [ "${XDG_SESSION_TYPE:-}" = "wayland" ] && [ "${CODEX_USE_WAYLAND:-0}" != "1" ]; then
+    echo "[INFO] Wayland session detected; launching Codex with X11 backend (set CODEX_USE_WAYLAND=1 to override)."
+    ELECTRON_FLAGS+=(--ozone-platform=x11)
+fi
+
+if [ "${CODEX_DISABLE_GPU:-0}" = "1" ]; then
+    ELECTRON_FLAGS+=(--use-gl=swiftshader --use-angle=swiftshader --enable-unsafe-swiftshader)
+fi
+
+exec "$SCRIPT_DIR/electron" "${ELECTRON_FLAGS[@]}" "$@"
 SCRIPT
 
     chmod +x "$INSTALL_DIR/start.sh"
