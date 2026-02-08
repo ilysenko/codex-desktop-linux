@@ -115,6 +115,10 @@ Remove the installed app and desktop integration:
 ./install.sh --uninstall
 ```
 
+This also removes:
+- Cached DMG at `Codex.dmg` in the repo root
+- Legacy launcher/icon leftovers from earlier installs
+
 ## How it works (technical details)
 
 The macOS Codex app is an Electron application. The core code (`app.asar`) is platform-independent JavaScript, but it bundles:

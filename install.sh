@@ -396,11 +396,53 @@ repair_desktop_integration() {
 }
 
 uninstall_app() {
-    remove_desktop_entry
-    if [ -d "$INSTALL_DIR" ]; then
-        rm -rf "$INSTALL_DIR"
-        info "Removed install directory: $INSTALL_DIR"
+    local default_install_dir="$SCRIPT_DIR/codex-app"
+    local dmg_cache="$SCRIPT_DIR/Codex.dmg"
+    local install_dirs=("$INSTALL_DIR")
+    local icon_pattern_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+    local desktop_entries=(
+        "${XDG_DATA_HOME:-$HOME/.local/share}/applications/codex-desktop-linux.desktop"
+        "$HOME/.local/share/applications/codex-desktop-linux.desktop"
+    )
+
+    if [ "$INSTALL_DIR" != "$default_install_dir" ]; then
+        install_dirs+=("$default_install_dir")
     fi
+
+    # Stop app processes from known install locations.
+    for dir in "${install_dirs[@]}"; do
+        pkill -f "$dir/electron" 2>/dev/null || true
+        pkill -f "$dir/start.sh" 2>/dev/null || true
+        if [ -f "$dir/.webview-http.pid" ]; then
+            local webview_pid
+            webview_pid="$(cat "$dir/.webview-http.pid" 2>/dev/null || true)"
+            if [ -n "$webview_pid" ] && kill -0 "$webview_pid" 2>/dev/null; then
+                kill "$webview_pid" 2>/dev/null || true
+            fi
+        fi
+    done
+
+    # Remove desktop launchers (current and legacy locations).
+    for entry in "${desktop_entries[@]}"; do
+        rm -f "$entry"
+    done
+
+    # Remove all icon-size variants created for this launcher.
+    find "$icon_pattern_dir" -type f -path "*/apps/${DESKTOP_APP_ID}.png" -delete 2>/dev/null || true
+
+    # Refresh desktop caches.
+    remove_desktop_entry
+
+    for dir in "${install_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            rm -rf "$dir"
+            info "Removed install directory: $dir"
+        fi
+    done
+
+    rm -f "$dmg_cache"
+    info "Removed cached DMG: $dmg_cache"
+
     info "Uninstall complete"
 }
 
