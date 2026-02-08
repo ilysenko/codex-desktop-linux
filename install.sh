@@ -320,7 +320,15 @@ if [ -d "$WEBVIEW_DIR" ] && [ "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
 fi
 
 export CODEX_CLI_PATH="${CODEX_CLI_PATH:-$(which codex 2>/dev/null || true)}"
-export CODEX_LINUX_INSTALLER_PATH="$SCRIPT_DIR/../install.sh"
+SCRIPT
+
+    # Bake the absolute installer path at install time (not inside the
+    # single-quoted heredoc) so custom CODEX_INSTALL_DIR works correctly.
+    local real_installer_path
+    real_installer_path="$(cd "$SCRIPT_DIR" && realpath install.sh)"
+    echo "export CODEX_LINUX_INSTALLER_PATH=\"$real_installer_path\"" >> "$INSTALL_DIR/start.sh"
+
+    cat >> "$INSTALL_DIR/start.sh" << 'SCRIPT'
 
 if [ -z "$CODEX_CLI_PATH" ]; then
     echo "Error: Codex CLI not found. Install with: npm i -g @openai/codex" >&2
