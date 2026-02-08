@@ -34,7 +34,7 @@ print_usage() {
 Usage:
   ./install.sh [path/to/Codex.dmg]
   ./install.sh --repair-desktop
-  ./install.sh --uninstall
+  ./install.sh --uninstall [--purge-cache]
   ./install.sh --help
 
 Environment variables:
@@ -396,10 +396,16 @@ repair_desktop_integration() {
 }
 
 uninstall_app() {
+    local purge_cache="$1"
     local default_install_dir="$SCRIPT_DIR/codex-app"
     local dmg_cache="$SCRIPT_DIR/Codex.dmg"
     local install_dirs=("$INSTALL_DIR")
     local icon_pattern_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+    local user_data_dirs=(
+        "$HOME/.config/Codex"
+        "$HOME/.cache/Codex"
+        "$HOME/.local/share/Codex"
+    )
     local desktop_entries=(
         "${XDG_DATA_HOME:-$HOME/.local/share}/applications/codex-desktop-linux.desktop"
         "$HOME/.local/share/applications/codex-desktop-linux.desktop"
@@ -422,6 +428,14 @@ uninstall_app() {
         fi
     done
 
+    # Remove Codex user data directories.
+    for dir in "${user_data_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            rm -rf "$dir"
+            info "Removed user data directory: $dir"
+        fi
+    done
+
     # Remove desktop launchers (current and legacy locations).
     for entry in "${desktop_entries[@]}"; do
         rm -f "$entry"
@@ -440,8 +454,12 @@ uninstall_app() {
         fi
     done
 
-    rm -f "$dmg_cache"
-    info "Removed cached DMG: $dmg_cache"
+    if [ "$purge_cache" = "1" ]; then
+        rm -f "$dmg_cache"
+        info "Removed cached DMG: $dmg_cache"
+    else
+        info "Kept cached DMG: $dmg_cache (use --purge-cache to remove it)"
+    fi
 
     info "Uninstall complete"
 }
@@ -459,6 +477,7 @@ resolve_dmg_path() {
 main() {
     local action="install"
     local provided_dmg=""
+    local purge_cache="0"
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -471,6 +490,9 @@ main() {
                 ;;
             --uninstall)
                 action="uninstall"
+                ;;
+            --purge-cache)
+                purge_cache="1"
                 ;;
             *)
                 if [ -z "$provided_dmg" ] && [ -f "$1" ]; then
@@ -489,7 +511,7 @@ main() {
     echo ""                                             >&2
 
     if [ "$action" = "uninstall" ]; then
-        uninstall_app
+        uninstall_app "$purge_cache"
         exit 0
     fi
 
