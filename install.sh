@@ -91,11 +91,33 @@ extract_dmg() {
     local dmg_path="$1"
     info "Extracting DMG with 7z..."
 
-    7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" >&2 || \
-        error "Failed to extract DMG"
+    rm -rf "$WORK_DIR/dmg-extract"
+    mkdir -p "$WORK_DIR/dmg-extract"
+
+    local log="$WORK_DIR/7z-extract.log"
+    local rc=0
+
+    # IMPORTANT: keep this in a conditional context so `set -e` / ERR trap won't fire
+    7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" >"$log" 2>&1 || rc=$?
+
+    if [ "$rc" -ne 0 ]; then
+        # Allow the common macOS DMG /Applications symlink warning:
+        # "ERROR: Dangerous link path was ignored : ... : /Applications"
+        local err_count
+        err_count=$(grep -c '^ERROR:' "$log" || true)
+
+        if grep -q 'Dangerous link path was ignored' "$log" && [ "$err_count" -eq 1 ]; then
+            warn "7z reported a DMG symlink warning (ignored). Continuing..."
+        else
+            echo "---- 7z output ----" >&2
+            sed -n '1,200p' "$log" >&2
+            echo "-------------------" >&2
+            error "Failed to extract DMG (7z exit code $rc)"
+        fi
+    fi
 
     local app_dir
-    app_dir=$(find "$WORK_DIR/dmg-extract" -maxdepth 3 -name "*.app" -type d | head -1)
+    app_dir=$(find "$WORK_DIR/dmg-extract" -maxdepth 4 -name "*.app" -type d | head -1)
     [ -n "$app_dir" ] || error "Could not find .app bundle in DMG"
 
     info "Found: $(basename "$app_dir")"
