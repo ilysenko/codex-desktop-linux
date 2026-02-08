@@ -71,6 +71,12 @@ The app is installed into `codex-app/` next to the install script:
 codex-desktop-linux/codex-app/start.sh
 ```
 
+The installer also creates a desktop launcher at:
+
+```bash
+~/.local/share/applications/codex-desktop-linux.desktop
+```
+
 Or add an alias to your shell:
 
 ```bash
@@ -82,6 +88,49 @@ echo 'alias codex-desktop="~/codex-desktop-linux/codex-app/start.sh"' >> ~/.bash
 ```bash
 CODEX_INSTALL_DIR=/opt/codex ./install.sh
 ```
+
+### Optional sandbox mode
+
+By default the launcher uses `--no-sandbox` for compatibility.
+
+To launch without that flag:
+
+```bash
+CODEX_DISABLE_SANDBOX=0 ./codex-app/start.sh
+```
+
+### Repair desktop integration
+
+Recreate launcher script, icon, and desktop entry without full reinstall:
+
+```bash
+./install.sh --repair-desktop
+```
+
+### Uninstall
+
+Remove the installed app and desktop integration:
+
+```bash
+./install.sh --uninstall
+```
+
+This also removes:
+- Legacy launcher/icon leftovers from earlier installs
+
+To also remove the cached DMG in the repo root:
+
+```bash
+./install.sh --uninstall --purge-cache
+```
+
+To also remove Codex desktop user data directories:
+
+```bash
+./install.sh --uninstall --purge-user-data
+```
+
+`~/.codex` is not removed by uninstall.
 
 ## How it works (technical details)
 

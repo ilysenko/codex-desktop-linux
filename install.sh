@@ -11,6 +11,14 @@ INSTALL_DIR="${CODEX_INSTALL_DIR:-$SCRIPT_DIR/codex-app}"
 ELECTRON_VERSION="40.0.0"
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
+DESKTOP_APP_ID="codex-desktop-linux"
+WINDOW_CLASS="Codex"
+DESKTOP_ENTRY_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+DESKTOP_ENTRY_FILE="$DESKTOP_ENTRY_DIR/${DESKTOP_APP_ID}.desktop"
+ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
+ICON_FILE="$ICON_DIR/${DESKTOP_APP_ID}.png"
+DEFAULT_DISABLE_SANDBOX="${CODEX_DISABLE_SANDBOX:-1}"
+WEBVIEW_SERVER_PORT="5175"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -20,6 +28,20 @@ NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC} $*" >&2; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+
+print_usage() {
+    cat << 'EOF'
+Usage:
+  ./install.sh [path/to/Codex.dmg]
+  ./install.sh --repair-desktop
+  ./install.sh --uninstall [--purge-cache] [--purge-user-data]
+  ./install.sh --help
+
+Environment variables:
+  CODEX_INSTALL_DIR      Install location (default: ./codex-app)
+  CODEX_DISABLE_SANDBOX  1 to pass --no-sandbox (default: 1), 0 to omit it
+EOF
+}
 
 cleanup() {
     rm -rf "$WORK_DIR"
@@ -54,6 +76,19 @@ Install them first:
     fi
 
     info "All dependencies found"
+}
+
+validate_installer_script() {
+    local installer_path="$SCRIPT_DIR/install.sh"
+    if command -v shellcheck &>/dev/null; then
+        if shellcheck -S warning "$installer_path" >/dev/null; then
+            info "shellcheck validation passed"
+        else
+            warn "shellcheck reported findings for $installer_path"
+        fi
+    else
+        warn "shellcheck not found; skipping installer validation"
+    fi
 }
 
 # ---- Download or find Codex DMG ----
@@ -220,18 +255,45 @@ install_app() {
 create_start_script() {
     cat > "$INSTALL_DIR/start.sh" << 'SCRIPT'
 #!/bin/bash
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WEBVIEW_DIR="$SCRIPT_DIR/content/webview"
+SERVER_PID_FILE="$SCRIPT_DIR/.webview-http.pid"
+SERVER_LOCK_DIR="$SCRIPT_DIR/.webview-http.lock"
+WEBVIEW_PORT="5175"
+DISABLE_SANDBOX="${CODEX_DISABLE_SANDBOX:-1}"
 
-pkill -f "http.server 5175" 2>/dev/null
-sleep 0.3
+is_webview_server_pid_valid() {
+    local pid="$1"
+    [ -n "$pid" ] || return 1
+    [ -e "/proc/$pid/cmdline" ] || return 1
+    local cmdline
+    cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+    [[ "$cmdline" == *"python3 -m http.server ${WEBVIEW_PORT}"* ]]
+}
 
-if [ -d "$WEBVIEW_DIR" ] && [ "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
-    cd "$WEBVIEW_DIR"
-    python3 -m http.server 5175 &> /dev/null &
-    HTTP_PID=$!
-    trap "kill $HTTP_PID 2>/dev/null" EXIT
-fi
+start_webview_server_if_needed() {
+    if [ ! -d "$WEBVIEW_DIR" ] || [ -z "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
+        return
+    fi
+
+    if [ -f "$SERVER_PID_FILE" ]; then
+        local existing_pid
+        existing_pid="$(cat "$SERVER_PID_FILE" 2>/dev/null || true)"
+        if is_webview_server_pid_valid "$existing_pid" && kill -0 "$existing_pid" 2>/dev/null; then
+            return
+        fi
+    fi
+
+    if mkdir "$SERVER_LOCK_DIR" 2>/dev/null; then
+        python3 -m http.server "$WEBVIEW_PORT" --bind 127.0.0.1 --directory "$WEBVIEW_DIR" >/dev/null 2>&1 &
+        echo "$!" > "$SERVER_PID_FILE"
+        rmdir "$SERVER_LOCK_DIR" 2>/dev/null || true
+    fi
+}
+
+start_webview_server_if_needed
 
 export CODEX_CLI_PATH="${CODEX_CLI_PATH:-$(which codex 2>/dev/null)}"
 
@@ -240,30 +302,240 @@ if [ -z "$CODEX_CLI_PATH" ]; then
     exit 1
 fi
 
+export CHROME_DESKTOP="${CHROME_DESKTOP:-codex-desktop-linux.desktop}"
+
 cd "$SCRIPT_DIR"
-exec "$SCRIPT_DIR/electron" --no-sandbox "$@"
+if [ "$DISABLE_SANDBOX" = "1" ]; then
+    exec -a "codex-desktop-linux" "$SCRIPT_DIR/electron" --no-sandbox --class=Codex --name=Codex --icon="$SCRIPT_DIR/icon.png" "$@"
+fi
+exec -a "codex-desktop-linux" "$SCRIPT_DIR/electron" --class=Codex --name=Codex --icon="$SCRIPT_DIR/icon.png" "$@"
 SCRIPT
 
     chmod +x "$INSTALL_DIR/start.sh"
     info "Start script created"
 }
 
+# ---- Create desktop entry ----
+escape_exec_path() {
+    local raw_path="$1"
+    printf '%s' "$raw_path" | sed -e 's/\\/\\\\/g' -e 's/ /\\ /g'
+}
+
+create_desktop_entry() {
+    local icon_source=""
+    local escaped_exec=""
+    local local_icon_file="$INSTALL_DIR/icon.png"
+
+    mkdir -p "$DESKTOP_ENTRY_DIR" "$ICON_DIR"
+
+    escaped_exec=$(escape_exec_path "$INSTALL_DIR/start.sh")
+    icon_source=$(find "$INSTALL_DIR/content/webview/assets" -maxdepth 1 -type f -name 'app-*.png' | sort | head -1 || true)
+
+    if [ -n "$icon_source" ] && [ -f "$icon_source" ]; then
+        cp "$icon_source" "$ICON_FILE"
+        cp "$icon_source" "$local_icon_file"
+    else
+        warn "Could not find app icon in $INSTALL_DIR/content/webview/assets"
+    fi
+
+    cat > "$DESKTOP_ENTRY_FILE" << EOF
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Codex Desktop
+Comment=Run Codex Desktop for Linux
+Exec=$escaped_exec %U
+TryExec=$escaped_exec
+Terminal=false
+Categories=Development;
+StartupNotify=true
+Icon=$DESKTOP_APP_ID
+StartupWMClass=$WINDOW_CLASS
+X-GNOME-WMClass=$WINDOW_CLASS
+EOF
+
+    chmod 644 "$DESKTOP_ENTRY_FILE"
+
+    if command -v update-desktop-database &>/dev/null; then
+        update-desktop-database "$DESKTOP_ENTRY_DIR" 2>/dev/null || true
+    fi
+
+    if command -v gtk-update-icon-cache &>/dev/null; then
+        gtk-update-icon-cache -f -t "$(dirname "$(dirname "$ICON_DIR")")" 2>/dev/null || true
+    fi
+
+    if command -v desktop-file-validate &>/dev/null; then
+        desktop-file-validate "$DESKTOP_ENTRY_FILE"
+        info "desktop-file-validate passed"
+    else
+        warn "desktop-file-validate not found; skipping desktop-entry validation"
+    fi
+
+    info "Desktop entry created: $DESKTOP_ENTRY_FILE"
+}
+
+remove_desktop_entry() {
+    rm -f "$DESKTOP_ENTRY_FILE"
+    rm -f "$ICON_FILE"
+
+    if command -v update-desktop-database &>/dev/null; then
+        update-desktop-database "$DESKTOP_ENTRY_DIR" 2>/dev/null || true
+    fi
+
+    if command -v gtk-update-icon-cache &>/dev/null; then
+        gtk-update-icon-cache -f -t "$(dirname "$(dirname "$ICON_DIR")")" 2>/dev/null || true
+    fi
+}
+
+repair_desktop_integration() {
+    [ -d "$INSTALL_DIR" ] || error "Install directory not found: $INSTALL_DIR"
+    [ -f "$INSTALL_DIR/electron" ] || error "Electron binary missing in $INSTALL_DIR"
+    create_start_script
+    create_desktop_entry
+    info "Desktop integration repaired"
+}
+
+uninstall_app() {
+    local purge_cache="$1"
+    local purge_user_data="$2"
+    local default_install_dir="$SCRIPT_DIR/codex-app"
+    local dmg_cache="$SCRIPT_DIR/Codex.dmg"
+    local install_dirs=("$INSTALL_DIR")
+    local icon_pattern_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+    local user_data_dirs=(
+        "$HOME/.config/Codex"
+        "$HOME/.cache/Codex"
+        "$HOME/.local/share/Codex"
+    )
+    local desktop_entries=(
+        "${XDG_DATA_HOME:-$HOME/.local/share}/applications/codex-desktop-linux.desktop"
+        "$HOME/.local/share/applications/codex-desktop-linux.desktop"
+    )
+
+    if [ "$INSTALL_DIR" != "$default_install_dir" ]; then
+        install_dirs+=("$default_install_dir")
+    fi
+
+    # Stop app processes from known install locations.
+    for dir in "${install_dirs[@]}"; do
+        pkill -f "$dir/electron" 2>/dev/null || true
+        pkill -f "$dir/start.sh" 2>/dev/null || true
+        if [ -f "$dir/.webview-http.pid" ]; then
+            local webview_pid
+            webview_pid="$(cat "$dir/.webview-http.pid" 2>/dev/null || true)"
+            if [ -n "$webview_pid" ] && kill -0 "$webview_pid" 2>/dev/null; then
+                kill "$webview_pid" 2>/dev/null || true
+            fi
+        fi
+    done
+
+    if [ "$purge_user_data" = "1" ]; then
+        # NOTE: We intentionally do not touch ~/.codex to avoid affecting Codex CLI setup.
+        for dir in "${user_data_dirs[@]}"; do
+            if [ -d "$dir" ]; then
+                rm -rf "$dir"
+                info "Removed user data directory: $dir"
+            fi
+        done
+    else
+        info "Kept Codex user data directories (use --purge-user-data to remove them)"
+    fi
+
+    # Remove desktop launchers (current and legacy locations).
+    for entry in "${desktop_entries[@]}"; do
+        rm -f "$entry"
+    done
+
+    # Remove all icon-size variants created for this launcher.
+    find "$icon_pattern_dir" -type f -path "*/apps/${DESKTOP_APP_ID}.png" -delete 2>/dev/null || true
+
+    # Refresh desktop caches.
+    remove_desktop_entry
+
+    for dir in "${install_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            rm -rf "$dir"
+            info "Removed install directory: $dir"
+        fi
+    done
+
+    if [ "$purge_cache" = "1" ]; then
+        rm -f "$dmg_cache"
+        info "Removed cached DMG: $dmg_cache"
+    else
+        info "Kept cached DMG: $dmg_cache (use --purge-cache to remove it)"
+    fi
+
+    info "Uninstall complete"
+}
+
+resolve_dmg_path() {
+    local provided_path="${1:-}"
+    if [ -n "$provided_path" ] && [ -f "$provided_path" ]; then
+        realpath "$provided_path"
+        return
+    fi
+    get_dmg
+}
+
 # ---- Main ----
 main() {
+    local action="install"
+    local provided_dmg=""
+    local purge_cache="0"
+    local purge_user_data="0"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --help|-h)
+                print_usage
+                exit 0
+                ;;
+            --repair-desktop)
+                action="repair-desktop"
+                ;;
+            --uninstall)
+                action="uninstall"
+                ;;
+            --purge-cache)
+                purge_cache="1"
+                ;;
+            --purge-user-data)
+                purge_user_data="1"
+                ;;
+            *)
+                if [ -z "$provided_dmg" ] && [ -f "$1" ]; then
+                    provided_dmg="$1"
+                else
+                    error "Unknown argument: $1 (use --help for usage)"
+                fi
+                ;;
+        esac
+        shift
+    done
+
     echo "============================================" >&2
     echo "  Codex Desktop for Linux — Installer"       >&2
     echo "============================================" >&2
     echo ""                                             >&2
 
+    if [ "$action" = "uninstall" ]; then
+        uninstall_app "$purge_cache" "$purge_user_data"
+        exit 0
+    fi
+
+    validate_installer_script
+
+    if [ "$action" = "repair-desktop" ]; then
+        repair_desktop_integration
+        exit 0
+    fi
+
     check_deps
 
-    local dmg_path=""
-    if [ $# -ge 1 ] && [ -f "$1" ]; then
-        dmg_path="$(realpath "$1")"
-        info "Using provided DMG: $dmg_path"
-    else
-        dmg_path=$(get_dmg)
-    fi
+    local dmg_path
+    dmg_path="$(resolve_dmg_path "$provided_dmg")"
+    info "Using DMG: $dmg_path"
 
     local app_dir
     app_dir=$(extract_dmg "$dmg_path")
@@ -273,6 +545,7 @@ main() {
     extract_webview "$app_dir"
     install_app
     create_start_script
+    create_desktop_entry
 
     if ! command -v codex &>/dev/null; then
         warn "Codex CLI not found. Install it: npm i -g @openai/codex"
@@ -282,6 +555,8 @@ main() {
     echo "============================================" >&2
     info "Installation complete!"
     echo "  Run:  $INSTALL_DIR/start.sh"                >&2
+    echo "  Menu: Codex Desktop"                        >&2
+    echo "  Sandbox: CODEX_DISABLE_SANDBOX=$DEFAULT_DISABLE_SANDBOX" >&2
     echo "============================================" >&2
 }
 
