@@ -71,6 +71,12 @@ The app is installed into `codex-app/` next to the install script:
 codex-desktop-linux/codex-app/start.sh
 ```
 
+The installer also creates a desktop launcher at:
+
+```bash
+~/.local/share/applications/codex-desktop-linux.desktop
+```
+
 Or add an alias to your shell:
 
 ```bash

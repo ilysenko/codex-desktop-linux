@@ -11,6 +11,12 @@ INSTALL_DIR="${CODEX_INSTALL_DIR:-$SCRIPT_DIR/codex-app}"
 ELECTRON_VERSION="40.0.0"
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
+DESKTOP_APP_ID="codex-desktop-linux"
+WINDOW_CLASS="Codex"
+DESKTOP_ENTRY_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+DESKTOP_ENTRY_FILE="$DESKTOP_ENTRY_DIR/${DESKTOP_APP_ID}.desktop"
+ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
+ICON_FILE="$ICON_DIR/${DESKTOP_APP_ID}.png"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -240,12 +246,66 @@ if [ -z "$CODEX_CLI_PATH" ]; then
     exit 1
 fi
 
+export CHROME_DESKTOP="${CHROME_DESKTOP:-codex-desktop-linux.desktop}"
+
 cd "$SCRIPT_DIR"
-exec "$SCRIPT_DIR/electron" --no-sandbox "$@"
+exec -a "codex-desktop-linux" "$SCRIPT_DIR/electron" --no-sandbox --class=Codex --name=Codex --icon="$SCRIPT_DIR/icon.png" "$@"
 SCRIPT
 
     chmod +x "$INSTALL_DIR/start.sh"
     info "Start script created"
+}
+
+# ---- Create desktop entry ----
+escape_exec_path() {
+    local raw_path="$1"
+    printf '%s' "$raw_path" | sed -e 's/\\/\\\\/g' -e 's/ /\\ /g'
+}
+
+create_desktop_entry() {
+    local icon_source=""
+    local escaped_exec=""
+    local local_icon_file="$INSTALL_DIR/icon.png"
+
+    mkdir -p "$DESKTOP_ENTRY_DIR" "$ICON_DIR"
+
+    escaped_exec=$(escape_exec_path "$INSTALL_DIR/start.sh")
+    icon_source=$(find "$INSTALL_DIR/content/webview/assets" -maxdepth 1 -type f -name 'app-*.png' | sort | head -1 || true)
+
+    if [ -n "$icon_source" ] && [ -f "$icon_source" ]; then
+        cp "$icon_source" "$ICON_FILE"
+        cp "$icon_source" "$local_icon_file"
+    else
+        warn "Could not find app icon in $INSTALL_DIR/content/webview/assets"
+    fi
+
+    cat > "$DESKTOP_ENTRY_FILE" << EOF
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Codex Desktop
+Comment=Run Codex Desktop for Linux
+Exec=$escaped_exec %U
+TryExec=$escaped_exec
+Terminal=false
+Categories=Development;
+StartupNotify=true
+Icon=$DESKTOP_APP_ID
+StartupWMClass=$WINDOW_CLASS
+X-GNOME-WMClass=$WINDOW_CLASS
+EOF
+
+    chmod 644 "$DESKTOP_ENTRY_FILE"
+
+    if command -v update-desktop-database &>/dev/null; then
+        update-desktop-database "$DESKTOP_ENTRY_DIR" 2>/dev/null || true
+    fi
+
+    if command -v gtk-update-icon-cache &>/dev/null; then
+        gtk-update-icon-cache -f -t "$(dirname "$(dirname "$ICON_DIR")")" 2>/dev/null || true
+    fi
+
+    info "Desktop entry created: $DESKTOP_ENTRY_FILE"
 }
 
 # ---- Main ----
@@ -273,6 +333,7 @@ main() {
     extract_webview "$app_dir"
     install_app
     create_start_script
+    create_desktop_entry
 
     if ! command -v codex &>/dev/null; then
         warn "Codex CLI not found. Install it: npm i -g @openai/codex"
@@ -282,6 +343,7 @@ main() {
     echo "============================================" >&2
     info "Installation complete!"
     echo "  Run:  $INSTALL_DIR/start.sh"                >&2
+    echo "  Menu: Codex Desktop"                        >&2
     echo "============================================" >&2
 }
 
