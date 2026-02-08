@@ -8,7 +8,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="${CODEX_INSTALL_DIR:-$SCRIPT_DIR/codex-app}"
-ELECTRON_VERSION="40.0.0"
+ELECTRON_VERSION_DEFAULT="40.0.0"
+ELECTRON_VERSION=""
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
 
@@ -25,6 +26,21 @@ cleanup() {
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
+
+# Run a command, capturing output to a log file. On failure, print the log.
+run_logged() {
+    local label="$1"; shift
+    local log="$WORK_DIR/${label}.log"
+    if "$@" > "$log" 2>&1; then
+        return 0
+    else
+        local rc=$?
+        echo -e "${RED}--- $label failed (exit $rc) ---${NC}" >&2
+        tail -40 "$log" >&2
+        echo -e "${RED}--- end of log ($log) ---${NC}" >&2
+        return "$rc"
+    fi
+}
 trap 'error "Failed at line $LINENO (exit code $?)"' ERR
 
 # ---- Check dependencies ----
@@ -91,15 +107,33 @@ extract_dmg() {
     local dmg_path="$1"
     info "Extracting DMG with 7z..."
 
-    7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" >&2 || \
-        error "Failed to extract DMG"
+    # 7z may report errors for macOS symlinks (e.g. /Applications shortcut)
+    # which are harmless — check for the .app bundle instead of the exit code
+    7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" >&2 || true
 
     local app_dir
     app_dir=$(find "$WORK_DIR/dmg-extract" -maxdepth 3 -name "*.app" -type d | head -1)
-    [ -n "$app_dir" ] || error "Could not find .app bundle in DMG"
+    [ -n "$app_dir" ] || error "Failed to extract DMG (no .app bundle found)"
 
     info "Found: $(basename "$app_dir")"
     echo "$app_dir"
+}
+
+# ---- Detect Electron version from extracted app ----
+detect_electron_version() {
+    local app_dir="$1"
+    local ver_file="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/version"
+    if [ -f "$ver_file" ]; then
+        local detected
+        detected="$(tr -d '[:space:]' < "$ver_file")"
+        if [[ "$detected" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            ELECTRON_VERSION="$detected"
+            info "Detected Electron version from app: $ELECTRON_VERSION"
+            return
+        fi
+    fi
+    ELECTRON_VERSION="$ELECTRON_VERSION_DEFAULT"
+    warn "Could not detect Electron version from app — using default: $ELECTRON_VERSION"
 }
 
 # ---- Build native modules in a clean directory ----
@@ -124,11 +158,11 @@ build_native_modules() {
     echo '{"private":true}' > package.json
 
     info "Installing fresh sources from npm..."
-    npm install "electron@$ELECTRON_VERSION" --save-dev --ignore-scripts 2>&1 >&2
-    npm install "better-sqlite3@$bs3_ver" "node-pty@$npty_ver" --ignore-scripts 2>&1 >&2
+    run_logged "npm-electron" npm install "electron@$ELECTRON_VERSION" --save-dev --ignore-scripts
+    run_logged "npm-native" npm install "better-sqlite3@$bs3_ver" "node-pty@$npty_ver" --ignore-scripts
 
     info "Compiling for Electron v$ELECTRON_VERSION (this takes ~1 min)..."
-    npx --yes @electron/rebuild -v "$ELECTRON_VERSION" --force 2>&1 >&2
+    run_logged "electron-rebuild" npx --yes @electron/rebuild -v "$ELECTRON_VERSION" --force
 
     info "Native modules built successfully"
 
@@ -148,7 +182,7 @@ patch_asar() {
 
     info "Extracting app.asar..."
     cd "$WORK_DIR"
-    npx --yes asar extract "$resources_dir/app.asar" app-extracted
+    npx --yes @electron/asar extract "$resources_dir/app.asar" app-extracted
 
     # Copy unpacked native modules if they exist
     if [ -d "$resources_dir/app.asar.unpacked" ]; then
@@ -162,10 +196,16 @@ patch_asar() {
     # Build native modules in clean environment and copy back
     build_native_modules "$WORK_DIR/app-extracted"
 
+    # Inject Linux update mechanism
+    info "Injecting Linux update mechanism..."
+    cp "$SCRIPT_DIR/linux-updater.js" "$WORK_DIR/app-extracted/.vite/build/linux-updater.js"
+    sed -i '1s|"use strict";|"use strict";require("./linux-updater.js");|' \
+        "$WORK_DIR/app-extracted/.vite/build/main.js"
+
     # Repack
     info "Repacking app.asar..."
     cd "$WORK_DIR"
-    npx asar pack app-extracted app.asar --unpack "{*.node,*.so,*.dylib}" 2>/dev/null
+    npx --yes @electron/asar pack app-extracted app.asar --unpack "{*.node,*.so,*.dylib}" 2>/dev/null
 
     info "app.asar patched"
 }
@@ -182,9 +222,33 @@ download_electron() {
         *)       error "Unsupported architecture: $ARCH" ;;
     esac
 
-    local url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-${electron_arch}.zip"
+    local base_url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}"
+    local zip_name="electron-v${ELECTRON_VERSION}-linux-${electron_arch}.zip"
+    local url="${base_url}/${zip_name}"
 
     curl -L --progress-bar -o "$WORK_DIR/electron.zip" "$url"
+
+    # Verify checksum
+    info "Verifying Electron download checksum..."
+    local shasums_url="${base_url}/SHASUMS256.txt"
+    if curl -fsSL --max-time 30 -o "$WORK_DIR/SHASUMS256.txt" "$shasums_url"; then
+        local expected actual
+        expected=$(grep "$zip_name" "$WORK_DIR/SHASUMS256.txt" | grep -v '\-symbols' | head -1 | awk '{print $1}')
+        actual=$(sha256sum "$WORK_DIR/electron.zip" | awk '{print $1}')
+        if [ -z "$expected" ]; then
+            warn "Could not find checksum for $zip_name in SHASUMS256.txt — skipping verification"
+        elif [ "$expected" != "$actual" ]; then
+            error "Electron checksum mismatch!
+  Expected: $expected
+  Got:      $actual
+Delete $WORK_DIR/electron.zip and retry, or check your network."
+        else
+            info "Checksum verified: $actual"
+        fi
+    else
+        warn "Could not fetch SHASUMS256.txt — skipping checksum verification"
+    fi
+
     mkdir -p "$INSTALL_DIR"
     cd "$INSTALL_DIR"
     unzip -qo "$WORK_DIR/electron.zip"
@@ -220,32 +284,197 @@ install_app() {
 create_start_script() {
     cat > "$INSTALL_DIR/start.sh" << 'SCRIPT'
 #!/bin/bash
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WEBVIEW_DIR="$SCRIPT_DIR/content/webview"
+HTTP_PID=""
+ELECTRON_PID=""
+HTTP_PORT=5175
 
-pkill -f "http.server 5175" 2>/dev/null
-sleep 0.3
+cleanup() {
+    [ -n "$ELECTRON_PID" ] && kill "$ELECTRON_PID" 2>/dev/null || true
+    [ -n "$HTTP_PID" ]     && kill "$HTTP_PID"     2>/dev/null || true
+    wait 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
 
 if [ -d "$WEBVIEW_DIR" ] && [ "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
-    cd "$WEBVIEW_DIR"
-    python3 -m http.server 5175 &> /dev/null &
-    HTTP_PID=$!
-    trap "kill $HTTP_PID 2>/dev/null" EXIT
+    # Check if port is already in use
+    if ss -tlnp 2>/dev/null | grep -q ":${HTTP_PORT} " || \
+       lsof -iTCP:"$HTTP_PORT" -sTCP:LISTEN &>/dev/null; then
+        echo "[WARN] Port $HTTP_PORT already in use — skipping HTTP server" >&2
+    else
+        cd "$WEBVIEW_DIR"
+        python3 -m http.server "$HTTP_PORT" &> /dev/null &
+        HTTP_PID=$!
+
+        # Wait for server readiness (up to 3 seconds)
+        for _ in $(seq 1 30); do
+            if curl -sf "http://127.0.0.1:${HTTP_PORT}/" > /dev/null 2>&1; then
+                break
+            fi
+            sleep 0.1
+        done
+    fi
 fi
 
-export CODEX_CLI_PATH="${CODEX_CLI_PATH:-$(which codex 2>/dev/null)}"
+export CODEX_CLI_PATH="${CODEX_CLI_PATH:-$(which codex 2>/dev/null || true)}"
+export CODEX_LINUX_INSTALLER_PATH="$SCRIPT_DIR/../install.sh"
 
 if [ -z "$CODEX_CLI_PATH" ]; then
-    echo "Error: Codex CLI not found. Install with: npm i -g @openai/codex"
+    echo "Error: Codex CLI not found. Install with: npm i -g @openai/codex" >&2
     exit 1
 fi
 
 cd "$SCRIPT_DIR"
-exec "$SCRIPT_DIR/electron" --no-sandbox "$@"
+"$SCRIPT_DIR/electron" --no-sandbox "$@" &
+ELECTRON_PID=$!
+wait "$ELECTRON_PID" 2>/dev/null || true
+ELECTRON_PID=""
 SCRIPT
 
     chmod +x "$INSTALL_DIR/start.sh"
     info "Start script created"
+}
+
+# ---- Idempotency stamp ----
+STAMP_FILE="${INSTALL_DIR}/.install-stamp"
+
+compute_stamp() {
+    local dmg_path="$1"
+    local dmg_hash
+    dmg_hash=$(sha256sum "$dmg_path" | awk '{print $1}')
+    echo "${dmg_hash}:${ELECTRON_VERSION}:${ARCH}"
+}
+
+check_stamp() {
+    local dmg_path="$1"
+    [ -f "$STAMP_FILE" ] || return 1
+    local current
+    current=$(compute_stamp "$dmg_path")
+    local saved
+    saved=$(cat "$STAMP_FILE" 2>/dev/null)
+    [ "$current" = "$saved" ]
+}
+
+write_stamp() {
+    local dmg_path="$1"
+    compute_stamp "$dmg_path" > "$STAMP_FILE"
+}
+
+# ---- Desktop integration ----
+install_desktop_entry() {
+    local app_dir="$1"
+    local icon_path="$INSTALL_DIR/codex-desktop.png"
+
+    # Try to extract icon from macOS .icns using multiple methods
+    local icns_file icon_extracted=false
+    icns_file=$(find "$app_dir" -name "*.icns" -type f 2>/dev/null | head -1)
+
+    if [ -z "$icns_file" ]; then
+        icon_path=""
+        warn "No .icns icon found in app bundle"
+    else
+        # Method 1: ImageMagick convert
+        if [ "$icon_extracted" = false ] && command -v convert &>/dev/null; then
+            if convert "$icns_file[0]" -resize 256x256 "$icon_path" 2>/dev/null; then
+                icon_extracted=true
+                info "Extracted app icon via ImageMagick (256x256)"
+            fi
+        fi
+
+        # Method 2: icns2png (from libicns)
+        if [ "$icon_extracted" = false ] && command -v icns2png &>/dev/null; then
+            if icns2png -x -s 256 -o "$INSTALL_DIR" "$icns_file" 2>/dev/null; then
+                # icns2png outputs <name>_256x256x32.png — find and rename it
+                local extracted
+                extracted=$(find "$INSTALL_DIR" -maxdepth 1 -name "*_256x256*" -o -name "*_128x128*" 2>/dev/null | head -1)
+                if [ -n "$extracted" ]; then
+                    mv "$extracted" "$icon_path"
+                    icon_extracted=true
+                    info "Extracted app icon via icns2png"
+                fi
+            fi
+        fi
+
+        # Method 3: Python3 + Pillow
+        if [ "$icon_extracted" = false ]; then
+            if python3 -c "
+from PIL import Image
+import struct, io, sys
+
+with open(sys.argv[1], 'rb') as f:
+    data = f.read()
+
+# .icns files contain multiple sizes; find the largest PNG chunk
+# Common icon types with embedded PNG: ic10 (1024), ic09 (512), ic08 (256), ic07 (128)
+best = None
+pos = 8  # skip header
+while pos < len(data) - 8:
+    icon_type = data[pos:pos+4]
+    size = struct.unpack('>I', data[pos+4:pos+8])[0]
+    chunk = data[pos+8:pos+size]
+    if chunk[:8] == b'\\x89PNG\\r\\n\\x1a\\n':
+        if best is None or len(chunk) > len(best):
+            best = chunk
+    pos += size
+
+if best:
+    img = Image.open(io.BytesIO(best))
+    img = img.resize((256, 256), Image.LANCZOS)
+    img.save(sys.argv[2])
+else:
+    sys.exit(1)
+" "$icns_file" "$icon_path" 2>/dev/null; then
+                icon_extracted=true
+                info "Extracted app icon via Python Pillow"
+            fi
+        fi
+
+        # Method 4: 7z can sometimes extract PNGs from .icns
+        if [ "$icon_extracted" = false ]; then
+            local icns_extract="$WORK_DIR/icns-extract"
+            mkdir -p "$icns_extract"
+            if 7z x -y "$icns_file" -o"$icns_extract" &>/dev/null; then
+                local best_png
+                best_png=$(find "$icns_extract" -name "*.png" -type f -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | awk '{print $2}')
+                if [ -n "$best_png" ]; then
+                    cp "$best_png" "$icon_path"
+                    icon_extracted=true
+                    info "Extracted app icon via 7z"
+                fi
+            fi
+        fi
+
+        if [ "$icon_extracted" = false ]; then
+            icon_path=""
+            warn "Could not extract icon — install ImageMagick (sudo apt install imagemagick) or Pillow (pip3 install Pillow)"
+        fi
+    fi
+
+    local desktop_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    mkdir -p "$desktop_dir"
+    local desktop_file="$desktop_dir/codex-desktop.desktop"
+
+    {
+        echo "[Desktop Entry]"
+        echo "Name=Codex Desktop"
+        echo "Comment=OpenAI Codex Desktop App"
+        echo "Exec=$INSTALL_DIR/start.sh"
+        [ -n "$icon_path" ] && echo "Icon=$icon_path"
+        echo "Terminal=false"
+        echo "Type=Application"
+        echo "Categories=Development;IDE;"
+        echo "StartupWMClass=codex"
+    } > "$desktop_file"
+
+    # Validate if desktop-file-validate is available
+    if command -v desktop-file-validate &>/dev/null; then
+        desktop-file-validate "$desktop_file" 2>/dev/null || true
+    fi
+
+    info "Desktop entry installed: $desktop_file"
 }
 
 # ---- Main ----
@@ -255,24 +484,48 @@ main() {
     echo "============================================" >&2
     echo ""                                             >&2
 
+    local force=false
+    local positional=()
+    for arg in "$@"; do
+        case "$arg" in
+            --force) force=true ;;
+            *)       positional+=("$arg") ;;
+        esac
+    done
+
     check_deps
 
     local dmg_path=""
-    if [ $# -ge 1 ] && [ -f "$1" ]; then
-        dmg_path="$(realpath "$1")"
+    if [ "${#positional[@]}" -ge 1 ] && [ -f "${positional[0]}" ]; then
+        dmg_path="$(realpath "${positional[0]}")"
         info "Using provided DMG: $dmg_path"
     else
         dmg_path=$(get_dmg)
     fi
 
+    # Idempotency: we need the Electron version to compute the stamp,
+    # but detection requires extracting the DMG. Do a quick extract just
+    # for version detection first.
     local app_dir
     app_dir=$(extract_dmg "$dmg_path")
+
+    detect_electron_version "$app_dir"
+
+    if [ "$force" = false ] && check_stamp "$dmg_path"; then
+        info "Installation is up to date (DMG, Electron $ELECTRON_VERSION, $ARCH unchanged)"
+        info "  Re-run with --force to rebuild anyway"
+        echo "  Run:  $INSTALL_DIR/start.sh"            >&2
+        return 0
+    fi
 
     patch_asar "$app_dir"
     download_electron
     extract_webview "$app_dir"
     install_app
     create_start_script
+    install_desktop_entry "$app_dir"
+
+    write_stamp "$dmg_path"
 
     if ! command -v codex &>/dev/null; then
         warn "Codex CLI not found. Install it: npm i -g @openai/codex"
