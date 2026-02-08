@@ -91,8 +91,11 @@ extract_dmg() {
     local dmg_path="$1"
     info "Extracting DMG with 7z..."
 
-    7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" >&2 || \
-        error "Failed to extract DMG"
+    local rc=0
+    7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" >&2 || rc=$?
+    if [ "$rc" -gt 2 ]; then
+        error "Failed to extract DMG (7z exit code $rc)"
+    fi
 
     local app_dir
     app_dir=$(find "$WORK_DIR/dmg-extract" -maxdepth 3 -name "*.app" -type d | head -1)
