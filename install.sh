@@ -34,7 +34,7 @@ print_usage() {
 Usage:
   ./install.sh [path/to/Codex.dmg]
   ./install.sh --repair-desktop
-  ./install.sh --uninstall [--purge-cache]
+  ./install.sh --uninstall [--purge-cache] [--purge-user-data]
   ./install.sh --help
 
 Environment variables:
@@ -397,6 +397,7 @@ repair_desktop_integration() {
 
 uninstall_app() {
     local purge_cache="$1"
+    local purge_user_data="$2"
     local default_install_dir="$SCRIPT_DIR/codex-app"
     local dmg_cache="$SCRIPT_DIR/Codex.dmg"
     local install_dirs=("$INSTALL_DIR")
@@ -428,13 +429,17 @@ uninstall_app() {
         fi
     done
 
-    # Remove Codex user data directories.
-    for dir in "${user_data_dirs[@]}"; do
-        if [ -d "$dir" ]; then
-            rm -rf "$dir"
-            info "Removed user data directory: $dir"
-        fi
-    done
+    if [ "$purge_user_data" = "1" ]; then
+        # NOTE: We intentionally do not touch ~/.codex to avoid affecting Codex CLI setup.
+        for dir in "${user_data_dirs[@]}"; do
+            if [ -d "$dir" ]; then
+                rm -rf "$dir"
+                info "Removed user data directory: $dir"
+            fi
+        done
+    else
+        info "Kept Codex user data directories (use --purge-user-data to remove them)"
+    fi
 
     # Remove desktop launchers (current and legacy locations).
     for entry in "${desktop_entries[@]}"; do
@@ -478,6 +483,7 @@ main() {
     local action="install"
     local provided_dmg=""
     local purge_cache="0"
+    local purge_user_data="0"
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -493,6 +499,9 @@ main() {
                 ;;
             --purge-cache)
                 purge_cache="1"
+                ;;
+            --purge-user-data)
+                purge_user_data="1"
                 ;;
             *)
                 if [ -z "$provided_dmg" ] && [ -f "$1" ]; then
@@ -511,7 +520,7 @@ main() {
     echo ""                                             >&2
 
     if [ "$action" = "uninstall" ]; then
-        uninstall_app "$purge_cache"
+        uninstall_app "$purge_cache" "$purge_user_data"
         exit 0
     fi
 

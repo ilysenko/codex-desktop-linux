@@ -116,7 +116,6 @@ Remove the installed app and desktop integration:
 ```
 
 This also removes:
-- `~/.config/Codex`, `~/.cache/Codex`, and `~/.local/share/Codex`
 - Legacy launcher/icon leftovers from earlier installs
 
 To also remove the cached DMG in the repo root:
@@ -124,6 +123,14 @@ To also remove the cached DMG in the repo root:
 ```bash
 ./install.sh --uninstall --purge-cache
 ```
+
+To also remove Codex desktop user data directories:
+
+```bash
+./install.sh --uninstall --purge-user-data
+```
+
+`~/.codex` is not removed by uninstall.
 
 ## How it works (technical details)
 
