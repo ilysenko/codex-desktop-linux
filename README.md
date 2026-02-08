@@ -89,6 +89,32 @@ echo 'alias codex-desktop="~/codex-desktop-linux/codex-app/start.sh"' >> ~/.bash
 CODEX_INSTALL_DIR=/opt/codex ./install.sh
 ```
 
+### Optional sandbox mode
+
+By default the launcher uses `--no-sandbox` for compatibility.
+
+To launch without that flag:
+
+```bash
+CODEX_DISABLE_SANDBOX=0 ./codex-app/start.sh
+```
+
+### Repair desktop integration
+
+Recreate launcher script, icon, and desktop entry without full reinstall:
+
+```bash
+./install.sh --repair-desktop
+```
+
+### Uninstall
+
+Remove the installed app and desktop integration:
+
+```bash
+./install.sh --uninstall
+```
+
 ## How it works (technical details)
 
 The macOS Codex app is an Electron application. The core code (`app.asar`) is platform-independent JavaScript, but it bundles:
