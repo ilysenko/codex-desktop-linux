@@ -88,19 +88,23 @@ get_dmg() {
 
 # ---- Extract app from DMG ----
 extract_dmg() {
-    local dmg_path="$1"
-    info "Extracting DMG with 7z..."
+  local dmg_path="$1"
+  info "Extracting DMG with 7z (app bundle only)..."
 
-    7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" >&2 || \
-        error "Failed to extract DMG"
+  mkdir -p "$WORK_DIR/dmg-extract"
 
-    local app_dir
-    app_dir=$(find "$WORK_DIR/dmg-extract" -maxdepth 3 -name "*.app" -type d | head -1)
-    [ -n "$app_dir" ] || error "Could not find .app bundle in DMG"
+  # Extract only the .app bundle to avoid the /Applications symlink entry.
+  7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" "*/*.app/*" >&2 || \
+      error "Failed to extract .app bundle from DMG"
 
-    info "Found: $(basename "$app_dir")"
-    echo "$app_dir"
+  local app_dir
+  app_dir=$(find "$WORK_DIR/dmg-extract" -maxdepth 4 -name "*.app" -type d | head -1)
+  [ -n "$app_dir" ] || error "Could not find .app bundle in DMG"
+
+  info "Found: $(basename "$app_dir")"
+  echo "$app_dir"
 }
+
 
 # ---- Build native modules in a clean directory ----
 build_native_modules() {
@@ -286,3 +290,4 @@ main() {
 }
 
 main "$@"
+
