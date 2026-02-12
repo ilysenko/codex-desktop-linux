@@ -224,13 +224,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WEBVIEW_DIR="$SCRIPT_DIR/content/webview"
 
 pkill -f "http.server 5175" 2>/dev/null
-sleep 0.3
+sleep 0.5
 
 if [ -d "$WEBVIEW_DIR" ] && [ "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
     cd "$WEBVIEW_DIR"
-    python3 -m http.server 5175 &> /dev/null &
+    nohup python3 -m http.server 5175 &> /dev/null &
     HTTP_PID=$!
     trap "kill $HTTP_PID 2>/dev/null" EXIT
+
+    # Wait for the HTTP server to be ready (up to 5 seconds)
+    echo "Waiting for webview server..."
+    for i in $(seq 1 50); do
+        if python3 -c "import socket; s=socket.socket(); s.settimeout(0.5); s.connect(('127.0.0.1',5175)); s.close()" 2>/dev/null; then
+            echo "Webview server ready."
+            break
+        fi
+        sleep 0.1
+    done
 fi
 
 export CODEX_CLI_PATH="${CODEX_CLI_PATH:-$(which codex 2>/dev/null)}"
@@ -241,7 +251,7 @@ if [ -z "$CODEX_CLI_PATH" ]; then
 fi
 
 cd "$SCRIPT_DIR"
-exec "$SCRIPT_DIR/electron" --no-sandbox "$@"
+exec "$SCRIPT_DIR/electron" --no-sandbox --ozone-platform-hint=auto --disable-gpu-sandbox --enable-features=WaylandWindowDecorations "$@"
 SCRIPT
 
     chmod +x "$INSTALL_DIR/start.sh"
