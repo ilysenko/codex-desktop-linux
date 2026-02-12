@@ -99,9 +99,10 @@ A small Python HTTP server is used as a workaround: when `app.isPackaged` is `fa
 | Problem | Solution |
 |---------|----------|
 | `Error: write EPIPE` | Make sure you're not piping the output — run `start.sh` directly |
-| Blank window | Check that port 5175 is not in use: `lsof -i :5175` |
+| Blank window | Check that port 5175 is not in use: `ss -tlnp \| grep 5175` |
+| `ERR_CONNECTION_REFUSED` on `:5175` | The webview HTTP server failed to start. Ensure `python3` works and port 5175 is free |
 | `CODEX_CLI_PATH` error | Install CLI: `npm i -g @openai/codex` |
-| GPU/rendering issues | Try: `./codex-app/start.sh --disable-gpu` |
+| GPU/Vulkan/Wayland errors | Electron flags `--ozone-platform-hint=auto` and `--disable-gpu-sandbox` are set by default. For X11, try: `./codex-app/start.sh --ozone-platform=x11` |
 | Sandbox errors | The `--no-sandbox` flag is already set in `start.sh` |
 
 ## Disclaimer
