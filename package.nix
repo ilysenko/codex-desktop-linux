@@ -7,9 +7,8 @@
   nodejs_20,
   python3,
   makeWrapper,
-  electron_40-bin,
+  electron_40,
 }:
-
 stdenv.mkDerivation {
   pname = "codex-desktop";
   version = "0.1.0";
@@ -25,7 +24,7 @@ stdenv.mkDerivation {
     nodejs_20
     python3
     makeWrapper
-    electron_40-bin
+    electron_40
   ];
 
   unpackPhase = ''
@@ -99,66 +98,70 @@ stdenv.mkDerivation {
   '';
 
   installPhase = ''
-    mkdir -p $out/lib/codex-desktop
-    mkdir -p $out/bin
-    mkdir -p $out/share/applications
+        mkdir -p $out/lib/codex-desktop
+        mkdir -p $out/bin
+        mkdir -p $out/share/applications
 
-    # Copy Electron binary and resources from electron_40-bin
-    echo "Setting up Electron 40..."
-    cp ${electron_40-bin}/libexec/electron/electron $out/lib/codex-desktop/
+        # Copy Electron binary and resources from electron_40
+        echo "Setting up Electron 40..."
+        cp ${electron_40}/libexec/electron/electron $out/lib/codex-desktop/
 
-    # Copy resources (creating writable copy)
-    mkdir -p $out/lib/codex-desktop/resources
-    cp -r ${electron_40-bin}/libexec/electron/resources/* $out/lib/codex-desktop/resources/ 2>/dev/null || true
+        # Copy resources (creating writable copy)
+        mkdir -p $out/lib/codex-desktop/resources
+        cp -r ${electron_40}/libexec/electron/resources/* $out/lib/codex-desktop/resources/ 2>/dev/null || true
 
-    # Copy patched app.asar
-    if [ -f repacked.asar ]; then
-      cp repacked.asar $out/lib/codex-desktop/resources/app.asar
-    elif [ -f "Codex.app/Contents/Resources/app.asar" ]; then
-      cp "Codex.app/Contents/Resources/app.asar" $out/lib/codex-desktop/resources/app.asar
-    else
-      echo "Error: No app.asar found"
-      exit 1
-    fi
+        # Also copy additional files that might be needed at the top level
+        cp ${electron_40}/libexec/electron/*.dat $out/lib/codex-desktop/ 2>/dev/null || true
+        cp -r ${electron_40}/libexec/electron/v8_context_snapshot*.bin $out/lib/codex-desktop/ 2>/dev/null || true
 
-    # Copy webview content
-    if [ -d "app-extracted/webview" ]; then
-      mkdir -p $out/lib/codex-desktop/content/webview
-      cp -r app-extracted/webview/* $out/lib/codex-desktop/content/webview/
-    fi
+        # Copy patched app.asar
+        if [ -f repacked.asar ]; then
+          cp repacked.asar $out/lib/codex-desktop/resources/app.asar
+        elif [ -f "Codex.app/Contents/Resources/app.asar" ]; then
+          cp "Codex.app/Contents/Resources/app.asar" $out/lib/codex-desktop/resources/app.asar
+        else
+          echo "Error: No app.asar found"
+          exit 1
+        fi
 
-    # Create launcher script using makeWrapper
-    makeWrapper $out/lib/codex-desktop/electron $out/bin/codex-desktop \
-      --run "export NIXOS_OZONE_WL=1 ELECTRON_OZONE_PLATFORM_HINT=wayland" \
-      --run "WEBVIEW_DIR=$out/lib/codex-desktop/content/webview" \
-      --run "if [ -d \"\$WEBVIEW_DIR\" ] && [ -n \"\$(ls -A \"\$WEBVIEW_DIR\" 2>/dev/null)\" ]; then" \
-      --run "  cd \"\$WEBVIEW_DIR\"" \
-      --run "  ${python3}/bin/python3 -m http.server 5175 > /dev/null 2>&1 &" \
-      --run "  HTTP_PID=\$!" \
-      --run "  trap \"kill \$HTTP_PID 2>/dev/null\" EXIT" \
-      --run "fi" \
-      --run "if ! command -v codex >/dev/null 2>&1; then" \
-      --run "  echo 'Warning: Codex CLI not found. Install with: npm i -g @openai/codex'" \
-      --run "fi" \
-      --run "cd $out/lib/codex-desktop" \
-      --add-flags "--no-sandbox" \
-      --add-flags "--ozone-platform=wayland" \
-      --add-flags "--enable-wayland-ime" \
-      --add-flags "resources/app.asar"
+        # Copy webview content
+        if [ -d "app-extracted/webview" ]; then
+          mkdir -p $out/lib/codex-desktop/content/webview
+          cp -r app-extracted/webview/* $out/lib/codex-desktop/content/webview/
+        fi
 
-    # Create .desktop file
-    mkdir -p $out/share/applications
-    cat > $out/share/applications/codex-desktop.desktop << 'EOF'
-[Desktop Entry]
-Name=Codex Desktop
-Exec=@out@/bin/codex-desktop
-Icon=text-editor
-Type=Application
-Categories=Development;IDE;
-StartupWMClass=Codex
-Comment=OpenAI Codex Desktop Application
-EOF
-    sed -i "s|@out@|$out|g" $out/share/applications/codex-desktop.desktop
+        # Create launcher script using makeWrapper
+        makeWrapper $out/lib/codex-desktop/electron $out/bin/codex-desktop \
+          --run "export NIXOS_OZONE_WL=1 ELECTRON_OZONE_PLATFORM_HINT=wayland" \
+          --run "WEBVIEW_DIR=$out/lib/codex-desktop/content/webview" \
+          --run "if [ -d \"\$WEBVIEW_DIR\" ] && [ -n \"\$(ls -A \"\$WEBVIEW_DIR\" 2>/dev/null)\" ]; then" \
+          --run "  cd \"\$WEBVIEW_DIR\"" \
+          --run "  ${python3}/bin/python3 -m http.server 5175 > /dev/null 2>&1 &" \
+          --run "  HTTP_PID=\$!" \
+          --run "  trap \"kill \$HTTP_PID 2>/dev/null\" EXIT" \
+          --run "fi" \
+          --run "if ! command -v codex >/dev/null 2>&1; then" \
+          --run "  echo 'Warning: Codex CLI not found. Install with: npm i -g @openai/codex'" \
+          --run "fi" \
+          --run "cd $out/lib/codex-desktop" \
+          --add-flags "--no-sandbox" \
+          --add-flags "--ozone-platform=wayland" \
+          --add-flags "--enable-wayland-ime" \
+          --add-flags "resources/app.asar"
+
+        # Create .desktop file
+        mkdir -p $out/share/applications
+        cat > $out/share/applications/codex-desktop.desktop << 'EOF'
+    [Desktop Entry]
+    Name=Codex Desktop
+    Exec=@out@/bin/codex-desktop
+    Icon=text-editor
+    Type=Application
+    Categories=Development;IDE;
+    StartupWMClass=Codex
+    Comment=OpenAI Codex Desktop Application
+    EOF
+        sed -i "s|@out@|$out|g" $out/share/applications/codex-desktop.desktop
   '';
 
   dontStrip = true;
