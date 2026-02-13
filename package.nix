@@ -11,9 +11,17 @@
   gnumake,
   pkg-config,
 }: let
+  betterSqlite3Version = "12.5.0";
+  nodePtyVersion = "1.1.0";
+
   betterSqlite3Src = fetchurl {
-    url = "https://registry.npmjs.org/better-sqlite3/-/better-sqlite3-12.5.0.tgz";
+    url = "https://registry.npmjs.org/better-sqlite3/-/better-sqlite3-${betterSqlite3Version}.tgz";
     hash = "sha256-CjzQVUsGPDGFuZEu9wWbhEVaLkEdY3+qAWb++f76BMI=";
+  };
+
+  nodePtySrc = fetchurl {
+    url = "https://registry.npmjs.org/node-pty/-/node-pty-${nodePtyVersion}.tgz";
+    hash = "sha256-x1F/GQg93LBfJ2kEaA6ysRprXsq3eLjk5WhabWRbP2A=";
   };
 in
   stdenv.mkDerivation {
@@ -94,6 +102,18 @@ in
       rm -rf app-extracted/node_modules/sparkle-darwin 2>/dev/null || true
       find app-extracted -name "sparkle.node" -delete 2>/dev/null || true
 
+      # Ensure pinned rebuild module versions still match the bundled app.
+      appBetterSqlite3Version="$(${nodejs_20}/bin/node -p "require('./app-extracted/node_modules/better-sqlite3/package.json').version")"
+      appNodePtyVersion="$(${nodejs_20}/bin/node -p "require('./app-extracted/node_modules/node-pty/package.json').version")"
+      if [ "$appBetterSqlite3Version" != "${betterSqlite3Version}" ]; then
+        echo "Error: better-sqlite3 version mismatch. App has $appBetterSqlite3Version, package expects ${betterSqlite3Version}."
+        exit 1
+      fi
+      if [ "$appNodePtyVersion" != "${nodePtyVersion}" ]; then
+        echo "Error: node-pty version mismatch. App has $appNodePtyVersion, package expects ${nodePtyVersion}."
+        exit 1
+      fi
+
       # Remove pre-compiled macOS native .node files (will be rebuilt for Linux)
       echo "Removing pre-compiled macOS native modules..."
       find app-extracted -name "*.node" -delete 2>/dev/null || true
@@ -113,14 +133,21 @@ in
           export npm_config_nodedir=${electron_40.headers}
           export HOME=$TMPDIR
 
-          echo "Building better-sqlite3 for Electron..."
-          rm -rf node_modules/better-sqlite3
-          mkdir -p node_modules/better-sqlite3
-          tar -xzf ${betterSqlite3Src} --strip-components=1 -C node_modules/better-sqlite3
+          build_native_module() {
+            local module_name="$1"
+            local module_tarball="$2"
 
-          cd node_modules/better-sqlite3
-          ${nodejs_20}/bin/node ${nodejs_20}/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release
-          cd ../..
+            echo "Building $module_name for Electron..."
+            rm -rf "node_modules/$module_name"
+            mkdir -p "node_modules/$module_name"
+            tar -xzf "$module_tarball" --strip-components=1 -C "node_modules/$module_name"
+            cd "node_modules/$module_name"
+            ${nodejs_20}/bin/node ${nodejs_20}/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release
+            cd ../..
+          }
+
+          build_native_module better-sqlite3 ${betterSqlite3Src}
+          build_native_module node-pty ${nodePtySrc}
 
           cd ..
 
@@ -190,6 +217,11 @@ in
                                 mkdir -p $out/lib/codex-desktop/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release
                                 cp app-extracted/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
                                   $out/lib/codex-desktop/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/
+                              fi
+                              if [ -d app-extracted/node_modules/node-pty/build/Release ]; then
+                                mkdir -p $out/lib/codex-desktop/resources/app.asar.unpacked/node_modules/node-pty/build/Release
+                                cp -r app-extracted/node_modules/node-pty/build/Release/* \
+                                  $out/lib/codex-desktop/resources/app.asar.unpacked/node_modules/node-pty/build/Release/
                               fi
                             elif [ -f "Codex.app/Contents/Resources/app.asar" ]; then
                               cp "Codex.app/Contents/Resources/app.asar" $out/lib/codex-desktop/resources/app.asar

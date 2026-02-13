@@ -67,7 +67,7 @@ user.programs.codex-desktop.enable = true;
 
 The flake handles all dependencies (Electron 40, Node.js, Python, 7z) automatically. The app runs with Wayland/Ozone support enabled by default.
 
-**Note:** The flake uses `electron_40-bin` from nixpkgs for consistency. Due to sandbox restrictions during Nix builds, native modules are not recompiled. The app may have limited functionality with native features (database, terminal). For full functionality, use Option B (traditional installation) on a non-NixOS system or build native modules outside the Nix sandbox.
+**Note:** The flake uses `electron_40` from nixpkgs and recompiles pinned native modules (`better-sqlite3`, `node-pty`) for Linux during the build. If the upstream DMG updates these module versions, `package.nix` must be updated with the new tarball hashes.
 
 ### Option B: Auto-download DMG
 
