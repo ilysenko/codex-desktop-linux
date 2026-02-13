@@ -130,24 +130,35 @@ stdenv.mkDerivation {
           cp -r app-extracted/webview/* $out/lib/codex-desktop/content/webview/
         fi
 
-        # Create launcher script using makeWrapper
-        makeWrapper $out/lib/codex-desktop/electron $out/bin/codex-desktop \
-          --run "export NIXOS_OZONE_WL=1 ELECTRON_OZONE_PLATFORM_HINT=wayland" \
-          --run "WEBVIEW_DIR=$out/lib/codex-desktop/content/webview" \
-          --run "if [ -d \"\$WEBVIEW_DIR\" ] && [ -n \"\$(ls -A \"\$WEBVIEW_DIR\" 2>/dev/null)\" ]; then" \
-          --run "  cd \"\$WEBVIEW_DIR\"" \
-          --run "  ${python3}/bin/python3 -m http.server 5175 > /dev/null 2>&1 &" \
-          --run "  HTTP_PID=\$!" \
-          --run "  trap \"kill \$HTTP_PID 2>/dev/null\" EXIT" \
-          --run "fi" \
-          --run "if ! command -v codex >/dev/null 2>&1; then" \
-          --run "  echo 'Warning: Codex CLI not found. Install with: npm i -g @openai/codex'" \
-          --run "fi" \
-          --run "cd $out/lib/codex-desktop" \
-          --add-flags "--no-sandbox" \
-          --add-flags "--ozone-platform=wayland" \
-          --add-flags "--enable-wayland-ime" \
-          --add-flags "resources/app.asar"
+        # Create launcher script with proper library paths
+        cat > $out/bin/codex-desktop << 'WRAPPER'
+#!/bin/bash
+export LD_LIBRARY_PATH="${electron_40}/lib:${electron_40}/libexec/electron:$LD_LIBRARY_PATH"
+export NIXOS_OZONE_WL=1
+export ELECTRON_OZONE_PLATFORM_HINT=wayland
+
+APPDIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
+WEBVIEW_DIR="$APPDIR/lib/codex-desktop/content/webview"
+
+if [ -d "$WEBVIEW_DIR" ] && [ -n "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
+  cd "$WEBVIEW_DIR"
+  ${python3}/bin/python3 -m http.server 5175 > /dev/null 2>&1 &
+  HTTP_PID=$!
+  trap "kill $HTTP_PID 2>/dev/null" EXIT
+fi
+
+if ! command -v codex >/dev/null 2>&1; then
+  echo "Warning: Codex CLI not found. Install with: npm i -g @openai/codex" >&2
+fi
+
+cd "$APPDIR/lib/codex-desktop"
+exec "$APPDIR/lib/codex-desktop/electron" \
+  --no-sandbox \
+  --ozone-platform=wayland \
+  --enable-wayland-ime \
+  resources/app.asar "$@"
+WRAPPER
+        chmod +x $out/bin/codex-desktop
 
         # Create .desktop file
         mkdir -p $out/share/applications
