@@ -46,7 +46,30 @@ npm i -g @openai/codex
 
 ## Installation
 
-### Option A: Auto-download DMG
+### Option A: Nix Flake (Recommended for Nix/NixOS)
+
+For reproducible, dependency-free installation on NixOS or systems with Nix:
+
+```bash
+# Direct installation from flake
+nix run github:y0usaf/codex-desktop-linux
+
+# Or add to your NixOS configuration
+# In flake.nix inputs:
+codex-desktop-linux = {
+  url = "github:y0usaf/codex-desktop-linux";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+
+# Then in your NixOS module:
+user.programs.codex-desktop.enable = true;
+```
+
+The flake handles all dependencies (Electron 40, Node.js, Python, 7z) automatically. The app runs with Wayland/Ozone support enabled by default.
+
+**Note:** The flake uses `electron_40-bin` from nixpkgs for consistency. Due to sandbox restrictions during Nix builds, native modules are not recompiled. The app may have limited functionality with native features (database, terminal). For full functionality, use Option B (traditional installation) on a non-NixOS system or build native modules outside the Nix sandbox.
+
+### Option B: Auto-download DMG
 
 ```bash
 git clone https://github.com/ilysenko/codex-desktop-linux.git
@@ -55,7 +78,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-### Option B: Provide your own DMG
+### Option C: Provide your own DMG
 
 Download `Codex.dmg` from [openai.com/codex](https://openai.com/codex/), then:
 
