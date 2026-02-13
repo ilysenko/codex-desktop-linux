@@ -106,13 +106,33 @@ stdenv.mkDerivation {
         echo "Setting up Electron 40..."
         cp ${electron_40}/libexec/electron/electron $out/lib/codex-desktop/
 
-        # Copy resources (creating writable copy)
+        # Copy all Electron resources and supporting files
         mkdir -p $out/lib/codex-desktop/resources
-        cp -r ${electron_40}/libexec/electron/resources/* $out/lib/codex-desktop/resources/ 2>/dev/null || true
 
-        # Also copy additional files that might be needed at the top level
-        cp ${electron_40}/libexec/electron/*.dat $out/lib/codex-desktop/ 2>/dev/null || true
-        cp -r ${electron_40}/libexec/electron/v8_context_snapshot*.bin $out/lib/codex-desktop/ 2>/dev/null || true
+        # Copy pak files and other resources
+        for f in ${electron_40}/libexec/electron/*.pak; do
+          [ -e "$f" ] && cp "$f" $out/lib/codex-desktop/resources/
+        done
+
+        # Copy data files
+        for f in ${electron_40}/libexec/electron/*.dat; do
+          [ -e "$f" ] && cp "$f" $out/lib/codex-desktop/
+        done
+
+        # Copy v8 snapshot
+        for f in ${electron_40}/libexec/electron/v8_context_snapshot*.bin; do
+          [ -e "$f" ] && cp "$f" $out/lib/codex-desktop/
+        done
+
+        # Copy crashpad handler
+        if [ -f "${electron_40}/libexec/electron/chrome_crashpad_handler" ]; then
+          cp "${electron_40}/libexec/electron/chrome_crashpad_handler" $out/lib/codex-desktop/
+        fi
+
+        # Copy any other necessary binaries
+        for bin in ${electron_40}/libexec/electron/chrome_*.so ${electron_40}/libexec/electron/libEGL*.so* ${electron_40}/libexec/electron/libGLES*.so*; do
+          [ -e "$bin" ] && cp "$bin" $out/lib/codex-desktop/ 2>/dev/null || true
+        done
 
         # Copy patched app.asar
         if [ -f repacked.asar ]; then
