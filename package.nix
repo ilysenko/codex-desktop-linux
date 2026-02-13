@@ -8,6 +8,9 @@
   python3,
   makeWrapper,
   electron_40,
+  gcc,
+  gnumake,
+  pkg-config,
 }:
 stdenv.mkDerivation {
   pname = "codex-desktop";
@@ -25,6 +28,9 @@ stdenv.mkDerivation {
     python3
     makeWrapper
     electron_40
+    gcc
+    gnumake
+    pkg-config
   ];
 
   unpackPhase = ''
@@ -75,9 +81,21 @@ stdenv.mkDerivation {
       cp -r "$RESOURCES_DIR/app.asar.unpacked/"* app-extracted/ 2>/dev/null || true
     fi
 
-    # Remove macOS-only modules
+    # Remove macOS-only modules and problematic native modules
     rm -rf app-extracted/node_modules/sparkle-darwin 2>/dev/null || true
     find app-extracted -name "sparkle.node" -delete 2>/dev/null || true
+
+    # Remove entire better-sqlite3 module entirely (can't run on Linux without rebuild)
+    # The app will fail gracefully instead of crashing
+    echo "Removing better-sqlite3 module..."
+    rm -rf app-extracted/node_modules/better-sqlite3 2>/dev/null || true
+
+    # Remove node-pty as well since it has native modules too
+    echo "Removing node-pty module..."
+    rm -rf app-extracted/node_modules/node-pty 2>/dev/null || true
+
+    # Remove any remaining .node files
+    find app-extracted -name "*.node" -delete 2>/dev/null || true
   '';
 
   configurePhase = ''
@@ -89,7 +107,8 @@ stdenv.mkDerivation {
   '';
 
   buildPhase = ''
-    echo "Repacking app.asar..."
+    # Repack app.asar without native modules
+    echo "Repacking app.asar (native modules removed)..."
     ${asar}/bin/asar pack \
       app-extracted \
       repacked.asar \
