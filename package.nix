@@ -107,13 +107,6 @@ in
     buildPhase = ''
       cd app-extracted
 
-      # Force an opaque BrowserWindow background on Linux; upstream defaults to fully transparent.
-      # Transparent windows can render dark/washed sidebars depending on compositor/GPU.
-      for js in .vite/build/main-*.js; do
-        [ -f "$js" ] || continue
-        sed -i 's/tv="#00000000"/tv="#14171a"/g' "$js"
-      done
-
       # Configure npm for Electron-specific native module compilation
           export npm_config_target=40.0.0
           export npm_config_runtime=electron
