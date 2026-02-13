@@ -124,6 +124,9 @@ in
               sed -i \
                 's/background-color:#0000;height:100vh;padding:0/background-color:var(--vscode-editor-background, #14171a);height:100vh;padding:0/g' \
                 "$css"
+              sed -i \
+                's/background:color-mix(in srgb,var(--color-token-side-bar-background)50%,transparent)/background:var(--color-token-side-bar-background)/g' \
+                "$css"
 
               cat >> "$css" <<'CSS_EOF'
       /* codex-desktop-linux: Linux compositor transparency fix */
@@ -143,9 +146,17 @@ in
       [data-codex-window-type=electron] .main-surface,
       [data-codex-window-type=electron] .window-fx-sidebar-surface,
       [data-codex-window-type=electron] .app-header-tint {
+        background: var(--vscode-editor-background, #14171a) !important;
+        background-color: var(--vscode-editor-background, #14171a) !important;
+      }
+      [data-codex-window-type=electron]:not([data-codex-os=win32]) body,
+      [data-codex-window-type=electron].electron-opaque,
+      [data-codex-window-type=electron].electron-opaque body {
+        background: var(--vscode-editor-background, #14171a) !important;
         background-color: var(--vscode-editor-background, #14171a) !important;
       }
       body[data-codex-window-type=electron] {
+        background: var(--vscode-editor-background, #14171a) !important;
         background-color: var(--vscode-editor-background, #14171a) !important;
       }
       CSS_EOF
