@@ -240,17 +240,17 @@ in
 
                         # Create .desktop file
                         mkdir -p $out/share/applications
-                        cat > $out/share/applications/codex-desktop.desktop << 'DESKTOP_EOF'
-            [Desktop Entry]
-            Name=Codex Desktop
-            Exec=@out@/bin/codex-desktop
-            Icon=text-editor
-            Type=Application
-            Categories=Development;IDE;
-            StartupWMClass=Codex
-            Comment=OpenAI Codex Desktop Application
-            DESKTOP_EOF
-                        sed -i "s|@out@|$out|g" $out/share/applications/codex-desktop.desktop
+                        desktopFile="$out/share/applications/codex-desktop.desktop"
+                        {
+                          echo "[Desktop Entry]"
+                          echo "Name=Codex Desktop"
+                          echo "Exec=$out/bin/codex-desktop"
+                          echo "Icon=text-editor"
+                          echo "Type=Application"
+                          echo "Categories=Development;IDE;"
+                          echo "StartupWMClass=Codex"
+                          echo "Comment=OpenAI Codex Desktop Application"
+                        } > "$desktopFile"
     '';
 
     dontStrip = true;
