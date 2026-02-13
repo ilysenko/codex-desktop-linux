@@ -105,41 +105,65 @@ in
     '';
 
     buildPhase = ''
-      cd app-extracted
+            cd app-extracted
 
-      # Force an opaque BrowserWindow background on Linux; upstream defaults to fully transparent.
-      # Transparent windows can render dark/washed sidebars depending on compositor/GPU.
-      for js in .vite/build/main-*.js; do
-        [ -f "$js" ] || continue
-        sed -i 's/tv="#00000000"/tv="#14171a"/g' "$js"
-      done
+            # Force an opaque BrowserWindow background on Linux; upstream defaults to fully transparent.
+            # Transparent windows can render dark/washed sidebars depending on compositor/GPU.
+            for js in .vite/build/main-*.js; do
+              [ -f "$js" ] || continue
+              sed -i 's/tv="#00000000"/tv="#14171a"/g' "$js"
+            done
 
-      # Configure npm for Electron-specific native module compilation
-          export npm_config_target=40.0.0
-          export npm_config_runtime=electron
-          export npm_config_nodedir=${electron_40.headers}
-          export HOME=$TMPDIR
+            # Force renderer surfaces opaque in Electron mode.
+            # Upstream CSS uses transparent body/background layers which can blend to black on Linux compositors.
+            for css in webview/assets/index-*.css; do
+              [ -f "$css" ] || continue
+              cat >> "$css" <<'CSS_EOF'
+      /* codex-desktop-linux: Linux compositor transparency fix */
+      :root[data-codex-window-type=electron] {
+        --color-token-bg-primary: var(--vscode-editor-background, #14171a) !important;
+        --color-token-side-bar-background: var(--vscode-sideBar-background, var(--vscode-editor-background, #14171a)) !important;
+        --codex-titlebar-tint: var(--vscode-titleBar-activeBackground, var(--vscode-editor-background, #14171a)) !important;
+      }
+      [data-codex-window-type=electron] body,
+      [data-codex-window-type=electron] #root,
+      [data-codex-window-type=electron] .main-surface,
+      [data-codex-window-type=electron] .window-fx-sidebar-surface,
+      [data-codex-window-type=electron] .app-header-tint {
+        background-color: var(--color-token-side-bar-background) !important;
+      }
+      body[data-codex-window-type=electron] {
+        background-color: var(--color-token-side-bar-background) !important;
+      }
+      CSS_EOF
+            done
 
-          echo "Building better-sqlite3 for Electron..."
-          rm -rf node_modules/better-sqlite3
-          mkdir -p node_modules/better-sqlite3
-          tar -xzf ${betterSqlite3Src} --strip-components=1 -C node_modules/better-sqlite3
+            # Configure npm for Electron-specific native module compilation
+                export npm_config_target=40.0.0
+                export npm_config_runtime=electron
+                export npm_config_nodedir=${electron_40.headers}
+                export HOME=$TMPDIR
 
-          cd node_modules/better-sqlite3
-          ${nodejs_20}/bin/node ${nodejs_20}/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release
-          cd ../..
+                echo "Building better-sqlite3 for Electron..."
+                rm -rf node_modules/better-sqlite3
+                mkdir -p node_modules/better-sqlite3
+                tar -xzf ${betterSqlite3Src} --strip-components=1 -C node_modules/better-sqlite3
 
-          cd ..
+                cd node_modules/better-sqlite3
+                ${nodejs_20}/bin/node ${nodejs_20}/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release
+                cd ../..
 
-      # Repack app.asar with rebuilt native modules
-      echo "Repacking app.asar with native modules..."
-      ${asar}/bin/asar pack \
-        app-extracted \
-        repacked.asar \
-        --unpack "**/*.{node,so,dylib}" || \
-      ${asar}/bin/asar pack app-extracted repacked.asar
+                cd ..
 
-      echo "Build complete"
+            # Repack app.asar with rebuilt native modules
+            echo "Repacking app.asar with native modules..."
+            ${asar}/bin/asar pack \
+              app-extracted \
+              repacked.asar \
+              --unpack "**/*.{node,so,dylib}" || \
+            ${asar}/bin/asar pack app-extracted repacked.asar
+
+            echo "Build complete"
     '';
 
     installPhase = ''
