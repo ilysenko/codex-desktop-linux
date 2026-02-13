@@ -118,35 +118,22 @@ in
             # Upstream CSS uses transparent body/background layers which can blend to black on Linux compositors.
             for css in webview/assets/index-*.css; do
               [ -f "$css" ] || continue
-
-              # Replace transparent body fallback with editor background.
-              # This avoids transparent layers resolving to black with some compositors.
-              sed -i \
-                's/background-color:#0000;height:100vh;padding:0/background-color:var(--vscode-editor-background, #14171a);height:100vh;padding:0/g' \
-                "$css"
-
               cat >> "$css" <<'CSS_EOF'
       /* codex-desktop-linux: Linux compositor transparency fix */
-      :root[data-codex-window-type=electron],
-      [data-codex-window-type=electron] {
+      :root[data-codex-window-type=electron] {
         --color-token-bg-primary: var(--vscode-editor-background, #14171a) !important;
-        --color-token-side-bar-background: var(--vscode-editor-background, #14171a) !important;
-        --color-token-main-surface-primary: var(--vscode-editor-background, #14171a) !important;
-        --color-token-bg-secondary: var(--vscode-editor-background, #14171a) !important;
-        --color-token-bg-tertiary: var(--vscode-editor-background, #14171a) !important;
+        --color-token-side-bar-background: var(--vscode-sideBar-background, var(--vscode-editor-background, #14171a)) !important;
         --codex-titlebar-tint: var(--vscode-titleBar-activeBackground, var(--vscode-editor-background, #14171a)) !important;
       }
-      body[data-codex-window-type=electron],
       [data-codex-window-type=electron] body,
-      :root[data-codex-window-type=electron] body,
       [data-codex-window-type=electron] #root,
       [data-codex-window-type=electron] .main-surface,
       [data-codex-window-type=electron] .window-fx-sidebar-surface,
       [data-codex-window-type=electron] .app-header-tint {
-        background-color: var(--vscode-editor-background, #14171a) !important;
+        background-color: var(--color-token-side-bar-background) !important;
       }
       body[data-codex-window-type=electron] {
-        background-color: var(--vscode-editor-background, #14171a) !important;
+        background-color: var(--color-token-side-bar-background) !important;
       }
       CSS_EOF
             done
