@@ -242,6 +242,8 @@ in
       export LD_LIBRARY_PATH="${electron_40}/lib:${electron_40}/libexec/electron:$LD_LIBRARY_PATH"
       export NIXOS_OZONE_WL=1
       export ELECTRON_OZONE_PLATFORM_HINT=wayland
+      # Prevent shell auto-start hooks from attaching zellij in Codex terminals.
+      export ZELLIJ=0
 
       APPDIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
       WEBVIEW_DIR="$APPDIR/lib/codex-desktop/content/webview"
