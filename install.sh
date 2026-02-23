@@ -53,7 +53,22 @@ Install them first:
   sudo pacman -S base-devel          # Arch"
     fi
 
-    info "All dependencies found"
+    # Prefer modern 7-zip if available (required for APFS DMG)
+    if command -v 7zz &>/dev/null; then
+        SEVEN_ZIP_CMD="7zz"
+    else
+        SEVEN_ZIP_CMD="7z"
+    fi
+
+    if "$SEVEN_ZIP_CMD" | head -n 1 | grep -q "16.02"; then
+        error "Your 7-zip is too old to open modern APFS DMGs.
+Install a newer 7-zip (7zz), e.g.:
+  curl -L -o /tmp/7z.tar.xz https://www.7-zip.org/a/7z2409-linux-x64.tar.xz
+  tar -C /tmp -xf /tmp/7z.tar.xz
+  sudo install -m 755 /tmp/7zz /usr/local/bin/7zz"
+    fi
+
+    info "All dependencies found (using $SEVEN_ZIP_CMD)"
 }
 
 # ---- Download or find Codex DMG ----
@@ -91,8 +106,15 @@ extract_dmg() {
     local dmg_path="$1"
     info "Extracting DMG with 7z..."
 
-    7z x -y "$dmg_path" -o"$WORK_DIR/dmg-extract" >&2 || \
-        error "Failed to extract DMG"
+    local seven_log="$WORK_DIR/7z.log"
+    if ! "$SEVEN_ZIP_CMD" x -y -snl "$dmg_path" -o"$WORK_DIR/dmg-extract" >"$seven_log" 2>&1; then
+        if grep -q "Dangerous link path was ignored" "$seven_log"; then
+            warn "7-zip reported a dangerous link inside the DMG. Continuing without it."
+        else
+            cat "$seven_log" >&2
+            error "Failed to extract DMG"
+        fi
+    fi
 
     local app_dir
     app_dir=$(find "$WORK_DIR/dmg-extract" -maxdepth 3 -name "*.app" -type d | head -1)

@@ -25,6 +25,15 @@ The installer:
 sudo apt install nodejs npm python3 p7zip-full curl build-essential
 ```
 
+Note: Ubuntu/Pop!_OS package `p7zip-full` is often too old to read modern APFS DMGs.
+Install a newer 7-zip (`7zz`) if extraction fails:
+
+```bash
+curl -L -o /tmp/7z.tar.xz https://www.7-zip.org/a/7z2409-linux-x64.tar.xz
+tar -C /tmp -xf /tmp/7z.tar.xz
+sudo install -m 755 /tmp/7zz /usr/local/bin/7zz
+```
+
 ### Fedora
 
 ```bash
