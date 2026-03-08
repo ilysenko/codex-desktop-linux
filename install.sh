@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -Eeuo pipefail
 
 # ============================================================================
@@ -222,7 +222,7 @@ install_app() {
 # ---- Create start script ----
 create_start_script() {
     cat > "$INSTALL_DIR/start.sh" << 'SCRIPT'
-#!/bin/bash
+#!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WEBVIEW_DIR="$SCRIPT_DIR/content/webview"
 
@@ -236,7 +236,7 @@ if [ -d "$WEBVIEW_DIR" ] && [ "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
     trap "kill $HTTP_PID 2>/dev/null" EXIT
 fi
 
-export CODEX_CLI_PATH="${CODEX_CLI_PATH:-$(which codex 2>/dev/null)}"
+export CODEX_CLI_PATH="${CODEX_CLI_PATH:-$(command -v codex 2>/dev/null)}"
 
 if [ -z "$CODEX_CLI_PATH" ]; then
     echo "Error: Codex CLI not found. Install with: npm i -g @openai/codex"

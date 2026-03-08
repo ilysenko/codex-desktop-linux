@@ -13,7 +13,7 @@
 
         codexDmg = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-          hash = "sha256-dGgr8Av/1MArxkpIxT8c/Ui2fexgpnWHywJPuSq82PY=";
+          hash = "sha256-4oKdhkRmwUbvnexeguuwfv+oRHhR3WYbUwewB9rpLDc=";
         };
 
         electronLibs = with pkgs; [
@@ -42,10 +42,10 @@
           libXrandr
           libxcb
           libxkbcommon
-          xorg.libXcursor
-          xorg.libXi
-          xorg.libXtst
-          xorg.libXScrnSaver
+          libxcursor
+          libxi
+          libxtst
+          libxscrnsaver
           libglvnd
           systemd
           wayland
@@ -56,7 +56,8 @@
         installer = pkgs.writeShellApplication {
           name = "codex-desktop-installer";
           runtimeInputs = [
-            pkgs.nodejs_20
+            pkgs.bash
+            pkgs.nodejs
             pkgs.python3
             pkgs.p7zip
             pkgs.curl
@@ -81,7 +82,7 @@
 
             cd "$workdir"
             export CODEX_INSTALL_DIR="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
-            "$workdir/install.sh" "$workdir/Codex.dmg" "$@"
+            ${pkgs.bash}/bin/bash "$workdir/install.sh" "$workdir/Codex.dmg" "$@"
 
             install_dir="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
 
@@ -127,7 +128,7 @@
 
         devShells.default = pkgs.mkShell {
           packages = [
-            pkgs.nodejs_20
+            pkgs.nodejs
             pkgs.python3
             pkgs.p7zip
             pkgs.curl
