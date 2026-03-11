@@ -60,6 +60,8 @@ load_state() {
     PENDING_CONTENT_LENGTH=""
 
     if [ -f "$STATE_FILE" ]; then
+        # State is stored as shell-safe assignments so the updater can reuse it
+        # without needing jq or another parser.
         # shellcheck disable=SC1090
         source "$STATE_FILE"
     fi
@@ -102,6 +104,8 @@ clear_pending_update() {
 acquire_update_lock() {
     ensure_state_dir
     LOCK_DIR="$STATE_DIR/lock"
+    # The lock keeps the timer and launch-time updater from rebuilding the app
+    # at the same time.
     if mkdir "$LOCK_DIR" 2>/dev/null; then
         printf '%s\n' "$$" > "$LOCK_DIR/pid"
         return 0
@@ -321,6 +325,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WEBVIEW_DIR="$SCRIPT_DIR/content/webview"
 
+# Always try to upgrade before opening Electron so deferred background updates
+# are applied the next time the user launches Codex.
 if [ "${CODEX_AUTO_UPDATE:-1}" != "0" ] && [ -x "$SCRIPT_DIR/update.sh" ]; then
     "$SCRIPT_DIR/update.sh" --foreground || echo "[WARN] Launch-time update failed, starting current version" >&2
 fi
@@ -358,6 +364,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR"
+# The updater keeps its own tiny state directory inside the installed app so
+# the timer and launcher share the same metadata.
 STATE_DIR="$INSTALL_DIR/.updater"
 STATE_FILE="$STATE_DIR/state.env"
 PENDING_FILE="$STATE_DIR/pending"
@@ -416,6 +424,8 @@ if ! update_available; then
 fi
 
 if [ "$MODE" = "--background" ] && is_codex_running; then
+    # Never replace the live bundle while Electron is running; record the
+    # update instead and let the next launch install it safely.
     mark_pending_update
     LAST_UPDATE_STATUS="pending"
     LAST_ERROR=""
@@ -478,6 +488,8 @@ perform_install_pipeline() {
         create_work_dir
     fi
 
+    # The upstream app is platform-neutral JavaScript, so the Linux port mostly
+    # comes down to rebuilding native modules and pairing them with Linux Electron.
     app_dir="$(extract_dmg "$dmg_path")"
     patch_asar "$app_dir"
     download_electron "$target_dir"
@@ -491,6 +503,8 @@ promote_stage_install() {
     local live_dir="$2"
     local backup_dir="${live_dir}.previous"
 
+    # Swap the completed stage directory into place in one move so the install
+    # path always points at either the old app or the new app.
     rm -rf "$backup_dir"
     if [ -d "$live_dir" ]; then
         mv "$live_dir" "$backup_dir"
@@ -595,6 +609,8 @@ refresh_remote_fingerprint() {
     local headers
     local update_url="${CODEX_UPDATE_URL:-$DEFAULT_DMG_URL}"
 
+    # HEAD is enough here; we only need stable metadata to decide whether the
+    # full DMG download is worth doing.
     if ! headers="$(curl -fsSI --connect-timeout 20 --max-time 60 "$update_url")"; then
         return 1
     fi
@@ -627,6 +643,8 @@ install_remote_update() {
     local stage_dir="${INSTALL_DIR}.next.$$"
     local dmg_path
 
+    # Updates reuse the exact same conversion pipeline as the initial install,
+    # but they build into a sibling directory and swap only after success.
     create_work_dir
     dmg_path="$CURRENT_WORK_DIR/Codex.dmg"
 

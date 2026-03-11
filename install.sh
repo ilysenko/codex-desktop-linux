@@ -56,6 +56,8 @@ main() {
         dmg_path="$(get_dmg_for_install "$DMG_CACHE_PATH")"
     fi
 
+    # Build into a throwaway directory first so a failed install never leaves
+    # the live app half-written.
     stage_dir="${INSTALL_DIR}.install.$$"
     perform_install_pipeline "$dmg_path" "$stage_dir"
     write_initial_state "$stage_dir"
