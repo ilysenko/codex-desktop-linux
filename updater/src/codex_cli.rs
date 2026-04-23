@@ -43,6 +43,24 @@ pub fn preflight(
     state.cli_installed_version = Some(installed_version.clone());
     persist_state(paths, state)?;
 
+    if cached_latest_version_matches_install(
+        state,
+        cached_installed_version.as_deref(),
+        &installed_version,
+    ) {
+        if let Some(latest_version) = state.cli_latest_version.clone() {
+            if latest_version != installed_version {
+                return upgrade_cli_to_latest(
+                    state,
+                    paths,
+                    requested_path,
+                    installed_version,
+                    latest_version,
+                );
+            }
+        }
+    }
+
     if should_skip_latest_version_check(
         state,
         cached_installed_version.as_deref(),
@@ -101,6 +119,22 @@ pub fn preflight(
         });
     }
 
+    upgrade_cli_to_latest(
+        state,
+        paths,
+        requested_path,
+        installed_version,
+        latest_version,
+    )
+}
+
+fn upgrade_cli_to_latest(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    requested_path: Option<&Path>,
+    installed_version: String,
+    latest_version: String,
+) -> Result<PreflightOutcome> {
     state.cli_status = CliStatus::UpdateRequired;
     persist_state(paths, state)?;
     info!(
@@ -112,10 +146,20 @@ pub fn preflight(
     persist_state(paths, state)?;
     install_latest_cli(&latest_version)?;
 
-    let refreshed_path = resolve_cli_path(requested_path)
+    let mut refreshed_path = resolve_cli_path(requested_path)
         .or_else(|| resolve_cli_path(None))
         .ok_or_else(|| anyhow!("Codex CLI disappeared after the automatic upgrade attempt"))?;
-    let refreshed_version = read_installed_version(&refreshed_path)?;
+    let mut refreshed_version = read_installed_version(&refreshed_path)?;
+
+    if refreshed_version != latest_version
+        && install_latest_cli_for_requested_path(requested_path, &latest_version)?
+    {
+        refreshed_path = resolve_cli_path(requested_path)
+            .or_else(|| resolve_cli_path(None))
+            .ok_or_else(|| anyhow!("Codex CLI disappeared after the prefix upgrade attempt"))?;
+        refreshed_version = read_installed_version(&refreshed_path)?;
+    }
+
     state.cli_path = Some(refreshed_path.clone());
     state.cli_installed_version = Some(refreshed_version.clone());
 
@@ -264,14 +308,11 @@ fn known_cli_locations() -> Vec<PathBuf> {
 }
 
 fn requested_cli_path(state: &PersistedState) -> Option<PathBuf> {
-    state
-        .cli_path
-        .clone()
-        .or_else(|| {
-            std::env::var_os("CODEX_CLI_PATH")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-        })
+    state.cli_path.clone().or_else(|| {
+        std::env::var_os("CODEX_CLI_PATH")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    })
 }
 
 fn should_skip_latest_version_check(
@@ -393,6 +434,41 @@ fn install_latest_cli(latest_version: &str) -> Result<()> {
             })
         }
     }
+}
+
+fn install_latest_cli_for_requested_path(
+    requested_path: Option<&Path>,
+    latest_version: &str,
+) -> Result<bool> {
+    let Some(prefix) = requested_path.and_then(npm_prefix_for_cli_path) else {
+        return Ok(false);
+    };
+
+    let npm = npm_program();
+    let package_spec = format!("{CLI_PACKAGE_NAME}@{latest_version}");
+    let args = vec![
+        OsString::from("install"),
+        OsString::from("-g"),
+        OsString::from("--prefix"),
+        prefix.as_os_str().to_os_string(),
+        OsString::from(package_spec),
+    ];
+    run_npm_command(&npm, &args).with_context(|| {
+        format!(
+            "Failed to install {} into explicit Codex CLI prefix {}",
+            CLI_PACKAGE_NAME,
+            prefix.display()
+        )
+    })?;
+    Ok(true)
+}
+
+fn npm_prefix_for_cli_path(path: &Path) -> Option<PathBuf> {
+    let bin_dir = path.parent()?;
+    if bin_dir.file_name()? != "bin" {
+        return None;
+    }
+    bin_dir.parent().map(Path::to_path_buf)
 }
 
 fn install_missing_cli(
@@ -594,7 +670,12 @@ mod tests {
         state::{CliStatus, PersistedState},
     };
     use chrono::Utc;
-    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        path::Path,
+        sync::{Mutex, OnceLock},
+    };
     use tempfile::tempdir;
 
     fn write_executable_script(path: &Path, contents: &str) -> Result<()> {
@@ -614,6 +695,11 @@ mod tests {
             state_dir: root.join("state"),
             config_dir: root.join("config"),
         }
+    }
+
+    fn path_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     #[test]
@@ -744,6 +830,132 @@ mod tests {
         assert_eq!(state.cli_latest_version.as_deref(), Some("0.42.0"));
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert_eq!(state.cli_error_message, None);
+        Ok(())
+    }
+
+    #[test]
+    fn preflight_updates_when_cached_latest_is_newer_than_installed() -> Result<()> {
+        let _path_guard = path_env_lock().lock().expect("PATH env lock poisoned");
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let version_file = temp.path().join("codex-version");
+        fs::write(&version_file, "codex-cli v0.42.0\n")?;
+
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        let codex_path = bin_dir.join("codex");
+        write_executable_script(
+            &codex_path,
+            &format!(
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  cat '{}'\n  exit 0\nfi\nexit 1\n",
+                version_file.display()
+            ),
+        )?;
+        write_executable_script(
+            &bin_dir.join("npm"),
+            &format!(
+                "#!/bin/sh\nif [ \"$1\" = \"install\" ]; then\n  echo 'codex-cli v0.43.0' > '{}'\n  exit 0\nfi\nif [ \"$1\" = \"view\" ]; then\n  echo '0.43.0'\n  exit 0\nfi\nexit 1\n",
+                version_file.display()
+            ),
+        )?;
+
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths(
+                std::iter::once(bin_dir.as_path().to_path_buf()).chain(
+                    old_path
+                        .as_deref()
+                        .map(std::env::split_paths)
+                        .into_iter()
+                        .flatten(),
+                ),
+            )?,
+        );
+
+        let mut state = PersistedState::new(true);
+        state.cli_installed_version = Some("0.42.0".to_string());
+        state.cli_latest_version = Some("0.43.0".to_string());
+        state.cli_last_check_at = Some(Utc::now() - Duration::minutes(5));
+        state.cli_status = CliStatus::UpdateRequired;
+
+        let outcome = preflight(&mut state, &paths, Some(codex_path.clone()), false);
+
+        match old_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+
+        let outcome = outcome?;
+        assert_eq!(outcome.cli_path, codex_path);
+        assert_eq!(outcome.installed_version, "0.43.0");
+        assert_eq!(outcome.latest_version.as_deref(), Some("0.43.0"));
+        assert!(outcome.updated);
+        assert_eq!(state.cli_installed_version.as_deref(), Some("0.43.0"));
+        assert_eq!(state.cli_status, CliStatus::UpToDate);
+        Ok(())
+    }
+
+    #[test]
+    fn preflight_updates_prefix_that_owns_explicit_cli_path() -> Result<()> {
+        let _path_guard = path_env_lock().lock().expect("PATH env lock poisoned");
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let version_file = temp.path().join("codex-version");
+        fs::write(&version_file, "codex-cli v0.42.0\n")?;
+
+        let prefix = temp.path().join("local-prefix");
+        let bin_dir = prefix.join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        let codex_path = bin_dir.join("codex");
+        write_executable_script(
+            &codex_path,
+            &format!(
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  cat '{}'\n  exit 0\nfi\nexit 1\n",
+                version_file.display()
+            ),
+        )?;
+        write_executable_script(
+            &bin_dir.join("npm"),
+            &format!(
+                "#!/bin/sh\nif [ \"$1\" = \"view\" ]; then\n  echo '0.43.0'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ]; then\n  if [ \"$3\" = \"--prefix\" ]; then\n    echo 'codex-cli v0.43.0' > '{}'\n  fi\n  exit 0\nfi\nexit 1\n",
+                version_file.display()
+            ),
+        )?;
+
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths(
+                std::iter::once(bin_dir.as_path().to_path_buf()).chain(
+                    old_path
+                        .as_deref()
+                        .map(std::env::split_paths)
+                        .into_iter()
+                        .flatten(),
+                ),
+            )?,
+        );
+
+        let mut state = PersistedState::new(true);
+        let outcome = preflight(&mut state, &paths, Some(codex_path.clone()), false);
+
+        match old_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+
+        let outcome = outcome?;
+        assert_eq!(outcome.cli_path, codex_path);
+        assert_eq!(outcome.installed_version, "0.43.0");
+        assert_eq!(outcome.latest_version.as_deref(), Some("0.43.0"));
+        assert!(outcome.updated);
+        assert_eq!(state.cli_installed_version.as_deref(), Some("0.43.0"));
+        assert_eq!(state.cli_status, CliStatus::UpToDate);
         Ok(())
     }
 }
