@@ -214,6 +214,78 @@ extract_dmg() {
     echo "$app_dir"
 }
 
+# ---- Detect Electron version from DMG ----
+sanitize_electron_version() {
+    local value="$1"
+    value="${value#v}"
+    value="${value#^}"
+    value="${value#~}"
+
+    if [[ "$value" =~ ^[0-9]+(\.[0-9]+){2}([.-][0-9A-Za-z]+)*$ ]]; then
+        echo "$value"
+        return 0
+    fi
+
+    return 1
+}
+
+detect_electron_version() {
+    local app_dir="$1"
+    local plist_file="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist"
+
+    if [ -f "$plist_file" ]; then
+        local detected detected_version
+        detected=$(python3 - "$plist_file" <<'PY' 2>/dev/null || true
+import sys
+import xml.etree.ElementTree as ET
+
+tree = ET.parse(sys.argv[1])
+root = tree.getroot()
+it = iter(root.iter())
+for elem in it:
+    if elem.tag == 'key' and elem.text == 'CFBundleVersion':
+        try:
+            print(next(it).text)
+        except StopIteration:
+            pass
+        break
+PY
+)
+        if detected_version=$(sanitize_electron_version "$detected"); then
+            info "Detected Electron version from DMG: $detected_version"
+            ELECTRON_VERSION="$detected_version"
+            return
+        elif [ -n "$detected" ]; then
+            warn "Ignoring invalid Electron version from DMG: $detected"
+        fi
+    fi
+
+    local resources_dir="$app_dir/Contents/Resources"
+    if [ -f "$resources_dir/app.asar" ]; then
+        local probe_dir detected_json detected_json_version
+        probe_dir="$WORK_DIR/electron-version-probe"
+        mkdir -p "$probe_dir"
+        if (cd "$probe_dir" && npx --yes asar extract-file "$resources_dir/app.asar" package.json >/dev/null 2>&1); then
+            detected_json=$(node -e "
+const pkg = require(process.argv[1]);
+process.stdout.write(String(pkg.devDependencies?.electron ?? pkg.dependencies?.electron ?? ''));
+" "$probe_dir/package.json" 2>/dev/null || true)
+        else
+            detected_json=""
+        fi
+
+        if detected_json_version=$(sanitize_electron_version "$detected_json"); then
+            info "Detected Electron version from package.json: $detected_json_version"
+            ELECTRON_VERSION="$detected_json_version"
+            return
+        elif [ -n "$detected_json" ]; then
+            warn "Ignoring invalid Electron version from package.json: $detected_json"
+        fi
+    fi
+
+    warn "Could not auto-detect Electron version; using fallback $ELECTRON_VERSION"
+}
+
 # ---- Build native modules in a clean directory ----
 build_native_modules() {
     local app_extracted="$1"
@@ -274,13 +346,19 @@ patch_asar() {
     # Build native modules in clean environment and copy back
     build_native_modules "$WORK_DIR/app-extracted"
 
+    # Remove dead foreign prebuilds and build artifacts to save space.
+    rm -rf "$WORK_DIR/app-extracted/node_modules/node-pty/prebuilds/darwin-"* \
+           "$WORK_DIR/app-extracted/node_modules/node-pty/prebuilds/win32-"* \
+           "$WORK_DIR/app-extracted/node_modules/node-pty/build/Release/obj.target" \
+           2>/dev/null || true
+
     info "Patching Linux window and shell behavior..."
     node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" "$WORK_DIR/app-extracted"
 
     # Repack
     info "Repacking app.asar..."
     cd "$WORK_DIR"
-    npx asar pack app-extracted app.asar --unpack "{*.node,*.so,*.dylib}" 2>/dev/null
+    npx asar pack app-extracted app.asar --unpack "{*.node,*.so,*.so.*,*.dylib}" 2>/dev/null
 
     info "app.asar patched"
 }
@@ -331,6 +409,10 @@ extract_webview() {
 
 # ---- Install app.asar ----
 install_app() {
+    mkdir -p "$INSTALL_DIR/resources"
+    rm -f "$INSTALL_DIR/resources/app.asar"
+    rm -rf "$INSTALL_DIR/resources/app.asar.unpacked"
+
     cp "$WORK_DIR/app.asar" "$INSTALL_DIR/resources/"
     if [ -d "$WORK_DIR/app.asar.unpacked" ]; then
         cp -r "$WORK_DIR/app.asar.unpacked" "$INSTALL_DIR/resources/"
@@ -356,12 +438,17 @@ APP_NOTIFICATION_ICON_NAME="codex-desktop"
 APP_NOTIFICATION_ICON_BUNDLE="$SCRIPT_DIR/.codex-linux/$APP_NOTIFICATION_ICON_NAME.png"
 APP_NOTIFICATION_ICON_SYSTEM="/usr/share/icons/hicolor/256x256/apps/$APP_NOTIFICATION_ICON_NAME.png"
 APP_NOTIFICATION_ICON_REPO="$SCRIPT_DIR/../assets/codex.png"
+USER_SUPPLIED_CODEX_CLI_PATH=0
 
 mkdir -p "$LOG_DIR" "$APP_STATE_DIR"
 STARTED_WEBVIEW_PID=""
 ELECTRON_PID=""
 RUNNING_APP_PID=""
 WARM_START=0
+
+if [ -n "${CODEX_CLI_PATH:-}" ]; then
+    USER_SUPPLIED_CODEX_CLI_PATH=1
+fi
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'HELP'
@@ -374,6 +461,12 @@ Options:
   --disable-gpu               Completely disable GPU acceleration
   --disable-gpu-compositing   Disable GPU compositing (fixes flickering)
   --ozone-platform=x11        Force X11 instead of Wayland
+
+Environment:
+  CODEX_ENABLE_SANDBOX=1      Keep Chromium sandbox enabled (default: off)
+  CODEX_GPU_MODE=MODE         conservative, auto, nvidia, or off
+                              default: conservative
+  CODEX_ENABLE_GPU_COMPOSITING=1  Legacy alias for CODEX_GPU_MODE=auto
 
 Extra flags are passed directly to Electron.
 
@@ -434,9 +527,11 @@ run_cli_preflight() {
 
     local -a preflight_args=(
         cli-preflight
-        --cli-path "$CODEX_CLI_PATH"
         --print-path
     )
+    if [ "$USER_SUPPLIED_CODEX_CLI_PATH" = "1" ] && [ -n "${CODEX_CLI_PATH:-}" ]; then
+        preflight_args+=(--cli-path "$CODEX_CLI_PATH")
+    fi
     if [ "$allow_install_missing" = "1" ]; then
         preflight_args+=(--allow-install-missing)
     fi
@@ -461,8 +556,16 @@ run_cli_preflight_background() {
         return 0
     fi
 
+    local -a preflight_args=(
+        cli-preflight
+        --print-path
+    )
+    if [ "$USER_SUPPLIED_CODEX_CLI_PATH" = "1" ] && [ -n "${CODEX_CLI_PATH:-}" ]; then
+        preflight_args+=(--cli-path "$CODEX_CLI_PATH")
+    fi
+
     (
-        if ! codex-update-manager cli-preflight --cli-path "$CODEX_CLI_PATH" --print-path >/dev/null 2>&1; then
+        if ! codex-update-manager "${preflight_args[@]}" >/dev/null 2>&1; then
             echo "Codex CLI background preflight failed. Continuing with the current CLI."
         fi
     ) &
@@ -514,11 +617,6 @@ resolve_notification_icon() {
 }
 
 find_codex_cli() {
-    if command -v codex >/dev/null 2>&1; then
-        command -v codex
-        return 0
-    fi
-
     if [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
         export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
         # shellcheck disable=SC1090
@@ -533,6 +631,7 @@ find_codex_cli() {
     for candidate in \
         "$HOME/.nvm/versions/node/current/bin/codex" \
         "$HOME/.nvm/versions/node"/*/bin/codex \
+        "$HOME/.npm-global/bin/codex" \
         "$HOME/.local/share/pnpm/codex" \
         "$HOME/.local/bin/codex" \
         "/usr/local/bin/codex" \
@@ -543,6 +642,11 @@ find_codex_cli() {
             return 0
         fi
     done
+
+    if command -v codex >/dev/null 2>&1; then
+        command -v codex
+        return 0
+    fi
 
     return 1
 }
@@ -813,32 +917,87 @@ cleanup_launcher() {
     fi
 }
 
+configure_gpu_mode() {
+    local requested="${CODEX_GPU_MODE:-}"
+    if [ -z "$requested" ] && [ -n "${CODEX_ENABLE_GPU_COMPOSITING:-}" ]; then
+        requested="auto"
+    fi
+    if [ -z "$requested" ]; then
+        requested="conservative"
+    fi
+
+    case "$requested" in
+        conservative|auto|nvidia|off)
+            ;;
+        *)
+            echo "Unknown CODEX_GPU_MODE=$requested; using conservative"
+            requested="conservative"
+            ;;
+    esac
+
+    CODEX_GPU_MODE="$requested"
+    export CODEX_GPU_MODE
+
+    if [ "$CODEX_GPU_MODE" = "nvidia" ]; then
+        export __NV_PRIME_RENDER_OFFLOAD="${__NV_PRIME_RENDER_OFFLOAD:-1}"
+        export __GLX_VENDOR_LIBRARY_NAME="${__GLX_VENDOR_LIBRARY_NAME:-nvidia}"
+        export __VK_LAYER_NV_optimus="${__VK_LAYER_NV_optimus:-NVIDIA_only}"
+    fi
+}
+
+log_gpu_diagnostics() {
+    echo "GPU mode: $CODEX_GPU_MODE"
+    echo "Display: XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-} DISPLAY=${DISPLAY:-} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}"
+
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        echo "nvidia-smi:"
+        nvidia-smi --query-gpu=name,driver_version,pci.bus_id --format=csv,noheader 2>&1 || true
+    else
+        echo "nvidia-smi: unavailable"
+    fi
+
+    if command -v glxinfo >/dev/null 2>&1; then
+        echo "glxinfo -B:"
+        glxinfo -B 2>&1 | sed -n '1,25p' || true
+    else
+        echo "glxinfo: unavailable"
+    fi
+}
+
 launch_electron() {
     cd "$SCRIPT_DIR"
     log_phase "electron_launch"
 
+    local -a electron_flags=(
+        --class=codex-desktop
+        --app-id=codex-desktop
+        --ozone-platform-hint=auto
+        --disable-gpu-sandbox
+        --enable-features=WaylandWindowDecorations
+    )
+
+    if [ -z "${CODEX_ENABLE_SANDBOX:-}" ]; then
+        electron_flags+=(--no-sandbox)
+    fi
+
+    case "$CODEX_GPU_MODE" in
+        conservative)
+            electron_flags+=(--disable-gpu-compositing)
+            ;;
+        off)
+            electron_flags+=(--disable-gpu --disable-gpu-compositing)
+            ;;
+    esac
+
+    echo "Electron flags: ${electron_flags[*]}"
+    log_gpu_diagnostics
+
     if [ "$WARM_START" -eq 1 ]; then
-        "$SCRIPT_DIR/electron" \
-            --no-sandbox \
-            --class=codex-desktop \
-            --app-id=codex-desktop \
-            --ozone-platform-hint=auto \
-            --disable-gpu-sandbox \
-            --disable-gpu-compositing \
-            --enable-features=WaylandWindowDecorations \
-            "$@"
+        "$SCRIPT_DIR/electron" "${electron_flags[@]}" "$@"
         return $?
     fi
 
-    "$SCRIPT_DIR/electron" \
-        --no-sandbox \
-        --class=codex-desktop \
-        --app-id=codex-desktop \
-        --ozone-platform-hint=auto \
-        --disable-gpu-sandbox \
-        --disable-gpu-compositing \
-        --enable-features=WaylandWindowDecorations \
-        "$@" &
+    "$SCRIPT_DIR/electron" "${electron_flags[@]}" "$@" &
     ELECTRON_PID=$!
     echo "$ELECTRON_PID" > "$APP_PID_FILE"
     log_phase "electron_spawned"
@@ -896,6 +1055,7 @@ if [ "$WARM_START" -eq 0 ]; then
 fi
 
 export_packaged_runtime_env
+configure_gpu_mode
 
 echo "Using CODEX_CLI_PATH=${CODEX_CLI_PATH:-warm-start-skip}"
 
@@ -934,6 +1094,8 @@ main() {
 
     local app_dir
     app_dir=$(extract_dmg "$dmg_path")
+
+    detect_electron_version "$app_dir"
 
     patch_asar "$app_dir"
     download_electron
