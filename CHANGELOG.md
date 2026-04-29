@@ -3,6 +3,20 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.3] - 2026-04-28
+
+### Changed
+
+- The packaged launcher now leaves stale update checks to the already-running user daemon instead of starting a duplicate launch-time `check-now` unit.
+- The RPM builder now uses the shared native-packaging launcher helper instead of duplicating package stub logic.
+- Native package builders and post-install hooks now normalize installed payload permissions after staging generated app files.
+
+### Fixed
+
+- Prefer user-local Codex CLI installs such as `~/.npm-global/bin/codex` before stale system-wide CLI binaries when a GUI launcher has a reduced `PATH`.
+- Validate executable permissions before using updater builder scripts, Node toolchain binaries, and resolved Codex CLI candidates.
+- Bound privileged updater installs with a timeout and prune stale rebuild workspaces after a successful local package build.
+
 ## [0.4.2] - 2026-04-23
 
 ### Changed

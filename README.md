@@ -4,7 +4,7 @@ Run [OpenAI Codex Desktop](https://openai.com/codex/) on Linux.
 
 The official Codex Desktop app is macOS-only. This project converts the upstream macOS `Codex.dmg` into a runnable Linux Electron app, packages it as `.deb`, `.rpm`, or pacman artifacts, and includes a local updater that rebuilds future Linux packages from newer upstream DMGs.
 
-`codex-update-manager` current crate version: `0.4.2`
+`codex-update-manager` current crate version: `0.4.3`
 
 SemVer policy for the crate:
 
@@ -373,14 +373,15 @@ The package installs a companion service named `codex-update-manager`.
 
 - It runs as a `systemd --user` service.
 - The launcher starts it in best-effort mode on app launch.
-- Each app launch also triggers a background `check-now --if-stale`; the updater skips that request when the last successful upstream check is still fresh or another check, rebuild, or install is already active.
+- If the service is not already active, the launcher also triggers a background `check-now --if-stale`; otherwise the running daemon owns startup and periodic checks.
 - It checks the upstream `Codex.dmg` on daemon startup and every 6 hours.
 - When a new DMG is detected, it rebuilds a local native package using `/opt/codex-desktop/update-builder`.
+- Successful rebuilds retain the current workspace plus the newest previous workspace and prune older updater workspaces from `~/.cache/codex-update-manager/workspaces`.
 - If the app is open, the update waits until Electron exits.
 - When the app is closed, the updater uses `pkexec` only for the final native-package install step.
 - On Arch, that final install step is `pacman -U --noconfirm` against the locally rebuilt `.pkg.tar.zst`, not `git pull`.
 - On openSUSE, that final install step is `zypper --non-interactive --no-gpg-checks install` against the locally rebuilt `.rpm` (the package is unsigned because it is built locally).
-- If a privileged install fails or is dismissed, the updater stays in `failed` instead of re-prompting every 15 seconds.
+- If a privileged install fails, is dismissed, or times out, the updater stays in `failed` instead of re-prompting every 15 seconds.
 - If an `Installing` state is interrupted by a crash or restart, the updater now recovers that state automatically instead of getting stuck and skipping all future upstream checks.
 - Before Electron launches, the launcher only resolves a usable Codex CLI path. If the CLI is missing and the launcher was started from an interactive terminal, it prompts before attempting an automatic install. The updater CLI preflight then runs in the background by default so npm registry checks and follow-up updates do not block the first window.
 - That CLI preflight is best-effort: it uses a 1-hour cooldown for registry checks, falls back to `npm install -g --prefix ~/.local` if a global install fails, and keeps the app launch on the current CLI when the automatic refresh does not succeed. Set `CODEX_SYNC_CLI_PREFLIGHT=1` to restore the old synchronous preflight behavior for debugging.

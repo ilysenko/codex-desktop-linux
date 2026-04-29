@@ -48,22 +48,6 @@ rpm_version_parts() {
     RPM_RELEASE="$hash"
 }
 
-ensure_updater_binary() {
-    if [ -x "$UPDATER_BINARY_SOURCE" ]; then
-        return
-    fi
-
-    [ -f "$REPO_DIR/Cargo.toml" ] || error "Missing updater binary: $UPDATER_BINARY_SOURCE"
-    command -v cargo >/dev/null 2>&1 || error "cargo is required to build codex-update-manager.
-Install the Rust toolchain:
-  bash scripts/install-deps.sh        # auto-installs via rustup
-  # or manually: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-
-    info "Building codex-update-manager release binary"
-    cargo build --release -p codex-update-manager >&2
-    [ -x "$UPDATER_BINARY_SOURCE" ] || error "Failed to build updater binary: $UPDATER_BINARY_SOURCE"
-}
-
 main() {
     [ -d "$APP_DIR" ] || error "Missing app directory: $APP_DIR. Run ./install.sh first."
     [ -x "$APP_DIR/start.sh" ] || error "Missing launcher: $APP_DIR/start.sh"
@@ -93,11 +77,8 @@ main() {
     stage_common_package_files "$staging_root"
     stage_update_builder_bundle "$staging_root"
 
-    cat > "$staging_root/usr/bin/$PACKAGE_NAME" <<SCRIPT
-#!/bin/bash
-exec /opt/$PACKAGE_NAME/start.sh "\$@"
-SCRIPT
-    chmod 0755 "$staging_root/usr/bin/$PACKAGE_NAME"
+    write_launcher_stub "$staging_root"
+    normalize_package_permissions "$staging_root"
 
     local spec_file="$build_root/codex-desktop.spec"
     sed \

@@ -40,6 +40,7 @@ fi
 SERVICE_HELPER=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/codex-update-manager-user-service.sh
 if [ -f "$SERVICE_HELPER" ]; then
     . "$SERVICE_HELPER"
+    codex_normalize_package_permissions || true
     codex_ensure_user_service_running || true
 fi
 

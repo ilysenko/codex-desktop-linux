@@ -5,6 +5,7 @@ SERVICE_HELPER="/opt/codex-desktop/update-builder/packaging/linux/codex-update-m
 if [ -f "$SERVICE_HELPER" ]; then
     # shellcheck source=/opt/codex-desktop/update-builder/packaging/linux/codex-update-manager-user-service.sh
     . "$SERVICE_HELPER"
+    codex_normalize_package_permissions || true
     codex_ensure_user_service_running || true
 fi
 

@@ -68,7 +68,7 @@ The current working flow is:
 - `~/.local/state/codex-update-manager/service.log`
   Updater service log.
 - `~/.cache/codex-update-manager/`
-  Downloaded DMGs, rebuild workspaces, staged package artifacts, and build logs.
+  Downloaded DMGs, rebuild workspaces, staged package artifacts, and build logs. Successful rebuilds prune older workspaces and keep the current workspace plus the newest previous one.
 
 Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, prefer updating `install.sh` and then regenerating the app.
 
@@ -104,15 +104,17 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
 - Privilege boundary:
   The updater runs unprivileged. It only escalates at install time via `pkexec /usr/bin/codex-update-manager install-deb --path <deb>`, `install-rpm --path <rpm>`, or `install-pacman --path <pkg.tar.zst>`.
 - Failed privileged installs:
-  A failed or cancelled `pkexec` install now stays in `Failed` and does not auto-retry every reconcile cycle. Check `service.log`, fix the root cause, and retry by waiting for the next rebuild or rebuilding a newer package.
+  A failed, cancelled, or timed-out `pkexec` install now stays in `Failed` and does not auto-retry every reconcile cycle. Check `service.log`, fix the root cause, and retry by waiting for the next rebuild or rebuilding a newer package.
 - Interrupted installs:
   If updater state is left in `Installing` after a crash, restart, or interrupted privileged flow, the daemon now recovers that state automatically instead of staying stuck and skipping future upstream checks.
+- Launch-time update checks:
+  The packaged runtime starts `codex-update-manager.service` in best-effort mode on app launch, but it skips the transient `codex-update-manager-launch-check` unit when the user daemon is already active. The daemon owns initial and periodic checks once it is running.
 - Package removal:
   Debian and RPM removal now make a best-effort attempt to stop and disable `codex-update-manager.service` for active user sessions. If a user manager is unavailable, manual cleanup is still `systemctl --user disable --now codex-update-manager.service`.
 
 ## Crate Versioning
 
-- Current updater crate version: `0.4.2`
+- Current updater crate version: `0.4.3`
 - Bump `patch` for fixes, docs, and maintenance-only updates.
 - Bump `minor` for compatible feature additions.
 - Bump `major` for incompatible CLI, persisted-state, or install-flow changes.
@@ -206,6 +208,8 @@ The native packages currently install:
 - icon under `/usr/share/icons/hicolor/256x256/apps/codex-desktop.png`
 
 The Debian builder uses `dpkg-deb --root-owner-group` so package ownership is correct.
+
+The native builders and post-install hooks normalize staged `/opt` and `/usr` payload permissions after copying generated app files, so package artifacts and upgrades do not preserve group-writable modes from a developer checkout.
 
 The RPM builder stages the same app and updater payload into an RPM buildroot before invoking `rpmbuild`.
 

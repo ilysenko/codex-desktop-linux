@@ -130,3 +130,20 @@ exec /opt/$PACKAGE_NAME/start.sh "\$@"
 SCRIPT
     chmod 0755 "$root/usr/bin/$PACKAGE_NAME"
 }
+
+normalize_package_permissions() {
+    local root="$1"
+    local path
+
+    chmod 0755 "$root"
+
+    for path in "$root/opt" "$root/usr"; do
+        if [ -d "$path" ]; then
+            chmod -R u+rwX,go+rX,go-w "$path"
+        fi
+    done
+
+    [ -x "$root/opt/$PACKAGE_NAME/start.sh" ] && chmod 0755 "$root/opt/$PACKAGE_NAME/start.sh"
+    [ -x "$root/usr/bin/$PACKAGE_NAME" ] && chmod 0755 "$root/usr/bin/$PACKAGE_NAME"
+    [ -x "$root/usr/bin/codex-update-manager" ] && chmod 0755 "$root/usr/bin/codex-update-manager"
+}

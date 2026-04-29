@@ -6,6 +6,8 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use chrono::{Duration, Utc};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     ffi::OsString,
     fs,
@@ -235,11 +237,10 @@ fn resolve_cli_path(explicit_path: Option<&Path>) -> Option<PathBuf> {
         }
     }
 
-    find_in_path("codex", &command_path_env()).or_else(|| {
-        known_cli_locations()
-            .into_iter()
-            .find(|path| is_executable(path))
-    })
+    known_cli_locations()
+        .into_iter()
+        .find(|path| is_executable(path))
+        .or_else(|| find_in_path("codex", &command_path_env()))
 }
 
 fn known_cli_locations() -> Vec<PathBuf> {
@@ -255,6 +256,7 @@ fn known_cli_locations() -> Vec<PathBuf> {
             versioned_paths.reverse();
             candidates.extend(versioned_paths);
         }
+        candidates.push(home.join(".npm-global/bin/codex"));
         candidates.push(home.join(".local/share/pnpm/codex"));
         candidates.push(home.join(".local/bin/codex"));
     }
@@ -264,14 +266,11 @@ fn known_cli_locations() -> Vec<PathBuf> {
 }
 
 fn requested_cli_path(state: &PersistedState) -> Option<PathBuf> {
-    state
-        .cli_path
-        .clone()
-        .or_else(|| {
-            std::env::var_os("CODEX_CLI_PATH")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-        })
+    state.cli_path.clone().or_else(|| {
+        std::env::var_os("CODEX_CLI_PATH")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    })
 }
 
 fn should_skip_latest_version_check(
@@ -548,15 +547,23 @@ fn command_path_env() -> OsString {
 }
 
 fn preferred_node_bin_dirs() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        let npm_global_bin = home.join(".npm-global/bin");
+        if node_toolchain_dir(&npm_global_bin) {
+            directories.push(npm_global_bin);
+        }
+    }
+
     let nvm_root = std::env::var_os("NVM_DIR")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".nvm")));
 
     let Some(nvm_root) = nvm_root else {
-        return Vec::new();
+        return directories;
     };
 
-    let mut directories = Vec::new();
     let current_bin = nvm_root.join("versions/node/current/bin");
     if node_toolchain_dir(&current_bin) {
         directories.push(current_bin);
@@ -579,9 +586,18 @@ fn preferred_node_bin_dirs() -> Vec<PathBuf> {
 fn node_toolchain_dir(path: &Path) -> bool {
     ["node", "npm", "npx"]
         .into_iter()
-        .all(|binary| path.join(binary).is_file())
+        .all(|binary| is_executable(&path.join(binary)))
 }
 
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
 fn is_executable(path: &Path) -> bool {
     path.is_file()
 }
@@ -601,6 +617,14 @@ mod tests {
         fs::write(path, contents)?;
         let mut permissions = fs::metadata(path)?.permissions();
         permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)?;
+        Ok(())
+    }
+
+    fn write_plain_file(path: &Path, contents: &str) -> Result<()> {
+        fs::write(path, contents)?;
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o644);
         fs::set_permissions(path, permissions)?;
         Ok(())
     }
@@ -632,6 +656,53 @@ mod tests {
     #[test]
     fn ignores_non_version_text() {
         assert_eq!(extract_version("Codex CLI"), None);
+    }
+
+    #[test]
+    fn executable_check_requires_execute_permission() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("codex");
+
+        write_plain_file(&path, "#!/bin/sh\n")?;
+        assert!(!is_executable(&path));
+
+        write_executable_script(&path, "#!/bin/sh\n")?;
+        assert!(is_executable(&path));
+        Ok(())
+    }
+
+    #[test]
+    fn find_in_path_rejects_non_executable_entries() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("codex");
+        write_plain_file(&path, "#!/bin/sh\n")?;
+
+        let path_env = std::env::join_paths([temp.path()])?;
+        assert_eq!(find_in_path("codex", &path_env), None);
+
+        write_executable_script(&path, "#!/bin/sh\n")?;
+        assert_eq!(
+            find_in_path("codex", &path_env).as_deref(),
+            Some(path.as_path())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn node_toolchain_dir_requires_executable_tools() -> Result<()> {
+        let temp = tempdir()?;
+        let bin = temp.path().join("bin");
+        fs::create_dir_all(&bin)?;
+        for tool in ["node", "npm", "npx"] {
+            write_plain_file(&bin.join(tool), "#!/bin/sh\n")?;
+        }
+        assert!(!node_toolchain_dir(&bin));
+
+        for tool in ["node", "npm", "npx"] {
+            write_executable_script(&bin.join(tool), "#!/bin/sh\n")?;
+        }
+        assert!(node_toolchain_dir(&bin));
+        Ok(())
     }
 
     #[test]

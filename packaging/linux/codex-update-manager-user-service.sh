@@ -1,6 +1,7 @@
 #!/bin/sh
 
 SERVICE_NAME="${SERVICE_NAME:-codex-update-manager.service}"
+PACKAGE_ROOT="${CODEX_DESKTOP_PACKAGE_ROOT:-/opt/codex-desktop}"
 
 codex_foreach_user_manager() {
     if ! command -v runuser >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
@@ -82,4 +83,23 @@ codex_cleanup_one_user_service() {
 
     codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" "$action" "$SERVICE_NAME" || true
     codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" daemon-reload || true
+}
+
+codex_normalize_package_permissions() {
+    [ -d "$PACKAGE_ROOT" ] || return 0
+
+    chmod 0755 "$PACKAGE_ROOT" || true
+    find "$PACKAGE_ROOT" -type d -exec chmod 0755 {} + 2>/dev/null || true
+    find "$PACKAGE_ROOT" -type f -perm /022 -exec chmod go-w {} + 2>/dev/null || true
+
+    chmod 0755 \
+        "$PACKAGE_ROOT/start.sh" \
+        /usr/bin/codex-desktop \
+        /usr/bin/codex-update-manager 2>/dev/null || true
+
+    chmod 0644 \
+        "$PACKAGE_ROOT/.codex-linux/codex-packaged-runtime.sh" \
+        /usr/lib/systemd/user/codex-update-manager.service \
+        /usr/share/applications/codex-desktop.desktop \
+        /usr/share/icons/hicolor/256x256/apps/codex-desktop.png 2>/dev/null || true
 }

@@ -17,11 +17,16 @@ use std::{
     fs::{self, OpenOptions},
     io::{Seek, SeekFrom, Write},
     path::Path,
+    process::Output,
 };
-use tokio::time::{self, Duration};
+use tokio::{
+    process::Command,
+    time::{self, Duration},
+};
 use tracing::{error, info, warn};
 
 const RECONCILE_INTERVAL_SECONDS: u64 = 15;
+const PRIVILEGED_INSTALL_TIMEOUT_SECONDS: u64 = 300;
 const CLI_MISSING_NOTIFICATION_EVENT: &str = "cli_missing";
 
 /// Runs the updater command-line entrypoint.
@@ -670,9 +675,24 @@ async fn trigger_install(
     );
 
     let current_exe = std::env::current_exe().context("Failed to resolve updater binary path")?;
-    let output = install::pkexec_command(&current_exe, package_path)
-        .output()
-        .context("Failed to launch pkexec for update installation")?;
+    let output = match run_privileged_install_command(
+        &current_exe,
+        package_path,
+        Duration::from_secs(PRIVILEGED_INSTALL_TIMEOUT_SECONDS),
+    )
+    .await
+    {
+        Ok(output) => output,
+        Err(error) => {
+            error!(?error, "privileged install did not complete");
+            mark_failed_and_persist(state, paths, error.to_string())?;
+            let _ = notify::send(
+                "Codex update failed",
+                "The privileged package install did not finish. Check the updater log for details.",
+            );
+            return Err(error);
+        }
+    };
     let status = output.status;
 
     if status.success() {
@@ -767,6 +787,37 @@ fn defer_install_until_next_app_exit(
     persist_state(paths, state)
 }
 
+async fn run_privileged_install_command(
+    current_exe: &Path,
+    package_path: &Path,
+    timeout_duration: Duration,
+) -> Result<Output> {
+    let (updater_binary, subcommand) =
+        install::privileged_install_command_parts(current_exe, package_path);
+    let mut command = Command::new("pkexec");
+    command
+        .arg("--disable-internal-agent")
+        .arg(updater_binary)
+        .arg(subcommand)
+        .arg("--path")
+        .arg(package_path);
+    run_command_with_timeout(command, timeout_duration).await
+}
+
+async fn run_command_with_timeout(
+    mut command: Command,
+    timeout_duration: Duration,
+) -> Result<Output> {
+    command.kill_on_drop(true);
+    match time::timeout(timeout_duration, command.output()).await {
+        Ok(output) => output.context("Failed to execute privileged install command"),
+        Err(_) => anyhow::bail!(
+            "Privileged install timed out after {} seconds",
+            timeout_duration.as_secs()
+        ),
+    }
+}
+
 fn notify_failure(
     config: &RuntimeConfig,
     state: &mut PersistedState,
@@ -809,6 +860,18 @@ mod tests {
 
         state.last_successful_check_at = Some(Utc::now() - ChronoDuration::hours(7));
         assert!(!upstream_check_is_fresh(&config, &state));
+    }
+
+    #[tokio::test]
+    async fn privileged_install_command_timeout_returns_error() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("sleep 5");
+
+        let error = run_command_with_timeout(command, Duration::from_millis(20))
+            .await
+            .expect_err("command should time out");
+
+        assert!(error.to_string().contains("timed out"));
     }
 
     #[tokio::test]

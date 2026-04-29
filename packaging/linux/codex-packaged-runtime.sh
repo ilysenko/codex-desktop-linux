@@ -49,6 +49,11 @@ codex_packaged_runtime_trigger_update_check() {
         return 0
     fi
 
+    if command -v systemctl >/dev/null 2>&1 &&
+        systemctl --user is-active --quiet codex-update-manager.service >/dev/null 2>&1; then
+        return 0
+    fi
+
     if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
         systemd-run --user \
             --unit=codex-update-manager-launch-check \

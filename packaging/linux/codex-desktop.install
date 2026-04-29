@@ -9,6 +9,7 @@ post_install() {
         update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
     fi
     if [ -f "$SERVICE_HELPER" ]; then
+        codex_normalize_package_permissions || true
         codex_ensure_user_service_running || true
     fi
 }

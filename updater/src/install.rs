@@ -253,14 +253,24 @@ pub fn install_pacman(path: &Path) -> Result<()> {
     run_install(&mut command).context("pacman -U failed")
 }
 
-/// Builds the `pkexec` command used for privileged package installation.
-pub fn pkexec_command(current_exe: &Path, package_path: &Path) -> Command {
+/// Returns the updater binary and install subcommand used for a privileged package install.
+pub fn privileged_install_command_parts(
+    current_exe: &Path,
+    package_path: &Path,
+) -> (PathBuf, &'static str) {
     let updater_binary = updater_binary_for_privileged_install(current_exe);
     let subcommand = match PackageKind::from_path(package_path) {
         PackageKind::Rpm => "install-rpm",
         PackageKind::Deb => "install-deb",
         PackageKind::Pacman => "install-pacman",
     };
+    (updater_binary, subcommand)
+}
+
+/// Builds the `pkexec` command used for privileged package installation.
+#[cfg(test)]
+pub fn pkexec_command(current_exe: &Path, package_path: &Path) -> Command {
+    let (updater_binary, subcommand) = privileged_install_command_parts(current_exe, package_path);
     let mut command = Command::new("pkexec");
     command
         .arg("--disable-internal-agent")

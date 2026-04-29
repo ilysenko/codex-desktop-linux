@@ -6,13 +6,16 @@ use crate::{
     state::{ArtifactPaths, PersistedState, UpdateStatus},
 };
 use anyhow::{Context, Result};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 use tokio::process::Command;
-use tracing::info;
+use tracing::{info, warn};
 
 const REQUIRED_BUNDLE_FILES: [(&str, &str); 6] = [
     ("install.sh", "install.sh"),
@@ -41,6 +44,7 @@ const PACMAN_PACKAGE_SUFFIXES: &[&str] = &[
     ".pkg.tar.lz4",
     ".pkg.tar.lz5",
 ];
+const MAX_RETAINED_WORKSPACES: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Paths to the temporary workspace and generated package produced by a rebuild.
@@ -65,6 +69,10 @@ pub async fn build_update(
     state.save(&paths.state_file)?;
 
     copy_builder_bundle(&config.builder_bundle_root, &workspace.bundle_dir)?;
+    ensure_executable(
+        &workspace.bundle_dir.join("install.sh"),
+        "builder install script",
+    )?;
 
     state.status = UpdateStatus::PatchingApp;
     state.save(&paths.state_file)?;
@@ -83,6 +91,7 @@ pub async fn build_update(
     state.save(&paths.state_file)?;
 
     let build_script = package_build_script(&workspace.bundle_dir);
+    ensure_executable(&build_script, "native package build script")?;
     run_and_log(
         Command::new(&build_script)
             .env("PACKAGE_VERSION", candidate_version)
@@ -111,6 +120,13 @@ pub async fn build_update(
     };
     state.save(&paths.state_file)?;
     info!(candidate_version, package = %package_path.display(), "local update build ready");
+    if let Err(error) = prune_old_workspaces(
+        &config.workspace_root,
+        &workspace.workspace_dir,
+        MAX_RETAINED_WORKSPACES,
+    ) {
+        warn!(?error, "failed to prune old updater workspaces");
+    }
 
     Ok(BuildArtifacts {
         workspace_dir: workspace.workspace_dir,
@@ -264,6 +280,56 @@ fn find_package_in(dist_dir: &Path) -> Result<PathBuf> {
     )
 }
 
+fn prune_old_workspaces(
+    workspace_root: &Path,
+    keep_workspace: &Path,
+    max_retained: usize,
+) -> Result<()> {
+    if max_retained == 0 {
+        return Ok(());
+    }
+
+    let workspaces_dir = workspace_root.join("workspaces");
+    if !workspaces_dir.exists() {
+        return Ok(());
+    }
+
+    let keep_workspace = keep_workspace
+        .canonicalize()
+        .unwrap_or_else(|_| keep_workspace.to_path_buf());
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(&workspaces_dir)
+        .with_context(|| format!("Failed to read {}", workspaces_dir.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let path = entry.path();
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if canonical_path == keep_workspace {
+            continue;
+        }
+
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        candidates.push((modified, path));
+    }
+
+    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+    for (_, path) in candidates.into_iter().skip(max_retained.saturating_sub(1)) {
+        fs::remove_dir_all(&path).with_context(|| {
+            format!("Failed to remove old updater workspace {}", path.display())
+        })?;
+        info!(workspace = %path.display(), "removed old updater workspace");
+    }
+
+    Ok(())
+}
+
 fn is_native_package_file(path: &Path) -> bool {
     let name = path
         .file_name()
@@ -329,7 +395,28 @@ fn collect_nvm_bin_dirs(nvm_root: &Path) -> Vec<PathBuf> {
 fn is_node_toolchain_dir(path: &Path) -> bool {
     ["node", "npm", "npx"]
         .into_iter()
-        .all(|binary| path.join(binary).is_file())
+        .all(|binary| is_executable(&path.join(binary)))
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn ensure_executable(path: &Path, label: &str) -> Result<()> {
+    if is_executable(path) {
+        return Ok(());
+    }
+
+    anyhow::bail!("{label} is missing or not executable: {}", path.display())
 }
 
 async fn run_and_log(command: &mut Command, log_path: &Path) -> Result<()> {
@@ -403,6 +490,16 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
         Ok(())
     }
 
+    fn write_executable_file(path: &Path, contents: &[u8]) -> Result<()> {
+        fs::write(path, contents)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn builds_update_with_fake_bundle() -> Result<()> {
         let temp = tempdir()?;
@@ -429,23 +526,15 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
             bundle_root.join("packaging/linux/codex-update-manager.service"),
             "[Unit]\nDescription=Codex Update Manager\n",
         )?;
-        fs::write(
-            bundle_root.join("install.sh"),
-            r#"#!/bin/bash
+        write_executable_file(
+            &bundle_root.join("install.sh"),
+            br#"#!/bin/bash
 set -euo pipefail
 mkdir -p "${CODEX_INSTALL_DIR}"
 echo launcher > "${CODEX_INSTALL_DIR}/start.sh"
 chmod +x "${CODEX_INSTALL_DIR}/start.sh"
 "#,
         )?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(
-                bundle_root.join("install.sh"),
-                fs::Permissions::from_mode(0o755),
-            )?;
-        }
 
         write_fake_build_script(
             &bundle_root.join("scripts/build-deb.sh"),
@@ -564,6 +653,50 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
     }
 
     #[test]
+    fn prunes_old_workspaces_but_keeps_current() -> Result<()> {
+        let temp = tempdir()?;
+        let workspace_root = temp.path().join("cache");
+        let workspaces_dir = workspace_root.join("workspaces");
+        let current = workspaces_dir.join("current");
+        let old_a = workspaces_dir.join("old-a");
+        let old_b = workspaces_dir.join("old-b");
+
+        for workspace in [&current, &old_a, &old_b] {
+            fs::create_dir_all(workspace)?;
+            fs::write(workspace.join("marker"), b"workspace")?;
+        }
+
+        prune_old_workspaces(&workspace_root, &current, 1)?;
+
+        assert!(current.exists());
+        assert!(!old_a.exists());
+        assert!(!old_b.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_pruning_retains_only_configured_count() -> Result<()> {
+        let temp = tempdir()?;
+        let workspace_root = temp.path().join("cache");
+        let workspaces_dir = workspace_root.join("workspaces");
+        let current = workspaces_dir.join("current");
+        let old_a = workspaces_dir.join("old-a");
+        let old_b = workspaces_dir.join("old-b");
+
+        for workspace in [&current, &old_a, &old_b] {
+            fs::create_dir_all(workspace)?;
+            fs::write(workspace.join("marker"), b"workspace")?;
+        }
+
+        prune_old_workspaces(&workspace_root, &current, 2)?;
+
+        let retained_count = fs::read_dir(&workspaces_dir)?.count();
+        assert_eq!(retained_count, 2);
+        assert!(current.exists());
+        Ok(())
+    }
+
+    #[test]
     fn finds_pacman_package_in_dist_dir() -> Result<()> {
         let temp = tempdir()?;
         let pkg_path = temp
@@ -587,13 +720,25 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
         fs::create_dir_all(&version_bin)?;
         for dir in [&current_bin, &version_bin] {
             for binary in ["node", "npm", "npx"] {
-                fs::write(dir.join(binary), b"bin")?;
+                write_executable_file(&dir.join(binary), b"bin")?;
             }
         }
 
         let directories = collect_nvm_bin_dirs(&nvm_root);
         assert_eq!(directories.first(), Some(&current_bin));
         assert!(directories.contains(&version_bin));
+        Ok(())
+    }
+
+    #[test]
+    fn executable_check_requires_execute_permission() -> Result<()> {
+        let temp = tempdir()?;
+        let script = temp.path().join("script.sh");
+        fs::write(&script, b"#!/bin/sh\n")?;
+
+        assert!(!is_executable(&script));
+        write_executable_file(&script, b"#!/bin/sh\n")?;
+        assert!(is_executable(&script));
         Ok(())
     }
 }

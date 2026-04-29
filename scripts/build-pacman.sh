@@ -65,6 +65,7 @@ main() {
 	stage_common_package_files "$staging_root"
 	stage_update_builder_bundle "$staging_root"
 	write_launcher_stub "$staging_root"
+	normalize_package_permissions "$staging_root"
 
 	sed \
 		-e "s/__PACKAGE_NAME__/$PACKAGE_NAME/g" \
