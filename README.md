@@ -184,6 +184,8 @@ You need:
 - `python3`, `7z` (or `7zz`), `curl`, `unzip`, `make`, `g++`
 - **Rust toolchain** (`cargo`) for the `codex-update-manager` and `codex-computer-use-linux` crates
 
+Browser Use / `node_repl` currently needs Node.js 22.22.0+. The launcher exports `NODE_REPL_NODE_PATH` and `CODEX_BROWSER_USE_NODE_PATH` to a compatible runtime when it can find one, preferring the bundled primary runtime cache, system Node, and then `nvm` installs.
+
 The easiest setup is the bundled bootstrap:
 
 ```bash
@@ -277,7 +279,7 @@ Override the package version with `PACKAGE_VERSION=YYYY.MM.DD.HHMMSS+commitish .
 
 The packaging scripts only repackage what's already in `codex-app/`. They do not download or extract the DMG themselves.
 
-Native packages declare `nodejs (>= 20)` because the bundled update manager rebuilds future packages locally. They also pull in `polkit` (or `policykit-1` on older Debian/Ubuntu) plus `pkexec` so the privileged install flow works out of the box.
+Native packages do not hard-depend on distro `nodejs`: Browser Use prefers Node.js 22.22.0+ from the bundled primary runtime cache, system Node, or `nvm`, while local auto-updates still need Node.js 20+ with `npm`/`npx` to rebuild future packages. The packages pull in `polkit` (or `policykit-1` on older Debian/Ubuntu) plus `pkexec` so the privileged install flow works out of the box.
 
 ### Updater service controls
 

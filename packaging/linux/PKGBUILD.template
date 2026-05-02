@@ -7,8 +7,6 @@ arch=('__ARCH__')
 url="https://github.com/ilysenko/codex-desktop-linux"
 license=('MIT')
 depends=(
-    'nodejs>=20'
-    'npm'
     'python'
     'p7zip'
     'polkit'
@@ -42,6 +40,8 @@ depends=(
 optdepends=(
     'zenity: GTK dialog fallback when the Codex CLI is missing'
     'kdialog: KDE dialog fallback when the Codex CLI is missing'
+    'nodejs: Node.js 22.22+ for Browser Use and local rebuilds when no user-managed Node is available'
+    'npm: install or update the Codex CLI and rebuild future packages'
 )
 options=(!debug !strip)
 install=__PACKAGE_NAME__.install

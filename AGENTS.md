@@ -229,9 +229,11 @@ PACKAGE_VERSION=2026.03.24.120000+deadbeef ./scripts/build-pacman.sh
 
 - `node`, `npm`, `npx`, `python3`, `7z`, `curl`, `unzip`, `make`, and `g++` are required for `install.sh`
 - Node.js 20+ is required
+- Browser Use / `node_repl` currently requires Node.js 22.22.0+. The launcher exports `NODE_REPL_NODE_PATH` and `CODEX_BROWSER_USE_NODE_PATH` to a compatible runtime when it can find one, preferring the bundled primary runtime cache, system Node, and then `nvm` installs.
 - On apt-based systems, `scripts/install-deps.sh` uses a compatible distro `nodejs`/`npm` candidate when available and otherwise bootstraps NodeSource Node.js 22 by default. `NODEJS_MAJOR=24 bash scripts/install-deps.sh` selects Node.js 24 instead.
 - the packaged app still requires the Codex CLI at runtime:
   `codex` must exist in `PATH` or be set through `CODEX_CLI_PATH`, but the launcher now attempts a best-effort automatic install on first run when the CLI is missing and `npm` is available
+- native packages no longer hard-depend on distro `nodejs`; local auto-updates still need Node.js 20+ with `npm`/`npx` from the system or a user-managed install such as `nvm`
 
 ## Packaging Notes
 

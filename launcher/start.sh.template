@@ -52,6 +52,10 @@ ADOPTED_WEBVIEW_PID=""
 ELECTRON_PID=""
 RUNNING_APP_PID=""
 WARM_START=0
+BROWSER_USE_MIN_NODE_VERSION="22.22.0"
+BROWSER_USE_MIN_NODE_MAJOR=22
+BROWSER_USE_MIN_NODE_MINOR=22
+BROWSER_USE_MIN_NODE_PATCH=0
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<HELP
@@ -326,18 +330,154 @@ sync_browser_use_bundled_plugin_cache() {
     fi
 }
 
+node_version_parts() {
+    local node_path="$1"
+    local version
+    local major
+    local minor
+    local patch
+
+    [ -x "$node_path" ] || return 1
+    version="$("$node_path" -v 2>/dev/null)" || return 1
+    major="${version#v}"
+    minor="${major#*.}"
+    patch="${minor#*.}"
+    major="${major%%.*}"
+    minor="${minor%%.*}"
+    patch="${patch%%.*}"
+    case "$major" in
+        ""|*[!0-9]*) return 1 ;;
+    esac
+    case "$minor" in
+        ""|*[!0-9]*) return 1 ;;
+    esac
+    case "$patch" in
+        ""|*[!0-9]*) return 1 ;;
+    esac
+
+    echo "$major $minor $patch"
+}
+
+node_runtime_compatible() {
+    local major
+    local minor
+    local patch
+
+    read -r major minor patch < <(node_version_parts "$1") || return 1
+    if [ "$major" -gt "$BROWSER_USE_MIN_NODE_MAJOR" ]; then
+        return 0
+    fi
+    if [ "$major" -lt "$BROWSER_USE_MIN_NODE_MAJOR" ]; then
+        return 1
+    fi
+    if [ "$minor" -gt "$BROWSER_USE_MIN_NODE_MINOR" ]; then
+        return 0
+    fi
+    if [ "$minor" -lt "$BROWSER_USE_MIN_NODE_MINOR" ]; then
+        return 1
+    fi
+    [ "$patch" -ge "$BROWSER_USE_MIN_NODE_PATCH" ]
+}
+
+print_compatible_node_runtime() {
+    local candidate="$1"
+
+    [ -n "$candidate" ] || return 1
+    node_runtime_compatible "$candidate" || return 1
+    echo "$candidate"
+}
+
+find_compatible_node_runtime() {
+    local candidate
+    local node_from_path
+    local nvm_root
+    local versions_root
+
+    for candidate in \
+        "$SCRIPT_DIR/resources/node" \
+        "${XDG_CACHE_HOME:-$HOME/.cache}/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node" \
+        "${NODE_REPL_NODE_PATH:-}" \
+        "${NVM_BIN:-}/node" \
+        "$HOME/.nvm/versions/node/current/bin/node" \
+        "/usr/local/bin/node" \
+        "/usr/bin/node" \
+        "/bin/node"
+    do
+        print_compatible_node_runtime "$candidate" && return 0
+    done
+
+    if [ -n "${CODEX_CLI_PATH:-}" ]; then
+        candidate="${CODEX_CLI_PATH%/codex}/node"
+        print_compatible_node_runtime "$candidate" && return 0
+    fi
+
+    if command -v node >/dev/null 2>&1; then
+        node_from_path="$(command -v node)"
+        print_compatible_node_runtime "$node_from_path" && return 0
+    fi
+
+    nvm_root="${NVM_DIR:-$HOME/.nvm}"
+    if [ -s "$nvm_root/nvm.sh" ]; then
+        export NVM_DIR="$nvm_root"
+        # shellcheck disable=SC1090
+        . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true
+        if command -v node >/dev/null 2>&1; then
+            node_from_path="$(command -v node)"
+            print_compatible_node_runtime "$node_from_path" && return 0
+        fi
+    fi
+
+    versions_root="$nvm_root/versions/node"
+    if [ -d "$versions_root" ]; then
+        while IFS= read -r candidate; do
+            print_compatible_node_runtime "$candidate" && return 0
+        done < <(find "$versions_root" -mindepth 3 -maxdepth 3 -type f -path "*/bin/node" 2>/dev/null | sort -Vr)
+    fi
+
+    return 1
+}
+
+prepend_browser_use_node_to_path() {
+    local node_dir
+
+    [ -n "${CODEX_BROWSER_USE_NODE_PATH:-}" ] || return 0
+    node_dir="$(dirname "$CODEX_BROWSER_USE_NODE_PATH")"
+    case ":$PATH:" in
+        *":$node_dir:"*) ;;
+        *) export PATH="$node_dir:$PATH" ;;
+    esac
+}
+
 resolve_browser_use_runtime_env() {
     if [ -z "${CODEX_ELECTRON_RESOURCES_PATH:-}" ]; then
         export CODEX_ELECTRON_RESOURCES_PATH="$SCRIPT_DIR/resources"
     fi
 
+    if [ -n "${CODEX_BROWSER_USE_NODE_PATH:-}" ] && ! node_runtime_compatible "$CODEX_BROWSER_USE_NODE_PATH"; then
+        echo "Ignoring CODEX_BROWSER_USE_NODE_PATH=$CODEX_BROWSER_USE_NODE_PATH because Browser Use requires Node.js $BROWSER_USE_MIN_NODE_VERSION+."
+        unset CODEX_BROWSER_USE_NODE_PATH
+    fi
+
     if [ -z "${CODEX_BROWSER_USE_NODE_PATH:-}" ]; then
-        if [ -x "$SCRIPT_DIR/resources/node" ]; then
-            export CODEX_BROWSER_USE_NODE_PATH="$SCRIPT_DIR/resources/node"
-        elif command -v node >/dev/null 2>&1; then
-            CODEX_BROWSER_USE_NODE_PATH="$(command -v node)"
+        if CODEX_BROWSER_USE_NODE_PATH="$(find_compatible_node_runtime)"; then
             export CODEX_BROWSER_USE_NODE_PATH
+        else
+            echo "Browser Use Node.js $BROWSER_USE_MIN_NODE_VERSION+ runtime not found; in-app browser automation may be unavailable."
         fi
+    fi
+
+    if [ -n "${NODE_REPL_NODE_PATH:-}" ] && ! node_runtime_compatible "$NODE_REPL_NODE_PATH"; then
+        echo "Ignoring NODE_REPL_NODE_PATH=$NODE_REPL_NODE_PATH because node_repl requires Node.js $BROWSER_USE_MIN_NODE_VERSION+."
+        unset NODE_REPL_NODE_PATH
+    fi
+
+    if [ -z "${NODE_REPL_NODE_PATH:-}" ] && [ -n "${CODEX_BROWSER_USE_NODE_PATH:-}" ]; then
+        export NODE_REPL_NODE_PATH="$CODEX_BROWSER_USE_NODE_PATH"
+    fi
+
+    if [ -n "${CODEX_NODE_REPL_PATH:-}" ] && [ ! -x "$CODEX_NODE_REPL_PATH" ]; then
+        echo "Ignoring CODEX_NODE_REPL_PATH=$CODEX_NODE_REPL_PATH because it is not executable."
+        unset CODEX_NODE_REPL_PATH
     fi
 
     if [ -z "${CODEX_NODE_REPL_PATH:-}" ]; then
@@ -1178,7 +1318,9 @@ if needs_cold_start; then
     sync_browser_use_bundled_plugin_cache
 fi
 resolve_browser_use_runtime_env
+prepend_browser_use_node_to_path
 
 echo "Using CODEX_CLI_PATH=${CODEX_CLI_PATH:-warm-start-skip}"
+echo "Using CODEX_BROWSER_USE_NODE_PATH=${CODEX_BROWSER_USE_NODE_PATH:-not-found}"
 
 launch_electron "$@"
