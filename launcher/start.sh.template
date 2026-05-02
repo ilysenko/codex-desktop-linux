@@ -463,6 +463,7 @@ resolve_browser_use_runtime_env() {
             export CODEX_BROWSER_USE_NODE_PATH
         else
             echo "Browser Use Node.js $BROWSER_USE_MIN_NODE_VERSION+ runtime not found; in-app browser automation may be unavailable."
+            echo "Install Node.js $BROWSER_USE_MIN_NODE_VERSION+: sudo apt install nodejs npm   (or nvm: https://github.com/nvm-sh/nvm)"
         fi
     fi
 

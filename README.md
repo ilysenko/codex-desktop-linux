@@ -279,7 +279,7 @@ Override the package version with `PACKAGE_VERSION=YYYY.MM.DD.HHMMSS+commitish .
 
 The packaging scripts only repackage what's already in `codex-app/`. They do not download or extract the DMG themselves.
 
-Native packages do not hard-depend on distro `nodejs`: Browser Use prefers Node.js 22.22.0+ from the bundled primary runtime cache, system Node, or `nvm`, while local auto-updates still need Node.js 20+ with `npm`/`npx` to rebuild future packages. The packages pull in `polkit` (or `policykit-1` on older Debian/Ubuntu) plus `pkexec` so the privileged install flow works out of the box.
+Native packages do not hard-depend on distro `nodejs`: Browser Use prefers Node.js 22.22.0+ from the bundled primary runtime cache, system Node, or `nvm`, while local auto-updates still need Node.js 20+ with `npm`/`npx` to rebuild future packages. Debian packages recommend `nodejs`/`npm` for bare-system installs; users with `nvm` can still opt out with `--no-install-recommends`. The packages pull in `polkit` (or `policykit-1` on older Debian/Ubuntu) plus `pkexec` so the privileged install flow works out of the box.
 
 ### Updater service controls
 

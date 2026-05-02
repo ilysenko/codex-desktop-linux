@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Linux quit now bypasses the close-to-tray gate so the app actually exits instead of getting trapped in the tray.
 - Keybinds settings index patch tolerates upstream minified variable-name drift; the route map is detected via a `(0,X.lazy)` lookahead instead of hard-coded `c_e` / `Xge` / `Zge` names.
 - NixOS-installed `start.sh` shebang is patched to a nix-store `bash` so the launcher actually runs on systems without `/bin/bash`.
+- Debian packages now recommend Node.js/npm for bare-system Browser Use installs, and the launcher prints an install hint when Node.js 22.22.0+ is unavailable.
 
 ## [0.6.2] - 2026-05-01
 
