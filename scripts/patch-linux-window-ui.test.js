@@ -233,7 +233,7 @@ test("adds Linux tray support including the platform guard", () => {
   assert.match(patched, /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`/);
   assert.match(
     patched,
-    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&!codexLinuxIsQuitInProgress\(\)/,
+    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)/,
   );
   assert.match(patched, /setLinuxTrayContextMenu\(\)\{let e=n\.Menu\.buildFromTemplate/);
   assert.match(
@@ -242,12 +242,12 @@ test("adds Linux tray support including the platform guard", () => {
   );
   assert.match(
     patched,
-    /openNativeTrayMenu\(\)\{if\(process\.platform===`linux`&&codexLinuxIsQuitInProgress\(\)\)return;/,
+    /openNativeTrayMenu\(\)\{if\(process\.platform===`linux`&&\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)\)return;/,
   );
   assert.match(patched, /if\(process\.platform===`linux`\)return;e\.once\(`menu-will-show`/);
   assert.match(
     patched,
-    /this\.trayMenuThreads=e\.trayMenuThreads,process\.platform===`linux`&&!codexLinuxIsQuitInProgress\(\)&&this\.setLinuxTrayContextMenu\?\.\(\)/,
+    /this\.trayMenuThreads=e\.trayMenuThreads,process\.platform===`linux`&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.setLinuxTrayContextMenu\?\.\(\)/,
   );
   assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&oe\(\);/);
 });
@@ -264,7 +264,7 @@ test("adds Linux tray support for current minified window and startup identifier
   assert.match(patched, /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`/);
   assert.match(
     patched,
-    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&!codexLinuxIsQuitInProgress\(\)/,
+    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)/,
   );
   assert.match(patched, /e\.preventDefault\(\),j\.hide\(\);return/);
   assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&ce\$\(\);/);
@@ -295,7 +295,23 @@ test("scopes close-to-tray already-patched detection to the handler", () => {
 
   assert.match(
     patched,
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&!codexLinuxIsQuitInProgress\(\)&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),j\.hide\(\);return\}/,
+    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),j\.hide\(\);return\}/,
+  );
+});
+
+test("keeps close-to-tray crash-safe when only the second-instance bootstrap anchor is available", () => {
+  const source = [
+    "let unrelated=require(`electron`);",
+    "l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=async()=>{};",
+    "v&&j.on(`close`,e=>{this.persistPrimaryWindowBounds(j,f);let t=this.getPrimaryWindows(f).some(e=>e!==j);if(process.platform===`win32`&&f===`local`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),j.hide();return}});",
+  ].join("");
+
+  const patched = applyPatchTwice(patchMainBundleSource, source, null);
+
+  assert.match(patched, /codexLinuxQuitInProgress=!1/);
+  assert.match(
+    patched,
+    /!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastLocalWindowToTray/,
   );
 });
 
@@ -304,7 +320,10 @@ test("adds Linux single-instance lock and second-instance handoff", () => {
 
   assert.match(patched, /process\.platform===`linux`&&!n\.app\.requestSingleInstanceLock\(\)/);
   assert.match(patched, /n\.app\.quit\(\);return/);
-  assert.match(patched, /codexLinuxBeforeQuitHandler=\(\)=>\{codexLinuxMarkQuitInProgress\(\)\}/);
+  assert.match(
+    patched,
+    /codexLinuxBeforeQuitHandler=\(\)=>\{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\)\}/,
+  );
   assert.match(patched, /n\.app\.on\(`before-quit`,codexLinuxBeforeQuitHandler\)/);
   assert.match(patched, /n\.app\.off\(`before-quit`,codexLinuxBeforeQuitHandler\)/);
   assert.match(patched, /codexLinuxSecondInstanceHandler/);
@@ -358,8 +377,14 @@ test("adds Linux launch actions when captured window identifiers contain dollar 
   assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitInProgress===!0/);
   assert.match(patched, /codexLinuxGetSetting=e=>/);
   assert.match(patched, /codexLinuxHandleLaunchActionArgs=async e=>/);
-  assert.match(patched, /codexLinuxHandleLaunchActionArgs=async e=>codexLinuxIsQuitInProgress\(\)\?!0:/);
-  assert.match(patched, /codexLinuxHandleLaunchActionArgsFallback=\(e,t\)=>\{if\(codexLinuxIsQuitInProgress\(\)\)return;/);
+  assert.match(
+    patched,
+    /codexLinuxHandleLaunchActionArgs=async e=>typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\?!0:/,
+  );
+  assert.match(
+    patched,
+    /codexLinuxHandleLaunchActionArgsFallback=\(e,t\)=>\{if\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)return;/,
+  );
   assert.match(patched, /codexLinuxStartLaunchActionSocket=\(\)=>/);
   assert.match(patched, /codexLinuxPrewarmHotkeyWindow=\(\)=>/);
   assert.match(patched, /e\.includes\(`--new-chat`\)/);
