@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
+const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -22,12 +23,14 @@ const {
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxQuitGuardPatch,
   applyLinuxHotkeyWindowPrewarmPatch,
+  applyLinuxIdeOpenTargetPatch,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxSetIconPatch,
   applyLinuxSingleInstancePatch,
+  applyLinuxTerminalOpenTargetPatch,
   applyLinuxTrayCloseSettingPatch,
   applyLinuxTrayPatch,
   applyLinuxWindowOptionsPatch,
@@ -45,8 +48,14 @@ const {
 
 const mainBundlePrefix =
   "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`);";
+const mainBundlePrefixWithChildProcess =
+  "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);";
 const fileManagerBundle =
   "var lu=jl({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>il(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:uu,args:e=>il(e),open:async({path:e})=>du(e)}});function uu(){}";
+const terminalOpenTargetBundle =
+  "var uh={id:`terminal`,platforms:{darwin:{label:`Terminal`,icon:`apps/terminal.png`,kind:`terminal`,detect:()=>`open`,args:e=>[`-a`,`Terminal`,e]},win32:{label:`Terminal`,icon:`apps/microsoft-terminal.png`,kind:`terminal`,detect:vh,iconPath:()=>null,args:yh,open:({command:e,path:t})=>bh(e,yh(t))}}};function vh(){return `wt.exe`}function yh(e){return[`-d`,e]}async function bh(){}";
+const ideOpenTargetsBundle =
+  "function ih({id:e,label:t,icon:n,darwinDetect:r,win32Detect:i,darwinEnv:a,darwinArgs:o,hidden:s}){return{id:e,platforms:{darwin:r?{label:t,icon:n,kind:`editor`,hidden:s,detect:r,env:a,args:o??ah,supportsSsh:!0}:void 0,win32:i?{label:t,icon:n,kind:`editor`,hidden:s,detect:i,args:ah,supportsSsh:!0}:void 0}}}var ah=(e,t)=>t?[`${e}:${t.line}:${t.column}`]:[e];var Og=ih({id:`vscode`,label:`VS Code`,icon:`apps/vscode.png`,darwinDetect:()=>`open`,win32Detect:()=>`Code.exe`});var jh=ih({id:`cursor`,label:`Cursor`,icon:`apps/cursor.png`,darwinDetect:()=>`open`,win32Detect:()=>`Cursor.exe`});function sg({id:e,label:t,icon:n,toolboxTarget:r,macExecutable:i,windowsPathCommands:a,windowsInstallDirPrefixes:o,windowsInstallExecutables:s}){return{id:e,platforms:{darwin:{label:t,icon:n,kind:`editor`,detect:()=>`open`,args:mg},win32:a&&o&&s?{label:t,icon:n,kind:`editor`,detect:()=>`idea.exe`,args:mg}:void 0}}}function mg(e,t){return t?[`--line`,t.line.toString(),`--column`,t.column.toString(),e]:[e]}var $h=sg({id:`intellij`,label:`IntelliJ IDEA`,icon:`apps/intellij.png`,toolboxTarget:`intellij`,macExecutable:`idea`,windowsPathCommands:[`idea`],windowsInstallDirPrefixes:[`idea`],windowsInstallExecutables:[`idea`]});var Wg={id:`zed`,platforms:{darwin:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:Gg,args:hg},win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:Kg,args:hg}}};function Gg(){}function Kg(){}function hg(e,t){return t?[`${e}:${t.line}:${t.column}`]:[e]}var Xg=[Og,jh,Wg,$h];";
 const alreadyOpaqueBackgroundBundle =
   "process.platform===`linux`?{backgroundColor:e?t:n,backgroundMaterial:null}:{backgroundColor:r,backgroundMaterial:null}";
 const opaqueBackgroundBundleWithDriftingGw =
@@ -73,6 +82,87 @@ function captureWarns(fn) {
   } finally {
     console.warn = originalWarn;
   }
+}
+
+function withTempDir(fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-open-targets-"));
+  try {
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function makeExecutable(dir, name) {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(file, 0o755);
+  return file;
+}
+
+function createSpawnRecorder() {
+  return {
+    calls: [],
+    spawn(command, args, options = {}) {
+      this.calls.push({ command, args, cwd: options.cwd ?? null });
+      const child = new EventEmitter();
+      child.unref = () => {};
+      process.nextTick(() => child.emit("close", 0));
+      return child;
+    },
+  };
+}
+
+function evaluateLinuxFileManager(source, env, spawnRecorder, openPathCalls = []) {
+  const patched = applyPatchTwice(applyLinuxFileManagerPatch, source);
+  assert.doesNotThrow(() => new Function("require", "process", `${patched};return lu;`));
+  const requireStub = (name) => {
+    if (name === "node:fs") return fs;
+    if (name === "node:path") return path;
+    if (name === "node:child_process") return spawnRecorder;
+    if (name === "electron") {
+      return {
+        shell: {
+          openPath: async (target) => {
+            openPathCalls.push(target);
+            return "";
+          },
+        },
+      };
+    }
+    return require(name);
+  };
+  const processStub = { platform: "linux", env };
+  return new Function("require", "process", `${patched};return lu.platforms?.linux??lu.linux;`)(requireStub, processStub);
+}
+
+function evaluateLinuxTerminal(source, env, spawnRecorder) {
+  const patched = applyPatchTwice(applyLinuxTerminalOpenTargetPatch, source);
+  assert.doesNotThrow(() => new Function("require", "process", `${patched};return uh;`));
+  const requireStub = (name) => {
+    if (name === "node:fs") return fs;
+    if (name === "node:path") return path;
+    if (name === "node:child_process") return spawnRecorder;
+    if (name === "electron") return { shell: { openPath: async () => "" } };
+    return require(name);
+  };
+  const processStub = { platform: "linux", env };
+  return new Function("require", "process", `${patched};return uh.platforms.linux;`)(requireStub, processStub);
+}
+
+function evaluateLinuxIdeTargets(source, env) {
+  const patched = applyPatchTwice(applyLinuxIdeOpenTargetPatch, source);
+  assert.doesNotThrow(() => new Function("require", "process", `${patched};return Xg;`));
+  const requireStub = (name) => {
+    if (name === "node:fs") return fs;
+    if (name === "node:path") return path;
+    if (name === "node:child_process") return createSpawnRecorder();
+    if (name === "electron") return { shell: { openPath: async () => "" } };
+    return require(name);
+  };
+  const processStub = { platform: "linux", env };
+  return new Function("require", "process", `${patched};return Xg;`)(requireStub, processStub);
 }
 
 function trayBundleFixture() {
@@ -162,8 +252,154 @@ test("adds Linux file manager support without relying on exact minified variable
   const patched = applyPatchTwice(applyLinuxFileManagerPatch, source);
 
   assert.match(patched, /linux:\{label:`File Manager`/);
-  assert.match(patched, /detect:\(\)=>`linux-file-manager`/);
-  assert.match(patched, /n\.shell\.openPath\(__codexOpenTarget\)/);
+  assert.match(patched, /detect:\(\)=>codexLinuxFindExecutable\(`dolphin`\)/);
+  assert.match(patched, /codexLinuxOpenFileManager\(e\)/);
+  assert.match(patched, /function codexLinuxOpenTargetEnv/);
+  assert.match(patched, /`dolphin`,\[`--select`,t\]/);
+  assert.match(patched, /`nautilus`,\[`--select`,t\]/);
+  assert.match(patched, /n\.shell\.openPath\(t\)/);
+});
+
+test("upgrades the older Linux file manager patch to reveal files when possible", () => {
+  const oldLinuxFileManager =
+    ",linux:{label:`File Manager`,icon:`apps/file-explorer.png`,detect:()=>`linux-file-manager`,args:e=>[e],open:async({path:e})=>{let __codexOpenTarget=e;let __codexError=await n.shell.openPath(__codexOpenTarget);if(__codexError)throw Error(__codexError)}}";
+  const source = `${mainBundlePrefix}${fileManagerBundle.replace("}});", `}${oldLinuxFileManager}});`)}`;
+
+  const patched = applyPatchTwice(applyLinuxFileManagerPatch, source);
+
+  assert.match(patched, /codexLinuxOpenFileManager\(e\)/);
+  assert.doesNotMatch(patched, /__codexOpenTarget/);
+});
+
+test("adds Linux file manager support when provider strings contain call endings", () => {
+  const source = `${mainBundlePrefix}${fileManagerBundle.replace(
+    "kind:`fileManager`,",
+    "kind:`fileManager`,note:`});`,",
+  )}`;
+
+  const patched = applyPatchTwice(applyLinuxFileManagerPatch, source);
+
+  assert.match(patched, /note:`}\);`/);
+  assert.match(patched, /linux:\{label:`File Manager`/);
+});
+
+test("Linux file manager reveals files through an installed reveal-capable manager", async () => {
+  await withTempDir(async (tmp) => {
+    const binDir = path.join(tmp, "bin");
+    const dolphin = makeExecutable(binDir, "dolphin");
+    const file = path.join(tmp, "project", "src", "main.rs");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "fn main() {}\n");
+    const spawnRecorder = createSpawnRecorder();
+    const source = `${mainBundlePrefix}function jl(e){return e}function il(e){return [e]}${fileManagerBundle}`;
+
+    const fileManager = evaluateLinuxFileManager(source, { PATH: binDir }, spawnRecorder);
+    await fileManager.open({ path: file });
+
+    assert.deepEqual(spawnRecorder.calls, [{ command: dolphin, args: ["--select", file], cwd: null }]);
+  });
+});
+
+test("Linux file manager falls back to an installed directory opener", async () => {
+  await withTempDir(async (tmp) => {
+    const binDir = path.join(tmp, "bin");
+    const xdgOpen = makeExecutable(binDir, "xdg-open");
+    const dir = path.join(tmp, "project");
+    fs.mkdirSync(dir, { recursive: true });
+    const spawnRecorder = createSpawnRecorder();
+    const source = `${mainBundlePrefix}function jl(e){return e}function il(e){return [e]}${fileManagerBundle}`;
+
+    const fileManager = evaluateLinuxFileManager(source, { PATH: binDir }, spawnRecorder);
+    await fileManager.open({ path: dir });
+
+    assert.deepEqual(spawnRecorder.calls, [{ command: xdgOpen, args: [dir], cwd: null }]);
+  });
+});
+
+test("adds Linux terminal open-target support", async () => {
+  await withTempDir(async (tmp) => {
+    const binDir = path.join(tmp, "bin");
+    const terminalCommand = makeExecutable(binDir, "gnome-terminal");
+    const file = path.join(tmp, "project", "src", "main.rs");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "fn main() {}\n");
+    const spawnRecorder = createSpawnRecorder();
+    const source = `${mainBundlePrefixWithChildProcess}${terminalOpenTargetBundle}`;
+
+    const terminal = evaluateLinuxTerminal(source, { HOME: tmp, PATH: binDir }, spawnRecorder);
+
+    assert.equal(terminal.label, "Terminal");
+    assert.equal(terminal.kind, "terminal");
+    assert.equal(terminal.detect(), terminalCommand);
+    assert.deepEqual(terminal.args(file), ["--working-directory", path.dirname(file)]);
+
+    await terminal.open({ command: terminalCommand, path: file });
+    assert.deepEqual(spawnRecorder.calls, [
+      { command: terminalCommand, args: ["--working-directory", path.dirname(file)], cwd: path.dirname(file) },
+    ]);
+  });
+});
+
+test("Linux terminal open-target prefers xdg-terminal-exec when available", () => {
+  withTempDir((tmp) => {
+    const binDir = path.join(tmp, "bin");
+    const xdgTerminal = makeExecutable(binDir, "xdg-terminal-exec");
+    const projectDir = path.join(tmp, "project");
+    fs.mkdirSync(projectDir, { recursive: true });
+    const spawnRecorder = createSpawnRecorder();
+    const source = `${mainBundlePrefixWithChildProcess}${terminalOpenTargetBundle}`;
+
+    const terminal = evaluateLinuxTerminal(source, { HOME: tmp, PATH: binDir }, spawnRecorder);
+
+    assert.equal(terminal.detect(), xdgTerminal);
+    assert.deepEqual(terminal.args(projectDir), []);
+  });
+});
+
+test("Linux terminal open-target uses terminal-specific cwd arguments", () => {
+  withTempDir((tmp) => {
+    const binDir = path.join(tmp, "bin");
+    const konsole = makeExecutable(binDir, "konsole");
+    const projectDir = path.join(tmp, "project");
+    fs.mkdirSync(projectDir, { recursive: true });
+    const spawnRecorder = createSpawnRecorder();
+    const source = `${mainBundlePrefixWithChildProcess}${terminalOpenTargetBundle}`;
+
+    const terminal = evaluateLinuxTerminal(source, { HOME: tmp, PATH: binDir }, spawnRecorder);
+
+    assert.equal(terminal.detect(), konsole);
+    assert.deepEqual(terminal.args(projectDir), ["--workdir", projectDir]);
+  });
+});
+
+test("adds Linux IDE open-target support to known upstream editor factories", () => {
+  const source = `${mainBundlePrefixWithChildProcess}${ideOpenTargetsBundle}`;
+
+  const patched = applyPatchTwice(applyLinuxIdeOpenTargetPatch, source);
+
+  assert.match(patched, /function codexLinuxIdeCommand/);
+  assert.match(patched, /cursor/);
+  assert.match(patched, /code-insiders/);
+  assert.match(patched, /codium/);
+  assert.match(patched, /linux:codexLinuxIdePlatform\(e,t,n,s,ah\)/);
+  assert.match(patched, /linux:codexLinuxJetBrainsIdePlatform\(e,t,n,mg\)/);
+  assert.match(patched, /linux:\{label:`Zed`,icon:`apps\/zed\.png`,kind:`editor`,detect:\(\)=>codexLinuxFindExecutable\(`zed`\),args:hg\}/);
+  assert.doesNotMatch(patched, /codexLinuxDiscoveredIdeTargets/);
+});
+
+test("Linux known IDE targets detect installed commands without desktop scanning", () => {
+  withTempDir((tmp) => {
+    const binDir = path.join(tmp, "bin");
+    const code = makeExecutable(binDir, "code");
+    const idea = makeExecutable(binDir, "idea");
+    const source = `${mainBundlePrefixWithChildProcess}${ideOpenTargetsBundle}`;
+
+    const targets = evaluateLinuxIdeTargets(source, { HOME: tmp, PATH: binDir });
+
+    assert.equal(targets.find((target) => target.id === "vscode")?.platforms.linux.detect(), code);
+    assert.equal(targets.find((target) => target.id === "intellij")?.platforms.linux.detect(), idea);
+    assert.equal(targets.some((target) => target.id.startsWith("linux-desktop-")), false);
+  });
 });
 
 test("adds the Linux quit guard when electron/path/fs requires are split across statements", () => {

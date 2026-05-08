@@ -3,62 +3,12 @@
 const {
   TRAY_GUARD_LOOKAHEAD,
   escapeRegExp,
-  findCallBlock,
   findMatchingBrace,
   inferModuleAlias,
-  requireName,
 } = require("./shared.js");
 
 // Main-process patches adapt Electron shell behavior: windows, tray, menu,
-// single-instance handling, file manager integration, and packaged runtime glue.
-function applyLinuxFileManagerPatch(currentSource) {
-  const block = findCallBlock(currentSource, "id:`fileManager`");
-  if (block == null) {
-    console.warn("Failed to apply Linux File Manager Patch");
-    return currentSource;
-  }
-
-  if (block.text.includes("linux:{")) {
-    return currentSource;
-  }
-
-  const electronVar = requireName(currentSource, "electron");
-  const fsVar = requireName(currentSource, "node:fs");
-  const pathVar = requireName(currentSource, "node:path");
-  if (electronVar == null || fsVar == null || pathVar == null) {
-    console.warn("Failed to apply Linux File Manager Patch");
-    return currentSource;
-  }
-
-  const insertionPoint = block.text.lastIndexOf("}});");
-  if (insertionPoint === -1) {
-    console.warn("Failed to apply Linux File Manager Patch");
-    return currentSource;
-  }
-
-  const linuxFileManager =
-    `,linux:{label:\`File Manager\`,icon:\`apps/file-explorer.png\`,detect:()=>\`linux-file-manager\`,args:e=>[e],open:async({path:e})=>{let __codexResolved=e;for(;;){if((0,${fsVar}.existsSync)(__codexResolved))break;let __codexParent=(0,${pathVar}.dirname)(__codexResolved);if(__codexParent===__codexResolved){__codexResolved=null;break}__codexResolved=__codexParent}let __codexOpenTarget=__codexResolved??e;if((0,${fsVar}.existsSync)(__codexOpenTarget)&&(0,${fsVar}.statSync)(__codexOpenTarget).isFile())__codexOpenTarget=(0,${pathVar}.dirname)(__codexOpenTarget);let __codexError=await ${electronVar}.shell.openPath(__codexOpenTarget);if(__codexError)throw Error(__codexError)}}`;
-
-  const patchedBlock =
-    block.text.slice(0, insertionPoint + 1) +
-    linuxFileManager +
-    block.text.slice(insertionPoint + 1);
-  const patchedSource =
-    currentSource.slice(0, block.start) + patchedBlock + currentSource.slice(block.end);
-
-  const patchedBlockCheck = patchedSource.slice(block.start, block.start + patchedBlock.length);
-  if (
-    !patchedBlockCheck.includes("linux:{label:`File Manager`") ||
-    !patchedBlockCheck.includes("detect:()=>`linux-file-manager`") ||
-    !patchedBlockCheck.includes(`${electronVar}.shell.openPath(__codexOpenTarget)`)
-  ) {
-    console.warn("Failed to apply Linux File Manager Patch");
-    return currentSource;
-  }
-
-  return patchedSource;
-}
-
+// single-instance handling, and packaged runtime glue.
 function applyLinuxWindowOptionsPatch(currentSource, iconAsset) {
   if (iconAsset == null) {
     return currentSource;
@@ -523,7 +473,6 @@ function applyLinuxGitOriginsSourceFallbackPatch(currentSource) {
 
 module.exports = {
   applyBrowserUseNodeReplApprovalPatch,
-  applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxMenuPatch,
   applyLinuxOpaqueBackgroundPatch,

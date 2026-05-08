@@ -35,7 +35,6 @@ const {
 } = require("./patches/launch-actions.js");
 const {
   applyBrowserUseNodeReplApprovalPatch,
-  applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxMenuPatch,
   applyLinuxOpaqueBackgroundPatch,
@@ -45,6 +44,11 @@ const {
   applyLinuxTrayPatch,
   applyLinuxWindowOptionsPatch,
 } = require("./patches/main-process.js");
+const {
+  applyLinuxFileManagerPatch,
+  applyLinuxIdeOpenTargetPatch,
+  applyLinuxTerminalOpenTargetPatch,
+} = require("./patches/open-targets.js");
 const {
   patchPackageJson,
   resolveDesktopName,
@@ -116,6 +120,7 @@ module.exports = {
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxHotkeyWindowPrewarmPatch,
+  applyLinuxIdeOpenTargetPatch,
   applyLinuxKeybindOverridesRuntimePatch,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,
@@ -125,6 +130,7 @@ module.exports = {
   applyLinuxSetIconPatch,
   applyLinuxSettingsPersistencePatch,
   applyLinuxSingleInstancePatch,
+  applyLinuxTerminalOpenTargetPatch,
   applyLinuxTrayCloseSettingPatch,
   applyLinuxTrayPatch,
   applyLinuxWindowOptionsPatch,

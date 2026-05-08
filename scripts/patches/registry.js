@@ -18,7 +18,6 @@ const {
 } = require("./shared.js");
 const {
   applyBrowserUseNodeReplApprovalPatch,
-  applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxMenuPatch,
   applyLinuxOpaqueBackgroundPatch,
@@ -28,6 +27,11 @@ const {
   applyLinuxTrayPatch,
   applyLinuxWindowOptionsPatch,
 } = require("./main-process.js");
+const {
+  applyLinuxFileManagerPatch,
+  applyLinuxIdeOpenTargetPatch,
+  applyLinuxTerminalOpenTargetPatch,
+} = require("./open-targets.js");
 const {
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseInstallFlowPatch,
@@ -91,6 +95,16 @@ const MAIN_BUNDLE_PATCHES = [
     name: "linux-file-manager",
     ciPolicy: REQUIRED_UPSTREAM,
     apply: (source) => applyLinuxFileManagerPatch(source),
+  },
+  {
+    name: "linux-terminal-open-target",
+    ciPolicy: OPTIONAL,
+    apply: (source) => applyLinuxTerminalOpenTargetPatch(source),
+  },
+  {
+    name: "linux-known-ide-open-targets",
+    ciPolicy: OPTIONAL,
+    apply: (source) => applyLinuxIdeOpenTargetPatch(source),
   },
   {
     name: "linux-tray",

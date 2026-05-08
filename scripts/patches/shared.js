@@ -155,6 +155,80 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function findBalancedBlock(source, openBraceIndex) {
+  if (openBraceIndex < 0 || source[openBraceIndex] !== "{") {
+    return null;
+  }
+
+  let depth = 0;
+  const stack = [{ type: "code" }];
+  for (let index = openBraceIndex; index < source.length; index += 1) {
+    const char = source[index];
+    const top = stack[stack.length - 1];
+
+    if (top.type === "string") {
+      if (top.escaped) {
+        top.escaped = false;
+      } else if (char === "\\") {
+        top.escaped = true;
+      } else if (char === top.quote) {
+        stack.pop();
+      }
+      continue;
+    }
+
+    if (top.type === "template") {
+      if (top.escaped) {
+        top.escaped = false;
+      } else if (char === "\\") {
+        top.escaped = true;
+      } else if (char === "`") {
+        stack.pop();
+      } else if (char === "$" && source[index + 1] === "{") {
+        stack.push({ type: "templateExpression", depth: 1 });
+        index += 1;
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      stack.push({ type: "string", quote: char, escaped: false });
+      continue;
+    }
+    if (char === "`") {
+      stack.push({ type: "template", escaped: false });
+      continue;
+    }
+
+    if (top.type === "templateExpression") {
+      if (char === "{") {
+        top.depth += 1;
+      } else if (char === "}") {
+        top.depth -= 1;
+        if (top.depth === 0) {
+          stack.pop();
+        }
+      }
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          start: openBraceIndex,
+          end: index + 1,
+          text: source.slice(openBraceIndex, index + 1),
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 function findCallBlock(source, marker) {
   const markerStart = source.indexOf(marker);
   if (markerStart === -1) {
@@ -166,15 +240,18 @@ function findCallBlock(source, marker) {
     source.lastIndexOf("let ", markerStart),
     source.lastIndexOf("const ", markerStart),
   );
-  const blockEnd = source.indexOf("});", markerStart);
-  if (blockStart === -1 || blockEnd === -1) {
+  const objectStart = source.lastIndexOf("{", markerStart);
+  const objectBlock = findBalancedBlock(source, objectStart);
+  if (blockStart === -1 || objectBlock == null) {
     return null;
   }
+  const callEndMatch = source.slice(objectBlock.end).match(/^\s*\);/u);
+  const blockEnd = callEndMatch == null ? objectBlock.end : objectBlock.end + callEndMatch[0].length;
 
   return {
     start: blockStart,
-    end: blockEnd + "});".length,
-    text: source.slice(blockStart, blockEnd + "});".length),
+    end: blockEnd,
+    text: source.slice(blockStart, blockEnd),
   };
 }
 
@@ -269,6 +346,7 @@ module.exports = {
   HANDLER_PREFIX_LOOKBACK,
   TRAY_GUARD_LOOKAHEAD,
   escapeRegExp,
+  findBalancedBlock,
   findCallBlock,
   findDisposableVar,
   findIconAsset,
