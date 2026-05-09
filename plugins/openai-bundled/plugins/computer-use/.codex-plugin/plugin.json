@@ -1,6 +1,6 @@
 {
   "name": "computer-use",
-  "version": "0.1.2-linux-alpha1",
+  "version": "0.1.2-linux-alpha2",
   "description": "Control desktop apps on Linux from Codex through Computer Use.",
   "author": {
     "name": "avifenesh"

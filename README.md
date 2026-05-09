@@ -27,7 +27,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Linux tray + warm-start handoff | ✅ always | Single-instance lock, second-instance window focus |
 | GUI install prompts (`kdialog` / `zenity`) | ✅ if installed | Falls back to interactive terminal prompt |
 | Linux browser annotations | ✅ always | Stored-anchor screenshots, isolated marker rendering |
-| Linux Computer Use | ⚠️ opt-in | Linux Computer Use backend with screen capture, accessibility, window targeting, and input synthesis. The MCP server registers by default; the in-app UI surface is enabled at your discretion — see "Enabling Computer Use UI" below. Validated on Ubuntu/GNOME and KDE Plasma/KWin. |
+| Linux Computer Use | ⚠️ opt-in | Linux Computer Use backend with screen capture, accessibility, window targeting, and input synthesis. The MCP server registers by default; the in-app UI surface is enabled at your discretion — see "Enabling Computer Use UI" below. Validated on Ubuntu/GNOME, KDE Plasma/KWin, Hyprland, and i3. |
 | Server-gated features (e.g. `gpt-5.5`) | 🟡 server-side | OpenAI rolls per-account, not project-controlled. Building a fresh package does not unlock these. |
 
 ## Before you install
@@ -84,7 +84,7 @@ Linux Computer Use is an **opt-in** plugin that lets Codex inspect and control d
 
 - **App listing & accessibility tree** — via AT-SPI bus (`org.a11y.Bus`)
 - **Screenshot capture** — primary path through GNOME Shell DBus, fallback through XDG Desktop Portal (`org.freedesktop.portal.Screenshot`)
-- **Window listing & focusing** — via the Codex GNOME Shell extension, GNOME Shell introspection, KWin/Plasma DBus scripting, or Hyprland `hyprctl`
+- **Window listing & focusing** — via the Codex GNOME Shell extension, GNOME Shell introspection, KWin/Plasma DBus scripting, Hyprland `hyprctl`, or i3 `i3-msg`
 - **Input synthesis** — keys, text, click, scroll, drag — through `ydotool` with `ydotoold` daemon
 
 ### Runtime dependencies
@@ -114,7 +114,7 @@ sudo usermod -a -G input "$USER"
 
 On Ubuntu 24.04, the `ydotoold` package may install `/usr/bin/ydotoold` without a systemd unit. In that case, create or install a `ydotoold.service` unit before running `systemctl enable --now ydotoold`.
 
-A working XDG Desktop Portal implementation is needed if you are not on GNOME — `xdg-desktop-portal-kde` for KDE Plasma, `xdg-desktop-portal-wlr` for sway / Hyprland. GNOME ships a working portal by default.
+A working XDG Desktop Portal implementation is needed if you are not on GNOME — `xdg-desktop-portal-kde` for KDE Plasma, `xdg-desktop-portal-wlr` for sway / Hyprland, or your distro's preferred portal backend for i3. GNOME ships a working portal by default.
 
 ### Verifying readiness
 
@@ -122,7 +122,7 @@ The plugin exposes a `doctor` tool. Once Computer Use is visible in the Codex UI
 
 > Check whether Linux Computer Use is ready
 
-The response is a structured report covering AT-SPI bus availability, GNOME Shell version, KWin/Plasma windowing support, Desktop Portal interfaces, `ydotool` / `ydotoold` / `/dev/uinput`, and a top-level readiness verdict. You can also invoke the backend binary directly:
+The response is a structured report covering AT-SPI bus availability, GNOME Shell version, KWin/Plasma, Hyprland, and i3 windowing support, Desktop Portal interfaces, `ydotool` / `ydotoold` / `/dev/uinput`, and a top-level readiness verdict. You can also invoke the backend binary directly:
 
 ```bash
 ./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux doctor
