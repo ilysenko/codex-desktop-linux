@@ -440,6 +440,7 @@ test_launcher_template_sanity() {
     assert_contains "$REPO_DIR/launcher/start.sh.template" "owned_webview_server_pid"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "discover_webview_server_pid"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "Adopted existing webview server"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "reconcile_runtime_state"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "detect_warm_start"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "send_warm_start_launch_action"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_DESKTOP_LAUNCH_ACTION_SOCKET"
@@ -463,6 +464,7 @@ runtime_body = source.split("trap cleanup_launcher EXIT", 1)[1].split("launch_el
 stop_body = source.split("stop_owned_webview_server() {", 1)[1].split("owned_webview_server_pid() {", 1)[0]
 adopt_body = source.split("adopt_existing_webview_server() {", 1)[1].split("ensure_webview_server() {", 1)[0]
 ensure_body = source.split("ensure_webview_server() {", 1)[1].split("wait_for_webview_server", 1)[0]
+reconcile_body = source.split("reconcile_runtime_state() {", 1)[1].split("set_electron_defaults() {", 1)[0]
 if 'RUNNING_APP_PID="$(find_running_app_pid)"' not in detect_body:
     raise SystemExit("detect_warm_start must record a pid-file running app even when warm start is disabled")
 if '[ -S "$LAUNCH_ACTION_SOCKET" ] && RUNNING_APP_PID="$(discover_running_app_pid)"' not in detect_body:
@@ -503,6 +505,14 @@ if "stop_stale_webview_server" not in ensure_body:
     raise SystemExit("ensure_webview_server must clear stale deleted webview servers before treating the port as foreign")
 if "Keeping the live app untouched" not in ensure_body:
     raise SystemExit("ensure_webview_server must not stop a live app server when validation fails")
+if 'if live_app_pid="$(find_running_app_pid)" || { [ -S "$LAUNCH_ACTION_SOCKET" ] && live_app_pid="$(discover_running_app_pid)"; }; then' not in reconcile_body:
+    raise SystemExit("reconcile_runtime_state must preserve runtime markers when a live app still exists")
+if 'rm -f "$LAUNCH_ACTION_SOCKET"' not in reconcile_body:
+    raise SystemExit("reconcile_runtime_state must clear a stale launch-action socket when no live app exists")
+if 'clear_stale_pid_file' not in reconcile_body:
+    raise SystemExit("reconcile_runtime_state must still clear stale app.pid markers")
+if 'if [ -z "$webview_pid" ] || { ! pid_is_webview_server "$webview_pid" && ! pid_is_stale_webview_server "$webview_pid"; }; then' not in reconcile_body:
+    raise SystemExit("reconcile_runtime_state must clear stale launcher webview ownership markers without touching valid orphaned servers")
 PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" "warm_start_ipc_sent"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "launcher_phase"
@@ -900,6 +910,92 @@ NODE
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'if(process.platform===`linux`)return;e.once(`menu-will-show`' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())&&this.setLinuxTrayContextMenu?.()' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&oe' '1'
+}
+
+test_linux_explicit_quit_patch_smoke() {
+    info "Checking Linux explicit quit patch behavior"
+    local workspace="$TMP_DIR/explicit-quit-patch"
+    local extracted="$workspace/extracted"
+    local output_log="$workspace/output.log"
+    local bundle_body
+
+    mkdir -p "$workspace"
+    bundle_body="$(cat <<'JS'
+let n=require(`electron`),i=require(`node:path`),a=require(`node:fs`);
+var pb=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{n.app.quit()}}]}};
+function qB(r,o){if(o.type===`quit-app`){n.app.quit();return}return o}
+JS
+)"
+    make_fake_extracted_asar "$extracted" "$bundle_body"
+
+    node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
+    assert_contains "$extracted/.vite/build/main-test.js" '{label:rB(this.appName),click:()=>{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),n.app.quit()}}'
+    assert_contains "$extracted/.vite/build/main-test.js" 'if(o.type===`quit-app`){typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),n.app.quit();return}'
+    assert_not_contains "$output_log" 'WARN: Could not find tray quit menu handler'
+    assert_not_contains "$output_log" 'WARN: Could not find quit-app IPC handler'
+
+    node - "$extracted/.vite/build/main-test.js" <<'NODE'
+const fs = require("fs");
+
+const source = fs.readFileSync(process.argv[2], "utf8");
+const traySnippet = source.match(/\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/)?.[0];
+const quitAppSnippet = source.match(/if\(o\.type===`quit-app`\)\{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\);return\}/)?.[0];
+if (!traySnippet || !quitAppSnippet) {
+  throw new Error("Could not extract explicit quit snippets");
+}
+
+function runTrayQuit({ withHelper = true } = {}) {
+  const state = { markCalls: 0, quitCalls: 0 };
+  const app = { quit() { state.quitCalls += 1; } };
+  const mark = withHelper ? () => { state.markCalls += 1; } : undefined;
+  const factory = new Function(
+    "n",
+    "rB",
+    "codexLinuxMarkQuitInProgress",
+    `return (${traySnippet}).click;`,
+  );
+  const click = factory({ app }, () => "Quit", mark);
+  click();
+  return state;
+}
+
+function runQuitApp({ withHelper = true } = {}) {
+  const state = { markCalls: 0, quitCalls: 0 };
+  const app = { quit() { state.quitCalls += 1; } };
+  const mark = withHelper ? () => { state.markCalls += 1; } : undefined;
+  const handler = new Function(
+    "n",
+    "codexLinuxMarkQuitInProgress",
+    "o",
+    `${quitAppSnippet};return null;`,
+  );
+  handler({ app }, mark, { type: "quit-app" });
+  return state;
+}
+
+let state = runTrayQuit();
+if (state.markCalls !== 1 || state.quitCalls !== 1) {
+  throw new Error("tray quit should mark quit-in-progress before quitting");
+}
+
+state = runQuitApp();
+if (state.markCalls !== 1 || state.quitCalls !== 1) {
+  throw new Error("quit-app IPC should mark quit-in-progress before quitting");
+}
+
+state = runTrayQuit({ withHelper: false });
+if (state.markCalls !== 0 || state.quitCalls !== 1) {
+  throw new Error("tray quit should still quit when the helper is unavailable");
+}
+
+state = runQuitApp({ withHelper: false });
+if (state.markCalls !== 0 || state.quitCalls !== 1) {
+  throw new Error("quit-app IPC should still quit when the helper is unavailable");
+}
+NODE
+
+    node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress()' '2'
 }
 
 test_keybinds_settings_tab_patch_smoke() {
@@ -1766,6 +1862,7 @@ main() {
     test_keybinds_settings_tab_patch_smoke
     test_keybinds_settings_patch_warns_on_bundle_shape_miss
     test_linux_tray_patch_smoke
+    test_linux_explicit_quit_patch_smoke
     test_browser_annotation_screenshot_patch_smoke
     test_linux_single_instance_patch_smoke
     test_linux_computer_use_gate_patch_smoke

@@ -1082,6 +1082,31 @@ clear_stale_pid_file() {
     fi
 }
 
+reconcile_runtime_state() {
+    local live_app_pid=""
+    local webview_pid=""
+
+    if live_app_pid="$(find_running_app_pid)" || { [ -S "$LAUNCH_ACTION_SOCKET" ] && live_app_pid="$(discover_running_app_pid)"; }; then
+        echo "$live_app_pid" > "$APP_PID_FILE"
+        return 0
+    fi
+
+    clear_stale_pid_file
+
+    if [ -e "$LAUNCH_ACTION_SOCKET" ]; then
+        rm -f "$LAUNCH_ACTION_SOCKET"
+    fi
+
+    if [ ! -f "$WEBVIEW_PID_FILE" ]; then
+        return 0
+    fi
+
+    webview_pid="$(cat "$WEBVIEW_PID_FILE" 2>/dev/null || true)"
+    if [ -z "$webview_pid" ] || { ! pid_is_webview_server "$webview_pid" && ! pid_is_stale_webview_server "$webview_pid"; }; then
+        rm -f "$WEBVIEW_PID_FILE"
+    fi
+}
+
 set_electron_defaults() {
     ELECTRON_OZONE_PLATFORM=""
     ELECTRON_OZONE_HINT="auto"
@@ -1241,7 +1266,7 @@ configure_side_by_side_app_env
 load_packaged_runtime_helper
 prepend_managed_node_runtime_to_path
 register_url_scheme_handlers
-clear_stale_pid_file
+reconcile_runtime_state
 detect_warm_start
 trap cleanup_launcher EXIT
 

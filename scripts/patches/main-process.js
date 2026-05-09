@@ -398,6 +398,64 @@ function applyLinuxQuitGuardPatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxExplicitTrayQuitPatch(currentSource) {
+  let patchedSource = currentSource;
+
+  const quitMarkerExpression =
+    "typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),";
+
+  const trayQuitNeedle = "{label:rB(this.appName),click:()=>{n.app.quit()}}";
+  const trayQuitPatch =
+    `{label:rB(this.appName),click:()=>{${quitMarkerExpression}n.app.quit()}}`;
+  const trayQuitRegex =
+    /\{label:rB\(([^)]+)\),click:\(\)=>\{([A-Za-z_$][\w$]*)\.app\.quit\(\)\}\}/;
+  if (patchedSource.includes(trayQuitPatch)) {
+    // Already patched.
+  } else if (patchedSource.includes(trayQuitNeedle)) {
+    patchedSource = patchedSource.replace(trayQuitNeedle, trayQuitPatch);
+  } else if (trayQuitRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      trayQuitRegex,
+      (_match, appNameExpr, electronVar) =>
+        `{label:rB(${appNameExpr}),click:()=>{${quitMarkerExpression}${electronVar}.app.quit()}}`,
+    );
+  } else if (
+    patchedSource.includes("getNativeTrayMenuItems(){") &&
+    (patchedSource.includes("label:rB(") || patchedSource.includes("role:`quit`"))
+  ) {
+    console.warn("WARN: Could not find tray quit menu handler — skipping Linux explicit tray quit patch");
+  }
+
+  return patchedSource;
+}
+
+function applyLinuxExplicitIpcQuitPatch(currentSource) {
+  let patchedSource = currentSource;
+
+  const quitMarkerExpression =
+    "typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),";
+
+  const quitAppNeedle = "if(o.type===`quit-app`){n.app.quit();return}";
+  const quitAppPatch = `if(o.type===\`quit-app\`){${quitMarkerExpression}n.app.quit();return}`;
+  const quitAppRegex =
+    /if\(([A-Za-z_$][\w$]*)\.type===`quit-app`\)\{([A-Za-z_$][\w$]*)\.app\.quit\(\);return\}/;
+  if (patchedSource.includes(quitAppPatch)) {
+    // Already patched.
+  } else if (patchedSource.includes(quitAppNeedle)) {
+    patchedSource = patchedSource.replace(quitAppNeedle, quitAppPatch);
+  } else if (quitAppRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      quitAppRegex,
+      (_match, messageVar, electronVar) =>
+        `if(${messageVar}.type===\`quit-app\`){${quitMarkerExpression}${electronVar}.app.quit();return}`,
+    );
+  } else if (patchedSource.includes("type===`quit-app`")) {
+    console.warn("WARN: Could not find quit-app IPC handler — skipping Linux explicit quit-app patch");
+  }
+
+  return patchedSource;
+}
+
 function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   let patchedSource = currentSource;
 
@@ -678,6 +736,8 @@ function applyLinuxGitOriginsSourceFallbackPatch(currentSource) {
 module.exports = {
   applyBrowserUseNodeReplApprovalPatch,
   applyLinuxAvatarOverlayMousePassthroughPatch,
+  applyLinuxExplicitIpcQuitPatch,
+  applyLinuxExplicitTrayQuitPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxMenuPatch,

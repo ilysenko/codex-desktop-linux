@@ -19,6 +19,8 @@ const {
 const {
   applyLinuxAvatarOverlayMousePassthroughPatch,
   applyBrowserUseNodeReplApprovalPatch,
+  applyLinuxExplicitIpcQuitPatch,
+  applyLinuxExplicitTrayQuitPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxMenuPatch,
@@ -67,6 +69,16 @@ const MAIN_BUNDLE_PATCHES = [
     name: "linux-quit-guard",
     ciPolicy: REQUIRED_UPSTREAM,
     apply: (source) => applyLinuxQuitGuardPatch(source),
+  },
+  {
+    name: "linux-explicit-tray-quit",
+    ciPolicy: REQUIRED_UPSTREAM,
+    apply: (source) => applyLinuxExplicitTrayQuitPatch(source),
+  },
+  {
+    name: "linux-explicit-ipc-quit",
+    ciPolicy: REQUIRED_UPSTREAM,
+    apply: (source) => applyLinuxExplicitIpcQuitPatch(source),
   },
   {
     name: "linux-window-options",

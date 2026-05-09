@@ -19,6 +19,8 @@ const {
   applyBrowserUseNodeReplApprovalPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
+  applyLinuxExplicitIpcQuitPatch,
+  applyLinuxExplicitTrayQuitPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxQuitGuardPatch,
@@ -90,6 +92,13 @@ function singleInstanceBundleFixture() {
   return [
     "agentRunId:process.env.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null}});let A=Date.now();await n.app.whenReady();",
     "l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=",
+  ].join("");
+}
+
+function explicitQuitBundleFixture() {
+  return [
+    "var pb=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{n.app.quit()}}]}};",
+    "if(o.type===`quit-app`){n.app.quit();return}",
   ].join("");
 }
 
@@ -207,6 +216,54 @@ test("adds the Linux quit guard when only the Electron require is recognizable",
   assert.match(patched, /codexLinuxMarkQuitInProgress=\(\)=>\{codexLinuxQuitInProgress=!0\}/);
   assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitInProgress===!0/);
   assert.equal((patched.match(/codexLinuxQuitInProgress=!1/g) ?? []).length, 1);
+});
+
+test("marks Linux quit-in-progress for the tray quit path", () => {
+  const source = `${mainBundlePrefix}${explicitQuitBundleFixture()}`;
+  const patched = applyPatchTwice(
+    applyLinuxExplicitTrayQuitPatch,
+    applyLinuxQuitGuardPatch(source),
+  );
+
+  assert.match(
+    patched,
+    /\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/,
+  );
+});
+
+test("marks Linux quit-in-progress for the quit-app IPC path", () => {
+  const source = `${mainBundlePrefix}${explicitQuitBundleFixture()}`;
+  const patched = applyPatchTwice(
+    applyLinuxExplicitIpcQuitPatch,
+    applyLinuxQuitGuardPatch(source),
+  );
+
+  assert.match(
+    patched,
+    /if\(o\.type===`quit-app`\)\{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\);return\}/,
+  );
+});
+
+test("supports explicit tray quit patching when minified aliases drift", () => {
+  const source =
+    "let x=require(`electron`);var q=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{x.app.quit()}}]}};if(m.type===`quit-app`){x.app.quit();return}";
+  const patched = applyPatchTwice(applyLinuxExplicitTrayQuitPatch, source);
+
+  assert.match(
+    patched,
+    /\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),x\.app\.quit\(\)\}\}/,
+  );
+});
+
+test("supports explicit IPC quit patching when minified aliases drift", () => {
+  const source =
+    "let x=require(`electron`);var q=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{x.app.quit()}}]}};if(m.type===`quit-app`){x.app.quit();return}";
+  const patched = applyPatchTwice(applyLinuxExplicitIpcQuitPatch, source);
+
+  assert.match(
+    patched,
+    /if\(m\.type===`quit-app`\)\{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),x\.app\.quit\(\);return\}/,
+  );
 });
 
 test("adds Linux menu hiding next to Windows removeMenu calls", () => {

@@ -36,6 +36,8 @@ const {
 const {
   applyLinuxAvatarOverlayMousePassthroughPatch,
   applyBrowserUseNodeReplApprovalPatch,
+  applyLinuxExplicitIpcQuitPatch,
+  applyLinuxExplicitTrayQuitPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxMenuPatch,
@@ -115,6 +117,8 @@ module.exports = {
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxComputerUseRendererAvailabilityPatch,
+  applyLinuxExplicitIpcQuitPatch,
+  applyLinuxExplicitTrayQuitPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxHotkeyWindowPrewarmPatch,
