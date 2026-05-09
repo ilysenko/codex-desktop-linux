@@ -1134,6 +1134,45 @@ test("missing icon asset skips only icon patches", () => {
   }
 });
 
+test("patchExtractedApp scans apps bundles for Computer Use availability when UI is enabled", () => {
+  withIsolatedHome(() => {
+    process.env[COMPUTER_USE_UI_ENV_VAR] = "1";
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-computer-use-apps-assets-test-"));
+    try {
+      const buildDir = path.join(tempRoot, ".vite", "build");
+      const assetsDir = path.join(tempRoot, "webview", "assets");
+      fs.mkdirSync(buildDir, { recursive: true });
+      fs.mkdirSync(assetsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(buildDir, "main.js"),
+        [
+          mainBundlePrefix,
+          "process.platform===`win32`&&k.removeMenu(),",
+          alreadyOpaqueBackgroundBundle,
+          fileManagerBundle,
+          trayBundleFixture(),
+          singleInstanceBundleFixture(),
+        ].join(""),
+      );
+      fs.writeFileSync(
+        path.join(assetsDir, "apps-current.js"),
+        "function g(e){return e===`macOS`||e===`windows`}" +
+          "function _(e){let t=(0,d.c)(8),{enabled:n,hostId:r,isHostLocal:i}=e,a=n===void 0?!0:n,{isLoading:o,platform:c}=u(),l=s(`1506311413`),f;t[0]===r?f=t[1]:(f={featureName:`computer_use`,hostId:r},t[0]=r,t[1]=f);let p=h(f),m;t[2]===c?m=t[3]:(m=g(c),t[2]=c,t[3]=m);let _=a&&i&&l&&(o||m),v=_&&!o&&p.enabled&&!p.isLoading,y=_&&p.isLoading,b=_&&(o||p.isLoading),x;return x}",
+      );
+      fs.writeFileSync(path.join(tempRoot, "package.json"), JSON.stringify({ name: "codex" }));
+
+      patchExtractedApp(tempRoot);
+
+      assert.match(
+        fs.readFileSync(path.join(assetsDir, "apps-current.js"), "utf8"),
+        /let _=a&&i&&\(c===`linux`\|\|l&&\(o\|\|m\)\),v=_&&!o&&\(c===`linux`\|\|p\.enabled\)&&!p\.isLoading/,
+      );
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 test("patchExtractedApp records a structured patch report", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-test-"));
   try {
