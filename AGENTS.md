@@ -133,6 +133,8 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
   `applyLinuxLaunchActionArgsPatch` + `applyLinuxHotkeyWindowPrewarmPatch` add a Unix-domain-socket launch-action listener (`launch-action.sock` under `$XDG_RUNTIME_DIR/codex-desktop/`). When `start.sh` detects an existing Electron PID, it sends `--new-chat` / `--quick-chat` / `--prompt-chat` / `--hotkey-window` over the socket and exits, so a second launch never spawns a fresh Electron.
 - Linux translucent sidebar default:
   During the same ASAR patch step, Linux defaults `Translucent sidebar` to `false` by applying `opaqueWindows: true` only when the app has no saved explicit value yet. This keeps existing user preferences intact while avoiding the sidebar disappearing bug on first run.
+- Linux pet overlay mouse passthrough:
+  `applyLinuxAvatarOverlayMousePassthroughPatch` keeps the floating pet's transparent-area click-through behavior by preferring `BrowserWindow.setShape()` on Linux. Electron only documents forwarded mouse events for macOS and Windows, so Linux can miss the renderer mousemove that should turn `setIgnoreMouseEvents(true)` back off after pet/workspace changes or when the Codex window is not focused. The Linux patch shapes the overlay input region to the current pet mascot/tray rectangles, expands it to the full overlay while dragging, leaves transparent regions click-through at the window-manager level, and falls back to the main-process pointer sync loop only if `setShape()` is unavailable or fails.
 - Launcher logging:
   The generated launcher logs to:
   `~/.cache/codex-desktop/launcher.log`

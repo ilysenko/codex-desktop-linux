@@ -125,6 +125,160 @@ function applyLinuxSetIconPatch(currentSource, iconAsset) {
   );
 }
 
+function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
+  let patchedSource = currentSource;
+
+  const interactivityNeedle =
+    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1;return}let t=!this.pointerInteractive;if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}refreshCursorAtCurrentMousePosition(e){";
+  const previousInteractivityNeedle =
+    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1,this.codexLinuxStopAvatarPassthroughRecovery();return}let t=!this.pointerInteractive;if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0}),this.codexLinuxStartAvatarPassthroughRecovery();return}this.codexLinuxStopAvatarPassthroughRecovery(),e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}else t&&this.codexLinuxStartAvatarPassthroughRecovery()}codexLinuxStopAvatarPassthroughRecovery(){this.codexLinuxAvatarPassthroughRecoveryTimer!=null&&(clearInterval(this.codexLinuxAvatarPassthroughRecoveryTimer),this.codexLinuxAvatarPassthroughRecoveryTimer=null)}codexLinuxRecoverAvatarPointerInteractivity(){this.pointerInteractive=!0,this.applyPointerInteractivityPolicy()}codexLinuxStartAvatarPassthroughRecovery(){if(process.platform!==`linux`||this.codexLinuxAvatarPassthroughRecoveryTimer!=null)return;this.codexLinuxAvatarPassthroughRecoveryTimer=setInterval(()=>{let e=this.window;if(e==null||e.isDestroyed()||!this.mousePassthroughEnabled){this.codexLinuxStopAvatarPassthroughRecovery();return}let t;try{t=this.codexLinuxIsCursorInAvatarInteractiveRegion(e)}catch{this.codexLinuxRecoverAvatarPointerInteractivity();return}t&&this.codexLinuxRecoverAvatarPointerInteractivity()},80),this.codexLinuxAvatarPassthroughRecoveryTimer.unref?.()}codexLinuxIsCursorInAvatarInteractiveRegion(e){let t=this.layout;if(t==null)return!1;let r=n.screen.getCursorScreenPoint(),i=e.getContentBounds(),a=r.x-i.x,o=r.y-i.y,s=e=>e!=null&&a>=e.left&&a<=e.left+e.width&&o>=e.top&&o<=e.top+e.height;return s(t.mascot)||s(t.tray)}refreshCursorAtCurrentMousePosition(e){";
+  const previousSyncInteractivityNeedle =
+    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1,this.codexLinuxStopAvatarPassthroughRecovery();return}process.platform===`linux`&&(this.codexLinuxStartAvatarPassthroughRecovery(),this.codexLinuxSyncAvatarPointerInteractivity(e));let t=!this.pointerInteractive;this.dragState!=null&&(t=!1);if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}codexLinuxStopAvatarPassthroughRecovery(){this.codexLinuxAvatarPassthroughRecoveryTimer!=null&&(clearInterval(this.codexLinuxAvatarPassthroughRecoveryTimer),this.codexLinuxAvatarPassthroughRecoveryTimer=null)}codexLinuxStartAvatarPassthroughRecovery(){if(process.platform!==`linux`||this.codexLinuxAvatarPassthroughRecoveryTimer!=null)return;this.codexLinuxAvatarPassthroughRecoveryTimer=setInterval(()=>{let e=this.window;if(e==null||e.isDestroyed()||!e.isVisible()){this.codexLinuxStopAvatarPassthroughRecovery();return}this.codexLinuxSyncAvatarPointerInteractivity(e)&&this.applyPointerInteractivityPolicy()},32),this.codexLinuxAvatarPassthroughRecoveryTimer.unref?.()}codexLinuxSyncAvatarPointerInteractivity(e){if(process.platform!==`linux`||e==null||e.isDestroyed())return!1;if(this.dragState!=null){if(this.pointerInteractive)return!1;return this.pointerInteractive=!0,!0}let t;try{t=this.codexLinuxIsCursorInAvatarInteractiveRegion(e)}catch{t=!0}return this.pointerInteractive===t?!1:(this.pointerInteractive=t,!0)}codexLinuxIsCursorInAvatarInteractiveRegion(e){let t=this.layout;if(t==null)return!1;let r=n.screen.getCursorScreenPoint(),i=e.getContentBounds(),a=r.x-i.x,o=r.y-i.y;if(a<0||o<0||a>i.width||o>i.height)return!1;let s=e=>e!=null&&a>=e.left&&a<=e.left+e.width&&o>=e.top&&o<=e.top+e.height;return s(t.mascot)||s(t.tray)}refreshCursorAtCurrentMousePosition(e){";
+  const interactivityPatch =
+    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1,this.codexLinuxStopAvatarPassthroughRecovery();return}if(process.platform===`linux`&&typeof e.setShape==`function`){this.codexLinuxStopAvatarPassthroughRecovery(),this.mousePassthroughEnabled&&(this.mousePassthroughEnabled=!1,e.setIgnoreMouseEvents(!1));if(this.codexLinuxApplyAvatarInputShape(e))return}process.platform===`linux`&&(this.codexLinuxStartAvatarPassthroughRecovery(),this.codexLinuxSyncAvatarPointerInteractivity(e));let t=!this.pointerInteractive;this.dragState!=null&&(t=!1);if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}codexLinuxStopAvatarPassthroughRecovery(){this.codexLinuxAvatarPassthroughRecoveryTimer!=null&&(clearInterval(this.codexLinuxAvatarPassthroughRecoveryTimer),this.codexLinuxAvatarPassthroughRecoveryTimer=null)}codexLinuxBuildAvatarInputShape(e){let t=this.layout;if(t==null)return null;if(this.dragState!=null){let t=e.getContentBounds();return[{x:0,y:0,width:t.width,height:t.height}]}let r=e.getContentBounds(),i=e=>{if(e==null)return null;let t=Math.max(0,e.left),n=Math.max(0,e.top),i=Math.min(r.width,e.left+e.width)-t,a=Math.min(r.height,e.top+e.height)-n;return i<=0||a<=0?null:{x:t,y:n,width:i,height:a}};return[i(t.mascot),i(t.tray)].filter(Boolean)}codexLinuxApplyAvatarInputShape(e){if(process.platform!==`linux`||e==null||e.isDestroyed()||typeof e.setShape!=`function`)return!1;let t=this.codexLinuxBuildAvatarInputShape(e);if(t==null)return!1;let n=JSON.stringify(t);if(this.codexLinuxAvatarInputShapeKey===n)return!0;try{e.setShape(t),this.codexLinuxAvatarInputShapeKey=n;return!0}catch{this.codexLinuxAvatarInputShapeKey=null;return!1}}codexLinuxStartAvatarPassthroughRecovery(){if(process.platform!==`linux`||this.codexLinuxAvatarPassthroughRecoveryTimer!=null)return;this.codexLinuxAvatarPassthroughRecoveryTimer=setInterval(()=>{let e=this.window;if(e==null||e.isDestroyed()||!e.isVisible()){this.codexLinuxStopAvatarPassthroughRecovery();return}this.codexLinuxSyncAvatarPointerInteractivity(e)&&this.applyPointerInteractivityPolicy()},32),this.codexLinuxAvatarPassthroughRecoveryTimer.unref?.()}codexLinuxSyncAvatarPointerInteractivity(e){if(process.platform!==`linux`||e==null||e.isDestroyed())return!1;if(this.dragState!=null){if(this.pointerInteractive)return!1;return this.pointerInteractive=!0,!0}let t;try{t=this.codexLinuxIsCursorInAvatarInteractiveRegion(e)}catch{t=!0}return this.pointerInteractive===t?!1:(this.pointerInteractive=t,!0)}codexLinuxIsCursorInAvatarInteractiveRegion(e){let t=this.layout;if(t==null)return!1;let r=n.screen.getCursorScreenPoint(),i=e.getContentBounds(),a=r.x-i.x,o=r.y-i.y;if(a<0||o<0||a>i.width||o>i.height)return!1;let s=e=>e!=null&&a>=e.left&&a<=e.left+e.width&&o>=e.top&&o<=e.top+e.height;return s(t.mascot)||s(t.tray)}refreshCursorAtCurrentMousePosition(e){";
+
+  if (!patchedSource.includes("codexLinuxApplyAvatarInputShape")) {
+    if (patchedSource.includes(interactivityNeedle)) {
+      patchedSource = patchedSource.replace(interactivityNeedle, interactivityPatch);
+    } else if (patchedSource.includes(previousInteractivityNeedle)) {
+      patchedSource = patchedSource.replace(previousInteractivityNeedle, interactivityPatch);
+    } else if (patchedSource.includes(previousSyncInteractivityNeedle)) {
+      patchedSource = patchedSource.replace(previousSyncInteractivityNeedle, interactivityPatch);
+    } else if (
+      patchedSource.includes("avatar-overlay") &&
+      patchedSource.includes("applyPointerInteractivityPolicy(){let e=this.window")
+    ) {
+      console.warn(
+        "WARN: Could not find avatar overlay mouse passthrough policy — skipping Linux avatar overlay passthrough recovery patch",
+      );
+      return currentSource;
+    }
+  }
+
+  const previousStartDragPatch =
+    "startDrag(e,{pointerWindowX:t,pointerWindowY:r}){let i=this.window;if(i==null||i.isDestroyed()||i.webContents.id!==e)return;this.pointerInteractive=!0,this.applyPointerInteractivityPolicy(),this.cancelMomentum();";
+  const originalStartDragPrefix =
+    "startDrag(e,{pointerWindowX:t,pointerWindowY:r}){let i=this.window;if(i==null||i.isDestroyed()||i.webContents.id!==e)return;this.cancelMomentum();";
+  const startDragNeedle =
+    "displayBounds:n.screen.getDisplayNearestPoint(n.screen.getCursorScreenPoint()).bounds}}moveDrag(e){";
+  const startDragPatch =
+    "displayBounds:n.screen.getDisplayNearestPoint(n.screen.getCursorScreenPoint()).bounds},process.platform===`linux`&&(this.pointerInteractive=!0,this.applyPointerInteractivityPolicy())}moveDrag(e){";
+  const previousStartDragAfterStatePatch =
+    "displayBounds:n.screen.getDisplayNearestPoint(n.screen.getCursorScreenPoint()).bounds},this.pointerInteractive=!0,this.applyPointerInteractivityPolicy()}moveDrag(e){";
+  if (patchedSource.includes(previousStartDragPatch)) {
+    patchedSource = patchedSource.replace(previousStartDragPatch, originalStartDragPrefix);
+  }
+  if (patchedSource.includes(previousStartDragAfterStatePatch)) {
+    patchedSource = patchedSource.replace(previousStartDragAfterStatePatch, startDragPatch);
+  } else if (patchedSource.includes(startDragNeedle)) {
+    patchedSource = patchedSource.replace(startDragNeedle, startDragPatch);
+  } else if (
+    patchedSource.includes("avatar-overlay") &&
+    !patchedSource.includes(startDragPatch)
+  ) {
+    console.warn(
+      "WARN: Could not find avatar overlay drag start — skipping Linux avatar overlay drag interactivity patch",
+    );
+  }
+
+  const endDragNeedle =
+    "endDrag(e){let t=this.window;t==null||t.isDestroyed()||t.webContents.id!==e||(this.dragState?.hasMoved&&this.moveDragToCurrentCursor(t),this.dragState=null,this.reclampWindowToVisibleDisplay({shouldPersist:!0}))}";
+  const endDragPatch =
+    "endDrag(e){let t=this.window;t==null||t.isDestroyed()||t.webContents.id!==e||(this.dragState?.hasMoved&&this.moveDragToCurrentCursor(t),this.dragState=null,this.reclampWindowToVisibleDisplay({shouldPersist:!0}),process.platform===`linux`&&this.applyPointerInteractivityPolicy())}";
+  const previousEndDragPatch =
+    "endDrag(e){let t=this.window;t==null||t.isDestroyed()||t.webContents.id!==e||(this.dragState?.hasMoved&&this.moveDragToCurrentCursor(t),this.dragState=null,this.reclampWindowToVisibleDisplay({shouldPersist:!0}),this.codexLinuxSyncAvatarPointerInteractivity(t)&&this.applyPointerInteractivityPolicy())}";
+  if (patchedSource.includes(previousEndDragPatch)) {
+    patchedSource = patchedSource.replace(previousEndDragPatch, endDragPatch);
+  } else if (patchedSource.includes(endDragNeedle)) {
+    patchedSource = patchedSource.replace(endDragNeedle, endDragPatch);
+  } else if (
+    patchedSource.includes("avatar-overlay") &&
+    !patchedSource.includes(endDragPatch)
+  ) {
+    console.warn(
+      "WARN: Could not find avatar overlay drag end — skipping Linux avatar overlay drag cleanup patch",
+    );
+  }
+
+  const setElementSizeNeedle =
+    "setElementSize(e,{mascot:t,tray:n}){let r=this.window;r==null||r.isDestroyed()||r.webContents.id!==e||(this.cancelMomentum(),this.anchor={...this.anchor,width:t.width,height:t.height},this.mascotSize=t,this.traySize=n,this.applyLayout(r))}";
+  const setElementSizePatch =
+    "setElementSize(e,{mascot:t,tray:n}){let r=this.window;r==null||r.isDestroyed()||r.webContents.id!==e||(this.cancelMomentum(),this.anchor={...this.anchor,width:t.width,height:t.height},this.mascotSize=t,this.traySize=n,this.applyLayout(r),process.platform===`linux`&&this.applyPointerInteractivityPolicy())}";
+  const previousSetElementSizePatch =
+    "setElementSize(e,{mascot:t,tray:n}){let r=this.window;r==null||r.isDestroyed()||r.webContents.id!==e||(this.cancelMomentum(),this.anchor={...this.anchor,width:t.width,height:t.height},this.mascotSize=t,this.traySize=n,this.applyLayout(r),this.codexLinuxSyncAvatarPointerInteractivity(r)&&this.applyPointerInteractivityPolicy())}";
+  if (patchedSource.includes(previousSetElementSizePatch)) {
+    patchedSource = patchedSource.replace(previousSetElementSizePatch, setElementSizePatch);
+  } else if (patchedSource.includes(setElementSizeNeedle)) {
+    patchedSource = patchedSource.replace(setElementSizeNeedle, setElementSizePatch);
+  } else if (
+    patchedSource.includes("avatar-overlay") &&
+    !patchedSource.includes(setElementSizePatch)
+  ) {
+    console.warn(
+      "WARN: Could not find avatar overlay element size update — skipping Linux avatar overlay layout interactivity patch",
+    );
+  }
+
+  const applyLayoutNeedle =
+    "this.setWindowBounds(e,r.windowBounds),this.sendLayoutToRenderer(e)}getLayout(e){";
+  const applyLayoutPatch =
+    "this.setWindowBounds(e,r.windowBounds),this.sendLayoutToRenderer(e),process.platform===`linux`&&this.applyPointerInteractivityPolicy()}getLayout(e){";
+  const previousApplyLayoutPatch =
+    "this.setWindowBounds(e,r.windowBounds),this.sendLayoutToRenderer(e),this.codexLinuxSyncAvatarPointerInteractivity(e)&&this.applyPointerInteractivityPolicy()}getLayout(e){";
+  if (patchedSource.includes(previousApplyLayoutPatch)) {
+    patchedSource = patchedSource.replace(previousApplyLayoutPatch, applyLayoutPatch);
+  } else if (patchedSource.includes(applyLayoutNeedle)) {
+    patchedSource = patchedSource.replace(applyLayoutNeedle, applyLayoutPatch);
+  } else if (
+    patchedSource.includes("avatar-overlay") &&
+    !patchedSource.includes(applyLayoutPatch)
+  ) {
+    console.warn(
+      "WARN: Could not find avatar overlay layout application — skipping Linux avatar overlay layout sync patch",
+    );
+  }
+
+  const showWindowNeedle =
+    "e.moveTop(),e.showInactive(),!t&&this.isOpen()&&this.broadcastOpenState()}broadcastOpenState(){";
+  const showWindowPatch =
+    "e.moveTop(),e.showInactive(),process.platform===`linux`&&this.applyPointerInteractivityPolicy(),!t&&this.isOpen()&&this.broadcastOpenState()}broadcastOpenState(){";
+  const previousShowWindowPatch =
+    "e.moveTop(),e.showInactive(),process.platform===`linux`&&this.codexLinuxStartAvatarPassthroughRecovery(),this.codexLinuxSyncAvatarPointerInteractivity(e)&&this.applyPointerInteractivityPolicy(),!t&&this.isOpen()&&this.broadcastOpenState()}broadcastOpenState(){";
+  if (patchedSource.includes(previousShowWindowPatch)) {
+    patchedSource = patchedSource.replace(previousShowWindowPatch, showWindowPatch);
+  } else if (patchedSource.includes(showWindowNeedle)) {
+    patchedSource = patchedSource.replace(showWindowNeedle, showWindowPatch);
+  } else if (
+    patchedSource.includes("avatar-overlay") &&
+    !patchedSource.includes(showWindowPatch)
+  ) {
+    console.warn(
+      "WARN: Could not find avatar overlay show window — skipping Linux avatar overlay show sync patch",
+    );
+  }
+
+  const closedNeedle = "this.window===t&&(this.cancelMomentum(),this.window=null,";
+  const closedPatch =
+    "this.window===t&&(this.codexLinuxStopAvatarPassthroughRecovery(),this.codexLinuxAvatarInputShapeKey=null,this.cancelMomentum(),this.window=null,";
+  const previousClosedPatch =
+    "this.window===t&&(this.codexLinuxStopAvatarPassthroughRecovery(),this.cancelMomentum(),this.window=null,";
+  if (patchedSource.includes(previousClosedPatch)) {
+    patchedSource = patchedSource.replace(previousClosedPatch, closedPatch);
+  } else if (patchedSource.includes(closedNeedle)) {
+    patchedSource = patchedSource.replace(closedNeedle, closedPatch);
+  } else if (
+    patchedSource.includes("avatar-overlay") &&
+    patchedSource.includes("codexLinuxStartAvatarPassthroughRecovery") &&
+    !patchedSource.includes(closedPatch)
+  ) {
+    console.warn(
+      "WARN: Could not find avatar overlay close cleanup — skipping Linux avatar overlay passthrough cleanup patch",
+    );
+  }
+
+  return patchedSource;
+}
+
 function applyLinuxOpaqueBackgroundPatch(currentSource) {
   if (currentSource.includes("===`linux`&&!OM(")) {
     return currentSource;
@@ -523,6 +677,7 @@ function applyLinuxGitOriginsSourceFallbackPatch(currentSource) {
 
 module.exports = {
   applyBrowserUseNodeReplApprovalPatch,
+  applyLinuxAvatarOverlayMousePassthroughPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxMenuPatch,

@@ -34,6 +34,7 @@ const {
   applyLinuxTrayCloseSettingPatch,
 } = require("./patches/launch-actions.js");
 const {
+  applyLinuxAvatarOverlayMousePassthroughPatch,
   applyBrowserUseNodeReplApprovalPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
@@ -109,6 +110,7 @@ module.exports = {
   applyLinuxAppSunsetPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
+  applyLinuxAvatarOverlayMousePassthroughPatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,

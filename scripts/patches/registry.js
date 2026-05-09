@@ -17,6 +17,7 @@ const {
   patchAssetFiles,
 } = require("./shared.js");
 const {
+  applyLinuxAvatarOverlayMousePassthroughPatch,
   applyBrowserUseNodeReplApprovalPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
@@ -86,6 +87,11 @@ const MAIN_BUNDLE_PATCHES = [
     name: "linux-opaque-background",
     ciPolicy: OPTIONAL,
     apply: (source) => applyLinuxOpaqueBackgroundPatch(source),
+  },
+  {
+    name: "linux-avatar-overlay-mouse-passthrough",
+    ciPolicy: OPTIONAL,
+    apply: (source) => applyLinuxAvatarOverlayMousePassthroughPatch(source),
   },
   {
     name: "linux-file-manager",
