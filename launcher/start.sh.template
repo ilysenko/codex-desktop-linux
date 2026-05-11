@@ -316,9 +316,35 @@ print(version.strip())
 PY
 }
 
+browser_use_bundled_marketplace_root() {
+    local root
+
+    for root in \
+        "$SCRIPT_DIR/resources/plugins/openai-bundled" \
+        "$SCRIPT_DIR/resources/plugins/openai-bundled-beta"
+    do
+        [ -f "$root/plugins/browser-use/.codex-plugin/plugin.json" ] && echo "$root" && return 0
+    done
+
+    for root in "$SCRIPT_DIR/resources/plugins"/openai-bundled*; do
+        [ -d "$root" ] || continue
+        [ -f "$root/plugins/browser-use/.codex-plugin/plugin.json" ] && echo "$root" && return 0
+    done
+
+    return 1
+}
+
 sync_browser_use_bundled_plugin_cache() {
-    local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/browser-use"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
+    local bundled_marketplace
+    local marketplace_name
+    local source_plugin
+    local source_marketplace
+    if ! bundled_marketplace="$(browser_use_bundled_marketplace_root)"; then
+        return 0
+    fi
+    marketplace_name="$(basename "$bundled_marketplace")"
+    source_plugin="$bundled_marketplace/plugins/browser-use"
+    source_marketplace="$bundled_marketplace/.agents/plugins/marketplace.json"
     local plugin_json="$source_plugin/.codex-plugin/plugin.json"
     local source_client="$source_plugin/scripts/browser-client.mjs"
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
@@ -334,7 +360,7 @@ sync_browser_use_bundled_plugin_cache() {
     [ -f "$plugin_json" ] || return 0
     [ -f "$source_client" ] || return 0
 
-    marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
+    marketplace_root="$codex_home/.tmp/bundled-marketplaces/$marketplace_name"
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
     if [ -f "$source_marketplace" ]; then
         mkdir -p "$marketplace_plugins_dir"
@@ -347,7 +373,7 @@ sync_browser_use_bundled_plugin_cache() {
     version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
 
-    cache_root="$codex_home/plugins/cache/openai-bundled/browser-use"
+    cache_root="$codex_home/plugins/cache/$marketplace_name/browser-use"
     cache_plugin="$cache_root/$version"
     cache_client="$cache_plugin/scripts/browser-client.mjs"
 
@@ -858,7 +884,11 @@ has_update_manager() {
 
 run_update_manager() {
     resolve_update_manager_path || return 127
-    "$CODEX_UPDATE_MANAGER_PATH" "$@"
+    if [ -z "${CODEX_RELEASE_TRACK:-}" ] && [ "${CODEX_LINUX_RELEASE_TRACK:-stable}" != "stable" ]; then
+        CODEX_RELEASE_TRACK="$CODEX_LINUX_RELEASE_TRACK" "$CODEX_UPDATE_MANAGER_PATH" "$@"
+    else
+        "$CODEX_UPDATE_MANAGER_PATH" "$@"
+    fi
 }
 
 pid_is_current_user() {

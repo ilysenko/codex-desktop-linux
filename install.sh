@@ -18,6 +18,7 @@ if [ "$CODEX_APP_ID" != "codex-desktop" ]; then
 fi
 INSTALL_DIR="${CODEX_INSTALL_DIR:-$INSTALL_ROOT/$DEFAULT_INSTALL_DIR_NAME}"
 CODEX_WEBVIEW_PORT="${CODEX_WEBVIEW_PORT:-$DEFAULT_CODEX_WEBVIEW_PORT}"
+RELEASE_TRACK="${CODEX_RELEASE_TRACK:-stable}"
 ELECTRON_VERSION="41.3.0"
 ELECTRON_HEADERS_URL="${ELECTRON_HEADERS_URL:-${npm_config_disturl:-${NPM_CONFIG_DISTURL:-https://artifacts.electronjs.org/headers/dist}}}"
 ELECTRON_MIRROR="${ELECTRON_MIRROR:-}"
@@ -42,9 +43,11 @@ ICON_SOURCE="$SCRIPT_DIR/assets/codex.png"
 create_start_script() {
     local quoted_app_id
     local quoted_app_display_name
+    local quoted_release_track
     local quoted_webview_port
     quoted_app_id="$(shell_quote "$CODEX_APP_ID")"
     quoted_app_display_name="$(shell_quote "$CODEX_APP_DISPLAY_NAME")"
+    quoted_release_track="$(shell_quote "$RELEASE_TRACK")"
     quoted_webview_port="$(shell_quote "$CODEX_WEBVIEW_PORT")"
 
     cat > "$INSTALL_DIR/start.sh" << SCRIPT
@@ -53,6 +56,7 @@ set -euo pipefail
 
 CODEX_LINUX_APP_ID=$quoted_app_id
 CODEX_LINUX_APP_DISPLAY_NAME=$quoted_app_display_name
+CODEX_LINUX_RELEASE_TRACK=$quoted_release_track
 CODEX_LINUX_WEBVIEW_PORT=\${CODEX_WEBVIEW_PORT:-$quoted_webview_port}
 SCRIPT
 
@@ -86,21 +90,24 @@ main() {
         ensure_managed_node_runtime "$WORK_DIR/node-runtime"
     fi
 
-    local dmg_path=""
+    local installer_path=""
     if [ -n "$PROVIDED_DMG_PATH" ]; then
-        [ -f "$PROVIDED_DMG_PATH" ] || error "Provided DMG not found: $PROVIDED_DMG_PATH"
-        dmg_path="$(realpath "$PROVIDED_DMG_PATH")"
-        info "Using provided DMG: $dmg_path"
+        [ -f "$PROVIDED_DMG_PATH" ] || error "Provided installer not found: $PROVIDED_DMG_PATH"
+        installer_path="$(realpath "$PROVIDED_DMG_PATH")"
+        case "${installer_path,,}" in
+            *.dmg) info "Using provided DMG: $installer_path" ;;
+            *) info "Using provided installer: $installer_path" ;;
+        esac
     else
-        dmg_path=$(get_dmg)
+        installer_path=$(get_installer)
     fi
 
     local app_dir
-    app_dir=$(extract_dmg "$dmg_path")
+    app_dir=$(extract_app_bundle "$installer_path")
 
     detect_electron_version "$app_dir"
     if [ "$INSPECT_ONLY" -eq 1 ]; then
-        inspect_rebuild_candidate "$app_dir" "$dmg_path"
+        inspect_rebuild_candidate "$app_dir" "$installer_path"
         return 0
     fi
 
@@ -115,7 +122,7 @@ main() {
     if [ -n "${CODEX_REBUILD_REPORT_JSON:-}" ] && [ -n "${CODEX_PATCH_REPORT_JSON:-}" ]; then
         write_rebuild_report_json \
             "$CODEX_REBUILD_REPORT_JSON" \
-            "$dmg_path" \
+            "$installer_path" \
             "$ELECTRON_VERSION" \
             "$CODEX_PATCH_REPORT_JSON" \
             "$INSTALL_DIR"

@@ -395,6 +395,96 @@ PLIST
     [ "$(tail -n 1 "$output_log")" = "41.3.0" ] || fail "Expected fallback Electron version 41.3.0, got: $(cat "$output_log")"
 }
 
+test_installer_release_track_options() {
+    info "Checking installer release track option parsing"
+    local workspace="$TMP_DIR/release-track"
+    local output_log="$workspace/output.log"
+    mkdir -p "$workspace"
+
+    CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+        'source "$1"; parse_args "${@:2}"; printf "%s %s\n" "$RELEASE_TRACK" "$(installer_app_track)"' \
+        _ "$REPO_DIR/install.sh" >"$output_log"
+    [ "$(cat "$output_log")" = "stable stable" ] || fail "Expected default stable track, got: $(cat "$output_log")"
+
+    CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+        'source "$1"; parse_args "${@:2}"; printf "%s %s\n" "$RELEASE_TRACK" "$(installer_app_track)"' \
+        _ "$REPO_DIR/install.sh" --track stable >"$output_log"
+    [ "$(cat "$output_log")" = "stable stable" ] || fail "Expected explicit stable track, got: $(cat "$output_log")"
+
+    CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+        'source "$1"; parse_args "${@:2}"; printf "%s %s\n" "$RELEASE_TRACK" "$(installer_app_track)"' \
+        _ "$REPO_DIR/install.sh" --track preview >"$output_log"
+    [ "$(cat "$output_log")" = "preview preview" ] || fail "Expected preview track, got: $(cat "$output_log")"
+
+    if CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+        'source "$1"; parse_args "${@:2}"' \
+        _ "$REPO_DIR/install.sh" --track nightly >"$output_log" 2>&1; then
+        fail "Expected invalid release track to fail"
+    fi
+    assert_contains "$output_log" "Unknown release track: nightly (expected stable or preview)"
+}
+
+test_user_local_release_track_env_override() {
+    info "Checking user-local release track env override"
+    local workspace="$TMP_DIR/user-local-track"
+    local home_dir="$workspace/home"
+    local state_root="$workspace/state"
+    local install_state_dir="$state_root/codex-desktop-linux"
+    local output_log="$workspace/output.log"
+    mkdir -p "$home_dir" "$install_state_dir"
+
+    cat > "$install_state_dir/install.env" <<EOF
+REPO_DIR=$(printf '%q' "$REPO_DIR")
+CODEX_RELEASE_TRACK=stable
+EOF
+
+    HOME="$home_dir" XDG_STATE_HOME="$state_root" CODEX_RELEASE_TRACK=preview bash -c \
+        'source "$1"; load_install_config; printf "%s\n" "$CODEX_RELEASE_TRACK"' \
+        _ "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" >"$output_log"
+    [ "$(cat "$output_log")" = "preview" ] || fail "Expected env release track override, got: $(cat "$output_log")"
+}
+
+test_user_local_release_track_persists_without_env_override() {
+    info "Checking user-local persisted release track"
+    local workspace="$TMP_DIR/user-local-persisted-track"
+    local home_dir="$workspace/home"
+    local state_root="$workspace/state"
+    local install_state_dir="$state_root/codex-desktop-linux"
+    local output_log="$workspace/output.log"
+    mkdir -p "$home_dir" "$install_state_dir"
+
+    cat > "$install_state_dir/install.env" <<EOF
+REPO_DIR=$(printf '%q' "$REPO_DIR")
+CODEX_RELEASE_TRACK=preview
+EOF
+
+    HOME="$home_dir" XDG_STATE_HOME="$state_root" bash -c \
+        'source "$1"; load_install_config; printf "%s\n" "$CODEX_RELEASE_TRACK"' \
+        _ "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" >"$output_log"
+    [ "$(cat "$output_log")" = "preview" ] || fail "Expected persisted preview track, got: $(cat "$output_log")"
+}
+
+test_user_local_record_metadata_skips_missing_preview_cache() {
+    info "Checking user-local metadata skip without preview cache"
+    local workspace="$TMP_DIR/user-local-missing-preview-cache"
+    local home_dir="$workspace/home"
+    local state_root="$workspace/state"
+    local repo_dir="$workspace/repo"
+    local install_state_dir="$state_root/codex-desktop-linux"
+    local output_log="$workspace/output.log"
+    mkdir -p "$home_dir" "$install_state_dir" "$repo_dir"
+
+    cat > "$install_state_dir/install.env" <<EOF
+REPO_DIR=$(printf '%q' "$repo_dir")
+CODEX_RELEASE_TRACK=preview
+EOF
+
+    HOME="$home_dir" XDG_STATE_HOME="$state_root" bash -c \
+        'source "$1"; record_metadata; printf "ok\n"' \
+        _ "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" >"$output_log"
+    [ "$(cat "$output_log")" = "ok" ] || fail "Expected missing preview cache to be skipped, got: $(cat "$output_log")"
+}
+
 test_managed_node_runtime_source_install() {
     info "Checking managed Node.js runtime source install"
     local workspace="$TMP_DIR/managed-node-runtime"
@@ -638,6 +728,8 @@ PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_UPDATE_MANAGER_PATH"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "resolve_update_manager_path"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "run_update_manager"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_LINUX_RELEASE_TRACK"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "browser_use_bundled_marketplace_root"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "sync_browser_use_bundled_plugin_cache"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "sync_chrome_bundled_plugin_cache"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-id.json"
@@ -645,7 +737,8 @@ PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".config/chromium/NativeMessagingHosts"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "scripts/check-extension-installed.js"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "scripts/chrome-is-running.js"
-    assert_contains "$REPO_DIR/launcher/start.sh.template" ".tmp/bundled-marketplaces/openai-bundled"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" '.tmp/bundled-marketplaces/$marketplace_name'
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "openai-bundled-beta"
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".agents/plugins/marketplace.json"
     assert_contains "$REPO_DIR/scripts/lib/bundled-plugins.sh" "stage_chrome_plugin_from_upstream"
     assert_contains "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "Linux native host manifest location"
@@ -713,6 +806,7 @@ test_side_by_side_launcher_identity() {
     assert_file_exists "$app_dir/start.sh"
     assert_contains "$app_dir/start.sh" "CODEX_LINUX_APP_ID=codex-cua-lab"
     assert_contains "$app_dir/start.sh" "CODEX_LINUX_APP_DISPLAY_NAME=Codex\\\\ CUA\\\\ Lab"
+    assert_contains "$app_dir/start.sh" "CODEX_LINUX_RELEASE_TRACK=stable"
     assert_contains "$app_dir/start.sh" 'CODEX_LINUX_WEBVIEW_PORT=${CODEX_WEBVIEW_PORT:-5176}'
     assert_contains "$app_dir/start.sh" 'WEBVIEW_ORIGIN="http://127.0.0.1:$CODEX_LINUX_WEBVIEW_PORT"'
     assert_contains "$app_dir/start.sh" 'ELECTRON_RENDERER_URL="${ELECTRON_RENDERER_URL:-$WEBVIEW_ORIGIN/}"'
@@ -978,6 +1072,39 @@ PY
         assert_contains "$manifest_path" "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
         assert_contains "$manifest_path" "$host_path"
     done
+}
+
+test_bundled_plugin_resources_follow_upstream_marketplace_name() {
+    info "Checking bundled plugin marketplace name detection"
+    local workspace="$TMP_DIR/bundled-marketplace-name"
+    local app_dir="$workspace/Codex.app"
+    local resources_dir="$app_dir/Contents/Resources"
+    local install_dir="$workspace/install"
+
+    mkdir -p "$workspace" "$install_dir/resources"
+    make_fake_browser_use_upstream_app "$app_dir"
+    mv "$resources_dir/plugins/openai-bundled" "$resources_dir/plugins/openai-bundled-beta"
+    cp /bin/true "$resources_dir/node"
+    cp /bin/true "$resources_dir/node_repl"
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        INSTALL_DIR="$install_dir"
+        WORK_DIR="$workspace/work"
+        ARCH="$(uname -m)"
+        ICON_SOURCE="$workspace/missing-icon.png"
+        mkdir -p "$WORK_DIR"
+        warn() { echo "[WARN] $*" >&2; }
+        info() { echo "[INFO] $*" >&2; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        stage_linux_computer_use_plugin() { return 1; }
+        install_bundled_plugin_resources "$app_dir"
+    ) >"$workspace/output.log" 2>&1
+
+    assert_file_exists "$install_dir/resources/plugins/openai-bundled-beta/plugins/browser-use/scripts/browser-client.mjs"
+    assert_file_exists "$install_dir/resources/plugins/openai-bundled-beta/.agents/plugins/marketplace.json"
+    assert_contains "$install_dir/resources/plugins/openai-bundled-beta/plugins/browser-use/scripts/browser-client.mjs" "codexLinuxSiteStatusAllowlistFallback"
 }
 
 make_fake_extracted_asar() {
@@ -2193,10 +2320,15 @@ main() {
     test_upstream_build_app_workflow_tracks_dmg_metadata
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
+    test_installer_release_track_options
+    test_user_local_release_track_env_override
+    test_user_local_release_track_persists_without_env_override
+    test_user_local_record_metadata_skips_missing_preview_cache
     test_managed_node_runtime_source_install
     test_browser_use_node_repl_fallback_runtime
     test_chrome_plugin_staging
     test_chrome_native_host_manifest_writer
+    test_bundled_plugin_resources_follow_upstream_marketplace_name
     test_launcher_template_sanity
     test_side_by_side_launcher_identity
     test_linux_file_manager_patch_smoke

@@ -36,6 +36,7 @@ trap cleanup EXIT
 trap 'error "Failed at line $LINENO (exit code $?)"' ERR
 
 CACHED_DMG_PATH="$SCRIPT_DIR/Codex.dmg"
+CACHED_TRACK_ZIP_ROOT="$SCRIPT_DIR/.cache"
 FRESH_INSTALL=0
 REUSE_CACHED_DMG=1
 PROVIDED_DMG_PATH=""
@@ -44,20 +45,24 @@ REPORT_DIR=""
 
 usage() {
     cat <<'HELP'
-Usage: ./install.sh [OPTIONS] [path/to/Codex.dmg]
+Usage: ./install.sh [OPTIONS] [path/to/Codex.dmg|path/to/Codex-Preview.zip]
 
 Converts the official macOS Codex Desktop app to run on Linux.
 
 Options:
   -h, --help     Show this help message and exit
+  --track stable|preview
+                 Select release track (default: stable)
   --fresh        Remove existing install directory and cached DMG before building
   --reuse-dmg    Reuse cached Codex.dmg if present (default)
-  --inspect      Inspect the DMG and write patch/rebuild reports without installing
+  --inspect      Inspect the installer and write patch/rebuild reports without installing
   --report-dir DIR
                  Directory for --inspect reports (default: ./dist-next/rebuild)
 
 Environment variables:
   CODEX_INSTALL_DIR   Override the install directory (default: ./codex-app)
+  CODEX_RELEASE_TRACK
+                      Override the release track: stable or preview
   CODEX_INSTALL_ALLOW_RUNNING=1
                       Allow overwriting INSTALL_DIR while Codex is running
   CODEX_APP_ID        Override Linux app id/bin identity (default: codex-desktop)
@@ -79,6 +84,14 @@ HELP
 parse_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
+            --track)
+                shift
+                [ $# -gt 0 ] || error "--track requires stable or preview"
+                RELEASE_TRACK="$1"
+                ;;
+            --track=*)
+                RELEASE_TRACK="${1#*=}"
+                ;;
             --fresh)
                 FRESH_INSTALL=1
                 REUSE_CACHED_DMG=0
@@ -102,12 +115,17 @@ parse_args() {
                 error "Unknown option: $1 (see --help)"
                 ;;
             *)
-                [ -z "$PROVIDED_DMG_PATH" ] || error "Only one DMG path may be provided"
+                [ -z "$PROVIDED_DMG_PATH" ] || error "Only one installer path may be provided"
                 PROVIDED_DMG_PATH="$1"
                 ;;
         esac
         shift
     done
+
+    case "$RELEASE_TRACK" in
+        stable|preview) ;;
+        *) error "Unknown release track: $RELEASE_TRACK (expected stable or preview)" ;;
+    esac
 }
 
 validate_app_identity() {
@@ -142,6 +160,14 @@ prepare_install() {
     if [ "$FRESH_INSTALL" -eq 1 ] && [ "$REUSE_CACHED_DMG" -ne 1 ] && [ -f "$CACHED_DMG_PATH" ]; then
         info "Removing cached DMG: $CACHED_DMG_PATH"
         rm -f "$CACHED_DMG_PATH"
+    fi
+
+    if [ "$FRESH_INSTALL" -eq 1 ] && [ "$REUSE_CACHED_DMG" -ne 1 ] && [ "$RELEASE_TRACK" != "stable" ]; then
+        local track_cache_dir="$CACHED_TRACK_ZIP_ROOT/$RELEASE_TRACK"
+        if [ -d "$track_cache_dir" ]; then
+            info "Removing cached $RELEASE_TRACK installer: $track_cache_dir"
+            rm -rf "$track_cache_dir"
+        fi
     fi
 }
 

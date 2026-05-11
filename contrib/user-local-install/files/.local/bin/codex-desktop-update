@@ -7,6 +7,19 @@ ensure_layout
 load_install_config
 load_metadata
 
+acquire_update_lock() {
+    if ! command -v flock >/dev/null 2>&1; then
+        return 0
+    fi
+    exec 9>"$STATE_DIR/update.lock"
+    if ! flock -n 9; then
+        echo "Another Codex Desktop update is already running." >&2
+        exit 0
+    fi
+}
+
+acquire_update_lock
+
 quiet=0
 force=0
 record_only=0
@@ -36,8 +49,49 @@ log() {
     fi
 }
 
+parse_codex_version() {
+    sed -nE 's/.*v?([0-9]+\.[0-9]+\.[0-9]+[-+._[:alnum:]]*).*/\1/p' | head -n 1
+}
+
+update_cli_for_track() {
+    [ "$CODEX_RELEASE_TRACK" = "stable" ] && return 0
+
+    local npm_cmd=""
+    local target_version=""
+    local current_version=""
+    local npm_prefix="${CODEX_CLI_NPM_PREFIX:-$HOME/.local}"
+
+    if [ -x "$APP_DIR/resources/node-runtime/bin/npm" ]; then
+        npm_cmd="$APP_DIR/resources/node-runtime/bin/npm"
+    elif command -v npm >/dev/null 2>&1; then
+        npm_cmd="$(command -v npm)"
+    else
+        log "npm was not found; skipping Codex CLI preview update."
+        return 0
+    fi
+
+    if ! target_version="$("$npm_cmd" view "@openai/codex@alpha" version 2>/dev/null | parse_codex_version)"; then
+        log "Could not query @openai/codex@alpha; keeping the current CLI."
+        return 0
+    fi
+    [ -n "$target_version" ] || return 0
+
+    export PATH="$npm_prefix/bin${PATH:+:$PATH}"
+    if command -v codex >/dev/null 2>&1; then
+        current_version="$(codex --version 2>/dev/null | parse_codex_version || true)"
+    fi
+    if [ "$current_version" = "$target_version" ]; then
+        log "Codex CLI is already current for preview ($target_version)."
+        return 0
+    fi
+
+    mkdir -p "$npm_prefix"
+    log "Installing Codex CLI alpha ($target_version)..."
+    "$npm_cmd" install -g --prefix "$npm_prefix" "@openai/codex@$target_version" >/dev/null 2>&1 ||
+        log "Codex CLI alpha install failed; continuing with the app rebuild."
+}
+
 if [ "$record_only" -eq 1 ]; then
-    extract_icon
     record_metadata
     log "Metadata refreshed."
     exit 0
@@ -45,34 +99,38 @@ fi
 
 local_head="$(current_repo_head)"
 remote_head=""
-dmg_headers=""
+upstream_metadata=""
 
 if ! remote_head="$(remote_repo_head 2>/dev/null)"; then
     echo "Could not query wrapper repo upstream." >&2
     exit 1
 fi
 
-if ! dmg_headers="$(remote_dmg_headers 2>/dev/null)"; then
-    echo "Could not query Codex.dmg headers." >&2
+if ! upstream_metadata="$(remote_upstream_metadata 2>/dev/null)"; then
+    echo "Could not query Codex $CODEX_RELEASE_TRACK upstream metadata." >&2
     exit 1
 fi
 
-remote_etag="$(header_value "$dmg_headers" "etag")"
-remote_last_modified="$(header_value "$dmg_headers" "last-modified")"
-remote_content_length="$(header_value "$dmg_headers" "content-length")"
+remote_version="$(metadata_value "$upstream_metadata" "UPSTREAM_VERSION")"
+remote_url="$(metadata_value "$upstream_metadata" "UPSTREAM_URL")"
+remote_etag="$(metadata_value "$upstream_metadata" "UPSTREAM_ETAG")"
+remote_last_modified="$(metadata_value "$upstream_metadata" "UPSTREAM_LAST_MODIFIED")"
+remote_content_length="$(metadata_value "$upstream_metadata" "UPSTREAM_CONTENT_LENGTH")"
 
 repo_changed=0
-dmg_changed=0
+upstream_changed=0
 
 if [ "$local_head" != "$remote_head" ]; then
     repo_changed=1
 fi
 
-if [ "$force" -eq 1 ] || [ "${DMG_ETAG-}" != "$remote_etag" ] || [ "${DMG_LAST_MODIFIED-}" != "$remote_last_modified" ] || [ "${DMG_CONTENT_LENGTH-}" != "$remote_content_length" ]; then
-    dmg_changed=1
+if [ "$force" -eq 1 ] || [ "${UPSTREAM_VERSION-}" != "$remote_version" ] || [ "${UPSTREAM_URL-}" != "$remote_url" ] || [ "${UPSTREAM_ETAG-${DMG_ETAG-}}" != "$remote_etag" ] || [ "${UPSTREAM_LAST_MODIFIED-${DMG_LAST_MODIFIED-}}" != "$remote_last_modified" ] || [ "${UPSTREAM_CONTENT_LENGTH-${DMG_CONTENT_LENGTH-}}" != "$remote_content_length" ]; then
+    upstream_changed=1
 fi
 
-if [ "$repo_changed" -eq 0 ] && [ "$dmg_changed" -eq 0 ] && [ "$force" -eq 0 ]; then
+update_cli_for_track
+
+if [ "$repo_changed" -eq 0 ] && [ "$upstream_changed" -eq 0 ] && [ "$force" -eq 0 ]; then
     log "Codex desktop wrapper is already up to date."
     exit 0
 fi
@@ -82,24 +140,28 @@ if [ "$repo_changed" -eq 1 ]; then
     git -C "$REPO_DIR" pull --ff-only
     if [ -x "$REPO_DIR/contrib/user-local-install/install-user-local.sh" ]; then
         log "Refreshing installed helper scripts..."
-        "$REPO_DIR/contrib/user-local-install/install-user-local.sh" --from-update
+        "$REPO_DIR/contrib/user-local-install/install-user-local.sh" --from-update --track "$CODEX_RELEASE_TRACK"
         load_install_config
         load_metadata
     fi
 fi
 
-if [ "$dmg_changed" -eq 1 ]; then
-    log "Refreshing cached Codex.dmg..."
-    rm -f "$DMG_FILE"
+if [ "$upstream_changed" -eq 1 ]; then
+    log "Refreshing cached Codex $CODEX_RELEASE_TRACK installer..."
+    if [ "$CODEX_RELEASE_TRACK" = "stable" ]; then
+        rm -f "$REPO_DMG_FILE" "$DMG_FILE"
+    else
+        local_installer="$(local_installer_path)"
+        [ -n "$local_installer" ] && rm -f "$local_installer"
+    fi
 fi
 
-log "Rebuilding wrapper..."
+log "Rebuilding wrapper from Codex $CODEX_RELEASE_TRACK..."
 (
     cd "$REPO_DIR"
-    CODEX_INSTALL_ROOT="$OPT_ROOT" CODEX_INSTALL_DIR="$APP_DIR" ./install.sh
+    CODEX_INSTALL_ROOT="$OPT_ROOT" CODEX_INSTALL_DIR="$APP_DIR" ./install.sh --track "$CODEX_RELEASE_TRACK"
 )
 
-extract_icon
 record_metadata
 
 if command -v update-desktop-database >/dev/null 2>&1; then

@@ -438,6 +438,31 @@ stage_browser_use_plugin_from_upstream() {
     return 0
 }
 
+find_upstream_bundled_plugins_dir() {
+    local upstream_resources="$1"
+    local candidate
+
+    for candidate in \
+        "$upstream_resources/plugins/openai-bundled" \
+        "$upstream_resources/plugins/openai-bundled-beta"
+    do
+        if [ -f "$candidate/.agents/plugins/marketplace.json" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    for candidate in "$upstream_resources/plugins"/openai-bundled*; do
+        [ -d "$candidate" ] || continue
+        if [ -f "$candidate/.agents/plugins/marketplace.json" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 write_bundled_plugins_marketplace() {
     local source="$1"
     local destination="$2"
@@ -498,19 +523,26 @@ NODE
 install_bundled_plugin_resources() {
     local app_dir="$1"
     local upstream_resources="$app_dir/Contents/Resources"
-    local source_marketplace="$upstream_resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
-    local source_browser_plugin="$upstream_resources/plugins/openai-bundled/plugins/browser-use"
-    local source_chrome_plugin="$upstream_resources/plugins/openai-bundled/plugins/chrome"
+    local source_bundled_plugins_dir=""
+    local source_marketplace=""
+    local source_browser_plugin=""
+    local source_chrome_plugin=""
     local resources_dir="$INSTALL_DIR/resources"
-    local bundled_plugins_dir="$resources_dir/plugins/openai-bundled"
+    local marketplace_name=""
+    local bundled_plugins_dir=""
     local include_browser=0
     local include_chrome=0
     local include_computer_use=0
 
-    if [ ! -f "$source_marketplace" ]; then
+    if ! source_bundled_plugins_dir="$(find_upstream_bundled_plugins_dir "$upstream_resources")"; then
         warn "Bundled plugin marketplace not found in upstream app; skipping bundled plugins"
         return 0
     fi
+    marketplace_name="$(basename "$source_bundled_plugins_dir")"
+    source_marketplace="$source_bundled_plugins_dir/.agents/plugins/marketplace.json"
+    source_browser_plugin="$source_bundled_plugins_dir/plugins/browser-use"
+    source_chrome_plugin="$source_bundled_plugins_dir/plugins/chrome"
+    bundled_plugins_dir="$resources_dir/plugins/$marketplace_name"
 
     mkdir -p "$bundled_plugins_dir/plugins" "$bundled_plugins_dir/.agents/plugins"
 

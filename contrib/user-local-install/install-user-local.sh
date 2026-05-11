@@ -10,6 +10,13 @@ OPT_LIB_DIR="${OPT_ROOT}/lib/codex-desktop-linux"
 STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/codex-desktop-linux"
 FROM_UPDATE=0
 ENABLE_TIMER=0
+ENV_CODEX_RELEASE_TRACK="${CODEX_RELEASE_TRACK:-}"
+
+if [ -f "${STATE_DIR}/install.env" ]; then
+    # shellcheck disable=SC1090
+    source "${STATE_DIR}/install.env"
+fi
+CODEX_RELEASE_TRACK="${ENV_CODEX_RELEASE_TRACK:-${CODEX_RELEASE_TRACK:-stable}}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -19,6 +26,14 @@ while [ $# -gt 0 ]; do
         --enable-timer)
             ENABLE_TIMER=1
             ;;
+        --track)
+            shift
+            [ $# -gt 0 ] || { echo "--track requires stable or preview" >&2; exit 2; }
+            CODEX_RELEASE_TRACK="$1"
+            ;;
+        --track=*)
+            CODEX_RELEASE_TRACK="${1#*=}"
+            ;;
         *)
             echo "Unknown option: $1" >&2
             exit 2
@@ -26,6 +41,11 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+case "$CODEX_RELEASE_TRACK" in
+    stable|preview) ;;
+    *) echo "Unknown release track: $CODEX_RELEASE_TRACK (expected stable or preview)" >&2; exit 2 ;;
+esac
 
 copy_file() {
     local src="$1"
@@ -36,7 +56,9 @@ copy_file() {
 
 install_manager_files() {
     local systemd_user_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
+    local install_config_tmp
     mkdir -p "$OPT_BIN_DIR" "$OPT_LIB_DIR" "${HOME}/.local/share/applications" "${HOME}/.local/bin" "$STATE_DIR" "$systemd_user_dir"
+    chmod 700 "$STATE_DIR"
 
     copy_file "${FILES_DIR}/.local/lib/codex-desktop-linux/common.sh" "${OPT_LIB_DIR}/common.sh"
     copy_file "${FILES_DIR}/.local/bin/codex-desktop" "${OPT_BIN_DIR}/codex-desktop"
@@ -70,10 +92,14 @@ EOF
     copy_file "${FILES_DIR}/.config/systemd/user/codex-desktop-update.service" "${systemd_user_dir}/codex-desktop-update.service"
     copy_file "${FILES_DIR}/.config/systemd/user/codex-desktop-update.timer" "${systemd_user_dir}/codex-desktop-update.timer"
 
-    cat > "${STATE_DIR}/install.env" <<EOF
+    install_config_tmp="$(mktemp "${STATE_DIR}/install.env.tmp.XXXXXX")"
+    chmod 600 "$install_config_tmp"
+    cat > "$install_config_tmp" <<EOF
 REPO_DIR=$(printf '%q' "$REPO_ROOT")
 OPT_ROOT=$(printf '%q' "$OPT_ROOT")
+CODEX_RELEASE_TRACK=$(printf '%q' "$CODEX_RELEASE_TRACK")
 EOF
+    mv "$install_config_tmp" "${STATE_DIR}/install.env"
 
     chmod +x \
         "${OPT_BIN_DIR}/codex-desktop" \

@@ -1,6 +1,7 @@
 //! CLI discovery and prelaunch update checks for the user-installed Codex CLI.
 
 use crate::{
+    config::ReleaseTrack,
     config::RuntimePaths,
     state::{CliStatus, PersistedState},
 };
@@ -35,11 +36,14 @@ pub fn preflight(
     paths: &RuntimePaths,
     explicit_cli_path: Option<PathBuf>,
     allow_install_missing: bool,
+    release_track: ReleaseTrack,
 ) -> Result<PreflightOutcome> {
     let requested_path = explicit_cli_path.as_deref();
     let cli_path = match resolve_cli_path(requested_path) {
         Some(path) => path,
-        None if allow_install_missing => install_missing_cli(state, paths, requested_path)?,
+        None if allow_install_missing => {
+            install_missing_cli(state, paths, requested_path, release_track)?
+        }
         None => anyhow::bail!("Codex CLI not found in PATH or known install locations"),
     };
     let cached_installed_version = state.cli_installed_version.clone();
@@ -53,12 +57,13 @@ pub fn preflight(
         state,
         cached_installed_version.as_deref(),
         &installed_version,
+        release_track,
     ) {
         info!(
             installed_version,
             "skipping Codex CLI registry lookup because the cached result is still fresh"
         );
-        refresh_cli_status_from_latest(state, &installed_version);
+        refresh_cli_status_from_latest(state, &installed_version, release_track);
         state.cli_error_message = None;
         persist_state(paths, state)?;
         return Ok(PreflightOutcome {
@@ -74,11 +79,12 @@ pub fn preflight(
     state.cli_status = CliStatus::Checking;
     persist_state(paths, state)?;
 
-    let latest_version = match read_latest_version() {
+    let latest_version = match read_latest_version(release_track) {
         Ok(version) => version,
         Err(error) => {
             state.cli_status = CliStatus::Unknown;
             state.cli_latest_version = None;
+            state.cli_latest_release_track = None;
             state.cli_error_message = Some(format!(
                 "Could not check the latest {CLI_PACKAGE_NAME} version: {error}"
             ));
@@ -94,6 +100,7 @@ pub fn preflight(
     };
 
     state.cli_latest_version = Some(latest_version.clone());
+    state.cli_latest_release_track = Some(release_track.as_str().to_string());
     if installed_version == latest_version {
         state.cli_status = CliStatus::UpToDate;
         state.cli_error_message = None;
@@ -158,18 +165,22 @@ pub fn refresh_cached_status(state: &mut PersistedState, paths: &RuntimePaths) -
     };
 
     let Some(installed_version) = cached_installed_version_if_fresh(state, &cli_path) else {
-        return refresh_status(state, paths);
+        return refresh_status(state, paths, ReleaseTrack::Stable);
     };
 
     state.cli_path = Some(cli_path);
     state.cli_installed_version = Some(installed_version.clone());
-    refresh_cli_status_from_latest(state, &installed_version);
+    refresh_cli_status_from_latest(state, &installed_version, ReleaseTrack::Stable);
     state.cli_error_message = None;
 
     persist_if_changed(paths, state, &original_state)
 }
 
-pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
+pub fn refresh_status(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    release_track: ReleaseTrack,
+) -> Result<()> {
     let requested_path = requested_cli_path(state);
     let cli_path = match resolve_cli_path(requested_path.as_deref()) {
         Some(path) => path,
@@ -205,12 +216,13 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
         state,
         cached_installed_version.as_deref(),
         &installed_version,
+        release_track,
     ) {
         info!(
             installed_version,
             "skipping Codex CLI registry lookup because the cached result is still fresh"
         );
-        refresh_cli_status_from_latest(state, &installed_version);
+        refresh_cli_status_from_latest(state, &installed_version, release_track);
         state.cli_error_message = None;
         persist_state(paths, state)?;
         return Ok(());
@@ -221,10 +233,11 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
     state.cli_status = CliStatus::Checking;
     persist_state(paths, state)?;
 
-    match read_latest_version() {
+    match read_latest_version(release_track) {
         Ok(latest_version) => {
             state.cli_latest_version = Some(latest_version);
-            refresh_cli_status_from_latest(state, &installed_version);
+            state.cli_latest_release_track = Some(release_track.as_str().to_string());
+            refresh_cli_status_from_latest(state, &installed_version, release_track);
             state.cli_error_message = None;
         }
         Err(error) => {
@@ -232,9 +245,10 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
                 state,
                 cached_installed_version.as_deref(),
                 &installed_version,
+                release_track,
             );
             if cached_latest_matches_install {
-                refresh_cli_status_from_latest(state, &installed_version);
+                refresh_cli_status_from_latest(state, &installed_version, release_track);
             } else {
                 state.cli_status = CliStatus::Unknown;
             }
@@ -248,14 +262,18 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
     persist_state(paths, state)
 }
 
-pub fn reconcile_if_present(state: &mut PersistedState, paths: &RuntimePaths) -> Result<bool> {
+pub fn reconcile_if_present(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    release_track: ReleaseTrack,
+) -> Result<bool> {
     let requested_path = requested_cli_path(state);
     if resolve_cli_path(requested_path.as_deref()).is_none() {
-        refresh_status(state, paths)?;
+        refresh_status(state, paths, release_track)?;
         return Ok(false);
     }
 
-    Ok(preflight(state, paths, requested_path, false)?.updated)
+    Ok(preflight(state, paths, requested_path, false, release_track)?.updated)
 }
 
 fn persist_state(paths: &RuntimePaths, state: &PersistedState) -> Result<()> {
@@ -364,11 +382,17 @@ fn should_skip_latest_version_check(
     state: &PersistedState,
     cached_installed_version: Option<&str>,
     installed_version: &str,
+    release_track: ReleaseTrack,
 ) -> bool {
     let Some(last_check_at) = state.cli_last_check_at else {
         return false;
     };
-    if !cached_latest_version_matches_install(state, cached_installed_version, installed_version) {
+    if !cached_latest_version_matches_install(
+        state,
+        cached_installed_version,
+        installed_version,
+        release_track,
+    ) {
         return false;
     }
 
@@ -379,15 +403,29 @@ fn cached_latest_version_matches_install(
     state: &PersistedState,
     cached_installed_version: Option<&str>,
     installed_version: &str,
+    release_track: ReleaseTrack,
 ) -> bool {
-    state.cli_latest_version.is_some() && cached_installed_version == Some(installed_version)
+    cli_latest_track_matches(state, release_track)
+        && cached_installed_version == Some(installed_version)
 }
 
-fn refresh_cli_status_from_latest(state: &mut PersistedState, installed_version: &str) {
-    state.cli_status = match state.cli_latest_version.as_deref() {
-        Some(latest_version) if latest_version == installed_version => CliStatus::UpToDate,
-        Some(_) => CliStatus::UpdateRequired,
-        None => CliStatus::Unknown,
+fn cli_latest_track_matches(state: &PersistedState, release_track: ReleaseTrack) -> bool {
+    match state.cli_latest_release_track.as_deref() {
+        Some(track) => track == release_track.as_str(),
+        None => release_track == ReleaseTrack::Stable && state.cli_latest_version.is_some(),
+    }
+}
+
+fn refresh_cli_status_from_latest(
+    state: &mut PersistedState,
+    installed_version: &str,
+    release_track: ReleaseTrack,
+) {
+    let track_matches = cli_latest_track_matches(state, release_track);
+    state.cli_status = match (track_matches, state.cli_latest_version.as_deref()) {
+        (true, Some(latest_version)) if latest_version == installed_version => CliStatus::UpToDate,
+        (true, Some(_)) => CliStatus::UpdateRequired,
+        _ => CliStatus::Unknown,
     };
 }
 
@@ -406,11 +444,15 @@ fn read_installed_version(cli_path: &Path) -> Result<String> {
     })
 }
 
-fn read_latest_version() -> Result<String> {
+fn read_latest_version(release_track: ReleaseTrack) -> Result<String> {
     let npm = npm_program();
+    let package_spec = match release_track {
+        ReleaseTrack::Stable => CLI_PACKAGE_NAME.to_string(),
+        ReleaseTrack::Preview => format!("{}@alpha", CLI_PACKAGE_NAME),
+    };
     let output = Command::new(&npm)
         .env("PATH", command_path_env())
-        .args(["view", CLI_PACKAGE_NAME, "version"])
+        .args(["view", package_spec.as_str(), "version"])
         .output()
         .with_context(|| format!("Failed to spawn {}", npm.display()))?;
 
@@ -419,7 +461,7 @@ fn read_latest_version() -> Result<String> {
         anyhow::bail!(
             "{} view {} version failed with {}{}",
             npm.display(),
-            CLI_PACKAGE_NAME,
+            package_spec,
             output.status,
             if stderr.is_empty() {
                 String::new()
@@ -433,7 +475,7 @@ fn read_latest_version() -> Result<String> {
         anyhow!(
             "{} view {} version returned an unparseable version string",
             npm.display(),
-            CLI_PACKAGE_NAME
+            package_spec
         )
     })
 }
@@ -485,12 +527,14 @@ fn install_missing_cli(
     state: &mut PersistedState,
     paths: &RuntimePaths,
     requested_path: Option<&Path>,
+    release_track: ReleaseTrack,
 ) -> Result<PathBuf> {
     state.cli_status = CliStatus::Updating;
     persist_state(paths, state)?;
 
-    let latest_version = read_latest_version()?;
+    let latest_version = read_latest_version(release_track)?;
     state.cli_latest_version = Some(latest_version.clone());
+    state.cli_latest_release_track = Some(release_track.as_str().to_string());
     persist_state(paths, state)?;
 
     info!(
@@ -733,7 +777,24 @@ mod tests {
         assert!(should_skip_latest_version_check(
             &state,
             Some("0.42.0"),
-            "0.42.0"
+            "0.42.0",
+            ReleaseTrack::Stable
+        ));
+    }
+
+    #[test]
+    fn does_not_skip_registry_lookup_when_release_track_changed() {
+        let mut state = PersistedState::new(true);
+        state.cli_installed_version = Some("0.42.0".to_string());
+        state.cli_latest_version = Some("0.42.0".to_string());
+        state.cli_latest_release_track = Some("stable".to_string());
+        state.cli_last_check_at = Some(Utc::now() - Duration::minutes(30));
+
+        assert!(!should_skip_latest_version_check(
+            &state,
+            Some("0.42.0"),
+            "0.42.0",
+            ReleaseTrack::Preview
         ));
     }
 
@@ -747,7 +808,8 @@ mod tests {
         assert!(!should_skip_latest_version_check(
             &state,
             Some("0.42.0"),
-            "0.43.0"
+            "0.43.0",
+            ReleaseTrack::Stable
         ));
     }
 
@@ -761,7 +823,8 @@ mod tests {
         assert!(!should_skip_latest_version_check(
             &state,
             Some("0.42.0"),
-            "0.42.0"
+            "0.42.0",
+            ReleaseTrack::Stable
         ));
     }
 
@@ -774,8 +837,53 @@ mod tests {
         assert!(!should_skip_latest_version_check(
             &state,
             Some("0.42.0"),
-            "0.42.0"
+            "0.42.0",
+            ReleaseTrack::Stable
         ));
+    }
+
+    #[test]
+    fn reads_latest_version_from_release_track() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+
+        write_executable_script(
+            &bin_dir.join("npm"),
+            "#!/bin/sh\nif [ \"$1\" = \"view\" ] && [ \"$2\" = \"@openai/codex\" ] && [ \"$3\" = \"version\" ]; then\n  echo '0.42.0'\n  exit 0\nfi\nif [ \"$1\" = \"view\" ] && [ \"$2\" = \"@openai/codex@alpha\" ] && [ \"$3\" = \"version\" ]; then\n  echo '0.44.0-alpha.1'\n  exit 0\nfi\nexit 1\n",
+        )?;
+
+        let original_home = std::env::var_os("HOME");
+        let original_path = std::env::var_os("PATH");
+        let original_nvm_dir = std::env::var_os("NVM_DIR");
+        std::env::set_var("HOME", temp.path());
+        std::env::set_var("PATH", std::env::join_paths([bin_dir])?);
+        std::env::remove_var("NVM_DIR");
+
+        assert_eq!(read_latest_version(ReleaseTrack::Stable)?, "0.42.0");
+        assert_eq!(
+            read_latest_version(ReleaseTrack::Preview)?,
+            "0.44.0-alpha.1"
+        );
+
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+        if let Some(nvm_dir) = original_nvm_dir {
+            std::env::set_var("NVM_DIR", nvm_dir);
+        } else {
+            std::env::remove_var("NVM_DIR");
+        }
+
+        Ok(())
     }
 
     #[test]
@@ -795,7 +903,7 @@ mod tests {
         state.cli_installed_version = Some("0.42.0".to_string());
         state.cli_latest_version = Some("0.43.0".to_string());
         state.cli_last_check_at = Some(Utc::now() - Duration::minutes(30));
-        refresh_status(&mut state, &paths)?;
+        refresh_status(&mut state, &paths, ReleaseTrack::Stable)?;
 
         assert_eq!(state.cli_path.as_deref(), Some(codex_path.as_path()));
         assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.0"));
@@ -824,7 +932,13 @@ mod tests {
         state.cli_status = CliStatus::Unknown;
         state.cli_error_message = Some("previous error".to_string());
 
-        let outcome = preflight(&mut state, &paths, Some(codex_path.clone()), false)?;
+        let outcome = preflight(
+            &mut state,
+            &paths,
+            Some(codex_path.clone()),
+            false,
+            ReleaseTrack::Stable,
+        )?;
 
         assert_eq!(outcome.cli_path, codex_path);
         assert_eq!(outcome.installed_version, "0.42.0");
@@ -947,7 +1061,7 @@ mod tests {
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
         let mut state = PersistedState::new(true);
-        refresh_status(&mut state, &paths)?;
+        refresh_status(&mut state, &paths, ReleaseTrack::Stable)?;
 
         if let Some(home) = original_home {
             std::env::set_var("HOME", home);
@@ -1020,7 +1134,7 @@ mod tests {
         let mut state = PersistedState::new(true);
         state.cli_path = Some(codex_path.clone());
 
-        let updated = reconcile_if_present(&mut state, &paths)?;
+        let updated = reconcile_if_present(&mut state, &paths, ReleaseTrack::Stable)?;
 
         if let Some(home) = original_home {
             std::env::set_var("HOME", home);

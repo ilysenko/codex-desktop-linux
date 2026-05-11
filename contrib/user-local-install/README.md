@@ -8,8 +8,8 @@ It adds:
 - self-contained maintenance scripts under `~/.local/opt/codex-desktop-linux/bin`
 - thin launch/check/update/version wrappers under `~/.local/bin`
 - a desktop entry under `~/.local/share/applications`
-- an icon extracted from the local `Codex.dmg`
-- metadata tracking for the wrapper repo and cached `Codex.dmg`
+- an icon extracted from the selected local app installer
+- metadata tracking for the wrapper repo and selected app installer
 - an optional weekly `systemd --user` timer for unattended update checks and rebuilds (opt-in)
 
 ## Files
@@ -47,6 +47,14 @@ From the repository root:
 ./contrib/user-local-install/install-user-local.sh
 ```
 
+To opt into preview:
+
+```bash
+./contrib/user-local-install/install-user-local.sh --track preview
+```
+
+`preview` uses the public Codex Desktop beta appcast and records the preview release track for CLI-aware update flows.
+
 To also enable the weekly auto-update timer, pass `--enable-timer`:
 
 ```bash
@@ -62,7 +70,7 @@ The installer:
 5. reloads the user `systemd` daemon if available
 6. enables the weekly timer only if `--enable-timer` was passed
 7. refreshes desktop metadata if available
-8. records local metadata and extracts the icon if `Codex.dmg` already exists
+8. records local metadata and extracts the icon if the selected installer cache exists
 
 ## Commands
 
@@ -77,7 +85,8 @@ codex-desktop-version
 
 ## Notes
 
-- The icon is not committed as a binary asset here. It is generated locally from `Codex.dmg`.
-- The helper scripts track both upstream wrapper changes and upstream `Codex.dmg` headers.
+- The icon is not committed as a binary asset here. It is generated locally from the selected app installer.
+- The selected track is recorded in `~/.local/state/codex-desktop-linux/install.env` as `CODEX_RELEASE_TRACK=stable` or `CODEX_RELEASE_TRACK=preview`.
+- The helper scripts track both upstream wrapper changes and selected upstream app metadata.
 - The helper scripts are copied into `~/.local/opt` and do not run from the git checkout directly.
 - The weekly timer runs `codex-desktop-update --quiet`. It is opt-in: pass `--enable-timer` to `install-user-local.sh` to activate it, or run `systemctl --user enable --now codex-desktop-update.timer` manually after install.

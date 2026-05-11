@@ -163,11 +163,15 @@ Override the dev identity with `DEV_APP_ID`, `DEV_APP_NAME`, and `CODEX_WEBVIEW_
 
 The native package installs a companion `systemd --user` service named `codex-update-manager`.
 
-- It checks upstream `Codex.dmg` on daemon startup, every 6 hours, and in the background on app launch when stale.
-- When a new DMG is available, it rebuilds a local native package with `/opt/codex-desktop/update-builder`.
+- It checks the selected release track on daemon startup, every 6 hours, and in the background on app launch when stale.
+- The default `stable` track uses the upstream `Codex.dmg` and the default Codex CLI package.
+- The opt-in `preview` track uses the public Codex Desktop beta appcast and the Codex CLI alpha tag.
+- When a new app installer is available, it rebuilds a local native package with `/opt/codex-desktop/update-builder`.
 - If Codex Desktop is open, the final install waits until Electron exits.
 - The updater runs unprivileged and uses `pkexec` only for the final package install.
 - Codex CLI checks are best-effort and launcher-scoped. Set `CODEX_SYNC_CLI_PREFLIGHT=1` when debugging launch-time CLI preflight.
+
+Opt into preview by adding `release_track = "preview"` to `~/.config/codex-update-manager/config.toml`. Supported values are `stable` and `preview`; omitted config remains stable.
 
 Inspect the live service and runtime files with:
 
@@ -263,6 +267,7 @@ Equivalent direct commands:
 ```bash
 ./install.sh                                # default: download or reuse cached DMG
 ./install.sh /path/to/Codex.dmg             # use a specific DMG
+./install.sh --track preview                # beta desktop app + alpha CLI track
 ./install.sh --fresh                        # remove existing install dir + cached DMG
 ./codex-app/start.sh                        # run after build
 ```

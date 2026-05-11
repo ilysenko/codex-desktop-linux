@@ -84,6 +84,7 @@ pub async fn build_update(
         Command::new(workspace.bundle_dir.join("install.sh"))
             .arg(dmg_path)
             .env("CODEX_INSTALL_DIR", &workspace.app_dir)
+            .env("CODEX_RELEASE_TRACK", config.release_track.as_str())
             .env(
                 "CODEX_MANAGED_NODE_SOURCE",
                 config.builder_bundle_root.join("node-runtime"),
@@ -414,6 +415,7 @@ async fn run_and_log(command: &mut Command, log_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ReleaseTrack;
     use crate::config::RuntimePaths;
     use anyhow::Result;
     use tempfile::tempdir;
@@ -572,7 +574,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
             r#"#!/bin/bash
 set -euo pipefail
 mkdir -p "${CODEX_INSTALL_DIR}"
-echo launcher > "${CODEX_INSTALL_DIR}/start.sh"
+echo "track=${CODEX_RELEASE_TRACK:-}" > "${CODEX_INSTALL_DIR}/start.sh"
 chmod +x "${CODEX_INSTALL_DIR}/start.sh"
 "#,
         )?;
@@ -629,7 +631,9 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
         paths.ensure_dirs()?;
 
         let config = RuntimeConfig {
+            release_track: ReleaseTrack::Preview,
             dmg_url: "https://example.com/Codex.dmg".to_string(),
+            beta_appcast_url: "https://example.com/appcast.xml".to_string(),
             initial_check_delay_seconds: 30,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,
@@ -653,6 +657,10 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
         assert_eq!(state.status, UpdateStatus::ReadyToInstall);
         assert!(artifacts.workspace_dir.exists());
         assert!(artifacts.package_path.exists());
+        assert_eq!(
+            fs::read_to_string(artifacts.workspace_dir.join("codex-app/start.sh"))?,
+            "track=preview\n"
+        );
         assert!(artifacts
             .workspace_dir
             .join("builder/scripts/rebuild-candidate.sh")

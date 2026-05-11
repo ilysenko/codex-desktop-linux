@@ -1,4 +1,5 @@
 *.dmg
+/.cache/
 node_modules/
 codex-app/
 codex-app.backup-*/

@@ -53,6 +53,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_path,
             allow_install_missing,
         } => run_cli_preflight(
+            &config,
             &mut state,
             &paths,
             cli_path,
@@ -62,8 +63,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::PromptInstallCli {
             cli_path,
             print_path,
-        } => run_prompt_install_cli(&mut state, &paths, cli_path, print_path),
-        Commands::Status { json } => run_status(&mut state, &paths, json),
+        } => run_prompt_install_cli(&config, &mut state, &paths, cli_path, print_path),
+        Commands::Status { json } => run_status(&config, &mut state, &paths, json),
         Commands::InstallReady => run_install_ready(&config, &mut state, &paths).await,
         Commands::Rollback => rollback::run(&config, &mut state, &paths).await,
         Commands::InstallDeb { path } => install::install_deb(&path),
@@ -191,7 +192,7 @@ async fn run_daemon(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
-    codex_cli::reconcile_if_present(state, paths)?;
+    codex_cli::reconcile_if_present(state, paths, config.release_track)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     maybe_notify_installed(state, paths, config.notifications)?;
     if packaged_runtime_removed(config) {
@@ -249,7 +250,7 @@ async fn run_check_now(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
-    codex_cli::reconcile_if_present(state, paths)?;
+    codex_cli::reconcile_if_present(state, paths, config.release_track)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     maybe_notify_installed(state, paths, config.notifications)?;
     if if_stale && upstream_check_is_fresh(config, state) {
@@ -269,14 +270,20 @@ fn upstream_check_is_fresh(config: &RuntimeConfig, state: &PersistedState) -> bo
     Utc::now().signed_duration_since(last_successful_check_at) < freshness_window
 }
 
-fn run_status(state: &mut PersistedState, paths: &RuntimePaths, json: bool) -> Result<()> {
-    codex_cli::reconcile_if_present(state, paths)?;
+fn run_status(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    json: bool,
+) -> Result<()> {
+    codex_cli::reconcile_if_present(state, paths, config.release_track)?;
     complete_pending_install_if_already_installed(state, paths)?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(state)?);
     } else {
         println!("status: {:?}", state.status);
+        println!("release_track: {}", config.release_track.as_str());
         println!("installed_version: {}", state.installed_version);
         println!(
             "candidate_version: {}",
@@ -312,12 +319,13 @@ fn run_status(state: &mut PersistedState, paths: &RuntimePaths, json: bool) -> R
 }
 
 fn run_prompt_install_cli(
+    config: &RuntimeConfig,
     state: &mut PersistedState,
     paths: &RuntimePaths,
     cli_path: Option<PathBuf>,
     print_path: bool,
 ) -> Result<()> {
-    let outcome = prompt_install_cli(state, paths, cli_path)?;
+    let outcome = prompt_install_cli(config, state, paths, cli_path)?;
     match outcome {
         PromptInstallCliOutcome::Installed(path) => {
             if print_path {
@@ -335,13 +343,20 @@ fn run_prompt_install_cli(
 }
 
 fn run_cli_preflight(
+    config: &RuntimeConfig,
     state: &mut PersistedState,
     paths: &RuntimePaths,
     cli_path: Option<std::path::PathBuf>,
     print_path: bool,
     allow_install_missing: bool,
 ) -> Result<()> {
-    let outcome = codex_cli::preflight(state, paths, cli_path, allow_install_missing)?;
+    let outcome = codex_cli::preflight(
+        state,
+        paths,
+        cli_path,
+        allow_install_missing,
+        config.release_track,
+    )?;
     if print_path {
         println!("{}", outcome.cli_path.display());
     }
@@ -356,6 +371,7 @@ enum PromptInstallCliOutcome {
 }
 
 fn prompt_install_cli(
+    config: &RuntimeConfig,
     state: &mut PersistedState,
     paths: &RuntimePaths,
     cli_path: Option<PathBuf>,
@@ -399,7 +415,7 @@ fn prompt_install_cli(
     }
 
     state.cli_prompt_dismissed_at = None;
-    let outcome = codex_cli::preflight(state, paths, cli_path, true)?;
+    let outcome = codex_cli::preflight(state, paths, cli_path, true, config.release_track)?;
     Ok(PromptInstallCliOutcome::Installed(outcome.cli_path))
 }
 
@@ -509,7 +525,7 @@ async fn run_check_cycle(
         return Ok(());
     }
 
-    if let Err(error) = codex_cli::reconcile_if_present(state, paths) {
+    if let Err(error) = codex_cli::reconcile_if_present(state, paths, config.release_track) {
         warn!(
             ?error,
             "unable to reconcile Codex CLI before checking upstream packages"
@@ -531,7 +547,8 @@ async fn run_check_cycle(
     persist_state(paths, state)?;
 
     let result: Result<()> = async {
-        let metadata = upstream::fetch_remote_metadata(&client, &config.dmg_url).await?;
+        let installer = upstream::resolve_installer(&client, config).await?;
+        let metadata = installer.metadata;
         let previous_headers_fingerprint = state.remote_headers_fingerprint.clone();
         state.remote_headers_fingerprint = Some(metadata.headers_fingerprint.clone());
         state.last_successful_check_at = Some(Utc::now());
@@ -548,8 +565,14 @@ async fn run_check_cycle(
         set_status(state, paths, UpdateStatus::DownloadingDmg)?;
 
         let downloads_dir = config.workspace_root.join("downloads");
-        let downloaded =
-            upstream::download_dmg(&client, &config.dmg_url, &downloads_dir, Utc::now()).await?;
+        let downloaded = upstream::download_installer(
+            &client,
+            &installer.download_url,
+            &downloads_dir,
+            Utc::now(),
+            &installer.file_name,
+        )
+        .await?;
 
         if state
             .rollback_blocked_candidate_version
@@ -577,7 +600,7 @@ async fn run_check_cycle(
             state.status = UpdateStatus::Idle;
             state.artifact_paths.dmg_path = Some(downloaded.path);
             persist_state(paths, state)?;
-            info!("downloaded DMG hash matches current cached DMG; no update detected");
+            info!("downloaded installer hash matches current cached installer; no update detected");
             return Ok(());
         }
 
@@ -595,7 +618,7 @@ async fn run_check_cycle(
             config.notifications,
             "update_detected",
             "New Codex Desktop update detected",
-            "Preparing a local Linux package from the new upstream DMG.",
+            "Preparing a local Linux package from the new upstream installer.",
         )?;
 
         let candidate_version = state
@@ -1178,11 +1201,14 @@ fn notify_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ReleaseTrack;
 
     #[test]
     fn upstream_check_freshness_respects_configured_interval() {
         let config = RuntimeConfig {
+            release_track: ReleaseTrack::Stable,
             dmg_url: "https://example.com/Codex.dmg".to_string(),
+            beta_appcast_url: "https://example.com/appcast.xml".to_string(),
             initial_check_delay_seconds: 1,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,
@@ -1224,7 +1250,9 @@ mod tests {
         std::fs::write(&package_path, b"deb")?;
 
         let config = RuntimeConfig {
+            release_track: ReleaseTrack::Stable,
             dmg_url: "https://example.com/Codex.dmg".to_string(),
+            beta_appcast_url: "https://example.com/appcast.xml".to_string(),
             initial_check_delay_seconds: 1,
             check_interval_hours: 6,
             auto_install_on_app_exit: false,
@@ -1261,7 +1289,9 @@ mod tests {
         paths.ensure_dirs()?;
 
         let config = RuntimeConfig {
+            release_track: ReleaseTrack::Stable,
             dmg_url: "https://invalid.example/Codex.dmg".to_string(),
+            beta_appcast_url: "https://invalid.example/appcast.xml".to_string(),
             initial_check_delay_seconds: 1,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,
@@ -1361,7 +1391,9 @@ mod tests {
         paths.ensure_dirs()?;
 
         let config = RuntimeConfig {
+            release_track: ReleaseTrack::Stable,
             dmg_url: "https://example.com/Codex.dmg".to_string(),
+            beta_appcast_url: "https://example.com/appcast.xml".to_string(),
             initial_check_delay_seconds: 1,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,
@@ -1408,7 +1440,9 @@ mod tests {
         std::fs::write(&package_path, b"deb")?;
 
         let config = RuntimeConfig {
+            release_track: ReleaseTrack::Stable,
             dmg_url: "https://example.com/Codex.dmg".to_string(),
+            beta_appcast_url: "https://example.com/appcast.xml".to_string(),
             initial_check_delay_seconds: 1,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,
@@ -1452,7 +1486,9 @@ mod tests {
         std::fs::write(&package_path, b"deb")?;
 
         let config = RuntimeConfig {
+            release_track: ReleaseTrack::Stable,
             dmg_url: "https://example.com/Codex.dmg".to_string(),
+            beta_appcast_url: "https://example.com/appcast.xml".to_string(),
             initial_check_delay_seconds: 1,
             check_interval_hours: 6,
             auto_install_on_app_exit: false,
@@ -1491,7 +1527,9 @@ mod tests {
         paths.ensure_dirs()?;
 
         let config = RuntimeConfig {
+            release_track: ReleaseTrack::Stable,
             dmg_url: "https://example.com/Codex.dmg".to_string(),
+            beta_appcast_url: "https://example.com/appcast.xml".to_string(),
             initial_check_delay_seconds: 1,
             check_interval_hours: 6,
             auto_install_on_app_exit: false,
@@ -1592,8 +1630,9 @@ mod tests {
 
         let mut state = PersistedState::new(true);
         state.cli_path = Some(invalid_cli_path);
+        let config = RuntimeConfig::default_with_paths(&paths);
 
-        let outcome = prompt_install_cli(&mut state, &paths, None)?;
+        let outcome = prompt_install_cli(&config, &mut state, &paths, None)?;
 
         if let Some(value) = original_display {
             std::env::set_var("DISPLAY", value);
@@ -1789,7 +1828,8 @@ mod tests {
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
-        let result = run_status(&mut state, &paths, true);
+        let config = RuntimeConfig::default_with_paths(&paths);
+        let result = run_status(&config, &mut state, &paths, true);
 
         if let Some(home) = original_home {
             std::env::set_var("HOME", home);
@@ -1873,7 +1913,8 @@ mod tests {
 
         let mut state = PersistedState::new(true);
         state.cli_path = Some(codex_path);
-        let result = run_status(&mut state, &paths, true);
+        let config = RuntimeConfig::default_with_paths(&paths);
+        let result = run_status(&config, &mut state, &paths, true);
 
         if let Some(home) = original_home {
             std::env::set_var("HOME", home);

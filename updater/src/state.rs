@@ -87,6 +87,8 @@ pub struct PersistedState {
     #[serde(default)]
     pub cli_latest_version: Option<String>,
     #[serde(default)]
+    pub cli_latest_release_track: Option<String>,
+    #[serde(default)]
     pub cli_status: CliStatus,
     #[serde(default)]
     pub cli_last_check_at: Option<DateTime<Utc>>,
@@ -118,6 +120,7 @@ impl PersistedState {
             cli_path: None,
             cli_installed_version: None,
             cli_latest_version: None,
+            cli_latest_release_track: None,
             cli_status: CliStatus::Unknown,
             cli_last_check_at: None,
             cli_last_verified_at: None,
