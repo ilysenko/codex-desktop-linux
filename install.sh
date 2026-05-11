@@ -92,7 +92,12 @@ main() {
 
     local installer_path=""
     if [ -n "$PROVIDED_DMG_PATH" ]; then
-        [ -f "$PROVIDED_DMG_PATH" ] || error "Provided installer not found: $PROVIDED_DMG_PATH"
+        if [ ! -f "$PROVIDED_DMG_PATH" ]; then
+            case "${PROVIDED_DMG_PATH,,}" in
+                *.dmg) error "Provided DMG not found: $PROVIDED_DMG_PATH" ;;
+                *) error "Provided installer not found: $PROVIDED_DMG_PATH" ;;
+            esac
+        fi
         installer_path="$(realpath "$PROVIDED_DMG_PATH")"
         case "${installer_path,,}" in
             *.dmg) info "Using provided DMG: $installer_path" ;;

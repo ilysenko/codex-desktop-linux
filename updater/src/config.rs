@@ -9,18 +9,13 @@ const SERVICE_NAME: &str = "codex-update-manager";
 pub const STABLE_DMG_URL: &str = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
 pub const BETA_APPCAST_URL: &str = "https://persistent.oaistatic.com/codex-app-beta/appcast.xml";
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 /// Release track selected for app and CLI update checks.
 pub enum ReleaseTrack {
+    #[default]
     Stable,
     Preview,
-}
-
-impl Default for ReleaseTrack {
-    fn default() -> Self {
-        Self::Stable
-    }
 }
 
 impl ReleaseTrack {

@@ -71,8 +71,8 @@ async fn resolve_appcast_installer(
         .text()
         .await
         .with_context(|| format!("Failed reading appcast body from {appcast_url}"))?;
-    let release = parse_first_appcast_release(&appcast)
-        .with_context(|| format!("Failed to resolve preview appcast"))?;
+    let release =
+        parse_first_appcast_release(&appcast).context("Failed to resolve preview appcast")?;
     validate_appcast_release_url(appcast_url, &release.url)?;
     let mut metadata = fetch_remote_metadata(client, &release.url).await?;
     metadata.headers_fingerprint = format!(
