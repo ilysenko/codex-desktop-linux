@@ -24,6 +24,30 @@ better_sqlite3_build_version() {
     echo "$detected_version"
 }
 
+# Patch downloaded better-sqlite3 sources before electron-rebuild runs against
+# Electron 42+ headers.
+patch_better_sqlite3_for_electron_42() {
+    # Electron 42+ ships V8 13.x, which made v8::External::New / Value require
+    # an ExternalPointerTypeTag argument. better-sqlite3 (<= 12.10.0) still calls
+    # the deprecated 2-arg form, so add the default tag explicitly.
+    local src_dir="$1"
+    local cpp="$src_dir/better_sqlite3.cpp"
+    local macros="$src_dir/util/macros.cpp"
+    local helpers="$src_dir/util/helpers.cpp"
+
+    [ -f "$cpp" ] && sed -i \
+        's/v8::External::New(isolate, addon)/v8::External::New(isolate, addon, v8::kExternalPointerTypeTagDefault)/' \
+        "$cpp"
+    [ -f "$macros" ] && sed -i \
+        's/info\.Data()\.As<v8::External>()->Value()/info.Data().As<v8::External>()->Value(v8::kExternalPointerTypeTagDefault)/' \
+        "$macros"
+    # SetNativeDataProperty now has overloads where the setter slot is
+    # AccessorNameSetterCallback / V2 / nullptr_t - pass nullptr to disambiguate.
+    [ -f "$helpers" ] && sed -i \
+        's|^\t\t0,$|\t\tnullptr,|' \
+        "$helpers"
+}
+
 prune_native_module_build_artifacts() {
     local module_dir="$1"
     local build_dir="$module_dir/build"
@@ -64,6 +88,12 @@ build_native_modules() {
     info "Installing fresh sources from npm..."
     npm install "electron@$ELECTRON_VERSION" --save-dev --ignore-scripts 2>&1 >&2
     npm install "better-sqlite3@$bs3_build_ver" "node-pty@$npty_ver" --ignore-scripts 2>&1 >&2
+
+    local electron_major="${ELECTRON_VERSION%%.*}"
+    if [ -n "$electron_major" ] && [ "$electron_major" -ge 42 ] 2>/dev/null; then
+        info "Patching better-sqlite3 for Electron $electron_major V8 API"
+        patch_better_sqlite3_for_electron_42 "$build_dir/node_modules/better-sqlite3/src"
+    fi
 
     info "Compiling for Electron v$ELECTRON_VERSION (this takes ~1 min)..."
     info "Using Electron headers: $ELECTRON_HEADERS_URL"
