@@ -284,6 +284,42 @@ mod tests {
     }
 
     #[test]
+    fn rounded_window_id_can_be_disambiguated_by_title() {
+        let first_window_id = 7_511_476_032_840_641_491;
+        let second_window_id = 7_511_476_032_840_641_999;
+        let rounded_window_id = 7_511_476_032_840_642_000;
+        assert_eq!(first_window_id as f64, rounded_window_id as f64);
+        assert_eq!(second_window_id as f64, rounded_window_id as f64);
+
+        let windows = vec![
+            window(
+                first_window_id,
+                "First — Kate",
+                "org.kde.kate",
+                "org.kde.kate",
+            ),
+            window(
+                second_window_id,
+                "Second — Kate",
+                "org.kde.kate",
+                "org.kde.kate",
+            ),
+        ];
+
+        let matched = resolve_window_target(
+            &windows,
+            &WindowTarget {
+                window_id: Some(rounded_window_id),
+                title: Some("Second".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(matched.window_id, second_window_id);
+    }
+
+    #[test]
     fn pid_target_reports_ambiguous_matches() {
         let mut first = window(1, "Ghostty One", "com.mitchellh.ghostty.desktop", "Ghostty");
         let mut second = window(2, "Ghostty Two", "com.mitchellh.ghostty.desktop", "Ghostty");

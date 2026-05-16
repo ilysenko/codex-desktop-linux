@@ -43,7 +43,11 @@ if [ "$record_only" -eq 1 ]; then
     exit 0
 fi
 
-local_head="$(current_repo_head)"
+build_head="${REPO_HEAD-}"
+if [ -z "$build_head" ]; then
+    build_head="$(current_repo_head)"
+fi
+source_overlay_sha="$(source_repo_overlay_signature 2>/dev/null || true)"
 remote_head=""
 dmg_headers=""
 
@@ -63,9 +67,17 @@ remote_content_length="$(header_value "$dmg_headers" "content-length")"
 
 repo_changed=0
 dmg_changed=0
+repo_upstream_changed=0
+repo_overlay_changed=0
 
-if [ "$local_head" != "$remote_head" ]; then
+if [ "$build_head" != "$remote_head" ]; then
     repo_changed=1
+    repo_upstream_changed=1
+fi
+
+if [ "$source_overlay_sha" != "${SOURCE_OVERLAY_SHA256-}" ]; then
+    repo_changed=1
+    repo_overlay_changed=1
 fi
 
 if [ "$force" -eq 1 ] || [ "${DMG_ETAG-}" != "$remote_etag" ] || [ "${DMG_LAST_MODIFIED-}" != "$remote_last_modified" ] || [ "${DMG_CONTENT_LENGTH-}" != "$remote_content_length" ]; then
@@ -77,12 +89,19 @@ if [ "$repo_changed" -eq 0 ] && [ "$dmg_changed" -eq 0 ] && [ "$force" -eq 0 ]; 
     exit 0
 fi
 
+prepare_build_repo
+
 if [ "$repo_changed" -eq 1 ]; then
-    log "Pulling wrapper updates..."
-    git -C "$REPO_DIR" pull --ff-only
-    if [ -x "$REPO_DIR/contrib/user-local-install/install-user-local.sh" ]; then
+    if [ "$repo_upstream_changed" -eq 1 ]; then
+        log "Refreshing wrapper repo in managed build checkout..."
+    fi
+    if [ "$repo_overlay_changed" -eq 1 ]; then
+        log "Applying source repo overlay changes..."
+    fi
+    if [ -x "$BUILD_REPO_DIR/contrib/user-local-install/install-user-local.sh" ]; then
         log "Refreshing installed helper scripts..."
-        "$REPO_DIR/contrib/user-local-install/install-user-local.sh" --from-update
+        CODEX_USER_LOCAL_SOURCE_REPO_DIR="$SOURCE_REPO_DIR" \
+            "$BUILD_REPO_DIR/contrib/user-local-install/install-user-local.sh" --from-update
         load_install_config
         load_metadata
     fi
@@ -95,8 +114,16 @@ fi
 
 log "Rebuilding wrapper..."
 (
-    cd "$REPO_DIR"
-    CODEX_INSTALL_ROOT="$OPT_ROOT" CODEX_INSTALL_DIR="$APP_DIR" ./install.sh
+    cd "$BUILD_REPO_DIR"
+    mkdir -p "$STATE_DIR/tmp"
+    if [ -f "$SOURCE_REPO_DIR/linux-features/features.json" ]; then
+        export CODEX_LINUX_FEATURES_CONFIG="$SOURCE_REPO_DIR/linux-features/features.json"
+    fi
+    TMPDIR="$STATE_DIR/tmp" \
+    CODEX_INSTALL_ALLOW_RUNNING=1 \
+        CODEX_INSTALL_ROOT="$OPT_ROOT" \
+        CODEX_INSTALL_DIR="$APP_DIR" \
+        ./install.sh
 )
 
 extract_icon

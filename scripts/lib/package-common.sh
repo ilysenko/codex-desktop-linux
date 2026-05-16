@@ -38,6 +38,45 @@ package_with_updater_enabled() {
     esac
 }
 
+package_node_binary() {
+    local managed_node="${APP_DIR:-}/resources/node-runtime/bin/node"
+    if [ -x "$managed_node" ] && [ "$("$managed_node" -e 'process.stdout.write("ok")' 2>/dev/null || true)" = "ok" ]; then
+        printf '%s\n' "$managed_node"
+        return 0
+    fi
+
+    command -v node >/dev/null 2>&1 || error "node is required"
+    command -v node
+}
+
+stage_update_builder_linux_features_config() {
+    local update_builder_root="$1"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local target="$update_builder_root/linux-features/features.json"
+    local node_bin
+
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+
+    node_bin="$(package_node_binary)"
+    "$node_bin" - "$helper" "$target" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const helperPath = path.resolve(process.argv[2]);
+const targetPath = path.resolve(process.argv[3]);
+const { enabledLinuxFeatureIds } = require(helperPath);
+
+const enabled = enabledLinuxFeatureIds();
+if (enabled.length === 0) {
+  fs.rmSync(targetPath, { force: true });
+  process.exit(0);
+}
+
+fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+fs.writeFileSync(targetPath, `${JSON.stringify({ enabled }, null, 2)}\n`);
+NODE
+}
+
 render_desktop_entry() {
     local target="$1"
     local package_name
@@ -417,7 +456,7 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/packaging/linux/codex-update-manager.postinst" "$update_builder_root/packaging/linux/codex-update-manager.postinst"
     cp "$REPO_DIR/packaging/linux/codex-update-manager.prerm" "$update_builder_root/packaging/linux/codex-update-manager.prerm"
     cp -r "$REPO_DIR/linux-features/." "$update_builder_root/linux-features/"
-    rm -f "$update_builder_root/linux-features/features.json"
+    stage_update_builder_linux_features_config "$update_builder_root"
     cp "$REPO_DIR/packaging/linux/codex-update-manager.postrm" "$update_builder_root/packaging/linux/codex-update-manager.postrm"
     cp "$REPO_DIR/assets/codex.png" "$update_builder_root/assets/codex.png"
     if [ -d "$node_runtime_source" ]; then

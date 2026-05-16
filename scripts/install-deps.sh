@@ -361,10 +361,15 @@ bootstrap_7zz() {
         return 0
     fi
 
-    # System 7z is already new enough — skip
-    if command -v 7z &>/dev/null && ! 7z 2>&1 | grep -m 1 "7-Zip" | grep -q "16.02"; then
-        info "System 7z is already new enough; skipping 7zz bootstrap"
-        return 0
+    # System 7z is already new enough — skip. p7zip 17.05 still cannot
+    # extract current APFS-based Codex DMGs, so only accept non-p7zip 7z.
+    if command -v 7z &>/dev/null; then
+        local seven_zip_banner
+        seven_zip_banner="$(7z 2>&1 | head -n 3 || true)"
+        if [[ "$seven_zip_banner" == *"7-Zip"* && "$seven_zip_banner" != *"16.02"* && "$seven_zip_banner" != *"p7zip Version"* ]]; then
+            info "System 7z is already new enough; skipping 7zz bootstrap"
+            return 0
+        fi
     fi
 
     local sevenzip_arch

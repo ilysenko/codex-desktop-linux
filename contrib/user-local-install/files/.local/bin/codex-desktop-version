@@ -13,9 +13,12 @@ if [ ! -f "$METADATA_FILE" ]; then
 fi
 
 echo "Install root:      $OPT_ROOT"
-echo "Repo root:         ${REPO_DIR-unknown}"
+echo "Source repo:       ${SOURCE_REPO_DIR-${REPO_DIR-unknown}}"
+echo "Build repo:        ${REPO_DIR-unknown}"
 echo "Build time:        ${BUILD_TIME-unknown}"
-echo "Wrapper repo:      ${REPO_HEAD-unknown}"
+echo "Build repo head:   ${REPO_HEAD-unknown}"
+echo "Source repo head:  ${SOURCE_REPO_HEAD-unavailable}"
+echo "Source overlay:    ${SOURCE_OVERLAY_SHA256-none}"
 echo "Repo origin:       ${REPO_ORIGIN-unknown}"
 echo "DMG sha256:        ${DMG_SHA256-unknown}"
 echo "DMG size:          ${DMG_SIZE-unknown}"

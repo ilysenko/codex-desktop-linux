@@ -7,7 +7,15 @@ ensure_layout
 load_install_config
 load_metadata
 
-local_head="$(current_repo_head)"
+build_head="${REPO_HEAD-}"
+if [ -z "$build_head" ]; then
+    build_head="$(current_repo_head)"
+fi
+source_head="$(source_repo_head 2>/dev/null || true)"
+if [ -z "$source_head" ]; then
+    source_head="${SOURCE_REPO_HEAD-}"
+fi
+source_overlay_sha="$(source_repo_overlay_signature 2>/dev/null || true)"
 remote_head=""
 dmg_headers=""
 
@@ -27,9 +35,17 @@ remote_content_length="$(header_value "$dmg_headers" "content-length")"
 
 repo_changed=0
 dmg_changed=0
+repo_upstream_changed=0
+repo_overlay_changed=0
 
-if [ "$local_head" != "$remote_head" ]; then
+if [ "$build_head" != "$remote_head" ]; then
     repo_changed=1
+    repo_upstream_changed=1
+fi
+
+if [ "$source_overlay_sha" != "${SOURCE_OVERLAY_SHA256-}" ]; then
+    repo_changed=1
+    repo_overlay_changed=1
 fi
 
 if [ "${DMG_ETAG-}" != "$remote_etag" ] || [ "${DMG_LAST_MODIFIED-}" != "$remote_last_modified" ] || [ "${DMG_CONTENT_LENGTH-}" != "$remote_content_length" ]; then
@@ -37,9 +53,12 @@ if [ "${DMG_ETAG-}" != "$remote_etag" ] || [ "${DMG_LAST_MODIFIED-}" != "$remote
 fi
 
 echo "Install root: $OPT_ROOT"
-echo "Repo root:    $REPO_DIR"
-echo "Wrapper repo local:  $local_head"
+echo "Source repo:  $SOURCE_REPO_DIR"
+echo "Build repo:   ${REPO_DIR:-$(effective_repo_dir)}"
+echo "Build repo head:     $build_head"
+echo "Source repo head:    ${source_head:-unavailable}"
 echo "Wrapper repo remote: $remote_head"
+echo "Source overlay sha:  ${source_overlay_sha:-none}"
 echo "Cached DMG etag:     ${DMG_ETAG-untracked}"
 echo "Remote DMG etag:     ${remote_etag:-unknown}"
 echo "Cached DMG modified: ${DMG_LAST_MODIFIED-untracked}"
@@ -51,8 +70,11 @@ if [ "$repo_changed" -eq 0 ] && [ "$dmg_changed" -eq 0 ]; then
 fi
 
 echo "Status: update available"
-if [ "$repo_changed" -eq 1 ]; then
-    echo "Reason: wrapper repo changed"
+if [ "$repo_upstream_changed" -eq 1 ]; then
+    echo "Reason: wrapper repo upstream changed"
+fi
+if [ "$repo_overlay_changed" -eq 1 ]; then
+    echo "Reason: source overlay changed"
 fi
 if [ "$dmg_changed" -eq 1 ]; then
     echo "Reason: Codex.dmg changed"

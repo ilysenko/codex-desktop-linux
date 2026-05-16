@@ -167,14 +167,14 @@ function applyCurrentBootstrapUpdaterBridgePatch(currentSource) {
     if (!patchedSource.includes("state:`disabled`")) {
       return currentSource;
     }
-    const bootstrapNeedle = "var rK={enabled:!1,running:!1,state:`disabled`};";
-    if (!patchedSource.includes(bootstrapNeedle)) {
+    const bootstrapMatch = patchedSource.match(/var [A-Za-z_$][\w$]*=\{enabled:!1,running:!1,state:`disabled`\};/);
+    if (bootstrapMatch == null) {
       console.warn("WARN: Could not find current updater bridge insertion point - skipping Linux updater bridge patch");
       return currentSource;
     }
     patchedSource = patchedSource.replace(
-      bootstrapNeedle,
-      `${buildBootstrapBridgeSource({ childProcessVar, electronVar, fsVar, pathVar })};${bootstrapNeedle}`,
+      bootstrapMatch[0],
+      `${buildBootstrapBridgeSource({ childProcessVar, electronVar, fsVar, pathVar })};${bootstrapMatch[0]}`,
     );
   }
 
@@ -315,22 +315,18 @@ function applyLinuxAppUpdaterBridgePatch(currentSource) {
 }
 
 function applyLinuxAppUpdaterMenuPatch(currentSource) {
-  const menuNeedles = [
-    "d=t.C.shouldIncludeSparkle(a,process.platform,process.env)",
-    "d=t.T.shouldIncludeSparkle(a,process.platform,process.env)",
-  ];
-
-  if (/d=t\.[A-Za-z_$][\w$]*\.shouldIncludeSparkle\(a,process\.platform,process\.env\)\|\|process\.platform===`linux`/.test(currentSource)) {
+  if (/[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.shouldIncludeSparkle\([A-Za-z_$][\w$]*,process\.platform,process\.env\)\|\|process\.platform===`linux`/.test(currentSource)) {
     return currentSource;
   }
-  const menuNeedle = menuNeedles.find((needle) => currentSource.includes(needle));
-  if (menuNeedle == null) {
+  const menuRegex =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\.shouldIncludeSparkle\(([A-Za-z_$][\w$]*),process\.platform,process\.env\)/;
+  if (!menuRegex.test(currentSource)) {
     if (currentSource.includes("enableSparkle") && currentSource.includes("shouldIncludeSparkle")) {
       console.warn("WARN: Could not find update menu feature gate - skipping Linux update menu patch");
     }
     return currentSource;
   }
-  return currentSource.replace(menuNeedle, `${menuNeedle}||process.platform===\`linux\``);
+  return currentSource.replace(menuRegex, "$1=$2.$3.shouldIncludeSparkle($4,process.platform,process.env)||process.platform===`linux`");
 }
 
 function patchLinuxAppUpdaterBridge(extractedDir) {

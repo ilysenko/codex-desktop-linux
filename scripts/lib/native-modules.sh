@@ -5,6 +5,9 @@
 # shellcheck shell=bash
 
 # ---- Build native modules in a clean directory ----
+ELECTRON_REBUILD_PACKAGE="@electron/rebuild@4.0.4"
+ELECTRON_REBUILD_NODE_ABI_PACKAGE="node-abi@^4.31.0"
+
 version_lt() {
     [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]
 }
@@ -46,6 +49,90 @@ patch_better_sqlite3_for_electron_42() {
     [ -f "$helpers" ] && sed -i \
         's|^\t\t0,$|\t\tnullptr,|' \
         "$helpers"
+patch_better_sqlite3_for_v8_external_pointer_api() {
+    local module_dir="$1"
+    local electron_major="${ELECTRON_VERSION%%.*}"
+
+    case "$electron_major" in
+        ""|*[!0-9]*) return 0 ;;
+    esac
+    [ "$electron_major" -ge 42 ] || return 0
+
+    [ -d "$module_dir" ] || error "better-sqlite3 source not found at $module_dir"
+
+    node - "$module_dir" <<'JS'
+const fs = require("fs");
+const path = require("path");
+
+const moduleDir = process.argv[2];
+const files = {
+  main: path.join(moduleDir, "src/better_sqlite3.cpp"),
+  helpers: path.join(moduleDir, "src/util/helpers.cpp"),
+  macros: path.join(moduleDir, "src/util/macros.cpp"),
+};
+
+for (const [name, file] of Object.entries(files)) {
+  if (!fs.existsSync(file)) {
+    throw new Error(`Missing better-sqlite3 ${name} source: ${file}`);
+  }
+}
+
+function replaceOnce(file, needle, replacement) {
+  const source = fs.readFileSync(file, "utf8");
+  if (source.includes(replacement)) {
+    return false;
+  }
+  if (!source.includes(needle)) {
+    throw new Error(`Could not find better-sqlite3 V8 external pointer patch needle in ${file}`);
+  }
+  fs.writeFileSync(file, source.replace(needle, replacement));
+  return true;
+}
+
+let patched = false;
+patched = replaceOnce(
+  files.main,
+  "v8::Local<v8::External> data = v8::External::New(isolate, addon);",
+  "v8::Local<v8::External> data = BETTER_SQLITE3_EXTERNAL_NEW(isolate, addon);",
+) || patched;
+
+patched = replaceOnce(
+  files.macros,
+  `#define EasyIsolate v8::Isolate* isolate = v8::Isolate::GetCurrent()
+#define OnlyIsolate info.GetIsolate()
+#define OnlyContext isolate->GetCurrentContext()
+#define OnlyAddon static_cast<Addon*>(info.Data().As<v8::External>()->Value())`,
+  `#if defined(V8_MAJOR_VERSION) && V8_MAJOR_VERSION >= 14
+#define BETTER_SQLITE3_EXTERNAL_POINTER_TAG v8::kExternalPointerTypeTagDefault
+#define BETTER_SQLITE3_EXTERNAL_NEW(isolate, value) v8::External::New((isolate), (value), BETTER_SQLITE3_EXTERNAL_POINTER_TAG)
+#define BETTER_SQLITE3_EXTERNAL_VALUE(external) ((external)->Value(BETTER_SQLITE3_EXTERNAL_POINTER_TAG))
+#else
+#define BETTER_SQLITE3_EXTERNAL_NEW(isolate, value) v8::External::New((isolate), (value))
+#define BETTER_SQLITE3_EXTERNAL_VALUE(external) ((external)->Value())
+#endif
+
+#define EasyIsolate v8::Isolate* isolate = v8::Isolate::GetCurrent()
+#define OnlyIsolate info.GetIsolate()
+#define OnlyContext isolate->GetCurrentContext()
+#define OnlyAddon static_cast<Addon*>(BETTER_SQLITE3_EXTERNAL_VALUE(info.Data().As<v8::External>()))`,
+) || patched;
+
+patched = replaceOnce(
+  files.helpers,
+  `\t\tfunc,
+\t\t0,
+\t\tdata`,
+  `\t\tfunc,
+\t\tnullptr,
+\t\tdata`,
+) || patched;
+
+if (patched) {
+  console.error("[INFO] Patched better-sqlite3 source for V8 external pointer API");
+} else {
+  console.error("[INFO] better-sqlite3 V8 external pointer source patch already applied");
+}
+JS
 }
 
 prune_native_module_build_artifacts() {
@@ -86,8 +173,14 @@ build_native_modules() {
     echo '{"private":true}' > package.json
 
     info "Installing fresh sources from npm..."
-    npm install "electron@$ELECTRON_VERSION" --save-dev --ignore-scripts 2>&1 >&2
+    npm install \
+        "electron@$ELECTRON_VERSION" \
+        "$ELECTRON_REBUILD_PACKAGE" \
+        "$ELECTRON_REBUILD_NODE_ABI_PACKAGE" \
+        --save-dev \
+        --ignore-scripts 2>&1 >&2
     npm install "better-sqlite3@$bs3_build_ver" "node-pty@$npty_ver" --ignore-scripts 2>&1 >&2
+    patch_better_sqlite3_for_v8_external_pointer_api "$build_dir/node_modules/better-sqlite3"
 
     local electron_major="${ELECTRON_VERSION%%.*}"
     if [ -n "$electron_major" ] && [ "$electron_major" -ge 42 ] 2>/dev/null; then
@@ -97,9 +190,10 @@ build_native_modules() {
 
     info "Compiling for Electron v$ELECTRON_VERSION (this takes ~1 min)..."
     info "Using Electron headers: $ELECTRON_HEADERS_URL"
+    [ -f "$build_dir/node_modules/@electron/rebuild/lib/cli.js" ] || error "electron-rebuild CLI not found in native build toolchain"
     npm_config_disturl="$ELECTRON_HEADERS_URL" \
     NPM_CONFIG_DISTURL="$ELECTRON_HEADERS_URL" \
-    npx --yes @electron/rebuild -v "$ELECTRON_VERSION" --force --dist-url "$ELECTRON_HEADERS_URL" 2>&1 >&2
+    node "$build_dir/node_modules/@electron/rebuild/lib/cli.js" -v "$ELECTRON_VERSION" --force --dist-url "$ELECTRON_HEADERS_URL" 2>&1 >&2
 
     info "Native modules built successfully"
 

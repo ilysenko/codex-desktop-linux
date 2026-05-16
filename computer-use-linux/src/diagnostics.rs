@@ -17,6 +17,9 @@ const DESKTOP_ENV_KEYS: &[&str] = &[
     "DBUS_SESSION_BUS_ADDRESS",
     "DESKTOP_SESSION",
     "DISPLAY",
+    "HYPRLAND_INSTANCE_SIGNATURE",
+    "YDOTOOL_SOCKET",
+    "XDG_SESSION_DESKTOP",
     "WAYLAND_DISPLAY",
     "XDG_CURRENT_DESKTOP",
     "XDG_RUNTIME_DIR",
@@ -153,7 +156,9 @@ pub fn doctor_report() -> DoctorReport {
 }
 
 pub fn hydrate_session_bus_env() {
+    hydrate_common_command_path();
     hydrate_desktop_env_from_process_tree();
+    hydrate_desktop_env_from_systemd_user();
 
     if env_var("XDG_RUNTIME_DIR").is_none() {
         if let Some(runtime) = xdg_runtime_dir() {
@@ -176,22 +181,60 @@ pub fn hydrate_session_bus_env() {
     }
 }
 
+fn hydrate_common_command_path() {
+    let mut entries = env::var_os("PATH")
+        .map(|path| env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+    for path in [
+        "/run/current-system/sw/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ] {
+        let path = PathBuf::from(path);
+        if path.exists() && !entries.iter().any(|entry| entry == &path) {
+            entries.push(path);
+        }
+    }
+    if let Ok(path) = env::join_paths(entries) {
+        env::set_var("PATH", path);
+    }
+}
+
 fn hydrate_desktop_env_from_process_tree() {
     for process_env in desktop_process_environments() {
-        for key in DESKTOP_ENV_KEYS {
-            if env_var(key).is_some() {
-                continue;
-            }
-            if let Some(value) = process_env
-                .get(*key)
-                .filter(|value| !value.trim().is_empty())
-            {
-                env::set_var(key, value);
-            }
-        }
+        hydrate_desktop_env_from_map(&process_env);
 
         if DESKTOP_ENV_KEYS.iter().all(|key| env_var(key).is_some()) {
             break;
+        }
+    }
+}
+
+fn hydrate_desktop_env_from_systemd_user() {
+    let Ok(output) = Command::new("systemctl")
+        .args(["--user", "show-environment"])
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let env_map = parse_line_environment(&output.stdout);
+    hydrate_desktop_env_from_map(&env_map);
+}
+
+fn hydrate_desktop_env_from_map(process_env: &HashMap<String, String>) {
+    for key in DESKTOP_ENV_KEYS {
+        if env_var(key).is_some() {
+            continue;
+        }
+        if let Some(value) = process_env
+            .get(*key)
+            .filter(|value| !value.trim().is_empty())
+        {
+            env::set_var(key, value);
         }
     }
 }
@@ -251,22 +294,56 @@ fn parse_environ(bytes: &[u8]) -> HashMap<String, String> {
         .collect()
 }
 
+fn parse_line_environment(bytes: &[u8]) -> HashMap<String, String> {
+    bytes
+        .split(|byte| *byte == b'\n')
+        .filter_map(|entry| {
+            if entry.is_empty() {
+                return None;
+            }
+            let split = entry.iter().position(|byte| *byte == b'=')?;
+            let (key, value) = entry.split_at(split);
+            let value = &value[1..];
+            let key = std::str::from_utf8(key).ok()?.to_string();
+            let value = std::str::from_utf8(value).ok()?.to_string();
+            Some((key, value))
+        })
+        .collect()
+}
+
 pub fn setup_accessibility_report() -> SetupReport {
     hydrate_session_bus_env();
 
     let before = doctor_report();
     let accessibility_command = if can_build_accessibility_tree(&before.accessibility) {
-        Check::ok("GNOME accessibility is already enabled")
+        Check::ok("AT-SPI accessibility is already enabled")
     } else {
-        command_check_with_session_bus(
-            "gsettings",
+        let atspi_status = command_check_with_session_bus(
+            "busctl",
             &[
-                "set",
-                "org.gnome.desktop.interface",
-                "toolkit-accessibility",
+                "--user",
+                "set-property",
+                "org.a11y.Bus",
+                "/org/a11y/bus",
+                "org.a11y.Status",
+                "IsEnabled",
+                "b",
                 "true",
             ],
-        )
+        );
+        if atspi_status.ok {
+            atspi_status
+        } else {
+            command_check_with_session_bus(
+                "gsettings",
+                &[
+                    "set",
+                    "org.gnome.desktop.interface",
+                    "toolkit-accessibility",
+                    "true",
+                ],
+            )
+        }
     };
     let after = doctor_report();
     let before_ready = before.readiness.can_build_accessibility_tree;
@@ -275,12 +352,12 @@ pub fn setup_accessibility_report() -> SetupReport {
     let requires_target_app_restart = changed_accessibility;
     let message = if after_ready {
         if changed_accessibility {
-            "GNOME accessibility is enabled. Restart already-running target apps if their AT-SPI tree is still empty."
+            "AT-SPI accessibility is enabled. Restart already-running target apps if their AT-SPI tree is still empty."
         } else {
-            "GNOME accessibility is ready."
+            "AT-SPI accessibility is ready."
         }
     } else {
-        "Could not enable GNOME accessibility automatically. Check the accessibility_command detail and enable org.gnome.desktop.interface toolkit-accessibility manually."
+        "Could not enable AT-SPI accessibility automatically. Check the accessibility_command detail and enable org.a11y.Status IsEnabled or org.gnome.desktop.interface toolkit-accessibility manually."
     }
     .to_string();
 
@@ -323,12 +400,7 @@ fn portal_report() -> PortalReport {
 
 fn accessibility_report() -> AccessibilityReport {
     AccessibilityReport {
-        at_spi_bus: gdbus_call_check(
-            "org.a11y.Bus",
-            "/org/a11y/bus",
-            "org.a11y.Bus.GetAddress",
-            &[],
-        ),
+        at_spi_bus: atspi_bus_address_check(),
         toolkit_accessibility: command_check_with_session_bus(
             "gsettings",
             &[
@@ -337,18 +409,8 @@ fn accessibility_report() -> AccessibilityReport {
                 "toolkit-accessibility",
             ],
         ),
-        at_spi_enabled: gdbus_call_check(
-            "org.a11y.Bus",
-            "/org/a11y/bus",
-            "org.freedesktop.DBus.Properties.Get",
-            &["org.a11y.Status", "IsEnabled"],
-        ),
-        screen_reader_enabled: gdbus_call_check(
-            "org.a11y.Bus",
-            "/org/a11y/bus",
-            "org.freedesktop.DBus.Properties.Get",
-            &["org.a11y.Status", "ScreenReaderEnabled"],
-        ),
+        at_spi_enabled: atspi_status_property_check("IsEnabled"),
+        screen_reader_enabled: atspi_status_property_check("ScreenReaderEnabled"),
     }
 }
 
@@ -435,7 +497,7 @@ fn readiness_report(
 
     if !can_build_accessibility_tree {
         blockers.push(
-            "GNOME accessibility is disabled; enable org.gnome.desktop.interface toolkit-accessibility for AT-SPI tree extraction."
+            "AT-SPI accessibility is disabled; enable org.a11y.Status IsEnabled or org.gnome.desktop.interface toolkit-accessibility for tree extraction."
                 .to_string(),
         );
     }
@@ -464,7 +526,7 @@ fn readiness_report(
     }
 
     let recommended_next_step = if !can_build_accessibility_tree {
-        "Run setup_accessibility to enable GNOME accessibility before element-aware actions."
+        "Run setup_accessibility to enable AT-SPI accessibility before element-aware actions."
             .to_string()
     } else if !can_query_windows {
         format!(
@@ -641,6 +703,54 @@ fn portal_interface_check(interface: &str) -> Check {
     )
 }
 
+fn atspi_bus_address_check() -> Check {
+    let busctl = command_check_with_session_bus(
+        "busctl",
+        &[
+            "--user",
+            "call",
+            "org.a11y.Bus",
+            "/org/a11y/bus",
+            "org.a11y.Bus",
+            "GetAddress",
+        ],
+    );
+    if busctl.ok {
+        return busctl;
+    }
+
+    gdbus_call_check(
+        "org.a11y.Bus",
+        "/org/a11y/bus",
+        "org.a11y.Bus.GetAddress",
+        &[],
+    )
+}
+
+fn atspi_status_property_check(property: &str) -> Check {
+    let busctl = command_check_with_session_bus(
+        "busctl",
+        &[
+            "--user",
+            "get-property",
+            "org.a11y.Bus",
+            "/org/a11y/bus",
+            "org.a11y.Status",
+            property,
+        ],
+    );
+    if busctl.ok {
+        return busctl;
+    }
+
+    gdbus_call_check(
+        "org.a11y.Bus",
+        "/org/a11y/bus",
+        "org.freedesktop.DBus.Properties.Get",
+        &["org.a11y.Status", property],
+    )
+}
+
 fn gdbus_call_check(destination: &str, object_path: &str, method: &str, args: &[&str]) -> Check {
     let mut command_args = vec![
         "call",
@@ -813,6 +923,26 @@ mod tests {
             Some("wayland-0")
         );
         assert_eq!(environment.get("EMPTY").map(String::as_str), Some(""));
+        assert!(!environment.contains_key("NO_EQUALS"));
+    }
+
+    #[test]
+    fn parses_systemd_show_environment_output() {
+        let environment = parse_line_environment(
+            b"DISPLAY=:0\nHYPRLAND_INSTANCE_SIGNATURE=abc\nNO_EQUALS\nYDOTOOL_SOCKET=/run/ydotoold/socket\n",
+        );
+
+        assert_eq!(environment.get("DISPLAY").map(String::as_str), Some(":0"));
+        assert_eq!(
+            environment
+                .get("HYPRLAND_INSTANCE_SIGNATURE")
+                .map(String::as_str),
+            Some("abc")
+        );
+        assert_eq!(
+            environment.get("YDOTOOL_SOCKET").map(String::as_str),
+            Some("/run/ydotoold/socket")
+        );
         assert!(!environment.contains_key("NO_EQUALS"));
     }
 

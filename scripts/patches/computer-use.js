@@ -44,7 +44,16 @@ function computerUseUiSettingsPath(env) {
     : home
       ? path.join(home, ".config")
       : null;
-  return configHome == null ? null : path.join(configHome, "codex-desktop", "settings.json");
+  if (configHome == null) {
+    return null;
+  }
+  const appId = computerUseUiSettingsAppId(env);
+  return path.join(configHome, appId, "settings.json");
+}
+
+function computerUseUiSettingsAppId(env) {
+  const appId = env.CODEX_APP_ID || env.CODEX_LINUX_APP_ID || "codex-desktop";
+  return /^[A-Za-z0-9._-]+$/.test(appId) ? appId : "codex-desktop";
 }
 
 // Lookback/lookahead windows used when searching for the nearest minified
@@ -144,10 +153,14 @@ function applyLinuxComputerUsePluginGatePatch(currentSource) {
 function applyLinuxComputerUseFeaturePatch(currentSource) {
   const patchedFeaturePattern =
     /function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{env:[A-Za-z_$][\w$]*=process\.env,platform:[A-Za-z_$][\w$]*=process\.platform\}=\{\}\)\{return [A-Za-z_$][\w$]*===`linux`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:/;
+  const currentPatchedFeaturePattern =
+    /let [A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*===`linux`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*===`win32`&&[A-Za-z_$][\w$]*\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*,/;
   const windowsOnlyFeaturePattern =
     /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\{env:([A-Za-z_$][\w$]*)=process\.env,platform:([A-Za-z_$][\w$]*)=process\.platform\}=\{\}\)\{return \4!==`win32`\|\|\3\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==`1`\?\2:\{\.\.\.\2,computerUse:!0,computerUseNodeRepl:!0\}\}/;
+  const currentWindowsOnlyFeaturePattern =
+    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`win32`&&([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0,computerUseNodeRepl:!0\}:\4,/;
 
-  if (patchedFeaturePattern.test(currentSource)) {
+  if (patchedFeaturePattern.test(currentSource) || currentPatchedFeaturePattern.test(currentSource)) {
     return currentSource;
   }
 
@@ -156,6 +169,14 @@ function applyLinuxComputerUseFeaturePatch(currentSource) {
       windowsOnlyFeaturePattern,
       (_, fnName, featuresVar, envVar, platformVar) =>
         `function ${fnName}(${featuresVar},{env:${envVar}=process.env,platform:${platformVar}=process.platform}={}){return ${platformVar}===\`linux\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${platformVar}!==\`win32\`||${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==\`1\`?${featuresVar}:{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}}`,
+    );
+  }
+
+  if (currentWindowsOnlyFeaturePattern.test(currentSource)) {
+    return currentSource.replace(
+      currentWindowsOnlyFeaturePattern,
+      (_, gateVar, platformVar, envVar, featuresVar) =>
+        `let ${gateVar}=${platformVar}===\`linux\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${platformVar}===\`win32\`&&${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===\`1\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${featuresVar},`,
     );
   }
 

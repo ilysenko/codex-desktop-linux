@@ -173,7 +173,7 @@ import_graphical_env_entry() {
     # systemd --user manager environment (and not in the spawned process's
     # initial env).
     case "$name" in
-        DISPLAY|WAYLAND_DISPLAY|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|DESKTOP_SESSION|XAUTHORITY|SOMMELIER_VERSION|SOMMELIER_VM_IDENTIFIER)
+        DISPLAY|WAYLAND_DISPLAY|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|XDG_SESSION_DESKTOP|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|DESKTOP_SESSION|XAUTHORITY|HYPRLAND_INSTANCE_SIGNATURE|YDOTOOL_SOCKET|SOMMELIER_VERSION|SOMMELIER_VM_IDENTIFIER)
             if [ -z "${!name:-}" ]; then
                 export "$entry"
             fi
@@ -1042,39 +1042,50 @@ webview_origin_is_reachable() {
 }
 
 webview_port_is_open() {
-    python3 - "$CODEX_LINUX_WEBVIEW_PORT" <<'PY' 2>/dev/null
-import socket
-import sys
-
-port = int(sys.argv[1])
-s = socket.socket()
-s.settimeout(0.2)
-try:
-    s.connect(("127.0.0.1", port))
-finally:
-    s.close()
-PY
+    # bash /dev/tcp connect, capped at 0.2 s by a watchdog kill.
+    # Replaces python3 socket.connect heredoc (~3 ms vs 13–60 ms here).
+    # /usr/bin/timeout is intentionally not used: on uutils-coreutils
+    # distros (Ubuntu 26+) its cold start is ~105 ms, which would dominate
+    # the 200 ms cap it would enforce.
+    local probe_pid kill_pid rc=1 self_pid=$$
+    ( exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" ) 2>/dev/null &
+    probe_pid=$!
+    # Watchdog: before SIGKILL, verify /proc/<probe>/stat still reports us as
+    # the parent. Guards against PID reuse: if the probe has already exited
+    # and the kernel has recycled that PID to an unrelated process between
+    # the wait below and the watchdog firing, its ppid will not match
+    # $self_pid and the SIGKILL is suppressed.
+    ( sleep 0.2
+      [ -r "/proc/$probe_pid/stat" ] || exit 0
+      # /proc/<pid>/stat: "<pid> (comm) <state> <ppid> ..." — comm can contain
+      # spaces/parens, so strip up to the last ") " before splitting fields.
+      local stat_line rest
+      stat_line=$(< "/proc/$probe_pid/stat") || exit 0
+      rest=${stat_line##*) }
+      set -- $rest
+      # $1 = state, $2 = ppid
+      [ "${2:-}" = "$self_pid" ] && kill -9 "$probe_pid" 2>/dev/null
+    ) 2>/dev/null &
+    kill_pid=$!
+    if wait "$probe_pid" 2>/dev/null; then rc=0; fi
+    kill "$kill_pid" 2>/dev/null
+    wait "$kill_pid" 2>/dev/null
+    return $rc
 }
 
 wait_for_webview_server() {
     echo "Waiting for webview server on :$CODEX_LINUX_WEBVIEW_PORT"
 
+    # 250 × 20 ms = same 5 s overall budget as 50 × 100 ms, but with 5× tighter
+    # polling cadence so the typical case detects readiness within one cycle
+    # of the server actually binding instead of within the next 100 ms tick.
     local attempt
-    for attempt in $(seq 1 50); do
-        if python3 - "$CODEX_LINUX_WEBVIEW_PORT" <<'PY' 2>/dev/null; then
-import socket
-import sys
-
-port = int(sys.argv[1])
-s = socket.socket()
-s.settimeout(0.5)
-s.connect(("127.0.0.1", port))
-s.close()
-PY
+    for attempt in $(seq 1 250); do
+        if webview_port_is_open; then
             echo "Webview server is ready"
             return 0
         fi
-        sleep 0.1
+        sleep 0.02
     done
 
     return 1
@@ -1083,22 +1094,33 @@ PY
 verify_webview_origin() {
     local url="$1"
 
-    python3 - "$url" <<'PY'
-import sys
-import urllib.request
+    # curl with built-in --max-time replaces python3 urllib (~7 ms vs ~38 ms).
+    # --fail rejects non-2xx; --max-time 2 mirrors urllib.urlopen(timeout=2).
+    # --show-error + 2>$err captures curl's actual diagnostic so failures
+    # surface the underlying cause (HTTP status, connect refused, timeout,
+    # SSL error, etc.) instead of a generic "HTTP fetch failed", matching
+    # what the original python3 urllib version exposed via its raised
+    # exception text.
+    # --noproxy keeps loopback validation pointed at the embedded webview
+    # server even when the user's shell exports http_proxy/ALL_PROXY without a
+    # localhost NO_PROXY exemption.
+    local body err detail
+    err=$(mktemp 2>/dev/null) || err="${TMPDIR:-/tmp}/codex-curl-err.$$"
+    if ! body="$(curl --disable --noproxy 127.0.0.1,localhost --silent --show-error --fail --max-time 2 "$url" 2>"$err")"; then
+        detail=$(< "$err" 2>/dev/null)
+        rm -f "$err"
+        echo "Webview origin validation failed for $url; ${detail:-curl exited non-zero with no diagnostic}" >&2
+        return 1
+    fi
+    rm -f "$err"
 
-url = sys.argv[1]
-required_markers = ("<title>Codex</title>", "startup-loader")
-
-with urllib.request.urlopen(url, timeout=2) as response:
-    body = response.read(8192).decode("utf-8", "ignore")
-
-missing = [marker for marker in required_markers if marker not in body]
-if missing:
-    raise SystemExit(
-        f"Webview origin validation failed for {url}; missing markers: {', '.join(missing)}"
-    )
-PY
+    local missing=()
+    [[ "$body" == *"<title>Codex</title>"* ]] || missing+=("<title>Codex</title>")
+    [[ "$body" == *"startup-loader"* ]]       || missing+=("startup-loader")
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "Webview origin validation failed for $url; missing markers: ${missing[*]}" >&2
+        return 1
+    fi
 }
 
 pid_has_webview_server_cmdline() {

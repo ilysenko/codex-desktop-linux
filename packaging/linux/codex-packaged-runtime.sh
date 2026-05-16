@@ -23,7 +23,9 @@ codex_packaged_runtime_prelaunch_background() {
         WAYLAND_DISPLAY \
         DBUS_SESSION_BUS_ADDRESS \
         XAUTHORITY \
-        XDG_RUNTIME_DIR >/dev/null 2>&1 || true
+        XDG_RUNTIME_DIR \
+        HYPRLAND_INSTANCE_SIGNATURE \
+        YDOTOOL_SOCKET >/dev/null 2>&1 || true
 
     if command -v dbus-update-activation-environment >/dev/null 2>&1; then
         dbus-update-activation-environment --systemd \
@@ -32,7 +34,9 @@ codex_packaged_runtime_prelaunch_background() {
             WAYLAND_DISPLAY \
             DBUS_SESSION_BUS_ADDRESS \
             XAUTHORITY \
-            XDG_RUNTIME_DIR >/dev/null 2>&1 || true
+            XDG_RUNTIME_DIR \
+            HYPRLAND_INSTANCE_SIGNATURE \
+            YDOTOOL_SOCKET >/dev/null 2>&1 || true
     fi
 
     if systemctl --user is-enabled codex-update-manager.service >/dev/null 2>&1; then

@@ -145,6 +145,29 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
   }
 
   const [, transparentVar, darkVar, lightVar] = colorMatch;
+
+  const currentFuncParamRegex =
+    /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowsEnabled:([A-Za-z_$][\w$]*),prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\3&&!([A-Za-z_$][\w$]*)\(\2\)&&\(\1===`darwin`\|\|\1===`win32`\)\?/;
+  const currentFuncMatch = currentSource.match(currentFuncParamRegex);
+  if (currentFuncMatch != null) {
+    const [, platformParam, appearanceParam, , darkColorsParam, transparentAppearancePredicate] =
+      currentFuncMatch;
+    const win32Needle =
+      `:${platformParam}===\`win32\`&&!${transparentAppearancePredicate}(${appearanceParam})?`;
+    const linuxBgPrefix =
+      `:${platformParam}===\`linux\`&&!${transparentAppearancePredicate}(${appearanceParam})?{backgroundColor:${darkColorsParam}?${darkVar}:${lightVar},backgroundMaterial:null}:`;
+
+    if (currentSource.includes(linuxBgPrefix)) {
+      return currentSource;
+    }
+    if (currentSource.includes(win32Needle)) {
+      return currentSource.replace(win32Needle, `${linuxBgPrefix}${win32Needle.slice(1)}`);
+    }
+
+    console.warn("WARN: Could not find BrowserWindow background color needle — skipping background patch");
+    return currentSource;
+  }
+
   const funcParamRegex =
     /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowsEnabled:[A-Za-z_$][\w$]*,prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\1===`win32`&&!([A-Za-z_$][\w$]*)\(\2\)/;
   const funcMatch = currentSource.match(funcParamRegex);
@@ -339,9 +362,13 @@ function applyLinuxExplicitTrayQuitPatch(currentSource) {
   const trayQuitNeedle = "{label:rB(this.appName),click:()=>{n.app.quit()}}";
   const trayQuitPatch =
     `{label:rB(this.appName),click:()=>{${quitMarkerExpression}n.app.quit()}}`;
+  const patchedTrayQuitRegex =
+    /\{label:[^{}]+,click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),[A-Za-z_$][\w$]*\.app\.quit\(\)\}\}/;
   const trayQuitRegex =
     /\{label:rB\(([^)]+)\),click:\(\)=>\{([A-Za-z_$][\w$]*)\.app\.quit\(\)\}\}/;
-  if (patchedSource.includes(trayQuitPatch)) {
+  const genericTrayQuitRegex =
+    /\{label:([A-Za-z_$][\w$]*\(this\.appName\)),click:\(\)=>\{([A-Za-z_$][\w$]*)\.app\.quit\(\)\}\}/;
+  if (patchedSource.includes(trayQuitPatch) || patchedTrayQuitRegex.test(patchedSource)) {
     // Already patched.
   } else if (patchedSource.includes(trayQuitNeedle)) {
     patchedSource = patchedSource.replace(trayQuitNeedle, trayQuitPatch);
@@ -350,6 +377,12 @@ function applyLinuxExplicitTrayQuitPatch(currentSource) {
       trayQuitRegex,
       (_match, appNameExpr, electronVar) =>
         `{label:rB(${appNameExpr}),click:()=>{${quitMarkerExpression}${electronVar}.app.quit()}}`,
+    );
+  } else if (genericTrayQuitRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      genericTrayQuitRegex,
+      (_match, labelExpression, electronVar) =>
+        `{label:${labelExpression},click:()=>{${quitMarkerExpression}${electronVar}.app.quit()}}`,
     );
   } else if (
     patchedSource.includes("getNativeTrayMenuItems(){") &&
@@ -420,31 +453,19 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     }
   }
 
-  const closeToTrayNeedle =
-    "if(process.platform===`win32`&&f===`local`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}";
-  const closeToTrayExistingPatch =
-    "if((process.platform===`win32`||process.platform===`linux`)&&f===`local`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}";
-  const closeToTrayPatch =
-    "if((process.platform===`win32`||process.platform===`linux`)&&f===`local`&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}";
   const patchedCloseToTrayRegex =
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&[A-Za-z_$][\w$]*===`local`&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)\{[A-Za-z_$][\w$]*\.preventDefault\(\),[A-Za-z_$][\w$]*\.hide\(\);return\}/;
-  if (patchedSource.includes(closeToTrayPatch)) {
-    // Already patched.
-  } else if (patchedSource.includes(closeToTrayExistingPatch)) {
-    patchedSource = patchedSource.replace(closeToTrayExistingPatch, closeToTrayPatch);
-  } else if (patchedSource.includes(closeToTrayNeedle)) {
-    patchedSource = patchedSource.replace(closeToTrayNeedle, closeToTrayPatch);
-  } else if (patchedCloseToTrayRegex.test(patchedSource)) {
+    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)\{[A-Za-z_$][\w$]*\.preventDefault\(\),[A-Za-z_$][\w$]*\.hide\(\);return\}/;
+  if (patchedCloseToTrayRegex.test(patchedSource)) {
     // Already patched with a newer minifier's window variable.
   } else {
     const closeToTrayRegex =
-      /if\(process\.platform===`win32`&&([A-Za-z_$][\w$]*)===`local`&&!this\.isAppQuitting&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)\.preventDefault\(\),([A-Za-z_$][\w$]*)\.hide\(\);return\}/;
+      /if\(process\.platform===`win32`&&!this\.isAppQuitting&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)\.preventDefault\(\),([A-Za-z_$][\w$]*)\.hide\(\);return\}/;
     const closeToTrayMatch = patchedSource.match(closeToTrayRegex);
     if (closeToTrayMatch != null) {
-      const [, hostVar, hasOtherWindowVar, eventVar, windowVar] = closeToTrayMatch;
+      const [, hasOtherWindowVar, eventVar, windowVar] = closeToTrayMatch;
       patchedSource = patchedSource.replace(
         closeToTrayRegex,
-        `if((process.platform===\`win32\`||process.platform===\`linux\`)&&${hostVar}===\`local\`&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress())&&this.options.canHideLastLocalWindowToTray?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
+        `if((process.platform===\`win32\`||process.platform===\`linux\`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress())&&this.options.canHideLastLocalWindowToTray?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
       );
     } else {
       console.warn("WARN: Could not find close-to-tray condition — skipping Linux close-to-tray patch");
@@ -763,29 +784,14 @@ function applyLinuxGitOriginsSourceFallbackPatch(currentSource) {
     return currentSource;
   }
 
-  const exactNeedle =
-    "if(o==null){if(e.qt(r))throw Error(`Missing git operation source for ${r}`);return l()}return t.Gt({source:o,requestKind:r},l)";
-  const exactReplacement =
-    `if(o==null){if(e.qt(r)){if(r===\`git-origins\`)return t.Gt({source:\`${fallbackSource}\`,requestKind:r},l);throw Error(\`Missing git operation source for \${r}\`)}return l()}return t.Gt({source:o,requestKind:r},l)`;
-  if (currentSource.includes(exactNeedle)) {
-    return currentSource.replace(exactNeedle, exactReplacement);
-  }
-  const currentExactNeedle =
-    "if(o==null){if(e.Gt(r))throw Error(`Missing git operation source for ${r}`);return l()}return t.Gt({source:o,requestKind:r},l)";
-  const currentExactReplacement =
-    `if(o==null){if(e.Gt(r)){if(r===\`git-origins\`)return t.Gt({source:\`${fallbackSource}\`,requestKind:r},l);throw Error(\`Missing git operation source for \${r}\`)}return l()}return t.Gt({source:o,requestKind:r},l)`;
-  if (currentSource.includes(currentExactNeedle)) {
-    return currentSource.replace(currentExactNeedle, currentExactReplacement);
-  }
-
   const dynamicRegex =
-    /if\(([A-Za-z_$][\w$]*)==null\)\{if\(([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\)throw Error\(`Missing git operation source for \$\{\4\}`\);return ([A-Za-z_$][\w$]*)\(\)\}return ([A-Za-z_$][\w$]*)\.Gt\(\{source:\1,requestKind:\4\},\5\)/;
+    /if\(([A-Za-z_$][\w$]*)==null\)\{if\(([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\)throw Error\(`Missing git operation source for \$\{\4\}`\);return ([A-Za-z_$][\w$]*)\(\)\}return ([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\(\{source:\1,requestKind:\4\},\5\)/;
   const dynamicMatch = currentSource.match(dynamicRegex);
   if (dynamicMatch != null) {
-    const [, sourceVar, gitGuardVar, guardFn, requestKindVar, callVar, operationContextVar] = dynamicMatch;
+    const [, sourceVar, gitGuardVar, guardFn, requestKindVar, callVar, operationContextVar, operationContextFn] = dynamicMatch;
     return currentSource.replace(
       dynamicRegex,
-      `if(${sourceVar}==null){if(${gitGuardVar}.${guardFn}(${requestKindVar})){if(${requestKindVar}===\`git-origins\`)return ${operationContextVar}.Gt({source:\`${fallbackSource}\`,requestKind:${requestKindVar}},${callVar});throw Error(\`Missing git operation source for \${${requestKindVar}}\`)}return ${callVar}()}return ${operationContextVar}.Gt({source:${sourceVar},requestKind:${requestKindVar}},${callVar})`,
+      `if(${sourceVar}==null){if(${gitGuardVar}.${guardFn}(${requestKindVar})){if(${requestKindVar}===\`git-origins\`)return ${operationContextVar}.${operationContextFn}({source:\`${fallbackSource}\`,requestKind:${requestKindVar}},${callVar});throw Error(\`Missing git operation source for \${${requestKindVar}}\`)}return ${callVar}()}return ${operationContextVar}.${operationContextFn}({source:${sourceVar},requestKind:${requestKindVar}},${callVar})`,
     );
   }
 

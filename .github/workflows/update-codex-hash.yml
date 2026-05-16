@@ -8,9 +8,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: update-nix-upstream-hashes
+  cancel-in-progress: false
+
 jobs:
   update-hash:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     env:
       NIX_CONFIG: experimental-features = nix-command flakes
     steps:
@@ -31,7 +36,8 @@ jobs:
           fi
 
           CODEX_DMG_HASH="$(scripts/ci/update-nix-hashes.sh read-flake-hash 'codexDmg = pkgs.fetchurl {' 'hash = ')"
-          PAYLOAD_HASH="$(scripts/ci/update-nix-hashes.sh read-flake-hash 'codexDesktopPayload = pkgs.stdenv.mkDerivation {' 'outputHash = ')"
+          PAYLOAD_HASH="$(scripts/ci/update-nix-hashes.sh read-flake-hash 'codexDesktopPayload = mkCodexDesktopPayload {' 'outputHash = ')"
+          COMPUTER_USE_UI_PAYLOAD_HASH="$(scripts/ci/update-nix-hashes.sh read-flake-hash 'codexDesktopComputerUseUiPayload = mkCodexDesktopPayload {' 'outputHash = ')"
 
           git config user.name  "codex-dmg-hash-bot"
           git config user.email "actions@github.com"
@@ -40,5 +46,6 @@ jobs:
             -m "fix(nix): update upstream Nix hashes" \
             -m "Refreshed Codex.dmg SRI hash to $CODEX_DMG_HASH." \
             -m "Refreshed codexDesktopPayload recursive outputHash to $PAYLOAD_HASH." \
+            -m "Refreshed codexDesktopComputerUseUiPayload recursive outputHash to $COMPUTER_USE_UI_PAYLOAD_HASH." \
             -m "[skip ci]"
           git push origin main

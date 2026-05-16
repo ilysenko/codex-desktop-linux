@@ -8,7 +8,6 @@ const path = require("node:path");
 const TRAY_GUARD_LOOKAHEAD = 1200;
 const CLOSE_GATE_PREFIX_LOOKBACK = 8000;
 const HANDLER_PREFIX_LOOKBACK = 12000;
-const DIRECT_HANDLER_PROXIMITY = 1200;
 
 const linuxSettingsKeys = {
   promptWindow: "codex-linux-prompt-window-enabled",
@@ -265,7 +264,6 @@ function findDisposableVar(prefix) {
 
 module.exports = {
   CLOSE_GATE_PREFIX_LOOKBACK,
-  DIRECT_HANDLER_PROXIMITY,
   HANDLER_PREFIX_LOOKBACK,
   TRAY_GUARD_LOOKAHEAD,
   escapeRegExp,

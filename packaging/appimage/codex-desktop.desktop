@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=__PACKAGE_DISPLAY_NAME__
+Comment=__PACKAGE_COMMENT__
+Exec=AppRun %u
+Icon=__PACKAGE_NAME__
+Terminal=false
+Type=Application
+Categories=Development;
+MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;
+StartupNotify=true
+StartupWMClass=Codex
+X-GNOME-WMClass=Codex
+X-AppImage-Version=__VERSION__

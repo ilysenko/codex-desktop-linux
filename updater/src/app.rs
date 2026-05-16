@@ -293,6 +293,7 @@ fn run_status(state: &mut PersistedState, paths: &RuntimePaths, json: bool) -> R
                 .as_deref()
                 .unwrap_or("none")
         );
+        println!("{}", update_error_status_line(state));
         println!("cli_status: {:?}", state.cli_status);
         println!(
             "cli_installed_version: {}",
@@ -309,6 +310,13 @@ fn run_status(state: &mut PersistedState, paths: &RuntimePaths, json: bool) -> R
     }
 
     Ok(())
+}
+
+fn update_error_status_line(state: &PersistedState) -> String {
+    format!(
+        "update_error: {}",
+        state.error_message.as_deref().unwrap_or("none")
+    )
 }
 
 fn run_prompt_install_cli(
@@ -1200,6 +1208,21 @@ mod tests {
 
         state.last_successful_check_at = Some(Utc::now() - ChronoDuration::hours(7));
         assert!(!upstream_check_is_fresh(&config, &state));
+    }
+
+    #[test]
+    fn plain_status_reports_update_error() {
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::Failed;
+        state.error_message = Some("install.sh failed during local rebuild".to_string());
+
+        assert_eq!(
+            update_error_status_line(&state),
+            "update_error: install.sh failed during local rebuild"
+        );
+
+        state.error_message = None;
+        assert_eq!(update_error_status_line(&state), "update_error: none");
     }
 
     #[tokio::test]

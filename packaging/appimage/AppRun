@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+resolve_appdir() {
+    local source="${BASH_SOURCE[0]}"
+    local dir
+
+    while [ -L "$source" ]; do
+        dir="$(cd -P "$(dirname "$source")" && pwd)"
+        source="$(readlink "$source")"
+        case "$source" in
+            /*) ;;
+            *) source="$dir/$source" ;;
+        esac
+    done
+
+    cd -P "$(dirname "$source")" && pwd
+}
+
+APPDIR="${APPDIR:-$(resolve_appdir)}"
+export APPDIR
+
+exec "$APPDIR/opt/__PACKAGE_NAME__/start.sh" "$@"
