@@ -12,6 +12,10 @@ PACKAGE_OUTPUTS=(
     ".#codex-desktop-computer-use-ui"
     ".#codex-desktop-remote-mobile-control"
     ".#codex-desktop-computer-use-ui-remote-mobile-control"
+    ".#codex-desktop-remote-control-ui"
+    ".#codex-desktop-computer-use-ui-remote-control-ui"
+    ".#codex-desktop-remote-control"
+    ".#codex-desktop-computer-use-ui-remote-control"
     ".#installer"
 )
 

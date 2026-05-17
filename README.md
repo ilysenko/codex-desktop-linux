@@ -97,16 +97,28 @@ nix run github:ilysenko/codex-desktop-linux
 
 The flake handles dependencies and patches Electron for NixOS. A GitHub Actions bot refreshes the upstream `Codex.dmg` hash and verifies the Nix package outputs in `main`; if you hit a hash mismatch right after an upstream release, wait for the next bot run and retry.
 
-Because flakes do not include the git-ignored `linux-features/features.json` opt-in file, Nix exposes feature-specific app variants for optional integrations. To build and run Codex Desktop with the experimental mobile remote-control feature enabled:
+Because flakes do not include the git-ignored `linux-features/features.json` opt-in file, Nix exposes feature-specific app variants for optional integrations. To build and run Codex Desktop with the experimental mobile remote-control host patches enabled:
 
 ```bash
 nix run github:ilysenko/codex-desktop-linux#remote-mobile-control
 ```
 
-Feature-specific Nix outputs are additive. To enable both the Computer Use UI and experimental mobile remote control:
+To enable the newer remote-control UI visibility patches without the host-enrollment patches:
 
 ```bash
-nix run github:ilysenko/codex-desktop-linux#computer-use-ui-remote-mobile-control
+nix run github:ilysenko/codex-desktop-linux#remote-control-ui
+```
+
+To enable both remote-control feature sets together:
+
+```bash
+nix run github:ilysenko/codex-desktop-linux#remote-control
+```
+
+Feature-specific Nix outputs are additive. To enable the Computer Use UI along with the full experimental remote-control set:
+
+```bash
+nix run github:ilysenko/codex-desktop-linux#computer-use-ui-remote-control
 ```
 
 `nix develop github:ilysenko/codex-desktop-linux` enters a dev shell with the required tooling.
@@ -196,7 +208,7 @@ nix run github:ilysenko/codex-desktop-linux#codex-desktop-computer-use-ui
 The Computer Use UI output can also be combined with Linux feature outputs, for example:
 
 ```bash
-nix run github:ilysenko/codex-desktop-linux#computer-use-ui-remote-mobile-control
+nix run github:ilysenko/codex-desktop-linux#computer-use-ui-remote-control
 ```
 
 ### Side-by-side dev variant

@@ -22,11 +22,23 @@ git-ignored `features.json` file is not part of the flake source:
 nix run .#remote-mobile-control
 ```
 
+To combine the host-enrollment patches with the newer remote-control UI gates:
+
+```bash
+nix run .#remote-control
+```
+
 Feature-specific Nix outputs are additive. To combine this feature with the
 Computer Use UI opt-in:
 
 ```bash
 nix run .#computer-use-ui-remote-mobile-control
+```
+
+To combine the Computer Use UI with the full experimental remote-control set:
+
+```bash
+nix run .#computer-use-ui-remote-control
 ```
 
 What it changes:
