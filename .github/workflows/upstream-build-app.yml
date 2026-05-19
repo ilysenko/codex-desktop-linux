@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: '30 6 * * *'
   pull_request:
+    branches:
+      - development
+      - test
+      - main
     paths:
       - install.sh
       - Makefile
