@@ -23,6 +23,7 @@ env:
 
 jobs:
   populate:
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["development","test","main"]'), github.ref_name)
     name: Build Nix flake outputs
     runs-on: ubuntu-latest
     timeout-minutes: 150

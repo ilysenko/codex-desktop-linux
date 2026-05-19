@@ -39,6 +39,7 @@ env:
 
 jobs:
   build-app-upstream-dmg:
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["development","test","main"]'), github.ref_name)
     name: Build App Against Upstream DMG
     runs-on: ubuntu-latest
     timeout-minutes: 60

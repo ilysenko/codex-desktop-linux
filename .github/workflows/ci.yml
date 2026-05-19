@@ -16,6 +16,7 @@ env:
 
 jobs:
   rust-and-smoke:
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["development","test","main"]'), github.ref_name)
     name: Rust and Smoke Tests
     runs-on: ubuntu-latest
     steps:
@@ -71,6 +72,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   package-deb:
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["development","test","main"]'), github.ref_name)
     name: Build Debian Package
     runs-on: ubuntu-latest
     steps:
@@ -104,6 +106,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   nix:
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["development","test","main"]'), github.ref_name)
     name: Nix Package Builds
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -142,6 +145,7 @@ jobs:
             --print-build-logs
 
   package-rpm:
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["development","test","main"]'), github.ref_name)
     name: Build RPM Package
     runs-on: ubuntu-latest
     steps:
@@ -182,6 +186,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   package-pacman:
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["development","test","main"]'), github.ref_name)
     name: Build Pacman Package
     runs-on: ubuntu-latest
     steps:
