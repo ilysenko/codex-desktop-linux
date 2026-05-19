@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Multi-instance launches (`--new-instance` / `CODEX_MULTI_LAUNCH=1`) now skip warm-start and Electron second-instance handoff in the launcher, so an already-running default instance cannot hijack an explicit new-instance request.
+- Packaged `.desktop` files now expose an **Open New Instance** action (right-click the launcher icon) that passes the multi-launch flags expected by the patched Electron bootstrap lock bypass.
+- The embedded webview HTTP server now installs `PR_SET_PDEATHSIG(SIGTERM)` so orphaned servers cannot permanently block webview ports after a crashed or killed launcher.
 - The Chrome native-messaging host now evicts stale browser clients when a newer Codex browser client connects, preventing old Node REPL sessions from repeatedly reattaching CDP and driving extension service-worker CPU.
 - The bundled Chrome plugin is now auto-installed during app startup, matching Browser Use, so the plugin page no longer falls back to an install button after restart when the Linux native host is already staged.
 - Nix builds, installer apps, and dev shells now use modern `7zz`, and the installer dependency check accepts `7zz` without requiring a separate legacy `7z` binary.

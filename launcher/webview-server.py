@@ -1,7 +1,35 @@
 #!/usr/bin/env python3
+import ctypes
+import ctypes.util
 import functools
 import http.server
+import os
+import signal
 import sys
+
+
+def _install_parent_death_signal():
+    # Ensure the kernel terminates this process if the launcher (parent) exits
+    # without invoking its cleanup trap (SIGKILL, OOM, crash). Without this,
+    # the HTTP server can outlive the launcher and block its webview port,
+    # which is fatal for multi-instance launches pinned to a single port.
+    if sys.platform != "linux":
+        return
+    libc_name = ctypes.util.find_library("c") or "libc.so.6"
+    try:
+        libc = ctypes.CDLL(libc_name, use_errno=True)
+    except OSError:
+        return
+    PR_SET_PDEATHSIG = 1
+    if libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0) != 0:
+        return
+    # The parent may have died between fork() and prctl(); in that case the
+    # death signal never fires. Bail out now so the port is freed promptly.
+    if os.getppid() == 1:
+        os._exit(0)
+
+
+_install_parent_death_signal()
 
 
 port = int(sys.argv[1])

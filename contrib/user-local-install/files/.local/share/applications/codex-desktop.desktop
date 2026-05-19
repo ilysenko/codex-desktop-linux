@@ -11,4 +11,10 @@ MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;
 Keywords=codex;openai;ai;coding;
 StartupNotify=true
 StartupWMClass=codex-desktop
+X-GNOME-WMClass=codex-desktop
 Icon=codex-desktop
+Actions=NewInstance;
+
+[Desktop Action NewInstance]
+Name=Open New Instance
+Exec=env CODEX_MULTI_LAUNCH=1 @HOME@/.local/bin/codex-desktop --new-instance

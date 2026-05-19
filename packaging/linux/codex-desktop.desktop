@@ -8,9 +8,13 @@ Type=Application
 Categories=Development;
 MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;
 StartupNotify=true
-StartupWMClass=Codex
-X-GNOME-WMClass=Codex
-Actions=CheckForUpdates;InstallReadyUpdate;
+StartupWMClass=codex-desktop
+X-GNOME-WMClass=codex-desktop
+Actions=NewInstance;CheckForUpdates;InstallReadyUpdate;
+
+[Desktop Action NewInstance]
+Name=Open New Instance
+Exec=env BAMF_DESKTOP_FILE_HINT=/usr/share/applications/codex-desktop.desktop CHROME_DESKTOP=codex-desktop.desktop CODEX_MULTI_LAUNCH=1 /usr/bin/codex-desktop --new-instance
 
 [Desktop Action CheckForUpdates]
 Name=Check for Updates

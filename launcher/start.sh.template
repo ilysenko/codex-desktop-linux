@@ -1247,7 +1247,7 @@ running_app_is_active() {
 }
 
 using_second_instance_handoff() {
-    [ "$WARM_START" -eq 0 ] && running_app_is_active
+    [ "$MULTI_LAUNCH_ACTIVE" -eq 0 ] && [ "$WARM_START" -eq 0 ] && running_app_is_active
 }
 
 needs_cold_start() {
@@ -1255,6 +1255,13 @@ needs_cold_start() {
 }
 
 detect_warm_start() {
+    if [ "$MULTI_LAUNCH_ACTIVE" -eq 1 ]; then
+        WARM_START=0
+        RUNNING_APP_PID=""
+        echo "Multi-launch active; skipping warm-start and second-instance handoff"
+        return 0
+    fi
+
     if RUNNING_APP_PID="$(find_running_app_pid)" || { [ -S "$LAUNCH_ACTION_SOCKET" ] && RUNNING_APP_PID="$(discover_running_app_pid)"; }; then
         echo "$RUNNING_APP_PID" > "$APP_PID_FILE"
         if ! linux_setting_enabled "codex-linux-warm-start-enabled" 1; then

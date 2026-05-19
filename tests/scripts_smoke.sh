@@ -1467,6 +1467,10 @@ test_launcher_template_sanity() {
     assert_file_exists "$REPO_DIR/launcher/webview-server.py"
     assert_contains "$REPO_DIR/launcher/webview-server.py" "Cache-Control"
     assert_contains "$REPO_DIR/launcher/webview-server.py" "If-Modified-Since"
+    assert_contains "$REPO_DIR/launcher/webview-server.py" "PR_SET_PDEATHSIG"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "Actions=NewInstance;"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "--new-instance"
     assert_contains "$REPO_DIR/install.sh" "webview-server.py"
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "WEBVIEW_PID_FILE"
@@ -1530,6 +1534,10 @@ if 'send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"' not in source:
     raise SystemExit("warm-start handoff must not receive launcher-only multi-launch flags")
 if 'launch_electron "${LAUNCHER_ARGS[@]}"' not in source:
     raise SystemExit("Electron launch must receive sanitized launcher args")
+if '"$MULTI_LAUNCH_ACTIVE" -eq 1' not in detect_body or 'skipping warm-start and second-instance handoff' not in detect_body:
+    raise SystemExit("detect_warm_start must bypass warm-start when multi-launch is active")
+if 'MULTI_LAUNCH_ACTIVE" -eq 0 ] && [ "$WARM_START" -eq 0 ] && running_app_is_active' not in source:
+    raise SystemExit("using_second_instance_handoff must ignore live apps during multi-launch")
 if 'RUNNING_APP_PID="$(find_running_app_pid)"' not in detect_body:
     raise SystemExit("detect_warm_start must record a pid-file running app even when warm start is disabled")
 if '[ -S "$LAUNCH_ACTION_SOCKET" ] && RUNNING_APP_PID="$(discover_running_app_pid)"' not in detect_body:

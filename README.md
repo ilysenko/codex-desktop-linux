@@ -267,6 +267,8 @@ By default, second launches reuse the running app through the Linux warm-start h
 ./codex-app/start.sh --new-instance
 ```
 
+Packaged installs also expose **Open New Instance** in the `.desktop` entry actions menu (right-click the app icon in your launcher).
+
 The launcher picks the first free webview port from a bounded range, then uses per-port pid files, launch socket, log, and Electron user-data dir. This keeps Electron's single-instance lock scoped to that new instance while leaving normal launches unchanged. The default range allows up to five instances.
 
 Configure the range or make every launch use this mode with:

@@ -97,12 +97,22 @@ render_desktop_entry() {
         mv "$rendered_target" "$target"
     else
         awk '
+            BEGIN { actions_rewritten = 0 }
             /^\[Desktop Action CheckForUpdates\]$/ { skip = 1; next }
             /^\[Desktop Action InstallReadyUpdate\]$/ { skip = 1; next }
             /^\[/ { skip = 0 }
             skip { next }
-            /^Actions=/ { next }
+            /^Actions=/ {
+                print "Actions=NewInstance;"
+                actions_rewritten = 1
+                next
+            }
             { print }
+            END {
+                if (actions_rewritten == 0) {
+                    print "Actions=NewInstance;"
+                }
+            }
         ' "$rendered_target" > "$target"
         rm -f "$rendered_target"
     fi
