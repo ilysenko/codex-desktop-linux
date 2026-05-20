@@ -1499,6 +1499,18 @@ test("adds Linux package updater behind the existing app updater manager", () =>
   assert.match(patched, /if\(t\?\.status===`waiting_for_app_exit`\)/);
 });
 
+test("ignores local require assignments when finding updater bridge module bindings", () => {
+  const source = [
+    "async function choosePath(){let electron;try{electron=require(`electron`)}catch{return null}return electron.dialog.showOpenDialog({})}",
+    appUpdaterBundleFixture(),
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, source);
+
+  assert.match(patched, /t\.dialog\?\.showMessageBox\(\{type:`info`/);
+  assert.match(patched, /t\.app\?\.quit\?\.\(\)/);
+  assert.doesNotMatch(patched, /electron\.app\?\.quit/);
+});
+
 test("does not run bootstrap probe-state migration on class-style updater bundles", () => {
   const source = `function unrelated(){i();let o=1;return o}${appUpdaterBundleFixture()}`;
   const patched = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, source);
@@ -1665,6 +1677,21 @@ test("migrates an already-patched Linux updater bridge to relaunch after install
 
   assert.match(migrated, /grep -q "\^status: Installed"/);
   assert.match(migrated, /\/usr\/bin\/codex-desktop >\/dev\/null 2>&1 &/);
+});
+
+test("migrates an already-patched Linux updater bridge away from a stale electron binding", () => {
+  const patched = applyLinuxAppUpdaterBridgePatch(appUpdaterBundleFixture());
+  const stalePatched = patched
+    .replaceAll("t.dialog?.showMessageBox", "electron.dialog?.showMessageBox")
+    .replaceAll("t.app?.exit", "electron.app?.exit")
+    .replaceAll("t.app?.quit", "electron.app?.quit");
+  assert.match(stalePatched, /electron\.app\?\.quit/);
+
+  const migrated = applyLinuxAppUpdaterBridgePatch(stalePatched);
+
+  assert.match(migrated, /t\.dialog\?\.showMessageBox\(\{type:`info`/);
+  assert.match(migrated, /t\.app\?\.quit\?\.\(\)/);
+  assert.doesNotMatch(migrated, /electron\.app\?\.quit/);
 });
 
 test("enables the existing app update menu on Linux", () => {

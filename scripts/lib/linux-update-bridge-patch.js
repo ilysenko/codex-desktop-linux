@@ -3,7 +3,17 @@ const path = require("path");
 
 function requireName(source, moduleName) {
   const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return source.match(new RegExp(`([A-Za-z_$][\\w$]*)=require\\([\\\`'"]${escaped}[\\\`'"]\\)`))?.[1] ?? null;
+  const declarationPattern = /(?:^|[;{}\n])\s*(?:const|let|var)\s+([^;]+)/g;
+  const requirePattern = new RegExp(
+    `(?:^|,)\\s*([A-Za-z_$][\\w$]*)\\s*=\\s*require\\([\\\`'"]${escaped}[\\\`'"]\\)`,
+  );
+  for (const declaration of source.matchAll(declarationPattern)) {
+    const match = declaration[1].match(requirePattern);
+    if (match != null) {
+      return match[1];
+    }
+  }
+  return null;
 }
 
 function buildInstallAfterQuitSource(childProcessVar) {
@@ -46,11 +56,28 @@ function buildBridgeSource({ childProcessVar, electronVar, fsVar, pathVar }) {
   return `function codexLinuxUpdateStatePath(){let e=process.env.XDG_STATE_HOME||process.env.HOME&&(0,${pathVar}.join)(process.env.HOME,\`.local\`,\`state\`);return e?(0,${pathVar}.join)(e,\`codex-update-manager\`,\`state.json\`):null}function codexLinuxReadUpdateState(){let e=codexLinuxUpdateStatePath();if(!e||!${fsVar}.existsSync(e))return null;try{let t=JSON.parse(${fsVar}.readFileSync(e,\`utf8\`));return t&&typeof t===\`object\`&&!Array.isArray(t)?t:null}catch{return null}}function codexLinuxUpdateLifecycleState(e){switch(e){case\`ready_to_install\`:case\`waiting_for_app_exit\`:return\`ready\`;case\`installing\`:return\`installing\`;case\`checking_upstream\`:case\`update_detected\`:case\`downloading_dmg\`:case\`preparing_workspace\`:case\`patching_app\`:case\`building_package\`:return\`checking\`;default:return\`idle\`}}function codexLinuxUpdateManagerPath(){let e=process.env.CODEX_UPDATE_MANAGER_PATH;return typeof e===\`string\`&&e.trim().length>0?e:\`codex-update-manager\`}${showUpdateMessage}${installAfterQuit}${quitForUpdate}function codexLinuxRunUpdateManager(e){return new Promise((t,n)=>{${childProcessVar}.execFile(codexLinuxUpdateManagerPath(),e,{encoding:\`utf8\`,windowsHide:!0},(e,r,i)=>{if(e){e.stdout=r,e.stderr=i,n(e);return}t({stdout:r??\`\`,stderr:i??\`\`})})})}async function codexLinuxProbeUpdateManager(){await codexLinuxRunUpdateManager([\`--help\`])}async function codexLinuxRefreshUpdateState(){return codexLinuxReadUpdateState()}`;
 }
 
-function migrateLinuxUpdaterBridgeSource(source) {
+function migrateUpdaterElectronBinding(source, electronVar) {
+  if (electronVar == null) {
+    return source;
+  }
+
+  let patchedSource = source.replace(
+    /async function codexLinuxShowUpdateMessage\(codexLinuxMessage,codexLinuxDetail\)\{try\{await [A-Za-z_$][\w$]*\.dialog\?\.showMessageBox\(/,
+    `async function codexLinuxShowUpdateMessage(codexLinuxMessage,codexLinuxDetail){try{await ${electronVar}.dialog?.showMessageBox(`,
+  );
+  patchedSource = patchedSource.replace(
+    /function codexLinuxQuitForUpdate\(\)\{try\{(codexLinuxInstallAfterQuit\(\);)?let e=setTimeout\(\(\)=>[A-Za-z_$][\w$]*\.app\?\.exit\?\.\(0\),1500\);e\.unref\?\.\(\),[A-Za-z_$][\w$]*\.app\?\.quit\?\.\(\)\}catch\{\}\}/,
+    (_match, installPrefix) => buildQuitForUpdateSource(electronVar, installPrefix != null),
+  );
+  return patchedSource;
+}
+
+function migrateLinuxUpdaterBridgeSource(source, { electronVar } = {}) {
   let patchedSource = source.replace(
     "async function codexLinuxRefreshUpdateState(){await codexLinuxRunUpdateManager([`status`,`--json`]);return codexLinuxReadUpdateState()}",
     "async function codexLinuxRefreshUpdateState(){return codexLinuxReadUpdateState()}",
   );
+  patchedSource = migrateUpdaterElectronBinding(patchedSource, electronVar);
   const probeSource =
     "async function codexLinuxProbeUpdateManager(){await codexLinuxRunUpdateManager([`--help`])}";
   const refreshSource =
@@ -178,7 +205,7 @@ function applyCurrentBootstrapUpdaterBridgePatch(currentSource) {
     );
   }
 
-  patchedSource = migrateLinuxUpdaterBridgeSource(patchedSource);
+  patchedSource = migrateLinuxUpdaterBridgeSource(patchedSource, { electronVar });
 
   const destructureRegex =
     /let\{startedAtMs:([A-Za-z_$][\w$]*),buildFlavor:([A-Za-z_$][\w$]*),desktopSentry:([A-Za-z_$][\w$]*),sparkleManager:([A-Za-z_$][\w$]*),setSparkleBridgeHandlers:([A-Za-z_$][\w$]*),setSecondInstanceArgsHandler:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\(\),/;
@@ -311,7 +338,7 @@ function applyLinuxAppUpdaterBridgePatch(currentSource) {
     patchedSource = patchedSource.replace(methodNeedle, `${methodPatch}${methodNeedle}`);
   }
 
-  return migrateLinuxUpdaterBridgeSource(patchedSource);
+  return migrateLinuxUpdaterBridgeSource(patchedSource, { electronVar });
 }
 
 function applyLinuxAppUpdaterMenuPatch(currentSource) {
