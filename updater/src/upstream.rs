@@ -41,8 +41,8 @@ pub struct RemoteMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Result of downloading the selected Linux release package.
-pub struct DownloadedDmg {
+/// Result of downloading a selected release or rebuild source asset.
+pub struct DownloadedAsset {
     pub path: PathBuf,
     pub sha256: String,
     pub candidate_version: String,
@@ -146,15 +146,15 @@ pub async fn fetch_remote_metadata(
     })
 }
 
-/// Downloads the selected Linux release package and hashes its contents.
-pub async fn download_dmg(
+/// Downloads a selected asset and hashes its contents.
+pub async fn download_asset(
     client: &Client,
     download_url: &str,
     asset_name: &str,
     destination_dir: &Path,
     version_timestamp: DateTime<Utc>,
     candidate_version: &str,
-) -> Result<DownloadedDmg> {
+) -> Result<DownloadedAsset> {
     tokio::fs::create_dir_all(destination_dir)
         .await
         .with_context(|| format!("Failed to create {}", destination_dir.display()))?;
@@ -199,7 +199,7 @@ pub async fn download_dmg(
         candidate_version.to_string()
     };
 
-    Ok(DownloadedDmg {
+    Ok(DownloadedAsset {
         path: destination,
         sha256,
         candidate_version,
@@ -498,7 +498,7 @@ mod tests {
 
         let client = Client::builder().build()?;
         let temp = tempdir()?;
-        let downloaded = download_dmg(
+        let downloaded = download_asset(
             &client,
             &format!(
                 "{}/codex-desktop_2026.05.20.222222+new_amd64.deb",

@@ -1,6 +1,6 @@
 # Codex Desktop for Linux
 
-Unofficial Linux build of [OpenAI Codex Desktop](https://openai.com/codex/). The official Codex Desktop app is macOS-only — this project converts the upstream macOS `Codex.dmg` into a runnable Linux Electron app, ships native `.deb` / `.rpm` / `.pkg.tar.zst` packages plus local AppImage self-builds and a Nix flake, and includes a local auto-updater that rebuilds future native Linux packages from newer upstream DMGs.
+Unofficial Linux build of [OpenAI Codex Desktop](https://openai.com/codex/). The official Codex Desktop app is macOS-only — this project converts the upstream macOS `Codex.dmg` into a runnable Linux Electron app, ships native `.deb` / `.rpm` / `.pkg.tar.zst` packages plus local AppImage self-builds and a Nix flake, and includes a local auto-updater that follows this repository's GitHub Releases.
 
 Before opening a pull request, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -27,7 +27,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Feature | Status | Notes |
 |---|---|---|
 | Standard Codex Desktop UI | ✅ always | Chats, browser, files, MCP plugins |
-| Auto-updater (`codex-update-manager`) | ✅ native packages | Detects newer upstream DMGs, rebuilds + installs native packages locally |
+| Auto-updater (`codex-update-manager`) | ✅ native packages | Detects newer Linux releases, installs the matching native package, and rebuilds locally only for selected opt-in Linux features |
 | Native packaging (`.deb` / `.rpm` / `.pkg.tar.zst`) | ✅ always | One-shot `make package` picks your distro |
 | AppImage self-build | ✅ manual | `make appimage` writes a local `dist/*.AppImage`; rebuild manually after upstream updates |
 | Linux tray + warm-start handoff | ✅ always | Single-instance lock, second-instance window focus |
@@ -280,8 +280,11 @@ CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.s
 
 By default, the native package installs a companion `systemd --user` service named `codex-update-manager`.
 
-- It checks this repository's GitHub Releases on daemon startup, every 6 hours, and in the background on app launch when stale.
-- When a newer release is available, it downloads the matching `.deb`, `.rpm`, or `.pkg.tar.*` asset for the current system.
+- It checks this repository's GitHub Releases on daemon startup, every 6 hours, and in the background on app launch.
+- When a newer release is available, Codex Desktop shows the existing Update action.
+- Choosing Update asks which optional Linux features to include.
+- If no optional features are selected, the updater downloads the matching `.deb`, `.rpm`, or `.pkg.tar.*` release asset for the current system.
+- If optional features are selected, it rebuilds a local native package from the upstream `Codex.dmg` with that feature config.
 - If Codex Desktop is open, the final install waits until Electron exits.
 - The updater runs unprivileged and uses `pkexec` only for the final package install.
 - Codex CLI checks are best-effort and launcher-scoped. Set `CODEX_SYNC_CLI_PREFLIGHT=1` when debugging launch-time CLI preflight.
@@ -504,7 +507,7 @@ make clean-state
 6. It writes the Linux launcher into `codex-app/start.sh` (body sourced from `launcher/start.sh.template`)
 7. `scripts/build-{deb,rpm,pacman}.sh` packages `codex-app/` into a native artifact; `scripts/build-appimage.sh` creates a local AppImage
 8. Default native packages provide `codex-update-manager` plus a `systemd --user` service unit
-9. The updater watches for newer upstream DMGs and rebuilds future native Linux packages locally, unless the package was built with `PACKAGE_WITH_UPDATER=0`
+9. The updater watches this repository's GitHub Releases, installs matching native packages directly when no optional features are selected, and rebuilds locally from the upstream `Codex.dmg` only when selected Linux features require it
 
 The installer replaces the macOS Electron binary with a Linux build, recompiles native modules, and removes macOS-only pieces such as `sparkle`.
 

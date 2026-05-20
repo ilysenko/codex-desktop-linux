@@ -577,8 +577,6 @@ async fn run_check_cycle(
         );
     }
 
-    let retrying_failed_update = state.status == UpdateStatus::Failed;
-
     let Some(_check_lock) = try_acquire_check_lock(paths)? else {
         return Ok(());
     };
@@ -610,21 +608,21 @@ async fn run_check_cycle(
             }
             Err(error) => return Err(error),
         };
-        let previous_headers_fingerprint = state.remote_headers_fingerprint.clone();
         state.remote_headers_fingerprint = Some(metadata.headers_fingerprint.clone());
         state.last_successful_check_at = Some(Utc::now());
 
-        if previous_headers_fingerprint.as_deref() == Some(metadata.headers_fingerprint.as_str())
-            && !retrying_failed_update
-            && installed_version_satisfies_candidate(&state.installed_version, &metadata.candidate_version)
-        {
-            set_status(state, paths, UpdateStatus::Idle)?;
+        if release_candidate_is_already_installed_or_superseded(
+            &state.installed_version,
+            &metadata.candidate_version,
+        ) {
+            state.status = UpdateStatus::Idle;
             state.candidate_version = None;
             state.remote_package_download_url = None;
             state.remote_package_asset_name = None;
             state.artifact_paths.package_path = None;
+            state.error_message = None;
             persist_state(paths, state)?;
-            info!("Linux release fingerprint unchanged and installed version is current");
+            info!("Linux release candidate is already installed or superseded");
             return Ok(());
         }
 
@@ -898,7 +896,7 @@ async fn prepare_update_package_if_needed(
     set_status(state, paths, UpdateStatus::DownloadingDmg)?;
 
     let downloads_dir = config.workspace_root.join("downloads");
-    let downloaded = upstream::download_dmg(
+    let downloaded = upstream::download_asset(
         &client,
         &config.dmg_url,
         "Codex.dmg",
@@ -985,7 +983,7 @@ async fn download_ready_release_package(
 
     set_status(state, paths, UpdateStatus::DownloadingDmg)?;
     let downloads_dir = config.workspace_root.join("downloads");
-    let downloaded = upstream::download_dmg(
+    let downloaded = upstream::download_asset(
         &client,
         &download_url,
         &asset_name,
@@ -1104,6 +1102,10 @@ fn installed_version_satisfies_candidate(installed: &str, candidate: &str) -> bo
         Some(_) => true,
         None => installed == candidate,
     }
+}
+
+fn release_candidate_is_already_installed_or_superseded(installed: &str, candidate: &str) -> bool {
+    installed_version_satisfies_candidate(installed, candidate)
 }
 
 fn installed_version_matches_candidate(installed: &str, candidate: &str) -> bool {
@@ -1429,6 +1431,26 @@ mod tests {
 
         state.last_successful_check_at = Some(Utc::now() - ChronoDuration::hours(7));
         assert!(!upstream_check_is_fresh(&config, &state));
+    }
+
+    #[test]
+    fn release_candidate_current_check_does_not_depend_on_cached_fingerprint() {
+        assert!(release_candidate_is_already_installed_or_superseded(
+            "2026.05.20.222222+new",
+            "2026.05.20.222222+new"
+        ));
+        assert!(release_candidate_is_already_installed_or_superseded(
+            "2026.05.21.010203+newer",
+            "2026.05.20.222222+new"
+        ));
+        assert!(!release_candidate_is_already_installed_or_superseded(
+            "2026.05.19.010203+old",
+            "2026.05.20.222222+new"
+        ));
+        assert!(!release_candidate_is_already_installed_or_superseded(
+            "unknown",
+            "2026.05.20.222222+new"
+        ));
     }
 
     #[test]
