@@ -77,6 +77,7 @@ pub async fn build_update(
 ) -> Result<BuildArtifacts> {
     let workspace = BuilderWorkspace::prepare(&config.workspace_root, candidate_version)?;
     let build_path = build_command_path(&config.builder_bundle_root);
+    let user_features_config = paths.config_dir.join("features.json");
 
     state.status = UpdateStatus::PreparingWorkspace;
     state.artifact_paths.workspace_dir = Some(workspace.workspace_dir.clone());
@@ -94,6 +95,7 @@ pub async fn build_update(
                 "CODEX_MANAGED_NODE_SOURCE",
                 config.builder_bundle_root.join("node-runtime"),
             )
+            .env("CODEX_LINUX_FEATURES_CONFIG", &user_features_config)
             .env("PATH", &build_path)
             .current_dir(&workspace.bundle_dir),
         &workspace.install_log,
@@ -117,6 +119,7 @@ pub async fn build_update(
                     .bundle_dir
                     .join("packaging/linux/codex-update-manager.service"),
             )
+            .env("CODEX_LINUX_FEATURES_CONFIG", &user_features_config)
             .env("PATH", &build_path)
             .current_dir(&workspace.bundle_dir),
         &workspace.build_log,
@@ -435,6 +438,7 @@ mod tests {
             FakePackageOutput::Deb => {
                 r#"#!/bin/bash
 set -euo pipefail
+test -f "${CODEX_LINUX_FEATURES_CONFIG:?}"
 mkdir -p "${DIST_DIR_OVERRIDE}"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop_${PACKAGE_VERSION}_amd64.deb"
 "#
@@ -442,6 +446,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop_${PACKAGE_VERSION}_amd64.deb"
             FakePackageOutput::Rpm => {
                 r#"#!/bin/bash
 set -euo pipefail
+test -f "${CODEX_LINUX_FEATURES_CONFIG:?}"
 mkdir -p "${DIST_DIR_OVERRIDE}"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
 "#
@@ -449,6 +454,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
             FakePackageOutput::Pacman => {
                 r#"#!/bin/bash
 set -euo pipefail
+test -f "${CODEX_LINUX_FEATURES_CONFIG:?}"
 VER="${PACKAGE_VERSION%%+*}"
 mkdir -p "${DIST_DIR_OVERRIDE}"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
@@ -596,6 +602,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
             bundle_root.join("install.sh"),
             r#"#!/bin/bash
 set -euo pipefail
+test -f "${CODEX_LINUX_FEATURES_CONFIG:?}"
 mkdir -p "${CODEX_INSTALL_DIR}"
 echo launcher > "${CODEX_INSTALL_DIR}/start.sh"
 chmod +x "${CODEX_INSTALL_DIR}/start.sh"
@@ -652,6 +659,10 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
             config_dir: temp.path().join("config"),
         };
         paths.ensure_dirs()?;
+        fs::write(
+            paths.config_dir.join("features.json"),
+            b"{\"enabled\":[\"example-feature\"]}\n",
+        )?;
 
         let config = RuntimeConfig {
             dmg_url: "https://example.com/Codex.dmg".to_string(),

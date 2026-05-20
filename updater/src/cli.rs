@@ -37,6 +37,16 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Print available optional Linux features and the current update selection.
+    Features {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a native feature-selection prompt for the next update rebuild.
+    PromptFeatures {
+        #[arg(long)]
+        json: bool,
+    },
     /// Install the already rebuilt update package, if one is ready.
     InstallReady,
     /// Roll back to the last retained known-good package.

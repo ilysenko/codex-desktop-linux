@@ -1,10 +1,11 @@
 //! Application entrypoints and orchestration for the local updater daemon.
 
 use crate::{
+    builder,
     cli::{Cli, Commands},
     codex_cli,
     config::{RuntimeConfig, RuntimePaths},
-    install, install_rollback, liveness, logging, notify, rollback,
+    features, install, install_rollback, liveness, logging, notify, rollback,
     state::{CliStatus, PersistedState, UpdateStatus},
     upstream,
 };
@@ -63,6 +64,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_path,
         } => run_prompt_install_cli(&mut state, &paths, cli_path, print_path),
         Commands::Status { json } => run_status(&mut state, &paths, json),
+        Commands::Features { json } => run_features(&config, &paths, json),
+        Commands::PromptFeatures { json } => run_prompt_features(&config, &paths, json),
         Commands::InstallReady => run_install_ready(&config, &mut state, &paths).await,
         Commands::Rollback => rollback::run(&config, &mut state, &paths).await,
         Commands::InstallDeb { path } => install::install_deb(&path),
@@ -308,6 +311,57 @@ fn run_status(state: &mut PersistedState, paths: &RuntimePaths, json: bool) -> R
         );
     }
 
+    Ok(())
+}
+
+fn run_features(config: &RuntimeConfig, paths: &RuntimePaths, json: bool) -> Result<()> {
+    let selection = features::selection(config, paths)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&selection)?);
+    } else {
+        println!("features_config: {}", selection.config_path.display());
+        println!(
+            "enabled_features: {}",
+            if selection.enabled.is_empty() {
+                "none".to_string()
+            } else {
+                selection.enabled.join(",")
+            }
+        );
+        for option in selection.available {
+            println!(
+                "{} [{}] - {}",
+                option.id,
+                if option.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                option.title
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_prompt_features(config: &RuntimeConfig, paths: &RuntimePaths, json: bool) -> Result<()> {
+    let outcome = features::prompt_for_update(config, paths)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&outcome)?);
+    } else if outcome.cancelled {
+        println!("Feature selection cancelled.");
+    } else if outcome.prompted {
+        println!(
+            "Enabled update features: {}",
+            if outcome.selection.enabled.is_empty() {
+                "none".to_string()
+            } else {
+                outcome.selection.enabled.join(",")
+            }
+        );
+    } else {
+        println!("No graphical feature selection prompt was available.");
+    }
     Ok(())
 }
 
@@ -561,64 +615,41 @@ async fn run_check_cycle(
         state.last_successful_check_at = Some(Utc::now());
 
         if previous_headers_fingerprint.as_deref() == Some(metadata.headers_fingerprint.as_str())
-            && state.dmg_sha256.is_some()
             && !retrying_failed_update
+            && installed_version_satisfies_candidate(&state.installed_version, &metadata.candidate_version)
         {
             set_status(state, paths, UpdateStatus::Idle)?;
-            info!("upstream fingerprint unchanged; skipping download");
+            info!("Linux release fingerprint unchanged and installed version is current");
             return Ok(());
         }
-
-        set_status(state, paths, UpdateStatus::DownloadingDmg)?;
-
-        let downloads_dir = config.workspace_root.join("downloads");
-        let downloaded = upstream::download_dmg(
-            &client,
-            &metadata.download_url,
-            &metadata.asset_name,
-            &downloads_dir,
-            Utc::now(),
-            &metadata.candidate_version,
-        )
-        .await?;
 
         if state
             .rollback_blocked_candidate_version
             .as_deref()
             .is_some_and(|blocked| {
-                installed_version_matches_candidate(blocked, &downloaded.candidate_version)
+                installed_version_matches_candidate(blocked, &metadata.candidate_version)
             })
         {
             state.status = UpdateStatus::Idle;
             state.error_message = Some(format!(
                 "Candidate {} was rolled back and will not be reinstalled automatically",
-                downloaded.candidate_version
+                metadata.candidate_version
             ));
             persist_state(paths, state)?;
             info!(
-                candidate_version = %downloaded.candidate_version,
+                candidate_version = %metadata.candidate_version,
                 "skipping candidate blocked by rollback"
             );
             return Ok(());
         }
 
-        if state.dmg_sha256.as_deref() == Some(downloaded.sha256.as_str())
-            && !retrying_failed_update
-        {
-            state.status = UpdateStatus::Idle;
-            state.artifact_paths.package_path = Some(downloaded.path);
-            persist_state(paths, state)?;
-            info!("downloaded release package hash matches current cached package; no update detected");
-            return Ok(());
-        }
-
         rollback::record_current_package_as_known_good(state);
         state.status = UpdateStatus::UpdateDetected;
-        state.candidate_version = Some(downloaded.candidate_version);
-        state.dmg_sha256 = Some(downloaded.sha256);
+        state.candidate_version = Some(metadata.candidate_version.clone());
+        state.dmg_sha256 = None;
         state.artifact_paths.dmg_path = None;
         state.artifact_paths.workspace_dir = None;
-        state.artifact_paths.package_path = Some(downloaded.path.clone());
+        state.artifact_paths.package_path = None;
         state.notified_events.clear();
         state.save(&paths.state_file)?;
 
@@ -628,7 +659,7 @@ async fn run_check_cycle(
             config.notifications,
             "update_detected",
             "New Codex Desktop update detected",
-            "Downloaded the matching package from the Codex Desktop Linux release.",
+            "Choose Update in Codex Desktop to select optional Linux features and prepare a local package.",
         )?;
 
         state.status = UpdateStatus::ReadyToInstall;
@@ -769,6 +800,10 @@ async fn run_install_ready(
         }
     }
 
+    if !prepare_update_package_if_needed(config, state, paths).await? {
+        return Ok(());
+    }
+
     let Some(package_path) = state.artifact_paths.package_path.clone() else {
         mark_failed_and_persist(state, paths, "No ready update package is recorded")?;
         maybe_send_notification(
@@ -815,6 +850,89 @@ async fn run_install_ready(
 
     clear_install_auth_required_event(state, paths)?;
     trigger_install(state, paths, &package_path).await
+}
+
+async fn prepare_update_package_if_needed(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<bool> {
+    if state.artifact_paths.package_path.is_some() {
+        return Ok(true);
+    }
+
+    let Some(candidate_version) = state.candidate_version.clone() else {
+        mark_failed_and_persist(state, paths, "No ready update candidate is recorded")?;
+        maybe_send_notification(
+            config.notifications,
+            "Codex update failed",
+            "The updater has no candidate version recorded for the ready update.",
+        );
+        println!("No ready update candidate is recorded.");
+        return Ok(false);
+    };
+
+    let feature_outcome = features::prompt_for_update(config, paths)?;
+    if feature_outcome.cancelled {
+        maybe_send_notification(
+            config.notifications,
+            "Codex update cancelled",
+            "No update was installed because Linux feature selection was cancelled.",
+        );
+        println!("Feature selection cancelled.");
+        return Ok(false);
+    }
+
+    let client = Client::builder().build()?;
+    set_status(state, paths, UpdateStatus::DownloadingDmg)?;
+
+    let downloads_dir = config.workspace_root.join("downloads");
+    let downloaded = upstream::download_dmg(
+        &client,
+        &config.dmg_url,
+        "Codex.dmg",
+        &downloads_dir,
+        Utc::now(),
+        &candidate_version,
+    )
+    .await?;
+
+    if state
+        .rollback_blocked_candidate_version
+        .as_deref()
+        .is_some_and(|blocked| {
+            installed_version_matches_candidate(blocked, &downloaded.candidate_version)
+        })
+    {
+        state.status = UpdateStatus::Idle;
+        state.error_message = Some(format!(
+            "Candidate {} was rolled back and will not be reinstalled automatically",
+            downloaded.candidate_version
+        ));
+        persist_state(paths, state)?;
+        info!(
+            candidate_version = %downloaded.candidate_version,
+            "skipping candidate blocked by rollback"
+        );
+        return Ok(false);
+    }
+
+    rollback::record_current_package_as_known_good(state);
+    state.status = UpdateStatus::UpdateDetected;
+    state.candidate_version = Some(downloaded.candidate_version);
+    state.dmg_sha256 = Some(downloaded.sha256);
+    state.artifact_paths.dmg_path = Some(downloaded.path.clone());
+    state.artifact_paths.workspace_dir = None;
+    state.artifact_paths.package_path = None;
+    state.error_message = None;
+    persist_state(paths, state)?;
+
+    let candidate_version = state
+        .candidate_version
+        .clone()
+        .expect("candidate version should be set before local build");
+    builder::build_update(config, state, paths, &candidate_version, &downloaded.path).await?;
+    Ok(true)
 }
 
 fn complete_pending_install_if_already_installed(
@@ -1059,7 +1177,7 @@ fn maybe_notify_update_ready(
     if enabled {
         if let Err(error) = notify::send(
             "Codex Desktop update ready",
-            "A rebuilt Linux package is ready. Open Codex Desktop and choose Update to install it.",
+            "A Linux update is available. Open Codex Desktop and choose Update to select features and install it.",
         ) {
             warn!(?error, "failed to send update-ready notification");
         }
