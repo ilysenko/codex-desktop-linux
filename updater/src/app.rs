@@ -619,6 +619,11 @@ async fn run_check_cycle(
             && installed_version_satisfies_candidate(&state.installed_version, &metadata.candidate_version)
         {
             set_status(state, paths, UpdateStatus::Idle)?;
+            state.candidate_version = None;
+            state.remote_package_download_url = None;
+            state.remote_package_asset_name = None;
+            state.artifact_paths.package_path = None;
+            persist_state(paths, state)?;
             info!("Linux release fingerprint unchanged and installed version is current");
             return Ok(());
         }
@@ -646,6 +651,8 @@ async fn run_check_cycle(
         rollback::record_current_package_as_known_good(state);
         state.status = UpdateStatus::UpdateDetected;
         state.candidate_version = Some(metadata.candidate_version.clone());
+        state.remote_package_download_url = Some(metadata.download_url.clone());
+        state.remote_package_asset_name = Some(metadata.asset_name.clone());
         state.dmg_sha256 = None;
         state.artifact_paths.dmg_path = None;
         state.artifact_paths.workspace_dir = None;
@@ -883,6 +890,10 @@ async fn prepare_update_package_if_needed(
         return Ok(false);
     }
 
+    if feature_outcome.selection.enabled.is_empty() {
+        return download_ready_release_package(config, state, paths, &candidate_version).await;
+    }
+
     let client = Client::builder().build()?;
     set_status(state, paths, UpdateStatus::DownloadingDmg)?;
 
@@ -935,6 +946,66 @@ async fn prepare_update_package_if_needed(
     Ok(true)
 }
 
+async fn download_ready_release_package(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    candidate_version: &str,
+) -> Result<bool> {
+    let client = Client::builder().build()?;
+    let (download_url, asset_name) = match (
+        state.remote_package_download_url.clone(),
+        state.remote_package_asset_name.clone(),
+    ) {
+        (Some(download_url), Some(asset_name)) => (download_url, asset_name),
+        _ => {
+            let metadata = upstream::fetch_remote_metadata(
+                &client,
+                upstream::DEFAULT_RELEASES_API_URL,
+                install::PackageKind::detect(),
+            )
+            .await?;
+            if metadata.candidate_version != candidate_version {
+                mark_failed_and_persist(
+                    state,
+                    paths,
+                    format!(
+                        "Ready update metadata is stale: expected {candidate_version}, found {}",
+                        metadata.candidate_version
+                    ),
+                )?;
+                return Ok(false);
+            }
+            state.remote_headers_fingerprint = Some(metadata.headers_fingerprint);
+            state.remote_package_download_url = Some(metadata.download_url.clone());
+            state.remote_package_asset_name = Some(metadata.asset_name.clone());
+            (metadata.download_url, metadata.asset_name)
+        }
+    };
+
+    set_status(state, paths, UpdateStatus::DownloadingDmg)?;
+    let downloads_dir = config.workspace_root.join("downloads");
+    let downloaded = upstream::download_dmg(
+        &client,
+        &download_url,
+        &asset_name,
+        &downloads_dir,
+        Utc::now(),
+        candidate_version,
+    )
+    .await?;
+
+    state.status = UpdateStatus::ReadyToInstall;
+    state.candidate_version = Some(downloaded.candidate_version);
+    state.dmg_sha256 = Some(downloaded.sha256);
+    state.artifact_paths.dmg_path = None;
+    state.artifact_paths.workspace_dir = None;
+    state.artifact_paths.package_path = Some(downloaded.path);
+    state.error_message = None;
+    persist_state(paths, state)?;
+    Ok(true)
+}
+
 fn complete_pending_install_if_already_installed(
     state: &mut PersistedState,
     paths: &RuntimePaths,
@@ -957,6 +1028,8 @@ fn complete_pending_install_if_already_installed(
 
     state.status = UpdateStatus::Installed;
     state.candidate_version = None;
+    state.remote_package_download_url = None;
+    state.remote_package_asset_name = None;
     if !candidate_is_installed {
         state.artifact_paths.package_path = None;
     }
@@ -980,6 +1053,8 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
 
         state.status = UpdateStatus::Installed;
         state.candidate_version = None;
+        state.remote_package_download_url = None;
+        state.remote_package_asset_name = None;
         if !candidate_is_installed {
             state.artifact_paths.package_path = None;
         }
@@ -1217,6 +1292,8 @@ async fn trigger_install(
         state.status = UpdateStatus::Installed;
         state.installed_version = install::installed_package_version();
         state.candidate_version = None;
+        state.remote_package_download_url = None;
+        state.remote_package_asset_name = None;
         state.rollback_blocked_candidate_version = None;
         state.error_message = None;
         state.notified_events.clear();
@@ -1326,6 +1403,10 @@ fn notify_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
 
     #[test]
     fn upstream_check_freshness_respects_configured_interval() {
@@ -1637,6 +1718,66 @@ mod tests {
 
         assert_eq!(state.status, UpdateStatus::WaitingForAppExit);
         assert!(!install_auth_retry_is_blocked(&state));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn prepare_update_uses_release_package_when_no_features_are_selected() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = RuntimePaths {
+            config_file: temp.path().join("config/config.toml"),
+            state_file: temp.path().join("state/state.json"),
+            log_file: temp.path().join("state/service.log"),
+            cache_dir: temp.path().join("cache"),
+            state_dir: temp.path().join("state"),
+            config_dir: temp.path().join("config"),
+        };
+        paths.ensure_dirs()?;
+
+        let server = MockServer::start().await;
+        let body = b"native-release-package";
+        Mock::given(method("GET"))
+            .and(path("/codex-desktop_2999.03.25.010203+deadbeef_amd64.deb"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
+            .mount(&server)
+            .await;
+
+        let config = RuntimeConfig {
+            dmg_url: format!("{}/Codex.dmg", server.uri()),
+            initial_check_delay_seconds: 1,
+            check_interval_hours: 6,
+            auto_install_on_app_exit: false,
+            notifications: false,
+            workspace_root: temp.path().join("cache"),
+            builder_bundle_root: temp.path().join("builder-without-features"),
+            app_executable_path: temp.path().join("not-running-electron"),
+        };
+
+        let mut state = PersistedState::new(false);
+        state.status = UpdateStatus::ReadyToInstall;
+        state.candidate_version = Some("2999.03.25.010203+deadbeef".to_string());
+        state.remote_package_asset_name =
+            Some("codex-desktop_2999.03.25.010203+deadbeef_amd64.deb".to_string());
+        state.remote_package_download_url = Some(format!(
+            "{}/codex-desktop_2999.03.25.010203+deadbeef_amd64.deb",
+            server.uri()
+        ));
+
+        assert!(prepare_update_package_if_needed(&config, &mut state, &paths).await?);
+
+        assert_eq!(state.status, UpdateStatus::ReadyToInstall);
+        assert_eq!(
+            state.candidate_version.as_deref(),
+            Some("2999.03.25.010203+deadbeef")
+        );
+        assert_eq!(state.artifact_paths.dmg_path, None);
+        assert_eq!(state.artifact_paths.workspace_dir, None);
+        let package_path = state
+            .artifact_paths
+            .package_path
+            .as_ref()
+            .expect("release package should be prepared");
+        assert_eq!(std::fs::read(package_path)?, body);
         Ok(())
     }
 

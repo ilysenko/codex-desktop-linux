@@ -71,6 +71,10 @@ pub struct PersistedState {
     pub last_check_at: Option<DateTime<Utc>>,
     pub last_successful_check_at: Option<DateTime<Utc>>,
     pub remote_headers_fingerprint: Option<String>,
+    #[serde(default)]
+    pub remote_package_download_url: Option<String>,
+    #[serde(default)]
+    pub remote_package_asset_name: Option<String>,
     pub dmg_sha256: Option<String>,
     pub artifact_paths: ArtifactPaths,
     pub error_message: Option<String>,
@@ -108,6 +112,8 @@ impl PersistedState {
             last_check_at: None,
             last_successful_check_at: None,
             remote_headers_fingerprint: None,
+            remote_package_download_url: None,
+            remote_package_asset_name: None,
             dmg_sha256: None,
             artifact_paths: ArtifactPaths::default(),
             error_message: None,
