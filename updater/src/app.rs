@@ -1,7 +1,6 @@
 //! Application entrypoints and orchestration for the local updater daemon.
 
 use crate::{
-    builder,
     cli::{Cli, Commands},
     codex_cli,
     config::{RuntimeConfig, RuntimePaths},
@@ -539,7 +538,24 @@ async fn run_check_cycle(
     persist_state(paths, state)?;
 
     let result: Result<()> = async {
-        let metadata = upstream::fetch_remote_metadata(&client, &config.dmg_url).await?;
+        let package_kind = install::PackageKind::detect();
+        let metadata = match upstream::fetch_remote_metadata(
+            &client,
+            upstream::DEFAULT_RELEASES_API_URL,
+            package_kind,
+        )
+        .await
+        {
+            Ok(metadata) => metadata,
+            Err(error) if error.downcast_ref::<upstream::NoPublishedReleases>().is_some() => {
+                state.remote_headers_fingerprint = None;
+                state.last_successful_check_at = Some(Utc::now());
+                set_status(state, paths, UpdateStatus::Idle)?;
+                info!("Linux release repository has no published releases yet");
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         let previous_headers_fingerprint = state.remote_headers_fingerprint.clone();
         state.remote_headers_fingerprint = Some(metadata.headers_fingerprint.clone());
         state.last_successful_check_at = Some(Utc::now());
@@ -556,8 +572,15 @@ async fn run_check_cycle(
         set_status(state, paths, UpdateStatus::DownloadingDmg)?;
 
         let downloads_dir = config.workspace_root.join("downloads");
-        let downloaded =
-            upstream::download_dmg(&client, &config.dmg_url, &downloads_dir, Utc::now()).await?;
+        let downloaded = upstream::download_dmg(
+            &client,
+            &metadata.download_url,
+            &metadata.asset_name,
+            &downloads_dir,
+            Utc::now(),
+            &metadata.candidate_version,
+        )
+        .await?;
 
         if state
             .rollback_blocked_candidate_version
@@ -583,9 +606,9 @@ async fn run_check_cycle(
             && !retrying_failed_update
         {
             state.status = UpdateStatus::Idle;
-            state.artifact_paths.dmg_path = Some(downloaded.path);
+            state.artifact_paths.package_path = Some(downloaded.path);
             persist_state(paths, state)?;
-            info!("downloaded DMG hash matches current cached DMG; no update detected");
+            info!("downloaded release package hash matches current cached package; no update detected");
             return Ok(());
         }
 
@@ -593,7 +616,9 @@ async fn run_check_cycle(
         state.status = UpdateStatus::UpdateDetected;
         state.candidate_version = Some(downloaded.candidate_version);
         state.dmg_sha256 = Some(downloaded.sha256);
-        state.artifact_paths.dmg_path = Some(downloaded.path.clone());
+        state.artifact_paths.dmg_path = None;
+        state.artifact_paths.workspace_dir = None;
+        state.artifact_paths.package_path = Some(downloaded.path.clone());
         state.notified_events.clear();
         state.save(&paths.state_file)?;
 
@@ -603,14 +628,11 @@ async fn run_check_cycle(
             config.notifications,
             "update_detected",
             "New Codex Desktop update detected",
-            "Preparing a local Linux package from the new upstream DMG.",
+            "Downloaded the matching package from the Codex Desktop Linux release.",
         )?;
 
-        let candidate_version = state
-            .candidate_version
-            .clone()
-            .expect("candidate version should be set before local build");
-        builder::build_update(config, state, paths, &candidate_version, &downloaded.path).await?;
+        state.status = UpdateStatus::ReadyToInstall;
+        state.save(&paths.state_file)?;
         maybe_notify_update_ready(state, paths, config.notifications)?;
         Ok(())
     }

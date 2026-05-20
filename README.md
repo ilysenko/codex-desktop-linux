@@ -280,8 +280,8 @@ CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.s
 
 By default, the native package installs a companion `systemd --user` service named `codex-update-manager`.
 
-- It checks upstream `Codex.dmg` on daemon startup, every 6 hours, and in the background on app launch when stale.
-- When a new DMG is available, it rebuilds a local native package with `/opt/codex-desktop/update-builder`.
+- It checks this repository's GitHub Releases on daemon startup, every 6 hours, and in the background on app launch when stale.
+- When a newer release is available, it downloads the matching `.deb`, `.rpm`, or `.pkg.tar.*` asset for the current system.
 - If Codex Desktop is open, the final install waits until Electron exits.
 - The updater runs unprivileged and uses `pkexec` only for the final package install.
 - Codex CLI checks are best-effort and launcher-scoped. Set `CODEX_SYNC_CLI_PREFLIGHT=1` when debugging launch-time CLI preflight.

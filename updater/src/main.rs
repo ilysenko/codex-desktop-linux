@@ -1,6 +1,7 @@
 //! Binary entrypoint for the local Codex Desktop update manager.
 
 mod app;
+#[cfg(test)]
 mod builder;
 mod cli;
 mod codex_cli;
