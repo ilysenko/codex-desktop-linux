@@ -1877,6 +1877,42 @@ test("handles literal Chrome plugin gate names", () => {
   assert.doesNotMatch(patched, /installWhenMissing:!0,name:'chrome-internal'/);
 });
 
+test("does not fail when external browser flags appear outside Chrome plugin gates", () => {
+  const source =
+    "var me={externalBrowserUse:!1,externalBrowserUseAllowed:!1},ut=`chrome`;";
+
+  const { value: patched, warnings } = captureWarns(() =>
+    applyPatchTwice(applyLinuxChromePluginAutoInstallPatch, source),
+  );
+
+  assert.equal(patched, source);
+  assert.deepEqual(warnings, []);
+});
+
+test("reports Chrome plugin auto-install as already applied when only feature defaults remain", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-chrome-feature-defaults-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(buildDir, "main.js"),
+      `${mainBundlePrefix}var me={externalBrowserUse:!1,externalBrowserUseAllowed:!1},ut=\`chrome\`;`,
+    );
+
+    const report = createPatchReport();
+    captureWarns(() => patchExtractedApp(tempRoot, { report }));
+
+    const pluginGatePatch = report.patches.find((patch) => patch.name === "linux-chrome-plugin-auto-install");
+    assert.equal(pluginGatePatch.status, "already-applied");
+    assert.doesNotMatch(
+      validateReport(report, "upstream-build").join("\n"),
+      /linux-chrome-plugin-auto-install/,
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("reports missing required Chrome plugin auto-install gate as required upstream validation failure", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-missing-chrome-"));
   try {

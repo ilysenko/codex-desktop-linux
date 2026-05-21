@@ -17,6 +17,43 @@ function hasChromeAutoInstall(source, chromeNameVar) {
   return new RegExp(String.raw`installWhenMissing:!0,name:(?:${namePatterns.join("|")})`).test(source);
 }
 
+function applyNearbyChromeGateFallback(currentSource, chromeNameVar, nameExpressionPattern) {
+  const nameAvailabilityRegex =
+    new RegExp(String.raw`name:(${nameExpressionPattern}),((?:isEnabled|isAvailable):)`, "g");
+
+  let patched = "";
+  let lastIndex = 0;
+  let didPatch = false;
+
+  for (const match of currentSource.matchAll(nameAvailabilityRegex)) {
+    const [matchText, nameExpr, availabilityPrefix] = match;
+    const matchIndex = match.index;
+    if (matchIndex == null || !isChromeNameExpr(nameExpr, chromeNameVar)) {
+      continue;
+    }
+
+    const before = currentSource.slice(Math.max(0, matchIndex - 300), matchIndex);
+    const after = currentSource.slice(matchIndex, Math.min(currentSource.length, matchIndex + 900));
+    if (
+      before.includes("installWhenMissing:!0") ||
+      !after.includes("externalBrowserUseAllowed")
+    ) {
+      continue;
+    }
+
+    patched += currentSource.slice(lastIndex, matchIndex);
+    patched += `installWhenMissing:!0,name:${nameExpr},${availabilityPrefix}`;
+    lastIndex = matchIndex + matchText.length;
+    didPatch = true;
+  }
+
+  if (!didPatch) {
+    return currentSource;
+  }
+
+  return patched + currentSource.slice(lastIndex);
+}
+
 function applyLinuxChromePluginAutoInstallPatch(currentSource) {
   if (!hasChromePluginLiteral(currentSource)) {
     console.warn(
@@ -58,13 +95,15 @@ function applyLinuxChromePluginAutoInstallPatch(currentSource) {
     return currentSource;
   }
 
-  if (currentSource.includes("externalBrowserUseAllowed")) {
-    throw new Error("Required Linux Chrome plugin auto-install patch failed: could not enable bundled Chrome auto-install");
+  const fallbackPatched = applyNearbyChromeGateFallback(
+    currentSource,
+    chromeNameVar,
+    nameExpressionPattern,
+  );
+  if (fallbackPatched !== currentSource) {
+    return fallbackPatched;
   }
 
-  console.warn(
-    "WARN: Could not find Chrome plugin auto-install gate — skipping Linux Chrome plugin auto-install patch",
-  );
   return currentSource;
 }
 
