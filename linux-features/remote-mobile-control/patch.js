@@ -1,5 +1,8 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 function requireName(source, moduleName) {
   const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = source.match(new RegExp(`([A-Za-z_$][\\w$]*)=require\\(\`${escaped}\`\\)`));
@@ -44,6 +47,10 @@ const REMOTE_CONTROL_LINUX_COPY_REPLACEMENTS = [
   ["Connect your phone to this Mac", "Connect your phone to this Linux desktop"],
 ];
 const CLIENT_ACCOUNT_COMPAT_MARKER = "codexLinuxRemoteControlAccountMatches";
+const INLINE_SETUP_FLOW_MARKER = "codexLinuxRemoteControlInlineSetupFlow";
+const APP_SERVER_ARGS_NEEDLE = "args:[`app-server`,`--analytics-default-enabled`]";
+const APP_SERVER_ARGS_REPLACEMENT =
+  "args:[`app-server`,`--analytics-default-enabled`,`--remote-control`]";
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -160,6 +167,47 @@ function applyLinuxRemoteControlPreserveConfigPatch(source) {
 
   console.warn("WARN: Could not find remote-control config stripping needle - skipping Linux remote-control config patch");
   return source;
+}
+
+function applyLinuxRemoteControlAppServerHostModePatch(source) {
+  if (!source.includes(APP_SERVER_ARGS_NEEDLE)) {
+    return source;
+  }
+  return source.split(APP_SERVER_ARGS_NEEDLE).join(APP_SERVER_ARGS_REPLACEMENT);
+}
+
+function patchLinuxRemoteControlAppServerHostModeInExtractedApp(extractedDir) {
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  if (!fs.existsSync(buildDir)) {
+    console.warn(
+      `WARN: Could not find Vite build directory in ${buildDir} - skipping Linux remote-control app-server host mode patch`,
+    );
+    return { changed: false, matched: 0 };
+  }
+
+  let matched = 0;
+  let changed = 0;
+  for (const filename of fs.readdirSync(buildDir).filter((name) => name.endsWith(".js")).sort()) {
+    const filePath = path.join(buildDir, filename);
+    const source = fs.readFileSync(filePath, "utf8");
+    if (!source.includes(APP_SERVER_ARGS_NEEDLE) && !source.includes(APP_SERVER_ARGS_REPLACEMENT)) {
+      continue;
+    }
+    matched += 1;
+    const patched = applyLinuxRemoteControlAppServerHostModePatch(source);
+    if (patched !== source) {
+      fs.writeFileSync(filePath, patched, "utf8");
+      changed += 1;
+    }
+  }
+
+  if (matched === 0) {
+    console.warn(
+      `WARN: Could not find local app-server launch args in ${buildDir} - skipping Linux remote-control app-server host mode patch`,
+    );
+  }
+
+  return { changed: changed > 0, matched };
 }
 
 function applyLinuxRemoteControlClientAccountCompatibilityPatch(source) {
@@ -443,6 +491,52 @@ function applyLinuxRemoteControlCopyPatch(source) {
   return patched;
 }
 
+function applyLinuxRemoteControlInlineSetupFlowPatch(source) {
+  if (source.includes(INLINE_SETUP_FLOW_MARKER)) {
+    return source;
+  }
+  if (
+    !source.includes("CODEX_MOBILE_SETUP_COMPLETED") ||
+    !source.includes("mode:`setup`") ||
+    !source.includes("variant:`dialog`")
+  ) {
+    return source;
+  }
+
+  const dialogSetupFlowRegex =
+    /function [A-Za-z_$][\w$]*\(e\)\{[\s\S]{0,800}?\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{onClose:[A-Za-z_$][\w$]*,variant:`dialog`\}\)[\s\S]{0,300}?\}/u;
+  const dialogSetupFlowMatch = source.match(dialogSetupFlowRegex);
+  if (dialogSetupFlowMatch == null) {
+    console.warn("WARN: Could not find Codex mobile setup flow dialog wrapper - skipping Linux inline setup flow patch");
+    return source;
+  }
+  const [, jsxRuntimeVar, setupFlowComponentVar] = dialogSetupFlowMatch;
+
+  const setupCardRegex = new RegExp(
+    `\\(0,${escapeRegExp(jsxRuntimeVar)}\\.jsx\\)\\(([A-Za-z_$][\\w$]*),\\{mode:\`setup\`\\}\\)`,
+    "u",
+  );
+  const setupCardMatch = source.match(setupCardRegex);
+  if (setupCardMatch == null) {
+    console.warn("WARN: Could not find remote-control setup card render - skipping Linux inline setup flow patch");
+    return source;
+  }
+
+  const setupCardIndex = source.search(setupCardRegex);
+  const setupFunctionStart = source.lastIndexOf("function ", setupCardIndex);
+  if (setupFunctionStart < 0) {
+    console.warn("WARN: Could not find remote-control setup state function - skipping Linux inline setup flow patch");
+    return source;
+  }
+
+  const helper = `function ${INLINE_SETUP_FLOW_MARKER}(e,t){return(0,e.jsx)(t,{onClose:()=>{},variant:\`page\`})}`;
+  const patched = source.replace(
+    setupCardRegex,
+    `${INLINE_SETUP_FLOW_MARKER}(${jsxRuntimeVar},${setupFlowComponentVar})`,
+  );
+  return `${patched.slice(0, setupFunctionStart)}${helper}${patched.slice(setupFunctionStart)}`;
+}
+
 module.exports = [
   {
     id: "linux-remote-control-device-key",
@@ -457,6 +551,13 @@ module.exports = [
     order: 20_110,
     ciPolicy: "optional",
     apply: applyLinuxRemoteControlPreserveConfigPatch,
+  },
+  {
+    id: "linux-remote-control-app-server-host-mode",
+    phase: "extracted-app",
+    order: 20_112,
+    ciPolicy: "optional",
+    apply: patchLinuxRemoteControlAppServerHostModeInExtractedApp,
   },
   {
     id: "linux-remote-control-client-account-compatibility",
@@ -493,6 +594,16 @@ module.exports = [
     apply: applyLinuxRemoteControlVisibilityPatch,
   },
   {
+    id: "linux-remote-control-inline-setup-flow",
+    phase: "webview-asset",
+    pattern: /^remote-connections-settings-.*\.js$/,
+    order: 20_125,
+    ciPolicy: "optional",
+    missingDescription: "remote-control settings setup bundle",
+    skipDescription: "Linux remote-control inline setup flow patch",
+    apply: applyLinuxRemoteControlInlineSetupFlowPatch,
+  },
+  {
     id: "linux-remote-control-copy",
     phase: "webview-asset",
     pattern: /^(?:codex-mobile-setup-flow|remote-connections-settings|use-codex-mobile-connected-settings)-.*\.js$/,
@@ -506,10 +617,15 @@ module.exports = [
 
 module.exports.applyLinuxRemoteControlDeviceKeyPatch = applyLinuxRemoteControlDeviceKeyPatch;
 module.exports.applyLinuxRemoteControlPreserveConfigPatch = applyLinuxRemoteControlPreserveConfigPatch;
+module.exports.applyLinuxRemoteControlAppServerHostModePatch =
+  applyLinuxRemoteControlAppServerHostModePatch;
+module.exports.patchLinuxRemoteControlAppServerHostModeInExtractedApp =
+  patchLinuxRemoteControlAppServerHostModeInExtractedApp;
 module.exports.applyLinuxRemoteControlClientAccountCompatibilityPatch =
   applyLinuxRemoteControlClientAccountCompatibilityPatch;
 module.exports.applyLinuxRemoteControlClientRevocationRecoveryPatch =
   applyLinuxRemoteControlClientRevocationRecoveryPatch;
 module.exports.applyLinuxRemoteControlLoadGatePatch = applyLinuxRemoteControlLoadGatePatch;
 module.exports.applyLinuxRemoteControlVisibilityPatch = applyLinuxRemoteControlVisibilityPatch;
+module.exports.applyLinuxRemoteControlInlineSetupFlowPatch = applyLinuxRemoteControlInlineSetupFlowPatch;
 module.exports.applyLinuxRemoteControlCopyPatch = applyLinuxRemoteControlCopyPatch;

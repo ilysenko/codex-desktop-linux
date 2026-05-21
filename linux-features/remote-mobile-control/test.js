@@ -18,11 +18,13 @@ const {
 } = require("../../scripts/patch-linux-window-ui.js");
 const {
   applyLinuxRemoteControlDeviceKeyPatch,
+  applyLinuxRemoteControlAppServerHostModePatch,
   applyLinuxRemoteControlClientAccountCompatibilityPatch,
   applyLinuxRemoteControlClientRevocationRecoveryPatch,
   applyLinuxRemoteControlCopyPatch,
   applyLinuxRemoteControlPreserveConfigPatch,
   applyLinuxRemoteControlLoadGatePatch,
+  applyLinuxRemoteControlInlineSetupFlowPatch,
   applyLinuxRemoteControlVisibilityPatch,
 } = require("./patch.js");
 
@@ -47,6 +49,27 @@ function syntheticCurrentMainBundle() {
     "var lz=(0,b.createRequire)(__filename),uz=`remote-control-device-key.node`,dz=`codex-device-key-sign-payload/v1`;",
     "function pz({resourcesPath:e}){let t=null,n=()=>{if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=lz((0,i.join)(e,`native`,uz)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=mz(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
     "async function vV({codexHome:e,hostConfig:n,logger:r=t.Jr()}){if(n.kind===`local`)try{await yV(i.default.join(e??t.Rr({hostConfig:n,preferWsl:t.Kr(n)}),_V))&&r.info(`Removed remote_control from config before app-server start`)}catch(e){r.warning(`Failed to remove remote_control before app-server start`,{safe:{},sensitive:{error:e}})}}",
+  ].join("");
+}
+
+function syntheticAppServerLaunchBundle() {
+  return [
+    "function Pd(e){",
+    "let t=e.hostConfig.codex_cli_command;",
+    "if(t&&t.length>0){let[e,...n]=t;return!e||e.trim().length===0?null:{executablePath:e,args:n}}",
+    "let n=Kd();",
+    "if(n!=null)return{executablePath:n,args:[`app-server`,`--analytics-default-enabled`]};",
+    "let r=Nd(e.repoRoot,{resourcesPath:e.resourcesPath});",
+    "return r?{executablePath:r.executablePath,args:[`app-server`,`--analytics-default-enabled`],binDirectory:r.binDirectory}:null",
+    "}",
+    "function Fd(e){",
+    "let t=e.hostConfig.codex_cli_command;",
+    "if(t&&t.length>0){let[e,...n]=t;return!e||e.trim().length===0?null:{executablePath:e,args:n}}",
+    "let n=Kd();",
+    "if(n!=null)return{executablePath:n,args:[`app-server`,`--analytics-default-enabled`]};",
+    "let r=Ud(e.repoRoot,{resourcesPath:e.resourcesPath,windowsCodexHome:e.windowsCodexHome});",
+    "return r?{executablePath:r.executablePath,args:[`app-server`,`--analytics-default-enabled`],binDirectory:r.binDirectory}:null",
+    "}",
   ].join("");
 }
 
@@ -79,6 +102,27 @@ function syntheticMobileConnectedSettingsBundle() {
 
 function syntheticRemoteConnectionsSettingsCopyBundle() {
   return [
+    syntheticCurrentVisibilityBundle(),
+    "let platformLabel={id:`settings.remoteConnections.platform.mac`,defaultMessage:`Mac`,description:`Short label for a Mac device`};",
+    "let a={id:`settings.remoteConnections.tabs.controlThisMac`,defaultMessage:`Control this Mac`,description:`Tab label for settings that let other devices control this computer`};",
+    "let b={id:`settings.remoteControlConnections.devices.title`,defaultMessage:`Devices that can control this Mac`,description:`Header title for devices that can control this Mac`};",
+    "let c={id:`settings.remoteConnections.accessOtherDevices.header.title`,defaultMessage:`Devices you can control from this Mac`,description:`Header title for the devices this computer can access`};",
+    "let d={id:`settings.remoteConnections.ssh.header.title`,defaultMessage:`SSH connections from this Mac`,description:`Header title for SSH connections from this Mac`};",
+    "let e={id:`settings.remoteControlConnections.keepAwake.title`,defaultMessage:`Keep this Mac awake`,description:`Keep awake title`};",
+  ].join("");
+}
+
+function syntheticRemoteConnectionsSettingsSetupBundle() {
+  return [
+    "var Q={jsx:(e,t)=>({e,t}),jsxs:(e,t)=>({e,t})};",
+    "function pt(e){let t=(0,$.c)(2),{onClose:n}=e,r;return t[0]===n?r=t[1]:(r=(0,Q.jsx)(rt,{onClose:n,variant:`dialog`}),t[0]=n,t[1]=r),r}",
+    "function xt(){let e=(0,$.c)(2),{data:n,isLoading:r}=B(t.CODEX_MOBILE_SETUP_COMPLETED);if(r)return null;if(!n){let t;return e[0]===Symbol.for(`react.memo_cache_sentinel`)?(t=(0,Q.jsx)(Ct,{mode:`setup`}),e[0]=t):t=e[0],t}let i;return e[1]===Symbol.for(`react.memo_cache_sentinel`)?(i=(0,Q.jsxs)(Q.Fragment,{children:[(0,Q.jsx)(Ct,{mode:`manage`}),(0,Q.jsx)(St,{})]}),e[1]=i):i=e[1],i}",
+  ].join("");
+}
+
+function syntheticRemoteConnectionsSettingsSetupAndCopyBundle() {
+  return [
+    syntheticRemoteConnectionsSettingsSetupBundle(),
     syntheticCurrentVisibilityBundle(),
     "let platformLabel={id:`settings.remoteConnections.platform.mac`,defaultMessage:`Mac`,description:`Short label for a Mac device`};",
     "let a={id:`settings.remoteConnections.tabs.controlThisMac`,defaultMessage:`Control this Mac`,description:`Tab label for settings that let other devices control this computer`};",
@@ -136,17 +180,21 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.deepEqual(descriptors.map((descriptor) => descriptor.id), [
       "feature:remote-mobile-control:linux-remote-control-device-key",
       "feature:remote-mobile-control:linux-remote-control-preserve-config",
+      "feature:remote-mobile-control:linux-remote-control-app-server-host-mode",
       "feature:remote-mobile-control:linux-remote-control-client-account-compatibility",
       "feature:remote-mobile-control:linux-remote-control-client-revocation-recovery",
       "feature:remote-mobile-control:linux-remote-control-load-gate",
       "feature:remote-mobile-control:linux-remote-control-visibility",
+      "feature:remote-mobile-control:linux-remote-control-inline-setup-flow",
       "feature:remote-mobile-control:linux-remote-control-copy",
     ]);
     assert.deepEqual(descriptors.map((descriptor) => descriptor.phase), [
       "main-bundle",
       "main-bundle",
+      "extracted-app",
       "main-bundle",
       "main-bundle",
+      "webview-asset",
       "webview-asset",
       "webview-asset",
       "webview-asset",
@@ -179,6 +227,20 @@ test("Linux remote-control device-key patch handles current minified aliases", (
   assert.match(patched, /process\.platform===`linux`\)return codexLinuxRemoteControlDeviceKeyClient\(\)/);
   assert.match(patched, /n\.kind===`local`&&process\.platform!==`linux`/);
   assert.equal(applyLinuxRemoteControlPreserveConfigPatch(applyLinuxRemoteControlDeviceKeyPatch(patched)), patched);
+});
+
+test("Linux remote-control host mode patch starts the Desktop app-server as a Remote host", () => {
+  const source = syntheticAppServerLaunchBundle();
+  const patched = applyLinuxRemoteControlAppServerHostModePatch(source);
+
+  assert.notEqual(patched, source);
+  assert.equal((patched.match(/`--remote-control`/g) ?? []).length, 4);
+  assert.doesNotMatch(patched, /args:\[`app-server`,`--analytics-default-enabled`\]/);
+  assert.match(
+    patched,
+    /args:\[`app-server`,`--analytics-default-enabled`,`--remote-control`\]/,
+  );
+  assert.equal(applyLinuxRemoteControlAppServerHostModePatch(patched), patched);
 });
 
 test("Linux remote-control client enrollment accepts account-scoped and base user ids", () => {
@@ -245,6 +307,18 @@ test("Linux remote-control visibility patch handles current settings bundle shap
   assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
   assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)/);
   assert.equal(applyLinuxRemoteControlVisibilityPatch(patched), patched);
+});
+
+test("Linux remote-control settings setup renders the full mobile setup flow inline", () => {
+  const source = syntheticRemoteConnectionsSettingsSetupBundle();
+  const patched = applyLinuxRemoteControlInlineSetupFlowPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteControlInlineSetupFlow/);
+  assert.doesNotMatch(patched, /\(0,Q\.jsx\)\(Ct,\{mode:`setup`\}\)/);
+  assert.match(patched, /codexLinuxRemoteControlInlineSetupFlow\(Q,rt\)/);
+  assert.match(patched, /variant:`page`/);
+  assert.equal(applyLinuxRemoteControlInlineSetupFlowPatch(patched), patched);
 });
 
 test("Linux mobile setup copy does not refer to Mac-only Computer Use", () => {
@@ -350,6 +424,10 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         fs.mkdirSync(assetsDir, { recursive: true });
         fs.writeFileSync(path.join(buildDir, "main.js"), source);
         fs.writeFileSync(
+          path.join(buildDir, "workspace-root-drop-handler-test.js"),
+          syntheticAppServerLaunchBundle(),
+        );
+        fs.writeFileSync(
           path.join(assetsDir, "remote-connection-visibility-test.js"),
           syntheticRemoteConnectionVisibilityBundle(),
         );
@@ -359,7 +437,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
         fs.writeFileSync(
           path.join(assetsDir, "remote-connections-settings-test.js"),
-          syntheticRemoteConnectionsSettingsCopyBundle(),
+          syntheticRemoteConnectionsSettingsSetupAndCopyBundle(),
         );
         fs.writeFileSync(
           path.join(assetsDir, "codex-mobile-setup-flow-test.js"),
@@ -374,6 +452,10 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         patchExtractedApp(tempApp, { report });
 
         const patchedFile = fs.readFileSync(path.join(buildDir, "main.js"), "utf8");
+        const patchedLaunchFile = fs.readFileSync(
+          path.join(buildDir, "workspace-root-drop-handler-test.js"),
+          "utf8",
+        );
         const patchedVisibilityFile = fs.readFileSync(
           path.join(assetsDir, "remote-control-connections-visibility-test.js"),
           "utf8",
@@ -396,9 +478,11 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
         assert.match(patchedFile, /codexLinuxRemoteControlDeviceKeyClient/);
         assert.match(patchedFile, /n\.kind===`local`&&process\.platform!==`linux`/);
+        assert.match(patchedLaunchFile, /`--remote-control`/);
         assert.match(patchedRemoteConnectionVisibilityFile, /codexLinuxRemoteControlLoadGateEnabled/);
         assert.match(patchedVisibilityFile, /navigator\.userAgent\.includes\(`Linux`\)/);
         assert.match(patchedRemoteConnectionsSettingsFile, /Control this Linux desktop/);
+        assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlInlineSetupFlow/);
         assert.match(patchedRemoteConnectionsSettingsFile, /SSH connections from this Linux desktop/);
         assert.match(patchedMobileSetupFlowFile, /Connect your phone to this Linux desktop/);
         assert.match(patchedMobileConnectedSettingsFile, /apps on this Linux desktop/);
@@ -422,6 +506,12 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
         assert.ok(
           report.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-control-app-server-host-mode" &&
+            patch.status === "applied",
+          ),
+        );
+        assert.ok(
+          report.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-control-load-gate" &&
             patch.status === "applied",
           ),
@@ -429,6 +519,12 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.ok(
           report.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-control-visibility" &&
+            patch.status === "applied",
+          ),
+        );
+        assert.ok(
+          report.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-control-inline-setup-flow" &&
             patch.status === "applied",
           ),
         );
