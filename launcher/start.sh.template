@@ -534,7 +534,7 @@ PY
 }
 
 sync_browser_use_bundled_plugin_cache() {
-    local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/browser"
+    local source_plugin=""
     local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local plugin_json=""
     local source_client=""
@@ -551,6 +551,69 @@ sync_browser_use_bundled_plugin_cache() {
     local marketplace_plugins_dir
     local marketplace_plugin_link
     local needs_copy=1
+
+    if [ -f "$source_marketplace" ]; then
+        source_plugin="$(python3 - "$SCRIPT_DIR/resources/plugins/openai-bundled" "$source_marketplace" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+
+root = os.path.abspath(sys.argv[1])
+marketplace_path = sys.argv[2]
+browser_names = ("browser-use", "browser")
+
+try:
+    with open(marketplace_path, "r", encoding="utf-8") as handle:
+        marketplace = json.load(handle)
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+plugins = marketplace.get("plugins")
+if not isinstance(plugins, list):
+    raise SystemExit(1)
+
+for name in browser_names:
+    for plugin in plugins:
+        if not isinstance(plugin, dict) or plugin.get("name") != name:
+            continue
+        source = plugin.get("source")
+        if not isinstance(source, dict):
+            continue
+        if source.get("source") != "local":
+            continue
+        path = source.get("path")
+        if not isinstance(path, str) or path == "":
+            continue
+        candidate = os.path.abspath(os.path.join(root, path))
+        try:
+            if os.path.commonpath([root, candidate]) != root:
+                continue
+        except ValueError:
+            continue
+        if (
+            os.path.isfile(os.path.join(candidate, ".codex-plugin", "plugin.json"))
+            and os.path.isfile(os.path.join(candidate, "scripts", "browser-client.mjs"))
+        ):
+            print(candidate)
+            raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+)"
+    fi
+
+    if [ -z "$source_plugin" ]; then
+        for candidate in \
+            "$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/browser-use" \
+            "$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/browser"
+        do
+            if [ -f "$candidate/.codex-plugin/plugin.json" ] && [ -f "$candidate/scripts/browser-client.mjs" ]; then
+                source_plugin="$candidate"
+                break
+            fi
+        done
+    fi
+    [ -n "$source_plugin" ] || return 0
 
     plugin_json="$source_plugin/.codex-plugin/plugin.json"
     source_client="$source_plugin/scripts/browser-client.mjs"

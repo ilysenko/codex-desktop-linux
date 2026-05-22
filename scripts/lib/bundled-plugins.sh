@@ -679,24 +679,36 @@ const path = require("path");
 const bundledRoot = process.argv[2];
 const marketplacePath = process.argv[3];
 const candidates = [];
+const browserPluginNames = new Set(["browser-use", "browser"]);
+
+function isInsideRoot(candidate) {
+  const relative = path.relative(bundledRoot, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
 
 try {
   const marketplace = JSON.parse(fs.readFileSync(marketplacePath, "utf8"));
   const plugins = Array.isArray(marketplace.plugins) ? marketplace.plugins : [];
-  const plugin = plugins.find((entry) => entry && entry.name === "browser");
-  const source = plugin && plugin.source;
-  if (
-    source &&
-    source.source === "local" &&
-    typeof source.path === "string" &&
-    source.path.length > 0
-  ) {
-    candidates.push(path.resolve(bundledRoot, source.path));
+  for (const name of browserPluginNames) {
+    const plugin = plugins.find((entry) => entry && entry.name === name);
+    const source = plugin && plugin.source;
+    if (
+      source &&
+      source.source === "local" &&
+      typeof source.path === "string" &&
+      source.path.length > 0
+    ) {
+      const candidate = path.resolve(bundledRoot, source.path);
+      if (isInsideRoot(candidate)) {
+        candidates.push(candidate);
+      }
+    }
   }
 } catch (_err) {
-  // Fall back to the known upstream directory name below.
+  // Fall back to the known upstream directory names below.
 }
 
+candidates.push(path.join(bundledRoot, "plugins", "browser-use"));
 candidates.push(path.join(bundledRoot, "plugins", "browser"));
 
 const seen = new Set();
@@ -726,6 +738,7 @@ stage_browser_plugin_from_upstream() {
     local target_name
     target_name="$(basename "$source_plugin")"
     local target_plugin="$target_plugins/$target_name"
+    local obsolete_plugin=""
     local source_client="$source_plugin/scripts/browser-client.mjs"
     local target_client="$target_plugin/scripts/browser-client.mjs"
 
@@ -744,6 +757,14 @@ stage_browser_plugin_from_upstream() {
         return 1
     fi
 
+    case "$target_name" in
+        browser-use) obsolete_plugin="$target_plugins/browser" ;;
+        browser) obsolete_plugin="$target_plugins/browser-use" ;;
+    esac
+
+    if [ -n "$obsolete_plugin" ]; then
+        rm -rf "$obsolete_plugin"
+    fi
     rm -rf "$target_plugin"
     cp -R "$source_plugin" "$target_plugin"
     remove_macos_sidecar_files "$target_plugin"
@@ -776,61 +797,80 @@ const plugins = [];
 
 if (includeBrowser) {
   const marketplaceRoot = path.resolve(path.dirname(destinationPath), "..", "..");
-  const browser = sourcePlugins.find((plugin) => {
-    if (plugin == null || typeof plugin !== "object") {
-      return false;
+  function isInsideMarketplaceRoot(candidate) {
+    const relative = path.relative(marketplaceRoot, candidate);
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  }
+  let browser = null;
+  for (const browserPluginName of ["browser-use", "browser"]) {
+    browser = sourcePlugins.find((plugin) => {
+      if (plugin == null || typeof plugin !== "object") {
+        return false;
+      }
+      if (plugin.name !== browserPluginName) {
+        return false;
+      }
+      const source = plugin.source || {};
+      if (source.source !== "local" || typeof source.path !== "string") {
+        return false;
+      }
+      const stagedPlugin = path.resolve(marketplaceRoot, source.path);
+      if (!isInsideMarketplaceRoot(stagedPlugin)) {
+        return false;
+      }
+      const stagedManifest = path.join(
+        stagedPlugin,
+        ".codex-plugin",
+        "plugin.json",
+      );
+      return fs.existsSync(stagedManifest);
+    });
+    if (browser != null) {
+      break;
     }
-    if (plugin.name !== "browser") {
-      return false;
-    }
-    const source = plugin.source || {};
-    if (source.source !== "local" || typeof source.path !== "string") {
-      return true;
-    }
-    const stagedManifest = path.join(
-      path.resolve(marketplaceRoot, source.path),
-      ".codex-plugin",
-      "plugin.json",
-    );
-    return fs.existsSync(stagedManifest);
-  });
+  }
   if (browser == null) {
     let fallback = null;
-    const stagedManifestPath = path.join(
-      marketplaceRoot,
-      "plugins",
-      "browser",
-      ".codex-plugin",
-      "plugin.json",
-    );
-    try {
-      const manifest = JSON.parse(fs.readFileSync(stagedManifestPath, "utf8"));
-      const name =
-        typeof manifest.name === "string" && manifest.name.length > 0 ? manifest.name : "browser";
-      const category =
-        manifest &&
-        manifest.interface &&
-        typeof manifest.interface.category === "string" &&
-        manifest.interface.category.length > 0
-          ? manifest.interface.category
-          : "Engineering";
-      fallback = {
-        name,
-        source: {
-          source: "local",
-          path: "./plugins/browser",
-        },
-        policy: {
-          installation: "AVAILABLE",
-          authentication: "ON_INSTALL",
-        },
-        category,
-      };
-    } catch (_err) {
-      // Fall through to the explicit error below.
+    for (const pluginDirName of ["browser-use", "browser"]) {
+      const stagedManifestPath = path.join(
+        marketplaceRoot,
+        "plugins",
+        pluginDirName,
+        ".codex-plugin",
+        "plugin.json",
+      );
+      try {
+        const manifest = JSON.parse(fs.readFileSync(stagedManifestPath, "utf8"));
+        const name =
+          typeof manifest.name === "string" && manifest.name.length > 0
+            ? manifest.name
+            : pluginDirName;
+        const category =
+          manifest &&
+          manifest.interface &&
+          typeof manifest.interface.category === "string" &&
+          manifest.interface.category.length > 0
+            ? manifest.interface.category
+            : "Engineering";
+        fallback = {
+          name,
+          source: {
+            source: "local",
+            path: `./plugins/${pluginDirName}`,
+          },
+          policy: {
+            installation: "AVAILABLE",
+            authentication: "ON_INSTALL",
+          },
+          category,
+        };
+        break;
+      } catch (_err) {
+        // Try the next known browser plugin directory.
+      }
     }
     if (fallback == null) {
-      throw new Error("Bundled marketplace does not contain browser plugin");
+      throw new Error("Bundled marketplace does not contain Browser Use plugin");
     }
     plugins.push(fallback);
   } else {
