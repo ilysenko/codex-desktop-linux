@@ -288,7 +288,7 @@ fn node_line(node: &AccessibilityNode) -> String {
     format!("{indent}- {}", parts.join(" "))
 }
 
-fn first_non_empty<'a, const N: usize>(values: [Option<&'a str>; N]) -> Option<&'a str> {
+fn first_non_empty<const N: usize>(values: [Option<&str>; N]) -> Option<&str> {
     values
         .into_iter()
         .flatten()
@@ -323,7 +323,7 @@ fn push_capped_line(output: &mut String, line: &str) {
         return;
     }
     let remaining = MAX_AX_TEXT_CHARS - output.len();
-    if line.len() + 1 <= remaining {
+    if line.len() < remaining {
         output.push_str(line);
         output.push('\n');
         return;
