@@ -22,6 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Bundled Browser plugin staging now preserves `file://` URL support advertised
+  by the Browser plugin while keeping `data:` URLs blocked by the upstream URL
+  policy.
 - `codex-update-manager` now prunes unreferenced updater workspaces under `~/.cache/codex-update-manager/workspaces`, removing heavy build artifacts (`builder/`, `codex-app/`, `dist/`) while preserving lightweight diagnostics such as `logs/` and rebuild reports.
 - The Chrome native-messaging host now evicts stale browser clients when a newer Codex browser client connects, preventing old Node REPL sessions from repeatedly reattaching CDP and driving extension service-worker CPU.
 - The bundled Chrome plugin is now auto-installed during app startup, matching Browser Use, so the plugin page no longer falls back to an install button after restart when the Linux native host is already staged.
