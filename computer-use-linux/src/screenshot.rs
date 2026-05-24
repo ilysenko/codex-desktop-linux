@@ -7,7 +7,10 @@ use serde::Serialize;
 use std::{
     collections::HashMap,
     fs,
+    io::Read,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
+    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use zbus::{
@@ -41,9 +44,12 @@ pub async fn capture_screenshot() -> Result<ScreenshotCapture> {
         Ok(capture) => Ok(capture),
         Err(gnome_error) => match capture_with_portal().await {
             Ok(capture) => Ok(capture),
-            Err(portal_error) => Err(anyhow!(
-                "GNOME Shell screenshot failed: {gnome_error}; XDG portal screenshot failed: {portal_error}"
-            )),
+            Err(portal_error) => match capture_with_cli_fallback().await {
+                Ok(capture) => Ok(capture),
+                Err(cli_error) => Err(anyhow!(
+                    "GNOME Shell screenshot failed: {gnome_error}; XDG portal screenshot failed: {portal_error}; CLI screenshot fallback failed: {cli_error}"
+                )),
+            },
         },
     }
 }
@@ -133,6 +139,144 @@ async fn capture_with_portal() -> Result<ScreenshotCapture> {
     let path = file_uri_to_path(&uri)?;
 
     read_png_as_capture(path, "xdg-desktop-portal", ScreenshotCleanup::Preserve).await
+}
+
+async fn capture_with_cli_fallback() -> Result<ScreenshotCapture> {
+    let mut attempts = Vec::new();
+    for candidate in screenshot_command_candidates() {
+        if !command_exists(candidate.program) {
+            attempts.push(format!("{} not found", candidate.program));
+            continue;
+        }
+
+        let path = temp_png_path(candidate.source);
+        let result = run_screenshot_command(&candidate, &path)
+            .and_then(|_| read_png_as_capture_inner(&path, candidate.source));
+        cleanup_gnome_requested_path(&path);
+
+        match result {
+            Ok(capture) => return Ok(capture),
+            Err(error) => attempts.push(format!("{} failed: {error:#}", candidate.program)),
+        }
+    }
+
+    bail!("{}", attempts.join("; "))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScreenshotCommand {
+    source: &'static str,
+    program: &'static str,
+    args: &'static [&'static str],
+    output_path_arg: OutputPathArg,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OutputPathArg {
+    Append,
+    After(&'static str),
+}
+
+fn screenshot_command_candidates() -> Vec<ScreenshotCommand> {
+    vec![
+        ScreenshotCommand {
+            source: "grim",
+            program: "grim",
+            args: &[],
+            output_path_arg: OutputPathArg::Append,
+        },
+        ScreenshotCommand {
+            source: "gnome-screenshot",
+            program: "gnome-screenshot",
+            args: &[],
+            output_path_arg: OutputPathArg::After("-f"),
+        },
+        ScreenshotCommand {
+            source: "spectacle",
+            program: "spectacle",
+            args: &["-b", "-n"],
+            output_path_arg: OutputPathArg::After("-o"),
+        },
+        ScreenshotCommand {
+            source: "imagemagick-import",
+            program: "import",
+            args: &["-window", "root"],
+            output_path_arg: OutputPathArg::Append,
+        },
+    ]
+}
+
+fn run_screenshot_command(candidate: &ScreenshotCommand, path: &Path) -> Result<()> {
+    let path = path
+        .to_str()
+        .context("temporary screenshot path is not valid UTF-8")?;
+    let args = screenshot_command_args(candidate, path);
+    let mut child = Command::new(candidate.program)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to spawn {}", candidate.program))?;
+    let started_at = std::time::Instant::now();
+
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .with_context(|| format!("failed to wait for {}", candidate.program))?
+        {
+            let mut stderr = String::new();
+            if let Some(mut stream) = child.stderr.take() {
+                let _ = stream.read_to_string(&mut stderr);
+            }
+            if status.success() {
+                return Ok(());
+            }
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                bail!("{} exited with status {status}", candidate.program);
+            }
+            bail!(
+                "{} exited with status {status}: {stderr}",
+                candidate.program
+            );
+        }
+
+        if started_at.elapsed() >= Duration::from_secs(10) {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("{} timed out", candidate.program);
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn screenshot_command_args(candidate: &ScreenshotCommand, output_path: &str) -> Vec<String> {
+    let mut args = candidate
+        .args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    match candidate.output_path_arg {
+        OutputPathArg::Append => args.push(output_path.to_string()),
+        OutputPathArg::After(flag) => {
+            args.push(flag.to_string());
+            args.push(output_path.to_string());
+        }
+    }
+    args
+}
+
+fn command_exists(program: &str) -> bool {
+    let program_path = Path::new(program);
+    if program_path.components().count() > 1 {
+        return program_path.is_file();
+    }
+
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .any(|dir| dir.join(program).is_file())
 }
 
 async fn portal_response_stream(connection: &zbus::Connection) -> Result<MessageStream> {
@@ -289,6 +433,31 @@ mod tests {
         png.extend_from_slice(&height.to_be_bytes());
         png.extend_from_slice(&[8, 6, 0, 0, 0]);
         png
+    }
+
+    #[test]
+    fn builds_cli_screenshot_args() {
+        let import = ScreenshotCommand {
+            source: "imagemagick-import",
+            program: "import",
+            args: &["-window", "root"],
+            output_path_arg: OutputPathArg::Append,
+        };
+        assert_eq!(
+            screenshot_command_args(&import, "/tmp/shot.png"),
+            vec!["-window", "root", "/tmp/shot.png"]
+        );
+
+        let spectacle = ScreenshotCommand {
+            source: "spectacle",
+            program: "spectacle",
+            args: &["-b", "-n"],
+            output_path_arg: OutputPathArg::After("-o"),
+        };
+        assert_eq!(
+            screenshot_command_args(&spectacle, "/tmp/shot.png"),
+            vec!["-b", "-n", "-o", "/tmp/shot.png"]
+        );
     }
 
     #[test]

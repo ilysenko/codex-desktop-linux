@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   forces native Wayland with GPU compositing enabled and skips forced renderer
   accessibility by default for Wayland desktops where XWayland or software
   rendering is unstable.
+- Linux AppShots now use the bundled Computer Use backend to attach the focused
+  Linux window with metadata, AT-SPI text, and a screenshot. The ASAR patcher
+  exposes the upstream AppShots composer control and global double-modifier
+  hotkey on Linux and routes capture updates through the same renderer event
+  contract as macOS.
+- Linux screenshot capture now falls back to common desktop tools (`grim`,
+  `gnome-screenshot`, `spectacle`, ImageMagick `import`) when GNOME Shell DBus
+  and XDG Desktop Portal capture are unavailable.
 - New opt-in Linux feature `read-aloud-mcp` that stages a standalone Rust Read
   Aloud MCP plugin with `doctor`, `read_aloud`, and `stop` tools. The MCP server
   reuses the Kokoro runner/model configuration from the Read Aloud UI feature

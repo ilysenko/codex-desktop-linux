@@ -31,6 +31,12 @@ const {
   patchAutomationScheduleAssets,
 } = require("./patches/automation-schedule.js");
 const {
+  applyLinuxAppshotAvailabilityPatch,
+  applyLinuxAppshotHotkeyPatch,
+  applyLinuxAppshotMainProcessPatch,
+  applyLinuxAppshotSettingsHotkeyPatch,
+} = require("./patches/appshots.js");
+const {
   applyLinuxChromePluginAutoInstallPatch,
 } = require("./patches/chrome-plugin.js");
 const {
@@ -155,6 +161,10 @@ module.exports = {
   applyKeybindsSettingsSectionsPatch,
   applyKeybindsSettingsSharedPatch,
   applyLinuxAppSunsetPatch,
+  applyLinuxAppshotAvailabilityPatch,
+  applyLinuxAppshotHotkeyPatch,
+  applyLinuxAppshotMainProcessPatch,
+  applyLinuxAppshotSettingsHotkeyPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
   applyLinuxAvatarOverlayMousePassthroughPatch,

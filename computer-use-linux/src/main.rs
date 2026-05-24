@@ -1,5 +1,7 @@
 mod abs_pointer;
+mod appshot;
 mod atspi_tree;
+mod bare_modifier;
 mod cosmic_helper;
 mod diagnostics;
 mod gnome_extension;
@@ -93,6 +95,44 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
+        Some("focused-window") => {
+            let report = match windows::focused_window().await {
+                Ok(window) => {
+                    let backend = window
+                        .as_ref()
+                        .map(|window| window.backend.as_str())
+                        .unwrap_or(windows::GNOME_SHELL_INTROSPECT_BACKEND);
+                    serde_json::json!({
+                        "backend": backend,
+                        "focused_window": window,
+                        "error": null,
+                        "permissions_hint": null,
+                    })
+                }
+                Err(error) => {
+                    let error = format!("{error:#}");
+                    serde_json::json!({
+                        "backend": "unavailable",
+                        "focused_window": null,
+                        "error": error,
+                        "permissions_hint": windows::window_permission_hint(&error),
+                    })
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("appshot") => {
+            let app_filter = std::env::args().nth(2);
+            let capture = appshot::capture_appshot(app_filter.as_deref()).await;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&capture)
+                    .context("failed to serialize AppShot capture")?
+            );
+            Ok(())
+        }
+        Some("bare-modifier-monitor") => bare_modifier::run(std::env::args().skip(2)),
         Some("windows") => {
             let report = match windows::list_windows().await {
                 Ok(windows) => {
@@ -135,7 +175,7 @@ async fn main() -> Result<()> {
         }
         Some(command) => {
             anyhow::bail!(
-                "unknown command '{command}'. Expected one of: mcp, doctor, setup, apps, state, screenshot, windows, setup-window-targeting"
+                "unknown command '{command}'. Expected one of: mcp, doctor, setup, apps, state, screenshot, focused-window, appshot, bare-modifier-monitor, windows, setup-window-targeting"
             );
         }
         None => {
@@ -147,6 +187,6 @@ async fn main() -> Result<()> {
 
 fn print_help() {
     println!(
-        "codex-computer-use-linux\n\nUsage:\n  codex-computer-use-linux mcp\n  codex-computer-use-linux doctor\n  codex-computer-use-linux setup\n  codex-computer-use-linux setup-window-targeting\n  codex-computer-use-linux apps\n  codex-computer-use-linux state [APP_NAME]\n  codex-computer-use-linux screenshot\n  codex-computer-use-linux windows"
+        "codex-computer-use-linux\n\nUsage:\n  codex-computer-use-linux mcp\n  codex-computer-use-linux doctor\n  codex-computer-use-linux setup\n  codex-computer-use-linux setup-window-targeting\n  codex-computer-use-linux apps\n  codex-computer-use-linux state [APP_NAME]\n  codex-computer-use-linux screenshot\n  codex-computer-use-linux focused-window\n  codex-computer-use-linux appshot [APP_NAME|pid:PID]\n  codex-computer-use-linux bare-modifier-monitor --key DoubleShift [--immediate]\n  codex-computer-use-linux windows"
     );
 }

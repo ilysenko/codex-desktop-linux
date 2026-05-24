@@ -14,6 +14,10 @@ const {
   COMPUTER_USE_UI_SETTINGS_KEY,
   applyAutomationScheduleMultiTimePatch,
   applyKeybindsSettingsIndexPatch,
+  applyLinuxAppshotAvailabilityPatch,
+  applyLinuxAppshotHotkeyPatch,
+  applyLinuxAppshotMainProcessPatch,
+  applyLinuxAppshotSettingsHotkeyPatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,
@@ -497,6 +501,8 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-single-instance",
     "linux-computer-use-ui-feature",
     "linux-computer-use-plugin-gate",
+    "linux-appshots-main-process",
+    "linux-appshots-hotkey",
     "linux-chrome-plugin-auto-install",
     "browser-use-node-repl-approval",
     "linux-chrome-extension-status",
@@ -514,6 +520,8 @@ test("default core patch descriptors are grouped and unique", () => {
     "opaque-window-default-webview-index",
     "opaque-window-default-resolved-theme",
     "subagent-nickname-metadata-shape",
+    "linux-appshots-availability",
+    "linux-appshots-settings-hotkey",
     "linux-computer-use-ui-availability",
     "linux-computer-use-install-flow",
     "linux-app-updater-bridge",
@@ -576,6 +584,37 @@ function computerUseGateBundleFixture() {
   return [
     "var Qt=`openai-bundled`,$t=`browser-use`,en=`chrome-internal`,tn=`computer-use`,nn=`latex-tectonic`;",
     "var $n=[{forceReload:!0,installWhenMissing:!0,name:$t,isEnabled:({features:e})=>e.browserAgentAvailable,migrate:cn},{name:en,isEnabled:({buildFlavor:e})=>rn(e)},{name:tn,isEnabled:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:wn},{name:nn,isEnabled:()=>!0}];",
+  ].join("");
+}
+
+function appshotAvailabilityBundleFixture() {
+  return [
+    "import{o as e}from\"./statsig-CpJRDK88.js\";import{t}from\"./use-platform-ByMJlQVq.js\";",
+    "function n(){let{platform:n}=t(),r=e(`1304276663`);return n===`macOS`&&r}export{n as t};",
+  ].join("");
+}
+
+function appshotMainProcessBundleFixture() {
+  return [
+    "var F=`codex_desktop:message-for-view`;function nS(e,t){e.isDestroyed()||e.send(F,t)}",
+    "\"computer-use-frontmost-window\":async()=>process.platform===`darwin`?Xo():null,",
+    "\"computer-use-start-capture\":async({animationDestination:e,bundleIdentifier:t,origin:n,requestId:r})=>{if(process.platform!==`darwin`||this.requestComputerUseCaptureWorker==null||this.subscribeComputerUseCaptureWorkerEvent==null)return null;let i=GO({backgroundColor:e.backgroundColor,cornerRadius:e.cornerRadius,primaryTextColor:e.primaryTextColor,viewportFrame:e.viewportFrame,webContents:n});return i==null?null:eS({animationTarget:i,bundleIdentifier:t,origin:n,requestComputerUseCaptureWorker:this.requestComputerUseCaptureWorker,requestId:r,subscribeComputerUseCaptureWorkerEvent:this.subscribeComputerUseCaptureWorkerEvent})}",
+  ].join("");
+}
+
+function appshotHotkeyMainBundleFixture() {
+  return [
+    "var uG=`DoubleCommand`,dG=6e4;",
+    "function rw(e,t=process.platform){return t===`darwin`&&aw(e)!=null}",
+    "function bw(e,t,r){if(iw(e))return rw(e)?QC(e,t,r?.bareModifierTrigger):null;let i=Ew(e),a=()=>{t.onPressed()},o=n.globalShortcut.register(i,a);return o?{handlesRelease:!1,unregister:()=>{n.globalShortcut.unregister(i)}}:null}",
+    "function fG({globalState:e,windowManager:n,enabled:r}){let i=e.get(`appshotHotkey`)??uG,a=null,o=()=>({supported:r&&process.platform===`darwin`,configuredHotkey:i,isActive:a!=null}),s=()=>{if(a?.unregister(),a=null,!r||process.platform!==`darwin`||i==null){t.$r().info(`Appshot hotkey inactive`,{safe:{enabled:r,platform:process.platform,configured:i!=null},sensitive:{}});return}if(t.$r().info(`Registering appshot hotkey`,{safe:{hotkey:i},sensitive:{}}),Cw(i,{bareModifierTrigger:`immediatePress`}),a=bw(i,{onPressed:()=>{t.$r().info(`Appshot hotkey pressed`,{safe:{hotkey:i},sensitive:{}});let e=n.getPrimaryWindow();if(e==null||e.isDestroyed()){return}let r=n.wasPrimaryWindowFocusedWithin(e,dG);r||n.sendMessageToWindow(e,{type:`navigate-to-route`,path:`/`,state:{focusComposerNonce:Date.now()}}),n.sendMessageToWindow(e,{type:`appshot-shortcut`})}},{bareModifierTrigger:`immediatePress`}),a==null)throw Error(`Unable to register shortcut: ${i}`);t.$r().info(`Registered appshot hotkey`,{safe:{hotkey:i},sensitive:{}})},c=n=>{if(!r||process.platform!==`darwin`)return{success:!1,error:`Not supported.`,state:o()};if(n!=null){let e=Sw(n);if(e!=null)return{success:!1,error:e,state:o()}}let a=i;i=n;try{s()}catch(e){i=a;return{success:!1,error:e instanceof Error?e.message:String(e),state:o()}}return e.set(`appshotHotkey`,i??void 0),{success:!0,state:o()}};try{s()}catch(e){}return{getState:o,setHotkey:c,dispose:()=>{a?.unregister(),a=null}}}",
+  ].join("");
+}
+
+function appshotSettingsBundleFixture() {
+  return [
+    "var O=d(),A=e(t(),1),j=n(),M=[{hotkey:`DoubleCommand`,label:`\\u2318 + \\u2318`},{hotkey:`DoubleOption`,label:`\\u2325 + \\u2325`},{hotkey:`DoubleShift`,label:`\\u21e7 + \\u21e7`}];",
+    "function N(){let{data:h}=l(`appshot-hotkey-state`,{queryConfig:{enabled:t}}),x=c(`appshot-set-hotkey`);let w=h?.configuredHotkey??null,E=M.find(e=>e.hotkey===w)??null;return E}",
   ].join("");
 }
 
@@ -1690,6 +1729,77 @@ test("allows bundled Computer Use on Linux as well as macOS", () => {
     /\{installWhenMissing:!0,name:tn,isEnabled:\(\{features:e,platform:t\}\)=>\(t===`darwin`\|\|t===`linux`\)&&e\.computerUse/,
   );
   assert.doesNotMatch(patched, /t===`darwin`&&e\.computerUse/);
+});
+
+test("enables AppShots availability on Linux", () => {
+  const patched = applyPatchTwice(
+    applyLinuxAppshotAvailabilityPatch,
+    appshotAvailabilityBundleFixture(),
+  );
+
+  assert.match(patched, /return n===`linux`\|\|n===`macOS`&&r/);
+});
+
+test("routes AppShots capture through Linux Computer Use backend", () => {
+  const patched = applyPatchTwice(
+    applyLinuxAppshotMainProcessPatch,
+    appshotMainProcessBundleFixture(),
+  );
+
+  assert.match(
+    patched,
+    /process\.platform===`linux`\?codexLinuxAppshotFrontmostWindow\(\):process\.platform===`darwin`\?Xo\(\):null/,
+  );
+  assert.match(
+    patched,
+    /if\(process\.platform===`linux`\)return codexLinuxAppshotStartCapture\(\{origin:n,requestId:r,bundleIdentifier:t\}\);/,
+  );
+  assert.match(patched, /function codexLinuxAppshotBackendPath/);
+  assert.match(patched, /type:`metadata`,app:\{bundleIdentifier:a\.bundleIdentifier/);
+  assert.match(patched, /type:`axText`,text:i\.accessibility_text/);
+  assert.match(patched, /type:`screenshot`,screenshotDataURL:o/);
+  assert.match(patched, /type:`completed`,transitionSnapshotDataURL:o/);
+});
+
+test("enables the AppShots global hotkey on Linux", () => {
+  const patched = applyPatchTwice(
+    applyLinuxAppshotHotkeyPatch,
+    appshotHotkeyMainBundleFixture(),
+  );
+
+  assert.match(
+    patched,
+    /e\.get\(`appshotHotkey`\)\?\?\(process\.platform===`linux`\?`DoubleShift`:uG\)/,
+  );
+  assert.match(
+    patched,
+    /process\.platform===`linux`&&typeof codexLinuxAppshotBareModifierHotkey==`function`&&codexLinuxAppshotBareModifierHotkey\(e\)/,
+  );
+  assert.match(
+    patched,
+    /codexLinuxAppshotRegisterBareModifierHotkey\(e,t,r\?\.bareModifierTrigger\)/,
+  );
+  assert.match(
+    patched,
+    /supported:r&&\(process\.platform===`darwin`\|\|process\.platform===`linux`\)/,
+  );
+  assert.match(patched, /process\.platform!==`darwin`&&process\.platform!==`linux`/);
+  assert.match(patched, /type:`appshot-shortcut`/);
+});
+
+test("shows Linux AppShots hotkey choices in settings", () => {
+  const patched = applyPatchTwice(
+    applyLinuxAppshotSettingsHotkeyPatch,
+    appshotSettingsBundleFixture(),
+  );
+
+  assert.match(
+    patched,
+    /typeof navigator!=`undefined`&&navigator\.userAgent\.includes\(`Linux`\)\?\[\{hotkey:`DoubleShift`,label:`Shift \+ Shift`\}/,
+  );
+  assert.match(patched, /\{hotkey:`DoubleAlt`,label:`Alt \+ Alt`\}/);
+  assert.match(patched, /\{hotkey:`Ctrl\+Alt\+A`,label:`Ctrl \+ Alt \+ A`\}/);
+  assert.match(patched, /:\[\{hotkey:`DoubleCommand`/);
 });
 
 test("adds Keybinds settings route after upstream minified variable drift", () => {

@@ -34,6 +34,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Multi-instance launcher | 🧪 opt-in | `--new-instance` or `CODEX_MULTI_LAUNCH=1` allocates a bounded webview port and isolated Electron profile |
 | GUI install prompts (`kdialog` / `zenity`) | ✅ if installed | Falls back to interactive terminal prompt |
 | Linux browser annotations | ✅ always | Stored-anchor screenshots, isolated marker rendering |
+| Linux AppShots | ✅ always | Global hotkey and composer capture attach the focused Linux window with screenshot and AT-SPI text through the bundled Computer Use backend |
 | Chrome plugin native host | ✅ always | Auto-installs the upstream Chrome plugin plus Linux native-messaging support for Chrome, Brave, and Chromium |
 | Linux Computer Use | ⚠️ opt-in | MCP backend registers by default; the in-app UI is opt-in. Supports screenshots, accessibility, window targeting, and input synthesis |
 | Linux Read Aloud | 🧪 opt-in experiment | `linux-features/read-aloud` adds an explicit response speaker button; `linux-features/read-aloud-mcp` stages a separate MCP plugin so the agent can read text aloud on request |
@@ -210,7 +211,7 @@ The scheduled `Populate Cachix` workflow builds the default Codex Desktop packag
 Linux Computer Use is an **opt-in** plugin that lets Codex inspect and control desktop apps on Linux through a native Rust MCP backend (`codex-computer-use-linux`). It is designed and maintained by [@avifenesh](https://github.com/avifenesh) and supports:
 
 - app listing and accessibility trees via AT-SPI
-- screenshots through GNOME Shell DBus or XDG Desktop Portal
+- screenshots through GNOME Shell DBus, XDG Desktop Portal, or CLI fallbacks such as `grim`, `gnome-screenshot`, `spectacle`, and ImageMagick `import`
 - window listing and focusing on GNOME, KWin/Plasma, Hyprland, and i3
 - keyboard, text, click, scroll, and drag input through a uinput absolute pointer, the XDG Desktop Portal RemoteDesktop session, or `ydotool`
 
@@ -263,8 +264,15 @@ You can also invoke the backend binary directly:
 ./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux setup    # enables GNOME accessibility
 ./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux apps     # lists running apps via AT-SPI
 ./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux windows  # lists targetable windows
+./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux focused-window
 ./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux screenshot
+./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux appshot [APP_NAME|pid:PID]
 ```
+
+For the full AppShots UI path, use the AppShots hotkey in the running app. On
+Linux the default is pressing both Shift keys at once. The AppShots settings
+page also offers both Alt keys, plus `Ctrl+Alt+A` as a normal-accelerator
+fallback.
 
 ### Enabling Computer Use UI
 
