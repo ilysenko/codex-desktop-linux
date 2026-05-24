@@ -168,6 +168,26 @@ build_native_modules() {
     info "Compiling for Electron v$ELECTRON_VERSION (this takes ~1 min)..."
     info "Using Electron headers: $ELECTRON_HEADERS_URL"
     [ -f "$build_dir/node_modules/@electron/rebuild/lib/cli.js" ] || error "electron-rebuild CLI not found in native build toolchain"
+
+    # GCC 16+ no longer exposes nullptr_t in the global namespace; Electron's V8
+    # headers use it unqualified, breaking native module compilation.  Detect the
+    # issue and wrap the C++ compiler to force-include a fixup header if needed.
+    local _cxx="${CXX:-c++}"
+    if ! echo 'nullptr_t x = nullptr;' | "$_cxx" -x c++ -std=c++20 -fsyntax-only - 2>/dev/null; then
+        local _nullptr_fix="$build_dir/.v8-nullptr-fix.h"
+        local _cxx_wrapper="$build_dir/.cxx-v8-fix"
+        printf '#include <cstddef>\nusing std::nullptr_t;\n' > "$_nullptr_fix"
+        local _real_cxx
+        _real_cxx="$(which "$_cxx")"
+        cat > "$_cxx_wrapper" <<_WRAP
+#!/bin/bash
+exec "$_real_cxx" -include "$_nullptr_fix" "\$@"
+_WRAP
+        chmod +x "$_cxx_wrapper"
+        export CXX="$_cxx_wrapper"
+        info "Applied GCC 16+ nullptr_t compatibility workaround"
+    fi
+
     npm_config_disturl="$ELECTRON_HEADERS_URL" \
     NPM_CONFIG_DISTURL="$ELECTRON_HEADERS_URL" \
     node "$build_dir/node_modules/@electron/rebuild/lib/cli.js" -v "$ELECTRON_VERSION" --force --dist-url "$ELECTRON_HEADERS_URL" 2>&1 >&2
