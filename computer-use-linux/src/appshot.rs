@@ -1,5 +1,5 @@
 use crate::atspi_tree::{snapshot_tree, AccessibilityNode};
-use crate::screenshot::{capture_screenshot, ScreenshotCapture};
+use crate::screenshot::{capture_screenshot_without_cli_fallback, ScreenshotCapture};
 use crate::windows::{focused_window, WindowBounds, WindowInfo};
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -30,15 +30,26 @@ pub async fn capture_appshot(app_filter: Option<&str>) -> AppshotCapture {
         Err(error) => (None, Some(format!("{error:#}"))),
     };
 
-    let (screenshot, screenshot_error) = match capture_screenshot().await {
-        Ok(capture) => (
-            Some(
-                crop_capture_to_window(capture, focused_window.as_ref())
-                    .unwrap_or_else(|capture| capture),
-            ),
+    let (screenshot, screenshot_error) = match focused_window.as_ref() {
+        Some(window) => match capture_screenshot_without_cli_fallback().await {
+            Ok(capture) => match crop_capture_to_window(capture, window) {
+                Ok(capture) => (Some(capture), None),
+                Err(error) => (None, Some(format!("{error:#}"))),
+            },
+            Err(error) => (None, Some(format!("{error:#}"))),
+        },
+        None => (
             None,
+            Some(
+                focused_window_error
+                    .as_deref()
+                    .map(|error| format!("focused window unavailable; refusing full-screen AppShot screenshot: {error}"))
+                    .unwrap_or_else(|| {
+                        "focused window unavailable; refusing full-screen AppShot screenshot"
+                            .to_string()
+                    }),
+            ),
         ),
-        Err(error) => (None, Some(format!("{error:#}"))),
     };
 
     let selector = accessibility_selector(app_filter, focused_window.as_ref());
@@ -82,15 +93,12 @@ pub async fn capture_appshot(app_filter: Option<&str>) -> AppshotCapture {
 
 fn crop_capture_to_window(
     capture: ScreenshotCapture,
-    focused_window: Option<&WindowInfo>,
-) -> std::result::Result<ScreenshotCapture, ScreenshotCapture> {
-    let Some(bounds) = focused_window.and_then(|window| window.bounds.as_ref()) else {
-        return Err(capture);
+    focused_window: &WindowInfo,
+) -> Result<ScreenshotCapture> {
+    let Some(bounds) = focused_window.bounds.as_ref() else {
+        anyhow::bail!("focused window bounds unavailable; refusing full-screen AppShot screenshot");
     };
-    let Ok(cropped) = crop_capture_to_bounds(&capture, bounds) else {
-        return Err(capture);
-    };
-    Ok(cropped)
+    crop_capture_to_bounds(&capture, bounds)
 }
 
 fn crop_capture_to_bounds(
@@ -98,7 +106,9 @@ fn crop_capture_to_bounds(
     bounds: &WindowBounds,
 ) -> Result<ScreenshotCapture> {
     let Some((x, y, width, height)) = crop_rect(capture.width, capture.height, bounds) else {
-        return Ok(capture.clone());
+        anyhow::bail!(
+            "focused window bounds did not intersect screenshot; refusing full-screen AppShot screenshot"
+        );
     };
 
     if x == 0 && y == 0 && width == capture.width && height == capture.height {
@@ -405,5 +415,46 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn crop_capture_to_window_requires_bounds() {
+        let mut window = window();
+        window.bounds = None;
+        let capture = ScreenshotCapture {
+            mime_type: "image/png".to_string(),
+            data_url: "data:image/png;base64,".to_string(),
+            source: "xdg-desktop-portal".to_string(),
+            width: 100,
+            height: 100,
+        };
+
+        let error = crop_capture_to_window(capture, &window).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("focused window bounds unavailable"));
+    }
+
+    #[test]
+    fn crop_capture_to_window_rejects_non_intersecting_bounds() {
+        let mut window = window();
+        window.bounds = Some(WindowBounds {
+            x: Some(200),
+            y: Some(200),
+            width: 20,
+            height: 20,
+        });
+        let capture = ScreenshotCapture {
+            mime_type: "image/png".to_string(),
+            data_url: "data:image/png;base64,".to_string(),
+            source: "xdg-desktop-portal".to_string(),
+            width: 100,
+            height: 100,
+        };
+
+        let error = crop_capture_to_window(capture, &window).unwrap_err();
+
+        assert!(error.to_string().contains("did not intersect screenshot"));
     }
 }

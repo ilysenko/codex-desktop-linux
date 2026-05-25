@@ -2,15 +2,28 @@
 
 const {
   applyLinuxAppshotAvailabilityPatch,
+  applyLinuxAppshotHotkeyPatch,
+  applyLinuxAppshotMainProcessPatch,
   applyLinuxAppshotSettingsHotkeyPatch,
-} = require("../../../../appshots.js");
+} = require("../../scripts/patches/appshots.js");
 
-module.exports = [
+const descriptors = [
+  {
+    id: "linux-appshots-main-process",
+    phase: "main-bundle",
+    order: 142,
+    apply: applyLinuxAppshotMainProcessPatch,
+  },
+  {
+    id: "linux-appshots-hotkey",
+    phase: "main-bundle",
+    order: 143,
+    apply: applyLinuxAppshotHotkeyPatch,
+  },
   {
     id: "linux-appshots-availability",
     phase: "webview-asset",
     order: 1090,
-    ciPolicy: "required-upstream",
     pattern: /^use-is-appshot-available-.*\.js$/,
     missingDescription: "AppShots availability bundle",
     skipDescription: "Linux AppShots availability patch",
@@ -20,10 +33,13 @@ module.exports = [
     id: "linux-appshots-settings-hotkey",
     phase: "webview-asset",
     order: 1091,
-    ciPolicy: "required-upstream",
     pattern: /^appshots-settings-.*\.js$/,
     missingDescription: "AppShots settings bundle",
     skipDescription: "Linux AppShots settings hotkey patch",
     apply: applyLinuxAppshotSettingsHotkeyPatch,
   },
 ];
+
+module.exports = {
+  descriptors,
+};

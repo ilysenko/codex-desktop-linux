@@ -38,18 +38,29 @@ enum ScreenshotCleanup {
 }
 
 pub async fn capture_screenshot() -> Result<ScreenshotCapture> {
+    capture_screenshot_inner(true).await
+}
+
+pub async fn capture_screenshot_without_cli_fallback() -> Result<ScreenshotCapture> {
+    capture_screenshot_inner(false).await
+}
+
+async fn capture_screenshot_inner(allow_cli_fallback: bool) -> Result<ScreenshotCapture> {
     hydrate_session_bus_env();
 
     match capture_with_gnome_shell().await {
         Ok(capture) => Ok(capture),
         Err(gnome_error) => match capture_with_portal().await {
             Ok(capture) => Ok(capture),
-            Err(portal_error) => match capture_with_cli_fallback().await {
+            Err(portal_error) if allow_cli_fallback => match capture_with_cli_fallback().await {
                 Ok(capture) => Ok(capture),
                 Err(cli_error) => Err(anyhow!(
                     "GNOME Shell screenshot failed: {gnome_error}; XDG portal screenshot failed: {portal_error}; CLI screenshot fallback failed: {cli_error}"
                 )),
             },
+            Err(portal_error) => Err(anyhow!(
+                "GNOME Shell screenshot failed: {gnome_error}; XDG portal screenshot failed: {portal_error}; CLI screenshot fallback disabled"
+            )),
         },
     }
 }

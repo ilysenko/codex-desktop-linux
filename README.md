@@ -34,7 +34,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Multi-instance launcher | 🧪 opt-in | `--new-instance` or `CODEX_MULTI_LAUNCH=1` allocates a bounded webview port and isolated Electron profile |
 | GUI install prompts (`kdialog` / `zenity`) | ✅ if installed | Falls back to interactive terminal prompt |
 | Linux browser annotations | ✅ always | Stored-anchor screenshots, isolated marker rendering |
-| Linux AppShots | ✅ always | Global hotkey and composer capture attach the focused Linux window with screenshot and AT-SPI text through the bundled Computer Use backend |
+| Linux AppShots | 🧪 opt-in experiment | `linux-features/appshots` exposes the upstream AppShots composer control on Linux and attaches the focused window screenshot plus AT-SPI text through the bundled Computer Use backend |
 | Chrome plugin native host | ✅ always | Auto-installs the upstream Chrome plugin plus Linux native-messaging support for Chrome, Brave, and Chromium |
 | Linux Computer Use | ⚠️ opt-in | MCP backend registers by default; the in-app UI is opt-in. Supports screenshots, accessibility, window targeting, and input synthesis |
 | Linux Read Aloud | 🧪 opt-in experiment | `linux-features/read-aloud` adds an explicit response speaker button; `linux-features/read-aloud-mcp` stages a separate MCP plugin so the agent can read text aloud on request |
@@ -269,10 +269,10 @@ You can also invoke the backend binary directly:
 ./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux appshot [APP_NAME|pid:PID]
 ```
 
-For the full AppShots UI path, use the AppShots hotkey in the running app. On
-Linux the default is pressing both Shift keys at once. The AppShots settings
-page also offers both Alt keys, plus `Ctrl+Alt+A` as a normal-accelerator
-fallback.
+For the full AppShots UI path, enable `linux-features/appshots` before building.
+The feature exposes the upstream AppShots composer control on Linux. Global
+hotkeys are disabled by default; after opting in, configure one from the
+AppShots settings page.
 
 ### Enabling Computer Use UI
 

@@ -1,7 +1,7 @@
 "use strict";
 
 const APPSHOT_HELPER_MARKER = "codexLinuxAppshotStartCapture";
-const LINUX_APPSHOT_DEFAULT_HOTKEY = "DoubleShift";
+const LINUX_APPSHOT_RECOMMENDED_BARE_HOTKEY = "DoubleShift";
 const LINUX_APPSHOT_FALLBACK_HOTKEY = "Ctrl+Alt+A";
 
 function applyLinuxAppshotAvailabilityPatch(currentSource) {
@@ -67,7 +67,7 @@ function applyLinuxAppshotMainProcessPatch(currentSource) {
 }
 
 function applyLinuxAppshotHotkeyPatch(currentSource) {
-  if (currentSource.includes("process.platform===`linux`?`DoubleShift`")) {
+  if (currentSource.includes("process.platform===`linux`?null")) {
     return currentSource;
   }
 
@@ -85,7 +85,7 @@ function applyLinuxAppshotHotkeyPatch(currentSource) {
       reconcileFnVar,
     ) => {
       changed = true;
-      return `let ${configuredVar}=${globalStateVar}.get(\`appshotHotkey\`)??(process.platform===\`linux\`?\`${LINUX_APPSHOT_DEFAULT_HOTKEY}\`:${defaultHotkeyVar});let ${registrationVar}=null,${stateFnVar}=()=>({supported:${enabledVar}&&(process.platform===\`darwin\`||process.platform===\`linux\`),configuredHotkey:${configuredVar},isActive:${registrationVar}!=null}),${reconcileFnVar}=()=>{if(${registrationVar}?.unregister(),${registrationVar}=null,!${enabledVar}||process.platform!==\`darwin\`&&process.platform!==\`linux\`||${configuredVar}==null){`;
+      return `let ${configuredVar}=${globalStateVar}.get(\`appshotHotkey\`)??(process.platform===\`linux\`?null:${defaultHotkeyVar});let ${registrationVar}=null,${stateFnVar}=()=>({supported:${enabledVar}&&(process.platform===\`darwin\`||process.platform===\`linux\`),configuredHotkey:${configuredVar},isActive:${registrationVar}!=null}),${reconcileFnVar}=()=>{if(${registrationVar}?.unregister(),${registrationVar}=null,!${enabledVar}||process.platform!==\`darwin\`&&process.platform!==\`linux\`||${configuredVar}==null){`;
     },
   );
 
@@ -142,7 +142,7 @@ function applyLinuxAppshotSettingsHotkeyPatch(currentSource) {
     /((?:var\s+|,)([A-Za-z_$][\w$]*)=)(\[\{hotkey:`DoubleCommand`,label:`[^`]+`\},\{hotkey:`DoubleOption`,label:`[^`]+`\},\{hotkey:`DoubleShift`,label:`[^`]+`\}\])(?=;)/,
     (match, declarationPrefix, optionsVar, macOptions) => {
       changed = true;
-      return `${declarationPrefix}typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)?[{hotkey:\`${LINUX_APPSHOT_DEFAULT_HOTKEY}\`,label:\`Shift + Shift\`},{hotkey:\`DoubleAlt\`,label:\`Alt + Alt\`},{hotkey:\`${LINUX_APPSHOT_FALLBACK_HOTKEY}\`,label:\`Ctrl + Alt + A\`}]:${macOptions}`;
+      return `${declarationPrefix}typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)?[{hotkey:\`${LINUX_APPSHOT_RECOMMENDED_BARE_HOTKEY}\`,label:\`Shift + Shift\`},{hotkey:\`DoubleAlt\`,label:\`Alt + Alt\`},{hotkey:\`${LINUX_APPSHOT_FALLBACK_HOTKEY}\`,label:\`Ctrl + Alt + A\`}]:${macOptions}`;
     },
   );
 

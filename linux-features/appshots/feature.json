@@ -1,0 +1,9 @@
+{
+  "id": "appshots",
+  "title": "Linux AppShots",
+  "description": "Opt-in AppShots UI integration that captures the focused Linux window through the bundled Computer Use backend.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
