@@ -1,0 +1,242 @@
+name: Build Release Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to upload into (defaults to ci-<run_number>)"
+        required: false
+        type: string
+      make_latest:
+        description: "Mark release as latest"
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CI_PACKAGE_VERSION: 2026.04.28.000000+ci${{ github.run_number }}
+
+jobs:
+  prepare-release:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      make_latest: ${{ steps.meta.outputs.make_latest }}
+    steps:
+      - name: Compute release metadata
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_MAKE_LATEST: ${{ inputs.make_latest }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "push" ]; then
+            tag="$REF_NAME"
+          elif [ -n "${INPUT_TAG:-}" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="ci-${GITHUB_RUN_NUMBER}"
+          fi
+
+          if [[ "$tag" == v* ]]; then
+            prerelease=false
+          else
+            prerelease=true
+          fi
+
+          release_name="Codex Desktop Linux $tag"
+
+          {
+            echo "tag=$tag"
+            echo "release_name=$release_name"
+            echo "prerelease=$prerelease"
+            echo "make_latest=${INPUT_MAKE_LATEST:-false}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-deb:
+    name: Build Debian package
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create minimal packaged app fixture
+        run: |
+          set -euo pipefail
+          rm -rf codex-app dist
+          tests/fixtures/create-packaged-app-fixture.sh codex-app
+
+      - name: Build Debian package
+        run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-deb.sh
+
+      - name: Upload Debian artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-deb
+          path: dist/codex-desktop_*.deb
+          if-no-files-found: error
+
+  build-rpm:
+    name: Build RPM package
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install RPM tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Create minimal packaged app fixture
+        run: |
+          set -euo pipefail
+          rm -rf codex-app dist
+          tests/fixtures/create-packaged-app-fixture.sh codex-app
+
+      - name: Build RPM package
+        run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-rpm.sh
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-rpm
+          path: dist/codex-desktop-*.rpm
+          if-no-files-found: error
+
+  build-pacman:
+    name: Build Pacman package
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and capture pacman package in Arch Linux
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e CI_PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
+            -v "$PWD:/work" \
+            -w /work \
+            archlinux:base-devel \
+            bash -lc '
+              set -euo pipefail
+              pacman -Syu --noconfirm --needed rust nodejs npm zstd sudo
+              useradd -m builder
+              chown -R builder:builder /work
+
+              runuser -u builder -- bash -lc '"'"'
+                set -euo pipefail
+                rm -rf codex-app dist
+                tests/fixtures/create-packaged-app-fixture.sh codex-app
+
+                cargo build --release -p codex-update-manager
+                PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-pacman.sh
+              '"'"'
+            '
+
+      - name: Upload pacman artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-pacman
+          path: dist/codex-desktop-*.pkg.tar.*
+          if-no-files-found: error
+
+  build-appimage:
+    name: Build AppImage
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create minimal packaged app fixture
+        run: |
+          set -euo pipefail
+          rm -rf codex-app dist
+          tests/fixtures/create-packaged-app-fixture.sh codex-app
+
+      - name: Install appimagetool
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libfuse2
+          curl -fsSL -o /tmp/appimagetool.AppImage \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool.AppImage
+
+      - name: Build AppImage
+        env:
+          APPIMAGETOOL: /tmp/appimagetool.AppImage
+        run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-appimage.sh
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-appimage
+          path: dist/codex-desktop-*.AppImage
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - build-deb
+      - build-rpm
+      - build-pacman
+      - build-appimage
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Show downloaded artifacts
+        run: find release-artifacts -maxdepth 3 -type f | sort
+
+      - name: Build release notes
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          ## Artifacts
+          - Debian package (.deb)
+          - RPM package (.rpm)
+          - Pacman package (.pkg.tar.zst)
+          - AppImage (.AppImage)
+
+          Built from commit: `${GITHUB_SHA}`
+          Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          EOF
+
+      - name: Publish or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          name: ${{ needs.prepare-release.outputs.release_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ needs.prepare-release.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.prepare-release.outputs.make_latest }}
+          files: |
+            release-artifacts/release-deb/*
+            release-artifacts/release-rpm/*
+            release-artifacts/release-pacman/*
+            release-artifacts/release-appimage/*
+          fail_on_unmatched_files: true
