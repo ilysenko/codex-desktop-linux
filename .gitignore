@@ -10,6 +10,7 @@ bin/codex-*
 target/
 dist/
 dist-next/
+output/
 linux-features/features.json
 .idea/
 .claude/

@@ -814,9 +814,33 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   return patchedSource;
 }
 
+function ensureLinuxChromeExtensionStatusFlatpakRoot(currentSource) {
+  if (!currentSource.includes("codexLinuxChromeProfileRoots")) {
+    return currentSource;
+  }
+  if (currentSource.includes("`com.google.Chrome`,`config`,`google-chrome`")) {
+    return currentSource;
+  }
+
+  const chromiumRootRegex =
+    /\(0,([A-Za-z_$][\w$]*)\.join\)\(e,`\.config`,`chromium`\)/;
+  const match = currentSource.match(chromiumRootRegex);
+  if (match == null) {
+    console.warn(
+      "WARN: Could not find Linux Chrome profile roots — skipping Flatpak Chrome profile root patch",
+    );
+    return currentSource;
+  }
+
+  const pathVar = match[1];
+  const flatpakRoot =
+    `(0,${pathVar}.join)(e,\`.var\`,\`app\`,\`com.google.Chrome\`,\`config\`,\`google-chrome\`),`;
+  return currentSource.replace(chromiumRootRegex, `${flatpakRoot}${match[0]}`);
+}
+
 function applyLinuxChromeExtensionStatusPatch(currentSource) {
   if (currentSource.includes("codexLinuxChromeProfileRoots")) {
-    return currentSource;
+    return ensureLinuxChromeExtensionStatusFlatpakRoot(currentSource);
   }
 
   const fsVar = requireName(currentSource, "node:fs");
@@ -899,7 +923,7 @@ function applyLinuxChromeExtensionStatusPatch(currentSource) {
   }
 
   const replacement =
-    `function codexLinuxChromeProfileRoots({homeDir:e,platform:t}){return t===\`linux\`?[(0,${pathVar}.join)(e,\`.config\`,\`BraveSoftware\`,\`Brave-Browser\`),(0,${pathVar}.join)(e,\`.config\`,\`google-chrome\`),(0,${pathVar}.join)(e,\`.config\`,\`google-chrome-beta\`),(0,${pathVar}.join)(e,\`.config\`,\`google-chrome-unstable\`),(0,${pathVar}.join)(e,\`.config\`,\`chromium\`)]:[]}function codexLinuxChromeHasExtension({extensionId:e,homeDir:t,platform:n}){if(n!==\`linux\`)return!1;let r=${extensionIdValidatorName}(e);for(let e of codexLinuxChromeProfileRoots({homeDir:t,platform:n})){if(!(0,${fsVar}.existsSync)(e))continue;for(let t of (0,${fsVar}.readdirSync)(e,{withFileTypes:!0}))if(t.isDirectory()&&(0,${fsVar}.existsSync)((0,${pathVar}.join)(e,t.name,\`Extensions\`,r)))return!0}return!1}function codexLinuxChromeCommand(){let e=(process.env.PATH??\`\`).split(\`:\`);for(let t of[\`brave-browser\`,\`brave\`,\`google-chrome\`,\`google-chrome-stable\`,\`chromium-browser\`,\`chromium\`])for(let n of e){if(n.length===0)continue;let e=(0,${pathVar}.join)(n,t);try{if((0,${fsVar}.existsSync)(e)&&(0,${fsVar}.statSync)(e).isFile())return e}catch{}}return null}function ${statusFunctionName}({extensionId:e,homeDir:t=(0,${osVar}.homedir)(),localAppDataDir:n=process.env.LOCALAPPDATA,platform:a=process.platform}){if(a===\`linux\`)return codexLinuxChromeHasExtension({extensionId:e,homeDir:t,platform:a});let s=${extensionIdValidatorName}(e),c=${profileDirFunctionName}({homeDir:t,localAppDataDir:n,platform:a});return c==null||!(0,${fsVar}.existsSync)(c)?!1:(0,${fsVar}.readdirSync)(c,{withFileTypes:!0}).some(e=>e.isDirectory()&&(0,${fsVar}.existsSync)((0,${pathVar}.join)(c,e.name,\`Extensions\`,s)))}async function ${openFunctionName}({extensionId:e,platform:t=process.platform,detectChromeCommand:n=${detectChromeFunctionName},runCommand:r=${runCommandFunctionName}}){if(t===\`darwin\`){await r(${macOpenFunctionName},[\`-b\`,${macBundleIdName},${extensionUrlFunctionName}(e)]);return}if(t===\`win32\`){let t=n();if(t==null)throw Error(\`Google Chrome is not installed\`);await r(t,[${extensionUrlFunctionName}(e)]);return}if(t===\`linux\`){let t=codexLinuxChromeCommand()??n();if(t==null)throw Error(\`Google Chrome, Brave, or Chromium is not installed\`);await r(t,[${extensionUrlFunctionName}(e)]);return}throw Error(\`Opening Chrome extension settings is only supported on macOS, Windows, and Linux\`)}`;
+    `function codexLinuxChromeProfileRoots({homeDir:e,platform:t}){return t===\`linux\`?[(0,${pathVar}.join)(e,\`.config\`,\`BraveSoftware\`,\`Brave-Browser\`),(0,${pathVar}.join)(e,\`.config\`,\`google-chrome\`),(0,${pathVar}.join)(e,\`.config\`,\`google-chrome-beta\`),(0,${pathVar}.join)(e,\`.config\`,\`google-chrome-unstable\`),(0,${pathVar}.join)(e,\`.var\`,\`app\`,\`com.google.Chrome\`,\`config\`,\`google-chrome\`),(0,${pathVar}.join)(e,\`.config\`,\`chromium\`)]:[]}function codexLinuxChromeHasExtension({extensionId:e,homeDir:t,platform:n}){if(n!==\`linux\`)return!1;let r=${extensionIdValidatorName}(e);for(let e of codexLinuxChromeProfileRoots({homeDir:t,platform:n})){if(!(0,${fsVar}.existsSync)(e))continue;for(let t of (0,${fsVar}.readdirSync)(e,{withFileTypes:!0}))if(t.isDirectory()&&(0,${fsVar}.existsSync)((0,${pathVar}.join)(e,t.name,\`Extensions\`,r)))return!0}return!1}function codexLinuxChromeCommand(){let e=(process.env.PATH??\`\`).split(\`:\`);for(let t of[\`brave-browser\`,\`brave\`,\`google-chrome\`,\`google-chrome-stable\`,\`chromium-browser\`,\`chromium\`])for(let n of e){if(n.length===0)continue;let e=(0,${pathVar}.join)(n,t);try{if((0,${fsVar}.existsSync)(e)&&(0,${fsVar}.statSync)(e).isFile())return e}catch{}}return null}function ${statusFunctionName}({extensionId:e,homeDir:t=(0,${osVar}.homedir)(),localAppDataDir:n=process.env.LOCALAPPDATA,platform:a=process.platform}){if(a===\`linux\`)return codexLinuxChromeHasExtension({extensionId:e,homeDir:t,platform:a});let s=${extensionIdValidatorName}(e),c=${profileDirFunctionName}({homeDir:t,localAppDataDir:n,platform:a});return c==null||!(0,${fsVar}.existsSync)(c)?!1:(0,${fsVar}.readdirSync)(c,{withFileTypes:!0}).some(e=>e.isDirectory()&&(0,${fsVar}.existsSync)((0,${pathVar}.join)(c,e.name,\`Extensions\`,s)))}async function ${openFunctionName}({extensionId:e,platform:t=process.platform,detectChromeCommand:n=${detectChromeFunctionName},runCommand:r=${runCommandFunctionName}}){if(t===\`darwin\`){await r(${macOpenFunctionName},[\`-b\`,${macBundleIdName},${extensionUrlFunctionName}(e)]);return}if(t===\`win32\`){let t=n();if(t==null)throw Error(\`Google Chrome is not installed\`);await r(t,[${extensionUrlFunctionName}(e)]);return}if(t===\`linux\`){let t=codexLinuxChromeCommand()??n();if(t==null)throw Error(\`Google Chrome, Brave, or Chromium is not installed\`);await r(t,[${extensionUrlFunctionName}(e)]);return}throw Error(\`Opening Chrome extension settings is only supported on macOS, Windows, and Linux\`)}`;
 
   return currentSource.slice(0, blockStart) + replacement + currentSource.slice(blockEnd);
 }

@@ -2559,6 +2559,7 @@ test("detects Chrome extension installation from Linux browser profiles", () => 
   assert.match(patched, /function codexLinuxChromeProfileRoots/);
   assert.match(patched, /`BraveSoftware`,`Brave-Browser`/);
   assert.match(patched, /`google-chrome-unstable`/);
+  assert.match(patched, /`\.var`,`app`,`com\.google\.Chrome`,`config`,`google-chrome`/);
   assert.match(
     patched,
     /if\(a===`linux`\)return codexLinuxChromeHasExtension\(\{extensionId:e,homeDir:t,platform:a\}\)/,
@@ -2571,6 +2572,33 @@ test("detects Chrome extension installation from Linux browser profiles", () => 
   assert.doesNotMatch(patched, /function codexLinuxChromeCommand\(\)\{for\(let e of\[[^\]]+\]\)\{let t=Rp/);
 });
 
+test("upgrades old Linux Chrome extension status patch with Flatpak profile root", () => {
+  const patchedWithoutFlatpak = applyLinuxChromeExtensionStatusPatch(
+    chromeExtensionStatusBundleFixture(),
+  ).replace(
+    /\(0,i\.join\)\(e,`\.var`,`app`,`com\.google\.Chrome`,`config`,`google-chrome`\),/,
+    "",
+  );
+
+  assert.match(patchedWithoutFlatpak, /function codexLinuxChromeProfileRoots/);
+  assert.doesNotMatch(
+    patchedWithoutFlatpak,
+    /`\.var`,`app`,`com\.google\.Chrome`,`config`,`google-chrome`/,
+  );
+
+  const upgraded = applyPatchTwice(
+    applyLinuxChromeExtensionStatusPatch,
+    patchedWithoutFlatpak,
+  );
+
+  assert.match(
+    upgraded,
+    /`\.var`,`app`,`com\.google\.Chrome`,`config`,`google-chrome`/,
+  );
+  assert.match(upgraded, /`google-chrome-unstable`/);
+  assert.match(upgraded, /`\.config`,`chromium`/);
+});
+
 test("detects Chrome extension installation after upstream minifier renames", () => {
   const patched = applyPatchTwice(
     applyLinuxChromeExtensionStatusPatch,
@@ -2578,6 +2606,7 @@ test("detects Chrome extension installation after upstream minifier renames", ()
   );
 
   assert.match(patched, /function codexLinuxChromeProfileRoots/);
+  assert.match(patched, /`\.var`,`app`,`com\.google\.Chrome`,`config`,`google-chrome`/);
   assert.match(patched, /let r=um\(e\);for\(let e of codexLinuxChromeProfileRoots/);
   assert.match(patched, /function om\(\{extensionId:e,homeDir:t=\(0,r\.homedir\)\(\)/);
   assert.match(patched, /c=dm\(\{homeDir:t,localAppDataDir:n,platform:a\}\)/);

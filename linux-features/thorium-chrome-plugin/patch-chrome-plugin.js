@@ -95,6 +95,16 @@ const nativeHostManifestFallback = `  if (process.platform === "linux") {
       ),
       path.join(
         os.homedir(),
+        ".var",
+        "app",
+        "com.google.Chrome",
+        "config",
+        "google-chrome",
+        "NativeMessagingHosts",
+        \`\${expectedHostName}.json\`,
+      ),
+      path.join(
+        os.homedir(),
         ".config",
         "chromium",
         "NativeMessagingHosts",
@@ -132,17 +142,26 @@ const nativeHostManifestFallbackWithoutThorium = nativeHostManifestFallback.repl
 );
 
 const extensionAwareUserDataFallback = `  const linuxChromeUserDataDirectory = path.join(os.homedir(), ".config", "google-chrome");
-  const linuxChromiumUserDataDirectory = path.join(os.homedir(), ".config", "chromium");
-  const linuxThoriumUserDataDirectory = path.join(os.homedir(), ".config", "thorium");
   const linuxBraveUserDataDirectory = path.join(
     os.homedir(),
     ".config",
     "BraveSoftware",
     "Brave-Browser",
   );
+  const linuxFlatpakChromeUserDataDirectory = path.join(
+    os.homedir(),
+    ".var",
+    "app",
+    "com.google.Chrome",
+    "config",
+    "google-chrome",
+  );
+  const linuxChromiumUserDataDirectory = path.join(os.homedir(), ".config", "chromium");
+  const linuxThoriumUserDataDirectory = path.join(os.homedir(), ".config", "thorium");
   const linuxUserDataCandidates = [
     linuxBraveUserDataDirectory,
     linuxChromeUserDataDirectory,
+    linuxFlatpakChromeUserDataDirectory,
     linuxChromiumUserDataDirectory,
     linuxThoriumUserDataDirectory,
   ].filter((candidate) => fs.existsSync(candidate));
@@ -177,20 +196,40 @@ const extensionAwareUserDataFallbackWithoutThorium = extensionAwareUserDataFallb
   .replace("    linuxThoriumUserDataDirectory,\n", "");
 
 const defaultBrowserUserDataFallback = `  const linuxChromeUserDataDirectory = path.join(os.homedir(), ".config", "google-chrome");
-  const linuxChromiumUserDataDirectory = path.join(os.homedir(), ".config", "chromium");
-  const linuxThoriumUserDataDirectory = path.join(os.homedir(), ".config", "thorium");
   const linuxBraveUserDataDirectory = path.join(
     os.homedir(),
     ".config",
     "BraveSoftware",
     "Brave-Browser",
   );
+  const linuxFlatpakChromeUserDataDirectory = path.join(
+    os.homedir(),
+    ".var",
+    "app",
+    "com.google.Chrome",
+    "config",
+    "google-chrome",
+  );
+  const linuxChromiumUserDataDirectory = path.join(os.homedir(), ".config", "chromium");
+  const linuxThoriumUserDataDirectory = path.join(os.homedir(), ".config", "thorium");
   const defaultBrowser = runCommand(["xdg-settings", "get", "default-web-browser"]);
   if (
     defaultBrowser === "brave-browser.desktop" &&
     fs.existsSync(linuxBraveUserDataDirectory)
   ) {
     return linuxBraveUserDataDirectory;
+  }
+  if (
+    defaultBrowser === "google-chrome.desktop" &&
+    fs.existsSync(linuxChromeUserDataDirectory)
+  ) {
+    return linuxChromeUserDataDirectory;
+  }
+  if (
+    defaultBrowser === "com.google.Chrome.desktop" &&
+    fs.existsSync(linuxFlatpakChromeUserDataDirectory)
+  ) {
+    return linuxFlatpakChromeUserDataDirectory;
   }
   if (
     ["chromium.desktop", "chromium-browser.desktop"].includes(defaultBrowser) &&
@@ -207,6 +246,7 @@ const defaultBrowserUserDataFallback = `  const linuxChromeUserDataDirectory = p
 
   if (fs.existsSync(linuxBraveUserDataDirectory)) return linuxBraveUserDataDirectory;
   if (fs.existsSync(linuxChromeUserDataDirectory)) return linuxChromeUserDataDirectory;
+  if (fs.existsSync(linuxFlatpakChromeUserDataDirectory)) return linuxFlatpakChromeUserDataDirectory;
   if (fs.existsSync(linuxChromiumUserDataDirectory)) return linuxChromiumUserDataDirectory;
   if (fs.existsSync(linuxThoriumUserDataDirectory)) return linuxThoriumUserDataDirectory;
 
@@ -227,9 +267,10 @@ patchFileFirstMatch(path.join(scriptsDir, "installManifest.mjs"), {
   label: "Thorium native host manifest location",
   oldTexts: [
     'linux:[".config/google-chrome/NativeMessagingHosts",".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",".config/chromium/NativeMessagingHosts"]',
+    'linux:[".config/google-chrome/NativeMessagingHosts",".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts",".config/chromium/NativeMessagingHosts"]',
   ],
   newText:
-    'linux:[".config/google-chrome/NativeMessagingHosts",".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",".config/chromium/NativeMessagingHosts",".config/thorium/NativeMessagingHosts"]',
+    'linux:[".config/google-chrome/NativeMessagingHosts",".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts",".config/chromium/NativeMessagingHosts",".config/thorium/NativeMessagingHosts"]',
 });
 
 patchFile(path.join(scriptsDir, "check-native-host-manifest.js"), [
@@ -249,16 +290,28 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
       newText: String.raw`codexLinuxChromeUserDataDirectories=()=>WF()==="linux"?[GF(VF(),".config","BraveSoftware","Brave-Browser"),GF(VF(),".config","google-chrome"),GF(VF(),".config","chromium"),GF(VF(),".config","thorium")]:[Tc]`,
     },
     {
+      oldText: String.raw`codexLinuxChromeUserDataDirectories=()=>WF()==="linux"?[GF(VF(),".config","BraveSoftware","Brave-Browser"),GF(VF(),".config","google-chrome"),GF(VF(),".var","app","com.google.Chrome","config","google-chrome"),GF(VF(),".config","chromium")]:[Tc]`,
+      newText: String.raw`codexLinuxChromeUserDataDirectories=()=>WF()==="linux"?[GF(VF(),".config","BraveSoftware","Brave-Browser"),GF(VF(),".config","google-chrome"),GF(VF(),".var","app","com.google.Chrome","config","google-chrome"),GF(VF(),".config","chromium"),GF(VF(),".config","thorium")]:[Tc]`,
+    },
+    {
       oldText: String.raw`codexLinuxChromeUserDataDirectories=()=>rO()==="linux"?[eO(tO(),".config","BraveSoftware","Brave-Browser"),eO(tO(),".config","google-chrome"),eO(tO(),".config","chromium")]:[Ic]`,
       newText: String.raw`codexLinuxChromeUserDataDirectories=()=>rO()==="linux"?[eO(tO(),".config","BraveSoftware","Brave-Browser"),eO(tO(),".config","google-chrome"),eO(tO(),".config","chromium"),eO(tO(),".config","thorium")]:[Ic]`,
+    },
+    {
+      oldText: String.raw`codexLinuxChromeUserDataDirectories=()=>rO()==="linux"?[eO(tO(),".config","BraveSoftware","Brave-Browser"),eO(tO(),".config","google-chrome"),eO(tO(),".var","app","com.google.Chrome","config","google-chrome"),eO(tO(),".config","chromium")]:[Ic]`,
+      newText: String.raw`codexLinuxChromeUserDataDirectories=()=>rO()==="linux"?[eO(tO(),".config","BraveSoftware","Brave-Browser"),eO(tO(),".config","google-chrome"),eO(tO(),".var","app","com.google.Chrome","config","google-chrome"),eO(tO(),".config","chromium"),eO(tO(),".config","thorium")]:[Ic]`,
     },
     {
       oldText: String.raw`codexLinuxChromeUserDataDirectories=()=>X5()==="linux"?[Y5(Z5(),".config","BraveSoftware","Brave-Browser"),Y5(Z5(),".config","google-chrome"),Y5(Z5(),".config","chromium")]:[hl]`,
       newText: String.raw`codexLinuxChromeUserDataDirectories=()=>X5()==="linux"?[Y5(Z5(),".config","BraveSoftware","Brave-Browser"),Y5(Z5(),".config","google-chrome"),Y5(Z5(),".config","chromium"),Y5(Z5(),".config","thorium")]:[hl]`,
     },
     {
+      oldText: String.raw`codexLinuxChromeUserDataDirectories=()=>X5()==="linux"?[Y5(Z5(),".config","BraveSoftware","Brave-Browser"),Y5(Z5(),".config","google-chrome"),Y5(Z5(),".var","app","com.google.Chrome","config","google-chrome"),Y5(Z5(),".config","chromium")]:[hl]`,
+      newText: String.raw`codexLinuxChromeUserDataDirectories=()=>X5()==="linux"?[Y5(Z5(),".config","BraveSoftware","Brave-Browser"),Y5(Z5(),".config","google-chrome"),Y5(Z5(),".var","app","com.google.Chrome","config","google-chrome"),Y5(Z5(),".config","chromium"),Y5(Z5(),".config","thorium")]:[hl]`,
+    },
+    {
       oldText: String.raw`var hl=Y5(Z5(),X5()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");`,
-      newText: String.raw`var hl=Y5(Z5(),X5()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome"),codexLinuxChromeUserDataDirectories=()=>X5()==="linux"?[Y5(Z5(),".config","BraveSoftware","Brave-Browser"),Y5(Z5(),".config","google-chrome"),Y5(Z5(),".config","chromium"),Y5(Z5(),".config","thorium")]:[hl];`,
+      newText: String.raw`var hl=Y5(Z5(),X5()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome"),codexLinuxChromeUserDataDirectories=()=>X5()==="linux"?[Y5(Z5(),".config","BraveSoftware","Brave-Browser"),Y5(Z5(),".config","google-chrome"),Y5(Z5(),".var","app","com.google.Chrome","config","google-chrome"),Y5(Z5(),".config","chromium"),Y5(Z5(),".config","thorium")]:[hl];`,
     },
   ],
   alreadyText: '".config","thorium"',
@@ -307,6 +360,36 @@ patchFile(path.join(scriptsDir, "installed-browsers.js"), [
   {
     name: "Thorium",
     bundleIds: ["org.chromium.Thorium"],
+    appNames: ["Thorium.app"],
+    commands: ["thorium-browser-avx2", "thorium-browser", "thorium"],
+    windowsExecutable: "chrome.exe",
+  },
+];`,
+    alreadyText: ['"Thorium"', "flatpakAppIds"],
+  },
+  {
+    label: "Thorium browser inventory with Flatpak metadata",
+    oldText: `  {
+    name: "Chromium",
+    bundleIds: ["org.chromium.Chromium"],
+    flatpakAppIds: ["org.chromium.Chromium"],
+    appNames: ["Chromium.app"],
+    commands: ["chromium", "chromium-browser"],
+    windowsExecutable: "chrome.exe",
+  },
+];`,
+    newText: `  {
+    name: "Chromium",
+    bundleIds: ["org.chromium.Chromium"],
+    flatpakAppIds: ["org.chromium.Chromium"],
+    appNames: ["Chromium.app"],
+    commands: ["chromium", "chromium-browser"],
+    windowsExecutable: "chrome.exe",
+  },
+  {
+    name: "Thorium",
+    bundleIds: ["org.chromium.Thorium"],
+    flatpakAppIds: ["org.chromium.Thorium"],
     appNames: ["Thorium.app"],
     commands: ["thorium-browser-avx2", "thorium-browser", "thorium"],
     windowsExecutable: "chrome.exe",
