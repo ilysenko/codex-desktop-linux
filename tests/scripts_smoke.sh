@@ -978,6 +978,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local doctor_log="$TMP_DIR/make-doctor.log"
     local parity_schema_log="$TMP_DIR/make-parity-schema.log"
     local parity_browser_matrix_log="$TMP_DIR/make-parity-browser-matrix.log"
+    local parity_browser_live_log="$TMP_DIR/make-parity-browser-live.log"
     local parity_full_log="$TMP_DIR/make-parity-full.log"
     local parity_strict_log="$TMP_DIR/make-parity-strict.log"
 
@@ -1013,6 +1014,10 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" parity-browser-matrix >"$parity_browser_matrix_log"
     assert_contains "$parity_browser_matrix_log" 'scripts/browser-matrix-smoke.js'
+
+    make -n -C "$REPO_DIR" parity-browser-live >"$parity_browser_live_log"
+    assert_contains "$parity_browser_live_log" 'CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1'
+    assert_contains "$parity_browser_live_log" '/usr/bin/codex-desktop-doctor'
 
     make -n -C "$REPO_DIR" parity-full >"$parity_full_log"
     assert_contains "$parity_full_log" 'scripts/desktop-parity-full.sh'
@@ -1064,6 +1069,7 @@ test_desktop_doctor_browser_manifest_coverage() {
     local workspace="$TMP_DIR/desktop-doctor-browser-manifests"
     local doctor="$workspace/codex-doctor-smoke"
     local report="$workspace/report.json"
+    local live_report="$workspace/live-report.json"
     local home_dir="$workspace/home"
     local plugin_scripts="$home_dir/.codex/plugins/cache/openai-bundled/chrome/latest/scripts"
     local host_path="$workspace/extension-host"
@@ -1072,7 +1078,12 @@ test_desktop_doctor_browser_manifest_coverage() {
 
     mkdir -p "$plugin_scripts" "$home_dir/.config/google-chrome/NativeMessagingHosts" \
         "$home_dir/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts" \
-        "$home_dir/.config/chromium/NativeMessagingHosts" "$workspace/config"
+        "$home_dir/.config/chromium/NativeMessagingHosts" \
+        "$home_dir/.config/google-chrome/Default/Local Extension Settings/$extension_id" \
+        "$home_dir/.config/BraveSoftware/Brave-Browser/Profile 1" \
+        "$home_dir/.config/chromium/Default" \
+        "$home_dir/.var/app/com.google.Chrome/config/google-chrome/Default" \
+        "$workspace/config"
     sed 's/__PACKAGE_NAME__/codex-doctor-smoke/g' \
         "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" >"$doctor"
     chmod +x "$doctor"
@@ -1131,7 +1142,35 @@ if bad:
     raise SystemExit(f"expected pass statuses: {bad}")
 if "chrome_manifest_flatpak_chrome" not in checks:
     raise SystemExit("missing Flatpak Chrome manifest check")
+if "chrome_live_profile_validation" in checks:
+    raise SystemExit("live profile validation should be opt-in")
 PY
+
+    if HOME="$home_dir" XDG_CONFIG_HOME="$workspace/config" CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1 \
+        python3 "$doctor" --json --package-name codex-doctor-smoke >"$live_report"; then
+        fail "doctor should still report failures for a deliberately missing package"
+    fi
+
+    node - "$live_report" "$home_dir" <<'NODE' || fail "Expected live browser validation to stay redacted"
+const fs = require("node:fs");
+const reportPath = process.argv[2];
+const homeDir = process.argv[3];
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+const checks = Object.fromEntries(report.checks.map((check) => [check.id, check]));
+const live = checks.chrome_live_profile_validation;
+if (!live) {
+  throw new Error("missing chrome_live_profile_validation");
+}
+if (live.status !== "pass" || live.profileCount !== 4 || live.profilesWithExtensionCount !== 1 || live.anyProfileEnabled !== true) {
+  throw new Error(`unexpected live summary: ${JSON.stringify(live)}`);
+}
+const liveText = JSON.stringify(live);
+for (const forbidden of [homeDir, "Default", "Profile 1", "abcdefghijklmnopabcdefghijklmnop", "com.example.codextest"]) {
+  if (liveText.includes(forbidden)) {
+    throw new Error(`live summary leaked ${forbidden}: ${liveText}`);
+  }
+}
+NODE
 }
 
 test_desktop_doctor_node_runtime_probe() {

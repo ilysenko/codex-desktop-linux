@@ -34,6 +34,7 @@ Run the local checks from the repo root:
 make doctor
 make parity-schema
 make parity-browser-matrix
+make parity-browser-live
 make parity-smoke
 make parity-full
 ```
@@ -75,7 +76,7 @@ screenshots, or private conversation text into parity artifacts.
 | Skills | Built-in app support | Skills list API plus repo-scoped fixture discovery present | `make parity-smoke` | Add skill enable/disable fixture later |
 | Config and requirements | User, repo, and managed config | Config/read validates a repo-scoped project config fixture; requirements/read surface plus isolated `/etc/codex/requirements.toml` fixture when `bwrap` is available | `make parity-smoke`, `make parity-schema` | Expand policy-shape coverage as upstream requirements fields change |
 | External agent import | Detect/import agent artifacts | Detect surface plus temporary CLAUDE.md and MCP config fixture detection present; import remains untouched by smoke | `make parity-smoke`, `make parity-schema` | Add safe no-op import validation only if upstream exposes a dry-run mode |
-| Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper | `make doctor`, `make parity-full`, `make parity-browser-matrix` | Add live browser-profile validation only with a redacted opt-in mode |
+| Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper and opt-in redacted live browser/profile validation | `make doctor`, `make parity-full`, `make parity-browser-matrix`, `make parity-browser-live` | Add deeper live extension bridge checks only if they stay redacted |
 | Chrome Flatpak | macOS not applicable | Flatpak host wrapper via `flatpak-spawn --host` | `make doctor` | Keep manifest/path regression tests |
 | Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis | `make parity-full` | Extend desktop-environment matrix |
 | Computer Use UI | Native UI | Opt-in Linux UI gate | `make doctor`, manual UI check | Keep opt-in; do not force Statsig-like UI gates globally |
@@ -126,6 +127,6 @@ screenshots, or private conversation text into parity artifacts.
    KWallet, locked keyrings, and headless sessions.
 5. Expand the desktop-environment matrix in `docs/DESKTOP_ENVIRONMENT_MATRIX.md`
    with live validation for more GNOME, KDE Plasma, Hyprland, Sway, COSMIC,
-   X11, native Chrome, Flatpak Chrome, Brave, and Chromium combinations.
+   X11, and browser combinations.
 6. Research locked-use equivalents separately and require a threat model before
    writing any unlock/session-control code.

@@ -522,7 +522,20 @@ make parity-full
 a temporary directory and verifies the protocol methods and notifications used
 by the Linux parity probes are still present. `make parity-browser-matrix`
 checks the committed Chrome, Brave, Chromium, and Flatpak Chrome integration
-matrix without reading browser profiles. `make parity-full` composes the
+matrix without reading browser profiles. To explicitly inspect the local
+browser/profile installation state with redacted output, run:
+
+```bash
+make parity-browser-live
+```
+
+`make parity-browser-live` runs the installed doctor with
+`CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1`. The live browser check adds
+only booleans, counts, and a browser-family enum for running-browser detection,
+profile-root presence, profile counts, and extension-setting counts; it does
+not print browser profile names, tab state, URLs, cookies, history, or profile
+paths.
+`make parity-full` composes the
 installed doctor, `systemd --user` service state, app-server schema guard,
 Computer Use doctor, and the non-sensitive app-server smoke. The smoke also
 uses temporary repo fixtures for skill discovery, project config layering, and

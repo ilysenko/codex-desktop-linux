@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -241,6 +242,121 @@ def check_manifest_file(
         detail,
         **data,
     )
+
+
+def chrome_profile_dirs(root: Path) -> list[Path]:
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return []
+    return [
+        entry
+        for entry in entries
+        if entry.is_dir() and (entry.name == "Default" or re.fullmatch(r"Profile \d+", entry.name))
+    ]
+
+
+def chrome_profiles_with_extension(root: Path, extension_id: str | None) -> int:
+    if not extension_id:
+        return 0
+    return sum(
+        1
+        for profile in chrome_profile_dirs(root)
+        if (profile / "Local Extension Settings" / extension_id).is_dir()
+    )
+
+
+def browser_roots(home: Path) -> dict[str, Path]:
+    return {
+        "chrome": home / ".config/google-chrome",
+        "brave": home / ".config/BraveSoftware/Brave-Browser",
+        "chromium": home / ".config/chromium",
+        "flatpak_chrome": home / ".var/app/com.google.Chrome/config/google-chrome",
+    }
+
+
+def proc_cmdlines() -> list[list[str]]:
+    proc = Path("/proc")
+    cmdlines: list[list[str]] = []
+    try:
+        entries = list(proc.iterdir())
+    except OSError:
+        return cmdlines
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        parts = [part.decode("utf-8", errors="ignore") for part in raw.split(b"\0") if part]
+        if parts:
+            cmdlines.append(parts)
+    return cmdlines
+
+
+def browser_family_from_cmdline(parts: list[str]) -> str | None:
+    joined = "\0".join(parts).lower()
+    exe = Path(parts[0]).name.lower() if parts else ""
+    if "com.google.chrome" in joined and "flatpak" in joined:
+        return "flatpak_chrome"
+    if exe in {"brave", "brave-browser", "brave-browser-stable"}:
+        return "brave"
+    if exe in {"chromium", "chromium-browser"}:
+        return "chromium"
+    if exe in {"chrome", "google-chrome", "google-chrome-stable"}:
+        return "chrome"
+    return None
+
+
+def cmdline_value(parts: list[str], name: str) -> str | None:
+    prefix = f"{name}="
+    for part in parts:
+        if part.startswith(prefix):
+            return part[len(prefix) :]
+    return None
+
+
+def chrome_live_profile_summary(home: Path, extension_id: str | None) -> dict[str, Any]:
+    roots = browser_roots(home)
+    profile_counts = {family: len(chrome_profile_dirs(root)) for family, root in roots.items()}
+    extension_counts = {
+        family: chrome_profiles_with_extension(root, extension_id)
+        for family, root in roots.items()
+    }
+
+    running_family = "unknown"
+    running_profile_detected = False
+    selected_running_profile_enabled = None
+    for parts in proc_cmdlines():
+        family = browser_family_from_cmdline(parts)
+        if family is None:
+            continue
+        running_family = family
+        profile_directory = cmdline_value(parts, "--profile-directory")
+        user_data_dir = cmdline_value(parts, "--user-data-dir")
+        root = Path(user_data_dir).expanduser() if user_data_dir else roots.get(family)
+        if root is not None and profile_directory:
+            candidate = root / profile_directory
+            running_profile_detected = candidate.is_dir()
+            if extension_id:
+                selected_running_profile_enabled = (
+                    candidate / "Local Extension Settings" / extension_id
+                ).is_dir()
+        break
+
+    total_profile_count = sum(profile_counts.values())
+    total_extension_count = sum(extension_counts.values())
+    return {
+        "anyProfileEnabled": total_extension_count > 0,
+        "browserFamily": running_family,
+        "profileCount": total_profile_count,
+        "profileRootCount": sum(1 for root in roots.values() if root.is_dir()),
+        "profilesWithExtensionCount": total_extension_count,
+        "runningBrowserDetected": running_family != "unknown",
+        "runningProfileDetected": running_profile_detected,
+        "selectedRunningProfileEnabled": selected_running_profile_enabled,
+    }
 
 
 def secret_service_canary(secret_tool: str, app_id: str) -> tuple[str, str]:
@@ -547,6 +663,38 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
             )
         else:
             add_check(checks, "chrome_manifest_probe", "Chrome native host manifest probe", WARN, manifest_detail or "unavailable")
+
+        if os.environ.get("CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION") == "1":
+            if extension_id:
+                live_summary = chrome_live_profile_summary(Path.home(), extension_id)
+                observed = (
+                    live_summary["profileRootCount"] > 0
+                    or live_summary["profileCount"] > 0
+                    or live_summary["runningBrowserDetected"]
+                )
+                add_check(
+                    checks,
+                    "chrome_live_profile_validation",
+                    "Chrome live browser/profile validation",
+                    PASS if observed else INFO,
+                    (
+                        f"profileRoots={live_summary['profileRootCount']} "
+                        f"profiles={live_summary['profileCount']} "
+                        f"profilesWithExtension={live_summary['profilesWithExtensionCount']}"
+                    ),
+                    **live_summary,
+                )
+            else:
+                add_check(
+                    checks,
+                    "chrome_live_profile_validation",
+                    "Chrome live browser/profile validation",
+                    WARN,
+                    "Chrome plugin metadata unavailable",
+                    browserFamily="unknown",
+                    runningBrowserDetected=False,
+                    runningProfileDetected=False,
+                )
 
     home = Path.home()
     if host_name:
