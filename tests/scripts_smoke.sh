@@ -1243,6 +1243,39 @@ JSON
     assert_contains "$output_log" "$plugin_cache"
 }
 
+test_setup_native_wizard_remote_keys_follow_linux_app_id() {
+    info "Checking setup-native wizard remote key paths follow Linux app id"
+    local workspace="$TMP_DIR/setup-native-remote-keys-app-id"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+    local fake_home="$workspace/home"
+    local key_file="$fake_home/.config/codex-cua-lab/remote-control-device-keys-v1.json"
+    local legacy_key_file="$fake_home/.config/codex-desktop/remote-control-device-keys-v1.json"
+
+    make_wizard_feature_root "$features_root"
+    cat > "$config" <<'JSON'
+{"enabled":["remote-mobile-control"]}
+JSON
+    mkdir -p "$(dirname "$key_file")" "$(dirname "$legacy_key_file")"
+    printf '%s\n' '{"deviceKeys":[]}' > "$key_file"
+    printf '%s\n' '{"deviceKeys":[]}' > "$legacy_key_file"
+
+    HOME="$fake_home" \
+    XDG_CONFIG_HOME="$fake_home/.config" \
+    CODEX_LINUX_APP_ID="codex-cua-lab" \
+    CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$config" \
+    CODEX_LINUX_DISABLE_FEATURES="remote-mobile-control" \
+        bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log"
+
+    assert_file_exists "$key_file"
+    assert_file_exists "$legacy_key_file"
+    assert_contains "$output_log" "Not deleting $key_file"
+    assert_contains "$output_log" "Legacy default-app metadata may also exist at $legacy_key_file"
+}
+
 test_setup_native_wizard_summary_keeps_existing_config() {
     info "Checking setup-native wizard read-only summary keeps existing feature config"
     local workspace="$TMP_DIR/setup-native-summary"
@@ -5183,6 +5216,7 @@ main() {
     test_setup_native_wizard_rejects_invalid_feature_ids
     test_setup_native_wizard_rejects_conflicting_feature_ids
     test_setup_native_wizard_disable_is_non_destructive
+    test_setup_native_wizard_remote_keys_follow_linux_app_id
     test_setup_native_wizard_summary_keeps_existing_config
     test_setup_native_wizard_uses_package_name_for_installed_state
     test_setup_native_wizard_portal_summary_survives_busctl_sigpipe

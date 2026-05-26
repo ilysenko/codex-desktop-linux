@@ -53,6 +53,15 @@ def read_json(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def linux_app_id(package_name: str) -> str:
+    candidate = (os.environ.get("CODEX_LINUX_APP_ID") or os.environ.get("CODEX_APP_ID") or package_name or "codex-desktop").strip()
+    if candidate in {"", ".", ".."}:
+        return "codex-desktop"
+    if any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in candidate):
+        return "codex-desktop"
+    return candidate
+
+
 def probe_node_runtime(node_path: Path) -> tuple[bool, str | None, str]:
     if not node_path.is_file() or not os.access(node_path, os.X_OK):
         return False, None, f"missing or not executable: {node_path}"
@@ -558,7 +567,11 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
 
     remote_marker = app_root / ".codex-linux/remote-mobile-control-enabled"
     remote_hook = app_root / ".codex-linux/cold-start.d/remote-mobile-control"
-    key_file = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "codex-desktop/remote-control-device-keys-v1.json"
+    remote_app_id = linux_app_id(package_name)
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    key_file = config_home / remote_app_id / "remote-control-device-keys-v1.json"
+    legacy_key_file = config_home / "codex-desktop/remote-control-device-keys-v1.json" if remote_app_id != "codex-desktop" else None
+    key_file_to_read = legacy_key_file if legacy_key_file is not None and legacy_key_file.exists() and not key_file.exists() else key_file
     if remote_marker.exists():
         add_check(checks, "remote_mobile_marker", "Remote mobile feature marker", PASS, str(remote_marker), path=str(remote_marker))
         add_check(
@@ -584,9 +597,9 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
         key_count = None
         secret_service_key_count = None
         file_fallback_key_count = None
-        if key_file.exists():
-            key_mode = oct(key_file.stat().st_mode & 0o777)
-            key_store = read_json(key_file) or {}
+        if key_file_to_read.exists():
+            key_mode = oct(key_file_to_read.stat().st_mode & 0o777)
+            key_store = read_json(key_file_to_read) or {}
             keys = key_store.get("keys")
             if isinstance(keys, dict):
                 records = [record for record in keys.values() if isinstance(record, dict)]
@@ -597,9 +610,11 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
             checks,
             "remote_mobile_key_file",
             "Remote mobile key metadata/fallback file",
-            PASS if key_file.exists() else INFO,
-            f"{key_file} ({key_mode})" if key_mode else f"not found: {key_file}",
-            path=str(key_file),
+            PASS if key_file_to_read.exists() else INFO,
+            f"{key_file_to_read} ({key_mode})" if key_mode else f"not found: {key_file}",
+            path=str(key_file_to_read),
+            appId=remote_app_id,
+            legacyPath=str(legacy_key_file) if legacy_key_file is not None else None,
             mode=key_mode,
             keyCount=key_count,
             secretServiceKeyCount=secret_service_key_count,
