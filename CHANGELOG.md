@@ -19,9 +19,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   bundled plugin registry so the app keeps `read-aloud` installed, and the
   launcher syncs the plugin cache so new Codex windows expose the MCP tools
   through the same auto-install path as Computer Use.
+- Native packages now install `codex-desktop-doctor`, a safe installed-state
+  healthcheck for package files, user services, update-builder staging, Chrome
+  native messaging, Computer Use readiness, and remote-mobile markers.
+- Native packages now include an opt-in `codex-desktop.service` user unit plus
+  `make app-service-enable`, `make app-service-status`, and
+  `make app-service-disable` helpers for users who want Codex Desktop managed
+  by `systemd --user`; the unit waits on the launcher PID file so it can stay
+  active when Electron is moved into a desktop app scope.
 
 ### Fixed
 
+- Local rebuild/update bundles now include `scripts/ci/validate-patch-report.js`,
+  and ASAR patching validates required upstream patches during update-builder
+  rebuilds so critical Linux and remote-mobile compatibility drift fails early.
 - Bundled Browser plugin staging now preserves local `file://` target support
   advertised by the Browser plugin while keeping remote file hosts and `data:`
   URLs blocked by the URL policy.

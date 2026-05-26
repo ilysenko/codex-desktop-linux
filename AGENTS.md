@@ -51,7 +51,7 @@ The current working flow is:
 - `linux-target-context.js` — Linux target detection used by patch descriptors. Reads `/etc/os-release` plus env overrides and exposes helpers such as `matchesId()`, `packageFormatIs()`, `packageManagerIs()`, `desktopMatches()`, and `versionAtLeast()`.
 - `patch-report.js` — shared helpers for building `patch-report.json` (status capture, warning capture, `recordPatch`, `writePatchReport`).
 - `rebuild-report.sh` — writes `rebuild-report.json` (DMG path, Electron version, patch report, app dir) used by the rebuild candidate flow.
-- `package-common.sh` — shared shell helpers used by the native package builders (versioning, payload staging, user-service helper installation).
+- `package-common.sh` — shared shell helpers used by the native package builders (versioning, payload staging, desktop app service/doctor rendering, user-service helper installation).
 - `linux-features.sh` / `linux-features.js` — opt-in Linux feature framework loader. The shell side runs `stage.sh` hooks for enabled features; the JS side resolves manifests, validates entrypoints, and contributes `mainBundlePatch` functions to the patch registry.
 
 ### Patch registry (`scripts/patches/`)
@@ -88,6 +88,8 @@ The current working flow is:
 - `packaging/linux/PKGBUILD.template` — pacman PKGBUILD template (used to generate `.PKGINFO`/`.MTREE` plus the archive contents).
 - `packaging/linux/codex-desktop.install` — pacman `.install` hooks (`post_install` / `post_upgrade` / `pre_remove` / `post_remove`).
 - `packaging/linux/codex-desktop.desktop` — desktop entry template.
+- `packaging/linux/codex-desktop.service` — opt-in user-level `systemd` unit for launching the installed desktop app through `/usr/bin/codex-desktop`; it waits on the launcher PID file so Electron can remain tracked after desktop app-scope handoff.
+- `packaging/linux/codex-desktop-doctor.py` — installed safe healthcheck rendered as `/usr/bin/codex-desktop-doctor`; keep it status/path only and never print pairing secrets, browser contents, screenshots, cookies, or key material.
 - `packaging/linux/codex-update-manager.service` — user-level `systemd` unit for the local update manager.
 - `packaging/linux/codex-update-manager.postinst` — Debian maintainer script that starts the user service after install.
 - `packaging/linux/codex-update-manager.prerm` — Debian maintainer script that stops or disables the user service during removal.
@@ -196,7 +198,7 @@ This path is for users who do not want a system-wide native package; the daily-d
 - ASAR patches are independent and fail-soft:
   `scripts/patches/core/**/patch.js` descriptors are the source of truth for shipped patch order, phase, target filter, and CI policy; `scripts/patches/registry.js` discovers and orchestrates them. Each patch function has its own regex-driven needles, an idempotency check, and a `console.warn` fall-back when the upstream bundle drifts. Current groups: main-process shell/window patches, webview asset patches, keybinds settings, launch actions, Computer Use gates, package metadata, and any opt-in `linux-features/` patches that have been enabled. The wrapper `scripts/patch-linux-window-ui.js` keeps the old CLI and test export surface. When adding a new needle, mirror this pattern — never `throw` unless the existing patch is intentionally required.
 - Patch reporting and CI gate:
-  `scripts/lib/patch-report.js` produces `patch-report.json` for each install (and `rebuild-report.sh` rolls it into `rebuild-report.json` under `dist-next/rebuild/`). `scripts/ci/validate-patch-report.js` reads that report and fails upstream-build CI when a `required-upstream` patch is missing or skipped. Mark new patches with `ciPolicy: REQUIRED_UPSTREAM` only when their absence should block CI.
+  `scripts/lib/patch-report.js` produces `patch-report.json` for each install (and `rebuild-report.sh` rolls it into `rebuild-report.json` under `dist-next/rebuild/`). `scripts/ci/validate-patch-report.js` reads that report and fails upstream-build CI when a `required-upstream` patch is missing or skipped. Native update-builder bundles stage the validator and run it during local rebuilds too. Mark new patches with `ciPolicy: REQUIRED_UPSTREAM` only when their absence should block CI or update survival.
 - Linux features framework:
   `linux-features/` is opt-in. By default no extras are loaded. Per-developer choices live in the gitignored `linux-features/features.json`; CI sees only the empty `features.example.json` template. Features can contribute a main-bundle patch (registered as `feature:<id>` with `ciPolicy: optional`) and/or a `stage.sh` hook executed during install staging. Keep core Linux fixes in `scripts/patches/`; reserve `linux-features/` for additions that should not ship to every Linux build.
 - Linux file manager integration:
@@ -235,7 +237,7 @@ This path is for users who do not want a system-wide native package; the daily-d
 - Closing behavior:
   If future work touches shutdown behavior, assume the confirmation dialog may be implemented inside the app bundle rather than the Linux launcher.
 - Update manager:
-  The native packages include `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`.
+  Default native packages include `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`. All native packages include `/usr/bin/codex-desktop-doctor` and the opt-in app unit `/usr/lib/systemd/user/codex-desktop.service`.
 - Privilege boundary:
   The updater runs unprivileged. It only escalates at install time via `pkexec /usr/bin/codex-update-manager install-deb --path <deb>`, `install-rpm --path <rpm>`, or `install-pacman --path <pkg.tar.zst>`.
 - Manual rollback:
@@ -344,6 +346,8 @@ The native packages currently install:
 
 - app files under `/opt/codex-desktop`
 - launcher under `/usr/bin/codex-desktop`
+- installed doctor under `/usr/bin/codex-desktop-doctor`
+- opt-in app unit under `/usr/lib/systemd/user/codex-desktop.service`
 - updater binary under `/usr/bin/codex-update-manager`
 - updater unit under `/usr/lib/systemd/user/codex-update-manager.service`
 - update builder bundle under `/opt/codex-desktop/update-builder`
@@ -368,6 +372,7 @@ bash -n launcher/start.sh.template
 bash -n scripts/build-deb.sh
 bash -n scripts/build-rpm.sh
 bash -n scripts/build-pacman.sh
+python3 -m py_compile packaging/linux/codex-desktop-doctor.py
 node --test scripts/patch-linux-window-ui.test.js
 node --test linux-features/*/test.js
 bash tests/scripts_smoke.sh
@@ -411,6 +416,8 @@ If updater behavior changed, also inspect:
 
 ```bash
 systemctl --user status codex-update-manager.service
+systemctl --user status codex-desktop.service
+codex-desktop-doctor --json
 codex-update-manager status --json
 sed -n '1,120p' ~/.local/state/codex-update-manager/state.json
 sed -n '1,160p' ~/.local/state/codex-update-manager/service.log

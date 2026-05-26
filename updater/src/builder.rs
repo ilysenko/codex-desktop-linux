@@ -14,7 +14,7 @@ use std::{
 use tokio::process::Command;
 use tracing::info;
 
-const REQUIRED_BUNDLE_FILES: [(&str, &str); 17] = [
+const REQUIRED_BUNDLE_FILES: [(&str, &str); 18] = [
     ("Cargo.toml", "Cargo.toml"),
     ("Cargo.lock", "Cargo.lock"),
     ("computer-use-linux", "computer-use-linux"),
@@ -38,6 +38,7 @@ const REQUIRED_BUNDLE_FILES: [(&str, &str); 17] = [
     ),
     ("scripts/patches", "scripts/patches"),
     ("scripts/lib", "scripts/lib"),
+    ("scripts/ci", "scripts/ci"),
     ("packaging/linux", "packaging/linux"),
     ("assets/codex.png", "assets/codex.png"),
     ("linux-features", "linux-features"),
@@ -546,6 +547,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
         let state_root = temp.path().join("state");
         let cache_root = temp.path().join("cache");
         fs::create_dir_all(bundle_root.join("scripts/lib"))?;
+        fs::create_dir_all(bundle_root.join("scripts/ci"))?;
         fs::create_dir_all(bundle_root.join("scripts/patches"))?;
         fs::create_dir_all(bundle_root.join("launcher"))?;
         fs::create_dir_all(bundle_root.join("packaging/linux"))?;
@@ -663,6 +665,10 @@ fi
             bundle_root.join("scripts/lib/node-runtime.sh"),
             b"#!/bin/bash\n",
         )?;
+        fs::write(
+            bundle_root.join("scripts/ci/validate-patch-report.js"),
+            b"#!/usr/bin/env node\n",
+        )?;
 
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
@@ -717,6 +723,10 @@ fi
             .exists());
         assert!(artifacts
             .workspace_dir
+            .join("builder/scripts/ci/validate-patch-report.js")
+            .exists());
+        assert!(artifacts
+            .workspace_dir
             .join("builder/linux-features/features.example.json")
             .exists());
         assert!(artifacts
@@ -742,6 +752,7 @@ fi
         let destination_root = temp.path().join("destination");
 
         fs::create_dir_all(source_root.join("scripts/lib"))?;
+        fs::create_dir_all(source_root.join("scripts/ci"))?;
         fs::create_dir_all(source_root.join("scripts/patches"))?;
         fs::create_dir_all(source_root.join("launcher"))?;
         fs::create_dir_all(source_root.join("packaging/linux"))?;
@@ -775,6 +786,10 @@ fi
             b"#!/bin/bash\n",
         )?;
         fs::write(
+            source_root.join("scripts/ci/validate-patch-report.js"),
+            b"#!/usr/bin/env node\n",
+        )?;
+        fs::write(
             source_root.join("packaging/linux/control"),
             b"Package: codex\n",
         )?;
@@ -805,6 +820,9 @@ fi
             .exists());
         assert!(destination_root
             .join("scripts/lib/node-runtime.sh")
+            .exists());
+        assert!(destination_root
+            .join("scripts/ci/validate-patch-report.js")
             .exists());
         assert!(destination_root
             .join("linux-features/features.example.json")

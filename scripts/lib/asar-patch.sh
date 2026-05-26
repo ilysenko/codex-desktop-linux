@@ -34,6 +34,9 @@ patch_asar() {
         patch_args+=(--report-json "$CODEX_PATCH_REPORT_JSON")
     fi
     node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" "${patch_args[@]}" "$WORK_DIR/app-extracted"
+    if [ -n "${CODEX_PATCH_REPORT_JSON:-}" ] && [ -f "$SCRIPT_DIR/scripts/ci/validate-patch-report.js" ]; then
+        node "$SCRIPT_DIR/scripts/ci/validate-patch-report.js" "$CODEX_PATCH_REPORT_JSON" --profile upstream-build
+    fi
 
     # Repack
     info "Repacking app.asar..."
@@ -68,6 +71,9 @@ inspect_rebuild_candidate() {
     fi
 
     node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" --report-json "$patch_report" "$inspect_dir"
+    if [ -f "$SCRIPT_DIR/scripts/ci/validate-patch-report.js" ]; then
+        node "$SCRIPT_DIR/scripts/ci/validate-patch-report.js" "$patch_report" --profile upstream-build
+    fi
     write_rebuild_report_json "$rebuild_report" "$dmg_path" "$ELECTRON_VERSION" "$patch_report" ""
 
     info "Patch report: $patch_report"

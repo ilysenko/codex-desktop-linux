@@ -13,6 +13,9 @@ const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
+  requiredPatchNamesForProfile,
+} = require("../../scripts/patches/registry.js");
+const {
   createPatchReport,
   patchExtractedApp,
   patchMainBundleSource,
@@ -254,7 +257,9 @@ function withTempFeatureRoot(enabled, fn) {
 
 function withFeatureRootEnv(root, fn) {
   const previous = process.env.CODEX_LINUX_FEATURES_ROOT;
+  const previousConfig = process.env.CODEX_LINUX_FEATURES_CONFIG;
   process.env.CODEX_LINUX_FEATURES_ROOT = root;
+  delete process.env.CODEX_LINUX_FEATURES_CONFIG;
   try {
     return fn();
   } finally {
@@ -262,6 +267,11 @@ function withFeatureRootEnv(root, fn) {
       delete process.env.CODEX_LINUX_FEATURES_ROOT;
     } else {
       process.env.CODEX_LINUX_FEATURES_ROOT = previous;
+    }
+    if (previousConfig == null) {
+      delete process.env.CODEX_LINUX_FEATURES_CONFIG;
+    } else {
+      process.env.CODEX_LINUX_FEATURES_CONFIG = previousConfig;
     }
   }
 }
@@ -583,6 +593,37 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "webview-asset",
       "webview-asset",
     ]);
+    assert.deepEqual(descriptors.map((descriptor) => descriptor.ciPolicy), [
+      "required-upstream",
+      "required-upstream",
+      "required-upstream",
+      "required-upstream",
+      "required-upstream",
+      "optional",
+      "optional",
+      "optional",
+      "optional",
+      "optional",
+      "optional",
+      "optional",
+      "optional",
+      "optional",
+      "optional",
+      "optional",
+    ]);
+    withFeatureRootEnv(root, () => {
+      assert.deepEqual(
+        requiredPatchNamesForProfile("upstream-build")
+          .filter((name) => name.startsWith("feature:remote-mobile-control:")),
+        [
+          "feature:remote-mobile-control:linux-remote-control-device-key",
+          "feature:remote-mobile-control:linux-remote-control-preserve-config",
+          "feature:remote-mobile-control:linux-remote-control-client-account-compatibility",
+          "feature:remote-mobile-control:linux-remote-control-client-revocation-recovery",
+          "feature:remote-mobile-control:linux-remote-mobile-app-server-remote-control",
+        ],
+      );
+    });
   });
 });
 
