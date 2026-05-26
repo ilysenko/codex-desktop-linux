@@ -12,7 +12,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  CI_PACKAGE_VERSION: 2026.04.28.000000+ci${{ github.run_number }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CI_PACKAGE_VERSION: 26.519.41502+ci${{ github.run_number }}
 
 jobs:
   rust-and-smoke:

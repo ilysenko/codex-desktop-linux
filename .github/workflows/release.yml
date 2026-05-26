@@ -19,13 +19,14 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CI_PACKAGE_VERSION: 26.519.41502+ci${{ github.run_number }}
+
 concurrency:
   group: build-release-${{ github.ref }}
   cancel-in-progress: false
-
-env:
-  CARGO_TERM_COLOR: always
-  CI_PACKAGE_VERSION: 2026.04.28.000000+ci${{ github.run_number }}
 
 jobs:
   prepare-release:
@@ -128,6 +129,8 @@ jobs:
     needs: prepare-release
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Build and capture pacman package in Arch Linux
         run: |
@@ -212,18 +215,28 @@ jobs:
         run: find release-artifacts -maxdepth 3 -type f | sort
 
       - name: Build release notes
+        env:
+          RESOLVED_COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          cat > release-notes.md <<EOF
-          ## Artifacts
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          body = """## Artifacts
           - Debian package (.deb)
           - RPM package (.rpm)
           - Pacman package (.pkg.tar.zst)
           - AppImage (.AppImage)
 
-          Built from commit: `${GITHUB_SHA}`
-          Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          EOF
+          Built from commit: `{sha}`
+          Workflow run: {run_url}
+          """.format(
+              sha=os.environ["RESOLVED_COMMIT_SHA"],
+              run_url=f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+          )
+          Path('release-notes.md').write_text(body + "\n")
+          PY
 
       - name: Publish or update release
         uses: softprops/action-gh-release@v2

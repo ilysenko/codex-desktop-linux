@@ -4,7 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-DEFAULT_CI_PACKAGE_VERSION="2026.04.28.000000+local"
+DEFAULT_CI_PACKAGE_VERSION="26.519.41502+local"
 CI_PACKAGE_VERSION="${CI_PACKAGE_VERSION:-$DEFAULT_CI_PACKAGE_VERSION}"
 CI_CACHE_DIR="${CI_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop-linux-ci}"
 
@@ -35,7 +35,7 @@ Targets:
 
 Environment:
   CI_CONTAINER_ENGINE=docker|podman
-  CI_PACKAGE_VERSION=2026.04.28.000000+local
+  CI_PACKAGE_VERSION=26.519.41502+local
   CI_DMG_PATH=/path/to/Codex.dmg
   CI_SKIP_PULL=1
   CI_CACHE_DIR=/path/to/cache
