@@ -16,7 +16,7 @@ ICON_SOURCE="$REPO_DIR/assets/codex.png"
 PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
 PACKAGE_DISPLAY_NAME="${PACKAGE_DISPLAY_NAME:-Codex Desktop}"
 PACKAGE_COMMENT="${PACKAGE_COMMENT:-Run Codex Desktop on Linux}"
-PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
+PACKAGE_VERSION="${PACKAGE_VERSION:-$(node -e 'const fs=require("node:fs"); const path=require("node:path"); const infoPath=path.resolve(process.argv[1]); const now=new Date(); const pad=(n)=>String(n).padStart(2,"0"); const stamp=`${now.getUTCFullYear()}${pad(now.getUTCMonth()+1)}${pad(now.getUTCDate())}.${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`; let version=`0.0.0+linux.${stamp}`; try { const info=JSON.parse(fs.readFileSync(infoPath,"utf8")); const upstream=info?.upstreamDmg?.appVersion; if (typeof upstream === "string" && upstream.trim()) version=`${upstream.trim()}+linux.${stamp}`; } catch {} process.stdout.write(version);' "$REPO_DIR/codex-app/resources/codex-linux-build-info.json")}"
 
 map_arch() {
     case "$(uname -m)" in

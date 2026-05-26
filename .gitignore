@@ -11,6 +11,7 @@ target/
 dist/
 dist-next/
 linux-features/features.json
+linux-features/.generated/
 .idea/
 .claude/
 .codex/

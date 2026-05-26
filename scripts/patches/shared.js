@@ -129,8 +129,18 @@ function findImportedAsset(webviewAssetsDir, importerAsset, description) {
 
 function requireName(source, moduleName) {
   const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(new RegExp(`([A-Za-z_$][\\w$]*)=require\\(\`${escaped}\`\\)`));
-  return match?.[1] ?? null;
+  const patterns = [
+    new RegExp(`([A-Za-z_$][\\w$]*)=require\\(\`${escaped}\`\\)`),
+    new RegExp(`([A-Za-z_$][\\w$]*)=require\\("${escaped}"\\)`),
+    new RegExp(`([A-Za-z_$][\\w$]*)=require\\('${escaped}'\\)`),
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
 }
 
 function inferModuleAlias(source, moduleName) {
@@ -139,17 +149,33 @@ function inferModuleAlias(source, moduleName) {
     return requiredName;
   }
 
-  if (moduleName === "electron") {
-    return source.match(/(?:let|,)\s*([A-Za-z_$][\w$]*)=\{app:\{/u)?.[1] ?? null;
-  }
-  if (moduleName === "node:path") {
-    return source.match(/(?:let|,)\s*([A-Za-z_$][\w$]*)=\{default:\{dirname\(/u)?.[1] ?? null;
-  }
-  if (moduleName === "node:fs") {
-    return source.match(/(?:let|,)\s*([A-Za-z_$][\w$]*)=\{mkdirSync\(/u)?.[1] ?? null;
-  }
-  if (moduleName === "node:net") {
-    return source.match(/(?:let|,)\s*([A-Za-z_$][\w$]*)=\{default:\{createServer\(/u)?.[1] ?? null;
+  const fallbackPatterns = {
+    electron: [
+      /(?:let|var|const|,)\s*([A-Za-z_$][\w$]*)=\{app:\{/u,
+      /(?:let|var|const|,)\s*([A-Za-z_$][\w$]*)=\{[^}]*shell:[A-Za-z_$][\w$]*/u,
+    ],
+    "node:path": [
+      /(?:let|var|const|,)\s*([A-Za-z_$][\w$]*)=\{default:\{dirname\(/u,
+      /(?:let|var|const|,)\s*([A-Za-z_$][\w$]*)=\{[^}]*dirname\(/u,
+      /([A-Za-z_$][\w$]*)=require\(`node:path`\)/u,
+    ],
+    "node:fs": [
+      /(?:let|var|const|,)\s*([A-Za-z_$][\w$]*)=\{mkdirSync\(/u,
+      /(?:let|var|const|,)\s*([A-Za-z_$][\w$]*)=\{[^}]*existsSync\(/u,
+      /([A-Za-z_$][\w$]*)=require\(`node:fs`\)/u,
+    ],
+    "node:net": [
+      /(?:let|var|const|,)\s*([A-Za-z_$][\w$]*)=\{default:\{createServer\(/u,
+      /(?:let|var|const|,)\s*([A-Za-z_$][\w$]*)=\{[^}]*createServer\(/u,
+      /([A-Za-z_$][\w$]*)=require\(`node:net`\)/u,
+    ],
+  };
+
+  for (const pattern of fallbackPatterns[moduleName] ?? []) {
+    const match = source.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
   }
 
   return null;

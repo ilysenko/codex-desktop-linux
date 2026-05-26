@@ -61,7 +61,7 @@ export XDG_CACHE_HOME=~/tmp/codex-cache
 
 ## Quick install
 
-The fastest path: install deps, build the local app, build the native package, install it.
+The fastest path: install deps, then one command builds and installs the current three-feature package (Computer Use UI + remote-mobile-control + remote-control-ui).
 
 ```bash
 git clone https://github.com/ilysenko/codex-desktop-linux.git
@@ -69,9 +69,9 @@ cd codex-desktop-linux
 make bootstrap-native
 ```
 
-`make bootstrap-native` installs build dependencies, regenerates `codex-app/` from a fresh upstream `Codex.dmg`, builds the matching native package, and installs the newest artifact from `dist/`. It uses the same package auto-detection as `make package` / `make install`.
+`make bootstrap-native` is now the single default entrypoint. It installs build dependencies, regenerates `codex-app/` from a fresh upstream `Codex.dmg`, enables the current three-feature build, builds the matching native package, and installs the newest artifact from `dist/`.
 
-If dependencies are already installed, use `make install-native` to run only the fresh app build, package, and install steps.
+If dependencies are already installed, use `make install-native` to rerun only the build/package/install portion for that same three-feature package.
 
 ## Guided native setup
 
@@ -117,7 +117,7 @@ CODEX_BOOTSTRAP_INSTALL_NATIVE=1 \
 make setup-native
 ```
 
-Build-time feature changes only apply after rebuilding and reinstalling:
+Build-time feature changes only apply after rebuilding and reinstalling the current three-feature package:
 
 ```bash
 make install-native
@@ -278,6 +278,17 @@ CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 make build-app
 mkdir -p ~/.config/codex-desktop
 echo '{"codex-linux-computer-use-ui-enabled": true}' > ~/.config/codex-desktop/settings.json
 ```
+
+If this fork's default distribution posture is "remote mobile control + remote control UI + Computer Use UI on", use the explicit enhanced targets instead of remembering env vars:
+
+```bash
+make build-app-enhanced
+PACKAGE_WITH_UPDATER=0 make package-enhanced
+make deb-enhanced
+ENHANCED_PACKAGE_TIMESTAMP=20260525.161500 make enhanced-package-version
+```
+
+Enhanced package targets derive versions as `<appVersion>+enhanced.<utc_timestamp>` from `codex-app/.codex-linux/build-info.json`, while keeping the default `make deb/rpm/pacman/package` flow unchanged.
 
 Either path enables the in-app controls on subsequent builds. To opt back out, unset the env var and remove or set the settings flag to `false`.
 
