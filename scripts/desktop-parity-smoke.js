@@ -18,6 +18,7 @@ function usage() {
     "Options:",
     "  --json                       Print sanitized JSON instead of text",
     "  --skip-cdp                   Skip optional Electron CDP UI checks",
+    "  --strict                     Fail if optional UI parity checks are not configured",
     "  --cdp-origin URL             Include UI checks through an existing CDP endpoint",
     "  --codex-bin PATH             Codex CLI binary to spawn (default: codex)",
     "  --require-remote-connected   Fail unless remote-control status is connected",
@@ -27,6 +28,7 @@ function usage() {
     "  CODEX_DESKTOP_CDP_ORIGIN     Same as --cdp-origin",
     "  CODEX_PARITY_CODEX_BIN       Same as --codex-bin",
     "  CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1",
+    "  CODEX_PARITY_STRICT=1",
   ].join("\n");
 }
 
@@ -37,6 +39,7 @@ function parseArgs(argv) {
     json: false,
     requireRemoteConnected: process.env.CODEX_PARITY_REQUIRE_REMOTE_CONNECTED === "1",
     skipCdp: false,
+    strict: process.env.CODEX_PARITY_STRICT === "1",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -45,6 +48,8 @@ function parseArgs(argv) {
       options.json = true;
     } else if (arg === "--skip-cdp") {
       options.skipCdp = true;
+    } else if (arg === "--strict") {
+      options.strict = true;
     } else if (arg === "--require-remote-connected") {
       options.requireRemoteConnected = true;
     } else if (arg === "--cdp-origin") {
@@ -68,6 +73,9 @@ function parseArgs(argv) {
   }
 
   if (options.skipCdp) {
+    if (options.strict) {
+      throw new Error("--skip-cdp cannot be combined with --strict");
+    }
     options.cdpOrigin = null;
   }
 
@@ -597,11 +605,15 @@ async function withCdpSocket(webSocketDebuggerUrl, callback) {
   }
 }
 
-async function runCdpSmoke(cdpOrigin) {
+async function runCdpSmoke(cdpOrigin, strict) {
   if (!cdpOrigin) {
     return {
-      status: "skip",
-      details: { reason: "set CODEX_DESKTOP_CDP_ORIGIN or --cdp-origin to include UI checks" },
+      status: strict ? "fail" : "skip",
+      details: {
+        reason: strict
+          ? "strict mode requires CODEX_DESKTOP_CDP_ORIGIN or --cdp-origin"
+          : "set CODEX_DESKTOP_CDP_ORIGIN or --cdp-origin to include UI checks",
+      },
     };
   }
 
@@ -719,7 +731,7 @@ async function main() {
   const appServer = await runAppServerSmoke(options);
   let cdp;
   try {
-    cdp = await runCdpSmoke(options.cdpOrigin);
+    cdp = await runCdpSmoke(options.cdpOrigin, options.strict);
   } catch (error) {
     cdp = {
       status: "fail",

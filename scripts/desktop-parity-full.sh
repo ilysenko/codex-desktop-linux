@@ -8,6 +8,8 @@ CODEX_BIN="${CODEX_PARITY_CODEX_BIN:-codex}"
 DOCTOR="${DOCTOR:-/usr/bin/${PACKAGE_NAME}-doctor}"
 TMP_DIR="${CODEX_PARITY_FULL_TMPDIR:-$(mktemp -d)}"
 CREATED_TMP_DIR=0
+CODEX_PARITY_STRICT="${CODEX_PARITY_STRICT:-0}"
+CODEX_PARITY_STRICT_REMOTE="${CODEX_PARITY_STRICT_REMOTE:-auto}"
 
 if [ -z "${CODEX_PARITY_FULL_TMPDIR:-}" ]; then
     CREATED_TMP_DIR=1
@@ -24,6 +26,21 @@ pass_count=0
 fail_count=0
 skip_count=0
 
+truthy() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+strict_enabled() {
+    truthy "$CODEX_PARITY_STRICT"
+}
+
 pass() {
     pass_count=$((pass_count + 1))
     printf '[parity-full] PASS %s\n' "$*"
@@ -35,8 +52,12 @@ fail() {
 }
 
 skip() {
-    skip_count=$((skip_count + 1))
-    printf '[parity-full] SKIP %s\n' "$*"
+    if strict_enabled; then
+        fail "$*: skipped while CODEX_PARITY_STRICT=1"
+    else
+        skip_count=$((skip_count + 1))
+        printf '[parity-full] SKIP %s\n' "$*"
+    fi
 }
 
 node_json_field() {
@@ -149,6 +170,44 @@ run_computer_use_doctor() {
     fi
 }
 
+remote_mobile_feature_enabled() {
+    local marker
+    for marker in \
+        "/opt/${PACKAGE_NAME}/.codex-linux/remote-mobile-control-enabled" \
+        "$REPO_DIR/codex-app/.codex-linux/remote-mobile-control-enabled"; do
+        if [ -e "$marker" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+strict_remote_required() {
+    if truthy "${CODEX_PARITY_REQUIRE_REMOTE_CONNECTED:-0}"; then
+        return 0
+    fi
+    if ! strict_enabled; then
+        return 1
+    fi
+
+    case "$CODEX_PARITY_STRICT_REMOTE" in
+        1|true|TRUE|yes|YES|on|ON)
+            return 0
+            ;;
+        0|false|FALSE|no|NO|off|OFF)
+            return 1
+            ;;
+        auto|"")
+            remote_mobile_feature_enabled
+            return $?
+            ;;
+        *)
+            fail "app-server parity smoke: invalid CODEX_PARITY_STRICT_REMOTE=$CODEX_PARITY_STRICT_REMOTE"
+            return 1
+            ;;
+    esac
+}
+
 run_parity_smoke() {
     if [ "${CODEX_PARITY_SKIP_SMOKE:-0}" = "1" ]; then
         skip "app-server parity smoke: disabled by CODEX_PARITY_SKIP_SMOKE=1"
@@ -156,7 +215,14 @@ run_parity_smoke() {
     fi
 
     local args=("--codex-bin" "$CODEX_BIN")
-    if [ "${CODEX_PARITY_REQUIRE_REMOTE_CONNECTED:-0}" = "1" ]; then
+    if strict_enabled; then
+        args+=("--strict")
+        if [ -z "${CODEX_DESKTOP_CDP_ORIGIN:-}" ]; then
+            fail "app-server parity smoke: strict mode requires CODEX_DESKTOP_CDP_ORIGIN"
+            return
+        fi
+    fi
+    if strict_remote_required; then
         args+=("--require-remote-connected")
     fi
     if [ -n "${CODEX_DESKTOP_CDP_ORIGIN:-}" ]; then

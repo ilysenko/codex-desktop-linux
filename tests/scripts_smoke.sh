@@ -152,6 +152,9 @@ test_desktop_parity_smoke_script_syntax() {
     node --check "$REPO_DIR/scripts/app-server-schema-guard.js" >/dev/null
     node --check "$REPO_DIR/scripts/desktop-parity-smoke.js" >/dev/null
     bash -n "$REPO_DIR/scripts/desktop-parity-full.sh"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "--strict"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-full.sh" "CODEX_PARITY_STRICT"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-full.sh" "CODEX_PARITY_STRICT_REMOTE"
 }
 
 test_package_payload_permission_normalization() {
@@ -906,6 +909,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local doctor_log="$TMP_DIR/make-doctor.log"
     local parity_schema_log="$TMP_DIR/make-parity-schema.log"
     local parity_full_log="$TMP_DIR/make-parity-full.log"
+    local parity_strict_log="$TMP_DIR/make-parity-strict.log"
 
     make -n -C "$REPO_DIR" install-native >"$install_log"
     assert_contains "$install_log" './install.sh --fresh'
@@ -939,6 +943,9 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" parity-full >"$parity_full_log"
     assert_contains "$parity_full_log" 'scripts/desktop-parity-full.sh'
+
+    make -n -C "$REPO_DIR" parity-strict >"$parity_strict_log"
+    assert_contains "$parity_strict_log" 'CODEX_PARITY_STRICT=1 bash scripts/desktop-parity-full.sh'
 }
 
 test_desktop_doctor_template_smoke() {

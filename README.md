@@ -527,6 +527,17 @@ full run to require connected remote-control state:
 CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full
 ```
 
+For a stricter installed-app profile, launch the app with a local CDP debug
+origin and run:
+
+```bash
+CODEX_DESKTOP_CDP_ORIGIN=http://127.0.0.1:9334 make parity-strict
+```
+
+Strict mode fails instead of accepting skipped components. It also requires
+connected remote-control status automatically when the installed
+`remote-mobile-control` feature marker is present.
+
 The current parity matrix and remaining Mac/Linux gaps are tracked in
 [`docs/PARITY_MATRIX.md`](docs/PARITY_MATRIX.md).
 

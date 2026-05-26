@@ -43,6 +43,13 @@ For an enrolled remote-control host, require connected remote status:
 CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full
 ```
 
+For strict installed parity, require a local Electron CDP origin and fail on
+skipped components:
+
+```bash
+CODEX_DESKTOP_CDP_ORIGIN=http://127.0.0.1:9334 make parity-strict
+```
+
 For optional Electron UI presence checks, launch a local debug-port instance
 yourself and pass only the local CDP origin:
 
@@ -57,7 +64,7 @@ screenshots, or private conversation text into parity artifacts.
 
 | Area | Mac baseline | Linux status | Validation | Gap / next step |
 |---|---|---|---|---|
-| Desktop UI | Official Codex Desktop app | Repackaged Electron app from upstream DMG | `make doctor`, optional CDP path in `make parity-full` | Not official Linux support |
+| Desktop UI | Official Codex Desktop app | Repackaged Electron app from upstream DMG | `make doctor`, optional CDP path in `make parity-full`, required CDP path in `make parity-strict` | Not official Linux support |
 | CLI bridge | `codex app` launches app | Launcher wraps Linux Electron app and discovers CLI | `make doctor` | Keep CLI path/preflight covered during updates |
 | App-server protocol | Local app protocol | `codex app-server` used directly by smoke tests | `make parity-schema`, `make parity-smoke` | Track schema drift on each upstream refresh |
 | Thread history | Native app reads local sessions | App-server thread list/read surface is present | `make parity-smoke` | Avoid printing thread names/content in logs |
