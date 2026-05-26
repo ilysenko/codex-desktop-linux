@@ -255,13 +255,30 @@ class AppServerClient {
 
   async close() {
     this.rl.close();
-    if (!this.child.killed) {
-      this.child.stdin.end();
-      this.child.kill("SIGTERM");
-      await wait(250);
-      if (!this.child.killed) {
-        this.child.kill("SIGKILL");
+    if (this.child.exitCode !== null || this.child.signalCode !== null) {
+      return;
+    }
+
+    const exited = new Promise((resolve) => {
+      if (this.child.exitCode !== null || this.child.signalCode !== null) {
+        resolve(true);
+        return;
       }
+      this.child.once("exit", () => resolve(true));
+    });
+
+    if (this.child.stdin.writable) {
+      this.child.stdin.end();
+    }
+    this.child.kill("SIGTERM");
+
+    const exitedAfterTerm = await Promise.race([
+      exited.then(() => true),
+      wait(250).then(() => false),
+    ]);
+    if (!exitedAfterTerm && this.child.exitCode === null && this.child.signalCode === null) {
+      this.child.kill("SIGKILL");
+      await Promise.race([exited, wait(250)]);
     }
   }
 }
