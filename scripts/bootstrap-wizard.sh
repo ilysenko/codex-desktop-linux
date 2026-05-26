@@ -830,13 +830,17 @@ cleanup_path_is_safe() {
     local path="$1"
     local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
     local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+    local remote_key_file
+    local legacy_remote_key_file
+    remote_key_file="$(remote_mobile_key_file_path)"
+    legacy_remote_key_file="$(remote_mobile_legacy_key_file_path)"
     case "$path" in
         ""|"/"|"$HOME"|"$HOME/"|"$config_home"|"$config_home/"|"$data_home"|"$data_home/"|"$HOME/.codex"|"$HOME/.codex/")
             return 1
             ;;
     esac
     case "$path" in
-        "$config_home"/codex-desktop/*|"$data_home"/codex-desktop/read-aloud|"$data_home"/codex-desktop/read-aloud/*|"$data_home"/kokoro/kokoro-v1.0.onnx|"$data_home"/kokoro/voices-v1.0.bin|"$HOME"/.codex/plugins/cache/openai-bundled/read-aloud|"$HOME"/.codex/plugins/cache/openai-bundled/read-aloud/*)
+        "$remote_key_file"|"$legacy_remote_key_file"|"$config_home"/codex-desktop/*|"$data_home"/codex-desktop/read-aloud|"$data_home"/codex-desktop/read-aloud/*|"$data_home"/kokoro/kokoro-v1.0.onnx|"$data_home"/kokoro/voices-v1.0.bin|"$HOME"/.codex/plugins/cache/openai-bundled/read-aloud|"$HOME"/.codex/plugins/cache/openai-bundled/read-aloud/*)
             return 0
             ;;
     esac
