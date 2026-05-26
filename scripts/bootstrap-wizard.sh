@@ -767,6 +767,7 @@ print_safe_disable_guidance() {
         local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
         local key_file="$config_home/codex-desktop/remote-control-device-keys-v1.json"
         info "Remote mobile control opt-out: Not deleting $key_file."
+        info "If Secret Service is available, that file may contain only key metadata while private keys live in the desktop keyring."
         info "Revoke paired devices from Codex Settings/Connections or ChatGPT before deleting local keys manually."
     fi
 
@@ -884,7 +885,8 @@ run_feature_cleanup() {
     if list_includes_id "$cleanup_raw" "remote-mobile-control"; then
         local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
         local key_file="$config_home/codex-desktop/remote-control-device-keys-v1.json"
-        info "Remote mobile control cleanup: revoke paired devices in Codex Settings/Connections or ChatGPT before deleting local keys."
+        info "Remote mobile control cleanup: revoke paired devices in Codex Settings/Connections or ChatGPT before deleting local key metadata or fallback keys."
+        info "Secret Service-backed keys are cleared by the app when the paired device is revoked; manual metadata deletion alone may leave orphaned keyring entries."
         confirm_and_delete_path "$key_file"
     fi
 

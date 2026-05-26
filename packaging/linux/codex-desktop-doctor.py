@@ -515,17 +515,41 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
             str(remote_hook),
             path=str(remote_hook),
         )
+        secret_tool = shutil.which("secret-tool")
+        add_check(
+            checks,
+            "remote_mobile_secret_service",
+            "Remote mobile Secret Service helper",
+            PASS if secret_tool else INFO,
+            "secret-tool available; new keys prefer Secret Service"
+            if secret_tool
+            else "secret-tool missing; file fallback will be used",
+            path=secret_tool,
+        )
         key_mode = None
+        key_count = None
+        secret_service_key_count = None
+        file_fallback_key_count = None
         if key_file.exists():
             key_mode = oct(key_file.stat().st_mode & 0o777)
+            key_store = read_json(key_file) or {}
+            keys = key_store.get("keys")
+            if isinstance(keys, dict):
+                records = [record for record in keys.values() if isinstance(record, dict)]
+                key_count = len(records)
+                secret_service_key_count = sum(1 for record in records if isinstance(record.get("secretService"), dict))
+                file_fallback_key_count = sum(1 for record in records if isinstance(record.get("privateKeyPkcs8Pem"), str))
         add_check(
             checks,
             "remote_mobile_key_file",
-            "Remote mobile key file presence",
+            "Remote mobile key metadata/fallback file",
             PASS if key_file.exists() else INFO,
             f"{key_file} ({key_mode})" if key_mode else f"not found: {key_file}",
             path=str(key_file),
             mode=key_mode,
+            keyCount=key_count,
+            secretServiceKeyCount=secret_service_key_count,
+            fileFallbackKeyCount=file_fallback_key_count,
         )
     else:
         add_check(checks, "remote_mobile_marker", "Remote mobile feature marker", INFO, "remote-mobile-control feature is not enabled")

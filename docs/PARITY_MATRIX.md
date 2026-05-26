@@ -73,7 +73,7 @@ screenshots, or private conversation text into parity artifacts.
 | Computer Use UI | Native UI | Opt-in Linux UI gate | `make doctor`, manual UI check | Keep opt-in; do not force Statsig-like UI gates globally |
 | Locked Computer Use | Apple authorization plug-in on macOS | Not equivalent | Not implemented | Research only; do not fake remote unlock |
 | Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` checks explicit status read plus status notification | Server-side rejection can still happen |
-| Remote-control key storage | macOS keychain/Secure Enclave-style boundary | File-backed `0600` key material today | `make doctor` reports presence/mode only | Add Secret Service/libsecret backend with file fallback |
+| Remote-control key storage | macOS keychain/Secure Enclave-style boundary | Secret Service via `secret-tool` when available, with `0600` file fallback | `make doctor` reports helper availability and metadata/fallback counts only | Exercise migration across more desktop keyring implementations |
 | Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units | `make doctor`, `make parity-full` | Add suspend/resume and network-change regression tests |
 | Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Schema guard is packaged into update-builder; enforce during background rebuilds after CLI path is deterministic |
 | Native packages | Official platform installers | `.deb`, `.rpm`, pacman, AppImage, Nix | GitHub CI, `make package` | Keep distro matrix green |
@@ -116,8 +116,8 @@ screenshots, or private conversation text into parity artifacts.
 4. Extend the phone/remote-control E2E check beyond host connected state only
    when it can still record only connected/disconnected state and redacted
    booleans.
-5. Add a Secret Service/libsecret key store for Linux remote-control device keys,
-   with file fallback and migration tests.
+5. Expand Secret Service/libsecret key-store coverage across GNOME Keyring,
+   KWallet, locked keyrings, and headless sessions.
 6. Build a desktop-environment matrix for GNOME, KDE Plasma, Hyprland, Sway,
    COSMIC, X11, native Chrome, Flatpak Chrome, Brave, and Chromium.
 7. Research locked-use equivalents separately and require a threat model before

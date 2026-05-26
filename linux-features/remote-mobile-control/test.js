@@ -276,6 +276,32 @@ function withFeatureRootEnv(root, fn) {
   }
 }
 
+function installFakeSecretTool(binDir) {
+  const secretTool = path.join(binDir, "secret-tool");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(
+    secretTool,
+    [
+      "#!/usr/bin/env node",
+      "const fs=require('node:fs');",
+      "const path=require('node:path');",
+      "const dir=process.env.CODEX_TEST_SECRET_STORE;",
+      "if(!dir)process.exit(2);",
+      "const [cmd,...rawArgs]=process.argv.slice(2);",
+      "function attrs(args){return args.filter((arg)=>!arg.startsWith('--label='));}",
+      "function fileFor(args){return path.join(dir,Buffer.from(attrs(args).join('\\0')).toString('base64url'));}",
+      "fs.mkdirSync(dir,{recursive:true});",
+      "if(cmd==='store'){fs.writeFileSync(fileFor(rawArgs),fs.readFileSync(0,'utf8'));process.exit(0);}",
+      "if(cmd==='lookup'){const file=fileFor(rawArgs);if(!fs.existsSync(file))process.exit(1);process.stdout.write(fs.readFileSync(file,'utf8'));process.exit(0);}",
+      "if(cmd==='clear'){fs.rmSync(fileFor(rawArgs),{force:true});process.exit(0);}",
+      "process.exit(2);",
+      "",
+    ].join("\n"),
+  );
+  fs.chmodSync(secretTool, 0o755);
+  return secretTool;
+}
+
 function captureWarnings(fn) {
   const warnings = [];
   const originalWarn = console.warn;
@@ -652,6 +678,26 @@ test("Linux remote-control device-key patch handles current minified aliases", (
   assert.match(patched, /process\.platform===`linux`\)return codexLinuxRemoteControlDeviceKeyClient\(\)/);
   assert.match(patched, /n\.kind===`local`&&process\.platform!==`linux`/);
   assert.equal(applyLinuxRemoteControlPreserveConfigPatch(applyLinuxRemoteControlDeviceKeyPatch(patched)), patched);
+});
+
+test("Linux remote-control device-key patch upgrades older file-backed provider", () => {
+  const oldPatched = [
+    "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),b={createRequire:()=>()=>({})};",
+    "function TV(e){return Buffer.from(JSON.stringify(e),`utf8`)}",
+    "function codexLinuxRemoteControlDeviceKeyStorePath(){return`old-file-backed`}",
+    "function codexLinuxRemoteControlPublicDeviceKey(e){return e}",
+    "function codexLinuxReadRemoteControlDeviceKeyStore(){return{keys:{}}}",
+    "function codexLinuxWriteRemoteControlDeviceKeyStore(e){}",
+    "function codexLinuxRemoteControlDeviceKeyClient(){return{createDeviceKey:async e=>{},deleteDeviceKey:async e=>{},getDeviceKeyPublic:async e=>{},signDeviceKey:async(e,t)=>{}}}",
+    "var bV=(0,b.createRequire)(__filename),xV=`remote-control-device-key.node`,SV=`codex-device-key-sign-payload/v1`;",
+    "function wV({resourcesPath:e}){let t=null,n=()=>{if(process.platform===`linux`)return codexLinuxRemoteControlDeviceKeyClient();if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=bV(i.join(e,`native`,xV)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=TV(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
+  ].join("");
+
+  const upgraded = applyLinuxRemoteControlDeviceKeyPatch(oldPatched);
+  assert.match(upgraded, /codexLinuxRemoteControlSecretTool/);
+  assert.match(upgraded, /codexLinuxMigrateRemoteControlDeviceKeySecrets/);
+  assert.doesNotMatch(upgraded, /old-file-backed/);
+  assert.equal(applyLinuxRemoteControlDeviceKeyPatch(upgraded), upgraded);
 });
 
 test("Linux remote-control client enrollment accepts account-scoped and base user ids", () => {
@@ -1223,7 +1269,7 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
       __filename: path.join(configHome, "main.js"),
       module: { exports: {} },
       process: {
-        env: { XDG_CONFIG_HOME: configHome },
+        env: { CODEX_REMOTE_CONTROL_KEY_STORE: "file", XDG_CONFIG_HOME: configHome },
         pid: process.pid,
         platform: "linux",
       },
@@ -1250,11 +1296,138 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
 
     const storePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
     assert.equal(fs.statSync(storePath).mode & 0o777, 0o600);
+    const store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    assert.match(store.keys[created.keyId].privateKeyPkcs8Pem, /BEGIN PRIVATE KEY/);
 
     await client.deleteDeviceKey(created.keyId);
     await assert.rejects(() => client.getDeviceKeyPublic(created.keyId), /not found/);
   } finally {
     fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("patched Linux device-key provider prefers Secret Service when secret-tool is available", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-secret-service-"));
+  const configHome = path.join(workspace, "config");
+  const binDir = path.join(workspace, "bin");
+  const secretStore = path.join(workspace, "secrets");
+  try {
+    installFakeSecretTool(binDir);
+
+    const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
+    const context = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: {
+          CODEX_REMOTE_CONTROL_KEY_STORE: "secret-service",
+          CODEX_TEST_SECRET_STORE: secretStore,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          XDG_CONFIG_HOME: configHome,
+        },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, context);
+    const client = context.module.exports;
+    const created = await client.createDeviceKey("allow_os_protected_nonextractable");
+    const storePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    const store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    const record = store.keys[created.keyId];
+
+    assert.equal(record.privateKeyPkcs8Pem, undefined);
+    assert.equal(record.secretService.backend, "secret-service");
+    assert.equal(record.secretService.tool, "secret-tool");
+    assert.equal(record.secretService.attributes.keyId, created.keyId);
+    assert.equal(fs.readdirSync(secretStore).length, 1);
+
+    const signature = await client.signDeviceKey(created.keyId, { nonce: "secret-service" });
+    assert.equal(signature.algorithm, "ecdsa_p256_sha256");
+    assert.match(signature.signatureDerBase64, /^[A-Za-z0-9+/]+=*$/);
+
+    await client.deleteDeviceKey(created.keyId);
+    await assert.rejects(() => client.signDeviceKey(created.keyId, { nonce: "deleted" }), /not found/);
+    assert.equal(fs.readdirSync(secretStore).length, 0);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("patched Linux device-key provider migrates existing file-backed keys to Secret Service", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-secret-migrate-"));
+  const configHome = path.join(workspace, "config");
+  const binDir = path.join(workspace, "bin");
+  const secretStore = path.join(workspace, "secrets");
+  try {
+    const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
+    const fileContext = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: { CODEX_REMOTE_CONTROL_KEY_STORE: "file", XDG_CONFIG_HOME: configHome },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, fileContext);
+    const fileClient = fileContext.module.exports;
+    const created = await fileClient.createDeviceKey("allow_os_protected_nonextractable");
+
+    const storePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    let store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    assert.match(store.keys[created.keyId].privateKeyPkcs8Pem, /BEGIN PRIVATE KEY/);
+
+    installFakeSecretTool(binDir);
+    const secretContext = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: {
+          CODEX_REMOTE_CONTROL_KEY_STORE: "secret-service",
+          CODEX_TEST_SECRET_STORE: secretStore,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          XDG_CONFIG_HOME: configHome,
+        },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, secretContext);
+    const secretClient = secretContext.module.exports;
+
+    assert.equal(JSON.stringify(await secretClient.getDeviceKeyPublic(created.keyId)), JSON.stringify(created));
+    store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    assert.equal(store.keys[created.keyId].privateKeyPkcs8Pem, undefined);
+    assert.equal(store.keys[created.keyId].secretService.backend, "secret-service");
+    assert.equal(fs.readdirSync(secretStore).length, 1);
+
+    const signature = await secretClient.signDeviceKey(created.keyId, { nonce: "migrated" });
+    assert.equal(signature.algorithm, "ecdsa_p256_sha256");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
 
