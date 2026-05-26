@@ -1,6 +1,7 @@
 //! Rebuilds native Linux packages from a downloaded upstream DMG.
 
 use crate::{
+    codex_cli,
     config::{RuntimeConfig, RuntimePaths},
     install::PackageKind,
     state::{ArtifactPaths, PersistedState, UpdateStatus},
@@ -114,6 +115,11 @@ pub async fn build_update(
     .await
     .context("install.sh failed during local rebuild")?;
 
+    let schema_guard_node = schema_guard_node_program(&config.builder_bundle_root);
+    run_app_server_schema_guard(state, paths, &workspace, &build_path, &schema_guard_node)
+        .await
+        .context("app-server schema guard failed during local rebuild")?;
+
     state.status = UpdateStatus::BuildingPackage;
     state.save(&paths.state_file)?;
 
@@ -162,6 +168,7 @@ struct BuilderWorkspace {
     app_dir: PathBuf,
     reports_dir: PathBuf,
     install_log: PathBuf,
+    schema_guard_log: PathBuf,
     build_log: PathBuf,
 }
 
@@ -174,6 +181,7 @@ impl BuilderWorkspace {
         let logs_dir = workspace_dir.join("logs");
         let reports_dir = workspace_dir.join("reports");
         let install_log = logs_dir.join("install.log");
+        let schema_guard_log = logs_dir.join("app-server-schema-guard.log");
         let build_log = logs_dir.join("build-package.log");
 
         if workspace_dir.exists() {
@@ -193,9 +201,52 @@ impl BuilderWorkspace {
             app_dir,
             reports_dir,
             install_log,
+            schema_guard_log,
             build_log,
         })
     }
+}
+
+fn schema_guard_cli_path(state: &PersistedState) -> Result<PathBuf> {
+    codex_cli::resolve_cli_path(state.cli_path.as_deref())
+        .context("Codex CLI is required to validate app-server schema during local rebuild")
+}
+
+fn schema_guard_node_program(builder_bundle_root: &Path) -> PathBuf {
+    let managed_node = builder_bundle_root.join("node-runtime/bin/node");
+    if managed_node.is_file() {
+        managed_node
+    } else {
+        PathBuf::from("node")
+    }
+}
+
+async fn run_app_server_schema_guard(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    workspace: &BuilderWorkspace,
+    build_path: &OsString,
+    node_program: &Path,
+) -> Result<()> {
+    let cli_path = schema_guard_cli_path(state)?;
+    state.cli_path = Some(cli_path.clone());
+    state.save(&paths.state_file)?;
+
+    run_and_log(
+        Command::new(node_program)
+            .arg(
+                workspace
+                    .bundle_dir
+                    .join("scripts/app-server-schema-guard.js"),
+            )
+            .arg("--codex-bin")
+            .arg(&cli_path)
+            .arg("--json")
+            .env("PATH", build_path)
+            .current_dir(&workspace.bundle_dir),
+        &workspace.schema_guard_log,
+    )
+    .await
 }
 
 /// Returns the path to the native-package build script appropriate for the running system.
@@ -700,8 +751,16 @@ fi
         };
         let dmg_path = temp.path().join("Codex.dmg");
         fs::write(&dmg_path, b"dmg")?;
+        let fake_codex = temp.path().join("codex");
+        fs::write(&fake_codex, b"#!/bin/sh\necho codex 0.0.0\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&fake_codex, fs::Permissions::from_mode(0o755))?;
+        }
 
         let mut state = PersistedState::new(true);
+        state.cli_path = Some(fake_codex.clone());
         let artifacts = build_update(
             &config,
             &mut state,
@@ -749,6 +808,11 @@ fi
             .workspace_dir
             .join("reports/rebuild-report.json")
             .exists());
+        assert!(artifacts
+            .workspace_dir
+            .join("logs/app-server-schema-guard.log")
+            .exists());
+        assert_eq!(state.cli_path.as_deref(), Some(fake_codex.as_path()));
         assert!(
             is_native_package_file(&artifacts.package_path),
             "expected a native package (.deb, .rpm, or .pkg.tar.zst), got {}",
@@ -918,6 +982,21 @@ fi
         let path = build_command_path(temp.path());
         let directories = std::env::split_paths(&path).collect::<Vec<_>>();
         assert_eq!(directories.first(), Some(&runtime_bin));
+        Ok(())
+    }
+
+    #[test]
+    fn schema_guard_node_program_prefers_packaged_managed_node() -> Result<()> {
+        let temp = tempdir()?;
+        let managed_node = temp.path().join("node-runtime/bin/node");
+        fs::create_dir_all(managed_node.parent().unwrap())?;
+        fs::write(&managed_node, b"bin")?;
+
+        assert_eq!(schema_guard_node_program(temp.path()), managed_node);
+        assert_eq!(
+            schema_guard_node_program(&temp.path().join("missing")),
+            PathBuf::from("node")
+        );
         Ok(())
     }
 

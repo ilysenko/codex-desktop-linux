@@ -75,7 +75,7 @@ screenshots, or private conversation text into parity artifacts.
 | Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` checks explicit status read plus status notification | Server-side rejection can still happen |
 | Remote-control key storage | macOS keychain/Secure Enclave-style boundary | Secret Service via `secret-tool` when available, with `0600` file fallback | `make doctor` reports helper availability and metadata/fallback counts only | Exercise migration across more desktop keyring implementations |
 | Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units | `make doctor`, `make parity-full` | Add suspend/resume and network-change regression tests |
-| Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Schema guard is packaged into update-builder; enforce during background rebuilds after CLI path is deterministic |
+| Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Update-builder runs the app-server schema guard during local rebuilds; keep failure logs actionable |
 | Native packages | Official platform installers | `.deb`, `.rpm`, pacman, AppImage, Nix | GitHub CI, `make package` | Keep distro matrix green |
 | Nix | Not a primary Mac path | Flake outputs and feature variants | GitHub CI Nix job | Keep upstream hash refresh bot green |
 | AppImage | Not a Mac path | Manual self-build | `make appimage` | No resident updater by design |
@@ -109,16 +109,14 @@ screenshots, or private conversation text into parity artifacts.
 ## Work Queue
 
 1. Keep `make parity-full` passing on the installed app.
-2. Add schema-guard execution to updater rebuild validation after confirming the
-   updater service has a deterministic Codex CLI path.
-3. Add safe fixture tests for external agent config import, managed
+2. Add safe fixture tests for external agent config import, managed
    requirements, and MCP server visibility.
-4. Extend the phone/remote-control E2E check beyond host connected state only
+3. Extend the phone/remote-control E2E check beyond host connected state only
    when it can still record only connected/disconnected state and redacted
    booleans.
-5. Expand Secret Service/libsecret key-store coverage across GNOME Keyring,
+4. Expand Secret Service/libsecret key-store coverage across GNOME Keyring,
    KWallet, locked keyrings, and headless sessions.
-6. Build a desktop-environment matrix for GNOME, KDE Plasma, Hyprland, Sway,
+5. Build a desktop-environment matrix for GNOME, KDE Plasma, Hyprland, Sway,
    COSMIC, X11, native Chrome, Flatpak Chrome, Brave, and Chromium.
-7. Research locked-use equivalents separately and require a threat model before
+6. Research locked-use equivalents separately and require a threat model before
    writing any unlock/session-control code.

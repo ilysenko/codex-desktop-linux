@@ -84,18 +84,21 @@ function usage() {
     "  --codex-bin PATH       Codex CLI binary to use (default: codex)",
     "  --schema-dir DIR       Read existing schema bundle instead of generating one",
     "  --keep-output DIR      Generate schema bundle into DIR and keep it",
+    "  --timeout-ms MS        Timeout for schema generation (default: 30000)",
     "  --no-experimental      Omit --experimental when generating schemas",
     "  -h, --help             Show this help",
   ].join("\n");
 }
 
 function parseArgs(argv) {
+  const timeoutMs = Number.parseInt(process.env.CODEX_SCHEMA_GUARD_TIMEOUT_MS || "30000", 10);
   const options = {
     codexBin: process.env.CODEX_PARITY_CODEX_BIN || "codex",
     experimental: true,
     json: false,
     keepOutput: null,
     schemaDir: null,
+    timeoutMs,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -120,6 +123,12 @@ function parseArgs(argv) {
         throw new Error(usage());
       }
       index += 1;
+    } else if (arg === "--timeout-ms") {
+      options.timeoutMs = Number.parseInt(argv[index + 1], 10);
+      if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0) {
+        throw new Error(usage());
+      }
+      index += 1;
     } else if (arg === "--no-experimental") {
       options.experimental = false;
     } else if (arg === "-h" || arg === "--help") {
@@ -128,6 +137,10 @@ function parseArgs(argv) {
     } else {
       throw new Error(`Unknown option: ${arg}\n\n${usage()}`);
     }
+  }
+
+  if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0) {
+    throw new Error(usage());
   }
 
   return options;
@@ -170,7 +183,11 @@ function generateSchemas(options) {
   const result = spawnSync(options.codexBin, args, {
     encoding: "utf8",
     env: { ...process.env, NO_COLOR: "1" },
+    timeout: options.timeoutMs,
   });
+  if (result.error) {
+    throw new Error(`failed to generate app-server JSON schemas: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     const stderr = String(result.stderr || result.stdout || "").trim();
     throw new Error(`failed to generate app-server JSON schemas: ${stderr || `exit ${result.status}`}`);
