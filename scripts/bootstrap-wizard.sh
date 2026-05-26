@@ -373,7 +373,7 @@ window_backend_hint() {
     if [[ "$desktop" == *hyprland* ]]; then
         printf 'Hyprland -> hyprctl backend'
     elif [[ "$desktop" == *sway* ]]; then
-        printf 'Sway -> not explicitly supported by the current i3 backend; verify with Computer Use doctor after install'
+        printf 'Sway -> swaymsg backend'
     elif [[ "$desktop" == *i3* ]]; then
         printf 'i3 -> i3 IPC backend'
     elif [[ "$desktop" == *cosmic* ]]; then

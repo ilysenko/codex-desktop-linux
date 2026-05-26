@@ -10,8 +10,8 @@ claim a backend that has not been tested.
 | KDE Plasma / KWin | KWin DBus scripting | KWin DBus scripting | abs_pointer, portal, ydotool | Implemented |
 | COSMIC Wayland | Bundled COSMIC helper | Bundled COSMIC helper | abs_pointer, portal, ydotool | Implemented |
 | Hyprland | `hyprctl` | `hyprctl` | abs_pointer, portal, ydotool | Implemented |
+| Sway | `swaymsg -t get_tree` | `swaymsg [con_id=...] focus` | abs_pointer, portal, ydotool where available | Implemented; fixture-covered, live validation pending |
 | i3 | `i3-msg` plus `xprop` for PIDs | `i3-msg` | abs_pointer, ydotool | Implemented |
-| Sway | Not yet implemented | Not yet implemented | abs_pointer, portal, ydotool where available | Research target |
 | Generic X11 | Best-effort global input only | Not verified | ydotool | Unsupported for targeted window input |
 
 ## Current Validation
@@ -19,14 +19,14 @@ claim a backend that has not been tested.
 - `codex-computer-use-linux doctor` reports the active backends and preferred
   input/window/screenshot paths.
 - Parser and targeting fixtures live in the Rust test suite under
-  `computer-use-linux/src/windowing/`.
+  `computer-use-linux/src/windowing/`, including Sway `swaymsg` tree parsing
+  and exact container-id targeting.
 - `codex-desktop-doctor` includes the Computer Use doctor summary without
   printing window titles, application names, screenshots, or accessibility tree
   contents.
 
 ## Next Safe Expansion
 
-Sway support should start with a fixture parser for `swaymsg -t get_tree`, then
-add an activation path only if it can focus an exact window id without relying
-on title matching. Until then, Sway remains a research target rather than a
-claimed parity backend.
+Sway now has parser and exact `con_id` targeting coverage. The next step is
+live validation on a real Sway session before treating it as fully exercised in
+the desktop matrix.

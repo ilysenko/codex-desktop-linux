@@ -79,7 +79,7 @@ screenshots, or private conversation text into parity artifacts.
 | External agent import | Detect/import agent artifacts | Detect surface plus temporary CLAUDE.md and MCP config fixture detection present; import remains untouched by smoke | `make parity-smoke`, `make parity-schema` | Add safe no-op import validation only if upstream exposes a dry-run mode |
 | Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper, opt-in redacted live browser/profile validation, and isolated native-host bridge loopback | `make doctor`, `make parity-full`, `make parity-browser-matrix`, `make parity-browser-live` | Add deeper live extension request/turn-completion checks only if they stay redacted |
 | Chrome Flatpak | macOS not applicable | Flatpak host wrapper via `flatpak-spawn --host` | `make doctor` | Keep manifest/path regression tests |
-| Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis | `make parity-full` | Extend desktop-environment matrix |
+| Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis, including fixture-covered Sway `swaymsg` window support | `make parity-full`, Rust windowing tests | Add live desktop-environment matrix validation |
 | Computer Use UI | Native UI | Opt-in Linux UI gate | `make doctor`, manual UI check | Keep opt-in; do not force Statsig-like UI gates globally |
 | Locked Computer Use | Apple authorization plug-in on macOS | Not equivalent | `docs/LOCKED_COMPUTER_USE_RESEARCH.md` | Research only; do not fake remote unlock |
 | Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` checks explicit status read plus status notification | Server-side rejection can still happen |
@@ -129,8 +129,7 @@ screenshots, or private conversation text into parity artifacts.
    matrix.
 5. Add opt-in live service lifecycle checks for suspend/resume and network
    changes once they can run without disrupting an active desktop session.
-6. Expand the desktop-environment matrix in `docs/DESKTOP_ENVIRONMENT_MATRIX.md`
-   with live validation for more GNOME, KDE Plasma, Hyprland, Sway, COSMIC,
-   X11, and browser combinations.
+6. Expand live desktop-environment validation for GNOME, KDE Plasma, Hyprland,
+   Sway, COSMIC, X11, and browser combinations.
 7. Research locked-use equivalents separately and require a threat model before
    writing any unlock/session-control code.
