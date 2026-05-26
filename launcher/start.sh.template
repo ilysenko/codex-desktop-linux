@@ -1382,7 +1382,9 @@ webview_port_is_open() {
     # the 200 ms cap it would enforce.
     local probe_pid kill_pid rc=1 self_pid=$$
     ( trap - EXIT
-      exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" ) 2>/dev/null &
+      exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" || exit 1
+      exec 3>&- 3<&-
+      exit 0 ) 2>/dev/null &
     probe_pid=$!
     # Watchdog: before SIGKILL, verify /proc/<probe>/stat still reports us as
     # the parent. Guards against PID reuse: if the probe has already exited

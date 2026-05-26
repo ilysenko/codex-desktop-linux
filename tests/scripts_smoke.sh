@@ -2013,7 +2013,7 @@ if 'unset CODEX_LINUX_MULTI_LAUNCH' not in source.split('parse_launcher_args() {
     raise SystemExit("launcher must clear inherited internal multi-launch markers before parsing args")
 if '$((CODEX_LINUX_WEBVIEW_PORT + 4))' not in source:
     raise SystemExit("multi-launch default range must cap the default at five ports")
-if '( trap - EXIT\n      exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" )' not in webview_probe_body:
+if '( trap - EXIT\n      exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" || exit 1\n      exec 3>&- 3<&-\n      exit 0 )' not in webview_probe_body:
     raise SystemExit("webview port probe must not inherit the launcher EXIT cleanup trap")
 if '( trap - EXIT\n      sleep 0.2' not in webview_probe_body:
     raise SystemExit("webview port probe watchdog must not inherit the launcher EXIT cleanup trap")
