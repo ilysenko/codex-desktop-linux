@@ -979,6 +979,81 @@ if report["summary"]["fail"] < 1:
 PY
 }
 
+test_desktop_doctor_browser_manifest_coverage() {
+    info "Checking installed doctor browser manifest coverage"
+    local workspace="$TMP_DIR/desktop-doctor-browser-manifests"
+    local doctor="$workspace/codex-doctor-smoke"
+    local report="$workspace/report.json"
+    local home_dir="$workspace/home"
+    local plugin_scripts="$home_dir/.codex/plugins/cache/openai-bundled/chrome/latest/scripts"
+    local host_path="$workspace/extension-host"
+    local host_name="com.example.codextest"
+    local extension_id="abcdefghijklmnopabcdefghijklmnop"
+
+    mkdir -p "$plugin_scripts" "$home_dir/.config/google-chrome/NativeMessagingHosts" \
+        "$home_dir/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts" \
+        "$home_dir/.config/chromium/NativeMessagingHosts" "$workspace/config"
+    sed 's/__PACKAGE_NAME__/codex-doctor-smoke/g' \
+        "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" >"$doctor"
+    chmod +x "$doctor"
+    printf '%s\n' '#!/bin/sh' 'exit 0' >"$host_path"
+    chmod +x "$host_path"
+    cat > "$plugin_scripts/extension-id.json" <<JSON
+{"extensionId":"$extension_id","extensionHostName":"$host_name"}
+JSON
+
+    python3 - "$home_dir" "$host_name" "$extension_id" "$host_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+home = Path(sys.argv[1])
+host_name = sys.argv[2]
+extension_id = sys.argv[3]
+host_path = sys.argv[4]
+manifest = {
+    "name": host_name,
+    "description": "Codex test host",
+    "path": host_path,
+    "type": "stdio",
+    "allowed_origins": [f"chrome-extension://{extension_id}/"],
+}
+for relative in [
+    ".config/google-chrome/NativeMessagingHosts",
+    ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",
+    ".config/chromium/NativeMessagingHosts",
+]:
+    path = home / relative / f"{host_name}.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+PY
+
+    if HOME="$home_dir" XDG_CONFIG_HOME="$workspace/config" \
+        python3 "$doctor" --json --package-name codex-doctor-smoke >"$report"; then
+        fail "doctor should still report failures for a deliberately missing package"
+    fi
+
+    python3 - "$report" <<'PY' || fail "Expected doctor to validate Chrome, Brave, and Chromium manifests"
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+checks = {check["id"]: check for check in report["checks"]}
+expected_pass = {
+    "chrome_manifest_google_chrome",
+    "chrome_manifest_brave_browser",
+    "chrome_manifest_chromium",
+}
+missing = expected_pass - set(checks)
+if missing:
+    raise SystemExit(f"missing checks: {sorted(missing)}")
+bad = {check_id: checks[check_id]["status"] for check_id in expected_pass if checks[check_id]["status"] != "pass"}
+if bad:
+    raise SystemExit(f"expected pass statuses: {bad}")
+if "chrome_manifest_flatpak_chrome" not in checks:
+    raise SystemExit("missing Flatpak Chrome manifest check")
+PY
+}
+
 test_desktop_doctor_node_runtime_probe() {
     info "Checking installed doctor rejects fake Node runtime stubs"
     local workspace="$TMP_DIR/desktop-doctor-node-runtime"
@@ -5094,6 +5169,7 @@ main() {
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_native_shortcut_targets_compose_existing_flows
     test_desktop_doctor_template_smoke
+    test_desktop_doctor_browser_manifest_coverage
     test_desktop_doctor_node_runtime_probe
     test_fedora_dependency_bootstrap_installs_rpmbuild
     test_setup_native_wizard_noninteractive_feature_writer

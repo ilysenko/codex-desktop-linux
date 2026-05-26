@@ -490,7 +490,7 @@ codex-desktop-doctor --json
 make doctor
 ```
 
-The doctor checks installed package files, the optional app service, updater/update-builder files, required ASAR patch markers, Chrome native-messaging manifests, Flatpak Chrome permissions, Computer Use readiness, and remote-mobile feature markers. It reports only sanitized status fields and file paths; it does not print pairing secrets, browser tab contents, cookies, QR data, screenshots, or Computer Use window/application state.
+The doctor checks installed package files, the optional app service, updater/update-builder files, required ASAR patch markers, Chrome/Brave/Chromium native-messaging manifests, Flatpak Chrome permissions, Computer Use readiness, and remote-mobile feature markers. It reports only sanitized status fields and file paths; it does not print pairing secrets, browser tab contents, cookies, QR data, screenshots, or Computer Use window/application state.
 
 For a deeper local runtime smoke test after login, run:
 

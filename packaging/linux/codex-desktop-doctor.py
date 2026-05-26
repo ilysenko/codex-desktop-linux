@@ -497,6 +497,22 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
             "google_chrome",
             required=False,
         )
+        check_manifest_file(
+            checks,
+            home / ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts" / f"{host_name}.json",
+            extension_id,
+            host_name,
+            "brave_browser",
+            required=False,
+        )
+        check_manifest_file(
+            checks,
+            home / ".config/chromium/NativeMessagingHosts" / f"{host_name}.json",
+            extension_id,
+            host_name,
+            "chromium",
+            required=False,
+        )
         flatpak_manifest = home / ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts" / f"{host_name}.json"
         flatpak_installed = command_exists("flatpak") and run(["flatpak", "info", "com.google.Chrome"], timeout=5).returncode == 0
         check_manifest_file(
