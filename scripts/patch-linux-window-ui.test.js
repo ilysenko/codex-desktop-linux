@@ -39,6 +39,7 @@ const {
   applyLinuxMultiInstanceBootstrapPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueBackgroundPatch,
+  applyLinuxFastModeModelGuardPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxReadyToShowWindowStatePatch,
   applyLinuxSetIconPatch,
@@ -513,6 +514,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "opaque-window-default-general-settings",
     "opaque-window-default-webview-index",
     "opaque-window-default-resolved-theme",
+    "linux-fast-mode-model-guard",
     "subagent-nickname-metadata-shape",
     "linux-computer-use-ui-availability",
     "linux-computer-use-install-flow",
@@ -1098,6 +1100,16 @@ test("patches drifted comment preload screenshot anchor helper names", () => {
   );
   assert.doesNotMatch(patched, /\bWd\(/);
   assert.doesNotMatch(patched, /\bS\.width\b/);
+});
+
+test("guards fast-mode model tier lookup when serviceTiers is missing", () => {
+  const source =
+    "function m(e){return e.serviceTiers.length>0||e.additionalSpeedTiers?.includes(u)===!0}";
+
+  const patched = applyPatchTwice(applyLinuxFastModeModelGuardPatch, source);
+
+  assert.match(patched, /\(e\?\.serviceTiers\?\.length\?\?0\)>0/);
+  assert.doesNotMatch(patched, /e\.serviceTiers\.length/);
 });
 
 test("warns when a matched webview opaque bundle has no known insertion point", () => {
