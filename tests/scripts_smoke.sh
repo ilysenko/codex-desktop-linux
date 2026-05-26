@@ -152,6 +152,7 @@ test_desktop_parity_smoke_script_syntax() {
     node --check "$REPO_DIR/scripts/app-server-schema-guard.js" >/dev/null
     node --check "$REPO_DIR/scripts/desktop-parity-smoke.js" >/dev/null
     node --check "$REPO_DIR/scripts/browser-matrix-smoke.js" >/dev/null
+    node --check "$REPO_DIR/scripts/service-lifecycle-smoke.js" >/dev/null
     python3 -m py_compile "$REPO_DIR/scripts/secret-service-matrix-smoke.py"
     bash -n "$REPO_DIR/scripts/desktop-parity-full.sh"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "--strict"
@@ -165,6 +166,7 @@ test_desktop_parity_smoke_script_syntax() {
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "remote redacted e2e summary"
     assert_contains "$REPO_DIR/Makefile" "parity-browser-matrix"
     assert_contains "$REPO_DIR/Makefile" "parity-secret-service-live"
+    assert_contains "$REPO_DIR/Makefile" "parity-services"
 
     node - "$REPO_DIR/scripts/desktop-parity-smoke.js" <<'NODE' \
         || fail "Expected desktop parity smoke redactor to cover quoted JSON fields"
@@ -982,6 +984,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local parity_browser_matrix_log="$TMP_DIR/make-parity-browser-matrix.log"
     local parity_browser_live_log="$TMP_DIR/make-parity-browser-live.log"
     local parity_secret_service_live_log="$TMP_DIR/make-parity-secret-service-live.log"
+    local parity_services_log="$TMP_DIR/make-parity-services.log"
     local parity_full_log="$TMP_DIR/make-parity-full.log"
     local parity_strict_log="$TMP_DIR/make-parity-strict.log"
 
@@ -1027,11 +1030,39 @@ test_native_shortcut_targets_compose_existing_flows() {
     assert_contains "$parity_secret_service_live_log" 'CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1'
     assert_contains "$parity_secret_service_live_log" 'scripts/secret-service-matrix-smoke.py --live'
 
+    make -n -C "$REPO_DIR" parity-services >"$parity_services_log"
+    assert_contains "$parity_services_log" 'scripts/service-lifecycle-smoke.js'
+
     make -n -C "$REPO_DIR" parity-full >"$parity_full_log"
     assert_contains "$parity_full_log" 'scripts/desktop-parity-full.sh'
 
     make -n -C "$REPO_DIR" parity-strict >"$parity_strict_log"
     assert_contains "$parity_strict_log" 'CODEX_PARITY_STRICT=1 bash scripts/desktop-parity-full.sh'
+}
+
+test_service_lifecycle_smoke() {
+    info "Checking service lifecycle parity smoke"
+    local report="$TMP_DIR/service-lifecycle-smoke.json"
+
+    node "$REPO_DIR/scripts/service-lifecycle-smoke.js" --json >"$report"
+    node - "$report" <<'NODE'
+const fs = require("node:fs");
+const assert = require("node:assert/strict");
+
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+assert.equal(report.status, "pass");
+assert.equal(report.counts.fail, 0);
+const names = new Set(report.checks.map((check) => check.name));
+for (const expected of [
+  "desktop_app_service_session_lifecycle",
+  "updater_service_network_lifecycle",
+  "launcher_environment_and_update_probe",
+  "parity_service_status_gate",
+  "service_lifecycle_docs",
+]) {
+  assert.equal(names.has(expected), true, `missing check ${expected}`);
+}
+NODE
 }
 
 test_desktop_doctor_template_smoke() {
@@ -5830,6 +5861,7 @@ main() {
     test_make_build_app_uses_installer_download_flow_by_default
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_native_shortcut_targets_compose_existing_flows
+    test_service_lifecycle_smoke
     test_desktop_doctor_template_smoke
     test_desktop_doctor_browser_manifest_coverage
     test_desktop_doctor_node_runtime_probe

@@ -529,6 +529,7 @@ For a broader local parity pass, run:
 ```bash
 make parity-schema
 make parity-browser-matrix
+make parity-services
 make parity-full
 ```
 
@@ -551,6 +552,12 @@ profile-root presence, profile counts, extension-setting counts, and an
 isolated native-host bridge loopback. They do not print browser profile names,
 native-host socket paths, native-host binary paths, tab state, URLs, cookies,
 history, or profile paths.
+`make parity-services` checks the committed systemd user-service lifecycle
+markers without starting services: the app unit stays bound to
+`graphical-session.target`, the updater declares `After=` / `Wants=` for
+`network-online.target` and restarts on failure, the packaged launcher imports
+the desktop session environment before starting the updater, and launch-time
+update checks run as a collected one-shot when systemd is available.
 `make parity-full` composes the
 installed doctor, `systemd --user` service state, app-server schema guard,
 Computer Use doctor, and the non-sensitive app-server smoke. The smoke also

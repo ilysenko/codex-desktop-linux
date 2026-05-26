@@ -35,6 +35,7 @@ make doctor
 make parity-schema
 make parity-browser-matrix
 make parity-browser-live
+make parity-services
 make parity-smoke
 make parity-full
 ```
@@ -83,7 +84,7 @@ screenshots, or private conversation text into parity artifacts.
 | Locked Computer Use | Apple authorization plug-in on macOS | Not equivalent | `docs/LOCKED_COMPUTER_USE_RESEARCH.md` | Research only; do not fake remote unlock |
 | Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` checks explicit status read plus status notification | Server-side rejection can still happen |
 | Remote-control key storage | macOS keychain/Secure Enclave-style boundary | App-id scoped Secret Service via `secret-tool` when available, with `0600` file fallback and sanitized locked/provider/headless doctor classifications | `make doctor` reports helper availability, coarse canary issue kind, and metadata/fallback counts only; `make parity-secret-service-live` runs an opt-in redacted live keyring canary | Exercise the live canary across more desktop keyring implementations |
-| Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units | `make doctor`, `make parity-full` | Add suspend/resume and network-change regression tests |
+| Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units with static lifecycle marker coverage | `make doctor`, `make parity-services`, `make parity-full` | Add live suspend/resume and network-change regression tests |
 | Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Update-builder runs the app-server schema guard during local rebuilds; keep failure logs actionable |
 | Native packages | Official platform installers | `.deb`, `.rpm`, pacman, AppImage, Nix | GitHub CI, `make package` | Keep distro matrix green |
 | Nix | Not a primary Mac path | Flake outputs and feature variants | GitHub CI Nix job | Keep upstream hash refresh bot green |
@@ -126,8 +127,10 @@ screenshots, or private conversation text into parity artifacts.
 4. Run `make parity-secret-service-live` across GNOME Keyring, KWallet, locked
    keyrings, and headless sessions, and capture only the redacted pass/warn
    matrix.
-5. Expand the desktop-environment matrix in `docs/DESKTOP_ENVIRONMENT_MATRIX.md`
+5. Add opt-in live service lifecycle checks for suspend/resume and network
+   changes once they can run without disrupting an active desktop session.
+6. Expand the desktop-environment matrix in `docs/DESKTOP_ENVIRONMENT_MATRIX.md`
    with live validation for more GNOME, KDE Plasma, Hyprland, Sway, COSMIC,
    X11, and browser combinations.
-6. Research locked-use equivalents separately and require a threat model before
+7. Research locked-use equivalents separately and require a threat model before
    writing any unlock/session-control code.
