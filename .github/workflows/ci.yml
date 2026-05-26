@@ -108,7 +108,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      NIX_CONFIG: experimental-features = nix-command flakes
+      NIX_CONFIG: |
+        experimental-features = nix-command flakes
+        max-jobs = 1
     steps:
       - uses: actions/checkout@v4
 
@@ -132,14 +134,21 @@ jobs:
 
       - name: Build Nix package outputs
         run: |
-          nix build \
-            .#codex-desktop \
-            .#codex-desktop-computer-use-ui \
-            .#codex-desktop-remote-mobile-control \
-            .#codex-desktop-computer-use-ui-remote-mobile-control \
-            .#installer \
-            --no-link \
-            --print-build-logs
+          set -euo pipefail
+          outputs=(
+            .#codex-desktop
+            .#codex-desktop-computer-use-ui
+            .#codex-desktop-remote-mobile-control
+            .#codex-desktop-computer-use-ui-remote-mobile-control
+            .#installer
+          )
+          for output in "${outputs[@]}"; do
+            nix build "$output" --no-link --print-build-logs --max-jobs 1
+            store_usage="$(df -P /nix/store | awk 'NR == 2 { gsub("%", "", $5); print $5 }')"
+            if [ "${store_usage:-0}" -ge 85 ]; then
+              nix store gc || true
+            fi
+          done
 
   package-rpm:
     name: Build RPM Package
