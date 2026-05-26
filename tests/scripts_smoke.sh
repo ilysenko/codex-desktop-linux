@@ -147,6 +147,11 @@ test_common_helper_sourcing() {
     ensure_file_exists "$probe_file" "probe file"
 }
 
+test_desktop_parity_smoke_script_syntax() {
+    info "Checking desktop parity smoke script syntax"
+    node --check "$REPO_DIR/scripts/desktop-parity-smoke.js" >/dev/null
+}
+
 test_package_payload_permission_normalization() {
     info "Checking package payload permission normalization"
     local root="$TMP_DIR/package-permissions"
@@ -4948,6 +4953,7 @@ EOF
 
 main() {
     test_common_helper_sourcing
+    test_desktop_parity_smoke_script_syntax
     test_package_payload_permission_normalization
     test_deb_builder_smoke
     test_update_builder_preserves_enabled_linux_features_config

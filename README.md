@@ -492,6 +492,20 @@ make doctor
 
 The doctor checks installed package files, the optional app service, updater/update-builder files, required ASAR patch markers, Chrome native-messaging manifests, Flatpak Chrome permissions, Computer Use readiness, and remote-mobile feature markers. It reports only sanitized status fields and file paths; it does not print pairing secrets, browser tab contents, cookies, QR data, screenshots, or Computer Use window/application state.
 
+For a deeper local runtime smoke test after login, run:
+
+```bash
+make parity-smoke
+```
+
+`make parity-smoke` starts `codex app-server --remote-control`, probes read-only app-server APIs for threads, plugins, apps, MCP status, skills, models, config, external-agent detection, and a sandboxed command, then prints only sanitized counts and booleans. It does not print thread names, account fields, browser state, QR data, screenshots, cookies, tokens, or remote-control identifiers. To include optional real Electron UI presence checks, launch a separate debug-port instance yourself and pass its local CDP origin:
+
+```bash
+CODEX_DESKTOP_CDP_ORIGIN=http://127.0.0.1:9334 make parity-smoke
+```
+
+The CDP path only checks for generic UI controls and intentionally does not click or save the mobile pairing flow.
+
 Native packages also install an opt-in app unit at `/usr/lib/systemd/user/codex-desktop.service`:
 
 ```bash
@@ -599,6 +613,7 @@ After changing installer, packaging, or updater logic:
 ```bash
 bash -n install.sh scripts/lib/*.sh launcher/start.sh.template scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/build-appimage.sh scripts/install-deps.sh
 node --check scripts/patch-linux-window-ui.js
+node --check scripts/desktop-parity-smoke.js
 for file in scripts/patches/*.js; do node --check "$file"; done
 node --check scripts/ci/validate-patch-report.js
 node --test scripts/patch-linux-window-ui.test.js
