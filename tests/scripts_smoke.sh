@@ -1576,7 +1576,13 @@ test_managed_node_runtime_source_install() {
         cat > "$source_dir/bin/$binary" <<'SCRIPT'
 #!/usr/bin/env bash
 case "$(basename "$0")" in
-    node) echo v22.22.2 ;;
+    node)
+        case "${1:-}" in
+            -e) printf '%s' 'codex-node-runtime-ok:22.22.2' ;;
+            -v) echo v22.22.2 ;;
+            *) echo v22.22.2 ;;
+        esac
+        ;;
     *) echo 10.9.7 ;;
 esac
 SCRIPT
@@ -1600,6 +1606,62 @@ SCRIPT
     ) > "$workspace/output.log" 2>&1
 
     assert_file_exists "$install_dir/resources/node-runtime/bin/node"
+    assert_contains "$workspace/output.log" "$install_dir/resources/node-runtime/bin/node"
+    assert_contains "$workspace/output.log" "v22.22.2"
+}
+
+test_managed_node_runtime_rejects_version_only_stub() {
+    info "Checking managed Node.js runtime rejects version-only stubs"
+    local workspace="$TMP_DIR/managed-node-runtime-stub"
+    local source_dir="$workspace/source"
+    local install_dir="$workspace/install"
+
+    mkdir -p "$source_dir/bin" "$install_dir/resources/node-runtime/bin"
+    for binary in node npm npx; do
+        cat > "$install_dir/resources/node-runtime/bin/$binary" <<'SCRIPT'
+#!/usr/bin/env bash
+case "$(basename "$0")" in
+    node) echo v22.22.2 ;;
+    *) echo 10.9.7 ;;
+esac
+SCRIPT
+        chmod +x "$install_dir/resources/node-runtime/bin/$binary"
+    done
+
+    for binary in node npm npx; do
+        cat > "$source_dir/bin/$binary" <<'SCRIPT'
+#!/usr/bin/env bash
+case "$(basename "$0")" in
+    node)
+        case "${1:-}" in
+            -e) printf '%s' 'codex-node-runtime-ok:22.22.2' ;;
+            -v) echo v22.22.2 ;;
+            *) echo v22.22.2 ;;
+        esac
+        ;;
+    *) echo 10.9.7 ;;
+esac
+SCRIPT
+        chmod +x "$source_dir/bin/$binary"
+    done
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        WORK_DIR="$workspace/work"
+        ARCH="x86_64"
+        CODEX_MANAGED_NODE_SOURCE="$source_dir"
+        mkdir -p "$WORK_DIR"
+        info() { echo "[INFO] $*" >&2; }
+        warn() { echo "[WARN] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/node-runtime.sh"
+        ensure_managed_node_runtime "$install_dir/resources/node-runtime"
+        command -v node
+        node -v
+    ) > "$workspace/output.log" 2>&1
+
+    assert_contains "$workspace/output.log" "Managed Node.js runtime copied from $source_dir"
     assert_contains "$workspace/output.log" "$install_dir/resources/node-runtime/bin/node"
     assert_contains "$workspace/output.log" "v22.22.2"
 }
@@ -4852,6 +4914,7 @@ main() {
     test_installer_keeps_electron_fallback_for_bad_metadata
     test_port_validation_rejects_oversized_numeric_values
     test_managed_node_runtime_source_install
+    test_managed_node_runtime_rejects_version_only_stub
     test_better_sqlite3_electron_42_source_patch
     test_v8_nullptr_workaround_skips_when_included_probe_succeeds
     test_v8_nullptr_workaround_wraps_when_included_probe_fails
