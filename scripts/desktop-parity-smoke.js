@@ -140,6 +140,42 @@ function createSkillFixture() {
   return fixtureDir;
 }
 
+function createProjectConfigFixture() {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-config-"));
+  fs.mkdirSync(path.join(fixtureDir, ".git"), { recursive: true });
+  fs.mkdirSync(path.join(fixtureDir, ".codex"), { recursive: true });
+  fs.writeFileSync(
+    path.join(fixtureDir, ".codex", "config.toml"),
+    [
+      "desktop_parity_fixture = true",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  return fixtureDir;
+}
+
+function createExternalAgentFixture() {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-external-agent-"));
+  fs.mkdirSync(path.join(fixtureDir, ".git"), { recursive: true });
+  fs.writeFileSync(
+    path.join(fixtureDir, "CLAUDE.md"),
+    [
+      "# Codex Parity External Agent Fixture",
+      "",
+      "This temporary file verifies safe migration detection only.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(fixtureDir, ".mcp.json"),
+    JSON.stringify({ mcpServers: { "codex-parity-mcp": { command: "true" } } }, null, 2) + "\n",
+    "utf8",
+  );
+  return fixtureDir;
+}
+
 function removeFixture(fixtureDir) {
   if (fixtureDir) {
     fs.rmSync(fixtureDir, { recursive: true, force: true });
@@ -341,6 +377,16 @@ function summarizeConfig(result) {
   };
 }
 
+function hasProjectConfigLayer(result, fixtureDir) {
+  const layers = Array.isArray(result.layers) ? result.layers : [];
+  return layers.some((layer) => (
+    hasObject(layer) &&
+    hasObject(layer.name) &&
+    layer.name.type === "project" &&
+    layer.name.dotCodexFolder === path.join(fixtureDir, ".codex")
+  ));
+}
+
 function summarizeRemoteStatus(params) {
   if (!hasObject(params)) {
     return null;
@@ -509,6 +555,46 @@ async function runAppServerSmoke(options) {
       record("repo skill fixture", "fail", { error: summarizeErrorText(error.message) });
     } finally {
       removeFixture(skillFixtureDir);
+    }
+
+    const configFixtureDir = createProjectConfigFixture();
+    try {
+      const result = await client.request("config/read", { cwd: configFixtureDir, includeLayers: true });
+      const projectLayerPresent = hasProjectConfigLayer(result, configFixtureDir);
+      record("project config fixture", projectLayerPresent ? "pass" : "fail", {
+        hasConfig: hasObject(result.config),
+        layerCount: safeArrayLength(result.layers),
+        projectLayerPresent,
+      });
+    } catch (error) {
+      record("project config fixture", "fail", { error: summarizeErrorText(error.message) });
+    } finally {
+      removeFixture(configFixtureDir);
+    }
+
+    const externalAgentFixtureDir = createExternalAgentFixture();
+    try {
+      const result = await client.request("externalAgentConfig/detect", {
+        includeHome: false,
+        cwds: [externalAgentFixtureDir],
+      });
+      const items = Array.isArray(result.items) ? result.items : [];
+      const itemTypes = new Set(items.map((item) => item && item.itemType).filter(Boolean));
+      const mcpItem = items.find((item) => item && item.itemType === "MCP_SERVER_CONFIG");
+      const mcpNames = Array.isArray(mcpItem?.details?.mcpServers)
+        ? mcpItem.details.mcpServers.map((server) => server && server.name).filter(Boolean)
+        : [];
+      const agentsMdDetected = itemTypes.has("AGENTS_MD");
+      const mcpDetected = itemTypes.has("MCP_SERVER_CONFIG") && mcpNames.includes("codex-parity-mcp");
+      record("external agent fixture detect", agentsMdDetected && mcpDetected ? "pass" : "fail", {
+        itemCount: items.length,
+        agentsMdDetected,
+        mcpDetected,
+      });
+    } catch (error) {
+      record("external agent fixture detect", "fail", { error: summarizeErrorText(error.message) });
+    } finally {
+      removeFixture(externalAgentFixtureDir);
     }
 
     const commandResult = await client.request("command/exec", {

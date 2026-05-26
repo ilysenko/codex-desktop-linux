@@ -156,6 +156,8 @@ test_desktop_parity_smoke_script_syntax() {
     assert_contains "$REPO_DIR/scripts/desktop-parity-full.sh" "CODEX_PARITY_STRICT"
     assert_contains "$REPO_DIR/scripts/desktop-parity-full.sh" "CODEX_PARITY_STRICT_REMOTE"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity-skill"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity-config"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity-mcp"
 }
 
 test_package_payload_permission_normalization() {

@@ -72,8 +72,8 @@ screenshots, or private conversation text into parity artifacts.
 | Apps/connectors | Built-in app support | App list surface present | `make parity-smoke` | Account/workspace gating remains server-side |
 | MCP servers | Built-in app support | MCP status API present | `make parity-smoke` | Add fixture MCP server test later |
 | Skills | Built-in app support | Skills list API plus repo-scoped fixture discovery present | `make parity-smoke` | Add skill enable/disable fixture later |
-| Config and requirements | User and managed config | Config/read and requirements/read present | `make parity-smoke`, `make parity-schema` | Add managed requirements fixture later |
-| External agent import | Detect/import agent artifacts | Detect surface present | `make parity-smoke`, `make parity-schema` | Build safe migration smoke around temporary fixtures |
+| Config and requirements | User, repo, and managed config | Config/read validates a repo-scoped project config fixture; requirements/read surface is present | `make parity-smoke`, `make parity-schema` | Add managed requirements fixture later |
+| External agent import | Detect/import agent artifacts | Detect surface plus temporary CLAUDE.md and MCP config fixture detection present; import remains untouched by smoke | `make parity-smoke`, `make parity-schema` | Add safe no-op import validation only if upstream exposes a dry-run mode |
 | Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper | `make doctor`, `make parity-full` | Add browser matrix across native/Flatpak browsers |
 | Chrome Flatpak | macOS not applicable | Flatpak host wrapper via `flatpak-spawn --host` | `make doctor` | Keep manifest/path regression tests |
 | Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis | `make parity-full` | Extend desktop-environment matrix |
@@ -116,8 +116,7 @@ screenshots, or private conversation text into parity artifacts.
 ## Work Queue
 
 1. Keep `make parity-full` passing on the installed app.
-2. Add safe fixture tests for external agent config import, managed
-   requirements, and MCP server visibility.
+2. Add safe fixture tests for managed requirements and MCP server visibility.
 3. Extend the phone/remote-control E2E check beyond host connected state only
    when it can still record only connected/disconnected state and redacted
    booleans.

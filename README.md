@@ -517,8 +517,10 @@ make parity-full
 a temporary directory and verifies the protocol methods and notifications used
 by the Linux parity probes are still present. `make parity-full` composes the
 installed doctor, `systemd --user` service state, app-server schema guard,
-Computer Use doctor, and the non-sensitive app-server smoke. It summarizes only
-counts, booleans, and local readiness states.
+Computer Use doctor, and the non-sensitive app-server smoke. The smoke also
+uses temporary repo fixtures for skill discovery, project config layering, and
+external-agent detection. It summarizes only counts, booleans, and local
+readiness states.
 
 If the host is enrolled for experimental mobile remote control and you want the
 full run to require connected remote-control state:
