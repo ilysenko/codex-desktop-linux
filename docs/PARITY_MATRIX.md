@@ -72,7 +72,7 @@ screenshots, or private conversation text into parity artifacts.
 | Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis | `make parity-full` | Extend desktop-environment matrix |
 | Computer Use UI | Native UI | Opt-in Linux UI gate | `make doctor`, manual UI check | Keep opt-in; do not force Statsig-like UI gates globally |
 | Locked Computer Use | Apple authorization plug-in on macOS | Not equivalent | Not implemented | Research only; do not fake remote unlock |
-| Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` | Server-side rejection can still happen |
+| Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` checks explicit status read plus status notification | Server-side rejection can still happen |
 | Remote-control key storage | macOS keychain/Secure Enclave-style boundary | File-backed `0600` key material today | `make doctor` reports presence/mode only | Add Secret Service/libsecret backend with file fallback |
 | Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units | `make doctor`, `make parity-full` | Add suspend/resume and network-change regression tests |
 | Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Add schema guard to updater rebuild validation |
@@ -113,8 +113,9 @@ screenshots, or private conversation text into parity artifacts.
    is cheap enough for every auto-update.
 3. Add safe fixture tests for external agent config import, managed
    requirements, and MCP server visibility.
-4. Add a phone/remote-control E2E check that records only connected/disconnected
-   state and redacted booleans.
+4. Extend the phone/remote-control E2E check beyond host connected state only
+   when it can still record only connected/disconnected state and redacted
+   booleans.
 5. Add a Secret Service/libsecret key store for Linux remote-control device keys,
    with file fallback and migration tests.
 6. Build a desktop-environment matrix for GNOME, KDE Plasma, Hyprland, Sway,

@@ -81,6 +81,19 @@ function redactText(value) {
     .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/g, "<jwt-redacted>");
 }
 
+function summarizeErrorText(value) {
+  const text = redactText(value).replace(/\s+/g, " ").trim();
+  const httpStatus = text.match(/Request failed with status\s+(\d+)\s*([^:<]*)/i);
+  if (httpStatus) {
+    const reason = httpStatus[2]?.trim();
+    return `request failed with status ${httpStatus[1]}${reason ? ` ${reason}` : ""}`;
+  }
+  if (/<html|<!doctype|challenge-platform|cloudflare/i.test(text)) {
+    return "HTML error response redacted";
+  }
+  return text.slice(0, 300) || "unknown error";
+}
+
 function safeArrayLength(value) {
   return Array.isArray(value) ? value.length : null;
 }
@@ -140,7 +153,7 @@ class AppServerClient {
       this.pending.delete(message.id);
       clearTimeout(pending.timer);
       if (message.error) {
-        pending.reject(new Error(`${pending.method}: ${message.error.message || "JSON-RPC error"}`));
+        pending.reject(new Error(`${pending.method}: ${summarizeErrorText(message.error.message || "JSON-RPC error")}`));
       } else {
         pending.resolve(message.result ?? {});
       }
@@ -407,12 +420,21 @@ async function runAppServerSmoke(options) {
     ];
 
     for (const probe of probes) {
-      const result = await client.request(probe.method, probe.params);
-      const details = probe.summarize(result);
-      if (probe.method === "plugin/list" && details.loadErrors > 0) {
-        record(probe.name, "fail", details);
-      } else {
-        record(probe.name, "pass", details);
+      try {
+        const result = await client.request(probe.method, probe.params);
+        const details = probe.summarize(result);
+        if (probe.method === "plugin/list" && details.loadErrors > 0) {
+          record(probe.name, "fail", details);
+        } else {
+          record(probe.name, "pass", details);
+        }
+      } catch (error) {
+        const errorSummary = summarizeErrorText(error.message);
+        const status =
+          probe.method === "app/list" && /request failed with status (403|429|5\d\d)/.test(errorSummary)
+            ? "info"
+            : "fail";
+        record(probe.name, status, { error: errorSummary });
       }
     }
 
@@ -432,6 +454,16 @@ async function runAppServerSmoke(options) {
       stderrEmpty: commandResult.stderr === "",
       stdoutMatchesSentinel: commandResult.stdout === `${COMMAND_SENTINEL}\n`,
     });
+
+    const remoteStatusReadResult = await client.request("remoteControl/status/read", {});
+    const remoteStatusRead = summarizeRemoteStatus(remoteStatusReadResult);
+    if (remoteStatusRead) {
+      const status =
+        options.requireRemoteConnected && remoteStatusRead.status !== "connected" ? "fail" : "pass";
+      record("remote control status read", status, remoteStatusRead);
+    } else {
+      record("remote control status read", "fail", { observed: false });
+    }
 
     const remoteStatusNotification = await waitForRemoteStatus(client, options.requireRemoteConnected);
     const remoteStatus = summarizeRemoteStatus(remoteStatusNotification);

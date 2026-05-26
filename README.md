@@ -498,7 +498,7 @@ For a deeper local runtime smoke test after login, run:
 make parity-smoke
 ```
 
-`make parity-smoke` starts `codex app-server --remote-control`, probes read-only app-server APIs for threads, plugins, apps, MCP status, skills, models, config, external-agent detection, and a sandboxed command, then prints only sanitized counts and booleans. It does not print thread names, account fields, browser state, QR data, screenshots, cookies, tokens, or remote-control identifiers. To include optional real Electron UI presence checks, launch a separate debug-port instance yourself and pass its local CDP origin:
+`make parity-smoke` starts `codex app-server --remote-control`, probes read-only app-server APIs for threads, plugins, apps, MCP status, skills, models, config, external-agent detection, a sandboxed command, and remote-control status through both an explicit status read and a status notification, then prints only sanitized counts and booleans. Transient app directory HTTP errors are summarized without response bodies. It does not print thread names, account fields, browser state, QR data, screenshots, cookies, tokens, or remote-control identifiers. To include optional real Electron UI presence checks, launch a separate debug-port instance yourself and pass its local CDP origin:
 
 ```bash
 CODEX_DESKTOP_CDP_ORIGIN=http://127.0.0.1:9334 make parity-smoke
