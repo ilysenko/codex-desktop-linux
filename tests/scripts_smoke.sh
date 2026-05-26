@@ -1017,6 +1017,7 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" parity-browser-live >"$parity_browser_live_log"
     assert_contains "$parity_browser_live_log" 'CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1'
+    assert_contains "$parity_browser_live_log" 'CODEX_DESKTOP_LIVE_BROWSER_BRIDGE_VALIDATION=1'
     assert_contains "$parity_browser_live_log" '/usr/bin/codex-desktop-doctor'
 
     make -n -C "$REPO_DIR" parity-full >"$parity_full_log"
@@ -1075,6 +1076,16 @@ test_desktop_doctor_browser_manifest_coverage() {
     local host_path="$workspace/extension-host"
     local host_name="com.example.codextest"
     local extension_id="abcdefghijklmnopabcdefghijklmnop"
+    local extension_host_arch=""
+    local bridge_host=""
+
+    case "$(uname -m)" in
+        x86_64|amd64) extension_host_arch="x64" ;;
+        aarch64|arm64) extension_host_arch="arm64" ;;
+    esac
+    if [ -n "$extension_host_arch" ]; then
+        bridge_host="$home_dir/.codex/plugins/cache/openai-bundled/chrome/latest/extension-host/linux/$extension_host_arch/extension-host"
+    fi
 
     mkdir -p "$plugin_scripts" "$home_dir/.config/google-chrome/NativeMessagingHosts" \
         "$home_dir/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts" \
@@ -1092,6 +1103,65 @@ test_desktop_doctor_browser_manifest_coverage() {
     cat > "$plugin_scripts/extension-id.json" <<JSON
 {"extensionId":"$extension_id","extensionHostName":"$host_name"}
 JSON
+    if [ -n "$bridge_host" ]; then
+        mkdir -p "$(dirname "$bridge_host")"
+        cat > "$bridge_host" <<'PYHOST'
+#!/usr/bin/env python3
+import json
+import os
+import socket
+import struct
+import sys
+
+def read_frame(stream):
+    header = stream.read(4)
+    if len(header) != 4:
+        raise SystemExit(1)
+    length = struct.unpack("=I", header)[0]
+    body = stream.read(length)
+    if len(body) != length:
+        raise SystemExit(1)
+    return json.loads(body.decode("utf-8"))
+
+def write_frame(stream, message):
+    body = json.dumps(message, separators=(",", ":")).encode("utf-8")
+    stream.write(struct.pack("=I", len(body)))
+    stream.write(body)
+    stream.flush()
+
+socket_dir = os.environ["CODEX_BROWSER_USE_SOCKET_DIR"]
+os.makedirs(socket_dir, mode=0o700, exist_ok=True)
+socket_path = os.path.join(socket_dir, "extension-fake.sock")
+try:
+    os.unlink(socket_path)
+except FileNotFoundError:
+    pass
+
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(socket_path)
+os.chmod(socket_path, 0o600)
+server.listen(1)
+client, _ = server.accept()
+client_file = client.makefile("rwb", buffering=0)
+
+ping = read_frame(client_file)
+write_frame(client_file, {"jsonrpc": "2.0", "id": ping.get("id"), "result": "pong"})
+
+chrome_request = read_frame(sys.stdin.buffer)
+routed = dict(chrome_request)
+routed["id"] = "doctor-client-request"
+write_frame(client_file, routed)
+
+client_response = read_frame(client_file)
+returned = dict(client_response)
+returned["id"] = chrome_request.get("id")
+write_frame(sys.stdout.buffer, returned)
+
+client.close()
+server.close()
+PYHOST
+        chmod +x "$bridge_host"
+    fi
 
     python3 - "$home_dir" "$host_name" "$extension_id" "$host_path" <<'PY'
 import json
@@ -1142,11 +1212,19 @@ if bad:
     raise SystemExit(f"expected pass statuses: {bad}")
 if "chrome_manifest_flatpak_chrome" not in checks:
     raise SystemExit("missing Flatpak Chrome manifest check")
+host_binary = checks.get("chrome_native_host_binary")
+if host_binary is None:
+    raise SystemExit("missing Chrome native host binary check")
+if host_binary.get("hostArch") in {"x64", "arm64"} and host_binary["status"] != "pass":
+    raise SystemExit(f"expected native host binary pass, got {host_binary}")
 if "chrome_live_profile_validation" in checks:
     raise SystemExit("live profile validation should be opt-in")
+if "chrome_native_host_bridge_loopback" in checks:
+    raise SystemExit("native host bridge loopback should be opt-in")
 PY
 
-    if HOME="$home_dir" XDG_CONFIG_HOME="$workspace/config" CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1 \
+    if HOME="$home_dir" XDG_CONFIG_HOME="$workspace/config" \
+        CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1 CODEX_DESKTOP_LIVE_BROWSER_BRIDGE_VALIDATION=1 \
         python3 "$doctor" --json --package-name codex-doctor-smoke >"$live_report"; then
         fail "doctor should still report failures for a deliberately missing package"
     fi
@@ -1164,10 +1242,28 @@ if (!live) {
 if (live.status !== "pass" || live.profileCount !== 4 || live.profilesWithExtensionCount !== 1 || live.anyProfileEnabled !== true) {
   throw new Error(`unexpected live summary: ${JSON.stringify(live)}`);
 }
-const liveText = JSON.stringify(live);
+const bridge = checks.chrome_native_host_bridge_loopback;
+if (!bridge) {
+  throw new Error("missing chrome_native_host_bridge_loopback");
+}
+if (
+  bridge.status !== "pass" ||
+  bridge.socketCreated !== true ||
+  bridge.clientPing !== true ||
+  bridge.chromeToClient !== true ||
+  bridge.clientToChrome !== true
+) {
+  throw new Error(`unexpected bridge summary: ${JSON.stringify(bridge)}`);
+}
+const liveText = JSON.stringify({live, bridge});
 for (const forbidden of [homeDir, "Default", "Profile 1", "abcdefghijklmnopabcdefghijklmnop", "com.example.codextest"]) {
   if (liveText.includes(forbidden)) {
     throw new Error(`live summary leaked ${forbidden}: ${liveText}`);
+  }
+}
+for (const forbidden of ["chrome-extension://", "doctor-client-request", "codexDoctorBridgeProbe", "extension-fake.sock"]) {
+  if (liveText.includes(forbidden)) {
+    throw new Error(`bridge summary leaked ${forbidden}: ${liveText}`);
   }
 }
 NODE

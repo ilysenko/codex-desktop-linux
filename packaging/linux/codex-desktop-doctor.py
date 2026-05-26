@@ -6,12 +6,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import re
+import select
 import secrets
 import shutil
 import socket
+import struct
 import subprocess
 import sys
+import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -181,6 +186,185 @@ def run_json_script(script: Path, node: Path | None = None) -> tuple[int, dict[s
             data = None
     detail = (result.stderr or result.stdout).strip()
     return result.returncode, data, detail
+
+
+def write_native_frame_fd(fd: int, message: dict[str, Any]) -> None:
+    body = json.dumps(message, separators=(",", ":")).encode("utf-8")
+    os.write(fd, struct.pack("=I", len(body)))
+    os.write(fd, body)
+
+
+def read_exact_fd(fd: int, count: int, timeout: float) -> bytes:
+    deadline = time.monotonic() + timeout
+    chunks: list[bytes] = []
+    remaining = count
+    while remaining > 0:
+        wait = deadline - time.monotonic()
+        if wait <= 0:
+            raise TimeoutError("native frame read timed out")
+        ready, _, _ = select.select([fd], [], [], wait)
+        if not ready:
+            raise TimeoutError("native frame read timed out")
+        chunk = os.read(fd, remaining)
+        if not chunk:
+            raise EOFError("native frame stream closed")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def read_native_frame_fd(fd: int, timeout: float = 2.0) -> dict[str, Any]:
+    header = read_exact_fd(fd, 4, timeout)
+    length = struct.unpack("=I", header)[0]
+    if length > 1024 * 1024:
+        raise ValueError("native frame too large")
+    body = read_exact_fd(fd, length, timeout)
+    parsed = json.loads(body.decode("utf-8"))
+    if not isinstance(parsed, dict):
+        raise ValueError("native frame was not an object")
+    return parsed
+
+
+def chrome_extension_host_arch() -> str | None:
+    machine = platform.machine().lower()
+    if machine in {"x86_64", "amd64"}:
+        return "x64"
+    if machine in {"aarch64", "arm64"}:
+        return "arm64"
+    return None
+
+
+def chrome_extension_host_binary(plugin_dir: Path) -> tuple[Path | None, str | None]:
+    arch = chrome_extension_host_arch()
+    if arch is None:
+        return None, None
+    return plugin_dir / "extension-host/linux" / arch / "extension-host", arch
+
+
+def wait_for_native_host_socket(
+    socket_dir: Path,
+    process: subprocess.Popen[bytes],
+    timeout: float = 3.0,
+) -> Path | None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        matches = sorted(socket_dir.glob("extension-*.sock"))
+        if matches:
+            return matches[0]
+        if process.poll() is not None:
+            return None
+        time.sleep(0.05)
+    return None
+
+
+def chrome_native_host_bridge_loopback(host_path: Path) -> tuple[str, str, dict[str, Any]]:
+    data: dict[str, Any] = {
+        "socketCreated": False,
+        "clientPing": False,
+        "chromeToClient": False,
+        "clientToChrome": False,
+    }
+
+    if not host_path.is_file() or not os.access(host_path, os.X_OK):
+        return WARN, "native host bridge loopback skipped: host unavailable", data
+
+    process: subprocess.Popen[bytes] | None = None
+    client: socket.socket | None = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="codex-chrome-host-") as tmp:
+            root = Path(tmp)
+            socket_dir = root / "socket"
+            sessions_dir = root / "sessions"
+            sessions_dir.mkdir(mode=0o700)
+            env = os.environ.copy()
+            env["CODEX_BROWSER_USE_SOCKET_DIR"] = str(socket_dir)
+            env["CODEX_BROWSER_USE_SESSIONS_DIR"] = str(sessions_dir)
+
+            process = subprocess.Popen(
+                [str(host_path), "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            assert process.stdin is not None
+            assert process.stdout is not None
+
+            socket_path = wait_for_native_host_socket(socket_dir, process)
+            data["socketCreated"] = socket_path is not None
+            if socket_path is None:
+                return WARN, "native host bridge loopback failed before socket creation", data
+
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.connect(str(socket_path))
+
+            write_native_frame_fd(
+                client.fileno(),
+                {"jsonrpc": "2.0", "id": "client-ping", "method": "ping"},
+            )
+            ping = read_native_frame_fd(client.fileno())
+            data["clientPing"] = ping.get("id") == "client-ping" and ping.get("result") == "pong"
+
+            write_native_frame_fd(
+                process.stdin.fileno(),
+                {
+                    "jsonrpc": "2.0",
+                    "id": "chrome-probe",
+                    "method": "codexDoctorBridgeProbe",
+                    "params": {"redacted": True},
+                },
+            )
+            process.stdin.flush()
+            routed = read_native_frame_fd(client.fileno())
+            routed_id = routed.get("id")
+            data["chromeToClient"] = (
+                routed.get("method") == "codexDoctorBridgeProbe"
+                and isinstance(routed_id, str)
+                and routed_id != "chrome-probe"
+            )
+
+            write_native_frame_fd(
+                client.fileno(),
+                {"jsonrpc": "2.0", "id": routed_id, "result": {"ok": True}},
+            )
+            returned = read_native_frame_fd(process.stdout.fileno())
+            data["clientToChrome"] = (
+                returned.get("id") == "chrome-probe"
+                and isinstance(returned.get("result"), dict)
+                and returned["result"].get("ok") is True
+            )
+
+            if all(data.values()):
+                return PASS, "native host bridge loopback succeeded", data
+            return WARN, "native host bridge loopback incomplete", data
+    except (
+        OSError,
+        TimeoutError,
+        EOFError,
+        ValueError,
+        json.JSONDecodeError,
+        subprocess.SubprocessError,
+    ):
+        return WARN, "native host bridge loopback failed", data
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except OSError:
+                pass
+        if process is not None:
+            try:
+                if process.stdin is not None:
+                    process.stdin.close()
+            except OSError:
+                pass
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2)
 
 
 def check_manifest_file(
@@ -623,6 +807,19 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
         add_check(checks, "chrome_plugin", "Chrome plugin cache/bundle", FAIL, "Chrome plugin not found")
         add_check(checks, "chrome_extension_installed", "Chrome extension install status", WARN, "Chrome plugin unavailable")
         add_check(checks, "chrome_manifest_probe", "Chrome native host manifest probe", WARN, "Chrome plugin unavailable")
+        add_check(checks, "chrome_native_host_binary", "Chrome native host binary", WARN, "Chrome plugin unavailable")
+        if os.environ.get("CODEX_DESKTOP_LIVE_BROWSER_BRIDGE_VALIDATION") == "1":
+            add_check(
+                checks,
+                "chrome_native_host_bridge_loopback",
+                "Chrome native host bridge loopback",
+                WARN,
+                "Chrome plugin unavailable",
+                socketCreated=False,
+                clientPing=False,
+                chromeToClient=False,
+                clientToChrome=False,
+            )
         extension_id = host_name = None
     else:
         extension_id, host_name = chrome_metadata(plugin_dir)
@@ -634,6 +831,37 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
             str(plugin_dir),
             path=str(plugin_dir),
         )
+        extension_host, extension_host_arch = chrome_extension_host_binary(plugin_dir)
+        if extension_host is None:
+            add_check(
+                checks,
+                "chrome_native_host_binary",
+                "Chrome native host binary",
+                INFO,
+                "unsupported architecture for Linux native host",
+                hostArch="unsupported",
+            )
+        else:
+            host_binary_ok = extension_host.is_file() and os.access(extension_host, os.X_OK)
+            add_check(
+                checks,
+                "chrome_native_host_binary",
+                "Chrome native host binary",
+                PASS if host_binary_ok else FAIL,
+                "Linux native host binary is executable" if host_binary_ok else "Linux native host binary is missing or not executable",
+                hostArch=extension_host_arch,
+            )
+            if os.environ.get("CODEX_DESKTOP_LIVE_BROWSER_BRIDGE_VALIDATION") == "1":
+                bridge_status, bridge_detail, bridge_data = chrome_native_host_bridge_loopback(extension_host)
+                add_check(
+                    checks,
+                    "chrome_native_host_bridge_loopback",
+                    "Chrome native host bridge loopback",
+                    bridge_status,
+                    bridge_detail,
+                    **bridge_data,
+                )
+
         _, extension_status, extension_detail = run_json_script(plugin_dir / "scripts/check-extension-installed.js", managed_node)
         if extension_status is not None:
             installed = bool(extension_status.get("installed"))

@@ -79,6 +79,15 @@ function runMatrix() {
       "defaultLinuxUserDataDirectoryForCommand",
       "resolveChromeProfileDirectoryFromRunningProcess",
     ]),
+    evaluateCheck("live_bridge_validation", `${doctor}\n${read("Makefile")}`, [
+      "CODEX_DESKTOP_LIVE_BROWSER_BRIDGE_VALIDATION",
+      "chrome_extension_host_binary",
+      "chrome_native_host_bridge_loopback",
+      "socketCreated",
+      "clientPing",
+      "chromeToClient",
+      "clientToChrome",
+    ]),
   ];
 
   const counts = checks.reduce(

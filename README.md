@@ -490,7 +490,7 @@ codex-desktop-doctor --json
 make doctor
 ```
 
-The doctor checks installed package files, the optional app service, updater/update-builder files, required ASAR patch markers, Chrome/Brave/Chromium native-messaging manifests, Flatpak Chrome permissions, Computer Use readiness, and remote-mobile feature markers. It reports only sanitized status fields and file paths; it does not print pairing secrets, browser tab contents, cookies, QR data, screenshots, or Computer Use window/application state.
+The doctor checks installed package files, the optional app service, updater/update-builder files, required ASAR patch markers, Chrome/Brave/Chromium native-messaging manifests and host binaries, Flatpak Chrome permissions, Computer Use readiness, and remote-mobile feature markers. It reports only sanitized status fields and file paths; it does not print pairing secrets, browser tab contents, cookies, QR data, screenshots, or Computer Use window/application state.
 
 To run the optional Secret Service canary for the experimental remote-mobile key
 store, set `CODEX_DESKTOP_SECRET_SERVICE_CANARY=1`. The canary stores, looks up,
@@ -530,11 +530,13 @@ make parity-browser-live
 ```
 
 `make parity-browser-live` runs the installed doctor with
-`CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1`. The live browser check adds
+`CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1` and
+`CODEX_DESKTOP_LIVE_BROWSER_BRIDGE_VALIDATION=1`. The live browser checks add
 only booleans, counts, and a browser-family enum for running-browser detection,
-profile-root presence, profile counts, and extension-setting counts; it does
-not print browser profile names, tab state, URLs, cookies, history, or profile
-paths.
+profile-root presence, profile counts, extension-setting counts, and an
+isolated native-host bridge loopback. They do not print browser profile names,
+native-host socket paths, native-host binary paths, tab state, URLs, cookies,
+history, or profile paths.
 `make parity-full` composes the
 installed doctor, `systemd --user` service state, app-server schema guard,
 Computer Use doctor, and the non-sensitive app-server smoke. The smoke also

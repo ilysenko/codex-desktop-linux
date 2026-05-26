@@ -347,7 +347,7 @@ parity-browser-matrix:
 
 parity-browser-live:
 	@echo "[make] Checking live Linux browser/profile integration state"
-	CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1 "$(or $(DOCTOR),/usr/bin/$(PACKAGE_NAME)-doctor)"
+	CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1 CODEX_DESKTOP_LIVE_BROWSER_BRIDGE_VALIDATION=1 "$(or $(DOCTOR),/usr/bin/$(PACKAGE_NAME)-doctor)"
 
 parity-full:
 	@echo "[make] Running full local desktop parity checks"
