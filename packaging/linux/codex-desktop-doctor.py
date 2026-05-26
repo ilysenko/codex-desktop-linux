@@ -53,6 +53,31 @@ def read_json(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def probe_node_runtime(node_path: Path) -> tuple[bool, str | None, str]:
+    if not node_path.is_file() or not os.access(node_path, os.X_OK):
+        return False, None, f"missing or not executable: {node_path}"
+
+    try:
+        result = run(
+            [
+                str(node_path),
+                "-e",
+                'process.stdout.write("codex-node-runtime-ok:" + process.versions.node)',
+            ],
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, None, f"JS probe failed: {exc}"
+
+    marker = "codex-node-runtime-ok:"
+    output = (result.stdout or "").strip()
+    if result.returncode == 0 and output.startswith(marker):
+        version = output[len(marker) :]
+        return True, version, f"{node_path} (node {version})"
+
+    return False, None, f"JS probe did not return expected marker: exit={result.returncode}"
+
+
 def add_check(
     checks: list[dict[str, Any]],
     check_id: str,
@@ -217,6 +242,7 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
     update_service = Path("/usr/lib/systemd/user/codex-update-manager.service")
     asar = app_root / "resources/app.asar"
     managed_node = app_root / "resources/node-runtime/bin/node"
+    managed_node_ok, managed_node_version, managed_node_detail = probe_node_runtime(managed_node)
     build_info_paths = [
         app_root / ".codex-linux/build-info.json",
         app_root / "resources/codex-linux-build-info.json",
@@ -269,9 +295,10 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
         checks,
         "managed_node",
         "Managed Node.js runtime",
-        PASS if managed_node.is_file() and os.access(managed_node, os.X_OK) else FAIL,
-        str(managed_node),
+        PASS if managed_node_ok else FAIL,
+        managed_node_detail,
         path=str(managed_node),
+        version=managed_node_version,
     )
     build_info_path = first_existing_path(build_info_paths)
     build_info = read_json(build_info_path) if build_info_path is not None else None
@@ -359,6 +386,8 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
     )
     update_builder = app_root / "update-builder"
     validator = update_builder / "scripts/ci/validate-patch-report.js"
+    update_builder_node = update_builder / "node-runtime/bin/node"
+    update_builder_node_ok, update_builder_node_version, update_builder_node_detail = probe_node_runtime(update_builder_node)
     add_check(
         checks,
         "update_builder",
@@ -374,6 +403,15 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
         PASS if validator.is_file() else (WARN if update_builder.is_dir() else INFO),
         str(validator) if validator.is_file() else "not staged",
         path=str(validator),
+    )
+    add_check(
+        checks,
+        "update_builder_managed_node",
+        "Update-builder managed Node.js runtime",
+        PASS if update_builder_node_ok else (WARN if update_builder.is_dir() else INFO),
+        update_builder_node_detail if update_builder.is_dir() else "not installed in manual-update/AppImage mode",
+        path=str(update_builder_node),
+        version=update_builder_node_version,
     )
     staged_features = read_json(update_builder / "linux-features/features.json")
     if staged_features is not None:

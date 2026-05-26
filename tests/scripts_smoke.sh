@@ -979,6 +979,57 @@ if report["summary"]["fail"] < 1:
 PY
 }
 
+test_desktop_doctor_node_runtime_probe() {
+    info "Checking installed doctor rejects fake Node runtime stubs"
+    local workspace="$TMP_DIR/desktop-doctor-node-runtime"
+    local doctor="$workspace/codex-doctor-smoke"
+    local fake_node="$workspace/fake-node"
+    local real_node="$workspace/real-node"
+
+    mkdir -p "$workspace"
+    sed 's/__PACKAGE_NAME__/codex-doctor-smoke/g' \
+        "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" >"$doctor"
+
+    cat > "$fake_node" <<'SCRIPT'
+#!/usr/bin/env bash
+echo v22.22.2
+SCRIPT
+    chmod +x "$fake_node"
+
+    cat > "$real_node" <<'SCRIPT'
+#!/usr/bin/env bash
+case "${1:-}" in
+    -e) printf '%s' 'codex-node-runtime-ok:22.22.2' ;;
+    *) echo v22.22.2 ;;
+esac
+SCRIPT
+    chmod +x "$real_node"
+
+    python3 - "$doctor" "$fake_node" "$real_node" <<'PY' || fail "Expected doctor Node runtime probe to reject stubs"
+import importlib.machinery
+import importlib.util
+import pathlib
+import sys
+
+doctor_path = pathlib.Path(sys.argv[1])
+fake_node = pathlib.Path(sys.argv[2])
+real_node = pathlib.Path(sys.argv[3])
+loader = importlib.machinery.SourceFileLoader("codex_doctor_smoke", str(doctor_path))
+spec = importlib.util.spec_from_loader("codex_doctor_smoke", loader)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+fake_ok, fake_version, fake_detail = module.probe_node_runtime(fake_node)
+if fake_ok or fake_version is not None or "expected marker" not in fake_detail:
+    raise SystemExit(f"fake runtime was accepted: {fake_ok} {fake_version} {fake_detail}")
+
+real_ok, real_version, real_detail = module.probe_node_runtime(real_node)
+if not real_ok or real_version != "22.22.2" or "node 22.22.2" not in real_detail:
+    raise SystemExit(f"real runtime was rejected: {real_ok} {real_version} {real_detail}")
+PY
+}
+
 test_fedora_dependency_bootstrap_installs_rpmbuild() {
     info "Checking Fedora dependency bootstrap includes rpmbuild"
     local install_deps="$REPO_DIR/scripts/install-deps.sh"
@@ -5043,6 +5094,7 @@ main() {
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_native_shortcut_targets_compose_existing_flows
     test_desktop_doctor_template_smoke
+    test_desktop_doctor_node_runtime_probe
     test_fedora_dependency_bootstrap_installs_rpmbuild
     test_setup_native_wizard_noninteractive_feature_writer
     test_setup_native_wizard_rejects_invalid_feature_ids
