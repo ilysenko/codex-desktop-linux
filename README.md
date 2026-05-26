@@ -234,7 +234,7 @@ sudo pacman -S ydotool
 sudo zypper install ydotool
 ```
 
-`ydotool` needs `/dev/uinput` access. The usual setup is to run `ydotoold`, add your user to the `input` group, then re-login:
+The preferred coordinate input path opens `/dev/uinput` directly. The XDG RemoteDesktop portal can also provide input on desktops that expose it. `ydotool` remains the fallback path; when you need it, run `ydotoold`, add your user to the `input` group, then re-login:
 
 ```bash
 sudo systemctl enable --now ydotoold
@@ -603,7 +603,7 @@ make clean-state
 | Unsure which installed integration is broken | Run `codex-desktop-doctor` or `codex-desktop-doctor --json` from a native package install |
 | `codex-desktop.service` is enabled but inactive | Close any manually launched Codex Desktop process, then run `systemctl --user start codex-desktop.service` |
 | Computer Use plugin invisible in UI | Ensure you enabled the Computer Use UI. If it is enabled and still hidden, the OpenAI per-account rollout may not be available |
-| Computer Use `doctor` reports `ydotool not running` | Start the distro-provided daemon unit (`ydotoold` or `ydotool`), or use a user-session `ydotoold` service, then add your user to the `input` group |
+| Computer Use `doctor` reports no input backend | Grant read/write `/dev/uinput`, enable the XDG RemoteDesktop portal, or start the distro-provided `ydotoold` / `ydotool` daemon with a socket accessible to your user |
 | Computer Use `doctor` reports `ydotool_socket: Permission denied` | The daemon socket is root-only. Adjust the `ydotoold` service so `/tmp/.ydotool_socket` becomes `root:input` with `0660` permissions |
 | `ConnectTimeoutError` for `www.electronjs.org` during `@electron/rebuild` | Re-run `make build-app`; the installer now uses `https://artifacts.electronjs.org/headers/dist` for Electron headers by default |
 | Computer Use AT-SPI tree empty | Run `codex-computer-use-linux setup` to flip GNOME accessibility on, then restart the target app |
