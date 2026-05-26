@@ -3,6 +3,8 @@
 
 const { spawn } = require("node:child_process");
 const { Buffer } = require("node:buffer");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 
@@ -114,6 +116,34 @@ function wait(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function createSkillFixture() {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-skills-"));
+  const skillDir = path.join(fixtureDir, ".codex", "skills", "codex-parity-skill");
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: codex-parity-skill",
+      "description: Temporary desktop parity fixture skill.",
+      "---",
+      "",
+      "# Codex Parity Skill",
+      "",
+      "This fixture verifies repo-scoped skill discovery.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  return fixtureDir;
+}
+
+function removeFixture(fixtureDir) {
+  if (fixtureDir) {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
 }
 
 class AppServerClient {
@@ -461,6 +491,24 @@ async function runAppServerSmoke(options) {
             : "fail";
         record(probe.name, status, { error: errorSummary });
       }
+    }
+
+    const skillFixtureDir = createSkillFixture();
+    try {
+      const result = await client.request("skills/list", { cwds: [skillFixtureDir], forceReload: true });
+      const cwdEntries = Array.isArray(result.data) ? result.data : [];
+      const fixtureEntry = cwdEntries.find((entry) => entry && entry.cwd === skillFixtureDir);
+      const skills = Array.isArray(fixtureEntry?.skills) ? fixtureEntry.skills : [];
+      const fixtureSkill = skills.find((skill) => skill && skill.name === "codex-parity-skill");
+      record("repo skill fixture", fixtureSkill?.enabled === true && fixtureSkill.scope === "repo" ? "pass" : "fail", {
+        cwdEntries: cwdEntries.length,
+        fixtureSkillPresent: fixtureSkill != null,
+        fixtureSkillRepoScoped: fixtureSkill?.scope === "repo",
+      });
+    } catch (error) {
+      record("repo skill fixture", "fail", { error: summarizeErrorText(error.message) });
+    } finally {
+      removeFixture(skillFixtureDir);
     }
 
     const commandResult = await client.request("command/exec", {

@@ -71,7 +71,7 @@ screenshots, or private conversation text into parity artifacts.
 | Plugins and marketplace | Built-in app support | Plugin list and bundled marketplace cache present | `make parity-smoke`, `make doctor` | Add install/uninstall smoke only with explicit non-destructive mode |
 | Apps/connectors | Built-in app support | App list surface present | `make parity-smoke` | Account/workspace gating remains server-side |
 | MCP servers | Built-in app support | MCP status API present | `make parity-smoke` | Add fixture MCP server test later |
-| Skills | Built-in app support | Skills list API present | `make parity-smoke` | Add skill enable/disable fixture later |
+| Skills | Built-in app support | Skills list API plus repo-scoped fixture discovery present | `make parity-smoke` | Add skill enable/disable fixture later |
 | Config and requirements | User and managed config | Config/read and requirements/read present | `make parity-smoke`, `make parity-schema` | Add managed requirements fixture later |
 | External agent import | Detect/import agent artifacts | Detect surface present | `make parity-smoke`, `make parity-schema` | Build safe migration smoke around temporary fixtures |
 | Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper | `make doctor`, `make parity-full` | Add browser matrix across native/Flatpak browsers |
