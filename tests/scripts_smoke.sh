@@ -240,6 +240,7 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-target-context.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/ci/validate-patch-report.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/app-server-schema-guard.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/engine.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/registry.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/shared.js"
@@ -580,6 +581,7 @@ SCRIPT
     assert_contains "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service" "/usr/bin/codex-desktop"
     assert_not_contains "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service" "--remote-debugging-port"
     assert_file_exists "$capture_dir/staging/opt/codex-desktop/update-builder/scripts/ci/validate-patch-report.js"
+    assert_file_exists "$capture_dir/staging/opt/codex-desktop/update-builder/scripts/app-server-schema-guard.js"
 
     rm -rf "$dist_dir" "$capture_dir"
     mkdir -p "$dist_dir" "$capture_dir"

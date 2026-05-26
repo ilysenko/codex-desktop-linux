@@ -75,7 +75,7 @@ screenshots, or private conversation text into parity artifacts.
 | Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` checks explicit status read plus status notification | Server-side rejection can still happen |
 | Remote-control key storage | macOS keychain/Secure Enclave-style boundary | File-backed `0600` key material today | `make doctor` reports presence/mode only | Add Secret Service/libsecret backend with file fallback |
 | Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units | `make doctor`, `make parity-full` | Add suspend/resume and network-change regression tests |
-| Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Add schema guard to updater rebuild validation |
+| Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Schema guard is packaged into update-builder; enforce during background rebuilds after CLI path is deterministic |
 | Native packages | Official platform installers | `.deb`, `.rpm`, pacman, AppImage, Nix | GitHub CI, `make package` | Keep distro matrix green |
 | Nix | Not a primary Mac path | Flake outputs and feature variants | GitHub CI Nix job | Keep upstream hash refresh bot green |
 | AppImage | Not a Mac path | Manual self-build | `make appimage` | No resident updater by design |
@@ -109,8 +109,8 @@ screenshots, or private conversation text into parity artifacts.
 ## Work Queue
 
 1. Keep `make parity-full` passing on the installed app.
-2. Add schema-guard execution to updater rebuild validation after confirming it
-   is cheap enough for every auto-update.
+2. Add schema-guard execution to updater rebuild validation after confirming the
+   updater service has a deterministic Codex CLI path.
 3. Add safe fixture tests for external agent config import, managed
    requirements, and MCP server visibility.
 4. Extend the phone/remote-control E2E check beyond host connected state only

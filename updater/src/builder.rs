@@ -14,7 +14,7 @@ use std::{
 use tokio::process::Command;
 use tracing::info;
 
-const REQUIRED_BUNDLE_FILES: [(&str, &str); 18] = [
+const REQUIRED_BUNDLE_FILES: [(&str, &str); 19] = [
     ("Cargo.toml", "Cargo.toml"),
     ("Cargo.lock", "Cargo.lock"),
     ("computer-use-linux", "computer-use-linux"),
@@ -35,6 +35,10 @@ const REQUIRED_BUNDLE_FILES: [(&str, &str); 18] = [
     (
         "scripts/patch-linux-window-ui.js",
         "scripts/patch-linux-window-ui.js",
+    ),
+    (
+        "scripts/app-server-schema-guard.js",
+        "scripts/app-server-schema-guard.js",
     ),
     ("scripts/patches", "scripts/patches"),
     ("scripts/lib", "scripts/lib"),
@@ -654,6 +658,10 @@ fi
             b"console.log('patched');\n",
         )?;
         fs::write(
+            bundle_root.join("scripts/app-server-schema-guard.js"),
+            b"#!/usr/bin/env node\n",
+        )?;
+        fs::write(
             bundle_root.join("scripts/patches/registry.js"),
             b"module.exports = {};\n",
         )?;
@@ -723,6 +731,10 @@ fi
             .exists());
         assert!(artifacts
             .workspace_dir
+            .join("builder/scripts/app-server-schema-guard.js")
+            .exists());
+        assert!(artifacts
+            .workspace_dir
             .join("builder/scripts/ci/validate-patch-report.js")
             .exists());
         assert!(artifacts
@@ -774,6 +786,10 @@ fi
             b"console.log('patched');\n",
         )?;
         fs::write(
+            source_root.join("scripts/app-server-schema-guard.js"),
+            b"#!/usr/bin/env node\n",
+        )?;
+        fs::write(
             source_root.join("scripts/patches/registry.js"),
             b"module.exports = {};\n",
         )?;
@@ -804,6 +820,9 @@ fi
         assert!(destination_root.join("scripts/build-deb.sh").exists());
         assert!(destination_root
             .join("scripts/patch-linux-window-ui.js")
+            .exists());
+        assert!(destination_root
+            .join("scripts/app-server-schema-guard.js")
             .exists());
         assert!(destination_root.join("launcher/webview-server.py").exists());
         assert!(destination_root

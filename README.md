@@ -638,6 +638,7 @@ After changing installer, packaging, or updater logic:
 bash -n install.sh scripts/lib/*.sh launcher/start.sh.template scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/build-appimage.sh scripts/install-deps.sh
 node --check scripts/patch-linux-window-ui.js
 node --check scripts/desktop-parity-smoke.js
+node --check scripts/app-server-schema-guard.js
 for file in scripts/patches/*.js; do node --check "$file"; done
 node --check scripts/ci/validate-patch-report.js
 node --test scripts/patch-linux-window-ui.test.js
