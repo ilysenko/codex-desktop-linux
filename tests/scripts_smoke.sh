@@ -1065,6 +1065,70 @@ for (const expected of [
 NODE
 }
 
+test_packaged_runtime_prelaunch_uses_user_systemd_safely() {
+    info "Checking packaged runtime user-service prelaunch behavior"
+    local workspace="$TMP_DIR/packaged-runtime-prelaunch"
+    local bin_dir="$workspace/bin"
+    local runtime_dir="$workspace/runtime"
+    local log="$workspace/calls.log"
+
+    mkdir -p "$bin_dir" "$runtime_dir"
+
+    cat >"$bin_dir/systemctl" <<'SCRIPT'
+#!/usr/bin/env bash
+printf 'systemctl %s\n' "$*" >> "$CODEX_TEST_SERVICE_LOG"
+case "$*" in
+    "--user show-environment")
+        exit 0
+        ;;
+    "--user import-environment"*)
+        exit 0
+        ;;
+    "--user is-enabled codex-update-manager.service")
+        exit 1
+        ;;
+    "--user enable --now codex-update-manager.service")
+        exit 0
+        ;;
+esac
+exit 0
+SCRIPT
+    chmod +x "$bin_dir/systemctl"
+
+    cat >"$bin_dir/dbus-update-activation-environment" <<'SCRIPT'
+#!/usr/bin/env bash
+printf 'dbus-update-activation-environment %s\n' "$*" >> "$CODEX_TEST_SERVICE_LOG"
+SCRIPT
+    chmod +x "$bin_dir/dbus-update-activation-environment"
+
+    cat >"$bin_dir/systemd-run" <<'SCRIPT'
+#!/usr/bin/env bash
+printf 'systemd-run %s\n' "$*" >> "$CODEX_TEST_SERVICE_LOG"
+SCRIPT
+    chmod +x "$bin_dir/systemd-run"
+
+    cat >"$bin_dir/codex-update-manager" <<'SCRIPT'
+#!/usr/bin/env bash
+printf 'codex-update-manager-fallback %s\n' "$*" >> "$CODEX_TEST_SERVICE_LOG"
+SCRIPT
+    chmod +x "$bin_dir/codex-update-manager"
+
+    PATH="$bin_dir:$PATH" \
+        XDG_RUNTIME_DIR="$runtime_dir" \
+        CODEX_TEST_SERVICE_LOG="$log" \
+        bash -c '. "$1"; codex_packaged_runtime_prelaunch_background' \
+        bash "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
+
+    assert_contains "$log" 'systemctl --user show-environment'
+    assert_contains "$log" 'systemctl --user import-environment'
+    assert_contains "$log" 'dbus-update-activation-environment --systemd'
+    assert_contains "$log" 'systemctl --user is-enabled codex-update-manager.service'
+    assert_contains "$log" 'systemctl --user enable --now codex-update-manager.service'
+    assert_contains "$log" 'systemd-run --user --unit=codex-update-manager-launch-check --collect --quiet /usr/bin/codex-update-manager check-now --if-stale'
+    assert_not_contains "$log" 'restart codex-update-manager.service'
+    assert_not_contains "$log" 'codex-update-manager-fallback'
+}
+
 test_desktop_doctor_template_smoke() {
     info "Checking installed doctor template smoke path"
     local workspace="$TMP_DIR/desktop-doctor"
@@ -5862,6 +5926,7 @@ main() {
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_native_shortcut_targets_compose_existing_flows
     test_service_lifecycle_smoke
+    test_packaged_runtime_prelaunch_uses_user_systemd_safely
     test_desktop_doctor_template_smoke
     test_desktop_doctor_browser_manifest_coverage
     test_desktop_doctor_node_runtime_probe
