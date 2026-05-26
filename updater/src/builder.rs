@@ -472,7 +472,7 @@ async fn run_and_log(command: &mut Command, log_path: &Path) -> Result<()> {
     let mut combined = Vec::new();
     combined.extend_from_slice(&output.stdout);
     combined.extend_from_slice(&output.stderr);
-    fs::write(log_path, &combined)
+    fs::write(log_path, redact_command_log(&combined))
         .with_context(|| format!("Failed to write {}", log_path.display()))?;
 
     if !output.status.success() {
@@ -484,6 +484,177 @@ async fn run_and_log(command: &mut Command, log_path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn redact_command_log(bytes: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(bytes);
+    redact_sensitive_fields(&redact_prefixed_token(
+        &redact_after_prefix(&text, "Bearer ", "Bearer <redacted>"),
+        "sk-",
+        "sk-<redacted>",
+    ))
+    .into_bytes()
+}
+
+fn redact_sensitive_fields(input: &str) -> String {
+    const FIELDS: &[&str] = &[
+        "pairingCode",
+        "pairing_code",
+        "deviceKey",
+        "device_key",
+        "clientId",
+        "client_id",
+        "clientSecret",
+        "client_secret",
+        "installationId",
+        "installation_id",
+        "environmentId",
+        "environment_id",
+        "keyId",
+        "key_id",
+        "tabTitle",
+        "tabUrl",
+        "conversationText",
+        "threadPreview",
+        "screenshot",
+    ];
+    let mut output = redact_url_tokens(input);
+    for field in FIELDS {
+        output = redact_named_field(&output, field);
+    }
+    output
+}
+
+fn redact_url_tokens(input: &str) -> String {
+    let with_https = redact_after_prefix(input, "https://", "<url-redacted>");
+    redact_after_prefix(&with_https, "http://", "<url-redacted>")
+}
+
+fn redact_named_field(input: &str, field: &str) -> String {
+    let mut output = input.to_string();
+    for quote in ['"', '\''] {
+        let quoted_prefix = format!("{quote}{field}{quote}: {quote}");
+        let quoted_replacement = format!("{quote}{field}{quote}: {quote}<redacted>");
+        output = redact_after_quoted_prefix(&output, &quoted_prefix, &quoted_replacement, quote);
+
+        let compact_quoted_prefix = format!("{quote}{field}{quote}:{quote}");
+        let compact_quoted_replacement = format!("{quote}{field}{quote}:{quote}<redacted>");
+        output = redact_after_quoted_prefix(
+            &output,
+            &compact_quoted_prefix,
+            &compact_quoted_replacement,
+            quote,
+        );
+
+        let unquoted_prefix = format!("{field}={quote}");
+        let unquoted_replacement = format!("{field}={quote}<redacted>");
+        output =
+            redact_after_quoted_prefix(&output, &unquoted_prefix, &unquoted_replacement, quote);
+
+        let colon_unquoted_prefix = format!("{field}: {quote}");
+        let colon_unquoted_replacement = format!("{field}: {quote}<redacted>");
+        output = redact_after_quoted_prefix(
+            &output,
+            &colon_unquoted_prefix,
+            &colon_unquoted_replacement,
+            quote,
+        );
+    }
+    output = redact_after_prefix_unquoted(
+        &output,
+        &format!("{field}="),
+        &format!("{field}=<redacted>"),
+    );
+    redact_after_prefix_unquoted(
+        &output,
+        &format!("{field}: "),
+        &format!("{field}: <redacted>"),
+    )
+}
+
+fn redact_after_prefix(input: &str, prefix: &str, replacement: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(index) = rest.find(prefix) {
+        output.push_str(&rest[..index]);
+        output.push_str(replacement);
+        let token_start = index + prefix.len();
+        let token_end = rest[token_start..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ';' | ')'))
+            .map(|end| token_start + end)
+            .unwrap_or(rest.len());
+        rest = &rest[token_end..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn redact_after_quoted_prefix(input: &str, prefix: &str, replacement: &str, quote: char) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(index) = rest.find(prefix) {
+        output.push_str(&rest[..index]);
+        output.push_str(replacement);
+        let token_start = index + prefix.len();
+        let mut escaped = false;
+        let mut token_end = rest.len();
+        for (offset, ch) in rest[token_start..].char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                token_end = token_start + offset;
+                break;
+            }
+        }
+        rest = &rest[token_end..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn redact_after_prefix_unquoted(input: &str, prefix: &str, replacement: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(index) = rest.find(prefix) {
+        output.push_str(&rest[..index]);
+        let token_start = index + prefix.len();
+        let value = &rest[token_start..];
+        if value.starts_with('"') || value.starts_with('\'') {
+            output.push_str(prefix);
+            rest = &rest[token_start..];
+            continue;
+        }
+        output.push_str(replacement);
+        let token_end = rest[token_start..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ';' | ')'))
+            .map(|end| token_start + end)
+            .unwrap_or(rest.len());
+        rest = &rest[token_end..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn redact_prefixed_token(input: &str, prefix: &str, replacement: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(index) = rest.find(prefix) {
+        output.push_str(&rest[..index]);
+        output.push_str(replacement);
+        let token_end = rest[index..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ';' | ')'))
+            .map(|end| index + end)
+            .unwrap_or(rest.len());
+        rest = &rest[token_end..];
+    }
+    output.push_str(rest);
+    output
 }
 
 #[cfg(test)]
@@ -591,6 +762,120 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
         fs::write(
             root.join("linux-features/example-feature/feature.json"),
             b"{\"id\":\"example-feature\"}\n",
+        )?;
+        Ok(())
+    }
+
+    fn write_executable(path: &Path, contents: &str) -> Result<()> {
+        fs::write(path, contents)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+        }
+        Ok(())
+    }
+
+    fn write_fake_update_bundle(root: &Path, schema_guard_script: &str) -> Result<()> {
+        fs::create_dir_all(root.join("scripts/lib"))?;
+        fs::create_dir_all(root.join("scripts/ci"))?;
+        fs::create_dir_all(root.join("scripts/patches"))?;
+        fs::create_dir_all(root.join("launcher"))?;
+        fs::create_dir_all(root.join("packaging/linux"))?;
+        fs::create_dir_all(root.join("assets"))?;
+        write_fake_computer_use_bundle(root)?;
+        write_fake_linux_features_bundle(root)?;
+        fs::write(
+            root.join("launcher/start.sh.template"),
+            b"# fake launcher template\n",
+        )?;
+        fs::write(
+            root.join("launcher/webview-server.py"),
+            b"# fake webview server\n",
+        )?;
+        fs::write(root.join("assets/codex.png"), b"png")?;
+        fs::write(root.join("packaging/linux/control"), "Package: codex")?;
+        fs::write(
+            root.join("packaging/linux/codex-desktop.spec"),
+            "Name: codex",
+        )?;
+        fs::write(
+            root.join("packaging/linux/codex-desktop.desktop"),
+            "[Desktop Entry]",
+        )?;
+        fs::write(
+            root.join("packaging/linux/codex-update-manager.service"),
+            "[Unit]\nDescription=Codex Update Manager\n",
+        )?;
+        fs::write(
+            root.join("packaging/linux/codex-update-manager-user-service.sh"),
+            "#!/bin/bash\n",
+        )?;
+        fs::write(
+            root.join("packaging/linux/codex-update-manager.postinst"),
+            "#!/bin/sh\nexit 0\n",
+        )?;
+        fs::write(
+            root.join("packaging/linux/codex-update-manager.prerm"),
+            "#!/bin/sh\nexit 0\n",
+        )?;
+        fs::write(
+            root.join("packaging/linux/codex-update-manager.postrm"),
+            "#!/bin/sh\nexit 0\n",
+        )?;
+        fs::write(
+            root.join("packaging/linux/codex-packaged-runtime.sh"),
+            "#!/bin/bash\n",
+        )?;
+        fs::write(
+            root.join("packaging/linux/PKGBUILD.template"),
+            "pkgname=codex\n",
+        )?;
+        fs::write(
+            root.join("packaging/linux/codex-desktop.install"),
+            "post_install() { :; }\n",
+        )?;
+        write_executable(
+            &root.join("install.sh"),
+            r#"#!/bin/bash
+set -euo pipefail
+mkdir -p "${CODEX_INSTALL_DIR}"
+echo launcher > "${CODEX_INSTALL_DIR}/start.sh"
+chmod +x "${CODEX_INSTALL_DIR}/start.sh"
+if [ -n "${CODEX_PATCH_REPORT_JSON:-}" ]; then
+  mkdir -p "$(dirname "$CODEX_PATCH_REPORT_JSON")"
+  printf '{"patches":[]}\n' > "${CODEX_PATCH_REPORT_JSON}"
+fi
+if [ -n "${CODEX_REBUILD_REPORT_JSON:-}" ]; then
+  mkdir -p "$(dirname "$CODEX_REBUILD_REPORT_JSON")"
+  printf '{"appDir":"%s"}\n' "${CODEX_INSTALL_DIR}" > "${CODEX_REBUILD_REPORT_JSON}"
+fi
+"#,
+        )?;
+        write_fake_build_script(&root.join("scripts/build-deb.sh"), FakePackageOutput::Deb)?;
+        write_fake_build_script(&root.join("scripts/build-rpm.sh"), FakePackageOutput::Rpm)?;
+        write_fake_build_script(
+            &root.join("scripts/build-pacman.sh"),
+            FakePackageOutput::Pacman,
+        )?;
+        fs::write(root.join("scripts/rebuild-candidate.sh"), b"#!/bin/bash\n")?;
+        fs::write(
+            root.join("scripts/patch-linux-window-ui.js"),
+            b"console.log('patched');\n",
+        )?;
+        fs::write(
+            root.join("scripts/app-server-schema-guard.js"),
+            schema_guard_script,
+        )?;
+        fs::write(
+            root.join("scripts/patches/registry.js"),
+            b"module.exports = {};\n",
+        )?;
+        fs::write(root.join("scripts/lib/package-common.sh"), b"#!/bin/bash\n")?;
+        fs::write(root.join("scripts/lib/node-runtime.sh"), b"#!/bin/bash\n")?;
+        fs::write(
+            root.join("scripts/ci/validate-patch-report.js"),
+            b"#!/usr/bin/env node\n",
         )?;
         Ok(())
     }
@@ -817,6 +1102,86 @@ fi
             is_native_package_file(&artifacts.package_path),
             "expected a native package (.deb, .rpm, or .pkg.tar.zst), got {}",
             artifacts.package_path.display()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn schema_guard_failure_blocks_update_and_writes_sanitized_log() -> Result<()> {
+        let temp = tempdir()?;
+        let bundle_root = temp.path().join("bundle");
+        let state_root = temp.path().join("state");
+        let cache_root = temp.path().join("cache");
+        write_fake_update_bundle(
+            &bundle_root,
+            r#"console.error('schema guard failed Bearer secret-token sk-test-secret https://signed.example/path?token=url-fixture {"installationId":"install-fixture","tabUrl":"https://private.example/tab","tabTitle":"private tab fixture"} deviceKey="device-key-fixture"');
+process.exit(42);
+"#,
+        )?;
+
+        let paths = RuntimePaths {
+            config_file: temp.path().join("config/config.toml"),
+            state_file: state_root.join("state.json"),
+            log_file: state_root.join("service.log"),
+            cache_dir: cache_root.clone(),
+            state_dir: state_root.clone(),
+            config_dir: temp.path().join("config"),
+        };
+        paths.ensure_dirs()?;
+
+        let config = RuntimeConfig {
+            dmg_url: "https://example.com/Codex.dmg".to_string(),
+            initial_check_delay_seconds: 30,
+            check_interval_hours: 6,
+            auto_install_on_app_exit: true,
+            notifications: true,
+            workspace_root: cache_root.clone(),
+            builder_bundle_root: bundle_root,
+            app_executable_path: PathBuf::from("/opt/codex-desktop/electron"),
+        };
+        let dmg_path = temp.path().join("Codex.dmg");
+        fs::write(&dmg_path, b"dmg")?;
+        let fake_codex = temp.path().join("codex");
+        write_executable(&fake_codex, "#!/bin/sh\necho codex 0.0.0\n")?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(fake_codex.clone());
+        let err = build_update(
+            &config,
+            &mut state,
+            &paths,
+            "2026.03.24+schemafail",
+            &dmg_path,
+        )
+        .await
+        .expect_err("schema guard failure should block the update");
+        let error_text = format!("{err:#}");
+        assert!(error_text.contains("app-server schema guard failed during local rebuild"));
+        assert!(error_text.contains("Command failed"));
+        assert_eq!(state.status, UpdateStatus::PatchingApp);
+
+        let workspace = cache_root.join("workspaces/2026.03.24+schemafail");
+        let schema_guard_log = workspace.join("logs/app-server-schema-guard.log");
+        let build_log = workspace.join("logs/build-package.log");
+        let log = fs::read_to_string(&schema_guard_log)?;
+        assert!(log.contains("schema guard failed"));
+        assert!(log.contains("Bearer <redacted>"));
+        assert!(log.contains("sk-<redacted>"));
+        assert!(log.contains("<url-redacted>"));
+        assert!(log.contains(r#""installationId":"<redacted>""#));
+        assert!(log.contains(r#""tabUrl":"<redacted>""#));
+        assert!(log.contains(r#""tabTitle":"<redacted>""#));
+        assert!(log.contains(r#"deviceKey="<redacted>""#));
+        assert!(!log.contains("secret-token"));
+        assert!(!log.contains("sk-test-secret"));
+        assert!(!log.contains("signed.example"));
+        assert!(!log.contains("install-fixture"));
+        assert!(!log.contains("private.example"));
+        assert!(!log.contains("private tab fixture"));
+        assert!(!log.contains("device-key-fixture"));
+        assert!(
+            !build_log.exists(),
+            "package build should not start after schema guard failure"
         );
         Ok(())
     }

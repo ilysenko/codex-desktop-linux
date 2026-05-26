@@ -51,7 +51,7 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status app-service-enable app-service-disable app-service-status doctor parity-schema parity-smoke parity-full parity-strict clean-dist clean-state
+.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status app-service-enable app-service-disable app-service-status doctor parity-schema parity-smoke parity-browser-matrix parity-full parity-strict clean-dist clean-state
 
 help:
 	@printf '\nCodex Desktop Linux Make Targets\n\n'
@@ -86,6 +86,7 @@ help:
 	@printf '  %-18s %s\n' "make doctor" "Run the installed Codex Desktop Linux doctor"
 	@printf '  %-18s %s\n' "make parity-schema" "Check required Codex app-server schema surface"
 	@printf '  %-18s %s\n' "make parity-smoke" "Run non-sensitive app-server parity probes"
+	@printf '  %-18s %s\n' "make parity-browser-matrix" "Check committed Chrome/Brave/Chromium integration markers"
 	@printf '  %-18s %s\n' "make parity-full" "Run doctor, schema, service, Computer Use, and app-server probes"
 	@printf '  %-18s %s\n' "make parity-strict" "Run parity-full with strict no-skip UI/remote checks"
 	@printf '  %-18s %s\n' "make clean-dist" "Remove generated dist/ artifacts"
@@ -338,6 +339,10 @@ parity-schema:
 parity-smoke:
 	@echo "[make] Running non-sensitive desktop parity smoke"
 	node scripts/desktop-parity-smoke.js
+
+parity-browser-matrix:
+	@echo "[make] Checking Linux browser integration matrix"
+	node scripts/browser-matrix-smoke.js
 
 parity-full:
 	@echo "[make] Running full local desktop parity checks"

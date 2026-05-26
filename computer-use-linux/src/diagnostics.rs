@@ -1,6 +1,6 @@
 use crate::windowing::registry::{
     self, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, KWIN_BACKEND,
+    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -234,6 +234,13 @@ fn capability_map(
     }
     if windowing.cosmic_helper.ok {
         window_backends.push("cosmic".to_string());
+    }
+    if windowing
+        .backends
+        .get(I3_BACKEND)
+        .is_some_and(|check| check.ok)
+    {
+        window_backends.push("i3".to_string());
     }
 
     let mut accessibility_backends = Vec::new();
@@ -578,11 +585,13 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
             "A KWin/Plasma window backend is available for list_windows, focused_window, and targeted input verification."
         } else if hyprland.ok {
             "A Hyprland window backend is available for list_windows, focused_window, and targeted input verification."
+        } else if backends.get(I3_BACKEND).is_some_and(|check| check.ok) {
+            "An i3 window backend is available for list_windows, focused_window, and targeted input verification."
         } else {
             "A GNOME window listing backend is available for list_windows, focused_window, and targeted input verification."
         }
     } else {
-        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Hyprland, ensure hyprctl is available in the session."
+        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Hyprland, ensure hyprctl is available in the session. On i3, ensure i3-msg can reach the active i3 IPC socket."
     }
     .to_string();
 
@@ -1167,6 +1176,31 @@ mod tests {
         assert!(readiness.can_focus_apps);
         assert!(readiness.can_focus_windows);
         assert!(readiness.blockers.is_empty());
+    }
+
+    #[test]
+    fn capability_map_reports_i3_window_backend() {
+        let platform = platform_report();
+        let accessibility = accessibility_report(Check::ok("bus"), Check::ok("true"));
+        let mut windowing = windowing_report(false, false);
+        windowing.backends.insert(
+            I3_BACKEND.to_string(),
+            Check::ok("i3-msg get_tree returned a JSON tree"),
+        );
+        windowing.can_list_windows = true;
+        windowing.can_focus_apps = true;
+        windowing.can_focus_windows = true;
+        let input = input_report(true);
+
+        let capabilities = capability_map(
+            &platform,
+            &portal_report(Check::fail("missing")),
+            &accessibility,
+            &windowing,
+            &input,
+        );
+
+        assert!(capabilities.window_control.contains(&"i3".to_string()));
     }
 
     #[test]

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -240,6 +241,57 @@ def check_manifest_file(
         detail,
         **data,
     )
+
+
+def secret_service_canary(secret_tool: str, app_id: str) -> tuple[str, str]:
+    value = f"codex-canary-{secrets.token_hex(16)}"
+    attributes = [
+        "application",
+        "codex-desktop-linux",
+        "app-id",
+        app_id,
+        "kind",
+        "canary",
+    ]
+    store = subprocess.run(
+        [secret_tool, "store", "--label", "Codex Desktop Linux canary", *attributes],
+        check=False,
+        input=value,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=8,
+    )
+    if store.returncode != 0:
+        detail = (store.stderr or store.stdout or "secret-tool store failed").strip()
+        lowered = detail.lower()
+        if "locked" in lowered or "cancelled" in lowered or "canceled" in lowered:
+            return WARN, "Secret Service canary unavailable: keyring locked or prompt cancelled"
+        return WARN, "Secret Service canary unavailable: store failed"
+
+    lookup = subprocess.run(
+        [secret_tool, "lookup", *attributes],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=8,
+    )
+    try:
+        subprocess.run(
+            [secret_tool, "clear", *attributes],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    if lookup.returncode == 0 and lookup.stdout == value:
+        return PASS, "store/lookup/clear succeeded"
+    return WARN, "Secret Service canary lookup did not round-trip"
 
 
 def checks_for_package(package_name: str) -> list[dict[str, Any]]:
@@ -593,6 +645,22 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
             else "secret-tool missing; file fallback will be used",
             path=secret_tool,
         )
+        if os.environ.get("CODEX_DESKTOP_SECRET_SERVICE_CANARY") == "1" or os.environ.get("CODEX_SECRET_SERVICE_CANARY") == "1":
+            if secret_tool:
+                try:
+                    canary_status, canary_detail = secret_service_canary(secret_tool, remote_app_id)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    canary_status, canary_detail = WARN, f"Secret Service canary unavailable: {type(exc).__name__}"
+            else:
+                canary_status, canary_detail = INFO, "secret-tool missing; canary skipped"
+            add_check(
+                checks,
+                "remote_mobile_secret_service_canary",
+                "Remote mobile Secret Service canary",
+                canary_status,
+                canary_detail,
+                appId=remote_app_id,
+            )
         key_mode = None
         key_count = None
         secret_service_key_count = None

@@ -492,13 +492,17 @@ make doctor
 
 The doctor checks installed package files, the optional app service, updater/update-builder files, required ASAR patch markers, Chrome/Brave/Chromium native-messaging manifests, Flatpak Chrome permissions, Computer Use readiness, and remote-mobile feature markers. It reports only sanitized status fields and file paths; it does not print pairing secrets, browser tab contents, cookies, QR data, screenshots, or Computer Use window/application state.
 
+To run the optional Secret Service canary for the experimental remote-mobile key
+store, set `CODEX_DESKTOP_SECRET_SERVICE_CANARY=1`. The canary stores, looks up,
+and clears a random non-secret value, and reports only pass/fail state.
+
 For a deeper local runtime smoke test after login, run:
 
 ```bash
 make parity-smoke
 ```
 
-`make parity-smoke` starts `codex app-server --remote-control`, probes read-only app-server APIs for threads, plugins, apps, MCP status, skills, models, config, external-agent detection, a sandboxed command, and remote-control status through both an explicit status read and a status notification, then prints only sanitized counts and booleans. Transient app directory HTTP errors are summarized without response bodies. It does not print thread names, account fields, browser state, QR data, screenshots, cookies, tokens, or remote-control identifiers. To include optional real Electron UI presence checks, launch a separate debug-port instance yourself and pass its local CDP origin:
+`make parity-smoke` starts `codex app-server --remote-control`, probes read-only app-server APIs for threads, plugins, apps, live session-scoped MCP status, skills, models, config, managed requirements when `bwrap` can isolate `/etc/codex`, external-agent detection, a sandboxed command, and remote-control status through both an explicit status read and a status notification, then prints only sanitized counts and booleans. Transient app directory HTTP errors are summarized without response bodies. It does not print thread names, account fields, browser state, QR data, screenshots, cookies, tokens, or remote-control identifiers. To include optional real Electron UI presence checks, launch a separate debug-port instance yourself and pass its local CDP origin:
 
 ```bash
 CODEX_DESKTOP_CDP_ORIGIN=http://127.0.0.1:9334 make parity-smoke
@@ -510,12 +514,15 @@ For a broader local parity pass, run:
 
 ```bash
 make parity-schema
+make parity-browser-matrix
 make parity-full
 ```
 
 `make parity-schema` generates the current `codex app-server` JSON Schema into
 a temporary directory and verifies the protocol methods and notifications used
-by the Linux parity probes are still present. `make parity-full` composes the
+by the Linux parity probes are still present. `make parity-browser-matrix`
+checks the committed Chrome, Brave, Chromium, and Flatpak Chrome integration
+matrix without reading browser profiles. `make parity-full` composes the
 installed doctor, `systemd --user` service state, app-server schema guard,
 Computer Use doctor, and the non-sensitive app-server smoke. The smoke also
 uses temporary repo fixtures for skill discovery, project config layering, and
@@ -542,6 +549,8 @@ connected remote-control status automatically when the installed
 
 The current parity matrix and remaining Mac/Linux gaps are tracked in
 [`docs/PARITY_MATRIX.md`](docs/PARITY_MATRIX.md).
+Locked Computer Use remains research-only on Linux; see
+[`docs/LOCKED_COMPUTER_USE_RESEARCH.md`](docs/LOCKED_COMPUTER_USE_RESEARCH.md).
 
 Native packages also install an opt-in app unit at `/usr/lib/systemd/user/codex-desktop.service`:
 
@@ -651,6 +660,7 @@ After changing installer, packaging, or updater logic:
 bash -n install.sh scripts/lib/*.sh launcher/start.sh.template scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/build-appimage.sh scripts/install-deps.sh
 node --check scripts/patch-linux-window-ui.js
 node --check scripts/desktop-parity-smoke.js
+node --check scripts/browser-matrix-smoke.js
 node --check scripts/app-server-schema-guard.js
 for file in scripts/patches/*.js; do node --check "$file"; done
 node --check scripts/ci/validate-patch-report.js

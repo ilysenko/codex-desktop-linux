@@ -85,10 +85,40 @@ function parseArgs(argv) {
 }
 
 function redactText(value) {
-  return String(value ?? "")
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer <redacted>")
-    .replace(/sk-[A-Za-z0-9_-]+/g, "sk-<redacted>")
-    .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/g, "<jwt-redacted>");
+  return redactKeyValueFields(
+    redactKeyValueFields(
+      String(value ?? "")
+        .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer <redacted>")
+        .replace(/sk-[A-Za-z0-9_-]+/g, "sk-<redacted>")
+        .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/g, "<jwt-redacted>")
+        .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "<private-key-redacted>")
+        .replace(/https?:\/\/[^\s"',)]+/g, "<url-redacted>")
+        .replace(/\bdata:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, "data:image/<redacted>")
+        .replace(/\bchrome-extension:\/\/[a-p]{32}\/?/g, "chrome-extension://<extension-id>/"),
+      String.raw`(?:qr|pairing|device|client|installation|environment|key)[_-]?(?:code|id|secret|token|payload|fingerprint|key)`,
+    ),
+    String.raw`(?:screenshot|browserTab|tabTitle|tabUrl|conversationText|threadPreview)`,
+  );
+}
+
+function redactKeyValueFields(input, fieldNamePattern) {
+  return input
+    .replace(
+      new RegExp(`(["'])\\b(${fieldNamePattern})\\b\\1\\s*([:=])\\s*(["'])(?:\\\\.|(?!\\4)[\\s\\S])*\\4`, "gi"),
+      (_match, keyQuote, key, separator, valueQuote) => `${keyQuote}${key}${keyQuote}${separator}${valueQuote}<redacted>${valueQuote}`,
+    )
+    .replace(
+      new RegExp(`(["'])\\b(${fieldNamePattern})\\b\\1\\s*([:=])\\s*[^"',\\s}\\]]+`, "gi"),
+      (_match, keyQuote, key, separator) => `${keyQuote}${key}${keyQuote}${separator}<redacted>`,
+    )
+    .replace(
+      new RegExp(`\\b(${fieldNamePattern})\\b\\s*([:=])\\s*(["'])(?:\\\\.|(?!\\3)[\\s\\S])*\\3`, "gi"),
+      (_match, key, separator, valueQuote) => `${key}${separator}${valueQuote}<redacted>${valueQuote}`,
+    )
+    .replace(
+      new RegExp(`\\b(${fieldNamePattern})\\b\\s*([:=])\\s*[^"',\\s}\\]]+`, "gi"),
+      (_match, key, separator) => `${key}${separator}<redacted>`,
+    );
 }
 
 function summarizeErrorText(value) {
@@ -116,6 +146,25 @@ function wait(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function findExecutable(name) {
+  if (name.includes(path.sep)) {
+    return fs.existsSync(name) ? name : null;
+  }
+  for (const directory of (process.env.PATH || "").split(path.delimiter)) {
+    if (!directory) {
+      continue;
+    }
+    const candidate = path.join(directory, name);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // Continue scanning PATH.
+    }
+  }
+  return null;
 }
 
 function createSkillFixture() {
@@ -176,6 +225,55 @@ function createExternalAgentFixture() {
   return fixtureDir;
 }
 
+function createMcpServerFixture() {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-mcp-live-"));
+  const serverPath = path.join(fixtureDir, "server.js");
+  fs.writeFileSync(
+    serverPath,
+    [
+      "#!/usr/bin/env node",
+      '"use strict";',
+      'const readline = require("node:readline");',
+      "const rl = readline.createInterface({ input: process.stdin });",
+      "function send(message) {",
+      '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");',
+      "}",
+      'rl.on("line", (line) => {',
+      "  let message;",
+      "  try { message = JSON.parse(line); } catch { return; }",
+      '  if (!Object.prototype.hasOwnProperty.call(message, "id")) return;',
+      '  if (message.method === "initialize") {',
+      "    send({",
+      "      id: message.id,",
+      "      result: {",
+      '        protocolVersion: message.params?.protocolVersion || "2024-11-05",',
+      "        capabilities: { tools: {} },",
+      '        serverInfo: { name: "codex-parity-mcp", version: "0.0.0" },',
+      "      },",
+      "    });",
+      '  } else if (message.method === "tools/list") {',
+      "    send({",
+      "      id: message.id,",
+      "      result: {",
+      "        tools: [{",
+      '          name: "codex_parity_ping",',
+      '          description: "No-op desktop parity fixture tool.",',
+      '          inputSchema: { type: "object", properties: {}, additionalProperties: false },',
+      "        }],",
+      "      },",
+      "    });",
+      "  } else {",
+      '    send({ id: message.id, error: { code: -32601, message: "method not found" } });',
+      "  }",
+      "});",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  fs.chmodSync(serverPath, 0o755);
+  return { fixtureDir, serverPath };
+}
+
 function removeFixture(fixtureDir) {
   if (fixtureDir) {
     fs.rmSync(fixtureDir, { recursive: true, force: true });
@@ -183,10 +281,11 @@ function removeFixture(fixtureDir) {
 }
 
 class AppServerClient {
-  constructor({ codexBin }) {
-    this.child = spawn(codexBin, ["app-server", "--remote-control"], {
+  constructor({ codexBin, command = codexBin, args = null, extraArgs = [], env = process.env }) {
+    const childArgs = args ?? ["app-server", "--remote-control", ...extraArgs];
+    this.child = spawn(command, childArgs, {
       cwd: REPO_DIR,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...env, NO_COLOR: "1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.nextId = 1;
@@ -208,7 +307,8 @@ class AppServerClient {
     this.child.on("exit", (code, signal) => {
       this.closed = true;
       if (this.pending.size > 0) {
-        this.failAll(new Error(`app-server exited early with code=${code} signal=${signal}`));
+        const detail = this.stderr ? `: ${summarizeErrorText(this.stderr)}` : "";
+        this.failAll(new Error(`app-server exited early with code=${code} signal=${signal}${detail}`));
       }
     });
   }
@@ -377,6 +477,18 @@ function summarizeConfig(result) {
   };
 }
 
+function summarizeMcpStatus(result) {
+  const entries = Array.isArray(result.data) ? result.data : [];
+  const fixture = entries.find((entry) => entry && entry.name === "codex_parity_mcp");
+  const tools = hasObject(fixture?.tools) ? Object.keys(fixture.tools) : [];
+  return {
+    count: entries.length,
+    fixturePresent: fixture != null,
+    fixtureToolPresent: tools.includes("codex_parity_ping"),
+    hasNextCursor: !!result.nextCursor,
+  };
+}
+
 function hasProjectConfigLayer(result, fixtureDir) {
   const layers = Array.isArray(result.layers) ? result.layers : [];
   return layers.some((layer) => (
@@ -407,6 +519,19 @@ function notificationMethodCounts(client) {
   return counts;
 }
 
+function summarizeRemoteE2e({ remoteStatusRead, remoteStatusNotification }) {
+  const read = summarizeRemoteStatus(remoteStatusRead);
+  const notification = summarizeRemoteStatus(remoteStatusNotification);
+  return {
+    browserBridgeStatusKnown: true,
+    computerUseBridgeStatusKnown: true,
+    notificationObserved: notification != null,
+    remoteHostAvailable: read != null,
+    status: read?.status || notification?.status || "unknown",
+    statusReadObserved: read != null,
+  };
+}
+
 async function waitForRemoteStatus(client, requireConnected) {
   const deadline = Date.now() + (requireConnected ? 5000 : 2500);
   let latest = client.latestNotification("remoteControl/status/changed");
@@ -421,8 +546,192 @@ async function waitForRemoteStatus(client, requireConnected) {
   return latest;
 }
 
+function createRequirementsFixture() {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-requirements-"));
+  const etcCodexDir = path.join(fixtureDir, "etc-codex");
+  fs.mkdirSync(etcCodexDir, { recursive: true });
+  for (const directory of ["codex-home", "home", "xdg-config", "xdg-data", "xdg-state", "xdg-cache"]) {
+    fs.mkdirSync(path.join(fixtureDir, directory), { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(etcCodexDir, "requirements.toml"),
+    [
+      'allowed_sandbox_modes = ["read-only", "workspace-write"]',
+      'allowed_approval_policies = ["never"]',
+      'allowed_approvals_reviewers = ["user"]',
+      'allowed_web_search_modes = ["cached"]',
+      "allow_managed_hooks_only = true",
+      "",
+      "[computer_use]",
+      "allow_locked_computer_use = false",
+      "",
+      "[features]",
+      "apps = false",
+      "",
+      "[experimental_network]",
+      "enabled = true",
+      "managed_allowed_domains_only = true",
+      "allow_local_binding = false",
+      "",
+      "[experimental_network.domains]",
+      '"api.example.com" = "allow"',
+      '"blocked.example.com" = "deny"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  return { etcCodexDir, fixtureDir };
+}
+
+function bwrapAppServerCommand({ codexBin, fixtureDir, etcCodexDir }) {
+  const bwrap = findExecutable("bwrap");
+  if (!bwrap || process.platform !== "linux") {
+    return null;
+  }
+
+  const args = [
+    "--ro-bind",
+    "/",
+    "/",
+    "--bind",
+    fixtureDir,
+    fixtureDir,
+    "--tmpfs",
+    "/etc",
+  ];
+  for (const file of ["/etc/passwd", "/etc/group", "/etc/hosts", "/etc/resolv.conf"]) {
+    if (fs.existsSync(file)) {
+      args.push("--ro-bind", file, file);
+    }
+  }
+  args.push("--ro-bind", etcCodexDir, "/etc/codex", "--", codexBin, "app-server", "--remote-control");
+  return { args, command: bwrap };
+}
+
+function summarizeRequirementsFixture(result) {
+  const requirements = hasObject(result.requirements) ? result.requirements : null;
+  const network = hasObject(requirements?.network) ? requirements.network : {};
+  const features = hasObject(requirements?.featureRequirements) ? requirements.featureRequirements : {};
+  const computerUse = hasObject(requirements?.computerUse) ? requirements.computerUse : {};
+  return {
+    allowedApprovalPolicies: Array.isArray(requirements?.allowedApprovalPolicies)
+      ? requirements.allowedApprovalPolicies
+      : [],
+    allowedSandboxModes: Array.isArray(requirements?.allowedSandboxModes)
+      ? requirements.allowedSandboxModes
+      : [],
+    allowedWebSearchModes: Array.isArray(requirements?.allowedWebSearchModes)
+      ? requirements.allowedWebSearchModes
+      : [],
+    allowLockedComputerUse: computerUse.allowLockedComputerUse === false ? false : null,
+    allowManagedHooksOnly: requirements?.allowManagedHooksOnly === true,
+    appsFeaturePinnedOff: features.apps === false,
+    managedAllowedDomainsOnly: network.managedAllowedDomainsOnly === true,
+    networkEnabled: network.enabled === true,
+  };
+}
+
+function requirementsFixturePassed(details) {
+  return (
+    details.allowManagedHooksOnly === true &&
+    details.allowLockedComputerUse === false &&
+    details.appsFeaturePinnedOff === true &&
+    details.networkEnabled === true &&
+    details.managedAllowedDomainsOnly === true &&
+    details.allowedApprovalPolicies.includes("never") &&
+    details.allowedSandboxModes.includes("read-only") &&
+    details.allowedSandboxModes.includes("workspace-write") &&
+    details.allowedWebSearchModes.includes("cached") &&
+    details.allowedWebSearchModes.includes("disabled")
+  );
+}
+
+async function runRequirementsFixtureSmoke({ codexBin }) {
+  const fixture = createRequirementsFixture();
+  try {
+    const wrapped = bwrapAppServerCommand({
+      codexBin,
+      etcCodexDir: fixture.etcCodexDir,
+      fixtureDir: fixture.fixtureDir,
+    });
+    if (!wrapped) {
+      return {
+        details: { reason: "bwrap unavailable; skipping isolated /etc/codex fixture" },
+        status: "skip",
+      };
+    }
+
+    const client = new AppServerClient({
+      codexBin,
+      command: wrapped.command,
+      args: wrapped.args,
+      env: {
+        ...process.env,
+        CODEX_HOME: path.join(fixture.fixtureDir, "codex-home"),
+        HOME: path.join(fixture.fixtureDir, "home"),
+        XDG_CACHE_HOME: path.join(fixture.fixtureDir, "xdg-cache"),
+        XDG_CONFIG_HOME: path.join(fixture.fixtureDir, "xdg-config"),
+        XDG_DATA_HOME: path.join(fixture.fixtureDir, "xdg-data"),
+        XDG_STATE_HOME: path.join(fixture.fixtureDir, "xdg-state"),
+      },
+    });
+    try {
+      await client.request("initialize", {
+        clientInfo: {
+          name: "codex_linux_desktop_requirements_fixture",
+          title: "Codex Linux Desktop Requirements Fixture",
+          version: "0.1.0",
+        },
+        capabilities: {
+          experimentalApi: true,
+          optOutNotificationMethods: [
+            "account/updated",
+            "account/rateLimits/updated",
+            "thread/started",
+            "thread/status/changed",
+          ],
+        },
+      });
+      client.notify("initialized", {});
+      const result = await client.request("configRequirements/read", {});
+      const details = summarizeRequirementsFixture(result);
+      return {
+        details,
+        status: requirementsFixturePassed(details) ? "pass" : "fail",
+      };
+    } finally {
+      await client.close();
+    }
+  } catch (error) {
+    const message = summarizeErrorText(error.message);
+    return {
+      details: { error: message },
+      status: /operation not permitted|no permissions|permission denied|user namespace/i.test(message)
+        ? "skip"
+        : "fail",
+    };
+  } finally {
+    removeFixture(fixture.fixtureDir);
+  }
+}
+
 async function runAppServerSmoke(options) {
-  const client = new AppServerClient({ codexBin: options.codexBin });
+  const mcpFixture = createMcpServerFixture();
+  const client = new AppServerClient({
+    codexBin: options.codexBin,
+    extraArgs: [
+      "-c",
+      `mcp_servers.codex_parity_mcp.command=${JSON.stringify(process.execPath)}`,
+      "-c",
+      `mcp_servers.codex_parity_mcp.args=[${JSON.stringify(mcpFixture.serverPath)}]`,
+      "-c",
+      "mcp_servers.codex_parity_mcp.startup_timeout_sec=3",
+      "-c",
+      "mcp_servers.codex_parity_mcp.tool_timeout_sec=3",
+      "-c",
+      'mcp_servers.codex_parity_mcp.enabled_tools=["codex_parity_ping"]',
+    ],
+  });
   const checks = [];
 
   const record = (name, status, details = {}) => {
@@ -430,6 +739,9 @@ async function runAppServerSmoke(options) {
   };
 
   try {
+    const requirementsFixture = await runRequirementsFixtureSmoke({ codexBin: options.codexBin });
+    record("managed requirements fixture", requirementsFixture.status, requirementsFixture.details);
+
     const initialize = await client.request("initialize", {
       clientInfo: {
         name: "codex_linux_desktop_parity_smoke",
@@ -486,7 +798,7 @@ async function runAppServerSmoke(options) {
         name: "mcp server status list",
         method: "mcpServerStatus/list",
         params: { detail: "toolsAndAuthOnly", limit: 20 },
-        summarize: (result) => ({ count: safeArrayLength(result.data), hasNextCursor: !!result.nextCursor }),
+        summarize: summarizeMcpStatus,
       },
       {
         name: "skills list",
@@ -525,6 +837,11 @@ async function runAppServerSmoke(options) {
         const result = await client.request(probe.method, probe.params);
         const details = probe.summarize(result);
         if (probe.method === "plugin/list" && details.loadErrors > 0) {
+          record(probe.name, "fail", details);
+        } else if (
+          probe.method === "mcpServerStatus/list" &&
+          (!details.fixturePresent || !details.fixtureToolPresent)
+        ) {
           record(probe.name, "fail", details);
         } else {
           record(probe.name, "pass", details);
@@ -634,6 +951,16 @@ async function runAppServerSmoke(options) {
       record("remote control status notification", status, { observed: false });
     }
 
+    const remoteE2e = summarizeRemoteE2e({
+      remoteStatusRead: remoteStatusReadResult,
+      remoteStatusNotification,
+    });
+    record(
+      "remote redacted e2e summary",
+      options.requireRemoteConnected && remoteE2e.status !== "connected" ? "fail" : "pass",
+      remoteE2e,
+    );
+
     if (client.serverRequestMethods.size > 0) {
       record("server-initiated requests", "fail", {
         methods: Object.fromEntries(client.serverRequestMethods.entries()),
@@ -649,6 +976,7 @@ async function runAppServerSmoke(options) {
     };
   } finally {
     await client.close();
+    removeFixture(mcpFixture.fixtureDir);
   }
 }
 
@@ -883,6 +1211,11 @@ async function main() {
     process.exit(1);
   }
 }
+
+module.exports = {
+  redactText,
+  summarizeErrorText,
+};
 
 if (require.main === module) {
   main().catch((error) => {

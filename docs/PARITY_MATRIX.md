@@ -33,6 +33,7 @@ Run the local checks from the repo root:
 ```bash
 make doctor
 make parity-schema
+make parity-browser-matrix
 make parity-smoke
 make parity-full
 ```
@@ -70,15 +71,15 @@ screenshots, or private conversation text into parity artifacts.
 | Thread history | Native app reads local sessions | App-server thread list/read surface is present | `make parity-smoke` | Avoid printing thread names/content in logs |
 | Plugins and marketplace | Built-in app support | Plugin list and bundled marketplace cache present | `make parity-smoke`, `make doctor` | Add install/uninstall smoke only with explicit non-destructive mode |
 | Apps/connectors | Built-in app support | App list surface present | `make parity-smoke` | Account/workspace gating remains server-side |
-| MCP servers | Built-in app support | MCP status API present | `make parity-smoke` | Add fixture MCP server test later |
+| MCP servers | Built-in app support | MCP status API plus session-scoped live MCP fixture present | `make parity-smoke` | Expand tool-call coverage only with non-mutating fixtures |
 | Skills | Built-in app support | Skills list API plus repo-scoped fixture discovery present | `make parity-smoke` | Add skill enable/disable fixture later |
-| Config and requirements | User, repo, and managed config | Config/read validates a repo-scoped project config fixture; requirements/read surface is present | `make parity-smoke`, `make parity-schema` | Add managed requirements fixture later |
+| Config and requirements | User, repo, and managed config | Config/read validates a repo-scoped project config fixture; requirements/read surface plus isolated `/etc/codex/requirements.toml` fixture when `bwrap` is available | `make parity-smoke`, `make parity-schema` | Expand policy-shape coverage as upstream requirements fields change |
 | External agent import | Detect/import agent artifacts | Detect surface plus temporary CLAUDE.md and MCP config fixture detection present; import remains untouched by smoke | `make parity-smoke`, `make parity-schema` | Add safe no-op import validation only if upstream exposes a dry-run mode |
-| Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper | `make doctor`, `make parity-full` | Add browser matrix across native/Flatpak browsers |
+| Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper | `make doctor`, `make parity-full`, `make parity-browser-matrix` | Add live browser-profile validation only with a redacted opt-in mode |
 | Chrome Flatpak | macOS not applicable | Flatpak host wrapper via `flatpak-spawn --host` | `make doctor` | Keep manifest/path regression tests |
 | Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis | `make parity-full` | Extend desktop-environment matrix |
 | Computer Use UI | Native UI | Opt-in Linux UI gate | `make doctor`, manual UI check | Keep opt-in; do not force Statsig-like UI gates globally |
-| Locked Computer Use | Apple authorization plug-in on macOS | Not equivalent | Not implemented | Research only; do not fake remote unlock |
+| Locked Computer Use | Apple authorization plug-in on macOS | Not equivalent | `docs/LOCKED_COMPUTER_USE_RESEARCH.md` | Research only; do not fake remote unlock |
 | Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` checks explicit status read plus status notification | Server-side rejection can still happen |
 | Remote-control key storage | macOS keychain/Secure Enclave-style boundary | App-id scoped Secret Service via `secret-tool` when available, with `0600` file fallback | `make doctor` reports helper availability and metadata/fallback counts only | Exercise migration across more desktop keyring implementations |
 | Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units | `make doctor`, `make parity-full` | Add suspend/resume and network-change regression tests |
@@ -86,7 +87,7 @@ screenshots, or private conversation text into parity artifacts.
 | Native packages | Official platform installers | `.deb`, `.rpm`, pacman, AppImage, Nix | GitHub CI, `make package` | Keep distro matrix green |
 | Nix | Not a primary Mac path | Flake outputs and feature variants | GitHub CI Nix job | Keep upstream hash refresh bot green |
 | AppImage | Not a Mac path | Manual self-build | `make appimage` | No resident updater by design |
-| Enterprise controls | Config/requirements support | Requirements API surface available | `make parity-smoke`, `make parity-schema` | Add fixture-based requirements tests |
+| Enterprise controls | Config/requirements support | Requirements API surface plus isolated `/etc/codex/requirements.toml` fixture when `bwrap` is available | `make parity-smoke`, `make parity-schema` | Skip safely when mount namespaces are unavailable |
 | Security posture | Official app trust model | Local wrapper, updater, scripts, and experimental features | `make doctor`, code review | Threat-model remote/mobile and key handling before deeper unlock work |
 
 ## Reusable Prior Art
@@ -116,13 +117,15 @@ screenshots, or private conversation text into parity artifacts.
 ## Work Queue
 
 1. Keep `make parity-full` passing on the installed app.
-2. Add safe fixture tests for managed requirements and MCP server visibility.
+2. Keep safe fixture tests for managed requirements and MCP server visibility
+   aligned with upstream app-server behavior.
 3. Extend the phone/remote-control E2E check beyond host connected state only
    when it can still record only connected/disconnected state and redacted
    booleans.
 4. Expand Secret Service/libsecret key-store coverage across GNOME Keyring,
    KWallet, locked keyrings, and headless sessions.
-5. Build a desktop-environment matrix for GNOME, KDE Plasma, Hyprland, Sway,
-   COSMIC, X11, native Chrome, Flatpak Chrome, Brave, and Chromium.
+5. Expand the desktop-environment matrix in `docs/DESKTOP_ENVIRONMENT_MATRIX.md`
+   with live validation for more GNOME, KDE Plasma, Hyprland, Sway, COSMIC,
+   X11, native Chrome, Flatpak Chrome, Brave, and Chromium combinations.
 6. Research locked-use equivalents separately and require a threat model before
    writing any unlock/session-control code.

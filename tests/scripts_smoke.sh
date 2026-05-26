@@ -151,6 +151,7 @@ test_desktop_parity_smoke_script_syntax() {
     info "Checking desktop parity scripts syntax"
     node --check "$REPO_DIR/scripts/app-server-schema-guard.js" >/dev/null
     node --check "$REPO_DIR/scripts/desktop-parity-smoke.js" >/dev/null
+    node --check "$REPO_DIR/scripts/browser-matrix-smoke.js" >/dev/null
     bash -n "$REPO_DIR/scripts/desktop-parity-full.sh"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "--strict"
     assert_contains "$REPO_DIR/scripts/desktop-parity-full.sh" "CODEX_PARITY_STRICT"
@@ -158,6 +159,71 @@ test_desktop_parity_smoke_script_syntax() {
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity-skill"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity-config"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity-mcp"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex_parity_ping"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "managed requirements fixture"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "remote redacted e2e summary"
+    assert_contains "$REPO_DIR/Makefile" "parity-browser-matrix"
+
+    node - "$REPO_DIR/scripts/desktop-parity-smoke.js" <<'NODE' \
+        || fail "Expected desktop parity smoke redactor to cover quoted JSON fields"
+const { redactText, summarizeErrorText } = require(process.argv[2]);
+const input = JSON.stringify({
+  pairingCode: "pairing-fixture-value",
+  installationId: "installation-fixture-value",
+  tabTitle: "private tab fixture",
+  tabUrl: "https://private.example/path",
+  conversationText: "private conversation fixture",
+}) + " deviceKey='device-key-fixture' Bearer bearer-fixture sk-test-fixture";
+const output = redactText(input);
+for (const forbidden of [
+  "pairing-fixture-value",
+  "installation-fixture-value",
+  "private tab fixture",
+  "private.example",
+  "private conversation fixture",
+  "device-key-fixture",
+  "bearer-fixture",
+  "sk-test-fixture",
+]) {
+  if (output.includes(forbidden)) {
+    throw new Error(`redaction leaked ${forbidden}: ${output}`);
+  }
+}
+const summary = summarizeErrorText(`stderr: ${input}`);
+if (summary.includes("pairing-fixture-value") || summary.includes("private.example")) {
+  throw new Error(`summary leaked redacted fields: ${summary}`);
+}
+NODE
+}
+
+test_browser_matrix_smoke() {
+    info "Checking browser matrix smoke"
+    local report="$TMP_DIR/browser-matrix.json"
+
+    node "$REPO_DIR/scripts/browser-matrix-smoke.js" --json >"$report"
+    assert_contains "$report" '"google_chrome"'
+    assert_contains "$report" '"brave_browser"'
+    assert_contains "$report" '"chromium"'
+    assert_contains "$report" '"flatpak_chrome"'
+
+    node - "$report" <<'NODE' || fail "Expected browser matrix smoke to pass"
+const fs = require("node:fs");
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (!report.ok || report.counts.fail !== 0) {
+  throw new Error(JSON.stringify(report));
+}
+NODE
+}
+
+test_locked_computer_use_research_doc() {
+    info "Checking locked Computer Use research guard"
+    local doc="$REPO_DIR/docs/LOCKED_COMPUTER_USE_RESEARCH.md"
+
+    assert_file_exists "$doc"
+    assert_contains "$doc" "research only"
+    assert_contains "$doc" "does not fake remote unlock"
+    assert_contains "$doc" "No lock-screen bypass"
+    assert_not_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "LOCKED_COMPUTER_USE_ENABLE"
 }
 
 test_package_payload_permission_normalization() {
@@ -911,6 +977,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local app_service_log="$TMP_DIR/make-app-service.log"
     local doctor_log="$TMP_DIR/make-doctor.log"
     local parity_schema_log="$TMP_DIR/make-parity-schema.log"
+    local parity_browser_matrix_log="$TMP_DIR/make-parity-browser-matrix.log"
     local parity_full_log="$TMP_DIR/make-parity-full.log"
     local parity_strict_log="$TMP_DIR/make-parity-strict.log"
 
@@ -943,6 +1010,9 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" parity-schema >"$parity_schema_log"
     assert_contains "$parity_schema_log" 'scripts/app-server-schema-guard.js'
+
+    make -n -C "$REPO_DIR" parity-browser-matrix >"$parity_browser_matrix_log"
+    assert_contains "$parity_browser_matrix_log" 'scripts/browser-matrix-smoke.js'
 
     make -n -C "$REPO_DIR" parity-full >"$parity_full_log"
     assert_contains "$parity_full_log" 'scripts/desktop-parity-full.sh'
@@ -1113,6 +1183,62 @@ real_ok, real_version, real_detail = module.probe_node_runtime(real_node)
 if not real_ok or real_version != "22.22.2" or "node 22.22.2" not in real_detail:
     raise SystemExit(f"real runtime was rejected: {real_ok} {real_version} {real_detail}")
 PY
+}
+
+test_desktop_doctor_secret_service_canary() {
+    info "Checking installed doctor Secret Service canary helper"
+    local workspace="$TMP_DIR/desktop-doctor-secret-service-canary"
+    local doctor="$workspace/codex-doctor-smoke"
+    local fake_secret_tool="$workspace/secret-tool"
+
+    mkdir -p "$workspace"
+    sed 's/__PACKAGE_NAME__/codex-doctor-smoke/g' \
+        "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" >"$doctor"
+
+    cat > "$fake_secret_tool" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+state="${SECRET_TOOL_STATE:?}"
+case "${1:-}" in
+    store)
+        cat > "$state"
+        ;;
+    lookup)
+        cat "$state"
+        ;;
+    clear)
+        rm -f "$state"
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+SCRIPT
+    chmod +x "$fake_secret_tool"
+
+    SECRET_TOOL_STATE="$workspace/secret-state" python3 - "$doctor" "$fake_secret_tool" <<'PY' \
+        || fail "Expected Secret Service canary helper to report only sanitized state"
+import importlib.machinery
+import importlib.util
+import pathlib
+import sys
+
+doctor_path = pathlib.Path(sys.argv[1])
+secret_tool = sys.argv[2]
+loader = importlib.machinery.SourceFileLoader("codex_doctor_smoke", str(doctor_path))
+spec = importlib.util.spec_from_loader("codex_doctor_smoke", loader)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+status, detail = module.secret_service_canary(secret_tool, "codex-desktop")
+if status != module.PASS or detail != "store/lookup/clear succeeded":
+    raise SystemExit(f"unexpected canary result: {status} {detail}")
+if "codex-canary-" in detail:
+    raise SystemExit("canary detail leaked value")
+PY
+
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "CODEX_DESKTOP_SECRET_SERVICE_CANARY"
 }
 
 test_fedora_dependency_bootstrap_installs_rpmbuild() {
@@ -5231,6 +5357,8 @@ EOF
 main() {
     test_common_helper_sourcing
     test_desktop_parity_smoke_script_syntax
+    test_browser_matrix_smoke
+    test_locked_computer_use_research_doc
     test_package_payload_permission_normalization
     test_deb_builder_smoke
     test_update_builder_preserves_enabled_linux_features_config
@@ -5248,6 +5376,7 @@ main() {
     test_desktop_doctor_template_smoke
     test_desktop_doctor_browser_manifest_coverage
     test_desktop_doctor_node_runtime_probe
+    test_desktop_doctor_secret_service_canary
     test_fedora_dependency_bootstrap_installs_rpmbuild
     test_setup_native_wizard_noninteractive_feature_writer
     test_setup_native_wizard_rejects_invalid_feature_ids
