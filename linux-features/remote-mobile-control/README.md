@@ -148,6 +148,10 @@ Secret Service environments:
   sanitized no-session-bus/provider warning.
 - CI and smoke tests simulate `secret-tool` responses; they do not require or
   mutate a real desktop keyring.
+- `make parity-secret-service-live` runs an opt-in live canary using
+  remote-control-style Secret Service attributes, then clears it. It reports
+  only sanitized pass/warn state, desktop family, and booleans; it never
+  enumerates real keyring items.
 
 KDE Plasma smoke check:
 

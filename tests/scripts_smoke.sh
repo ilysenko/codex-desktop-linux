@@ -152,6 +152,7 @@ test_desktop_parity_smoke_script_syntax() {
     node --check "$REPO_DIR/scripts/app-server-schema-guard.js" >/dev/null
     node --check "$REPO_DIR/scripts/desktop-parity-smoke.js" >/dev/null
     node --check "$REPO_DIR/scripts/browser-matrix-smoke.js" >/dev/null
+    python3 -m py_compile "$REPO_DIR/scripts/secret-service-matrix-smoke.py"
     bash -n "$REPO_DIR/scripts/desktop-parity-full.sh"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "--strict"
     assert_contains "$REPO_DIR/scripts/desktop-parity-full.sh" "CODEX_PARITY_STRICT"
@@ -163,6 +164,7 @@ test_desktop_parity_smoke_script_syntax() {
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "managed requirements fixture"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "remote redacted e2e summary"
     assert_contains "$REPO_DIR/Makefile" "parity-browser-matrix"
+    assert_contains "$REPO_DIR/Makefile" "parity-secret-service-live"
 
     node - "$REPO_DIR/scripts/desktop-parity-smoke.js" <<'NODE' \
         || fail "Expected desktop parity smoke redactor to cover quoted JSON fields"
@@ -979,6 +981,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local parity_schema_log="$TMP_DIR/make-parity-schema.log"
     local parity_browser_matrix_log="$TMP_DIR/make-parity-browser-matrix.log"
     local parity_browser_live_log="$TMP_DIR/make-parity-browser-live.log"
+    local parity_secret_service_live_log="$TMP_DIR/make-parity-secret-service-live.log"
     local parity_full_log="$TMP_DIR/make-parity-full.log"
     local parity_strict_log="$TMP_DIR/make-parity-strict.log"
 
@@ -1019,6 +1022,10 @@ test_native_shortcut_targets_compose_existing_flows() {
     assert_contains "$parity_browser_live_log" 'CODEX_DESKTOP_LIVE_BROWSER_PROFILE_VALIDATION=1'
     assert_contains "$parity_browser_live_log" 'CODEX_DESKTOP_LIVE_BROWSER_BRIDGE_VALIDATION=1'
     assert_contains "$parity_browser_live_log" '/usr/bin/codex-desktop-doctor'
+
+    make -n -C "$REPO_DIR" parity-secret-service-live >"$parity_secret_service_live_log"
+    assert_contains "$parity_secret_service_live_log" 'CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1'
+    assert_contains "$parity_secret_service_live_log" 'scripts/secret-service-matrix-smoke.py --live'
 
     make -n -C "$REPO_DIR" parity-full >"$parity_full_log"
     assert_contains "$parity_full_log" 'scripts/desktop-parity-full.sh'
@@ -1538,6 +1545,153 @@ PY
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "classify_secret_service_failure"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "remote_mobile_key_file_summary"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "remote_mobile_key_file_check_data"
+}
+
+test_secret_service_matrix_smoke() {
+    info "Checking Secret Service matrix smoke redaction"
+    local workspace="$TMP_DIR/secret-service-matrix-smoke"
+    local default_report="$workspace/default.json"
+    local live_report="$workspace/live.json"
+    local headless_report="$workspace/headless.json"
+    local require_report="$workspace/require.json"
+    local fake_bin="$workspace/bin"
+    local secret_store="$workspace/store"
+
+    mkdir -p "$fake_bin" "$secret_store"
+    python3 "$REPO_DIR/scripts/secret-service-matrix-smoke.py" --json >"$default_report"
+    python3 - "$default_report" <<'PY' || fail "Expected default Secret Service matrix report to be gated"
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+checks = {check["name"]: check for check in report["checks"]}
+if not report["ok"]:
+    raise SystemExit("default report should not fail")
+if checks["live_gate"]["status"] != "skip":
+    raise SystemExit(f"expected live gate skip: {checks['live_gate']}")
+if checks["remote_key_secret_roundtrip"]["status"] != "skip":
+    raise SystemExit(f"expected roundtrip skip: {checks['remote_key_secret_roundtrip']}")
+PY
+
+    cat > "$fake_bin/secret-tool" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${CODEX_TEST_SECRET_TOOL_MODE:-ok}" = "headless" ]; then
+    echo "Cannot autolaunch D-Bus; DBUS_SESSION_BUS_ADDRESS=/tmp/not-for-output; PRIVATE KEY fake" >&2
+    exit 1
+fi
+store="${CODEX_TEST_SECRET_STORE:?}"
+cmd="${1:-}"
+shift || true
+mkdir -p "$store"
+key="$(python3 - "$@" <<'PY'
+import hashlib
+import sys
+
+filtered = []
+skip_next = False
+for arg in sys.argv[1:]:
+    if skip_next:
+        skip_next = False
+        continue
+    if arg == "--label":
+        skip_next = True
+        continue
+    if arg.startswith("--label="):
+        continue
+    filtered.append(arg)
+print(hashlib.sha256("\0".join(filtered).encode()).hexdigest())
+PY
+)"
+case "$cmd" in
+    store)
+        cat > "$store/$key"
+        ;;
+    lookup)
+        cat "$store/$key"
+        ;;
+    clear)
+        rm -f "$store/$key"
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+SCRIPT
+    chmod +x "$fake_bin/secret-tool"
+
+    PATH="$fake_bin:$PATH" \
+    CODEX_TEST_SECRET_STORE="$secret_store" \
+    CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1 \
+        python3 "$REPO_DIR/scripts/secret-service-matrix-smoke.py" --json --app-id codex-cua-lab >"$live_report"
+
+    python3 - "$live_report" "$secret_store" <<'PY' || fail "Expected live Secret Service matrix report to stay redacted"
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+secret_store = sys.argv[2]
+checks = {check["name"]: check for check in report["checks"]}
+if not report["ok"]:
+    raise SystemExit(f"live report failed: {report}")
+roundtrip = checks["remote_key_secret_roundtrip"]
+if roundtrip["status"] != "pass" or not roundtrip.get("lookupMatched") or not roundtrip.get("clearSucceeded"):
+    raise SystemExit(f"bad roundtrip check: {roundtrip}")
+text = json.dumps(report, sort_keys=True)
+for forbidden in [
+    secret_store,
+    "codex-matrix-secret",
+    "codex-matrix-",
+    "remote-control-device-key",
+    "key-id",
+    "PRIVATE KEY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "/tmp/not-for-output",
+]:
+    if forbidden in text:
+        raise SystemExit(f"matrix report leaked {forbidden}: {text}")
+PY
+
+    PATH="$fake_bin:$PATH" \
+    CODEX_TEST_SECRET_STORE="$secret_store" \
+    CODEX_TEST_SECRET_TOOL_MODE=headless \
+    CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1 \
+        python3 "$REPO_DIR/scripts/secret-service-matrix-smoke.py" --json --app-id codex-cua-lab >"$headless_report"
+
+    python3 - "$headless_report" <<'PY' || fail "Expected headless Secret Service matrix report to be classified"
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+checks = {check["name"]: check for check in report["checks"]}
+roundtrip = checks["remote_key_secret_roundtrip"]
+if not report["ok"]:
+    raise SystemExit(f"headless report should warn, not fail: {report}")
+if roundtrip["status"] != "warn" or roundtrip.get("issueKind") != "headless_session":
+    raise SystemExit(f"bad headless classification: {roundtrip}")
+text = json.dumps(report, sort_keys=True)
+for forbidden in ["DBUS_SESSION_BUS_ADDRESS", "/tmp/not-for-output", "PRIVATE KEY"]:
+    if forbidden in text:
+        raise SystemExit(f"headless report leaked {forbidden}: {text}")
+PY
+
+    if PATH="$fake_bin:$PATH" \
+        CODEX_TEST_SECRET_STORE="$secret_store" \
+        CODEX_TEST_SECRET_TOOL_MODE=headless \
+            python3 "$REPO_DIR/scripts/secret-service-matrix-smoke.py" --json --live --require-canary >"$require_report"; then
+        fail "Expected required Secret Service matrix canary to fail when provider is unavailable"
+    fi
+    python3 - "$require_report" <<'PY' || fail "Expected required Secret Service matrix report to stay redacted"
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+checks = {check["name"]: check for check in report["checks"]}
+if report["ok"]:
+    raise SystemExit("required canary report should not be ok")
+if checks["remote_key_secret_roundtrip"]["status"] != "fail":
+    raise SystemExit(f"expected required roundtrip failure: {checks['remote_key_secret_roundtrip']}")
+PY
 }
 
 test_fedora_dependency_bootstrap_installs_rpmbuild() {
@@ -5680,6 +5834,7 @@ main() {
     test_desktop_doctor_browser_manifest_coverage
     test_desktop_doctor_node_runtime_probe
     test_desktop_doctor_secret_service_canary
+    test_secret_service_matrix_smoke
     test_fedora_dependency_bootstrap_installs_rpmbuild
     test_setup_native_wizard_noninteractive_feature_writer
     test_setup_native_wizard_rejects_invalid_feature_ids

@@ -496,6 +496,20 @@ To run the optional Secret Service canary for the experimental remote-mobile key
 store, set `CODEX_DESKTOP_SECRET_SERVICE_CANARY=1`. The canary stores, looks up,
 and clears a random non-secret value, and reports only pass/fail state.
 
+To exercise the same Secret Service/libsecret path as the remote-control key
+store without touching real paired-device entries, run:
+
+```bash
+make parity-secret-service-live
+```
+
+This creates, looks up, and clears a temporary canary under remote-control-style
+Secret Service attributes, then reports only sanitized provider state, desktop
+family, booleans, and pass/warn status. It does not enumerate keyring items,
+print key ids, print key material, or print raw provider errors. Set
+`CODEX_SECRET_SERVICE_REQUIRE_CANARY=1` when you want the target to fail if the
+live keyring canary cannot complete.
+
 For a deeper local runtime smoke test after login, run:
 
 ```bash
