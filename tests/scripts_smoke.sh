@@ -148,8 +148,10 @@ test_common_helper_sourcing() {
 }
 
 test_desktop_parity_smoke_script_syntax() {
-    info "Checking desktop parity smoke script syntax"
+    info "Checking desktop parity scripts syntax"
+    node --check "$REPO_DIR/scripts/app-server-schema-guard.js" >/dev/null
     node --check "$REPO_DIR/scripts/desktop-parity-smoke.js" >/dev/null
+    bash -n "$REPO_DIR/scripts/desktop-parity-full.sh"
 }
 
 test_package_payload_permission_normalization() {
@@ -900,6 +902,8 @@ test_native_shortcut_targets_compose_existing_flows() {
     local setup_log="$TMP_DIR/make-setup-native.log"
     local app_service_log="$TMP_DIR/make-app-service.log"
     local doctor_log="$TMP_DIR/make-doctor.log"
+    local parity_schema_log="$TMP_DIR/make-parity-schema.log"
+    local parity_full_log="$TMP_DIR/make-parity-full.log"
 
     make -n -C "$REPO_DIR" install-native >"$install_log"
     assert_contains "$install_log" './install.sh --fresh'
@@ -927,6 +931,12 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" doctor >"$doctor_log"
     assert_contains "$doctor_log" '/usr/bin/codex-desktop-doctor'
+
+    make -n -C "$REPO_DIR" parity-schema >"$parity_schema_log"
+    assert_contains "$parity_schema_log" 'scripts/app-server-schema-guard.js'
+
+    make -n -C "$REPO_DIR" parity-full >"$parity_full_log"
+    assert_contains "$parity_full_log" 'scripts/desktop-parity-full.sh'
 }
 
 test_desktop_doctor_template_smoke() {

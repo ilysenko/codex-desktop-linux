@@ -506,6 +506,30 @@ CODEX_DESKTOP_CDP_ORIGIN=http://127.0.0.1:9334 make parity-smoke
 
 The CDP path only checks for generic UI controls and intentionally does not click or save the mobile pairing flow.
 
+For a broader local parity pass, run:
+
+```bash
+make parity-schema
+make parity-full
+```
+
+`make parity-schema` generates the current `codex app-server` JSON Schema into
+a temporary directory and verifies the protocol methods and notifications used
+by the Linux parity probes are still present. `make parity-full` composes the
+installed doctor, `systemd --user` service state, app-server schema guard,
+Computer Use doctor, and the non-sensitive app-server smoke. It summarizes only
+counts, booleans, and local readiness states.
+
+If the host is enrolled for experimental mobile remote control and you want the
+full run to require connected remote-control state:
+
+```bash
+CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full
+```
+
+The current parity matrix and remaining Mac/Linux gaps are tracked in
+[`docs/PARITY_MATRIX.md`](docs/PARITY_MATRIX.md).
+
 Native packages also install an opt-in app unit at `/usr/lib/systemd/user/codex-desktop.service`:
 
 ```bash

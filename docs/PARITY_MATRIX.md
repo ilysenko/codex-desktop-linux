@@ -1,0 +1,123 @@
+# Codex Desktop Linux Parity Matrix
+
+This project is an unofficial Linux build of Codex Desktop. The goal is
+closest-possible daily-driver parity with the upstream desktop app while staying
+honest about official platform, account, and operating-system boundaries.
+
+Last reviewed: 2026-05-26.
+
+## Official Boundaries
+
+- OpenAI documents `codex app` as the desktop app launcher for official desktop
+  platforms, and `codex app-server` as the local protocol surface for rich
+  clients.
+- OpenAI's mobile setup docs currently say mobile access requires Codex App for
+  macOS. The same page says the connected host supplies repo files, shell,
+  plugins, MCP servers, skills, browser access, and Computer Use.
+- OpenAI's locked Computer Use path is macOS-specific. It uses an Apple
+  authorization plug-in in the macOS unlock flow, so Linux cannot claim the
+  same implementation.
+
+Primary references:
+
+- <https://developers.openai.com/codex/cli/reference#command-overview>
+- <https://developers.openai.com/codex/app-server>
+- <https://developers.openai.com/codex/remote-connections>
+- <https://developers.openai.com/codex/app/computer-use#locked-use>
+- <https://developers.openai.com/codex/config-reference>
+
+## Validation Commands
+
+Run the local checks from the repo root:
+
+```bash
+make doctor
+make parity-schema
+make parity-smoke
+make parity-full
+```
+
+For an enrolled remote-control host, require connected remote status:
+
+```bash
+CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full
+```
+
+For optional Electron UI presence checks, launch a local debug-port instance
+yourself and pass only the local CDP origin:
+
+```bash
+CODEX_DESKTOP_CDP_ORIGIN=http://127.0.0.1:9334 make parity-full
+```
+
+Do not save or paste QR codes, device keys, cookies, browser tab titles/URLs,
+screenshots, or private conversation text into parity artifacts.
+
+## Matrix
+
+| Area | Mac baseline | Linux status | Validation | Gap / next step |
+|---|---|---|---|---|
+| Desktop UI | Official Codex Desktop app | Repackaged Electron app from upstream DMG | `make doctor`, optional CDP path in `make parity-full` | Not official Linux support |
+| CLI bridge | `codex app` launches app | Launcher wraps Linux Electron app and discovers CLI | `make doctor` | Keep CLI path/preflight covered during updates |
+| App-server protocol | Local app protocol | `codex app-server` used directly by smoke tests | `make parity-schema`, `make parity-smoke` | Track schema drift on each upstream refresh |
+| Thread history | Native app reads local sessions | App-server thread list/read surface is present | `make parity-smoke` | Avoid printing thread names/content in logs |
+| Plugins and marketplace | Built-in app support | Plugin list and bundled marketplace cache present | `make parity-smoke`, `make doctor` | Add install/uninstall smoke only with explicit non-destructive mode |
+| Apps/connectors | Built-in app support | App list surface present | `make parity-smoke` | Account/workspace gating remains server-side |
+| MCP servers | Built-in app support | MCP status API present | `make parity-smoke` | Add fixture MCP server test later |
+| Skills | Built-in app support | Skills list API present | `make parity-smoke` | Add skill enable/disable fixture later |
+| Config and requirements | User and managed config | Config/read and requirements/read present | `make parity-smoke`, `make parity-schema` | Add managed requirements fixture later |
+| External agent import | Detect/import agent artifacts | Detect surface present | `make parity-smoke`, `make parity-schema` | Build safe migration smoke around temporary fixtures |
+| Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper | `make doctor`, `make parity-full` | Add browser matrix across native/Flatpak browsers |
+| Chrome Flatpak | macOS not applicable | Flatpak host wrapper via `flatpak-spawn --host` | `make doctor` | Keep manifest/path regression tests |
+| Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis | `make parity-full` | Extend desktop-environment matrix |
+| Computer Use UI | Native UI | Opt-in Linux UI gate | `make doctor`, manual UI check | Keep opt-in; do not force Statsig-like UI gates globally |
+| Locked Computer Use | Apple authorization plug-in on macOS | Not equivalent | Not implemented | Research only; do not fake remote unlock |
+| Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` | Server-side rejection can still happen |
+| Remote-control key storage | macOS keychain/Secure Enclave-style boundary | File-backed `0600` key material today | `make doctor` reports presence/mode only | Add Secret Service/libsecret backend with file fallback |
+| Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units | `make doctor`, `make parity-full` | Add suspend/resume and network-change regression tests |
+| Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Add schema guard to updater rebuild validation |
+| Native packages | Official platform installers | `.deb`, `.rpm`, pacman, AppImage, Nix | GitHub CI, `make package` | Keep distro matrix green |
+| Nix | Not a primary Mac path | Flake outputs and feature variants | GitHub CI Nix job | Keep upstream hash refresh bot green |
+| AppImage | Not a Mac path | Manual self-build | `make appimage` | No resident updater by design |
+| Enterprise controls | Config/requirements support | Requirements API surface available | `make parity-smoke`, `make parity-schema` | Add fixture-based requirements tests |
+| Security posture | Official app trust model | Local wrapper, updater, scripts, and experimental features | `make doctor`, code review | Threat-model remote/mobile and key handling before deeper unlock work |
+
+## Reusable Prior Art
+
+- OpenAI app-server schemas and TypeScript bindings:
+  `codex app-server generate-json-schema` and `codex app-server generate-ts`.
+- Linux Computer Use primitives:
+  <https://github.com/agent-sh/computer-use-linux>.
+- Other Linux desktop wrapper prior art:
+  <https://github.com/better-slop/codex-app-linux>.
+- App-server bridge prior art:
+  <https://github.com/siddheshkothadi/codex-app-server> and
+  <https://github.com/mideco-tech/codex-tg>.
+- ACP adapter prior art:
+  <https://github.com/beyond5959/acp-adapter> and <https://zed.dev/acp>.
+- Chrome native messaging:
+  <https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging>.
+- Flatpak host spawning:
+  <https://docs.flatpak.org/en/latest/flatpak-command-reference.html>.
+- XDG Desktop Portal RemoteDesktop:
+  <https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html>.
+- ydotool/uinput:
+  <https://github.com/ReimuNotMoe/ydotool>.
+- Linux Secret Service:
+  <https://specifications.freedesktop.org/secret-service/latest-single/>.
+
+## Work Queue
+
+1. Keep `make parity-full` passing on the installed app.
+2. Add schema-guard execution to updater rebuild validation after confirming it
+   is cheap enough for every auto-update.
+3. Add safe fixture tests for external agent config import, managed
+   requirements, and MCP server visibility.
+4. Add a phone/remote-control E2E check that records only connected/disconnected
+   state and redacted booleans.
+5. Add a Secret Service/libsecret key store for Linux remote-control device keys,
+   with file fallback and migration tests.
+6. Build a desktop-environment matrix for GNOME, KDE Plasma, Hyprland, Sway,
+   COSMIC, X11, native Chrome, Flatpak Chrome, Brave, and Chromium.
+7. Research locked-use equivalents separately and require a threat model before
+   writing any unlock/session-control code.
