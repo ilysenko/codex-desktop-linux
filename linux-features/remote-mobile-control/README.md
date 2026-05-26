@@ -138,6 +138,17 @@ fallback for troubleshooting or minimal desktop sessions. Existing legacy
 Secret Service entries without `app-id` remain readable so already-enrolled
 devices are not stranded during upgrade.
 
+Secret Service environments:
+
+- GNOME Keyring and KWallet are both exercised through the freedesktop Secret
+  Service API used by `secret-tool`.
+- Locked keyrings or cancelled prompts should produce a sanitized doctor
+  warning with no canary value, key id, or provider stderr.
+- Headless sessions or missing Secret Service providers should produce a
+  sanitized no-session-bus/provider warning.
+- CI and smoke tests simulate `secret-tool` responses; they do not require or
+  mutate a real desktop keyring.
+
 KDE Plasma smoke check:
 
 Mobile control depends on the Linux Computer Use backend once the host is

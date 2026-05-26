@@ -787,6 +787,8 @@ print_safe_disable_guidance() {
             info "Legacy default-app metadata may also exist at $(remote_mobile_legacy_key_file_path)."
         fi
         info "If Secret Service is available, that file may contain only key metadata while private keys live in the desktop keyring."
+        info "This wizard never enumerates or deletes Secret Service entries; use Codex/ChatGPT device revocation before manual keyring cleanup."
+        info "On headless or minimal sessions, set CODEX_REMOTE_CONTROL_KEY_STORE=file if you need to force the file-backed fallback."
         info "Revoke paired devices from Codex Settings/Connections or ChatGPT before deleting local keys manually."
     fi
 

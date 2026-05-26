@@ -543,7 +543,41 @@ def chrome_live_profile_summary(home: Path, extension_id: str | None) -> dict[st
     }
 
 
-def secret_service_canary(secret_tool: str, app_id: str) -> tuple[str, str]:
+def classify_secret_service_failure(raw: str) -> tuple[str, str]:
+    lowered = raw.lower()
+    if any(marker in lowered for marker in ("locked", "cancelled", "canceled", "dismissed", "denied")):
+        return "locked_or_cancelled", "Secret Service canary unavailable: keyring locked or prompt cancelled"
+    if any(
+        marker in lowered
+        for marker in (
+            "dbus_session_bus_address",
+            "no session bus",
+            "cannot autolaunch",
+            "dbus-launch",
+            "unable to autolaunch",
+            "cannot open display",
+        )
+    ):
+        return "headless_session", "Secret Service canary unavailable: no desktop session bus"
+    if any(
+        marker in lowered
+        for marker in (
+            "org.freedesktop.secrets",
+            "no such name",
+            "name has no owner",
+            "service unknown",
+            "secret service not available",
+            "no secret service",
+            "could not connect",
+        )
+    ):
+        return "provider_unavailable", "Secret Service canary unavailable: provider not reachable"
+    if any(marker in lowered for marker in ("timeout", "timed out", "no reply", "did not receive a reply")):
+        return "provider_timeout", "Secret Service canary unavailable: provider did not reply"
+    return "store_failed", "Secret Service canary unavailable: store failed"
+
+
+def secret_service_canary(secret_tool: str, app_id: str, runner: Any = subprocess.run) -> tuple[str, str, str | None]:
     value = f"codex-canary-{secrets.token_hex(16)}"
     attributes = [
         "application",
@@ -553,7 +587,7 @@ def secret_service_canary(secret_tool: str, app_id: str) -> tuple[str, str]:
         "kind",
         "canary",
     ]
-    store = subprocess.run(
+    store = runner(
         [secret_tool, "store", "--label", "Codex Desktop Linux canary", *attributes],
         check=False,
         input=value,
@@ -564,12 +598,10 @@ def secret_service_canary(secret_tool: str, app_id: str) -> tuple[str, str]:
     )
     if store.returncode != 0:
         detail = (store.stderr or store.stdout or "secret-tool store failed").strip()
-        lowered = detail.lower()
-        if "locked" in lowered or "cancelled" in lowered or "canceled" in lowered:
-            return WARN, "Secret Service canary unavailable: keyring locked or prompt cancelled"
-        return WARN, "Secret Service canary unavailable: store failed"
+        issue_kind, sanitized_detail = classify_secret_service_failure(detail)
+        return WARN, sanitized_detail, issue_kind
 
-    lookup = subprocess.run(
+    lookup = runner(
         [secret_tool, "lookup", *attributes],
         check=False,
         text=True,
@@ -578,7 +610,7 @@ def secret_service_canary(secret_tool: str, app_id: str) -> tuple[str, str]:
         timeout=8,
     )
     try:
-        subprocess.run(
+        runner(
             [secret_tool, "clear", *attributes],
             check=False,
             text=True,
@@ -590,8 +622,58 @@ def secret_service_canary(secret_tool: str, app_id: str) -> tuple[str, str]:
         pass
 
     if lookup.returncode == 0 and lookup.stdout == value:
-        return PASS, "store/lookup/clear succeeded"
-    return WARN, "Secret Service canary lookup did not round-trip"
+        return PASS, "store/lookup/clear succeeded", None
+    if lookup.returncode != 0:
+        issue_kind, sanitized_detail = classify_secret_service_failure((lookup.stderr or lookup.stdout or "").strip())
+        if issue_kind == "store_failed":
+            issue_kind = "lookup_failed"
+            sanitized_detail = "Secret Service canary unavailable: lookup failed"
+        return WARN, sanitized_detail, issue_kind
+    return WARN, "Secret Service canary lookup did not round-trip", "lookup_mismatch"
+
+
+def remote_mobile_key_file_summary(path: Path) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "mode": None,
+        "keyCount": None,
+        "secretServiceKeyCount": None,
+        "fileFallbackKeyCount": None,
+    }
+    if not path.exists():
+        return summary
+    summary["mode"] = oct(path.stat().st_mode & 0o777)
+    key_store = read_json(path) or {}
+    keys = key_store.get("keys")
+    if isinstance(keys, dict):
+        records = [record for record in keys.values() if isinstance(record, dict)]
+        summary["keyCount"] = len(records)
+        summary["secretServiceKeyCount"] = sum(1 for record in records if isinstance(record.get("secretService"), dict))
+        summary["fileFallbackKeyCount"] = sum(1 for record in records if isinstance(record.get("privateKeyPkcs8Pem"), str))
+    return summary
+
+
+def remote_mobile_key_file_check_data(
+    legacy_key_file: Path | None,
+    key_file_to_read: Path,
+) -> tuple[str, dict[str, Any]]:
+    key_summary = remote_mobile_key_file_summary(key_file_to_read)
+    present = key_file_to_read.exists()
+    using_legacy = legacy_key_file is not None and key_file_to_read == legacy_key_file
+    if present:
+        detail = "legacy metadata file present" if using_legacy else "metadata file present"
+        if key_summary["mode"]:
+            detail = f"{detail} ({key_summary['mode']})"
+    else:
+        detail = "metadata file not found"
+
+    data: dict[str, Any] = {
+        "metadataFilePresent": present,
+        **key_summary,
+    }
+    if legacy_key_file is not None:
+        data["legacyMetadataFilePresent"] = legacy_key_file.exists()
+        data["usingLegacyMetadataFile"] = using_legacy
+    return detail, data
 
 
 def checks_for_package(package_name: str) -> list[dict[str, Any]]:
@@ -1024,11 +1106,11 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
         if os.environ.get("CODEX_DESKTOP_SECRET_SERVICE_CANARY") == "1" or os.environ.get("CODEX_SECRET_SERVICE_CANARY") == "1":
             if secret_tool:
                 try:
-                    canary_status, canary_detail = secret_service_canary(secret_tool, remote_app_id)
+                    canary_status, canary_detail, canary_issue_kind = secret_service_canary(secret_tool, remote_app_id)
                 except (OSError, subprocess.SubprocessError) as exc:
-                    canary_status, canary_detail = WARN, f"Secret Service canary unavailable: {type(exc).__name__}"
+                    canary_status, canary_detail, canary_issue_kind = WARN, f"Secret Service canary unavailable: {type(exc).__name__}", "runner_error"
             else:
-                canary_status, canary_detail = INFO, "secret-tool missing; canary skipped"
+                canary_status, canary_detail, canary_issue_kind = INFO, "secret-tool missing; canary skipped", "tool_missing"
             add_check(
                 checks,
                 "remote_mobile_secret_service_canary",
@@ -1036,33 +1118,17 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
                 canary_status,
                 canary_detail,
                 appId=remote_app_id,
+                issueKind=canary_issue_kind,
             )
-        key_mode = None
-        key_count = None
-        secret_service_key_count = None
-        file_fallback_key_count = None
-        if key_file_to_read.exists():
-            key_mode = oct(key_file_to_read.stat().st_mode & 0o777)
-            key_store = read_json(key_file_to_read) or {}
-            keys = key_store.get("keys")
-            if isinstance(keys, dict):
-                records = [record for record in keys.values() if isinstance(record, dict)]
-                key_count = len(records)
-                secret_service_key_count = sum(1 for record in records if isinstance(record.get("secretService"), dict))
-                file_fallback_key_count = sum(1 for record in records if isinstance(record.get("privateKeyPkcs8Pem"), str))
+        key_detail, key_data = remote_mobile_key_file_check_data(legacy_key_file, key_file_to_read)
         add_check(
             checks,
             "remote_mobile_key_file",
             "Remote mobile key metadata/fallback file",
             PASS if key_file_to_read.exists() else INFO,
-            f"{key_file_to_read} ({key_mode})" if key_mode else f"not found: {key_file}",
-            path=str(key_file_to_read),
+            key_detail,
             appId=remote_app_id,
-            legacyPath=str(legacy_key_file) if legacy_key_file is not None else None,
-            mode=key_mode,
-            keyCount=key_count,
-            secretServiceKeyCount=secret_service_key_count,
-            fileFallbackKeyCount=file_fallback_key_count,
+            **key_data,
         )
     else:
         add_check(checks, "remote_mobile_marker", "Remote mobile feature marker", INFO, "remote-mobile-control feature is not enabled")

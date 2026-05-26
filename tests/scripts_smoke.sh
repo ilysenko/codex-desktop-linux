@@ -1324,56 +1324,220 @@ test_desktop_doctor_secret_service_canary() {
     info "Checking installed doctor Secret Service canary helper"
     local workspace="$TMP_DIR/desktop-doctor-secret-service-canary"
     local doctor="$workspace/codex-doctor-smoke"
-    local fake_secret_tool="$workspace/secret-tool"
+    local key_file="$workspace/remote-control-device-keys-v1.json"
 
     mkdir -p "$workspace"
     sed 's/__PACKAGE_NAME__/codex-doctor-smoke/g' \
         "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" >"$doctor"
+    cat > "$key_file" <<'JSON'
+{
+  "keys": {
+    "fake-key-id-1": {
+      "publicKeyJwk": {"kid": "fake-key-id-1"},
+      "secretService": {
+        "label": "Codex",
+        "attributes": {"key-id": "fake-key-id-1", "token": "sk-fake-token"}
+      }
+    },
+    "fake-key-id-2": {
+      "privateKeyPkcs8Pem": "-----BEGIN PRIVATE KEY-----\nFAKE_PRIVATE_KEY_MATERIAL\n-----END PRIVATE KEY-----",
+      "deviceToken": "gho_fake_token"
+    }
+  }
+}
+JSON
+    chmod 600 "$key_file"
 
-    cat > "$fake_secret_tool" <<'SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-state="${SECRET_TOOL_STATE:?}"
-case "${1:-}" in
-    store)
-        cat > "$state"
-        ;;
-    lookup)
-        cat "$state"
-        ;;
-    clear)
-        rm -f "$state"
-        ;;
-    *)
-        exit 2
-        ;;
-esac
-SCRIPT
-    chmod +x "$fake_secret_tool"
-
-    SECRET_TOOL_STATE="$workspace/secret-state" python3 - "$doctor" "$fake_secret_tool" <<'PY' \
+    python3 - "$doctor" "$key_file" <<'PY' \
         || fail "Expected Secret Service canary helper to report only sanitized state"
+import json
 import importlib.machinery
 import importlib.util
 import pathlib
+import subprocess
 import sys
 
 doctor_path = pathlib.Path(sys.argv[1])
-secret_tool = sys.argv[2]
+key_file = pathlib.Path(sys.argv[2])
 loader = importlib.machinery.SourceFileLoader("codex_doctor_smoke", str(doctor_path))
 spec = importlib.util.spec_from_loader("codex_doctor_smoke", loader)
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
 
-status, detail = module.secret_service_canary(secret_tool, "codex-desktop")
-if status != module.PASS or detail != "store/lookup/clear succeeded":
-    raise SystemExit(f"unexpected canary result: {status} {detail}")
-if "codex-canary-" in detail:
+class MemorySecretTool:
+    def __init__(self):
+        self.value = None
+        self.calls = []
+
+    def __call__(self, args, **kwargs):
+        self.calls.append(args[1])
+        if args[1] == "store":
+            self.value = kwargs.get("input")
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[1] == "lookup":
+            return subprocess.CompletedProcess(args, 0, stdout=self.value or "", stderr="")
+        if args[1] == "clear":
+            self.value = None
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args, 2, stdout="", stderr="unsupported")
+
+runner = MemorySecretTool()
+status, detail, issue_kind = module.secret_service_canary("secret-tool", "codex-desktop", runner=runner)
+if status != module.PASS or detail != "store/lookup/clear succeeded" or issue_kind is not None:
+    raise SystemExit(f"unexpected canary result: {status} {detail} {issue_kind}")
+if runner.value is not None or runner.calls != ["store", "lookup", "clear"]:
+    raise SystemExit(f"canary was not cleared: value={runner.value!r} calls={runner.calls!r}")
+if "codex-canary-" in detail or "secret-tool" in detail:
     raise SystemExit("canary detail leaked value")
+
+failure_cases = [
+    (
+        "GNOME Keyring collection is locked; prompt cancelled; token sk-do-not-print",
+        "locked_or_cancelled",
+        "Secret Service canary unavailable: keyring locked or prompt cancelled",
+    ),
+    (
+        "org.freedesktop.DBus.Error.ServiceUnknown: org.freedesktop.secrets has no owner; key-id fake-key-id-1",
+        "provider_unavailable",
+        "Secret Service canary unavailable: provider not reachable",
+    ),
+    (
+        "Cannot autolaunch D-Bus without X11 $DISPLAY; DBUS_SESSION_BUS_ADDRESS=/tmp/not-for-output",
+        "headless_session",
+        "Secret Service canary unavailable: no desktop session bus",
+    ),
+    (
+        "Did not receive a reply. Possible causes include timeout. PRIVATE KEY fake",
+        "provider_timeout",
+        "Secret Service canary unavailable: provider did not reply",
+    ),
+    (
+        "store failed with privateKeyPkcs8Pem=FAKE_PRIVATE_KEY_MATERIAL and gho_fake_token",
+        "store_failed",
+        "Secret Service canary unavailable: store failed",
+    ),
+]
+
+for raw, expected_kind, expected_detail in failure_cases:
+    kind, classified_detail = module.classify_secret_service_failure(raw)
+    if (kind, classified_detail) != (expected_kind, expected_detail):
+        raise SystemExit(f"bad classification for {raw!r}: {kind} {classified_detail}")
+
+    def failing_runner(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr=raw)
+
+    status, detail, issue_kind = module.secret_service_canary("secret-tool", "codex-desktop", runner=failing_runner)
+    if status != module.WARN or detail != expected_detail or issue_kind != expected_kind:
+        raise SystemExit(f"bad canary failure: {status} {detail} {issue_kind}")
+    leaked = json.dumps({"detail": detail, "issueKind": issue_kind})
+    for forbidden in [
+        "sk-do-not-print",
+        "fake-key-id-1",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "/tmp/not-for-output",
+        "PRIVATE KEY",
+        "FAKE_PRIVATE_KEY_MATERIAL",
+        "gho_fake_token",
+    ]:
+        if forbidden in leaked:
+            raise SystemExit(f"Secret Service classification leaked {forbidden}: {leaked}")
+
+class LookupFailureSecretTool:
+    def __call__(self, args, **kwargs):
+        if args[1] == "store":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[1] == "lookup":
+            return subprocess.CompletedProcess(
+                args,
+                1,
+                stdout="",
+                stderr="org.freedesktop.secrets lookup failed with fake-key-id-1 and gho_fake_token",
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+status, detail, issue_kind = module.secret_service_canary(
+    "secret-tool",
+    "codex-desktop",
+    runner=LookupFailureSecretTool(),
+)
+if status != module.WARN or detail != "Secret Service canary unavailable: provider not reachable" or issue_kind != "provider_unavailable":
+    raise SystemExit(f"bad lookup failure result: {status} {detail} {issue_kind}")
+
+class LookupMismatchSecretTool:
+    def __call__(self, args, **kwargs):
+        if args[1] == "store":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[1] == "lookup":
+            return subprocess.CompletedProcess(args, 0, stdout="wrong value with FAKE_PRIVATE_KEY_MATERIAL", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+status, detail, issue_kind = module.secret_service_canary(
+    "secret-tool",
+    "codex-desktop",
+    runner=LookupMismatchSecretTool(),
+)
+if status != module.WARN or detail != "Secret Service canary lookup did not round-trip" or issue_kind != "lookup_mismatch":
+    raise SystemExit(f"bad lookup mismatch result: {status} {detail} {issue_kind}")
+leaked = json.dumps({"detail": detail, "issueKind": issue_kind})
+for forbidden in ["fake-key-id-1", "gho_fake_token", "FAKE_PRIVATE_KEY_MATERIAL", "codex-canary-"]:
+    if forbidden in leaked:
+        raise SystemExit(f"lookup branch leaked {forbidden}: {leaked}")
+
+summary = module.remote_mobile_key_file_summary(key_file)
+expected = {
+    "mode": "0o600",
+    "keyCount": 2,
+    "secretServiceKeyCount": 1,
+    "fileFallbackKeyCount": 1,
+}
+if summary != expected:
+    raise SystemExit(f"unexpected key summary: {summary}")
+summary_text = json.dumps(summary, sort_keys=True)
+for forbidden in [
+    "fake-key-id-1",
+    "fake-key-id-2",
+    "sk-fake-token",
+    "FAKE_PRIVATE_KEY_MATERIAL",
+    "gho_fake_token",
+    "privateKeyPkcs8Pem",
+]:
+    if forbidden in summary_text:
+        raise SystemExit(f"key summary leaked {forbidden}: {summary_text}")
+
+detail, data = module.remote_mobile_key_file_check_data(None, key_file)
+if detail != "metadata file present (0o600)":
+    raise SystemExit(f"unexpected key-file detail: {detail}")
+key_check_text = json.dumps({"detail": detail, **data}, sort_keys=True)
+for forbidden in [
+    str(key_file),
+    str(key_file.parent),
+    "fake-key-id-1",
+    "fake-key-id-2",
+    "sk-fake-token",
+    "FAKE_PRIVATE_KEY_MATERIAL",
+    "gho_fake_token",
+    "privateKeyPkcs8Pem",
+]:
+    if forbidden in key_check_text:
+        raise SystemExit(f"key-file check leaked {forbidden}: {key_check_text}")
+
+legacy_key_file = key_file.with_name("legacy-remote-control-device-keys-v1.json")
+legacy_key_file.write_text(key_file.read_text(encoding="utf-8"), encoding="utf-8")
+legacy_key_file.chmod(0o600)
+detail, data = module.remote_mobile_key_file_check_data(legacy_key_file, legacy_key_file)
+if detail != "legacy metadata file present (0o600)" or data.get("usingLegacyMetadataFile") is not True:
+    raise SystemExit(f"unexpected legacy key-file detail: {detail} {data}")
+legacy_key_check_text = json.dumps({"detail": detail, **data}, sort_keys=True)
+for forbidden in [str(key_file), str(legacy_key_file), "fake-key-id-1", "FAKE_PRIVATE_KEY_MATERIAL"]:
+    if forbidden in legacy_key_check_text:
+        raise SystemExit(f"legacy key-file check leaked {forbidden}: {legacy_key_check_text}")
 PY
 
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "CODEX_DESKTOP_SECRET_SERVICE_CANARY"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "classify_secret_service_failure"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "remote_mobile_key_file_summary"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "remote_mobile_key_file_check_data"
 }
 
 test_fedora_dependency_bootstrap_installs_rpmbuild() {
@@ -1502,6 +1666,8 @@ JSON
     assert_file_exists "$model_file"
     assert_file_exists "$plugin_cache/marker"
     assert_contains "$output_log" "Not deleting $key_file"
+    assert_contains "$output_log" "This wizard never enumerates or deletes Secret Service entries"
+    assert_contains "$output_log" "CODEX_REMOTE_CONTROL_KEY_STORE=file"
     assert_contains "$output_log" "Not removing Read Aloud model files, Python runtimes, or plugin caches"
     assert_contains "$output_log" "$fake_home/.local/share/codex-desktop/read-aloud"
     assert_contains "$output_log" "$plugin_cache"
@@ -1537,6 +1703,8 @@ JSON
     assert_file_exists "$key_file"
     assert_file_exists "$legacy_key_file"
     assert_contains "$output_log" "Not deleting $key_file"
+    assert_contains "$output_log" "This wizard never enumerates or deletes Secret Service entries"
+    assert_contains "$output_log" "CODEX_REMOTE_CONTROL_KEY_STORE=file"
     assert_contains "$output_log" "Legacy default-app metadata may also exist at $legacy_key_file"
 }
 
