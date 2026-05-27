@@ -312,6 +312,13 @@ render_desktop_entry_doctor_helper() {
     chmod 0644 "$target"
 }
 
+render_desktop_service_lifecycle_helper() {
+    local target="$1"
+
+    cp "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" "$target"
+    chmod 0644 "$target"
+}
+
 render_desktop_app_service() {
     local target="$1"
     local package_name
@@ -640,6 +647,7 @@ stage_common_package_files() {
     stage_packaged_app_build_info_source "$app_root"
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"
+    render_desktop_service_lifecycle_helper "$app_root/.codex-linux/codex-desktop-service-lifecycle.sh"
     render_desktop_entry "$root/usr/share/applications/$PACKAGE_NAME.desktop"
     render_desktop_app_service "$root/usr/lib/systemd/user/$PACKAGE_NAME.service"
     render_desktop_app_doctor "$root/usr/bin/$PACKAGE_NAME-doctor"
@@ -722,6 +730,8 @@ stage_update_builder_bundle() {
         "$update_builder_root/packaging/linux/codex-desktop-doctor.py"
     cp "$REPO_DIR/packaging/linux/codex-desktop-entry-doctor.sh" \
         "$update_builder_root/packaging/linux/codex-desktop-entry-doctor.sh"
+    cp "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" \
+        "$update_builder_root/packaging/linux/codex-desktop-service-lifecycle.sh"
     cp "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "$update_builder_root/packaging/linux/codex-packaged-runtime.sh"
     cp "$REPO_DIR/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy" \
         "$update_builder_root/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy"

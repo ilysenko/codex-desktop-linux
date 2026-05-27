@@ -75,10 +75,10 @@ assert_not_contains_literal() {
 
 assert_app_service_shell_variables_escaped() {
     local path="$1"
-    assert_contains_literal "$path" 'status=$$?'
-    assert_contains_literal "$path" '$${XDG_STATE_HOME:-$$HOME/.local/state}'
-    assert_contains_literal "$path" '"$$pid_file"'
-    assert_contains_literal "$path" 'pid="$$(cat "$$pid_file"'
+    local package_name="${2:-codex-desktop}"
+
+    assert_contains_literal "$path" "ExecStart=/bin/bash /opt/$package_name/.codex-linux/codex-desktop-service-lifecycle.sh start $package_name /usr/bin/$package_name"
+    assert_contains_literal "$path" "ExecStop=/bin/bash /opt/$package_name/.codex-linux/codex-desktop-service-lifecycle.sh stop $package_name /usr/bin/$package_name"
     assert_not_contains_literal "$path" 'status=$?'
     assert_not_contains_literal "$path" '${XDG_STATE_HOME:-$HOME/.local/state}'
 }
@@ -310,9 +310,11 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/.codex-linux/source-info.json"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-service-lifecycle.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-doctor.py"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop.service"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-service-lifecycle.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
     node - \
         "$pkg_root/opt/codex-desktop/.codex-linux/build-info.json" \
@@ -350,8 +352,44 @@ NODE
     assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
     assert_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "/usr/bin/codex-desktop"
     assert_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "WantedBy=graphical-session.target"
+    assert_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "ExecStop="
     assert_not_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "--remote-debugging-port"
     assert_app_service_shell_variables_escaped "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
+}
+
+test_desktop_service_lifecycle_helper_detects_orphaned_app_scope() {
+    info "Checking desktop service lifecycle helper finds app-scope main process"
+    local workspace="$TMP_DIR/desktop-service-lifecycle"
+    local app_root="$workspace/opt/codex-desktop"
+    local proc_root="$workspace/proc"
+    local state_home="$workspace/state"
+    local uid
+    uid="$(id -u)"
+
+    mkdir -p "$app_root" "$proc_root/123" "$proc_root/124" "$state_home"
+    printf '#!/usr/bin/env bash\n' > "$app_root/electron"
+    chmod +x "$app_root/electron"
+    ln -s "$app_root/electron" "$proc_root/123/exe"
+    ln -s "$app_root/electron" "$proc_root/124/exe"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/123/status"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/124/status"
+    printf 'electron\0--no-sandbox\0' > "$proc_root/123/cmdline"
+    printf 'electron\0--type=renderer\0' > "$proc_root/124/cmdline"
+
+    local output
+    output="$(
+        CODEX_PROCESS_PROC_ROOT="$proc_root" \
+        CODEX_DESKTOP_SERVICE_APP_ROOT="$app_root" \
+        CODEX_DESKTOP_SERVICE_DRY_RUN=1 \
+        XDG_STATE_HOME="$state_home" \
+        bash "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" stop codex-desktop
+    )"
+
+    printf '%s\n' "$output" | grep -Fxq "terminate 123" \
+        || fail "Expected service lifecycle helper to terminate main pid 123"
+    if printf '%s\n' "$output" | grep -Fq "124"; then
+        fail "Expected service lifecycle helper to ignore renderer/helper pid 124"
+    fi
 }
 
 test_update_builder_preserves_enabled_linux_features_config() {
@@ -474,7 +512,7 @@ SCRIPT
     assert_contains "$pkg_root/opt/codex-cua-lab/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-cua-lab.desktop"'
     assert_contains "$pkg_root/usr/bin/codex-cua-lab-doctor" 'PACKAGE_NAME = "codex-cua-lab"'
     assert_contains "$pkg_root/usr/lib/systemd/user/codex-cua-lab.service" "/usr/bin/codex-cua-lab"
-    assert_app_service_shell_variables_escaped "$pkg_root/usr/lib/systemd/user/codex-cua-lab.service"
+    assert_app_service_shell_variables_escaped "$pkg_root/usr/lib/systemd/user/codex-cua-lab.service" "codex-cua-lab"
 }
 
 test_deb_builder_without_updater() {
@@ -5555,6 +5593,7 @@ main() {
     test_common_helper_sourcing
     test_package_payload_permission_normalization
     test_deb_builder_smoke
+    test_desktop_service_lifecycle_helper_detects_orphaned_app_scope
     test_update_builder_preserves_enabled_linux_features_config
     test_deb_builder_respects_package_identity
     test_deb_builder_without_updater
