@@ -31,6 +31,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Native packaging (`.deb` / `.rpm` / `.pkg.tar.zst`) | ✅ always | One-shot `make package` picks your distro |
 | AppImage self-build | ✅ manual | `make appimage` writes a local `dist/*.AppImage`; rebuild manually after upstream updates |
 | Linux tray + warm-start handoff | ✅ always | Single-instance lock, second-instance window focus |
+| Desktop launcher actions | ✅ always | New Window, Quick Chat, and Compact Prompt entries in Linux app menus |
 | Multi-instance launcher | 🧪 opt-in | `--new-instance` or `CODEX_MULTI_LAUNCH=1` allocates a bounded webview port and isolated Electron profile |
 | GUI install prompts (`kdialog` / `zenity`) | ✅ if installed | Falls back to interactive terminal prompt |
 | Linux browser annotations | ✅ always | Stored-anchor screenshots, isolated marker rendering |

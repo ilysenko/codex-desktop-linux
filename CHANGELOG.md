@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   bundled plugin registry so the app keeps `read-aloud` installed, and the
   launcher syncs the plugin cache so new Codex windows expose the MCP tools
   through the same auto-install path as Computer Use.
+- Linux desktop entries now expose Quick Chat and Compact Prompt actions backed
+  by the existing `--quick-chat` and `--prompt-chat` launcher paths.
 
 ### Fixed
 
