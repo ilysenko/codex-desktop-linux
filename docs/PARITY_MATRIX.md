@@ -73,7 +73,7 @@ screenshots, or private conversation text into parity artifacts.
 | Thread history | Native app reads local sessions | App-server thread list/read surface is present | `make parity-smoke` | Avoid printing thread names/content in logs |
 | Plugins and marketplace | Built-in app support | Plugin list and bundled marketplace cache present | `make parity-smoke`, `make doctor` | Add install/uninstall smoke only with explicit non-destructive mode |
 | Apps/connectors | Built-in app support | App list surface present | `make parity-smoke` | Account/workspace gating remains server-side |
-| MCP servers | Built-in app support | MCP status API plus session-scoped live MCP fixture and no-op tool-call coverage through an ephemeral thread | `make parity-smoke`, `make parity-schema` | Expand resource-read coverage only with non-mutating fixtures |
+| MCP servers | Built-in app support | MCP status API plus session-scoped live MCP fixture, no-op tool-call coverage, and non-mutating resource-read coverage through an ephemeral thread | `make parity-smoke`, `make parity-schema` | Add broader resource-shape coverage only with non-mutating fixtures |
 | Skills | Built-in app support | Skills list API plus repo-scoped fixture discovery present | `make parity-smoke` | Add skill enable/disable fixture later |
 | Config and requirements | User, repo, and managed config | Config/read validates a repo-scoped project config fixture; requirements/read surface plus isolated `/etc/codex/requirements.toml` fixture when `bwrap` is available | `make parity-smoke`, `make parity-schema` | Expand policy-shape coverage as upstream requirements fields change |
 | External agent import | Detect/import agent artifacts | Detect surface plus temporary CLAUDE.md and MCP config fixture detection present; import remains untouched by smoke | `make parity-smoke`, `make parity-schema` | Add safe no-op import validation only if upstream exposes a dry-run mode |
@@ -119,7 +119,7 @@ screenshots, or private conversation text into parity artifacts.
 ## Work Queue
 
 1. Keep `make parity-full` passing on the installed app.
-2. Keep safe fixture tests for managed requirements and MCP server visibility
+2. Keep safe fixture tests for managed requirements and MCP server behavior
    aligned with upstream app-server behavior.
 3. Extend the phone/remote-control E2E check beyond host connected state only
    when it can still record only connected/disconnected state and redacted

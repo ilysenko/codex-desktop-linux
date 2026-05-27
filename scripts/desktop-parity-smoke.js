@@ -10,6 +10,7 @@ const readline = require("node:readline");
 
 const REPO_DIR = path.resolve(__dirname, "..");
 const COMMAND_SENTINEL = "codex-linux-smoke";
+const MCP_RESOURCE_URI = "codex-parity://resource/ping";
 
 function usage() {
   return [
@@ -247,8 +248,31 @@ function createMcpServerFixture() {
       "      id: message.id,",
       "      result: {",
       '        protocolVersion: message.params?.protocolVersion || "2024-11-05",',
-      "        capabilities: { tools: {} },",
+      "        capabilities: { resources: {}, tools: {} },",
       '        serverInfo: { name: "codex-parity-mcp", version: "0.0.0" },',
+      "      },",
+      "    });",
+      '  } else if (message.method === "resources/list") {',
+      "    send({",
+      "      id: message.id,",
+      "      result: {",
+      "        resources: [{",
+      `          uri: ${JSON.stringify(MCP_RESOURCE_URI)},`,
+      '          name: "codex-parity-resource",',
+      '          description: "Read-only desktop parity fixture resource.",',
+      '          mimeType: "text/plain",',
+      "        }],",
+      "      },",
+      "    });",
+      `  } else if (message.method === "resources/read" && message.params?.uri === ${JSON.stringify(MCP_RESOURCE_URI)}) {`,
+      "    send({",
+      "      id: message.id,",
+      "      result: {",
+      "        contents: [{",
+      "          uri: message.params.uri,",
+      '          mimeType: "text/plain",',
+      '          text: "codex-parity-resource-pong",',
+      "        }],",
       "      },",
       "    });",
       '  } else if (message.method === "tools/list") {',
@@ -513,6 +537,17 @@ function summarizeMcpToolCall(result) {
   };
 }
 
+function summarizeMcpResourceRead(result) {
+  const contents = Array.isArray(result.contents) ? result.contents : [];
+  const textContents = contents.filter((item) => item && typeof item.text === "string");
+  return {
+    contentCount: contents.length,
+    mimeTypeObserved: textContents.some((item) => item.mimeType === "text/plain"),
+    textPongObserved: textContents.some((item) => item.text === "codex-parity-resource-pong"),
+    uriObserved: contents.some((item) => item && item.uri === MCP_RESOURCE_URI),
+  };
+}
+
 function hasProjectConfigLayer(result, fixtureDir) {
   const layers = Array.isArray(result.layers) ? result.layers : [];
   return layers.some((layer) => (
@@ -757,9 +792,24 @@ async function runAppServerSmoke(options) {
     ],
   });
   const checks = [];
+  let mcpThreadId = null;
 
   const record = (name, status, details = {}) => {
     checks.push({ name, status, details });
+  };
+
+  const ensureMcpThread = async () => {
+    if (mcpThreadId) {
+      return mcpThreadId;
+    }
+    const threadStart = await client.request("thread/start", {
+      approvalPolicy: "never",
+      cwd: REPO_DIR,
+      ephemeral: true,
+      sandbox: "read-only",
+    });
+    mcpThreadId = extractThreadId(threadStart);
+    return mcpThreadId;
   };
 
   try {
@@ -881,13 +931,7 @@ async function runAppServerSmoke(options) {
     }
 
     try {
-      const threadStart = await client.request("thread/start", {
-        approvalPolicy: "never",
-        cwd: REPO_DIR,
-        ephemeral: true,
-        sandbox: "read-only",
-      });
-      const threadId = extractThreadId(threadStart);
+      const threadId = await ensureMcpThread();
       if (!threadId) {
         record("mcp tool call fixture", "fail", { threadStarted: false });
       } else {
@@ -917,6 +961,38 @@ async function runAppServerSmoke(options) {
       }
     } catch (error) {
       record("mcp tool call fixture", "fail", { error: summarizeErrorText(error.message) });
+    }
+
+    try {
+      const threadId = await ensureMcpThread();
+      if (!threadId) {
+        record("mcp resource read fixture", "fail", { threadStarted: false });
+      } else {
+        const resourceRead = await client.request("mcpServer/resource/read", {
+          server: "codex_parity_mcp",
+          threadId,
+          uri: MCP_RESOURCE_URI,
+        });
+        const details = summarizeMcpResourceRead(resourceRead);
+        record(
+          "mcp resource read fixture",
+          details.contentCount > 0 &&
+            details.mimeTypeObserved === true &&
+            details.textPongObserved === true &&
+            details.uriObserved === true
+            ? "pass"
+            : "fail",
+          {
+            contentCount: details.contentCount,
+            mimeTypeObserved: details.mimeTypeObserved,
+            textPongObserved: details.textPongObserved,
+            threadStarted: true,
+            uriObserved: details.uriObserved,
+          },
+        );
+      }
+    } catch (error) {
+      record("mcp resource read fixture", "fail", { error: summarizeErrorText(error.message) });
     }
 
     const skillFixtureDir = createSkillFixture();
