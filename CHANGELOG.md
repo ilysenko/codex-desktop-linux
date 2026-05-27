@@ -50,6 +50,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Linux Keybinds settings now show current upstream shortcut defaults for Quick Chat, alternate New Chat, search, terminal, browser, and thread actions, and no longer lists non-dispatchable runtime rows.
 - Linux `Open in File Manager` now prefers desktop file managers directly, selecting files in Dolphin and Nautilus where supported before falling back to Electron's shell opener.
 - Linux Computer Use doctor now reports an unreachable user session D-Bus as the root blocker before AT-SPI, portal, or window-targeting follow-up checks, making stale or refused graphical-session buses easier to diagnose.
+- Installed `codex-desktop-doctor` now checks whether the `systemd --user`
+  bus is reachable, so app-service lifecycle validation failures surface
+  directly instead of only through later service commands.
 
 ## [0.8.0] - 2026-05-16
 

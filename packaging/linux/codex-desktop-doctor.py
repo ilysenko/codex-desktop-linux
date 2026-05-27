@@ -117,6 +117,16 @@ def computer_use_doctor_summary(data: dict[str, Any]) -> tuple[str, dict[str, An
     }
 
 
+def systemd_user_bus_detail() -> tuple[str, str]:
+    if not command_exists("systemctl"):
+        return WARN, "systemctl not found"
+    result = run(["systemctl", "--user", "show-environment"], timeout=5)
+    if result.returncode == 0:
+        return PASS, "systemd user bus is reachable"
+    detail = (result.stderr or result.stdout).strip().splitlines()
+    return WARN, detail[0] if detail else f"exit status {result.returncode}"
+
+
 def package_version(package_name: str) -> tuple[str, str]:
     if command_exists("dpkg-query"):
         result = run(["dpkg-query", "-W", "-f=${Version}", package_name], timeout=5)
@@ -323,6 +333,14 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
         app_service_status,
         app_service_detail,
         path=str(app_service),
+    )
+    user_bus_status, user_bus_detail = systemd_user_bus_detail()
+    add_check(
+        checks,
+        "systemd_user_bus",
+        "systemd user bus",
+        user_bus_status,
+        user_bus_detail,
     )
     add_check(
         checks,
