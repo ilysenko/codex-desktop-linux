@@ -179,8 +179,9 @@ test_deb_builder_smoke() {
     local dist_dir="$workspace/dist"
     local pkg_root="$workspace/deb-root"
     local updater_bin="$workspace/codex-update-manager"
+    local capture_dir="$workspace/capture"
 
-    mkdir -p "$workspace" "$dist_dir"
+    mkdir -p "$workspace" "$dist_dir" "$capture_dir"
     make_stub_bin_dir "$bin_dir"
     make_fake_app "$app_dir"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$updater_bin"
@@ -197,6 +198,8 @@ SCRIPT
     cat > "$bin_dir/dpkg-deb" <<'SCRIPT'
 #!/usr/bin/env bash
 output="${@: -1}"
+printf '%s\n' "$*" > "$CAPTURE_DIR/dpkg-deb-args"
+printf '%s\n' "${DPKG_DEB_THREADS_MAX:-}" > "$CAPTURE_DIR/dpkg-deb-threads"
 mkdir -p "$(dirname "$output")"
 touch "$output"
 SCRIPT
@@ -211,11 +214,15 @@ SCRIPT
     APP_DIR_OVERRIDE="$app_dir" \
     PKG_ROOT_OVERRIDE="$pkg_root" \
     DIST_DIR_OVERRIDE="$dist_dir" \
+    CAPTURE_DIR="$capture_dir" \
     UPDATER_BINARY_SOURCE="$updater_bin" \
+    MAX_BUILD_THREADS=6 \
     PACKAGE_VERSION="2026.03.24.120000+deadbeef" \
     bash "$REPO_DIR/scripts/build-deb.sh"
 
     assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+deadbeef_amd64.deb"
+    [ "$(cat "$capture_dir/dpkg-deb-threads")" = "6" ] \
+        || fail "Expected MAX_BUILD_THREADS to reach dpkg-deb"
     assert_file_exists "$pkg_root/DEBIAN/prerm"
     assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=New Window"
     assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=Check for Updates"
@@ -517,11 +524,13 @@ test_rpm_builder_smoke() {
     cat > "$bin_dir/rpmbuild" <<'SCRIPT'
 #!/usr/bin/env bash
 rpmdir=""
+binary_payload=""
 spec_file="${@: -1}"
 while [ $# -gt 0 ]; do
     if [ "$1" = "--define" ]; then
         case "$2" in
             _rpmdir\ *) rpmdir="${2#_rpmdir }" ;;
+            _binary_payload\ *) binary_payload="${2#_binary_payload }" ;;
         esac
         shift 2
         continue
@@ -531,6 +540,7 @@ done
 [ -n "$rpmdir" ] || exit 1
 if [ -n "${CAPTURE_DIR:-}" ]; then
     cp "$spec_file" "$CAPTURE_DIR/codex-desktop.spec"
+    printf '%s\n' "$binary_payload" > "$CAPTURE_DIR/rpm-binary-payload"
     staging_dir="$(sed -n 's|cp -a "\(.*\)/\." "%{buildroot}/"|\1|p' "$spec_file" | head -n 1)"
     if [ -n "$staging_dir" ] && [ -d "$staging_dir" ]; then
         cp -a "$staging_dir" "$CAPTURE_DIR/staging"
@@ -547,6 +557,7 @@ SCRIPT
     chmod +x "$bin_dir/rpmbuild" "$bin_dir/cargo"
 
     PATH="$bin_dir:$PATH" \
+    CAPTURE_DIR="$capture_dir" \
     APP_DIR_OVERRIDE="$app_dir" \
     DIST_DIR_OVERRIDE="$dist_dir" \
     UPDATER_BINARY_SOURCE="$updater_bin" \
@@ -554,6 +565,8 @@ SCRIPT
     bash "$REPO_DIR/scripts/build-rpm.sh"
 
     assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000-deadbeef.x86_64.rpm"
+    [ "$(cat "$capture_dir/rpm-binary-payload")" = "w19T4.zstdio" ] \
+        || fail "Expected default RPM binary payload to use conservative threaded zstd"
 
     rm -rf "$dist_dir" "$capture_dir"
     mkdir -p "$dist_dir" "$capture_dir"
@@ -564,10 +577,13 @@ SCRIPT
     DIST_DIR_OVERRIDE="$dist_dir" \
     PACKAGE_WITH_UPDATER=0 \
     PACKAGE_VERSION="2026.03.24.120000+manual" \
+    MAX_BUILD_THREADS=8 \
     bash "$REPO_DIR/scripts/build-rpm.sh"
 
     assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000-manual.x86_64.rpm"
     assert_file_exists "$capture_dir/codex-desktop.spec"
+    [ "$(cat "$capture_dir/rpm-binary-payload")" = "w19T8.zstdio" ] \
+        || fail "Expected MAX_BUILD_THREADS to reach rpmbuild payload compression"
     assert_file_exists "$capture_dir/staging/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
     assert_file_not_exists "$capture_dir/staging/usr/bin/codex-update-manager"
     assert_file_not_exists "$capture_dir/staging/usr/lib/systemd/user/codex-update-manager.service"
@@ -610,6 +626,10 @@ test_pacman_builder_without_updater_transition_hook() {
 set -euo pipefail
 cp PKGBUILD "$CAPTURE_DIR/PKGBUILD"
 cp codex-desktop.install "$CAPTURE_DIR/codex-desktop.install"
+printf '%s\n' "${MAKEPKG_CONF:-}" > "$CAPTURE_DIR/makepkg-conf-path"
+if [ -n "${MAKEPKG_CONF:-}" ]; then
+    cp "$MAKEPKG_CONF" "$CAPTURE_DIR/makepkg.conf"
+fi
 pkgname="$(sed -n 's/^pkgname=//p' PKGBUILD)"
 pkgver="$(sed -n 's/^pkgver=//p' PKGBUILD)"
 pkgrel="$(sed -n 's/^pkgrel=//p' PKGBUILD)"
@@ -632,6 +652,7 @@ SCRIPT
         APP_DIR_OVERRIDE="$app_dir" \
         DIST_DIR_OVERRIDE="$dist_dir" \
         PACKAGE_WITH_UPDATER=0 \
+        MAX_BUILD_THREADS=5 \
         PACKAGE_VERSION="2026.03.24.120000+manual" \
         bash "$REPO_DIR/scripts/build-pacman.sh"
     )"
@@ -642,6 +663,9 @@ SCRIPT
     [ "$(readlink "$dist_dir/codex-desktop-latest.pkg.tar.zst")" = "codex-desktop-2026.03.24.120000+manual-1-x86_64.pkg.tar.zst" ] || fail "Expected latest pacman symlink to point at built package"
     assert_file_exists "$capture_dir/PKGBUILD"
     assert_file_exists "$capture_dir/codex-desktop.install"
+    assert_file_exists "$capture_dir/makepkg.conf"
+    assert_contains "$capture_dir/makepkg.conf" "MAKEFLAGS=\"-j5"
+    assert_contains "$capture_dir/makepkg.conf" "COMPRESSZST=(zstd -c -z -T5 -)"
     assert_contains "$capture_dir/PKGBUILD" "pkgver=2026.03.24.120000+manual"
     assert_contains "$capture_dir/PKGBUILD" "pkgrel=1"
     assert_contains "$capture_dir/PKGBUILD" "ampersand&tmp"
@@ -1768,6 +1792,7 @@ case "$args" in
 #!/usr/bin/env node
 const fs = require("fs");
 fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `electron-rebuild ${process.argv.slice(2).join(" ")}\n`);
+fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `electron-rebuild-env jobs=${process.env.npm_config_jobs || ""} makeflags=${process.env.MAKEFLAGS || ""}\n`);
 fs.mkdirSync("node_modules/better-sqlite3/build/Release", { recursive: true });
 fs.mkdirSync("node_modules/node-pty/build/Release", { recursive: true });
 fs.closeSync(fs.openSync("node_modules/better-sqlite3/build/Release/better_sqlite3.node", "w"));
@@ -1825,6 +1850,8 @@ SCRIPT
         export PATH
         NATIVE_TOOLCHAIN_LOG="$toolchain_log"
         export NATIVE_TOOLCHAIN_LOG
+        MAX_BUILD_THREADS=4
+        export MAX_BUILD_THREADS
         WORK_DIR="$workspace/work"
         ELECTRON_VERSION="42.0.1"
         ELECTRON_HEADERS_URL="https://example.invalid/electron"
@@ -1839,7 +1866,8 @@ SCRIPT
 
     assert_contains "$toolchain_log" "@electron/rebuild@4.0.4"
     assert_contains "$toolchain_log" "node-abi@^4.31.0"
-    assert_contains "$toolchain_log" "electron-rebuild -v 42.0.1 --force --dist-url https://example.invalid/electron"
+    assert_contains "$toolchain_log" "electron-rebuild -v 42.0.1 --force --dist-url https://example.invalid/electron --parallel"
+    assert_contains "$toolchain_log" "electron-rebuild-env jobs=4 makeflags=-j4"
     assert_contains "$output_log" "Native modules built successfully"
     assert_file_exists "$app_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
     assert_file_exists "$app_dir/node_modules/node-pty/build/Release/pty.node"

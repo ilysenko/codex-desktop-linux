@@ -6,6 +6,9 @@ NEXT_APP_DIR := $(CURDIR)/codex-app-next
 REBUILD_REPORT_DIR := $(CURDIR)/dist-next/rebuild
 PACKAGE_NAME := codex-desktop
 PACKAGE_WITH_UPDATER ?= 1
+MAX_BUILD_THREADS ?= 4
+RPM_BINARY_PAYLOAD ?= w19T$(MAX_BUILD_THREADS).zstdio
+CARGO_JOBS_ARG = $(if $(filter-out 0,$(MAX_BUILD_THREADS)),--jobs $(MAX_BUILD_THREADS),)
 DEV_APP_ID ?= codex-cua-lab
 DEV_APP_NAME ?= Codex CUA Lab
 DEV_APP_DIR ?= $(CURDIR)/$(DEV_APP_ID)-app
@@ -91,6 +94,8 @@ help:
 	@printf '  %-18s %s\n' "DEV_APP_NAME=..." "Override side-by-side test app display name"
 	@printf '  %-18s %s\n' "PACKAGE_VERSION=..." "Override the package version for make deb / make rpm / make pacman / make appimage"
 	@printf '  %-18s %s\n' "PACKAGE_WITH_UPDATER=0" "Build packages without codex-update-manager or the updater service"
+	@printf '  %-18s %s\n' "MAX_BUILD_THREADS=8" "Cap supported build jobs/compression threads (default: 4, 0=auto/default)"
+	@printf '  %-18s %s\n' "RPM_BINARY_PAYLOAD=..." "Advanced RPM payload flags override (default: $(RPM_BINARY_PAYLOAD))"
 	@printf '  %-18s %s\n' "APPIMAGETOOL=..." "Override the appimagetool executable for make appimage"
 	@printf '  %-18s %s\n' "DEB=/path/file.deb" "Override the .deb used by make install"
 	@printf '  %-18s %s\n' "RPM=/path/file.rpm" "Override the .rpm used by make install"
@@ -112,6 +117,8 @@ help:
 	@printf '  %s\n' "./bin/codex-cua-lab"
 	@printf '  %s\n' "make deb PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "make rpm PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
+	@printf '  %s\n' "MAX_BUILD_THREADS=8 make install-native"
+	@printf '  %s\n' "MAX_BUILD_THREADS=8 make rpm"
 	@printf '  %s\n' "make pacman PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "make appimage PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "make install"
@@ -119,15 +126,15 @@ help:
 
 check:
 	@echo "[make] Running cargo check"
-	cargo check -p codex-update-manager
+	cargo check $(CARGO_JOBS_ARG) -p codex-update-manager
 
 test:
 	@echo "[make] Running cargo test"
-	cargo test -p codex-update-manager
+	cargo test $(CARGO_JOBS_ARG) -p codex-update-manager
 
 build-updater:
 	@echo "[make] Building codex-update-manager (release)"
-	cargo build --release -p codex-update-manager
+	cargo build $(CARGO_JOBS_ARG) --release -p codex-update-manager
 
 maybe-build-updater:
 	@case "$(PACKAGE_WITH_UPDATER)" in \
@@ -141,12 +148,14 @@ update: rebuild-install
 
 rebuild:
 	@echo "[make] Running safe rebuild flow"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" \
 	REBUILD_REPORT_DIR="$(REBUILD_REPORT_DIR)" \
 	CODEX_NEXT_APP_DIR="$(NEXT_APP_DIR)" \
 		./scripts/rebuild-candidate.sh "$(DMG)"
 
 rebuild-install:
 	@echo "[make] Running rebuild and local install flow"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" \
 	REBUILD_REPORT_DIR="$(REBUILD_REPORT_DIR)" \
 	CODEX_NEXT_APP_DIR="$(NEXT_APP_DIR)" \
 	CODEX_FINAL_APP_DIR="$(APP_DIR)" \
@@ -154,15 +163,15 @@ rebuild-install:
 
 inspect-upstream:
 	@echo "[make] Inspecting upstream DMG"
-	./install.sh --inspect --report-dir "$(REBUILD_REPORT_DIR)" "$(DMG)"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --inspect --report-dir "$(REBUILD_REPORT_DIR)" "$(DMG)"
 
 build-app:
 	@echo "[make] Regenerating codex-app from DMG"
-	./install.sh "$(DMG)"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh "$(DMG)"
 
 build-app-fresh:
 	@echo "[make] Regenerating codex-app from fresh DMG"
-	./install.sh --fresh "$(DMG)"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --fresh "$(DMG)"
 
 setup-native:
 	@echo "[make] Running guided native setup"
@@ -186,6 +195,7 @@ update-native:
 
 rebuild-next:
 	@echo "[make] Building side-by-side rebuild candidate"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" \
 	CODEX_INSTALL_DIR="$(NEXT_APP_DIR)" \
 	CODEX_PATCH_REPORT_JSON="$(REBUILD_REPORT_DIR)/patch-report.json" \
 	CODEX_REBUILD_REPORT_JSON="$(REBUILD_REPORT_DIR)/rebuild-report.json" \
@@ -200,6 +210,7 @@ run-app:
 
 build-dev-app:
 	@echo "[make] Building side-by-side Electron app as $(DEV_APP_ID)"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" \
 	CODEX_APP_ID="$(DEV_APP_ID)" \
 	CODEX_APP_DISPLAY_NAME="$(DEV_APP_NAME)" \
 	CODEX_INSTALL_DIR="$(DEV_APP_DIR)" \
@@ -214,29 +225,29 @@ run-dev-app:
 
 deb: maybe-build-updater
 	@echo "[make] Building Debian package"
-	PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-deb.sh
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-deb.sh
 
 rpm: maybe-build-updater
 	@echo "[make] Building RPM package"
-	PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-rpm.sh
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" RPM_BINARY_PAYLOAD="$(RPM_BINARY_PAYLOAD)" ./scripts/build-rpm.sh
 
 pacman: maybe-build-updater
 	@echo "[make] Building pacman package"
-	PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-pacman.sh
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-pacman.sh
 
 appimage:
 	@echo "[make] Building AppImage"
-	PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" ./scripts/build-appimage.sh
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" ./scripts/build-appimage.sh
 
 package: maybe-build-updater
 	@echo "[make] Building native package (auto-detecting distro)"
 	@format="$$( $(NATIVE_PKG_FORMAT_CMD) )"; \
 	if [ "$$format" = "pacman" ]; then \
-		PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-pacman.sh; \
+		MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-pacman.sh; \
 	elif [ "$$format" = "rpm" ]; then \
-		PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-rpm.sh; \
+		MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" RPM_BINARY_PAYLOAD="$(RPM_BINARY_PAYLOAD)" ./scripts/build-rpm.sh; \
 	elif [ "$$format" = "deb" ]; then \
-		PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-deb.sh; \
+		MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-deb.sh; \
 	else \
 		echo "[make] No supported packaging tool found. Install dpkg-dev (Debian), rpm-build (Fedora), or pacman (Arch)." >&2; \
 		exit 1; \

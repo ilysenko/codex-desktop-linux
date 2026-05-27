@@ -14,6 +14,8 @@ PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
 
 PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
+MAX_BUILD_THREADS="${MAX_BUILD_THREADS:-4}"
+RPM_BINARY_PAYLOAD="${RPM_BINARY_PAYLOAD:-w19T${MAX_BUILD_THREADS}.zstdio}"
 UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-update-manager}"
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
 PACKAGED_RUNTIME_SOURCE="${PACKAGED_RUNTIME_SOURCE:-$PACKAGED_RUNTIME_TEMPLATE}"
@@ -25,6 +27,14 @@ UPDATE_BUILDER_ROOT_PLACEHOLDER="__UPDATE_BUILDER_ROOT__"
 
 info()  { echo "[INFO] $*" >&2; }
 error() { echo "[ERROR] $*" >&2; exit 1; }
+
+validate_max_build_threads() {
+    case "$MAX_BUILD_THREADS" in
+        ""|*[!0-9]*)
+            error "MAX_BUILD_THREADS must be 0 or a positive integer"
+            ;;
+    esac
+}
 
 map_arch() {
     case "$(uname -m)" in
@@ -49,6 +59,8 @@ rpm_version_parts() {
 }
 
 main() {
+    validate_max_build_threads
+
     [ -d "$APP_DIR" ] || error "Missing app directory: $APP_DIR. Run ./install.sh first."
     [ -x "$APP_DIR/start.sh" ] || error "Missing launcher: $APP_DIR/start.sh"
     [ -f "$SPEC_TEMPLATE" ] || error "Missing spec template: $SPEC_TEMPLATE"
@@ -108,12 +120,14 @@ SCRIPT
 
     mkdir -p "$DIST_DIR"
     info "Building $PACKAGE_NAME-${rpm_ver}-${rpm_rel}.${arch}.rpm"
+    info "RPM binary payload compression: $RPM_BINARY_PAYLOAD"
     rpmbuild -bb \
         --define "_rpmdir $rpmbuild_dir/RPMS" \
         --define "_srcrpmdir $rpmbuild_dir/SRPMS" \
         --define "_builddir $rpmbuild_dir/BUILD" \
         --define "_sourcedir $rpmbuild_dir/SOURCES" \
         --define "_specdir $build_root" \
+        --define "_binary_payload $RPM_BINARY_PAYLOAD" \
         --define "_build_name_fmt %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
         "$spec_file" >&2
 
