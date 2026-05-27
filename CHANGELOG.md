@@ -27,6 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `make app-service-disable` helpers for users who want Codex Desktop managed
   by `systemd --user`; the unit waits on the launcher PID file so it can stay
   active when Electron is moved into a desktop app scope.
+- Desktop parity smoke now covers `externalAgentConfig/import` with an empty
+  no-op migration request, exercising the upstream import protocol without
+  migrating user files or external-agent state.
 
 ### Fixed
 

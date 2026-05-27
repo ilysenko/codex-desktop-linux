@@ -1623,6 +1623,18 @@ async function runAppServerSmoke(options) {
       removeFixture(externalAgentFixtureDir);
     }
 
+    try {
+      const result = await client.request("externalAgentConfig/import", {
+        migrationItems: [],
+      });
+      record("external agent no-op import", hasObject(result) ? "pass" : "fail", {
+        migrationCount: 0,
+        responseObjectKnown: hasObject(result),
+      });
+    } catch (error) {
+      record("external agent no-op import", "fail", { error: summarizeErrorText(error.message) });
+    }
+
     const fsFixture = createFsFixture();
     try {
       const directoryMetadata = await client.request("fs/getMetadata", { path: fsFixture.workspaceDir });
