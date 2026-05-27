@@ -19,6 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   bundled plugin registry so the app keeps `read-aloud` installed, and the
   launcher syncs the plugin cache so new Codex windows expose the MCP tools
   through the same auto-install path as Computer Use.
+- Native packages now include an opt-in `codex-desktop.service` user unit plus
+  `make app-service-enable`, `make app-service-status`, and
+  `make app-service-disable` helpers for users who want Codex Desktop managed
+  by `systemd --user`; the unit waits on the launcher PID file so it can stay
+  active when Electron is moved into a desktop app scope.
 
 ### Fixed
 

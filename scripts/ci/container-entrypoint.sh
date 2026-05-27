@@ -277,6 +277,7 @@ run_deb_job() {
     dpkg-deb -I "$deb_file"
     dpkg-deb -c "$deb_file" | tee /tmp/deb-contents.txt >/dev/null
     assert_contains_file /tmp/deb-contents.txt './usr/bin/codex-update-manager'
+    assert_contains_file /tmp/deb-contents.txt './usr/lib/systemd/user/codex-desktop.service'
     assert_contains_file /tmp/deb-contents.txt './usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/launcher/webview-server.py'
@@ -297,6 +298,7 @@ run_deb_job() {
     dpkg-deb -e "$deb_no_updater_file" /tmp/deb-no-updater-control
     dpkg-deb -x "$deb_no_updater_file" /tmp/deb-no-updater-payload
     assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/bin/codex-update-manager'
+    assert_contains_file /tmp/deb-no-updater-contents.txt './usr/lib/systemd/user/codex-desktop.service'
     assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/lib/systemd/user/codex-update-manager.service'
     assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy'
     assert_not_contains_file /tmp/deb-no-updater-contents.txt './opt/codex-desktop/update-builder/'
@@ -332,6 +334,7 @@ run_rpm_job() {
     rpm -qip "$rpm_file"
     rpm -qlp "$rpm_file" | tee /tmp/rpm-contents.txt >/dev/null
     assert_contains_file /tmp/rpm-contents.txt '/usr/bin/codex-update-manager'
+    assert_contains_file /tmp/rpm-contents.txt '/usr/lib/systemd/user/codex-desktop.service'
     assert_contains_file /tmp/rpm-contents.txt '/usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/launcher/webview-server.py'
@@ -348,6 +351,7 @@ run_rpm_job() {
     rpm -qlp "$rpm_no_updater_file" | tee /tmp/rpm-no-updater-contents.txt >/dev/null
     rpm -qp --scripts "$rpm_no_updater_file" | tee /tmp/rpm-no-updater-scripts.txt >/dev/null
     assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/bin/codex-update-manager'
+    assert_contains_file /tmp/rpm-no-updater-contents.txt '/usr/lib/systemd/user/codex-desktop.service'
     assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/lib/systemd/user/codex-update-manager.service'
     assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy'
     assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/opt/codex-desktop/update-builder/'
@@ -381,6 +385,7 @@ run_pacman_job() {
     pacman -Qip "$pkg_file"
     pacman -Qlp "$pkg_file" | tee /tmp/pacman-contents.txt >/dev/null
     assert_contains_file /tmp/pacman-contents.txt 'usr/bin/codex-update-manager'
+    assert_contains_file /tmp/pacman-contents.txt 'usr/lib/systemd/user/codex-desktop.service'
     assert_contains_file /tmp/pacman-contents.txt 'usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/launcher/webview-server.py'
@@ -398,6 +403,7 @@ run_pacman_job() {
     tar -xOf "$pkg_no_updater_file" .INSTALL | tee /tmp/pacman-no-updater-install.txt >/dev/null
     tar -xOf "$pkg_no_updater_file" opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh | tee /tmp/pacman-no-updater-cleanup.txt >/dev/null
     assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/bin/codex-update-manager'
+    assert_contains_file /tmp/pacman-no-updater-contents.txt 'usr/lib/systemd/user/codex-desktop.service'
     assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/lib/systemd/user/codex-update-manager.service'
     assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy'
     assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'opt/codex-desktop/update-builder/'

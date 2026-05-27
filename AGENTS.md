@@ -51,7 +51,7 @@ The current working flow is:
 - `linux-target-context.js` — Linux target detection used by patch descriptors. Reads `/etc/os-release` plus env overrides and exposes helpers such as `matchesId()`, `packageFormatIs()`, `packageManagerIs()`, `desktopMatches()`, and `versionAtLeast()`.
 - `patch-report.js` — shared helpers for building `patch-report.json` (status capture, warning capture, `recordPatch`, `writePatchReport`).
 - `rebuild-report.sh` — writes `rebuild-report.json` (DMG path, Electron version, patch report, app dir) used by the rebuild candidate flow.
-- `package-common.sh` — shared shell helpers used by the native package builders (versioning, payload staging, user-service helper installation).
+- `package-common.sh` — shared shell helpers used by the native package builders (versioning, payload staging, desktop app service rendering, user-service helper installation).
 - `linux-features.sh` / `linux-features.js` — opt-in Linux feature framework loader. The shell side runs `stage.sh` hooks for enabled features; the JS side resolves manifests, validates entrypoints, and contributes `mainBundlePatch` functions to the patch registry.
 
 ### Patch registry (`scripts/patches/`)
@@ -88,6 +88,7 @@ The current working flow is:
 - `packaging/linux/PKGBUILD.template` — pacman PKGBUILD template (used to generate `.PKGINFO`/`.MTREE` plus the archive contents).
 - `packaging/linux/codex-desktop.install` — pacman `.install` hooks (`post_install` / `post_upgrade` / `pre_remove` / `post_remove`).
 - `packaging/linux/codex-desktop.desktop` — desktop entry template.
+- `packaging/linux/codex-desktop.service` — opt-in user-level `systemd` unit for launching the installed desktop app through `/usr/bin/codex-desktop`; it waits on the launcher PID file so Electron can remain tracked after desktop app-scope handoff.
 - `packaging/linux/codex-update-manager.service` — user-level `systemd` unit for the local update manager.
 - `packaging/linux/codex-update-manager.postinst` — Debian maintainer script that starts the user service after install.
 - `packaging/linux/codex-update-manager.prerm` — Debian maintainer script that stops or disables the user service during removal.
@@ -235,7 +236,7 @@ This path is for users who do not want a system-wide native package; the daily-d
 - Closing behavior:
   If future work touches shutdown behavior, assume the confirmation dialog may be implemented inside the app bundle rather than the Linux launcher.
 - Update manager:
-  The native packages include `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`.
+  Default native packages include `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`. All native packages include the opt-in app unit `/usr/lib/systemd/user/codex-desktop.service`.
 - Privilege boundary:
   The updater runs unprivileged. It only escalates at install time via `pkexec /usr/bin/codex-update-manager install-deb --path <deb>`, `install-rpm --path <rpm>`, or `install-pacman --path <pkg.tar.zst>`.
 - Manual rollback:
@@ -344,6 +345,7 @@ The native packages currently install:
 
 - app files under `/opt/codex-desktop`
 - launcher under `/usr/bin/codex-desktop`
+- opt-in app unit under `/usr/lib/systemd/user/codex-desktop.service`
 - updater binary under `/usr/bin/codex-update-manager`
 - updater unit under `/usr/lib/systemd/user/codex-update-manager.service`
 - update builder bundle under `/opt/codex-desktop/update-builder`
@@ -411,6 +413,7 @@ If updater behavior changed, also inspect:
 
 ```bash
 systemctl --user status codex-update-manager.service
+systemctl --user status codex-desktop.service
 codex-update-manager status --json
 sed -n '1,120p' ~/.local/state/codex-update-manager/state.json
 sed -n '1,160p' ~/.local/state/codex-update-manager/service.log

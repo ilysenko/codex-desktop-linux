@@ -51,7 +51,7 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
+.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status app-service-enable app-service-disable app-service-status clean-dist clean-state
 
 help:
 	@printf '\nCodex Desktop Linux Make Targets\n\n'
@@ -80,6 +80,9 @@ help:
 	@printf '  %-18s %s\n' "make install" "Install the latest generated native package"
 	@printf '  %-18s %s\n' "make service-enable" "Enable and start codex-update-manager.service for the current user"
 	@printf '  %-18s %s\n' "make service-status" "Show codex-update-manager.service status for the current user"
+	@printf '  %-18s %s\n' "make app-service-enable" "Opt in to starting Codex Desktop via systemd --user"
+	@printf '  %-18s %s\n' "make app-service-disable" "Stop and disable Codex Desktop's systemd --user unit"
+	@printf '  %-18s %s\n' "make app-service-status" "Show Codex Desktop's systemd --user unit status"
 	@printf '  %-18s %s\n' "make clean-dist" "Remove generated dist/ artifacts"
 	@printf '  %-18s %s\n' "make clean-state" "Remove updater runtime state from XDG directories"
 	@printf '\nVariables:\n\n'
@@ -299,6 +302,25 @@ service-enable:
 service-status:
 	@echo "[make] Showing codex-update-manager.service status"
 	systemctl --user status codex-update-manager.service --no-pager
+
+app-service-enable:
+	@echo "[make] Enabling and starting $(PACKAGE_NAME).service"
+	systemctl --user daemon-reload
+	systemctl --user import-environment \
+		PATH DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XAUTHORITY XDG_RUNTIME_DIR HYPRLAND_INSTANCE_SIGNATURE YDOTOOL_SOCKET || true
+	systemctl --user enable --now $(PACKAGE_NAME).service
+	@if ! systemctl --user is-active --quiet $(PACKAGE_NAME).service; then \
+		echo "[make] $(PACKAGE_NAME).service is enabled but is not active yet."; \
+		echo "[make] Close any already-running Codex Desktop process, then run: systemctl --user start $(PACKAGE_NAME).service"; \
+	fi
+
+app-service-disable:
+	@echo "[make] Stopping and disabling $(PACKAGE_NAME).service"
+	systemctl --user disable --now $(PACKAGE_NAME).service
+
+app-service-status:
+	@echo "[make] Showing $(PACKAGE_NAME).service status"
+	systemctl --user status $(PACKAGE_NAME).service --no-pager
 
 clean-dist:
 	@echo "[make] Removing dist/"
