@@ -29,6 +29,80 @@ FAIL = "fail"
 INFO = "info"
 
 
+READINESS_CATEGORIES = [
+    {
+        "id": "package_runtime",
+        "label": "Package and runtime",
+        "checks": [
+            "package",
+            "launcher",
+            "doctor",
+            "app_root",
+            "electron_runtime",
+            "managed_node",
+            "build_info",
+            "app_asar",
+            "asar_flatpak_chrome_status",
+        ],
+    },
+    {
+        "id": "app_service",
+        "label": "Desktop app service",
+        "checks": ["app_service_unit", "app_service_state", "webview_port"],
+    },
+    {
+        "id": "updater",
+        "label": "Updater and rebuild guard",
+        "checks": [
+            "updater_service_unit",
+            "update_builder",
+            "patch_report_validator",
+            "update_builder_managed_node",
+        ],
+    },
+    {
+        "id": "browser_bridge",
+        "label": "Browser bridge",
+        "checks": [
+            "chrome_plugin",
+            "chrome_extension_installed",
+            "chrome_manifest_probe",
+            "chrome_native_host_binary",
+            "chrome_manifest_google_chrome",
+            "chrome_manifest_brave_browser",
+            "chrome_manifest_chromium",
+            "chrome_manifest_flatpak_chrome",
+            "flatpak_chrome_permission",
+            "chrome_live_profile_validation",
+            "chrome_native_host_bridge_loopback",
+        ],
+    },
+    {
+        "id": "remote_mobile",
+        "label": "Remote mobile",
+        "checks": [
+            "asar_remote_control",
+            "remote_mobile_marker",
+            "remote_mobile_cold_start_hook",
+            "remote_mobile_secret_service",
+            "remote_mobile_secret_service_canary",
+            "remote_mobile_key_file",
+        ],
+    },
+    {
+        "id": "computer_use",
+        "label": "Linux Computer Use",
+        "checks": ["computer_use_doctor"],
+    },
+]
+
+READINESS_LIMITATIONS = [
+    "This is an unofficial Linux build, not official OpenAI Linux Desktop support.",
+    "macOS-only platform pieces such as Apple authorization plugins, entitlements, and locked-session behavior are not replicated.",
+    "Experimental remote mobile control is only release-ready when the optional live remote and Secret Service checks are intentionally run and pass.",
+]
+
+
 def run(args: list[str], timeout: int = 8) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,
@@ -112,6 +186,25 @@ def add_check(
         if value is not None:
             entry[key] = value
     checks.append(entry)
+
+
+def status_counts(checks: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        PASS: sum(1 for check in checks if check["status"] == PASS),
+        WARN: sum(1 for check in checks if check["status"] == WARN),
+        FAIL: sum(1 for check in checks if check["status"] == FAIL),
+        INFO: sum(1 for check in checks if check["status"] == INFO),
+    }
+
+
+def strongest_status(counts: dict[str, int]) -> str:
+    if counts.get(FAIL, 0) > 0:
+        return FAIL
+    if counts.get(WARN, 0) > 0:
+        return WARN
+    if counts.get(PASS, 0) > 0:
+        return PASS
+    return INFO
 
 
 def package_version(package_name: str) -> tuple[str, str]:
@@ -1136,6 +1229,97 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
     return checks
 
 
+def readiness_detail(status: str, counts: dict[str, int]) -> str:
+    if status == FAIL:
+        return f"{counts[FAIL]} failing check(s), {counts[WARN]} warning(s)"
+    if status == WARN:
+        return f"{counts[WARN]} warning(s), {counts[PASS]} passing check(s)"
+    if status == PASS:
+        return f"{counts[PASS]} passing check(s)"
+    return "optional or not installed"
+
+
+def category_next_action(category_id: str, status: str) -> str | None:
+    if status not in {FAIL, WARN}:
+        return None
+    actions = {
+        "package_runtime": "Reinstall or repair the native package, then rerun codex-desktop-doctor --readiness.",
+        "app_service": "Enable/start the optional app service only if you want systemd to manage the desktop app.",
+        "updater": "Repair the updater bundle before relying on local rebuilds from future upstream DMGs.",
+        "browser_bridge": "Run the browser setup path again, then rerun the browser live check if Chrome/Brave/Chromium integration matters.",
+        "remote_mobile": "Rerun setup-native for remote-mobile-control and use the live Secret Service/remote checks before trusting phone control.",
+        "computer_use": "Run the bundled Computer Use doctor and fix its reported input, accessibility, or window backend blockers.",
+    }
+    return actions.get(category_id)
+
+
+def build_readiness_report(
+    package_name: str,
+    checks: list[dict[str, Any]],
+    summary: dict[str, int],
+) -> dict[str, Any]:
+    checks_by_id = {check["id"]: check for check in checks}
+    categories = []
+    next_actions = []
+
+    for category in READINESS_CATEGORIES:
+        category_checks = [
+            checks_by_id[check_id]
+            for check_id in category["checks"]
+            if check_id in checks_by_id
+        ]
+        counts = status_counts(category_checks)
+        status = strongest_status(counts)
+        action = category_next_action(category["id"], status)
+        if action is not None:
+            next_actions.append(action)
+        categories.append(
+            {
+                "id": category["id"],
+                "label": category["label"],
+                "status": status,
+                "detail": readiness_detail(status, counts),
+                "counts": counts,
+                "checks": [
+                    {"id": check["id"], "status": check["status"]}
+                    for check in category_checks
+                ],
+            }
+        )
+
+    if summary[FAIL] > 0:
+        overall = "not-ready"
+    elif summary[WARN] > 0:
+        overall = "ready-with-warnings"
+    else:
+        overall = "ready"
+
+    if not next_actions:
+        next_actions.append("No blocking readiness action found in the installed doctor checks.")
+
+    return {
+        "packageName": package_name,
+        "overall": overall,
+        "summary": summary,
+        "categories": categories,
+        "nextActions": next_actions,
+        "limitations": READINESS_LIMITATIONS,
+    }
+
+
+def print_readiness_text(readiness: dict[str, Any]) -> None:
+    print(f"Codex Desktop Linux readiness ({readiness['packageName']})")
+    print(f"Overall: {readiness['overall']}")
+    for category in readiness["categories"]:
+        print(f"[{category['status'].upper()}] {category['label']}: {category['detail']}")
+    print("Next actions:")
+    for action in readiness["nextActions"]:
+        print(f"- {action}")
+    print("Known limitations:")
+    for limitation in readiness["limitations"]:
+        print(f"- {limitation}")
+
+
 def print_text(report: dict[str, Any]) -> None:
     print(f"Codex Desktop Linux doctor ({report['packageName']})")
     for check in report["checks"]:
@@ -1151,25 +1335,27 @@ def print_text(report: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check an installed Codex Desktop Linux package.")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    parser.add_argument("--readiness", action="store_true", help="print a compact release/readiness summary")
     parser.add_argument("--package-name", default=PACKAGE_NAME, help="installed package name")
     args = parser.parse_args()
 
     package_name = args.package_name
     checks = checks_for_package(package_name)
-    summary = {
-        PASS: sum(1 for check in checks if check["status"] == PASS),
-        WARN: sum(1 for check in checks if check["status"] == WARN),
-        FAIL: sum(1 for check in checks if check["status"] == FAIL),
-        INFO: sum(1 for check in checks if check["status"] == INFO),
-    }
+    summary = status_counts(checks)
+    readiness = build_readiness_report(package_name, checks, summary)
     report = {
         "packageName": package_name,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "checks": checks,
         "summary": summary,
+        "readiness": readiness,
     }
 
-    if args.json:
+    if args.readiness and args.json:
+        print(json.dumps(readiness, indent=2, sort_keys=True))
+    elif args.readiness:
+        print_readiness_text(readiness)
+    elif args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print_text(report)

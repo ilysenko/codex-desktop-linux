@@ -22,6 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Native packages now install `codex-desktop-doctor`, a safe installed-state
   healthcheck for package files, user services, update-builder staging, Chrome
   native messaging, Computer Use readiness, and remote-mobile markers.
+- `codex-desktop-doctor --readiness` and `make readiness` now provide a compact
+  release/readiness summary grouped by package runtime, app service, updater,
+  browser bridge, remote-mobile, and Linux Computer Use state.
 - Native packages now include an opt-in `codex-desktop.service` user unit plus
   `make app-service-enable`, `make app-service-status`, and
   `make app-service-disable` helpers for users who want Codex Desktop managed

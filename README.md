@@ -487,10 +487,14 @@ Native packages install a safe healthcheck at `/usr/bin/codex-desktop-doctor`:
 ```bash
 codex-desktop-doctor
 codex-desktop-doctor --json
+codex-desktop-doctor --readiness
 make doctor
+make readiness
 ```
 
 The doctor checks installed package files, the optional app service, updater/update-builder files, required ASAR patch markers, Chrome/Brave/Chromium native-messaging manifests and host binaries, Flatpak Chrome permissions, Computer Use readiness, and remote-mobile feature markers. It reports only sanitized status fields and file paths; it does not print pairing secrets, browser tab contents, cookies, QR data, screenshots, or Computer Use window/application state.
+
+Use `codex-desktop-doctor --readiness` when you want the compact release/readiness view instead of the full checklist. It groups the same checks into package/runtime, app service, updater, browser bridge, remote-mobile, and Linux Computer Use categories, then prints the overall state, next actions, and known Linux limitations without detailed file paths. `codex-desktop-doctor --readiness --json` emits the same compact grouped report for automation.
 
 To run the optional Secret Service canary for the experimental remote-mobile key
 store, set `CODEX_DESKTOP_SECRET_SERVICE_CANARY=1`. The canary stores, looks up,

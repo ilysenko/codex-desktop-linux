@@ -1046,6 +1046,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local setup_log="$TMP_DIR/make-setup-native.log"
     local app_service_log="$TMP_DIR/make-app-service.log"
     local doctor_log="$TMP_DIR/make-doctor.log"
+    local readiness_log="$TMP_DIR/make-readiness.log"
     local parity_schema_log="$TMP_DIR/make-parity-schema.log"
     local parity_browser_matrix_log="$TMP_DIR/make-parity-browser-matrix.log"
     local parity_browser_live_log="$TMP_DIR/make-parity-browser-live.log"
@@ -1080,6 +1081,10 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" doctor >"$doctor_log"
     assert_contains "$doctor_log" '/usr/bin/codex-desktop-doctor'
+
+    make -n -C "$REPO_DIR" readiness >"$readiness_log"
+    assert_contains "$readiness_log" '/usr/bin/codex-desktop-doctor'
+    assert_contains "$readiness_log" '--readiness'
 
     make -n -C "$REPO_DIR" parity-schema >"$parity_schema_log"
     assert_contains "$parity_schema_log" 'scripts/app-server-schema-guard.js'
@@ -1200,6 +1205,8 @@ test_desktop_doctor_template_smoke() {
     local workspace="$TMP_DIR/desktop-doctor"
     local doctor="$workspace/codex-doctor-smoke"
     local report="$workspace/report.json"
+    local readiness_report="$workspace/readiness.json"
+    local readiness_text="$workspace/readiness.txt"
 
     mkdir -p "$workspace/home" "$workspace/config"
     sed 's/__PACKAGE_NAME__/codex-doctor-smoke/g' \
@@ -1216,6 +1223,7 @@ test_desktop_doctor_template_smoke() {
     assert_contains "$report" '"app_service_unit"'
     assert_contains "$report" '"patch_report_validator"'
     assert_contains "$report" '"chrome_manifest_probe"'
+    assert_contains "$report" '"readiness"'
     assert_not_contains "$report" "FAKE_QR_SECRET"
 
     python3 - "$report" <<'PY' || fail "Expected doctor JSON report to be well formed"
@@ -1230,7 +1238,47 @@ if missing:
     raise SystemExit(f"missing checks: {sorted(missing)}")
 if report["summary"]["fail"] < 1:
     raise SystemExit("expected at least one failure for missing package")
+readiness = report.get("readiness")
+if not isinstance(readiness, dict) or readiness.get("overall") != "not-ready":
+    raise SystemExit(f"bad readiness block: {readiness}")
+category_ids = {category["id"] for category in readiness.get("categories", [])}
+expected_categories = {"package_runtime", "app_service", "updater", "browser_bridge", "remote_mobile", "computer_use"}
+if expected_categories - category_ids:
+    raise SystemExit(f"missing readiness categories: {sorted(expected_categories - category_ids)}")
 PY
+
+    if HOME="$workspace/home" XDG_CONFIG_HOME="$workspace/config" \
+        python3 "$doctor" --readiness --json --package-name codex-doctor-smoke >"$readiness_report"; then
+        fail "readiness should report failures for a deliberately missing package"
+    fi
+    python3 - "$readiness_report" "$workspace" <<'PY' || fail "Expected readiness JSON to stay compact and redacted"
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+workspace = sys.argv[2]
+if report["overall"] != "not-ready":
+    raise SystemExit(f"expected not-ready, got {report['overall']}")
+if "checks" not in report["categories"][0]:
+    raise SystemExit("expected compact category checks")
+text = json.dumps(report, sort_keys=True)
+if workspace in text or "/usr/bin/" in text or "/opt/" in text:
+    raise SystemExit(f"readiness JSON leaked detailed paths: {text}")
+if not any("native package" in action.lower() for action in report["nextActions"]):
+    raise SystemExit(f"expected package repair action: {report['nextActions']}")
+if not any("unofficial Linux build" in limitation for limitation in report["limitations"]):
+    raise SystemExit(f"expected Linux limitation: {report['limitations']}")
+PY
+
+    if HOME="$workspace/home" XDG_CONFIG_HOME="$workspace/config" \
+        python3 "$doctor" --readiness --package-name codex-doctor-smoke >"$readiness_text"; then
+        fail "text readiness should report failures for a deliberately missing package"
+    fi
+    assert_contains "$readiness_text" "Codex Desktop Linux readiness"
+    assert_contains "$readiness_text" "Overall: not-ready"
+    assert_contains "$readiness_text" "Package and runtime"
+    assert_contains "$readiness_text" "Known limitations"
+    assert_not_contains "$readiness_text" "$workspace"
 }
 
 test_desktop_doctor_browser_manifest_coverage() {
