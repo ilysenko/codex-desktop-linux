@@ -220,6 +220,7 @@ async fn run_daemon(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
+    complete_failed_update_if_already_installed(state, paths)?;
     codex_cli::reconcile_if_present(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
     maybe_prune_workspace_cache(&config.workspace_root, state);
@@ -280,6 +281,7 @@ async fn run_check_now(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
+    complete_failed_update_if_already_installed(state, paths)?;
     codex_cli::reconcile_if_present(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
     maybe_prune_workspace_cache(&config.workspace_root, state);
@@ -305,6 +307,7 @@ fn upstream_check_is_fresh(config: &RuntimeConfig, state: &PersistedState) -> bo
 fn run_status(state: &mut PersistedState, paths: &RuntimePaths, json: bool) -> Result<()> {
     codex_cli::reconcile_if_present(state, paths)?;
     complete_pending_install_if_already_installed(state, paths)?;
+    complete_failed_update_if_already_installed(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
 
     if json {
@@ -672,6 +675,10 @@ async fn reconcile_pending_install(
         let _ = maybe_notify_installed(state, paths, config.notifications);
         return Ok(());
     }
+    if complete_failed_update_if_already_installed(state, paths)? {
+        let _ = maybe_notify_installed(state, paths, config.notifications);
+        return Ok(());
+    }
 
     match state.status {
         UpdateStatus::ReadyToInstall => {
@@ -756,6 +763,11 @@ async fn run_install_ready(
     recover_interrupted_install(state, paths)?;
 
     if complete_pending_install_if_already_installed(state, paths)? {
+        let _ = maybe_notify_installed(state, paths, config.notifications);
+        println!("Codex Desktop update is already installed or superseded.");
+        return Ok(());
+    }
+    if complete_failed_update_if_already_installed(state, paths)? {
         let _ = maybe_notify_installed(state, paths, config.notifications);
         println!("Codex Desktop update is already installed or superseded.");
         return Ok(());
@@ -861,6 +873,38 @@ fn complete_pending_install_if_already_installed(
     cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
     persist_state(paths, state)?;
     info!("recovered pending install state because the candidate version is already installed or superseded");
+    Ok(true)
+}
+
+fn complete_failed_update_if_already_installed(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<bool> {
+    if state.status != UpdateStatus::Failed {
+        return Ok(false);
+    }
+
+    let Some(candidate_version) = state.candidate_version.clone().filter(|candidate| {
+        installed_version_satisfies_candidate(&state.installed_version, candidate)
+    }) else {
+        return Ok(false);
+    };
+
+    let candidate_is_installed =
+        installed_version_matches_candidate(&state.installed_version, &candidate_version);
+
+    state.status = UpdateStatus::Installed;
+    state.candidate_version = None;
+    if !candidate_is_installed {
+        state.artifact_paths.package_path = None;
+    }
+    state.error_message = None;
+    state.notified_events.clear();
+    cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
+    persist_state(paths, state)?;
+    info!(
+        "cleared failed update state because the installed package already satisfies the candidate"
+    );
     Ok(true)
 }
 
@@ -1897,6 +1941,83 @@ mod tests {
         assert_eq!(state.candidate_version, None);
         assert_eq!(state.artifact_paths.package_path, None);
         assert_eq!(state.artifact_paths.workspace_dir, None);
+        Ok(())
+    }
+
+    #[test]
+    fn status_clears_superseded_failed_update() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let paths = RuntimePaths {
+            config_file: temp.path().join("config/config.toml"),
+            state_file: temp.path().join("state/state.json"),
+            log_file: temp.path().join("state/service.log"),
+            cache_dir: temp.path().join("cache"),
+            state_dir: temp.path().join("state"),
+            config_dir: temp.path().join("config"),
+        };
+        paths.ensure_dirs()?;
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::Failed;
+        state.installed_version = "2026.05.27.201403+parity77814e0".to_string();
+        state.candidate_version = Some("2026.05.27.190229+c9a9ee11".to_string());
+        state.error_message = Some("install.sh failed during local rebuild".to_string());
+        let superseded_package_path = temp.path().join("superseded-failed.deb");
+        std::fs::write(&superseded_package_path, b"deb")?;
+        state.artifact_paths.package_path = Some(superseded_package_path);
+        state.artifact_paths.workspace_dir = Some(
+            temp.path()
+                .join("cache/workspaces/2026.05.27.190229+c9a9ee11"),
+        );
+
+        let original_home = std::env::var_os("HOME");
+        let original_path = std::env::var_os("PATH");
+        let original_nvm_dir = std::env::var_os("NVM_DIR");
+        let original_codex_cli_path = std::env::var_os("CODEX_CLI_PATH");
+        let original_skip_system_cli_lookup =
+            std::env::var_os("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP");
+        std::env::set_var("HOME", temp.path());
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+
+        let result = run_status(&mut state, &paths, true);
+
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+        if let Some(nvm_dir) = original_nvm_dir {
+            std::env::set_var("NVM_DIR", nvm_dir);
+        } else {
+            std::env::remove_var("NVM_DIR");
+        }
+        if let Some(cli_path) = original_codex_cli_path {
+            std::env::set_var("CODEX_CLI_PATH", cli_path);
+        } else {
+            std::env::remove_var("CODEX_CLI_PATH");
+        }
+        if let Some(value) = original_skip_system_cli_lookup {
+            std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", value);
+        } else {
+            std::env::remove_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP");
+        }
+
+        result?;
+
+        assert_eq!(state.status, UpdateStatus::Installed);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.artifact_paths.package_path, None);
+        assert_eq!(state.artifact_paths.workspace_dir, None);
+        assert_eq!(state.error_message, None);
         Ok(())
     }
 

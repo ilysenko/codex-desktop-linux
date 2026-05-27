@@ -59,6 +59,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Install-time running-app detection now treats upgraded Electron processes
   whose executable appears as `(deleted)` as still running, while continuing to
   ignore renderer/GPU/helper processes.
+- `codex-update-manager status` and daemon startup now clear stale failed update
+  state when the installed package already satisfies or supersedes the failed
+  candidate, while keeping failures for newer candidates intact.
 
 ## [0.8.0] - 2026-05-16
 
