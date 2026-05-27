@@ -263,7 +263,10 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-doctor.py"
     assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_file_exists "$pkg_root/usr/bin/codex-desktop-doctor"
+    assert_contains "$pkg_root/usr/bin/codex-desktop-doctor" 'PACKAGE_NAME = "codex-desktop"'
 }
 
 test_update_builder_preserves_enabled_linux_features_config() {
@@ -373,6 +376,7 @@ SCRIPT
 
     assert_file_exists "$dist_dir/codex-cua-lab_2026.03.24.120000+deadbeef_amd64.deb"
     assert_file_exists "$pkg_root/usr/bin/codex-cua-lab"
+    assert_file_exists "$pkg_root/usr/bin/codex-cua-lab-doctor"
     assert_file_exists "$pkg_root/opt/codex-cua-lab/start.sh"
     assert_contains "$pkg_root/DEBIAN/control" "Package: codex-cua-lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "Name=Codex CUA Lab"
@@ -382,6 +386,7 @@ SCRIPT
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "StartupWMClass=codex-cua-lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "X-GNOME-WMClass=codex-cua-lab"
     assert_contains "$pkg_root/opt/codex-cua-lab/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-cua-lab.desktop"'
+    assert_contains "$pkg_root/usr/bin/codex-cua-lab-doctor" 'PACKAGE_NAME = "codex-cua-lab"'
 }
 
 test_deb_builder_without_updater() {
@@ -427,6 +432,7 @@ SCRIPT
 
     assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+manual_amd64.deb"
     assert_file_exists "$pkg_root/usr/bin/codex-desktop"
+    assert_file_exists "$pkg_root/usr/bin/codex-desktop-doctor"
     assert_file_exists "$pkg_root/DEBIAN/postinst"
     assert_file_exists "$pkg_root/DEBIAN/prerm"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
@@ -569,6 +575,8 @@ SCRIPT
     assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000-deadbeef.x86_64.rpm"
     [ "$(cat "$capture_dir/rpm-binary-payload")" = "" ] \
         || fail "Expected default RPM binary payload to use tool default"
+    assert_file_exists "$capture_dir/staging/usr/bin/codex-desktop-doctor"
+    assert_contains "$capture_dir/staging/usr/bin/codex-desktop-doctor" 'PACKAGE_NAME = "codex-desktop"'
 
     rm -rf "$dist_dir" "$capture_dir"
     mkdir -p "$dist_dir" "$capture_dir"
@@ -586,6 +594,7 @@ SCRIPT
     assert_file_exists "$capture_dir/codex-desktop.spec"
     [ "$(cat "$capture_dir/rpm-binary-payload")" = "w19T8.zstdio" ] \
         || fail "Expected MAX_BUILD_THREADS to reach rpmbuild payload compression"
+    assert_file_exists "$capture_dir/staging/usr/bin/codex-desktop-doctor"
     assert_file_exists "$capture_dir/staging/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
     assert_file_not_exists "$capture_dir/staging/usr/bin/codex-update-manager"
     assert_file_not_exists "$capture_dir/staging/usr/lib/systemd/user/codex-update-manager.service"
@@ -650,6 +659,11 @@ if [ -n "${MAKEPKG_CONF:-}" ]; then
     cp "$MAKEPKG_CONF" "$CAPTURE_DIR/makepkg.conf"
     bash -c 'set -euo pipefail; . "$1"; printf "%s\n" "$MAKEFLAGS"' _ "$MAKEPKG_CONF" > "$CAPTURE_DIR/makepkg-evaluated-makeflags"
 fi
+staging_dir="$(sed -n 's|^[[:space:]]*cp -a "\(.*\)/\." .*$|\1|p' PKGBUILD | head -n 1)"
+staging_dir="${staging_dir//\\&/&}"
+if [ -n "$staging_dir" ] && [ -d "$staging_dir" ]; then
+    cp -a "$staging_dir" "$CAPTURE_DIR/staging"
+fi
 pkgname="$(sed -n 's/^pkgname=//p' PKGBUILD)"
 pkgver="$(sed -n 's/^pkgver=//p' PKGBUILD)"
 pkgrel="$(sed -n 's/^pkgrel=//p' PKGBUILD)"
@@ -689,6 +703,8 @@ SCRIPT
     [ "$(cat "$capture_dir/makepkg-evaluated-makeflags")" = "-j12 -j5" ] \
         || fail "Expected generated makepkg config to make MAX_BUILD_THREADS win over existing MAKEFLAGS"
     assert_contains "$capture_dir/makepkg.conf" "COMPRESSZST=(zstd -c -z -T5 -)"
+    assert_file_exists "$capture_dir/staging/usr/bin/codex-desktop-doctor"
+    assert_file_not_exists "$capture_dir/staging/usr/bin/codex-update-manager"
     assert_contains "$capture_dir/PKGBUILD" "pkgver=2026.03.24.120000+manual"
     assert_contains "$capture_dir/PKGBUILD" "pkgrel=1"
     assert_contains "$capture_dir/PKGBUILD" "ampersand&tmp"
@@ -770,6 +786,7 @@ SCRIPT
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-desktop.png"
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_file_not_exists "$capture_dir/AppDir/usr/bin/codex-desktop-doctor"
     assert_file_not_exists "$capture_dir/AppDir/usr/bin/codex-update-manager"
     assert_file_not_exists "$capture_dir/AppDir/usr/lib/systemd/user/codex-update-manager.service"
     assert_file_not_exists "$capture_dir/AppDir/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy"
@@ -908,6 +925,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local bootstrap_log="$TMP_DIR/make-bootstrap-native.log"
     local update_log="$TMP_DIR/make-update-native.log"
     local setup_log="$TMP_DIR/make-setup-native.log"
+    local doctor_log="$TMP_DIR/make-doctor.log"
 
     make -n -C "$REPO_DIR" install-native >"$install_log"
     assert_contains "$install_log" './install.sh --fresh'
@@ -926,6 +944,71 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" setup-native >"$setup_log"
     assert_contains "$setup_log" 'bash scripts/bootstrap-wizard.sh'
+
+    make -n -C "$REPO_DIR" doctor >"$doctor_log"
+    assert_contains "$doctor_log" '/usr/bin/codex-desktop-doctor'
+}
+
+test_desktop_doctor_template_smoke() {
+    info "Checking installed doctor template smoke path"
+    local workspace="$TMP_DIR/desktop-doctor"
+    local doctor="$workspace/codex-doctor-smoke"
+    local report="$workspace/report.json"
+    local chrome_scripts="$workspace/home/.codex/plugins/cache/openai-bundled/chrome/latest/scripts"
+
+    mkdir -p "$workspace/home" "$workspace/config" "$chrome_scripts"
+    cat > "$chrome_scripts/extension-id.json" <<'JSON'
+{
+  "extensionId": "abcdefghijklmnopabcdefghijklmnop",
+  "extensionHostName": "codex.chrome.host"
+}
+JSON
+    cat > "$chrome_scripts/check-extension-installed.js" <<'JS'
+console.log(JSON.stringify({
+  installed: false,
+  enabled: false,
+  ignoredSecret: "FAKE_QR_SECRET_FROM_EXTENSION_CHECK"
+}));
+JS
+    cat > "$chrome_scripts/check-native-host-manifest.js" <<'JS'
+console.log(JSON.stringify({
+  correct: false,
+  problem: "FAKE_QR_SECRET_FROM_MANIFEST_PROBLEM",
+  manifestPath: "/tmp/FAKE_QR_SECRET_PROFILE_PATH"
+}));
+JS
+    sed 's/__PACKAGE_NAME__/codex-doctor-smoke/g' \
+        "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" >"$doctor"
+    chmod +x "$doctor"
+
+    python3 -m py_compile "$doctor"
+    if HOME="$workspace/home" XDG_CONFIG_HOME="$workspace/config" \
+        python3 "$doctor" --json --package-name codex-doctor-smoke >"$report"; then
+        fail "doctor should report failures for a deliberately missing package"
+    fi
+
+    assert_contains "$report" '"packageName": "codex-doctor-smoke"'
+    assert_contains "$report" '"patch_report_validator"'
+    assert_contains "$report" '"chrome_manifest_probe"'
+    assert_contains "$report" "manifest probe reported a problem"
+    assert_not_contains "$report" "FAKE_QR_SECRET"
+    assert_not_contains "$report" "FAKE_QR_SECRET_PROFILE_PATH"
+
+    python3 - "$report" <<'PY' || fail "Expected doctor JSON report to be well formed"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    report = json.load(handle)
+
+ids = {check["id"] for check in report["checks"]}
+required = {"package", "launcher", "doctor", "app_root", "managed_node", "app_asar"}
+missing = required - ids
+if missing:
+    raise SystemExit(f"missing checks: {sorted(missing)}")
+if report["summary"]["fail"] < 1:
+    raise SystemExit("expected at least one failure for missing installed files")
+PY
 }
 
 test_fedora_dependency_bootstrap_installs_rpmbuild() {
@@ -5253,6 +5336,7 @@ main() {
     test_make_build_app_uses_installer_download_flow_by_default
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_native_shortcut_targets_compose_existing_flows
+    test_desktop_doctor_template_smoke
     test_fedora_dependency_bootstrap_installs_rpmbuild
     test_setup_native_wizard_noninteractive_feature_writer
     test_setup_native_wizard_rejects_invalid_feature_ids

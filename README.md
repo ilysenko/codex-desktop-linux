@@ -28,6 +28,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 |---|---|---|
 | Standard Codex Desktop UI | ✅ always | Chats, browser, files, MCP plugins |
 | Auto-updater (`codex-update-manager`) | ✅ native packages | Detects newer upstream DMGs, rebuilds + installs native packages locally |
+| Installed setup doctor | ✅ native packages | `codex-desktop-doctor` checks package files, updater/update-builder health, browser native messaging, and Computer Use readiness without reading private session contents |
 | Native packaging (`.deb` / `.rpm` / `.pkg.tar.zst`) | ✅ always | One-shot `make package` picks your distro |
 | AppImage self-build | ✅ manual | `make appimage` writes a local `dist/*.AppImage`; rebuild manually after upstream updates |
 | Linux tray + warm-start handoff | ✅ always | Single-instance lock, second-instance window focus |
@@ -138,7 +139,7 @@ make appimage
 ./dist/codex-desktop-*.AppImage
 ```
 
-The AppImage flow does not include `codex-update-manager`, the systemd user service, polkit policy, or the native-package update builder. When upstream Codex Desktop changes, update your checkout and rebuild locally:
+The AppImage flow does not include `codex-update-manager`, the systemd user service, the installed doctor, polkit policy, or the native-package update builder. When upstream Codex Desktop changes, update your checkout and rebuild locally:
 
 ```bash
 git pull --ff-only
@@ -488,6 +489,18 @@ The packaging scripts only repackage what's already in `codex-app/`. They do not
 
 Native packages bundle the managed Node.js runtime and do not hard-depend on distro `nodejs` / `npm`. Packages built with the default updater pull in `polkit` (or `policykit-1` on older Debian/Ubuntu) plus `pkexec` for privileged update installs; `PACKAGE_WITH_UPDATER=0` packages do not install those updater-specific artifacts.
 
+### Installed doctor
+
+Native packages install a safe healthcheck at `/usr/bin/codex-desktop-doctor`:
+
+```bash
+codex-desktop-doctor
+codex-desktop-doctor --json
+make doctor
+```
+
+The doctor checks installed package files, updater/update-builder files, required ASAR patch markers, Chrome native-messaging manifests, Flatpak Chrome permissions when present, Computer Use readiness, and remote mobile feature markers. It reports only sanitized status fields and file paths; it does not print pairing secrets, browser tab contents, cookies, QR data, screenshots, or Computer Use window/application state.
+
 ### Updater service controls
 
 After installing a default native package with the updater enabled:
@@ -523,6 +536,7 @@ make package           # auto-detect distro
 make install           # install latest dist/ artifact
 make service-enable
 make service-status
+make doctor
 make clean-dist
 make clean-state
 ```
@@ -542,6 +556,7 @@ make clean-state
 | Window flickering | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./codex-app/start.sh` to use the legacy compositing workaround. If flickering persists, try `./codex-app/start.sh --disable-gpu` to fully disable GPU acceleration |
 | Sandbox errors | The launcher already sets `--no-sandbox` |
 | Stale install / cached DMG | `make build-app-fresh` removes the existing install dir and cached DMG, then re-downloads |
+| Unsure which installed integration is broken | Run `codex-desktop-doctor` or `codex-desktop-doctor --json` from a native package install |
 | Computer Use plugin invisible in UI | Ensure you enabled the Computer Use UI. If it is enabled and still hidden, the OpenAI per-account rollout may not be available |
 | Computer Use `doctor` reports no input backend | Grant read/write `/dev/uinput`, enable the XDG RemoteDesktop portal, or start the distro-provided `ydotoold` / `ydotool` daemon with a socket accessible to your user |
 | Computer Use `doctor` reports `ydotool_socket: Permission denied` | The daemon socket is root-only. Adjust the `ydotoold` service so `/tmp/.ydotool_socket` becomes `root:input` with `0660` permissions |
@@ -558,8 +573,9 @@ make clean-state
 5. It downloads the matching Linux Electron runtime (cached under `~/.cache/codex-desktop/electron/`)
 6. It writes the Linux launcher into `codex-app/start.sh` (body sourced from `launcher/start.sh.template`)
 7. `scripts/build-{deb,rpm,pacman}.sh` packages `codex-app/` into a native artifact; `scripts/build-appimage.sh` creates a local AppImage
-8. Default native packages provide `codex-update-manager` plus a `systemd --user` service unit
-9. The updater watches for newer upstream DMGs and rebuilds future native Linux packages locally, unless the package was built with `PACKAGE_WITH_UPDATER=0`
+8. Native packages provide `codex-desktop-doctor`
+9. Default native packages provide `codex-update-manager` plus a `systemd --user` service unit
+10. The updater watches for newer upstream DMGs and rebuilds future native Linux packages locally, unless the package was built with `PACKAGE_WITH_UPDATER=0`
 
 The installer replaces the macOS Electron binary with a Linux build, recompiles native modules, and removes macOS-only pieces such as `sparkle`.
 
