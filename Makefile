@@ -51,7 +51,7 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status app-service-enable app-service-disable app-service-status doctor readiness capability-gaps parity-schema parity-smoke parity-browser-matrix parity-browser-live parity-secret-service-live parity-services parity-full parity-strict clean-dist clean-state
+.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status app-service-enable app-service-disable app-service-status doctor readiness capability-gaps parity-schema parity-smoke parity-browser-matrix parity-browser-live parity-secret-service-live parity-live-matrix parity-services parity-full parity-strict clean-dist clean-state
 
 help:
 	@printf '\nCodex Desktop Linux Make Targets\n\n'
@@ -91,6 +91,7 @@ help:
 	@printf '  %-18s %s\n' "make parity-browser-matrix" "Check committed Chrome/Brave/Chromium integration markers"
 	@printf '  %-18s %s\n' "make parity-browser-live" "Opt-in live browser/profile manifest check with redacted output"
 	@printf '  %-18s %s\n' "make parity-secret-service-live" "Opt-in live Secret Service keyring canary with redacted output"
+	@printf '  %-18s %s\n' "make parity-live-matrix" "Build redacted live desktop/keyring validation matrix"
 	@printf '  %-18s %s\n' "make parity-services" "Check committed systemd service lifecycle markers"
 	@printf '  %-18s %s\n' "make parity-full" "Run doctor, schema, service, Computer Use, and app-server probes"
 	@printf '  %-18s %s\n' "make parity-strict" "Run parity-full with strict no-skip UI/remote checks"
@@ -364,6 +365,10 @@ parity-browser-live:
 parity-secret-service-live:
 	@echo "[make] Checking live Linux Secret Service keyring state"
 	CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1 python3 scripts/secret-service-matrix-smoke.py --live
+
+parity-live-matrix:
+	@echo "[make] Building redacted live desktop/keyring validation matrix"
+	CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1 python3 scripts/live-validation-matrix.py --live
 
 parity-services:
 	@echo "[make] Checking Linux service lifecycle parity markers"

@@ -509,6 +509,7 @@ store without touching real paired-device entries, run:
 
 ```bash
 make parity-secret-service-live
+make parity-live-matrix
 ```
 
 This creates, looks up, and clears a temporary canary under remote-control-style
@@ -517,6 +518,12 @@ family, booleans, and pass/warn status. It does not enumerate keyring items,
 print key ids, print key material, or print raw provider errors. Set
 `CODEX_SECRET_SERVICE_REQUIRE_CANARY=1` when you want the target to fail if the
 live keyring canary cannot complete.
+
+`make parity-live-matrix` combines the redacted Secret Service canary with the
+Linux Computer Use doctor summary when the backend is installed. It emits only
+the fields allowed by `docs/LIVE_VALIDATION_MATRIX.md`: desktop/session enums,
+backend booleans, blocker counts, provider hints, sanitized issue kinds, and
+round-trip booleans.
 
 For a deeper local runtime smoke test after login, run:
 
@@ -537,6 +544,7 @@ For a broader local parity pass, run:
 ```bash
 make parity-schema
 make parity-browser-matrix
+make parity-live-matrix
 make parity-services
 make parity-full
 ```

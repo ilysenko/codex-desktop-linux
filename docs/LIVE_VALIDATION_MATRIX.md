@@ -93,6 +93,7 @@ codex-desktop-doctor --readiness --json
 codex-desktop-doctor --capability-gaps --json
 make parity-full
 make parity-secret-service-live
+make parity-live-matrix
 ```
 
 For Secret Service/keyring-only validation, use:
@@ -100,6 +101,13 @@ For Secret Service/keyring-only validation, use:
 ```bash
 CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1 \
 python3 scripts/secret-service-matrix-smoke.py --live --json
+```
+
+For the combined redacted desktop/keyring result, use:
+
+```bash
+CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1 \
+python3 scripts/live-validation-matrix.py --live --json
 ```
 
 ## Redacted Result Template

@@ -38,6 +38,7 @@ make capability-gaps
 make parity-schema
 make parity-browser-matrix
 make parity-browser-live
+make parity-live-matrix
 make parity-services
 make parity-smoke
 make parity-full
@@ -84,11 +85,11 @@ screenshots, or private conversation text into parity artifacts.
 | External agent import | Detect/import agent artifacts | Detect surface plus temporary CLAUDE.md and MCP config fixture detection present; import protocol is covered with an empty no-op migration request | `make parity-smoke`, `make parity-schema` | Add real import fixture coverage only if it can stay isolated from user state |
 | Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper, opt-in redacted live browser/profile validation, and isolated native-host bridge loopback | `make doctor`, `make parity-full`, `make parity-browser-matrix`, `make parity-browser-live` | Add deeper live extension request/turn-completion checks only if they stay redacted |
 | Chrome Flatpak | macOS not applicable | Flatpak host wrapper via `flatpak-spawn --host` | `make doctor` | Keep manifest/path regression tests |
-| Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis, including fixture-covered Sway `swaymsg` window support | `make parity-full`, Rust windowing tests | Add live desktop-environment matrix validation |
+| Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis, including fixture-covered Sway `swaymsg` window support | `make parity-full`, `make parity-live-matrix`, Rust windowing tests | Add live desktop-environment matrix validation across more desktop sessions |
 | Computer Use UI | Native UI | Opt-in Linux UI gate | `make doctor`, manual UI check | Keep opt-in; do not force Statsig-like UI gates globally |
 | Locked Computer Use | Apple authorization plug-in on macOS | Not equivalent | `docs/LOCKED_COMPUTER_USE_RESEARCH.md` | Research only; do not fake remote unlock |
 | Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` checks explicit status read plus status notification | Server-side rejection can still happen |
-| Remote-control key storage | macOS keychain/Secure Enclave-style boundary | App-id scoped Secret Service via `secret-tool` when available, with `0600` file fallback and sanitized locked/provider/headless doctor classifications | `make doctor` reports helper availability, coarse canary issue kind, and metadata/fallback counts only; `make parity-secret-service-live` runs an opt-in redacted live keyring canary | Exercise the live canary across more desktop keyring implementations |
+| Remote-control key storage | macOS keychain/Secure Enclave-style boundary | App-id scoped Secret Service via `secret-tool` when available, with `0600` file fallback and sanitized locked/provider/headless doctor classifications | `make doctor` reports helper availability, coarse canary issue kind, and metadata/fallback counts only; `make parity-secret-service-live` and `make parity-live-matrix` run opt-in redacted live keyring canaries | Exercise the live canary across more desktop keyring implementations |
 | Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units with static lifecycle marker coverage | `make doctor`, `make parity-services`, `make parity-full` | Add live suspend/resume and network-change regression tests |
 | Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Update-builder runs the app-server schema guard during local rebuilds; keep failure logs actionable |
 | Native packages | Official platform installers | `.deb`, `.rpm`, pacman, AppImage, Nix | GitHub CI, `make package` | Keep distro matrix green |
@@ -129,9 +130,9 @@ screenshots, or private conversation text into parity artifacts.
 3. Extend the phone/remote-control E2E check beyond host connected state only
    when it can still record only connected/disconnected state and redacted
    booleans.
-4. Run `make parity-secret-service-live` across GNOME Keyring, KWallet, locked
-   keyrings, and headless sessions, and capture only the redacted pass/warn
-   fields allowed by `docs/LIVE_VALIDATION_MATRIX.md`.
+4. Run `make parity-live-matrix` across GNOME Keyring, KWallet, locked
+   keyrings, headless sessions, and supported desktop environments, and capture
+   only the redacted pass/warn fields allowed by `docs/LIVE_VALIDATION_MATRIX.md`.
 5. Add opt-in live service lifecycle checks for suspend/resume and network
    changes once they can run without disrupting an active desktop session.
 6. Expand live desktop-environment validation for GNOME, KDE Plasma, Hyprland,

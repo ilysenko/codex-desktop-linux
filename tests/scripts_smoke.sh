@@ -154,6 +154,7 @@ test_desktop_parity_smoke_script_syntax() {
     node --check "$REPO_DIR/scripts/browser-matrix-smoke.js" >/dev/null
     node --check "$REPO_DIR/scripts/service-lifecycle-smoke.js" >/dev/null
     python3 -m py_compile "$REPO_DIR/scripts/secret-service-matrix-smoke.py"
+    python3 -m py_compile "$REPO_DIR/scripts/live-validation-matrix.py"
     bash -n "$REPO_DIR/scripts/desktop-parity-full.sh"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "--strict"
     assert_contains "$REPO_DIR/scripts/desktop-parity-full.sh" "CODEX_PARITY_STRICT"
@@ -232,6 +233,7 @@ test_desktop_parity_smoke_script_syntax() {
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "remote redacted e2e summary"
     assert_contains "$REPO_DIR/Makefile" "parity-browser-matrix"
     assert_contains "$REPO_DIR/Makefile" "parity-secret-service-live"
+    assert_contains "$REPO_DIR/Makefile" "parity-live-matrix"
     assert_contains "$REPO_DIR/Makefile" "parity-services"
 
     node - "$REPO_DIR/scripts/desktop-parity-smoke.js" <<'NODE' \
@@ -306,6 +308,8 @@ test_live_validation_matrix_doc() {
     assert_contains "$doc" "Allowed Evidence Fields"
     assert_contains "$doc" "Forbidden Evidence"
     assert_contains "$doc" "CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1"
+    assert_contains "$doc" "scripts/live-validation-matrix.py --live --json"
+    assert_contains "$doc" "make parity-live-matrix"
     assert_contains "$doc" "No private app, window, browser, file, or session content."
     assert_contains "$REPO_DIR/docs/DESKTOP_ENVIRONMENT_MATRIX.md" "LIVE_VALIDATION_MATRIX.md"
     assert_contains "$REPO_DIR/docs/PARITY_MATRIX.md" "LIVE_VALIDATION_MATRIX.md"
@@ -1073,6 +1077,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local parity_browser_matrix_log="$TMP_DIR/make-parity-browser-matrix.log"
     local parity_browser_live_log="$TMP_DIR/make-parity-browser-live.log"
     local parity_secret_service_live_log="$TMP_DIR/make-parity-secret-service-live.log"
+    local parity_live_matrix_log="$TMP_DIR/make-parity-live-matrix.log"
     local parity_services_log="$TMP_DIR/make-parity-services.log"
     local parity_full_log="$TMP_DIR/make-parity-full.log"
     local parity_strict_log="$TMP_DIR/make-parity-strict.log"
@@ -1126,6 +1131,10 @@ test_native_shortcut_targets_compose_existing_flows() {
     make -n -C "$REPO_DIR" parity-secret-service-live >"$parity_secret_service_live_log"
     assert_contains "$parity_secret_service_live_log" 'CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1'
     assert_contains "$parity_secret_service_live_log" 'scripts/secret-service-matrix-smoke.py --live'
+
+    make -n -C "$REPO_DIR" parity-live-matrix >"$parity_live_matrix_log"
+    assert_contains "$parity_live_matrix_log" 'CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1'
+    assert_contains "$parity_live_matrix_log" 'scripts/live-validation-matrix.py --live'
 
     make -n -C "$REPO_DIR" parity-services >"$parity_services_log"
     assert_contains "$parity_services_log" 'scripts/service-lifecycle-smoke.js'
@@ -1974,6 +1983,129 @@ if report["ok"]:
     raise SystemExit("required canary report should not be ok")
 if checks["remote_key_secret_roundtrip"]["status"] != "fail":
     raise SystemExit(f"expected required roundtrip failure: {checks['remote_key_secret_roundtrip']}")
+PY
+}
+
+test_live_validation_matrix_smoke() {
+    info "Checking combined live validation matrix redaction"
+    local workspace="$TMP_DIR/live-validation-matrix-smoke"
+    local fake_bin="$workspace/bin"
+    local secret_store="$workspace/store"
+    local fake_doctor="$workspace/codex-computer-use-linux"
+    local report="$workspace/report.json"
+
+    mkdir -p "$fake_bin" "$secret_store"
+    cat > "$fake_bin/secret-tool" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+store="${CODEX_TEST_SECRET_STORE:?}"
+cmd="${1:-}"
+shift || true
+mkdir -p "$store"
+case "$cmd" in
+    store)
+        cat > "$store/value"
+        ;;
+    lookup)
+        cat "$store/value"
+        ;;
+    clear)
+        rm -f "$store/value"
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+SCRIPT
+    chmod +x "$fake_bin/secret-tool"
+
+    cat > "$fake_doctor" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = "doctor" ] || exit 2
+cat <<'JSON'
+{
+  "capabilities": {
+    "input": ["abs_pointer", "portal", "ydotool"],
+    "screenshot": ["portal"],
+    "window_control": ["gnome_shell_extension"],
+    "preferred": {
+      "input": "abs_pointer",
+      "screenshot": "portal",
+      "window_control": "gnome_shell_extension"
+    }
+  },
+  "readiness": {
+    "can_focus_windows": true,
+    "blockers": []
+  }
+}
+JSON
+SCRIPT
+    chmod +x "$fake_doctor"
+
+    PATH="$fake_bin:$PATH" \
+    CODEX_TEST_SECRET_STORE="$secret_store" \
+    CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1 \
+    XDG_CURRENT_DESKTOP=GNOME \
+    XDG_SESSION_TYPE=wayland \
+    WAYLAND_DISPLAY=wayland-test \
+    DISPLAY= \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/not-for-output \
+        python3 "$REPO_DIR/scripts/live-validation-matrix.py" \
+            --json \
+            --live \
+            --computer-use-doctor "$fake_doctor" \
+            --app-id codex-cua-lab >"$report"
+
+    python3 - "$report" "$workspace" "$secret_store" "$fake_doctor" <<'PY' \
+        || fail "Expected combined live validation matrix to stay redacted"
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+workspace = sys.argv[2]
+secret_store = sys.argv[3]
+fake_doctor = sys.argv[4]
+
+if not report.get("ok"):
+    raise SystemExit(f"matrix report failed: {report}")
+desktop = report.get("desktop", {})
+secret = report.get("secretService", {})
+if desktop.get("status") != "pass":
+    raise SystemExit(f"bad desktop status: {desktop}")
+if desktop.get("desktopFamily") != "gnome" or desktop.get("sessionType") != "wayland":
+    raise SystemExit(f"bad desktop/session family: {desktop}")
+if desktop.get("windowBackend") != "gnome" or not desktop.get("exactFocusSupported"):
+    raise SystemExit(f"bad window backend summary: {desktop}")
+inputs = desktop.get("inputBackends", {})
+if not (inputs.get("absPointer") and inputs.get("portal") and inputs.get("ydotool")):
+    raise SystemExit(f"bad input backend summary: {desktop}")
+if secret.get("status") != "pass" or secret.get("canaryStatus") != "pass":
+    raise SystemExit(f"bad secret service status: {secret}")
+if secret.get("issueKind") != "none" or not secret.get("lookupMatched") or not secret.get("clearSucceeded"):
+    raise SystemExit(f"bad secret service summary: {secret}")
+
+text = json.dumps(report, sort_keys=True)
+for forbidden in [
+    workspace,
+    secret_store,
+    fake_doctor,
+    "codex-matrix-secret",
+    "codex-matrix-",
+    "remote-control-device-key",
+    "key-id",
+    "gnome_shell_extension",
+    "abs_pointer",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "/tmp/not-for-output",
+    "PRIVATE KEY",
+]:
+    if forbidden in text:
+        raise SystemExit(f"combined matrix leaked {forbidden}: {text}")
+for forbidden_key in ["checks", "detail"]:
+    if forbidden_key in report:
+        raise SystemExit(f"combined matrix exposed raw helper field {forbidden_key}: {report}")
 PY
 }
 
@@ -6138,6 +6270,7 @@ main() {
     test_desktop_doctor_node_runtime_probe
     test_desktop_doctor_secret_service_canary
     test_secret_service_matrix_smoke
+    test_live_validation_matrix_smoke
     test_fedora_dependency_bootstrap_installs_rpmbuild
     test_setup_native_wizard_noninteractive_feature_writer
     test_setup_native_wizard_rejects_invalid_feature_ids

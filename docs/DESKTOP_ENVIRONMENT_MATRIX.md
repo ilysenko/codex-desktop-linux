@@ -21,6 +21,9 @@ For the redacted live evidence format, see
 
 - `codex-computer-use-linux doctor` reports the active backends and preferred
   input/window/screenshot paths.
+- `make parity-live-matrix` folds the Computer Use doctor into the redacted
+  live evidence shape without recording window titles, app names, screenshots,
+  filesystem paths, or accessibility tree contents.
 - Parser and targeting fixtures live in the Rust test suite under
   `computer-use-linux/src/windowing/`, including Sway `swaymsg` tree parsing
   and exact container-id targeting.
