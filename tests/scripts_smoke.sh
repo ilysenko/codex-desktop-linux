@@ -255,10 +255,23 @@ test_deb_builder_smoke() {
     local pkg_root="$workspace/deb-root"
     local updater_bin="$workspace/codex-update-manager"
     local capture_dir="$workspace/capture"
+    local chrome_runtime
+    local true_bin
 
     mkdir -p "$workspace" "$dist_dir" "$capture_dir"
     make_stub_bin_dir "$bin_dir"
     make_fake_app "$app_dir"
+    true_bin="$(type -P true)"
+    cp "$true_bin" "$app_dir/resources/node-runtime/bin/node"
+    chmod 0755 "$app_dir/resources/node-runtime/bin/node"
+    cp "$true_bin" "$app_dir/resources/node_repl"
+    chmod 0755 "$app_dir/resources/node_repl"
+    chrome_runtime="$app_dir/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime"
+    mkdir -p "$chrome_runtime"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_runtime/node"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_runtime/node_repl"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_runtime/codex"
+    chmod +x "$chrome_runtime/node" "$chrome_runtime/node_repl" "$chrome_runtime/codex"
     mkdir -p "$app_dir/.codex-linux"
     cat > "$app_dir/.codex-linux/build-info.json" <<'JSON'
 {
@@ -367,6 +380,13 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop.service"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-service-lifecycle.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_linux_elf_executable "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/node"
+    assert_linux_elf_executable "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/node_repl"
+    assert_file_exists "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/codex"
+    [ -x "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/codex" ] \
+        || fail "Expected packaged Chrome app-server codex shim to be executable"
+    assert_not_macho_binary "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/codex"
+    assert_contains "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/codex" 'CODEX_CLI_PATH'
     node - \
         "$pkg_root/opt/codex-desktop/.codex-linux/build-info.json" \
         "$pkg_root/opt/codex-desktop/resources/codex-linux-build-info.json" <<'NODE' \

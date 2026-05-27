@@ -103,6 +103,78 @@ stage_packaged_linux_computer_use_backend() {
     chmod 0755 "$target_bin/codex-computer-use-linux" "$target_bin/codex-computer-use-cosmic"
 }
 
+is_macho_binary() {
+    local path="$1"
+    python3 - "$path" <<'PY'
+import pathlib
+import sys
+
+try:
+    magic = pathlib.Path(sys.argv[1]).read_bytes()[:4]
+except OSError:
+    sys.exit(1)
+
+macho_magics = {
+    b"\xfe\xed\xfa\xce",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+}
+sys.exit(0 if magic in macho_magics else 1)
+PY
+}
+
+write_packaged_chrome_codex_cli_shim() {
+    local destination="$1"
+
+    cat > "$destination" <<'SCRIPT'
+#!/bin/sh
+set -eu
+
+if [ -n "${CODEX_CLI_PATH:-}" ] && [ -x "$CODEX_CLI_PATH" ]; then
+    exec "$CODEX_CLI_PATH" "$@"
+fi
+
+if command -v codex >/dev/null 2>&1; then
+    exec codex "$@"
+fi
+
+if [ -x "$HOME/.npm-global/bin/codex" ]; then
+    exec "$HOME/.npm-global/bin/codex" "$@"
+fi
+
+echo "codex CLI not found; set CODEX_CLI_PATH or install @openai/codex" >&2
+exit 127
+SCRIPT
+    chmod 0755 "$destination"
+}
+
+stage_packaged_chrome_app_server_runtime() {
+    local app_root="$1"
+    local target_plugin="$app_root/resources/plugins/openai-bundled/plugins/chrome"
+    local runtime_dir="$target_plugin/app-server-runtime"
+    local managed_node="$app_root/resources/node-runtime/bin/node"
+    local node_repl="$app_root/resources/node_repl"
+
+    [ -d "$target_plugin" ] || return 0
+    [ -x "$managed_node" ] || error "Missing packaged managed Node.js runtime for Chrome plugin: $managed_node"
+    [ -x "$node_repl" ] || error "Missing packaged node_repl runtime for Chrome plugin: $node_repl"
+    if is_macho_binary "$managed_node"; then
+        error "Packaged managed Node.js runtime is a macOS binary: $managed_node"
+    fi
+    if is_macho_binary "$node_repl"; then
+        error "Packaged node_repl runtime is a macOS binary: $node_repl"
+    fi
+
+    rm -rf "$runtime_dir"
+    mkdir -p "$runtime_dir"
+    install -m 0755 "$managed_node" "$runtime_dir/node"
+    install -m 0755 "$node_repl" "$runtime_dir/node_repl"
+    write_packaged_chrome_codex_cli_shim "$runtime_dir/codex"
+}
+
 stage_update_builder_linux_features_config() {
     local update_builder_root="$1"
     local helper="$REPO_DIR/scripts/lib/linux-features.js"
@@ -643,6 +715,7 @@ stage_common_package_files() {
     rm -rf "$app_root"
     cp -aT "$APP_DIR" "$app_root"
     stage_packaged_linux_computer_use_backend "$app_root"
+    stage_packaged_chrome_app_server_runtime "$app_root"
     mkdir -p "$app_root/.codex-linux"
     stage_packaged_app_build_info_source "$app_root"
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
