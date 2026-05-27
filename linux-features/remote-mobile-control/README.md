@@ -40,9 +40,13 @@ What it changes:
 - Keeps Chrome Browser Use available to remote/mobile controlled sessions when
   the local Chrome plugin and native host are healthy, and adds a diagnostic
   when the native browser bridge is not exposed to the session.
-- Persists the private key material at
+- Prefers the Linux Secret Service keyring via `secret-tool` for private key
+  material, while keeping non-secret public key metadata at
   `~/.config/codex-desktop/remote-control-device-keys-v1.json` with `0600`
-  file permissions.
+  file permissions. If `secret-tool` or the desktop keyring is unavailable, the
+  same JSON file remains the `0600` file-backed fallback.
+- Migrates existing file-backed private keys into Secret Service on the next
+  successful key read when `secret-tool` is available.
 - Preserves `remote_control = true` / `features.remote_control = true` in the
   local Codex config instead of letting upstream strip it before app-server
   startup.
@@ -121,6 +125,15 @@ To keep Desktop using Homebrew while the daemon uses standalone, set
 `CODEX_CLI_PATH` to the Brew binary and leave
 `CODEX_REMOTE_CONTROL_CODEX_PATH` unset or pointed at the standalone binary.
 
+Key storage:
+
+When `secret-tool` is available on `PATH`, newly enrolled Linux device keys are
+stored in the user's Secret Service keyring with attributes
+`application=codex-desktop-linux`, `kind=remote-control-device-key`, and
+`key-id=<device key id>`. The JSON file remains as public metadata plus lookup
+attributes. Set `CODEX_REMOTE_CONTROL_KEY_STORE=file` to force the older
+file-backed `0600` fallback for troubleshooting or minimal desktop sessions.
+
 KDE Plasma smoke check:
 
 Mobile control depends on the Linux Computer Use backend once the host is
@@ -138,8 +151,10 @@ a non-empty `windows` list.
 
 Known risks:
 
-- This is not equivalent to macOS Secure Enclave-backed storage. Private key
-  material is file-backed and protected by ordinary user file permissions.
+- This is not equivalent to macOS Secure Enclave-backed storage. Secret Service
+  support improves the default Linux storage boundary when the desktop keyring
+  is available, but the feature intentionally falls back to ordinary `0600`
+  file-backed storage when it is not.
 - OpenAI may still reject Linux host enrollment server-side. This feature only
   removes local macOS-only blockers in the repackaged app.
 - Treat this as experimental account-level remote-control plumbing.
