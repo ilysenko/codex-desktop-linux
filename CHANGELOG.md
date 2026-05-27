@@ -39,6 +39,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `docs/SERVICE_LIFECYCLE_MATRIX.md` now provide a read-only redacted live
   systemd user-service state probe without starting, stopping, restarting, or
   reading logs from services.
+- `scripts/parity-evidence-bundle.js` and `make parity-evidence` now compose
+  the browser matrix, service lifecycle checks, live service probe, and
+  desktop/keyring matrix into one redacted evidence summary. The Secret Service
+  canary stays opt-in for this bundle.
 - Native packages now include an opt-in `codex-desktop.service` user unit plus
   `make app-service-enable`, `make app-service-status`, and
   `make app-service-disable` helpers for users who want Codex Desktop managed

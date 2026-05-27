@@ -43,6 +43,7 @@ make parity-browser-live
 make parity-live-matrix
 make parity-services
 make parity-services-live
+make parity-evidence
 make parity-smoke
 make parity-full
 ```
@@ -70,6 +71,13 @@ CODEX_DESKTOP_CDP_ORIGIN=http://127.0.0.1:9334 make parity-full
 Do not save or paste QR codes, device keys, cookies, browser tab titles/URLs,
 screenshots, or private conversation text into parity artifacts.
 
+Use `make parity-evidence` when you need one shareable redacted summary across
+the browser matrix, service markers, live service state, and desktop/keyring
+matrix. It omits raw command output, paths, logs, keys, browser state, and
+private app/session content; the Secret Service canary is opt-in through
+`CODEX_PARITY_EVIDENCE_LIVE_SECRET_SERVICE=1` or
+`scripts/parity-evidence-bundle.js --live-secret-service`.
+
 ## Matrix
 
 | Area | Mac baseline | Linux status | Validation | Gap / next step |
@@ -86,14 +94,14 @@ screenshots, or private conversation text into parity artifacts.
 | Config and requirements | User, repo, and managed config | Config/read validates a repo-scoped project config fixture; requirements/read surface plus isolated `/etc/codex/requirements.toml` fixture when `bwrap` is available | `make parity-smoke`, `make parity-schema` | Expand policy-shape coverage as upstream requirements fields change |
 | Models, modes, and permissions | Rich clients read available models, provider capabilities, feature flags, permission profiles, and collaboration modes | Model list plus provider-capability booleans, experimental feature counts, empty no-op feature enablement-set coverage, permission profile counts, and collaboration mode counts are covered without printing names or IDs | `make parity-smoke`, `make parity-schema` | Add further write/toggle fixtures only when isolated from real user config |
 | External agent import | Detect/import agent artifacts | Detect surface plus temporary CLAUDE.md and MCP config fixture detection present; import protocol is covered with an empty no-op migration request | `make parity-smoke`, `make parity-schema` | Add real import fixture coverage only if it can stay isolated from user state |
-| Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper, opt-in redacted live browser/profile validation, and isolated native-host bridge loopback | `make doctor`, `make parity-full`, `make parity-browser-matrix`, `make parity-browser-live` | Add deeper live extension request/turn-completion checks only if they stay redacted |
+| Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper, opt-in redacted live browser/profile validation, and isolated native-host bridge loopback | `make doctor`, `make parity-full`, `make parity-browser-matrix`, `make parity-browser-live`, `make parity-evidence` | Add deeper live extension request/turn-completion checks only if they stay redacted |
 | Chrome Flatpak | macOS not applicable | Flatpak host wrapper via `flatpak-spawn --host` | `make doctor` | Keep manifest/path regression tests |
 | Computer Use backend | Native Computer Use | Linux MCP backend with AT-SPI, screenshots, window targeting, and input synthesis, including fixture-covered Sway `swaymsg` window support | `make parity-full`, `make parity-live-matrix`, Rust windowing tests | Add live desktop-environment matrix validation across more desktop sessions |
 | Computer Use UI | Native UI | Opt-in Linux UI gate | `make doctor`, manual UI check | Keep opt-in; do not force Statsig-like UI gates globally |
 | Locked Computer Use | Apple authorization plug-in on macOS | Not equivalent | `docs/LOCKED_COMPUTER_USE_RESEARCH.md` | Research only; do not fake remote unlock |
 | Mobile remote-control host | Official macOS setup | Experimental Linux feature removes local macOS-only blockers | `CODEX_PARITY_REQUIRE_REMOTE_CONNECTED=1 make parity-full` checks explicit status read plus status notification | Server-side rejection can still happen |
 | Remote-control key storage | macOS keychain/Secure Enclave-style boundary | App-id scoped Secret Service via `secret-tool` when available, with `0600` file fallback and sanitized locked/provider/headless doctor classifications | `make doctor` reports helper availability, coarse canary issue kind, and metadata/fallback counts only; `make parity-secret-service-live` and `make parity-live-matrix` run opt-in redacted live keyring canaries | Exercise the live canary across more desktop keyring implementations |
-| Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units with static lifecycle marker coverage plus read-only live state evidence | `make doctor`, `make parity-services`, `make parity-services-live`, `make parity-full` | Add true suspend/resume and network-change regression tests only when they can run without disrupting the session |
+| Services | App/update lifecycle integrated with OS | `systemd --user` app and updater units with static lifecycle marker coverage plus read-only live state evidence | `make doctor`, `make parity-services`, `make parity-services-live`, `make parity-evidence`, `make parity-full` | Add true suspend/resume and network-change regression tests only when they can run without disrupting the session |
 | Auto-update | Upstream desktop updates | Local updater rebuilds native package from newer DMG | `make doctor`, CI package builds | Update-builder runs the app-server schema guard during local rebuilds; keep failure logs actionable |
 | Native packages | Official platform installers | `.deb`, `.rpm`, pacman, AppImage, Nix | GitHub CI, `make package` | Keep distro matrix green |
 | Nix | Not a primary Mac path | Flake outputs and feature variants | GitHub CI Nix job | Keep upstream hash refresh bot green |
@@ -128,18 +136,20 @@ screenshots, or private conversation text into parity artifacts.
 ## Work Queue
 
 1. Keep `make parity-full` passing on the installed app.
-2. Keep safe fixture tests for managed requirements and MCP server behavior
+2. Keep `make parity-evidence` redacted and useful as the quick shareable
+   evidence bundle for browser, service, desktop, and keyring state.
+3. Keep safe fixture tests for managed requirements and MCP server behavior
    aligned with upstream app-server behavior.
-3. Extend the phone/remote-control E2E check beyond host connected state only
+4. Extend the phone/remote-control E2E check beyond host connected state only
    when it can still record only connected/disconnected state and redacted
    booleans.
-4. Run `make parity-live-matrix` across GNOME Keyring, KWallet, locked
+5. Run `make parity-live-matrix` across GNOME Keyring, KWallet, locked
    keyrings, headless sessions, and supported desktop environments, and capture
    only the redacted pass/warn fields allowed by `docs/LIVE_VALIDATION_MATRIX.md`.
-5. Extend `make parity-services-live` with true suspend/resume and
+6. Extend `make parity-services-live` with true suspend/resume and
    network-change regression checks only when they can run without disrupting an
    active desktop session.
-6. Expand live desktop-environment validation for GNOME, KDE Plasma, Hyprland,
+7. Expand live desktop-environment validation for GNOME, KDE Plasma, Hyprland,
    Sway, COSMIC, X11, and browser combinations.
-7. Research locked-use equivalents separately and require a threat model before
+8. Research locked-use equivalents separately and require a threat model before
    writing any unlock/session-control code.

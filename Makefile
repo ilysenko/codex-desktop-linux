@@ -51,7 +51,7 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status app-service-enable app-service-disable app-service-status doctor readiness capability-gaps parity-schema parity-smoke parity-browser-matrix parity-browser-live parity-secret-service-live parity-live-matrix parity-services parity-services-live parity-full parity-strict clean-dist clean-state
+.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status app-service-enable app-service-disable app-service-status doctor readiness capability-gaps parity-schema parity-smoke parity-browser-matrix parity-browser-live parity-secret-service-live parity-live-matrix parity-services parity-services-live parity-evidence parity-full parity-strict clean-dist clean-state
 
 help:
 	@printf '\nCodex Desktop Linux Make Targets\n\n'
@@ -94,6 +94,7 @@ help:
 	@printf '  %-18s %s\n' "make parity-live-matrix" "Build redacted live desktop/keyring validation matrix"
 	@printf '  %-18s %s\n' "make parity-services" "Check committed systemd service lifecycle markers"
 	@printf '  %-18s %s\n' "make parity-services-live" "Read-only live systemd user-service state probe"
+	@printf '  %-18s %s\n' "make parity-evidence" "Build one redacted browser/service/desktop/keyring evidence bundle"
 	@printf '  %-18s %s\n' "make parity-full" "Run doctor, schema, service, Computer Use, and app-server probes"
 	@printf '  %-18s %s\n' "make parity-strict" "Run parity-full with strict no-skip UI/remote checks"
 	@printf '  %-18s %s\n' "make clean-dist" "Remove generated dist/ artifacts"
@@ -378,6 +379,10 @@ parity-services:
 parity-services-live:
 	@echo "[make] Checking live Linux service lifecycle state"
 	node scripts/service-lifecycle-live.js
+
+parity-evidence:
+	@echo "[make] Building redacted parity evidence bundle"
+	node scripts/parity-evidence-bundle.js
 
 parity-full:
 	@echo "[make] Running full local desktop parity checks"

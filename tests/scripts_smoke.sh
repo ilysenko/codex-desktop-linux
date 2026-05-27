@@ -154,6 +154,7 @@ test_desktop_parity_smoke_script_syntax() {
     node --check "$REPO_DIR/scripts/browser-matrix-smoke.js" >/dev/null
     node --check "$REPO_DIR/scripts/service-lifecycle-smoke.js" >/dev/null
     node --check "$REPO_DIR/scripts/service-lifecycle-live.js" >/dev/null
+    node --check "$REPO_DIR/scripts/parity-evidence-bundle.js" >/dev/null
     python3 -m py_compile "$REPO_DIR/scripts/secret-service-matrix-smoke.py"
     python3 -m py_compile "$REPO_DIR/scripts/live-validation-matrix.py"
     bash -n "$REPO_DIR/scripts/desktop-parity-full.sh"
@@ -237,6 +238,7 @@ test_desktop_parity_smoke_script_syntax() {
     assert_contains "$REPO_DIR/Makefile" "parity-live-matrix"
     assert_contains "$REPO_DIR/Makefile" "parity-services"
     assert_contains "$REPO_DIR/Makefile" "parity-services-live"
+    assert_contains "$REPO_DIR/Makefile" "parity-evidence"
 
     node - "$REPO_DIR/scripts/desktop-parity-smoke.js" <<'NODE' \
         || fail "Expected desktop parity smoke redactor to cover quoted JSON fields"
@@ -1099,6 +1101,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local parity_live_matrix_log="$TMP_DIR/make-parity-live-matrix.log"
     local parity_services_log="$TMP_DIR/make-parity-services.log"
     local parity_services_live_log="$TMP_DIR/make-parity-services-live.log"
+    local parity_evidence_log="$TMP_DIR/make-parity-evidence.log"
     local parity_full_log="$TMP_DIR/make-parity-full.log"
     local parity_strict_log="$TMP_DIR/make-parity-strict.log"
 
@@ -1161,6 +1164,9 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" parity-services-live >"$parity_services_live_log"
     assert_contains "$parity_services_live_log" 'scripts/service-lifecycle-live.js'
+
+    make -n -C "$REPO_DIR" parity-evidence >"$parity_evidence_log"
+    assert_contains "$parity_evidence_log" 'scripts/parity-evidence-bundle.js'
 
     make -n -C "$REPO_DIR" parity-full >"$parity_full_log"
     assert_contains "$parity_full_log" 'scripts/desktop-parity-full.sh'
@@ -2268,6 +2274,229 @@ for forbidden_key in ["checks", "detail"]:
     if forbidden_key in report:
         raise SystemExit(f"combined matrix exposed raw helper field {forbidden_key}: {report}")
 PY
+}
+
+test_parity_evidence_bundle_smoke() {
+    info "Checking redacted parity evidence bundle"
+    local workspace="$TMP_DIR/parity-evidence-bundle-smoke"
+    local fake_bin="$workspace/bin"
+    local secret_store="$workspace/store"
+    local fake_doctor="$workspace/codex-computer-use-linux"
+    local default_report="$workspace/default-report.json"
+    local report="$workspace/report.json"
+
+    mkdir -p "$fake_bin" "$secret_store"
+    cat > "$fake_bin/secret-tool" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+store="${CODEX_TEST_SECRET_STORE:?}"
+cmd="${1:-}"
+shift || true
+mkdir -p "$store"
+case "$cmd" in
+    store)
+        touch "$store/store-called"
+        cat > "$store/value"
+        ;;
+    lookup)
+        cat "$store/value"
+        ;;
+    clear)
+        rm -f "$store/value"
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+SCRIPT
+    chmod +x "$fake_bin/secret-tool"
+
+    cat > "$fake_bin/systemctl" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = "--user" ] || exit 2
+shift
+case "${1:-}" in
+    show-environment)
+        printf '%s\n' 'PRIVATE_ENV=/tmp/not-for-output'
+        ;;
+    show)
+        unit="${2:-}"
+        case "$unit" in
+            codex-cua-lab.service)
+                cat <<'EOF'
+LoadState=loaded
+ActiveState=active
+SubState=running
+UnitFileState=enabled
+Result=success
+Restart=on-failure
+NRestarts=2
+After=graphical-session.target app.slice /tmp/not-for-output
+Wants=
+PartOf=graphical-session.target
+FragmentPath=/tmp/not-for-output/codex-cua-lab.service
+EOF
+                ;;
+            codex-update-manager.service)
+                cat <<'EOF'
+LoadState=loaded
+ActiveState=active
+SubState=running
+UnitFileState=enabled
+Result=success
+Restart=on-failure
+NRestarts=1
+After=network-online.target graphical-session.target app.slice
+Wants=network-online.target
+PartOf=
+ExecStart=/tmp/not-for-output/codex-update-manager daemon
+EOF
+                ;;
+            *)
+                exit 3
+                ;;
+        esac
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+SCRIPT
+    chmod +x "$fake_bin/systemctl"
+
+    cat > "$fake_doctor" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = "doctor" ] || exit 2
+cat <<'JSON'
+{
+  "capabilities": {
+    "input": ["abs_pointer", "portal", "ydotool"],
+    "screenshot": ["portal"],
+    "window_control": ["gnome_shell_extension"],
+    "preferred": {
+      "input": "abs_pointer",
+      "screenshot": "portal",
+      "window_control": "gnome_shell_extension"
+    }
+  },
+  "readiness": {
+    "can_focus_windows": true,
+    "blockers": []
+  }
+}
+JSON
+SCRIPT
+    chmod +x "$fake_doctor"
+
+    PATH="$fake_bin:$PATH" \
+    CODEX_TEST_SECRET_STORE="$secret_store" \
+    XDG_CURRENT_DESKTOP=GNOME \
+    XDG_SESSION_TYPE=wayland \
+    WAYLAND_DISPLAY=wayland-test \
+    DISPLAY= \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/not-for-output \
+        node "$REPO_DIR/scripts/parity-evidence-bundle.js" \
+            --json \
+            --computer-use-doctor "$fake_doctor" \
+            --systemctl "$fake_bin/systemctl" \
+            --package-name codex-cua-lab >"$default_report"
+
+    assert_file_not_exists "$secret_store/store-called"
+
+    node - "$default_report" <<'NODE' || fail "Expected default parity evidence bundle to skip live canary"
+const fs = require("node:fs");
+const assert = require("node:assert/strict");
+
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+assert.equal(report.ok, true);
+assert.equal(report.status, "pass");
+assert.equal(report.liveSecretServiceCanary, false);
+assert.equal(report.components.desktopKeyring.canaryStatus, "skip");
+NODE
+
+    PATH="$fake_bin:$PATH" \
+    CODEX_TEST_SECRET_STORE="$secret_store" \
+    XDG_CURRENT_DESKTOP=GNOME \
+    XDG_SESSION_TYPE=wayland \
+    WAYLAND_DISPLAY=wayland-test \
+    DISPLAY= \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/not-for-output \
+        node "$REPO_DIR/scripts/parity-evidence-bundle.js" \
+            --json \
+            --live-secret-service \
+            --computer-use-doctor "$fake_doctor" \
+            --systemctl "$fake_bin/systemctl" \
+            --package-name codex-cua-lab >"$report"
+
+    node - "$report" "$workspace" "$secret_store" "$fake_doctor" <<'NODE' \
+        || fail "Expected parity evidence bundle to stay redacted"
+const fs = require("node:fs");
+const assert = require("node:assert/strict");
+
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const workspace = process.argv[3];
+const secretStore = process.argv[4];
+const fakeDoctor = process.argv[5];
+
+assert.equal(report.ok, true);
+assert.equal(report.status, "pass");
+assert.equal(report.liveSecretServiceCanary, true);
+assert.equal(report.components.browserMatrix.status, "pass");
+assert.equal(report.components.serviceStatic.status, "pass");
+assert.equal(report.components.serviceLive.status, "pass");
+assert.equal(report.components.serviceLive.systemdUserAvailable, true);
+assert.equal(report.components.serviceLive.appServiceStatus, "pass");
+assert.equal(report.components.serviceLive.updaterServiceStatus, "pass");
+assert.equal(report.components.desktopKeyring.status, "pass");
+assert.equal(report.components.desktopKeyring.desktopStatus, "pass");
+assert.equal(report.components.desktopKeyring.secretServiceStatus, "pass");
+assert.equal(report.components.desktopKeyring.canaryStatus, "pass");
+assert.equal(report.components.desktopKeyring.secretServiceIssueKind, "none");
+assert.equal(report.components.desktopKeyring.lookupMatched, true);
+assert.equal(report.components.desktopKeyring.clearSucceeded, true);
+
+function hasKey(value, key) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, key)) {
+    return true;
+  }
+  return Object.values(value).some((entry) => hasKey(entry, key));
+}
+
+const text = JSON.stringify(report);
+for (const forbidden of [
+  workspace,
+  secretStore,
+  fakeDoctor,
+  "/tmp/not-for-output",
+  "PRIVATE_ENV",
+  "codex-matrix-secret",
+  "codex-matrix-",
+  "remote-control-device-key",
+  "key-id",
+  "gnome_shell_extension",
+  "abs_pointer",
+  "graphical-session.target",
+  "network-online.target",
+  "FragmentPath",
+  "ExecStart",
+  "After=",
+  "Wants=",
+]) {
+  assert.equal(text.includes(forbidden), false, `leaked ${forbidden}: ${text}`);
+}
+for (const forbiddenKey of ["checks", "missing", "detail"]) {
+  assert.equal(hasKey(report, forbiddenKey), false, `exposed raw helper key ${forbiddenKey}: ${text}`);
+}
+NODE
+
+    assert_contains "$REPO_DIR/README.md" "make parity-evidence"
+    assert_contains "$REPO_DIR/docs/PARITY_MATRIX.md" "make parity-evidence"
+    assert_contains "$REPO_DIR/CHANGELOG.md" "parity-evidence"
 }
 
 test_fedora_dependency_bootstrap_installs_rpmbuild() {
@@ -6434,6 +6663,7 @@ main() {
     test_desktop_doctor_secret_service_canary
     test_secret_service_matrix_smoke
     test_live_validation_matrix_smoke
+    test_parity_evidence_bundle_smoke
     test_fedora_dependency_bootstrap_installs_rpmbuild
     test_setup_native_wizard_noninteractive_feature_writer
     test_setup_native_wizard_rejects_invalid_feature_ids

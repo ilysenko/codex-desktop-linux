@@ -547,6 +547,7 @@ make parity-browser-matrix
 make parity-live-matrix
 make parity-services
 make parity-services-live
+make parity-evidence
 make parity-full
 ```
 
@@ -579,6 +580,12 @@ update checks run as a collected one-shot when systemd is available.
 sanitized `systemctl --user show` state for the app and updater units, then
 reports only enums, booleans, restart counts, and sanitized issue kinds. It does
 not start, stop, restart, enable, disable, or read logs for any service.
+`make parity-evidence` builds a single redacted summary from the browser
+matrix, service marker check, read-only live service probe, and desktop/keyring
+matrix. By default it does not run the Secret Service canary; set
+`CODEX_PARITY_EVIDENCE_LIVE_SECRET_SERVICE=1` or pass
+`--live-secret-service` to `scripts/parity-evidence-bundle.js` when you want the
+temporary canary included.
 `make parity-full` composes the
 installed doctor, `systemd --user` service state, app-server schema guard,
 Computer Use doctor, and the non-sensitive app-server smoke. The smoke also
