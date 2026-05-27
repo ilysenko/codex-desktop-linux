@@ -74,6 +74,49 @@ def add_check(
     checks.append(entry)
 
 
+def nested_bool(data: dict[str, Any], *keys: str) -> bool | None:
+    current: Any = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current if isinstance(current, bool) else None
+
+
+def status_word(value: bool | None) -> str:
+    if value is True:
+        return "pass"
+    if value is False:
+        return "fail"
+    return "unknown"
+
+
+def computer_use_doctor_summary(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    readiness = data.get("readiness") if isinstance(data.get("readiness"), dict) else {}
+    blockers = readiness.get("blockers") if isinstance(readiness.get("blockers"), list) else []
+    session_bus = nested_bool(data, "platform", "session_bus", "ok")
+    accessibility_tree = nested_bool(data, "readiness", "can_build_accessibility_tree")
+    windowing = nested_bool(data, "readiness", "can_query_windows")
+    input_ready = nested_bool(data, "readiness", "can_send_development_input")
+
+    detail = " ".join(
+        [
+            f"sessionBus={status_word(session_bus)}",
+            f"accessibilityTree={status_word(accessibility_tree)}",
+            f"windowing={status_word(windowing)}",
+            f"input={status_word(input_ready)}",
+            f"blockers={len(blockers)}",
+        ]
+    )
+    return detail, {
+        "blockersCount": len(blockers),
+        "sessionBusOk": session_bus,
+        "accessibilityTreeOk": accessibility_tree,
+        "windowingOk": windowing,
+        "inputOk": input_ready,
+    }
+
+
 def package_version(package_name: str) -> tuple[str, str]:
     if command_exists("dpkg-query"):
         result = run(["dpkg-query", "-W", "-f=${Version}", package_name], timeout=5)
@@ -492,14 +535,16 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
         try:
             result = run([str(cu_doctor), "doctor"], timeout=12)
             data = json.loads(result.stdout) if result.stdout.strip() else {}
-            blockers = data.get("readiness", {}).get("blockers", []) if isinstance(data, dict) else []
+            raw_blockers = data.get("readiness", {}).get("blockers", []) if isinstance(data, dict) else []
+            blockers = raw_blockers if isinstance(raw_blockers, list) else []
+            detail, summary = computer_use_doctor_summary(data if isinstance(data, dict) else {})
             add_check(
                 checks,
                 "computer_use_doctor",
                 "Computer Use doctor",
                 PASS if result.returncode == 0 and not blockers else WARN,
-                "blockers=0" if not blockers else f"blockers={len(blockers)}",
-                blockersCount=len(blockers) if isinstance(blockers, list) else None,
+                detail,
+                **summary,
             )
         except (subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
             add_check(checks, "computer_use_doctor", "Computer Use doctor", WARN, str(exc))

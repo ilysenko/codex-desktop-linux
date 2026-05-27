@@ -49,6 +49,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Native Linux launches now keep GPU compositing enabled by default, avoiding sustained Electron GPU-process CPU usage on some X11/NVIDIA desktops. Users who still need the old flicker workaround can opt in with `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1`.
 - Linux Keybinds settings now show current upstream shortcut defaults for Quick Chat, alternate New Chat, search, terminal, browser, and thread actions, and no longer lists non-dispatchable runtime rows.
 - Linux `Open in File Manager` now prefers desktop file managers directly, selecting files in Dolphin and Nautilus where supported before falling back to Electron's shell opener.
+- Linux Computer Use doctor now reports an unreachable user session D-Bus as the root blocker before AT-SPI, portal, or window-targeting follow-up checks, making stale or refused graphical-session buses easier to diagnose.
 
 ## [0.8.0] - 2026-05-16
 

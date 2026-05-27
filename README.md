@@ -578,6 +578,7 @@ make clean-state
 | `codex-desktop.service` is enabled but inactive | Close any manually launched Codex Desktop process, then run `systemctl --user start codex-desktop.service` |
 | Unsure which installed integration is broken | Run `codex-desktop-doctor` or `codex-desktop-doctor --json` from a native package install |
 | Computer Use plugin invisible in UI | Ensure you enabled the Computer Use UI. If it is enabled and still hidden, the OpenAI per-account rollout may not be available |
+| Computer Use `doctor` reports the user session D-Bus is unreachable | Run the doctor from a terminal attached to the graphical login session. If `systemctl --user` also says `Failed to connect to bus`, repair or restart the user session bus before retrying Computer Use setup, portal, or window-targeting checks |
 | Computer Use `doctor` reports no input backend | Grant read/write `/dev/uinput`, enable the XDG RemoteDesktop portal, or start the distro-provided `ydotoold` / `ydotool` daemon with a socket accessible to your user |
 | Computer Use `doctor` reports `ydotool_socket: Permission denied` | The daemon socket is root-only. Adjust the `ydotoold` service so `/tmp/.ydotool_socket` becomes `root:input` with `0660` permissions |
 | `ConnectTimeoutError` for `www.electronjs.org` during `@electron/rebuild` | Re-run `make build-app`; the installer now uses `https://artifacts.electronjs.org/headers/dist` for Electron headers by default |
