@@ -392,6 +392,35 @@ test_desktop_service_lifecycle_helper_detects_orphaned_app_scope() {
     fi
 }
 
+test_desktop_service_lifecycle_helper_ignores_space_joined_helper_cmdline() {
+    info "Checking desktop service lifecycle helper ignores space-joined Electron helper cmdline"
+    local workspace="$TMP_DIR/desktop-service-lifecycle-space-joined-helper"
+    local app_root="$workspace/opt/codex-desktop"
+    local proc_root="$workspace/proc"
+    local state_home="$workspace/state"
+    local uid
+    uid="$(id -u)"
+
+    mkdir -p "$app_root" "$proc_root/124" "$state_home"
+    printf '#!/usr/bin/env bash\n' > "$app_root/electron"
+    chmod +x "$app_root/electron"
+    ln -s "$app_root/electron" "$proc_root/124/exe"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/124/status"
+    printf '%s --type=renderer --no-sandbox' "$app_root/electron" > "$proc_root/124/cmdline"
+
+    local output
+    output="$(
+        CODEX_PROCESS_PROC_ROOT="$proc_root" \
+        CODEX_DESKTOP_SERVICE_APP_ROOT="$app_root" \
+        CODEX_DESKTOP_SERVICE_DRY_RUN=1 \
+        XDG_STATE_HOME="$state_home" \
+        bash "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" stop codex-desktop
+    )"
+
+    [ -z "$output" ] \
+        || fail "Expected service lifecycle helper to ignore helper-only process table, got: $output"
+}
+
 test_update_builder_preserves_enabled_linux_features_config() {
     info "Checking update-builder preserves sanitized enabled Linux feature config"
     local workspace="$TMP_DIR/update-builder-linux-features"
@@ -5594,6 +5623,7 @@ main() {
     test_package_payload_permission_normalization
     test_deb_builder_smoke
     test_desktop_service_lifecycle_helper_detects_orphaned_app_scope
+    test_desktop_service_lifecycle_helper_ignores_space_joined_helper_cmdline
     test_update_builder_preserves_enabled_linux_features_config
     test_deb_builder_respects_package_identity
     test_deb_builder_without_updater

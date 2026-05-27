@@ -35,7 +35,7 @@ pid_is_electron_helper() {
 
     root="$(proc_root)"
     [ -r "$root/$pid/cmdline" ] || return 1
-    tr '\0' '\n' < "$root/$pid/cmdline" 2>/dev/null | grep -Eq '^--type='
+    tr '\0' '\n' < "$root/$pid/cmdline" 2>/dev/null | grep -Eq '(^|[[:space:]])--type='
 }
 
 pid_matches_app() {
