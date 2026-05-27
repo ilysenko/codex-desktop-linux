@@ -649,6 +649,15 @@ function applyLinuxFastModeModelGuardPatch(currentSource) {
     return currentSource.replace(exactNeedle, exactPatch);
   }
 
+  const arrayGuardNeedle = /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return Array\.isArray\(\2\.serviceTiers\)&&\2\.serviceTiers\.length>0\|\|\2\.additionalSpeedTiers\?\.includes\(([A-Za-z_$][\w$]*)\)===!0\}/u;
+  if (arrayGuardNeedle.test(currentSource)) {
+    return currentSource.replace(
+      arrayGuardNeedle,
+      (match, fnName, modelVar, fastTierVar) =>
+        `function ${fnName}(${modelVar}){return(${modelVar}?.serviceTiers?.length??0)>0||${modelVar}?.additionalSpeedTiers?.includes(${fastTierVar})===!0}`,
+    );
+  }
+
   const driftedNeedle = /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return \2\.serviceTiers\.length>0\|\|\2\.additionalSpeedTiers\?\.includes\(([A-Za-z_$][\w$]*)\)===!0\}/u;
   if (driftedNeedle.test(currentSource)) {
     return currentSource.replace(

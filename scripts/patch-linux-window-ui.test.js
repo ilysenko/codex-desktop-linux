@@ -1118,6 +1118,17 @@ test("guards fast-mode model tier lookup when serviceTiers is missing", () => {
   assert.doesNotMatch(patched, /e\.serviceTiers\.length/);
 });
 
+test("guards current fast-mode model tier lookup with an array precheck", () => {
+  const source =
+    "function m(e){return Array.isArray(e.serviceTiers)&&e.serviceTiers.length>0||e.additionalSpeedTiers?.includes(u)===!0}";
+
+  const patched = applyPatchTwice(applyLinuxFastModeModelGuardPatch, source);
+
+  assert.match(patched, /\(e\?\.serviceTiers\?\.length\?\?0\)>0/);
+  assert.doesNotMatch(patched, /Array\.isArray\(e\.serviceTiers\)/);
+  assert.doesNotMatch(patched, /e\.additionalSpeedTiers\?\.includes/);
+});
+
 test("warns when a matched webview opaque bundle has no known insertion point", () => {
   const { warnings } = captureWarns(() =>
     applyLinuxOpaqueWindowsDefaultPatch("function runtime(){let C=theme;if(C.opaqueWindows&&!ba()){}}"),
