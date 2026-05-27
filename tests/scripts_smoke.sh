@@ -296,6 +296,27 @@ test_locked_computer_use_research_doc() {
     assert_not_contains "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" "LOCKED_COMPUTER_USE_ENABLE"
 }
 
+test_live_validation_matrix_doc() {
+    info "Checking live validation matrix redaction contract"
+    local doc="$REPO_DIR/docs/LIVE_VALIDATION_MATRIX.md"
+
+    assert_file_exists "$doc"
+    assert_contains "$doc" "Desktop Environment Matrix"
+    assert_contains "$doc" "Secret Service / Keyring Matrix"
+    assert_contains "$doc" "Allowed Evidence Fields"
+    assert_contains "$doc" "Forbidden Evidence"
+    assert_contains "$doc" "CODEX_DESKTOP_LIVE_SECRET_SERVICE_MATRIX=1"
+    assert_contains "$doc" "No private app, window, browser, file, or session content."
+    assert_contains "$REPO_DIR/docs/DESKTOP_ENVIRONMENT_MATRIX.md" "LIVE_VALIDATION_MATRIX.md"
+    assert_contains "$REPO_DIR/docs/PARITY_MATRIX.md" "LIVE_VALIDATION_MATRIX.md"
+    assert_contains "$REPO_DIR/README.md" "docs/LIVE_VALIDATION_MATRIX.md"
+    assert_not_contains "$doc" "windowTitle"
+    assert_not_contains "$doc" "tabUrl"
+    assert_not_contains "$doc" "privateKey"
+    assert_not_contains "$doc" "pairingCode"
+    assert_not_contains "$doc" "threadId"
+}
+
 test_package_payload_permission_normalization() {
     info "Checking package payload permission normalization"
     local root="$TMP_DIR/package-permissions"
@@ -6095,6 +6116,7 @@ main() {
     test_desktop_parity_smoke_script_syntax
     test_browser_matrix_smoke
     test_locked_computer_use_research_doc
+    test_live_validation_matrix_doc
     test_package_payload_permission_normalization
     test_deb_builder_smoke
     test_update_builder_preserves_enabled_linux_features_config

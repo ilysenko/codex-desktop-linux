@@ -29,6 +29,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   provide a compact Linux capability summary that separates covered,
   experimental, server-side, and not-equivalent surfaces without claiming
   official Linux or exact macOS parity.
+- `docs/LIVE_VALIDATION_MATRIX.md` now defines the redacted live
+  desktop-environment and Secret Service/keyring evidence format for future
+  Linux matrix runs.
 - Native packages now include an opt-in `codex-desktop.service` user unit plus
   `make app-service-enable`, `make app-service-status`, and
   `make app-service-disable` helpers for users who want Codex Desktop managed

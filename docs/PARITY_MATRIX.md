@@ -25,6 +25,8 @@ Primary references:
 - <https://developers.openai.com/codex/remote-connections>
 - <https://developers.openai.com/codex/app/computer-use#locked-use>
 - <https://developers.openai.com/codex/config-reference>
+- [`LIVE_VALIDATION_MATRIX.md`](LIVE_VALIDATION_MATRIX.md) for the redacted
+  desktop/keyring evidence format used by live Linux matrix runs.
 
 ## Validation Commands
 
@@ -129,7 +131,7 @@ screenshots, or private conversation text into parity artifacts.
    booleans.
 4. Run `make parity-secret-service-live` across GNOME Keyring, KWallet, locked
    keyrings, and headless sessions, and capture only the redacted pass/warn
-   matrix.
+   fields allowed by `docs/LIVE_VALIDATION_MATRIX.md`.
 5. Add opt-in live service lifecycle checks for suspend/resume and network
    changes once they can run without disrupting an active desktop session.
 6. Expand live desktop-environment validation for GNOME, KDE Plasma, Hyprland,

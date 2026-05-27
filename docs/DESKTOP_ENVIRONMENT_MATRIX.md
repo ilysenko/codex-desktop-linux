@@ -4,6 +4,9 @@ This matrix tracks Linux Computer Use window-control parity by desktop session.
 It separates implemented support from research targets so the package does not
 claim a backend that has not been tested.
 
+For the redacted live evidence format, see
+[`LIVE_VALIDATION_MATRIX.md`](LIVE_VALIDATION_MATRIX.md).
+
 | Environment | Window listing | Exact focus | Input path | Status |
 |---|---|---|---|---|
 | GNOME Wayland | GNOME Shell Introspect or Codex GNOME Shell extension | Codex GNOME Shell extension | abs_pointer, portal, ydotool | Implemented |

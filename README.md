@@ -593,6 +593,8 @@ connected remote-control status automatically when the installed
 
 The current parity matrix and remaining Mac/Linux gaps are tracked in
 [`docs/PARITY_MATRIX.md`](docs/PARITY_MATRIX.md).
+Redacted live desktop/keyring validation evidence must follow
+[`docs/LIVE_VALIDATION_MATRIX.md`](docs/LIVE_VALIDATION_MATRIX.md).
 Locked Computer Use remains research-only on Linux; see
 [`docs/LOCKED_COMPUTER_USE_RESEARCH.md`](docs/LOCKED_COMPUTER_USE_RESEARCH.md).
 
