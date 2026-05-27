@@ -1482,6 +1482,11 @@ async function runAppServerSmoke(options) {
           (!details.imageGenerationKnown || !details.namespaceToolsKnown || !details.webSearchKnown)
         ) {
           record(probe.name, "fail", details);
+        } else if (
+          probe.method === "experimentalFeature/enablement/set" &&
+          (!details.responseObjectKnown || !details.noUpdatedFeatures)
+        ) {
+          record(probe.name, "fail", details);
         } else {
           record(probe.name, "pass", details);
         }
