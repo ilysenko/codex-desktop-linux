@@ -780,9 +780,21 @@ function summarizeFsFixture({ directoryMetadata, fileMetadata, readDirectory, re
   };
 }
 
-function summarizeFsMutationFixture({ copiedFilePath, directoryMetadata, readDirectory, readCopiedFile, writeFilePath }) {
+function summarizeFsMutationFixture({
+  changedNotification,
+  copiedFilePath,
+  directoryMetadata,
+  readDirectory,
+  readCopiedFile,
+  unwatchResponse,
+  watchId,
+  watchResponse,
+  writeFilePath,
+}) {
   const entries = Array.isArray(readDirectory.entries) ? readDirectory.entries : [];
   return {
+    changedNotificationObserved: hasObject(changedNotification),
+    changedPathCount: safeArrayLength(changedNotification?.changedPaths),
     copiedEntryObserved: entries.some((entry) => (
       entry?.fileName === "copied.txt" &&
       entry.isFile === true &&
@@ -797,6 +809,9 @@ function summarizeFsMutationFixture({ copiedFilePath, directoryMetadata, readDir
     directoryEntryCount: entries.length,
     removedEntryMissing: !entries.some((entry) => entry?.fileName === "written.txt"),
     removedFileAbsentOnHost: !fs.existsSync(writeFilePath),
+    unwatchResponseKnown: hasObject(unwatchResponse),
+    watchIdMatched: changedNotification?.watchId === watchId,
+    watchPathKnown: typeof watchResponse.path === "string" && watchResponse.path.length > 0,
   };
 }
 
@@ -1638,7 +1653,13 @@ async function runAppServerSmoke(options) {
     }
 
     const fsMutationFixture = createFsFixture();
+    const fsMutationWatchId = "codex-parity-fs-watch";
+    let fsMutationUnwatched = false;
     try {
+      const watchResponse = await client.request("fs/watch", {
+        path: fsMutationFixture.workspaceDir,
+        watchId: fsMutationWatchId,
+      });
       await client.request("fs/createDirectory", {
         path: fsMutationFixture.appCreatedDir,
         recursive: true,
@@ -1657,24 +1678,36 @@ async function runAppServerSmoke(options) {
         path: fsMutationFixture.writeFilePath,
         recursive: false,
       });
+      const changedNotification = await client.waitForNotification("fs/changed", 3000);
+      const unwatchResponse = await client.request("fs/unwatch", { watchId: fsMutationWatchId });
+      fsMutationUnwatched = true;
       const directoryMetadata = await client.request("fs/getMetadata", { path: fsMutationFixture.appCreatedDir });
       const readDirectory = await client.request("fs/readDirectory", { path: fsMutationFixture.appCreatedDir });
       const readCopiedFile = await client.request("fs/readFile", { path: fsMutationFixture.copiedFilePath });
       const details = summarizeFsMutationFixture({
+        changedNotification,
         copiedFilePath: fsMutationFixture.copiedFilePath,
         directoryMetadata,
         readCopiedFile,
         readDirectory,
+        unwatchResponse,
+        watchId: fsMutationWatchId,
+        watchResponse,
         writeFilePath: fsMutationFixture.writeFilePath,
       });
       record(
         "filesystem mutation fixture",
-        details.copiedEntryObserved &&
+        details.changedNotificationObserved &&
+          details.changedPathCount > 0 &&
+          details.copiedEntryObserved &&
           details.copiedFilePresentOnHost &&
           details.copiedReadMatchesFixture &&
           details.createdDirectoryMetadataObserved &&
           details.removedEntryMissing &&
-          details.removedFileAbsentOnHost
+          details.removedFileAbsentOnHost &&
+          details.unwatchResponseKnown &&
+          details.watchIdMatched &&
+          details.watchPathKnown
           ? "pass"
           : "fail",
         details,
@@ -1682,6 +1715,9 @@ async function runAppServerSmoke(options) {
     } catch (error) {
       record("filesystem mutation fixture", "fail", { error: summarizeErrorText(error.message) });
     } finally {
+      if (!fsMutationUnwatched) {
+        await client.request("fs/unwatch", { watchId: fsMutationWatchId }).catch(() => {});
+      }
       removeFixture(fsMutationFixture.fixtureDir);
     }
 

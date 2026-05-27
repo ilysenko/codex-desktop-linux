@@ -32,6 +32,8 @@ const REQUIRED_CLIENT_REQUEST_METHODS = [
   "fs/readDirectory",
   "fs/readFile",
   "fs/remove",
+  "fs/unwatch",
+  "fs/watch",
   "fs/writeFile",
   "config/read",
   "configRequirements/read",
@@ -44,6 +46,7 @@ const REQUIRED_SERVER_NOTIFICATION_METHODS = [
   "remoteControl/status/changed",
   "app/list/updated",
   "command/exec/outputDelta",
+  "fs/changed",
 ];
 
 const OPTIONAL_PARITY_CLIENT_REQUEST_METHODS = [
@@ -113,8 +116,13 @@ const REQUIRED_SCHEMA_FILES = [
   "v2/FsReadFileResponse.json",
   "v2/FsRemoveParams.json",
   "v2/FsRemoveResponse.json",
+  "v2/FsUnwatchParams.json",
+  "v2/FsUnwatchResponse.json",
+  "v2/FsWatchParams.json",
+  "v2/FsWatchResponse.json",
   "v2/FsWriteFileParams.json",
   "v2/FsWriteFileResponse.json",
+  "v2/FsChangedNotification.json",
   "v2/ConfigReadParams.json",
   "v2/ConfigRequirementsReadResponse.json",
   "v2/ExternalAgentConfigDetectParams.json",
