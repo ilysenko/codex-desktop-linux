@@ -231,8 +231,14 @@ test_desktop_parity_smoke_script_syntax() {
     assert_contains "$REPO_DIR/scripts/app-server-schema-guard.js" "v2/ExperimentalFeatureEnablementSetParams.json"
     assert_contains "$REPO_DIR/scripts/app-server-schema-guard.js" "v2/ExperimentalFeatureEnablementSetResponse.json"
     assert_contains "$REPO_DIR/scripts/app-server-schema-guard.js" "v2/ThreadStartParams.json"
+    assert_contains "$REPO_DIR/scripts/app-server-schema-guard.js" "v2/ThreadReadParams.json"
+    assert_contains "$REPO_DIR/scripts/app-server-schema-guard.js" "v2/ThreadGoalGetParams.json"
+    assert_contains "$REPO_DIR/scripts/app-server-schema-guard.js" "v2/ThreadGoalSetParams.json"
+    assert_contains "$REPO_DIR/scripts/app-server-schema-guard.js" "v2/ThreadGoalClearParams.json"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "managed requirements fixture"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "remote redacted e2e summary"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "isolated thread lifecycle fixture"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity-thread-goal-fixture"
     assert_contains "$REPO_DIR/Makefile" "parity-browser-matrix"
     assert_contains "$REPO_DIR/Makefile" "parity-secret-service-live"
     assert_contains "$REPO_DIR/Makefile" "parity-live-matrix"
@@ -249,7 +255,7 @@ const input = JSON.stringify({
   tabTitle: "private tab fixture",
   tabUrl: "https://private.example/path",
   conversationText: "private conversation fixture",
-}) + " deviceKey='device-key-fixture' Bearer bearer-fixture sk-test-fixture";
+}) + " threadId=019e67f4-faf3-7820-a6c9-58c7fae89250 deviceKey='device-key-fixture' Bearer bearer-fixture sk-test-fixture";
 const output = redactText(input);
 for (const forbidden of [
   "pairing-fixture-value",
@@ -257,6 +263,7 @@ for (const forbidden of [
   "private tab fixture",
   "private.example",
   "private conversation fixture",
+  "019e67f4-faf3-7820-a6c9-58c7fae89250",
   "device-key-fixture",
   "bearer-fixture",
   "sk-test-fixture",

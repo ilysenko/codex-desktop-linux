@@ -17,6 +17,7 @@ const FS_FIXTURE_TEXT = "codex-parity-fs-pong\n";
 const FS_FIXTURE_BASE64 = Buffer.from(FS_FIXTURE_TEXT, "utf8").toString("base64");
 const FS_MUTATION_FIXTURE_TEXT = "codex-parity-fs-write-pong\n";
 const FS_MUTATION_FIXTURE_BASE64 = Buffer.from(FS_MUTATION_FIXTURE_TEXT, "utf8").toString("base64");
+const THREAD_GOAL_FIXTURE_OBJECTIVE = "codex-parity-thread-goal-fixture";
 
 function usage() {
   return [
@@ -100,6 +101,7 @@ function redactText(value) {
         .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/g, "<jwt-redacted>")
         .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "<private-key-redacted>")
         .replace(/https?:\/\/[^\s"',)]+/g, "<url-redacted>")
+        .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<id-redacted>")
         .replace(/\bdata:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, "data:image/<redacted>")
         .replace(/\bchrome-extension:\/\/[a-p]{32}\/?/g, "chrome-extension://<extension-id>/"),
       String.raw`(?:qr|pairing|device|client|installation|environment|key)[_-]?(?:code|id|secret|token|payload|fingerprint|key)`,
@@ -239,6 +241,20 @@ function createProjectConfigFixture() {
     "utf8",
   );
   return fixtureDir;
+}
+
+function createThreadLifecycleFixture() {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-thread-lifecycle-"));
+  const repoDir = path.join(fixtureDir, "repo");
+  fs.mkdirSync(path.join(repoDir, ".git"), { recursive: true });
+  for (const directory of ["codex-home", "home", "xdg-config", "xdg-data", "xdg-state", "xdg-cache"]) {
+    fs.mkdirSync(path.join(fixtureDir, directory), { recursive: true });
+  }
+  return {
+    codexHome: path.join(fixtureDir, "codex-home"),
+    fixtureDir,
+    repoDir,
+  };
 }
 
 function createExternalAgentFixture() {
@@ -693,6 +709,25 @@ function summarizeMcpStatus(result) {
 function extractThreadId(result) {
   const thread = hasObject(result.thread) ? result.thread : null;
   return typeof thread?.id === "string" && thread.id.length > 0 ? thread.id : null;
+}
+
+function summarizeThreadRead(result) {
+  const thread = hasObject(result.thread) ? result.thread : {};
+  return {
+    threadPresent: typeof thread.id === "string" && thread.id.length > 0,
+    turnsArrayAbsentOrKnown: thread.turns == null || Array.isArray(thread.turns),
+  };
+}
+
+function summarizeThreadGoal(result) {
+  const goal = hasObject(result.goal) ? result.goal : null;
+  return {
+    goalPresent: goal != null,
+    objectiveMatches: goal?.objective === THREAD_GOAL_FIXTURE_OBJECTIVE,
+    statusActive: goal?.status === "active",
+    threadIdPresent: typeof goal?.threadId === "string" && goal.threadId.length > 0,
+    tokenBudgetMatches: goal?.tokenBudget === 12345,
+  };
 }
 
 function summarizeMcpToolCall(result) {
@@ -1290,6 +1325,103 @@ async function runRequirementsFixtureSmoke({ codexBin }) {
   }
 }
 
+async function runThreadLifecycleFixtureSmoke({ codexBin }) {
+  const fixture = createThreadLifecycleFixture();
+  const isolatedEnv = {
+    ...process.env,
+    CODEX_HOME: fixture.codexHome,
+    HOME: path.join(fixture.fixtureDir, "home"),
+    XDG_CACHE_HOME: path.join(fixture.fixtureDir, "xdg-cache"),
+    XDG_CONFIG_HOME: path.join(fixture.fixtureDir, "xdg-config"),
+    XDG_DATA_HOME: path.join(fixture.fixtureDir, "xdg-data"),
+    XDG_STATE_HOME: path.join(fixture.fixtureDir, "xdg-state"),
+  };
+
+  try {
+    const client = new AppServerClient({
+      codexBin,
+      cwd: fixture.repoDir,
+      env: isolatedEnv,
+    });
+    try {
+      await client.request("initialize", {
+        clientInfo: {
+          name: "codex_linux_desktop_thread_lifecycle_fixture",
+          title: "Codex Linux Desktop Thread Lifecycle Fixture",
+          version: "0.1.0",
+        },
+        capabilities: {
+          experimentalApi: true,
+          optOutNotificationMethods: [
+            "account/updated",
+            "account/rateLimits/updated",
+            "thread/goal/updated",
+            "thread/started",
+            "thread/status/changed",
+          ],
+        },
+      });
+      client.notify("initialized", {});
+      const threadStart = await client.request("thread/start", {
+        approvalPolicy: "never",
+        cwd: fixture.repoDir,
+        ephemeral: false,
+        sandbox: "read-only",
+      });
+      const threadId = extractThreadId(threadStart);
+      if (!threadId) {
+        return {
+          details: { threadStarted: false },
+          status: "fail",
+        };
+      }
+
+      const threadRead = summarizeThreadRead(await client.request("thread/read", {
+        includeTurns: false,
+        threadId,
+      }));
+      const initialGoal = await client.request("thread/goal/get", { threadId });
+      const setGoal = summarizeThreadGoal(await client.request("thread/goal/set", {
+        objective: THREAD_GOAL_FIXTURE_OBJECTIVE,
+        status: "active",
+        threadId,
+        tokenBudget: 12345,
+      }));
+      const getGoal = summarizeThreadGoal(await client.request("thread/goal/get", { threadId }));
+      const clearGoal = await client.request("thread/goal/clear", { threadId });
+      const finalGoal = await client.request("thread/goal/get", { threadId });
+      const details = {
+        cleared: clearGoal.cleared === true,
+        finalGoalCleared: finalGoal.goal == null,
+        getGoalObjectiveMatches: getGoal.objectiveMatches,
+        getGoalStatusActive: getGoal.statusActive,
+        getGoalTokenBudgetMatches: getGoal.tokenBudgetMatches,
+        initialGoalEmpty: initialGoal.goal == null,
+        isolatedCodexHome: isolatedEnv.CODEX_HOME === fixture.codexHome,
+        setGoalObjectiveMatches: setGoal.objectiveMatches,
+        setGoalStatusActive: setGoal.statusActive,
+        setGoalThreadIdPresent: setGoal.threadIdPresent,
+        threadReadPresent: threadRead.threadPresent,
+        threadReadTurnsShapeKnown: threadRead.turnsArrayAbsentOrKnown,
+        threadStarted: true,
+      };
+      return {
+        details,
+        status: Object.values(details).every((value) => value === true) ? "pass" : "fail",
+      };
+    } finally {
+      await client.close();
+    }
+  } catch (error) {
+    return {
+      details: { error: summarizeErrorText(error.message) },
+      status: "fail",
+    };
+  } finally {
+    removeFixture(fixture.fixtureDir);
+  }
+}
+
 async function runAppServerSmoke(options) {
   const mcpFixture = createMcpServerFixture();
   const client = new AppServerClient({
@@ -1337,6 +1469,9 @@ async function runAppServerSmoke(options) {
 
     const skillConfigFixture = await runSkillConfigFixtureSmoke({ codexBin: options.codexBin });
     record("isolated skill config fixture", skillConfigFixture.status, skillConfigFixture.details);
+
+    const threadLifecycleFixture = await runThreadLifecycleFixtureSmoke({ codexBin: options.codexBin });
+    record("isolated thread lifecycle fixture", threadLifecycleFixture.status, threadLifecycleFixture.details);
 
     const initialize = await client.request("initialize", {
       clientInfo: {

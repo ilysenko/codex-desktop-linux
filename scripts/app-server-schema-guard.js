@@ -42,6 +42,10 @@ const REQUIRED_CLIENT_REQUEST_METHODS = [
   "externalAgentConfig/import",
   "command/exec",
   "thread/start",
+  "thread/read",
+  "thread/goal/get",
+  "thread/goal/set",
+  "thread/goal/clear",
 ];
 
 const REQUIRED_SERVER_NOTIFICATION_METHODS = [
@@ -134,6 +138,14 @@ const REQUIRED_SCHEMA_FILES = [
   "v2/CommandExecParams.json",
   "v2/ThreadStartParams.json",
   "v2/ThreadStartResponse.json",
+  "v2/ThreadReadParams.json",
+  "v2/ThreadReadResponse.json",
+  "v2/ThreadGoalGetParams.json",
+  "v2/ThreadGoalGetResponse.json",
+  "v2/ThreadGoalSetParams.json",
+  "v2/ThreadGoalSetResponse.json",
+  "v2/ThreadGoalClearParams.json",
+  "v2/ThreadGoalClearResponse.json",
   "v2/RemoteControlStatusChangedNotification.json",
 ];
 
