@@ -262,6 +262,14 @@ function createMcpServerFixture() {
       "        }],",
       "      },",
       "    });",
+      '  } else if (message.method === "tools/call" && message.params?.name === "codex_parity_ping") {',
+      "    send({",
+      "      id: message.id,",
+      "      result: {",
+      '        content: [{ type: "text", text: "codex-parity-pong" }],',
+      "        structuredContent: { ok: true },",
+      "      },",
+      "    });",
       "  } else {",
       '    send({ id: message.id, error: { code: -32601, message: "method not found" } });',
       "  }",
@@ -486,6 +494,22 @@ function summarizeMcpStatus(result) {
     fixturePresent: fixture != null,
     fixtureToolPresent: tools.includes("codex_parity_ping"),
     hasNextCursor: !!result.nextCursor,
+  };
+}
+
+function extractThreadId(result) {
+  const thread = hasObject(result.thread) ? result.thread : null;
+  return typeof thread?.id === "string" && thread.id.length > 0 ? thread.id : null;
+}
+
+function summarizeMcpToolCall(result) {
+  const content = Array.isArray(result.content) ? result.content : [];
+  const textContent = content.filter((item) => item && item.type === "text" && typeof item.text === "string");
+  return {
+    contentCount: content.length,
+    isError: result.isError === true,
+    structuredOk: hasObject(result.structuredContent) && result.structuredContent.ok === true,
+    textPongObserved: textContent.some((item) => item.text === "codex-parity-pong"),
   };
 }
 
@@ -854,6 +878,45 @@ async function runAppServerSmoke(options) {
             : "fail";
         record(probe.name, status, { error: errorSummary });
       }
+    }
+
+    try {
+      const threadStart = await client.request("thread/start", {
+        approvalPolicy: "never",
+        cwd: REPO_DIR,
+        ephemeral: true,
+        sandbox: "read-only",
+      });
+      const threadId = extractThreadId(threadStart);
+      if (!threadId) {
+        record("mcp tool call fixture", "fail", { threadStarted: false });
+      } else {
+        const toolCall = await client.request("mcpServer/tool/call", {
+          arguments: {},
+          server: "codex_parity_mcp",
+          threadId,
+          tool: "codex_parity_ping",
+        });
+        const details = summarizeMcpToolCall(toolCall);
+        record(
+          "mcp tool call fixture",
+          details.contentCount > 0 &&
+            details.isError === false &&
+            details.structuredOk === true &&
+            details.textPongObserved === true
+            ? "pass"
+            : "fail",
+          {
+            contentCount: details.contentCount,
+            isError: details.isError,
+            structuredOk: details.structuredOk,
+            textPongObserved: details.textPongObserved,
+            threadStarted: true,
+          },
+        );
+      }
+    } catch (error) {
+      record("mcp tool call fixture", "fail", { error: summarizeErrorText(error.message) });
     }
 
     const skillFixtureDir = createSkillFixture();
