@@ -230,12 +230,16 @@ function applySubagentNicknameMetadataPatch(currentSource) {
   const sourceShapePatchedMarker = "`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null";
   const nicknamePatchedMarker =
     "Zl(e.agentNickname)??Zl(e.agent_nickname)??Zl(B(e.source)?.agentNickname)";
+  const sourceShapePatchedRegex =
+    /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{return`subAgent`in \1\?\1\.subAgent:`subagent`in \1\?\1\.subagent:null\}/u;
+  const nicknamePatchedRegex =
+    /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{return \1==null\?null:([A-Za-z_$][\w$]*)\(\1\.agentNickname\)\?\?\2\(\1\.agent_nickname\)\?\?\2\(([A-Za-z_$][\w$]*)\(\1\.source\)\?\.agentNickname\)\}/u;
 
   const sourceShapeNeedle =
     "function Mi(e){return`subAgent`in e?e.subAgent:null}function Ni(e){return typeof e==`string`?Pi():`thread_spawn`in e?{parentThreadId:j(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:Pi()}";
   const sourceShapePatch =
     "function Mi(e){return`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null}function Ni(e){return typeof e==`string`?Pi():`thread_spawn`in e?{parentThreadId:j(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:Pi()}";
-  if (patchedSource.includes(sourceShapePatchedMarker)) {
+  if (patchedSource.includes(sourceShapePatchedMarker) || sourceShapePatchedRegex.test(patchedSource)) {
     // Already patched.
   } else if (patchedSource.includes(sourceShapeNeedle)) {
     patchedSource = patchedSource.replace(sourceShapeNeedle, sourceShapePatch);
@@ -254,7 +258,7 @@ function applySubagentNicknameMetadataPatch(currentSource) {
     "function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(B(e.source)?.agentNickname)}";
   const nicknamePatch =
     "function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(e.agent_nickname)??Zl(B(e.source)?.agentNickname)}";
-  if (patchedSource.includes(nicknamePatchedMarker)) {
+  if (patchedSource.includes(nicknamePatchedMarker) || nicknamePatchedRegex.test(patchedSource)) {
     // Already patched.
   } else if (patchedSource.includes(nicknameNeedle)) {
     patchedSource = patchedSource.replace(nicknameNeedle, nicknamePatch);
@@ -271,7 +275,10 @@ function applySubagentNicknameMetadataPatch(currentSource) {
 
   if (
     patchedSource === currentSource &&
-    !(currentSource.includes(sourceShapePatchedMarker) && currentSource.includes(nicknamePatchedMarker)) &&
+    !(
+      (currentSource.includes(sourceShapePatchedMarker) || sourceShapePatchedRegex.test(currentSource)) &&
+      (currentSource.includes(nicknamePatchedMarker) || nicknamePatchedRegex.test(currentSource))
+    ) &&
     (currentSource.includes("agentNickname") ||
       currentSource.includes("agent_nickname") ||
       currentSource.includes("thread_spawn"))
@@ -647,6 +654,15 @@ function applyLinuxFastModeModelGuardPatch(currentSource) {
   }
   if (currentSource.includes(exactNeedle)) {
     return currentSource.replace(exactNeedle, exactPatch);
+  }
+
+  const arrayGuardNeedle = /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return Array\.isArray\(\2\.serviceTiers\)&&\2\.serviceTiers\.length>0\|\|\2\.additionalSpeedTiers\?\.includes\(([A-Za-z_$][\w$]*)\)===!0\}/u;
+  if (arrayGuardNeedle.test(currentSource)) {
+    return currentSource.replace(
+      arrayGuardNeedle,
+      (match, fnName, modelVar, fastTierVar) =>
+        `function ${fnName}(${modelVar}){return(${modelVar}?.serviceTiers?.length??0)>0||${modelVar}?.additionalSpeedTiers?.includes(${fastTierVar})===!0}`,
+    );
   }
 
   const driftedNeedle = /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return \2\.serviceTiers\.length>0\|\|\2\.additionalSpeedTiers\?\.includes\(([A-Za-z_$][\w$]*)\)===!0\}/u;

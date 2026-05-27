@@ -267,6 +267,20 @@ function applyLinuxRemoteControlClientAccountCompatibilityPatch(source) {
   }
 
   if (
+    source.includes("authIdentity:") &&
+    source.includes("connectionKey:") &&
+    source.includes("?.record??null") &&
+    source.includes("?.key??") &&
+    source.includes("tokenAccountUserId==null)return[]") &&
+    source.includes("tokenAccountId!=null") &&
+    source.includes("headerChatGptAccountId===") &&
+    source.includes("tokenAuthUserId!==") &&
+    source.includes("tokenAuthUserId===")
+  ) {
+    return source;
+  }
+
+  if (
     source.includes("function ep({authIdentity:e,connectionKey:t,deviceKeyClient:n,globalState:r})") &&
     source.includes("Promise.all(tp(e).map(async e=>{let i=jf(t,e);") &&
     source.includes("function tp(e){if(e.tokenAccountUserId==null)return[];") &&

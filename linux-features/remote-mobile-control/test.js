@@ -758,6 +758,16 @@ test("Linux remote-control client enrollment handles current upstream account co
   assert.equal(applyLinuxRemoteControlClientAccountCompatibilityPatch(patched), patched);
 });
 
+test("Linux remote-control client enrollment accepts upstream-native compatibility", () => {
+  const source = [
+    "async function Pf({appServerClient:e,deviceKeyClient:t,desktopApiOptions:n,enrollmentKey:r,globalState:i,headers:a,requestRemoteControlEnrollmentStepUpToken:o}){let s=Vf(a),c=s.tokenAccountUserId;if(c==null)throw Error(`Remote control enrollment requires the current ChatGPT account user id.`);let l=s.tokenAccountId??s.headerChatGptAccountId,u=await tp({authIdentity:s,connectionKey:r,deviceKeyClient:t,globalState:i}),d=u?.record??null,f=u?.key??Mf(r,c),p=d,m;if(p==null){let u=await Xf({appServerClient:e,body:{},desktopApiOptions:n,headers:a});if(u.account_user_id!==c&&!(s.tokenAccountId!=null&&s.headerChatGptAccountId===s.tokenAccountId&&s.tokenAuthUserId===u.account_user_id))throw Error(`Remote control enrollment start does not match current account.`);let d=await o({accountId:l}),f=Wf({accountUserId:c,stepUpToken:d});m=f}else p=d}",
+    "async function tp({authIdentity:e,connectionKey:t,deviceKeyClient:n,globalState:r}){let i=(await Promise.all(np(e).map(async e=>{let i=Mf(t,e);return{key:i,record:await ip({deviceKeyClient:n,enrollmentKey:i,globalState:r})}}))).find(e=>e.record!=null);return i?.record==null?null:{key:i.key,record:i.record}}",
+    "function np(e){if(e.tokenAccountUserId==null)return[];let t=[e.tokenAccountUserId];return e.tokenAccountId!=null&&e.headerChatGptAccountId===e.tokenAccountId&&e.tokenAuthUserId!=null&&e.tokenAuthUserId!==e.tokenAccountUserId&&t.push(e.tokenAuthUserId),t}",
+  ].join("");
+
+  assert.equal(applyLinuxRemoteControlClientAccountCompatibilityPatch(source), source);
+});
+
 test("Linux remote-control client revocation triggers local cleanup and re-enrollment", () => {
   const source = syntheticRecoverableErrorPredicateBundle();
   const patched = applyLinuxRemoteControlClientRevocationRecoveryPatch(source);

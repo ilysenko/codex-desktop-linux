@@ -230,6 +230,24 @@ test("subagent nickname metadata patch accepts session metadata shape", () => {
   });
 });
 
+test("subagent nickname metadata patch accepts current upstream-native shape", () => {
+  const source = [
+    "function q(e){if(e==null||typeof e==`string`)return null;let t=Os(e);return t==null?null:ks(t)}",
+    "function Os(e){return`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null}",
+    "function ks(e){return typeof e==`string`?As():`thread_spawn`in e?{parentThreadId:F(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:As()}",
+    "function As(){return{parentThreadId:null,depth:null,agentNickname:null,agentRole:null}}",
+    "function js(e){return e==null?null:Ms(e.agentNickname)??Ms(e.agent_nickname)??Ms(q(e.source)?.agentNickname)}",
+    "function Ms(e){if(e==null)return null;let t=e.trim();return t.length===0?null:t}",
+  ].join("");
+
+  const { value: patched, warnings } = captureWarns(() =>
+    applyPatchTwice(applySubagentNicknameMetadataPatch, source),
+  );
+
+  assert.equal(patched, source);
+  assert.deepEqual(warnings, []);
+});
+
 test("Linux target context parses distro, package, and desktop details", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-linux-target-"));
   try {
@@ -1116,6 +1134,17 @@ test("guards fast-mode model tier lookup when serviceTiers is missing", () => {
 
   assert.match(patched, /\(e\?\.serviceTiers\?\.length\?\?0\)>0/);
   assert.doesNotMatch(patched, /e\.serviceTiers\.length/);
+});
+
+test("guards current fast-mode model tier lookup with an array precheck", () => {
+  const source =
+    "function m(e){return Array.isArray(e.serviceTiers)&&e.serviceTiers.length>0||e.additionalSpeedTiers?.includes(u)===!0}";
+
+  const patched = applyPatchTwice(applyLinuxFastModeModelGuardPatch, source);
+
+  assert.match(patched, /\(e\?\.serviceTiers\?\.length\?\?0\)>0/);
+  assert.doesNotMatch(patched, /Array\.isArray\(e\.serviceTiers\)/);
+  assert.doesNotMatch(patched, /e\.additionalSpeedTiers\?\.includes/);
 });
 
 test("warns when a matched webview opaque bundle has no known insertion point", () => {
