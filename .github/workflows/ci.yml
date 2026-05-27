@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -108,7 +109,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      NIX_CONFIG: experimental-features = nix-command flakes
+      NIX_CONFIG: |
+        experimental-features = nix-command flakes
+        max-jobs = 1
     steps:
       - uses: actions/checkout@v4
 
@@ -124,22 +127,104 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y p7zip-full
 
+      - name: Detect Nix pin file changes
+        id: nix-pin-files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          changed=false
+          changed_files="$(mktemp)"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+              --paginate \
+              --jq '.[].filename' | tee "$changed_files"
+            if grep -Eq '^(flake\.nix|flake\.lock|nix/native-modules/package\.json|nix/native-modules/package-lock\.json|scripts/ci/update-nix-hashes\.sh|scripts/ci/validate-nix-pins\.sh)$' "$changed_files"; then
+              changed=true
+              {
+                echo "## Nix Pin File Changes"
+                echo ""
+                echo "- Rollout skip is disabled because this PR changes Nix pin source-of-truth files."
+                echo "- Changed guarded files:"
+                grep -E '^(flake\.nix|flake\.lock|nix/native-modules/package\.json|nix/native-modules/package-lock\.json|scripts/ci/update-nix-hashes\.sh|scripts/ci/validate-nix-pins\.sh)$' "$changed_files" | sed 's/^/  - `/' | sed 's/$/`/'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          rm -f "$changed_files"
+
       - name: Validate Nix pins against upstream DMG
-        run: scripts/ci/validate-nix-pins.sh
+        id: nix-pin-validation
+        env:
+          NIX_PIN_FILES_CHANGED: ${{ steps.nix-pin-files.outputs.changed }}
+        run: |
+          set -euo pipefail
+          validation_log="$(mktemp)"
+          set +e
+          scripts/ci/validate-nix-pins.sh 2>&1 | tee "$validation_log"
+          validation_status="${PIPESTATUS[0]}"
+          set -e
+          if [ "$validation_status" -ne 0 ]; then
+            if [ "$GITHUB_EVENT_NAME" = "pull_request" ] \
+                && [ "$NIX_PIN_FILES_CHANGED" != "true" ] \
+                && grep -Eq "Codex app version pin mismatch|Electron version pin mismatch|native-modules .* pin mismatch" "$validation_log"; then
+              {
+                echo "## Nix Pin Validation"
+                echo ""
+                echo "- Skipped package-output builds because upstream \`Codex.dmg\` metadata is ahead of the committed flake pins during rollout."
+                echo "- This is PR-only; main-branch validation still fails so the scheduled hash-refresh workflow can update pins once the rollout stabilizes."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "skip_package_outputs=true" >> "$GITHUB_OUTPUT"
+              rm -f "$validation_log"
+              exit 0
+            fi
+            exit "$validation_status"
+          fi
+          echo "skip_package_outputs=false" >> "$GITHUB_OUTPUT"
+          rm -f "$validation_log"
 
       - name: Check flake evaluation
         run: nix flake check --no-build
 
       - name: Build Nix package outputs
+        if: steps.nix-pin-validation.outputs.skip_package_outputs != 'true'
+        env:
+          NIX_PIN_FILES_CHANGED: ${{ steps.nix-pin-files.outputs.changed }}
         run: |
-          nix build \
-            .#codex-desktop \
-            .#codex-desktop-computer-use-ui \
-            .#codex-desktop-remote-mobile-control \
-            .#codex-desktop-computer-use-ui-remote-mobile-control \
-            .#installer \
-            --no-link \
-            --print-build-logs
+          set -euo pipefail
+          outputs=(
+            .#installer
+            .#codex-desktop
+            .#codex-desktop-computer-use-ui
+            .#codex-desktop-remote-mobile-control
+            .#codex-desktop-computer-use-ui-remote-mobile-control
+          )
+          for output in "${outputs[@]}"; do
+            build_log="$(mktemp)"
+            if ! nix build "$output" --no-link --print-build-logs --max-jobs 1 2>&1 | tee "$build_log"; then
+              if [ "$GITHUB_EVENT_NAME" = "pull_request" ] \
+                  && [ "$NIX_PIN_FILES_CHANGED" != "true" ] \
+                  && grep -q "hash mismatch in fixed-output derivation" "$build_log" \
+                  && grep -q "Codex.dmg.drv" "$build_log"; then
+                {
+                  echo "## Nix Package Builds"
+                  echo ""
+                  echo "- Skipped package-output builds after \`$output\` because upstream \`Codex.dmg\` is rolling between fixed-output hashes."
+                  echo "- This does not mask non-DMG Nix failures; main-branch builds still fail on this condition."
+                  echo "- The scheduled hash-refresh workflow owns updating the committed DMG pin once the rollout stabilizes."
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              exit 1
+            fi
+            rm -f "$build_log"
+            store_usage="$(df -P /nix/store | awk 'NR == 2 { gsub("%", "", $5); print $5 }')"
+            if [ "${store_usage:-0}" -ge 85 ]; then
+              nix store gc || true
+            fi
+          done
 
   package-rpm:
     name: Build RPM Package
