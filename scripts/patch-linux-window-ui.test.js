@@ -780,9 +780,31 @@ test("adds Linux file manager support without relying on exact minified variable
 
   const patched = applyPatchTwice(applyLinuxFileManagerPatch, source);
 
+  assert.match(patched, /function codexLinuxFindExecutable\(/);
+  assert.match(patched, /function codexLinuxLaunchDetached\(e,t,n=\{\}\)/);
+  assert.match(patched, /cwd:n\.cwd/);
   assert.match(patched, /linux:\{label:`File Manager`/);
-  assert.match(patched, /detect:\(\)=>`linux-file-manager`/);
-  assert.match(patched, /n\.shell\.openPath\(__codexOpenTarget\)/);
+  assert.match(patched, /detect:\(\)=>codexLinuxFindExecutable\(`dolphin`\)\?\?/);
+  assert.match(patched, /\[`dolphin`,\[`--select`,t\]\]/);
+  assert.match(patched, /n\.shell\.openPath\(t\)/);
+  assert.doesNotMatch(patched, /__codexOpenTarget/);
+});
+
+test("replaces legacy Linux file manager opener with reveal-aware opener", () => {
+  const legacyLinuxFileManager =
+    "linux:{label:`File Manager`,icon:`apps/file-explorer.png`,detect:()=>`linux-file-manager`,args:e=>[e],open:async({path:e})=>{let __codexOpenTarget=e;let __codexError=await n.shell.openPath(__codexOpenTarget);if(__codexError)throw Error(__codexError)}}";
+  const legacyBundle = fileManagerBundle.replace(
+    "}});function uu(){}",
+    `},${legacyLinuxFileManager}});function uu(){}`,
+  );
+  const source = `${mainBundlePrefix}${legacyBundle}`;
+
+  const patched = applyPatchTwice(applyLinuxFileManagerPatch, source);
+
+  assert.equal((patched.match(/linux:\{label:`File Manager`/g) ?? []).length, 1);
+  assert.match(patched, /codexLinuxOpenFileManager\(e\)/);
+  assert.match(patched, /n\.shell\.openPath\(t\)/);
+  assert.doesNotMatch(patched, /__codexOpenTarget|__codexError/);
 });
 
 test("preserves user-enabled remote_control config on Linux", () => {
