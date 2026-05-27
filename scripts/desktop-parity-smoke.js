@@ -192,6 +192,36 @@ function createSkillFixture() {
   return fixtureDir;
 }
 
+function createSkillConfigFixture() {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-skill-config-"));
+  const repoDir = path.join(fixtureDir, "repo");
+  const skillName = "codex-parity-toggle-skill";
+  const skillDir = path.join(repoDir, ".codex", "skills", skillName);
+  fs.mkdirSync(skillDir, { recursive: true });
+  for (const directory of ["codex-home", "home", "xdg-config", "xdg-data", "xdg-state", "xdg-cache"]) {
+    fs.mkdirSync(path.join(fixtureDir, directory), { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    [
+      "---",
+      `name: ${skillName}`,
+      "description: Temporary desktop parity skill config fixture.",
+      "---",
+      "",
+      "# Codex Parity Toggle Skill",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  return {
+    codexHome: path.join(fixtureDir, "codex-home"),
+    fixtureDir,
+    repoDir,
+    skillName,
+  };
+}
+
 function createProjectConfigFixture() {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-config-"));
   fs.mkdirSync(path.join(fixtureDir, ".git"), { recursive: true });
@@ -758,6 +788,13 @@ function findPluginSummary(result, pluginName) {
   return null;
 }
 
+function findRepoSkillSummary(result, cwd, skillName) {
+  const cwdEntries = Array.isArray(result.data) ? result.data : [];
+  const fixtureEntry = cwdEntries.find((entry) => entry && entry.cwd === cwd);
+  const skills = Array.isArray(fixtureEntry?.skills) ? fixtureEntry.skills : [];
+  return skills.find((skill) => skill && skill.name === skillName) || null;
+}
+
 function summarizePluginRead(result) {
   const plugin = hasObject(result.plugin) ? result.plugin : {};
   const summary = hasObject(plugin.summary) ? plugin.summary : {};
@@ -770,6 +807,94 @@ function summarizePluginRead(result) {
     summaryInstalledKnown: typeof summary.installed === "boolean",
     summaryPresent: hasObject(plugin.summary),
   };
+}
+
+async function runSkillConfigFixtureSmoke({ codexBin }) {
+  const fixture = createSkillConfigFixture();
+  const isolatedEnv = {
+    ...process.env,
+    CODEX_HOME: fixture.codexHome,
+    HOME: path.join(fixture.fixtureDir, "home"),
+    XDG_CACHE_HOME: path.join(fixture.fixtureDir, "xdg-cache"),
+    XDG_CONFIG_HOME: path.join(fixture.fixtureDir, "xdg-config"),
+    XDG_DATA_HOME: path.join(fixture.fixtureDir, "xdg-data"),
+    XDG_STATE_HOME: path.join(fixture.fixtureDir, "xdg-state"),
+  };
+
+  try {
+    const client = new AppServerClient({
+      codexBin,
+      cwd: fixture.repoDir,
+      env: isolatedEnv,
+    });
+    try {
+      await client.request("initialize", {
+        clientInfo: {
+          name: "codex_linux_desktop_skill_config_fixture",
+          title: "Codex Linux Desktop Skill Config Fixture",
+          version: "0.1.0",
+        },
+        capabilities: {
+          experimentalApi: true,
+          optOutNotificationMethods: [
+            "account/updated",
+            "account/rateLimits/updated",
+            "thread/started",
+            "thread/status/changed",
+          ],
+        },
+      });
+      client.notify("initialized", {});
+
+      const before = findRepoSkillSummary(
+        await client.request("skills/list", { cwds: [fixture.repoDir], forceReload: true }),
+        fixture.repoDir,
+        fixture.skillName,
+      );
+      const disabled = await client.request("skills/config/write", {
+        enabled: false,
+        name: fixture.skillName,
+      });
+      const afterDisable = findRepoSkillSummary(
+        await client.request("skills/list", { cwds: [fixture.repoDir], forceReload: true }),
+        fixture.repoDir,
+        fixture.skillName,
+      );
+      const enabled = await client.request("skills/config/write", {
+        enabled: true,
+        name: fixture.skillName,
+      });
+      const afterEnable = findRepoSkillSummary(
+        await client.request("skills/list", { cwds: [fixture.repoDir], forceReload: true }),
+        fixture.repoDir,
+        fixture.skillName,
+      );
+
+      const details = {
+        disabledAfterWrite: afterDisable?.enabled === false,
+        disableEffectiveFalse: disabled.effectiveEnabled === false,
+        enableEffectiveTrue: enabled.effectiveEnabled === true,
+        enabledAfterWrite: afterEnable?.enabled === true,
+        enabledBeforeWrite: before?.enabled === true,
+        fixturePresent: before != null && afterDisable != null && afterEnable != null,
+        isolatedCodexHome: isolatedEnv.CODEX_HOME === fixture.codexHome,
+        repoScoped: before?.scope === "repo" && afterDisable?.scope === "repo" && afterEnable?.scope === "repo",
+      };
+      return {
+        details,
+        status: Object.values(details).every((value) => value === true) ? "pass" : "fail",
+      };
+    } finally {
+      await client.close();
+    }
+  } catch (error) {
+    return {
+      details: { error: summarizeErrorText(error.message) },
+      status: "fail",
+    };
+  } finally {
+    removeFixture(fixture.fixtureDir);
+  }
 }
 
 async function runPluginInstallFixtureSmoke({ codexBin }) {
@@ -1115,6 +1240,9 @@ async function runAppServerSmoke(options) {
 
     const pluginInstallFixture = await runPluginInstallFixtureSmoke({ codexBin: options.codexBin });
     record("isolated plugin install fixture", pluginInstallFixture.status, pluginInstallFixture.details);
+
+    const skillConfigFixture = await runSkillConfigFixtureSmoke({ codexBin: options.codexBin });
+    record("isolated skill config fixture", skillConfigFixture.status, skillConfigFixture.details);
 
     const initialize = await client.request("initialize", {
       clientInfo: {
