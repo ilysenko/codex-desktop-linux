@@ -1,6 +1,7 @@
 //! Rebuilds native Linux packages from a downloaded upstream DMG.
 
 use crate::{
+    codex_cli,
     config::{RuntimeConfig, RuntimePaths},
     install::PackageKind,
     state::{ArtifactPaths, PersistedState, UpdateStatus},
@@ -14,7 +15,7 @@ use std::{
 use tokio::process::Command;
 use tracing::info;
 
-const REQUIRED_BUNDLE_FILES: [(&str, &str); 17] = [
+const REQUIRED_BUNDLE_FILES: [(&str, &str); 19] = [
     ("Cargo.toml", "Cargo.toml"),
     ("Cargo.lock", "Cargo.lock"),
     ("computer-use-linux", "computer-use-linux"),
@@ -36,8 +37,13 @@ const REQUIRED_BUNDLE_FILES: [(&str, &str); 17] = [
         "scripts/patch-linux-window-ui.js",
         "scripts/patch-linux-window-ui.js",
     ),
+    (
+        "scripts/app-server-schema-guard.js",
+        "scripts/app-server-schema-guard.js",
+    ),
     ("scripts/patches", "scripts/patches"),
     ("scripts/lib", "scripts/lib"),
+    ("scripts/ci", "scripts/ci"),
     ("packaging/linux", "packaging/linux"),
     ("assets/codex.png", "assets/codex.png"),
     ("linux-features", "linux-features"),
@@ -109,6 +115,11 @@ pub async fn build_update(
     .await
     .context("install.sh failed during local rebuild")?;
 
+    let schema_guard_node = schema_guard_node_program(&config.builder_bundle_root);
+    run_app_server_schema_guard(state, paths, &workspace, &build_path, &schema_guard_node)
+        .await
+        .context("app-server schema guard failed during local rebuild")?;
+
     state.status = UpdateStatus::BuildingPackage;
     state.save(&paths.state_file)?;
 
@@ -157,6 +168,7 @@ struct BuilderWorkspace {
     app_dir: PathBuf,
     reports_dir: PathBuf,
     install_log: PathBuf,
+    schema_guard_log: PathBuf,
     build_log: PathBuf,
 }
 
@@ -169,6 +181,7 @@ impl BuilderWorkspace {
         let logs_dir = workspace_dir.join("logs");
         let reports_dir = workspace_dir.join("reports");
         let install_log = logs_dir.join("install.log");
+        let schema_guard_log = logs_dir.join("app-server-schema-guard.log");
         let build_log = logs_dir.join("build-package.log");
 
         if workspace_dir.exists() {
@@ -188,9 +201,52 @@ impl BuilderWorkspace {
             app_dir,
             reports_dir,
             install_log,
+            schema_guard_log,
             build_log,
         })
     }
+}
+
+fn schema_guard_cli_path(state: &PersistedState) -> Result<PathBuf> {
+    codex_cli::resolve_cli_path(state.cli_path.as_deref())
+        .context("Codex CLI is required to validate app-server schema during local rebuild")
+}
+
+fn schema_guard_node_program(builder_bundle_root: &Path) -> PathBuf {
+    let managed_node = builder_bundle_root.join("node-runtime/bin/node");
+    if managed_node.is_file() {
+        managed_node
+    } else {
+        PathBuf::from("node")
+    }
+}
+
+async fn run_app_server_schema_guard(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    workspace: &BuilderWorkspace,
+    build_path: &OsString,
+    node_program: &Path,
+) -> Result<()> {
+    let cli_path = schema_guard_cli_path(state)?;
+    state.cli_path = Some(cli_path.clone());
+    state.save(&paths.state_file)?;
+
+    run_and_log(
+        Command::new(node_program)
+            .arg(
+                workspace
+                    .bundle_dir
+                    .join("scripts/app-server-schema-guard.js"),
+            )
+            .arg("--codex-bin")
+            .arg(&cli_path)
+            .arg("--json")
+            .env("PATH", build_path)
+            .current_dir(&workspace.bundle_dir),
+        &workspace.schema_guard_log,
+    )
+    .await
 }
 
 /// Returns the path to the native-package build script appropriate for the running system.
@@ -416,7 +472,7 @@ async fn run_and_log(command: &mut Command, log_path: &Path) -> Result<()> {
     let mut combined = Vec::new();
     combined.extend_from_slice(&output.stdout);
     combined.extend_from_slice(&output.stderr);
-    fs::write(log_path, &combined)
+    fs::write(log_path, redact_command_log(&combined))
         .with_context(|| format!("Failed to write {}", log_path.display()))?;
 
     if !output.status.success() {
@@ -428,6 +484,276 @@ async fn run_and_log(command: &mut Command, log_path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn redact_command_log(bytes: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(bytes);
+    let without_pem = redact_pem_blocks(&text);
+    let without_bearer = redact_after_prefix(
+        &redact_after_prefix(&without_pem, "Bearer ", "Bearer <redacted>"),
+        "bearer ",
+        "bearer <redacted>",
+    );
+    let without_api_keys = redact_prefixed_token(&without_bearer, "sk-", "sk-<redacted>");
+    redact_sensitive_fields(&without_api_keys).into_bytes()
+}
+
+fn redact_sensitive_fields(input: &str) -> String {
+    const FIELDS: &[&str] = &[
+        "pairingCode",
+        "pairing_code",
+        "accountId",
+        "account_id",
+        "accountUserId",
+        "account_user_id",
+        "accessToken",
+        "access_token",
+        "apiKey",
+        "api_key",
+        "authToken",
+        "auth_token",
+        "authorization",
+        "browserProfile",
+        "browser_profile",
+        "browserProfilePath",
+        "browser_profile_path",
+        "conversationId",
+        "conversation_id",
+        "cookie",
+        "cookies",
+        "deviceKey",
+        "device_key",
+        "email",
+        "idToken",
+        "id_token",
+        "clientId",
+        "client_id",
+        "clientSecret",
+        "client_secret",
+        "installationId",
+        "installation_id",
+        "environmentId",
+        "environment_id",
+        "keyId",
+        "key_id",
+        "password",
+        "privateKey",
+        "private_key",
+        "privateKeyPkcs8Pem",
+        "private_key_pkcs8_pem",
+        "profilePath",
+        "profile_path",
+        "refreshToken",
+        "refresh_token",
+        "remoteControlToken",
+        "remote_control_token",
+        "secret",
+        "sensitive",
+        "stepUpToken",
+        "step_up_token",
+        "tabTitle",
+        "tabUrl",
+        "threadId",
+        "thread_id",
+        "conversationText",
+        "threadPreview",
+        "token",
+        "screenshot",
+    ];
+    let mut output = redact_url_tokens(input);
+    for field in FIELDS {
+        output = redact_named_field(&output, field);
+    }
+    output
+}
+
+fn redact_url_tokens(input: &str) -> String {
+    let with_https = redact_after_prefix(input, "https://", "<url-redacted>");
+    redact_after_prefix(&with_https, "http://", "<url-redacted>")
+}
+
+fn redact_named_field(input: &str, field: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut search_start = 0;
+
+    while let Some(relative_index) = input[search_start..].find(field) {
+        let field_start = search_start + relative_index;
+        if let Some((value_start, value_end)) = field_value_span(input, field, field_start) {
+            output.push_str(&input[search_start..value_start]);
+            output.push_str("<redacted>");
+            search_start = value_end;
+        } else {
+            let field_end = field_start + field.len();
+            output.push_str(&input[search_start..field_end]);
+            search_start = field_end;
+        }
+    }
+
+    output.push_str(&input[search_start..]);
+    output
+}
+
+fn field_value_span(input: &str, field: &str, field_start: usize) -> Option<(usize, usize)> {
+    let field_end = field_start + field.len();
+    let previous = input[..field_start].chars().next_back();
+    let next = input[field_end..].chars().next();
+
+    let delimiter_start = if matches!(previous, Some('"') | Some('\'')) && next == previous {
+        field_end + next?.len_utf8()
+    } else {
+        if previous.is_some_and(is_identifier_char) || next.is_some_and(is_identifier_char) {
+            return None;
+        }
+        field_end
+    };
+
+    let delimiter_index = skip_whitespace(input, delimiter_start);
+    let delimiter = input[delimiter_index..].chars().next()?;
+    if !matches!(delimiter, ':' | '=') {
+        return None;
+    }
+
+    let value_start = skip_whitespace(input, delimiter_index + delimiter.len_utf8());
+    let value_char = input[value_start..].chars().next()?;
+    if matches!(value_char, '"' | '\'') {
+        let content_start = value_start + value_char.len_utf8();
+        return find_closing_quote(input, content_start, value_char)
+            .map(|content_end| (content_start, content_end));
+    }
+    if value_char == '{' {
+        return find_balanced_value(input, value_start, '{', '}')
+            .map(|value_end| (value_start, value_end));
+    }
+    if value_char == '[' {
+        return find_balanced_value(input, value_start, '[', ']')
+            .map(|value_end| (value_start, value_end));
+    }
+
+    let value_end = input[value_start..]
+        .find(|ch: char| {
+            ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ';' | ')' | '}' | ']')
+        })
+        .map(|end| value_start + end)
+        .unwrap_or(input.len());
+    (value_end > value_start).then_some((value_start, value_end))
+}
+
+fn is_identifier_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
+}
+
+fn skip_whitespace(input: &str, start: usize) -> usize {
+    let mut index = start;
+    for ch in input[start..].chars() {
+        if !ch.is_whitespace() {
+            break;
+        }
+        index += ch.len_utf8();
+    }
+    index
+}
+
+fn find_closing_quote(input: &str, start: usize, quote: char) -> Option<usize> {
+    let mut escaped = false;
+    for (offset, ch) in input[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            return Some(start + offset);
+        }
+    }
+    None
+}
+
+fn find_balanced_value(input: &str, start: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quoted = None;
+    let mut escaped = false;
+    for (offset, ch) in input[start..].char_indices() {
+        if let Some(quote) = quoted {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == quote {
+                quoted = None;
+            }
+            continue;
+        }
+
+        if matches!(ch, '"' | '\'') {
+            quoted = Some(ch);
+        } else if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return Some(start + offset + ch.len_utf8());
+            }
+        }
+    }
+    None
+}
+
+fn redact_pem_blocks(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(start) = rest.find("-----BEGIN ") {
+        output.push_str(&rest[..start]);
+        output.push_str("<pem-redacted>");
+        let after_begin = &rest[start + "-----BEGIN ".len()..];
+        let Some(end_relative) = after_begin.find("-----END ") else {
+            rest = "";
+            break;
+        };
+        let after_end = &after_begin[end_relative + "-----END ".len()..];
+        let Some(end_marker_relative) = after_end.find("-----") else {
+            rest = "";
+            break;
+        };
+        rest = &after_end[end_marker_relative + "-----".len()..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn redact_after_prefix(input: &str, prefix: &str, replacement: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(index) = rest.find(prefix) {
+        output.push_str(&rest[..index]);
+        output.push_str(replacement);
+        let token_start = index + prefix.len();
+        let token_end = rest[token_start..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ';' | ')'))
+            .map(|end| token_start + end)
+            .unwrap_or(rest.len());
+        rest = &rest[token_end..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn redact_prefixed_token(input: &str, prefix: &str, replacement: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(index) = rest.find(prefix) {
+        output.push_str(&rest[..index]);
+        output.push_str(replacement);
+        let token_end = rest[index..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ';' | ')'))
+            .map(|end| index + end)
+            .unwrap_or(rest.len());
+        rest = &rest[token_end..];
+    }
+    output.push_str(rest);
+    output
 }
 
 #[cfg(test)]
@@ -546,6 +872,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
         let state_root = temp.path().join("state");
         let cache_root = temp.path().join("cache");
         fs::create_dir_all(bundle_root.join("scripts/lib"))?;
+        fs::create_dir_all(bundle_root.join("scripts/ci"))?;
         fs::create_dir_all(bundle_root.join("scripts/patches"))?;
         fs::create_dir_all(bundle_root.join("launcher"))?;
         fs::create_dir_all(bundle_root.join("packaging/linux"))?;
@@ -652,6 +979,10 @@ fi
             b"console.log('patched');\n",
         )?;
         fs::write(
+            bundle_root.join("scripts/app-server-schema-guard.js"),
+            b"#!/usr/bin/env node\n",
+        )?;
+        fs::write(
             bundle_root.join("scripts/patches/registry.js"),
             b"module.exports = {};\n",
         )?;
@@ -662,6 +993,10 @@ fi
         fs::write(
             bundle_root.join("scripts/lib/node-runtime.sh"),
             b"#!/bin/bash\n",
+        )?;
+        fs::write(
+            bundle_root.join("scripts/ci/validate-patch-report.js"),
+            b"#!/usr/bin/env node\n",
         )?;
 
         let paths = RuntimePaths {
@@ -686,8 +1021,16 @@ fi
         };
         let dmg_path = temp.path().join("Codex.dmg");
         fs::write(&dmg_path, b"dmg")?;
+        let fake_codex = temp.path().join("codex");
+        fs::write(&fake_codex, b"#!/bin/sh\necho codex 0.0.0\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&fake_codex, fs::Permissions::from_mode(0o755))?;
+        }
 
         let mut state = PersistedState::new(true);
+        state.cli_path = Some(fake_codex.clone());
         let artifacts = build_update(
             &config,
             &mut state,
@@ -717,6 +1060,14 @@ fi
             .exists());
         assert!(artifacts
             .workspace_dir
+            .join("builder/scripts/app-server-schema-guard.js")
+            .exists());
+        assert!(artifacts
+            .workspace_dir
+            .join("builder/scripts/ci/validate-patch-report.js")
+            .exists());
+        assert!(artifacts
+            .workspace_dir
             .join("builder/linux-features/features.example.json")
             .exists());
         assert!(artifacts
@@ -727,6 +1078,11 @@ fi
             .workspace_dir
             .join("reports/rebuild-report.json")
             .exists());
+        assert!(artifacts
+            .workspace_dir
+            .join("logs/app-server-schema-guard.log")
+            .exists());
+        assert_eq!(state.cli_path.as_deref(), Some(fake_codex.as_path()));
         assert!(
             is_native_package_file(&artifacts.package_path),
             "expected a native package (.deb, .rpm, or .pkg.tar.zst), got {}",
@@ -742,6 +1098,7 @@ fi
         let destination_root = temp.path().join("destination");
 
         fs::create_dir_all(source_root.join("scripts/lib"))?;
+        fs::create_dir_all(source_root.join("scripts/ci"))?;
         fs::create_dir_all(source_root.join("scripts/patches"))?;
         fs::create_dir_all(source_root.join("launcher"))?;
         fs::create_dir_all(source_root.join("packaging/linux"))?;
@@ -763,6 +1120,10 @@ fi
             b"console.log('patched');\n",
         )?;
         fs::write(
+            source_root.join("scripts/app-server-schema-guard.js"),
+            b"#!/usr/bin/env node\n",
+        )?;
+        fs::write(
             source_root.join("scripts/patches/registry.js"),
             b"module.exports = {};\n",
         )?;
@@ -773,6 +1134,10 @@ fi
         fs::write(
             source_root.join("scripts/lib/node-runtime.sh"),
             b"#!/bin/bash\n",
+        )?;
+        fs::write(
+            source_root.join("scripts/ci/validate-patch-report.js"),
+            b"#!/usr/bin/env node\n",
         )?;
         fs::write(
             source_root.join("packaging/linux/control"),
@@ -790,6 +1155,9 @@ fi
         assert!(destination_root
             .join("scripts/patch-linux-window-ui.js")
             .exists());
+        assert!(destination_root
+            .join("scripts/app-server-schema-guard.js")
+            .exists());
         assert!(destination_root.join("launcher/webview-server.py").exists());
         assert!(destination_root
             .join("scripts/patches/registry.js")
@@ -805,6 +1173,9 @@ fi
             .exists());
         assert!(destination_root
             .join("scripts/lib/node-runtime.sh")
+            .exists());
+        assert!(destination_root
+            .join("scripts/ci/validate-patch-report.js")
             .exists());
         assert!(destination_root
             .join("linux-features/features.example.json")
@@ -881,6 +1252,65 @@ fi
         let path = build_command_path(temp.path());
         let directories = std::env::split_paths(&path).collect::<Vec<_>>();
         assert_eq!(directories.first(), Some(&runtime_bin));
+        Ok(())
+    }
+
+    #[test]
+    fn schema_guard_node_program_prefers_packaged_managed_node() -> Result<()> {
+        let temp = tempdir()?;
+        let managed_node = temp.path().join("node-runtime/bin/node");
+        fs::create_dir_all(managed_node.parent().unwrap())?;
+        fs::write(&managed_node, b"bin")?;
+
+        assert_eq!(schema_guard_node_program(temp.path()), managed_node);
+        assert_eq!(
+            schema_guard_node_program(&temp.path().join("missing")),
+            PathBuf::from("node")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn command_log_redaction_covers_private_app_state() -> Result<()> {
+        let input = br#"schema guard failed Bearer secret-token bearer lower-secret sk-test-secret https://signed.example/path?token=url-fixture {"installationId":"install-fixture","tabUrl":"https://private.example/tab","tabTitle":"private tab fixture", "accountUserId" : "account-user-fixture", "privateKeyPkcs8Pem": "pkcs8-fixture"} deviceKey = "device-key-fixture" threadPreview=private-preview remote_control_token: remote-token-fixture sensitive:{error:"sensitive-fixture"} conversationId='conversation-fixture' stepUpToken = step-up-fixture -----BEGIN PRIVATE KEY----- pem-fixture -----END PRIVATE KEY-----"#;
+        let output = String::from_utf8(redact_command_log(input))?;
+
+        assert!(output.contains("Bearer <redacted>"));
+        assert!(output.contains("bearer <redacted>"));
+        assert!(output.contains("sk-<redacted>"));
+        assert!(output.contains("<url-redacted>"));
+        assert!(output.contains(r#""installationId":"<redacted>""#));
+        assert!(output.contains(r#""tabUrl":"<redacted>""#));
+        assert!(output.contains(r#""tabTitle":"<redacted>""#));
+        assert!(output.contains(r#""accountUserId" : "<redacted>""#));
+        assert!(output.contains(r#""privateKeyPkcs8Pem": "<redacted>""#));
+        assert!(output.contains(r#"deviceKey = "<redacted>""#));
+        assert!(output.contains("threadPreview=<redacted>"));
+        assert!(output.contains("remote_control_token: <redacted>"));
+        assert!(output.contains("sensitive:<redacted>"));
+        assert!(output.contains("conversationId='<redacted>'"));
+        assert!(output.contains("stepUpToken = <redacted>"));
+        assert!(output.contains("<pem-redacted>"));
+        for forbidden in [
+            "secret-token",
+            "lower-secret",
+            "sk-test-secret",
+            "signed.example",
+            "install-fixture",
+            "private.example",
+            "private tab fixture",
+            "account-user-fixture",
+            "pkcs8-fixture",
+            "device-key-fixture",
+            "private-preview",
+            "remote-token-fixture",
+            "sensitive-fixture",
+            "conversation-fixture",
+            "step-up-fixture",
+            "pem-fixture",
+        ] {
+            assert!(!output.contains(forbidden), "leaked {forbidden}");
+        }
         Ok(())
     }
 

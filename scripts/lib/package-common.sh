@@ -540,6 +540,7 @@ stage_update_builder_bundle() {
     mkdir -p \
         "$update_builder_root/scripts" \
         "$update_builder_root/scripts/lib" \
+        "$update_builder_root/scripts/ci" \
         "$update_builder_root/scripts/patches" \
         "$update_builder_root/launcher" \
         "$update_builder_root/linux-features" \
@@ -563,6 +564,7 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/scripts/build-rpm.sh" "$update_builder_root/scripts/build-rpm.sh"
     cp "$REPO_DIR/scripts/build-pacman.sh" "$update_builder_root/scripts/build-pacman.sh"
     cp "$REPO_DIR/scripts/rebuild-candidate.sh" "$update_builder_root/scripts/rebuild-candidate.sh"
+    cp "$REPO_DIR/scripts/app-server-schema-guard.js" "$update_builder_root/scripts/app-server-schema-guard.js"
     cp "$REPO_DIR/scripts/patch-linux-window-ui.js" "$update_builder_root/scripts/patch-linux-window-ui.js"
     cp -r "$REPO_DIR/scripts/patches/." "$update_builder_root/scripts/patches/"
     cp "$REPO_DIR/scripts/lib/package-common.sh" "$update_builder_root/scripts/lib/package-common.sh"
@@ -583,6 +585,8 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/scripts/lib/rebuild-report.sh" "$update_builder_root/scripts/lib/rebuild-report.sh"
     cp "$REPO_DIR/scripts/lib/build-info.js" "$update_builder_root/scripts/lib/build-info.js"
     cp "$REPO_DIR/scripts/lib/build-info.sh" "$update_builder_root/scripts/lib/build-info.sh"
+    cp "$REPO_DIR/scripts/ci/validate-patch-report.js" \
+        "$update_builder_root/scripts/ci/validate-patch-report.js"
     cp "$REPO_DIR/packaging/linux/control" "$update_builder_root/packaging/linux/control"
     cp "$REPO_DIR/packaging/linux/codex-desktop.spec" "$update_builder_root/packaging/linux/codex-desktop.spec"
     cp "$REPO_DIR/packaging/linux/codex-desktop.desktop" "$update_builder_root/packaging/linux/codex-desktop.desktop"

@@ -249,6 +249,7 @@ run_core_job() {
     for file in scripts/patches/*.js; do
         node --check "$file"
     done
+    node --check scripts/app-server-schema-guard.js
     node --check scripts/ci/validate-patch-report.js
     node --test scripts/patch-linux-window-ui.test.js
 
@@ -280,6 +281,8 @@ run_deb_job() {
     assert_contains_file /tmp/deb-contents.txt './usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/launcher/webview-server.py'
+    assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/ci/validate-patch-report.js'
+    assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/app-server-schema-guard.js'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
 
     rm -rf dist
@@ -335,6 +338,8 @@ run_rpm_job() {
     assert_contains_file /tmp/rpm-contents.txt '/usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/launcher/webview-server.py'
+    assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/ci/validate-patch-report.js'
+    assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/app-server-schema-guard.js'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
 
     rm -rf dist
@@ -384,6 +389,8 @@ run_pacman_job() {
     assert_contains_file /tmp/pacman-contents.txt 'usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/launcher/webview-server.py'
+    assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/ci/validate-patch-report.js'
+    assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/app-server-schema-guard.js'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
 
     rm -rf dist

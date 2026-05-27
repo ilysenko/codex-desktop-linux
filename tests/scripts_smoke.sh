@@ -232,6 +232,8 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-target-context.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/app-server-schema-guard.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/ci/validate-patch-report.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/engine.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/registry.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/shared.js"
@@ -1537,6 +1539,60 @@ test_upstream_build_app_workflow_tracks_dmg_metadata() {
     assert_contains "$workflow" 'make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg'
     assert_contains "$workflow" 'DMG Last-Modified'
     assert_contains "$workflow" 'DMG SHA-256'
+}
+
+test_app_server_schema_guard_static_contract() {
+    info "Checking app-server schema guard static contract"
+    local guard="$REPO_DIR/scripts/app-server-schema-guard.js"
+
+    assert_file_exists "$guard"
+    node --check "$guard"
+    assert_contains "$guard" "app-server"
+    assert_contains "$guard" "generate-json-schema"
+    assert_contains "$guard" "v2/PluginInstallParams.json"
+    assert_contains "$guard" "v2/McpServerToolCallParams.json"
+    assert_contains "$guard" "v2/ConfigReadResponse.json"
+    assert_contains "$guard" "v2/AppsListResponse.json"
+    assert_contains "$guard" "v2/CommandExecResponse.json"
+    assert_contains "$guard" "v2/RemoteControlStatusChangedNotification.json"
+    assert_contains "$guard" "v2/AppListUpdatedNotification.json"
+    assert_contains "$guard" "v2/CommandExecOutputDeltaNotification.json"
+    assert_contains "$guard" "thread/goal/set"
+    assert_contains "$guard" "fs/writeFile"
+
+    node - "$guard" "$TMP_DIR/schema-guard-fixture" <<'NODE' \
+        || fail "Expected app-server schema guard to validate schema-dir fixtures"
+const fs = require("node:fs");
+const path = require("node:path");
+const guard = require(process.argv[2]);
+const schemaDir = process.argv[3];
+fs.rmSync(schemaDir, { force: true, recursive: true });
+for (const relativePath of guard.REQUIRED_SCHEMA_FILES) {
+  const filePath = path.join(schemaDir, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, "{}\n");
+}
+const variant = (method) => ({ properties: { method: { enum: [method] } } });
+fs.writeFileSync(
+  path.join(schemaDir, "ClientRequest.json"),
+  JSON.stringify({ oneOf: guard.REQUIRED_CLIENT_REQUEST_METHODS.map(variant) }),
+);
+fs.writeFileSync(
+  path.join(schemaDir, "ServerNotification.json"),
+  JSON.stringify({ oneOf: guard.REQUIRED_SERVER_NOTIFICATION_METHODS.map(variant) }),
+);
+let summary = guard.run({ schemaDir, keepOutput: null });
+if (!summary.ok) {
+  console.error(summary);
+  process.exit(1);
+}
+fs.rmSync(path.join(schemaDir, "v2/CommandExecResponse.json"));
+summary = guard.run({ schemaDir, keepOutput: null });
+if (summary.ok || !summary.missing.requiredFiles.includes("v2/CommandExecResponse.json")) {
+  console.error(summary);
+  process.exit(1);
+}
+NODE
 }
 
 test_installer_detects_electron_version_from_plist() {
@@ -5014,6 +5070,7 @@ main() {
     test_setup_native_wizard_dry_run_cleanup_does_not_delete_confirmed_paths
     test_setup_native_wizard_cleanup_deletes_only_confirmed_paths
     test_upstream_build_app_workflow_tracks_dmg_metadata
+    test_app_server_schema_guard_static_contract
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
     test_port_validation_rejects_oversized_numeric_values
