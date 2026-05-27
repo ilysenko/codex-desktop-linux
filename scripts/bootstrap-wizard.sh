@@ -372,6 +372,8 @@ window_backend_hint() {
     desktop="${desktop,,}"
     if [[ "$desktop" == *hyprland* ]]; then
         printf 'Hyprland -> hyprctl backend'
+    elif [[ "$desktop" == *niri* ]]; then
+        printf 'niri -> niri msg backend'
     elif [[ "$desktop" == *sway* ]]; then
         printf 'Sway -> not explicitly supported by the current i3 backend; verify with Computer Use doctor after install'
     elif [[ "$desktop" == *i3* ]]; then

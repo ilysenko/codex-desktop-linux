@@ -1278,6 +1278,27 @@ test_setup_native_wizard_sway_hint_is_conservative() {
     assert_not_contains "$output_log" "Sway -> i3 IPC backend through swaymsg"
 }
 
+test_setup_native_wizard_niri_hint_reports_backend() {
+    info "Checking setup-native wizard niri backend hint"
+    local workspace="$TMP_DIR/setup-native-niri-hint"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+
+    make_wizard_feature_root "$features_root"
+    printf '%s\n' '{"enabled":[]}' > "$config"
+
+    XDG_CURRENT_DESKTOP=niri \
+    DESKTOP_SESSION=niri \
+    XDG_SESSION_DESKTOP=niri \
+    CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$config" \
+        bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log"
+
+    assert_contains "$output_log" "niri -> niri msg backend"
+}
+
 test_setup_native_wizard_cleanup_requires_interactive_confirmation() {
     info "Checking setup-native wizard cleanup refuses non-interactive deletion"
     local workspace="$TMP_DIR/setup-native-cleanup-noninteractive"

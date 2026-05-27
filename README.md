@@ -211,7 +211,7 @@ Linux Computer Use is an **opt-in** plugin that lets Codex inspect and control d
 
 - app listing and accessibility trees via AT-SPI
 - screenshots through GNOME Shell DBus or XDG Desktop Portal
-- window listing and focusing on GNOME, KWin/Plasma, Hyprland, and i3
+- window listing and focusing on GNOME, KWin/Plasma, Hyprland, niri, and i3
 - keyboard, text, click, scroll, and drag input through a uinput absolute pointer, the XDG Desktop Portal RemoteDesktop session, or `ydotool`
 
 ### Runtime dependencies
@@ -248,7 +248,7 @@ If you are on Fedora + KDE Plasma and the system unit path is awkward, a user-se
 - old system-level overrides are removed if they force the wrong socket path
 - `codex-computer-use-linux doctor` reports `can_send_development_input: true`
 
-A working XDG Desktop Portal implementation is needed if you are not on GNOME — `xdg-desktop-portal-kde` for KDE Plasma, `xdg-desktop-portal-wlr` for sway, `xdg-desktop-portal-hyprland` for Hyprland, or your distro's preferred portal backend for i3. GNOME ships a working portal by default.
+A working XDG Desktop Portal implementation is needed if you are not on GNOME — `xdg-desktop-portal-kde` for KDE Plasma, `xdg-desktop-portal-wlr` for sway or niri, `xdg-desktop-portal-hyprland` for Hyprland, or your distro's preferred portal backend for i3. GNOME ships a working portal by default.
 
 ### Verifying readiness
 
