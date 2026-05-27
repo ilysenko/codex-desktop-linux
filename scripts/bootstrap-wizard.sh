@@ -461,14 +461,30 @@ settings_file_path() {
         printf '%s\n' "$CODEX_LINUX_SETTINGS_FILE"
     else
         local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-        local app_id="${CODEX_LINUX_APP_ID:-${CODEX_APP_ID:-codex-desktop}}"
-        case "$app_id" in
-            */*|*[!A-Za-z0-9._-]*|"."|".."|"")
-                app_id="codex-desktop"
-                ;;
-        esac
+        local app_id
+        app_id="$(linux_app_id)"
         printf '%s\n' "$config_home/$app_id/settings.json"
     fi
+}
+
+linux_app_id() {
+    local app_id="${CODEX_LINUX_APP_ID:-${CODEX_APP_ID:-${PACKAGE_NAME:-codex-desktop}}}"
+    case "$app_id" in
+        */*|*[!A-Za-z0-9._-]*|"."|".."|"")
+            app_id="codex-desktop"
+            ;;
+    esac
+    printf '%s\n' "$app_id"
+}
+
+remote_mobile_key_file_path() {
+    local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+    printf '%s/%s/remote-control-device-keys-v1.json\n' "$config_home" "$(linux_app_id)"
+}
+
+remote_mobile_legacy_key_file_path() {
+    local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+    printf '%s/codex-desktop/remote-control-device-keys-v1.json\n' "$config_home"
 }
 
 json_setting_value() {
@@ -846,9 +862,12 @@ print_safe_disable_guidance() {
     info "Disabling a build-time feature only edits linux-features/features.json for the next rebuild."
 
     if list_includes_id "$disable_raw" "remote-mobile-control"; then
-        local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-        local key_file="$config_home/codex-desktop/remote-control-device-keys-v1.json"
+        local key_file
+        key_file="$(remote_mobile_key_file_path)"
         info "Remote mobile control opt-out: Not deleting $key_file."
+        if [ "$(linux_app_id)" != "codex-desktop" ]; then
+            info "Legacy default-app metadata may also exist at $(remote_mobile_legacy_key_file_path)."
+        fi
         info "If Secret Service is available, that file may contain only key metadata while private keys live in the desktop keyring."
         info "Revoke paired devices from Codex Settings/Connections or ChatGPT before deleting local keys manually."
     fi
@@ -971,11 +990,15 @@ run_feature_cleanup() {
     fi
 
     if list_includes_id "$cleanup_raw" "remote-mobile-control"; then
-        local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-        local key_file="$config_home/codex-desktop/remote-control-device-keys-v1.json"
+        local key_file legacy_key_file
+        key_file="$(remote_mobile_key_file_path)"
+        legacy_key_file="$(remote_mobile_legacy_key_file_path)"
         info "Remote mobile control cleanup: revoke paired devices in Codex Settings/Connections or ChatGPT before deleting local key metadata or fallback keys."
         info "Secret Service-backed keys are cleared by the app when the paired device is revoked; manual metadata deletion alone may leave orphaned keyring entries."
         confirm_and_delete_path "$key_file"
+        if [ "$legacy_key_file" != "$key_file" ] && [ -e "$legacy_key_file" ]; then
+            confirm_and_delete_path "$legacy_key_file"
+        fi
     fi
 
     if list_includes_id "$cleanup_raw" "read-aloud" ||

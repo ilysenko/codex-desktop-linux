@@ -42,9 +42,10 @@ What it changes:
   when the native browser bridge is not exposed to the session.
 - Prefers the Linux Secret Service keyring via `secret-tool` for private key
   material, while keeping non-secret public key metadata at
-  `~/.config/codex-desktop/remote-control-device-keys-v1.json` with `0600`
-  file permissions. If `secret-tool` or the desktop keyring is unavailable, the
-  same JSON file remains the `0600` file-backed fallback.
+  `~/.config/<app-id>/remote-control-device-keys-v1.json` with `0600` file
+  permissions. The default app id is `codex-desktop`; side-by-side app ids use
+  their own metadata path. If `secret-tool` or the desktop keyring is
+  unavailable, the same JSON file remains the `0600` file-backed fallback.
 - Migrates existing file-backed private keys into Secret Service on the next
   successful key read when `secret-tool` is available.
 - Preserves `remote_control = true` / `features.remote_control = true` in the
@@ -129,10 +130,13 @@ Key storage:
 
 When `secret-tool` is available on `PATH`, newly enrolled Linux device keys are
 stored in the user's Secret Service keyring with attributes
-`application=codex-desktop-linux`, `kind=remote-control-device-key`, and
-`key-id=<device key id>`. The JSON file remains as public metadata plus lookup
-attributes. Set `CODEX_REMOTE_CONTROL_KEY_STORE=file` to force the older
-file-backed `0600` fallback for troubleshooting or minimal desktop sessions.
+`application=codex-desktop-linux`, `app-id=<app id>`,
+`kind=remote-control-device-key`, and `key-id=<device key id>`. The JSON file
+remains as public metadata plus lookup attributes. Set
+`CODEX_REMOTE_CONTROL_KEY_STORE=file` to force the older file-backed `0600`
+fallback for troubleshooting or minimal desktop sessions. Existing legacy
+Secret Service entries without `app-id` remain readable so already-enrolled
+devices are not stranded during upgrade.
 
 KDE Plasma smoke check:
 
