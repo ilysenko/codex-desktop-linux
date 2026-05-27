@@ -51,12 +51,36 @@ assert_contains() {
     grep -q -- "$pattern" "$path" || fail "Expected '$pattern' in $path"
 }
 
+assert_contains_literal() {
+    local path="$1"
+    local literal="$2"
+    grep -Fq -- "$literal" "$path" || fail "Expected literal '$literal' in $path"
+}
+
 assert_not_contains() {
     local path="$1"
     local pattern="$2"
     if grep -q -- "$pattern" "$path"; then
         fail "Did not expect '$pattern' in $path"
     fi
+}
+
+assert_not_contains_literal() {
+    local path="$1"
+    local literal="$2"
+    if grep -Fq -- "$literal" "$path"; then
+        fail "Did not expect literal '$literal' in $path"
+    fi
+}
+
+assert_app_service_shell_variables_escaped() {
+    local path="$1"
+    assert_contains_literal "$path" 'status=$$?'
+    assert_contains_literal "$path" '$${XDG_STATE_HOME:-$$HOME/.local/state}'
+    assert_contains_literal "$path" '"$$pid_file"'
+    assert_contains_literal "$path" 'pid="$$(cat "$$pid_file"'
+    assert_not_contains_literal "$path" 'status=$?'
+    assert_not_contains_literal "$path" '${XDG_STATE_HOME:-$HOME/.local/state}'
 }
 
 assert_occurrence_count() {
@@ -266,9 +290,15 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-doctor.py"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop.service"
     assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
     assert_file_exists "$pkg_root/usr/bin/codex-desktop-doctor"
     assert_contains "$pkg_root/usr/bin/codex-desktop-doctor" 'PACKAGE_NAME = "codex-desktop"'
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
+    assert_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "/usr/bin/codex-desktop"
+    assert_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "WantedBy=graphical-session.target"
+    assert_not_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "--remote-debugging-port"
+    assert_app_service_shell_variables_escaped "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
 }
 
 test_update_builder_preserves_enabled_linux_features_config() {
@@ -379,6 +409,7 @@ SCRIPT
     assert_file_exists "$dist_dir/codex-cua-lab_2026.03.24.120000+deadbeef_amd64.deb"
     assert_file_exists "$pkg_root/usr/bin/codex-cua-lab"
     assert_file_exists "$pkg_root/usr/bin/codex-cua-lab-doctor"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-cua-lab.service"
     assert_file_exists "$pkg_root/opt/codex-cua-lab/start.sh"
     assert_contains "$pkg_root/DEBIAN/control" "Package: codex-cua-lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "Name=Codex CUA Lab"
@@ -389,6 +420,8 @@ SCRIPT
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "X-GNOME-WMClass=codex-cua-lab"
     assert_contains "$pkg_root/opt/codex-cua-lab/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-cua-lab.desktop"'
     assert_contains "$pkg_root/usr/bin/codex-cua-lab-doctor" 'PACKAGE_NAME = "codex-cua-lab"'
+    assert_contains "$pkg_root/usr/lib/systemd/user/codex-cua-lab.service" "/usr/bin/codex-cua-lab"
+    assert_app_service_shell_variables_escaped "$pkg_root/usr/lib/systemd/user/codex-cua-lab.service"
 }
 
 test_deb_builder_without_updater() {
@@ -435,6 +468,8 @@ SCRIPT
     assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+manual_amd64.deb"
     assert_file_exists "$pkg_root/usr/bin/codex-desktop"
     assert_file_exists "$pkg_root/usr/bin/codex-desktop-doctor"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
+    assert_app_service_shell_variables_escaped "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
     assert_file_exists "$pkg_root/DEBIAN/postinst"
     assert_file_exists "$pkg_root/DEBIAN/prerm"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
@@ -583,6 +618,10 @@ SCRIPT
         || fail "Expected default RPM binary payload to use tool default"
     assert_file_exists "$capture_dir/staging/usr/bin/codex-desktop-doctor"
     assert_contains "$capture_dir/staging/usr/bin/codex-desktop-doctor" 'PACKAGE_NAME = "codex-desktop"'
+    assert_file_exists "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
+    assert_contains "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service" "/usr/bin/codex-desktop"
+    assert_not_contains "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service" "--remote-debugging-port"
+    assert_app_service_shell_variables_escaped "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
 
     rm -rf "$dist_dir" "$capture_dir"
     mkdir -p "$dist_dir" "$capture_dir"
@@ -601,6 +640,8 @@ SCRIPT
     [ "$(cat "$capture_dir/rpm-binary-payload")" = "w19T8.zstdio" ] \
         || fail "Expected MAX_BUILD_THREADS to reach rpmbuild payload compression"
     assert_file_exists "$capture_dir/staging/usr/bin/codex-desktop-doctor"
+    assert_file_exists "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
+    assert_app_service_shell_variables_escaped "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
     assert_file_exists "$capture_dir/staging/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
     assert_file_not_exists "$capture_dir/staging/usr/bin/codex-update-manager"
     assert_file_not_exists "$capture_dir/staging/usr/lib/systemd/user/codex-update-manager.service"
@@ -717,6 +758,9 @@ SCRIPT
     assert_not_contains "$capture_dir/PKGBUILD" "__STAGING_DIR__"
     assert_contains "$capture_dir/PKGBUILD" "install=codex-desktop.install"
     assert_not_contains "$capture_dir/PKGBUILD" "'polkit'"
+    assert_file_exists "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
+    assert_contains "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service" "/usr/bin/codex-desktop"
+    assert_app_service_shell_variables_escaped "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
     assert_contains "$capture_dir/codex-desktop.install" "codex_no_updater_cleanup_update_manager_service"
     assert_contains "$capture_dir/codex-desktop.install" "post_upgrade"
     assert_contains "$capture_dir/codex-desktop.install" "pre_remove"
@@ -794,6 +838,7 @@ SCRIPT
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/resources/node-runtime/bin/node"
     assert_file_not_exists "$capture_dir/AppDir/usr/bin/codex-desktop-doctor"
     assert_file_not_exists "$capture_dir/AppDir/usr/bin/codex-update-manager"
+    assert_file_not_exists "$capture_dir/AppDir/usr/lib/systemd/user/codex-desktop.service"
     assert_file_not_exists "$capture_dir/AppDir/usr/lib/systemd/user/codex-update-manager.service"
     assert_file_not_exists "$capture_dir/AppDir/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy"
     assert_file_not_exists "$capture_dir/AppDir/opt/codex-desktop/update-builder"
@@ -936,6 +981,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local update_log="$TMP_DIR/make-update-native.log"
     local setup_log="$TMP_DIR/make-setup-native.log"
     local doctor_log="$TMP_DIR/make-doctor.log"
+    local app_service_log="$TMP_DIR/make-app-service.log"
 
     make -n -C "$REPO_DIR" install-native >"$install_log"
     assert_contains "$install_log" './install.sh --fresh'
@@ -957,6 +1003,12 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" doctor >"$doctor_log"
     assert_contains "$doctor_log" '/usr/bin/codex-desktop-doctor'
+
+    make -n -C "$REPO_DIR" app-service-enable >"$app_service_log"
+    assert_contains "$app_service_log" 'systemctl --user import-environment'
+    assert_contains "$app_service_log" 'systemctl --user enable --now codex-desktop.service'
+    assert_contains "$app_service_log" 'Close any already-running Codex Desktop process'
+    assert_not_contains "$app_service_log" '--remote-debugging-port'
 }
 
 test_desktop_doctor_template_smoke() {
@@ -998,6 +1050,7 @@ JS
     fi
 
     assert_contains "$report" '"packageName": "codex-doctor-smoke"'
+    assert_contains "$report" '"app_service_unit"'
     assert_contains "$report" '"patch_report_validator"'
     assert_contains "$report" '"chrome_manifest_probe"'
     assert_contains "$report" "manifest probe reported a problem"
@@ -1012,7 +1065,7 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     report = json.load(handle)
 
 ids = {check["id"] for check in report["checks"]}
-required = {"package", "launcher", "doctor", "app_root", "managed_node", "app_asar"}
+required = {"package", "launcher", "doctor", "app_service_unit", "app_root", "managed_node", "app_asar"}
 missing = required - ids
 if missing:
     raise SystemExit(f"missing checks: {sorted(missing)}")

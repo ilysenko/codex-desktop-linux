@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -210,6 +211,7 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
     app_root = Path("/opt") / package_name
     launcher = Path("/usr/bin") / package_name
     doctor = Path("/usr/bin") / f"{package_name}-doctor"
+    app_service = Path("/usr/lib/systemd/user") / f"{package_name}.service"
     update_service = Path("/usr/lib/systemd/user/codex-update-manager.service")
     asar = app_root / "resources/app.asar"
     managed_node = app_root / "resources/node-runtime/bin/node"
@@ -244,6 +246,40 @@ def checks_for_package(package_name: str) -> list[dict[str, Any]]:
         PASS if doctor.is_file() and os.access(doctor, os.X_OK) else FAIL,
         str(doctor),
         path=str(doctor),
+    )
+    app_service_status = FAIL if version else INFO
+    app_service_detail = "not installed in native-package service directory"
+    if app_service.is_file():
+        try:
+            service_text = app_service.read_text(encoding="utf-8")
+        except OSError as exc:
+            app_service_status = FAIL
+            app_service_detail = str(exc)
+        else:
+            expected_exec = f"/usr/bin/{package_name}"
+            exec_token = re.compile(rf"(^|[\s'\";]){re.escape(expected_exec)}([\s;'\"$]|$)")
+            service_lines = [line.strip() for line in service_text.splitlines()]
+            has_expected_exec = any(
+                line.startswith("ExecStart=") and exec_token.search(line)
+                for line in service_lines
+            )
+            has_install_target = any(
+                line == "WantedBy=graphical-session.target"
+                for line in service_lines
+            )
+            has_debug_port = "--remote-debugging-port" in service_text
+            app_service_status = PASS if has_expected_exec and has_install_target and not has_debug_port else FAIL
+            if app_service_status == PASS:
+                app_service_detail = "unit is installed and targets the packaged launcher"
+            else:
+                app_service_detail = "unit exists but does not match the packaged launcher contract"
+    add_check(
+        checks,
+        "app_service_unit",
+        "App user service unit",
+        app_service_status,
+        app_service_detail,
+        path=str(app_service),
     )
     add_check(
         checks,

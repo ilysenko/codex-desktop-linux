@@ -22,6 +22,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Native packages now install `codex-desktop-doctor`, a safe installed-state
   healthcheck for package files, updater/update-builder staging, Chrome native
   messaging, Computer Use readiness, and remote mobile markers.
+- Native packages now include an opt-in `codex-desktop.service` user unit plus
+  `make app-service-enable`, `make app-service-status`, and
+  `make app-service-disable` helpers for users who want Codex Desktop managed
+  by `systemd --user`; the unit waits on the launcher PID file so it can stay
+  active when Electron is moved into a desktop app scope.
 - Linux desktop entries now expose Quick Chat and Compact Prompt actions backed
   by the existing `--quick-chat` and `--prompt-chat` launcher paths.
 - Linux Zed editor opener support is now enabled by default when the `zed`,
