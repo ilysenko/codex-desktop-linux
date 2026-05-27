@@ -7,12 +7,10 @@ UPSTREAM_DMG_URL="${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app
 UPSTREAM_DMG_PATH="${1:-${UPSTREAM_DMG_PATH:-/tmp/Codex.dmg}}"
 NATIVE_MODULES_PKG="${NATIVE_MODULES_PKG:-$REPO_DIR/nix/native-modules/package.json}"
 
-# Opt-in pin-writing mode (used by the hash-refresh bot, not by PR CI). When set,
-# the version pins are rewritten from the DMG before the assertions run, so they
-# confirm the write instead of failing on drift. APPCAST_URL, when also set,
-# gates the write on the upstream Sparkle appcast: the moving Codex.dmg must
-# already match the appcast's advertised latest version, otherwise we are mid
-# rollout and exit 75 (skip) rather than pinning a transient build.
+# Opt-in pin-writing mode (used by refresh flows, not by PR CI). When set, the
+# version pins are rewritten from the DMG before the assertions run, so they
+# confirm the write instead of failing on drift. APPCAST_URL remains an optional
+# caller-controlled guard for flows that explicitly want Sparkle appcast parity.
 WRITE_PINS="${WRITE_PINS:-0}"
 APPCAST_URL="${APPCAST_URL:-}"
 

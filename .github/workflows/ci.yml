@@ -174,7 +174,7 @@ jobs:
                 echo "## Nix Pin Validation"
                 echo ""
                 echo "- Skipped package-output builds because upstream \`Codex.dmg\` metadata is ahead of the committed flake pins during rollout."
-                echo "- This is PR-only; main-branch validation still fails so the scheduled hash-refresh workflow can update pins once the rollout stabilizes."
+                echo "- This is PR-only; main-branch validation still fails so the scheduled hash-refresh workflow can open a full pin-refresh PR from the current upstream DMG."
               } >> "$GITHUB_STEP_SUMMARY"
               echo "skip_package_outputs=true" >> "$GITHUB_OUTPUT"
               rm -f "$validation_log"
@@ -213,7 +213,7 @@ jobs:
                   echo ""
                   echo "- Skipped package-output builds after \`$output\` because upstream \`Codex.dmg\` is rolling between fixed-output hashes."
                   echo "- This does not mask non-DMG Nix failures; main-branch builds still fail on this condition."
-                  echo "- The scheduled hash-refresh workflow owns updating the committed DMG pin once the rollout stabilizes."
+                  echo "- The scheduled hash-refresh workflow owns updating the committed DMG pin from the current upstream DMG."
                 } >> "$GITHUB_STEP_SUMMARY"
                 exit 0
               fi

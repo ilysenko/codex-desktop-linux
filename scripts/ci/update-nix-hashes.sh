@@ -6,8 +6,8 @@ FLAKE_FILE="${FLAKE_FILE:-$REPO_DIR/flake.nix}"
 UPSTREAM_DMG_URL="${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/Codex.dmg}"
 UPSTREAM_DMG_PATH="${UPSTREAM_DMG_PATH:-/tmp/Codex.dmg}"
 VERIFY_LOG="${VERIFY_LOG:-/tmp/codex-nix-build-verify.log}"
-# Upstream Codex Sparkle appcast (x64 runners). Used to gate the pin refresh on
-# the advertised latest release so we never pin a transient mid-rollout DMG.
+# Upstream Codex Sparkle appcast (x64 runners). Used only for reporting when it
+# lags behind the moving Codex.dmg; the verified DMG payload is the pin source.
 APPCAST_URL="${APPCAST_URL:-https://persistent.oaistatic.com/codex-app-prod/appcast-x64.xml}"
 
 PACKAGE_OUTPUTS=(
@@ -26,6 +26,20 @@ validate_sri_hash() {
 read_flake_string() {
     local name="$1"
     grep -m1 "$name = " "$FLAKE_FILE" | sed 's/.*"\(.*\)".*/\1/'
+}
+
+fetch_appcast_latest_version() {
+    local url="${1:-$APPCAST_URL}"
+    curl -fsSL --retry 3 "$url" | python3 -c '
+import re
+import sys
+
+xml = sys.stdin.read()
+match = re.search(r"<sparkle:shortVersionString>([^<]+)</sparkle:shortVersionString>", xml)
+if not match:
+    sys.exit("Could not find sparkle:shortVersionString in appcast")
+sys.stdout.write(match.group(1).strip())
+'
 }
 
 prefetch_sri() {
@@ -137,28 +151,29 @@ main() {
     fi
 
     # Refresh the version pins (codexVersion/electronVersion + native-modules)
-    # from the DMG, gated on the upstream Sparkle appcast: only proceed when the
-    # moving Codex.dmg has caught up to the appcast's advertised latest version,
-    # so we never pin a transient mid-rollout build. Exit 75 means "rollout in
-    # progress" and is treated as a no-op skip.
+    # from the current upstream DMG. The appcast can lag the moving DMG for many
+    # hours, so it is reported as metadata instead of blocking the refresh PR.
     local old_electron_version
     old_electron_version="$(read_flake_string electronVersion)"
 
-    local validate_status=0
-    WRITE_PINS=1 APPCAST_URL="$APPCAST_URL" \
-        "$REPO_DIR/scripts/ci/validate-nix-pins.sh" "$UPSTREAM_DMG_PATH" || validate_status="$?"
-    if [ "$validate_status" -eq 75 ]; then
-        echo "Upstream rollout in progress; leaving pins unchanged until Codex.dmg matches the appcast."
-        exit 0
+    local appcast_latest_version=""
+    if appcast_latest_version="$(fetch_appcast_latest_version "$APPCAST_URL" 2>/dev/null)"; then
+        echo "Appcast latest version: $appcast_latest_version"
+    else
+        echo "WARN: Could not read upstream appcast version from $APPCAST_URL; continuing with Codex.dmg pins." >&2
     fi
-    if [ "$validate_status" -ne 0 ]; then
-        exit "$validate_status"
-    fi
+
+    WRITE_PINS=1 APPCAST_URL= "$REPO_DIR/scripts/ci/validate-nix-pins.sh" "$UPSTREAM_DMG_PATH"
 
     # If the Electron pin moved, refresh its fixed-output hashes so the verify
     # build does not fail on the new download URLs.
     local new_electron_version
     new_electron_version="$(read_flake_string electronVersion)"
+    local new_codex_version
+    new_codex_version="$(read_flake_string codexVersion)"
+    if [ -n "$appcast_latest_version" ] && [ "$new_codex_version" != "$appcast_latest_version" ]; then
+        echo "WARN: Appcast latest version ($appcast_latest_version) differs from Codex.dmg version ($new_codex_version); proceeding with verified DMG pins." >&2
+    fi
     if [ "$old_electron_version" != "$new_electron_version" ]; then
         echo "Electron pin: $old_electron_version -> $new_electron_version; refreshing electron hashes."
         refresh_electron_hashes "$new_electron_version"
@@ -191,6 +206,20 @@ case "${1:-}" in
             exit 2
         fi
         read_flake_hash "$2" "$3"
+        ;;
+    read-flake-string)
+        if [ "$#" -ne 2 ]; then
+            echo "usage: $0 read-flake-string <name>" >&2
+            exit 2
+        fi
+        read_flake_string "$2"
+        ;;
+    read-appcast-version)
+        if [ "$#" -gt 2 ]; then
+            echo "usage: $0 read-appcast-version [url]" >&2
+            exit 2
+        fi
+        fetch_appcast_latest_version "${2:-$APPCAST_URL}"
         ;;
     "")
         main

@@ -60,7 +60,15 @@ jobs:
           fi
 
           CODEX_DMG_HASH="$(scripts/ci/update-nix-hashes.sh read-flake-hash 'codexDmg = pkgs.fetchurl {' 'hash = ')"
-          CODEX_VERSION="$(grep -m1 'codexVersion = ' flake.nix | sed 's/.*"\(.*\)".*/\1/')"
+          CODEX_VERSION="$(scripts/ci/update-nix-hashes.sh read-flake-string codexVersion)"
+          APPCAST_VERSION="$(scripts/ci/update-nix-hashes.sh read-appcast-version 2>/dev/null || true)"
+          if [ -n "$APPCAST_VERSION" ] && [ "$APPCAST_VERSION" != "$CODEX_VERSION" ]; then
+            APPCAST_NOTE="- warning: Sparkle appcast currently advertises \`$APPCAST_VERSION\`, while current \`Codex.dmg\` contains \`$CODEX_VERSION\`; this PR follows the verified DMG payload."
+          elif [ -n "$APPCAST_VERSION" ]; then
+            APPCAST_NOTE="- Sparkle appcast also advertises \`$APPCAST_VERSION\`."
+          else
+            APPCAST_NOTE="- Sparkle appcast version could not be read during PR creation; pins follow the verified DMG payload."
+          fi
 
           git config user.name  "codex-dmg-hash-bot"
           git config user.email "actions@github.com"
@@ -68,7 +76,7 @@ jobs:
           git add flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json
           git commit \
             -m "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
-            -m "Refreshed Codex.dmg SRI hash to $CODEX_DMG_HASH and synced codexVersion / electronVersion / native-module pins to the upstream Sparkle appcast latest." \
+            -m "Refreshed Codex.dmg SRI hash to $CODEX_DMG_HASH and synced codexVersion / electronVersion / native-module pins to the current upstream DMG." \
             -m "Verified all Codex Desktop Nix package outputs against the refreshed DMG." \
             -m "[skip ci]"
           git push --force origin "$REFRESH_BRANCH"
@@ -76,9 +84,10 @@ jobs:
           pr_body="$RUNNER_TEMP/nix-refresh-pr-body.md"
           cat >"$pr_body" <<EOF
           ## Summary
-          - refresh Codex.dmg hash and upstream version pins to the Sparkle appcast latest
+          - refresh Codex.dmg hash and upstream version pins to the current upstream DMG
           - update Electron fixed-output hashes when electronVersion changes
           - regenerate nix/native-modules/package-lock.json when native module pins change
+          $APPCAST_NOTE
 
           ## Validation
           - this workflow verified all Codex Desktop Nix package outputs before opening the PR
