@@ -758,9 +758,27 @@ function findPluginSummary(result, pluginName) {
   return null;
 }
 
+function summarizePluginRead(result) {
+  const plugin = hasObject(result.plugin) ? result.plugin : {};
+  const summary = hasObject(plugin.summary) ? plugin.summary : {};
+  return {
+    appsEmpty: safeArrayLength(plugin.apps) === 0,
+    hooksEmpty: safeArrayLength(plugin.hooks) === 0,
+    marketplaceNamePresent: typeof plugin.marketplaceName === "string" && plugin.marketplaceName.length > 0,
+    mcpServersEmpty: safeArrayLength(plugin.mcpServers) === 0,
+    skillsArrayKnown: Array.isArray(plugin.skills),
+    summaryInstalledKnown: typeof summary.installed === "boolean",
+    summaryPresent: hasObject(plugin.summary),
+  };
+}
+
 async function runPluginInstallFixtureSmoke({ codexBin }) {
   const fixture = createPluginInstallFixture();
   const pluginListParams = { cwds: [fixture.repoDir], marketplaceKinds: ["local"] };
+  const pluginInstalledParams = {
+    cwds: [fixture.repoDir],
+    installSuggestionPluginNames: [fixture.pluginName],
+  };
   const isolatedEnv = {
     ...process.env,
     CODEX_HOME: fixture.codexHome,
@@ -797,12 +815,25 @@ async function runPluginInstallFixtureSmoke({ codexBin }) {
       client.notify("initialized", {});
 
       const before = findPluginSummary(await client.request("plugin/list", pluginListParams), fixture.pluginName);
+      const installedBefore = findPluginSummary(
+        await client.request("plugin/installed", pluginInstalledParams),
+        fixture.pluginName,
+      );
+      const pluginRead = summarizePluginRead(await client.request("plugin/read", {
+        marketplacePath: fixture.marketplacePath,
+        pluginName: fixture.pluginName,
+        remoteMarketplaceName: null,
+      }));
       const install = await client.request("plugin/install", {
         marketplacePath: fixture.marketplacePath,
         pluginName: fixture.pluginName,
         remoteMarketplaceName: null,
       });
       const after = findPluginSummary(await client.request("plugin/list", pluginListParams), fixture.pluginName);
+      const installedAfter = findPluginSummary(
+        await client.request("plugin/installed", pluginInstalledParams),
+        fixture.pluginName,
+      );
       if (!after?.pluginId) {
         return {
           details: {
@@ -816,14 +847,28 @@ async function runPluginInstallFixtureSmoke({ codexBin }) {
 
       await client.request("plugin/uninstall", { pluginId: after.pluginId });
       const final = findPluginSummary(await client.request("plugin/list", pluginListParams), fixture.pluginName);
+      const installedFinal = findPluginSummary(
+        await client.request("plugin/installed", pluginInstalledParams),
+        fixture.pluginName,
+      );
       const details = {
         appsNeedingAuthCount: safeArrayLength(install.appsNeedingAuth),
         authPolicyOnUse: install.authPolicy === "ON_USE",
         fixturePresent: before != null && after != null && final != null,
+        installedSummaryAfterInstall: installedAfter?.installed === true,
+        installedSummaryBeforeInstall: installedBefore?.installed === false,
+        installedSummaryFinalUninstalled: installedFinal?.installed === false,
         installedAfterInstall: after.installed === true,
         isolatedCodexHome: isolatedEnv.CODEX_HOME === fixture.codexHome,
         notInstalledBeforeInstall: before?.installed === false,
         pluginIdPresent: before?.idPresent === true && after.idPresent === true && final?.idPresent === true,
+        pluginReadAppsEmpty: pluginRead.appsEmpty === true,
+        pluginReadHooksEmpty: pluginRead.hooksEmpty === true,
+        pluginReadMarketplaceNamePresent: pluginRead.marketplaceNamePresent === true,
+        pluginReadMcpServersEmpty: pluginRead.mcpServersEmpty === true,
+        pluginReadSkillsArrayKnown: pluginRead.skillsArrayKnown === true,
+        pluginReadSummaryInstalledKnown: pluginRead.summaryInstalledKnown === true,
+        pluginReadSummaryPresent: pluginRead.summaryPresent === true,
         uninstalledAfterUninstall: final?.installed === false,
       };
       return {
