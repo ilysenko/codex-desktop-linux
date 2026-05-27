@@ -19,7 +19,7 @@ jobs:
     name: Rust and Smoke Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust components
         run: rustup component add rustfmt clippy
@@ -74,7 +74,7 @@ jobs:
     name: Build Debian Package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Create minimal packaged app fixture
         run: |
@@ -112,9 +112,9 @@ jobs:
         experimental-features = nix-command flakes
         max-jobs = 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
 
@@ -195,7 +195,7 @@ jobs:
     name: Build RPM Package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install RPM tooling
         run: |
@@ -235,7 +235,7 @@ jobs:
     name: Build Pacman Package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build and inspect pacman package in Arch Linux
         run: |

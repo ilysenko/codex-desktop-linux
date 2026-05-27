@@ -2476,7 +2476,7 @@ test_upstream_build_app_workflow_tracks_dmg_metadata() {
     assert_file_exists "$workflow"
     assert_contains "$workflow" 'name: Upstream Build App'
     assert_contains "$workflow" 'UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg'
-    assert_contains "$workflow" 'actions/cache@v4'
+    assert_contains "$workflow" 'actions/cache@v5'
     assert_contains "$workflow" 'path: /tmp/codex-upstream-ci/Codex.dmg'
     assert_contains "$workflow" 'Last-Modified'
     assert_contains "$workflow" 'sha256sum'
@@ -2485,6 +2485,21 @@ test_upstream_build_app_workflow_tracks_dmg_metadata() {
     assert_contains "$workflow" 'make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg'
     assert_contains "$workflow" 'DMG Last-Modified'
     assert_contains "$workflow" 'DMG SHA-256'
+}
+
+test_github_workflows_use_node24_action_majors() {
+    info "Checking GitHub workflows use Node 24 action majors"
+    local workflow_dir="$REPO_DIR/.github/workflows"
+
+    assert_contains "$workflow_dir/ci.yml" 'actions/checkout@v6'
+    assert_contains "$workflow_dir/ci.yml" 'actions/setup-node@v6'
+    assert_contains "$workflow_dir/upstream-build-app.yml" 'actions/cache@v5'
+    assert_contains "$workflow_dir/upstream-build-app.yml" 'actions/upload-artifact@v7'
+    assert_contains "$workflow_dir/computer-use-sync-reminder.yml" 'actions/github-script@v9'
+
+    if grep -R --line-number -E 'actions/(checkout|setup-node|cache|upload-artifact)@v4|actions/github-script@v7' "$workflow_dir"; then
+        fail "Found a deprecated Node 20 GitHub action major in workflows"
+    fi
 }
 
 test_installer_detects_electron_version_from_plist() {
@@ -6021,6 +6036,7 @@ main() {
     test_setup_native_wizard_dry_run_cleanup_does_not_delete_confirmed_paths
     test_setup_native_wizard_cleanup_deletes_only_confirmed_paths
     test_upstream_build_app_workflow_tracks_dmg_metadata
+    test_github_workflows_use_node24_action_majors
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
     test_port_validation_rejects_oversized_numeric_values
