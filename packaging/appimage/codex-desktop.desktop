@@ -11,8 +11,16 @@ StartupNotify=true
 StartupWMClass=codex-desktop
 X-GNOME-WMClass=codex-desktop
 X-AppImage-Version=__VERSION__
-Actions=new-window;
+Actions=new-window;quick-chat;compact-prompt;
 
 [Desktop Action new-window]
 Name=New Window
 Exec=env CHROME_DESKTOP=codex-desktop.desktop CODEX_MULTI_LAUNCH=1 AppRun --new-instance
+
+[Desktop Action quick-chat]
+Name=Quick Chat
+Exec=env CHROME_DESKTOP=codex-desktop.desktop AppRun --quick-chat
+
+[Desktop Action compact-prompt]
+Name=Compact Prompt
+Exec=env CHROME_DESKTOP=codex-desktop.desktop AppRun --prompt-chat

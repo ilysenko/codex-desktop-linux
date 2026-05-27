@@ -22,6 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Native packages now install `codex-desktop-doctor`, a safe installed-state
   healthcheck for package files, updater/update-builder staging, Chrome native
   messaging, Computer Use readiness, and remote mobile markers.
+- Linux desktop entries now expose Quick Chat and Compact Prompt actions backed
+  by the existing `--quick-chat` and `--prompt-chat` launcher paths.
 
 ### Fixed
 
