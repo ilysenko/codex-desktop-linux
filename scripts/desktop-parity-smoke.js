@@ -593,6 +593,26 @@ function summarizePluginList(result) {
   };
 }
 
+function summarizePluginInstalled(result) {
+  const marketplaces = Array.isArray(result.marketplaces) ? result.marketplaces : [];
+  let pluginCount = 0;
+  let installedCount = 0;
+  for (const marketplace of marketplaces) {
+    for (const plugin of Array.isArray(marketplace?.plugins) ? marketplace.plugins : []) {
+      pluginCount += 1;
+      if (plugin?.installed === true) {
+        installedCount += 1;
+      }
+    }
+  }
+  return {
+    installed: installedCount,
+    loadErrors: safeArrayLength(result.marketplaceLoadErrors) || 0,
+    marketplaces: marketplaces.length,
+    plugins: pluginCount,
+  };
+}
+
 function summarizeConfig(result) {
   const config = hasObject(result.config) ? result.config : {};
   return {
@@ -645,6 +665,37 @@ function summarizeMcpResourceRead(result) {
     mimeTypeObserved: textContents.some((item) => item.mimeType === "text/plain"),
     textPongObserved: textContents.some((item) => item.text === "codex-parity-resource-pong"),
     textUriObserved: contents.some((item) => item && item.uri === MCP_RESOURCE_URI),
+  };
+}
+
+function summarizeModelProviderCapabilities(result) {
+  return {
+    imageGenerationKnown: typeof result.imageGeneration === "boolean",
+    namespaceToolsKnown: typeof result.namespaceTools === "boolean",
+    webSearchKnown: typeof result.webSearch === "boolean",
+  };
+}
+
+function summarizeExperimentalFeatures(result) {
+  const features = Array.isArray(result.data) ? result.data : [];
+  return {
+    count: features.length,
+    defaultEnabled: features.filter((feature) => feature?.defaultEnabled === true).length,
+    enabled: features.filter((feature) => feature?.enabled === true).length,
+    hasNextCursor: !!result.nextCursor,
+  };
+}
+
+function summarizePermissionProfiles(result) {
+  return {
+    count: safeArrayLength(result.data),
+    hasNextCursor: !!result.nextCursor,
+  };
+}
+
+function summarizeCollaborationModes(result) {
+  return {
+    count: safeArrayLength(result.data),
   };
 }
 
@@ -1067,6 +1118,12 @@ async function runAppServerSmoke(options) {
         summarize: summarizePluginList,
       },
       {
+        name: "installed plugin summary",
+        method: "plugin/installed",
+        params: { cwds: [REPO_DIR], installSuggestionPluginNames: [] },
+        summarize: summarizePluginInstalled,
+      },
+      {
         name: "app list",
         method: "app/list",
         params: { forceRefetch: false, limit: 20 },
@@ -1089,6 +1146,30 @@ async function runAppServerSmoke(options) {
         method: "model/list",
         params: { includeHidden: false, limit: 20 },
         summarize: (result) => ({ count: safeArrayLength(result.data), hasNextCursor: !!result.nextCursor }),
+      },
+      {
+        name: "model provider capabilities",
+        method: "modelProvider/capabilities/read",
+        params: {},
+        summarize: summarizeModelProviderCapabilities,
+      },
+      {
+        name: "experimental feature list",
+        method: "experimentalFeature/list",
+        params: { limit: 50 },
+        summarize: summarizeExperimentalFeatures,
+      },
+      {
+        name: "permission profile list",
+        method: "permissionProfile/list",
+        params: { cwd: REPO_DIR, limit: 50 },
+        summarize: summarizePermissionProfiles,
+      },
+      {
+        name: "collaboration mode list",
+        method: "collaborationMode/list",
+        params: {},
+        summarize: summarizeCollaborationModes,
       },
       {
         name: "config read",
@@ -1116,9 +1197,16 @@ async function runAppServerSmoke(options) {
         const details = probe.summarize(result);
         if (probe.method === "plugin/list" && details.loadErrors > 0) {
           record(probe.name, "fail", details);
+        } else if (probe.method === "plugin/installed" && details.loadErrors > 0) {
+          record(probe.name, "fail", details);
         } else if (
           probe.method === "mcpServerStatus/list" &&
           (!details.fixturePresent || !details.fixtureToolPresent)
+        ) {
+          record(probe.name, "fail", details);
+        } else if (
+          probe.method === "modelProvider/capabilities/read" &&
+          (!details.imageGenerationKnown || !details.namespaceToolsKnown || !details.webSearchKnown)
         ) {
           record(probe.name, "fail", details);
         } else {

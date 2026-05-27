@@ -4,7 +4,7 @@ This project is an unofficial Linux build of Codex Desktop. The goal is
 closest-possible daily-driver parity with the upstream desktop app while staying
 honest about official platform, account, and operating-system boundaries.
 
-Last reviewed: 2026-05-26.
+Last reviewed: 2026-05-27.
 
 ## Official Boundaries
 
@@ -69,13 +69,14 @@ screenshots, or private conversation text into parity artifacts.
 |---|---|---|---|---|
 | Desktop UI | Official Codex Desktop app | Repackaged Electron app from upstream DMG | `make doctor`, optional CDP path in `make parity-full`, required CDP path in `make parity-strict` | Not official Linux support |
 | CLI bridge | `codex app` launches app | Launcher wraps Linux Electron app and discovers CLI | `make doctor` | Keep CLI path/preflight covered during updates |
-| App-server protocol | Local app protocol | `codex app-server` used directly by smoke tests | `make parity-schema`, `make parity-smoke` | Track schema drift on each upstream refresh |
+| App-server protocol | Local app protocol | `codex app-server` used directly by smoke tests, including read-only model-provider capability, feature-list, permission-profile, and collaboration-mode surfaces | `make parity-schema`, `make parity-smoke` | Track schema drift on each upstream refresh |
 | Thread history | Native app reads local sessions | App-server thread list/read surface is present | `make parity-smoke` | Avoid printing thread names/content in logs |
-| Plugins and marketplace | Built-in app support | Plugin list and bundled marketplace cache present, plus isolated install/uninstall coverage against a temporary `CODEX_HOME` and synthetic local marketplace | `make parity-smoke`, `make doctor` | Keep mutating plugin checks isolated from real user state |
+| Plugins and marketplace | Built-in app support | Plugin list, installed-plugin summary, and bundled marketplace cache present, plus isolated install/uninstall coverage against a temporary `CODEX_HOME` and synthetic local marketplace | `make parity-smoke`, `make doctor` | Keep mutating plugin checks isolated from real user state |
 | Apps/connectors | Built-in app support | App list surface present | `make parity-smoke` | Account/workspace gating remains server-side |
 | MCP servers | Built-in app support | MCP status API plus session-scoped live MCP fixture, no-op tool-call coverage, and non-mutating text/blob resource-read coverage through an ephemeral thread | `make parity-smoke`, `make parity-schema` | Add broader MCP coverage only when it stays fixture-only and non-mutating |
 | Skills | Built-in app support | Skills list API plus repo-scoped fixture discovery present | `make parity-smoke` | Add skill enable/disable fixture later |
 | Config and requirements | User, repo, and managed config | Config/read validates a repo-scoped project config fixture; requirements/read surface plus isolated `/etc/codex/requirements.toml` fixture when `bwrap` is available | `make parity-smoke`, `make parity-schema` | Expand policy-shape coverage as upstream requirements fields change |
+| Models, modes, and permissions | Rich clients read available models, provider capabilities, feature flags, permission profiles, and collaboration modes | Model list plus provider-capability booleans, experimental feature counts, permission profile counts, and collaboration mode counts are covered without printing names or IDs | `make parity-smoke`, `make parity-schema` | Add write/toggle fixtures only when isolated from real user config |
 | External agent import | Detect/import agent artifacts | Detect surface plus temporary CLAUDE.md and MCP config fixture detection present; import remains untouched by smoke | `make parity-smoke`, `make parity-schema` | Add safe no-op import validation only if upstream exposes a dry-run mode |
 | Browser Use | Browser bridge and extension | Chrome/Brave/Chromium native messaging plus Flatpak wrapper, opt-in redacted live browser/profile validation, and isolated native-host bridge loopback | `make doctor`, `make parity-full`, `make parity-browser-matrix`, `make parity-browser-live` | Add deeper live extension request/turn-completion checks only if they stay redacted |
 | Chrome Flatpak | macOS not applicable | Flatpak host wrapper via `flatpak-spawn --host` | `make doctor` | Keep manifest/path regression tests |
