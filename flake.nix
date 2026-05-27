@@ -24,7 +24,7 @@
 
         codexDmg = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-          hash = "sha256-yanuEZhqD4gBWLgeRZtktoRkI5b0nq9/oOAY9KjDe0I=";
+          hash = "sha256-MQHAXf1AMUEVQYxK2H7e4CQZ0Jf3FkxnfdvdRVmtikI=";
         };
 
         codexVersion = "26.519.41501";

@@ -136,14 +136,30 @@ jobs:
         run: |
           set -euo pipefail
           outputs=(
+            .#installer
             .#codex-desktop
             .#codex-desktop-computer-use-ui
             .#codex-desktop-remote-mobile-control
             .#codex-desktop-computer-use-ui-remote-mobile-control
-            .#installer
           )
           for output in "${outputs[@]}"; do
-            nix build "$output" --no-link --print-build-logs --max-jobs 1
+            build_log="$(mktemp)"
+            if ! nix build "$output" --no-link --print-build-logs --max-jobs 1 2>&1 | tee "$build_log"; then
+              if [ "$GITHUB_EVENT_NAME" = "pull_request" ] \
+                  && grep -q "hash mismatch in fixed-output derivation" "$build_log" \
+                  && grep -q "Codex.dmg.drv" "$build_log"; then
+                {
+                  echo "## Nix Package Builds"
+                  echo ""
+                  echo "- Skipped package-output builds after \`$output\` because upstream \`Codex.dmg\` is rolling between fixed-output hashes."
+                  echo "- This does not mask non-DMG Nix failures; main-branch builds still fail on this condition."
+                  echo "- The scheduled hash-refresh workflow owns updating the committed DMG pin once the rollout stabilizes."
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              exit 1
+            fi
+            rm -f "$build_log"
             store_usage="$(df -P /nix/store | awk 'NR == 2 { gsub("%", "", $5); print $5 }')"
             if [ "${store_usage:-0}" -ge 85 ]; then
               nix store gc || true
