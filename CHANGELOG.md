@@ -53,6 +53,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Installed `codex-desktop-doctor` now checks whether the `systemd --user`
   bus is reachable, so app-service lifecycle validation failures surface
   directly instead of only through later service commands.
+- Native package builders now refresh the packaged Linux Computer Use backend
+  during payload staging, preventing stale `codex-app` plugin binaries from
+  being shipped after backend source changes.
 
 ## [0.8.0] - 2026-05-16
 

@@ -49,6 +49,60 @@ package_node_binary() {
     command -v node
 }
 
+find_cargo_for_packaged_computer_use() {
+    if command -v cargo >/dev/null 2>&1; then
+        command -v cargo
+        return 0
+    fi
+
+    if [ -x "$HOME/.cargo/bin/cargo" ]; then
+        echo "$HOME/.cargo/bin/cargo"
+        return 0
+    fi
+
+    return 1
+}
+
+stage_packaged_linux_computer_use_backend() {
+    local app_root="$1"
+    local target_plugin="$app_root/resources/plugins/openai-bundled/plugins/computer-use"
+    local target_bin="$target_plugin/bin"
+    local backend_source="${CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE:-}"
+    local cosmic_source="${CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE:-}"
+    local cargo_cmd=""
+
+    [ -d "$target_plugin" ] || return 0
+
+    if [ -n "$backend_source" ] || [ -n "$cosmic_source" ]; then
+        [ -x "$backend_source" ] || error "CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE is not executable: $backend_source"
+        [ -x "$cosmic_source" ] || error "CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE is not executable: $cosmic_source"
+        info "Using prebuilt Linux Computer Use backend for package payload"
+    else
+        if [ ! -d "$REPO_DIR/computer-use-linux" ]; then
+            info "Linux Computer Use source not found; keeping existing package payload backend"
+            return 0
+        fi
+        if ! cargo_cmd="$(find_cargo_for_packaged_computer_use)"; then
+            [ -x "$target_bin/codex-computer-use-linux" ] && [ -x "$target_bin/codex-computer-use-cosmic" ] \
+                || error "cargo not found and packaged Linux Computer Use backend is missing"
+            info "cargo not found; keeping existing package payload backend"
+            return 0
+        fi
+        info "Building Linux Computer Use backend for package payload"
+        (cd "$REPO_DIR" && "$cargo_cmd" build --release -p codex-computer-use-linux >&2) \
+            || error "Failed to build Linux Computer Use backend"
+        backend_source="$REPO_DIR/target/release/codex-computer-use-linux"
+        cosmic_source="$REPO_DIR/target/release/codex-computer-use-cosmic"
+    fi
+
+    [ -x "$backend_source" ] || error "Linux Computer Use backend missing: $backend_source"
+    [ -x "$cosmic_source" ] || error "Linux Computer Use COSMIC helper missing: $cosmic_source"
+    mkdir -p "$target_bin"
+    cp "$backend_source" "$target_bin/codex-computer-use-linux"
+    cp "$cosmic_source" "$target_bin/codex-computer-use-cosmic"
+    chmod 0755 "$target_bin/codex-computer-use-linux" "$target_bin/codex-computer-use-cosmic"
+}
+
 stage_update_builder_linux_features_config() {
     local update_builder_root="$1"
     local helper="$REPO_DIR/scripts/lib/linux-features.js"
@@ -535,6 +589,7 @@ stage_common_package_files() {
 
     rm -rf "$app_root"
     cp -aT "$APP_DIR" "$app_root"
+    stage_packaged_linux_computer_use_backend "$app_root"
     mkdir -p "$app_root/.codex-linux"
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"

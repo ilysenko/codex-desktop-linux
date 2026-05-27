@@ -2372,6 +2372,36 @@ test_bundled_plugin_builders_accept_prebuilt_binaries() {
     assert_contains "$output_log" "$host"
 }
 
+test_package_payload_refreshes_computer_use_backend() {
+    info "Checking package payload refreshes Linux Computer Use backend"
+    local workspace="$TMP_DIR/package-computer-use-refresh"
+    local app_root="$workspace/app-root"
+    local target_bin="$app_root/resources/plugins/openai-bundled/plugins/computer-use/bin"
+    local backend="$workspace/prebuilt/codex-computer-use-linux"
+    local cosmic="$workspace/prebuilt/codex-computer-use-cosmic"
+
+    mkdir -p "$target_bin" "$workspace/prebuilt"
+    printf '%s\n' 'stale backend' > "$target_bin/codex-computer-use-linux"
+    printf '%s\n' 'stale cosmic' > "$target_bin/codex-computer-use-cosmic"
+    printf '%s\n' 'fresh backend' > "$backend"
+    printf '%s\n' 'fresh cosmic' > "$cosmic"
+    chmod +x "$backend" "$cosmic"
+
+    (
+        REPO_DIR="$REPO_DIR"
+        CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE="$backend"
+        CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE="$cosmic"
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/package-common.sh"
+        stage_packaged_linux_computer_use_backend "$app_root"
+    )
+
+    assert_contains "$target_bin/codex-computer-use-linux" "fresh backend"
+    assert_contains "$target_bin/codex-computer-use-cosmic" "fresh cosmic"
+    assert_mode "$target_bin/codex-computer-use-linux" "755"
+    assert_mode "$target_bin/codex-computer-use-cosmic" "755"
+}
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
@@ -5480,6 +5510,7 @@ main() {
     test_native_module_rebuild_uses_local_electron_rebuild_toolchain
     test_native_module_rebuild_accepts_prebuilt_source
     test_bundled_plugin_builders_accept_prebuilt_binaries
+    test_package_payload_refreshes_computer_use_backend
     test_browser_use_node_repl_fallback_runtime
     test_browser_use_file_url_policy_patch_behavior
     test_browser_plugin_renamed_upstream_staging
