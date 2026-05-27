@@ -15,6 +15,8 @@ const MCP_BLOB_RESOURCE_URI = "codex-parity://resource/blob";
 const MCP_BLOB_RESOURCE_BASE64 = "Y29kZXgtcGFyaXR5LXJlc291cmNlLWJsb2I=";
 const FS_FIXTURE_TEXT = "codex-parity-fs-pong\n";
 const FS_FIXTURE_BASE64 = Buffer.from(FS_FIXTURE_TEXT, "utf8").toString("base64");
+const FS_MUTATION_FIXTURE_TEXT = "codex-parity-fs-write-pong\n";
+const FS_MUTATION_FIXTURE_BASE64 = Buffer.from(FS_MUTATION_FIXTURE_TEXT, "utf8").toString("base64");
 
 function usage() {
   return [
@@ -265,12 +267,18 @@ function createFsFixture() {
   const workspaceDir = path.join(fixtureDir, "workspace");
   const nestedDir = path.join(workspaceDir, "nested");
   const filePath = path.join(workspaceDir, "fixture.txt");
+  const appCreatedDir = path.join(workspaceDir, "app-created");
+  const copiedFilePath = path.join(appCreatedDir, "copied.txt");
+  const writeFilePath = path.join(appCreatedDir, "written.txt");
   fs.mkdirSync(nestedDir, { recursive: true });
   fs.writeFileSync(filePath, FS_FIXTURE_TEXT, "utf8");
   return {
+    appCreatedDir,
+    copiedFilePath,
     filePath,
     fixtureDir,
     nestedDir,
+    writeFilePath,
     workspaceDir,
   };
 }
@@ -769,6 +777,26 @@ function summarizeFsFixture({ directoryMetadata, fileMetadata, readDirectory, re
       entry.isDirectory === true &&
       entry.isFile === false
     )),
+  };
+}
+
+function summarizeFsMutationFixture({ copiedFilePath, directoryMetadata, readDirectory, readCopiedFile, writeFilePath }) {
+  const entries = Array.isArray(readDirectory.entries) ? readDirectory.entries : [];
+  return {
+    copiedEntryObserved: entries.some((entry) => (
+      entry?.fileName === "copied.txt" &&
+      entry.isFile === true &&
+      entry.isDirectory === false
+    )),
+    copiedFilePresentOnHost: fs.existsSync(copiedFilePath),
+    copiedReadMatchesFixture: readCopiedFile.dataBase64 === FS_MUTATION_FIXTURE_BASE64,
+    createdDirectoryMetadataObserved:
+      directoryMetadata.isDirectory === true &&
+      directoryMetadata.isFile === false &&
+      directoryMetadata.isSymlink === false,
+    directoryEntryCount: entries.length,
+    removedEntryMissing: !entries.some((entry) => entry?.fileName === "written.txt"),
+    removedFileAbsentOnHost: !fs.existsSync(writeFilePath),
   };
 }
 
@@ -1607,6 +1635,54 @@ async function runAppServerSmoke(options) {
       record("filesystem fixture", "fail", { error: summarizeErrorText(error.message) });
     } finally {
       removeFixture(fsFixture.fixtureDir);
+    }
+
+    const fsMutationFixture = createFsFixture();
+    try {
+      await client.request("fs/createDirectory", {
+        path: fsMutationFixture.appCreatedDir,
+        recursive: true,
+      });
+      await client.request("fs/writeFile", {
+        dataBase64: FS_MUTATION_FIXTURE_BASE64,
+        path: fsMutationFixture.writeFilePath,
+      });
+      await client.request("fs/copy", {
+        destinationPath: fsMutationFixture.copiedFilePath,
+        recursive: false,
+        sourcePath: fsMutationFixture.writeFilePath,
+      });
+      await client.request("fs/remove", {
+        force: false,
+        path: fsMutationFixture.writeFilePath,
+        recursive: false,
+      });
+      const directoryMetadata = await client.request("fs/getMetadata", { path: fsMutationFixture.appCreatedDir });
+      const readDirectory = await client.request("fs/readDirectory", { path: fsMutationFixture.appCreatedDir });
+      const readCopiedFile = await client.request("fs/readFile", { path: fsMutationFixture.copiedFilePath });
+      const details = summarizeFsMutationFixture({
+        copiedFilePath: fsMutationFixture.copiedFilePath,
+        directoryMetadata,
+        readCopiedFile,
+        readDirectory,
+        writeFilePath: fsMutationFixture.writeFilePath,
+      });
+      record(
+        "filesystem mutation fixture",
+        details.copiedEntryObserved &&
+          details.copiedFilePresentOnHost &&
+          details.copiedReadMatchesFixture &&
+          details.createdDirectoryMetadataObserved &&
+          details.removedEntryMissing &&
+          details.removedFileAbsentOnHost
+          ? "pass"
+          : "fail",
+        details,
+      );
+    } catch (error) {
+      record("filesystem mutation fixture", "fail", { error: summarizeErrorText(error.message) });
+    } finally {
+      removeFixture(fsMutationFixture.fixtureDir);
     }
 
     const commandResult = await client.request("command/exec", {
