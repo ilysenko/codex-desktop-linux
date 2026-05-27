@@ -73,6 +73,57 @@ assert_not_contains_literal() {
     fi
 }
 
+assert_linux_elf_executable() {
+    local path="$1"
+    python3 - "$path" "$(uname -m)" <<'PY' || fail "Expected Linux ELF executable: $path"
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+arch = sys.argv[2]
+expected_machine = {
+    "x86_64": 62,
+    "aarch64": 183,
+    "armv7l": 40,
+    "armv6l": 40,
+    "armhf": 40,
+}.get(arch)
+if expected_machine is None:
+    sys.exit(1)
+
+try:
+    header = path.read_bytes()[:20]
+except OSError:
+    sys.exit(1)
+
+if len(header) < 20 or header[:4] != b"\x7fELF" or header[5] != 1:
+    sys.exit(1)
+
+machine = int.from_bytes(header[18:20], "little")
+sys.exit(0 if machine == expected_machine else 1)
+PY
+    [ -x "$path" ] || fail "Expected executable bit on Linux ELF: $path"
+}
+
+assert_not_macho_binary() {
+    local path="$1"
+    python3 - "$path" <<'PY' || fail "Expected non-Mach-O file: $path"
+import pathlib
+import sys
+
+magic = pathlib.Path(sys.argv[1]).read_bytes()[:4]
+macho_magics = {
+    b"\xfe\xed\xfa\xce",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+}
+sys.exit(1 if magic in macho_magics else 0)
+PY
+}
+
 assert_app_service_shell_variables_escaped() {
     local path="$1"
     local package_name="${2:-codex-desktop}"
@@ -3088,7 +3139,7 @@ test_browser_use_node_repl_fallback_runtime() {
     local archive_sha
     local true_bin
 
-    mkdir -p "$workspace" "$install_dir/resources" "$archive_root/codex-primary-runtime/dependencies/bin"
+    mkdir -p "$workspace" "$install_dir/resources/node-runtime/bin" "$archive_root/codex-primary-runtime/dependencies/bin"
     make_fake_browser_upstream_app "$app_dir"
 
     # Simulate the current upstream DMG shape: node_repl exists, but it is not a Linux ELF.
@@ -3096,6 +3147,8 @@ test_browser_use_node_repl_fallback_runtime() {
     chmod +x "$app_dir/Contents/Resources/node_repl"
 
     true_bin="$(type -P true)"
+    cp "$true_bin" "$install_dir/resources/node-runtime/bin/node"
+    chmod 0755 "$install_dir/resources/node-runtime/bin/node"
     cp "$true_bin" "$archive_root/codex-primary-runtime/dependencies/bin/node_repl"
     chmod 0755 "$archive_root/codex-primary-runtime/dependencies/bin/node_repl"
     tar -cJf "$archive" -C "$archive_root" codex-primary-runtime
@@ -3294,6 +3347,7 @@ make_fake_chrome_upstream_app() {
     mkdir -p \
         "$resources_dir/plugins/openai-bundled/.agents/plugins" \
         "$chrome_dir/.codex-plugin" \
+        "$chrome_dir/app-server-runtime" \
         "$chrome_dir/scripts"
 
     cat > "$resources_dir/plugins/openai-bundled/.agents/plugins/marketplace.json" <<'JSON'
@@ -3302,6 +3356,12 @@ JSON
     cat > "$chrome_dir/.codex-plugin/plugin.json" <<'JSON'
 {"name":"chrome","version":"0.1.7"}
 JSON
+    printf '\xcf\xfa\xed\xfe' > "$chrome_dir/app-server-runtime/node"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_dir/app-server-runtime/node_repl"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_dir/app-server-runtime/codex"
+    chmod +x "$chrome_dir/app-server-runtime/node" "$chrome_dir/app-server-runtime/node_repl" "$chrome_dir/app-server-runtime/codex"
+    cp "$(type -P true)" "$resources_dir/node_repl"
+    chmod +x "$resources_dir/node_repl"
     cat > "$chrome_dir/scripts/installManifest.mjs" <<'JS'
 var n={extensionId:"hehggadaopoacecdllhhajmbjkdcmajg",extensionHostName:"com.openai.codexextension"};var p=o=>{let t=`${o.extensionHostName}.json`,r={darwin:["Library/Application Support/Google/Chrome/NativeMessagingHosts"],linux:[".config/google-chrome/NativeMessagingHosts"],win32:["AppData/Local/OpenAI/extension"]}[m.platform()];return r.map(s=>l.resolve(m.homedir(),s,t))};async function y({appServerHostConfig:t,description:e=_,extensionHostName:o,extensionHostPath:n,extensionId:s,manifestPaths:p}){let f={allowed_origins:[`chrome-extension://${r(s,"extensionId")}/`],description:e,name:r(o,"extensionHostName"),path:r(n,"extensionHostPath"),type:"stdio"},m=`${JSON.stringify(f,null,2)}
 `,l=await T({appServerHostConfig:{...t,extensionId:r(s,"extensionId")},extensionHostPath:n});return await Promise.all(p.map(async u=>{await w(d(u),{recursive:!0}),await v(u,m,"utf8")})),{configPath:l,manifestPaths:p}}
@@ -3457,9 +3517,13 @@ test_chrome_plugin_staging() {
     local output_log="$workspace/output.log"
     local chrome_dir="$install_dir/resources/plugins/openai-bundled/plugins/chrome"
     local host="$chrome_dir/extension-host/linux/x64/extension-host"
+    local true_bin
 
-    mkdir -p "$workspace" "$install_dir/resources"
+    mkdir -p "$workspace" "$install_dir/resources/node-runtime/bin"
     make_fake_chrome_upstream_app "$app_dir"
+    true_bin="$(type -P true)"
+    cp "$true_bin" "$install_dir/resources/node-runtime/bin/node"
+    chmod 0755 "$install_dir/resources/node-runtime/bin/node"
 
     (
         SCRIPT_DIR="$REPO_DIR"
@@ -3485,6 +3549,12 @@ test_chrome_plugin_staging() {
 
     assert_file_exists "$host"
     [ -x "$host" ] || fail "Expected Chrome extension host to be executable: $host"
+    assert_linux_elf_executable "$chrome_dir/app-server-runtime/node"
+    assert_linux_elf_executable "$chrome_dir/app-server-runtime/node_repl"
+    assert_file_exists "$chrome_dir/app-server-runtime/codex"
+    [ -x "$chrome_dir/app-server-runtime/codex" ] || fail "Expected Chrome app-server codex shim to be executable"
+    assert_not_macho_binary "$chrome_dir/app-server-runtime/codex"
+    assert_contains "$chrome_dir/app-server-runtime/codex" 'CODEX_CLI_PATH'
     assert_contains "$chrome_dir/scripts/installManifest.mjs" "BraveSoftware/Brave-Browser/NativeMessagingHosts"
     assert_contains "$chrome_dir/scripts/installManifest.mjs" ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts"
     assert_contains "$chrome_dir/scripts/installManifest.mjs" "extension-host-flatpak-wrapper.sh"
@@ -3663,9 +3733,13 @@ test_chrome_marketplace_fallback_synthesis() {
     local install_dir="$workspace/install"
     local output_log="$workspace/output.log"
     local marketplace="$install_dir/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
+    local true_bin
 
-    mkdir -p "$workspace" "$install_dir/resources"
+    mkdir -p "$workspace" "$install_dir/resources/node-runtime/bin"
     make_fake_chrome_upstream_app "$app_dir"
+    true_bin="$(type -P true)"
+    cp "$true_bin" "$install_dir/resources/node-runtime/bin/node"
+    chmod 0755 "$install_dir/resources/node-runtime/bin/node"
 
     # Upstream marketplace.json lists no chrome entry — exercises the
     # synthesized-fallback path in write_bundled_plugins_marketplace.
