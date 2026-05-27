@@ -228,6 +228,80 @@ function createExternalAgentFixture() {
   return fixtureDir;
 }
 
+function createPluginInstallFixture() {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-plugin-install-"));
+  const repoDir = path.join(fixtureDir, "repo");
+  const marketplaceDir = path.join(repoDir, ".agents", "plugins");
+  const marketplacePath = path.join(marketplaceDir, "marketplace.json");
+  const pluginName = "codex-parity-plugin";
+  const pluginDir = path.join(repoDir, "plugins", pluginName);
+  const skillDir = path.join(pluginDir, "skills", "codex-parity-plugin-skill");
+
+  fs.mkdirSync(path.join(pluginDir, ".codex-plugin"), { recursive: true });
+  fs.mkdirSync(skillDir, { recursive: true });
+  for (const directory of ["codex-home", "home", "xdg-config", "xdg-data", "xdg-state", "xdg-cache"]) {
+    fs.mkdirSync(path.join(fixtureDir, directory), { recursive: true });
+  }
+
+  fs.writeFileSync(
+    path.join(pluginDir, ".codex-plugin", "plugin.json"),
+    JSON.stringify({
+      name: pluginName,
+      version: "0.0.0",
+      description: "Temporary desktop parity plugin fixture.",
+      author: { name: "Codex Parity" },
+      license: "MIT",
+      skills: "./skills/",
+      interface: {
+        displayName: "Codex Parity Plugin",
+        shortDescription: "Temporary desktop parity plugin fixture.",
+        longDescription: "Temporary desktop parity plugin fixture.",
+        developerName: "Codex Parity",
+        category: "Engineering",
+        capabilities: ["Read"],
+        screenshots: [],
+      },
+    }, null, 2) + "\n",
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: codex-parity-plugin-skill",
+      "description: Temporary plugin install parity fixture skill.",
+      "---",
+      "",
+      "# Codex Parity Plugin Skill",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  fs.mkdirSync(marketplaceDir, { recursive: true });
+  fs.writeFileSync(
+    marketplacePath,
+    JSON.stringify({
+      name: "codex-parity-marketplace",
+      interface: { displayName: "Codex Parity Marketplace" },
+      plugins: [{
+        name: pluginName,
+        source: { source: "local", path: `./plugins/${pluginName}` },
+        policy: { installation: "AVAILABLE", authentication: "ON_USE" },
+        category: "Engineering",
+      }],
+    }, null, 2) + "\n",
+    "utf8",
+  );
+
+  return {
+    codexHome: path.join(fixtureDir, "codex-home"),
+    fixtureDir,
+    marketplacePath,
+    pluginName,
+    repoDir,
+  };
+}
+
 function createMcpServerFixture() {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-mcp-live-"));
   const serverPath = path.join(fixtureDir, "server.js");
@@ -333,10 +407,10 @@ function removeFixture(fixtureDir) {
 }
 
 class AppServerClient {
-  constructor({ codexBin, command = codexBin, args = null, extraArgs = [], env = process.env }) {
+  constructor({ codexBin, command = codexBin, args = null, cwd = REPO_DIR, extraArgs = [], env = process.env }) {
     const childArgs = args ?? ["app-server", "--remote-control", ...extraArgs];
     this.child = spawn(command, childArgs, {
-      cwd: REPO_DIR,
+      cwd,
       env: { ...env, NO_COLOR: "1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -617,6 +691,107 @@ function summarizeRemoteE2e({ remoteStatusRead, remoteStatusNotification }) {
   };
 }
 
+function findPluginSummary(result, pluginName) {
+  for (const marketplace of Array.isArray(result.marketplaces) ? result.marketplaces : []) {
+    for (const plugin of Array.isArray(marketplace.plugins) ? marketplace.plugins : []) {
+      if (plugin?.name === pluginName) {
+        return {
+          idPresent: typeof plugin.id === "string" && plugin.id.length > 0,
+          installed: plugin.installed === true,
+          marketplacePresent: typeof marketplace.name === "string" && marketplace.name.length > 0,
+          pluginId: plugin.id,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+async function runPluginInstallFixtureSmoke({ codexBin }) {
+  const fixture = createPluginInstallFixture();
+  const pluginListParams = { cwds: [fixture.repoDir], marketplaceKinds: ["local"] };
+  const isolatedEnv = {
+    ...process.env,
+    CODEX_HOME: fixture.codexHome,
+    HOME: path.join(fixture.fixtureDir, "home"),
+    XDG_CACHE_HOME: path.join(fixture.fixtureDir, "xdg-cache"),
+    XDG_CONFIG_HOME: path.join(fixture.fixtureDir, "xdg-config"),
+    XDG_DATA_HOME: path.join(fixture.fixtureDir, "xdg-data"),
+    XDG_STATE_HOME: path.join(fixture.fixtureDir, "xdg-state"),
+  };
+
+  try {
+    const client = new AppServerClient({
+      codexBin,
+      cwd: fixture.repoDir,
+      env: isolatedEnv,
+    });
+    try {
+      await client.request("initialize", {
+        clientInfo: {
+          name: "codex_linux_desktop_plugin_fixture",
+          title: "Codex Linux Desktop Plugin Fixture",
+          version: "0.1.0",
+        },
+        capabilities: {
+          experimentalApi: true,
+          optOutNotificationMethods: [
+            "account/updated",
+            "account/rateLimits/updated",
+            "thread/started",
+            "thread/status/changed",
+          ],
+        },
+      });
+      client.notify("initialized", {});
+
+      const before = findPluginSummary(await client.request("plugin/list", pluginListParams), fixture.pluginName);
+      const install = await client.request("plugin/install", {
+        marketplacePath: fixture.marketplacePath,
+        pluginName: fixture.pluginName,
+        remoteMarketplaceName: null,
+      });
+      const after = findPluginSummary(await client.request("plugin/list", pluginListParams), fixture.pluginName);
+      if (!after?.pluginId) {
+        return {
+          details: {
+            afterInstallPresent: false,
+            isolatedCodexHome: isolatedEnv.CODEX_HOME === fixture.codexHome,
+            notInstalledBeforeInstall: before?.installed === false,
+          },
+          status: "fail",
+        };
+      }
+
+      await client.request("plugin/uninstall", { pluginId: after.pluginId });
+      const final = findPluginSummary(await client.request("plugin/list", pluginListParams), fixture.pluginName);
+      const details = {
+        appsNeedingAuthCount: safeArrayLength(install.appsNeedingAuth),
+        authPolicyOnUse: install.authPolicy === "ON_USE",
+        fixturePresent: before != null && after != null && final != null,
+        installedAfterInstall: after.installed === true,
+        isolatedCodexHome: isolatedEnv.CODEX_HOME === fixture.codexHome,
+        notInstalledBeforeInstall: before?.installed === false,
+        pluginIdPresent: before?.idPresent === true && after.idPresent === true && final?.idPresent === true,
+        uninstalledAfterUninstall: final?.installed === false,
+      };
+      return {
+        details,
+        status: Object.values(details).every((value) => value === true || value === 0) ? "pass" : "fail",
+      };
+    } finally {
+      await client.close();
+    }
+  } catch (error) {
+    return {
+      details: { error: summarizeErrorText(error.message) },
+      status: "fail",
+    };
+  } finally {
+    removeFixture(fixture.fixtureDir);
+  }
+}
+
 async function waitForRemoteStatus(client, requireConnected) {
   const deadline = Date.now() + (requireConnected ? 5000 : 2500);
   let latest = client.latestNotification("remoteControl/status/changed");
@@ -841,6 +1016,9 @@ async function runAppServerSmoke(options) {
   try {
     const requirementsFixture = await runRequirementsFixtureSmoke({ codexBin: options.codexBin });
     record("managed requirements fixture", requirementsFixture.status, requirementsFixture.details);
+
+    const pluginInstallFixture = await runPluginInstallFixtureSmoke({ codexBin: options.codexBin });
+    record("isolated plugin install fixture", pluginInstallFixture.status, pluginInstallFixture.details);
 
     const initialize = await client.request("initialize", {
       clientInfo: {

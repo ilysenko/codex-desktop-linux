@@ -71,7 +71,7 @@ screenshots, or private conversation text into parity artifacts.
 | CLI bridge | `codex app` launches app | Launcher wraps Linux Electron app and discovers CLI | `make doctor` | Keep CLI path/preflight covered during updates |
 | App-server protocol | Local app protocol | `codex app-server` used directly by smoke tests | `make parity-schema`, `make parity-smoke` | Track schema drift on each upstream refresh |
 | Thread history | Native app reads local sessions | App-server thread list/read surface is present | `make parity-smoke` | Avoid printing thread names/content in logs |
-| Plugins and marketplace | Built-in app support | Plugin list and bundled marketplace cache present | `make parity-smoke`, `make doctor` | Add install/uninstall smoke only with explicit non-destructive mode |
+| Plugins and marketplace | Built-in app support | Plugin list and bundled marketplace cache present, plus isolated install/uninstall coverage against a temporary `CODEX_HOME` and synthetic local marketplace | `make parity-smoke`, `make doctor` | Keep mutating plugin checks isolated from real user state |
 | Apps/connectors | Built-in app support | App list surface present | `make parity-smoke` | Account/workspace gating remains server-side |
 | MCP servers | Built-in app support | MCP status API plus session-scoped live MCP fixture, no-op tool-call coverage, and non-mutating text/blob resource-read coverage through an ephemeral thread | `make parity-smoke`, `make parity-schema` | Add broader MCP coverage only when it stays fixture-only and non-mutating |
 | Skills | Built-in app support | Skills list API plus repo-scoped fixture discovery present | `make parity-smoke` | Add skill enable/disable fixture later |
