@@ -645,37 +645,86 @@ function buildLinuxBuildInfoHelpers(electronVar, fsVar, pathVar) {
   return `function codexLinuxBuildInfoPaths(){let e=[];try{e.push((0,${pathVar}.join)(process.resourcesPath,\`codex-linux-build-info.json\`)),e.push((0,${pathVar}.join)(process.resourcesPath,\`..\`,\`.codex-linux\`,\`build-info.json\`))}catch{}return e}function codexLinuxReadBuildInfo(){for(let e of codexLinuxBuildInfoPaths())try{if(${fsVar}.existsSync(e)){let t=JSON.parse(${fsVar}.readFileSync(e,\`utf8\`));return t&&typeof t===\`object\`&&!Array.isArray(t)?t:null}}catch{}return null}function codexLinuxBuildInfoValue(e,t=\`unknown\`){return typeof e===\`string\`&&e.trim().length>0?e:Array.isArray(e)&&e.length>0?e.join(\`, \`):e==null?t:String(e)}function codexLinuxBuildInfoDetail(e){if(!e)return\`No Linux build metadata file was found in this app install.\`;let t=e.linuxTarget??{},n=t.distro??{},r=e.upstreamDmg??{},i=e.source??{},a=e.linuxFeatures?.enabled??[],o=e.packageProfile??{},s=i.shortCommit||i.commit,c=s?i.dirty?\`\${s} (dirty)\`:s:\`unknown\`,l=n.prettyName||[n.id,n.versionId].filter(Boolean).join(\` \`)||\`unknown\`;return[\`Linux package profile: \${codexLinuxBuildInfoValue(o.label)}\`,\`Distro: \${l}\`,\`Package manager: \${codexLinuxBuildInfoValue(t.packageManager??o.packageManager)}\`,\`Package format: \${codexLinuxBuildInfoValue(t.packageFormat??o.format)}\`,\`Enabled features: \${a.length>0?a.join(\`, \`):\`none\`}\`,\`Upstream app version: \${codexLinuxBuildInfoValue(r.appVersion)}\`,\`Upstream DMG SHA256: \${codexLinuxBuildInfoValue(r.sha256)}\`,\`Electron: \${codexLinuxBuildInfoValue(e.electronVersion)}\`,\`Linux source revision: \${c}\`,\`Source branch: \${codexLinuxBuildInfoValue(i.branch)}\`,\`Generated: \${codexLinuxBuildInfoValue(e.generatedAt)}\`].join(\`\\n\`)}async function codexLinuxShowBuildInfo(){try{let e=codexLinuxReadBuildInfo();await ${electronVar}.dialog?.showMessageBox({type:\`info\`,buttons:[\`OK\`],defaultId:0,noLink:!0,message:\`Codex Desktop Linux build information\`,detail:codexLinuxBuildInfoDetail(e)})}catch{}}`;
 }
 
-function applyLinuxBuildInfoTrayPatch(currentSource) {
-  if (currentSource.includes("function codexLinuxShowBuildInfo()")) {
-    return currentSource;
+function findLinuxBuildInfoHelperInsertionIndex(source, classMatch, helpMenuMatch) {
+  if (classMatch?.index != null) {
+    return classMatch.index;
+  }
+  if (helpMenuMatch?.index == null) {
+    return null;
   }
 
+  const statementStart = source.lastIndexOf(";", helpMenuMatch.index) + 1;
+  const insertionIndex = statementStart === 0 ? 0 : statementStart;
+  return insertionIndex <= helpMenuMatch.index ? insertionIndex : null;
+}
+
+function applyLinuxBuildInfoTrayPatch(currentSource) {
   const electronVar = requireName(currentSource, "electron");
   const fsVar = requireName(currentSource, "node:fs");
   const pathVar = requireName(currentSource, "node:path");
-  if (electronVar == null || fsVar == null || pathVar == null) {
+  const hasHelper = currentSource.includes("function codexLinuxShowBuildInfo()");
+  if (!hasHelper && (electronVar == null || fsVar == null || pathVar == null)) {
     console.warn("WARN: Could not find build info module bindings — skipping Linux build info tray patch");
     return currentSource;
   }
 
-  const trayMenuRegex = /getNativeTrayMenuItems\(\)\{return\[/g;
-  if (!trayMenuRegex.test(currentSource)) {
+  let patchedSource = currentSource;
+  let changed = false;
+  const trayMenuRegex = /getNativeTrayMenuItems\(\)\{[^]*?return\[/g;
+  const classRegex = /var [A-Za-z_$][\w$]*=class\{[^]*?getNativeTrayMenuItems\(\)\{[^]*?return\[/;
+  const helpMenuPattern = /\{role:`help`,id:[A-Za-z_$][\w$]*\.bn\.help,submenu:\[/;
+  const helperInsertionIndex = findLinuxBuildInfoHelperInsertionIndex(
+    currentSource,
+    currentSource.match(classRegex),
+    currentSource.match(helpMenuPattern),
+  );
+  const canInstallHelper = hasHelper || helperInsertionIndex != null;
+  const trayMenuMatch = patchedSource.match(trayMenuRegex);
+  if (trayMenuMatch == null && !patchedSource.includes("role:`help`")) {
     console.warn("WARN: Could not find tray menu items method — skipping Linux build info tray patch");
-    return currentSource;
+  } else if (
+    trayMenuMatch != null &&
+    !/getNativeTrayMenuItems\(\)\{[^]*?label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}/.test(patchedSource)
+  ) {
+    const menuPrefix =
+      "...process.platform===`linux`?[{label:`Build Information`,click:()=>{codexLinuxShowBuildInfo()}},{type:`separator`}]:[],";
+    patchedSource = patchedSource.replace(trayMenuRegex, (match) => `${match}${menuPrefix}`);
+    changed = true;
   }
 
-  const classRegex = /var [A-Za-z_$][\w$]*=class\{[^]*?getNativeTrayMenuItems\(\)\{return\[/;
-  const classMatch = currentSource.match(classRegex);
-  if (classMatch == null || classMatch.index == null) {
-    console.warn("WARN: Could not find tray class insertion point — skipping Linux build info tray patch");
+  const helpMenuRegex = /\{role:`help`,id:[A-Za-z_$][\w$]*\.bn\.help,submenu:\[/g;
+  if (
+    !/\{role:`help`,id:[A-Za-z_$][\w$]*\.bn\.help,submenu:\[\.\.\.process\.platform===`linux`\?\[\{label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],/.test(patchedSource)
+  ) {
+    if (canInstallHelper) {
+      let patchedHelpMenu = false;
+      patchedSource = patchedSource.replace(helpMenuRegex, (match) => {
+        patchedHelpMenu = true;
+        return `${match}...process.platform===\`linux\`?[{label:\`Build Information\`,click:()=>{codexLinuxShowBuildInfo()}},{type:\`separator\`}]:[],`;
+      });
+      changed = changed || patchedHelpMenu;
+      if (!patchedHelpMenu && patchedSource.includes("role:`help`")) {
+        console.warn("WARN: Could not find Help menu insertion point — skipping Linux build info app menu patch");
+      }
+    } else if (patchedSource.includes("role:`help`")) {
+      console.warn("WARN: Could not find Help menu insertion point — skipping Linux build info app menu patch");
+    }
+  }
+
+  if (!changed || hasHelper) {
+    return patchedSource;
+  }
+
+  const classMatch = patchedSource.match(classRegex);
+  const helpMenuMatch = patchedSource.match(helpMenuPattern);
+  const helperIndex = findLinuxBuildInfoHelperInsertionIndex(patchedSource, classMatch, helpMenuMatch);
+  if (helperIndex == null) {
+    console.warn("WARN: Could not find build info helper insertion point — skipping Linux build info patch");
     return currentSource;
   }
 
   const helpers = buildLinuxBuildInfoHelpers(electronVar, fsVar, pathVar);
-  const menuPrefix =
-    "...process.platform===`linux`?[{label:`Build Information`,click:()=>{codexLinuxShowBuildInfo()}},{type:`separator`}]:[],";
-  const withMenuItem = currentSource.replace(trayMenuRegex, `getNativeTrayMenuItems(){return[${menuPrefix}`);
-  return `${withMenuItem.slice(0, classMatch.index)}${helpers};${withMenuItem.slice(classMatch.index)}`;
+  return `${patchedSource.slice(0, helperIndex)}${helpers};${patchedSource.slice(helperIndex)}`;
 }
 
 function applyLinuxSingleInstancePatch(currentSource) {
