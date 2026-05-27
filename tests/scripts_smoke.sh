@@ -1317,8 +1317,8 @@ test_setup_native_wizard_read_aloud_paths_match_runtime_defaults() {
     assert_not_contains "$output_log" "$fake_home/.local/share/codex-desktop/read-aloud/kokoro/kokoro-v1.0.onnx"
 }
 
-test_setup_native_wizard_sway_hint_is_conservative() {
-    info "Checking setup-native wizard Sway backend hint stays conservative"
+test_setup_native_wizard_sway_hint_reports_backend() {
+    info "Checking setup-native wizard Sway backend hint"
     local workspace="$TMP_DIR/setup-native-sway-hint"
     local features_root="$workspace/linux-features"
     local config="$workspace/features.json"
@@ -1335,8 +1335,10 @@ test_setup_native_wizard_sway_hint_is_conservative() {
     CODEX_LINUX_FEATURES_CONFIG="$config" \
         bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log"
 
-    assert_contains "$output_log" "Sway -> not explicitly supported by the current i3 backend"
-    assert_not_contains "$output_log" "Sway -> i3 IPC backend through swaymsg"
+    assert_contains "$output_log" "Sway -> swaymsg backend"
+    assert_not_contains "$output_log" "Sway -> not explicitly supported"
+    assert_not_contains "$output_log" "Sway -> i3 IPC backend"
+    assert_not_contains "$output_log" "verify with Computer Use doctor after install"
 }
 
 test_setup_native_wizard_cleanup_requires_interactive_confirmation() {
@@ -5004,7 +5006,7 @@ main() {
     test_setup_native_wizard_prints_deep_readiness_guidance
     test_setup_native_wizard_uinput_stat_is_bounded
     test_setup_native_wizard_read_aloud_paths_match_runtime_defaults
-    test_setup_native_wizard_sway_hint_is_conservative
+    test_setup_native_wizard_sway_hint_reports_backend
     test_setup_native_wizard_cleanup_requires_interactive_confirmation
     test_setup_native_wizard_dry_run_cleanup_allows_noninteractive_preview
     test_setup_native_wizard_blank_interactive_cleanup_ids_skip_cleanup

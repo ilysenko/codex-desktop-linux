@@ -6,7 +6,7 @@ pub mod types;
 #[allow(unused_imports)]
 pub use registry::{
     COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, WINDOW_PERMISSION_HINT,
+    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, SWAY_BACKEND, WINDOW_PERMISSION_HINT,
 };
 #[allow(unused_imports)]
 pub use target::{
@@ -24,6 +24,7 @@ mod tests {
     use super::backends::kwin::{
         kwin_activate_script_source, kwin_window_id_from_uuid, parse_kwin_windows, KWIN_BACKEND,
     };
+    use super::backends::sway::{parse_sway_tree, SWAY_BACKEND};
     use super::registry::{
         descriptors, list_note, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND,
         GNOME_SHELL_INTROSPECT_BACKEND,
@@ -54,6 +55,7 @@ mod tests {
                 COSMIC_WAYLAND_BACKEND,
                 KWIN_BACKEND,
                 HYPRLAND_BACKEND,
+                SWAY_BACKEND,
                 I3_BACKEND,
             ]
         );
@@ -226,6 +228,21 @@ mod tests {
     fn i3_backend_can_exact_focus_targets() {
         let mut window = window(2, "Codex", "codex-desktop", "codex-desktop");
         window.backend = I3_BACKEND.to_string();
+
+        ensure_backend_can_focus_target(
+            &WindowTarget {
+                title: Some("Codex".to_string()),
+                ..Default::default()
+            },
+            &window,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn sway_backend_can_exact_focus_targets() {
+        let mut window = window(2, "Codex", "codex-desktop", "codex-desktop");
+        window.backend = SWAY_BACKEND.to_string();
 
         ensure_backend_can_focus_target(
             &WindowTarget {
@@ -625,6 +642,104 @@ mod tests {
         assert_eq!(windows[0].backend, I3_BACKEND);
         assert_eq!(windows[0].bounds.as_ref().unwrap().x, Some(0));
         assert_eq!(windows[1].title.as_deref(), Some("Save File"));
+        assert_eq!(windows[1].bounds.as_ref().unwrap().width, 600);
+    }
+
+    #[test]
+    fn parses_sway_tree_as_window_info() {
+        let tree_json = r#"{
+          "id": 1,
+          "type": "root",
+          "focused": false,
+          "nodes": [
+            {
+              "id": 2,
+              "type": "output",
+              "focused": false,
+              "nodes": [
+                {
+                  "id": 3,
+                  "type": "dockarea",
+                  "focused": false,
+                  "nodes": [
+                    {
+                      "id": 4,
+                      "type": "con",
+                      "focused": false,
+                      "name": "swaybar",
+                      "app_id": "swaybar",
+                      "pid": 100,
+                      "shell": "xdg_shell",
+                      "rect": {"x": 0, "y": 0, "width": 2560, "height": 40}
+                    }
+                  ]
+                },
+                {
+                  "id": 5,
+                  "type": "workspace",
+                  "num": 2,
+                  "focused": false,
+                  "nodes": [
+                    {
+                      "id": 42,
+                      "type": "con",
+                      "focused": true,
+                      "name": "Codex",
+                      "app_id": "codex-desktop",
+                      "pid": 19313,
+                      "shell": "xdg_shell",
+                      "rect": {"x": 0, "y": 40, "width": 2560, "height": 1400}
+                    },
+                    {
+                      "id": 43,
+                      "type": "con",
+                      "focused": false,
+                      "name": "Split container",
+                      "rect": {"x": 0, "y": 40, "width": 2560, "height": 1400},
+                      "nodes": []
+                    }
+                  ],
+                  "floating_nodes": [
+                    {
+                      "id": 73,
+                      "type": "floating_con",
+                      "focused": false,
+                      "window": 73400323,
+                      "window_type": "dialog",
+                      "name": "Save File",
+                      "pid": 20001,
+                      "shell": "xwayland",
+                      "window_properties": {
+                        "class": "zenity",
+                        "instance": "zenity",
+                        "title": "Save File"
+                      },
+                      "geometry": {"x": 100, "y": 120, "width": 600, "height": 400}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }"#;
+
+        let windows = parse_sway_tree(tree_json).unwrap();
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].window_id, 42);
+        assert_eq!(windows[0].title.as_deref(), Some("Codex"));
+        assert_eq!(windows[0].app_id.as_deref(), Some("codex-desktop"));
+        assert_eq!(windows[0].wm_class, None);
+        assert_eq!(windows[0].pid, Some(19313));
+        assert_eq!(windows[0].workspace, Some(2));
+        assert!(windows[0].focused);
+        assert_eq!(windows[0].client_type.as_deref(), Some("wayland"));
+        assert_eq!(windows[0].backend, SWAY_BACKEND);
+        assert_eq!(windows[0].bounds.as_ref().unwrap().height, 1400);
+        assert_eq!(windows[1].title.as_deref(), Some("Save File"));
+        assert_eq!(windows[1].app_id.as_deref(), Some("zenity"));
+        assert_eq!(windows[1].wm_class.as_deref(), Some("zenity"));
+        assert_eq!(windows[1].client_type.as_deref(), Some("x11"));
         assert_eq!(windows[1].bounds.as_ref().unwrap().width, 600);
     }
 
