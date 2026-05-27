@@ -258,6 +258,17 @@ render_desktop_entry_doctor_helper() {
     chmod 0644 "$target"
 }
 
+render_desktop_app_doctor() {
+    local target="$1"
+    local package_name
+    local doctor_source="${DESKTOP_DOCTOR_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop-doctor.py}"
+
+    ensure_file_exists "$doctor_source" "desktop doctor template"
+    package_name="$(sed_escape_replacement "$PACKAGE_NAME")"
+    sed -e "s/__PACKAGE_NAME__/$package_name/g" "$doctor_source" > "$target"
+    chmod 0755 "$target"
+}
+
 write_no_updater_deb_postinst() {
     local target="$1"
     local package_name
@@ -517,6 +528,7 @@ stage_common_package_files() {
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"
     render_desktop_entry "$root/usr/share/applications/$PACKAGE_NAME.desktop"
+    render_desktop_app_doctor "$root/usr/bin/$PACKAGE_NAME-doctor"
     cp "$ICON_SOURCE" "$root/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
     if package_with_updater_enabled; then
         cp "$UPDATER_BINARY_SOURCE" "$root/usr/bin/codex-update-manager"
@@ -586,6 +598,8 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/packaging/linux/control" "$update_builder_root/packaging/linux/control"
     cp "$REPO_DIR/packaging/linux/codex-desktop.spec" "$update_builder_root/packaging/linux/codex-desktop.spec"
     cp "$REPO_DIR/packaging/linux/codex-desktop.desktop" "$update_builder_root/packaging/linux/codex-desktop.desktop"
+    cp "${DESKTOP_DOCTOR_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop-doctor.py}" \
+        "$update_builder_root/packaging/linux/codex-desktop-doctor.py"
     cp "$REPO_DIR/packaging/linux/codex-desktop-entry-doctor.sh" \
         "$update_builder_root/packaging/linux/codex-desktop-entry-doctor.sh"
     cp "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "$update_builder_root/packaging/linux/codex-packaged-runtime.sh"

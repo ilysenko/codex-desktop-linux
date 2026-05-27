@@ -44,6 +44,7 @@ cp -a "__RPM_STAGING_DIR__/." "%{buildroot}/"
 %defattr(-,root,root,-)
 /opt/__PACKAGE_NAME__/
 /usr/bin/__PACKAGE_NAME__
+/usr/bin/__PACKAGE_NAME__-doctor
 %if __PACKAGE_WITH_UPDATER__
 /usr/bin/codex-update-manager
 /usr/lib/systemd/user/codex-update-manager.service

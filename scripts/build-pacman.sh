@@ -10,6 +10,7 @@ PKGBUILD_TEMPLATE="$REPO_DIR/packaging/linux/PKGBUILD.template"
 INSTALL_HOOKS="$REPO_DIR/packaging/linux/codex-desktop.install"
 DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
 SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.service"
+DESKTOP_DOCTOR_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop-doctor.py"
 USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh"
 ICON_SOURCE="$REPO_DIR/assets/codex.png"
 PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
@@ -18,6 +19,7 @@ PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
 UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-update-manager}"
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
+DESKTOP_DOCTOR_SOURCE="${DESKTOP_DOCTOR_SOURCE:-$DESKTOP_DOCTOR_TEMPLATE}"
 PACKAGED_RUNTIME_SOURCE="${PACKAGED_RUNTIME_SOURCE:-$PACKAGED_RUNTIME_TEMPLATE}"
 
 map_arch() {
@@ -40,6 +42,7 @@ main() {
 	ensure_app_layout
 	ensure_file_exists "$PKGBUILD_TEMPLATE" "PKGBUILD template"
 	ensure_file_exists "$DESKTOP_TEMPLATE" "desktop template"
+	ensure_file_exists "$DESKTOP_DOCTOR_SOURCE" "desktop doctor template"
 	ensure_file_exists "$ICON_SOURCE" "icon"
 	if package_with_updater_enabled; then
 		ensure_file_exists "$INSTALL_HOOKS" "install hooks"

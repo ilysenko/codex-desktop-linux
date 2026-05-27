@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   bundled plugin registry so the app keeps `read-aloud` installed, and the
   launcher syncs the plugin cache so new Codex windows expose the MCP tools
   through the same auto-install path as Computer Use.
+- Native packages now install `codex-desktop-doctor`, a safe installed-state
+  healthcheck for package files, updater/update-builder staging, Chrome native
+  messaging, Computer Use readiness, and remote mobile markers.
 
 ### Fixed
 

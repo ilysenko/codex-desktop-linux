@@ -51,7 +51,7 @@ The current working flow is:
 - `linux-target-context.js` — Linux target detection used by patch descriptors. Reads `/etc/os-release` plus env overrides and exposes helpers such as `matchesId()`, `packageFormatIs()`, `packageManagerIs()`, `desktopMatches()`, and `versionAtLeast()`.
 - `patch-report.js` — shared helpers for building `patch-report.json` (status capture, warning capture, `recordPatch`, `writePatchReport`).
 - `rebuild-report.sh` — writes `rebuild-report.json` (DMG path, Electron version, patch report, app dir) used by the rebuild candidate flow.
-- `package-common.sh` — shared shell helpers used by the native package builders (versioning, payload staging, user-service helper installation).
+- `package-common.sh` — shared shell helpers used by the native package builders (versioning, payload staging, installed doctor rendering, user-service helper installation).
 - `linux-features.sh` / `linux-features.js` — opt-in Linux feature framework loader. The shell side runs `stage.sh` hooks for enabled features; the JS side resolves manifests, validates entrypoints, and contributes `mainBundlePatch` functions to the patch registry.
 
 ### Patch registry (`scripts/patches/`)
@@ -88,6 +88,7 @@ The current working flow is:
 - `packaging/linux/PKGBUILD.template` — pacman PKGBUILD template (used to generate `.PKGINFO`/`.MTREE` plus the archive contents).
 - `packaging/linux/codex-desktop.install` — pacman `.install` hooks (`post_install` / `post_upgrade` / `pre_remove` / `post_remove`).
 - `packaging/linux/codex-desktop.desktop` — desktop entry template.
+- `packaging/linux/codex-desktop-doctor.py` — installed safe healthcheck rendered as `/usr/bin/codex-desktop-doctor`; keep it status/path only and never print pairing secrets, browser contents, screenshots, cookies, or key material.
 - `packaging/linux/codex-update-manager.service` — user-level `systemd` unit for the local update manager.
 - `packaging/linux/codex-update-manager.postinst` — Debian maintainer script that starts the user service after install.
 - `packaging/linux/codex-update-manager.prerm` — Debian maintainer script that stops or disables the user service during removal.
@@ -235,7 +236,7 @@ This path is for users who do not want a system-wide native package; the daily-d
 - Closing behavior:
   If future work touches shutdown behavior, assume the confirmation dialog may be implemented inside the app bundle rather than the Linux launcher.
 - Update manager:
-  The native packages include `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`.
+  Default native packages include `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`. All native packages include `/usr/bin/codex-desktop-doctor`.
 - Privilege boundary:
   The updater runs unprivileged. It only escalates at install time via `pkexec /usr/bin/codex-update-manager install-deb --path <deb>`, `install-rpm --path <rpm>`, or `install-pacman --path <pkg.tar.zst>`.
 - Manual rollback:
@@ -344,6 +345,7 @@ The native packages currently install:
 
 - app files under `/opt/codex-desktop`
 - launcher under `/usr/bin/codex-desktop`
+- installed doctor under `/usr/bin/codex-desktop-doctor`
 - updater binary under `/usr/bin/codex-update-manager`
 - updater unit under `/usr/lib/systemd/user/codex-update-manager.service`
 - update builder bundle under `/opt/codex-desktop/update-builder`
@@ -368,6 +370,7 @@ bash -n launcher/start.sh.template
 bash -n scripts/build-deb.sh
 bash -n scripts/build-rpm.sh
 bash -n scripts/build-pacman.sh
+python3 -m py_compile packaging/linux/codex-desktop-doctor.py
 node --test scripts/patch-linux-window-ui.test.js
 node --test linux-features/*/test.js
 bash tests/scripts_smoke.sh
