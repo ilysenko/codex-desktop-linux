@@ -214,6 +214,28 @@ jobs:
       - name: Show downloaded artifacts
         run: find release-artifacts -maxdepth 3 -type f | sort
 
+      - name: Generate per-file SHA256 checksums
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          root = Path('release-artifacts')
+          files = sorted(
+              p for p in root.rglob('*')
+              if p.is_file() and not p.name.endswith('.sha256')
+          )
+          if not files:
+              raise SystemExit('No release artifacts found for checksum generation')
+
+          for path in files:
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              checksum_path = path.with_name(path.name + '.sha256')
+              checksum_path.write_text(f"{digest}  {path.name}\n", encoding='utf-8')
+              print(checksum_path.relative_to(root).as_posix())
+          PY
+
       - name: Build release notes
         env:
           RESOLVED_COMMIT_SHA: ${{ github.sha }}
@@ -224,10 +246,15 @@ jobs:
           from pathlib import Path
 
           body = """## Artifacts
-          - Debian package (.deb)
-          - RPM package (.rpm)
-          - Pacman package (.pkg.tar.zst)
-          - AppImage (.AppImage)
+          - Debian package (.deb) + `.sha256`
+          - RPM package (.rpm) + `.sha256`
+          - Pacman package (.pkg.tar.zst) + `.sha256`
+          - AppImage (.AppImage) + `.sha256`
+
+          ### Verify a download
+          ```bash
+          sha256sum -c codex-desktop-<filename>.sha256
+          ```
 
           Built from commit: `{sha}`
           Workflow run: {run_url}
