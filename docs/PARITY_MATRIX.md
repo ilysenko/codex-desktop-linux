@@ -32,6 +32,7 @@ Run the local checks from the repo root:
 
 ```bash
 make doctor
+make capability-gaps
 make parity-schema
 make parity-browser-matrix
 make parity-browser-live

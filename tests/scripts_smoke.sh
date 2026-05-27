@@ -1047,6 +1047,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local app_service_log="$TMP_DIR/make-app-service.log"
     local doctor_log="$TMP_DIR/make-doctor.log"
     local readiness_log="$TMP_DIR/make-readiness.log"
+    local capability_gaps_log="$TMP_DIR/make-capability-gaps.log"
     local parity_schema_log="$TMP_DIR/make-parity-schema.log"
     local parity_browser_matrix_log="$TMP_DIR/make-parity-browser-matrix.log"
     local parity_browser_live_log="$TMP_DIR/make-parity-browser-live.log"
@@ -1085,6 +1086,10 @@ test_native_shortcut_targets_compose_existing_flows() {
     make -n -C "$REPO_DIR" readiness >"$readiness_log"
     assert_contains "$readiness_log" '/usr/bin/codex-desktop-doctor'
     assert_contains "$readiness_log" '--readiness'
+
+    make -n -C "$REPO_DIR" capability-gaps >"$capability_gaps_log"
+    assert_contains "$capability_gaps_log" '/usr/bin/codex-desktop-doctor'
+    assert_contains "$capability_gaps_log" '--capability-gaps'
 
     make -n -C "$REPO_DIR" parity-schema >"$parity_schema_log"
     assert_contains "$parity_schema_log" 'scripts/app-server-schema-guard.js'
@@ -1207,6 +1212,8 @@ test_desktop_doctor_template_smoke() {
     local report="$workspace/report.json"
     local readiness_report="$workspace/readiness.json"
     local readiness_text="$workspace/readiness.txt"
+    local capability_gaps_report="$workspace/capability-gaps.json"
+    local capability_gaps_text="$workspace/capability-gaps.txt"
 
     mkdir -p "$workspace/home" "$workspace/config"
     sed 's/__PACKAGE_NAME__/codex-doctor-smoke/g' \
@@ -1224,6 +1231,7 @@ test_desktop_doctor_template_smoke() {
     assert_contains "$report" '"patch_report_validator"'
     assert_contains "$report" '"chrome_manifest_probe"'
     assert_contains "$report" '"readiness"'
+    assert_contains "$report" '"capabilityGaps"'
     assert_not_contains "$report" "FAKE_QR_SECRET"
 
     python3 - "$report" <<'PY' || fail "Expected doctor JSON report to be well formed"
@@ -1245,6 +1253,13 @@ category_ids = {category["id"] for category in readiness.get("categories", [])}
 expected_categories = {"package_runtime", "app_service", "updater", "browser_bridge", "remote_mobile", "computer_use"}
 if expected_categories - category_ids:
     raise SystemExit(f"missing readiness categories: {sorted(expected_categories - category_ids)}")
+capability_gaps = report.get("capabilityGaps")
+if not isinstance(capability_gaps, dict) or capability_gaps.get("overall") != "not-ready":
+    raise SystemExit(f"bad capability gaps block: {capability_gaps}")
+area_ids = {area["id"] for area in capability_gaps.get("areas", [])}
+expected_areas = {"desktop_shell", "browser_bridge", "computer_use", "remote_mobile", "locked_computer_use", "server_gated_features"}
+if expected_areas - area_ids:
+    raise SystemExit(f"missing capability gap areas: {sorted(expected_areas - area_ids)}")
 PY
 
     if HOME="$workspace/home" XDG_CONFIG_HOME="$workspace/config" \
@@ -1279,6 +1294,44 @@ PY
     assert_contains "$readiness_text" "Package and runtime"
     assert_contains "$readiness_text" "Known limitations"
     assert_not_contains "$readiness_text" "$workspace"
+
+    if HOME="$workspace/home" XDG_CONFIG_HOME="$workspace/config" \
+        python3 "$doctor" --capability-gaps --json --package-name codex-doctor-smoke >"$capability_gaps_report"; then
+        fail "capability gaps should report failures for a deliberately missing package"
+    fi
+    python3 - "$capability_gaps_report" "$workspace" <<'PY' || fail "Expected capability gaps JSON to stay compact and redacted"
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+workspace = sys.argv[2]
+if report["overall"] != "not-ready":
+    raise SystemExit(f"expected not-ready, got {report['overall']}")
+area_by_id = {area["id"]: area for area in report["areas"]}
+if area_by_id["desktop_shell"]["supportLevel"] != "blocked":
+    raise SystemExit(f"expected blocked desktop shell: {area_by_id['desktop_shell']}")
+if area_by_id["remote_mobile"]["supportLevel"] != "experimental-not-enabled":
+    raise SystemExit(f"expected experimental remote gap: {area_by_id['remote_mobile']}")
+if area_by_id["locked_computer_use"]["supportLevel"] != "not-equivalent":
+    raise SystemExit(f"expected locked Computer Use gap: {area_by_id['locked_computer_use']}")
+if area_by_id["server_gated_features"]["supportLevel"] != "server-side":
+    raise SystemExit(f"expected server-side feature note: {area_by_id['server_gated_features']}")
+text = json.dumps(report, sort_keys=True)
+if workspace in text or "/usr/bin/" in text or "/opt/" in text:
+    raise SystemExit(f"capability gaps JSON leaked detailed paths: {text}")
+if not any("macOS" in boundary["detail"] for boundary in report["officialBoundaries"]):
+    raise SystemExit(f"expected macOS official boundary: {report['officialBoundaries']}")
+PY
+
+    if HOME="$workspace/home" XDG_CONFIG_HOME="$workspace/config" \
+        python3 "$doctor" --capability-gaps --package-name codex-doctor-smoke >"$capability_gaps_text"; then
+        fail "text capability gaps should report failures for a deliberately missing package"
+    fi
+    assert_contains "$capability_gaps_text" "Codex Desktop Linux capability gaps"
+    assert_contains "$capability_gaps_text" "Overall: not-ready"
+    assert_contains "$capability_gaps_text" "Locked Computer Use"
+    assert_contains "$capability_gaps_text" "Official boundaries"
+    assert_not_contains "$capability_gaps_text" "$workspace"
 }
 
 test_desktop_doctor_browser_manifest_coverage() {

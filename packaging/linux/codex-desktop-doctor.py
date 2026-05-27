@@ -102,6 +102,138 @@ READINESS_LIMITATIONS = [
     "Experimental remote mobile control is only release-ready when the optional live remote and Secret Service checks are intentionally run and pass.",
 ]
 
+CAPABILITY_BOUNDARIES = [
+    {
+        "id": "official_linux_support",
+        "status": "not-official",
+        "detail": "This package is an unofficial Linux conversion of the upstream macOS app, not official OpenAI Linux Desktop support.",
+        "reference": "https://developers.openai.com/codex/app-server",
+    },
+    {
+        "id": "mobile_setup",
+        "status": "macos-required-upstream",
+        "detail": "OpenAI documentation currently says Codex mobile setup requires the Codex App for macOS; Windows does not support mobile setup yet.",
+        "reference": "https://developers.openai.com/codex/remote-connections#before-you-set-up-mobile-access",
+    },
+    {
+        "id": "computer_use_permissions",
+        "status": "macos-baseline-upstream",
+        "detail": "OpenAI Computer Use setup documentation describes macOS Screen Recording and Accessibility permissions as the upstream desktop baseline.",
+        "reference": "https://developers.openai.com/codex/app/computer-use#set-up-computer-use",
+    },
+]
+
+CAPABILITY_AREAS = [
+    {
+        "id": "desktop_shell",
+        "label": "Desktop app shell",
+        "categoryId": "package_runtime",
+        "officialBaseline": "Official Codex Desktop app for supported desktop platforms.",
+        "linuxImplementation": "Repackaged Linux Electron app built from the user's upstream Codex DMG.",
+        "supportLevels": {
+            PASS: "covered-unofficial",
+            WARN: "covered-with-warnings",
+            FAIL: "blocked",
+            INFO: "not-installed",
+        },
+        "gap": "Not official OpenAI Linux Desktop support.",
+        "nextAction": "Repair package/runtime checks before evaluating higher-level parity.",
+    },
+    {
+        "id": "app_service",
+        "label": "Desktop app service",
+        "categoryId": "app_service",
+        "officialBaseline": "Native desktop lifecycle managed by the supported app.",
+        "linuxImplementation": "Optional systemd --user app service plus launcher PID tracking.",
+        "supportLevels": {
+            PASS: "covered-optional",
+            WARN: "covered-with-warnings",
+            FAIL: "needs-repair",
+            INFO: "optional-not-running",
+        },
+        "gap": "Optional Linux service integration, not an upstream desktop lifecycle contract.",
+        "nextAction": "Enable the app service only if systemd should manage the desktop app.",
+    },
+    {
+        "id": "local_updates",
+        "label": "Local update rebuilds",
+        "categoryId": "updater",
+        "officialBaseline": "Official desktop update mechanism.",
+        "linuxImplementation": "Local update manager rebuilds native Linux packages from future upstream DMGs.",
+        "supportLevels": {
+            PASS: "covered-unofficial",
+            WARN: "needs-attention",
+            FAIL: "blocked",
+            INFO: "manual-update-mode",
+        },
+        "gap": "Linux update flow rebuilds local packages instead of using an official Linux update channel.",
+        "nextAction": "Repair updater/update-builder warnings before relying on automatic rebuilds.",
+    },
+    {
+        "id": "browser_bridge",
+        "label": "Browser bridge",
+        "categoryId": "browser_bridge",
+        "officialBaseline": "Bundled browser integration through supported desktop plugin paths.",
+        "linuxImplementation": "Linux Chrome/Brave/Chromium native-messaging host with optional live validation.",
+        "supportLevels": {
+            PASS: "covered-unofficial",
+            WARN: "needs-attention",
+            FAIL: "blocked",
+            INFO: "not-observed",
+        },
+        "gap": "Live browser/profile checks are opt-in and must stay redacted.",
+        "nextAction": "Run browser setup and optional live checks when browser integration matters.",
+    },
+    {
+        "id": "computer_use",
+        "label": "Computer Use",
+        "categoryId": "computer_use",
+        "officialBaseline": "macOS Computer Use with Screen Recording and Accessibility permissions.",
+        "linuxImplementation": "Linux MCP backend using AT-SPI, screenshots, window targeting, and input backends.",
+        "supportLevels": {
+            PASS: "covered-linux-backend",
+            WARN: "needs-attention",
+            FAIL: "blocked",
+            INFO: "not-installed",
+        },
+        "gap": "Linux backend is not the same as macOS locked Computer Use or Apple permission flows.",
+        "nextAction": "Run the bundled Computer Use doctor and fix any reported Linux backend blockers.",
+    },
+    {
+        "id": "remote_mobile",
+        "label": "Mobile remote-control host",
+        "categoryId": "remote_mobile",
+        "officialBaseline": "OpenAI docs currently require Codex App for macOS to set up mobile access.",
+        "linuxImplementation": "Opt-in experimental Linux remote-mobile-control feature removes local Linux blockers when enabled.",
+        "supportLevels": {
+            PASS: "experimental-covered",
+            WARN: "experimental-needs-attention",
+            FAIL: "experimental-blocked",
+            INFO: "experimental-not-enabled",
+        },
+        "gap": "Server/account/workspace gating can still reject mobile control, and Linux setup is not official.",
+        "nextAction": "Use live remote and Secret Service checks before trusting phone control.",
+    },
+    {
+        "id": "locked_computer_use",
+        "label": "Locked Computer Use",
+        "supportLevel": "not-equivalent",
+        "officialBaseline": "macOS locked Computer Use relies on macOS-specific authorization behavior.",
+        "linuxImplementation": "Research-only on Linux; no unlock or bypass implementation is shipped.",
+        "gap": "Do not fake locked-session parity without a separate threat model and implementation.",
+        "nextAction": "Keep locked Computer Use as research-only until explicit design and threat-model work exists.",
+    },
+    {
+        "id": "server_gated_features",
+        "label": "Server-gated features",
+        "supportLevel": "server-side",
+        "officialBaseline": "Feature availability can depend on OpenAI account, workspace, region, and rollout state.",
+        "linuxImplementation": "The Linux package can expose local protocol surfaces but cannot unlock server-side rollouts.",
+        "gap": "Building or reinstalling this package cannot force account-scoped feature availability.",
+        "nextAction": "Validate local plumbing separately from account/workspace entitlement state.",
+    },
+]
+
 
 def run(args: list[str], timeout: int = 8) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -1307,6 +1439,79 @@ def build_readiness_report(
     }
 
 
+def build_capability_gap_report(
+    package_name: str,
+    readiness: dict[str, Any],
+) -> dict[str, Any]:
+    categories_by_id = {category["id"]: category for category in readiness["categories"]}
+    areas = []
+
+    for definition in CAPABILITY_AREAS:
+        category = categories_by_id.get(definition.get("categoryId"))
+        if category is not None:
+            category_status = category["status"]
+            support_level = definition["supportLevels"][category_status]
+            checks = category["checks"]
+        else:
+            category_status = None
+            support_level = definition["supportLevel"]
+            checks = []
+        areas.append(
+            {
+                "id": definition["id"],
+                "label": definition["label"],
+                "supportLevel": support_level,
+                "categoryStatus": category_status,
+                "officialBaseline": definition["officialBaseline"],
+                "linuxImplementation": definition["linuxImplementation"],
+                "gap": definition["gap"],
+                "nextAction": definition["nextAction"],
+                "checks": checks,
+            }
+        )
+
+    support_summary: dict[str, int] = {}
+    for area in areas:
+        support_level = area["supportLevel"]
+        support_summary[support_level] = support_summary.get(support_level, 0) + 1
+
+    if readiness["overall"] == "not-ready":
+        overall = "not-ready"
+    elif readiness["overall"] == "ready-with-warnings":
+        overall = "closest-possible-with-warnings"
+    else:
+        overall = "closest-possible-unofficial"
+
+    return {
+        "packageName": package_name,
+        "overall": overall,
+        "supportSummary": support_summary,
+        "areas": areas,
+        "officialBoundaries": CAPABILITY_BOUNDARIES,
+        "validationCommands": [
+            "codex-desktop-doctor --readiness",
+            "codex-desktop-doctor --capability-gaps",
+            "make parity-full",
+            "make parity-strict",
+        ],
+    }
+
+
+def print_capability_gap_text(capability_gaps: dict[str, Any]) -> None:
+    print(f"Codex Desktop Linux capability gaps ({capability_gaps['packageName']})")
+    print(f"Overall: {capability_gaps['overall']}")
+    for area in capability_gaps["areas"]:
+        print(f"[{area['supportLevel'].upper()}] {area['label']}: {area['linuxImplementation']}")
+        print(f"  Gap: {area['gap']}")
+        print(f"  Next: {area['nextAction']}")
+    print("Official boundaries:")
+    for boundary in capability_gaps["officialBoundaries"]:
+        print(f"- [{boundary['status']}] {boundary['detail']}")
+    print("Validation commands:")
+    for command in capability_gaps["validationCommands"]:
+        print(f"- {command}")
+
+
 def print_readiness_text(readiness: dict[str, Any]) -> None:
     print(f"Codex Desktop Linux readiness ({readiness['packageName']})")
     print(f"Overall: {readiness['overall']}")
@@ -1335,7 +1540,9 @@ def print_text(report: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check an installed Codex Desktop Linux package.")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
-    parser.add_argument("--readiness", action="store_true", help="print a compact release/readiness summary")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--readiness", action="store_true", help="print a compact release/readiness summary")
+    mode.add_argument("--capability-gaps", action="store_true", help="print a compact Linux capability gap summary")
     parser.add_argument("--package-name", default=PACKAGE_NAME, help="installed package name")
     args = parser.parse_args()
 
@@ -1343,15 +1550,21 @@ def main() -> int:
     checks = checks_for_package(package_name)
     summary = status_counts(checks)
     readiness = build_readiness_report(package_name, checks, summary)
+    capability_gaps = build_capability_gap_report(package_name, readiness)
     report = {
         "packageName": package_name,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "checks": checks,
         "summary": summary,
         "readiness": readiness,
+        "capabilityGaps": capability_gaps,
     }
 
-    if args.readiness and args.json:
+    if args.capability_gaps and args.json:
+        print(json.dumps(capability_gaps, indent=2, sort_keys=True))
+    elif args.capability_gaps:
+        print_capability_gap_text(capability_gaps)
+    elif args.readiness and args.json:
         print(json.dumps(readiness, indent=2, sort_keys=True))
     elif args.readiness:
         print_readiness_text(readiness)

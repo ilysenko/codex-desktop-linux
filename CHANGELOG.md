@@ -25,6 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `codex-desktop-doctor --readiness` and `make readiness` now provide a compact
   release/readiness summary grouped by package runtime, app service, updater,
   browser bridge, remote-mobile, and Linux Computer Use state.
+- `codex-desktop-doctor --capability-gaps` and `make capability-gaps` now
+  provide a compact Linux capability summary that separates covered,
+  experimental, server-side, and not-equivalent surfaces without claiming
+  official Linux or exact macOS parity.
 - Native packages now include an opt-in `codex-desktop.service` user unit plus
   `make app-service-enable`, `make app-service-status`, and
   `make app-service-disable` helpers for users who want Codex Desktop managed
