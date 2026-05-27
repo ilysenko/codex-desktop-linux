@@ -106,6 +106,10 @@ function syntheticCurrentVisibilityBundle() {
   return "function Et({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)}export{Et as t};";
 }
 
+function syntheticCurrentUsePluginVisibilityBundle() {
+  return "function ke({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}export{ke as l};";
+}
+
 function syntheticMobileConnectedSettingsBundle() {
   return "let y={id:`codexMobile.setupDialog.connected.computerUse.description`,defaultMessage:`Let Codex control the apps on your Mac.`,description:`Description for enabling Computer Use after mobile setup`};";
 }
@@ -583,6 +587,14 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "webview-asset",
       "webview-asset",
     ]);
+
+    const visibilityDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-control-visibility"
+    );
+    assert.ok(visibilityDescriptor);
+    assert.equal(visibilityDescriptor.pattern.test("remote-connections-settings-fixture.js"), true);
+    assert.equal(visibilityDescriptor.pattern.test("use-plugin-install-flow-fixture.js"), true);
+    assert.equal(visibilityDescriptor.pattern.test("app-main-fixture.js"), false);
   });
 });
 
@@ -751,7 +763,17 @@ test("Linux remote-control visibility patch handles current settings bundle shap
 
   assert.notEqual(patched, source);
   assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
-  assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)/);
+  assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)&&e\?\.accessRequired!==!0/);
+  assert.equal(applyLinuxRemoteControlVisibilityPatch(patched), patched);
+});
+
+test("Linux remote-control visibility patch handles current use-plugin gate shape", () => {
+  const source = syntheticCurrentUsePluginVisibilityBundle();
+  const patched = applyLinuxRemoteControlVisibilityPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
+  assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)&&e\?\.accessRequired!==!0/);
   assert.equal(applyLinuxRemoteControlVisibilityPatch(patched), patched);
 });
 
