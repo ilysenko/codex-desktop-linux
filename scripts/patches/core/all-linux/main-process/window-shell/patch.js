@@ -7,6 +7,7 @@ const {
   applyLinuxReadyToShowWindowStatePatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxFileManagerPatch,
+  applyLinuxZedOpenerPatch,
   applyLinuxBuildInfoTrayPatch,
   applyLinuxTrayPatch,
   applyLinuxSingleInstancePatch,
@@ -63,6 +64,13 @@ module.exports = [
     order: 100,
     ciPolicy: "required-upstream",
     apply: applyLinuxFileManagerPatch,
+  },
+  {
+    id: "linux-zed-opener",
+    phase: "main-bundle",
+    order: 105,
+    ciPolicy: "optional",
+    apply: applyLinuxZedOpenerPatch,
   },
   {
     id: "linux-tray",

@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   messaging, Computer Use readiness, and remote mobile markers.
 - Linux desktop entries now expose Quick Chat and Compact Prompt actions backed
   by the existing `--quick-chat` and `--prompt-chat` launcher paths.
+- Linux Zed editor opener support is now enabled by default when the `zed`,
+  `zeditor`, `zedit`, or `zed-cli` command is available.
 
 ### Fixed
 

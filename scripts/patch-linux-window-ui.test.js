@@ -49,6 +49,7 @@ const {
   applyLinuxTrayPatch,
   applyLinuxWillQuitDrainTimeoutPatch,
   applyLinuxWindowOptionsPatch,
+  applyLinuxZedOpenerPatch,
   applySubagentNicknameMetadataPatch,
   isComputerUseUiEnabled,
   patchMainBundleSource,
@@ -84,6 +85,8 @@ const mainBundlePrefix =
   "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`);";
 const fileManagerBundle =
   "var lu=jl({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>il(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:uu,args:e=>il(e),open:async({path:e})=>du(e)}});function uu(){}";
+const zedOpenerBundle =
+  "function Tw(e,t){return t?[`${e}:${t.line}:${t.column}`]:[e]}function Rp(e){return e}var eT={id:`zed`,platforms:{darwin:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:tT,args:Tw,open:async({command:e,path:t,location:n})=>{await aT(e,t,n)}},win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:nT,args:Tw}}};function tT(){return Rp(`zed`)??nC(`Zed`,`zed`)}function nT(){let e=Rp(`zed.exe`)??Rp(`zed`);return e}";
 const alreadyOpaqueBackgroundBundle =
   "process.platform===`linux`?{backgroundColor:e?t:n,backgroundMaterial:null}:{backgroundColor:r,backgroundMaterial:null}";
 const opaqueBackgroundBundleWithDriftingGw =
@@ -493,6 +496,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-opaque-background",
     "linux-avatar-overlay-mouse-passthrough",
     "linux-file-manager",
+    "linux-zed-opener",
     "linux-tray",
     "linux-build-info-tray",
     "linux-single-instance",
@@ -783,6 +787,29 @@ test("adds Linux file manager support without relying on exact minified variable
   assert.match(patched, /linux:\{label:`File Manager`/);
   assert.match(patched, /detect:\(\)=>`linux-file-manager`/);
   assert.match(patched, /n\.shell\.openPath\(__codexOpenTarget\)/);
+});
+
+test("adds Linux Zed opener support to the upstream opener block", () => {
+  const patched = applyPatchTwice(applyLinuxZedOpenerPatch, zedOpenerBundle);
+
+  assert.match(patched, /linux:\{label:`Zed`,icon:`apps\/zed\.png`,kind:`editor`/);
+  assert.match(
+    patched,
+    /detect:\(\)=>Rp\(`zed`\)\?\?Rp\(`zeditor`\)\?\?Rp\(`zedit`\)\?\?Rp\(`zed-cli`\)/,
+  );
+  assert.match(patched, /args:Tw/);
+});
+
+test("keeps an existing Linux Zed opener unchanged", () => {
+  const zedAlreadyLinux = zedOpenerBundle.replace(
+    "win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:nT,args:Tw}}",
+    "win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:nT,args:Tw},linux:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:tT,args:Tw}}",
+  );
+
+  const patched = applyPatchTwice(applyLinuxZedOpenerPatch, zedAlreadyLinux);
+
+  assert.equal((patched.match(/linux:\{label:`Zed`/g) ?? []).length, 1);
+  assert.match(patched, /detect:tT,args:Tw/);
 });
 
 test("preserves user-enabled remote_control config on Linux", () => {

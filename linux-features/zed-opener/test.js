@@ -95,14 +95,14 @@ test("Zed opener feature fails soft when the opener block is missing", () => {
   assert.match(warnings.join("\n"), /Could not find Zed opener block/);
 });
 
-test("Zed opener feature stays disabled until listed in features.json", () => {
+test("Zed opener feature stays disabled while core Zed support remains enabled", () => {
   withTempFeatureConfig([], (root) => {
     assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), []);
     assert.deepEqual(loadLinuxFeatureMainBundlePatches({ featuresRoot: root }), []);
 
     withLinuxFeatureRootEnv(root, () => {
       const { value: patched } = captureWarns(() => patchMainBundleSource(zedOpenerBundle, null));
-      assert.doesNotMatch(patched, /linux:\{label:`Zed`/);
+      assert.match(patched, /linux:\{label:`Zed`/);
     });
   });
 });
@@ -140,7 +140,10 @@ test("Zed opener feature participates in main bundle patching and patch reports"
 
         assert.match(fs.readFileSync(path.join(buildDir, "main.js"), "utf8"), /linux:\{label:`Zed`/);
         assert.ok(
-          report.patches.some((patch) => patch.name === "feature:zed-opener" && patch.status === "applied"),
+          report.patches.some((patch) => patch.name === "linux-zed-opener" && patch.status === "applied"),
+        );
+        assert.ok(
+          report.patches.some((patch) => patch.name === "feature:zed-opener" && patch.status === "already-applied"),
         );
       } finally {
         fs.rmSync(tempApp, { recursive: true, force: true });
