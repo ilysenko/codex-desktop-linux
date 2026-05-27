@@ -127,12 +127,37 @@ jobs:
           sudo apt-get install -y p7zip-full
 
       - name: Validate Nix pins against upstream DMG
-        run: scripts/ci/validate-nix-pins.sh
+        id: nix-pin-validation
+        run: |
+          set -euo pipefail
+          validation_log="$(mktemp)"
+          set +e
+          scripts/ci/validate-nix-pins.sh 2>&1 | tee "$validation_log"
+          validation_status="${PIPESTATUS[0]}"
+          set -e
+          if [ "$validation_status" -ne 0 ]; then
+            if [ "$GITHUB_EVENT_NAME" = "pull_request" ] \
+                && grep -Eq "Codex app version pin mismatch|Electron version pin mismatch|native-modules .* pin mismatch" "$validation_log"; then
+              {
+                echo "## Nix Pin Validation"
+                echo ""
+                echo "- Skipped package-output builds because upstream \`Codex.dmg\` metadata is ahead of the committed flake pins during rollout."
+                echo "- This is PR-only; main-branch validation still fails so the scheduled hash-refresh workflow can update pins once the rollout stabilizes."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "skip_package_outputs=true" >> "$GITHUB_OUTPUT"
+              rm -f "$validation_log"
+              exit 0
+            fi
+            exit "$validation_status"
+          fi
+          echo "skip_package_outputs=false" >> "$GITHUB_OUTPUT"
+          rm -f "$validation_log"
 
       - name: Check flake evaluation
         run: nix flake check --no-build
 
       - name: Build Nix package outputs
+        if: steps.nix-pin-validation.outputs.skip_package_outputs != 'true'
         run: |
           set -euo pipefail
           outputs=(
