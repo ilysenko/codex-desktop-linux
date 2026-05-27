@@ -35,6 +35,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `scripts/live-validation-matrix.py` and `make parity-live-matrix` now emit the
   combined redacted desktop-environment and Secret Service/keyring matrix
   without exposing paths, window state, browser state, key ids, or key material.
+- `scripts/service-lifecycle-live.js`, `make parity-services-live`, and
+  `docs/SERVICE_LIFECYCLE_MATRIX.md` now provide a read-only redacted live
+  systemd user-service state probe without starting, stopping, restarting, or
+  reading logs from services.
 - Native packages now include an opt-in `codex-desktop.service` user unit plus
   `make app-service-enable`, `make app-service-status`, and
   `make app-service-disable` helpers for users who want Codex Desktop managed

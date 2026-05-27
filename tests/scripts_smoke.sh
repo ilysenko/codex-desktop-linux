@@ -153,6 +153,7 @@ test_desktop_parity_smoke_script_syntax() {
     node --check "$REPO_DIR/scripts/desktop-parity-smoke.js" >/dev/null
     node --check "$REPO_DIR/scripts/browser-matrix-smoke.js" >/dev/null
     node --check "$REPO_DIR/scripts/service-lifecycle-smoke.js" >/dev/null
+    node --check "$REPO_DIR/scripts/service-lifecycle-live.js" >/dev/null
     python3 -m py_compile "$REPO_DIR/scripts/secret-service-matrix-smoke.py"
     python3 -m py_compile "$REPO_DIR/scripts/live-validation-matrix.py"
     bash -n "$REPO_DIR/scripts/desktop-parity-full.sh"
@@ -235,6 +236,7 @@ test_desktop_parity_smoke_script_syntax() {
     assert_contains "$REPO_DIR/Makefile" "parity-secret-service-live"
     assert_contains "$REPO_DIR/Makefile" "parity-live-matrix"
     assert_contains "$REPO_DIR/Makefile" "parity-services"
+    assert_contains "$REPO_DIR/Makefile" "parity-services-live"
 
     node - "$REPO_DIR/scripts/desktop-parity-smoke.js" <<'NODE' \
         || fail "Expected desktop parity smoke redactor to cover quoted JSON fields"
@@ -319,6 +321,23 @@ test_live_validation_matrix_doc() {
     assert_not_contains "$doc" "privateKey"
     assert_not_contains "$doc" "pairingCode"
     assert_not_contains "$doc" "threadId"
+}
+
+test_service_lifecycle_matrix_doc() {
+    info "Checking service lifecycle matrix redaction contract"
+    local doc="$REPO_DIR/docs/SERVICE_LIFECYCLE_MATRIX.md"
+
+    assert_file_exists "$doc"
+    assert_contains "$doc" "read-only"
+    assert_contains "$doc" "Allowed Evidence Fields"
+    assert_contains "$doc" "Forbidden Evidence"
+    assert_contains "$doc" "make parity-services-live"
+    assert_contains "$doc" "node scripts/service-lifecycle-live.js --json"
+    assert_contains "$REPO_DIR/docs/PARITY_MATRIX.md" "SERVICE_LIFECYCLE_MATRIX.md"
+    assert_contains "$REPO_DIR/README.md" "docs/SERVICE_LIFECYCLE_MATRIX.md"
+    assert_not_contains "$doc" "journalctl -"
+    assert_not_contains "$doc" "systemctl --user restart"
+    assert_not_contains "$doc" "systemctl --user stop"
 }
 
 test_package_payload_permission_normalization() {
@@ -1079,6 +1098,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local parity_secret_service_live_log="$TMP_DIR/make-parity-secret-service-live.log"
     local parity_live_matrix_log="$TMP_DIR/make-parity-live-matrix.log"
     local parity_services_log="$TMP_DIR/make-parity-services.log"
+    local parity_services_live_log="$TMP_DIR/make-parity-services-live.log"
     local parity_full_log="$TMP_DIR/make-parity-full.log"
     local parity_strict_log="$TMP_DIR/make-parity-strict.log"
 
@@ -1139,6 +1159,9 @@ test_native_shortcut_targets_compose_existing_flows() {
     make -n -C "$REPO_DIR" parity-services >"$parity_services_log"
     assert_contains "$parity_services_log" 'scripts/service-lifecycle-smoke.js'
 
+    make -n -C "$REPO_DIR" parity-services-live >"$parity_services_live_log"
+    assert_contains "$parity_services_live_log" 'scripts/service-lifecycle-live.js'
+
     make -n -C "$REPO_DIR" parity-full >"$parity_full_log"
     assert_contains "$parity_full_log" 'scripts/desktop-parity-full.sh'
 
@@ -1168,6 +1191,144 @@ for (const expected of [
 ]) {
   assert.equal(names.has(expected), true, `missing check ${expected}`);
 }
+NODE
+}
+
+test_service_lifecycle_live_smoke() {
+    info "Checking service lifecycle live probe redaction"
+    local workspace="$TMP_DIR/service-lifecycle-live-smoke"
+    local fake_bin="$workspace/bin"
+    local report="$workspace/report.json"
+    local skip_report="$workspace/skip.json"
+    local strict_report="$workspace/strict.json"
+
+    mkdir -p "$fake_bin"
+    cat > "$fake_bin/systemctl" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${CODEX_TEST_SYSTEMCTL_MODE:-ok}" = "unavailable" ]; then
+    echo "PRIVATE_ENV=/tmp/not-for-output" >&2
+    exit 1
+fi
+[ "${1:-}" = "--user" ] || exit 2
+shift
+case "${1:-}" in
+    show-environment)
+        printf '%s\n' 'PRIVATE_ENV=/tmp/not-for-output'
+        ;;
+    show)
+        unit="${2:-}"
+        case "$unit" in
+            codex-cua-lab.service)
+                cat <<'EOF'
+LoadState=loaded
+ActiveState=active
+SubState=running
+UnitFileState=enabled
+Result=success
+Restart=on-failure
+NRestarts=2
+After=graphical-session.target app.slice /tmp/not-for-output
+Wants=
+PartOf=graphical-session.target
+FragmentPath=/tmp/not-for-output/codex-cua-lab.service
+EOF
+                ;;
+            codex-update-manager.service)
+                cat <<'EOF'
+LoadState=loaded
+ActiveState=active
+SubState=running
+UnitFileState=enabled
+Result=success
+Restart=on-failure
+NRestarts=1
+After=network-online.target graphical-session.target app.slice
+Wants=network-online.target
+PartOf=
+ExecStart=/tmp/not-for-output/codex-update-manager daemon
+EOF
+                ;;
+            *)
+                exit 3
+                ;;
+        esac
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+SCRIPT
+    chmod +x "$fake_bin/systemctl"
+
+    PATH="$fake_bin:$PATH" \
+        node "$REPO_DIR/scripts/service-lifecycle-live.js" \
+            --json \
+            --package-name codex-cua-lab >"$report"
+
+    node - "$report" "$workspace" <<'NODE' || fail "Expected service lifecycle live report to stay redacted"
+const fs = require("node:fs");
+const assert = require("node:assert/strict");
+
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const workspace = process.argv[3];
+assert.equal(report.ok, true);
+assert.equal(report.status, "pass");
+assert.equal(report.systemdUser.available, true);
+assert.equal(report.appService.activeState, "active");
+assert.equal(report.appService.unitFileState, "enabled");
+assert.equal(report.appService.restartCount, 2);
+assert.equal(report.appService.dependencies.afterGraphicalSession, true);
+assert.equal(report.appService.dependencies.partOfGraphicalSession, true);
+assert.equal(report.updaterService.dependencies.afterGraphicalSession, true);
+assert.equal(report.updaterService.dependencies.afterNetworkOnline, true);
+assert.equal(report.updaterService.dependencies.wantsNetworkOnline, true);
+const text = JSON.stringify(report);
+for (const forbidden of [
+  workspace,
+  "/tmp/not-for-output",
+  "PRIVATE_ENV",
+  "FragmentPath",
+  "ExecStart",
+  "After=",
+  "Wants=",
+  "graphical-session.target",
+  "network-online.target",
+]) {
+  assert.equal(text.includes(forbidden), false, `leaked ${forbidden}: ${text}`);
+}
+NODE
+
+    PATH="$fake_bin:$PATH" \
+    CODEX_TEST_SYSTEMCTL_MODE=unavailable \
+        node "$REPO_DIR/scripts/service-lifecycle-live.js" --json >"$skip_report"
+
+    node - "$skip_report" <<'NODE' || fail "Expected unavailable user manager to skip without strict mode"
+const fs = require("node:fs");
+const assert = require("node:assert/strict");
+
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+assert.equal(report.ok, true);
+assert.equal(report.status, "skip");
+assert.equal(report.systemdUser.issueKind, "systemd_user_unavailable");
+const text = JSON.stringify(report);
+assert.equal(text.includes("/tmp/not-for-output"), false);
+assert.equal(text.includes("PRIVATE_ENV"), false);
+NODE
+
+    if PATH="$fake_bin:$PATH" \
+        CODEX_TEST_SYSTEMCTL_MODE=unavailable \
+            node "$REPO_DIR/scripts/service-lifecycle-live.js" --strict --json >"$strict_report"; then
+        fail "Expected strict service lifecycle live probe to fail without user manager"
+    fi
+    node - "$strict_report" <<'NODE' || fail "Expected strict unavailable report to stay redacted"
+const fs = require("node:fs");
+const assert = require("node:assert/strict");
+
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+assert.equal(report.ok, false);
+assert.equal(report.status, "fail");
+assert.equal(report.systemdUser.issueKind, "systemd_user_unavailable");
 NODE
 }
 
@@ -6249,6 +6410,7 @@ main() {
     test_browser_matrix_smoke
     test_locked_computer_use_research_doc
     test_live_validation_matrix_doc
+    test_service_lifecycle_matrix_doc
     test_package_payload_permission_normalization
     test_deb_builder_smoke
     test_update_builder_preserves_enabled_linux_features_config
@@ -6264,6 +6426,7 @@ main() {
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_native_shortcut_targets_compose_existing_flows
     test_service_lifecycle_smoke
+    test_service_lifecycle_live_smoke
     test_packaged_runtime_prelaunch_uses_user_systemd_safely
     test_desktop_doctor_template_smoke
     test_desktop_doctor_browser_manifest_coverage

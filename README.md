@@ -546,6 +546,7 @@ make parity-schema
 make parity-browser-matrix
 make parity-live-matrix
 make parity-services
+make parity-services-live
 make parity-full
 ```
 
@@ -574,6 +575,10 @@ markers without starting services: the app unit stays bound to
 `network-online.target` and restarts on failure, the packaged launcher imports
 the desktop session environment before starting the updater, and launch-time
 update checks run as a collected one-shot when systemd is available.
+`make parity-services-live` is the read-only live companion check. It queries
+sanitized `systemctl --user show` state for the app and updater units, then
+reports only enums, booleans, restart counts, and sanitized issue kinds. It does
+not start, stop, restart, enable, disable, or read logs for any service.
 `make parity-full` composes the
 installed doctor, `systemd --user` service state, app-server schema guard,
 Computer Use doctor, and the non-sensitive app-server smoke. The smoke also
@@ -603,6 +608,8 @@ The current parity matrix and remaining Mac/Linux gaps are tracked in
 [`docs/PARITY_MATRIX.md`](docs/PARITY_MATRIX.md).
 Redacted live desktop/keyring validation evidence must follow
 [`docs/LIVE_VALIDATION_MATRIX.md`](docs/LIVE_VALIDATION_MATRIX.md).
+Redacted live service lifecycle evidence must follow
+[`docs/SERVICE_LIFECYCLE_MATRIX.md`](docs/SERVICE_LIFECYCLE_MATRIX.md).
 Locked Computer Use remains research-only on Linux; see
 [`docs/LOCKED_COMPUTER_USE_RESEARCH.md`](docs/LOCKED_COMPUTER_USE_RESEARCH.md).
 

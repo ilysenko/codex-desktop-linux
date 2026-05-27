@@ -143,8 +143,10 @@ function runSmoke() {
     ]),
     evaluateCheck("service_lifecycle_docs", [
       { name: "make_target_documented", ok: readmeSource.includes("make parity-services") },
+      { name: "live_make_target_documented", ok: readmeSource.includes("make parity-services-live") },
       { name: "matrix_validation", ok: parityMatrixSource.includes("make parity-services") },
-      { name: "no_live_suspend_claim", ok: parityMatrixSource.includes("live suspend/resume") },
+      { name: "live_matrix_linked", ok: parityMatrixSource.includes("SERVICE_LIFECYCLE_MATRIX.md") },
+      { name: "no_disruptive_suspend_claim", ok: parityMatrixSource.includes("true suspend/resume") },
     ]),
   ];
 
