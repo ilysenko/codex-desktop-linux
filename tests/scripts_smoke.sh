@@ -2402,6 +2402,46 @@ test_package_payload_refreshes_computer_use_backend() {
     assert_mode "$target_bin/codex-computer-use-cosmic" "755"
 }
 
+test_process_detection_handles_deleted_running_app() {
+    info "Checking running app detection handles upgraded Electron processes"
+    local workspace="$TMP_DIR/process-detection-deleted"
+    local proc_root="$workspace/proc"
+    local install_dir="$workspace/opt/codex-desktop"
+    local state_home="$workspace/state"
+    local uid
+
+    uid="$(id -u)"
+    mkdir -p "$proc_root/1234" "$proc_root/1235" "$install_dir" "$state_home/codex-desktop"
+    printf '%s\n' '#!/bin/sh' > "$install_dir/electron"
+    printf '%s\n' '#!/bin/sh' > "$install_dir/electron (deleted)"
+    chmod +x "$install_dir/electron" "$install_dir/electron (deleted)"
+    ln -s "$install_dir/electron (deleted)" "$proc_root/1234/exe"
+    ln -s "$install_dir/electron (deleted)" "$proc_root/1235/exe"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/1234/status"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/1235/status"
+    printf '%s\0' "$install_dir/electron --no-sandbox" > "$proc_root/1234/cmdline"
+    printf '%s\0' "$install_dir/electron --type=renderer --no-sandbox" > "$proc_root/1235/cmdline"
+    printf '%s\n' 1234 > "$state_home/codex-desktop/app.pid"
+
+    (
+        INSTALL_DIR="$install_dir"
+        CODEX_APP_ID="codex-desktop"
+        XDG_STATE_HOME="$state_home"
+        CODEX_PROCESS_PROC_ROOT="$proc_root"
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/process-detection.sh"
+
+        [ "$(find_running_install_target_pid)" = "1234" ] \
+            || fail "Expected deleted main Electron process to be detected"
+        pid_matches_install_target 1234 "$install_dir/electron" \
+            || fail "Expected deleted executable suffix to match install target"
+        ! pid_matches_install_target 1235 "$install_dir/electron" \
+            || fail "Expected Electron helper process to be ignored"
+        pid_is_electron_helper 1235 \
+            || fail "Expected process title with embedded --type= to count as Electron helper"
+    )
+}
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
@@ -5511,6 +5551,7 @@ main() {
     test_native_module_rebuild_accepts_prebuilt_source
     test_bundled_plugin_builders_accept_prebuilt_binaries
     test_package_payload_refreshes_computer_use_backend
+    test_process_detection_handles_deleted_running_app
     test_browser_use_node_repl_fallback_runtime
     test_browser_use_file_url_policy_patch_behavior
     test_browser_plugin_renamed_upstream_staging

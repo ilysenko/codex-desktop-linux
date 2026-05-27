@@ -56,6 +56,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Native package builders now refresh the packaged Linux Computer Use backend
   during payload staging, preventing stale `codex-app` plugin binaries from
   being shipped after backend source changes.
+- Install-time running-app detection now treats upgraded Electron processes
+  whose executable appears as `(deleted)` as still running, while continuing to
+  ignore renderer/GPU/helper processes.
 
 ## [0.8.0] - 2026-05-16
 
