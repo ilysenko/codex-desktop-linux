@@ -633,6 +633,7 @@ write_chrome_native_host_manifests() {
 import json
 import pathlib
 import re
+import shlex
 import sys
 
 host_path = sys.argv[1]
@@ -667,18 +668,32 @@ if not isinstance(host_name, str) or re.fullmatch(r"[A-Za-z0-9_.]+", host_name) 
     raise SystemExit("Invalid Chrome native host name in bundled plugin metadata")
 
 manifest_name = f"{host_name}.json"
-manifest = {
-    "name": host_name,
-    "description": "Codex chrome native messaging host",
-    "type": "stdio",
-    "path": host_path,
-    "allowed_origins": [f"chrome-extension://{extension_id}/"],
-}
-text = json.dumps(manifest, separators=(",", ":"))
+def manifest_text(native_host_path):
+    manifest = {
+        "name": host_name,
+        "description": "Codex chrome native messaging host",
+        "type": "stdio",
+        "path": str(native_host_path),
+        "allowed_origins": [f"chrome-extension://{extension_id}/"],
+    }
+    return json.dumps(manifest, separators=(",", ":"))
+
+def ensure_flatpak_native_host_wrapper():
+    wrapper_path = home / ".var/app/com.google.Chrome/config/codex/extension-host-flatpak-wrapper.sh"
+    wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+    wrapper_text = "#!/bin/sh\nexec /usr/bin/flatpak-spawn --host " + shlex.quote(host_path) + ' "$@"\n'
+    try:
+        if wrapper_path.read_text(encoding="utf-8") != wrapper_text:
+            wrapper_path.write_text(wrapper_text, encoding="utf-8")
+    except OSError:
+        wrapper_path.write_text(wrapper_text, encoding="utf-8")
+    wrapper_path.chmod(0o755)
+    return wrapper_path
 
 manifest_locations = [
     ".config/google-chrome/NativeMessagingHosts",
     ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",
+    ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts",
     ".config/chromium/NativeMessagingHosts",
 ]
 
@@ -702,6 +717,10 @@ for relative in manifest_locations:
     directory = home / relative
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / manifest_name
+    native_host_path = host_path
+    if relative == ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts":
+        native_host_path = ensure_flatpak_native_host_wrapper()
+    text = manifest_text(native_host_path)
     try:
         if path.read_text(encoding="utf-8") == text:
             continue
@@ -826,6 +845,9 @@ sync_chrome_bundled_plugin_cache() {
 
     host_path="$cache_root/latest/extension-host/linux/$extension_arch/extension-host"
     [ -x "$host_path" ] || return 0
+    if command -v flatpak >/dev/null 2>&1 && flatpak info com.google.Chrome >/dev/null 2>&1; then
+        flatpak override --user --talk-name=org.freedesktop.Flatpak com.google.Chrome >/dev/null 2>&1 || true
+    fi
     write_chrome_native_host_manifests "$host_path" "$cache_root/latest" || \
         echo "Chrome native host manifest sync failed; continuing with existing browser manifests."
 }

@@ -2441,6 +2441,8 @@ PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-id.json"
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts"
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".config/chromium/NativeMessagingHosts"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-host-flatpak-wrapper.sh"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "flatpak override --user --talk-name=org.freedesktop.Flatpak com.google.Chrome"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "scripts/check-extension-installed.js"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "scripts/chrome-is-running.js"
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".tmp/bundled-marketplaces/openai-bundled"
@@ -2817,7 +2819,8 @@ JSON
 {"name":"chrome","version":"0.1.7"}
 JSON
     cat > "$chrome_dir/scripts/installManifest.mjs" <<'JS'
-var n={extensionId:"hehggadaopoacecdllhhajmbjkdcmajg",extensionHostName:"com.openai.codexextension"};var p=o=>{let t=`${o.extensionHostName}.json`,r={darwin:["Library/Application Support/Google/Chrome/NativeMessagingHosts"],linux:[".config/google-chrome/NativeMessagingHosts"],win32:["AppData/Local/OpenAI/extension"]}[m.platform()];return r.map(s=>l.resolve(m.homedir(),s,t))};
+var n={extensionId:"hehggadaopoacecdllhhajmbjkdcmajg",extensionHostName:"com.openai.codexextension"};var p=o=>{let t=`${o.extensionHostName}.json`,r={darwin:["Library/Application Support/Google/Chrome/NativeMessagingHosts"],linux:[".config/google-chrome/NativeMessagingHosts"],win32:["AppData/Local/OpenAI/extension"]}[m.platform()];return r.map(s=>l.resolve(m.homedir(),s,t))};async function y({appServerHostConfig:t,description:e=_,extensionHostName:o,extensionHostPath:n,extensionId:s,manifestPaths:p}){let f={allowed_origins:[`chrome-extension://${r(s,"extensionId")}/`],description:e,name:r(o,"extensionHostName"),path:r(n,"extensionHostPath"),type:"stdio"},m=`${JSON.stringify(f,null,2)}
+`,l=await T({appServerHostConfig:{...t,extensionId:r(s,"extensionId")},extensionHostPath:n});return await Promise.all(p.map(async u=>{await w(d(u),{recursive:!0}),await v(u,m,"utf8")})),{configPath:l,manifestPaths:p}}
 JS
     cat > "$chrome_dir/scripts/extension-id.json" <<'JSON'
 {"extensionId":"hehggadaopoacecdllhhajmbjkdcmajg","extensionHostName":"com.openai.codexextension"}
@@ -2858,6 +2861,32 @@ const KNOWN_BROWSERS = [
     windowsExecutable: "chrome.exe",
   },
 ];
+
+function commandPath(command) {
+  return runCommand(["which", command]);
+}
+
+function findCommandBrowsers() {
+  const found = new Map();
+
+  for (const browser of KNOWN_BROWSERS) {
+    for (const command of browser.commands) {
+      const executable = commandPath(command);
+      if (!executable) continue;
+
+      found.set(browser.name, {
+        name: browser.name,
+        command,
+        path: executable,
+        bundle_id: browser.bundleIds[0] || null,
+        version: null,
+      });
+      break;
+    }
+  }
+
+  return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 JS
     cat > "$chrome_dir/scripts/chrome-is-running.js" <<'JS'
 const CHROME_PROCESS_NAMES_BY_PLATFORM = {
@@ -2973,26 +3002,44 @@ test_chrome_plugin_staging() {
     assert_file_exists "$host"
     [ -x "$host" ] || fail "Expected Chrome extension host to be executable: $host"
     assert_contains "$chrome_dir/scripts/installManifest.mjs" "BraveSoftware/Brave-Browser/NativeMessagingHosts"
+    assert_contains "$chrome_dir/scripts/installManifest.mjs" ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts"
+    assert_contains "$chrome_dir/scripts/installManifest.mjs" "extension-host-flatpak-wrapper.sh"
+    assert_contains "$chrome_dir/scripts/installManifest.mjs" "flatpak-spawn --host"
+    assert_contains "$chrome_dir/scripts/installManifest.mjs" "codexLinuxShellQuote"
+    assert_not_contains "$chrome_dir/scripts/installManifest.mjs" "a(d(d(d(u)))"
+    assert_not_contains "$chrome_dir/scripts/installManifest.mjs" 'U("chmod"'
     assert_contains "$chrome_dir/scripts/installManifest.mjs" ".config/chromium/NativeMessagingHosts"
+    assert_contains "$chrome_dir/scripts/installed-browsers.js" "flatpakAppIds"
+    assert_contains "$chrome_dir/scripts/installed-browsers.js" "findFlatpakBrowser"
     assert_contains "$chrome_dir/scripts/installed-browsers.js" "Brave Browser"
     assert_contains "$chrome_dir/scripts/installed-browsers.js" "Chromium"
     assert_contains "$chrome_dir/scripts/chrome-is-running.js" "brave-browser"
     assert_contains "$chrome_dir/scripts/chrome-is-running.js" "chromium-browser"
     assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" 'process.platform === "linux"'
     assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "BraveSoftware"
+    assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "com.google.Chrome"
+    assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "linuxFlatpakChromePreferred"
+    assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "linuxRunCommand"
+    assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" '"flatpak", "info", "com.google.Chrome"'
     assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "chromium"
     assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxBraveUserDataDirectory"
+    assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxFlatpakChromeUserDataDirectory"
+    assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxHasBrowserUserDataDirectory"
     assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxChromiumUserDataDirectory"
     assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxCandidateWithInstalledExtension"
     assert_contains "$chrome_dir/scripts/check-extension-installed.js" "resolveChromeProfileDirectoryFromRunningProcess"
     assert_contains "$chrome_dir/scripts/check-extension-installed.js" "defaultLinuxUserDataDirectoryForCommand"
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "brave-browser"
+    assert_contains "$chrome_dir/scripts/open-chrome-window.js" "com.google.Chrome"
+    assert_contains "$chrome_dir/scripts/open-chrome-window.js" "linuxArgs"
+    assert_contains "$chrome_dir/scripts/open-chrome-window.js" "linuxHasBrowserUserDataDirectory"
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "chromium"
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "defaultBrowser ==="
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "resolveChromeProfileDirectoryFromRunningProcess"
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "defaultLinuxUserDataDirectoryForCommand"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxChromeUserDataDirectories"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" '"com.google.Chrome","config","google-chrome"'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" '".config","chromium"'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "instanceId:await IS(o.id,t,r)"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxRankBrowserBackends"
@@ -3021,6 +3068,7 @@ JS
     node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
     assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
     assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '"com.google.Chrome","config","google-chrome"'
     assert_contains "$browser_client" '".config","chromium"'
 
     cat > "$browser_client" <<'JS'
@@ -3029,6 +3077,7 @@ JS
     node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
     assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
     assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '"com.google.Chrome","config","google-chrome"'
     assert_contains "$browser_client" '".config","chromium"'
 
     cat > "$browser_client" <<'JS'
@@ -3037,9 +3086,90 @@ JS
     node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
     assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
     assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '"com.google.Chrome","config","google-chrome"'
     assert_contains "$browser_client" '".config","chromium"'
     assert_contains "$browser_client" "async(e,t,r=hl)"
     assert_contains "$browser_client" "instanceId:await mT(o.id,e,r)"
+}
+
+test_chrome_flatpak_install_manifest_runtime() {
+    info "Checking Chrome Flatpak install manifest wrapper runtime"
+    local workspace="$TMP_DIR/chrome-flatpak-install-manifest"
+    local chrome_dir="$workspace/chrome"
+    local install_manifest="$chrome_dir/scripts/installManifest.mjs"
+
+    mkdir -p "$chrome_dir/scripts"
+    cat > "$install_manifest" <<'JS'
+import { dirname as d } from "node:path";
+import { mkdir as w, writeFile as v } from "node:fs/promises";
+const _ = "Codex chrome native messaging host";
+function r(value) { return value; }
+async function T() { return "/tmp/codex-config.json"; }
+async function y({appServerHostConfig:t,description:e=_,extensionHostName:o,extensionHostPath:n,extensionId:s,manifestPaths:p}){let f={allowed_origins:[`chrome-extension://${r(s,"extensionId")}/`],description:e,name:r(o,"extensionHostName"),path:r(n,"extensionHostPath"),type:"stdio"},m=`${JSON.stringify(f,null,2)}
+`,l=await T({appServerHostConfig:{...t,extensionId:r(s,"extensionId")},extensionHostPath:n});return await Promise.all(p.map(async u=>{await w(d(u),{recursive:!0}),await v(u,m,"utf8")})),{configPath:l,manifestPaths:p}}
+export { y };
+JS
+
+    node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
+
+    node - "$install_manifest" "$workspace" <<'NODE' || fail "Expected Flatpak manifest writer to run without hidden minifier aliases"
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+(async () => {
+  const installManifest = process.argv[2];
+  const workspace = process.argv[3];
+  const mod = await import(`${pathToFileURL(installManifest).href}?t=${Date.now()}`);
+  const hostPath = path.join(workspace, "host with ' quote", "extension-host");
+  const home = path.join(workspace, "home");
+  const hostName = "com.example.codextest";
+  const extensionId = "abcdefghijklmnopabcdefghijklmnop";
+  const regularManifest = path.join(
+    home,
+    ".config",
+    "google-chrome",
+    "NativeMessagingHosts",
+    `${hostName}.json`,
+  );
+  const flatpakManifest = path.join(
+    home,
+    ".var",
+    "app",
+    "com.google.Chrome",
+    "config",
+    "google-chrome",
+    "NativeMessagingHosts",
+    `${hostName}.json`,
+  );
+
+  fs.mkdirSync(path.dirname(hostPath), { recursive: true });
+  fs.writeFileSync(hostPath, "#!/bin/sh\n", "utf8");
+
+  await mod.y({
+    appServerHostConfig: {},
+    extensionHostName: hostName,
+    extensionHostPath: hostPath,
+    extensionId,
+    manifestPaths: [regularManifest, flatpakManifest],
+  });
+
+  const regular = JSON.parse(fs.readFileSync(regularManifest, "utf8"));
+  assert.equal(regular.path, hostPath);
+
+  const flatpak = JSON.parse(fs.readFileSync(flatpakManifest, "utf8"));
+  assert.match(flatpak.path, /extension-host-flatpak-wrapper\.sh$/);
+  const wrapper = fs.readFileSync(flatpak.path, "utf8");
+  assert.match(wrapper, /^#!\/bin\/sh\nexec \/usr\/bin\/flatpak-spawn --host /);
+  assert.equal(wrapper.includes(hostPath), false, "wrapper should shell-quote the raw host path");
+  assert.equal(wrapper.includes("'\\''"), true, "wrapper should escape single quotes safely");
+  assert.equal(fs.statSync(flatpak.path).mode & 0o111, 0o111);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+NODE
 }
 
 test_chrome_marketplace_fallback_synthesis() {
@@ -3134,14 +3264,25 @@ PY
     for relative in \
         ".config/google-chrome/NativeMessagingHosts" \
         ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts" \
+        ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts" \
         ".config/chromium/NativeMessagingHosts" \
         ".config/example-browser/NativeMessagingHosts"; do
         manifest_path="$home_dir/$relative/com.example.codextest.json"
         assert_file_exists "$manifest_path"
         assert_contains "$manifest_path" "com.example.codextest"
         assert_contains "$manifest_path" "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
-        assert_contains "$manifest_path" "$host_path"
+        if [ "$relative" = ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts" ]; then
+            assert_contains "$manifest_path" "extension-host-flatpak-wrapper.sh"
+        else
+            assert_contains "$manifest_path" "$host_path"
+        fi
     done
+
+    local wrapper_path="$home_dir/.var/app/com.google.Chrome/config/codex/extension-host-flatpak-wrapper.sh"
+    assert_file_exists "$wrapper_path"
+    [ -x "$wrapper_path" ] || fail "Expected Flatpak native host wrapper to be executable: $wrapper_path"
+    assert_contains "$wrapper_path" "flatpak-spawn --host"
+    assert_contains "$wrapper_path" "$host_path"
 }
 
 make_fake_extracted_asar() {
@@ -5032,6 +5173,7 @@ main() {
     test_browser_use_node_repl_ldd_output_compatibility
     test_chrome_plugin_staging
     test_chrome_browser_client_profile_root_variants
+    test_chrome_flatpak_install_manifest_runtime
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
     test_launcher_template_sanity
