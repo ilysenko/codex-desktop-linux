@@ -13,6 +13,8 @@ const COMMAND_SENTINEL = "codex-linux-smoke";
 const MCP_RESOURCE_URI = "codex-parity://resource/ping";
 const MCP_BLOB_RESOURCE_URI = "codex-parity://resource/blob";
 const MCP_BLOB_RESOURCE_BASE64 = "Y29kZXgtcGFyaXR5LXJlc291cmNlLWJsb2I=";
+const FS_FIXTURE_TEXT = "codex-parity-fs-pong\n";
+const FS_FIXTURE_BASE64 = Buffer.from(FS_FIXTURE_TEXT, "utf8").toString("base64");
 
 function usage() {
   return [
@@ -256,6 +258,21 @@ function createExternalAgentFixture() {
     "utf8",
   );
   return fixtureDir;
+}
+
+function createFsFixture() {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-parity-fs-"));
+  const workspaceDir = path.join(fixtureDir, "workspace");
+  const nestedDir = path.join(workspaceDir, "nested");
+  const filePath = path.join(workspaceDir, "fixture.txt");
+  fs.mkdirSync(nestedDir, { recursive: true });
+  fs.writeFileSync(filePath, FS_FIXTURE_TEXT, "utf8");
+  return {
+    filePath,
+    fixtureDir,
+    nestedDir,
+    workspaceDir,
+  };
 }
 
 function createPluginInstallFixture() {
@@ -726,6 +743,32 @@ function summarizePermissionProfiles(result) {
 function summarizeCollaborationModes(result) {
   return {
     count: safeArrayLength(result.data),
+  };
+}
+
+function summarizeFsFixture({ directoryMetadata, fileMetadata, readDirectory, readFile }) {
+  const entries = Array.isArray(readDirectory.entries) ? readDirectory.entries : [];
+  return {
+    directoryEntryCount: entries.length,
+    directoryMetadataObserved:
+      directoryMetadata.isDirectory === true &&
+      directoryMetadata.isFile === false &&
+      directoryMetadata.isSymlink === false,
+    fileEntryObserved: entries.some((entry) => (
+      entry?.fileName === "fixture.txt" &&
+      entry.isFile === true &&
+      entry.isDirectory === false
+    )),
+    fileMetadataObserved:
+      fileMetadata.isFile === true &&
+      fileMetadata.isDirectory === false &&
+      fileMetadata.isSymlink === false,
+    fileReadMatchesFixture: readFile.dataBase64 === FS_FIXTURE_BASE64,
+    nestedDirectoryEntryObserved: entries.some((entry) => (
+      entry?.fileName === "nested" &&
+      entry.isDirectory === true &&
+      entry.isFile === false
+    )),
   };
 }
 
@@ -1535,6 +1578,35 @@ async function runAppServerSmoke(options) {
       record("external agent fixture detect", "fail", { error: summarizeErrorText(error.message) });
     } finally {
       removeFixture(externalAgentFixtureDir);
+    }
+
+    const fsFixture = createFsFixture();
+    try {
+      const directoryMetadata = await client.request("fs/getMetadata", { path: fsFixture.workspaceDir });
+      const fileMetadata = await client.request("fs/getMetadata", { path: fsFixture.filePath });
+      const readDirectory = await client.request("fs/readDirectory", { path: fsFixture.workspaceDir });
+      const readFile = await client.request("fs/readFile", { path: fsFixture.filePath });
+      const details = summarizeFsFixture({
+        directoryMetadata,
+        fileMetadata,
+        readDirectory,
+        readFile,
+      });
+      record(
+        "filesystem fixture",
+        details.directoryMetadataObserved &&
+          details.fileEntryObserved &&
+          details.fileMetadataObserved &&
+          details.fileReadMatchesFixture &&
+          details.nestedDirectoryEntryObserved
+          ? "pass"
+          : "fail",
+        details,
+      );
+    } catch (error) {
+      record("filesystem fixture", "fail", { error: summarizeErrorText(error.message) });
+    } finally {
+      removeFixture(fsFixture.fixtureDir);
     }
 
     const commandResult = await client.request("command/exec", {
