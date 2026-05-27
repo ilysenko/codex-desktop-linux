@@ -164,6 +164,8 @@ test_desktop_parity_smoke_script_syntax() {
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex_parity_ping"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity-pong"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity-resource-pong"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "codex-parity://resource/blob"
+    assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "blobContentCount"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "mcpServer/resource/read"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "mcpServer/tool/call"
     assert_contains "$REPO_DIR/scripts/desktop-parity-smoke.js" "mcp resource read fixture"

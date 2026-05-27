@@ -11,6 +11,8 @@ const readline = require("node:readline");
 const REPO_DIR = path.resolve(__dirname, "..");
 const COMMAND_SENTINEL = "codex-linux-smoke";
 const MCP_RESOURCE_URI = "codex-parity://resource/ping";
+const MCP_BLOB_RESOURCE_URI = "codex-parity://resource/blob";
+const MCP_BLOB_RESOURCE_BASE64 = "Y29kZXgtcGFyaXR5LXJlc291cmNlLWJsb2I=";
 
 function usage() {
   return [
@@ -235,6 +237,8 @@ function createMcpServerFixture() {
       "#!/usr/bin/env node",
       '"use strict";',
       'const readline = require("node:readline");',
+      `const TEXT_RESOURCE_URI = ${JSON.stringify(MCP_RESOURCE_URI)};`,
+      `const BLOB_RESOURCE_URI = ${JSON.stringify(MCP_BLOB_RESOURCE_URI)};`,
       "const rl = readline.createInterface({ input: process.stdin });",
       "function send(message) {",
       '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");',
@@ -257,14 +261,19 @@ function createMcpServerFixture() {
       "      id: message.id,",
       "      result: {",
       "        resources: [{",
-      `          uri: ${JSON.stringify(MCP_RESOURCE_URI)},`,
+      "          uri: TEXT_RESOURCE_URI,",
       '          name: "codex-parity-resource",',
       '          description: "Read-only desktop parity fixture resource.",',
       '          mimeType: "text/plain",',
+      "        }, {",
+      "          uri: BLOB_RESOURCE_URI,",
+      '          name: "codex-parity-blob-resource",',
+      '          description: "Read-only binary desktop parity fixture resource.",',
+      '          mimeType: "application/octet-stream",',
       "        }],",
       "      },",
       "    });",
-      `  } else if (message.method === "resources/read" && message.params?.uri === ${JSON.stringify(MCP_RESOURCE_URI)}) {`,
+      "  } else if (message.method === \"resources/read\" && message.params?.uri === TEXT_RESOURCE_URI) {",
       "    send({",
       "      id: message.id,",
       "      result: {",
@@ -272,6 +281,17 @@ function createMcpServerFixture() {
       "          uri: message.params.uri,",
       '          mimeType: "text/plain",',
       '          text: "codex-parity-resource-pong",',
+      "        }],",
+      "      },",
+      "    });",
+      "  } else if (message.method === \"resources/read\" && message.params?.uri === BLOB_RESOURCE_URI) {",
+      "    send({",
+      "      id: message.id,",
+      "      result: {",
+      "        contents: [{",
+      "          uri: message.params.uri,",
+      '          mimeType: "application/octet-stream",',
+      `          blob: ${JSON.stringify(MCP_BLOB_RESOURCE_BASE64)},`,
       "        }],",
       "      },",
       "    });",
@@ -540,11 +560,17 @@ function summarizeMcpToolCall(result) {
 function summarizeMcpResourceRead(result) {
   const contents = Array.isArray(result.contents) ? result.contents : [];
   const textContents = contents.filter((item) => item && typeof item.text === "string");
+  const blobContents = contents.filter((item) => item && typeof item.blob === "string");
   return {
+    blobContentCount: blobContents.length,
+    blobMimeTypeObserved: blobContents.some((item) => item.mimeType === "application/octet-stream"),
+    blobObserved: blobContents.some((item) => item.blob === MCP_BLOB_RESOURCE_BASE64),
+    blobUriObserved: contents.some((item) => item && item.uri === MCP_BLOB_RESOURCE_URI),
     contentCount: contents.length,
+    textContentCount: textContents.length,
     mimeTypeObserved: textContents.some((item) => item.mimeType === "text/plain"),
     textPongObserved: textContents.some((item) => item.text === "codex-parity-resource-pong"),
-    uriObserved: contents.some((item) => item && item.uri === MCP_RESOURCE_URI),
+    textUriObserved: contents.some((item) => item && item.uri === MCP_RESOURCE_URI),
   };
 }
 
@@ -968,26 +994,45 @@ async function runAppServerSmoke(options) {
       if (!threadId) {
         record("mcp resource read fixture", "fail", { threadStarted: false });
       } else {
-        const resourceRead = await client.request("mcpServer/resource/read", {
+        const textResourceRead = await client.request("mcpServer/resource/read", {
           server: "codex_parity_mcp",
           threadId,
           uri: MCP_RESOURCE_URI,
         });
-        const details = summarizeMcpResourceRead(resourceRead);
+        const blobResourceRead = await client.request("mcpServer/resource/read", {
+          server: "codex_parity_mcp",
+          threadId,
+          uri: MCP_BLOB_RESOURCE_URI,
+        });
+        const details = summarizeMcpResourceRead({
+          contents: [
+            ...(Array.isArray(textResourceRead.contents) ? textResourceRead.contents : []),
+            ...(Array.isArray(blobResourceRead.contents) ? blobResourceRead.contents : []),
+          ],
+        });
         record(
           "mcp resource read fixture",
-          details.contentCount > 0 &&
+          details.textContentCount > 0 &&
+            details.blobContentCount > 0 &&
             details.mimeTypeObserved === true &&
             details.textPongObserved === true &&
-            details.uriObserved === true
+            details.textUriObserved === true &&
+            details.blobMimeTypeObserved === true &&
+            details.blobObserved === true &&
+            details.blobUriObserved === true
             ? "pass"
             : "fail",
           {
+            blobContentCount: details.blobContentCount,
+            blobMimeTypeObserved: details.blobMimeTypeObserved,
+            blobObserved: details.blobObserved,
+            blobUriObserved: details.blobUriObserved,
             contentCount: details.contentCount,
             mimeTypeObserved: details.mimeTypeObserved,
+            textContentCount: details.textContentCount,
             textPongObserved: details.textPongObserved,
             threadStarted: true,
-            uriObserved: details.uriObserved,
+            textUriObserved: details.textUriObserved,
           },
         );
       }
