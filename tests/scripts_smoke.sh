@@ -208,6 +208,23 @@ test_deb_builder_smoke() {
     mkdir -p "$workspace" "$dist_dir" "$capture_dir"
     make_stub_bin_dir "$bin_dir"
     make_fake_app "$app_dir"
+    mkdir -p "$app_dir/.codex-linux"
+    cat > "$app_dir/.codex-linux/build-info.json" <<'JSON'
+{
+  "schemaVersion": 1,
+  "generatedAt": "2024-01-01T00:00:00.000Z",
+  "source": {
+    "commit": "old-app-commit",
+    "shortCommit": "old-app-comm",
+    "branch": "old-app-branch",
+    "remote": "https://example.com/old/repo.git",
+    "describe": "old-app",
+    "dirty": false,
+    "provenance": "git"
+  }
+}
+JSON
+    cp "$app_dir/.codex-linux/build-info.json" "$app_dir/resources/codex-linux-build-info.json"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$updater_bin"
     chmod +x "$updater_bin"
 
@@ -240,6 +257,11 @@ SCRIPT
     DIST_DIR_OVERRIDE="$dist_dir" \
     CAPTURE_DIR="$capture_dir" \
     UPDATER_BINARY_SOURCE="$updater_bin" \
+    CODEX_LINUX_SOURCE_COMMIT="0123456789abcdef0123456789abcdef01234567" \
+    CODEX_LINUX_SOURCE_BRANCH="packaging-source-branch" \
+    CODEX_LINUX_SOURCE_REMOTE="https://builder:secret-token@example.com/org/repo.git" \
+    CODEX_LINUX_SOURCE_DESCRIBE="packaging-source-v1" \
+    SOURCE_DATE_EPOCH="1710000000" \
     MAX_BUILD_THREADS=6 \
     PACKAGE_VERSION="2026.03.24.120000+deadbeef" \
     bash "$REPO_DIR/scripts/build-deb.sh"
@@ -292,6 +314,37 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-doctor.py"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop.service"
     assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
+    node - \
+        "$pkg_root/opt/codex-desktop/.codex-linux/build-info.json" \
+        "$pkg_root/opt/codex-desktop/resources/codex-linux-build-info.json" <<'NODE' \
+        || fail "Expected packaged app build info source metadata to be refreshed"
+const fs = require("node:fs");
+const paths = process.argv.slice(2);
+for (const infoPath of paths) {
+  const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
+  if (info.generatedAt !== new Date(1710000000 * 1000).toISOString()) {
+    throw new Error(`${infoPath}: unexpected generatedAt ${info.generatedAt}`);
+  }
+  if (info.source.commit !== "0123456789abcdef0123456789abcdef01234567") {
+    throw new Error(`${infoPath}: stale commit ${info.source.commit}`);
+  }
+  if (info.source.shortCommit !== "0123456789ab") {
+    throw new Error(`${infoPath}: stale shortCommit ${info.source.shortCommit}`);
+  }
+  if (info.source.branch !== "packaging-source-branch") {
+    throw new Error(`${infoPath}: stale branch ${info.source.branch}`);
+  }
+  if (info.source.remote !== "https://example.com/org/repo.git") {
+    throw new Error(`${infoPath}: remote was not sanitized: ${info.source.remote}`);
+  }
+  if (info.source.describe !== "packaging-source-v1") {
+    throw new Error(`${infoPath}: stale describe ${info.source.describe}`);
+  }
+  if (info.source.provenance !== "packaged-app-payload") {
+    throw new Error(`${infoPath}: unexpected provenance ${info.source.provenance}`);
+  }
+}
+NODE
     assert_file_exists "$pkg_root/usr/bin/codex-desktop-doctor"
     assert_contains "$pkg_root/usr/bin/codex-desktop-doctor" 'PACKAGE_NAME = "codex-desktop"'
     assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-desktop.service"

@@ -567,6 +567,52 @@ fs.writeFileSync(infoFile, `${JSON.stringify(info, null, 2)}\n`, "utf8");
 NODE
 }
 
+stage_packaged_app_build_info_source() {
+    local app_root="$1"
+    local primary_info="$app_root/.codex-linux/build-info.json"
+    local resource_info="$app_root/resources/codex-linux-build-info.json"
+    local node_bin
+
+    [ -f "$primary_info" ] || [ -f "$resource_info" ] || return 0
+
+    node_bin="$(package_node_binary)"
+    "$node_bin" - "$REPO_DIR" "$primary_info" "$resource_info" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [repoDir, ...infoPaths] = process.argv.slice(2);
+const { isoTimestamp, sourceInfo } = require(path.join(repoDir, "scripts/lib/build-info.js"));
+
+function readJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+const existing = infoPaths.map(readJson).find((value) => value != null && typeof value === "object" && !Array.isArray(value));
+if (existing == null) {
+  process.exit(0);
+}
+
+const source = {
+  ...sourceInfo(repoDir),
+  provenance: "packaged-app-payload",
+};
+const updated = {
+  ...existing,
+  generatedAt: isoTimestamp(),
+  source,
+};
+
+for (const infoPath of infoPaths) {
+  fs.mkdirSync(path.dirname(infoPath), { recursive: true });
+  fs.writeFileSync(infoPath, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+}
+NODE
+}
+
 stage_common_package_files() {
     local root="$1"
     local app_root="$root/opt/$PACKAGE_NAME"
@@ -591,6 +637,7 @@ stage_common_package_files() {
     cp -aT "$APP_DIR" "$app_root"
     stage_packaged_linux_computer_use_backend "$app_root"
     mkdir -p "$app_root/.codex-linux"
+    stage_packaged_app_build_info_source "$app_root"
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"
     render_desktop_entry "$root/usr/share/applications/$PACKAGE_NAME.desktop"
