@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   bundled plugin registry so the app keeps `read-aloud` installed, and the
   launcher syncs the plugin cache so new Codex windows expose the MCP tools
   through the same auto-install path as Computer Use.
+- Linux Zed editor opener support is now enabled by default when the `zed`,
+  `zeditor`, `zedit`, or `zed-cli` command is available.
 
 ### Fixed
 
