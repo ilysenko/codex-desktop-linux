@@ -30,6 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Desktop parity smoke now covers `externalAgentConfig/import` with an empty
   no-op migration request, exercising the upstream import protocol without
   migrating user files or external-agent state.
+- Desktop parity smoke now covers `experimentalFeature/enablement/set` with an
+  empty no-op enablement map, exercising the feature-toggle write protocol
+  without changing feature flags.
 
 ### Fixed
 

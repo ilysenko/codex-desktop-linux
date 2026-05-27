@@ -741,6 +741,14 @@ function summarizeExperimentalFeatures(result) {
   };
 }
 
+function summarizeExperimentalFeatureEnablementNoop(result) {
+  const enablement = hasObject(result.enablement) ? result.enablement : {};
+  return {
+    noUpdatedFeatures: Object.keys(enablement).length === 0,
+    responseObjectKnown: hasObject(result),
+  };
+}
+
 function summarizePermissionProfiles(result) {
   return {
     count: safeArrayLength(result.data),
@@ -1417,6 +1425,12 @@ async function runAppServerSmoke(options) {
         method: "experimentalFeature/list",
         params: { limit: 50 },
         summarize: summarizeExperimentalFeatures,
+      },
+      {
+        name: "experimental feature no-op enablement set",
+        method: "experimentalFeature/enablement/set",
+        params: { enablement: {} },
+        summarize: summarizeExperimentalFeatureEnablementNoop,
       },
       {
         name: "permission profile list",
