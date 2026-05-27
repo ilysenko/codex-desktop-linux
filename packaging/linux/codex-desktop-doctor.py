@@ -621,7 +621,7 @@ def secret_service_canary(secret_tool: str, app_id: str, runner: Any = subproces
     except (OSError, subprocess.SubprocessError):
         pass
 
-    if lookup.returncode == 0 and lookup.stdout == value:
+    if lookup.returncode == 0 and lookup.stdout.rstrip("\r\n") == value:
         return PASS, "store/lookup/clear succeeded", None
     if lookup.returncode != 0:
         issue_kind, sanitized_detail = classify_secret_service_failure((lookup.stderr or lookup.stdout or "").strip())

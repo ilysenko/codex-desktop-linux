@@ -162,7 +162,7 @@ def remote_key_secret_roundtrip(secret_tool: str, app_id: str, require_canary: b
     clear = run_secret_tool(secret_tool, ["clear", *attrs])
     data["clearSucceeded"] = clear.returncode == 0
 
-    if lookup.returncode == 0 and lookup.stdout == value:
+    if lookup.returncode == 0 and lookup.stdout.rstrip("\r\n") == value:
         data["lookupMatched"] = True
         return PASS, "remote key Secret Service store/lookup/clear succeeded", None, data
     if lookup.returncode != 0:

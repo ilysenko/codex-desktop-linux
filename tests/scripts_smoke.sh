@@ -1544,7 +1544,7 @@ class MemorySecretTool:
             self.value = kwargs.get("input")
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if args[1] == "lookup":
-            return subprocess.CompletedProcess(args, 0, stdout=self.value or "", stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout=(self.value or "") + "\n", stderr="")
         if args[1] == "clear":
             self.value = None
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
@@ -1769,7 +1769,7 @@ case "$cmd" in
         cat > "$store/$key"
         ;;
     lookup)
-        cat "$store/$key"
+        printf '%s\n' "$(cat "$store/$key")"
         ;;
     clear)
         rm -f "$store/$key"
