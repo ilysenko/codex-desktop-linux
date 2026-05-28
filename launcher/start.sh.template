@@ -225,6 +225,8 @@ Environment:
                               Set to 1 to add --disable-gpu-compositing for flicker workarounds
   CODEX_FORCE_RENDERER_ACCESSIBILITY=auto|0|1
                               Override --force-renderer-accessibility; auto skips it under WSLg and wayland-gpu
+  CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=PORT
+                              Opt-in local CDP automation port; binds to 127.0.0.1 and is disabled by default
   CODEX_MULTI_LAUNCH=1        Treat normal launches like --new-instance
   CODEX_MULTI_LAUNCH_PORT_RANGE=START-END
                               Port allocation range for --new-instance (default: CODEX_WEBVIEW_PORT through +4)
@@ -1803,6 +1805,33 @@ falsey_env_value() {
     esac
 }
 
+normalize_electron_remote_debugging_port() {
+    local value="${1:-}"
+
+    if [ -z "$value" ] || falsey_env_value "$value"; then
+        return 1
+    fi
+
+    case "$value" in
+        *[!0-9]*)
+            echo "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must be a TCP port number" >&2
+            return 2
+            ;;
+    esac
+
+    while [ "${value#0}" != "$value" ]; do
+        value="${value#0}"
+    done
+    [ -n "$value" ] || value=0
+
+    if [ "${#value}" -gt 5 ] || [ "$value" -lt 1 ] || [ "$value" -gt 65535 ]; then
+        echo "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must be between 1 and 65535" >&2
+        return 2
+    fi
+
+    printf '%s\n' "$value"
+}
+
 scan_electron_rendering_arg() {
     case "$1" in
         --ozone-platform=*)
@@ -1820,6 +1849,12 @@ scan_electron_rendering_arg() {
             ;;
         --disable-gpu-compositing|--disable-gpu-compositing=*)
             ELECTRON_GPU_COMPOSITING_SWITCH_PROVIDED=1
+            ;;
+        --remote-debugging-port|--remote-debugging-port=*)
+            ELECTRON_REMOTE_DEBUGGING_PORT_SWITCH_PROVIDED=1
+            ;;
+        --remote-debugging-address|--remote-debugging-address=*)
+            ELECTRON_REMOTE_DEBUGGING_ADDRESS_SWITCH_PROVIDED=1
             ;;
     esac
 }
@@ -1943,6 +1978,8 @@ set_electron_defaults() {
     ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS=0
     ELECTRON_GPU_COMPOSITING_DISABLED=0
     ELECTRON_GPU_COMPOSITING_SWITCH_PROVIDED=0
+    ELECTRON_REMOTE_DEBUGGING_PORT_SWITCH_PROVIDED=0
+    ELECTRON_REMOTE_DEBUGGING_ADDRESS_SWITCH_PROVIDED=0
     ELECTRON_RENDERER_ACCESSIBILITY_FORCED=0
     ELECTRON_ARGS=()
     local passthrough=0
@@ -2064,6 +2101,21 @@ build_electron_launch_args() {
 
     if [ "$ELECTRON_OZONE_PLATFORM" = "wayland" ]; then
         ELECTRON_LAUNCH_ARGS+=(--enable-features=WaylandWindowDecorations)
+    fi
+
+    local remote_debugging_port
+    if remote_debugging_port="$(normalize_electron_remote_debugging_port "${CODEX_ELECTRON_REMOTE_DEBUGGING_PORT:-}")"; then
+        if [ "$ELECTRON_REMOTE_DEBUGGING_PORT_SWITCH_PROVIDED" -eq 0 ]; then
+            if [ "$ELECTRON_REMOTE_DEBUGGING_ADDRESS_SWITCH_PROVIDED" -ne 0 ]; then
+                echo "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT cannot be combined with --remote-debugging-address unless --remote-debugging-port is also explicit" >&2
+                return 2
+            fi
+            ELECTRON_LAUNCH_ARGS+=(--remote-debugging-port="$remote_debugging_port")
+            ELECTRON_LAUNCH_ARGS+=(--remote-debugging-address=127.0.0.1)
+        fi
+    else
+        local status=$?
+        [ "$status" -eq 1 ] || return "$status"
     fi
 }
 

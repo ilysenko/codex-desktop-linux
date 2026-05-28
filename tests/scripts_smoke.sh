@@ -2937,6 +2937,27 @@ PY
     output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 "$launcher_probe" probe)"
     [[ "$output" == *"comp=0"* && "$output" != *"<--disable-gpu-compositing>"* ]] || fail "CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 must suppress the compositor flag: $output"
 
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=9333 "$launcher_probe" probe)"
+    [[ "$output" == *"<--remote-debugging-port=9333>"* ]] || fail "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must enable the CDP port: $output"
+    [[ "$output" == *"<--remote-debugging-address=127.0.0.1>"* ]] || fail "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must bind CDP to loopback: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=9333 "$launcher_probe" probe -- --remote-debugging-port=9444)"
+    [[ "$output" == *"electron=<--remote-debugging-port=9444>"* ]] || fail "explicit Electron remote-debugging port must still pass through: $output"
+    [[ "$output" != *"<--remote-debugging-port=9333>"* ]] || fail "env CDP port must not duplicate an explicit Electron port: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=false "$launcher_probe" probe)"
+    [[ "$output" != *"<--remote-debugging-port="* && "$output" != *"<--remote-debugging-address="* ]] || fail "falsey CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must keep CDP disabled: $output"
+
+    if env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=70000 "$launcher_probe" probe >"$TMP_DIR/launcher-invalid-cdp.out" 2>"$TMP_DIR/launcher-invalid-cdp.err"; then
+        fail "Expected invalid CODEX_ELECTRON_REMOTE_DEBUGGING_PORT to fail"
+    fi
+    assert_contains "$TMP_DIR/launcher-invalid-cdp.err" "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must be between 1 and 65535"
+
+    if env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=9333 "$launcher_probe" probe -- --remote-debugging-address=0.0.0.0 >"$TMP_DIR/launcher-cdp-address.out" 2>"$TMP_DIR/launcher-cdp-address.err"; then
+        fail "Expected env CDP port plus explicit remote-debugging address to fail"
+    fi
+    assert_contains "$TMP_DIR/launcher-cdp-address.err" "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT cannot be combined with --remote-debugging-address unless --remote-debugging-port is also explicit"
+
     output="$(env -i PATH="$PATH" HOME="$HOME" WSL_INTEROP=/tmp/codex-wsl WAYLAND_DISPLAY=wayland-0 "$launcher_probe" probe)"
     [[ "$output" == *"mode=wslg"* && "$output" == *"wslg=1"* ]] || fail "auto rendering mode must detect WSLg from WSL and GUI markers: $output"
 
@@ -2963,6 +2984,7 @@ PY
     assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "CODEX_APP_ID"
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'ELECTRON_OZONE_HINT="auto"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_LINUX_RENDERING_MODE=auto|default|wslg|wayland-gpu"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT"
     assert_contains "$REPO_DIR/launcher/start.sh.template" '--ozone-platform-hint="$ELECTRON_OZONE_HINT"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "--disable-gpu-sandbox"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "--force-renderer-accessibility"
