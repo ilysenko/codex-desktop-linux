@@ -66,10 +66,15 @@ const helperPath = path.resolve(process.argv[2]);
 const targetPath = path.resolve(process.argv[3]);
 const { enabledLinuxFeatureIds } = require(helperPath);
 
-const enabled = enabledLinuxFeatureIds();
+const DEFAULT_UPDATE_BUILDER_FEATURES = [
+  "computer-use-linux",
+  "open-target-discovery",
+  "remote-control-ui",
+];
+
+let enabled = enabledLinuxFeatureIds();
 if (enabled.length === 0) {
-  fs.rmSync(targetPath, { force: true });
-  process.exit(0);
+  enabled = DEFAULT_UPDATE_BUILDER_FEATURES;
 }
 
 fs.mkdirSync(path.dirname(targetPath), { recursive: true });
