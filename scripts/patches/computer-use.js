@@ -37,6 +37,9 @@ function readComputerUseUiSettingsFlag(env) {
 }
 
 function computerUseUiSettingsPath(env) {
+  if (typeof env.CODEX_LINUX_SETTINGS_FILE === "string" && env.CODEX_LINUX_SETTINGS_FILE.length > 0) {
+    return env.CODEX_LINUX_SETTINGS_FILE;
+  }
   const xdgConfig = env.XDG_CONFIG_HOME;
   const home = env.HOME;
   const configHome = (xdgConfig && xdgConfig.length > 0)

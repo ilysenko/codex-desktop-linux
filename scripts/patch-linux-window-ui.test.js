@@ -2717,11 +2717,13 @@ function withIsolatedHome(body) {
   const previousXdg = process.env.XDG_CONFIG_HOME;
   const previousAppId = process.env.CODEX_APP_ID;
   const previousLinuxAppId = process.env.CODEX_LINUX_APP_ID;
+  const previousLinuxSettingsFile = process.env.CODEX_LINUX_SETTINGS_FILE;
   const previousFlag = process.env[COMPUTER_USE_UI_ENV_VAR];
   process.env.HOME = tempHome;
   delete process.env.XDG_CONFIG_HOME;
   delete process.env.CODEX_APP_ID;
   delete process.env.CODEX_LINUX_APP_ID;
+  delete process.env.CODEX_LINUX_SETTINGS_FILE;
   delete process.env[COMPUTER_USE_UI_ENV_VAR];
   try {
     return body(tempHome);
@@ -2745,6 +2747,11 @@ function withIsolatedHome(body) {
       delete process.env.CODEX_LINUX_APP_ID;
     } else {
       process.env.CODEX_LINUX_APP_ID = previousLinuxAppId;
+    }
+    if (previousLinuxSettingsFile == null) {
+      delete process.env.CODEX_LINUX_SETTINGS_FILE;
+    } else {
+      process.env.CODEX_LINUX_SETTINGS_FILE = previousLinuxSettingsFile;
     }
     if (previousFlag == null) {
       delete process.env[COMPUTER_USE_UI_ENV_VAR];
@@ -2787,6 +2794,20 @@ test("isComputerUseUiEnabled honours side-by-side CODEX_APP_ID settings", () => 
   withIsolatedHome((home) => {
     process.env.CODEX_APP_ID = "codex-cua-lab";
     writeSettingsFile(home, JSON.stringify({ [COMPUTER_USE_UI_SETTINGS_KEY]: true }), "codex-cua-lab");
+    assert.equal(isComputerUseUiEnabled(), true);
+  });
+});
+
+test("isComputerUseUiEnabled honours CODEX_LINUX_SETTINGS_FILE", () => {
+  withIsolatedHome((home) => {
+    const settingsFile = path.join(home, "custom-settings", "settings.json");
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+    fs.writeFileSync(
+      settingsFile,
+      JSON.stringify({ [COMPUTER_USE_UI_SETTINGS_KEY]: true }),
+      "utf8",
+    );
+    process.env.CODEX_LINUX_SETTINGS_FILE = settingsFile;
     assert.equal(isComputerUseUiEnabled(), true);
   });
 });
