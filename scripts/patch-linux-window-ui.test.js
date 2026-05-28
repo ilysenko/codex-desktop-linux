@@ -78,6 +78,7 @@ const {
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxConfigWriteVersionConflictPatch,
+  applyLinuxCollaborationModeDefaultPatch,
 } = require("./patches/webview-assets.js");
 const { patchAssetFiles } = require("./patches/shared.js");
 
@@ -513,6 +514,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-app-sunset-gate",
     "linux-app-server-feature-enablement",
     "linux-config-write-version-conflict",
+    "linux-collaboration-mode-default-compat",
     "opaque-window-default-general-settings",
     "opaque-window-default-webview-index",
     "opaque-window-default-resolved-theme",
@@ -1894,6 +1896,43 @@ test("leaves already-null config write versions unchanged", () => {
   const patched = applyPatchTwice(applyLinuxConfigWriteVersionConflictPatch, source);
 
   assert.equal(patched, source);
+});
+
+test("normalizes default collaboration mode before turn/start reaches app-server", () => {
+  const source = [
+    "var Xs=3e4;",
+    "async function y_(e,t,n){let se={threadId:t,collaborationMode:{mode:`default`,settings:{model:`gpt-5`,reasoning_effort:`medium`,developer_instructions:null}}};return await e.sendRequest(`turn/start`,se,{timeoutMs:Xs})}",
+    "var br=class{conversations=new Map;streamRoles=new Map;requestPromises=new Map;requestLifecycleListeners=[];createRequest(e,t,n){let r=L(),i=n?.timeoutMs??0,a=vo(t),o=this.requestPromises.size,s=Date.now(),c=new Promise((t,n)=>{});return R.debug(`mcp_request_enqueued`,{safe:{requestId:r,method:String(e),conversationId:a??`none`,timeoutMs:i,pendingCountBefore:o,pendingCountAfter:this.requestPromises.size},sensitive:{}}),{request:{id:r,method:e,params:t},promise:c}}};",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxCollaborationModeDefaultPatch, source);
+
+  assert.match(patched, /function codexLinuxNormalizeCollaborationModeDefault/);
+  assert.match(
+    patched,
+    /method!==`turn\/start`\|\|params\?\.collaborationMode\?\.mode!==`default`/,
+  );
+  assert.match(patched, /collaborationMode:\{\.\.\.params\.collaborationMode,mode:`code`\}/);
+  assert.match(
+    patched,
+    /createRequest\(e,t,n\)\{t=codexLinuxNormalizeCollaborationModeDefault\(e,t\);let r=L\(\),i=n\?\.timeoutMs\?\?0,a=vo\(t\),/,
+  );
+});
+
+test("warns when collaboration mode default request creation shape drifts", () => {
+  const source = [
+    "async function y_(e,t,n){let se={threadId:t,collaborationMode:{mode:`default`}};return await e.sendRequest(`turn/start`,se)}",
+    "var br=class{conversations=new Map;streamRoles=new Map;requestPromises=new Map;createRequest(e,t,n){return{request:{id:L(),method:e,params:t}}}};",
+  ].join("");
+
+  const { value: patched, warnings } = captureWarns(() =>
+    applyLinuxCollaborationModeDefaultPatch(source),
+  );
+
+  assert.equal(patched, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find app-server request creation needle — skipping collaboration mode default compatibility patch",
+  ]);
 });
 
 test("adds Linux package updater behind the existing app updater manager", () => {

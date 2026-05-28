@@ -251,6 +251,42 @@ function applyLinuxConfigWriteVersionConflictPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxCollaborationModeDefaultPatch(currentSource) {
+  const marker = "codexLinuxNormalizeCollaborationModeDefault";
+  if (currentSource.includes(marker)) {
+    return currentSource;
+  }
+  if (!currentSource.includes("turn/start") || !currentSource.includes("collaborationMode")) {
+    return currentSource;
+  }
+
+  const helperInsertionRegex = /var ([A-Za-z_$][\w$]*)=class\{conversations=new Map;streamRoles=new Map;/u;
+  const helperInsertionMatch = currentSource.match(helperInsertionRegex);
+  if (helperInsertionMatch == null) {
+    console.warn(
+      "WARN: Could not find app-server manager class — skipping collaboration mode default compatibility patch",
+    );
+    return currentSource;
+  }
+
+  const createRequestRegex =
+    /createRequest\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=L\(\),([A-Za-z_$][\w$]*)=\3\?\.timeoutMs\?\?0,([A-Za-z_$][\w$]*)=vo\(\2\),/u;
+  const createRequestMatch = currentSource.match(createRequestRegex);
+  if (createRequestMatch == null) {
+    console.warn(
+      "WARN: Could not find app-server request creation needle — skipping collaboration mode default compatibility patch",
+    );
+    return currentSource;
+  }
+
+  const helper = `function ${marker}(method,params){try{if(method!==\`turn/start\`||params?.collaborationMode?.mode!==\`default\`)return params;return{...params,collaborationMode:{...params.collaborationMode,mode:\`code\`}}}catch{return params}}`;
+  const withHelper = currentSource.replace(helperInsertionRegex, `${helper}var $1=class{conversations=new Map;streamRoles=new Map;`);
+  return withHelper.replace(
+    createRequestRegex,
+    "createRequest($1,$2,$3){$2=codexLinuxNormalizeCollaborationModeDefault($1,$2);let $4=L(),$5=$3?.timeoutMs??0,$6=vo($2),",
+  );
+}
+
 function applySubagentNicknameMetadataPatch(currentSource) {
   let patchedSource = currentSource;
   const sourceShapePatchedMarker = "`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null";
@@ -706,6 +742,7 @@ module.exports = {
   applyBrowserAnnotationScreenshotPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxConfigWriteVersionConflictPatch,
+  applyLinuxCollaborationModeDefaultPatch,
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
