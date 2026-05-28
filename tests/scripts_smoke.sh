@@ -5068,6 +5068,59 @@ TOML
         || fail "Expected one node_repl tools.js approval table"
 }
 
+test_launcher_reheals_node_repl_js_approval_after_startup_rewrite() {
+    info "Checking launcher re-heals node_repl approval after app startup rewrite"
+    local workspace="$TMP_DIR/node-repl-js-approval-retry"
+    local launcher_lib="$workspace/launcher-lib.sh"
+    local codex_home="$workspace/codex-home"
+    local config="$codex_home/config.toml"
+
+    mkdir -p "$workspace" "$codex_home"
+    awk '/^hydrate_graphical_session_env$/{exit} {print}' \
+        "$REPO_DIR/launcher/start.sh.template" > "$launcher_lib"
+
+    (
+        CODEX_HOME="$codex_home"
+        CODEX_LINUX_APP_ID="codex-desktop"
+        CODEX_LINUX_APP_DISPLAY_NAME="Codex"
+        CODEX_LINUX_WEBVIEW_PORT="5175"
+        CODEX_NODE_REPL_APPROVAL_REPAIR_DELAYS="0 0"
+
+        write_stale_config() {
+            cat > "$config" <<'TOML'
+[mcp_servers.node_repl]
+command = "/opt/codex-desktop/resources/node_repl"
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+CODEX_HOME = "/tmp/codex-home"
+TOML
+        }
+
+        write_stale_config
+
+        # shellcheck disable=SC1090
+        source "$launcher_lib"
+        ensure_node_repl_js_approval
+
+        sleep() {
+            if [ "${rewrote_config_once:-0}" = "0" ]; then
+                rewrote_config_once=1
+                write_stale_config
+            fi
+            return 0
+        }
+
+        start_node_repl_js_approval_repair_loop
+        wait "$NODE_REPL_APPROVAL_REPAIR_PID"
+    )
+
+    assert_contains_literal "$config" "[mcp_servers.node_repl.tools.js]"
+    assert_contains_literal "$config" 'approval_mode = "approve"'
+    [ "$(grep -F -c "[mcp_servers.node_repl.tools.js]" "$config")" = "1" ] \
+        || fail "Expected one node_repl tools.js approval table after retry repair"
+}
+
 test_webview_probe_equivalence() {
     info "Checking webview probe behavioral equivalence (bash + curl vs python3 reference)"
     # The harness extracts webview_port_is_open and verify_webview_origin from
@@ -5846,6 +5899,7 @@ main() {
     test_chrome_native_host_manifest_writer
     test_launcher_template_sanity
     test_launcher_heals_node_repl_js_approval_config
+    test_launcher_reheals_node_repl_js_approval_after_startup_rewrite
     test_webview_probe_equivalence
     test_side_by_side_launcher_identity
     test_linux_file_manager_patch_smoke
