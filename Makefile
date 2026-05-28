@@ -6,6 +6,7 @@ NEXT_APP_DIR := $(CURDIR)/codex-app-next
 REBUILD_REPORT_DIR := $(CURDIR)/dist-next/rebuild
 PACKAGE_NAME := codex-desktop
 PACKAGE_WITH_UPDATER ?= 1
+PRIVILEGE_CMD ?= $(shell if [ "$$(id -u)" -eq 0 ]; then printf ""; elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then printf "sudo"; elif command -v pkexec >/dev/null 2>&1; then printf "pkexec"; elif command -v sudo >/dev/null 2>&1; then printf "sudo"; fi)
 MAX_BUILD_THREADS ?= 0
 MAX_BUILD_THREADS_VALUE := $(strip $(MAX_BUILD_THREADS))
 MAX_BUILD_THREADS_ENABLED := $(filter-out 0,$(MAX_BUILD_THREADS_VALUE))
@@ -185,7 +186,7 @@ setup-native:
 
 bootstrap-native:
 	@echo "[make] Installing native build dependencies"
-	bash scripts/install-deps.sh
+	CODEX_PRIVILEGE_CMD="$(PRIVILEGE_CMD)" bash scripts/install-deps.sh
 	PATH="$$HOME/.cargo/bin:$$PATH" $(MAKE) install-native
 
 install-native:
@@ -268,6 +269,10 @@ install:
 		[ -n "$$matches" ] || return 0; \
 		printf '%s\n' "$$matches" | sort -V | tail -n 1; \
 	}; \
+	if [ "$$(id -u)" -ne 0 ] && [ -z "$(PRIVILEGE_CMD)" ]; then \
+		echo "[make] Root privileges required, but neither sudo nor pkexec is available." >&2; \
+		exit 1; \
+	fi; \
 	format="$$( $(NATIVE_PKG_FORMAT_CMD) )"; \
 	if [ "$$format" = "pacman" ]; then \
 		pkg="$${PKG:-$$(latest_matching_file "$(PACMAN_GLOB)")}"; \
@@ -275,35 +280,35 @@ install:
 			echo "[make] No pacman package found. Run 'make pacman' first." >&2; exit 1; \
 		fi; \
 		echo "[make] Installing $$pkg"; \
-		sudo pacman -U --noconfirm "$$pkg"; \
+		$(PRIVILEGE_CMD) pacman -U --noconfirm "$$pkg"; \
 	elif [ "$$format" = "rpm" ] && command -v dnf >/dev/null 2>&1; then \
 		rpm="$${RPM:-$$(latest_matching_file "$(RPM_GLOB)")}"; \
 		if [ -z "$$rpm" ]; then \
 			echo "[make] No RPM package found. Run 'make rpm' first." >&2; exit 1; \
 		fi; \
 		echo "[make] Installing $$rpm"; \
-		sudo dnf install -y "$$rpm"; \
+		$(PRIVILEGE_CMD) dnf install -y "$$rpm"; \
 	elif [ "$$format" = "rpm" ] && command -v zypper >/dev/null 2>&1; then \
 		rpm="$${RPM:-$$(latest_matching_file "$(RPM_GLOB)")}"; \
 		if [ -z "$$rpm" ]; then \
 			echo "[make] No RPM package found. Run 'make rpm' first." >&2; exit 1; \
 		fi; \
 		echo "[make] Installing $$rpm"; \
-		sudo zypper --non-interactive --no-gpg-checks install -y "$$rpm"; \
+		$(PRIVILEGE_CMD) zypper --non-interactive --no-gpg-checks install -y "$$rpm"; \
 	elif [ "$$format" = "rpm" ]; then \
 		rpm="$${RPM:-$$(latest_matching_file "$(RPM_GLOB)")}"; \
 		if [ -z "$$rpm" ]; then \
 			echo "[make] No RPM package found. Run 'make rpm' first." >&2; exit 1; \
 		fi; \
 		echo "[make] Installing $$rpm"; \
-		sudo rpm -Uvh "$$rpm"; \
+		$(PRIVILEGE_CMD) rpm -Uvh "$$rpm"; \
 	elif [ "$$format" = "deb" ]; then \
 		deb="$${DEB:-$$(latest_matching_file "$(DEB_GLOB)")}"; \
 		if [ -z "$$deb" ]; then \
 			echo "[make] No Debian package found. Run 'make deb' first." >&2; exit 1; \
 		fi; \
 		echo "[make] Installing $$deb"; \
-		sudo dpkg -i "$$deb"; \
+		$(PRIVILEGE_CMD) dpkg -i "$$deb"; \
 	else \
 		echo "[make] No supported package manager found (dpkg, rpm, zypper, or pacman)." >&2; exit 1; \
 	fi

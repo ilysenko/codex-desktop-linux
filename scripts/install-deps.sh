@@ -16,6 +16,51 @@ info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
+
+detect_privilege_cmd() {
+    if [ "$(id -u)" -eq 0 ]; then
+        echo ""
+        return
+    fi
+
+    if [ -n "${CODEX_PRIVILEGE_CMD:-}" ]; then
+        echo "$CODEX_PRIVILEGE_CMD"
+        return
+    fi
+
+    if command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
+        echo "sudo"
+        return
+    fi
+
+    if [ -t 0 ] && command -v sudo &>/dev/null; then
+        echo "sudo"
+        return
+    fi
+
+    if command -v pkexec &>/dev/null; then
+        echo "pkexec"
+        return
+    fi
+
+    if command -v sudo &>/dev/null; then
+        echo "sudo"
+    fi
+}
+
+run_privileged() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+        return
+    fi
+
+    if [ -z "${PRIVILEGE_CMD:-}" ]; then
+        error "Root privileges are required but no privilege helper was selected."
+    fi
+
+    "$PRIVILEGE_CMD" "$@"
+}
+
 # ---------------------------------------------------------------------------
 # Node.js compatibility
 # ---------------------------------------------------------------------------
@@ -96,7 +141,7 @@ install_apt_distro_nodejs_if_compatible() {
     fi
 
     info "Installing distro Node.js/npm candidate (Node.js major $major)"
-    sudo apt-get install -y nodejs npm
+    run_privileged apt-get install -y nodejs npm
 }
 
 apt_arch_for_nodesource() {
@@ -126,18 +171,18 @@ install_nodesource_nodejs() {
     trap "rm -f '$tmp_key'" RETURN
 
     info "Installing Node.js ${NODEJS_MAJOR}.x from NodeSource"
-    sudo apt-get install -y gnupg
-    sudo install -d -m 0755 /etc/apt/keyrings
+    run_privileged apt-get install -y gnupg
+    run_privileged install -d -m 0755 /etc/apt/keyrings
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$tmp_key"
-    gpg --dearmor < "$tmp_key" | sudo tee "$keyring" >/dev/null
-    sudo chmod 0644 "$keyring"
+    gpg --dearmor < "$tmp_key" | run_privileged tee "$keyring" >/dev/null
+    run_privileged chmod 0644 "$keyring"
 
     printf 'deb [arch=%s signed-by=%s] https://deb.nodesource.com/node_%s.x nodistro main\n' \
         "$apt_arch" "$keyring" "$NODEJS_MAJOR" \
-        | sudo tee "$source_list" >/dev/null
+        | run_privileged tee "$source_list" >/dev/null
 
-    sudo apt-get update -qq
-    sudo apt-get install -y nodejs
+    run_privileged apt-get update -qq
+    run_privileged apt-get install -y nodejs
 }
 
 report_nodejs_toolchain() {
@@ -287,8 +332,8 @@ preferred_gui_prompt_package() {
 # ---------------------------------------------------------------------------
 install_apt() {
     info "Detected Debian/Ubuntu (apt)"
-    sudo apt-get update -qq
-    sudo apt-get install -y \
+    run_privileged apt-get update -qq
+    run_privileged apt-get install -y \
         ca-certificates python3 \
         p7zip-full curl unzip \
         build-essential
@@ -297,7 +342,7 @@ install_apt() {
 install_dnf5() {
     info "Detected RPM-based distro (dnf5)"
     # dnf5: 7zip provides /usr/bin/7z; @development-tools is the group syntax
-    sudo dnf install -y \
+    run_privileged dnf install -y \
         python3 7zip curl unzip rpm-build \
         @development-tools
 }
@@ -305,15 +350,15 @@ install_dnf5() {
 install_dnf() {
     info "Detected RPM-based distro (dnf)"
     # Older dnf: 7z comes from p7zip + p7zip-plugins
-    sudo dnf install -y \
+    run_privileged dnf install -y \
         nodejs npm python3 \
         p7zip p7zip-plugins curl unzip rpm-build
-    sudo dnf groupinstall -y 'Development Tools'
+    run_privileged dnf groupinstall -y 'Development Tools'
 }
 
 install_pacman() {
     info "Detected Arch Linux (pacman)"
-    sudo pacman -S --needed --noconfirm \
+    run_privileged pacman -S --needed --noconfirm \
         nodejs npm python \
         p7zip curl unzip zstd \
         base-devel
@@ -321,10 +366,10 @@ install_pacman() {
 
 install_zypper() {
     info "Detected openSUSE (zypper)"
-    sudo zypper --non-interactive install \
+    run_privileged zypper --non-interactive install \
         nodejs-default npm-default python3 \
         p7zip-full curl unzip
-    sudo zypper --non-interactive install -t pattern devel_basis
+    run_privileged zypper --non-interactive install -t pattern devel_basis
 }
 
 install_gui_prompt_helper() {
@@ -333,19 +378,19 @@ install_gui_prompt_helper() {
 
     case "$DISTRO" in
         apt)
-            sudo apt-get install -y "$package"
+            run_privileged apt-get install -y "$package"
             ;;
         dnf5)
-            sudo dnf install -y "$package"
+            run_privileged dnf install -y "$package"
             ;;
         dnf)
-            sudo dnf install -y "$package"
+            run_privileged dnf install -y "$package"
             ;;
         pacman)
-            sudo pacman -S --needed --noconfirm "$package"
+            run_privileged pacman -S --needed --noconfirm "$package"
             ;;
         zypper)
-            sudo zypper --non-interactive install "$package"
+            run_privileged zypper --non-interactive install "$package"
             ;;
     esac
 }
@@ -416,8 +461,8 @@ Install 7zz manually from https://www.7-zip.org/download.html and ensure it is o
     tar -C "$tmpdir" -xf "$tmpdir/7z.tar.xz" 7zz
 
     if [ "$install_dir" = "/usr/local/bin" ]; then
-        sudo install -d -m 755 "$install_dir"
-        sudo install -m 755 "$tmpdir/7zz" "$install_dir/7zz"
+        run_privileged install -d -m 755 "$install_dir"
+        run_privileged install -m 755 "$tmpdir/7zz" "$install_dir/7zz"
     else
         mkdir -p "$install_dir"
         install -m 755 "$tmpdir/7zz" "$install_dir/7zz"
@@ -466,6 +511,10 @@ OS_RELEASE_ID="$(os_release_field ID 2>/dev/null || true)"
 OS_RELEASE_ID_LIKE="$(os_release_field ID_LIKE 2>/dev/null || true)"
 OS_RELEASE_VERSION_ID="$(os_release_field VERSION_ID 2>/dev/null || true)"
 DISTRO="$(detect_distro)"
+PRIVILEGE_CMD="$(detect_privilege_cmd)"
+if [ -n "$PRIVILEGE_CMD" ]; then
+    info "Using privilege helper: $PRIVILEGE_CMD"
+fi
 
 if [ "${DETECT_ONLY:-0}" = "1" ]; then
     info "Detected dependency profile: $DISTRO"
