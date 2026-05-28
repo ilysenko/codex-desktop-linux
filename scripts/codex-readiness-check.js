@@ -8,12 +8,53 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const BUILD_INFO_PATH = "/opt/codex-desktop/.codex-linux/build-info.json";
 const PRIVATE_SESSION_PATH_PATTERN = /\/home\/[^/\s]+\/\.codex\/sessions\/[^\s]+/g;
 const READY_STATUSES = new Set(["pass", "warn", "fail"]);
+const DETAILS_MAX_DEPTH = 4;
+const DETAILS_MAX_ARRAY_ITEMS = 20;
+const DETAILS_MAX_OBJECT_KEYS = 40;
 
 function sanitizeMessage(value) {
   return String(value ?? "")
     .replace(PRIVATE_SESSION_PATH_PATTERN, "[redacted-session-path]")
     .replace(/[^ -~\n\t]/g, "?")
     .slice(0, 240);
+}
+
+function sanitizeDetails(value, depth = 0, seen = new WeakSet()) {
+  if (value == null || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    return sanitizeMessage(value);
+  }
+  if (depth >= DETAILS_MAX_DEPTH) {
+    return "[redacted-depth-limit]";
+  }
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, DETAILS_MAX_ARRAY_ITEMS)
+      .map((item) => sanitizeDetails(item, depth + 1, seen));
+  }
+  if (typeof value === "object") {
+    if (seen.has(value)) {
+      return "[redacted-circular]";
+    }
+    seen.add(value);
+
+    const sanitized = {};
+    for (const [key, item] of Object.entries(value).slice(0, DETAILS_MAX_OBJECT_KEYS)) {
+      const sanitizedItem = sanitizeDetails(item, depth + 1, seen);
+      if (sanitizedItem !== undefined) {
+        sanitized[sanitizeMessage(key)] = sanitizedItem;
+      }
+    }
+    seen.delete(value);
+    return sanitized;
+  }
+
+  return null;
 }
 
 function parseDoctorSummary(stdout) {
@@ -43,7 +84,7 @@ function aggregateChecks(checks) {
       message: statusIsKnown
         ? message
         : sanitizeMessage(`unknown readiness status "${sanitizeMessage(status)}": ${message}`),
-      ...(check.details == null ? {} : { details: check.details }),
+      ...(check.details == null ? {} : { details: sanitizeDetails(check.details) }),
     };
   });
   const summary = {
@@ -420,7 +461,7 @@ async function checkRemote(options, runner) {
 }
 
 async function checkHistory(options, runner) {
-  const script = path.join("scripts", "codex-history-context-check.js");
+  const script = path.join(__dirname, "codex-history-context-check.js");
   const result = await runner("node", [script, "--cwd", options.cwd], { ...options, cwd: options.cwd });
   if (isTimedOut(result)) {
     return timeoutCheck("history", "history");

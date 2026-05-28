@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
@@ -91,6 +92,38 @@ test("aggregateChecks reports ready for clean pass results", () => {
     pass: 2,
     warn: 0,
     fail: 0,
+  });
+});
+
+test("aggregateChecks sanitizes nested details before JSON output", () => {
+  const report = aggregateChecks([
+    {
+      id: "history",
+      status: "pass",
+      message: "memory ok",
+      details: {
+        ok: true,
+        count: 2,
+        absent: null,
+        rawPath: "/home/remy/.codex/sessions/private.jsonl",
+        nested: {
+          paths: ["/home/remy/.codex/sessions/other.jsonl", 7, false],
+        },
+      },
+    },
+  ]);
+  const serialized = JSON.stringify(report);
+
+  assert.equal(serialized.includes("/home/remy/.codex/sessions"), false);
+  assert.equal(serialized.includes(".jsonl"), false);
+  assert.deepEqual(report.checks[0].details, {
+    ok: true,
+    count: 2,
+    absent: null,
+    rawPath: "[redacted-session-path]",
+    nested: {
+      paths: ["[redacted-session-path]", 7, false],
+    },
   });
 });
 
@@ -199,7 +232,9 @@ test("parseArgs supports json cwd timeout help and env cwd fallback", () => {
 
 test("runReadinessCheck composes package doctor services remote history and repo checks", async () => {
   const calls = [];
+  const rawCalls = [];
   const runner = async (command, args) => {
+    rawCalls.push([command, ...args]);
     calls.push([command, ...args].join(" "));
     if (command === "dpkg-query") {
       return { code: 0, stdout: "codex-desktop 2026.05.28.042624+paritycacd32b\n", stderr: "" };
@@ -251,7 +286,10 @@ test("runReadinessCheck composes package doctor services remote history and repo
     report.checks.map((check) => check.id),
     ["package", "build-info", "doctor", "services", "remote", "history", "repo"],
   );
-  assert.ok(calls.includes("node scripts/codex-history-context-check.js --cwd /repo"));
+  const historyCall = rawCalls.find((call) => call[0] === "node");
+  assert.equal(path.isAbsolute(historyCall[1]), true);
+  assert.equal(historyCall[1].endsWith(path.join("scripts", "codex-history-context-check.js")), true);
+  assert.deepEqual(historyCall.slice(2), ["--cwd", "/repo"]);
   assert.ok(calls.includes("pgrep -af codex app-server --remote-control"));
   assert.equal(JSON.stringify(report).includes("--private-payload"), false);
 });
