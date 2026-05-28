@@ -372,9 +372,13 @@ test("runReadinessCheck fails closed when a subprocess times out", async () => {
   assert.equal(JSON.stringify(report).includes("private timeout detail"), false);
 });
 
-test("runReadinessCheck supplies a user bus environment for service checks", async () => {
+test("runReadinessCheck supplies a user bus environment for doctor and service checks", async () => {
+  let doctorOptions;
   let serviceOptions;
   const runner = async (command, args, options = {}) => {
+    if (command === "/usr/bin/codex-desktop-doctor") {
+      doctorOptions = options;
+    }
     if (command === "systemctl") {
       serviceOptions = options;
     }
@@ -412,6 +416,8 @@ test("runReadinessCheck supplies a user bus environment for service checks", asy
 
   await runReadinessCheck({ cwd: "/repo", timeoutMs: 1000 }, runner);
 
+  assert.equal(typeof doctorOptions.env.XDG_RUNTIME_DIR, "string");
+  assert.equal(typeof doctorOptions.env.DBUS_SESSION_BUS_ADDRESS, "string");
   assert.equal(typeof serviceOptions.env.XDG_RUNTIME_DIR, "string");
   assert.equal(typeof serviceOptions.env.DBUS_SESSION_BUS_ADDRESS, "string");
 });

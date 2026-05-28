@@ -416,7 +416,7 @@ async function checkBuildInfo(options, runner) {
 }
 
 async function checkDoctor(options, runner) {
-  const result = await runner("/usr/bin/codex-desktop-doctor", [], options);
+  const result = await runner("/usr/bin/codex-desktop-doctor", [], { ...options, env: userBusEnv(options.env) });
   if (isTimedOut(result)) {
     return timeoutCheck("doctor", "doctor");
   }
