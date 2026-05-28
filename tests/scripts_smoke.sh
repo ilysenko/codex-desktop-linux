@@ -5838,6 +5838,17 @@ test_codex_history_context_checker_unit_tests() {
     node --test "$REPO_DIR/scripts/codex-history-context-check.test.js"
 }
 
+test_codex_readiness_checker_unit_tests() {
+    info "Checking Codex Desktop readiness checker"
+    node --check "$REPO_DIR/scripts/codex-readiness-check.js"
+    node --check "$REPO_DIR/scripts/codex-readiness-check.test.js"
+    node --test "$REPO_DIR/scripts/codex-readiness-check.test.js"
+    local make_help
+    make_help="$(make -C "$REPO_DIR" help)"
+    grep -Fq "make readiness-check" <<<"$make_help" \
+        || fail "Expected make help to list readiness-check"
+}
+
 main() {
     test_common_helper_sourcing
     test_package_payload_permission_normalization
@@ -5934,6 +5945,7 @@ main() {
     test_user_local_prepare_build_repo_skips_unmerged_overlay_paths
     test_cdp_composer_helper_unit_tests
     test_codex_history_context_checker_unit_tests
+    test_codex_readiness_checker_unit_tests
     info "All script smoke tests passed"
 }
 
