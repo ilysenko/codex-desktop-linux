@@ -528,6 +528,17 @@ node scripts/cdp-compose.js --port 9333 --text-file /path/to/prompt.txt
 
 The helper returns sanitized JSON fields such as `composerFound`, `sendButtonFound`, `clicked`, and `composerCleared`. The packaged service keeps CDP disabled by default; enable it only with a local systemd drop-in or an explicit launcher environment.
 
+### Local Codex history and memory context
+
+Codex Desktop uses the Codex app-server thread APIs for local session history. To verify that local Codex sessions and continuity memory files are available without printing chat text, run:
+
+```bash
+make history-check
+node scripts/codex-history-context-check.js --cwd "$PWD"
+```
+
+The checker prints only sanitized counts and booleans: whether `thread/list` responds, how many threads were returned in the global page, how many match the requested cwd filter, source counts, and whether `~/.codex/memories/SESSION_STATE.json`, `current.md`, and `MEMORY_INDEX.md` exist. It deliberately omits thread ids, titles, previews, message text, log paths, and raw memory bodies.
+
 ### Updater service controls
 
 After installing a default native package with the updater enabled:
