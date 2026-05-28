@@ -1,6 +1,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
@@ -14,6 +16,39 @@ const {
   runReadinessCheck,
   sanitizeMessage,
 } = require("./codex-readiness-check.js");
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cleanupProcess(pid) {
+  if (!Number.isInteger(pid) || !isProcessAlive(pid)) {
+    return;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  if (isProcessAlive(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Best-effort cleanup for a test child that may already have exited.
+    }
+  }
+}
 
 test("parseDoctorSummary extracts pass warn fail info counts", () => {
   assert.deepEqual(parseDoctorSummary("noise\nSummary: 25 pass, 0 warn, 0 fail, 3 info\n"), {
@@ -394,4 +429,37 @@ test("runCommand resolves promptly when a timed-out child ignores SIGTERM", asyn
 
   assert.equal(result.code, 124);
   assert.ok(elapsedMs < 700, `expected timeout to settle promptly, elapsed ${elapsedMs}ms`);
+});
+
+test("runCommand cleans up descendants spawned by a timed-out child", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-readiness-timeout-"));
+  const pidFile = path.join(tmpDir, "descendant.pid");
+  let descendantPid = null;
+  const parentScript = [
+    "const { spawn } = require('node:child_process');",
+    "const fs = require('node:fs');",
+    "const pidFile = process.argv[1];",
+    "const child = spawn(process.execPath, [",
+    "  '-e',",
+    "  \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);\",",
+    "], { stdio: 'ignore' });",
+    "fs.writeFileSync(pidFile, String(child.pid));",
+    "setInterval(() => {}, 1000);",
+  ].join("\n");
+
+  try {
+    const result = await runCommand(process.execPath, ["-e", parentScript, pidFile], { timeoutMs: 150 });
+
+    for (let attempt = 0; attempt < 20 && !fs.existsSync(pidFile); attempt += 1) {
+      await sleep(25);
+    }
+    descendantPid = Number.parseInt(fs.readFileSync(pidFile, "utf8"), 10);
+    await sleep(500);
+
+    assert.equal(result.code, 124);
+    assert.equal(isProcessAlive(descendantPid), false);
+  } finally {
+    cleanupProcess(descendantPid);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

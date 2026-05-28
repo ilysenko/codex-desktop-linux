@@ -230,6 +230,25 @@ function parseArgs(argv, env = process.env) {
   return parsed;
 }
 
+function supportsProcessGroups() {
+  return process.platform !== "win32";
+}
+
+function killCommandProcess(child, signal, useProcessGroup) {
+  if (child?.pid == null) {
+    return;
+  }
+  try {
+    if (useProcessGroup) {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch {
+    // Best-effort timeout cleanup. The process may have already exited.
+  }
+}
+
 function runCommand(command, args, options = {}) {
   return new Promise((resolve) => {
     let stdout = "";
@@ -239,6 +258,7 @@ function runCommand(command, args, options = {}) {
     let child;
     let timeoutTimer;
     let cleanupTimer;
+    const useProcessGroup = supportsProcessGroups();
 
     const settle = (result) => {
       if (settled) {
@@ -254,10 +274,10 @@ function runCommand(command, args, options = {}) {
     const settleTimedOut = () => {
       timedOut = true;
       if (child?.pid != null) {
-        child.kill("SIGTERM");
+        killCommandProcess(child, "SIGTERM", useProcessGroup);
         cleanupTimer = setTimeout(() => {
-          if (child?.exitCode == null && child?.signalCode == null) {
-            child.kill("SIGKILL");
+          if (useProcessGroup || (child?.exitCode == null && child?.signalCode == null)) {
+            killCommandProcess(child, "SIGKILL", useProcessGroup);
           }
         }, 250);
         child.unref?.();
@@ -270,6 +290,7 @@ function runCommand(command, args, options = {}) {
     try {
       child = spawn(command, args, {
         cwd: options.cwd,
+        detached: useProcessGroup,
         env: options.env || process.env,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -292,7 +313,7 @@ function runCommand(command, args, options = {}) {
       settle({ code: 127, stdout, stderr: String(error?.message || error) });
     });
     child.on("close", (code, signal) => {
-      if (cleanupTimer != null) {
+      if (cleanupTimer != null && !(timedOut && useProcessGroup)) {
         clearTimeout(cleanupTimer);
       }
       settle({
