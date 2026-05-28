@@ -2682,6 +2682,7 @@ test_launcher_template_sanity() {
     assert_contains "$REPO_DIR/launcher/start.sh.template" "ADOPTED_WEBVIEW_PID"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "Reusing webview server pid="
     assert_contains "$REPO_DIR/launcher/start.sh.template" "run_cold_start_hooks"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "ensure_node_repl_js_approval"
     assert_contains "$REPO_DIR/linux-features/remote-mobile-control/feature.json" '"stageHook": "./stage.sh"'
     assert_contains "$REPO_DIR/linux-features/remote-mobile-control/stage.sh" "cold-start.d"
     assert_contains "$REPO_DIR/linux-features/remote-mobile-control/stage.sh" "remote-mobile-control"
@@ -5031,6 +5032,42 @@ test_linux_file_manager_patch_fails_soft() {
     assert_contains "$output_log" 'Failed to apply Linux File Manager Patch'
 }
 
+test_launcher_heals_node_repl_js_approval_config() {
+    info "Checking launcher heals Browser Use node_repl tool approval"
+    local workspace="$TMP_DIR/node-repl-js-approval"
+    local launcher_lib="$workspace/launcher-lib.sh"
+    local codex_home="$workspace/codex-home"
+    local config="$codex_home/config.toml"
+
+    mkdir -p "$workspace" "$codex_home"
+    awk '/^hydrate_graphical_session_env$/{exit} {print}' \
+        "$REPO_DIR/launcher/start.sh.template" > "$launcher_lib"
+    cat > "$config" <<'TOML'
+[mcp_servers.node_repl]
+command = "/opt/codex-desktop/resources/node_repl"
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+CODEX_HOME = "/tmp/codex-home"
+TOML
+
+    (
+        CODEX_HOME="$codex_home"
+        CODEX_LINUX_APP_ID="codex-desktop"
+        CODEX_LINUX_APP_DISPLAY_NAME="Codex"
+        CODEX_LINUX_WEBVIEW_PORT="5175"
+        # shellcheck disable=SC1090
+        source "$launcher_lib"
+        ensure_node_repl_js_approval
+        ensure_node_repl_js_approval
+    )
+
+    assert_contains_literal "$config" "[mcp_servers.node_repl.tools.js]"
+    assert_contains_literal "$config" 'approval_mode = "approve"'
+    [ "$(grep -F -c "[mcp_servers.node_repl.tools.js]" "$config")" = "1" ] \
+        || fail "Expected one node_repl tools.js approval table"
+}
+
 test_webview_probe_equivalence() {
     info "Checking webview probe behavioral equivalence (bash + curl vs python3 reference)"
     # The harness extracts webview_port_is_open and verify_webview_origin from
@@ -5808,6 +5845,7 @@ main() {
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
     test_launcher_template_sanity
+    test_launcher_heals_node_repl_js_approval_config
     test_webview_probe_equivalence
     test_side_by_side_launcher_identity
     test_linux_file_manager_patch_smoke

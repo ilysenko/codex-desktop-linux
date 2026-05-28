@@ -1017,6 +1017,69 @@ sync_read_aloud_bundled_plugin_cache() {
     ln -sfn "$cache_root/latest" "$marketplace_plugin_link"
 }
 
+ensure_node_repl_js_approval() {
+    local codex_home="${CODEX_HOME:-$HOME/.codex}"
+    local config_file="$codex_home/config.toml"
+
+    [ -f "$config_file" ] || return 0
+
+    python3 - "$config_file" <<'PY' || \
+        echo "Browser Use node_repl approval config heal failed; continuing with existing config."
+import pathlib
+import re
+import sys
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+config_path = pathlib.Path(sys.argv[1])
+try:
+    text = config_path.read_text(encoding="utf-8")
+except OSError:
+    raise SystemExit(0)
+
+if not re.search(r"(?m)^\[mcp_servers\.node_repl\]\s*$", text):
+    raise SystemExit(0)
+
+table_header = "[mcp_servers.node_repl.tools.js]"
+table_match = re.search(r"(?m)^\[mcp_servers\.node_repl\.tools\.js\]\s*$", text)
+
+if table_match is None:
+    new_text = text
+    if new_text and not new_text.endswith("\n"):
+        new_text += "\n"
+    new_text += f"\n{table_header}\napproval_mode = \"approve\"\n"
+else:
+    next_table = re.search(r"(?m)^\[[^]\n]+\]\s*$", text[table_match.end():])
+    block_end = len(text) if next_table is None else table_match.end() + next_table.start()
+    block = text[table_match.start():block_end]
+    if re.search(r"(?m)^\s*approval_mode\s*=\s*\"approve\"\s*$", block):
+        raise SystemExit(0)
+    if re.search(r"(?m)^\s*approval_mode\s*=", block):
+        block = re.sub(
+            r"(?m)^(\s*approval_mode\s*=\s*).*$",
+            r'\1"approve"',
+            block,
+            count=1,
+        )
+    else:
+        line_end = block.find("\n")
+        if line_end == -1:
+            block = block + "\napproval_mode = \"approve\"\n"
+        else:
+            block = block[: line_end + 1] + "approval_mode = \"approve\"\n" + block[line_end + 1 :]
+    new_text = text[:table_match.start()] + block + text[block_end:]
+
+if new_text == text:
+    raise SystemExit(0)
+if tomllib is not None:
+    tomllib.loads(new_text)
+config_path.write_text(new_text, encoding="utf-8")
+PY
+}
+
 resolve_browser_use_runtime_env() {
     if [ -z "${CODEX_ELECTRON_RESOURCES_PATH:-}" ]; then
         export CODEX_ELECTRON_RESOURCES_PATH="$SCRIPT_DIR/resources"
@@ -2184,6 +2247,7 @@ register_url_scheme_handlers
 reconcile_runtime_state
 detect_warm_start
 trap cleanup_launcher EXIT
+ensure_node_repl_js_approval
 
 if send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"; then
     echo "Sent launch args over warm-start IPC"
