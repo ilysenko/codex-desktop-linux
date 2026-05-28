@@ -7,7 +7,9 @@ const {
   aggregateChecks,
   classifyRepoStatus,
   formatHumanReport,
+  parseArgs,
   parseDoctorSummary,
+  runReadinessCheck,
   sanitizeMessage,
 } = require("./codex-readiness-check.js");
 
@@ -178,4 +180,164 @@ test("formatHumanReport prints no raw details object or private paths", () => {
   assert.equal(output.includes("rawPath"), false);
   assert.equal(output.includes(".jsonl"), false);
   assert.equal(output.includes("/home/remy/.codex/sessions"), false);
+});
+
+test("parseArgs supports json cwd timeout help and env cwd fallback", () => {
+  assert.deepEqual(parseArgs(["--json", "--timeout-ms", "1234", "--cwd", "/tmp/repo"], {}), {
+    cwd: "/tmp/repo",
+    json: true,
+    timeoutMs: 1234,
+  });
+  assert.deepEqual(parseArgs(["--help"], { CODEX_READINESS_CWD: "/env/repo" }), {
+    cwd: "/env/repo",
+    help: true,
+    json: false,
+    timeoutMs: 5000,
+  });
+});
+
+test("runReadinessCheck composes package doctor services remote history and repo checks", async () => {
+  const calls = [];
+  const runner = async (command, args) => {
+    calls.push([command, ...args].join(" "));
+    if (command === "dpkg-query") {
+      return { code: 0, stdout: "codex-desktop 2026.05.28.042624+paritycacd32b\n", stderr: "" };
+    }
+    if (command === "cat") {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          source: {
+            shortCommit: "cacd32b65470",
+            branch: "codex/local-parity-lab",
+            dirty: true,
+          },
+        }),
+        stderr: "",
+      };
+    }
+    if (command === "/usr/bin/codex-desktop-doctor") {
+      return { code: 0, stdout: "Summary: 25 pass, 0 warn, 0 fail, 3 info\n", stderr: "" };
+    }
+    if (command === "systemctl") {
+      return { code: 0, stdout: "active\nactive\n", stderr: "" };
+    }
+    if (command === "pgrep") {
+      return { code: 0, stdout: "123 codex app-server --remote-control --private-payload\n", stderr: "" };
+    }
+    if (command === "node") {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          ok: true,
+          memoryContext: { sessionStateExists: true, currentExists: true },
+          threadHistory: { responded: true, cwdFilteredThreadCount: 0 },
+        }),
+        stderr: "",
+      };
+    }
+    if (command === "git") {
+      return { code: 0, stdout: "## branch\n?? output/\n", stderr: "" };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+
+  const report = await runReadinessCheck({ cwd: "/repo", timeoutMs: 1000 }, runner);
+
+  assert.equal(report.ok, true);
+  assert.equal(report.summary.status, "ready-with-warnings");
+  assert.deepEqual(
+    report.checks.map((check) => check.id),
+    ["package", "build-info", "doctor", "services", "remote", "history", "repo"],
+  );
+  assert.ok(calls.includes("node scripts/codex-history-context-check.js --cwd /repo"));
+  assert.ok(calls.includes("pgrep -af codex app-server --remote-control"));
+  assert.equal(JSON.stringify(report).includes("--private-payload"), false);
+});
+
+test("runReadinessCheck fails closed when a subprocess times out", async () => {
+  const runner = async (command) => {
+    if (command === "dpkg-query") {
+      return { code: 0, stdout: "codex-desktop 2026.05.28.042624+paritycacd32b\n", stderr: "" };
+    }
+    if (command === "cat") {
+      return { code: 0, stdout: JSON.stringify({ source: { shortCommit: "cacd32b" } }), stderr: "" };
+    }
+    if (command === "/usr/bin/codex-desktop-doctor") {
+      return { code: 0, stdout: "Summary: 25 pass, 0 warn, 0 fail, 3 info\n", stderr: "" };
+    }
+    if (command === "systemctl") {
+      return { code: 0, stdout: "active\nactive\n", stderr: "" };
+    }
+    if (command === "pgrep") {
+      return { code: 1, stdout: "", stderr: "" };
+    }
+    if (command === "node") {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          ok: true,
+          memoryContext: { sessionStateExists: true, currentExists: true },
+          threadHistory: { responded: true, cwdFilteredThreadCount: 0 },
+        }),
+        stderr: "",
+      };
+    }
+    if (command === "git") {
+      return { code: 124, stdout: "", stderr: "private timeout detail" };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+
+  const report = await runReadinessCheck({ cwd: "/repo", timeoutMs: 1000 }, runner);
+  const repoCheck = report.checks.find((check) => check.id === "repo");
+
+  assert.equal(report.ok, false);
+  assert.equal(repoCheck.status, "fail");
+  assert.equal(repoCheck.message, "repo status check timed out");
+  assert.equal(JSON.stringify(report).includes("private timeout detail"), false);
+});
+
+test("runReadinessCheck supplies a user bus environment for service checks", async () => {
+  let serviceOptions;
+  const runner = async (command, args, options = {}) => {
+    if (command === "systemctl") {
+      serviceOptions = options;
+    }
+    if (command === "dpkg-query") {
+      return { code: 0, stdout: "codex-desktop 2026.05.28.042624+paritycacd32b\n", stderr: "" };
+    }
+    if (command === "cat") {
+      return { code: 0, stdout: JSON.stringify({ source: { shortCommit: "cacd32b" } }), stderr: "" };
+    }
+    if (command === "/usr/bin/codex-desktop-doctor") {
+      return { code: 0, stdout: "Summary: 25 pass, 0 warn, 0 fail, 3 info\n", stderr: "" };
+    }
+    if (command === "systemctl") {
+      return { code: 0, stdout: "active\nactive\n", stderr: "" };
+    }
+    if (command === "pgrep") {
+      return { code: 1, stdout: "", stderr: "" };
+    }
+    if (command === "node") {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          ok: true,
+          memoryContext: { sessionStateExists: true, currentExists: true },
+          threadHistory: { responded: true, cwdFilteredThreadCount: 0 },
+        }),
+        stderr: "",
+      };
+    }
+    if (command === "git") {
+      return { code: 0, stdout: "## branch\n", stderr: "" };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+
+  await runReadinessCheck({ cwd: "/repo", timeoutMs: 1000 }, runner);
+
+  assert.equal(typeof serviceOptions.env.XDG_RUNTIME_DIR, "string");
+  assert.equal(typeof serviceOptions.env.DBUS_SESSION_BUS_ADDRESS, "string");
 });
