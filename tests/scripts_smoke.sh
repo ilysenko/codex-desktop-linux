@@ -5734,6 +5734,13 @@ EOF
     )
 }
 
+test_cdp_composer_helper_unit_tests() {
+    info "Checking redacted CDP composer helper"
+    node --check "$REPO_DIR/scripts/cdp-compose.js"
+    node --check "$REPO_DIR/scripts/cdp-compose.test.js"
+    node --test "$REPO_DIR/scripts/cdp-compose.test.js"
+}
+
 main() {
     test_common_helper_sourcing
     test_package_payload_permission_normalization
@@ -5826,6 +5833,7 @@ main() {
     test_user_local_prepare_build_repo_handles_deleted_overlay_paths
     test_user_local_prepare_build_repo_removes_rename_source_paths
     test_user_local_prepare_build_repo_skips_unmerged_overlay_paths
+    test_cdp_composer_helper_unit_tests
     info "All script smoke tests passed"
 }
 

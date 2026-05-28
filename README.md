@@ -517,6 +517,17 @@ The app unit launches `/usr/bin/codex-desktop` and waits on the launcher PID fil
 
 If `make app-service-enable` reports that the unit is enabled but not active, an already-running manually launched Codex Desktop process probably received the warm-start handoff. Close that process and run `systemctl --user start codex-desktop.service`.
 
+### Optional local CDP composer helper
+
+If you intentionally enable a localhost CDP port with `CODEX_ELECTRON_REMOTE_DEBUGGING_PORT`, the redacted helper can verify the composer or submit text without printing prompt text, DOM text, screenshots, or debugger URLs:
+
+```bash
+node scripts/cdp-compose.js --check --port 9333
+node scripts/cdp-compose.js --port 9333 --text-file /path/to/prompt.txt
+```
+
+The helper returns sanitized JSON fields such as `composerFound`, `sendButtonFound`, `clicked`, and `composerCleared`. The packaged service keeps CDP disabled by default; enable it only with a local systemd drop-in or an explicit launcher environment.
+
 ### Updater service controls
 
 After installing a default native package with the updater enabled:
