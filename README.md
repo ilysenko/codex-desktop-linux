@@ -503,6 +503,19 @@ make doctor
 
 The doctor checks installed package files, updater/update-builder files, required ASAR patch markers, Chrome native-messaging manifests, Flatpak Chrome permissions when present, Computer Use readiness, and remote mobile feature markers. It reports only sanitized status fields and file paths; it does not print pairing secrets, browser tab contents, cookies, QR data, screenshots, or Computer Use window/application state.
 
+### Readiness check
+
+To produce a sanitized handoff/readiness report for the installed desktop setup, run:
+
+```bash
+make readiness-check
+node scripts/codex-readiness-check.js --json
+```
+
+The readiness check composes the installed doctor, package/build metadata, `systemd --user` service state, remote-control app-server presence, repository state, and the redacted Codex history/memory check.
+
+It is read-only: it does not revoke mobile access, re-pair devices, restart services, log out, reboot, or print private session contents.
+
 ### Optional app service
 
 Native packages install an opt-in app unit at `/usr/lib/systemd/user/codex-desktop.service`:
