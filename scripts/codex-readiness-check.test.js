@@ -9,6 +9,7 @@ const {
   formatHumanReport,
   parseArgs,
   parseDoctorSummary,
+  runCommand,
   runReadinessCheck,
   sanitizeMessage,
 } = require("./codex-readiness-check.js");
@@ -340,4 +341,19 @@ test("runReadinessCheck supplies a user bus environment for service checks", asy
 
   assert.equal(typeof serviceOptions.env.XDG_RUNTIME_DIR, "string");
   assert.equal(typeof serviceOptions.env.DBUS_SESSION_BUS_ADDRESS, "string");
+});
+
+test("runCommand resolves promptly when a timed-out child ignores SIGTERM", async () => {
+  const childScript = [
+    "process.on('SIGTERM', () => {});",
+    "setTimeout(() => process.exit(0), 1500);",
+    "setInterval(() => {}, 1000);",
+  ].join("");
+  const started = Date.now();
+
+  const result = await runCommand(process.execPath, ["-e", childScript], { timeoutMs: 100 });
+  const elapsedMs = Date.now() - started;
+
+  assert.equal(result.code, 124);
+  assert.ok(elapsedMs < 700, `expected timeout to settle promptly, elapsed ${elapsedMs}ms`);
 });

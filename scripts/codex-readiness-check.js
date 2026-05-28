@@ -196,22 +196,35 @@ function runCommand(command, args, options = {}) {
     let timedOut = false;
     let settled = false;
     let child;
+    let timeoutTimer;
+    let cleanupTimer;
 
     const settle = (result) => {
       if (settled) {
         return;
       }
       settled = true;
-      clearTimeout(timeoutTimer);
+      if (timeoutTimer != null) {
+        clearTimeout(timeoutTimer);
+      }
       resolve(result);
     };
 
-    const timeoutTimer = setTimeout(() => {
+    const settleTimedOut = () => {
       timedOut = true;
       if (child?.pid != null) {
         child.kill("SIGTERM");
+        cleanupTimer = setTimeout(() => {
+          if (child?.exitCode == null && child?.signalCode == null) {
+            child.kill("SIGKILL");
+          }
+        }, 250);
+        child.unref?.();
+        child.stdout?.destroy();
+        child.stderr?.destroy();
       }
-    }, options.timeoutMs || DEFAULT_TIMEOUT_MS);
+      settle({ code: 124, stdout, stderr });
+    };
 
     try {
       child = spawn(command, args, {
@@ -223,6 +236,8 @@ function runCommand(command, args, options = {}) {
       settle({ code: 127, stdout, stderr: String(error?.message || error) });
       return;
     }
+
+    timeoutTimer = setTimeout(settleTimedOut, options.timeoutMs || DEFAULT_TIMEOUT_MS);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -236,6 +251,9 @@ function runCommand(command, args, options = {}) {
       settle({ code: 127, stdout, stderr: String(error?.message || error) });
     });
     child.on("close", (code, signal) => {
+      if (cleanupTimer != null) {
+        clearTimeout(cleanupTimer);
+      }
       settle({
         code: timedOut || signal === "SIGTERM" ? 124 : (code ?? 1),
         stdout,
