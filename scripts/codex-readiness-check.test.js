@@ -51,6 +51,31 @@ test("aggregateChecks fails when any check fails", () => {
   });
 });
 
+test("aggregateChecks treats unknown statuses as failures", () => {
+  const result = aggregateChecks([
+    {
+      id: "doctor",
+      status: "error",
+      message: "/home/remy/.codex/sessions/private.jsonl could not be parsed",
+    },
+  ]);
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.summary, {
+    status: "not-ready",
+    pass: 0,
+    warn: 0,
+    fail: 1,
+  });
+  assert.deepEqual(result.checks, [
+    {
+      id: "doctor",
+      status: "fail",
+      message: 'unknown readiness status "error": [redacted-session-path] could not be parsed',
+    },
+  ]);
+});
+
 test("aggregateChecks reports ready for clean pass results", () => {
   const result = aggregateChecks([
     { id: "package", status: "pass", message: "codex-desktop 1" },
@@ -68,6 +93,17 @@ test("aggregateChecks reports ready for clean pass results", () => {
 
 test("classifyRepoStatus treats only output/ as warning", () => {
   assert.deepEqual(classifyRepoStatus("## branch\n?? output/\n"), {
+    status: "warn",
+    message: "untracked output/ is present",
+    details: {
+      untrackedOutput: true,
+      otherChanges: false,
+    },
+  });
+});
+
+test("classifyRepoStatus treats output descendants as warning", () => {
+  assert.deepEqual(classifyRepoStatus("## branch\n?? output/playwright/report.json\n?? output/logs/run.txt\n"), {
     status: "warn",
     message: "untracked output/ is present",
     details: {

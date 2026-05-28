@@ -2,6 +2,7 @@
 "use strict";
 
 const PRIVATE_SESSION_PATH_PATTERN = /\/home\/[^/\s]+\/\.codex\/sessions\/[^\s]+/g;
+const READY_STATUSES = new Set(["pass", "warn", "fail"]);
 
 function sanitizeMessage(value) {
   return String(value ?? "")
@@ -27,12 +28,19 @@ function parseDoctorSummary(stdout) {
 }
 
 function aggregateChecks(checks) {
-  const normalizedChecks = checks.map((check) => ({
-    id: String(check.id),
-    status: check.status,
-    message: sanitizeMessage(check.message),
-    ...(check.details == null ? {} : { details: check.details }),
-  }));
+  const normalizedChecks = checks.map((check) => {
+    const status = String(check.status);
+    const message = sanitizeMessage(check.message);
+    const statusIsKnown = READY_STATUSES.has(status);
+    return {
+      id: String(check.id),
+      status: statusIsKnown ? status : "fail",
+      message: statusIsKnown
+        ? message
+        : sanitizeMessage(`unknown readiness status "${sanitizeMessage(status)}": ${message}`),
+      ...(check.details == null ? {} : { details: check.details }),
+    };
+  });
   const summary = {
     status: "ready",
     pass: 0,
@@ -63,14 +71,18 @@ function aggregateChecks(checks) {
   };
 }
 
+function isOutputStatusLine(line) {
+  return line === "?? output" || line === "?? output/" || line.startsWith("?? output/");
+}
+
 function classifyRepoStatus(stdout) {
   const lines = String(stdout ?? "")
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter(Boolean)
     .filter((line) => !line.startsWith("## "));
-  const untrackedOutput = lines.some((line) => line === "?? output/" || line === "?? output");
-  const otherChanges = lines.some((line) => line !== "?? output/" && line !== "?? output");
+  const untrackedOutput = lines.some(isOutputStatusLine);
+  const otherChanges = lines.some((line) => !isOutputStatusLine(line));
 
   if (otherChanges) {
     return {
