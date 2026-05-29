@@ -1,0 +1,9 @@
+{
+  "id": "browser-viewer",
+  "title": "Custom Browser Viewer",
+  "description": "Unlocks the native side-panel browser and its Ctrl+Shift+B hotkey.",
+  "defaultEnabled": true,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
