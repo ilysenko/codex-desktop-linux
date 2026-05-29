@@ -263,6 +263,33 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
     availabilityChanged = true;
   }
 
+  const currentAvailabilityObjectPattern =
+    /(isComputerUseFeatureEnabled:)([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*),(isComputerUseFeatureLoading:)([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*),(isComputerUseGateEnabled:)([A-Za-z_$][\w$]*),(isHostCompatiblePlatform:)([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),/g;
+  patchedSource = patchedSource.replace(
+    currentAvailabilityObjectPattern,
+    (
+      match,
+      featureEnabledKey,
+      featureEnabledExpr,
+      featureLoadingKey,
+      featureLoadingExpr,
+      gateEnabledKey,
+      gateEnabledExpr,
+      platformKey,
+      platformPredicateFn,
+      platformVar,
+      offset,
+    ) => {
+      const context = patchedSource.slice(Math.max(0, offset - 1200), offset + match.length);
+      if (!context.includes(computerUseFeatureNeedle)) {
+        return match;
+      }
+      availabilityGateFound = true;
+      availabilityChanged = true;
+      return `${featureEnabledKey}${featureEnabledExpr}||${platformVar}===\`linux\`,${featureLoadingKey}${platformVar}===\`linux\`?!1:${featureLoadingExpr},${gateEnabledKey}${gateEnabledExpr}||${platformVar}===\`linux\`,${platformKey}${platformVar}===\`linux\`||${platformPredicateFn}(${platformVar}),`;
+    },
+  );
+
   const currentHookAvailabilityPattern =
     /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\|\|([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=\1&&!\5&&([A-Za-z_$][\w$]*)\.enabled&&!\8\.isLoading,([A-Za-z_$][\w$]*)=\1&&\8\.isLoading,([A-Za-z_$][\w$]*)=\1&&\(\5\|\|\8\.isLoading\),([A-Za-z_$][\w$]*);/g;
   patchedSource = patchedSource.replace(

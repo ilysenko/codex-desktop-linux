@@ -287,6 +287,63 @@ function applyLinuxCollaborationModeDefaultPatch(currentSource) {
   );
 }
 
+function applyLinuxPluginListCompatibilityPatch(currentSource) {
+  const marker = "function codexLinuxPluginListFallback";
+  if (!currentSource.includes("plugin/list")) {
+    return currentSource;
+  }
+
+  const importHeaderMatch = currentSource.match(/^((?:import[^;]+;)+)/u);
+  const helperInsertionRegex = /var ([A-Za-z_$][\w$]*)=class\{conversations=new Map;streamRoles=new Map;/u;
+  const managerMethodRegex =
+    /listPlugins\(([A-Za-z_$][\w$]*)\)\{return ([A-Za-z_$][\w$]*)\(this,\1\)\}/u;
+  const messageHandlerRegex =
+    /"list-plugins":([A-Za-z_$][\w$]*)\(\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)=>\2\.sendRequest\(`plugin\/list`,\3\)\)/u;
+
+  let patchedSource = currentSource;
+  let changed = false;
+  if (managerMethodRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      managerMethodRegex,
+      "listPlugins($1){return $2(this,$1).catch(codexLinuxPluginListFallback)}",
+    );
+    changed = true;
+  }
+  if (messageHandlerRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      messageHandlerRegex,
+      '"list-plugins":$1(($2,$3)=>$2.sendRequest(`plugin/list`,$3).catch(codexLinuxPluginListFallback))',
+    );
+    changed = true;
+  }
+
+  const referencesHelper = patchedSource.includes("codexLinuxPluginListFallback");
+  if (!changed && !referencesHelper) {
+    console.warn(
+      "WARN: Could not find plugin list request site — skipping plugin/list compatibility patch",
+    );
+    return currentSource;
+  }
+
+  if (patchedSource.includes(marker)) {
+    return patchedSource;
+  }
+
+  const helper =
+    "function codexLinuxPluginListFallback(error){let message=String(error?.message??error??``);if(!message.includes(`unknown variant`)||!message.includes(`plugin/list`))throw error;return{marketplaces:[],featuredPluginIds:[],marketplaceLoadErrors:[]}}";
+
+  if (importHeaderMatch != null) {
+    return patchedSource.replace(importHeaderMatch[1], `${importHeaderMatch[1]}${helper}`);
+  } else if (helperInsertionRegex.test(currentSource)) {
+    return patchedSource.replace(
+      helperInsertionRegex,
+      `${helper}var $1=class{conversations=new Map;streamRoles=new Map;`,
+    );
+  }
+
+  return `${helper}${patchedSource}`;
+}
+
 function applySubagentNicknameMetadataPatch(currentSource) {
   let patchedSource = currentSource;
   const sourceShapePatchedMarker = "`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null";
@@ -720,6 +777,43 @@ function applyLinuxFastModeModelGuardPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxModelListAvailabilityPatch(currentSource) {
+  const marker = "codexLinuxShouldShowModel";
+  if (currentSource.includes(marker)) {
+    return currentSource;
+  }
+  if (!currentSource.includes("list-models-for-host") || !currentSource.includes("includeHidden:!0")) {
+    return currentSource;
+  }
+
+  const importHeaderMatch = currentSource.match(/^((?:import[^;]+;)+)/u);
+  if (importHeaderMatch == null) {
+    console.warn(
+      "WARN: Could not find model list import header — skipping Linux model list availability patch",
+    );
+    return currentSource;
+  }
+
+  const modelFilterRegex =
+    /if\(([A-Za-z_$][\w$]*)\?([A-Za-z_$][\w$]*)\.has\(([A-Za-z_$][\w$]*)\.model\):!\3\.hidden\)\{/gu;
+  const patchedFilterSource = currentSource.replace(
+    modelFilterRegex,
+    "if(codexLinuxShouldShowModel($3,$1,$2)){",
+  );
+  if (patchedFilterSource === currentSource) {
+    if (currentSource.includes("available_models") || currentSource.includes("use_hidden_models")) {
+      console.warn(
+        "WARN: Could not find model availability filter — skipping Linux model list availability patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const helper =
+    "function codexLinuxShouldShowModel(model,useAvailabilityAllowlist,availableModels){try{let platform=(navigator.userAgentData?.platform??navigator.platform??navigator.userAgent??``).toLowerCase();if(platform.includes(`linux`))return !0}catch{}return useAvailabilityAllowlist?availableModels.has(model.model):!model.hidden}";
+  return patchedFilterSource.replace(importHeaderMatch[1], `${importHeaderMatch[1]}${helper}`);
+}
+
 function patchCommentPreloadBundle(extractedDir) {
   const commentPreloadBundle = path.join(extractedDir, ".vite", "build", "comment-preload.js");
   if (!fs.existsSync(commentPreloadBundle)) {
@@ -747,6 +841,8 @@ module.exports = {
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxFastModeModelGuardPatch,
+  applyLinuxModelListAvailabilityPatch,
+  applyLinuxPluginListCompatibilityPatch,
   applySubagentNicknameMetadataPatch,
   patchCommentPreloadBundle,
 };

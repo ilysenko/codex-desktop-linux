@@ -101,6 +101,8 @@ const {
   applyLinuxCollaborationModeDefaultPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxFastModeModelGuardPatch,
+  applyLinuxModelListAvailabilityPatch,
+  applyLinuxPluginListCompatibilityPatch,
   applySubagentNicknameMetadataPatch,
   patchCommentPreloadBundle,
 } = require("./patches/webview-assets.js");
@@ -184,6 +186,8 @@ module.exports = {
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxFastModeModelGuardPatch,
+  applyLinuxModelListAvailabilityPatch,
+  applyLinuxPluginListCompatibilityPatch,
   applyLinuxQuitGuardPatch,
   applyLinuxReadyToShowWindowStatePatch,
   applyLinuxRemoteControlConfigPreservationPatch,

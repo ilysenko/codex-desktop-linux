@@ -40,6 +40,8 @@ const {
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxFastModeModelGuardPatch,
+  applyLinuxModelListAvailabilityPatch,
+  applyLinuxPluginListCompatibilityPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxReadyToShowWindowStatePatch,
   applyLinuxSetIconPatch,
@@ -515,6 +517,8 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-app-server-feature-enablement",
     "linux-config-write-version-conflict",
     "linux-collaboration-mode-default-compat",
+    "linux-model-list-availability",
+    "linux-plugin-list-compat",
     "opaque-window-default-general-settings",
     "opaque-window-default-webview-index",
     "opaque-window-default-resolved-theme",
@@ -1149,6 +1153,109 @@ test("warns when the fast-mode tier lookup is recognizable but unpatchable", () 
   assert.deepEqual(warnings, [
     "WARN: Could not find fast-mode model guard insertion point — skipping fast-mode crash guard patch",
   ]);
+});
+
+test("shows server-returned hidden models on Linux", () => {
+  const source =
+    "import{x as e}from\"./a.js\";var p=`gpt-5.5`;function select({data:r}){let i=[],a=new Set(e),o=null;return r.forEach(e=>{if(d?a.has(e.model):!e.hidden){let n=[...e.supportedReasoningEfforts];i.push({...e,supportedReasoningEfforts:n}),e.isDefault&&(o=e)}}),{models:i,defaultModel:o}}function load(){return i(`list-models-for-host`,{hostId:a,includeHidden:!0,cursor:null,limit:u})}";
+
+  const patched = applyPatchTwice(applyLinuxModelListAvailabilityPatch, source);
+
+  assert.match(patched, /function codexLinuxShouldShowModel/);
+  assert.match(patched, /platform\.includes\(`linux`\)\)return !0/);
+  assert.match(patched, /if\(codexLinuxShouldShowModel\(e,d,a\)\)\{/);
+  assert.doesNotMatch(patched, /if\(d\?a\.has\(e\.model\):!e\.hidden\)\{/);
+});
+
+test("keeps non-Linux model filtering semantics in model list patch", () => {
+  const source =
+    "import{x as e}from\"./a.js\";function select({data:r}){let i=[],a=new Set(e),o=null;return r.forEach(e=>{if(d?a.has(e.model):!e.hidden){i.push(e)}}),{models:i,defaultModel:o}}function load(){return i(`list-models-for-host`,{includeHidden:!0})}";
+  const patched = applyLinuxModelListAvailabilityPatch(source);
+  const predicateSource = patched.match(/function codexLinuxShouldShowModel[\s\S]*?return useAvailabilityAllowlist\?availableModels\.has\(model\.model\):!model\.hidden\}/)?.[0];
+  assert.ok(predicateSource);
+
+  const context = {
+    navigator: { platform: "MacIntel", userAgent: "Macintosh" },
+    Set,
+  };
+  vm.createContext(context);
+  vm.runInContext(`${predicateSource}; result = [
+    codexLinuxShouldShowModel({ model: "allowed", hidden: true }, true, new Set(["allowed"])),
+    codexLinuxShouldShowModel({ model: "blocked", hidden: true }, true, new Set(["allowed"])),
+    codexLinuxShouldShowModel({ model: "visible", hidden: false }, false, new Set()),
+    codexLinuxShouldShowModel({ model: "hidden", hidden: true }, false, new Set()),
+  ];`, context);
+
+  assert.deepEqual(Array.from(context.result), [true, false, true, false]);
+});
+
+test("falls back when plugin/list is unsupported by app-server", () => {
+  const source = [
+    "import{x as e}from\"./a.js\";",
+    "function u_(e,t){return e.sendRequest(`plugin/list`,t)}",
+    "var br=class{conversations=new Map;streamRoles=new Map;listPlugins(e){return u_(this,e)}};",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxPluginListCompatibilityPatch, source);
+
+  assert.match(patched, /function codexLinuxPluginListFallback/);
+  assert.match(
+    patched,
+    /listPlugins\(e\)\{return u_\(this,e\)\.catch\(codexLinuxPluginListFallback\)\}/,
+  );
+  assert.doesNotMatch(patched, /listPlugins\(e\)\{return u_\(this,e\)\}/);
+
+  const fallbackSource = patched.match(
+    /function codexLinuxPluginListFallback[\s\S]*?marketplaceLoadErrors:\[\]\}\}/,
+  )?.[0];
+  assert.ok(fallbackSource);
+
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(`${fallbackSource}; result = codexLinuxPluginListFallback(new Error("Invalid request: unknown variant \`plugin/list\`"));`, context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.result)), {
+    marketplaces: [],
+    featuredPluginIds: [],
+    marketplaceLoadErrors: [],
+  });
+});
+
+test("falls back for app-main list-plugins handler when plugin/list is unsupported", () => {
+  const source = [
+    "import{x as e}from\"./a.js\";",
+    "var ZN={",
+    '"list-plugins":PN((e,t)=>e.sendRequest(`plugin/list`,t)),',
+    '"list-models-for-host":NN((e,t)=>e.listModels(t))',
+    "};",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxPluginListCompatibilityPatch, source);
+
+  assert.match(patched, /function codexLinuxPluginListFallback/);
+  assert.match(
+    patched,
+    /"list-plugins":PN\(\(e,t\)=>e\.sendRequest\(`plugin\/list`,t\)\.catch\(codexLinuxPluginListFallback\)\)/,
+  );
+});
+
+test("rethrows non-plugin-list errors in plugin compatibility patch", () => {
+  const source = [
+    "function u_(e,t){return e.sendRequest(`plugin/list`,t)}",
+    "var br=class{conversations=new Map;streamRoles=new Map;listPlugins(e){return u_(this,e)}};",
+  ].join("");
+  const patched = applyLinuxPluginListCompatibilityPatch(source);
+  const fallbackSource = patched.match(
+    /function codexLinuxPluginListFallback[\s\S]*?marketplaceLoadErrors:\[\]\}\}/,
+  )?.[0];
+  assert.ok(fallbackSource);
+
+  const context = {};
+  vm.createContext(context);
+  assert.throws(
+    () => vm.runInContext(`${fallbackSource}; codexLinuxPluginListFallback(new Error("network failed"));`, context),
+    /network failed/,
+  );
 });
 
 test("warns when a matched webview opaque bundle has no known insertion point", () => {
@@ -2515,7 +2622,7 @@ test("shows current use-is-plugins-enabled Computer Use UI on Linux", () => {
   );
 });
 
-test("shows object-helper Computer Use plugin UI on Linux", () => {
+test("shows object-argument Computer Use UI on Linux", () => {
   const source =
     "function m(e){return e===`macOS`||e===`windows`}" +
     "function h(e){let n=(0,f.c)(15),{enabled:r,hostId:i}=e,a=r===void 0?!0:r,{isLoading:o,platform:s}=u(),c=t(i).kind===`local`,d=l(`1506311413`),h;n[0]===i?h=n[1]:(h={featureName:`computer_use`,hostId:i},n[0]=i,n[1]=h);let _=p(h),v;n[2]!==_.enabled||n[3]!==_.isLoading||n[4]!==a||n[5]!==d||n[6]!==c||n[7]!==o||n[8]!==s?(v=g({enabled:a,isComputerUseFeatureEnabled:_.enabled,isComputerUseFeatureLoading:_.isLoading,isComputerUseGateEnabled:d,isHostCompatiblePlatform:m(s),isHostLocal:c,isPlatformLoading:o,windowType:`electron`}),n[2]=_.enabled,n[3]=_.isLoading,n[4]=a,n[5]=d,n[6]=c,n[7]=o,n[8]=s,n[9]=v):v=n[9];return v}";
@@ -2525,7 +2632,7 @@ test("shows object-helper Computer Use plugin UI on Linux", () => {
   assert.match(patched, /function m\(e\)\{return e===`macOS`\|\|e===`windows`\|\|e===`linux`\}/);
   assert.match(
     patched,
-    /v=g\(\{enabled:a,isComputerUseFeatureEnabled:s===`linux`\|\|_\.enabled,isComputerUseFeatureLoading:s!==`linux`&&_\.isLoading,isComputerUseGateEnabled:s===`linux`\|\|d,isHostCompatiblePlatform:s===`linux`\|\|m\(s\),isHostLocal:c,isPlatformLoading:o,windowType:`electron`\}\)/,
+    /v=g\(\{enabled:a,isComputerUseFeatureEnabled:_\.enabled\|\|s===`linux`,isComputerUseFeatureLoading:s===`linux`\?!1:_\.isLoading,isComputerUseGateEnabled:d\|\|s===`linux`,isHostCompatiblePlatform:s===`linux`\|\|m\(s\),isHostLocal:c,isPlatformLoading:o,windowType:`electron`\}\)/,
   );
 });
 
@@ -2539,7 +2646,7 @@ test("keeps object-helper Computer Use host compatibility on Linux when platform
   assert.match(patched, /function m\(e\)\{return e===`macOS`\|\|e===`windows`\|\|q\(e\)\}/);
   assert.match(
     patched,
-    /v=g\(\{enabled:a,isComputerUseFeatureEnabled:s===`linux`\|\|_\.enabled,isComputerUseFeatureLoading:s!==`linux`&&_\.isLoading,isComputerUseGateEnabled:s===`linux`\|\|d,isHostCompatiblePlatform:s===`linux`\|\|m\(s\),isHostLocal:c,isPlatformLoading:o,windowType:`electron`\}\)/,
+    /v=g\(\{enabled:a,isComputerUseFeatureEnabled:_\.enabled\|\|s===`linux`,isComputerUseFeatureLoading:s===`linux`\?!1:_\.isLoading,isComputerUseGateEnabled:d\|\|s===`linux`,isHostCompatiblePlatform:s===`linux`\|\|m\(s\),isHostLocal:c,isPlatformLoading:o,windowType:`electron`\}\)/,
   );
 });
 
@@ -3077,7 +3184,7 @@ test("patchExtractedApp scans apps bundles for Computer Use availability when UI
       );
       assert.match(
         fs.readFileSync(path.join(assetsDir, "use-is-plugins-enabled-current.js"), "utf8"),
-        /v=g\(\{enabled:a,isComputerUseFeatureEnabled:s===`linux`\|\|_\.enabled,isComputerUseFeatureLoading:s!==`linux`&&_\.isLoading,isComputerUseGateEnabled:s===`linux`\|\|d,isHostCompatiblePlatform:s===`linux`\|\|p\(s\),isHostLocal:c,isPlatformLoading:o,windowType:`electron`\}\)/,
+        /v=g\(\{enabled:a,isComputerUseFeatureEnabled:_\.enabled\|\|s===`linux`,isComputerUseFeatureLoading:s===`linux`\?!1:_\.isLoading,isComputerUseGateEnabled:d\|\|s===`linux`,isHostCompatiblePlatform:s===`linux`\|\|p\(s\),isHostLocal:c,isPlatformLoading:o,windowType:`electron`\}\)/,
       );
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
