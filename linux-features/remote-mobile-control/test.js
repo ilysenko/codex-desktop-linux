@@ -176,6 +176,15 @@ function syntheticSettingsBundle() {
   ].join("");
 }
 
+function syntheticSshInstallSettingsBundle() {
+  return [
+    "function pn({action:e,disabled:t,hostId:n,installCodexPending:r,onAuthenticate:i,onInstallCodex:a}){if(e==null)return null;switch(e.kind){case`install-codex`:return{disabled:t,label:e.label,loading:r,loadingLabel:e.loadingLabel,renderInElectronOnly:!0,tooltipText:e.tooltipText,onClick:()=>a(n)};case`login`:return{label:e.label,onClick:()=>i(n)};case`settings`:return null}}",
+    "let et=R(`install-remote-codex`),vt=(e,t,n)=>{globalThis.__states.push({hostId:e,state:t,error:n})},bt=e=>{et.mutate({hostId:e},{onSuccess:({state:t,error:n})=>{vt(e,t,n)}})};",
+    "function un(e){let t=(0,$.c)(86),{connection:n,disabled:r,installCodexPending:i,onAuthenticate:a,onEdit:o,onInstallCodex:s,onLogoutConnection:c,onRemove:l,onShowDetails:u,onToggleConnection:d}=e,f=ee(),{appServerVersion:p,error:m,installedCodexVersion:h,state:g}=De(n.hostId),_=n.displayName,v;let T=w,E=oe(`2153867414`),D,O,k,A,j,M;if(t[8]!==p||t[9]!==n.hostId||t[10]!==r||t[11]!==m||t[12]!==i||t[13]!==h||t[14]!==f||t[15]!==a||t[16]!==s||t[17]!==E||t[18]!==g){k=fn({appServerVersion:p,installedCodexVersion:h,state:g}),D=g===`connected`||m?.code===`login-required`||m?.code===`update-required`||m?.code===`restart-required`;let{statusError:e,isRestartAvailableNotice:o,statusState:c}=dn({error:m,restartAvailableNotice:k,state:g});A=e,O=o,j=c==null?null:Ne(f,{canLogin:!0,error:A,state:c,surface:`connections-row`});let l=!E&&(A?.code===`remote-codex-not-found`||A?.code===`update-required`);M=j==null||l?null:pn({action:j.action,disabled:r,hostId:n.hostId,installCodexPending:i,onAuthenticate:a,onInstallCodex:s}),t[8]=p,t[9]=n.hostId,t[10]=r,t[11]=m,t[12]=i,t[13]=h,t[14]=f,t[15]=a,t[16]=s,t[17]=E,t[18]=g,t[19]=D,t[20]=O,t[21]=k,t[22]=A,t[23]=j,t[24]=M}else D=t[19],O=t[20],k=t[21],A=t[22],j=t[23],M=t[24];return M}",
+    "function nr(e,t){return e.displayName.localeCompare(t.displayName)}",
+  ].join("");
+}
+
 function syntheticSettingsRefreshBundle() {
   return [
     "var Qn=15e3,Z=React;",
@@ -960,6 +969,107 @@ test("Linux remote-control settings UX patch keeps outbound tab visible and remo
   assert.doesNotMatch(patched, /Control this Mac/);
   assert.doesNotMatch(patched, /this Mac/);
   assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
+});
+
+test("Linux remote-control SSH install sends the local Desktop app-server version for fresh installs", () => {
+  const source = syntheticSshInstallSettingsBundle();
+  const patched = applyLinuxRemoteControlSettingsUxPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteControlSshInstallRelease/);
+  assert.match(patched, /codexLinuxRemoteControlSshInstallDefaultRelease/);
+  assert.match(patched, /De\(`local`\)/);
+  assert.match(patched, /release=codexLinuxRemoteControlSshInstallResolvedRelease/);
+  assert.match(patched, /onClick:\(\)=>a\(n,codexLinuxRemoteControlSshInstallReleaseTarget\)/);
+
+  const context = {
+    $: { c: () => [] },
+    __mutations: [],
+    __states: [],
+    globalThis: null,
+    w: "Restart",
+    ee: () => ({}),
+    fn: () => null,
+    dn: ({ error, state }) => ({
+      isRestartAvailableNotice: false,
+      statusError: error,
+      statusState: state,
+    }),
+    Ne: () => ({
+      action: {
+        kind: "install-codex",
+        label: "Install Codex",
+        loadingLabel: "Installing",
+      },
+    }),
+    oe: () => true,
+    De: (hostId) =>
+      hostId === "local"
+        ? { appServerVersion: "0.136.0", error: null, installedCodexVersion: null, state: "connected" }
+        : {
+            appServerVersion: null,
+            error: { code: "remote-codex-not-found" },
+            installedCodexVersion: null,
+            state: "error",
+          },
+    R: () => ({
+      mutate(request, options) {
+        context.__mutations.push(request);
+        options.onSuccess({ state: "connected", error: null });
+      },
+    }),
+  };
+  context.globalThis = context;
+  vm.runInNewContext(`${patched};let action=un({connection:{hostId:'remote-ssh:dev',displayName:'dev'},disabled:false,installCodexPending:false,onAuthenticate(){},onEdit(){},onInstallCodex:bt,onLogoutConnection(){},onRemove(){},onShowDetails(){},onToggleConnection(){}});action.onClick();`, context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.__mutations)), [{ hostId: "remote-ssh:dev", release: "0.136.0" }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.__states)), [{ hostId: "remote-ssh:dev", state: "connected", error: null }]);
+  assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
+});
+
+test("Linux remote-control SSH install prefers update-required minRequiredVersion", () => {
+  const patched = applyLinuxRemoteControlSettingsUxPatch(syntheticSshInstallSettingsBundle());
+  const context = {
+    $: { c: () => [] },
+    __mutations: [],
+    __states: [],
+    globalThis: null,
+    w: "Restart",
+    ee: () => ({}),
+    fn: () => null,
+    dn: ({ error, state }) => ({
+      isRestartAvailableNotice: false,
+      statusError: error,
+      statusState: state,
+    }),
+    Ne: () => ({
+      action: {
+        kind: "install-codex",
+        label: "Update Codex",
+        loadingLabel: "Updating",
+      },
+    }),
+    oe: () => true,
+    De: (hostId) =>
+      hostId === "local"
+        ? { appServerVersion: "0.136.0", error: null, installedCodexVersion: null, state: "connected" }
+        : {
+            appServerVersion: "0.130.0",
+            error: { code: "update-required", currentVersion: "0.130.0", minRequiredVersion: "0.137.0" },
+            installedCodexVersion: "0.130.0",
+            state: "error",
+          },
+    R: () => ({
+      mutate(request, options) {
+        context.__mutations.push(request);
+        options.onSuccess({ state: "connected", error: null });
+      },
+    }),
+  };
+  context.globalThis = context;
+  vm.runInNewContext(`${patched};let action=un({connection:{hostId:'remote-ssh:dev',displayName:'dev'},disabled:false,installCodexPending:false,onAuthenticate(){},onEdit(){},onInstallCodex:bt,onLogoutConnection(){},onRemove(){},onShowDetails(){},onToggleConnection(){}});action.onClick();`, context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.__mutations)), [{ hostId: "remote-ssh:dev", release: "0.137.0" }]);
 });
 
 test("Linux remote-control settings UX patch handles current minified helper names", () => {
