@@ -878,13 +878,15 @@ test("Linux mobile setup flow copy does not refer to Mac-only setup", () => {
   assert.equal(applyLinuxRemoteControlCopyPatch(patched), patched);
 });
 
-test("Linux remote-control settings UX patch hides unsupported outbound tab and removes Mac copy", () => {
+test("Linux remote-control settings UX patch keeps outbound tab visible and removes Mac copy", () => {
   const source = syntheticSettingsBundle();
   const patched = applyLinuxRemoteControlSettingsUxPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteControlSettingsTabs/);
-  assert.match(patched, /e\.filter\(e=>e\.key!==`access-other-devices`\)/);
+  assert.match(patched, /function codexLinuxRemoteControlSettingsTabs\(e\)\{return e\}/);
+  assert.doesNotMatch(patched, /e\.filter\(e=>e\.key!==`access-other-devices`\)/);
+  assert.match(patched, /key:`access-other-devices`/);
   assert.match(patched, /Control this Linux desktop/);
   assert.match(patched, /Control this Linux desktop from your phone or other device/);
   assert.match(patched, /Add device to control this Linux desktop remotely/);
@@ -902,13 +904,15 @@ test("Linux remote-control settings UX patch handles current minified helper nam
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteControlSettingsTabs/);
+  assert.match(patched, /function codexLinuxRemoteControlSettingsTabs\(e\)\{return e\}/);
   assert.match(patched, /tabs:codexLinuxRemoteControlSettingsTabs/);
+  assert.match(patched, /key:`access-other-devices`/);
   assert.match(patched, /Control this Linux desktop/);
   assert.doesNotMatch(patched, /Control this Mac/);
   assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
 });
 
-test("Linux remote-control selected-tab fallback avoids outbound control on Linux", () => {
+test("Linux remote-control selected-tab fallback keeps outbound control reachable on Linux", () => {
   const patched = applyLinuxRemoteControlSelectedTabPatch(syntheticSelectedTabBundle());
   assert.match(patched, /codexLinuxRemoteControlSelectedTab/);
   const context = {
@@ -925,7 +929,7 @@ test("Linux remote-control selected-tab fallback avoids outbound control on Linu
       showRemoteControlConnectionsSection: true,
       showTabbedSshPage: true,
     }),
-    "control-this-mac",
+    "access-other-devices",
   );
   assert.equal(
     resolveTab({
@@ -934,7 +938,16 @@ test("Linux remote-control selected-tab fallback avoids outbound control on Linu
       showRemoteControlConnectionsSection: true,
       showTabbedSshPage: true,
     }),
-    "ssh",
+    "access-other-devices",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "control-this-mac",
+      showControlThisMacTab: false,
+      showRemoteControlConnectionsSection: true,
+      showTabbedSshPage: true,
+    }),
+    "access-other-devices",
   );
   assert.equal(applyLinuxRemoteControlSelectedTabPatch(patched), patched);
 });
@@ -959,7 +972,7 @@ test("Linux remote-control selected-tab patch handles the current six-param reso
       showRemoteSshConnections: true,
       showTabbedSshPage: true,
     }),
-    "control-this-mac",
+    "access-other-devices",
   );
   assert.equal(
     resolveTab({
@@ -969,6 +982,50 @@ test("Linux remote-control selected-tab patch handles the current six-param reso
       showRemoteControlConnectionsSection: true,
       showRemoteSshConnections: true,
       showTabbedSshPage: true,
+    }),
+    "access-other-devices",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "access-other-devices",
+      showControlOtherDevices: false,
+      showControlThisMacTab: false,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: true,
+    }),
+    "ssh",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "control-this-mac",
+      showControlOtherDevices: true,
+      showControlThisMacTab: false,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: true,
+    }),
+    "access-other-devices",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "ssh",
+      showControlOtherDevices: true,
+      showControlThisMacTab: true,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: false,
+    }),
+    "access-other-devices",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "ssh",
+      showControlOtherDevices: false,
+      showControlThisMacTab: false,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: false,
     }),
     "ssh",
   );

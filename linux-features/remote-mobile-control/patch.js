@@ -25,6 +25,10 @@ const REMOTE_CONTROL_VISIBILITY_OLD_REPLACEMENT =
 const REMOTE_CONTROL_SETTINGS_VISIBILITY_NEEDLE =
   /function ([A-Za-z_$][\w$]*)\(\{remoteControlConnectionsState:([A-Za-z_$][\w$]*),slingshotEnabled:([A-Za-z_$][\w$]*)\}\)\{return \3&&\(\2\?\.available\?\?!0\)(?:&&\2\?\.accessRequired!==!0)?\}/u;
 const REMOTE_CONTROL_SETTINGS_UX_MARKER = "codexLinuxRemoteControlSettingsTabs";
+const REMOTE_CONTROL_SETTINGS_TABS_HELPER =
+  "function codexLinuxRemoteControlSettingsTabs(e){return e}";
+const REMOTE_CONTROL_SETTINGS_TABS_OLD_HELPER =
+  "function codexLinuxRemoteControlSettingsTabs(e){return typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`)?e.filter(e=>e.key!==`access-other-devices`):e}";
 const REMOTE_CONNECTIONS_REFRESH_MARKER = "codexLinuxRemoteConnectionsRefreshNow";
 const REMOTE_MOBILE_CHROME_BRIDGE_MARKER = "codexLinuxRemoteMobileBrowserBackends";
 const REMOTE_CONTROL_LOAD_GATE_MARKER = "codexLinuxRemoteControlLoadGateEnabled";
@@ -45,7 +49,7 @@ const REMOTE_MOBILE_PROJECTLESS_REMOTE_TASK_MARKER = "codexLinuxRemoteMobileProj
 const REMOTE_CONTROL_SELECTED_TAB_NEEDLE =
   "function rr({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}";
 const REMOTE_CONTROL_SELECTED_TAB_REPLACEMENT =
-  "function rr({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){let i=typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`);if(i){if(!n)return`ssh`;if(e===`access-other-devices`)return t?`control-this-mac`:`ssh`;if(e===`control-this-mac`&&!t)return`ssh`;if(e===`ssh`&&!r)return t?`control-this-mac`:`ssh`;return e}return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}";
+  "function rr({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){let i=typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`);if(i){if(!n)return`ssh`;if(e===`control-this-mac`&&!t)return`access-other-devices`;if(e===`ssh`&&!r)return`access-other-devices`;return e}return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}";
 const REMOTE_CONTROL_SELECTED_TAB_REGEX =
   /function ([A-Za-z_$][\w$]*)\(\{selectedConnectionsTab:([A-Za-z_$][\w$]*),showControlThisMacTab:([A-Za-z_$][\w$]*),showRemoteControlConnectionsSection:([A-Za-z_$][\w$]*),showTabbedSshPage:([A-Za-z_$][\w$]*)\}\)\{return \4\?\2===`control-this-mac`&&!\3\|\|\2===`ssh`&&!\5\?`access-other-devices`:\2:`ssh`\}/u;
 const REMOTE_CONTROL_SELECTED_TAB_MARKER = "codexLinuxRemoteControlSelectedTab";
@@ -686,6 +690,10 @@ function applyLinuxRemoteControlCopyPatch(source) {
 function applyLinuxRemoteControlSettingsUxPatch(source) {
   let patched = replaceLinuxRemoteControlCopy(source).patched;
 
+  if (patched.includes(REMOTE_CONTROL_SETTINGS_TABS_OLD_HELPER)) {
+    patched = patched.replace(REMOTE_CONTROL_SETTINGS_TABS_OLD_HELPER, REMOTE_CONTROL_SETTINGS_TABS_HELPER);
+  }
+
   if (!patched.includes(REMOTE_CONTROL_SETTINGS_UX_MARKER)) {
     const helperNeedle = /function ([A-Za-z_$][\w$]*)\(e,t\)\{return e\.displayName\.localeCompare\(t\.displayName\)\}/u;
     const helperMatch = patched.match(helperNeedle);
@@ -693,9 +701,7 @@ function applyLinuxRemoteControlSettingsUxPatch(source) {
       console.warn("WARN: Could not find remote-control settings helper needle - skipping Linux remote-control settings UX patch");
       return patched;
     }
-    const helper =
-      "function codexLinuxRemoteControlSettingsTabs(e){return typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`)?e.filter(e=>e.key!==`access-other-devices`):e}";
-    patched = patched.replace(helperNeedle, `${helper}${helperMatch[0]}`);
+    patched = patched.replace(helperNeedle, `${REMOTE_CONTROL_SETTINGS_TABS_HELPER}${helperMatch[0]}`);
   }
 
   patched = wrapRemoteControlTabs(patched, "control-this-mac");
@@ -713,8 +719,8 @@ function applyLinuxRemoteControlSelectedTabPatch(source) {
   }
 
   // 26.527.x moved the selected-tab resolver into the plugin-install-flow bundle
-  // and added showControlOtherDevices / showRemoteSshConnections params. Inject a
-  // Linux branch that avoids the Mac-only access-other-devices/control-this-mac tabs.
+  // and added showControlOtherDevices / showRemoteSshConnections params. Keep
+  // outbound control reachable on Linux while still avoiding hidden tabs.
   const newRegex =
     /function ([A-Za-z_$][\w$]*)\(\{selectedConnectionsTab:([A-Za-z_$][\w$]*),showControlOtherDevices:([A-Za-z_$][\w$]*),showControlThisMacTab:([A-Za-z_$][\w$]*),showRemoteControlConnectionsSection:([A-Za-z_$][\w$]*),showRemoteSshConnections:([A-Za-z_$][\w$]*),showTabbedSshPage:([A-Za-z_$][\w$]*)\}\)\{return ([^{}]*)\}/u;
   const newMatch = source.match(newRegex);
@@ -723,8 +729,10 @@ function applyLinuxRemoteControlSelectedTabPatch(source) {
     const replacement =
       `function ${fn}({selectedConnectionsTab:${sel},showControlOtherDevices:${otherDevices},showControlThisMacTab:${controlThisMac},showRemoteControlConnectionsSection:${section},showRemoteSshConnections:${sshConns},showTabbedSshPage:${tabbedSsh}}){` +
       `/*${REMOTE_CONTROL_SELECTED_TAB_MARKER}*/if(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)){` +
-      `if(!${section})return\`ssh\`;if(${sel}===\`access-other-devices\`)return ${controlThisMac}?\`control-this-mac\`:\`ssh\`;` +
-      `if(${sel}===\`control-this-mac\`&&!${controlThisMac})return\`ssh\`;if(${sel}===\`ssh\`&&!${tabbedSsh})return ${controlThisMac}?\`control-this-mac\`:\`ssh\`;return ${sel}}` +
+      `if(!${section})return ${sshConns}?\`ssh\`:\`access-other-devices\`;` +
+      `if(${sel}===\`control-this-mac\`&&!${controlThisMac})return ${otherDevices}?\`access-other-devices\`:\`ssh\`;` +
+      `if(${sel}===\`access-other-devices\`&&!${otherDevices})return ${controlThisMac}?\`control-this-mac\`:\`ssh\`;` +
+      `if(${sel}===\`ssh\`&&!${tabbedSsh})return ${otherDevices}?\`access-other-devices\`:${controlThisMac}?\`control-this-mac\`:\`ssh\`;return ${sel}}` +
       `return ${body}}`;
     return source.replace(newRegex, replacement);
   }
@@ -736,8 +744,8 @@ function applyLinuxRemoteControlSelectedTabPatch(source) {
     const replacement =
       `function ${functionName}({selectedConnectionsTab:${selectedVar},showControlThisMacTab:${controlThisMacVar},showRemoteControlConnectionsSection:${sectionVar},showTabbedSshPage:${sshVar}}){` +
       `/*${REMOTE_CONTROL_SELECTED_TAB_MARKER}*/let i=typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`);` +
-      `if(i){if(!${sectionVar})return\`ssh\`;if(${selectedVar}===\`access-other-devices\`)return ${controlThisMacVar}?\`control-this-mac\`:\`ssh\`;` +
-      `if(${selectedVar}===\`control-this-mac\`&&!${controlThisMacVar})return\`ssh\`;if(${selectedVar}===\`ssh\`&&!${sshVar})return ${controlThisMacVar}?\`control-this-mac\`:\`ssh\`;return ${selectedVar}}` +
+      `if(i){if(!${sectionVar})return\`ssh\`;if(${selectedVar}===\`control-this-mac\`&&!${controlThisMacVar})return\`access-other-devices\`;` +
+      `if(${selectedVar}===\`ssh\`&&!${sshVar})return\`access-other-devices\`;return ${selectedVar}}` +
       `return ${sectionVar}?${selectedVar}===\`control-this-mac\`&&!${controlThisMacVar}||${selectedVar}===\`ssh\`&&!${sshVar}?\`access-other-devices\`:${selectedVar}:\`ssh\`}`;
     return source.replace(REMOTE_CONTROL_SELECTED_TAB_REGEX, replacement);
   }
