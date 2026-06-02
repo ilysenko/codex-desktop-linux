@@ -5,6 +5,33 @@ const path = require("node:path");
 
 // Webview asset patches target hashed browser chunks copied out of app.asar.
 // They stay fail-soft because upstream chunk names and minified symbols drift.
+const LINUX_SAFE_MONOSPACE_FONT_STACK =
+  "\"Noto Sans Mono\", \"DejaVu Sans Mono\", \"Liberation Mono\", \"Ubuntu Mono\", ui-monospace, \"SFMono-Regular\", \"SF Mono\", Menlo, Consolas, monospace";
+
+function applyLinuxSafeMonospaceFontStackPatch(currentSource) {
+  const safeLinuxMonoFontPattern =
+    /`[^`]*(?:Noto Sans Mono|DejaVu Sans Mono|Liberation Mono|Ubuntu Mono)[^`]*monospace[^`]*`/u;
+  if (safeLinuxMonoFontPattern.test(currentSource)) {
+    return currentSource;
+  }
+
+  const unsafeDefaultStack = "`ui-monospace, \"SFMono-Regular\", Menlo, Consolas, monospace`";
+  if (currentSource.includes(unsafeDefaultStack)) {
+    return currentSource.replace(
+      unsafeDefaultStack,
+      `\`${LINUX_SAFE_MONOSPACE_FONT_STACK}\``,
+    );
+  }
+
+  if (currentSource.includes("ui-monospace") && currentSource.includes("monospace")) {
+    console.warn(
+      "WARN: Could not find Linux monospace font stack insertion point — skipping default font stack patch",
+    );
+  }
+
+  return currentSource;
+}
+
 function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
   let patchedSource = currentSource;
   let warnedMissingNeedle = false;
@@ -942,6 +969,7 @@ module.exports = {
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
+  applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxFastModeModelGuardPatch,
   applyLocalEnvironmentActionModalDraftPatch,
   applySubagentNicknameMetadataPatch,

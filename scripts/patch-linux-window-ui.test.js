@@ -81,6 +81,7 @@ const {
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxConfigWriteVersionConflictPatch,
+  applyLinuxSafeMonospaceFontStackPatch,
 } = require("./patches/webview-assets.js");
 const { patchAssetFiles } = require("./patches/shared.js");
 
@@ -202,6 +203,39 @@ test("asset patch helpers match every file when passed a global regex", () => {
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("Linux safe monospace font stack patch prioritizes Linux mono families", () => {
+  const source = "var e=`ui-monospace, \"SFMono-Regular\", Menlo, Consolas, monospace`;export{e as t};";
+  const patched = applyPatchTwice(applyLinuxSafeMonospaceFontStackPatch, source);
+
+  assert.match(
+    patched,
+    /`"Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono", ui-monospace,/,
+  );
+  assert.doesNotMatch(patched, /var e=`ui-monospace, "SFMono-Regular"/);
+});
+
+test("Linux safe monospace font stack patch accepts upstream-safe stacks", () => {
+  const source =
+    "var e=`DejaVu Sans Mono, ui-monospace, \"SFMono-Regular\", Menlo, Consolas, monospace`;export{e as t};";
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxSafeMonospaceFontStackPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, []);
+});
+
+test("Linux safe monospace font stack patch warns when the unsafe stack drifts", () => {
+  const source = "var e=buildFontStack(`ui-monospace`,`monospace`);export{e as t};";
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxSafeMonospaceFontStackPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Could not find Linux monospace font stack insertion point/);
 });
 
 test("subagent nickname metadata patch accepts session metadata shape", () => {
@@ -536,6 +570,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "opaque-window-default-webview-index",
     "opaque-window-default-resolved-theme",
     "linux-fast-mode-model-guard",
+    "linux-safe-monospace-font-stack",
     "subagent-nickname-metadata-shape",
     "local-environment-action-modal-draft",
     "linux-computer-use-ui-availability",
