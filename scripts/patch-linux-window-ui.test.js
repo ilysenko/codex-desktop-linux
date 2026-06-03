@@ -82,6 +82,7 @@ const {
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxI18nGatePatch,
+  applyLinuxProfileSettingsMenuPatch,
   applyLinuxSafeMonospaceFontStackPatch,
 } = require("./patches/webview-assets.js");
 const { patchAssetFiles } = require("./patches/shared.js");
@@ -564,6 +565,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-hotkey-window-prewarm",
     "linux-git-origins-source-fallback",
     "linux-i18n-gate",
+    "linux-profile-settings-menu",
     "automation-schedule-multi-time-rrule",
     "linux-app-sunset-gate",
     "linux-app-server-feature-enablement",
@@ -1995,6 +1997,17 @@ test("allows explicit locale overrides through the settings language row i18n ga
     /i=re\(`72216192`\)\?\.get\(`enable_i18n`,!0\),s=H\(t\.localeOverride\);i=i\|\|s!=null;if\(!i\)/,
   );
   assert.equal((patched.match(/H\(t\.localeOverride\)/g) ?? []).length, 1);
+});
+
+test("shows the profile dropdown settings route on Linux", () => {
+  const source =
+    "function E(){let Ct=se(`4166894088`),Pt=Ct,Ft=f(De,`settings`),U=Pt&&(0,C.jsx)(S,{LeftIcon:ye,keyboardShortcut:Ft,onClick:()=>{v(`/settings/general-settings`)},children:(0,C.jsx)(g,{id:`codex.profileDropdown.settingsPage`,defaultMessage:`Settings`})});return U}";
+
+  const patched = applyPatchTwice(applyLinuxProfileSettingsMenuPatch, source);
+
+  assert.match(patched, /let Ct=!0,Pt=Ct,Ft=f\(De,`settings`\)/);
+  assert.match(patched, /\/settings\/general-settings/);
+  assert.match(patched, /codex\.profileDropdown\.settingsPage/);
 });
 
 test("removes unsupported features from default app-server feature sync", () => {

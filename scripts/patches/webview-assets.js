@@ -354,6 +354,23 @@ function applyLinuxI18nGatePatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxProfileSettingsMenuPatch(currentSource) {
+  if (!currentSource.includes("codex.profileDropdown.settingsPage")) {
+    return currentSource;
+  }
+
+  const patchedSource = currentSource.replace(
+    /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(`4166894088`\)/g,
+    "$1=!0",
+  );
+
+  if (currentSource.includes("4166894088") && patchedSource === currentSource) {
+    console.warn("WARN: Could not find profile settings menu gate needle — skipping Linux settings menu patch");
+  }
+
+  return patchedSource;
+}
+
 function applyLinuxConfigWriteVersionConflictPatch(currentSource) {
   if (!currentSource.includes("expectedVersion:")) {
     return currentSource;
@@ -1026,6 +1043,7 @@ module.exports = {
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxI18nGatePatch,
+  applyLinuxProfileSettingsMenuPatch,
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
