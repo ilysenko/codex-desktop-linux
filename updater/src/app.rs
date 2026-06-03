@@ -29,6 +29,23 @@ const CLI_MISSING_NOTIFICATION_EVENT: &str = "cli_missing";
 const CLI_MISSING_PROMPT_DISMISS_TTL: ChronoDuration = ChronoDuration::minutes(10);
 const PROMPT_INSTALL_CLI_CANCELLED_EXIT_CODE: i32 = 10;
 const PROMPT_INSTALL_CLI_NO_BACKEND_EXIT_CODE: i32 = 11;
+const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
+    "budgie-polkit",
+    "cinnamon-polkit",
+    "gnome-shell",
+    "hyprpolkitagent",
+    "io.elementary.desktop.agent-polkit",
+    "lxpolkit",
+    "lxqt-policykit-agent",
+    "mate-polkit",
+    "polkit-agent",
+    "polkit-dde-agent",
+    "polkit-gnome-authentication-agent",
+    "polkit-kde-authentication-agent",
+    "soteria",
+    "ukui-polkit",
+    "xfce-polkit",
+];
 
 /// Runs the updater command-line entrypoint.
 pub async fn run(cli: Cli) -> Result<()> {
@@ -912,6 +929,11 @@ async fn reconcile_pending_install(
             }
 
             if state.auto_install_on_app_exit && liveness::is_app_running(config)? {
+                if !graphical_polkit_auth_agent_is_likely_available() {
+                    defer_install_for_manual_auth(state, paths, &package_path)?;
+                    maybe_notify_manual_install_required(state, paths, config.notifications)?;
+                    return Ok(());
+                }
                 clear_install_auth_required_event(state, paths)?;
                 set_waiting_for_app_exit(state, paths, true)?;
                 maybe_notify(
@@ -950,6 +972,11 @@ async fn reconcile_pending_install(
             }
 
             if liveness::is_app_running(config)? {
+                if !graphical_polkit_auth_agent_is_likely_available() {
+                    defer_install_for_manual_auth(state, paths, &package_path)?;
+                    maybe_notify_manual_install_required(state, paths, config.notifications)?;
+                    return Ok(());
+                }
                 clear_install_auth_required_event(state, paths)?;
                 maybe_notify(
                     state,
@@ -963,6 +990,12 @@ async fn reconcile_pending_install(
             }
 
             if install_auth_retry_is_blocked(state) {
+                return Ok(());
+            }
+
+            if !graphical_polkit_auth_agent_is_likely_available() {
+                defer_install_for_manual_auth(state, paths, &package_path)?;
+                maybe_notify_manual_install_required(state, paths, config.notifications)?;
                 return Ok(());
             }
 
@@ -1043,6 +1076,12 @@ async fn run_install_ready(
     }
 
     if liveness::is_app_running(config)? {
+        if !graphical_polkit_auth_agent_is_likely_available() {
+            defer_install_for_manual_auth(state, paths, &package_path)?;
+            maybe_send_manual_install_required_notification(config.notifications);
+            print_manual_install_required(&package_path);
+            return Ok(());
+        }
         clear_install_auth_required_event(state, paths)?;
         set_waiting_for_app_exit(state, paths, false)?;
         maybe_send_notification(
@@ -1056,6 +1095,12 @@ async fn run_install_ready(
 
     clear_install_auth_required_event(state, paths)?;
     state.waiting_for_app_exit_auto_install = false;
+    if !graphical_polkit_auth_agent_is_likely_available() {
+        defer_install_for_manual_auth(state, paths, &package_path)?;
+        maybe_send_manual_install_required_notification(config.notifications);
+        print_manual_install_required(&package_path);
+        return Ok(());
+    }
     trigger_install(state, paths, &config.workspace_root, &package_path).await
 }
 
@@ -1406,6 +1451,124 @@ fn install_auth_retry_is_blocked(state: &PersistedState) -> bool {
     install_auth_required_event_key(state)
         .as_ref()
         .is_some_and(|event_key| state.notified_events.contains(event_key))
+}
+
+fn manual_install_required_message(package_path: &Path) -> String {
+    format!(
+        "No graphical polkit authentication agent is available for pkexec. Run this from a terminal after closing Codex Desktop: {}",
+        manual_install_command(package_path)
+    )
+}
+
+fn manual_install_command(package_path: &Path) -> String {
+    let subcommand = match install::PackageKind::from_path(package_path) {
+        install::PackageKind::Deb => "install-deb",
+        install::PackageKind::Rpm => "install-rpm",
+        install::PackageKind::Pacman => "install-pacman",
+    };
+    format!(
+        "sudo /usr/bin/codex-update-manager {subcommand} --path {}",
+        shell_quote_path(package_path)
+    )
+}
+
+fn shell_quote_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn print_manual_install_required(package_path: &Path) {
+    println!("Manual install required: no graphical polkit authentication agent is available.");
+    println!("Run this from a terminal after closing Codex Desktop:");
+    println!("{}", manual_install_command(package_path));
+}
+
+fn defer_install_for_manual_auth(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    package_path: &Path,
+) -> Result<()> {
+    state.status = UpdateStatus::ReadyToInstall;
+    state.waiting_for_app_exit_auto_install = false;
+    state.error_message = Some(manual_install_required_message(package_path));
+    persist_state(paths, state)
+}
+
+fn maybe_notify_manual_install_required(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    enabled: bool,
+) -> Result<()> {
+    maybe_notify(
+        state,
+        paths,
+        enabled,
+        "manual_install_required",
+        "Codex update needs manual install",
+        "No graphical authentication agent was found for pkexec. Run codex-update-manager status for details.",
+    )
+}
+
+fn maybe_send_manual_install_required_notification(enabled: bool) {
+    maybe_send_notification(
+        enabled,
+        "Codex update needs manual install",
+        "No graphical authentication agent was found for pkexec. Run codex-update-manager status for details.",
+    );
+}
+
+fn graphical_polkit_auth_agent_is_likely_available() -> bool {
+    if std::env::var_os("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT").is_some() {
+        return false;
+    }
+    if std::env::var_os("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT").is_some() {
+        return true;
+    }
+    if !has_graphical_session() {
+        return false;
+    }
+    polkit_auth_agent_process_is_running()
+}
+
+fn polkit_auth_agent_process_is_running() -> bool {
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return true;
+    };
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        if !file_name
+            .to_string_lossy()
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        {
+            continue;
+        }
+        let process_dir = entry.path();
+        let mut process_text = String::new();
+        if let Ok(comm) = fs::read_to_string(process_dir.join("comm")) {
+            process_text.push_str(&comm);
+            process_text.push('\n');
+        }
+        if let Ok(cmdline) = fs::read(process_dir.join("cmdline")) {
+            process_text.push_str(&String::from_utf8_lossy(&cmdline).replace('\0', " "));
+        }
+        if process_text_matches_polkit_auth_agent(&process_text) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn process_text_matches_polkit_auth_agent(process_text: &str) -> bool {
+    let normalized = process_text.to_ascii_lowercase();
+    if normalized.contains("polkitd") || normalized.contains("polkit-agent-helper") {
+        return false;
+    }
+    POLKIT_AUTH_AGENT_PROCESS_TOKENS
+        .iter()
+        .any(|token| normalized.contains(token))
 }
 
 fn clear_install_auth_required_event(
@@ -1966,7 +2129,9 @@ mod tests {
         paths.ensure_dirs()?;
         let settings_path = temp.path().join("settings.json");
         let previous_settings_file = std::env::var_os("CODEX_LINUX_SETTINGS_FILE");
+        let previous_assume_agent = std::env::var_os("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT");
         std::env::set_var("CODEX_LINUX_SETTINGS_FILE", &settings_path);
+        std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
         std::fs::write(
             &settings_path,
             r#"{"codex-linux-auto-update-on-exit": true}"#,
@@ -2008,6 +2173,11 @@ mod tests {
             std::env::set_var("CODEX_LINUX_SETTINGS_FILE", value);
         } else {
             std::env::remove_var("CODEX_LINUX_SETTINGS_FILE");
+        }
+        if let Some(value) = previous_assume_agent {
+            std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", value);
+        } else {
+            std::env::remove_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT");
         }
 
         result?;
@@ -2100,7 +2270,9 @@ mod tests {
         paths.ensure_dirs()?;
         let settings_path = temp.path().join("settings.json");
         let previous_settings_file = std::env::var_os("CODEX_LINUX_SETTINGS_FILE");
+        let previous_assume_agent = std::env::var_os("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT");
         std::env::set_var("CODEX_LINUX_SETTINGS_FILE", &settings_path);
+        std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
         std::fs::write(
             &settings_path,
             r#"{"codex-linux-auto-update-on-exit": false}"#,
@@ -2140,6 +2312,11 @@ mod tests {
             std::env::set_var("CODEX_LINUX_SETTINGS_FILE", value);
         } else {
             std::env::remove_var("CODEX_LINUX_SETTINGS_FILE");
+        }
+        if let Some(value) = previous_assume_agent {
+            std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", value);
+        } else {
+            std::env::remove_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT");
         }
 
         result?;
@@ -2213,6 +2390,9 @@ mod tests {
 
     #[tokio::test]
     async fn install_ready_waits_when_app_is_running() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let previous_assume_agent = std::env::var_os("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT");
+        std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
         let temp = tempfile::tempdir()?;
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
@@ -2254,11 +2434,80 @@ mod tests {
             .notified_events
             .insert("install_auth_required:2999.03.25.010203+deadbeef".to_string());
 
-        run_install_ready(&config, &mut state, &paths).await?;
+        let result = run_install_ready(&config, &mut state, &paths).await;
+
+        if let Some(value) = previous_assume_agent {
+            std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", value);
+        } else {
+            std::env::remove_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT");
+        }
+
+        result?;
 
         assert_eq!(state.status, UpdateStatus::WaitingForAppExit);
         assert!(!state.waiting_for_app_exit_auto_install);
         assert!(!install_auth_retry_is_blocked(&state));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_ready_stays_open_when_no_polkit_agent_is_available() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let previous_no_agent = std::env::var_os("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT");
+        std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT", "1");
+        let temp = tempfile::tempdir()?;
+        let paths = RuntimePaths {
+            config_file: temp.path().join("config/config.toml"),
+            state_file: temp.path().join("state/state.json"),
+            log_file: temp.path().join("state/service.log"),
+            cache_dir: temp.path().join("cache"),
+            state_dir: temp.path().join("state"),
+            config_dir: temp.path().join("config"),
+        };
+        paths.ensure_dirs()?;
+
+        let package_path = temp.path().join("dist/codex desktop.pkg.tar.zst");
+        std::fs::create_dir_all(
+            package_path
+                .parent()
+                .expect("package path should have parent"),
+        )?;
+        std::fs::write(&package_path, b"pkg")?;
+
+        let config = RuntimeConfig {
+            dmg_url: "https://example.com/Codex.dmg".to_string(),
+            initial_check_delay_seconds: 1,
+            check_interval_hours: 6,
+            auto_install_on_app_exit: false,
+            notifications: false,
+            workspace_root: temp.path().join("cache"),
+            builder_bundle_root: temp.path().join("builder"),
+            app_executable_path: std::env::current_exe()?,
+            enable_wrapper_updates: false,
+            wrapper_remote: String::new(),
+            wrapper_branch: "main".to_string(),
+        };
+
+        let mut state = PersistedState::new(false);
+        state.status = UpdateStatus::ReadyToInstall;
+        state.candidate_version = Some("2999.03.25.010203+deadbeef".to_string());
+        state.artifact_paths.package_path = Some(package_path);
+
+        let result = run_install_ready(&config, &mut state, &paths).await;
+
+        if let Some(value) = previous_no_agent {
+            std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT", value);
+        } else {
+            std::env::remove_var("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT");
+        }
+
+        result?;
+        assert_eq!(state.status, UpdateStatus::ReadyToInstall);
+        assert!(!state.waiting_for_app_exit_auto_install);
+        let message = state.error_message.as_deref().unwrap_or("");
+        assert!(message.contains("No graphical polkit authentication agent"));
+        assert!(message.contains("sudo /usr/bin/codex-update-manager install-pacman"));
+        assert!(message.contains("codex desktop.pkg.tar.zst'"));
         Ok(())
     }
 
@@ -2320,6 +2569,37 @@ mod tests {
             .status()?;
         assert!(!pkexec_authentication_was_not_obtained(&status));
         Ok(())
+    }
+
+    #[test]
+    fn polkit_agent_process_matching_ignores_daemon_and_matches_agents() {
+        assert!(process_text_matches_polkit_auth_agent(
+            "/usr/lib/polkit-kde-authentication-agent-1"
+        ));
+        assert!(process_text_matches_polkit_auth_agent(
+            "/usr/lib/polkit-gnome-authentication-agent-1"
+        ));
+        assert!(process_text_matches_polkit_auth_agent(
+            "gnome-shell --wayland"
+        ));
+        assert!(!process_text_matches_polkit_auth_agent(
+            "/usr/lib/polkit-1/polkitd --no-debug"
+        ));
+        assert!(!process_text_matches_polkit_auth_agent(
+            "/usr/bin/ssh-agent -D"
+        ));
+    }
+
+    #[test]
+    fn manual_install_command_selects_package_kind_and_quotes_path() {
+        assert_eq!(
+            manual_install_command(Path::new("/tmp/codex update.pkg.tar.zst")),
+            "sudo /usr/bin/codex-update-manager install-pacman --path '/tmp/codex update.pkg.tar.zst'"
+        );
+        assert_eq!(
+            manual_install_command(Path::new("/tmp/codex'update.deb")),
+            "sudo /usr/bin/codex-update-manager install-deb --path '/tmp/codex'\\''update.deb'"
+        );
     }
 
     #[test]

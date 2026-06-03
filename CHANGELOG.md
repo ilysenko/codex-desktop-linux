@@ -56,6 +56,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The in-app updater no longer quits into a broken `pkexec` install path when a
+  minimal window-manager session has no graphical polkit authentication agent;
+  it keeps the rebuilt package ready and reports a terminal `sudo
+  /usr/bin/codex-update-manager ... --path ...` command instead.
 - The opt-in Linux AppShots bare-modifier shortcuts now require left and right
   modifier keycodes, preventing a fast double-tap on one physical Alt or Shift
   key from opening AppShots.

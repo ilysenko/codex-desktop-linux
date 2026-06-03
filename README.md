@@ -150,6 +150,10 @@ Full contract: [linux-features/README.md](linux-features/README.md) and
 Default native packages install `codex-update-manager`, a `systemd --user`
 service that checks for newer upstream DMGs, rebuilds a local native package,
 and installs it after Codex Desktop exits. The final install uses `pkexec`.
+Minimal window-manager sessions need a graphical polkit authentication agent
+for the in-app install button; otherwise the updater keeps the package ready
+and reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...`
+command.
 
 Manual-update package:
 
