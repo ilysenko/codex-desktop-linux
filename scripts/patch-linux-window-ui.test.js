@@ -71,6 +71,8 @@ const {
 const {
   keybindsSettingsAsset,
   linuxDesktopSettingsAsset,
+  applyKeybindsSettingsSharedPatch,
+  applyLinuxDesktopSettingsSharedPatch,
 } = require("./patches/keybinds-settings.js");
 const {
   validateReport,
@@ -816,6 +818,17 @@ function settingsSharedBundleFixture() {
   return [
     '"general-settings":{id:`settings.nav.general-settings`,defaultMessage:`General`,description:`Title for general settings section`},appearance:{id:`settings.nav.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`},',
     "function titleForSection(e){switch(e){case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}case`appearance`:return (0,d.jsx)(n,{id:`settings.section.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`})}}",
+  ].join("");
+}
+
+// Same bundle as settingsSharedBundleFixture() but with the minified JSX message
+// component bound to `r` instead of `n` (and the memo cache as `o[5]`), mirroring
+// the identifiers shipped in Codex 26.601.21317 (settings-shared-BibDzP9i.js).
+// The minifier picks these letters arbitrarily, so the patch must not hardcode them.
+function settingsSharedBundleWithDriftingJsxAliasFixture() {
+  return [
+    '"general-settings":{id:`settings.nav.general-settings`,defaultMessage:`General`,description:`Title for general settings section`},appearance:{id:`settings.nav.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`},',
+    "function titleForSection(e){switch(e){case`general-settings`:{let e;return o[5]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(r,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),o[5]=e):e=o[5],e}case`appearance`:return (0,d.jsx)(r,{id:`settings.section.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`})}}",
   ].join("");
 }
 
@@ -2040,6 +2053,32 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
   } finally {
     fs.rmSync(extractedDir, { recursive: true, force: true });
   }
+});
+
+test("adds the Linux desktop section title when the JSX message component identifier drifts", () => {
+  const patched = applyLinuxDesktopSettingsSharedPatch(
+    settingsSharedBundleWithDriftingJsxAliasFixture(),
+  );
+
+  // The injected case must reuse the bundle's actual identifiers (r / o[5]),
+  // not a hardcoded `n`, otherwise the section title renders blank.
+  assert.match(
+    patched,
+    /case`linux-desktop`:\{return \(0,d\.jsx\)\(r,\{id:`settings\.section\.linux-desktop`,defaultMessage:`Linux desktop`,description:`Title for Linux desktop settings section`\}\)\}/,
+  );
+  // The original general-settings case is preserved untouched.
+  assert.match(patched, /case`general-settings`:\{let e;return o\[5\]===Symbol\.for\(`react\.memo_cache_sentinel`\)/);
+});
+
+test("adds the keybinds section title when the JSX message component identifier drifts", () => {
+  const patched = applyKeybindsSettingsSharedPatch(
+    settingsSharedBundleWithDriftingJsxAliasFixture(),
+  );
+
+  assert.match(
+    patched,
+    /case`keybinds`:\{return \(0,d\.jsx\)\(r,\{id:`settings\.section\.keybinds`,defaultMessage:`Keybinds`,description:`Title for keybinds settings section`\}\)\}/,
+  );
 });
 
 test("keeps local environment action modal inputs editable inside stored modal content", () => {

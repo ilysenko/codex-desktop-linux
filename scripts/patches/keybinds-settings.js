@@ -448,6 +448,29 @@ function applyLinuxDesktopSettingsSectionsPatch(currentSource) {
   throw new Error("Required Keybinds settings patch failed: could not add Linux desktop settings section");
 }
 
+// Inserts a new `titleForSection` switch case after the upstream
+// `general-settings` case. The minifier names the JSX factory, the message
+// component, and the memo-cache slot arbitrarily (e.g. `n` vs `r`, `t[2]` vs
+// `o[5]`) and these drift between upstream builds, so the identifiers are
+// captured from the matched block and reused in the injected case rather than
+// hardcoded. Returns null when the anchor case cannot be located.
+function injectSettingsSectionTitle(currentSource, { slug, defaultMessage, description }) {
+  const generalCasePattern =
+    /case`general-settings`:\{let ([A-Za-z_$][\w$]*);return ([A-Za-z_$][\w$]*)\[(\d+)\]===Symbol\.for\(`react\.memo_cache_sentinel`\)\?\(\1=\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{id:`settings\.section\.general-settings`,defaultMessage:`General`,description:`Title for general settings section`\}\),\2\[\3\]=\1\):\1=\2\[\3\],\1\}/;
+  const match = currentSource.match(generalCasePattern);
+  if (match == null) {
+    return null;
+  }
+  const matchedBlock = match[0];
+  const jsxFactory = match[4];
+  const messageComponent = match[5];
+  const injectedCase =
+    `case\`${slug}\`:{return (0,${jsxFactory}.jsx)(${messageComponent},`
+    + `{id:\`settings.section.${slug}\`,defaultMessage:\`${defaultMessage}\`,description:\`${description}\`})}`;
+  const insertAt = match.index + matchedBlock.length;
+  return currentSource.slice(0, insertAt) + injectedCase + currentSource.slice(insertAt);
+}
+
 function applyKeybindsSettingsSharedPatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -463,14 +486,15 @@ function applyKeybindsSettingsSharedPatch(currentSource) {
   }
 
   if (!patchedSource.includes("settings.section.keybinds")) {
-    const sectionNeedle =
-      "case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}";
-    const sectionPatch =
-      "case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}case`keybinds`:{return (0,d.jsx)(n,{id:`settings.section.keybinds`,defaultMessage:`Keybinds`,description:`Title for keybinds settings section`})}";
-    if (!patchedSource.includes(sectionNeedle)) {
+    const next = injectSettingsSectionTitle(patchedSource, {
+      slug: "keybinds",
+      defaultMessage: "Keybinds",
+      description: "Title for keybinds settings section",
+    });
+    if (next == null) {
       throw new Error("Required Keybinds settings patch failed: could not add keybinds section title");
     }
-    patchedSource = patchedSource.replace(sectionNeedle, sectionPatch);
+    patchedSource = next;
   }
 
   return patchedSource;
@@ -491,14 +515,15 @@ function applyLinuxDesktopSettingsSharedPatch(currentSource) {
   }
 
   if (!patchedSource.includes("settings.section.linux-desktop")) {
-    const sectionNeedle =
-      "case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}";
-    const sectionPatch =
-      "case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}case`linux-desktop`:{return (0,d.jsx)(n,{id:`settings.section.linux-desktop`,defaultMessage:`Linux desktop`,description:`Title for Linux desktop settings section`})}";
-    if (!patchedSource.includes(sectionNeedle)) {
+    const next = injectSettingsSectionTitle(patchedSource, {
+      slug: "linux-desktop",
+      defaultMessage: "Linux desktop",
+      description: "Title for Linux desktop settings section",
+    });
+    if (next == null) {
       throw new Error("Required Keybinds settings patch failed: could not add Linux desktop section title");
     }
-    patchedSource = patchedSource.replace(sectionNeedle, sectionPatch);
+    patchedSource = next;
   }
 
   return patchedSource;
