@@ -295,6 +295,36 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   ].join("");
 }
 
+function applyLinuxI18nGatePatch(currentSource) {
+  const localeOverrideMatch = currentSource.match(
+    /,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.localeOverride\)/u,
+  );
+
+  if (localeOverrideMatch == null) {
+    if (currentSource.includes("enable_i18n")) {
+      console.warn("WARN: Could not find i18n localeOverride needle — skipping Linux i18n gate patch");
+    }
+    return currentSource;
+  }
+
+  const [, , normalizeLocaleVar, settingsVar] = localeOverrideMatch;
+  const localeOverrideFallback = `${normalizeLocaleVar}(${settingsVar}.localeOverride)!=null`;
+  if (currentSource.includes(`||${localeOverrideFallback}`)) {
+    return currentSource;
+  }
+
+  const patchedSource = currentSource.replace(
+    /((?:[A-Za-z_$][\w$]*|[A-Za-z_$][\w$]*\([^)]*\))\?\.get\(`enable_i18n`,!(?:0|1)\))/g,
+    `($1||${localeOverrideFallback})`,
+  );
+
+  if (currentSource.includes("enable_i18n") && patchedSource === currentSource) {
+    console.warn("WARN: Could not find i18n gate needle — skipping Linux i18n gate patch");
+  }
+
+  return patchedSource;
+}
+
 function applyLinuxConfigWriteVersionConflictPatch(currentSource) {
   if (!currentSource.includes("expectedVersion:")) {
     return currentSource;
@@ -966,6 +996,7 @@ module.exports = {
   applyBrowserAnnotationScreenshotPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxConfigWriteVersionConflictPatch,
+  applyLinuxI18nGatePatch,
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
