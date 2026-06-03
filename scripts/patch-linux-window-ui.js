@@ -48,8 +48,12 @@ const {
   applyKeybindsSettingsIndexPatch,
   applyKeybindsSettingsSectionsPatch,
   applyKeybindsSettingsSharedPatch,
+  applyLinuxDesktopSettingsIndexPatch,
+  applyLinuxDesktopSettingsSectionsPatch,
+  applyLinuxDesktopSettingsSharedPatch,
   applyLinuxKeybindOverridesRuntimePatch,
   patchKeybindsSettingsAssets,
+  resolveLinuxDesktopSettingsAsset,
   resolveKeybindsSettingsAsset,
 } = require("./patches/keybinds-settings.js");
 const {
@@ -160,6 +164,9 @@ module.exports = {
   applyKeybindsSettingsIndexPatch,
   applyKeybindsSettingsSectionsPatch,
   applyKeybindsSettingsSharedPatch,
+  applyLinuxDesktopSettingsIndexPatch,
+  applyLinuxDesktopSettingsSectionsPatch,
+  applyLinuxDesktopSettingsSharedPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
@@ -225,5 +232,6 @@ module.exports = {
   patchMainBundleSource,
   patchPackageJson,
   resolveDesktopName,
+  resolveLinuxDesktopSettingsAsset,
   resolveKeybindsSettingsAsset,
 };

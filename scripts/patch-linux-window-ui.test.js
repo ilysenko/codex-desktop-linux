@@ -18,6 +18,7 @@ const {
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxComputerUseRendererAvailabilityPatch,
+  applyLinuxDesktopSettingsIndexPatch,
   applyLinuxAvatarOverlayMousePassthroughPatch,
   applyBrowserUseNodeReplApprovalPatch,
   applyLinuxBrowserUseIabVisibleOnCreatePatch,
@@ -56,6 +57,7 @@ const {
   patchExtractedApp,
   patchPackageJson,
   patchLinuxAppUpdaterBridge,
+  patchKeybindsSettingsAssets,
   patchAutomationScheduleAssets,
   createPatchReport,
   corePatchDescriptors,
@@ -66,6 +68,10 @@ const {
   parseOsRelease,
   resolveDesktopName,
 } = require("./patch-linux-window-ui.js");
+const {
+  keybindsSettingsAsset,
+  linuxDesktopSettingsAsset,
+} = require("./patches/keybinds-settings.js");
 const {
   validateReport,
 } = require("./ci/validate-patch-report.js");
@@ -804,6 +810,70 @@ function keybindsIndexBundleWithLazyAliasDriftFixture() {
     "(0,Z.lazy)(()=>s(",
     "(0,R.lazy)(()=>q(",
   );
+}
+
+function settingsSharedBundleFixture() {
+  return [
+    '"general-settings":{id:`settings.nav.general-settings`,defaultMessage:`General`,description:`Title for general settings section`},appearance:{id:`settings.nav.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`},',
+    "function titleForSection(e){switch(e){case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}case`appearance`:return (0,d.jsx)(n,{id:`settings.section.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`})}}",
+  ].join("");
+}
+
+function linuxDesktopRouteBundleFixture() {
+  return [
+    "var DE={",
+    '"read-aloud-settings":(0,$.lazy)(()=>Xr(()=>import(`./general-settings-read.js`),[],import.meta.url)),',
+    '"general-settings":(0,$.lazy)(()=>Xr(()=>import(`./general-settings-A.js`),[],import.meta.url)),',
+    "profile:(0,$.lazy)(()=>Xr(()=>import(`./profile-A.js`),[],import.meta.url)),",
+    '"keyboard-shortcuts":(0,$.lazy)(()=>Xr(()=>import(`./keyboard-shortcuts-settings-A.js`),[],import.meta.url))',
+    "};",
+  ].join("");
+}
+
+function linuxDesktopNavigationBundleFixture() {
+  return [
+    'var ye={"general-settings":q,profile:ee,"keyboard-shortcuts":ve,appearance:le};',
+    "var xe=[`general-settings`,`profile`,`appearance`,`keyboard-shortcuts`];",
+    "var Se=[{key:`app`,slugs:[`general-settings`,`profile`,`appearance`]},{key:`connection`,slugs:[`agent`,`keyboard-shortcuts`}]}];",
+    "function visible(e){switch(e.slug){case`appearance`:return!0;case`general-settings`:case`agent`:case`personalization`:return!0;case`keyboard-shortcuts`:return!0}}",
+    "function loading(H){let W=!1;if(H)bb0:switch(H.slug){case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`data-controls`:case`personalization`:W=!1;break bb0;case`keyboard-shortcuts`:W=!1;break bb0}return W}",
+  ].join("");
+}
+
+function createNativeKeyboardShortcutsSettingsFixture() {
+  const extractedDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-native-shortcuts-"));
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  fs.mkdirSync(assetsDir, { recursive: true });
+
+  const writeAsset = (name, source = "") => {
+    fs.writeFileSync(path.join(assetsDir, name), source, "utf8");
+  };
+
+  writeAsset("chunk-A.js", "");
+  writeAsset(
+    "jsx-runtime-A.js",
+    'import{s as s}from"./chunk-A.js";function n(){return{}}function t(){return{jsx(){},jsxs(){},Fragment:"Fragment"}}react.transitional.element;export{n,t};',
+  );
+  writeAsset(
+    "setting-storage-A.js",
+    'async function requestCodex(...args){let[request]=args,{params:params,source:source}=request;return send("vscode://codex/",params)}export{requestCodex as z};',
+  );
+  writeAsset("general-settings-A.js", "hotkey-window-hotkey-state");
+  writeAsset("toggle-A.js", "export{t};");
+  writeAsset("settings-row-A.js", "export{n};");
+  writeAsset("settings-content-layout-A.js", "export{n,r,t};");
+  writeAsset("settings-group-A.js", "export{n,t};");
+  writeAsset("settings-surface-A.js", "export{t};");
+  writeAsset(
+    "settings-sections-A.js",
+    "var e=`general-settings`,t=`mcp-settings`,n=[{slug:e},{slug:`appearance`},{slug:`keyboard-shortcuts`}];",
+  );
+  writeAsset("settings-shared-A.js", settingsSharedBundleFixture());
+  writeAsset("app-main-A.js", linuxDesktopRouteBundleFixture());
+  writeAsset("settings-page-A.js", linuxDesktopNavigationBundleFixture());
+  writeAsset("keyboard-shortcuts-settings-A.js", "export default function KeyboardShortcutsSettings(){}");
+
+  return { extractedDir, assetsDir };
 }
 
 function appSunsetBundleFixture() {
@@ -1904,6 +1974,72 @@ test("adds Keybinds settings route with current lazy and preload aliases", () =>
     /var i_e=\{keybinds:\(0,R\.lazy\)\(\(\)=>q\(\(\)=>import\(`\.\/keybinds-settings-linux\.js`\)/,
   );
   assert.doesNotMatch(patched, /keybinds:\(0,Z\.lazy\)\(\(\)=>s\(/);
+});
+
+test("adds Linux desktop settings route when upstream owns Keyboard Shortcuts", () => {
+  const patched = applyPatchTwice(
+    applyLinuxDesktopSettingsIndexPatch,
+    keybindsIndexBundleFixture(),
+  );
+
+  assert.match(
+    patched,
+    /var i_e=\{"linux-desktop":\(0,Z\.lazy\)\(\(\)=>s\(\(\)=>import\(`\.\/linux-desktop-settings-linux\.js`\)/,
+  );
+  assert.match(patched, /var Kge=\{"linux-desktop":xh,"general-settings":xh,/);
+  assert.match(patched, /qge=\[`general-settings`,`linux-desktop`,`appearance`/);
+  assert.match(patched, /slugs:\[`general-settings`,`linux-desktop`,`appearance`/);
+  assert.match(patched, /case`linux-desktop`:return l===`electron`/);
+  assert.match(patched, /case`linux-desktop`:k=!1;break bb0;/);
+  assert.doesNotMatch(patched, /codexLinuxKeybindOverridesRuntime/);
+});
+
+test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () => {
+  const { extractedDir, assetsDir } = createNativeKeyboardShortcutsSettingsFixture();
+  try {
+    const result = patchKeybindsSettingsAssets(extractedDir);
+
+    assert.equal(result.matched, true);
+    assert.ok(result.changed >= 4);
+    assert.match(result.reason, /upstream keyboard shortcuts settings are present/);
+    assert.equal(fs.existsSync(path.join(assetsDir, keybindsSettingsAsset)), false);
+    assert.equal(fs.existsSync(path.join(assetsDir, linuxDesktopSettingsAsset)), true);
+
+    const linuxDesktopSource = fs.readFileSync(
+      path.join(assetsDir, linuxDesktopSettingsAsset),
+      "utf8",
+    );
+    assert.match(linuxDesktopSource, /Linux desktop/);
+    assert.match(linuxDesktopSource, /Compact prompt window/);
+    assert.match(linuxDesktopSource, /System tray/);
+    assert.match(linuxDesktopSource, /Warm start/);
+    assert.match(linuxDesktopSource, /Install updates when you close Codex/);
+    assert.match(linuxDesktopSource, /codex-linux-system-tray-enabled/);
+    assert.match(linuxDesktopSource, /codex-linux-auto-update-on-exit/);
+    assert.match(linuxDesktopSource, /import\{z as __post\}from"\.\/setting-storage-A\.js"/);
+
+    assert.match(
+      fs.readFileSync(path.join(assetsDir, "settings-sections-A.js"), "utf8"),
+      /slug:`linux-desktop`/,
+    );
+    assert.match(
+      fs.readFileSync(path.join(assetsDir, "settings-shared-A.js"), "utf8"),
+      /settings\.nav\.linux-desktop/,
+    );
+    const appMainSource = fs.readFileSync(path.join(assetsDir, "app-main-A.js"), "utf8");
+    assert.match(appMainSource, /linux-desktop-settings-linux\.js/);
+    assert.doesNotMatch(appMainSource, /keybinds-settings-linux\.js/);
+    const settingsPageSource = fs.readFileSync(path.join(assetsDir, "settings-page-A.js"), "utf8");
+    assert.match(settingsPageSource, /"linux-desktop":q,"general-settings":q/);
+    assert.match(settingsPageSource, /slugs:\[`general-settings`,`linux-desktop`,`profile`/);
+    assert.match(settingsPageSource, /case`linux-desktop`:case`general-settings`/);
+
+    const secondResult = patchKeybindsSettingsAssets(extractedDir);
+    assert.equal(secondResult.matched, true);
+    assert.equal(secondResult.changed, 0);
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
 });
 
 test("keeps local environment action modal inputs editable inside stored modal content", () => {
