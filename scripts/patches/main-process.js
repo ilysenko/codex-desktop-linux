@@ -387,6 +387,11 @@ function isTrayFactoryFunction(source, functionName) {
   return body != null && /new [A-Za-z_$][\w$]*\.Tray\(/.test(body);
 }
 
+function trayGuardLookaheadHasTrayFactory(source, trayGuardIndex) {
+  const lookahead = source.slice(trayGuardIndex, trayGuardIndex + TRAY_GUARD_LOOKAHEAD);
+  return /new [A-Za-z_$][\w$]*\.Tray\(/.test(lookahead);
+}
+
 function findDynamicTraySetup(source) {
   const setupRegex =
     /let ([A-Za-z_$][\w$]*)=async\(\)=>\{[A-Za-z_$][\w$]*=!0;try\{await ([A-Za-z_$][\w$]*)\(\{buildFlavor:/g;
@@ -618,9 +623,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     // Already patched.
   } else if (
     trayGuardIndex !== -1 &&
-    /new [A-Za-z_$][\w$]*\.Tray\(/.test(
-      patchedSource.slice(trayGuardIndex, trayGuardIndex + TRAY_GUARD_LOOKAHEAD),
-    )
+    trayGuardLookaheadHasTrayFactory(patchedSource, trayGuardIndex)
   ) {
     patchedSource = patchedSource.replace(trayGuardNeedle, trayGuardPatch);
   } else {
@@ -628,6 +631,23 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   }
 
   if (iconPathExpression != null) {
+    const linuxTrayPathExpression = `process.platform===\`linux\`?${iconPathExpression}:`;
+    if (!patchedSource.includes(linuxTrayPathExpression)) {
+      const trayPathRegex = /new ([A-Za-z_$][\w$]*)\.Tray\(([A-Za-z_$][\w$]*)\.defaultIcon\)/g;
+      let patchedTrayFactory = false;
+      patchedSource = patchedSource.replace(trayPathRegex, (match, electronVar, iconVar, offset) => {
+        const lookahead = patchedSource.slice(offset, offset + TRAY_GUARD_LOOKAHEAD);
+        if (!lookahead.includes("setToolTip") && !lookahead.includes("Tray")) {
+          return match;
+        }
+        patchedTrayFactory = true;
+        return `new ${electronVar}.Tray(${linuxTrayPathExpression}${iconVar}.defaultIcon)`;
+      });
+      if (!patchedTrayFactory) {
+        console.warn("WARN: Could not find tray factory icon argument — skipping Linux tray path patch");
+      }
+    }
+
     const trayIconNeedle =
       `for(let e of o){let t=${electronVar}.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}return{defaultIcon:await ${electronVar}.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`;
     const trayIconPatch =

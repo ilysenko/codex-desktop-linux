@@ -829,13 +829,14 @@ test("general settings patch exports a dedicated read aloud settings page", () =
   assert.match(patched, /settings\.readAloud\.voice\.title/);
 });
 
-test("general settings patch exports read aloud from the current inner chunk", () => {
+test("general settings patch follows the exported settings component when minifier names drift", () => {
   const source = [
-    "function $n(){return (0,$.jsxs)(vt,{children:[]})}",
+    "function $n(){return (0,$.jsxs)(pt,{children:[]})}",
     "export{ir as i,rr as n,$n as r,Cr as t};",
   ].join("");
   const patched = twice(applyGeneralSettingsPatch, source);
   assert.match(patched, /function codexLinuxReadAloudSettingsPage/);
+  assert.match(patched, /\$n as r/);
   assert.match(patched, /codexLinuxReadAloudSettingsPage as ReadAloudSettings/);
   assert.match(patched, /export\{ir as i,rr as n,\$n as r,Cr as t,codexLinuxReadAloudSettingsPage as ReadAloudSettings\}/);
 });
@@ -907,6 +908,23 @@ test("settings nav patch adds the read aloud icon to the current settings page i
   );
   assert.match(patched, /`computer-use`,`read-aloud-settings`,`data-controls`/);
   assert.match(patched, /case`read-aloud-settings`:z=!1;break bb0;case`computer-use`/);
+});
+
+test("settings nav patch supports current minified icon map aliases", () => {
+  const page = [
+    "var ge=f(),_e=e(r()),$=i(),ve=e=>null,ye={\"browser-use\":me,\"computer-use\":fe,\"local-environments\":pe};",
+    "xe=[`browser-use`,`computer-use`,`data-controls`];",
+    "Se=[{slugs:[`browser-use`,`computer-use`,`local-environments`]}];",
+    "case`computer-use`:return A;",
+    "case`computer-use`:z=k.isLoading||m.isLoading;break bb0;",
+  ].join("");
+
+  const patchedPage = twice(applySettingsPageNavPatch, page);
+  assert.match(patchedPage, /codexLinuxReadAloudSettingsIcon=e=>\(0,\$\.jsxs\)/);
+  assert.match(
+    patchedPage,
+    /"computer-use":fe,"read-aloud-settings":codexLinuxReadAloudSettingsIcon,"local-environments":pe/,
+  );
 });
 
 test("app route patch wires read aloud settings to the generated page export", () => {

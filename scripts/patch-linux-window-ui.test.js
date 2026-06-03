@@ -843,6 +843,13 @@ function currentBootstrapUpdaterBundleWithParametrizedQuitFixture() {
   ].join("");
 }
 
+function currentBootstrapUpdaterBundleWithLateQuitReassignmentFixture() {
+  return currentBootstrapUpdaterBundleWithParametrizedQuitFixture().replace(
+    "c({onInstallProgressChanged:e=>{E&&M.sendMessageToAllRegisteredWindows({type:`app-update-install-progress-changed`,installProgressPercent:e})},onUpdateReadyChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})},onUpdateLifecycleStateChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-lifecycle-state-changed`,lifecycleState:e})},onInstallUpdatesRequested:e=>{ne(e)},isTrustedIpcEvent:N});",
+    "c({onInstallProgressChanged:e=>{E&&M.sendMessageToAllRegisteredWindows({type:`app-update-install-progress-changed`,installProgressPercent:e})},onUpdateReadyChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})},onUpdateLifecycleStateChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-lifecycle-state-changed`,lifecycleState:e})},onInstallUpdatesRequested:e=>{ne(e)},isTrustedIpcEvent:N});ne=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall({allowWithoutPrompt:!0,skipDrainBeforeQuit:!0});return}P0({exitImmediately:k&&n.app.isPackaged,quitForUpdateInstall:()=>{n.app.quit()},quitState:ee})};",
+  );
+}
+
 function avatarOverlayBundleFixture() {
   return [
     "let u=require(`node:child_process`);",
@@ -1450,6 +1457,10 @@ test("adds Linux tray support including the platform guard", () => {
   );
   assert.match(
     patched,
+    new RegExp(`new n\\.Tray\\(process\\.platform===\`linux\`\\?${escapeRegExp(iconPathExpression)}:r\\.defaultIcon\\)`),
+  );
+  assert.match(
+    patched,
     /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)/,
   );
   assert.match(patched, /setLinuxTrayContextMenu\(\)\{let e=n\.Menu\.buildFromTemplate/);
@@ -1527,6 +1538,35 @@ test("adds Linux tray support for current minified window and startup identifier
   assert.match(
     patched,
     /\(E\|\|process\.platform===`linux`&&\(typeof codexLinuxIsTrayEnabled!==`function`\|\|codexLinuxIsTrayEnabled\(\)\)\)&&ce\$\(\);/,
+  );
+});
+
+test("adds Linux tray platform guard when Electron alias drifts", () => {
+  const source = [
+    "async function O0(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(T0=!0,w0=(async()=>{let t=await A0(e.buildFlavor,e.repoRoot),r=new i.Tray(t.defaultIcon);return r})())}",
+    "let ve=async()=>{ee=!0;try{await O0({buildFlavor:s,repoRoot:N.repoRoot})}catch(e){ee=!1}};",
+    "(k||process.platform===`linux`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&ve();",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
+  assert.match(
+    patched,
+    /process\.platform!==`win32`&&process\.platform!==`darwin`&&process\.platform!==`linux`\?null:/,
+  );
+});
+
+test("passes a packaged icon path to Linux Tray when Electron alias drifts", () => {
+  const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
+  const source = [
+    "async function O0(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(T0=!0,w0=(async()=>{let t=await A0(e.buildFlavor,e.repoRoot),r=new i.Tray(t.defaultIcon);return r.setToolTip(i.app.getName()),r})())}",
+    "let ve=async()=>{ee=!0;try{await O0({buildFlavor:s,repoRoot:N.repoRoot})}catch(e){ee=!1}};",
+    "(k||process.platform===`linux`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&ve();",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, iconPathExpression);
+  assert.match(
+    patched,
+    new RegExp(`new i\\.Tray\\(process\\.platform===\`linux\`\\?${escapeRegExp(iconPathExpression)}:t\\.defaultIcon\\)`),
   );
 });
 
@@ -2217,6 +2257,20 @@ test("adds Linux package updater to current bootstrap updater wiring when dispat
 
   assert.match(patched, /function codexLinuxCreatePackageUpdateManager\(/);
   assert.match(patched, /send:e=>M\.sendMessageToAllRegisteredWindows\(e\)/);
+});
+
+test("keeps the Linux updater quit callback when upstream reassigns it later", () => {
+  const patched = applyPatchTwice(
+    applyLinuxAppUpdaterBridgePatch,
+    currentBootstrapUpdaterBundleWithLateQuitReassignmentFixture(),
+  );
+
+  assert.match(patched, /ne=codexLinuxPackageUpdateBridge\.quitForUpdate/);
+  assert.match(
+    patched,
+    /process\.platform===`linux`&&codexLinuxPackageUpdateBridge!=null\|\|\(ne=e=>\{if\(e\?\.quitImmediately===!1\)/,
+  );
+  assert.match(patched, /onInstallUpdatesRequested:e=>\{ne\(e\)\}/);
 });
 
 test("migrates already-patched bootstrap updater bridge to probe before enabling UI", () => {

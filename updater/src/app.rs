@@ -2707,7 +2707,8 @@ mod tests {
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
-        let result = run_status(&mut state, &paths, true);
+        let config = test_config(temp.path());
+        let result = run_status(&config, &mut state, &paths, true);
 
         if let Some(home) = original_home {
             std::env::set_var("HOME", home);
