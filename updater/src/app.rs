@@ -2388,9 +2388,10 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn install_ready_waits_when_app_is_running() -> Result<()> {
+    #[test]
+    fn install_ready_waits_when_app_is_running() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
+        let runtime = tokio::runtime::Runtime::new()?;
         let previous_assume_agent = std::env::var_os("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT");
         std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
         let temp = tempfile::tempdir()?;
@@ -2434,7 +2435,7 @@ mod tests {
             .notified_events
             .insert("install_auth_required:2999.03.25.010203+deadbeef".to_string());
 
-        let result = run_install_ready(&config, &mut state, &paths).await;
+        let result = runtime.block_on(run_install_ready(&config, &mut state, &paths));
 
         if let Some(value) = previous_assume_agent {
             std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", value);
@@ -2450,9 +2451,10 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn install_ready_stays_open_when_no_polkit_agent_is_available() -> Result<()> {
+    #[test]
+    fn install_ready_stays_open_when_no_polkit_agent_is_available() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
+        let runtime = tokio::runtime::Runtime::new()?;
         let previous_no_agent = std::env::var_os("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT");
         std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT", "1");
         let temp = tempfile::tempdir()?;
@@ -2493,7 +2495,7 @@ mod tests {
         state.candidate_version = Some("2999.03.25.010203+deadbeef".to_string());
         state.artifact_paths.package_path = Some(package_path);
 
-        let result = run_install_ready(&config, &mut state, &paths).await;
+        let result = runtime.block_on(run_install_ready(&config, &mut state, &paths));
 
         if let Some(value) = previous_no_agent {
             std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT", value);
