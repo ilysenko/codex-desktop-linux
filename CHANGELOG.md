@@ -53,6 +53,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   bundled plugin registry so the app keeps `read-aloud` installed, and the
   launcher syncs the plugin cache so new Codex windows expose the MCP tools
   through the same auto-install path as Computer Use.
+- Native packages now install `codex-desktop-doctor`, a safe installed-state
+  healthcheck for package files, updater/update-builder staging, Chrome native
+  messaging, Computer Use readiness, and remote mobile markers.
+- `make readiness-check` now runs a sanitized handoff/readiness report that
+  composes the installed doctor, package/build metadata, user services,
+  remote-control process presence, repo status, and redacted history/memory
+  continuity checks.
+- Native packages now include an opt-in `codex-desktop.service` user unit plus
+  `make app-service-enable`, `make app-service-status`, and
+  `make app-service-disable` helpers for users who want Codex Desktop managed
+  by `systemd --user`; the unit waits on the launcher PID file so it can stay
+  active when Electron is moved into a desktop app scope.
+- Linux desktop entries now expose Quick Chat and Compact Prompt actions backed
+  by the existing `--quick-chat` and `--prompt-chat` launcher paths.
+- Linux Zed editor opener support is now enabled by default when the `zed`,
+  `zeditor`, `zedit`, or `zed-cli` command is available.
 
 ### Fixed
 
@@ -78,6 +94,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Linux webview bundles no longer ask current Codex CLI app servers to enable unsupported feature flags, avoiding connector authentication sync errors.
 - Native Linux launches now keep GPU compositing enabled by default, avoiding sustained Electron GPU-process CPU usage on some X11/NVIDIA desktops. Users who still need the old flicker workaround can opt in with `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1`.
 - Linux Keybinds settings now show current upstream shortcut defaults for Quick Chat, alternate New Chat, search, terminal, browser, and thread actions, and no longer lists non-dispatchable runtime rows.
+- Linux `Open in File Manager` now prefers desktop file managers directly, selecting files in Dolphin and Nautilus where supported before falling back to Electron's shell opener.
+- Linux Computer Use doctor now reports an unreachable user session D-Bus as the root blocker before AT-SPI, portal, or window-targeting follow-up checks, making stale or refused graphical-session buses easier to diagnose.
+- Installed `codex-desktop-doctor` now checks whether the `systemd --user`
+  bus is reachable, so app-service lifecycle validation failures surface
+  directly instead of only through later service commands.
+- Native package builders now refresh the packaged Linux Computer Use backend
+  during payload staging, preventing stale `codex-app` plugin binaries from
+  being shipped after backend source changes.
+- Install-time running-app detection now treats upgraded Electron processes
+  whose executable appears as `(deleted)` as still running, while continuing to
+  ignore renderer/GPU/helper processes.
+- `codex-update-manager status` and daemon startup now clear stale failed update
+  state when the installed package already satisfies or supersedes the failed
+  candidate, while keeping failures for newer candidates intact.
 
 ## [0.8.0] - 2026-05-16
 

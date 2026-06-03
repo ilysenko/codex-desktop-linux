@@ -79,6 +79,7 @@ pub struct PlatformReport {
     pub xauthority: Option<String>,
     pub dbus_session_bus_address: Option<String>,
     pub xdg_runtime_dir: Option<String>,
+    pub session_bus: Check,
     pub gnome_shell_version: Check,
 }
 
@@ -518,6 +519,7 @@ fn platform_report() -> PlatformReport {
         xauthority: env_var("XAUTHORITY"),
         dbus_session_bus_address: dbus_session_address(),
         xdg_runtime_dir: xdg_runtime_dir().map(|path| path.display().to_string()),
+        session_bus: session_bus_check(),
         gnome_shell_version: command_check("gnome-shell", &["--version"]),
     }
 }
@@ -630,15 +632,21 @@ fn readiness_report(
     let can_focus_apps = windowing.can_focus_apps;
     let can_focus_windows = windowing.can_focus_windows;
     let can_send_development_input = can_send_development_input(portals, input);
+    let can_reach_session_bus = platform.session_bus.ok;
 
-    if !can_build_accessibility_tree {
+    if !can_reach_session_bus {
+        blockers.push(
+            "User session D-Bus is unreachable from this process; portal, AT-SPI, and window-introspection checks cannot be trusted until the graphical user bus accepts clients."
+                .to_string(),
+        );
+    } else if !can_build_accessibility_tree {
         blockers.push(
             "AT-SPI accessibility is disabled; enable org.a11y.Status IsEnabled or org.gnome.desktop.interface toolkit-accessibility for tree extraction."
                 .to_string(),
         );
     }
 
-    if !can_query_windows {
+    if can_reach_session_bus && !can_query_windows {
         blockers.push(if is_cosmic_wayland_platform(platform) {
             "COSMIC Wayland window introspection is unavailable; targeted window focus and verification will be disabled.".to_string()
         } else {
@@ -647,7 +655,7 @@ fn readiness_report(
         });
     }
 
-    if can_query_windows && !can_focus_windows {
+    if can_reach_session_bus && can_query_windows && !can_focus_windows {
         blockers.push(
             "Exact window activation is unavailable; app-level focus may work, but window_id/title/terminal-targeted input cannot be verified."
                 .to_string(),
@@ -661,7 +669,10 @@ fn readiness_report(
         );
     }
 
-    let recommended_next_step = if !can_build_accessibility_tree {
+    let recommended_next_step = if !can_reach_session_bus {
+        "Run Computer Use from a shell attached to the graphical session, or repair/restart the user session bus before retrying Computer Use setup, portal, or window-targeting checks."
+            .to_string()
+    } else if !can_build_accessibility_tree {
         "Run setup_accessibility to enable AT-SPI accessibility before element-aware actions."
             .to_string()
     } else if !can_query_windows {
@@ -741,6 +752,50 @@ fn dbus_session_address() -> Option<String> {
                 .strip_prefix("unix:path=")
                 .is_some_and(|p| Path::new(p).exists())
         })
+}
+
+fn session_bus_check() -> Check {
+    let Some(address) = dbus_session_address() else {
+        return Check::fail("DBUS_SESSION_BUS_ADDRESS is unavailable");
+    };
+
+    if let Some(path) = session_bus_unix_path(&address) {
+        if !path.exists() {
+            return Check::fail(format!("session bus socket missing: {}", path.display()));
+        }
+        if let Err(error) = UnixStream::connect(&path) {
+            return Check::fail(format!(
+                "session bus socket refused connection: {}: {error}",
+                path.display()
+            ));
+        }
+    }
+
+    let ping = command_check_with_session_bus(
+        "busctl",
+        &[
+            "--user",
+            "call",
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus.Peer",
+            "Ping",
+        ],
+    );
+    if ping.ok {
+        Check::ok("session bus is reachable")
+    } else {
+        Check::fail(format!(
+            "session bus socket accepted connections but D-Bus ping failed: {}",
+            ping.detail
+        ))
+    }
+}
+
+fn session_bus_unix_path(address: &str) -> Option<PathBuf> {
+    let value = address.strip_prefix("unix:path=")?;
+    let path = value.split(',').next().unwrap_or(value);
+    (!path.trim().is_empty()).then(|| PathBuf::from(path))
 }
 
 fn ydotool_socket_candidates() -> Vec<PathBuf> {
@@ -968,6 +1023,7 @@ mod tests {
             xauthority: Some("/run/user/1000/Xauthority".to_string()),
             dbus_session_bus_address: Some("unix:path=/run/user/1000/bus".to_string()),
             xdg_runtime_dir: Some("/run/user/1000".to_string()),
+            session_bus: Check::ok("session bus is reachable"),
             gnome_shell_version: Check::ok("GNOME Shell 46.0"),
         }
     }
@@ -1142,6 +1198,42 @@ mod tests {
             .blockers
             .iter()
             .any(|blocker| blocker.contains("Exact window activation")));
+    }
+
+    #[test]
+    fn readiness_prioritizes_unreachable_session_bus() {
+        let mut platform = platform_report();
+        platform.session_bus =
+            Check::fail("session bus socket refused connection: /run/user/1000/bus");
+        let accessibility = accessibility_report(
+            Check::fail("Failed to connect to bus: Connection refused"),
+            Check::ok("true"),
+        );
+        let windowing = windowing_report(false, false);
+        let input = input_report(true);
+
+        let readiness = readiness_report(
+            &platform,
+            &portal_report(Check::fail("Failed to connect to bus: Connection refused")),
+            &accessibility,
+            &windowing,
+            &input,
+        );
+
+        assert!(!readiness.can_build_accessibility_tree);
+        assert!(readiness.recommended_next_step.contains("user session bus"));
+        assert!(readiness
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("User session D-Bus is unreachable")));
+        assert!(!readiness
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("AT-SPI accessibility is disabled")));
+        assert!(!readiness
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("Window introspection is unavailable")));
     }
 
     #[test]

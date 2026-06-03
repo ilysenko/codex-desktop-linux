@@ -10,6 +10,9 @@ function requireName(source, moduleName) {
 }
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
+const DEVICE_KEY_SECRET_SERVICE_MARKER = "codexLinuxRemoteControlSecretTool";
+const DEVICE_KEY_APP_ID_MARKER = "codexLinuxRemoteControlAppId";
+const DEVICE_KEY_PROVIDER_START = "function codexLinuxRemoteControlDeviceKeyStorePath(){";
 const DEVICE_KEY_GUARD =
   "if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);";
 const DEVICE_KEY_GUARD_REPLACEMENT =
@@ -110,45 +113,93 @@ function linuxRemoteControlClientAccountCompatibilityHelpers(loadEnrollmentFn, e
 
 function linuxDeviceKeyProviderSource({ cryptoVar, fsVar, pathVar }) {
   return [
-    "function codexLinuxRemoteControlDeviceKeyStorePath(){",
+    "function codexLinuxRemoteControlAppId(){",
+    "let e=(process.env.CODEX_LINUX_APP_ID||process.env.CODEX_APP_ID||`codex-desktop`).trim();return/^[A-Za-z0-9._-]+$/.test(e)&&e!==`.`&&e!==`..`?e:`codex-desktop`",
+    "}",
+    "function codexLinuxRemoteControlConfigHome(){",
     `let e=process.env.XDG_CONFIG_HOME&&process.env.XDG_CONFIG_HOME.trim()?process.env.XDG_CONFIG_HOME.trim():process.env.HOME?${pathVar}.join(process.env.HOME,\`.config\`):null;`,
-    "if(e==null)throw Error(`Linux remote control device keys require HOME or XDG_CONFIG_HOME`);",
-    `${fsVar}.mkdirSync(${pathVar}.join(e,\`codex-desktop\`),{recursive:!0,mode:448});`,
-    `return ${pathVar}.join(e,\`codex-desktop\`,\`remote-control-device-keys-v1.json\`)`,
+    "if(e==null)throw Error(`Linux remote control device keys require HOME or XDG_CONFIG_HOME`);return e",
+    "}",
+    "function codexLinuxRemoteControlDeviceKeyStorePath(){",
+    `let e=codexLinuxRemoteControlConfigHome(),t=codexLinuxRemoteControlAppId();${fsVar}.mkdirSync(${pathVar}.join(e,t),{recursive:!0,mode:448});return ${pathVar}.join(e,t,\`remote-control-device-keys-v1.json\`)`,
+    "}",
+    "function codexLinuxRemoteControlLegacyDeviceKeyStorePath(){",
+    `let e=codexLinuxRemoteControlAppId();return e===\`codex-desktop\`?null:${pathVar}.join(codexLinuxRemoteControlConfigHome(),\`codex-desktop\`,\`remote-control-device-keys-v1.json\`)`,
     "}",
     "function codexLinuxRemoteControlPublicDeviceKey(e){",
     "return{algorithm:e.algorithm,keyId:e.keyId,protectionClass:e.protectionClass,publicKeySpkiDerBase64:e.publicKeySpkiDerBase64}",
     "}",
+    "function codexLinuxRemoteControlKeyStorePrefersFile(){",
+    "let e=(process.env.CODEX_REMOTE_CONTROL_KEY_STORE||process.env.CODEX_LINUX_REMOTE_CONTROL_KEY_STORE||`secret-service`).toLowerCase();return e===`file`||e===`json`",
+    "}",
+    "function codexLinuxRemoteControlSecretAttributes(e,t=!1){",
+    "let n=[`application`,`codex-desktop-linux`];t||n.push(`app-id`,codexLinuxRemoteControlAppId());return n.push(`kind`,`remote-control-device-key`,`key-id`,String(e)),n",
+    "}",
+    "function codexLinuxRemoteControlSecretMetadata(e){",
+    "return{backend:`secret-service`,tool:`secret-tool`,attributes:{application:`codex-desktop-linux`,appId:codexLinuxRemoteControlAppId(),kind:`remote-control-device-key`,keyId:String(e)}}",
+    "}",
+    "function codexLinuxRemoteControlSecretTool(e,t){",
+    "if(codexLinuxRemoteControlKeyStorePrefersFile())return null;",
+    "try{let n=require(`node:child_process`).spawnSync(`secret-tool`,e,{encoding:`utf8`,env:process.env,input:t??``,timeout:3000,windowsHide:!0});return n&&typeof n.status==`number`?n:null}catch{return null}",
+    "}",
+    "function codexLinuxStoreRemoteControlPrivateKeySecret(e,t){",
+    "let n=codexLinuxRemoteControlAppId(),r=codexLinuxRemoteControlSecretTool([`store`,`--label=Codex Desktop Linux (${n}) remote control device key`,...codexLinuxRemoteControlSecretAttributes(e)],t);return r?.status===0?codexLinuxRemoteControlSecretMetadata(e):null",
+    "}",
+    "function codexLinuxLookupRemoteControlPrivateKeySecret(e){",
+    "let t=codexLinuxRemoteControlSecretTool([`lookup`,...codexLinuxRemoteControlSecretAttributes(e)]);if(t?.status===0&&typeof t.stdout==`string`&&t.stdout.length>0)return t.stdout;let n=codexLinuxRemoteControlSecretTool([`lookup`,...codexLinuxRemoteControlSecretAttributes(e,!0)]);return n?.status===0&&typeof n.stdout==`string`&&n.stdout.length>0?n.stdout:null",
+    "}",
+    "function codexLinuxClearRemoteControlPrivateKeySecret(e){",
+    "let t=codexLinuxRemoteControlSecretTool([`clear`,...codexLinuxRemoteControlSecretAttributes(e)]),n=codexLinuxRemoteControlSecretTool([`clear`,...codexLinuxRemoteControlSecretAttributes(e,!0)]);return t?.status===0||n?.status===0",
+    "}",
+    "function codexLinuxMigrateRemoteControlDeviceKeySecrets(e){",
+    "if(codexLinuxRemoteControlKeyStorePrefersFile())return e;",
+    "let t=e.keys??{},n=!1,r={...t};",
+    "for(let[i,a]of Object.entries(t)){if(a&&typeof a.privateKeyPkcs8Pem==`string`&&a.secretService==null){let o=codexLinuxStoreRemoteControlPrivateKeySecret(i,a.privateKeyPkcs8Pem);if(o!=null){let{privateKeyPkcs8Pem:s,...c}=a;r[i]={...c,secretService:o},n=!0}}}",
+    "return n?{...e,keys:r}:e",
+    "}",
     "function codexLinuxReadRemoteControlDeviceKeyStore(){",
-    "let e=codexLinuxRemoteControlDeviceKeyStorePath();",
+    "let e=codexLinuxRemoteControlDeviceKeyStorePath(),t=codexLinuxRemoteControlLegacyDeviceKeyStorePath(),n=e;",
+    `if(!${fsVar}.existsSync(e)&&t!=null&&${fsVar}.existsSync(t))e=t;`,
     `if(!${fsVar}.existsSync(e))return{keys:{}};`,
     "try{",
-    `let t=JSON.parse(${fsVar}.readFileSync(e,\`utf8\`));`,
-    "return t&&typeof t==`object`&&!Array.isArray(t)&&t.keys&&typeof t.keys==`object`&&!Array.isArray(t.keys)?t:{keys:{}}",
+    `let r=JSON.parse(${fsVar}.readFileSync(e,\`utf8\`));`,
+    "let i=r&&typeof r==`object`&&!Array.isArray(r)&&r.keys&&typeof r.keys==`object`&&!Array.isArray(r.keys)?r:{keys:{}};",
+    "let a=codexLinuxMigrateRemoteControlDeviceKeySecrets(i);",
+    "if(a!==i)try{codexLinuxWriteRemoteControlDeviceKeyStore(a);e!==n&&codexLinuxWriteRemoteControlDeviceKeyStoreAt(e,a)}catch{}",
+    "return a",
     "}catch{return{keys:{}}}",
     "}",
+    "function codexLinuxWriteRemoteControlDeviceKeyStoreAt(e,t){",
+    "let n=`${e}.tmp-${process.pid}-${Date.now()}`;",
+    `try{${fsVar}.writeFileSync(n,JSON.stringify(t,null,2)+\`\\n\`,{encoding:\`utf8\`,mode:384}),${fsVar}.chmodSync(n,384),${fsVar}.renameSync(n,e),${fsVar}.chmodSync(e,384)}catch(e){try{${fsVar}.rmSync(n,{force:!0})}catch{}throw e}`,
+    "}",
     "function codexLinuxWriteRemoteControlDeviceKeyStore(e){",
-    "let t=codexLinuxRemoteControlDeviceKeyStorePath(),n=`${t}.tmp-${process.pid}-${Date.now()}`;",
-    `try{${fsVar}.writeFileSync(n,JSON.stringify(e,null,2)+\`\\n\`,{encoding:\`utf8\`,mode:384}),${fsVar}.chmodSync(n,384),${fsVar}.renameSync(n,t),${fsVar}.chmodSync(t,384)}catch(e){try{${fsVar}.rmSync(n,{force:!0})}catch{}throw e}`,
+    "codexLinuxWriteRemoteControlDeviceKeyStoreAt(codexLinuxRemoteControlDeviceKeyStorePath(),e)",
     "}",
     "function codexLinuxRemoteControlDeviceKeyClient(){return{",
     "createDeviceKey:async e=>{",
     "let t=codexLinuxReadRemoteControlDeviceKeyStore();",
     `let{publicKey:n,privateKey:r}=(0,${cryptoVar}.generateKeyPairSync)(\`ec\`,{namedCurve:\`P-256\`});`,
     `let i=(0,${cryptoVar}.randomUUID)(),a=n.export({type:\`spki\`,format:\`der\`}).toString(\`base64\`),o=r.export({type:\`pkcs8\`,format:\`pem\`});`,
-    "let c={algorithm:`ecdsa_p256_sha256`,keyId:i,protectionClass:`os_protected_nonextractable`,publicKeySpkiDerBase64:a,privateKeyPkcs8Pem:o,createdAt:new Date().toISOString()};",
+    "let l=codexLinuxStoreRemoteControlPrivateKeySecret(i,o);",
+    "let c={algorithm:`ecdsa_p256_sha256`,keyId:i,protectionClass:`os_protected_nonextractable`,publicKeySpkiDerBase64:a,createdAt:new Date().toISOString()};",
+    "l==null?c.privateKeyPkcs8Pem=o:c.secretService=l;",
     "t.keys={...t.keys,[i]:c},codexLinuxWriteRemoteControlDeviceKeyStore(t);",
     "return codexLinuxRemoteControlPublicDeviceKey(c)",
     "},",
-    "deleteDeviceKey:async e=>{let t=codexLinuxReadRemoteControlDeviceKeyStore();t.keys&&delete t.keys[e],codexLinuxWriteRemoteControlDeviceKeyStore(t)},",
+    "deleteDeviceKey:async e=>{codexLinuxClearRemoteControlPrivateKeySecret(e);let t=codexLinuxReadRemoteControlDeviceKeyStore();t.keys&&delete t.keys[e],codexLinuxWriteRemoteControlDeviceKeyStore(t)},",
     "getDeviceKeyPublic:async e=>{let t=codexLinuxReadRemoteControlDeviceKeyStore().keys?.[e];if(t==null)throw Error(`Linux remote control device key not found`);return codexLinuxRemoteControlPublicDeviceKey(t)},",
-    `signDeviceKey:async(e,t)=>{let n=codexLinuxReadRemoteControlDeviceKeyStore().keys?.[e];if(n==null)throw Error(\`Linux remote control device key not found\`);let r=(0,${cryptoVar}.createPrivateKey)(n.privateKeyPkcs8Pem),i=(0,${cryptoVar}.sign)(\`sha256\`,t,r).toString(\`base64\`);return{algorithm:n.algorithm,signatureDerBase64:i}}`,
+    `signDeviceKey:async(e,t)=>{let n=codexLinuxReadRemoteControlDeviceKeyStore().keys?.[e];if(n==null)throw Error(\`Linux remote control device key not found\`);let r=n.secretService?codexLinuxLookupRemoteControlPrivateKeySecret(e):null,i=r??n.privateKeyPkcs8Pem;if(typeof i!=\`string\`||i.length===0)throw Error(\`Linux remote control device key not found\`);let a=(0,${cryptoVar}.createPrivateKey)(i),o=(0,${cryptoVar}.sign)(\`sha256\`,t,a).toString(\`base64\`);return{algorithm:n.algorithm,signatureDerBase64:o}}`,
     "}}",
   ].join("");
 }
 
 function applyLinuxRemoteControlDeviceKeyPatch(source) {
-  if (source.includes(DEVICE_KEY_CLIENT_MARKER)) {
+  if (
+    source.includes(DEVICE_KEY_CLIENT_MARKER) &&
+    source.includes(DEVICE_KEY_SECRET_SERVICE_MARKER) &&
+    source.includes(DEVICE_KEY_APP_ID_MARKER)
+  ) {
     return source;
   }
 
@@ -161,12 +212,27 @@ function applyLinuxRemoteControlDeviceKeyPatch(source) {
   }
 
   const insertionNeedle = source.match(DEVICE_KEY_REQUIRE_NEEDLE)?.[0] ?? null;
-  if (insertionNeedle == null || !source.includes(DEVICE_KEY_GUARD)) {
+  if (insertionNeedle == null) {
     console.warn("WARN: Could not find remote-control device-key bundle needles - skipping Linux remote-control device-key patch");
     return source;
   }
 
   const provider = linuxDeviceKeyProviderSource({ cryptoVar, fsVar, pathVar });
+  if (source.includes(DEVICE_KEY_CLIENT_MARKER)) {
+    const providerStart = source.indexOf(DEVICE_KEY_PROVIDER_START);
+    const providerEnd = source.indexOf(insertionNeedle);
+    if (providerStart >= 0 && providerEnd > providerStart) {
+      return `${source.slice(0, providerStart)}${provider}${source.slice(providerEnd)}`;
+    }
+    console.warn("WARN: Could not find existing Linux remote-control device-key provider - skipping provider upgrade");
+    return source;
+  }
+
+  if (!source.includes(DEVICE_KEY_GUARD)) {
+    console.warn("WARN: Could not find remote-control device-key platform guard - skipping Linux remote-control device-key patch");
+    return source;
+  }
+
   return source
     .replace(insertionNeedle, `${provider}${insertionNeedle}`)
     .replace(DEVICE_KEY_GUARD, DEVICE_KEY_GUARD_REPLACEMENT);

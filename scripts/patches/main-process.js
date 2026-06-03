@@ -12,13 +12,13 @@ const {
 // Main-process patches adapt Electron shell behavior: windows, tray, menu,
 // single-instance handling, file manager integration, and packaged runtime glue.
 function applyLinuxFileManagerPatch(currentSource) {
-  const block = findCallBlock(currentSource, "id:`fileManager`");
+  let block = findCallBlock(currentSource, "id:`fileManager`");
   if (block == null) {
     console.warn("Failed to apply Linux File Manager Patch");
     return currentSource;
   }
 
-  if (block.text.includes("linux:{")) {
+  if (block.text.includes("codexLinuxOpenFileManager(e)")) {
     return currentSource;
   }
 
@@ -30,6 +30,15 @@ function applyLinuxFileManagerPatch(currentSource) {
     return currentSource;
   }
 
+  let patchedSource = insertLinuxFileManagerHelpers(currentSource, block.start, { fsVar, pathVar });
+  if (patchedSource !== currentSource) {
+    block = findCallBlock(patchedSource, "id:`fileManager`");
+    if (block == null) {
+      console.warn("Failed to apply Linux File Manager Patch");
+      return currentSource;
+    }
+  }
+
   const insertionPoint = block.text.lastIndexOf("}});");
   if (insertionPoint === -1) {
     console.warn("Failed to apply Linux File Manager Patch");
@@ -37,26 +46,152 @@ function applyLinuxFileManagerPatch(currentSource) {
   }
 
   const linuxFileManager =
-    `,linux:{label:\`File Manager\`,icon:\`apps/file-explorer.png\`,detect:()=>\`linux-file-manager\`,args:e=>[e],open:async({path:e})=>{let __codexResolved=e;for(;;){if((0,${fsVar}.existsSync)(__codexResolved))break;let __codexParent=(0,${pathVar}.dirname)(__codexResolved);if(__codexParent===__codexResolved){__codexResolved=null;break}__codexResolved=__codexParent}let __codexOpenTarget=__codexResolved??e;if((0,${fsVar}.existsSync)(__codexOpenTarget)&&(0,${fsVar}.statSync)(__codexOpenTarget).isFile())__codexOpenTarget=(0,${pathVar}.dirname)(__codexOpenTarget);let __codexError=await ${electronVar}.shell.openPath(__codexOpenTarget);if(__codexError)throw Error(__codexError)}}`;
+    `,linux:{label:\`File Manager\`,icon:\`apps/file-explorer.png\`,detect:()=>codexLinuxFindExecutable(\`dolphin\`)??codexLinuxFindExecutable(\`nautilus\`)??codexLinuxFindExecutable(\`nemo\`)??codexLinuxFindExecutable(\`thunar\`)??codexLinuxFindExecutable(\`pcmanfm\`)??codexLinuxFindExecutable(\`caja\`)??codexLinuxFindExecutable(\`xdg-open\`)??\`linux-file-manager\`,args:e=>[e],open:async({path:e})=>{await codexLinuxOpenFileManager(e).catch(async()=>{let t=codexLinuxResolveExistingTarget(e)??e;try{(0,${fsVar}.existsSync)(t)&&(0,${fsVar}.statSync)(t).isFile()&&(t=(0,${pathVar}.dirname)(t))}catch{}let r=await ${electronVar}.shell.openPath(t);if(r)throw Error(r)})}}`;
 
-  const patchedBlock =
-    block.text.slice(0, insertionPoint + 1) +
-    linuxFileManager +
-    block.text.slice(insertionPoint + 1);
-  const patchedSource =
-    currentSource.slice(0, block.start) + patchedBlock + currentSource.slice(block.end);
+  const existingLinuxBlock = findPropertyBlock(block.text, "linux");
+  const patchedBlock = existingLinuxBlock == null
+    ? block.text.slice(0, insertionPoint + 1) + linuxFileManager + block.text.slice(insertionPoint + 1)
+    : block.text.slice(0, existingLinuxBlock.start) +
+      linuxFileManager +
+      block.text.slice(existingLinuxBlock.end);
+  patchedSource =
+    patchedSource.slice(0, block.start) + patchedBlock + patchedSource.slice(block.end);
 
   const patchedBlockCheck = patchedSource.slice(block.start, block.start + patchedBlock.length);
   if (
     !patchedBlockCheck.includes("linux:{label:`File Manager`") ||
-    !patchedBlockCheck.includes("detect:()=>`linux-file-manager`") ||
-    !patchedBlockCheck.includes(`${electronVar}.shell.openPath(__codexOpenTarget)`)
+    !patchedBlockCheck.includes("codexLinuxOpenFileManager(e)") ||
+    !patchedBlockCheck.includes(`${electronVar}.shell.openPath(t)`)
   ) {
     console.warn("Failed to apply Linux File Manager Patch");
     return currentSource;
   }
 
   return patchedSource;
+}
+
+function findZedOpenerBlock(source) {
+  const markerStart = source.indexOf("id:`zed`");
+  if (markerStart === -1) {
+    return null;
+  }
+
+  const blockStart = Math.max(
+    source.lastIndexOf("var ", markerStart),
+    source.lastIndexOf("let ", markerStart),
+    source.lastIndexOf("const ", markerStart),
+  );
+  const objectStart = blockStart === -1 ? -1 : source.indexOf("{", blockStart);
+  const objectEnd = objectStart === -1 ? -1 : findMatchingBrace(source, objectStart);
+  if (blockStart === -1 || objectStart === -1 || objectEnd === -1) {
+    return null;
+  }
+
+  const blockEnd = source[objectEnd + 1] === ";" ? objectEnd + 2 : objectEnd + 1;
+  return {
+    start: blockStart,
+    end: blockEnd,
+    text: source.slice(blockStart, blockEnd),
+  };
+}
+
+function findZedPathLookupFunction(source, detectFn) {
+  const detectFunctionRegex = new RegExp(
+    `function ${escapeRegExp(detectFn)}\\(\\)\\{return ([A-Za-z_$][\\w$]*)\\(\\\`zed\\\`\\)`,
+  );
+  return source.match(detectFunctionRegex)?.[1] ?? null;
+}
+
+function applyLinuxZedOpenerPatch(currentSource) {
+  if (!currentSource.includes("id:`zed`")) {
+    return currentSource;
+  }
+
+  const block = findZedOpenerBlock(currentSource);
+  if (block == null) {
+    console.warn("WARN: Could not parse Zed opener block - skipping Linux Zed opener patch");
+    return currentSource;
+  }
+  if (block.text.includes("linux:{")) {
+    return currentSource;
+  }
+
+  const argsFn = block.text.match(/\bargs:([A-Za-z_$][\w$]*)/)?.[1];
+  const detectFn = block.text.match(/\bdarwin:\{[^}]*\bdetect:([A-Za-z_$][\w$]*)/)?.[1];
+  if (argsFn == null || detectFn == null) {
+    console.warn("WARN: Could not identify Zed opener helpers - skipping Linux Zed opener patch");
+    return currentSource;
+  }
+
+  const pathLookupFn = findZedPathLookupFunction(currentSource, detectFn);
+  if (pathLookupFn == null) {
+    console.warn("WARN: Could not identify Zed path lookup helper - skipping Linux Zed opener patch");
+    return currentSource;
+  }
+
+  let insertionPoint = block.text.lastIndexOf("}}};");
+  if (insertionPoint === -1) {
+    insertionPoint = block.text.lastIndexOf("}}}");
+  }
+  if (insertionPoint === -1) {
+    console.warn("WARN: Could not find Zed opener insertion point - skipping Linux Zed opener patch");
+    return currentSource;
+  }
+
+  const linuxZed =
+    `,linux:{label:\`Zed\`,icon:\`apps/zed.png\`,kind:\`editor\`,detect:()=>${pathLookupFn}(\`zed\`)??${pathLookupFn}(\`zeditor\`)??${pathLookupFn}(\`zedit\`)??${pathLookupFn}(\`zed-cli\`),args:${argsFn}}`;
+  const patchedBlock =
+    block.text.slice(0, insertionPoint + 1) + linuxZed + block.text.slice(insertionPoint + 1);
+  const patchedSource =
+    currentSource.slice(0, block.start) + patchedBlock + currentSource.slice(block.end);
+  const patchedBlockCheck = patchedSource.slice(block.start, block.start + patchedBlock.length);
+  if (
+    !patchedBlockCheck.includes("id:`zed`") ||
+    !patchedBlockCheck.includes("linux:{label:`Zed`") ||
+    !patchedBlockCheck.includes(`${pathLookupFn}(\`zeditor\`)`) ||
+    !patchedBlockCheck.includes(`args:${argsFn}`)
+  ) {
+    console.warn("WARN: Failed to apply Linux Zed opener patch");
+    return currentSource;
+  }
+
+  return patchedSource;
+}
+
+function findPropertyBlock(source, propertyName) {
+  const propertyIndex = source.indexOf(`,${propertyName}:{`);
+  if (propertyIndex === -1) {
+    return null;
+  }
+
+  const openIndex = source.indexOf("{", propertyIndex);
+  const closeIndex = findMatchingBrace(source, openIndex);
+  if (openIndex === -1 || closeIndex === -1) {
+    return null;
+  }
+
+  return {
+    start: propertyIndex,
+    end: closeIndex + 1,
+    text: source.slice(propertyIndex, closeIndex + 1),
+  };
+}
+
+function insertLinuxFileManagerHelpers(currentSource, insertionIndex, { fsVar, pathVar }) {
+  if (currentSource.includes("function codexLinuxFindExecutable(")) {
+    return currentSource;
+  }
+
+  const helpers =
+    `function codexLinuxFindExecutable(e){if(process.platform!==\`linux\`||!e)return null;let t=process.env.PATH||\`\`;for(let n of t.split(\`:\`)){if(!n||!${pathVar}.isAbsolute(n))continue;let r=(0,${pathVar}.join)(n,e);try{if((0,${fsVar}.existsSync)(r)){let e=(0,${fsVar}.statSync)(r);if(e.isFile())try{(0,${fsVar}.accessSync)(r,${fsVar}.constants.X_OK);return r}catch{}}}catch{}}return null}` +
+    `function codexLinuxResolveExistingTarget(e){if(typeof e!==\`string\`||e.length===0)return null;let t=e;for(;;){try{if((0,${fsVar}.existsSync)(t))return t}catch{}let n=(0,${pathVar}.dirname)(t);if(n===t)return null;t=n}}` +
+    `function codexLinuxShouldDropXdgConfigHome(e){let t=e.XDG_CONFIG_HOME,n=e.CODEX_ELECTRON_USER_DATA_DIR;if(typeof t!==\`string\`)return!1;if(typeof n===\`string\`&&t===(0,${pathVar}.join)((0,${pathVar}.dirname)(n),\`xdg-config\`))return!0;let r=e.CODEX_LINUX_APP_ID;return!!(r&&t.endsWith(\`/\${r}/xdg-config\`))}` +
+    `function codexLinuxOpenTargetEnv(){let e={...process.env};codexLinuxShouldDropXdgConfigHome(e)&&delete e.XDG_CONFIG_HOME;for(let t of [\`NODE_OPTIONS\`,\`NODE_PATH\`,\`NODE_REPL_EXTERNAL_MODULE\`,\`ELECTRON_RUN_AS_NODE\`,\`ELECTRON_NO_ASAR\`,\`ELECTRON_ENABLE_LOGGING\`,\`VSCODE_NODE_OPTIONS\`,\`VSCODE_NODE_REPL_EXTERNAL_MODULE\`,\`npm_config_node_options\`,\`NPM_CONFIG_NODE_OPTIONS\`,\`CHROME_DESKTOP\`,\`ELECTRON_RENDERER_URL\`,\`CODEX_ELECTRON_RESOURCES_PATH\`,\`CODEX_ELECTRON_USER_DATA_DIR\`,\`CODEX_LINUX_APP_ID\`,\`CODEX_LINUX_APP_DISPLAY_NAME\`,\`CODEX_LINUX_WEBVIEW_PORT\`])delete e[t];return e}` +
+    `function codexLinuxLaunchDetached(e,t,n={}){return new Promise((r,i)=>{let a=!1,o;try{let s=require(\`node:child_process\`).spawn(e,t,{detached:!0,stdio:\`ignore\`,windowsHide:!0,cwd:n.cwd,env:codexLinuxOpenTargetEnv()});o=setTimeout(()=>{a=!0,s.unref?.(),r()},400),o.unref?.(),s.on(\`error\`,e=>{a||(clearTimeout(o),i(e))}),s.on(\`close\`,e=>{a||(clearTimeout(o),e===0?r():i(Error(\`Linux open target launch failed\`)))})}catch(e){clearTimeout(o),i(e)}})}` +
+    `function codexLinuxTryReveal(e,t){return new Promise((n,r)=>{let i=!1,a;try{let o=require(\`node:child_process\`).spawn(e,t,{stdio:\`ignore\`,windowsHide:!0,env:codexLinuxOpenTargetEnv()});a=setTimeout(()=>{i=!0,o.unref?.(),n()},400),a.unref?.(),o.on(\`error\`,e=>{i||(clearTimeout(a),r(e))}),o.on(\`close\`,e=>{i||(clearTimeout(a),e===0?n():r(Error(\`Linux file manager reveal failed\`)))})}catch(e){clearTimeout(a),r(e)}})}` +
+    `async function codexLinuxOpenFileManager(e){let t=codexLinuxResolveExistingTarget(e)??e;if(typeof t!==\`string\`||t.length===0)throw Error(\`No Linux file manager target available\`);let n=!1;try{n=(0,${fsVar}.existsSync)(t)&&(0,${fsVar}.statSync)(t).isFile()}catch{}if(n)for(let e of [[\`dolphin\`,[\`--select\`,t]],[\`nautilus\`,[\`--select\`,t]]]){let t=codexLinuxFindExecutable(e[0]);if(t)try{await codexLinuxTryReveal(t,e[1]);return}catch{}}t=n?(0,${pathVar}.dirname)(t):t;for(let e of [\`nemo\`,\`thunar\`,\`pcmanfm\`,\`caja\`,\`xdg-open\`]){let n=codexLinuxFindExecutable(e);if(n)try{await codexLinuxLaunchDetached(n,[t]);return}catch{}}throw Error(\`No Linux file manager available\`)}`;
+
+  return currentSource.slice(0, insertionIndex) + helpers + currentSource.slice(insertionIndex);
 }
 
 function applyLinuxWindowOptionsPatch(currentSource, iconAsset) {
@@ -1053,4 +1188,5 @@ module.exports = {
   applyLinuxTrayPatch,
   applyLinuxWillQuitDrainTimeoutPatch,
   applyLinuxWindowOptionsPatch,
+  applyLinuxZedOpenerPatch,
 };

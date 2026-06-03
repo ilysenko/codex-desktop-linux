@@ -539,6 +539,63 @@ install_chrome_extension_host_resource() {
     install -m 0755 "$source_host" "$target_host"
 }
 
+install_chrome_linux_runtime_binary() {
+    local source="$1"
+    local destination="$2"
+    local label="$3"
+
+    if [ ! -f "$source" ]; then
+        warn "Chrome plugin $label not found at $source; skipping Chrome"
+        return 1
+    fi
+
+    if ! is_host_linux_elf_executable "$source"; then
+        warn "Chrome plugin $label is not a Linux executable for $ARCH; skipping Chrome"
+        return 1
+    fi
+
+    install -m 0755 "$source" "$destination"
+}
+
+write_chrome_codex_cli_shim() {
+    local destination="$1"
+
+    cat > "$destination" <<'SCRIPT'
+#!/bin/sh
+set -eu
+
+if [ -n "${CODEX_CLI_PATH:-}" ] && [ -x "$CODEX_CLI_PATH" ]; then
+    exec "$CODEX_CLI_PATH" "$@"
+fi
+
+if command -v codex >/dev/null 2>&1; then
+    exec codex "$@"
+fi
+
+if [ -x "$HOME/.npm-global/bin/codex" ]; then
+    exec "$HOME/.npm-global/bin/codex" "$@"
+fi
+
+echo "codex CLI not found; set CODEX_CLI_PATH or install @openai/codex" >&2
+exit 127
+SCRIPT
+    chmod 0755 "$destination"
+}
+
+stage_chrome_app_server_runtime() {
+    local target_plugin="$1"
+    local runtime_dir="$target_plugin/app-server-runtime"
+    local managed_node="$INSTALL_DIR/resources/node-runtime/bin/node"
+    local node_repl="$INSTALL_DIR/resources/node_repl"
+
+    rm -rf "$runtime_dir"
+    mkdir -p "$runtime_dir"
+
+    install_chrome_linux_runtime_binary "$managed_node" "$runtime_dir/node" "managed Node.js runtime" || return 1
+    install_chrome_linux_runtime_binary "$node_repl" "$runtime_dir/node_repl" "node_repl runtime" || return 1
+    write_chrome_codex_cli_shim "$runtime_dir/codex"
+}
+
 patch_chrome_plugin_for_linux() {
     local target_plugin="$1"
     local patcher="$SCRIPT_DIR/scripts/lib/patch-chrome-plugin.js"
@@ -579,6 +636,10 @@ stage_chrome_plugin_from_upstream() {
     rm -rf "$target_plugin"
     cp -R "$source_plugin" "$target_plugin"
     remove_macos_sidecar_files "$target_plugin"
+    if ! stage_chrome_app_server_runtime "$target_plugin"; then
+        rm -rf "$target_plugin"
+        return 1
+    fi
     patch_chrome_plugin_for_linux "$target_plugin"
     patch_browser_use_node_repl_env_guard "$target_plugin/scripts/browser-client.mjs"
     patch_browser_use_native_pipe_import_meta_bridge "$target_plugin/scripts/browser-client.mjs"
@@ -1046,6 +1107,8 @@ install_bundled_plugin_resources() {
     fi
 
     mkdir -p "$bundled_plugins_dir/plugins" "$bundled_plugins_dir/.agents/plugins"
+    install_linux_executable_resource "$upstream_resources/node" "$resources_dir/node" "node runtime" "info" || true
+    install_browser_use_node_repl_resource "$upstream_resources/node_repl" "$resources_dir/node_repl" || true
 
     if source_browser_plugin="$(find_browser_plugin_source "$bundled_source_root" "$source_marketplace")" &&
         stage_browser_plugin_from_upstream "$source_browser_plugin" "$bundled_plugins_dir/plugins"; then
@@ -1070,9 +1133,6 @@ install_bundled_plugin_resources() {
     fi
 
     write_bundled_plugins_marketplace "$source_marketplace" "$bundled_plugins_dir/.agents/plugins/marketplace.json" "$include_browser" "$include_chrome" "$include_computer_use"
-
-    install_linux_executable_resource "$upstream_resources/node" "$resources_dir/node" "node runtime" "info" || true
-    install_browser_use_node_repl_resource "$upstream_resources/node_repl" "$resources_dir/node_repl" || true
 
     info "Linux-safe bundled plugins installed"
 }

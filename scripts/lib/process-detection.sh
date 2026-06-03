@@ -8,13 +8,19 @@ canonical_path() {
     realpath -m "$1"
 }
 
+proc_root() {
+    printf '%s\n' "${CODEX_PROCESS_PROC_ROOT:-/proc}"
+}
+
 pid_is_current_user() {
     local pid="$1"
+    local root
     local uid
 
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-    [ -d "/proc/$pid" ] || return 1
-    uid="$(awk '/^Uid:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)"
+    root="$(proc_root)"
+    [ -d "$root/$pid" ] || return 1
+    uid="$(awk '/^Uid:/ {print $2}' "$root/$pid/status" 2>/dev/null || true)"
     [ "$uid" = "$(id -u)" ]
 }
 
@@ -24,21 +30,28 @@ pid_is_current_user() {
 # their parent and re-attach to systemd.
 pid_is_electron_helper() {
     local pid="$1"
-    [ -r "/proc/$pid/cmdline" ] || return 1
-    tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -q '^--type='
+    local root
+
+    root="$(proc_root)"
+    [ -r "$root/$pid/cmdline" ] || return 1
+    tr '\0' '\n' < "$root/$pid/cmdline" 2>/dev/null | grep -Eq '(^|[[:space:]])--type='
 }
 
 pid_matches_install_target() {
     local pid="$1"
     local expected="$2"
     local actual
+    local deleted_suffix=" (deleted)"
+    local root
 
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-    [ -d "/proc/$pid" ] || return 1
+    root="$(proc_root)"
+    [ -d "$root/$pid" ] || return 1
     pid_is_current_user "$pid" || return 1
-    actual="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+    actual="$(readlink -f "$root/$pid/exe" 2>/dev/null || true)"
     [ -n "$actual" ] || return 1
-    [ "$actual" = "$(canonical_path "$expected")" ] || return 1
+    actual="${actual%"$deleted_suffix"}"
+    [ "$(canonical_path "$actual")" = "$(canonical_path "$expected")" ] || return 1
     ! pid_is_electron_helper "$pid"
 }
 
@@ -47,8 +60,10 @@ find_running_install_target_pid() {
     local app_pid_file="${XDG_STATE_HOME:-$HOME/.local/state}/$CODEX_APP_ID/app.pid"
     local pid
     local proc_exe
+    local root
 
     [ -e "$electron_path" ] || return 1
+    root="$(proc_root)"
 
     if [ -f "$app_pid_file" ]; then
         pid="$(cat "$app_pid_file" 2>/dev/null || true)"
@@ -58,9 +73,9 @@ find_running_install_target_pid() {
         fi
     fi
 
-    for proc_exe in /proc/[0-9]*/exe; do
+    for proc_exe in "$root"/[0-9]*/exe; do
         [ -e "$proc_exe" ] || continue
-        pid="${proc_exe#/proc/}"
+        pid="${proc_exe#"$root"/}"
         pid="${pid%/exe}"
         if pid_matches_install_target "$pid" "$electron_path"; then
             echo "$pid"
@@ -87,4 +102,3 @@ Close that app before rebuilding this install directory, or build into a separat
 Set CODEX_INSTALL_ALLOW_RUNNING=1 only if you intentionally want to overwrite a running app."
     fi
 }
-

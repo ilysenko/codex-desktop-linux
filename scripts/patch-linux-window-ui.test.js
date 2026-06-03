@@ -50,6 +50,7 @@ const {
   applyLinuxTrayPatch,
   applyLinuxWillQuitDrainTimeoutPatch,
   applyLinuxWindowOptionsPatch,
+  applyLinuxZedOpenerPatch,
   applySubagentNicknameMetadataPatch,
   isComputerUseUiEnabled,
   patchMainBundleSource,
@@ -89,6 +90,8 @@ const mainBundlePrefix =
   "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`);";
 const fileManagerBundle =
   "var lu=jl({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>il(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:uu,args:e=>il(e),open:async({path:e})=>du(e)}});function uu(){}";
+const zedOpenerBundle =
+  "function Tw(e,t){return t?[`${e}:${t.line}:${t.column}`]:[e]}function Rp(e){return e}var eT={id:`zed`,platforms:{darwin:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:tT,args:Tw,open:async({command:e,path:t,location:n})=>{await aT(e,t,n)}},win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:nT,args:Tw}}};function tT(){return Rp(`zed`)??nC(`Zed`,`zed`)}function nT(){let e=Rp(`zed.exe`)??Rp(`zed`);return e}";
 const alreadyOpaqueBackgroundBundle =
   "process.platform===`linux`?{backgroundColor:e?t:n,backgroundMaterial:null}:{backgroundColor:r,backgroundMaterial:null}";
 const opaqueBackgroundBundleWithDriftingGw =
@@ -546,6 +549,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-opaque-background",
     "linux-avatar-overlay-mouse-passthrough",
     "linux-file-manager",
+    "linux-zed-opener",
     "linux-tray",
     "linux-build-info-tray",
     "linux-single-instance",
@@ -864,9 +868,54 @@ test("adds Linux file manager support without relying on exact minified variable
 
   const patched = applyPatchTwice(applyLinuxFileManagerPatch, source);
 
+  assert.match(patched, /function codexLinuxFindExecutable\(/);
+  assert.match(patched, /function codexLinuxLaunchDetached\(e,t,n=\{\}\)/);
+  assert.match(patched, /cwd:n\.cwd/);
   assert.match(patched, /linux:\{label:`File Manager`/);
-  assert.match(patched, /detect:\(\)=>`linux-file-manager`/);
-  assert.match(patched, /n\.shell\.openPath\(__codexOpenTarget\)/);
+  assert.match(patched, /detect:\(\)=>codexLinuxFindExecutable\(`dolphin`\)\?\?/);
+  assert.match(patched, /\[`dolphin`,\[`--select`,t\]\]/);
+  assert.match(patched, /n\.shell\.openPath\(t\)/);
+  assert.doesNotMatch(patched, /__codexOpenTarget/);
+});
+
+test("replaces legacy Linux file manager opener with reveal-aware opener", () => {
+  const legacyLinuxFileManager =
+    "linux:{label:`File Manager`,icon:`apps/file-explorer.png`,detect:()=>`linux-file-manager`,args:e=>[e],open:async({path:e})=>{let __codexOpenTarget=e;let __codexError=await n.shell.openPath(__codexOpenTarget);if(__codexError)throw Error(__codexError)}}";
+  const legacyBundle = fileManagerBundle.replace(
+    "}});function uu(){}",
+    `},${legacyLinuxFileManager}});function uu(){}`,
+  );
+  const source = `${mainBundlePrefix}${legacyBundle}`;
+
+  const patched = applyPatchTwice(applyLinuxFileManagerPatch, source);
+
+  assert.equal((patched.match(/linux:\{label:`File Manager`/g) ?? []).length, 1);
+  assert.match(patched, /codexLinuxOpenFileManager\(e\)/);
+  assert.match(patched, /n\.shell\.openPath\(t\)/);
+  assert.doesNotMatch(patched, /__codexOpenTarget|__codexError/);
+});
+
+test("adds Linux Zed opener support to the upstream opener block", () => {
+  const patched = applyPatchTwice(applyLinuxZedOpenerPatch, zedOpenerBundle);
+
+  assert.match(patched, /linux:\{label:`Zed`,icon:`apps\/zed\.png`,kind:`editor`/);
+  assert.match(
+    patched,
+    /detect:\(\)=>Rp\(`zed`\)\?\?Rp\(`zeditor`\)\?\?Rp\(`zedit`\)\?\?Rp\(`zed-cli`\)/,
+  );
+  assert.match(patched, /args:Tw/);
+});
+
+test("keeps an existing Linux Zed opener unchanged", () => {
+  const zedAlreadyLinux = zedOpenerBundle.replace(
+    "win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:nT,args:Tw}}",
+    "win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:nT,args:Tw},linux:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:tT,args:Tw}}",
+  );
+
+  const patched = applyPatchTwice(applyLinuxZedOpenerPatch, zedAlreadyLinux);
+
+  assert.equal((patched.match(/linux:\{label:`Zed`/g) ?? []).length, 1);
+  assert.match(patched, /detect:tT,args:Tw/);
 });
 
 test("preserves user-enabled remote_control config on Linux", () => {
@@ -3064,11 +3113,13 @@ function withIsolatedHome(body) {
   const previousXdg = process.env.XDG_CONFIG_HOME;
   const previousAppId = process.env.CODEX_APP_ID;
   const previousLinuxAppId = process.env.CODEX_LINUX_APP_ID;
+  const previousLinuxSettingsFile = process.env.CODEX_LINUX_SETTINGS_FILE;
   const previousFlag = process.env[COMPUTER_USE_UI_ENV_VAR];
   process.env.HOME = tempHome;
   delete process.env.XDG_CONFIG_HOME;
   delete process.env.CODEX_APP_ID;
   delete process.env.CODEX_LINUX_APP_ID;
+  delete process.env.CODEX_LINUX_SETTINGS_FILE;
   delete process.env[COMPUTER_USE_UI_ENV_VAR];
   try {
     return body(tempHome);
@@ -3092,6 +3143,11 @@ function withIsolatedHome(body) {
       delete process.env.CODEX_LINUX_APP_ID;
     } else {
       process.env.CODEX_LINUX_APP_ID = previousLinuxAppId;
+    }
+    if (previousLinuxSettingsFile == null) {
+      delete process.env.CODEX_LINUX_SETTINGS_FILE;
+    } else {
+      process.env.CODEX_LINUX_SETTINGS_FILE = previousLinuxSettingsFile;
     }
     if (previousFlag == null) {
       delete process.env[COMPUTER_USE_UI_ENV_VAR];
@@ -3134,6 +3190,20 @@ test("isComputerUseUiEnabled honours side-by-side CODEX_APP_ID settings", () => 
   withIsolatedHome((home) => {
     process.env.CODEX_APP_ID = "codex-cua-lab";
     writeSettingsFile(home, JSON.stringify({ [COMPUTER_USE_UI_SETTINGS_KEY]: true }), "codex-cua-lab");
+    assert.equal(isComputerUseUiEnabled(), true);
+  });
+});
+
+test("isComputerUseUiEnabled honours CODEX_LINUX_SETTINGS_FILE", () => {
+  withIsolatedHome((home) => {
+    const settingsFile = path.join(home, "custom-settings", "settings.json");
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+    fs.writeFileSync(
+      settingsFile,
+      JSON.stringify({ [COMPUTER_USE_UI_SETTINGS_KEY]: true }),
+      "utf8",
+    );
+    process.env.CODEX_LINUX_SETTINGS_FILE = settingsFile;
     assert.equal(isComputerUseUiEnabled(), true);
   });
 });

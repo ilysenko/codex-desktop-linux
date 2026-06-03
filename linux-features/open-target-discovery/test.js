@@ -813,16 +813,16 @@ test("open-target discovery upgrades the baseline file manager target", async ()
   });
 });
 
-test("open-target discovery stays disabled until listed in features.json", () => {
+test("open-target discovery leaves terminal and IDE disabled until listed in features.json", () => {
   withTempFeatureConfig([], (root) => {
     assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), []);
     assert.deepEqual(loadLinuxFeatureMainBundlePatches({ featuresRoot: root }), []);
 
     withLinuxFeatureRootEnv(root, () => {
       const patched = captureWarns(() => patchMainBundleSource(openTargetsBundle, null)).value;
+      assert.match(patched, /codexLinuxOpenFileManager\(e\)/);
       assert.doesNotMatch(patched, /linux:\{label:`Terminal`/);
       assert.doesNotMatch(patched, /\.\.\.codexLinuxDiscoveredIdeTargets\(\)/);
-      assert.doesNotMatch(patched, /codexLinuxOpenFileManager\(e\)/);
     });
   });
 });

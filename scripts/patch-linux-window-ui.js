@@ -77,6 +77,7 @@ const {
   applyLinuxTrayPatch,
   applyLinuxWillQuitDrainTimeoutPatch,
   applyLinuxWindowOptionsPatch,
+  applyLinuxZedOpenerPatch,
 } = require("./patches/main-process.js");
 const {
   applyLinuxAvatarOverlayMousePassthroughPatch,
@@ -195,6 +196,7 @@ module.exports = {
   applyLinuxTrayPatch,
   applyLinuxWillQuitDrainTimeoutPatch,
   applyLinuxWindowOptionsPatch,
+  applyLinuxZedOpenerPatch,
   applySubagentNicknameMetadataPatch,
   createPatchReport,
   corePatchDescriptors,

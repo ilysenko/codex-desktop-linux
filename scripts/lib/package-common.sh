@@ -49,6 +49,132 @@ package_node_binary() {
     command -v node
 }
 
+find_cargo_for_packaged_computer_use() {
+    if command -v cargo >/dev/null 2>&1; then
+        command -v cargo
+        return 0
+    fi
+
+    if [ -x "$HOME/.cargo/bin/cargo" ]; then
+        echo "$HOME/.cargo/bin/cargo"
+        return 0
+    fi
+
+    return 1
+}
+
+stage_packaged_linux_computer_use_backend() {
+    local app_root="$1"
+    local target_plugin="$app_root/resources/plugins/openai-bundled/plugins/computer-use"
+    local target_bin="$target_plugin/bin"
+    local backend_source="${CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE:-}"
+    local cosmic_source="${CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE:-}"
+    local cargo_cmd=""
+
+    [ -d "$target_plugin" ] || return 0
+
+    if [ -n "$backend_source" ] || [ -n "$cosmic_source" ]; then
+        [ -x "$backend_source" ] || error "CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE is not executable: $backend_source"
+        [ -x "$cosmic_source" ] || error "CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE is not executable: $cosmic_source"
+        info "Using prebuilt Linux Computer Use backend for package payload"
+    else
+        if [ ! -d "$REPO_DIR/computer-use-linux" ]; then
+            info "Linux Computer Use source not found; keeping existing package payload backend"
+            return 0
+        fi
+        if ! cargo_cmd="$(find_cargo_for_packaged_computer_use)"; then
+            [ -x "$target_bin/codex-computer-use-linux" ] && [ -x "$target_bin/codex-computer-use-cosmic" ] \
+                || error "cargo not found and packaged Linux Computer Use backend is missing"
+            info "cargo not found; keeping existing package payload backend"
+            return 0
+        fi
+        info "Building Linux Computer Use backend for package payload"
+        (cd "$REPO_DIR" && "$cargo_cmd" build --release -p codex-computer-use-linux >&2) \
+            || error "Failed to build Linux Computer Use backend"
+        backend_source="$REPO_DIR/target/release/codex-computer-use-linux"
+        cosmic_source="$REPO_DIR/target/release/codex-computer-use-cosmic"
+    fi
+
+    [ -x "$backend_source" ] || error "Linux Computer Use backend missing: $backend_source"
+    [ -x "$cosmic_source" ] || error "Linux Computer Use COSMIC helper missing: $cosmic_source"
+    mkdir -p "$target_bin"
+    cp "$backend_source" "$target_bin/codex-computer-use-linux"
+    cp "$cosmic_source" "$target_bin/codex-computer-use-cosmic"
+    chmod 0755 "$target_bin/codex-computer-use-linux" "$target_bin/codex-computer-use-cosmic"
+}
+
+is_macho_binary() {
+    local path="$1"
+    python3 - "$path" <<'PY'
+import pathlib
+import sys
+
+try:
+    magic = pathlib.Path(sys.argv[1]).read_bytes()[:4]
+except OSError:
+    sys.exit(1)
+
+macho_magics = {
+    b"\xfe\xed\xfa\xce",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+}
+sys.exit(0 if magic in macho_magics else 1)
+PY
+}
+
+write_packaged_chrome_codex_cli_shim() {
+    local destination="$1"
+
+    cat > "$destination" <<'SCRIPT'
+#!/bin/sh
+set -eu
+
+if [ -n "${CODEX_CLI_PATH:-}" ] && [ -x "$CODEX_CLI_PATH" ]; then
+    exec "$CODEX_CLI_PATH" "$@"
+fi
+
+if command -v codex >/dev/null 2>&1; then
+    exec codex "$@"
+fi
+
+if [ -x "$HOME/.npm-global/bin/codex" ]; then
+    exec "$HOME/.npm-global/bin/codex" "$@"
+fi
+
+echo "codex CLI not found; set CODEX_CLI_PATH or install @openai/codex" >&2
+exit 127
+SCRIPT
+    chmod 0755 "$destination"
+}
+
+stage_packaged_chrome_app_server_runtime() {
+    local app_root="$1"
+    local target_plugin="$app_root/resources/plugins/openai-bundled/plugins/chrome"
+    local runtime_dir="$target_plugin/app-server-runtime"
+    local managed_node="$app_root/resources/node-runtime/bin/node"
+    local node_repl="$app_root/resources/node_repl"
+
+    [ -d "$target_plugin" ] || return 0
+    [ -x "$managed_node" ] || error "Missing packaged managed Node.js runtime for Chrome plugin: $managed_node"
+    [ -x "$node_repl" ] || error "Missing packaged node_repl runtime for Chrome plugin: $node_repl"
+    if is_macho_binary "$managed_node"; then
+        error "Packaged managed Node.js runtime is a macOS binary: $managed_node"
+    fi
+    if is_macho_binary "$node_repl"; then
+        error "Packaged node_repl runtime is a macOS binary: $node_repl"
+    fi
+
+    rm -rf "$runtime_dir"
+    mkdir -p "$runtime_dir"
+    install -m 0755 "$managed_node" "$runtime_dir/node"
+    install -m 0755 "$node_repl" "$runtime_dir/node_repl"
+    write_packaged_chrome_codex_cli_shim "$runtime_dir/codex"
+}
+
 stage_update_builder_linux_features_config() {
     local update_builder_root="$1"
     local helper="$REPO_DIR/scripts/lib/linux-features.js"
@@ -183,14 +309,14 @@ render_desktop_entry() {
             /^\[/ { skip = 0 }
             skip { next }
             /^Actions=/ {
-                print "Actions=new-window;"
+                print "Actions=new-window;quick-chat;compact-prompt;"
                 actions_rewritten = 1
                 next
             }
             { print }
             END {
                 if (actions_rewritten == 0) {
-                    print "Actions=new-window;"
+                    print "Actions=new-window;quick-chat;compact-prompt;"
                 }
             }
         ' "$rendered_target" > "$target"
@@ -314,6 +440,35 @@ render_desktop_entry_doctor_helper() {
 
     cp "$REPO_DIR/packaging/linux/codex-desktop-entry-doctor.sh" "$target"
     chmod 0644 "$target"
+}
+
+render_desktop_service_lifecycle_helper() {
+    local target="$1"
+
+    cp "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" "$target"
+    chmod 0644 "$target"
+}
+
+render_desktop_app_service() {
+    local target="$1"
+    local package_name
+    local service_source="${DESKTOP_SERVICE_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop.service}"
+
+    ensure_file_exists "$service_source" "desktop app service template"
+    package_name="$(sed_escape_replacement "$PACKAGE_NAME")"
+    sed -e "s/__PACKAGE_NAME__/$package_name/g" "$service_source" > "$target"
+    chmod 0644 "$target"
+}
+
+render_desktop_app_doctor() {
+    local target="$1"
+    local package_name
+    local doctor_source="${DESKTOP_DOCTOR_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop-doctor.py}"
+
+    ensure_file_exists "$doctor_source" "desktop doctor template"
+    package_name="$(sed_escape_replacement "$PACKAGE_NAME")"
+    sed -e "s/__PACKAGE_NAME__/$package_name/g" "$doctor_source" > "$target"
+    chmod 0755 "$target"
 }
 
 write_no_updater_deb_postinst() {
@@ -642,6 +797,52 @@ fs.writeFileSync(infoFile, `${JSON.stringify(info, null, 2)}\n`, "utf8");
 NODE
 }
 
+stage_packaged_app_build_info_source() {
+    local app_root="$1"
+    local primary_info="$app_root/.codex-linux/build-info.json"
+    local resource_info="$app_root/resources/codex-linux-build-info.json"
+    local node_bin
+
+    [ -f "$primary_info" ] || [ -f "$resource_info" ] || return 0
+
+    node_bin="$(package_node_binary)"
+    "$node_bin" - "$REPO_DIR" "$primary_info" "$resource_info" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [repoDir, ...infoPaths] = process.argv.slice(2);
+const { isoTimestamp, sourceInfo } = require(path.join(repoDir, "scripts/lib/build-info.js"));
+
+function readJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+const existing = infoPaths.map(readJson).find((value) => value != null && typeof value === "object" && !Array.isArray(value));
+if (existing == null) {
+  process.exit(0);
+}
+
+const source = {
+  ...sourceInfo(repoDir),
+  provenance: "packaged-app-payload",
+};
+const updated = {
+  ...existing,
+  generatedAt: isoTimestamp(),
+  source,
+};
+
+for (const infoPath of infoPaths) {
+  fs.mkdirSync(path.dirname(infoPath), { recursive: true });
+  fs.writeFileSync(infoPath, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+}
+NODE
+}
+
 stage_common_package_files() {
     local root="$1"
     local app_root="$root/opt/$PACKAGE_NAME"
@@ -655,19 +856,25 @@ stage_common_package_files() {
         "$root/opt" \
         "$root/usr/bin" \
         "$root/usr/share/applications" \
-        "$root/usr/share/icons/hicolor/256x256/apps"
+        "$root/usr/share/icons/hicolor/256x256/apps" \
+        "$root/usr/lib/systemd/user"
     if package_with_updater_enabled; then
         mkdir -p \
-            "$root/usr/lib/systemd/user" \
             "$root/usr/share/polkit-1/actions"
     fi
 
     rm -rf "$app_root"
     cp -aT "$APP_DIR" "$app_root"
+    stage_packaged_linux_computer_use_backend "$app_root"
+    stage_packaged_chrome_app_server_runtime "$app_root"
     mkdir -p "$app_root/.codex-linux"
+    stage_packaged_app_build_info_source "$app_root"
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"
+    render_desktop_service_lifecycle_helper "$app_root/.codex-linux/codex-desktop-service-lifecycle.sh"
     render_desktop_entry "$root/usr/share/applications/$PACKAGE_NAME.desktop"
+    render_desktop_app_service "$root/usr/lib/systemd/user/$PACKAGE_NAME.service"
+    render_desktop_app_doctor "$root/usr/bin/$PACKAGE_NAME-doctor"
     cp "$ICON_SOURCE" "$root/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
     if package_with_updater_enabled; then
         cp "$UPDATER_BINARY_SOURCE" "$root/usr/bin/codex-update-manager"
@@ -691,6 +898,7 @@ stage_update_builder_bundle() {
     mkdir -p \
         "$update_builder_root/scripts" \
         "$update_builder_root/scripts/lib" \
+        "$update_builder_root/scripts/ci" \
         "$update_builder_root/scripts/patches" \
         "$update_builder_root/launcher" \
         "$update_builder_root/linux-features" \
@@ -715,6 +923,7 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/scripts/build-rpm.sh" "$update_builder_root/scripts/build-rpm.sh"
     cp "$REPO_DIR/scripts/build-pacman.sh" "$update_builder_root/scripts/build-pacman.sh"
     cp "$REPO_DIR/scripts/rebuild-candidate.sh" "$update_builder_root/scripts/rebuild-candidate.sh"
+    cp "$REPO_DIR/scripts/app-server-schema-guard.js" "$update_builder_root/scripts/app-server-schema-guard.js"
     cp "$REPO_DIR/scripts/patch-linux-window-ui.js" "$update_builder_root/scripts/patch-linux-window-ui.js"
     cp -r "$REPO_DIR/scripts/patches/." "$update_builder_root/scripts/patches/"
     cp "$REPO_DIR/scripts/lib/package-common.sh" "$update_builder_root/scripts/lib/package-common.sh"
@@ -735,11 +944,19 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/scripts/lib/rebuild-report.sh" "$update_builder_root/scripts/lib/rebuild-report.sh"
     cp "$REPO_DIR/scripts/lib/build-info.js" "$update_builder_root/scripts/lib/build-info.js"
     cp "$REPO_DIR/scripts/lib/build-info.sh" "$update_builder_root/scripts/lib/build-info.sh"
+    cp "$REPO_DIR/scripts/ci/validate-patch-report.js" \
+        "$update_builder_root/scripts/ci/validate-patch-report.js"
     cp "$REPO_DIR/packaging/linux/control" "$update_builder_root/packaging/linux/control"
     cp "$REPO_DIR/packaging/linux/codex-desktop.spec" "$update_builder_root/packaging/linux/codex-desktop.spec"
     cp "$REPO_DIR/packaging/linux/codex-desktop.desktop" "$update_builder_root/packaging/linux/codex-desktop.desktop"
+    cp "${DESKTOP_SERVICE_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop.service}" \
+        "$update_builder_root/packaging/linux/codex-desktop.service"
+    cp "${DESKTOP_DOCTOR_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop-doctor.py}" \
+        "$update_builder_root/packaging/linux/codex-desktop-doctor.py"
     cp "$REPO_DIR/packaging/linux/codex-desktop-entry-doctor.sh" \
         "$update_builder_root/packaging/linux/codex-desktop-entry-doctor.sh"
+    cp "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" \
+        "$update_builder_root/packaging/linux/codex-desktop-service-lifecycle.sh"
     cp "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "$update_builder_root/packaging/linux/codex-packaged-runtime.sh"
     cp "$REPO_DIR/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy" \
         "$update_builder_root/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy"
