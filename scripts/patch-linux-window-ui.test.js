@@ -599,6 +599,18 @@ test("default core patch descriptors are grouped and unique", () => {
   );
 });
 
+test("fast-mode guard descriptor follows upstream service-tier bundle names", () => {
+  const descriptor = corePatchDescriptors().find((descriptor) =>
+    descriptor.id === "linux-fast-mode-model-guard",
+  );
+
+  assert.ok(descriptor.pattern.test("use-is-fast-mode-enabled-abc.js"));
+  assert.ok(descriptor.pattern.test("read-service-tier-for-request-BJ8QN0Q7.js"));
+  assert.ok(descriptor.pattern.test("use-service-tier-settings-DFXPADNF.js"));
+  assert.ok(descriptor.pattern.test("app-server-manager-signals-BOGyjFm3.js"));
+  assert.equal(descriptor.pattern.test("service-tier-icons-CsNhab5W.js"), false);
+});
+
 function trayBundleFixture() {
   return [
     "async function Hw(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(zw=!0,Lw??Rw??(Rw=(async()=>{let r=await Ww(e.buildFlavor,e.repoRoot),i=new n.Tray(r.defaultIcon);return i})()))}",
@@ -1229,6 +1241,19 @@ test("warns when the fast-mode tier lookup is recognizable but unpatchable", () 
   assert.deepEqual(warnings, [
     "WARN: Could not find fast-mode model guard insertion point — skipping fast-mode crash guard patch",
   ]);
+});
+
+test("treats current service-tier helper bundles as already guarded", () => {
+  const source = [
+    "function sA(e,t){return t==null?null:t===`fast`?uA(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
+    "function cA(e){return[{description:tA.standardDescription},...(e?.serviceTiers??[]).map(e=>({tier:e,value:e.id}))]}",
+    "function uA(e){return e?.serviceTiers?.find(e=>rA(e.id,e.name)===`fast`)??null}",
+  ].join("");
+
+  const { value, warnings } = captureWarns(() => applyLinuxFastModeModelGuardPatch(source));
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, []);
 });
 
 test("warns when a matched webview opaque bundle has no known insertion point", () => {
