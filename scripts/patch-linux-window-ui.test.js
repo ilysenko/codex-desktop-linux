@@ -81,6 +81,7 @@ const {
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxConfigWriteVersionConflictPatch,
+  applyLinuxI18nGatePatch,
   applyLinuxSafeMonospaceFontStackPatch,
 } = require("./patches/webview-assets.js");
 const { patchAssetFiles } = require("./patches/shared.js");
@@ -562,6 +563,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-launch-actions",
     "linux-hotkey-window-prewarm",
     "linux-git-origins-source-fallback",
+    "linux-i18n-gate",
     "automation-schedule-multi-time-rrule",
     "linux-app-sunset-gate",
     "linux-app-server-feature-enablement",
@@ -1956,6 +1958,43 @@ test("warns when the app sunset key is present but the gate shape drifts", () =>
   assert.deepEqual(warnings, [
     "WARN: Could not find app sunset gate needle — skipping Linux app sunset patch",
   ]);
+});
+
+test("allows explicit locale overrides through the webview i18n provider gate on Linux", () => {
+  const source =
+    "function eP(e){let a=Ma(`72216192`),o;o=a?.get(`enable_i18n`,!1);let c=o,l=a?.get(`locale_source`,`IDE`),u=js(s.localeOverride);return c?u:null}";
+
+  const patched = applyPatchTwice(applyLinuxI18nGatePatch, source);
+
+  assert.match(patched, /o=a\?\.get\(`enable_i18n`,!1\);let l=a\?\.get\(`locale_source`,`IDE`\),u=js\(s\.localeOverride\),c=o\|\|u!=null/);
+  assert.equal((patched.match(/js\(s\.localeOverride\)/g) ?? []).length, 1);
+  assert.match(patched, /localeOverride/);
+});
+
+test("keeps React compiler cache hook order in the webview i18n provider gate patch", () => {
+  const source =
+    "function eP(e){let t=(0,Z.c)(21),a=Ma(`72216192`),o;t[0]===a?o=t[1]:(o=a?.get(`enable_i18n`,!1),t[0]=a,t[1]=o);let c=o,l=a?.get(`locale_source`,`IDE`),u=js(s.localeOverride),d=r?.ideLocale;return c?u:d}";
+
+  const patched = applyPatchTwice(applyLinuxI18nGatePatch, source);
+
+  assert.match(
+    patched,
+    /o=a\?\.get\(`enable_i18n`,!1\),t\[0\]=a,t\[1\]=o\);let l=a\?\.get\(`locale_source`,`IDE`\),u=js\(s\.localeOverride\),c=o\|\|u!=null/,
+  );
+  assert.equal((patched.match(/js\(s\.localeOverride\)/g) ?? []).length, 1);
+});
+
+test("allows explicit locale overrides through the settings language row i18n gate on Linux", () => {
+  const source =
+    "function Or(){let r=F(),i=re(`72216192`)?.get(`enable_i18n`,!0),s=H(t.localeOverride);if(!i)return null;return r.locale+s}";
+
+  const patched = applyPatchTwice(applyLinuxI18nGatePatch, source);
+
+  assert.match(
+    patched,
+    /i=re\(`72216192`\)\?\.get\(`enable_i18n`,!0\),s=H\(t\.localeOverride\);i=i\|\|s!=null;if\(!i\)/,
+  );
+  assert.equal((patched.match(/H\(t\.localeOverride\)/g) ?? []).length, 1);
 });
 
 test("removes unsupported features from default app-server feature sync", () => {

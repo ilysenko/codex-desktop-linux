@@ -295,6 +295,65 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   ].join("");
 }
 
+function applyLinuxI18nGatePatch(currentSource) {
+  let patchedSource = currentSource.replace(
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\?\.get\(`enable_i18n`,!1\)(?:,[^;]+?)?);let ([A-Za-z_$][\w$]*)=\1,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\?\.get\(`locale_source`,`IDE`\)),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.localeOverride\)/g,
+    (
+      _match,
+      gateVar,
+      gateExpression,
+      enabledVar,
+      localeSourceVar,
+      localeSourceExpression,
+      localeOverrideVar,
+      readLocaleOverrideVar,
+      settingsVar,
+    ) =>
+      `${gateVar}=${gateExpression};let ${localeSourceVar}=${localeSourceExpression},${localeOverrideVar}=${readLocaleOverrideVar}(${settingsVar}.localeOverride),${enabledVar}=${gateVar}||${localeOverrideVar}!=null`,
+  );
+
+  patchedSource = patchedSource.replace(
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\([^)]*\)\?\.get\(`enable_i18n`,!0\))((?:,\[[^\]]+\]=[^;]+?)),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.localeOverride\),([A-Za-z_$][\w$]*);/g,
+    (
+      _match,
+      gateVar,
+      gateExpression,
+      betweenGateAndOverride,
+      localeOverrideVar,
+      readLocaleOverrideVar,
+      settingsVar,
+      nextVar,
+    ) =>
+      `${gateVar}=${gateExpression}${betweenGateAndOverride},${localeOverrideVar}=${readLocaleOverrideVar}(${settingsVar}.localeOverride);${gateVar}=${gateVar}||${localeOverrideVar}!=null;let ${nextVar};`,
+  );
+
+  patchedSource = patchedSource.replace(
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\([^)]*\)\?\.get\(`enable_i18n`,!0\)),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.localeOverride\);/g,
+    (
+      match,
+      gateVar,
+      gateExpression,
+      localeOverrideVar,
+      readLocaleOverrideVar,
+      settingsVar,
+      offset,
+      source,
+    ) => {
+      const appliedMarker = `${gateVar}=${gateVar}||${localeOverrideVar}!=null;`;
+      if (source.startsWith(appliedMarker, offset + match.length)) {
+        return match;
+      }
+      return `${gateVar}=${gateExpression},${localeOverrideVar}=${readLocaleOverrideVar}(${settingsVar}.localeOverride);${appliedMarker}`;
+    },
+  );
+
+  if (currentSource.includes("enable_i18n") && patchedSource === currentSource) {
+    console.warn("WARN: Could not find i18n gate needle — skipping Linux i18n gate patch");
+  }
+
+  return patchedSource;
+}
+
 function applyLinuxConfigWriteVersionConflictPatch(currentSource) {
   if (!currentSource.includes("expectedVersion:")) {
     return currentSource;
@@ -966,6 +1025,7 @@ module.exports = {
   applyBrowserAnnotationScreenshotPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxConfigWriteVersionConflictPatch,
+  applyLinuxI18nGatePatch,
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
