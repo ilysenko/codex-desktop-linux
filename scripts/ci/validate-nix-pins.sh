@@ -7,12 +7,10 @@ UPSTREAM_DMG_URL="${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app
 UPSTREAM_DMG_PATH="${1:-${UPSTREAM_DMG_PATH:-/tmp/Codex.dmg}}"
 NATIVE_MODULES_PKG="${NATIVE_MODULES_PKG:-$REPO_DIR/nix/native-modules/package.json}"
 
-# Opt-in pin-writing mode (used by the hash-refresh bot, not by PR CI). When set,
-# the version pins are rewritten from the DMG before the assertions run, so they
-# confirm the write instead of failing on drift. APPCAST_URL, when also set,
-# gates the write on the upstream Sparkle appcast: the moving Codex.dmg must
-# already match the appcast's advertised latest version, otherwise we are mid
-# rollout and exit 75 (skip) rather than pinning a transient build.
+# Opt-in pin-writing mode (used by refresh flows, not by PR CI). When set, the
+# version pins are rewritten from the DMG before the assertions run, so they
+# confirm the write instead of failing on drift. APPCAST_URL remains an optional
+# caller-controlled guard for flows that explicitly want Sparkle appcast parity.
 WRITE_PINS="${WRITE_PINS:-0}"
 APPCAST_URL="${APPCAST_URL:-}"
 
@@ -132,6 +130,57 @@ json_file_field() {
     node -e "const value = require(process.argv[1]); process.stdout.write(String($expression ?? ''));" "$json_path"
 }
 
+sanitize_electron_version() {
+    local value="$1"
+    value="${value#v}"
+    value="${value#^}"
+    value="${value#~}"
+
+    if [[ "$value" =~ ^[0-9]+(\.[0-9]+){2}([.-][0-9A-Za-z]+)*$ ]]; then
+        echo "$value"
+        return 0
+    fi
+
+    return 1
+}
+
+read_plist_key() {
+    local plist_path="$1"
+    local key="$2"
+
+    python3 - "$plist_path" "$key" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    print(plistlib.load(handle).get(sys.argv[2], ""))
+PY
+}
+
+detect_dmg_electron_version() {
+    local app_dir="$1"
+    local asar_extract_dir="$2"
+    local detected=""
+    local detected_version=""
+    local plist_path="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist"
+
+    if [ -f "$plist_path" ]; then
+        detected="$(read_plist_key "$plist_path" CFBundleVersion)"
+        if detected_version="$(sanitize_electron_version "$detected")"; then
+            echo "$detected_version"
+            return 0
+        fi
+    fi
+
+    detected="$(json_file_field "$asar_extract_dir/package.json" "(value.devDependencies?.electron || value.dependencies?.electron)")"
+    if detected_version="$(sanitize_electron_version "$detected")"; then
+        echo "$detected_version"
+        return 0
+    fi
+
+    fail "Could not find Electron version in DMG"
+}
+
 assert_equal() {
     local label="$1"
     local expected="$2"
@@ -160,20 +209,11 @@ APP_DIR="$(find "$WORK_DIR/dmg" -maxdepth 3 -name "*.app" -type d | head -1)"
 [ -n "$APP_DIR" ] || fail "Could not find .app bundle in $UPSTREAM_DMG_PATH"
 
 ASAR_PATH="$APP_DIR/Contents/Resources/app.asar"
-PLIST_PATH="$APP_DIR/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist"
 [ -f "$ASAR_PATH" ] || fail "Could not find app.asar in DMG"
-[ -f "$PLIST_PATH" ] || fail "Could not find Electron Info.plist in DMG"
 ASAR_EXTRACT_DIR="$WORK_DIR/app-extracted"
 npx --yes asar extract "$ASAR_PATH" "$ASAR_EXTRACT_DIR"
 
-dmg_electron_version="$(python3 - "$PLIST_PATH" <<'PY'
-import plistlib
-import sys
-
-with open(sys.argv[1], "rb") as handle:
-    print(plistlib.load(handle).get("CFBundleVersion", ""))
-PY
-)"
+dmg_electron_version="$(detect_dmg_electron_version "$APP_DIR" "$ASAR_EXTRACT_DIR")"
 dmg_codex_version="$(json_file_field "$ASAR_EXTRACT_DIR/package.json" "value.version")"
 dmg_better_sqlite3_version="$(json_file_field "$ASAR_EXTRACT_DIR/node_modules/better-sqlite3/package.json" "value.version")"
 dmg_node_pty_version="$(json_file_field "$ASAR_EXTRACT_DIR/node_modules/node-pty/package.json" "value.version")"

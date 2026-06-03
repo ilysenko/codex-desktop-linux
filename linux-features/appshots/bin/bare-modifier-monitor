@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+key=""
+trigger_mode="press"
+release_modifiers=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --key)
+            shift
+            key="${1:-}"
+            [ -n "$key" ] || {
+                echo "missing --key value" >&2
+                exit 2
+            }
+            ;;
+        --immediate)
+            trigger_mode="press"
+            ;;
+        --trigger-on-release)
+            trigger_mode="release"
+            ;;
+        --request-permission)
+            exit 0
+            ;;
+        --release-modifiers)
+            shift
+            release_modifiers="${1:-}"
+            ;;
+        *)
+            if [ -z "$key" ] && [[ "$1" != -* ]]; then
+                key="$1"
+            else
+                echo "unknown bare modifier monitor argument '$1'" >&2
+                exit 2
+            fi
+            ;;
+    esac
+    shift
+done
+
+normalize_key() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d ' _-'
+}
+
+select_keys() {
+    case "$(normalize_key "$1")" in
+        doubleshift|shift+shift|leftshift+rightshift)
+            printf '%s\t%s\n' "Shift_L Shift_R" "50 62"
+            ;;
+        doublealt|doubleoption|alt+alt|option+option|leftalt+rightalt|leftoption+rightoption)
+            printf '%s\t%s\n' "Alt_L Alt_R Meta_L Meta_R ISO_Level3_Shift" "64 108"
+            ;;
+        doublesuper|doublecommand|doublemeta|super+super|command+command|meta+meta|leftsuper+rightsuper|leftcommand+rightcommand|leftmeta+rightmeta)
+            printf '%s\t%s\n' "Super_L Super_R Meta_L Meta_R Hyper_L Hyper_R" "133 134"
+            ;;
+        doublecontrol|doublectrl|control+control|ctrl+ctrl|leftcontrol+rightcontrol|leftctrl+rightctrl)
+            printf '%s\t%s\n' "Control_L Control_R" "37 105"
+            ;;
+        *)
+            echo "unsupported bare modifier hotkey '$1'" >&2
+            exit 2
+            ;;
+    esac
+}
+
+find_keycodes() {
+    local symbols="$1"
+    local fallbacks="$2"
+    local symbol
+    local code
+    local codes=""
+
+    for symbol in $symbols; do
+        code="$(
+            awk -v symbol="$symbol" '
+                $1 == "keycode" {
+                    for (i = 4; i <= NF; i++) {
+                        if ($i == symbol) {
+                            print $2
+                            exit
+                        }
+                    }
+                }
+            ' <<<"${xmodmap_output:-}"
+        )"
+        if [ -n "$code" ]; then
+            codes="$codes $code"
+        fi
+    done
+
+    for code in $fallbacks; do
+        codes="$codes $code"
+    done
+
+    printf '%s\n' "$codes" | tr ' ' '\n' | awk 'NF && !seen[$1]++' | tr '\n' ' '
+}
+
+if [ -n "$release_modifiers" ]; then
+    echo "up"
+    exit 0
+fi
+
+[ -n "$key" ] || {
+    echo "missing --key" >&2
+    exit 2
+}
+
+if [ -z "${DISPLAY:-}" ] || ! command -v xinput >/dev/null 2>&1; then
+    echo "permission-denied"
+    exit 1
+fi
+
+xmodmap_output="$(xmodmap -pke 2>/dev/null || true)"
+IFS=$'\t' read -r key_symbols fallback_codes < <(select_keys "$key")
+key_codes="$(find_keycodes "$key_symbols" "$fallback_codes")"
+double_tap_ms="${CODEX_BARE_MODIFIER_DOUBLE_TAP_MS:-500}"
+
+if [ -z "$key_codes" ]; then
+    echo "modifier key did not resolve to any keycodes" >&2
+    exit 1
+fi
+
+is_target_keycode() {
+    local candidate="$1"
+    local code
+
+    for code in $key_codes; do
+        [ "$candidate" = "$code" ] && return 0
+    done
+    return 1
+}
+
+now_ms() {
+    date +%s%3N
+}
+
+last_tap_ms=0
+last_tap_code=""
+active=0
+
+keyboard_ids="$(
+    xinput list --short |
+        awk '
+            /\[slave[[:space:]]+keyboard/ {
+                if (match($0, /id=[0-9]+/)) {
+                    print substr($0, RSTART + 3, RLENGTH - 3)
+                }
+            }
+        '
+)"
+
+if [ -z "$keyboard_ids" ]; then
+    echo "permission-denied"
+    exit 1
+fi
+
+event_fifo="$(mktemp -u "${TMPDIR:-/tmp}/codex-bare-modifier.XXXXXX")"
+mkfifo "$event_fifo"
+monitor_pids=()
+
+cleanup() {
+    for pid in "${monitor_pids[@]:-}"; do
+        if command -v pkill >/dev/null 2>&1; then
+            pkill -TERM -P "$pid" >/dev/null 2>&1 || true
+        fi
+        kill "$pid" >/dev/null 2>&1 || true
+    done
+    sleep 0.05
+    for pid in "${monitor_pids[@]:-}"; do
+        if command -v pkill >/dev/null 2>&1; then
+            pkill -KILL -P "$pid" >/dev/null 2>&1 || true
+        fi
+        kill -KILL "$pid" >/dev/null 2>&1 || true
+    done
+    wait "${monitor_pids[@]:-}" >/dev/null 2>&1 || true
+    rm -f "$event_fifo"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 143' INT TERM
+
+exec 4<>"$event_fifo"
+
+for device_id in $keyboard_ids; do
+    (
+        xinput_cmd=(xinput test "$device_id")
+        if command -v stdbuf >/dev/null 2>&1; then
+            xinput_cmd=(stdbuf -oL "${xinput_cmd[@]}")
+        fi
+
+        "${xinput_cmd[@]}" 2>/dev/null |
+            while IFS= read -r line; do
+                set -- $line
+                [ "${1:-}" = "key" ] || continue
+                case "${2:-}" in
+                    press|release)
+                        printf '%s %s\n' "$2" "${3:-}"
+                        ;;
+                esac
+            done
+    ) >"$event_fifo" 2>/dev/null &
+    monitor_pids+=("$!")
+done
+
+exec 3<"$event_fifo"
+echo "ready"
+
+while read -r pending code <&3; do
+    code="${code//[[:space:]]/}"
+    [ -n "$code" ] || continue
+
+    if ! is_target_keycode "$code"; then
+        if [ "$pending" = "press" ]; then
+            last_tap_ms=0
+            last_tap_code=""
+        fi
+        continue
+    fi
+
+    if [ "$pending" = "press" ]; then
+        current_ms="$(now_ms)"
+        elapsed_ms=$((current_ms - last_tap_ms))
+        if [ "$last_tap_ms" -gt 0 ] && [ "$elapsed_ms" -le "$double_tap_ms" ] && [ "$code" != "$last_tap_code" ]; then
+            active=1
+            last_tap_ms=0
+            last_tap_code=""
+            if [ "$trigger_mode" = "press" ]; then
+                echo "down"
+            fi
+        else
+            last_tap_ms="$current_ms"
+            last_tap_code="$code"
+        fi
+        continue
+    fi
+
+    if [ "$pending" = "release" ] && [ "$active" -eq 1 ]; then
+        if [ "$trigger_mode" = "release" ]; then
+            echo "down"
+        fi
+        echo "up"
+        active=0
+    fi
+done

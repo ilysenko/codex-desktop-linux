@@ -298,10 +298,10 @@ function applyLinuxHotkeyWindowPrewarmPatch(currentSource) {
   }
 
   const dynamicStartupPrewarmRegex =
-    /(w\(`(?:local )?window ensured`,([A-Za-z_$][\w$]*),\{(?:hostId:[^,{}]+,localWindowVisible:[^}]+|windowVisible:[^}]+)\}\),)\2=Date\.now\(\),await ([A-Za-z_$][\w$]*)\.deepLinks\.flushPendingDeepLinks\(\)/;
+    /(([A-Za-z_$][\w$]*)\(`(?:local )?window ensured`,([A-Za-z_$][\w$]*),\{(?:hostId:[^,{}]+,localWindowVisible:[^}]+|windowVisible:[^}]+)\}\),)\3=Date\.now\(\),await ([A-Za-z_$][\w$]*)\.deepLinks\.flushPendingDeepLinks\(\)/;
   const dynamicStartupPrewarmMatch = patchedSource.match(dynamicStartupPrewarmRegex);
   if (dynamicStartupPrewarmMatch != null) {
-    const [, prefix, timeVar, deepLinksVar] = dynamicStartupPrewarmMatch;
+    const [, prefix, _traceVar, timeVar, deepLinksVar] = dynamicStartupPrewarmMatch;
     patchedSource = patchedSource.replace(
       dynamicStartupPrewarmRegex,
       `${prefix}process.platform===\`linux\`&&codexLinuxPrewarmHotkeyWindow(),${timeVar}=Date.now(),await ${deepLinksVar}.deepLinks.flushPendingDeepLinks()`,

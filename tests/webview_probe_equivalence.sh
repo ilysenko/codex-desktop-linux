@@ -19,6 +19,7 @@
 #   HTTP verify     — wrong <title>                   → both impls fail
 #   HTTP verify     — body missing startup-loader     → both impls fail
 #   HTTP verify     — origin port is dead             → both impls fail
+#   slow valid HTTP — body after 300 ms               → fast probe fails, full verify succeeds
 #   watchdog cap    — a 5 s sleeper is killed at ~0.2 s
 #
 # Exit 0 when every verdict matches and the watchdog cap fires within its
@@ -95,11 +96,17 @@ load_new_impls() {
     {
         extract_function webview_port_is_open
         extract_function verify_webview_origin
+        extract_function webview_origin_is_reachable_fast
+        extract_function webview_origin_is_reachable
+        extract_function wait_for_webview_server
     } > "$extracted"
 
     # Sanity check: extraction must have produced both function definitions.
     grep -q '^webview_port_is_open() {$'  "$extracted" || { rm -f "$extracted"; fail "webview_port_is_open not extracted from template"; }
     grep -q '^verify_webview_origin() {$' "$extracted" || { rm -f "$extracted"; fail "verify_webview_origin not extracted from template"; }
+    grep -q '^webview_origin_is_reachable_fast() {$' "$extracted" || { rm -f "$extracted"; fail "webview_origin_is_reachable_fast not extracted from template"; }
+    grep -q '^webview_origin_is_reachable() {$' "$extracted" || { rm -f "$extracted"; fail "webview_origin_is_reachable not extracted from template"; }
+    grep -q '^wait_for_webview_server() {$' "$extracted" || { rm -f "$extracted"; fail "wait_for_webview_server not extracted from template"; }
 
     # shellcheck source=/dev/null
     source "$extracted"
@@ -108,7 +115,22 @@ load_new_impls() {
     # Rename so we can call both side-by-side in the same shell.
     eval "$(declare -f webview_port_is_open  | sed '1s/^webview_port_is_open /webview_port_is_open__new /')"
     eval "$(declare -f verify_webview_origin | sed '1s/^verify_webview_origin /verify_webview_origin__new /')"
-    unset -f webview_port_is_open verify_webview_origin
+    eval "$(declare -f webview_origin_is_reachable_fast | sed '1s/^webview_origin_is_reachable_fast /webview_origin_is_reachable_fast__new /')"
+    eval "$(declare -f webview_origin_is_reachable | sed '1s/^webview_origin_is_reachable /webview_origin_is_reachable__new /')"
+    eval "$(declare -f wait_for_webview_server | sed '1s/^wait_for_webview_server /wait_for_webview_server__new /')"
+    unset -f webview_port_is_open verify_webview_origin webview_origin_is_reachable_fast webview_origin_is_reachable wait_for_webview_server
+
+    # Reachability helpers call verify_webview_origin at runtime; keep that name wired
+    # to the extracted implementation under test.
+    verify_webview_origin() {
+        verify_webview_origin__new "$@"
+    }
+    webview_origin_is_reachable_fast() {
+        webview_origin_is_reachable_fast__new "$@"
+    }
+    webview_origin_is_reachable() {
+        webview_origin_is_reachable__new "$@"
+    }
 }
 
 # webview_port_is_open__new reads the global $CODEX_LINUX_WEBVIEW_PORT.
@@ -242,8 +264,65 @@ stop_fixture_server() {
     SERVER_PID=""
 }
 
+start_slow_valid_fixture_server() {
+    SLOW_PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));p=s.getsockname()[1];s.close();print(p)')
+    CODEX_LINUX_WEBVIEW_PORT="$SLOW_PORT"
+    WEBVIEW_ORIGIN="http://127.0.0.1:$SLOW_PORT"
+
+    ( exec python3 - "$SLOW_PORT" <<'PY' >/dev/null 2>&1 ) &
+import http.server
+import sys
+import time
+
+INDEX_BODY = b"""<!doctype html>
+<html>
+<head><title>Codex</title></head>
+<body>
+<div id="startup-loader">loading</div>
+</body>
+</html>
+"""
+
+
+class SlowOKHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        time.sleep(0.3)
+        if self.path in ("/", "/index.html"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(INDEX_BODY)))
+            self.end_headers()
+            self.wfile.write(INDEX_BODY)
+            return
+        self.send_error(404)
+
+    def log_message(self, format, *args):
+        pass
+
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), SlowOKHandler)
+server.daemon_threads = True
+server.serve_forever()
+PY
+    SLOW_SERVER_PID=$!
+
+    local i
+    for i in $(seq 1 40); do
+        curl --disable --silent --fail --max-time 2 "http://127.0.0.1:$SLOW_PORT/index.html" >/dev/null 2>&1 && return 0
+        sleep 0.05
+    done
+    return 1
+}
+
+stop_slow_fixture_server() {
+    [ -n "${SLOW_SERVER_PID:-}" ] && kill "$SLOW_SERVER_PID" 2>/dev/null
+    [ -n "${SLOW_SERVER_PID:-}" ] && wait "$SLOW_SERVER_PID" 2>/dev/null
+    SLOW_SERVER_PID=""
+}
+
 teardown() {
     [ "${BASHPID:-$$}" = "$MAIN_BASHPID" ] || return 0
+    stop_slow_fixture_server
     stop_fixture_server
     [ -n "${FIXTURES:-}"   ] && rm -rf "$FIXTURES"
     [ -n "${CURLRC_HOME:-}" ] && rm -rf "$CURLRC_HOME"
@@ -310,6 +389,30 @@ main() {
     assert_rc "new   missing startup-loader" 1 verify_webview_origin__new  "$URL_NOLOADER"
     assert_rc "orig  dead port"              1 verify_webview_origin__orig "$URL_DEAD"
     assert_rc "new   dead port"              1 verify_webview_origin__new  "$URL_DEAD"
+
+    stop_fixture_server
+    [ -n "${FIXTURES:-}" ] && rm -rf "$FIXTURES"
+    FIXTURES=""
+
+    info "slow valid HTTP — 300 ms response exceeds fast probe but passes full verify"
+    start_slow_valid_fixture_server || fail "slow valid fixture server did not bind"
+    assert_rc "new   fast probe rejects 300 ms response" 1 webview_origin_is_reachable_fast__new
+    assert_rc "new   full verify accepts 300 ms response" 0 webview_origin_is_reachable__new
+    local t_slow0 t_slow1 slow_elapsed_ms
+    t_slow0=$(date +%s%N)
+    assert_rc "new   wait fallback accepts 300 ms response" 0 wait_for_webview_server__new
+    t_slow1=$(date +%s%N)
+    slow_elapsed_ms=$(( (t_slow1 - t_slow0) / 1000000 ))
+    run_count=$((run_count + 1))
+    if [ "$slow_elapsed_ms" -le 12000 ]; then
+        printf '  [PASS] slow wait fallback returned after %d ms\n' "$slow_elapsed_ms"
+    else
+        printf '  [FAIL] slow wait fallback returned after %d ms (expected <=12000 ms)\n' "$slow_elapsed_ms"
+        fail_count=$((fail_count + 1))
+    fi
+    stop_slow_fixture_server
+
+    setup_server || fail "fixture server did not bind after slow-valid probe"
 
     info "watchdog cap — 5 s sleeper must die at ~0.2 s"
     local probe_pid kill_pid t0 t1 elapsed_ms

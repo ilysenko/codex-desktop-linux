@@ -1,12 +1,13 @@
 # Zed Opener
 
-Adds Zed as an opt-in Linux editor opener in Codex Desktop. The patch extends
-the upstream Zed opener block with a Linux platform entry and reuses the
-upstream `path:line:column` argument builder.
+Historically added Zed as an opt-in Linux editor opener in Codex Desktop. Core
+Linux patching now enables the same Zed opener by default, and this feature is
+kept as a compatibility wrapper for local configs that still list
+`zed-opener`.
 
-This feature is opt-in. The loader reads enabled feature ids from the root
-config at `linux-features/features.json`, then loads this feature's manifest
-from `linux-features/zed-opener/feature.json`.
+The loader reads enabled feature ids from the root config at
+`linux-features/features.json`, then loads this feature's manifest from
+`linux-features/zed-opener/feature.json`.
 
 To enable it locally, create the root config if needed:
 
@@ -45,5 +46,5 @@ node scripts/patch-linux-window-ui.js /path/to/extracted/app.asar
 ```
 
 Known risk: the patch depends on the upstream minified Zed opener block. If
-that block changes shape, the feature fails soft and leaves the bundle
-unchanged.
+that block changes shape, the core patch and compatibility feature fail soft
+and leave the bundle unchanged.

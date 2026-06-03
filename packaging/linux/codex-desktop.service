@@ -1,0 +1,15 @@
+[Unit]
+Description=Codex Desktop
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /opt/__PACKAGE_NAME__/.codex-linux/codex-desktop-service-lifecycle.sh start __PACKAGE_NAME__ /usr/bin/__PACKAGE_NAME__
+ExecStop=/bin/bash /opt/__PACKAGE_NAME__/.codex-linux/codex-desktop-service-lifecycle.sh stop __PACKAGE_NAME__ /usr/bin/__PACKAGE_NAME__
+Restart=on-failure
+RestartSec=5
+Slice=app.slice
+
+[Install]
+WantedBy=graphical-session.target

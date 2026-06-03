@@ -28,6 +28,8 @@ The current working flow is:
   Workspace root. Members: `computer-use-linux`, `updater`.
 - `flake.nix` / `flake.lock`
   Nix flake that pins upstream DMG hash, Cargo deps hash, and Node deps hash so `nix build` can reproduce the install end-to-end. `scripts/ci/update-nix-hashes.sh` is the maintained way to refresh the pinned hashes.
+- `.devcontainer/devcontainer.json` / `.devcontainer/Dockerfile`
+  Use this container for Rust and patcher validation before suggesting host Rust/toolchain installs. It intentionally stays a generic repo build/test container (`rust:1-bookworm`, Node 22/npm, packaging tools, `rustfmt`, `clippy`).
 
 ### Launcher
 
@@ -51,7 +53,7 @@ The current working flow is:
 - `linux-target-context.js` — Linux target detection used by patch descriptors. Reads `/etc/os-release` plus env overrides and exposes helpers such as `matchesId()`, `packageFormatIs()`, `packageManagerIs()`, `desktopMatches()`, and `versionAtLeast()`.
 - `patch-report.js` — shared helpers for building `patch-report.json` (status capture, warning capture, `recordPatch`, `writePatchReport`).
 - `rebuild-report.sh` — writes `rebuild-report.json` (DMG path, Electron version, patch report, app dir) used by the rebuild candidate flow.
-- `package-common.sh` — shared shell helpers used by the native package builders (versioning, payload staging, user-service helper installation).
+- `package-common.sh` — shared shell helpers used by the native package builders (versioning, payload staging, desktop app service rendering, installed doctor rendering, user-service helper installation).
 - `linux-features.sh` / `linux-features.js` — opt-in Linux feature framework loader. The shell side runs `stage.sh` hooks for enabled features; the JS side resolves manifests, validates entrypoints, and contributes `mainBundlePatch` functions to the patch registry.
 
 ### Patch registry (`scripts/patches/`)
@@ -88,6 +90,8 @@ The current working flow is:
 - `packaging/linux/PKGBUILD.template` — pacman PKGBUILD template (used to generate `.PKGINFO`/`.MTREE` plus the archive contents).
 - `packaging/linux/codex-desktop.install` — pacman `.install` hooks (`post_install` / `post_upgrade` / `pre_remove` / `post_remove`).
 - `packaging/linux/codex-desktop.desktop` — desktop entry template.
+- `packaging/linux/codex-desktop.service` — opt-in user-level `systemd` unit for launching the installed desktop app through `/usr/bin/codex-desktop`; it waits on the launcher PID file so Electron can remain tracked after desktop app-scope handoff.
+- `packaging/linux/codex-desktop-doctor.py` — installed safe healthcheck rendered as `/usr/bin/codex-desktop-doctor`; keep it status/path only and never print pairing secrets, browser contents, screenshots, cookies, or key material.
 - `packaging/linux/codex-update-manager.service` — user-level `systemd` unit for the local update manager.
 - `packaging/linux/codex-update-manager.postinst` — Debian maintainer script that starts the user service after install.
 - `packaging/linux/codex-update-manager.prerm` — Debian maintainer script that stops or disables the user service during removal.
@@ -132,7 +136,7 @@ The current working flow is:
 - `computer-use-linux/src/windowing/types.rs` — `WindowInfo`, `WindowBounds`, `WindowTarget`, `WindowFocusResult`.
 - `computer-use-linux/src/windowing/registry.rs` — backend descriptors, ordering, list-note hints, and the `WINDOW_PERMISSION_HINT`.
 - `computer-use-linux/src/windowing/target.rs` — target resolution (window id, pid, title, app, terminal selectors), focus verification, ambiguity errors.
-- `computer-use-linux/src/windowing/backends/` — desktop-specific listing, activation, probes, parsers, and per-backend tests. Current backends: `gnome.rs`, `cosmic.rs`, `kwin.rs`, `hyprland.rs`, `i3.rs`. Add new desktop/window-manager support here and register it in `registry.rs`; avoid adding backend-specific branches to `server.rs` or `diagnostics.rs`.
+- `computer-use-linux/src/windowing/backends/` — desktop-specific listing, activation, probes, parsers, and per-backend tests. Current backends: `gnome.rs`, `cosmic.rs`, `kwin.rs`, `hyprland.rs`, `sway.rs`, `i3.rs`. Add new desktop/window-manager support here and register it in `registry.rs`; avoid adding backend-specific branches to `server.rs` or `diagnostics.rs`.
 - `computer-use-linux/src/bin/codex-chrome-extension-host.rs` — Linux native-messaging host for the bundled Chrome plugin. Bridges Chrome extension stdio frames to local Browser Use Unix-socket clients, validates the socket directory and same-UID peer credentials, watches Codex session rollout files for completed turns, emits `turnEnded`, and is staged as `extension-host/linux/<arch>/extension-host`.
 - `computer-use-linux/src/bin/codex-computer-use-cosmic.rs` — COSMIC Wayland helper binary used by the Linux Computer Use backend for compositor-native window enumeration and activation on COSMIC sessions.
 - `computer-use-linux/gnome-shell-extension/codex-window-control@openai.com/` — bundled GNOME Shell extension (`extension.js` + `metadata.json`) installed by `gnome_extension.rs` for exact window activation under GNOME Shell.
@@ -209,7 +213,7 @@ This path is for users who do not want a system-wide native package; the daily-d
 - Linux Chrome plugin and native messaging:
   `install_bundled_plugin_resources` stages the upstream `chrome` plugin alongside `browser-use`, patches the Chrome plugin scripts for Linux, builds `codex-chrome-extension-host` from Rust, and installs that ELF as `extension-host/linux/<arch>/extension-host`. The host mirrors the macOS native host's browser socket bridge and rollout/session watcher: it observes browser requests carrying `session_id` / `turn_id`, tails the matching rollout JSONL under `~/.codex/sessions`, and emits `turnEnded` back to the extension after `task_complete`. It keeps one active Browser Use client per extension host: a newer Codex browser client evicts stale client sockets and clears their pending requests so old Node REPL kernels cannot keep issuing CDP setup calls. The launcher mirrors the staged plugin into `~/.codex/plugins/cache/openai-bundled/chrome/<version>`, maintains `latest`, writes bundled marketplace metadata, symlinks `plugins/chrome` under the temporary marketplace root, derives extension id/native-host name from the staged plugin metadata, and installs native-host manifests for Google Chrome, Brave, and Chromium. `applyLinuxChromePluginAutoInstallPatch` adds `installWhenMissing` to the upstream Chrome plugin descriptor so the plugin page does not depend on a manually persisted marketplace install state after restart. The staged diagnostics also recognize Brave and Chromium installs, running processes, profiles, and extension-aware profile selection before telling the user Chrome setup is missing. `applyLinuxChromeExtensionStatusPatch` fixes the Electron settings page's `chrome-extension-installed-read` handler so the visible Connected/Not connected badge scans Linux Chrome, Brave, and Chromium profile roots instead of returning false on Linux. Chrome's bundled `browser-client.mjs` must receive the same Linux `/aura/site_status` allowlist fallback as Browser Use so `Always allow` is not defeated by a missing `nodeRepl.fetch` allowlist. This is the durable source-of-truth fix for Linux browser extension availability; do not hand-edit only the user cache.
 - Linux Computer Use window backends:
-  Add new desktop/window-manager support under `computer-use-linux/src/windowing/backends/` and register it in `windowing/registry.rs`; avoid adding backend-specific branches to `server.rs` or `diagnostics.rs`. GNOME uses `org.gnome.Shell.Introspect` for listing plus the bundled `codex-window-control@openai.com` GNOME Shell extension for exact activation. COSMIC Wayland uses the bundled `codex-computer-use-cosmic` helper, which talks directly to the compositor's COSMIC toplevel Wayland protocols. KWin uses a generated KWin scripting bridge; Hyprland uses `hyprctl`; i3/Sway uses the i3 IPC tree plus `xprop` for PIDs. When no compositor backend is available, Computer Use still supports screenshots, AT-SPI, and global `ydotool` input, but not verified window-targeted keyboard input.
+  Add new desktop/window-manager support under `computer-use-linux/src/windowing/backends/` and register it in `windowing/registry.rs`; avoid adding backend-specific branches to `server.rs` or `diagnostics.rs`. GNOME uses `org.gnome.Shell.Introspect` for listing plus the bundled `codex-window-control@openai.com` GNOME Shell extension for exact activation. COSMIC Wayland uses the bundled `codex-computer-use-cosmic` helper, which talks directly to the compositor's COSMIC toplevel Wayland protocols. KWin uses a generated KWin scripting bridge; Hyprland uses `hyprctl`; Sway uses `swaymsg`; i3 uses `i3-msg` plus `xprop` for PIDs. When no compositor backend is available, Computer Use still supports screenshots, AT-SPI, and global `ydotool` input, but not verified window-targeted keyboard input.
 - Linux settings persistence:
   `applyLinuxSettingsPersistencePatch` inserts `codexLinuxPersistSettingsState(...)` so the keybinds-settings page toggles (system tray, warm start, compact prompt window) are mirrored to `~/.config/codex-desktop/settings.json`, where `linux_setting_enabled` in `install.sh` reads them. The patch is fail-soft: if the upstream `Yb` state-file marker or `set-global-state` IPC handler isn't present, the patch logs a warning and skips, leaving keybinds toggles in-memory only.
 - Linux warm-start handoff:
@@ -235,7 +239,7 @@ This path is for users who do not want a system-wide native package; the daily-d
 - Closing behavior:
   If future work touches shutdown behavior, assume the confirmation dialog may be implemented inside the app bundle rather than the Linux launcher.
 - Update manager:
-  The native packages include `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`.
+  Default native packages include `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`. All native packages include `/usr/bin/codex-desktop-doctor` and the opt-in app unit `/usr/lib/systemd/user/codex-desktop.service`.
 - Privilege boundary:
   The updater runs unprivileged. It only escalates at install time via `pkexec /usr/bin/codex-update-manager install-deb --path <deb>`, `install-rpm --path <rpm>`, or `install-pacman --path <pkg.tar.zst>`.
 - Manual rollback:
@@ -344,6 +348,8 @@ The native packages currently install:
 
 - app files under `/opt/codex-desktop`
 - launcher under `/usr/bin/codex-desktop`
+- installed doctor under `/usr/bin/codex-desktop-doctor`
+- opt-in app unit under `/usr/lib/systemd/user/codex-desktop.service`
 - updater binary under `/usr/bin/codex-update-manager`
 - updater unit under `/usr/lib/systemd/user/codex-update-manager.service`
 - update builder bundle under `/opt/codex-desktop/update-builder`
@@ -368,6 +374,7 @@ bash -n launcher/start.sh.template
 bash -n scripts/build-deb.sh
 bash -n scripts/build-rpm.sh
 bash -n scripts/build-pacman.sh
+python3 -m py_compile packaging/linux/codex-desktop-doctor.py
 node --test scripts/patch-linux-window-ui.test.js
 node --test linux-features/*/test.js
 bash tests/scripts_smoke.sh
@@ -411,6 +418,7 @@ If updater behavior changed, also inspect:
 
 ```bash
 systemctl --user status codex-update-manager.service
+systemctl --user status codex-desktop.service
 codex-update-manager status --json
 sed -n '1,120p' ~/.local/state/codex-update-manager/state.json
 sed -n '1,160p' ~/.local/state/codex-update-manager/service.log

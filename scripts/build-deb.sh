@@ -10,6 +10,8 @@ DIST_DIR="${DIST_DIR_OVERRIDE:-$REPO_DIR/dist}"
 CONTROL_TEMPLATE="$REPO_DIR/packaging/linux/control"
 DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
 SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.service"
+DESKTOP_SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.service"
+DESKTOP_DOCTOR_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop-doctor.py"
 USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh"
 ICON_SOURCE="$REPO_DIR/assets/codex.png"
 PRERM_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.prerm"
@@ -19,9 +21,20 @@ PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
 
 PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
+MAX_BUILD_THREADS="${MAX_BUILD_THREADS:-0}"
 UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-update-manager}"
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
+DESKTOP_SERVICE_SOURCE="${DESKTOP_SERVICE_SOURCE:-$DESKTOP_SERVICE_TEMPLATE}"
+DESKTOP_DOCTOR_SOURCE="${DESKTOP_DOCTOR_SOURCE:-$DESKTOP_DOCTOR_TEMPLATE}"
 PACKAGED_RUNTIME_SOURCE="${PACKAGED_RUNTIME_SOURCE:-$PACKAGED_RUNTIME_TEMPLATE}"
+
+validate_max_build_threads() {
+    case "$MAX_BUILD_THREADS" in
+        ""|*[!0-9]*)
+            error "MAX_BUILD_THREADS must be 0 or a positive integer"
+            ;;
+    esac
+}
 
 map_arch() {
     case "$(dpkg --print-architecture)" in
@@ -35,9 +48,13 @@ map_arch() {
 }
 
 main() {
+    validate_max_build_threads
+
     ensure_app_layout
     ensure_file_exists "$CONTROL_TEMPLATE" "control template"
     ensure_file_exists "$DESKTOP_TEMPLATE" "desktop template"
+    ensure_file_exists "$DESKTOP_SERVICE_SOURCE" "desktop app service template"
+    ensure_file_exists "$DESKTOP_DOCTOR_SOURCE" "desktop doctor template"
     ensure_file_exists "$ICON_SOURCE" "icon"
     if package_with_updater_enabled; then
         ensure_file_exists "$UPDATER_SERVICE_SOURCE" "updater service template"
@@ -67,7 +84,9 @@ main() {
     stage_common_package_files "$PKG_ROOT"
     stage_optional_update_builder_bundle "$PKG_ROOT"
     write_launcher_stub "$PKG_ROOT"
+    run_linux_feature_package_hooks "$PKG_ROOT" "deb"
     normalize_package_payload_permissions "$PKG_ROOT"
+    restore_linux_feature_payload_permissions "$PKG_ROOT"
 
     sed \
         -e "s/__PACKAGE_NAME__/$PACKAGE_NAME/g" \
@@ -101,7 +120,12 @@ CONTROL
 
     mkdir -p "$DIST_DIR"
     info "Building $output_file"
-    dpkg-deb --root-owner-group --build "$PKG_ROOT" "$output_file" >&2
+    if [ "$MAX_BUILD_THREADS" != "0" ]; then
+        info "Debian package compression threads: $MAX_BUILD_THREADS"
+        DPKG_DEB_THREADS_MAX="$MAX_BUILD_THREADS" dpkg-deb --root-owner-group --build "$PKG_ROOT" "$output_file" >&2
+    else
+        dpkg-deb --root-owner-group --build "$PKG_ROOT" "$output_file" >&2
+    fi
     info "Built package: $output_file"
 }
 

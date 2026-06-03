@@ -37,6 +37,9 @@ function readComputerUseUiSettingsFlag(env) {
 }
 
 function computerUseUiSettingsPath(env) {
+  if (typeof env.CODEX_LINUX_SETTINGS_FILE === "string" && env.CODEX_LINUX_SETTINGS_FILE.length > 0) {
+    return env.CODEX_LINUX_SETTINGS_FILE;
+  }
   const xdgConfig = env.XDG_CONFIG_HOME;
   const home = env.HOME;
   const configHome = (xdgConfig && xdgConfig.length > 0)
@@ -213,6 +216,7 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
     (currentSource.includes("isComputerUseAvailable") || currentSource.includes("1506311413"));
   const availabilityAlreadyPatched = () =>
     /featureName:`computer_use`[\s\S]{0,1200}?let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*&&[A-Za-z_$][\w$]*&&\([A-Za-z_$][\w$]*===`linux`\|\|[A-Za-z_$][\w$]*&&\([A-Za-z_$][\w$]*\|\|[A-Za-z_$][\w$]*\)\),[A-Za-z_$][\w$]*=\1&&![A-Za-z_$][\w$]*&&\([A-Za-z_$][\w$]*===`linux`\|\|[A-Za-z_$][\w$]*\.enabled\)&&![A-Za-z_$][\w$]*\.isLoading/.test(patchedSource) ||
+    /featureName:`computer_use`[\s\S]{0,1800}?isComputerUseFeatureEnabled:([A-Za-z_$][\w$]*)===`linux`\|\|[A-Za-z_$][\w$]*\.enabled,isComputerUseFeatureLoading:\1!==`linux`&&[A-Za-z_$][\w$]*\.isLoading,isComputerUseGateEnabled:\1===`linux`\|\|[A-Za-z_$][\w$]*,isHostCompatiblePlatform:\1===`linux`\|\|[A-Za-z_$][\w$]*\(\1\)(?:,isHostLocal:[A-Za-z_$][\w$]*)?,isPlatformLoading:/.test(patchedSource) ||
     patchedSource.includes(availabilityPatch) ||
     patchedSource.includes(currentAvailabilityPatch);
 
@@ -293,6 +297,35 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
       }
       availabilityChanged = true;
       return `let ${availabilityVar}=${enabledVar}&&${isHostLocalVar}&&(${platformVar}===\`linux\`||${rolloutVar}&&(${platformLoadingVar}||${supportedPlatformVar})),${availableVar}=${availabilityVar}&&!${platformLoadingVar}&&(${platformVar}===\`linux\`||${featureQueryVar}.enabled)&&!${featureQueryVar}.isLoading,${fetchingVar}=${availabilityVar}&&${platformVar}!==\`linux\`&&${featureQueryVar}.isLoading,${loadingVar}=${availabilityVar}&&(${platformLoadingVar}||${platformVar}!==\`linux\`&&${featureQueryVar}.isLoading),${resultVar};`;
+    },
+  );
+
+  const currentObjectAvailabilityPattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{enabled:([A-Za-z_$][\w$]*),isComputerUseFeatureEnabled:([A-Za-z_$][\w$]*)\.enabled,isComputerUseFeatureLoading:\4\.isLoading,isComputerUseGateEnabled:([A-Za-z_$][\w$]*),isHostCompatiblePlatform:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)(?:,isHostLocal:([A-Za-z_$][\w$]*))?,isPlatformLoading:([A-Za-z_$][\w$]*),windowType:`electron`\}\)/g;
+  patchedSource = patchedSource.replace(
+    currentObjectAvailabilityPattern,
+    (
+      match,
+      resultVar,
+      helperVar,
+      enabledVar,
+      featureQueryVar,
+      rolloutVar,
+      platformPredicateVar,
+      platformVar,
+      isHostLocalVar,
+      platformLoadingVar,
+      offset,
+    ) => {
+      const contextStart = Math.max(0, offset - 900);
+      const context = patchedSource.slice(contextStart, offset + match.length);
+      if (!context.includes(computerUseFeatureNeedle)) {
+        return match;
+      }
+      availabilityGateFound = true;
+      availabilityChanged = true;
+      const hostLocalSegment = isHostLocalVar == null ? "" : `,isHostLocal:${isHostLocalVar}`;
+      return `${resultVar}=${helperVar}({enabled:${enabledVar},isComputerUseFeatureEnabled:${platformVar}===\`linux\`||${featureQueryVar}.enabled,isComputerUseFeatureLoading:${platformVar}!==\`linux\`&&${featureQueryVar}.isLoading,isComputerUseGateEnabled:${platformVar}===\`linux\`||${rolloutVar},isHostCompatiblePlatform:${platformVar}===\`linux\`||${platformPredicateVar}(${platformVar})${hostLocalSegment},isPlatformLoading:${platformLoadingVar},windowType:\`electron\`})`;
     },
   );
 

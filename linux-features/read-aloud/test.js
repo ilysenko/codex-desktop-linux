@@ -829,11 +829,36 @@ test("general settings patch exports a dedicated read aloud settings page", () =
   assert.match(patched, /settings\.readAloud\.voice\.title/);
 });
 
+test("general settings patch follows the exported settings component when minifier names drift", () => {
+  const source = [
+    "function $n(){return (0,$.jsxs)(pt,{children:[]})}",
+    "export{ir as i,rr as n,$n as r,Cr as t};",
+  ].join("");
+  const patched = twice(applyGeneralSettingsPatch, source);
+  assert.match(patched, /function codexLinuxReadAloudSettingsPage/);
+  assert.match(patched, /\$n as r/);
+  assert.match(patched, /codexLinuxReadAloudSettingsPage as ReadAloudSettings/);
+  assert.match(patched, /export\{ir as i,rr as n,\$n as r,Cr as t,codexLinuxReadAloudSettingsPage as ReadAloudSettings\}/);
+});
+
 test("general settings wrapper re-exports the read aloud settings page", () => {
   const source = 'import{r as e}from"./general-settings-Bvwhh0-i.js";export{e as GeneralSettings};';
   const patched = twice(applyGeneralSettingsWrapperPatch, source);
+  assert.match(
+    patched,
+    /import\{r as e,ReadAloudSettings as codexLinuxReadAloudSettings\}from"\.\/general-settings-Bvwhh0-i\.js"/,
+  );
+  assert.match(patched, /export\{e as GeneralSettings,codexLinuxReadAloudSettings as ReadAloudSettings\}/);
+  assert.doesNotMatch(patched, /e as GeneralSettings,e as ReadAloudSettings/);
+});
+
+test("general settings wrapper preserves an existing read aloud import", () => {
+  const source =
+    'import{r as e,ReadAloudSettings as t}from"./general-settings-CV9Safs7.js";export{e as GeneralSettings,t as ReadAloudSettings};';
+  const patched = twice(applyGeneralSettingsWrapperPatch, source);
+  assert.equal(patched, source);
   assert.match(patched, /ReadAloudSettings as t/);
-  assert.match(patched, /t as ReadAloudSettings/);
+  assert.doesNotMatch(patched, /e as GeneralSettings,e as ReadAloudSettings/);
 });
 
 test("settings nav patches add a visible read aloud section after computer use", () => {
@@ -864,6 +889,42 @@ test("settings nav patches add a visible read aloud section after computer use",
   assert.match(patchedPage, /`computer-use`,`read-aloud-settings`,`local-environments`/);
   assert.match(patchedPage, /case`read-aloud-settings`:return a;case`computer-use`/);
   assert.match(patchedPage, /case`read-aloud-settings`:z=!1;break bb0;case`computer-use`/);
+});
+
+test("settings nav patch adds the read aloud icon to the current settings page icon map", () => {
+  const page = [
+    "var ge=f(),_e=e(r()),$=i(),ve=e=>(0,$.jsxs)(`svg`,{children:[]}),ye={\"general-settings\":q,profile:ee,\"keyboard-shortcuts\":ve,\"browser-use\":me,\"computer-use\":fe,\"local-environments\":pe,worktrees:K};",
+    "xe=[`browser-use`,`computer-use`,`data-controls`];",
+    "Se=[{slugs:[`browser-use`,`computer-use`,`local-environments`]}];",
+    "case`computer-use`:return A;",
+    "case`computer-use`:z=D.isLoading||h.isLoading;break bb0;",
+  ].join("");
+  const patched = twice(applySettingsPageNavPatch, page);
+  assert.match(patched, /codexLinuxReadAloudSettingsIcon=e=>\(0,\$\.jsxs\)/);
+  assert.doesNotMatch(patched, /codexLinuxReadAloudSettingsIcon=e=>\(0,Z\.jsxs\)/);
+  assert.match(
+    patched,
+    /"browser-use":me,"computer-use":fe,"read-aloud-settings":codexLinuxReadAloudSettingsIcon,"local-environments":pe/,
+  );
+  assert.match(patched, /`computer-use`,`read-aloud-settings`,`data-controls`/);
+  assert.match(patched, /case`read-aloud-settings`:z=!1;break bb0;case`computer-use`/);
+});
+
+test("settings nav patch supports current minified icon map aliases", () => {
+  const page = [
+    "var ge=f(),_e=e(r()),$=i(),ve=e=>null,ye={\"browser-use\":me,\"computer-use\":fe,\"local-environments\":pe};",
+    "xe=[`browser-use`,`computer-use`,`data-controls`];",
+    "Se=[{slugs:[`browser-use`,`computer-use`,`local-environments`]}];",
+    "case`computer-use`:return A;",
+    "case`computer-use`:z=k.isLoading||m.isLoading;break bb0;",
+  ].join("");
+
+  const patchedPage = twice(applySettingsPageNavPatch, page);
+  assert.match(patchedPage, /codexLinuxReadAloudSettingsIcon=e=>\(0,\$\.jsxs\)/);
+  assert.match(
+    patchedPage,
+    /"computer-use":fe,"read-aloud-settings":codexLinuxReadAloudSettingsIcon,"local-environments":pe/,
+  );
 });
 
 test("app route patch wires read aloud settings to the generated page export", () => {
@@ -1025,6 +1086,10 @@ test("settings asset patch creates a first-class read aloud settings section", (
     assert.match(
       fs.readFileSync(path.join(assets, "app-main-current.js"), "utf8"),
       /default:e\.ReadAloudSettings/,
+    );
+    assert.match(
+      fs.readFileSync(path.join(assets, "general-settings-wrapper.js"), "utf8"),
+      /export\{e as GeneralSettings,codexLinuxReadAloudSettings as ReadAloudSettings\}/,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

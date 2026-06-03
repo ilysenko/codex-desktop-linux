@@ -1,0 +1,20 @@
+{
+  "id": "codex-wrapper-updater",
+  "name": "Wrapper updater",
+  "description": "Adds an opt-in Codex Desktop Linux wrapper update button. The feature owns the button, marker, retry, and apply hook; core only provides generic feature hooks.",
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "runtimeHooks": {
+    "prelaunch": {
+      "source": "apply-pending.sh",
+      "name": "apply-pending.sh",
+      "mode": "0755"
+    },
+    "afterExit": {
+      "source": "apply-pending.sh",
+      "name": "apply-pending.sh",
+      "mode": "0755"
+    }
+  }
+}

@@ -257,6 +257,10 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
       newText: String.raw`codexLinuxChromeUserDataDirectories=()=>X5()==="linux"?[Y5(Z5(),".config","BraveSoftware","Brave-Browser"),Y5(Z5(),".config","google-chrome"),Y5(Z5(),".config","chromium"),Y5(Z5(),".config","thorium")]:[hl]`,
     },
     {
+      oldText: String.raw`codexLinuxChromeUserDataDirectories=()=>L9()==="linux"?[M9(F9(),".config","BraveSoftware","Brave-Browser"),M9(F9(),".config","google-chrome"),M9(F9(),".config","chromium")]:[kl]`,
+      newText: String.raw`codexLinuxChromeUserDataDirectories=()=>L9()==="linux"?[M9(F9(),".config","BraveSoftware","Brave-Browser"),M9(F9(),".config","google-chrome"),M9(F9(),".config","chromium"),M9(F9(),".config","thorium")]:[kl]`,
+    },
+    {
       oldText: String.raw`var hl=Y5(Z5(),X5()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");`,
       newText: String.raw`var hl=Y5(Z5(),X5()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome"),codexLinuxChromeUserDataDirectories=()=>X5()==="linux"?[Y5(Z5(),".config","BraveSoftware","Brave-Browser"),Y5(Z5(),".config","google-chrome"),Y5(Z5(),".config","chromium"),Y5(Z5(),".config","thorium")]:[hl];`,
     },
@@ -272,7 +276,7 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
       newText: String.raw`var mT=async(e,t,r=hl)=>{let n=rh(r,e,"Local Extension Settings",t);if(!n9(n))return null;let o=await r9(rh(o9(),"codex"));await t9(n,o,{recursive:!0}),await fT(rh(o,"LOCK"));let i=new Q5(o,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await i.open();let s=await i.get("extensionInstanceId");if(!s)return null;let a=JSON.parse(s);return typeof a!="string"?null:a}finally{await i.close(),await fT(o,{force:!0,recursive:!0})}}`,
     },
   ],
-  alreadyText: "async(e,t,r=hl)",
+  alreadyText: ["async(e,t,r=hl)", `r,e,"Local Extension Settings"`],
 });
 
 patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
@@ -283,7 +287,7 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
       newText: String.raw`a9=async(e,t)=>{let r=(await u9(e)).filter(n=>n.instanceId===t);return r.length===1?r[0]:null},u9=async e=>{let t=[];for(let r of codexLinuxChromeUserDataDirectories())try{let n=await c9(r);t.push(...await Promise.all(n.map(async o=>({...o,userDataDir:r,instanceId:await mT(o.id,e,r).catch(i=>(ne(i),null))}))))}catch(n){ne(n)}return t},c9=async r=>{let n=s9(r,"Local State"),o=JSON.parse(await i9(n,"utf8"));return o.profile.profiles_order.map((i,s)=>{let a=o.profile.info_cache[i];return a?{id:i,name:a.name,isLastUsed:o.profile.last_used===i,orderingIndex:s,avatarUrl:a.avatar_icon}:null}).filter(i=>!!i)}`,
     },
   ],
-  alreadyText: "r.length===1?r[0]:null},u9=async",
+  alreadyText: "r.length===1?r[0]:null",
 });
 
 patchFile(path.join(scriptsDir, "installed-browsers.js"), [

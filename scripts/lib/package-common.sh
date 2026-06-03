@@ -49,6 +49,132 @@ package_node_binary() {
     command -v node
 }
 
+find_cargo_for_packaged_computer_use() {
+    if command -v cargo >/dev/null 2>&1; then
+        command -v cargo
+        return 0
+    fi
+
+    if [ -x "$HOME/.cargo/bin/cargo" ]; then
+        echo "$HOME/.cargo/bin/cargo"
+        return 0
+    fi
+
+    return 1
+}
+
+stage_packaged_linux_computer_use_backend() {
+    local app_root="$1"
+    local target_plugin="$app_root/resources/plugins/openai-bundled/plugins/computer-use"
+    local target_bin="$target_plugin/bin"
+    local backend_source="${CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE:-}"
+    local cosmic_source="${CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE:-}"
+    local cargo_cmd=""
+
+    [ -d "$target_plugin" ] || return 0
+
+    if [ -n "$backend_source" ] || [ -n "$cosmic_source" ]; then
+        [ -x "$backend_source" ] || error "CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE is not executable: $backend_source"
+        [ -x "$cosmic_source" ] || error "CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE is not executable: $cosmic_source"
+        info "Using prebuilt Linux Computer Use backend for package payload"
+    else
+        if [ ! -d "$REPO_DIR/computer-use-linux" ]; then
+            info "Linux Computer Use source not found; keeping existing package payload backend"
+            return 0
+        fi
+        if ! cargo_cmd="$(find_cargo_for_packaged_computer_use)"; then
+            [ -x "$target_bin/codex-computer-use-linux" ] && [ -x "$target_bin/codex-computer-use-cosmic" ] \
+                || error "cargo not found and packaged Linux Computer Use backend is missing"
+            info "cargo not found; keeping existing package payload backend"
+            return 0
+        fi
+        info "Building Linux Computer Use backend for package payload"
+        (cd "$REPO_DIR" && "$cargo_cmd" build --release -p codex-computer-use-linux >&2) \
+            || error "Failed to build Linux Computer Use backend"
+        backend_source="$REPO_DIR/target/release/codex-computer-use-linux"
+        cosmic_source="$REPO_DIR/target/release/codex-computer-use-cosmic"
+    fi
+
+    [ -x "$backend_source" ] || error "Linux Computer Use backend missing: $backend_source"
+    [ -x "$cosmic_source" ] || error "Linux Computer Use COSMIC helper missing: $cosmic_source"
+    mkdir -p "$target_bin"
+    cp "$backend_source" "$target_bin/codex-computer-use-linux"
+    cp "$cosmic_source" "$target_bin/codex-computer-use-cosmic"
+    chmod 0755 "$target_bin/codex-computer-use-linux" "$target_bin/codex-computer-use-cosmic"
+}
+
+is_macho_binary() {
+    local path="$1"
+    python3 - "$path" <<'PY'
+import pathlib
+import sys
+
+try:
+    magic = pathlib.Path(sys.argv[1]).read_bytes()[:4]
+except OSError:
+    sys.exit(1)
+
+macho_magics = {
+    b"\xfe\xed\xfa\xce",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+}
+sys.exit(0 if magic in macho_magics else 1)
+PY
+}
+
+write_packaged_chrome_codex_cli_shim() {
+    local destination="$1"
+
+    cat > "$destination" <<'SCRIPT'
+#!/bin/sh
+set -eu
+
+if [ -n "${CODEX_CLI_PATH:-}" ] && [ -x "$CODEX_CLI_PATH" ]; then
+    exec "$CODEX_CLI_PATH" "$@"
+fi
+
+if command -v codex >/dev/null 2>&1; then
+    exec codex "$@"
+fi
+
+if [ -x "$HOME/.npm-global/bin/codex" ]; then
+    exec "$HOME/.npm-global/bin/codex" "$@"
+fi
+
+echo "codex CLI not found; set CODEX_CLI_PATH or install @openai/codex" >&2
+exit 127
+SCRIPT
+    chmod 0755 "$destination"
+}
+
+stage_packaged_chrome_app_server_runtime() {
+    local app_root="$1"
+    local target_plugin="$app_root/resources/plugins/openai-bundled/plugins/chrome"
+    local runtime_dir="$target_plugin/app-server-runtime"
+    local managed_node="$app_root/resources/node-runtime/bin/node"
+    local node_repl="$app_root/resources/node_repl"
+
+    [ -d "$target_plugin" ] || return 0
+    [ -x "$managed_node" ] || error "Missing packaged managed Node.js runtime for Chrome plugin: $managed_node"
+    [ -x "$node_repl" ] || error "Missing packaged node_repl runtime for Chrome plugin: $node_repl"
+    if is_macho_binary "$managed_node"; then
+        error "Packaged managed Node.js runtime is a macOS binary: $managed_node"
+    fi
+    if is_macho_binary "$node_repl"; then
+        error "Packaged node_repl runtime is a macOS binary: $node_repl"
+    fi
+
+    rm -rf "$runtime_dir"
+    mkdir -p "$runtime_dir"
+    install -m 0755 "$managed_node" "$runtime_dir/node"
+    install -m 0755 "$node_repl" "$runtime_dir/node_repl"
+    write_packaged_chrome_codex_cli_shim "$runtime_dir/codex"
+}
+
 stage_update_builder_linux_features_config() {
     local update_builder_root="$1"
     local helper="$REPO_DIR/scripts/lib/linux-features.js"
@@ -75,6 +201,64 @@ if (enabled.length === 0) {
 fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 fs.writeFileSync(targetPath, `${JSON.stringify({ enabled }, null, 2)}\n`);
 NODE
+}
+
+linux_features_root_path() {
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+
+    node_bin="$(package_node_binary)"
+    "$node_bin" "$helper" --features-root
+}
+
+stage_update_builder_linux_features_tree() {
+    local update_builder_root="$1"
+    local source_root
+    local target="$update_builder_root/linux-features"
+
+    source_root="$(linux_features_root_path)"
+    [ -d "$source_root" ] || error "Missing Linux features root: $source_root"
+
+    mkdir -p "$target"
+    cp -a "$source_root/." "$target/"
+}
+
+run_linux_feature_package_hooks() {
+    local staging_root="$1"
+    local package_format="$2"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+    local feature_id
+    local hook_path
+    local hooks_output
+    local app_dir="$staging_root/opt/$PACKAGE_NAME"
+
+    [ -d "$staging_root" ] || error "Missing package staging root: $staging_root"
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+
+    node_bin="$(package_node_binary)"
+    if ! hooks_output="$("$node_bin" "$helper" --package-hooks "$package_format")"; then
+        error "Failed to discover Linux feature package hooks for $package_format"
+    fi
+
+    while IFS=$'\t' read -r feature_id hook_path; do
+        [ -n "${feature_id:-}" ] || continue
+        [ -f "$hook_path" ] || error "Missing Linux feature package hook for $feature_id: $hook_path"
+
+        info "Running Linux feature package hook ($package_format): $feature_id"
+        REPO_DIR="$REPO_DIR" \
+            SCRIPT_DIR="$REPO_DIR" \
+            APP_DIR="$app_dir" \
+            PACKAGE_APP_DIR="$app_dir" \
+            PACKAGE_NAME="$PACKAGE_NAME" \
+            PACKAGE_VERSION="$PACKAGE_VERSION" \
+            PACKAGE_FORMAT="$package_format" \
+            PACKAGE_ROOT="$staging_root" \
+            PACKAGE_STAGING_ROOT="$staging_root" \
+            bash "$hook_path"
+    done <<< "$hooks_output"
 }
 
 render_desktop_entry() {
@@ -125,14 +309,14 @@ render_desktop_entry() {
             /^\[/ { skip = 0 }
             skip { next }
             /^Actions=/ {
-                print "Actions=new-window;"
+                print "Actions=new-window;quick-chat;compact-prompt;"
                 actions_rewritten = 1
                 next
             }
             { print }
             END {
                 if (actions_rewritten == 0) {
-                    print "Actions=new-window;"
+                    print "Actions=new-window;quick-chat;compact-prompt;"
                 }
             }
         ' "$rendered_target" > "$target"
@@ -256,6 +440,35 @@ render_desktop_entry_doctor_helper() {
 
     cp "$REPO_DIR/packaging/linux/codex-desktop-entry-doctor.sh" "$target"
     chmod 0644 "$target"
+}
+
+render_desktop_service_lifecycle_helper() {
+    local target="$1"
+
+    cp "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" "$target"
+    chmod 0644 "$target"
+}
+
+render_desktop_app_service() {
+    local target="$1"
+    local package_name
+    local service_source="${DESKTOP_SERVICE_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop.service}"
+
+    ensure_file_exists "$service_source" "desktop app service template"
+    package_name="$(sed_escape_replacement "$PACKAGE_NAME")"
+    sed -e "s/__PACKAGE_NAME__/$package_name/g" "$service_source" > "$target"
+    chmod 0644 "$target"
+}
+
+render_desktop_app_doctor() {
+    local target="$1"
+    local package_name
+    local doctor_source="${DESKTOP_DOCTOR_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop-doctor.py}"
+
+    ensure_file_exists "$doctor_source" "desktop doctor template"
+    package_name="$(sed_escape_replacement "$PACKAGE_NAME")"
+    sed -e "s/__PACKAGE_NAME__/$package_name/g" "$doctor_source" > "$target"
+    chmod 0755 "$target"
 }
 
 write_no_updater_deb_postinst() {
@@ -389,8 +602,18 @@ find_cargo_command() {
     return 1
 }
 
+updater_build_output_binary() {
+    local target_dir="${CARGO_TARGET_DIR:-$REPO_DIR/target}"
+    case "$target_dir" in
+        /*) ;;
+        *) target_dir="$REPO_DIR/$target_dir" ;;
+    esac
+    printf '%s\n' "$target_dir/release/codex-update-manager"
+}
+
 ensure_updater_binary() {
     local cargo_cmd=""
+    local built_binary=""
 
     if ! package_with_updater_enabled; then
         return
@@ -408,6 +631,10 @@ Install the Rust toolchain:
 
     info "Building codex-update-manager release binary"
     "$cargo_cmd" build --release -p codex-update-manager >&2
+    built_binary="$(updater_build_output_binary)"
+    if [ -x "$built_binary" ]; then
+        UPDATER_BINARY_SOURCE="$built_binary"
+    fi
     [ -x "$UPDATER_BINARY_SOURCE" ] || error "Failed to build updater binary: $UPDATER_BINARY_SOURCE"
 }
 
@@ -473,21 +700,146 @@ function sanitizeGitRemoteUrl(remote) {
   return value;
 }
 
+function readJsonFile(filePath) {
+  try {
+    const value = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return value != null && typeof value === "object" && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseWrapperVersion(content) {
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.trim().match(/^version\s*=\s*"([^"]+)"/);
+    if (match) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function readWrapperVersion(repoDir) {
+  try {
+    return parseWrapperVersion(fs.readFileSync(path.join(repoDir, "updater", "Cargo.toml"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeSourceInfo(info) {
+  const remote = sanitizeGitRemoteUrl(info.remote);
+  return {
+    ...info,
+    version: info.version ?? readWrapperVersion(repoDir),
+    remote,
+    commitUrl: githubCommitUrl(remote, info.commit),
+    provenance: info.provenance ?? "packaged-update-builder",
+    recapturedAt: isoTimestamp(),
+  };
+}
+
+function githubCommitUrl(remote, commit) {
+  const sha = typeof commit === "string" ? commit.trim() : "";
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
+    return null;
+  }
+  const value = sanitizeGitRemoteUrl(remote);
+  if (value == null) {
+    return null;
+  }
+
+  let ownerAndRepo = null;
+  try {
+    const url = new URL(value);
+    if (url.hostname.toLowerCase() !== "github.com") {
+      return null;
+    }
+    ownerAndRepo = url.pathname.replace(/^\/+/, "");
+  } catch {
+    const scpMatch = value.match(/^(?:[^@]+@)?github\.com:([^/]+\/[^/]+?)(?:\.git)?$/i);
+    if (scpMatch) {
+      ownerAndRepo = scpMatch[1];
+    }
+  }
+
+  if (ownerAndRepo == null) {
+    return null;
+  }
+  ownerAndRepo = ownerAndRepo.replace(/\/+$/, "").replace(/\.git$/i, "");
+  if (!/^[^/\s]+\/[^/\s]+$/.test(ownerAndRepo)) {
+    return null;
+  }
+  return `https://github.com/${ownerAndRepo}/commit/${sha}`;
+}
+
+const stagedInfo = readJsonFile(path.join(repoDir, ".codex-linux", "source-info.json"));
 const commit = process.env.CODEX_LINUX_SOURCE_COMMIT?.trim() || git(["rev-parse", "HEAD"]);
 const status = git(["status", "--porcelain"]);
-const info = {
-  commit,
-  shortCommit: commit == null ? null : commit.slice(0, 12),
-  branch: process.env.CODEX_LINUX_SOURCE_BRANCH?.trim() || git(["branch", "--show-current"]),
-  remote: sanitizeGitRemoteUrl(process.env.CODEX_LINUX_SOURCE_REMOTE?.trim() || git(["remote", "get-url", "origin"])),
-  describe: process.env.CODEX_LINUX_SOURCE_DESCRIBE?.trim() || git(["describe", "--always", "--dirty", "--tags"]),
-  dirty: status == null ? null : status.length > 0,
-  provenance: "packaged-update-builder",
-  capturedAt: isoTimestamp(),
-};
+const remote = sanitizeGitRemoteUrl(process.env.CODEX_LINUX_SOURCE_REMOTE?.trim() || git(["remote", "get-url", "origin"]));
+const info = stagedInfo?.commit
+  ? sanitizeSourceInfo(stagedInfo)
+  : {
+      commit,
+      shortCommit: commit == null ? null : commit.slice(0, 12),
+      version: readWrapperVersion(repoDir),
+      branch: process.env.CODEX_LINUX_SOURCE_BRANCH?.trim() || git(["branch", "--show-current"]),
+      remote,
+      commitUrl: githubCommitUrl(remote, commit),
+      describe: process.env.CODEX_LINUX_SOURCE_DESCRIBE?.trim() || git(["describe", "--always", "--dirty", "--tags"]),
+      dirty: status == null ? null : status.length > 0,
+      provenance: "packaged-update-builder",
+      capturedAt: isoTimestamp(),
+    };
 
 fs.mkdirSync(path.dirname(infoFile), { recursive: true });
 fs.writeFileSync(infoFile, `${JSON.stringify(info, null, 2)}\n`, "utf8");
+NODE
+}
+
+stage_packaged_app_build_info_source() {
+    local app_root="$1"
+    local primary_info="$app_root/.codex-linux/build-info.json"
+    local resource_info="$app_root/resources/codex-linux-build-info.json"
+    local node_bin
+
+    [ -f "$primary_info" ] || [ -f "$resource_info" ] || return 0
+
+    node_bin="$(package_node_binary)"
+    "$node_bin" - "$REPO_DIR" "$primary_info" "$resource_info" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [repoDir, ...infoPaths] = process.argv.slice(2);
+const { isoTimestamp, sourceInfo } = require(path.join(repoDir, "scripts/lib/build-info.js"));
+
+function readJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+const existing = infoPaths.map(readJson).find((value) => value != null && typeof value === "object" && !Array.isArray(value));
+if (existing == null) {
+  process.exit(0);
+}
+
+const source = {
+  ...sourceInfo(repoDir),
+  provenance: "packaged-app-payload",
+};
+const updated = {
+  ...existing,
+  generatedAt: isoTimestamp(),
+  source,
+};
+
+for (const infoPath of infoPaths) {
+  fs.mkdirSync(path.dirname(infoPath), { recursive: true });
+  fs.writeFileSync(infoPath, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+}
 NODE
 }
 
@@ -504,19 +856,25 @@ stage_common_package_files() {
         "$root/opt" \
         "$root/usr/bin" \
         "$root/usr/share/applications" \
-        "$root/usr/share/icons/hicolor/256x256/apps"
+        "$root/usr/share/icons/hicolor/256x256/apps" \
+        "$root/usr/lib/systemd/user"
     if package_with_updater_enabled; then
         mkdir -p \
-            "$root/usr/lib/systemd/user" \
             "$root/usr/share/polkit-1/actions"
     fi
 
     rm -rf "$app_root"
     cp -aT "$APP_DIR" "$app_root"
+    stage_packaged_linux_computer_use_backend "$app_root"
+    stage_packaged_chrome_app_server_runtime "$app_root"
     mkdir -p "$app_root/.codex-linux"
+    stage_packaged_app_build_info_source "$app_root"
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"
+    render_desktop_service_lifecycle_helper "$app_root/.codex-linux/codex-desktop-service-lifecycle.sh"
     render_desktop_entry "$root/usr/share/applications/$PACKAGE_NAME.desktop"
+    render_desktop_app_service "$root/usr/lib/systemd/user/$PACKAGE_NAME.service"
+    render_desktop_app_doctor "$root/usr/bin/$PACKAGE_NAME-doctor"
     cp "$ICON_SOURCE" "$root/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
     if package_with_updater_enabled; then
         cp "$UPDATER_BINARY_SOURCE" "$root/usr/bin/codex-update-manager"
@@ -540,6 +898,7 @@ stage_update_builder_bundle() {
     mkdir -p \
         "$update_builder_root/scripts" \
         "$update_builder_root/scripts/lib" \
+        "$update_builder_root/scripts/ci" \
         "$update_builder_root/scripts/patches" \
         "$update_builder_root/launcher" \
         "$update_builder_root/linux-features" \
@@ -547,6 +906,7 @@ stage_update_builder_bundle() {
         "$update_builder_root/assets"
 
     cp "$REPO_DIR/install.sh" "$update_builder_root/install.sh"
+    cp "$REPO_DIR/CHANGELOG.md" "$update_builder_root/CHANGELOG.md"
     cp "$REPO_DIR/launcher/start.sh.template" "$update_builder_root/launcher/start.sh.template"
     cp "$REPO_DIR/launcher/webview-server.py" "$update_builder_root/launcher/webview-server.py"
     cp "$REPO_DIR/Cargo.toml" "$update_builder_root/Cargo.toml"
@@ -563,6 +923,7 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/scripts/build-rpm.sh" "$update_builder_root/scripts/build-rpm.sh"
     cp "$REPO_DIR/scripts/build-pacman.sh" "$update_builder_root/scripts/build-pacman.sh"
     cp "$REPO_DIR/scripts/rebuild-candidate.sh" "$update_builder_root/scripts/rebuild-candidate.sh"
+    cp "$REPO_DIR/scripts/app-server-schema-guard.js" "$update_builder_root/scripts/app-server-schema-guard.js"
     cp "$REPO_DIR/scripts/patch-linux-window-ui.js" "$update_builder_root/scripts/patch-linux-window-ui.js"
     cp -r "$REPO_DIR/scripts/patches/." "$update_builder_root/scripts/patches/"
     cp "$REPO_DIR/scripts/lib/package-common.sh" "$update_builder_root/scripts/lib/package-common.sh"
@@ -583,11 +944,19 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/scripts/lib/rebuild-report.sh" "$update_builder_root/scripts/lib/rebuild-report.sh"
     cp "$REPO_DIR/scripts/lib/build-info.js" "$update_builder_root/scripts/lib/build-info.js"
     cp "$REPO_DIR/scripts/lib/build-info.sh" "$update_builder_root/scripts/lib/build-info.sh"
+    cp "$REPO_DIR/scripts/ci/validate-patch-report.js" \
+        "$update_builder_root/scripts/ci/validate-patch-report.js"
     cp "$REPO_DIR/packaging/linux/control" "$update_builder_root/packaging/linux/control"
     cp "$REPO_DIR/packaging/linux/codex-desktop.spec" "$update_builder_root/packaging/linux/codex-desktop.spec"
     cp "$REPO_DIR/packaging/linux/codex-desktop.desktop" "$update_builder_root/packaging/linux/codex-desktop.desktop"
+    cp "${DESKTOP_SERVICE_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop.service}" \
+        "$update_builder_root/packaging/linux/codex-desktop.service"
+    cp "${DESKTOP_DOCTOR_SOURCE:-$REPO_DIR/packaging/linux/codex-desktop-doctor.py}" \
+        "$update_builder_root/packaging/linux/codex-desktop-doctor.py"
     cp "$REPO_DIR/packaging/linux/codex-desktop-entry-doctor.sh" \
         "$update_builder_root/packaging/linux/codex-desktop-entry-doctor.sh"
+    cp "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" \
+        "$update_builder_root/packaging/linux/codex-desktop-service-lifecycle.sh"
     cp "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "$update_builder_root/packaging/linux/codex-packaged-runtime.sh"
     cp "$REPO_DIR/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy" \
         "$update_builder_root/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy"
@@ -598,7 +967,7 @@ stage_update_builder_bundle() {
     cp "$UPDATER_SERVICE_SOURCE" "$update_builder_root/packaging/linux/codex-update-manager.service"
     cp "$REPO_DIR/packaging/linux/codex-update-manager.postinst" "$update_builder_root/packaging/linux/codex-update-manager.postinst"
     cp "$REPO_DIR/packaging/linux/codex-update-manager.prerm" "$update_builder_root/packaging/linux/codex-update-manager.prerm"
-    cp -r "$REPO_DIR/linux-features/." "$update_builder_root/linux-features/"
+    stage_update_builder_linux_features_tree "$update_builder_root"
     stage_update_builder_linux_features_config "$update_builder_root"
     cp "$REPO_DIR/packaging/linux/codex-update-manager.postrm" "$update_builder_root/packaging/linux/codex-update-manager.postrm"
     cp "$REPO_DIR/assets/codex.png" "$update_builder_root/assets/codex.png"
@@ -615,6 +984,68 @@ stage_optional_update_builder_bundle() {
         stage_update_builder_bundle "$@"
     else
         info "Skipping update-builder bundle (PACKAGE_WITH_UPDATER=0)"
+    fi
+}
+
+restore_linux_feature_payload_permissions() {
+    local root="$1"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local app_root="$root/opt/$PACKAGE_NAME"
+    local node_bin
+    local staged_files_json
+
+    [ -d "$root" ] || error "Missing package root: $root"
+    [ -d "$app_root" ] || error "Missing package app root: $app_root"
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+
+    node_bin="$(package_node_binary)"
+    if ! staged_files_json="$("$node_bin" "$helper" --staged-files-json "$app_root")"; then
+        error "Failed to read Linux feature staged file manifest"
+    fi
+
+    if ! "$node_bin" - "$app_root" "$staged_files_json" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [appRoot, rawJson] = process.argv.slice(2);
+const entries = JSON.parse(rawJson);
+
+if (!Array.isArray(entries)) {
+  throw new Error("Linux feature staged files payload must be an array");
+}
+
+function assertRelativeTarget(target) {
+  if (typeof target !== "string" || target.length === 0) {
+    throw new Error("Linux feature staged file target must be a relative path");
+  }
+  const parts = target.split(/[\\/]+/).filter(Boolean);
+  if (path.isAbsolute(target) || parts.includes("..")) {
+    throw new Error(`Unsafe Linux feature staged file target: ${target}`);
+  }
+  const resolved = path.resolve(appRoot, ...parts);
+  const relative = path.relative(appRoot, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Unsafe Linux feature staged file target: ${target}`);
+  }
+  return resolved;
+}
+
+for (const entry of entries) {
+  if (entry == null || typeof entry !== "object") {
+    throw new Error("Linux feature staged file entry must be an object");
+  }
+  if (typeof entry.mode !== "string" || !/^[0-7]{3,4}$/.test(entry.mode)) {
+    throw new Error(`Invalid Linux feature staged file mode for ${entry.target}: ${entry.mode}`);
+  }
+  const target = assertRelativeTarget(entry.target);
+  if (!fs.existsSync(target)) {
+    throw new Error(`Linux feature staged file is missing from package payload: ${entry.target}`);
+  }
+  fs.chmodSync(target, Number.parseInt(entry.mode, 8));
+}
+NODE
+    then
+        error "Failed to restore Linux feature staged file permissions"
     fi
 }
 

@@ -116,7 +116,10 @@ log "Rebuilding wrapper..."
 (
     cd "$BUILD_REPO_DIR"
     mkdir -p "$STATE_DIR/tmp"
-    if [ -f "$SOURCE_REPO_DIR/linux-features/features.json" ]; then
+    # Honor a caller-provided feature config (e.g. the in-app Update button's
+    # feature picker) over the repo-local default, so a picked selection wins.
+    if [ -z "${CODEX_LINUX_FEATURES_CONFIG:-}" ] && \
+       [ -f "$SOURCE_REPO_DIR/linux-features/features.json" ]; then
         export CODEX_LINUX_FEATURES_CONFIG="$SOURCE_REPO_DIR/linux-features/features.json"
     fi
     TMPDIR="$STATE_DIR/tmp" \

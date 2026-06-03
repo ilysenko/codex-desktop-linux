@@ -51,12 +51,87 @@ assert_contains() {
     grep -q -- "$pattern" "$path" || fail "Expected '$pattern' in $path"
 }
 
+assert_contains_literal() {
+    local path="$1"
+    local literal="$2"
+    grep -Fq -- "$literal" "$path" || fail "Expected literal '$literal' in $path"
+}
+
 assert_not_contains() {
     local path="$1"
     local pattern="$2"
     if grep -q -- "$pattern" "$path"; then
         fail "Did not expect '$pattern' in $path"
     fi
+}
+
+assert_not_contains_literal() {
+    local path="$1"
+    local literal="$2"
+    if grep -Fq -- "$literal" "$path"; then
+        fail "Did not expect literal '$literal' in $path"
+    fi
+}
+
+assert_linux_elf_executable() {
+    local path="$1"
+    python3 - "$path" "$(uname -m)" <<'PY' || fail "Expected Linux ELF executable: $path"
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+arch = sys.argv[2]
+expected_machine = {
+    "x86_64": 62,
+    "aarch64": 183,
+    "armv7l": 40,
+    "armv6l": 40,
+    "armhf": 40,
+}.get(arch)
+if expected_machine is None:
+    sys.exit(1)
+
+try:
+    header = path.read_bytes()[:20]
+except OSError:
+    sys.exit(1)
+
+if len(header) < 20 or header[:4] != b"\x7fELF" or header[5] != 1:
+    sys.exit(1)
+
+machine = int.from_bytes(header[18:20], "little")
+sys.exit(0 if machine == expected_machine else 1)
+PY
+    [ -x "$path" ] || fail "Expected executable bit on Linux ELF: $path"
+}
+
+assert_not_macho_binary() {
+    local path="$1"
+    python3 - "$path" <<'PY' || fail "Expected non-Mach-O file: $path"
+import pathlib
+import sys
+
+magic = pathlib.Path(sys.argv[1]).read_bytes()[:4]
+macho_magics = {
+    b"\xfe\xed\xfa\xce",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+}
+sys.exit(1 if magic in macho_magics else 0)
+PY
+}
+
+assert_app_service_shell_variables_escaped() {
+    local path="$1"
+    local package_name="${2:-codex-desktop}"
+
+    assert_contains_literal "$path" "ExecStart=/bin/bash /opt/$package_name/.codex-linux/codex-desktop-service-lifecycle.sh start $package_name /usr/bin/$package_name"
+    assert_contains_literal "$path" "ExecStop=/bin/bash /opt/$package_name/.codex-linux/codex-desktop-service-lifecycle.sh stop $package_name /usr/bin/$package_name"
+    assert_not_contains_literal "$path" 'status=$?'
+    assert_not_contains_literal "$path" '${XDG_STATE_HOME:-$HOME/.local/state}'
 }
 
 assert_occurrence_count() {
@@ -95,18 +170,23 @@ make_wizard_feature_root() {
     cat > "$features_root/conversation-mode/feature.json" <<'JSON'
 {"id":"conversation-mode","name":"Conversation mode","description":"Voice conversation loop."}
 JSON
+    printf '%s\n' '# Conversation Mode' > "$features_root/conversation-mode/README.md"
     cat > "$features_root/example-feature/feature.json" <<'JSON'
 {"id":"example-feature","title":"Example Linux Feature","description":"Developer sample."}
 JSON
+    printf '%s\n' '# Example Linux Feature' > "$features_root/example-feature/README.md"
     cat > "$features_root/read-aloud/feature.json" <<'JSON'
 {"id":"read-aloud","name":"Read aloud","description":"Read assistant responses aloud."}
 JSON
+    printf '%s\n' '# Read Aloud' > "$features_root/read-aloud/README.md"
     cat > "$features_root/read-aloud-mcp/feature.json" <<'JSON'
 {"id":"read-aloud-mcp","title":"Read Aloud MCP","description":"Read Aloud MCP plugin staging."}
 JSON
+    printf '%s\n' '# Read Aloud MCP' > "$features_root/read-aloud-mcp/README.md"
     cat > "$features_root/remote-mobile-control/feature.json" <<'JSON'
 {"id":"remote-mobile-control","title":"Experimental Remote Mobile Control","description":"Mobile host enrollment patches."}
 JSON
+    printf '%s\n' '# Remote Mobile Control' > "$features_root/remote-mobile-control/README.md"
 }
 
 make_fake_browser_upstream_app() {
@@ -151,24 +231,42 @@ test_package_payload_permission_normalization() {
     info "Checking package payload permission normalization"
     local root="$TMP_DIR/package-permissions"
     local app_root="$root/opt/codex-desktop"
+    local private_file="$app_root/.codex-linux/features/private/secret.txt"
 
-    mkdir -p "$app_root/content/webview" "$root/usr/bin"
+    mkdir -p "$app_root/content/webview" "$root/usr/bin" "$(dirname "$private_file")"
     printf '%s\n' '#!/bin/bash' 'echo start' > "$app_root/start.sh"
     printf '%s\n' '<!doctype html>' > "$app_root/content/webview/index.html"
     printf '%s\n' '#!/bin/bash' 'exec /opt/codex-desktop/start.sh "$@"' > "$root/usr/bin/codex-desktop"
+    printf '%s\n' 'secret' > "$private_file"
+    cat > "$app_root/.codex-linux/linux-features-staged.json" <<'JSON'
+{
+  "version": 1,
+  "resources": [
+    {
+      "id": "private",
+      "type": "resource",
+      "target": ".codex-linux/features/private/secret.txt",
+      "mode": "0600"
+    }
+  ],
+  "runtimeHooks": []
+}
+JSON
     chmod 0700 "$root/opt" "$app_root" "$app_root/content" "$app_root/content/webview"
     chmod 0700 "$app_root/start.sh" "$root/usr/bin/codex-desktop"
-    chmod 0600 "$app_root/content/webview/index.html"
+    chmod 0600 "$app_root/content/webview/index.html" "$private_file"
 
     # shellcheck disable=SC1091
     source "$REPO_DIR/scripts/lib/package-common.sh"
     normalize_package_payload_permissions "$root"
+    PACKAGE_NAME="codex-desktop" restore_linux_feature_payload_permissions "$root"
 
     assert_mode "$app_root" "755"
     assert_mode "$app_root/content/webview" "755"
     assert_mode "$app_root/start.sh" "755"
     assert_mode "$root/usr/bin/codex-desktop" "755"
     assert_mode "$app_root/content/webview/index.html" "644"
+    assert_mode "$private_file" "600"
 }
 
 test_deb_builder_smoke() {
@@ -179,12 +277,257 @@ test_deb_builder_smoke() {
     local dist_dir="$workspace/dist"
     local pkg_root="$workspace/deb-root"
     local updater_bin="$workspace/codex-update-manager"
+    local capture_dir="$workspace/capture"
+    local chrome_runtime
+    local true_bin
+
+    mkdir -p "$workspace" "$dist_dir" "$capture_dir"
+    make_stub_bin_dir "$bin_dir"
+    make_fake_app "$app_dir"
+    true_bin="$(type -P true)"
+    cp "$true_bin" "$app_dir/resources/node-runtime/bin/node"
+    chmod 0755 "$app_dir/resources/node-runtime/bin/node"
+    cp "$true_bin" "$app_dir/resources/node_repl"
+    chmod 0755 "$app_dir/resources/node_repl"
+    chrome_runtime="$app_dir/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime"
+    mkdir -p "$chrome_runtime"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_runtime/node"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_runtime/node_repl"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_runtime/codex"
+    chmod +x "$chrome_runtime/node" "$chrome_runtime/node_repl" "$chrome_runtime/codex"
+    mkdir -p "$app_dir/.codex-linux"
+    cat > "$app_dir/.codex-linux/build-info.json" <<'JSON'
+{
+  "schemaVersion": 1,
+  "generatedAt": "2024-01-01T00:00:00.000Z",
+  "source": {
+    "commit": "old-app-commit",
+    "shortCommit": "old-app-comm",
+    "branch": "old-app-branch",
+    "remote": "https://example.com/old/repo.git",
+    "describe": "old-app",
+    "dirty": false,
+    "provenance": "git"
+  }
+}
+JSON
+    cp "$app_dir/.codex-linux/build-info.json" "$app_dir/resources/codex-linux-build-info.json"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$updater_bin"
+    chmod +x "$updater_bin"
+
+    cat > "$bin_dir/dpkg" <<'SCRIPT'
+#!/usr/bin/env bash
+if [ "$1" = "--print-architecture" ]; then
+    echo amd64
+    exit 0
+fi
+exit 0
+SCRIPT
+    cat > "$bin_dir/dpkg-deb" <<'SCRIPT'
+#!/usr/bin/env bash
+output="${@: -1}"
+printf '%s\n' "$*" > "$CAPTURE_DIR/dpkg-deb-args"
+printf '%s\n' "${DPKG_DEB_THREADS_MAX:-}" > "$CAPTURE_DIR/dpkg-deb-threads"
+mkdir -p "$(dirname "$output")"
+touch "$output"
+SCRIPT
+    cat > "$bin_dir/cargo" <<'SCRIPT'
+#!/usr/bin/env bash
+echo "cargo should not be called when UPDATER_BINARY_SOURCE exists" >&2
+exit 99
+SCRIPT
+    chmod +x "$bin_dir/dpkg" "$bin_dir/dpkg-deb" "$bin_dir/cargo"
+
+    PATH="$bin_dir:$PATH" \
+    APP_DIR_OVERRIDE="$app_dir" \
+    PKG_ROOT_OVERRIDE="$pkg_root" \
+    DIST_DIR_OVERRIDE="$dist_dir" \
+    CAPTURE_DIR="$capture_dir" \
+    UPDATER_BINARY_SOURCE="$updater_bin" \
+    CODEX_LINUX_SOURCE_COMMIT="0123456789abcdef0123456789abcdef01234567" \
+    CODEX_LINUX_SOURCE_BRANCH="packaging-source-branch" \
+    CODEX_LINUX_SOURCE_REMOTE="https://builder:secret-token@example.com/org/repo.git" \
+    CODEX_LINUX_SOURCE_DESCRIBE="packaging-source-v1" \
+    SOURCE_DATE_EPOCH="1710000000" \
+    MAX_BUILD_THREADS=6 \
+    PACKAGE_VERSION="2026.03.24.120000+deadbeef" \
+    bash "$REPO_DIR/scripts/build-deb.sh"
+
+    assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+deadbeef_amd64.deb"
+    [ "$(cat "$capture_dir/dpkg-deb-threads")" = "6" ] \
+        || fail "Expected MAX_BUILD_THREADS to reach dpkg-deb"
+    assert_file_exists "$pkg_root/DEBIAN/prerm"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=New Window"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=Quick Chat"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=Compact Prompt"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=Check for Updates"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=Install Ready Update"
+    assert_file_exists "$pkg_root/DEBIAN/postrm"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/package-common.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/patch-chrome-plugin.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/node-runtime.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-update-bridge-patch.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/patch-report.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/rebuild-report.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/build-info.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/build-info.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-target-context.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/app-server-schema-guard.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/ci/validate-patch-report.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/engine.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/registry.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/shared.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/all-linux/main-process/lifecycle/patch.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/all-linux/webview/theme-and-sunset/patch.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/distro/nixos/README.md"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/desktop/i3/README.md"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/package/deb/README.md"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/README.md"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/example-feature/feature.json"
+    assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/features.json"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/node-runtime/bin/node"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/CHANGELOG.md"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/computer-use-linux/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/read-aloud-linux/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/updater/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/plugins/openai-bundled/plugins/computer-use/.mcp.json"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/plugins/openai-bundled/plugins/read-aloud/.mcp.json"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/.codex-linux/source-info.json"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-service-lifecycle.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-doctor.py"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop.service"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-service-lifecycle.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_linux_elf_executable "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/node"
+    assert_linux_elf_executable "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/node_repl"
+    assert_file_exists "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/codex"
+    [ -x "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/codex" ] \
+        || fail "Expected packaged Chrome app-server codex shim to be executable"
+    assert_not_macho_binary "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/codex"
+    assert_contains "$pkg_root/opt/codex-desktop/resources/plugins/openai-bundled/plugins/chrome/app-server-runtime/codex" 'CODEX_CLI_PATH'
+    node - \
+        "$pkg_root/opt/codex-desktop/.codex-linux/build-info.json" \
+        "$pkg_root/opt/codex-desktop/resources/codex-linux-build-info.json" <<'NODE' \
+        || fail "Expected packaged app build info source metadata to be refreshed"
+const fs = require("node:fs");
+const paths = process.argv.slice(2);
+for (const infoPath of paths) {
+  const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
+  if (info.generatedAt !== new Date(1710000000 * 1000).toISOString()) {
+    throw new Error(`${infoPath}: unexpected generatedAt ${info.generatedAt}`);
+  }
+  if (info.source.commit !== "0123456789abcdef0123456789abcdef01234567") {
+    throw new Error(`${infoPath}: stale commit ${info.source.commit}`);
+  }
+  if (info.source.shortCommit !== "0123456789ab") {
+    throw new Error(`${infoPath}: stale shortCommit ${info.source.shortCommit}`);
+  }
+  if (info.source.branch !== "packaging-source-branch") {
+    throw new Error(`${infoPath}: stale branch ${info.source.branch}`);
+  }
+  if (info.source.remote !== "https://example.com/org/repo.git") {
+    throw new Error(`${infoPath}: remote was not sanitized: ${info.source.remote}`);
+  }
+  if (info.source.describe !== "packaging-source-v1") {
+    throw new Error(`${infoPath}: stale describe ${info.source.describe}`);
+  }
+  if (info.source.provenance !== "packaged-app-payload") {
+    throw new Error(`${infoPath}: unexpected provenance ${info.source.provenance}`);
+  }
+}
+NODE
+    assert_file_exists "$pkg_root/usr/bin/codex-desktop-doctor"
+    assert_contains "$pkg_root/usr/bin/codex-desktop-doctor" 'PACKAGE_NAME = "codex-desktop"'
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
+    assert_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "/usr/bin/codex-desktop"
+    assert_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "WantedBy=graphical-session.target"
+    assert_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "ExecStop="
+    assert_not_contains "$pkg_root/usr/lib/systemd/user/codex-desktop.service" "--remote-debugging-port"
+    assert_app_service_shell_variables_escaped "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
+}
+
+test_desktop_service_lifecycle_helper_detects_orphaned_app_scope() {
+    info "Checking desktop service lifecycle helper finds app-scope main process"
+    local workspace="$TMP_DIR/desktop-service-lifecycle"
+    local app_root="$workspace/opt/codex-desktop"
+    local proc_root="$workspace/proc"
+    local state_home="$workspace/state"
+    local uid
+    uid="$(id -u)"
+
+    mkdir -p "$app_root" "$proc_root/123" "$proc_root/124" "$state_home"
+    printf '#!/usr/bin/env bash\n' > "$app_root/electron"
+    chmod +x "$app_root/electron"
+    ln -s "$app_root/electron" "$proc_root/123/exe"
+    ln -s "$app_root/electron" "$proc_root/124/exe"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/123/status"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/124/status"
+    printf 'electron\0--no-sandbox\0' > "$proc_root/123/cmdline"
+    printf 'electron\0--type=renderer\0' > "$proc_root/124/cmdline"
+
+    local output
+    output="$(
+        CODEX_PROCESS_PROC_ROOT="$proc_root" \
+        CODEX_DESKTOP_SERVICE_APP_ROOT="$app_root" \
+        CODEX_DESKTOP_SERVICE_DRY_RUN=1 \
+        XDG_STATE_HOME="$state_home" \
+        bash "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" stop codex-desktop
+    )"
+
+    printf '%s\n' "$output" | grep -Fxq "terminate 123" \
+        || fail "Expected service lifecycle helper to terminate main pid 123"
+    if printf '%s\n' "$output" | grep -Fq "124"; then
+        fail "Expected service lifecycle helper to ignore renderer/helper pid 124"
+    fi
+}
+
+test_desktop_service_lifecycle_helper_ignores_space_joined_helper_cmdline() {
+    info "Checking desktop service lifecycle helper ignores space-joined Electron helper cmdline"
+    local workspace="$TMP_DIR/desktop-service-lifecycle-space-joined-helper"
+    local app_root="$workspace/opt/codex-desktop"
+    local proc_root="$workspace/proc"
+    local state_home="$workspace/state"
+    local uid
+    uid="$(id -u)"
+
+    mkdir -p "$app_root" "$proc_root/124" "$state_home"
+    printf '#!/usr/bin/env bash\n' > "$app_root/electron"
+    chmod +x "$app_root/electron"
+    ln -s "$app_root/electron" "$proc_root/124/exe"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/124/status"
+    printf '%s --type=renderer --no-sandbox' "$app_root/electron" > "$proc_root/124/cmdline"
+
+    local output
+    output="$(
+        CODEX_PROCESS_PROC_ROOT="$proc_root" \
+        CODEX_DESKTOP_SERVICE_APP_ROOT="$app_root" \
+        CODEX_DESKTOP_SERVICE_DRY_RUN=1 \
+        XDG_STATE_HOME="$state_home" \
+        bash "$REPO_DIR/packaging/linux/codex-desktop-service-lifecycle.sh" stop codex-desktop
+    )"
+
+    [ -z "$output" ] \
+        || fail "Expected service lifecycle helper to ignore helper-only process table, got: $output"
+}
+
+test_deb_builder_rebuilds_deleted_updater_source() {
+    info "Checking package builder recovers from deleted updater binary source"
+    local workspace="$TMP_DIR/deb-deleted-updater-source"
+    local bin_dir="$workspace/bin"
+    local app_dir="$workspace/app"
+    local dist_dir="$workspace/dist"
+    local pkg_root="$workspace/deb-root"
+    local cargo_target_dir="$workspace/cargo-target"
 
     mkdir -p "$workspace" "$dist_dir"
     make_stub_bin_dir "$bin_dir"
     make_fake_app "$app_dir"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$updater_bin"
-    chmod +x "$updater_bin"
 
     cat > "$bin_dir/dpkg" <<'SCRIPT'
 #!/usr/bin/env bash
@@ -202,8 +545,14 @@ touch "$output"
 SCRIPT
     cat > "$bin_dir/cargo" <<'SCRIPT'
 #!/usr/bin/env bash
-echo "cargo should not be called when UPDATER_BINARY_SOURCE exists" >&2
-exit 99
+set -euo pipefail
+target_dir="${CARGO_TARGET_DIR:-target}"
+mkdir -p "$target_dir/release"
+cat > "$target_dir/release/codex-update-manager" <<'BIN'
+#!/usr/bin/env bash
+echo rebuilt updater
+BIN
+chmod +x "$target_dir/release/codex-update-manager"
 SCRIPT
     chmod +x "$bin_dir/dpkg" "$bin_dir/dpkg-deb" "$bin_dir/cargo"
 
@@ -211,50 +560,14 @@ SCRIPT
     APP_DIR_OVERRIDE="$app_dir" \
     PKG_ROOT_OVERRIDE="$pkg_root" \
     DIST_DIR_OVERRIDE="$dist_dir" \
-    UPDATER_BINARY_SOURCE="$updater_bin" \
-    PACKAGE_VERSION="2026.03.24.120000+deadbeef" \
+    CARGO_TARGET_DIR="$cargo_target_dir" \
+    UPDATER_BINARY_SOURCE="$workspace/codex-update-manager (deleted)" \
+    PACKAGE_VERSION="2026.03.24.120000+rebuilt" \
     bash "$REPO_DIR/scripts/build-deb.sh"
 
-    assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+deadbeef_amd64.deb"
-    assert_file_exists "$pkg_root/DEBIAN/prerm"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=New Window"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=Check for Updates"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=Install Ready Update"
-    assert_file_exists "$pkg_root/DEBIAN/postrm"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/package-common.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/patch-chrome-plugin.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/node-runtime.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-update-bridge-patch.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/patch-report.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/rebuild-report.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/build-info.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/build-info.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-target-context.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/engine.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/registry.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/shared.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/all-linux/main-process/lifecycle/patch.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/all-linux/webview/theme-and-sunset/patch.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/distro/nixos/README.md"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/desktop/i3/README.md"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/package/deb/README.md"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/README.md"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/example-feature/feature.json"
-    assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/features.json"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/node-runtime/bin/node"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/Cargo.toml"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/computer-use-linux/Cargo.toml"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/read-aloud-linux/Cargo.toml"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/updater/Cargo.toml"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/plugins/openai-bundled/plugins/computer-use/.mcp.json"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/plugins/openai-bundled/plugins/read-aloud/.mcp.json"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/.codex-linux/source-info.json"
-    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+rebuilt_amd64.deb"
+    assert_file_exists "$pkg_root/usr/bin/codex-update-manager"
+    assert_contains "$pkg_root/usr/bin/codex-update-manager" "rebuilt updater"
 }
 
 test_update_builder_preserves_enabled_linux_features_config() {
@@ -262,16 +575,28 @@ test_update_builder_preserves_enabled_linux_features_config() {
     local workspace="$TMP_DIR/update-builder-linux-features"
     local root="$workspace/root"
     local app_dir="$workspace/app"
+    local features_root="$workspace/linux-features"
     local feature_config="$workspace/features.json"
     local staged_config="$root/opt/codex-desktop/update-builder/linux-features/features.json"
+    local staged_local_manifest="$root/opt/codex-desktop/update-builder/linux-features/local/local-tool/feature.json"
     local source_info="$root/opt/codex-desktop/update-builder/.codex-linux/source-info.json"
 
     mkdir -p "$workspace"
     make_fake_app "$app_dir"
+    mkdir -p "$features_root/example-feature" "$features_root/local/local-tool"
+    printf '%s\n' '# Linux Features' > "$features_root/README.md"
+    printf '%s\n' '{"enabled":[]}' > "$features_root/features.example.json"
+    printf '%s\n' '{"id":"example-feature","title":"Example Linux Feature"}' \
+        > "$features_root/example-feature/feature.json"
+    printf '%s\n' '# Example Linux Feature' > "$features_root/example-feature/README.md"
+    printf '%s\n' '{"id":"local-tool","title":"Local Tool"}' \
+        > "$features_root/local/local-tool/feature.json"
+    printf '%s\n' '# Local Tool' > "$features_root/local/local-tool/README.md"
     cat > "$feature_config" <<'JSON'
 {
   "enabled": [
-    "example-feature"
+    "example-feature",
+    "local-tool"
   ],
   "localComment": "should not be packaged"
 }
@@ -281,6 +606,7 @@ JSON
         export APP_DIR="$app_dir"
         export PACKAGE_NAME="codex-desktop"
         export UPDATER_SERVICE_SOURCE="$REPO_DIR/packaging/linux/codex-update-manager.service"
+        export CODEX_LINUX_FEATURES_ROOT="$features_root"
         export CODEX_LINUX_FEATURES_CONFIG="$feature_config"
         export CODEX_LINUX_SOURCE_REMOTE="https://builder:secret-token@example.com/org/repo.git"
         export SOURCE_DATE_EPOCH="1710000000"
@@ -291,14 +617,16 @@ JSON
     )
 
     assert_file_exists "$staged_config"
+    assert_file_exists "$staged_local_manifest"
     assert_contains "$staged_config" "example-feature"
+    assert_contains "$staged_config" "local-tool"
     assert_not_contains "$staged_config" "localComment"
 
     node - "$staged_config" <<'NODE' || fail "Expected staged Linux features config to be sanitized"
 const fs = require("node:fs");
 const configPath = process.argv[2];
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-if (JSON.stringify(config) !== JSON.stringify({ enabled: ["example-feature"] })) {
+if (JSON.stringify(config) !== JSON.stringify({ enabled: ["example-feature", "local-tool"] })) {
   process.exit(1);
 }
 NODE
@@ -314,6 +642,100 @@ if (info.capturedAt !== new Date(1710000000 * 1000).toISOString()) {
   throw new Error(`unexpected capturedAt: ${info.capturedAt}`);
 }
 NODE
+}
+
+test_update_builder_source_info_survives_without_git_checkout() {
+    info "Checking update-builder source info survives packaged no-git rebuild layout"
+    local workspace="$TMP_DIR/update-builder-source-info"
+    local update_builder="$workspace/update-builder"
+    local source_info="$update_builder/.codex-linux/source-info.json"
+
+    mkdir -p "$update_builder/.codex-linux" "$update_builder/updater"
+    cat > "$update_builder/updater/Cargo.toml" <<'TOML'
+[package]
+name = "codex-update-manager"
+version = "0.8.1"
+TOML
+    cat > "$source_info" <<'JSON'
+{
+  "commit": "0123456789012345678901234567890123456789",
+  "branch": "main",
+  "remote": "https://builder:secret-token@example.com/org/repo.git",
+  "provenance": "packaged-update-builder",
+  "capturedAt": "2026-05-29T00:00:00.000Z"
+}
+JSON
+
+    (
+        export REPO_DIR="$update_builder"
+        export SOURCE_DATE_EPOCH="1710000000"
+
+        # shellcheck disable=SC1091
+        source "$SCRIPT_DIR/../scripts/lib/package-common.sh"
+        stage_update_builder_source_info "$update_builder"
+    )
+
+    node - "$source_info" <<'NODE' || fail "Expected staged source info to preserve installed metadata"
+const fs = require("node:fs");
+const info = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (info.commit !== "0123456789012345678901234567890123456789") {
+  throw new Error(`unexpected commit: ${info.commit}`);
+}
+if (info.version !== "0.8.1") {
+  throw new Error(`unexpected version: ${info.version}`);
+}
+if (info.remote !== "https://example.com/org/repo.git") {
+  throw new Error(`unexpected remote: ${info.remote}`);
+}
+if (info.recapturedAt !== new Date(1710000000 * 1000).toISOString()) {
+  throw new Error(`unexpected recapturedAt: ${info.recapturedAt}`);
+}
+NODE
+}
+
+test_linux_feature_package_hook_discovery_failure_blocks_build() {
+    info "Checking Linux feature package hook discovery failure blocks package staging"
+    local workspace="$TMP_DIR/package-hook-discovery-failure"
+    local root="$workspace/root"
+    local app_dir="$workspace/app"
+    local features_root="$workspace/linux-features"
+    local feature_config="$features_root/features.json"
+    local output_log="$workspace/output.log"
+
+    mkdir -p "$root" "$features_root/bad-package-hook"
+    make_fake_app "$app_dir"
+    printf '%s\n' '{"enabled":[]}' > "$features_root/features.example.json"
+    cat > "$features_root/bad-package-hook/feature.json" <<'JSON'
+{
+  "id": "bad-package-hook",
+  "title": "Bad Package Hook",
+  "packageHooks": [
+    {
+      "path": "missing.sh",
+      "formats": ["deb"]
+    }
+  ]
+}
+JSON
+    printf '%s\n' '# Bad Package Hook' > "$features_root/bad-package-hook/README.md"
+    printf '%s\n' '{"enabled":["bad-package-hook"]}' > "$feature_config"
+
+    if (
+        export APP_DIR="$app_dir"
+        export PACKAGE_NAME="codex-desktop"
+        export PACKAGE_VERSION="2026.03.24.120000+hookfailure"
+        export CODEX_LINUX_FEATURES_ROOT="$features_root"
+        export CODEX_LINUX_FEATURES_CONFIG="$feature_config"
+
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/package-common.sh"
+        run_linux_feature_package_hooks "$root" "deb"
+    ) >"$output_log" 2>&1; then
+        fail "Expected package hook discovery failure to stop package staging"
+    fi
+
+    assert_contains "$output_log" "Failed to discover Linux feature package hooks for deb"
+    assert_contains "$output_log" "packageHook 1 not found"
 }
 
 test_deb_builder_respects_package_identity() {
@@ -364,6 +786,8 @@ SCRIPT
 
     assert_file_exists "$dist_dir/codex-cua-lab_2026.03.24.120000+deadbeef_amd64.deb"
     assert_file_exists "$pkg_root/usr/bin/codex-cua-lab"
+    assert_file_exists "$pkg_root/usr/bin/codex-cua-lab-doctor"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-cua-lab.service"
     assert_file_exists "$pkg_root/opt/codex-cua-lab/start.sh"
     assert_contains "$pkg_root/DEBIAN/control" "Package: codex-cua-lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "Name=Codex CUA Lab"
@@ -373,6 +797,9 @@ SCRIPT
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "StartupWMClass=codex-cua-lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "X-GNOME-WMClass=codex-cua-lab"
     assert_contains "$pkg_root/opt/codex-cua-lab/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-cua-lab.desktop"'
+    assert_contains "$pkg_root/usr/bin/codex-cua-lab-doctor" 'PACKAGE_NAME = "codex-cua-lab"'
+    assert_contains "$pkg_root/usr/lib/systemd/user/codex-cua-lab.service" "/usr/bin/codex-cua-lab"
+    assert_app_service_shell_variables_escaped "$pkg_root/usr/lib/systemd/user/codex-cua-lab.service" "codex-cua-lab"
 }
 
 test_deb_builder_without_updater() {
@@ -418,6 +845,9 @@ SCRIPT
 
     assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+manual_amd64.deb"
     assert_file_exists "$pkg_root/usr/bin/codex-desktop"
+    assert_file_exists "$pkg_root/usr/bin/codex-desktop-doctor"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
+    assert_app_service_shell_variables_escaped "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
     assert_file_exists "$pkg_root/DEBIAN/postinst"
     assert_file_exists "$pkg_root/DEBIAN/prerm"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
@@ -431,9 +861,13 @@ SCRIPT
     assert_not_contains "$pkg_root/DEBIAN/control" "polkit"
     assert_not_contains "$pkg_root/DEBIAN/control" "Local auto-updates"
     assert_contains "$pkg_root/DEBIAN/control" "without codex-update-manager"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Actions=new-window;"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Actions=new-window;quick-chat;compact-prompt;"
     assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Desktop Action new-window"
     assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/codex-desktop --new-instance"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Desktop Action quick-chat"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "/usr/bin/codex-desktop --quick-chat"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Desktop Action compact-prompt"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "/usr/bin/codex-desktop --prompt-chat"
     assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Desktop Action CheckForUpdates"
     assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "InstallReadyUpdate"
     assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "codex-update-manager"
@@ -517,11 +951,13 @@ test_rpm_builder_smoke() {
     cat > "$bin_dir/rpmbuild" <<'SCRIPT'
 #!/usr/bin/env bash
 rpmdir=""
+binary_payload=""
 spec_file="${@: -1}"
 while [ $# -gt 0 ]; do
     if [ "$1" = "--define" ]; then
         case "$2" in
             _rpmdir\ *) rpmdir="${2#_rpmdir }" ;;
+            _binary_payload\ *) binary_payload="${2#_binary_payload }" ;;
         esac
         shift 2
         continue
@@ -531,6 +967,7 @@ done
 [ -n "$rpmdir" ] || exit 1
 if [ -n "${CAPTURE_DIR:-}" ]; then
     cp "$spec_file" "$CAPTURE_DIR/codex-desktop.spec"
+    printf '%s\n' "$binary_payload" > "$CAPTURE_DIR/rpm-binary-payload"
     staging_dir="$(sed -n 's|cp -a "\(.*\)/\." "%{buildroot}/"|\1|p' "$spec_file" | head -n 1)"
     if [ -n "$staging_dir" ] && [ -d "$staging_dir" ]; then
         cp -a "$staging_dir" "$CAPTURE_DIR/staging"
@@ -547,6 +984,7 @@ SCRIPT
     chmod +x "$bin_dir/rpmbuild" "$bin_dir/cargo"
 
     PATH="$bin_dir:$PATH" \
+    CAPTURE_DIR="$capture_dir" \
     APP_DIR_OVERRIDE="$app_dir" \
     DIST_DIR_OVERRIDE="$dist_dir" \
     UPDATER_BINARY_SOURCE="$updater_bin" \
@@ -554,6 +992,14 @@ SCRIPT
     bash "$REPO_DIR/scripts/build-rpm.sh"
 
     assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000-deadbeef.x86_64.rpm"
+    [ "$(cat "$capture_dir/rpm-binary-payload")" = "" ] \
+        || fail "Expected default RPM binary payload to use tool default"
+    assert_file_exists "$capture_dir/staging/usr/bin/codex-desktop-doctor"
+    assert_contains "$capture_dir/staging/usr/bin/codex-desktop-doctor" 'PACKAGE_NAME = "codex-desktop"'
+    assert_file_exists "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
+    assert_contains "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service" "/usr/bin/codex-desktop"
+    assert_not_contains "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service" "--remote-debugging-port"
+    assert_app_service_shell_variables_escaped "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
 
     rm -rf "$dist_dir" "$capture_dir"
     mkdir -p "$dist_dir" "$capture_dir"
@@ -564,10 +1010,16 @@ SCRIPT
     DIST_DIR_OVERRIDE="$dist_dir" \
     PACKAGE_WITH_UPDATER=0 \
     PACKAGE_VERSION="2026.03.24.120000+manual" \
+    MAX_BUILD_THREADS=8 \
     bash "$REPO_DIR/scripts/build-rpm.sh"
 
     assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000-manual.x86_64.rpm"
     assert_file_exists "$capture_dir/codex-desktop.spec"
+    [ "$(cat "$capture_dir/rpm-binary-payload")" = "w19T8.zstdio" ] \
+        || fail "Expected MAX_BUILD_THREADS to reach rpmbuild payload compression"
+    assert_file_exists "$capture_dir/staging/usr/bin/codex-desktop-doctor"
+    assert_file_exists "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
+    assert_app_service_shell_variables_escaped "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
     assert_file_exists "$capture_dir/staging/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
     assert_file_not_exists "$capture_dir/staging/usr/bin/codex-update-manager"
     assert_file_not_exists "$capture_dir/staging/usr/lib/systemd/user/codex-update-manager.service"
@@ -585,6 +1037,21 @@ SCRIPT
     assert_not_contains "$capture_dir/codex-desktop.spec" "mesa-libgbm"
     assert_contains "$capture_dir/codex-desktop.spec" "codex_no_updater_cleanup_update_manager_service"
     assert_contains "$capture_dir/staging/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_user_enablement_links"
+
+    rm -rf "$dist_dir" "$capture_dir"
+    mkdir -p "$dist_dir" "$capture_dir"
+
+    PATH="$bin_dir:$PATH" \
+    CAPTURE_DIR="$capture_dir" \
+    APP_DIR_OVERRIDE="$app_dir" \
+    DIST_DIR_OVERRIDE="$dist_dir" \
+    UPDATER_BINARY_SOURCE="$updater_bin" \
+    PACKAGE_VERSION="2026.03.24.120000+payload" \
+    RPM_BINARY_PAYLOAD="w19.zstdio" \
+    bash "$REPO_DIR/scripts/build-rpm.sh"
+
+    [ "$(cat "$capture_dir/rpm-binary-payload")" = "w19.zstdio" ] \
+        || fail "Expected RPM_BINARY_PAYLOAD to override tool default"
 }
 
 test_pacman_builder_without_updater_transition_hook() {
@@ -600,16 +1067,28 @@ test_pacman_builder_without_updater_transition_hook() {
     local dist_dir="$workspace/dist"
     local capture_dir="$workspace/capture"
     local ampersand_tmpdir="$workspace/ampersand&tmp"
+    local base_makepkg_conf="$workspace/base-makepkg.conf"
 
     mkdir -p "$workspace" "$dist_dir" "$capture_dir" "$ampersand_tmpdir"
     make_stub_bin_dir "$bin_dir"
     make_fake_app "$app_dir"
+    printf 'MAKEFLAGS="-j12"\n' > "$base_makepkg_conf"
 
     cat > "$bin_dir/makepkg" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 cp PKGBUILD "$CAPTURE_DIR/PKGBUILD"
 cp codex-desktop.install "$CAPTURE_DIR/codex-desktop.install"
+printf '%s\n' "${MAKEPKG_CONF:-}" > "$CAPTURE_DIR/makepkg-conf-path"
+if [ -n "${MAKEPKG_CONF:-}" ]; then
+    cp "$MAKEPKG_CONF" "$CAPTURE_DIR/makepkg.conf"
+    bash -c 'set -euo pipefail; . "$1"; printf "%s\n" "$MAKEFLAGS"' _ "$MAKEPKG_CONF" > "$CAPTURE_DIR/makepkg-evaluated-makeflags"
+fi
+staging_dir="$(sed -n 's|^[[:space:]]*cp -a "\(.*\)/\." .*$|\1|p' PKGBUILD | head -n 1)"
+staging_dir="${staging_dir//\\&/&}"
+if [ -n "$staging_dir" ] && [ -d "$staging_dir" ]; then
+    cp -a "$staging_dir" "$CAPTURE_DIR/staging"
+fi
 pkgname="$(sed -n 's/^pkgname=//p' PKGBUILD)"
 pkgver="$(sed -n 's/^pkgver=//p' PKGBUILD)"
 pkgrel="$(sed -n 's/^pkgrel=//p' PKGBUILD)"
@@ -631,7 +1110,9 @@ SCRIPT
         CAPTURE_DIR="$capture_dir" \
         APP_DIR_OVERRIDE="$app_dir" \
         DIST_DIR_OVERRIDE="$dist_dir" \
+        MAKEPKG_CONF="$base_makepkg_conf" \
         PACKAGE_WITH_UPDATER=0 \
+        MAX_BUILD_THREADS=5 \
         PACKAGE_VERSION="2026.03.24.120000+manual" \
         bash "$REPO_DIR/scripts/build-pacman.sh"
     )"
@@ -642,12 +1123,22 @@ SCRIPT
     [ "$(readlink "$dist_dir/codex-desktop-latest.pkg.tar.zst")" = "codex-desktop-2026.03.24.120000+manual-1-x86_64.pkg.tar.zst" ] || fail "Expected latest pacman symlink to point at built package"
     assert_file_exists "$capture_dir/PKGBUILD"
     assert_file_exists "$capture_dir/codex-desktop.install"
+    assert_file_exists "$capture_dir/makepkg.conf"
+    assert_contains "$capture_dir/makepkg.conf" "MAKEFLAGS=\"\${MAKEFLAGS:+\$MAKEFLAGS }-j5\""
+    [ "$(cat "$capture_dir/makepkg-evaluated-makeflags")" = "-j12 -j5" ] \
+        || fail "Expected generated makepkg config to make MAX_BUILD_THREADS win over existing MAKEFLAGS"
+    assert_contains "$capture_dir/makepkg.conf" "COMPRESSZST=(zstd -c -z -T5 -)"
+    assert_file_exists "$capture_dir/staging/usr/bin/codex-desktop-doctor"
+    assert_file_not_exists "$capture_dir/staging/usr/bin/codex-update-manager"
     assert_contains "$capture_dir/PKGBUILD" "pkgver=2026.03.24.120000+manual"
     assert_contains "$capture_dir/PKGBUILD" "pkgrel=1"
     assert_contains "$capture_dir/PKGBUILD" "ampersand&tmp"
     assert_not_contains "$capture_dir/PKGBUILD" "__STAGING_DIR__"
     assert_contains "$capture_dir/PKGBUILD" "install=codex-desktop.install"
     assert_not_contains "$capture_dir/PKGBUILD" "'polkit'"
+    assert_file_exists "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
+    assert_contains "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service" "/usr/bin/codex-desktop"
+    assert_app_service_shell_variables_escaped "$capture_dir/staging/usr/lib/systemd/user/codex-desktop.service"
     assert_contains "$capture_dir/codex-desktop.install" "codex_no_updater_cleanup_update_manager_service"
     assert_contains "$capture_dir/codex-desktop.install" "post_upgrade"
     assert_contains "$capture_dir/codex-desktop.install" "pre_remove"
@@ -723,15 +1214,21 @@ SCRIPT
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-desktop.png"
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_file_not_exists "$capture_dir/AppDir/usr/bin/codex-desktop-doctor"
     assert_file_not_exists "$capture_dir/AppDir/usr/bin/codex-update-manager"
+    assert_file_not_exists "$capture_dir/AppDir/usr/lib/systemd/user/codex-desktop.service"
     assert_file_not_exists "$capture_dir/AppDir/usr/lib/systemd/user/codex-update-manager.service"
     assert_file_not_exists "$capture_dir/AppDir/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy"
     assert_file_not_exists "$capture_dir/AppDir/opt/codex-desktop/update-builder"
     assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "Exec=AppRun %u"
     assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "Icon=codex-desktop"
     assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "X-AppImage-Version=2026.03.24.120000+appimage"
-    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "Actions=new-window;"
+    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "Actions=new-window;quick-chat;compact-prompt;"
     assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "[Desktop Action new-window]"
+    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "Desktop Action quick-chat"
+    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "AppRun --quick-chat"
+    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "Desktop Action compact-prompt"
+    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "AppRun --prompt-chat"
     assert_not_contains "$capture_dir/AppDir/codex-desktop.desktop" "codex-update-manager"
     assert_contains "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-desktop.desktop"'
     assert_not_contains "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "/usr/share/applications"
@@ -861,6 +1358,8 @@ test_native_shortcut_targets_compose_existing_flows() {
     local bootstrap_log="$TMP_DIR/make-bootstrap-native.log"
     local update_log="$TMP_DIR/make-update-native.log"
     local setup_log="$TMP_DIR/make-setup-native.log"
+    local doctor_log="$TMP_DIR/make-doctor.log"
+    local app_service_log="$TMP_DIR/make-app-service.log"
 
     make -n -C "$REPO_DIR" install-native >"$install_log"
     assert_contains "$install_log" './install.sh --fresh'
@@ -879,6 +1378,78 @@ test_native_shortcut_targets_compose_existing_flows() {
 
     make -n -C "$REPO_DIR" setup-native >"$setup_log"
     assert_contains "$setup_log" 'bash scripts/bootstrap-wizard.sh'
+
+    make -n -C "$REPO_DIR" doctor >"$doctor_log"
+    assert_contains "$doctor_log" '/usr/bin/codex-desktop-doctor'
+
+    make -n -C "$REPO_DIR" app-service-enable >"$app_service_log"
+    assert_contains "$app_service_log" 'systemctl --user import-environment'
+    assert_contains "$app_service_log" 'systemctl --user enable --now codex-desktop.service'
+    assert_contains "$app_service_log" 'Close any already-running Codex Desktop process'
+    assert_not_contains "$app_service_log" '--remote-debugging-port'
+}
+
+test_desktop_doctor_template_smoke() {
+    info "Checking installed doctor template smoke path"
+    local workspace="$TMP_DIR/desktop-doctor"
+    local doctor="$workspace/codex-doctor-smoke"
+    local report="$workspace/report.json"
+    local chrome_scripts="$workspace/home/.codex/plugins/cache/openai-bundled/chrome/latest/scripts"
+
+    mkdir -p "$workspace/home" "$workspace/config" "$chrome_scripts"
+    cat > "$chrome_scripts/extension-id.json" <<'JSON'
+{
+  "extensionId": "abcdefghijklmnopabcdefghijklmnop",
+  "extensionHostName": "codex.chrome.host"
+}
+JSON
+    cat > "$chrome_scripts/check-extension-installed.js" <<'JS'
+console.log(JSON.stringify({
+  installed: false,
+  enabled: false,
+  ignoredSecret: "FAKE_QR_SECRET_FROM_EXTENSION_CHECK"
+}));
+JS
+    cat > "$chrome_scripts/check-native-host-manifest.js" <<'JS'
+console.log(JSON.stringify({
+  correct: false,
+  problem: "FAKE_QR_SECRET_FROM_MANIFEST_PROBLEM",
+  manifestPath: "/tmp/FAKE_QR_SECRET_PROFILE_PATH"
+}));
+JS
+    sed 's/__PACKAGE_NAME__/codex-doctor-smoke/g' \
+        "$REPO_DIR/packaging/linux/codex-desktop-doctor.py" >"$doctor"
+    chmod +x "$doctor"
+
+    python3 -m py_compile "$doctor"
+    if HOME="$workspace/home" XDG_CONFIG_HOME="$workspace/config" \
+        python3 "$doctor" --json --package-name codex-doctor-smoke >"$report"; then
+        fail "doctor should report failures for a deliberately missing package"
+    fi
+
+    assert_contains "$report" '"packageName": "codex-doctor-smoke"'
+    assert_contains "$report" '"app_service_unit"'
+    assert_contains "$report" '"patch_report_validator"'
+    assert_contains "$report" '"chrome_manifest_probe"'
+    assert_contains "$report" "manifest probe reported a problem"
+    assert_not_contains "$report" "FAKE_QR_SECRET"
+    assert_not_contains "$report" "FAKE_QR_SECRET_PROFILE_PATH"
+
+    python3 - "$report" <<'PY' || fail "Expected doctor JSON report to be well formed"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    report = json.load(handle)
+
+ids = {check["id"] for check in report["checks"]}
+required = {"package", "launcher", "doctor", "app_service_unit", "app_root", "managed_node", "app_asar"}
+missing = required - ids
+if missing:
+    raise SystemExit(f"missing checks: {sorted(missing)}")
+if report["summary"]["fail"] < 1:
+    raise SystemExit("expected at least one failure for missing installed files")
+PY
 }
 
 test_fedora_dependency_bootstrap_installs_rpmbuild() {
@@ -950,6 +1521,29 @@ test_setup_native_wizard_rejects_invalid_feature_ids() {
     assert_json_enabled_equals "$config" '[]'
 }
 
+test_setup_native_wizard_rejects_features_without_readme() {
+    info "Checking setup-native wizard rejects undocumented Linux features"
+    local workspace="$TMP_DIR/setup-native-missing-readme"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+
+    make_wizard_feature_root "$features_root"
+    rm -f "$features_root/read-aloud/README.md"
+    printf '%s\n' '{"enabled":[]}' > "$config"
+
+    if CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
+        CODEX_LINUX_FEATURES_ROOT="$features_root" \
+        CODEX_LINUX_FEATURES_CONFIG="$config" \
+        CODEX_LINUX_FEATURES="read-aloud" \
+            bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log" 2>&1; then
+        fail "setup wizard should reject Linux features without README.md"
+    fi
+
+    assert_contains "$output_log" "must include README.md next to feature.json"
+    assert_json_enabled_equals "$config" '[]'
+}
+
 test_setup_native_wizard_rejects_conflicting_feature_ids() {
     info "Checking setup-native wizard conflicting feature validation"
     local workspace="$TMP_DIR/setup-native-conflicting-feature"
@@ -1012,6 +1606,100 @@ JSON
     assert_contains "$output_log" "$plugin_cache"
 }
 
+test_setup_native_wizard_accepts_numbered_feature_selection() {
+    info "Checking setup-native wizard accepts numbered feature selections"
+    local workspace="$TMP_DIR/setup-native-numbered-features"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+    local fake_home="$workspace/home"
+
+    make_wizard_feature_root "$features_root"
+    printf '%s\n' '{"enabled":["remote-mobile-control"]}' > "$config"
+
+    if ! command -v script >/dev/null 2>&1; then
+        info "Skipping numbered feature selection smoke test because script(1) is unavailable"
+        return
+    fi
+
+    (
+        export HOME="$fake_home"
+        export XDG_CONFIG_HOME="$fake_home/.config"
+        export CODEX_LINUX_FEATURES_ROOT="$features_root"
+        export CODEX_LINUX_FEATURES_CONFIG="$config"
+        {
+            printf '1,3-4\n'
+            printf '5\n'
+            printf '\n'
+            printf '\n'
+            printf '\n'
+            printf '\n'
+        } | script -qefc "CODEX_BOOTSTRAP_NO_GUI=1 bash $REPO_DIR/scripts/bootstrap-wizard.sh" /dev/null >"$output_log"
+    )
+
+    assert_json_enabled_equals "$config" '["conversation-mode","read-aloud","read-aloud-mcp"]'
+    assert_contains "$output_log" "1\\. \\[available\\] conversation-mode - Conversation mode"
+    assert_contains "$output_log" "5\\. \\[enabled\\] remote-mobile-control - Experimental Remote Mobile Control"
+    assert_contains "$output_log" "Enable feature ids or numbers for the next build"
+    assert_contains "$output_log" "Disable feature ids or numbers for the next build"
+}
+
+test_setup_native_wizard_rejects_out_of_range_feature_numbers() {
+    info "Checking setup-native wizard explains out-of-range feature numbers"
+    local workspace="$TMP_DIR/setup-native-feature-number-range"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+
+    make_wizard_feature_root "$features_root"
+    printf '%s\n' '{"enabled":[]}' > "$config"
+
+    if CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
+        CODEX_LINUX_FEATURES_ROOT="$features_root" \
+        CODEX_LINUX_FEATURES_CONFIG="$config" \
+        CODEX_LINUX_FEATURES="99" \
+            bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log" 2>&1; then
+        fail "setup wizard should reject out-of-range feature numbers"
+    fi
+
+    assert_contains "$output_log" "Feature number 99 is out of range for enable"
+    assert_contains "$output_log" "Use feature ids, numbers, or ranges like 1,3-4."
+    assert_json_enabled_equals "$config" '[]'
+}
+
+test_setup_native_wizard_remote_keys_follow_linux_app_id() {
+    info "Checking setup-native wizard remote key paths follow Linux app id"
+    local workspace="$TMP_DIR/setup-native-remote-keys-app-id"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+    local fake_home="$workspace/home"
+    local key_file="$fake_home/.config/codex-cua-lab/remote-control-device-keys-v1.json"
+    local legacy_key_file="$fake_home/.config/codex-desktop/remote-control-device-keys-v1.json"
+
+    make_wizard_feature_root "$features_root"
+    cat > "$config" <<'JSON'
+{"enabled":["remote-mobile-control"]}
+JSON
+    mkdir -p "$(dirname "$key_file")" "$(dirname "$legacy_key_file")"
+    printf '%s\n' '{"deviceKeys":[]}' > "$key_file"
+    printf '%s\n' '{"deviceKeys":[]}' > "$legacy_key_file"
+
+    HOME="$fake_home" \
+    XDG_CONFIG_HOME="$fake_home/.config" \
+    CODEX_LINUX_APP_ID="codex-cua-lab" \
+    CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$config" \
+    CODEX_LINUX_DISABLE_FEATURES="remote-mobile-control" \
+        bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log"
+
+    assert_file_exists "$key_file"
+    assert_file_exists "$legacy_key_file"
+    assert_contains "$output_log" "Not deleting $key_file"
+    assert_contains "$output_log" "Legacy default-app metadata may also exist at $legacy_key_file"
+}
+
 test_setup_native_wizard_summary_keeps_existing_config() {
     info "Checking setup-native wizard read-only summary keeps existing feature config"
     local workspace="$TMP_DIR/setup-native-summary"
@@ -1033,6 +1721,31 @@ JSON
     assert_contains "$output_log" "Enabled Linux features: remote-mobile-control"
     assert_contains "$output_log" "Default native package mode includes codex-update-manager"
     assert_contains "$output_log" "make install-native"
+}
+
+test_setup_native_wizard_lists_local_features() {
+    info "Checking setup-native wizard discovers user-local Linux features"
+    local workspace="$TMP_DIR/setup-native-local-feature"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+
+    make_wizard_feature_root "$features_root"
+    mkdir -p "$features_root/local/local-tool"
+    printf '%s\n' '{"id":"local-tool","title":"Local Tool","description":"User-local integration."}' \
+        > "$features_root/local/local-tool/feature.json"
+    printf '%s\n' '# Local Tool' > "$features_root/local/local-tool/README.md"
+    printf '%s\n' '{"enabled":[]}' > "$config"
+
+    CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$config" \
+    CODEX_LINUX_FEATURES="local-tool" \
+        bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log"
+
+    assert_json_enabled_equals "$config" '["local-tool"]'
+    assert_contains "$output_log" "local-tool \\[local\\] - Local Tool"
+    assert_contains "$output_log" "Enabled Linux features: local-tool"
 }
 
 test_setup_native_wizard_uses_package_name_for_installed_state() {
@@ -1256,8 +1969,8 @@ test_setup_native_wizard_read_aloud_paths_match_runtime_defaults() {
     assert_not_contains "$output_log" "$fake_home/.local/share/codex-desktop/read-aloud/kokoro/kokoro-v1.0.onnx"
 }
 
-test_setup_native_wizard_sway_hint_is_conservative() {
-    info "Checking setup-native wizard Sway backend hint stays conservative"
+test_setup_native_wizard_sway_hint_reports_backend() {
+    info "Checking setup-native wizard Sway backend hint"
     local workspace="$TMP_DIR/setup-native-sway-hint"
     local features_root="$workspace/linux-features"
     local config="$workspace/features.json"
@@ -1274,8 +1987,10 @@ test_setup_native_wizard_sway_hint_is_conservative() {
     CODEX_LINUX_FEATURES_CONFIG="$config" \
         bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log"
 
-    assert_contains "$output_log" "Sway -> not explicitly supported by the current i3 backend"
-    assert_not_contains "$output_log" "Sway -> i3 IPC backend through swaymsg"
+    assert_contains "$output_log" "Sway -> swaymsg backend"
+    assert_not_contains "$output_log" "Sway -> not explicitly supported"
+    assert_not_contains "$output_log" "Sway -> i3 IPC backend"
+    assert_not_contains "$output_log" "verify with Computer Use doctor after install"
 }
 
 test_setup_native_wizard_cleanup_requires_interactive_confirmation() {
@@ -1334,6 +2049,43 @@ test_setup_native_wizard_dry_run_cleanup_allows_noninteractive_preview() {
     assert_not_contains "$output_log" "Cleanup requires an interactive terminal"
 }
 
+test_setup_native_wizard_blank_interactive_cleanup_ids_skip_cleanup() {
+    info "Checking setup-native wizard skips cleanup when interactive feature ids are blank"
+    local workspace="$TMP_DIR/setup-native-cleanup-blank"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+    local fake_home="$workspace/home"
+
+    make_wizard_feature_root "$features_root"
+    printf '%s\n' '{"enabled":["remote-mobile-control"]}' > "$config"
+
+    if ! command -v script >/dev/null 2>&1; then
+        info "Skipping blank cleanup smoke test because script(1) is unavailable"
+        return
+    fi
+
+    (
+        export HOME="$fake_home"
+        export XDG_CONFIG_HOME="$fake_home/.config"
+        export CODEX_LINUX_FEATURES_ROOT="$features_root"
+        export CODEX_LINUX_FEATURES_CONFIG="$config"
+        {
+            printf '\n'
+            printf '\n'
+            printf '\n'
+            printf 'y\n'
+            printf '\n'
+            printf '\n'
+            printf '\n'
+        } | script -qefc "CODEX_BOOTSTRAP_NO_GUI=1 bash $REPO_DIR/scripts/bootstrap-wizard.sh" /dev/null >"$output_log"
+    )
+
+    assert_json_enabled_equals "$config" '["remote-mobile-control"]'
+    assert_contains "$output_log" "No cleanup feature ids provided; skipping feature cleanup."
+    assert_contains "$output_log" "Default native package mode includes codex-update-manager"
+}
+
 test_setup_native_wizard_dry_run_cleanup_does_not_delete_confirmed_paths() {
     info "Checking setup-native wizard dry-run cleanup is non-destructive"
     local workspace="$TMP_DIR/setup-native-cleanup-dry-run"
@@ -1365,7 +2117,7 @@ test_setup_native_wizard_dry_run_cleanup_does_not_delete_confirmed_paths() {
             printf '\n'
             printf '\n'
             printf 'DELETE %s\n' "$key_file"
-        } | script -qefc "bash $REPO_DIR/scripts/bootstrap-wizard.sh" /dev/null >"$output_log"
+        } | script -qefc "CODEX_BOOTSTRAP_NO_GUI=1 bash $REPO_DIR/scripts/bootstrap-wizard.sh" /dev/null >"$output_log"
     )
 
     assert_file_exists "$key_file"
@@ -1412,7 +2164,7 @@ test_setup_native_wizard_cleanup_deletes_only_confirmed_paths() {
             printf '\n'
             printf '\n'
             printf '\n'
-        } | script -qefc "bash $REPO_DIR/scripts/bootstrap-wizard.sh" /dev/null >"$output_log"
+        } | script -qefc "CODEX_BOOTSTRAP_NO_GUI=1 bash $REPO_DIR/scripts/bootstrap-wizard.sh" /dev/null >"$output_log"
     )
 
     assert_file_not_exists "$key_file"
@@ -1439,6 +2191,60 @@ test_upstream_build_app_workflow_tracks_dmg_metadata() {
     assert_contains "$workflow" 'make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg'
     assert_contains "$workflow" 'DMG Last-Modified'
     assert_contains "$workflow" 'DMG SHA-256'
+}
+
+test_app_server_schema_guard_static_contract() {
+    info "Checking app-server schema guard static contract"
+    local guard="$REPO_DIR/scripts/app-server-schema-guard.js"
+
+    assert_file_exists "$guard"
+    node --check "$guard"
+    assert_contains "$guard" "app-server"
+    assert_contains "$guard" "generate-json-schema"
+    assert_contains "$guard" "v2/PluginInstallParams.json"
+    assert_contains "$guard" "v2/McpServerToolCallParams.json"
+    assert_contains "$guard" "v2/ConfigReadResponse.json"
+    assert_contains "$guard" "v2/AppsListResponse.json"
+    assert_contains "$guard" "v2/CommandExecResponse.json"
+    assert_contains "$guard" "v2/RemoteControlStatusChangedNotification.json"
+    assert_contains "$guard" "v2/AppListUpdatedNotification.json"
+    assert_contains "$guard" "v2/CommandExecOutputDeltaNotification.json"
+    assert_contains "$guard" "thread/goal/set"
+    assert_contains "$guard" "fs/writeFile"
+
+    node - "$guard" "$TMP_DIR/schema-guard-fixture" <<'NODE' \
+        || fail "Expected app-server schema guard to validate schema-dir fixtures"
+const fs = require("node:fs");
+const path = require("node:path");
+const guard = require(process.argv[2]);
+const schemaDir = process.argv[3];
+fs.rmSync(schemaDir, { force: true, recursive: true });
+for (const relativePath of guard.REQUIRED_SCHEMA_FILES) {
+  const filePath = path.join(schemaDir, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, "{}\n");
+}
+const variant = (method) => ({ properties: { method: { enum: [method] } } });
+fs.writeFileSync(
+  path.join(schemaDir, "ClientRequest.json"),
+  JSON.stringify({ oneOf: guard.REQUIRED_CLIENT_REQUEST_METHODS.map(variant) }),
+);
+fs.writeFileSync(
+  path.join(schemaDir, "ServerNotification.json"),
+  JSON.stringify({ oneOf: guard.REQUIRED_SERVER_NOTIFICATION_METHODS.map(variant) }),
+);
+let summary = guard.run({ schemaDir, keepOutput: null });
+if (!summary.ok) {
+  console.error(summary);
+  process.exit(1);
+}
+fs.rmSync(path.join(schemaDir, "v2/CommandExecResponse.json"));
+summary = guard.run({ schemaDir, keepOutput: null });
+if (summary.ok || !summary.missing.requiredFiles.includes("v2/CommandExecResponse.json")) {
+  console.error(summary);
+  process.exit(1);
+}
+NODE
 }
 
 test_installer_detects_electron_version_from_plist() {
@@ -1576,7 +2382,13 @@ test_managed_node_runtime_source_install() {
         cat > "$source_dir/bin/$binary" <<'SCRIPT'
 #!/usr/bin/env bash
 case "$(basename "$0")" in
-    node) echo v22.22.2 ;;
+    node)
+        case "${1:-}" in
+            -e) printf '%s' 'codex-node-runtime-ok:22.22.2' ;;
+            -v) echo v22.22.2 ;;
+            *) echo v22.22.2 ;;
+        esac
+        ;;
     *) echo 10.9.7 ;;
 esac
 SCRIPT
@@ -1600,6 +2412,62 @@ SCRIPT
     ) > "$workspace/output.log" 2>&1
 
     assert_file_exists "$install_dir/resources/node-runtime/bin/node"
+    assert_contains "$workspace/output.log" "$install_dir/resources/node-runtime/bin/node"
+    assert_contains "$workspace/output.log" "v22.22.2"
+}
+
+test_managed_node_runtime_rejects_version_only_stub() {
+    info "Checking managed Node.js runtime rejects version-only stubs"
+    local workspace="$TMP_DIR/managed-node-runtime-stub"
+    local source_dir="$workspace/source"
+    local install_dir="$workspace/install"
+
+    mkdir -p "$source_dir/bin" "$install_dir/resources/node-runtime/bin"
+    for binary in node npm npx; do
+        cat > "$install_dir/resources/node-runtime/bin/$binary" <<'SCRIPT'
+#!/usr/bin/env bash
+case "$(basename "$0")" in
+    node) echo v22.22.2 ;;
+    *) echo 10.9.7 ;;
+esac
+SCRIPT
+        chmod +x "$install_dir/resources/node-runtime/bin/$binary"
+    done
+
+    for binary in node npm npx; do
+        cat > "$source_dir/bin/$binary" <<'SCRIPT'
+#!/usr/bin/env bash
+case "$(basename "$0")" in
+    node)
+        case "${1:-}" in
+            -e) printf '%s' 'codex-node-runtime-ok:22.22.2' ;;
+            -v) echo v22.22.2 ;;
+            *) echo v22.22.2 ;;
+        esac
+        ;;
+    *) echo 10.9.7 ;;
+esac
+SCRIPT
+        chmod +x "$source_dir/bin/$binary"
+    done
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        WORK_DIR="$workspace/work"
+        ARCH="x86_64"
+        CODEX_MANAGED_NODE_SOURCE="$source_dir"
+        mkdir -p "$WORK_DIR"
+        info() { echo "[INFO] $*" >&2; }
+        warn() { echo "[WARN] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/node-runtime.sh"
+        ensure_managed_node_runtime "$install_dir/resources/node-runtime"
+        command -v node
+        node -v
+    ) > "$workspace/output.log" 2>&1
+
+    assert_contains "$workspace/output.log" "Managed Node.js runtime copied from $source_dir"
     assert_contains "$workspace/output.log" "$install_dir/resources/node-runtime/bin/node"
     assert_contains "$workspace/output.log" "v22.22.2"
 }
@@ -1768,6 +2636,7 @@ case "$args" in
 #!/usr/bin/env node
 const fs = require("fs");
 fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `electron-rebuild ${process.argv.slice(2).join(" ")}\n`);
+fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `electron-rebuild-env jobs=${process.env.npm_config_jobs || ""} makeflags=${process.env.MAKEFLAGS || ""}\n`);
 fs.mkdirSync("node_modules/better-sqlite3/build/Release", { recursive: true });
 fs.mkdirSync("node_modules/node-pty/build/Release", { recursive: true });
 fs.closeSync(fs.openSync("node_modules/better-sqlite3/build/Release/better_sqlite3.node", "w"));
@@ -1825,6 +2694,10 @@ SCRIPT
         export PATH
         NATIVE_TOOLCHAIN_LOG="$toolchain_log"
         export NATIVE_TOOLCHAIN_LOG
+        MAX_BUILD_THREADS=4
+        MAKEFLAGS="-j12 -l8"
+        export MAX_BUILD_THREADS
+        export MAKEFLAGS
         WORK_DIR="$workspace/work"
         ELECTRON_VERSION="42.0.1"
         ELECTRON_HEADERS_URL="https://example.invalid/electron"
@@ -1839,7 +2712,8 @@ SCRIPT
 
     assert_contains "$toolchain_log" "@electron/rebuild@4.0.4"
     assert_contains "$toolchain_log" "node-abi@^4.31.0"
-    assert_contains "$toolchain_log" "electron-rebuild -v 42.0.1 --force --dist-url https://example.invalid/electron"
+    assert_contains "$toolchain_log" "electron-rebuild -v 42.0.1 --force --dist-url https://example.invalid/electron --sequential"
+    assert_contains "$toolchain_log" "electron-rebuild-env jobs=4 makeflags=-j4"
     assert_contains "$output_log" "Native modules built successfully"
     assert_file_exists "$app_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
     assert_file_exists "$app_dir/node_modules/node-pty/build/Release/pty.node"
@@ -1924,6 +2798,76 @@ test_bundled_plugin_builders_accept_prebuilt_binaries() {
     assert_contains "$output_log" "$host"
 }
 
+test_package_payload_refreshes_computer_use_backend() {
+    info "Checking package payload refreshes Linux Computer Use backend"
+    local workspace="$TMP_DIR/package-computer-use-refresh"
+    local app_root="$workspace/app-root"
+    local target_bin="$app_root/resources/plugins/openai-bundled/plugins/computer-use/bin"
+    local backend="$workspace/prebuilt/codex-computer-use-linux"
+    local cosmic="$workspace/prebuilt/codex-computer-use-cosmic"
+
+    mkdir -p "$target_bin" "$workspace/prebuilt"
+    printf '%s\n' 'stale backend' > "$target_bin/codex-computer-use-linux"
+    printf '%s\n' 'stale cosmic' > "$target_bin/codex-computer-use-cosmic"
+    printf '%s\n' 'fresh backend' > "$backend"
+    printf '%s\n' 'fresh cosmic' > "$cosmic"
+    chmod +x "$backend" "$cosmic"
+
+    (
+        REPO_DIR="$REPO_DIR"
+        CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE="$backend"
+        CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE="$cosmic"
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/package-common.sh"
+        stage_packaged_linux_computer_use_backend "$app_root"
+    )
+
+    assert_contains "$target_bin/codex-computer-use-linux" "fresh backend"
+    assert_contains "$target_bin/codex-computer-use-cosmic" "fresh cosmic"
+    assert_mode "$target_bin/codex-computer-use-linux" "755"
+    assert_mode "$target_bin/codex-computer-use-cosmic" "755"
+}
+
+test_process_detection_handles_deleted_running_app() {
+    info "Checking running app detection handles upgraded Electron processes"
+    local workspace="$TMP_DIR/process-detection-deleted"
+    local proc_root="$workspace/proc"
+    local install_dir="$workspace/opt/codex-desktop"
+    local state_home="$workspace/state"
+    local uid
+
+    uid="$(id -u)"
+    mkdir -p "$proc_root/1234" "$proc_root/1235" "$install_dir" "$state_home/codex-desktop"
+    printf '%s\n' '#!/bin/sh' > "$install_dir/electron"
+    printf '%s\n' '#!/bin/sh' > "$install_dir/electron (deleted)"
+    chmod +x "$install_dir/electron" "$install_dir/electron (deleted)"
+    ln -s "$install_dir/electron (deleted)" "$proc_root/1234/exe"
+    ln -s "$install_dir/electron (deleted)" "$proc_root/1235/exe"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/1234/status"
+    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$proc_root/1235/status"
+    printf '%s\0' "$install_dir/electron --no-sandbox" > "$proc_root/1234/cmdline"
+    printf '%s\0' "$install_dir/electron --type=renderer --no-sandbox" > "$proc_root/1235/cmdline"
+    printf '%s\n' 1234 > "$state_home/codex-desktop/app.pid"
+
+    (
+        INSTALL_DIR="$install_dir"
+        CODEX_APP_ID="codex-desktop"
+        XDG_STATE_HOME="$state_home"
+        CODEX_PROCESS_PROC_ROOT="$proc_root"
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/process-detection.sh"
+
+        [ "$(find_running_install_target_pid)" = "1234" ] \
+            || fail "Expected deleted main Electron process to be detected"
+        pid_matches_install_target 1234 "$install_dir/electron" \
+            || fail "Expected deleted executable suffix to match install target"
+        ! pid_matches_install_target 1235 "$install_dir/electron" \
+            || fail "Expected Electron helper process to be ignored"
+        pid_is_electron_helper 1235 \
+            || fail "Expected process title with embedded --type= to count as Electron helper"
+    )
+}
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
@@ -1973,6 +2917,7 @@ test_launcher_template_sanity() {
     assert_contains "$REPO_DIR/launcher/start.sh.template" "ADOPTED_WEBVIEW_PID"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "Reusing webview server pid="
     assert_contains "$REPO_DIR/launcher/start.sh.template" "run_cold_start_hooks"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "ensure_node_repl_js_approval"
     assert_contains "$REPO_DIR/linux-features/remote-mobile-control/feature.json" '"stageHook": "./stage.sh"'
     assert_contains "$REPO_DIR/linux-features/remote-mobile-control/stage.sh" "cold-start.d"
     assert_contains "$REPO_DIR/linux-features/remote-mobile-control/stage.sh" "remote-mobile-control"
@@ -1998,6 +2943,8 @@ detect_body = source.split("detect_warm_start() {", 1)[1].split("send_warm_start
 launch_body = source.split("launch_electron() {", 1)[1].split("load_packaged_runtime_helper", 1)[0]
 runtime_body = source.split("trap cleanup_launcher EXIT", 1)[1].split("launch_electron", 1)[0]
 webview_probe_body = source.split("webview_port_is_open() {", 1)[1].split("wait_for_webview_server() {", 1)[0]
+wait_body = source.split("wait_for_webview_server() {", 1)[1].split("verify_webview_origin() {", 1)[0]
+prelaunch_hooks_body = source.split("run_feature_prelaunch_hooks() {", 1)[1].split("bundled_plugin_version() {", 1)[0]
 cold_start_hooks_body = source.split("run_cold_start_hooks() {", 1)[1].split("run_cli_preflight() {", 1)[0]
 stop_body = source.split("stop_owned_webview_server() {", 1)[1].split("owned_webview_server_pid() {", 1)[0]
 stale_body = source.split("pid_is_stale_webview_server() {", 1)[1].split("stop_owned_webview_server() {", 1)[0]
@@ -2007,16 +2954,24 @@ ensure_body = source.split("ensure_webview_server() {", 1)[1].split("wait_for_we
 reconcile_body = source.split("reconcile_runtime_state() {", 1)[1].split("set_electron_defaults() {", 1)[0]
 if 'LAUNCHER_ARGS=()' not in source:
     raise SystemExit("launcher must keep a sanitized argv for launcher-only flags")
+if 'CODEX_LINUX_FEATURES_DIR="$SCRIPT_DIR/.codex-linux/features"' not in source:
+    raise SystemExit("launcher must expose the app-local Linux feature resource directory")
+if 'export CODEX_HOME CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINUX_WEBVIEW_PORT CODEX_LINUX_SETTINGS_FILE CODEX_LINUX_FEATURES_DIR' not in source:
+    raise SystemExit("launcher must export CODEX_HOME and Linux feature resource directory")
 if 'configure_multi_launch_instance "$@"' not in source:
     raise SystemExit("launcher must configure multi-launch before deriving WEBVIEW_ORIGIN")
 if 'unset CODEX_LINUX_MULTI_LAUNCH' not in source.split('parse_launcher_args() {', 1)[0]:
     raise SystemExit("launcher must clear inherited internal multi-launch markers before parsing args")
 if '$((CODEX_LINUX_WEBVIEW_PORT + 4))' not in source:
     raise SystemExit("multi-launch default range must cap the default at five ports")
-if '( trap - EXIT\n      exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" )' not in webview_probe_body:
+if '( trap - EXIT\n      exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" || exit 1\n      exec 3>&- 3<&-\n      exit 0 )' not in webview_probe_body:
     raise SystemExit("webview port probe must not inherit the launcher EXIT cleanup trap")
 if '( trap - EXIT\n      sleep 0.2' not in webview_probe_body:
     raise SystemExit("webview port probe watchdog must not inherit the launcher EXIT cleanup trap")
+if "webview_origin_is_reachable_fast" not in wait_body or "webview_port_is_open" in wait_body:
+    raise SystemExit("wait_for_webview_server must use the HTTP origin as the readiness signal")
+if "if webview_origin_is_reachable;" not in wait_body:
+    raise SystemExit("wait_for_webview_server must fall back to full origin verification before failing")
 if 'CODEX_LINUX_INSTANCE_ID="port-$CODEX_LINUX_WEBVIEW_PORT"' not in multi_body:
     raise SystemExit("multi-launch must derive a stable instance id from the allocated port")
 if 'CODEX_LINUX_MULTI_LAUNCH=1' not in multi_body:
@@ -2033,6 +2988,8 @@ if 'send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"' not in source:
     raise SystemExit("warm-start handoff must not receive launcher-only multi-launch flags")
 if 'launch_electron "${LAUNCHER_ARGS[@]}"' not in source:
     raise SystemExit("Electron launch must receive sanitized launcher args")
+if 'Adopted concurrently-started verified webview server' not in source:
+    raise SystemExit("launcher must tolerate a concurrent verified webview server winning the bind race")
 if 'RUNNING_APP_PID="$(find_running_app_pid)"' not in detect_body:
     raise SystemExit("detect_warm_start must record a pid-file running app even when warm start is disabled")
 if '[ -S "$LAUNCH_ACTION_SOCKET" ] && RUNNING_APP_PID="$(discover_running_app_pid)"' not in detect_body:
@@ -2076,6 +3033,11 @@ if "if needs_cold_start;" not in runtime_body:
     raise SystemExit("second-instance handoff must skip CLI preflight")
 if 'run_cold_start_hooks' not in runtime_body:
     raise SystemExit("cold start must run feature-staged hooks before Electron launches")
+for name, body in (("prelaunch", prelaunch_hooks_body), ("cold-start", cold_start_hooks_body)):
+    if 'CODEX_HOME="$CODEX_HOME"' not in body:
+        raise SystemExit(f"launcher {name} hooks must receive resolved CODEX_HOME")
+    if 'CODEX_LINUX_FEATURES_DIR="$CODEX_LINUX_FEATURES_DIR"' not in body:
+        raise SystemExit(f"launcher {name} hooks must receive the app-local Linux feature resource directory")
 if 'COLD_START_HOOK_DIR' not in cold_start_hooks_body or '"$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR"' not in cold_start_hooks_body:
     raise SystemExit("launcher cold-start hook runner must be generic and pass standard paths")
 if '>>"$LOG_FILE" 2>&1 &' not in cold_start_hooks_body:
@@ -2228,6 +3190,27 @@ PY
     output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 "$launcher_probe" probe)"
     [[ "$output" == *"comp=0"* && "$output" != *"<--disable-gpu-compositing>"* ]] || fail "CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 must suppress the compositor flag: $output"
 
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=9333 "$launcher_probe" probe)"
+    [[ "$output" == *"<--remote-debugging-port=9333>"* ]] || fail "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must enable the CDP port: $output"
+    [[ "$output" == *"<--remote-debugging-address=127.0.0.1>"* ]] || fail "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must bind CDP to loopback: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=9333 "$launcher_probe" probe -- --remote-debugging-port=9444)"
+    [[ "$output" == *"electron=<--remote-debugging-port=9444>"* ]] || fail "explicit Electron remote-debugging port must still pass through: $output"
+    [[ "$output" != *"<--remote-debugging-port=9333>"* ]] || fail "env CDP port must not duplicate an explicit Electron port: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=false "$launcher_probe" probe)"
+    [[ "$output" != *"<--remote-debugging-port="* && "$output" != *"<--remote-debugging-address="* ]] || fail "falsey CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must keep CDP disabled: $output"
+
+    if env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=70000 "$launcher_probe" probe >"$TMP_DIR/launcher-invalid-cdp.out" 2>"$TMP_DIR/launcher-invalid-cdp.err"; then
+        fail "Expected invalid CODEX_ELECTRON_REMOTE_DEBUGGING_PORT to fail"
+    fi
+    assert_contains "$TMP_DIR/launcher-invalid-cdp.err" "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must be between 1 and 65535"
+
+    if env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=9333 "$launcher_probe" probe -- --remote-debugging-address=0.0.0.0 >"$TMP_DIR/launcher-cdp-address.out" 2>"$TMP_DIR/launcher-cdp-address.err"; then
+        fail "Expected env CDP port plus explicit remote-debugging address to fail"
+    fi
+    assert_contains "$TMP_DIR/launcher-cdp-address.err" "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT cannot be combined with --remote-debugging-address unless --remote-debugging-port is also explicit"
+
     output="$(env -i PATH="$PATH" HOME="$HOME" WSL_INTEROP=/tmp/codex-wsl WAYLAND_DISPLAY=wayland-0 "$launcher_probe" probe)"
     [[ "$output" == *"mode=wslg"* && "$output" == *"wslg=1"* ]] || fail "auto rendering mode must detect WSLg from WSL and GUI markers: $output"
 
@@ -2243,17 +3226,22 @@ PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" '/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "kill -9 \"\$probe_pid\""
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'curl --disable --noproxy 127.0.0.1,localhost --silent --show-error --fail --max-time 2'
-    assert_contains "$REPO_DIR/launcher/start.sh.template" "for attempt in \$(seq 1 250)"
-    assert_contains "$REPO_DIR/launcher/start.sh.template" "sleep 0.02"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "webview_origin_is_reachable_fast"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "for attempt in \$(seq 1 20)"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "sleep 0.05"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "Webview origin verified."
     assert_contains "$REPO_DIR/launcher/start.sh.template" "hydrate_graphical_session_env"
     assert_not_contains "$REPO_DIR/install.sh" "pkill -f \"http.server 5175\""
     assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_WEBVIEW_PORT"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_LINUX_PIN_RENDERER_URL"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_LINUX_ALLOW_RENDERER_URL_OVERRIDE"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" 'export ELECTRON_RENDERER_URL="$WEBVIEW_ORIGIN/"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'ELECTRON_RENDERER_URL="${ELECTRON_RENDERER_URL:-$WEBVIEW_ORIGIN/}"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" '--app-id="$CODEX_LINUX_APP_ID"'
     assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "CODEX_APP_ID"
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'ELECTRON_OZONE_HINT="auto"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_LINUX_RENDERING_MODE=auto|default|wslg|wayland-gpu"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT"
     assert_contains "$REPO_DIR/launcher/start.sh.template" '--ozone-platform-hint="$ELECTRON_OZONE_HINT"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "--disable-gpu-sandbox"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "--force-renderer-accessibility"
@@ -2267,6 +3255,7 @@ PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" "prompt_install_missing_cli"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "prompt-install-cli"
     assert_contains "$REPO_DIR/launcher/start.sh.template" '.npm-global/bin/codex'
+    assert_contains "$REPO_DIR/launcher/start.sh.template" '.config}/nvm/versions/node'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_UPDATE_MANAGER_PATH"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "resolve_update_manager_path"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "run_update_manager"
@@ -2281,6 +3270,8 @@ PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-id.json"
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts"
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".config/chromium/NativeMessagingHosts"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-host-flatpak-wrapper.sh"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "flatpak override --user --talk-name=org.freedesktop.Flatpak com.google.Chrome"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "scripts/check-extension-installed.js"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "scripts/chrome-is-running.js"
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".tmp/bundled-marketplaces/openai-bundled"
@@ -2316,6 +3307,9 @@ PY
     assert_contains "$REPO_DIR/.github/workflows/ci.yml" "tests/fixtures/create-packaged-app-fixture.sh codex-app"
     assert_contains "$REPO_DIR/.github/workflows/ci.yml" "for file in scripts/patches/"
     assert_contains "$REPO_DIR/scripts/ci/container-entrypoint.sh" "for file in scripts/patches/"
+    assert_contains "$REPO_DIR/flake.nix" "rewriteCratesIoDownloadUrl"
+    assert_contains "$REPO_DIR/flake.nix" "https://static.crates.io/crates/"
+    assert_contains "$REPO_DIR/flake.nix" "api/v1/crates/"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "MANAGED_NODE_BIN_DIR"
     assert_contains "$REPO_DIR/updater/src/builder.rs" "managed_node_bin_dirs"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "stage_common_package_files"
@@ -2325,16 +3319,22 @@ PY
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "StartupWMClass=codex-desktop"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "X-GNOME-WMClass=codex-desktop"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "Actions=new-window;CheckForUpdates;InstallReadyUpdate;"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "Actions=new-window;quick-chat;compact-prompt;CheckForUpdates;InstallReadyUpdate;"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "[Desktop Action new-window]"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/codex-desktop --new-instance"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "Desktop Action quick-chat"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "/usr/bin/codex-desktop --quick-chat"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "Desktop Action compact-prompt"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "/usr/bin/codex-desktop --prompt-chat"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "codex-update-manager check-now"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "codex-update-manager install-ready"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "BAMF_DESKTOP_FILE_HINT=@HOME@/.local/share/applications/codex-desktop.desktop"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "@HOME@/.local/bin/codex-desktop %U"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "Actions=new-window;"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "Actions=new-window;quick-chat;compact-prompt;"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1 @HOME@/.local/bin/codex-desktop --new-instance"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "@HOME@/.local/bin/codex-desktop --quick-chat"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "@HOME@/.local/bin/codex-desktop --prompt-chat"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/codex-desktop" "CODEX_USER_LOCAL_OZONE_PLATFORM"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/codex-desktop" 'exec "${APP_DIR}/start.sh" --x11 "$@"'
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/codex-desktop" 'exec "${APP_DIR}/start.sh" --wayland "$@"'
@@ -2403,8 +3403,11 @@ test_side_by_side_launcher_identity() {
     assert_contains "$app_dir/start.sh" "CODEX_LINUX_APP_DISPLAY_NAME=Codex\\\\ CUA\\\\ Lab"
     assert_contains "$app_dir/start.sh" 'CODEX_LINUX_WEBVIEW_PORT=${CODEX_WEBVIEW_PORT:-5176}'
     assert_contains "$app_dir/start.sh" 'CODEX_LINUX_SETTINGS_FILE="$APP_SETTINGS_FILE"'
-    assert_contains "$app_dir/start.sh" 'export CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINUX_WEBVIEW_PORT CODEX_LINUX_SETTINGS_FILE'
+    assert_contains "$app_dir/start.sh" 'export CODEX_HOME CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINUX_WEBVIEW_PORT CODEX_LINUX_SETTINGS_FILE CODEX_LINUX_FEATURES_DIR'
     assert_contains "$app_dir/start.sh" 'WEBVIEW_ORIGIN="http://127.0.0.1:$CODEX_LINUX_WEBVIEW_PORT"'
+    assert_contains "$app_dir/start.sh" "CODEX_LINUX_PIN_RENDERER_URL"
+    assert_contains "$app_dir/start.sh" "CODEX_LINUX_ALLOW_RENDERER_URL_OVERRIDE"
+    assert_contains "$app_dir/start.sh" 'export ELECTRON_RENDERER_URL="$WEBVIEW_ORIGIN/"'
     assert_contains "$app_dir/start.sh" 'ELECTRON_RENDERER_URL="${ELECTRON_RENDERER_URL:-$WEBVIEW_ORIGIN/}"'
     assert_contains "$app_dir/start.sh" "resolve_script_dir"
     assert_contains "$app_dir/start.sh" "configure_side_by_side_app_env"
@@ -2439,7 +3442,7 @@ test_browser_use_node_repl_fallback_runtime() {
     local archive_sha
     local true_bin
 
-    mkdir -p "$workspace" "$install_dir/resources" "$archive_root/codex-primary-runtime/dependencies/bin"
+    mkdir -p "$workspace" "$install_dir/resources/node-runtime/bin" "$archive_root/codex-primary-runtime/dependencies/bin"
     make_fake_browser_upstream_app "$app_dir"
 
     # Simulate the current upstream DMG shape: node_repl exists, but it is not a Linux ELF.
@@ -2447,6 +3450,8 @@ test_browser_use_node_repl_fallback_runtime() {
     chmod +x "$app_dir/Contents/Resources/node_repl"
 
     true_bin="$(type -P true)"
+    cp "$true_bin" "$install_dir/resources/node-runtime/bin/node"
+    chmod 0755 "$install_dir/resources/node-runtime/bin/node"
     cp "$true_bin" "$archive_root/codex-primary-runtime/dependencies/bin/node_repl"
     chmod 0755 "$archive_root/codex-primary-runtime/dependencies/bin/node_repl"
     tar -cJf "$archive" -C "$archive_root" codex-primary-runtime
@@ -2645,6 +3650,7 @@ make_fake_chrome_upstream_app() {
     mkdir -p \
         "$resources_dir/plugins/openai-bundled/.agents/plugins" \
         "$chrome_dir/.codex-plugin" \
+        "$chrome_dir/app-server-runtime" \
         "$chrome_dir/scripts"
 
     cat > "$resources_dir/plugins/openai-bundled/.agents/plugins/marketplace.json" <<'JSON'
@@ -2653,14 +3659,22 @@ JSON
     cat > "$chrome_dir/.codex-plugin/plugin.json" <<'JSON'
 {"name":"chrome","version":"0.1.7"}
 JSON
+    printf '\xcf\xfa\xed\xfe' > "$chrome_dir/app-server-runtime/node"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_dir/app-server-runtime/node_repl"
+    printf '\xcf\xfa\xed\xfe' > "$chrome_dir/app-server-runtime/codex"
+    chmod +x "$chrome_dir/app-server-runtime/node" "$chrome_dir/app-server-runtime/node_repl" "$chrome_dir/app-server-runtime/codex"
+    cp "$(type -P true)" "$resources_dir/node_repl"
+    chmod +x "$resources_dir/node_repl"
     cat > "$chrome_dir/scripts/installManifest.mjs" <<'JS'
-var n={extensionId:"hehggadaopoacecdllhhajmbjkdcmajg",extensionHostName:"com.openai.codexextension"};var p=o=>{let t=`${o.extensionHostName}.json`,r={darwin:["Library/Application Support/Google/Chrome/NativeMessagingHosts"],linux:[".config/google-chrome/NativeMessagingHosts"],win32:["AppData/Local/OpenAI/extension"]}[m.platform()];return r.map(s=>l.resolve(m.homedir(),s,t))};
+var n={extensionId:"hehggadaopoacecdllhhajmbjkdcmajg",extensionHostName:"com.openai.codexextension"};var p=o=>{let t=`${o.extensionHostName}.json`,r={darwin:["Library/Application Support/Google/Chrome/NativeMessagingHosts"],linux:[".config/google-chrome/NativeMessagingHosts"],win32:["AppData/Local/OpenAI/extension"]}[m.platform()];return r.map(s=>l.resolve(m.homedir(),s,t))};async function y({appServerHostConfig:t,description:e=_,extensionHostName:o,extensionHostPath:n,extensionId:s,manifestPaths:p}){let f={allowed_origins:[`chrome-extension://${r(s,"extensionId")}/`],description:e,name:r(o,"extensionHostName"),path:r(n,"extensionHostPath"),type:"stdio"},m=`${JSON.stringify(f,null,2)}
+`,l=await T({appServerHostConfig:{...t,extensionId:r(s,"extensionId")},extensionHostPath:n});return await Promise.all(p.map(async u=>{await w(d(u),{recursive:!0}),await v(u,m,"utf8")})),{configPath:l,manifestPaths:p}}
 JS
     cat > "$chrome_dir/scripts/extension-id.json" <<'JSON'
 {"extensionId":"hehggadaopoacecdllhhajmbjkdcmajg","extensionHostName":"com.openai.codexextension"}
 JSON
     cat > "$chrome_dir/scripts/browser-client.mjs" <<'JS'
 import{resolve as GF}from"path";import{homedir as VF,platform as WF}from"os";var Tc=GF(VF(),WF()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");import{ClassicLevel as KF}from"./node_modules/classic-level.mjs";import{resolve as Gf}from"path";import{tmpdir as YF}from"os";import{cp as ZF,mkdtemp as JF,rm as kS}from"fs/promises";import{existsSync as XF}from"fs";var IS=async(t,e)=>{let r=Gf(Tc,t,"Local Extension Settings",e);if(!XF(r))return null;let n=await JF(Gf(QF(),"codex"));await ZF(r,n,{recursive:!0}),await kS(Gf(n,"LOCK"));let o=new KF(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await kS(n,{force:!0,recursive:!0})}},QF=()=>"nodeRepl"in globalThis&&globalThis.nodeRepl?globalThis.nodeRepl.tmpDir:YF();var AS=async t=>{if(t.type!=="extension"||!t.metadata?.extensionInstanceId||!t.metadata.extensionId)return t;let e=await rO(t.metadata.extensionId,t.metadata.extensionInstanceId);return e?{...t,metadata:{...t.metadata,profileName:e.name,profileIsLastUsed:e.isLastUsed.toString(),profileOrdering:e.orderingIndex.toString()}}:t},rO=async(t,e)=>(await nO(t)).find(o=>o.instanceId===e)||null,nO=async t=>{let e=await oO();return await Promise.all(e.map(async r=>({...r,instanceId:await IS(r.id,t).catch(n=>(ee(n),null))})))},oO=async()=>{let t=tO(Tc,"Local State"),e=JSON.parse(await eO(t,"utf8"));return e.profile.profiles_order.map((r,n)=>{let o=e.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:e.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)};
+var oh=Vb(l9.platform()),d9=async e=>{let t=ST(),r=e.filter(o=>o.info.type==="iab"),n=p9(r,t);return await Promise.all(r.filter(o=>!n.includes(o)).map(async({api:o})=>o.close())),[...e.filter(o=>o.info.type!=="iab"),...n]},p9=(e,t)=>t==null?[]:e.filter(r=>r.info.metadata?.codexSessionId===t);
 function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}
 import{platform as yT}from"node:os";function eh(){return"privileged native pipe bridge is not available; browser-client is not trusted"}function th(){let e=globalThis.nodeRepl?.nativePipe;return e==null||typeof e.createConnection!="function"?null:e}var ml=class e{constructor(t){this.socket=t}static async create(t){let r=th();if(r!=null){let n=await r.createConnection(t);return new e(n)}throw new Error(eh())}};
 async fetchBlocked(e){let r=await bS(e.endpoint,{method:"GET"});if(!r.ok)throw new Error(ae(`Browser Use cannot determine if ${e.displayUrl} is allowed. Please try again later or use another source.`));let n=await r.json();return TF(n)}
@@ -2694,6 +3708,32 @@ const KNOWN_BROWSERS = [
     windowsExecutable: "chrome.exe",
   },
 ];
+
+function commandPath(command) {
+  return runCommand(["which", command]);
+}
+
+function findCommandBrowsers() {
+  const found = new Map();
+
+  for (const browser of KNOWN_BROWSERS) {
+    for (const command of browser.commands) {
+      const executable = commandPath(command);
+      if (!executable) continue;
+
+      found.set(browser.name, {
+        name: browser.name,
+        command,
+        path: executable,
+        bundle_id: browser.bundleIds[0] || null,
+        version: null,
+      });
+      break;
+    }
+  }
+
+  return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 JS
     cat > "$chrome_dir/scripts/chrome-is-running.js" <<'JS'
 const CHROME_PROCESS_NAMES_BY_PLATFORM = {
@@ -2705,10 +3745,56 @@ JS
 function resolveChromeUserDataDirectory() {
   return path.join(os.homedir(), ".config", "google-chrome");
 }
+
+function resolveChromeProfileDirectory(userDataDirectory) {
+  const localStateProfile =
+    resolveChromeProfileDirectoryFromLocalState(userDataDirectory);
+  if (localStateProfile) return localStateProfile;
+
+  const latestProfile = findLatestChromeProfile(userDataDirectory);
+  if (latestProfile) return latestProfile;
+
+  throw new Error(`No Chrome profile found in ${userDataDirectory}`);
+}
+
+function resolveChromeProfileDirectoryFromLocalState(userDataDirectory) {
+  return null;
+}
+
+function findLatestChromeProfile(userDataDirectory) {
+  return "Default";
+}
+
+function isUsableChromeProfile(userDataDirectory, profileDirectory) {
+  return profileDirectory.length > 0;
+}
 JS
     cat > "$chrome_dir/scripts/open-chrome-window.js" <<'JS'
 function resolveChromeUserDataDirectory() {
   return path.join(os.homedir(), ".config", "google-chrome");
+}
+
+function resolveChromeProfileDirectory(userDataDirectory) {
+  const localStateProfile =
+    resolveChromeProfileDirectoryFromLocalState(userDataDirectory);
+  if (localStateProfile) return localStateProfile;
+
+  const latestProfile = findLatestChromeProfile(userDataDirectory);
+  if (latestProfile) return latestProfile;
+
+  throw new Error(`No Chrome profile found in ${userDataDirectory}`);
+}
+
+function resolveChromeProfileDirectoryFromLocalState(userDataDirectory) {
+  return null;
+}
+
+function findLatestChromeProfile(userDataDirectory) {
+  return "Default";
+}
+
+function isUsableChromeProfile(userDataDirectory, profileDirectory) {
+  return profileDirectory.length > 0;
 }
 
 function getOpenChromeCommand(profileDirectory) {
@@ -2734,9 +3820,13 @@ test_chrome_plugin_staging() {
     local output_log="$workspace/output.log"
     local chrome_dir="$install_dir/resources/plugins/openai-bundled/plugins/chrome"
     local host="$chrome_dir/extension-host/linux/x64/extension-host"
+    local true_bin
 
-    mkdir -p "$workspace" "$install_dir/resources"
+    mkdir -p "$workspace" "$install_dir/resources/node-runtime/bin"
     make_fake_chrome_upstream_app "$app_dir"
+    true_bin="$(type -P true)"
+    cp "$true_bin" "$install_dir/resources/node-runtime/bin/node"
+    chmod 0755 "$install_dir/resources/node-runtime/bin/node"
 
     (
         SCRIPT_DIR="$REPO_DIR"
@@ -2762,25 +3852,55 @@ test_chrome_plugin_staging() {
 
     assert_file_exists "$host"
     [ -x "$host" ] || fail "Expected Chrome extension host to be executable: $host"
+    assert_linux_elf_executable "$chrome_dir/app-server-runtime/node"
+    assert_linux_elf_executable "$chrome_dir/app-server-runtime/node_repl"
+    assert_file_exists "$chrome_dir/app-server-runtime/codex"
+    [ -x "$chrome_dir/app-server-runtime/codex" ] || fail "Expected Chrome app-server codex shim to be executable"
+    assert_not_macho_binary "$chrome_dir/app-server-runtime/codex"
+    assert_contains "$chrome_dir/app-server-runtime/codex" 'CODEX_CLI_PATH'
     assert_contains "$chrome_dir/scripts/installManifest.mjs" "BraveSoftware/Brave-Browser/NativeMessagingHosts"
+    assert_contains "$chrome_dir/scripts/installManifest.mjs" ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts"
+    assert_contains "$chrome_dir/scripts/installManifest.mjs" "extension-host-flatpak-wrapper.sh"
+    assert_contains "$chrome_dir/scripts/installManifest.mjs" "flatpak-spawn --host"
+    assert_contains "$chrome_dir/scripts/installManifest.mjs" "codexLinuxShellQuote"
+    assert_not_contains "$chrome_dir/scripts/installManifest.mjs" "a(d(d(d(u)))"
+    assert_not_contains "$chrome_dir/scripts/installManifest.mjs" 'U("chmod"'
     assert_contains "$chrome_dir/scripts/installManifest.mjs" ".config/chromium/NativeMessagingHosts"
+    assert_contains "$chrome_dir/scripts/installed-browsers.js" "flatpakAppIds"
+    assert_contains "$chrome_dir/scripts/installed-browsers.js" "findFlatpakBrowser"
     assert_contains "$chrome_dir/scripts/installed-browsers.js" "Brave Browser"
     assert_contains "$chrome_dir/scripts/installed-browsers.js" "Chromium"
     assert_contains "$chrome_dir/scripts/chrome-is-running.js" "brave-browser"
     assert_contains "$chrome_dir/scripts/chrome-is-running.js" "chromium-browser"
     assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" 'process.platform === "linux"'
     assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "BraveSoftware"
+    assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "com.google.Chrome"
+    assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "linuxFlatpakChromePreferred"
+    assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "linuxRunCommand"
+    assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" '"flatpak", "info", "com.google.Chrome"'
     assert_contains "$chrome_dir/scripts/check-native-host-manifest.js" "chromium"
     assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxBraveUserDataDirectory"
+    assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxFlatpakChromeUserDataDirectory"
+    assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxHasBrowserUserDataDirectory"
     assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxChromiumUserDataDirectory"
     assert_contains "$chrome_dir/scripts/check-extension-installed.js" "linuxCandidateWithInstalledExtension"
+    assert_contains "$chrome_dir/scripts/check-extension-installed.js" "resolveChromeProfileDirectoryFromRunningProcess"
+    assert_contains "$chrome_dir/scripts/check-extension-installed.js" "defaultLinuxUserDataDirectoryForCommand"
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "brave-browser"
+    assert_contains "$chrome_dir/scripts/open-chrome-window.js" "com.google.Chrome"
+    assert_contains "$chrome_dir/scripts/open-chrome-window.js" "linuxArgs"
+    assert_contains "$chrome_dir/scripts/open-chrome-window.js" "linuxHasBrowserUserDataDirectory"
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "chromium"
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "defaultBrowser ==="
+    assert_contains "$chrome_dir/scripts/open-chrome-window.js" "resolveChromeProfileDirectoryFromRunningProcess"
+    assert_contains "$chrome_dir/scripts/open-chrome-window.js" "defaultLinuxUserDataDirectoryForCommand"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxChromeUserDataDirectories"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" '"com.google.Chrome","config","google-chrome"'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" '".config","chromium"'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "instanceId:await IS(o.id,t,r)"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxRankBrowserBackends"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "getUserTabs()"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env?.\[e\]'
     assert_not_contains "$chrome_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env\[e\]'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "nativePipe??import.meta.__codexNativePipe"
@@ -2805,6 +3925,7 @@ JS
     node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
     assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
     assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '"com.google.Chrome","config","google-chrome"'
     assert_contains "$browser_client" '".config","chromium"'
 
     cat > "$browser_client" <<'JS'
@@ -2813,7 +3934,99 @@ JS
     node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
     assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
     assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '"com.google.Chrome","config","google-chrome"'
     assert_contains "$browser_client" '".config","chromium"'
+
+    cat > "$browser_client" <<'JS'
+import{resolve as Y5}from"path";import{homedir as Z5,platform as X5}from"os";var hl=Y5(Z5(),X5()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");import{ClassicLevel as Q5}from"./node_modules/classic-level.mjs";import{resolve as rh}from"path";import{tmpdir as o9}from"os";import{cp as t9,mkdtemp as r9,rm as fT}from"fs/promises";import{existsSync as n9}from"fs";var mT=async(e,t)=>{let r=rh(hl,e,"Local Extension Settings",t);if(!n9(r))return null;let n=await r9(rh(o9(),"codex"));await t9(r,n,{recursive:!0}),await fT(rh(n,"LOCK"));let o=new Q5(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await fT(n,{force:!0,recursive:!0})}};var a9=async(e,t)=>(await u9(e)).find(o=>o.instanceId===t)||null,u9=async e=>{let t=await c9();return await Promise.all(t.map(async r=>({...r,instanceId:await mT(r.id,e).catch(n=>(ne(n),null))})))},c9=async()=>{let e=s9(hl,"Local State"),t=JSON.parse(await i9(e,"utf8"));return t.profile.profiles_order.map((r,n)=>{let o=t.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:t.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)}
+JS
+    node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
+    assert_contains "$browser_client" "codexLinuxChromeUserDataDirectories"
+    assert_contains "$browser_client" '"BraveSoftware","Brave-Browser"'
+    assert_contains "$browser_client" '"com.google.Chrome","config","google-chrome"'
+    assert_contains "$browser_client" '".config","chromium"'
+    assert_contains "$browser_client" "async(e,t,r=hl)"
+    assert_contains "$browser_client" "instanceId:await mT(o.id,e,r)"
+}
+
+test_chrome_flatpak_install_manifest_runtime() {
+    info "Checking Chrome Flatpak install manifest wrapper runtime"
+    local workspace="$TMP_DIR/chrome-flatpak-install-manifest"
+    local chrome_dir="$workspace/chrome"
+    local install_manifest="$chrome_dir/scripts/installManifest.mjs"
+
+    mkdir -p "$chrome_dir/scripts"
+    cat > "$install_manifest" <<'JS'
+import { dirname as d } from "node:path";
+import { mkdir as w, writeFile as v } from "node:fs/promises";
+const _ = "Codex chrome native messaging host";
+function r(value) { return value; }
+async function T() { return "/tmp/codex-config.json"; }
+async function y({appServerHostConfig:t,description:e=_,extensionHostName:o,extensionHostPath:n,extensionId:s,manifestPaths:p}){let f={allowed_origins:[`chrome-extension://${r(s,"extensionId")}/`],description:e,name:r(o,"extensionHostName"),path:r(n,"extensionHostPath"),type:"stdio"},m=`${JSON.stringify(f,null,2)}
+`,l=await T({appServerHostConfig:{...t,extensionId:r(s,"extensionId")},extensionHostPath:n});return await Promise.all(p.map(async u=>{await w(d(u),{recursive:!0}),await v(u,m,"utf8")})),{configPath:l,manifestPaths:p}}
+export { y };
+JS
+
+    node "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$chrome_dir" >/dev/null 2>&1
+
+    node - "$install_manifest" "$workspace" <<'NODE' || fail "Expected Flatpak manifest writer to run without hidden minifier aliases"
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+(async () => {
+  const installManifest = process.argv[2];
+  const workspace = process.argv[3];
+  const mod = await import(`${pathToFileURL(installManifest).href}?t=${Date.now()}`);
+  const hostPath = path.join(workspace, "host with ' quote", "extension-host");
+  const home = path.join(workspace, "home");
+  const hostName = "com.example.codextest";
+  const extensionId = "abcdefghijklmnopabcdefghijklmnop";
+  const regularManifest = path.join(
+    home,
+    ".config",
+    "google-chrome",
+    "NativeMessagingHosts",
+    `${hostName}.json`,
+  );
+  const flatpakManifest = path.join(
+    home,
+    ".var",
+    "app",
+    "com.google.Chrome",
+    "config",
+    "google-chrome",
+    "NativeMessagingHosts",
+    `${hostName}.json`,
+  );
+
+  fs.mkdirSync(path.dirname(hostPath), { recursive: true });
+  fs.writeFileSync(hostPath, "#!/bin/sh\n", "utf8");
+
+  await mod.y({
+    appServerHostConfig: {},
+    extensionHostName: hostName,
+    extensionHostPath: hostPath,
+    extensionId,
+    manifestPaths: [regularManifest, flatpakManifest],
+  });
+
+  const regular = JSON.parse(fs.readFileSync(regularManifest, "utf8"));
+  assert.equal(regular.path, hostPath);
+
+  const flatpak = JSON.parse(fs.readFileSync(flatpakManifest, "utf8"));
+  assert.match(flatpak.path, /extension-host-flatpak-wrapper\.sh$/);
+  const wrapper = fs.readFileSync(flatpak.path, "utf8");
+  assert.match(wrapper, /^#!\/bin\/sh\nexec \/usr\/bin\/flatpak-spawn --host /);
+  assert.equal(wrapper.includes(hostPath), false, "wrapper should shell-quote the raw host path");
+  assert.equal(wrapper.includes("'\\''"), true, "wrapper should escape single quotes safely");
+  assert.equal(fs.statSync(flatpak.path).mode & 0o111, 0o111);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+NODE
 }
 
 test_chrome_marketplace_fallback_synthesis() {
@@ -2823,9 +4036,13 @@ test_chrome_marketplace_fallback_synthesis() {
     local install_dir="$workspace/install"
     local output_log="$workspace/output.log"
     local marketplace="$install_dir/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
+    local true_bin
 
-    mkdir -p "$workspace" "$install_dir/resources"
+    mkdir -p "$workspace" "$install_dir/resources/node-runtime/bin"
     make_fake_chrome_upstream_app "$app_dir"
+    true_bin="$(type -P true)"
+    cp "$true_bin" "$install_dir/resources/node-runtime/bin/node"
+    chmod 0755 "$install_dir/resources/node-runtime/bin/node"
 
     # Upstream marketplace.json lists no chrome entry — exercises the
     # synthesized-fallback path in write_bundled_plugins_marketplace.
@@ -2908,14 +4125,25 @@ PY
     for relative in \
         ".config/google-chrome/NativeMessagingHosts" \
         ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts" \
+        ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts" \
         ".config/chromium/NativeMessagingHosts" \
         ".config/example-browser/NativeMessagingHosts"; do
         manifest_path="$home_dir/$relative/com.example.codextest.json"
         assert_file_exists "$manifest_path"
         assert_contains "$manifest_path" "com.example.codextest"
         assert_contains "$manifest_path" "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
-        assert_contains "$manifest_path" "$host_path"
+        if [ "$relative" = ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts" ]; then
+            assert_contains "$manifest_path" "extension-host-flatpak-wrapper.sh"
+        else
+            assert_contains "$manifest_path" "$host_path"
+        fi
     done
+
+    local wrapper_path="$home_dir/.var/app/com.google.Chrome/config/codex/extension-host-flatpak-wrapper.sh"
+    assert_file_exists "$wrapper_path"
+    [ -x "$wrapper_path" ] || fail "Expected Flatpak native host wrapper to be executable: $wrapper_path"
+    assert_contains "$wrapper_path" "flatpak-spawn --host"
+    assert_contains "$wrapper_path" "$host_path"
 }
 
 make_fake_extracted_asar() {
@@ -2959,8 +4187,12 @@ test_linux_file_manager_patch_smoke() {
     make_fake_extracted_asar "$extracted" 'let D={removeMenu(){},setMenuBarVisibility(){},setIcon(){},once(){}};let n=require(`electron`),t=require(`node:path`),a=require(`node:fs`);...process.platform===`win32`?{autoHideMenuBar:!0}:{},process.platform===`win32`&&D.removeMenu(),foo)}),D.once(`ready-to-show`,()=>{var sa=Mi({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>ai(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:ca,args:e=>ai(e),open:async({path:e})=>la(e)}});function ca(){let e=1;return e}async function la(e){let t=ua(e);if(t&&(0,a.statSync)(t).isFile()){n.shell.showItemInFolder(t);return}let r=t??e,i=await n.shell.openPath(r);if(i)throw Error(i)}function ua(e){return e}var Ua=Mi({id:`systemDefault`,label:`System Default App`,icon:`apps/file-explorer.png`,kind:`systemDefault`,hidden:!0,darwin:{icon:`apps/finder.png`,detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},win32:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},linux:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)}});async function Wa(e){return e}'
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_contains "$extracted/.vite/build/main-test.js" 'detect:()=>`linux-file-manager`'
     assert_contains "$extracted/.vite/build/main-test.js" 'linux:{label:`File Manager`'
+    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxFindExecutable(`dolphin`)'
+    assert_contains "$extracted/.vite/build/main-test.js" '--select'
+    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxOpenFileManager(e)'
+    assert_contains "$extracted/.vite/build/main-test.js" 'n.shell.openPath(t)'
+    assert_not_contains "$extracted/.vite/build/main-test.js" '__codexOpenTarget'
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&D.setMenuBarVisibility(!1),'
     assert_contains "$extracted/.vite/build/main-test.js" '&&D.setIcon('
     assert_contains "$extracted/webview/assets/app-server-manager-signals-test.js" '`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null'
@@ -3151,7 +4383,7 @@ if (!result.event.prevented || result.state.hideCalls !== 1) {
 NODE
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform!==`linux`' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform!==`win32`&&process.platform!==`darwin`&&process.platform!==`linux`?null:' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`)&&!this.isAppQuitting' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){' '1'
@@ -3329,6 +4561,19 @@ JS
     assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "toggleTerminal"
     assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "toggleDiffPanel"
     assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "thread9"
+    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+Alt+N"
+    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+Shift+O"
+    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+G"
+    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+J"
+    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+Alt+Shift+C"
+    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "navigateBack"
+    assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "navigateForward"
+    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "CmdOrCtrl+Shift+K"
+    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "Ctrl+\`"
+    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "newWindow"
+    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "openThreadOverlay"
+    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "openAvatarOverlay"
+    assert_not_contains "$extracted/webview/assets/keybinds-settings-linux.js" "toggleTraceRecording"
     assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "codex-linux-system-tray-enabled"
     assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "codex-linux-warm-start-enabled"
     assert_contains "$extracted/webview/assets/keybinds-settings-linux.js" "codex-linux-prompt-window-enabled"
@@ -4047,6 +5292,95 @@ test_linux_file_manager_patch_fails_soft() {
     assert_contains "$output_log" 'Failed to apply Linux File Manager Patch'
 }
 
+test_launcher_heals_node_repl_js_approval_config() {
+    info "Checking launcher heals Browser Use node_repl tool approval"
+    local workspace="$TMP_DIR/node-repl-js-approval"
+    local launcher_lib="$workspace/launcher-lib.sh"
+    local codex_home="$workspace/codex-home"
+    local config="$codex_home/config.toml"
+
+    mkdir -p "$workspace" "$codex_home"
+    awk '/^hydrate_graphical_session_env$/{exit} {print}' \
+        "$REPO_DIR/launcher/start.sh.template" > "$launcher_lib"
+    cat > "$config" <<'TOML'
+[mcp_servers.node_repl]
+command = "/opt/codex-desktop/resources/node_repl"
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+CODEX_HOME = "/tmp/codex-home"
+TOML
+
+    (
+        CODEX_HOME="$codex_home"
+        CODEX_LINUX_APP_ID="codex-desktop"
+        CODEX_LINUX_APP_DISPLAY_NAME="Codex"
+        CODEX_LINUX_WEBVIEW_PORT="5175"
+        # shellcheck disable=SC1090
+        source "$launcher_lib"
+        ensure_node_repl_js_approval
+        ensure_node_repl_js_approval
+    )
+
+    assert_contains_literal "$config" "[mcp_servers.node_repl.tools.js]"
+    assert_contains_literal "$config" 'approval_mode = "approve"'
+    [ "$(grep -F -c "[mcp_servers.node_repl.tools.js]" "$config")" = "1" ] \
+        || fail "Expected one node_repl tools.js approval table"
+}
+
+test_launcher_reheals_node_repl_js_approval_after_startup_rewrite() {
+    info "Checking launcher re-heals node_repl approval after app startup rewrite"
+    local workspace="$TMP_DIR/node-repl-js-approval-retry"
+    local launcher_lib="$workspace/launcher-lib.sh"
+    local codex_home="$workspace/codex-home"
+    local config="$codex_home/config.toml"
+
+    mkdir -p "$workspace" "$codex_home"
+    awk '/^hydrate_graphical_session_env$/{exit} {print}' \
+        "$REPO_DIR/launcher/start.sh.template" > "$launcher_lib"
+
+    (
+        CODEX_HOME="$codex_home"
+        CODEX_LINUX_APP_ID="codex-desktop"
+        CODEX_LINUX_APP_DISPLAY_NAME="Codex"
+        CODEX_LINUX_WEBVIEW_PORT="5175"
+        CODEX_NODE_REPL_APPROVAL_REPAIR_DELAYS="0 0"
+
+        write_stale_config() {
+            cat > "$config" <<'TOML'
+[mcp_servers.node_repl]
+command = "/opt/codex-desktop/resources/node_repl"
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+CODEX_HOME = "/tmp/codex-home"
+TOML
+        }
+
+        write_stale_config
+
+        # shellcheck disable=SC1090
+        source "$launcher_lib"
+        ensure_node_repl_js_approval
+
+        sleep() {
+            if [ "${rewrote_config_once:-0}" = "0" ]; then
+                rewrote_config_once=1
+                write_stale_config
+            fi
+            return 0
+        }
+
+        start_node_repl_js_approval_repair_loop
+        wait "$NODE_REPL_APPROVAL_REPAIR_PID"
+    )
+
+    assert_contains_literal "$config" "[mcp_servers.node_repl.tools.js]"
+    assert_contains_literal "$config" 'approval_mode = "approve"'
+    [ "$(grep -F -c "[mcp_servers.node_repl.tools.js]" "$config")" = "1" ] \
+        || fail "Expected one node_repl tools.js approval table after retry repair"
+}
+
 test_webview_probe_equivalence() {
     info "Checking webview probe behavioral equivalence (bash + curl vs python3 reference)"
     # The harness extracts webview_port_is_open and verify_webview_origin from
@@ -4411,7 +5745,7 @@ EOF
     assert_file_exists "$stale_entry.bak"
     assert_contains "$stale_entry.bak" "Actions=NewInstance;"
     assert_file_exists "$current_entry"
-    assert_contains "$current_entry" "Actions=new-window;"
+    assert_contains "$current_entry" "Actions=new-window;quick-chat;compact-prompt;"
     assert_contains "$current_entry" "x-scheme-handler/codex-browser-sidebar"
     assert_file_exists "$custom_entry"
     assert_not_contains "$custom_entry" "codex-browser-sidebar"
@@ -4750,11 +6084,41 @@ EOF
     )
 }
 
+test_cdp_composer_helper_unit_tests() {
+    info "Checking redacted CDP composer helper"
+    node --check "$REPO_DIR/scripts/cdp-compose.js"
+    node --check "$REPO_DIR/scripts/cdp-compose.test.js"
+    node --test "$REPO_DIR/scripts/cdp-compose.test.js"
+}
+
+test_codex_history_context_checker_unit_tests() {
+    info "Checking redacted Codex history/context checker"
+    node --check "$REPO_DIR/scripts/codex-history-context-check.js"
+    node --check "$REPO_DIR/scripts/codex-history-context-check.test.js"
+    node --test "$REPO_DIR/scripts/codex-history-context-check.test.js"
+}
+
+test_codex_readiness_checker_unit_tests() {
+    info "Checking Codex Desktop readiness checker"
+    node --check "$REPO_DIR/scripts/codex-readiness-check.js"
+    node --check "$REPO_DIR/scripts/codex-readiness-check.test.js"
+    node --test "$REPO_DIR/scripts/codex-readiness-check.test.js"
+    local make_help
+    make_help="$(make -C "$REPO_DIR" help)"
+    grep -Fq "make readiness-check" <<<"$make_help" \
+        || fail "Expected make help to list readiness-check"
+}
+
 main() {
     test_common_helper_sourcing
     test_package_payload_permission_normalization
     test_deb_builder_smoke
+    test_deb_builder_rebuilds_deleted_updater_source
+    test_desktop_service_lifecycle_helper_detects_orphaned_app_scope
+    test_desktop_service_lifecycle_helper_ignores_space_joined_helper_cmdline
     test_update_builder_preserves_enabled_linux_features_config
+    test_update_builder_source_info_survives_without_git_checkout
+    test_linux_feature_package_hook_discovery_failure_blocks_build
     test_deb_builder_respects_package_identity
     test_deb_builder_without_updater
     test_no_updater_cleanup_helper_removes_inactive_user_enablement
@@ -4766,12 +6130,18 @@ main() {
     test_make_build_app_uses_installer_download_flow_by_default
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_native_shortcut_targets_compose_existing_flows
+    test_desktop_doctor_template_smoke
     test_fedora_dependency_bootstrap_installs_rpmbuild
     test_setup_native_wizard_noninteractive_feature_writer
     test_setup_native_wizard_rejects_invalid_feature_ids
+    test_setup_native_wizard_rejects_features_without_readme
     test_setup_native_wizard_rejects_conflicting_feature_ids
     test_setup_native_wizard_disable_is_non_destructive
+    test_setup_native_wizard_accepts_numbered_feature_selection
+    test_setup_native_wizard_rejects_out_of_range_feature_numbers
+    test_setup_native_wizard_remote_keys_follow_linux_app_id
     test_setup_native_wizard_summary_keeps_existing_config
+    test_setup_native_wizard_lists_local_features
     test_setup_native_wizard_uses_package_name_for_installed_state
     test_setup_native_wizard_portal_summary_survives_busctl_sigpipe
     test_setup_native_wizard_warns_when_conversation_mode_lacks_read_aloud
@@ -4779,22 +6149,27 @@ main() {
     test_setup_native_wizard_prints_deep_readiness_guidance
     test_setup_native_wizard_uinput_stat_is_bounded
     test_setup_native_wizard_read_aloud_paths_match_runtime_defaults
-    test_setup_native_wizard_sway_hint_is_conservative
+    test_setup_native_wizard_sway_hint_reports_backend
     test_setup_native_wizard_cleanup_requires_interactive_confirmation
     test_setup_native_wizard_dry_run_cleanup_allows_noninteractive_preview
+    test_setup_native_wizard_blank_interactive_cleanup_ids_skip_cleanup
     test_setup_native_wizard_dry_run_cleanup_does_not_delete_confirmed_paths
     test_setup_native_wizard_cleanup_deletes_only_confirmed_paths
     test_upstream_build_app_workflow_tracks_dmg_metadata
+    test_app_server_schema_guard_static_contract
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
     test_port_validation_rejects_oversized_numeric_values
     test_managed_node_runtime_source_install
+    test_managed_node_runtime_rejects_version_only_stub
     test_better_sqlite3_electron_42_source_patch
     test_v8_nullptr_workaround_skips_when_included_probe_succeeds
     test_v8_nullptr_workaround_wraps_when_included_probe_fails
     test_native_module_rebuild_uses_local_electron_rebuild_toolchain
     test_native_module_rebuild_accepts_prebuilt_source
     test_bundled_plugin_builders_accept_prebuilt_binaries
+    test_package_payload_refreshes_computer_use_backend
+    test_process_detection_handles_deleted_running_app
     test_browser_use_node_repl_fallback_runtime
     test_browser_use_file_url_policy_patch_behavior
     test_browser_plugin_renamed_upstream_staging
@@ -4802,9 +6177,12 @@ main() {
     test_browser_use_node_repl_ldd_output_compatibility
     test_chrome_plugin_staging
     test_chrome_browser_client_profile_root_variants
+    test_chrome_flatpak_install_manifest_runtime
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
     test_launcher_template_sanity
+    test_launcher_heals_node_repl_js_approval_config
+    test_launcher_reheals_node_repl_js_approval_after_startup_rewrite
     test_webview_probe_equivalence
     test_side_by_side_launcher_identity
     test_linux_file_manager_patch_smoke
@@ -4830,6 +6208,9 @@ main() {
     test_user_local_prepare_build_repo_handles_deleted_overlay_paths
     test_user_local_prepare_build_repo_removes_rename_source_paths
     test_user_local_prepare_build_repo_skips_unmerged_overlay_paths
+    test_cdp_composer_helper_unit_tests
+    test_codex_history_context_checker_unit_tests
+    test_codex_readiness_checker_unit_tests
     info "All script smoke tests passed"
 }
 

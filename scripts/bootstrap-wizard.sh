@@ -6,19 +6,44 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FEATURES_ROOT="${CODEX_LINUX_FEATURES_ROOT:-$REPO_DIR/linux-features}"
 PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
+SETUP_ERROR_REPORTED=0
+COLOR_RESET=""
+COLOR_BOLD=""
+COLOR_DIM=""
+COLOR_RED=""
+COLOR_YELLOW=""
+COLOR_CYAN=""
+COLOR_GREEN=""
 
 info() {
-    echo "[setup] $*"
+    echo "${COLOR_DIM}[setup]${COLOR_RESET} $*"
 }
 
 warn() {
-    echo "[setup][WARN] $*" >&2
+    echo "${COLOR_YELLOW}[setup][WARN]${COLOR_RESET} $*" >&2
 }
 
 error() {
-    echo "[setup][ERROR] $*" >&2
+    SETUP_ERROR_REPORTED=1
+    echo "${COLOR_RED}[setup][ERROR]${COLOR_RESET} $*" >&2
     exit 1
 }
+
+section() {
+    echo
+    echo "${COLOR_CYAN}${COLOR_BOLD}[setup] == $* ==${COLOR_RESET}"
+}
+
+unexpected_error() {
+    local status=$?
+    [ "$status" = "0" ] && return 0
+    [ "${SETUP_ERROR_REPORTED:-0}" = "1" ] && return "$status"
+    echo "${COLOR_RED}[setup][ERROR]${COLOR_RESET} setup-native stopped unexpectedly near line ${BASH_LINENO[0]:-unknown} (exit $status)." >&2
+    echo "${COLOR_RED}[setup][ERROR]${COLOR_RESET} Review the last [setup] lines above. You can rerun with CODEX_BOOTSTRAP_DRY_RUN=1 for a read-only preview." >&2
+    return "$status"
+}
+
+trap unexpected_error ERR
 
 usage() {
     cat <<'EOF'
@@ -30,10 +55,12 @@ Environment:
   CODEX_BOOTSTRAP_INSTALL_DEPS=1       run bash scripts/install-deps.sh after checks
   CODEX_BOOTSTRAP_INSTALL_NATIVE=1     run make install-native after checks
   CODEX_BOOTSTRAP_CLEANUP_FEATURES=a,b cleanup feature-owned data with confirmation
+  CODEX_BOOTSTRAP_COLOR=auto|1|0       enable ANSI color automatically, force it, or disable it
   CODEX_LINUX_FEATURES=a,b             enable build-time Linux features
   CODEX_LINUX_DISABLE_FEATURES=a,b     disable build-time Linux features
   CODEX_LINUX_FEATURES_ROOT=/path      override linux-features root
   CODEX_LINUX_FEATURES_CONFIG=/path    override features.json path
+  linux-features/local/<id>/           user-local feature dirs are discovered and marked [local]
   PACKAGE_NAME=codex-cua-lab           check side-by-side installed package state
   PACKAGE_WITH_UPDATER=0               choose manual-update package mode
 
@@ -77,6 +104,34 @@ falsy() {
             ;;
     esac
 }
+
+init_colors() {
+    case "${CODEX_BOOTSTRAP_COLOR:-auto}" in
+        1|true|True|TRUE|yes|Yes|YES|on|On|ON|always)
+            ;;
+        0|false|False|FALSE|no|No|NO|off|Off|OFF|never)
+            return 0
+            ;;
+        auto|"")
+            [ -z "${NO_COLOR:-}" ] || return 0
+            [ -t 1 ] || return 0
+            [ "${TERM:-}" != "dumb" ] || return 0
+            ;;
+        *)
+            error "CODEX_BOOTSTRAP_COLOR must be auto, 1, or 0"
+            ;;
+    esac
+
+    COLOR_RESET=$'\033[0m'
+    COLOR_BOLD=$'\033[1m'
+    COLOR_DIM=$'\033[2m'
+    COLOR_RED=$'\033[31m'
+    COLOR_YELLOW=$'\033[33m'
+    COLOR_CYAN=$'\033[36m'
+    COLOR_GREEN=$'\033[32m'
+}
+
+init_colors
 
 noninteractive_mode() {
     truthy "${CODEX_BOOTSTRAP_NONINTERACTIVE:-0}" || ! [ -t 0 ]
@@ -373,7 +428,7 @@ window_backend_hint() {
     if [[ "$desktop" == *hyprland* ]]; then
         printf 'Hyprland -> hyprctl backend'
     elif [[ "$desktop" == *sway* ]]; then
-        printf 'Sway -> not explicitly supported by the current i3 backend; verify with Computer Use doctor after install'
+        printf 'Sway -> swaymsg backend'
     elif [[ "$desktop" == *i3* ]]; then
         printf 'i3 -> i3 IPC backend'
     elif [[ "$desktop" == *cosmic* ]]; then
@@ -407,22 +462,38 @@ settings_file_path() {
         printf '%s\n' "$CODEX_LINUX_SETTINGS_FILE"
     else
         local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-        local app_id="${CODEX_LINUX_APP_ID:-${CODEX_APP_ID:-codex-desktop}}"
-        case "$app_id" in
-            */*|*[!A-Za-z0-9._-]*|"."|".."|"")
-                app_id="codex-desktop"
-                ;;
-        esac
+        local app_id
+        app_id="$(linux_app_id)"
         printf '%s\n' "$config_home/$app_id/settings.json"
     fi
+}
+
+linux_app_id() {
+    local app_id="${CODEX_LINUX_APP_ID:-${CODEX_APP_ID:-${PACKAGE_NAME:-codex-desktop}}}"
+    case "$app_id" in
+        */*|*[!A-Za-z0-9._-]*|"."|".."|"")
+            app_id="codex-desktop"
+            ;;
+    esac
+    printf '%s\n' "$app_id"
+}
+
+remote_mobile_key_file_path() {
+    local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+    printf '%s/%s/remote-control-device-keys-v1.json\n' "$config_home" "$(linux_app_id)"
+}
+
+remote_mobile_legacy_key_file_path() {
+    local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+    printf '%s/codex-desktop/remote-control-device-keys-v1.json\n' "$config_home"
 }
 
 json_setting_value() {
     local key="$1"
     local settings_path
     settings_path="$(settings_file_path)"
-    [ -r "$settings_path" ] || return 1
-    command -v python3 >/dev/null 2>&1 || return 1
+    [ -r "$settings_path" ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
     python3 - "$settings_path" "$key" <<'PY' 2>/dev/null || true
 import json
 import sys
@@ -592,6 +663,7 @@ run_feature_config_python() {
     local enable_raw="$1"
     local disable_raw="$2"
     local apply_changes="$3"
+    local output_mode="${4:-}"
     local config_path
     config_path="$(feature_config_path)"
 
@@ -603,7 +675,7 @@ run_feature_config_python() {
         return
     fi
 
-    python3 - "$FEATURES_ROOT" "$config_path" "$enable_raw" "$disable_raw" "$apply_changes" <<'PY'
+    if ! python3 - "$FEATURES_ROOT" "$config_path" "$enable_raw" "$disable_raw" "$apply_changes" "$output_mode" <<'PY'
 import json
 import pathlib
 import re
@@ -614,6 +686,7 @@ config_path = pathlib.Path(sys.argv[2])
 enable_raw = sys.argv[3]
 disable_raw = sys.argv[4]
 apply_changes = sys.argv[5] == "1"
+output_mode = sys.argv[6] if len(sys.argv) > 6 else ""
 
 id_re = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -624,15 +697,38 @@ def die(message):
 def warn(message):
     print(f"[setup][WARN] {message}", file=sys.stderr)
 
-def split_ids(raw):
+def split_selectors(raw, features, label):
     if not raw.strip():
         return []
-    ids = [item for item in re.split(r"[,\s]+", raw.strip()) if item]
+    items = [item for item in re.split(r"[,\s]+", raw.strip()) if item]
+    feature_ids = list(features)
     seen = set()
     result = []
-    for item in ids:
+    def add_feature_number(raw_number):
+        number = int(raw_number)
+        if number < 1 or number > len(feature_ids):
+            maximum = len(feature_ids)
+            hint = f"1-{maximum}" if maximum else "none available"
+            die(f"Feature number {number} is out of range for {label} (available: {hint}). Use feature ids, numbers, or ranges like 1,3-4.")
+        feature_id = feature_ids[number - 1]
+        if feature_id not in seen:
+            seen.add(feature_id)
+            result.append(feature_id)
+    for item in items:
+        if re.match(r"^[0-9]+-[0-9]+$", item):
+            start_raw, end_raw = item.split("-", 1)
+            start = int(start_raw)
+            end = int(end_raw)
+            if start > end:
+                die(f"Feature range {item} is invalid for {label}. Use ascending ranges like 2-4.")
+            for number in range(start, end + 1):
+                add_feature_number(str(number))
+            continue
+        if re.match(r"^[0-9]+$", item):
+            add_feature_number(item)
+            continue
         if not id_re.match(item):
-            die(f"Invalid Linux feature id: {item}")
+            die(f"Invalid Linux feature selector for {label}: {item}. Use feature ids, numbers, or ranges like 1,3-4.")
         if item not in seen:
             seen.add(item)
             result.append(item)
@@ -646,26 +742,70 @@ def read_json(path, label):
     except Exception as exc:
         die(f"Could not read {label} at {path}: {exc}")
 
+def normalize_id_list(value, label, manifest_path):
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        die(f"Linux feature manifest {manifest_path} field {label} must be an array")
+    result = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str) or not id_re.match(item):
+            die(f"Linux feature manifest {manifest_path} field {label} contains invalid feature id: {item}")
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+def feature_manifest_paths(root):
+    if not root.exists():
+        return []
+    reserved = {"local", "README.md", "features.example.json", "features.json"}
+    paths = []
+    for child in sorted(root.iterdir(), key=lambda item: item.name):
+        if child.name.startswith(".") or child.name in reserved or not child.is_dir():
+            continue
+        manifest_path = child / "feature.json"
+        if manifest_path.exists():
+            paths.append(("repo", manifest_path))
+    local_root = root / "local"
+    if local_root.is_dir():
+        for child in sorted(local_root.iterdir(), key=lambda item: item.name):
+            if child.name.startswith(".") or not child.is_dir():
+                continue
+            manifest_path = child / "feature.json"
+            if manifest_path.exists():
+                paths.append(("local", manifest_path))
+    return paths
+
 def discover_features(root):
     features = {}
     if not root.exists():
         warn(f"Linux features root not found: {root}")
         return features
-    for manifest_path in sorted(root.glob("*/feature.json")):
+    for origin, manifest_path in feature_manifest_paths(root):
         data = read_json(manifest_path, f"Linux feature manifest {manifest_path}") or {}
         feature_id = data.get("id")
         if not isinstance(feature_id, str) or not id_re.match(feature_id):
             warn(f"Skipping feature with invalid id in {manifest_path}")
             continue
+        if not (manifest_path.parent / "README.md").is_file():
+            die(f"Linux feature '{feature_id}' must include README.md next to feature.json")
+        if data.get("defaultEnabled") is True:
+            die(f"Linux feature '{feature_id}' must be disabled by default; defaultEnabled true is not allowed")
         if feature_id in features:
-            warn(f"Skipping duplicate Linux feature id: {feature_id}")
-            continue
+            die(f"Duplicate Linux feature id '{feature_id}' in {manifest_path} and {features[feature_id]['manifest_path']}")
         title = data.get("title") or data.get("name") or feature_id
         description = data.get("description") or ""
         features[feature_id] = {
             "id": feature_id,
             "title": str(title),
             "description": str(description),
+            "origin": origin,
+            "local": origin == "local",
+            "requires": normalize_id_list(data.get("requires"), "requires", manifest_path),
+            "conflicts": normalize_id_list(data.get("conflicts"), "conflicts", manifest_path),
+            "manifest_path": str(manifest_path),
         }
     return dict(sorted(features.items()))
 
@@ -696,8 +836,19 @@ def csv(ids):
 
 features = discover_features(features_root)
 current = read_enabled_ids(config_path)
-enable = split_ids(enable_raw)
-disable = split_ids(disable_raw)
+
+if output_mode == "tsv":
+    # Machine-readable discovery for the GUI feature picker: one
+    # id<TAB>title<TAB>enabled_flag line per feature. No side effects.
+    current_set = set(current)
+    for feature_id, feature in features.items():
+        title = feature["title"].replace("\t", " ").replace("\n", " ")
+        flag = "1" if feature_id in current_set else "0"
+        print(f"{feature_id}\t{title}\t{flag}")
+    sys.exit(0)
+
+enable = split_selectors(enable_raw, features, "enable")
+disable = split_selectors(disable_raw, features, "disable")
 conflicting = sorted(set(enable) & set(disable))
 if conflicting:
     die(f"Linux feature ids cannot be both enabled and disabled: {csv(conflicting)}")
@@ -713,6 +864,18 @@ final = [feature_id for feature_id in current if feature_id not in set(disable)]
 for feature_id in enable:
     if feature_id not in final:
         final.append(feature_id)
+
+final_set = set(final)
+for feature_id in final:
+    feature = features.get(feature_id)
+    if feature is None:
+        continue
+    missing_required = [required for required in feature["requires"] if required not in final_set]
+    if missing_required:
+        die(f"Linux feature '{feature_id}' requires enabled feature(s): {csv(missing_required)}")
+    conflicting_enabled = [conflict for conflict in feature["conflicts"] if conflict in final_set]
+    if conflicting_enabled:
+        die(f"Linux feature '{feature_id}' conflicts with enabled feature(s): {csv(conflicting_enabled)}")
 
 if apply_changes and (enable or disable):
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -734,16 +897,22 @@ if "conversation-mode" in final and "read-aloud" not in final:
 
 if features:
     print("[setup] Available Linux features:")
-    for feature_id, feature in features.items():
+    for index, (feature_id, feature) in enumerate(features.items(), start=1):
         state = "enabled" if feature_id in final else "available"
         sample = " (developer sample)" if feature_id == "example-feature" else ""
-        print(f"[setup]   [{state}] {feature_id}{sample} - {feature['title']}")
+        local = " [local]" if feature.get("local") else ""
+        print(f"[setup]   {index}. [{state}] {feature_id}{local}{sample} - {feature['title']}")
 else:
     print("[setup] Available Linux features: none found")
 
 if apply_changes and (enable or disable):
     print("[setup] Feature changes apply after rebuilding and reinstalling Codex Desktop Linux.")
 PY
+    then
+        SETUP_ERROR_REPORTED=1
+        echo "${COLOR_RED}[setup][ERROR]${COLOR_RESET} Could not update Linux feature config; review the message above." >&2
+        return 1
+    fi
 }
 
 list_includes_id() {
@@ -764,9 +933,13 @@ print_safe_disable_guidance() {
     info "Disabling a build-time feature only edits linux-features/features.json for the next rebuild."
 
     if list_includes_id "$disable_raw" "remote-mobile-control"; then
-        local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-        local key_file="$config_home/codex-desktop/remote-control-device-keys-v1.json"
+        local key_file
+        key_file="$(remote_mobile_key_file_path)"
         info "Remote mobile control opt-out: Not deleting $key_file."
+        if [ "$(linux_app_id)" != "codex-desktop" ]; then
+            info "Legacy default-app metadata may also exist at $(remote_mobile_legacy_key_file_path)."
+        fi
+        info "If Secret Service is available, that file may contain only key metadata while private keys live in the desktop keyring."
         info "Revoke paired devices from Codex Settings/Connections or ChatGPT before deleting local keys manually."
     fi
 
@@ -855,6 +1028,7 @@ run_feature_cleanup() {
         if noninteractive_mode; then
             return
         fi
+        section "Cleanup"
         local wants_cleanup=""
         prompt_read wants_cleanup "[setup] Clean up feature-owned local data now? [y/N]: " || true
         case "$wants_cleanup" in
@@ -863,11 +1037,16 @@ run_feature_cleanup() {
                 ;;
             *)
                 return
-                ;;
+            ;;
         esac
+    else
+        section "Cleanup"
     fi
 
-    [ -n "$cleanup_raw" ] || return
+    if [ -z "$cleanup_raw" ]; then
+        info "No cleanup feature ids provided; skipping feature cleanup."
+        return 0
+    fi
     validate_cleanup_feature_ids "$cleanup_raw"
 
     if noninteractive_mode && ! dry_run_enabled; then
@@ -882,10 +1061,15 @@ run_feature_cleanup() {
     fi
 
     if list_includes_id "$cleanup_raw" "remote-mobile-control"; then
-        local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-        local key_file="$config_home/codex-desktop/remote-control-device-keys-v1.json"
-        info "Remote mobile control cleanup: revoke paired devices in Codex Settings/Connections or ChatGPT before deleting local keys."
+        local key_file legacy_key_file
+        key_file="$(remote_mobile_key_file_path)"
+        legacy_key_file="$(remote_mobile_legacy_key_file_path)"
+        info "Remote mobile control cleanup: revoke paired devices in Codex Settings/Connections or ChatGPT before deleting local key metadata or fallback keys."
+        info "Secret Service-backed keys are cleared by the app when the paired device is revoked; manual metadata deletion alone may leave orphaned keyring entries."
         confirm_and_delete_path "$key_file"
+        if [ "$legacy_key_file" != "$key_file" ] && [ -e "$legacy_key_file" ]; then
+            confirm_and_delete_path "$legacy_key_file"
+        fi
     fi
 
     if list_includes_id "$cleanup_raw" "read-aloud" ||
@@ -997,6 +1181,102 @@ maybe_run_install_steps() {
     fi
 }
 
+# True when an interactive GUI checklist can be shown: a graphical session,
+# a dialog helper (zenity/kdialog), python3 for feature discovery, and the user
+# has not opted out via CODEX_BOOTSTRAP_NO_GUI.
+gui_feature_picker_available() {
+    truthy "${CODEX_BOOTSTRAP_NO_GUI:-0}" && return 1
+    [ -t 0 ] || return 1
+    [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    command -v zenity >/dev/null 2>&1 || command -v kdialog >/dev/null 2>&1
+}
+
+# Shows a zenity/kdialog checklist of discovered features (pre-checked = current),
+# then applies the selection through the existing Python config writer. Returns
+# non-zero when the GUI path could not run so the caller falls back to the
+# terminal prompt. A cancelled dialog leaves the config unchanged and returns 0.
+prompt_for_feature_changes_gui() {
+    local feature_lines
+    feature_lines="$(run_feature_config_python "" "" "0" "tsv")" || return 1
+    [ -n "$feature_lines" ] || return 1
+
+    local -a all_ids=()
+    declare -A enabled_now=()
+    declare -A title_of=()
+    local id title flag
+    while IFS=$'\t' read -r id title flag; do
+        [ -n "$id" ] || continue
+        all_ids+=("$id")
+        title_of["$id"]="$title"
+        [ "$flag" = "1" ] && enabled_now["$id"]=1
+    done <<< "$feature_lines"
+
+    [ "${#all_ids[@]}" -gt 0 ] || return 1
+
+    local selected="" status=0
+    if command -v zenity >/dev/null 2>&1; then
+        # Columns: [Enable checkbox] [feature id] [title]. Print the id column
+        # (2) one per line. `--separate-output` was removed in zenity 4.x, so we
+        # pin the row separator with `--separator` instead for both 3.x and 4.x.
+        local -a rows=()
+        for id in "${all_ids[@]}"; do
+            if [ -n "${enabled_now[$id]:-}" ]; then rows+=("TRUE"); else rows+=("FALSE"); fi
+            rows+=("$id" "${title_of[$id]}")
+        done
+        selected="$(zenity --list --checklist \
+            --title="Codex Desktop Linux features" \
+            --text="Select the optional Linux features to enable for the next build." \
+            --column="Enable" --column="Feature" --column="Description" \
+            --print-column=2 --separator=$'\n' \
+            "${rows[@]}" 2>/dev/null)" || status=$?
+    else
+        local -a rows=()
+        for id in "${all_ids[@]}"; do
+            if [ -n "${enabled_now[$id]:-}" ]; then
+                rows+=("$id" "${title_of[$id]}" "on")
+            else
+                rows+=("$id" "${title_of[$id]}" "off")
+            fi
+        done
+        selected="$(kdialog --separate-output --checklist \
+            "Select the optional Linux features to enable for the next build." \
+            "${rows[@]}" 2>/dev/null)" || status=$?
+    fi
+
+    if [ "$status" -ne 0 ]; then
+        info "Feature selection cancelled; config unchanged."
+        return 0
+    fi
+
+    declare -A selected_set=()
+    while IFS= read -r id; do
+        id="${id//\"/}"
+        [ -n "$id" ] && selected_set["$id"]=1
+    done <<< "$selected"
+
+    local -a enable_ids=() disable_ids=()
+    for id in "${all_ids[@]}"; do
+        if [ -n "${selected_set[$id]:-}" ]; then
+            [ -z "${enabled_now[$id]:-}" ] && enable_ids+=("$id")
+        else
+            [ -n "${enabled_now[$id]:-}" ] && disable_ids+=("$id")
+        fi
+    done
+
+    if [ "${#enable_ids[@]}" -eq 0 ] && [ "${#disable_ids[@]}" -eq 0 ]; then
+        info "Feature config unchanged."
+        return 0
+    fi
+
+    local enable_csv disable_csv
+    enable_csv="$(IFS=,; echo "${enable_ids[*]}")"
+    disable_csv="$(IFS=,; echo "${disable_ids[*]}")"
+    run_feature_config_python "$enable_csv" "$disable_csv" "1"
+    print_safe_disable_guidance "$disable_csv"
+    return 0
+}
+
 prompt_for_feature_changes() {
     local enable_raw="${CODEX_LINUX_FEATURES:-}"
     local disable_raw="${CODEX_LINUX_DISABLE_FEATURES:-}"
@@ -1007,10 +1287,20 @@ prompt_for_feature_changes() {
         return
     fi
 
+    # Prefer a graphical checklist when the environment supports it; the explicit
+    # CODEX_LINUX_FEATURES / CODEX_LINUX_DISABLE_FEATURES env selectors and the
+    # terminal prompt remain the fallback for headless or no-GUI sessions.
+    if [ -z "$enable_raw$disable_raw" ] && gui_feature_picker_available; then
+        if prompt_for_feature_changes_gui; then
+            prompt_package_updater_mode
+            return
+        fi
+    fi
+
     run_feature_config_python "" "" "0"
     echo
-    prompt_read enable_raw "[setup] Enable feature ids for the next build (comma-separated, blank keeps current): " || true
-    prompt_read disable_raw "[setup] Disable feature ids for the next build (comma-separated, blank disables none): " || true
+    prompt_read enable_raw "[setup] Enable feature ids or numbers for the next build (comma-separated, blank keeps current): " || true
+    prompt_read disable_raw "[setup] Disable feature ids or numbers for the next build (comma-separated, blank disables none): " || true
     if [ -n "$enable_raw$disable_raw" ]; then
         run_feature_config_python "$enable_raw" "$disable_raw" "1"
         print_safe_disable_guidance "$disable_raw"
@@ -1018,6 +1308,10 @@ prompt_for_feature_changes() {
         info "Feature config unchanged."
     fi
 
+    prompt_package_updater_mode
+}
+
+prompt_package_updater_mode() {
     local answer
     if package_with_updater_enabled; then
         prompt_read answer "[setup] Keep codex-update-manager in the next native package? [Y/n]: " || true
@@ -1037,11 +1331,15 @@ prompt_for_feature_changes() {
 }
 
 main() {
+    section "System"
     print_system_summary
+    section "Linux Features"
     prompt_for_feature_changes
+    section "Readiness"
     print_computer_use_details
     print_read_aloud_details
     run_feature_cleanup
+    section "Next Steps"
     print_package_mode_guidance
     maybe_run_install_steps
     if dry_run_enabled; then

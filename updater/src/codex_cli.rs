@@ -328,16 +328,8 @@ fn post_install_cli_path_candidates(explicit_path: Option<&Path>) -> Vec<PathBuf
 fn known_cli_locations() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        candidates.push(home.join(".nvm/versions/node/current/bin/codex"));
-        let versions_root = home.join(".nvm/versions/node");
-        if let Ok(entries) = fs::read_dir(versions_root) {
-            let mut versioned_paths = entries
-                .filter_map(|entry| entry.ok().map(|item| item.path().join("bin/codex")))
-                .collect::<Vec<_>>();
-            versioned_paths.sort();
-            versioned_paths.reverse();
-            candidates.extend(versioned_paths);
-        }
+        append_nvm_cli_locations(&mut candidates, xdg_nvm_root(&home));
+        append_nvm_cli_locations(&mut candidates, home.join(".nvm"));
         candidates.push(home.join(".npm-global/bin/codex"));
         candidates.push(home.join(".local/share/pnpm/codex"));
         candidates.push(home.join(".local/bin/codex"));
@@ -347,6 +339,19 @@ fn known_cli_locations() -> Vec<PathBuf> {
         candidates.push(PathBuf::from("/usr/bin/codex"));
     }
     candidates
+}
+
+fn append_nvm_cli_locations(candidates: &mut Vec<PathBuf>, nvm_root: PathBuf) {
+    candidates.push(nvm_root.join("versions/node/current/bin/codex"));
+    let versions_root = nvm_root.join("versions/node");
+    if let Ok(entries) = fs::read_dir(versions_root) {
+        let mut versioned_paths = entries
+            .filter_map(|entry| entry.ok().map(|item| item.path().join("bin/codex")))
+            .collect::<Vec<_>>();
+        versioned_paths.sort();
+        versioned_paths.reverse();
+        candidates.extend(versioned_paths);
+    }
 }
 
 fn include_system_cli_locations() -> bool {
@@ -698,12 +703,29 @@ fn command_path_env() -> OsString {
     std::env::join_paths(entries).unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
 }
 
-fn preferred_node_bin_dirs() -> Vec<PathBuf> {
-    let nvm_root = std::env::var_os("NVM_DIR")
+fn xdg_nvm_root(home: &Path) -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".nvm")));
+        .unwrap_or_else(|| home.join(".config"))
+        .join("nvm")
+}
 
-    let Some(nvm_root) = nvm_root else {
+fn default_nvm_root() -> Option<PathBuf> {
+    if let Some(nvm_dir) = std::env::var_os("NVM_DIR") {
+        return Some(PathBuf::from(nvm_dir));
+    }
+
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    let xdg_root = xdg_nvm_root(&home);
+    if xdg_root.is_dir() {
+        Some(xdg_root)
+    } else {
+        Some(home.join(".nvm"))
+    }
+}
+
+fn preferred_node_bin_dirs() -> Vec<PathBuf> {
+    let Some(nvm_root) = default_nvm_root() else {
         return Vec::new();
     };
 
@@ -795,6 +817,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn xdg_nvm_install_is_discovered_without_shell_env() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let home = temp.path().join("home");
+        let nvm_bin = home.join(".config/nvm/versions/node/v22.17.1/bin");
+        fs::create_dir_all(&nvm_bin)?;
+
+        for binary in ["node", "npm", "npx"] {
+            fs::write(nvm_bin.join(binary), "")?;
+        }
+        let codex_path = nvm_bin.join("codex");
+        write_executable_script(
+            &codex_path,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"version\" ]; then\n  echo 'codex-cli v0.42.0'\n  exit 0\nfi\nexit 1\n",
+        )?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_CONFIG_HOME",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+        ]);
+        std::env::set_var("HOME", &home);
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+
+        let command_path = command_path_env();
+        assert!(std::env::split_paths(&command_path).any(|path| path == nvm_bin.as_path()));
+        assert_eq!(resolve_cli_path(None), Some(codex_path));
+        Ok(())
     }
 
     #[test]

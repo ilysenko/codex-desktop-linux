@@ -172,6 +172,28 @@ CPP
 
 build_native_modules() {
     local app_extracted="$1"
+    local max_build_threads="${MAX_BUILD_THREADS:-0}"
+    local -a electron_rebuild_mode_args=()
+    local -a native_build_env=()
+
+    case "$max_build_threads" in
+        ""|*[!0-9]*)
+            error "MAX_BUILD_THREADS must be 0 or a positive integer"
+            ;;
+    esac
+
+    if [ "$max_build_threads" != "0" ]; then
+        electron_rebuild_mode_args+=(--sequential)
+    fi
+
+    if [ "$max_build_threads" != "0" ]; then
+        native_build_env+=(
+            "npm_config_jobs=$max_build_threads"
+            "NPM_CONFIG_JOBS=$max_build_threads"
+            "MAKEFLAGS=-j$max_build_threads"
+        )
+        info "Max build threads: $max_build_threads"
+    fi
 
     # Read versions from extracted app
     local bs3_ver bs3_build_ver npty_ver
@@ -213,9 +235,11 @@ build_native_modules() {
     info "Using Electron headers: $ELECTRON_HEADERS_URL"
     [ -f "$build_dir/node_modules/@electron/rebuild/lib/cli.js" ] || error "electron-rebuild CLI not found in native build toolchain"
     apply_v8_nullptr_t_workaround_if_needed "$build_dir"
-    npm_config_disturl="$ELECTRON_HEADERS_URL" \
-    NPM_CONFIG_DISTURL="$ELECTRON_HEADERS_URL" \
-    node "$build_dir/node_modules/@electron/rebuild/lib/cli.js" -v "$ELECTRON_VERSION" --force --dist-url "$ELECTRON_HEADERS_URL" 2>&1 >&2
+    env \
+        npm_config_disturl="$ELECTRON_HEADERS_URL" \
+        NPM_CONFIG_DISTURL="$ELECTRON_HEADERS_URL" \
+        "${native_build_env[@]}" \
+        node "$build_dir/node_modules/@electron/rebuild/lib/cli.js" -v "$ELECTRON_VERSION" --force --dist-url "$ELECTRON_HEADERS_URL" "${electron_rebuild_mode_args[@]}" 2>&1 >&2
 
     info "Native modules built successfully"
 

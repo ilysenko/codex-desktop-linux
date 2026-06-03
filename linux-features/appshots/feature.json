@@ -1,0 +1,16 @@
+{
+  "id": "appshots",
+  "title": "Linux AppShots",
+  "description": "Opt-in AppShots composer integration that captures and crops the focused Linux window without core AppShots backend changes.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "resources": [
+    {
+      "source": "bin/bare-modifier-monitor",
+      "target": "resources/native/bare-modifier-monitor",
+      "mode": "0755"
+    }
+  ]
+}

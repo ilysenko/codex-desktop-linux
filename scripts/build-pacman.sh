@@ -10,15 +10,28 @@ PKGBUILD_TEMPLATE="$REPO_DIR/packaging/linux/PKGBUILD.template"
 INSTALL_HOOKS="$REPO_DIR/packaging/linux/codex-desktop.install"
 DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
 SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.service"
+DESKTOP_SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.service"
+DESKTOP_DOCTOR_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop-doctor.py"
 USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh"
 ICON_SOURCE="$REPO_DIR/assets/codex.png"
 PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
 
 PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
+MAX_BUILD_THREADS="${MAX_BUILD_THREADS:-0}"
 UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-update-manager}"
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
+DESKTOP_SERVICE_SOURCE="${DESKTOP_SERVICE_SOURCE:-$DESKTOP_SERVICE_TEMPLATE}"
+DESKTOP_DOCTOR_SOURCE="${DESKTOP_DOCTOR_SOURCE:-$DESKTOP_DOCTOR_TEMPLATE}"
 PACKAGED_RUNTIME_SOURCE="${PACKAGED_RUNTIME_SOURCE:-$PACKAGED_RUNTIME_TEMPLATE}"
+
+validate_max_build_threads() {
+	case "$MAX_BUILD_THREADS" in
+	""|*[!0-9]*)
+		error "MAX_BUILD_THREADS must be 0 or a positive integer"
+		;;
+	esac
+}
 
 map_arch() {
 	case "$(uname -m)" in
@@ -36,10 +49,46 @@ pacman_version_parts() {
 	PACMAN_PKGREL="1"
 }
 
+write_threaded_makepkg_config() {
+	local target="$1"
+	local home_dir="${HOME:-}"
+	local xdg_config_home="${XDG_CONFIG_HOME:-}"
+	local user_makepkg_conf=""
+
+	if [ -z "$xdg_config_home" ] && [ -n "$home_dir" ]; then
+		xdg_config_home="$home_dir/.config"
+	fi
+	if [ -n "$xdg_config_home" ] && [ -r "$xdg_config_home/pacman/makepkg.conf" ]; then
+		user_makepkg_conf="$xdg_config_home/pacman/makepkg.conf"
+	elif [ -n "$home_dir" ] && [ -r "$home_dir/.makepkg.conf" ]; then
+		user_makepkg_conf="$home_dir/.makepkg.conf"
+	fi
+
+	{
+		if [ -n "${MAKEPKG_CONF:-}" ]; then
+			[ -r "$MAKEPKG_CONF" ] || error "MAKEPKG_CONF is not readable: $MAKEPKG_CONF"
+			printf '. %q\n' "$MAKEPKG_CONF"
+		else
+			[ -r /etc/makepkg.conf ] && printf '. %q\n' /etc/makepkg.conf
+			local system_makepkg_conf
+			for system_makepkg_conf in /etc/makepkg.conf.d/*.conf; do
+				[ -r "$system_makepkg_conf" ] && printf '. %q\n' "$system_makepkg_conf"
+			done
+			[ -n "$user_makepkg_conf" ] && printf '. %q\n' "$user_makepkg_conf"
+		fi
+		printf 'MAKEFLAGS="${MAKEFLAGS:+$MAKEFLAGS }-j%s"\n' "$MAX_BUILD_THREADS"
+		printf 'COMPRESSZST=(zstd -c -z -T%s -)\n' "$MAX_BUILD_THREADS"
+	} >"$target"
+}
+
 main() {
+	validate_max_build_threads
+
 	ensure_app_layout
 	ensure_file_exists "$PKGBUILD_TEMPLATE" "PKGBUILD template"
 	ensure_file_exists "$DESKTOP_TEMPLATE" "desktop template"
+	ensure_file_exists "$DESKTOP_SERVICE_SOURCE" "desktop app service template"
+	ensure_file_exists "$DESKTOP_DOCTOR_SOURCE" "desktop doctor template"
 	ensure_file_exists "$ICON_SOURCE" "icon"
 	if package_with_updater_enabled; then
 		ensure_file_exists "$INSTALL_HOOKS" "install hooks"
@@ -67,11 +116,21 @@ main() {
 	trap "rm -rf '$build_root'" EXIT
 
 	local staging_root="$build_root/staging"
+	local -a makepkg_env=("PKGDEST=$DIST_DIR")
+
+	if [ "$MAX_BUILD_THREADS" != "0" ]; then
+		local makepkg_config="$build_root/makepkg.conf"
+		write_threaded_makepkg_config "$makepkg_config"
+		makepkg_env+=("MAKEPKG_CONF=$makepkg_config")
+		info "Pacman package build/compression threads: $MAX_BUILD_THREADS"
+	fi
 
 	stage_common_package_files "$staging_root"
 	stage_optional_update_builder_bundle "$staging_root"
 	write_launcher_stub "$staging_root"
+	run_linux_feature_package_hooks "$staging_root" "pacman"
 	normalize_package_payload_permissions "$staging_root"
+	restore_linux_feature_payload_permissions "$staging_root"
 
 	local package_name
 	local pacman_pkgver
@@ -108,7 +167,7 @@ main() {
 	# Build the package; --nodeps skips dependency checks at build time (they
 	# are enforced by pacman at install time), and --skipinteg is needed
 	# because we have no remote sources to verify.
-	(cd "$build_root" && PKGDEST="$DIST_DIR" makepkg -f --nodeps --skipinteg 2>&1) >&2
+	(cd "$build_root" && env "${makepkg_env[@]}" makepkg -f --nodeps --skipinteg 2>&1) >&2
 
 	local pkg_file=""
 	pkg_file="$(find "$DIST_DIR" \( -name "${PACKAGE_NAME}-${PACMAN_PKGVER}-*.pkg.tar.zst" \

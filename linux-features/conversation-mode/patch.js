@@ -167,15 +167,20 @@ function applyComposerControlPatch(source) {
   let patched = source;
   const vars = composerVoiceVars(patched);
   const visiblePattern =
-    /let Be=ze,Ve=F===`empty-message`&&!A&&\((?:globalThis\.codexLinuxConversationAvailable\?\.\(\)\|\|)?([A-Za-z_$][\w$]*)\.isAvailable&&\1\.phase!==`active`\|\|([A-Za-z_$][\w$]*)\),He=([A-Za-z_$][\w$]*)\(fc,`composer\.startVoiceMode`\)/;
+    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=F===`empty-message`&&!A&&\((?:v&&globalThis\.codexLinuxConversationAvailable\?\.\(\)\|\|)?([A-Za-z_$][\w$]*)\.isAvailable&&\4\.phase!==`active`\|\|([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),`composer\.startVoiceMode`\)/;
   const visibleMatch = patched.match(visiblePattern);
   if (visibleMatch && !patched.includes("codexLinuxConversationSync?.(v")) {
-    const threadRealtime = visibleMatch[1];
-    const realtimeAvailable = visibleMatch[2] || vars.isNewRealtimeConversationAvailable;
-    const shortcutFn = visibleMatch[3];
+    const labelVar = visibleMatch[1];
+    const labelSrc = visibleMatch[2];
+    const visVar = visibleMatch[3];
+    const threadRealtime = visibleMatch[4];
+    const realtimeAvailable = visibleMatch[5] || vars.isNewRealtimeConversationAvailable;
+    const shortcutResultVar = visibleMatch[6];
+    const shortcutFn = visibleMatch[7];
+    const shortcutArg = visibleMatch[8];
     patched = patched.replace(
       visiblePattern,
-      `let Be=ze;globalThis.codexLinuxConversationSync?.(v,{${composerSyncPayload(vars)}});let codexLinuxConversationActive=globalThis.codexLinuxConversationIsActive?.(v)===!0,Ve=codexLinuxConversationActive||F===\`empty-message\`&&!A&&((v&&globalThis.codexLinuxConversationAvailable?.())||${threadRealtime}.isAvailable&&${threadRealtime}.phase!==\`active\`||${realtimeAvailable}),He=${shortcutFn}(fc,\`composer.startVoiceMode\`)`,
+      `let ${labelVar}=${labelSrc};globalThis.codexLinuxConversationSync?.(v,{${composerSyncPayload(vars)}});let codexLinuxConversationActive=globalThis.codexLinuxConversationIsActive?.(v)===!0,${visVar}=codexLinuxConversationActive||F===\`empty-message\`&&!A&&((v&&globalThis.codexLinuxConversationAvailable?.())||${threadRealtime}.isAvailable&&${threadRealtime}.phase!==\`active\`||${realtimeAvailable}),${shortcutResultVar}=${shortcutFn}(${shortcutArg},\`composer.startVoiceMode\`)`,
     );
   } else if (!patched.includes("codexLinuxConversationSync?.(v")) {
     warn("Could not find composer voice button visibility gate", "conversation mode composer control patch");
@@ -229,22 +234,22 @@ function applyDictationEndpointPatch(source) {
     );
   }
 
-  const cleanupNeedle = "r&&(r.ondataavailable=null,r.onstop=null),m.current=null,O();";
+  const cleanupNeedle = "r&&(r.ondataavailable=null,r.onstop=null),m.current=null,D();";
   if (!patched.includes("codexLinuxConversationCleanup?.()") && patched.includes(cleanupNeedle)) {
     patched = patched.replace(
       cleanupNeedle,
-      "r?.codexLinuxConversationCleanup?.(),r&&(r.ondataavailable=null,r.onstop=null),m.current=null,O();",
+      "r?.codexLinuxConversationCleanup?.(),r&&(r.ondataavailable=null,r.onstop=null),m.current=null,D();",
     );
   } else if (!patched.includes("codexLinuxConversationCleanup")) {
     warn("Could not find dictation cleanup point", "conversation mode dictation endpoint patch");
   }
 
   const recorderNeedle =
-    "t.ondataavailable=e=>{e.data.size>0&&v.current.push(e.data)},t.onstop=()=>{M()},t.start(),l(!0)";
+    "t.ondataavailable=e=>{e.data.size>0&&g.current.push(e.data)},t.onstop=()=>{A()},t.start(),l(!0)";
   if (!patched.includes("codexLinuxConversationEndpoint?.(") && patched.includes(recorderNeedle)) {
     patched = patched.replace(
       recorderNeedle,
-      "t.ondataavailable=e=>{e.data.size>0&&v.current.push(e.data)},t.onstop=()=>{M()},t.codexLinuxConversationCleanup=globalThis.codexLinuxConversationEndpoint?.({stream:e,stop:()=>P(`send`),isActive:()=>m.current===t&&t.state!==`inactive`}),t.start(),l(!0)",
+      "t.ondataavailable=e=>{e.data.size>0&&g.current.push(e.data)},t.onstop=()=>{A()},t.codexLinuxConversationCleanup=globalThis.codexLinuxConversationEndpoint?.({stream:e,stop:()=>a(`send`),isActive:()=>m.current===t&&t.state!==`inactive`}),t.start(),l(!0)",
     );
   } else if (!patched.includes("codexLinuxConversationEndpoint")) {
     warn("Could not find dictation recorder start point", "conversation mode dictation endpoint patch");
@@ -259,11 +264,11 @@ function applyDictationEndpointPatch(source) {
   }
 
   const transcriptSendNeedle =
-    "i.length>0&&(h.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))";
+    "i.length>0&&(j.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))";
   if (!patched.includes("codexLinuxConversationShouldSendTranscript") && patched.includes(transcriptSendNeedle)) {
     patched = patched.replace(
       transcriptSendNeedle,
-      "i.length>0&&e!==`discard`&&globalThis.codexLinuxConversationShouldSendTranscript?.(i,e)!==!1&&(h.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))",
+      "i.length>0&&e!==`discard`&&globalThis.codexLinuxConversationShouldSendTranscript?.(i,e)!==!1&&(j.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))",
     );
   } else if (!patched.includes("codexLinuxConversationShouldSendTranscript")) {
     warn("Could not find dictation transcript send point", "conversation mode transcript dedupe patch");
@@ -286,7 +291,7 @@ function applyAssistantRenderPatch(source) {
     return source;
   }
   const jsxCallPattern =
-    /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{item:([A-Za-z_$][\w$]*),([^{}]*?)assistantCopyText:([A-Za-z_$][\w$]*),([^{}]*?)conversationId:([A-Za-z_$][\w$]*),([^{}]*?)renderCodeBlocksAsWritingBlocks:([A-Za-z_$][\w$]*)\}\)/g;
+    /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{item:([A-Za-z_$][\w$]*),([^{}]*?)assistantCopyText:([A-Za-z_$][\w$]*),([^{}]*?)conversationId:([A-Za-z_$][\w$]*),[^{}]*?\}\)/g;
   const patched = source.replace(
     jsxCallPattern,
     (match, jsxVar, _component, itemVar, _beforeCopy, copyVar, _beforeConversation, conversationVar) =>
@@ -328,7 +333,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20690,
       ciPolicy: "optional",
-      pattern: /^annotation-comment-editor-card-.*\.js$/,
+      pattern: /^browser-sidebar-comment-light-dismiss-.*\.js$/,
       missingDescription: "composer dictation bundle",
       skipDescription: "conversation mode dictation endpoint patch",
       apply: applyDictationEndpointPatch,

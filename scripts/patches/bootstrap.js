@@ -8,12 +8,23 @@ function applyLinuxMultiInstanceBootstrapPatch(currentSource) {
     "if(!(!S||n.app.requestSingleInstanceLock()))";
   const guardedLock =
     "if(!(!S||process.platform===`linux`&&process.env.CODEX_LINUX_MULTI_LAUNCH===`1`||n.app.requestSingleInstanceLock()))";
+  const dynamicGuardedLockRegex =
+    /if\(!\(!([A-Za-z_$][\w$]*)\|\|process\.platform===`linux`&&process\.env\.CODEX_LINUX_MULTI_LAUNCH===`1`\|\|([A-Za-z_$][\w$]*)\.app\.requestSingleInstanceLock\(\)\)\)/;
+  const dynamicUnguardedLockRegex =
+    /if\(!\(!([A-Za-z_$][\w$]*)\|\|([A-Za-z_$][\w$]*)\.app\.requestSingleInstanceLock\(\)\)\)/;
 
-  if (currentSource.includes(guardedLock)) {
+  if (currentSource.includes(guardedLock) || dynamicGuardedLockRegex.test(currentSource)) {
     return currentSource;
   }
   if (currentSource.includes(unguardedLock)) {
     return currentSource.replace(unguardedLock, guardedLock);
+  }
+  if (dynamicUnguardedLockRegex.test(currentSource)) {
+    return currentSource.replace(
+      dynamicUnguardedLockRegex,
+      (_match, enabledVar, appVar) =>
+        `if(!(!${enabledVar}||process.platform===\`linux\`&&process.env.CODEX_LINUX_MULTI_LAUNCH===\`1\`||${appVar}.app.requestSingleInstanceLock()))`,
+    );
   }
 
   if (

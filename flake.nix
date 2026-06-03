@@ -9,7 +9,49 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        rewriteCratesIoDownloadUrl = url:
+          if ! builtins.isString url then
+            url
+          else
+            let
+              match = builtins.match
+                "https://crates[.]io/api/v1/crates/([^/]+)/([^/]+)/download"
+                url;
+            in
+            if match == null then
+              url
+            else
+              let
+                crateName = builtins.elemAt match 0;
+                version = builtins.elemAt match 1;
+              in
+              "https://static.crates.io/crates/${crateName}/${crateName}-${version}.crate";
+
+        rewriteCratesIoFetchurlArgs = lib: args:
+          if ! builtins.isAttrs args then
+            args
+          else
+            args
+            // lib.optionalAttrs (args ? url) {
+              url =
+                if builtins.isList args.url then
+                  map rewriteCratesIoDownloadUrl args.url
+                else
+                  rewriteCratesIoDownloadUrl args.url;
+            }
+            // lib.optionalAttrs (args ? urls) {
+              urls = map rewriteCratesIoDownloadUrl args.urls;
+            };
+
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [
+            (_final: prev: {
+              fetchurl = args:
+                prev.fetchurl (rewriteCratesIoFetchurlArgs prev.lib args);
+            })
+          ];
+        };
         flakeSourceCommit = self.rev or (self.dirtyRev or "");
         flakeSourceDateEpoch = toString (self.lastModified or 1);
         sourceRoot = pkgs.lib.cleanSourceWith {
@@ -21,13 +63,28 @@
             in
               !(pkgs.lib.hasSuffix "/.codex" pathStr || pkgs.lib.hasInfix "/.codex/" pathStr));
         };
+        computerUseBuildSource = pkgs.runCommandLocal "codex-computer-use-linux-source" { } ''
+          mkdir -p "$out"
+          cp ${./Cargo.lock} "$out/Cargo.lock"
+          cat > "$out/Cargo.toml" <<'EOF'
+          [workspace]
+          members = ["computer-use-linux"]
+          resolver = "2"
+          EOF
+          cp -R ${./computer-use-linux} "$out/computer-use-linux"
+          chmod -R u+w "$out"
+        '';
+        nativeModulesBuildSupport = pkgs.runCommandLocal "codex-native-modules-build-support" { } ''
+          mkdir -p "$out/scripts/lib"
+          cp ${./scripts/lib/native-modules.sh} "$out/scripts/lib/native-modules.sh"
+        '';
 
         codexDmg = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-          hash = "sha256-MQHAXf1AMUEVQYxK2H7e4CQZ0Jf3FkxnfdvdRVmtikI=";
+          hash = "sha256-xGhTgxNq/IhSbFhBu4Sie2BxkOzqEeaPSeSTQce/34o=";
         };
 
-        codexVersion = "26.519.41501";
+        codexVersion = "26.527.60818";
         electronVersion = "42.1.0";
         electronPlatform =
           {
@@ -76,7 +133,7 @@
         codexComputerUseBinaries = pkgs.rustPlatform.buildRustPackage {
           pname = "codex-computer-use-linux-binaries";
           version = "0.1.2-linux-alpha1";
-          src = sourceRoot;
+          src = computerUseBuildSource;
 
           cargoLock = {
             lockFile = ./Cargo.lock;
@@ -138,7 +195,7 @@
             mkdir -p "$TMPDIR/electron-headers"
             tar -xzf ${electronHeaders} -C "$TMPDIR/electron-headers" --strip-components=1
 
-            export SCRIPT_DIR=${sourceRoot}
+            export SCRIPT_DIR=${nativeModulesBuildSupport}
             export WORK_DIR="$TMPDIR"
             export ARCH="${pkgs.stdenv.hostPlatform.uname.processor}"
             export ELECTRON_VERSION=${electronVersion}
@@ -151,7 +208,7 @@
             info() { echo "[INFO] $*" >&2; }
             warn() { echo "[WARN] $*" >&2; }
             error() { echo "[ERROR] $*" >&2; exit 1; }
-            source ${sourceRoot}/scripts/lib/native-modules.sh
+            source ${nativeModulesBuildSupport}/scripts/lib/native-modules.sh
             patch_better_sqlite3_for_v8_external_pointer_api "$PWD/node_modules/better-sqlite3"
             apply_v8_nullptr_t_workaround_if_needed "$TMPDIR/native-nullptr-workaround"
 

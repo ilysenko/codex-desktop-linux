@@ -1,0 +1,28 @@
+{
+  "id": "agent-workspace",
+  "title": "Agent Workspaces",
+  "description": "Adds an opt-in Linux settings page and Electron bridge for agent-workspace-linux hidden desktop environments.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "resources": [
+    {
+      "source": "skills/agent-workspace-linux/SKILL.md",
+      "target": ".codex-linux/features/agent-workspace/skills/agent-workspace-linux/SKILL.md",
+      "mode": "0644"
+    }
+  ],
+  "runtimeHooks": {
+    "env": {
+      "source": "pin-renderer.env",
+      "name": "pin-renderer.env",
+      "mode": "0644"
+    },
+    "prelaunch": {
+      "source": "install-skill.sh",
+      "name": "install-skill.sh",
+      "mode": "0755"
+    }
+  }
+}

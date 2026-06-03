@@ -31,6 +31,10 @@ test("read-aloud-mcp stays disabled until listed in features.json", () => {
     path.join(featuresRoot, "read-aloud-mcp", "feature.json"),
   );
   fs.copyFileSync(
+    path.join(__dirname, "README.md"),
+    path.join(featuresRoot, "read-aloud-mcp", "README.md"),
+  );
+  fs.copyFileSync(
     path.join(__dirname, "stage.sh"),
     path.join(featuresRoot, "read-aloud-mcp", "stage.sh"),
   );

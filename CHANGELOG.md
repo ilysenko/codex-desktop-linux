@@ -7,6 +7,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- The `make setup-native` Linux feature picker can now present a GUI checklist
+  (zenity or kdialog) instead of the terminal-only numbered prompt, pre-checked
+  with the currently-enabled features. It falls back to the terminal picker when
+  no dialog tool or display is available (headless/SSH/CI) or when
+  `CODEX_BOOTSTRAP_NO_GUI=1` is set. The existing Python discovery/validation/
+  write path is reused unchanged.
+- An "Install updates when you close Codex" toggle in the Keybinds settings page
+  (new "Updates" section). When on (the default, matching prior behavior), a
+  ready update waits for Codex to close and then installs; when off, updates
+  wait until you explicitly click Update. The toggle persists to
+  `~/.config/<appId>/settings.json` as `codex-linux-auto-update-on-exit`, and
+  `codex-update-manager` rereads it during reconciliation as an overlay over
+  `config.toml` so the in-app preference wins without restarting the service.
+- `codex-update-manager` can now track newer *wrapper* releases (this repo's own
+  Linux features and fixes) in addition to the upstream Codex DMG. Opt in with
+  `enable_wrapper_updates = true` in `config.toml`; a new `check-wrapper`
+  subcommand and the `status --json` output report the detected wrapper commit
+  and a changelog of what changed. Detection is git-based, requires the remote
+  candidate to descend from the installed checkout, clears stale candidates
+  when no update is currently valid, uses timeout-bound non-interactive git
+  commands, prefers curated `CHANGELOG.md` sections newer than the installed
+  version, and falls back to git commit subjects. Packaged frozen bundles
+  without a git checkout degrade gracefully (no wrapper tracking; updates arrive
+  via a normal package upgrade).
+- The opt-in `codex-wrapper-updater` update action can ask which optional Linux
+  features to enable before rebuilding. The picker reads the recorded candidate
+  wrapper source, preserves unknown/private feature ids from the existing
+  config, saves selections to `~/.config/<appId>/linux-features.json`, and
+  skips without blocking the update when there is no display, no dialog tool, a
+  dialog launch failure, or a cancellation.
+- The opt-in `codex-wrapper-updater` toolbar now shows the installed short
+  wrapper commit as a SHA chip when build metadata is available, and shows a
+  disabled "dev mode" action when the installed commit is ahead of the tracked
+  remote.
 - Launcher rendering mode `CODEX_LINUX_RENDERING_MODE=wayland-gpu`, which
   forces native Wayland with GPU compositing enabled and skips forced renderer
   accessibility by default for Wayland desktops where XWayland or software
@@ -19,9 +53,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   bundled plugin registry so the app keeps `read-aloud` installed, and the
   launcher syncs the plugin cache so new Codex windows expose the MCP tools
   through the same auto-install path as Computer Use.
+- Native packages now install `codex-desktop-doctor`, a safe installed-state
+  healthcheck for package files, updater/update-builder staging, Chrome native
+  messaging, Computer Use readiness, and remote mobile markers.
+- `make readiness-check` now runs a sanitized handoff/readiness report that
+  composes the installed doctor, package/build metadata, user services,
+  remote-control process presence, repo status, and redacted history/memory
+  continuity checks.
+- Native packages now include an opt-in `codex-desktop.service` user unit plus
+  `make app-service-enable`, `make app-service-status`, and
+  `make app-service-disable` helpers for users who want Codex Desktop managed
+  by `systemd --user`; the unit waits on the launcher PID file so it can stay
+  active when Electron is moved into a desktop app scope.
+- Linux desktop entries now expose Quick Chat and Compact Prompt actions backed
+  by the existing `--quick-chat` and `--prompt-chat` launcher paths.
+- Linux Zed editor opener support is now enabled by default when the `zed`,
+  `zeditor`, `zedit`, or `zed-cli` command is available.
 
 ### Fixed
 
+- The opt-in Linux AppShots bare-modifier shortcuts now require left and right
+  modifier keycodes, preventing a fast double-tap on one physical Alt or Shift
+  key from opening AppShots.
+- The wrapper updater no longer offers a "downgrade as update" when the
+  installed build is ahead of the tracked remote. Detection records dev mode
+  when the candidate does not descend from the installed commit, clears stale
+  wrapper candidates when detection is not valid, and the apply path refuses to
+  run while dev mode is recorded.
+- Nix builds now rewrite crates.io API crate download URLs to the static
+  crates.io CDN path, avoiding PR-only CI failures from crates.io API 403s
+  while preserving the same lockfile checksums.
 - Bundled Browser plugin staging now preserves local `file://` target support
   advertised by the Browser plugin while keeping remote file hosts and `data:`
   URLs blocked by the URL policy.
@@ -32,6 +93,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Codex Desktop no longer removes user-enabled `remote_control = true` from the local Linux config before starting the app server.
 - Linux webview bundles no longer ask current Codex CLI app servers to enable unsupported feature flags, avoiding connector authentication sync errors.
 - Native Linux launches now keep GPU compositing enabled by default, avoiding sustained Electron GPU-process CPU usage on some X11/NVIDIA desktops. Users who still need the old flicker workaround can opt in with `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1`.
+- Linux Keybinds settings now show current upstream shortcut defaults for Quick Chat, alternate New Chat, search, terminal, browser, and thread actions, and no longer lists non-dispatchable runtime rows.
+- Linux `Open in File Manager` now prefers desktop file managers directly, selecting files in Dolphin and Nautilus where supported before falling back to Electron's shell opener.
+- Linux Computer Use doctor now reports an unreachable user session D-Bus as the root blocker before AT-SPI, portal, or window-targeting follow-up checks, making stale or refused graphical-session buses easier to diagnose.
+- Installed `codex-desktop-doctor` now checks whether the `systemd --user`
+  bus is reachable, so app-service lifecycle validation failures surface
+  directly instead of only through later service commands.
+- Native package builders now refresh the packaged Linux Computer Use backend
+  during payload staging, preventing stale `codex-app` plugin binaries from
+  being shipped after backend source changes.
+- Install-time running-app detection now treats upgraded Electron processes
+  whose executable appears as `(deleted)` as still running, while continuing to
+  ignore renderer/GPU/helper processes.
+- `codex-update-manager status` and daemon startup now clear stale failed update
+  state when the installed package already satisfies or supersedes the failed
+  candidate, while keeping failures for newer candidates intact.
 
 ## [0.8.0] - 2026-05-16
 

@@ -3,6 +3,7 @@
 
 const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -31,9 +32,11 @@ const {
   applyLinuxRemoteMobileAppServerRemoteControlPatch,
   applyLinuxRemoteMobileChromeBridgePatch,
   applyLinuxRemoteMobileConversationHydrationPatch,
+  applyLinuxRemoteControlStatusReadGuardPatch,
   applyLinuxRemoteMobileProjectlessRemoteTaskPatch,
   applyLinuxRemoteConnectionsRefreshPatch,
   applyLinuxRemoteControlSettingsUxPatch,
+  applyLinuxRemoteControlSelectedTabPatch,
   applyLinuxRemoteControlVisibilityPatch,
 } = require("./patch.js");
 
@@ -85,6 +88,25 @@ function syntheticCurrentClientEnrollmentBundle() {
   ].join("");
 }
 
+function syntheticNativeClientEnrollmentBundle() {
+  return [
+    "function Af(e){return[e.desktopOriginator,e.devApiBaseUrl,e.prodApiBaseUrl].join(`\\n`)}",
+    "function jf(e,t){return`${e}\\n${t}`}",
+    "function Th(e){if(e.tokenAccountUserId==null)return[];let t=[e.tokenAccountUserId];return e.tokenAccountId!=null&&e.headerChatGptAccountId===e.tokenAccountId&&e.tokenAuthUserId!=null&&e.tokenAuthUserId!==e.tokenAccountUserId&&t.push(e.tokenAuthUserId),t}",
+    "async function wh({authIdentity:e,enrollmentKey:t,deviceKeyClient:n,globalState:r}){let i=(await Promise.all(Th(e).map(async e=>{let i=jf(t,e);return{enrollment:await tp({deviceKeyClient:n,enrollmentKey:i,globalState:r}),enrollmentRecordKey:i}}))).find(e=>e.enrollment!=null);return i?.enrollment==null?null:i}",
+    "async function Nf({appServerClient:e,deviceKeyClient:t,desktopApiOptions:n,enrollmentKey:r,globalState:i,headers:a,requestRemoteControlEnrollmentStepUpToken:o}){let s=Bf(a),c=s.tokenAccountUserId;if(c==null)throw Error(`Remote control enrollment requires the current ChatGPT account user id.`);let l=jf(r,c),u=await wh({authIdentity:s,deviceKeyClient:t,enrollmentKey:r,globalState:i}),d=u?.enrollment??null,f;if(d==null){let l=await Yf({appServerClient:e,body:{},desktopApiOptions:n,headers:a});if(l.account_user_id!==c&&!(s.tokenAccountId!=null&&s.headerChatGptAccountId===s.tokenAccountId&&s.tokenAuthUserId===l.account_user_id))throw bf().warning(`remote_control_client_enrollment_start_account_mismatch`,{}),Error(`Remote control enrollment start does not match current account.`);d=await ap({accountUserId:l.account_user_id,clientId:l.client_id,deviceKeyClient:t}),np(i,jf(r,d.accountUserId),d)}return{clientId:f?.client_id??d.clientId}}",
+  ].join("");
+}
+
+function syntheticAlreadyCompatibleCurrentClientEnrollmentBundle() {
+  return [
+    "function Mf(e,t){return`${e}\\n${t}`}",
+    "function np(e){if(e.tokenAccountUserId==null)return[];let t=[e.tokenAccountUserId];return e.tokenAccountId!=null&&e.headerChatGptAccountId===e.tokenAccountId&&e.tokenAuthUserId!=null&&e.tokenAuthUserId!==e.tokenAccountUserId&&t.push(e.tokenAuthUserId),t}",
+    "function tp({authIdentity:e,connectionKey:t,deviceKeyClient:n,globalState:r}){let i=(await Promise.all(np(e).map(async e=>{let i=Mf(t,e);return{key:i,record:await ip({deviceKeyClient:n,enrollmentKey:i,globalState:r})}}))).find(e=>e.record!=null);return i?.record==null?null:{key:i.key,record:i.record}}",
+    "async function Pf({appServerClient:e,deviceKeyClient:t,desktopApiOptions:n,enrollmentKey:r,globalState:i,headers:a,requestRemoteControlEnrollmentStepUpToken:o}){let s=Vf(a),c=s.tokenAccountUserId;if(c==null)throw Error(`Remote control enrollment requires the current ChatGPT account user id.`);let l=s.tokenAccountId??s.headerChatGptAccountId,u=await tp({authIdentity:s,connectionKey:r,deviceKeyClient:t,globalState:i}),d=u?.record??null,f=u?.key??Mf(r,c),p=d,m;if(p==null){let u=await Xf({appServerClient:e,body:{},desktopApiOptions:n,headers:a});if(u.account_user_id!==c&&!(s.tokenAccountId!=null&&s.headerChatGptAccountId===s.tokenAccountId&&s.tokenAuthUserId===u.account_user_id))throw Error(`Remote control enrollment start does not match current account.`);let d=await o({accountId:l}),h=Wf({accountUserId:c,stepUpToken:d});m=await Zf({appServerClient:e,body:{client_id:p?.clientId??null,step_up_token:d},desktopApiOptions:n,headers:a})}return{clientId:m?.client_id??null,key:f}}",
+  ].join("");
+}
+
 function syntheticRecoverableErrorPredicateBundle() {
   return "function Bd(e){return e instanceof Error?e.message.startsWith(`Remote control request failed (404):`)||e.message===`Remote control request failed (401): Remote-control client enrollment is incomplete`||e.message===`Remote control request failed (403): Remote-control client key material missing`:!1}";
 }
@@ -95,15 +117,27 @@ function syntheticRemoteConnectionVisibilityBundle() {
 
 function syntheticAppMainFeatureSyncBundle() {
   return [
-    "var GF=[`apps`,`memories`,`plugins`,`tool_call_mcp_elicitation`,`tool_suggest`];",
+    "var GF=[`apps`,`memories`,`plugins`,`tool_call_mcp_elicitation`,`tool_suggest`],vI=`remote_plugin`;",
     "function KF(){let e=(0,Z.c)(6),t=K(G),[n]=ts(`statsig_default_enable_features`),r=Lc(),i=Io(),a,o;",
-    "return e[0]!==r?(a=()=>{let r=qF(n);qn(`set-experimental-feature-enablement-for-host`,{hostId:t,enablement:r}).catch(n=>{q.error(`Failed to sync experimental feature enablement`,{sensitive:{error:n}})})},o=[r],e[0]=r,e[1]=a,e[2]=o):(a=e[1],o=e[2]),null}",
-    "function qF(e){let t={};for(let n of GF){let r=e[n];r!=null&&(t[n]=r)}return t}",
+    "return e[0]!==r?(a=()=>{let r=qF(n,!0);qn(`set-experimental-feature-enablement-for-host`,{hostId:t,enablement:r}).catch(n=>{q.error(`Failed to sync experimental feature enablement`,{sensitive:{error:n}})})},o=[r],e[0]=r,e[1]=a,e[2]=o):(a=e[1],o=e[2]),null}",
+    "function qF(e,t){let n={};for(let r of GF){let i=e[r];i!=null&&(n[r]=i)}return n[vI]=t,n}",
+  ].join("");
+}
+
+function syntheticCurrentAppMainFeatureSyncBundle() {
+  return [
+    "var gI=[`apps`,`memories`,`plugins`,`tool_call_mcp_elicitation`,`tool_suggest`],vI=`remote_plugin`,Ir=`local-host`,Vt=`hosts`,Ro=`features-query`,G={error(){}};",
+    "function yI(){let e=new Map,o=()=>{if(ln(`set-default-feature-overrides`,{overrides:features??null}),features==null)return;let i=bI(features,!0),o=store.get(Ir),s=new Set(store.get(Vt).filter(e=>e===o||xn(store,e).state===`connected`));for(let t of e.keys())s.has(t)||e.delete(t);let c=store.get(Vt).filter(e=>s.has(e)).flatMap(t=>(0,dv.default)(e.get(t),i)?[]:(e.set(t,i),[ln(`set-experimental-feature-enablement-for-host`,{hostId:t,enablement:i}).catch(n=>{e.delete(t),G.error(`Failed to sync experimental feature enablement`,{safe:{hostId:t},sensitive:{error:n}})})]));c.length!==0&&Promise.all(c).then(()=>{query.invalidateQueries({queryKey:Ro})})};return o()}",
+    "function bI(e,t){let n={};for(let t of gI){let r=e[t];r!=null&&(n[t]=r)}return n[vI]=t,n}",
   ].join("");
 }
 
 function syntheticCurrentVisibilityBundle() {
   return "function Et({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)}export{Et as t};";
+}
+
+function syntheticCurrentUsePluginVisibilityBundle() {
+  return "function ke({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}export{ke as l};";
 }
 
 function syntheticMobileConnectedSettingsBundle() {
@@ -137,8 +171,18 @@ function syntheticSettingsBundle() {
     "tabs:[{key:`control-this-mac`,name:o===`windows`?(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.controlThisMac.windows`,defaultMessage:`Control this PC`,description:`Tab label for settings that let other devices control this Windows device`}):(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.controlThisMac`,defaultMessage:`Control this Mac`,description:`Tab label for settings that let other devices control this computer`})},{key:`access-other-devices`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.accessOtherDevices`,defaultMessage:`Control other devices`,description:`Tab label for settings that let this computer control other devices`})},{key:`ssh`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.ssh`,defaultMessage:`SSH`,description:`Tab label for SSH remote connections`})}],selectedKey:je,variant:`underline`,onSelect:se}",
     "tabs:[{key:`access-other-devices`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.accessOtherDevices`,defaultMessage:`Control other devices`,description:`Tab label for settings that let this computer control other devices`})},{key:`ssh`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.ssh`,defaultMessage:`SSH`,description:`Tab label for SSH remote connections`})}],selectedKey:je,variant:`underline`,onSelect:se}",
     "const a=`Control this Mac from your phone or other device`,b=`Add device to control this Mac remotely`,c=`Devices that can control this Mac`,d=`Keep Mac awake`,e=`Allow this Mac to be discovered and controlled`,f=`Control other devices from this Mac`,g=`Authorize this Mac to control other devices signed in to your ChatGPT account`,h=`Devices you can control from this Mac`;",
+    "let xe=!Pe&&(Te?.code===`remote-codex-not-found`||Te?.code===`update-required`);Ce=Ae==null||xe?null:Re({action:Ae.action,connection:Ee});",
     "function nr(e,t){return e.displayName.localeCompare(t.displayName)}",
     "function rr({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}",
+  ].join("");
+}
+
+function syntheticSshInstallSettingsBundle() {
+  return [
+    "function pn({action:e,disabled:t,hostId:n,installCodexPending:r,onAuthenticate:i,onInstallCodex:a}){if(e==null)return null;switch(e.kind){case`install-codex`:return{disabled:t,label:e.label,loading:r,loadingLabel:e.loadingLabel,renderInElectronOnly:!0,tooltipText:e.tooltipText,onClick:()=>a(n)};case`login`:return{label:e.label,onClick:()=>i(n)};case`settings`:return null}}",
+    "let et=R(`install-remote-codex`),vt=(e,t,n)=>{globalThis.__states.push({hostId:e,state:t,error:n})},bt=e=>{et.mutate({hostId:e},{onSuccess:({state:t,error:n})=>{vt(e,t,n)}})};",
+    "function un(e){let t=(0,$.c)(86),{connection:n,disabled:r,installCodexPending:i,onAuthenticate:a,onEdit:o,onInstallCodex:s,onLogoutConnection:c,onRemove:l,onShowDetails:u,onToggleConnection:d}=e,f=ee(),{appServerVersion:p,error:m,installedCodexVersion:h,state:g}=De(n.hostId),_=n.displayName,v;let T=w,E=oe(`2153867414`),D,O,k,A,j,M;if(t[8]!==p||t[9]!==n.hostId||t[10]!==r||t[11]!==m||t[12]!==i||t[13]!==h||t[14]!==f||t[15]!==a||t[16]!==s||t[17]!==E||t[18]!==g){k=fn({appServerVersion:p,installedCodexVersion:h,state:g}),D=g===`connected`||m?.code===`login-required`||m?.code===`update-required`||m?.code===`restart-required`;let{statusError:e,isRestartAvailableNotice:o,statusState:c}=dn({error:m,restartAvailableNotice:k,state:g});A=e,O=o,j=c==null?null:Ne(f,{canLogin:!0,error:A,state:c,surface:`connections-row`});let l=!E&&(A?.code===`remote-codex-not-found`||A?.code===`update-required`);M=j==null||l?null:pn({action:j.action,disabled:r,hostId:n.hostId,installCodexPending:i,onAuthenticate:a,onInstallCodex:s}),t[8]=p,t[9]=n.hostId,t[10]=r,t[11]=m,t[12]=i,t[13]=h,t[14]=f,t[15]=a,t[16]=s,t[17]=E,t[18]=g,t[19]=D,t[20]=O,t[21]=k,t[22]=A,t[23]=j,t[24]=M}else D=t[19],O=t[20],k=t[21],A=t[22],j=t[23],M=t[24];return M}",
+    "function nr(e,t){return e.displayName.localeCompare(t.displayName)}",
   ].join("");
 }
 
@@ -193,24 +237,26 @@ function syntheticRevokeSetupResetBundle() {
 
 function syntheticChromeBrowserClientBundle() {
   return [
-    "var tE=\"x-codex-browser-use-available-backends\",X6=[\"chrome\",\"iab\",\"cdp\"];",
-    "function rE(t){return X6.some(e=>e===t)}",
-    "function Cm(){let t=import.meta.__codexNativePipeUnavailableMessage;return typeof t==\"string\"&&t.length>0?t:\"privileged native pipe bridge is not available; browser-client is not trusted\"}",
-    "function yC(){let t=globalThis.nodeRepl?.requestMeta?.[tE];return t==null?null:Array.isArray(t)?t.filter(rE):[]}",
+    "var e2=[\"chrome\",\"iab\",\"cdp\"];function ly(e){return e2.some(t=>t===e)}var dy=\"BROWSER_USE_AVAILABLE_BACKENDS\";",
+    "function Su(e){return globalThis[e]??null}function vy(e){return Array.isArray(e)?e:String(e).split(\",\")}",
+    "function _y(){let e=Su(dy);return e==null?null:vy(e).filter(ly)}",
   ].join("");
 }
 
 function syntheticAppServerManagerSignalsBundle() {
   return [
-    "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let p=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=p)});return}}",
-    "class T{onNotification(e,t){let n={method:e,params:t};switch(n.method){case`turn/started`:{let{threadId:e,turn:t}=n.params,r=j(e),i=this.conversations.get(r);if(this.captureBrowserUseTurnRoute(r,t.id),this.captureComputerUseTurnRoute(r,t.id),!i){R.error(`Received turn/started for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}this.markConversationStreaming(r),this.updateConversationState(r,e=>{});break}case`turn/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`turn/completed`,n.params)}))break;let{threadId:e,turn:t}=n.params,r=j(e);if(!this.conversations.get(r)){this.browserUseTurnRouteIdsByConversationId.get(r)?.has(t.id)===!0&&this.releaseBrowserUseTurnRoute(r,t.id),this.computerUseTurnRouteIdsByConversationId.get(r)?.has(t.id)===!0&&this.releaseComputerUseTurnRoute(r,t.id),R.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}break}case`item/started`:{let{item:e,threadId:t,turnId:r}=n.params,i=j(t);if(!this.conversations.get(i)){R.error(`Received item/started for unknown conversation`,{safe:{conversationId:i},sensitive:{}});break}this.markConversationStreaming(i),this.updateConversationState(i,t=>{});break}case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;let{item:e,threadId:t,turnId:r}=n.params,i=j(t);if(!this.conversations.get(i)){R.error(`Received item/completed for unknown conversation`,{safe:{conversationId:i},sensitive:{}});break}this.updateConversationState(i,t=>{});break}}}}",
+    "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
+    "class T{onNotification(e,t){let n={method:e,params:t};switch(n.method){case`turn/started`:{let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/started for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}this.markConversationStreaming(r),this.updateConversationState(r,e=>{});break}case`turn/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`turn/completed`,n.params)}))break;let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}break}case`item/started`:{let{item:e,threadId:t,turnId:r,startedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/started for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.markConversationStreaming(a),this.updateConversationState(a,t=>{});break}case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;let{item:e,threadId:t,turnId:r,completedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.updateConversationState(a,t=>{});break}}}}",
   ].join("");
 }
 
-function syntheticCurrentAppServerManagerSignalsBundle() {
+function syntheticAppServerManagerStatusBundle() {
   return [
-    "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let p=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=p)});return}}",
-    "class T{onNotification(e,t){let n={method:e,params:t};switch(n.method){case`turn/started`:{let{threadId:e,turn:t}=n.params,r=F(e),i=this.conversations.get(r);if(this.captureBrowserUseTurnRoute(r,t.id),!i){R.error(`Received turn/started for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}this.markConversationStreaming(r),this.updateConversationState(r,e=>{});break}case`turn/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`turn/completed`,n.params)}))break;let{threadId:e,turn:t}=n.params,r=F(e);if(!this.conversations.get(r)){this.browserUseTurnRouteIdsByConversationId.get(r)?.has(t.id)===!0&&this.releaseBrowserUseTurnRoute(r,t.id),R.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}break}case`item/started`:{let{item:e,threadId:t,turnId:r}=n.params,i=F(t);if(!this.conversations.get(i)){R.error(`Received item/started for unknown conversation`,{safe:{conversationId:i},sensitive:{}});break}this.markConversationStreaming(i),this.updateConversationState(i,t=>{});break}case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;let{item:e,threadId:t,turnId:r}=n.params,i=F(t);if(!this.conversations.get(i)){R.error(`Received item/completed for unknown conversation`,{safe:{conversationId:i},sensitive:{}});break}this.updateConversationState(i,t=>{});break}}}}",
+    "var z={error(){}};",
+    "var bO={};",
+    "function wO(e,t){return e.bump(t)}",
+    "function TO(e,t,n){return e.current(t)===n}",
+    "function SO(e,t){let n=t.getHostId(),r=wO(e,n),i=e.get(bO,n);t.addNotificationCallback(`remoteControl/status/changed`,({params:t})=>{TO(e,n,r)&&e.set(bO,n,t)}),t.sendRequest(`remoteControl/status/read`,void 0).then(t=>{e.get(bO,n)===i&&TO(e,n,r)&&e.set(bO,n,t)}).catch(t=>{TO(e,n,r)&&z.error(`Failed to read remote-control status`,{safe:{},sensitive:{error:t}})})}",
   ].join("");
 }
 
@@ -240,6 +286,10 @@ function syntheticSelectedTabBundle() {
   ].join("");
 }
 
+function syntheticCurrentSelectedTabBundle() {
+  return "function Pe({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:n,showRemoteControlConnectionsSection:r,showRemoteSshConnections:i,showTabbedSshPage:a}){return r?e===`control-this-mac`&&!n?t?`access-other-devices`:`ssh`:e===`access-other-devices`&&!t?n?`control-this-mac`:`ssh`:e===`ssh`&&!a?t?`access-other-devices`:`control-this-mac`:e:i?`ssh`:`access-other-devices`}";
+}
+
 function withTempFeatureRoot(enabled, fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-feature-test-"));
   try {
@@ -264,6 +314,36 @@ function withFeatureRootEnv(root, fn) {
       process.env.CODEX_LINUX_FEATURES_ROOT = previous;
     }
   }
+}
+
+function installFakeSecretTool(binDir) {
+  const secretTool = path.join(binDir, "secret-tool");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(
+    secretTool,
+    [
+      "#!/usr/bin/env node",
+      "const fs=require('node:fs');",
+      "const path=require('node:path');",
+      "const dir=process.env.CODEX_TEST_SECRET_STORE;",
+      "if(!dir)process.exit(2);",
+      "const [cmd,...rawArgs]=process.argv.slice(2);",
+      "function attrs(args){return args.filter((arg)=>!arg.startsWith('--label='));}",
+      "function fileFor(args){return path.join(dir,Buffer.from(attrs(args).join('\\0')).toString('base64url'));}",
+      "fs.mkdirSync(dir,{recursive:true});",
+      "if(cmd==='store'){fs.writeFileSync(fileFor(rawArgs),fs.readFileSync(0,'utf8'));process.exit(0);}",
+      "if(cmd==='lookup'){const file=fileFor(rawArgs);if(!fs.existsSync(file))process.exit(1);process.stdout.write(fs.readFileSync(file,'utf8'));process.exit(0);}",
+      "if(cmd==='clear'){fs.rmSync(fileFor(rawArgs),{force:true});process.exit(0);}",
+      "process.exit(2);",
+      "",
+    ].join("\n"),
+  );
+  fs.chmodSync(secretTool, 0o755);
+  return secretTool;
+}
+
+function fakeSecretStoreEntries(secretStore) {
+  return fs.readdirSync(secretStore).map((name) => Buffer.from(name, "base64url").toString("utf8").split("\0"));
 }
 
 function captureWarnings(fn) {
@@ -558,9 +638,11 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-control-visibility",
       "feature:remote-mobile-control:linux-remote-control-copy",
       "feature:remote-mobile-control:linux-remote-control-settings-ux",
+      "feature:remote-mobile-control:linux-remote-control-selected-tab",
       "feature:remote-mobile-control:linux-remote-control-client-revoke-setup-reset",
       "feature:remote-mobile-control:linux-remote-connections-refresh",
       "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration",
+      "feature:remote-mobile-control:linux-remote-control-status-read-guard",
       "feature:remote-mobile-control:linux-remote-control-enablement-bridge",
       "feature:remote-mobile-control:linux-remote-mobile-active-status",
       "feature:remote-mobile-control:linux-remote-mobile-projectless-remote-task",
@@ -582,7 +664,17 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "webview-asset",
       "webview-asset",
       "webview-asset",
+      "webview-asset",
+      "webview-asset",
     ]);
+
+    const visibilityDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-control-visibility"
+    );
+    assert.ok(visibilityDescriptor);
+    assert.equal(visibilityDescriptor.pattern.test("remote-connections-settings-fixture.js"), true);
+    assert.equal(visibilityDescriptor.pattern.test("use-plugin-install-flow-fixture.js"), true);
+    assert.equal(visibilityDescriptor.pattern.test("app-main-fixture.js"), false);
   });
 });
 
@@ -611,6 +703,44 @@ test("Linux remote-control device-key patch handles current minified aliases", (
   assert.match(patched, /process\.platform===`linux`\)return codexLinuxRemoteControlDeviceKeyClient\(\)/);
   assert.match(patched, /n\.kind===`local`&&process\.platform!==`linux`/);
   assert.equal(applyLinuxRemoteControlPreserveConfigPatch(applyLinuxRemoteControlDeviceKeyPatch(patched)), patched);
+});
+
+test("Linux remote-control device-key patch upgrades older file-backed provider", () => {
+  const oldPatched = [
+    "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),b={createRequire:()=>()=>({})};",
+    "function TV(e){return Buffer.from(JSON.stringify(e),`utf8`)}",
+    "function codexLinuxRemoteControlDeviceKeyStorePath(){return`old-file-backed`}",
+    "function codexLinuxRemoteControlPublicDeviceKey(e){return e}",
+    "function codexLinuxReadRemoteControlDeviceKeyStore(){return{keys:{}}}",
+    "function codexLinuxWriteRemoteControlDeviceKeyStore(e){}",
+    "function codexLinuxRemoteControlDeviceKeyClient(){return{createDeviceKey:async e=>{},deleteDeviceKey:async e=>{},getDeviceKeyPublic:async e=>{},signDeviceKey:async(e,t)=>{}}}",
+    "var bV=(0,b.createRequire)(__filename),xV=`remote-control-device-key.node`,SV=`codex-device-key-sign-payload/v1`;",
+    "function wV({resourcesPath:e}){let t=null,n=()=>{if(process.platform===`linux`)return codexLinuxRemoteControlDeviceKeyClient();if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=bV(i.join(e,`native`,xV)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=TV(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
+  ].join("");
+
+  const upgraded = applyLinuxRemoteControlDeviceKeyPatch(oldPatched);
+  assert.match(upgraded, /codexLinuxRemoteControlSecretTool/);
+  assert.match(upgraded, /codexLinuxMigrateRemoteControlDeviceKeySecrets/);
+  assert.doesNotMatch(upgraded, /old-file-backed/);
+  assert.equal(applyLinuxRemoteControlDeviceKeyPatch(upgraded), upgraded);
+});
+
+test("Linux remote-control device-key patch upgrades older Secret Service provider", () => {
+  const oldPatched = [
+    "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),b={createRequire:()=>()=>({})};",
+    "function TV(e){return Buffer.from(JSON.stringify(e),`utf8`)}",
+    "function codexLinuxRemoteControlDeviceKeyStorePath(){return`old-secret-service`}",
+    "function codexLinuxRemoteControlSecretTool(e,t){return null}",
+    "function codexLinuxRemoteControlDeviceKeyClient(){return{createDeviceKey:async e=>{},deleteDeviceKey:async e=>{},getDeviceKeyPublic:async e=>{},signDeviceKey:async(e,t)=>{}}}",
+    "var bV=(0,b.createRequire)(__filename),xV=`remote-control-device-key.node`,SV=`codex-device-key-sign-payload/v1`;",
+    "function wV({resourcesPath:e}){let t=null,n=()=>{if(process.platform===`linux`)return codexLinuxRemoteControlDeviceKeyClient();if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=bV(i.join(e,`native`,xV)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=TV(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
+  ].join("");
+
+  const upgraded = applyLinuxRemoteControlDeviceKeyPatch(oldPatched);
+  assert.match(upgraded, /codexLinuxRemoteControlAppId/);
+  assert.match(upgraded, /app-id/);
+  assert.doesNotMatch(upgraded, /old-secret-service/);
+  assert.equal(applyLinuxRemoteControlDeviceKeyPatch(upgraded), upgraded);
 });
 
 test("Linux remote-control client enrollment accepts account-scoped and base user ids", () => {
@@ -646,6 +776,37 @@ test("Linux remote-control client enrollment handles current upstream account co
   assert.doesNotMatch(patched, /function Uf\(\{accountId:e,accountUserId:t,stepUpToken:n\}\)/);
   assert.match(patched, /clientId:a\?\.enrollment\.clientId\?\?null/);
   assert.equal(applyLinuxRemoteControlClientAccountCompatibilityPatch(patched), patched);
+});
+
+test("Linux remote-control client enrollment no-ops only on complete native compatibility", () => {
+  const source = syntheticNativeClientEnrollmentBundle();
+  const patched = applyLinuxRemoteControlClientAccountCompatibilityPatch(source);
+
+  assert.equal(patched, source);
+});
+
+test("Linux remote-control client enrollment does not hide partial native drift", () => {
+  const source = [
+    "function jf(e,t){return`${e}\\n${t}`}",
+    "function Th(e){if(e.tokenAccountUserId==null)return[];return[e.tokenAccountUserId]}",
+    "function marker({candidateAccountUserId:e,expectedAccountUserId:t,tokenAuthUserId:n}){return e===t||n===t}",
+    "async function Nf(){let s=Bf(a),c=s.tokenAccountUserId,l=await Yf();if(l.account_user_id!==c)throw bf().warning(`remote_control_client_enrollment_start_account_mismatch`,{}),Error(`Remote control enrollment start does not match current account.`)}",
+  ].join("");
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteControlClientAccountCompatibilityPatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("enrollment start shape")));
+});
+
+test("Linux remote-control client enrollment leaves current upstream-compatible shape untouched", () => {
+  const source = syntheticAlreadyCompatibleCurrentClientEnrollmentBundle();
+  const patched = applyLinuxRemoteControlClientAccountCompatibilityPatch(source);
+
+  assert.equal(patched, source);
+  assert.match(patched, /function tp\(\{authIdentity:e,connectionKey:t,deviceKeyClient:n,globalState:r\}\)/);
+  assert.match(patched, /u\?\.key\?\?Mf\(r,c\)/);
 });
 
 test("Linux remote-control client revocation triggers local cleanup and re-enrollment", () => {
@@ -725,14 +886,68 @@ test("Linux remote-control load gate enables remote-control environment loading"
   assert.equal(applyLinuxRemoteControlLoadGatePatch(patched), patched);
 });
 
-test("Linux remote-control feature sync includes remote_control", () => {
+test("Linux remote-control feature sync forces remote_control and drops remote_plugin on Linux", () => {
   const source = syntheticAppMainFeatureSyncBundle();
   const patched = applyLinuxRemoteControlFeatureSyncPatch(source);
 
   assert.notEqual(patched, source);
-  assert.match(patched, /`tool_suggest`,`remote_control`\]/);
+  assert.match(patched, /\.remote_control=!0/);
   assert.match(patched, /codexLinuxRemoteControlFeatureSyncEnabled/);
+  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)\?\(/);
+  assert.match(patched, /:\(n\[vI\]=t,n\)\}/);
   assert.equal(applyLinuxRemoteControlFeatureSyncPatch(patched), patched);
+});
+
+test("Linux remote-control feature sync composes with core-sanitized dynamic builder", () => {
+  const source = syntheticAppMainFeatureSyncBundle().replace("return n[vI]=t,n}", "return n}");
+  const patched = applyLinuxRemoteControlFeatureSyncPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /\.remote_control=!0/);
+  assert.match(patched, /codexLinuxRemoteControlFeatureSyncEnabled/);
+  assert.doesNotMatch(patched, /n\[vI\]=t/);
+  assert.match(patched, /:n\}/);
+  assert.equal(applyLinuxRemoteControlFeatureSyncPatch(patched), patched);
+});
+
+test("Linux remote-control feature sync does not advertise SSH hosts to mobile", async () => {
+  const source = syntheticCurrentAppMainFeatureSyncBundle();
+  const patched = applyLinuxRemoteControlFeatureSyncPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteControlFeatureSyncEnabled/);
+
+  const calls = [];
+  const context = {
+    Promise,
+    features: { apps: true, memories: false },
+    navigator: { userAgent: "X11; Linux x86_64" },
+    query: { invalidateQueries() {} },
+    store: {
+      get(key) {
+        if (key === "local-host") return "local";
+        if (key === "hosts") return ["local", "remote-ssh-discovered:devpod"];
+        return undefined;
+      },
+    },
+    dv: { default: () => false },
+    ln(method, params) {
+      calls.push({ method, params });
+      return Promise.resolve();
+    },
+    xn(_store, hostId) {
+      return { state: hostId === "remote-ssh-discovered:devpod" ? "connected" : "disconnected" };
+    },
+  };
+  vm.runInNewContext(`${patched};yI();`, context);
+  await Promise.resolve();
+
+  const hostCalls = calls.filter((call) => call.method === "set-experimental-feature-enablement-for-host");
+  assert.equal(hostCalls.length, 2);
+  assert.equal(hostCalls[0].params.hostId, "local");
+  assert.equal(hostCalls[0].params.enablement.remote_control, true);
+  assert.equal(hostCalls[1].params.hostId, "remote-ssh-discovered:devpod");
+  assert.equal(hostCalls[1].params.enablement.remote_control, undefined);
 });
 
 test("Linux remote-control visibility patch allows Linux when upstream marks availability false", () => {
@@ -751,7 +966,17 @@ test("Linux remote-control visibility patch handles current settings bundle shap
 
   assert.notEqual(patched, source);
   assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
-  assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)/);
+  assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)&&e\?\.accessRequired!==!0/);
+  assert.equal(applyLinuxRemoteControlVisibilityPatch(patched), patched);
+});
+
+test("Linux remote-control visibility patch handles current use-plugin gate shape", () => {
+  const source = syntheticCurrentUsePluginVisibilityBundle();
+  const patched = applyLinuxRemoteControlVisibilityPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
+  assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)&&e\?\.accessRequired!==!0/);
   assert.equal(applyLinuxRemoteControlVisibilityPatch(patched), patched);
 });
 
@@ -793,14 +1018,17 @@ test("Linux mobile setup flow copy does not refer to Mac-only setup", () => {
   assert.equal(applyLinuxRemoteControlCopyPatch(patched), patched);
 });
 
-test("Linux remote-control settings UX patch hides unsupported outbound tab and removes Mac copy", () => {
+test("Linux remote-control settings UX patch keeps outbound tab visible and removes Mac copy", () => {
   const source = syntheticSettingsBundle();
   const patched = applyLinuxRemoteControlSettingsUxPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteControlSettingsTabs/);
-  assert.match(patched, /e\.filter\(e=>e\.key!==`access-other-devices`\)/);
-  assert.match(patched, /if\(e===`access-other-devices`\)return t\?`control-this-mac`:`ssh`/);
+  assert.match(patched, /codexLinuxRemoteControlSshInstallActions/);
+  assert.match(patched, /function codexLinuxRemoteControlSettingsTabs\(e\)\{return e\}/);
+  assert.doesNotMatch(patched, /e\.filter\(e=>e\.key!==`access-other-devices`\)/);
+  assert.match(patched, /key:`access-other-devices`/);
+  assert.match(patched, /Ce=Ae==null\?null:Re\(\{action:Ae\.action/);
   assert.match(patched, /Control this Linux desktop/);
   assert.match(patched, /Control this Linux desktop from your phone or other device/);
   assert.match(patched, /Add device to control this Linux desktop remotely/);
@@ -812,22 +1040,124 @@ test("Linux remote-control settings UX patch hides unsupported outbound tab and 
   assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
 });
 
+test("Linux remote-control SSH install sends the local Desktop app-server version for fresh installs", () => {
+  const source = syntheticSshInstallSettingsBundle();
+  const patched = applyLinuxRemoteControlSettingsUxPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteControlSshInstallRelease/);
+  assert.match(patched, /codexLinuxRemoteControlSshInstallDefaultRelease/);
+  assert.match(patched, /De\(`local`\)/);
+  assert.match(patched, /release=codexLinuxRemoteControlSshInstallResolvedRelease/);
+  assert.match(patched, /onClick:\(\)=>a\(n,codexLinuxRemoteControlSshInstallReleaseTarget\)/);
+
+  const context = {
+    $: { c: () => [] },
+    __mutations: [],
+    __states: [],
+    globalThis: null,
+    w: "Restart",
+    ee: () => ({}),
+    fn: () => null,
+    dn: ({ error, state }) => ({
+      isRestartAvailableNotice: false,
+      statusError: error,
+      statusState: state,
+    }),
+    Ne: () => ({
+      action: {
+        kind: "install-codex",
+        label: "Install Codex",
+        loadingLabel: "Installing",
+      },
+    }),
+    oe: () => true,
+    De: (hostId) =>
+      hostId === "local"
+        ? { appServerVersion: "0.136.0", error: null, installedCodexVersion: null, state: "connected" }
+        : {
+            appServerVersion: null,
+            error: { code: "remote-codex-not-found" },
+            installedCodexVersion: null,
+            state: "error",
+          },
+    R: () => ({
+      mutate(request, options) {
+        context.__mutations.push(request);
+        options.onSuccess({ state: "connected", error: null });
+      },
+    }),
+  };
+  context.globalThis = context;
+  vm.runInNewContext(`${patched};let action=un({connection:{hostId:'remote-ssh:dev',displayName:'dev'},disabled:false,installCodexPending:false,onAuthenticate(){},onEdit(){},onInstallCodex:bt,onLogoutConnection(){},onRemove(){},onShowDetails(){},onToggleConnection(){}});action.onClick();`, context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.__mutations)), [{ hostId: "remote-ssh:dev", release: "0.136.0" }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.__states)), [{ hostId: "remote-ssh:dev", state: "connected", error: null }]);
+  assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
+});
+
+test("Linux remote-control SSH install prefers update-required minRequiredVersion", () => {
+  const patched = applyLinuxRemoteControlSettingsUxPatch(syntheticSshInstallSettingsBundle());
+  const context = {
+    $: { c: () => [] },
+    __mutations: [],
+    __states: [],
+    globalThis: null,
+    w: "Restart",
+    ee: () => ({}),
+    fn: () => null,
+    dn: ({ error, state }) => ({
+      isRestartAvailableNotice: false,
+      statusError: error,
+      statusState: state,
+    }),
+    Ne: () => ({
+      action: {
+        kind: "install-codex",
+        label: "Update Codex",
+        loadingLabel: "Updating",
+      },
+    }),
+    oe: () => true,
+    De: (hostId) =>
+      hostId === "local"
+        ? { appServerVersion: "0.136.0", error: null, installedCodexVersion: null, state: "connected" }
+        : {
+            appServerVersion: "0.130.0",
+            error: { code: "update-required", currentVersion: "0.130.0", minRequiredVersion: "0.137.0" },
+            installedCodexVersion: "0.130.0",
+            state: "error",
+          },
+    R: () => ({
+      mutate(request, options) {
+        context.__mutations.push(request);
+        options.onSuccess({ state: "connected", error: null });
+      },
+    }),
+  };
+  context.globalThis = context;
+  vm.runInNewContext(`${patched};let action=un({connection:{hostId:'remote-ssh:dev',displayName:'dev'},disabled:false,installCodexPending:false,onAuthenticate(){},onEdit(){},onInstallCodex:bt,onLogoutConnection(){},onRemove(){},onShowDetails(){},onToggleConnection(){}});action.onClick();`, context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.__mutations)), [{ hostId: "remote-ssh:dev", release: "0.137.0" }]);
+});
+
 test("Linux remote-control settings UX patch handles current minified helper names", () => {
   const source = syntheticCurrentSettingsBundle();
   const patched = applyLinuxRemoteControlSettingsUxPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteControlSettingsTabs/);
+  assert.match(patched, /function codexLinuxRemoteControlSettingsTabs\(e\)\{return e\}/);
   assert.match(patched, /tabs:codexLinuxRemoteControlSettingsTabs/);
-  assert.match(patched, /function er\(\{selectedConnectionsTab:e/);
-  assert.match(patched, /if\(e===`access-other-devices`\)return t\?`control-this-mac`:`ssh`/);
+  assert.match(patched, /key:`access-other-devices`/);
   assert.match(patched, /Control this Linux desktop/);
   assert.doesNotMatch(patched, /Control this Mac/);
   assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
 });
 
-test("Linux remote-control selected-tab fallback avoids outbound control on Linux", () => {
-  const patched = applyLinuxRemoteControlSettingsUxPatch(syntheticSelectedTabBundle());
+test("Linux remote-control selected-tab fallback keeps outbound control reachable on Linux", () => {
+  const patched = applyLinuxRemoteControlSelectedTabPatch(syntheticSelectedTabBundle());
+  assert.match(patched, /codexLinuxRemoteControlSelectedTab/);
   const context = {
     navigator: { userAgent: "Linux x86_64" },
     module: { exports: {} },
@@ -842,7 +1172,7 @@ test("Linux remote-control selected-tab fallback avoids outbound control on Linu
       showRemoteControlConnectionsSection: true,
       showTabbedSshPage: true,
     }),
-    "control-this-mac",
+    "access-other-devices",
   );
   assert.equal(
     resolveTab({
@@ -851,8 +1181,98 @@ test("Linux remote-control selected-tab fallback avoids outbound control on Linu
       showRemoteControlConnectionsSection: true,
       showTabbedSshPage: true,
     }),
+    "access-other-devices",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "control-this-mac",
+      showControlThisMacTab: false,
+      showRemoteControlConnectionsSection: true,
+      showTabbedSshPage: true,
+    }),
+    "access-other-devices",
+  );
+  assert.equal(applyLinuxRemoteControlSelectedTabPatch(patched), patched);
+});
+
+test("Linux remote-control selected-tab patch handles the current six-param resolver", () => {
+  const patched = applyLinuxRemoteControlSelectedTabPatch(syntheticCurrentSelectedTabBundle());
+  assert.notEqual(patched, syntheticCurrentSelectedTabBundle());
+  assert.match(patched, /codexLinuxRemoteControlSelectedTab/);
+  const context = {
+    navigator: { userAgent: "Linux x86_64" },
+    module: { exports: {} },
+  };
+  vm.runInNewContext(`${patched};module.exports=Pe;`, context);
+  const resolveTab = context.module.exports;
+
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "access-other-devices",
+      showControlOtherDevices: true,
+      showControlThisMacTab: true,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: true,
+    }),
+    "access-other-devices",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "access-other-devices",
+      showControlOtherDevices: true,
+      showControlThisMacTab: false,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: true,
+    }),
+    "access-other-devices",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "access-other-devices",
+      showControlOtherDevices: false,
+      showControlThisMacTab: false,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: true,
+    }),
     "ssh",
   );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "control-this-mac",
+      showControlOtherDevices: true,
+      showControlThisMacTab: false,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: true,
+    }),
+    "access-other-devices",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "ssh",
+      showControlOtherDevices: true,
+      showControlThisMacTab: true,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: false,
+    }),
+    "access-other-devices",
+  );
+  assert.equal(
+    resolveTab({
+      selectedConnectionsTab: "ssh",
+      showControlOtherDevices: false,
+      showControlThisMacTab: false,
+      showRemoteControlConnectionsSection: true,
+      showRemoteSshConnections: true,
+      showTabbedSshPage: false,
+    }),
+    "ssh",
+  );
+  assert.equal(applyLinuxRemoteControlSelectedTabPatch(patched), patched);
 });
 
 test("Linux remote-connections refresh patch shortens polling and refreshes on resume signals", () => {
@@ -898,130 +1318,129 @@ test("Linux remote-connections refresh patch warns when upstream refresh needles
   assert.ok(warnings.some((warning) => warning.includes("auto-refresh effect")));
 });
 
-test("Linux remote mobile Chrome bridge patch preserves Chrome when request metadata narrows browser backends", () => {
+test("Linux remote mobile Chrome bridge patch preserves Chrome when backends config narrows browser backends", () => {
   const source = syntheticChromeBrowserClientBundle();
   const patched = applyLinuxRemoteMobileChromeBridgePatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteMobileBrowserBackends/);
-  assert.match(patched, /codexLinuxRemoteMobileBrowserBridgeDiagnostic/);
-  assert.match(patched, /Chrome bridge was not exposed to this remote\/mobile session/);
+  assert.match(patched, /function _y\(\)\{let e=Su\(dy\);return codexLinuxRemoteMobileBrowserBackends/);
   assert.equal(applyLinuxRemoteMobileChromeBridgePatch(patched), patched);
 
   const context = {
-    globalThis: {
-      nodeRepl: {
-        requestMeta: {
-          "x-codex-browser-use-available-backends": ["iab"],
-        },
-      },
-    },
+    BROWSER_USE_AVAILABLE_BACKENDS: ["iab"],
     module: { exports: {} },
     process: { platform: "linux" },
   };
-  context.globalThis.globalThis = context.globalThis;
-  const nativePipeIndex = patched.indexOf("function codexLinuxRemoteMobileBrowserBridgeDiagnostic");
-  const browserBackendsOnly = patched.slice(0, nativePipeIndex) + patched.slice(patched.indexOf("function yC"));
-  vm.runInNewContext(`${browserBackendsOnly};module.exports=yC;`, context);
+  vm.runInNewContext(`${patched};module.exports=_y;`, context);
   assert.deepEqual([...context.module.exports()], ["chrome", "iab"]);
 });
 
 test("Linux remote mobile Chrome bridge patch warns when browser-client needles drift", () => {
-  const source = "var tE=\"x-codex-browser-use-available-backends\";function yC(){return null}";
+  const source = "var e2=[\"chrome\",\"iab\",\"cdp\"];function ly(e){return e2.some(t=>t===e)}";
   const { result, warnings } = captureWarnings(() => applyLinuxRemoteMobileChromeBridgePatch(source));
 
   assert.equal(result, source);
   assert.ok(warnings.some((warning) => warning.includes("backend allowlist needles")));
 });
 
-test("Linux remote mobile conversation hydration patch handles stale refresh and unknown turn starts", () => {
+test("Linux remote mobile conversation hydration patch handles current app-server signal shape", () => {
   const source = syntheticAppServerManagerSignalsBundle();
   const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteMobileThreadRuntimeStatus/);
-  assert.match(patched, /p\?\.type===`active`\|\|p\?\.type===`idle`/);
+  assert.match(patched, /h\?\.type===`active`\|\|h\?\.type===`idle`/);
   assert.match(patched, /codexLinuxRemoteMobileHydrateUnknownTurn/);
   assert.match(patched, /codexLinuxRemoteMobileNotificationQueue/);
   assert.match(patched, /codexLinuxRemoteMobilePendingNotifications\?\?=new Map/);
   assert.match(patched, /this\.readThread\(r,\{includeTurns:!1\}\)/);
-  assert.match(patched, /typeof t\?\.path==`string`&&t\.path\.endsWith\(`\.jsonl`\)/);
-  assert.match(patched, /if\(!\(typeof t\?\.path==`string`&&t\.path\.endsWith\(`\.jsonl`\)\)\)\{if\(a<12\)/);
-  assert.match(patched, /Retrying hydration for non-persisted conversation/);
-  assert.match(patched, /queuedNotificationCount:i\.length,attempt:a\+1/);
-  assert.match(patched, /setTimeout\(\(\)=>s\(a\+1\),250\)/);
-  assert.match(patched, /Skipping hydration for non-persisted conversation/);
-  assert.match(patched, /releaseBrowserUseTurnRoute\(r,t\.id\)/);
-  assert.match(patched, /for\(let e of i\)this\.onNotification\(e\.method,e\.params\)/);
+  assert.match(patched, /Hydrating conversation for turn\/started/);
+  assert.match(patched, /this\.upsertConversationFromThread\(t\)/);
+  assert.match(patched, /for\(let e of c\)this\.onNotification\(e\.method,e\.params\)/);
   assert.match(patched, /Queueing item\/started for hydrating conversation/);
   assert.match(patched, /Queueing item\/completed for hydrating conversation/);
   assert.match(patched, /Queueing turn\/completed for hydrating conversation/);
+  assert.doesNotMatch(patched, /captureBrowserUseTurnRoute/);
+  assert.doesNotMatch(patched, /releaseBrowserUseTurnRoute/);
   assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(patched), patched);
 });
 
-test("Linux remote mobile conversation hydration patch handles current app-server signal shape", () => {
-  const source = syntheticCurrentAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteMobileHydrateUnknownTurn/);
-  assert.match(patched, /codexLinuxRemoteMobileNotificationQueue/);
-  assert.match(patched, /this\.captureBrowserUseTurnRoute\(r,t\.id\),!i/);
-  assert.doesNotMatch(patched, /captureComputerUseTurnRoute/);
-  assert.match(patched, /typeof t\?\.path==`string`&&t\.path\.endsWith\(`\.jsonl`\)/);
-  assert.match(patched, /Retrying hydration for non-persisted conversation/);
-  assert.match(patched, /Queueing item\/started for hydrating conversation/);
-  assert.match(patched, /Queueing item\/completed for hydrating conversation/);
-  assert.match(patched, /Queueing turn\/completed for hydrating conversation/);
-  assert.doesNotMatch(patched, /releaseComputerUseTurnRoute/);
-  assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(patched), patched);
-});
-
-test("Linux remote mobile conversation hydration patch retries transient thread reads", () => {
+test("Linux remote mobile conversation hydration patch retries transient and missing thread reads", () => {
   const source = syntheticAppServerManagerSignalsBundle();
   const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
 
   assert.match(patched, /Retrying hydration for turn\/started/);
-  assert.match(patched, /Retrying hydration for non-persisted conversation/);
-  assert.match(patched, /if\(a<12\)/);
-  assert.match(patched, /setTimeout\(\(\)=>s\(a\+1\),250\)/);
+  assert.match(patched, /Retrying hydration for missing conversation/);
+  assert.match(patched, /Skipping hydration for missing conversation/);
+  assert.match(patched, /if\(s<12\)/);
+  assert.match(patched, /setTimeout\(\(\)=>o\(s\+1\),250\)/);
   assert.match(patched, /Failed to hydrate conversation for turn\/started/);
 });
 
-test("Linux remote mobile conversation hydration patch upgrades unsafe queued hydration", () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const safeRead =
-    "this.readThread(r,{includeTurns:!1}).then(e=>{let t=e?.thread??e,i=this.codexLinuxRemoteMobilePendingNotifications?.get(r)??[];if(!(typeof t?.path==`string`&&t.path.endsWith(`.jsonl`))){if(a<12){R.warning(`Retrying hydration for non-persisted conversation`,{safe:{conversationId:r,path:t?.path??null,queuedNotificationCount:i.length,attempt:a+1},sensitive:{}}),setTimeout(()=>s(a+1),250);return}this.codexLinuxRemoteMobilePendingNotifications?.delete(r);for(let e of i)if(e.method===`turn/completed`){let{turn:t}=e.params;this.browserUseTurnRouteIdsByConversationId.get(r)?.has(t.id)===!0&&this.releaseBrowserUseTurnRoute(r,t.id),this.computerUseTurnRouteIdsByConversationId.get(r)?.has(t.id)===!0&&this.releaseComputerUseTurnRoute(r,t.id)}R.warning(`Skipping hydration for non-persisted conversation`,{safe:{conversationId:r,path:t?.path??null,queuedNotificationCount:i.length},sensitive:{}});return}this.upsertConversationFromThread(t);this.codexLinuxRemoteMobilePendingNotifications?.delete(r);for(let e of i)this.onNotification(e.method,e.params)}).catch";
-  const unsafeRead =
-    "this.readThread(r,{includeTurns:!1}).then(e=>{let t=e?.thread??e;if(t){this.upsertConversationFromThread(t);let e=this.codexLinuxRemoteMobilePendingNotifications?.get(r)??[];this.codexLinuxRemoteMobilePendingNotifications?.delete(r);for(let t of e)this.onNotification(t.method,t.params)}}).catch";
-  const unsafeQueued = patched.replace(safeRead, unsafeRead);
+test("Linux remote-control status guard skips slow remote SSH status reads", async () => {
+  const source = syntheticAppServerManagerStatusBundle();
+  const patched = applyLinuxRemoteControlStatusReadGuardPatch(source);
 
-  assert.notEqual(unsafeQueued, patched);
-  assert.doesNotMatch(unsafeQueued, /Skipping hydration for missing conversation/);
-  const upgraded = applyLinuxRemoteMobileConversationHydrationPatch(unsafeQueued);
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteControlShouldReadStatus/);
+  assert.equal(applyLinuxRemoteControlStatusReadGuardPatch(patched), patched);
 
-  assert.match(upgraded, /codexLinuxRemoteMobileNotificationQueue/);
-  assert.match(upgraded, /Retrying hydration for non-persisted conversation/);
-  assert.match(upgraded, /Skipping hydration for non-persisted conversation/);
-  assert.match(upgraded, /typeof t\?\.path==`string`&&t\.path\.endsWith\(`\.jsonl`\)/);
-  assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(upgraded), upgraded);
-});
+  const context = {
+    module: { exports: {} },
+    navigator: { userAgent: "X11; Linux x86_64" },
+    Promise,
+    z: { error() {} },
+  };
+  vm.runInNewContext(`${patched};module.exports={SO,bO};`, context);
+  const { SO } = context.module.exports;
+  const generations = new Map();
+  const values = new Map();
+  const store = {
+    bump(hostId) {
+      const next = (generations.get(hostId) ?? 0) + 1;
+      generations.set(hostId, next);
+      return next;
+    },
+    current(hostId) {
+      return generations.get(hostId);
+    },
+    get(_atom, hostId) {
+      return values.get(hostId) ?? null;
+    },
+    set(_atom, hostId, value) {
+      values.set(hostId, value);
+    },
+  };
 
-test("Linux remote mobile conversation hydration patch upgrades local-path guarded hydration", () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const localPathGuardedRead =
-    "this.readThread(r,{includeTurns:!1}).then(e=>{let t=e?.thread??e,i=this.codexLinuxRemoteMobilePendingNotifications?.get(r)??[];if(!(typeof t?.path==`string`&&t.path.endsWith(`.jsonl`))){if(a<12){R.warning(`Retrying hydration for non-persisted conversation`,{safe:{conversationId:r,path:t?.path??null,queuedNotificationCount:i.length,attempt:a+1},sensitive:{}}),setTimeout(()=>s(a+1),250);return}this.codexLinuxRemoteMobilePendingNotifications?.delete(r);for(let e of i)if(e.method===`turn/completed`){let{turn:t}=e.params;this.browserUseTurnRouteIdsByConversationId.get(r)?.has(t.id)===!0&&this.releaseBrowserUseTurnRoute(r,t.id),this.computerUseTurnRouteIdsByConversationId.get(r)?.has(t.id)===!0&&this.releaseComputerUseTurnRoute(r,t.id)}R.warning(`Skipping hydration for non-persisted conversation`,{safe:{conversationId:r,path:t?.path??null,queuedNotificationCount:i.length},sensitive:{}});return}this.upsertConversationFromThread(t);this.codexLinuxRemoteMobilePendingNotifications?.delete(r);for(let e of i)this.onNotification(e.method,e.params)}).catch";
-  const oldGuarded = patched.replace(localPathGuardedRead, localPathGuardedRead);
+  let remoteRequests = 0;
+  SO(store, {
+    getHostId: () => "remote-ssh-discovered:dev",
+    addNotificationCallback() {},
+    sendRequest() {
+      remoteRequests += 1;
+      return Promise.resolve({ status: "enabled" });
+    },
+  });
+  assert.equal(remoteRequests, 0);
+  const disabledStatus = values.get("remote-ssh-discovered:dev");
+  assert.equal(disabledStatus.status, "disabled");
+  assert.equal(disabledStatus.available, false);
+  assert.equal(disabledStatus.accessRequired, false);
 
-  assert.equal(oldGuarded, patched);
-  assert.match(oldGuarded, /Skipping hydration for non-persisted conversation/);
-  const upgraded = applyLinuxRemoteMobileConversationHydrationPatch(oldGuarded);
-
-  assert.match(upgraded, /Skipping hydration for non-persisted conversation/);
-  assert.match(upgraded, /typeof t\?\.path==`string`&&t\.path\.endsWith\(`\.jsonl`\)/);
-  assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(upgraded), upgraded);
+  let localRequests = 0;
+  SO(store, {
+    getHostId: () => "local",
+    addNotificationCallback() {},
+    sendRequest(method) {
+      localRequests += 1;
+      assert.equal(method, "remoteControl/status/read");
+      return Promise.resolve({ status: "enabled" });
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(localRequests, 1);
+  assert.equal(values.get("local").status, "enabled");
 });
 
 test("Linux remote mobile projectless remote task patch groups tasks without owner repo metadata", () => {
@@ -1182,7 +1601,7 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
       __filename: path.join(configHome, "main.js"),
       module: { exports: {} },
       process: {
-        env: { XDG_CONFIG_HOME: configHome },
+        env: { CODEX_REMOTE_CONTROL_KEY_STORE: "file", XDG_CONFIG_HOME: configHome },
         pid: process.pid,
         platform: "linux",
       },
@@ -1209,11 +1628,384 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
 
     const storePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
     assert.equal(fs.statSync(storePath).mode & 0o777, 0o600);
+    const store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    assert.match(store.keys[created.keyId].privateKeyPkcs8Pem, /BEGIN PRIVATE KEY/);
 
     await client.deleteDeviceKey(created.keyId);
     await assert.rejects(() => client.getDeviceKeyPublic(created.keyId), /not found/);
   } finally {
     fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("patched Linux device-key provider scopes file-backed keys by app id", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-store-app-id-"));
+  try {
+    const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
+    const context = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: {
+          CODEX_LINUX_APP_ID: "codex-cua-lab",
+          CODEX_REMOTE_CONTROL_KEY_STORE: "file",
+          XDG_CONFIG_HOME: configHome,
+        },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, context);
+    const client = context.module.exports;
+    const created = await client.createDeviceKey("allow_os_protected_nonextractable");
+    const scopedStorePath = path.join(configHome, "codex-cua-lab", "remote-control-device-keys-v1.json");
+    const defaultStorePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    const store = JSON.parse(fs.readFileSync(scopedStorePath, "utf8"));
+
+    assert.equal(fs.existsSync(defaultStorePath), false);
+    assert.match(store.keys[created.keyId].privateKeyPkcs8Pem, /BEGIN PRIVATE KEY/);
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("patched Linux device-key provider prefers Secret Service when secret-tool is available", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-secret-service-"));
+  const configHome = path.join(workspace, "config");
+  const binDir = path.join(workspace, "bin");
+  const secretStore = path.join(workspace, "secrets");
+  try {
+    installFakeSecretTool(binDir);
+
+    const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
+    const context = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: {
+          CODEX_REMOTE_CONTROL_KEY_STORE: "secret-service",
+          CODEX_TEST_SECRET_STORE: secretStore,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          XDG_CONFIG_HOME: configHome,
+        },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, context);
+    const client = context.module.exports;
+    const created = await client.createDeviceKey("allow_os_protected_nonextractable");
+    const storePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    const store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    const record = store.keys[created.keyId];
+
+    assert.equal(record.privateKeyPkcs8Pem, undefined);
+    assert.equal(record.secretService.backend, "secret-service");
+    assert.equal(record.secretService.tool, "secret-tool");
+    assert.equal(record.secretService.attributes.appId, "codex-desktop");
+    assert.equal(record.secretService.attributes.keyId, created.keyId);
+    assert.equal(fs.readdirSync(secretStore).length, 1);
+    assert.deepEqual(
+      fakeSecretStoreEntries(secretStore)[0].slice(0, 4),
+      ["application", "codex-desktop-linux", "app-id", "codex-desktop"],
+    );
+
+    const signature = await client.signDeviceKey(created.keyId, { nonce: "secret-service" });
+    assert.equal(signature.algorithm, "ecdsa_p256_sha256");
+    assert.match(signature.signatureDerBase64, /^[A-Za-z0-9+/]+=*$/);
+
+    await client.deleteDeviceKey(created.keyId);
+    await assert.rejects(() => client.signDeviceKey(created.keyId, { nonce: "deleted" }), /not found/);
+    assert.equal(fs.readdirSync(secretStore).length, 0);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("patched Linux device-key provider scopes Secret Service keys by app id", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-secret-service-app-id-"));
+  const configHome = path.join(workspace, "config");
+  const binDir = path.join(workspace, "bin");
+  const secretStore = path.join(workspace, "secrets");
+  try {
+    installFakeSecretTool(binDir);
+    const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
+    const context = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: {
+          CODEX_LINUX_APP_ID: "codex-cua-lab",
+          CODEX_REMOTE_CONTROL_KEY_STORE: "secret-service",
+          CODEX_TEST_SECRET_STORE: secretStore,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          XDG_CONFIG_HOME: configHome,
+        },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, context);
+    const client = context.module.exports;
+    const created = await client.createDeviceKey("allow_os_protected_nonextractable");
+    const storePath = path.join(configHome, "codex-cua-lab", "remote-control-device-keys-v1.json");
+    const defaultStorePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    const store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    const record = store.keys[created.keyId];
+    const secretAttrs = fakeSecretStoreEntries(secretStore)[0];
+
+    assert.equal(fs.existsSync(defaultStorePath), false);
+    assert.equal(record.privateKeyPkcs8Pem, undefined);
+    assert.equal(record.secretService.attributes.appId, "codex-cua-lab");
+    assert.deepEqual(secretAttrs.slice(0, 4), ["application", "codex-desktop-linux", "app-id", "codex-cua-lab"]);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("patched Linux device-key provider migrates existing file-backed keys to Secret Service", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-secret-migrate-"));
+  const configHome = path.join(workspace, "config");
+  const binDir = path.join(workspace, "bin");
+  const secretStore = path.join(workspace, "secrets");
+  try {
+    const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
+    const fileContext = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: { CODEX_REMOTE_CONTROL_KEY_STORE: "file", XDG_CONFIG_HOME: configHome },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, fileContext);
+    const fileClient = fileContext.module.exports;
+    const created = await fileClient.createDeviceKey("allow_os_protected_nonextractable");
+
+    const storePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    let store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    assert.match(store.keys[created.keyId].privateKeyPkcs8Pem, /BEGIN PRIVATE KEY/);
+
+    installFakeSecretTool(binDir);
+    const secretContext = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: {
+          CODEX_REMOTE_CONTROL_KEY_STORE: "secret-service",
+          CODEX_TEST_SECRET_STORE: secretStore,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          XDG_CONFIG_HOME: configHome,
+        },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, secretContext);
+    const secretClient = secretContext.module.exports;
+
+    assert.equal(JSON.stringify(await secretClient.getDeviceKeyPublic(created.keyId)), JSON.stringify(created));
+    store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    assert.equal(store.keys[created.keyId].privateKeyPkcs8Pem, undefined);
+    assert.equal(store.keys[created.keyId].secretService.backend, "secret-service");
+    assert.equal(fs.readdirSync(secretStore).length, 1);
+
+    const signature = await secretClient.signDeviceKey(created.keyId, { nonce: "migrated" });
+    assert.equal(signature.algorithm, "ecdsa_p256_sha256");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("patched Linux device-key provider migrates legacy side-by-side file-backed keys safely", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-secret-migrate-legacy-app-id-"));
+  const configHome = path.join(workspace, "config");
+  const binDir = path.join(workspace, "bin");
+  const secretStore = path.join(workspace, "secrets");
+  try {
+    const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
+    const fileContext = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: { CODEX_REMOTE_CONTROL_KEY_STORE: "file", XDG_CONFIG_HOME: configHome },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, fileContext);
+    const fileClient = fileContext.module.exports;
+    const created = await fileClient.createDeviceKey("allow_os_protected_nonextractable");
+
+    const legacyStorePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    const scopedStorePath = path.join(configHome, "codex-cua-lab", "remote-control-device-keys-v1.json");
+    let legacyStore = JSON.parse(fs.readFileSync(legacyStorePath, "utf8"));
+    assert.match(legacyStore.keys[created.keyId].privateKeyPkcs8Pem, /BEGIN PRIVATE KEY/);
+
+    installFakeSecretTool(binDir);
+    const secretContext = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: {
+          CODEX_LINUX_APP_ID: "codex-cua-lab",
+          CODEX_REMOTE_CONTROL_KEY_STORE: "secret-service",
+          CODEX_TEST_SECRET_STORE: secretStore,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          XDG_CONFIG_HOME: configHome,
+        },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, secretContext);
+    const secretClient = secretContext.module.exports;
+
+    assert.equal(JSON.stringify(await secretClient.getDeviceKeyPublic(created.keyId)), JSON.stringify(created));
+    const scopedStore = JSON.parse(fs.readFileSync(scopedStorePath, "utf8"));
+    legacyStore = JSON.parse(fs.readFileSync(legacyStorePath, "utf8"));
+    assert.equal(scopedStore.keys[created.keyId].privateKeyPkcs8Pem, undefined);
+    assert.equal(legacyStore.keys[created.keyId].privateKeyPkcs8Pem, undefined);
+    assert.equal(scopedStore.keys[created.keyId].secretService.attributes.appId, "codex-cua-lab");
+    assert.equal(legacyStore.keys[created.keyId].secretService.attributes.appId, "codex-cua-lab");
+    assert.equal(fs.readdirSync(secretStore).length, 1);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("patched Linux device-key provider can read legacy side-by-side metadata and Secret Service entries", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-secret-legacy-app-id-"));
+  const configHome = path.join(workspace, "config");
+  const binDir = path.join(workspace, "bin");
+  const secretStore = path.join(workspace, "secrets");
+  try {
+    installFakeSecretTool(binDir);
+    const keyId = "legacy-side-by-side-key";
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const privateKeyPkcs8Pem = privateKey.export({ type: "pkcs8", format: "pem" });
+    const publicKeySpkiDerBase64 = publicKey.export({ type: "spki", format: "der" }).toString("base64");
+    const legacyStorePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    const legacyAttrs = ["application", "codex-desktop-linux", "kind", "remote-control-device-key", "key-id", keyId];
+    fs.mkdirSync(path.dirname(legacyStorePath), { recursive: true });
+    fs.mkdirSync(secretStore, { recursive: true });
+    fs.writeFileSync(
+      legacyStorePath,
+      JSON.stringify(
+        {
+          keys: {
+            [keyId]: {
+              algorithm: "ecdsa_p256_sha256",
+              keyId,
+              protectionClass: "os_protected_nonextractable",
+              publicKeySpkiDerBase64,
+              createdAt: new Date().toISOString(),
+              secretService: {
+                backend: "secret-service",
+                tool: "secret-tool",
+                attributes: {
+                  application: "codex-desktop-linux",
+                  kind: "remote-control-device-key",
+                  keyId,
+                },
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    fs.writeFileSync(path.join(secretStore, Buffer.from(legacyAttrs.join("\0")).toString("base64url")), privateKeyPkcs8Pem);
+
+    const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
+    const context = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: {
+          CODEX_LINUX_APP_ID: "codex-cua-lab",
+          CODEX_REMOTE_CONTROL_KEY_STORE: "secret-service",
+          CODEX_TEST_SECRET_STORE: secretStore,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          XDG_CONFIG_HOME: configHome,
+        },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+
+    vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, context);
+    const client = context.module.exports;
+    const readBack = await client.getDeviceKeyPublic(keyId);
+    const signature = await client.signDeviceKey(keyId, { nonce: "legacy" });
+
+    assert.equal(readBack.keyId, keyId);
+    assert.equal(readBack.publicKeySpkiDerBase64, publicKeySpkiDerBase64);
+    assert.equal(signature.algorithm, "ecdsa_p256_sha256");
+    assert.match(signature.signatureDerBase64, /^[A-Za-z0-9+/]+=*$/);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
 
@@ -1258,7 +2050,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
         fs.writeFileSync(
           path.join(assetsDir, "app-server-manager-signals-test.js"),
-          syntheticAppServerManagerSignalsBundle(),
+          syntheticAppServerManagerSignalsBundle() + syntheticAppServerManagerStatusBundle(),
         );
         fs.writeFileSync(
           path.join(assetsDir, "app-main-test.js"),
@@ -1316,7 +2108,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedAppServerLaunchFile, /codexLinuxRemoteMobileAppServerArgs/);
         assert.match(patchedAppServerLaunchFile, /`--remote-control`/);
         assert.match(patchedRemoteConnectionVisibilityFile, /codexLinuxRemoteControlLoadGateEnabled/);
-        assert.match(patchedAppMainFile, /`remote_control`/);
+        assert.match(patchedAppMainFile, /\.remote_control=!0/);
         assert.match(patchedVisibilityFile, /navigator\.userAgent\.includes\(`Linux`\)/);
         assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlSettingsTabs/);
         assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlResetMobileSetupAfterRevoke/);
@@ -1328,6 +2120,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedMobileConnectedSettingsFile, /apps on this Linux desktop/);
         assert.match(patchedSignalsFile, /codexLinuxRemoteMobileHydrateUnknownTurn/);
         assert.match(patchedSignalsFile, /codexLinuxRemoteMobileThreadRuntimeStatus/);
+        assert.match(patchedSignalsFile, /codexLinuxRemoteControlShouldReadStatus/);
         assert.match(patchedSidebarProjectGroupsFile, /codexLinuxRemoteMobileProjectlessRemoteTaskId/);
         assert.match(patchedAppMainFile, /codexLinuxRemoteControlEnablementBridge/);
         assert.match(patchedAppMainFile, /codexLinuxRemoteMobileActiveStatus/);
@@ -1400,6 +2193,12 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.ok(
           report.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration" &&
+            patch.status === "applied",
+          ),
+        );
+        assert.ok(
+          report.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-control-status-read-guard" &&
             patch.status === "applied",
           ),
         );

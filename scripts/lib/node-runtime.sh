@@ -44,14 +44,20 @@ Set CODEX_MANAGED_NODE_SHA256 when overriding CODEX_MANAGED_NODE_VERSION or CODE
 
 node_version_parts() {
     local node_path="$1"
+    local probe
     local version
     local major
     local minor
     local patch
 
     [ -x "$node_path" ] || return 1
-    version="$("$node_path" -v 2>/dev/null)" || return 1
-    major="${version#v}"
+    probe="$("$node_path" -e 'process.stdout.write("codex-node-runtime-ok:" + process.versions.node)' 2>/dev/null)" || return 1
+    case "$probe" in
+        codex-node-runtime-ok:*) version="${probe#codex-node-runtime-ok:}" ;;
+        *) return 1 ;;
+    esac
+
+    major="$version"
     minor="${major#*.}"
     patch="${minor#*.}"
     major="${major%%.*}"

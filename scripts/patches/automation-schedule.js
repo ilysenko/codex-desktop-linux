@@ -8,18 +8,29 @@ const {
   readDirectoryNames,
 } = require("./shared.js");
 
+const AUTOMATION_SCHEDULE_MARKER =
+  "return t!=null&&n!=null?{hour:t,minute:n}:e.dtstart?{hour:e.dtstart.getHours(),minute:e.dtstart.getMinutes()}:null";
+const AUTOMATION_SCHEDULE_PATCH_MARKER = "function codexLinuxNormalizeRruleNumbers(";
+
 function findWorkspaceRootDropHandlerBundles(extractedDir) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   return readDirectoryNames(buildDir)
-    .filter((name) => /^workspace-root-drop-handler(?:-[^.]+)?\.js$/.test(name))
+    .filter((name) => name.endsWith(".js"))
     .sort()
-    .map((name) => path.join(buildDir, name));
+    .map((name) => path.join(buildDir, name))
+    .filter((candidate) => {
+      try {
+        const source = fs.readFileSync(candidate, "utf8");
+        return source.includes(AUTOMATION_SCHEDULE_MARKER) ||
+          source.includes(AUTOMATION_SCHEDULE_PATCH_MARKER);
+      } catch {
+        return false;
+      }
+    });
 }
 
 function findAutomationScheduleHelperBlock(source) {
-  const marker =
-    "return t!=null&&n!=null?{hour:t,minute:n}:e.dtstart?{hour:e.dtstart.getHours(),minute:e.dtstart.getMinutes()}:null";
-  const markerIndex = source.indexOf(marker);
+  const markerIndex = source.indexOf(AUTOMATION_SCHEDULE_MARKER);
   if (markerIndex === -1) {
     return null;
   }

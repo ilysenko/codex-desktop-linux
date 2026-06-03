@@ -83,7 +83,7 @@ const explicitButtonMainBundleSource =
   "function codexLinuxReadAloudHandle(e={}){return e.action===`config`?codexLinuxReadAloudConfig():e.action===`setup`?codexLinuxReadAloudSetup(e):e.action===`stop`?codexLinuxReadAloudStop():e.action===`speak`&&e.source===`button`?codexLinuxReadAloudSpeak(e.text,{requireEnabled:!1}):codexLinuxReadAloudReport({spoken:!1,reason:`not-explicit`})}var h={handlers:{\"linux-read-aloud\":async(e)=>codexLinuxReadAloudHandle(e),\"native-desktop-apps\":async()=>({apps:[]})}};";
 
 const dictationSource =
-  "function Ht(){let {recordingDurationMs:T,waveformCanvasRef:E,startWaveformCapture:D,stopWaveformCapture:O,resetWaveformDisplay:k}=Ve(),m={current:null},_={current:null},v={current:[]},y={current:null},C={current:null};let j=async({action:e,handlers:n})=>{let i=`hello`;i.length>0&&(h.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))};let M=async()=>{let e=y.current??`insert`;y.current=null;let r=m.current,i=v.current;v.current=[],r&&(r.ondataavailable=null,r.onstop=null),m.current=null,O();};let P=z(e=>{y.current=e;let t=m.current;if(!t){M();return}if(t.state===`inactive`){M();return}t.stop()});return{startDictation:z(async()=>{let e=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1}});let t=new MediaRecorder(e);m.current=t,v.current=[],t.ondataavailable=e=>{e.data.size>0&&v.current.push(e.data)},t.onstop=()=>{M()},t.start(),l(!0)}),stopDictation:P}}function Kt(){let p={current:null};let x=e=>{!d||p.current!==e.sessionId||(p.current=null,o(`insert`))}}";
+  "function Ht(){let {recordingDurationMs:T,waveformCanvasRef:E,startWaveformCapture:Wc,stopWaveformCapture:D,resetWaveformDisplay:k}=Ve(),m={current:null},_={current:null},g={current:[]},y={current:null},C={current:null};let j=async({action:e,handlers:n})=>{let i=`hello`;i.length>0&&(j.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))};let A=async()=>{let e=y.current??`insert`;y.current=null;let r=m.current,i=g.current;g.current=[],r&&(r.ondataavailable=null,r.onstop=null),m.current=null,D();};let a=z(e=>{y.current=e;let t=m.current;if(!t){A();return}if(t.state===`inactive`){A();return}t.stop()});return{startDictation:z(async()=>{let e=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1}});let t=new MediaRecorder(e);m.current=t,g.current=[],t.ondataavailable=e=>{e.data.size>0&&g.current.push(e.data)},t.onstop=()=>{A()},t.start(),l(!0)}),stopDictation:a}}function Kt(){let p={current:null};let x=e=>{!d||p.current!==e.sessionId||(p.current=null,o(`insert`))}}";
 
 const composerControlSource =
   "function mz(e){let {voiceControls:z}=e;let Be=ze,Ve=F===`empty-message`&&!A&&(ue.isAvailable&&ue.phase!==`active`||J),He=si(fc,`composer.startVoiceMode`),Ue;Ue=()=>{if(ue.phase===`starting`||ue.phase===`active`){ue.stopRealtime();return}if(ue.isAvailable){ue.phase===`inactive`&&ue.startRealtime(`composer_button_existing_thread`);return}ce()};let e=G.formatMessage({id:`composer.realtime.start.aria`,defaultMessage:`Start realtime voice`,description:`Aria label for the button that starts realtime voice mode in the composer`});let n=G.formatMessage({id:`composer.realtime.start.tooltip`,defaultMessage:`Start realtime voice`,description:`Tooltip for the button that starts realtime voice mode in the composer`});}";
@@ -1688,7 +1688,7 @@ test("dictation endpoint patch adds VAD stop-on-silence and send action", () => 
   assert.match(patched, /codexLinuxConversationShouldSendTranscript/);
   assert.match(patched, /e!==`discard`/);
   assert.match(patched, /e===`send`\?n\.onTranscriptSend\(i\):n\.onTranscriptInsert\(i\)/);
-  assert.match(patched, /stop:\(\)=>P\(`send`\)/);
+  assert.match(patched, /stop:\(\)=>a\(`send`\)/);
   assert.match(patched, /o\(e\.action===`discard`\?`discard`:e\.action===`send`\?`send`:`insert`\)/);
 });
 
@@ -1779,7 +1779,7 @@ test("conversation mode patches matching app assets and records report entries",
         fs.mkdirSync(assetsDir, { recursive: true });
         fs.writeFileSync(path.join(buildDir, "main.js"), mainBundleSource);
         fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
-        fs.writeFileSync(path.join(assetsDir, "annotation-comment-editor-card-test.js"), dictationSource);
+        fs.writeFileSync(path.join(assetsDir, "browser-sidebar-comment-light-dismiss-test.js"), dictationSource);
         fs.writeFileSync(path.join(assetsDir, "composer-test.js"), composerControlSource);
         fs.writeFileSync(path.join(assetsDir, "local-conversation-thread-test.js"), assistantRenderSource);
 
@@ -1794,7 +1794,7 @@ test("conversation mode patches matching app assets and records report entries",
           /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:!1\}\)/,
         );
         assert.match(
-          fs.readFileSync(path.join(assetsDir, "annotation-comment-editor-card-test.js"), "utf8"),
+          fs.readFileSync(path.join(assetsDir, "browser-sidebar-comment-light-dismiss-test.js"), "utf8"),
           /codexLinuxConversationEndpoint/,
         );
         assert.match(

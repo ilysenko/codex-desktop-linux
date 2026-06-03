@@ -15,13 +15,21 @@ resolve_script_dir() {
 }
 
 SCRIPT_DIR="$(resolve_script_dir)"
+if [ -z "${CODEX_HOME:-}" ]; then
+    if [ -n "${HOME:-}" ]; then
+        CODEX_HOME="$HOME/.codex"
+    else
+        CODEX_HOME=""
+    fi
+fi
 WEBVIEW_DIR="$SCRIPT_DIR/content/webview"
 LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/$CODEX_LINUX_APP_ID"
 LOG_FILE="$LOG_DIR/launcher.log"
 APP_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$CODEX_LINUX_APP_ID"
 APP_SETTINGS_FILE="$APP_CONFIG_DIR/settings.json"
 CODEX_LINUX_SETTINGS_FILE="$APP_SETTINGS_FILE"
-export CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINUX_WEBVIEW_PORT CODEX_LINUX_SETTINGS_FILE
+CODEX_LINUX_FEATURES_DIR="$SCRIPT_DIR/.codex-linux/features"
+export CODEX_HOME CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINUX_WEBVIEW_PORT CODEX_LINUX_SETTINGS_FILE CODEX_LINUX_FEATURES_DIR
 APP_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$CODEX_LINUX_APP_ID"
 APP_PID_FILE="$APP_STATE_DIR/app.pid"
 WEBVIEW_PID_FILE="$APP_STATE_DIR/webview.pid"
@@ -29,6 +37,10 @@ LAUNCH_ACTION_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$APP_STATE_DIR}/$CODEX_LINUX_APP_I
 LAUNCH_ACTION_SOCKET="$LAUNCH_ACTION_RUNTIME_DIR/launch-action.sock"
 PACKAGED_RUNTIME_HELPER="$SCRIPT_DIR/.codex-linux/codex-packaged-runtime.sh"
 COLD_START_HOOK_DIR="$SCRIPT_DIR/.codex-linux/cold-start.d"
+FEATURE_ENV_DIR="$SCRIPT_DIR/.codex-linux/env.d"
+FEATURE_PRELAUNCH_HOOK_DIR="$SCRIPT_DIR/.codex-linux/prelaunch.d"
+FEATURE_ELECTRON_ARGS_DIR="$SCRIPT_DIR/.codex-linux/electron-args.d"
+FEATURE_AFTER_EXIT_HOOK_DIR="$SCRIPT_DIR/.codex-linux/after-exit.d"
 MANAGED_NODE_BIN_DIR="$SCRIPT_DIR/resources/node-runtime/bin"
 APP_NOTIFICATION_ICON_NAME="$CODEX_LINUX_APP_ID"
 APP_NOTIFICATION_ICON_BUNDLE="$SCRIPT_DIR/.codex-linux/$APP_NOTIFICATION_ICON_NAME.png"
@@ -225,6 +237,8 @@ Environment:
                               Set to 1 to add --disable-gpu-compositing for flicker workarounds
   CODEX_FORCE_RENDERER_ACCESSIBILITY=auto|0|1
                               Override --force-renderer-accessibility; auto skips it under WSLg and wayland-gpu
+  CODEX_ELECTRON_REMOTE_DEBUGGING_PORT=PORT
+                              Opt-in local CDP automation port; binds to 127.0.0.1 and is disabled by default
   CODEX_MULTI_LAUNCH=1        Treat normal launches like --new-instance
   CODEX_MULTI_LAUNCH_PORT_RANGE=START-END
                               Port allocation range for --new-instance (default: CODEX_WEBVIEW_PORT through +4)
@@ -495,6 +509,61 @@ prepend_managed_node_runtime_to_path() {
     export CODEX_MANAGED_NODE_RUNTIME_DIR="$SCRIPT_DIR/resources/node-runtime"
 }
 
+source_feature_env_files() {
+    [ -n "${FEATURE_ENV_DIR:-}" ] || return 0
+    [ -d "$FEATURE_ENV_DIR" ] || return 0
+
+    local env_file
+    local line
+    local name
+    local value
+    for env_file in "$FEATURE_ENV_DIR"/*; do
+        [ -f "$env_file" ] || continue
+        echo "Loading Linux feature environment: $env_file"
+        while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in
+                ""|\#*) continue ;;
+                *=*) ;;
+                *)
+                    echo "Ignoring Linux feature env line without KEY=VALUE in $env_file"
+                    continue
+                    ;;
+            esac
+            name="${line%%=*}"
+            value="${line#*=}"
+            case "$name" in
+                ""|[!A-Za-z_]*|*[!A-Za-z0-9_]*)
+                    echo "Ignoring Linux feature env line with invalid key '$name' in $env_file"
+                    continue
+                    ;;
+            esac
+            export "$name=$value"
+        done < "$env_file"
+    done
+}
+
+run_feature_prelaunch_hooks() {
+    [ -n "${FEATURE_PRELAUNCH_HOOK_DIR:-}" ] || return 0
+    [ -d "$FEATURE_PRELAUNCH_HOOK_DIR" ] || return 0
+
+    local hook
+    for hook in "$FEATURE_PRELAUNCH_HOOK_DIR"/*; do
+        [ -f "$hook" ] || continue
+        [ -x "$hook" ] || continue
+        echo "Running Linux feature prelaunch hook: $hook"
+        CODEX_HOME="$CODEX_HOME" \
+        CODEX_LINUX_APP_DIR="$SCRIPT_DIR" \
+        CODEX_LINUX_APP_STATE_DIR="$APP_STATE_DIR" \
+        CODEX_LINUX_FEATURES_DIR="$CODEX_LINUX_FEATURES_DIR" \
+        CODEX_LINUX_LAUNCHER_LOG="$LOG_FILE" \
+        CODEX_LINUX_LAUNCHER_CMD="${CODEX_LINUX_LAUNCHER_CMD:-$SCRIPT_DIR/start.sh}" \
+        CODEX_LINUX_FEATURE_HOOK_PHASE="prelaunch" \
+        CODEX_UPDATE_MANAGER_PATH="${CODEX_UPDATE_MANAGER_PATH:-}" \
+            "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR"
+    done
+}
+
 bundled_plugin_version() {
     local plugin_json="$1"
 
@@ -633,6 +702,7 @@ write_chrome_native_host_manifests() {
 import json
 import pathlib
 import re
+import shlex
 import sys
 
 host_path = sys.argv[1]
@@ -667,18 +737,32 @@ if not isinstance(host_name, str) or re.fullmatch(r"[A-Za-z0-9_.]+", host_name) 
     raise SystemExit("Invalid Chrome native host name in bundled plugin metadata")
 
 manifest_name = f"{host_name}.json"
-manifest = {
-    "name": host_name,
-    "description": "Codex chrome native messaging host",
-    "type": "stdio",
-    "path": host_path,
-    "allowed_origins": [f"chrome-extension://{extension_id}/"],
-}
-text = json.dumps(manifest, separators=(",", ":"))
+def manifest_text(native_host_path):
+    manifest = {
+        "name": host_name,
+        "description": "Codex chrome native messaging host",
+        "type": "stdio",
+        "path": str(native_host_path),
+        "allowed_origins": [f"chrome-extension://{extension_id}/"],
+    }
+    return json.dumps(manifest, separators=(",", ":"))
+
+def ensure_flatpak_native_host_wrapper():
+    wrapper_path = home / ".var/app/com.google.Chrome/config/codex/extension-host-flatpak-wrapper.sh"
+    wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+    wrapper_text = "#!/bin/sh\nexec /usr/bin/flatpak-spawn --host " + shlex.quote(host_path) + ' "$@"\n'
+    try:
+        if wrapper_path.read_text(encoding="utf-8") != wrapper_text:
+            wrapper_path.write_text(wrapper_text, encoding="utf-8")
+    except OSError:
+        wrapper_path.write_text(wrapper_text, encoding="utf-8")
+    wrapper_path.chmod(0o755)
+    return wrapper_path
 
 manifest_locations = [
     ".config/google-chrome/NativeMessagingHosts",
     ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",
+    ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts",
     ".config/chromium/NativeMessagingHosts",
 ]
 
@@ -702,6 +786,10 @@ for relative in manifest_locations:
     directory = home / relative
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / manifest_name
+    native_host_path = host_path
+    if relative == ".var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts":
+        native_host_path = ensure_flatpak_native_host_wrapper()
+    text = manifest_text(native_host_path)
     try:
         if path.read_text(encoding="utf-8") == text:
             continue
@@ -826,6 +914,9 @@ sync_chrome_bundled_plugin_cache() {
 
     host_path="$cache_root/latest/extension-host/linux/$extension_arch/extension-host"
     [ -x "$host_path" ] || return 0
+    if command -v flatpak >/dev/null 2>&1 && flatpak info com.google.Chrome >/dev/null 2>&1; then
+        flatpak override --user --talk-name=org.freedesktop.Flatpak com.google.Chrome >/dev/null 2>&1 || true
+    fi
     write_chrome_native_host_manifests "$host_path" "$cache_root/latest" || \
         echo "Chrome native host manifest sync failed; continuing with existing browser manifests."
 }
@@ -993,6 +1084,81 @@ sync_read_aloud_bundled_plugin_cache() {
     ln -sfn "$cache_root/latest" "$marketplace_plugin_link"
 }
 
+ensure_node_repl_js_approval() {
+    local codex_home="${CODEX_HOME:-$HOME/.codex}"
+    local config_file="$codex_home/config.toml"
+
+    [ -f "$config_file" ] || return 0
+
+    python3 - "$config_file" <<'PY' || \
+        echo "Browser Use node_repl approval config heal failed; continuing with existing config."
+import pathlib
+import re
+import sys
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+config_path = pathlib.Path(sys.argv[1])
+try:
+    text = config_path.read_text(encoding="utf-8")
+except OSError:
+    raise SystemExit(0)
+
+if not re.search(r"(?m)^\[mcp_servers\.node_repl\]\s*$", text):
+    raise SystemExit(0)
+
+table_header = "[mcp_servers.node_repl.tools.js]"
+table_match = re.search(r"(?m)^\[mcp_servers\.node_repl\.tools\.js\]\s*$", text)
+
+if table_match is None:
+    new_text = text
+    if new_text and not new_text.endswith("\n"):
+        new_text += "\n"
+    new_text += f"\n{table_header}\napproval_mode = \"approve\"\n"
+else:
+    next_table = re.search(r"(?m)^\[[^]\n]+\]\s*$", text[table_match.end():])
+    block_end = len(text) if next_table is None else table_match.end() + next_table.start()
+    block = text[table_match.start():block_end]
+    if re.search(r"(?m)^\s*approval_mode\s*=\s*\"approve\"\s*$", block):
+        raise SystemExit(0)
+    if re.search(r"(?m)^\s*approval_mode\s*=", block):
+        block = re.sub(
+            r"(?m)^(\s*approval_mode\s*=\s*).*$",
+            r'\1"approve"',
+            block,
+            count=1,
+        )
+    else:
+        line_end = block.find("\n")
+        if line_end == -1:
+            block = block + "\napproval_mode = \"approve\"\n"
+        else:
+            block = block[: line_end + 1] + "approval_mode = \"approve\"\n" + block[line_end + 1 :]
+    new_text = text[:table_match.start()] + block + text[block_end:]
+
+if new_text == text:
+    raise SystemExit(0)
+if tomllib is not None:
+    tomllib.loads(new_text)
+config_path.write_text(new_text, encoding="utf-8")
+PY
+}
+
+start_node_repl_js_approval_repair_loop() {
+    NODE_REPL_APPROVAL_REPAIR_PID=""
+    (
+        local delay
+        for delay in ${CODEX_NODE_REPL_APPROVAL_REPAIR_DELAYS:-1 3 8 15}; do
+            sleep "$delay" || exit 0
+            ensure_node_repl_js_approval
+        done
+    ) &
+    NODE_REPL_APPROVAL_REPAIR_PID=$!
+}
+
 resolve_browser_use_runtime_env() {
     if [ -z "${CODEX_ELECTRON_RESOURCES_PATH:-}" ]; then
         export CODEX_ELECTRON_RESOURCES_PATH="$SCRIPT_DIR/resources"
@@ -1038,11 +1204,45 @@ run_cold_start_hooks() {
         [ -x "$hook" ] || continue
         echo "Starting cold-start hook: $hook"
         (
+            CODEX_HOME="$CODEX_HOME" \
             CODEX_LINUX_APP_DIR="$SCRIPT_DIR" \
             CODEX_LINUX_APP_STATE_DIR="$APP_STATE_DIR" \
+            CODEX_LINUX_FEATURES_DIR="$CODEX_LINUX_FEATURES_DIR" \
             CODEX_LINUX_LAUNCHER_LOG="$LOG_FILE" \
+            CODEX_LINUX_LAUNCHER_CMD="${CODEX_LINUX_LAUNCHER_CMD:-$SCRIPT_DIR/start.sh}" \
+            CODEX_LINUX_FEATURE_HOOK_PHASE="cold-start" \
+            CODEX_UPDATE_MANAGER_PATH="${CODEX_UPDATE_MANAGER_PATH:-}" \
             "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR"
         ) >>"$LOG_FILE" 2>&1 &
+    done
+}
+
+run_feature_after_exit_hooks() {
+    [ -n "${FEATURE_AFTER_EXIT_HOOK_DIR:-}" ] || return 0
+    [ -d "$FEATURE_AFTER_EXIT_HOOK_DIR" ] || return 0
+
+    local electron_status="${1:-0}"
+    local hook hook_status
+    for hook in "$FEATURE_AFTER_EXIT_HOOK_DIR"/*; do
+        [ -f "$hook" ] || continue
+        [ -x "$hook" ] || continue
+        echo "Running Linux feature after-exit hook: $hook"
+        set +e
+        CODEX_HOME="$CODEX_HOME" \
+        CODEX_LINUX_APP_DIR="$SCRIPT_DIR" \
+        CODEX_LINUX_APP_STATE_DIR="$APP_STATE_DIR" \
+        CODEX_LINUX_FEATURES_DIR="$CODEX_LINUX_FEATURES_DIR" \
+        CODEX_LINUX_LAUNCHER_LOG="$LOG_FILE" \
+        CODEX_LINUX_LAUNCHER_CMD="${CODEX_LINUX_LAUNCHER_CMD:-$SCRIPT_DIR/start.sh}" \
+        CODEX_LINUX_FEATURE_HOOK_PHASE="after-exit" \
+        CODEX_LINUX_ELECTRON_EXIT_STATUS="$electron_status" \
+        CODEX_UPDATE_MANAGER_PATH="${CODEX_UPDATE_MANAGER_PATH:-}" \
+            "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR" "$electron_status"
+        hook_status=$?
+        set -e
+        if [ "$hook_status" -ne 0 ]; then
+            echo "Linux feature after-exit hook failed with status $hook_status: $hook"
+        fi
     done
 }
 
@@ -1170,8 +1370,16 @@ find_codex_cli() {
         return 0
     fi
 
-    if [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
-        export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    local nvm_dir="${NVM_DIR:-}"
+    if [ -z "$nvm_dir" ]; then
+        if [ -s "${XDG_CONFIG_HOME:-$HOME/.config}/nvm/nvm.sh" ]; then
+            nvm_dir="${XDG_CONFIG_HOME:-$HOME/.config}/nvm"
+        else
+            nvm_dir="$HOME/.nvm"
+        fi
+    fi
+    if [ -s "$nvm_dir/nvm.sh" ]; then
+        export NVM_DIR="$nvm_dir"
         # shellcheck disable=SC1090
         . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true
         if command -v codex >/dev/null 2>&1; then
@@ -1184,6 +1392,8 @@ find_codex_cli() {
     for candidate in \
         "$HOME/.bun/bin/codex" \
         "$HOME/.npm-global/bin/codex" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/nvm/versions/node/current/bin/codex" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/nvm/versions/node"/*/bin/codex \
         "$HOME/.nvm/versions/node/current/bin/codex" \
         "$HOME/.nvm/versions/node"/*/bin/codex \
         "$HOME/.local/share/pnpm/codex" \
@@ -1249,6 +1459,14 @@ resolve_update_manager_path() {
 
 has_update_manager() {
     resolve_update_manager_path >/dev/null 2>&1
+}
+
+export_feature_runtime_env() {
+    CODEX_LINUX_APP_DIR="$SCRIPT_DIR"
+    CODEX_LINUX_APP_STATE_DIR="$APP_STATE_DIR"
+    CODEX_LINUX_LAUNCHER_CMD="$SCRIPT_DIR/start.sh"
+    export CODEX_LINUX_APP_DIR CODEX_LINUX_APP_STATE_DIR CODEX_LINUX_LAUNCHER_CMD
+    resolve_update_manager_path >/dev/null 2>&1 || true
 }
 
 run_update_manager() {
@@ -1374,6 +1592,21 @@ webview_origin_is_reachable() {
     verify_webview_origin "$WEBVIEW_ORIGIN/index.html" >/dev/null 2>&1
 }
 
+webview_origin_is_reachable_fast() {
+    local url="$WEBVIEW_ORIGIN/index.html"
+    local body err
+
+    err=$(mktemp 2>/dev/null) || err="${TMPDIR:-/tmp}/codex-curl-err.$$"
+    if ! body="$(curl --disable --noproxy 127.0.0.1,localhost --silent --show-error --fail --max-time 0.2 "$url" 2>"$err")"; then
+        rm -f "$err"
+        return 1
+    fi
+    rm -f "$err"
+
+    [[ "$body" == *"<title>Codex</title>"* ]] || return 1
+    [[ "$body" == *"startup-loader"* ]] || return 1
+}
+
 webview_port_is_open() {
     # bash /dev/tcp connect, capped at 0.2 s by a watchdog kill.
     # Replaces python3 socket.connect heredoc (~3 ms vs 13–60 ms here).
@@ -1382,7 +1615,9 @@ webview_port_is_open() {
     # the 200 ms cap it would enforce.
     local probe_pid kill_pid rc=1 self_pid=$$
     ( trap - EXIT
-      exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" ) 2>/dev/null &
+      exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" || exit 1
+      exec 3>&- 3<&-
+      exit 0 ) 2>/dev/null &
     probe_pid=$!
     # Watchdog: before SIGKILL, verify /proc/<probe>/stat still reports us as
     # the parent. Guards against PID reuse: if the probe has already exited
@@ -1411,17 +1646,24 @@ webview_port_is_open() {
 wait_for_webview_server() {
     echo "Waiting for webview server on :$CODEX_LINUX_WEBVIEW_PORT"
 
-    # 250 × 20 ms = same 5 s overall budget as 50 × 100 ms, but with 5× tighter
-    # polling cadence so the typical case detects readiness within one cycle
-    # of the server actually binding instead of within the next 100 ms tick.
+    # Treat the actual localhost webview response as the readiness signal.
+    # Under cold-login load the shell /dev/tcp probe can be a little too brittle,
+    # while a short curl against index.html matches what Electron needs next.
     local attempt
-    for attempt in $(seq 1 250); do
-        if webview_port_is_open; then
+    for attempt in $(seq 1 20); do
+        if webview_origin_is_reachable_fast; then
             echo "Webview server is ready"
             return 0
         fi
-        sleep 0.02
+        sleep 0.05
     done
+
+    # The fast probe caps curl at 0.2s; a valid local webview can answer a little
+    # slower during cold start. Confirm with the full 2s origin check before failing.
+    if webview_origin_is_reachable; then
+        echo "Webview server is ready"
+        return 0
+    fi
 
     return 1
 }
@@ -1685,6 +1927,12 @@ ensure_webview_server() {
     fi
 
     if ! kill -0 "$STARTED_WEBVIEW_PID" 2>/dev/null; then
+        if webview_origin_is_reachable && adopt_discovered_webview_server; then
+            echo "Adopted concurrently-started verified webview server on :$CODEX_LINUX_WEBVIEW_PORT"
+            log_phase "webview_reused"
+            return 0
+        fi
+
         notify_error "$CODEX_LINUX_APP_DISPLAY_NAME webview server exited before Electron launch. Another process may already be using port $CODEX_LINUX_WEBVIEW_PORT."
         exit 1
     fi
@@ -1779,6 +2027,33 @@ falsey_env_value() {
     esac
 }
 
+normalize_electron_remote_debugging_port() {
+    local value="${1:-}"
+
+    if [ -z "$value" ] || falsey_env_value "$value"; then
+        return 1
+    fi
+
+    case "$value" in
+        *[!0-9]*)
+            echo "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must be a TCP port number" >&2
+            return 2
+            ;;
+    esac
+
+    while [ "${value#0}" != "$value" ]; do
+        value="${value#0}"
+    done
+    [ -n "$value" ] || value=0
+
+    if [ "${#value}" -gt 5 ] || [ "$value" -lt 1 ] || [ "$value" -gt 65535 ]; then
+        echo "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT must be between 1 and 65535" >&2
+        return 2
+    fi
+
+    printf '%s\n' "$value"
+}
+
 scan_electron_rendering_arg() {
     case "$1" in
         --ozone-platform=*)
@@ -1796,6 +2071,12 @@ scan_electron_rendering_arg() {
             ;;
         --disable-gpu-compositing|--disable-gpu-compositing=*)
             ELECTRON_GPU_COMPOSITING_SWITCH_PROVIDED=1
+            ;;
+        --remote-debugging-port|--remote-debugging-port=*)
+            ELECTRON_REMOTE_DEBUGGING_PORT_SWITCH_PROVIDED=1
+            ;;
+        --remote-debugging-address|--remote-debugging-address=*)
+            ELECTRON_REMOTE_DEBUGGING_ADDRESS_SWITCH_PROVIDED=1
             ;;
     esac
 }
@@ -1919,6 +2200,8 @@ set_electron_defaults() {
     ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS=0
     ELECTRON_GPU_COMPOSITING_DISABLED=0
     ELECTRON_GPU_COMPOSITING_SWITCH_PROVIDED=0
+    ELECTRON_REMOTE_DEBUGGING_PORT_SWITCH_PROVIDED=0
+    ELECTRON_REMOTE_DEBUGGING_ADDRESS_SWITCH_PROVIDED=0
     ELECTRON_RENDERER_ACCESSIBILITY_FORCED=0
     ELECTRON_ARGS=()
     local passthrough=0
@@ -1999,6 +2282,25 @@ set_electron_defaults() {
     apply_electron_rendering_profile
 }
 
+append_feature_electron_args() {
+    [ -n "${FEATURE_ELECTRON_ARGS_DIR:-}" ] || return 0
+    [ -d "$FEATURE_ELECTRON_ARGS_DIR" ] || return 0
+
+    local args_file
+    local line
+    for args_file in "$FEATURE_ELECTRON_ARGS_DIR"/*; do
+        [ -f "$args_file" ] || continue
+        echo "Loading Linux feature Electron args: $args_file"
+        while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in
+                ""|\#*) continue ;;
+            esac
+            ELECTRON_LAUNCH_ARGS+=("$line")
+        done < "$args_file"
+    done
+}
+
 build_electron_launch_args() {
     ELECTRON_LAUNCH_ARGS=(
         --no-sandbox
@@ -2040,6 +2342,22 @@ build_electron_launch_args() {
 
     if [ "$ELECTRON_OZONE_PLATFORM" = "wayland" ]; then
         ELECTRON_LAUNCH_ARGS+=(--enable-features=WaylandWindowDecorations)
+    fi
+
+    append_feature_electron_args
+    local remote_debugging_port
+    if remote_debugging_port="$(normalize_electron_remote_debugging_port "${CODEX_ELECTRON_REMOTE_DEBUGGING_PORT:-}")"; then
+        if [ "$ELECTRON_REMOTE_DEBUGGING_PORT_SWITCH_PROVIDED" -eq 0 ]; then
+            if [ "$ELECTRON_REMOTE_DEBUGGING_ADDRESS_SWITCH_PROVIDED" -ne 0 ]; then
+                echo "CODEX_ELECTRON_REMOTE_DEBUGGING_PORT cannot be combined with --remote-debugging-address unless --remote-debugging-port is also explicit" >&2
+                return 2
+            fi
+            ELECTRON_LAUNCH_ARGS+=(--remote-debugging-port="$remote_debugging_port")
+            ELECTRON_LAUNCH_ARGS+=(--remote-debugging-address=127.0.0.1)
+        fi
+    else
+        local status=$?
+        [ "$status" -eq 1 ] || return "$status"
     fi
 }
 
@@ -2092,22 +2410,27 @@ launch_electron() {
         echo "$ELECTRON_PID" > "$APP_PID_FILE"
     fi
     log_phase "electron_spawned"
+    start_node_repl_js_approval_repair_loop
 
     set +e
     wait "$ELECTRON_PID"
     local status=$?
     set -e
+    run_feature_after_exit_hooks "$status"
     return "$status"
 }
 
 hydrate_graphical_session_env
 configure_side_by_side_app_env
+export_feature_runtime_env
 load_packaged_runtime_helper
 prepend_managed_node_runtime_to_path
+source_feature_env_files
 register_url_scheme_handlers
 reconcile_runtime_state
 detect_warm_start
 trap cleanup_launcher EXIT
+ensure_node_repl_js_approval
 
 if send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"; then
     echo "Sent launch args over warm-start IPC"
@@ -2121,6 +2444,8 @@ if using_second_instance_handoff; then
     echo "Detected running Codex Desktop pid=$RUNNING_APP_PID; using Electron second-instance handoff"
     log_phase "second_instance_handoff_ready"
 elif needs_cold_start; then
+    run_feature_prelaunch_hooks
+    log_phase "feature_prelaunch"
     run_packaged_runtime_prelaunch
     log_phase "packaged_prelaunch"
     ensure_webview_server
@@ -2135,7 +2460,14 @@ if needs_cold_start && [ -z "${CODEX_CLI_PATH:-}" ]; then
     log_phase "cli_lookup"
 fi
 export CHROME_DESKTOP="${CHROME_DESKTOP:-$CODEX_LINUX_APP_ID.desktop}"
-export ELECTRON_RENDERER_URL="${ELECTRON_RENDERER_URL:-$WEBVIEW_ORIGIN/}"
+if truthy_env_value "${CODEX_LINUX_PIN_RENDERER_URL:-}" && ! truthy_env_value "${CODEX_LINUX_ALLOW_RENDERER_URL_OVERRIDE:-}"; then
+    if [ -n "${ELECTRON_RENDERER_URL:-}" ] && [ "$ELECTRON_RENDERER_URL" != "$WEBVIEW_ORIGIN/" ]; then
+        echo "Ignoring inherited ELECTRON_RENDERER_URL; set CODEX_LINUX_ALLOW_RENDERER_URL_OVERRIDE=1 to allow overrides"
+    fi
+    export ELECTRON_RENDERER_URL="$WEBVIEW_ORIGIN/"
+else
+    export ELECTRON_RENDERER_URL="${ELECTRON_RENDERER_URL:-$WEBVIEW_ORIGIN/}"
+fi
 
 if needs_cold_start && [ -z "$CODEX_CLI_PATH" ]; then
     if is_interactive_terminal; then
@@ -2179,6 +2511,7 @@ if needs_cold_start; then
     run_cold_start_hooks
 fi
 resolve_browser_use_runtime_env
+ensure_node_repl_js_approval
 
 echo "Using CODEX_CLI_PATH=${CODEX_CLI_PATH:-warm-start-skip}"
 echo "Using managed Node.js runtime=${CODEX_MANAGED_NODE_RUNTIME_DIR:-$SCRIPT_DIR/resources/node-runtime}"
