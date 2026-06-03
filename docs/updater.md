@@ -9,7 +9,10 @@ It:
   background on app launch when stale
 - rebuilds a local native package with `/opt/codex-desktop/update-builder`
 - waits for Electron to exit before installing a ready update
-- runs unprivileged and uses `pkexec` only for the final package install
+- runs unprivileged; the final package install uses `pkexec` when a graphical
+  polkit authentication agent is available, or keeps the package ready and
+  reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...`
+  command when no auth agent is available
 - performs best-effort Codex CLI preflight from the launcher
 
 ## Inspect State
