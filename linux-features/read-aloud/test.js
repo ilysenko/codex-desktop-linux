@@ -886,7 +886,7 @@ test("settings nav patches add a visible read aloud section after computer use",
   assert.match(patchedPage, /"read-aloud-settings":codexLinuxReadAloudSettingsIcon/);
   assert.match(patchedPage, /`computer-use`,`read-aloud-settings`,`data-controls`/);
   assert.match(patchedPage, /`computer-use`,`read-aloud-settings`,`local-environments`/);
-  assert.match(patchedPage, /case`read-aloud-settings`:return a;case`computer-use`/);
+  assert.match(patchedPage, /case`read-aloud-settings`:return!0;case`computer-use`/);
   assert.match(patchedPage, /case`read-aloud-settings`:z=!1;break bb0;case`computer-use`/);
 });
 
@@ -906,7 +906,47 @@ test("settings nav patch adds the read aloud icon to the current settings page i
     /"browser-use":me,"computer-use":fe,"read-aloud-settings":codexLinuxReadAloudSettingsIcon,"local-environments":pe/,
   );
   assert.match(patched, /`computer-use`,`read-aloud-settings`,`data-controls`/);
+  assert.match(patched, /case`read-aloud-settings`:return!0;case`computer-use`/);
   assert.match(patched, /case`read-aloud-settings`:z=!1;break bb0;case`computer-use`/);
+});
+
+test("settings nav patch repairs stale hidden read aloud visibility gates", () => {
+  const source =
+    "case`profile`:return y;case`read-aloud-settings`:return a;case`computer-use`:return A;case`browser-use`:return L;";
+  const patched = twice(applySettingsPageNavPatch, source);
+  assert.equal(
+    patched,
+    "case`profile`:return y;case`read-aloud-settings`:return!0;case`computer-use`:return A;case`browser-use`:return L;",
+  );
+});
+
+test("settings nav patch adds read aloud visibility before drifted computer-use aliases", () => {
+  const source = "case`profile`:return b;case`computer-use`:return E;case`browser-use`:return D;";
+  const patched = twice(applySettingsPageNavPatch, source);
+  assert.equal(
+    patched,
+    "case`profile`:return b;case`read-aloud-settings`:return!0;case`computer-use`:return E;case`browser-use`:return D;",
+  );
+});
+
+test("settings nav patch defines the read aloud icon before var icon maps", () => {
+  const page = [
+    "var $=i();",
+    "var codexLinuxAgentWorkspaceSettingsIcon=e=>(0,$.jsxs)(`svg`,{children:[]});",
+    'var qe={"general-settings":I,profile:J,"browser-use":ke,"computer-use":De,"read-aloud-settings":codexLinuxReadAloudSettingsIcon,"local-environments":Oe,"agent-workspaces":codexLinuxAgentWorkspaceSettingsIcon,worktrees:q};',
+    "Ye=[`browser-use`,`computer-use`,`data-controls`];",
+    "Ze=[{slugs:[`browser-use`,`computer-use`,`local-environments`]}];",
+    "case`computer-use`:return A;",
+    "case`computer-use`:I=T.isLoading||g.isLoading;break bb0;",
+  ].join("");
+  const patched = twice(applySettingsPageNavPatch, page);
+  assert.match(patched, /var codexLinuxReadAloudSettingsIcon=e=>\(0,\$\.jsxs\)/);
+  assert.ok(
+    patched.indexOf("codexLinuxReadAloudSettingsIcon=e=>") <
+      patched.indexOf('"read-aloud-settings":codexLinuxReadAloudSettingsIcon'),
+  );
+  assert.match(patched, /case`read-aloud-settings`:return!0;case`computer-use`/);
+  assert.match(patched, /case`read-aloud-settings`:I=!1;break bb0;case`computer-use`/);
 });
 
 test("app route patch wires read aloud settings to the generated page export", () => {

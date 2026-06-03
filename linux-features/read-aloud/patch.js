@@ -348,7 +348,9 @@ function applySettingsSharedNavPatch(source) {
 }
 
 function detectSettingsPageJsxRuntime(source) {
-  const iconMatch = source.match(/[,(]([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*=>\(0,([A-Za-z_$][\w$]*)\.jsxs\)\(\`svg\`,/);
+  const iconMatch = source.match(
+    /(?:var |let |const |[,;(])([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*=>\(0,([A-Za-z_$][\w$]*)\.jsxs\)\(\`svg\`,/,
+  );
   return iconMatch?.[2] ?? "Z";
 }
 
@@ -363,10 +365,23 @@ function applySettingsPageNavPatch(source) {
     if (patched.includes(",pe={")) {
       patched = patched.replace(",pe={", `,${iconSource},pe={`);
     } else {
-      patched = patched.replace(
-        /,([A-Za-z_$][\w$]*)=\{"general-settings":/,
-        `,${iconSource},$1={"general-settings":`,
+      const iconMapMatch = patched.match(
+        /(?:var |let |const |,)[A-Za-z_$][\w$]*=\{(?=[^;\n]*"general-settings":)(?=[^;\n]*"computer-use":)[^;\n]*\}/,
       );
+      if (iconMapMatch != null) {
+        const index = iconMapMatch.index ?? 0;
+        if (iconMapMatch[0].startsWith(",")) {
+          patched = `${patched.slice(0, index)},${iconSource}${patched.slice(index)}`;
+        } else {
+          const keyword = iconMapMatch[0].match(/^(var |let |const )/)?.[1] ?? "var ";
+          patched = `${patched.slice(0, index)}${keyword}${iconSource};${patched.slice(index)}`;
+        }
+      } else {
+        patched = patched.replace(
+          /,([A-Za-z_$][\w$]*)=\{"general-settings":/,
+          `,${iconSource},$1={"general-settings":`,
+        );
+      }
     }
   }
   if (!patched.includes(`"read-aloud-settings":codexLinuxReadAloudSettingsIcon`)) {
@@ -397,11 +412,18 @@ function applySettingsPageNavPatch(source) {
       "`browser-use`,`computer-use`,`read-aloud-settings`,`local-environments`",
     );
   }
-  if (!patched.includes("case`read-aloud-settings`:return a;case`computer-use`")) {
-    patched = patched.replace(
-      "case`computer-use`:return A;",
-      "case`read-aloud-settings`:return a;case`computer-use`:return A;",
-    );
+  if (!patched.includes("case`read-aloud-settings`:return!0;case`computer-use`")) {
+    const staleVisibilityRegex =
+      /case`read-aloud-settings`:return[^;]+;(case`computer-use`:return\s*[A-Za-z_$][\w$]*;)/;
+    const currentVisibilityRegex = /(case`computer-use`:return\s*[A-Za-z_$][\w$]*;)/;
+    if (staleVisibilityRegex.test(patched)) {
+      patched = patched.replace(staleVisibilityRegex, "case`read-aloud-settings`:return!0;$1");
+    } else {
+      patched = patched.replace(
+        currentVisibilityRegex,
+        "case`read-aloud-settings`:return!0;$1",
+      );
+    }
   }
   if (!/case`read-aloud-settings`:[A-Za-z_$][\w$]*=!1;break bb0;case`computer-use`/.test(patched)) {
     const currentLoadingCaseRegex =
@@ -411,11 +433,12 @@ function applySettingsPageNavPatch(source) {
         currentLoadingCaseRegex,
         "case`read-aloud-settings`:$1=!1;break bb0;case`computer-use`:$1=$2.isLoading||$3.isLoading;break bb0;",
       );
+    } else {
+      patched = patched.replace(
+        "case`computer-use`:z=k.isLoading||m.isLoading;break bb0;",
+        "case`read-aloud-settings`:z=!1;break bb0;case`computer-use`:z=k.isLoading||m.isLoading;break bb0;",
+      );
     }
-    patched = patched.replace(
-      "case`computer-use`:z=k.isLoading||m.isLoading;break bb0;",
-      "case`read-aloud-settings`:z=!1;break bb0;case`computer-use`:z=k.isLoading||m.isLoading;break bb0;",
-    );
   }
   return patched;
 }

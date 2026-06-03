@@ -1,0 +1,10 @@
+{
+  "id": "x11-ewmh-computer-use",
+  "title": "X11/EWMH Computer Use",
+  "description": "Disabled-by-default adapter for the standalone codex-computer-use-x11 MCP plugin.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patches.js",
+    "stageHook": "./stage.sh"
+  }
+}
