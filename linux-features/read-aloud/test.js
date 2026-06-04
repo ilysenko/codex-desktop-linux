@@ -145,6 +145,121 @@ test("kokoro stdin runner compiles and makes a bounded first streaming chunk", (
   assert.equal(chunkCheck.status, 0, chunkCheck.stderr);
 });
 
+test("kokoro stdin runner waits for first PCM before launching aplay", (t) => {
+  const python = spawnSync("python3", ["--version"], { encoding: "utf8" });
+  if (python.error) {
+    t.skip("python3 not available");
+    return;
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-kokoro-"));
+  try {
+    const binDir = path.join(root, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const eventsPath = path.join(root, "events.log");
+    const pcmPath = path.join(root, "audio.pcm");
+
+    fs.writeFileSync(
+      path.join(root, "kokoro_onnx.py"),
+      [
+        "import os",
+        "import time",
+        "from pathlib import Path",
+        "",
+        "def event(name):",
+        "    with open(os.environ['KOKORO_TEST_EVENTS'], 'a', encoding='utf8') as handle:",
+        "        handle.write(name + '\\n')",
+        "",
+        "class Kokoro:",
+        "    def __init__(self, model, voices):",
+        "        self.model = model",
+        "        self.voices = voices",
+        "",
+        "    def create(self, chunk, voice, speed, lang):",
+        "        event('create-start')",
+        "        time.sleep(0.05)",
+        "        event('create-end')",
+        "        import numpy as np",
+        "        return np.array([0.25, -0.25]), 24000",
+      ].join("\n") + "\n",
+    );
+    fs.writeFileSync(
+      path.join(root, "numpy.py"),
+      [
+        "class Array:",
+        "    def __init__(self, values):",
+        "        self.values = values",
+        "",
+        "    def __mul__(self, scalar):",
+        "        return Array([value * scalar for value in self.values])",
+        "",
+        "    def astype(self, dtype):",
+        "        return self",
+        "",
+        "    def tobytes(self):",
+        "        return b'\\x01\\x00\\xff\\xff'",
+        "",
+        "def array(values):",
+        "    return Array(values)",
+        "",
+        "def clip(samples, low, high):",
+        "    return samples",
+      ].join("\n") + "\n",
+    );
+
+    const fakeAplay = path.join(binDir, "aplay");
+    fs.writeFileSync(
+      fakeAplay,
+      [
+        "#!/usr/bin/env python3",
+        "import os",
+        "import sys",
+        "from pathlib import Path",
+        "",
+        "def event(name):",
+        "    with open(os.environ['KOKORO_TEST_EVENTS'], 'a', encoding='utf8') as handle:",
+        "        handle.write(name + '\\n')",
+        "",
+        "event('aplay-start:' + ' '.join(sys.argv[1:]))",
+        "data = sys.stdin.buffer.read()",
+        "Path(os.environ['KOKORO_TEST_PCM']).write_bytes(data)",
+        "event('aplay-bytes:' + str(len(data)))",
+      ].join("\n") + "\n",
+    );
+    fs.chmodSync(fakeAplay, 0o755);
+
+    const runner = path.join(__dirname, "bin", "kokoro_stdin.py");
+    const result = spawnSync("python3", [runner], {
+      encoding: "utf8",
+      input: "First sentence for playback. ".repeat(12),
+      env: {
+        ...process.env,
+        CODEX_LINUX_READ_ALOUD_KOKORO_MODEL: path.join(root, "model.onnx"),
+        CODEX_LINUX_READ_ALOUD_KOKORO_VOICES: path.join(root, "voices.bin"),
+        KOKORO_TEST_EVENTS: eventsPath,
+        KOKORO_TEST_PCM: pcmPath,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH || ""}`,
+        PYTHONDONTWRITEBYTECODE: "1",
+        PYTHONPATH: root,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+
+    const events = fs.readFileSync(eventsPath, "utf8").trim().split("\n");
+    const firstCreateEnd = events.indexOf("create-end");
+    const aplayStart = events.findIndex((line) => line.startsWith("aplay-start:"));
+    assert.notEqual(firstCreateEnd, -1, events);
+    assert.notEqual(aplayStart, -1, events);
+    assert.ok(firstCreateEnd < aplayStart, events.join("\n"));
+    assert.match(events[aplayStart], /--buffer-time=500000/);
+    assert.match(events[aplayStart], /--period-time=100000/);
+    assert.ok(events.filter((line) => line === "create-start").length > 1, events);
+    assert.ok(fs.statSync(pcmPath).size > 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("main handler stores a chosen Kokoro model folder", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-main-"));
   try {

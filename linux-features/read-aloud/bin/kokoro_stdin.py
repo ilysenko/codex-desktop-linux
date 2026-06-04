@@ -116,14 +116,11 @@ def main() -> int:
     lang = os.environ.get("CODEX_LINUX_READ_ALOUD_KOKORO_LANG", "en-us")
 
     sample_rate = 24000
-    player = subprocess.Popen(
-        ["aplay", "-q", "-r", str(sample_rate), "-c", "1", "-f", "S16_LE", "-t", "raw"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
     chunks = split_for_streaming(text)
-    audio_queue: queue.Queue[object] = queue.Queue(maxsize=2)
+    # Deeper queue so synthesis can run ahead of playback. Under CPU
+    # contention a chunk can take several seconds; keeping later chunks
+    # rendered and waiting reduces playback starvation.
+    audio_queue: queue.Queue[object] = queue.Queue(maxsize=32)
     stop_event = threading.Event()
     worker = threading.Thread(
         target=synthesize_chunks,
@@ -132,12 +129,40 @@ def main() -> int:
     )
     worker.start()
 
+    # Do not open aplay until the first PCM chunk is ready.
+    # The previous version spawned aplay up front and then synthesized
+    # chunk 0 (seconds of work on a busy CPU). aplay sat on an empty ALSA
+    # buffer and underran immediately, heard as the last fragment looping,
+    # followed by a gap when real audio finally arrived. Pulling the first
+    # item first means aplay opens with audio already in hand.
+    first = audio_queue.get()
+    if first is None:
+        return 0
+    if isinstance(first, Exception):
+        return 1
+    if not isinstance(first, (bytes, bytearray, memoryview)):
+        return 1
+
+    # --buffer-time/--period-time give ALSA a real cushion (0.5s buffer,
+    # 0.1s period) to ride out scheduling jitter on a loaded machine. The
+    # deep queue is the primary defense; this is cheap insurance.
+    player = subprocess.Popen(
+        [
+            "aplay", "-q", "-r", str(sample_rate), "-c", "1",
+            "-f", "S16_LE", "-t", "raw",
+            "--buffer-time=500000", "--period-time=100000",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
     try:
         assert player.stdin is not None
+        item: object = first
         while True:
             if player.poll() is not None:
                 break
-            item = audio_queue.get()
             if item is None:
                 break
             if isinstance(item, Exception):
@@ -146,6 +171,7 @@ def main() -> int:
                 return 1
             player.stdin.write(item)
             player.stdin.flush()
+            item = audio_queue.get()
         player.stdin.close()
         player.wait(timeout=5)
     except BrokenPipeError:
