@@ -60,7 +60,7 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
+.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman aur aur-srcinfo appimage package install service-enable service-status clean-dist clean-state
 
 help:
 	@printf '\nCodex Desktop Linux Make Targets\n\n'
@@ -84,6 +84,8 @@ help:
 	@printf '  %-18s %s\n' "make deb" "Build the Debian package into dist/"
 	@printf '  %-18s %s\n' "make rpm" "Build the RPM package into dist/ (Fedora/openSUSE)"
 	@printf '  %-18s %s\n' "make pacman" "Build the pacman package into dist/ (Arch)"
+	@printf '  %-18s %s\n' "make aur" "Render AUR PKGBUILD files into dist/aur/"
+	@printf '  %-18s %s\n' "make aur-srcinfo" "Render AUR files and generate dist/aur/.SRCINFO"
 	@printf '  %-18s %s\n' "make appimage" "Build the AppImage into dist/ (local self-build)"
 	@printf '  %-18s %s\n' "make package" "Build native package (auto-detects deb, rpm, or pacman)"
 	@printf '  %-18s %s\n' "make install" "Install the latest generated native package"
@@ -126,6 +128,7 @@ help:
 	@printf '  %s\n' "MAX_BUILD_THREADS=8 make install-native"
 	@printf '  %s\n' "MAX_BUILD_THREADS=8 make rpm"
 	@printf '  %s\n' "make pacman PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
+	@printf '  %s\n' "AUR_PKGVER=2026.03.24 make aur-srcinfo"
 	@printf '  %s\n' "make appimage PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "make install"
 	@printf '  %s\n\n' "make service-enable"
@@ -240,6 +243,14 @@ rpm: maybe-build-updater
 pacman: maybe-build-updater
 	@echo "[make] Building pacman package"
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ./scripts/build-pacman.sh
+
+aur:
+	@echo "[make] Rendering AUR package files"
+	./scripts/aur/render-aur-package.sh
+
+aur-srcinfo: aur
+	@echo "[make] Generating AUR .SRCINFO"
+	cd dist/aur && makepkg --printsrcinfo > .SRCINFO
 
 appimage:
 	@echo "[make] Building AppImage"

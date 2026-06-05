@@ -1,0 +1,98 @@
+# Maintainer: Codex Desktop Linux Maintainers
+
+pkgname=__AUR_PKGNAME__
+pkgver=__PKGVER__
+pkgrel=__PKGREL__
+pkgdesc="Codex Desktop for Linux, community-built from the macOS DMG"
+arch=('x86_64' 'aarch64')
+url="https://github.com/ilysenko/codex-desktop-linux"
+license=('MIT')
+depends=(
+    'python'
+    'curl'
+    'alsa-lib'
+    'at-spi2-core'
+    'atk'
+    'cairo'
+    'dbus'
+    'glib2'
+    'gtk3'
+    'libcups'
+    'libdrm'
+    'libx11'
+    'libxcb'
+    'libxcomposite'
+    'libxdamage'
+    'libxext'
+    'libxfixes'
+    'libxkbcommon'
+    'libxrandr'
+    'mesa'
+    'nspr'
+    'nss'
+    'pango'
+)
+makedepends=(
+    'cargo'
+    'gcc'
+    'git'
+    'make'
+    '7zip'
+    'unzip'
+)
+optdepends=(
+    'nodejs>=22.22.0: optional override for the bundled managed Node.js runtime'
+    'npm: optional override for Codex CLI install/update flows'
+    'zenity: GTK dialog fallback when the Codex CLI is missing'
+    'kdialog: KDE dialog fallback when the Codex CLI is missing'
+)
+provides=('codex-desktop')
+conflicts=('codex-desktop')
+options=(!debug !strip)
+install="${pkgname}.install"
+
+_source_ref="__SOURCE_REF__"
+_dmg_url="__DMG_URL__"
+_repo_dir="codex-desktop-linux-${_source_ref}"
+
+source=(
+    "${_repo_dir}.tar.gz::__SOURCE_REPO__/archive/${_source_ref}.tar.gz"
+    "Codex.dmg::${_dmg_url}"
+)
+sha256sums=(
+    '__SOURCE_SHA256__'
+    '__DMG_SHA256__'
+)
+
+build() {
+    cd "${srcdir}/${_repo_dir}"
+
+    export CODEX_LINUX_SOURCE_REMOTE="__SOURCE_REPO__"
+    export CODEX_LINUX_SOURCE_COMMIT="${_source_ref}"
+    export CODEX_LINUX_SOURCE_BRANCH=""
+    export CODEX_LINUX_SOURCE_DESCRIBE="${pkgver}-${pkgrel}"
+
+    ./install.sh "${srcdir}/Codex.dmg"
+}
+
+package() {
+    cd "${srcdir}/${_repo_dir}"
+
+    export REPO_DIR="$PWD"
+    export APP_DIR="$PWD/codex-app"
+    export PACKAGE_NAME="codex-desktop"
+    export PACKAGE_VERSION="${pkgver}-${pkgrel}"
+    export PACKAGE_WITH_UPDATER=0
+    export DESKTOP_TEMPLATE="$PWD/packaging/linux/codex-desktop.desktop"
+    export ICON_SOURCE="$PWD/assets/codex.png"
+    export PACKAGED_RUNTIME_SOURCE="$PWD/packaging/linux/codex-packaged-runtime.sh"
+
+    # shellcheck source=/dev/null
+    . "$PWD/scripts/lib/package-common.sh"
+
+    stage_common_package_files "$pkgdir"
+    write_launcher_stub "$pkgdir"
+    run_linux_feature_package_hooks "$pkgdir" "pacman"
+    normalize_package_payload_permissions "$pkgdir"
+    restore_linux_feature_payload_permissions "$pkgdir"
+}

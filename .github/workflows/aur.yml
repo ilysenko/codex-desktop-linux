@@ -1,0 +1,123 @@
+name: Publish AUR Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      pkgver:
+        description: AUR pkgver override, without hyphens
+        required: false
+        type: string
+      source_ref:
+        description: Git ref or commit to package
+        required: false
+        type: string
+      publish:
+        description: Push changes to aur.archlinux.org
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  AUR_PKGNAME: codex-desktop-linux
+  AUR_SOURCE_REPO: https://github.com/ilysenko/codex-desktop-linux
+  AUR_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg
+
+jobs:
+  aur:
+    name: Render AUR Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Render and validate in Arch Linux
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e AUR_PKGNAME="$AUR_PKGNAME" \
+            -e AUR_SOURCE_REPO="$AUR_SOURCE_REPO" \
+            -e AUR_SOURCE_REF="${{ inputs.source_ref || github.sha }}" \
+            -e AUR_PKGVER="${{ inputs.pkgver }}" \
+            -e AUR_DMG_URL="$AUR_DMG_URL" \
+            -e AUR_PUBLISH="${{ inputs.publish }}" \
+            -v "$PWD:/work" \
+            -w /work \
+            archlinux:base-devel \
+            bash -lc '
+              set -euo pipefail
+              pacman -Syu --noconfirm --needed curl git
+
+              if [ -z "${AUR_PKGVER:-}" ]; then
+                AUR_PKGVER="$(date -u +%Y.%m.%d.%H%M%S)"
+                export AUR_PKGVER
+              fi
+
+              if [ "${AUR_PUBLISH:-false}" = "true" ]; then
+                archive_url="${AUR_SOURCE_REPO}/archive/${AUR_SOURCE_REF}.tar.gz"
+                AUR_SOURCE_SHA256="$(curl -fsSL "$archive_url" | sha256sum | cut -d" " -f1)"
+                AUR_DMG_SHA256="$(curl -fL --retry 3 "$AUR_DMG_URL" | sha256sum | cut -d" " -f1)"
+                export AUR_SOURCE_SHA256 AUR_DMG_SHA256
+              fi
+
+              AUR_DIR=/work/dist/aur ./scripts/aur/render-aur-package.sh
+              cd /work/dist/aur
+              makepkg --printsrcinfo > .SRCINFO
+              test -s PKGBUILD
+              test -s .SRCINFO
+              grep -q "^pkgname = ${AUR_PKGNAME}$" .SRCINFO
+            '
+
+      - name: Upload rendered AUR files
+        uses: actions/upload-artifact@v4
+        with:
+          name: aur-package
+          path: |
+            dist/aur/PKGBUILD
+            dist/aur/.SRCINFO
+            dist/aur/*.install
+
+      - name: Configure AUR SSH
+        if: inputs.publish == true
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_KNOWN_HOSTS: ${{ secrets.AUR_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$AUR_SSH_PRIVATE_KEY"
+          install -m 0700 -d "$HOME/.ssh"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur"
+          chmod 0600 "$HOME/.ssh/aur"
+          if [ -n "$AUR_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$AUR_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan aur.archlinux.org > "$HOME/.ssh/known_hosts"
+          fi
+          cat > "$HOME/.ssh/config" <<'SSH'
+Host aur.archlinux.org
+  IdentityFile ~/.ssh/aur
+  User aur
+  IdentitiesOnly yes
+SSH
+          chmod 0600 "$HOME/.ssh/config"
+
+      - name: Publish to AUR
+        if: inputs.publish == true
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/aur-codex-desktop-linux
+          git clone "ssh://aur@aur.archlinux.org/${AUR_PKGNAME}.git" /tmp/aur-codex-desktop-linux
+          cp dist/aur/PKGBUILD dist/aur/.SRCINFO dist/aur/*.install /tmp/aur-codex-desktop-linux/
+          cd /tmp/aur-codex-desktop-linux
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- PKGBUILD .SRCINFO *.install; then
+            echo "No AUR package changes to publish."
+            exit 0
+          fi
+          git add PKGBUILD .SRCINFO *.install
+          git commit -m "Update ${AUR_PKGNAME}"
+          git push

@@ -1,0 +1,34 @@
+CLEANUP_HELPER="/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
+DESKTOP_ENTRY_DOCTOR="/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
+
+codex_no_updater_cleanup_if_present() {
+    if [ -f "$CLEANUP_HELPER" ]; then
+        # shellcheck source=/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh
+        . "$CLEANUP_HELPER"
+        codex_no_updater_cleanup_update_manager_service || true
+    fi
+}
+
+codex_desktop_repair_if_present() {
+    if [ -f "$DESKTOP_ENTRY_DOCTOR" ]; then
+        # shellcheck source=/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh
+        . "$DESKTOP_ENTRY_DOCTOR"
+        codex_desktop_repair_system_package_shadow_entries codex-desktop || true
+    fi
+}
+
+post_install() {
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+    fi
+    codex_desktop_repair_if_present
+    codex_no_updater_cleanup_if_present
+}
+
+post_upgrade() {
+    post_install
+}
+
+pre_remove() {
+    codex_no_updater_cleanup_if_present
+}
