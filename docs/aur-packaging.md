@@ -33,11 +33,17 @@ Useful overrides:
 ```bash
 AUR_PKGVER=2026.06.05 make aur
 AUR_SOURCE_REF="$(git rev-parse HEAD)" make aur
-AUR_SOURCE_SHA256=<repo-archive-sha256> AUR_DMG_SHA256=<dmg-sha256> make aur
+AUR_DMG_SHA256=<dmg-sha256> make aur
 ```
 
+`AUR_SOURCE_REF` must be a full 40-character commit SHA. Resolve tags or
+branches before rendering so the published AUR package does not depend on a
+mutable ref or a slash-containing archive directory name.
+
 `AUR_SOURCE_SHA256` and `AUR_DMG_SHA256` default to `SKIP` for local rendering.
-The GitHub Actions publisher can calculate both values before publishing.
+Keep `AUR_SOURCE_SHA256=SKIP` for GitHub-generated source archives because
+GitHub may regenerate tarball compression bytes for the same commit. The GitHub
+Actions publisher calculates the DMG checksum before publishing.
 
 Publishing to AUR requires an SSH key registered with `aur.archlinux.org`.
 Configure these GitHub secrets:
@@ -76,9 +82,12 @@ update the AUR package manually:
 5. Set `pkgver` when publishing a specific package version. If omitted, the
    workflow uses a UTC timestamp in `YYYY.MM.DD.HHMMSS` format.
 
-6. Set `source_ref` when publishing a specific commit or tag. If omitted, the
-   workflow packages the workflow run's commit SHA.
+6. Set `source_ref` when publishing a specific commit, tag, or branch. If
+   omitted, the workflow uses the workflow run's commit SHA. The workflow
+   resolves the value to a full commit SHA before rendering `PKGBUILD`.
 
-The workflow calculates source checksums only when `publish=true`. Local
+The workflow calculates the DMG checksum only when `publish=true`. Local
 rendering keeps `SKIP` checksums so contributors can generate and inspect AUR
-metadata without downloading all sources.
+metadata without downloading all sources. The GitHub source archive checksum
+stays `SKIP` because GitHub-generated tarball bytes are not stable enough for a
+durable AUR checksum.

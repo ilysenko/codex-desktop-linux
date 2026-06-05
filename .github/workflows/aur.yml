@@ -34,13 +34,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve source ref
+        id: source-ref
+        env:
+          SOURCE_REF_INPUT: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          source_ref="${SOURCE_REF_INPUT:-$GITHUB_SHA}"
+          resolved="$(git rev-parse "${source_ref}^{commit}")"
+          echo "source_ref=$resolved" >> "$GITHUB_OUTPUT"
+
       - name: Render and validate in Arch Linux
         run: |
           set -euo pipefail
           docker run --rm \
             -e AUR_PKGNAME="$AUR_PKGNAME" \
             -e AUR_SOURCE_REPO="$AUR_SOURCE_REPO" \
-            -e AUR_SOURCE_REF="${{ inputs.source_ref || github.sha }}" \
+            -e AUR_SOURCE_REF="${{ steps.source-ref.outputs.source_ref }}" \
             -e AUR_PKGVER="${{ inputs.pkgver }}" \
             -e AUR_DMG_URL="$AUR_DMG_URL" \
             -e AUR_PUBLISH="${{ inputs.publish }}" \
@@ -50,25 +60,36 @@ jobs:
             bash -lc '
               set -euo pipefail
               pacman -Syu --noconfirm --needed curl git
+              useradd -m builder
+              chown -R builder:builder /work
 
-              if [ -z "${AUR_PKGVER:-}" ]; then
-                AUR_PKGVER="$(date -u +%Y.%m.%d.%H%M%S)"
-                export AUR_PKGVER
-              fi
+              runuser -u builder -- env \
+                AUR_PKGNAME="$AUR_PKGNAME" \
+                AUR_SOURCE_REPO="$AUR_SOURCE_REPO" \
+                AUR_SOURCE_REF="$AUR_SOURCE_REF" \
+                AUR_PKGVER="$AUR_PKGVER" \
+                AUR_DMG_URL="$AUR_DMG_URL" \
+                AUR_PUBLISH="$AUR_PUBLISH" \
+                bash -lc '"'"'
+                  set -euo pipefail
 
-              if [ "${AUR_PUBLISH:-false}" = "true" ]; then
-                archive_url="${AUR_SOURCE_REPO}/archive/${AUR_SOURCE_REF}.tar.gz"
-                AUR_SOURCE_SHA256="$(curl -fsSL "$archive_url" | sha256sum | cut -d" " -f1)"
-                AUR_DMG_SHA256="$(curl -fL --retry 3 "$AUR_DMG_URL" | sha256sum | cut -d" " -f1)"
-                export AUR_SOURCE_SHA256 AUR_DMG_SHA256
-              fi
+                  if [ -z "${AUR_PKGVER:-}" ]; then
+                    AUR_PKGVER="$(date -u +%Y.%m.%d.%H%M%S)"
+                    export AUR_PKGVER
+                  fi
 
-              AUR_DIR=/work/dist/aur ./scripts/aur/render-aur-package.sh
-              cd /work/dist/aur
-              makepkg --printsrcinfo > .SRCINFO
-              test -s PKGBUILD
-              test -s .SRCINFO
-              grep -q "^pkgname = ${AUR_PKGNAME}$" .SRCINFO
+                  if [ "${AUR_PUBLISH:-false}" = "true" ]; then
+                    AUR_DMG_SHA256="$(curl -fL --retry 3 "$AUR_DMG_URL" | sha256sum | cut -d" " -f1)"
+                    export AUR_DMG_SHA256
+                  fi
+
+                  AUR_DIR=/work/dist/aur ./scripts/aur/render-aur-package.sh
+                  cd /work/dist/aur
+                  makepkg --printsrcinfo > .SRCINFO
+                  test -s PKGBUILD
+                  test -s .SRCINFO
+                  grep -q "^pkgname = ${AUR_PKGNAME}$" .SRCINFO
+                '"'"'
             '
 
       - name: Upload rendered AUR files

@@ -31,6 +31,17 @@ validate_pkgver() {
     esac
 }
 
+validate_source_ref() {
+    case "$1" in
+        [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
+            return 0
+            ;;
+        *)
+            error "AUR_SOURCE_REF must be a full 40-character commit SHA. Resolve tags or branches before rendering."
+            ;;
+    esac
+}
+
 derive_pkgver() {
     local version
     version="$(git -C "$REPO_DIR" describe --tags --always --dirty 2>/dev/null || true)"
@@ -78,6 +89,7 @@ main() {
         AUR_PKGVER="$(derive_pkgver)"
     fi
     validate_pkgver "$AUR_PKGVER"
+    validate_source_ref "$AUR_SOURCE_REF"
 
     mkdir -p "$AUR_DIR"
     render_template "$REPO_DIR/packaging/aur/PKGBUILD.template" "$AUR_DIR/PKGBUILD"
