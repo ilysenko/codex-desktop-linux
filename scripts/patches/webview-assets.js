@@ -212,6 +212,87 @@ function applyLinuxAppSunsetPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxBrowserUseAvailabilityPatch(currentSource) {
+  const browserUseFeatureNeedle = "featureName:`browser_use`";
+  const statsigNeedle = "410262010";
+  let changed = false;
+
+  const alreadyPatched = () =>
+    /featureName:`browser_use`[\s\S]{0,1400}?isBrowserAgentGateEnabled:!0,/.test(currentSource);
+
+  const gatePattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{isBrowserAgentGateEnabled:([A-Za-z_$][\w$]*),isBrowserSidebarEnabled:([A-Za-z_$][\w$]*),isBrowserUseEnabled:([A-Za-z_$][\w$]*),isLoading:([A-Za-z_$][\w$]*),runCodexInWsl:([A-Za-z_$][\w$]*),windowType:`electron`\}\)/g;
+
+  const patchedSource = currentSource.replace(
+    gatePattern,
+    (
+      match,
+      resultVar,
+      helperVar,
+      gateVar,
+      sidebarVar,
+      browserUseVar,
+      loadingVar,
+      wslVar,
+      offset,
+    ) => {
+      const contextStart = Math.max(0, offset - 1400);
+      const context = currentSource.slice(contextStart, offset + match.length);
+      if (!context.includes(browserUseFeatureNeedle) || !context.includes(statsigNeedle)) {
+        return match;
+      }
+
+      changed = true;
+      return `${resultVar}=${helperVar}({isBrowserAgentGateEnabled:!0,isBrowserSidebarEnabled:${sidebarVar},isBrowserUseEnabled:${browserUseVar},isLoading:${loadingVar},runCodexInWsl:${wslVar},windowType:\`electron\`})`;
+    },
+  );
+
+  if (changed || alreadyPatched()) {
+    return patchedSource;
+  }
+
+  if (currentSource.includes(browserUseFeatureNeedle) && currentSource.includes(statsigNeedle)) {
+    console.warn(
+      "WARN: Could not find Browser Use availability gate — skipping Linux Browser Use availability patch",
+    );
+  }
+
+  return currentSource;
+}
+
+function applyLinuxBrowserUseNonLocalNavigationPatch(currentSource) {
+  const messageNeedle = "browser-use-non-local-sites-allowed-changed";
+  const statsigNeedle = "3903563814";
+  let changed = false;
+
+  if (currentSource.includes(`${messageNeedle}\`,{allowed:!0}`)) {
+    return currentSource;
+  }
+
+  const dispatchPattern =
+    /((?:[A-Za-z_$][\w$]*=)?[A-Za-z_$][\w$]*\(`3903563814`\)[\s\S]{0,1800}?dispatchMessage\(`browser-use-non-local-sites-allowed-changed`,\{allowed:)([A-Za-z_$][\w$]*)(\}\))/g;
+
+  const patchedSource = currentSource.replace(
+    dispatchPattern,
+    (match, prefix, allowedVar, suffix) => {
+      changed = true;
+      return `${prefix}!0${suffix}`;
+    },
+  );
+
+  if (changed) {
+    return patchedSource;
+  }
+
+  if (currentSource.includes(messageNeedle) && currentSource.includes(statsigNeedle)) {
+    console.warn(
+      "WARN: Could not find Browser Use non-local navigation gate — skipping Linux Browser Use navigation patch",
+    );
+  }
+
+  return currentSource;
+}
+
 function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   const supportedFeatures = new Set([
     "apps",
@@ -1041,6 +1122,8 @@ function patchCommentPreloadBundle(extractedDir) {
 module.exports = {
   applyBrowserAnnotationScreenshotPatch,
   applyLinuxAppServerFeatureEnablementPatch,
+  applyLinuxBrowserUseAvailabilityPatch,
+  applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxI18nGatePatch,
   applyLinuxProfileSettingsMenuPatch,

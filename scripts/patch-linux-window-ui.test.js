@@ -41,6 +41,8 @@ const {
   applyLinuxNativeTitlebarPatch,
   applyLinuxMultiInstanceBootstrapPatch,
   applyLinuxAppSunsetPatch,
+  applyLinuxBrowserUseAvailabilityPatch,
+  applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxFastModeModelGuardPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
@@ -557,6 +559,8 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-set-icon",
     "linux-opaque-background",
     "linux-avatar-overlay-mouse-passthrough",
+    "linux-browser-use-availability",
+    "linux-browser-use-non-local-navigation",
     "linux-file-manager",
     "linux-tray",
     "linux-build-info-tray",
@@ -3065,6 +3069,33 @@ test("shows current use-is-plugins-enabled Computer Use UI on Linux", () => {
     patched,
     /let _=a&&i&&\(s===`linux`\|\|u&&\(o\|\|g\)\),v=_&&!o&&\(s===`linux`\|\|h\.enabled\)&&!h\.isLoading,y=_&&s!==`linux`&&h\.isLoading,b=_&&\(o\|\|s!==`linux`&&h\.isLoading\),x;/,
   );
+});
+
+test("enables Browser Use availability on Linux when only the Statsig gate is disabled", () => {
+  const source =
+    "function h(n){let r=(0,l.c)(13),{hostId:a}=n,s=t(c),d=i(`410262010`),f;r[0]===a?f=r[1]:(f={featureName:`browser_use`,hostId:a},r[0]=a,r[1]=f);let p=u(f),m=o(e.runCodexInWsl),h=p.enabled&&!p.isLoading,_=p.isLoading,v=m===!0,y;r[2]!==d||r[3]!==s||r[4]!==h||r[5]!==_||r[6]!==v?(y=g({isBrowserAgentGateEnabled:d,isBrowserSidebarEnabled:s,isBrowserUseEnabled:h,isLoading:_,runCodexInWsl:v,windowType:`electron`}),r[2]=d,r[3]=s,r[4]=h,r[5]=_,r[6]=v,r[7]=y):y=r[7];return y}";
+
+  const patched = applyPatchTwice(applyLinuxBrowserUseAvailabilityPatch, source);
+
+  assert.match(
+    patched,
+    /y=g\(\{isBrowserAgentGateEnabled:!0,isBrowserSidebarEnabled:s,isBrowserUseEnabled:h,isLoading:_,runCodexInWsl:v,windowType:`electron`\}\)/,
+  );
+  assert.match(patched, /isBrowserUseEnabled:h/);
+  assert.match(patched, /featureName:`browser_use`/);
+});
+
+test("allows Browser Use non-local navigation on Linux without the upstream rollout flag", () => {
+  const source =
+    "function mx(){let e=(0,Z.c)(20),t=q(Ss).value,n;e[0]===t?n=e[1]:(n=vs(t),e[0]=t,e[1]=n);let r=n,i=J(fl.activeTab$),a=J(Xn),o=ka(`3903563814`),s=ka(`2327881676`),c,l;e[2]!==i||e[3]!==r||e[4]!==a||e[5]!==t.pathname||e[6]!==t.search?(c=()=>{if(r==null)return;let e=ml(i,r);ci.dispatchMessage(`browser-sidebar-owner-sync`,{conversationId:r})},l=[i,r,a,t.pathname,t.search],e[2]=i,e[3]=r,e[4]=a,e[5]=t.pathname,e[6]=t.search,e[7]=c,e[8]=l):(c=e[7],l=e[8]),(0,$.useLayoutEffect)(c,l);let u,d;e[9]===o?(u=e[10],d=e[11]):(u=()=>{ux||ci.dispatchMessage(`browser-use-non-local-sites-allowed-changed`,{allowed:o})},d=[o],e[9]=o,e[10]=u,e[11]=d),(0,$.useEffect)(u,d);return null}";
+
+  const patched = applyPatchTwice(applyLinuxBrowserUseNonLocalNavigationPatch, source);
+
+  assert.match(
+    patched,
+    /dispatchMessage\(`browser-use-non-local-sites-allowed-changed`,\{allowed:!0\}\)/,
+  );
+  assert.match(patched, /ka\(`3903563814`\)/);
 });
 
 test("shows object-helper Computer Use plugin UI on Linux", () => {
