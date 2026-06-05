@@ -118,6 +118,7 @@ build() {
     export CODEX_LINUX_SOURCE_BRANCH=""
     export CODEX_LINUX_SOURCE_DESCRIBE="${pkgver}-${pkgrel}"
     export CODEX_MANAGED_NODE_SOURCE="${srcdir}/aur-node-runtime"
+    export CODEX_EXPECTED_ELECTRON_VERSION="${_electron_version}"
 
     case "${CARCH}" in
         x86_64)

@@ -101,6 +101,9 @@ main() {
     app_dir=$(extract_dmg "$dmg_path")
 
     detect_electron_version "$app_dir"
+    if [ -n "${CODEX_EXPECTED_ELECTRON_VERSION:-}" ] && [ "$ELECTRON_VERSION" != "$CODEX_EXPECTED_ELECTRON_VERSION" ]; then
+        error "Detected Electron version $ELECTRON_VERSION does not match expected $CODEX_EXPECTED_ELECTRON_VERSION"
+    fi
     if [ "$INSPECT_ONLY" -eq 1 ]; then
         inspect_rebuild_candidate "$app_dir" "$dmg_path"
         return 0

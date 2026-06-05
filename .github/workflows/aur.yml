@@ -48,13 +48,15 @@ jobs:
           echo "source_ref=$resolved" >> "$GITHUB_OUTPUT"
 
       - name: Render and validate in Arch Linux
+        env:
+          AUR_PKGVER_INPUT: ${{ inputs.pkgver }}
         run: |
           set -euo pipefail
           docker run --rm \
             -e AUR_PKGNAME="$AUR_PKGNAME" \
             -e AUR_SOURCE_REPO="$AUR_SOURCE_REPO" \
             -e AUR_SOURCE_REF="${{ steps.source-ref.outputs.source_ref }}" \
-            -e AUR_PKGVER="${{ inputs.pkgver }}" \
+            -e AUR_PKGVER="$AUR_PKGVER_INPUT" \
             -e AUR_DMG_URL="$AUR_DMG_URL" \
             -e AUR_PUBLISH="${{ inputs.publish }}" \
             -e AUR_NODE_VERSION="$AUR_NODE_VERSION" \
