@@ -13,6 +13,14 @@ AUR_SOURCE_SHA256="${AUR_SOURCE_SHA256:-SKIP}"
 AUR_DMG_URL="${AUR_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/Codex.dmg}"
 AUR_DMG_SHA256="${AUR_DMG_SHA256:-SKIP}"
 AUR_PKGVER="${AUR_PKGVER:-}"
+AUR_NODE_VERSION="${AUR_NODE_VERSION:-v22.22.2}"
+AUR_NODE_X64_SHA256="${AUR_NODE_X64_SHA256:-SKIP}"
+AUR_NODE_ARM64_SHA256="${AUR_NODE_ARM64_SHA256:-SKIP}"
+AUR_ELECTRON_VERSION="${AUR_ELECTRON_VERSION:-42.1.0}"
+AUR_ELECTRON_X64_SHA256="${AUR_ELECTRON_X64_SHA256:-SKIP}"
+AUR_ELECTRON_ARM64_SHA256="${AUR_ELECTRON_ARM64_SHA256:-SKIP}"
+AUR_BROWSER_RUNTIME_VERSION="${AUR_BROWSER_RUNTIME_VERSION:-26.426.12240}"
+AUR_BROWSER_RUNTIME_X64_SHA256="${AUR_BROWSER_RUNTIME_X64_SHA256:-SKIP}"
 
 error() {
     echo "[ERROR] $*" >&2
@@ -62,6 +70,8 @@ render_template() {
     local template="$1"
     local target="$2"
     local aur_pkgname aur_pkgver aur_pkgrel source_repo source_ref source_sha dmg_url dmg_sha
+    local node_version node_x64_sha node_arm64_sha electron_version electron_x64_sha electron_arm64_sha
+    local browser_runtime_version browser_runtime_x64_sha
 
     aur_pkgname="$(sed_escape_replacement "$AUR_PKGNAME")"
     aur_pkgver="$(sed_escape_replacement "$AUR_PKGVER")"
@@ -71,6 +81,14 @@ render_template() {
     source_sha="$(sed_escape_replacement "$AUR_SOURCE_SHA256")"
     dmg_url="$(sed_escape_replacement "$AUR_DMG_URL")"
     dmg_sha="$(sed_escape_replacement "$AUR_DMG_SHA256")"
+    node_version="$(sed_escape_replacement "$AUR_NODE_VERSION")"
+    node_x64_sha="$(sed_escape_replacement "$AUR_NODE_X64_SHA256")"
+    node_arm64_sha="$(sed_escape_replacement "$AUR_NODE_ARM64_SHA256")"
+    electron_version="$(sed_escape_replacement "$AUR_ELECTRON_VERSION")"
+    electron_x64_sha="$(sed_escape_replacement "$AUR_ELECTRON_X64_SHA256")"
+    electron_arm64_sha="$(sed_escape_replacement "$AUR_ELECTRON_ARM64_SHA256")"
+    browser_runtime_version="$(sed_escape_replacement "$AUR_BROWSER_RUNTIME_VERSION")"
+    browser_runtime_x64_sha="$(sed_escape_replacement "$AUR_BROWSER_RUNTIME_X64_SHA256")"
 
     sed \
         -e "s/__AUR_PKGNAME__/$aur_pkgname/g" \
@@ -81,6 +99,14 @@ render_template() {
         -e "s/__SOURCE_SHA256__/$source_sha/g" \
         -e "s|__DMG_URL__|$dmg_url|g" \
         -e "s/__DMG_SHA256__/$dmg_sha/g" \
+        -e "s/__NODE_VERSION__/$node_version/g" \
+        -e "s/__NODE_X64_SHA256__/$node_x64_sha/g" \
+        -e "s/__NODE_ARM64_SHA256__/$node_arm64_sha/g" \
+        -e "s/__ELECTRON_VERSION__/$electron_version/g" \
+        -e "s/__ELECTRON_X64_SHA256__/$electron_x64_sha/g" \
+        -e "s/__ELECTRON_ARM64_SHA256__/$electron_arm64_sha/g" \
+        -e "s/__BROWSER_RUNTIME_VERSION__/$browser_runtime_version/g" \
+        -e "s/__BROWSER_RUNTIME_X64_SHA256__/$browser_runtime_x64_sha/g" \
         "$template" > "$target"
 }
 

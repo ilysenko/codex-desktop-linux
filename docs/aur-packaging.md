@@ -19,6 +19,9 @@ The generated `PKGBUILD` downloads:
 
 - this repository archive at `AUR_SOURCE_REF`
 - the upstream `Codex.dmg`
+- the managed Node.js runtime archive
+- the matching Linux Electron runtime archive
+- the Browser Use `node_repl` fallback runtime archive on `x86_64`
 
 It then runs `install.sh` during `build()` and stages a no-updater package
 during `package()`. The AUR package intentionally sets
@@ -44,13 +47,16 @@ mutable ref or a slash-containing archive directory name.
 regenerate tarball compression bytes for the same commit. Keep
 `AUR_DMG_SHA256=SKIP` because the Codex DMG URL is the stable upstream download
 location for this project and package refreshes are handled by publishing a new
-AUR revision.
+AUR revision. Local rendering also defaults the runtime archive hashes to
+`SKIP`; the GitHub Actions publisher computes those runtime hashes before
+publishing.
 
 This AUR package intentionally runs the same networked build flow as the rest
-of this repository. During `build()`, `install.sh` can download the managed Node
-runtime, Electron runtime, npm rebuild inputs, and bundled plugin fallback
-resources. Listing every transient build input in AUR `source=()` would require
-a larger source-cache mode that this repository does not currently have.
+of this repository, but the largest runtime archives that already have local
+override hooks are declared in AUR `source=()` and passed into `install.sh`.
+During `build()`, `install.sh` can still download npm rebuild inputs for native
+modules. Listing every transient npm input in AUR `source=()` would require a
+larger source-cache mode that this repository does not currently have.
 
 Publishing to AUR requires an SSH key registered with `aur.archlinux.org`.
 Configure these GitHub secrets:
@@ -93,8 +99,10 @@ update the AUR package manually:
    omitted, the workflow uses the workflow run's commit SHA. The workflow
    resolves the value to a full commit SHA before rendering `PKGBUILD`.
 
-The workflow keeps source checksums as `SKIP` so contributors can generate and
-inspect AUR metadata without downloading all sources. The GitHub source archive
-checksum stays `SKIP` because GitHub-generated tarball bytes are not stable
-enough for a durable AUR checksum. The DMG checksum also stays `SKIP`; package
-freshness is handled by rerunning the publish workflow for a new AUR revision.
+The workflow keeps the GitHub source archive and DMG checksums as `SKIP` so
+contributors can generate and inspect AUR metadata without downloading those
+sources. It calculates checksums for the declared runtime archives when
+`publish=true`. The GitHub source archive checksum stays `SKIP` because
+GitHub-generated tarball bytes are not stable enough for a durable AUR
+checksum. The DMG checksum also stays `SKIP`; package freshness is handled by
+rerunning the publish workflow for a new AUR revision.

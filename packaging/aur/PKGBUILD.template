@@ -54,6 +54,9 @@ install="${pkgname}.install"
 _source_ref="__SOURCE_REF__"
 _dmg_url="__DMG_URL__"
 _repo_dir="codex-desktop-linux-${_source_ref}"
+_node_version="__NODE_VERSION__"
+_electron_version="__ELECTRON_VERSION__"
+_browser_runtime_version="__BROWSER_RUNTIME_VERSION__"
 
 source=(
     "${_repo_dir}.tar.gz::__SOURCE_REPO__/archive/${_source_ref}.tar.gz"
@@ -63,6 +66,49 @@ sha256sums=(
     '__SOURCE_SHA256__'
     '__DMG_SHA256__'
 )
+source_x86_64=(
+    "node-${_node_version}-linux-x64.tar.xz::https://nodejs.org/dist/${_node_version}/node-${_node_version}-linux-x64.tar.xz"
+    "electron-v${_electron_version}-linux-x64.zip::https://github.com/electron/electron/releases/download/v${_electron_version}/electron-v${_electron_version}-linux-x64.zip"
+    "codex-primary-runtime-linux-x64-${_browser_runtime_version}.tar.xz::https://persistent.oaistatic.com/codex-primary-runtime/${_browser_runtime_version}/codex-primary-runtime-linux-x64-${_browser_runtime_version}.tar.xz"
+)
+sha256sums_x86_64=(
+    '__NODE_X64_SHA256__'
+    '__ELECTRON_X64_SHA256__'
+    '__BROWSER_RUNTIME_X64_SHA256__'
+)
+source_aarch64=(
+    "node-${_node_version}-linux-arm64.tar.xz::https://nodejs.org/dist/${_node_version}/node-${_node_version}-linux-arm64.tar.xz"
+    "electron-v${_electron_version}-linux-arm64.zip::https://github.com/electron/electron/releases/download/v${_electron_version}/electron-v${_electron_version}-linux-arm64.zip"
+)
+sha256sums_aarch64=(
+    '__NODE_ARM64_SHA256__'
+    '__ELECTRON_ARM64_SHA256__'
+)
+
+prepare() {
+    rm -rf "${srcdir}/aur-node-runtime"
+    mkdir -p "${srcdir}/aur-node-runtime"
+
+    case "${CARCH}" in
+        x86_64)
+            tar -xJf "${srcdir}/node-${_node_version}-linux-x64.tar.xz" \
+                -C "${srcdir}/aur-node-runtime" --strip-components=1
+            rm -rf "${srcdir}/aur-browser-use-runtime"
+            mkdir -p "${srcdir}/aur-browser-use-runtime"
+            tar -xJf "${srcdir}/codex-primary-runtime-linux-x64-${_browser_runtime_version}.tar.xz" \
+                -C "${srcdir}/aur-browser-use-runtime" \
+                codex-primary-runtime/dependencies/bin/node_repl
+            ;;
+        aarch64)
+            tar -xJf "${srcdir}/node-${_node_version}-linux-arm64.tar.xz" \
+                -C "${srcdir}/aur-node-runtime" --strip-components=1
+            ;;
+        *)
+            echo "Unsupported architecture: ${CARCH}" >&2
+            return 1
+            ;;
+    esac
+}
 
 build() {
     cd "${srcdir}/${_repo_dir}"
@@ -71,6 +117,17 @@ build() {
     export CODEX_LINUX_SOURCE_COMMIT="${_source_ref}"
     export CODEX_LINUX_SOURCE_BRANCH=""
     export CODEX_LINUX_SOURCE_DESCRIBE="${pkgver}-${pkgrel}"
+    export CODEX_MANAGED_NODE_SOURCE="${srcdir}/aur-node-runtime"
+
+    case "${CARCH}" in
+        x86_64)
+            export CODEX_ELECTRON_ZIP_SOURCE="${srcdir}/electron-v${_electron_version}-linux-x64.zip"
+            export CODEX_LINUX_NODE_REPL_SOURCE="${srcdir}/aur-browser-use-runtime/codex-primary-runtime/dependencies/bin/node_repl"
+            ;;
+        aarch64)
+            export CODEX_ELECTRON_ZIP_SOURCE="${srcdir}/electron-v${_electron_version}-linux-arm64.zip"
+            ;;
+    esac
 
     ./install.sh "${srcdir}/Codex.dmg"
 }

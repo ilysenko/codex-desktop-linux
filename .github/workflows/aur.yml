@@ -24,6 +24,9 @@ env:
   AUR_PKGNAME: codex-desktop-linux
   AUR_SOURCE_REPO: https://github.com/ilysenko/codex-desktop-linux
   AUR_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg
+  AUR_NODE_VERSION: v22.22.2
+  AUR_ELECTRON_VERSION: 42.1.0
+  AUR_BROWSER_RUNTIME_VERSION: 26.426.12240
 
 jobs:
   aur:
@@ -54,6 +57,9 @@ jobs:
             -e AUR_PKGVER="${{ inputs.pkgver }}" \
             -e AUR_DMG_URL="$AUR_DMG_URL" \
             -e AUR_PUBLISH="${{ inputs.publish }}" \
+            -e AUR_NODE_VERSION="$AUR_NODE_VERSION" \
+            -e AUR_ELECTRON_VERSION="$AUR_ELECTRON_VERSION" \
+            -e AUR_BROWSER_RUNTIME_VERSION="$AUR_BROWSER_RUNTIME_VERSION" \
             -v "$PWD:/work" \
             -w /work \
             archlinux:base-devel \
@@ -63,6 +69,17 @@ jobs:
               useradd -m builder
               chown -R builder:builder /work
 
+              if [ "${AUR_PUBLISH:-false}" = "true" ]; then
+                AUR_NODE_X64_SHA256="$(curl -fsSL "https://nodejs.org/dist/${AUR_NODE_VERSION}/node-${AUR_NODE_VERSION}-linux-x64.tar.xz" | sha256sum | cut -d" " -f1)"
+                AUR_NODE_ARM64_SHA256="$(curl -fsSL "https://nodejs.org/dist/${AUR_NODE_VERSION}/node-${AUR_NODE_VERSION}-linux-arm64.tar.xz" | sha256sum | cut -d" " -f1)"
+                AUR_ELECTRON_X64_SHA256="$(curl -fsSL "https://github.com/electron/electron/releases/download/v${AUR_ELECTRON_VERSION}/electron-v${AUR_ELECTRON_VERSION}-linux-x64.zip" | sha256sum | cut -d" " -f1)"
+                AUR_ELECTRON_ARM64_SHA256="$(curl -fsSL "https://github.com/electron/electron/releases/download/v${AUR_ELECTRON_VERSION}/electron-v${AUR_ELECTRON_VERSION}-linux-arm64.zip" | sha256sum | cut -d" " -f1)"
+                AUR_BROWSER_RUNTIME_X64_SHA256="$(curl -fsSL "https://persistent.oaistatic.com/codex-primary-runtime/${AUR_BROWSER_RUNTIME_VERSION}/codex-primary-runtime-linux-x64-${AUR_BROWSER_RUNTIME_VERSION}.tar.xz" | sha256sum | cut -d" " -f1)"
+                export AUR_NODE_X64_SHA256 AUR_NODE_ARM64_SHA256
+                export AUR_ELECTRON_X64_SHA256 AUR_ELECTRON_ARM64_SHA256
+                export AUR_BROWSER_RUNTIME_X64_SHA256
+              fi
+
               runuser -u builder -- env \
                 AUR_PKGNAME="$AUR_PKGNAME" \
                 AUR_SOURCE_REPO="$AUR_SOURCE_REPO" \
@@ -70,6 +87,14 @@ jobs:
                 AUR_PKGVER="$AUR_PKGVER" \
                 AUR_DMG_URL="$AUR_DMG_URL" \
                 AUR_PUBLISH="$AUR_PUBLISH" \
+                AUR_NODE_VERSION="$AUR_NODE_VERSION" \
+                AUR_NODE_X64_SHA256="${AUR_NODE_X64_SHA256:-SKIP}" \
+                AUR_NODE_ARM64_SHA256="${AUR_NODE_ARM64_SHA256:-SKIP}" \
+                AUR_ELECTRON_VERSION="$AUR_ELECTRON_VERSION" \
+                AUR_ELECTRON_X64_SHA256="${AUR_ELECTRON_X64_SHA256:-SKIP}" \
+                AUR_ELECTRON_ARM64_SHA256="${AUR_ELECTRON_ARM64_SHA256:-SKIP}" \
+                AUR_BROWSER_RUNTIME_VERSION="$AUR_BROWSER_RUNTIME_VERSION" \
+                AUR_BROWSER_RUNTIME_X64_SHA256="${AUR_BROWSER_RUNTIME_X64_SHA256:-SKIP}" \
                 bash -lc '"'"'
                   set -euo pipefail
 
