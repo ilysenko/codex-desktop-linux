@@ -78,11 +78,6 @@ jobs:
                     export AUR_PKGVER
                   fi
 
-                  if [ "${AUR_PUBLISH:-false}" = "true" ]; then
-                    AUR_DMG_SHA256="$(curl -fL --retry 3 "$AUR_DMG_URL" | sha256sum | cut -d" " -f1)"
-                    export AUR_DMG_SHA256
-                  fi
-
                   AUR_DIR=/work/dist/aur ./scripts/aur/render-aur-package.sh
                   cd /work/dist/aur
                   makepkg --printsrcinfo > .SRCINFO
@@ -135,10 +130,10 @@ SSH
           cd /tmp/aur-codex-desktop-linux
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- PKGBUILD .SRCINFO *.install; then
+          git add PKGBUILD .SRCINFO *.install
+          if git diff --cached --quiet -- PKGBUILD .SRCINFO *.install; then
             echo "No AUR package changes to publish."
             exit 0
           fi
-          git add PKGBUILD .SRCINFO *.install
           git commit -m "Update ${AUR_PKGNAME}"
           git push
