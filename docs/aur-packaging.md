@@ -48,3 +48,37 @@ Configure these GitHub secrets:
 The `Publish AUR Package` workflow renders `PKGBUILD`, generates `.SRCINFO`,
 clones the AUR Git repository, copies the generated files, and pushes only when
 the rendered package metadata changed.
+
+## Publish After Merge
+
+After this workflow exists on the default branch, a maintainer can publish or
+update the AUR package manually:
+
+1. Create the AUR package repository once, if it does not already exist:
+
+   ```bash
+   git clone ssh://aur@aur.archlinux.org/codex-desktop-linux.git
+   ```
+
+   The first successful push from the workflow can populate the empty AUR Git
+   repository with `PKGBUILD`, `.SRCINFO`, and `codex-desktop-linux.install`.
+
+2. Add an SSH private key that can push to the AUR package as the
+   `AUR_SSH_PRIVATE_KEY` GitHub Actions secret. The matching public key must be
+   registered on the maintainer's AUR account.
+
+3. Optionally add `AUR_KNOWN_HOSTS`. If omitted, the workflow runs
+   `ssh-keyscan aur.archlinux.org` during setup.
+
+4. Open GitHub Actions in the repository and run `Publish AUR Package`
+   manually with `publish` set to `true`.
+
+5. Set `pkgver` when publishing a specific package version. If omitted, the
+   workflow uses a UTC timestamp in `YYYY.MM.DD.HHMMSS` format.
+
+6. Set `source_ref` when publishing a specific commit or tag. If omitted, the
+   workflow packages the workflow run's commit SHA.
+
+The workflow calculates source checksums only when `publish=true`. Local
+rendering keeps `SKIP` checksums so contributors can generate and inspect AUR
+metadata without downloading all sources.
