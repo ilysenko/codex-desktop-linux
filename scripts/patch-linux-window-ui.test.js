@@ -3098,6 +3098,20 @@ test("allows Browser Use non-local navigation on Linux without the upstream roll
   assert.match(patched, /ka\(`3903563814`\)/);
 });
 
+test("patches later Browser Use navigation dispatches when an earlier one is already patched", () => {
+  const source =
+    "function first(){let o=ka(`3903563814`);return()=>ci.dispatchMessage(`browser-use-non-local-sites-allowed-changed`,{allowed:!0})}" +
+    "function second(){let p=ka(`3903563814`);return()=>ci.dispatchMessage(`browser-use-non-local-sites-allowed-changed`,{allowed:p})}";
+
+  const patched = applyPatchTwice(applyLinuxBrowserUseNonLocalNavigationPatch, source);
+
+  assert.equal(
+    (patched.match(/browser-use-non-local-sites-allowed-changed`,\{allowed:!0\}/g) || []).length,
+    2,
+  );
+  assert.doesNotMatch(patched, /browser-use-non-local-sites-allowed-changed`,\{allowed:p\}/);
+});
+
 test("shows object-helper Computer Use plugin UI on Linux", () => {
   const source =
     "function m(e){return e===`macOS`||e===`windows`}" +

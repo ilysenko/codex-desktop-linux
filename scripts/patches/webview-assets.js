@@ -265,10 +265,6 @@ function applyLinuxBrowserUseNonLocalNavigationPatch(currentSource) {
   const statsigNeedle = "3903563814";
   let changed = false;
 
-  if (currentSource.includes(`${messageNeedle}\`,{allowed:!0}`)) {
-    return currentSource;
-  }
-
   const dispatchPattern =
     /((?:[A-Za-z_$][\w$]*=)?[A-Za-z_$][\w$]*\(`3903563814`\)[\s\S]{0,1800}?dispatchMessage\(`browser-use-non-local-sites-allowed-changed`,\{allowed:)([A-Za-z_$][\w$]*)(\}\))/g;
 
@@ -282,6 +278,10 @@ function applyLinuxBrowserUseNonLocalNavigationPatch(currentSource) {
 
   if (changed) {
     return patchedSource;
+  }
+
+  if (currentSource.includes(`${messageNeedle}\`,{allowed:!0}`)) {
+    return currentSource;
   }
 
   if (currentSource.includes(messageNeedle) && currentSource.includes(statsigNeedle)) {
