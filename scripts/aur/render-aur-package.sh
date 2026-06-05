@@ -20,7 +20,7 @@ error() {
 }
 
 sed_escape_replacement() {
-    printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
+    printf '%s' "$1" | sed -e 's/[\/&|]/\\&/g'
 }
 
 validate_pkgver() {

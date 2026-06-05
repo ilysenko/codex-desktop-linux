@@ -90,6 +90,7 @@ package() {
     # shellcheck source=/dev/null
     . "$PWD/scripts/lib/package-common.sh"
 
+    ensure_app_layout
     stage_common_package_files "$pkgdir"
     write_launcher_stub "$pkgdir"
     run_linux_feature_package_hooks "$pkgdir" "pacman"
