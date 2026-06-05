@@ -64,22 +64,143 @@ function applyLinuxWindowOptionsPatch(currentSource, iconAsset) {
     return currentSource;
   }
 
-  const windowOptionsNeedle = "...process.platform===`win32`?{autoHideMenuBar:!0}:{},";
   const iconPathExpression = `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
   const iconPathNeedle = `icon:${iconPathExpression}`;
-  const windowOptionsReplacement =
-    `...process.platform===\`win32\`||process.platform===\`linux\`?{autoHideMenuBar:!0,...process.platform===\`linux\`?{${iconPathNeedle}}:{}}:{},`;
 
-  if (currentSource.includes(windowOptionsNeedle)) {
-    return currentSource.split(windowOptionsNeedle).join(windowOptionsReplacement);
+  const windowOptionsNeedle = "...process.platform===`win32`?{autoHideMenuBar:!0}:{},";
+  const legacyLinuxSystemTitlebarNeedle =
+    `...process.platform===\`win32\`||process.platform===\`linux\`?{autoHideMenuBar:!0,...process.platform===\`linux\`?{${iconPathNeedle}}:{}}:{},`;
+  const windowOptionsReplacement =
+    `...process.platform===\`win32\`?{autoHideMenuBar:!0}:process.platform===\`linux\`?{${iconPathNeedle}}:{},`;
+
+  let patchedSource = currentSource;
+  if (patchedSource.includes(legacyLinuxSystemTitlebarNeedle)) {
+    patchedSource = patchedSource.split(legacyLinuxSystemTitlebarNeedle).join(windowOptionsReplacement);
   }
 
-  if (currentSource.includes(iconPathNeedle)) {
-    return currentSource;
+  if (patchedSource.includes(windowOptionsNeedle)) {
+    return patchedSource.split(windowOptionsNeedle).join(windowOptionsReplacement);
+  }
+
+  if (patchedSource !== currentSource || patchedSource.includes(iconPathNeedle)) {
+    return patchedSource;
   }
 
   console.warn("WARN: Could not find BrowserWindow autoHideMenuBar snippet — skipping window options patch");
   return currentSource;
+}
+
+function applyLinuxNativeTitlebarPatch(currentSource) {
+  const patchedPrimaryTitlebarRegex =
+    /===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:([A-Za-z_$][\w$]*)\.nativeTheme\.shouldUseDarkColors\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),symbolColor:\1\.nativeTheme\.shouldUseDarkColors\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),height:Math\.round\(([A-Za-z_$][\w$]*)\*[A-Za-z_$][\w$]*\)\}\}/;
+  const alreadyPatchedTitlebarMatch = currentSource.match(patchedPrimaryTitlebarRegex);
+
+  const primaryTitlebarRegex =
+    /case`primary`:return ([A-Za-z_$][\w$]*)===`darwin`\?([A-Za-z_$][\w$]*)\?\{titleBarStyle:`hiddenInset`,trafficLightPosition:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\}:\{vibrancy:`menu`,titleBarStyle:`hiddenInset`,trafficLightPosition:\3\(\4\)\}:\1===`win32`(\|\|\1===`linux`)?\?\{titleBarStyle:`hidden`,titleBarOverlay:([A-Za-z_$][\w$]*)\(\4\)\}:\{titleBarStyle:`default`\};/g;
+  const primaryTitlebarMatch = primaryTitlebarRegex.exec(currentSource);
+  if (primaryTitlebarMatch == null && alreadyPatchedTitlebarMatch == null) {
+    console.warn("WARN: Could not find primary BrowserWindow titlebar snippet — skipping Linux native titlebar patch");
+    return currentSource;
+  }
+
+  let patchedSource = currentSource;
+  let electronAlias;
+  let lightSymbolAlias;
+  let darkSymbolAlias;
+  let overlayHeightAlias;
+  let darkBackgroundAlias;
+  let lightBackgroundAlias;
+
+  if (primaryTitlebarMatch != null) {
+    const [, platformAlias, opaqueWindowsAlias, trafficLightAlias, zoomAlias, , overlayHelperAlias] = primaryTitlebarMatch;
+    const overlayHelperRegex = new RegExp(
+      `function ${escapeRegExp(overlayHelperAlias)}\\([^)]*\\)\\{return\\{color:[A-Za-z_$][\\w$]*,symbolColor:([A-Za-z_$][\\w$]*)\\.nativeTheme\\.shouldUseDarkColors\\?([A-Za-z_$][\\w$]*):([A-Za-z_$][\\w$]*),height:Math\\.round\\(([A-Za-z_$][\\w$]*)\\*[^)]*\\)\\}\\}`,
+    );
+    const overlayHelperMatch = currentSource.match(overlayHelperRegex);
+    const linuxBackgroundMatch = currentSource.match(
+      /===`linux`&&!([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*\)\?\{backgroundColor:([A-Za-z_$][\w$]*)\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),backgroundMaterial:null\}/,
+    );
+
+    if (overlayHelperMatch == null || linuxBackgroundMatch == null) {
+      console.warn("WARN: Could not derive titleBarOverlay aliases — skipping Linux native titlebar patch");
+      return currentSource;
+    }
+
+    [, electronAlias, lightSymbolAlias, darkSymbolAlias, overlayHeightAlias] = overlayHelperMatch;
+    [, , , darkBackgroundAlias, lightBackgroundAlias] = linuxBackgroundMatch;
+    const replacement =
+      `case\`primary\`:return ${platformAlias}===\`darwin\`?${opaqueWindowsAlias}?{titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:{vibrancy:\`menu\`,titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:${platformAlias}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelperAlias}(${zoomAlias})}:${platformAlias}===\`linux\`?{titleBarStyle:\`hidden\`,titleBarOverlay:{color:${electronAlias}.nativeTheme.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${electronAlias}.nativeTheme.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${overlayHeightAlias}*${zoomAlias})}}:{titleBarStyle:\`default\`};`;
+
+    primaryTitlebarRegex.lastIndex = 0;
+    patchedSource = patchedSource.replace(primaryTitlebarRegex, replacement);
+  } else {
+    [, electronAlias, darkBackgroundAlias, lightBackgroundAlias, lightSymbolAlias, darkSymbolAlias, overlayHeightAlias] =
+      alreadyPatchedTitlebarMatch;
+    patchedSource = patchedSource.replace(
+      /(===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:[A-Za-z_$][\w$]*\.nativeTheme\.shouldUseDarkColors\?)[A-Za-z_$][\w$]*(:[A-Za-z_$][\w$]*,symbolColor:)/,
+      "$1`#111111`$2",
+    );
+  }
+
+  if (
+    patchedSource.includes("process.platform!==`win32`&&process.platform!==`linux`") &&
+    /setTitleBarOverlay\(process\.platform===`linux`\?\{color:[A-Za-z_$][\w$]*\.nativeTheme\.shouldUseDarkColors\?`#111111`:/.test(patchedSource)
+  ) {
+    return patchedSource;
+  }
+
+  const escapedElectronAlias = escapeRegExp(electronAlias);
+  const overlaySyncRegex = new RegExp(
+    "installWindowsTitleBarOverlaySync\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{if\\(process\\.platform!==`win32`\\|\\|\\2!==`primary`\\)return;let ([A-Za-z_$][\\w$]*)=\\(\\)=>\\{\\1\\.isDestroyed\\(\\)\\|\\|\\1\\.setTitleBarOverlay\\(([A-Za-z_$][\\w$]*)\\(this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\)\\};return " +
+      escapedElectronAlias +
+      "\\.nativeTheme\\.on\\(`updated`,\\3\\),\\3\\(\\),\\(\\)=>\\{" +
+      escapedElectronAlias +
+      "\\.nativeTheme\\.off\\(`updated`,\\3\\)\\}\\}",
+  );
+  let overlaySyncMatch = patchedSource.match(overlaySyncRegex);
+  if (overlaySyncMatch == null) {
+    const existingLinuxOverlaySyncRegex = new RegExp(
+      "installWindowsTitleBarOverlaySync\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{if\\(\\(process\\.platform!==`win32`&&process\\.platform!==`linux`\\)\\|\\|\\2!==`primary`\\)return;let ([A-Za-z_$][\\w$]*)=\\(\\)=>\\{\\1\\.isDestroyed\\(\\)\\|\\|\\1\\.setTitleBarOverlay\\(process\\.platform===`linux`\\?\\{color:" +
+        escapedElectronAlias +
+        "\\.nativeTheme\\.shouldUseDarkColors\\?[A-Za-z_$][\\w$]*:[A-Za-z_$][\\w$]*,symbolColor:" +
+        escapedElectronAlias +
+        "\\.nativeTheme\\.shouldUseDarkColors\\?[A-Za-z_$][\\w$]*:[A-Za-z_$][\\w$]*,height:Math\\.round\\([A-Za-z_$][\\w$]*\\*this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\}:([A-Za-z_$][\\w$]*)\\(this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\)\\};return " +
+        escapedElectronAlias +
+        "\\.nativeTheme\\.on\\(`updated`,\\3\\),\\3\\(\\),\\(\\)=>\\{" +
+        escapedElectronAlias +
+        "\\.nativeTheme\\.off\\(`updated`,\\3\\)\\}\\}",
+    );
+    overlaySyncMatch = patchedSource.match(existingLinuxOverlaySyncRegex);
+  }
+  if (overlaySyncMatch == null) {
+    if (patchedSource.includes("installWindowsTitleBarOverlaySync")) {
+      console.warn("WARN: Could not patch titleBarOverlay nativeTheme sync for Linux");
+    }
+    return patchedSource;
+  }
+
+  const [, windowAlias, windowTypeAlias, updateAlias, windowsOverlayHelperAlias] = overlaySyncMatch;
+  const linuxOverlay =
+    `{color:${electronAlias}.nativeTheme.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${electronAlias}.nativeTheme.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${overlayHeightAlias}*this.windowZooms.get(${windowAlias}.id))}`;
+  const overlaySyncReplacement =
+    `installWindowsTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if((process.platform!==\`win32\`&&process.platform!==\`linux\`)||${windowTypeAlias}!==\`primary\`)return;let ${updateAlias}=()=>{${windowAlias}.isDestroyed()||${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${linuxOverlay}:${windowsOverlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))};return ${electronAlias}.nativeTheme.on(\`updated\`,${updateAlias}),${updateAlias}(),()=>{${electronAlias}.nativeTheme.off(\`updated\`,${updateAlias})}}`;
+  const replacedSource = patchedSource.replace(overlaySyncRegex, overlaySyncReplacement);
+  if (replacedSource !== patchedSource) {
+    return replacedSource;
+  }
+
+  const methodDefinitionRegex = /installWindowsTitleBarOverlaySync\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\{if\(/g;
+  let methodStart = -1;
+  for (const match of patchedSource.matchAll(methodDefinitionRegex)) {
+    methodStart = match.index;
+  }
+  const methodEndMarker = "}isOpaqueWindowsEnabled(){";
+  const methodEnd = methodStart === -1 ? -1 : patchedSource.indexOf(methodEndMarker, methodStart);
+  if (methodEnd !== -1) {
+    return patchedSource.slice(0, methodStart) + overlaySyncReplacement + patchedSource.slice(methodEnd + 1);
+  }
+
+  return patchedSource;
 }
 
 function applyLinuxMenuPatch(currentSource) {
@@ -1044,6 +1165,7 @@ module.exports = {
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxMenuPatch,
+  applyLinuxNativeTitlebarPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxQuitGuardPatch,
   applyLinuxReadyToShowWindowStatePatch,

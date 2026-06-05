@@ -38,6 +38,7 @@ const {
   applyLinuxLaunchActionArgsPatch,
   applyLinuxSettingsPersistencePatch,
   applyLinuxMenuPatch,
+  applyLinuxNativeTitlebarPatch,
   applyLinuxMultiInstanceBootstrapPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueBackgroundPatch,
@@ -550,6 +551,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-explicit-tray-quit",
     "linux-explicit-ipc-quit",
     "linux-window-options",
+    "linux-native-titlebar",
     "linux-menu",
     "linux-multi-instance-bootstrap-lock",
     "linux-set-icon",
@@ -608,6 +610,12 @@ test("default core patch descriptors are grouped and unique", () => {
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "local-environment-action-modal-draft")?.ciPolicy,
     "optional",
+  );
+
+  const descriptorOrder = new Map(descriptors.map((descriptor) => [descriptor.id, descriptor.order]));
+  assert.ok(
+    descriptorOrder.get("linux-native-titlebar") > descriptorOrder.get("linux-opaque-background"),
+    "linux-native-titlebar must run after linux-opaque-background so it can reuse the inserted Linux background branch aliases",
   );
 });
 
@@ -1180,13 +1188,49 @@ test("patches remaining explicit quit handlers when another copy is already patc
   );
 });
 
+test("uses the frameless native Codex titlebar for primary Linux windows", () => {
+  const source = [
+    "function A2(e){return e===`avatarOverlay`}",
+    "function I2({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!A2(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?a2:o2,backgroundMaterial:e===`win32`?`none`:null}:e===`linux`&&!A2(t)?{backgroundColor:r?a2:o2,backgroundMaterial:null}:{backgroundColor:i2,backgroundMaterial:null}}",
+    "function b2(e=1){return{color:i2,symbolColor:a.nativeTheme.shouldUseDarkColors?v2:_2,height:Math.round(g2*e)}}",
+    "case`primary`:return n===`darwin`?t?{titleBarStyle:`hiddenInset`,trafficLightPosition:y2(r)}:{vibrancy:`menu`,titleBarStyle:`hiddenInset`,trafficLightPosition:y2(r)}:n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:b2(r)}:{titleBarStyle:`default`};",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxNativeTitlebarPatch, source);
+
+  assert.match(patched, /n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:a\.nativeTheme\.shouldUseDarkColors\?`#111111`:o2,symbolColor:a\.nativeTheme\.shouldUseDarkColors\?v2:_2,height:Math\.round\(g2\*r\)\}\}/);
+  assert.doesNotMatch(patched, /n===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:b2\(r\)\}:\{titleBarStyle:`default`\}/);
+  assert.doesNotMatch(patched, /n===`win32`\|\|n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:b2\(r\)\}/);
+});
+
+test("updates the Linux native titlebar overlay when nativeTheme changes", () => {
+  const source = [
+    "function A2(e){return e===`avatarOverlay`}",
+    "function I2({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!A2(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?a2:o2,backgroundMaterial:e===`win32`?`none`:null}:e===`linux`&&!A2(t)?{backgroundColor:r?a2:o2,backgroundMaterial:null}:{backgroundColor:i2,backgroundMaterial:null}}",
+    "function b2(e=1){return{color:i2,symbolColor:a.nativeTheme.shouldUseDarkColors?v2:_2,height:Math.round(g2*e)}}",
+    "case`primary`:return n===`darwin`?t?{titleBarStyle:`hiddenInset`,trafficLightPosition:y2(r)}:{vibrancy:`menu`,titleBarStyle:`hiddenInset`,trafficLightPosition:y2(r)}:n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:b2(r)}:{titleBarStyle:`default`};",
+    "installWindowsTitleBarOverlaySync(e,t){if(process.platform!==`win32`||t!==`primary`)return;let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(b2(this.windowZooms.get(e.id)))};return a.nativeTheme.on(`updated`,n),n(),()=>{a.nativeTheme.off(`updated`,n)}}",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxNativeTitlebarPatch, source);
+
+  assert.match(
+    patched,
+    /if\(\(process\.platform!==`win32`&&process\.platform!==`linux`\)\|\|t!==`primary`\)return/,
+  );
+  assert.match(
+    patched,
+    /e\.setTitleBarOverlay\(process\.platform===`linux`\?\{color:a\.nativeTheme\.shouldUseDarkColors\?`#111111`:o2,symbolColor:a\.nativeTheme\.shouldUseDarkColors\?v2:_2,height:Math\.round\(g2\*this\.windowZooms\.get\(e\.id\)\)\}:b2\(this\.windowZooms\.get\(e\.id\)\)\)/,
+  );
+  assert.doesNotMatch(patched, /webContents\.executeJavaScript\(/);
+  assert.doesNotMatch(patched, /data-codex-window-type/);
+});
+
 test("adds Linux menu hiding next to Windows removeMenu calls", () => {
-  const source = "process.platform===`win32`&&k.removeMenu(),k.on(`closed`,()=>{})";
+  const source = "process.platform===`win32`&&k.removeMenu(),";
   const patched = applyPatchTwice(applyLinuxMenuPatch, source);
 
   assert.equal(
     patched,
-    "process.platform===`linux`&&k.setMenuBarVisibility(!1),process.platform===`win32`&&k.removeMenu(),k.on(`closed`,()=>{})",
+    "process.platform===`linux`&&k.setMenuBarVisibility(!1),process.platform===`win32`&&k.removeMenu(),",
   );
 });
 
@@ -1455,13 +1499,15 @@ test("adds Linux window icon handling when an icon asset is available", () => {
     iconAsset,
   );
 
-  assert.match(patchedWindowOptions, /process\.platform===`win32`\|\|process\.platform===`linux`/);
+  assert.match(patchedWindowOptions, /process\.platform===`win32`\?\{autoHideMenuBar:!0\}:process\.platform===`linux`/);
+  assert.doesNotMatch(patchedWindowOptions, /process\.platform===`win32`\|\|process\.platform===`linux`/);
   assert.match(patchedWindowOptions, new RegExp(`icon:${escapeRegExp(iconPathExpression)}`));
   assert.equal(
     patchedSetIcon,
     `process.platform===\`linux\`&&D.setIcon(${iconPathExpression}),${readyToShowSource}`,
   );
   assert.match(patchedMain, new RegExp(`icon:${escapeRegExp(iconPathExpression)}`));
+  assert.doesNotMatch(patchedMain, /process\.platform===`win32`\|\|process\.platform===`linux`\?\{autoHideMenuBar:!0/);
   assert.match(patchedMain, new RegExp(`D\\.setIcon\\(${escapeRegExp(iconPathExpression)}\\)`));
 });
 
@@ -1470,7 +1516,7 @@ test("patches remaining Linux window icon snippets when another window is alread
   const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
   const windowOptionsSource = "...process.platform===`win32`?{autoHideMenuBar:!0}:{},";
   const patchedWindowOptionsNeedle =
-    `...process.platform===\`win32\`||process.platform===\`linux\`?{autoHideMenuBar:!0,...process.platform===\`linux\`?{icon:${iconPathExpression}}:{}}:{},`;
+    `...process.platform===\`win32\`?{autoHideMenuBar:!0}:process.platform===\`linux\`?{icon:${iconPathExpression}}:{},`;
   const readyToShowSource = "D.once(`ready-to-show`,()=>{})";
   const readyToShowSource2 = "E.once(`ready-to-show`,()=>{})";
   const patchedSetIconNeedle =
@@ -1490,7 +1536,7 @@ test("patches remaining Linux window icon snippets when another window is alread
   assert.equal((patchedWindowOptions.match(/icon:process\.resourcesPath/g) ?? []).length, 2);
   assert.match(
     patchedWindowOptions,
-    /function createSecondWindow\(\)\{return \{\.\.\.process\.platform===`win32`\|\|process\.platform===`linux`\?\{autoHideMenuBar:!0,\.\.\.process\.platform===`linux`\?\{icon:process\.resourcesPath\+`\/\.\.\/content\/webview\/assets\/app-test\.png`\}:\{\}\}:\{\},\}\}/,
+    /function createSecondWindow\(\)\{return \{\.\.\.process\.platform===`win32`\?\{autoHideMenuBar:!0\}:process\.platform===`linux`\?\{icon:process\.resourcesPath\+`\/\.\.\/content\/webview\/assets\/app-test\.png`\}:\{\},\}\}/,
   );
   assert.equal((patchedSetIcon.match(/\.setIcon\(/g) ?? []).length, 2);
   assert.match(
