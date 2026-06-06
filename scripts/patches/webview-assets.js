@@ -196,13 +196,13 @@ function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
 
 function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
   const currentInset = `applicationMenu:Object.freeze({left:0,right:${LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT}})`;
-  if (currentSource.includes(currentInset)) {
-    return currentSource;
-  }
-
   const defaultInset = "applicationMenu:Object.freeze({left:0,right:0})";
   if (currentSource.includes(defaultInset)) {
-    return currentSource.replace(defaultInset, currentInset);
+    return currentSource.split(defaultInset).join(currentInset);
+  }
+
+  if (currentSource.includes(currentInset)) {
+    return currentSource;
   }
 
   if (currentSource.includes("applicationMenu:Object.freeze({left:0,right:")) {
@@ -216,16 +216,16 @@ function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
 
 function applyLinuxTooltipWindowControlsCollisionPatch(currentSource) {
   const currentPadding = `padding:{top:${LINUX_TOOLTIP_COLLISION_PADDING_TOP},right:8,bottom:8,left:8}`;
-  if (currentSource.includes(currentPadding)) {
-    return currentSource;
-  }
-
   const defaultMiddleware = "middleware:[a({mainAxis:C,crossAxis:t}),c({padding:8}),l({padding:8}),u({padding:8,apply({availableWidth:e,availableHeight:t,elements:n,rects:r})";
   const patchedMiddleware =
     `middleware:[a({mainAxis:C,crossAxis:t}),c({${currentPadding}}),l({${currentPadding}}),u({${currentPadding},apply({availableWidth:e,availableHeight:t,elements:n,rects:r})`;
 
   if (currentSource.includes(defaultMiddleware)) {
-    return currentSource.replace(defaultMiddleware, patchedMiddleware);
+    return currentSource.split(defaultMiddleware).join(patchedMiddleware);
+  }
+
+  if (currentSource.includes(currentPadding)) {
+    return currentSource;
   }
 
   if (currentSource.includes("middleware:[") && currentSource.includes("availableWidth")) {
@@ -250,7 +250,7 @@ function applyLinuxThreadSidePanelNativeTooltipPatch(currentSource) {
   }
 
   if (currentSource.includes(nativeTitleNeedle)) {
-    return currentSource.replace(nativeTitleNeedle, nativeTitlePatch);
+    return currentSource.split(nativeTitleNeedle).join(nativeTitlePatch);
   }
 
   if (currentSource.includes("tooltipContent:i") && currentSource.includes("title:i")) {
