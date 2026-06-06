@@ -3,6 +3,9 @@
 const {
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
+  applyLinuxThreadSidePanelNativeTooltipPatch,
+  applyLinuxTooltipWindowControlsCollisionPatch,
+  applyLinuxWindowControlsSafeAreaPatch,
 } = require("../../../../webview-assets.js");
 
 module.exports = [
@@ -45,5 +48,35 @@ module.exports = [
     missingDescription: "resolved theme bundle",
     skipDescription: "translucent sidebar default patch",
     apply: applyLinuxOpaqueWindowsDefaultPatch,
+  },
+  {
+    id: "linux-window-controls-safe-area",
+    phase: "webview-asset",
+    order: 1040,
+    ciPolicy: "optional",
+    pattern: /^use-window-controls-safe-area-.*\.js$/,
+    missingDescription: "window controls safe-area bundle",
+    skipDescription: "Linux window controls safe-area patch",
+    apply: applyLinuxWindowControlsSafeAreaPatch,
+  },
+  {
+    id: "linux-tooltip-window-controls-collision",
+    phase: "webview-asset",
+    order: 1050,
+    ciPolicy: "optional",
+    pattern: /^tooltip-.*\.js$/,
+    missingDescription: "tooltip bundle",
+    skipDescription: "Linux tooltip titlebar collision patch",
+    apply: applyLinuxTooltipWindowControlsCollisionPatch,
+  },
+  {
+    id: "linux-thread-side-panel-native-tooltip",
+    phase: "webview-asset",
+    order: 1060,
+    ciPolicy: "optional",
+    pattern: /^thread-app-shell-chrome-.*\.js$/,
+    missingDescription: "thread app shell chrome bundle",
+    skipDescription: "Linux thread side panel native tooltip patch",
+    apply: applyLinuxThreadSidePanelNativeTooltipPatch,
   },
 ];
