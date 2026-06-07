@@ -27,6 +27,7 @@ LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/$CODEX_LINUX_APP_ID"
 LOG_FILE="$LOG_DIR/launcher.log"
 APP_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$CODEX_LINUX_APP_ID"
 APP_SETTINGS_FILE="$APP_CONFIG_DIR/settings.json"
+USER_ELECTRON_FLAGS_FILE="$APP_CONFIG_DIR/electron-flags.conf"
 CODEX_LINUX_SETTINGS_FILE="$APP_SETTINGS_FILE"
 CODEX_LINUX_FEATURES_DIR="$SCRIPT_DIR/.codex-linux/features"
 export CODEX_HOME CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINUX_WEBVIEW_PORT CODEX_LINUX_SETTINGS_FILE CODEX_LINUX_FEATURES_DIR
@@ -228,6 +229,7 @@ Options:
 
 Default launch keeps Electron GPU enabled and lets Electron choose the platform.
 Extra flags are passed directly to Electron.
+Persistent launch flags: $USER_ELECTRON_FLAGS_FILE
 
 Environment:
   CODEX_LINUX_RENDERING_MODE=auto|default|wslg|wayland-gpu
@@ -1949,6 +1951,80 @@ scan_electron_rendering_arg() {
     esac
 }
 
+write_user_electron_flags_template() {
+    cat > "$USER_ELECTRON_FLAGS_FILE" <<'EOF'
+# Codex Desktop Linux launch flags.
+# Uncomment one flag per line. Existing files are never overwritten.
+# Lines starting with # and blank lines are ignored.
+# Shell syntax, quotes, variables, and inline comments are not evaluated.
+#
+# X11 / Wayland:
+# --x11
+# --wayland
+# --ozone-platform=x11
+# --ozone-platform=wayland
+# --ozone-platform-hint=auto
+#
+# Wayland / IME:
+# --enable-wayland-ime
+# --wayland-text-input-version=1
+#
+# GPU / rendering:
+# --safe-mode
+# --disable-gpu
+# --enable-gpu
+# --disable-gpu-compositing
+# --use-gl=angle
+# --use-gl=desktop
+# --use-angle=gl
+# --disable-features=Vulkan
+#
+# Accessibility:
+# --force-renderer-accessibility
+#
+# Wayland decorations:
+# --enable-features=WaylandWindowDecorations
+EOF
+}
+
+ensure_user_electron_flags_file() {
+    [ -n "${USER_ELECTRON_FLAGS_FILE:-}" ] || return 0
+    if [ -e "$USER_ELECTRON_FLAGS_FILE" ] || [ -L "$USER_ELECTRON_FLAGS_FILE" ]; then
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$USER_ELECTRON_FLAGS_FILE")"
+    if write_user_electron_flags_template; then
+        echo "Created persistent Electron flags template: $USER_ELECTRON_FLAGS_FILE"
+    else
+        echo "Could not create persistent Electron flags template: $USER_ELECTRON_FLAGS_FILE"
+        rm -f "$USER_ELECTRON_FLAGS_FILE" 2>/dev/null || true
+    fi
+}
+
+load_user_electron_flags() {
+    USER_ELECTRON_FLAGS=()
+    [ -n "${USER_ELECTRON_FLAGS_FILE:-}" ] || return 0
+    [ -f "$USER_ELECTRON_FLAGS_FILE" ] || return 0
+
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        case "$line" in
+            ""|\#*) continue ;;
+            --)
+                echo "Ignoring unsupported separator in Electron flags file: $USER_ELECTRON_FLAGS_FILE"
+                continue
+                ;;
+        esac
+        USER_ELECTRON_FLAGS+=("$line")
+    done < "$USER_ELECTRON_FLAGS_FILE"
+
+    if [ "${#USER_ELECTRON_FLAGS[@]}" -gt 0 ]; then
+        echo "Loaded ${#USER_ELECTRON_FLAGS[@]} persistent Electron flag(s): $USER_ELECTRON_FLAGS_FILE"
+    fi
+}
+
 apply_electron_rendering_profile() {
     local requested_mode
     requested_mode="$(normalize_linux_rendering_mode)"
@@ -2242,7 +2318,9 @@ launch_electron() {
     cd "$SCRIPT_DIR"
     log_phase "electron_launch"
 
-    set_electron_defaults "$@"
+    ensure_user_electron_flags_file
+    load_user_electron_flags
+    set_electron_defaults "${USER_ELECTRON_FLAGS[@]}" "$@"
     build_electron_launch_args
 
     if [ "$WARM_START" -eq 1 ]; then
