@@ -2907,8 +2907,9 @@ print_state() {
 case "${1:-}" in
     probe)
         shift
+        load_feature_electron_args
         load_user_electron_flags
-        set_electron_defaults "${USER_ELECTRON_FLAGS[@]}" "$@"
+        set_electron_defaults "${FEATURE_ELECTRON_ARGS[@]}" "${USER_ELECTRON_FLAGS[@]}" "$@"
         build_electron_launch_args
         print_state
         ;;
@@ -2954,6 +2955,14 @@ PY
 
     output="$(env -i PATH="$PATH" HOME="$HOME" APP_CONFIG_DIR="$user_flags_dir" USER_ELECTRON_FLAGS_FILE="$user_flags_file" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe -- --use-gl=desktop)"
     [[ "$output" == *"electron=<--enable-wayland-ime><--use-gl=angle><--use-gl=desktop>"* ]] || fail "explicit CLI Electron args must follow persistent file args: $output"
+
+    local feature_args_dir="$TMP_DIR/feature-electron-args"
+    mkdir -p "$feature_args_dir"
+    printf '%s\n' '--ozone-platform=wayland' '--use-angle=gl' > "$feature_args_dir/feature"
+    output="$(env -i PATH="$PATH" HOME="$HOME" APP_CONFIG_DIR="$user_flags_dir" USER_ELECTRON_FLAGS_FILE="$user_flags_file" FEATURE_ELECTRON_ARGS_DIR="$feature_args_dir" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe)"
+    [[ "$output" == *"<--ozone-platform=x11>"* ]] || fail "persistent flags file must override feature Electron platform args: $output"
+    [[ "$output" != *"<--ozone-platform=wayland>"* ]] || fail "feature Electron platform args must not survive after user override: $output"
+    [[ "$output" == *"electron=<--use-angle=gl><--enable-wayland-ime><--use-gl=angle>"* ]] || fail "feature, user, and CLI-independent Electron args must keep precedence order: $output"
 
     local template_dir="$TMP_DIR/user-electron-template"
     local template_file="$template_dir/electron-flags.conf"

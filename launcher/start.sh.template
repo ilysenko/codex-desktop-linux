@@ -2224,7 +2224,8 @@ set_electron_defaults() {
     apply_electron_rendering_profile
 }
 
-append_feature_electron_args() {
+load_feature_electron_args() {
+    FEATURE_ELECTRON_ARGS=()
     [ -n "${FEATURE_ELECTRON_ARGS_DIR:-}" ] || return 0
     [ -d "$FEATURE_ELECTRON_ARGS_DIR" ] || return 0
 
@@ -2238,7 +2239,7 @@ append_feature_electron_args() {
             case "$line" in
                 ""|\#*) continue ;;
             esac
-            ELECTRON_LAUNCH_ARGS+=("$line")
+            FEATURE_ELECTRON_ARGS+=("$line")
         done < "$args_file"
     done
 }
@@ -2286,7 +2287,6 @@ build_electron_launch_args() {
         ELECTRON_LAUNCH_ARGS+=(--enable-features=WaylandWindowDecorations)
     fi
 
-    append_feature_electron_args
 }
 
 configure_side_by_side_app_env() {
@@ -2319,8 +2319,9 @@ launch_electron() {
     log_phase "electron_launch"
 
     ensure_user_electron_flags_file
+    load_feature_electron_args
     load_user_electron_flags
-    set_electron_defaults "${USER_ELECTRON_FLAGS[@]}" "$@"
+    set_electron_defaults "${FEATURE_ELECTRON_ARGS[@]}" "${USER_ELECTRON_FLAGS[@]}" "$@"
     build_electron_launch_args
 
     if [ "$WARM_START" -eq 1 ]; then
