@@ -64,6 +64,7 @@ const {
 } = require("./patches/launch-actions.js");
 const {
   applyBrowserUseNodeReplApprovalPatch,
+  applyLinuxAboutDialogPatch,
   applyLinuxBuildInfoTrayPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxExplicitIpcQuitPatch,
@@ -171,6 +172,7 @@ module.exports = {
   applyLinuxDesktopSettingsIndexPatch,
   applyLinuxDesktopSettingsSectionsPatch,
   applyLinuxDesktopSettingsSharedPatch,
+  applyLinuxAboutDialogPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,

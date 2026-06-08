@@ -1,6 +1,7 @@
 "use strict";
 
 const {
+  applyLinuxAboutDialogPatch,
   applyLinuxWindowOptionsPatch,
   applyLinuxNativeTitlebarPatch,
   applyLinuxMenuPatch,
@@ -16,6 +17,13 @@ const {
 const { applyLinuxAvatarOverlayMousePassthroughPatch } = require("../../../../avatar-overlay.js");
 
 module.exports = [
+  {
+    id: "linux-about-dialog",
+    phase: "main-bundle",
+    order: 55,
+    ciPolicy: "optional",
+    apply: (source, context) => applyLinuxAboutDialogPatch(source, context.iconPathExpression),
+  },
   {
     id: "linux-window-options",
     phase: "main-bundle",
