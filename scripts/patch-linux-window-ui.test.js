@@ -51,6 +51,7 @@ const {
   applyLinuxReadyToShowWindowStatePatch,
   applyLinuxSetIconPatch,
   applyLinuxRemoteControlConfigPreservationPatch,
+  applyLinuxRemoteControlDeviceKeyPatch,
   applyLinuxSingleInstancePatch,
   applyLinuxTrayCloseSettingPatch,
   applyLinuxTrayPatch,
@@ -95,6 +96,7 @@ const {
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxI18nGatePatch,
+  applyLinuxMarketplaceCatalogKindPatch,
   applyLinuxProfileSettingsMenuPatch,
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxThreadSidePanelNativeTooltipPatch,
@@ -113,6 +115,12 @@ const opaqueBackgroundBundleWithDriftingGw =
   "var cM=`#00000000`,lM=`#000000`,uM=`#f9f9f9`;function OM(e){return e===`avatarOverlay`||e===`browserCommentPopup`}function jM({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return e===`win32`&&!OM(t)?n?{backgroundColor:r?lM:uM,backgroundMaterial:`none`}:{backgroundColor:cM,backgroundMaterial:`mica`}:{backgroundColor:cM,backgroundMaterial:null}}function gw(e){return e.page==null?e.snapshot.url:mw(e.page)}";
 const currentOpaqueBackgroundBundle =
   "var QK=`#00000000`,$K=`#000000`,eq=`#f9f9f9`;function vq(e){return e===`avatarOverlay`||e===`browserCommentPopup`||e===`globalDictation`||e===`hotkeyWindowHome`||e===`hotkeyWindowThread`}function xq({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!vq(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?$K:eq,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`&&!vq(t)?{backgroundColor:QK,backgroundMaterial:`mica`}:{backgroundColor:QK,backgroundMaterial:null}}";
+const remoteControlDeviceKeyBundle = [
+  "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),b={createRequire:()=>()=>({})};",
+  "function mz(e){return Buffer.from(JSON.stringify({domain:`codex-device-key-sign-payload/v1`,payload:e}),`utf8`)}",
+  "var lz=(0,b.createRequire)(__filename),uz=`remote-control-device-key.node`,dz=`codex-device-key-sign-payload/v1`;",
+  "function pz({resourcesPath:e}){let t=null,n=()=>{if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=lz((0,i.join)(e,`native`,uz)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=mz(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
+].join("");
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -578,6 +586,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-chrome-native-host-runtime",
     "browser-use-node-repl-approval",
     "linux-chrome-extension-status",
+    "linux-remote-control-device-key",
     "linux-remote-control-config-preservation",
     "linux-app-updater-menu",
     "linux-tray-close-setting",
@@ -590,6 +599,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "automation-schedule-multi-time-rrule",
     "linux-app-sunset-gate",
     "linux-app-server-feature-enablement",
+    "linux-plugin-marketplace-catalog-kinds",
     "linux-config-write-version-conflict",
     "opaque-window-default-general-settings",
     "opaque-window-default-webview-index",
@@ -631,6 +641,118 @@ test("default core patch descriptors are grouped and unique", () => {
     descriptorOrder.get("linux-native-titlebar") > descriptorOrder.get("linux-opaque-background"),
     "linux-native-titlebar must run after linux-opaque-background so it can reuse the inserted Linux background branch aliases",
   );
+});
+
+test("patched Linux remote-control device-key provider can create, sign with, and delete a key", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-core-remote-key-store-"));
+  try {
+    const patched = applyPatchTwice(
+      applyLinuxRemoteControlDeviceKeyPatch,
+      remoteControlDeviceKeyBundle,
+    );
+    assert.match(patched, /codexLinuxRemoteControlDeviceKeyClient/);
+
+    const context = {
+      Buffer,
+      Date,
+      Error,
+      JSON,
+      Promise,
+      console,
+      __filename: path.join(configHome, "main.js"),
+      module: { exports: {} },
+      process: {
+        env: { XDG_CONFIG_HOME: configHome },
+        pid: process.pid,
+        platform: "linux",
+      },
+      require,
+    };
+    vm.runInNewContext(`${patched};module.exports=pz({resourcesPath:null});`, context);
+
+    const client = context.module.exports;
+    const created = await client.createDeviceKey("allow_os_protected_nonextractable");
+    assert.equal(created.algorithm, "ecdsa_p256_sha256");
+    assert.equal(created.protectionClass, "os_protected_nonextractable");
+
+    const payload = { type: "remoteControlClientEnrollment", nonce: "test" };
+    const signature = await client.signDeviceKey(created.keyId, payload);
+    assert.equal(signature.algorithm, "ecdsa_p256_sha256");
+    assert.match(signature.signatureDerBase64, /^[A-Za-z0-9+/]+=*$/);
+    assert.match(signature.signedPayloadBase64, /^[A-Za-z0-9+/]+=*$/);
+
+    const publicKey = crypto.createPublicKey({
+      key: Buffer.from(created.publicKeySpkiDerBase64, "base64"),
+      type: "spki",
+      format: "der",
+    });
+    assert.equal(
+      crypto.verify(
+        "sha256",
+        Buffer.from(signature.signedPayloadBase64, "base64"),
+        publicKey,
+        Buffer.from(signature.signatureDerBase64, "base64"),
+      ),
+      true,
+    );
+
+    const storePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    assert.equal(fs.statSync(storePath).mode & 0o777, 0o600);
+
+    await client.deleteDeviceKey(created.keyId);
+    await assert.rejects(() => client.getDeviceKeyPublic(created.keyId), /not found/);
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("core main bundle patch installs the Linux remote-control device-key provider", () => {
+  const patched = patchMainBundleSource(remoteControlDeviceKeyBundle, null);
+
+  assert.match(patched, /codexLinuxRemoteControlDeviceKeyClient/);
+  assert.match(
+    patched,
+    /if\(process\.platform===`linux`\)return codexLinuxRemoteControlDeviceKeyClient\(\)/,
+  );
+});
+
+test("filters unsupported vertical plugin marketplace catalog kinds", () => {
+  const source =
+    "function Ae({additionalMarketplaceKinds:e,includeRemoteCatalog:t,includeVerticalCatalog:n}){return t&&!n&&e.length===0?null:n?[`local`,`vertical`,...e]:[`local`,...e]}";
+  const patched = applyPatchTwice(applyLinuxMarketplaceCatalogKindPatch, source);
+  const context = { module: { exports: {} } };
+  vm.runInNewContext(`${patched};module.exports=Ae;`, context);
+
+  const catalogKinds = context.module.exports;
+  assert.deepEqual(
+    catalogKinds({
+      additionalMarketplaceKinds: [],
+      includeRemoteCatalog: true,
+      includeVerticalCatalog: false,
+    }),
+    null,
+  );
+  assert.deepEqual(
+    [
+      ...catalogKinds({
+        additionalMarketplaceKinds: [],
+        includeRemoteCatalog: true,
+        includeVerticalCatalog: true,
+      }),
+    ],
+    ["local"],
+  );
+  assert.deepEqual(
+    [
+      ...catalogKinds({
+        additionalMarketplaceKinds: ["workspace-directory", "vertical", "shared-with-me"],
+        includeRemoteCatalog: false,
+        includeVerticalCatalog: true,
+      }),
+    ],
+    ["local", "workspace-directory", "shared-with-me"],
+  );
+  assert.doesNotMatch(patched, /\[`local`,`vertical`,/);
 });
 
 test("fast-mode guard descriptor follows upstream service-tier bundle names", () => {

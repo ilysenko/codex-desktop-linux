@@ -10,6 +10,13 @@ const {
 } = require("./shared.js");
 
 const LINUX_TITLEBAR_OVERLAY_HEIGHT = 30;
+const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
+const DEVICE_KEY_GUARD =
+  "if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);";
+const DEVICE_KEY_GUARD_REPLACEMENT =
+  "if(process.platform===`linux`)return codexLinuxRemoteControlDeviceKeyClient();if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);";
+const DEVICE_KEY_REQUIRE_NEEDLE =
+  /(?:var|let|const)\s+[A-Za-z_$][\w$]*=\(0,[A-Za-z_$][\w$]*\.createRequire\)\(__filename\),[A-Za-z_$][\w$]*=`remote-control-device-key\.node`/u;
 
 // Main-process patches adapt Electron shell behavior: windows, tray, menu,
 // single-instance handling, file manager integration, and packaged runtime glue.
@@ -1209,6 +1216,75 @@ function applyLinuxRemoteControlConfigPreservationPatch(currentSource) {
   return currentSource;
 }
 
+function linuxRemoteControlDeviceKeyProviderSource({ cryptoVar, fsVar, pathVar }) {
+  return [
+    "function codexLinuxRemoteControlDeviceKeyStorePath(){",
+    `let e=process.env.XDG_CONFIG_HOME&&process.env.XDG_CONFIG_HOME.trim()?process.env.XDG_CONFIG_HOME.trim():process.env.HOME?${pathVar}.join(process.env.HOME,\`.config\`):null;`,
+    "if(e==null)throw Error(`Linux remote control device keys require HOME or XDG_CONFIG_HOME`);",
+    `${fsVar}.mkdirSync(${pathVar}.join(e,\`codex-desktop\`),{recursive:!0,mode:448});`,
+    `return ${pathVar}.join(e,\`codex-desktop\`,\`remote-control-device-keys-v1.json\`)`,
+    "}",
+    "function codexLinuxRemoteControlPublicDeviceKey(e){",
+    "return{algorithm:e.algorithm,keyId:e.keyId,protectionClass:e.protectionClass,publicKeySpkiDerBase64:e.publicKeySpkiDerBase64}",
+    "}",
+    "function codexLinuxReadRemoteControlDeviceKeyStore(){",
+    "let e=codexLinuxRemoteControlDeviceKeyStorePath();",
+    `if(!${fsVar}.existsSync(e))return{keys:{}};`,
+    "try{",
+    `let t=JSON.parse(${fsVar}.readFileSync(e,\`utf8\`));`,
+    "return t&&typeof t==`object`&&!Array.isArray(t)&&t.keys&&typeof t.keys==`object`&&!Array.isArray(t.keys)?t:{keys:{}}",
+    "}catch{return{keys:{}}}",
+    "}",
+    "function codexLinuxWriteRemoteControlDeviceKeyStore(e){",
+    "let t=codexLinuxRemoteControlDeviceKeyStorePath(),n=`${t}.tmp-${process.pid}-${Date.now()}`;",
+    `try{${fsVar}.writeFileSync(n,JSON.stringify(e,null,2)+\`\\n\`,{encoding:\`utf8\`,mode:384}),${fsVar}.chmodSync(n,384),${fsVar}.renameSync(n,t),${fsVar}.chmodSync(t,384)}catch(e){try{${fsVar}.rmSync(n,{force:!0})}catch{}throw e}`,
+    "}",
+    "function codexLinuxRemoteControlDeviceKeyClient(){return{",
+    "createDeviceKey:async e=>{",
+    "let t=codexLinuxReadRemoteControlDeviceKeyStore();",
+    `let{publicKey:n,privateKey:r}=(0,${cryptoVar}.generateKeyPairSync)(\`ec\`,{namedCurve:\`P-256\`});`,
+    `let i=(0,${cryptoVar}.randomUUID)(),a=n.export({type:\`spki\`,format:\`der\`}).toString(\`base64\`),o=r.export({type:\`pkcs8\`,format:\`pem\`});`,
+    "let c={algorithm:`ecdsa_p256_sha256`,keyId:i,protectionClass:`os_protected_nonextractable`,publicKeySpkiDerBase64:a,privateKeyPkcs8Pem:o,createdAt:new Date().toISOString()};",
+    "t.keys={...t.keys,[i]:c},codexLinuxWriteRemoteControlDeviceKeyStore(t);",
+    "return codexLinuxRemoteControlPublicDeviceKey(c)",
+    "},",
+    "deleteDeviceKey:async e=>{let t=codexLinuxReadRemoteControlDeviceKeyStore();t.keys&&delete t.keys[e],codexLinuxWriteRemoteControlDeviceKeyStore(t)},",
+    "getDeviceKeyPublic:async e=>{let t=codexLinuxReadRemoteControlDeviceKeyStore().keys?.[e];if(t==null)throw Error(`Linux remote control device key not found`);return codexLinuxRemoteControlPublicDeviceKey(t)},",
+    `signDeviceKey:async(e,t)=>{let n=codexLinuxReadRemoteControlDeviceKeyStore().keys?.[e];if(n==null)throw Error(\`Linux remote control device key not found\`);let r=(0,${cryptoVar}.createPrivateKey)(n.privateKeyPkcs8Pem),i=(0,${cryptoVar}.sign)(\`sha256\`,t,r).toString(\`base64\`);return{algorithm:n.algorithm,signatureDerBase64:i}}`,
+    "}}",
+  ].join("");
+}
+
+function applyLinuxRemoteControlDeviceKeyPatch(currentSource) {
+  if (currentSource.includes(DEVICE_KEY_CLIENT_MARKER)) {
+    return currentSource;
+  }
+
+  const cryptoVar = requireName(currentSource, "node:crypto");
+  const fsVar = requireName(currentSource, "node:fs");
+  const pathVar = requireName(currentSource, "node:path");
+  if (cryptoVar == null || fsVar == null || pathVar == null) {
+    console.warn("WARN: Could not find Node module aliases — skipping Linux remote-control device-key patch");
+    return currentSource;
+  }
+
+  const insertionNeedle = currentSource.match(DEVICE_KEY_REQUIRE_NEEDLE)?.[0] ?? null;
+  if (insertionNeedle == null || !currentSource.includes(DEVICE_KEY_GUARD)) {
+    if (
+      currentSource.includes("remote-control-device-key.node") ||
+      currentSource.includes("Remote control device keys are only available on macOS")
+    ) {
+      console.warn("WARN: Could not find remote-control device-key bundle needles — skipping Linux remote-control device-key patch");
+    }
+    return currentSource;
+  }
+
+  const provider = linuxRemoteControlDeviceKeyProviderSource({ cryptoVar, fsVar, pathVar });
+  return currentSource
+    .replace(insertionNeedle, `${provider}${insertionNeedle}`)
+    .replace(DEVICE_KEY_GUARD, DEVICE_KEY_GUARD_REPLACEMENT);
+}
+
 module.exports = {
   applyBrowserUseNodeReplApprovalPatch,
   applyLinuxAboutDialogPatch,
@@ -1225,6 +1301,7 @@ module.exports = {
   applyLinuxQuitGuardPatch,
   applyLinuxReadyToShowWindowStatePatch,
   applyLinuxRemoteControlConfigPreservationPatch,
+  applyLinuxRemoteControlDeviceKeyPatch,
   applyLinuxSetIconPatch,
   applyLinuxSingleInstancePatch,
   applyLinuxTrayPatch,

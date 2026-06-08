@@ -1684,8 +1684,14 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedAppMainFile, /codexLinuxRemoteMobileActiveStatus/);
         assert.ok(
           report.patches.some((patch) =>
-            patch.name === "feature:remote-mobile-control:linux-remote-control-device-key" &&
+            patch.name === "linux-remote-control-device-key" &&
             patch.status === "applied",
+          ),
+        );
+        assert.ok(
+          report.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-control-device-key" &&
+            patch.status === "already-applied",
           ),
         );
         assert.ok(

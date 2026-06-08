@@ -411,6 +411,37 @@ function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxMarketplaceCatalogKindPatch(currentSource) {
+  if (
+    currentSource.includes("additionalMarketplaceKinds") &&
+    currentSource.includes(".filter(e=>e!==`vertical`)")
+  ) {
+    return currentSource;
+  }
+
+  const catalogKindBuilderRegex =
+    /function ([A-Za-z_$][\w$]*)\(\{additionalMarketplaceKinds:([A-Za-z_$][\w$]*),includeRemoteCatalog:([A-Za-z_$][\w$]*),includeVerticalCatalog:([A-Za-z_$][\w$]*)\}\)\{return \3&&!\4&&\2\.length===0\?null:\4\?\[`local`,`vertical`,\.\.\.\2\]:\[`local`,\.\.\.\2\]\}/u;
+  if (catalogKindBuilderRegex.test(currentSource)) {
+    return currentSource.replace(
+      catalogKindBuilderRegex,
+      (_match, functionName, additionalKindsVar, includeRemoteVar, includeVerticalVar) =>
+        `function ${functionName}({additionalMarketplaceKinds:${additionalKindsVar},includeRemoteCatalog:${includeRemoteVar},includeVerticalCatalog:${includeVerticalVar}}){return ${includeRemoteVar}&&!${includeVerticalVar}&&${additionalKindsVar}.length===0?null:[\`local\`,...${additionalKindsVar}.filter(e=>e!==\`vertical\`)]}`,
+    );
+  }
+
+  if (
+    currentSource.includes("additionalMarketplaceKinds") &&
+    currentSource.includes("includeVerticalCatalog") &&
+    currentSource.includes("`vertical`")
+  ) {
+    console.warn(
+      "WARN: Could not find marketplace catalog kind builder — skipping unsupported vertical catalog patch",
+    );
+  }
+
+  return currentSource;
+}
+
 function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   const supportedFeatures = new Set([
     "apps",
@@ -1242,6 +1273,7 @@ module.exports = {
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
+  applyLinuxMarketplaceCatalogKindPatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxI18nGatePatch,
