@@ -27,6 +27,7 @@ const {
   applyLinuxChromePluginAutoInstallPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
+  applyLinuxAboutDialogPatch,
   applyLinuxBuildInfoTrayPatch,
   applyLinuxExplicitIpcQuitPatch,
   applyLinuxExplicitQuitPromptBypassPatch,
@@ -557,6 +558,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-explicit-tray-quit",
     "linux-explicit-ipc-quit",
     "linux-window-options",
+    "linux-about-dialog",
     "linux-native-titlebar",
     "linux-menu",
     "linux-multi-instance-bootstrap-lock",
@@ -1707,6 +1709,28 @@ test("adds Linux build information to the app Help menu", () => {
     patched,
     /\{role:`help`,id:e\.bn\.help,submenu:\[\.\.\.process\.platform===`linux`\?\[\{label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],\{label:`Codex Documentation`/,
   );
+});
+
+test("makes About dialog prefer the bundled Linux icon asset", () => {
+  const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
+  const source = [
+    "let a=require(`electron`),r={T:()=>null,V:()=>({formatMessage:({defaultMessage:e})=>e})},t={dt:()=>null,Kr:()=>null};",
+    "var $X=`codex.aboutDialog.title`,eZ=`About {appName}`,tZ=`codex.aboutDialog.ok`,nZ=`codex.aboutDialog.versionLine`,rZ=`Version {version}`,iZ=`codex.aboutDialog.versionLineWithDate`,aZ=`Version {version} • Released {releaseDate}`,oZ=`codex.aboutDialog.buildInfoLabel`,sZ=`Build information`,cZ=380,lZ=360,uZ=72,pZ=null;",
+    "async function bZ(){let e=process.platform===`darwin`,t=e?r.T():process.execPath,[n,i]=await Promise.all([e?Fw(t):null,a.app.getFileIcon(t,{size:process.platform===`win32`?`large`:`normal`})]);return{htmlIconDataUrl:n??(i.isEmpty()?null:i.resize({width:uZ,height:uZ,quality:`best`}).toDataURL()),windowIcon:i}}",
+    "let d={windowIcon:null},q={...d.windowIcon.isEmpty()?{}:{icon:d.windowIcon}};",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxAboutDialogPatch, source, iconPathExpression);
+
+  assert.match(
+    patched,
+    new RegExp(`nativeImage\\.createFromPath\\(${escapeRegExp(iconPathExpression)}\\)`),
+  );
+  assert.match(patched, /process\.platform===`linux`\?null:e\?Fw\(t\):null/);
+  assert.match(patched, /windowIcon==null\|\|d\.windowIcon\.isEmpty\(\)\?\{\}:\{icon:d\.windowIcon\}/);
+  assert.match(patched, /i==null\|\|i\.isEmpty\(\)\?null:i\.resize\(/);
+  assert.match(patched, /windowIcon:i\?\?null/);
+  assert.doesNotThrow(() => new Function(patched));
 });
 
 test("adds Linux tray support for current minified window and startup identifiers", () => {

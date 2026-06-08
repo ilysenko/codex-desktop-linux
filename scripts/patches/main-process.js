@@ -357,6 +357,58 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxAboutDialogPatch(currentSource, iconPathExpression) {
+  if (!currentSource.includes("codex.aboutDialog.title")) {
+    return currentSource;
+  }
+
+  const alreadyUsesBundledIcon =
+    iconPathExpression != null &&
+    currentSource.includes(`nativeImage.createFromPath(${iconPathExpression})`);
+  const alreadyNullSafe =
+    currentSource.includes("windowIcon==null||d.windowIcon.isEmpty()?{}:{icon:d.windowIcon}") &&
+    currentSource.includes("i==null||i.isEmpty()?null:i.resize(");
+  if (alreadyUsesBundledIcon && alreadyNullSafe) {
+    return currentSource;
+  }
+
+  let patchedSource = currentSource;
+  if (iconPathExpression != null) {
+    const aboutIconPromiseRegex =
+      /\[([A-Za-z_$][\w$]*)\?([A-Za-z_$][\w$]*)\(([^()]+)\):null,([A-Za-z_$][\w$]*)\.app\.getFileIcon\(([^()]+),\{size:process\.platform===`win32`\?`large`:`normal`\}\)\]/;
+    patchedSource = patchedSource.replace(
+      aboutIconPromiseRegex,
+      `[
+process.platform===\`linux\`?null:$1?$2($3):null,
+process.platform===\`linux\`?Promise.resolve((()=>{let __codexLinuxAboutIcon=$4.nativeImage.createFromPath(${iconPathExpression});return __codexLinuxAboutIcon.isEmpty()?null:__codexLinuxAboutIcon})()):$4.app.getFileIcon($5,{size:process.platform===\`win32\`?\`large\`:\`normal\`}).catch(()=>null)
+]`,
+    );
+  } else {
+    const patchedGetFileIconRegex =
+      /([A-Za-z_$][\w$]*)\.app\.getFileIcon\(([^()]+),\{size:process\.platform===`win32`\?`large`:`normal`\}\)\.catch\(\(\)=>null\)/;
+    if (!patchedGetFileIconRegex.test(patchedSource)) {
+      const getFileIconRegex =
+        /([A-Za-z_$][\w$]*)\.app\.getFileIcon\(([^()]+),\{size:process\.platform===`win32`\?`large`:`normal`\}\)/;
+      patchedSource = patchedSource.replace(
+        getFileIconRegex,
+        "$1.app.getFileIcon($2,{size:process.platform===`win32`?`large`:`normal`}).catch(()=>null)",
+      );
+    }
+  }
+
+  patchedSource = patchedSource
+    .replace("i.isEmpty()?null:i.resize(", "i==null||i.isEmpty()?null:i.resize(")
+    .replace("windowIcon:i}", "windowIcon:i??null}")
+    .replace("windowIcon.isEmpty()?{}:{icon:d.windowIcon}", "windowIcon==null||d.windowIcon.isEmpty()?{}:{icon:d.windowIcon}");
+
+  if (patchedSource !== currentSource) {
+    return patchedSource;
+  }
+
+  console.warn("WARN: Could not patch About dialog icon fallback for Linux");
+  return currentSource;
+}
+
 function findNamedFunctionBody(source, functionName) {
   const functionMatch = source.match(
     new RegExp(`(?:async\\s+)?function\\s+${escapeRegExp(functionName)}\\([^)]*\\)\\{`),
@@ -1159,6 +1211,7 @@ function applyLinuxRemoteControlConfigPreservationPatch(currentSource) {
 
 module.exports = {
   applyBrowserUseNodeReplApprovalPatch,
+  applyLinuxAboutDialogPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxExplicitIpcQuitPatch,
   applyLinuxExplicitQuitPromptBypassPatch,
