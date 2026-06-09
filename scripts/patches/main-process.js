@@ -434,7 +434,7 @@ function findDynamicTraySetup(source) {
   while ((match = setupRegex.exec(source)) != null) {
     const [, setupFn, factoryFn] = match;
     if (isTrayFactoryFunction(source, factoryFn)) {
-      return { setupFn, index: match.index };
+      return { setupFn, factoryFn, index: match.index };
     }
   }
   return null;
@@ -444,6 +444,47 @@ function findDynamicTrayStartupCall(source, setupFn, startIndex) {
   const startupRegex = new RegExp(`([A-Za-z_$][\\w$]*)&&${escapeRegExp(setupFn)}\\(\\);`, "g");
   startupRegex.lastIndex = startIndex;
   return startupRegex.exec(source);
+}
+
+function addDynamicTraySetupFailureLogging(source, traySetup) {
+  const logMessage = "[codex-linux] Failed to set up system tray";
+  if (traySetup == null || source.includes(logMessage)) {
+    return source;
+  }
+
+  const openIndex = source.indexOf("{", traySetup.index);
+  if (openIndex === -1) {
+    return source;
+  }
+  const closeIndex = findMatchingBrace(source, openIndex);
+  if (closeIndex === -1) {
+    return source;
+  }
+
+  const body = source.slice(openIndex, closeIndex + 1);
+  if (!body.includes(`await ${traySetup.factoryFn}(`)) {
+    return source;
+  }
+
+  const catchRegex = /catch\(([A-Za-z_$][\w$]*)\)\{/;
+  const catchMatch = body.match(catchRegex);
+  if (catchMatch == null) {
+    return source;
+  }
+
+  const [, errorVar] = catchMatch;
+  const catchOpenIndex = catchMatch.index + catchMatch[0].length - 1;
+  const catchCloseIndex = findMatchingBrace(body, catchOpenIndex);
+  if (catchCloseIndex === -1) {
+    return source;
+  }
+
+  const catchBody = body.slice(catchOpenIndex + 1, catchCloseIndex);
+  const separator = catchBody.trim().length === 0 || /[;,]$/.test(catchBody.trim()) ? "" : ";";
+  const linuxWarning = `${separator}process.platform===\`linux\`&&console.warn(\`${logMessage}\`,${errorVar})`;
+  const patchedBody =
+    `${body.slice(0, catchCloseIndex)}${linuxWarning}${body.slice(catchCloseIndex)}`;
+  return `${source.slice(0, openIndex)}${patchedBody}${source.slice(closeIndex + 1)}`;
 }
 
 function applyLinuxQuitGuardPatch(currentSource) {
@@ -839,6 +880,20 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
       console.warn("WARN: Could not find tray startup call — skipping Linux tray startup patch");
     }
   }
+
+  const traySetupForDiagnostics = findDynamicTraySetup(patchedSource);
+  const sourceWithTrayDiagnostics = addDynamicTraySetupFailureLogging(
+    patchedSource,
+    traySetupForDiagnostics,
+  );
+  if (
+    traySetupForDiagnostics != null &&
+    sourceWithTrayDiagnostics === patchedSource &&
+    !patchedSource.includes("[codex-linux] Failed to set up system tray")
+  ) {
+    console.warn("WARN: Could not find tray setup catch handler — skipping Linux tray diagnostics patch");
+  }
+  patchedSource = sourceWithTrayDiagnostics;
 
   return patchedSource;
 }
