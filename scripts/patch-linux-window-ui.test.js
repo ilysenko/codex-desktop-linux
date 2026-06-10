@@ -1729,6 +1729,37 @@ test("adds Linux tray support even when About dialog already uses the bundled ic
   );
 });
 
+test("does not shadow the Electron alias in Linux tray icon fallbacks", () => {
+  const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
+  const source = [
+    "let r=require(`electron`);",
+    "async function Ww(e,t){let n=process.platform===`win32`?`.ico`:`.png`,i=Nw(e,process.platform),o=[(0,a.join)(t,`electron`,`src`,`icons`,`${i}${n}`)];for(let e of o){let t=r.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}return{defaultIcon:await r.app.getFileIcon(process.execPath,{size:process.platform===`win32`?`small`:`normal`}),chronicleRunningIcon:null}}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, iconPathExpression);
+
+  assert.match(
+    patched,
+    /let __codexLinuxUpstreamTrayIcon=r\.nativeImage\.createFromPath\(process\.resourcesPath\+`\/\.\.\/content\/webview\/assets\/app-test\.png`\)/,
+  );
+  assert.doesNotMatch(patched, /let r=r\.nativeImage\.createFromPath/);
+});
+
+test("migrates already patched Linux tray icon fallbacks away from alias shadowing", () => {
+  const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
+  const source = [
+    "let r=require(`electron`);",
+    "async function Ww(e,t){let n=process.platform===`win32`?`.ico`:`.png`,i=Nw(e,process.platform),o=[(0,a.join)(t,`electron`,`src`,`icons`,`${i}${n}`)];for(let e of o){let t=r.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}if(process.platform===`linux`){let e=r.nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop-tray.png`);if(!e.isEmpty())return{defaultIcon:e,chronicleRunningIcon:null};let t=r.nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop.png`);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null};let r=r.nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`);if(!r.isEmpty())return{defaultIcon:r,chronicleRunningIcon:null}}return{defaultIcon:await r.app.getFileIcon(process.execPath,{size:process.platform===`win32`?`small`:`normal`}),chronicleRunningIcon:null}}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, iconPathExpression);
+
+  assert.match(patched, /let __codexLinuxTrayIcon=r\.nativeImage\.createFromPath/);
+  assert.match(patched, /let __codexLinuxAppIcon=r\.nativeImage\.createFromPath/);
+  assert.match(patched, /let __codexLinuxUpstreamTrayIcon=r\.nativeImage\.createFromPath/);
+  assert.doesNotMatch(patched, /let r=r\.nativeImage\.createFromPath/);
+});
+
 test("adds Linux build information to the tray menu", () => {
   const patched = applyPatchTwice(applyLinuxBuildInfoTrayPatch, `${mainBundlePrefix}${trayBundleFixture()}`);
 
