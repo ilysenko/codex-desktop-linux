@@ -9,7 +9,8 @@ const {
   requireName,
 } = require("./shared.js");
 
-const LINUX_TITLEBAR_OVERLAY_HEIGHT = 30;
+const LINUX_TITLEBAR_OVERLAY_COLOR = "`rgba(0,0,0,0)`";
+const LINUX_TITLEBAR_OVERLAY_HEIGHT = 1;
 const LINUX_TITLEBAR_OVERLAY_HELPER = "codexLinuxTitleBarOverlay";
 
 function linuxTitlebarOverlayHelperSource(
@@ -18,7 +19,7 @@ function linuxTitlebarOverlayHelperSource(
   lightSymbolAlias,
   darkSymbolAlias,
 ) {
-  return `function ${LINUX_TITLEBAR_OVERLAY_HELPER}(e=1){return{color:${electronAlias}.nativeTheme.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${electronAlias}.nativeTheme.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${LINUX_TITLEBAR_OVERLAY_HEIGHT}*e)}}`;
+  return `function ${LINUX_TITLEBAR_OVERLAY_HELPER}(e=1){return{color:${LINUX_TITLEBAR_OVERLAY_COLOR},symbolColor:${LINUX_TITLEBAR_OVERLAY_COLOR},height:${LINUX_TITLEBAR_OVERLAY_HEIGHT}}}`;
 }
 
 function ensureLinuxTitlebarOverlayHelper(source, anchorText, helperSource) {
@@ -127,9 +128,7 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
   const helperFunctionRegex = new RegExp(
     'function ' +
       escapeRegExp(LINUX_TITLEBAR_OVERLAY_HELPER) +
-      '\\([^)]*\\)\\{return\\{color:([A-Za-z_$][\\w$]*)\\.nativeTheme\\.shouldUseDarkColors\\?`#111111`:([A-Za-z_$][\\w$]*),symbolColor:\\1\\.nativeTheme\\.shouldUseDarkColors\\?([A-Za-z_$][\\w$]*):([A-Za-z_$][\\w$]*),height:Math\\.round\\(' +
-      LINUX_TITLEBAR_OVERLAY_HEIGHT +
-      '\\*[A-Za-z_$][\\w$]*\\)\\}\\}',
+      '\\([^)]*\\)\\{return\\{color:`rgba\\(0,0,0,0\\)`,symbolColor:`rgba\\(0,0,0,0\\)`,height:1\\}\\}',
   );
   const helperFunctionMatch = currentSource.match(helperFunctionRegex);
 
@@ -184,7 +183,7 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
       return currentSource;
     }
   } else if (helperFunctionMatch != null) {
-    [, electronAlias, lightBackgroundAlias, lightSymbolAlias, darkSymbolAlias] = helperFunctionMatch;
+    electronAlias = requireName(currentSource, "electron");
   } else {
     console.warn("WARN: Could not derive Linux titleBarOverlay helper aliases — skipping Linux native titlebar patch");
     return currentSource;
@@ -196,6 +195,13 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
       `setTitleBarOverlay\\(process\\.platform===\`linux\`\\?${escapeRegExp(LINUX_TITLEBAR_OVERLAY_HELPER)}\\(`,
     ).test(patchedSource)
   ) {
+    return patchedSource;
+  }
+
+  if (electronAlias == null) {
+    if (patchedSource.includes("installWindowsTitleBarOverlaySync")) {
+      console.warn("WARN: Could not derive Electron alias — skipping Linux native titlebar sync patch");
+    }
     return patchedSource;
   }
 
@@ -257,13 +263,24 @@ function applyLinuxMenuPatch(currentSource) {
   const menuRegex = /process\.platform===`win32`&&([A-Za-z_$][\w$]*)\.removeMenu\(\),/g;
   let patchedAny = false;
   const patchedSource = currentSource.replace(menuRegex, (match, windowVar, offset) => {
-    const linuxPatch = `process.platform===\`linux\`&&${windowVar}.setMenuBarVisibility(!1),`;
+    const linuxPatch = `process.platform===\`linux\`&&(${windowVar}.setMenuBarVisibility(!1),${windowVar}.removeMenu?.()),`;
+    const legacyLinuxPatch = `process.platform===\`linux\`&&${windowVar}.setMenuBarVisibility(!1),`;
     if (currentSource.slice(Math.max(0, offset - linuxPatch.length), offset) === linuxPatch) {
+      return match;
+    }
+    if (currentSource.slice(Math.max(0, offset - legacyLinuxPatch.length), offset) === legacyLinuxPatch) {
+      patchedAny = true;
       return match;
     }
     patchedAny = true;
     return `${linuxPatch}${match}`;
   });
+
+  const upgradedSource = patchedSource.replace(
+    /process\.platform===`linux`&&([A-Za-z_$][\w$]*)\.setMenuBarVisibility\(!1\),process\.platform===`win32`&&\1\.removeMenu\(\),/g,
+    (_match, windowVar) =>
+      `process.platform===\`linux\`&&(${windowVar}.setMenuBarVisibility(!1),${windowVar}.removeMenu?.()),process.platform===\`win32\`&&${windowVar}.removeMenu(),`,
+  );
 
   if (!patchedAny && !currentSource.includes("setMenuBarVisibility(!1)")) {
     const hasWindowsRemoveMenu = /process\.platform===`win32`&&[A-Za-z_$][\w$]*\.removeMenu\(\),/.test(currentSource);
@@ -272,7 +289,7 @@ function applyLinuxMenuPatch(currentSource) {
     }
   }
 
-  return patchedSource;
+  return upgradedSource;
 }
 
 function applyLinuxSetIconPatch(currentSource, iconAsset) {

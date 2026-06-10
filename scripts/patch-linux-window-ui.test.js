@@ -1302,7 +1302,7 @@ test("patches remaining explicit quit handlers when another copy is already patc
   );
 });
 
-test("uses the frameless native Codex titlebar for primary Linux windows", () => {
+test("uses a hidden native titlebar overlay for primary Linux windows", () => {
   const source = [
     "function A2(e){return e===`avatarOverlay`}",
     "function I2({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!A2(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?a2:o2,backgroundMaterial:e===`win32`?`none`:null}:e===`linux`&&!A2(t)?{backgroundColor:r?a2:o2,backgroundMaterial:null}:{backgroundColor:i2,backgroundMaterial:null}}",
@@ -1313,7 +1313,7 @@ test("uses the frameless native Codex titlebar for primary Linux windows", () =>
 
   assert.match(
     patched,
-    /function codexLinuxTitleBarOverlay\(e=1\)\{return\{color:a\.nativeTheme\.shouldUseDarkColors\?`#111111`:o2,symbolColor:a\.nativeTheme\.shouldUseDarkColors\?v2:_2,height:Math\.round\(30\*e\)\}\}/,
+    /function codexLinuxTitleBarOverlay\(e=1\)\{return\{color:`rgba\(0,0,0,0\)`,symbolColor:`rgba\(0,0,0,0\)`,height:1\}\}/,
   );
   assert.match(
     patched,
@@ -1336,7 +1336,7 @@ test("uses a module-scoped Linux native titlebar helper when aliases shadow Elec
 
   assert.match(
     value,
-    /function codexLinuxTitleBarOverlay\(e=1\)\{return\{color:r\.nativeTheme\.shouldUseDarkColors\?`#111111`:K4,symbolColor:r\.nativeTheme\.shouldUseDarkColors\?i3:r3,height:Math\.round\(30\*e\)\}\}/,
+    /function codexLinuxTitleBarOverlay\(e=1\)\{return\{color:`rgba\(0,0,0,0\)`,symbolColor:`rgba\(0,0,0,0\)`,height:1\}\}/,
   );
   assert.match(
     value,
@@ -1368,40 +1368,60 @@ test("updates the Linux native titlebar overlay when nativeTheme changes", () =>
   assert.doesNotMatch(patched, /data-codex-window-type/);
 });
 
-test("adds a right-side safe area for Linux window controls in application menu chrome", () => {
+test("maps Linux window controls chrome to native webview layout", () => {
   const source = [
     "var l=Object.freeze({default:Object.freeze({left:0,right:0}),mac:Object.freeze({legacy:Object.freeze({left:66+c,right:0}),modern:Object.freeze({left:76+c,right:0})}),applicationMenu:Object.freeze({left:0,right:0})});",
     "var m=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});",
+    "function chrome(e){switch(e){case`win32`:case`linux`:return`application-menu`;default:return`native`}}",
+    "let inset=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??l.applicationMenu:l.default;",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxWindowControlsSafeAreaPatch, source);
 
   assert.equal(
-    (patched.match(/applicationMenu:Object\.freeze\(\{left:0,right:138\}\)/g) ?? []).length,
+    (patched.match(/applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/g) ?? []).length,
     2,
   );
-  assert.doesNotMatch(
-    patched,
-    /applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/,
-  );
+  assert.match(patched, /case`win32`:return`application-menu`;case`linux`:return`native`/);
+  assert.match(patched, /i\.includes\(`win`\)\|\|r\.includes\(`windows`\)\?t\?\?l\.applicationMenu:l\.default/);
+  assert.doesNotMatch(patched, /case`win32`:case`linux`:return`application-menu`/);
+  assert.doesNotMatch(patched, /i\.includes\(`win`\)\|\|r\.includes\(`windows`\)\|\|i\.includes\(`linux`\)\?t\?\?l\.applicationMenu:l\.default/);
 });
 
-test("patches remaining Linux window controls safe areas when another copy is already patched", () => {
+test("patches remaining Linux window controls chrome snippets when another copy is already patched", () => {
   const source = [
-    "var l=Object.freeze({applicationMenu:Object.freeze({left:0,right:138})});",
+    "var l=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});",
+    "function patched(e){switch(e){case`win32`:return`application-menu`;case`linux`:return`native`;default:return`native`}}",
     "var m=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});",
+    "function unpatched(e){switch(e){case`win32`:case`linux`:return`application-menu`;default:return`native`}}",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxWindowControlsSafeAreaPatch, source);
 
   assert.equal(
-    (patched.match(/applicationMenu:Object\.freeze\(\{left:0,right:138\}\)/g) ?? []).length,
+    (patched.match(/applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/g) ?? []).length,
     2,
   );
-  assert.doesNotMatch(
-    patched,
-    /applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/,
+  assert.equal(
+    (patched.match(/case`win32`:return`application-menu`;case`linux`:return`native`/g) ?? []).length,
+    2,
   );
+  assert.doesNotMatch(patched, /case`win32`:case`linux`:return`application-menu`/);
+});
+
+test("warns when Linux window controls chrome mapping drifts", () => {
+  const source =
+    "var l=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});function chrome(e){return e===`linux`?`application-menu`:`native`}";
+
+  const { value, warnings } = captureWarns(() =>
+    applyPatchTwice(applyLinuxWindowControlsSafeAreaPatch, source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find Linux window controls chrome mapping — skipping Linux native chrome layout patch",
+    "WARN: Could not find Linux window controls chrome mapping — skipping Linux native chrome layout patch",
+  ]);
 });
 
 test("keeps tooltips out of the Linux window controls titlebar area", () => {
@@ -1462,13 +1482,13 @@ test("adds Linux menu hiding next to Windows removeMenu calls", () => {
 
   assert.equal(
     patched,
-    "process.platform===`linux`&&k.setMenuBarVisibility(!1),process.platform===`win32`&&k.removeMenu(),",
+    "process.platform===`linux`&&(k.setMenuBarVisibility(!1),k.removeMenu?.()),process.platform===`win32`&&k.removeMenu(),",
   );
 });
 
 test("patches remaining Windows menu snippets when another copy is already Linux-patched", () => {
   const windowsMenuSnippet = "process.platform===`win32`&&k.removeMenu(),";
-  const linuxMenuPatch = "process.platform===`linux`&&k.setMenuBarVisibility(!1),";
+  const linuxMenuPatch = "process.platform===`linux`&&(k.setMenuBarVisibility(!1),k.removeMenu?.()),";
   const source = `${linuxMenuPatch}${windowsMenuSnippet}function createSecondWindow(){${windowsMenuSnippet}}`;
 
   const patched = applyPatchTwice(applyLinuxMenuPatch, source);
@@ -1476,7 +1496,7 @@ test("patches remaining Windows menu snippets when another copy is already Linux
   assert.equal((patched.match(/setMenuBarVisibility\(!1\)/g) ?? []).length, 2);
   assert.match(
     patched,
-    /function createSecondWindow\(\)\{process\.platform===`linux`&&k\.setMenuBarVisibility\(!1\),process\.platform===`win32`&&k\.removeMenu\(\),\}/,
+    /function createSecondWindow\(\)\{process\.platform===`linux`&&\(k\.setMenuBarVisibility\(!1\),k\.removeMenu\?\.\(\)\),process\.platform===`win32`&&k\.removeMenu\(\),\}/,
   );
 });
 
@@ -4239,7 +4259,10 @@ test("patchMainBundleSource keeps non-icon patches active without an icon asset"
   assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitInProgress===!0/);
   assert.match(patched, /codexLinuxShouldBypassQuitPrompt=\(\)=>codexLinuxExplicitQuitApproved===!0/);
   assert.match(patched, /n\.app\.on\(`before-quit`,codexLinuxBeforeQuitHandler\)/);
-  assert.match(patched, /process\.platform===`linux`&&k\.setMenuBarVisibility\(!1\)/);
+  assert.match(
+    patched,
+    /process\.platform===`linux`&&\(k\.setMenuBarVisibility\(!1\),k\.removeMenu\?\.\(\)\)/,
+  );
   assert.match(patched, /linux:\{label:`File Manager`/);
   assert.match(
     patched,

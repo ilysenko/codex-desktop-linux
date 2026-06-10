@@ -12,7 +12,7 @@ const {
 const LINUX_SAFE_MONOSPACE_FONT_STACK =
   "\"Noto Sans Mono\", \"DejaVu Sans Mono\", \"Liberation Mono\", \"Ubuntu Mono\", ui-monospace, \"SFMono-Regular\", \"SF Mono\", Menlo, Consolas, monospace";
 const LINUX_TOOLTIP_COLLISION_PADDING_TOP = 44;
-const LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT = 138;
+const LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT = 0;
 
 function applyLinuxSafeMonospaceFontStackPatch(currentSource) {
   const safeLinuxMonoFontPattern =
@@ -201,21 +201,45 @@ function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
 function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
   const currentInset = `applicationMenu:Object.freeze({left:0,right:${LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT}})`;
   const defaultInset = "applicationMenu:Object.freeze({left:0,right:0})";
-  if (currentSource.includes(defaultInset)) {
-    return currentSource.split(defaultInset).join(currentInset);
+  const hasWindowControlsInset = currentSource.includes("applicationMenu:Object.freeze({left:0,right:");
+  let patchedSource = currentSource;
+
+  if (patchedSource.includes(defaultInset)) {
+    patchedSource = patchedSource.split(defaultInset).join(currentInset);
   }
 
-  if (currentSource.includes(currentInset)) {
-    return currentSource;
+  const linuxApplicationMenuChrome = "case`win32`:case`linux`:return`application-menu`";
+  const linuxNativeChrome = "case`win32`:return`application-menu`;case`linux`:return`native`";
+  const foundApplicationMenuChrome = patchedSource.includes(linuxApplicationMenuChrome);
+  const hasNativeChrome = patchedSource.includes(linuxNativeChrome);
+  if (foundApplicationMenuChrome) {
+    patchedSource = patchedSource.split(linuxApplicationMenuChrome).join(linuxNativeChrome);
   }
 
-  if (currentSource.includes("applicationMenu:Object.freeze({left:0,right:")) {
+  const linuxApplicationMenuBrowserGate =
+    "i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??l.applicationMenu:l.default";
+  const linuxNativeBrowserGate =
+    "i.includes(`win`)||r.includes(`windows`)?t??l.applicationMenu:l.default";
+  const foundApplicationMenuBrowserGate = patchedSource.includes(linuxApplicationMenuBrowserGate);
+  const hasNativeBrowserGate = patchedSource.includes(linuxNativeBrowserGate);
+  if (foundApplicationMenuBrowserGate) {
+    patchedSource = patchedSource.split(linuxApplicationMenuBrowserGate).join(linuxNativeBrowserGate);
+  }
+
+  const recognizedChromeMapping = foundApplicationMenuChrome || hasNativeChrome;
+  const recognizedBrowserGate = foundApplicationMenuBrowserGate || hasNativeBrowserGate;
+
+  if (recognizedChromeMapping || recognizedBrowserGate) {
+    return patchedSource;
+  }
+
+  if (hasWindowControlsInset) {
     console.warn(
-      "WARN: Could not find Linux window controls safe-area insertion point — skipping safe-area patch",
+      "WARN: Could not find Linux window controls chrome mapping — skipping Linux native chrome layout patch",
     );
   }
 
-  return currentSource;
+  return patchedSource;
 }
 
 function applyLinuxTooltipWindowControlsCollisionPatch(currentSource) {
