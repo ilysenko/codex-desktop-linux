@@ -93,8 +93,14 @@ function applyLinuxWindowOptionsPatch(currentSource, iconAsset) {
 }
 
 function applyLinuxNativeTitlebarPatch(currentSource) {
+  const nativeThemeExpression = "require(`electron`).nativeTheme";
+  const safePatchedPrimaryTitlebarRegex =
+    /===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:require\(`electron`\)\.nativeTheme\.shouldUseDarkColors\?`#111111`:[A-Za-z_$][\w$]*,symbolColor:require\(`electron`\)\.nativeTheme\.shouldUseDarkColors\?[A-Za-z_$][\w$]*:[A-Za-z_$][\w$]*,height:Math\.round\(30\*[A-Za-z_$][\w$]*\)\}\}/;
   const patchedPrimaryTitlebarRegex =
     /===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:([A-Za-z_$][\w$]*)\.nativeTheme\.shouldUseDarkColors\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),symbolColor:\1\.nativeTheme\.shouldUseDarkColors\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),height:Math\.round\(((?:[A-Za-z_$][\w$]*|\d+(?:\.\d+)?)?)\*[A-Za-z_$][\w$]*\)\}\}/;
+  if (safePatchedPrimaryTitlebarRegex.test(currentSource)) {
+    return currentSource;
+  }
   const alreadyPatchedTitlebarMatch = currentSource.match(patchedPrimaryTitlebarRegex);
 
   const primaryTitlebarRegex =
@@ -131,22 +137,27 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
     [, electronAlias, lightSymbolAlias, darkSymbolAlias, overlayHeightAlias] = overlayHelperMatch;
     [, , , darkBackgroundAlias, lightBackgroundAlias] = linuxBackgroundMatch;
     const replacement =
-      `case\`primary\`:return ${platformAlias}===\`darwin\`?${opaqueWindowsAlias}?{titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:{vibrancy:\`menu\`,titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:${platformAlias}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelperAlias}(${zoomAlias})}:${platformAlias}===\`linux\`?{titleBarStyle:\`hidden\`,titleBarOverlay:{color:${electronAlias}.nativeTheme.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${electronAlias}.nativeTheme.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${LINUX_TITLEBAR_OVERLAY_HEIGHT}*${zoomAlias})}}:{titleBarStyle:\`default\`};`;
+      `case\`primary\`:return ${platformAlias}===\`darwin\`?${opaqueWindowsAlias}?{titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:{vibrancy:\`menu\`,titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:${platformAlias}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelperAlias}(${zoomAlias})}:${platformAlias}===\`linux\`?{titleBarStyle:\`hidden\`,titleBarOverlay:{color:${nativeThemeExpression}.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${nativeThemeExpression}.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${LINUX_TITLEBAR_OVERLAY_HEIGHT}*${zoomAlias})}}:{titleBarStyle:\`default\`};`;
 
     primaryTitlebarRegex.lastIndex = 0;
     patchedSource = patchedSource.replace(primaryTitlebarRegex, replacement);
   } else {
     [, electronAlias, darkBackgroundAlias, lightBackgroundAlias, lightSymbolAlias, darkSymbolAlias, overlayHeightAlias] =
       alreadyPatchedTitlebarMatch;
-    patchedSource = patchedSource.replace(
-      /(===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:[A-Za-z_$][\w$]*\.nativeTheme\.shouldUseDarkColors\?)[A-Za-z_$][\w$]*(:[A-Za-z_$][\w$]*,symbolColor:)/,
-      "$1`#111111`$2",
-    );
+    patchedSource = patchedSource
+      .replace(
+        /(===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:)[A-Za-z_$][\w$]*\.nativeTheme\.shouldUseDarkColors\?[A-Za-z_$][\w$]*(:[A-Za-z_$][\w$]*,symbolColor:)/,
+        `$1${nativeThemeExpression}.shouldUseDarkColors?\`#111111\`$2`,
+      )
+      .replace(
+        /(symbolColor:)[A-Za-z_$][\w$]*\.nativeTheme\.shouldUseDarkColors\?/,
+        `$1${nativeThemeExpression}.shouldUseDarkColors?`,
+      );
   }
 
   if (
     patchedSource.includes("process.platform!==`win32`&&process.platform!==`linux`") &&
-    /setTitleBarOverlay\(process\.platform===`linux`\?\{color:[A-Za-z_$][\w$]*\.nativeTheme\.shouldUseDarkColors\?`#111111`:/.test(patchedSource)
+    /setTitleBarOverlay\(process\.platform===`linux`\?\{color:(?:[A-Za-z_$][\w$]*\.nativeTheme|require\(`electron`\)\.nativeTheme)\.shouldUseDarkColors\?`#111111`:/.test(patchedSource)
   ) {
     return patchedSource;
   }
@@ -183,9 +194,9 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
 
   const [, windowAlias, windowTypeAlias, updateAlias, windowsOverlayHelperAlias] = overlaySyncMatch;
   const linuxOverlay =
-    `{color:${electronAlias}.nativeTheme.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${electronAlias}.nativeTheme.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${LINUX_TITLEBAR_OVERLAY_HEIGHT}*this.windowZooms.get(${windowAlias}.id))}`;
+    `{color:${nativeThemeExpression}.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${nativeThemeExpression}.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${LINUX_TITLEBAR_OVERLAY_HEIGHT}*this.windowZooms.get(${windowAlias}.id))}`;
   const overlaySyncReplacement =
-    `installWindowsTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if((process.platform!==\`win32\`&&process.platform!==\`linux\`)||${windowTypeAlias}!==\`primary\`)return;let ${updateAlias}=()=>{${windowAlias}.isDestroyed()||${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${linuxOverlay}:${windowsOverlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))};return ${electronAlias}.nativeTheme.on(\`updated\`,${updateAlias}),${updateAlias}(),()=>{${electronAlias}.nativeTheme.off(\`updated\`,${updateAlias})}}`;
+    `installWindowsTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if((process.platform!==\`win32\`&&process.platform!==\`linux\`)||${windowTypeAlias}!==\`primary\`)return;let ${updateAlias}=()=>{${windowAlias}.isDestroyed()||${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${linuxOverlay}:${windowsOverlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))};return ${nativeThemeExpression}.on(\`updated\`,${updateAlias}),${updateAlias}(),()=>{${nativeThemeExpression}.off(\`updated\`,${updateAlias})}}`;
   const replacedSource = patchedSource.replace(overlaySyncRegex, overlaySyncReplacement);
   if (replacedSource !== patchedSource) {
     return replacedSource;
@@ -306,8 +317,30 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
 
   const [, transparentVar, darkVar, lightVar] = colorMatch;
 
+  const surfaceFuncParamRegex =
+    /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowSurfaceEnabled:([A-Za-z_$][\w$]*),prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\3\?\{backgroundColor:[^{}]+,backgroundMaterial:\1===`win32`\?`none`:null\}:\1===`win32`&&!([A-Za-z_$][\w$]*)\(\2\)\?/;
+  const surfaceFuncMatch = currentSource.match(surfaceFuncParamRegex);
+  if (surfaceFuncMatch != null) {
+    const [, platformParam, appearanceParam, , darkColorsParam, transparentAppearancePredicate] =
+      surfaceFuncMatch;
+    const win32Needle =
+      `:${platformParam}===\`win32\`&&!${transparentAppearancePredicate}(${appearanceParam})?`;
+    const linuxBgPrefix =
+      `:${platformParam}===\`linux\`&&!${transparentAppearancePredicate}(${appearanceParam})?{backgroundColor:${darkColorsParam}?${darkVar}:${lightVar},backgroundMaterial:null}:`;
+
+    if (currentSource.includes(linuxBgPrefix)) {
+      return currentSource;
+    }
+    if (currentSource.includes(win32Needle)) {
+      return currentSource.replace(win32Needle, `${linuxBgPrefix}${win32Needle.slice(1)}`);
+    }
+
+    console.warn("WARN: Could not find BrowserWindow background color needle — skipping background patch");
+    return currentSource;
+  }
+
   const currentFuncParamRegex =
-    /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowsEnabled:([A-Za-z_$][\w$]*),prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\3&&!([A-Za-z_$][\w$]*)\(\2\)&&\(\1===`darwin`\|\|\1===`win32`\)\?/;
+    /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaque(?:WindowsEnabled|WindowSurfaceEnabled):([A-Za-z_$][\w$]*),prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\3&&!([A-Za-z_$][\w$]*)\(\2\)&&\(\1===`darwin`\|\|\1===`win32`\)\?/;
   const currentFuncMatch = currentSource.match(currentFuncParamRegex);
   if (currentFuncMatch != null) {
     const [, platformParam, appearanceParam, , darkColorsParam, transparentAppearancePredicate] =
@@ -329,7 +362,7 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
   }
 
   const funcParamRegex =
-    /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowsEnabled:[A-Za-z_$][\w$]*,prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\1===`win32`&&!([A-Za-z_$][\w$]*)\(\2\)/;
+    /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaque(?:WindowsEnabled|WindowSurfaceEnabled):[A-Za-z_$][\w$]*,prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\1===`win32`&&!([A-Za-z_$][\w$]*)\(\2\)/;
   const funcMatch = currentSource.match(funcParamRegex);
 
   if (funcMatch == null) {
