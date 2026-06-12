@@ -190,56 +190,73 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
     return currentSource;
   }
 
+  // Zoom-change overlay call site: newer upstream includes Linux in the
+  // win32 branch and reuses the transparent win32 overlay helper there.
+  const zoomOverlayRegex =
+    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\(([A-Za-z_$][\w$]*)\(\2\)\)\)/;
+  const zoomOverlayMatch = patchedSource.match(zoomOverlayRegex);
+  if (zoomOverlayMatch != null && zoomOverlayMatch[3] !== LINUX_TITLEBAR_OVERLAY_HELPER) {
+    const [zoomMatchText, zoomWindowAlias, zoomValueAlias, zoomHelperAlias] = zoomOverlayMatch;
+    patchedSource = patchedSource.replace(
+      zoomMatchText,
+      `(process.platform===\`win32\`||process.platform===\`linux\`)&&(this.windowZooms.set(${zoomWindowAlias}.id,${zoomValueAlias}),${zoomWindowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(${zoomValueAlias}):${zoomHelperAlias}(${zoomValueAlias})))`,
+    );
+  }
+
   if (
-    patchedSource.includes("process.platform!==`win32`&&process.platform!==`linux`") &&
     new RegExp(
-      `setTitleBarOverlay\\(process\\.platform===\`linux\`\\?${escapeRegExp(LINUX_TITLEBAR_OVERLAY_HELPER)}\\(`,
+      `setTitleBarOverlay\\(process\\.platform===\`linux\`\\?${escapeRegExp(LINUX_TITLEBAR_OVERLAY_HELPER)}\\(this\\.windowZooms\\.get\\(`,
     ).test(patchedSource)
   ) {
     return patchedSource;
   }
 
   const escapedElectronAlias = escapeRegExp(electronAlias);
+  // Upstream has renamed installWindowsTitleBarOverlaySync (e.g. to
+  // installApplicationMenuTitleBarOverlaySync) and made its guard
+  // Linux-aware while still calling the transparent win32 helper, so match
+  // any install*TitleBarOverlaySync name and both guard shapes.
   const overlaySyncRegex = new RegExp(
-    "installWindowsTitleBarOverlaySync\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{if\\(process\\.platform!==`win32`\\|\\|\\2!==`primary`\\)return;let ([A-Za-z_$][\\w$]*)=\\(\\)=>\\{\\1\\.isDestroyed\\(\\)\\|\\|\\1\\.setTitleBarOverlay\\(([A-Za-z_$][\\w$]*)\\(this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\)\\};return " +
+    "(install[A-Za-z_$][\\w$]*TitleBarOverlaySync)\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{if\\(process\\.platform!==`win32`(?:&&process\\.platform!==`linux`)?\\|\\|\\3!==`primary`\\)return;let ([A-Za-z_$][\\w$]*)=\\(\\)=>\\{\\2\\.isDestroyed\\(\\)\\|\\|\\2\\.setTitleBarOverlay\\(([A-Za-z_$][\\w$]*)\\(this\\.windowZooms\\.get\\(\\2\\.id\\)\\)\\)\\};return " +
       escapedElectronAlias +
-      "\\.nativeTheme\\.on\\(`updated`,\\3\\),\\3\\(\\),\\(\\)=>\\{" +
+      "\\.nativeTheme\\.on\\(`updated`,\\4\\),\\4\\(\\),\\(\\)=>\\{" +
       escapedElectronAlias +
-      "\\.nativeTheme\\.off\\(`updated`,\\3\\)\\}\\}",
+      "\\.nativeTheme\\.off\\(`updated`,\\4\\)\\}\\}",
   );
   let overlaySyncMatch = patchedSource.match(overlaySyncRegex);
   let overlaySyncReplacementRegex = overlaySyncRegex;
   if (overlaySyncMatch == null) {
     const existingLinuxOverlaySyncRegex = new RegExp(
-      "installWindowsTitleBarOverlaySync\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{if\\(\\(process\\.platform!==`win32`&&process\\.platform!==`linux`\\)\\|\\|\\2!==`primary`\\)return;let ([A-Za-z_$][\\w$]*)=\\(\\)=>\\{\\1\\.isDestroyed\\(\\)\\|\\|\\1\\.setTitleBarOverlay\\(process\\.platform===`linux`\\?\\{color:" +
+      "(install[A-Za-z_$][\\w$]*TitleBarOverlaySync)\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{if\\(\\(process\\.platform!==`win32`&&process\\.platform!==`linux`\\)\\|\\|\\3!==`primary`\\)return;let ([A-Za-z_$][\\w$]*)=\\(\\)=>\\{\\2\\.isDestroyed\\(\\)\\|\\|\\2\\.setTitleBarOverlay\\(process\\.platform===`linux`\\?\\{color:" +
         escapedElectronAlias +
         "\\.nativeTheme\\.shouldUseDarkColors\\?[A-Za-z_$][\\w$]*:[A-Za-z_$][\\w$]*,symbolColor:" +
         escapedElectronAlias +
-        "\\.nativeTheme\\.shouldUseDarkColors\\?[A-Za-z_$][\\w$]*:[A-Za-z_$][\\w$]*,height:Math\\.round\\((?:[A-Za-z_$][\\w$]*|\\d+(?:\\.\\d+)?)\\*this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\}:([A-Za-z_$][\\w$]*)\\(this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\)\\};return " +
+        "\\.nativeTheme\\.shouldUseDarkColors\\?[A-Za-z_$][\\w$]*:[A-Za-z_$][\\w$]*,height:Math\\.round\\((?:[A-Za-z_$][\\w$]*|\\d+(?:\\.\\d+)?)\\*this\\.windowZooms\\.get\\(\\2\\.id\\)\\)\\}:([A-Za-z_$][\\w$]*)\\(this\\.windowZooms\\.get\\(\\2\\.id\\)\\)\\)\\};return " +
         escapedElectronAlias +
-        "\\.nativeTheme\\.on\\(`updated`,\\3\\),\\3\\(\\),\\(\\)=>\\{" +
+        "\\.nativeTheme\\.on\\(`updated`,\\4\\),\\4\\(\\),\\(\\)=>\\{" +
         escapedElectronAlias +
-        "\\.nativeTheme\\.off\\(`updated`,\\3\\)\\}\\}",
+        "\\.nativeTheme\\.off\\(`updated`,\\4\\)\\}\\}",
     );
     overlaySyncMatch = patchedSource.match(existingLinuxOverlaySyncRegex);
     overlaySyncReplacementRegex = existingLinuxOverlaySyncRegex;
   }
   if (overlaySyncMatch == null) {
-    if (patchedSource.includes("installWindowsTitleBarOverlaySync")) {
+    if (/install[A-Za-z_$][\w$]*TitleBarOverlaySync\(/.test(patchedSource)) {
       console.warn("WARN: Could not patch titleBarOverlay nativeTheme sync for Linux");
     }
     return patchedSource;
   }
 
-  const [, windowAlias, windowTypeAlias, updateAlias, windowsOverlayHelperAlias] = overlaySyncMatch;
+  const [, overlaySyncMethodName, windowAlias, windowTypeAlias, updateAlias, windowsOverlayHelperAlias] =
+    overlaySyncMatch;
   const overlaySyncReplacement =
-    `installWindowsTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if((process.platform!==\`win32\`&&process.platform!==\`linux\`)||${windowTypeAlias}!==\`primary\`)return;let ${updateAlias}=()=>{${windowAlias}.isDestroyed()||${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(this.windowZooms.get(${windowAlias}.id)):${windowsOverlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))};return ${electronAlias}.nativeTheme.on(\`updated\`,${updateAlias}),${updateAlias}(),()=>{${electronAlias}.nativeTheme.off(\`updated\`,${updateAlias})}}`;
+    `${overlaySyncMethodName}(${windowAlias},${windowTypeAlias}){if((process.platform!==\`win32\`&&process.platform!==\`linux\`)||${windowTypeAlias}!==\`primary\`)return;let ${updateAlias}=()=>{${windowAlias}.isDestroyed()||${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(this.windowZooms.get(${windowAlias}.id)):${windowsOverlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))};return ${electronAlias}.nativeTheme.on(\`updated\`,${updateAlias}),${updateAlias}(),()=>{${electronAlias}.nativeTheme.off(\`updated\`,${updateAlias})}}`;
   const replacedSource = patchedSource.replace(overlaySyncReplacementRegex, overlaySyncReplacement);
   if (replacedSource !== patchedSource) {
     return replacedSource;
   }
 
-  const methodDefinitionRegex = /installWindowsTitleBarOverlaySync\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\{if\(/g;
+  const methodDefinitionRegex = /install[A-Za-z_$][\w$]*TitleBarOverlaySync\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\{if\(/g;
   let methodStart = -1;
   for (const match of patchedSource.matchAll(methodDefinitionRegex)) {
     methodStart = match.index;
