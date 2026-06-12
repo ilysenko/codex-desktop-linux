@@ -193,15 +193,16 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
   // Zoom-change overlay call site: newer upstream includes Linux in the
   // win32 branch and reuses the transparent win32 overlay helper there.
   const zoomOverlayRegex =
-    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\(([A-Za-z_$][\w$]*)\(\2\)\)\)/;
-  const zoomOverlayMatch = patchedSource.match(zoomOverlayRegex);
-  if (zoomOverlayMatch != null && zoomOverlayMatch[3] !== LINUX_TITLEBAR_OVERLAY_HELPER) {
-    const [zoomMatchText, zoomWindowAlias, zoomValueAlias, zoomHelperAlias] = zoomOverlayMatch;
-    patchedSource = patchedSource.replace(
-      zoomMatchText,
-      `(process.platform===\`win32\`||process.platform===\`linux\`)&&(this.windowZooms.set(${zoomWindowAlias}.id,${zoomValueAlias}),${zoomWindowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(${zoomValueAlias}):${zoomHelperAlias}(${zoomValueAlias})))`,
-    );
-  }
+    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\(([A-Za-z_$][\w$]*)\(\2\)\)\)/g;
+  patchedSource = patchedSource.replace(
+    zoomOverlayRegex,
+    (zoomMatchText, zoomWindowAlias, zoomValueAlias, zoomHelperAlias) => {
+      if (zoomHelperAlias === LINUX_TITLEBAR_OVERLAY_HELPER) {
+        return zoomMatchText;
+      }
+      return `(process.platform===\`win32\`||process.platform===\`linux\`)&&(this.windowZooms.set(${zoomWindowAlias}.id,${zoomValueAlias}),${zoomWindowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(${zoomValueAlias}):${zoomHelperAlias}(${zoomValueAlias})))`;
+    },
+  );
 
   if (
     new RegExp(
