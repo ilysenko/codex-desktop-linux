@@ -13,6 +13,8 @@ cleanup_remote_mobile_control_interactive_symlink() {
     local home_dir="${HOME:-}"
     local user_codex=""
     local resolved_user_codex=""
+    local active_cli_path=""
+    local resolved_active_cli_path=""
     local standalone_root=""
 
     [ -n "$home_dir" ] || return 0
@@ -25,6 +27,15 @@ cleanup_remote_mobile_control_interactive_symlink() {
 
     case "$resolved_user_codex" in
         "$standalone_root"/*)
+            active_cli_path="${CODEX_CLI_PATH:-}"
+            if [ -n "$active_cli_path" ]; then
+                resolved_active_cli_path="$(readlink -f "$active_cli_path" 2>/dev/null || true)"
+                if [ "$active_cli_path" = "$user_codex" ] ||
+                    { [ -n "$resolved_active_cli_path" ] && [ "$resolved_active_cli_path" = "$resolved_user_codex" ]; }; then
+                    echo "Preserved active CODEX_CLI_PATH symlink: $user_codex -> $resolved_user_codex"
+                    return 0
+                fi
+            fi
             if rm -f "$user_codex"; then
                 echo "Removed remote mobile control standalone symlink from interactive PATH: $user_codex -> $resolved_user_codex"
             fi

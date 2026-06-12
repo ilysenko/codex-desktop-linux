@@ -56,6 +56,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The opt-in `remote-mobile-control` cold-start hook no longer removes
+  `~/.local/bin/codex` when the launcher is actively using that symlink as
+  `CODEX_CLI_PATH`.
 - The in-app updater no longer quits into a broken `pkexec` install path when a
   minimal window-manager session has no graphical polkit authentication agent;
   it keeps the rebuilt package ready and reports a terminal `sudo

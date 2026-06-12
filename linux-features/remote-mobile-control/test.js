@@ -474,6 +474,64 @@ test("remote mobile cold-start hook removes leaked standalone codex symlink from
   }
 });
 
+test("remote mobile cold-start hook preserves active CODEX_CLI_PATH standalone symlink", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const standaloneCodex = path.join(codexHome, "packages", "standalone", "current", "bin", "codex");
+    const userCodex = path.join(home, ".local", "bin", "codex");
+
+    fs.mkdirSync(path.dirname(standaloneCodex), { recursive: true });
+    fs.mkdirSync(path.dirname(userCodex), { recursive: true });
+    fs.writeFileSync(standaloneCodex, "#!/usr/bin/env sh\nexit 0\n");
+    fs.chmodSync(standaloneCodex, 0o755);
+    fs.symlinkSync(standaloneCodex, userCodex);
+
+    const result = runColdStartHook({
+      CODEX_CLI_PATH: userCodex,
+      CODEX_HOME: codexHome,
+      CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED: "1",
+      HOME: home,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.readlinkSync(userCodex), standaloneCodex);
+    assert.match(result.stdout, /Preserved active CODEX_CLI_PATH symlink/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook preserves symlink resolving to active CODEX_CLI_PATH", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const standaloneCodex = path.join(codexHome, "packages", "standalone", "current", "bin", "codex");
+    const userCodex = path.join(home, ".local", "bin", "codex");
+
+    fs.mkdirSync(path.dirname(standaloneCodex), { recursive: true });
+    fs.mkdirSync(path.dirname(userCodex), { recursive: true });
+    fs.writeFileSync(standaloneCodex, "#!/usr/bin/env sh\nexit 0\n");
+    fs.chmodSync(standaloneCodex, 0o755);
+    fs.symlinkSync(standaloneCodex, userCodex);
+
+    const result = runColdStartHook({
+      CODEX_CLI_PATH: standaloneCodex,
+      CODEX_HOME: codexHome,
+      CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED: "1",
+      HOME: home,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.readlinkSync(userCodex), standaloneCodex);
+    assert.match(result.stdout, /Preserved active CODEX_CLI_PATH symlink/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("remote mobile cold-start hook preserves user codex symlinks outside the standalone runtime", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
   try {
