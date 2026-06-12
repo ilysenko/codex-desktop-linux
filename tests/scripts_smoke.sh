@@ -3269,6 +3269,25 @@ if (!launcher.includes('ln -sfnT "$target" "$link_path"')) {
 NODE
 }
 
+test_process_detection_helper_cmdline_shapes() {
+    info "Checking Electron helper process detection cmdline shapes"
+    local nul_cmdline="$TMP_DIR/electron-helper-nul.cmdline"
+    local space_cmdline="$TMP_DIR/electron-helper-space.cmdline"
+    local main_cmdline="$TMP_DIR/electron-main.cmdline"
+
+    printf '/opt/codex-desktop/electron\0--type=gpu-process\0--no-sandbox\0' > "$nul_cmdline"
+    printf '/opt/codex-desktop/electron --type=utility --no-sandbox' > "$space_cmdline"
+    printf '/opt/codex-desktop/electron --no-sandbox' > "$main_cmdline"
+
+    (
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/process-detection.sh"
+        cmdline_has_electron_helper_type "$nul_cmdline" || exit 1
+        cmdline_has_electron_helper_type "$space_cmdline" || exit 1
+        ! cmdline_has_electron_helper_type "$main_cmdline" || exit 1
+    ) || fail "Electron helper detection must handle NUL-separated and space-joined cmdline formats"
+}
+
 test_side_by_side_launcher_identity() {
     info "Checking side-by-side launcher identity"
     local workspace="$TMP_DIR/side-by-side-launcher"
@@ -5977,6 +5996,7 @@ main() {
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
     test_launcher_template_sanity
+    test_process_detection_helper_cmdline_shapes
     test_webview_probe_equivalence
     test_side_by_side_launcher_identity
     test_linux_file_manager_patch_smoke
