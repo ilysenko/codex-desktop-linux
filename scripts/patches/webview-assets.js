@@ -445,10 +445,36 @@ function applyLinuxChatSearchHydrationPatch(currentSource) {
     "function $1($2){return $2}function $3($4){return $4}",
   );
 
+  let patchedResultSelectCache = false;
+  const resultSelectCachePattern =
+    /(?<cache>[A-Za-z_$][\w$]*)\[(?<closeSlot>\d+)\]!==(?<close>[A-Za-z_$][\w$]*)\|\|\k<cache>\[(?<routeSlot>\d+)\]!==(?<route>[A-Za-z_$][\w$]*)\|\|\k<cache>\[(?<localSlot>\d+)\]!==(?<local>[A-Za-z_$][\w$]*)\|\|\k<cache>\[(?<resultSlot>\d+)\]!==(?<result>[A-Za-z_$][\w$]*)\.threadKey\?\((?<callback>[A-Za-z_$][\w$]*)=\(\)=>\{(?<select>[A-Za-z_$][\w$]*)\(\k<result>\.threadKey,\k<local>,\k<route>\),\k<close>\(\)\},\k<cache>\[\k<closeSlot>\]=\k<close>,\k<cache>\[\k<routeSlot>\]=\k<route>,\k<cache>\[\k<localSlot>\]=\k<local>,\k<cache>\[\k<resultSlot>\]=\k<result>\.threadKey,\k<cache>\[(?<callbackSlot>\d+)\]=\k<callback>\):\k<callback>=\k<cache>\[\k<callbackSlot>\]/u;
   patchedSource = patchedSource.replace(
-    /([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.threadKey,([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)\(\)/u,
-    "$1($2,$3,$4),$5()",
+    resultSelectCachePattern,
+    (...args) => {
+      const {
+        cache: cacheVar,
+        closeSlot,
+        close: closeVar,
+        routeSlot,
+        route: routeVar,
+        localSlot,
+        local: localVar,
+        resultSlot,
+        result: resultVar,
+        callbackSlot,
+        callback: callbackVar,
+        select: selectFn,
+      } = args[args.length - 1];
+      patchedResultSelectCache = true;
+      return `${cacheVar}[${closeSlot}]!==${closeVar}||${cacheVar}[${routeSlot}]!==${routeVar}||${cacheVar}[${localSlot}]!==${localVar}||${cacheVar}[${resultSlot}]!==${resultVar}?(${callbackVar}=()=>{${selectFn}(${resultVar},${localVar},${routeVar}),${closeVar}()},${cacheVar}[${closeSlot}]=${closeVar},${cacheVar}[${routeSlot}]=${routeVar},${cacheVar}[${localSlot}]=${localVar},${cacheVar}[${resultSlot}]=${resultVar},${cacheVar}[${callbackSlot}]=${callbackVar}):${callbackVar}=${cacheVar}[${callbackSlot}]`;
+    },
   );
+  if (!patchedResultSelectCache) {
+    console.warn(
+      "WARN: Could not find chat search result selection cache — skipping Linux chat search hydration patch",
+    );
+    return currentSource;
+  }
 
   if (requestAlias == null) {
     if (patchedSource !== currentSource) {

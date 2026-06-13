@@ -3946,7 +3946,12 @@ test("hydrates local chat search results before navigating", () => {
   assert.match(patched, /return\[\{kind:`local`,hostId:e\.hostId\?\?`local`,threadKey:/);
   assert.match(patched, /return\{kind:`local`,hostId:e\.hostId\?\?`local`,threadKey:/);
   assert.match(patched, /function NF\(e\)\{return e\}function PF\(e\)\{return e\}/);
-  assert.match(patched, /FS\(s,o,d\),r\(\)/);
+  assert.match(
+    patched,
+    /t\[20\]!==r\|\|t\[21\]!==d\|\|t\[22\]!==o\|\|t\[23\]!==s\?\(v=\(\)=>\{FS\(s,o,d\),r\(\)\},t\[20\]=r,t\[21\]=d,t\[22\]=o,t\[23\]=s,t\[24\]=v\):v=t\[24\]/,
+  );
+  assert.doesNotMatch(patched, /t\[23\]!==s\.threadKey/);
+  assert.doesNotMatch(patched, /t\[23\]=s\.threadKey/);
 });
 
 test("falls back to the single live Linux Browser Use route window", () => {
