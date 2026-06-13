@@ -12,16 +12,16 @@ function warn(message, patchName) {
 }
 
 function applyLinuxAppshotAvailabilityPatch(currentSource) {
-  if (currentSource.includes("===`linux`||") && currentSource.includes("===`macOS`&&")) {
+  if (currentSource.includes("!==`linux`&&(") && currentSource.includes("!==`macOS`||")) {
     return currentSource;
   }
 
   let changed = false;
   const patchedSource = currentSource.replace(
-    /return ([A-Za-z_$][\w$]*)===`macOS`&&([A-Za-z_$][\w$]*)/g,
-    (match, platformVar, flagVar) => {
+    /if\(([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)!==`macOS`\|\|!([A-Za-z_$][\w$]*)\(([^)]*?)\)\)return!1;/g,
+    (match, platformGetFn, platformAtomVar, flagGetFn, flagArgs) => {
       changed = true;
-      return `return ${platformVar}===\`linux\`||${platformVar}===\`macOS\`&&${flagVar}`;
+      return `if(${platformGetFn}(${platformAtomVar})!==\`linux\`&&(${platformGetFn}(${platformAtomVar})!==\`macOS\`||!${flagGetFn}(${flagArgs})))return!1;`;
     },
   );
 
@@ -37,7 +37,7 @@ function applyLinuxAppshotAvailabilityPatch(currentSource) {
 
 function applyLinuxAppshotMainProcessPatch(currentSource) {
   if (currentSource.includes(APPSHOT_HELPER_MARKER)) {
-    return repairLinuxAppshotRendererSender(currentSource);
+    return currentSource;
   }
 
   const sendMessageFn = findMessageForViewSendFunction(currentSource);
@@ -75,21 +75,6 @@ function applyLinuxAppshotMainProcessPatch(currentSource) {
 }
 
 function applyLinuxAppshotHotkeyPatch(currentSource) {
-  currentSource = currentSource.replace(
-    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.(getStored|get)\(`appshotHotkey`\)\?\?\(process\.platform===`linux`\?`DoubleShift`:([A-Za-z_$][\w$]*)\);/g,
-    (match, configuredVar, globalStateVar, getterName, defaultHotkeyVar) =>
-      `let ${configuredVar}=${globalStateVar}.${getterName}(\`appshotHotkey\`)??(process.platform===\`linux\`?null:${defaultHotkeyVar});`,
-  );
-  currentSource = currentSource.replace(
-    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.(getStored|get)\(`appshotHotkey`\)\?\?\(process\.platform===`linux`\?null:([A-Za-z_$][\w$]*)\);/g,
-    (match, configuredVar, globalStateVar, getterName, defaultHotkeyVar) =>
-      `let ${configuredVar}=${globalStateVar}.${getterName}(\`appshotHotkey\`)??(process.platform===\`linux\`?null:${defaultHotkeyVar});`,
-  );
-  currentSource = currentSource.replace(
-    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.(getStored|get)\(`appshotHotkey`\)\?\?([A-Za-z_$][\w$]*);let ([A-Za-z_$][\w$]*)=null,([A-Za-z_$][\w$]*)=\(\)=>\(\{supported:([A-Za-z_$][\w$]*)&&\(process\.platform===`darwin`\|\|process\.platform===`linux`\),configuredHotkey:\1,isActive:\5!=null\}\)/g,
-    (match, configuredVar, globalStateVar, getterName, defaultHotkeyVar, registrationVar, stateFnVar, enabledVar) =>
-      `let ${configuredVar}=${globalStateVar}.${getterName}(\`appshotHotkey\`)??(process.platform===\`linux\`?null:${defaultHotkeyVar});let ${registrationVar}=null,${stateFnVar}=()=>({supported:${enabledVar}&&(process.platform===\`darwin\`||process.platform===\`linux\`),configuredHotkey:${configuredVar},isActive:${registrationVar}!=null})`,
-  );
   currentSource = currentSource.replace(
     /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.(getStored|get)\(`appshotHotkey`\),([A-Za-z_$][\w$]*)=\1===void 0\?([A-Za-z_$][\w$]*):\1,([A-Za-z_$][\w$]*)=null,([A-Za-z_$][\w$]*)=\(\)=>\(\{supported:([A-Za-z_$][\w$]*)&&process\.platform===`darwin`,configuredHotkey:\4,isActive:\6!=null\}\),([A-Za-z_$][\w$]*)=\(\)=>\{if\(\6\?\.unregister\(\),\6=null,!\8\|\|process\.platform!==`darwin`\|\|\4==null\)\{/g,
     (
@@ -184,15 +169,7 @@ function applyLinuxAppshotSettingsHotkeyPatch(currentSource) {
   }
 
   let changed = false;
-  let patchedSource = currentSource.replace(
-    /((?:var\s+|,)([A-Za-z_$][\w$]*)=typeof navigator!=`undefined`&&navigator\.userAgent\.includes\(`Linux`\)\?)\[[^\]]+\]:(\[\{hotkey:`DoubleCommand`,label:`[^`]+`\},\{hotkey:`DoubleOption`,label:`[^`]+`\},\{hotkey:`DoubleShift`,label:`[^`]+`\}\])(?=;)/,
-    (match, linuxPrefix, optionsVar, macOptions) => {
-      changed = true;
-      return `${linuxPrefix}${linuxOptions}:${macOptions}`;
-    },
-  );
-
-  patchedSource = patchedSource.replace(
+  const patchedSource = currentSource.replace(
     /((?:var\s+|,)([A-Za-z_$][\w$]*)=)(\[\{hotkey:`DoubleCommand`,label:`[^`]+`\},\{hotkey:`DoubleOption`,label:`[^`]+`\},\{hotkey:`DoubleShift`,label:`[^`]+`\}\])(?=;)/,
     (match, declarationPrefix, optionsVar, macOptions) => {
       changed = true;
@@ -208,19 +185,6 @@ function applyLinuxAppshotSettingsHotkeyPatch(currentSource) {
     warn("Could not find AppShots settings hotkey options", "Linux AppShots settings patch");
   }
   return currentSource;
-}
-
-function repairLinuxAppshotRendererSender(source) {
-  const sendMessageFn = findMessageForViewSendFunction(source);
-  if (sendMessageFn == null) {
-    return source;
-  }
-
-  return source.replace(
-    /function codexLinuxAppshotSend\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{try\{[A-Za-z_$][\w$]*\(\1,\{requestId:\2,type:`computer-use-capture-updated`,update:\3\}\)\}catch\{\}\}/,
-    (match, originVar, requestIdVar, updateVar) =>
-      `function codexLinuxAppshotSend(${originVar},${requestIdVar},${updateVar}){try{${sendMessageFn}(${originVar},{requestId:${requestIdVar},type:\`computer-use-capture-updated\`,update:${updateVar}})}catch{}}`,
-  );
 }
 
 function findMessageForViewSendFunction(source) {
@@ -301,7 +265,7 @@ const descriptors = [
     id: "linux-appshots-availability",
     phase: "webview-asset",
     order: 1090,
-    pattern: /^use-is-appshot-available-.*\.js$/,
+    pattern: /^appshot-availability-.*\.js$/,
     missingDescription: "AppShots availability bundle",
     skipDescription: "Linux AppShots availability patch",
     apply: applyLinuxAppshotAvailabilityPatch,

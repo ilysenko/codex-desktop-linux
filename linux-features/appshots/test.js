@@ -27,8 +27,15 @@ function applyPatchTwice(patchFn, source) {
   return once;
 }
 
-function appshotAvailabilityBundleFixture() {
-  return "function t(n,r){return n===`macOS`&&r}";
+function appshotAvailabilityAtomBundleFixture() {
+  return [
+    "import{c as e,l as t,t as n}from\"./app-scope.js\";",
+    "import{v as r}from\"./app-server-manager-signals.js\";",
+    "import{f as i}from\"./statsig.js\";",
+    "import{n as a}from\"./platform.js\";",
+    "import{c as o}from\"./config-queries.js\";",
+    "var s=t(n,(e,{get:t})=>{if(t(a)!==`macOS`||!t(i,`1304276663`))return!1;let{data:n}=t(o,{hostId:e});return n!=null&&n.requirements?.allowAppshots!==!1}),c=e(n,({get:e})=>e(s,e(r)));export{s as n,c as t};",
+  ].join("");
 }
 
 function appshotMainProcessBundleFixture() {
@@ -67,13 +74,6 @@ function appshotSettingsBundleFixture() {
     "var O=d(),A=e(t(),1),j=n(),M=[{hotkey:`DoubleCommand`,label:`\\u2318 + \\u2318`},{hotkey:`DoubleOption`,label:`\\u2325 + \\u2325`},{hotkey:`DoubleShift`,label:`\\u21e7 + \\u21e7`}];",
     "function N(){let{data:h}=l(`appshot-hotkey-state`,{queryConfig:{enabled:t}}),x=c(`appshot-set-hotkey`);let w=h?.configuredHotkey??null,E=M.find(e=>e.hotkey===w)??null;return E}",
   ].join("");
-}
-
-function previouslyPatchedAppshotSettingsBundleFixture() {
-  return appshotSettingsBundleFixture().replace(
-    "M=[{hotkey:`DoubleCommand`,label:`\\u2318 + \\u2318`},{hotkey:`DoubleOption`,label:`\\u2325 + \\u2325`},{hotkey:`DoubleShift`,label:`\\u21e7 + \\u21e7`}]",
-    "M=typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`)?[{hotkey:`Ctrl+Alt+A`,label:`Ctrl + Alt + A`},{hotkey:`Alt+Shift+A`,label:`Alt + Shift + A`},{hotkey:`Ctrl+Shift+A`,label:`Ctrl + Shift + A`}]:[{hotkey:`DoubleCommand`,label:`\\u2318 + \\u2318`},{hotkey:`DoubleOption`,label:`\\u2325 + \\u2325`},{hotkey:`DoubleShift`,label:`\\u21e7 + \\u21e7`}]",
-  );
 }
 
 test("appshots stays disabled until listed in features.json", () => {
@@ -116,6 +116,14 @@ test("appshots feature descriptors are optional", () => {
   assert.ok(descriptors.every((descriptor) => descriptor.ciPolicy == null));
 });
 
+test("appshots availability descriptor matches the current bundle", () => {
+  const descriptor = descriptors.find(
+    (descriptor) => descriptor.id === "linux-appshots-availability",
+  );
+
+  assert.ok(descriptor.pattern.test("appshot-availability-BoK-Z77O.js"));
+});
+
 test("stages the Linux bare modifier monitor helper", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "feature.json"), "utf8"));
   const helperSource = fs.readFileSync(
@@ -146,13 +154,17 @@ test("stages the Linux bare modifier monitor helper", () => {
   execFileSync("bash", ["-n", path.join(__dirname, "bin", "bare-modifier-monitor")]);
 });
 
-test("enables AppShots availability on Linux", () => {
+test("enables AppShots availability atom on Linux", () => {
   const patched = applyPatchTwice(
     applyLinuxAppshotAvailabilityPatch,
-    appshotAvailabilityBundleFixture(),
+    appshotAvailabilityAtomBundleFixture(),
   );
 
-  assert.equal(patched, "function t(n,r){return n===`linux`||n===`macOS`&&r}");
+  assert.match(
+    patched,
+    /if\(t\(a\)!==`linux`&&\(t\(a\)!==`macOS`\|\|!t\(i,`1304276663`\)\)\)return!1;/,
+  );
+  assert.match(patched, /requirements\?\.allowAppshots!==!1/);
 });
 
 test("finds only the raw renderer message sender", () => {
@@ -288,37 +300,4 @@ test("shows Linux AppShots accelerator choices in settings", () => {
   assert.doesNotMatch(patched, /hotkey:`Ctrl\+Alt\+A`/);
   assert.match(patched, /hotkey:`DoubleCommand`,label:`\\u2318 \+ \\u2318`/);
   assert.match(patched, /hotkey:`DoubleShift`,label:`\\u21e7 \+ \\u21e7`/);
-});
-
-test("upgrades stale Linux AppShots settings accelerators", () => {
-  const patched = applyPatchTwice(
-    applyLinuxAppshotSettingsHotkeyPatch,
-    previouslyPatchedAppshotSettingsBundleFixture(),
-  );
-
-  assert.match(patched, /hotkey:`DoubleOption`,label:`Alt \+ Alt`/);
-  assert.match(patched, /hotkey:`DoubleShift`,label:`Shift \+ Shift`/);
-  assert.match(patched, /hotkey:`Ctrl\+Super\+A`,label:`Ctrl \+ Super \+ A`/);
-  assert.doesNotMatch(patched, /Alt\+Super\+A/);
-  assert.doesNotMatch(patched, /Ctrl\+Alt\+A/);
-  assert.doesNotMatch(patched, /Alt\+Shift\+A/);
-  assert.doesNotMatch(patched, /Ctrl\+Shift\+A/);
-});
-
-test("repairs AppShots renderer updates in already-patched bundles", () => {
-  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
-  const regressed = patched.replace(
-    "rS(e,{requestId:t,type:`computer-use-capture-updated`,update:n})",
-    "nS(e,{requestId:t,type:`computer-use-capture-updated`,update:n})",
-  );
-  const repaired = applyLinuxAppshotMainProcessPatch(regressed);
-
-  assert.match(
-    repaired,
-    /function codexLinuxAppshotSend\(e,t,n\)\{try\{rS\(e,\{requestId:t,type:`computer-use-capture-updated`,update:n\}\)\}catch\{\}\}/,
-  );
-  assert.doesNotMatch(
-    repaired,
-    /function codexLinuxAppshotSend\(e,t,n\)\{try\{nS\(e,\{requestId:t,type:`computer-use-capture-updated`,update:n\}\)\}catch\{\}\}/,
-  );
 });
