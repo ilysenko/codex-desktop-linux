@@ -991,6 +991,10 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
       "Je=(We?N?.kind===`comment`?me:[]:qe==null?me:me.filter(e=>e.id!==qe.id)).flatMap";
     const latestCommentPreloadMarkersPatch =
       "Je=(We?N?.kind===`comment`?Ue:[]:qe==null?me:me.filter(e=>e.id!==qe.id)).flatMap";
+    const currentCommentPreloadSelectedMarkersNeedle =
+      "Ye=(Ge?M?.kind===`comment`?he:[]:Je==null?he:he.filter(e=>e.id!==Je.id)).flatMap";
+    const currentCommentPreloadSelectedMarkersPatch =
+      "Ye=(Ge?M?.kind===`comment`?We:[]:Je==null?he:he.filter(e=>e.id!==Je.id)).flatMap";
     if (patchedSource.includes(currentMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentSelectedMarkersPatch)) {
@@ -998,6 +1002,8 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
     } else if (patchedSource.includes(currentCommentPreloadMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(latestCommentPreloadMarkersPatch)) {
+      // Already patched.
+    } else if (patchedSource.includes(currentCommentPreloadSelectedMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentMarkersNeedle)) {
       patchedSource = patchedSource.replace(currentMarkersNeedle, currentMarkersPatch);
@@ -1012,6 +1018,11 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
       patchedSource = patchedSource.replace(
         latestCommentPreloadMarkersNeedle,
         latestCommentPreloadMarkersPatch,
+      );
+    } else if (patchedSource.includes(currentCommentPreloadSelectedMarkersNeedle)) {
+      patchedSource = patchedSource.replace(
+        currentCommentPreloadSelectedMarkersNeedle,
+        currentCommentPreloadSelectedMarkersPatch,
       );
     } else {
       console.warn("WARN: Could not find browser annotation screenshot markers — skipping screenshot marker patch");

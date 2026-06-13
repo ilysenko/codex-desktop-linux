@@ -14,8 +14,24 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
     patchedSource = patchedSource.split(needle).join(approvalPatch);
   }
 
+  const runtimeFactoryTrustedHashesRegex =
+    /([A-Za-z_$][\w$]*)\.(Dn|Pn|Fa|La)\(\{([^{}]*?trustedBrowserClientSha256s:)(?!codexLinuxTrustedBrowserClientSha256s\()([A-Za-z_$][\w$]*)(,[^{}]*?\})\)/g;
+  if (
+    requireName(patchedSource, "node:fs") != null &&
+    requireName(patchedSource, "node:path") != null &&
+    requireName(patchedSource, "node:crypto") != null
+  ) {
+    patchedSource = patchedSource.replace(
+      runtimeFactoryTrustedHashesRegex,
+      (match, runtimeFactoryVar, runtimeFactoryMethod, configPrefix, trustedHashesVar, configSuffix) => {
+        patchedTrustedHashes = true;
+        return `${runtimeFactoryVar}.${runtimeFactoryMethod}({${configPrefix}codexLinuxTrustedBrowserClientSha256s(${trustedHashesVar})${configSuffix})`;
+      },
+    );
+  }
+
   const currentRuntimeConfigRegex =
-    /([A-Za-z_$][\w$]*)\.(Dn|Pn|Fa)\(\{([^{}]*?)nodeReplPath:([^,{}]+)(,)(?!tools:\{js:\{approval_mode:`approve`\}\})/g;
+    /([A-Za-z_$][\w$]*)\.(Dn|Pn|Fa|La)\(\{([^{}]*?)nodeReplPath:([^,{}]+)(,)(?!tools:\{js:\{approval_mode:`approve`\}\})/g;
   let patchedAnyCurrentRuntimeConfig = false;
   patchedSource = patchedSource.replace(
     currentRuntimeConfigRegex,
@@ -53,10 +69,14 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
         /trustedBrowserClientSha256s:([^,{}]+)\|\|([^,{}]+)\?codexLinuxTrustedBrowserClientSha256s\(([A-Za-z_$][\w$]*)\):\[\]/g,
         "trustedBrowserClientSha256s:$1||$2?$3:[]",
       );
+      patchedSource = patchedSource.replace(
+        /trustedBrowserClientSha256s:codexLinuxTrustedBrowserClientSha256s\(([A-Za-z_$][\w$]*)\)/g,
+        "trustedBrowserClientSha256s:$1",
+      );
       patchedTrustedHashes = false;
     } else {
       const helper =
-        `function codexLinuxTrustedBrowserClientSha256s(e,t=process.resourcesPath){if(process.platform!==\`linux\`)return e;let n=Array.isArray(e)?[...e]:[],r=t??"";if(r.length===0)return Array.from(new Set(n));for(let a of[\`browser\`,\`chrome\`])try{let e=(0,${pathVar}.join)(r,\`plugins\`,\`openai-bundled\`,\`plugins\`,a,\`scripts\`,\`browser-client.mjs\`);(0,${fsVar}.existsSync)(e)&&n.push((0,${cryptoVar}.createHash)(\`sha256\`).update((0,${fsVar}.readFileSync)(e)).digest(\`hex\`))}catch{}return Array.from(new Set(n))}`;
+        `function codexLinuxTrustedBrowserClientSha256s(__codexHashes,__codexResourcesPath=process.resourcesPath){if(process.platform!==\`linux\`)return __codexHashes;let __codexTrustedHashes=Array.isArray(__codexHashes)?[...__codexHashes]:[],__codexBasePath=__codexResourcesPath??"";if(__codexBasePath.length===0)return Array.from(new Set(__codexTrustedHashes));for(let __codexPluginName of[\`browser\`,\`chrome\`])try{let __codexBrowserClientPath=(0,${pathVar}.join)(__codexBasePath,\`plugins\`,\`openai-bundled\`,\`plugins\`,__codexPluginName,\`scripts\`,\`browser-client.mjs\`);(0,${fsVar}.existsSync)(__codexBrowserClientPath)&&__codexTrustedHashes.push((0,${cryptoVar}.createHash)(\`sha256\`).update((0,${fsVar}.readFileSync)(__codexBrowserClientPath)).digest(\`hex\`))}catch{}return Array.from(new Set(__codexTrustedHashes))}`;
       const strictDirective = '"use strict";';
       const helperInsertionIndex = patchedSource.startsWith(strictDirective)
         ? strictDirective.length

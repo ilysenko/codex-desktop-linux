@@ -58,7 +58,10 @@ The current flow is:
   package autodetection, dev side-by-side app identities, AppImage, cleanup,
   and bootstrap workflows. Important targets include `setup-native`,
   `bootstrap-native`, `install-native`, `update-native`, `appimage`, `package`,
-  and `install`.
+  and `install`, plus granular helpers (`build-app`, `build-app-fresh`,
+  `rebuild`, `rebuild-install`, `rebuild-next`, `build-dev-app`, `run-app`,
+  `run-dev-app`, `inspect-upstream`, `build-updater`, `service-enable`,
+  `service-status`, `check`, `test`, `clean-dist`, `clean-state`).
 - `scripts/bootstrap-wizard.sh`
   Guided native setup/update helper. It can discover Linux features, edit
   feature config, validate feature relationships, install native packages, and
@@ -69,6 +72,9 @@ The current flow is:
 - `flake.nix` / `flake.lock`
   Nix flake that pins upstream DMG, Cargo dependency, and Node dependency
   hashes. Use `scripts/ci/update-nix-hashes.sh` to refresh pins.
+- `nix/`
+  Nix integration modules: `home-manager-module.nix`, `nixos-module.nix`, and
+  `native-modules/` rebuild support for the flake.
 - `.devcontainer/devcontainer.json` / `.devcontainer/Dockerfile`
   Generic repo build/test container with Rust, Node 22/npm, packaging tools,
   `rustfmt`, and `clippy`. Prefer it before asking users to install host
@@ -80,7 +86,15 @@ The current flow is:
   Runtime launcher body. Edit this for launcher behavior: webview server
   lifecycle, warm-start handoff, CLI preflight, GUI prompts, URL-scheme
   handling, runtime Linux feature hooks, bundled plugin cache sync, and
-  process/liveness behavior.
+  process/liveness behavior. Single-instance enforcement uses an `flock`
+  launcher lock (`$APP_STATE_DIR/launcher.lock`, wait tunable via
+  `CODEX_LAUNCHER_LOCK_WAIT_SECONDS`) plus a serialized bootstrap critical
+  section around detection/spawn/`app.pid`, and a `/proc`-based running-app scan
+  filtered by `CODEX_LINUX_INSTANCE_ID` so duplicate launches collapse to the
+  live instance while side-by-side identities stay independent.
+- `launcher/webview-server.py`
+  Standalone Python HTTP server for the local webview assets, serving them with
+  explicit no-store/no-cache headers. Started and supervised by the launcher.
 - `packaging/linux/codex-packaged-runtime.sh`
   Native-package-only runtime helper loaded optionally by the launcher. Keep
   distro/native-package specifics here so the generic launcher stays portable.
@@ -92,6 +106,10 @@ The current flow is:
 - `install-helpers.sh`
   Argument parsing, dependency checks, identity validation, install-dir
   preparation, logging/color helpers, and shell quoting.
+- `build-info.sh` / `build-info.js`
+  Build provenance capture. Sourced by `install.sh` to record git commit, DMG
+  source, upstream/Electron versions, enabled feature ids, and target context
+  into the generated `codex-app/` so installs and rebuilds are traceable.
 - `node-runtime.sh`
   Managed Linux Node.js runtime download and SHA256 validation. The launcher,
   Browser Use, native module rebuilds, Codex CLI install/update flow, and
@@ -139,7 +157,10 @@ The current flow is:
 - `scripts/patches/core/**/patch.js`
   Source of truth for shipped Linux compatibility patch descriptors. New core
   patches should be added as descriptors here, grouped under `all-linux/`,
-  `distro/`, `package/`, or `desktop/`.
+  `distro/`, `package/`, or `desktop/`. Today all shipped descriptors live under
+  `all-linux/` (split into `extracted-app/`, `main-process/`, and `webview/`);
+  the `distro/`, `package/`, and `desktop/` buckets are README-only placeholders
+  reserved for future target-scoped patches.
 - `scripts/patches/engine.js`
   Discovers descriptors, normalizes them, checks duplicate ids, applies target
   filters, and records patch report metadata.
@@ -212,9 +233,10 @@ extension point to core rather than moving the feature itself into core.
 - `scripts/build-appimage.sh`
   Builds an AppImage using `packaging/appimage/`.
 - `packaging/linux/`
-  Debian control files, RPM spec, pacman template/hooks, desktop entry, icon
-  policy, Polkit policy, packaged runtime helper, and shared user-service
-  maintainer-script helper.
+  Debian control files, RPM spec, pacman `PKGBUILD.template`/install hooks,
+  desktop entry, icon policy, Polkit policy, packaged runtime helper, shared
+  user-service maintainer-script helper, and `codex-desktop-entry-doctor.sh`
+  (desktop-entry validation/repair run from package hooks).
 - `packaging/appimage/`
   AppImage `AppRun`, desktop file, and runtime helper.
 
@@ -233,6 +255,13 @@ update-builder bundle under `/opt/codex-desktop/update-builder`.
   upstream DMGs.
 - `upstream.rs`
   Upstream DMG polling, ETag cache, download, and hash verification.
+- `wrapper.rs` / `wrapper_apply.rs` / `changelog.rs` / `feature_picker.rs`
+  Wrapper-repo (this repository) self-update path, separate from the upstream
+  DMG flow: detect pending Linux feature/patch updates from the wrapper repo,
+  surface CHANGELOG entries and an interactive feature picker for the in-app
+  Update button, then rebuild and reinstall for packaged and user-local installs.
+- `cache_cleanup.rs`
+  Cleanup of updater-managed download/rebuild workspaces under the cache dir.
 - `install.rs` / `install_rollback.rs` / `rollback.rs`
   Privileged package install, format-specific install/rollback commands, and
   manual rollback orchestration.
@@ -253,20 +282,32 @@ The updater runs unprivileged and only escalates through `pkexec` for
 
 - `computer-use-linux/`
   Rust crate for Linux Computer Use MCP, Chrome native messaging host, and the
-  COSMIC helper.
+  COSMIC helper. Beyond windowing it covers input (`abs_pointer.rs` uinput
+  absolute pointer), capture (`screenshot.rs`), accessibility (`atspi_tree.rs`),
+  terminal (`terminal.rs`), identity (`identity.rs`), and desktop integrations
+  (`gnome_extension.rs`, `cosmic_helper.rs`, `remote_desktop.rs`). Binaries live
+  in `src/bin/` (`codex-chrome-extension-host.rs`, `codex-computer-use-cosmic.rs`).
 - `computer-use-linux/src/windowing/`
   Window backend registry, target resolution, focus verification, and
-  backend-specific implementations. Add new compositor/window-manager support
-  under `windowing/backends/` and register it in `windowing/registry.rs`; avoid
+  backend-specific implementations (`backends/` holds `cosmic`, `gnome`,
+  `hyprland`, `i3`, `kwin`). Add new compositor/window-manager support under
+  `windowing/backends/` and register it in `windowing/registry.rs`; avoid
   backend-specific branches in `server.rs` or `diagnostics.rs`.
 - `computer-use-linux/gnome-shell-extension/`
   Bundled GNOME Shell extension used for exact GNOME activation.
-- `plugins/openai-bundled/plugins/computer-use/`
-  Bundled plugin manifest/resources staged into the Linux app.
+- `plugins/openai-bundled/plugins/computer-use/` and `.../read-aloud/`
+  Bundled plugin manifests/resources staged into the Linux app.
 - `read-aloud-linux/`
   Rust MCP backend for optional Read Aloud support.
 - `linux-features/read-aloud/` and `linux-features/read-aloud-mcp/`
-  Optional Linux features for Read Aloud patching/staging/integration.
+  Optional Linux features for Read Aloud patching/staging/integration. They are
+  two of ~16 opt-in features under `linux-features/` (e.g. `agent-workspace`,
+  `appshots`, `codex-wrapper-updater`, `conversation-mode`,
+  `copilot-reasoning-effort`, `frameless-titlebar`, `node-repl-reaper`,
+  `open-target-discovery`, `remote-control-ui`, `remote-mobile-control`,
+  `thorium-chrome-plugin`, `x11-ewmh-computer-use`, `zed-opener`,
+  plus the `example-feature` template); all ship `feature.json` + `README.md`
+  and are disabled by default.
 
 ### User-Local Install (`contrib/user-local-install/`)
 
@@ -277,8 +318,12 @@ package. The daily-driver flow remains `install.sh` plus a native package plus
 - `install-user-local.sh`
   Installs under `~/.local/opt/codex-desktop-linux`, creates wrappers under
   `~/.local/bin`, and installs a user desktop entry.
+- `files/.local/bin/codex-desktop{,-update,-check-update,-version}`
+  Installed launcher and update/version maintenance wrappers.
 - `files/.local/lib/codex-desktop-linux/common.sh`
   Shared helpers for installed maintenance scripts.
+- `files/.local/share/applications/codex-desktop.desktop`
+  User desktop entry installed by the user-local path.
 - `files/.config/systemd/user/codex-desktop-update.{service,timer}`
   Optional weekly user timer.
 
@@ -290,12 +335,18 @@ package. The daily-driver flow remains `install.sh` plus a native package plus
   staging.
 - `tests/fixtures/create-packaged-app-fixture.sh`
   Minimal fake packaged app layout for package-builder tests.
+- `tests/webview_probe_equivalence.sh`
+  Checks the launcher's webview startup probe stays equivalent to the standalone
+  `launcher/webview-server.py` behavior.
 - `scripts/ci-local.sh`
   Local containerized CI runner. Targets include `pr`, `all`, `core`, `deb`,
   `rpm`, `pacman`, `install-deps[:image]`, `nix`, and `upstream`.
 - `.github/workflows/`
-  GitHub Actions for CI, upstream build app, install-deps, Cachix, Nix pin
-  validation/update, and Computer Use sync reminders.
+  GitHub Actions: `ci.yml`, `upstream-build-app.yml`, `install-deps.yml`,
+  `cachix.yml`, `update-codex-hash.yml` (refresh upstream Nix hash pins), and
+  `computer-use-sync-reminder.yml`. Nix pins are validated by
+  `scripts/ci/validate-nix-pins.sh` and refreshed by
+  `scripts/ci/update-nix-hashes.sh`.
 
 ### Docs
 
@@ -305,8 +356,22 @@ package. The daily-driver flow remains `install.sh` plus a native package plus
   Contributor expectations.
 - `CHANGELOG.md`
   Release notes.
+- `docs/architecture.md`
+  High-level architecture overview of the repo and runtime flow.
+- `docs/build-and-packaging.md`
+  Build pipeline and native package builder reference.
+- `docs/native-setup.md`
+  Guided native setup/install/update walkthrough.
+- `docs/updater.md`
+  Update manager design, states, and operations.
 - `docs/linux-features-architecture.md`
   Linux feature framework contract.
+- `docs/linux-computer-use.md`
+  Linux Computer Use backend, windowing, and desktop integration notes.
+- `docs/nix.md`
+  Nix flake, modules (`nix/`), and hash-pin workflow.
+- `docs/troubleshooting.md`
+  Common install/runtime issues and diagnostics.
 - `docs/github-cli-auth.md`
   GitHub CLI authentication guidance.
 - `docs/webview-server-evaluation.md`

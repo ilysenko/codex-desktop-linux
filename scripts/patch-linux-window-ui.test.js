@@ -1670,6 +1670,19 @@ test("patches drifted comment preload screenshot anchor helper names", () => {
   assert.doesNotMatch(patched, /\bS\.width\b/);
 });
 
+test("patches current comment preload screenshot marker selection list", () => {
+  const source =
+    "let Ue=M?.annotation.id??null,We=M?.kind===`comment`?[M.annotation]:he,Ge=M!=null&&g!=null,Ke=m?.target.mode===`create`?oo(m.anchor):null,qe=m?.target.mode===`create`&&m.anchor.type===`element`?m.anchor.viewportSize:void 0,Je=Ke==null?null:he.find(e=>le(e.anchor,Ke))??null,Ye=(Ge?M?.kind===`comment`?he:[]:Je==null?he:he.filter(e=>e.id!==Je.id)).flatMap(e=>{let t=fe.get(e.id);if(t==null)return[];return[{comment:e,commentNumber:t}]})";
+
+  const patched = applyPatchTwice(applyBrowserAnnotationScreenshotPatch, source);
+
+  assert.match(
+    patched,
+    /Ye=\(Ge\?M\?\.kind===`comment`\?We:\[\]:Je==null\?he:he\.filter\(e=>e\.id!==Je\.id\)\)\.flatMap/,
+  );
+  assert.doesNotMatch(patched, /Ge\?M\?\.kind===`comment`\?he:\[\]/);
+});
+
 test("guards fast-mode model tier lookup when serviceTiers is missing", () => {
   const source =
     "function m(e){return e.serviceTiers.length>0||e.additionalSpeedTiers?.includes(u)===!0}";
@@ -1955,6 +1968,19 @@ test("adds Linux window icon handling when an icon asset is available", () => {
   assert.match(patchedMain, new RegExp(`icon:${escapeRegExp(iconPathExpression)}`));
   assert.doesNotMatch(patchedMain, /process\.platform===`win32`\|\|process\.platform===`linux`\?\{autoHideMenuBar:!0/);
   assert.match(patchedMain, new RegExp(`D\\.setIcon\\(${escapeRegExp(iconPathExpression)}\\)`));
+});
+
+test("adds Linux window icon handling to current Linux autoHideMenuBar options", () => {
+  const iconAsset = "app-test.png";
+  const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
+  const windowOptionsSource =
+    "...process.platform===`win32`||process.platform===`linux`?{autoHideMenuBar:!0}:{},";
+
+  const patched = applyPatchTwice(applyLinuxWindowOptionsPatch, windowOptionsSource, iconAsset);
+
+  assert.match(patched, /process\.platform===`win32`\?\{autoHideMenuBar:!0\}:process\.platform===`linux`/);
+  assert.doesNotMatch(patched, /process\.platform===`win32`\|\|process\.platform===`linux`/);
+  assert.match(patched, new RegExp(`icon:${escapeRegExp(iconPathExpression)}`));
 });
 
 test("patches remaining Linux window icon snippets when another window is already patched", () => {
@@ -4346,6 +4372,62 @@ test("auto-approves the Electron 42 Browser Use node_repl runtime config builder
     patched,
     /t\.Fa\(\{codexCliPath:c\.codexCliPath,codexHome:m,extraEnv:b,nodeModuleDirs:f,nodePath:c\.nodePath,nodeReplPath:u\?t\.kr\(c\.nodeReplPath\):c\.nodeReplPath,tools:\{js:\{approval_mode:`approve`\}\},platform:c\.platform/,
   );
+});
+
+test("auto-approves and trusts the current Browser Use node_repl runtime config builder", () => {
+  const resourcesRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-current-browser-client-hash-"));
+  try {
+    const browserClient = path.join(
+      resourcesRoot,
+      "plugins",
+      "openai-bundled",
+      "plugins",
+      "browser",
+      "scripts",
+      "browser-client.mjs",
+    );
+    const chromeClient = path.join(
+      resourcesRoot,
+      "plugins",
+      "openai-bundled",
+      "plugins",
+      "chrome",
+      "scripts",
+      "browser-client.mjs",
+    );
+    fs.mkdirSync(path.dirname(browserClient), { recursive: true });
+    fs.mkdirSync(path.dirname(chromeClient), { recursive: true });
+    fs.writeFileSync(browserClient, "patched current browser client\n", "utf8");
+    fs.writeFileSync(chromeClient, "patched current chrome client\n", "utf8");
+    const browserHash = cryptoHash("patched current browser client\n");
+    const chromeHash = cryptoHash("patched current chrome client\n");
+    const source =
+      "\"use strict\";let o=require(`node:fs`),a=require(`node:path`),s=require(`node:crypto`),d=[`upstream-hash`],u=!1,t={La:e=>e,jr:e=>e},c={codexCliPath:null,nodePath:null,nodeReplPath:null,platform:`linux`},m=null,b=null,f=[],g=null,l=null,v=null,_=!1;function build(){return t.La({codexCliPath:c.codexCliPath,codexHome:m,extraEnv:b,nodeModuleDirs:f,nodePath:c.nodePath,nodeReplPath:u?t.jr(c.nodeReplPath):c.nodeReplPath,platform:c.platform,requestMeta:g,sentryUserId:l,traceMeta:v,trustAllCode:_,trustedBrowserClientSha256s:d,shouldUseWslPaths:u}).trustedBrowserClientSha256s}";
+
+    const patched = applyPatchTwice(applyBrowserUseNodeReplApprovalPatch, source);
+
+    assert.match(patched, /^"use strict";function codexLinuxTrustedBrowserClientSha256s/);
+    assert.match(
+      patched,
+      /t\.La\(\{codexCliPath:c\.codexCliPath,codexHome:m,extraEnv:b,nodeModuleDirs:f,nodePath:c\.nodePath,nodeReplPath:u\?t\.jr\(c\.nodeReplPath\):c\.nodeReplPath,tools:\{js:\{approval_mode:`approve`\}\},platform:c\.platform/,
+    );
+    assert.match(
+      patched,
+      /trustedBrowserClientSha256s:codexLinuxTrustedBrowserClientSha256s\(d\),shouldUseWslPaths:u/,
+    );
+    assert.equal(
+      (patched.match(/function codexLinuxTrustedBrowserClientSha256s/g) || []).length,
+      1,
+    );
+    assert.doesNotMatch(patched, /for\(let a of/);
+    const linuxHashes = vm.runInNewContext(`${patched};build();`, {
+      require,
+      process: { platform: "linux", resourcesPath: resourcesRoot },
+    });
+    assert.deepEqual(Array.from(linuxHashes), ["upstream-hash", browserHash, chromeHash]);
+  } finally {
+    fs.rmSync(resourcesRoot, { recursive: true, force: true });
+  }
 });
 
 test("trusts Linux patched bundled Browser Use clients by hashing staged files", () => {
