@@ -141,12 +141,16 @@ jobs:
         run: node scripts/ci/validate-patch-report.js patch-report.json --profile upstream-build
 
       - name: Upload upstream DMG metadata artifact
+        # The build step now aborts on critical patch failures; keep uploading
+        # the patch report so the failure is diagnosable from the artifact.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: upstream-dmg-metadata
           path: |
             upstream-dmg-metadata.json
             patch-report.json
+          if-no-files-found: ignore
 
       - name: Write build summary
         run: |

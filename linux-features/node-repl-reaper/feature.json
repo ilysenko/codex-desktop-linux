@@ -1,0 +1,9 @@
+{
+  "id": "node-repl-reaper",
+  "title": "Browser Use node_repl Reaper",
+  "description": "Reaps Browser Use node_repl helper processes leaked by the upstream codex app-server: on launch, periodically while the app runs, and on exit.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "stageHook": "./stage.sh"
+  }
+}

@@ -4,6 +4,7 @@ const {
   findMatchingBrace,
   requireName,
 } = require("./shared.js");
+const { recordStrategy } = require("./strategy-telemetry.js");
 
 function findAvatarMethod(source, signatureRegex) {
   const match = source.match(signatureRegex);
@@ -78,44 +79,38 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
 
   const interactivityNeedle =
     "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1;return}let t=!this.pointerInteractive;if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}refreshCursorAtCurrentMousePosition(e){";
-  const previousInteractivityNeedle =
-    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1,this.codexLinuxStopAvatarPassthroughRecovery();return}let t=!this.pointerInteractive;if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0}),this.codexLinuxStartAvatarPassthroughRecovery();return}this.codexLinuxStopAvatarPassthroughRecovery(),e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}else t&&this.codexLinuxStartAvatarPassthroughRecovery()}codexLinuxStopAvatarPassthroughRecovery(){this.codexLinuxAvatarPassthroughRecoveryTimer!=null&&(clearInterval(this.codexLinuxAvatarPassthroughRecoveryTimer),this.codexLinuxAvatarPassthroughRecoveryTimer=null)}codexLinuxRecoverAvatarPointerInteractivity(){this.pointerInteractive=!0,this.applyPointerInteractivityPolicy()}codexLinuxStartAvatarPassthroughRecovery(){if(process.platform!==`linux`||this.codexLinuxAvatarPassthroughRecoveryTimer!=null)return;this.codexLinuxAvatarPassthroughRecoveryTimer=setInterval(()=>{let e=this.window;if(e==null||e.isDestroyed()||!this.mousePassthroughEnabled){this.codexLinuxStopAvatarPassthroughRecovery();return}let t;try{t=this.codexLinuxIsCursorInAvatarInteractiveRegion(e)}catch{this.codexLinuxRecoverAvatarPointerInteractivity();return}t&&this.codexLinuxRecoverAvatarPointerInteractivity()},80),this.codexLinuxAvatarPassthroughRecoveryTimer.unref?.()}codexLinuxIsCursorInAvatarInteractiveRegion(e){let t=this.layout;if(t==null)return!1;let r=n.screen.getCursorScreenPoint(),i=e.getContentBounds(),a=r.x-i.x,o=r.y-i.y,s=e=>e!=null&&a>=e.left&&a<=e.left+e.width&&o>=e.top&&o<=e.top+e.height;return s(t.mascot)||s(t.tray)}refreshCursorAtCurrentMousePosition(e){";
-  const previousSyncInteractivityNeedle =
-    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1,this.codexLinuxStopAvatarPassthroughRecovery();return}process.platform===`linux`&&(this.codexLinuxStartAvatarPassthroughRecovery(),this.codexLinuxSyncAvatarPointerInteractivity(e));let t=!this.pointerInteractive;this.dragState!=null&&(t=!1);if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}codexLinuxStopAvatarPassthroughRecovery(){this.codexLinuxAvatarPassthroughRecoveryTimer!=null&&(clearInterval(this.codexLinuxAvatarPassthroughRecoveryTimer),this.codexLinuxAvatarPassthroughRecoveryTimer=null)}codexLinuxStartAvatarPassthroughRecovery(){if(process.platform!==`linux`||this.codexLinuxAvatarPassthroughRecoveryTimer!=null)return;this.codexLinuxAvatarPassthroughRecoveryTimer=setInterval(()=>{let e=this.window;if(e==null||e.isDestroyed()||!e.isVisible()){this.codexLinuxStopAvatarPassthroughRecovery();return}this.codexLinuxSyncAvatarPointerInteractivity(e)&&this.applyPointerInteractivityPolicy()},32),this.codexLinuxAvatarPassthroughRecoveryTimer.unref?.()}codexLinuxSyncAvatarPointerInteractivity(e){if(process.platform!==`linux`||e==null||e.isDestroyed())return!1;if(this.dragState!=null){if(this.pointerInteractive)return!1;return this.pointerInteractive=!0,!0}let t;try{t=this.codexLinuxIsCursorInAvatarInteractiveRegion(e)}catch{t=!0}return this.pointerInteractive===t?!1:(this.pointerInteractive=t,!0)}codexLinuxIsCursorInAvatarInteractiveRegion(e){let t=this.layout;if(t==null)return!1;let r=n.screen.getCursorScreenPoint(),i=e.getContentBounds(),a=r.x-i.x,o=r.y-i.y;if(a<0||o<0||a>i.width||o>i.height)return!1;let s=e=>e!=null&&a>=e.left&&a<=e.left+e.width&&o>=e.top&&o<=e.top+e.height;return s(t.mascot)||s(t.tray)}refreshCursorAtCurrentMousePosition(e){";
   const previousShapeInteractivityNeedle =
     "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1,this.codexLinuxStopAvatarPassthroughRecovery();return}if(process.platform===`linux`&&typeof e.setShape==`function`){this.codexLinuxStopAvatarPassthroughRecovery(),this.mousePassthroughEnabled&&(this.mousePassthroughEnabled=!1,e.setIgnoreMouseEvents(!1));if(this.codexLinuxApplyAvatarInputShape(e))return}process.platform===`linux`&&(this.codexLinuxStartAvatarPassthroughRecovery(),this.codexLinuxSyncAvatarPointerInteractivity(e));let t=!this.pointerInteractive;this.dragState!=null&&(t=!1);if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}codexLinuxStopAvatarPassthroughRecovery(){this.codexLinuxAvatarPassthroughRecoveryTimer!=null&&(clearInterval(this.codexLinuxAvatarPassthroughRecoveryTimer),this.codexLinuxAvatarPassthroughRecoveryTimer=null)}codexLinuxBuildAvatarInputShape(e){let t=this.layout;if(t==null)return null;if(this.dragState!=null){let t=e.getContentBounds();return[{x:0,y:0,width:t.width,height:t.height}]}let r=e.getContentBounds(),i=e=>{if(e==null)return null;let t=Math.max(0,e.left),n=Math.max(0,e.top),i=Math.min(r.width,e.left+e.width)-t,a=Math.min(r.height,e.top+e.height)-n;return i<=0||a<=0?null:{x:t,y:n,width:i,height:a}};return[i(t.mascot),i(t.tray)].filter(Boolean)}codexLinuxApplyAvatarInputShape(e){if(process.platform!==`linux`||e==null||e.isDestroyed()||typeof e.setShape!=`function`)return!1;let t=this.codexLinuxBuildAvatarInputShape(e);if(t==null)return!1;let n=JSON.stringify(t);if(this.codexLinuxAvatarInputShapeKey===n)return!0;try{e.setShape(t),this.codexLinuxAvatarInputShapeKey=n;return!0}catch{this.codexLinuxAvatarInputShapeKey=null;return!1}}codexLinuxStartAvatarPassthroughRecovery(){if(process.platform!==`linux`||this.codexLinuxAvatarPassthroughRecoveryTimer!=null)return;this.codexLinuxAvatarPassthroughRecoveryTimer=setInterval(()=>{let e=this.window;if(e==null||e.isDestroyed()||!e.isVisible()){this.codexLinuxStopAvatarPassthroughRecovery();return}this.codexLinuxSyncAvatarPointerInteractivity(e)&&this.applyPointerInteractivityPolicy()},32),this.codexLinuxAvatarPassthroughRecoveryTimer.unref?.()}codexLinuxSyncAvatarPointerInteractivity(e){if(process.platform!==`linux`||e==null||e.isDestroyed())return!1;if(this.dragState!=null){if(this.pointerInteractive)return!1;return this.pointerInteractive=!0,!0}let t;try{t=this.codexLinuxIsCursorInAvatarInteractiveRegion(e)}catch{t=!0}return this.pointerInteractive===t?!1:(this.pointerInteractive=t,!0)}codexLinuxIsCursorInAvatarInteractiveRegion(e){let t=this.layout;if(t==null)return!1;let r=n.screen.getCursorScreenPoint(),i=e.getContentBounds(),a=r.x-i.x,o=r.y-i.y;if(a<0||o<0||a>i.width||o>i.height)return!1;let s=e=>e!=null&&a>=e.left&&a<=e.left+e.width&&o>=e.top&&o<=e.top+e.height;return s(t.mascot)||s(t.tray)}refreshCursorAtCurrentMousePosition(e){";
-  const interactivityPatch = withElectronAlias(previousShapeInteractivityNeedle)
-    .replace(
-      "codexLinuxStopAvatarPassthroughRecovery(){",
-      `${i3SessionMethod}${compositorHintsMethod}codexLinuxStopAvatarPassthroughRecovery(){`,
-    );
-  const previousI3AlwaysInteractivePatch =
-    "if(process.platform===`linux`&&this.codexLinuxIsI3Session()){this.codexLinuxStopAvatarPassthroughRecovery(),this.codexLinuxAvatarInputShapeKey=null,this.pointerInteractive=!0,this.mousePassthroughEnabled&&(this.mousePassthroughEnabled=!1),e.setIgnoreMouseEvents(!1);return}";
-  const previousI3SetShapeGuardPatch =
-    "if(process.platform===`linux`&&typeof e.setShape==`function`&&!this.codexLinuxIsI3Session()){";
   const previousSetShapePolicyPatch =
     "if(process.platform===`linux`&&typeof e.setShape==`function`){this.codexLinuxStopAvatarPassthroughRecovery(),this.mousePassthroughEnabled&&(this.mousePassthroughEnabled=!1,e.setIgnoreMouseEvents(!1));if(this.codexLinuxApplyAvatarInputShape(e))return}";
   const setShapePolicyPatch =
     "if(process.platform===`linux`&&typeof e.setShape==`function`){this.codexLinuxStartAvatarPassthroughRecovery(),this.mousePassthroughEnabled&&(this.mousePassthroughEnabled=!1,e.setIgnoreMouseEvents(!1));if(this.codexLinuxApplyAvatarInputShape(e))return}";
+  // previousShapeInteractivityNeedle embeds the older Stop-based policy block;
+  // finalize it at build time so the replaceAll below only fires for trees
+  // patched by an older wrapper, not on every fresh DMG.
+  const interactivityPatch = withElectronAlias(previousShapeInteractivityNeedle)
+    .replace(
+      "codexLinuxStopAvatarPassthroughRecovery(){",
+      `${i3SessionMethod}${compositorHintsMethod}codexLinuxStopAvatarPassthroughRecovery(){`,
+    )
+    .replaceAll(previousSetShapePolicyPatch, setShapePolicyPatch);
 
   if (!patchedSource.includes("codexLinuxIsI3Session")) {
     if (patchedSource.includes(interactivityNeedle)) {
+      recordStrategy("avatar-interactivity", "upstream");
       patchedSource = patchedSource.replace(interactivityNeedle, interactivityPatch);
-    } else if (patchedSource.includes(previousInteractivityNeedle)) {
-      patchedSource = patchedSource.replace(previousInteractivityNeedle, interactivityPatch);
-    } else if (patchedSource.includes(previousSyncInteractivityNeedle)) {
-      patchedSource = patchedSource.replace(previousSyncInteractivityNeedle, interactivityPatch);
-    } else if (patchedSource.includes(previousShapeInteractivityNeedle)) {
-      patchedSource = patchedSource.replace(previousShapeInteractivityNeedle, interactivityPatch);
     } else if (
       patchedSource.includes("avatar-overlay") &&
       patchedSource.includes("applyPointerInteractivityPolicy(){let e=this.window")
     ) {
+      recordStrategy("avatar-interactivity", "none");
       console.warn(
         "WARN: Could not find avatar overlay mouse passthrough policy — skipping Linux avatar overlay passthrough recovery patch",
       );
       return currentSource;
     }
+  } else {
+    recordStrategy("avatar-interactivity", "already-applied");
   }
   if (
     patchedSource.includes("codexLinuxIsI3Session") &&
@@ -126,51 +121,24 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
       `${i3SessionMethod}${compositorHintsMethod}codexLinuxStopAvatarPassthroughRecovery(){`,
     );
   }
-  if (patchedSource.includes(previousI3AlwaysInteractivePatch)) {
-    patchedSource = patchedSource.replace(previousI3AlwaysInteractivePatch, "");
-  }
-  if (patchedSource.includes(previousI3SetShapeGuardPatch)) {
-    patchedSource = patchedSource.replace(
-      previousI3SetShapeGuardPatch,
-      "if(process.platform===`linux`&&typeof e.setShape==`function`){",
-    );
-  }
-  patchedSource = patchedSource.replaceAll(previousSetShapePolicyPatch, setShapePolicyPatch);
   patchedSource = upgradeAvatarOverlayInjectedMethods(patchedSource, electronVar);
 
-  const previousStartDragPatch =
-    "startDrag(e,{pointerWindowX:t,pointerWindowY:r}){let i=this.window;if(i==null||i.isDestroyed()||i.webContents.id!==e)return;this.pointerInteractive=!0,this.applyPointerInteractivityPolicy(),this.cancelMomentum();";
-  const originalStartDragPrefix =
-    "startDrag(e,{pointerWindowX:t,pointerWindowY:r}){let i=this.window;if(i==null||i.isDestroyed()||i.webContents.id!==e)return;this.cancelMomentum();";
-  const startDragNeedle =
-    "displayBounds:n.screen.getDisplayNearestPoint(n.screen.getCursorScreenPoint()).bounds}}moveDrag(e){";
   const startDragPatch =
     `displayBounds:${electronVar}.screen.getDisplayNearestPoint(${electronVar}.screen.getCursorScreenPoint()).bounds},process.platform===\`linux\`&&(this.pointerInteractive=!0,this.applyPointerInteractivityPolicy())}moveDrag(e){`;
-  const previousStartDragAfterStatePatch =
-    "displayBounds:n.screen.getDisplayNearestPoint(n.screen.getCursorScreenPoint()).bounds},this.pointerInteractive=!0,this.applyPointerInteractivityPolicy()}moveDrag(e){";
   const startDragRegex =
     /displayBounds:([A-Za-z_$][\w$]*)\.screen\.getDisplayNearestPoint\(\1\.screen\.getCursorScreenPoint\(\)\)\.bounds\}\}moveDrag\(e\)\{/;
-  const previousStartDragAfterStateRegex =
-    /displayBounds:([A-Za-z_$][\w$]*)\.screen\.getDisplayNearestPoint\(\1\.screen\.getCursorScreenPoint\(\)\)\.bounds\},this\.pointerInteractive=!0,this\.applyPointerInteractivityPolicy\(\)\}moveDrag\(e\)\{/;
   const currentStartDragPatchRegex =
     /displayBounds:([A-Za-z_$][\w$]*)\.screen\.getDisplayNearestPoint\(\1\.screen\.getCursorScreenPoint\(\)\)\.bounds\},process\.platform===`linux`&&\(this\.pointerInteractive=!0,this\.applyPointerInteractivityPolicy\(\)\)\}moveDrag\(e\)\{/;
-  if (patchedSource.includes(previousStartDragPatch)) {
-    patchedSource = patchedSource.replace(previousStartDragPatch, originalStartDragPrefix);
-  }
   if (currentStartDragPatchRegex.test(patchedSource)) {
-    // Already patched.
-  } else if (previousStartDragAfterStateRegex.test(patchedSource)) {
-    patchedSource = patchedSource.replace(previousStartDragAfterStateRegex, startDragPatch);
-  } else if (patchedSource.includes(previousStartDragAfterStatePatch)) {
-    patchedSource = patchedSource.replace(previousStartDragAfterStatePatch, startDragPatch);
-  } else if (patchedSource.includes(startDragNeedle)) {
-    patchedSource = patchedSource.replace(startDragNeedle, startDragPatch);
+    recordStrategy("avatar-start-drag", "already-applied");
   } else if (startDragRegex.test(patchedSource)) {
+    recordStrategy("avatar-start-drag", "upstream-regex");
     patchedSource = patchedSource.replace(startDragRegex, startDragPatch);
   } else if (
     patchedSource.includes("avatar-overlay") &&
     !patchedSource.includes(startDragPatch)
   ) {
+    recordStrategy("avatar-start-drag", "none");
     console.warn(
       "WARN: Could not find avatar overlay drag start — skipping Linux avatar overlay drag interactivity patch",
     );
@@ -180,16 +148,15 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
     "endDrag(e){let t=this.window;t==null||t.isDestroyed()||t.webContents.id!==e||(this.dragState?.hasMoved&&this.moveDragToCurrentCursor(t),this.dragState=null,this.reclampWindowToVisibleDisplay({shouldPersist:!0}))}";
   const endDragPatch =
     "endDrag(e){let t=this.window;t==null||t.isDestroyed()||t.webContents.id!==e||(this.dragState?.hasMoved&&this.moveDragToCurrentCursor(t),this.dragState=null,this.reclampWindowToVisibleDisplay({shouldPersist:!0}),process.platform===`linux`&&this.applyPointerInteractivityPolicy())}";
-  const previousEndDragPatch =
-    "endDrag(e){let t=this.window;t==null||t.isDestroyed()||t.webContents.id!==e||(this.dragState?.hasMoved&&this.moveDragToCurrentCursor(t),this.dragState=null,this.reclampWindowToVisibleDisplay({shouldPersist:!0}),this.codexLinuxSyncAvatarPointerInteractivity(t)&&this.applyPointerInteractivityPolicy())}";
-  if (patchedSource.includes(previousEndDragPatch)) {
-    patchedSource = patchedSource.replace(previousEndDragPatch, endDragPatch);
-  } else if (patchedSource.includes(endDragNeedle)) {
+  if (patchedSource.includes(endDragNeedle)) {
+    recordStrategy("avatar-end-drag", "upstream");
     patchedSource = patchedSource.replace(endDragNeedle, endDragPatch);
+  } else if (patchedSource.includes(endDragPatch)) {
+    recordStrategy("avatar-end-drag", "already-applied");
   } else if (
-    patchedSource.includes("avatar-overlay") &&
-    !patchedSource.includes(endDragPatch)
+    patchedSource.includes("avatar-overlay")
   ) {
+    recordStrategy("avatar-end-drag", "none");
     console.warn(
       "WARN: Could not find avatar overlay drag end — skipping Linux avatar overlay drag cleanup patch",
     );
@@ -203,6 +170,7 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
     if (
       !/this\.(?:applyLayout|applyLatestElementSizes)\([A-Za-z_$][\w$]*\),process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)/.test(setElementSizeMethod.text)
     ) {
+      recordStrategy("avatar-element-size", "upstream");
       const patchedMethod = setElementSizeMethod.text.replace(
         /this\.(applyLayout|applyLatestElementSizes)\(([A-Za-z_$][\w$]*)\)(?!,process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\))/g,
         "this.$1($2),process.platform===`linux`&&this.applyPointerInteractivityPolicy()",
@@ -213,11 +181,14 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
           patchedMethod +
           patchedSource.slice(setElementSizeMethod.end);
       }
+    } else {
+      recordStrategy("avatar-element-size", "already-applied");
     }
   } else if (
     patchedSource.includes("avatar-overlay") &&
     !/setElementSize\([^{}]+\)\{[^]*?this\.applyLayout\([A-Za-z_$][\w$]*\),process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)/.test(patchedSource)
   ) {
+    recordStrategy("avatar-element-size", "none");
     console.warn(
       "WARN: Could not find avatar overlay element size update — skipping Linux avatar overlay layout interactivity patch",
     );
@@ -240,74 +211,53 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
     )
   ) {
     if (i3TrayFallbackRegex.test(patchedSource)) {
+      recordStrategy("avatar-i3-tray-fallback", "upstream");
       patchedSource = patchedSource.replace(i3TrayFallbackRegex, i3TrayFallbackPatch);
     } else if (patchedSource.includes("avatar-overlay")) {
+      recordStrategy("avatar-i3-tray-fallback", "none");
       console.warn(
         "WARN: Could not find avatar overlay default tray layout — skipping Linux i3 hidden tray layout patch",
       );
     }
+  } else {
+    recordStrategy("avatar-i3-tray-fallback", "already-applied");
   }
 
   const currentApplyLayoutPatchRegex =
     /this\.setWindowBounds\(e,([A-Za-z_$][\w$]*)\.windowBounds((?:,[A-Za-z_$][\w$]*)*)\),this\.sendLayoutToRenderer\(e\),process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)\}getLayout\(e\)\{/;
-  const previousApplyLayoutPatchRegex =
-    /this\.setWindowBounds\(e,([A-Za-z_$][\w$]*)\.windowBounds((?:,[A-Za-z_$][\w$]*)*)\),this\.sendLayoutToRenderer\(e\),this\.codexLinuxSyncAvatarPointerInteractivity\(e\)&&this\.applyPointerInteractivityPolicy\(\)\}getLayout\(e\)\{/;
   const applyLayoutRegex =
     /this\.setWindowBounds\(e,([A-Za-z_$][\w$]*)\.windowBounds((?:,[A-Za-z_$][\w$]*)*)\),this\.sendLayoutToRenderer\(e\)\}getLayout\(e\)\{/;
   if (currentApplyLayoutPatchRegex.test(patchedSource)) {
-    // Already patched.
-  } else if (previousApplyLayoutPatchRegex.test(patchedSource)) {
-    patchedSource = patchedSource.replace(
-      previousApplyLayoutPatchRegex,
-      "this.setWindowBounds(e,$1.windowBounds$2),this.sendLayoutToRenderer(e),process.platform===`linux`&&this.applyPointerInteractivityPolicy()}getLayout(e){",
-    );
+    recordStrategy("avatar-apply-layout", "already-applied");
   } else if (applyLayoutRegex.test(patchedSource)) {
+    recordStrategy("avatar-apply-layout", "upstream");
     patchedSource = patchedSource.replace(
       applyLayoutRegex,
       "this.setWindowBounds(e,$1.windowBounds$2),this.sendLayoutToRenderer(e),process.platform===`linux`&&this.applyPointerInteractivityPolicy()}getLayout(e){",
     );
   } else if (
-    patchedSource.includes("avatar-overlay") &&
-    !currentApplyLayoutPatchRegex.test(patchedSource)
+    patchedSource.includes("avatar-overlay")
   ) {
+    recordStrategy("avatar-apply-layout", "none");
     console.warn(
       "WARN: Could not find avatar overlay layout application — skipping Linux avatar overlay layout sync patch",
     );
   }
 
-  const showWindowNeedle =
-    "e.moveTop(),e.showInactive(),!t&&this.isOpen()&&this.broadcastOpenState()}broadcastOpenState(){";
-  const showWindowPatch =
-    "e.moveTop(),e.showInactive(),process.platform===`linux`&&this.codexLinuxApplyAvatarCompositorHints(e),process.platform===`linux`&&this.applyPointerInteractivityPolicy(),!t&&this.isOpen()&&this.broadcastOpenState()}broadcastOpenState(){";
-  const previousShowWindowCompositorPatch =
-    "e.moveTop(),process.platform===`linux`&&this.codexLinuxApplyAvatarCompositorHints(e),e.showInactive(),process.platform===`linux`&&this.applyPointerInteractivityPolicy(),!t&&this.isOpen()&&this.broadcastOpenState()}broadcastOpenState(){";
-  const previousShowWindowI3Patch =
-    "e.moveTop(),e.showInactive(),process.platform===`linux`&&this.applyPointerInteractivityPolicy(),!t&&this.isOpen()&&this.broadcastOpenState()}broadcastOpenState(){";
-  const previousShowWindowPatch =
-    "e.moveTop(),e.showInactive(),process.platform===`linux`&&this.codexLinuxStartAvatarPassthroughRecovery(),this.codexLinuxSyncAvatarPointerInteractivity(e)&&this.applyPointerInteractivityPolicy(),!t&&this.isOpen()&&this.broadcastOpenState()}broadcastOpenState(){";
   const currentShowWindowRegex =
     /e\.moveTop\(\),e\.showInactive\(\),(![A-Za-z_$][\w$]*&&this\.isOpen\(\)&&this\.broadcastOpenState\(\)\}showWindowIfReady\([A-Za-z_$][\w$]*\)\{)/;
   const currentShowWindowPatchRegex =
     /e\.moveTop\(\),e\.showInactive\(\),process\.platform===`linux`&&this\.codexLinuxApplyAvatarCompositorHints\(e\),process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\),![A-Za-z_$][\w$]*&&this\.isOpen\(\)&&this\.broadcastOpenState\(\)\}showWindowIfReady\([A-Za-z_$][\w$]*\)\{/;
-  if (patchedSource.includes(previousShowWindowCompositorPatch)) {
-    patchedSource = patchedSource.replace(previousShowWindowCompositorPatch, showWindowPatch);
-  } else if (patchedSource.includes(previousShowWindowPatch)) {
-    patchedSource = patchedSource.replace(previousShowWindowPatch, showWindowPatch);
-  } else if (patchedSource.includes(previousShowWindowI3Patch)) {
-    patchedSource = patchedSource.replace(previousShowWindowI3Patch, showWindowPatch);
-  } else if (patchedSource.includes(showWindowNeedle)) {
-    patchedSource = patchedSource.replace(showWindowNeedle, showWindowPatch);
-  } else if (currentShowWindowPatchRegex.test(patchedSource)) {
-    // Already patched.
+  if (currentShowWindowPatchRegex.test(patchedSource)) {
+    recordStrategy("avatar-show-window", "already-applied");
   } else if (currentShowWindowRegex.test(patchedSource)) {
+    recordStrategy("avatar-show-window", "upstream-regex");
     patchedSource = patchedSource.replace(
       currentShowWindowRegex,
       "e.moveTop(),e.showInactive(),process.platform===`linux`&&this.codexLinuxApplyAvatarCompositorHints(e),process.platform===`linux`&&this.applyPointerInteractivityPolicy(),$1",
     );
-  } else if (
-    patchedSource.includes("avatar-overlay") &&
-    !patchedSource.includes(showWindowPatch)
-  ) {
+  } else if (patchedSource.includes("avatar-overlay")) {
+    recordStrategy("avatar-show-window", "none");
     console.warn(
       "WARN: Could not find avatar overlay show window — skipping Linux avatar overlay show sync patch",
     );
@@ -316,17 +266,18 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
   const closedPatchRegex =
     /this\.window===[A-Za-z_$][\w$]*&&\(this\.codexLinuxStopAvatarPassthroughRecovery\(\),this\.codexLinuxAvatarInputShapeKey=null,this\.codexLinuxAvatarCompositorHintsApplied=!1,this\.codexLinuxAvatarCompositorHintsApplying=!1,this\.cancelMomentum\(\),[\s\S]*?this\.window=null,/;
   if (closedPatchRegex.test(patchedSource)) {
-    // Already patched.
+    recordStrategy("avatar-close-cleanup", "already-applied");
   } else if (/this\.window===([A-Za-z_$][\w$]*)&&\(this\.cancelMomentum\(\),((?:(?!this\.window=null,).)*?)this\.window=null,/.test(patchedSource)) {
+    recordStrategy("avatar-close-cleanup", "upstream");
     patchedSource = patchedSource.replace(
       /this\.window===([A-Za-z_$][\w$]*)&&\(this\.cancelMomentum\(\),((?:(?!this\.window=null,).)*?)this\.window=null,/,
       "this.window===$1&&(this.codexLinuxStopAvatarPassthroughRecovery(),this.codexLinuxAvatarInputShapeKey=null,this.codexLinuxAvatarCompositorHintsApplied=!1,this.codexLinuxAvatarCompositorHintsApplying=!1,this.cancelMomentum(),$2this.window=null,",
     );
   } else if (
     patchedSource.includes("avatar-overlay") &&
-    patchedSource.includes("codexLinuxStartAvatarPassthroughRecovery") &&
-    !closedPatchRegex.test(patchedSource)
+    patchedSource.includes("codexLinuxStartAvatarPassthroughRecovery")
   ) {
+    recordStrategy("avatar-close-cleanup", "none");
     console.warn(
       "WARN: Could not find avatar overlay close cleanup — skipping Linux avatar overlay passthrough cleanup patch",
     );

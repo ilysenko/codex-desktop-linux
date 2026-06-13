@@ -7,7 +7,7 @@ module.exports = [
     id: "linux-safe-monospace-font-stack",
     phase: "webview-asset",
     order: 1045,
-    ciPolicy: "required-upstream",
+    ciPolicy: "optional",
     pattern: /^font-settings-.*\.js$/,
     missingDescription: "font settings bundle",
     skipDescription: "Linux monospace font stack patch",

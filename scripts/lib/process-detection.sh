@@ -22,10 +22,16 @@ pid_is_current_user() {
 # all carry their role as a `--type=...` argv entry. Only the main app
 # process omits it, so we use this to skip orphaned helpers that survive
 # their parent and re-attach to systemd.
+cmdline_has_electron_helper_type() {
+    local cmdline_path="$1"
+    [ -r "$cmdline_path" ] || return 1
+    tr '\000' '\n' < "$cmdline_path" 2>/dev/null | grep -q '^--type=' && return 0
+    LC_ALL=C grep -a -q -- ' --type=' "$cmdline_path" 2>/dev/null
+}
+
 pid_is_electron_helper() {
     local pid="$1"
-    [ -r "/proc/$pid/cmdline" ] || return 1
-    tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -q '^--type='
+    cmdline_has_electron_helper_type "/proc/$pid/cmdline"
 }
 
 pid_matches_install_target() {
@@ -87,4 +93,3 @@ Close that app before rebuilding this install directory, or build into a separat
 Set CODEX_INSTALL_ALLOW_RUNNING=1 only if you intentionally want to overwrite a running app."
     fi
 }
-

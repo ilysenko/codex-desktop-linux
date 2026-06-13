@@ -27,6 +27,7 @@ const OBSERVED_TURN_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const ROLLOUT_SEARCH_MAX_DEPTH: usize = 5;
 
 type SharedState = Arc<Mutex<HostState>>;
+type SharedChromeWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 type SharedClientWriter = Arc<Mutex<UnixStream>>;
 
 #[derive(Clone)]
@@ -64,7 +65,7 @@ impl ChromeClientRouteError {
 }
 
 struct HostState {
-    stdout: Arc<Mutex<io::Stdout>>,
+    stdout: SharedChromeWriter,
     rollout_tracker: RolloutTracker,
     extension_id: Option<String>,
     clients: HashMap<usize, Client>,
@@ -77,7 +78,7 @@ struct HostState {
 
 impl HostState {
     fn new(
-        stdout: Arc<Mutex<io::Stdout>>,
+        stdout: SharedChromeWriter,
         rollout_tracker: RolloutTracker,
         extension_id: Option<String>,
     ) -> Self {
@@ -145,7 +146,7 @@ impl HostState {
 #[derive(Clone)]
 struct RolloutTracker {
     inner: Arc<Mutex<RolloutTrackerState>>,
-    stdout: Arc<Mutex<io::Stdout>>,
+    stdout: SharedChromeWriter,
     sessions_root: Option<PathBuf>,
 }
 
@@ -162,7 +163,7 @@ struct ObservedTurn {
 }
 
 impl RolloutTracker {
-    fn new(stdout: Arc<Mutex<io::Stdout>>) -> Self {
+    fn new(stdout: SharedChromeWriter) -> Self {
         let tracker = Self {
             inner: Arc::new(Mutex::new(RolloutTrackerState {
                 observed: HashMap::new(),
@@ -310,7 +311,7 @@ fn main() -> Result<()> {
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))
         .with_context(|| format!("failed to chmod {}", socket_path.display()))?;
 
-    let stdout = Arc::new(Mutex::new(io::stdout()));
+    let stdout: SharedChromeWriter = Arc::new(Mutex::new(Box::new(io::stdout())));
     let rollout_tracker = RolloutTracker::new(Arc::clone(&stdout));
     let extension_id = extension_id_from_args();
     let state = Arc::new(Mutex::new(HostState::new(
@@ -1073,6 +1074,115 @@ mod tests {
     }
 
     #[test]
+    fn forwards_client_raw_cdp_call_requests_to_chrome_without_filtering() {
+        let (mut host_state, output) = test_host_state_with_output();
+        host_state.clients.insert(1, test_client());
+        let state = Arc::new(Mutex::new(host_state));
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "client-cdp-call-1",
+            "method": "tab_cdp_call",
+            "params": {
+                "browser_id": "browser-1",
+                "tab_id": "42",
+                "method": "Runtime.evaluate",
+                "params": {
+                    "expression": "document.title",
+                    "returnByValue": true
+                },
+                "target": {
+                    "target_id": "target-1"
+                },
+                "timeout_ms": 5000
+            }
+        });
+
+        handle_client_message(&state, 1, request.clone());
+
+        let chrome_id = format!("linux-{}-1", process::id());
+        let forwarded = read_captured_message(&output);
+        assert_eq!(forwarded["id"], chrome_id);
+        assert_eq!(forwarded["method"], "tab_cdp_call");
+        assert_eq!(forwarded["params"], request["params"]);
+
+        let state = state.lock().unwrap();
+        let pending = state.pending_chrome_requests.get(&chrome_id).unwrap();
+        assert_eq!(pending.client_id, 1);
+        assert_eq!(pending.client_request_id, json!("client-cdp-call-1"));
+        assert!(!pending.fallback_extension_info);
+    }
+
+    #[test]
+    fn forwards_client_raw_cdp_event_requests_to_chrome_without_filtering() {
+        let (mut host_state, output) = test_host_state_with_output();
+        host_state.clients.insert(1, test_client());
+        let state = Arc::new(Mutex::new(host_state));
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "client-cdp-events-1",
+            "method": "tab_cdp_events",
+            "params": {
+                "after_sequence": 7,
+                "browser_id": "browser-1",
+                "limit": 25,
+                "methods": ["Runtime.consoleAPICalled", "Target.attachedToTarget"],
+                "tab_id": "42",
+                "target": {
+                    "session_id": "session-1"
+                },
+                "timeout_ms": 500
+            }
+        });
+
+        handle_client_message(&state, 1, request.clone());
+
+        let forwarded = read_captured_message(&output);
+        assert_eq!(forwarded["id"], format!("linux-{}-1", process::id()));
+        assert_eq!(forwarded["method"], "tab_cdp_events");
+        assert_eq!(forwarded["params"], request["params"]);
+    }
+
+    #[test]
+    fn forwards_chrome_raw_cdp_responses_to_the_requesting_client() {
+        let (client_writer, mut client_reader) = UnixStream::pair().unwrap();
+        let mut state = test_host_state();
+        state.clients.insert(
+            1,
+            Client {
+                writer: Arc::new(Mutex::new(client_writer)),
+            },
+        );
+        state.pending_chrome_requests.insert(
+            "linux-1-1".to_string(),
+            PendingChromeRequest {
+                client_id: 1,
+                client_request_id: json!("client-cdp-call-1"),
+                fallback_extension_info: false,
+            },
+        );
+        let state = Arc::new(Mutex::new(state));
+
+        handle_chrome_message(
+            &state,
+            json!({
+                "jsonrpc": "2.0",
+                "id": "linux-1-1",
+                "result": {
+                    "result": {
+                        "type": "string",
+                        "value": "Codex"
+                    }
+                }
+            }),
+        );
+
+        let message = read_frame(&mut client_reader).unwrap().unwrap();
+        assert_eq!(message["id"], "client-cdp-call-1");
+        assert_eq!(message["result"]["result"]["value"], "Codex");
+        assert!(state.lock().unwrap().pending_chrome_requests.is_empty());
+    }
+
+    #[test]
     fn get_info_falls_back_when_runtime_get_version_is_missing() {
         let (client_writer, mut client_reader) = UnixStream::pair().unwrap();
         let mut state = test_host_state();
@@ -1169,7 +1279,7 @@ mod tests {
     }
 
     fn test_host_state() -> HostState {
-        let stdout = Arc::new(Mutex::new(io::stdout()));
+        let stdout: SharedChromeWriter = Arc::new(Mutex::new(Box::new(io::stdout())));
         HostState::new(
             Arc::clone(&stdout),
             RolloutTracker {
@@ -1181,6 +1291,46 @@ mod tests {
             },
             Some("abcdefghijklmnopabcdefghijklmnop".to_string()),
         )
+    }
+
+    fn test_host_state_with_output() -> (HostState, Arc<Mutex<Vec<u8>>>) {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let stdout: SharedChromeWriter = Arc::new(Mutex::new(Box::new(CaptureWriter {
+            output: Arc::clone(&output),
+        })));
+        let state = HostState::new(
+            Arc::clone(&stdout),
+            RolloutTracker {
+                inner: Arc::new(Mutex::new(RolloutTrackerState {
+                    observed: HashMap::new(),
+                })),
+                stdout,
+                sessions_root: None,
+            },
+            Some("abcdefghijklmnopabcdefghijklmnop".to_string()),
+        );
+        (state, output)
+    }
+
+    fn read_captured_message(output: &Arc<Mutex<Vec<u8>>>) -> Value {
+        let data = output.lock().unwrap().clone();
+        let mut cursor = io::Cursor::new(data);
+        read_frame(&mut cursor).unwrap().unwrap()
+    }
+
+    struct CaptureWriter {
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for CaptureWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.output.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
     fn unique_test_dir(prefix: &str) -> PathBuf {

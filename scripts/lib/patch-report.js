@@ -3,6 +3,38 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+const CRITICAL_CI_POLICY = "required-upstream";
+const SUCCESS_STATUSES = new Set(["applied", "already-applied"]);
+// Statuses meaning "not applicable here" rather than "failed": the patch was
+// skipped because of platform targeting or an explicit enable gate.
+const NOT_APPLICABLE_STATUSES = new Set(["skipped-target", "skipped-disabled"]);
+
+function isCriticalPolicy(ciPolicy) {
+  return ciPolicy === CRITICAL_CI_POLICY;
+}
+
+function reportEntryFailure(patch) {
+  return {
+    name: patch.name,
+    status: patch.status,
+    reason: patch.reason ?? null,
+  };
+}
+
+function criticalFailuresFromReport(report) {
+  return (report?.patches ?? [])
+    .filter((patch) => isCriticalPolicy(patch.ciPolicy))
+    .filter((patch) => !SUCCESS_STATUSES.has(patch.status) && !NOT_APPLICABLE_STATUSES.has(patch.status))
+    .map(reportEntryFailure);
+}
+
+function optionalDriftFromReport(report) {
+  return (report?.patches ?? [])
+    .filter((patch) => !isCriticalPolicy(patch.ciPolicy))
+    .filter((patch) => !SUCCESS_STATUSES.has(patch.status) && !NOT_APPLICABLE_STATUSES.has(patch.status))
+    .map(reportEntryFailure);
+}
+
 function createPatchReport() {
   return {
     generatedAt: new Date().toISOString(),
@@ -69,7 +101,7 @@ function patchStatusFromChange(changed, warnings, ciPolicy = "optional") {
 }
 
 function patchGroupForEntry(entry) {
-  if (entry.ciPolicy === "required-upstream") {
+  if (isCriticalPolicy(entry.ciPolicy)) {
     return "requiredCore";
   }
   return entry.sourceKind === "feature" ? "optionalFeatures" : "optionalCore";
@@ -103,8 +135,12 @@ function summarizePatchReport(report) {
 }
 
 module.exports = {
+  SUCCESS_STATUSES,
   captureWarnings,
   createPatchReport,
+  criticalFailuresFromReport,
+  isCriticalPolicy,
+  optionalDriftFromReport,
   patchStatusFromChange,
   recordPatch,
   summarizePatchReport,

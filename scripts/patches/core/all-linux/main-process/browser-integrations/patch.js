@@ -12,7 +12,7 @@ module.exports = [
     id: "linux-chrome-plugin-auto-install",
     phase: "main-bundle",
     order: 150,
-    ciPolicy: "required-upstream",
+    ciPolicy: "optional",
     apply: applyLinuxChromePluginAutoInstallPatch,
   },
   {
@@ -33,7 +33,7 @@ module.exports = [
     id: "linux-chrome-extension-status",
     phase: "main-bundle",
     order: 180,
-    ciPolicy: "required-upstream",
+    ciPolicy: "optional",
     apply: applyLinuxChromeExtensionStatusPatch,
   },
 ];

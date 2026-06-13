@@ -86,18 +86,22 @@ function patchAssetFiles(extractedDir, filenamePattern, patchFn, missingWarnMess
     return { matched: 0, changed: 0 };
   }
 
-  let changed = 0;
+  // Buffer writes until every candidate has been patched so a throw partway
+  // through leaves no half-patched mix of assets on disk.
+  const pendingWrites = [];
   for (const candidate of candidates) {
     const filePath = path.join(webviewAssetsDir, candidate);
     const currentSource = fs.readFileSync(filePath, "utf8");
     const patchedSource = patchFn(currentSource);
     if (patchedSource !== currentSource) {
-      fs.writeFileSync(filePath, patchedSource, "utf8");
-      changed += 1;
+      pendingWrites.push({ filePath, patchedSource });
     }
   }
+  for (const { filePath, patchedSource } of pendingWrites) {
+    fs.writeFileSync(filePath, patchedSource, "utf8");
+  }
 
-  return { matched: candidates.length, changed };
+  return { matched: candidates.length, changed: pendingWrites.length };
 }
 
 function readWebviewAsset(webviewAssetsDir, assetName) {

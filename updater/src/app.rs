@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use chrono::{Duration as ChronoDuration, Utc};
 use fs4::fs_std::FileExt;
 use reqwest::Client;
+use serde::Deserialize;
 use std::{
     ffi::OsString,
     fs::{self, OpenOptions},
@@ -299,6 +300,7 @@ async fn run_daemon(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
+    complete_current_dmg_update_if_already_installed(config, state, paths)?;
     codex_cli::reconcile_if_present(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
     maybe_prune_workspace_cache(&config.workspace_root, state);
@@ -359,6 +361,7 @@ async fn run_check_now(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
+    complete_current_dmg_update_if_already_installed(config, state, paths)?;
     codex_cli::reconcile_if_present(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
     maybe_prune_workspace_cache(&config.workspace_root, state);
@@ -533,6 +536,7 @@ fn run_status(
     json: bool,
 ) -> Result<()> {
     codex_cli::reconcile_if_present(state, paths)?;
+    complete_current_dmg_update_if_already_installed(config, state, paths)?;
     complete_pending_install_if_already_installed(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
     if !config.enable_wrapper_updates {
@@ -831,6 +835,17 @@ async fn run_check_cycle(
         let downloaded =
             upstream::download_dmg(&client, &config.dmg_url, &downloads_dir, Utc::now()).await?;
 
+        if installed_upstream_dmg_matches(config, &downloaded.sha256) {
+            clear_dmg_update_candidate(
+                state,
+                paths,
+                Some(downloaded.path),
+                Some(downloaded.sha256),
+            )?;
+            info!("downloaded DMG hash matches installed app; no update detected");
+            return Ok(());
+        }
+
         if state
             .rollback_blocked_candidate_version
             .as_deref()
@@ -1016,6 +1031,11 @@ async fn run_install_ready(
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
 
+    if complete_current_dmg_update_if_already_installed(config, state, paths)? {
+        println!("Codex Desktop is already up to date.");
+        return Ok(());
+    }
+
     if complete_pending_install_if_already_installed(state, paths)? {
         let _ = maybe_notify_installed(state, paths, config.notifications);
         println!("Codex Desktop update is already installed or superseded.");
@@ -1103,6 +1123,108 @@ async fn run_install_ready(
         return Ok(());
     }
     trigger_install(state, paths, &config.workspace_root, &package_path).await
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstalledBuildInfo {
+    upstream_dmg: Option<InstalledUpstreamDmg>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InstalledUpstreamDmg {
+    sha256: Option<String>,
+}
+
+fn complete_current_dmg_update_if_already_installed(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<bool> {
+    if !dmg_update_state_can_be_cleared_as_current(&state.status) {
+        return Ok(false);
+    }
+
+    if state.candidate_version.is_none() {
+        return Ok(false);
+    }
+
+    let Some(candidate_sha256) = state.dmg_sha256.clone() else {
+        return Ok(false);
+    };
+
+    if !installed_upstream_dmg_matches(config, &candidate_sha256) {
+        return Ok(false);
+    }
+
+    clear_dmg_update_candidate(state, paths, None, Some(candidate_sha256))?;
+    info!("recovered DMG update state because the candidate DMG is already installed");
+    Ok(true)
+}
+
+fn dmg_update_state_can_be_cleared_as_current(status: &UpdateStatus) -> bool {
+    matches!(
+        status,
+        UpdateStatus::UpdateDetected
+            | UpdateStatus::DownloadingDmg
+            | UpdateStatus::PreparingWorkspace
+            | UpdateStatus::PatchingApp
+            | UpdateStatus::BuildingPackage
+            | UpdateStatus::ReadyToInstall
+            | UpdateStatus::WaitingForAppExit
+            | UpdateStatus::Installing
+            | UpdateStatus::Failed
+    )
+}
+
+fn clear_dmg_update_candidate(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    dmg_path: Option<PathBuf>,
+    sha256: Option<String>,
+) -> Result<()> {
+    state.status = UpdateStatus::Idle;
+    state.waiting_for_app_exit_auto_install = false;
+    state.candidate_version = None;
+    if let Some(sha256) = sha256 {
+        state.dmg_sha256 = Some(sha256);
+    }
+    if let Some(dmg_path) = dmg_path {
+        state.artifact_paths.dmg_path = Some(dmg_path);
+    }
+    state.artifact_paths.package_path = None;
+    state.error_message = None;
+    state.notified_events.clear();
+    cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
+    persist_state(paths, state)
+}
+
+fn installed_upstream_dmg_matches(config: &RuntimeConfig, sha256: &str) -> bool {
+    installed_upstream_dmg_sha256(config).as_deref() == Some(sha256)
+}
+
+fn installed_upstream_dmg_sha256(config: &RuntimeConfig) -> Option<String> {
+    installed_build_info_paths(config)
+        .into_iter()
+        .find_map(|path| upstream_dmg_sha256_from_build_info(&path))
+}
+
+fn installed_build_info_paths(config: &RuntimeConfig) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(app_root) = config.app_executable_path.parent() {
+        paths.push(app_root.join(".codex-linux/build-info.json"));
+        paths.push(app_root.join("resources/codex-linux-build-info.json"));
+    }
+    paths
+}
+
+fn upstream_dmg_sha256_from_build_info(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let build_info = serde_json::from_str::<InstalledBuildInfo>(&content).ok()?;
+    build_info
+        .upstream_dmg?
+        .sha256
+        .filter(|value| !value.is_empty())
 }
 
 fn complete_pending_install_if_already_installed(
@@ -1628,6 +1750,10 @@ fn notify_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
 
     fn test_paths(root: &std::path::Path) -> RuntimePaths {
         RuntimePaths {
@@ -1654,6 +1780,26 @@ mod tests {
             wrapper_remote: String::new(),
             wrapper_branch: "main".to_string(),
         }
+    }
+
+    fn write_installed_build_info(config: &RuntimeConfig, sha256: &str) -> Result<()> {
+        let app_root = config
+            .app_executable_path
+            .parent()
+            .expect("test app executable should have parent");
+        std::fs::create_dir_all(app_root.join(".codex-linux"))?;
+        std::fs::write(
+            app_root.join(".codex-linux/build-info.json"),
+            format!(
+                r#"{{
+  "upstreamDmg": {{
+    "sha256": "{sha256}"
+  }}
+}}
+"#
+            ),
+        )?;
+        Ok(())
     }
 
     #[test]
@@ -1947,6 +2093,52 @@ mod tests {
             assert_eq!(state.last_check_at, None);
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_check_cycle_ignores_downloaded_dmg_already_installed() -> Result<()> {
+        let server = MockServer::start().await;
+        let body = b"codex-dmg-test-payload";
+        let sha256 = "678cd508ffe0071e217020a7a4eecbebe25362c022ac78c13a5ae87b7a3a0c92";
+
+        Mock::given(method("HEAD"))
+            .and(path("/Codex.dmg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("ETag", "\"same-dmg\"")
+                    .insert_header("Content-Length", body.len().to_string()),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Codex.dmg"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
+            .mount(&server)
+            .await;
+
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let mut config = test_config(temp.path());
+        config.dmg_url = format!("{}/Codex.dmg", server.uri());
+        write_installed_build_info(&config, sha256)?;
+
+        let mut state = PersistedState::new(true);
+        run_check_cycle(&config, &mut state, &paths).await?;
+
+        let expected_dmg_path = config.workspace_root.join("downloads/Codex.dmg");
+        assert_eq!(state.status, UpdateStatus::Idle);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.dmg_sha256.as_deref(), Some(sha256));
+        assert_eq!(
+            state.artifact_paths.dmg_path.as_deref(),
+            Some(expected_dmg_path.as_path())
+        );
+        assert_eq!(state.artifact_paths.package_path, None);
+        assert_eq!(state.artifact_paths.workspace_dir, None);
+        assert_eq!(state.error_message, None);
+        assert!(state.last_successful_check_at.is_some());
         Ok(())
     }
 
@@ -2756,6 +2948,123 @@ mod tests {
         assert!(state
             .notified_events
             .contains("installed:2026.04.25.054929+12345678"));
+        Ok(())
+    }
+
+    #[test]
+    fn in_progress_same_dmg_update_is_cleared_as_current() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let sha256 = "51eeeba58394c4747cbc9d9fee7aa613500253fedd7ad5b114f48dfcb89a6cbb";
+        write_installed_build_info(&config, sha256)?;
+
+        let package_path = temp
+            .path()
+            .join("cache/workspaces/2026.06.12.120204+51eeeba5/dist/codex.pkg.tar.zst");
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::PatchingApp;
+        state.installed_version = "2026.06.12.094134-1".to_string();
+        state.candidate_version = Some("2026.06.12.120204+51eeeba5".to_string());
+        state.dmg_sha256 = Some(sha256.to_string());
+        state.artifact_paths.package_path = Some(package_path);
+        state.artifact_paths.workspace_dir = Some(
+            temp.path()
+                .join("cache/workspaces/2026.06.12.120204+51eeeba5"),
+        );
+        state.error_message = Some("interrupted rebuild".to_string());
+        state
+            .notified_events
+            .insert("update_detected:2026.06.12.120204+51eeeba5".to_string());
+
+        assert!(complete_current_dmg_update_if_already_installed(
+            &config, &mut state, &paths
+        )?);
+
+        assert_eq!(state.status, UpdateStatus::Idle);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.dmg_sha256.as_deref(), Some(sha256));
+        assert_eq!(state.artifact_paths.package_path, None);
+        assert_eq!(state.artifact_paths.workspace_dir, None);
+        assert_eq!(state.error_message, None);
+        assert!(state.notified_events.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn in_progress_different_dmg_update_is_not_cleared() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        write_installed_build_info(
+            &config,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )?;
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::PatchingApp;
+        state.candidate_version = Some("2026.06.12.120204+51eeeba5".to_string());
+        state.dmg_sha256 =
+            Some("51eeeba58394c4747cbc9d9fee7aa613500253fedd7ad5b114f48dfcb89a6cbb".to_string());
+        state
+            .notified_events
+            .insert("update_detected:2026.06.12.120204+51eeeba5".to_string());
+
+        assert!(!complete_current_dmg_update_if_already_installed(
+            &config, &mut state, &paths
+        )?);
+
+        assert_eq!(state.status, UpdateStatus::PatchingApp);
+        assert_eq!(
+            state.candidate_version.as_deref(),
+            Some("2026.06.12.120204+51eeeba5")
+        );
+        assert!(state
+            .notified_events
+            .contains("update_detected:2026.06.12.120204+51eeeba5"));
+        Ok(())
+    }
+
+    #[test]
+    fn same_dmg_recovery_keeps_ready_wrapper_update_package() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let sha256 = "51eeeba58394c4747cbc9d9fee7aa613500253fedd7ad5b114f48dfcb89a6cbb";
+        write_installed_build_info(&config, sha256)?;
+
+        let package_path = temp.path().join("dist/codex-desktop-wrapper.deb");
+        let workspace_dir = temp
+            .path()
+            .join("cache/workspaces/2026.06.12.120204+51eeeba5");
+        let wrapper_commit = "b".repeat(40);
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::ReadyToInstall;
+        state.dmg_sha256 = Some(sha256.to_string());
+        state.candidate_wrapper_commit = Some(wrapper_commit.clone());
+        state.candidate_wrapper_version = Some("0.9.0".to_string());
+        state.artifact_paths.package_path = Some(package_path.clone());
+        state.artifact_paths.workspace_dir = Some(workspace_dir.clone());
+
+        assert!(!complete_current_dmg_update_if_already_installed(
+            &config, &mut state, &paths
+        )?);
+
+        assert_eq!(state.status, UpdateStatus::ReadyToInstall);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.dmg_sha256.as_deref(), Some(sha256));
+        assert_eq!(
+            state.candidate_wrapper_commit.as_deref(),
+            Some(wrapper_commit.as_str())
+        );
+        assert_eq!(state.candidate_wrapper_version.as_deref(), Some("0.9.0"));
+        assert_eq!(state.artifact_paths.package_path, Some(package_path));
+        assert_eq!(state.artifact_paths.workspace_dir, Some(workspace_dir));
         Ok(())
     }
 

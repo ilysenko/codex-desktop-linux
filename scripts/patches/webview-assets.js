@@ -1,5 +1,7 @@
 "use strict";
 
+const { recordStrategy } = require("./strategy-telemetry.js");
+
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -1115,21 +1117,106 @@ function detectComposerFooterConversationIdVar(source, footerNeedles) {
 }
 
 function detectLatestComposerFooterControls(source) {
-  const controlsRegex =
-    /function ([A-Za-z_$][\w$]*)\(e\)\{[\s\S]{0,9000}?conversationId:([A-Za-z_$][\w$]*)[\s\S]{0,9000}?FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\]\}/;
-  const match = source.match(controlsRegex);
-  if (match == null) {
+  const candidates = [];
+  for (const match of source.matchAll(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\]\}/g,
+  )) {
+    candidates.push({
+      index: match.index,
+      firstChildVar: match[1],
+      secondChildVar: match[2],
+      conversationIdVar: null,
+    });
+  }
+  for (const match of source.matchAll(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:([A-Za-z_$][\w$]*)\}\),([A-Za-z_$][\w$]*)\]\}/g,
+  )) {
+    candidates.push({
+      index: match.index,
+      firstChildVar: match[1],
+      secondChildVar: match[3],
+      conversationIdVar: match[2],
+    });
+  }
+  for (const match of source.matchAll(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)==null\?null:\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:\2\}\),([A-Za-z_$][\w$]*)\]\}/g,
+  )) {
+    candidates.push({
+      index: match.index,
+      firstChildVar: match[1],
+      secondChildVar: match[3],
+      conversationIdVar: match[2],
+    });
+  }
+  for (const match of source.matchAll(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:([A-Za-z_$][\w$]*)\}\)\]\}/g,
+  )) {
+    candidates.push({
+      index: match.index,
+      firstChildVar: match[1],
+      secondChildVar: match[2],
+      conversationIdVar: match[3],
+    });
+  }
+
+  candidates.sort((left, right) => left.index - right.index);
+  for (const candidate of candidates) {
+    const functionStart = source.lastIndexOf("function ", candidate.index);
+    if (functionStart === -1) {
+      continue;
+    }
+    const functionHeader = source.slice(functionStart).match(/^function ([A-Za-z_$][\w$]*)\(e\)\{/);
+    if (functionHeader == null) {
+      continue;
+    }
+    const scopePrefix = source.slice(functionStart, candidate.index);
+    if (!scopePrefix.includes("addContextButton:")) {
+      continue;
+    }
+    const conversationIdVar =
+      candidate.conversationIdVar ??
+      scopePrefix.match(/conversationId:([A-Za-z_$][\w$]*)/)?.[1] ??
+      null;
+    if (conversationIdVar == null) {
+      continue;
+    }
+
+    const [, functionName] = functionHeader;
+    const { firstChildVar, secondChildVar } = candidate;
+    return {
+      insertionNeedle: `function ${functionName}(e){`,
+      conversationIdVar,
+      footerControlsNeedle:
+        `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},${secondChildVar}]}`,
+      footerControlsPatch:
+        `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:${conversationIdVar}}),${secondChildVar}]}`,
+      footerControlsAfterPermissionsPatch:
+        `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},${secondChildVar},(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:${conversationIdVar}})]}`,
+    };
+  }
+
+  return null;
+}
+
+function detectLatestComposerRateLimitQuery(source) {
+  const queryMatches = Array.from(
+    source.matchAll(
+      /\{data:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)[\s\S]{0,1800}?rateLimitStatus:\1/g,
+    ),
+  );
+  if (queryMatches.length === 0) {
     return null;
   }
-  const [, functionName, conversationIdVar, firstChildVar, secondChildVar] = match;
-  return {
-    insertionNeedle: `function ${functionName}(e){`,
-    conversationIdVar,
-    footerControlsNeedle:
-      `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},${secondChildVar}]}`,
-    footerControlsPatch:
-      `FooterInlineControls,{gap:\`normal\`,children:[${firstChildVar},${conversationIdVar}==null?null:(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:${conversationIdVar}}),${secondChildVar}]}`,
-  };
+
+  const [, , queryHook, queryKey] = queryMatches[queryMatches.length - 1];
+  return { queryHook, queryKey };
+}
+
+function removeBroadFooterInlineControlsRateLimitPatch(source) {
+  return source.replace(
+    /let ([A-Za-z_$][\w$]*);return \1=\(0,([A-Za-z_$][\w$]*)\.jsxs\)\(`div`,\{ref:([A-Za-z_$][\w$]*),className:([A-Za-z_$][\w$]*),children:\[([A-Za-z_$][\w$]*),\(0,\2\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:null\}\)\]\}\),\1\}/g,
+    "let $1;return $1=(0,$2.jsx)(`div`,{ref:$3,className:$4,children:$5}),$1}",
+  );
 }
 
 function detectCurrentPermissionsRateLimitFooterSymbols(source) {
@@ -1163,15 +1250,47 @@ function detectCurrentPermissionsRateLimitFooterSymbols(source) {
   };
 }
 
+function replaceCodexLinuxRateLimitFooterFunction(source, replacement) {
+  const functionStart = source.indexOf("function codexLinuxRateLimitFooter(");
+  if (functionStart === -1) {
+    return source;
+  }
+
+  const headerMatch = source
+    .slice(functionStart)
+    .match(/^function codexLinuxRateLimitFooter\([^)]*\)\{/);
+  if (headerMatch == null) {
+    return source;
+  }
+  const openBrace = functionStart + headerMatch[0].length - 1;
+
+  const closeBrace = findMatchingBrace(source, openBrace);
+  if (closeBrace === -1) {
+    return source;
+  }
+
+  const existingFunction = source.slice(functionStart, closeBrace + 1);
+  if (existingFunction === replacement) {
+    return source;
+  }
+
+  return source.slice(0, functionStart) + replacement + source.slice(closeBrace + 1);
+}
+
 function applyPersistentRateLimitFooterPatch(currentSource) {
   let patchedSource = currentSource;
   const currentSymbols = detectCurrentRateLimitFooterSymbols(currentSource);
   const latestFooterControls = detectLatestComposerFooterControls(currentSource);
+  const latestRateLimitQuery = detectLatestComposerRateLimitQuery(currentSource) ?? {
+    queryHook: "f",
+    queryKey: "Ae",
+  };
   const currentPermissionsFooterSymbols = detectCurrentPermissionsRateLimitFooterSymbols(currentSource);
+  const footerLabelClass = "composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-transparent px-2 py-1 text-xs text-token-text-secondary dark:border-white/10";
   const currentComposerStatusNeedle =
     "function zg(e){";
   const currentComposerFooterFunction =
-    "function codexLinuxRateLimitFooter({conversationId:e,rateLimit:t}){try{let n=Et(),{activeMode:r}=or(e),i=r?.settings.model??null,a=sa(t),o=ta(t),s=da(a,{activeLimitName:o,selectedModel:i}),c=s.filter(kg).slice(0,2);c.length===0&&(c=da(a,{activeLimitName:o,selectedModel:null}).filter(kg).slice(0,2));if(c.length===0)return null;let l=c.map(e=>`${bg(e.bucket.windowDurationMins??null,n,{withColon:!1})} ${n.formatNumber(Yi(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `);return(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l})}catch(e){return null}}";
+    `function codexLinuxRateLimitFooter({conversationId:e,rateLimit:t}){try{let n=Et(),{activeMode:r}=or(e),i=r?.settings.model??null,a=sa(t),o=ta(t),s=da(a,{activeLimitName:o,selectedModel:i}),c=s.filter(kg).slice(0,2);c.length===0&&(c=da(a,{activeLimitName:o,selectedModel:null}).filter(kg).slice(0,2));if(c.length===0)return null;let l=c.map(e=>\`\${bg(e.bucket.windowDurationMins??null,n,{withColon:!1})} \${n.formatNumber(Yi(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%\`).join(\` / \`);return(0,Q.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:l})}catch(e){return null}}`;
   const currentComposerFooterCallNeedle =
     "children:[ue,de,W,fe,pe,me,G,he,_e,ve,ye,xe,Se,Ce,we,Te,Ee,Oe,Ae,je,Me]";
   const currentComposerFooterCallPatch =
@@ -1209,19 +1328,33 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
     : `(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:${homeFooterConversationIdVar}})`;
 
   const legacyFooterFunction =
-    "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,Z.c)(22),n=ea(),{modelSettings:r}=Bi(e),i=r.model??null,{data:a=null}=li(Fn),o=Ro(a),s=Zo(a),c=Xo(Jo(o,{activeLimitName:s,selectedModel:i})).slice(0,2);c.length===0&&(c=Xo(Jo(o,{activeLimitName:s,selectedModel:null})).slice(0,2));if(c.length===0)return null;let l;t[0]!==n?(l=(0,Q.jsx)(X,{id:`composer.linuxRateLimitFooter.tooltip`,defaultMessage:`Rate limits remaining`,description:`Tooltip for compact footer rate limit status`}),t[0]=n,t[1]=l):l=t[1];let u;if(t[2]!==c){u=c.map((e,t)=>{let n=No(e.bucket.usedPercent??0);return(0,Q.jsxs)(`span`,{className:`flex items-center gap-1 whitespace-nowrap`,children:[t>0?(0,Q.jsx)(`span`,{className:`text-token-input-placeholder-foreground`,children:`/`}):null,(0,Q.jsx)(`span`,{children:(0,Q.jsx)(V_,{minutes:e.bucket.windowDurationMins,variant:`summary`})}),(0,Q.jsx)(`span`,{className:`font-medium text-token-text-primary`,children:Do(n)})]},e.key)}),t[2]=c,t[3]=u}else u=t[3];let d;t[4]!==u?(d=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:u}),t[4]=u,t[5]=d):d=t[5];let f;return t[6]!==l||t[7]!==d?(f=(0,Q.jsx)(nc,{tooltipContent:l,children:d}),t[6]=l,t[7]=d,t[8]=f):f=t[8],f}catch(e){return null}}";
+    `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,Z.c)(22),n=ea(),{modelSettings:r}=Bi(e),i=r.model??null,{data:a=null}=li(Fn),o=Ro(a),s=Zo(a),c=Xo(Jo(o,{activeLimitName:s,selectedModel:i})).slice(0,2);c.length===0&&(c=Xo(Jo(o,{activeLimitName:s,selectedModel:null})).slice(0,2));if(c.length===0)return null;let l;t[0]!==n?(l=(0,Q.jsx)(X,{id:\`composer.linuxRateLimitFooter.tooltip\`,defaultMessage:\`Rate limits remaining\`,description:\`Tooltip for compact footer rate limit status\`}),t[0]=n,t[1]=l):l=t[1];let u;if(t[2]!==c){u=c.map((e,t)=>{let n=No(e.bucket.usedPercent??0);return(0,Q.jsxs)(\`span\`,{className:\`flex items-center gap-1 whitespace-nowrap\`,children:[t>0?(0,Q.jsx)(\`span\`,{className:\`text-token-input-placeholder-foreground\`,children:\`/\`}):null,(0,Q.jsx)(\`span\`,{children:(0,Q.jsx)(V_,{minutes:e.bucket.windowDurationMins,variant:\`summary\`})}),(0,Q.jsx)(\`span\`,{className:\`font-medium text-token-text-primary\`,children:Do(n)})]},e.key)}),t[2]=c,t[3]=u}else u=t[3];let d;t[4]!==u?(d=(0,Q.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:u}),t[4]=u,t[5]=d):d=t[5];let f;return t[6]!==l||t[7]!==d?(f=(0,Q.jsx)(nc,{tooltipContent:l,children:d}),t[6]=l,t[7]=d,t[8]=f):f=t[8],f}catch(e){return null}}`;
   const currentFooterFunction = currentSymbols == null
     ? null
-    : `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,Z.c)(22),{activeMode:n}=Bi(e),r=n?.settings.model??null,{data:i}=ci(${currentSymbols.accountSignalVar}),a=i===void 0?null:i,o=Ro(a),s=Zo(a),c=Xo(Jo(o,{activeLimitName:s,selectedModel:r})).slice(0,2);c.length===0&&(c=Xo(Jo(o,{activeLimitName:s,selectedModel:null})).slice(0,2));if(c.length===0)return null;let l;t[0]===Symbol.for(\`react.memo_cache_sentinel\`)?(l=(0,Q.jsx)(X,{id:\`composer.linuxRateLimitFooter.tooltip\`,defaultMessage:\`Rate limits remaining\`,description:\`Tooltip for compact footer rate limit status\`}),t[0]=l):l=t[0];let u;if(t[1]!==c){u=c.map((e,t)=>{let n=No(e.bucket.usedPercent??0);return(0,Q.jsxs)(\`span\`,{className:\`flex items-center gap-1 whitespace-nowrap\`,children:[t>0?(0,Q.jsx)(\`span\`,{className:\`text-token-input-placeholder-foreground\`,children:\`/\`}):null,(0,Q.jsx)(\`span\`,{children:(0,Q.jsx)(${currentSymbols.durationComponent},{minutes:e.bucket.windowDurationMins,variant:\`summary\`})}),(0,Q.jsx)(\`span\`,{className:\`font-medium text-token-text-primary\`,children:Do(n)})]},e.key)}),t[1]=c,t[2]=u}else u=t[2];let d;t[3]!==u?(d=(0,Q.jsx)(\`span\`,{className:\`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10\`,children:u}),t[3]=u,t[4]=d):d=t[4];let f;return t[5]!==l||t[6]!==d?(f=(0,Q.jsx)(nc,{tooltipContent:l,children:d}),t[5]=l,t[6]=d,t[7]=f):f=t[7],f}catch(e){return null}}`;
+    : `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,Z.c)(22),{activeMode:n}=Bi(e),r=n?.settings.model??null,{data:i}=ci(${currentSymbols.accountSignalVar}),a=i===void 0?null:i,o=Ro(a),s=Zo(a),c=Xo(Jo(o,{activeLimitName:s,selectedModel:r})).slice(0,2);c.length===0&&(c=Xo(Jo(o,{activeLimitName:s,selectedModel:null})).slice(0,2));if(c.length===0)return null;let l;t[0]===Symbol.for(\`react.memo_cache_sentinel\`)?(l=(0,Q.jsx)(X,{id:\`composer.linuxRateLimitFooter.tooltip\`,defaultMessage:\`Rate limits remaining\`,description:\`Tooltip for compact footer rate limit status\`}),t[0]=l):l=t[0];let u;if(t[1]!==c){u=c.map((e,t)=>{let n=No(e.bucket.usedPercent??0);return(0,Q.jsxs)(\`span\`,{className:\`flex items-center gap-1 whitespace-nowrap\`,children:[t>0?(0,Q.jsx)(\`span\`,{className:\`text-token-input-placeholder-foreground\`,children:\`/\`}):null,(0,Q.jsx)(\`span\`,{children:(0,Q.jsx)(${currentSymbols.durationComponent},{minutes:e.bucket.windowDurationMins,variant:\`summary\`})}),(0,Q.jsx)(\`span\`,{className:\`font-medium text-token-text-primary\`,children:Do(n)})]},e.key)}),t[1]=c,t[2]=u}else u=t[2];let d;t[3]!==u?(d=(0,Q.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:u}),t[3]=u,t[4]=d):d=t[4];let f;return t[5]!==l||t[6]!==d?(f=(0,Q.jsx)(nc,{tooltipContent:l,children:d}),t[5]=l,t[6]=d,t[7]=f):f=t[7],f}catch(e){return null}}`;
   const latestFooterFunction =
+    `function codexLinuxRateLimitFooter(){try{let e=(0,$.c)(6),t=${latestRateLimitQuery.queryHook}(${latestRateLimitQuery.queryKey})?.data,n=t?.rate_limit,r=[n?.primary_window,n?.secondary_window].filter(e=>e!=null&&Number.isFinite(e.used_percent)).slice(0,2);if(r.length===0)return null;let i;if(e[0]!==r){i=r.map(e=>{let t=e.limit_window_seconds==null?null:e.limit_window_seconds/60,n=t==null?\`Rate\`:t>=1440?\`\${Math.ceil(t/1440)}d\`:t>=60?\`\${Math.ceil(t/60)}h\`:\`\${Math.ceil(t)}m\`,r=Math.max(0,100-(e.used_percent??0));return\`\${n} \${Math.round(r)}%\`}).join(\` / \`),e[0]=r,e[1]=i}else i=e[1];let a;return e[2]!==i?(a=(0,Q.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:i}),e[2]=i,e[3]=a):a=e[3],a}catch(e){return null}}`;
+  const previousLatestFooterFunctionWithVisibleFallback =
+    "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,$.c)(8),{activeMode:n}=or(e),r=n?.settings.model??null,{data:i}=St(ue),a=ma(i),o=la(i),s=da(a,{activeLimitName:o,selectedModel:r}).filter(og).slice(0,2);s.length===0&&(s=da(a,{activeLimitName:o,selectedModel:null}).filter(og).slice(0,2));if(s.length===0)return(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:`Usage limits`});let c=ht(),l;if(t[0]!==s||t[1]!==c){l=s.map(e=>`${Xh(e.bucket.windowDurationMins??null,c)} ${c.formatNumber(Sa(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `),t[0]=s,t[1]=c,t[2]=l}else l=t[2];let u;return t[3]!==l?(u=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l}),t[3]=l,t[4]=u):u=t[4],u}catch(e){return null}}";
+  const previousLatestFooterFunctionWithVisibleCatchFallback =
+    "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,$.c)(8),{activeMode:n}=or(e),r=n?.settings.model??null,{data:i}=St(ue),a=ma(i),o=la(i),s=da(a,{activeLimitName:o,selectedModel:r}).filter(og).slice(0,2);s.length===0&&(s=da(a,{activeLimitName:o,selectedModel:null}).filter(og).slice(0,2));if(s.length===0)return(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:`Usage limits`});let c=ht(),l;if(t[0]!==s||t[1]!==c){l=s.map(e=>`${Xh(e.bucket.windowDurationMins??null,c)} ${c.formatNumber(Sa(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `),t[0]=s,t[1]=c,t[2]=l}else l=t[2];let u;return t[3]!==l?(u=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l}),t[3]=l,t[4]=u):u=t[4],u}catch(e){return(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:`Usage limits`})}}";
+  const previousLatestFooterFunctionWithModelFallback =
+    "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,$.c)(8),{activeMode:n}=or(e),r=n?.settings.model??null,{data:i}=St(ue),a=ma(i),o=la(i),s=da(a,{activeLimitName:o,selectedModel:r}).filter(og).slice(0,2);s.length===0&&(s=da(a,{activeLimitName:o,selectedModel:null}).filter(og).slice(0,2));if(s.length===0)return null;let c=ht(),l;if(t[0]!==s||t[1]!==c){l=s.map(e=>`${Xh(e.bucket.windowDurationMins??null,c)} ${c.formatNumber(Sa(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `),t[0]=s,t[1]=c,t[2]=l}else l=t[2];let u;return t[3]!==l?(u=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l}),t[3]=l,t[4]=u):u=t[4],u}catch(e){return null}}";
+  const previousLatestFooterFunction =
     "function codexLinuxRateLimitFooter({conversationId:e}){try{let t=(0,$.c)(8),{activeMode:n}=or(e),r=n?.settings.model??null,{data:i}=St(ue),a=ma(i),o=la(i),s=da(a,{activeLimitName:o,selectedModel:r}).filter(og).slice(0,2);if(s.length===0)return null;let c=ht(),l;if(t[0]!==s||t[1]!==c){l=s.map(e=>`${Xh(e.bucket.windowDurationMins??null,c)} ${c.formatNumber(Sa(e.bucket.usedPercent??0),{maximumFractionDigits:0})}%`).join(` / `),t[0]=s,t[1]=c,t[2]=l}else l=t[2];let u;return t[3]!==l?(u=(0,Q.jsx)(`span`,{className:`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10`,children:l}),t[3]=l,t[4]=u):u=t[4],u}catch(e){return null}}";
   const currentPermissionsFooterFunction = currentPermissionsFooterSymbols == null
     ? null
-    : `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=${currentPermissionsFooterSymbols.activeModeHook}(e)?.activeMode?.settings.model??null,{data:n}=${currentPermissionsFooterSymbols.queryHook}(${currentPermissionsFooterSymbols.queryKey}),r=${currentPermissionsFooterSymbols.entriesFn}(n),i=${currentPermissionsFooterSymbols.activeLimitFn}(n),a=${currentPermissionsFooterSymbols.summaryFn}(r,{activeLimitName:i,selectedModel:t});if(a==null)return null;let o=[];if(a.windowMinutes!=null){let e=a.windowMinutes;o.push(e>=1440?\`\${Math.ceil(e/1440)}d\`:e>=60?\`\${Math.ceil(e/60)}h\`:\`\${Math.ceil(e)}m\`)}a.remainingPercent!=null&&o.push(\`\${Math.round(a.remainingPercent)}%\`);if(o.length===0)return null;return(0,${currentPermissionsFooterSymbols.jsxAlias}.jsx)(\`span\`,{className:\`composer-footer__label--sm inline-flex shrink-0 items-center gap-1.5 rounded-full border border-token-border-light bg-token-main-surface-primary/80 px-2 py-1 text-xs text-token-text-secondary shadow-sm dark:border-white/10\`,children:o.join(\` \`)})}catch(e){return null}}`;
+    : `function codexLinuxRateLimitFooter({conversationId:e}){try{let t=${currentPermissionsFooterSymbols.activeModeHook}(e)?.activeMode?.settings.model??null,{data:n}=${currentPermissionsFooterSymbols.queryHook}(${currentPermissionsFooterSymbols.queryKey}),r=${currentPermissionsFooterSymbols.entriesFn}(n),i=${currentPermissionsFooterSymbols.activeLimitFn}(n),a=${currentPermissionsFooterSymbols.summaryFn}(r,{activeLimitName:i,selectedModel:t});if(a==null)return null;let o=[];if(a.windowMinutes!=null){let e=a.windowMinutes;o.push(e>=1440?\`\${Math.ceil(e/1440)}d\`:e>=60?\`\${Math.ceil(e/60)}h\`:\`\${Math.ceil(e)}m\`)}a.remainingPercent!=null&&o.push(\`\${Math.round(a.remainingPercent)}%\`);if(o.length===0)return null;return(0,${currentPermissionsFooterSymbols.jsxAlias}.jsx)(\`span\`,{className:\`${footerLabelClass}\`,children:o.join(\` \`)})}catch(e){return null}}`;
 
   if (!patchedSource.includes("function codexLinuxRateLimitFooter(")) {
     const legacyInsertionNeedle = "function TF(e){";
-    if (latestFooterControls != null) {
+    if (currentPermissionsFooterSymbols != null && currentPermissionsFooterFunction != null) {
+      patchedSource = patchedSource.replace(
+        currentPermissionsFooterSymbols.insertionNeedle,
+        `${currentPermissionsFooterFunction}${currentPermissionsFooterSymbols.insertionNeedle}`,
+      );
+    } else if (latestFooterControls != null) {
+      recordStrategy("rate-limit-footer", "upstream-latest");
       patchedSource = patchedSource.replace(
         latestFooterControls.insertionNeedle,
         `${latestFooterFunction}${latestFooterControls.insertionNeedle}`,
@@ -1230,11 +1363,6 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
       patchedSource = patchedSource.replace(
         currentSymbols.insertionNeedle,
         `${currentFooterFunction}${currentSymbols.insertionNeedle}`,
-      );
-    } else if (currentPermissionsFooterSymbols != null && currentPermissionsFooterFunction != null) {
-      patchedSource = patchedSource.replace(
-        currentPermissionsFooterSymbols.insertionNeedle,
-        `${currentPermissionsFooterFunction}${currentPermissionsFooterSymbols.insertionNeedle}`,
       );
     } else if (patchedSource.includes(currentComposerStatusNeedle)) {
       patchedSource = patchedSource.replace(
@@ -1247,39 +1375,82 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
         `${legacyFooterFunction}${legacyInsertionNeedle}`,
       );
     }
+  } else if (currentPermissionsFooterSymbols != null && currentPermissionsFooterFunction != null) {
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      currentPermissionsFooterFunction,
+    );
   } else if (currentSymbols != null && currentFooterFunction != null) {
-    const functionStart = patchedSource.indexOf("function codexLinuxRateLimitFooter(");
-    const functionEnd = patchedSource.indexOf(currentSymbols.insertionNeedle, functionStart);
-    if (functionEnd !== -1) {
-      const existingFooterFunction = patchedSource.slice(functionStart, functionEnd);
-      if (existingFooterFunction !== currentFooterFunction) {
-        patchedSource =
-          patchedSource.slice(0, functionStart) +
-          currentFooterFunction +
-          patchedSource.slice(functionEnd);
-      }
-    }
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      currentFooterFunction,
+    );
+  } else if (currentSource.includes(currentComposerStatusNeedle)) {
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      currentComposerFooterFunction,
+    );
+  } else if (latestFooterControls != null) {
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      latestFooterFunction,
+    );
   } else {
-    const legacyInsertionNeedle = "function TF(e){";
-    const functionStart = patchedSource.indexOf("function codexLinuxRateLimitFooter(");
-    const functionEnd = patchedSource.indexOf(legacyInsertionNeedle, functionStart);
-    if (functionStart !== -1 && functionEnd !== -1) {
-      const existingFooterFunction = patchedSource.slice(functionStart, functionEnd);
-      if (existingFooterFunction !== legacyFooterFunction) {
-        patchedSource =
-          patchedSource.slice(0, functionStart) +
-          legacyFooterFunction +
-          patchedSource.slice(functionEnd);
-      }
-    }
+    patchedSource = replaceCodexLinuxRateLimitFooterFunction(
+      patchedSource,
+      legacyFooterFunction,
+    );
   }
 
   const hasFooterFunction = patchedSource.includes("function codexLinuxRateLimitFooter(");
   if (!hasFooterFunction) {
+    if (currentSource.includes("FooterInlineControls")) {
+      // Composer-shaped bundle, but the footer controls drifted from the
+      // supported upstream shape.
+      recordStrategy("rate-limit-footer", "none");
+      console.warn("WARN: Could not insert persistent rate limit footer helper — skipping composer footer limit patch");
+      return currentSource;
+    }
     if (shouldWarnAboutMissingFooterHelper) {
       console.warn("WARN: Could not insert persistent rate limit footer helper — skipping composer footer limit patch");
+      return currentSource;
     }
     return currentSource;
+  }
+
+  if (patchedSource.includes(previousLatestFooterFunction)) {
+    patchedSource = patchedSource.replace(previousLatestFooterFunction, latestFooterFunction);
+  }
+  if (patchedSource.includes(previousLatestFooterFunctionWithModelFallback)) {
+    patchedSource = patchedSource.replace(previousLatestFooterFunctionWithModelFallback, latestFooterFunction);
+  }
+  if (patchedSource.includes(previousLatestFooterFunctionWithVisibleFallback)) {
+    patchedSource = patchedSource.replace(previousLatestFooterFunctionWithVisibleFallback, latestFooterFunction);
+  }
+  if (patchedSource.includes(previousLatestFooterFunctionWithVisibleCatchFallback)) {
+    patchedSource = patchedSource.replace(previousLatestFooterFunctionWithVisibleCatchFallback, latestFooterFunction);
+  }
+
+  patchedSource = removeBroadFooterInlineControlsRateLimitPatch(patchedSource);
+
+  patchedSource = patchedSource.replace(
+    /([A-Za-z_$][\w$]*)==null\?null:\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:\1\}\)/g,
+    "(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:$1})",
+  );
+
+  patchedSource = patchedSource.replace(
+    /FooterInlineControls,\{gap:`normal`,children:\[([A-Za-z_$][\w$]*),\(0,Q\.jsx\)\(codexLinuxRateLimitFooter,\{conversationId:([A-Za-z_$][\w$]*)\}\),([A-Za-z_$][\w$]*)\]\}/g,
+    "FooterInlineControls,{gap:`normal`,children:[$1,$3,(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:$2})]}",
+  );
+
+  if (
+    latestFooterControls != null &&
+    patchedSource.includes(latestFooterControls.footerControlsPatch)
+  ) {
+    patchedSource = patchedSource.replace(
+      latestFooterControls.footerControlsPatch,
+      latestFooterControls.footerControlsAfterPermissionsPatch,
+    );
   }
 
   if (
@@ -1289,7 +1460,7 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
   ) {
     patchedSource = patchedSource.replace(
       latestFooterControls.footerControlsNeedle,
-      latestFooterControls.footerControlsPatch,
+      latestFooterControls.footerControlsAfterPermissionsPatch,
     );
   }
 
@@ -1345,14 +1516,14 @@ function applyPersistentRateLimitFooterPatch(currentSource) {
   const permissionsControlsNeedle =
     "(0,Q.jsx)(nz,{conversationId:f,hostId:C,cwdOverride:w}),(0,Q.jsx)(vz,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})";
   const permissionsControlsPatch =
-    "(0,Q.jsx)(nz,{conversationId:f,hostId:C,cwdOverride:w}),f==null?null:(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:f}),(0,Q.jsx)(vz,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})";
+    "(0,Q.jsx)(nz,{conversationId:f,hostId:C,cwdOverride:w}),(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:f}),(0,Q.jsx)(vz,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})";
   if (patchedSource.includes(permissionsControlsNeedle)) {
     patchedSource = patchedSource.replace(permissionsControlsNeedle, permissionsControlsPatch);
   }
   if (currentPermissionsControlsNeedle.test(patchedSource)) {
     patchedSource = patchedSource.replace(
       currentPermissionsControlsNeedle,
-      "(0,Q.jsx)($1,{conversationId:f,hostId:C,cwdOverride:w}),f==null?null:(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:f}),(0,Q.jsx)($2,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})",
+      "(0,Q.jsx)($1,{conversationId:f,hostId:C,cwdOverride:w}),(0,Q.jsx)(codexLinuxRateLimitFooter,{conversationId:f}),(0,Q.jsx)($2,{conversationId:f,hasGoal:y,isGoalActionAvailable:b,onClearGoal:x,showDivider:!0})",
     );
   }
 

@@ -299,6 +299,20 @@ remove_tree_if_exists() {
     rm -rf "$path"
 }
 
+replace_symlink() {
+    local target="$1"
+    local link_path="$2"
+
+    if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
+        remove_tree_if_exists "$link_path"
+    fi
+
+    if ! ln -sfnT "$target" "$link_path" 2>/dev/null; then
+        remove_tree_if_exists "$link_path"
+        ln -sfnT "$target" "$link_path"
+    fi
+}
+
 fix_bundled_marketplace_tmp_permissions() {
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
     local marketplace_tmp_root="$codex_home/.tmp/bundled-marketplaces"
@@ -681,16 +695,10 @@ sync_browser_use_bundled_plugin_cache() {
         fi
     fi
 
-    if [ -e "$cache_root/latest" ] && [ ! -L "$cache_root/latest" ]; then
-        remove_tree_if_exists "$cache_root/latest"
-    fi
-    ln -sfn "$version" "$cache_root/latest"
+    replace_symlink "$version" "$cache_root/latest"
 
     mkdir -p "$marketplace_root/plugins"
-    if [ -e "$marketplace_plugin_link" ] && [ ! -L "$marketplace_plugin_link" ]; then
-        remove_tree_if_exists "$marketplace_plugin_link"
-    fi
-    ln -sfn "$cache_root/latest" "$marketplace_plugin_link"
+    replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
 }
 
 chrome_extension_host_arch() {
@@ -880,10 +888,7 @@ sync_chrome_bundled_plugin_cache() {
         fi
     fi
 
-    if [ -e "$cache_root/latest" ] && [ ! -L "$cache_root/latest" ]; then
-        remove_tree_if_exists "$cache_root/latest"
-    fi
-    ln -sfn "$version" "$cache_root/latest"
+    replace_symlink "$version" "$cache_root/latest"
 
     marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
@@ -895,10 +900,7 @@ sync_chrome_bundled_plugin_cache() {
             chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
             echo "Chrome bundled marketplace sync failed; continuing with existing marketplace cache."
     fi
-    if [ -e "$marketplace_plugin_link" ] && [ ! -L "$marketplace_plugin_link" ]; then
-        remove_tree_if_exists "$marketplace_plugin_link"
-    fi
-    ln -sfn "$cache_root/latest" "$marketplace_plugin_link"
+    replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
 
     host_path="$cache_root/latest/extension-host/linux/$extension_arch/extension-host"
     [ -x "$host_path" ] || return 0
@@ -973,16 +975,10 @@ sync_computer_use_bundled_plugin_cache() {
         fi
     fi
 
-    if [ -e "$cache_root/latest" ] && [ ! -L "$cache_root/latest" ]; then
-        remove_tree_if_exists "$cache_root/latest"
-    fi
-    ln -sfn "$version" "$cache_root/latest"
+    replace_symlink "$version" "$cache_root/latest"
 
     mkdir -p "$marketplace_root/plugins"
-    if [ -e "$marketplace_plugin_link" ] && [ ! -L "$marketplace_plugin_link" ]; then
-        remove_tree_if_exists "$marketplace_plugin_link"
-    fi
-    ln -sfn "$cache_root/latest" "$marketplace_plugin_link"
+    replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
 }
 
 sync_read_aloud_bundled_plugin_cache() {
@@ -1057,16 +1053,10 @@ sync_read_aloud_bundled_plugin_cache() {
         fi
     fi
 
-    if [ -e "$cache_root/latest" ] && [ ! -L "$cache_root/latest" ]; then
-        remove_tree_if_exists "$cache_root/latest"
-    fi
-    ln -sfn "$version" "$cache_root/latest"
+    replace_symlink "$version" "$cache_root/latest"
 
     mkdir -p "$marketplace_root/plugins"
-    if [ -e "$marketplace_plugin_link" ] && [ ! -L "$marketplace_plugin_link" ]; then
-        remove_tree_if_exists "$marketplace_plugin_link"
-    fi
-    ln -sfn "$cache_root/latest" "$marketplace_plugin_link"
+    replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
 }
 
 resolve_browser_use_runtime_env() {
@@ -1426,6 +1416,25 @@ find_running_app_pid() {
     return 1
 }
 
+pid_in_same_launch_instance() {
+    # The /proc scan matches by electron binary path, which side-by-side
+    # multi-launch instances share with the default app. Match instance
+    # identity via the process environment so the default app never adopts
+    # a side-by-side instance and vice versa. Substring checks on the
+    # newline-joined environ avoid grep -q pipelines, which can fail under
+    # pipefail when grep exits before the writer finishes.
+    local pid="$1"
+    local environ="/proc/$pid/environ"
+    local env_lines
+
+    env_lines=$'\n'"$(tr '\0' '\n' < "$environ" 2>/dev/null || true)"$'\n'
+    if [ "$MULTI_LAUNCH_ACTIVE" -eq 1 ]; then
+        [[ "$env_lines" == *$'\n'"CODEX_LINUX_INSTANCE_ID=$CODEX_LINUX_INSTANCE_ID"$'\n'* ]]
+    else
+        [[ "$env_lines" != *$'\n'"CODEX_LINUX_MULTI_LAUNCH=1"$'\n'* ]]
+    fi
+}
+
 discover_running_app_pid() {
     local pid
     local proc_exe
@@ -1434,7 +1443,7 @@ discover_running_app_pid() {
         [ -e "$proc_exe" ] || continue
         pid="${proc_exe#/proc/}"
         pid="${pid%/exe}"
-        if pid_matches_executable "$pid" "$SCRIPT_DIR/electron"; then
+        if pid_matches_executable "$pid" "$SCRIPT_DIR/electron" && pid_in_same_launch_instance "$pid"; then
             echo "$pid"
             return 0
         fi
@@ -1456,7 +1465,12 @@ needs_cold_start() {
 }
 
 detect_warm_start() {
-    if RUNNING_APP_PID="$(find_running_app_pid)" || { [ -S "$LAUNCH_ACTION_SOCKET" ] && RUNNING_APP_PID="$(discover_running_app_pid)"; }; then
+    # Always fall back to the /proc scan: a hidden-to-tray instance can lose
+    # both its app.pid marker (clobbered by a failed duplicate launch) and its
+    # launch-action socket (runtime dir wiped, warm start disabled, or socket
+    # setup failed), and gating the scan on the socket made such an instance
+    # undetectable — every launch then cold-started a duplicate.
+    if RUNNING_APP_PID="$(find_running_app_pid)" || RUNNING_APP_PID="$(discover_running_app_pid)"; then
         echo "$RUNNING_APP_PID" > "$APP_PID_FILE"
         if ! linux_setting_enabled "codex-linux-warm-start-enabled" 1; then
             WARM_START=0
@@ -1873,7 +1887,7 @@ reconcile_runtime_state() {
     local live_app_pid=""
     local webview_pid=""
 
-    if live_app_pid="$(find_running_app_pid)" || { [ -S "$LAUNCH_ACTION_SOCKET" ] && live_app_pid="$(discover_running_app_pid)"; }; then
+    if live_app_pid="$(find_running_app_pid)" || live_app_pid="$(discover_running_app_pid)"; then
         echo "$live_app_pid" > "$APP_PID_FILE"
         return 0
     fi
@@ -2322,6 +2336,31 @@ cleanup_launcher() {
     fi
 }
 
+# Serialize the running-app detection -> Electron spawn -> app.pid write
+# critical section across concurrent launchers. Without this, two launches
+# racing through detection can both cold-start, and the loser's cleanup later
+# deletes the survivor's app.pid marker, making it undetectable. Fd 9 stays
+# open in this shell; the flock is released explicitly, so the fd leaking
+# into child processes does not extend the lock.
+acquire_launcher_lock() {
+    command -v flock >/dev/null 2>&1 || return 0
+    exec 9>"$APP_STATE_DIR/launcher.lock" || return 0
+    if ! flock -w 30 9; then
+        echo "WARN: timed out waiting for another launcher to finish; continuing unserialized"
+    fi
+}
+
+release_launcher_lock() {
+    flock -u 9 2>/dev/null || true
+}
+
+refresh_launch_state() {
+    WARM_START=0
+    RUNNING_APP_PID=""
+    reconcile_runtime_state
+    detect_warm_start
+}
+
 launch_electron() {
     cd "$SCRIPT_DIR"
     log_phase "electron_launch"
@@ -2333,6 +2372,7 @@ launch_electron() {
     build_electron_launch_args
 
     if [ "$WARM_START" -eq 1 ]; then
+        release_launcher_lock
         echo "Electron warm-start handoff: pid=$RUNNING_APP_PID rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED renderer_accessibility_forced=$ELECTRON_RENDERER_ACCESSIBILITY_FORCED"
         unset ELECTRON_RUN_AS_NODE
         "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"
@@ -2348,6 +2388,7 @@ launch_electron() {
     else
         echo "$ELECTRON_PID" > "$APP_PID_FILE"
     fi
+    release_launcher_lock
     log_phase "electron_spawned"
 
     set +e
@@ -2365,8 +2406,7 @@ load_packaged_runtime_helper
 prepend_managed_node_runtime_to_path
 source_feature_env_files
 register_url_scheme_handlers
-reconcile_runtime_state
-detect_warm_start
+refresh_launch_state
 trap cleanup_launcher EXIT
 
 if send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"; then
@@ -2391,7 +2431,7 @@ else
     log_phase "warm_start_ready"
 fi
 
-if needs_cold_start && [ -z "${CODEX_CLI_PATH:-}" ]; then
+if [ -z "${CODEX_CLI_PATH:-}" ]; then
     CODEX_CLI_PATH="$(find_codex_cli || true)"
     export CODEX_CLI_PATH
     log_phase "cli_lookup"
@@ -2448,6 +2488,11 @@ if needs_cold_start; then
     run_cold_start_hooks
 fi
 resolve_browser_use_runtime_env
+
+if needs_cold_start; then
+    acquire_launcher_lock
+    refresh_launch_state
+fi
 
 echo "Using CODEX_CLI_PATH=${CODEX_CLI_PATH:-warm-start-skip}"
 echo "Using managed Node.js runtime=${CODEX_MANAGED_NODE_RUNTIME_DIR:-$SCRIPT_DIR/resources/node-runtime}"

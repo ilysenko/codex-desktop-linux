@@ -9,7 +9,7 @@ module.exports = [
     id: "linux-remote-control-config-preservation",
     phase: "main-bundle",
     order: 185,
-    ciPolicy: "required-upstream",
+    ciPolicy: "optional",
     apply: applyLinuxRemoteControlConfigPreservationPatch,
   },
 ];

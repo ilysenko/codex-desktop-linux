@@ -5,8 +5,11 @@ const fs = require("node:fs");
 const {
   requiredPatchNamesForProfile,
 } = require("../patches/registry.js");
-
-const SUCCESS_STATUSES = new Set(["applied", "already-applied"]);
+const {
+  SUCCESS_STATUSES,
+  criticalFailuresFromReport,
+  optionalDriftFromReport,
+} = require("../lib/patch-report.js");
 
 function usage() {
   return "Usage: validate-patch-report.js <patch-report.json> [--profile upstream-build]";
@@ -53,24 +56,40 @@ function validateReport(report, profile) {
   const patchesByName = new Map(report.patches.map((patch) => [patch.name, patch]));
   const failures = [];
 
+  // A required patch that never ran leaves no report entry, so the
+  // report-driven check below cannot see it — catch it by name first.
   for (const name of requiredNames) {
-    const patch = patchesByName.get(name);
-    if (patch == null) {
+    if (!patchesByName.has(name)) {
       failures.push(`${name}: missing from patch report`);
-      continue;
-    }
-    if (!SUCCESS_STATUSES.has(patch.status)) {
-      failures.push(`${name}: ${patch.status}${patch.reason ? ` (${patch.reason})` : ""}`);
     }
   }
 
+  // Shared predicate with the local build gate (patch-linux-window-ui.js
+  // --enforce-critical): any recorded critical patch with a non-success,
+  // applicable status fails validation.
+  for (const failure of criticalFailuresFromReport(report)) {
+    failures.push(`${failure.name}: ${failure.status}${failure.reason ? ` (${failure.reason})` : ""}`);
+  }
+
   return failures;
+}
+
+function printOptionalDrift(report) {
+  const drift = optionalDriftFromReport(report);
+  if (drift.length === 0) {
+    return;
+  }
+  console.warn(`Optional patch drift (${drift.length}, non-failing):`);
+  for (const item of drift) {
+    console.warn(`- ${item.name}: ${item.status}${item.reason ? ` (${item.reason})` : ""}`);
+  }
 }
 
 function main() {
   try {
     const { profile, reportPath } = parseArgs(process.argv.slice(2));
     const report = readReport(reportPath);
+    printOptionalDrift(report);
     const failures = validateReport(report, profile);
     if (failures.length > 0) {
       console.error(`Required patch validation failed for profile ${profile}:`);

@@ -27,8 +27,24 @@ native modules, and removes macOS-only pieces such as Sparkle.
 ## Patch System
 
 Core Linux compatibility patches live under `scripts/patches/core/`.
-Descriptors declare phase, order, target filters, and CI policy. They are
-fail-soft unless explicitly marked as required for upstream-build validation.
+Descriptors declare phase, order, target filters, and CI policy.
+
+`ciPolicy` is the single criticality axis, enforced by the patch engine —
+patches themselves never abort the build:
+
+- `required-upstream` (critical): the app does not launch or is core-unusable
+  without it. If one fails (no match or a throw), the patcher exits non-zero
+  with an aggregated `Critical patch failures` summary and the build aborts.
+  `CODEX_ENFORCE_CRITICAL_PATCHES=0` bypasses this for emergency builds.
+- `optional`: best-effort. Failures and throws are caught by the engine,
+  logged as warnings, and listed in the end-of-build
+  `optional patches not fully applied` summary so they can be fixed later.
+- `opt-in`: disabled unless explicitly enabled; recorded as `skipped-disabled`.
+
+Every build writes a patch report (`<app>/.codex-linux/patch-report.json`,
+next to `build-info.json`). CI validates the same report with
+`scripts/ci/validate-patch-report.js`, which shares the failure predicate with
+the local gate and prints non-failing optional-drift warnings.
 
 Optional additions belong under `linux-features/`. Feature descriptor ids are
 namespaced in patch reports and are optional by default.

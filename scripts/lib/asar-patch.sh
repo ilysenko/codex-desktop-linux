@@ -12,13 +12,13 @@ print_patch_report_summary() {
 const fs = require("node:fs");
 const reportPath = process.argv[2];
 const helperPath = process.argv[3];
-const { summarizePatchReport } = require(helperPath);
+const { optionalDriftFromReport, summarizePatchReport } = require(helperPath);
 
 const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
 const summary = summarizePatchReport(report);
 const fmt = (counts) => Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(", ") || "none";
 
-console.error("[INFO] inspect-upstream summary:");
+console.error("[INFO] patch summary:");
 console.error(`  required core: ${fmt(summary.groups.requiredCore.statusCounts)}`);
 console.error(`  optional core: ${fmt(summary.groups.optionalCore.statusCounts)}`);
 
@@ -33,6 +33,29 @@ if (summary.enabledFeatures.length === 0) {
     for (const [featureId, featureSummary] of featureEntries) {
       console.error(`  feature ${featureId}: ${fmt(featureSummary.statusCounts)}`);
     }
+  }
+}
+
+const drift = optionalDriftFromReport(report);
+if (drift.length > 0) {
+  console.error(`[WARN] optional patches not fully applied (${drift.length}) — fix when convenient:`);
+  for (const item of drift) {
+    console.error(`  - ${item.name}: ${item.status}${item.reason ? ` (${item.reason})` : ""}`);
+  }
+}
+
+const strategyDrift = [];
+for (const patch of report.patches ?? []) {
+  for (const entry of patch.strategies ?? []) {
+    if (entry.strategy.startsWith("legacy:") || entry.strategy === "none") {
+      strategyDrift.push(`${patch.name}: ${entry.group}=${entry.strategy}`);
+    }
+  }
+}
+if (strategyDrift.length > 0) {
+  console.error(`[INFO] legacy match strategies in use (${strategyDrift.length}):`);
+  for (const line of strategyDrift) {
+    console.error(`  - ${line}`);
   }
 }
 NODE
@@ -63,11 +86,19 @@ patch_asar() {
     build_native_modules "$WORK_DIR/app-extracted"
 
     info "Patching Linux window and shell behavior..."
-    if [ -n "${CODEX_PATCH_REPORT_JSON:-}" ]; then
-        mkdir -p "$(dirname "$CODEX_PATCH_REPORT_JSON")"
-        patch_args+=(--report-json "$CODEX_PATCH_REPORT_JSON")
+    # Always produce a report: enforcement and the end-of-build summary need it,
+    # and install.sh persists it into the app's .codex-linux/ directory.
+    local patch_report_json="${CODEX_PATCH_REPORT_JSON:-$WORK_DIR/patch-report.json}"
+    mkdir -p "$(dirname "$patch_report_json")"
+    patch_args+=(--report-json "$patch_report_json")
+    if [ "${CODEX_ENFORCE_CRITICAL_PATCHES:-1}" != "0" ]; then
+        patch_args+=(--enforce-critical)
+    else
+        warn "Critical patch enforcement disabled (CODEX_ENFORCE_CRITICAL_PATCHES=0)"
     fi
     node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" "${patch_args[@]}" "$WORK_DIR/app-extracted"
+    CODEX_PATCH_REPORT_RESOLVED="$patch_report_json"
+    print_patch_report_summary "$patch_report_json"
 
     # Repack
     info "Repacking app.asar..."
