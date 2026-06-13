@@ -52,6 +52,11 @@ class CodexWebviewHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
 
+class CodexHTTPServer(http.server.ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 handler = functools.partial(CodexWebviewHandler, directory=".")
-with http.server.ThreadingHTTPServer((bind, port), handler) as httpd:
+with CodexHTTPServer((bind, port), handler) as httpd:
     httpd.serve_forever()
