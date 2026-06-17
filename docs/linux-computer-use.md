@@ -12,6 +12,9 @@ It supports:
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
   RemoteDesktop portal, or `ydotool`
 
+For the opt-in X11/EWMH feature, native packages also install `xdotool` so
+focused-window typing on X11 keeps a reliable fallback path.
+
 ## Runtime Dependencies
 
 Install `ydotool` when you need the fallback input path:

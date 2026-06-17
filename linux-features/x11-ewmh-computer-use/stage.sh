@@ -4,7 +4,10 @@ set -Eeuo pipefail
 PLUGIN_NAME="codex-computer-use-x11"
 DEFAULT_X86_64_RELEASE_URL="https://github.com/AlekseiSeleznev/codex-computer-use-x11/releases/download/v0.1.3/codex-computer-use-x11-v0.1.3-x86_64-unknown-linux-gnu.tar.gz"
 DEFAULT_X86_64_RELEASE_SHA256="067244a16f9e812eb369af42149658c8cf138b13057445bb9d10318f29b0c26b"
+DEFAULT_SOURCE_URL="https://github.com/AlekseiSeleznev/codex-computer-use-x11/archive/refs/tags/v0.1.3.tar.gz"
+DEFAULT_SOURCE_SHA256="42948a01d3e821e817503c37466884ac8867e2d83a3cb97008ffc054e1df6e3a"
 FEATURE_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OVERLAY_DIR="$FEATURE_DIR/upstream-overlay"
 INSTALL_DIR="${INSTALL_DIR:?INSTALL_DIR is required}"
 WORK_DIR="${WORK_DIR:-$(mktemp -d)}"
 TARGET_PLUGIN="$INSTALL_DIR/resources/plugins/openai-bundled/plugins/$PLUGIN_NAME"
@@ -42,7 +45,15 @@ default_release_sha256() {
     esac
 }
 
-expected_sha_value() {
+default_source_url() {
+    printf '%s\n' "$DEFAULT_SOURCE_URL"
+}
+
+default_source_sha256() {
+    printf '%s\n' "$DEFAULT_SOURCE_SHA256"
+}
+
+expected_release_sha_value() {
     local value="${CODEX_X11_COMPUTER_USE_RELEASE_SHA256:-}"
     if [ -z "$value" ]; then
         value="$(default_release_sha256)" || return 1
@@ -53,11 +64,39 @@ expected_sha_value() {
         printf '%s\n' "$value"
     fi
 }
-verify_sha256() {
+
+expected_source_sha_value() {
+    local value="${CODEX_X11_COMPUTER_USE_SOURCE_SHA256:-}"
+    if [ -z "$value" ]; then
+        value="$(default_source_sha256)" || return 1
+    fi
+    if [ -f "$value" ]; then
+        awk '{print $1; exit}' "$value"
+    else
+        printf '%s\n' "$value"
+    fi
+}
+
+verify_release_sha256() {
     local file="$1"
     local expected
-    expected="$(expected_sha_value)" || {
+    expected="$(expected_release_sha_value)" || {
         echo "CODEX_X11_COMPUTER_USE_RELEASE_SHA256 is required for tarball/download mode" >&2
+        return 1
+    }
+    local actual
+    actual="$(sha256sum "$file" | awk '{print $1}')"
+    if [ "$actual" != "$expected" ]; then
+        echo "sha256 mismatch for $file: expected $expected got $actual" >&2
+        return 1
+    fi
+}
+
+verify_source_sha256() {
+    local file="$1"
+    local expected
+    expected="$(expected_source_sha_value)" || {
+        echo "CODEX_X11_COMPUTER_USE_SOURCE_SHA256 is required for source tarball/download mode" >&2
         return 1
     }
     local actual
@@ -76,6 +115,25 @@ write_plugin_from_binary() {
     mkdir -p "$dest/.codex-plugin" "$dest/bin" "$dest/assets"
     cp "$binary" "$dest/bin/codex-computer-use-x11"
     chmod 0755 "$dest/bin/codex-computer-use-x11"
+    cat > "$dest/bin/codex-computer-use-x11-launcher" <<'SH'
+#!/bin/bash
+set -Eeuo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Codex and helper shells may export NO_AT_BRIDGE=1, which suppresses the GTK
+# accessibility bridge. Drop it for the standalone X11 plugin so AT-SPI tree
+# collection stays available when the desktop session supports it.
+unset NO_AT_BRIDGE
+
+# Prefer a colocated helper tool if the feature ever stages one in the plugin.
+if [ -d "$script_dir" ]; then
+    PATH="$script_dir:$PATH"
+fi
+
+exec "$script_dir/codex-computer-use-x11" "$@"
+SH
+    chmod 0755 "$dest/bin/codex-computer-use-x11-launcher"
     if [ -f "$FEATURE_DIR/assets/app-icon.png" ]; then
         cp "$FEATURE_DIR/assets/app-icon.png" "$dest/assets/app-icon.png"
     else
@@ -85,7 +143,7 @@ write_plugin_from_binary() {
 {
   "mcpServers": {
     "codex-computer-use-x11": {
-      "command": "./bin/codex-computer-use-x11",
+      "command": "./bin/codex-computer-use-x11-launcher",
       "args": ["mcp"],
       "cwd": "."
     }
@@ -167,7 +225,7 @@ while (offset + 512 <= data.length) {
   validatePath(entryPath);
   if (typeflag === "1") throw new Error(`tarball contains unsupported hardlink entry: ${entryPath}`);
   if (typeflag === "2") throw new Error(`tarball contains unsupported symlink entry: ${entryPath}`);
-  if (!(typeflag === "0" || typeflag.charCodeAt(0) === 0 || typeflag === "5")) {
+  if (!(typeflag === "0" || typeflag.charCodeAt(0) === 0 || typeflag === "5" || typeflag === "g" || typeflag === "x")) {
     throw new Error(`tarball contains unsupported entry type ${JSON.stringify(typeflag)}: ${entryPath}`);
   }
   const size = parseOctal(header, 124, 12);
@@ -178,26 +236,95 @@ NODE
 
 stage_from_tarball() {
     local tarball="$1"
-    verify_sha256 "$tarball"
+    verify_release_sha256 "$tarball"
     validate_tarball_entries "$tarball"
     local extract_dir="$WORK_DIR/x11-computer-use-extract"
     rm -rf "$extract_dir"
     mkdir -p "$extract_dir"
     tar -xzf "$tarball" -C "$extract_dir"
     [ -f "$extract_dir/$PLUGIN_NAME/.mcp.json" ] || { echo "tarball does not contain $PLUGIN_NAME/.mcp.json" >&2; return 1; }
-    rm -rf "$TARGET_PLUGIN"
-    mkdir -p "$(dirname "$TARGET_PLUGIN")"
-    cp -R "$extract_dir/$PLUGIN_NAME" "$TARGET_PLUGIN"
-    chmod 0755 "$TARGET_PLUGIN/bin/codex-computer-use-x11"
+    write_plugin_from_binary "$extract_dir/$PLUGIN_NAME/bin/codex-computer-use-x11" "$TARGET_PLUGIN"
+}
+
+copy_source_tree() {
+    local source="$1"
+    local dest="$2"
+    rm -rf "$dest"
+    mkdir -p "$dest"
+    cp -a "$source"/. "$dest"/
+}
+
+apply_source_overlay() {
+    local source_root="$1"
+    [ -d "$OVERLAY_DIR" ] || return 0
+    command -v patch >/dev/null 2>&1 || {
+        echo "patch is required to apply the x11-ewmh-computer-use source overlay" >&2
+        return 1
+    }
+    local patch_file
+    while IFS= read -r patch_file; do
+        (cd "$source_root" && patch -p1 -N -i "$patch_file" >/dev/null)
+    done < <(find "$OVERLAY_DIR" -maxdepth 1 -type f -name '*.patch' | sort)
+    return 0
+}
+
+find_source_root() {
+    local root="$1"
+    if [ -f "$root/Cargo.toml" ]; then
+        printf '%s\n' "$root"
+        return 0
+    fi
+    local cargo_toml
+    cargo_toml="$(find "$root" -mindepth 1 -maxdepth 3 -type f -name Cargo.toml | head -n1 || true)"
+    [ -n "$cargo_toml" ] || {
+        echo "could not locate Cargo.toml in extracted source tree: $root" >&2
+        return 1
+    }
+    dirname "$cargo_toml"
+}
+
+stage_from_source_tree() {
+    local source_root="$1"
+    local cargo_cmd
+    cargo_cmd="$(find_cargo)" || { echo "cargo not found for x11-ewmh-computer-use source build" >&2; return 1; }
+    apply_source_overlay "$source_root"
+    (cd "$source_root" && "$cargo_cmd" build --release >&2)
+    write_plugin_from_binary "$source_root/target/release/codex-computer-use-x11" "$TARGET_PLUGIN"
 }
 
 stage_from_source() {
     local source="$1"
     [ -f "$source/Cargo.toml" ] || { echo "CODEX_X11_COMPUTER_USE_SOURCE lacks Cargo.toml: $source" >&2; return 1; }
-    local cargo_cmd
-    cargo_cmd="$(find_cargo)" || { echo "cargo not found for CODEX_X11_COMPUTER_USE_SOURCE build" >&2; return 1; }
-    (cd "$source" && "$cargo_cmd" build --release >&2)
-    write_plugin_from_binary "$source/target/release/codex-computer-use-x11" "$TARGET_PLUGIN"
+    local build_root="$WORK_DIR/x11-computer-use-source"
+    copy_source_tree "$source" "$build_root"
+    stage_from_source_tree "$build_root"
+}
+
+stage_from_source_tarball() {
+    local tarball="$1"
+    verify_source_sha256 "$tarball"
+    validate_tarball_entries "$tarball"
+    local extract_dir="$WORK_DIR/x11-computer-use-source-extract"
+    rm -rf "$extract_dir"
+    mkdir -p "$extract_dir"
+    tar -xzf "$tarball" -C "$extract_dir"
+    local source_root
+    source_root="$(find_source_root "$extract_dir")" || return 1
+    stage_from_source_tree "$source_root"
+}
+
+stage_from_source_download() {
+    local url="$1"
+    local tarball="$WORK_DIR/codex-computer-use-x11-source-download.tar.gz"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url" -o "$tarball"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -O "$tarball" "$url"
+    else
+        echo "curl or wget is required for CODEX_X11_COMPUTER_USE_SOURCE_DOWNLOAD_URL" >&2
+        return 1
+    fi
+    stage_from_source_tarball "$tarball"
 }
 
 stage_from_download() {
@@ -242,6 +369,12 @@ elif [ -n "${CODEX_X11_COMPUTER_USE_BINARY:-}" ]; then
     write_plugin_from_binary "$CODEX_X11_COMPUTER_USE_BINARY" "$TARGET_PLUGIN"
 elif [ -n "${CODEX_X11_COMPUTER_USE_SOURCE:-}" ]; then
     stage_from_source "$CODEX_X11_COMPUTER_USE_SOURCE"
+elif [ "${CODEX_X11_COMPUTER_USE_BUILD_FROM_SOURCE:-0}" = "1" ] && [ -n "${CODEX_X11_COMPUTER_USE_SOURCE_TARBALL:-}" ]; then
+    stage_from_source_tarball "$CODEX_X11_COMPUTER_USE_SOURCE_TARBALL"
+elif [ "${CODEX_X11_COMPUTER_USE_BUILD_FROM_SOURCE:-0}" = "1" ] && [ -n "${CODEX_X11_COMPUTER_USE_SOURCE_DOWNLOAD_URL:-}" ]; then
+    stage_from_source_download "$CODEX_X11_COMPUTER_USE_SOURCE_DOWNLOAD_URL"
+elif [ "${CODEX_X11_COMPUTER_USE_BUILD_FROM_SOURCE:-0}" = "1" ]; then
+    stage_from_source_download "$(default_source_url)"
 elif [ -n "${CODEX_X11_COMPUTER_USE_DOWNLOAD_URL:-}" ]; then
     stage_from_download "$CODEX_X11_COMPUTER_USE_DOWNLOAD_URL"
 else

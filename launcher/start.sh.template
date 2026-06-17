@@ -2447,6 +2447,21 @@ should_disable_gpu_compositing() {
         return 0
     fi
 
+    # Cinnamon on X11 still shows stale sidebar frames on some Linux desktops
+    # after upstream Electron updates. Prefer the stable compositor profile
+    # there and let operators opt back in via CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0.
+    local desktop_tokens
+    desktop_tokens="$(printf '%s:%s:%s' \
+        "${XDG_CURRENT_DESKTOP:-}" \
+        "${XDG_SESSION_DESKTOP:-}" \
+        "${DESKTOP_SESSION:-}" | tr '[:upper:]' '[:lower:]')"
+    if [ "${XDG_SESSION_TYPE:-}" = "x11" ] &&
+        [ "$ELECTRON_RENDERING_MODE" = "default" ] &&
+        printf '%s\n' "$desktop_tokens" | grep -Eq '(^|:)(x-)?cinnamon($|:)'; then
+        echo "Detected Cinnamon on X11; adding --disable-gpu-compositing for sidebar rendering stability. Set CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 to opt out."
+        return 0
+    fi
+
     return 1
 }
 

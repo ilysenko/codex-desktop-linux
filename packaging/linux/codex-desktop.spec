@@ -12,9 +12,9 @@ ExclusiveArch:  __ARCH__
 %endif
 
 %if __PACKAGE_WITH_UPDATER__
-Requires:       python3, /usr/bin/7z, polkit, curl, unzip, gcc-c++, make
+Requires:       python3, /usr/bin/7z, polkit, curl, unzip, gcc-c++, make, xdotool
 %else
-Requires:       python3, /usr/bin/7z, curl, unzip, gcc-c++, make
+Requires:       python3, /usr/bin/7z, curl, unzip, gcc-c++, make, xdotool
 %endif
 Requires:       libasound.so.2%{codex_elf_suffix}, libatk-bridge-2.0.so.0%{codex_elf_suffix}
 Requires:       libatk-1.0.so.0%{codex_elf_suffix}, libglib-2.0.so.0%{codex_elf_suffix}, libgtk-3.so.0%{codex_elf_suffix}

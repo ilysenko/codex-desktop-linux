@@ -3108,6 +3108,12 @@ PY
     output="$(env -i PATH="$PATH" HOME="$HOME" XDG_SESSION_TYPE=wayland CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 "$launcher_probe" probe)"
     [[ "$output" == *"comp=0"* && "$output" != *"<--disable-gpu-compositing>"* ]] || fail "CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 must suppress the Wayland compositor workaround: $output"
 
+    output="$(env -i PATH="$PATH" HOME="$HOME" XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=X-Cinnamon CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe)"
+    [[ "$output" == *"comp=1"* && "$output" == *"<--disable-gpu-compositing>"* ]] || fail "Cinnamon on X11 must disable GPU compositing for sidebar rendering stability: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=X-Cinnamon CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 "$launcher_probe" probe)"
+    [[ "$output" == *"comp=0"* && "$output" != *"<--disable-gpu-compositing>"* ]] || fail "CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 must suppress the Cinnamon/X11 compositor workaround: $output"
+
     output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe -- --ozone-platform=x11)"
     [[ "$output" == *"electron=<--ozone-platform=x11>"* ]] || fail "pass-through ozone platform must reach Electron: $output"
     [[ "$output" != *"<--ozone-platform-hint=auto>"* ]] || fail "launcher must not add ozone hint when pass-through supplies an ozone platform: $output"
@@ -3284,9 +3290,12 @@ PY
     assert_contains "$REPO_DIR/scripts/install-deps.sh" "https://deb.nodesource.com/node_"
     assert_not_contains "$REPO_DIR/packaging/linux/control" "Depends:.*nodejs"
     assert_not_contains "$REPO_DIR/packaging/linux/control" "Depends:.*npm"
+    assert_contains "$REPO_DIR/packaging/linux/control" "Depends:.*xdotool"
     assert_not_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "Requires:.*nodejs"
     assert_not_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "Requires:.*npm"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "Requires:.*xdotool"
     assert_not_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "'nodejs>=20'"
+    assert_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "'xdotool'"
     assert_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "optional override for the bundled managed Node.js runtime"
     assert_contains "$REPO_DIR/scripts/lib/node-runtime.sh" "MANAGED_NODE_VERSION"
     assert_contains "$REPO_DIR/scripts/lib/package-common.sh" "node-runtime"

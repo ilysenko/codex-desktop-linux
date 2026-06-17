@@ -1742,7 +1742,7 @@ impl ComputerUseLinux {
         if let Some(target_pid) = target_pid {
             if let Ok(apps) = list_accessible_apps(200).await {
                 if let Some(object_ref) =
-                    select_accessibility_object_ref(&apps, target_pid, &candidates)
+                    select_accessibility_object_ref(&apps, target_pid, window_context, &candidates)
                 {
                     return Some(object_ref);
                 }
@@ -2296,31 +2296,26 @@ fn is_sentinel_or_missing_bounds(bounds: Option<&Bounds>) -> bool {
 fn select_accessibility_object_ref(
     apps: &[AccessibleAppSummary],
     target_pid: u32,
+    window_context: Option<&WindowInfo>,
     candidates: &[String],
 ) -> Option<String> {
-    let mut pid_matches = apps.iter().filter(|app| app.pid == Some(target_pid));
-    let first = pid_matches.next()?;
-    let second = pid_matches.next();
-
-    if second.is_none() {
-        return Some(first.object_ref.clone());
-    }
-
     let lowered_candidates = candidates
         .iter()
         .map(|candidate| candidate.to_ascii_lowercase())
         .collect::<Vec<_>>();
-
-    apps.iter()
+    let pid_matches = apps
+        .iter()
         .filter(|app| app.pid == Some(target_pid))
-        .find(|app| {
-            let name = app.name.as_deref().unwrap_or_default().to_ascii_lowercase();
-            lowered_candidates
-                .iter()
-                .any(|candidate| !candidate.is_empty() && name.contains(candidate))
-        })
+        .collect::<Vec<_>>();
+
+    if pid_matches.len() == 1 {
+        return Some(pid_matches[0].object_ref.clone());
+    }
+
+    pid_matches
+        .into_iter()
+        .max_by_key(|app| accessibility_app_match_score(app, window_context, &lowered_candidates))
         .map(|app| app.object_ref.clone())
-        .or_else(|| Some(first.object_ref.clone()))
 }
 
 fn accessibility_filter_candidates(window_context: Option<&WindowInfo>) -> Vec<String> {
@@ -2361,6 +2356,53 @@ fn push_candidate(candidates: &mut Vec<String>, value: Option<&str>) {
 
 fn trimmed_nonempty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn accessibility_app_match_score(
+    app: &AccessibleAppSummary,
+    window_context: Option<&WindowInfo>,
+    lowered_candidates: &[String],
+) -> i64 {
+    let name = app.name.as_deref().unwrap_or_default().to_ascii_lowercase();
+    let mut score = 0_i64;
+
+    for candidate in lowered_candidates {
+        if candidate.is_empty() {
+            continue;
+        }
+        if name == *candidate {
+            score = score.max(20_000 + candidate.len() as i64);
+        } else if name.contains(candidate) {
+            score = score.max(10_000 + candidate.len() as i64);
+        }
+    }
+
+    if let Some(bounds_score) =
+        accessibility_bounds_match_score(app.bounds.as_ref(), window_context)
+    {
+        score += bounds_score;
+    }
+
+    score
+}
+
+fn accessibility_bounds_match_score(
+    app_bounds: Option<&Bounds>,
+    window_context: Option<&WindowInfo>,
+) -> Option<i64> {
+    let app_bounds = app_bounds?;
+    let window_bounds = window_context?.bounds.as_ref()?;
+    let window_x = window_bounds.x?;
+    let window_y = window_bounds.y?;
+
+    let x_delta = i64::from((app_bounds.x - window_x).abs());
+    let y_delta = i64::from((app_bounds.y - window_y).abs());
+    let width_delta =
+        i64::from((i64::from(app_bounds.width) - i64::from(window_bounds.width)).abs());
+    let height_delta =
+        i64::from((i64::from(app_bounds.height) - i64::from(window_bounds.height)).abs());
+
+    Some(5_000 - (x_delta + y_delta + width_delta + height_delta))
 }
 
 fn env_contains(key: &str, needle: &str) -> bool {
@@ -3192,10 +3234,60 @@ mod tests {
         let object_ref = select_accessibility_object_ref(
             &apps,
             2914326,
+            None,
             &[
                 "CU ATSPI GTK Test".to_string(),
                 "cu_atspi_gtk_test.py".to_string(),
             ],
+        )
+        .unwrap();
+
+        assert_eq!(object_ref, ":1.64/org/a11y/atspi/accessible/root");
+    }
+
+    #[test]
+    fn select_accessibility_object_ref_prefers_bounds_match_when_pid_is_shared() {
+        let window = window_info(
+            42,
+            Some("Terminal"),
+            Some("org.gnome.Terminal.desktop"),
+            Some("gnome-terminal-server"),
+            Some(2914326),
+        );
+        let apps = vec![
+            AccessibleAppSummary {
+                object_ref: ":1.31/org/a11y/atspi/accessible/root".to_string(),
+                name: Some("gnome-terminal-server".to_string()),
+                pid: Some(2914326),
+                role: "application".to_string(),
+                child_count: 1,
+                bounds: Some(Bounds {
+                    x: 0,
+                    y: 0,
+                    width: 1280,
+                    height: 720,
+                }),
+            },
+            AccessibleAppSummary {
+                object_ref: ":1.64/org/a11y/atspi/accessible/root".to_string(),
+                name: Some("gnome-terminal-server".to_string()),
+                pid: Some(2914326),
+                role: "application".to_string(),
+                child_count: 1,
+                bounds: Some(Bounds {
+                    x: 10,
+                    y: 20,
+                    width: 800,
+                    height: 600,
+                }),
+            },
+        ];
+
+        let object_ref = select_accessibility_object_ref(
+            &apps,
+            2914326,
+            Some(&window),
+            &["Terminal".to_string(), "gnome-terminal-server".to_string()],
         )
         .unwrap();
 

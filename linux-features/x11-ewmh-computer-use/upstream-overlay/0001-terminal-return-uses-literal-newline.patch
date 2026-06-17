@@ -1,0 +1,170 @@
+diff --git a/src/input.rs b/src/input.rs
+index 634b34b..d9d1578 100644
+--- a/src/input.rs
++++ b/src/input.rs
+@@ -163,7 +163,7 @@ pub fn report_from_listing(
+         );
+     }
+
+-    let keyboard = run_keyboard_backend(&action);
++    let keyboard = run_keyboard_backend(&action, Some(&requested_window));
+     if keyboard.ok {
+         success(&action, listing, requested_window, focus, keyboard)
+     } else {
+@@ -337,7 +337,10 @@ fn success(
+     }
+ }
+
+-fn run_keyboard_backend(action: &TargetedInputAction) -> KeyboardAttempt {
++fn run_keyboard_backend(
++    action: &TargetedInputAction,
++    target: Option<&WindowInfo>,
++) -> KeyboardAttempt {
+     let (args, route, requested_key, normalized_key) = match action {
+         TargetedInputAction::TypeText { text } if !text.is_ascii() => {
+             return run_unicode_text_backend(text);
+@@ -354,16 +357,29 @@ fn run_keyboard_backend(action: &TargetedInputAction) -> KeyboardAttempt {
+         ),
+         TargetedInputAction::PressKey { key } => {
+             let normalized = normalize_key_alias(key);
+-            (
+-                vec![
+-                    "key".to_string(),
+-                    "--clearmodifiers".to_string(),
+-                    normalized.clone(),
+-                ],
+-                "xdotool-key".to_string(),
+-                Some(key.clone()),
+-                Some(normalized),
+-            )
++            if should_type_literal_newline(&normalized, target) {
++                (
++                    vec![
++                        "type".to_string(),
++                        "--clearmodifiers".to_string(),
++                        "\n".to_string(),
++                    ],
++                    "xdotool-type-literal-newline".to_string(),
++                    Some(key.clone()),
++                    Some(normalized),
++                )
++            } else {
++                (
++                    vec![
++                        "key".to_string(),
++                        "--clearmodifiers".to_string(),
++                        normalized.clone(),
++                    ],
++                    "xdotool-key".to_string(),
++                    Some(key.clone()),
++                    Some(normalized),
++                )
++            }
+         }
+     };
+     let output = std::process::Command::new("xdotool").args(&args).output();
+@@ -399,6 +415,34 @@ fn run_keyboard_backend(action: &TargetedInputAction) -> KeyboardAttempt {
+     }
+ }
+
++fn should_type_literal_newline(normalized_key: &str, target: Option<&WindowInfo>) -> bool {
++    matches!(normalized_key, "Return" | "KP_Enter" | "Linefeed")
++        && target.is_some_and(target_looks_like_terminal)
++}
++
++fn target_looks_like_terminal(target: &WindowInfo) -> bool {
++    let terminal_markers = [
++        "terminal",
++        "gnome-terminal",
++        "xterm",
++        "kitty",
++        "alacritty",
++        "wezterm",
++        "konsole",
++        "tilix",
++        "lxterminal",
++        "mate-terminal",
++        "terminator",
++        "foot",
++        "rxvt",
++    ];
++    [target.app_id.as_deref(), target.wm_class.as_deref(), target.title.as_deref()]
++        .into_iter()
++        .flatten()
++        .map(|value| value.to_ascii_lowercase())
++        .any(|value| terminal_markers.iter().any(|marker| value.contains(marker)))
++}
++
+ fn run_unicode_text_backend(text: &str) -> KeyboardAttempt {
+     let keysyms = unicode_keysyms(text);
+     let mut args = vec!["key".to_string(), "--clearmodifiers".to_string()];
+diff --git a/tests/targeted_input_cli.rs b/tests/targeted_input_cli.rs
+index aa7ce5d..c531373 100644
+--- a/tests/targeted_input_cli.rs
++++ b/tests/targeted_input_cli.rs
+@@ -221,6 +221,65 @@ fn targeted_type_text_invokes_active_context_xdotool_after_verified_focus() {
+     );
+ }
+
++#[cfg(unix)]
++#[test]
++fn targeted_press_key_return_uses_literal_newline_for_terminal_windows() {
++    let dir = temp_dir("targeted-press-return-terminal");
++    let state = dir.join("active-window.txt");
++    std::fs::write(&state, "0x1").expect("write active state");
++    let log = dir.join("commands.log");
++    let state_path = state.display();
++    let log_path = log.display();
++    write_executable(
++        &dir.join("wmctrl"),
++        &format!(
++            "#!/bin/sh\nif [ \"$1\" = \"-lpGx\" ]; then\ncat <<'OUT'\n0x00000002 0 112 30 40 800 600 gnome-terminal-server.Gnome-terminal testhost Terminal\nOUT\nelif [ \"$1\" = \"-ia\" ]; then\n  echo \"wmctrl $*\" >> '{log_path}'\n  echo \"$2\" > '{state_path}'\n  exit 0\nelse\n  echo \"unexpected wmctrl args: $*\" >&2\n  exit 2\nfi\n"
++        ),
++    );
++    write_executable(
++        &dir.join("xprop"),
++        &format!(
++            "#!/bin/sh\nif [ \"$1\" = \"-root\" ]; then\n  id=$(cat '{state_path}')\n  echo \"_NET_ACTIVE_WINDOW(WINDOW): window id # $id\"\nelse\n  echo \"unexpected xprop args: $*\" >&2\n  exit 2\nfi\n"
++        ),
++    );
++    write_executable(
++        &dir.join("xdotool"),
++        &format!("#!/bin/sh\necho \"xdotool $*\" >> '{log_path}'\nexit 0\n"),
++    );
++
++    let output = run_cli_with_path(
++        &[
++            "press-key",
++            "--window-id",
++            "0x2",
++            "--key",
++            "Return",
++            "--json",
++        ],
++        path_with_fake_commands(&dir),
++    );
++    let log_contents = std::fs::read_to_string(&log).unwrap_or_default();
++    let _ = std::fs::remove_dir_all(&dir);
++
++    assert!(output.status.success(), "status should succeed");
++    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
++    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
++    assert_eq!(report["success"], true);
++    assert_eq!(report["input_sent"], true);
++    assert_eq!(
++        report["keyboard"]["route"],
++        "xdotool-type-literal-newline"
++    );
++    assert!(
++        log_contents.contains("xdotool type --clearmodifiers"),
++        "terminal Return should type a literal newline: {log_contents}"
++    );
++    assert!(
++        !log_contents.contains("xdotool key --clearmodifiers Return"),
++        "terminal Return should not use key injection: {log_contents}"
++    );
++}
++
+ #[cfg(unix)]
+ #[test]
+ fn targeted_press_key_invokes_active_context_xdotool_after_verified_focus() {
