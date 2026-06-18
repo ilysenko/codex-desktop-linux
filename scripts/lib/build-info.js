@@ -12,6 +12,9 @@ const {
   enabledLinuxFeatureIds,
   linuxFeaturesRoot,
 } = require("./linux-features.js");
+const {
+  parseCertificate,
+} = require("../organ-registry.js");
 
 function runGit(repoDir, args) {
   const result = childProcess.spawnSync("git", ["-C", repoDir, ...args], {
@@ -136,9 +139,10 @@ function sourceInfoFromGit(repoDir, env = process.env) {
   }
 
   const commit = overrideCommit || runGit(repoDir, ["rev-parse", "HEAD"]);
-  const status = runGit(repoDir, ["status", "--porcelain"]);
+  const status = runGit(repoDir, ["status", "--short", "--branch"]);
   const remote = sanitizeGitRemoteUrl(env.CODEX_LINUX_SOURCE_REMOTE?.trim() || runGit(repoDir, ["remote", "get-url", "origin"]));
   return {
+    repoPath: repoDir,
     commit,
     shortCommit: commit == null ? null : commit.slice(0, 12),
     version: readWrapperVersion(repoDir),
@@ -146,7 +150,8 @@ function sourceInfoFromGit(repoDir, env = process.env) {
     remote,
     commitUrl: githubCommitUrl(remote, commit),
     describe: env.CODEX_LINUX_SOURCE_DESCRIBE?.trim() || runGit(repoDir, ["describe", "--always", "--dirty", "--tags"]),
-    dirty: status != null && status.length > 0,
+    statusShortBranch: status,
+    dirty: status != null ? status.split(/\r?\n/u).some((line, index) => index > 0 && line.trim().length > 0) : null,
   };
 }
 
@@ -165,6 +170,7 @@ function sourceInfo(repoDir, env = process.env) {
     return { ...gitInfo, provenance: "git" };
   }
   return {
+    repoPath: null,
     commit: env.CODEX_LINUX_SOURCE_COMMIT?.trim() || null,
     shortCommit: env.CODEX_LINUX_SOURCE_COMMIT?.trim()?.slice(0, 12) || null,
     version: readWrapperVersion(repoDir),
@@ -172,8 +178,38 @@ function sourceInfo(repoDir, env = process.env) {
     remote: sanitizeGitRemoteUrl(env.CODEX_LINUX_SOURCE_REMOTE?.trim() || null),
     commitUrl: githubCommitUrl(env.CODEX_LINUX_SOURCE_REMOTE?.trim() || null, env.CODEX_LINUX_SOURCE_COMMIT?.trim() || null),
     describe: env.CODEX_LINUX_SOURCE_DESCRIBE?.trim() || null,
+    statusShortBranch: null,
     dirty: null,
     provenance: "unknown",
+  };
+}
+
+function readRootCertificate(repoDir) {
+  const certificatePath = path.join(repoDir, "G-CODEX_ROOT_CERTIFICATE.md");
+  if (!fs.existsSync(certificatePath)) {
+    return null;
+  }
+
+  try {
+    const certificate = parseCertificate(fs.readFileSync(certificatePath, "utf8"));
+    return {
+      path: certificatePath,
+      ...certificate,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readWorkflowHarness(repoDir) {
+  const documentPath = path.join(repoDir, "docs", "codex-workflow-harness.md");
+  if (!fs.existsSync(documentPath)) {
+    return null;
+  }
+
+  return {
+    path: documentPath,
+    status: "design proposal only",
   };
 }
 
@@ -301,6 +337,10 @@ function buildInfo(options) {
     linuxFeatures: {
       enabled: enabledLinuxFeatureIds({ featuresRoot }),
     },
+    workspace: {
+      rootCertificate: readRootCertificate(repoDir),
+      workflowHarness: readWorkflowHarness(repoDir),
+    },
   };
 }
 
@@ -353,5 +393,7 @@ module.exports = {
   sanitizeGitRemoteUrl,
   sourceInfo,
   sourceInfoFromGit,
+  readRootCertificate,
+  readWorkflowHarness,
   writeBuildInfo,
 };

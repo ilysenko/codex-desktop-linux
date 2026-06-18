@@ -99,6 +99,8 @@ const {
   buildInfo,
   githubCommitUrl,
   packageProfile,
+  readRootCertificate,
+  readWorkflowHarness,
   sourceInfo,
 } = require("./lib/build-info.js");
 const {
@@ -430,9 +432,28 @@ test("build info captures DMG hash, features, distro profile, and source revisio
       JSON.stringify({ enabled: ["read-aloud", "zed-opener"] }),
       "utf8",
     );
+    fs.writeFileSync(
+      path.join(tempRoot, "G-CODEX_ROOT_CERTIFICATE.md"),
+      [
+        "# Certificate",
+        "",
+        "**Status:** ACTIVE DEVELOPMENT ROOT",
+        "**Organ:** codex-desktop-linux",
+        "",
+        "**Required pre-work checks:**",
+        "- check this certificate before work",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.mkdirSync(path.join(tempRoot, "docs"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tempRoot, "docs", "codex-workflow-harness.md"),
+      "# Codex Workflow Harness\n\nDesign proposal only.\n",
+      "utf8",
+    );
 
     const info = buildInfo({
-      repoDir: tempRoot,
+      repoDir: path.join(__dirname, ".."),
       dmgPath,
       appDir,
       electronVersion: "41.3.0",
@@ -460,11 +481,18 @@ test("build info captures DMG hash, features, distro profile, and source revisio
     assert.equal(info.upstreamDmg.path, undefined);
     assert.equal(info.upstreamDmg.sha256, "e33df8d941faed4fdc3bb688fea70572931e81a6e0c2603b810338177148dfa2");
     assert.equal(info.upstreamDmg.appVersion, "1.2.3");
+    assert.equal(info.source.repoPath, path.join(__dirname, ".."));
     assert.equal(info.source.shortCommit, "abcdef123456");
     assert.equal(info.source.remote, "https://github.com/example/codex-desktop-linux.git");
     assert.equal(info.source.commitUrl, "https://github.com/example/codex-desktop-linux/commit/abcdef1234567890");
+    assert.equal(info.source.statusShortBranch?.startsWith("## "), true);
+    assert.equal(info.source.dirty, true);
     assert.equal(info.packageProfile.id, "debian-family");
     assert.equal(info.packageProfile.packageManager, "apt");
+    assert.match(info.workspace.rootCertificate.status, /ACTIVE DEVELOPMENT ROOT/);
+    assert.equal(info.workspace.rootCertificate.path, path.join(__dirname, "..", "G-CODEX_ROOT_CERTIFICATE.md"));
+    assert.equal(info.workspace.workflowHarness.status, "design proposal only");
+    assert.equal(info.workspace.workflowHarness.path, path.join(__dirname, "..", "docs", "codex-workflow-harness.md"));
     assert.deepEqual(info.linuxFeatures.enabled, ["read-aloud", "zed-opener"]);
     assert.equal(info.linuxFeatures.configPath, undefined);
   } finally {
@@ -497,9 +525,20 @@ test("build info sanitizes staged source metadata from packaged update-builder",
     assert.equal(info.remote, "https://example.com/org/repo.git");
     assert.equal(info.commitUrl, null);
     assert.equal(info.sourceInfoPath, undefined);
+    assert.equal(info.repoPath, undefined);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("read root certificate and workflow harness metadata from the repo", () => {
+  const repoDir = path.join(__dirname, "..");
+  const certificate = readRootCertificate(repoDir);
+  const workflowHarness = readWorkflowHarness(repoDir);
+
+    assert.match(certificate?.status ?? "", /ACTIVE DEVELOPMENT ROOT/);
+  assert.equal(certificate?.organ, "codex-desktop-linux");
+  assert.equal(workflowHarness?.status, "design proposal only");
 });
 
 test("build info derives GitHub commit links from common remote forms", () => {
@@ -2917,11 +2956,13 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
       "utf8",
     );
     assert.match(linuxDesktopSource, /Linux desktop/);
+    assert.match(linuxDesktopSource, /Workspace status/);
     assert.match(linuxDesktopSource, /Compact prompt window/);
     assert.match(linuxDesktopSource, /System tray/);
     assert.match(linuxDesktopSource, /Warm start/);
     assert.match(linuxDesktopSource, /Install updates when you close Codex/);
-    assert.match(linuxDesktopSource, /Build information/);
+    assert.match(linuxDesktopSource, /Workspace status/);
+    assert.match(linuxDesktopSource, /Copy repo path/);
     assert.match(linuxDesktopSource, /Linux source commit/);
     assert.match(linuxDesktopSource, /Copy commit/);
     assert.match(linuxDesktopSource, /Open commit/);
