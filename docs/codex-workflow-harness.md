@@ -26,6 +26,9 @@ Verified in this repository:
 
 - the Linux webview can display upstream rate-limit information
 - local scripts can inspect repository, build, test, package, and updater state
+- the Linux desktop settings page can expose a workspace-status card with repo
+  location, Git remote, branch, dirty/clean state, root-certificate status, and
+  workflow-harness status
 - optional workflow-specific integrations belong in `linux-features/` and stay
   disabled by default
 - launcher runtime hooks provide bounded extension points, but are not a
