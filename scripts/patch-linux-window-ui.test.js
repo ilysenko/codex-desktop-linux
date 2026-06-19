@@ -745,6 +745,16 @@ test("fast-mode guard descriptor follows upstream service-tier bundle names", ()
   assert.equal(descriptor.pattern.test("service-tier-icons-CsNhab5W.js"), false);
 });
 
+test("subagent nickname metadata descriptor follows upstream metadata bundle names", () => {
+  const descriptor = corePatchDescriptors().find((descriptor) =>
+    descriptor.id === "subagent-nickname-metadata-shape",
+  );
+
+  assert.ok(descriptor.pattern.test("app-server-manager-signals-BOGyjFm3.js"));
+  assert.ok(descriptor.pattern.test("use-host-config-Dpd_LQBD.js"));
+  assert.equal(descriptor.pattern.test("thread-context-inputs-D5uMjcUB.js"), false);
+});
+
 function trayBundleFixture() {
   return [
     "async function Hw(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(zw=!0,Lw??Rw??(Rw=(async()=>{let r=await Ww(e.buildFlavor,e.repoRoot),i=new n.Tray(r.defaultIcon);return i})()))}",
