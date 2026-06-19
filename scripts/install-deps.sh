@@ -313,8 +313,15 @@ install_dnf() {
 
 install_pacman() {
     info "Detected Arch Linux (pacman)"
+    local node_packages=(nodejs npm)
+
+    if has_compatible_nodejs; then
+        info "Compatible Node.js toolchain already available; skipping pacman nodejs/npm packages"
+        node_packages=()
+    fi
+
     sudo pacman -S --needed --noconfirm \
-        nodejs npm python \
+        "${node_packages[@]}" python \
         p7zip curl unzip zstd \
         base-devel
 }
