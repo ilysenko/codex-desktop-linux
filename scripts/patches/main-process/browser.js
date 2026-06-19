@@ -8,6 +8,7 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   const approvalPatch =
     "startup_timeout_sec:120,tools:{js:{approval_mode:`approve`}},env:{";
   const needle = "startup_timeout_sec:120,env:{";
+  const runtimeFactoryMethods = String.raw`Dn|Pn|Fa|La|Ha|\$a`;
   let patchedSource = currentSource;
   let patchedTrustedHashes = false;
   if (patchedSource.includes(needle)) {
@@ -15,7 +16,7 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   }
 
   const runtimeFactoryTrustedHashesRegex =
-    /([A-Za-z_$][\w$]*)\.(Dn|Pn|Fa|La|Ha)\(\{([^{}]*?trustedBrowserClientSha256s:)(?!codexLinuxTrustedBrowserClientSha256s\()([A-Za-z_$][\w$]*)(,[^{}]*?\})\)/g;
+    new RegExp(String.raw`([A-Za-z_$][\w$]*)\.(${runtimeFactoryMethods})\(\{([^{}]*?trustedBrowserClientSha256s:)(?!codexLinuxTrustedBrowserClientSha256s\()([A-Za-z_$][\w$]*)(,[^{}]*?\})\)`, "g");
   if (
     requireName(patchedSource, "node:fs") != null &&
     requireName(patchedSource, "node:path") != null &&
@@ -31,9 +32,9 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   }
 
   const currentRuntimeConfigRegex =
-    /([A-Za-z_$][\w$]*)\.(Dn|Pn|Fa|La|Ha)\(\{([^{}]*?)nodeReplPath:([^,{}]+)(,)(?!tools:\{js:\{approval_mode:`approve`\}\})/g;
+    new RegExp(String.raw`([A-Za-z_$][\w$]*)\.(${runtimeFactoryMethods})\(\{([^{}]*?)nodeReplPath:([^,{}]+)(,)(?!tools:\{js:\{approval_mode:\`approve\`\}\})`, "g");
   const currentRuntimeConfigAlreadyApprovedRegex =
-    /[A-Za-z_$][\w$]*\.(?:Dn|Pn|Fa|La|Ha)\(\{[^{}]*?nodeReplPath:[^,{}]+,tools:\{js:\{approval_mode:`approve`\}\},/;
+    new RegExp(String.raw`[A-Za-z_$][\w$]*\.(?:${runtimeFactoryMethods})\(\{[^{}]*?nodeReplPath:[^,{}]+,tools:\{js:\{approval_mode:\`approve\`\}\},`);
   let patchedAnyCurrentRuntimeConfig = false;
   patchedSource = patchedSource.replace(
     currentRuntimeConfigRegex,

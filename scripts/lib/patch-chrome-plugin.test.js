@@ -27,6 +27,15 @@ function currentBrowserClientFixture() {
   );
 }
 
+function electron42BrowserClientFixture() {
+  return (
+    String.raw`import{readdir as hk}from"node:fs/promises";import iz,{platform as gk}from"node:os";import bk from"node:path";import{readFile as X7}from"fs/promises";import{resolve as Q7}from"path";import{resolve as z7}from"path";import{homedir as W7,platform as H7}from"os";var Rd=z7(W7(),H7()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");import{ClassicLevel as V7}from"./node_modules/classic-level.mjs";import{resolve as Eg}from"path";import{tmpdir as G7}from"os";import{cp as K7,mkdtemp as J7,rm as lk}from"fs/promises";import{existsSync as Y7}from"fs";var ck=async(e,t)=>{let r=Eg(Rd,e,"Local Extension Settings",t);if(!Y7(r))return null;let n=await J7(Eg(Z7(),"codex"));await K7(r,n,{recursive:!0}),await lk(Eg(n,"LOCK"));let o=new V7(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await lk(n,{force:!0,recursive:!0})}},Z7=()=>"nodeRepl"in globalThis&&globalThis.nodeRepl?globalThis.nodeRepl.tmpDir:G7();var dk=async e=>{if(e.type!=="extension"||!e.metadata?.extensionInstanceId||!e.metadata.extensionId)return e;let t=await ez(e.metadata.extensionId,e.metadata.extensionInstanceId);return t?{...e,metadata:{...e.metadata,profileName:t.name,profileIsLastUsed:t.isLastUsed.toString(),profileOrdering:t.orderingIndex.toString()}}:e},ez=async(e,t)=>(await tz(e)).find(o=>o.instanceId===t)||null,tz=async e=>{let t=await rz();return await Promise.all(t.map(async r=>({...r,instanceId:await ck(r.id,e).catch(n=>(le(n),null))})))},rz=async()=>{let e=Q7(Rd,"Local State"),t=JSON.parse(await X7(e,"utf8"));return t.profile.profiles_order.map((r,n)=>{let o=t.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:t.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)};var sz=5e3,Tg=T_(iz.platform()),az=async(e,{codexSessionId:t})=>{let r=os(__),n=e.filter(i=>i.info.type==="iab"),o=uz(n,t,r);return await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close())),[...e.filter(i=>i.info.type!=="iab"),...o]},uz=(e,t,r)=>t==null?[]:e.filter(n=>n.info.metadata?.codexSessionId===t&&(r==null||n.info.metadata.codexAppBuildFlavor===r)),yk=async()=>{};function pg(e){return e==="extension"||e==="iab"||e==="cdp"}function dg(e){return e}function _I({browserId:e,clientInfo:t,requestedBrowserId:r}){return pg(r)?dg(t.type)===r:e===r}function fd(e,t){return{capabilities:O_(t.capabilities),id:e,name:t.name,type:dg(t.type),metadata:t.metadata}}var Nd=class{browsers=null;async refresh(){}list(){return this.getBrowsers()}` +
+    'async get(t){let r=(await this.getBrowsers()).find(n=>_I({browserId:n.id,clientInfo:n.info,requestedBrowserId:t}));if(r==null)throw new Error(`Browser is not available: ${t}`);return r}' +
+    String.raw`async getBrowsers(){return this.browsers==null&&await this.refresh(),this.browsers??[]}};` +
+    String.raw`function T_(){return"/tmp/codex-browser-use"}function os(){return null}function le(){}`
+  );
+}
+
 test("patches Linux Chrome Beta and Unstable support into bundled Chrome plugin scripts", () => {
   const pluginDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chrome-plugin-"));
   try {
@@ -181,6 +190,29 @@ function openChromeWindow(chromeArgs) {
     assert.match(openWindow, /google-chrome-beta\.desktop/);
     assert.match(openWindow, /commandPath\("google-chrome-beta"\)/);
     assert.match(openWindow, /commandPath\("google-chrome-unstable"\)/);
+  } finally {
+    fs.rmSync(pluginDir, { recursive: true, force: true });
+  }
+});
+
+test("patches current Electron 42 browser-client Chrome profile drift", () => {
+  const pluginDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chrome-plugin-current-"));
+  try {
+    writeScript(pluginDir, "browser-client.mjs", electron42BrowserClientFixture());
+
+    const result = spawnSync(process.execPath, [patcher, pluginDir], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /browser-client\.mjs missing patch target/);
+
+    const browserClient = readScript(pluginDir, "browser-client.mjs");
+    assert.match(browserClient, /async\(e,t,r=Rd\)/);
+    assert.match(browserClient, /r\.length===1\?r\[0\]:null/);
+    assert.match(browserClient, /codexLinuxRankBrowserBackends/);
+    assert.match(browserClient, /codexLinuxCloseDiscardedBrowserBackends/);
+    assert.match(browserClient, /codexLinuxRejectAmbiguousBrowserAlias/);
+    assert.match(browserClient, /__codexBrowsers=await this\.getBrowsers\(\)/);
   } finally {
     fs.rmSync(pluginDir, { recursive: true, force: true });
   }

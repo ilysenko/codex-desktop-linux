@@ -472,6 +472,19 @@ function applyLinuxChatSearchHydrationPatch(currentSource) {
     },
   );
   if (!patchedResultSelectCache) {
+    if (requestAlias != null) {
+      const currentRoutePattern =
+        /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{switch\(\2\.kind\)\{case`local`:case`remote`:([A-Za-z_$][\w$]*)\(\2\.threadKey,\3,\4\);return;case`chatgpt`:return\}\}/u;
+      if (currentRoutePattern.test(patchedSource)) {
+        return patchedSource.replace(
+          currentRoutePattern,
+          (_match, routeFn, resultVar, localNavigateArg, routeNavigateArg, modeArg, navigateFn) => {
+            const helper = `function codexLinuxHydrateSearchConversation(e,t){try{if(e==null||typeof e!==\`object\`||e.kind!==\`local\`)return Promise.resolve();let n=e.hostId??\`local\`,r=${requestAlias}(\`load-recent-conversation-ids-for-host\`,{hostId:n,conversationIds:[t]}),i=new Promise(e=>globalThis.setTimeout(e,1500));return Promise.race([r,i]).catch(()=>{})}catch{return Promise.resolve()}}`;
+            return `${helper}async function ${routeFn}(${resultVar},${localNavigateArg},${routeNavigateArg},${modeArg}){switch(${resultVar}.kind){case\`local\`:await codexLinuxHydrateSearchConversation(${resultVar},${resultVar}.threadKey);${navigateFn}(${resultVar}.threadKey,${localNavigateArg},${routeNavigateArg});return;case\`remote\`:${navigateFn}(${resultVar}.threadKey,${localNavigateArg},${routeNavigateArg});return;case\`chatgpt\`:return}}`;
+          },
+        );
+      }
+    }
     console.warn(
       "WARN: Could not find chat search result selection cache — skipping Linux chat search hydration patch",
     );
@@ -1214,6 +1227,10 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
       "Ye=(Ge?M?.kind===`comment`?he:[]:Je==null?he:he.filter(e=>e.id!==Je.id)).flatMap";
     const currentCommentPreloadSelectedMarkersPatch =
       "Ye=(Ge?M?.kind===`comment`?We:[]:Je==null?he:he.filter(e=>e.id!==Je.id)).flatMap";
+    const electron42CommentPreloadMarkersNeedle =
+      "Ze=(qe?A?.kind===`comment`?ge:[]:Xe==null?ge:ge.filter(e=>e.id!==Xe.id)).flatMap";
+    const electron42CommentPreloadMarkersPatch =
+      "Ze=(qe?A?.kind===`comment`?Ke:[]:Xe==null?ge:ge.filter(e=>e.id!==Xe.id)).flatMap";
     if (patchedSource.includes(currentMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentSelectedMarkersPatch)) {
@@ -1223,6 +1240,8 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
     } else if (patchedSource.includes(latestCommentPreloadMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentCommentPreloadSelectedMarkersPatch)) {
+      // Already patched.
+    } else if (patchedSource.includes(electron42CommentPreloadMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentMarkersNeedle)) {
       patchedSource = patchedSource.replace(currentMarkersNeedle, currentMarkersPatch);
@@ -1242,6 +1261,11 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
       patchedSource = patchedSource.replace(
         currentCommentPreloadSelectedMarkersNeedle,
         currentCommentPreloadSelectedMarkersPatch,
+      );
+    } else if (patchedSource.includes(electron42CommentPreloadMarkersNeedle)) {
+      patchedSource = patchedSource.replace(
+        electron42CommentPreloadMarkersNeedle,
+        electron42CommentPreloadMarkersPatch,
       );
     } else {
       console.warn("WARN: Could not find browser annotation screenshot markers — skipping screenshot marker patch");

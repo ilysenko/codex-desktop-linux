@@ -416,6 +416,10 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
       oldText: String.raw`var Cd=S7(v7(),E7()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");`,
       newText: String.raw`var Cd=S7(v7(),E7()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome"),codexLinuxChromeUserDataDirectories=()=>E7()==="linux"?[S7(v7(),".config","BraveSoftware","Brave-Browser"),S7(v7(),".config","google-chrome"),S7(v7(),".config","google-chrome-beta"),S7(v7(),".config","google-chrome-unstable"),S7(v7(),".config","chromium")]:[Cd];`,
     },
+    {
+      oldText: String.raw`var Rd=z7(W7(),H7()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome");`,
+      newText: String.raw`var Rd=z7(W7(),H7()==="win32"?"AppData\\Local\\Google\\Chrome\\User Data":"Library/Application Support/Google/Chrome"),codexLinuxChromeUserDataDirectories=()=>H7()==="linux"?[z7(W7(),".config","BraveSoftware","Brave-Browser"),z7(W7(),".config","google-chrome"),z7(W7(),".config","google-chrome-beta"),z7(W7(),".config","google-chrome-unstable"),z7(W7(),".config","chromium")]:[Rd];`,
+    },
   ],
   alreadyText: "codexLinuxChromeUserDataDirectories",
 });
@@ -428,8 +432,12 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
       oldText: String.raw`var VI=async(e,t)=>{let r=bg(Cd,e,"Local Extension Settings",t);if(!k7(r))return null;let n=await I7(bg(R7(),"codex"));await A7(r,n,{recursive:!0}),await HI(bg(n,"LOCK"));let o=new C7(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await HI(n,{force:!0,recursive:!0})}}`,
       newText: String.raw`var VI=async(e,t,r=Cd)=>{let n=bg(r,e,"Local Extension Settings",t);if(!k7(n))return null;let o=await I7(bg(R7(),"codex"));await A7(n,o,{recursive:!0}),await HI(bg(o,"LOCK"));let i=new C7(o,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await i.open();let s=await i.get("extensionInstanceId");if(!s)return null;let a=JSON.parse(s);return typeof a!="string"?null:a}finally{await i.close(),await HI(o,{force:!0,recursive:!0})}}`,
     },
+    {
+      oldText: String.raw`var ck=async(e,t)=>{let r=Eg(Rd,e,"Local Extension Settings",t);if(!Y7(r))return null;let n=await J7(Eg(Z7(),"codex"));await K7(r,n,{recursive:!0}),await lk(Eg(n,"LOCK"));let o=new V7(n,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await o.open();let i=await o.get("extensionInstanceId");if(!i)return null;let s=JSON.parse(i);return typeof s!="string"?null:s}finally{await o.close(),await lk(n,{force:!0,recursive:!0})}}`,
+      newText: String.raw`var ck=async(e,t,r=Rd)=>{let n=Eg(r,e,"Local Extension Settings",t);if(!Y7(n))return null;let o=await J7(Eg(Z7(),"codex"));await K7(n,o,{recursive:!0}),await lk(Eg(o,"LOCK"));let i=new V7(o,{createIfMissing:!1,keyEncoding:"utf8",valueEncoding:"utf8"});try{await i.open();let s=await i.get("extensionInstanceId");if(!s)return null;let a=JSON.parse(s);return typeof a!="string"?null:a}finally{await i.close(),await lk(o,{force:!0,recursive:!0})}}`,
+    },
   ],
-  alreadyText: "async(t,e,r=Tc)",
+  alreadyText: ["async(t,e,r=Tc)", "async(e,t,r=Rd)"],
 });
 
 patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
@@ -439,6 +447,10 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
     {
       oldText: String.raw`N7=async(e,t)=>(await O7(e)).find(o=>o.instanceId===t)||null,O7=async e=>{let t=await M7();return await Promise.all(t.map(async r=>({...r,instanceId:await VI(r.id,e).catch(n=>(le(n),null))})))},M7=async()=>{let e=D7(Cd,"Local State"),t=JSON.parse(await P7(e,"utf8"));return t.profile.profiles_order.map((r,n)=>{let o=t.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:t.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)}`,
       newText: String.raw`N7=async(e,t)=>{let r=(await O7(e)).filter(n=>n.instanceId===t);return r.length===1?r[0]:null},O7=async e=>{let t=[];for(let r of codexLinuxChromeUserDataDirectories())try{let n=await M7(r);t.push(...await Promise.all(n.map(async o=>({...o,userDataDir:r,instanceId:await VI(o.id,e,r).catch(i=>(le(i),null))}))))}catch(n){le(n)}return t},M7=async r=>{let n=D7(r,"Local State"),o=JSON.parse(await P7(n,"utf8"));return o.profile.profiles_order.map((i,s)=>{let a=o.profile.info_cache[i];return a?{id:i,name:a.name,isLastUsed:o.profile.last_used===i,orderingIndex:s,avatarUrl:a.avatar_icon}:null}).filter(i=>!!i)}`,
+    },
+    {
+      oldText: String.raw`ez=async(e,t)=>(await tz(e)).find(o=>o.instanceId===t)||null,tz=async e=>{let t=await rz();return await Promise.all(t.map(async r=>({...r,instanceId:await ck(r.id,e).catch(n=>(le(n),null))})))},rz=async()=>{let e=Q7(Rd,"Local State"),t=JSON.parse(await X7(e,"utf8"));return t.profile.profiles_order.map((r,n)=>{let o=t.profile.info_cache[r];return o?{id:r,name:o.name,isLastUsed:t.profile.last_used===r,orderingIndex:n,avatarUrl:o.avatar_icon}:null}).filter(r=>!!r)}`,
+      newText: String.raw`ez=async(e,t)=>{let r=(await tz(e)).filter(n=>n.instanceId===t);return r.length===1?r[0]:null},tz=async e=>{let t=[];for(let r of codexLinuxChromeUserDataDirectories())try{let n=await rz(r);t.push(...await Promise.all(n.map(async o=>({...o,userDataDir:r,instanceId:await ck(o.id,e,r).catch(i=>(le(i),null))}))))}catch(n){le(n)}return t},rz=async r=>{let n=Q7(r,"Local State"),o=JSON.parse(await X7(n,"utf8"));return o.profile.profiles_order.map((i,s)=>{let a=o.profile.info_cache[i];return a?{id:i,name:a.name,isLastUsed:o.profile.last_used===i,orderingIndex:s,avatarUrl:a.avatar_icon}:null}).filter(i=>!!i)}`,
     },
   ],
   alreadyText: "r.length===1?r[0]:null",
@@ -451,6 +463,10 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
     {
       oldText: String.raw`j7=async(e,{codexSessionId:t})=>{let r=tl(p_),n=e.filter(i=>i.info.type==="iab"),o=q7(n,t,r);return await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close())),[...e.filter(i=>i.info.type!=="iab"),...o]},q7=(e,t,r)=>t==null?[]:e.filter(n=>n.info.metadata?.codexSessionId===t&&(r==null||n.info.metadata.codexAppBuildFlavor===r)),ek=async`,
       newText: String.raw`j7=async(e,{codexSessionId:t})=>{let r=tl(p_),n=e.filter(i=>i.info.type==="iab"),o=q7(n,t,r);await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close()));let s=[...e.filter(i=>i.info.type!=="iab"),...o];return await codexLinuxRankBrowserBackends(s)},q7=(e,t,r)=>t==null?[]:e.filter(n=>n.info.metadata?.codexSessionId===t&&(r==null||n.info.metadata.codexAppBuildFlavor===r));async function codexLinuxRankBrowserBackends(e){if(XI()!=="linux")return e;let t=await Promise.all(e.map(async(r,n)=>({browser:r,index:n,userTabCount:await codexLinuxExtensionUserTabCount(r)})));return t.sort(codexLinuxBackendCompare).map(({browser:r})=>r)}function codexLinuxBackendCompare(e,t){let r=e.browser.info.type==="extension",n=t.browser.info.type==="extension";return!r||!n?e.index-t.index:codexLinuxExtensionBackendScore(t)-codexLinuxExtensionBackendScore(e)||e.index-t.index}async function codexLinuxExtensionUserTabCount(e){if(e.info.type!=="extension")return-1;try{let t=await Promise.race([e.api.getUserTabs(),new Promise((r,n)=>setTimeout(()=>n(new Error("Chrome profile tab probe timed out")),750))]);return Array.isArray(t)?t.length:0}catch(t){return le(t),0}}function codexLinuxExtensionBackendScore(e){let t=e.userTabCount>0?1e4+e.userTabCount:0,r=e.browser.info.metadata??{};r.profileIsLastUsed==="true"&&(t+=100);let n=Number(r.profileOrdering);return Number.isFinite(n)?t-n:t}var ek=async`,
+    },
+    {
+      oldText: String.raw`az=async(e,{codexSessionId:t})=>{let r=os(__),n=e.filter(i=>i.info.type==="iab"),o=uz(n,t,r);return await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close())),[...e.filter(i=>i.info.type!=="iab"),...o]},uz=(e,t,r)=>t==null?[]:e.filter(n=>n.info.metadata?.codexSessionId===t&&(r==null||n.info.metadata.codexAppBuildFlavor===r)),yk=async`,
+      newText: String.raw`az=async(e,{codexSessionId:t})=>{let r=os(__),n=e.filter(i=>i.info.type==="iab"),o=uz(n,t,r);await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close()));let s=[...e.filter(i=>i.info.type!=="iab"),...o];return await codexLinuxRankBrowserBackends(s)},uz=(e,t,r)=>t==null?[]:e.filter(n=>n.info.metadata?.codexSessionId===t&&(r==null||n.info.metadata.codexAppBuildFlavor===r));async function codexLinuxRankBrowserBackends(e){if(gk()!=="linux")return e;let t=await Promise.all(e.map(async(r,n)=>({browser:r,index:n,userTabCount:await codexLinuxExtensionUserTabCount(r)})));return t.sort(codexLinuxBackendCompare).map(({browser:r})=>r)}function codexLinuxBackendCompare(e,t){let r=e.browser.info.type==="extension",n=t.browser.info.type==="extension";return!r||!n?e.index-t.index:codexLinuxExtensionBackendScore(t)-codexLinuxExtensionBackendScore(e)||e.index-t.index}async function codexLinuxExtensionUserTabCount(e){if(e.info.type!=="extension")return-1;try{let t=await Promise.race([e.api.getUserTabs(),new Promise((r,n)=>setTimeout(()=>n(new Error("Chrome profile tab probe timed out")),750))]);return Array.isArray(t)?t.length:0}catch(t){return le(t),0}}function codexLinuxExtensionBackendScore(e){let t=e.userTabCount>0?1e4+e.userTabCount:0,r=e.browser.info.metadata??{};r.profileIsLastUsed==="true"&&(t+=100);let n=Number(r.profileOrdering);return Number.isFinite(n)?t-n:t}var yk=async`,
     },
   ],
   alreadyText: "codexLinuxRankBrowserBackends",
@@ -472,6 +488,10 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
       oldText: String.raw`function tI({browserId:e,clientInfo:t,requestedBrowserId:r}){return ig(r)?og(t.type)===r:e===r}function ld`,
       newText: String.raw`function tI({browserId:e,clientInfo:t,requestedBrowserId:r}){return ig(r)?og(t.type)===r:e===r}function codexLinuxRejectAmbiguousBrowserAlias(e,t){if(XI()!=="linux"||e!=="extension")return;let r=t.filter(n=>n.info?.type==="extension");if(r.length<=1)return;let n=r.map(o=>{let i=o.info.metadata??{},s=i.profileName??i.profileDirectory??i.extensionInstanceId??"unknown-profile";return o.id+" ("+s+")"}).join(", ");throw new Error('Multiple Chrome extension instances are connected. Use a specific browser id instead of "extension": '+n)}function ld`,
     },
+    {
+      oldText: String.raw`function _I({browserId:e,clientInfo:t,requestedBrowserId:r}){return pg(r)?dg(t.type)===r:e===r}function fd`,
+      newText: String.raw`function _I({browserId:e,clientInfo:t,requestedBrowserId:r}){return pg(r)?dg(t.type)===r:e===r}function codexLinuxRejectAmbiguousBrowserAlias(e,t){if(gk()!=="linux"||e!=="extension")return;let r=t.filter(n=>n.info?.type==="extension");if(r.length<=1)return;let n=r.map(o=>{let i=o.info.metadata??{},s=i.profileName??i.profileDirectory??i.extensionInstanceId??"unknown-profile";return o.id+" ("+s+")"}).join(", ");throw new Error('Multiple Chrome extension instances are connected. Use a specific browser id instead of "extension": '+n)}function fd`,
+    },
   ],
   alreadyText: "codexLinuxRejectAmbiguousBrowserAlias",
 });
@@ -483,10 +503,15 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
       oldText: String.raw`if(ig(l.browser_id)){let _=li(l.browser_id);KI(_)}let p=await r.get(l.browser_id),`,
       newText: String.raw`if(ig(l.browser_id)){let _=li(l.browser_id);KI(_),codexLinuxRejectAmbiguousBrowserAlias(l.browser_id,await r.getBrowsers())}let p=await r.get(l.browser_id),`,
     },
+    {
+      oldText: 'async get(t){let r=(await this.getBrowsers()).find(n=>_I({browserId:n.id,clientInfo:n.info,requestedBrowserId:t}));if(r==null)throw new Error(`Browser is not available: ${t}`);return r}',
+      newText: 'async get(t){let __codexBrowsers=await this.getBrowsers();pg(t)&&codexLinuxRejectAmbiguousBrowserAlias(t,__codexBrowsers);let r=__codexBrowsers.find(n=>_I({browserId:n.id,clientInfo:n.info,requestedBrowserId:t}));if(r==null)throw new Error(`Browser is not available: ${t}`);return r}',
+    },
   ],
   alreadyText: [
     "codexLinuxRejectAmbiguousBrowserAlias(p.browser_id,i)",
     "codexLinuxRejectAmbiguousBrowserAlias(l.browser_id,await r.getBrowsers())",
+    "__codexBrowsers=await this.getBrowsers()",
   ],
 });
 
