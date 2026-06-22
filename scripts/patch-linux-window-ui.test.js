@@ -1625,6 +1625,18 @@ test("supports explicit tray quit patching when upstream renames the quit label 
   );
 });
 
+test("replaces role-only tray quit items with an explicit Linux quit handler", () => {
+  const source =
+    "let n=require(`electron`);var q=class{getNativeTrayMenuItems(){return[{label:`New Chat`,click:()=>{}},{type:`separator`},{role:`quit`}]}};";
+  const patched = applyPatchTwice(applyLinuxExplicitTrayQuitPatch, source);
+
+  assert.doesNotMatch(patched, /\{role:`quit`\}/);
+  assert.match(
+    patched,
+    /\{label:`Quit`,click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/,
+  );
+});
+
 test("supports explicit IPC quit patching when minified aliases drift", () => {
   const source =
     "let x=require(`electron`);var q=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{x.app.quit()}}]}};if(m.type===`quit-app`){x.app.quit();return}";

@@ -1,5 +1,7 @@
 "use strict";
 
+const { findMatchingBrace, requireName } = require("../shared.js");
+
 function applyLinuxQuitGuardPatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -43,6 +45,44 @@ function applyLinuxQuitGuardPatch(currentSource) {
 
 function linuxExplicitQuitExpression() {
   return "typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),";
+}
+
+function patchRoleOnlyTrayQuitItems(source, electronVar, quitMarkerExpression) {
+  let patchedSource = source;
+  let changed = false;
+  const methodNeedle = "getNativeTrayMenuItems(){";
+  const roleOnlyTrayQuitRegex = /\{role:`quit`\}/g;
+  let cursor = 0;
+
+  while (cursor < patchedSource.length) {
+    const methodIndex = patchedSource.indexOf(methodNeedle, cursor);
+    if (methodIndex === -1) {
+      break;
+    }
+
+    const openIndex = methodIndex + methodNeedle.length - 1;
+    const closeIndex = findMatchingBrace(patchedSource, openIndex);
+    if (closeIndex === -1) {
+      break;
+    }
+
+    const body = patchedSource.slice(openIndex + 1, closeIndex);
+    const patchedBody = body.replace(roleOnlyTrayQuitRegex, () => {
+      changed = true;
+      return `{label:\`Quit\`,click:()=>{${quitMarkerExpression}${electronVar}.app.quit()}}`;
+    });
+    if (patchedBody !== body) {
+      patchedSource =
+        patchedSource.slice(0, openIndex + 1) +
+        patchedBody +
+        patchedSource.slice(closeIndex);
+      cursor = openIndex + 1 + patchedBody.length + 1;
+    } else {
+      cursor = closeIndex + 1;
+    }
+  }
+
+  return { patchedSource, changed };
 }
 
 function applyLinuxWillQuitDrainTimeoutPatch(currentSource) {
@@ -128,6 +168,7 @@ function applyLinuxExplicitTrayQuitPatch(currentSource) {
   let patchedSource = currentSource;
 
   const quitMarkerExpression = linuxExplicitQuitExpression();
+  const electronVar = requireName(currentSource, "electron") ?? "n";
 
   const trayQuitNeedle = "{label:rB(this.appName),click:()=>{n.app.quit()}}";
   const trayQuitPatch =
@@ -157,6 +198,13 @@ function applyLinuxExplicitTrayQuitPatch(currentSource) {
       return `{label:${labelExpression},click:()=>{${quitMarkerExpression}${electronVar}.app.quit()}}`;
     },
   );
+  const roleOnlyTrayQuitPatch = patchRoleOnlyTrayQuitItems(
+    patchedSource,
+    electronVar,
+    quitMarkerExpression,
+  );
+  patchedSource = roleOnlyTrayQuitPatch.patchedSource;
+  patchedAny ||= roleOnlyTrayQuitPatch.changed;
   if (
     !patchedAny &&
     !patchedTrayQuitRegex.test(patchedSource) &&
