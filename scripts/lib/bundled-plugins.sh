@@ -5,18 +5,63 @@
 # shellcheck shell=bash
 
 # ---- Install Linux-safe bundled plugin resources ----
+MIN_CARGO_VERSION_FOR_BUNDLED_PLUGINS="${MIN_CARGO_VERSION_FOR_BUNDLED_PLUGINS:-1.78.0}"
+
+cargo_version_at_least() {
+    local actual="$1"
+    local required="$2"
+    python3 - "$actual" "$required" <<'PY'
+import re
+import sys
+
+def version_tuple(value):
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", value)
+    if match is None:
+        raise SystemExit(1)
+    return tuple(int(part) for part in match.groups())
+
+raise SystemExit(0 if version_tuple(sys.argv[1]) >= version_tuple(sys.argv[2]) else 1)
+PY
+}
+
 find_cargo_for_linux_computer_use() {
+    local cargo_cmd=""
+    local version=""
+
     if command -v cargo >/dev/null 2>&1; then
-        command -v cargo
+        cargo_cmd="$(command -v cargo)"
+    elif [ -x "$HOME/.cargo/bin/cargo" ]; then
+        cargo_cmd="$HOME/.cargo/bin/cargo"
+    else
+        return 1
+    fi
+
+    version="$("$cargo_cmd" --version 2>/dev/null || true)"
+    if ! cargo_version_at_least "$version" "$MIN_CARGO_VERSION_FOR_BUNDLED_PLUGINS"; then
+        warn "cargo is too old for bundled Chrome/Computer Use plugins: found '${version:-unknown}', need >= $MIN_CARGO_VERSION_FOR_BUNDLED_PLUGINS"
+        return 1
+    fi
+
+    printf '%s\n' "$cargo_cmd"
+}
+
+bundled_plugin_build_failures_are_allowed() {
+    case "${CODEX_ALLOW_INCOMPLETE_BUNDLED_PLUGINS:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+handle_required_bundled_plugin_failure() {
+    local plugin_name="$1"
+    local detail="$2"
+
+    if bundled_plugin_build_failures_are_allowed; then
+        warn "$plugin_name bundled plugin unavailable: $detail"
         return 0
     fi
 
-    if [ -x "$HOME/.cargo/bin/cargo" ]; then
-        echo "$HOME/.cargo/bin/cargo"
-        return 0
-    fi
-
-    return 1
+    error "$plugin_name bundled plugin unavailable: $detail. Install a supported Rust toolchain with cargo >= $MIN_CARGO_VERSION_FOR_BUNDLED_PLUGINS, or set CODEX_ALLOW_INCOMPLETE_BUNDLED_PLUGINS=1 to build a deliberately incomplete app."
 }
 
 build_linux_computer_use_backend() {
@@ -1245,12 +1290,14 @@ install_bundled_plugin_resources() {
 
     if stage_chrome_plugin_from_upstream "$source_chrome_plugin" "$bundled_plugins_dir/plugins"; then
         include_chrome=1
+    elif [ -d "$source_chrome_plugin" ]; then
+        handle_required_bundled_plugin_failure "Chrome" "failed to stage the Linux extension host"
     fi
 
     if stage_linux_computer_use_plugin "$bundled_plugins_dir/plugins"; then
         include_computer_use=1
     else
-        warn "Linux Computer Use plugin will be unavailable"
+        handle_required_bundled_plugin_failure "Linux Computer Use" "failed to build or stage the native backend"
     fi
 
     if [ "$include_browser" -eq 0 ] && [ "$include_chrome" -eq 0 ] && [ "$include_computer_use" -eq 0 ]; then

@@ -2871,6 +2871,117 @@ test_bundled_plugin_builders_accept_prebuilt_binaries() {
     assert_contains "$output_log" "$host"
 }
 
+test_bundled_plugin_builders_reject_old_cargo() {
+    info "Checking bundled plugin builders reject old cargo"
+    local workspace="$TMP_DIR/bundled-plugin-old-cargo"
+    local bin_dir="$workspace/bin"
+    local fake_home="$workspace/home"
+    local output_log="$workspace/output.log"
+
+    mkdir -p "$bin_dir" "$fake_home"
+    cat > "$bin_dir/cargo" <<'SCRIPT'
+#!/usr/bin/env bash
+echo "cargo 1.75.0 (1d8b05cdd 2023-11-20)"
+SCRIPT
+    chmod +x "$bin_dir/cargo"
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        HOME="$fake_home"
+        PATH="$bin_dir:/bin"
+        warn() { echo "[WARN] $*" >&2; }
+        info() { echo "[INFO] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        if find_cargo_for_linux_computer_use; then
+            echo "old cargo was accepted" >&2
+            exit 1
+        fi
+    ) > "$output_log" 2>&1
+
+    assert_contains "$output_log" "cargo is too old for bundled Chrome/Computer Use plugins"
+    assert_contains "$output_log" "need >= 1.78.0"
+}
+
+test_bundled_plugin_install_fails_without_cargo_by_default() {
+    info "Checking bundled plugin install fails without cargo by default"
+    local workspace="$TMP_DIR/bundled-plugin-missing-cargo"
+    local app_dir="$workspace/Codex.app"
+    local install_dir="$workspace/install"
+    local output_log="$workspace/output.log"
+    local fake_home="$workspace/home"
+
+    mkdir -p "$workspace" "$install_dir/resources" "$fake_home"
+    make_fake_chrome_upstream_app "$app_dir"
+
+    if (
+        SCRIPT_DIR="$REPO_DIR"
+        INSTALL_DIR="$install_dir"
+        WORK_DIR="$workspace/work"
+        HOME="$fake_home"
+        PATH="/bin"
+        ARCH="x86_64"
+        ICON_SOURCE="$workspace/missing-icon.png"
+        CODEX_APP_ID="codex-desktop"
+        mkdir -p "$WORK_DIR"
+        warn() { echo "[WARN] $*" >&2; }
+        info() { echo "[INFO] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        install_bundled_plugin_resources "$app_dir"
+    ) > "$output_log" 2>&1; then
+        fail "Expected missing cargo to fail bundled plugin installation"
+    fi
+
+    assert_contains "$output_log" "cargo not found; Chrome extension host will be unavailable"
+    assert_contains "$output_log" "Chrome bundled plugin unavailable"
+    assert_contains "$output_log" "CODEX_ALLOW_INCOMPLETE_BUNDLED_PLUGINS=1"
+}
+
+test_bundled_plugin_install_fails_with_old_cargo_by_default() {
+    info "Checking bundled plugin install fails with old cargo by default"
+    local workspace="$TMP_DIR/bundled-plugin-install-old-cargo"
+    local app_dir="$workspace/Codex.app"
+    local install_dir="$workspace/install"
+    local bin_dir="$workspace/bin"
+    local output_log="$workspace/output.log"
+    local fake_home="$workspace/home"
+
+    mkdir -p "$workspace" "$install_dir/resources" "$bin_dir" "$fake_home"
+    make_fake_chrome_upstream_app "$app_dir"
+    cat > "$bin_dir/cargo" <<'SCRIPT'
+#!/usr/bin/env bash
+echo "cargo 1.75.0 (1d8b05cdd 2023-11-20)"
+SCRIPT
+    chmod +x "$bin_dir/cargo"
+
+    if (
+        SCRIPT_DIR="$REPO_DIR"
+        INSTALL_DIR="$install_dir"
+        WORK_DIR="$workspace/work"
+        HOME="$fake_home"
+        PATH="$bin_dir:/bin"
+        ARCH="x86_64"
+        ICON_SOURCE="$workspace/missing-icon.png"
+        CODEX_APP_ID="codex-desktop"
+        mkdir -p "$WORK_DIR"
+        warn() { echo "[WARN] $*" >&2; }
+        info() { echo "[INFO] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        install_bundled_plugin_resources "$app_dir"
+    ) > "$output_log" 2>&1; then
+        fail "Expected old cargo to fail bundled plugin installation"
+    fi
+
+    assert_contains "$output_log" "cargo is too old for bundled Chrome/Computer Use plugins"
+    assert_contains "$output_log" "Chrome bundled plugin unavailable"
+    assert_contains "$output_log" "CODEX_ALLOW_INCOMPLETE_BUNDLED_PLUGINS=1"
+}
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
@@ -3618,6 +3729,7 @@ test_browser_use_node_repl_fallback_runtime() {
         CODEX_BROWSER_USE_NODE_REPL_RUNTIME_URL="file://$archive"
         CODEX_BROWSER_USE_NODE_REPL_RUNTIME_SHA256="$archive_sha"
         mkdir -p "$WORK_DIR"
+        CODEX_ALLOW_INCOMPLETE_BUNDLED_PLUGINS=1
         warn() { echo "[WARN] $*" >&2; }
         info() { echo "[INFO] $*" >&2; }
         # shellcheck disable=SC1091
@@ -3734,6 +3846,7 @@ test_browser_plugin_renamed_upstream_staging() {
         ICON_SOURCE="$workspace/missing-icon.png"
         CODEX_APP_ID="codex-desktop"
         mkdir -p "$WORK_DIR"
+        CODEX_ALLOW_INCOMPLETE_BUNDLED_PLUGINS=1
         warn() { echo "[WARN] $*" >&2; }
         info() { echo "[INFO] $*" >&2; }
         # shellcheck disable=SC1091
@@ -3965,6 +4078,7 @@ test_chrome_plugin_staging() {
         ICON_SOURCE="$workspace/missing-icon.png"
         CODEX_APP_ID="codex-desktop"
         mkdir -p "$WORK_DIR"
+        CODEX_ALLOW_INCOMPLETE_BUNDLED_PLUGINS=1
         warn() { echo "[WARN] $*" >&2; }
         info() { echo "[INFO] $*" >&2; }
         # shellcheck disable=SC1091
@@ -4107,6 +4221,7 @@ JSON
         ICON_SOURCE="$workspace/missing-icon.png"
         CODEX_APP_ID="codex-desktop"
         mkdir -p "$WORK_DIR"
+        CODEX_ALLOW_INCOMPLETE_BUNDLED_PLUGINS=1
         warn() { echo "[WARN] $*" >&2; }
         info() { echo "[INFO] $*" >&2; }
         # shellcheck disable=SC1091
@@ -6229,6 +6344,9 @@ main() {
     test_native_module_rebuild_uses_local_electron_rebuild_toolchain
     test_native_module_rebuild_accepts_prebuilt_source
     test_bundled_plugin_builders_accept_prebuilt_binaries
+    test_bundled_plugin_builders_reject_old_cargo
+    test_bundled_plugin_install_fails_without_cargo_by_default
+    test_bundled_plugin_install_fails_with_old_cargo_by_default
     test_browser_use_node_repl_fallback_runtime
     test_browser_use_file_url_policy_patch_behavior
     test_browser_plugin_renamed_upstream_staging
