@@ -395,7 +395,8 @@ bootstrap_7zz() {
         install_dir="/usr/local/bin"
     fi
 
-    # Try pinned versions newest-first with HEAD verification — no HTML parsing
+    # Try pinned versions newest-first with HEAD verification — no HTML parsing.
+    # The archive is accepted only when the caller provides an expected SHA256.
     local -a versions=(2600 2500 2409)
     local version="" url="" candidate_url
     for candidate in "${versions[@]}"; do
@@ -413,6 +414,15 @@ Tried versions: ${versions[*]}
 Install 7zz manually from https://www.7-zip.org/download.html and ensure it is on your PATH."
     fi
 
+    local expected_sha="${SEVENZIP_BOOTSTRAP_SHA256:-}"
+    if [ -z "$expected_sha" ] && [ -n "${SEVENZIP_BOOTSTRAP_SHA256_FILE:-}" ]; then
+        expected_sha="$(awk '{print $1; exit}' "$SEVENZIP_BOOTSTRAP_SHA256_FILE")"
+    fi
+    if [ -z "$expected_sha" ]; then
+        error "Refusing to install 7zz ${version} without an expected SHA256.
+Set SEVENZIP_BOOTSTRAP_SHA256 or SEVENZIP_BOOTSTRAP_SHA256_FILE for $url."
+    fi
+
     local tmpdir
     tmpdir="$(mktemp -d)"
     # shellcheck disable=SC2064
@@ -420,6 +430,9 @@ Install 7zz manually from https://www.7-zip.org/download.html and ensure it is o
 
     info "Downloading 7zz ${version} from $url"
     curl -fL --progress-bar -o "$tmpdir/7z.tar.xz" "$url"
+    if ! printf '%s  %s\n' "$expected_sha" "$tmpdir/7z.tar.xz" | sha256sum -c - >/dev/null 2>&1; then
+        error "7zz archive checksum mismatch"
+    fi
     tar -C "$tmpdir" -xf "$tmpdir/7z.tar.xz" 7zz
 
     if [ "$install_dir" = "/usr/local/bin" ]; then
@@ -456,8 +469,30 @@ install_rust() {
         return
     fi
 
-    info "Installing Rust toolchain via rustup..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    local rustup_arch rustup_url rustup_tmp expected_sha
+    case "$ARCH" in
+        x86_64)  rustup_arch="x86_64-unknown-linux-gnu" ;;
+        aarch64) rustup_arch="aarch64-unknown-linux-gnu" ;;
+        armv7l)  rustup_arch="armv7-unknown-linux-gnueabihf" ;;
+        *)       error "Unsupported rustup architecture: $ARCH" ;;
+    esac
+
+    expected_sha="${RUSTUP_INIT_SHA256:-}"
+    [ -n "$expected_sha" ] || error "Refusing to install Rust via network without RUSTUP_INIT_SHA256.
+Install cargo through your distro package manager, or set RUSTUP_INIT_SHA256 for rustup-init ${rustup_arch}."
+
+    rustup_url="${RUSTUP_INIT_URL:-https://static.rust-lang.org/rustup/dist/${rustup_arch}/rustup-init}"
+    rustup_tmp="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '$rustup_tmp'" RETURN
+
+    info "Installing Rust toolchain via verified rustup-init..."
+    curl --proto '=https' --tlsv1.2 -sSf "$rustup_url" -o "$rustup_tmp"
+    if ! printf '%s  %s\n' "$expected_sha" "$rustup_tmp" | sha256sum -c - >/dev/null 2>&1; then
+        error "rustup-init checksum mismatch"
+    fi
+    chmod 0755 "$rustup_tmp"
+    "$rustup_tmp" -y
 
     # Make cargo available in this shell session
     # shellcheck source=/dev/null
