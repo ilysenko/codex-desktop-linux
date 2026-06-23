@@ -8,6 +8,7 @@
 DEFAULT_DMG_URL="https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
 DMG_URL="${CODEX_UPSTREAM_DMG_URL:-$DEFAULT_DMG_URL}"
 DMG_REMOTE_FINGERPRINT=""
+DMG_EXPECTED_SHA256="${CODEX_UPSTREAM_DMG_SHA256:-}"
 
 redact_dmg_url() {
     local dmg_url="$1"
@@ -48,6 +49,30 @@ validate_dmg_url() {
             error "Upstream DMG URL must be an HTTPS URL: $(redact_dmg_url "$dmg_url")"
             ;;
     esac
+}
+
+truthy_dmg_env_value() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+verify_dmg_sha256_policy() {
+    local dmg_path="$1"
+
+    if [ -z "$DMG_EXPECTED_SHA256" ]; then
+        if truthy_dmg_env_value "${CODEX_ALLOW_UNVERIFIED_DMG:-0}"; then
+            warn "Accepting unverified Codex DMG because CODEX_ALLOW_UNVERIFIED_DMG=1"
+            return 0
+        fi
+        error "Refusing to use Codex DMG without CODEX_UPSTREAM_DMG_SHA256.
+Set CODEX_UPSTREAM_DMG_SHA256 to the expected SHA256, or CODEX_ALLOW_UNVERIFIED_DMG=1 for a local manual override."
+    fi
+
+    if ! printf '%s  %s\n' "$DMG_EXPECTED_SHA256" "$dmg_path" | sha256sum -c - >/dev/null 2>&1; then
+        error "Codex DMG checksum mismatch: $dmg_path"
+    fi
 }
 
 dmg_url_cache_key() {
@@ -179,6 +204,7 @@ get_dmg() {
     if [ -s "$dmg_dest" ]; then
         DMG_REMOTE_FINGERPRINT=""
         if cached_dmg_is_fresh "$dmg_dest" "$metadata_path" "$DMG_URL"; then
+            verify_dmg_sha256_policy "$dmg_dest"
             info "Using cached DMG: $dmg_dest ($(du -h "$dmg_dest" | cut -f1))"
             echo "$dmg_dest"
             return
@@ -210,6 +236,7 @@ get_dmg() {
         error "Download produced empty file. Download manually and place as: $dmg_dest"
     fi
 
+    verify_dmg_sha256_policy "$tmp_dest"
     mv "$tmp_dest" "$dmg_dest"
     write_cached_dmg_metadata "$metadata_path" "$download_fingerprint"
     info "Saved: $dmg_dest ($(du -h "$dmg_dest" | cut -f1))"
