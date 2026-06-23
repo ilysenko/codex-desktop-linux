@@ -286,6 +286,17 @@ pub fn resolve_remote(config_remote: &str, bundle_root: &Path) -> String {
     origin_url(bundle_root).unwrap_or_else(|| "origin".to_string())
 }
 
+pub fn remote_is_trusted(remote: &str) -> bool {
+    let trimmed = remote.trim();
+    matches!(
+        trimmed,
+        "https://github.com/ilysenko/codex-desktop-linux"
+            | "https://github.com/ilysenko/codex-desktop-linux.git"
+            | "git@github.com:ilysenko/codex-desktop-linux.git"
+            | "ssh://git@github.com/ilysenko/codex-desktop-linux.git"
+    )
+}
+
 /// Queries the remote head commit for `branch` via `git ls-remote`.
 ///
 /// `remote` may be a configured remote name (`origin`) or an explicit URL. When
@@ -296,6 +307,9 @@ pub fn fetch_remote_head(repo: &Path, remote: &str, branch: &str) -> Option<Stri
     } else {
         remote.to_string()
     };
+    if !remote_is_trusted(&resolved_remote) {
+        return None;
+    }
     let output = git_capture(repo, &["ls-remote", &resolved_remote, branch])?;
     // ls-remote prints "<sha>\t<ref>"; take the first whitespace-delimited field.
     output
@@ -318,6 +332,9 @@ fn fetch_objects(repo: &Path, remote: &str, branch: &str) -> bool {
     } else {
         remote.to_string()
     };
+    if !remote_is_trusted(&resolved_remote) {
+        return false;
+    }
     // `git fetch <remote> <branch>` updates FETCH_HEAD and objects only.
     git_status(repo, &["fetch", "--quiet", &resolved_remote, branch])
         .is_some_and(|status| status.success())

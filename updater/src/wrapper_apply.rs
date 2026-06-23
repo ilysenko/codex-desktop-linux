@@ -409,6 +409,9 @@ pub(crate) fn ensure_wrapper_source(
     candidate_commit: Option<&str>,
 ) -> Result<PathBuf> {
     let remote = wrapper::resolve_remote(&config.wrapper_remote, &config.builder_bundle_root);
+    if !wrapper::remote_is_trusted(&remote) {
+        anyhow::bail!("refusing wrapper update from untrusted remote: {remote}");
+    }
     let branch = if config.wrapper_branch.trim().is_empty() {
         "main"
     } else {
