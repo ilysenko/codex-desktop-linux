@@ -163,6 +163,10 @@ remote_mobile_control_main() {
             echo "Remote mobile control standalone runtime auto-install disabled by CODEX_REMOTE_CONTROL_RUNTIME_AUTO_INSTALL_DISABLED"
             return 0
         fi
+        if ! truthy_env_value "${CODEX_REMOTE_CONTROL_RUNTIME_AUTO_INSTALL:-0}"; then
+            echo "Remote mobile control standalone runtime auto-install requires explicit CODEX_REMOTE_CONTROL_RUNTIME_AUTO_INSTALL=1"
+            return 0
+        fi
         if ! install_remote_mobile_control_runtime "$codex_home"; then
             echo "Remote mobile control is enabled, but the standalone Codex daemon runtime could not be installed at $standalone_codex"
             echo "Brew or another CLI can remain the interactive Codex CLI; remote mobile control uses CODEX_REMOTE_CONTROL_CODEX_PATH separately."
