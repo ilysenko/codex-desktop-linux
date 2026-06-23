@@ -8,6 +8,37 @@ voices="${CODEX_LINUX_READ_ALOUD_KOKORO_VOICES:-$data_home/kokoro/voices-v1.0.bi
 model_url="${CODEX_LINUX_READ_ALOUD_KOKORO_MODEL_URL:-https://huggingface.co/zijuncheng/kokoro_model_v1.0/resolve/main/kokoro-v1.0.onnx}"
 voices_url="${CODEX_LINUX_READ_ALOUD_KOKORO_VOICES_URL:-https://huggingface.co/zijuncheng/kokoro_model_v1.0/resolve/main/voices-v1.0.bin}"
 
+truthy_env_value() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+expected_sha_for_target() {
+    local target="$1"
+    case "$target" in
+        "$model") printf '%s\n' "${CODEX_LINUX_READ_ALOUD_KOKORO_MODEL_SHA256:-}" ;;
+        "$voices") printf '%s\n' "${CODEX_LINUX_READ_ALOUD_KOKORO_VOICES_SHA256:-}" ;;
+        *) printf '%s\n' "" ;;
+    esac
+}
+
+verify_download_sha256() {
+    local target="$1"
+    local expected_sha
+    expected_sha="$(expected_sha_for_target "$target")"
+    if [ -z "$expected_sha" ]; then
+        echo "Refusing to download $(basename "$target") without an expected SHA256" >&2
+        exit 1
+    fi
+    if ! printf '%s  %s\n' "$expected_sha" "$target" | sha256sum -c - >/dev/null 2>&1; then
+        rm -f "$target"
+        echo "Checksum mismatch for $target" >&2
+        exit 1
+    fi
+}
+
 choose_python() {
     local candidate
     for candidate in "${PYTHON:-}" python3.12 python3.13 python3.11 python3.10 python3; do
@@ -54,6 +85,7 @@ PY
     fi
 
     mv "$tmp" "$target"
+    verify_download_sha256 "$target"
 }
 
 python_bin="$(choose_python || true)"
@@ -64,18 +96,34 @@ python_bin="$(choose_python || true)"
 
 mkdir -p "$(dirname "$venv")"
 
+if ! truthy_env_value "${CODEX_LINUX_READ_ALOUD_ALLOW_NETWORK_INSTALL:-0}"; then
+    echo "Read Aloud network runtime install requires explicit CODEX_LINUX_READ_ALOUD_ALLOW_NETWORK_INSTALL=1" >&2
+    exit 1
+fi
+
+requirements_file="${CODEX_LINUX_READ_ALOUD_PIP_REQUIREMENTS:-}"
+if [ -z "$requirements_file" ]; then
+    echo "Refusing to install Python packages without hashed requirements." >&2
+    echo "Set CODEX_LINUX_READ_ALOUD_PIP_REQUIREMENTS to a pip requirements file using --hash entries." >&2
+    exit 1
+fi
+[ -f "$requirements_file" ] || {
+    echo "Read Aloud requirements file not found: $requirements_file" >&2
+    exit 1
+}
+
 if command -v uv >/dev/null 2>&1; then
     if [ ! -x "$venv/bin/python" ]; then
         uv venv --python "$python_bin" "$venv"
     fi
-    uv pip install --python "$venv/bin/python" 'kokoro-onnx>=0.5.0' 'numpy>=2.0.2'
+    uv pip install --python "$venv/bin/python" --require-hashes -r "$requirements_file"
 else
     if [ ! -x "$venv/bin/python" ]; then
         "$python_bin" -m venv "$venv"
     fi
     "$venv/bin/python" -m ensurepip --upgrade
     "$venv/bin/python" -m pip install --upgrade pip
-    "$venv/bin/python" -m pip install 'kokoro-onnx>=0.5.0' 'numpy>=2.0.2'
+    "$venv/bin/python" -m pip install --require-hashes -r "$requirements_file"
 fi
 
 echo "Kokoro runtime installed at $venv" >&2
