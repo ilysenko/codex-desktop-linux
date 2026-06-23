@@ -284,6 +284,38 @@ install_native_modules_from_source() {
 }
 
 # ---- Download Linux Electron ----
+electron_zip_sha256() {
+    local electron_arch="$1"
+    local key
+    key="$(printf '%s_%s' "$ELECTRON_VERSION" "$electron_arch" | tr '.-' '__')"
+
+    if [ -n "${CODEX_ELECTRON_ZIP_SHA256:-}" ]; then
+        printf '%s\n' "$CODEX_ELECTRON_ZIP_SHA256"
+        return 0
+    fi
+
+    eval "printf '%s\n' \"\${CODEX_ELECTRON_ZIP_SHA256_${key}:-}\""
+}
+
+verify_electron_zip_sha256() {
+    local zip_path="$1"
+    local electron_arch="$2"
+    local expected_sha
+    local version_key
+
+    expected_sha="$(electron_zip_sha256 "$electron_arch")"
+    version_key="$(printf '%s_%s' "$ELECTRON_VERSION" "$electron_arch" | tr '.-' '__')"
+    if [ -z "$expected_sha" ]; then
+        error "No SHA256 configured for Electron v${ELECTRON_VERSION} linux-${electron_arch}.
+Set CODEX_ELECTRON_ZIP_SHA256 or CODEX_ELECTRON_ZIP_SHA256_${version_key} before downloading Electron archives."
+    fi
+
+    if ! printf '%s  %s\n' "$expected_sha" "$zip_path" | sha256sum -c - >/dev/null 2>&1; then
+        rm -f "$zip_path"
+        error "Electron runtime checksum mismatch; removed archive: $zip_path"
+    fi
+}
+
 download_electron() {
     info "Downloading Electron v${ELECTRON_VERSION} for Linux..."
 
@@ -298,6 +330,7 @@ download_electron() {
     local electron_zip="electron-v${ELECTRON_VERSION}-linux-${electron_arch}.zip"
     if [ -n "${CODEX_ELECTRON_ZIP_SOURCE:-}" ]; then
         [ -f "$CODEX_ELECTRON_ZIP_SOURCE" ] || error "CODEX_ELECTRON_ZIP_SOURCE does not exist: $CODEX_ELECTRON_ZIP_SOURCE"
+        verify_electron_zip_sha256 "$CODEX_ELECTRON_ZIP_SOURCE" "$electron_arch"
         info "Using Electron runtime archive: $CODEX_ELECTRON_ZIP_SOURCE"
         cp "$CODEX_ELECTRON_ZIP_SOURCE" "$WORK_DIR/electron.zip"
         mkdir -p "$INSTALL_DIR"
@@ -326,6 +359,7 @@ download_electron() {
     else
         info "Using cached Electron archive: $cached_zip"
     fi
+    verify_electron_zip_sha256 "$cached_zip" "$electron_arch"
 
     cp "$cached_zip" "$WORK_DIR/electron.zip"
     mkdir -p "$INSTALL_DIR"
