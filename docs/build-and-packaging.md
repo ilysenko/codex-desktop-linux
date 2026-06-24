@@ -5,6 +5,7 @@
 You need:
 
 - `python3`, `7z` or `7zz`, `curl`, `unzip`, `make`, `g++`
+- `flatpak` and `flatpak-builder` for Flatpak self-builds
 - Rust toolchain with `cargo` for `codex-update-manager`,
   `codex-computer-use-linux`, and the Chrome extension host binary
 
@@ -102,8 +103,8 @@ CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.s
 
 ## Package Formats
 
-After `make build-app` or `make build-app-fresh`, build a package from
-`codex-app/`:
+After `make build-app` or `make build-app-fresh`, build a native package or
+AppImage from `codex-app/`:
 
 | Format | Build command | Output | Install |
 |---|---|---|---|
@@ -119,8 +120,9 @@ Override package version:
 PACKAGE_VERSION=2026.03.24.220723+88f07cd3 make deb
 ```
 
-The packaging scripts only repackage what is already in `codex-app/`; they do
-not download or extract the DMG.
+The native package and AppImage scripts only repackage what is already in
+`codex-app/`; they do not download or extract the DMG. Flatpak is handled
+separately below and rebuilds from source inside `flatpak-builder`.
 
 ## AppImage Local Self-Build
 
@@ -146,6 +148,48 @@ AppImage builds require `appimagetool` on `PATH`, or:
 ```bash
 APPIMAGETOOL=/path/to/appimagetool make appimage
 ```
+
+## Flatpak Self-Build
+
+```bash
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+make flatpak
+flatpak install --user dist/io.github.ilysenko.codex_desktop_linux-*.flatpak
+```
+
+The Flatpak build path renders `packaging/flatpak/io.github.ilysenko.codex_desktop_linux.json`, stages a pinned npm cache for `asar`, the bundled Codex CLI, and native-module rebuild inputs, then builds a local bundle through `flatpak-builder`.
+
+`scripts/build-flatpak.sh` always builds through `flatpak-builder`, which is the same path you should expect to use for a Flathub submission. If the host cannot run `flatpak-builder`'s sandbox correctly, Flatpak self-builds are unsupported on that host; build on another machine or in a working Flatpak-capable environment instead of falling back to a host-side export path.
+
+The default Flatpak manifest is intentionally self-contained rather than native-package feature parity. It keeps the desktop shell, bundled Codex CLI, bundled Node runtime, bundled Git and ripgrep runtime tools, GPU/window-system access, the PulseAudio compatibility socket for in-app voice input/output, SSH agent forwarding, and Secret Service access that the packaged app needs, while deliberately avoiding both broad host filesystem grants and the `org.freedesktop.Flatpak` host-command bridge.
+
+The wrapper pins `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, and `XDG_STATE_HOME` into Flatpak-managed persistent storage under `/var`, so launcher state, Codex home, CLI caches, and Git config stay inside the sandbox. That is the default storage model for the Flatpak package, but it does not prevent explicit user-granted access to files or directories chosen through portal-backed file dialogs.
+
+As a result, the default Flatpak build should be treated as a sandboxed desktop package with a reduced support matrix relative to the native packages in this repository:
+
+- no packaged updater / rebuild-manager flow
+- no host browser native-host registration
+- no Linux Computer Use staging
+- no broad host filesystem grant; host files are available only when the user explicitly chooses them through the document portal
+
+If full host integration is a hard requirement, prefer the native packages from this repository. A Flatpak variant that adds broad host filesystem access or `org.freedesktop.Flatpak` host-command access would be a different trust model and should not be the default Flathub submission.
+
+Important differences from the native package flow:
+
+- No `codex-update-manager`, package hooks, or privileged in-app updater path.
+- No bundled Browser Use / Chrome native-host / Linux Computer Use resource staging.
+- A small Python runtime is bundled only to satisfy launcher internals inside the Flatpak sandbox.
+- The launcher uses `zypak-wrapper` from the Electron BaseApp and skips host URL-scheme registration.
+
+If the required Flatpak refs are already present, skip dependency installation with `FLATPAK_INSTALL_DEPS=0 make flatpak`. To use a different remote name, set `FLATPAK_DEPS_REMOTE=your-remote-name`.
+
+When you change pinned npm dependencies for Flatpak packaging, regenerate the lockfiles, source manifests, and checked-in manifest:
+
+```bash
+bash scripts/flatpak/refresh-generated-sources.sh
+```
+
+For a real Flathub submission, keep the checked-in Flatpak files here but render the manifest with a pinned archive or git source instead of the local `dir` source, and complete a normal Flathub policy/trademark review. `scripts/build-flatpak.sh` already does this locally by rendering a temporary manifest from a tarball snapshot of the current checkout.
 
 ## Electron Mirrors
 
@@ -197,6 +241,7 @@ make deb
 make rpm
 make pacman
 make appimage
+make flatpak
 make package
 make install
 make service-enable

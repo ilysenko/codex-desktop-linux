@@ -1,0 +1,91 @@
+name: Flatpak Bundle
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/flatpak.yml
+      - Makefile
+      - install.sh
+      - launcher/**
+      - packaging/flatpak/**
+      - scripts/build-flatpak.sh
+      - scripts/flatpak/**
+      - scripts/lib/**
+      - scripts/patch-linux-window-ui.js
+      - scripts/patches/**
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/flatpak.yml
+      - Makefile
+      - install.sh
+      - launcher/**
+      - packaging/flatpak/**
+      - scripts/build-flatpak.sh
+      - scripts/flatpak/**
+      - scripts/lib/**
+      - scripts/patch-linux-window-ui.js
+      - scripts/patches/**
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  flatpak:
+    name: Build Flatpak Bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Flatpak tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder appstream
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Cache Flatpak builder state
+        uses: actions/cache@v4
+        with:
+          path: |
+            .flatpak-builder
+            ~/.local/share/flatpak
+          key: flatpak-${{ runner.os }}-${{ hashFiles('packaging/flatpak/upstream.json', 'packaging/flatpak/*-sources.json', 'packaging/flatpak/**/package-lock.json') }}
+          restore-keys: |
+            flatpak-${{ runner.os }}-
+
+      - name: Build Flatpak bundle
+        run: make flatpak
+
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-desktop-linux-flatpak
+          path: dist/*.flatpak
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write build summary
+        run: |
+          set -euo pipefail
+          bundle="$(find dist -maxdepth 1 -name '*.flatpak' -print -quit)"
+          test -n "$bundle"
+          {
+            echo "## Flatpak Bundle"
+            echo ""
+            echo "- Bundle: \`$bundle\`"
+            echo "- Build command: \`make flatpak\`"
+            echo "- Artifact name: \`codex-desktop-linux-flatpak\`"
+          } >> "$GITHUB_STEP_SUMMARY"

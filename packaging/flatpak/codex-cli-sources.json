@@ -1,0 +1,29 @@
+[
+  {
+    "type": "file",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.142.0.tgz",
+    "dest": "npm-cache/_cacache/content-v2/sha512/73/b5",
+    "dest-filename": "9fb5b472138cce2c9579a7bde67069f88d52b71662bce10eb986b66b5dba19ccb3c35917db15e7426ec2235383c94bf92f83230f86fedd1f8fe7857cd4ca",
+    "sha512": "73b59fb5b472138cce2c9579a7bde67069f88d52b71662bce10eb986b66b5dba19ccb3c35917db15e7426ec2235383c94bf92f83230f86fedd1f8fe7857cd4ca"
+  },
+  {
+    "type": "file",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.142.0-linux-arm64.tgz",
+    "dest": "npm-cache/_cacache/content-v2/sha512/81/7f",
+    "dest-filename": "6108ae7d6c4d08b67a2eb35302aca8974d8ba819513aa09504d24c914b36810f6ebbb21f53351dc35ca6d8ed3b0fee202cd7d9fc6170c935d1d926d6a449",
+    "sha512": "817f6108ae7d6c4d08b67a2eb35302aca8974d8ba819513aa09504d24c914b36810f6ebbb21f53351dc35ca6d8ed3b0fee202cd7d9fc6170c935d1d926d6a449",
+    "only-arches": [
+      "aarch64"
+    ]
+  },
+  {
+    "type": "file",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.142.0-linux-x64.tgz",
+    "dest": "npm-cache/_cacache/content-v2/sha512/9f/2c",
+    "dest-filename": "12fa88053d18599d09ca2fe8f358acc58668d341b60f87a9fc76d43f13eb09dc5a1955c6fd6ba92f1cbe728e0b650a20e43f48cf0d863900aded0d2858cb",
+    "sha512": "9f2c12fa88053d18599d09ca2fe8f358acc58668d341b60f87a9fc76d43f13eb09dc5a1955c6fd6ba92f1cbe728e0b650a20e43f48cf0d863900aded0d2858cb",
+    "only-arches": [
+      "x86_64"
+    ]
+  }
+]

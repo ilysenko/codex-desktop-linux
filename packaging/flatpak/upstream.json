@@ -1,0 +1,61 @@
+{
+  "appId": "io.github.ilysenko.codex_desktop_linux",
+  "displayName": "Codex Desktop Linux",
+  "codexVersion": "26.616.81150",
+  "runtimeVersion": "25.08",
+  "codexDmg": {
+    "url": "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg",
+    "sha256": "4bb552bf1c1904bd66e284d349c45829c59110e46e4832c5d69b3efaf910213f",
+    "size": 525052314
+  },
+  "electronVersion": "42.1.0",
+  "electronZip": {
+    "x86_64": {
+      "url": "https://github.com/electron/electron/releases/download/v42.1.0/electron-v42.1.0-linux-x64.zip",
+      "sha256": "882047343a9e203c6cfc5d39b166ea9e025dd256943e0d3711f86725ad0e3bd9"
+    },
+    "aarch64": {
+      "url": "https://github.com/electron/electron/releases/download/v42.1.0/electron-v42.1.0-linux-arm64.zip",
+      "sha256": "1e700f7f3daef794cc45235e51c1172664aed49a4e7737b8896ddc398bff4d7d"
+    }
+  },
+  "electronHeaders": {
+    "url": "https://artifacts.electronjs.org/headers/dist/v42.1.0/node-v42.1.0-headers.tar.gz",
+    "sha256": "0cfc1d20f252d6c29bdd14b1f3caa30edc6477db93e5a6620674424b38dcddfd"
+  },
+  "managedNode": {
+    "version": "22.22.2",
+    "x86_64": {
+      "url": "https://nodejs.org/dist/v22.22.2/node-v22.22.2-linux-x64.tar.xz",
+      "sha256": "88fd1ce767091fd8d4a99fdb2356e98c819f93f3b1f8663853a2dee9b438068a"
+    },
+    "aarch64": {
+      "url": "https://nodejs.org/dist/v22.22.2/node-v22.22.2-linux-arm64.tar.xz",
+      "sha256": "e9e1930fd321a470e29bb68f30318bf58e3ecb4acb4f1533fb19c58328a091fe"
+    }
+  },
+  "pythonStandalone": {
+    "version": "3.10.20+20260623",
+    "x86_64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260623/cpython-3.10.20%2B20260623-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "ac308036658cee12537c90bf85985f348160663dfab8550f25fc19bf10695573"
+    },
+    "aarch64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260623/cpython-3.10.20%2B20260623-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "2d9a5d103129bd8155f0332f3f876df90364038e59945369fa73fed15e6a2474"
+    }
+  },
+  "sevenZip": {
+    "version": "26.01",
+    "x86_64": {
+      "url": "https://github.com/ip7z/7zip/releases/download/26.01/7z2601-linux-x64.tar.xz",
+      "sha256": "8ea0fc8a135e7b848e80a4116fe22dff56c8c4518dde1f43cce67f4e340b437a"
+    },
+    "aarch64": {
+      "url": "https://github.com/ip7z/7zip/releases/download/26.01/7z2601-linux-arm64.tar.xz",
+      "sha256": "39f8c9070c300a63c7484d9a983119ef3edf841e1ddf69f1affae29fdec5f612"
+    }
+  },
+  "asarVersion": "3.2.0",
+  "codexCliVersion": "0.142.0"
+}

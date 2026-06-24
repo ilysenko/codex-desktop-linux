@@ -1,0 +1,8 @@
+{
+  "name": "codex-desktop-flatpak-asar",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "asar": "3.2.0"
+  }
+}

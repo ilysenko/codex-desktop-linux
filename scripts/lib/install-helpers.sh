@@ -141,6 +141,40 @@ shell_quote() {
     printf '%q' "$1"
 }
 
+run_asar_cli() {
+    if [ -n "${CODEX_ASAR_CLI:-}" ]; then
+        [ -x "$CODEX_ASAR_CLI" ] || error "CODEX_ASAR_CLI is not executable: $CODEX_ASAR_CLI"
+        "$CODEX_ASAR_CLI" "$@"
+        return
+    fi
+
+    npx --yes asar "$@"
+}
+
+extract_zip_archive() {
+    local archive="$1"
+    local destination="$2"
+
+    mkdir -p "$destination"
+    if command -v unzip >/dev/null 2>&1; then
+        (cd "$destination" && unzip -qo "$archive")
+        return
+    fi
+
+    python3 - "$archive" "$destination" <<'PY'
+import pathlib
+import sys
+import zipfile
+
+archive = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+destination.mkdir(parents=True, exist_ok=True)
+
+with zipfile.ZipFile(archive) as handle:
+    handle.extractall(destination)
+PY
+}
+
 prepare_install() {
     if [ "$FRESH_INSTALL" -eq 1 ] && [ -d "$INSTALL_DIR" ]; then
         info "Removing existing install directory: $INSTALL_DIR"
@@ -158,9 +192,12 @@ prepare_install() {
 # ---- Check dependencies ----
 check_deps() {
     local missing=()
-    for cmd in python3 curl unzip tar; do
+    for cmd in python3 curl tar; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
+    if ! command -v unzip &>/dev/null && ! python3 -c 'import zipfile' >/dev/null 2>&1; then
+        missing+=("unzip or python3 zipfile support")
+    fi
     if ! command -v 7zz &>/dev/null && ! command -v 7z &>/dev/null; then
         missing+=("7z or 7zz")
     fi
@@ -169,8 +206,8 @@ check_deps() {
 $(dependency_help)"
     fi
 
-    if ! command -v make &>/dev/null || ! command -v g++ &>/dev/null; then
-        error "Build tools (make, g++) required:
+    if ! command -v make &>/dev/null || { ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null; }; then
+        error "Build tools (make, g++ or c++) required:
 $(dependency_help)"
     fi
 

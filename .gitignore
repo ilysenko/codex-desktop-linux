@@ -11,6 +11,13 @@ bin/codex-*
 target/
 dist/
 dist-next/
+.flatpak-builder/
+.flatpak-cache/
+.flatpak-home/
+.flatpak-sources/
+.flatpak-stage/
+.flatpak-tools/
+npm-cache/
 linux-features/features.json
 linux-features/local/
 .idea/

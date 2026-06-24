@@ -71,7 +71,7 @@ patch_asar() {
 
     info "Extracting app.asar..."
     cd "$WORK_DIR"
-    npx --yes asar extract "$resources_dir/app.asar" app-extracted
+    run_asar_cli extract "$resources_dir/app.asar" app-extracted
 
     # Copy unpacked native modules if they exist
     if [ -d "$resources_dir/app.asar.unpacked" ]; then
@@ -104,7 +104,7 @@ patch_asar() {
     info "Repacking app.asar..."
     cd "$WORK_DIR"
     (cd app-extracted && find . -type f | LC_ALL=C sort | sed 's#^\./##') > "$WORK_DIR/app.asar.ordering"
-    npx asar pack app-extracted app.asar --ordering "$WORK_DIR/app.asar.ordering" --unpack "{*.node,*.so,*.dylib}" 2>/dev/null
+    run_asar_cli pack app-extracted app.asar --ordering "$WORK_DIR/app.asar.ordering" --unpack "{*.node,*.so,*.dylib}" 2>/dev/null
 
     info "app.asar patched"
 }
@@ -126,7 +126,7 @@ inspect_rebuild_candidate() {
 
     info "Inspecting app.asar without changing the active app..."
     cd "$WORK_DIR"
-    npx --yes asar extract "$resources_dir/app.asar" "$inspect_dir"
+    run_asar_cli extract "$resources_dir/app.asar" "$inspect_dir"
 
     if [ -d "$resources_dir/app.asar.unpacked" ]; then
         cp -r "$resources_dir/app.asar.unpacked/"* "$inspect_dir/" 2>/dev/null || true

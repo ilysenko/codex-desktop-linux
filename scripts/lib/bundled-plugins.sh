@@ -1229,6 +1229,13 @@ install_bundled_plugin_resources() {
     local include_chrome=0
     local include_computer_use=0
 
+    case "${CODEX_DISABLE_BUNDLED_PLUGINS:-0}" in
+        1|true|TRUE|yes|YES|on|ON)
+            info "Bundled plugin staging disabled (CODEX_DISABLE_BUNDLED_PLUGINS=1)"
+            return 0
+            ;;
+    esac
+
     if [ ! -f "$source_marketplace" ]; then
         warn "Bundled plugin marketplace not found in upstream app; skipping bundled plugins"
         return 0

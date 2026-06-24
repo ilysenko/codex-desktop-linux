@@ -104,12 +104,46 @@ node_toolchain_compatible() {
         && [ -x "$runtime_dir/bin/npx" ]
 }
 
+node_toolchain_present() {
+    local runtime_dir="$1"
+
+    [ -x "$runtime_dir/bin/node" ] \
+        && [ -x "$runtime_dir/bin/npm" ] \
+        && [ -x "$runtime_dir/bin/npx" ]
+}
+
+managed_node_skip_compatibility_check() {
+    case "${CODEX_MANAGED_NODE_SKIP_COMPATIBILITY_CHECK:-0}" in
+        1|true|TRUE|yes|YES|on|ON)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+managed_node_skip_path_export() {
+    case "${CODEX_MANAGED_NODE_SKIP_PATH_EXPORT:-0}" in
+        1|true|TRUE|yes|YES|on|ON)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 copy_node_runtime() {
     local source_dir="$1"
     local destination_dir="$2"
     local tmp_dir
 
-    node_toolchain_compatible "$source_dir" || return 1
+    if managed_node_skip_compatibility_check; then
+        node_toolchain_present "$source_dir" || return 1
+    else
+        node_toolchain_compatible "$source_dir" || return 1
+    fi
 
     if [ "$(realpath -m "$source_dir")" = "$(realpath -m "$destination_dir")" ]; then
         return 0
@@ -209,6 +243,9 @@ export_managed_node_runtime() {
     local bin_dir="$runtime_dir/bin"
 
     [ -x "$bin_dir/node" ] || error "Managed Node.js runtime is missing node: $bin_dir/node"
-    export PATH="$bin_dir:$PATH"
     export CODEX_MANAGED_NODE_RUNTIME_DIR="$runtime_dir"
+    if managed_node_skip_path_export; then
+        return 0
+    fi
+    export PATH="$bin_dir:$PATH"
 }

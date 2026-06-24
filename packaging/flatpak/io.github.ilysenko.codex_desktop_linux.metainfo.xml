@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.ilysenko.codex_desktop_linux</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>Codex Desktop Linux</name>
+  <summary>Community-maintained Linux packaging for Codex Desktop</summary>
+  <developer id="io.github.ilysenko">
+    <name>Ilya Senko and contributors</name>
+  </developer>
+  <launchable type="desktop-id">io.github.ilysenko.codex_desktop_linux.desktop</launchable>
+  <provides>
+    <binary>codex-desktop-flatpak</binary>
+  </provides>
+  <description>
+    <p>Codex Desktop Linux packages the upstream Codex Desktop application for Linux desktops using this repository's Linux compatibility patches, launcher, and rebuild pipeline.</p>
+    <p>This Flatpak build keeps the core desktop experience inside the sandbox by storing state under Flatpak-managed config and data directories, shipping a bundled managed Node runtime, bundling the Codex CLI plus runtime tools such as Git and ripgrep, and exposing the audio socket needed for in-app voice input and output.</p>
+    <p>Broad host filesystem grants, native package update flows, host browser and native-host integrations, and Linux Computer Use are outside the default Flatpak scope. User-selected files and directories can still be exposed through the document portal without opening general host access.</p>
+  </description>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Start a new Codex task from the desktop app.</caption>
+      <image>https://images.ctfassets.net/kftzwdyauwt9/3G8qVyVJxJ8C8QD2wcSBgw/ef4163c22cbfffc69e71e7a881a76aa8/App.png?fm=webp&amp;q=90&amp;w=3840</image>
+    </screenshot>
+    <screenshot>
+      <caption>Review active projects, threads, and automation work in the sidebar.</caption>
+      <image>https://images.ctfassets.net/kftzwdyauwt9/212T6zWyTJxsZOe79RrI1a/8af0d0131ab9d1bcc90789fe0910de4e/tablet_m_feature02.png?fm=webp&amp;q=90&amp;w=3840</image>
+    </screenshot>
+    <screenshot>
+      <caption>Inspect task output and review pending changes before continuing locally.</caption>
+      <image>https://images.ctfassets.net/kftzwdyauwt9/5NKYWYpG3A95VQaRV2mUr3/f8abccd639ee4bf6d9593db8d74a7943/tablet_m_feature01.png?fm=webp&amp;q=90&amp;w=3840</image>
+    </screenshot>
+  </screenshots>
+  <url type="homepage">https://github.com/ilysenko/codex-desktop-linux</url>
+  <url type="bugtracker">https://github.com/ilysenko/codex-desktop-linux/issues</url>
+  <url type="vcs-browser">https://github.com/ilysenko/codex-desktop-linux</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="26.616.81150" date="2026-06-24"/>
+  </releases>
+</component>

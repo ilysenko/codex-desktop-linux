@@ -52,6 +52,10 @@ MULTI_LAUNCH_REQUESTED=0
 MULTI_LAUNCH_ACTIVE=0
 CODEX_LINUX_INSTANCE_ID=""
 LAUNCHER_ARGS=()
+CODEX_RUNNING_IN_FLATPAK=0
+if [ -f "/.flatpak-info" ]; then
+    CODEX_RUNNING_IN_FLATPAK=1
+fi
 
 # Internal marker consumed by patched Electron bundles; never trust inheritance.
 unset CODEX_LINUX_MULTI_LAUNCH
@@ -474,6 +478,10 @@ desktop_entry_exists() {
 }
 
 register_url_scheme_handlers() {
+    if truthy_env_value "${CODEX_SKIP_URL_SCHEME_REGISTRATION:-0}" || [ "$CODEX_RUNNING_IN_FLATPAK" -eq 1 ]; then
+        return 0
+    fi
+
     command -v xdg-mime >/dev/null 2>&1 || return 0
     desktop_entry_exists || return 0
 
@@ -1749,16 +1757,40 @@ webview_origin_is_reachable() {
     verify_webview_origin "$WEBVIEW_ORIGIN/index.html" >/dev/null 2>&1
 }
 
+fetch_webview_origin_body() {
+    local url="$1"
+    local timeout_seconds="$2"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl --disable --noproxy 127.0.0.1,localhost --silent --show-error --fail --max-time "$timeout_seconds" "$url"
+        return 0
+    fi
+
+    python3 - "$url" "$timeout_seconds" <<'PY'
+import sys
+import urllib.error
+import urllib.request
+
+url, timeout_value = sys.argv[1:3]
+timeout = float(timeout_value)
+request = urllib.request.Request(url, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
+
+try:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        sys.stdout.write(response.read().decode("utf-8", errors="replace"))
+except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError) as exc:
+    print(exc, file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 webview_origin_is_reachable_fast() {
     local url="$WEBVIEW_ORIGIN/index.html"
-    local body err
+    local body
 
-    err=$(mktemp 2>/dev/null) || err="${TMPDIR:-/tmp}/codex-curl-err.$$"
-    if ! body="$(curl --disable --noproxy 127.0.0.1,localhost --silent --show-error --fail --max-time 0.2 "$url" 2>"$err")"; then
-        rm -f "$err"
+    if ! body="$(fetch_webview_origin_body "$url" 0.2 2>/dev/null)"; then
         return 1
     fi
-    rm -f "$err"
 
     [[ "$body" == *"<title>Codex</title>"* ]] || return 1
     [[ "$body" == *"startup-loader"* ]] || return 1
@@ -1840,10 +1872,10 @@ verify_webview_origin() {
     # localhost NO_PROXY exemption.
     local body err detail
     err=$(mktemp 2>/dev/null) || err="${TMPDIR:-/tmp}/codex-curl-err.$$"
-    if ! body="$(curl --disable --noproxy 127.0.0.1,localhost --silent --show-error --fail --max-time 2 "$url" 2>"$err")"; then
+    if ! body="$(fetch_webview_origin_body "$url" 2 2>"$err")"; then
         detail=$(cat "$err" 2>/dev/null || true)
         rm -f "$err"
-        echo "Webview origin validation failed for $url; ${detail:-curl exited non-zero with no diagnostic}" >&2
+        echo "Webview origin validation failed for $url; ${detail:-origin fetch exited non-zero with no diagnostic}" >&2
         return 1
     fi
     rm -f "$err"
@@ -2853,6 +2885,23 @@ refresh_launch_state_quick() {
     fi
 }
 
+run_electron_binary() {
+    if [ -n "${CODEX_ELECTRON_WRAPPER_BIN:-}" ]; then
+        "$CODEX_ELECTRON_WRAPPER_BIN" "$SCRIPT_DIR/electron" "$@"
+        return $?
+    fi
+
+    "$SCRIPT_DIR/electron" "$@"
+}
+
+exec_electron_binary() {
+    if [ -n "${CODEX_ELECTRON_WRAPPER_BIN:-}" ]; then
+        exec "$CODEX_ELECTRON_WRAPPER_BIN" "$SCRIPT_DIR/electron" "$@"
+    fi
+
+    exec "$SCRIPT_DIR/electron" "$@"
+}
+
 launch_electron() {
     cd "$SCRIPT_DIR"
     log_phase "electron_launch"
@@ -2871,7 +2920,7 @@ launch_electron() {
             echo "Rendering hint: if the side panel flickers or appears transparent on Wayland, retry with CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1"
         fi
         unset ELECTRON_RUN_AS_NODE
-        "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"
+        run_electron_binary "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"
         return $?
     fi
 
@@ -2882,7 +2931,7 @@ launch_electron() {
     (
         close_launcher_lock_fd_for_child
         unset ELECTRON_RUN_AS_NODE
-        exec "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"
+        exec_electron_binary "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"
     ) &
     ELECTRON_PID=$!
     if [ -n "${RUNNING_APP_PID:-}" ] && pid_matches_executable "$RUNNING_APP_PID" "$SCRIPT_DIR/electron"; then

@@ -412,7 +412,7 @@ PY
         rm -rf "$package_extract_dir"
         mkdir -p "$package_extract_dir"
 
-        if (cd "$package_extract_dir" && npx --yes asar extract-file "$resources_dir/app.asar" package.json >"$package_stdout" 2>/dev/null); then
+        if (cd "$package_extract_dir" && run_asar_cli extract-file "$resources_dir/app.asar" package.json >"$package_stdout" 2>/dev/null); then
             if [ -f "$package_json" ]; then
                 :
             elif [ -s "$package_stdout" ]; then

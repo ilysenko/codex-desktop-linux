@@ -6,8 +6,8 @@ covers Linux by converting the upstream macOS `Codex.dmg` into a runnable Linux
 Electron app.
 
 The project builds native `.deb`, `.rpm`, and `.pkg.tar.zst` packages, supports
-local AppImage self-builds and Nix, and can install a local update manager that
-rebuilds future Linux packages from newer upstream DMGs.
+local AppImage and Flatpak self-builds plus Nix, and can install a local update
+manager that rebuilds future Linux packages from newer upstream DMGs.
 
 Before opening a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md). For
 implementation details, see [AGENTS.md](AGENTS.md).
@@ -20,6 +20,7 @@ implementation details, see [AGENTS.md](AGENTS.md).
 | Fedora | `make bootstrap-native` | Builds and installs an `.rpm` |
 | openSUSE | `make bootstrap-native` | Builds and installs an `.rpm` |
 | Arch, Manjaro, EndeavourOS | `make bootstrap-native` | Builds and installs a pacman package |
+| Any distro with Flatpak tooling | `make flatpak` | Local `.flatpak` self-build; sandbox-private storage plus user-selected document-portal files, bundled CLI/runtime tools, no updater or host native-host integration |
 | NixOS / Nix | `nix run github:ilysenko/codex-desktop-linux` | See [Nix docs](docs/nix.md) |
 | Atomic desktops / other distros | `make build-app && make appimage` | Local self-build; no bundled updater |
 
@@ -86,6 +87,7 @@ workarounds.
 | Native packages | Always | `make package && make install` | [Build and packaging](docs/build-and-packaging.md) |
 | Auto-update manager | Native packages | Included unless `PACKAGE_WITH_UPDATER=0` | [Updater](docs/updater.md) |
 | AppImage self-build | Manual | `make build-app && make appimage` | [Build and packaging](docs/build-and-packaging.md#appimage-local-self-build) |
+| Flatpak self-build | Manual | `make flatpak` | [Build and packaging](docs/build-and-packaging.md#flatpak-self-build) |
 | Nix flake | Manual | `nix run github:ilysenko/codex-desktop-linux` | [Nix](docs/nix.md) |
 | GUI install prompts | If installed | Uses `kdialog` / `zenity`, then terminal fallback | [Native setup](docs/native-setup.md) |
 | Linux file manager integration | Always | Built into core Linux patches | [Architecture](docs/architecture.md) |
@@ -167,8 +169,8 @@ Manual rebuild from a trusted checkout:
 PACKAGE_WITH_UPDATER=0 make update-native
 ```
 
-AppImage builds and repo-only generated apps do not include the native-package
-updater. See [Updater](docs/updater.md).
+AppImage builds, Flatpak self-builds, and repo-only generated apps do not
+include the native-package updater. See [Updater](docs/updater.md).
 
 ## Build, Package, And Run
 
@@ -199,10 +201,13 @@ make deb
 make rpm
 make pacman
 make appimage
+make flatpak
 ```
 
-The package scripts only repackage the already-generated `codex-app/`. They do
-not download or extract the DMG themselves. See
+The native package and AppImage scripts only repackage the already-generated
+`codex-app/`. Flatpak rebuilds from source inside `flatpak-builder`. If the
+host cannot run `flatpak-builder`, run the Flatpak build on another machine or
+in a working Flatpak-capable build environment. See
 [Build and packaging](docs/build-and-packaging.md).
 
 ## Troubleshooting

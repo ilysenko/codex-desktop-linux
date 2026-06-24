@@ -1,0 +1,18 @@
+[Desktop Entry]
+Name=Codex Desktop Linux
+Comment=Community-maintained Linux packaging for Codex Desktop
+Exec=codex-desktop-flatpak %u
+Icon=io.github.ilysenko.codex_desktop_linux
+Terminal=false
+Type=Application
+Categories=Development;
+Keywords=Codex;OpenAI;Development;Coding;
+MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;
+StartupNotify=true
+StartupWMClass=io.github.ilysenko.codex_desktop_linux
+X-GNOME-WMClass=io.github.ilysenko.codex_desktop_linux
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=codex-desktop-flatpak --new-instance

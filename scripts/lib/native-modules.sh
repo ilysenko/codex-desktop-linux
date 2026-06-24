@@ -200,6 +200,15 @@ build_native_modules() {
     bs3_ver=$(node -p "require('$app_extracted/node_modules/better-sqlite3/package.json').version" 2>/dev/null || echo "")
     npty_ver=$(node -p "require('$app_extracted/node_modules/node-pty/package.json').version" 2>/dev/null || echo "")
 
+    if [ -n "${CODEX_NATIVE_MODULES_SOURCE:-}" ]; then
+        if [ -z "$bs3_ver" ]; then
+            bs3_ver=$(node -p "require('${CODEX_NATIVE_MODULES_SOURCE}/better-sqlite3/package.json').version" 2>/dev/null || echo "")
+        fi
+        if [ -z "$npty_ver" ]; then
+            npty_ver=$(node -p "require('${CODEX_NATIVE_MODULES_SOURCE}/node-pty/package.json').version" 2>/dev/null || echo "")
+        fi
+    fi
+
     [ -n "$bs3_ver" ] || error "Could not detect better-sqlite3 version"
     [ -n "$npty_ver" ] || error "Could not detect node-pty version"
 
@@ -301,8 +310,7 @@ download_electron() {
         info "Using Electron runtime archive: $CODEX_ELECTRON_ZIP_SOURCE"
         cp "$CODEX_ELECTRON_ZIP_SOURCE" "$WORK_DIR/electron.zip"
         mkdir -p "$INSTALL_DIR"
-        cd "$INSTALL_DIR"
-        unzip -qo "$WORK_DIR/electron.zip"
+        extract_zip_archive "$WORK_DIR/electron.zip" "$INSTALL_DIR"
         info "Electron ready"
         return 0
     fi
@@ -329,8 +337,7 @@ download_electron() {
 
     cp "$cached_zip" "$WORK_DIR/electron.zip"
     mkdir -p "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
-    unzip -qo "$WORK_DIR/electron.zip"
+    extract_zip_archive "$WORK_DIR/electron.zip" "$INSTALL_DIR"
 
     info "Electron ready"
 }
