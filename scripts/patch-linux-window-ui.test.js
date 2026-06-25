@@ -2901,6 +2901,109 @@ test("registers Linux proxy authentication before Electron app ready", async () 
   assert.equal(credentials, null);
 });
 
+test("routes authenticated proxy desktop fetches through ClientRequest login", async () => {
+  const source = [
+    "let a=require(`electron`);",
+    "async function boot(){await a.app.whenReady()}",
+    "class Fetcher{",
+    "async performDesktopFetch({body:e,headers:n,method:r,onUploadProgress:i,resolvedUrl:o,signal:s}){let p=()=>e,m=async e=>{let t=this.cloneHeaders(n);let d=i==null?await a.net.fetch(o,{method:r,headers:t,body:p(),signal:s}):await this.performProgressRequest({body:p(),headers:t,method:r,onUploadProgress:i,resolvedUrl:o,signal:s});return d};return m({})}",
+    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,signal:o}){return new Promise((s,c)=>{let l=a.net.request({method:n,url:i,headers:t}),u=-1,d=()=>{let e=l.getUploadProgress();!e.started||e.current===u||(u=e.current,r({loaded:e.current,total:e.total}))};if(o.addEventListener(`abort`,()=>{},{}),o.aborted)return;l.on(`error`,e=>c(e)),l.on(`response`,e=>{d();let t=[];e.on(`data`,e=>{t.push(e)}),e.on(`end`,()=>{let n=Buffer.concat(t),r=new Headers;for(let[t,n]of Object.entries(e.headers))for(let e of Array.isArray(n)?n:[n])r.append(t,e);s(new Response(n.length===0?null:n,{status:e.statusCode,statusText:e.statusMessage,headers:r}))})});let g=e instanceof ArrayBuffer?Buffer.from(e):e;l.end(g)})}",
+    "cloneHeaders(e){return e}",
+    "}",
+    "globalThis.Fetcher=Fetcher;",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxProxyAuthPatch, source);
+
+  assert.match(patched, /function codexLinuxAttachProxyAuthToRequest\(e\)/);
+  assert.match(patched, /i==null&&!codexLinuxProxyAuthEntry\(\)\?await a\.net\.fetch/);
+  assert.match(
+    patched,
+    /codexLinuxAttachProxyAuthToRequest\(l\);let u=-1,d=\(\)=>\{if\(r==null\)return;/,
+  );
+
+  let fetchCalls = 0;
+  let requestCalls = 0;
+  let credentials = null;
+  const app = {
+    on() {},
+    whenReady() {
+      return Promise.resolve();
+    },
+  };
+  const net = {
+    fetch() {
+      fetchCalls += 1;
+      return Promise.resolve(new Response("fetch"));
+    },
+    request() {
+      requestCalls += 1;
+      const handlers = {};
+      return {
+        on(event, handler) {
+          handlers[event] = handler;
+          return this;
+        },
+        getUploadProgress() {
+          return { started: false, current: 0, total: 0 };
+        },
+        end() {
+          handlers.login?.(
+            { isProxy: true, host: "PROXY.EXAMPLE", port: 8080 },
+            (username, password) => {
+              credentials = { username, password };
+            },
+          );
+          const responseHandlers = {};
+          handlers.response?.({
+            statusCode: 200,
+            statusMessage: "OK",
+            headers: { "content-type": "text/plain" },
+            on(event, handler) {
+              responseHandlers[event] = handler;
+              return this;
+            },
+          });
+          responseHandlers.data?.(Buffer.from("request"));
+          responseHandlers.end?.();
+        },
+      };
+    },
+  };
+  const context = {
+    ArrayBuffer,
+    Buffer,
+    DOMException,
+    Headers,
+    Response,
+    globalThis: {},
+    process: {
+      platform: "linux",
+      env: {
+        CODEX_LINUX_PROXY_AUTH_HOST: "proxy.example",
+        CODEX_LINUX_PROXY_AUTH_PORT: "8080",
+        CODEX_LINUX_PROXY_USERNAME: "user",
+        CODEX_LINUX_PROXY_PASSWORD: "p@ss",
+      },
+    },
+    require(name) {
+      assert.equal(name, "electron");
+      return { app, net };
+    },
+  };
+
+  await vm.runInNewContext(`${patched};boot()`, context);
+  const response = await vm.runInNewContext(
+    "new globalThis.Fetcher().performDesktopFetch({body:null,headers:{},method:`GET`,resolvedUrl:`https://chatgpt.com/wham/usage`,signal:{aborted:false,addEventListener(){},removeEventListener(){}}})",
+    context,
+  );
+
+  assert.equal(fetchCalls, 0);
+  assert.equal(requestCalls, 1);
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "request");
+  assert.deepEqual(credentials, { username: "user", password: "p@ss" });
+});
+
 test("forces the bootstrap single-instance lock on Linux even when upstream disables it", () => {
   const source =
     "var S=t.x({isMacOS:b,isPackaged:n.app.isPackaged});if(!(!S||n.app.requestSingleInstanceLock()))t.Jr().info(`Exiting second desktop instance`,{safe:{packaged:n.app.isPackaged,platform:process.platform}}),n.app.exit(0);else{let e=t.C(x);}";

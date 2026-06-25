@@ -80,10 +80,18 @@ in that URL are split into `CODEX_LINUX_PROXY_USERNAME` and
 `CODEX_LINUX_PROXY_BYPASS_LIST` is unset, `no_proxy` or `NO_PROXY` is converted
 to the Electron bypass list.
 
-If any `--proxy-server` flag is provided explicitly in `electron-flags.conf` or
-on the launcher command line, the launcher does not process
-`CODEX_LINUX_PROXY_*` variables. In that mode you are responsible for a
-Chromium-supported proxy configuration.
+Common proxy environment variables are still URLs, so reserved characters in
+embedded credentials should be percent-encoded. Use
+`CODEX_LINUX_PROXY_USERNAME` and `CODEX_LINUX_PROXY_PASSWORD` when you want to
+pass credentials as raw strings.
+
+If `--proxy-server` is already present while the launcher is assembling
+Electron arguments, the launcher does not add another proxy server from
+`CODEX_LINUX_PROXY_SERVER` or the common proxy environment variables. There is
+no special parser for `electron-flags.conf`; persistent launch flags,
+feature-provided Electron args, and command-line passthrough arguments are all
+loaded into the same Electron argument list before this check. In that mode you
+are responsible for a Chromium-supported proxy configuration.
 
 ## Transparent Or Dark Sidebar
 
