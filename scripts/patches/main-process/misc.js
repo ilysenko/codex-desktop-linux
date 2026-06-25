@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const {
   findCallBlock,
+  inferModuleAlias,
   requireName,
 } = require("../shared.js");
 
@@ -132,6 +133,47 @@ function patchLinuxWorkerFileManagerTarget(extractedDir) {
   }
   fs.writeFileSync(workerPath, patchedSource, "utf8");
   return { matched: 1, changed: 1 };
+}
+
+function applyLinuxProxyAuthPatch(currentSource) {
+  if (currentSource.includes("function codexLinuxInstallProxyAuthHandler(")) {
+    return currentSource;
+  }
+
+  const electronVar = inferModuleAlias(currentSource, "electron");
+  if (electronVar == null) {
+    console.warn(
+      "WARN: Could not find Electron alias — skipping Linux proxy authentication patch",
+    );
+    return currentSource;
+  }
+
+  const whenReadyNeedle = `await ${electronVar}.app.whenReady()`;
+  if (!currentSource.includes(whenReadyNeedle)) {
+    if (currentSource.includes(".app.whenReady()")) {
+      console.warn(
+        "WARN: Could not find Electron app ready point — skipping Linux proxy authentication patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const helper =
+    "function codexLinuxProxyAuthEntry(e=process.env){if(process.platform!==`linux`)return null;let t=String(e.CODEX_LINUX_PROXY_AUTH_HOST??``).trim().replace(/^\\[|\\]$/g,``).toLowerCase(),n=String(e.CODEX_LINUX_PROXY_AUTH_PORT??``).trim(),r=e.CODEX_LINUX_PROXY_USERNAME;if(!t||r==null||String(r).length===0)return null;return{host:t,port:n,username:String(r),password:String(e.CODEX_LINUX_PROXY_PASSWORD??``)}}" +
+    "function codexLinuxInstallProxyAuthHandler(e){let t=codexLinuxProxyAuthEntry();if(t==null)return;e.app.on(`login`,(n,r,i,a,o)=>{if(!a?.isProxy)return;let s=String(a.host??``).replace(/^\\[|\\]$/g,``).toLowerCase();if(t.host!==s||t.port&&String(a.port??``)!==t.port)return;n.preventDefault(),o(t.username,t.password)})}";
+  const strictDirective = '"use strict";';
+  const helperInsertionIndex = currentSource.startsWith(strictDirective)
+    ? strictDirective.length
+    : 0;
+  const withHelper =
+    currentSource.slice(0, helperInsertionIndex) +
+    helper +
+    currentSource.slice(helperInsertionIndex);
+
+  return withHelper.replace(
+    whenReadyNeedle,
+    `codexLinuxInstallProxyAuthHandler(${electronVar});${whenReadyNeedle}`,
+  );
 }
 
 function applyLinuxGitOriginsSourceFallbackPatch(currentSource) {
@@ -364,6 +406,7 @@ module.exports = {
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxLocalAppServerFeatureEnablementHandlerPatch,
   applyLinuxOwlFeatureBindingFallbackPatch,
+  applyLinuxProxyAuthPatch,
   applyLinuxWorkerFileManagerPatch,
   patchLinuxOwlFeatureBindingFallbackAssets,
   patchLinuxWorkerFileManagerTarget,

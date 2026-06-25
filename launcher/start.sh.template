@@ -246,6 +246,13 @@ Environment:
   CODEX_MULTI_LAUNCH=1        Treat normal launches like --new-instance
   CODEX_MULTI_LAUNCH_PORT_RANGE=START-END
                               Port allocation range for --new-instance (default: CODEX_WEBVIEW_PORT through +4)
+  CODEX_LINUX_PROXY_SERVER=URL
+                              Add --proxy-server=URL when no --proxy-server flag was supplied
+  CODEX_LINUX_PROXY_USERNAME / CODEX_LINUX_PROXY_PASSWORD
+                              Credentials for CODEX_LINUX_PROXY_SERVER; values are raw strings, not URL encoded
+  CODEX_LINUX_PROXY_BYPASS_LIST=RULES
+                              Add --proxy-bypass-list=RULES with CODEX_LINUX_PROXY_SERVER
+                              If CODEX_LINUX_PROXY_SERVER is unset, common proxy env vars are used
 
 Logs: $LOG_FILE
 HELP
@@ -2302,6 +2309,229 @@ electron_enable_features_arg() {
     printf '%s\n' "--enable-features=$joined"
 }
 
+electron_proxy_server_arg_present() {
+    local arg
+
+    for arg in "${ELECTRON_ARGS[@]}"; do
+        case "$arg" in
+            --proxy-server|--proxy-server=*)
+                return 0
+                ;;
+        esac
+    done
+
+    return 1
+}
+
+select_standard_proxy_env() {
+    local name
+    local value
+
+    STANDARD_PROXY_ENV_NAME=""
+    STANDARD_PROXY_ENV_VALUE=""
+    for name in https_proxy HTTPS_PROXY http_proxy HTTP_PROXY all_proxy ALL_PROXY; do
+        value="${!name-}"
+        [ -n "$value" ] || continue
+        STANDARD_PROXY_ENV_NAME="$name"
+        STANDARD_PROXY_ENV_VALUE="$value"
+        return 0
+    done
+
+    return 1
+}
+
+standard_no_proxy_env_value() {
+    if [ -n "${no_proxy-}" ]; then
+        printf '%s\n' "$no_proxy"
+        return 0
+    fi
+    if [ -n "${NO_PROXY-}" ]; then
+        printf '%s\n' "$NO_PROXY"
+        return 0
+    fi
+    return 1
+}
+
+parse_standard_proxy_url() {
+    python3 - "$1" <<'PY'
+import sys
+from urllib.parse import unquote, urlsplit, urlunsplit
+
+raw = sys.argv[1].strip()
+if not raw:
+    raise SystemExit(1)
+
+parse_target = raw if "://" in raw else f"//{raw}"
+parts = urlsplit(parse_target)
+netloc = parts.netloc
+if not netloc:
+    netloc = parts.path.split("/", 1)[0]
+if not netloc:
+    raise SystemExit(1)
+
+userinfo = ""
+hostport = netloc
+if "@" in netloc:
+    userinfo, hostport = netloc.rsplit("@", 1)
+
+if parts.scheme:
+    server = urlunsplit((parts.scheme, hostport, "", "", ""))
+else:
+    server = hostport
+
+username = ""
+password = ""
+if userinfo:
+    if ":" in userinfo:
+        username, password = userinfo.split(":", 1)
+    else:
+        username = userinfo
+    username = unquote(username)
+    password = unquote(password)
+
+print(f"{server}\t{username}\t{password}")
+PY
+}
+
+populate_proxy_bypass_from_standard_env() {
+    local no_proxy_value
+
+    [ -z "${CODEX_LINUX_PROXY_BYPASS_LIST:-}" ] || return 0
+    no_proxy_value="$(standard_no_proxy_env_value)" || return 0
+    [ -n "$no_proxy_value" ] || return 0
+
+    CODEX_LINUX_PROXY_BYPASS_LIST="${no_proxy_value//,/;}"
+    export CODEX_LINUX_PROXY_BYPASS_LIST
+}
+
+populate_codex_proxy_env_from_standard_env() {
+    local parsed
+    local server
+    local username
+    local password
+
+    if [ -n "${CODEX_LINUX_PROXY_SERVER:-}" ]; then
+        populate_proxy_bypass_from_standard_env
+        return 0
+    fi
+
+    select_standard_proxy_env || return 0
+    parsed="$(parse_standard_proxy_url "$STANDARD_PROXY_ENV_VALUE")" || {
+        echo "Ignoring $STANDARD_PROXY_ENV_NAME: could not parse proxy URL."
+        return 0
+    }
+
+    IFS=$'\t' read -r server username password <<< "$parsed"
+    [ -n "$server" ] || return 0
+
+    CODEX_LINUX_PROXY_SERVER="$server"
+    export CODEX_LINUX_PROXY_SERVER
+
+    if [ -z "${CODEX_LINUX_PROXY_USERNAME:-}" ] && [ -n "$username" ]; then
+        CODEX_LINUX_PROXY_USERNAME="$username"
+        export CODEX_LINUX_PROXY_USERNAME
+    fi
+    if [ -z "${CODEX_LINUX_PROXY_PASSWORD:-}" ] && [ -n "$password" ]; then
+        CODEX_LINUX_PROXY_PASSWORD="$password"
+        export CODEX_LINUX_PROXY_PASSWORD
+    fi
+    populate_proxy_bypass_from_standard_env
+
+    echo "Derived CODEX_LINUX_PROXY_SERVER from $STANDARD_PROXY_ENV_NAME."
+}
+
+extract_proxy_auth_endpoint() {
+    local server="$1"
+    local endpoint
+    local rest
+    local host=""
+    local port=""
+
+    CODEX_LINUX_PROXY_AUTH_HOST=""
+    CODEX_LINUX_PROXY_AUTH_PORT=""
+
+    endpoint="$server"
+    case "$endpoint" in
+        *";"*|*=*)
+            echo "Ignoring proxy auth env: CODEX_LINUX_PROXY_SERVER must be a single proxy endpoint, not a proxy list."
+            return 1
+            ;;
+    esac
+
+    case "$endpoint" in
+        *://*) endpoint="${endpoint#*://}" ;;
+    esac
+    endpoint="${endpoint%%/*}"
+    endpoint="${endpoint%%\?*}"
+    endpoint="${endpoint%%#*}"
+
+    case "$endpoint" in
+        *@*)
+            echo "Ignoring credentials embedded in CODEX_LINUX_PROXY_SERVER; use CODEX_LINUX_PROXY_USERNAME and CODEX_LINUX_PROXY_PASSWORD instead."
+            endpoint="${endpoint#*@}"
+            ;;
+    esac
+
+    case "$endpoint" in
+        \[*\]*)
+            host="${endpoint%%]*}"
+            host="${host#[}"
+            rest="${endpoint#*]}"
+            case "$rest" in
+                :*) port="${rest#:}" ;;
+            esac
+            ;;
+        *)
+            host="${endpoint%%:*}"
+            if [ "$host" != "$endpoint" ]; then
+                port="${endpoint#*:}"
+            fi
+            ;;
+    esac
+
+    if [ -z "$host" ]; then
+        echo "Ignoring proxy auth env: could not parse CODEX_LINUX_PROXY_SERVER host."
+        return 1
+    fi
+
+    CODEX_LINUX_PROXY_AUTH_HOST="${host,,}"
+    CODEX_LINUX_PROXY_AUTH_PORT="$port"
+    return 0
+}
+
+configure_electron_proxy_from_env() {
+    unset CODEX_LINUX_PROXY_AUTH_HOST CODEX_LINUX_PROXY_AUTH_PORT
+
+    if electron_proxy_server_arg_present; then
+        if [ -n "${CODEX_LINUX_PROXY_SERVER:-}" ] ||
+            [ -n "${CODEX_LINUX_PROXY_USERNAME:-}" ] ||
+            [ -n "${CODEX_LINUX_PROXY_PASSWORD:-}" ] ||
+            [ -n "${CODEX_LINUX_PROXY_BYPASS_LIST:-}" ]; then
+            echo "Ignoring CODEX_LINUX_PROXY_* env because --proxy-server was provided explicitly."
+        fi
+        return 0
+    fi
+
+    populate_codex_proxy_env_from_standard_env
+    [ -n "${CODEX_LINUX_PROXY_SERVER:-}" ] || return 0
+
+    ELECTRON_ARGS+=("--proxy-server=$CODEX_LINUX_PROXY_SERVER")
+    if [ -n "${CODEX_LINUX_PROXY_BYPASS_LIST:-}" ]; then
+        ELECTRON_ARGS+=("--proxy-bypass-list=$CODEX_LINUX_PROXY_BYPASS_LIST")
+    fi
+
+    if [ -n "${CODEX_LINUX_PROXY_USERNAME:-}" ]; then
+        if extract_proxy_auth_endpoint "$CODEX_LINUX_PROXY_SERVER"; then
+            export CODEX_LINUX_PROXY_AUTH_HOST CODEX_LINUX_PROXY_AUTH_PORT CODEX_LINUX_PROXY_USERNAME CODEX_LINUX_PROXY_PASSWORD
+            echo "Configured Electron proxy from CODEX_LINUX_PROXY_SERVER with proxy authentication."
+        fi
+    elif [ -n "${CODEX_LINUX_PROXY_PASSWORD:-}" ]; then
+        echo "Ignoring CODEX_LINUX_PROXY_PASSWORD because CODEX_LINUX_PROXY_USERNAME is empty."
+    else
+        echo "Configured Electron proxy from CODEX_LINUX_PROXY_SERVER."
+    fi
+}
+
 write_user_electron_flags_template() {
     cat > "$USER_ELECTRON_FLAGS_FILE" <<'EOF'
 # Codex Desktop Linux launch flags.
@@ -2591,6 +2821,7 @@ set_electron_defaults() {
     fi
 
     apply_electron_rendering_profile
+    configure_electron_proxy_from_env
 }
 
 load_feature_electron_args() {

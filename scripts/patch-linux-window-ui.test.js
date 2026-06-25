@@ -60,6 +60,7 @@ const {
   applyLinuxAppServerBackfillWaitPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxOwlFeatureBindingFallbackPatch,
+  applyLinuxProxyAuthPatch,
   applyLinuxFastModeModelGuardPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxReadyToShowWindowStatePatch,
@@ -698,6 +699,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-tray",
     "linux-build-info-tray",
     "linux-single-instance",
+    "linux-proxy-auth",
     "linux-computer-use-ui-feature",
     "linux-computer-use-plugin-gate",
     "linux-chrome-plugin-auto-install",
@@ -2816,6 +2818,87 @@ test("adds Linux single-instance lock and second-instance handoff", () => {
   assert.match(patched, /codexLinuxSecondInstanceHandler/);
   assert.match(patched, /n\.app\.on\(`second-instance`,codexLinuxSecondInstanceHandler\)/);
   assert.match(patched, /n\.app\.off\(`second-instance`,codexLinuxSecondInstanceHandler\)/);
+});
+
+test("registers Linux proxy authentication before Electron app ready", async () => {
+  const source = [
+    "let n=require(`electron`);",
+    "async function boot(){",
+    "t.Er().info(`Launching app`,{safe:{agentRunId:process.env.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null}});",
+    "let A=Date.now();",
+    "await n.app.whenReady();",
+    "return A}",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxProxyAuthPatch, source);
+
+  assert.match(patched, /function codexLinuxInstallProxyAuthHandler\(e\)/);
+  assert.match(patched, /codexLinuxInstallProxyAuthHandler\(n\);await n\.app\.whenReady\(\)/);
+
+  const handlers = {};
+  const calls = { whenReady: 0 };
+  const app = {
+    on(event, handler) {
+      handlers[event] = handler;
+    },
+    whenReady() {
+      calls.whenReady += 1;
+      return Promise.resolve();
+    },
+  };
+  const context = {
+    Date,
+    process: {
+      platform: "linux",
+      env: {
+        CODEX_LINUX_PROXY_AUTH_HOST: "proxy.example",
+        CODEX_LINUX_PROXY_AUTH_PORT: "8080",
+        CODEX_LINUX_PROXY_USERNAME: "user",
+        CODEX_LINUX_PROXY_PASSWORD: "p@ss",
+      },
+    },
+    require(name) {
+      assert.equal(name, "electron");
+      return { app };
+    },
+    t: {
+      Er() {
+        return { info() {} };
+      },
+    },
+  };
+
+  await vm.runInNewContext(`${patched};boot()`, context);
+  assert.equal(calls.whenReady, 1);
+  assert.equal(typeof handlers.login, "function");
+
+  let prevented = 0;
+  let credentials = null;
+  handlers.login(
+    { preventDefault() { prevented += 1; } },
+    null,
+    null,
+    { isProxy: true, host: "PROXY.EXAMPLE", port: 8080 },
+    (username, password) => {
+      credentials = { username, password };
+    },
+  );
+
+  assert.equal(prevented, 1);
+  assert.deepEqual(credentials, { username: "user", password: "p@ss" });
+
+  credentials = null;
+  handlers.login(
+    { preventDefault() { prevented += 1; } },
+    null,
+    null,
+    { isProxy: false, host: "proxy.example", port: 8080 },
+    (username, password) => {
+      credentials = { username, password };
+    },
+  );
+
+  assert.equal(prevented, 1);
+  assert.equal(credentials, null);
 });
 
 test("forces the bootstrap single-instance lock on Linux even when upstream disables it", () => {

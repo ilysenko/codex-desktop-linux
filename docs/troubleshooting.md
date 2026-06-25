@@ -20,6 +20,7 @@
 | Computer Use `doctor` reports `ydotool_socket: Permission denied` | Adjust the daemon socket so users in the `input` group can use it |
 | `ConnectTimeoutError` for Electron headers | Re-run `make build-app`; the installer uses `https://artifacts.electronjs.org/headers/dist` by default |
 | Computer Use AT-SPI tree empty | Run `codex-computer-use-linux setup`, then restart the target app |
+| `ERR_NO_SUPPORTED_PROXIES` with an authenticated proxy | Do not pass credentials inside Chromium's `--proxy-server` URL; use the proxy environment variables below |
 | `codex-update-manager` keeps running after package removal | Run `systemctl --user disable --now codex-update-manager.service` and confirm `/opt/codex-desktop` is gone |
 
 ## Persistent Launch Flags
@@ -51,6 +52,38 @@ For native Wayland IME setups, try:
 
 Restart Codex Desktop after changing this file. Warm-start launches reuse the
 running Electron process and will not pick up new flags.
+
+## Authenticated HTTP Proxies
+
+Chromium does not accept `user:password@` credentials inside the proxy list
+passed through `--proxy-server`. Prefer the dedicated Linux proxy environment
+variables; usernames and passwords are raw strings and do not need URL
+encoding:
+
+```bash
+CODEX_LINUX_PROXY_SERVER='http://proxy.example:8080' \
+CODEX_LINUX_PROXY_USERNAME='user' \
+CODEX_LINUX_PROXY_PASSWORD='p@ss' \
+./codex-app/start.sh
+```
+
+The launcher turns `CODEX_LINUX_PROXY_SERVER` into Electron's
+`--proxy-server` argument and wires proxy authentication through the Electron
+main process. Optional bypass rules can be passed with
+`CODEX_LINUX_PROXY_BYPASS_LIST`.
+
+If `CODEX_LINUX_PROXY_SERVER` is unset, the launcher falls back to common proxy
+environment variables in this order: `https_proxy`, `HTTPS_PROXY`,
+`http_proxy`, `HTTP_PROXY`, `all_proxy`, then `ALL_PROXY`. Credentials embedded
+in that URL are split into `CODEX_LINUX_PROXY_USERNAME` and
+`CODEX_LINUX_PROXY_PASSWORD`; percent-encoded characters are decoded. If
+`CODEX_LINUX_PROXY_BYPASS_LIST` is unset, `no_proxy` or `NO_PROXY` is converted
+to the Electron bypass list.
+
+If any `--proxy-server` flag is provided explicitly in `electron-flags.conf` or
+on the launcher command line, the launcher does not process
+`CODEX_LINUX_PROXY_*` variables. In that mode you are responsible for a
+Chromium-supported proxy configuration.
 
 ## Transparent Or Dark Sidebar
 

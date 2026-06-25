@@ -3205,6 +3205,11 @@ print_state() {
     for arg in "${ELECTRON_ARGS[@]}"; do
         printf '<%s>' "$arg"
     done
+    printf ' proxy_host=%s proxy_port=%s proxy_user=%s proxy_password=%s' \
+        "${CODEX_LINUX_PROXY_AUTH_HOST:-}" \
+        "${CODEX_LINUX_PROXY_AUTH_PORT:-}" \
+        "${CODEX_LINUX_PROXY_USERNAME:-}" \
+        "${CODEX_LINUX_PROXY_PASSWORD:-}"
     printf '\n'
 }
 
@@ -3246,6 +3251,29 @@ PY
     output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe -- --ozone-platform=x11)"
     [[ "$output" == *"electron=<--ozone-platform=x11>"* ]] || fail "pass-through ozone platform must reach Electron: $output"
     [[ "$output" != *"<--ozone-platform-hint=auto>"* ]] || fail "launcher must not add ozone hint when pass-through supplies an ozone platform: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_LINUX_PROXY_SERVER=http://proxy.example:8080 CODEX_LINUX_PROXY_USERNAME=user CODEX_LINUX_PROXY_PASSWORD='p@ss' "$launcher_probe" probe)"
+    [[ "$output" == *"electron=<--proxy-server=http://proxy.example:8080>"* ]] || fail "proxy env must add an Electron proxy-server arg: $output"
+    [[ "$output" == *"proxy_host=proxy.example proxy_port=8080 proxy_user=user proxy_password=p@ss"* ]] || fail "proxy env must export raw proxy auth metadata: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default https_proxy='http://user:p%40ss@proxy.example:8080' no_proxy='localhost,127.0.0.1' "$launcher_probe" probe)"
+    [[ "$output" == *"electron=<--proxy-server=http://proxy.example:8080><--proxy-bypass-list=localhost;127.0.0.1>"* ]] || fail "standard proxy env must derive Electron proxy args: $output"
+    [[ "$output" == *"proxy_host=proxy.example proxy_port=8080 proxy_user=user proxy_password=p@ss"* ]] || fail "standard proxy env must derive raw proxy auth metadata: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_LINUX_PROXY_SERVER=http://custom.example:8080 CODEX_LINUX_PROXY_USERNAME=custom CODEX_LINUX_PROXY_PASSWORD='secret' https_proxy='http://user:p%40ss@proxy.example:8080' "$launcher_probe" probe)"
+    [[ "$output" == *"electron=<--proxy-server=http://custom.example:8080>"* ]] || fail "custom proxy env must win over standard proxy env: $output"
+    [[ "$output" != *"<--proxy-server=http://proxy.example:8080>"* ]] || fail "standard proxy env must not override custom proxy env: $output"
+    [[ "$output" == *"proxy_host=custom.example proxy_port=8080 proxy_user=custom proxy_password=secret"* ]] || fail "custom proxy auth metadata must win over standard proxy env: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_LINUX_PROXY_SERVER=http://proxy.example:8080 CODEX_LINUX_PROXY_USERNAME=user CODEX_LINUX_PROXY_PASSWORD='p@ss' "$launcher_probe" probe -- --proxy-server=http://explicit.example:8888)"
+    [[ "$output" == *"electron=<--proxy-server=http://explicit.example:8888>"* ]] || fail "explicit proxy-server arg must be preserved: $output"
+    [[ "$output" != *"<--proxy-server=http://proxy.example:8080>"* ]] || fail "proxy env must not add a second proxy-server when one was explicit: $output"
+    [[ "$output" == *"proxy_host= proxy_port= proxy_user=user proxy_password=p@ss"* ]] || fail "explicit proxy-server must suppress derived proxy auth metadata: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default https_proxy='http://user:p%40ss@proxy.example:8080' "$launcher_probe" probe -- --proxy-server=http://explicit.example:8888)"
+    [[ "$output" == *"electron=<--proxy-server=http://explicit.example:8888>"* ]] || fail "explicit proxy-server arg must be preserved with standard proxy env: $output"
+    [[ "$output" != *"<--proxy-server=http://proxy.example:8080>"* ]] || fail "standard proxy env must not add a second proxy-server when one was explicit: $output"
+    [[ "$output" == *"proxy_host= proxy_port= proxy_user= proxy_password="* ]] || fail "explicit proxy-server must suppress standard proxy auth metadata: $output"
 
     local user_flags_dir="$TMP_DIR/user-electron-flags"
     local user_flags_file="$user_flags_dir/electron-flags.conf"
