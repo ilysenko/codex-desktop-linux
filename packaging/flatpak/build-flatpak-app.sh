@@ -164,24 +164,6 @@ export GIT_TEMPLATE_DIR="$runtime_git_template_path"
 EOF2
     fi
     cat >> "$FLATPAK_LIB_STAGE/bin/git" <<EOF2
-git_runtime_compat_dir="\${XDG_CACHE_HOME:-/var/cache}/codex-desktop/git-runtime-compat"
-git_runtime_libcurl_target=""
-for git_runtime_candidate in \
-    /usr/lib/x86_64-linux-gnu/libcurl.so.4 \
-    /usr/lib/aarch64-linux-gnu/libcurl.so.4 \
-    /usr/lib64/libcurl.so.4 \
-    /usr/lib/libcurl.so.4
-do
-    if [ -e "\$git_runtime_candidate" ]; then
-        git_runtime_libcurl_target="\$git_runtime_candidate"
-        break
-    fi
-done
-if [ -n "\$git_runtime_libcurl_target" ]; then
-    mkdir -p "\$git_runtime_compat_dir"
-    ln -sfn "\$git_runtime_libcurl_target" "\$git_runtime_compat_dir/libcurl-gnutls.so.4"
-    export LD_LIBRARY_PATH="\$git_runtime_compat_dir\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
-fi
 exec "$runtime_git_path" "\$@"
 EOF2
     chmod 0755 "$FLATPAK_LIB_STAGE/bin/git"
