@@ -310,7 +310,8 @@ download_electron() {
         info "Using Electron runtime archive: $CODEX_ELECTRON_ZIP_SOURCE"
         cp "$CODEX_ELECTRON_ZIP_SOURCE" "$WORK_DIR/electron.zip"
         mkdir -p "$INSTALL_DIR"
-        extract_zip_archive "$WORK_DIR/electron.zip" "$INSTALL_DIR"
+        cd "$INSTALL_DIR"
+        unzip -qo "$WORK_DIR/electron.zip"
         info "Electron ready"
         return 0
     fi
@@ -337,7 +338,8 @@ download_electron() {
 
     cp "$cached_zip" "$WORK_DIR/electron.zip"
     mkdir -p "$INSTALL_DIR"
-    extract_zip_archive "$WORK_DIR/electron.zip" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    unzip -qo "$WORK_DIR/electron.zip"
 
     info "Electron ready"
 }

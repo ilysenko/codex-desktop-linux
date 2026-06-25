@@ -156,7 +156,6 @@ EOF2
 
     cat > "$FLATPAK_LIB_STAGE/bin/git" <<EOF2
 #!/bin/sh
-set -eu
 export GIT_EXEC_PATH="$runtime_git_exec_path"
 EOF2
     if [ -n "$runtime_git_template_path" ]; then
@@ -235,7 +234,7 @@ install_payload() {
         "$FLATPAK_APP_PREFIX/opt" \
         "$FLATPAK_APP_PREFIX/lib" \
         "$FLATPAK_APP_PREFIX/share/applications" \
-        "$FLATPAK_APP_PREFIX/share/icons/hicolor/256x256/apps" \
+        "$FLATPAK_APP_PREFIX/share/icons/hicolor/scalable/apps" \
         "$FLATPAK_APP_PREFIX/share/metainfo"
 
     cp -a "$APP_STAGE" "$FLATPAK_APP_OPT_DIR"
@@ -246,7 +245,7 @@ install_payload() {
     ln -sfn codex-desktop-flatpak "$FLATPAK_APP_PREFIX/bin/codex-desktop"
     install -m 0644 "$SOURCE_ROOT/packaging/flatpak/${APP_ID}.desktop" "$FLATPAK_APP_PREFIX/share/applications/${APP_ID}.desktop"
     install -m 0644 "$SOURCE_ROOT/packaging/flatpak/${APP_ID}.metainfo.xml" "$FLATPAK_APP_PREFIX/share/metainfo/${APP_ID}.metainfo.xml"
-    install -m 0644 "$SOURCE_ROOT/packaging/flatpak/${APP_ID}.png" "$FLATPAK_APP_PREFIX/share/icons/hicolor/256x256/apps/${APP_ID}.png"
+    install -m 0644 "$SOURCE_ROOT/packaging/flatpak/${APP_ID}.svg" "$FLATPAK_APP_PREFIX/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
 }
 
 main() {

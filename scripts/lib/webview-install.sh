@@ -18,15 +18,7 @@ extract_webview() {
         # on Linux the transparent background causes flickering.
         local webview_index="$INSTALL_DIR/content/webview/index.html"
         if [ -f "$webview_index" ]; then
-            python3 - "$webview_index" <<'PY'
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-source = path.read_text(encoding="utf-8")
-source = source.replace("--startup-background: transparent", "--startup-background: #1e1e1e", 1)
-path.write_text(source, encoding="utf-8")
-PY
+            sed -i 's/--startup-background: transparent/--startup-background: #1e1e1e/' "$webview_index"
         fi
         info "Webview files copied"
     else

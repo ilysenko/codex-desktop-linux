@@ -52,10 +52,6 @@ MULTI_LAUNCH_REQUESTED=0
 MULTI_LAUNCH_ACTIVE=0
 CODEX_LINUX_INSTANCE_ID=""
 LAUNCHER_ARGS=()
-CODEX_RUNNING_IN_FLATPAK=0
-if [ -f "/.flatpak-info" ]; then
-    CODEX_RUNNING_IN_FLATPAK=1
-fi
 
 # Internal marker consumed by patched Electron bundles; never trust inheritance.
 unset CODEX_LINUX_MULTI_LAUNCH
@@ -478,7 +474,7 @@ desktop_entry_exists() {
 }
 
 register_url_scheme_handlers() {
-    if truthy_env_value "${CODEX_SKIP_URL_SCHEME_REGISTRATION:-0}" || [ "$CODEX_RUNNING_IN_FLATPAK" -eq 1 ]; then
+    if truthy_env_value "${CODEX_SKIP_URL_SCHEME_REGISTRATION:-0}"; then
         return 0
     fi
 
