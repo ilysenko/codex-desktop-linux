@@ -2948,6 +2948,7 @@ webview_probe_body = source.split("webview_port_is_open() {", 1)[1].split("wait_
 wait_body = source.split("wait_for_webview_server() {", 1)[1].split("verify_webview_origin() {", 1)[0]
 send_body = source.split("send_warm_start_launch_action() {", 1)[1].split("webview_origin_is_reachable() {", 1)[0]
 prelaunch_hooks_body = source.split("run_feature_prelaunch_hooks() {", 1)[1].split("bundled_plugin_version() {", 1)[0]
+launcher_hooks_body = source.split("run_feature_launcher_hooks() {", 1)[1].split("build_electron_launch_args() {", 1)[0]
 cold_start_hooks_body = source.split("run_cold_start_hooks() {", 1)[1].split("run_cli_preflight() {", 1)[0]
 stop_body = source.split("stop_owned_webview_server() {", 1)[1].split("owned_webview_server_pid() {", 1)[0]
 stale_body = source.split("pid_is_stale_webview_server() {", 1)[1].split("stop_owned_webview_server() {", 1)[0]
@@ -3000,6 +3001,12 @@ if "client.shutdown(socket.SHUT_WR)" not in send_body or "response = client.recv
     raise SystemExit("warm-start IPC client must read the Electron socket acknowledgement")
 if 'launch_electron "${LAUNCHER_ARGS[@]}"' not in source:
     raise SystemExit("Electron launch must receive sanitized launcher args")
+if 'FEATURE_LAUNCHER_HOOK_DIR="$SCRIPT_DIR/.codex-linux/launcher.d"' not in source:
+    raise SystemExit("launcher must expose a generic Linux feature launcher hook directory")
+if launch_body.index("run_feature_launcher_hooks") > launch_body.index("build_electron_launch_args"):
+    raise SystemExit("Linux feature launcher hooks must run before final Electron launch args are built")
+if "configure_electron_proxy_from_env" in source or "CODEX_LINUX_PROXY_SERVER=URL" in source:
+    raise SystemExit("authenticated proxy setup must live in an opt-in Linux feature, not the core launcher")
 if 'Adopted concurrently-started verified webview server' not in source:
     raise SystemExit("launcher must tolerate a concurrent verified webview server winning the bind race")
 if 'set_detected_running_app "$pid"' not in detect_body:
@@ -3083,11 +3090,17 @@ if "if needs_cold_start;" not in runtime_body:
     raise SystemExit("second-instance handoff must skip CLI preflight")
 if 'run_cold_start_hooks' not in runtime_body:
     raise SystemExit("cold start must run feature-staged hooks before Electron launches")
-for name, body in (("prelaunch", prelaunch_hooks_body), ("cold-start", cold_start_hooks_body)):
+for name, body in (("prelaunch", prelaunch_hooks_body), ("cold-start", cold_start_hooks_body), ("launcher", launcher_hooks_body)):
     if 'CODEX_HOME="$CODEX_HOME"' not in body:
         raise SystemExit(f"launcher {name} hooks must receive resolved CODEX_HOME")
     if 'CODEX_LINUX_FEATURES_DIR="$CODEX_LINUX_FEATURES_DIR"' not in body:
         raise SystemExit(f"launcher {name} hooks must receive the app-local Linux feature resource directory")
+if 'CODEX_LINUX_FEATURE_HOOK_PHASE=launcher' not in launcher_hooks_body:
+    raise SystemExit("launcher hooks must receive their hook phase")
+if '"$hook" "${ELECTRON_ARGS[@]}"' not in launcher_hooks_body:
+    raise SystemExit("launcher hooks must receive current Electron args as argv")
+if 'env\\ *)' not in launcher_hooks_body or 'electron-arg\\ *)' not in launcher_hooks_body:
+    raise SystemExit("launcher hooks must use the generic env/electron-arg stdout protocol")
 if 'COLD_START_HOOK_DIR' not in cold_start_hooks_body or '"$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR"' not in cold_start_hooks_body:
     raise SystemExit("launcher cold-start hook runner must be generic and pass standard paths")
 if '>>"$LOG_FILE" 2>&1 &' not in cold_start_hooks_body:
@@ -3182,13 +3195,18 @@ probe = "#!/usr/bin/env bash\n" + source[start:end] + r'''
 set -Eeuo pipefail
 
 CODEX_LINUX_APP_ID="${CODEX_LINUX_APP_ID:-codex-desktop}"
+SCRIPT_DIR="${SCRIPT_DIR:-/tmp/codex-launcher-probe-app}"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 APP_STATE_DIR="${APP_STATE_DIR:-/tmp/codex-launcher-probe-state}"
 APP_CONFIG_DIR="${APP_CONFIG_DIR:-/tmp/codex-launcher-probe-config.$$}"
 USER_ELECTRON_FLAGS_FILE="${USER_ELECTRON_FLAGS_FILE:-$APP_CONFIG_DIR/electron-flags.conf}"
+LOG_FILE="${LOG_FILE:-/tmp/codex-launcher-probe.log}"
+CODEX_LINUX_FEATURES_DIR="${CODEX_LINUX_FEATURES_DIR:-$SCRIPT_DIR/.codex-linux/features}"
 FEATURE_ELECTRON_ARGS_DIR="${FEATURE_ELECTRON_ARGS_DIR:-}"
+FEATURE_LAUNCHER_HOOK_DIR="${FEATURE_LAUNCHER_HOOK_DIR:-}"
 
 print_state() {
-    printf 'mode=%s wslg=%s ozone_platform=%s ozone_hint=%s gpu=%s gpu_arg=%s comp=%s gl_added=%s renderer_accessibility=%s launch=' \
+    printf 'mode=%s wslg=%s ozone_platform=%s ozone_hint=%s gpu=%s gpu_arg=%s comp=%s gl_added=%s renderer_accessibility=%s hook_value=%s hook_saw_arg=%s launch=' \
         "$ELECTRON_RENDERING_MODE" \
         "$ELECTRON_WSLG_DETECTED" \
         "${ELECTRON_OZONE_PLATFORM:-}" \
@@ -3197,7 +3215,9 @@ print_state() {
         "$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS" \
         "$ELECTRON_GPU_COMPOSITING_DISABLED" \
         "$ELECTRON_GL_SWITCH_ADDED" \
-        "$ELECTRON_RENDERER_ACCESSIBILITY_FORCED"
+        "$ELECTRON_RENDERER_ACCESSIBILITY_FORCED" \
+        "${CODEX_TEST_LAUNCHER_HOOK_VALUE:-}" \
+        "${CODEX_TEST_LAUNCHER_HOOK_SAW_ARG:-}"
     for arg in "${ELECTRON_LAUNCH_ARGS[@]}"; do
         printf '<%s>' "$arg"
     done
@@ -3205,11 +3225,6 @@ print_state() {
     for arg in "${ELECTRON_ARGS[@]}"; do
         printf '<%s>' "$arg"
     done
-    printf ' proxy_host=%s proxy_port=%s proxy_user=%s proxy_password=%s' \
-        "${CODEX_LINUX_PROXY_AUTH_HOST:-}" \
-        "${CODEX_LINUX_PROXY_AUTH_PORT:-}" \
-        "${CODEX_LINUX_PROXY_USERNAME:-}" \
-        "${CODEX_LINUX_PROXY_PASSWORD:-}"
     printf '\n'
 }
 
@@ -3219,6 +3234,7 @@ case "${1:-}" in
         load_feature_electron_args
         load_user_electron_flags
         set_electron_defaults "${FEATURE_ELECTRON_ARGS[@]}" "${USER_ELECTRON_FLAGS[@]}" "$@"
+        run_feature_launcher_hooks
         build_electron_launch_args
         print_state
         ;;
@@ -3252,28 +3268,24 @@ PY
     [[ "$output" == *"electron=<--ozone-platform=x11>"* ]] || fail "pass-through ozone platform must reach Electron: $output"
     [[ "$output" != *"<--ozone-platform-hint=auto>"* ]] || fail "launcher must not add ozone hint when pass-through supplies an ozone platform: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_LINUX_PROXY_SERVER=http://proxy.example:8080 CODEX_LINUX_PROXY_USERNAME=user CODEX_LINUX_PROXY_PASSWORD='p@ss' "$launcher_probe" probe)"
-    [[ "$output" == *"electron=<--proxy-server=http://proxy.example:8080>"* ]] || fail "proxy env must add an Electron proxy-server arg: $output"
-    [[ "$output" == *"proxy_host=proxy.example proxy_port=8080 proxy_user=user proxy_password=p@ss"* ]] || fail "proxy env must export raw proxy auth metadata: $output"
-
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default https_proxy='http://user:p%40ss@proxy.example:8080' no_proxy='localhost,127.0.0.1' "$launcher_probe" probe)"
-    [[ "$output" == *"electron=<--proxy-server=http://proxy.example:8080><--proxy-bypass-list=localhost;127.0.0.1>"* ]] || fail "standard proxy env must derive Electron proxy args: $output"
-    [[ "$output" == *"proxy_host=proxy.example proxy_port=8080 proxy_user=user proxy_password=p@ss"* ]] || fail "standard proxy env must derive raw proxy auth metadata: $output"
-
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_LINUX_PROXY_SERVER=http://custom.example:8080 CODEX_LINUX_PROXY_USERNAME=custom CODEX_LINUX_PROXY_PASSWORD='secret' https_proxy='http://user:p%40ss@proxy.example:8080' "$launcher_probe" probe)"
-    [[ "$output" == *"electron=<--proxy-server=http://custom.example:8080>"* ]] || fail "custom proxy env must win over standard proxy env: $output"
-    [[ "$output" != *"<--proxy-server=http://proxy.example:8080>"* ]] || fail "standard proxy env must not override custom proxy env: $output"
-    [[ "$output" == *"proxy_host=custom.example proxy_port=8080 proxy_user=custom proxy_password=secret"* ]] || fail "custom proxy auth metadata must win over standard proxy env: $output"
-
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_LINUX_PROXY_SERVER=http://proxy.example:8080 CODEX_LINUX_PROXY_USERNAME=user CODEX_LINUX_PROXY_PASSWORD='p@ss' "$launcher_probe" probe -- --proxy-server=http://explicit.example:8888)"
-    [[ "$output" == *"electron=<--proxy-server=http://explicit.example:8888>"* ]] || fail "explicit proxy-server arg must be preserved: $output"
-    [[ "$output" != *"<--proxy-server=http://proxy.example:8080>"* ]] || fail "proxy env must not add a second proxy-server when one was explicit: $output"
-    [[ "$output" == *"proxy_host= proxy_port= proxy_user=user proxy_password=p@ss"* ]] || fail "explicit proxy-server must suppress derived proxy auth metadata: $output"
-
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default https_proxy='http://user:p%40ss@proxy.example:8080' "$launcher_probe" probe -- --proxy-server=http://explicit.example:8888)"
-    [[ "$output" == *"electron=<--proxy-server=http://explicit.example:8888>"* ]] || fail "explicit proxy-server arg must be preserved with standard proxy env: $output"
-    [[ "$output" != *"<--proxy-server=http://proxy.example:8080>"* ]] || fail "standard proxy env must not add a second proxy-server when one was explicit: $output"
-    [[ "$output" == *"proxy_host= proxy_port= proxy_user= proxy_password="* ]] || fail "explicit proxy-server must suppress standard proxy auth metadata: $output"
+    local feature_launcher_hook_dir="$TMP_DIR/feature-launcher-hooks"
+    mkdir -p "$feature_launcher_hook_dir"
+    cat > "$feature_launcher_hook_dir/generic-hook" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' 'env CODEX_TEST_LAUNCHER_HOOK_VALUE=from-hook'
+printf '%s\n' 'electron-arg --test-feature-launcher-hook=1'
+printf '%s\n' 'electron-arg --enable-features=TestHookFeature'
+for arg in "$@"; do
+    if [ "$arg" = "--existing-electron-arg" ]; then
+        printf '%s\n' 'env CODEX_TEST_LAUNCHER_HOOK_SAW_ARG=1'
+    fi
+done
+EOF
+    chmod +x "$feature_launcher_hook_dir/generic-hook"
+    output="$(env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe -- --existing-electron-arg)"
+    [[ "$output" == *"hook_value=from-hook hook_saw_arg=1"* ]] || fail "launcher hook must contribute environment variables and receive current Electron args: $output"
+    [[ "$output" == *"electron=<--existing-electron-arg><--test-feature-launcher-hook=1>"* ]] || fail "launcher hook must append Electron args after existing args: $output"
+    [[ "$output" == *"<--enable-features=TestHookFeature>"* ]] || fail "launcher hook enable-features output must merge into launch args: $output"
 
     local user_flags_dir="$TMP_DIR/user-electron-flags"
     local user_flags_file="$user_flags_dir/electron-flags.conf"

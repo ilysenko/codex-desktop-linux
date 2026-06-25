@@ -16,6 +16,7 @@ const RUNTIME_HOOK_DIRS = {
   env: { dir: "env.d", executable: false },
   prelaunch: { dir: "prelaunch.d", executable: true },
   electronArgs: { dir: "electron-args.d", executable: false },
+  launcher: { dir: "launcher.d", executable: true },
   coldStart: { dir: "cold-start.d", executable: true },
   afterExit: { dir: "after-exit.d", executable: true },
 };

@@ -76,6 +76,9 @@ Declarative runtime hooks are staged under `codex-app/.codex-linux/`:
 - `runtimeHooks.env` writes literal `KEY=VALUE` files consumed by the launcher
 - `runtimeHooks.prelaunch` runs synchronously before webview setup
 - `runtimeHooks.electronArgs` appends one Electron argument per line
+- `runtimeHooks.launcher` runs before final Electron args are built; executable
+  hooks receive current Electron args as argv and can print `env KEY=VALUE` or
+  `electron-arg VALUE` lines
 - `runtimeHooks.coldStart` runs background hooks after bundled plugin cache sync
 - `runtimeHooks.afterExit` runs after Electron exits while preserving the
   original Electron exit status

@@ -1,0 +1,16 @@
+{
+  "id": "authenticated-proxy",
+  "title": "Authenticated HTTP Proxy",
+  "description": "Opt-in launcher and main-process support for HTTP proxies that require username/password authentication.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "runtimeHooks": {
+    "launcher": {
+      "source": "launcher-hook.sh",
+      "name": "authenticated-proxy.sh",
+      "mode": "0755"
+    }
+  }
+}

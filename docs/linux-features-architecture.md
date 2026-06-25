@@ -128,6 +128,7 @@ Use `runtimeHooks` for launcher-visible hooks:
     "env": "env",
     "prelaunch": "prelaunch.sh",
     "electronArgs": "electron-args",
+    "launcher": "launcher.sh",
     "coldStart": "cold-start.sh",
     "afterExit": "after-exit.sh"
   }
@@ -142,6 +143,11 @@ The runtime hook types map to:
   synchronously before the packaged runtime prelaunch and webview setup.
 - `electronArgs`: copied to `.codex-linux/electron-args.d/`; each non-comment
   line is appended as one Electron argument.
+- `launcher`: copied to `.codex-linux/launcher.d/`; executable hooks run after
+  feature, user, and command-line Electron args are merged, but before final
+  Electron launch args are built. Hooks receive the current Electron args as
+  argv and may print `env KEY=VALUE` or `electron-arg VALUE` lines on stdout.
+  Unknown output lines are ignored; stderr is logged normally.
 - `coldStart`: copied to `.codex-linux/cold-start.d/`; executable hooks run in
   the background during cold start, after bundled plugin cache sync.
 - `afterExit`: copied to `.codex-linux/after-exit.d/`; executable hooks run
