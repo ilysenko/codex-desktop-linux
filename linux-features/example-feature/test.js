@@ -32,7 +32,7 @@ function withTempFeatureRoot(enabled, fn) {
     delete process.env.CODEX_LINUX_FEATURES_CONFIG;
     fs.writeFileSync(path.join(root, "features.example.json"), JSON.stringify({ enabled: [] }, null, 2));
     fs.writeFileSync(path.join(root, "features.json"), JSON.stringify({ enabled }, null, 2));
-    fs.cpSync(__dirname, path.join(root, "example-feature"), { recursive: true });
+    copyRepositoryFeature(root, "example-feature");
     return fn(root);
   } finally {
     if (originalConfig == null) {
@@ -42,6 +42,10 @@ function withTempFeatureRoot(enabled, fn) {
     }
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+function copyRepositoryFeature(root, featureId) {
+  fs.cpSync(path.resolve(__dirname, "..", featureId), path.join(root, featureId), { recursive: true });
 }
 
 function writeJson(filePath, value) {
@@ -95,6 +99,23 @@ test("example feature exposes its patch and stage hook when enabled", () => {
       patches[0].apply("codexLinuxExampleFeatureDisabled()", {}),
       "codexLinuxExampleFeatureEnabled()",
     );
+  });
+});
+
+test("legacy zed-opener configs enable open-target-discovery", () => {
+  withTempFeatureRoot(["zed-opener"], (root) => {
+    copyRepositoryFeature(root, "open-target-discovery");
+
+    assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), ["open-target-discovery"]);
+    assert.deepEqual(
+      loadEnabledLinuxFeatures({ featuresRoot: root }).map((feature) => feature.id),
+      ["open-target-discovery"],
+    );
+
+    writeJson(path.join(root, "features.json"), {
+      enabled: ["zed-opener", "open-target-discovery"],
+    });
+    assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), ["open-target-discovery"]);
   });
 });
 
