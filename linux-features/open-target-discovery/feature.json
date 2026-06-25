@@ -4,6 +4,6 @@
   "description": "Adds opt-in Linux terminal and editor opener discovery, plus richer file manager launching.",
   "defaultEnabled": false,
   "entrypoints": {
-    "mainBundlePatch": "./patch.js"
+    "patchDescriptors": "./patch.js"
   }
 }

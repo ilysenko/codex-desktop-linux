@@ -8,7 +8,15 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { pathToFileURL } = require("node:url");
-const { applyMainBundlePatch } = require("./patch.js");
+const {
+  applyMainBundlePatch,
+  applyNativeOpenTargetSelectionPatch,
+  applyOpenInTargetCommandPatch,
+  applyOpenInTargetExecutePatch,
+  applyOpenInTargetRegistryCommandPatch,
+  applyOpenInTargetsBridgeDetectionPatch,
+  applyOpenInTargetsDirectoryModePatch,
+} = require("./patch.js");
 const {
   enabledLinuxFeatureIds,
   loadLinuxFeatureMainBundlePatches,
@@ -37,6 +45,18 @@ const iconResolverBundle =
   "async function c_(e,t,a){return e===`win32`?Promise.all(t.map(async e=>{let t=a?.get(e.id)??null,r=e.iconPath?e.iconPath(t):t;return{id:e.id,label:e.label,icon:await d_(r,e.icon),kind:e.kind,hidden:e.hidden,supportsSsh:e.supportsSsh}})):l_(t)}function l_(e){return e.map(({id:e,label:t,icon:n,kind:r,hidden:i,supportsSsh:a})=>({id:e,label:t,icon:n,kind:r,hidden:i,supportsSsh:a}))}async function d_(e,t){if(!e)return t;try{let r=e.toLowerCase().endsWith(`.lnk`)?await f_(e):await n.app.getFileIcon(e,{size:`normal`});return!r||r.isEmpty()?t:r.toDataURL()}catch(e){return t}}async function f_(e){return n.nativeImage.createFromPath(e)}";
 const currentIconResolverBundle =
   "async function VN(e,t,n){return e===`win32`?Promise.all(t.map(async e=>{let t=n?.get(e.id)??null,r=e.iconPath?e.iconPath(t):t;return{id:e.id,label:e.label,icon:await WN(r,e.icon),kind:e.kind,hidden:e.hidden,supportsSsh:e.supportsSsh}})):HN(t)}function HN(e){return e.map(({id:e,label:t,icon:n,kind:r,hidden:i,supportsSsh:a})=>({id:e,label:t,icon:n,kind:r,hidden:i,supportsSsh:a}))}async function WN(e,t){if(!e)return t;try{let r=e.toLowerCase().endsWith(`.lnk`)?await UN(e):await n.app.getFileIcon(e,{size:`normal`});return!r||r.isEmpty()?t:r.toDataURL()}catch(e){return t}}async function UN(e){return n.nativeImage.createFromPath(e)}";
+const openInCommandBundle =
+  "async function JN(){}function iP(e){return e.targets}var IN={};class App{constructor(){this.requestOpenInWorker=async()=>({command:`worker-command`});this.settingsStore={targets:[{id:`linux-desktop-agent`,detect:async()=>`main-command`},{id:`missing`,detect:async()=>null}]}}getSettingsStore(){return this.settingsStore}async getOpenInTargetCommand(e){if(this.requestOpenInWorker==null)return;let{command:t}=await this.requestOpenInWorker({method:`get-target-command`,params:JN(this.getSettingsStore(),e)});return t}}";
+const currentOpenInCommandBundle =
+  "async function JN(){}function iP(e){return e.targets}var IN={};class App{constructor(){this.requestOpenInWorker=async()=>({command:null});this.settingsStore={targets:[{id:`linux-desktop-agent`,detect:async()=>`main-command`},{id:`missing`,detect:async()=>null}]}}getSettingsStore(){return this.settingsStore}async getOpenInTargetCommand(e){if(this.requestOpenInWorker==null)return;let{command:t}=await this.requestOpenInWorker({method:`get-target-command`,params:JN(this.getSettingsStore(),e)});if(t==null)throw Error(`Open target \"${e}\" is not available`);return t}}";
+const openInBridgeBundle =
+  "async function JN(){}function iP(e){return e.targets}var IN={};var bridge={options:{settingsStore:{targets:[{id:`linux-desktop-agent`,detect:async()=>`main-command`},{id:`missing`,detect:async()=>null}]},requestOpenInWorker:async()=>({command:`worker-command`})},openInTargets:{detectTarget:async({target:e})=>{if(this.options.requestOpenInWorker==null)throw Error(`Open in worker unavailable`);let{command:t}=await this.options.requestOpenInWorker({method:`get-target-command`,params:JN(this.options.settingsStore,e)});return{available:t!=null}},loadTargetIcon:()=>{}}}";
+const openInExecuteBundle =
+  "function iP(e){return e.targets}async function BN(e,t,n){return n}async function ZN(e,t,n,{appPath:r,detectedCommand:i,hostConfig:a,location:o,remotePath:s,remoteWorkspaceRoot:c}={}){await BN(t,n,{appPath:r,detectedCommand:i,hostConfig:a,location:o,remotePath:s,remoteWorkspaceRoot:c})}";
+const openInTargetsBundle =
+  '"open-in-targets":async({cwd:e,deferEnrichment:n=!1,hostId:r,nativeBrowserDiscovery:i=`scan`,path:a})=>{let o=this.getRequestAppServerClient(r??void 0),s=this.getSettingsStore();let[c,l]=await Promise.all([XN(s),YN(s)]),u=a?.replace(/^([ab])[\\\\/]/,``)??null,d=u!=null&&_F(u)&&!t.Ta(o.hostConfig),f=u==null||d||t.Ta(o.hostConfig)?null:this.resolveOpenFilePath(this.mapAgentPathToLocalPath(u,o.hostConfig)??u,this.mapAgentPathToLocalPath(e,o.hostConfig)??this.getWorkspaceRoot()),p=oj(o.hostConfig,c,l),m=new Set(p),h=tP(s,e,m),g=d||f!=null&&t.wo(f),_=f!=null&&UA(f),v=f!=null&&GA(f),y=g?await gF({nativeBrowserDiscovery:i}):_?await hF({filePath:f}):[];return{preferredTarget:h,availableTargets:Array.from(m),mode:g||v?`native`:`editor`,targets:[...l.map(({id:e,label:t,icon:n,kind:r,hidden:i})=>({id:e,target:e,label:t,icon:n,kind:r,hidden:i,available:m.has(e),default:h===e||void 0})),...y]}}';
+const openTargetSelectionBundle =
+  "function e({targets:e,availableTargets:t,includeHiddenTargets:n=!1,mode:r=`editor`}){let i=e.filter(e=>e.appPath!=null);if(i.length>0)return i;if(r===`native`)return e.filter(e=>e.target===`systemDefault`||e.target===`fileManager`);let a=new Set(t);return e.filter(e=>a.has(e.target)&&(n||!e.hidden))}function t({preferredTarget:t,targets:n,availableTargets:r,includeHiddenTargets:i=!0,mode:a=`editor`}){let o=e({targets:n,availableTargets:r,includeHiddenTargets:i,mode:a});return o.length===0?null:t?o.find(e=>e.target===t)??o[0]??null:o[0]??null}function n(e){return e.appPath==null&&e.kind===`editor`}export{e as n,t as r,n as t};";
 
 function applyPatchTwice(patchFn, source, ...args) {
   const patched = patchFn(source, ...args);
@@ -715,23 +735,56 @@ test("open-target discovery uses desktop entry icons when available", () => {
   });
 });
 
+test("open-target discovery follows symlinked desktop entry icons", () => {
+  withTempDir((tmp) => {
+    const dataHome = path.join(tmp, "share");
+    const appsDir = path.join(dataHome, "applications");
+    const iconDir = path.join(dataHome, "icons", "hicolor", "128x128", "apps");
+    const targetIconPath = path.join(tmp, "flatpak-app", "export", "icons", "hicolor", "128x128", "apps", "com.example.Agent.png");
+    const symlinkIconPath = path.join(iconDir, "com.example.Agent.png");
+    const editorCommand = makeExecutable(path.join(tmp, "flatpak", "exports", "bin"), "com.example.Agent");
+    fs.mkdirSync(appsDir, { recursive: true });
+    fs.mkdirSync(iconDir, { recursive: true });
+    fs.mkdirSync(path.dirname(targetIconPath), { recursive: true });
+    fs.writeFileSync(targetIconPath, "png");
+    fs.symlinkSync(targetIconPath, symlinkIconPath);
+    fs.writeFileSync(
+      path.join(appsDir, "com.example.Agent.desktop"),
+      [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Flatpak Agent",
+        `Exec=${editorCommand} %U`,
+        "Icon=com.example.Agent",
+        "Categories=Development;",
+      ].join("\n"),
+    );
+
+    const targets = evaluatePatched(
+      openTargetsBundle,
+      { HOME: tmp, PATH: path.join(tmp, "bin"), XDG_DATA_HOME: dataHome, XDG_DATA_DIRS: path.join(tmp, "empty") },
+      "Xg.flatMap((target)=>{let platform=target.platforms.linux;return platform?[{label:platform.label,iconPath:platform.iconPath?.()}]:[]})",
+    );
+    const agent = targets.find((target) => target.label === "Flatpak Agent");
+
+    assert.ok(agent);
+    assert.equal(agent.iconPath, symlinkIconPath);
+  });
+});
+
 test("open-target discovery resolves iconPath on Linux", async () => {
   const patched = applyPatchTwice(applyMainBundlePatch, `${mainBundlePrefix}${iconResolverBundle}`);
-  const iconPath = "/tmp/codex-icon.png";
-  const image = {
-    isEmpty: () => false,
-    toDataURL: () => "data:image/png;base64,codex",
-  };
+  const iconPath = path.join(os.tmpdir(), "codex-open-target-icon.png");
+  fs.writeFileSync(iconPath, "codex");
   const electron = {
     app: {
       getFileIcon: async () => {
-        throw new Error("should prefer nativeImage for image files");
+        throw new Error("should prefer direct data URL for image files");
       },
     },
     nativeImage: {
-      createFromPath: (target) => {
-        assert.equal(target, iconPath);
-        return image;
+      createFromPath: () => {
+        throw new Error("should not need nativeImage for image files");
       },
     },
   };
@@ -751,26 +804,29 @@ test("open-target discovery resolves iconPath on Linux", async () => {
     targets,
   );
 
-  assert.equal(result[0].icon, "data:image/png;base64,codex");
+  assert.equal(result[0].icon, `data:image/png;base64,${Buffer.from("codex").toString("base64")}`);
+  fs.rmSync(iconPath, { force: true });
 });
 
 test("open-target discovery resolves iconPath on current upstream bundle shape", async () => {
   const patched = applyPatchTwice(applyMainBundlePatch, `${mainBundlePrefix}${currentIconResolverBundle}`);
-  const iconPath = "/tmp/codex-current-icon.svg";
-  const image = {
-    isEmpty: () => false,
-    toDataURL: () => "data:image/svg+xml;base64,codex",
-  };
+  const iconPath = path.join(os.tmpdir(), "codex-current-open-target-icon.svg");
+  fs.writeFileSync(iconPath, "<svg/>");
+  let nativeImageUsed = false;
   const electron = {
     app: {
       getFileIcon: async () => {
-        throw new Error("should prefer nativeImage for image files");
+        throw new Error("should not need getFileIcon for image files");
       },
     },
     nativeImage: {
       createFromPath: (target) => {
+        nativeImageUsed = true;
         assert.equal(target, iconPath);
-        return image;
+        return {
+          isEmpty: () => false,
+          toDataURL: () => "data:image/png;base64,converted-svg",
+        };
       },
     },
   };
@@ -792,7 +848,343 @@ test("open-target discovery resolves iconPath on current upstream bundle shape",
     targets,
   );
 
-  assert.equal(result[0].icon, "data:image/svg+xml;base64,codex");
+  assert.equal(nativeImageUsed, true);
+  assert.equal(result[0].icon, "data:image/png;base64,converted-svg");
+  fs.rmSync(iconPath, { force: true });
+});
+
+test("open-target discovery rasterizes undecodable SVG iconPath", async () => {
+  const patched = applyPatchTwice(applyMainBundlePatch, `${mainBundlePrefix}${currentIconResolverBundle}`);
+  const iconPath = path.join(os.tmpdir(), "codex-current-open-target-empty-svg.svg");
+  const svg = "<svg><rect width=\"16\" height=\"16\" /></svg>";
+  fs.writeFileSync(iconPath, svg);
+  const electron = {
+    app: {
+      getFileIcon: async () => {
+        throw new Error("should not fall back to file type icons for SVG iconPath");
+      },
+    },
+    nativeImage: {
+      createFromPath: (target) => {
+        assert.equal(target, iconPath);
+        return { isEmpty: () => true };
+      },
+    },
+    BrowserWindow: class {
+      webContents = {
+        capturePage: async () => ({
+          isEmpty: () => false,
+          toDataURL: () => "data:image/png;base64,rasterized-svg",
+          getSize: () => ({ width: 64, height: 64 }),
+        }),
+      };
+      async loadURL(url) {
+        assert.match(url, /^data:text\/html;charset=utf-8,/);
+      }
+      destroy() {}
+    },
+  };
+  const targets = [
+    {
+      id: "linux-desktop-agent",
+      label: "Agent",
+      icon: "apps/terminal.png",
+      kind: "editor",
+      iconPath: () => iconPath,
+    },
+  ];
+
+  const result = await new Function("require", "process", `${patched};return VN('linux', arguments[2], new Map());`)(
+    (name) => (name === "electron" ? electron : require(name)),
+    { platform: "linux", env: {} },
+    targets,
+  );
+
+  assert.equal(result[0].icon, "data:image/png;base64,rasterized-svg");
+  fs.rmSync(iconPath, { force: true });
+});
+
+test("open-target discovery keeps built-in icons for Linux targets without iconPath", async () => {
+  const patched = applyPatchTwice(applyMainBundlePatch, `${mainBundlePrefix}${currentIconResolverBundle}`);
+  const commandPath = path.join(os.tmpdir(), "codex-current-open-target-command");
+  fs.writeFileSync(commandPath, "binary");
+  const electron = {
+    app: {
+      getFileIcon: async () => {
+        throw new Error("should not inspect command paths for Linux targets without iconPath");
+      },
+    },
+    nativeImage: {
+      createFromPath: () => {
+        throw new Error("should not inspect command paths for Linux targets without iconPath");
+      },
+    },
+  };
+  const targets = [
+    {
+      id: "webstorm",
+      label: "WebStorm",
+      icon: "apps/webstorm.svg",
+      kind: "editor",
+    },
+  ];
+
+  const result = await new Function("require", "process", `${patched};return VN('linux', arguments[2], arguments[3]);`)(
+    (name) => (name === "electron" ? electron : require(name)),
+    { platform: "linux", env: {} },
+    targets,
+    new Map([["webstorm", commandPath]]),
+  );
+
+  assert.equal(result[0].icon, "apps/webstorm.svg");
+  fs.rmSync(commandPath, { force: true });
+});
+
+test("open-target discovery preserves bundled SVG fallback icons in Linux open menus", async () => {
+  withTempDir(async (tmp) => {
+    const patched = applyPatchTwice(applyMainBundlePatch, `${mainBundlePrefix}${currentIconResolverBundle}`);
+    const electron = {
+      app: {
+        getFileIcon: async () => {
+          throw new Error("should not inspect command paths for Linux targets without iconPath");
+        },
+      },
+      nativeImage: {
+        createFromPath: () => {
+          throw new Error("should not convert bundled fallback icons");
+        },
+      },
+    };
+    const targets = [
+      {
+        id: "webstorm",
+        label: "WebStorm",
+        icon: "apps/webstorm.svg",
+        kind: "editor",
+      },
+    ];
+
+    const result = await new Function("require", "process", `${patched};return VN('linux', arguments[2], new Map());`)(
+      (name) => (name === "electron" ? electron : require(name)),
+      { platform: "linux", env: {} },
+      targets,
+    );
+
+    assert.equal(result[0].icon, "apps/webstorm.svg");
+  });
+});
+
+test("open-target discovery rasterizes bundled SVG fallback icons when available", async () => {
+  withTempDir(async (tmp) => {
+    const patched = applyPatchTwice(applyMainBundlePatch, `${mainBundlePrefix}${currentIconResolverBundle}`);
+    const resourcesPath = path.join(tmp, "resources");
+    const bundledIconPath = path.join(resourcesPath, "app.asar", "webview", "apps", "webstorm.svg");
+    fs.mkdirSync(path.dirname(bundledIconPath), { recursive: true });
+    fs.writeFileSync(bundledIconPath, "<svg><rect width=\"16\" height=\"16\" /></svg>");
+    const electron = {
+      app: {
+        getFileIcon: async () => {
+          throw new Error("should not inspect command paths for bundled fallback icons");
+        },
+      },
+      nativeImage: {
+        createFromPath: (target) => {
+          assert.equal(target, bundledIconPath);
+          return { isEmpty: () => true };
+        },
+      },
+      BrowserWindow: class {
+        webContents = {
+          capturePage: async () => ({
+            isEmpty: () => false,
+            toDataURL: () => "data:image/png;base64,bundled-webstorm",
+            getSize: () => ({ width: 64, height: 64 }),
+          }),
+        };
+        async loadURL(url) {
+          assert.match(url, /^data:text\/html;charset=utf-8,/);
+        }
+        destroy() {}
+      },
+    };
+    const targets = [
+      {
+        id: "webstorm",
+        label: "WebStorm",
+        icon: "apps/webstorm.svg",
+        kind: "editor",
+      },
+    ];
+
+    const result = await new Function("require", "process", `${patched};return VN('linux', arguments[2], new Map());`)(
+      (name) => (name === "electron" ? electron : require(name)),
+      { platform: "linux", env: {}, resourcesPath },
+      targets,
+    );
+
+    assert.equal(result[0].icon, "data:image/png;base64,bundled-webstorm");
+  });
+});
+
+test("open-target discovery resolves iconPath in Linux target summaries", async () => {
+  const patched = applyPatchTwice(applyMainBundlePatch, `${mainBundlePrefix}${currentIconResolverBundle}`);
+  const iconPath = path.join(os.tmpdir(), "codex-current-open-target-summary-icon.png");
+  fs.writeFileSync(iconPath, "summary");
+  const electron = {
+    app: {
+      getFileIcon: async () => {
+        throw new Error("should prefer direct data URL for Linux summaries");
+      },
+    },
+    nativeImage: {
+      createFromPath: () => {
+        throw new Error("should not need nativeImage for PNG summaries");
+      },
+    },
+  };
+  const targets = [
+    {
+      id: "linux-desktop-agent",
+      label: "Agent",
+      icon: "apps/terminal.png",
+      kind: "editor",
+      iconPath: () => iconPath,
+    },
+  ];
+
+  assert.match(patched, /function codexLinuxOpenTargetSummaryIcon/);
+  const result = new Function("require", "process", `${patched};return HN(arguments[2]);`)(
+    (name) => (name === "electron" ? electron : require(name)),
+    { platform: "linux", env: {} },
+    targets,
+  );
+
+  assert.equal(Array.isArray(result), true);
+  assert.equal(result[0].icon, `data:image/png;base64,${Buffer.from("summary").toString("base64")}`);
+  fs.rmSync(iconPath, { force: true });
+});
+
+test("open-target discovery resolves SVG iconPath in Linux target summaries", async () => {
+  const patched = applyPatchTwice(applyMainBundlePatch, `${mainBundlePrefix}${currentIconResolverBundle}`);
+  const iconPath = path.join(os.tmpdir(), "codex-current-open-target-summary-icon.svg");
+  const svg = "<svg><rect width=\"16\" height=\"16\" /></svg>";
+  fs.writeFileSync(iconPath, svg);
+  const electron = {
+    app: {
+      getFileIcon: async () => {
+        throw new Error("should prefer direct SVG data URL for Linux summaries");
+      },
+    },
+    nativeImage: {
+      createFromPath: () => {
+        throw new Error("summary mapping should stay synchronous");
+      },
+    },
+  };
+  const targets = [
+    {
+      id: "linux-desktop-agent",
+      label: "Agent",
+      icon: "apps/terminal.png",
+      kind: "editor",
+      iconPath: () => iconPath,
+    },
+  ];
+
+  const result = new Function("require", "process", `${patched};return HN(arguments[2]);`)(
+    (name) => (name === "electron" ? electron : require(name)),
+    { platform: "linux", env: {} },
+    targets,
+  );
+
+  assert.equal(Array.isArray(result), true);
+  assert.equal(result[0].icon, `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+  fs.rmSync(iconPath, { force: true });
+});
+
+test("open-target discovery uses main registry for Linux command lookup", async () => {
+  const patched = applyPatchTwice(applyOpenInTargetCommandPatch, openInCommandBundle);
+  const app = new Function(`${patched};return new App();`)();
+
+  assert.equal(await app.getOpenInTargetCommand("linux-desktop-agent"), "main-command");
+  await assert.rejects(() => app.getOpenInTargetCommand("vscode"), /not available/);
+  await assert.rejects(() => app.getOpenInTargetCommand("missing"), /not available/);
+});
+
+test("open-target discovery patches current command lookup shape", async () => {
+  const patched = applyPatchTwice(applyOpenInTargetCommandPatch, currentOpenInCommandBundle);
+  const app = new Function(`${patched};return new App();`)();
+
+  assert.equal(await app.getOpenInTargetCommand("linux-desktop-agent"), "main-command");
+  await assert.rejects(() => app.getOpenInTargetCommand("vscode"), /not available/);
+});
+
+test("open-target discovery bridge detection uses main registry on Linux", async () => {
+  const patched = applyPatchTwice(applyOpenInTargetsBridgeDetectionPatch, openInBridgeBundle);
+  const options = {
+    settingsStore: {
+      targets: [
+        { id: "linux-desktop-agent", detect: async () => "main-command" },
+        { id: "missing", detect: async () => null },
+      ],
+    },
+    requestOpenInWorker: async () => ({ command: "worker-command" }),
+  };
+  const bridge = new Function(`${patched};return bridge;`).call({ options });
+
+  assert.deepEqual(await bridge.openInTargets.detectTarget.call(bridge, { target: "linux-desktop-agent" }), {
+    available: true,
+  });
+  assert.deepEqual(await bridge.openInTargets.detectTarget.call(bridge, { target: "missing" }), {
+    available: false,
+  });
+  assert.deepEqual(await bridge.openInTargets.detectTarget.call(bridge, { target: "vscode" }), {
+    available: false,
+  });
+});
+
+test("open-target discovery inserts shared Linux registry command helper", async () => {
+  const patched = applyPatchTwice(applyOpenInTargetRegistryCommandPatch, openInCommandBundle);
+  const command = await new Function(`${patched};return codexLinuxOpenTargetRegistryCommand({targets:[{id:'kate',detect:async()=>'/usr/bin/kate'}]}, 'kate');`)();
+
+  assert.match(patched, /async function codexLinuxOpenTargetRegistryCommand/);
+  assert.equal(command, "/usr/bin/kate");
+});
+
+test("open-target discovery passes main registry into open execution", () => {
+  const patched = applyPatchTwice(applyOpenInTargetExecutePatch, openInExecuteBundle);
+
+  assert.match(patched, /targets:iP\(e\)/);
+});
+
+test("open-target discovery treats directories as native open targets", () => {
+  const patched = applyPatchTwice(applyOpenInTargetsDirectoryModePatch, openInTargetsBundle);
+
+  assert.match(patched, /codexLinuxOpenTargetIsDirectory/);
+  assert.match(patched, /w=f!=null&&codexLinuxOpenTargetIsDirectory\(f\)/);
+});
+
+test("open-target discovery native selector includes available directory-capable targets", () => {
+  const patched = applyPatchTwice(applyNativeOpenTargetSelectionPatch, openTargetSelectionBundle)
+    .replace(/export\{[^}]+\};/u, "return {selectTargets:e,selectTarget:t,isEditor:n};");
+  const { selectTargets } = new Function(patched)();
+  const targets = [
+    { target: "fileManager", appPath: "/usr/bin/dolphin" },
+    { target: "systemDefault", appPath: "/usr/share/applications/kate.desktop" },
+    { target: "terminal", available: true, kind: "terminal" },
+    { target: "vscode", available: true, kind: "editor" },
+    { target: "linux-desktop-kate", available: true, kind: "editor" },
+    { target: "linux-desktop-hidden", available: false, kind: "editor" },
+  ];
+
+  assert.deepEqual(
+    selectTargets({
+      targets,
+      availableTargets: targets.map((target) => target.target),
+      mode: "native",
+    }).map((target) => target.target),
+    ["fileManager", "systemDefault", "terminal", "vscode", "linux-desktop-kate"],
+  );
 });
 
 test("open-target discovery respects hidden desktop entry overrides", () => {
@@ -931,7 +1323,10 @@ test("open-target discovery participates in feature loading and patch reports", 
         assert.match(patched, /linux:\{label:`Terminal`/);
         assert.match(patched, /\.\.\.codexLinuxDiscoveredIdeTargets\(\)/);
         assert.ok(
-          report.patches.some((patch) => patch.name === "feature:open-target-discovery" && patch.status === "applied"),
+          report.patches.some((patch) =>
+            patch.name === "feature:open-target-discovery:main-bundle-open-target-discovery" &&
+            patch.status === "applied",
+          ),
         );
       } finally {
         fs.rmSync(tempApp, { recursive: true, force: true });
