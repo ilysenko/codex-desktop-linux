@@ -34,3 +34,4 @@ install_app() {
     fi
     info "app.asar installed"
 }
+
