@@ -5282,10 +5282,14 @@ test_linux_computer_use_ui_opt_in_smoke() {
     local output_log="$workspace/output.log"
     local main_bundle="$extracted/.vite/build/main-test.js"
     local renderer_asset="$extracted/webview/assets/use-model-settings-test.js"
+    local current_renderer_asset="$extracted/webview/assets/use-is-plugins-enabled-current-test.js"
     local install_flow_asset="$extracted/webview/assets/use-plugin-install-flow-test.js"
+    local native_apps_asset="$extracted/webview/assets/use-native-apps.electron-test.js"
     local bundle_body
     local renderer_body
+    local current_renderer_body
     local install_flow_body
+    local native_apps_body
 
     mkdir -p "$workspace" "$fake_home/.config/codex-desktop"
 
@@ -5301,11 +5305,23 @@ function hae(e){return e===`macOS`||e===`windows`}
 function RS(e){let t=(0,q.c)(8),{enabled:n,hostId:r,isHostLocal:i}=e,a=n===void 0?!0:n,o=r===void 0?R:r,s=Kn(),{isLoading:c,platform:l}=Hr(),u=Vn(`1506311413`),d;t[0]===o?d=t[1]:(d={featureName:`computer_use`,hostId:o},t[0]=o,t[1]=d);let f=LS(d),p;t[2]===l?p=t[3]:(p=hae(l),t[2]=l,t[3]=p);let m=a&&i&&s===`electron`&&u&&(c||p),h=m&&!c&&f.enabled&&!f.isLoading,g=m&&f.isLoading,_=m&&(c||f.isLoading),v;return v}
 JS
 )"
+    current_renderer_body="$(cat <<'JS'
+function b(e){return e===`macOS`||e===`windows`}
+function x(e){let t=(0,_.c)(16),{enabled:n,hostId:r}=e,i=n===void 0?!0:n,{isLoading:a,platform:o}=m(),s=u(`1506311413`),c;t[0]===r?c=t[1]:(c={featureName:`computer_use`,hostId:r},t[0]=r,t[1]=c);let l=v(c),d=o===`windows`&&!a,f=i&&d,p;t[2]===f?p=t[3]:(p={enabled:f},t[2]=f,t[3]=p);let h=S(p),g=l.isLoading||d&&h.isLoading,y=l.enabled&&(!d||h.enabled),x;t[4]!==y||t[5]!==i||t[6]!==g||t[7]!==s||t[8]!==a||t[9]!==o?(x=w({areRequiredFeaturesEnabled:y,enabled:i,isAnyFeatureLoading:g,isComputerUseGateEnabled:s,isHostCompatiblePlatform:b(o),isPlatformLoading:a,windowType:`electron`}),t[4]=y,t[5]=i,t[6]=g,t[7]=s,t[8]=a,t[9]=o,t[10]=x):x=t[10];return x}
+JS
+)"
     install_flow_body='function Qe({forceReloadPlugins:e,hostId:t}){let ne=f({featureName:`computer_use`,hostId:t}),re=!ne.isLoading&&ne.enabled,[L,R]=(0,Z.useState)({});return re}'
+    native_apps_body="$(cat <<'JS'
+function d(e){return e.find(e=>e.plugin.name===`computer-use`)??null}
+function C(e){let t=(0,S.c)(9),{enabled:n}=e,{platform:a,isLoading:o}=c(),s=n&&(a===`macOS`||a===`windows`),l;t[0]===Symbol.for(`react.memo_cache_sentinel`)?(l={order:`usage`},t[0]=l):l=t[0];let u;t[1]===s?u=t[2]:(u={params:l,queryConfig:{enabled:s,staleTime:i.FIVE_MINUTES,refetchOnWindowFocus:!1}},t[1]=s,t[2]=u);let d=r(`native-desktop-apps`,u);return d}
+JS
+)"
 
     make_fake_extracted_asar "$extracted" "$bundle_body"
     printf '%s\n' "$renderer_body" > "$renderer_asset"
+    printf '%s\n' "$current_renderer_body" > "$current_renderer_asset"
     printf '%s\n' "$install_flow_body" > "$install_flow_asset"
+    printf '%s\n' "$native_apps_body" > "$native_apps_asset"
 
     # Branch 1: no env var, no settings.json — only the plugin manifest gate runs.
     HOME="$fake_home" XDG_CONFIG_HOME= unset_env_value="" \
@@ -5315,13 +5331,17 @@ JS
     assert_contains "$main_bundle" '(t===`darwin`||t===`linux`)&&e.computerUse'
     assert_not_contains "$main_bundle" 'return n===`linux`?{...e,computerUse:!0,computerUseNodeRepl:!0}'
     assert_not_contains "$renderer_asset" 'function hae(e){return e===`macOS`||e===`windows`||e===`linux`}'
+    assert_not_contains "$current_renderer_asset" 'areRequiredFeaturesEnabled:o===`linux`||y'
+    assert_not_contains "$native_apps_asset" 'a===`macOS`||a===`windows`||a===`linux`'
     assert_not_contains "$install_flow_asset" 'navigator.userAgent.includes(`Linux`)'
 
-    # Branch 2: env var opts in — all four patches apply.
-    rm "$main_bundle" "$renderer_asset" "$install_flow_asset"
+    # Branch 2: env var opts in — all Computer Use UI patches apply.
+    rm "$main_bundle" "$renderer_asset" "$current_renderer_asset" "$install_flow_asset" "$native_apps_asset"
     printf '%s\n' "$bundle_body" > "$main_bundle"
     printf '%s\n' "$renderer_body" > "$renderer_asset"
+    printf '%s\n' "$current_renderer_body" > "$current_renderer_asset"
     printf '%s\n' "$install_flow_body" > "$install_flow_asset"
+    printf '%s\n' "$native_apps_body" > "$native_apps_asset"
 
     env -u CODEX_LINUX_APP_ID -u CODEX_APP_ID -u CODEX_LINUX_SETTINGS_FILE \
         CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
@@ -5329,13 +5349,18 @@ JS
     assert_contains "$main_bundle" '(t===`darwin`||t===`linux`)&&e.computerUse'
     assert_contains "$main_bundle" 'return n===`linux`?{...e,computerUse:!0,computerUseNodeRepl:!0}'
     assert_contains "$renderer_asset" 'function hae(e){return e===`macOS`||e===`windows`||e===`linux`}'
+    assert_contains "$current_renderer_asset" 'areRequiredFeaturesEnabled:o===`linux`||y'
+    assert_contains "$current_renderer_asset" 'isAnyFeatureLoading:o===`linux`?!1:g'
+    assert_contains "$native_apps_asset" 'a===`macOS`||a===`windows`||a===`linux`'
     assert_contains "$install_flow_asset" 'navigator.userAgent.includes(`Linux`)'
 
     # Branch 3: settings.json flag opts in even without env var.
-    rm "$main_bundle" "$renderer_asset" "$install_flow_asset"
+    rm "$main_bundle" "$renderer_asset" "$current_renderer_asset" "$install_flow_asset" "$native_apps_asset"
     printf '%s\n' "$bundle_body" > "$main_bundle"
     printf '%s\n' "$renderer_body" > "$renderer_asset"
+    printf '%s\n' "$current_renderer_body" > "$current_renderer_asset"
     printf '%s\n' "$install_flow_body" > "$install_flow_asset"
+    printf '%s\n' "$native_apps_body" > "$native_apps_asset"
     printf '%s\n' '{"codex-linux-computer-use-ui-enabled": true}' > "$fake_home/.config/codex-desktop/settings.json"
 
     env -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI -u CODEX_LINUX_APP_ID -u CODEX_APP_ID -u CODEX_LINUX_SETTINGS_FILE \
@@ -5343,6 +5368,8 @@ JS
         node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$main_bundle" 'return n===`linux`?{...e,computerUse:!0,computerUseNodeRepl:!0}'
     assert_contains "$renderer_asset" 'function hae(e){return e===`macOS`||e===`windows`||e===`linux`}'
+    assert_contains "$current_renderer_asset" 'areRequiredFeaturesEnabled:o===`linux`||y'
+    assert_contains "$native_apps_asset" 'a===`macOS`||a===`windows`||a===`linux`'
     assert_contains "$install_flow_asset" 'navigator.userAgent.includes(`Linux`)'
 }
 

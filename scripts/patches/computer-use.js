@@ -290,6 +290,7 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
   let platformPredicateChanged = false;
   let availabilityChanged = false;
   let availabilityGateFound = false;
+  let nativeAppsGateChanged = false;
 
   const computerUseFeatureNeedle = "featureName:`computer_use`";
   const hasComputerUseAvailabilityGate = () =>
@@ -430,7 +431,7 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
     ) => {
       const contextStart = Math.max(0, offset - 1200);
       const context = patchedSource.slice(contextStart, offset + match.length);
-      if (!context.includes(computerUseFeatureNeedle) || !context.includes("featureName:`windows_computer_use`")) {
+      if (!context.includes(computerUseFeatureNeedle)) {
         return match;
       }
       availabilityGateFound = true;
@@ -439,7 +440,19 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
     },
   );
 
-  if (availabilityChanged || availabilityAlreadyPatched()) {
+  if (patchedSource.includes("native-desktop-apps") && hasComputerUseLiteral(patchedSource)) {
+    const nativeAppsPlatformPattern =
+      /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)===`macOS`\|\|\3===`windows`\)/g;
+    patchedSource = patchedSource.replace(
+      nativeAppsPlatformPattern,
+      (match, availableVar, enabledVar, platformVar) => {
+        nativeAppsGateChanged = true;
+        return `${availableVar}=${enabledVar}&&(${platformVar}===\`macOS\`||${platformVar}===\`windows\`||${platformVar}===\`linux\`)`;
+      },
+    );
+  }
+
+  if (availabilityChanged || nativeAppsGateChanged || availabilityAlreadyPatched()) {
     return patchedSource;
   }
 
