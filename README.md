@@ -108,7 +108,6 @@ workarounds.
 | Remote Control UI gates | Opt-in | `remote-control-ui` | [Docs](linux-features/remote-control-ui/README.md) |
 | Experimental Remote Mobile Control | Opt-in | `remote-mobile-control` | [Docs](linux-features/remote-mobile-control/README.md) |
 | Thorium Chrome Plugin Support | Opt-in | `thorium-chrome-plugin` | [Docs](linux-features/thorium-chrome-plugin/README.md) |
-| Zed Opener | Opt-in | `zed-opener` | [Docs](linux-features/zed-opener/README.md) |
 
 Server-gated upstream features, such as model rollouts, are controlled by
 OpenAI per account. Rebuilding this wrapper does not unlock them.
@@ -129,7 +128,7 @@ cp linux-features/features.example.json linux-features/features.json
 {
   "enabled": [
     "read-aloud",
-    "zed-opener"
+    "open-target-discovery"
   ]
 }
 ```

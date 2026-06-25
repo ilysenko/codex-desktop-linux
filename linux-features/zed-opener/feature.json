@@ -1,9 +1,0 @@
-{
-  "id": "zed-opener",
-  "title": "Zed Opener",
-  "description": "Adds Zed as an opt-in Linux editor opener when a supported Zed CLI binary is available.",
-  "defaultEnabled": false,
-  "entrypoints": {
-    "mainBundlePatch": "./patch.js"
-  }
-}

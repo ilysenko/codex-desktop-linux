@@ -473,7 +473,7 @@ test("build info captures DMG hash, features, distro profile, and source revisio
     fs.mkdirSync(featuresRoot, { recursive: true });
     fs.writeFileSync(
       path.join(featuresRoot, "features.json"),
-      JSON.stringify({ enabled: ["read-aloud", "zed-opener"] }),
+      JSON.stringify({ enabled: ["read-aloud", "open-target-discovery"] }),
       "utf8",
     );
 
@@ -511,7 +511,7 @@ test("build info captures DMG hash, features, distro profile, and source revisio
     assert.equal(info.source.commitUrl, "https://github.com/example/codex-desktop-linux/commit/abcdef1234567890");
     assert.equal(info.packageProfile.id, "debian-family");
     assert.equal(info.packageProfile.packageManager, "apt");
-    assert.deepEqual(info.linuxFeatures.enabled, ["read-aloud", "zed-opener"]);
+    assert.deepEqual(info.linuxFeatures.enabled, ["read-aloud", "open-target-discovery"]);
     assert.equal(info.linuxFeatures.configPath, undefined);
   } finally {
     if (pinnedFeaturesConfig != null) {

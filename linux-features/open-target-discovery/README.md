@@ -18,7 +18,7 @@ The feature is disabled by default. Enable it locally by copying `linux-features
 }
 ```
 
-This feature is broader than `zed-opener`. If both are enabled, `zed-opener` can provide the focused Zed target while this feature avoids adding a second built-in Zed target and still discovers other editors.
+Use this feature for Zed and other Linux editor targets.
 
 Run the feature tests with:
 

@@ -305,7 +305,7 @@ The updater runs unprivileged and only escalates through `pkexec` for
   `appshots`, `codex-wrapper-updater`, `conversation-mode`,
   `copilot-reasoning-effort`, `frameless-titlebar`, `node-repl-reaper`,
   `open-target-discovery`, `remote-control-ui`, `remote-mobile-control`,
-  `thorium-chrome-plugin`, `x11-ewmh-computer-use`, `zed-opener`,
+  `thorium-chrome-plugin`, `x11-ewmh-computer-use`,
   plus the `example-feature` template); all ship `feature.json` + `README.md`
   and are disabled by default.
 
