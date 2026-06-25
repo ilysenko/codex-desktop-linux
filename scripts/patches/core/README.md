@@ -38,6 +38,13 @@ Omit `appliesTo` for all Linux builds. Use build-time target filters only when
 the patch should not be present in every Linux artifact; prefer runtime checks
 inside injected code for desktop/session details that can change after install.
 
+Supported `ciPolicy` values:
+
+- `required-upstream`: upstream-build CI fails when the patch drifts.
+- `optional`: drift is reported but does not fail upstream-build CI.
+- `opt-in`: same non-failing CI behavior as `optional`, for descriptors behind
+  an explicit local enable gate.
+
 Common filters:
 
 ```js

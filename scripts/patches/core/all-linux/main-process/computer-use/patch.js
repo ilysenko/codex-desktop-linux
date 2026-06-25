@@ -2,6 +2,7 @@
 
 const {
   applyLinuxComputerUseFeaturePatch,
+  applyLinuxNativeDesktopAppsHandlerPatch,
   applyLinuxComputerUsePluginGatePatch,
 } = require("../../../../computer-use.js");
 
@@ -20,5 +21,13 @@ module.exports = [
     order: 140,
     ciPolicy: "optional",
     apply: applyLinuxComputerUsePluginGatePatch,
+  },
+  {
+    id: "linux-computer-use-native-desktop-apps",
+    phase: "main-bundle",
+    order: 150,
+    ciPolicy: "opt-in",
+    enabled: (context) => context.enableComputerUseUi,
+    apply: applyLinuxNativeDesktopAppsHandlerPatch,
   },
 ];

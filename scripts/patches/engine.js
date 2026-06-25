@@ -20,9 +20,12 @@ const {
 
 const FAILED_REQUIRED = "failed-required";
 const REQUIRED_UPSTREAM = "required-upstream";
+const OPTIONAL = "optional";
+const OPT_IN = "opt-in";
 const SKIPPED_DISABLED = "skipped-disabled";
 const SKIPPED_OPTIONAL = "skipped-optional";
 const SKIPPED_TARGET = "skipped-target";
+const CI_POLICIES = new Set([REQUIRED_UPSTREAM, OPTIONAL, OPT_IN]);
 
 function descriptorId(descriptor) {
   return descriptor.id ?? descriptor.name;
@@ -39,8 +42,15 @@ function normalizeDescriptor(descriptor, sourcePath = null, index = 0) {
   if (typeof descriptor.apply !== "function") {
     throw new Error(`Patch descriptor '${id}' must export an apply function`);
   }
+  const ciPolicy = descriptor.ciPolicy ?? OPTIONAL;
+  if (!CI_POLICIES.has(ciPolicy)) {
+    throw new Error(
+      `Patch descriptor '${id}' has unsupported ciPolicy '${ciPolicy}' in ${sourcePath ?? "inline descriptor"}`,
+    );
+  }
   return {
     ...descriptor,
+    ciPolicy,
     id,
     name: descriptor.name ?? id,
     phase: descriptor.phase ?? "main-bundle",
