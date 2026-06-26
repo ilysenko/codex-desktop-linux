@@ -46,7 +46,7 @@ function applyPersistentStatusPanelPatch(source) {
     return source;
   }
 
-  const [stateNeedle, onOpenChange, _intl, _isOpen, setIsOpen] = match;
+  const [stateNeedle, onOpenChange, _intl, isOpen, setIsOpen, reactVar] = match;
   const openNeedle = `async()=>{${setIsOpen}(!0),${onOpenChange}?.(!0)}`;
   const closeNeedle = `()=>{${setIsOpen}(!1),${onOpenChange}?.(!1)}`;
   if (
@@ -64,10 +64,18 @@ function applyPersistentStatusPanelPatch(source) {
   const openPatch = `async()=>{try{localStorage.setItem(\`${STORAGE_KEY}\`,\`1\`)}catch{}${setIsOpen}(!0),${onOpenChange}?.(!0)}`;
   const closePatch = `()=>{try{localStorage.removeItem(\`${STORAGE_KEY}\`)}catch{}${setIsOpen}(!1),${onOpenChange}?.(!1)}`;
 
-  return source
+  let patchedSource = source
     .replace(stateNeedle, statePatch)
     .replace(openNeedle, openPatch)
     .replace(closeNeedle, closePatch);
+  const stateIndex = patchedSource.indexOf(statePatch);
+  const declarationEndIndex = stateIndex === -1 ? -1 : patchedSource.indexOf(";", stateIndex + statePatch.length);
+  if (declarationEndIndex === -1) {
+    console.warn("WARN: Could not find Codex status panel state declaration end - skipping persistent status panel patch");
+    return source;
+  }
+  const restoreEffect = `(0,${reactVar}.useEffect)(()=>{${isOpen}&&${onOpenChange}?.(!0)},[${isOpen},${onOpenChange}]);`;
+  return `${patchedSource.slice(0, declarationEndIndex + 1)}${restoreEffect}${patchedSource.slice(declarationEndIndex + 1)}`;
 }
 
 const patches = [

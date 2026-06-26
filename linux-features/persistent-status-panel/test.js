@@ -76,6 +76,16 @@ test("status panel preference survives component remounts", () => {
   assert.equal(applyPersistentStatusPanelPatch(patched), patched);
 });
 
+test("restored status panel state notifies composer layout", () => {
+  const patched = applyPersistentStatusPanelPatch(composerSource);
+
+  assert.match(patched, /\(0,Z\.useEffect\)\(\(\)=>\{c&&o\?\.\(!0\)\},\[c,o\]\);/);
+  assert.match(
+    patched,
+    /\(0,Z\.useState\)\(\(\)=>\{try\{return localStorage\.getItem\(`codex-linux-persistent-status-panel-open`\)===`1`\}catch\{return!1\}\}\),p;\(0,Z\.useEffect\)/,
+  );
+});
+
 test("ambiguous status panel handler needles are unchanged", () => {
   const ambiguousSource = composerSource.replace(
     "let y=s.formatMessage",
