@@ -463,10 +463,7 @@ PY
             chmod -R u+w "$source_dir"
             cp ${codexDmg} "$source_dir/Codex.dmg"
 
-            substituteInPlace "$source_dir/scripts/lib/asar-patch.sh" \
-              --replace-fail "npx --yes asar" "asar" \
-              --replace-fail "npx asar" "asar"
-            substituteInPlace "$source_dir/scripts/lib/dmg.sh" \
+            substituteInPlace "$source_dir/scripts/lib/install-helpers.sh" \
               --replace-fail "npx --yes asar" "asar"
 
             export CODEX_INSTALL_DIR="$out/opt/codex-desktop"

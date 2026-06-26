@@ -3043,8 +3043,8 @@ if 'basename "$actual"' in foreign_body:
     raise SystemExit("foreign Electron detection must not fork basename for every /proc candidate")
 if 'readlink "/proc/$pid/cwd"' in summary_body:
     raise SystemExit("pid summaries in launcher hot paths must not readlink /proc cwd")
-electron_launch = '"$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"'
-electron_exec = 'exec "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"'
+electron_launch = 'run_electron_binary "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"'
+electron_exec = 'exec_electron_binary "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"'
 warm_log = 'echo "Electron warm-start handoff:'
 normal_log = 'echo "Electron launch mode:'
 warm_log_pos = launch_body.index(warm_log)
@@ -3054,7 +3054,7 @@ normal_log_pos = launch_body.index(normal_log)
 normal_close_pos = launch_body.index("close_launcher_lock_fd_for_child", normal_log_pos)
 normal_unset_pos = launch_body.index("unset ELECTRON_RUN_AS_NODE", normal_log_pos)
 normal_launch_pos = launch_body.index(electron_exec, normal_unset_pos)
-if electron_launch + " &" in launch_body:
+if '"$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}" &' in launch_body or electron_launch + " &" in launch_body:
     raise SystemExit("cold Electron launch must close launcher fd in a child before exec, not background the binary directly")
 if not (warm_log_pos < warm_unset_pos < warm_launch_pos < normal_log_pos < normal_close_pos < normal_unset_pos < normal_launch_pos):
     raise SystemExit("launch_electron must close the launcher fd and clear ELECTRON_RUN_AS_NODE immediately before cold Electron exec")
