@@ -1239,6 +1239,7 @@ test_make_build_app_fresh_uses_installer_fresh_flow() {
     local first_line
     local second_line
     local third_line
+    local fourth_line
 
     mkdir -p "$workspace"
 
@@ -1258,9 +1259,11 @@ SCRIPT
     first_line="$(sed -n '1p' "$install_log")"
     second_line="$(sed -n '2p' "$install_log")"
     third_line="$(sed -n '3p' "$install_log")"
-    [ "$first_line" = "2" ] || fail "Expected make build-app-fresh to pass --fresh plus the default argument slot, got: $(cat "$install_log")"
+    fourth_line="$(sed -n '4p' "$install_log")"
+    [ "$first_line" = "3" ] || fail "Expected make build-app-fresh to pass --fresh, --reuse-dmg, plus the default argument slot, got: $(cat "$install_log")"
     [ "$second_line" = "--fresh" ] || fail "Expected make build-app-fresh to pass --fresh first, got: $(cat "$install_log")"
-    [ -z "$third_line" ] || fail "Expected make build-app-fresh default DMG argument to be empty, got: $(cat "$install_log")"
+    [ "$third_line" = "--reuse-dmg" ] || fail "Expected make build-app-fresh to pass --reuse-dmg after --fresh, got: $(cat "$install_log")"
+    [ -z "$fourth_line" ] || fail "Expected make build-app-fresh default DMG argument to be empty, got: $(cat "$install_log")"
 }
 
 test_installer_refreshes_stale_cached_dmg_metadata() {
@@ -1689,7 +1692,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local setup_log="$TMP_DIR/make-setup-native.log"
 
     make -n -C "$REPO_DIR" install-native >"$install_log"
-    assert_contains "$install_log" './install.sh --fresh'
+    assert_contains "$install_log" './install.sh --fresh --reuse-dmg'
     assert_contains "$install_log" 'Building native package'
     assert_contains "$install_log" 'Installing latest native package'
 

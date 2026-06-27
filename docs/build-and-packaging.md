@@ -67,13 +67,16 @@ Equivalent direct commands:
 ```bash
 ./install.sh
 ./install.sh /path/to/Codex.dmg
-./install.sh --fresh
+./install.sh --fresh --reuse-dmg
 ```
 
 The default path stores upstream DMG headers, plus a hash of the upstream URL,
 next to `Codex.dmg` and refreshes the cached file when that upstream fingerprint
-changes. `--fresh` still forces a cache removal before rebuilding, and an
-explicit `DMG=/path/to/Codex.dmg` uses that file exactly.
+changes. `make build-app-fresh` removes the generated app but keeps using that
+validated DMG cache, so it only downloads again when the DMG is missing, has no
+metadata yet, or the upstream fingerprint changed. Direct `./install.sh --fresh`
+still forces a cache removal before rebuilding, and an explicit
+`DMG=/path/to/Codex.dmg` uses that file exactly.
 
 Run the generated app:
 

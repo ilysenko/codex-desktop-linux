@@ -14,7 +14,7 @@
 | Window flickering, resize ghosting, or stale frame trails | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./codex-app/start.sh`, then `./codex-app/start.sh --disable-gpu` if needed |
 | Transparent or dark left sidebar | Check whether the Linux opaque-window patch was applied, then rebuild with a current checkout |
 | Sandbox errors | The launcher already sets `--no-sandbox` |
-| Stale install / cached DMG | `make build-app-fresh` removes the generated app and cached DMG, then downloads current upstream |
+| Stale install / cached DMG | `make build-app-fresh` removes the generated app and reuses `Codex.dmg` only when cached metadata still matches upstream; run `./install.sh --fresh` to force a fresh DMG download |
 | Computer Use plugin invisible in UI | Enable the Computer Use UI opt-in; upstream server/account rollout can still hide some controls |
 | Computer Use `doctor` reports no input backend | Grant `/dev/uinput`, enable XDG RemoteDesktop portal, or start `ydotoold` / `ydotool.service` |
 | Computer Use `doctor` reports `ydotool_socket: Permission denied` | Adjust the daemon socket so users in the `input` group can use it |
