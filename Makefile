@@ -212,6 +212,7 @@ rebuild-next:
 
 run-app:
 	@echo "[make] Launching local Electron app"
+	@[ -x "$(APP_DIR)/start.sh" ] || { echo "[make] Missing launcher: $(APP_DIR)/start.sh. Run make build-app first." >&2; exit 1; }
 	"$(APP_DIR)/start.sh"
 
 build-dev-app:

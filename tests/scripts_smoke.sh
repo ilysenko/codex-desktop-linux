@@ -1204,6 +1204,21 @@ test_make_install_reports_missing_native_packages() {
     done
 }
 
+test_make_run_app_reports_missing_launcher() {
+    info "Checking make run-app missing-launcher diagnostics"
+    local workspace="$TMP_DIR/make-run-app-missing"
+    local output_log="$workspace/run-app.log"
+
+    mkdir -p "$workspace"
+
+    if make -f "$REPO_DIR/Makefile" -C "$workspace" run-app >"$output_log" 2>&1; then
+        fail "make run-app should fail when codex-app/start.sh is missing"
+    fi
+
+    assert_contains "$output_log" "Missing launcher: $workspace/codex-app/start.sh. Run make build-app first."
+    assert_not_contains "$output_log" "No such file or directory"
+}
+
 test_make_build_app_uses_installer_download_flow_by_default() {
     info "Checking make build-app default DMG behavior"
     local workspace="$TMP_DIR/make-build-app"
@@ -6470,6 +6485,7 @@ main() {
     test_appimage_builder_smoke
     test_missing_input_failure
     test_make_install_reports_missing_native_packages
+    test_make_run_app_reports_missing_launcher
     test_make_build_app_uses_installer_download_flow_by_default
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_installer_refreshes_stale_cached_dmg_metadata
