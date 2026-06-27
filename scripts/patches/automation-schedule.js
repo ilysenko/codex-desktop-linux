@@ -11,6 +11,7 @@ const {
 const AUTOMATION_SCHEDULE_MARKER =
   "return t!=null&&n!=null?{hour:t,minute:n}:e.dtstart?{hour:e.dtstart.getHours(),minute:e.dtstart.getMinutes()}:null";
 const AUTOMATION_SCHEDULE_PATCH_MARKER = "function codexLinuxNormalizeRruleNumbers(";
+const MINIFIED_IDENTIFIER = "[A-Za-z_$][\\w$]*";
 
 function findWorkspaceRootDropHandlerBundles(extractedDir) {
   const candidateDirs = [
@@ -36,7 +37,7 @@ function findWorkspaceRootDropHandlerBundles(extractedDir) {
           ) ||
           (
             source.includes("hasMultipleTimeValues") &&
-            /rruleText:e,time:\w+\(r\.byhour,r\.byminute,r\)/.test(source)
+            new RegExp(`rruleText:e,time:${MINIFIED_IDENTIFIER}\\(r\\.byhour,r\\.byminute,r\\)`).test(source)
           );
       } catch {
         return false;
@@ -135,8 +136,9 @@ function applyGenericAutomationScheduleMultiTimePatch(source) {
     return source;
   }
 
-  const parserRe =
-    /hasMultipleTimeValues:Array\.isArray\(r\.byhour\)&&r\.byhour\.length>1\|\|Array\.isArray\(r\.byminute\)&&r\.byminute\.length>1,interval:Math\.max\(1,Math\.round\(r\.interval\?\?1\)\),minute:a,origOptions:n\.origOptions,rruleText:e,time:(\w+)\(r\.byhour,r\.byminute,r\),weekdays:i/;
+  const parserRe = new RegExp(
+    `hasMultipleTimeValues:Array\\.isArray\\(r\\.byhour\\)&&r\\.byhour\\.length>1\\|\\|Array\\.isArray\\(r\\.byminute\\)&&r\\.byminute\\.length>1,interval:Math\\.max\\(1,Math\\.round\\(r\\.interval\\?\\?1\\)\\),minute:a,origOptions:n\\.origOptions,rruleText:e,time:(${MINIFIED_IDENTIFIER})\\(r\\.byhour,r\\.byminute,r\\),weekdays:i`,
+  );
   const parserMatch = parserRe.exec(source);
   if (!parserMatch) {
     return source;
@@ -145,8 +147,8 @@ function applyGenericAutomationScheduleMultiTimePatch(source) {
 
   const helperRe = new RegExp(
     "function " +
-      timeFn +
-      "\\(e,t,n\\)\\{let r=(\\w+)\\(e\\),i=\\1\\(t\\);return r!=null&&i!=null\\?(\\w+)\\(r,i\\):n\\.dtstart\\?\\2\\(n\\.dtstart\\.getHours\\(\\),n\\.dtstart\\.getMinutes\\(\\)\\):(\\w+)\\}function \\1\\(e\\)\\{return Array\\.isArray\\(e\\)\\?typeof e\\[0\\]==`number`\\?e\\[0\\]:null:typeof e==`number`\\?e:null\\}",
+      timeFn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+      `\\(e,t,n\\)\\{let r=(${MINIFIED_IDENTIFIER})\\(e\\),i=\\1\\(t\\);return r!=null&&i!=null\\?(${MINIFIED_IDENTIFIER})\\(r,i\\):n\\.dtstart\\?\\2\\(n\\.dtstart\\.getHours\\(\\),n\\.dtstart\\.getMinutes\\(\\)\\):(${MINIFIED_IDENTIFIER})\\}function \\1\\(e\\)\\{return Array\\.isArray\\(e\\)\\?typeof e\\[0\\]==\`number\`\\?e\\[0\\]:null:typeof e==\`number\`\\?e:null\\}`,
   );
   const helperMatch = helperRe.exec(source);
   if (!helperMatch) {
@@ -155,8 +157,9 @@ function applyGenericAutomationScheduleMultiTimePatch(source) {
   const helperBlock = helperMatch[0];
   const combineFn = helperMatch[2];
 
-  const summaryRe =
-    /function (\w+)\(e,t\)\{if\(!e\|\|e\.hasMultipleTimeValues\)return null;[\s\S]*?let i=(\w+)\(e\.time,t\);return i\?(\w+)\(\{intl:t,isEveryDay:r,timeLabel:i,weekdays:n\}\):null\}/;
+  const summaryRe = new RegExp(
+    `function (${MINIFIED_IDENTIFIER})\\(e,t\\)\\{if\\(!e\\|\\|e\\.hasMultipleTimeValues\\)return null;[\\s\\S]*?let i=(${MINIFIED_IDENTIFIER})\\(e\\.time,t\\);return i\\?(${MINIFIED_IDENTIFIER})\\(\\{intl:t,isEveryDay:r,timeLabel:i,weekdays:n\\}\\):null\\}`,
+  );
   const summaryMatch = summaryRe.exec(source);
   if (!summaryMatch) {
     return source;

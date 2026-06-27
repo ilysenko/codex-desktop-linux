@@ -31,13 +31,24 @@ function patchFile(filePath, patches) {
   }
 
   let changed = false;
-  for (const { label, oldText, newText, alreadyText = newText } of patches) {
+  for (const {
+    label,
+    oldText,
+    newText,
+    alreadyText = newText,
+    skipIf = null,
+    skipDescription = "target no longer exists in this upstream bundle",
+  } of patches) {
     if (source.includes(newText) || sourceIncludesAny(source, alreadyText)) {
       console.log(`${path.basename(filePath)} already patched: ${label}`);
       continue;
     }
 
     if (!source.includes(oldText)) {
+      if (shouldSkipPatch(source, skipIf)) {
+        console.log(`${path.basename(filePath)} skipped: ${label} (${skipDescription})`);
+        continue;
+      }
       warn(`${path.basename(filePath)} missing patch target for ${label}`);
       continue;
     }
@@ -102,10 +113,22 @@ const scriptsDir = path.resolve(pluginDir, "scripts");
 
 function browserClientHasMovedChromeProfileMetadata(source) {
   return (
-    source.includes("setupBrowserRuntime") &&
-    !source.includes("Local Extension Settings") &&
-    !source.includes("Local State") &&
-    !source.includes("extensionInstanceId")
+    (
+      source.includes("setupBrowserRuntime") &&
+      !source.includes("Local Extension Settings") &&
+      !source.includes("Local State") &&
+      !source.includes("extensionInstanceId")
+    ) ||
+    browserClientHasModernBrowserPreferenceRouting(source)
+  );
+}
+
+function browserClientHasModernBrowserPreferenceRouting(source) {
+  return (
+    source.includes("browserPreference") &&
+    source.includes("preferredWindowIdFor") &&
+    source.includes("getForUrl") &&
+    source.includes("extensionInstanceId")
   );
 }
 
@@ -478,11 +501,15 @@ patchFile(path.join(scriptsDir, "browser-client.mjs"), [
     oldText: String.raw`let t=await Promise.all(e.map(async(r,n)=>({browser:r,index:n,userTabCount:await codexLinuxExtensionUserTabCount(r)})));return t.sort(codexLinuxBackendCompare).map(({browser:r})=>r)}function codexLinuxBackendCompare`,
     newText: String.raw`let t=await Promise.all(e.map(async(r,n)=>({browser:r,index:n,userTabCount:await codexLinuxExtensionUserTabCount(r)})));return (await codexLinuxFilterBrowserBackends(t)).sort(codexLinuxBackendCompare).map(({browser:r})=>r)}async function codexLinuxFilterBrowserBackends(e){let t=e.some(r=>r.browser.info.type==="extension"&&r.userTabCount>0);if(!t)return e;let r=e.filter(n=>n.browser.info.type!=="extension"||n.userTabCount>0),n=e.filter(o=>o.browser.info.type==="extension"&&o.userTabCount===0);return await codexLinuxCloseDiscardedBrowserBackends(n),r}async function codexLinuxCloseDiscardedBrowserBackends(e){await Promise.all(e.map(async({browser:t})=>{try{await t.api.close()}catch{}}))}function codexLinuxBackendCompare`,
     alreadyText: "codexLinuxCloseDiscardedBrowserBackends",
+    skipIf: browserClientHasModernBrowserPreferenceRouting,
+    skipDescription: "browser-client.mjs uses upstream browser preference routing",
   },
 ]);
 
 patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
   label: "Linux ambiguous active Chrome extension alias guard",
+  skipIf: browserClientHasModernBrowserPreferenceRouting,
+  skipDescription: "browser-client.mjs uses upstream browser preference routing",
   oldTexts: [
     {
       oldText: String.raw`function tI({browserId:e,clientInfo:t,requestedBrowserId:r}){return ig(r)?og(t.type)===r:e===r}function ld`,
@@ -498,6 +525,8 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
 
 patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
   label: "Linux ambiguous active Chrome extension alias check",
+  skipIf: browserClientHasModernBrowserPreferenceRouting,
+  skipDescription: "browser-client.mjs uses upstream browser preference routing",
   oldTexts: [
     {
       oldText: String.raw`if(ig(l.browser_id)){let _=li(l.browser_id);KI(_)}let p=await r.get(l.browser_id),`,
@@ -572,7 +601,12 @@ if (extensionInfos.length === 1) {
   }
 }
 nodeRepl.write(await browser.documentation());`,
-    alreadyText: "Multiple Chrome extension instances are connected",
+    alreadyText: [
+      "Multiple Chrome extension instances are connected",
+      "When more than one Chrome extension instance is connected",
+    ],
+    skipIf: "Use the browser bound to `browser` for tasks in this skill.",
+    skipDescription: "upstream skill bootstrap shape is different",
   },
   {
     label: "prefer active Chrome profile bootstrap",
@@ -650,7 +684,12 @@ if (extensionInfos.length === 1) {
   }
 }
 nodeRepl.write(await browser.documentation());`,
-    alreadyText: "activeSummaries",
+    alreadyText: [
+      "activeSummaries",
+      "When more than one Chrome extension instance is connected",
+    ],
+    skipIf: "Use the browser bound to `browser` for tasks in this skill.",
+    skipDescription: "upstream skill bootstrap shape is different",
   },
   {
     label: "Chrome active profile bootstrap ignores tab probe errors",
@@ -672,6 +711,8 @@ nodeRepl.write(await browser.documentation());`,
       ...(error ? { error } : {}),
     });`,
     alreadyText: "tabs: Array.isArray(tabs) ? tabs : []",
+    skipIf: "Use the browser bound to `browser` for tasks in this skill.",
+    skipDescription: "upstream skill bootstrap shape is different",
   },
   {
     label: "Chrome active profile bootstrap bounds tab probes",
@@ -690,6 +731,8 @@ nodeRepl.write(await browser.documentation());`,
       ]);
     } catch (caught) {`,
     alreadyText: "Chrome profile tab probe timed out",
+    skipIf: "Use the browser bound to `browser` for tasks in this skill.",
+    skipDescription: "upstream skill bootstrap shape is different",
   },
   {
     label: "Chrome profile launch guard",

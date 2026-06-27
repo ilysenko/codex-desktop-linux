@@ -260,6 +260,14 @@ function syntheticCurrentChromeBrowserClientBundle() {
   ].join("");
 }
 
+function syntheticModernChromeBrowserClientBundle() {
+  return [
+    "var wU=[\"chrome\",\"iab\",\"cdp\"];function Jv(t){return wU.some(e=>e===t)}",
+    "var Qv=\"BROWSER_USE_AVAILABLE_BACKENDS\";",
+    "class Browsers{constructor(e=null){this.browserPreference=e}async getForUrl(){}preferredWindowIdFor(e){return this.browserPreference?.preferredWindowId}}",
+  ].join("");
+}
+
 function syntheticAppServerManagerSignalsBundle() {
   return [
     "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
@@ -1413,6 +1421,14 @@ test("Linux remote mobile Chrome bridge patch handles current browser-client bac
   };
   vm.runInNewContext(`${patched};module.exports=N_;`, context);
   assert.deepEqual([...context.module.exports()], ["chrome", "iab"]);
+});
+
+test("Linux remote mobile Chrome bridge patch no-ops on upstream browser preference routing", () => {
+  const source = syntheticModernChromeBrowserClientBundle();
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteMobileChromeBridgePatch(source));
+
+  assert.equal(result, source);
+  assert.deepEqual(warnings, []);
 });
 
 test("Linux remote mobile Chrome bridge patch warns when browser-client needles drift", () => {

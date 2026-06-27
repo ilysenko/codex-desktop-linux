@@ -628,18 +628,36 @@ import sys
 
 path = Path(sys.argv[1])
 source = path.read_text(encoding="utf-8")
-pattern = re.compile(
-    r'async fetchBlocked\((?P<url>[A-Za-z_$][\w$]*)\)\{'
-    r'let (?P<response>[A-Za-z_$][\w$]*)=await (?P<fetch>[A-Za-z_$][\w$]*)'
-    r'\((?P=url)\.endpoint,\{method:"GET"\}\);'
-    r'if\(!(?P=response)\.ok\)throw new Error\((?P<format>[A-Za-z_$][\w$]*)'
-    r'\(`Browser Use cannot determine if \$\{(?P=url)\.displayUrl\} is allowed\. '
-    r'Please try again later or use another source\.`\)\);'
-    r'let (?P<json>[A-Za-z_$][\w$]*)=await (?P=response)\.json\(\);'
-    r'return (?P<status>[A-Za-z_$][\w$]*)\((?P=json)\)\}'
-)
-match = pattern.search(source)
+patterns = [
+    re.compile(
+        r'async fetchBlocked\((?P<url>[A-Za-z_$][\w$]*)\)\{'
+        r'let (?P<response>[A-Za-z_$][\w$]*)=await (?P<fetch>[A-Za-z_$][\w$]*)'
+        r'\((?P=url)\.endpoint,\{method:"GET"\}\);'
+        r'if\(!(?P=response)\.ok\)throw new Error\((?P<format>[A-Za-z_$][\w$]*)'
+        r'\(`Browser Use cannot determine if \$\{(?P=url)\.displayUrl\} is allowed\. '
+        r'Please try again later or use another source\.`\)\);'
+        r'let (?P<json>[A-Za-z_$][\w$]*)=await (?P=response)\.json\(\);'
+        r'return (?P<status>[A-Za-z_$][\w$]*)\((?P=json)\)\}'
+    ),
+    re.compile(
+        r'async fetchBlocked\((?P<url>[A-Za-z_$][\w$]*),(?P<label>[A-Za-z_$][\w$]*)\)\{'
+        r'let (?P<response>[A-Za-z_$][\w$]*)=await (?P<fetch>[A-Za-z_$][\w$]*)'
+        r'\((?P=url)\.endpoint,\{method:"GET"\}\);'
+        r'if\(!(?P=response)\.ok\)throw new Error\((?P<format>[A-Za-z_$][\w$]*)'
+        r'\(`\$\{(?P=label)\} cannot determine if \$\{(?P=url)\.displayUrl\} is allowed\. '
+        r'Please try again later or use another source\.`\)\);'
+        r'let (?P<json>[A-Za-z_$][\w$]*)=await (?P=response)\.json\(\);'
+        r'return (?P<status>[A-Za-z_$][\w$]*)\((?P=json)\)\}'
+    ),
+]
+match = None
+for pattern in patterns:
+    match = pattern.search(source)
+    if match is not None:
+        break
 if match is None:
+    if "/aura/site_status" not in source and "fetchBlocked(" not in source:
+        raise SystemExit(0)
     print(
         "WARN: Could not find Browser Use site_status allowlist fallback insertion point — leaving browser-client.mjs unchanged",
         file=sys.stderr,
@@ -652,14 +670,21 @@ fetch = match.group("fetch")
 formatter = match.group("format")
 json_value = match.group("json")
 status = match.group("status")
+label = match.groupdict().get("label")
 error = "__codexLinuxErr"
+error_message = (
+    f'Browser Use cannot determine if ${{{url}.displayUrl}} is allowed. Please try again later or use another source.'
+    if label is None
+    else f'${{{label}}} cannot determine if ${{{url}.displayUrl}} is allowed. Please try again later or use another source.'
+)
+args = url if label is None else f"{url},{label}"
 replacement = (
-    f'async fetchBlocked({url}){{let {response};try{{{response}=await {fetch}({url}.endpoint,{{method:"GET"}})}}'
+    f'async fetchBlocked({args}){{let {response};try{{{response}=await {fetch}({url}.endpoint,{{method:"GET"}})}}'
     f'catch({error}){{if(String({url}?.endpoint??"").includes("/aura/site_status")&&'
     f'String({error}?.message??{error}).toLowerCase().includes("allowlist"))return console.warn'
     f'("codexLinuxSiteStatusAllowlistFallback",{url}.endpoint),!1;throw {error}}}'
-    f'if(!{response}.ok)throw new Error({formatter}(`Browser Use cannot determine if ${{{url}.displayUrl}} is allowed. '
-    f'Please try again later or use another source.`));let {json_value}=await {response}.json();return {status}({json_value})}}'
+    f'if(!{response}.ok)throw new Error({formatter}(`{error_message}`));'
+    f'let {json_value}=await {response}.json();return {status}({json_value})}}'
 )
 path.write_text(source[:match.start()] + replacement + source[match.end():], encoding="utf-8")
 PY

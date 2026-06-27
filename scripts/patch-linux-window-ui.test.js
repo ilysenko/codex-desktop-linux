@@ -196,6 +196,16 @@ function currentAutomationScheduleBundleFixture() {
   ].join("");
 }
 
+function currentAutomationScheduleBundleWithDollarIdentifierFixture() {
+  return [
+    "var TJ={MINUTELY:1,HOURLY:2,DAILY:3,WEEKLY:4},PJ=[`SU`,`MO`,`TU`,`WE`,`TH`,`FR`,`SA`],XJ=`09:00`;",
+    "function Flt(e){return e.length>0?e:PJ}function Ylt(){return `minute`}function Jlt(){return `hour`}function Qlt({timeLabel:e}){return e}function xlt(e,t){return t.formatTime(e)}function KJ(e,t){return`${e}:${t}`}",
+    "function HJ(e){if(!e)return null;try{let t=DJ(e,{forceset:!0,tzid:iut()??void 0}),n=t.rrules()[0];if(!n)return null;let r=n.options,i=eut(r.byweekday)??tut(e)??PJ,a=WJ(r.byminute);return{freq:r.freq,isStandaloneRrule:n.origOptions.dtstart==null&&t.rrules().length===1&&t.rdates().length===0&&t.exrules().length===0&&t.exdates().length===0,hasMultipleTimeValues:Array.isArray(r.byhour)&&r.byhour.length>1||Array.isArray(r.byminute)&&r.byminute.length>1,interval:Math.max(1,Math.round(r.interval??1)),minute:a,origOptions:n.origOptions,rruleText:e,time:$lt(r.byhour,r.byminute,r),weekdays:i}}catch{return null}}",
+    "function qlt(e,t){if(!e||e.hasMultipleTimeValues)return null;let n=Flt(e.weekdays),r=n.length===PJ.length;if(e.freq===TJ.MINUTELY)return Ylt({intervalMinutes:e.interval,intl:t,isEveryDay:r,weekdays:n});if(e.freq===TJ.HOURLY)return Jlt({intervalHours:e.interval,intl:t,isEveryDay:r,weekdays:n});if(e.freq!==TJ.DAILY&&e.freq!==TJ.WEEKLY)return null;let i=xlt(e.time,t);return i?Qlt({intl:t,isEveryDay:r,timeLabel:i,weekdays:n}):null}",
+    "function $lt(e,t,n){let r=WJ(e),i=WJ(t);return r!=null&&i!=null?KJ(r,i):n.dtstart?KJ(n.dtstart.getHours(),n.dtstart.getMinutes()):XJ}function WJ(e){return Array.isArray(e)?typeof e[0]==`number`?e[0]:null:typeof e==`number`?e:null}",
+  ].join("");
+}
+
 function evaluateAutomationSchedule(source, now, options) {
   const context = { now, options, result: null };
   vm.runInNewContext(
@@ -259,6 +269,18 @@ test("automation schedule asset patch updates current webview automation bundle"
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("automation schedule patch handles current dollar-prefixed helper names", () => {
+  const patched = applyPatchTwice(
+    applyAutomationScheduleMultiTimePatch,
+    currentAutomationScheduleBundleWithDollarIdentifierFixture(),
+  );
+
+  assert.match(patched, /function codexLinuxRruleTimes/);
+  assert.match(patched, /timeValues:codexLinuxRruleTimes/);
+  assert.match(patched, /codexLinuxAutomationTimeLabel/);
+  assert.doesNotMatch(patched, /if\(!e\|\|e\.hasMultipleTimeValues\)return null/);
 });
 
 test("asset patch helpers match every file when passed a global regex", () => {
@@ -1145,6 +1167,24 @@ function createNativeKeyboardShortcutsSettingsFixture() {
   writeAsset("app-main-A.js", linuxDesktopRouteBundleFixture());
   writeAsset("settings-page-A.js", linuxDesktopNavigationBundleFixture());
   writeAsset("keyboard-shortcuts-settings-A.js", "export default function KeyboardShortcutsSettings(){}");
+
+  return { extractedDir, assetsDir };
+}
+
+function createModernNativeKeyboardShortcutsSettingsFixture() {
+  const extractedDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-modern-native-shortcuts-"));
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  fs.mkdirSync(assetsDir, { recursive: true });
+
+  const writeAsset = (name, source = "") => {
+    fs.writeFileSync(path.join(assetsDir, name), source, "utf8");
+  };
+
+  writeAsset("keyboard-shortcuts-settings-A.js", "slug:`keyboard-shortcuts`");
+  writeAsset(
+    "settings-page-A.js",
+    'var Hn={"general-settings":wt,"keyboard-shortcuts":xn};var Wn=[`general-settings`,`profile`,`keyboard-shortcuts`];',
+  );
 
   return { extractedDir, assetsDir };
 }
@@ -3757,6 +3797,22 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
     const secondResult = patchKeybindsSettingsAssets(extractedDir);
     assert.equal(secondResult.matched, true);
     assert.equal(secondResult.changed, 0);
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("skips Linux desktop settings injection when native shortcuts use unsupported settings router", () => {
+  const { extractedDir, assetsDir } = createModernNativeKeyboardShortcutsSettingsFixture();
+  try {
+    const { value: result, warnings } = captureWarns(() => patchKeybindsSettingsAssets(extractedDir));
+
+    assert.equal(result.matched, true);
+    assert.equal(result.changed, 0);
+    assert.match(result.reason, /extension point is unavailable/);
+    assert.deepEqual(warnings, []);
+    assert.equal(fs.existsSync(path.join(assetsDir, keybindsSettingsAsset)), false);
+    assert.equal(fs.existsSync(path.join(assetsDir, linuxDesktopSettingsAsset)), false);
   } finally {
     fs.rmSync(extractedDir, { recursive: true, force: true });
   }

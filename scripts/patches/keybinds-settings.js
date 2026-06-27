@@ -368,22 +368,66 @@ function hasNativeKeyboardShortcutsSettings(extractedDir) {
     return false;
   }
 
-  const hasSettingsRoute = fs
+  const assets = fs
     .readdirSync(webviewAssetsDir)
-    .filter((name) => /^settings-sections-.*\.js$/.test(name))
-    .some((name) => fs.readFileSync(path.join(webviewAssetsDir, name), "utf8").includes("slug:`keyboard-shortcuts`"));
+    .filter((name) => name.endsWith(".js"))
+    .sort();
+  const hasKeyboardShortcutsAsset = assets.some((name) =>
+    /^keyboard-shortcuts-settings-.*\.js$/.test(name),
+  );
+  if (!hasKeyboardShortcutsAsset) {
+    return false;
+  }
+
+  const hasSettingsRoute = assets.some((name) => {
+    const source = fs.readFileSync(path.join(webviewAssetsDir, name), "utf8");
+    return (
+      source.includes("slug:`keyboard-shortcuts`") ||
+      source.includes("settings.nav.keyboard-shortcuts") ||
+      /["']keyboard-shortcuts["']:\(0,[A-Za-z_$][\w$]*\.lazy\)/.test(source)
+    );
+  });
   if (!hasSettingsRoute) {
     return false;
   }
 
-  return fs
+  return true;
+}
+
+function hasLegacyLinuxDesktopSettingsExtensionPoints(extractedDir) {
+  const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
+  if (!fs.existsSync(webviewAssetsDir)) {
+    return false;
+  }
+
+  const assets = fs
     .readdirSync(webviewAssetsDir)
-    .some((name) => /^keyboard-shortcuts-settings-.*\.js$/.test(name));
+    .filter((name) => name.endsWith(".js"))
+    .sort();
+  return [
+    (name) => /^settings-sections-.*\.js$/.test(name),
+    (name) => /^settings-shared-.*\.js$/.test(name),
+    (name) => /^(?:app-main|index|settings-page)-.*\.js$/.test(name),
+    (name) => /^settings-row-.*\.js$/.test(name),
+    (name) => /^settings-content-layout-.*\.js$/.test(name),
+    (name) => /^toggle-.*\.js$/.test(name),
+  ].every((predicate) => assets.some(predicate));
 }
 
 function patchKeybindsSettingsAssets(extractedDir) {
   try {
     const hasNativeSettings = hasNativeKeyboardShortcutsSettings(extractedDir);
+    if (
+      hasNativeSettings &&
+      !hasLegacyLinuxDesktopSettingsExtensionPoints(extractedDir)
+    ) {
+      return {
+        matched: true,
+        changed: 0,
+        reason: "upstream keyboard shortcuts settings are present; Linux desktop settings extension point is unavailable",
+      };
+    }
+
     const settingsAsset = hasNativeSettings
       ? resolveLinuxDesktopSettingsAsset(extractedDir)
       : resolveKeybindsSettingsAsset(extractedDir);
