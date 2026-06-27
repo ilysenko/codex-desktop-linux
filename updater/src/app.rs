@@ -2043,12 +2043,26 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn fresh_check_now_still_clears_stale_wrapper_candidate() -> Result<()> {
+    #[test]
+    fn fresh_check_now_still_clears_stale_wrapper_candidate() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let runtime = tokio::runtime::Runtime::new()?;
         let temp = tempfile::tempdir()?;
         let paths = test_paths(temp.path());
         paths.ensure_dirs()?;
         let config = test_config(temp.path());
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+        ]);
+        std::env::set_var("HOME", temp.path());
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
         let mut state = PersistedState::new(true);
         state.last_successful_check_at = Some(Utc::now());
@@ -2057,7 +2071,7 @@ mod tests {
         state.wrapper_changelog = Some("old changelog".to_string());
         state.wrapper_dev_mode = Some(true);
 
-        run_check_now(&config, &mut state, &paths, true).await?;
+        runtime.block_on(run_check_now(&config, &mut state, &paths, true))?;
 
         assert_eq!(state.status, UpdateStatus::Idle);
         assert_eq!(state.candidate_wrapper_commit, None);
