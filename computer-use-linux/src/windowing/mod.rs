@@ -6,7 +6,7 @@ pub mod types;
 #[allow(unused_imports)]
 pub use registry::{
     COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, WINDOW_PERMISSION_HINT,
+    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, NIRI_BACKEND, WINDOW_PERMISSION_HINT,
 };
 #[allow(unused_imports)]
 pub use target::{
@@ -24,6 +24,7 @@ mod tests {
     use super::backends::kwin::{
         kwin_activate_script_source, kwin_window_id_from_uuid, parse_kwin_windows, KWIN_BACKEND,
     };
+    use super::backends::niri::{parse_niri_windows, NIRI_BACKEND};
     use super::registry::{
         descriptors, list_note, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND,
         GNOME_SHELL_INTROSPECT_BACKEND,
@@ -54,6 +55,7 @@ mod tests {
                 COSMIC_WAYLAND_BACKEND,
                 KWIN_BACKEND,
                 HYPRLAND_BACKEND,
+                NIRI_BACKEND,
                 I3_BACKEND,
             ]
         );
@@ -537,6 +539,57 @@ mod tests {
         assert_eq!(windows[0].backend, HYPRLAND_BACKEND);
         assert!(windows[1].focused);
         assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn parses_niri_windows_as_window_info() {
+        let windows_json = r#"[
+          {
+            "id": 22,
+            "title": "Remote Desktop",
+            "app_id": "xdg-desktop-portal-gnome",
+            "pid": null,
+            "workspace_id": 7,
+            "is_focused": true,
+            "is_floating": false,
+            "is_urgent": false,
+            "layout": {
+              "pos_in_scrolling_layout": [1.0, 1.0],
+              "window_size": [952, 1070]
+            }
+          },
+          {
+            "id": 21,
+            "title": "Codex",
+            "app_id": "codex-desktop",
+            "pid": 15056,
+            "workspace_id": 2,
+            "is_focused": false,
+            "is_floating": false,
+            "is_urgent": false,
+            "layout": {
+              "pos_in_scrolling_layout": [2.0, 1.0],
+              "window_size": [952, 1070]
+            }
+          }
+        ]"#;
+
+        let windows = parse_niri_windows(windows_json).unwrap();
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].window_id, 21);
+        assert_eq!(windows[0].app_id.as_deref(), Some("codex-desktop"));
+        assert_eq!(windows[0].wm_class.as_deref(), Some("codex-desktop"));
+        assert_eq!(windows[0].title.as_deref(), Some("Codex"));
+        assert_eq!(windows[0].pid, Some(15056));
+        assert_eq!(windows[0].bounds.as_ref().unwrap().x, Some(2));
+        assert_eq!(windows[0].bounds.as_ref().unwrap().height, 1070);
+        assert_eq!(windows[0].workspace, Some(2));
+        assert!(!windows[0].focused);
+        assert_eq!(windows[0].client_type.as_deref(), Some("wayland"));
+        assert_eq!(windows[0].backend, NIRI_BACKEND);
+        assert!(windows[1].focused);
+        assert_eq!(windows[1].pid, None);
     }
 
     #[test]

@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Linux Computer Use can now list and focus Niri windows through `niri msg`,
+  including `NIRI_SOCKET` environment hydration for Codex Desktop sessions.
+
 ## [0.8.4] - 2026-06-20
 
 ### Added

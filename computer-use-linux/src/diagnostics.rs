@@ -1,6 +1,6 @@
 use crate::windowing::registry::{
     self, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, KWIN_BACKEND,
+    HYPRLAND_BACKEND, KWIN_BACKEND, NIRI_BACKEND,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -21,6 +21,7 @@ const DESKTOP_ENV_KEYS: &[&str] = &[
     "DESKTOP_SESSION",
     "DISPLAY",
     "HYPRLAND_INSTANCE_SIGNATURE",
+    "NIRI_SOCKET",
     "XAUTHORITY",
     "YDOTOOL_SOCKET",
     "XDG_SESSION_DESKTOP",
@@ -109,6 +110,7 @@ pub struct WindowingReport {
     pub cosmic_helper: Check,
     pub kwin: Check,
     pub hyprland: Check,
+    pub niri: Check,
     pub backends: BTreeMap<String, Check>,
     pub can_list_windows: bool,
     pub can_focus_apps: bool,
@@ -236,6 +238,9 @@ fn capability_map(
     }
     if windowing.hyprland.ok {
         window_backends.push("hyprland".to_string());
+    }
+    if windowing.niri.ok {
+        window_backends.push("niri".to_string());
     }
     if windowing.cosmic_helper.ok {
         window_backends.push("cosmic".to_string());
@@ -570,6 +575,7 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
     let cosmic_helper = backend_check(COSMIC_WAYLAND_BACKEND);
     let kwin = backend_check(KWIN_BACKEND);
     let hyprland = backend_check(HYPRLAND_BACKEND);
+    let niri = backend_check(NIRI_BACKEND);
     let backends = probes
         .iter()
         .map(|probe| (probe.id.to_string(), check_from_backend_probe(probe)))
@@ -584,11 +590,13 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
             "A KWin/Plasma window backend is available for list_windows, focused_window, and targeted input verification."
         } else if hyprland.ok {
             "A Hyprland window backend is available for list_windows, focused_window, and targeted input verification."
+        } else if niri.ok {
+            "A Niri window backend is available for list_windows, focused_window, and targeted input verification."
         } else {
             "A GNOME window listing backend is available for list_windows, focused_window, and targeted input verification."
         }
     } else {
-        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Hyprland, ensure hyprctl is available in the session."
+        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Hyprland, ensure hyprctl is available in the session. On Niri, ensure niri msg can connect through NIRI_SOCKET."
     }
     .to_string();
 
@@ -598,6 +606,7 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
         cosmic_helper,
         kwin,
         hyprland,
+        niri,
         backends,
         can_list_windows,
         can_focus_apps,
@@ -1018,6 +1027,7 @@ mod tests {
             cosmic_helper: Check::fail("missing"),
             kwin: Check::fail("not a KWin session"),
             hyprland: Check::fail("not a Hyprland session"),
+            niri: Check::fail("not a Niri session"),
             backends: BTreeMap::new(),
             can_list_windows,
             can_focus_apps: true,
@@ -1111,6 +1121,31 @@ mod tests {
     #[test]
     fn desktop_env_hydration_includes_xauthority() {
         assert!(DESKTOP_ENV_KEYS.contains(&"XAUTHORITY"));
+    }
+
+    #[test]
+    fn desktop_env_hydration_includes_niri_socket() {
+        assert!(DESKTOP_ENV_KEYS.contains(&"NIRI_SOCKET"));
+    }
+
+    #[test]
+    fn capability_map_reports_niri_window_control() {
+        let platform = platform_report();
+        let portals = portal_report(Check::fail("missing"));
+        let accessibility = accessibility_report(Check::fail("missing"), Check::fail("missing"));
+        let mut windowing = windowing_report(true, true);
+        windowing.gnome_shell_introspect = Check::fail("not GNOME");
+        windowing.codex_gnome_shell_extension = Check::fail("not GNOME");
+        windowing.niri = Check::ok("niri msg --json windows returned a JSON array");
+        let input = input_report(false);
+
+        let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+
+        assert!(capabilities.window_control.contains(&"niri".to_string()));
+        assert_eq!(
+            capabilities.preferred.window_control.as_deref(),
+            Some("niri")
+        );
     }
 
     #[test]

@@ -8,7 +8,8 @@ It supports:
 
 - app listing and accessibility trees through AT-SPI
 - screenshots through GNOME Shell DBus or XDG Desktop Portal
-- window listing and focusing on GNOME, KWin/Plasma, Hyprland, COSMIC, and i3
+- window listing and focusing on GNOME, KWin/Plasma, Hyprland, Niri, COSMIC,
+  and i3
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
   RemoteDesktop portal, or `ydotool`
 
@@ -54,6 +55,8 @@ or screenshots:
 - KDE Plasma: `xdg-desktop-portal-kde`
 - sway/wlroots: `xdg-desktop-portal-wlr`
 - Hyprland: `xdg-desktop-portal-hyprland`
+- Niri: use your configured XDG Desktop Portal backend; window listing/focus
+  uses `niri msg` through `NIRI_SOCKET`
 - GNOME: usually available by default
 
 ## Verify Readiness
