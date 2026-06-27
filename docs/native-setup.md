@@ -13,9 +13,10 @@ cd codex-desktop-linux
 make bootstrap-native
 ```
 
-`make bootstrap-native` installs build dependencies, regenerates `codex-app/`
-from a fresh upstream `Codex.dmg`, builds the matching native package, and
-installs the newest artifact from `dist/`.
+`make bootstrap-native` installs build dependencies, regenerates `codex-app/`,
+validates the cached upstream `Codex.dmg` and downloads it only when missing or
+stale, builds the matching native package, and installs the newest artifact
+from `dist/`.
 
 If dependencies are already installed:
 

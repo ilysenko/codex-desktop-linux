@@ -1613,6 +1613,7 @@ test_fresh_install_removes_cached_dmg_metadata() {
     local source_dir="$workspace/source"
 
     mkdir -p "$source_dir"
+    printf '%s' "cached" >"$source_dir/Codex.dmg"
     printf '%s' "metadata" >"$source_dir/Codex.dmg.metadata"
 
     TEST_SOURCE_DIR="$source_dir" REPO_DIR="$REPO_DIR" bash <<'SCRIPT'
@@ -1631,6 +1632,94 @@ SCRIPT
 
     assert_file_not_exists "$source_dir/Codex.dmg"
     assert_file_not_exists "$source_dir/Codex.dmg.metadata"
+}
+
+test_fresh_reuse_dmg_uses_cache_when_metadata_matches() {
+    info "Checking --fresh --reuse-dmg reuses cached DMG when metadata matches"
+    local workspace="$TMP_DIR/fresh-reuse-dmg-metadata"
+    local bin_dir="$workspace/bin"
+    local source_dir="$workspace/source"
+    local output_log="$workspace/output.log"
+    local url="https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
+    local url_sha256
+
+    url_sha256="$(printf '%s' "$url" | sha256sum | awk '{print $1}')"
+
+    mkdir -p "$bin_dir" "$source_dir"
+    printf '%s' "cached" >"$source_dir/Codex.dmg"
+    cat >"$source_dir/Codex.dmg.metadata" <<EOF
+url_sha256=$url_sha256
+etag=same-etag
+last_modified=Thu, 04 Jun 2026 00:00:00 GMT
+content_length=6
+EOF
+
+    cat >"$bin_dir/curl" <<'SCRIPT'
+#!/usr/bin/env bash
+set -eu
+
+is_head=0
+for arg in "$@"; do
+    if [ "$arg" = "-fsSLI" ]; then
+        is_head=1
+    fi
+done
+
+if [ "$is_head" -eq 1 ]; then
+    printf '%s\n' "HEAD" >> "$TEST_CURL_LOG"
+    printf 'HTTP/2 200\r\n'
+    printf 'ETag: same-etag\r\n'
+    printf 'Last-Modified: Thu, 04 Jun 2026 00:00:00 GMT\r\n'
+    printf 'Content-Length: 6\r\n'
+    printf '\r\n'
+    exit 0
+fi
+
+printf '%s\n' "GET" >> "$TEST_CURL_LOG"
+out=""
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-o" ]; then
+        shift
+        out="$1"
+    fi
+    shift || true
+done
+
+[ -n "$out" ] || exit 2
+printf '%s' "downloaded" >"$out"
+SCRIPT
+    chmod +x "$bin_dir/curl"
+    : >"$source_dir/curl.log"
+
+    PATH="$bin_dir:$PATH" \
+    TEST_CURL_LOG="$source_dir/curl.log" \
+    TEST_SOURCE_DIR="$source_dir" \
+    REPO_DIR="$REPO_DIR" \
+        bash <<'SCRIPT' >"$output_log" 2>&1
+set -Eeuo pipefail
+
+SCRIPT_DIR="$TEST_SOURCE_DIR"
+WORK_DIR="$(mktemp -d)"
+INSTALL_DIR="$TEST_SOURCE_DIR/codex-app"
+# shellcheck disable=SC1091
+source "$REPO_DIR/scripts/lib/install-helpers.sh"
+# shellcheck disable=SC1091
+source "$REPO_DIR/scripts/lib/dmg.sh"
+
+FRESH_INSTALL=1
+REUSE_CACHED_DMG=1
+prepare_install
+
+dmg_path="$(get_dmg)"
+[ "$dmg_path" = "$TEST_SOURCE_DIR/Codex.dmg" ]
+SCRIPT
+
+    assert_file_exists "$source_dir/Codex.dmg"
+    assert_file_exists "$source_dir/Codex.dmg.metadata"
+    [ "$(cat "$source_dir/Codex.dmg")" = "cached" ] || fail "Expected matching metadata to keep cached DMG"
+    assert_contains "$source_dir/curl.log" "HEAD"
+    assert_not_contains "$source_dir/curl.log" "GET"
+    assert_contains "$output_log" "Using cached DMG"
 }
 
 test_rebuild_candidate_uses_validated_default_dmg() {
@@ -1689,7 +1778,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local setup_log="$TMP_DIR/make-setup-native.log"
 
     make -n -C "$REPO_DIR" install-native >"$install_log"
-    assert_contains "$install_log" './install.sh --fresh'
+    assert_contains "$install_log" './install.sh --fresh --reuse-dmg'
     assert_contains "$install_log" 'Building native package'
     assert_contains "$install_log" 'Installing latest native package'
 
@@ -6381,6 +6470,7 @@ main() {
     test_installer_refreshes_stale_cached_dmg_metadata
     test_extract_dmg_repairs_safe_7z_link_warnings
     test_fresh_install_removes_cached_dmg_metadata
+    test_fresh_reuse_dmg_uses_cache_when_metadata_matches
     test_rebuild_candidate_uses_validated_default_dmg
     test_native_shortcut_targets_compose_existing_flows
     test_fedora_dependency_bootstrap_installs_rpmbuild

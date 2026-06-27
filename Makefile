@@ -74,9 +74,9 @@ help:
 	@printf '  %-18s %s\n' "make build-app" "Run install.sh and regenerate codex-app/ (reuses cached Codex.dmg)"
 	@printf '  %-18s %s\n' "make build-app-fresh" "Remove cached Codex.dmg and regenerate codex-app/"
 	@printf '  %-18s %s\n' "make setup-native" "Guided setup summary and Linux feature config helper"
-	@printf '  %-18s %s\n' "make bootstrap-native" "Install deps, fresh-build, package, and install"
-	@printf '  %-18s %s\n' "make install-native" "Fresh-build, package, and install"
-	@printf '  %-18s %s\n' "make update-native" "Pull trusted checkout, fresh-build, package, and install"
+	@printf '  %-18s %s\n' "make bootstrap-native" "Install deps, validate/reuse DMG, package, and install"
+	@printf '  %-18s %s\n' "make install-native" "Clean-build, validate/reuse DMG, package, and install"
+	@printf '  %-18s %s\n' "make update-native" "Pull trusted checkout, validate/reuse DMG, package, and install"
 	@printf '  %-18s %s\n' "make rebuild-next" "Build a side-by-side candidate in codex-app-next/"
 	@printf '  %-18s %s\n' "make run-app" "Launch the local generated Electron app from codex-app/"
 	@printf '  %-18s %s\n' "make build-dev-app" "Build a side-by-side test app with a distinct app id/bin"
@@ -189,7 +189,7 @@ bootstrap-native:
 	PATH="$$HOME/.cargo/bin:$$PATH" $(MAKE) install-native
 
 install-native:
-	$(MAKE) build-app-fresh
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --fresh --reuse-dmg "$(DMG)"
 	$(MAKE) package
 	$(MAKE) install
 	@echo "[make] Native package install complete"

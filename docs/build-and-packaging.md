@@ -74,6 +74,8 @@ The default path stores upstream DMG headers, plus a hash of the upstream URL,
 next to `Codex.dmg` and refreshes the cached file when that upstream fingerprint
 changes. `--fresh` still forces a cache removal before rebuilding, and an
 explicit `DMG=/path/to/Codex.dmg` uses that file exactly.
+Native install shortcuts use `--fresh --reuse-dmg`, so they clean the generated
+app directory while still reusing the cached DMG when upstream metadata matches.
 
 Run the generated app:
 
