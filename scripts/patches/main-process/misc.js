@@ -324,8 +324,19 @@ function applyLinuxXdgDocumentsDirPatch(currentSource) {
 
 function applyLinuxLocalAppServerFeatureEnablementHandlerPatch(currentSource) {
   const method = "set-local-app-server-feature-enablement";
+  const featureKeys = [
+    "remote_control",
+    "remote_plugin",
+    "memories",
+    "mentions_v2",
+    "tool_search",
+    "tool_suggest",
+    "tool_call_mcp_elicitation",
+    "plugins",
+    "apps",
+  ];
   const handler =
-    "async e=>{let t=e?.params??e??{},n={},r=(e,t)=>{typeof t===`boolean`&&(n[e]=t)};if(t.enablement&&typeof t.enablement===`object`)for(let[e,n]of Object.entries(t.enablement))r(e,n);let i=t.featureName??t.feature_name??t.name??t.feature??null,a=t.enabled;i!=null&&r(i,a);for(let e of[`remote_control`,`remote_plugin`,`memories`,`tool_suggest`,`tool_call_mcp_elicitation`,`plugins`,`apps`])r(e,t[e]);let o=this.sharedObjectRepository?.get?.(`local_app_server_feature_enablement`)??{};return this.sharedObjectRepository?.set?.(`local_app_server_feature_enablement`,{...o,...n}),Object.prototype.hasOwnProperty.call(n,`remote_control`)&&this.sharedObjectRepository?.set?.(`local_remote_control_enabled`,n.remote_control),{enabled:n}}";
+    `async e=>{let t=e?.params??e??{},n={},r=(e,t)=>{typeof t===\`boolean\`&&(n[e]=t)};if(t.enablement&&typeof t.enablement===\`object\`)for(let[e,n]of Object.entries(t.enablement))r(e,n);let i=t.featureName??t.feature_name??t.name??t.feature??null,a=t.enabled;i!=null&&r(i,a);for(let e of[${featureKeys.map((key) => `\`${key}\``).join(",")}])r(e,t[e]);let o=this.sharedObjectRepository?.get?.(\`local_app_server_feature_enablement\`)??{};return this.sharedObjectRepository?.set?.(\`local_app_server_feature_enablement\`,{...o,...n}),Object.prototype.hasOwnProperty.call(n,\`remote_control\`)&&this.sharedObjectRepository?.set?.(\`local_remote_control_enabled\`,n.remote_control),{enabled:n}}`;
   let patchedSource = currentSource;
 
   if (!patchedSource.includes(`methods:[\`${method}\`]`)) {

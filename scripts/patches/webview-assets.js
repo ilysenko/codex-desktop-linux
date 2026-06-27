@@ -607,6 +607,7 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
     "remote_control",
     "remote_plugin",
     "tool_call_mcp_elicitation",
+    "tool_search",
     "tool_suggest",
   ]);
   const defaultFeaturesMarker = "statsig_default_enable_features";
@@ -630,7 +631,7 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
 
   function sanitizeFeatureArrayDeclaration(source, arrayVar) {
     const arrayDeclarationRegex = new RegExp(
-      `(var\\s+${escapeRegExp(arrayVar)}=\\[)([^\\]]*?)(\\])`,
+      `((?:var\\s+)?${escapeRegExp(arrayVar)}=\\[)([^\\]]*?)(\\])`,
       "u",
     );
     const match = source.match(arrayDeclarationRegex);

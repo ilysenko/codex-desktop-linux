@@ -809,6 +809,20 @@ test("default core patch descriptors are grouped and unique", () => {
   );
 });
 
+test("app-server feature enablement descriptor matches current app-main chunks", () => {
+  const descriptor = corePatchDescriptors().find(
+    (descriptor) => descriptor.id === "linux-app-server-feature-enablement",
+  );
+
+  assert.ok(descriptor);
+  assert.equal(descriptor.pattern.test("app-main-DxUcMyo0.js"), true);
+  assert.equal(
+    descriptor.pattern.test("app-initial~app-main~automations-page-BfqUlSo6.js"),
+    true,
+  );
+  assert.equal(descriptor.pattern.test("experimental-feature-visibility-Bvp90zWX.js"), false);
+});
+
 test("patch descriptors reject unsupported ciPolicy values", () => {
   assert.throws(
     () =>
@@ -1553,6 +1567,8 @@ test("registers local app-server feature enablement in internal and Electron han
   assert.match(patched, /"set-local-app-server-feature-enablement":async/);
   assert.match(patched, /local_app_server_feature_enablement/);
   assert.match(patched, /local_remote_control_enabled/);
+  assert.match(patched, /`mentions_v2`/);
+  assert.match(patched, /`tool_search`/);
   assert.match(patched, /enablement/);
   assert.equal(
     (patched.match(/set-local-app-server-feature-enablement/g) ?? []).length,
@@ -4005,11 +4021,11 @@ test("removes unsupported features from default app-server feature sync", () => 
 
   assert.match(
     patched,
-    /var GF=\[`apps`,`memories`,`mentions_v2`,`plugins`,`remote_control`,`remote_plugin`,`tool_call_mcp_elicitation`,`tool_suggest`\];/,
+    /var GF=\[`apps`,`memories`,`mentions_v2`,`plugins`,`remote_control`,`remote_plugin`,`tool_call_mcp_elicitation`,`tool_search`,`tool_suggest`\];/,
   );
   assert.doesNotMatch(patched, /`auth_elicitation`/);
   assert.doesNotMatch(patched, /`enable_mcp_apps`/);
-  assert.doesNotMatch(patched, /`tool_search`/);
+  assert.match(patched, /`tool_search`/);
   assert.doesNotMatch(patched, /,te\]/);
 });
 
@@ -4017,7 +4033,7 @@ test("patches the matched app-server feature sync array when an identical array 
   const unsupportedFeatureArray =
     "var GF=[`apps`,`auth_elicitation`,`enable_mcp_apps`,`memories`,`plugins`,`tool_call_mcp_elicitation`,`tool_search`,`tool_suggest`,te];";
   const supportedFeatureArray =
-    "var GF=[`apps`,`memories`,`plugins`,`tool_call_mcp_elicitation`,`tool_suggest`];";
+    "var GF=[`apps`,`memories`,`plugins`,`tool_call_mcp_elicitation`,`tool_search`,`tool_suggest`];";
   const source = [
     unsupportedFeatureArray,
     "function OF(){return GF}",
@@ -4059,6 +4075,22 @@ test("sanitizes unsupported features in current dynamic app-server feature sync"
 
   assert.match(patched, /var BV=\[`memories`,`tool_suggest`\],VV=`4218407052`,HV=`remote_plugin`/);
   assert.match(patched, /n\[HV\]=t,n/);
+  assert.doesNotMatch(patched, /`apps_mcp_path_override`/);
+  assert.doesNotMatch(patched, /`auth_elicitation`/);
+});
+
+test("sanitizes unsupported features in assignment-style dynamic app-server feature sync", () => {
+  const source = [
+    "function iae(e,t){let n={};for(let t of k7){let r=e[t];r!=null&&(n[t]=r)}return n[j7]=t,n}",
+    "var E7,D7,O7,k7,A7,j7,aae=e((()=>{E7=s(),k7=[`apps_mcp_path_override`,`auth_elicitation`,`memories`,`tool_suggest`],A7=`4218407052`,j7=`remote_plugin`}));",
+    "function rae(){let e=(0,E7.c)(7),t=M(J),[n]=Y_(`statsig_default_enable_features`),r=Kd(A7),i=Kh(),a=rt(),o,s;",
+    "return e[0]!==i||e[1]!==r||e[2]!==n||e[3]!==a||e[4]!==t?(o=()=>{let e=new Map,o=()=>{if(vd(`set-default-feature-overrides`,{overrides:n??null}),n==null)return;let i=iae(n,r),o=t.get(Kp),s=new Set(t.get(nm).filter(e=>e===o||pm(t,e).state===`connected`));for(let t of e.keys())s.has(t)||e.delete(t);let c=t.get(nm).filter(e=>s.has(e)).flatMap(t=>(0,D7.default)(e.get(t),i)?[]:(e.set(t,i),[vd(`set-experimental-feature-enablement-for-host`,{hostId:t,enablement:i}).catch(n=>{e.delete(t),l.error(`Failed to sync experimental feature enablement`,{safe:{hostId:t},sensitive:{error:n}})})]));c.length!==0&&Promise.all(c).then(()=>{a.invalidateQueries({queryKey:$te})})};return o(),i.addRegistryCallback(o)},s=[i,r,n,a,t],e[0]=i,e[1]=r,e[2]=n,e[3]=a,e[4]=t,e[5]=o,e[6]=s):(o=e[5],s=e[6]),(0,O7.useEffect)(o,s),null}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxAppServerFeatureEnablementPatch, source);
+
+  assert.match(patched, /k7=\[`memories`,`tool_suggest`\]/);
+  assert.match(patched, /n\[j7\]=t,n/);
   assert.doesNotMatch(patched, /`apps_mcp_path_override`/);
   assert.doesNotMatch(patched, /`auth_elicitation`/);
 });
