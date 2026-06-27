@@ -2055,12 +2055,14 @@ mod tests {
             "HOME",
             "PATH",
             "NVM_DIR",
+            "XDG_CONFIG_HOME",
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
         ]);
         std::env::set_var("HOME", temp.path());
         std::env::set_var("PATH", temp.path().join("missing-bin"));
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_CONFIG_HOME");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
