@@ -1200,10 +1200,34 @@ function createModernNativeKeyboardShortcutsSettingsFixture() {
     fs.writeFileSync(path.join(assetsDir, name), source, "utf8");
   };
 
+  writeAsset("chunk-A.js", "");
+  writeAsset(
+    "jsx-runtime-A.js",
+    'import{s as s}from"./chunk-A.js";function n(){return{}}function t(){return{jsx(){},jsxs(){},Fragment:"Fragment"}}react.transitional.element;export{n,t};',
+  );
+  writeAsset(
+    "setting-storage-A.js",
+    'async function requestCodex(...args){let[request]=args,{params:params,source:source}=request;return send("vscode://codex/",params)}export{requestCodex as z};',
+  );
+  writeAsset("toggle-A.js", "export{t};");
+  writeAsset(
+    "settings-row-A.js",
+    "function a(e){let{label:t,description:n,control:r}=e;return null}export{a as r};",
+  );
+  writeAsset("settings-content-layout-A.js", "export{n,r,t};");
+  writeAsset("settings-group-A.js", "export{n,t};");
+  writeAsset("settings-surface-A.js", "export{t};");
   writeAsset("keyboard-shortcuts-settings-A.js", "slug:`keyboard-shortcuts`");
   writeAsset(
     "settings-page-A.js",
-    'var Hn={"general-settings":wt,"keyboard-shortcuts":xn};var Wn=[`general-settings`,`profile`,`keyboard-shortcuts`];',
+    [
+      'var Zn={"general-settings":(0,Ya.lazy)(()=>Pr(()=>import(`./general-settings-A.js`),[],import.meta.url)),"keyboard-shortcuts":(0,Ya.lazy)(()=>Pr(()=>import(`./keyboard-shortcuts-settings-A.js`),[],import.meta.url))};',
+      'var Hn={"general-settings":wt,"keyboard-shortcuts":xn};',
+      "var Wn=[`general-settings`,`profile`,`keyboard-shortcuts`];",
+      "var Qn=[{key:`app`,slugs:[`general-settings`,`profile`,`keyboard-shortcuts`]}];",
+      "function visible(e){switch(e.slug){case`general-settings`:case`agent`:case`personalization`:return!0;case`keyboard-shortcuts`:return!0}}",
+      "function loading(H){let W=!1;if(H)bb0:switch(H.slug){case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`data-controls`:case`personalization`:W=!1;break bb0;case`keyboard-shortcuts`:W=!1;break bb0}return W}",
+    ].join(""),
   );
 
   return { extractedDir, assetsDir };
@@ -3863,17 +3887,32 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
   }
 });
 
-test("skips Linux desktop settings injection when native shortcuts use unsupported settings router", () => {
+test("adds Linux desktop settings when native shortcuts use a consolidated settings bundle", () => {
   const { extractedDir, assetsDir } = createModernNativeKeyboardShortcutsSettingsFixture();
   try {
     const { value: result, warnings } = captureWarns(() => patchKeybindsSettingsAssets(extractedDir));
 
     assert.equal(result.matched, true);
-    assert.equal(result.changed, 0);
-    assert.match(result.reason, /extension point is unavailable/);
+    assert.ok(result.changed >= 2);
+    assert.match(result.reason, /upstream keyboard shortcuts settings are present/);
     assert.deepEqual(warnings, []);
     assert.equal(fs.existsSync(path.join(assetsDir, keybindsSettingsAsset)), false);
-    assert.equal(fs.existsSync(path.join(assetsDir, linuxDesktopSettingsAsset)), false);
+    assert.equal(fs.existsSync(path.join(assetsDir, linuxDesktopSettingsAsset)), true);
+
+    const linuxDesktopSource = fs.readFileSync(
+      path.join(assetsDir, linuxDesktopSettingsAsset),
+      "utf8",
+    );
+    assert.match(linuxDesktopSource, /Linux desktop/);
+    assert.match(linuxDesktopSource, /Build information/);
+    assert.match(linuxDesktopSource, /codex-linux-get-build-info/);
+
+    const settingsPageSource = fs.readFileSync(path.join(assetsDir, "settings-page-A.js"), "utf8");
+    assert.match(settingsPageSource, /linux-desktop-settings-linux\.js/);
+    assert.match(settingsPageSource, /"linux-desktop":[A-Za-z_$][\w$]*,"general-settings"/);
+    assert.match(settingsPageSource, /=\[`general-settings`,`linux-desktop`,`profile`/);
+    assert.match(settingsPageSource, /slugs:\[`general-settings`,`linux-desktop`,`profile`/);
+    assert.match(settingsPageSource, /case`linux-desktop`:case`general-settings`/);
   } finally {
     fs.rmSync(extractedDir, { recursive: true, force: true });
   }

@@ -321,6 +321,36 @@ function collectRequiredAssetPatches(extractedDir, filenamePattern, patchFn, des
   });
 }
 
+function collectOptionalAssetPatches(extractedDir, filenamePattern, patchFn) {
+  const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
+  if (!fs.existsSync(webviewAssetsDir)) {
+    return [];
+  }
+
+  const candidates = fs
+    .readdirSync(webviewAssetsDir)
+    .filter((name) => filenamePattern.test(name))
+    .sort();
+
+  const patches = [];
+  for (const candidate of candidates) {
+    const filePath = path.join(webviewAssetsDir, candidate);
+    const currentSource = fs.readFileSync(filePath, "utf8");
+    try {
+      patches.push({
+        filePath,
+        currentSource,
+        patchedSource: patchFn(currentSource),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`WARN: Optional Keybinds settings patch skipped for ${candidate}: ${message}`);
+    }
+  }
+
+  return patches;
+}
+
 function collectLinuxDesktopRouteAndNavigationPatches(extractedDir) {
   const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
   if (!fs.existsSync(webviewAssetsDir)) {
@@ -394,40 +424,9 @@ function hasNativeKeyboardShortcutsSettings(extractedDir) {
   return true;
 }
 
-function hasLegacyLinuxDesktopSettingsExtensionPoints(extractedDir) {
-  const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
-  if (!fs.existsSync(webviewAssetsDir)) {
-    return false;
-  }
-
-  const assets = fs
-    .readdirSync(webviewAssetsDir)
-    .filter((name) => name.endsWith(".js"))
-    .sort();
-  return [
-    (name) => /^settings-sections-.*\.js$/.test(name),
-    (name) => /^settings-shared-.*\.js$/.test(name),
-    (name) => /^(?:app-main|index|settings-page)-.*\.js$/.test(name),
-    (name) => /^settings-row-.*\.js$/.test(name),
-    (name) => /^settings-content-layout-.*\.js$/.test(name),
-    (name) => /^toggle-.*\.js$/.test(name),
-  ].every((predicate) => assets.some(predicate));
-}
-
 function patchKeybindsSettingsAssets(extractedDir) {
   try {
     const hasNativeSettings = hasNativeKeyboardShortcutsSettings(extractedDir);
-    if (
-      hasNativeSettings &&
-      !hasLegacyLinuxDesktopSettingsExtensionPoints(extractedDir)
-    ) {
-      return {
-        matched: true,
-        changed: 0,
-        reason: "upstream keyboard shortcuts settings are present; Linux desktop settings extension point is unavailable",
-      };
-    }
-
     const settingsAsset = hasNativeSettings
       ? resolveLinuxDesktopSettingsAsset(extractedDir)
       : resolveKeybindsSettingsAsset(extractedDir);
@@ -435,34 +434,40 @@ function patchKeybindsSettingsAssets(extractedDir) {
     const previousSettingsSource = settingsAssetExists
       ? fs.readFileSync(settingsAsset.filePath, "utf8")
       : null;
-    const patches = [
-      ...collectRequiredAssetPatches(
-        extractedDir,
-        /^settings-sections-.*\.js$/,
-        hasNativeSettings
-          ? applyLinuxDesktopSettingsSectionsPatch
-          : applyKeybindsSettingsSectionsPatch,
-        "settings sections bundle",
-      ),
-      ...collectRequiredAssetPatches(
-        extractedDir,
-        /^settings-shared-.*\.js$/,
-        hasNativeSettings
-          ? applyLinuxDesktopSettingsSharedPatch
-          : applyKeybindsSettingsSharedPatch,
-        "settings shared bundle",
-      ),
-      ...(
-        hasNativeSettings
-          ? collectLinuxDesktopRouteAndNavigationPatches(extractedDir)
-          : collectRequiredAssetPatches(
-              extractedDir,
-              /^index-.*\.js$/,
-              applyKeybindsSettingsIndexPatch,
-              "webview index bundle",
-            )
-      ),
-    ];
+    const patches = hasNativeSettings
+      ? [
+          ...collectOptionalAssetPatches(
+            extractedDir,
+            /^settings-sections-.*\.js$/,
+            applyLinuxDesktopSettingsSectionsPatch,
+          ),
+          ...collectOptionalAssetPatches(
+            extractedDir,
+            /^settings-shared-.*\.js$/,
+            applyLinuxDesktopSettingsSharedPatch,
+          ),
+          ...collectLinuxDesktopRouteAndNavigationPatches(extractedDir),
+        ]
+      : [
+          ...collectRequiredAssetPatches(
+            extractedDir,
+            /^settings-sections-.*\.js$/,
+            applyKeybindsSettingsSectionsPatch,
+            "settings sections bundle",
+          ),
+          ...collectRequiredAssetPatches(
+            extractedDir,
+            /^settings-shared-.*\.js$/,
+            applyKeybindsSettingsSharedPatch,
+            "settings shared bundle",
+          ),
+          ...collectRequiredAssetPatches(
+            extractedDir,
+            /^index-.*\.js$/,
+            applyKeybindsSettingsIndexPatch,
+            "webview index bundle",
+          ),
+        ];
 
     fs.writeFileSync(settingsAsset.filePath, settingsAsset.source, "utf8");
     let changed = previousSettingsSource !== settingsAsset.source ? 1 : 0;
