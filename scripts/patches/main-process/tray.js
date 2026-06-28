@@ -174,17 +174,25 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   const trayClickNeedle =
     "this.tray.on(`click`,()=>{this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}";
   const trayClickPatchWithoutContextSetup =
-    "this.tray.on(`click`,()=>{process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}";
+    "this.tray.on(`click`,()=>{this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}";
   const trayClickPatch =
+    "process.platform===`linux`&&this.setLinuxTrayContextMenu(),this.tray.on(`click`,()=>{this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}";
+  const oldLinuxTrayClickPatchWithoutContextSetup =
+    "this.tray.on(`click`,()=>{process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}";
+  const oldLinuxTrayClickPatch =
     "process.platform===`linux`&&this.setLinuxTrayContextMenu(),this.tray.on(`click`,()=>{process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}";
   const canSetLinuxTrayContextMenu = patchedSource.includes("setLinuxTrayContextMenu(){");
-  if (patchedSource.includes("process.platform===`linux`&&this.setLinuxTrayContextMenu(),this.tray.on(`click`")) {
+  if (patchedSource.includes(trayClickPatch)) {
     // Already patched.
+  } else if (patchedSource.includes(oldLinuxTrayClickPatch)) {
+    patchedSource = patchedSource.replace(oldLinuxTrayClickPatch, trayClickPatch);
   } else if (patchedSource.includes(trayClickNeedle)) {
     patchedSource = patchedSource.replace(
       trayClickNeedle,
       canSetLinuxTrayContextMenu ? trayClickPatch : trayClickPatchWithoutContextSetup,
     );
+  } else if (canSetLinuxTrayContextMenu && patchedSource.includes(oldLinuxTrayClickPatchWithoutContextSetup)) {
+    patchedSource = patchedSource.replace(oldLinuxTrayClickPatchWithoutContextSetup, trayClickPatch);
   } else if (canSetLinuxTrayContextMenu && patchedSource.includes(trayClickPatchWithoutContextSetup)) {
     patchedSource = patchedSource.replace(trayClickPatchWithoutContextSetup, trayClickPatch);
   } else {

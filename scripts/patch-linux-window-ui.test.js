@@ -2650,8 +2650,9 @@ test("adds Linux tray support including the platform guard", () => {
   assert.match(patched, /setLinuxTrayContextMenu\(\)\{let e=n\.Menu\.buildFromTemplate/);
   assert.match(
     patched,
-    /process\.platform===`linux`&&this\.setLinuxTrayContextMenu\(\),this\.tray\.on\(`click`/,
+    /process\.platform===`linux`&&this\.setLinuxTrayContextMenu\(\),this\.tray\.on\(`click`,\(\)=>\{this\.onTrayButtonClick\(\)\}\)/,
   );
+  assert.doesNotMatch(patched, /process\.platform===`linux`\?this\.openNativeTrayMenu\(\):this\.onTrayButtonClick\(\)/);
   assert.match(
     patched,
     /openNativeTrayMenu\(\)\{if\(process\.platform===`linux`&&\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)\)return;/,
