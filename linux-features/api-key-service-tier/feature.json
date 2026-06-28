@@ -1,0 +1,9 @@
+{
+  "id": "api-key-service-tier",
+  "title": "API Key Service Tier",
+  "description": "Opt-in Fast/service-tier UI and request support for API-key authenticated OpenAI-compatible providers.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
