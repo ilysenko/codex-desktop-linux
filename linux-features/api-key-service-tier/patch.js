@@ -2,6 +2,7 @@
 
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const PATCH_MARKER = "codexLinuxApiKeyFastTier";
+const MODEL_MARKER = "codexLinuxApiKeyServiceTierModel";
 
 function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
@@ -37,6 +38,34 @@ function authMethodVarName(source) {
   return source.match(new RegExp(`(${JS_IDENT})=${JS_IDENT}\\?\\.authMethod\\?\\?null`))?.[1] ?? "__never";
 }
 
+function applyApiKeyModelMarkerPatch(source) {
+  if (new RegExp(`${MODEL_MARKER}:${JS_IDENT}===\\\`apikey\\\``).test(source)) {
+    return source;
+  }
+
+  const modelListPattern = new RegExp(
+    `(function ${JS_IDENT}\\(\\{authMethod:(${JS_IDENT}),availableModels:${JS_IDENT},` +
+      `defaultModel:${JS_IDENT},enabledReasoningEfforts:${JS_IDENT},` +
+      `includeUltraReasoningEffort:${JS_IDENT},models:${JS_IDENT},useHiddenModels:${JS_IDENT}\\}\\)` +
+      `\\{[\\s\\S]{0,1800}?[,;]${JS_IDENT}=\\{\\.\\.\\.${JS_IDENT},supportedReasoningEfforts:${JS_IDENT})(\\})`,
+    "g",
+  );
+
+  const patched = source.replace(
+    modelListPattern,
+    (_match, prefix, authMethodVar, suffix) => `${prefix},${MODEL_MARKER}:${authMethodVar}===\`apikey\`${suffix}`,
+  );
+
+  if (patched !== source) {
+    return patched;
+  }
+
+  if (source.includes("list-models-for-host") && source.includes("supportedReasoningEfforts")) {
+    warn("Could not find model list mapping", "API key model service tier marker patch");
+  }
+  return source;
+}
+
 function applyFallbackFastTierPatch(source) {
   let patched = source;
 
@@ -48,7 +77,7 @@ function applyFallbackFastTierPatch(source) {
     const fastResolverMatch = patched.match(fastResolverPattern);
     if (fastResolverMatch != null) {
       const helper =
-        `function ${PATCH_MARKER}(e){return e==null||e?.serviceTiers?.length?null:{id:\`fast\`,name:\`Fast\`,description:\`1.5x speed, increased usage\`}}`;
+        `function ${PATCH_MARKER}(e){return e==null||e?.serviceTiers?.length||e?.${MODEL_MARKER}!==!0?null:{id:\`fast\`,name:\`Fast\`,description:\`1.5x speed, increased usage\`}}`;
       patched = patched.replace(fastResolverPattern, `${helper}${fastResolverMatch[0]}`);
     }
   }
@@ -85,7 +114,7 @@ function applyFallbackFastTierPatch(source) {
 }
 
 function applyApiKeyServiceTierPatch(source) {
-  return applyFallbackFastTierPatch(applyApiKeyServiceTierGatePatch(source));
+  return applyFallbackFastTierPatch(applyApiKeyModelMarkerPatch(applyApiKeyServiceTierGatePatch(source)));
 }
 
 const descriptors = [
@@ -102,6 +131,7 @@ const descriptors = [
 ];
 
 module.exports = {
+  applyApiKeyModelMarkerPatch,
   applyApiKeyServiceTierGatePatch,
   applyFallbackFastTierPatch,
   applyApiKeyServiceTierPatch,

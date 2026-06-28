@@ -11,6 +11,7 @@ const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
+  applyApiKeyModelMarkerPatch,
   applyApiKeyServiceTierPatch,
   applyApiKeyServiceTierGatePatch,
   applyFallbackFastTierPatch,
@@ -76,7 +77,16 @@ test("service tier auth gate allows API-key hosts while preserving ChatGPT requi
   assert.doesNotMatch(patched, /d=a&&!u&&c!=null/);
 });
 
-test("fallback fast tier is synthesized when model catalog has no service tiers", () => {
+test("model list entries are marked only when loaded for API-key hosts", () => {
+  const source =
+    "function vbe({authMethod:e,availableModels:t,defaultModel:n,enabledReasoningEfforts:r,includeUltraReasoningEffort:i,models:a,useHiddenModels:o}){let s=[],c=null,l=o&&e!==`amazonBedrock`,u=a.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`max`)),d=i&&a.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`ultra`));return a.forEach(n=>{if(l?t.has(n.model):!n.hidden){let t=i?n.supportedReasoningEfforts:n.supportedReasoningEfforts.filter(({reasoningEffort:e})=>e!==`ultra`),a=(e===`copilot`?[t.find(e=>e.reasoningEffort===`medium`)??{reasoningEffort:`medium`,description:`medium effort`}]:t).filter(({reasoningEffort:e})=>Gx(e)&&r.has(e)),o={...n,supportedReasoningEfforts:a};s.push(o),n.isDefault&&(c=o)}}),c??=s.find(e=>e.model===n)??null,{models:s,defaultModel:c}}";
+
+  const patched = applyPatchTwice(applyApiKeyModelMarkerPatch, source);
+
+  assert.match(patched, /o=\{\.\.\.n,supportedReasoningEfforts:a,codexLinuxApiKeyServiceTierModel:e===`apikey`\}/);
+});
+
+test("fallback fast tier is synthesized only for API-key model catalog entries", () => {
   const source = [
     "function pQ(e,t){return t==null?null:t===`fast`?mQ(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
     "function tEe(e){return[{description:yQ.standardDescription,iconKind:null,label:yQ.standardLabel,tier:null,value:null},...(e?.serviceTiers??[]).map(e=>({description:eEe(e),iconKind:fQ(e.id,e.name),label:$Te(e),tier:e,value:e.id}))]}",
@@ -87,6 +97,7 @@ test("fallback fast tier is synthesized when model catalog has no service tiers"
   const patched = applyPatchTwice(applyFallbackFastTierPatch, source);
 
   assert.match(patched, /function codexLinuxApiKeyFastTier\(e\)/);
+  assert.match(patched, /e\?\.codexLinuxApiKeyServiceTierModel!==!0\?null/);
   assert.match(patched, /codexLinuxApiKeyFastTier\(e\)/);
   assert.match(patched, /\?e\.serviceTiers:\[codexLinuxApiKeyFastTier\(e\)\]\)\.filter\(Boolean\)\)\.map/);
   assert.doesNotMatch(patched, /\(e\?\.serviceTiers\?\?\[\]\)\.map/);
@@ -96,6 +107,7 @@ test("fallback fast tier is synthesized when model catalog has no service tiers"
 test("combined patch updates both service tier gate and fallback options", () => {
   const source = [
     "function sxe(e){let t=(0,cxe.c)(6),n=X(os),r=e?.hostId??n,i=Cf(r),a=i?.authMethod===`chatgpt`,o=i?.authMethod??null,s;t[0]!==r||t[1]!==o?(s={authMethod:o,hostId:r},t[0]=r,t[1]=o,t[2]=s):s=t[2];let{data:c,isPending:l}=ye(is,s),u=!!i?.isLoading||a&&l,d=a&&!u&&c!=null&&c?.requirements?.featureRequirements?.fast_mode!==!1,f;return t[3]!==u||t[4]!==d?(f={isServiceTierAllowed:d,isLoading:u},t[3]=u,t[4]=d,t[5]=f):f=t[5],f}",
+    "function vbe({authMethod:e,availableModels:t,defaultModel:n,enabledReasoningEfforts:r,includeUltraReasoningEffort:i,models:a,useHiddenModels:o}){let s=[],c=null,l=o&&e!==`amazonBedrock`,u=a.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`max`)),d=i&&a.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`ultra`));return a.forEach(n=>{if(l?t.has(n.model):!n.hidden){let t=i?n.supportedReasoningEfforts:n.supportedReasoningEfforts.filter(({reasoningEffort:e})=>e!==`ultra`),a=(e===`copilot`?[t.find(e=>e.reasoningEffort===`medium`)??{reasoningEffort:`medium`,description:`medium effort`}]:t).filter(({reasoningEffort:e})=>Gx(e)&&r.has(e)),o={...n,supportedReasoningEfforts:a};s.push(o),n.isDefault&&(c=o)}}),c??=s.find(e=>e.model===n)??null,{models:s,defaultModel:c}}",
     "function pQ(e,t){return t==null?null:t===`fast`?mQ(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
     "function tEe(e){return[{description:yQ.standardDescription,iconKind:null,label:yQ.standardLabel,tier:null,value:null},...(e?.serviceTiers??[]).map(e=>({description:eEe(e),iconKind:fQ(e.id,e.name),label:$Te(e),tier:e,value:e.id}))]}",
     "function mQ(e){return e?.serviceTiers?.find(e=>fQ(e.id,e.name)===`fast`||e.name.trim().toLowerCase()===`priority`)??null}",
@@ -104,5 +116,7 @@ test("combined patch updates both service tier gate and fallback options", () =>
   const patched = applyPatchTwice(applyApiKeyServiceTierPatch, source);
 
   assert.match(patched, /o===`apikey`/);
+  assert.match(patched, /codexLinuxApiKeyServiceTierModel:e===`apikey`/);
+  assert.match(patched, /e\?\.codexLinuxApiKeyServiceTierModel!==!0\?null/);
   assert.match(patched, /function codexLinuxApiKeyFastTier\(e\)/);
 });
