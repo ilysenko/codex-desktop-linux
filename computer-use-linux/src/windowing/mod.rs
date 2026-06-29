@@ -6,7 +6,7 @@ pub mod types;
 #[allow(unused_imports)]
 pub use registry::{
     COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, WINDOW_PERMISSION_HINT,
+    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, NIRI_BACKEND, WINDOW_PERMISSION_HINT,
 };
 #[allow(unused_imports)]
 pub use target::{
@@ -24,6 +24,7 @@ mod tests {
     use super::backends::kwin::{
         kwin_activate_script_source, kwin_window_id_from_uuid, parse_kwin_windows, KWIN_BACKEND,
     };
+    use super::backends::niri::{parse_niri_windows, NIRI_BACKEND};
     use super::registry::{
         descriptors, list_note, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND,
         GNOME_SHELL_INTROSPECT_BACKEND,
@@ -54,6 +55,7 @@ mod tests {
                 COSMIC_WAYLAND_BACKEND,
                 KWIN_BACKEND,
                 HYPRLAND_BACKEND,
+                NIRI_BACKEND,
                 I3_BACKEND,
             ]
         );
@@ -226,6 +228,21 @@ mod tests {
     fn i3_backend_can_exact_focus_targets() {
         let mut window = window(2, "Codex", "codex-desktop", "codex-desktop");
         window.backend = I3_BACKEND.to_string();
+
+        ensure_backend_can_focus_target(
+            &WindowTarget {
+                title: Some("Codex".to_string()),
+                ..Default::default()
+            },
+            &window,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn niri_backend_can_exact_focus_targets() {
+        let mut window = window(2, "Codex", "codex-desktop", "codex-desktop");
+        window.backend = NIRI_BACKEND.to_string();
 
         ensure_backend_can_focus_target(
             &WindowTarget {
@@ -537,6 +554,67 @@ mod tests {
         assert_eq!(windows[0].backend, HYPRLAND_BACKEND);
         assert!(windows[1].focused);
         assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn parses_niri_windows_as_window_info() {
+        let windows_json = r#"[
+          {
+            "id": 11,
+            "title": "Codex",
+            "app_id": "codex-desktop",
+            "pid": 618111,
+            "workspace_id": 3,
+            "is_focused": false,
+            "is_floating": false,
+            "is_urgent": false,
+            "layout": {
+              "pos_in_scrolling_layout": [2, 1],
+              "tile_size": [1920.0, 1062.0],
+              "window_size": [1916, 1058],
+              "tile_pos_in_workspace_view": [0.0, 48.0],
+              "window_offset_in_tile": [2.0, 2.0]
+            },
+            "focus_timestamp": {"secs": 59717, "nanos": 316379412}
+          },
+          {
+            "id": 6,
+            "title": "Browser",
+            "app_id": "helium",
+            "pid": -1,
+            "workspace_id": null,
+            "is_focused": true,
+            "is_floating": true,
+            "is_urgent": false,
+            "layout": {
+              "pos_in_scrolling_layout": null,
+              "tile_size": [800.4, 600.4],
+              "window_size": [796, 596],
+              "tile_pos_in_workspace_view": null,
+              "window_offset_in_tile": [2.0, 2.0]
+            },
+            "focus_timestamp": null
+          }
+        ]"#;
+
+        let windows = parse_niri_windows(windows_json).unwrap();
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].window_id, 6);
+        assert_eq!(windows[0].title.as_deref(), Some("Browser"));
+        assert_eq!(windows[0].app_id.as_deref(), Some("helium"));
+        assert_eq!(windows[0].wm_class.as_deref(), Some("helium"));
+        assert_eq!(windows[0].pid, None);
+        assert_eq!(windows[0].workspace, None);
+        assert!(windows[0].focused);
+        assert_eq!(windows[0].client_type.as_deref(), Some("wayland-floating"));
+        assert_eq!(windows[0].backend, NIRI_BACKEND);
+        assert_eq!(windows[0].bounds.as_ref().unwrap().width, 800);
+        assert_eq!(windows[0].bounds.as_ref().unwrap().x, None);
+        assert_eq!(windows[1].window_id, 11);
+        assert_eq!(windows[1].pid, Some(618111));
+        assert_eq!(windows[1].workspace, Some(3));
+        assert_eq!(windows[1].bounds.as_ref().unwrap().y, Some(48));
     }
 
     #[test]

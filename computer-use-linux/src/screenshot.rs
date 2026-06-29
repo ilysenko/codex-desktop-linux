@@ -1,4 +1,5 @@
 use crate::diagnostics::hydrate_session_bus_env;
+use crate::windowing::backends::niri;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::StreamExt;
@@ -144,12 +145,13 @@ impl ScreenshotPayloadOptions {
 }
 
 /// Environment variable forcing a single capture backend, skipping the
-/// fallback chain. Accepts `gnome-shell`, `portal`, or `gnome-screenshot`.
+/// fallback chain. Accepts `gnome-shell`, `niri`, `portal`, or `gnome-screenshot`.
 const SCREENSHOT_BACKEND_ENV: &str = "CODEX_COMPUTER_USE_SCREENSHOT_BACKEND";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScreenshotBackend {
     GnomeShell,
+    Niri,
     Portal,
     GnomeScreenshot,
 }
@@ -158,6 +160,7 @@ impl ScreenshotBackend {
     fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "gnome-shell" | "gnome_shell" | "shell" => Some(Self::GnomeShell),
+            "niri" | "niri-msg" | "niri_msg" => Some(Self::Niri),
             "portal" | "xdg-portal" | "xdg_portal" => Some(Self::Portal),
             "gnome-screenshot" | "gnome_screenshot" => Some(Self::GnomeScreenshot),
             _ => None,
@@ -167,6 +170,7 @@ impl ScreenshotBackend {
     async fn capture(self) -> Result<RawScreenshotCapture> {
         match self {
             Self::GnomeShell => capture_with_gnome_shell().await,
+            Self::Niri => capture_with_niri().await,
             Self::Portal => capture_with_portal().await,
             Self::GnomeScreenshot => capture_with_gnome_screenshot().await,
         }
@@ -186,12 +190,33 @@ pub async fn capture_screenshot_raw() -> Result<RawScreenshotCapture> {
     // The Shell and portal DBus paths fail for background processes (systemd
     // user services, non-interactive parent shells): GNOME Shell's
     // DBusSenderChecker rejects unknown bus names, and the portal cancels with
-    // response code 2 when there is no foreground window. `gnome-screenshot`
-    // claims an allowlisted bus name and works regardless, so it is the final
-    // fallback. See issue #20.
-    let gnome_error = match capture_with_gnome_shell().await {
-        Ok(capture) => return Ok(capture),
-        Err(error) => error,
+    // response code 2 when there is no foreground window. niri's compositor IPC
+    // can capture the focused screen without portal UI, and `gnome-screenshot`
+    // claims an allowlisted bus name and works regardless on GNOME-like
+    // sessions, so it remains the final fallback. See issue #20.
+    let niri_first = niri::niri_socket_path().is_some();
+    let mut niri_error = None;
+    if niri_first {
+        match capture_with_niri().await {
+            Ok(capture) => return Ok(capture),
+            Err(error) => niri_error = Some(error),
+        }
+    }
+
+    let gnome_error = if niri_first {
+        anyhow!("skipped because an active niri socket is available")
+    } else {
+        match capture_with_gnome_shell().await {
+            Ok(capture) => return Ok(capture),
+            Err(error) => error,
+        }
+    };
+    let niri_error = match niri_error {
+        Some(error) => error,
+        None => match capture_with_niri().await {
+            Ok(capture) => return Ok(capture),
+            Err(error) => error,
+        },
     };
     let portal_error = match capture_with_portal().await {
         Ok(capture) => return Ok(capture),
@@ -204,6 +229,7 @@ pub async fn capture_screenshot_raw() -> Result<RawScreenshotCapture> {
 
     Err(anyhow!(
         "GNOME Shell screenshot failed: {gnome_error}; \
+         niri screenshot failed: {niri_error}; \
          XDG portal screenshot failed: {portal_error}; \
          gnome-screenshot fallback failed: {cli_error}"
     ))
@@ -215,7 +241,7 @@ fn forced_backend() -> Result<Option<ScreenshotBackend>> {
             ScreenshotBackend::parse(&value).map(Some).ok_or_else(|| {
                 anyhow!(
                     "{SCREENSHOT_BACKEND_ENV}={value:?} is not a recognized backend \
-                     (expected gnome-shell, portal, or gnome-screenshot)"
+                     (expected gnome-shell, niri, portal, or gnome-screenshot)"
                 )
             })
         }
@@ -303,13 +329,13 @@ async fn capture_with_gnome_shell() -> Result<RawScreenshotCapture> {
     let (success, filename_used): (bool, String) = match result {
         Ok(result) => result,
         Err(error) => {
-            cleanup_gnome_requested_path(&path);
+            cleanup_requested_path(&path);
             return Err(error).context("GNOME Shell Screenshot call failed");
         }
     };
 
     if !success {
-        cleanup_gnome_requested_path(&path);
+        cleanup_requested_path(&path);
         bail!("GNOME Shell reported screenshot failure");
     }
 
@@ -319,6 +345,94 @@ async fn capture_with_gnome_shell() -> Result<RawScreenshotCapture> {
         ScreenshotCleanup::DeletePath(path),
     )
     .await
+}
+
+/// Upper bound on how long we wait for `niri msg` before killing it.
+const NIRI_SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(20);
+
+async fn capture_with_niri() -> Result<RawScreenshotCapture> {
+    let path = temp_png_path("niri");
+    let filename = path
+        .to_str()
+        .context("temporary screenshot path is not valid UTF-8")?;
+
+    let mut command = Command::new("niri");
+    command
+        .args([
+            "msg",
+            "--json",
+            "action",
+            "screenshot-screen",
+            "--write-to-disk",
+            "true",
+            "--show-pointer",
+            "false",
+            "--path",
+            filename,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(socket_path) = niri::niri_socket_path() {
+        command.env("NIRI_SOCKET", socket_path);
+    } else {
+        command.env_remove("NIRI_SOCKET");
+    }
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            cleanup_requested_path(&path);
+            return Err(error).context("failed to spawn niri msg screenshot-screen");
+        }
+    };
+
+    let status = match tokio::time::timeout(NIRI_SCREENSHOT_TIMEOUT, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => {
+            cleanup_requested_path(&path);
+            return Err(error).context("failed to wait for niri msg screenshot-screen");
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            cleanup_requested_path(&path);
+            bail!("niri msg screenshot-screen timed out");
+        }
+    };
+
+    if !status.success() {
+        cleanup_requested_path(&path);
+        bail!("niri msg screenshot-screen exited with {status}");
+    }
+
+    if let Err(error) = wait_for_screenshot_path(&path, NIRI_SCREENSHOT_TIMEOUT).await {
+        cleanup_requested_path(&path);
+        return Err(error);
+    }
+
+    read_png_as_capture(
+        path.clone(),
+        "niri-screenshot-screen",
+        ScreenshotCleanup::DeletePath(path),
+    )
+    .await
+}
+
+async fn wait_for_screenshot_path(path: &Path, timeout: Duration) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if path
+            .metadata()
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!("timed out waiting for screenshot file {}", path.display());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 async fn capture_with_portal() -> Result<RawScreenshotCapture> {
@@ -392,7 +506,7 @@ async fn capture_with_gnome_screenshot() -> Result<RawScreenshotCapture> {
     {
         Ok(child) => child,
         Err(error) => {
-            cleanup_gnome_requested_path(&path);
+            cleanup_requested_path(&path);
             return Err(error).context("failed to spawn gnome-screenshot");
         }
     };
@@ -402,18 +516,18 @@ async fn capture_with_gnome_screenshot() -> Result<RawScreenshotCapture> {
     let status = match tokio::time::timeout(GNOME_SCREENSHOT_TIMEOUT, child.wait()).await {
         Ok(Ok(status)) => status,
         Ok(Err(error)) => {
-            cleanup_gnome_requested_path(&path);
+            cleanup_requested_path(&path);
             return Err(error).context("failed to wait for gnome-screenshot");
         }
         Err(_) => {
             let _ = child.kill().await;
-            cleanup_gnome_requested_path(&path);
+            cleanup_requested_path(&path);
             bail!("gnome-screenshot timed out");
         }
     };
 
     if !status.success() {
-        cleanup_gnome_requested_path(&path);
+        cleanup_requested_path(&path);
         bail!("gnome-screenshot exited with {status}");
     }
 
@@ -599,7 +713,7 @@ fn next_dimensions_for_byte_cap(
     (next_width, next_height)
 }
 
-fn cleanup_gnome_requested_path(path: &Path) {
+fn cleanup_requested_path(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
@@ -735,6 +849,10 @@ mod tests {
         assert_eq!(
             ScreenshotBackend::parse("gnome-shell"),
             Some(ScreenshotBackend::GnomeShell)
+        );
+        assert_eq!(
+            ScreenshotBackend::parse("niri"),
+            Some(ScreenshotBackend::Niri)
         );
         assert_eq!(
             ScreenshotBackend::parse("  Portal "),
@@ -942,7 +1060,7 @@ mod tests {
         let path = test_path("gnome-pre-read-failure");
         fs::write(&path, b"partial").unwrap();
 
-        cleanup_gnome_requested_path(&path);
+        cleanup_requested_path(&path);
 
         assert!(!path.exists());
     }

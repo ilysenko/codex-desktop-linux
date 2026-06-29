@@ -7,8 +7,9 @@ the in-app Computer Use controls are disabled until you opt in.
 It supports:
 
 - app listing and accessibility trees through AT-SPI
-- screenshots through GNOME Shell DBus or XDG Desktop Portal
-- window listing and focusing on GNOME, KWin/Plasma, Hyprland, COSMIC, and i3
+- screenshots through niri IPC, GNOME Shell DBus, or XDG Desktop Portal
+- window listing and focusing on GNOME, KWin/Plasma, Hyprland, niri, COSMIC,
+  and i3
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
   RemoteDesktop portal, or `ydotool`
 
@@ -54,6 +55,8 @@ or screenshots:
 - KDE Plasma: `xdg-desktop-portal-kde`
 - sway/wlroots: `xdg-desktop-portal-wlr`
 - Hyprland: `xdg-desktop-portal-hyprland`
+- niri: a screenshot/input portal such as `xdg-desktop-portal-gnome` or
+  `xdg-desktop-portal-wlr`, depending on your session setup
 - GNOME: usually available by default
 
 ## Verify Readiness
