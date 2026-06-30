@@ -1,5 +1,10 @@
 "use strict";
 
+const {
+  escapeRegExp,
+  requireName,
+} = require("../shared.js");
+
 function applyLinuxQuitGuardPatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -223,7 +228,40 @@ function applyLinuxExplicitIpcQuitPatch(currentSource) {
   return patchedSource;
 }
 
+function linuxCtrlWCloseGuardSource(electronVar) {
+  return `process.platform===\`linux\`&&${electronVar}.app.on(\`web-contents-created\`,(e,t)=>{t.on(\`before-input-event\`,(e,t)=>{if(t?.type===\`keyDown\`&&t.control===!0&&t.alt!==!0&&t.meta!==!0&&t.shift!==!0&&String(t.key??\`\`).toLowerCase()===\`w\`){e.preventDefault()}})});`;
+}
+
+function applyLinuxCtrlWCloseGuardPatch(currentSource) {
+  if (currentSource.includes("String(t.key??``).toLowerCase()===`w`")) {
+    return currentSource;
+  }
+
+  const electronVar = requireName(currentSource, "electron");
+  if (electronVar == null) {
+    console.warn("WARN: Could not find Electron alias — skipping Linux Ctrl+W close guard patch");
+    return currentSource;
+  }
+
+  const guardSource = linuxCtrlWCloseGuardSource(electronVar);
+  const requireNeedle = `let ${electronVar}=require(\`electron\`);`;
+  if (currentSource.includes(requireNeedle)) {
+    return currentSource.replace(requireNeedle, `${requireNeedle}${guardSource}`);
+  }
+
+  const requireDeclarationRegex = new RegExp(
+    `((?:let|const|var)\\s+[^;]*\\b${escapeRegExp(electronVar)}\\s*=\\s*require\\(\\\`electron\\\`\\)[^;]*;)`,
+  );
+  if (requireDeclarationRegex.test(currentSource)) {
+    return currentSource.replace(requireDeclarationRegex, `$1${guardSource}`);
+  }
+
+  console.warn("WARN: Could not find Linux Ctrl+W close guard insertion point");
+  return currentSource;
+}
+
 module.exports = {
+  applyLinuxCtrlWCloseGuardPatch,
   applyLinuxExplicitIpcQuitPatch,
   applyLinuxExplicitQuitPromptBypassPatch,
   applyLinuxExplicitTrayQuitPatch,

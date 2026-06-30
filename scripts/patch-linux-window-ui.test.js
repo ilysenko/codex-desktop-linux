@@ -35,6 +35,7 @@ const {
   applyLinuxChromeNativeHostRuntimePatch,
   applyLinuxChromePluginAutoInstallPatch,
   applyLinuxTerminalUserPathPatch,
+  applyLinuxCtrlWCloseGuardPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
   applyLinuxAboutDialogPatch,
@@ -702,6 +703,7 @@ test("default core patch descriptors are grouped and unique", () => {
   const ids = descriptors.map((descriptor) => descriptor.id);
   const expectedIds = [
     "linux-quit-guard",
+    "linux-ctrl-w-close-guard",
     "linux-ready-to-show-window-state",
     "linux-explicit-quit-prompt-bypass",
     "linux-explicit-quit-drain-timeout",
@@ -1809,6 +1811,29 @@ test("upgrades the legacy Linux quit guard helper when re-patching older bundles
   assert.match(patched, /codexLinuxShouldBypassQuitPrompt=\(\)=>codexLinuxExplicitQuitApproved===!0/);
 });
 
+test("blocks Ctrl+W from closing Linux windows at the Electron input layer", () => {
+  const source =
+    "let n=require(`electron`);let codexLinuxQuitInProgress=!1,codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0;";
+
+  const patched = applyPatchTwice(applyLinuxCtrlWCloseGuardPatch, source);
+
+  assert.match(patched, /n\.app\.on\(`web-contents-created`,\(e,t\)=>\{t\.on\(`before-input-event`/);
+  assert.match(patched, /t\?\.type===`keyDown`&&t\.control===!0/);
+  assert.match(patched, /String\(t\.key\?\?``\)\.toLowerCase\(\)===`w`/);
+  assert.match(patched, /e\.preventDefault\(\)/);
+  assert.ok(patched.indexOf("n=require(`electron`)") < patched.indexOf("n.app.on(`web-contents-created`"));
+});
+
+test("blocks Ctrl+W after bundled Electron require declarations", () => {
+  const source =
+    "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`);let codexLinuxQuitInProgress=!1,codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0;";
+
+  const patched = applyPatchTwice(applyLinuxCtrlWCloseGuardPatch, source);
+
+  assert.match(patched, /o=require\(`node:fs`\);process\.platform===`linux`&&n\.app\.on\(`web-contents-created`/);
+  assert.ok(patched.indexOf("n=require(`electron`)") < patched.indexOf("n.app.on(`web-contents-created`"));
+});
+
 test("bypasses the upstream before-quit confirmation after a Linux explicit quit", () => {
   const source = `${mainBundlePrefix}${beforeQuitConfirmationBundleFixture()}`;
   const patched = applyPatchTwice(
@@ -2176,32 +2201,35 @@ test("adds Linux menu hiding next to Windows removeMenu calls", () => {
 
   assert.equal(
     patched,
-    "process.platform===`linux`&&k.setMenuBarVisibility(!1),process.platform===`win32`&&k.removeMenu(),",
+    "process.platform===`linux`&&k.removeMenu(),process.platform===`win32`&&k.removeMenu(),",
   );
 });
 
 test("patches remaining Windows menu snippets when another copy is already Linux-patched", () => {
   const windowsMenuSnippet = "process.platform===`win32`&&k.removeMenu(),";
-  const linuxMenuPatch = "process.platform===`linux`&&k.setMenuBarVisibility(!1),";
+  const linuxMenuPatch = "process.platform===`linux`&&k.removeMenu(),";
   const source = `${linuxMenuPatch}${windowsMenuSnippet}function createSecondWindow(){${windowsMenuSnippet}}`;
 
   const patched = applyPatchTwice(applyLinuxMenuPatch, source);
 
-  assert.equal((patched.match(/setMenuBarVisibility\(!1\)/g) ?? []).length, 2);
+  assert.equal((patched.match(/removeMenu\(\)/g) ?? []).length, 4);
   assert.match(
     patched,
-    /function createSecondWindow\(\)\{process\.platform===`linux`&&k\.setMenuBarVisibility\(!1\),process\.platform===`win32`&&k\.removeMenu\(\),\}/,
+    /function createSecondWindow\(\)\{process\.platform===`linux`&&k\.removeMenu\(\),process\.platform===`win32`&&k\.removeMenu\(\),\}/,
   );
 });
 
-test("recognizes the frameless-titlebar upgraded menu snippet as already applied", () => {
+test("upgrades legacy Linux menu snippets to remove the menu on Linux", () => {
   const source =
     "process.platform===`linux`&&(k.setMenuBarVisibility(!1),k.removeMenu?.()),process.platform===`win32`&&k.removeMenu(),";
 
   const patched = applyPatchTwice(applyLinuxMenuPatch, source);
 
-  assert.equal(patched, source);
-  assert.equal((patched.match(/setMenuBarVisibility\(!1\)/g) ?? []).length, 1);
+  assert.equal(
+    patched,
+    "process.platform===`linux`&&k.removeMenu(),process.platform===`win32`&&k.removeMenu(),",
+  );
+  assert.doesNotMatch(patched, /setMenuBarVisibility/);
 });
 
 test("recognizes already-applied Linux opaque background patch", () => {
@@ -6648,7 +6676,7 @@ test("patchMainBundleSource keeps non-icon patches active without an icon asset"
   assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitInProgress===!0/);
   assert.match(patched, /codexLinuxShouldBypassQuitPrompt=\(\)=>codexLinuxExplicitQuitApproved===!0/);
   assert.match(patched, /n\.app\.on\(`before-quit`,codexLinuxBeforeQuitHandler\)/);
-  assert.match(patched, /process\.platform===`linux`&&k\.setMenuBarVisibility\(!1\)/);
+  assert.match(patched, /process\.platform===`linux`&&k\.removeMenu\(\)/);
   assert.match(patched, /linux:\{label:`File Manager`/);
   assert.match(
     patched,

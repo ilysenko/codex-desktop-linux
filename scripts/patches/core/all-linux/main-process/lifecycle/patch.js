@@ -2,6 +2,7 @@
 
 const {
   applyLinuxQuitGuardPatch,
+  applyLinuxCtrlWCloseGuardPatch,
   applyLinuxExplicitQuitPromptBypassPatch,
   applyLinuxWillQuitDrainTimeoutPatch,
   applyLinuxExplicitTrayQuitPatch,
@@ -15,6 +16,13 @@ module.exports = [
     order: 0,
     ciPolicy: "required-upstream",
     apply: applyLinuxQuitGuardPatch,
+  },
+  {
+    id: "linux-ctrl-w-close-guard",
+    phase: "main-bundle",
+    order: 5,
+    ciPolicy: "required-upstream",
+    apply: applyLinuxCtrlWCloseGuardPatch,
   },
   {
     id: "linux-explicit-quit-prompt-bypass",
