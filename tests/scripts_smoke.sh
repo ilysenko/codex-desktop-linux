@@ -1974,7 +1974,7 @@ EOF
         OS_RELEASE_FILE="$os_release_44" \
         OSTREE_BOOTED_FILE="$ostree_booted" \
         HELPER_PATH="$helper" \
-        bash -lc '
+        bash -c '
             # shellcheck disable=SC1090
             source "$HELPER_PATH"
             OS_RELEASE_ID="$(os_release_field ID)"
@@ -1996,7 +1996,7 @@ EOF
         PATH="$fake_bin:/usr/bin:/bin" \
         OS_RELEASE_FILE="$os_release_40" \
         HELPER_PATH="$helper" \
-        bash -lc '
+        bash -c '
             # shellcheck disable=SC1090
             source "$HELPER_PATH"
             OS_RELEASE_ID="$(os_release_field ID)"
