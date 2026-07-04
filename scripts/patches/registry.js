@@ -101,6 +101,7 @@ function setReportLinuxTarget(report, linux) {
     sessionType: linux.sessionType,
     wayland: linux.wayland,
     x11: linux.x11,
+    atomic: linux.atomic,
   };
 }
 

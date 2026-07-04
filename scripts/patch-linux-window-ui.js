@@ -276,6 +276,7 @@ module.exports = {
   loadEnabledLinuxFeatures,
   loadLinuxFeaturePatchDescriptors,
   loadLinuxFeatureMainBundlePatches,
+  main,
   normalizePatchDescriptors,
   parseOsRelease,
   patchCommentPreloadBundle,

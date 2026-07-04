@@ -4,6 +4,10 @@
 # Also installs the Rust toolchain (cargo) via rustup when not already present.
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/linux-target-detect.sh"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -187,86 +191,8 @@ Install a supported Node.js version for this distro, or use install.sh to downlo
 Check apt output above or install Node.js ${MIN_NODE_MAJOR}+ manually."
 }
 
-# ---------------------------------------------------------------------------
-# Distro detection
-# ---------------------------------------------------------------------------
-os_release_field() {
-    local field="$1"
-    local file line value
-
-    for file in ${OS_RELEASE_FILE:-} /etc/os-release /usr/lib/os-release; do
-        [ -n "$file" ] || continue
-        [ -r "$file" ] || continue
-        while IFS= read -r line; do
-            case "$line" in
-                "$field="*)
-                    value="${line#*=}"
-                    value="${value#\"}"
-                    value="${value%\"}"
-                    value="${value#\'}"
-                    value="${value%\'}"
-                    printf '%s\n' "${value,,}"
-                    return 0
-                    ;;
-            esac
-        done < "$file"
-    done
-
-    return 1
-}
-
-os_release_matches() {
-    local expected token
-    for expected in "$@"; do
-        [ "${OS_RELEASE_ID:-}" = "$expected" ] && return 0
-        for token in ${OS_RELEASE_ID_LIKE:-}; do
-            [ "$token" = "$expected" ] && return 0
-        done
-    done
-    return 1
-}
-
-os_release_version_major() {
-    local version="${OS_RELEASE_VERSION_ID:-}"
-    version="${version%%.*}"
-    case "$version" in
-        ''|*[!0-9]*) return 1 ;;
-        *) printf '%s\n' "$version" ;;
-    esac
-}
-
 detect_distro() {
-    if os_release_matches debian ubuntu linuxmint pop elementary zorin && command -v apt-get &>/dev/null; then
-        echo "apt"
-    elif os_release_matches arch archlinux manjaro endeavouros artix && command -v pacman &>/dev/null; then
-        echo "pacman"
-    elif os_release_matches opensuse suse sles && command -v zypper &>/dev/null; then
-        echo "zypper"
-    elif os_release_matches fedora rhel centos rocky almalinux ol; then
-        local major
-        major="$(os_release_version_major 2>/dev/null || true)"
-        if [ "${OS_RELEASE_ID:-}" = "fedora" ] && [ -n "$major" ] && [ "$major" -lt 41 ] && command -v dnf &>/dev/null; then
-            echo "dnf"
-        elif command -v dnf5 &>/dev/null; then
-            echo "dnf5"
-        elif command -v dnf &>/dev/null; then
-            echo "dnf"
-        else
-            echo "unknown"
-        fi
-    elif command -v apt-get &>/dev/null; then
-        echo "apt"
-    elif command -v dnf5 &>/dev/null; then
-        echo "dnf5"
-    elif command -v dnf &>/dev/null; then
-        echo "dnf"
-    elif command -v pacman &>/dev/null; then
-        echo "pacman"
-    elif command -v zypper &>/dev/null; then
-        echo "zypper"
-    else
-        echo "unknown"
-    fi
+    detect_package_manager
 }
 
 preferred_gui_prompt_package() {

@@ -13,6 +13,7 @@ const {
   applyGeneralSettingsWrapperPatch,
   applyAssistantRenderPatch,
   applyIndexRuntimePatch,
+  applyLinuxDesktopSettingsPatch,
   applyMainBundlePatch,
   applySettingsAssetPatch,
   applySettingsPageNavPatch,
@@ -1300,6 +1301,18 @@ test("settings asset patch adds read aloud controls to generated Linux desktop s
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Linux desktop settings patch recognizes upstream message Build section", () => {
+  const source = 'var React={Fragment:{}},$={jsx(){},jsxs(){}},KEYS={promptWindow:"codex-linux-prompt-window-enabled",systemTray:"codex-linux-system-tray-enabled",warmStart:"codex-linux-warm-start-enabled",autoUpdateOnExit:"codex-linux-auto-update-on-exit"};function useLinuxSetting(){}function SettingsRow(){}function SettingsSection(){}function SettingsGroup(){}function SettingsPage(){}function Toggle(){}function LinuxToggle(){}function LinuxBuildInfoPanel(){}function codexLinuxDesktopText(id,defaultMessage,description){return $.jsx(LinuxDesktopMessage,{id,defaultMessage,description})}function LinuxDesktopSettings(){return $.jsx(SettingsPage,{title:codexLinuxDesktopText("settings.section.linux-desktop","Linux desktop","Title for Linux desktop settings section"),subtitle:codexLinuxDesktopText("settings.linux-desktop.subtitle","Launcher, tray, prompt window, and update behavior.","Subtitle for the Linux desktop settings page"),children:$.jsxs("div",{className:"flex flex-col gap-6",children:[$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:codexLinuxDesktopText("settings.linux-desktop.build","Build","Section title for Linux desktop build information")}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxBuildInfoPanel,{})})})]})]})})}';
+  const patched = twice(applyLinuxDesktopSettingsPatch, source);
+
+  assert.match(patched, /readAloud:"codex-linux-read-aloud-enabled"/);
+  assert.match(patched, /function LinuxReadAloudSettings\(\)/);
+  assert.match(
+    patched,
+    /\$\.jsx\(LinuxReadAloudSettings,\{\}\),\$\.jsxs\(SettingsSection,\{className:"gap-2",children:\[\$\.jsx\(SettingsSection\.Header,\{title:codexLinuxDesktopText\("settings\.linux-desktop\.build","Build"/,
+  );
 });
 
 test("settings asset patch removes an older generated keybinds read aloud toggle", () => {

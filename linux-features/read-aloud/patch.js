@@ -210,9 +210,9 @@ function applyLinuxDesktopSettingsPatch(source) {
     return source;
   }
 
-  const buildSectionNeedle =
-    '$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Build"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxBuildInfoPanel,{})})})]})';
-  if (!source.includes("$.jsx(LinuxReadAloudSettings,{})") && !source.includes(buildSectionNeedle)) {
+  const buildSectionPattern =
+    /\$\.jsxs\(SettingsSection,\{className:"gap-2",children:\[\$\.jsx\(SettingsSection\.Header,\{title:(?:"Build"|t\("buildSection"\)|codexLinuxDesktopText\("settings\.linux-desktop\.build","Build","[^"]*"\))\}\),\$\.jsx\(SettingsSection\.Content,\{children:\$\.jsx\(SettingsGroup,\{children:\$\.jsx\(LinuxBuildInfoPanel,\{\}\)\}\)\}\)\]\}\)/;
+  if (!source.includes("$.jsx(LinuxReadAloudSettings,{})") && !buildSectionPattern.test(source)) {
     warn("Could not find Linux desktop Build section", "read aloud Linux desktop settings patch");
     return source;
   }
@@ -234,7 +234,7 @@ function applyLinuxDesktopSettingsPatch(source) {
   }
 
   if (!patched.includes("$.jsx(LinuxReadAloudSettings,{})")) {
-    patched = patched.replace(buildSectionNeedle, `$.jsx(LinuxReadAloudSettings,{}),${buildSectionNeedle}`);
+    patched = patched.replace(buildSectionPattern, "$.jsx(LinuxReadAloudSettings,{}),$&");
   }
 
   return patched;

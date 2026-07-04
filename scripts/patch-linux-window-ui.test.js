@@ -2,7 +2,6 @@
 
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
-const { spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -92,6 +91,7 @@ const {
   discoverCorePatchDescriptors,
   enabledLinuxFeatureIds,
   linuxTargetSummary,
+  main: patcherMain,
   normalizePatchDescriptors,
   parseOsRelease,
   resolveDesktopName,
@@ -99,6 +99,7 @@ const {
 const {
   keybindsSettingsAsset,
   linuxDesktopSettingsAsset,
+  applyLinuxDesktopLocaleAssetPatch,
   applyLinuxDesktopSettingsSectionsPatch,
   applyLinuxDesktopSettingsSharedPatch,
 } = require("./patches/keybinds-settings.js");
@@ -136,6 +137,10 @@ const {
   patchAssetFiles,
 } = require("./patches/shared.js");
 const { featurePatchDescriptors } = require("./patches/registry.js");
+const {
+  BUILD_INFO_LOCALES,
+  resolveBuildInfoLocale,
+} = require("./patches/linux-build-info-i18n.js");
 
 const mainBundlePrefix =
   "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`);";
@@ -178,6 +183,41 @@ function captureWarns(fn) {
   } finally {
     console.warn = originalWarn;
   }
+}
+
+function runPatcherCli(args) {
+  const originalArgv = process.argv;
+  const originalExit = process.exit;
+  const originalError = console.error;
+  const stderr = [];
+  const exitSignal = Symbol("process.exit");
+  let status = 0;
+
+  process.argv = [process.execPath, path.join(__dirname, "patch-linux-window-ui.js"), ...args];
+  process.exit = (code = 0) => {
+    status = Number(code) || 0;
+    throw exitSignal;
+  };
+  console.error = (...values) => {
+    stderr.push(values.map(String).join(" "));
+  };
+
+  try {
+    patcherMain();
+  } catch (error) {
+    if (error !== exitSignal) {
+      throw error;
+    }
+  } finally {
+    process.argv = originalArgv;
+    process.exit = originalExit;
+    console.error = originalError;
+  }
+
+  return {
+    status,
+    stderr: stderr.length > 0 ? `${stderr.join("\n")}\n` : "",
+  };
 }
 
 function automationScheduleBundleFixture() {
@@ -450,9 +490,11 @@ test("Linux target context parses distro, package, and desktop details", () => {
       env: {
         OS_RELEASE_FILE: osReleasePath,
         PATH: "",
-        XDG_CURRENT_DESKTOP: "KDE:GNOME",
+        XDG_CURRENT_DESKTOP: "KDE",
+        DESKTOP_SESSION: "plasma",
         XDG_SESSION_TYPE: "wayland",
         WAYLAND_DISPLAY: "wayland-0",
+        DISPLAY: ":0",
       },
     });
 
@@ -470,10 +512,115 @@ test("Linux target context parses distro, package, and desktop details", () => {
     assert.equal(target.versionAtLeast("24.04"), true);
     assert.equal(target.versionAtLeast("24.10"), false);
     assert.equal(target.wayland, true);
+    assert.equal(target.x11, false);
+    assert.equal(target.atomic, false);
     assert.match(linuxTargetSummary(target), /^ubuntu:24\.04\/deb:/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("Linux target context preserves Fedora variant metadata and atomic host mode", () => {
+  const target = detectLinuxTargetContext({
+    atomic: true,
+    osReleaseFields: {
+      ID: "fedora",
+      VERSION_ID: "44",
+      PRETTY_NAME: "Fedora Kinoite 44",
+      VARIANT: "Atomic Desktop",
+      VARIANT_ID: "kinoite",
+    },
+    env: {
+      PATH: "",
+      XDG_CURRENT_DESKTOP: "KDE",
+      DESKTOP_SESSION: "plasma",
+      XDG_SESSION_TYPE: "wayland",
+      WAYLAND_DISPLAY: "wayland-0",
+      DISPLAY: ":0",
+    },
+  });
+
+  assert.equal(target.distro.variant, "Atomic Desktop");
+  assert.equal(target.distro.variantId, "kinoite");
+  assert.equal(target.desktopMatches("plasma"), true);
+  assert.equal(target.wayland, true);
+  assert.equal(target.x11, false);
+  assert.equal(target.atomic, true);
+  assert.equal(packageProfile(target).id, "fedora-atomic");
+  assert.equal(packageProfile(target).packageManager, "rpm-ostree");
+});
+
+test("build info locales cover ChatGPT interface languages and resolve common aliases", () => {
+  const expectedLocales = [
+    "en",
+    "sq",
+    "am",
+    "ar",
+    "hy",
+    "bn",
+    "bs",
+    "bg",
+    "my",
+    "ca",
+    "zh",
+    "hr",
+    "cs",
+    "da",
+    "nl",
+    "et",
+    "fi",
+    "fr",
+    "ka",
+    "de",
+    "el",
+    "gu",
+    "hi",
+    "hu",
+    "is",
+    "id",
+    "it",
+    "ja",
+    "kn",
+    "kk",
+    "ko",
+    "lv",
+    "lt",
+    "mk",
+    "ms",
+    "ml",
+    "mr",
+    "mn",
+    "no",
+    "fa",
+    "pl",
+    "pt",
+    "pa",
+    "ro",
+    "ru",
+    "sr",
+    "sk",
+    "sl",
+    "so",
+    "es",
+    "sw",
+    "sv",
+    "tl",
+    "ta",
+    "te",
+    "th",
+    "tr",
+    "uk",
+    "ur",
+    "vi",
+  ];
+
+  assert.deepEqual([...BUILD_INFO_LOCALES].sort(), [...expectedLocales].sort());
+  assert.equal(resolveBuildInfoLocale(["pt-BR"]), "pt");
+  assert.equal(resolveBuildInfoLocale(["nb-NO"]), "no");
+  assert.equal(resolveBuildInfoLocale(["nn-NO"]), "no");
+  assert.equal(resolveBuildInfoLocale(["fil-PH"]), "tl");
+  assert.equal(resolveBuildInfoLocale(["zh-CN"]), "zh");
+  assert.equal(resolveBuildInfoLocale(["unknown-locale"]), "en");
 });
 
 test("build info captures DMG hash, features, distro profile, and source revision", () => {
@@ -1133,6 +1280,7 @@ function keybindsIndexBundleFixture() {
 
 function settingsSharedBundleFixture() {
   return [
+    'import{J as d}from"./settings-jsx-A.js";import{M as n}from"./shared-intl-A.js";',
     '"general-settings":{id:`settings.nav.general-settings`,defaultMessage:`General`,description:`Title for general settings section`},appearance:{id:`settings.nav.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`},',
     "function titleForSection(e){switch(e){case`general-settings`:{let e;return t[2]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(n,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),t[2]=e):e=t[2],e}case`appearance`:return (0,d.jsx)(n,{id:`settings.section.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`})}}",
   ].join("");
@@ -1144,8 +1292,19 @@ function settingsSharedBundleFixture() {
 // The minifier picks these letters arbitrarily, so the patch must not hardcode them.
 function settingsSharedBundleWithDriftingJsxAliasFixture() {
   return [
+    'import{J as d}from"./settings-jsx-A.js";import{M as r}from"./shared-intl-A.js";',
     '"general-settings":{id:`settings.nav.general-settings`,defaultMessage:`General`,description:`Title for general settings section`},appearance:{id:`settings.nav.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`},',
     "function titleForSection(e){switch(e){case`general-settings`:{let e;return o[5]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,d.jsx)(r,{id:`settings.section.general-settings`,defaultMessage:`General`,description:`Title for general settings section`}),o[5]=e):e=o[5],e}case`appearance`:return (0,d.jsx)(r,{id:`settings.section.appearance`,defaultMessage:`Appearance`,description:`Title for appearance settings section`})}}",
+  ].join("");
+}
+
+function russianLocaleBundleFixture() {
+  return [
+    "(()=>{",
+    '"use strict";',
+    'var n={messages:{"settings.nav.general-settings":`Общее`,"settings.section.general-settings":`Общее`}};',
+    "export{n as default};",
+    "})();",
   ].join("");
 }
 
@@ -1188,6 +1347,8 @@ function createNativeKeyboardShortcutsSettingsFixture() {
     "shared-app-A.js",
     'function requestCodex(...args){let[method,request]=args,{params:params,select:select,signal:signal,source:source}=request??{};return rawCodex(method,params,select,signal,source)}async function rawCodex(method,params,select,signal,source){let result=(await transport.post(`vscode://codex/${method}`,JSON.stringify(params),headers(source),signal)).body;return select?select(result):result}export{requestCodex as z};',
   );
+  writeAsset("settings-jsx-A.js", "export{J};");
+  writeAsset("shared-intl-A.js", "export{M};");
   writeAsset("general-settings-A.js", "hotkey-window-hotkey-state");
   writeAsset("toggle-A.js", "export{t};");
   writeAsset(
@@ -1205,6 +1366,7 @@ function createNativeKeyboardShortcutsSettingsFixture() {
   writeAsset("app-main-A.js", linuxDesktopRouteBundleFixture());
   writeAsset("settings-page-A.js", linuxDesktopNavigationBundleFixture());
   writeAsset("keyboard-shortcuts-settings-A.js", "export default function KeyboardShortcutsSettings(){}");
+  writeAsset("ru-RU-A.js", russianLocaleBundleFixture());
 
   return { extractedDir, assetsDir };
 }
@@ -1227,6 +1389,8 @@ function createModernNativeKeyboardShortcutsSettingsFixture() {
     "setting-storage-A.js",
     'async function requestCodex(...args){let[request]=args,{params:params,source:source}=request;return send("vscode://codex/",params)}export{requestCodex as z};',
   );
+  writeAsset("settings-jsx-A.js", "export{J};");
+  writeAsset("shared-intl-A.js", "export{M};");
   writeAsset("toggle-A.js", "export{t};");
   writeAsset(
     "settings-row-A.js",
@@ -1269,6 +1433,7 @@ function createModernNativeKeyboardShortcutsSettingsFixture() {
       "}));",
     ].join(""),
   );
+  writeAsset("ru-RU-A.js", russianLocaleBundleFixture());
 
   return { extractedDir, assetsDir };
 }
@@ -1297,6 +1462,8 @@ function createSplitRouteNativeKeyboardShortcutsSettingsFixture() {
     "setting-storage-A.js",
     'async function requestCodex(...args){let[request]=args,{params:params,source:source}=request;return send("vscode://codex/",params)}export{requestCodex as z};',
   );
+  writeAsset("settings-jsx-A.js", "export{J};");
+  writeAsset("shared-intl-A.js", "export{M};");
   writeAsset("toggle-A.js", "export{t};");
   writeAsset(
     "settings-row-A.js",
@@ -1350,6 +1517,7 @@ function createSplitRouteNativeKeyboardShortcutsSettingsFixture() {
       "}));",
     ].join(""),
   );
+  writeAsset("ru-RU-A.js", russianLocaleBundleFixture());
 
   return { extractedDir, assetsDir };
 }
@@ -3061,14 +3229,15 @@ test("adds Linux build information to the tray menu", () => {
   const patched = applyPatchTwice(applyLinuxBuildInfoTrayPatch, `${mainBundlePrefix}${trayBundleFixture()}`);
 
   assert.match(patched, /function codexLinuxShowBuildInfo\(\)/);
+  assert.match(patched, /codexLinuxBuildInfoI18n\(\)\.t\("buildInformation"\)/);
   assert.match(patched, /codex-linux-build-info\.json/);
-  assert.match(patched, /label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}/);
-  assert.match(patched, /Enabled features:/);
-  assert.match(patched, /Upstream DMG SHA256:/);
-  assert.match(patched, /Linux source commit:/);
-  assert.match(patched, /Source commit URL:/);
-  assert.match(patched, /Open Source Commit/);
-  assert.match(patched, /Open Metadata File/);
+  assert.match(patched, /label:codexLinuxBuildInfoI18n\(\)\.t\("buildInformation"\),click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}/);
+  assert.match(patched, /__codexBuildInfoText\("enabledFeatures"\)\+": "/);
+  assert.match(patched, /__codexBuildInfoText\("upstreamDmgSha256"\)\+": "/);
+  assert.match(patched, /__codexBuildInfoText\("linuxSourceCommit"\)\+": "/);
+  assert.match(patched, /__codexBuildInfoText\("sourceCommitUrl"\)\+": "/);
+  assert.match(patched, /__codexBuildInfoText\("openSourceCommit"\)/);
+  assert.match(patched, /__codexBuildInfoText\("openMetadataFile"\)/);
   assert.match(patched, /shell\?\.openExternal/);
   assert.match(patched, /shell\?\.openPath/);
 });
@@ -3120,7 +3289,7 @@ test("adds Linux build information to current tray menu shape", () => {
   assert.match(patched, /function codexLinuxShowBuildInfo\(\)/);
   assert.match(
     patched,
-    /getNativeTrayMenuItems\(\)\{let\{pinnedThreads:e,[^]*?;return\[\.\.\.process\.platform===`linux`\?\[\{label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],\.\.\.h/,
+    /getNativeTrayMenuItems\(\)\{let\{pinnedThreads:e,[^]*?;return\[\.\.\.process\.platform===`linux`\?\[\{label:codexLinuxBuildInfoI18n\(\)\.t\("buildInformation"\),click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],\.\.\.h/,
   );
 });
 
@@ -3133,7 +3302,7 @@ test("adds Linux build information to the app Help menu", () => {
   assert.doesNotThrow(() => new Function(patched));
   assert.match(
     patched,
-    /\{role:`help`,id:e\.bn\.help,submenu:\[\.\.\.process\.platform===`linux`\?\[\{label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],\{label:`Codex Documentation`/,
+    /\{role:`help`,id:e\.bn\.help,submenu:\[\.\.\.process\.platform===`linux`\?\[\{label:codexLinuxBuildInfoI18n\(\)\.t\("buildInformation"\),click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],\{label:`Codex Documentation`/,
   );
 });
 
@@ -3832,7 +4001,6 @@ test("allows bundled Computer Use on Linux as well as macOS", () => {
 test("returns Linux native desktop apps from the Computer Use backend", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-linux-native-apps-"));
   try {
-    const backendPath = path.join(tempRoot, "codex-computer-use-linux");
     const dataHome = path.join(tempRoot, "share");
     const desktopDir = path.join(dataHome, "applications");
     const iconDir = path.join(dataHome, "icons", "hicolor", "scalable", "apps");
@@ -3852,28 +4020,36 @@ test("returns Linux native desktop apps from the Computer Use backend", async ()
       ].join("\n"),
     );
     fs.writeFileSync(iconPath, "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
-    fs.writeFileSync(
-      backendPath,
-      [
-        "#!/usr/bin/env node",
-        "if (process.argv[2] === 'windows') {",
-        "  console.log(JSON.stringify({ backend: 'test', windows: [{",
-        "    app_id: 'org.example.Terminal',",
-        "    wm_class: 'ExampleTerminal',",
-        "    title: 'Project - Example Terminal',",
-        "    pid: 123,",
-        "    window_id: 77,",
-        "    focused: true,",
-        "    client_type: 'wayland',",
-        "    backend: 'test'",
-        "  }] }));",
-        "} else {",
-        "  console.log(JSON.stringify({}));",
-        "}",
-        "",
-      ].join("\n"),
-    );
+    const backendPath = path.join(tempRoot, "codex-computer-use-linux");
+    fs.writeFileSync(backendPath, "#!/bin/sh\nexit 0\n");
     fs.chmodSync(backendPath, 0o755);
+    const fakeRequire = (specifier) => {
+      if (specifier === "node:child_process" || specifier === "child_process") {
+        return {
+          spawnSync(command, args) {
+            assert.equal(command, backendPath);
+            assert.equal(JSON.stringify(args), "[\"windows\"]");
+            return {
+              status: 0,
+              stdout: JSON.stringify({
+                backend: "test",
+                windows: [{
+                  app_id: "org.example.Terminal",
+                  wm_class: "ExampleTerminal",
+                  title: "Project - Example Terminal",
+                  pid: 123,
+                  window_id: 77,
+                  focused: true,
+                  client_type: "wayland",
+                  backend: "test",
+                }],
+              }),
+            };
+          },
+        };
+      }
+      return require(specifier);
+    };
 
     const source = [
       "\"use strict\";",
@@ -3883,7 +4059,7 @@ test("returns Linux native desktop apps from the Computer Use backend", async ()
     const patched = applyPatchTwice(applyLinuxNativeDesktopAppsHandlerPatch, source);
     const sandbox = {
       Buffer,
-      require,
+      require: fakeRequire,
       console,
       process: {
         env: {
@@ -4116,7 +4292,7 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
     const result = patchKeybindsSettingsAssets(extractedDir);
 
     assert.equal(result.matched, true);
-    assert.ok(result.changed >= 4);
+    assert.ok(result.changed >= 3);
     assert.match(result.reason, /upstream keyboard shortcuts settings are present/);
     assert.equal(fs.existsSync(path.join(assetsDir, keybindsSettingsAsset)), false);
     assert.equal(fs.existsSync(path.join(assetsDir, linuxDesktopSettingsAsset)), true);
@@ -4125,26 +4301,37 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
       path.join(assetsDir, linuxDesktopSettingsAsset),
       "utf8",
     );
-    assert.match(linuxDesktopSource, /Linux desktop/);
-    assert.match(linuxDesktopSource, /Compact prompt window/);
-    assert.match(linuxDesktopSource, /System tray/);
-    assert.match(linuxDesktopSource, /Warm start/);
-    assert.match(linuxDesktopSource, /Install updates when you close Codex/);
-    assert.match(linuxDesktopSource, /Build information/);
-    assert.match(linuxDesktopSource, /Linux source commit/);
-    assert.match(linuxDesktopSource, /Copy commit/);
-    assert.match(linuxDesktopSource, /Open on GitHub/);
-    assert.match(linuxDesktopSource, /"Linux source commit":\[\{key:"copyCommit"/);
-    assert.match(linuxDesktopSource, /"Generated":\[\{key:"refresh"/);
-    assert.match(linuxDesktopSource, /"Metadata file":\[\{key:"details"/);
-    assert.match(linuxDesktopSource, /control:null/);
-    assert.match(linuxDesktopSource, /cursor-pointer/);
+    assert.match(linuxDesktopSource, /import\{M as LinuxDesktopMessage\}from"\.\/shared-intl-A\.js"/);
+    assert.match(
+      linuxDesktopSource,
+      /title:codexLinuxDesktopText\("settings\.section\.linux-desktop","Linux desktop","Title for Linux desktop settings section"\)/,
+    );
+    assert.match(linuxDesktopSource, /function codexLinuxDesktopText\(id,defaultMessage,description\)\{return \$\.jsx\(LinuxDesktopMessage,\{id,defaultMessage,description\}\)\}/);
+    assert.match(linuxDesktopSource, /subtitle:codexLinuxDesktopText\("settings\.linux-desktop\.subtitle","Launcher, tray, prompt window, and update behavior\."/);
+    assert.match(linuxDesktopSource, /title:codexLinuxDesktopText\("settings\.linux-desktop\.globalShortcuts","Global shortcuts"/);
+    assert.match(linuxDesktopSource, /title:codexLinuxDesktopText\("settings\.linux-desktop\.desktopIntegration","Desktop integration"/);
+    assert.match(linuxDesktopSource, /title:codexLinuxDesktopText\("settings\.linux-desktop\.updates","Updates"/);
+    assert.match(linuxDesktopSource, /title:codexLinuxDesktopText\("settings\.linux-desktop\.build","Build"/);
+    assert.match(linuxDesktopSource, /label:codexLinuxDesktopText\("settings\.linux-desktop\.compactPromptWindow","Compact prompt window"/);
+    assert.match(linuxDesktopSource, /label:codexLinuxDesktopText\("settings\.linux-desktop\.systemTray","System tray"/);
+    assert.match(linuxDesktopSource, /label:codexLinuxDesktopText\("settings\.linux-desktop\.warmStart","Warm start"/);
+    assert.match(linuxDesktopSource, /label:codexLinuxDesktopText\("settings\.linux-desktop\.autoUpdateOnExit","Install updates when you close Codex"/);
+    assert.match(linuxDesktopSource, /codexLinuxDesktopText\("settings\.linux-desktop\.buildInformation","Build information"/);
+    assert.match(linuxDesktopSource, /codexLinuxDesktopText\("settings\.linux-desktop\.linuxSourceCommit","Linux source commit"/);
+    assert.match(linuxDesktopSource, /codexLinuxDesktopText\("settings\.linux-desktop\.copyCommit","Copy commit"/);
+    assert.match(linuxDesktopSource, /codexLinuxDesktopText\("settings\.linux-desktop\.openOnGitHub","Open on GitHub"/);
+    assert.match(linuxDesktopSource, /codexLinuxDesktopText\("settings\.linux-desktop\.buildInformationDescription","Installed package and upstream build metadata\."/);
+    assert.doesNotMatch(linuxDesktopSource, /codexLinuxBuildInfoI18n/);
+    assert.match(linuxDesktopSource, /codexLinuxDesktopText\("settings\.linux-desktop\.details","Details"/);
+    assert.match(linuxDesktopSource, /className:"flex flex-col gap-4 p-4"/);
+    assert.match(linuxDesktopSource, /className:"grid gap-3 sm:grid-cols-2"/);
+    assert.match(linuxDesktopSource, /border-b border-token-border-default pb-4/);
     assert.match(linuxDesktopSource, /disabled:cursor-not-allowed/);
     assert.doesNotMatch(
       linuxDesktopSource,
       /control:\$\.jsxs\("div",\{className:"flex flex-wrap items-center justify-end gap-2"/,
     );
-    assert.doesNotMatch(linuxDesktopSource, /Source commit URL/);
+    assert.doesNotMatch(linuxDesktopSource, /control:null/);
     assert.match(linuxDesktopSource, /href:url/);
     assert.match(linuxDesktopSource, /codex-linux-get-build-info/);
     assert.match(linuxDesktopSource, /codex-linux-system-tray-enabled/);
@@ -4168,6 +4355,17 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
       fs.readFileSync(path.join(assetsDir, "settings-shared-A.js"), "utf8"),
       /settings\.nav\.linux-desktop/,
     );
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(assetsDir, "settings-shared-A.js"), "utf8"),
+      /codexLinuxDesktopLabelText/,
+    );
+    const ruLocaleSource = fs.readFileSync(path.join(assetsDir, "ru-RU-A.js"), "utf8");
+    assert.match(ruLocaleSource, /"settings\.nav\.linux-desktop":`Рабочий стол Linux`,/);
+    assert.match(ruLocaleSource, /"settings\.section\.linux-desktop":`Рабочий стол Linux`,/);
+    assert.match(ruLocaleSource, /"settings\.linux-desktop\.globalShortcuts":`Глобальные сочетания клавиш`,/);
+    assert.match(ruLocaleSource, /"settings\.linux-desktop\.buildInformation":`Информация о сборке`,/);
+    assert.match(ruLocaleSource, /"settings\.linux-desktop\.copyCommit":`Скопировать коммит`,/);
+    assert.match(ruLocaleSource, /"settings\.linux-desktop\.commitCopied":`Коммит скопирован`,/);
     const appMainSource = fs.readFileSync(path.join(assetsDir, "app-main-A.js"), "utf8");
     assert.match(appMainSource, /linux-desktop-settings-linux\.js/);
     assert.doesNotMatch(appMainSource, /keybinds-settings-linux\.js/);
@@ -4348,12 +4546,19 @@ test("adds Linux desktop settings when native shortcuts use a consolidated setti
       path.join(assetsDir, linuxDesktopSettingsAsset),
       "utf8",
     );
-    assert.match(linuxDesktopSource, /Linux desktop/);
+    assert.match(linuxDesktopSource, /import\{M as LinuxDesktopMessage\}from"\.\/shared-intl-A\.js"/);
+    assert.match(
+      linuxDesktopSource,
+      /title:codexLinuxDesktopText\("settings\.section\.linux-desktop","Linux desktop","Title for Linux desktop settings section"\)/,
+    );
+    assert.match(linuxDesktopSource, /function codexLinuxDesktopText\(id,defaultMessage,description\)\{return \$\.jsx\(LinuxDesktopMessage,\{id,defaultMessage,description\}\)\}/);
+    assert.match(linuxDesktopSource, /title:codexLinuxDesktopText\("settings\.linux-desktop\.build","Build"/);
+    assert.match(linuxDesktopSource, /label:codexLinuxDesktopText\("settings\.linux-desktop\.autoUpdateOnExit","Install updates when you close Codex"/);
     assert.match(linuxDesktopSource, /Build information/);
     assert.match(linuxDesktopSource, /codex-linux-get-build-info/);
     assert.match(linuxDesktopSource, /Open on GitHub/);
     assert.match(linuxDesktopSource, /href:url/);
-    assert.doesNotMatch(linuxDesktopSource, /Source commit URL/);
+    assert.doesNotMatch(linuxDesktopSource, /codexLinuxBuildInfoI18n/);
     assert.match(linuxDesktopSource, /import\{R as __reactFactory,I as __jsxFactory\}from"\.\/shared-runtime-A\.js"/);
     assert.match(linuxDesktopSource, /import\{t as Toggle\}from"\.\/toggle-A\.js"/);
     assert.doesNotMatch(linuxDesktopSource, /function LinuxSwitch/);
@@ -4374,6 +4579,7 @@ test("adds Linux desktop settings when native shortcuts use a consolidated setti
     );
     assert.match(splitSharedSource, /settings\.nav\.linux-desktop/);
     assert.match(splitSharedSource, /settings\.section\.linux-desktop/);
+    assert.doesNotMatch(splitSharedSource, /codexLinuxDesktopLabelText/);
 
     const splitSectionsSource = fs.readFileSync(
       path.join(
@@ -4436,6 +4642,45 @@ test("adds Linux desktop settings when the lazy route map is hoisted into a sepa
   }
 });
 
+test("composes Linux desktop route and section patches when both target the same app chunk", () => {
+  const { extractedDir, assetsDir } = createSplitRouteNativeKeyboardShortcutsSettingsFixture();
+  try {
+    const routeChunkPath = path.join(assetsDir, "app-initial~app-main~automations-page-A.js");
+    const sectionsChunkPath = path.join(
+      assetsDir,
+      "app-initial~app-main~remote-conversation-page~settings-page~hotkey-window-thread-page~mcp-s-A.js",
+    );
+    const combinedSource = [
+      fs.readFileSync(routeChunkPath, "utf8"),
+      fs.readFileSync(sectionsChunkPath, "utf8"),
+    ].join("\n");
+    fs.writeFileSync(routeChunkPath, combinedSource, "utf8");
+    fs.rmSync(sectionsChunkPath);
+
+    const { value: result, warnings } = captureWarns(() => patchKeybindsSettingsAssets(extractedDir));
+
+    assert.equal(result.matched, true);
+    assert.deepEqual(warnings, []);
+
+    const routeChunkSource = fs.readFileSync(routeChunkPath, "utf8");
+    assert.match(
+      routeChunkSource,
+      /"linux-desktop":\(0,Ya\.lazy\)\(\(\)=>Pr\(\(\)=>import\(`\.\/linux-desktop-settings-linux\.js`\),\[\],import\.meta\.url\)\),"general-settings":/,
+    );
+    assert.match(
+      routeChunkSource,
+      /general-settings\.linux-desktop\.import\.profile\.keyboard-shortcuts/,
+    );
+    assert.match(routeChunkSource, /\{slug:`linux-desktop`\},\{slug:`import`\}/);
+
+    const secondResult = patchKeybindsSettingsAssets(extractedDir);
+    assert.equal(secondResult.matched, true);
+    assert.equal(secondResult.changed, 0);
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
 test("adds Linux desktop section to current native Keyboard Shortcuts sections bundle", () => {
   const source =
     "var e=[`general-settings`,`profile`,`keyboard-shortcuts`,`account`],t=`general-settings`,n=function(){},r=[{slug:`general-settings`},{slug:`profile`},{slug:`appearance`},{slug:`keyboard-shortcuts`}];";
@@ -4457,8 +4702,24 @@ test("adds the Linux desktop section title when the JSX message component identi
     patched,
     /case`linux-desktop`:\{return \(0,d\.jsx\)\(r,\{id:`settings\.section\.linux-desktop`,defaultMessage:`Linux desktop`,description:`Title for Linux desktop settings section`\}\)\}/,
   );
+  assert.doesNotMatch(patched, /codexLinuxDesktopLabelText/);
   // The original general-settings case is preserved untouched.
   assert.match(patched, /case`general-settings`:\{let e;return o\[5\]===Symbol\.for\(`react\.memo_cache_sentinel`\)/);
+});
+
+test("adds Russian Linux desktop locale keys next to the current settings labels", () => {
+  const patched = applyLinuxDesktopLocaleAssetPatch(russianLocaleBundleFixture());
+
+  assert.match(
+    patched,
+    /"settings\.nav\.general-settings":`Общее`,"settings\.nav\.linux-desktop":`Рабочий стол Linux`,"settings\.section\.general-settings":`Общее`,"settings\.section\.linux-desktop":`Рабочий стол Linux`,/,
+  );
+  assert.match(patched, /"settings\.linux-desktop\.subtitle":`Поведение запуска, системного трея, окна запроса и обновлений\.`,/);
+  assert.match(patched, /"settings\.linux-desktop\.globalShortcuts":`Глобальные сочетания клавиш`,/);
+  assert.match(patched, /"settings\.linux-desktop\.buildInformation":`Информация о сборке`,/);
+  assert.match(patched, /"settings\.linux-desktop\.copyCommit":`Скопировать коммит`,/);
+  assert.match(patched, /"settings\.linux-desktop\.commitCopied":`Коммит скопирован`,/);
+  assert.equal(applyLinuxDesktopLocaleAssetPatch(patched), patched);
 });
 
 test("keeps local environment action modal inputs editable inside stored modal content", () => {
@@ -7736,11 +7997,7 @@ test("patcher CLI writes --report-json output", () => {
     );
     fs.writeFileSync(path.join(tempRoot, "package.json"), JSON.stringify({ name: "codex" }));
 
-    const result = spawnSync(
-      process.execPath,
-      [path.join(__dirname, "patch-linux-window-ui.js"), "--report-json", reportPath, tempRoot],
-      { encoding: "utf8" },
-    );
+    const result = runPatcherCli(["--report-json", reportPath, tempRoot]);
 
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
@@ -8034,17 +8291,7 @@ test("patcher CLI --enforce-critical exits non-zero with an aggregated message",
     );
     fs.writeFileSync(path.join(tempRoot, "package.json"), JSON.stringify({ name: "codex" }));
 
-    const result = spawnSync(
-      process.execPath,
-      [
-        path.join(__dirname, "patch-linux-window-ui.js"),
-        "--enforce-critical",
-        "--report-json",
-        reportPath,
-        tempRoot,
-      ],
-      { encoding: "utf8" },
-    );
+    const result = runPatcherCli(["--enforce-critical", "--report-json", reportPath, tempRoot]);
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Critical patch failures \(\d+\):/);
@@ -8054,11 +8301,7 @@ test("patcher CLI --enforce-critical exits non-zero with an aggregated message",
     assert.ok(criticalFailuresFromReport(report).length > 0);
 
     // Without the flag the same fixture must keep exiting 0 (fail-soft default).
-    const lenient = spawnSync(
-      process.execPath,
-      [path.join(__dirname, "patch-linux-window-ui.js"), tempRoot],
-      { encoding: "utf8" },
-    );
+    const lenient = runPatcherCli([tempRoot]);
     assert.equal(lenient.status, 0, lenient.stderr);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -8076,17 +8319,7 @@ test("patcher CLI --enforce-critical treats window-shell drift as critical", () 
     fs.writeFileSync(path.join(buildDir, "main.js"), mainBundlePrefix);
     fs.writeFileSync(path.join(tempRoot, "package.json"), JSON.stringify({ name: "codex" }));
 
-    const result = spawnSync(
-      process.execPath,
-      [
-        path.join(__dirname, "patch-linux-window-ui.js"),
-        "--enforce-critical",
-        "--report-json",
-        reportPath,
-        tempRoot,
-      ],
-      { encoding: "utf8" },
-    );
+    const result = runPatcherCli(["--enforce-critical", "--report-json", reportPath, tempRoot]);
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /linux-opaque-background \(failed-required\)/);

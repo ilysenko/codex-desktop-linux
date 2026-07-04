@@ -200,6 +200,15 @@ function packageProfile(target) {
       notes: "Managed Node.js runtime is bundled; no distro Node.js package is required",
     };
   }
+  if (target.atomic && ids.has("fedora")) {
+    return {
+      id: "fedora-atomic",
+      label: "Fedora Atomic Desktop",
+      packageManager: "rpm-ostree",
+      format: ".rpm",
+      notes: "Native packages are layered with rpm-ostree instead of installed with dnf",
+    };
+  }
   if (id === "fedora") {
     return {
       id: versionMajor != null && versionMajor < 41 ? "fedora-pre-41" : "fedora-41-plus",
@@ -271,6 +280,7 @@ function linuxTargetInfo(target) {
     sessionType: target.sessionType,
     wayland: target.wayland,
     x11: target.x11,
+    atomic: target.atomic,
   };
 }
 

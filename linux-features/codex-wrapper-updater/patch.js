@@ -138,16 +138,18 @@ function applyWrapperUpdateSettingsPatch(source) {
   }
 
   if (!next.includes("Check for Codex Desktop Linux updates")) {
-    const toggleNeedle =
-      `children:$.jsx(LinuxToggle,{settingKey:KEYS.autoUpdateOnExit,label:"Install updates when you close Codex",description:"When on, a ready update waits for Codex to close and then installs. When off, updates wait until you click Update."})`;
-    if (!next.includes(toggleNeedle)) {
+    const togglePattern =
+      /children:(\$\.jsx\(LinuxToggle,\{settingKey:KEYS\.autoUpdateOnExit,.*?\}\))/;
+    const toggleMatch = next.match(togglePattern);
+    if (toggleMatch == null) {
       throw new Error("could not find Linux update toggle");
     }
+    const existingToggle = toggleMatch[1];
     const pickerToggle =
       `$.jsx(LinuxToggle,{settingKey:KEYS.featurePickerOnUpdate,label:"Ask which features to enable on update",description:"When on, clicking Update opens a checklist to pick optional Linux features before rebuilding. Turn off to keep your current feature selection without prompting.",defaultValue:!0},"featurePickerOnUpdate")`;
     const wrapperToggle =
-      `children:[$.jsx(LinuxToggle,{settingKey:KEYS.autoUpdateOnExit,label:"Install updates when you close Codex",description:"When on, a ready update waits for Codex to close and then installs. When off, updates wait until you click Update."},"autoUpdateOnExit"),$.jsx(LinuxToggle,{settingKey:KEYS.wrapperUpdates,label:"Check for Codex Desktop Linux updates",description:"Check for Linux wrapper updates from codex-desktop-linux in addition to upstream Codex app updates.",defaultValue:!1},"wrapperUpdates"),${pickerToggle}]`;
-    next = next.replace(toggleNeedle, wrapperToggle);
+      `children:[${existingToggle},$.jsx(LinuxToggle,{settingKey:KEYS.wrapperUpdates,label:"Check for Codex Desktop Linux updates",description:"Check for Linux wrapper updates from codex-desktop-linux in addition to upstream Codex app updates.",defaultValue:!1},"wrapperUpdates"),${pickerToggle}]`;
+    next = next.replace(toggleMatch[0], wrapperToggle);
   } else if (!next.includes("Ask which features to enable on update")) {
     const existingWrapperToggle =
       `$.jsx(LinuxToggle,{settingKey:KEYS.wrapperUpdates,label:"Check for Codex Desktop Linux updates",description:"Check for Linux wrapper updates from codex-desktop-linux in addition to upstream Codex app updates.",defaultValue:!1},"wrapperUpdates")`;

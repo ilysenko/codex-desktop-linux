@@ -1940,6 +1940,74 @@ test_fedora_dependency_bootstrap_installs_rpmbuild() {
     assert_contains "$readme" "sudo dnf install python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++"
 }
 
+test_shared_linux_target_detection_helper() {
+    info "Checking shared Linux target detection helper"
+    local workspace="$TMP_DIR/linux-target-detect"
+    local helper="$REPO_DIR/scripts/lib/linux-target-detect.sh"
+    local fake_bin="$workspace/bin"
+    local os_release_44="$workspace/fedora44-os-release"
+    local os_release_40="$workspace/fedora40-os-release"
+    local ostree_booted="$workspace/ostree-booted"
+    local output_44 output_40
+
+    mkdir -p "$fake_bin"
+    printf '%s\n' '#!/bin/sh' 'exit 0' > "$fake_bin/dnf"
+    printf '%s\n' '#!/bin/sh' 'exit 0' > "$fake_bin/dnf5"
+    printf '%s\n' '#!/bin/sh' 'exit 0' > "$fake_bin/rpmbuild"
+    chmod +x "$fake_bin/dnf" "$fake_bin/dnf5" "$fake_bin/rpmbuild"
+
+    cat > "$os_release_44" <<'EOF'
+ID=fedora
+VERSION_ID="44"
+PRETTY_NAME="Fedora Linux 44 (KDE Plasma Desktop Edition)"
+VARIANT_ID=kde
+EOF
+    cat > "$os_release_40" <<'EOF'
+ID=fedora
+VERSION_ID="40"
+PRETTY_NAME="Fedora Linux 40"
+EOF
+    : > "$ostree_booted"
+
+    output_44="$(
+        PATH="$fake_bin:/usr/bin:/bin" \
+        OS_RELEASE_FILE="$os_release_44" \
+        OSTREE_BOOTED_FILE="$ostree_booted" \
+        HELPER_PATH="$helper" \
+        bash -lc '
+            # shellcheck disable=SC1090
+            source "$HELPER_PATH"
+            OS_RELEASE_ID="$(os_release_field ID)"
+            OS_RELEASE_ID_LIKE="$(os_release_field ID_LIKE 2>/dev/null || true)"
+            OS_RELEASE_VERSION_ID="$(os_release_field VERSION_ID)"
+            printf "manager=%s\nformat=%s\natomic=%s\n" \
+                "$(detect_package_manager)" \
+                "$(detect_package_format)" \
+                "$([ linux_target_is_atomic ] && echo yes || echo no)"
+        '
+    )"
+    assert_contains <(printf '%s' "$output_44") "manager=dnf5"
+    assert_contains <(printf '%s' "$output_44") "format=rpm"
+    assert_contains <(printf '%s' "$output_44") "atomic=yes"
+
+    rm -f "$fake_bin/dnf5" "$ostree_booted"
+
+    output_40="$(
+        PATH="$fake_bin:/usr/bin:/bin" \
+        OS_RELEASE_FILE="$os_release_40" \
+        HELPER_PATH="$helper" \
+        bash -lc '
+            # shellcheck disable=SC1090
+            source "$HELPER_PATH"
+            OS_RELEASE_ID="$(os_release_field ID)"
+            OS_RELEASE_ID_LIKE="$(os_release_field ID_LIKE 2>/dev/null || true)"
+            OS_RELEASE_VERSION_ID="$(os_release_field VERSION_ID)"
+            printf "manager=%s\n" "$(detect_package_manager)"
+        '
+    )"
+    assert_contains <(printf '%s' "$output_40") "manager=dnf"
+}
+
 test_setup_native_wizard_noninteractive_feature_writer() {
     info "Checking setup-native wizard non-interactive feature writer"
     local workspace="$TMP_DIR/setup-native-writer"
@@ -5162,9 +5230,13 @@ JS
     [ ! -f "$extracted/webview/assets/keybinds-settings-linux.js" ] || fail "Old Keybinds settings asset should not be written for current native Keyboard Shortcuts"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "function LinuxDesktopSettings"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "Linux desktop"
-    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "System tray"
-    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "Warm start"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'subtitle:"Launcher, tray, prompt window, and update behavior."'
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'title:"Global shortcuts"'
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'title:"Desktop integration"'
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'label:"System tray"'
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'label:"Warm start"'
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "Build information"
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "settings.linux-desktop.buildInformation"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-system-tray-enabled"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-warm-start-enabled"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-prompt-window-enabled"
@@ -5922,6 +5994,17 @@ test_patcher_enforce_critical_gate() {
 
 test_webview_probe_equivalence() {
     info "Checking webview probe behavioral equivalence (bash + curl vs python3 reference)"
+    if ! python3 - <<'PY' >/dev/null 2>&1
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.close()
+PY
+    then
+        info "Skipping webview probe equivalence because localhost sockets are unavailable"
+        return
+    fi
+
     # The harness extracts webview_port_is_open and verify_webview_origin from
     # the live launcher template, runs them against a controlled localhost
     # python3 http.server fixture, and asserts the verdicts match the
@@ -6739,6 +6822,7 @@ main() {
     test_rebuild_candidate_uses_validated_default_dmg
     test_native_shortcut_targets_compose_existing_flows
     test_fedora_dependency_bootstrap_installs_rpmbuild
+    test_shared_linux_target_detection_helper
     test_setup_native_wizard_noninteractive_feature_writer
     test_setup_native_wizard_rejects_invalid_feature_ids
     test_setup_native_wizard_rejects_features_without_readme

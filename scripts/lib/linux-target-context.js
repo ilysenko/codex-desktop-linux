@@ -23,6 +23,20 @@ function splitTokens(value) {
     .filter(Boolean);
 }
 
+function booleanOverride(value) {
+  const normalized = normalizeToken(value);
+  if (!normalized) {
+    return null;
+  }
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
 function flattenValues(values) {
   const flattened = [];
   for (const value of values) {
@@ -190,10 +204,20 @@ function detectPackageManager(tokens, env, versionMajorValue) {
 
 function buildDesktopTokens(env) {
   const desktop = env.CODEX_LINUX_TARGET_DESKTOP ||
-    env.XDG_CURRENT_DESKTOP ||
-    env.DESKTOP_SESSION ||
-    "";
+    [env.XDG_CURRENT_DESKTOP, env.DESKTOP_SESSION].filter(Boolean).join(":");
   return splitTokens(desktop.replace(/[:;]/gu, " "));
+}
+
+function detectAtomicDesktop(env, options = {}) {
+  if (typeof options.atomic === "boolean") {
+    return options.atomic;
+  }
+  const override = booleanOverride(env.CODEX_LINUX_TARGET_ATOMIC);
+  if (override != null) {
+    return override;
+  }
+  const ostreeBootedPath = options.ostreeBootedPath ?? env.OSTREE_BOOTED_FILE ?? "/run/ostree-booted";
+  return Boolean(ostreeBootedPath) && fs.existsSync(ostreeBootedPath);
 }
 
 function createHelpers(target) {
@@ -228,8 +252,10 @@ function detectLinuxTargetContext(options = {}) {
   const versionId = env.CODEX_LINUX_TARGET_VERSION_ID || osRelease.fields.VERSION_ID || "";
   const versionMajorValue = versionMajor(versionId);
   const distroTokens = [id, ...idLike].filter(Boolean);
-  const sessionType = normalizeToken(env.CODEX_LINUX_TARGET_SESSION_TYPE || env.XDG_SESSION_TYPE || "");
+  const sessionType = normalizeToken(env.CODEX_LINUX_TARGET_SESSION_TYPE || env.XDG_SESSION_TYPE || "") ||
+    (env.WAYLAND_DISPLAY ? "wayland" : env.DISPLAY ? "x11" : "");
   const desktopTokens = buildDesktopTokens(env);
+  const atomic = detectAtomicDesktop(env, options);
   const target = {
     osReleasePath: osRelease.path,
     arch: env.CODEX_LINUX_TARGET_ARCH || process.arch,
@@ -240,16 +266,19 @@ function detectLinuxTargetContext(options = {}) {
       versionId,
       versionMajor: versionMajorValue,
       prettyName: env.CODEX_LINUX_TARGET_PRETTY_NAME || osRelease.fields.PRETTY_NAME || "",
+      variant: env.CODEX_LINUX_TARGET_VARIANT || osRelease.fields.VARIANT || "",
+      variantId: normalizeToken(env.CODEX_LINUX_TARGET_VARIANT_ID || osRelease.fields.VARIANT_ID || ""),
     },
     packageFormat: detectPackageFormat(distroTokens, env),
     packageManager: detectPackageManager(distroTokens, env, versionMajorValue),
     desktop: {
-      raw: env.CODEX_LINUX_TARGET_DESKTOP || env.XDG_CURRENT_DESKTOP || env.DESKTOP_SESSION || "",
+      raw: env.CODEX_LINUX_TARGET_DESKTOP || [env.XDG_CURRENT_DESKTOP, env.DESKTOP_SESSION].filter(Boolean).join(":"),
       tokens: desktopTokens,
     },
     sessionType,
-    wayland: sessionType === "wayland" || Boolean(env.WAYLAND_DISPLAY),
-    x11: sessionType === "x11" || Boolean(env.DISPLAY),
+    wayland: sessionType === "wayland",
+    x11: sessionType === "x11",
+    atomic,
   };
   target.helpers = createHelpers(target);
   Object.assign(target, target.helpers);
