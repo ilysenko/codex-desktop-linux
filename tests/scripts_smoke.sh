@@ -1980,12 +1980,16 @@ EOF
             OS_RELEASE_ID="$(os_release_field ID)"
             OS_RELEASE_ID_LIKE="$(os_release_field ID_LIKE 2>/dev/null || true)"
             OS_RELEASE_VERSION_ID="$(os_release_field VERSION_ID)"
-            printf "manager=%s\nformat=%s\natomic=%s\n" \
+            printf "id=%s\nid_like=%s\nmanager=%s\nformat=%s\natomic=%s\n" \
+                "$OS_RELEASE_ID" \
+                "$OS_RELEASE_ID_LIKE" \
                 "$(detect_package_manager)" \
                 "$(detect_package_format)" \
                 "$([ linux_target_is_atomic ] && echo yes || echo no)"
         '
     )"
+    assert_contains <(printf '%s' "$output_44") "^id=fedora$"
+    assert_contains <(printf '%s' "$output_44") "^id_like=$"
     assert_contains <(printf '%s' "$output_44") "manager=dnf5"
     assert_contains <(printf '%s' "$output_44") "format=rpm"
     assert_contains <(printf '%s' "$output_44") "atomic=yes"

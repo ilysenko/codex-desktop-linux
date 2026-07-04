@@ -3,8 +3,15 @@
 os_release_field() {
     local field="$1"
     local file line value
+    local files
 
-    for file in ${OS_RELEASE_FILE:-} /etc/os-release /usr/lib/os-release; do
+    if [ -n "${OS_RELEASE_FILE:-}" ]; then
+        files=("$OS_RELEASE_FILE")
+    else
+        files=(/etc/os-release /usr/lib/os-release)
+    fi
+
+    for file in "${files[@]}"; do
         [ -n "$file" ] || continue
         [ -r "$file" ] || continue
         while IFS= read -r line; do
