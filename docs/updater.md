@@ -20,6 +20,12 @@ installs continue to update through npm, while official standalone installs
 under `~/.codex/packages/standalone` are updated with the official standalone
 installer instead of being replaced through npm.
 
+Before the preflight runs, the launcher resolves the newest local `codex`
+binary it can find across the GUI `PATH` and known user install locations. This
+prevents an older system-wide CLI from winning over a newer user install, and
+the selected path plus version are written to the launcher log. `CODEX_CLI_PATH`
+still pins an explicit binary when users need one.
+
 ## Inspect State
 
 ```bash

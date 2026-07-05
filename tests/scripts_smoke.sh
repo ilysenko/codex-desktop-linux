@@ -4094,6 +4094,11 @@ EOF
     assert_contains "$REPO_DIR/launcher/start.sh.template" "prompt-install-cli"
     assert_contains "$REPO_DIR/launcher/start.sh.template" '.npm-global/bin/codex'
     assert_contains "$REPO_DIR/launcher/start.sh.template" '.config}/nvm/versions/node'
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "codex_cli_version_probe"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "codex_cli_version"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "codex_cli_version_compare"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "find_codex_cli_entry"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_CLI_VERSION"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_UPDATE_MANAGER_PATH"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "resolve_update_manager_path"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "run_update_manager"
@@ -4184,6 +4189,169 @@ EOF
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" "assets/codex-linux.png"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" "CODEX_USER_LOCAL_RECORD_DMG_FINGERPRINT"
     assert_contains "$REPO_DIR/contrib/user-local-install/README.md" "--force-x11"
+
+    local cli_resolver_probe old_cli_bin version_only_cli_bin blocked_cli_bin partial_blocked_cli_bin fallback_blocked_cli_bin same_core_prerelease_cli_bin newer_prerelease_cli_bin semver_home_dir home_dir selected_cli selected_entry expected_entry hanging_pids pid
+    cli_resolver_probe="$TMP_DIR/launcher-cli-resolver-probe.sh"
+    python3 - "$REPO_DIR/launcher/start.sh.template" "$cli_resolver_probe" <<'PY'
+import re
+import sys
+
+source_path, output_path = sys.argv[1:3]
+source = open(source_path, encoding="utf-8").read()
+functions = []
+for name in (
+    "codex_cli_version_probe",
+    "codex_cli_version",
+    "codex_cli_version_core",
+    "codex_cli_version_prerelease",
+    "codex_cli_version_core_compare",
+    "codex_cli_prerelease_compare",
+    "codex_cli_version_compare",
+    "codex_cli_version_gte",
+    "codex_cli_version_gt",
+    "path_contains_candidate",
+    "find_codex_cli_entry",
+    "find_codex_cli",
+):
+    match = re.search(rf"^{name}\(\) \{{[\s\S]*?^}}\n", source, re.M)
+    if match is None:
+        raise SystemExit(f"missing launcher function {name}")
+    functions.append(match.group(0))
+
+probe = "#!/usr/bin/env bash\nset -Eeuo pipefail\n" + "\n".join(functions) + "\nif [ \"${1:-path}\" = \"entry\" ]; then find_codex_cli_entry; else find_codex_cli; fi\n"
+open(output_path, "w", encoding="utf-8").write(probe)
+PY
+    chmod +x "$cli_resolver_probe"
+    old_cli_bin="$TMP_DIR/old-cli-bin"
+    home_dir="$TMP_DIR/cli-home"
+    mkdir -p "$old_cli_bin" "$home_dir/.npm-global/bin"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'if [ "${1:-}" = "--version" ] || [ "${1:-}" = "version" ]; then echo "codex-cli 0.120.0"; exit 0; fi' \
+        'exit 1' > "$old_cli_bin/codex"
+    chmod +x "$old_cli_bin/codex"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'if [ "${1:-}" = "--version" ] || [ "${1:-}" = "version" ]; then echo "codex-cli 0.142.5"; exit 0; fi' \
+        'exit 1' > "$home_dir/.npm-global/bin/codex"
+    chmod +x "$home_dir/.npm-global/bin/codex"
+    selected_cli="$(env -i PATH="$old_cli_bin:/usr/bin:/bin" HOME="$home_dir" "$cli_resolver_probe")"
+    [ "$selected_cli" = "$home_dir/.npm-global/bin/codex" ] \
+        || fail "launcher must prefer the newest discovered Codex CLI over the first PATH entry: $selected_cli"
+    selected_entry="$(env -i PATH="$old_cli_bin:/usr/bin:/bin" HOME="$home_dir" "$cli_resolver_probe" entry)"
+    expected_entry="$(printf '%s\t%s' "$home_dir/.npm-global/bin/codex" "0.142.5")"
+    [ "$selected_entry" = "$expected_entry" ] \
+        || fail "launcher must carry the selected Codex CLI version without probing again: $selected_entry"
+
+    same_core_prerelease_cli_bin="$TMP_DIR/same-core-prerelease-cli-bin"
+    semver_home_dir="$TMP_DIR/semver-cli-home"
+    mkdir -p "$same_core_prerelease_cli_bin" "$semver_home_dir/.npm-global/bin"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'if [ "${1:-}" = "--version" ] || [ "${1:-}" = "version" ]; then echo "codex-cli 0.142.0-alpha.1"; exit 0; fi' \
+        'exit 1' > "$same_core_prerelease_cli_bin/codex"
+    chmod +x "$same_core_prerelease_cli_bin/codex"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'if [ "${1:-}" = "--version" ] || [ "${1:-}" = "version" ]; then echo "codex-cli 0.142.0"; exit 0; fi' \
+        'exit 1' > "$semver_home_dir/.npm-global/bin/codex"
+    chmod +x "$semver_home_dir/.npm-global/bin/codex"
+    selected_cli="$(env -i PATH="$same_core_prerelease_cli_bin:/usr/bin:/bin" HOME="$semver_home_dir" "$cli_resolver_probe")"
+    [ "$selected_cli" = "$semver_home_dir/.npm-global/bin/codex" ] \
+        || fail "launcher must prefer a stable Codex CLI over a prerelease with the same core version: $selected_cli"
+
+    newer_prerelease_cli_bin="$TMP_DIR/newer-prerelease-cli-bin"
+    mkdir -p "$newer_prerelease_cli_bin"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'if [ "${1:-}" = "--version" ] || [ "${1:-}" = "version" ]; then echo "codex-cli 0.143.0-alpha.1"; exit 0; fi' \
+        'exit 1' > "$newer_prerelease_cli_bin/codex"
+    chmod +x "$newer_prerelease_cli_bin/codex"
+    selected_cli="$(env -i PATH="$newer_prerelease_cli_bin:/usr/bin:/bin" HOME="$semver_home_dir" "$cli_resolver_probe")"
+    [ "$selected_cli" = "$newer_prerelease_cli_bin/codex" ] \
+        || fail "launcher must keep a prerelease Codex CLI when its core version is newer than the stable fallback: $selected_cli"
+
+    version_only_cli_bin="$TMP_DIR/version-only-cli-bin"
+    mkdir -p "$version_only_cli_bin"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'if [ "${1:-}" = "--version" ]; then exit 2; fi' \
+        'if [ "${1:-}" = "version" ]; then echo "codex-cli 0.150.0"; exit 0; fi' \
+        'exit 1' > "$version_only_cli_bin/codex"
+    chmod +x "$version_only_cli_bin/codex"
+    selected_cli="$(env -i PATH="$version_only_cli_bin:$old_cli_bin:/usr/bin:/bin" HOME="$home_dir" "$cli_resolver_probe")"
+    [ "$selected_cli" = "$version_only_cli_bin/codex" ] \
+        || fail "launcher must accept Codex CLI versions from the fallback version command: $selected_cli"
+
+    blocked_cli_bin="$TMP_DIR/blocked-cli-bin"
+    mkdir -p "$blocked_cli_bin"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'printf "%s\n" "$$" >> "$HOME/hanging-cli-pids"' \
+        'sleep 30' \
+        'echo "codex-cli 9.999.0"' > "$blocked_cli_bin/codex"
+    chmod +x "$blocked_cli_bin/codex"
+    rm -f "$home_dir/hanging-cli-pids"
+    selected_cli="$(env -i PATH="$blocked_cli_bin:/usr/bin:/bin" HOME="$home_dir" "$cli_resolver_probe")"
+    [ "$selected_cli" = "$home_dir/.npm-global/bin/codex" ] \
+        || fail "launcher must skip a blocked Codex CLI probe and keep looking: $selected_cli"
+    hanging_pids="$home_dir/hanging-cli-pids"
+    if [ -f "$hanging_pids" ]; then
+        while read -r pid; do
+            [ -n "$pid" ] || continue
+            if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+                fail "blocked Codex CLI probe left a process running: $pid"
+            fi
+        done < "$hanging_pids"
+    fi
+
+    partial_blocked_cli_bin="$TMP_DIR/partial-blocked-cli-bin"
+    mkdir -p "$partial_blocked_cli_bin"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'printf "%s\n" "$$" >> "$HOME/hanging-cli-pids"' \
+        'echo "codex-cli 9.999.0"' \
+        'sleep 30' > "$partial_blocked_cli_bin/codex"
+    chmod +x "$partial_blocked_cli_bin/codex"
+    rm -f "$home_dir/hanging-cli-pids"
+    selected_cli="$(env -i PATH="$partial_blocked_cli_bin:/usr/bin:/bin" HOME="$home_dir" "$cli_resolver_probe")"
+    [ "$selected_cli" = "$home_dir/.npm-global/bin/codex" ] \
+        || fail "launcher must ignore partial version output from a timed-out Codex CLI probe: $selected_cli"
+    hanging_pids="$home_dir/hanging-cli-pids"
+    if [ -f "$hanging_pids" ]; then
+        while read -r pid; do
+            [ -n "$pid" ] || continue
+            if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+                fail "partial blocked Codex CLI probe left a process running: $pid"
+            fi
+        done < "$hanging_pids"
+    fi
+
+    fallback_blocked_cli_bin="$TMP_DIR/fallback-blocked-cli-bin"
+    mkdir -p "$fallback_blocked_cli_bin"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'if [ "${1:-}" = "--version" ]; then exit 2; fi' \
+        'printf "%s\n" "$$" >> "$HOME/hanging-cli-pids"' \
+        'echo "codex-cli 9.999.0"' \
+        'sleep 30' > "$fallback_blocked_cli_bin/codex"
+    chmod +x "$fallback_blocked_cli_bin/codex"
+    rm -f "$home_dir/hanging-cli-pids"
+    selected_cli="$(env -i PATH="$fallback_blocked_cli_bin:/usr/bin:/bin" HOME="$home_dir" "$cli_resolver_probe")"
+    [ "$selected_cli" = "$home_dir/.npm-global/bin/codex" ] \
+        || fail "launcher must ignore partial version output from a timed-out fallback Codex CLI probe: $selected_cli"
+    hanging_pids="$home_dir/hanging-cli-pids"
+    if [ -f "$hanging_pids" ]; then
+        while read -r pid; do
+            [ -n "$pid" ] || continue
+            if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+                fail "fallback blocked Codex CLI probe left a process running: $pid"
+            fi
+        done < "$hanging_pids"
+    fi
 
     node - "$REPO_DIR/launcher/start.sh.template" <<'NODE' || fail "Bundled backend plugin cache syncs must expose marketplace plugin links"
 const fs = require("node:fs");
