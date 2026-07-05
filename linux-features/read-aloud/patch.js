@@ -183,7 +183,9 @@ function applyAssistantRenderPatch(source) {
 
   const needle = "(0,$.jsx)(O6,{item:e,assistantCopyText:l,assistantRatingEventContext:f,after:u,conversationId:n,cwd:o,onFork:g})";
   if (!source.includes(needle)) {
-    if (source.includes("assistantCopyText") || source.includes("renderPlaceholderWhileStreaming")) {
+    // Turn normalizers can contain renderPlaceholderWhileStreaming without
+    // rendering assistant UI. assistantCopyText is the render-call signal here.
+    if (source.includes("assistantCopyText")) {
       warn("Could not find assistant message render call", "read aloud assistant render patch");
     }
     return source;
