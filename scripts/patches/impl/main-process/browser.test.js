@@ -6,6 +6,7 @@ const test = require("node:test");
 
 const {
   applyLinuxChromeExtensionStatusPatch,
+  applyLinuxExternalOpenEnvPatch,
 } = require("./browser.js");
 
 test("Linux Chrome extension opener searches Chrome Beta and Unstable commands", () => {
@@ -29,4 +30,46 @@ test("Linux Chrome extension opener searches Chrome Beta and Unstable commands",
   );
   assert.match(patched, /`google-chrome-beta`/);
   assert.match(patched, /`google-chrome-unstable`/);
+});
+
+test("Linux external open env patch wraps electron require with helper", () => {
+  const source = '"use strict";let e=require("electron");';
+  const patched = applyLinuxExternalOpenEnvPatch(source);
+
+  assert.match(patched, /codexLinuxPatchExternalOpen\(require\(("|`)electron\1\)\)/);
+  assert.match(patched, /function codexLinuxPatchExternalOpen\(/);
+});
+
+test("Linux external open env patch injects env var guard in helper", () => {
+  const source = '"use strict";let e=require("electron");';
+  const patched = applyLinuxExternalOpenEnvPatch(source);
+
+  assert.match(
+    patched,
+    /CODEX_LINUX_DISABLE_EXTERNAL_OPEN_PATCH/,
+    "helper should check CODEX_LINUX_DISABLE_EXTERNAL_OPEN_PATCH env var",
+  );
+});
+
+test("Linux external open env patch is idempotent", () => {
+  const source = '"use strict";let e=require("electron");';
+  const first = applyLinuxExternalOpenEnvPatch(source);
+  const second = applyLinuxExternalOpenEnvPatch(first);
+
+  assert.equal(second, first, "second application should not change the source");
+});
+
+test("Linux external open env patch warns when no electron require found", () => {
+  const source = '"use strict";const fs=require("node:fs");';
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (msg) => warnings.push(msg);
+  try {
+    const patched = applyLinuxExternalOpenEnvPatch(source);
+    assert.equal(patched, source, "source should be unchanged");
+    assert.ok(warnings.length > 0, "should have warned about missing require");
+    assert.match(warnings[0], /Could not find Electron require initializer/);
+  } finally {
+    console.warn = originalWarn;
+  }
 });
