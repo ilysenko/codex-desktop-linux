@@ -3618,8 +3618,8 @@ cold_start_hooks_body = source.split("run_cold_start_hooks() {", 1)[1].split("ru
 stop_body = source.split("stop_owned_webview_server() {", 1)[1].split("owned_webview_server_pid() {", 1)[0]
 stale_body = source.split("pid_is_stale_webview_server() {", 1)[1].split("stop_owned_webview_server() {", 1)[0]
 multi_body = source.split("configure_multi_launch_instance() {", 1)[1].split('WEBVIEW_ORIGIN="http://127.0.0.1:$CODEX_LINUX_WEBVIEW_PORT"', 1)[0]
-adopt_body = source.split("adopt_existing_webview_server() {", 1)[1].split("ensure_webview_server() {", 1)[0]
-ensure_body = source.split("ensure_webview_server() {", 1)[1].split("wait_for_webview_server", 1)[0]
+adopt_body = source.split("adopt_existing_webview_server() {", 1)[1].split("start_webview_server() {", 1)[0]
+ensure_body = source.split("start_webview_server() {", 1)[1].split("wait_for_webview_server", 1)[0]
 reconcile_body = source.split("reconcile_runtime_state() {", 1)[1].split("set_electron_defaults() {", 1)[0]
 orphan_body = source.split("pid_is_orphaned_runtime_process() {", 1)[1].split("detect_cross_install_conflict() {", 1)[0]
 reap_body = source.split("reap_orphaned_runtime_processes() {", 1)[1].split("reconcile_runtime_state() {", 1)[0]
@@ -3729,13 +3729,24 @@ if "second_instance_handoff_ready" not in runtime_body:
     raise SystemExit("second-instance handoff must skip cold-start setup")
 if "clear_bundled_marketplace_tmp_cache\nmonitor_bundled_marketplace_tmp_permissions\nreconcile_runtime_state" in runtime_body:
     raise SystemExit("warm-start path must not clear bundled marketplace temp cache")
-if not re.search(r'if needs_cold_start; then\s+log_phase "cold_start_cache_sync_start"\s+clear_bundled_marketplace_tmp_cache.*?monitor_bundled_marketplace_tmp_permissions.*?sync_browser_use_bundled_plugin_cache.*?sync_chrome_bundled_plugin_cache.*?sync_computer_use_bundled_plugin_cache.*?sync_read_aloud_bundled_plugin_cache.*?run_cold_start_hooks.*?log_phase "cold_start_hooks_dispatched"\s+fi', runtime_body, re.S):
-    raise SystemExit("bundled marketplace cleanup, plugin sync, and cold-start hooks must run only on cold start")
+if not re.search(r'if needs_cold_start; then\s+log_phase "cold_start_cache_sync_start"\s+clear_bundled_marketplace_tmp_cache.*?monitor_bundled_marketplace_tmp_permissions.*?stage_bundled_marketplace_metadata.*?sync_browser_use_bundled_plugin_cache &.*?sync_chrome_bundled_plugin_cache &.*?sync_computer_use_bundled_plugin_cache &.*?sync_read_aloud_bundled_plugin_cache &.*?sync_extra_bundled_plugin_cache &.*?run_cold_start_hooks.*?log_phase "cold_start_hooks_dispatched"\s+await_webview_server_ready\s+fi', runtime_body, re.S):
+    raise SystemExit("bundled marketplace cleanup, staged metadata, concurrent plugin syncs, cold-start hooks, and the webview readiness wait must run only on cold start")
+# The plugin syncs run concurrently, so the shared marketplace.json is staged
+# exactly once beforehand instead of racing rm+cp per sync, and every sync is
+# awaited before cold-start hooks so the app never sees a partial cache.
+if source.count('rm -f "$marketplace_plugins_dir/marketplace.json"') != 1:
+    raise SystemExit("bundled marketplace metadata must be staged exactly once, not per plugin sync")
+for sync_pid_var in ("SYNC_BROWSER_USE_PID", "SYNC_CHROME_PID", "SYNC_COMPUTER_USE_PID", "SYNC_READ_ALOUD_PID", "SYNC_EXTRA_PID"):
+    if 'wait "$' + sync_pid_var + '"' not in runtime_body:
+        raise SystemExit(f"cold start must await concurrent plugin sync {sync_pid_var}")
+    if runtime_body.index('wait "$' + sync_pid_var + '"') > runtime_body.index("run_cold_start_hooks"):
+        raise SystemExit(f"plugin sync {sync_pid_var} must be awaited before cold-start hooks run")
 for marker in (
     "initial_launch_state_refresh_start",
     "initial_launch_state_refreshed",
     "feature_prelaunch_start",
     "packaged_prelaunch_start",
+    "bundled_marketplace_metadata_staged",
     "browser_use_plugin_cache_synced",
     "chrome_plugin_cache_synced",
     "computer_use_plugin_cache_synced",
@@ -3802,13 +3813,37 @@ if 'STARTED_WEBVIEW_PID="$pid"' not in adopt_body:
 if "running_app_is_active" not in adopt_body:
     raise SystemExit("adopt_existing_webview_server must detect live-app reuse before cleanup")
 if "if adopt_existing_webview_server; then" not in ensure_body:
-    raise SystemExit("ensure_webview_server must split adoption from origin verification")
+    raise SystemExit("start_webview_server must split adoption from origin verification")
 if "stop_stale_webview_server" not in ensure_body:
-    raise SystemExit("ensure_webview_server must clear stale deleted webview servers before treating the port as foreign")
+    raise SystemExit("start_webview_server must clear stale deleted webview servers before treating the port as foreign")
 if ensure_body.find("stop_stale_webview_server") > ensure_body.find("is already serving Codex content"):
-    raise SystemExit("ensure_webview_server must try stale-server cleanup before foreign reachable-port failure")
+    raise SystemExit("start_webview_server must try stale-server cleanup before foreign reachable-port failure")
 if "Keeping the live app untouched" not in ensure_body:
-    raise SystemExit("ensure_webview_server must not stop a live app server when validation fails")
+    raise SystemExit("start_webview_server must not stop a live app server when validation fails")
+
+# Cold-start overlap: the webview server is spawned before the plugin cache
+# syncs and only awaited (readiness + origin verification) after them, so the
+# Python server boots while the launcher does unrelated work. Electron must
+# still never launch before the origin is verified.
+if "ensure_webview_server" in source:
+    raise SystemExit("ensure_webview_server was split into start_webview_server + await_webview_server_ready")
+if "WEBVIEW_STARTUP_PENDING" not in source:
+    raise SystemExit("start_webview_server must track pending startup for await_webview_server_ready")
+cold_flow = source.split("elif needs_cold_start; then", 1)[1]
+if "\n    start_webview_server\n" not in cold_flow:
+    raise SystemExit("cold start must spawn the webview server before the cache syncs")
+overlap_start = cold_flow.index("\n    start_webview_server\n")
+overlap_sync = cold_flow.index('log_phase "cold_start_cache_sync_start"')
+overlap_last_sync = cold_flow.index("sync_extra_bundled_plugin_cache")
+overlap_await = cold_flow.index("\n    await_webview_server_ready\n")
+overlap_lock = cold_flow.index("acquire_launcher_lock")
+if not (overlap_start < overlap_sync < overlap_last_sync < overlap_await < overlap_lock):
+    raise SystemExit("webview readiness wait must overlap the plugin cache syncs and finish before the launcher lock")
+await_body = source.split("await_webview_server_ready() {", 1)[1].split("clear_stale_pid_file() {", 1)[0]
+if "wait_for_webview_server" not in await_body or "verify_webview_origin" not in await_body:
+    raise SystemExit("await_webview_server_ready must keep readiness and origin verification before Electron")
+if 'log_phase "webview_ready"' not in await_body:
+    raise SystemExit("await_webview_server_ready must keep the webview_ready phase marker")
 if 'if [ -n "${RUNNING_APP_PID:-}" ] && running_app_is_active; then' not in reconcile_body:
     raise SystemExit("reconcile_runtime_state must preserve runtime markers when a live app still exists")
 if 'discover_running_app_pid' in reconcile_body:

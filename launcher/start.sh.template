@@ -673,9 +673,25 @@ print(name.strip())
 PY
 }
 
+# The bundled marketplace metadata is shared by every plugin sync below and
+# the syncs run concurrently on cold start, so the marketplace.json copy is
+# staged exactly once here instead of racing rm+cp inside each sync.
+stage_bundled_marketplace_metadata() {
+    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
+    local codex_home="${CODEX_HOME:-$HOME/.codex}"
+    local marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
+    local marketplace_plugins_dir="$marketplace_root/.agents/plugins"
+
+    [ -f "$source_marketplace" ] || return 0
+    mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
+    rm -f "$marketplace_plugins_dir/marketplace.json"
+    cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
+        chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
+        echo "Bundled marketplace metadata sync failed; continuing with existing marketplace cache."
+}
+
 sync_browser_use_bundled_plugin_cache() {
     local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/browser"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local plugin_json=""
     local source_client=""
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
@@ -706,13 +722,7 @@ sync_browser_use_bundled_plugin_cache() {
     marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
     marketplace_plugin_link="$marketplace_root/plugins/$plugin_dir_name"
-    if [ -f "$source_marketplace" ]; then
-        mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-        rm -f "$marketplace_plugins_dir/marketplace.json"
-        cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-            chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-            echo "Browser Use bundled marketplace sync failed; continuing with existing marketplace cache."
-    fi
+    mkdir -p "$marketplace_root/plugins"
 
     version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
@@ -846,7 +856,6 @@ PY
 
 sync_chrome_bundled_plugin_cache() {
     local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/chrome"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local plugin_json="$source_plugin/.codex-plugin/plugin.json"
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
     local extension_arch
@@ -943,12 +952,6 @@ sync_chrome_bundled_plugin_cache() {
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
     marketplace_plugin_link="$marketplace_root/plugins/chrome"
     mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-    if [ -f "$source_marketplace" ]; then
-        rm -f "$marketplace_plugins_dir/marketplace.json"
-        cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-            chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-            echo "Chrome bundled marketplace sync failed; continuing with existing marketplace cache."
-    fi
     replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
 
     host_path="$cache_root/latest/extension-host/linux/$extension_arch/extension-host"
@@ -959,7 +962,6 @@ sync_chrome_bundled_plugin_cache() {
 
 sync_computer_use_bundled_plugin_cache() {
     local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/computer-use"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local plugin_json="$source_plugin/.codex-plugin/plugin.json"
     local source_backend="$source_plugin/bin/codex-computer-use-linux"
     local source_cosmic_helper="$source_plugin/bin/codex-computer-use-cosmic"
@@ -983,13 +985,7 @@ sync_computer_use_bundled_plugin_cache() {
     marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
     marketplace_plugin_link="$marketplace_root/plugins/computer-use"
-    if [ -f "$source_marketplace" ]; then
-        mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-        rm -f "$marketplace_plugins_dir/marketplace.json"
-        cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-            chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-            echo "Computer Use bundled marketplace sync failed; continuing with existing marketplace cache."
-    fi
+    mkdir -p "$marketplace_root/plugins"
 
     version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
@@ -1032,7 +1028,6 @@ sync_computer_use_bundled_plugin_cache() {
 
 sync_read_aloud_bundled_plugin_cache() {
     local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/read-aloud"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local plugin_json="$source_plugin/.codex-plugin/plugin.json"
     local source_backend="$source_plugin/bin/codex-read-aloud-linux"
     local source_runner="$source_plugin/bin/kokoro-stdin"
@@ -1059,13 +1054,7 @@ sync_read_aloud_bundled_plugin_cache() {
     marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
     marketplace_plugin_link="$marketplace_root/plugins/read-aloud"
-    if [ -f "$source_marketplace" ]; then
-        mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-        rm -f "$marketplace_plugins_dir/marketplace.json"
-        cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-            chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-            echo "Read Aloud bundled marketplace sync failed; continuing with existing marketplace cache."
-    fi
+    mkdir -p "$marketplace_root/plugins"
 
     version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
@@ -1110,7 +1099,6 @@ sync_read_aloud_bundled_plugin_cache() {
 
 sync_extra_bundled_plugin_cache() {
     local plugins_root="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
     local source_plugin
     local plugin_json
@@ -1167,12 +1155,6 @@ sync_extra_bundled_plugin_cache() {
         marketplace_plugins_dir="$marketplace_root/.agents/plugins"
         marketplace_plugin_link="$marketplace_root/plugins/$plugin_dir_name"
         mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-        if [ -f "$source_marketplace" ]; then
-            rm -f "$marketplace_plugins_dir/marketplace.json"
-            cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-                chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-                echo "Extra bundled marketplace sync failed; continuing with existing marketplace cache."
-        fi
         replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
     done
 }
@@ -2236,7 +2218,9 @@ adopt_discovered_webview_server() {
     return 1
 }
 
-ensure_webview_server() {
+start_webview_server() {
+    WEBVIEW_STARTUP_PENDING=0
+
     if [ ! -d "$WEBVIEW_DIR" ] || [ ! "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
         return 0
     fi
@@ -2293,8 +2277,20 @@ ensure_webview_server() {
     python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1 &
     STARTED_WEBVIEW_PID=$!
     echo "$STARTED_WEBVIEW_PID" > "$WEBVIEW_PID_FILE"
+    WEBVIEW_STARTUP_PENDING=1
 
     echo "Started webview server pid=$STARTED_WEBVIEW_PID dir=$WEBVIEW_DIR"
+    log_phase "webview_spawned"
+}
+
+# Readiness runs separately from the spawn so the Python server finishes
+# booting while the launcher does unrelated cold-start work (CLI lookup,
+# plugin cache syncs). Electron never launches before this verifies the
+# origin; the server is tied to the launcher lifetime via PR_SET_PDEATHSIG,
+# so early-exit paths cannot leak it.
+await_webview_server_ready() {
+    [ "${WEBVIEW_STARTUP_PENDING:-0}" -eq 1 ] || return 0
+    WEBVIEW_STARTUP_PENDING=0
 
     if ! wait_for_webview_server; then
         notify_error "$CODEX_LINUX_APP_DISPLAY_NAME webview server did not become ready on port $CODEX_LINUX_WEBVIEW_PORT. Check the launcher log for the embedded http.server output."
@@ -3516,7 +3512,7 @@ elif needs_cold_start; then
     log_phase "packaged_prelaunch_start"
     run_packaged_runtime_prelaunch
     log_phase "packaged_prelaunch"
-    ensure_webview_server
+    start_webview_server
 else
     echo "Skipping packaged prelaunch and webview setup for warm start"
     log_phase "warm_start_ready"
@@ -3575,18 +3571,31 @@ if needs_cold_start; then
     # recreate read-only plugin cache trees before the sync below replaces them.
     monitor_bundled_marketplace_tmp_permissions
     log_phase "bundled_marketplace_tmp_monitor_started"
-    sync_browser_use_bundled_plugin_cache
+    stage_bundled_marketplace_metadata
+    log_phase "bundled_marketplace_metadata_staged"
+    sync_browser_use_bundled_plugin_cache &
+    SYNC_BROWSER_USE_PID=$!
+    sync_chrome_bundled_plugin_cache &
+    SYNC_CHROME_PID=$!
+    sync_computer_use_bundled_plugin_cache &
+    SYNC_COMPUTER_USE_PID=$!
+    sync_read_aloud_bundled_plugin_cache &
+    SYNC_READ_ALOUD_PID=$!
+    sync_extra_bundled_plugin_cache &
+    SYNC_EXTRA_PID=$!
+    wait "$SYNC_BROWSER_USE_PID"
     log_phase "browser_use_plugin_cache_synced"
-    sync_chrome_bundled_plugin_cache
+    wait "$SYNC_CHROME_PID"
     log_phase "chrome_plugin_cache_synced"
-    sync_computer_use_bundled_plugin_cache
+    wait "$SYNC_COMPUTER_USE_PID"
     log_phase "computer_use_plugin_cache_synced"
-    sync_read_aloud_bundled_plugin_cache
+    wait "$SYNC_READ_ALOUD_PID"
     log_phase "read_aloud_plugin_cache_synced"
-    sync_extra_bundled_plugin_cache
+    wait "$SYNC_EXTRA_PID"
     log_phase "extra_bundled_plugin_cache_synced"
     run_cold_start_hooks
     log_phase "cold_start_hooks_dispatched"
+    await_webview_server_ready
 fi
 resolve_browser_use_runtime_env
 log_phase "browser_use_runtime_env_resolved"
