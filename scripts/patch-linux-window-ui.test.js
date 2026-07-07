@@ -5032,7 +5032,7 @@ test("hydrates missing conversations when final app-server events arrive before 
   completedTurnManager.frameTextDeltaQueue = { drainBefore: () => false };
   completedTurnManager.readThread = async (threadId) => {
     completedTurnReads.push(threadId);
-    return { thread: { id: threadId } };
+    return { thread: { id: threadId }, turns: [{ id: "turn-a" }] };
   };
   completedTurnManager.upsertConversationFromThread = (thread) => {
     completedTurnManager.conversations.set(thread.id, thread);
@@ -5055,7 +5055,7 @@ test("hydrates missing conversations when final app-server events arrive before 
   completedItemManager.frameTextDeltaQueue = { drainBefore: () => false };
   completedItemManager.readThread = async (threadId) => {
     completedItemReads.push(threadId);
-    return { thread: { id: threadId } };
+    return { thread: { id: threadId }, turns: [{ id: "turn-a" }] };
   };
   completedItemManager.upsertConversationFromThread = (thread) => {
     completedItemManager.conversations.set(thread.id, thread);
@@ -5076,6 +5076,52 @@ test("hydrates missing conversations when final app-server events arrive before 
   assert.deepEqual(updatedConversations, ["thread-b"]);
   assert.equal(completedItemManager.codexLinuxRemoteMobilePendingNotifications?.has("thread-b"), false);
   assert.equal(completedItemManager.codexLinuxRemoteMobileInFlightHydrations?.has("thread-b"), false);
+});
+
+test("does not hydrate summary-only app-server conversations without turns", async () => {
+  const source = [
+    "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
+    "class T{onNotification(e,t){let n={method:e,params:t};switch(n.method){case`turn/started`:{let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/started for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}this.markConversationStreaming(r),this.updateConversationState(r,e=>{});break}case`turn/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`turn/completed`,n.params)}))break;let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}break}case`item/started`:{let{item:e,threadId:t,turnId:r,startedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/started for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.markConversationStreaming(a),this.updateConversationState(a,t=>{});break}case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;let{item:e,threadId:t,turnId:r,completedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.updateConversationState(a,t=>{});break}}}}",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxAppServerConversationHydrationPatch, source);
+  let scheduledRetry = null;
+  const context = {
+    module: { exports: {} },
+    I: (value) => value,
+    setTimeout(callback) {
+      scheduledRetry = callback;
+      return 1;
+    },
+    z: { error() {}, warning() {} },
+  };
+  vm.runInNewContext(`${patched};module.exports=T;`, context);
+  const manager = new context.module.exports();
+  const readThreadIds = [];
+  const upsertedThreads = [];
+
+  manager.conversations = new Map();
+  manager.frameTextDeltaQueue = { drainBefore: () => false };
+  manager.readThread = async (threadId) => {
+    readThreadIds.push(threadId);
+    return { thread: { id: threadId }, turns: [] };
+  };
+  manager.upsertConversationFromThread = (thread) => {
+    upsertedThreads.push(thread.id);
+    manager.conversations.set(thread.id, thread);
+  };
+
+  manager.onNotification("turn/completed", {
+    threadId: "thread-a",
+    turn: { id: "turn-a", threadId: "thread-a", status: "completed" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(readThreadIds, ["thread-a"]);
+  assert.deepEqual(upsertedThreads, []);
+  assert.equal(manager.conversations.has("thread-a"), false);
+  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications?.has("thread-a"), true);
+  assert.equal(manager.codexLinuxRemoteMobileInFlightHydrations?.has("thread-a"), true);
+  assert.equal(typeof scheduledRetry, "function");
 });
 
 test("coalesces final app-server events while hydrating a missing conversation", async () => {
@@ -5101,7 +5147,7 @@ test("coalesces final app-server events while hydrating a missing conversation",
   manager.readThread = (threadId) => {
     readThreadIds.push(threadId);
     return new Promise((resolve) => {
-      resolveRead = () => resolve({ thread: { id: threadId } });
+      resolveRead = () => resolve({ thread: { id: threadId }, turns: [{ id: "turn-a" }] });
     });
   };
   manager.upsertConversationFromThread = (thread) => {
@@ -5169,7 +5215,7 @@ test("restarts late-event hydration when a pending queue exists without an in-fl
   manager.readThread = (threadId) => {
     readThreadIds.push(threadId);
     return new Promise((resolve) => {
-      resolveRead = () => resolve({ thread: { id: threadId } });
+      resolveRead = () => resolve({ thread: { id: threadId }, turns: [{ id: "turn-a" }] });
     });
   };
   manager.upsertConversationFromThread = (thread) => {
