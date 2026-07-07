@@ -19,7 +19,7 @@ local AppImage self-builds and Nix, and can install a local update manager that
 rebuilds future Linux packages from newer upstream DMGs.
 
 <p align="center">
-  <a href="#install-by-platform">Install</a> ·
+  <a href="#how-to-install">Install</a> ·
   <a href="#uninstall">Uninstall</a> ·
   <a href="#feature-matrix">Features</a> ·
   <a href="#updates">Updates</a> ·
@@ -31,25 +31,20 @@ rebuilds future Linux packages from newer upstream DMGs.
 Before opening a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md). For
 implementation details, see [AGENTS.md](AGENTS.md).
 
-## At a Glance
+## How To Install
 
-| What this repository does | What users get |
-|---|---|
-| Converts the upstream macOS `Codex.dmg` into a Linux Electron app | Native `.deb`, `.rpm`, pacman packages, local AppImage self-builds, and Nix support |
-| Applies Linux compatibility patches and rebuilds native modules | A runnable Linux desktop app with bundled plugin resources and launcher integration |
-| Optionally installs `codex-update-manager` | Local rebuilds from newer upstream DMGs after Codex Desktop exits |
-| Keeps Linux-only extras in `linux-features/` | Opt-in integrations stay disabled by default and out of the core path |
+Codex Desktop for Linux is built locally from the upstream `Codex.dmg`: the
+installer downloads or reuses the DMG, extracts the Electron app, applies Linux
+compatibility patches, rebuilds native modules, stages the Linux runtime, and
+packages the result. Optional Linux-only integrations live in `linux-features/`
+and stay disabled unless you enable them before building.
 
-| Build flow | Stage |
-|---|---|
-| 1 | Download or reuse `Codex.dmg` |
-| 2 | Extract the app and ASAR bundle |
-| 3 | Apply core Linux patches and enabled opt-in features |
-| 4 | Rebuild native modules and stage the Linux runtime |
-| 5 | Produce `.deb`, `.rpm`, pacman, AppImage, or Nix output |
-| 6 | Optionally install the local update manager |
+For native packages and AppImage self-builds, start from a checkout:
 
-## Install By Platform
+```bash
+git clone https://github.com/ilysenko/codex-desktop-linux.git
+cd codex-desktop-linux
+```
 
 | Platform | Recommended path | Notes |
 |---|---|---|
@@ -60,11 +55,9 @@ implementation details, see [AGENTS.md](AGENTS.md).
 | NixOS / Nix | `nix run github:ilysenko/codex-desktop-linux` | See [Nix docs](docs/nix.md) |
 | Atomic desktops / other distros | `make build-app && make appimage` | Local self-build; no bundled updater |
 
-Native install:
+Recommended native install:
 
 ```bash
-git clone https://github.com/ilysenko/codex-desktop-linux.git
-cd codex-desktop-linux
 make bootstrap-native
 ```
 
