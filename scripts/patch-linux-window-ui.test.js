@@ -6764,6 +6764,44 @@ test("warns when Linux external-open helper exists without wrapped Electron requ
   ]);
 });
 
+test("disables xdg-open path when CODEX_LINUX_DISABLE_EXTERNAL_OPEN_PATCH=1", async () => {
+  const spawnCalls = [];
+  const { openExternal, originalCalls } = evaluatePatchedExternalOpen({
+    env: { CODEX_LINUX_DISABLE_EXTERNAL_OPEN_PATCH: "1" },
+    spawn(command, args, options) {
+      spawnCalls.push({ command, args, options });
+      return externalOpenChildClosingWith(0);
+    },
+    originalOpenExternal: async () => "delegated",
+  });
+
+  assert.equal(await openExternal("https://example.test/docs"), "delegated");
+  assert.equal(spawnCalls.length, 0, "should not spawn xdg-open when env var is set");
+  assert.deepEqual(originalCalls, [{ url: "https://example.test/docs", options: undefined }]);
+});
+
+test("uses xdg-open path when CODEX_LINUX_DISABLE_EXTERNAL_OPEN_PATCH is not 1", async () => {
+  const spawnCalls = [];
+  const env = {
+    PATH: "/usr/bin",
+    DISPLAY: ":1",
+    CODEX_LINUX_DISABLE_EXTERNAL_OPEN_PATCH: "0",
+  };
+  const { openExternal, originalCalls } = evaluatePatchedExternalOpen({
+    env,
+    spawn(command, args, options) {
+      spawnCalls.push({ command, args, options });
+      return externalOpenChildClosingWith(0);
+    },
+  });
+
+  await openExternal("https://example.test/docs");
+
+  assert.deepEqual(originalCalls, []);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0].command, "xdg-open");
+});
+
 test("auto-approves the app-provided Browser Use node_repl bridge", () => {
   const source =
     "return{[`mcp_servers.${pt}`]:{command:i.nodeReplPath,args:[],startup_timeout_sec:120,env:{[dt]:l,[ft]:i.nodePath}}}";
