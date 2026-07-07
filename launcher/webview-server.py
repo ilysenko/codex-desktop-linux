@@ -51,23 +51,16 @@ class CodexWebviewHandler(http.server.SimpleHTTPRequestHandler):
             normalized_path = "/" + normalized_path
         return normalized_path
 
-    def is_immutable_asset_request(self):
-        return self.normalized_request_path().startswith("/assets/")
-
     def send_head(self):
-        if not self.is_immutable_asset_request():
-            for header in ("If-Modified-Since", "If-None-Match"):
-                if header in self.headers:
-                    del self.headers[header]
+        for header in ("If-Modified-Since", "If-None-Match"):
+            if header in self.headers:
+                del self.headers[header]
         return super().send_head()
 
     def end_headers(self):
-        if self.is_immutable_asset_request():
-            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
-        else:
-            self.send_header("Cache-Control", "no-store, max-age=0")
-            self.send_header("Pragma", "no-cache")
-            self.send_header("Expires", "0")
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         super().end_headers()
 
 

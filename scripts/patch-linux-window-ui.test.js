@@ -152,6 +152,7 @@ const {
   applyLinuxCompletedItemRecoveryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxAppServerFeatureEnablementPatch,
+  applyAutomationUpdateEagerToolPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
@@ -877,6 +878,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-i18n-gate",
     "linux-profile-settings-menu",
     "automation-schedule-multi-time-rrule",
+    "automation-update-eager-tool",
     "linux-app-sunset-gate",
     "linux-app-server-feature-enablement",
     "linux-app-server-backfill-wait",
@@ -4818,6 +4820,17 @@ test("shows the profile dropdown settings route on Linux", () => {
   assert.match(patched, /let Ct=!0,Pt=Ct,Ft=f\(De,`settings`\)/);
   assert.match(patched, /\/settings\/general-settings/);
   assert.match(patched, /codex\.profileDropdown\.settingsPage/);
+});
+
+test("keeps automation_update eager in dynamic tools built during thread start", () => {
+  const source =
+    "async function pUt(){return[{type:`namespace`,name:cX,description:`Tools provided by the Codex app.`,tools:[...h?[_ee()]:[],...[],...i?.open_in_codex===!0?[TBt]:[],...h&&d?[SBt]:[],lu,...h&&y?[Ra]:[],...[],...g?AHt({availableHandoffHosts:e,availableModels:b,crossHostHandoffEnabled:n,forkThreadEnabled:!0}):[],...h&&_?[PBt,FBt]:[],...m===`conversational_onboarding`?[yoe]:[],...v&&m!==`conversational_onboarding`?[...vee,bu]:[]].map(e=>({type:`function`,...e,..._Ut.has(e.name)?{}:{deferLoading:!0}}))}]}async sendRequest(e,t,n){if(e===`config/read`)return this.sendConfigReadRequest(t,n);let{request:r,promise:i}=this.createRequest(e,t,n);return i}";
+
+  const patched = applyPatchTwice(applyAutomationUpdateEagerToolPatch, source);
+
+  assert.match(patched, /e\.name===`automation_update`&&delete t\.deferLoading/);
+  assert.match(patched, /\{deferLoading:!0\}/);
+  assert.doesNotMatch(patched, /codex-linux-automation-dynamic-tools-diagnostics/);
 });
 
 test("removes unsupported features from default app-server feature sync", () => {

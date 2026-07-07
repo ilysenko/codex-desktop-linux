@@ -720,6 +720,29 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   ].join("");
 }
 
+function applyAutomationUpdateEagerToolPatch(currentSource) {
+  const marker = "e.name===`automation_update`&&delete t.deferLoading";
+  if (currentSource.includes(marker)) {
+    return currentSource;
+  }
+
+  const dynamicToolsNeedle =
+    "tools:[...h?[_ee()]:[],...[],...i?.open_in_codex===!0?[TBt]:[],...h&&d?[SBt]:[],lu,...h&&y?[Ra]:[],...[],...g?AHt({availableHandoffHosts:e,availableModels:b,crossHostHandoffEnabled:n,forkThreadEnabled:!0}):[],...h&&_?[PBt,FBt]:[],...m===`conversational_onboarding`?[yoe]:[],...v&&m!==`conversational_onboarding`?[...vee,bu]:[]].map(e=>({type:`function`,...e,..._Ut.has(e.name)?{}:{deferLoading:!0}}))";
+  const dynamicToolsPatch =
+    "tools:[...h?[_ee()]:[],...[],...i?.open_in_codex===!0?[TBt]:[],...h&&d?[SBt]:[],lu,...h&&y?[Ra]:[],...[],...g?AHt({availableHandoffHosts:e,availableModels:b,crossHostHandoffEnabled:n,forkThreadEnabled:!0}):[],...h&&_?[PBt,FBt]:[],...m===`conversational_onboarding`?[yoe]:[],...v&&m!==`conversational_onboarding`?[...vee,bu]:[]].map(e=>{let t={type:`function`,...e,..._Ut.has(e.name)?{}:{deferLoading:!0}};return e.name===`automation_update`&&delete t.deferLoading,t})";
+
+  if (!currentSource.includes(dynamicToolsNeedle)) {
+    if (currentSource.includes("automation_update") && currentSource.includes("deferLoading:!0")) {
+      console.warn(
+        "WARN: Could not find dynamic tools construction point — skipping automation_update eager tool patch",
+      );
+    }
+    return currentSource;
+  }
+
+  return currentSource.replace(dynamicToolsNeedle, dynamicToolsPatch);
+}
+
 function applyLinuxAppServerBackfillWaitPatch(currentSource) {
   const helperSource =
     "function codexLinuxIsStateDbBackfillMessage(e){return typeof e===`string`&&e.toLowerCase().includes(`state db backfill is running`)}" +
@@ -2011,6 +2034,7 @@ module.exports = {
   applyLinuxCompletedItemRecoveryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxAppServerFeatureEnablementPatch,
+  applyAutomationUpdateEagerToolPatch,
   applyLinuxChatSearchHydrationPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,

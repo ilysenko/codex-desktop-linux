@@ -4720,17 +4720,17 @@ try:
 
     asset_status, asset_headers, _ = request("HEAD", "/assets/app-test-abc123.js")
     assert asset_status == 200, asset_status
-    assert asset_headers.get("cache-control") == "public, max-age=31536000, immutable", asset_headers
-    assert "pragma" not in asset_headers, asset_headers
-    assert "expires" not in asset_headers, asset_headers
+    assert asset_headers.get("cache-control") == "no-store, max-age=0", asset_headers
+    assert asset_headers.get("pragma") == "no-cache", asset_headers
+    assert asset_headers.get("expires") == "0", asset_headers
 
     cached_status, cached_headers, _ = request(
         "GET",
         "/assets/app-test-abc123.js",
         {"If-Modified-Since": asset_headers["last-modified"]},
     )
-    assert cached_status == 304, (cached_status, cached_headers)
-    assert cached_headers.get("cache-control") == "public, max-age=31536000, immutable", cached_headers
+    assert cached_status == 200, (cached_status, cached_headers)
+    assert cached_headers.get("cache-control") == "no-store, max-age=0", cached_headers
 
     refreshed_index_status, _, _ = request(
         "GET",
