@@ -5233,8 +5233,8 @@ test("recovers completed stream items that arrive after local state lost their s
     "if(a.type===`commandExecution`){let e=a.durationMs==null?null:i-a.durationMs;e!=null&&(n.commandExecutionStartedAtMsById??={},n.commandExecutionStartedAtMsById[a.id]??=e)}",
     "let s=FF(a.type===`contextCompaction`?{...a,completed:!0,source:o?.type===`contextCompaction`&&`source`in o?o.source:`automatic`}:a);",
     "if(e.type===`userMessage`){let t=Put(n.items,e.content,n.turnId,n.turnStartedAtMs,!1);if(t!=null){t.status=`accepted`,HI(n,FF({type:`steered`,id:e.id}));return}HI(n,s);return}",
-    "if(e.type===`hookPrompt`){HI(n,s);return}",
-    "Mut(e)&&(n.firstTurnWorkItemStartedAtMs=n.firstTurnWorkItemStartedAtMs??Date.now()),!(e.type!==`subAgentActivity`&&!TR(n,e.id,e.type))&&(e.type,HI(n,s))});break}}}}",
+    "if(e.type===`hookPrompt`){bP(n,s);return}",
+    "yV(e)&&(n.firstTurnWorkItemStartedAtMs=n.firstTurnWorkItemStartedAtMs??Date.now()),!(e.type!==`subAgentActivity`&&!LB(n,e.id,e.type))&&(e.type,bP(n,s))});break}}}}",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxCompletedItemRecoveryPatch, source);
@@ -5242,11 +5242,11 @@ test("recovers completed stream items that arrive after local state lost their s
   assert.match(patched, /codexLinuxCompletedItemExists=n\.items\.some\(e=>e\.id===s\.id\)/);
   assert.match(
     patched,
-    /if\(e\.type!==`subAgentActivity`&&codexLinuxCompletedItemExists&&!TR\(n,e\.id,e\.type\)\)return;HI\(n,s\)/,
+    /if\(e\.type!==`subAgentActivity`&&codexLinuxCompletedItemExists&&!LB\(n,e\.id,e\.type\)\)return;bP\(n,s\)/,
   );
   assert.doesNotMatch(
     patched,
-    /!\(e\.type!==`subAgentActivity`&&!TR\(n,e\.id,e\.type\)\)&&\(e\.type,HI\(n,s\)\)/,
+    /!\(e\.type!==`subAgentActivity`&&!LB\(n,e\.id,e\.type\)\)&&\(e\.type,bP\(n,s\)\)/,
   );
 
   const context = {};
@@ -5259,11 +5259,11 @@ test("recovers completed stream items that arrive after local state lost their s
       "function gI(){throw Error(`unexpected userMessage path`)}",
       "function uI(){throw Error(`unexpected null turn path`)}",
       "function aR(){}",
-      "function Mut(){return true}",
+      "function yV(){return true}",
       "function Jtt({item:e}){return {type:e.type,id:e.id,text:e.text??null}}",
       "function FF(e){return e}",
-      "function HI(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
-      "function TR(e,t,n){let r=e.items.find(e=>e.id===t&&e.type===n);if(r)return r;$.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}});return null}",
+      "function bP(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
+      "function LB(e,t,n){let r=e.items.find(e=>e.id===t&&e.type===n);if(r)return r;$.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}});return null}",
       "function Put(){return null}",
       patched,
       "function run(items){errors=[];let turn={turnId:`turn-1`,items:items.map(e=>({...e}))},conversation={turns:[turn]},manager=new T;manager.frameTextDeltaQueue={drainBefore:()=>false};manager.conversations=new Map([[`thread-1`,{}]]);manager.threadStore={threadsById:new Map};manager.hydrateCollabThreads=()=>{};manager.updateConversationState=(id,fn)=>fn(conversation);manager.onNotification(`item/completed`,{item:{type:`agentMessage`,id:`assistant-1`,text:`done`},threadId:`thread-1`,turnId:`turn-1`,completedAtMs:100});return {items:turn.items,errors}}",

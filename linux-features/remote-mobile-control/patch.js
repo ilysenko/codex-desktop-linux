@@ -1749,7 +1749,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-projectless-remote-task",
     phase: "webview-asset",
-    pattern: /^(?:sidebar-project-groups|app-initial~app-main~worktree-init-v2-page~remote-conversation-page~pull-requests-page~plug~).*\.js$/,
+    pattern: /^app-initial~app-main~remote-conversation-page~new-thread-panel-page~onboarding-page~appgen-~.*\.js$/,
     order: 20_170,
     ciPolicy: "optional",
     missingDescription: "sidebar project groups bundle",

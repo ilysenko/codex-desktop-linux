@@ -24,7 +24,6 @@ const {
 
 function projectBundleFixture() {
   return [
-    "function Hd(){return {id:`sidebarElectron.projectsNavLink`,defaultMessage:`Projects`}}",
     "function row(){let j=Pn(`group/folder-row group relative flex h-[var(--height-token-row)] text-sm text-token-foreground`);",
     "let V=(0,Iy.jsx)(`span`,{className:`min-w-0 truncate pr-1`,children:p});return [j,V]}",
   ].join("");
@@ -83,12 +82,12 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
 
 test("sidebar project descriptor targets only the current project sidebar asset", () => {
   assert.match(
-    "app-initial~app-main~remote-conversation-page~projects-index-page-By2_tGIM.js",
+    "app-initial~app-main~automations-page-BcHjEK7e.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
   assert.doesNotMatch("projects-index-page-TFjtVwC4.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
   assert.doesNotMatch(
-    "app-initial~app-main~remote-conversation-page~projects-index-page~hotkey-window-thread-page~hc7acb17-B7QwUDa9.js",
+    "app-initial~app-main~remote-conversation-page~projects-index-page-By2_tGIM.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
 });

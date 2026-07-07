@@ -43,6 +43,8 @@ const {
 } = require("./patch.js");
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
+const PROJECTLESS_REMOTE_TASK_ASSET =
+  "app-initial~app-main~remote-conversation-page~new-thread-panel-page~onboarding-page~appgen-~o4yhvtva-CRxLUCiX.js";
 
 function syntheticMainBundle() {
   return [
@@ -296,7 +298,7 @@ function syntheticAppMainActiveStatusBundle() {
 
 function syntheticSidebarProjectGroupsBundle() {
   return [
-    "function X(e,t,n){let r=Q(e,t),i=$(r);if(!i){s.warning(`No owner repo found for remote task`,{safe:{taskId:e.task.id},sensitive:{}});return}let a=i.repoName.toLowerCase();(n.find(e=>I(e.repositoryData?.ownerRepo,i)&&e.repositoryData?.repoPath===``&&e.repositoryData?.rootFolder?.toLowerCase()===a)??null??n.find(e=>I(e.repositoryData?.ownerRepo,i))??Z(i,r,n)).threadKeys.push(e.key)}",
+    "function AD(e,t,n){let r=MD(e,t),i=ND(r);if(!i){RD.has(e.task.id)||(RD.add(e.task.id),y.warning(`No owner repo found for remote task`,{safe:{taskId:e.task.id},sensitive:{}}));return}let a=i.repoName.toLowerCase();(n.find(e=>hD(e.repositoryData?.ownerRepo,i)&&e.repositoryData?.repoPath===``&&e.repositoryData?.rootFolder?.toLowerCase()===a)??null??n.find(e=>hD(e.repositoryData?.ownerRepo,i))??jD(i,r,n)).threadKeys.push(e.key)}",
   ].join("");
 }
 
@@ -2056,7 +2058,7 @@ test("remote mobile feature patch report records feature metadata and partial wa
           "if(!this.conversations.get(r)){z.error(`Received turn/completed for unknown conversation`,{safe:{id:r},sensitive:{}});break}",
         ) + syntheticAppServerManagerStatusBundle(),
       );
-      fs.writeFileSync(path.join(assetsDir, "sidebar-project-groups-test.js"), syntheticSidebarProjectGroupsBundle());
+      fs.writeFileSync(path.join(assetsDir, PROJECTLESS_REMOTE_TASK_ASSET), syntheticSidebarProjectGroupsBundle());
       fs.writeFileSync(path.join(assetsDir, "codex-mobile-setup-flow-test.js"), syntheticMobileSetupFlowCopyBundle());
       fs.writeFileSync(path.join(assetsDir, "use-codex-mobile-connected-settings-test.js"), syntheticMobileConnectedSettingsBundle());
 
@@ -2395,7 +2397,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
             syntheticAppMainActiveStatusBundle(),
         );
         fs.writeFileSync(
-          path.join(assetsDir, "sidebar-project-groups-test.js"),
+          path.join(assetsDir, PROJECTLESS_REMOTE_TASK_ASSET),
           syntheticSidebarProjectGroupsBundle(),
         );
 
@@ -2436,7 +2438,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           "utf8",
         );
         const patchedSidebarProjectGroupsFile = fs.readFileSync(
-          path.join(assetsDir, "sidebar-project-groups-test.js"),
+          path.join(assetsDir, PROJECTLESS_REMOTE_TASK_ASSET),
           "utf8",
         );
         assert.match(patchedFile, /codexLinuxRemoteControlDeviceKeyClient/);

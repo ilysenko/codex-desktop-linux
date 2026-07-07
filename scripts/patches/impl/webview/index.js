@@ -976,13 +976,13 @@ function applyLinuxCompletedItemRecoveryPatch(currentSource) {
   }
 
   const completedItemDropPattern =
-    /Mut\(([A-Za-z_$][\w$]*)\)&&\(([A-Za-z_$][\w$]*)\.firstTurnWorkItemStartedAtMs=\2\.firstTurnWorkItemStartedAtMs\?\?Date\.now\(\)\),!\(\1\.type!==`subAgentActivity`&&!TR\(\2,\1\.id,\1\.type\)\)&&\(\1\.type,HI\(\2,([A-Za-z_$][\w$]*)\)\)/u;
+    /yV\(([A-Za-z_$][\w$]*)\)&&\(([A-Za-z_$][\w$]*)\.firstTurnWorkItemStartedAtMs=\2\.firstTurnWorkItemStartedAtMs\?\?Date\.now\(\)\),!\(\1\.type!==`subAgentActivity`&&!LB\(\2,\1\.id,\1\.type\)\)&&\(\1\.type,bP\(\2,([A-Za-z_$][\w$]*)\)\)/u;
 
   if (completedItemDropPattern.test(currentSource)) {
     return currentSource.replace(
       completedItemDropPattern,
       (_match, completedItemVar, turnVar, viewItemVar) =>
-        `Mut(${completedItemVar})&&(${turnVar}.firstTurnWorkItemStartedAtMs=${turnVar}.firstTurnWorkItemStartedAtMs??Date.now());let codexLinuxCompletedItemExists=${turnVar}.items.some(e=>e.id===${viewItemVar}.id);if(${completedItemVar}.type!==\`subAgentActivity\`&&codexLinuxCompletedItemExists&&!TR(${turnVar},${completedItemVar}.id,${completedItemVar}.type))return;HI(${turnVar},${viewItemVar})`,
+        `yV(${completedItemVar})&&(${turnVar}.firstTurnWorkItemStartedAtMs=${turnVar}.firstTurnWorkItemStartedAtMs??Date.now());let codexLinuxCompletedItemExists=${turnVar}.items.some(e=>e.id===${viewItemVar}.id);if(${completedItemVar}.type!==\`subAgentActivity\`&&codexLinuxCompletedItemExists&&!LB(${turnVar},${completedItemVar}.id,${completedItemVar}.type))return;bP(${turnVar},${viewItemVar})`,
     );
   }
 
