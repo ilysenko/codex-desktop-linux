@@ -1,12 +1,11 @@
 //! Read-only diagnostics for installed Codex Desktop Linux runtimes.
 
 use crate::{
-    config::{RuntimeConfig, RuntimePaths},
+    config::{self, RuntimeConfig, RuntimePaths},
     liveness,
     state::PersistedState,
 };
-use anyhow::{Context, Result};
-use directories::BaseDirs;
+use anyhow::Result;
 use serde::Serialize;
 use std::{
     env, fs,
@@ -14,8 +13,8 @@ use std::{
     time::Duration,
 };
 
-const DEFAULT_APP_ID: &str = "codex-desktop";
 const DEFAULT_WEBVIEW_PORT: u16 = 5175;
+const SIDE_BY_SIDE_WEBVIEW_PORT: u16 = 5176;
 const WEBVIEW_TIMEOUT: Duration = Duration::from_secs(2);
 
 type WebviewProbe = (String, bool, Option<u16>, Option<String>);
@@ -126,8 +125,8 @@ fn collect_with_webview(
 ) -> Result<DiagnosticsReport> {
     let running = liveness::is_app_running(config);
     let app_running = running.as_ref().copied().unwrap_or(false);
-    let app_state_dir = codex_desktop_state_dir()?;
-    let app_pid_file = liveness::app_pid_file()?;
+    let app_state_dir = config::resolve_app_state_dir()?;
+    let app_pid_file = app_state_dir.join("app.pid");
     let webview_pid_file = app_state_dir.join("webview.pid");
     let metadata = metadata_diagnostics(config);
     let app = AppDiagnostics {
@@ -281,11 +280,37 @@ async fn check_webview(url: String) -> (String, bool, Option<u16>, Option<String
 }
 
 fn webview_url() -> String {
-    let port = env::var("CODEX_WEBVIEW_PORT")
-        .ok()
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(DEFAULT_WEBVIEW_PORT);
+    let port = webview_port();
     format!("http://127.0.0.1:{port}/")
+}
+
+fn webview_port() -> u16 {
+    env::var("CODEX_WEBVIEW_PORT")
+        .ok()
+        .and_then(|value| parse_tcp_port(&value))
+        .or_else(|| {
+            env::var("CODEX_LINUX_WEBVIEW_PORT")
+                .ok()
+                .and_then(|value| parse_tcp_port(&value))
+        })
+        .unwrap_or_else(default_webview_port)
+}
+
+fn default_webview_port() -> u16 {
+    if config::resolve_app_id() == config::DEFAULT_APP_ID {
+        DEFAULT_WEBVIEW_PORT
+    } else {
+        SIDE_BY_SIDE_WEBVIEW_PORT
+    }
+}
+
+fn parse_tcp_port(value: &str) -> Option<u16> {
+    let port = value.parse::<u32>().ok()?;
+    if (1..=u16::MAX as u32).contains(&port) {
+        Some(port as u16)
+    } else {
+        None
+    }
 }
 
 fn pid_file_diagnostics(path: &Path) -> PidFileDiagnostics {
@@ -351,57 +376,24 @@ fn first_existing_or_first(paths: Vec<PathBuf>) -> Option<PathBuf> {
         .or_else(|| paths.into_iter().next())
 }
 
-fn codex_desktop_state_dir() -> Result<PathBuf> {
-    let base_dirs = BaseDirs::new().context("Could not resolve XDG base directories")?;
-    let state_root = base_dirs
-        .state_dir()
-        .unwrap_or_else(|| base_dirs.data_local_dir());
-    Ok(state_root.join(app_id()))
-}
-
 fn launch_action_socket_path() -> Result<PathBuf> {
-    let app_id = app_id();
-    let instance_id = env::var("CODEX_LINUX_INSTANCE_ID")
-        .ok()
-        .filter(|value| valid_app_id(value));
-    let base = env::var_os("XDG_RUNTIME_DIR")
+    let app_id = config::resolve_app_id();
+    let instance_id = config::resolve_launch_instance_id();
+    if let Some(base) = env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
-        .or_else(|| {
-            BaseDirs::new().map(|base_dirs| {
-                base_dirs
-                    .state_dir()
-                    .unwrap_or_else(|| base_dirs.data_local_dir())
-                    .to_path_buf()
-            })
-        })
-        .context("Could not resolve XDG runtime or state directory")?;
-    let root = base.join(app_id);
-    Ok(match instance_id {
-        Some(instance) => root
-            .join("instances")
-            .join(instance)
-            .join("launch-action.sock"),
-        None => root.join("launch-action.sock"),
-    })
-}
-
-fn app_id() -> String {
-    for var in ["CODEX_LINUX_APP_ID", "CODEX_APP_ID"] {
-        if let Ok(value) = env::var(var) {
-            if valid_app_id(&value) {
-                return value;
-            }
-        }
+    {
+        let root = base.join(app_id);
+        return Ok(match instance_id {
+            Some(instance) => root
+                .join("instances")
+                .join(instance)
+                .join("launch-action.sock"),
+            None => root.join("launch-action.sock"),
+        });
     }
-    DEFAULT_APP_ID.to_string()
-}
 
-fn valid_app_id(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    Ok(config::resolve_app_state_dir()?.join("launch-action.sock"))
 }
 
 fn optional_path(path: Option<&PathBuf>) -> String {
@@ -450,6 +442,29 @@ mod tests {
     }
 
     #[test]
+    fn app_runtime_paths_follow_app_id_and_instance() -> Result<()> {
+        let _env_guard = env_lock();
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "CODEX_LINUX_APP_ID",
+            "CODEX_APP_ID",
+            "CODEX_LINUX_INSTANCE_ID",
+            "XDG_RUNTIME_DIR",
+        ]);
+        env::set_var("CODEX_LINUX_APP_ID", "codex-test");
+        env::set_var("CODEX_LINUX_INSTANCE_ID", "port-6176");
+        env::set_var("XDG_RUNTIME_DIR", "/tmp/codex-runtime-test");
+
+        assert!(config::resolve_app_state_dir()?.ends_with("codex-test/instances/port-6176"));
+        assert_eq!(
+            launch_action_socket_path()?,
+            PathBuf::from(
+                "/tmp/codex-runtime-test/codex-test/instances/port-6176/launch-action.sock"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
     fn launch_socket_uses_runtime_dir_and_instance() -> Result<()> {
         let _env_guard = env_lock();
         let _restore_env = EnvRestoreGuard::capture(&[
@@ -469,6 +484,27 @@ mod tests {
             )
         );
         Ok(())
+    }
+
+    #[test]
+    fn webview_port_matches_launcher_precedence() {
+        let _env_guard = env_lock();
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "CODEX_WEBVIEW_PORT",
+            "CODEX_LINUX_WEBVIEW_PORT",
+            "CODEX_LINUX_APP_ID",
+            "CODEX_APP_ID",
+        ]);
+        env::set_var("CODEX_LINUX_APP_ID", "codex-side");
+        env::remove_var("CODEX_WEBVIEW_PORT");
+        env::remove_var("CODEX_LINUX_WEBVIEW_PORT");
+        assert_eq!(webview_port(), SIDE_BY_SIDE_WEBVIEW_PORT);
+
+        env::set_var("CODEX_LINUX_WEBVIEW_PORT", "6176");
+        assert_eq!(webview_port(), 6176);
+
+        env::set_var("CODEX_WEBVIEW_PORT", "6177");
+        assert_eq!(webview_port(), 6177);
     }
 
     #[test]
@@ -572,6 +608,7 @@ mod tests {
         let _env_guard = env_lock();
         let _restore_env = EnvRestoreGuard::capture(&[
             "CODEX_WEBVIEW_PORT",
+            "CODEX_LINUX_WEBVIEW_PORT",
             "CODEX_LINUX_APP_ID",
             "CODEX_APP_ID",
             "CODEX_LINUX_INSTANCE_ID",

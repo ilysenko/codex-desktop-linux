@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "codex-update-manager"
-version = "0.8.6"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "chrono",
