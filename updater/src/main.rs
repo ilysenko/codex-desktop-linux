@@ -5,6 +5,7 @@ mod builder;
 mod cache_cleanup;
 mod changelog;
 mod cli;
+mod cli_management;
 mod codex_cli;
 mod config;
 mod feature_picker;

@@ -1,6 +1,7 @@
 //! CLI discovery and prelaunch update checks for the user-installed Codex CLI.
 
 use crate::{
+    cli_management,
     config::RuntimePaths,
     state::{CliStatus, PersistedState},
 };
@@ -29,7 +30,8 @@ const CLI_INSTALLED_VERSION_TTL: Duration = Duration::hours(1);
 pub struct PreflightOutcome {
     pub cli_path: PathBuf,
     pub installed_version: String,
-    pub latest_version: Option<String>,
+    pub official_latest_version: Option<String>,
+    pub package_manager_latest_version: Option<String>,
     pub updated: bool,
 }
 
@@ -45,10 +47,17 @@ pub fn preflight(
         None if allow_install_missing => install_missing_cli(state, paths, requested_path)?,
         None => anyhow::bail!("Codex CLI not found in PATH or known install locations"),
     };
+    let path_env = command_path_env();
+    let managed_cli = cli_management::detect_system_package_managed_cli(&cli_path, &path_env);
+    let package_manager_version_status =
+        current_package_manager_version_status(managed_cli.as_ref(), &path_env);
     let cached_installed_version = state.cli_installed_version.clone();
     let installed_version = read_installed_version(&cli_path)?;
     state.cli_path = Some(cli_path.clone());
     state.cli_installed_version = Some(installed_version.clone());
+    state.cli_package_manager_latest_version = package_manager_version_status
+        .as_ref()
+        .map(|status| status.latest_version.clone());
     state.cli_last_verified_at = Some(Utc::now());
     persist_state(paths, state)?;
 
@@ -61,15 +70,20 @@ pub fn preflight(
             installed_version,
             "skipping Codex CLI registry lookup because the cached result is still fresh"
         );
-        refresh_cli_status_from_latest(state, &installed_version);
-        state.cli_error_message = None;
+        refresh_cli_status_from_latest(
+            state,
+            &cli_path,
+            &installed_version,
+            managed_cli.as_ref(),
+            package_manager_version_status.as_ref(),
+        );
         persist_state(paths, state)?;
-        return Ok(PreflightOutcome {
+        return Ok(preflight_outcome_from_state(
             cli_path,
             installed_version,
-            latest_version: state.cli_latest_version.clone(),
-            updated: false,
-        });
+            state,
+            false,
+        ));
     }
 
     state.cli_last_check_at = Some(Utc::now());
@@ -77,39 +91,76 @@ pub fn preflight(
     state.cli_status = CliStatus::Checking;
     persist_state(paths, state)?;
 
-    let latest_version = match read_latest_version() {
-        Ok(version) => version,
+    let official_latest_version = match read_latest_version() {
+        Ok(version) => Some(version),
         Err(error) => {
-            state.cli_status = CliStatus::Unknown;
-            state.cli_latest_version = None;
-            state.cli_error_message = Some(format!(
-                "Could not check the latest {CLI_PACKAGE_NAME} version: {error}"
-            ));
-            persist_state(paths, state)?;
-            warn!(?error, "unable to check latest Codex CLI version");
-            return Ok(PreflightOutcome {
-                cli_path,
-                installed_version,
-                latest_version: None,
-                updated: false,
-            });
+            state.cli_official_latest_version = None;
+            if managed_cli.is_none() {
+                state.cli_status = CliStatus::Unknown;
+                state.cli_error_message = Some(format!(
+                    "Could not check the latest {CLI_PACKAGE_NAME} version: {error}"
+                ));
+                persist_state(paths, state)?;
+                warn!(?error, "unable to check latest Codex CLI version");
+                return Ok(preflight_outcome_from_state(
+                    cli_path,
+                    installed_version,
+                    state,
+                    false,
+                ));
+            }
+            warn!(?error, "unable to check latest official Codex CLI version");
+            None
         }
     };
 
-    state.cli_latest_version = Some(latest_version.clone());
-    if installed_cli_version_satisfies_latest(&installed_version, &latest_version) {
-        state.cli_status = CliStatus::UpToDate;
-        state.cli_error_message = None;
+    state.cli_official_latest_version = official_latest_version.clone();
+
+    refresh_cli_status_from_latest(
+        state,
+        &cli_path,
+        &installed_version,
+        managed_cli.as_ref(),
+        package_manager_version_status.as_ref(),
+    );
+
+    if managed_cli.is_some() {
         persist_state(paths, state)?;
-        return Ok(PreflightOutcome {
+        return Ok(preflight_outcome_from_state(
             cli_path,
             installed_version,
-            latest_version: Some(latest_version),
-            updated: false,
-        });
+            state,
+            false,
+        ));
     }
 
-    state.cli_status = CliStatus::UpdateRequired;
+    let latest_version = match official_latest_version {
+        Some(version) => version,
+        None => {
+            state.cli_status = CliStatus::Unknown;
+            state.cli_official_latest_version = None;
+            state.cli_error_message = Some(format!(
+                "Could not check the latest {CLI_PACKAGE_NAME} version"
+            ));
+            persist_state(paths, state)?;
+            return Ok(preflight_outcome_from_state(
+                cli_path,
+                installed_version,
+                state,
+                false,
+            ));
+        }
+    };
+    if state.cli_status == CliStatus::UpToDate {
+        persist_state(paths, state)?;
+        return Ok(preflight_outcome_from_state(
+            cli_path,
+            installed_version,
+            state,
+            false,
+        ));
+    }
+
     persist_state(paths, state)?;
     info!(
         installed_version,
@@ -147,12 +198,12 @@ pub fn preflight(
     state.cli_status = CliStatus::UpToDate;
     state.cli_error_message = None;
     persist_state(paths, state)?;
-    Ok(PreflightOutcome {
-        cli_path: refreshed_path,
-        installed_version: refreshed_version,
-        latest_version: Some(latest_version),
-        updated: true,
-    })
+    Ok(preflight_outcome_from_state(
+        refreshed_path,
+        refreshed_version,
+        state,
+        true,
+    ))
 }
 
 #[cfg(test)]
@@ -170,11 +221,23 @@ pub fn refresh_cached_status(state: &mut PersistedState, paths: &RuntimePaths) -
     let Some(installed_version) = cached_installed_version_if_fresh(state, &cli_path) else {
         return refresh_status(state, paths);
     };
+    let path_env = command_path_env();
+    let managed_cli = cli_management::detect_system_package_managed_cli(&cli_path, &path_env);
+    let package_manager_version_status =
+        current_package_manager_version_status(managed_cli.as_ref(), &path_env);
 
-    state.cli_path = Some(cli_path);
+    state.cli_path = Some(cli_path.clone());
     state.cli_installed_version = Some(installed_version.clone());
-    refresh_cli_status_from_latest(state, &installed_version);
-    state.cli_error_message = None;
+    state.cli_package_manager_latest_version = package_manager_version_status
+        .as_ref()
+        .map(|status| status.latest_version.clone());
+    refresh_cli_status_from_latest(
+        state,
+        &cli_path,
+        &installed_version,
+        managed_cli.as_ref(),
+        package_manager_version_status.as_ref(),
+    );
 
     persist_if_changed(paths, state, &original_state)
 }
@@ -189,6 +252,10 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
             return Ok(());
         }
     };
+    let path_env = command_path_env();
+    let managed_cli = cli_management::detect_system_package_managed_cli(&cli_path, &path_env);
+    let package_manager_version_status =
+        current_package_manager_version_status(managed_cli.as_ref(), &path_env);
 
     let cached_installed_version = state.cli_installed_version.clone();
     let installed_version = match read_installed_version(&cli_path) {
@@ -207,8 +274,11 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
         }
     };
 
-    state.cli_path = Some(cli_path);
+    state.cli_path = Some(cli_path.clone());
     state.cli_installed_version = Some(installed_version.clone());
+    state.cli_package_manager_latest_version = package_manager_version_status
+        .as_ref()
+        .map(|status| status.latest_version.clone());
     state.cli_last_verified_at = Some(Utc::now());
 
     if should_skip_latest_version_check(
@@ -220,8 +290,13 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
             installed_version,
             "skipping Codex CLI registry lookup because the cached result is still fresh"
         );
-        refresh_cli_status_from_latest(state, &installed_version);
-        state.cli_error_message = None;
+        refresh_cli_status_from_latest(
+            state,
+            &cli_path,
+            &installed_version,
+            managed_cli.as_ref(),
+            package_manager_version_status.as_ref(),
+        );
         persist_state(paths, state)?;
         return Ok(());
     }
@@ -233,25 +308,48 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
 
     match read_latest_version() {
         Ok(latest_version) => {
-            state.cli_latest_version = Some(latest_version);
-            refresh_cli_status_from_latest(state, &installed_version);
-            state.cli_error_message = None;
+            state.cli_official_latest_version = Some(latest_version);
+            refresh_cli_status_from_latest(
+                state,
+                &cli_path,
+                &installed_version,
+                managed_cli.as_ref(),
+                package_manager_version_status.as_ref(),
+            );
         }
         Err(error) => {
-            let cached_latest_matches_install = cached_latest_version_matches_install(
-                state,
-                cached_installed_version.as_deref(),
-                &installed_version,
-            );
-            if cached_latest_matches_install {
-                refresh_cli_status_from_latest(state, &installed_version);
+            if managed_cli.is_some() {
+                state.cli_official_latest_version = None;
+                refresh_cli_status_from_latest(
+                    state,
+                    &cli_path,
+                    &installed_version,
+                    managed_cli.as_ref(),
+                    package_manager_version_status.as_ref(),
+                );
+                warn!(?error, "unable to check latest official Codex CLI version");
             } else {
-                state.cli_status = CliStatus::Unknown;
+                let cached_latest_matches_install = cached_latest_version_matches_install(
+                    state,
+                    cached_installed_version.as_deref(),
+                    &installed_version,
+                );
+                if cached_latest_matches_install {
+                    refresh_cli_status_from_latest(
+                        state,
+                        &cli_path,
+                        &installed_version,
+                        managed_cli.as_ref(),
+                        package_manager_version_status.as_ref(),
+                    );
+                } else {
+                    state.cli_status = CliStatus::Unknown;
+                }
+                state.cli_error_message = Some(format!(
+                    "Could not check the latest {CLI_PACKAGE_NAME} version: {error}"
+                ));
+                warn!(?error, "unable to check latest Codex CLI version");
             }
-            state.cli_error_message = Some(format!(
-                "Could not check the latest {CLI_PACKAGE_NAME} version: {error}"
-            ));
-            warn!(?error, "unable to check latest Codex CLI version");
         }
     }
 
@@ -424,19 +522,120 @@ fn cached_latest_version_matches_install(
     cached_installed_version: Option<&str>,
     installed_version: &str,
 ) -> bool {
-    state.cli_latest_version.is_some() && cached_installed_version == Some(installed_version)
+    state.cli_official_latest_version.is_some()
+        && cached_installed_version == Some(installed_version)
 }
 
-fn refresh_cli_status_from_latest(state: &mut PersistedState, installed_version: &str) {
-    state.cli_status = match state.cli_latest_version.as_deref() {
-        Some(latest_version)
-            if installed_cli_version_satisfies_latest(installed_version, latest_version) =>
-        {
-            CliStatus::UpToDate
+fn refresh_cli_status_from_latest(
+    state: &mut PersistedState,
+    cli_path: &Path,
+    installed_version: &str,
+    managed_cli: Option<&cli_management::SystemPackageManagedCli>,
+    package_manager_version_status: Option<&cli_management::PacmanPackageVersionStatus>,
+) {
+    match managed_cli {
+        Some(cli_management::SystemPackageManagedCli::ManagedByPacman { package_name, .. }) => {
+            match package_manager_version_status {
+                Some(status) if status.update_available => {
+                    state.cli_status = CliStatus::UpdateRequired;
+                    state.cli_error_message = Some(format!(
+                        "This Codex CLI is managed by pacman package '{package_name}'. Pacman currently offers {}. Update it through pacman instead of npm (for example: sudo pacman -Syu).",
+                        status.latest_version
+                    ));
+                }
+                Some(status) => {
+                    state.cli_status = CliStatus::UpToDate;
+                    state.cli_error_message = state
+                        .cli_official_latest_version
+                        .as_deref()
+                        .filter(|official_latest| {
+                            !installed_cli_version_satisfies_latest(installed_version, official_latest)
+                        })
+                        .map(|official_latest| {
+                            format!(
+                                "This Codex CLI is managed by pacman package '{package_name}'. Pacman does not currently offer a newer package (latest known package: {}), but the official {CLI_PACKAGE_NAME} upstream is {official_latest}. Decide for yourself whether to keep the distro-managed package or switch CLI installation channels.",
+                                status.latest_version
+                            )
+                        });
+                }
+                None => {
+                    state.cli_status = CliStatus::Unknown;
+                    state.cli_error_message = Some(format!(
+                        "This Codex CLI is managed by pacman package '{package_name}', but Codex Desktop could not determine the latest version currently available through pacman. This install will not be auto-updated through npm; check pacman directly."
+                    ));
+                }
+            }
         }
-        Some(_) => CliStatus::UpdateRequired,
-        None => CliStatus::Unknown,
-    };
+        Some(cli_management::SystemPackageManagedCli::PacmanOwnershipUnknown { query_path }) => {
+            match state.cli_official_latest_version.as_deref() {
+                Some(official_latest)
+                    if installed_cli_version_satisfies_latest(
+                        installed_version,
+                        official_latest,
+                    ) =>
+                {
+                    state.cli_status = CliStatus::UpToDate;
+                    state.cli_error_message = None;
+                }
+                Some(official_latest) => {
+                    state.cli_status = CliStatus::Unknown;
+                    state.cli_error_message = Some(format!(
+                        "Codex Desktop resolved Codex CLI to {}, but pacman -Qo {} could not determine which package owns it. The official {CLI_PACKAGE_NAME} upstream is {official_latest}; this install will not be auto-updated through npm, so inspect the CLI source and decide how to update it.",
+                        cli_path.display(),
+                        query_path.display()
+                    ));
+                }
+                None => {
+                    state.cli_status = CliStatus::Unknown;
+                    state.cli_error_message = Some(format!(
+                        "Codex Desktop resolved Codex CLI to {}, but pacman -Qo {} could not determine which package owns it, and the official {CLI_PACKAGE_NAME} version could not be checked. This install will not be auto-updated through npm; inspect the CLI source and decide how to update it.",
+                        cli_path.display(),
+                        query_path.display()
+                    ));
+                }
+            }
+        }
+        None => match state.cli_official_latest_version.as_deref() {
+            Some(latest_version)
+                if installed_cli_version_satisfies_latest(installed_version, latest_version) =>
+            {
+                state.cli_status = CliStatus::UpToDate;
+                state.cli_error_message = None;
+            }
+            Some(_) => {
+                state.cli_status = CliStatus::UpdateRequired;
+                state.cli_error_message = None;
+            }
+            None => {
+                state.cli_status = CliStatus::Unknown;
+                state.cli_error_message = None;
+            }
+        },
+    }
+}
+
+fn current_package_manager_version_status(
+    managed_cli: Option<&cli_management::SystemPackageManagedCli>,
+    path_env: &OsString,
+) -> Option<cli_management::PacmanPackageVersionStatus> {
+    managed_cli.and_then(|managed_cli| {
+        cli_management::query_package_manager_version_status(managed_cli, path_env)
+    })
+}
+
+fn preflight_outcome_from_state(
+    cli_path: PathBuf,
+    installed_version: String,
+    state: &PersistedState,
+    updated: bool,
+) -> PreflightOutcome {
+    PreflightOutcome {
+        cli_path,
+        installed_version,
+        official_latest_version: state.cli_official_latest_version.clone(),
+        package_manager_latest_version: state.cli_package_manager_latest_version.clone(),
+        updated,
+    }
 }
 
 fn installed_cli_version_satisfies_latest(installed_version: &str, latest_version: &str) -> bool {
@@ -741,7 +940,8 @@ fn install_missing_cli(
     persist_state(paths, state)?;
 
     let latest_version = read_latest_version()?;
-    state.cli_latest_version = Some(latest_version.clone());
+    state.cli_official_latest_version = Some(latest_version.clone());
+    state.cli_package_manager_latest_version = None;
     persist_state(paths, state)?;
 
     info!(
@@ -1022,13 +1222,31 @@ mod tests {
         Ok(visible_codex)
     }
 
+    fn link_test_system_tool(tool_bin: &Path, name: &str) -> Result<()> {
+        let target = [
+            PathBuf::from("/bin").join(name),
+            PathBuf::from("/usr/bin").join(name),
+        ]
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("system tool {name} not found"),
+            )
+        })?;
+        let link_path = tool_bin.join(name);
+        if !link_path.exists() {
+            std::os::unix::fs::symlink(target, link_path)?;
+        }
+        Ok(())
+    }
+
     fn set_test_path_with_tool_bin(tool_bin: &Path) -> Result<()> {
-        let path_entries = [
-            tool_bin.to_path_buf(),
-            PathBuf::from("/usr/bin"),
-            PathBuf::from("/bin"),
-        ];
-        std::env::set_var("PATH", std::env::join_paths(path_entries)?);
+        for tool in ["sh", "cat", "mkdir", "ln", "chmod"] {
+            link_test_system_tool(tool_bin, tool)?;
+        }
+        std::env::set_var("PATH", std::env::join_paths([tool_bin.to_path_buf()])?);
         Ok(())
     }
 
@@ -1045,6 +1263,45 @@ mod tests {
                 install_log.display()
             ),
         )
+    }
+
+    fn write_fake_pacman_managed_package(
+        tool_bin: &Path,
+        package_name: &str,
+        sync_version: &str,
+        upgrade_version: Option<&str>,
+        query_log: &Path,
+    ) -> Result<PathBuf> {
+        let pacman_path = tool_bin.join("pacman");
+        write_executable_script(
+            &pacman_path,
+            &format!(
+                "#!/bin/sh\necho \"$1|$2|$3\" >> \"{}\"\nif [ \"$1\" = \"-Qo\" ] && [ \"$2\" = \"--\" ]; then\n  printf '%s is owned by {} 0.143.0-1\\n' \"$3\"\n  exit 0\nfi\nif [ \"$1\" = \"-Si\" ] && [ \"$2\" = \"--\" ] && [ \"$3\" = \"{}\" ]; then\n  printf 'Repository      : extra\\nName            : {}\\nVersion         : {}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"-Qu\" ] && [ \"$2\" = \"--\" ] && [ \"$3\" = \"{}\" ]; then\n{}\n  exit 0\nfi\nexit 1\n",
+                query_log.display(),
+                package_name,
+                package_name,
+                package_name,
+                sync_version,
+                package_name,
+                upgrade_version.map_or_else(
+                    String::new,
+                    |version| format!("  printf '{} 0.42.0-1 -> {}\\n'\n", package_name, version),
+                )
+            ),
+        )?;
+        Ok(pacman_path)
+    }
+
+    fn write_fake_pacman_unknown_owner(tool_bin: &Path, query_log: &Path) -> Result<PathBuf> {
+        let pacman_path = tool_bin.join("pacman");
+        write_executable_script(
+            &pacman_path,
+            &format!(
+                "#!/bin/sh\necho \"$1|$2|$3\" >> \"{}\"\nif [ \"$1\" = \"-Qo\" ] && [ \"$2\" = \"--\" ]; then\n  echo 'error: No package owns path' >&2\n  exit 1\nfi\nexit 1\n",
+                query_log.display()
+            ),
+        )?;
+        Ok(pacman_path)
     }
 
     fn write_fake_standalone_installer_curl(tool_bin: &Path) -> Result<()> {
@@ -1167,7 +1424,7 @@ exit 1
     fn skips_registry_lookup_when_previous_check_is_fresh_for_same_cli_version() {
         let mut state = PersistedState::new(true);
         state.cli_installed_version = Some("0.42.0".to_string());
-        state.cli_latest_version = Some("0.42.1".to_string());
+        state.cli_official_latest_version = Some("0.42.1".to_string());
         state.cli_last_check_at = Some(Utc::now() - Duration::minutes(30));
 
         assert!(should_skip_latest_version_check(
@@ -1181,7 +1438,7 @@ exit 1
     fn does_not_skip_registry_lookup_when_cli_version_changed() {
         let mut state = PersistedState::new(true);
         state.cli_installed_version = Some("0.42.0".to_string());
-        state.cli_latest_version = Some("0.42.1".to_string());
+        state.cli_official_latest_version = Some("0.42.1".to_string());
         state.cli_last_check_at = Some(Utc::now() - Duration::minutes(30));
 
         assert!(!should_skip_latest_version_check(
@@ -1195,7 +1452,7 @@ exit 1
     fn does_not_skip_registry_lookup_when_cached_check_is_stale() {
         let mut state = PersistedState::new(true);
         state.cli_installed_version = Some("0.42.0".to_string());
-        state.cli_latest_version = Some("0.42.0".to_string());
+        state.cli_official_latest_version = Some("0.42.0".to_string());
         state.cli_last_check_at = Some(Utc::now() - Duration::hours(2));
 
         assert!(!should_skip_latest_version_check(
@@ -1233,13 +1490,14 @@ exit 1
         let mut state = PersistedState::new(true);
         state.cli_path = Some(codex_path.clone());
         state.cli_installed_version = Some("0.42.0".to_string());
-        state.cli_latest_version = Some("0.43.0".to_string());
+        state.cli_official_latest_version = Some("0.43.0".to_string());
         state.cli_last_check_at = Some(Utc::now() - Duration::minutes(30));
         refresh_status(&mut state, &paths)?;
 
         assert_eq!(state.cli_path.as_deref(), Some(codex_path.as_path()));
         assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.0"));
-        assert_eq!(state.cli_latest_version.as_deref(), Some("0.43.0"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.43.0"));
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::UpdateRequired);
         assert_eq!(state.cli_error_message, None);
         Ok(())
@@ -1259,7 +1517,7 @@ exit 1
 
         let mut state = PersistedState::new(true);
         state.cli_installed_version = Some("0.42.0".to_string());
-        state.cli_latest_version = Some("0.42.0".to_string());
+        state.cli_official_latest_version = Some("0.42.0".to_string());
         state.cli_last_check_at = Some(Utc::now() - Duration::minutes(5));
         state.cli_status = CliStatus::Unknown;
         state.cli_error_message = Some("previous error".to_string());
@@ -1268,9 +1526,11 @@ exit 1
 
         assert_eq!(outcome.cli_path, codex_path);
         assert_eq!(outcome.installed_version, "0.42.0");
-        assert_eq!(outcome.latest_version.as_deref(), Some("0.42.0"));
+        assert_eq!(outcome.official_latest_version.as_deref(), Some("0.42.0"));
+        assert_eq!(outcome.package_manager_latest_version, None);
         assert!(!outcome.updated);
-        assert_eq!(state.cli_latest_version.as_deref(), Some("0.42.0"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.0"));
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert_eq!(state.cli_error_message, None);
         Ok(())
@@ -1291,7 +1551,7 @@ exit 1
         let mut state = PersistedState::new(true);
         state.cli_path = Some(codex_path.clone());
         state.cli_installed_version = Some("0.42.0".to_string());
-        state.cli_latest_version = Some("0.42.1".to_string());
+        state.cli_official_latest_version = Some("0.42.1".to_string());
         state.cli_last_check_at = Some(Utc::now() - Duration::minutes(30));
         state.cli_last_verified_at = Some(Utc::now() - Duration::minutes(30));
 
@@ -1299,8 +1559,251 @@ exit 1
 
         assert_eq!(state.cli_path.as_deref(), Some(codex_path.as_path()));
         assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.0"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::UpdateRequired);
         assert_eq!(state.cli_error_message, None);
+        Ok(())
+    }
+
+    #[test]
+    fn preflight_reports_actionable_pacman_update_without_running_npm_install() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let tool_bin = temp.path().join("tool-bin");
+        let system_root = temp.path().join("system-root/usr/bin");
+        fs::create_dir_all(&tool_bin)?;
+        fs::create_dir_all(&system_root)?;
+
+        let codex_path = system_root.join("codex");
+        write_executable_script(
+            &codex_path,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"version\" ]; then\n  echo 'codex-cli v0.42.0'\n  exit 0\nfi\nexit 1\n",
+        )?;
+
+        let npm_install_log = temp.path().join("npm-install.log");
+        let pacman_query_log = temp.path().join("pacman-query.log");
+        write_fake_latest_npm(&tool_bin, "0.42.2", &npm_install_log)?;
+        let pacman_path = write_fake_pacman_managed_package(
+            &tool_bin,
+            "openai-codex",
+            "0.42.1-1",
+            Some("0.42.1-1"),
+            &pacman_query_log,
+        )?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            "CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT",
+            "CODEX_UPDATE_MANAGER_TEST_PACMAN_PATH",
+            "CODEX_UPDATE_MANAGER_TEST_FORCE_ARCH_HOST",
+        ]);
+        std::env::set_var("HOME", temp.path());
+        set_test_path_with_tool_bin(&tool_bin)?;
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::remove_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP");
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT", &system_root);
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_PACMAN_PATH", &pacman_path);
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_FORCE_ARCH_HOST", "1");
+
+        let mut state = PersistedState::new(true);
+        let outcome = preflight(&mut state, &paths, Some(codex_path.clone()), false)?;
+
+        assert!(!outcome.updated);
+        assert_eq!(outcome.cli_path, codex_path);
+        assert_eq!(outcome.installed_version, "0.42.0");
+        assert_eq!(outcome.official_latest_version.as_deref(), Some("0.42.2"));
+        assert_eq!(
+            outcome.package_manager_latest_version.as_deref(),
+            Some("0.42.1-1")
+        );
+        assert_eq!(state.cli_status, CliStatus::UpdateRequired);
+        assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.0"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.2"));
+        assert_eq!(
+            state.cli_package_manager_latest_version.as_deref(),
+            Some("0.42.1-1")
+        );
+        assert_eq!(
+            state.cli_error_message.as_deref(),
+            Some(
+                "This Codex CLI is managed by pacman package 'openai-codex'. Pacman currently offers 0.42.1-1. Update it through pacman instead of npm (for example: sudo pacman -Syu)."
+            )
+        );
+        assert!(!npm_install_log.exists());
+        assert_eq!(
+            fs::read_to_string(&pacman_query_log)?,
+            format!(
+                "-Qo|--|{}\n-Si|--|openai-codex\n-Qu|--|openai-codex\n",
+                codex_path.display()
+            )
+        );
+        assert_eq!(read_installed_version(&codex_path)?, "0.42.0");
+        Ok(())
+    }
+
+    #[test]
+    fn preflight_reports_channel_mismatch_for_pacman_managed_cli_without_actionable_update(
+    ) -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let tool_bin = temp.path().join("tool-bin");
+        let system_root = temp.path().join("system-root/usr/bin");
+        fs::create_dir_all(&tool_bin)?;
+        fs::create_dir_all(&system_root)?;
+
+        let codex_path = system_root.join("codex");
+        write_executable_script(
+            &codex_path,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"version\" ]; then\n  echo 'codex-cli v0.42.0'\n  exit 0\nfi\nexit 1\n",
+        )?;
+
+        let npm_install_log = temp.path().join("npm-install.log");
+        let pacman_query_log = temp.path().join("pacman-query.log");
+        write_fake_latest_npm(&tool_bin, "0.42.2", &npm_install_log)?;
+        let pacman_path = write_fake_pacman_managed_package(
+            &tool_bin,
+            "openai-codex",
+            "0.42.0-1",
+            None,
+            &pacman_query_log,
+        )?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            "CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT",
+            "CODEX_UPDATE_MANAGER_TEST_PACMAN_PATH",
+            "CODEX_UPDATE_MANAGER_TEST_FORCE_ARCH_HOST",
+        ]);
+        std::env::set_var("HOME", temp.path());
+        set_test_path_with_tool_bin(&tool_bin)?;
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::remove_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP");
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT", &system_root);
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_PACMAN_PATH", &pacman_path);
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_FORCE_ARCH_HOST", "1");
+
+        let mut state = PersistedState::new(true);
+        let outcome = preflight(&mut state, &paths, Some(codex_path.clone()), false)?;
+
+        assert!(!outcome.updated);
+        assert_eq!(outcome.cli_path, codex_path);
+        assert_eq!(outcome.installed_version, "0.42.0");
+        assert_eq!(outcome.official_latest_version.as_deref(), Some("0.42.2"));
+        assert_eq!(
+            outcome.package_manager_latest_version.as_deref(),
+            Some("0.42.0-1")
+        );
+        assert_eq!(state.cli_status, CliStatus::UpToDate);
+        assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.0"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.2"));
+        assert_eq!(
+            state.cli_package_manager_latest_version.as_deref(),
+            Some("0.42.0-1")
+        );
+        let message = state
+            .cli_error_message
+            .as_deref()
+            .expect("channel mismatch should set a guidance message");
+        assert!(message.contains("Pacman does not currently offer a newer package"));
+        assert!(message.contains("latest known package: 0.42.0-1"));
+        assert!(message.contains("official @openai/codex upstream is 0.42.2"));
+        assert!(message.contains("switch CLI installation channels"));
+        assert!(!npm_install_log.exists());
+        assert_eq!(
+            fs::read_to_string(&pacman_query_log)?,
+            format!(
+                "-Qo|--|{}\n-Si|--|openai-codex\n-Qu|--|openai-codex\n",
+                codex_path.display()
+            )
+        );
+        assert_eq!(read_installed_version(&codex_path)?, "0.42.0");
+        Ok(())
+    }
+
+    #[test]
+    fn preflight_skips_npm_upgrade_when_pacman_cannot_confirm_owner() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let tool_bin = temp.path().join("tool-bin");
+        let system_root = temp.path().join("system-root/usr/bin");
+        fs::create_dir_all(&tool_bin)?;
+        fs::create_dir_all(&system_root)?;
+
+        let codex_path = system_root.join("codex");
+        write_executable_script(
+            &codex_path,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"version\" ]; then\n  echo 'codex-cli v0.42.0'\n  exit 0\nfi\nexit 1\n",
+        )?;
+
+        let npm_install_log = temp.path().join("npm-install.log");
+        let pacman_query_log = temp.path().join("pacman-query.log");
+        write_fake_latest_npm(&tool_bin, "0.42.1", &npm_install_log)?;
+        let pacman_path = write_fake_pacman_unknown_owner(&tool_bin, &pacman_query_log)?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            "CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT",
+            "CODEX_UPDATE_MANAGER_TEST_PACMAN_PATH",
+            "CODEX_UPDATE_MANAGER_TEST_FORCE_ARCH_HOST",
+        ]);
+        std::env::set_var("HOME", temp.path());
+        set_test_path_with_tool_bin(&tool_bin)?;
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::remove_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP");
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT", &system_root);
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_PACMAN_PATH", &pacman_path);
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_FORCE_ARCH_HOST", "1");
+
+        let mut state = PersistedState::new(true);
+        let outcome = preflight(&mut state, &paths, Some(codex_path.clone()), false)?;
+
+        assert!(!outcome.updated);
+        assert_eq!(outcome.cli_path, codex_path);
+        assert_eq!(outcome.installed_version, "0.42.0");
+        assert_eq!(outcome.official_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(outcome.package_manager_latest_version, None);
+        assert_eq!(state.cli_status, CliStatus::Unknown);
+        assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.0"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_package_manager_latest_version, None);
+        let message = state
+            .cli_error_message
+            .as_deref()
+            .expect("ownership failure should set a guidance message");
+        assert!(message.contains("pacman -Qo"));
+        assert!(message.contains("could not determine which package owns it"));
+        assert!(message.contains(&codex_path.display().to_string()));
+        assert!(!npm_install_log.exists());
+        assert_eq!(
+            fs::read_to_string(&pacman_query_log)?,
+            format!("-Qo|--|{}\n", codex_path.display())
+        );
+        assert_eq!(read_installed_version(&codex_path)?, "0.42.0");
         Ok(())
     }
 
@@ -1476,7 +1979,8 @@ exit 1
         assert_eq!(outcome.cli_path, visible_codex);
         assert_eq!(outcome.installed_version, "0.42.1");
         assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.1"));
-        assert_eq!(state.cli_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert_eq!(read_installed_version(&outcome.cli_path)?, "0.42.1");
         assert!(!npm_install_log.exists());
@@ -1525,7 +2029,8 @@ exit 1
         assert!(!updated);
         assert_eq!(state.cli_path.as_deref(), Some(visible_codex.as_path()));
         assert_eq!(state.cli_installed_version.as_deref(), Some("0.43.0"));
-        assert_eq!(state.cli_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert!(!npm_install_log.exists());
         assert!(!curl_call_log.exists());
@@ -1638,7 +2143,8 @@ exit 1
         assert!(updated);
         assert_eq!(state.cli_path.as_deref(), Some(codex_path.as_path()));
         assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.1"));
-        assert_eq!(state.cli_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert_eq!(read_installed_version(&codex_path)?, "0.42.1");
         Ok(())
@@ -1706,7 +2212,8 @@ exit 1
         assert_eq!(outcome.installed_version, "0.42.1");
         assert_eq!(state.cli_path.as_deref(), Some(user_codex.as_path()));
         assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.1"));
-        assert_eq!(state.cli_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert_eq!(read_installed_version(&system_codex)?, "0.42.0");
         Ok(())
@@ -1749,7 +2256,8 @@ exit 1
         assert!(!updated);
         assert_eq!(state.cli_path.as_deref(), Some(codex_path.as_path()));
         assert_eq!(state.cli_installed_version.as_deref(), Some("0.43.0"));
-        assert_eq!(state.cli_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_official_latest_version.as_deref(), Some("0.42.1"));
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert_eq!(read_installed_version(&codex_path)?, "0.43.0");
         Ok(())

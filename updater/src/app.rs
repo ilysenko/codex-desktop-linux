@@ -643,8 +643,18 @@ fn run_status(
             state.cli_installed_version.as_deref().unwrap_or("unknown")
         );
         println!(
-            "cli_latest_version: {}",
-            state.cli_latest_version.as_deref().unwrap_or("unknown")
+            "cli_official_latest_version: {}",
+            state
+                .cli_official_latest_version
+                .as_deref()
+                .unwrap_or("unknown")
+        );
+        println!(
+            "cli_package_manager_latest_version: {}",
+            state
+                .cli_package_manager_latest_version
+                .as_deref()
+                .unwrap_or("unknown")
         );
         println!(
             "cli_error: {}",
