@@ -49,6 +49,13 @@ test("frameless-titlebar stays disabled until listed in features.json", () => {
         "feature:frameless-titlebar:webview-window-controls-layout",
       ],
     );
+    const webviewPatch = descriptors.find(
+      (descriptor) => descriptor.id === "feature:frameless-titlebar:webview-window-controls-layout",
+    );
+    assert.match("app-initial~app-main~onboarding-page-abc.js", webviewPatch.pattern);
+    assert.doesNotMatch("use-window-controls-safe-area-abc.js", webviewPatch.pattern);
+    assert.doesNotMatch("app-initial~app-main~onboarding-page~debug-window-page-abc.js", webviewPatch.pattern);
+    assert.doesNotMatch("app-main-abc.js", webviewPatch.pattern);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -114,20 +121,23 @@ test("frameless-titlebar collapses the core-patched zoom overlay ternary", () =>
 
 test("frameless-titlebar maps Linux window controls chrome to native webview layout", () => {
   const source = [
-    "var l=Object.freeze({default:Object.freeze({left:0,right:0}),mac:Object.freeze({legacy:Object.freeze({left:66+c,right:0}),modern:Object.freeze({left:76+c,right:0})}),applicationMenu:Object.freeze({left:0,right:138})});",
-    "var m=Object.freeze({applicationMenu:Object.freeze({left:0,right:138})});",
+    "var eV=Object.freeze({default:Object.freeze({left:0,right:0}),mac:Object.freeze({legacy:Object.freeze({left:66+hyt,right:0}),modern:Object.freeze({left:76+hyt,right:0})}),applicationMenu:Object.freeze({left:0,right:138})});",
+    "function Nvt(){return vKe()&&window.electronBridge?.showApplicationMenu!=null}",
     "function chrome(e){switch(e){case`win32`:case`linux`:return`application-menu`;default:return`native`}}",
-    "let inset=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??l.applicationMenu:l.default;",
+    "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.applicationMenu:eV.default;",
   ].join("");
 
   const patched = applyPatchTwice(applyFramelessTitlebarWebviewPatch, source);
 
   assert.equal(
     (patched.match(/applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/g) ?? []).length,
-    2,
+    1,
   );
   assert.match(patched, /case`win32`:return`application-menu`;case`linux`:return`native`/);
-  assert.match(patched, /i\.includes\(`win`\)\|\|r\.includes\(`windows`\)\?t\?\?l\.applicationMenu:l\.default/);
+  assert.match(patched, /function Nvt\(\)\{return!1\}/);
+  assert.match(patched, /i\.includes\(`win`\)\|\|r\.includes\(`windows`\)\?t\?\?eV\.applicationMenu:eV\.default/);
   assert.doesNotMatch(patched, /case`win32`:case`linux`:return`application-menu`/);
+  assert.doesNotMatch(patched, /showApplicationMenu/);
+  assert.doesNotMatch(patched, /includes\(`linux`\)\?t\?\?eV\.applicationMenu/);
   assert.doesNotMatch(patched, /right:138/);
 });
