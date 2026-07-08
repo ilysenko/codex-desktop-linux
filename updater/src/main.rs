@@ -7,6 +7,7 @@ mod changelog;
 mod cli;
 mod codex_cli;
 mod config;
+mod diagnostics;
 mod feature_picker;
 mod install;
 mod install_rollback;

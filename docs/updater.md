@@ -31,9 +31,16 @@ need to pin a particular binary from a GUI-launched session.
 ```bash
 systemctl --user status codex-update-manager.service
 codex-update-manager status --json
+codex-update-manager diagnose --json
 sed -n '1,160p' ~/.local/state/codex-update-manager/state.json
 sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
 ```
+
+`diagnose` is read-only and intended for post-update support reports. It checks
+the persisted updater state, installed app executable, launcher `app.pid` and
+`webview.pid`, local webview HTTP endpoint, warm-start handoff socket, and
+Linux build metadata without starting, stopping, installing, or repairing
+anything.
 
 Runtime files:
 

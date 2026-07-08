@@ -5,7 +5,7 @@ use crate::{
     cli::{Cli, Commands},
     codex_cli,
     config::{RuntimeConfig, RuntimePaths},
-    feature_picker, install, install_rollback, liveness, logging, notify, rollback,
+    diagnostics, feature_picker, install, install_rollback, liveness, logging, notify, rollback,
     state::{CliStatus, PersistedState, UpdateStatus},
     upstream, wrapper, wrapper_apply,
 };
@@ -51,6 +51,10 @@ const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
 /// Runs the updater command-line entrypoint.
 pub async fn run(cli: Cli) -> Result<()> {
     let paths = RuntimePaths::detect()?;
+    if let Commands::Diagnose { json } = &cli.command {
+        return run_diagnose_command(&paths, *json).await;
+    }
+
     paths.ensure_dirs()?;
     logging::init(&paths.log_file)?;
 
@@ -90,6 +94,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_path,
         } => run_prompt_install_cli(&mut state, &paths, cli_path, print_path),
         Commands::Status { json } => run_status(&config, &mut state, &paths, json),
+        Commands::Diagnose { .. } => unreachable!("diagnose is handled before runtime writes"),
         Commands::InstallReady => run_install_ready(&config, &mut state, &paths).await,
         Commands::Rollback => rollback::run(&config, &mut state, &paths).await,
         Commands::InstallDeb { path } => install::install_deb(&path),
@@ -99,6 +104,17 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::InstallRollbackRpm { path } => install_rollback::install_rpm(&path),
         Commands::InstallRollbackPacman { path } => install_rollback::install_pacman(&path),
     }
+}
+
+async fn run_diagnose_command(paths: &RuntimePaths, json: bool) -> Result<()> {
+    let mut config = RuntimeConfig::load_or_default(paths)?;
+    if let Some(enabled) = crate::config::settings_wrapper_updates_override() {
+        config.enable_wrapper_updates = enabled;
+    }
+    let mut state =
+        PersistedState::load_or_default(&paths.state_file, effective_auto_install(&config))?;
+    state.installed_version = install::installed_package_version();
+    diagnostics::run(&config, &state, paths, json).await
 }
 
 fn persist_state(paths: &RuntimePaths, state: &PersistedState) -> Result<()> {
