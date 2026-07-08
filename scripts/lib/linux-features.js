@@ -616,7 +616,52 @@ function chmodRecursive(target, mode) {
   }
 }
 
-function copyInstallFile(source, target, mode) {
+function pathStaysInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+function assertNoSymbolicLinks(target, label) {
+  const stat = fs.lstatSync(target);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`${label} must not contain symbolic links`);
+  }
+  if (!stat.isDirectory()) {
+    return;
+  }
+  for (const name of fs.readdirSync(target)) {
+    assertNoSymbolicLinks(path.join(target, name), label);
+  }
+}
+
+function assertNoSymbolicLinksIfPresent(target, label) {
+  try {
+    assertNoSymbolicLinks(target, label);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+function assertInstallParentInside(installDir, target, label) {
+  fs.mkdirSync(installDir, { recursive: true });
+  const installRoot = fs.realpathSync(installDir);
+  const parent = path.dirname(target);
+  fs.mkdirSync(parent, { recursive: true });
+  const realParent = fs.realpathSync(parent);
+  if (!pathStaysInside(installRoot, realParent)) {
+    throw new Error(`${label} must stay inside the install directory`);
+  }
+}
+
+function copyInstallFile(installDir, source, target, mode) {
+  assertNoSymbolicLinks(source, "Linux feature source");
+  assertInstallParentInside(installDir, target, "Linux feature target");
+  assertNoSymbolicLinksIfPresent(target, "Linux feature target");
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.cpSync(source, target, { recursive: true, force: true });
   if (mode != null) {
@@ -735,12 +780,12 @@ function stageEnabledLinuxFeatureInstall(appDir, options = {}) {
     removePreviouslyStagedArtifacts(installDir, previousManifest);
   }
   for (const resource of plan.resources) {
-    copyInstallFile(resource.source, path.join(installDir, resource.target), resource.mode);
+    copyInstallFile(installDir, resource.source, path.join(installDir, resource.target), resource.mode);
     console.error(`Staged Linux feature resource: ${resource.id} -> ${resource.target}`);
   }
   for (const hook of plan.runtimeHooks) {
     const target = path.join(installDir, hook.target);
-    copyInstallFile(hook.source, target, hook.mode);
+    copyInstallFile(installDir, hook.source, target, hook.mode);
     console.error(`Staged Linux feature ${hook.key} hook: ${hook.id} -> ${path.relative(installDir, target)}`);
   }
   writeStagedFeatureManifest(installDir, plan);
