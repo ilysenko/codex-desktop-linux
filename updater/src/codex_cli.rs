@@ -263,6 +263,7 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
         Err(error) => {
             state.cli_path = Some(cli_path);
             state.cli_installed_version = None;
+            state.cli_package_manager_latest_version = None;
             state.cli_last_verified_at = None;
             state.cli_status = CliStatus::Failed;
             state.cli_error_message = Some(format!(
@@ -477,6 +478,7 @@ fn requested_cli_path(state: &PersistedState) -> Option<PathBuf> {
 fn mark_cli_missing(state: &mut PersistedState) {
     state.cli_path = None;
     state.cli_installed_version = None;
+    state.cli_package_manager_latest_version = None;
     state.cli_last_verified_at = None;
     state.cli_status = CliStatus::NotInstalled;
     state.cli_error_message = Some(CLI_NOT_INSTALLED_MESSAGE.to_string());
@@ -1574,8 +1576,10 @@ exit 1
         paths.ensure_dirs()?;
 
         let tool_bin = temp.path().join("tool-bin");
+        let pacman_bin = temp.path().join("pacman-bin");
         let system_root = temp.path().join("system-root/usr/bin");
         fs::create_dir_all(&tool_bin)?;
+        fs::create_dir_all(&pacman_bin)?;
         fs::create_dir_all(&system_root)?;
 
         let codex_path = system_root.join("codex");
@@ -1588,7 +1592,7 @@ exit 1
         let pacman_query_log = temp.path().join("pacman-query.log");
         write_fake_latest_npm(&tool_bin, "0.42.2", &npm_install_log)?;
         let pacman_path = write_fake_pacman_managed_package(
-            &tool_bin,
+            &pacman_bin,
             "openai-codex",
             "0.42.1-1",
             Some("0.42.1-1"),
@@ -1659,8 +1663,10 @@ exit 1
         paths.ensure_dirs()?;
 
         let tool_bin = temp.path().join("tool-bin");
+        let pacman_bin = temp.path().join("pacman-bin");
         let system_root = temp.path().join("system-root/usr/bin");
         fs::create_dir_all(&tool_bin)?;
+        fs::create_dir_all(&pacman_bin)?;
         fs::create_dir_all(&system_root)?;
 
         let codex_path = system_root.join("codex");
@@ -1673,7 +1679,7 @@ exit 1
         let pacman_query_log = temp.path().join("pacman-query.log");
         write_fake_latest_npm(&tool_bin, "0.42.2", &npm_install_log)?;
         let pacman_path = write_fake_pacman_managed_package(
-            &tool_bin,
+            &pacman_bin,
             "openai-codex",
             "0.42.0-1",
             None,
@@ -1745,8 +1751,10 @@ exit 1
         paths.ensure_dirs()?;
 
         let tool_bin = temp.path().join("tool-bin");
+        let pacman_bin = temp.path().join("pacman-bin");
         let system_root = temp.path().join("system-root/usr/bin");
         fs::create_dir_all(&tool_bin)?;
+        fs::create_dir_all(&pacman_bin)?;
         fs::create_dir_all(&system_root)?;
 
         let codex_path = system_root.join("codex");
@@ -1758,7 +1766,7 @@ exit 1
         let npm_install_log = temp.path().join("npm-install.log");
         let pacman_query_log = temp.path().join("pacman-query.log");
         write_fake_latest_npm(&tool_bin, "0.42.1", &npm_install_log)?;
-        let pacman_path = write_fake_pacman_unknown_owner(&tool_bin, &pacman_query_log)?;
+        let pacman_path = write_fake_pacman_unknown_owner(&pacman_bin, &pacman_query_log)?;
 
         let _restore_env = EnvRestoreGuard::capture(&[
             "HOME",
@@ -1830,6 +1838,7 @@ exit 1
         let mut state = PersistedState::new(true);
         state.cli_path = Some(missing_path);
         state.cli_installed_version = Some("0.42.0".to_string());
+        state.cli_package_manager_latest_version = Some("0.42.1-1".to_string());
         state.cli_last_verified_at = Some(Utc::now() - Duration::minutes(30));
 
         refresh_cached_status(&mut state, &paths)?;
@@ -1862,6 +1871,7 @@ exit 1
 
         assert_eq!(state.cli_path, None);
         assert_eq!(state.cli_installed_version, None);
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::NotInstalled);
         assert_eq!(
             state.cli_error_message.as_deref(),
@@ -1890,6 +1900,7 @@ exit 1
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
         let mut state = PersistedState::new(true);
+        state.cli_package_manager_latest_version = Some("0.42.1-1".to_string());
         refresh_status(&mut state, &paths)?;
 
         if let Some(home) = original_home {
@@ -1920,11 +1931,54 @@ exit 1
 
         assert_eq!(state.cli_path, None);
         assert_eq!(state.cli_installed_version, None);
+        assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::NotInstalled);
         assert_eq!(
             state.cli_error_message.as_deref(),
             Some(CLI_NOT_INSTALLED_MESSAGE)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_status_clears_package_manager_latest_when_cli_version_is_unreadable() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        let codex_path = bin_dir.join("codex");
+        write_executable_script(&codex_path, "#!/bin/sh\nexit 1\n")?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+        ]);
+        std::env::set_var("HOME", temp.path());
+        std::env::set_var("PATH", std::env::join_paths([bin_dir])?);
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(codex_path.clone());
+        state.cli_package_manager_latest_version = Some("0.42.1-1".to_string());
+        refresh_status(&mut state, &paths)?;
+
+        assert_eq!(state.cli_path.as_deref(), Some(codex_path.as_path()));
+        assert_eq!(state.cli_installed_version, None);
+        assert_eq!(state.cli_package_manager_latest_version, None);
+        assert_eq!(state.cli_status, CliStatus::Failed);
+        assert!(state
+            .cli_error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Could not read the installed"));
         Ok(())
     }
 

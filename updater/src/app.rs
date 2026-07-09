@@ -617,7 +617,10 @@ fn run_status(
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(state)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status_json_value(state)?)?
+        );
     } else {
         println!("status: {:?}", state.status);
         println!("installed_version: {}", state.installed_version);
@@ -663,6 +666,17 @@ fn run_status(
     }
 
     Ok(())
+}
+
+fn status_json_value(state: &PersistedState) -> Result<serde_json::Value> {
+    let mut value = serde_json::to_value(state)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "cli_latest_version".to_string(),
+            serde_json::to_value(&state.cli_official_latest_version)?,
+        );
+    }
+    Ok(value)
 }
 
 fn update_error_status_line(state: &PersistedState) -> String {
@@ -3588,6 +3602,20 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(state.cli_status, CliStatus::Updating);
+        Ok(())
+    }
+
+    #[test]
+    fn status_json_keeps_legacy_cli_latest_version_alias() -> Result<()> {
+        let mut state = PersistedState::new(true);
+        state.cli_official_latest_version = Some("0.42.1".to_string());
+        state.cli_package_manager_latest_version = Some("0.42.0-1".to_string());
+
+        let value = status_json_value(&state)?;
+
+        assert_eq!(value["cli_latest_version"], "0.42.1");
+        assert_eq!(value["cli_official_latest_version"], "0.42.1");
+        assert_eq!(value["cli_package_manager_latest_version"], "0.42.0-1");
         Ok(())
     }
 
