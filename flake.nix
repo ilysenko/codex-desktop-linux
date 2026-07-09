@@ -80,11 +80,11 @@
         '';
 
         codexDmg = pkgs.fetchurl {
-          url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-          hash = "sha256-MKL+mR5Ibx7W1SUWeWOXM1aNIN7cDXHJieggC8cRxGw=";
+          url = "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg";
+          hash = "sha256-TukDFPYFaGI+WE63hQuBc3d307761tMCi9+oco6sImU=";
         };
 
-        codexVersion = "26.623.141536";
+        codexVersion = "26.707.30751";
         electronVersion = "42.1.0";
         electronPlatform =
           {
