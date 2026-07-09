@@ -2128,7 +2128,7 @@ test("updates the Linux native titlebar overlay when nativeTheme changes", () =>
 
   assert.match(
     patched,
-    /if\(\(process\.platform!==`win32`&&process\.platform!==`linux`\)\|\|t!==`primary`\)return/,
+    /if\(\(process\.platform!==`win32`&&process\.platform!==`linux`\)\|\|t!==`primary`&&t!==`quickChat`\)return/,
   );
   assert.match(
     patched,
@@ -2157,7 +2157,7 @@ test("redirects the renamed Linux-aware titlebar overlay sync away from the tran
   );
   assert.match(
     patched,
-    /installApplicationMenuTitleBarOverlaySync\(e,t\)\{if\(\(process\.platform!==`win32`&&process\.platform!==`linux`\)\|\|t!==`primary`\)return/,
+    /installApplicationMenuTitleBarOverlaySync\(e,t\)\{if\(\(process\.platform!==`win32`&&process\.platform!==`linux`\)\|\|t!==`primary`&&t!==`quickChat`\)return/,
   );
   assert.match(
     patched,
@@ -3062,8 +3062,8 @@ test("lets ready-to-show icon insertion cover current window options drift", () 
 
 test("adds Linux tray support including the platform guard", () => {
   const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
-  const packagedTrayIconPathExpression = "process.resourcesPath+`/../.codex-linux/codex-desktop-tray.png`";
-  const packagedAppIconPathExpression = "process.resourcesPath+`/../.codex-linux/codex-desktop.png`";
+  const packagedTrayIconPathExpression = "process.resourcesPath+`/../.codex-linux/`+(process.env.CODEX_LINUX_APP_ID??`chatgpt-desktop`)+`-tray.png`";
+  const packagedAppIconPathExpression = "process.resourcesPath+`/../.codex-linux/`+(process.env.CODEX_LINUX_APP_ID??`chatgpt-desktop`)+`.png`";
   const patched = applyPatchTwice(applyLinuxTrayPatch, trayBundleFixture(), iconPathExpression);
 
   assert.match(
@@ -3142,7 +3142,7 @@ test("adds Linux tray icon fallback when current upstream uses small file icon f
 
 test("adds Linux tray support even when About dialog already uses the bundled icon path", () => {
   const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
-  const packagedTrayIconPathExpression = "process.resourcesPath+`/../.codex-linux/codex-desktop-tray.png`";
+  const packagedTrayIconPathExpression = "process.resourcesPath+`/../.codex-linux/`+(process.env.CODEX_LINUX_APP_ID??`chatgpt-desktop`)+`-tray.png`";
   const source = [
     trayBundleFixture(),
     "async function bZ(){let t=process.execPath;return process.platform===`linux`?Promise.resolve((()=>{let __codexLinuxAboutIcon=n.nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`);return __codexLinuxAboutIcon.isEmpty()?null:__codexLinuxAboutIcon})()):n.app.getFileIcon(t,{size:process.platform===`win32`?`large`:`normal`}).catch(()=>null)}",
@@ -5512,7 +5512,10 @@ test("adds Linux package updater behind the existing app updater manager", () =>
   assert.match(patched, /grep -q "\^status: WaitingForAppExit"/);
   assert.match(patched, /status: Installing/);
   assert.match(patched, /grep -q "\^status: Installed"/);
-  assert.match(patched, /\/usr\/bin\/codex-desktop >\/dev\/null 2>&1 &/);
+  assert.match(patched, /CODEX_LINUX_APP_ID:-\$\{CODEX_APP_ID:-chatgpt-desktop\}/);
+  assert.match(patched, /app=chatgpt-desktop/);
+  assert.match(patched, /command -v "\$app" >\/dev\/null 2>&1/);
+  assert.match(patched, /"\/usr\/bin\/\$app" >\/dev\/null 2>&1 &/);
   assert.match(patched, /detached:!0,stdio:`ignore`/);
   assert.match(patched, /codexLinuxInstallAfterQuit\(\);let t=codexLinuxGetElectronModule\(\);if\(!t\)return;let e=setTimeout/);
   assert.match(patched, /t\.app\?\.quit\?\.\(\)/);
@@ -5770,12 +5773,13 @@ test("migrates an already-patched Linux updater bridge to relaunch after install
     /function codexLinuxInstallAfterQuit\(\)\{try\{let e=u\.spawn\(`\/bin\/sh`,\[`-c`,[^]*?e\.unref\?\.\(\)\}catch\{\}\}/,
     oldHelper,
   );
-  assert.doesNotMatch(oldPatched, /\/usr\/bin\/codex-desktop/);
+  assert.doesNotMatch(oldPatched, /CODEX_LINUX_APP_ID:-\$\{CODEX_APP_ID:-chatgpt-desktop\}/);
 
   const migrated = applyLinuxAppUpdaterBridgePatch(oldPatched);
 
   assert.match(migrated, /grep -q "\^status: Installed"/);
-  assert.match(migrated, /\/usr\/bin\/codex-desktop >\/dev\/null 2>&1 &/);
+  assert.match(migrated, /CODEX_LINUX_APP_ID:-\$\{CODEX_APP_ID:-chatgpt-desktop\}/);
+  assert.match(migrated, /"\/usr\/bin\/\$app" >\/dev\/null 2>&1 &/);
 });
 
 test("enables the existing app update menu on Linux", () => {
@@ -7289,7 +7293,7 @@ function withIsolatedHome(body) {
   }
 }
 
-function writeSettingsFile(home, content, appId = "codex-desktop") {
+function writeSettingsFile(home, content, appId = "chatgpt-desktop") {
   const dir = path.join(home, ".config", appId);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "settings.json"), content, "utf8");
@@ -7415,7 +7419,7 @@ test("patchMainBundleSource applies Computer Use feature patch when settings.jso
 });
 
 test("uses CODEX_APP_ID for Electron desktopName", () => {
-  assert.equal(resolveDesktopName({}), "codex-desktop.desktop");
+  assert.equal(resolveDesktopName({}), "chatgpt-desktop.desktop");
   assert.equal(resolveDesktopName({ CODEX_APP_ID: "codex-cua-lab" }), "codex-cua-lab.desktop");
   assert.throws(
     () => resolveDesktopName({ CODEX_APP_ID: "bad/app" }),
@@ -7613,7 +7617,7 @@ test("missing icon asset skips only icon patches", () => {
 
     assert.match(patchedMain, /linux:\{label:`File Manager`/);
     assert.match(patchedTheme, /includes\(`linux`\)/);
-    assert.equal(patchedPackage.desktopName, "codex-desktop.desktop");
+    assert.equal(patchedPackage.desktopName, "chatgpt-desktop.desktop");
     assert.equal(fs.readFileSync(patchedMainPath, "utf8"), patchedMain);
     assert.equal(fs.readFileSync(patchedThemePath, "utf8"), patchedTheme);
     assert.equal(fs.readFileSync(patchedPackagePath, "utf8"), patchedPackageRaw);
@@ -7732,7 +7736,7 @@ test("patchExtractedApp records a structured patch report", () => {
 
     assert.equal(report.mainBundle, "main.js");
     assert.equal(report.iconAsset, "app-test.png");
-    assert.equal(report.desktopName, "codex-desktop.desktop");
+    assert.equal(report.desktopName, "chatgpt-desktop.desktop");
     assert.deepEqual(report.enabledFeatures, enabledLinuxFeatureIds());
     // Browser/Computer Use integration drift is optional, but window-shell
     // drift is critical: this partial fixture lacks the titlebar shape.

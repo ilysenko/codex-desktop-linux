@@ -6,17 +6,17 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'HELP'
-Usage: scripts/rebuild-candidate.sh [--install] [path/to/Codex.dmg]
+Usage: scripts/rebuild-candidate.sh [--install] [path/to/ChatGPT.dmg]
 
 Runs the safe rebuild flow:
-  1. Use the installer-managed Codex.dmg cache, unless a DMG path is given.
+  1. Use the installer-managed ChatGPT.dmg cache, unless a DMG path is given.
   2. Inspect the DMG and write reports.
-  3. Build a side-by-side candidate in codex-app-next/.
-  4. With --install, move the candidate into codex-app/ and keep a backup.
+  3. Build a side-by-side candidate in chatgpt-app-next/.
+  4. With --install, move the candidate into chatgpt-app/ and keep a backup.
 
 Environment:
-  CODEX_NEXT_APP_DIR   Candidate app directory (default: ./codex-app-next)
-  CODEX_FINAL_APP_DIR  Final app directory for --install (default: ./codex-app)
+  CODEX_NEXT_APP_DIR   Candidate app directory (default: ./chatgpt-app-next)
+  CODEX_FINAL_APP_DIR  Final app directory for --install (default: ./chatgpt-app)
   REBUILD_REPORT_DIR   Report directory (default: ./dist-next/rebuild)
 HELP
 }
@@ -57,8 +57,8 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-NEXT_APP_DIR="${CODEX_NEXT_APP_DIR:-$REPO_DIR/codex-app-next}"
-FINAL_APP_DIR="${CODEX_FINAL_APP_DIR:-$REPO_DIR/codex-app}"
+NEXT_APP_DIR="${CODEX_NEXT_APP_DIR:-$REPO_DIR/chatgpt-app-next}"
+FINAL_APP_DIR="${CODEX_FINAL_APP_DIR:-$REPO_DIR/chatgpt-app}"
 REPORT_DIR="${REBUILD_REPORT_DIR:-$REPO_DIR/dist-next/rebuild}"
 PATCH_REPORT="$REPORT_DIR/patch-report.json"
 REBUILD_REPORT="$REPORT_DIR/rebuild-report.json"
@@ -125,7 +125,7 @@ install_candidate() {
     [ "$NEXT_APP_DIR" != "$FINAL_APP_DIR" ] || error "Candidate and final app paths must differ"
 
     if pid="$(find_running_app_pid "$FINAL_APP_DIR/electron")"; then
-        error "Codex Desktop is running from $FINAL_APP_DIR (pid $pid). Close it before installing."
+        error "ChatGPT Desktop is running from $FINAL_APP_DIR (pid $pid). Close it before installing."
     fi
 
     if [ -e "$FINAL_APP_DIR" ]; then
@@ -146,14 +146,14 @@ if [ -n "$DMG_PATH" ]; then
     dmg_args=("$DMG_PATH")
     info "Using DMG: $DMG_PATH"
 else
-    info "No explicit DMG given; installer will validate, reuse, or download Codex.dmg"
+    info "No explicit DMG given; installer will validate, reuse, or download ChatGPT.dmg"
 fi
 
 info "1/2 Inspecting upstream DMG"
 "$REPO_DIR/install.sh" --inspect --report-dir "$REPORT_DIR" "${dmg_args[@]}"
 
 if [ -z "$DMG_PATH" ]; then
-    DMG_PATH="$REPO_DIR/Codex.dmg"
+    DMG_PATH="$REPO_DIR/ChatGPT.dmg"
     [ -f "$DMG_PATH" ] || error "Installer did not produce cached DMG: $DMG_PATH"
     dmg_args=("$DMG_PATH")
     info "Using validated DMG for build: $DMG_PATH"

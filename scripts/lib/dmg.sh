@@ -1,11 +1,11 @@
 #!/bin/bash
-# Codex.dmg download, extraction, and Electron-version detection from app metadata.
+# ChatGPT.dmg download, extraction, and Electron-version detection from app metadata.
 #
 # Sourced by install.sh. Do not run directly.
 # shellcheck shell=bash
 
-# ---- Download or find Codex DMG ----
-DEFAULT_DMG_URL="https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
+# ---- Download or find ChatGPT DMG ----
+DEFAULT_DMG_URL="https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg"
 DMG_URL="${CODEX_UPSTREAM_DMG_URL:-$DEFAULT_DMG_URL}"
 DMG_REMOTE_FINGERPRINT=""
 
@@ -205,7 +205,7 @@ get_dmg() {
         fi
     fi
 
-    info "Downloading Codex Desktop DMG..."
+    info "Downloading ChatGPT Desktop DMG..."
     info "URL: $(redact_dmg_url "$DMG_URL")"
 
     rm -f "$tmp_dest"

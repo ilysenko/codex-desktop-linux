@@ -11,7 +11,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
-const PACKAGE_NAME: &str = "codex-desktop";
+const PACKAGE_NAME: &str = "chatgpt-desktop";
 const INSTALLED_UPDATER_BINARY: &str = "/usr/bin/codex-update-manager";
 const APT_CANDIDATES: &[&str] = &["/usr/bin/apt", "/bin/apt"];
 const DNF_CANDIDATES: &[&str] = &["/usr/bin/dnf", "/bin/dnf", "/usr/bin/dnf5", "/bin/dnf5"];
@@ -406,8 +406,8 @@ fn set_private_file_permissions(_path: &Path) -> Result<()> {
 
 fn stable_file_name(kind: PackageKind, path: &Path) -> Result<String> {
     match kind {
-        PackageKind::Deb => Ok("codex-desktop.deb".to_string()),
-        PackageKind::Rpm => Ok("codex-desktop.rpm".to_string()),
+        PackageKind::Deb => Ok("chatgpt-desktop.deb".to_string()),
+        PackageKind::Rpm => Ok("chatgpt-desktop.rpm".to_string()),
         PackageKind::Pacman => path
             .file_name()
             .with_context(|| format!("Pacman package path has no file name: {}", path.display()))
@@ -959,18 +959,18 @@ mod tests {
     fn stable_file_name_uses_safe_names_for_deb_and_rpm() -> Result<()> {
         assert_eq!(
             stable_file_name(PackageKind::Deb, Path::new("-evil.deb"))?,
-            "codex-desktop.deb"
+            "chatgpt-desktop.deb"
         );
         assert_eq!(
             stable_file_name(PackageKind::Rpm, Path::new("-evil.rpm"))?,
-            "codex-desktop.rpm"
+            "chatgpt-desktop.rpm"
         );
         assert_eq!(
             stable_file_name(
                 PackageKind::Pacman,
-                Path::new("/tmp/codex-desktop-2026.03.30-1-x86_64.pkg.tar.zst")
+                Path::new("/tmp/chatgpt-desktop-2026.03.30-1-x86_64.pkg.tar.zst")
             )?,
-            "codex-desktop-2026.03.30-1-x86_64.pkg.tar.zst"
+            "chatgpt-desktop-2026.03.30-1-x86_64.pkg.tar.zst"
         );
         Ok(())
     }
@@ -1002,7 +1002,7 @@ mod tests {
     fn package_kind_from_path_detects_pacman_zst() {
         assert_eq!(
             PackageKind::from_path(Path::new(
-                "/tmp/codex-desktop-2026.03.30-1-x86_64.pkg.tar.zst"
+                "/tmp/chatgpt-desktop-2026.03.30-1-x86_64.pkg.tar.zst"
             )),
             PackageKind::Pacman
         );
@@ -1012,7 +1012,7 @@ mod tests {
     fn package_kind_from_path_detects_pacman_xz() {
         assert_eq!(
             PackageKind::from_path(Path::new(
-                "/tmp/codex-desktop-2026.03.30-1-x86_64.pkg.tar.xz"
+                "/tmp/chatgpt-desktop-2026.03.30-1-x86_64.pkg.tar.xz"
             )),
             PackageKind::Pacman
         );
@@ -1199,7 +1199,7 @@ mod tests {
     #[test]
     fn parses_pacman_installed_version_output() {
         assert_eq!(
-            parse_pacman_installed_version(b"codex-desktop 2026.04.02.120000-1\n".to_vec()),
+            parse_pacman_installed_version(b"chatgpt-desktop 2026.04.02.120000-1\n".to_vec()),
             "2026.04.02.120000-1"
         );
     }
@@ -1208,7 +1208,7 @@ mod tests {
     fn parses_pacman_package_version_from_filename() -> Result<()> {
         assert_eq!(
             pacman_package_version(Path::new(
-                "/tmp/codex-desktop-2026.04.02.120000-1-x86_64.pkg.tar.zst"
+                "/tmp/chatgpt-desktop-2026.04.02.120000-1-x86_64.pkg.tar.zst"
             ))?,
             "2026.04.02.120000-1"
         );
@@ -1219,9 +1219,9 @@ mod tests {
     #[test]
     fn resolves_pacman_latest_symlink_to_versioned_package_identity() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let package_name = "codex-desktop-2026.04.02.120000-1-x86_64.pkg.tar.zst";
+        let package_name = "chatgpt-desktop-2026.04.02.120000-1-x86_64.pkg.tar.zst";
         let package_path = temp.path().join(package_name);
-        let latest_path = temp.path().join("codex-desktop-latest.pkg.tar.zst");
+        let latest_path = temp.path().join("chatgpt-desktop-latest.pkg.tar.zst");
         std::fs::write(&package_path, b"pkg")?;
         std::os::unix::fs::symlink(package_name, &latest_path)?;
 
@@ -1247,12 +1247,12 @@ mod tests {
         let error = ensure_package_name("not-codex", Path::new("/tmp/not-codex.deb"))
             .expect_err("foreign package names must be rejected");
 
-        assert!(error.to_string().contains("expected codex-desktop"));
+        assert!(error.to_string().contains("expected chatgpt-desktop"));
     }
 
     #[test]
     fn accepts_codex_package_name() -> Result<()> {
-        ensure_package_name("codex-desktop", Path::new("/tmp/codex-desktop.deb"))
+        ensure_package_name("chatgpt-desktop", Path::new("/tmp/chatgpt-desktop.deb"))
     }
 
     #[test]
@@ -1262,6 +1262,6 @@ mod tests {
         ))
         .expect_err("foreign pacman packages must be rejected");
 
-        assert!(error.to_string().contains("codex-desktop-"));
+        assert!(error.to_string().contains("chatgpt-desktop-"));
     }
 }

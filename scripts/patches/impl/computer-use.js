@@ -60,8 +60,8 @@ function computerUseUiSettingsPath(env) {
 }
 
 function computerUseUiSettingsAppId(env) {
-  const appId = env.CODEX_LINUX_APP_ID || env.CODEX_APP_ID || "codex-desktop";
-  return /^[A-Za-z0-9._-]+$/.test(appId) ? appId : "codex-desktop";
+  const appId = env.CODEX_LINUX_APP_ID || env.CODEX_APP_ID || "chatgpt-desktop";
+  return /^[A-Za-z0-9._-]+$/.test(appId) ? appId : "chatgpt-desktop";
 }
 
 // Lookback/lookahead windows used when searching for the nearest minified

@@ -4,7 +4,7 @@
 //! pending apply marker. Detection (see [`crate::wrapper`]) only records that a
 //! newer wrapper build exists; this module performs the actual rebuild + install:
 //!
-//! - **User-local** installs reuse `~/.local/bin/codex-desktop-update`, which
+//! - **User-local** installs reuse `~/.local/bin/chatgpt-desktop-update`, which
 //!   pulls the managed checkout and re-runs `install.sh` in place as the user
 //!   (no privilege escalation).
 //! - **Packaged** installs fetch the wrapper source into a managed clone, build
@@ -36,7 +36,7 @@ use crate::{
 /// applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallType {
-    /// Native package under `/opt/codex-desktop` with a system package record.
+    /// Native package under `/opt/chatgpt-desktop` with a system package record.
     Packaged,
     /// `install.sh` install under the user's home (`~/.local/...`).
     UserLocal,
@@ -57,7 +57,7 @@ fn detect_install_type(config: &RuntimeConfig) -> InstallType {
 
     // Fallback when no launcher hint is present: a packaged builder bundle plus
     // an installed system package indicates the packaged install.
-    let packaged_bundle = Path::new("/opt/codex-desktop/update-builder");
+    let packaged_bundle = Path::new("/opt/chatgpt-desktop/update-builder");
     if config.builder_bundle_root == packaged_bundle && install::is_primary_package_installed() {
         InstallType::Packaged
     } else {
@@ -110,7 +110,7 @@ pub async fn run_apply_wrapper_update(
             state.clear_wrapper_update_candidate();
             state.save(&paths.state_file)?;
             let _ = notify::send(
-                "Codex Desktop Linux updated",
+                "ChatGPT Desktop Linux updated",
                 "The newer Linux wrapper build has been installed.",
             );
             Ok(())
@@ -132,7 +132,7 @@ fn refresh_installed_wrapper_state(config: &RuntimeConfig, state: &mut Persisted
     }
 }
 
-/// User-local apply. Prefers the contrib `codex-desktop-update` helper (managed
+/// User-local apply. Prefers the contrib `chatgpt-desktop-update` helper (managed
 /// checkout pull + in-place `install.sh`) when present; otherwise falls back to
 /// fetching the wrapper source and running its `install.sh` directly against the
 /// running app dir. Runs as the user, no privilege escalation.
@@ -329,7 +329,7 @@ fn stage_enabled_local_features(
 
 fn user_local_update_helper() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let candidate = home.join(".local/bin/codex-desktop-update");
+    let candidate = home.join(".local/bin/chatgpt-desktop-update");
     if candidate.is_file()
         && candidate
             .metadata()
@@ -358,9 +358,9 @@ async fn apply_packaged(
 ) -> Result<()> {
     if let Some(missing) = missing_build_dependency() {
         let body = format!(
-            "A newer Codex Desktop Linux build is available, but '{missing}' is needed to rebuild it. Install the build tools or update the package manually."
+            "A newer ChatGPT Desktop Linux build is available, but '{missing}' is needed to rebuild it. Install the build tools or update the package manually."
         );
-        let _ = notify::send("Codex Desktop Linux update available", &body);
+        let _ = notify::send("ChatGPT Desktop Linux update available", &body);
         println!("{body}");
         anyhow::bail!("missing build dependency for wrapper update: {missing}");
     }
@@ -566,7 +566,7 @@ mod tests {
 
     fn test_config(root: &Path) -> RuntimeConfig {
         RuntimeConfig {
-            dmg_url: "https://example.com/Codex.dmg".to_string(),
+            dmg_url: "https://example.com/ChatGPT.dmg".to_string(),
             initial_check_delay_seconds: 1,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,

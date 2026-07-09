@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "${HOME}/.local/opt/codex-desktop-linux/lib/codex-desktop-linux/common.sh"
+source "${HOME}/.local/opt/chatgpt-desktop-linux/lib/chatgpt-desktop-linux/common.sh"
 
 ensure_layout
 load_install_config
 load_metadata
 
 if [ ! -f "$METADATA_FILE" ]; then
-    echo "No metadata recorded yet. Run: codex-desktop-update --record-only"
+    echo "No metadata recorded yet. Run: chatgpt-desktop-update --record-only"
     exit 1
 fi
 
@@ -25,5 +25,5 @@ echo "DMG size:          ${DMG_SIZE-unknown}"
 echo "DMG etag:          ${DMG_ETAG-unknown}"
 echo "DMG modified:      ${DMG_LAST_MODIFIED-unknown}"
 echo "Electron version:  ${ELECTRON_VERSION-unknown}"
-echo "Launcher:          ${HOME}/.local/bin/codex-desktop"
+echo "Launcher:          ${HOME}/.local/bin/chatgpt-desktop"
 echo "Manager bin:       ${OPT_ROOT}/bin"

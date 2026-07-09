@@ -6,7 +6,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DEFAULT_CI_PACKAGE_VERSION="2026.04.28.000000+local"
 CI_PACKAGE_VERSION="${CI_PACKAGE_VERSION:-$DEFAULT_CI_PACKAGE_VERSION}"
-CI_CACHE_DIR="${CI_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop-linux-ci}"
+CI_CACHE_DIR="${CI_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/chatgpt-desktop-linux-ci}"
 
 IMAGE_UBUNTU_24="${CI_IMAGE_UBUNTU_24:-docker.io/library/ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b}"
 IMAGE_UBUNTU_22="${CI_IMAGE_UBUNTU_22:-docker.io/library/ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7}"
@@ -36,11 +36,11 @@ Targets:
 Environment:
   CI_CONTAINER_ENGINE=docker|podman
   CI_PACKAGE_VERSION=2026.04.28.000000+local
-  CI_DMG_PATH=/path/to/Codex.dmg
+  CI_DMG_PATH=/path/to/ChatGPT.dmg
   CI_SKIP_PULL=1
   CI_CACHE_DIR=/path/to/cache
 
-Note: package targets recreate generated codex-app/ and dist/ just like GitHub CI.
+Note: package targets recreate generated chatgpt-app/ and dist/ just like GitHub CI.
 HELP
 }
 
@@ -143,8 +143,8 @@ run_container_job() {
         -e "CI_PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         -e "PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         -e "CARGO_TERM_COLOR=${CARGO_TERM_COLOR:-always}"
-        -e "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/Codex.dmg}"
-        -e "UPSTREAM_DMG_PATH=${UPSTREAM_DMG_PATH:-/tmp/codex-upstream-ci/Codex.dmg}"
+        -e "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg}"
+        -e "UPSTREAM_DMG_PATH=${UPSTREAM_DMG_PATH:-/tmp/chatgpt-upstream-ci/ChatGPT.dmg}"
         -v "$REPO_DIR:/work"
         -v "$CI_CACHE_DIR:/ci-cache"
         -w /work

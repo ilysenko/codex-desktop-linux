@@ -1,8 +1,8 @@
-**IMPORTANT: THIS PROJECT SUPPORTS ONLY THE LATEST UPSTREAM `CODEX.DMG`. WHEN FIXING UPSTREAM DRIFT, REMOVE OLD DRIFT WORKAROUNDS IN THE SAME PULL REQUEST. DO NOT KEEP LEGACY DMG SHAPES, FALLBACK PATCH PATHS, OR VERSION-SPECIFIC COMPATIBILITY ZOOS AROUND. THE CODE SHOULD TARGET THE CURRENT DMG SO REVIEW, VALIDATION, AND DIAGNOSTICS DO NOT HAVE TO GUESS WHICH UPSTREAM VERSION FAILED.**
+**IMPORTANT: THIS PROJECT SUPPORTS ONLY THE LATEST UPSTREAM `CHATGPT.DMG`. WHEN FIXING UPSTREAM DRIFT, REMOVE OLD DRIFT WORKAROUNDS IN THE SAME PULL REQUEST. DO NOT KEEP LEGACY DMG SHAPES, FALLBACK PATCH PATHS, OR VERSION-SPECIFIC COMPATIBILITY BRANCHES AROUND. THE CODE SHOULD TARGET THE CURRENT DMG SO REVIEW, VALIDATION, AND DIAGNOSTICS DO NOT HAVE TO GUESS WHICH UPSTREAM VERSION FAILED.**
 
-# Contributing to Codex Desktop for Linux
+# Contributing to ChatGPT Desktop for Linux
 
-Thanks for your interest in contributing to Codex Desktop for Linux. This project adapts the official macOS Codex Desktop DMG into a runnable Linux app, packages it for multiple Linux distributions, and maintains a local Rust update manager for future rebuilds.
+Thanks for your interest in contributing to ChatGPT Desktop for Linux. This project adapts the official macOS ChatGPT Desktop DMG into a runnable Linux app, packages it for multiple Linux distributions, and maintains a local Rust update manager for future rebuilds.
 
 Contributions of all sizes are welcome: bug reports, documentation improvements, packaging fixes, installer updates, tests, and new features.
 
@@ -13,7 +13,7 @@ Contributions of all sizes are welcome: bug reports, documentation improvements,
 - Avoid mixed pull requests that combine unrelated fixes, refactors, formatting, docs, or cleanup.
 - Think through the impact on every supported path: source installs, `.deb`, `.rpm`, pacman packages, Nix, updater rebuilds, and different desktop environments.
 - Preserve existing platform behavior unless the pull request explicitly explains why it must change.
-- If a feature is not part of the standard upstream Codex Desktop experience and is not required Linux compatibility glue, implement it as an opt-in `linux-features/` module instead of a core patch.
+- If a feature is not part of the standard upstream ChatGPT Desktop experience and is not required Linux compatibility glue, implement it as an opt-in `linux-features/` module instead of a core patch.
 - Include a short summary, the user-visible behavior change, and the validation you ran.
 
 ## Before You Start
@@ -21,13 +21,13 @@ Contributions of all sizes are welcome: bug reports, documentation improvements,
 Please take a moment to understand how this repository is structured before making changes.
 
 - `install.sh` is the top-level installer entrypoint. Build-pipeline logic lives in `scripts/lib/*.sh` (DMG handling, ASAR patching, native modules, Electron download, bundled plugins) and the runtime launcher body lives in `launcher/start.sh.template`. Edit the template for launcher behavior and a lib file for build-pipeline behavior — `install.sh` itself is just orchestration plus the prelude that bakes install-time identity into the generated launcher.
-- `scripts/build-deb.sh`, `scripts/build-rpm.sh`, and `scripts/build-pacman.sh` package an already-generated `codex-app/`.
+- `scripts/build-deb.sh`, `scripts/build-rpm.sh`, and `scripts/build-pacman.sh` package an already-generated `chatgpt-app/`.
 - `scripts/install-deps.sh` bootstraps local development dependencies.
 - `updater/` contains the Rust update manager.
 - `scripts/patch-linux-window-ui.js` is the build-facing ASAR patcher CLI. Core
   patch descriptors live under `scripts/patches/core/`, with implementation
   helpers under `scripts/patches/impl/`.
-- `codex-app/` and `dist/` are generated artifacts and should not be treated as primary source unless you are intentionally validating generated output.
+- `chatgpt-app/` and `dist/` are generated artifacts and should not be treated as primary source unless you are intentionally validating generated output.
 
 For repository-specific implementation details, read [`AGENTS.md`](./AGENTS.md) and the relevant sections in [`README.md`](./README.md) before starting work.
 
@@ -64,15 +64,15 @@ Good issue reports usually include:
 The recommended local setup is:
 
 ```bash
-git clone https://github.com/ilysenko/codex-desktop-linux.git
-cd codex-desktop-linux
+git clone https://github.com/ilysenko/chatgpt-desktop-linux.git
+cd chatgpt-desktop-linux
 bash scripts/install-deps.sh
 ```
 
 This project requires:
 
 - `python3`
-- `7z` or `7zz`
+- `7z`, `7za`, or `7zz`
 - `curl`
 - `unzip`
 - `make`
@@ -124,7 +124,7 @@ When these principles conflict, prefer the option that keeps the repository easi
 
 This repository has generated outputs, and changes must respect the real ownership boundaries.
 
-- Prefer changing `launcher/start.sh.template` (runtime/launcher behavior) or the relevant `scripts/lib/*.sh` module (build-pipeline behavior) over editing `codex-app/start.sh` or the top-level `install.sh` directly.
+- Prefer changing `launcher/start.sh.template` (runtime/launcher behavior) or the relevant `scripts/lib/*.sh` module (build-pipeline behavior) over editing `chatgpt-app/start.sh` or the top-level `install.sh` directly.
 - Prefer changing packaging templates and helper scripts over editing staged package output.
 - Prefer changing updater source under `updater/` over working around behavior in tests or generated files.
 - If behavior differs between generated artifacts and source, fix the source and regenerate or revalidate.
@@ -187,7 +187,7 @@ If your change affects packaging, also run the relevant package builds:
 If your change affects launcher behavior, inspect the generated launcher:
 
 ```bash
-sed -n '1,160p' codex-app/start.sh
+sed -n '1,160p' chatgpt-app/start.sh
 ```
 
 If your change affects updater behavior, inspect runtime state where appropriate:
@@ -311,4 +311,4 @@ Please avoid:
 
 ## Thank You
 
-Every improvement helps make Codex Desktop for Linux more reliable across distributions, desktop environments, and packaging formats. Thanks for taking the time to contribute thoughtfully.
+Every improvement helps make ChatGPT Desktop for Linux more reliable across distributions, desktop environments, and packaging formats. Thanks for taking the time to contribute thoughtfully.

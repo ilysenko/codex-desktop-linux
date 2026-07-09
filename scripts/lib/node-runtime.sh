@@ -146,7 +146,7 @@ download_managed_node_runtime() {
     node_arch="$(managed_node_arch)"
     url="$(managed_node_archive_url "$node_arch")"
     expected_sha="$(managed_node_archive_sha256 "$node_arch")"
-    cache_dir="${CODEX_MANAGED_NODE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop/node-runtime}"
+    cache_dir="${CODEX_MANAGED_NODE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/chatgpt-desktop/node-runtime}"
     archive="$cache_dir/$(basename "$url")"
     extract_dir="$WORK_DIR/managed-node-runtime"
     extracted_root="$extract_dir/node-$MANAGED_NODE_VERSION-linux-$node_arch"

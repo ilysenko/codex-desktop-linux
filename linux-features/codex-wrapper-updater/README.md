@@ -1,16 +1,16 @@
 # codex-wrapper-updater
 
 Optional Linux feature that adds a **separate** in-app update path for the
-Codex Desktop Linux wrapper: this repository's Linux patches, bundled features,
+ChatGPT Desktop Linux wrapper: this repository's Linux patches, bundled features,
 packaging glue, launcher, and `codex-update-manager`.
 
 This is intentionally distinct from the upstream Codex app update path. The
 upstream path tracks the official macOS DMG. This feature tracks newer builds of
-`codex-desktop-linux` itself.
+`chatgpt-desktop-linux` itself.
 
 ## User-facing behavior
 
-- Settings -> General shows **Check for Codex Desktop Linux updates**.
+- Settings -> General shows **Check for ChatGPT Desktop Linux updates**.
 - Settings -> General also shows **Ask which features to enable on update**.
 - Both settings are off/on independently: wrapper update checks are off by
   default, and the feature picker prompt defaults on when this feature is built.

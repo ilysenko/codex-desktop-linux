@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OPT_ROOT="${HOME}/.local/opt/codex-desktop-linux"
-APP_DIR="${OPT_ROOT}/codex-app"
-DMG_URL="https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
+OPT_ROOT="${HOME}/.local/opt/chatgpt-desktop-linux"
+APP_DIR="${OPT_ROOT}/chatgpt-app"
+DMG_URL="https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg"
 
 XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
 
-DATA_DIR="${XDG_DATA_HOME}/codex-desktop-linux"
-STATE_DIR="${XDG_STATE_HOME}/codex-desktop-linux"
+DATA_DIR="${XDG_DATA_HOME}/chatgpt-desktop-linux"
+STATE_DIR="${XDG_STATE_HOME}/chatgpt-desktop-linux"
 LOG_DIR="${STATE_DIR}/logs"
 METADATA_FILE="${STATE_DIR}/metadata.env"
 INSTALL_CONFIG_FILE="${STATE_DIR}/install.env"
-ICON_PATH="${XDG_DATA_HOME}/icons/hicolor/512x512/apps/codex-desktop.png"
-DESKTOP_FILE="${XDG_DATA_HOME}/applications/codex-desktop.desktop"
+ICON_PATH="${XDG_DATA_HOME}/icons/hicolor/512x512/apps/chatgpt-desktop.png"
+DESKTOP_FILE="${XDG_DATA_HOME}/applications/chatgpt-desktop.desktop"
 
-REPO_DIR_DEFAULT="${HOME}/workspace/codex-desktop-linux"
+REPO_DIR_DEFAULT="${HOME}/workspace/chatgpt-desktop-linux"
 SOURCE_REPO_DIR="$REPO_DIR_DEFAULT"
 MANAGED_REPO_DIR="${DATA_DIR}/managed-repo"
 BUILD_REPO_DIR=""
@@ -62,7 +62,7 @@ effective_repo_dir() {
 # install.sh caches the upstream DMG next to itself in the build repo
 # checkout, never under $OPT_ROOT.
 cached_dmg_file() {
-    printf '%s/Codex.dmg\n' "$(effective_repo_dir)"
+    printf '%s/ChatGPT.dmg\n' "$(effective_repo_dir)"
 }
 
 current_repo_head() {
@@ -480,8 +480,8 @@ extract_icon() {
     tmp_dir="$(mktemp -d)"
     trap 'rm -rf "$tmp_dir"' RETURN
 
-    7z e -y "$dmg_file" "Codex Installer/Codex.app/Contents/Resources/electron.icns" "-o${tmp_dir}" >/dev/null
-    python3 - "$tmp_dir/electron.icns" "$ICON_PATH" <<'PY'
+    7z e -y "$dmg_file" "ChatGPT Installer/ChatGPT.app/Contents/Resources/icon-chatgpt.png" "-o${tmp_dir}" >/dev/null
+    python3 - "$tmp_dir/icon-chatgpt.png" "$ICON_PATH" <<'PY'
 from PIL import Image
 import sys
 

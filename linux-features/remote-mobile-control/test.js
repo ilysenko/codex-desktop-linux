@@ -424,7 +424,7 @@ test("remote mobile control feature stays disabled until listed in features.json
 test("remote mobile stage hook writes installed Desktop app-server ownership marker from patched app layout", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-stage-"));
   try {
-    const installDir = path.join(tempRoot, "package", "opt", "codex-desktop");
+    const installDir = path.join(tempRoot, "package", "opt", "chatgpt-desktop");
     const workDir = path.join(tempRoot, "work");
     const buildDir = path.join(workDir, "app-extracted", ".vite", "build");
     const marker = path.join(installDir, ".codex-linux", "desktop-app-server-remote-control-enabled");
@@ -452,7 +452,7 @@ test("remote mobile stage hook writes installed Desktop app-server ownership mar
 test("remote mobile stage hook leaves Desktop ownership marker absent when patch marker is missing", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-stage-"));
   try {
-    const installDir = path.join(tempRoot, "package", "opt", "codex-desktop");
+    const installDir = path.join(tempRoot, "package", "opt", "chatgpt-desktop");
     const workDir = path.join(tempRoot, "work");
     const buildDir = path.join(workDir, "app-extracted", ".vite", "build");
     const marker = path.join(installDir, ".codex-linux", "desktop-app-server-remote-control-enabled");
@@ -594,7 +594,7 @@ test("remote mobile cold-start hook skips daemon when Desktop app-server owns re
   try {
     const home = path.join(tempRoot, "home");
     const codexHome = path.join(tempRoot, "codex-home");
-    const appDir = path.join(tempRoot, "package", "share", "codex-desktop", "app");
+    const appDir = path.join(tempRoot, "package", "share", "chatgpt-desktop", "app");
     const standaloneCodex = path.join(codexHome, "packages", "standalone", "current", "codex");
     const callsLog = path.join(tempRoot, "calls.log");
 
@@ -629,7 +629,7 @@ test("remote mobile cold-start hook removes dead standalone daemon pid files whe
     const home = path.join(tempRoot, "home");
     const codexHome = path.join(tempRoot, "codex-home");
     const daemonDir = path.join(codexHome, "app-server-daemon");
-    const appDir = path.join(tempRoot, "package", "share", "codex-desktop", "app");
+    const appDir = path.join(tempRoot, "package", "share", "chatgpt-desktop", "app");
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(daemonDir, { recursive: true });
@@ -666,7 +666,7 @@ test("remote mobile cold-start hook preserves live standalone daemon pid files w
     const home = path.join(tempRoot, "home");
     const codexHome = path.join(tempRoot, "codex-home");
     const daemonDir = path.join(codexHome, "app-server-daemon");
-    const appDir = path.join(tempRoot, "package", "share", "codex-desktop", "app");
+    const appDir = path.join(tempRoot, "package", "share", "chatgpt-desktop", "app");
     const pidFile = path.join(daemonDir, "app-server.pid");
 
     fs.mkdirSync(home, { recursive: true });
@@ -2380,7 +2380,7 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
     assert.match(signature.signatureDerBase64, /^[A-Za-z0-9+/]+=*$/);
     assert.match(signature.signedPayloadBase64, /^[A-Za-z0-9+/]+=*$/);
 
-    const storePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    const storePath = path.join(configHome, "chatgpt-desktop", "remote-control-device-keys-v1.json");
     assert.equal(fs.statSync(storePath).mode & 0o777, 0o600);
 
     await client.deleteDeviceKey(created.keyId);

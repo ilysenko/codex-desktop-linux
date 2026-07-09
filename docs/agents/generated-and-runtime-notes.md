@@ -5,9 +5,9 @@ that agents need without keeping them in the main quick-start.
 
 ## Generated Artifacts
 
-- `codex-app/`
+- `chatgpt-app/`
   Generated Linux app directory. Treat as build output.
-- `codex-app-next/`
+- `chatgpt-app-next/`
   Side-by-side rebuild candidate from `scripts/rebuild-candidate.sh`.
 - `codex-*-app/`
   Alternate identity app directories, such as `codex-cua-lab-app/`.
@@ -19,13 +19,13 @@ that agents need without keeping them in the main quick-start.
   Rebuild candidate reports.
 - `target/`
   Rust build output for all workspace crates.
-- `Codex.dmg`
+- `ChatGPT.dmg`
   Cached upstream DMG.
 - `linux-features/features.json`
   Gitignored local opt-in feature config.
 - `linux-features/local/`
   Gitignored user-local feature directory.
-- `codex-app/.codex-linux/linux-features-staged.json`
+- `chatgpt-app/.codex-linux/linux-features-staged.json`
   Staged declarative feature ownership manifest.
 - `~/.config/codex-update-manager/config.toml`
   Runtime updater config.
@@ -35,11 +35,11 @@ that agents need without keeping them in the main quick-start.
   Updater service log.
 - `~/.cache/codex-update-manager/`
   Downloaded DMGs, rebuild workspaces, staged package artifacts, and build logs.
-- `~/.cache/codex-desktop/launcher.log`
+- `~/.cache/chatgpt-desktop/launcher.log`
   Launcher log for the default app identity.
-- `~/.local/state/codex-desktop/app.pid` and `webview.pid`
+- `~/.local/state/chatgpt-desktop/app.pid` and `webview.pid`
   Launcher liveness files.
-- `$XDG_RUNTIME_DIR/codex-desktop/launch-action.sock`
+- `$XDG_RUNTIME_DIR/chatgpt-desktop/launch-action.sock`
   Warm-start handoff socket.
 
 ## Runtime Notes
@@ -47,7 +47,7 @@ that agents need without keeping them in the main quick-start.
 - DMG extraction can warn when `7z` cannot materialize the `/Applications`
   symlink. This is acceptable if a `.app` bundle was extracted successfully.
 - The managed Node.js runtime is installed under
-  `codex-app/resources/node-runtime/`. Override only with
+  `chatgpt-app/resources/node-runtime/`. Override only with
   `CODEX_MANAGED_NODE_VERSION`, `CODEX_MANAGED_NODE_URL`, and
   `CODEX_MANAGED_NODE_SHA256`; the SHA must be set when overriding version or
   URL.
@@ -82,7 +82,7 @@ that agents need without keeping them in the main quick-start.
 
 ## Runtime Expectations
 
-- `python3`, `7z`, `curl`, `unzip`, `tar`, `make`, and `g++` are required for
+- `python3`, `7z`/`7za`/`7zz`, `curl`, `unzip`, `tar`, `make`, and `g++` are required for
   `install.sh`.
 - Native package builders require their format-specific tools (`dpkg-deb`,
   `rpmbuild`, `makepkg`/pacman tooling, or `appimagetool`).

@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 90
     env:
       NIX_CONFIG: experimental-features = nix-command flakes
-      CACHIX_CACHE_NAME: codex-desktop-linux
+      CACHIX_CACHE_NAME: chatgpt-desktop-linux
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -60,11 +60,11 @@ jobs:
             exit 0
           fi
 
-          CODEX_DMG_HASH="$(scripts/ci/update-nix-hashes.sh read-flake-hash 'codexDmg = pkgs.fetchurl {' 'hash = ')"
-          CODEX_VERSION="$(scripts/ci/update-nix-hashes.sh read-flake-string codexVersion)"
+          CHATGPT_DMG_HASH="$(scripts/ci/update-nix-hashes.sh read-flake-hash 'chatgptDmg = pkgs.fetchurl {' 'hash = ')"
+          CHATGPT_VERSION="$(scripts/ci/update-nix-hashes.sh read-flake-string chatgptVersion)"
           APPCAST_VERSION="$(scripts/ci/update-nix-hashes.sh read-appcast-version 2>/dev/null || true)"
-          if [ -n "$APPCAST_VERSION" ] && [ "$APPCAST_VERSION" != "$CODEX_VERSION" ]; then
-            APPCAST_NOTE="- warning: Sparkle appcast currently advertises \`$APPCAST_VERSION\`, while current \`Codex.dmg\` contains \`$CODEX_VERSION\`; this PR follows the verified DMG payload."
+          if [ -n "$APPCAST_VERSION" ] && [ "$APPCAST_VERSION" != "$CHATGPT_VERSION" ]; then
+            APPCAST_NOTE="- warning: Sparkle appcast currently advertises \`$APPCAST_VERSION\`, while current \`ChatGPT.dmg\` contains \`$CHATGPT_VERSION\`; this PR follows the verified DMG payload."
           elif [ -n "$APPCAST_VERSION" ]; then
             APPCAST_NOTE="- Sparkle appcast also advertises \`$APPCAST_VERSION\`."
           else
@@ -76,23 +76,23 @@ jobs:
           git checkout -B "$REFRESH_BRANCH"
           git add flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json
           git commit \
-            -m "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
-            -m "Refreshed Codex.dmg SRI hash to $CODEX_DMG_HASH and synced codexVersion / electronVersion / native-module pins to the current upstream DMG." \
-            -m "Verified all Codex Desktop Nix package outputs against the refreshed DMG." \
+            -m "fix(nix): refresh upstream Nix pins${CHATGPT_VERSION:+ for $CHATGPT_VERSION}" \
+            -m "Refreshed ChatGPT.dmg SRI hash to $CHATGPT_DMG_HASH and synced chatgptVersion / electronVersion / native-module pins to the current upstream DMG." \
+            -m "Verified all ChatGPT Desktop Nix package outputs against the refreshed DMG." \
             -m "[skip ci]"
           git push --force origin "$REFRESH_BRANCH"
 
           pr_body="$RUNNER_TEMP/nix-refresh-pr-body.md"
           cat >"$pr_body" <<EOF
           ## Summary
-          - refresh Codex.dmg hash and upstream version pins to the current upstream DMG
+          - refresh ChatGPT.dmg hash and upstream version pins to the current upstream DMG
           - update Electron fixed-output hashes when electronVersion changes
           - regenerate nix/native-modules/package-lock.json when native module pins change
           $APPCAST_NOTE
 
           ## Validation
-          - this workflow verified all Codex Desktop Nix package outputs before opening the PR
-          - refreshed Codex.dmg SRI hash: \`$CODEX_DMG_HASH\`
+          - this workflow verified all ChatGPT Desktop Nix package outputs before opening the PR
+          - refreshed ChatGPT.dmg SRI hash: \`$CHATGPT_DMG_HASH\`
           EOF
 
           pr_url="$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head "$REFRESH_BRANCH" --state open --json url --jq '.[0].url // ""')"
@@ -101,11 +101,11 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --base main \
               --head "$REFRESH_BRANCH" \
-              --title "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
+              --title "fix(nix): refresh upstream Nix pins${CHATGPT_VERSION:+ for $CHATGPT_VERSION}" \
               --body-file "$pr_body")"
           else
             gh pr edit "$pr_url" \
-              --title "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
+              --title "fix(nix): refresh upstream Nix pins${CHATGPT_VERSION:+ for $CHATGPT_VERSION}" \
               --body-file "$pr_body"
           fi
 

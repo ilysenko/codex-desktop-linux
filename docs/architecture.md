@@ -1,11 +1,11 @@
 # Architecture
 
-This repository adapts the upstream macOS Codex Desktop DMG into Linux app and
+This repository adapts the upstream macOS ChatGPT Desktop DMG into Linux app and
 package artifacts.
 
 ## Build Pipeline
 
-1. `install.sh` extracts `Codex.dmg` with `7z` / `7zz`.
+1. `install.sh` extracts `ChatGPT.dmg` with `7z` / `7zz`.
 2. It detects the Electron version from upstream metadata, with a pinned
    fallback.
 3. It extracts and patches `app.asar` with fail-soft Linux compatibility
@@ -14,9 +14,9 @@ package artifacts.
    Linux through `@electron/rebuild`.
 5. It downloads a matching Linux Electron runtime.
 6. It stages bundled plugins and any enabled optional `linux-features/`.
-7. It writes the Linux launcher to `codex-app/start.sh` from
+7. It writes the Linux launcher to `chatgpt-app/start.sh` from
    `launcher/start.sh.template`.
-8. Package builders repackage `codex-app/` into `.deb`, `.rpm`,
+8. Package builders repackage `chatgpt-app/` into `.deb`, `.rpm`,
    `.pkg.tar.zst`, or AppImage artifacts.
 9. Default native packages install `codex-update-manager` and a
    `systemd --user` service.

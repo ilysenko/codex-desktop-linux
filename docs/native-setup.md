@@ -8,13 +8,13 @@ This project has two native install entrypoints:
 ## Fast Native Install
 
 ```bash
-git clone https://github.com/ilysenko/codex-desktop-linux.git
-cd codex-desktop-linux
+git clone https://github.com/ilysenko/chatgpt-desktop-linux.git
+cd chatgpt-desktop-linux
 make bootstrap-native
 ```
 
-`make bootstrap-native` installs build dependencies, regenerates `codex-app/`,
-validates the cached upstream `Codex.dmg` and downloads it only when missing or
+`make bootstrap-native` installs build dependencies, regenerates `chatgpt-app/`,
+validates the cached upstream `ChatGPT.dmg` and downloads it only when missing or
 stale, builds the matching native package, and installs the newest artifact
 from `dist/`.
 

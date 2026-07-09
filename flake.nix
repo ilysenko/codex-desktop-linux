@@ -1,5 +1,5 @@
 {
-  description = "Codex Desktop for Linux installer";
+  description = "ChatGPT Desktop for Linux installer";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -79,12 +79,12 @@
           cp ${./scripts/lib/native-modules.sh} "$out/scripts/lib/native-modules.sh"
         '';
 
-        codexDmg = pkgs.fetchurl {
-          url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-          hash = "sha256-MKL+mR5Ibx7W1SUWeWOXM1aNIN7cDXHJieggC8cRxGw=";
+        chatgptDmg = pkgs.fetchurl {
+          url = "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg";
+          hash = "sha256-TukDFPYFaGI+WE63hQuBc3d307761tMCi9+oco6sImU=";
         };
 
-        codexVersion = "26.623.141536";
+        chatgptVersion = "26.707.30751";
         electronVersion = "42.1.0";
         electronPlatform =
           {
@@ -96,7 +96,7 @@
               arch = "arm64";
               hash = "sha256-HnAPfz2u95TMRSNeUcEXJmSu1JpOdze4iW3cOYv/TX0=";
             };
-          }.${system} or (throw "codex-desktop-linux Nix package is not supported on ${system}");
+          }.${system} or (throw "chatgpt-desktop-linux Nix package is not supported on ${system}");
 
         electronZip = pkgs.fetchurl {
           url = "https://github.com/electron/electron/releases/download/v${electronVersion}/electron-v${electronVersion}-linux-${electronPlatform.arch}.zip";
@@ -399,10 +399,10 @@ PY
           in
           if featureIds == [ ] then "" else "-${pkgs.lib.concatStringsSep "-" featureIds}";
 
-        mkCodexDesktopPayload = { enableComputerUseUi ? false, linuxFeatureIds ? [ ] }:
+        mkChatGPTDesktopPayload = { enableComputerUseUi ? false, linuxFeatureIds ? [ ] }:
         pkgs.stdenv.mkDerivation {
-          pname = "codex-desktop${packageSuffix { inherit enableComputerUseUi linuxFeatureIds; }}-payload";
-          version = codexVersion;
+          pname = "chatgpt-desktop${packageSuffix { inherit enableComputerUseUi linuxFeatureIds; }}-payload";
+          version = chatgptVersion;
           src = sourceRoot;
           __structuredAttrs = true;
 
@@ -461,7 +461,7 @@ PY
             mkdir -p "$source_dir"
             cp -R ./. "$source_dir/"
             chmod -R u+w "$source_dir"
-            cp ${codexDmg} "$source_dir/Codex.dmg"
+            cp ${chatgptDmg} "$source_dir/ChatGPT.dmg"
 
             substituteInPlace "$source_dir/scripts/lib/asar-patch.sh" \
               --replace-fail "npx --yes asar" "asar" \
@@ -469,29 +469,29 @@ PY
             substituteInPlace "$source_dir/scripts/lib/dmg.sh" \
               --replace-fail "npx --yes asar" "asar"
 
-            export CODEX_INSTALL_DIR="$out/opt/codex-desktop"
-            ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/Codex.dmg"
+            export CODEX_INSTALL_DIR="$out/opt/chatgpt-desktop"
+            ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/ChatGPT.dmg"
 
             asar extract "$CODEX_INSTALL_DIR/resources/app.asar" "$CODEX_INSTALL_DIR/resources/app-extracted"
             rm -f "$CODEX_INSTALL_DIR/resources/app.asar"
             rm -rf "$CODEX_INSTALL_DIR/resources/app.asar.unpacked"
 
-            ${patchNixGeneratedScripts "$out/opt/codex-desktop"}
+            ${patchNixGeneratedScripts "$out/opt/chatgpt-desktop"}
 
             runHook postInstall
           '';
         };
 
-        mkCodexDesktop = { enableComputerUseUi ? false, linuxFeatureIds ? [ ] }:
+        mkChatGPTDesktop = { enableComputerUseUi ? false, linuxFeatureIds ? [ ] }:
         let
           featureArgs = { inherit enableComputerUseUi linuxFeatureIds; };
-          payload = mkCodexDesktopPayload {
+          payload = mkChatGPTDesktopPayload {
             inherit enableComputerUseUi linuxFeatureIds;
           };
         in
         pkgs.stdenv.mkDerivation {
-          pname = "codex-desktop${packageSuffix featureArgs}";
-          version = codexVersion;
+          pname = "chatgpt-desktop${packageSuffix featureArgs}";
+          version = chatgptVersion;
           src = payload;
 
           nativeBuildInputs = [
@@ -507,16 +507,16 @@ PY
             runHook preInstall
 
             mkdir -p "$out/opt"
-            cp -aT "$src/opt/codex-desktop" "$out/opt/codex-desktop"
-            chmod -R u+w "$out/opt/codex-desktop"
-            rm -rf "$out/opt/codex-desktop/resources/node-runtime"
-            ln -s ${pkgs.nodejs} "$out/opt/codex-desktop/resources/node-runtime"
-            if [ -e "$out/opt/codex-desktop/update-builder/node-runtime" ]; then
-              rm -rf "$out/opt/codex-desktop/update-builder/node-runtime"
-              ln -s ${pkgs.nodejs} "$out/opt/codex-desktop/update-builder/node-runtime"
+            cp -aT "$src/opt/chatgpt-desktop" "$out/opt/chatgpt-desktop"
+            chmod -R u+w "$out/opt/chatgpt-desktop"
+            rm -rf "$out/opt/chatgpt-desktop/resources/node-runtime"
+            ln -s ${pkgs.nodejs} "$out/opt/chatgpt-desktop/resources/node-runtime"
+            if [ -e "$out/opt/chatgpt-desktop/update-builder/node-runtime" ]; then
+              rm -rf "$out/opt/chatgpt-desktop/update-builder/node-runtime"
+              ln -s ${pkgs.nodejs} "$out/opt/chatgpt-desktop/update-builder/node-runtime"
             fi
 
-            resources_dir="$out/opt/codex-desktop/resources"
+            resources_dir="$out/opt/chatgpt-desktop/resources"
             (cd "$resources_dir/app-extracted" && find . -type f | LC_ALL=C sort | sed 's#^\./##') > "$TMPDIR/app.asar.ordering"
             asar pack "$resources_dir/app-extracted" "$resources_dir/app.asar" \
               --ordering "$TMPDIR/app.asar.ordering" \
@@ -529,18 +529,19 @@ PY
                 "$resources_dir/node_repl"
             fi
 
-            ${patchNixInstalledApp "$out/opt/codex-desktop"}
+            ${patchNixInstalledApp "$out/opt/chatgpt-desktop"}
 
-            install -Dm0644 "$out/opt/codex-desktop/.codex-linux/codex-desktop.png" \
-              "$out/share/icons/hicolor/256x256/apps/codex-desktop.png"
+            install -Dm0644 "$out/opt/chatgpt-desktop/.codex-linux/chatgpt-desktop.png" \
+              "$out/share/icons/hicolor/256x256/apps/chatgpt-desktop.png"
 
             install -Dm0644 ${sourceRoot}/packaging/linux/codex-desktop.desktop \
-              "$out/share/applications/codex-desktop.desktop"
-            substituteInPlace "$out/share/applications/codex-desktop.desktop" \
-              --replace-fail "/usr/bin/codex-desktop" "$out/bin/codex-desktop" \
-              --replace-fail "/usr/share/applications/codex-desktop.desktop" "$out/share/applications/codex-desktop.desktop"
+              "$out/share/applications/chatgpt-desktop.desktop"
+            substituteInPlace "$out/share/applications/chatgpt-desktop.desktop" \
+              --replace-fail "codex-desktop" "chatgpt-desktop" \
+              --replace-fail "/usr/bin/chatgpt-desktop" "$out/bin/chatgpt-desktop" \
+              --replace-fail "/usr/share/applications/chatgpt-desktop.desktop" "$out/share/applications/chatgpt-desktop.desktop"
 
-            makeWrapper "$out/opt/codex-desktop/start.sh" "$out/bin/codex-desktop" \
+            makeWrapper "$out/opt/chatgpt-desktop/start.sh" "$out/bin/chatgpt-desktop" \
               --prefix PATH : "${launcherPath}" \
               --prefix LD_LIBRARY_PATH : "${electronLibPath}" \
               --prefix LD_LIBRARY_PATH : "${runtimeLibPath}" \
@@ -556,33 +557,33 @@ PY
                 featureIds = enabledFeatureIds featureArgs;
               in
               if featureIds == [ ] then
-                "Codex Desktop for Linux"
+                "ChatGPT Desktop for Linux"
               else
-                "Codex Desktop for Linux with ${pkgs.lib.concatStringsSep ", " featureIds} enabled";
-            homepage = "https://github.com/ilysenko/codex-desktop-linux";
+                "ChatGPT Desktop for Linux with ${pkgs.lib.concatStringsSep ", " featureIds} enabled";
+            homepage = "https://github.com/ilysenko/chatgpt-desktop-linux";
             license = pkgs.lib.licenses.mit;
             platforms = pkgs.lib.platforms.linux;
-            mainProgram = "codex-desktop";
+            mainProgram = "chatgpt-desktop";
           };
         };
 
-        codexDesktop = mkCodexDesktop { };
+        chatgptDesktop = mkChatGPTDesktop { };
 
-        codexDesktopComputerUseUi = mkCodexDesktop {
+        chatgptDesktopComputerUseUi = mkChatGPTDesktop {
           enableComputerUseUi = true;
         };
 
-        codexDesktopRemoteMobileControl = mkCodexDesktop {
+        chatgptDesktopRemoteMobileControl = mkChatGPTDesktop {
           linuxFeatureIds = [ "remote-mobile-control" ];
         };
 
-        codexDesktopComputerUseUiRemoteMobileControl = mkCodexDesktop {
+        chatgptDesktopComputerUseUiRemoteMobileControl = mkChatGPTDesktop {
           enableComputerUseUi = true;
           linuxFeatureIds = [ "remote-mobile-control" ];
         };
 
         installer = pkgs.writeShellApplication {
-          name = "codex-desktop-installer";
+          name = "chatgpt-desktop-installer";
           runtimeInputs = [
             pkgs.bash
             pkgs.nodejs
@@ -608,15 +609,15 @@ PY
             mkdir -p "$source_dir"
             cp -R ${sourceRoot}/. "$source_dir"
             chmod -R u+w "$source_dir"
-            cp ${codexDmg} "$source_dir/Codex.dmg"
+            cp ${chatgptDmg} "$source_dir/ChatGPT.dmg"
             chmod +x "$source_dir/install.sh"
 
             cd "$source_dir"
-            export CODEX_INSTALL_DIR="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
+            export CODEX_INSTALL_DIR="''${CODEX_INSTALL_DIR:-$root_dir/chatgpt-app}"
             export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
-            ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/Codex.dmg" "$@"
+            ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/ChatGPT.dmg" "$@"
 
-            install_dir="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
+            install_dir="''${CODEX_INSTALL_DIR:-$root_dir/chatgpt-app}"
 
             ${patchNixInstalledApp "$install_dir"}
           '';
@@ -624,37 +625,37 @@ PY
       in
       {
         packages = {
-          default = codexDesktop;
-          codex-desktop = codexDesktop;
-          codex-desktop-computer-use-ui = codexDesktopComputerUseUi;
-          codex-desktop-remote-mobile-control = codexDesktopRemoteMobileControl;
-          codex-desktop-computer-use-ui-remote-mobile-control = codexDesktopComputerUseUiRemoteMobileControl;
+          default = chatgptDesktop;
+          chatgpt-desktop = chatgptDesktop;
+          chatgpt-desktop-computer-use-ui = chatgptDesktopComputerUseUi;
+          chatgpt-desktop-remote-mobile-control = chatgptDesktopRemoteMobileControl;
+          chatgpt-desktop-computer-use-ui-remote-mobile-control = chatgptDesktopComputerUseUiRemoteMobileControl;
           installer = installer;
         };
 
         apps.default = {
           type = "app";
-          program = "${codexDesktop}/bin/codex-desktop";
+          program = "${chatgptDesktop}/bin/chatgpt-desktop";
         };
 
         apps.remote-mobile-control = {
           type = "app";
-          program = "${codexDesktopRemoteMobileControl}/bin/codex-desktop";
+          program = "${chatgptDesktopRemoteMobileControl}/bin/chatgpt-desktop";
         };
 
         apps.computer-use-ui-remote-mobile-control = {
           type = "app";
-          program = "${codexDesktopComputerUseUiRemoteMobileControl}/bin/codex-desktop";
+          program = "${chatgptDesktopComputerUseUiRemoteMobileControl}/bin/chatgpt-desktop";
         };
 
         apps.installer = {
           type = "app";
-          program = "${installer}/bin/codex-desktop-installer";
+          program = "${installer}/bin/chatgpt-desktop-installer";
         };
 
-        apps.codex-desktop-computer-use-ui = {
+        apps.chatgpt-desktop-computer-use-ui = {
           type = "app";
-          program = "${codexDesktopComputerUseUi}/bin/codex-desktop";
+          program = "${chatgptDesktopComputerUseUi}/bin/chatgpt-desktop";
         };
 
         devShells.default = pkgs.mkShell {
@@ -672,12 +673,12 @@ PY
     ) // {
       homeManagerModules = rec {
         default = import ./nix/home-manager-module.nix { inherit self; };
-        codex-desktop-linux = default;
+        chatgpt-desktop-linux = default;
       };
 
       nixosModules = rec {
         default = import ./nix/nixos-module.nix { inherit self; };
-        codex-desktop-linux = default;
+        chatgpt-desktop-linux = default;
       };
     };
 }

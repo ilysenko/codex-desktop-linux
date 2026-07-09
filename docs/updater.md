@@ -5,9 +5,9 @@ Default native packages install `codex-update-manager`, a companion
 
 It:
 
-- checks upstream `Codex.dmg` on daemon startup, every 6 hours, and in the
+- checks upstream `ChatGPT.dmg` on daemon startup, every 6 hours, and in the
   background on app launch when stale
-- rebuilds a local native package with `/opt/codex-desktop/update-builder`
+- rebuilds a local native package with `/opt/chatgpt-desktop/update-builder`
 - waits for Electron to exit before installing a ready update
 - runs unprivileged; the final package install uses `pkexec` when a graphical
   polkit authentication agent is available, or keeps the package ready and
@@ -74,15 +74,15 @@ Runtime files:
 ~/.local/state/codex-update-manager/state.json
 ~/.local/state/codex-update-manager/service.log
 ~/.cache/codex-update-manager/
-~/.cache/codex-desktop/launcher.log
-~/.local/state/codex-desktop/app.pid
+~/.cache/chatgpt-desktop/launcher.log
+~/.local/state/chatgpt-desktop/app.pid
 ```
 
 ## Generated Artifact Cleanup
 
 The updater always prunes unreferenced updater workspaces under
 `~/.cache/codex-update-manager/workspaces`. Local checkout build output such as
-`dist/`, `target/`, and `codex-app/` is cleaned only when explicitly enabled.
+`dist/`, `target/`, and `chatgpt-app/` is cleaned only when explicitly enabled.
 
 Example:
 
@@ -90,8 +90,8 @@ Example:
 [generated_artifact_cleanup]
 enabled = true
 min_free_bytes = 10737418240 # 10 GiB
-roots = ["/home/mohit/Github/codex-desktop-linux"]
-entries = ["dist", "target", "codex-app"]
+roots = ["/home/mohit/Github/chatgpt-desktop-linux"]
+entries = ["dist", "target", "chatgpt-app"]
 ```
 
 If `roots` is omitted, the updater uses `builder_bundle_root`. Cleanup only runs
@@ -102,7 +102,7 @@ that look like this wrapper repository or packaged update-builder.
 ## Rollback
 
 If a rebuilt update installs but the previous retained package was better,
-close Codex Desktop and run:
+close ChatGPT Desktop and run:
 
 ```bash
 codex-update-manager rollback
@@ -121,7 +121,7 @@ make install
 ```
 
 That package omits `codex-update-manager`, the user service unit, updater
-polkit policy, `/opt/codex-desktop/update-builder`, desktop updater actions,
+polkit policy, `/opt/chatgpt-desktop/update-builder`, desktop updater actions,
 and launcher updater startup checks.
 
 Installing a no-updater package over a default package also stops and disables
@@ -134,8 +134,8 @@ Manual updates should come from a checkout you trust:
 PACKAGE_WITH_UPDATER=0 make update-native
 ```
 
-`make update-native` runs `git pull --ff-only`, regenerates `codex-app/` from a
-fresh upstream `Codex.dmg`, builds the native package, and installs it.
+`make update-native` runs `git pull --ff-only`, regenerates `chatgpt-app/` from a
+fresh upstream `ChatGPT.dmg`, builds the native package, and installs it.
 
 ## Service Controls
 
@@ -155,7 +155,7 @@ Desktop usable, disable the user service:
 systemctl --user disable --now codex-update-manager.service
 ```
 
-Launching Codex Desktop and upgrading the package will not re-enable a disabled
+Launching ChatGPT Desktop and upgrading the package will not re-enable a disabled
 updater service. Re-enable updater behavior explicitly when you want automatic
 checks again:
 

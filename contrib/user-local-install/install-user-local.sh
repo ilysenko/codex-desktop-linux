@@ -6,16 +6,16 @@ FILES_DIR="${SCRIPT_DIR}/files"
 SCRIPT_REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SOURCE_REPO_ROOT="${CODEX_USER_LOCAL_SOURCE_REPO_DIR:-$SCRIPT_REPO_ROOT}"
 DESKTOP_ENTRY_DOCTOR="${SOURCE_REPO_ROOT}/packaging/linux/codex-desktop-entry-doctor.sh"
-OPT_ROOT="${HOME}/.local/opt/codex-desktop-linux"
+OPT_ROOT="${HOME}/.local/opt/chatgpt-desktop-linux"
 OPT_BIN_DIR="${OPT_ROOT}/bin"
-OPT_LIB_DIR="${OPT_ROOT}/lib/codex-desktop-linux"
+OPT_LIB_DIR="${OPT_ROOT}/lib/chatgpt-desktop-linux"
 XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
-DATA_DIR="${XDG_DATA_HOME}/codex-desktop-linux"
-CONFIG_DIR="${XDG_CONFIG_HOME}/codex-desktop-linux"
+DATA_DIR="${XDG_DATA_HOME}/chatgpt-desktop-linux"
+CONFIG_DIR="${XDG_CONFIG_HOME}/chatgpt-desktop-linux"
 USER_LOCAL_ENV_FILE="${CONFIG_DIR}/user-local.env"
 MANAGED_REPO_DIR="${DATA_DIR}/managed-repo"
-STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/codex-desktop-linux"
+STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/chatgpt-desktop-linux"
 FROM_UPDATE=0
 ENABLE_TIMER=0
 USER_LOCAL_OZONE_PLATFORM_SETTING=""
@@ -86,40 +86,40 @@ install_manager_files() {
     local systemd_user_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
     mkdir -p "$OPT_BIN_DIR" "$OPT_LIB_DIR" "$DATA_DIR" "${HOME}/.local/share/applications" "${HOME}/.local/bin" "$STATE_DIR" "$systemd_user_dir"
 
-    copy_file "${FILES_DIR}/.local/lib/codex-desktop-linux/common.sh" "${OPT_LIB_DIR}/common.sh"
-    copy_file "${FILES_DIR}/.local/bin/codex-desktop" "${OPT_BIN_DIR}/codex-desktop"
-    copy_file "${FILES_DIR}/.local/bin/codex-desktop-check-update" "${OPT_BIN_DIR}/codex-desktop-check-update"
-    copy_file "${FILES_DIR}/.local/bin/codex-desktop-update" "${OPT_BIN_DIR}/codex-desktop-update"
-    copy_file "${FILES_DIR}/.local/bin/codex-desktop-version" "${OPT_BIN_DIR}/codex-desktop-version"
+    copy_file "${FILES_DIR}/.local/lib/chatgpt-desktop-linux/common.sh" "${OPT_LIB_DIR}/common.sh"
+    copy_file "${FILES_DIR}/.local/bin/chatgpt-desktop" "${OPT_BIN_DIR}/chatgpt-desktop"
+    copy_file "${FILES_DIR}/.local/bin/chatgpt-desktop-check-update" "${OPT_BIN_DIR}/chatgpt-desktop-check-update"
+    copy_file "${FILES_DIR}/.local/bin/chatgpt-desktop-update" "${OPT_BIN_DIR}/chatgpt-desktop-update"
+    copy_file "${FILES_DIR}/.local/bin/chatgpt-desktop-version" "${OPT_BIN_DIR}/chatgpt-desktop-version"
 
-    cat > "${HOME}/.local/bin/codex-desktop" <<'EOF'
+    cat > "${HOME}/.local/bin/chatgpt-desktop" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-exec "${HOME}/.local/opt/codex-desktop-linux/bin/codex-desktop" "$@"
+exec "${HOME}/.local/opt/chatgpt-desktop-linux/bin/chatgpt-desktop" "$@"
 EOF
-    cat > "${HOME}/.local/bin/codex-desktop-check-update" <<'EOF'
+    cat > "${HOME}/.local/bin/chatgpt-desktop-check-update" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-exec "${HOME}/.local/opt/codex-desktop-linux/bin/codex-desktop-check-update" "$@"
+exec "${HOME}/.local/opt/chatgpt-desktop-linux/bin/chatgpt-desktop-check-update" "$@"
 EOF
-    cat > "${HOME}/.local/bin/codex-desktop-update" <<'EOF'
+    cat > "${HOME}/.local/bin/chatgpt-desktop-update" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-exec "${HOME}/.local/opt/codex-desktop-linux/bin/codex-desktop-update" "$@"
+exec "${HOME}/.local/opt/chatgpt-desktop-linux/bin/chatgpt-desktop-update" "$@"
 EOF
-    cat > "${HOME}/.local/bin/codex-desktop-version" <<'EOF'
+    cat > "${HOME}/.local/bin/chatgpt-desktop-version" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-exec "${HOME}/.local/opt/codex-desktop-linux/bin/codex-desktop-version" "$@"
+exec "${HOME}/.local/opt/chatgpt-desktop-linux/bin/chatgpt-desktop-version" "$@"
 EOF
 
     codex_desktop_write_user_local_entry \
-        "${FILES_DIR}/.local/share/applications/codex-desktop.desktop" \
-        "${HOME}/.local/share/applications/codex-desktop.desktop" \
+        "${FILES_DIR}/.local/share/applications/chatgpt-desktop.desktop" \
+        "${HOME}/.local/share/applications/chatgpt-desktop.desktop" \
         "${HOME}"
 
-    copy_file "${FILES_DIR}/.config/systemd/user/codex-desktop-update.service" "${systemd_user_dir}/codex-desktop-update.service"
-    copy_file "${FILES_DIR}/.config/systemd/user/codex-desktop-update.timer" "${systemd_user_dir}/codex-desktop-update.timer"
+    copy_file "${FILES_DIR}/.config/systemd/user/chatgpt-desktop-update.service" "${systemd_user_dir}/chatgpt-desktop-update.service"
+    copy_file "${FILES_DIR}/.config/systemd/user/chatgpt-desktop-update.timer" "${systemd_user_dir}/chatgpt-desktop-update.timer"
 
     cat > "${STATE_DIR}/install.env" <<EOF
 REPO_DIR=$(printf '%q' "$SOURCE_REPO_ROOT")
@@ -131,15 +131,15 @@ OPT_ROOT=$(printf '%q' "$OPT_ROOT")
 EOF
 
     chmod +x \
-        "${OPT_BIN_DIR}/codex-desktop" \
-        "${OPT_BIN_DIR}/codex-desktop-check-update" \
-        "${OPT_BIN_DIR}/codex-desktop-update" \
-        "${OPT_BIN_DIR}/codex-desktop-version" \
+        "${OPT_BIN_DIR}/chatgpt-desktop" \
+        "${OPT_BIN_DIR}/chatgpt-desktop-check-update" \
+        "${OPT_BIN_DIR}/chatgpt-desktop-update" \
+        "${OPT_BIN_DIR}/chatgpt-desktop-version" \
         "${OPT_LIB_DIR}/common.sh" \
-        "${HOME}/.local/bin/codex-desktop" \
-        "${HOME}/.local/bin/codex-desktop-check-update" \
-        "${HOME}/.local/bin/codex-desktop-update" \
-        "${HOME}/.local/bin/codex-desktop-version"
+        "${HOME}/.local/bin/chatgpt-desktop" \
+        "${HOME}/.local/bin/chatgpt-desktop-check-update" \
+        "${HOME}/.local/bin/chatgpt-desktop-update" \
+        "${HOME}/.local/bin/chatgpt-desktop-version"
 }
 
 install_manager_files
@@ -148,14 +148,14 @@ write_user_local_preferences
 if command -v systemctl >/dev/null 2>&1; then
     systemctl --user daemon-reload >/dev/null 2>&1 || true
     if [ "$ENABLE_TIMER" -eq 1 ]; then
-        systemctl --user enable --now codex-desktop-update.timer >/dev/null 2>&1 || true
+        systemctl --user enable --now chatgpt-desktop-update.timer >/dev/null 2>&1 || true
     fi
 fi
 
-if [ "$FROM_UPDATE" -eq 0 ] && [ -x "${HOME}/.local/bin/codex-desktop-update" ]; then
-    "${HOME}/.local/bin/codex-desktop-update" --record-only >/dev/null 2>&1 || true
+if [ "$FROM_UPDATE" -eq 0 ] && [ -x "${HOME}/.local/bin/chatgpt-desktop-update" ]; then
+    "${HOME}/.local/bin/chatgpt-desktop-update" --record-only >/dev/null 2>&1 || true
 fi
 
 if [ "$FROM_UPDATE" -eq 0 ]; then
-    echo "Installed user-local Codex desktop integration."
+    echo "Installed user-local ChatGPT desktop integration."
 fi

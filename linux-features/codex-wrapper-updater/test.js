@@ -84,7 +84,7 @@ test("settings patch adds wrapper update toggle", () => {
 
   assert.match(patched, /wrapperUpdates:"codex-linux-wrapper-updates-enabled"/);
   assert.match(patched, /featurePickerOnUpdate:"codex-linux-feature-picker-on-update"/);
-  assert.match(patched, /Check for Codex Desktop Linux updates/);
+  assert.match(patched, /Check for ChatGPT Desktop Linux updates/);
   assert.match(patched, /Ask which features to enable on update/);
   assert.equal(applyWrapperUpdateSettingsPatch(patched), patched);
 });
@@ -100,7 +100,7 @@ test("general settings patch adds wrapper update toggles for current upstream se
   assert.match(patched, /CodexLinuxFeaturePickerOnUpdateSetting/);
   assert.match(patched, /codex-linux-wrapper-updates-enabled/);
   assert.match(patched, /codex-linux-feature-picker-on-update/);
-  assert.match(patched, /Check for Codex Desktop Linux updates/);
+  assert.match(patched, /Check for ChatGPT Desktop Linux updates/);
   assert.match(patched, /Ask which features to enable on update/);
   assert.match(patched, /get-global-state/);
   assert.match(patched, /set-global-state/);
@@ -125,7 +125,7 @@ test("settings asset patch skips re-exported general settings bundles", () => {
   try {
     assert.deepEqual(patchWrapperUpdateSettingsAssets(appDir), { matched: true, changed: 1 });
     assert.doesNotMatch(fs.readFileSync(path.join(assetsDir, "general-settings-a.js"), "utf8"), /WrapperUpdates/);
-    assert.match(fs.readFileSync(path.join(assetsDir, "general-settings-z.js"), "utf8"), /Check for Codex Desktop Linux updates/);
+    assert.match(fs.readFileSync(path.join(assetsDir, "general-settings-z.js"), "utf8"), /Check for ChatGPT Desktop Linux updates/);
     assert.match(fs.readFileSync(path.join(assetsDir, "general-settings-z.js"), "utf8"), /Ask which features to enable on update/);
   } finally {
     fs.rmSync(appDir, { recursive: true, force: true });
@@ -147,7 +147,7 @@ test("settings asset patch prefers generated Linux desktop settings bundle", () 
     assert.deepEqual(patchWrapperUpdateSettingsAssets(appDir), { matched: true, changed: 1 });
     assert.match(
       fs.readFileSync(path.join(assetsDir, "linux-desktop-settings-linux.js"), "utf8"),
-      /Check for Codex Desktop Linux updates/,
+      /Check for ChatGPT Desktop Linux updates/,
     );
     assert.equal(
       fs.readFileSync(path.join(assetsDir, "general-settings-z.js"), "utf8"),

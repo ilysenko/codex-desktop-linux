@@ -2,7 +2,7 @@
 
 ## Context
 
-This decision record captures a performance comparison between Codex Desktop
+This decision record captures a performance comparison between ChatGPT Desktop
 and another Electron 42 app (Claude Desktop) running side by side on the same
 X11 GNOME 4K host, what the launcher changed as a result, and — just as
 importantly — what was reviewed and deliberately left alone so future work
@@ -33,7 +33,7 @@ launcher log, and repository history rather than synthetic benchmarks.
   Override: `CODEX_FORCE_RENDERER_ACCESSIBILITY=1|0`.
 
 Both decisions are visible at runtime in the `Electron launch mode:` line of
-`~/.cache/codex-desktop/launcher.log` (`dev_shm_usage_disabled=`,
+`~/.cache/chatgpt-desktop/launcher.log` (`dev_shm_usage_disabled=`,
 `renderer_accessibility_forced=`).
 
 ## Reviewed And Deliberately Not Changed

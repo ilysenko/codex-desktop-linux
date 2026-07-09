@@ -866,13 +866,13 @@ printf '00000000 T _SkyComputerUseClient\\n'
     );
   }));
 
-test("auto-baseline uses repo Codex.dmg when candidate is different", () =>
+test("auto-baseline uses repo ChatGPT.dmg when candidate is different", () =>
   withTempDir((workspace) => {
     const repoRoot = path.join(workspace, "repo");
     fs.mkdirSync(repoRoot, { recursive: true });
     const baselineApp = createFixtureApp(workspace, "baseline");
     const candidateApp = createFixtureApp(workspace, "candidate");
-    const baselineCache = path.join(repoRoot, "Codex.dmg");
+    const baselineCache = path.join(repoRoot, "ChatGPT.dmg");
     fs.cpSync(baselineApp, baselineCache, { recursive: true });
 
     assert.equal(

@@ -1669,7 +1669,7 @@ function resolveBaselinePath({ autoBaseline = false, baselinePath = null, candid
   if (baselinePath != null || !autoBaseline) {
     return baselinePath;
   }
-  const defaultBaselinePath = path.join(repoRoot, "Codex.dmg");
+  const defaultBaselinePath = path.join(repoRoot, "ChatGPT.dmg");
   if (!fs.existsSync(defaultBaselinePath)) {
     return null;
   }

@@ -563,7 +563,7 @@ fn refresh_cli_status_from_latest(
                 None => {
                     state.cli_status = CliStatus::Unknown;
                     state.cli_error_message = Some(format!(
-                        "This Codex CLI is managed by pacman package '{package_name}', but Codex Desktop could not determine the latest version currently available through pacman. This install will not be auto-updated through npm; check pacman directly."
+                        "This Codex CLI is managed by pacman package '{package_name}', but ChatGPT Desktop could not determine the latest version currently available through pacman. This install will not be auto-updated through npm; check pacman directly."
                     ));
                 }
             }
@@ -582,7 +582,7 @@ fn refresh_cli_status_from_latest(
                 Some(official_latest) => {
                     state.cli_status = CliStatus::Unknown;
                     state.cli_error_message = Some(format!(
-                        "Codex Desktop resolved Codex CLI to {}, but pacman -Qo {} could not determine which package owns it. The official {CLI_PACKAGE_NAME} upstream is {official_latest}; this install will not be auto-updated through npm, so inspect the CLI source and decide how to update it.",
+                        "ChatGPT Desktop resolved Codex CLI to {}, but pacman -Qo {} could not determine which package owns it. The official {CLI_PACKAGE_NAME} upstream is {official_latest}; this install will not be auto-updated through npm, so inspect the CLI source and decide how to update it.",
                         cli_path.display(),
                         query_path.display()
                     ));
@@ -590,7 +590,7 @@ fn refresh_cli_status_from_latest(
                 None => {
                     state.cli_status = CliStatus::Unknown;
                     state.cli_error_message = Some(format!(
-                        "Codex Desktop resolved Codex CLI to {}, but pacman -Qo {} could not determine which package owns it, and the official {CLI_PACKAGE_NAME} version could not be checked. This install will not be auto-updated through npm; inspect the CLI source and decide how to update it.",
+                        "ChatGPT Desktop resolved Codex CLI to {}, but pacman -Qo {} could not determine which package owns it, and the official {CLI_PACKAGE_NAME} version could not be checked. This install will not be auto-updated through npm; inspect the CLI source and decide how to update it.",
                         cli_path.display(),
                         query_path.display()
                     ));

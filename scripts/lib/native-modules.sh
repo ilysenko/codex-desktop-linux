@@ -314,7 +314,7 @@ download_electron() {
     else
         url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${electron_zip}"
     fi
-    local electron_cache_dir="${CODEX_ELECTRON_CACHE_DIR:-$HOME/.cache/codex-desktop/electron}"
+    local electron_cache_dir="${CODEX_ELECTRON_CACHE_DIR:-$HOME/.cache/chatgpt-desktop/electron}"
     local cached_zip="$electron_cache_dir/$electron_zip"
     local partial_zip="$cached_zip.part"
 

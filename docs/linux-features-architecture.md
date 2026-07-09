@@ -63,7 +63,7 @@ The build pipeline loads enabled features in these phases:
 
 1. ASAR patching: patch descriptors modify extracted upstream app files.
 2. App staging: declarative resources and runtime hooks are copied into
-   `codex-app/`.
+   `chatgpt-app/`.
 3. Legacy staging: optional `stage.sh` hooks run for features that still need
    custom install-time logic.
 4. Native packaging: optional package hooks can mutate the `.deb`, `.rpm`, or

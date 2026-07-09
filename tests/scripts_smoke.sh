@@ -191,13 +191,13 @@ test_common_helper_sourcing() {
 test_package_payload_permission_normalization() {
     info "Checking package payload permission normalization"
     local root="$TMP_DIR/package-permissions"
-    local app_root="$root/opt/codex-desktop"
+    local app_root="$root/opt/chatgpt-desktop"
     local private_file="$app_root/.codex-linux/features/private/secret.txt"
 
     mkdir -p "$app_root/content/webview" "$root/usr/bin" "$(dirname "$private_file")"
     printf '%s\n' '#!/bin/bash' 'echo start' > "$app_root/start.sh"
     printf '%s\n' '<!doctype html>' > "$app_root/content/webview/index.html"
-    printf '%s\n' '#!/bin/bash' 'exec /opt/codex-desktop/start.sh "$@"' > "$root/usr/bin/codex-desktop"
+    printf '%s\n' '#!/bin/bash' 'exec /opt/chatgpt-desktop/start.sh "$@"' > "$root/usr/bin/chatgpt-desktop"
     printf '%s\n' 'secret' > "$private_file"
     cat > "$app_root/.codex-linux/linux-features-staged.json" <<'JSON'
 {
@@ -214,18 +214,18 @@ test_package_payload_permission_normalization() {
 }
 JSON
     chmod 0700 "$root/opt" "$app_root" "$app_root/content" "$app_root/content/webview"
-    chmod 0700 "$app_root/start.sh" "$root/usr/bin/codex-desktop"
+    chmod 0700 "$app_root/start.sh" "$root/usr/bin/chatgpt-desktop"
     chmod 0600 "$app_root/content/webview/index.html" "$private_file"
 
     # shellcheck disable=SC1091
     source "$REPO_DIR/scripts/lib/package-common.sh"
     normalize_package_payload_permissions "$root"
-    PACKAGE_NAME="codex-desktop" restore_linux_feature_payload_permissions "$root"
+    PACKAGE_NAME="chatgpt-desktop" restore_linux_feature_payload_permissions "$root"
 
     assert_mode "$app_root" "755"
     assert_mode "$app_root/content/webview" "755"
     assert_mode "$app_root/start.sh" "755"
-    assert_mode "$root/usr/bin/codex-desktop" "755"
+    assert_mode "$root/usr/bin/chatgpt-desktop" "755"
     assert_mode "$app_root/content/webview/index.html" "644"
     assert_mode "$private_file" "600"
 }
@@ -237,8 +237,8 @@ test_stage_common_package_files_resolves_tray_icon_deterministically() {
     local root="$workspace/root"
     local output_log="$workspace/output.log"
     local icon_source="$workspace/icon-source.png"
-    local tray_output="$root/opt/codex-desktop/.codex-linux/codex-desktop-tray.png"
-    local package_icon="$root/opt/codex-desktop/.codex-linux/codex-desktop.png"
+    local tray_output="$root/opt/chatgpt-desktop/.codex-linux/chatgpt-desktop-tray.png"
+    local package_icon="$root/opt/chatgpt-desktop/.codex-linux/chatgpt-desktop.png"
 
     mkdir -p "$workspace" "$root"
     make_fake_app "$app_dir"
@@ -248,7 +248,7 @@ test_stage_common_package_files_resolves_tray_icon_deterministically() {
 
     (
         export APP_DIR="$app_dir"
-        export PACKAGE_NAME="codex-desktop"
+        export PACKAGE_NAME="chatgpt-desktop"
         export PACKAGE_WITH_UPDATER=0
         export ICON_SOURCE="$icon_source"
         export DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
@@ -278,7 +278,7 @@ test_stage_common_package_files_tray_icon_fallbacks_when_ambiguous_or_missing() 
     for scenario in ambiguous missing; do
         local app_dir="$workspace/$scenario-app"
         local root="$workspace/$scenario-root"
-        local tray_output="$root/opt/codex-desktop/.codex-linux/codex-desktop-tray.png"
+        local tray_output="$root/opt/chatgpt-desktop/.codex-linux/chatgpt-desktop-tray.png"
 
         mkdir -p "$root"
         make_fake_app "$app_dir"
@@ -290,7 +290,7 @@ test_stage_common_package_files_tray_icon_fallbacks_when_ambiguous_or_missing() 
 
         (
             export APP_DIR="$app_dir"
-            export PACKAGE_NAME="codex-desktop"
+            export PACKAGE_NAME="chatgpt-desktop"
             export PACKAGE_WITH_UPDATER=0
             export ICON_SOURCE="$icon_source"
             export DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
@@ -358,58 +358,58 @@ SCRIPT
     PACKAGE_VERSION="2026.03.24.120000+deadbeef" \
     bash "$REPO_DIR/scripts/build-deb.sh"
 
-    assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+deadbeef_amd64.deb"
+    assert_file_exists "$dist_dir/chatgpt-desktop_2026.03.24.120000+deadbeef_amd64.deb"
     [ "$(cat "$capture_dir/dpkg-deb-threads")" = "6" ] \
         || fail "Expected MAX_BUILD_THREADS to reach dpkg-deb"
     assert_file_exists "$pkg_root/DEBIAN/postinst"
     assert_file_exists "$pkg_root/DEBIAN/prerm"
     assert_contains "$pkg_root/DEBIAN/postinst" "codex_ensure_user_service_running"
     assert_contains "$pkg_root/DEBIAN/postinst" "codex_start_enabled_user_service"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=New Window"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=Check for Updates"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Name=Install Ready Update"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Name=New Window"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Name=Check for Updates"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Name=Install Ready Update"
     assert_file_exists "$pkg_root/DEBIAN/postrm"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/package-common.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/patch-chrome-plugin.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/node-runtime.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-update-bridge-patch.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/patch-report.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/rebuild-report.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/build-info.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/build-info.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-target-context.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/descriptor.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/engine.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/runner.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/lib/assets.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/lib/minified-js.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/lib/settings-keys.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/impl/webview/index.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/all-linux/main-process/lifecycle/patch.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/all-linux/webview/theme-and-sunset/patch.js"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/distro/nixos/README.md"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/desktop/i3/README.md"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/package/deb/README.md"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/README.md"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/example-feature/feature.json"
-    assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/features.json"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/node-runtime/bin/node"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/Cargo.toml"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/CHANGELOG.md"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/computer-use-linux/Cargo.toml"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/read-aloud-linux/Cargo.toml"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/updater/Cargo.toml"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/plugins/openai-bundled/plugins/computer-use/.mcp.json"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/plugins/openai-bundled/plugins/read-aloud/.mcp.json"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/.codex-linux/source-info.json"
-    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
-    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "is-enabled codex-update-manager.service"
-    assert_not_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "enable --now codex-update-manager.service"
-    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/package-common.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/patch-chrome-plugin.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/node-runtime.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/linux-update-bridge-patch.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/patch-report.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/rebuild-report.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/build-info.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/build-info.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/linux-features.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/linux-features.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/linux-target-context.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/descriptor.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/engine.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/runner.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/lib/assets.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/lib/minified-js.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/lib/settings-keys.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/impl/webview/index.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/core/all-linux/main-process/lifecycle/patch.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/core/all-linux/webview/theme-and-sunset/patch.js"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/core/distro/nixos/README.md"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/core/desktop/i3/README.md"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/patches/core/package/deb/README.md"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/linux-features/README.md"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/linux-features/example-feature/feature.json"
+    assert_file_not_exists "$pkg_root/opt/chatgpt-desktop/update-builder/linux-features/features.json"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/node-runtime/bin/node"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/CHANGELOG.md"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/computer-use-linux/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/read-aloud-linux/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/updater/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/plugins/openai-bundled/plugins/computer-use/.mcp.json"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/plugins/openai-bundled/plugins/read-aloud/.mcp.json"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/.codex-linux/source-info.json"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "is-enabled codex-update-manager.service"
+    assert_not_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "enable --now codex-update-manager.service"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/resources/node-runtime/bin/node"
 }
 
 test_deb_builder_rebuilds_deleted_updater_source() {
@@ -461,7 +461,7 @@ SCRIPT
     PACKAGE_VERSION="2026.03.24.120000+rebuilt" \
     bash "$REPO_DIR/scripts/build-deb.sh"
 
-    assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+rebuilt_amd64.deb"
+    assert_file_exists "$dist_dir/chatgpt-desktop_2026.03.24.120000+rebuilt_amd64.deb"
     assert_file_exists "$pkg_root/usr/bin/codex-update-manager"
     assert_contains "$pkg_root/usr/bin/codex-update-manager" "rebuilt updater"
 }
@@ -473,10 +473,10 @@ test_update_builder_preserves_enabled_linux_features_config() {
     local app_dir="$workspace/app"
     local features_root="$workspace/linux-features"
     local feature_config="$workspace/features.json"
-    local staged_config="$root/opt/codex-desktop/update-builder/linux-features/features.json"
-    local staged_local_manifest="$root/opt/codex-desktop/update-builder/linux-features/local/local-tool/feature.json"
-    local source_info="$root/opt/codex-desktop/update-builder/.codex-linux/source-info.json"
-    local update_builder_manifest="$root/opt/codex-desktop/update-builder/.codex-linux/update-builder-manifest.txt"
+    local staged_config="$root/opt/chatgpt-desktop/update-builder/linux-features/features.json"
+    local staged_local_manifest="$root/opt/chatgpt-desktop/update-builder/linux-features/local/local-tool/feature.json"
+    local source_info="$root/opt/chatgpt-desktop/update-builder/.codex-linux/source-info.json"
+    local update_builder_manifest="$root/opt/chatgpt-desktop/update-builder/.codex-linux/update-builder-manifest.txt"
 
     mkdir -p "$workspace"
     make_fake_app "$app_dir"
@@ -514,7 +514,7 @@ JSON
 
     (
         export APP_DIR="$app_dir"
-        export PACKAGE_NAME="codex-desktop"
+        export PACKAGE_NAME="chatgpt-desktop"
         export UPDATER_SERVICE_SOURCE="$REPO_DIR/packaging/linux/codex-update-manager.service"
         export CODEX_LINUX_FEATURES_ROOT="$features_root"
         export CODEX_LINUX_FEATURES_CONFIG="$feature_config"
@@ -652,7 +652,7 @@ JSON
 
     if (
         export APP_DIR="$app_dir"
-        export PACKAGE_NAME="codex-desktop"
+        export PACKAGE_NAME="chatgpt-desktop"
         export PACKAGE_VERSION="2026.03.24.120000+hookfailure"
         export CODEX_LINUX_FEATURES_ROOT="$features_root"
         export CODEX_LINUX_FEATURES_CONFIG="$feature_config"
@@ -768,37 +768,37 @@ SCRIPT
     PACKAGE_VERSION="2026.03.24.120000+manual" \
     bash "$REPO_DIR/scripts/build-deb.sh"
 
-    assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+manual_amd64.deb"
-    assert_file_exists "$pkg_root/usr/bin/codex-desktop"
+    assert_file_exists "$dist_dir/chatgpt-desktop_2026.03.24.120000+manual_amd64.deb"
+    assert_file_exists "$pkg_root/usr/bin/chatgpt-desktop"
     assert_file_exists "$pkg_root/DEBIAN/postinst"
     assert_file_exists "$pkg_root/DEBIAN/prerm"
-    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
-    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
     assert_file_not_exists "$pkg_root/usr/bin/codex-update-manager"
     assert_file_not_exists "$pkg_root/usr/lib/systemd/user/codex-update-manager.service"
-    assert_file_not_exists "$pkg_root/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy"
-    assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder"
+    assert_file_not_exists "$pkg_root/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy"
+    assert_file_not_exists "$pkg_root/opt/chatgpt-desktop/update-builder"
     assert_file_not_exists "$pkg_root/DEBIAN/postrm"
     assert_not_contains "$pkg_root/DEBIAN/control" "pkexec"
     assert_not_contains "$pkg_root/DEBIAN/control" "polkit"
     assert_not_contains "$pkg_root/DEBIAN/control" "Local auto-updates"
     assert_contains "$pkg_root/DEBIAN/control" "without codex-update-manager"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Actions=new-window;"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Desktop Action new-window"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/codex-desktop --new-instance"
-    assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Desktop Action CheckForUpdates"
-    assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "InstallReadyUpdate"
-    assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "codex-update-manager"
-    assert_not_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "systemctl"
-    assert_not_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "codex-update-manager"
-    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-desktop.desktop"'
-    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh" "codex_desktop_repair_system_package_shadow_entries"
-    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_update_manager_service"
-    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "stop \"\$SERVICE_NAME\""
-    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "disable \"\$SERVICE_NAME\""
-    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "daemon-reload"
-    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_user_enablement_links"
-    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "default.target.wants"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Actions=new-window;"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Desktop Action new-window"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/chatgpt-desktop --new-instance"
+    assert_not_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Desktop Action CheckForUpdates"
+    assert_not_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "InstallReadyUpdate"
+    assert_not_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "codex-update-manager"
+    assert_not_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "systemctl"
+    assert_not_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "codex-update-manager"
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="chatgpt-desktop.desktop"'
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-desktop-entry-doctor.sh" "codex_desktop_repair_system_package_shadow_entries"
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_update_manager_service"
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "stop \"\$SERVICE_NAME\""
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "disable \"\$SERVICE_NAME\""
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "daemon-reload"
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_user_enablement_links"
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "default.target.wants"
     assert_contains "$pkg_root/DEBIAN/postinst" "codex_no_updater_cleanup_update_manager_service"
     assert_contains "$pkg_root/DEBIAN/postinst" "codex_desktop_repair_system_package_shadow_entries"
     assert_contains "$pkg_root/DEBIAN/prerm" "codex_no_updater_cleanup_update_manager_service"
@@ -948,7 +948,7 @@ if [ -n "${CAPTURE_DIR:-}" ]; then
     fi
 fi
 mkdir -p "$rpmdir/x86_64"
-touch "$rpmdir/x86_64/codex-desktop-2026.03.24.120000-deadbeef.x86_64.rpm"
+touch "$rpmdir/x86_64/chatgpt-desktop-2026.03.24.120000-deadbeef.x86_64.rpm"
 SCRIPT
     cat > "$bin_dir/cargo" <<'SCRIPT'
 #!/usr/bin/env bash
@@ -965,7 +965,7 @@ SCRIPT
     PACKAGE_VERSION="2026.03.24.120000+deadbeef" \
     bash "$REPO_DIR/scripts/build-rpm.sh"
 
-    assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000-deadbeef.x86_64.rpm"
+    assert_file_exists "$dist_dir/chatgpt-desktop-2026.03.24.120000-deadbeef.x86_64.rpm"
     [ "$(cat "$capture_dir/rpm-binary-payload")" = "" ] \
         || fail "Expected default RPM binary payload to use tool default"
 
@@ -981,19 +981,19 @@ SCRIPT
     MAX_BUILD_THREADS=8 \
     bash "$REPO_DIR/scripts/build-rpm.sh"
 
-    assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000-manual.x86_64.rpm"
+    assert_file_exists "$dist_dir/chatgpt-desktop-2026.03.24.120000-manual.x86_64.rpm"
     assert_file_exists "$capture_dir/codex-desktop.spec"
     [ "$(cat "$capture_dir/rpm-binary-payload")" = "w19T8.zstdio" ] \
         || fail "Expected MAX_BUILD_THREADS to reach rpmbuild payload compression"
-    assert_file_exists "$capture_dir/staging/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
+    assert_file_exists "$capture_dir/staging/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
     assert_file_not_exists "$capture_dir/staging/usr/bin/codex-update-manager"
     assert_file_not_exists "$capture_dir/staging/usr/lib/systemd/user/codex-update-manager.service"
-    assert_file_not_exists "$capture_dir/staging/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy"
-    assert_file_not_exists "$capture_dir/staging/opt/codex-desktop/update-builder"
-    assert_mode "$capture_dir/staging/opt/codex-desktop" "755"
-    assert_mode "$capture_dir/staging/opt/codex-desktop/content/webview" "755"
-    assert_mode "$capture_dir/staging/opt/codex-desktop/start.sh" "755"
-    assert_mode "$capture_dir/staging/opt/codex-desktop/content/webview/index.html" "644"
+    assert_file_not_exists "$capture_dir/staging/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy"
+    assert_file_not_exists "$capture_dir/staging/opt/chatgpt-desktop/update-builder"
+    assert_mode "$capture_dir/staging/opt/chatgpt-desktop" "755"
+    assert_mode "$capture_dir/staging/opt/chatgpt-desktop/content/webview" "755"
+    assert_mode "$capture_dir/staging/opt/chatgpt-desktop/start.sh" "755"
+    assert_mode "$capture_dir/staging/opt/chatgpt-desktop/content/webview/index.html" "644"
     assert_contains "$capture_dir/codex-desktop.spec" "%if 0"
     assert_contains "$capture_dir/codex-desktop.spec" "codex_elf_suffix ()(64bit)"
     assert_contains "$capture_dir/codex-desktop.spec" "libatk-bridge-2.0.so.0"
@@ -1001,7 +1001,7 @@ SCRIPT
     assert_not_contains "$capture_dir/codex-desktop.spec" "at-spi2-atk"
     assert_not_contains "$capture_dir/codex-desktop.spec" "mesa-libgbm"
     assert_contains "$capture_dir/codex-desktop.spec" "codex_no_updater_cleanup_update_manager_service"
-    assert_contains "$capture_dir/staging/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_user_enablement_links"
+    assert_contains "$capture_dir/staging/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_user_enablement_links"
 
     rm -rf "$dist_dir" "$capture_dir"
     mkdir -p "$dist_dir" "$capture_dir"
@@ -1043,7 +1043,7 @@ test_pacman_builder_without_updater_transition_hook() {
 #!/usr/bin/env bash
 set -euo pipefail
 cp PKGBUILD "$CAPTURE_DIR/PKGBUILD"
-cp codex-desktop.install "$CAPTURE_DIR/codex-desktop.install"
+cp chatgpt-desktop.install "$CAPTURE_DIR/chatgpt-desktop.install"
 printf '%s\n' "${MAKEPKG_CONF:-}" > "$CAPTURE_DIR/makepkg-conf-path"
 if [ -n "${MAKEPKG_CONF:-}" ]; then
     cp "$MAKEPKG_CONF" "$CAPTURE_DIR/makepkg.conf"
@@ -1077,12 +1077,12 @@ SCRIPT
         bash "$REPO_DIR/scripts/build-pacman.sh"
     )"
 
-    assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000+manual-1-x86_64.pkg.tar.zst"
-    [ "$package_path" = "$dist_dir/codex-desktop-2026.03.24.120000+manual-1-x86_64.pkg.tar.zst" ] || fail "Expected build-pacman.sh to print built package path, got: $package_path"
-    assert_file_exists "$dist_dir/codex-desktop-latest.pkg.tar.zst"
-    [ "$(readlink "$dist_dir/codex-desktop-latest.pkg.tar.zst")" = "codex-desktop-2026.03.24.120000+manual-1-x86_64.pkg.tar.zst" ] || fail "Expected latest pacman symlink to point at built package"
+    assert_file_exists "$dist_dir/chatgpt-desktop-2026.03.24.120000+manual-1-x86_64.pkg.tar.zst"
+    [ "$package_path" = "$dist_dir/chatgpt-desktop-2026.03.24.120000+manual-1-x86_64.pkg.tar.zst" ] || fail "Expected build-pacman.sh to print built package path, got: $package_path"
+    assert_file_exists "$dist_dir/chatgpt-desktop-latest.pkg.tar.zst"
+    [ "$(readlink "$dist_dir/chatgpt-desktop-latest.pkg.tar.zst")" = "chatgpt-desktop-2026.03.24.120000+manual-1-x86_64.pkg.tar.zst" ] || fail "Expected latest pacman symlink to point at built package"
     assert_file_exists "$capture_dir/PKGBUILD"
-    assert_file_exists "$capture_dir/codex-desktop.install"
+    assert_file_exists "$capture_dir/chatgpt-desktop.install"
     assert_file_exists "$capture_dir/makepkg.conf"
     assert_contains "$capture_dir/makepkg.conf" "MAKEFLAGS=\"\${MAKEFLAGS:+\$MAKEFLAGS }-j5\""
     [ "$(cat "$capture_dir/makepkg-evaluated-makeflags")" = "-j12 -j5" ] \
@@ -1092,13 +1092,13 @@ SCRIPT
     assert_contains "$capture_dir/PKGBUILD" "pkgrel=1"
     assert_contains "$capture_dir/PKGBUILD" "ampersand&tmp"
     assert_not_contains "$capture_dir/PKGBUILD" "__STAGING_DIR__"
-    assert_contains "$capture_dir/PKGBUILD" "install=codex-desktop.install"
+    assert_contains "$capture_dir/PKGBUILD" "install=chatgpt-desktop.install"
     assert_not_contains "$capture_dir/PKGBUILD" "'polkit'"
-    assert_contains "$capture_dir/codex-desktop.install" "codex_no_updater_cleanup_update_manager_service"
-    assert_contains "$capture_dir/codex-desktop.install" "post_upgrade"
-    assert_contains "$capture_dir/codex-desktop.install" "pre_remove"
-    assert_contains "$capture_dir/codex-desktop.install" "codex-no-updater-transition-cleanup.sh"
-    assert_not_contains "$capture_dir/codex-desktop.install" "update-builder"
+    assert_contains "$capture_dir/chatgpt-desktop.install" "codex_no_updater_cleanup_update_manager_service"
+    assert_contains "$capture_dir/chatgpt-desktop.install" "post_upgrade"
+    assert_contains "$capture_dir/chatgpt-desktop.install" "pre_remove"
+    assert_contains "$capture_dir/chatgpt-desktop.install" "codex-no-updater-transition-cleanup.sh"
+    assert_not_contains "$capture_dir/chatgpt-desktop.install" "update-builder"
 }
 
 test_appimage_builder_smoke() {
@@ -1107,7 +1107,7 @@ test_appimage_builder_smoke() {
     local bin_dir="$workspace/bin"
     local app_dir="$workspace/app"
     local dist_dir="$workspace/dist"
-    local appdir="$workspace/codex-desktop.AppDir"
+    local appdir="$workspace/chatgpt-desktop.AppDir"
     local capture_dir="$workspace/capture"
     local arch
 
@@ -1157,30 +1157,30 @@ SCRIPT
     PACKAGE_VERSION="2026.03.24.120000+appimage" \
     bash "$REPO_DIR/scripts/build-appimage.sh"
 
-    assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000+appimage-$arch.AppImage"
+    assert_file_exists "$dist_dir/chatgpt-desktop-2026.03.24.120000+appimage-$arch.AppImage"
     assert_file_exists "$capture_dir/AppDir/AppRun"
     [ -x "$capture_dir/AppDir/AppRun" ] || fail "Expected AppRun to be executable"
-    assert_file_exists "$capture_dir/AppDir/codex-desktop.desktop"
-    assert_file_exists "$capture_dir/AppDir/codex-desktop.png"
+    assert_file_exists "$capture_dir/AppDir/chatgpt-desktop.desktop"
+    assert_file_exists "$capture_dir/AppDir/chatgpt-desktop.png"
     assert_file_exists "$capture_dir/AppDir/.DirIcon"
-    assert_file_exists "$capture_dir/AppDir/usr/share/applications/codex-desktop.desktop"
-    assert_file_exists "$capture_dir/AppDir/usr/share/icons/hicolor/256x256/apps/codex-desktop.png"
-    assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/start.sh"
-    assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-desktop.png"
-    assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
-    assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_file_exists "$capture_dir/AppDir/usr/share/applications/chatgpt-desktop.desktop"
+    assert_file_exists "$capture_dir/AppDir/usr/share/icons/hicolor/256x256/apps/chatgpt-desktop.png"
+    assert_file_exists "$capture_dir/AppDir/opt/chatgpt-desktop/start.sh"
+    assert_file_exists "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/chatgpt-desktop.png"
+    assert_file_exists "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_file_exists "$capture_dir/AppDir/opt/chatgpt-desktop/resources/node-runtime/bin/node"
     assert_file_not_exists "$capture_dir/AppDir/usr/bin/codex-update-manager"
     assert_file_not_exists "$capture_dir/AppDir/usr/lib/systemd/user/codex-update-manager.service"
-    assert_file_not_exists "$capture_dir/AppDir/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy"
-    assert_file_not_exists "$capture_dir/AppDir/opt/codex-desktop/update-builder"
-    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "Exec=AppRun %u"
-    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "Icon=codex-desktop"
-    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "X-AppImage-Version=2026.03.24.120000+appimage"
-    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "Actions=new-window;"
-    assert_contains "$capture_dir/AppDir/codex-desktop.desktop" "[Desktop Action new-window]"
-    assert_not_contains "$capture_dir/AppDir/codex-desktop.desktop" "codex-update-manager"
-    assert_contains "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-desktop.desktop"'
-    assert_not_contains "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "/usr/share/applications"
+    assert_file_not_exists "$capture_dir/AppDir/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy"
+    assert_file_not_exists "$capture_dir/AppDir/opt/chatgpt-desktop/update-builder"
+    assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "Exec=AppRun %u"
+    assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "Icon=chatgpt-desktop"
+    assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "X-AppImage-Version=2026.03.24.120000+appimage"
+    assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "Actions=new-window;"
+    assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "[Desktop Action new-window]"
+    assert_not_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "codex-update-manager"
+    assert_contains "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="chatgpt-desktop.desktop"'
+    assert_not_contains "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "/usr/share/applications"
     [ "$(cat "$capture_dir/arch")" = "$arch" ] || fail "Expected appimagetool ARCH=$arch"
     [ "$(cat "$capture_dir/version")" = "2026.03.24.120000+appimage" ] || fail "Expected appimagetool VERSION override"
 }
@@ -1250,10 +1250,10 @@ test_make_run_app_reports_missing_launcher() {
     mkdir -p "$workspace"
 
     if make -f "$REPO_DIR/Makefile" -C "$workspace" run-app >"$output_log" 2>&1; then
-        fail "make run-app should fail when codex-app/start.sh is missing"
+        fail "make run-app should fail when chatgpt-app/start.sh is missing"
     fi
 
-    assert_contains "$output_log" "Missing launcher: $workspace/codex-app/start.sh. Run make build-app first."
+    assert_contains "$output_log" "Missing launcher: $workspace/chatgpt-app/start.sh. Run make build-app first."
     assert_not_contains "$output_log" "No such file or directory"
 }
 
@@ -1320,7 +1320,7 @@ test_make_build_dev_app_writes_host_portable_launcher_symlink() {
     info "Checking make build-dev-app writes a host-portable launcher symlink"
     local workspace="$TMP_DIR/make-build-dev-app"
     local install_log="$workspace/install-env.log"
-    local launcher="$workspace/bin/codex-cua-lab"
+    local launcher="$workspace/bin/chatgpt-cua-lab"
     local target
 
     mkdir -p "$workspace"
@@ -1341,19 +1341,19 @@ SCRIPT
 
     assert_file_exists "$launcher"
     target="$(readlink "$launcher")"
-    [ "$target" = "../codex-cua-lab-app/start.sh" ] \
+    [ "$target" = "../chatgpt-cua-lab-app/start.sh" ] \
         || fail "Expected dev app launcher to use a relative symlink, got: $target"
     [ -x "$launcher" ] || fail "Expected dev app launcher symlink to resolve on the host"
-    assert_contains "$install_log" "codex-cua-lab"
-    assert_contains "$install_log" "Codex CUA Lab"
-    assert_contains "$install_log" "$workspace/codex-cua-lab-app"
+    assert_contains "$install_log" "chatgpt-cua-lab"
+    assert_contains "$install_log" "ChatGPT CUA Lab"
+    assert_contains "$install_log" "$workspace/chatgpt-cua-lab-app"
 }
 
 test_installer_refreshes_stale_cached_dmg_metadata() {
     info "Checking installer DMG cache freshness metadata branches"
     local workspace="$TMP_DIR/dmg-cache-refresh"
     local bin_dir="$workspace/bin"
-    local url="https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
+    local url="https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg"
     local url_sha256
 
     url_sha256="$(printf '%s' "$url" | sha256sum | awk '{print $1}')"
@@ -1426,28 +1426,28 @@ source "$REPO_DIR/scripts/lib/install-helpers.sh"
 source "$REPO_DIR/scripts/lib/dmg.sh"
 
 dmg_path="$(get_dmg)"
-[ "$dmg_path" = "$TEST_SOURCE_DIR/Codex.dmg" ]
+[ "$dmg_path" = "$TEST_SOURCE_DIR/ChatGPT.dmg" ]
 SCRIPT
     }
 
     local no_metadata="$workspace/no-metadata"
     mkdir -p "$no_metadata"
-    printf '%s' "old" >"$no_metadata/Codex.dmg"
+    printf '%s' "old" >"$no_metadata/ChatGPT.dmg"
     run_dmg_cache_case "$no_metadata" "$no_metadata/output.log" \
         TEST_ETAG=fresh-etag \
         TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
         TEST_CONTENT_LENGTH=3 \
         TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$no_metadata/Codex.dmg")" = "new" ] || fail "Expected missing-metadata cache to refresh"
-    assert_contains "$no_metadata/Codex.dmg.metadata" "etag=fresh-etag"
-    assert_contains "$no_metadata/Codex.dmg.metadata" "url_sha256=$url_sha256"
+    [ "$(cat "$no_metadata/ChatGPT.dmg")" = "new" ] || fail "Expected missing-metadata cache to refresh"
+    assert_contains "$no_metadata/ChatGPT.dmg.metadata" "etag=fresh-etag"
+    assert_contains "$no_metadata/ChatGPT.dmg.metadata" "url_sha256=$url_sha256"
     assert_contains "$no_metadata/output.log" "Cached DMG has no upstream metadata"
     assert_contains "$no_metadata/output.log" "Refreshing stale cached DMG"
 
     local matching="$workspace/matching"
     mkdir -p "$matching"
-    printf '%s' "old" >"$matching/Codex.dmg"
-    cat >"$matching/Codex.dmg.metadata" <<EOF
+    printf '%s' "old" >"$matching/ChatGPT.dmg"
+    cat >"$matching/ChatGPT.dmg.metadata" <<EOF
 url_sha256=$url_sha256
 etag=same-etag
 last_modified=Thu, 04 Jun 2026 00:00:00 GMT
@@ -1458,14 +1458,14 @@ EOF
         TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
         TEST_CONTENT_LENGTH=3 \
         TEST_DOWNLOAD_CONTENT=downloaded
-    [ "$(cat "$matching/Codex.dmg")" = "old" ] || fail "Expected matching metadata to reuse cache"
+    [ "$(cat "$matching/ChatGPT.dmg")" = "old" ] || fail "Expected matching metadata to reuse cache"
     assert_not_contains "$matching/curl.log" "GET"
     assert_contains "$matching/output.log" "Using cached DMG"
 
     local differing="$workspace/differing"
     mkdir -p "$differing"
-    printf '%s' "old" >"$differing/Codex.dmg"
-    cat >"$differing/Codex.dmg.metadata" <<EOF
+    printf '%s' "old" >"$differing/ChatGPT.dmg"
+    cat >"$differing/ChatGPT.dmg.metadata" <<EOF
 url_sha256=$url_sha256
 etag=old-etag
 last_modified=Thu, 04 Jun 2026 00:00:00 GMT
@@ -1476,13 +1476,13 @@ EOF
         TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
         TEST_CONTENT_LENGTH=3 \
         TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$differing/Codex.dmg")" = "new" ] || fail "Expected differing metadata to refresh cache"
+    [ "$(cat "$differing/ChatGPT.dmg")" = "new" ] || fail "Expected differing metadata to refresh cache"
     assert_contains "$differing/curl.log" "GET"
 
     local differing_pinned="$workspace/differing-pinned"
     mkdir -p "$differing_pinned"
-    printf '%s' "old" >"$differing_pinned/Codex.dmg"
-    cat >"$differing_pinned/Codex.dmg.metadata" <<EOF
+    printf '%s' "old" >"$differing_pinned/ChatGPT.dmg"
+    cat >"$differing_pinned/ChatGPT.dmg.metadata" <<EOF
 url_sha256=$url_sha256
 etag=old-etag
 last_modified=Thu, 04 Jun 2026 00:00:00 GMT
@@ -1494,21 +1494,21 @@ EOF
         TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
         TEST_CONTENT_LENGTH=3 \
         TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$differing_pinned/Codex.dmg")" = "old" ] || fail "Expected pinned stale cache to keep old DMG"
+    [ "$(cat "$differing_pinned/ChatGPT.dmg")" = "old" ] || fail "Expected pinned stale cache to keep old DMG"
     assert_not_contains "$differing_pinned/curl.log" "HEAD"
     assert_not_contains "$differing_pinned/curl.log" "GET"
     assert_contains "$differing_pinned/output.log" "CODEX_DMG_REFRESH_MODE=pinned"
 
     local no_metadata_pinned="$workspace/no-metadata-pinned"
     mkdir -p "$no_metadata_pinned"
-    printf '%s' "old" >"$no_metadata_pinned/Codex.dmg"
+    printf '%s' "old" >"$no_metadata_pinned/ChatGPT.dmg"
     run_dmg_cache_case "$no_metadata_pinned" "$no_metadata_pinned/output.log" \
         CODEX_DMG_REFRESH_MODE=pinned \
         TEST_ETAG=fresh-etag \
         TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
         TEST_CONTENT_LENGTH=3 \
         TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$no_metadata_pinned/Codex.dmg")" = "old" ] || fail "Expected pinned missing metadata cache to keep old DMG"
+    [ "$(cat "$no_metadata_pinned/ChatGPT.dmg")" = "old" ] || fail "Expected pinned missing metadata cache to keep old DMG"
     assert_not_contains "$no_metadata_pinned/curl.log" "HEAD"
     assert_not_contains "$no_metadata_pinned/curl.log" "GET"
 
@@ -1525,8 +1525,8 @@ EOF
 
     local failed_get="$workspace/failed-get"
     mkdir -p "$failed_get"
-    printf '%s' "old" >"$failed_get/Codex.dmg"
-    cat >"$failed_get/Codex.dmg.metadata" <<EOF
+    printf '%s' "old" >"$failed_get/ChatGPT.dmg"
+    cat >"$failed_get/ChatGPT.dmg.metadata" <<EOF
 url_sha256=$url_sha256
 etag=old-etag
 last_modified=Thu, 04 Jun 2026 00:00:00 GMT
@@ -1540,63 +1540,63 @@ EOF
     then
         fail "Expected failed replacement download to fail the refresh"
     fi
-    [ "$(cat "$failed_get/Codex.dmg")" = "old" ] || fail "Expected failed refresh to preserve old DMG"
-    assert_contains "$failed_get/Codex.dmg.metadata" "etag=old-etag"
-    assert_file_not_exists "$failed_get/Codex.dmg.part"
+    [ "$(cat "$failed_get/ChatGPT.dmg")" = "old" ] || fail "Expected failed refresh to preserve old DMG"
+    assert_contains "$failed_get/ChatGPT.dmg.metadata" "etag=old-etag"
+    assert_file_not_exists "$failed_get/ChatGPT.dmg.part"
 
     local head_failure="$workspace/head-failure"
     mkdir -p "$head_failure"
-    printf '%s' "old" >"$head_failure/Codex.dmg"
-    cat >"$head_failure/Codex.dmg.metadata" <<EOF
+    printf '%s' "old" >"$head_failure/ChatGPT.dmg"
+    cat >"$head_failure/ChatGPT.dmg.metadata" <<EOF
 url_sha256=$url_sha256
 etag=old-etag
 last_modified=Thu, 04 Jun 2026 00:00:00 GMT
 content_length=3
 EOF
     run_dmg_cache_case "$head_failure" "$head_failure/output.log" TEST_HEAD_FAIL=1
-    [ "$(cat "$head_failure/Codex.dmg")" = "old" ] || fail "Expected HEAD failure to preserve cache"
+    [ "$(cat "$head_failure/ChatGPT.dmg")" = "old" ] || fail "Expected HEAD failure to preserve cache"
     assert_not_contains "$head_failure/curl.log" "GET"
     assert_contains "$head_failure/output.log" "Could not check upstream DMG metadata"
 
     local head_failure_mismatched_url="$workspace/head-failure-mismatched-url"
     mkdir -p "$head_failure_mismatched_url"
-    printf '%s' "old" >"$head_failure_mismatched_url/Codex.dmg"
-    cat >"$head_failure_mismatched_url/Codex.dmg.metadata" <<EOF
+    printf '%s' "old" >"$head_failure_mismatched_url/ChatGPT.dmg"
+    cat >"$head_failure_mismatched_url/ChatGPT.dmg.metadata" <<EOF
 url_sha256=$url_sha256
 etag=old-etag
 last_modified=Thu, 04 Jun 2026 00:00:00 GMT
 content_length=3
 EOF
     if run_dmg_cache_case "$head_failure_mismatched_url" "$head_failure_mismatched_url/output.log" \
-        CODEX_UPSTREAM_DMG_URL="https://example.com/Codex.dmg" \
+        CODEX_UPSTREAM_DMG_URL="https://example.com/ChatGPT.dmg" \
         TEST_HEAD_FAIL=1 \
         TEST_GET_FAIL=1
     then
         fail "Expected HEAD failure with mismatched cached URL metadata to attempt refresh and fail"
     fi
-    [ "$(cat "$head_failure_mismatched_url/Codex.dmg")" = "old" ] || fail "Expected failed mismatched-URL refresh to preserve old DMG"
-    assert_contains "$head_failure_mismatched_url/Codex.dmg.metadata" "etag=old-etag"
+    [ "$(cat "$head_failure_mismatched_url/ChatGPT.dmg")" = "old" ] || fail "Expected failed mismatched-URL refresh to preserve old DMG"
+    assert_contains "$head_failure_mismatched_url/ChatGPT.dmg.metadata" "etag=old-etag"
     assert_contains "$head_failure_mismatched_url/curl.log" "GET"
     assert_contains "$head_failure_mismatched_url/output.log" "cached DMG URL metadata does not match current URL"
 
     local secret_url="$workspace/secret-url"
     mkdir -p "$secret_url"
     run_dmg_cache_case "$secret_url" "$secret_url/output.log" \
-        CODEX_UPSTREAM_DMG_URL="https://user:secret@example.com/Codex.dmg?token=topsecret#fragsecret" \
+        CODEX_UPSTREAM_DMG_URL="https://user:secret@example.com/ChatGPT.dmg?token=topsecret#fragsecret" \
         TEST_ETAG=opaque-etag \
         TEST_CONTENT_LENGTH=3 \
         TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$secret_url/Codex.dmg")" = "new" ] || fail "Expected HTTPS override URL to download"
-    assert_contains "$secret_url/output.log" "URL: https://redacted@example.com/Codex.dmg?REDACTED"
+    [ "$(cat "$secret_url/ChatGPT.dmg")" = "new" ] || fail "Expected HTTPS override URL to download"
+    assert_contains "$secret_url/output.log" "URL: https://redacted@example.com/ChatGPT.dmg?REDACTED"
     assert_not_contains "$secret_url/output.log" "topsecret"
     assert_not_contains "$secret_url/output.log" "fragsecret"
-    assert_not_contains "$secret_url/Codex.dmg.metadata" "topsecret"
-    assert_not_contains "$secret_url/Codex.dmg.metadata" "fragsecret"
+    assert_not_contains "$secret_url/ChatGPT.dmg.metadata" "topsecret"
+    assert_not_contains "$secret_url/ChatGPT.dmg.metadata" "fragsecret"
 
     local invalid_url="$workspace/invalid-url"
     mkdir -p "$invalid_url"
     if run_dmg_cache_case "$invalid_url" "$invalid_url/output.log" \
-        CODEX_UPSTREAM_DMG_URL="file:///tmp/Codex.dmg"
+        CODEX_UPSTREAM_DMG_URL="file:///tmp/ChatGPT.dmg"
     then
         fail "Expected non-HTTPS upstream DMG URL to fail"
     fi
@@ -1614,7 +1614,7 @@ test_extract_dmg_repairs_safe_7z_link_warnings() {
     local actual
 
     mkdir -p "$bin_dir" "$work_dir"
-    printf '%s' "fake dmg payload" >"$workspace/Codex.dmg"
+    printf '%s' "fake dmg payload" >"$workspace/ChatGPT.dmg"
 
     cat >"$bin_dir/7z" <<'SCRIPT'
 #!/usr/bin/env bash
@@ -1685,7 +1685,7 @@ SCRIPT
     REPO_DIR="$REPO_DIR" \
     WORK_DIR="$work_dir" \
     SEVEN_ZIP_CMD="$bin_dir/7z" \
-    TEST_DMG_PATH="$workspace/Codex.dmg" \
+    TEST_DMG_PATH="$workspace/ChatGPT.dmg" \
         bash <<'SCRIPT' >"$output_log" 2>&1
 set -Eeuo pipefail
 
@@ -1743,15 +1743,15 @@ test_fresh_install_removes_cached_dmg_metadata() {
     local source_dir="$workspace/source"
 
     mkdir -p "$source_dir"
-    printf '%s' "cached" >"$source_dir/Codex.dmg"
-    printf '%s' "metadata" >"$source_dir/Codex.dmg.metadata"
+    printf '%s' "cached" >"$source_dir/ChatGPT.dmg"
+    printf '%s' "metadata" >"$source_dir/ChatGPT.dmg.metadata"
 
     TEST_SOURCE_DIR="$source_dir" REPO_DIR="$REPO_DIR" bash <<'SCRIPT'
 set -Eeuo pipefail
 
 SCRIPT_DIR="$TEST_SOURCE_DIR"
 WORK_DIR="$(mktemp -d)"
-INSTALL_DIR="$TEST_SOURCE_DIR/codex-app"
+INSTALL_DIR="$TEST_SOURCE_DIR/chatgpt-app"
 # shellcheck disable=SC1091
 source "$REPO_DIR/scripts/lib/install-helpers.sh"
 
@@ -1760,8 +1760,8 @@ REUSE_CACHED_DMG=0
 prepare_install
 SCRIPT
 
-    assert_file_not_exists "$source_dir/Codex.dmg"
-    assert_file_not_exists "$source_dir/Codex.dmg.metadata"
+    assert_file_not_exists "$source_dir/ChatGPT.dmg"
+    assert_file_not_exists "$source_dir/ChatGPT.dmg.metadata"
 }
 
 test_fresh_pinned_dmg_preserves_cached_dmg_metadata() {
@@ -1770,15 +1770,15 @@ test_fresh_pinned_dmg_preserves_cached_dmg_metadata() {
     local source_dir="$workspace/source"
 
     mkdir -p "$source_dir"
-    printf '%s' "cached" >"$source_dir/Codex.dmg"
-    printf '%s' "metadata" >"$source_dir/Codex.dmg.metadata"
+    printf '%s' "cached" >"$source_dir/ChatGPT.dmg"
+    printf '%s' "metadata" >"$source_dir/ChatGPT.dmg.metadata"
 
     TEST_SOURCE_DIR="$source_dir" REPO_DIR="$REPO_DIR" bash <<'SCRIPT'
 set -Eeuo pipefail
 
 SCRIPT_DIR="$TEST_SOURCE_DIR"
 WORK_DIR="$(mktemp -d)"
-INSTALL_DIR="$TEST_SOURCE_DIR/codex-app"
+INSTALL_DIR="$TEST_SOURCE_DIR/chatgpt-app"
 CODEX_DMG_REFRESH_MODE=pinned
 # shellcheck disable=SC1091
 source "$REPO_DIR/scripts/lib/install-helpers.sh"
@@ -1788,8 +1788,8 @@ REUSE_CACHED_DMG=0
 prepare_install
 SCRIPT
 
-    assert_file_exists "$source_dir/Codex.dmg"
-    assert_file_exists "$source_dir/Codex.dmg.metadata"
+    assert_file_exists "$source_dir/ChatGPT.dmg"
+    assert_file_exists "$source_dir/ChatGPT.dmg.metadata"
 }
 
 test_fresh_reuse_dmg_uses_cache_when_metadata_matches() {
@@ -1798,14 +1798,14 @@ test_fresh_reuse_dmg_uses_cache_when_metadata_matches() {
     local bin_dir="$workspace/bin"
     local source_dir="$workspace/source"
     local output_log="$workspace/output.log"
-    local url="https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
+    local url="https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg"
     local url_sha256
 
     url_sha256="$(printf '%s' "$url" | sha256sum | awk '{print $1}')"
 
     mkdir -p "$bin_dir" "$source_dir"
-    printf '%s' "cached" >"$source_dir/Codex.dmg"
-    cat >"$source_dir/Codex.dmg.metadata" <<EOF
+    printf '%s' "cached" >"$source_dir/ChatGPT.dmg"
+    cat >"$source_dir/ChatGPT.dmg.metadata" <<EOF
 url_sha256=$url_sha256
 etag=same-etag
 last_modified=Thu, 04 Jun 2026 00:00:00 GMT
@@ -1858,7 +1858,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$TEST_SOURCE_DIR"
 WORK_DIR="$(mktemp -d)"
-INSTALL_DIR="$TEST_SOURCE_DIR/codex-app"
+INSTALL_DIR="$TEST_SOURCE_DIR/chatgpt-app"
 # shellcheck disable=SC1091
 source "$REPO_DIR/scripts/lib/install-helpers.sh"
 # shellcheck disable=SC1091
@@ -1869,12 +1869,12 @@ REUSE_CACHED_DMG=1
 prepare_install
 
 dmg_path="$(get_dmg)"
-[ "$dmg_path" = "$TEST_SOURCE_DIR/Codex.dmg" ]
+[ "$dmg_path" = "$TEST_SOURCE_DIR/ChatGPT.dmg" ]
 SCRIPT
 
-    assert_file_exists "$source_dir/Codex.dmg"
-    assert_file_exists "$source_dir/Codex.dmg.metadata"
-    [ "$(cat "$source_dir/Codex.dmg")" = "cached" ] || fail "Expected matching metadata to keep cached DMG"
+    assert_file_exists "$source_dir/ChatGPT.dmg"
+    assert_file_exists "$source_dir/ChatGPT.dmg.metadata"
+    [ "$(cat "$source_dir/ChatGPT.dmg")" = "cached" ] || fail "Expected matching metadata to keep cached DMG"
     assert_contains "$source_dir/curl.log" "HEAD"
     assert_not_contains "$source_dir/curl.log" "GET"
     assert_contains "$output_log" "Using cached DMG"
@@ -1891,7 +1891,7 @@ test_rebuild_candidate_uses_validated_default_dmg() {
 
     mkdir -p "$repo/scripts"
     cp "$REPO_DIR/scripts/rebuild-candidate.sh" "$repo/scripts/rebuild-candidate.sh"
-    printf '%s' "cached" >"$repo/Codex.dmg"
+    printf '%s' "cached" >"$repo/ChatGPT.dmg"
     printf '%s' "explicit" >"$explicit_dmg"
     explicit_realpath="$(realpath "$explicit_dmg")"
 
@@ -1914,8 +1914,8 @@ SCRIPT
         bash "$repo/scripts/rebuild-candidate.sh" >"$workspace/default.out" 2>&1
     first_line="$(sed -n '1p' "$workspace/default.log")"
     second_line="$(sed -n '2p' "$workspace/default.log")"
-    [[ "$first_line" != *"Codex.dmg"* ]] || fail "Default inspect should let installer validate the cache: $first_line"
-    [[ "$second_line" == *"<$repo/Codex.dmg>"* ]] || fail "Default build should pin the validated cache: $second_line"
+    [[ "$first_line" != *"ChatGPT.dmg"* ]] || fail "Default inspect should let installer validate the cache: $first_line"
+    [[ "$second_line" == *"<$repo/ChatGPT.dmg>"* ]] || fail "Default build should pin the validated cache: $second_line"
     assert_contains "$workspace/default.out" "Using validated DMG for build"
 
     TEST_REBUILD_LOG="$workspace/explicit.log" \
@@ -2249,8 +2249,8 @@ test_setup_native_wizard_disable_is_non_destructive() {
     local config="$workspace/features.json"
     local output_log="$workspace/output.log"
     local fake_home="$workspace/home"
-    local key_file="$fake_home/.config/codex-desktop/remote-control-device-keys-v1.json"
-    local model_file="$fake_home/.local/share/codex-desktop/read-aloud/kokoro-venv/bin/python"
+    local key_file="$fake_home/.config/chatgpt-desktop/remote-control-device-keys-v1.json"
+    local model_file="$fake_home/.local/share/chatgpt-desktop/read-aloud/kokoro-venv/bin/python"
     local plugin_cache="$fake_home/.codex/plugins/cache/openai-bundled/read-aloud"
 
     make_wizard_feature_root "$features_root"
@@ -2277,7 +2277,7 @@ JSON
     assert_file_exists "$plugin_cache/marker"
     assert_contains "$output_log" "Not deleting $key_file"
     assert_contains "$output_log" "Not removing Read Aloud model files, Python runtimes, or plugin caches"
-    assert_contains "$output_log" "$fake_home/.local/share/codex-desktop/read-aloud"
+    assert_contains "$output_log" "$fake_home/.local/share/chatgpt-desktop/read-aloud"
     assert_contains "$output_log" "$plugin_cache"
 }
 
@@ -2521,7 +2521,7 @@ test_setup_native_wizard_prints_deep_readiness_guidance() {
 
     make_wizard_feature_root "$features_root"
     printf '%s\n' '{"enabled":["read-aloud","read-aloud-mcp"]}' > "$config"
-    mkdir -p "$fake_home/.config/codex-desktop" "$fake_home/.local/share/codex-desktop/read-aloud"
+    mkdir -p "$fake_home/.config/chatgpt-desktop" "$fake_home/.local/share/chatgpt-desktop/read-aloud"
 
     HOME="$fake_home" \
     XDG_CONFIG_HOME="$fake_home/.config" \
@@ -2530,7 +2530,7 @@ test_setup_native_wizard_prints_deep_readiness_guidance() {
     DESKTOP_SESSION=plasma \
     XDG_SESSION_DESKTOP=plasma \
     XDG_SESSION_TYPE=wayland \
-    CODEX_LINUX_SETTINGS_FILE="$fake_home/.config/codex-desktop/settings.json" \
+    CODEX_LINUX_SETTINGS_FILE="$fake_home/.config/chatgpt-desktop/settings.json" \
     CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
     CODEX_LINUX_FEATURES_ROOT="$features_root" \
     CODEX_LINUX_FEATURES_CONFIG="$config" \
@@ -2597,7 +2597,7 @@ test_setup_native_wizard_read_aloud_paths_match_runtime_defaults() {
     XDG_CONFIG_HOME="$fake_home/.config" \
     XDG_DATA_HOME="$fake_home/.local/share" \
     CODEX_LINUX_APP_ID="codex-cua-lab" \
-    CODEX_APP_ID="codex-desktop" \
+    CODEX_APP_ID="chatgpt-desktop" \
     CODEX_LINUX_SETTINGS_FILE="$fake_home/.config/codex-cua-lab/settings.json" \
     CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
     CODEX_LINUX_FEATURES_ROOT="$features_root" \
@@ -2608,7 +2608,7 @@ test_setup_native_wizard_read_aloud_paths_match_runtime_defaults() {
     assert_contains "$output_log" "Kokoro python: /custom/python (missing)"
     assert_contains "$output_log" "Kokoro model: $fake_home/.local/share/kokoro/kokoro-v1.0.onnx (file)"
     assert_contains "$output_log" "Kokoro voices: $fake_home/.local/share/kokoro/voices-v1.0.bin (file)"
-    assert_not_contains "$output_log" "$fake_home/.local/share/codex-desktop/read-aloud/kokoro/kokoro-v1.0.onnx"
+    assert_not_contains "$output_log" "$fake_home/.local/share/chatgpt-desktop/read-aloud/kokoro/kokoro-v1.0.onnx"
 }
 
 test_setup_native_wizard_sway_hint_is_conservative() {
@@ -2640,7 +2640,7 @@ test_setup_native_wizard_cleanup_requires_interactive_confirmation() {
     local config="$workspace/features.json"
     local output_log="$workspace/output.log"
     local fake_home="$workspace/home"
-    local key_file="$fake_home/.config/codex-desktop/remote-control-device-keys-v1.json"
+    local key_file="$fake_home/.config/chatgpt-desktop/remote-control-device-keys-v1.json"
 
     make_wizard_feature_root "$features_root"
     printf '%s\n' '{"enabled":["remote-mobile-control"]}' > "$config"
@@ -2668,7 +2668,7 @@ test_setup_native_wizard_dry_run_cleanup_allows_noninteractive_preview() {
     local config="$workspace/features.json"
     local output_log="$workspace/output.log"
     local fake_home="$workspace/home"
-    local key_file="$fake_home/.config/codex-desktop/remote-control-device-keys-v1.json"
+    local key_file="$fake_home/.config/chatgpt-desktop/remote-control-device-keys-v1.json"
 
     make_wizard_feature_root "$features_root"
     printf '%s\n' '{"enabled":["remote-mobile-control"]}' > "$config"
@@ -2733,7 +2733,7 @@ test_setup_native_wizard_dry_run_cleanup_does_not_delete_confirmed_paths() {
     local config="$workspace/features.json"
     local output_log="$workspace/output.log"
     local fake_home="$workspace/home"
-    local key_file="$fake_home/.config/codex-desktop/remote-control-device-keys-v1.json"
+    local key_file="$fake_home/.config/chatgpt-desktop/remote-control-device-keys-v1.json"
 
     make_wizard_feature_root "$features_root"
     printf '%s\n' '{"enabled":["remote-mobile-control"]}' > "$config"
@@ -2772,8 +2772,8 @@ test_setup_native_wizard_cleanup_deletes_only_confirmed_paths() {
     local config="$workspace/features.json"
     local output_log="$workspace/output.log"
     local fake_home="$workspace/home"
-    local key_file="$fake_home/.config/codex-desktop/remote-control-device-keys-v1.json"
-    local read_aloud_data="$fake_home/.local/share/codex-desktop/read-aloud"
+    local key_file="$fake_home/.config/chatgpt-desktop/remote-control-device-keys-v1.json"
+    local read_aloud_data="$fake_home/.local/share/chatgpt-desktop/read-aloud"
     local plugin_cache="$fake_home/.codex/plugins/cache/openai-bundled/read-aloud"
 
     make_wizard_feature_root "$features_root"
@@ -2825,11 +2825,11 @@ make_update_nix_hash_fixture() {
 
     cat > "$fixture/flake.nix" <<EOF
 {
-  codexVersion = "26.623.81905";
+  chatgptVersion = "26.623.81905";
   electronVersion = "42.1.0";
 
-  codexDmg = pkgs.fetchurl {
-    url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
+  chatgptDmg = pkgs.fetchurl {
+    url = "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg";
     hash = "$hash_a";
   };
 
@@ -2863,7 +2863,7 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text()
-text = re.sub(r'(codexVersion\s*=\s*")[^"]+(";)', r'\g<1>99.0.0\2', text, count=1)
+text = re.sub(r'(chatgptVersion\s*=\s*")[^"]+(";)', r'\g<1>99.0.0\2', text, count=1)
 path.write_text(text)
 PY
 fi
@@ -2949,7 +2949,7 @@ run_update_nix_hash_fixture() {
     PATH="$fixture/bin:$PATH" \
         REPO_DIR="$fixture" \
         FLAKE_FILE="$fixture/flake.nix" \
-        UPSTREAM_DMG_PATH="$fixture/Codex.dmg" \
+        UPSTREAM_DMG_PATH="$fixture/ChatGPT.dmg" \
         VERIFY_LOG="$fixture/verify.log" \
         CALL_LOG="$fixture/calls.log" \
         VALIDATE_PIN_CHANGE="$validate_pin_change" \
@@ -2976,7 +2976,7 @@ test_update_nix_hashes_verifies_changed_pins() {
 
     run_update_nix_hash_fixture "$(basename "$fixture")" 1 "$hash_a"
 
-    assert_contains "$fixture/output.log" "Nix builds succeeded after refreshing the upstream pins and Codex.dmg hash."
+    assert_contains "$fixture/output.log" "Nix builds succeeded after refreshing the upstream pins and ChatGPT.dmg hash."
     assert_contains "$fixture/calls.log" "nix-store --add-fixed"
     assert_contains "$fixture/calls.log" "nix build"
 }
@@ -2988,7 +2988,7 @@ test_update_nix_hashes_verifies_changed_dmg_hash() {
 
     run_update_nix_hash_fixture "$(basename "$fixture")" 0 "$hash_b"
 
-    assert_contains "$fixture/output.log" "Nix builds succeeded after refreshing the upstream pins and Codex.dmg hash."
+    assert_contains "$fixture/output.log" "Nix builds succeeded after refreshing the upstream pins and ChatGPT.dmg hash."
     assert_contains "$fixture/calls.log" "nix-store --add-fixed"
     assert_contains "$fixture/calls.log" "nix build"
 }
@@ -4387,7 +4387,8 @@ EOF
     assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "CODEX_INSTALL_ALLOW_RUNNING"
     assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "assert_install_target_not_running"
     assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "find_running_install_target_pid"
-    assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "Codex Desktop is currently running from"
+    assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "CODEX_APP_DISPLAY_NAME:-ChatGPT Desktop"
+    assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "is currently running from"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "prompt_install_missing_cli"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "prompt-install-cli"
     assert_contains "$REPO_DIR/launcher/start.sh.template" '.npm-global/bin/codex'
@@ -4446,7 +4447,7 @@ EOF
     assert_contains "$REPO_DIR/scripts/lib/node-runtime.sh" "MANAGED_NODE_VERSION"
     assert_contains "$REPO_DIR/scripts/lib/package-common.sh" "node-runtime"
     assert_contains "$REPO_DIR/tests/fixtures/create-packaged-app-fixture.sh" "resources/node-runtime/bin"
-    assert_contains "$REPO_DIR/.github/workflows/ci.yml" "tests/fixtures/create-packaged-app-fixture.sh codex-app"
+    assert_contains "$REPO_DIR/.github/workflows/ci.yml" "tests/fixtures/create-packaged-app-fixture.sh chatgpt-app"
     assert_contains "$REPO_DIR/.github/workflows/ci.yml" "bash scripts/ci/run-node-checks.sh"
     assert_contains "$REPO_DIR/scripts/ci/container-entrypoint.sh" "bash scripts/ci/run-node-checks.sh"
     assert_contains "$REPO_DIR/scripts/ci/run-node-checks.sh" "git ls-files '\\*.js'"
@@ -4469,18 +4470,18 @@ EOF
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/codex-desktop --new-instance"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "codex-update-manager check-now"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "codex-update-manager install-ready"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "BAMF_DESKTOP_FILE_HINT=@HOME@/.local/share/applications/codex-desktop.desktop"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "@HOME@/.local/bin/codex-desktop %U"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "Actions=new-window;"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1 @HOME@/.local/bin/codex-desktop --new-instance"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/codex-desktop" "CODEX_USER_LOCAL_OZONE_PLATFORM"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/codex-desktop" 'exec "${APP_DIR}/start.sh" --x11 "$@"'
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/codex-desktop" 'exec "${APP_DIR}/start.sh" --wayland "$@"'
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/chatgpt-desktop.desktop" "BAMF_DESKTOP_FILE_HINT=@HOME@/.local/share/applications/chatgpt-desktop.desktop"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/chatgpt-desktop.desktop" "@HOME@/.local/bin/chatgpt-desktop %U"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/chatgpt-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/chatgpt-desktop.desktop" "Actions=new-window;"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/chatgpt-desktop.desktop" "CODEX_MULTI_LAUNCH=1 @HOME@/.local/bin/chatgpt-desktop --new-instance"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/chatgpt-desktop" "CODEX_USER_LOCAL_OZONE_PLATFORM"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/chatgpt-desktop" 'exec "${APP_DIR}/start.sh" --x11 "$@"'
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/chatgpt-desktop" 'exec "${APP_DIR}/start.sh" --wayland "$@"'
     assert_contains "$REPO_DIR/contrib/user-local-install/install-user-local.sh" "--force-x11"
     assert_contains "$REPO_DIR/contrib/user-local-install/install-user-local.sh" "user-local.env"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" "assets/codex-linux.png"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" "CODEX_USER_LOCAL_RECORD_DMG_FINGERPRINT"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh" "assets/codex-linux.png"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh" "CODEX_USER_LOCAL_RECORD_DMG_FINGERPRINT"
     assert_contains "$REPO_DIR/contrib/user-local-install/README.md" "--force-x11"
 
     node - "$REPO_DIR/launcher/start.sh.template" <<'NODE' || fail "Bundled backend plugin cache syncs must expose marketplace plugin links"
@@ -4793,9 +4794,9 @@ test_process_detection_helper_cmdline_shapes() {
     local space_cmdline="$TMP_DIR/electron-helper-space.cmdline"
     local main_cmdline="$TMP_DIR/electron-main.cmdline"
 
-    printf '/opt/codex-desktop/electron\0--type=gpu-process\0--no-sandbox\0' > "$nul_cmdline"
-    printf '/opt/codex-desktop/electron --type=utility --no-sandbox' > "$space_cmdline"
-    printf '/opt/codex-desktop/electron --no-sandbox' > "$main_cmdline"
+    printf '/opt/chatgpt-desktop/electron\0--type=gpu-process\0--no-sandbox\0' > "$nul_cmdline"
+    printf '/opt/chatgpt-desktop/electron --type=utility --no-sandbox' > "$space_cmdline"
+    printf '/opt/chatgpt-desktop/electron --no-sandbox' > "$main_cmdline"
 
     (
         # shellcheck disable=SC1091
@@ -4894,7 +4895,7 @@ test_browser_use_node_repl_fallback_runtime() {
         WORK_DIR="$workspace/work"
         ARCH="$(uname -m)"
         ICON_SOURCE="$workspace/missing-icon.png"
-        CODEX_APP_ID="codex-desktop"
+        CODEX_APP_ID="chatgpt-desktop"
         XDG_CACHE_HOME="$workspace/xdg-cache"
         CODEX_NODE_REPL_PATH=
         CODEX_LINUX_NODE_REPL_SOURCE=
@@ -5016,7 +5017,7 @@ test_browser_plugin_renamed_upstream_staging() {
         WORK_DIR="$workspace/work"
         ARCH="x86_64"
         ICON_SOURCE="$workspace/missing-icon.png"
-        CODEX_APP_ID="codex-desktop"
+        CODEX_APP_ID="chatgpt-desktop"
         mkdir -p "$WORK_DIR"
         warn() { echo "[WARN] $*" >&2; }
         info() { echo "[INFO] $*" >&2; }
@@ -5247,7 +5248,7 @@ test_chrome_plugin_staging() {
         WORK_DIR="$workspace/work"
         ARCH="x86_64"
         ICON_SOURCE="$workspace/missing-icon.png"
-        CODEX_APP_ID="codex-desktop"
+        CODEX_APP_ID="chatgpt-desktop"
         mkdir -p "$WORK_DIR"
         warn() { echo "[WARN] $*" >&2; }
         info() { echo "[INFO] $*" >&2; }
@@ -5389,7 +5390,7 @@ JSON
         WORK_DIR="$workspace/work"
         ARCH="x86_64"
         ICON_SOURCE="$workspace/missing-icon.png"
-        CODEX_APP_ID="codex-desktop"
+        CODEX_APP_ID="chatgpt-desktop"
         mkdir -p "$WORK_DIR"
         warn() { echo "[WARN] $*" >&2; }
         info() { echo "[INFO] $*" >&2; }
@@ -5698,8 +5699,8 @@ NODE
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform!==`win32`&&process.platform!==`darwin`&&process.platform!==`linux`?null:' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath' '3'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop-tray.png`)' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop.png`)' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/`+(process.env.CODEX_LINUX_APP_ID??`chatgpt-desktop`)+`-tray.png`)' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/`+(process.env.CODEX_LINUX_APP_ID??`chatgpt-desktop`)+`.png`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`)&&!this.isAppQuitting' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){' '1'
@@ -6499,7 +6500,7 @@ test_linux_computer_use_ui_opt_in_smoke() {
     local install_flow_body
     local native_apps_body
 
-    mkdir -p "$workspace" "$fake_home/.config/codex-desktop"
+    mkdir -p "$workspace" "$fake_home/.config/chatgpt-desktop"
 
     bundle_body="$(cat <<'JS'
 let n={app:{whenReady(){},quit(){},requestSingleInstanceLock(){},on(){},off(){}}};
@@ -6583,7 +6584,7 @@ JS
     printf '%s\n' "$current_renderer_body" > "$current_renderer_asset"
     printf '%s\n' "$install_flow_body" > "$install_flow_asset"
     printf '%s\n' "$native_apps_body" > "$native_apps_asset"
-    printf '%s\n' '{"codex-linux-computer-use-ui-enabled": true}' > "$fake_home/.config/codex-desktop/settings.json"
+    printf '%s\n' '{"codex-linux-computer-use-ui-enabled": true}' > "$fake_home/.config/chatgpt-desktop/settings.json"
 
     env -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI -u CODEX_LINUX_APP_ID -u CODEX_APP_ID -u CODEX_LINUX_SETTINGS_FILE \
         HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
@@ -6649,7 +6650,7 @@ test_user_local_prepare_build_repo_overlays_committed_local_changes() {
     local origin_repo="$workspace/origin.git"
     local source_repo="$workspace/source"
     local upstream_repo="$workspace/upstream"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
 
     mkdir -p "$workspace"
@@ -6694,7 +6695,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -6726,7 +6727,7 @@ test_user_local_prepare_build_repo_detects_default_branch_without_recorded_branc
     local origin_repo="$workspace/origin.git"
     local source_repo="$workspace/source"
     local unmanaged_source="$workspace/source-without-git"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
 
     mkdir -p "$workspace" "$unmanaged_source"
@@ -6749,7 +6750,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -6777,7 +6778,7 @@ test_user_local_prepare_build_repo_ignores_stale_recorded_default_branch() {
     local origin_repo="$workspace/origin.git"
     local source_repo="$workspace/source"
     local unmanaged_source="$workspace/source-without-git"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
 
     mkdir -p "$workspace" "$unmanaged_source"
@@ -6800,7 +6801,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -6827,7 +6828,7 @@ test_user_local_prepare_build_repo_ignores_stale_source_origin_head() {
     local workspace="$TMP_DIR/user-local-stale-origin-head"
     local origin_repo="$workspace/origin.git"
     local source_repo="$workspace/source"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
 
     mkdir -p "$workspace"
@@ -6851,7 +6852,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -6880,7 +6881,7 @@ test_user_local_prepare_build_repo_handles_relative_origin_url() {
     local source_repo="$workspace/source"
     local moved_source_repo="$workspace/source-moved"
     local updater_repo="$workspace/updater"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
 
     mkdir -p "$workspace"
@@ -6904,7 +6905,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -6945,7 +6946,7 @@ test_desktop_entry_doctor_repairs_only_legacy_generated_entries() {
     info "Checking desktop-entry doctor only backs up legacy generated entries"
     local workspace="$TMP_DIR/desktop-entry-doctor"
     local desktop_dir="$workspace/applications"
-    local template="$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop"
+    local template="$REPO_DIR/contrib/user-local-install/files/.local/share/applications/chatgpt-desktop.desktop"
     local stale_entry="$desktop_dir/stale.desktop"
     local current_entry="$desktop_dir/current.desktop"
     local custom_entry="$desktop_dir/custom.desktop"
@@ -6955,16 +6956,16 @@ test_desktop_entry_doctor_repairs_only_legacy_generated_entries() {
     cat > "$stale_entry" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Codex Desktop
-Exec=/home/tester/.local/bin/codex-desktop %U
-TryExec=/home/tester/.local/bin/codex-desktop
+Name=ChatGPT Desktop
+Exec=/home/tester/.local/bin/chatgpt-desktop %U
+TryExec=/home/tester/.local/bin/chatgpt-desktop
 Terminal=false
 Icon=codex-desktop
 Actions=NewInstance;
 
 [Desktop Action NewInstance]
 Name=Open New Instance
-Exec=env CODEX_MULTI_LAUNCH=1 /home/tester/.local/bin/codex-desktop --new-instance
+Exec=env CODEX_MULTI_LAUNCH=1 /home/tester/.local/bin/chatgpt-desktop --new-instance
 EOF
 
     cat > "$custom_entry" <<'EOF'
@@ -7008,8 +7009,8 @@ test_user_local_install_from_update_defers_record_only_metadata() {
     local fake_bin="$workspace/bin"
     local home="$workspace/home"
     local marker="$workspace/record-only-attempted"
-    local metadata_file="$workspace/state/codex-desktop-linux/metadata.env"
-    local app_dir="$home/.local/opt/codex-desktop-linux/codex-app"
+    local metadata_file="$workspace/state/chatgpt-desktop-linux/metadata.env"
+    local app_dir="$home/.local/opt/chatgpt-desktop-linux/chatgpt-app"
 
     mkdir -p "$fake_bin"
     cat > "$fake_bin/7z" <<'SCRIPT'
@@ -7054,7 +7055,7 @@ test_user_local_install_preserves_persisted_x11_preference_on_refresh() {
     local stub_bin="$workspace/bin"
     local home="$workspace/home"
     local config_home="$workspace/config"
-    local preference_file="$config_home/codex-desktop-linux/user-local.env"
+    local preference_file="$config_home/chatgpt-desktop-linux/user-local.env"
 
     mkdir -p "$stub_bin"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$stub_bin/7z"
@@ -7096,7 +7097,7 @@ test_user_local_prepare_build_repo_copies_enabled_local_features() {
     local workspace="$TMP_DIR/user-local-local-features"
     local origin_repo="$workspace/origin.git"
     local source_repo="$workspace/source"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
     local feature_config="$workspace/linux-features.json"
     local staged_local_feature="$managed_repo/linux-features/local/local-tool"
@@ -7145,7 +7146,7 @@ JSON
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -7177,7 +7178,7 @@ test_user_local_prepare_build_repo_updates_existing_single_branch_fetch_refspec(
     local origin_repo="$workspace/origin.git"
     local upstream_repo="$workspace/upstream"
     local unmanaged_source="$workspace/source-without-git"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
 
     mkdir -p "$workspace" "$unmanaged_source"
@@ -7199,7 +7200,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -7233,7 +7234,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -7258,7 +7259,7 @@ test_user_local_prepare_build_repo_handles_deleted_overlay_paths() {
     local workspace="$TMP_DIR/user-local-deleted-overlay"
     local origin_repo="$workspace/origin.git"
     local source_repo="$workspace/source"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
 
     mkdir -p "$workspace"
@@ -7288,7 +7289,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -7311,7 +7312,7 @@ test_user_local_prepare_build_repo_removes_rename_source_paths() {
     local workspace="$TMP_DIR/user-local-rename-overlay"
     local origin_repo="$workspace/origin.git"
     local source_repo="$workspace/source"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
 
     mkdir -p "$workspace"
@@ -7338,7 +7339,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF
@@ -7363,7 +7364,7 @@ test_user_local_prepare_build_repo_skips_unmerged_overlay_paths() {
     local workspace="$TMP_DIR/user-local-unmerged-overlay"
     local origin_repo="$workspace/origin.git"
     local source_repo="$workspace/source"
-    local managed_repo="$workspace/xdg-data/codex-desktop-linux/managed-repo"
+    local managed_repo="$workspace/xdg-data/chatgpt-desktop-linux/managed-repo"
     local install_env="$workspace/install.env"
 
     mkdir -p "$workspace"
@@ -7402,7 +7403,7 @@ EOF
         mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
         # shellcheck disable=SC1091
-        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh"
+        source "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh"
 
         INSTALL_CONFIG_FILE="$install_env"
         cat > "$INSTALL_CONFIG_FILE" <<EOF

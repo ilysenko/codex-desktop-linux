@@ -147,8 +147,8 @@ render_desktop_entry() {
     local rendered_target="$target.tmp"
 
     package_name="$(sed_escape_replacement "$PACKAGE_NAME")"
-    display_name="$(sed_escape_replacement "${PACKAGE_DISPLAY_NAME:-Codex Desktop}")"
-    comment="$(sed_escape_replacement "${PACKAGE_COMMENT:-Run Codex Desktop on Linux}")"
+    display_name="$(sed_escape_replacement "${PACKAGE_DISPLAY_NAME:-ChatGPT}")"
+    comment="$(sed_escape_replacement "${PACKAGE_COMMENT:-Run ChatGPT on Linux}")"
 
     awk \
         -v package_name="$package_name" \
@@ -691,8 +691,8 @@ stage_common_package_files() {
         chmod 0755 "$root/usr/bin/codex-update-manager"
         cp "$UPDATER_SERVICE_SOURCE" "$root/usr/lib/systemd/user/codex-update-manager.service"
         chmod 0644 "$root/usr/lib/systemd/user/codex-update-manager.service"
-        cp "$polkit_policy" "$root/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy"
-        chmod 0644 "$root/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy"
+        cp "$polkit_policy" "$root/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy"
+        chmod 0644 "$root/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy"
     else
         render_no_updater_transition_cleanup_helper \
             "$app_root/.codex-linux/codex-no-updater-transition-cleanup.sh"
@@ -785,7 +785,7 @@ stage_update_builder_bundle() {
         "$update_builder_root/packaging/linux/codex-desktop-entry-doctor.sh"
     cp "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "$update_builder_root/packaging/linux/codex-packaged-runtime.sh"
     cp "$REPO_DIR/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy" \
-        "$update_builder_root/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy"
+        "$update_builder_root/packaging/linux/com.github.ilysenko.chatgpt-desktop-linux.update.policy"
     cp "$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh" \
         "$update_builder_root/packaging/linux/codex-update-manager-user-service.sh"
     cp "$REPO_DIR/packaging/linux/PKGBUILD.template" "$update_builder_root/packaging/linux/PKGBUILD.template"

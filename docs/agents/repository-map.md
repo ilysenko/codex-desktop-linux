@@ -7,7 +7,7 @@ preserving the source-of-truth routing agents need before editing.
 
 - `install.sh`
   Top-level installer entrypoint. It sources `scripts/lib/*.sh`, keeps the
-  high-level build sequence small, and emits `codex-app/start.sh` from the
+  high-level build sequence small, and emits `chatgpt-app/start.sh` from the
   launcher template plus an install-time identity prelude.
 - `Makefile`
   Convenience targets for setup, fresh/build/install/package flows, native
@@ -74,7 +74,7 @@ preserving the source-of-truth routing agents need before editing.
 - `asar-patch.sh`
   Drives `scripts/patch-linux-window-ui.js` over the extracted upstream app.
 - `webview-install.sh`
-  Webview asset extraction and final `codex-app/` layout.
+  Webview asset extraction and final `chatgpt-app/` layout.
 - `bundled-plugins.sh`
   Stages bundled Browser Use, Chrome, Linux Computer Use resources, native
   helper binaries, and marketplace metadata.
@@ -151,7 +151,7 @@ Detailed contract: `linux-features/README.md` and
   patcher, and package builders.
 - Runtime hook types are `env`, `prelaunch`, `electronArgs`, `launcher`,
   `coldStart`, and `afterExit`; they are staged under
-  `codex-app/.codex-linux/`.
+  `chatgpt-app/.codex-linux/`.
 - Declarative resources and runtime hooks are tracked in
   `.codex-linux/linux-features-staged.json` and removed on the next install
   when their owning feature is disabled.
@@ -168,11 +168,11 @@ extension point to core rather than moving the feature itself into core.
 ## Native Packaging
 
 - `scripts/build-deb.sh`
-  Builds `.deb` from an already-generated `codex-app/`.
+  Builds `.deb` from an already-generated `chatgpt-app/`.
 - `scripts/build-rpm.sh`
-  Builds `.rpm` from `codex-app/`.
+  Builds `.rpm` from `chatgpt-app/`.
 - `scripts/build-pacman.sh`
-  Builds `.pkg.tar.zst` from `codex-app/`.
+  Builds `.pkg.tar.zst` from `chatgpt-app/`.
 - `scripts/build-appimage.sh`
   Builds an AppImage using `packaging/appimage/`.
 - `packaging/linux/`
@@ -183,11 +183,11 @@ extension point to core rather than moving the feature itself into core.
 - `packaging/appimage/`
   AppImage `AppRun`, desktop file, and runtime helper.
 
-The native package payload installs the app under `/opt/codex-desktop`, the
-launcher under `/usr/bin/codex-desktop`, the updater under
+The native package payload installs the app under `/opt/chatgpt-desktop`, the
+launcher under `/usr/bin/chatgpt-desktop`, the updater under
 `/usr/bin/codex-update-manager`, the user service under
 `/usr/lib/systemd/user/`, desktop/icon metadata under `/usr/share/`, and an
-update-builder bundle under `/opt/codex-desktop/update-builder`.
+update-builder bundle under `/opt/chatgpt-desktop/update-builder`.
 
 ## Updater (`updater/`)
 
@@ -248,15 +248,15 @@ want a system-wide native package. The daily-driver flow remains `install.sh`
 plus a native package plus `codex-update-manager`.
 
 - `install-user-local.sh`
-  Installs under `~/.local/opt/codex-desktop-linux`, creates wrappers under
+  Installs under `~/.local/opt/chatgpt-desktop-linux`, creates wrappers under
   `~/.local/bin`, and installs a user desktop entry.
-- `files/.local/bin/codex-desktop{,-update,-check-update,-version}`
+- `files/.local/bin/chatgpt-desktop{,-update,-check-update,-version}`
   Installed launcher and update/version maintenance wrappers.
-- `files/.local/lib/codex-desktop-linux/common.sh`
+- `files/.local/lib/chatgpt-desktop-linux/common.sh`
   Shared helpers for installed maintenance scripts.
-- `files/.local/share/applications/codex-desktop.desktop`
+- `files/.local/share/applications/chatgpt-desktop.desktop`
   User desktop entry installed by the user-local path.
-- `files/.config/systemd/user/codex-desktop-update.{service,timer}`
+- `files/.config/systemd/user/chatgpt-desktop-update.{service,timer}`
   Optional weekly user timer.
 
 ## Tests And CI

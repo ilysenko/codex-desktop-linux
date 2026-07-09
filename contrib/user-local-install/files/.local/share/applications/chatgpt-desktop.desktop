@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ChatGPT
+Comment=OpenAI ChatGPT desktop wrapper for Linux
+Exec=env BAMF_DESKTOP_FILE_HINT=@HOME@/.local/share/applications/chatgpt-desktop.desktop CHROME_DESKTOP=chatgpt-desktop.desktop @HOME@/.local/bin/chatgpt-desktop %U
+TryExec=@HOME@/.local/bin/chatgpt-desktop
+Terminal=false
+Categories=Utility;
+MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;
+Keywords=chatgpt;openai;ai;assistant;codex;
+StartupNotify=true
+StartupWMClass=chatgpt-desktop
+X-GNOME-WMClass=chatgpt-desktop
+Icon=chatgpt-desktop
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=env BAMF_DESKTOP_FILE_HINT=@HOME@/.local/share/applications/chatgpt-desktop.desktop CHROME_DESKTOP=chatgpt-desktop.desktop CODEX_MULTI_LAUNCH=1 @HOME@/.local/bin/chatgpt-desktop --new-instance

@@ -20,12 +20,12 @@ const BLOCKING_CLASSIFICATIONS = new Set([
 function usage() {
   return `Usage: scripts/dev/upstream-dmg-intel.js --candidate PATH [options]
 
-Build an upstream DMG intelligence report without mutating codex-app/.
+Build an upstream DMG intelligence report without mutating chatgpt-app/.
 
 Options:
-  --candidate PATH       Candidate Codex.dmg, extracted .app, or extracted app resources directory
-  --baseline PATH        Optional known-good baseline DMG or extracted .app; defaults to ./Codex.dmg when different
-  --no-baseline          Do a candidate-only scan even when ./Codex.dmg exists
+  --candidate PATH       Candidate ChatGPT.dmg, extracted .app, or extracted app resources directory
+  --baseline PATH        Optional known-good baseline DMG or extracted .app; defaults to ./ChatGPT.dmg when different
+  --no-baseline          Do a candidate-only scan even when ./ChatGPT.dmg exists
   --patch-report PATH    Optional patch-report.json to fold patch blockers/review items into drift-report.json
   --registry PATH        Protected surface registry (default: scripts/dev/upstream-dmg-protected-surfaces.json)
   --output-dir DIR       Exact output directory (default: reports/upstream-dmg/<timestamp>)

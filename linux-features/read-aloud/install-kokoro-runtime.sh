@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-venv="${CODEX_LINUX_READ_ALOUD_KOKORO_VENV:-$data_home/codex-desktop/read-aloud/kokoro-venv}"
+venv="${CODEX_LINUX_READ_ALOUD_KOKORO_VENV:-$data_home/chatgpt-desktop/read-aloud/kokoro-venv}"
 model="${CODEX_LINUX_READ_ALOUD_KOKORO_MODEL:-$data_home/kokoro/kokoro-v1.0.onnx}"
 voices="${CODEX_LINUX_READ_ALOUD_KOKORO_VOICES:-$data_home/kokoro/voices-v1.0.bin}"
 model_url="${CODEX_LINUX_READ_ALOUD_KOKORO_MODEL_URL:-https://huggingface.co/zijuncheng/kokoro_model_v1.0/resolve/main/kokoro-v1.0.onnx}"
@@ -33,14 +33,14 @@ download_file() {
     rm -f "$tmp"
 
     if command -v curl >/dev/null 2>&1; then
-        curl --fail --location --show-error --user-agent "codex-desktop-read-aloud" --output "$tmp" "$url"
+        curl --fail --location --show-error --user-agent "chatgpt-desktop-read-aloud" --output "$tmp" "$url"
     elif command -v wget >/dev/null 2>&1; then
-        wget --user-agent="codex-desktop-read-aloud" --output-document "$tmp" "$url"
+        wget --user-agent="chatgpt-desktop-read-aloud" --output-document "$tmp" "$url"
     else
         "$python_bin" - "$url" "$tmp" <<'PY'
 import sys
 import urllib.request
-request = urllib.request.Request(sys.argv[1], headers={"User-Agent": "codex-desktop-read-aloud"})
+request = urllib.request.Request(sys.argv[1], headers={"User-Agent": "chatgpt-desktop-read-aloud"})
 with urllib.request.urlopen(request) as response, open(sys.argv[2], "wb") as output:
     output.write(response.read())
 PY

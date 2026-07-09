@@ -2,21 +2,21 @@
 
 ## Purpose
 
-This repository adapts the official macOS Codex Desktop DMG into a runnable
+This repository adapts the official macOS ChatGPT Desktop DMG into a runnable
 Linux app, packages it as `.deb`, `.rpm`, pacman, and AppImage artifacts, and
 ships a local Rust update manager that can rebuild future Linux packages from
 newer upstream DMGs.
 
-The build flow: `install.sh` downloads/extracts `Codex.dmg`, patches the
+The build flow: `install.sh` downloads/extracts `ChatGPT.dmg`, patches the
 extracted app through core and enabled Linux feature descriptors, rebuilds
 native modules, downloads Linux Electron, stages bundled resources, writes
-`codex-app/start.sh`, and lets package builders produce native artifacts or
+`chatgpt-app/start.sh`, and lets package builders produce native artifacts or
 AppImage. Native packages also include `codex-update-manager` and an
 update-builder bundle.
 
 ## Maintainer Rules
 
-- This project supports only the latest upstream `CODEX.DMG`. When fixing
+- This project supports only the latest upstream `CHATGPT.DMG`. When fixing
   upstream drift, remove old drift workarounds in the same change. Do not keep
   legacy DMG shapes, fallback patch paths, or version-specific compatibility
   branches around.
@@ -32,7 +32,7 @@ update-builder bundle.
 - Each repository feature under `linux-features/<id>/` and each local feature
   under `linux-features/local/<id>/` must include a `README.md` next to
   `feature.json`.
-- Do not manually patch generated output such as `codex-app/start.sh` for a
+- Do not manually patch generated output such as `chatgpt-app/start.sh` for a
   durable fix. Change the source template, build helper, feature, or patch
   descriptor and regenerate.
 - Treat updater, package builder, launcher, and feature framework changes as
@@ -94,7 +94,7 @@ Primary human docs: [architecture](docs/architecture.md),
 - DMG extraction can warn when `7z` cannot materialize the `/Applications`
   symlink. This is acceptable if a `.app` bundle was extracted successfully.
 - The managed Node.js runtime is installed under
-  `codex-app/resources/node-runtime/`. If `CODEX_MANAGED_NODE_VERSION` or
+  `chatgpt-app/resources/node-runtime/`. If `CODEX_MANAGED_NODE_VERSION` or
   `CODEX_MANAGED_NODE_URL` is overridden, `CODEX_MANAGED_NODE_SHA256` must be
   set too.
 - GUI launchers often do not inherit shell `PATH`. The generated launcher
@@ -123,20 +123,20 @@ Primary human docs: [architecture](docs/architecture.md),
 ## Generated Artifacts
 
 Treat these as generated or local runtime state, not primary source:
-`codex-app/`, `codex-app-next/`, `codex-*-app/`, `dist/`,
-`dist/appimage.AppDir/`, `dist-next/rebuild/`, `target/`, `Codex.dmg`,
+`chatgpt-app/`, `chatgpt-app-next/`, `codex-*-app/`, `dist/`,
+`dist/appimage.AppDir/`, `dist-next/rebuild/`, `target/`, `ChatGPT.dmg`,
 `linux-features/features.json`, `linux-features/local/`,
-`codex-app/.codex-linux/linux-features-staged.json`, updater config/state/log
+`chatgpt-app/.codex-linux/linux-features-staged.json`, updater config/state/log
 files under `~/.config`, `~/.local/state`, and `~/.cache`, launcher state under
-`~/.cache/codex-desktop` and `~/.local/state/codex-desktop`, and
-`$XDG_RUNTIME_DIR/codex-desktop/launch-action.sock`.
+`~/.cache/chatgpt-desktop` and `~/.local/state/chatgpt-desktop`, and
+`$XDG_RUNTIME_DIR/chatgpt-desktop/launch-action.sock`.
 
 See [generated and runtime notes](docs/agents/generated-and-runtime-notes.md)
 for details.
 
 ## Common Commands
 
-Regenerate the Linux app: `./install.sh ./Codex.dmg` or `./install.sh`.
+Regenerate the Linux app: `./install.sh ./ChatGPT.dmg` or `./install.sh`.
 Guided native setup/install/update: `make setup-native`,
 `make bootstrap-native`, `make install-native`, `make update-native`.
 
@@ -154,7 +154,7 @@ Side-by-side rebuild candidate: `./scripts/rebuild-candidate.sh` or
 
 ## Runtime Expectations
 
-- `python3`, `7z`, `curl`, `unzip`, `tar`, `make`, and `g++` are required for
+- `python3`, `7z`/`7za`/`7zz`, `curl`, `unzip`, `tar`, `make`, and `g++` are required for
   `install.sh`.
 - Native package builders require their format-specific tools: `dpkg-deb`,
   `rpmbuild`, `makepkg`/pacman tooling, or `appimagetool`.

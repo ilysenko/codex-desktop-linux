@@ -10,19 +10,19 @@ Run upstream DMG intelligence inside the repo devcontainer image. This keeps
 gitignored reports/upstream-dmg/ tree by default.
 
 Options:
-  --candidate PATH       Candidate Codex.dmg, extracted .app, or resources dir
+  --candidate PATH       Candidate ChatGPT.dmg, extracted .app, or resources dir
   --candidate latest     Download current upstream DMG into reports/upstream-dmg/downloads/
                          Default when no candidate is passed
   --candidate-url URL    Upstream DMG URL for --candidate latest
-                         Default: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg
+                         Default: https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg
   --baseline PATH        Optional known-good baseline DMG or extracted .app;
-                         defaults to repo ./Codex.dmg when different
-  --no-baseline          Do a candidate-only scan even when ./Codex.dmg exists
+                         defaults to repo ./ChatGPT.dmg when different
+  --no-baseline          Do a candidate-only scan even when ./ChatGPT.dmg exists
   --patch-report PATH    Optional patch-report.json
   --registry PATH        Optional protected-surface registry path
   --output-dir DIR       Output dir inside this repo; default is tool default
   --timestamp VALUE      Timestamp slug used when --output-dir is omitted
-  --image IMAGE          Devcontainer image (default: codex-desktop-linux-devcontainer:local)
+  --image IMAGE          Devcontainer image (default: chatgpt-desktop-linux-devcontainer:local)
   --build-image          Build the devcontainer image if missing
   --no-build-image       Fail if the devcontainer image is missing
   -h, --help             Show this help
@@ -34,8 +34,8 @@ EOF
 }
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-image="${CODEX_DMG_INTEL_IMAGE:-codex-desktop-linux-devcontainer:local}"
-candidate_url="${CODEX_DMG_INTEL_CANDIDATE_URL:-${CODEX_UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/Codex.dmg}}"
+image="${CODEX_DMG_INTEL_IMAGE:-chatgpt-desktop-linux-devcontainer:local}"
+candidate_url="${CODEX_DMG_INTEL_CANDIDATE_URL:-${CODEX_UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg}}"
 build_image=auto
 candidate_path=""
 baseline_path=""
@@ -159,7 +159,7 @@ print(Path(sys.argv[1]).resolve())
 PY
 )"
 
-mounts=(-v "$repo_real:/workspaces/codex-desktop-linux")
+mounts=(-v "$repo_real:/workspaces/chatgpt-desktop-linux")
 container_args=()
 mount_index=0
 mapped_path=""
@@ -172,10 +172,10 @@ map_input_path() {
   case "$abs" in
     "$repo_real"/*)
       rel="${abs#"$repo_real"/}"
-      mapped_path="/workspaces/codex-desktop-linux/$rel"
+      mapped_path="/workspaces/chatgpt-desktop-linux/$rel"
       ;;
     "$repo_real")
-      mapped_path="/workspaces/codex-desktop-linux"
+      mapped_path="/workspaces/chatgpt-desktop-linux"
       ;;
     *)
       base="$(basename "$abs")"
@@ -203,7 +203,7 @@ PY
   case "$abs" in
     "$repo_real"/*)
       rel="${abs#"$repo_real"/}"
-      mapped_path="/workspaces/codex-desktop-linux/$rel"
+      mapped_path="/workspaces/chatgpt-desktop-linux/$rel"
       ;;
     *)
       echo "--output-dir must be inside the repository so report output stays scoped and gitignored: $value" >&2
@@ -221,7 +221,7 @@ if [[ -z "$candidate_path" || "$candidate_path" == "latest" ]]; then
       exit 2
       ;;
   esac
-  mapped_path="/workspaces/codex-desktop-linux/reports/upstream-dmg/downloads/Codex.dmg"
+  mapped_path="/workspaces/chatgpt-desktop-linux/reports/upstream-dmg/downloads/ChatGPT.dmg"
   container_args+=(--candidate "$mapped_path")
 else
   map_input_path "Candidate" "$candidate_path"
@@ -257,7 +257,7 @@ if [[ -n "$timestamp" ]]; then
   container_args+=(--timestamp "$timestamp")
 fi
 
-docker_args=(--rm "${mounts[@]}" -w /workspaces/codex-desktop-linux)
+docker_args=(--rm "${mounts[@]}" -w /workspaces/chatgpt-desktop-linux)
 
 if [[ -z "$candidate_path" || "$candidate_path" == "latest" ]]; then
   exec docker run \
@@ -266,7 +266,7 @@ if [[ -z "$candidate_path" || "$candidate_path" == "latest" ]]; then
     "$image" \
     bash -lc '
       set -euo pipefail
-      candidate_path="/workspaces/codex-desktop-linux/reports/upstream-dmg/downloads/Codex.dmg"
+      candidate_path="/workspaces/chatgpt-desktop-linux/reports/upstream-dmg/downloads/ChatGPT.dmg"
       mkdir -p "$(dirname "$candidate_path")"
       tmp_path="${candidate_path}.part"
       curl -fL --retry 3 --connect-timeout 30 --max-time 600 \

@@ -35,7 +35,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'error "Failed at line $LINENO (exit code $?)"' ERR
 
-CACHED_DMG_PATH="$SCRIPT_DIR/Codex.dmg"
+CACHED_DMG_PATH="$SCRIPT_DIR/ChatGPT.dmg"
 CACHED_DMG_METADATA_PATH="$CACHED_DMG_PATH.metadata"
 FRESH_INSTALL=0
 REUSE_CACHED_DMG=1
@@ -45,28 +45,28 @@ REPORT_DIR=""
 
 usage() {
     cat <<'HELP'
-Usage: ./install.sh [OPTIONS] [path/to/Codex.dmg]
+Usage: ./install.sh [OPTIONS] [path/to/ChatGPT.dmg]
 
-Converts the official macOS Codex Desktop app to run on Linux.
+Converts the official macOS ChatGPT Desktop app to run on Linux.
 
 Options:
   -h, --help     Show this help message and exit
   --fresh        Remove existing install directory and cached DMG before building
-  --reuse-dmg    Reuse cached Codex.dmg when upstream metadata still matches (default)
+  --reuse-dmg    Reuse cached ChatGPT.dmg when upstream metadata still matches (default)
   --inspect      Inspect the DMG and write patch/rebuild reports without installing
   --report-dir DIR
                  Directory for --inspect reports (default: ./dist-next/rebuild)
 
 Environment variables:
-  CODEX_INSTALL_DIR   Override the install directory (default: ./codex-app)
+  CODEX_INSTALL_DIR   Override the install directory (default: ./chatgpt-app)
   CODEX_INSTALL_ALLOW_RUNNING=1
                       Allow overwriting INSTALL_DIR while Codex is running
-  CODEX_APP_ID        Override Linux app id/bin identity (default: codex-desktop)
+  CODEX_APP_ID        Override Linux app id/bin identity (default: chatgpt-desktop)
   CODEX_APP_DISPLAY_NAME
-                      Override display name (default: Codex Desktop)
+                      Override display name (default: ChatGPT)
   CODEX_WEBVIEW_PORT  Override webview HTTP port (default: 5175, or 5176 for non-default app ids)
   CODEX_DMG_REFRESH_MODE=pinned
-                      Reuse an existing cached Codex.dmg verbatim and refuse
+                      Reuse an existing cached ChatGPT.dmg verbatim and refuse
                       network refresh/download when no explicit DMG path is passed
   ELECTRON_HEADERS_URL
                       Override the Electron headers URL used by @electron/rebuild
@@ -76,7 +76,7 @@ Environment variables:
   REBUILD_REPORT_DIR  Default report directory for --inspect and rebuild reports
 
 After install, launch with:
-  ./codex-app/start.sh
+  ./chatgpt-app/start.sh
 HELP
 }
 
@@ -179,8 +179,8 @@ check_deps() {
     for cmd in python3 curl unzip tar; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
-    if ! command -v 7zz &>/dev/null && ! command -v 7z &>/dev/null; then
-        missing+=("7z or 7zz")
+    if ! command -v 7zz &>/dev/null && ! command -v 7z &>/dev/null && ! command -v 7za &>/dev/null; then
+        missing+=("7z, 7za, or 7zz")
     fi
     if [ ${#missing[@]} -ne 0 ]; then
         error "Missing dependencies: ${missing[*]}
@@ -195,8 +195,10 @@ $(dependency_help)"
     # Prefer modern 7-zip if available (required for APFS DMG)
     if command -v 7zz &>/dev/null; then
         SEVEN_ZIP_CMD="7zz"
-    else
+    elif command -v 7z &>/dev/null; then
         SEVEN_ZIP_CMD="7z"
+    else
+        SEVEN_ZIP_CMD="7za"
     fi
 
     local seven_zip_banner

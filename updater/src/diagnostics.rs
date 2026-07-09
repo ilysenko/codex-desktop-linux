@@ -1,4 +1,4 @@
-//! Read-only diagnostics for installed Codex Desktop Linux runtimes.
+//! Read-only diagnostics for installed ChatGPT Desktop Linux runtimes.
 
 use crate::{
     config::{self, RuntimeConfig, RuntimePaths},
@@ -555,7 +555,7 @@ mod tests {
                 running: true,
                 running_error: None,
                 pid_file: PidFileDiagnostics {
-                    path: paths.state_dir.join("codex-desktop/app.pid"),
+                    path: paths.state_dir.join("chatgpt-desktop/app.pid"),
                     exists: true,
                     pid: Some(std::process::id()),
                     process_alive: Some(true),
@@ -567,14 +567,14 @@ mod tests {
                 status: None,
                 error: Some("connection refused".to_string()),
                 pid_file: PidFileDiagnostics {
-                    path: paths.state_dir.join("codex-desktop/webview.pid"),
+                    path: paths.state_dir.join("chatgpt-desktop/webview.pid"),
                     exists: true,
                     pid: Some(u32::MAX),
                     process_alive: Some(false),
                 },
             },
             warm_start: WarmStartDiagnostics {
-                socket_path: paths.state_dir.join("codex-desktop/launch-action.sock"),
+                socket_path: paths.state_dir.join("chatgpt-desktop/launch-action.sock"),
                 socket_exists: false,
             },
             metadata: MetadataDiagnostics {

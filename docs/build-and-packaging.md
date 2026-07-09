@@ -4,13 +4,13 @@
 
 You need:
 
-- `python3`, `7z` or `7zz`, `curl`, `unzip`, `tar`, `make`, `g++`
+- `python3`, `7z`/`7za`/`7zz`, `curl`, `unzip`, `tar`, `make`, `g++`
 - Rust toolchain with `cargo` for `codex-update-manager`,
   `codex-computer-use-linux`, the Chrome extension host binary, and optional
   Rust-backed features such as Read Aloud MCP and Record & Replay
 
 The installer downloads a managed Linux Node.js runtime into
-`codex-app/resources/node-runtime` and uses it for `node`, `npm`, and `npx`
+`chatgpt-app/resources/node-runtime` and uses it for `node`, `npm`, and `npx`
 during the build. Existing `nvm`, asdf, Volta, NodeSource, or nodejs.org
 installs are fine, but no longer required for the generated app build. The
 dependency helper may still install or validate a distro Node.js toolchain on
@@ -62,26 +62,26 @@ Ubuntu-family `p7zip-full` can be too old for newer APFS DMGs, so
 ```bash
 make build-app
 make build-app-fresh
-make build-app DMG=/path/to/Codex.dmg
+make build-app DMG=/path/to/ChatGPT.dmg
 ```
 
 Equivalent direct commands:
 
 ```bash
 ./install.sh
-./install.sh /path/to/Codex.dmg
+./install.sh /path/to/ChatGPT.dmg
 ./install.sh --fresh
 ```
 
 The default path stores upstream DMG headers, plus a hash of the upstream URL,
-next to `Codex.dmg` and refreshes the cached file when that upstream fingerprint
+next to `ChatGPT.dmg` and refreshes the cached file when that upstream fingerprint
 changes. `--fresh` still forces a cache removal before rebuilding, and an
-explicit `DMG=/path/to/Codex.dmg` uses that file exactly.
+explicit `DMG=/path/to/ChatGPT.dmg` uses that file exactly.
 Native install shortcuts use `--fresh --reuse-dmg`, so they clean the generated
 app directory while still reusing the cached DMG when upstream metadata matches.
 
 For deterministic test rounds, set `CODEX_DMG_REFRESH_MODE=pinned`. Pinned mode
-reuses the existing cached `Codex.dmg` verbatim, skips upstream metadata checks,
+reuses the existing cached `ChatGPT.dmg` verbatim, skips upstream metadata checks,
 and fails instead of downloading when no cached DMG or explicit `DMG=...` path is
 available. This also keeps `--fresh` from deleting the cached DMG.
 
@@ -90,17 +90,17 @@ lane to inventory protected Sky/Chronicle/Skysight/Computer Use/Record & Replay
 surfaces:
 
 ```bash
-make inspect-upstream DMG=/path/to/Codex.dmg
+make inspect-upstream DMG=/path/to/ChatGPT.dmg
 make inspect-upstream-intel-devcontainer
 ```
 
 The devcontainer intelligence target downloads the current upstream DMG into
 `reports/upstream-dmg/downloads/` when `DMG=...` is omitted and automatically
-compares it against repo `./Codex.dmg` when that cached baseline exists.
+compares it against repo `./ChatGPT.dmg` when that cached baseline exists.
 For an already downloaded candidate, pass only that one path:
 
 ```bash
-make inspect-upstream-intel-devcontainer DMG=/path/to/new/Codex.dmg
+make inspect-upstream-intel-devcontainer DMG=/path/to/new/ChatGPT.dmg
 ```
 
 See `docs/upstream-dmg-intelligence.md` for the protected-surface registry,
@@ -110,7 +110,7 @@ Run the generated app:
 
 ```bash
 make run-app
-./codex-app/start.sh
+./chatgpt-app/start.sh
 ```
 
 ## Running The Generated App
@@ -121,27 +121,27 @@ handoff.
 Open an independent app process:
 
 ```bash
-./codex-app/start.sh --new-instance
+./chatgpt-app/start.sh --new-instance
 ```
 
 Configure the port range or make every launch use multi-instance mode:
 
 ```bash
-CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh --new-instance
-CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh
+CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./chatgpt-app/start.sh --new-instance
+CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./chatgpt-app/start.sh
 ```
 
 ## Package Formats
 
 After `make build-app` or `make build-app-fresh`, build a package from
-`codex-app/`:
+`chatgpt-app/`:
 
 | Format | Build command | Output | Install |
 |---|---|---|---|
-| Debian | `make deb` | `dist/codex-desktop_*.deb` | `sudo dpkg -i dist/codex-desktop_*.deb` |
-| RPM | `make rpm` | `dist/codex-desktop-*.x86_64.rpm` | `sudo dnf install dist/codex-desktop-*.rpm` or `sudo zypper install dist/codex-desktop-*.rpm` |
-| Arch | `make pacman` | `dist/codex-desktop-*.pkg.tar.zst` | `sudo pacman -U dist/codex-desktop-*.pkg.tar.zst` |
-| AppImage | `make appimage` | `dist/codex-desktop-*.AppImage` | Run directly |
+| Debian | `make deb` | `dist/chatgpt-desktop_*.deb` | `sudo dpkg -i dist/chatgpt-desktop_*.deb` |
+| RPM | `make rpm` | `dist/chatgpt-desktop-*.x86_64.rpm` | `sudo dnf install dist/chatgpt-desktop-*.rpm` or `sudo zypper install dist/chatgpt-desktop-*.rpm` |
+| Arch | `make pacman` | `dist/chatgpt-desktop-*.pkg.tar.zst` | `sudo pacman -U dist/chatgpt-desktop-*.pkg.tar.zst` |
+| AppImage | `make appimage` | `dist/chatgpt-desktop-*.AppImage` | Run directly |
 | Auto-detect | `make package && make install` | matches host distro | handled by `make install` |
 
 Override package version:
@@ -150,7 +150,7 @@ Override package version:
 PACKAGE_VERSION=2026.03.24.220723+88f07cd3 make deb
 ```
 
-The packaging scripts only repackage what is already in `codex-app/`; they do
+The packaging scripts only repackage what is already in `chatgpt-app/`; they do
 not download or extract the DMG.
 
 ## AppImage Local Self-Build
@@ -158,13 +158,13 @@ not download or extract the DMG.
 ```bash
 make build-app
 make appimage
-./dist/codex-desktop-*.AppImage
+./dist/chatgpt-desktop-*.AppImage
 ```
 
 The AppImage flow does not include `codex-update-manager`, the systemd user
 service, polkit policy, or the native-package update builder.
 
-When upstream Codex Desktop changes:
+When upstream ChatGPT Desktop changes:
 
 ```bash
 git pull --ff-only

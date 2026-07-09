@@ -39,7 +39,7 @@ pub async fn run(
     paths: &RuntimePaths,
 ) -> Result<()> {
     if liveness::is_app_running(config)? {
-        println!("Codex Desktop is running. Close it before rollback.");
+        println!("ChatGPT Desktop is running. Close it before rollback.");
         return Ok(());
     }
 
@@ -78,7 +78,7 @@ async fn trigger_rollback(
     state.save(&paths.state_file)?;
 
     let _ = notify::send(
-        "Rolling back Codex Desktop",
+        "Rolling back ChatGPT Desktop",
         "Installing the last retained known-good package.",
     );
 
@@ -97,7 +97,7 @@ async fn trigger_rollback(
         );
         state.save(&paths.state_file)?;
         let _ = cache_cleanup::prune_unreferenced_workspaces(&config.workspace_root, state);
-        println!("Rolled back Codex Desktop to {}.", state.installed_version);
+        println!("Rolled back ChatGPT Desktop to {}.", state.installed_version);
         return Ok(());
     }
 

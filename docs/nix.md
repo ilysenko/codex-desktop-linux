@@ -1,26 +1,26 @@
 # Nix
 
-Run Codex Desktop for Linux directly with:
+Run ChatGPT Desktop for Linux directly with:
 
 ```bash
-nix run github:ilysenko/codex-desktop-linux
+nix run github:ilysenko/chatgpt-desktop-linux
 ```
 
 The flake handles dependencies and patches Electron for NixOS. A GitHub Actions
-bot refreshes the upstream `Codex.dmg` hash and verifies the Nix package outputs
+bot refreshes the upstream `ChatGPT.dmg` hash and verifies the Nix package outputs
 in `main`. If you hit a hash mismatch right after an upstream release, wait for
 the next bot run and retry.
 
 ## Codex CLI Requirement
 
-Codex Desktop still needs the Codex CLI at runtime. The Nix package in this
+ChatGPT Desktop still needs the Codex CLI at runtime. The Nix package in this
 repository does not install or maintain the CLI for you; it only needs a
 working `codex` binary. Put `codex` on your user `PATH`, or set
-`CODEX_CLI_PATH` to the exact binary that Codex Desktop should launch.
+`CODEX_CLI_PATH` to the exact binary that ChatGPT Desktop should launch.
 
 Relying on `PATH` alone is fragile: a graphical autostart entry, an application
 launcher, or a warm-start handoff to an already-running instance may not have
-your Nix profile on `PATH`, in which case Codex Desktop fails with
+your Nix profile on `PATH`, in which case ChatGPT Desktop fails with
 `Unable to locate the Codex CLI binary. Set CODEX_CLI_PATH ...`. Pinning the CLI
 explicitly avoids this. The Home Manager and NixOS modules can do this for you
 via [`programs.codexDesktopLinux.cliPackage`](#home-manager-nixos-module),
@@ -45,7 +45,7 @@ build recipe, binary cache, or support policy.
 Use it only if that trade-off makes sense for your configuration. Pin it to a
 tag or commit for reproducibility, review the flake and cache trust settings
 before using them, and report package/cache-specific issues to that project.
-Issues in this repository should be limited to Codex Desktop discovering and
+Issues in this repository should be limited to ChatGPT Desktop discovering and
 launching a working CLI binary.
 
 The community flake exposes Nix packages for the native binary and Node.js
@@ -71,7 +71,7 @@ For a declarative setup, add the CLI flake as an input:
 ```
 
 The flake also publishes a third-party Cachix cache for prebuilt binaries. This
-cache is independent from this repository's `codex-desktop-linux` cache. Enabling
+cache is independent from this repository's `chatgpt-desktop-linux` cache. Enabling
 it means trusting substitutes signed by that cache key; omit this step if you
 prefer local builds.
 
@@ -92,7 +92,7 @@ For a declarative NixOS cache configuration:
 }
 ```
 
-Then install its package next to Codex Desktop from Home Manager:
+Then install its package next to ChatGPT Desktop from Home Manager:
 
 ```nix
 { inputs, pkgs, ... }:
@@ -114,7 +114,7 @@ in
 }
 ```
 
-Setting `cliPackage` wraps the installed Codex Desktop launcher (and its
+Setting `cliPackage` wraps the installed ChatGPT Desktop launcher (and its
 `.desktop` entry) so it always starts with `CODEX_CLI_PATH` pointing at the
 package's `codex` binary. Because the value is baked into the launcher rather
 than exported as a session variable, it works for graphical, terminal, and
@@ -163,7 +163,7 @@ If your graphical session does not put the selected profile on `PATH`, set
 If `nix run` appears to do nothing, check the launcher log first:
 
 ```bash
-sed -n '1,220p' ~/.cache/codex-desktop/launcher.log
+sed -n '1,220p' ~/.cache/chatgpt-desktop/launcher.log
 ```
 
 ## Feature Outputs
@@ -174,19 +174,19 @@ file, so Nix exposes feature-specific app variants.
 Remote mobile control:
 
 ```bash
-nix run github:ilysenko/codex-desktop-linux#remote-mobile-control
+nix run github:ilysenko/chatgpt-desktop-linux#remote-mobile-control
 ```
 
 Computer Use UI plus remote mobile control:
 
 ```bash
-nix run github:ilysenko/codex-desktop-linux#computer-use-ui-remote-mobile-control
+nix run github:ilysenko/chatgpt-desktop-linux#computer-use-ui-remote-mobile-control
 ```
 
 Computer Use UI only:
 
 ```bash
-nix run github:ilysenko/codex-desktop-linux#codex-desktop-computer-use-ui
+nix run github:ilysenko/chatgpt-desktop-linux#chatgpt-desktop-computer-use-ui
 ```
 
 ## Home Manager / NixOS Module
@@ -197,7 +197,7 @@ systemd instead of the Desktop launcher:
 ```nix
 {
   imports = [
-    inputs.codex-desktop-linux.homeManagerModules.default
+    inputs.chatgpt-desktop-linux.homeManagerModules.default
   ];
 
   programs.codexDesktopLinux = {
@@ -209,7 +209,7 @@ systemd instead of the Desktop launcher:
 }
 ```
 
-This installs the selected Codex Desktop package variant and starts a user
+This installs the selected ChatGPT Desktop package variant and starts a user
 `codex-remote-control.service` with:
 
 ```text
@@ -222,19 +222,19 @@ configurations that prefer a global user unit.
 ## Development Shell
 
 ```bash
-nix develop github:ilysenko/codex-desktop-linux
+nix develop github:ilysenko/chatgpt-desktop-linux
 ```
 
 ## Cachix
 
-CI can populate a Cachix cache named `codex-desktop-linux` for flake package
+CI can populate a Cachix cache named `chatgpt-desktop-linux` for flake package
 outputs. To push to the cache, create it in Cachix and add a repository secret
 named `CACHIX_AUTH_TOKEN` with write access.
 
 Users can opt in locally with:
 
 ```bash
-cachix use codex-desktop-linux
+cachix use chatgpt-desktop-linux
 ```
 
 The scheduled `Populate Cachix` workflow builds the default package,

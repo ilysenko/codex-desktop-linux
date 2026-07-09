@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-APP_DIR="${APP_DIR_OVERRIDE:-$REPO_DIR/codex-app}"
+APP_DIR="${APP_DIR_OVERRIDE:-$REPO_DIR/chatgpt-app}"
 DIST_DIR="${DIST_DIR_OVERRIDE:-$REPO_DIR/dist}"
 SPEC_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.spec"
 DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
@@ -12,7 +12,7 @@ USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager-use
 ICON_SOURCE="$REPO_DIR/assets/codex-linux.png"
 PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
 
-PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
+PACKAGE_NAME="${PACKAGE_NAME:-chatgpt-desktop}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
 MAX_BUILD_THREADS="${MAX_BUILD_THREADS:-0}"
 RPM_BINARY_PAYLOAD="${RPM_BINARY_PAYLOAD:-}"
@@ -20,6 +20,9 @@ UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-u
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
 PACKAGED_RUNTIME_SOURCE="${PACKAGED_RUNTIME_SOURCE:-$PACKAGED_RUNTIME_TEMPLATE}"
 UPDATE_BUILDER_ROOT_PLACEHOLDER="__UPDATE_BUILDER_ROOT__"
+if [ -f "$APP_DIR/.codex-linux/$PACKAGE_NAME.png" ]; then
+    ICON_SOURCE="$APP_DIR/.codex-linux/$PACKAGE_NAME.png"
+fi
 
 # Keep the installed update-builder payload aligned with the other package formats.
 # shellcheck source=scripts/lib/package-common.sh

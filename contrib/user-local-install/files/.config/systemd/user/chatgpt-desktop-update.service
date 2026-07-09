@@ -1,0 +1,6 @@
+[Unit]
+Description=Update ChatGPT desktop Linux wrapper
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/chatgpt-desktop-update --quiet

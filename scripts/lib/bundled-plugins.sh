@@ -414,7 +414,7 @@ install_node_repl_from_primary_runtime_archive() {
     fi
     expected_sha="$(browser_use_node_repl_runtime_sha256)"
 
-    cache_dir="${CODEX_BROWSER_USE_RUNTIME_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop/browser-use}"
+    cache_dir="${CODEX_BROWSER_USE_RUNTIME_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/chatgpt-desktop/browser-use}"
     archive="$cache_dir/$(basename "$url")"
     extract_dir="$WORK_DIR/browser-use-node-repl-runtime"
     source="$extract_dir/codex-primary-runtime/dependencies/bin/node_repl"

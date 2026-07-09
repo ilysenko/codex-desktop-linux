@@ -1,5 +1,5 @@
 [Unit]
-Description=Codex Desktop Update Manager
+Description=ChatGPT Desktop Update Manager
 After=graphical-session.target network-online.target
 Wants=network-online.target
 

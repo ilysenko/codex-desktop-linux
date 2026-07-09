@@ -77,8 +77,8 @@ jobs:
       - name: Create minimal packaged app fixture
         run: |
           set -euo pipefail
-          rm -rf codex-app dist
-          tests/fixtures/create-packaged-app-fixture.sh codex-app
+          rm -rf chatgpt-app dist
+          tests/fixtures/create-packaged-app-fixture.sh chatgpt-app
 
       - name: Build Debian package
         run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-deb.sh
@@ -86,14 +86,14 @@ jobs:
       - name: Inspect Debian package
         run: |
           set -euo pipefail
-          deb_file="$(find dist -maxdepth 1 -name 'codex-desktop_*.deb' -print -quit)"
+          deb_file="$(find dist -maxdepth 1 -name 'chatgpt-desktop_*.deb' -print -quit)"
           test -n "$deb_file"
           dpkg-deb -I "$deb_file"
           dpkg-deb -c "$deb_file" | tee /tmp/deb-contents.txt >/dev/null
           grep -q './usr/bin/codex-update-manager' /tmp/deb-contents.txt
           grep -q './usr/lib/systemd/user/codex-update-manager.service' /tmp/deb-contents.txt
-          grep -q './opt/codex-desktop/update-builder/install.sh' /tmp/deb-contents.txt
-          grep -q './opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/deb-contents.txt
+          grep -q './opt/chatgpt-desktop/update-builder/install.sh' /tmp/deb-contents.txt
+          grep -q './opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/deb-contents.txt
           {
             echo "## Debian Package Validation"
             echo ""
@@ -121,7 +121,7 @@ jobs:
       - name: Configure Cachix for Nix build substitutions
         uses: cachix/cachix-action@v17
         with:
-          name: codex-desktop-linux
+          name: chatgpt-desktop-linux
           skipPush: true
 
       - name: Install validation dependencies
@@ -172,11 +172,11 @@ jobs:
           if [ "$validation_status" -ne 0 ]; then
             if [ "$GITHUB_EVENT_NAME" = "pull_request" ] \
                 && [ "$NIX_PIN_FILES_CHANGED" != "true" ] \
-                && grep -Eq "Codex app version pin mismatch|Electron version pin mismatch|native-modules .* pin mismatch" "$validation_log"; then
+                && grep -Eq "ChatGPT app version pin mismatch|Electron version pin mismatch|native-modules .* pin mismatch" "$validation_log"; then
               {
                 echo "## Nix Pin Validation"
                 echo ""
-                echo "- Skipped package-output builds because upstream \`Codex.dmg\` metadata is ahead of the committed flake pins during rollout."
+                echo "- Skipped package-output builds because upstream \`ChatGPT.dmg\` metadata is ahead of the committed flake pins during rollout."
                 echo "- This is PR-only; main-branch validation still fails so the scheduled hash-refresh workflow can open a full pin-refresh PR from the current upstream DMG."
               } >> "$GITHUB_STEP_SUMMARY"
               echo "skip_package_outputs=true" >> "$GITHUB_OUTPUT"
@@ -199,10 +199,10 @@ jobs:
           set -euo pipefail
           outputs=(
             .#installer
-            .#codex-desktop
-            .#codex-desktop-computer-use-ui
-            .#codex-desktop-remote-mobile-control
-            .#codex-desktop-computer-use-ui-remote-mobile-control
+            .#chatgpt-desktop
+            .#chatgpt-desktop-computer-use-ui
+            .#chatgpt-desktop-remote-mobile-control
+            .#chatgpt-desktop-computer-use-ui-remote-mobile-control
           )
           for output in "${outputs[@]}"; do
             build_log="$(mktemp)"
@@ -210,11 +210,11 @@ jobs:
               if [ "$GITHUB_EVENT_NAME" = "pull_request" ] \
                   && [ "$NIX_PIN_FILES_CHANGED" != "true" ] \
                   && grep -q "hash mismatch in fixed-output derivation" "$build_log" \
-                  && grep -q "Codex.dmg.drv" "$build_log"; then
+                  && grep -q "ChatGPT.dmg.drv" "$build_log"; then
                 {
                   echo "## Nix Package Builds"
                   echo ""
-                  echo "- Skipped package-output builds after \`$output\` because upstream \`Codex.dmg\` is rolling between fixed-output hashes."
+                  echo "- Skipped package-output builds after \`$output\` because upstream \`ChatGPT.dmg\` is rolling between fixed-output hashes."
                   echo "- This does not mask non-DMG Nix failures; main-branch builds still fail on this condition."
                   echo "- The scheduled hash-refresh workflow owns updating the committed DMG pin from the current upstream DMG."
                 } >> "$GITHUB_STEP_SUMMARY"
@@ -245,8 +245,8 @@ jobs:
       - name: Create minimal packaged app fixture
         run: |
           set -euo pipefail
-          rm -rf codex-app dist
-          tests/fixtures/create-packaged-app-fixture.sh codex-app
+          rm -rf chatgpt-app dist
+          tests/fixtures/create-packaged-app-fixture.sh chatgpt-app
 
       - name: Build RPM package
         run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-rpm.sh
@@ -254,14 +254,14 @@ jobs:
       - name: Inspect RPM package
         run: |
           set -euo pipefail
-          rpm_file="$(find dist -maxdepth 1 -name 'codex-desktop-*.rpm' -print -quit)"
+          rpm_file="$(find dist -maxdepth 1 -name 'chatgpt-desktop-*.rpm' -print -quit)"
           test -n "$rpm_file"
           rpm -qip "$rpm_file"
           rpm -qlp "$rpm_file" | tee /tmp/rpm-contents.txt >/dev/null
           grep -q '/usr/bin/codex-update-manager' /tmp/rpm-contents.txt
           grep -q '/usr/lib/systemd/user/codex-update-manager.service' /tmp/rpm-contents.txt
-          grep -q '/opt/codex-desktop/update-builder/install.sh' /tmp/rpm-contents.txt
-          grep -q '/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/rpm-contents.txt
+          grep -q '/opt/chatgpt-desktop/update-builder/install.sh' /tmp/rpm-contents.txt
+          grep -q '/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/rpm-contents.txt
           {
             echo "## RPM Package Validation"
             echo ""
@@ -291,20 +291,20 @@ jobs:
 
               runuser -u builder -- bash -lc '"'"'
                 set -euo pipefail
-                rm -rf codex-app dist
-                tests/fixtures/create-packaged-app-fixture.sh codex-app
+                rm -rf chatgpt-app dist
+                tests/fixtures/create-packaged-app-fixture.sh chatgpt-app
 
                 cargo build --release -p codex-update-manager
                 PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-pacman.sh
 
-                pkg_file="$(find dist -maxdepth 1 -name "codex-desktop-*.pkg.tar.*" -print -quit)"
+                pkg_file="$(find dist -maxdepth 1 -name "chatgpt-desktop-*.pkg.tar.*" -print -quit)"
                 test -n "$pkg_file"
                 pacman -Qip "$pkg_file"
                 pacman -Qlp "$pkg_file" | tee /tmp/pacman-contents.txt >/dev/null
                 grep -q "usr/bin/codex-update-manager" /tmp/pacman-contents.txt
                 grep -q "usr/lib/systemd/user/codex-update-manager.service" /tmp/pacman-contents.txt
-                grep -q "opt/codex-desktop/update-builder/install.sh" /tmp/pacman-contents.txt
-                grep -q "opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" /tmp/pacman-contents.txt
+                grep -q "opt/chatgpt-desktop/update-builder/install.sh" /tmp/pacman-contents.txt
+                grep -q "opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" /tmp/pacman-contents.txt
                 printf "%s\n" "$(basename "$pkg_file")" > /tmp/pacman-package-name.txt
               '"'"'
               cp /tmp/pacman-package-name.txt /work/.pacman-package-name.txt

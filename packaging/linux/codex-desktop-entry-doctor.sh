@@ -34,11 +34,11 @@ codex_desktop_entry_is_legacy_generated() {
     codex_desktop_file="${1:?missing desktop entry path}"
     [ -f "$codex_desktop_file" ] || return 1
 
-    grep -q '^Name=Codex Desktop$' "$codex_desktop_file" || return 1
-    grep -Eq '(^Exec=.*codex-desktop|^TryExec=.*codex-desktop|^Icon=codex-desktop$)' \
+    grep -Eq '^Name=(Codex Desktop|ChatGPT|ChatGPT Desktop)$' "$codex_desktop_file" || return 1
+    grep -Eq '(^Exec=.*(codex-desktop|chatgpt-desktop)|^TryExec=.*(codex-desktop|chatgpt-desktop)|^Icon=(codex-desktop|chatgpt-desktop)$)' \
         "$codex_desktop_file" || return 1
 
-    if grep -Eq 'codex-desktop-open-next|^Actions=NewWindow([;]|$)|^\[Desktop Action NewWindow\]$|^Actions=NewInstance([;]|$)|^\[Desktop Action NewInstance\]$' \
+    if grep -Eq '(codex-desktop|chatgpt-desktop)-open-next|^Actions=NewWindow([;]|$)|^\[Desktop Action NewWindow\]$|^Actions=NewInstance([;]|$)|^\[Desktop Action NewInstance\]$' \
         "$codex_desktop_file"; then
         return 0
     fi
@@ -80,7 +80,7 @@ codex_desktop_repair_shadow_entry() {
 }
 
 codex_desktop_repair_system_package_shadow_entries() {
-    codex_desktop_package_name="${1:-codex-desktop}"
+    codex_desktop_package_name="${1:-chatgpt-desktop}"
     codex_desktop_target_file="${codex_desktop_package_name}.desktop"
 
     if ! command -v runuser >/dev/null 2>&1 || ! command -v getent >/dev/null 2>&1; then

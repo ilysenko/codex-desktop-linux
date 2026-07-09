@@ -1,43 +1,43 @@
 # User-Local Desktop Integration
 
-This folder packages a user-local install layout for `codex-desktop-linux`.
+This folder packages a user-local install layout for `chatgpt-desktop-linux`.
 
 It adds:
 
-- a stable install root under `~/.local/opt/codex-desktop-linux`
-- self-contained maintenance scripts under `~/.local/opt/codex-desktop-linux/bin`
+- a stable install root under `~/.local/opt/chatgpt-desktop-linux`
+- self-contained maintenance scripts under `~/.local/opt/chatgpt-desktop-linux/bin`
 - thin launch/check/update/version wrappers under `~/.local/bin`
 - a desktop entry under `~/.local/share/applications`
-- an icon extracted from the local `Codex.dmg`
-- metadata tracking for the wrapper repo and cached `Codex.dmg`
+- an icon extracted from the local `ChatGPT.dmg`
+- metadata tracking for the wrapper repo and cached `ChatGPT.dmg`
 - an optional weekly `systemd --user` timer for unattended update checks and rebuilds (opt-in)
 
 ## Files
 
 The package is laid out as reusable payload files. The installer copies them into:
 
-- `~/.local/opt/codex-desktop-linux/bin/`
-- `~/.local/opt/codex-desktop-linux/lib/codex-desktop-linux/`
+- `~/.local/opt/chatgpt-desktop-linux/bin/`
+- `~/.local/opt/chatgpt-desktop-linux/lib/chatgpt-desktop-linux/`
 - `~/.local/bin/` wrappers
-- `files/.local/share/applications/codex-desktop.desktop`
-- `files/.config/systemd/user/codex-desktop-update.service`
-- `files/.config/systemd/user/codex-desktop-update.timer`
+- `files/.local/share/applications/chatgpt-desktop.desktop`
+- `files/.config/systemd/user/chatgpt-desktop-update.service`
+- `files/.config/systemd/user/chatgpt-desktop-update.timer`
 
 ## Expected Placement
 
 If installing manually, copy the files to:
 
-- `~/.local/opt/codex-desktop-linux/bin/`
-- `~/.local/opt/codex-desktop-linux/lib/codex-desktop-linux/`
-- `~/.local/bin/` wrappers that exec into `~/.local/opt/codex-desktop-linux/bin/`
+- `~/.local/opt/chatgpt-desktop-linux/bin/`
+- `~/.local/opt/chatgpt-desktop-linux/lib/chatgpt-desktop-linux/`
+- `~/.local/bin/` wrappers that exec into `~/.local/opt/chatgpt-desktop-linux/bin/`
 - `~/.local/share/applications/`
 - `~/.config/systemd/user/`
 
 The preferred git checkout location is:
 
-- `~/workspace/codex-desktop-linux`
+- `~/workspace/chatgpt-desktop-linux`
 
-The installed maintenance scripts record the repo path in user state and use that checkout for `git pull`, while rebuilding runtime assets into `~/.local/opt/codex-desktop-linux` via `CODEX_INSTALL_ROOT` / `CODEX_INSTALL_DIR`.
+The installed maintenance scripts record the repo path in user state and use that checkout for `git pull`, while rebuilding runtime assets into `~/.local/opt/chatgpt-desktop-linux` via `CODEX_INSTALL_ROOT` / `CODEX_INSTALL_DIR`.
 
 ## Install
 
@@ -67,30 +67,30 @@ To return to the default generated launcher behavior, pass `--no-force-x11`:
 
 The installer:
 
-1. copies standalone helper scripts into `~/.local/opt/codex-desktop-linux`
+1. copies standalone helper scripts into `~/.local/opt/chatgpt-desktop-linux`
 2. installs thin wrappers into `~/.local/bin`
 3. copies systemd unit files to `~/.config/systemd/user/`
 4. makes the scripts executable
 5. reloads the user `systemd` daemon if available
 6. enables the weekly timer only if `--enable-timer` was passed
 7. refreshes desktop metadata if available
-8. records local metadata and extracts the icon if `Codex.dmg` already exists
+8. records local metadata and extracts the icon if `ChatGPT.dmg` already exists
 
 ## Commands
 
 After installation:
 
 ```bash
-codex-desktop
-codex-desktop-check-update
-codex-desktop-update
-codex-desktop-version
+chatgpt-desktop
+chatgpt-desktop-check-update
+chatgpt-desktop-update
+chatgpt-desktop-version
 ```
 
 ## Notes
 
-- The icon is not committed as a binary asset here. It is generated locally from `Codex.dmg`.
-- The helper scripts track both upstream wrapper changes and upstream `Codex.dmg` headers.
+- The icon is not committed as a binary asset here. It is generated locally from `ChatGPT.dmg`.
+- The helper scripts track both upstream wrapper changes and upstream `ChatGPT.dmg` headers.
 - The helper scripts are copied into `~/.local/opt` and do not run from the git checkout directly.
-- The X11/XWayland preference is stored in `~/.config/codex-desktop-linux/user-local.env` and is preserved across updater refreshes.
-- The weekly timer runs `codex-desktop-update --quiet`. It is opt-in: pass `--enable-timer` to `install-user-local.sh` to activate it, or run `systemctl --user enable --now codex-desktop-update.timer` manually after install.
+- The X11/XWayland preference is stored in `~/.config/chatgpt-desktop-linux/user-local.env` and is preserved across updater refreshes.
+- The weekly timer runs `chatgpt-desktop-update --quiet`. It is opt-in: pass `--enable-timer` to `install-user-local.sh` to activate it, or run `systemctl --user enable --now chatgpt-desktop-update.timer` manually after install.

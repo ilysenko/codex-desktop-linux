@@ -82,9 +82,9 @@ run_prelaunch_apply_with_watchdog() {
 }
 
 resolve_app_id() {
-    local candidate="${CODEX_LINUX_APP_ID:-${CODEX_APP_ID:-codex-desktop}}"
+    local candidate="${CODEX_LINUX_APP_ID:-${CODEX_APP_ID:-chatgpt-desktop}}"
     case "$candidate" in
-        ""|*[!A-Za-z0-9._-]*) echo "codex-desktop" ;;
+        ""|*[!A-Za-z0-9._-]*) echo "chatgpt-desktop" ;;
         *) echo "$candidate" ;;
     esac
 }

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-python_bin="${CODEX_LINUX_READ_ALOUD_KOKORO_PYTHON:-$data_home/codex-desktop/read-aloud/kokoro-venv/bin/python}"
+python_bin="${CODEX_LINUX_READ_ALOUD_KOKORO_PYTHON:-$data_home/chatgpt-desktop/read-aloud/kokoro-venv/bin/python}"
 model="${CODEX_LINUX_READ_ALOUD_KOKORO_MODEL:-$data_home/kokoro/kokoro-v1.0.onnx}"
 voices="${CODEX_LINUX_READ_ALOUD_KOKORO_VOICES:-$data_home/kokoro/voices-v1.0.bin}"
 runner_dir="$(cd "$(dirname "$0")" && pwd)"

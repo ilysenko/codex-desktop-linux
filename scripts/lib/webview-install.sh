@@ -1,5 +1,5 @@
 #!/bin/bash
-# Webview asset extraction and patched app.asar install into the codex-app/ tree.
+# Webview asset extraction and patched app.asar install into the generated app tree.
 #
 # Sourced by install.sh. Do not run directly.
 # shellcheck shell=bash

@@ -80,7 +80,7 @@ pub async fn download_dmg(
         .await
         .with_context(|| format!("Failed to create {}", destination_dir.display()))?;
 
-    let destination = destination_dir.join("Codex.dmg");
+    let destination = destination_dir.join("ChatGPT.dmg");
     let mut file = File::create(&destination)
         .await
         .with_context(|| format!("Failed to create {}", destination.display()))?;
@@ -149,7 +149,7 @@ mod tests {
     async fn fetches_remote_metadata_from_head() -> Result<()> {
         let server = MockServer::start().await;
         Mock::given(method("HEAD"))
-            .and(path("/Codex.dmg"))
+            .and(path("/ChatGPT.dmg"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("ETag", "\"abc\"")
@@ -161,7 +161,7 @@ mod tests {
 
         let client = Client::builder().build()?;
         let metadata =
-            fetch_remote_metadata(&client, &format!("{}/Codex.dmg", server.uri())).await?;
+            fetch_remote_metadata(&client, &format!("{}/ChatGPT.dmg", server.uri())).await?;
         assert_eq!(metadata.etag.as_deref(), Some("\"abc\""));
         assert_eq!(
             metadata.last_modified.as_deref(),
@@ -177,7 +177,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = b"codex-dmg-test-payload";
         Mock::given(method("GET"))
-            .and(path("/Codex.dmg"))
+            .and(path("/ChatGPT.dmg"))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
             .mount(&server)
             .await;
@@ -186,13 +186,13 @@ mod tests {
         let temp = tempdir()?;
         let downloaded = download_dmg(
             &client,
-            &format!("{}/Codex.dmg", server.uri()),
+            &format!("{}/ChatGPT.dmg", server.uri()),
             temp.path(),
             Utc.with_ymd_and_hms(2026, 3, 24, 12, 0, 0).unwrap(),
         )
         .await?;
 
-        assert_eq!(downloaded.path, temp.path().join("Codex.dmg"));
+        assert_eq!(downloaded.path, temp.path().join("ChatGPT.dmg"));
         assert_eq!(
             downloaded.sha256,
             "678cd508ffe0071e217020a7a4eecbebe25362c022ac78c13a5ae87b7a3a0c92"

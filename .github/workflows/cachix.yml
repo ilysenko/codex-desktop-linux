@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  CACHIX_CACHE_NAME: codex-desktop-linux
+  CACHIX_CACHE_NAME: chatgpt-desktop-linux
   CARGO_TERM_COLOR: always
   NIX_CONFIG: experimental-features = nix-command flakes
   CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -45,17 +45,17 @@ jobs:
           ## Cachix
 
           `CACHIX_AUTH_TOKEN` is not configured, so this run will build without pushing to Cachix.
-          Add a write token for the `codex-desktop-linux` Cachix cache as a repository secret to populate it automatically.
+          Add a write token for the `chatgpt-desktop-linux` Cachix cache as a repository secret to populate it automatically.
           EOF
 
       - name: Build cacheable Nix outputs
         run: |
           set -euo pipefail
           nix build \
-            .#codex-desktop \
-            .#codex-desktop-computer-use-ui \
-            .#codex-desktop-remote-mobile-control \
-            .#codex-desktop-computer-use-ui-remote-mobile-control \
+            .#chatgpt-desktop \
+            .#chatgpt-desktop-computer-use-ui \
+            .#chatgpt-desktop-remote-mobile-control \
+            .#chatgpt-desktop-computer-use-ui-remote-mobile-control \
             .#installer \
             --no-link \
             --print-build-logs
@@ -63,9 +63,9 @@ jobs:
             echo "## Cachix population"
             echo ""
             echo "- Cache: \`${CACHIX_CACHE_NAME}\`"
-            echo "- Built: \`.#codex-desktop\`"
-            echo "- Built: \`.#codex-desktop-computer-use-ui\`"
-            echo "- Built: \`.#codex-desktop-remote-mobile-control\`"
-            echo "- Built: \`.#codex-desktop-computer-use-ui-remote-mobile-control\`"
+            echo "- Built: \`.#chatgpt-desktop\`"
+            echo "- Built: \`.#chatgpt-desktop-computer-use-ui\`"
+            echo "- Built: \`.#chatgpt-desktop-remote-mobile-control\`"
+            echo "- Built: \`.#chatgpt-desktop-computer-use-ui-remote-mobile-control\`"
             echo "- Built: \`.#installer\`"
           } >> "$GITHUB_STEP_SUMMARY"

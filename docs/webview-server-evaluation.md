@@ -9,7 +9,7 @@ bundle. It waits for the configured port to become reachable before launching
 Electron, validates the served origin, and exports `ELECTRON_RENDERER_URL` so
 side-by-side app IDs can use an isolated local origin.
 
-The extracted webview payload is a static bundle under `codex-app/content/webview` and is relatively large: about 35 MB across 693 files. The generated `index.html` references hashed assets through relative paths, so the app still expects a stable local origin.
+The extracted webview payload is a static bundle under `chatgpt-app/content/webview` and is relatively large: about 35 MB across 693 files. The generated `index.html` references hashed assets through relative paths, so the app still expects a stable local origin.
 
 ## Options
 

@@ -1,4 +1,4 @@
-//! Binary entrypoint for the local Codex Desktop update manager.
+//! Binary entrypoint for the local ChatGPT Desktop update manager.
 
 mod app;
 mod builder;

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "codex-update-manager")]
-#[command(about = "Local update manager for Codex Desktop on Linux")]
+#[command(about = "Local update manager for ChatGPT Desktop on Linux")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

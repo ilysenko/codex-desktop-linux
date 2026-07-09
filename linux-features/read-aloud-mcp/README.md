@@ -38,7 +38,7 @@ features:
 
 The MCP feature reuses the same Kokoro defaults as the UI feature:
 
-- Python runtime: `~/.local/share/codex-desktop/read-aloud/kokoro-venv/bin/python`
+- Python runtime: `~/.local/share/chatgpt-desktop/read-aloud/kokoro-venv/bin/python`
 - Model: `~/.local/share/kokoro/kokoro-v1.0.onnx`
 - Voices: `~/.local/share/kokoro/voices-v1.0.bin`
 

@@ -2,17 +2,17 @@
 set -Eeuo pipefail
 
 # ============================================================================
-# Codex Desktop for Linux — Installer
-# Converts the official macOS Codex Desktop app to run on Linux
+# ChatGPT Desktop for Linux — Installer
+# Converts the official macOS ChatGPT Desktop app to run on Linux
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CODEX_APP_ID="${CODEX_APP_ID:-codex-desktop}"
-CODEX_APP_DISPLAY_NAME="${CODEX_APP_DISPLAY_NAME:-Codex Desktop}"
+CODEX_APP_ID="${CODEX_APP_ID:-chatgpt-desktop}"
+CODEX_APP_DISPLAY_NAME="${CODEX_APP_DISPLAY_NAME:-ChatGPT}"
 INSTALL_ROOT="${CODEX_INSTALL_ROOT:-$SCRIPT_DIR}"
-DEFAULT_INSTALL_DIR_NAME="codex-app"
+DEFAULT_INSTALL_DIR_NAME="chatgpt-app"
 DEFAULT_CODEX_WEBVIEW_PORT=5175
-if [ "$CODEX_APP_ID" != "codex-desktop" ]; then
+if [ "$CODEX_APP_ID" != "chatgpt-desktop" ]; then
     DEFAULT_INSTALL_DIR_NAME="$CODEX_APP_ID-app"
     DEFAULT_CODEX_WEBVIEW_PORT=5176
 fi
@@ -24,8 +24,8 @@ ELECTRON_MIRROR="${ELECTRON_MIRROR:-}"
 MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41="12.9.0"
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
-ICON_SOURCE="$SCRIPT_DIR/assets/codex.png"
-LINUX_ICON_SOURCE="${CODEX_LINUX_ICON_SOURCE:-$SCRIPT_DIR/assets/codex-linux.png}"
+ICON_SOURCE="${CODEX_ICON_SOURCE:-$SCRIPT_DIR/assets/codex.png}"
+LINUX_ICON_SOURCE="${CODEX_LINUX_ICON_SOURCE:-}"
 
 # ---- Source library helpers ----
 . "$SCRIPT_DIR/scripts/lib/install-helpers.sh"
@@ -67,16 +67,40 @@ SCRIPT
     [ -f "$linux_icon_source" ] || linux_icon_source="$ICON_SOURCE"
     if [ -f "$linux_icon_source" ]; then
         cp "$linux_icon_source" "$INSTALL_DIR/.codex-linux/$CODEX_APP_ID.png"
+        cp "$linux_icon_source" "$INSTALL_DIR/.codex-linux/$CODEX_APP_ID-tray.png"
     else
         warn "Notification icon not found at $linux_icon_source"
     fi
     info "Start script created"
 }
 
+resolve_upstream_icon_sources() {
+    local app_dir="$1"
+    local resources_dir="$app_dir/Contents/Resources"
+    local candidate
+
+    if [ -n "${CODEX_LINUX_ICON_SOURCE:-}" ]; then
+        return 0
+    fi
+
+    for candidate in \
+        "$resources_dir/icon-chatgpt.png" \
+        "$resources_dir/app.png" \
+        "$resources_dir/icon-codex-dark-color.png" \
+        "$SCRIPT_DIR/assets/codex-linux.png" \
+        "$SCRIPT_DIR/assets/codex.png"; do
+        if [ -f "$candidate" ]; then
+            LINUX_ICON_SOURCE="$candidate"
+            [ -f "$ICON_SOURCE" ] || ICON_SOURCE="$candidate"
+            return 0
+        fi
+    done
+}
+
 # ---- Main ----
 main() {
     echo "============================================" >&2
-    echo "  Codex Desktop for Linux — Installer"       >&2
+    echo "  ChatGPT Desktop for Linux — Installer"     >&2
     echo "============================================" >&2
     echo ""                                             >&2
 
@@ -102,6 +126,7 @@ main() {
 
     local app_dir
     app_dir=$(extract_dmg "$dmg_path")
+    resolve_upstream_icon_sources "$app_dir"
 
     detect_electron_version "$app_dir"
     if [ "$INSPECT_ONLY" -eq 1 ]; then

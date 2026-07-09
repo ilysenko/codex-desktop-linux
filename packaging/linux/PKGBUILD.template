@@ -1,10 +1,10 @@
-# Maintainer: Codex Desktop Linux Maintainers
+# Maintainer: ChatGPT Desktop Linux Maintainers
 pkgname=__PACKAGE_NAME__
 pkgver=__PKGVER__
 pkgrel=__PKGREL__
-pkgdesc="Codex Desktop for Linux — community-built from the macOS DMG"
+pkgdesc="ChatGPT Desktop for Linux — community-built from the macOS DMG"
 arch=('__ARCH__')
-url="https://github.com/ilysenko/codex-desktop-linux"
+url="https://github.com/ilysenko/chatgpt-desktop-linux"
 license=('MIT')
 depends=(
     'python'

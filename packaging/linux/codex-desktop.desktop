@@ -1,6 +1,6 @@
 [Desktop Entry]
-Name=Codex Desktop
-Comment=Run Codex Desktop on Linux
+Name=ChatGPT
+Comment=Run ChatGPT on Linux
 Exec=env BAMF_DESKTOP_FILE_HINT=/usr/share/applications/codex-desktop.desktop CHROME_DESKTOP=codex-desktop.desktop /usr/bin/codex-desktop %u
 Icon=codex-desktop
 Terminal=false

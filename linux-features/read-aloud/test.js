@@ -288,7 +288,7 @@ test("main handler stores a chosen Kokoro model folder", async () => {
     fs.mkdirSync(path.dirname(runner), { recursive: true });
     fs.writeFileSync(runner, "");
     fs.chmodSync(runner, 0o755);
-    const python = path.join(root, ".local", "share", "codex-desktop", "read-aloud", "kokoro-venv", "bin", "python");
+    const python = path.join(root, ".local", "share", "chatgpt-desktop", "read-aloud", "kokoro-venv", "bin", "python");
     fs.mkdirSync(path.dirname(python), { recursive: true });
     fs.writeFileSync(python, "");
     fs.chmodSync(python, 0o755);
@@ -334,7 +334,7 @@ test("main handler stores a chosen Kokoro model folder", async () => {
 
     assert.equal(result.ok, true);
     const settings = JSON.parse(
-      fs.readFileSync(path.join(configHome, "codex-desktop", "settings.json"), "utf8"),
+      fs.readFileSync(path.join(configHome, "chatgpt-desktop", "settings.json"), "utf8"),
     );
     assert.equal(settings["codex-linux-read-aloud-kokoro-model"], path.join(modelDir, "kokoro-v1.0.onnx"));
     assert.equal(settings["codex-linux-read-aloud-kokoro-voices"], path.join(modelDir, "voices-v1.0.bin"));
@@ -388,7 +388,7 @@ test("main handler reports when a chosen Kokoro model folder is not speakable ye
     assert.equal(result.reason, "voice-unavailable");
     assert.deepEqual(result.config.kokoro.missing.sort(), ["aplay", "python", "runner"].sort());
     const settings = JSON.parse(
-      fs.readFileSync(path.join(configHome, "codex-desktop", "settings.json"), "utf8"),
+      fs.readFileSync(path.join(configHome, "chatgpt-desktop", "settings.json"), "utf8"),
     );
     assert.equal(settings["codex-linux-read-aloud-kokoro-model"], path.join(modelDir, "kokoro-v1.0.onnx"));
     assert.equal(settings["codex-linux-read-aloud-kokoro-voices"], path.join(modelDir, "voices-v1.0.bin"));
@@ -410,7 +410,7 @@ test("main handler honors Linux app-specific settings paths", async () => {
     fs.mkdirSync(path.dirname(runner), { recursive: true });
     fs.writeFileSync(runner, "");
     fs.chmodSync(runner, 0o755);
-    const python = path.join(root, ".local", "share", "codex-desktop", "read-aloud", "kokoro-venv", "bin", "python");
+    const python = path.join(root, ".local", "share", "chatgpt-desktop", "read-aloud", "kokoro-venv", "bin", "python");
     fs.mkdirSync(path.dirname(python), { recursive: true });
     fs.writeFileSync(python, "");
     fs.chmodSync(python, 0o755);
@@ -456,7 +456,7 @@ test("main handler honors Linux app-specific settings paths", async () => {
       fs.existsSync(path.join(configHome, "codex-desktop-5", "settings.json")),
       true,
     );
-    assert.equal(fs.existsSync(path.join(configHome, "codex-desktop", "settings.json")), false);
+    assert.equal(fs.existsSync(path.join(configHome, "chatgpt-desktop", "settings.json")), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -502,7 +502,7 @@ test("main handler reads and clamps stored Kokoro pace", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-main-"));
   try {
     const configHome = path.join(root, "config");
-    const settingsDir = path.join(configHome, "codex-desktop");
+    const settingsDir = path.join(configHome, "chatgpt-desktop");
     fs.mkdirSync(settingsDir, { recursive: true });
     fs.writeFileSync(
       path.join(settingsDir, "settings.json"),
@@ -850,7 +850,7 @@ test("main handler downloads setup files atomically", async () => {
 
     assert.equal(fs.readFileSync(target, "utf8"), "downloaded voice bytes");
     assert.equal(fs.existsSync(`${target}.part`), false);
-    assert.equal(observedHeaders?.["User-Agent"], "codex-desktop-read-aloud");
+    assert.equal(observedHeaders?.["User-Agent"], "chatgpt-desktop-read-aloud");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

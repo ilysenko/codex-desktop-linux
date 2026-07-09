@@ -30,8 +30,8 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg
-  UPSTREAM_DMG_PATH: /tmp/codex-upstream-ci/Codex.dmg
+  UPSTREAM_DMG_URL: https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg
+  UPSTREAM_DMG_PATH: /tmp/chatgpt-upstream-ci/ChatGPT.dmg
   DMG_CACHE_SCHEMA_VERSION: v1
 
 jobs:
@@ -93,7 +93,7 @@ jobs:
         id: dmg-cache
         uses: actions/cache@v4
         with:
-          path: /tmp/codex-upstream-ci/Codex.dmg
+          path: /tmp/chatgpt-upstream-ci/ChatGPT.dmg
           key: upstream-dmg-${{ env.DMG_CACHE_SCHEMA_VERSION }}-${{ steps.upstream-metadata.outputs.cache_segment }}
 
       - name: Download upstream DMG
@@ -135,7 +135,7 @@ jobs:
           JSON
 
       - name: Build app from upstream DMG
-        run: CODEX_PATCH_REPORT_JSON="$GITHUB_WORKSPACE/patch-report.json" make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg
+        run: CODEX_PATCH_REPORT_JSON="$GITHUB_WORKSPACE/patch-report.json" make build-app DMG=/tmp/chatgpt-upstream-ci/ChatGPT.dmg
 
       - name: Validate required upstream patches
         run: node scripts/ci/validate-patch-report.js patch-report.json --profile upstream-build
@@ -165,6 +165,6 @@ jobs:
             echo "- DMG Size (bytes): \`${{ steps.local-dmg.outputs.size_bytes }}\`"
             echo "- Tested At (UTC): \`${{ steps.local-dmg.outputs.tested_at_utc }}\`"
             echo "- Cache Hit: \`${{ steps.dmg-cache.outputs.cache-hit || 'false' }}\`"
-            echo "- Build command: \`make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg\`"
+            echo "- Build command: \`make build-app DMG=/tmp/chatgpt-upstream-ci/ChatGPT.dmg\`"
             echo "- Patch report: \`patch-report.json\`"
           } >> "$GITHUB_STEP_SUMMARY"

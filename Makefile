@@ -1,15 +1,15 @@
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-APP_DIR := $(CURDIR)/codex-app
-NEXT_APP_DIR := $(CURDIR)/codex-app-next
+APP_DIR := $(CURDIR)/chatgpt-app
+NEXT_APP_DIR := $(CURDIR)/chatgpt-app-next
 REBUILD_REPORT_DIR := $(CURDIR)/dist-next/rebuild
 UPSTREAM_INTEL_CANDIDATE ?= $(strip $(DMG))
-UPSTREAM_INTEL_HOST_CANDIDATE := $(if $(strip $(UPSTREAM_INTEL_CANDIDATE)),$(UPSTREAM_INTEL_CANDIDATE),$(CURDIR)/Codex.dmg)
+UPSTREAM_INTEL_HOST_CANDIDATE := $(if $(strip $(UPSTREAM_INTEL_CANDIDATE)),$(UPSTREAM_INTEL_CANDIDATE),$(CURDIR)/ChatGPT.dmg)
 UPSTREAM_INTEL_BASELINE ?=
 UPSTREAM_INTEL_PATCH_REPORT ?= $(REBUILD_REPORT_DIR)/patch-report.json
-UPSTREAM_INTEL_IMAGE ?= codex-desktop-linux-devcontainer:local
-PACKAGE_NAME := codex-desktop
+UPSTREAM_INTEL_IMAGE ?= chatgpt-desktop-linux-devcontainer:local
+PACKAGE_NAME := chatgpt-desktop
 PACKAGE_WITH_UPDATER ?= 1
 MAX_BUILD_THREADS ?= 0
 MAX_BUILD_THREADS_VALUE := $(strip $(MAX_BUILD_THREADS))
@@ -20,8 +20,8 @@ else
 RPM_BINARY_PAYLOAD ?=
 endif
 CARGO_JOBS_ARG = $(if $(MAX_BUILD_THREADS_ENABLED),--jobs $(MAX_BUILD_THREADS_VALUE),)
-DEV_APP_ID ?= codex-cua-lab
-DEV_APP_NAME ?= Codex CUA Lab
+DEV_APP_ID ?= chatgpt-cua-lab
+DEV_APP_NAME ?= ChatGPT CUA Lab
 DEV_APP_DIR ?= $(CURDIR)/$(DEV_APP_ID)-app
 DEV_APP_BIN ?= $(CURDIR)/bin/$(DEV_APP_ID)
 DEB_GLOB := $(CURDIR)/dist/$(PACKAGE_NAME)_*.deb
@@ -68,24 +68,24 @@ printf '%s\n' "$$format"
 .PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream inspect-upstream-intel inspect-upstream-intel-devcontainer build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
 
 help:
-	@printf '\nCodex Desktop Linux Make Targets\n\n'
+	@printf '\nChatGPT Desktop Linux Make Targets\n\n'
 	@printf '  %-18s %s\n' "make check" "Run cargo check for codex-update-manager"
 	@printf '  %-18s %s\n' "make test" "Run updater test suite"
 	@printf '  %-18s %s\n' "make build-updater" "Build codex-update-manager in release mode"
-	@printf '  %-18s %s\n' "make update" "Find a DMG, rebuild, and replace codex-app/ with backup"
+	@printf '  %-18s %s\n' "make update" "Find a DMG, rebuild, and replace chatgpt-app/ with backup"
 	@printf '  %-18s %s\n' "make rebuild" "Inspect a DMG and build a side-by-side candidate"
-	@printf '  %-18s %s\n' "make rebuild-install" "Find a DMG, rebuild, and install into codex-app/"
-	@printf '  %-18s %s\n' "make inspect-upstream" "Inspect a DMG and write rebuild reports without changing codex-app/"
+	@printf '  %-18s %s\n' "make rebuild-install" "Find a DMG, rebuild, and install into chatgpt-app/"
+	@printf '  %-18s %s\n' "make inspect-upstream" "Inspect a DMG and write rebuild reports without changing chatgpt-app/"
 	@printf '  %-18s %s\n' "make inspect-upstream-intel" "Inventory protected upstream DMG surfaces and write drift reports"
 	@printf '  %-18s %s\n' "make inspect-upstream-intel-devcontainer" "Run upstream DMG intelligence inside the devcontainer image"
-	@printf '  %-18s %s\n' "make build-app" "Run install.sh and regenerate codex-app/ (reuses cached Codex.dmg)"
-	@printf '  %-18s %s\n' "make build-app-fresh" "Remove generated app and refresh cached Codex.dmg by default"
+	@printf '  %-18s %s\n' "make build-app" "Run install.sh and regenerate chatgpt-app/ (reuses cached ChatGPT.dmg)"
+	@printf '  %-18s %s\n' "make build-app-fresh" "Remove generated app and refresh cached ChatGPT.dmg by default"
 	@printf '  %-18s %s\n' "make setup-native" "Guided setup summary and Linux feature config helper"
 	@printf '  %-18s %s\n' "make bootstrap-native" "Install deps, validate/reuse DMG, package, and install"
 	@printf '  %-18s %s\n' "make install-native" "Clean-build, validate/reuse DMG, package, and install"
 	@printf '  %-18s %s\n' "make update-native" "Pull trusted checkout, validate/reuse DMG, package, and install"
-	@printf '  %-18s %s\n' "make rebuild-next" "Build a side-by-side candidate in codex-app-next/"
-	@printf '  %-18s %s\n' "make run-app" "Launch the local generated Electron app from codex-app/"
+	@printf '  %-18s %s\n' "make rebuild-next" "Build a side-by-side candidate in chatgpt-app-next/"
+	@printf '  %-18s %s\n' "make run-app" "Launch the local generated Electron app from chatgpt-app/"
 	@printf '  %-18s %s\n' "make build-dev-app" "Build a side-by-side test app with a distinct app id/bin"
 	@printf '  %-18s %s\n' "make run-dev-app" "Launch the side-by-side test app"
 	@printf '  %-18s %s\n' "make deb" "Build the Debian package into dist/"
@@ -100,13 +100,13 @@ help:
 	@printf '  %-18s %s\n' "make clean-state" "Remove updater runtime state from XDG directories"
 	@printf '\nVariables:\n\n'
 	@printf '  %-18s %s\n' "DMG=/path/file.dmg" "Override the DMG; devcontainer intel downloads latest when omitted"
-	@printf '  %-18s %s\n' "UPSTREAM_INTEL_BASELINE=..." "Optional known-good DMG/.app; defaults to ./Codex.dmg when different"
+	@printf '  %-18s %s\n' "UPSTREAM_INTEL_BASELINE=..." "Optional known-good DMG/.app; defaults to ./ChatGPT.dmg when different"
 	@printf '  %-18s %s\n' "UPSTREAM_INTEL_PATCH_REPORT=..." "Optional patch-report.json folded into upstream intelligence drift"
 	@printf '  %-18s %s\n' "UPSTREAM_INTEL_IMAGE=..." "Docker image for make inspect-upstream-intel-devcontainer"
 	@printf '  %-18s %s\n' "NEXT_APP_DIR=..." "Override side-by-side rebuild candidate directory"
 	@printf '  %-18s %s\n' "APP_DIR=..." "Override final app directory for make rebuild-install"
 	@printf '  %-18s %s\n' "REBUILD_REPORT_DIR=..." "Override inspect/rebuild report output directory"
-	@printf '  %-18s %s\n' "DEV_APP_ID=..." "Override side-by-side test app id/bin (default: codex-cua-lab)"
+	@printf '  %-18s %s\n' "DEV_APP_ID=..." "Override side-by-side test app id/bin (default: chatgpt-cua-lab)"
 	@printf '  %-18s %s\n' "DEV_APP_NAME=..." "Override side-by-side test app display name"
 	@printf '  %-18s %s\n' "PACKAGE_VERSION=..." "Override the package version for make deb / make rpm / make pacman / make appimage"
 	@printf '  %-18s %s\n' "PACKAGE_WITH_UPDATER=0" "Build packages without codex-update-manager or the updater service"
@@ -119,21 +119,21 @@ help:
 	@printf '\nExamples:\n\n'
 	@printf '  %s\n' "make update"
 	@printf '  %s\n' "make rebuild-install"
-	@printf '  %s\n' "make rebuild DMG=/tmp/Codex.dmg"
-	@printf '  %s\n' "make build-app DMG=/tmp/Codex.dmg"
+	@printf '  %s\n' "make rebuild DMG=/tmp/ChatGPT.dmg"
+	@printf '  %s\n' "make build-app DMG=/tmp/ChatGPT.dmg"
 	@printf '  %s\n' "make build-app-fresh"
 	@printf '  %s\n' "make setup-native"
 	@printf '  %s\n' "make bootstrap-native"
 	@printf '  %s\n' "make install-native"
 	@printf '  %s\n' "PACKAGE_WITH_UPDATER=0 make update-native"
-	@printf '  %s\n' "make inspect-upstream DMG=/tmp/Codex.dmg"
+	@printf '  %s\n' "make inspect-upstream DMG=/tmp/ChatGPT.dmg"
 	@printf '  %s\n' "make inspect-upstream-intel DMG=/tmp/Codex-new.dmg"
 	@printf '  %s\n' "make inspect-upstream-intel-devcontainer"
 	@printf '  %s\n' "make inspect-upstream-intel-devcontainer DMG=/tmp/Codex-new.dmg"
-	@printf '  %s\n' "make rebuild-next DMG=/tmp/Codex.dmg"
+	@printf '  %s\n' "make rebuild-next DMG=/tmp/ChatGPT.dmg"
 	@printf '  %s\n' "make run-app"
 	@printf '  %s\n' "make build-dev-app"
-	@printf '  %s\n' "./bin/codex-cua-lab"
+	@printf '  %s\n' "./bin/chatgpt-cua-lab"
 	@printf '  %s\n' "make deb PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "make rpm PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "MAX_BUILD_THREADS=8 make install-native"
@@ -210,11 +210,11 @@ inspect-upstream-intel-devcontainer:
 	scripts/dev/upstream-dmg-intel-devcontainer "$${args[@]}"
 
 build-app:
-	@echo "[make] Regenerating codex-app from DMG"
+	@echo "[make] Regenerating chatgpt-app from DMG"
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh "$(DMG)"
 
 build-app-fresh:
-	@echo "[make] Regenerating codex-app from fresh DMG"
+	@echo "[make] Regenerating chatgpt-app from fresh DMG"
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --fresh "$(DMG)"
 
 setup-native:

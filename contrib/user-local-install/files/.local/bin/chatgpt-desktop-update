@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "${HOME}/.local/opt/codex-desktop-linux/lib/codex-desktop-linux/common.sh"
+source "${HOME}/.local/opt/chatgpt-desktop-linux/lib/chatgpt-desktop-linux/common.sh"
 
 ensure_layout
 load_install_config
@@ -37,9 +37,9 @@ log() {
 }
 
 if [ "$record_only" -eq 1 ]; then
-    # Icon extraction is best-effort: without a usable cached Codex.dmg it
+    # Icon extraction is best-effort: without a usable cached ChatGPT.dmg it
     # must not abort metadata recording under set -e.
-    extract_icon || log "Icon extraction skipped: no usable cached Codex.dmg."
+    extract_icon || log "Icon extraction skipped: no usable cached ChatGPT.dmg."
     record_metadata
     log "Metadata refreshed."
     exit 0
@@ -59,7 +59,7 @@ if ! remote_head="$(remote_repo_head 2>/dev/null)"; then
 fi
 
 if ! dmg_headers="$(remote_dmg_headers 2>/dev/null)"; then
-    echo "Could not query Codex.dmg headers." >&2
+    echo "Could not query ChatGPT.dmg headers." >&2
     exit 1
 fi
 
@@ -87,7 +87,7 @@ if [ "$force" -eq 1 ] || [ "${DMG_ETAG-}" != "$remote_etag" ] || [ "${DMG_LAST_M
 fi
 
 if [ "$repo_changed" -eq 0 ] && [ "$dmg_changed" -eq 0 ] && [ "$force" -eq 0 ]; then
-    log "Codex desktop wrapper is already up to date."
+    log "ChatGPT desktop wrapper is already up to date."
     exit 0
 fi
 
@@ -110,7 +110,7 @@ if [ "$repo_changed" -eq 1 ]; then
 fi
 
 if [ "$dmg_changed" -eq 1 ]; then
-    log "Refreshing cached Codex.dmg..."
+    log "Refreshing cached ChatGPT.dmg..."
     dmg_file="$(cached_dmg_file)"
     rm -f "$dmg_file" "$dmg_file.metadata"
 fi
@@ -132,7 +132,7 @@ log "Rebuilding wrapper..."
         ./install.sh
 )
 
-extract_icon || log "Icon extraction skipped: no usable cached Codex.dmg."
+extract_icon || log "Icon extraction skipped: no usable cached ChatGPT.dmg."
 record_metadata
 
 if command -v update-desktop-database >/dev/null 2>&1; then

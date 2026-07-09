@@ -303,7 +303,7 @@ fn show_picker(
             cmd.args([
                 "--list",
                 "--checklist",
-                "--title=Codex Desktop Linux features",
+                "--title=ChatGPT Desktop Linux features",
                 "--text=Select the optional Linux features to enable for this update.",
                 "--column=Enable",
                 "--column=Feature",
@@ -515,7 +515,7 @@ if (arg === "--features-json") {
         run_pick_features(&config, &paths, false).unwrap();
         assert!(!root
             .path()
-            .join("config/codex-desktop/linux-features.json")
+            .join("config/chatgpt-desktop/linux-features.json")
             .exists());
     }
 

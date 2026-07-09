@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "${HOME}/.local/opt/codex-desktop-linux/lib/codex-desktop-linux/common.sh"
+source "${HOME}/.local/opt/chatgpt-desktop-linux/lib/chatgpt-desktop-linux/common.sh"
 
 ensure_layout
 load_install_config
@@ -25,7 +25,7 @@ if ! remote_head="$(remote_repo_head 2>/dev/null)"; then
 fi
 
 if ! dmg_headers="$(remote_dmg_headers 2>/dev/null)"; then
-    echo "Could not query Codex.dmg headers."
+    echo "Could not query ChatGPT.dmg headers."
     exit 1
 fi
 
@@ -77,6 +77,6 @@ if [ "$repo_overlay_changed" -eq 1 ]; then
     echo "Reason: source overlay changed"
 fi
 if [ "$dmg_changed" -eq 1 ]; then
-    echo "Reason: Codex.dmg changed"
+    echo "Reason: ChatGPT.dmg changed"
 fi
 exit 10

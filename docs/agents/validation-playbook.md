@@ -19,7 +19,7 @@ bash -n scripts/build-appimage.sh
 For launcher behavior changes, rebuild or inspect the generated launcher:
 
 ```bash
-sed -n '1,160p' codex-app/start.sh
+sed -n '1,160p' chatgpt-app/start.sh
 ```
 
 If the change affects webview startup probes, run:
@@ -39,14 +39,14 @@ bash tests/scripts_smoke.sh
 For upstream drift or protected surface analysis:
 
 ```bash
-make inspect-upstream DMG=/path/to/Codex.dmg
+make inspect-upstream DMG=/path/to/ChatGPT.dmg
 make inspect-upstream-intel-devcontainer
 ```
 
 For patch report validation:
 
 ```bash
-scripts/ci/validate-patch-report.js codex-app/.codex-linux/patch-report.json
+scripts/ci/validate-patch-report.js chatgpt-app/.codex-linux/patch-report.json
 ```
 
 ## Rust Crates
@@ -85,8 +85,8 @@ Build the relevant package format and inspect metadata/layout:
 
 ```bash
 ./scripts/build-deb.sh
-dpkg-deb -I dist/codex-desktop_*.deb
-dpkg-deb -c dist/codex-desktop_*.deb | sed -n '1,80p'
+dpkg-deb -I dist/chatgpt-desktop_*.deb
+dpkg-deb -c dist/chatgpt-desktop_*.deb | sed -n '1,80p'
 ```
 
 Run other package formats when shared payload logic, package hooks, updater

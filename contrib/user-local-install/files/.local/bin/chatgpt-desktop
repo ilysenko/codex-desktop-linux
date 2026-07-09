@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OPT_ROOT="${HOME}/.local/opt/codex-desktop-linux"
-APP_DIR="${OPT_ROOT}/codex-app"
-CONFIG_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/codex-desktop-linux/user-local.env"
+OPT_ROOT="${HOME}/.local/opt/chatgpt-desktop-linux"
+APP_DIR="${OPT_ROOT}/chatgpt-app"
+CONFIG_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/chatgpt-desktop-linux/user-local.env"
 
 USER_LOCAL_OZONE_PLATFORM_OVERRIDE="${CODEX_USER_LOCAL_OZONE_PLATFORM:-}"
 if [ -f "$CONFIG_FILE" ]; then

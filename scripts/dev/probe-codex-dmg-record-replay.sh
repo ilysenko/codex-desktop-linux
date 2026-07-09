@@ -4,9 +4,9 @@ user_supplied_work_dir=0
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/dev/probe-codex-dmg-record-replay.sh [--dmg Codex.dmg] [--work-dir /tmp/probe] [--keep]
+Usage: scripts/dev/probe-codex-dmg-record-replay.sh [--dmg ChatGPT.dmg] [--work-dir /tmp/probe] [--keep]
 
-Extracts the smallest useful Codex.dmg surfaces for Record & Replay/Sky/Chronicle
+Extracts the smallest useful ChatGPT.dmg surfaces for Record & Replay/Sky/Chronicle
 reverse-engineering and prints a compact contract-search report.
 
 The script is read-only against the repository and writes scratch output under
@@ -23,7 +23,7 @@ status_line() {
   printf "\n"
 }
 
-dmg_path="Codex.dmg"
+dmg_path="ChatGPT.dmg"
 work_dir=""
 keep=0
 

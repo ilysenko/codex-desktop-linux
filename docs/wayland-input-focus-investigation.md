@@ -17,7 +17,7 @@ terminal). The window "looks like a modal" / never focuses.*
 The installed app was launched with Chrome DevTools Protocol enabled:
 
 ```
-./codex-app/start.sh -- --remote-debugging-port=9222 --remote-allow-origins=*
+./chatgpt-app/start.sh -- --remote-debugging-port=9222 --remote-allow-origins=*
 ```
 
 and inspected over CDP (see `scratchpad/cdp*.py`). Then the real X11 window was
@@ -59,7 +59,7 @@ the window.
 `xprop` on the real Codex window (under XWayland):
 
 ```
-WM_CLASS            = "codex-desktop", "codex-desktop"
+WM_CLASS            = "chatgpt-desktop", "chatgpt-desktop"
 WM_NAME             = "Codex"
 _NET_WM_WINDOW_TYPE = _NET_WM_WINDOW_TYPE_NORMAL
 _NET_WM_STATE       = _NET_WM_STATE_SKIP_PAGER, _NET_WM_STATE_SKIP_TASKBAR
@@ -147,7 +147,7 @@ focus, so no renderer- or app-level change can make hardware keys arrive.
 
 ## Verification checklist after applying #578
 
-1. Rebuild: `./install.sh ./Codex.dmg`.
+1. Rebuild: `./install.sh ./ChatGPT.dmg`.
 2. Launch and inspect the window with `xprop` (under XWayland) — expect
    `Override Redirect State: no` and a present `WM_STATE` / `WM_HINTS`.
 3. Click the window: `document.hasFocus()` should become true on its own (no

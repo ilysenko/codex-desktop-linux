@@ -3,8 +3,8 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 FLAKE_FILE="${FLAKE_FILE:-$REPO_DIR/flake.nix}"
-UPSTREAM_DMG_URL="${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/Codex.dmg}"
-UPSTREAM_DMG_PATH="${1:-${UPSTREAM_DMG_PATH:-/tmp/Codex.dmg}}"
+UPSTREAM_DMG_URL="${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg}"
+UPSTREAM_DMG_PATH="${1:-${UPSTREAM_DMG_PATH:-/tmp/ChatGPT.dmg}}"
 NATIVE_MODULES_PKG="${NATIVE_MODULES_PKG:-$REPO_DIR/nix/native-modules/package.json}"
 
 # Opt-in pin-writing mode (used by refresh flows, not by PR CI). When set, the
@@ -214,11 +214,11 @@ ASAR_EXTRACT_DIR="$WORK_DIR/app-extracted"
 npx --yes asar extract "$ASAR_PATH" "$ASAR_EXTRACT_DIR"
 
 dmg_electron_version="$(detect_dmg_electron_version "$APP_DIR" "$ASAR_EXTRACT_DIR")"
-dmg_codex_version="$(json_file_field "$ASAR_EXTRACT_DIR/package.json" "value.version")"
+dmg_chatgpt_version="$(json_file_field "$ASAR_EXTRACT_DIR/package.json" "value.version")"
 dmg_better_sqlite3_version="$(json_file_field "$ASAR_EXTRACT_DIR/node_modules/better-sqlite3/package.json" "value.version")"
 dmg_node_pty_version="$(json_file_field "$ASAR_EXTRACT_DIR/node_modules/node-pty/package.json" "value.version")"
 
-nix_codex_version="$(read_nix_string codexVersion)"
+nix_chatgpt_version="$(read_nix_string chatgptVersion)"
 nix_electron_version="$(read_nix_string electronVersion)"
 native_electron_version="$(node -p "require('$REPO_DIR/nix/native-modules/package.json').dependencies.electron")"
 native_better_sqlite3_version="$(node -p "require('$REPO_DIR/nix/native-modules/package.json').dependencies['better-sqlite3']")"
@@ -228,29 +228,29 @@ if [ "$WRITE_PINS" = "1" ]; then
     if [ -n "$APPCAST_URL" ]; then
         appcast_latest_version="$(fetch_appcast_latest_version "$APPCAST_URL")"
         echo "Appcast latest version: $appcast_latest_version"
-        echo "DMG codex version:      $dmg_codex_version"
-        if [ "$dmg_codex_version" != "$appcast_latest_version" ]; then
-            echo "DMG ($dmg_codex_version) is not yet aligned with the appcast latest ($appcast_latest_version);" >&2
+        echo "DMG ChatGPT version:    $dmg_chatgpt_version"
+        if [ "$dmg_chatgpt_version" != "$appcast_latest_version" ]; then
+            echo "DMG ($dmg_chatgpt_version) is not yet aligned with the appcast latest ($appcast_latest_version);" >&2
             echo "upstream rollout in progress, skipping pin update (exit 75)." >&2
             exit 75
         fi
     fi
 
-    write_nix_string codexVersion "$dmg_codex_version"
+    write_nix_string chatgptVersion "$dmg_chatgpt_version"
     write_nix_string electronVersion "$dmg_electron_version"
     write_json_dep "$NATIVE_MODULES_PKG" electron "$dmg_electron_version"
     write_json_dep "$NATIVE_MODULES_PKG" better-sqlite3 "$dmg_better_sqlite3_version"
     write_json_dep "$NATIVE_MODULES_PKG" node-pty "$dmg_node_pty_version"
 
     # Re-read so the assertions below confirm the writes landed.
-    nix_codex_version="$(read_nix_string codexVersion)"
+    nix_chatgpt_version="$(read_nix_string chatgptVersion)"
     nix_electron_version="$(read_nix_string electronVersion)"
     native_electron_version="$(node -p "require('$NATIVE_MODULES_PKG').dependencies.electron")"
     native_better_sqlite3_version="$(node -p "require('$NATIVE_MODULES_PKG').dependencies['better-sqlite3']")"
     native_node_pty_version="$(node -p "require('$NATIVE_MODULES_PKG').dependencies['node-pty']")"
 fi
 
-assert_equal "Codex app version pin" "$dmg_codex_version" "$nix_codex_version"
+assert_equal "ChatGPT app version pin" "$dmg_chatgpt_version" "$nix_chatgpt_version"
 assert_equal "Electron version pin" "$dmg_electron_version" "$nix_electron_version"
 assert_equal "native-modules Electron pin" "$nix_electron_version" "$native_electron_version"
 assert_equal "native-modules better-sqlite3 pin" "$dmg_better_sqlite3_version" "$native_better_sqlite3_version"

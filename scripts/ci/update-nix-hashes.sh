@@ -3,18 +3,19 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 FLAKE_FILE="${FLAKE_FILE:-$REPO_DIR/flake.nix}"
-UPSTREAM_DMG_URL="${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/Codex.dmg}"
-UPSTREAM_DMG_PATH="${UPSTREAM_DMG_PATH:-/tmp/Codex.dmg}"
+UPSTREAM_DMG_URL="${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg}"
+UPSTREAM_DMG_PATH="${UPSTREAM_DMG_PATH:-/tmp/ChatGPT.dmg}"
 VERIFY_LOG="${VERIFY_LOG:-/tmp/codex-nix-build-verify.log}"
-# Upstream Codex Sparkle appcast (x64 runners). Used only for reporting when it
-# lags behind the moving Codex.dmg; the verified DMG payload is the pin source.
-APPCAST_URL="${APPCAST_URL:-https://persistent.oaistatic.com/codex-app-prod/appcast-x64.xml}"
+# Optional upstream ChatGPT Sparkle appcast. The verified DMG payload is the pin
+# source, so leave this unset unless OpenAI publishes a ChatGPT desktop appcast
+# URL that should be reported alongside the moving DMG.
+APPCAST_URL="${APPCAST_URL:-}"
 
 PACKAGE_OUTPUTS=(
-    ".#codex-desktop"
-    ".#codex-desktop-computer-use-ui"
-    ".#codex-desktop-remote-mobile-control"
-    ".#codex-desktop-computer-use-ui-remote-mobile-control"
+    ".#chatgpt-desktop"
+    ".#chatgpt-desktop-computer-use-ui"
+    ".#chatgpt-desktop-remote-mobile-control"
+    ".#chatgpt-desktop-computer-use-ui-remote-mobile-control"
     ".#installer"
 )
 
@@ -160,17 +161,17 @@ main() {
         exit 1
     fi
 
-    # Refresh the version pins (codexVersion/electronVersion + native-modules)
+    # Refresh the version pins (chatgptVersion/electronVersion + native-modules)
     # from the current upstream DMG. The appcast can lag the moving DMG for many
     # hours, so it is reported as metadata instead of blocking the refresh PR.
     local old_electron_version
     old_electron_version="$(read_flake_string electronVersion)"
 
     local appcast_latest_version=""
-    if appcast_latest_version="$(fetch_appcast_latest_version "$APPCAST_URL" 2>/dev/null)"; then
+    if [ -n "$APPCAST_URL" ] && appcast_latest_version="$(fetch_appcast_latest_version "$APPCAST_URL" 2>/dev/null)"; then
         echo "Appcast latest version: $appcast_latest_version"
-    else
-        echo "WARN: Could not read upstream appcast version from $APPCAST_URL; continuing with Codex.dmg pins." >&2
+    elif [ -n "$APPCAST_URL" ]; then
+        echo "WARN: Could not read upstream appcast version from $APPCAST_URL; continuing with ChatGPT.dmg pins." >&2
     fi
 
     WRITE_PINS=1 APPCAST_URL= "$REPO_DIR/scripts/ci/validate-nix-pins.sh" "$UPSTREAM_DMG_PATH"
@@ -179,10 +180,10 @@ main() {
     # build does not fail on the new download URLs.
     local new_electron_version
     new_electron_version="$(read_flake_string electronVersion)"
-    local new_codex_version
-    new_codex_version="$(read_flake_string codexVersion)"
-    if [ -n "$appcast_latest_version" ] && [ "$new_codex_version" != "$appcast_latest_version" ]; then
-        echo "WARN: Appcast latest version ($appcast_latest_version) differs from Codex.dmg version ($new_codex_version); proceeding with verified DMG pins." >&2
+    local new_chatgpt_version
+    new_chatgpt_version="$(read_flake_string chatgptVersion)"
+    if [ -n "$appcast_latest_version" ] && [ "$new_chatgpt_version" != "$appcast_latest_version" ]; then
+        echo "WARN: Appcast latest version ($appcast_latest_version) differs from ChatGPT.dmg version ($new_chatgpt_version); proceeding with verified DMG pins." >&2
     fi
     if [ "$old_electron_version" != "$new_electron_version" ]; then
         echo "Electron pin: $old_electron_version -> $new_electron_version; refreshing electron hashes."
@@ -196,10 +197,10 @@ main() {
         ( cd "$REPO_DIR/nix/native-modules" && npm install --package-lock-only --ignore-scripts >/dev/null )
     fi
 
-    current_dmg_hash="$(read_flake_hash "codexDmg = pkgs.fetchurl {" "hash = ")"
-    echo "Current Codex.dmg hash:  $current_dmg_hash"
-    echo "Upstream Codex.dmg hash: $new_dmg_hash"
-    replace_flake_hash "codexDmg = pkgs.fetchurl {" "hash = " "$new_dmg_hash"
+    current_dmg_hash="$(read_flake_hash "chatgptDmg = pkgs.fetchurl {" "hash = ")"
+    echo "Current ChatGPT.dmg hash:  $current_dmg_hash"
+    echo "Upstream ChatGPT.dmg hash: $new_dmg_hash"
+    replace_flake_hash "chatgptDmg = pkgs.fetchurl {" "hash = " "$new_dmg_hash"
 
     if ! nix_pin_files_changed; then
         echo "Nix pins unchanged; skipping package-output verification."
@@ -211,7 +212,7 @@ main() {
     nix-store --add-fixed sha256 "$UPSTREAM_DMG_PATH" >/dev/null
 
     run_nix_build "$VERIFY_LOG" "${PACKAGE_OUTPUTS[@]}"
-    echo "Nix builds succeeded after refreshing the upstream pins and Codex.dmg hash."
+    echo "Nix builds succeeded after refreshing the upstream pins and ChatGPT.dmg hash."
 }
 
 case "${1:-}" in

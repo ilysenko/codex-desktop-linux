@@ -22,14 +22,14 @@ Read Aloud MCP tool. For older builds, or to force-enable direct runtime calls,
 set the runtime opt-in:
 
 ```bash
-mkdir -p ~/.config/codex-desktop
-node -e 'const fs=require("fs"),p=process.env.HOME+"/.config/codex-desktop/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}s["codex-linux-read-aloud-enabled"]=true;fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
+mkdir -p ~/.config/chatgpt-desktop
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.config/chatgpt-desktop/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}s["codex-linux-read-aloud-enabled"]=true;fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
 ```
 
 or:
 
 ```bash
-CODEX_LINUX_READ_ALOUD_ENABLED=1 codex-desktop
+CODEX_LINUX_READ_ALOUD_ENABLED=1 chatgpt-desktop
 ```
 
 The generated Read Aloud settings page also gets setup controls for machines
@@ -73,7 +73,7 @@ bundle.
 
 Default paths:
 
-- Python runtime: `~/.local/share/codex-desktop/read-aloud/kokoro-venv/bin/python`
+- Python runtime: `~/.local/share/chatgpt-desktop/read-aloud/kokoro-venv/bin/python`
 - Model: `~/.local/share/kokoro/kokoro-v1.0.onnx`
 - Voices: `~/.local/share/kokoro/voices-v1.0.bin`
 
@@ -120,7 +120,7 @@ For private/local setups, a custom command can still be used. Codex writes the
 cleaned response text to stdin:
 
 ```bash
-CODEX_LINUX_READ_ALOUD_COMMAND="/path/to/tts-stdin-command" codex-desktop
+CODEX_LINUX_READ_ALOUD_COMMAND="/path/to/tts-stdin-command" chatgpt-desktop
 ```
 
 When Kokoro is not ready, Read Aloud can fall back to system TTS through
@@ -130,7 +130,7 @@ backend when it is available. Disable the native fallback if the machine voice
 is not acceptable:
 
 ```bash
-CODEX_LINUX_READ_ALOUD_NATIVE_FALLBACK=0 codex-desktop
+CODEX_LINUX_READ_ALOUD_NATIVE_FALLBACK=0 chatgpt-desktop
 ```
 
 The handler never invokes a shell for response text.

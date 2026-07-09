@@ -130,7 +130,7 @@ choose_multi_launch_port() {
         fi
     done
 
-    echo "No free Codex Desktop webview port found in CODEX_MULTI_LAUNCH_PORT_RANGE=$range" >&2
+    echo "No free ChatGPT Desktop webview port found in CODEX_MULTI_LAUNCH_PORT_RANGE=$range" >&2
     return 1
 }
 
@@ -1271,7 +1271,7 @@ run_cli_preflight() {
         if [ "$allow_install_missing" = "1" ]; then
             return 1
         fi
-        notify_error "Codex CLI prelaunch check failed. Continuing with the current CLI state. Check the launcher and updater logs if Codex Desktop misbehaves."
+        notify_error "Codex CLI prelaunch check failed. Continuing with the current CLI state. Check the launcher and updater logs if ChatGPT Desktop misbehaves."
         return 0
     fi
 
@@ -1858,7 +1858,7 @@ detect_cross_install_conflict() {
 
     install_dir="$(pid_install_dir "$pid" 2>/dev/null || echo "unknown")"
     detail="Another $CODEX_LINUX_APP_DISPLAY_NAME is already running from $install_dir (pid $pid), while this launcher is $SCRIPT_DIR. Both use app id '$CODEX_LINUX_APP_ID', webview port $CODEX_LINUX_WEBVIEW_PORT, config $APP_CONFIG_DIR, and state $APP_STATE_DIR. Close the other app, or launch one build with a side-by-side CODEX_APP_ID/CODEX_LINUX_APP_ID or --new-instance."
-    echo "Foreign Codex Desktop process: $(pid_summary "$pid")"
+    echo "Foreign ChatGPT Desktop process: $(pid_summary "$pid")"
     notify_error "$detail"
     exit 1
 }
@@ -1877,12 +1877,12 @@ set_detected_running_app() {
     if ! linux_setting_enabled "codex-linux-warm-start-enabled" 1; then
         WARM_START=0
         echo "Warm-start handoff disabled by $APP_SETTINGS_FILE"
-        echo "Detected running Codex Desktop pid=$RUNNING_APP_PID; preserving liveness marker for second-instance handoff"
+        echo "Detected running ChatGPT Desktop pid=$RUNNING_APP_PID; preserving liveness marker for second-instance handoff"
         return 0
     fi
 
     WARM_START=1
-    echo "Detected running Codex Desktop pid=$RUNNING_APP_PID; using warm-start handoff"
+    echo "Detected running ChatGPT Desktop pid=$RUNNING_APP_PID; using warm-start handoff"
 }
 
 running_app_is_active() {
@@ -2100,7 +2100,7 @@ stop_owned_webview_server() {
     fi
 
     if running_app_is_active && [ -n "$pid" ] && pid_is_webview_server "$pid"; then
-        echo "Preserving webview server pid=$pid owned by running Codex Desktop pid=$RUNNING_APP_PID"
+        echo "Preserving webview server pid=$pid owned by running ChatGPT Desktop pid=$RUNNING_APP_PID"
         return 0
     fi
 
@@ -2190,7 +2190,7 @@ adopt_existing_webview_server() {
     if pid="$(owned_webview_server_pid)"; then
         if running_app_is_active; then
             ADOPTED_WEBVIEW_PID="$pid"
-            echo "Reusing webview server pid=$pid owned by running Codex Desktop pid=$RUNNING_APP_PID"
+            echo "Reusing webview server pid=$pid owned by running ChatGPT Desktop pid=$RUNNING_APP_PID"
         else
             STARTED_WEBVIEW_PID="$pid"
         fi
@@ -2207,7 +2207,7 @@ adopt_discovered_webview_server() {
         echo "$pid" > "$WEBVIEW_PID_FILE"
         if running_app_is_active; then
             ADOPTED_WEBVIEW_PID="$pid"
-            echo "Reusing webview server pid=$pid owned by running Codex Desktop pid=$RUNNING_APP_PID"
+            echo "Reusing webview server pid=$pid owned by running ChatGPT Desktop pid=$RUNNING_APP_PID"
         else
             STARTED_WEBVIEW_PID="$pid"
             echo "Adopted existing webview server pid=$pid dir=$WEBVIEW_DIR"
@@ -2233,7 +2233,7 @@ start_webview_server() {
         fi
 
         if running_app_is_active; then
-            notify_error "Codex Desktop webview server is already running for pid $RUNNING_APP_PID, but origin validation failed. Keeping the live app untouched."
+            notify_error "ChatGPT Desktop webview server is already running for pid $RUNNING_APP_PID, but origin validation failed. Keeping the live app untouched."
             exit 1
         fi
     fi
@@ -2591,7 +2591,7 @@ electron_enable_features_arg() {
 
 write_user_electron_flags_template() {
     cat > "$USER_ELECTRON_FLAGS_FILE" <<'EOF'
-# Codex Desktop Linux launch flags.
+# ChatGPT Desktop Linux launch flags.
 # Uncomment one flag per line. Existing files are never overwritten.
 # Lines starting with # and blank lines are ignored.
 # Shell syntax, quotes, variables, and inline comments are not evaluated.
@@ -3266,7 +3266,7 @@ build_electron_launch_args() {
         ELECTRON_GPU_COMPOSITING_DISABLED=0
     fi
 
-    if [ "$CODEX_LINUX_APP_ID" != "codex-desktop" ]; then
+    if [ "$CODEX_LINUX_APP_ID" != "chatgpt-desktop" ]; then
         ELECTRON_LAUNCH_ARGS+=(--user-data-dir="${CODEX_ELECTRON_USER_DATA_DIR:-$APP_STATE_DIR/electron-user-data}")
     elif [ -n "${CODEX_ELECTRON_USER_DATA_DIR:-}" ]; then
         ELECTRON_LAUNCH_ARGS+=(--user-data-dir="$CODEX_ELECTRON_USER_DATA_DIR")
@@ -3370,7 +3370,7 @@ print_scaling_diagnostics() {
 }
 
 configure_side_by_side_app_env() {
-    if [ "$CODEX_LINUX_APP_ID" = "codex-desktop" ]; then
+    if [ "$CODEX_LINUX_APP_ID" = "chatgpt-desktop" ]; then
         return 0
     fi
 
@@ -3504,7 +3504,7 @@ launch_electron() {
     ) &
     ELECTRON_PID=$!
     if [ -n "${RUNNING_APP_PID:-}" ] && pid_matches_executable "$RUNNING_APP_PID" "$SCRIPT_DIR/electron"; then
-        echo "Preserving Codex Desktop pid=$RUNNING_APP_PID liveness marker for second-instance handoff"
+        echo "Preserving ChatGPT Desktop pid=$RUNNING_APP_PID liveness marker for second-instance handoff"
     else
         echo "$ELECTRON_PID" > "$APP_PID_FILE"
     fi
@@ -3547,7 +3547,7 @@ elif [ "$WARM_START" -eq 1 ]; then
 fi
 
 if using_second_instance_handoff; then
-    echo "Detected running Codex Desktop pid=$RUNNING_APP_PID; using Electron second-instance handoff"
+    echo "Detected running ChatGPT Desktop pid=$RUNNING_APP_PID; using Electron second-instance handoff"
     log_phase "second_instance_handoff_ready"
 elif needs_cold_start; then
     log_phase "feature_prelaunch_start"

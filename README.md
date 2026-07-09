@@ -1,18 +1,19 @@
 <p align="center">
-  <img src="assets/codex-linux.png" width="96" alt="Codex Desktop for Linux icon">
+  <img src="assets/codex-linux.png" width="96" alt="ChatGPT Desktop for Linux icon">
 </p>
 
-<h1 align="center">Codex Desktop for Linux</h1>
+<h1 align="center">ChatGPT Desktop for Linux</h1>
 
 <p align="center">
-  <a href="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/ci.yml"><img src="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/upstream-build-app.yml"><img src="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/upstream-build-app.yml/badge.svg" alt="Upstream Build App"></a>
+  <a href="https://github.com/ilysenko/chatgpt-desktop-linux/actions/workflows/ci.yml"><img src="https://github.com/ilysenko/chatgpt-desktop-linux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ilysenko/chatgpt-desktop-linux/actions/workflows/upstream-build-app.yml"><img src="https://github.com/ilysenko/chatgpt-desktop-linux/actions/workflows/upstream-build-app.yml/badge.svg" alt="Upstream Build App"></a>
 </p>
 
-Unofficial Linux build wrapper for [OpenAI Codex Desktop](https://openai.com/codex/).
-The official Codex app is available for macOS and Windows; this repository
-covers Linux by converting the upstream macOS `Codex.dmg` into a runnable Linux
-Electron app.
+Unofficial Linux build wrapper for the [OpenAI ChatGPT desktop app](https://openai.com/chatgpt/download/).
+The official ChatGPT app is available for macOS and Windows; this repository
+covers Linux by converting the upstream macOS `ChatGPT.dmg` into a runnable Linux
+Electron app. It began as a ChatGPT-oriented fork of
+[ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux).
 
 The project builds native `.deb`, `.rpm`, and `.pkg.tar.zst` packages, supports
 local AppImage self-builds and Nix, and can install a local update manager that
@@ -33,7 +34,7 @@ implementation details, see [AGENTS.md](AGENTS.md).
 
 ## How To Install
 
-Codex Desktop for Linux is built locally from the upstream `Codex.dmg`: the
+ChatGPT Desktop for Linux is built locally from the upstream `ChatGPT.dmg`: the
 installer downloads or reuses the DMG, extracts the Electron app, applies Linux
 compatibility patches, rebuilds native modules, stages the Linux runtime, and
 packages the result. Optional Linux-only integrations live in `linux-features/`
@@ -42,8 +43,8 @@ and stay disabled unless you enable them before building.
 For native packages and AppImage self-builds, start from a checkout:
 
 ```bash
-git clone https://github.com/ilysenko/codex-desktop-linux.git
-cd codex-desktop-linux
+git clone https://github.com/ilysenko/chatgpt-desktop-linux.git
+cd chatgpt-desktop-linux
 ```
 
 | Platform | Recommended path | Notes |
@@ -52,7 +53,7 @@ cd codex-desktop-linux
 | Fedora | `make bootstrap-native` | Builds and installs an `.rpm` |
 | openSUSE | `make bootstrap-native` | Builds and installs an `.rpm` |
 | Arch, Manjaro, EndeavourOS | `make bootstrap-native` | Builds and installs a pacman package |
-| NixOS / Nix | `nix run github:ilysenko/codex-desktop-linux` | See [Nix docs](docs/nix.md) |
+| NixOS / Nix | `nix run github:ilysenko/chatgpt-desktop-linux` | See [Nix docs](docs/nix.md) |
 | Atomic desktops / other distros | `make build-app && make appimage` | Local self-build; no bundled updater |
 
 Recommended native install:
@@ -68,8 +69,8 @@ make install-native
 ```
 
 `make bootstrap-native` installs build dependencies, validates the cached
-upstream `Codex.dmg`, downloads it only when missing or stale, builds
-`codex-app/`, packages it for your distro, and installs the newest artifact
+upstream `ChatGPT.dmg`, downloads it only when missing or stale, builds
+`chatgpt-app/`, packages it for your distro, and installs the newest artifact
 from `dist/`.
 
 If you are installing dependencies manually on Fedora:
@@ -94,21 +95,21 @@ feature selection, cleanup flow, and `PACKAGE_WITH_UPDATER=0`.
 
 ## Uninstall
 
-Close Codex Desktop first, then remove the native package with your distro's
+Close ChatGPT Desktop first, then remove the native package with your distro's
 package manager:
 
 ```bash
 # Debian / Ubuntu
-sudo apt remove codex-desktop
+sudo apt remove chatgpt-desktop
 
 # Fedora
-sudo dnf remove codex-desktop
+sudo dnf remove chatgpt-desktop
 
 # openSUSE
-sudo zypper remove codex-desktop
+sudo zypper remove chatgpt-desktop
 
 # Arch / Manjaro
-sudo pacman -R codex-desktop
+sudo pacman -R chatgpt-desktop
 ```
 
 Native package removal stops and disables `codex-update-manager.service` when
@@ -124,17 +125,17 @@ AppImage file you created. A repo-only generated app can be removed from the
 checkout with:
 
 ```bash
-rm -rf codex-app
+rm -rf chatgpt-app
 ```
 
-`nix run github:ilysenko/codex-desktop-linux` is ephemeral. If you installed
+`nix run github:ilysenko/chatgpt-desktop-linux` is ephemeral. If you installed
 the flake through a Nix profile, Home Manager, or a NixOS module, remove that
 profile or configuration entry and rebuild your profile/system.
 
 User data is preserved for reinstall. To remove only this wrapper's local app
 state, logs, launcher flags, and updater state, delete these paths.
 
-If you enabled Remote Mobile Control, `~/.config/codex-desktop` can contain
+If you enabled Remote Mobile Control, `~/.config/chatgpt-desktop` can contain
 `remote-control-device-keys-v1.json`. Revoke paired devices in Codex
 Settings/Connections or ChatGPT before deleting that file or removing the whole
 directory. For feature-owned data, prefer the cleanup flow in
@@ -142,9 +143,9 @@ directory. For feature-owned data, prefer the cleanup flow in
 
 ```bash
 rm -rf \
-  ~/.config/codex-desktop \
-  ~/.local/state/codex-desktop \
-  ~/.cache/codex-desktop \
+  ~/.config/chatgpt-desktop \
+  ~/.local/state/chatgpt-desktop \
+  ~/.cache/chatgpt-desktop \
   ~/.config/codex-update-manager \
   ~/.local/state/codex-update-manager \
   ~/.cache/codex-update-manager
@@ -181,18 +182,18 @@ workarounds.
 
 | Feature | Default | Enable / use | Docs |
 |---|---|---|---|
-| Standard Codex Desktop UI | Always | Install or run the generated app | This README |
+| Standard ChatGPT Desktop UI | Always | Install or run the generated app | This README |
 | Managed Linux Node.js runtime | Always | Bundled during build/install | [Build and packaging](docs/build-and-packaging.md) |
 | Native packages | Always | `make package && make install` | [Build and packaging](docs/build-and-packaging.md) |
 | Auto-update manager | Native packages | Included unless `PACKAGE_WITH_UPDATER=0` | [Updater](docs/updater.md) |
 | AppImage self-build | Manual | `make build-app && make appimage` | [Build and packaging](docs/build-and-packaging.md#appimage-local-self-build) |
-| Nix flake | Manual | `nix run github:ilysenko/codex-desktop-linux` | [Nix](docs/nix.md) |
+| Nix flake | Manual | `nix run github:ilysenko/chatgpt-desktop-linux` | [Nix](docs/nix.md) |
 | GUI install prompts | If installed | Uses `kdialog` / `zenity`, then terminal fallback | [Native setup](docs/native-setup.md) |
 | Linux file manager integration | Always | Built into core Linux patches | [Architecture](docs/architecture.md) |
 | Chrome plugin native host | Always | Installed with bundled plugins | [Architecture](docs/architecture.md) |
 | Browser annotations | Always | Built into the patched webview | [Architecture](docs/architecture.md) |
 | Tray and warm-start handoff | Always | Normal app launch | [Architecture](docs/architecture.md) |
-| Multiple app instances | Opt-in | `./codex-app/start.sh --new-instance` | [Build and packaging](docs/build-and-packaging.md#running-the-generated-app) |
+| Multiple app instances | Opt-in | `./chatgpt-app/start.sh --new-instance` | [Build and packaging](docs/build-and-packaging.md#running-the-generated-app) |
 | Linux Computer Use backend | Bundled | MCP backend registers by default | [Linux Computer Use](docs/linux-computer-use.md) |
 | Linux Computer Use UI | Opt-in | `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1` or settings flag | [Linux Computer Use](docs/linux-computer-use.md#enable-the-in-app-ui) |
 | Linux Features framework | Opt-in | Edit `linux-features/features.json` | [Linux Features](linux-features/README.md) |
@@ -262,7 +263,7 @@ Full contract: [linux-features/README.md](linux-features/README.md) and
 
 Default native packages install `codex-update-manager`, a `systemd --user`
 service that checks for newer upstream DMGs, rebuilds a local native package,
-and installs it after Codex Desktop exits. The final install uses `pkexec`.
+and installs it after ChatGPT Desktop exits. The final install uses `pkexec`.
 Minimal window-manager sessions need a graphical polkit authentication agent
 for the in-app install button; otherwise the updater keeps the package ready
 and reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...`
@@ -296,7 +297,7 @@ make run-app
 Use a local DMG:
 
 ```bash
-make build-app DMG=/path/to/Codex.dmg
+make build-app DMG=/path/to/ChatGPT.dmg
 ```
 
 Build and install a package:
@@ -315,7 +316,7 @@ make pacman
 make appimage
 ```
 
-The package scripts only repackage the already-generated `codex-app/`. They do
+The package scripts only repackage the already-generated `chatgpt-app/`. They do
 not download or extract the DMG themselves. See
 [Build and packaging](docs/build-and-packaging.md).
 
@@ -324,11 +325,11 @@ not download or extract the DMG themselves. See
 | Problem | First thing to try |
 |---|---|
 | `/tmp` is mounted `noexec` | Set `TMPDIR` and `XDG_CACHE_HOME` to executable directories under `$HOME` |
-| Blank window or splash stuck | Check `~/.cache/codex-desktop/launcher.log` and whether port `5175` is already in use |
-| `CODEX_CLI_PATH` or CLI install error | Check `~/.cache/codex-desktop/launcher.log`, set `CODEX_CLI_PATH=/path/to/codex` to pin a binary, or install `@openai/codex` manually with optional dependencies |
-| Wayland / GPU / Vulkan hang | Try `CODEX_LINUX_RENDERING_MODE=wayland-gpu ./codex-app/start.sh` or persistent launch flags |
-| UI oversized or blurry (HiDPI / fractional scaling) | Try `CODEX_FORCE_DEVICE_SCALE_FACTOR=1 ./codex-app/start.sh` or `CODEX_OZONE_PLATFORM=x11 ./codex-app/start.sh`; see `./codex-app/start.sh --diagnose-scaling` |
-| Resize ghosting or stale frame trails | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./codex-app/start.sh` or `--disable-gpu-compositing` |
+| Blank window or splash stuck | Check `~/.cache/chatgpt-desktop/launcher.log` and whether port `5175` is already in use |
+| `CODEX_CLI_PATH` or CLI install error | Check `~/.cache/chatgpt-desktop/launcher.log`, set `CODEX_CLI_PATH=/path/to/codex` to pin a binary, or install `@openai/codex` manually with optional dependencies |
+| Wayland / GPU / Vulkan hang | Try `CODEX_LINUX_RENDERING_MODE=wayland-gpu ./chatgpt-app/start.sh` or persistent launch flags |
+| UI oversized or blurry (HiDPI / fractional scaling) | Try `CODEX_FORCE_DEVICE_SCALE_FACTOR=1 ./chatgpt-app/start.sh` or `CODEX_OZONE_PLATFORM=x11 ./chatgpt-app/start.sh`; see `./chatgpt-app/start.sh --diagnose-scaling` |
+| Resize ghosting or stale frame trails | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./chatgpt-app/start.sh` or `--disable-gpu-compositing` |
 | Computer Use UI is hidden | Enable the UI opt-in; account/server rollouts may still hide upstream-gated parts |
 | Computer Use has no input backend | Check `/dev/uinput`, portal support, or `ydotoold` / `ydotool.service` |
 | Updater seems stuck | Check `codex-update-manager status --json` and service logs |
@@ -354,7 +355,7 @@ Full list: [Troubleshooting](docs/troubleshooting.md).
 ## Disclaimer
 
 This is an unofficial community project and is not affiliated with OpenAI.
-Codex Desktop, OpenAI services, trademarks, upstream application code, binaries,
+ChatGPT Desktop, OpenAI services, trademarks, upstream application code, binaries,
 and assets remain the property of OpenAI or their respective owners.
 
 The MIT license in this repository applies only to this wrapper's source code,
@@ -368,7 +369,7 @@ Linux compatibility conversion on the user's own copy so it can run on Linux.
 In practice, it automates the conversion process that users perform on their
 own copies.
 
-Use of Codex Desktop remains subject to OpenAI's applicable terms and
+Use of ChatGPT Desktop remains subject to OpenAI's applicable terms and
 server-side feature availability.
 
 ## License

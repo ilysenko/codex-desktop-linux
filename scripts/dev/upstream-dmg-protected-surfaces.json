@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Protected upstream Codex Desktop macOS DMG surfaces that Linux packaging mirrors, patches, stages, or must explicitly classify before accepting a new upstream build.",
+  "description": "Protected upstream ChatGPT Desktop macOS DMG surfaces that Linux packaging mirrors, patches, stages, or must explicitly classify before accepting a new upstream build.",
   "surfaces": [
     {
       "id": "codex_chronicle",

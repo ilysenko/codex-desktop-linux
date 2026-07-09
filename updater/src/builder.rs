@@ -202,7 +202,7 @@ impl BuilderWorkspace {
         let workspace_dir = workspace_root.join("workspaces").join(candidate_version);
         let bundle_dir = workspace_dir.join("builder");
         let dist_dir = workspace_dir.join("dist");
-        let app_dir = workspace_dir.join("codex-app");
+        let app_dir = workspace_dir.join("chatgpt-app");
         let logs_dir = workspace_dir.join("logs");
         let reports_dir = workspace_dir.join("reports");
         let install_log = logs_dir.join("install.log");
@@ -551,14 +551,14 @@ mod tests {
                 r#"#!/bin/bash
 set -euo pipefail
 mkdir -p "${DIST_DIR_OVERRIDE}"
-touch "${DIST_DIR_OVERRIDE}/codex-desktop_${PACKAGE_VERSION}_amd64.deb"
+touch "${DIST_DIR_OVERRIDE}/chatgpt-desktop_${PACKAGE_VERSION}_amd64.deb"
 "#
             }
             FakePackageOutput::Rpm => {
                 r#"#!/bin/bash
 set -euo pipefail
 mkdir -p "${DIST_DIR_OVERRIDE}"
-touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
+touch "${DIST_DIR_OVERRIDE}/chatgpt-desktop-${PACKAGE_VERSION}.x86_64.rpm"
 "#
             }
             FakePackageOutput::Pacman => {
@@ -566,7 +566,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
 set -euo pipefail
 VER="${PACKAGE_VERSION%%+*}"
 mkdir -p "${DIST_DIR_OVERRIDE}"
-touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
+touch "${DIST_DIR_OVERRIDE}/chatgpt-desktop-${VER}-1-x86_64.pkg.tar.zst"
 "#
             }
         };
@@ -715,11 +715,11 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
             "Package: codex",
         )?;
         fs::write(
-            bundle_root.join("packaging/linux/codex-desktop.spec"),
+            bundle_root.join("packaging/linux/chatgpt-desktop.spec"),
             "Name: codex",
         )?;
         fs::write(
-            bundle_root.join("packaging/linux/codex-desktop.desktop"),
+            bundle_root.join("packaging/linux/chatgpt-desktop.desktop"),
             "[Desktop Entry]",
         )?;
         fs::write(
@@ -751,7 +751,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
             "pkgname=codex\n",
         )?;
         fs::write(
-            bundle_root.join("packaging/linux/codex-desktop.install"),
+            bundle_root.join("packaging/linux/chatgpt-desktop.install"),
             "post_install() { :; }\n",
         )?;
         fs::write(
@@ -820,20 +820,20 @@ fi
         paths.ensure_dirs()?;
 
         let config = RuntimeConfig {
-            dmg_url: "https://example.com/Codex.dmg".to_string(),
+            dmg_url: "https://example.com/ChatGPT.dmg".to_string(),
             initial_check_delay_seconds: 30,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,
             notifications: true,
             workspace_root: cache_root,
             builder_bundle_root: bundle_root,
-            app_executable_path: PathBuf::from("/opt/codex-desktop/electron"),
+            app_executable_path: PathBuf::from("/opt/chatgpt-desktop/electron"),
             enable_wrapper_updates: false,
             wrapper_remote: String::new(),
             wrapper_branch: "main".to_string(),
             generated_artifact_cleanup: Default::default(),
         };
-        let dmg_path = temp.path().join("Codex.dmg");
+        let dmg_path = temp.path().join("ChatGPT.dmg");
         fs::write(&dmg_path, b"dmg")?;
 
         let mut state = PersistedState::new(true);
@@ -1056,7 +1056,7 @@ fi
         let temp = tempdir()?;
         let pkg_path = temp
             .path()
-            .join("codex-desktop-2026.03.30.120000-1-x86_64.pkg.tar.zst");
+            .join("chatgpt-desktop-2026.03.30.120000-1-x86_64.pkg.tar.zst");
         fs::write(&pkg_path, b"pkg")?;
 
         let found = find_package_in(temp.path())?;

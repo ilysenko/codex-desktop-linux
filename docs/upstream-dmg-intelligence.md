@@ -1,6 +1,6 @@
 # Upstream DMG Intelligence
 
-Use this lane when OpenAI ships a new macOS `Codex.dmg` and Linux parity work
+Use this lane when OpenAI ships a new macOS `ChatGPT.dmg` and Linux parity work
 needs to know what moved before accepting the build.
 
 The intelligence command is report-only. It extracts a candidate DMG or scans an
@@ -20,8 +20,8 @@ The devcontainer wrapper is the preferred path for real DMG checks because it
 keeps `7zz`, Node, `jq`, and report-generation dependencies inside the project
 container. With no `DMG=...`, it downloads the current upstream DMG into the
 gitignored `reports/upstream-dmg/downloads/` directory and automatically uses
-repo `./Codex.dmg` as the baseline when that cached file exists and differs
-from the candidate. It builds `codex-desktop-linux-devcontainer:local` from
+repo `./ChatGPT.dmg` as the baseline when that cached file exists and differs
+from the candidate. It builds `chatgpt-desktop-linux-devcontainer:local` from
 `.devcontainer/Dockerfile` if that image is missing, mounts outside candidate
 or baseline paths into the container, and writes only the ignored report bundle
 under `reports/upstream-dmg/` by default.
@@ -36,7 +36,7 @@ Host-side candidate-only inventory is still available when the host already has
 the same toolchain:
 
 ```bash
-make inspect-upstream-intel DMG=./Codex.dmg
+make inspect-upstream-intel DMG=./ChatGPT.dmg
 ```
 
 For CI or release acceptance, keep report generation unchanged but fail the
@@ -44,7 +44,7 @@ command when protected-surface blockers are present:
 
 ```bash
 scripts/dev/upstream-dmg-intel.js \
-  --candidate /path/to/new/Codex.dmg \
+  --candidate /path/to/new/ChatGPT.dmg \
   --fail-on-blockers
 ```
 
@@ -53,14 +53,14 @@ Explicit baseline comparison remains available for older known-good builds:
 ```bash
 scripts/dev/upstream-dmg-intel.js \
   --baseline /path/to/known-good/Codex.app \
-  --candidate /path/to/new/Codex.dmg
+  --candidate /path/to/new/ChatGPT.dmg
 ```
 
 Pair it with the existing patch report path:
 
 ```bash
-make inspect-upstream DMG=/path/to/new/Codex.dmg
-make inspect-upstream-intel-devcontainer DMG=/path/to/new/Codex.dmg
+make inspect-upstream DMG=/path/to/new/ChatGPT.dmg
+make inspect-upstream-intel-devcontainer DMG=/path/to/new/ChatGPT.dmg
 ```
 
 When `dist-next/rebuild/patch-report.json` exists, `make inspect-upstream-intel`

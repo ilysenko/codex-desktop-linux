@@ -32,6 +32,16 @@ function applyLinuxQuitGuardPatch(currentSource) {
     return patchedSource.replace(matchedPrefix, `${matchedPrefix}${quitGuardSuffix}`);
   }
 
+  const multiDeclarationBundlerQuitGuardNeedle =
+    /let\s+[^;]{0,500}?([A-Za-z_$][\w$]*)=(?:codexLinuxPatchExternalOpen\()?require\(`electron`\)(?:\))?;(?:\1=[^;]+;)?[\s\S]{0,700}?(?:let|,)\s*([A-Za-z_$][\w$]*)=require\(`node:path`\);(?:\2=[^;]+;)?[\s\S]{0,700}?(?:let|,)\s*([A-Za-z_$][\w$]*)=require\(`node:fs`\);(?:\3=[^;]+;)?/;
+  const multiDeclarationBundlerQuitGuardMatch = patchedSource.match(
+    multiDeclarationBundlerQuitGuardNeedle,
+  );
+  if (multiDeclarationBundlerQuitGuardMatch != null) {
+    const matchedPrefix = multiDeclarationBundlerQuitGuardMatch[0];
+    return patchedSource.replace(matchedPrefix, `${matchedPrefix}${quitGuardSuffix}`);
+  }
+
   const splitQuitGuardNeedle =
     /let ([A-Za-z_$][\w$]*)=require\(`electron`\);(?:\1=[^;]+;)?let ([A-Za-z_$][\w$]*)=require\(`node:path`\);(?:\2=[^;]+;)?let ([A-Za-z_$][\w$]*)=require\(`node:fs`\);(?:\3=[^;]+;)?/;
   const splitQuitGuardMatch = patchedSource.match(splitQuitGuardNeedle);

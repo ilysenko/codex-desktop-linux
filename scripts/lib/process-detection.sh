@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install-time detection of an already-running Codex Desktop instance.
+# Install-time detection of an already-running ChatGPT Desktop instance.
 #
 # Sourced by install.sh. Do not run directly.
 # shellcheck shell=bash
@@ -79,16 +79,17 @@ find_running_install_target_pid() {
 
 assert_install_target_not_running() {
     local pid
+    local app_display_name="${CODEX_APP_DISPLAY_NAME:-ChatGPT Desktop}"
 
     if [ "${CODEX_INSTALL_ALLOW_RUNNING:-0}" = "1" ]; then
-        warn "CODEX_INSTALL_ALLOW_RUNNING=1 set; installer may overwrite a running Codex app"
+        warn "CODEX_INSTALL_ALLOW_RUNNING=1 set; installer may overwrite a running $app_display_name app"
         return 0
     fi
 
     if pid="$(find_running_install_target_pid)"; then
-        error "Codex Desktop is currently running from $INSTALL_DIR (pid $pid).
+        error "$app_display_name is currently running from $INSTALL_DIR (pid $pid).
 Close that app before rebuilding this install directory, or build into a separate path:
-  CODEX_INSTALL_DIR=/tmp/codex-app-build ./install.sh
+  CODEX_INSTALL_DIR=/tmp/chatgpt-app-build ./install.sh
 
 Set CODEX_INSTALL_ALLOW_RUNNING=1 only if you intentionally want to overwrite a running app."
     fi

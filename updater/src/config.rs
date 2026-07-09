@@ -38,7 +38,7 @@ fn default_generated_artifact_cleanup_min_free_bytes() -> u64 {
 }
 
 fn default_generated_artifact_cleanup_entries() -> Vec<PathBuf> {
-    ["codex-app", "codex-app-next", "dist", "dist-next", "target"]
+    ["chatgpt-app", "chatgpt-app-next", "dist", "dist-next", "target"]
         .into_iter()
         .map(PathBuf::from)
         .collect()
@@ -130,7 +130,7 @@ impl RuntimePaths {
 impl RuntimeConfig {
     /// Builds the default runtime configuration for the resolved paths.
     pub fn default_with_paths(paths: &RuntimePaths) -> Self {
-        let packaged_bundle_root = PathBuf::from("/opt/codex-desktop/update-builder");
+        let packaged_bundle_root = PathBuf::from("/opt/chatgpt-desktop/update-builder");
         let builder_bundle_root = if packaged_bundle_root.exists() {
             packaged_bundle_root
         } else {
@@ -141,14 +141,14 @@ impl RuntimeConfig {
         };
 
         Self {
-            dmg_url: "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg".to_string(),
+            dmg_url: "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg".to_string(),
             initial_check_delay_seconds: 30,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,
             notifications: true,
             workspace_root: paths.cache_dir.clone(),
             builder_bundle_root,
-            app_executable_path: PathBuf::from("/opt/codex-desktop/electron"),
+            app_executable_path: PathBuf::from("/opt/chatgpt-desktop/electron"),
             enable_wrapper_updates: false,
             wrapper_remote: String::new(),
             wrapper_branch: default_wrapper_branch(),
@@ -171,12 +171,12 @@ impl RuntimeConfig {
 }
 
 const APP_SETTINGS_FILE: &str = "settings.json";
-pub(crate) const DEFAULT_APP_ID: &str = "codex-desktop";
+pub(crate) const DEFAULT_APP_ID: &str = "chatgpt-desktop";
 const AUTO_INSTALL_SETTING_KEY: &str = "codex-linux-auto-update-on-exit";
 const WRAPPER_UPDATES_SETTING_KEY: &str = "codex-linux-wrapper-updates-enabled";
 
-/// Resolves the Codex Desktop app id the same way the Linux launcher and main
-/// bundle do: `CODEX_LINUX_APP_ID`, then `CODEX_APP_ID`, then `codex-desktop`.
+/// Resolves the ChatGPT Desktop app id the same way the Linux launcher and main
+/// bundle do: `CODEX_LINUX_APP_ID`, then `CODEX_APP_ID`, then `chatgpt-desktop`.
 /// Invalid ids fall back to the default so a malformed env value can never point
 /// the lookup at an attacker-controlled path.
 pub(crate) fn resolve_app_id() -> String {
@@ -512,8 +512,8 @@ mod tests {
         assert_eq!(
             config.generated_artifact_cleanup.entries,
             vec![
-                PathBuf::from("codex-app"),
-                PathBuf::from("codex-app-next"),
+                PathBuf::from("chatgpt-app"),
+                PathBuf::from("chatgpt-app-next"),
                 PathBuf::from("dist"),
                 PathBuf::from("dist-next"),
                 PathBuf::from("target"),
@@ -537,53 +537,53 @@ mod tests {
         fs::write(
             &paths.config_file,
             r#"
-dmg_url = "https://example.com/Codex.dmg"
+dmg_url = "https://example.com/ChatGPT.dmg"
 initial_check_delay_seconds = 5
 check_interval_hours = 12
 auto_install_on_app_exit = false
 notifications = false
-workspace_root = "/tmp/codex-workspaces"
-builder_bundle_root = "/tmp/codex-builder"
-app_executable_path = "/opt/codex-desktop/electron"
+workspace_root = "/tmp/chatgpt-workspaces"
+builder_bundle_root = "/tmp/chatgpt-builder"
+app_executable_path = "/opt/chatgpt-desktop/electron"
 
 [generated_artifact_cleanup]
 enabled = true
 min_free_bytes = 2147483648
-roots = ["/home/mohit/Github/codex-desktop-linux"]
-entries = ["dist", "target", "Codex.dmg"]
+roots = ["/home/mohit/Github/chatgpt-desktop-linux"]
+entries = ["dist", "target", "ChatGPT.dmg"]
 "#,
         )?;
 
         let config = RuntimeConfig::load_or_default(&paths)?;
-        assert_eq!(config.dmg_url, "https://example.com/Codex.dmg");
+        assert_eq!(config.dmg_url, "https://example.com/ChatGPT.dmg");
         assert_eq!(config.initial_check_delay_seconds, 5);
         assert_eq!(config.check_interval_hours, 12);
         assert!(!config.auto_install_on_app_exit);
         assert!(!config.notifications);
         assert_eq!(
             config.workspace_root,
-            PathBuf::from("/tmp/codex-workspaces")
+            PathBuf::from("/tmp/chatgpt-workspaces")
         );
         assert_eq!(
             config.builder_bundle_root,
-            PathBuf::from("/tmp/codex-builder")
+            PathBuf::from("/tmp/chatgpt-builder")
         );
         assert_eq!(
             config.app_executable_path,
-            PathBuf::from("/opt/codex-desktop/electron")
+            PathBuf::from("/opt/chatgpt-desktop/electron")
         );
         assert!(config.generated_artifact_cleanup.enabled);
         assert_eq!(config.generated_artifact_cleanup.min_free_bytes, 2147483648);
         assert_eq!(
             config.generated_artifact_cleanup.roots,
-            vec![PathBuf::from("/home/mohit/Github/codex-desktop-linux")]
+            vec![PathBuf::from("/home/mohit/Github/chatgpt-desktop-linux")]
         );
         assert_eq!(
             config.generated_artifact_cleanup.entries,
             vec![
                 PathBuf::from("dist"),
                 PathBuf::from("target"),
-                PathBuf::from("Codex.dmg"),
+                PathBuf::from("ChatGPT.dmg"),
             ]
         );
         Ok(())

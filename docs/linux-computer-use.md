@@ -65,11 +65,11 @@ Once Computer Use is visible in the Codex UI, ask Codex:
 You can also run the backend directly:
 
 ```bash
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux doctor
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux setup
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux apps
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux windows
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux screenshot
+./chatgpt-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux doctor
+./chatgpt-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux setup
+./chatgpt-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux apps
+./chatgpt-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux windows
+./chatgpt-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux screenshot
 ```
 
 ## Enable The In-App UI
@@ -83,8 +83,8 @@ CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 make build-app
 Persistent, including future auto-updater rebuilds:
 
 ```bash
-mkdir -p ~/.config/codex-desktop
-echo '{"codex-linux-computer-use-ui-enabled": true}' > ~/.config/codex-desktop/settings.json
+mkdir -p ~/.config/chatgpt-desktop
+echo '{"codex-linux-computer-use-ui-enabled": true}' > ~/.config/chatgpt-desktop/settings.json
 ```
 
 To opt back out, unset the env var and remove the settings flag or set it to
@@ -93,13 +93,13 @@ To opt back out, unset the env var and remove the settings flag or set it to
 Nix:
 
 ```bash
-nix run github:ilysenko/codex-desktop-linux#codex-desktop-computer-use-ui
+nix run github:ilysenko/chatgpt-desktop-linux#chatgpt-desktop-computer-use-ui
 ```
 
 Combined with a Linux feature output:
 
 ```bash
-nix run github:ilysenko/codex-desktop-linux#computer-use-ui-remote-mobile-control
+nix run github:ilysenko/chatgpt-desktop-linux#computer-use-ui-remote-mobile-control
 ```
 
 ## Side-By-Side Dev Variant

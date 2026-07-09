@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$REPO_DIR/scripts/lib/package-common.sh"
 
-APP_DIR="${APP_DIR_OVERRIDE:-$REPO_DIR/codex-app}"
+APP_DIR="${APP_DIR_OVERRIDE:-$REPO_DIR/chatgpt-app}"
 DIST_DIR="${DIST_DIR_OVERRIDE:-$REPO_DIR/dist}"
 APPDIR="${APPIMAGE_APPDIR_OVERRIDE:-$REPO_DIR/dist/appimage.AppDir}"
 APPRUN_TEMPLATE="$REPO_DIR/packaging/appimage/AppRun"
@@ -13,10 +13,13 @@ DESKTOP_TEMPLATE="$REPO_DIR/packaging/appimage/codex-desktop.desktop"
 APPIMAGE_RUNTIME_TEMPLATE="$REPO_DIR/packaging/appimage/codex-appimage-runtime.sh"
 ICON_SOURCE="$REPO_DIR/assets/codex-linux.png"
 
-PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
-PACKAGE_DISPLAY_NAME="${PACKAGE_DISPLAY_NAME:-Codex Desktop}"
-PACKAGE_COMMENT="${PACKAGE_COMMENT:-Run Codex Desktop on Linux}"
+PACKAGE_NAME="${PACKAGE_NAME:-chatgpt-desktop}"
+PACKAGE_DISPLAY_NAME="${PACKAGE_DISPLAY_NAME:-ChatGPT}"
+PACKAGE_COMMENT="${PACKAGE_COMMENT:-Run ChatGPT on Linux}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
+if [ -f "$APP_DIR/.codex-linux/$PACKAGE_NAME.png" ]; then
+    ICON_SOURCE="$APP_DIR/.codex-linux/$PACKAGE_NAME.png"
+fi
 
 map_arch() {
     case "$(uname -m)" in
