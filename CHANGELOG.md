@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   launcher routes OpenAI's bundled Git through the host Git HTTPS helper. This
   prevents HTTPS fetches and pushes from failing when the portable runtime's
   `git-remote-https` expects a distro-specific `libcurl-gnutls.so.4`.
+- The update manager now recognizes `/proc/<pid>/exe` links ending in
+  ` (deleted)` as a still-running ChatGPT Desktop process. A package replacement
+  can mark the old Electron inode deleted while it remains open; updates must
+  continue waiting for that process to exit before installing another package.
 - The live thread status pill now measures its step progress and green/red
   change totals at their intrinsic combined width, preventing late-arriving
   diff counts from collapsing into and overlapping the step number.

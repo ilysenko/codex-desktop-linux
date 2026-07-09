@@ -4,6 +4,7 @@ use crate::config::{self, RuntimeConfig};
 use anyhow::{Context, Result};
 use std::{
     fs,
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
 
@@ -59,8 +60,20 @@ fn scan_proc_for_executable(expected: &Path) -> Result<bool> {
 fn process_matches(pid: u32, expected: &Path) -> bool {
     is_process_alive(pid)
         && read_exe_link(pid)
-            .map(|path| path == expected)
+            .map(|path| executable_path_matches(&path, expected))
             .unwrap_or(false)
+}
+
+fn executable_path_matches(actual: &Path, expected: &Path) -> bool {
+    if actual == expected {
+        return true;
+    }
+
+    actual
+        .as_os_str()
+        .as_bytes()
+        .strip_suffix(b" (deleted)")
+        .is_some_and(|path| path == expected.as_os_str().as_bytes())
 }
 
 fn is_process_alive(pid: u32) -> bool {
@@ -106,5 +119,19 @@ mod tests {
             &config.app_executable_path
         ));
         Ok(())
+    }
+
+    #[test]
+    fn deleted_executable_link_still_matches_installed_app_path() {
+        let expected = Path::new("/opt/chatgpt-desktop/electron");
+
+        assert!(executable_path_matches(
+            Path::new("/opt/chatgpt-desktop/electron (deleted)"),
+            expected
+        ));
+        assert!(!executable_path_matches(
+            Path::new("/opt/chatgpt-desktop/electron-old (deleted)"),
+            expected
+        ));
     }
 }
