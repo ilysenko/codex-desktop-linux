@@ -3677,6 +3677,57 @@ test_bundled_plugin_builders_accept_prebuilt_binaries() {
     assert_contains "$output_log" "$host"
 }
 
+test_launcher_uses_system_git_https_transport() {
+    info "Checking launcher routes bundled Git HTTPS through the host Git helper"
+    local workspace="$TMP_DIR/launcher-git-https"
+    local fake_git="$workspace/system/bin/git"
+    local helper_dir="$workspace/system/libexec/git-core"
+    local probe="$workspace/probe.sh"
+    local output="$workspace/output.log"
+
+    mkdir -p "$(dirname "$fake_git")" "$helper_dir"
+    cat > "$fake_git" <<SCRIPT
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--exec-path" ]; then
+    printf '%s\n' '$helper_dir'
+    exit 0
+fi
+exit 2
+SCRIPT
+    cat > "$helper_dir/git-remote-https" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s\n' 'https-helper-ok'
+SCRIPT
+    chmod +x "$fake_git" "$helper_dir/git-remote-https"
+
+    python3 - "$REPO_DIR/launcher/start.sh.template" "$probe" <<'PY'
+from pathlib import Path
+import sys
+
+source_path, output_path = map(Path, sys.argv[1:3])
+source = source_path.read_text(encoding="utf-8")
+start = source.index("configure_git_https_transport() {")
+end = source.index("\nsource_feature_env_files() {", start)
+probe = "#!/usr/bin/env bash\nset -euo pipefail\n" + source[start:end] + r'''
+configure_git_https_transport
+printf 'system_git=%s\n' "${CODEX_LINUX_SYSTEM_GIT:-}"
+printf 'git_exec_path=%s\n' "${GIT_EXEC_PATH:-}"
+"$GIT_EXEC_PATH/git-remote-https"
+'''
+output_path.write_text(probe, encoding="utf-8")
+PY
+    chmod +x "$probe"
+
+    env -u GIT_EXEC_PATH \
+        CODEX_LINUX_SYSTEM_GIT="$fake_git" \
+        CODEX_LINUX_USER_PATH="$(dirname "$fake_git")" \
+        bash "$probe" > "$output"
+
+    assert_contains "$output" "system_git=$fake_git"
+    assert_contains "$output" "git_exec_path=$helper_dir"
+    assert_contains "$output" "https-helper-ok"
+}
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
@@ -4587,6 +4638,12 @@ EOF
     assert_contains "$REPO_DIR/flake.nix" "api/v1/crates/"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "MANAGED_NODE_BIN_DIR"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_LINUX_USER_PATH"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "configure_git_https_transport"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" 'git-remote-https'
+    assert_contains "$REPO_DIR/packaging/linux/control" "ca-certificates, curl, dpkg, git"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.spec" "ca-certificates, git"
+    assert_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "'ca-certificates'"
+    assert_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "'git'"
     assert_contains "$REPO_DIR/updater/src/builder.rs" "managed_node_bin_dirs"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "stage_common_package_files"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "PACKAGED_RUNTIME_SOURCE"
@@ -7631,6 +7688,7 @@ main() {
     test_chrome_browser_client_profile_root_variants
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
+    test_launcher_uses_system_git_https_transport
     test_launcher_template_sanity
     test_launcher_cli_resolution_policy
     test_webview_server_cache_policy

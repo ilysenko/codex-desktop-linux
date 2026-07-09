@@ -9,6 +9,8 @@ license=('MIT')
 __LEGACY_CONFLICTS__
 __LEGACY_REPLACES__
 depends=(
+    'ca-certificates'
+    'git'
     'python'
     'p7zip'
     'polkit'

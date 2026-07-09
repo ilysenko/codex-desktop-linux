@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Native packages now install the host Git client and CA certificates, and the
+  launcher routes OpenAI's bundled Git through the host Git HTTPS helper. This
+  prevents HTTPS fetches and pushes from failing when the portable runtime's
+  `git-remote-https` expects a distro-specific `libcurl-gnutls.so.4`.
 - The live thread status pill now measures its step progress and green/red
   change totals at their intrinsic combined width, preventing late-arriving
   diff counts from collapsing into and overlapping the step number.

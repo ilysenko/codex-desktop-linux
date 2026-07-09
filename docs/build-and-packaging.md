@@ -4,7 +4,8 @@
 
 You need:
 
-- `python3`, `7z`/`7za`/`7zz`, `curl`, `unzip`, `tar`, `make`, `g++`
+- `python3`, `7z`/`7za`/`7zz`, `curl`, `git`, CA certificates, `unzip`, `tar`,
+  `make`, `g++`
 - Rust toolchain with `cargo` for `chatgpt-update-manager`,
   `codex-computer-use-linux`, the Chrome extension host binary, and optional
   Rust-backed features such as Read Aloud MCP and Record & Replay
@@ -24,6 +25,12 @@ bash scripts/install-deps.sh
 
 It detects `apt`, `dnf5`, `dnf`, `pacman`, or `zypper`, installs system
 packages, and bootstraps Rust through `rustup` when needed.
+
+Native package manifests depend on the distro Git client and CA certificate
+bundle. At launch, ChatGPT Desktop exports the host Git `--exec-path`, ensuring
+that HTTPS fetches and pushes use a transport helper linked for that distro even
+when OpenAI's portable primary runtime places its own Git wrapper first in
+`PATH`.
 
 ## Manual Dependencies
 

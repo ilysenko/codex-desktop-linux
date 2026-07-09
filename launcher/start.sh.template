@@ -576,6 +576,38 @@ prepend_managed_node_runtime_to_path() {
     export CODEX_MANAGED_NODE_RUNTIME_DIR="$SCRIPT_DIR/resources/node-runtime"
 }
 
+configure_git_https_transport() {
+    [ -z "${GIT_EXEC_PATH:-}" ] || return 0
+
+    local user_path="${CODEX_LINUX_USER_PATH:-${PATH:-}}"
+    local system_git="${CODEX_LINUX_SYSTEM_GIT:-}"
+    local candidate
+    local git_exec_path
+
+    if [ -z "$system_git" ]; then
+        for candidate in /usr/bin/git /usr/local/bin/git; do
+            if [ -x "$candidate" ]; then
+                system_git="$candidate"
+                break
+            fi
+        done
+    fi
+    if [ -z "$system_git" ]; then
+        system_git="$(PATH="$user_path" command -v git 2>/dev/null || true)"
+    fi
+    [ -n "$system_git" ] && [ -x "$system_git" ] || return 0
+
+    case "$system_git" in
+        */codex-runtimes/*/dependencies/bin/git) return 0 ;;
+    esac
+
+    git_exec_path="$("$system_git" --exec-path 2>/dev/null || true)"
+    [ -n "$git_exec_path" ] && [ -x "$git_exec_path/git-remote-https" ] || return 0
+
+    export CODEX_LINUX_SYSTEM_GIT="$system_git"
+    export GIT_EXEC_PATH="$git_exec_path"
+}
+
 source_feature_env_files() {
     [ -n "${FEATURE_ENV_DIR:-}" ] || return 0
     [ -d "$FEATURE_ENV_DIR" ] || return 0
@@ -3543,6 +3575,7 @@ configure_side_by_side_app_env
 export_feature_runtime_env
 load_packaged_runtime_helper
 prepend_managed_node_runtime_to_path
+configure_git_https_transport
 source_feature_env_files
 if [ "$LAUNCHER_DIAGNOSE_SCALING" -eq 1 ]; then
     print_scaling_diagnostics

@@ -14,9 +14,9 @@ __LEGACY_OBSOLETES__
 %endif
 
 %if __PACKAGE_WITH_UPDATER__
-Requires:       python3, /usr/bin/7z, polkit, curl, unzip, xdg-utils, gcc-c++, make
+Requires:       ca-certificates, git, python3, /usr/bin/7z, polkit, curl, unzip, xdg-utils, gcc-c++, make
 %else
-Requires:       python3, /usr/bin/7z, curl, unzip, xdg-utils, gcc-c++, make
+Requires:       ca-certificates, git, python3, /usr/bin/7z, curl, unzip, xdg-utils, gcc-c++, make
 %endif
 Requires:       libasound.so.2%{codex_elf_suffix}, libatk-bridge-2.0.so.0%{codex_elf_suffix}
 Requires:       libatk-1.0.so.0%{codex_elf_suffix}, libglib-2.0.so.0%{codex_elf_suffix}, libgtk-3.so.0%{codex_elf_suffix}

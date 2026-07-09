@@ -12,6 +12,7 @@
 | `chatgpt-update-manager status --json` shows `/usr/bin/codex` with `cli_status: "up_to_date"` but `cli_official_latest_version` is newer than `cli_package_manager_latest_version` | The distro package is behind the official npm release, but pacman does not currently offer a newer package. ChatGPT Desktop will not auto-switch channels; read `cli_error_message` and decide whether to stay on the distro-managed CLI or replace it with another install method |
 | `nix run` exits with no window or terminal output | Check `~/.cache/chatgpt-desktop/launcher.log`; the Nix package still requires a user-provided `codex` CLI |
 | `gh auth status` works in terminal but fails inside ChatGPT Desktop | See [GitHub CLI auth in app-launched shells](github-cli-auth.md) |
+| Git HTTPS push fails with `libcurl-gnutls.so.4: cannot open shared object file` | Rebuild and reinstall the current native package. It installs host Git and CA certificates and routes the bundled runtime through the host `git-remote-https` helper |
 | Electron hangs while CLI is outdated | Re-run the launcher and check `~/.cache/chatgpt-desktop/launcher.log` plus `~/.local/state/chatgpt-update-manager/service.log` |
 | GPU / Vulkan / Wayland errors | Try `CODEX_LINUX_RENDERING_MODE=wayland-gpu ./chatgpt-app/start.sh` or persistent launch flags below |
 | UI massively oversized, tiny, or blurry | See [Oversized or blurry UI](#oversized-or-blurry-ui-hidpi--fractional-scaling); quick fix: `CODEX_FORCE_DEVICE_SCALE_FACTOR=1 ./chatgpt-app/start.sh` |

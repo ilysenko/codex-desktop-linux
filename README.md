@@ -81,7 +81,14 @@ desktop entry.
 
 Native packages use the `chatgpt-desktop` package and application id. Installing
 one replaces the legacy `codex-desktop` package so only the current ChatGPT
-Desktop launcher remains in the app menu.
+Desktop launcher remains in the app menu. They also install the host Git client
+and CA certificates; the launcher uses that Git installation's HTTPS transport
+for fetches and pushes started inside ChatGPT Desktop.
+
+Native packages include the update manager by default. It checks the official
+ChatGPT DMG in the background, rebuilds a native package when OpenAI publishes a
+new build, surfaces the ready update through the app, and installs it after
+ChatGPT Desktop closes. See [Updates](#updates).
 
 This project supports the latest **New ChatGPT** Electron DMG:
 `https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg`. The

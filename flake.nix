@@ -278,6 +278,7 @@
           curl
           findutils
           gawk
+          git
           gnugrep
           gnused
           nodejs
