@@ -24,7 +24,9 @@ Please take a moment to understand how this repository is structured before maki
 - `scripts/build-deb.sh`, `scripts/build-rpm.sh`, and `scripts/build-pacman.sh` package an already-generated `codex-app/`.
 - `scripts/install-deps.sh` bootstraps local development dependencies.
 - `updater/` contains the Rust update manager.
-- `scripts/patch-linux-window-ui.js` contains fail-soft ASAR patches for Linux behavior.
+- `scripts/patch-linux-window-ui.js` is the build-facing ASAR patcher CLI. Core
+  patch descriptors live under `scripts/patches/core/`, with implementation
+  helpers under `scripts/patches/impl/`.
 - `codex-app/` and `dist/` are generated artifacts and should not be treated as primary source unless you are intentionally validating generated output.
 
 For repository-specific implementation details, read [`AGENTS.md`](./AGENTS.md) and the relevant sections in [`README.md`](./README.md) before starting work.

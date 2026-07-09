@@ -2,8 +2,10 @@
 
 This optional feature hides the Linux Electron titlebar overlay controls and
 removes the native menu chrome from the main Codex window. It is intended for
-Wayland compositors or window managers where compositor-managed decorations
-already provide the expected window controls, such as Hyprland setups.
+compositors or window managers where compositor-managed decorations already
+provide the expected window controls, such as Hyprland setups. It is also a
+useful diagnostic switch for GNOME/X11 titlebar right-click lockups, because it
+removes the Linux Window Controls Overlay path from the main window.
 
 The default build leaves the existing Linux titlebar overlay behavior in place.
 Enable this only when the built-in Codex titlebar/buttons visually conflict
@@ -41,6 +43,10 @@ For a manual check, enable the feature as above, rebuild, and launch the app:
 - Changing the system dark/light theme must not crash the app or repaint a
   titlebar strip; the patch removes all Linux `setTitleBarOverlay` calls,
   which would otherwise throw on a window created without `titleBarOverlay`.
+- On GNOME/X11, right-click the same titlebar area that previously locked input
+  and verify whether clicks outside the window recover normally. If the issue
+  still reproduces, disable the feature again and report the distro, GNOME
+  version, session type, and installed `.codex-linux/linux-features-staged.json`.
 
 ## Known risks
 

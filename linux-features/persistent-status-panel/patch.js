@@ -86,5 +86,5 @@ const patches = [
 module.exports = {
   STORAGE_KEY,
   applyPersistentStatusPanelPatch,
-  patches,
+  descriptors: patches,
 };

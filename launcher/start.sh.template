@@ -229,21 +229,31 @@ Options:
   --enable-gpu                Re-enable Electron GPU acceleration
   --x11                       Force X11/XWayland
   --wayland                   Force native Wayland
+  --diagnose-scaling          Print display/session scaling diagnostics and exit
 
 Default launch keeps Electron GPU enabled and lets Electron choose the platform.
 Extra flags are passed directly to Electron.
 Persistent launch flags: $USER_ELECTRON_FLAGS_FILE
 
 Environment:
+  CODEX_OZONE_PLATFORM=x11|wayland|auto
+                              Select the Chromium Ozone backend without editing flags;
+                              explicit --x11/--wayland/--ozone-platform* flags win
+  CODEX_FORCE_DEVICE_SCALE_FACTOR=N
+                              Pass --force-device-scale-factor=N to Electron (e.g. 1, 1.5, 2);
+                              use 1 if the UI is oversized on HiDPI/fractional-scaling setups
   CODEX_LINUX_RENDERING_MODE=auto|default|wslg|wayland-gpu
                               Auto-detect WSLg, keep generic Linux defaults, force the WSLg profile,
                               or force native Wayland with GPU compositing enabled
   CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0|1
                               Override Wayland side-panel compositing workaround; 1 forces and 0 disables
+  CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE=auto|0|1
+                              Override --disable-dev-shm-usage; auto keeps it only when /dev/shm is missing or small
   CODEX_LAUNCHER_LOCK_WAIT_SECONDS=N
                               Seconds to wait for another launcher to leave the startup lock (default: 5)
   CODEX_FORCE_RENDERER_ACCESSIBILITY=auto|0|1
-                              Override --force-renderer-accessibility; auto skips it under WSLg and wayland-gpu
+                              Override --force-renderer-accessibility; auto forces it only when assistive
+                              technology is detected and never under WSLg or native wayland-gpu
   CODEX_MULTI_LAUNCH=1        Treat normal launches like --new-instance
   CODEX_MULTI_LAUNCH_PORT_RANGE=START-END
                               Port allocation range for --new-instance (default: CODEX_WEBVIEW_PORT through +4)
@@ -266,7 +276,18 @@ else
     LAUNCHER_EARLY_STDERR_FD=""
 fi
 
-exec >>"$LOG_FILE" 2>&1
+LAUNCHER_DIAGNOSE_SCALING=0
+if [[ "${LAUNCHER_ARGS[0]:-}" == "--diagnose-scaling" ]]; then
+    # Diagnostics are read interactively; keep them on the terminal instead
+    # of the launcher log. The early-stderr capture above left fd 2 on
+    # /dev/null, so point it back at the saved terminal stderr.
+    LAUNCHER_DIAGNOSE_SCALING=1
+    if [ -n "${LAUNCHER_EARLY_STDERR_FD:-}" ]; then
+        exec 2>&"$LAUNCHER_EARLY_STDERR_FD"
+    fi
+else
+    exec >>"$LOG_FILE" 2>&1
+fi
 
 echo "[$(date -Is)] Starting $CODEX_LINUX_APP_DISPLAY_NAME launcher"
 if [ "$MULTI_LAUNCH_ACTIVE" -eq 1 ]; then
@@ -652,9 +673,25 @@ print(name.strip())
 PY
 }
 
+# The bundled marketplace metadata is shared by every plugin sync below and
+# the syncs run concurrently on cold start, so the marketplace.json copy is
+# staged exactly once here instead of racing rm+cp inside each sync.
+stage_bundled_marketplace_metadata() {
+    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
+    local codex_home="${CODEX_HOME:-$HOME/.codex}"
+    local marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
+    local marketplace_plugins_dir="$marketplace_root/.agents/plugins"
+
+    [ -f "$source_marketplace" ] || return 0
+    mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
+    rm -f "$marketplace_plugins_dir/marketplace.json"
+    cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
+        chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
+        echo "Bundled marketplace metadata sync failed; continuing with existing marketplace cache."
+}
+
 sync_browser_use_bundled_plugin_cache() {
     local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/browser"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local plugin_json=""
     local source_client=""
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
@@ -685,13 +722,7 @@ sync_browser_use_bundled_plugin_cache() {
     marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
     marketplace_plugin_link="$marketplace_root/plugins/$plugin_dir_name"
-    if [ -f "$source_marketplace" ]; then
-        mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-        rm -f "$marketplace_plugins_dir/marketplace.json"
-        cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-            chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-            echo "Browser Use bundled marketplace sync failed; continuing with existing marketplace cache."
-    fi
+    mkdir -p "$marketplace_root/plugins"
 
     version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
@@ -825,7 +856,6 @@ PY
 
 sync_chrome_bundled_plugin_cache() {
     local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/chrome"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local plugin_json="$source_plugin/.codex-plugin/plugin.json"
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
     local extension_arch
@@ -922,12 +952,6 @@ sync_chrome_bundled_plugin_cache() {
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
     marketplace_plugin_link="$marketplace_root/plugins/chrome"
     mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-    if [ -f "$source_marketplace" ]; then
-        rm -f "$marketplace_plugins_dir/marketplace.json"
-        cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-            chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-            echo "Chrome bundled marketplace sync failed; continuing with existing marketplace cache."
-    fi
     replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
 
     host_path="$cache_root/latest/extension-host/linux/$extension_arch/extension-host"
@@ -938,7 +962,6 @@ sync_chrome_bundled_plugin_cache() {
 
 sync_computer_use_bundled_plugin_cache() {
     local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/computer-use"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local plugin_json="$source_plugin/.codex-plugin/plugin.json"
     local source_backend="$source_plugin/bin/codex-computer-use-linux"
     local source_cosmic_helper="$source_plugin/bin/codex-computer-use-cosmic"
@@ -962,13 +985,7 @@ sync_computer_use_bundled_plugin_cache() {
     marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
     marketplace_plugin_link="$marketplace_root/plugins/computer-use"
-    if [ -f "$source_marketplace" ]; then
-        mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-        rm -f "$marketplace_plugins_dir/marketplace.json"
-        cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-            chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-            echo "Computer Use bundled marketplace sync failed; continuing with existing marketplace cache."
-    fi
+    mkdir -p "$marketplace_root/plugins"
 
     version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
@@ -1011,7 +1028,6 @@ sync_computer_use_bundled_plugin_cache() {
 
 sync_read_aloud_bundled_plugin_cache() {
     local source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/read-aloud"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local plugin_json="$source_plugin/.codex-plugin/plugin.json"
     local source_backend="$source_plugin/bin/codex-read-aloud-linux"
     local source_runner="$source_plugin/bin/kokoro-stdin"
@@ -1038,13 +1054,7 @@ sync_read_aloud_bundled_plugin_cache() {
     marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
     marketplace_plugins_dir="$marketplace_root/.agents/plugins"
     marketplace_plugin_link="$marketplace_root/plugins/read-aloud"
-    if [ -f "$source_marketplace" ]; then
-        mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-        rm -f "$marketplace_plugins_dir/marketplace.json"
-        cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-            chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-            echo "Read Aloud bundled marketplace sync failed; continuing with existing marketplace cache."
-    fi
+    mkdir -p "$marketplace_root/plugins"
 
     version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
@@ -1089,7 +1099,6 @@ sync_read_aloud_bundled_plugin_cache() {
 
 sync_extra_bundled_plugin_cache() {
     local plugins_root="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins"
-    local source_marketplace="$SCRIPT_DIR/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
     local source_plugin
     local plugin_json
@@ -1146,12 +1155,6 @@ sync_extra_bundled_plugin_cache() {
         marketplace_plugins_dir="$marketplace_root/.agents/plugins"
         marketplace_plugin_link="$marketplace_root/plugins/$plugin_dir_name"
         mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-        if [ -f "$source_marketplace" ]; then
-            rm -f "$marketplace_plugins_dir/marketplace.json"
-            cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-                chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
-                echo "Extra bundled marketplace sync failed; continuing with existing marketplace cache."
-        fi
         replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
     done
 }
@@ -1406,6 +1409,124 @@ find_codex_cli() {
     done
 
     return 1
+}
+
+pid_parent_matches() {
+    local pid="$1"
+    local expected_parent="$2"
+    local stat_line
+    local rest
+
+    [ -r "/proc/$pid/stat" ] || return 1
+    stat_line=$(< "/proc/$pid/stat") || return 1
+    rest=${stat_line##*) }
+    set -- $rest
+    # $1 = state, $2 = ppid
+    [ "${2:-}" = "$expected_parent" ]
+}
+
+codex_cli_version_probe() {
+    local output_file="$1"
+    shift
+    local marker="${output_file}.timed-out"
+    local probe_pid
+    local watchdog_pid
+    # Under command substitution, $$ stays the top-level launcher PID.
+    local self_pid="${BASHPID:-$$}"
+    local status=0
+
+    rm -f "$marker"
+    ( trap - EXIT
+      { exec 9>&-; } 2>/dev/null || true
+      exec "$@" >"$output_file" 2>/dev/null
+    ) &
+    probe_pid="$!"
+    # The watchdog (and its sleep child, which outlives the kill below) must
+    # not inherit the caller's stdout: codex_cli_version runs under command
+    # substitution, and an inherited pipe fd would block the caller for the
+    # full watchdog second even when the probe answers immediately.
+    ( trap - EXIT
+      { exec 9>&-; } 2>/dev/null || true
+      sleep 1
+      if pid_parent_matches "$probe_pid" "$self_pid"; then
+          : > "$marker"
+          kill "$probe_pid" 2>/dev/null || true
+          sleep 0.05
+          if pid_parent_matches "$probe_pid" "$self_pid"; then
+              kill -9 "$probe_pid" 2>/dev/null || true
+          fi
+      fi
+    ) >/dev/null 2>&1 &
+    watchdog_pid="$!"
+
+    if wait "$probe_pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+
+    if [ -e "$marker" ]; then
+        rm -f "$marker"
+        return 124
+    fi
+    rm -f "$marker"
+    return "$status"
+}
+
+codex_cli_version() {
+    local cli_path="$1"
+    local probe_file
+    local output
+    local version
+    local version_arg
+    local probe_status=0
+
+    [ -n "$cli_path" ] || return 1
+    [ -x "$cli_path" ] || return 1
+    probe_file="$(mktemp "${TMPDIR:-/tmp}/codex-cli-version.XXXXXX" 2>/dev/null)" || return 1
+
+    for version_arg in --version version; do
+        : > "$probe_file"
+        if codex_cli_version_probe "$probe_file" "$cli_path" "$version_arg"; then
+            output="$(sed -n '1,3p' "$probe_file" 2>/dev/null || true)"
+            version="$(printf '%s\n' "$output" | sed -nE '
+s/^v?([0-9]+([.][0-9]+)+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?)([^0-9A-Za-z._+-].*)?$/\1/p
+s/.*[^0-9A-Za-z._+-]v?([0-9]+([.][0-9]+)+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?)([^0-9A-Za-z._+-].*)?$/\1/p
+' | head -n 1)"
+            if [ -n "$version" ]; then
+                rm -f "$probe_file" "${probe_file}.timed-out"
+                echo "$version"
+                return 0
+            fi
+        else
+            probe_status=$?
+            if [ "$probe_status" -eq 124 ]; then
+                rm -f "$probe_file" "${probe_file}.timed-out"
+                return 1
+            fi
+        fi
+    done
+
+    rm -f "$probe_file" "${probe_file}.timed-out"
+    return 1
+}
+
+log_codex_cli_path() {
+    local version
+
+    if [ -z "${CODEX_CLI_PATH:-}" ]; then
+        echo "Using CODEX_CLI_PATH=warm-start-skip"
+        return 0
+    fi
+
+    version="$(codex_cli_version "$CODEX_CLI_PATH" || true)"
+    if [ -n "$version" ]; then
+        echo "Using CODEX_CLI_PATH=$CODEX_CLI_PATH (version $version)"
+    else
+        echo "Using CODEX_CLI_PATH=$CODEX_CLI_PATH (version unknown; set CODEX_CLI_PATH=/path/to/codex to pin a known CLI)"
+    fi
 }
 
 notify_error() {
@@ -2097,7 +2218,9 @@ adopt_discovered_webview_server() {
     return 1
 }
 
-ensure_webview_server() {
+start_webview_server() {
+    WEBVIEW_STARTUP_PENDING=0
+
     if [ ! -d "$WEBVIEW_DIR" ] || [ ! "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
         return 0
     fi
@@ -2154,8 +2277,20 @@ ensure_webview_server() {
     python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1 &
     STARTED_WEBVIEW_PID=$!
     echo "$STARTED_WEBVIEW_PID" > "$WEBVIEW_PID_FILE"
+    WEBVIEW_STARTUP_PENDING=1
 
     echo "Started webview server pid=$STARTED_WEBVIEW_PID dir=$WEBVIEW_DIR"
+    log_phase "webview_spawned"
+}
+
+# Readiness runs separately from the spawn so the Python server finishes
+# booting while the launcher does unrelated cold-start work (CLI lookup,
+# plugin cache syncs). Electron never launches before this verifies the
+# origin; the server is tied to the launcher lifetime via PR_SET_PDEATHSIG,
+# so early-exit paths cannot leak it.
+await_webview_server_ready() {
+    [ "${WEBVIEW_STARTUP_PENDING:-0}" -eq 1 ] || return 0
+    WEBVIEW_STARTUP_PENDING=0
 
     if ! wait_for_webview_server; then
         notify_error "$CODEX_LINUX_APP_DISPLAY_NAME webview server did not become ready on port $CODEX_LINUX_WEBVIEW_PORT. Check the launcher log for the embedded http.server output."
@@ -2298,6 +2433,39 @@ is_wslg_session() {
     [ -n "${DISPLAY:-}" ] && [ -e /mnt/wslg ]
 }
 
+gnome_desktop_detected() {
+    case "${XDG_CURRENT_DESKTOP:-}:${XDG_SESSION_DESKTOP:-}:${DESKTOP_SESSION:-}" in
+        *GNOME*|*gnome*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+connected_drm_monitor_count() {
+    local drm_root="${CODEX_DRM_CLASS_ROOT:-/sys/class/drm}"
+    local status_file status count=0
+
+    [ -d "$drm_root" ] || return 1
+
+    for status_file in "$drm_root"/*/status; do
+        [ -f "$status_file" ] || continue
+        IFS= read -r status < "$status_file" || continue
+        [ "$status" = "connected" ] || continue
+        count=$((count + 1))
+    done
+
+    [ "$count" -gt 0 ] || return 1
+    printf '%s\n' "$count"
+}
+
+gnome_wayland_multi_monitor_detected() {
+    local count
+
+    [ "${XDG_SESSION_TYPE:-}" = "wayland" ] || return 1
+    gnome_desktop_detected || return 1
+    count="$(connected_drm_monitor_count)" || return 1
+    [ "$count" -gt 1 ]
+}
+
 normalize_linux_rendering_mode() {
     case "${CODEX_LINUX_RENDERING_MODE:-auto}" in
         auto|default|wslg|wayland-gpu)
@@ -2341,6 +2509,47 @@ scan_electron_rendering_arg() {
             ;;
         --disable-gpu-compositing|--disable-gpu-compositing=*)
             ELECTRON_GPU_COMPOSITING_SWITCH_PROVIDED=1
+            ;;
+        --force-device-scale-factor|--force-device-scale-factor=*)
+            ELECTRON_SCALE_SWITCH_IN_ARGS=1
+            ;;
+    esac
+}
+
+codex_forced_device_scale_factor() {
+    local value="${CODEX_FORCE_DEVICE_SCALE_FACTOR:-}"
+
+    [ -n "$value" ] || return 1
+    if [[ ! "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$value" =~ ^0+(\.0+)?$ ]]; then
+        echo "Invalid CODEX_FORCE_DEVICE_SCALE_FACTOR='$value'; expected a positive number like 1, 1.25, or 2" >&2
+        return 1
+    fi
+
+    printf '%s\n' "$value"
+}
+
+apply_codex_ozone_platform_env() {
+    local value="${CODEX_OZONE_PLATFORM:-}"
+
+    [ -n "$value" ] || return 0
+    if [ "$ELECTRON_PLATFORM_EXPLICIT" -eq 1 ] || [ "$ELECTRON_OZONE_SWITCH_IN_ARGS" -eq 1 ]; then
+        echo "Ignoring CODEX_OZONE_PLATFORM='$value'; an explicit platform flag was provided"
+        return 0
+    fi
+
+    case "$value" in
+        x11|wayland)
+            ELECTRON_OZONE_PLATFORM="$value"
+            ELECTRON_OZONE_HINT=""
+            ELECTRON_PLATFORM_EXPLICIT=1
+            ;;
+        auto)
+            ELECTRON_OZONE_PLATFORM=""
+            ELECTRON_OZONE_HINT="auto"
+            ELECTRON_PLATFORM_EXPLICIT=1
+            ;;
+        *)
+            echo "Invalid CODEX_OZONE_PLATFORM='$value'; expected x11, wayland, or auto" >&2
             ;;
     esac
 }
@@ -2413,6 +2622,10 @@ write_user_electron_flags_template() {
 #
 # Wayland decorations:
 # --enable-features=WaylandWindowDecorations
+#
+# HiDPI / fractional scaling (oversized or blurry UI):
+# --force-device-scale-factor=1
+# --force-device-scale-factor=1.5
 EOF
 }
 
@@ -2468,6 +2681,10 @@ apply_electron_rendering_profile() {
         auto)
             if [ "$ELECTRON_WSLG_DETECTED" -eq 1 ]; then
                 ELECTRON_RENDERING_MODE="wslg"
+            elif [ "$ELECTRON_PLATFORM_EXPLICIT" -eq 0 ] &&
+                [ "$ELECTRON_OZONE_SWITCH_IN_ARGS" -eq 0 ] &&
+                gnome_wayland_multi_monitor_detected; then
+                ELECTRON_RENDERING_MODE="gnome-wayland-multi-monitor"
             else
                 ELECTRON_RENDERING_MODE="default"
             fi
@@ -2484,6 +2701,13 @@ apply_electron_rendering_profile() {
             ;;
     esac
 
+    if [ "$ELECTRON_RENDERING_MODE" = "gnome-wayland-multi-monitor" ]; then
+        ELECTRON_OZONE_PLATFORM="x11"
+        ELECTRON_OZONE_HINT=""
+        echo "Detected GNOME Wayland multi-monitor session; forcing --ozone-platform=x11 for stable window scale/maximize behavior. Set CODEX_OZONE_PLATFORM=wayland or CODEX_LINUX_RENDERING_MODE=default to opt out."
+        return 0
+    fi
+
     [ "$ELECTRON_RENDERING_MODE" = "wslg" ] || return 0
 
     if [ "$ELECTRON_PLATFORM_EXPLICIT" -eq 0 ] && [ "$ELECTRON_OZONE_SWITCH_IN_ARGS" -eq 0 ]; then
@@ -2496,6 +2720,56 @@ apply_electron_rendering_profile() {
         ELECTRON_GL_SWITCH_PROVIDED=1
         ELECTRON_GL_SWITCH_ADDED=1
     fi
+}
+
+# --disable-dev-shm-usage exists for containers whose /dev/shm is too small
+# for Chromium's renderer/GPU shared-memory transport (Docker defaults to
+# 64 MiB). Everywhere else the flag pushes those buffers onto disk-backed
+# temp storage and hurts rendering performance, so it is only kept when
+# /dev/shm is missing, not writable, or below 1 GiB.
+dev_shm_size_kb() {
+    local size_kb
+    size_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR == 2 { print $2 }')"
+    case "$size_kb" in
+        ""|*[!0-9]*)
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$size_kb"
+}
+
+should_disable_dev_shm_usage() {
+    local min_size_kb=1048576 size_kb
+
+    if [ -n "${CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE:-}" ]; then
+        if truthy_env_value "$CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE"; then
+            return 0
+        fi
+        if falsey_env_value "$CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE"; then
+            return 1
+        fi
+        case "$CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE" in
+            auto|AUTO|Auto) ;;
+            *)
+                echo "Invalid CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE='${CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE:-}'; using automatic /dev/shm detection" >&2
+                ;;
+        esac
+    fi
+
+    if [ ! -d /dev/shm ] || [ ! -w /dev/shm ]; then
+        return 0
+    fi
+
+    if ! size_kb="$(dev_shm_size_kb)"; then
+        return 0
+    fi
+
+    if [ "$size_kb" -lt "$min_size_kb" ]; then
+        echo "Detected small /dev/shm (${size_kb} KiB); keeping --disable-dev-shm-usage. Set CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE=0 to opt out."
+        return 0
+    fi
+
+    return 1
 }
 
 should_disable_gpu_compositing() {
@@ -2534,6 +2808,117 @@ effective_electron_ozone_platform() {
     fi
 }
 
+# --force-renderer-accessibility keeps Chromium's accessibility engine active
+# in every renderer, so each DOM update also rebuilds and serializes the
+# accessibility tree — a measurable slowdown for the complex webview UI. Only
+# pay that cost when an assistive technology is plausibly in use; anything
+# missed by this detection can set CODEX_FORCE_RENDERER_ACCESSIBILITY=1.
+assistive_technology_detected() {
+    local env_marker
+
+    for env_marker in "${GNOME_ACCESSIBILITY:-}" "${QT_LINUX_ACCESSIBILITY_ALWAYS_ON:-}" "${ACCESSIBILITY_ENABLED:-}"; do
+        if truthy_env_value "$env_marker"; then
+            return 0
+        fi
+    done
+
+    if command -v pgrep >/dev/null 2>&1; then
+        if pgrep -x orca >/dev/null 2>&1 || pgrep -x brltty >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    session_bus_assistive_technology_detected
+}
+
+# Session-bus accessibility signals: the GNOME screen-reader setting plus the
+# AT-SPI state that `codex-computer-use-linux setup` enables (org.a11y.Status
+# IsEnabled via busctl, with org.gnome.desktop.interface toolkit-accessibility
+# as its gsettings fallback). gsettings/busctl can hang on a broken session
+# bus, so each external helper runs under a watchdog capped at 0.5 s. When
+# setsid is available the watchdog kills the helper process group, which keeps
+# shell stubs and helper descendants from surviving launch. A killed or failing
+# probe counts as "not detected" and never blocks launch.
+SESSION_BUS_PROBE_OUTPUT=""
+
+session_bus_probe_command() {
+    local output_file probe_pid kill_pid rc=1 self_pid use_process_group=0
+
+    SESSION_BUS_PROBE_OUTPUT=""
+    output_file="$(mktemp "${TMPDIR:-/tmp}/codex-session-bus-probe.XXXXXX")" || return 1
+    self_pid=${BASHPID:-$$}
+
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$@" >"$output_file" 2>/dev/null &
+        use_process_group=1
+    else
+        "$@" >"$output_file" 2>/dev/null &
+    fi
+    probe_pid=$!
+
+    ( trap - EXIT
+      sleep 0.5
+      [ -r "/proc/$probe_pid/stat" ] || exit 0
+      # /proc/<pid>/stat: "<pid> (comm) <state> <ppid> ..." — comm can contain
+      # spaces/parens, so strip up to the last ") " before splitting fields.
+      local stat_line rest
+      stat_line=$(< "/proc/$probe_pid/stat") || exit 0
+      rest=${stat_line##*) }
+      set -- $rest
+      # $1 = state, $2 = ppid
+      [ "${2:-}" = "$self_pid" ] || exit 0
+      if [ "$use_process_group" -eq 1 ]; then
+          kill -TERM "-$probe_pid" 2>/dev/null || kill -TERM "$probe_pid" 2>/dev/null || true
+          sleep 0.1
+          kill -KILL "-$probe_pid" 2>/dev/null || kill -KILL "$probe_pid" 2>/dev/null || true
+      else
+          kill -TERM "$probe_pid" 2>/dev/null || true
+          sleep 0.1
+          kill -KILL "$probe_pid" 2>/dev/null || true
+      fi
+    ) 2>/dev/null &
+    kill_pid=$!
+
+    if wait "$probe_pid" 2>/dev/null; then
+        rc=0
+    else
+        rc=$?
+    fi
+    kill "$kill_pid" 2>/dev/null || true
+    wait "$kill_pid" 2>/dev/null || true
+
+    if [ "$rc" -eq 0 ] && [ -r "$output_file" ]; then
+        SESSION_BUS_PROBE_OUTPUT="$(< "$output_file")"
+    fi
+    rm -f "$output_file"
+    return "$rc"
+}
+
+session_bus_assistive_technology_detected() {
+    if command -v gsettings >/dev/null 2>&1; then
+        if session_bus_probe_command gsettings get org.gnome.desktop.a11y.applications screen-reader-enabled; then
+            case "$SESSION_BUS_PROBE_OUTPUT" in
+                true) return 0 ;;
+            esac
+        fi
+        if session_bus_probe_command gsettings get org.gnome.desktop.interface toolkit-accessibility; then
+            case "$SESSION_BUS_PROBE_OUTPUT" in
+                true) return 0 ;;
+            esac
+        fi
+    fi
+
+    if command -v busctl >/dev/null 2>&1; then
+        if session_bus_probe_command busctl --user get-property org.a11y.Bus /org/a11y/bus org.a11y.Status IsEnabled; then
+            case "$SESSION_BUS_PROBE_OUTPUT" in
+                "b true") return 0 ;;
+            esac
+        fi
+    fi
+
+    return 1
+}
+
 should_force_renderer_accessibility() {
     local effective_platform
 
@@ -2559,11 +2944,10 @@ should_force_renderer_accessibility() {
         wayland-gpu)
             effective_platform="$(effective_electron_ozone_platform)"
             [ "$effective_platform" = "wayland" ] && return 1
-            return 0
             ;;
     esac
 
-    return 0
+    assistive_technology_detected
 }
 
 set_electron_defaults() {
@@ -2580,7 +2964,10 @@ set_electron_defaults() {
     ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS=0
     ELECTRON_GPU_COMPOSITING_DISABLED=0
     ELECTRON_GPU_COMPOSITING_SWITCH_PROVIDED=0
+    ELECTRON_DEV_SHM_USAGE_DISABLED=0
     ELECTRON_RENDERER_ACCESSIBILITY_FORCED=0
+    ELECTRON_SCALE_SWITCH_IN_ARGS=0
+    ELECTRON_FORCED_SCALE_FACTOR=""
     ELECTRON_ARGS=()
     ELECTRON_ENABLE_FEATURES=()
     local passthrough=0
@@ -2668,6 +3055,19 @@ set_electron_defaults() {
         echo "Detected Sommelier (SOMMELIER_VERSION=$SOMMELIER_VERSION); forcing --ozone-platform=x11 (Wayland windows are not visible under ChromeOS Crostini)"
     fi
 
+    # Session-level operator overrides for HiDPI / fractional-scaling issues.
+    # Explicit launcher/Electron flags still win over both env vars.
+    apply_codex_ozone_platform_env
+    if [ -n "${CODEX_FORCE_DEVICE_SCALE_FACTOR:-}" ]; then
+        if [ "$ELECTRON_SCALE_SWITCH_IN_ARGS" -eq 1 ]; then
+            echo "Ignoring CODEX_FORCE_DEVICE_SCALE_FACTOR; an explicit --force-device-scale-factor flag was provided"
+        elif ELECTRON_FORCED_SCALE_FACTOR="$(codex_forced_device_scale_factor)"; then
+            :
+        else
+            ELECTRON_FORCED_SCALE_FACTOR=""
+        fi
+    fi
+
     apply_electron_rendering_profile
 }
 
@@ -2707,18 +3107,61 @@ apply_feature_launcher_hook_env() {
     export "$name"
 }
 
+# Remove entries from ELECTRON_ARGS whose switch name (the part before '=')
+# matches one of the given switches, logging each drop against the new arg
+# that supersedes it.
+remove_superseded_electron_args() {
+    local new_arg="$1"
+    shift
+    local -a kept=()
+    local arg name switch dropped
+
+    for arg in "${ELECTRON_ARGS[@]}"; do
+        name="${arg%%=*}"
+        dropped=0
+        for switch in "$@"; do
+            if [ "$name" = "$switch" ]; then
+                echo "Dropping earlier Electron arg '$arg'; a launcher hook supplied '$new_arg'"
+                dropped=1
+                break
+            fi
+        done
+        [ "$dropped" -eq 1 ] || kept+=("$arg")
+    done
+
+    ELECTRON_ARGS=("${kept[@]}")
+}
+
 apply_feature_launcher_hook_electron_arg() {
     local arg="$1"
+    local switch
 
     case "$arg" in
         --enable-features=*)
             add_electron_enable_features "${arg#--enable-features=}"
-            ;;
-        *)
-            ELECTRON_ARGS+=("$arg")
-            scan_electron_rendering_arg "$arg"
+            return 0
             ;;
     esac
+
+    # Launcher hooks run last, after feature electron-args, the persistent
+    # flags file, and pass-through CLI args have all been collected into
+    # ELECTRON_ARGS. Chromium already resolves repeated switches last-wins, so
+    # replace any earlier occurrence of the same switch instead of appending a
+    # conflicting duplicate to the final argv. --ozone-platform and
+    # --ozone-platform-hint are one family: an explicit platform supersedes an
+    # earlier hint and vice versa.
+    switch="${arg%%=*}"
+    case "$switch" in
+        --ozone-platform|--ozone-platform-hint)
+            remove_superseded_electron_args "$arg" --ozone-platform --ozone-platform-hint
+            ;;
+        *)
+            remove_superseded_electron_args "$arg" "$switch"
+            ;;
+    esac
+
+    ELECTRON_ARGS+=("$arg")
+    scan_electron_rendering_arg "$arg"
 }
 
 run_feature_launcher_hooks() {
@@ -2780,13 +3223,41 @@ run_feature_launcher_hooks() {
 build_electron_launch_args() {
     local enable_features_arg
 
+    # Feature launcher hooks (runtimeHooks.launcher) run after
+    # set_electron_defaults() has already chosen the Ozone platform and device
+    # scale factor -- whether from CODEX_OZONE_PLATFORM /
+    # CODEX_FORCE_DEVICE_SCALE_FACTOR, the CODEX_LINUX_RENDERING_MODE profile
+    # (wayland-gpu / wslg), or the Sommelier X11 fallback. If such a hook then
+    # emits an explicit --ozone-platform / --force-device-scale-factor, both the
+    # launcher-computed flag and the hook flag would land in the final Electron
+    # argv (and a launcher-selected Wayland platform would still add
+    # WaylandWindowDecorations below). Pass-through CLI args are scanned before
+    # those defaults are computed and already suppress them; hook args are
+    # scanned afterward, so drop the launcher-computed value here whenever any
+    # explicit override reached the Electron args, so the hook flag wins cleanly.
+    if [ -n "$ELECTRON_OZONE_PLATFORM" ] && [ "$ELECTRON_OZONE_SWITCH_IN_ARGS" -eq 1 ]; then
+        echo "Dropping launcher-selected --ozone-platform=$ELECTRON_OZONE_PLATFORM; an explicit --ozone-platform arg overrides it"
+        ELECTRON_OZONE_PLATFORM=""
+        ELECTRON_OZONE_HINT=""
+    fi
+    if [ -n "$ELECTRON_FORCED_SCALE_FACTOR" ] && [ "$ELECTRON_SCALE_SWITCH_IN_ARGS" -eq 1 ]; then
+        echo "Dropping launcher-selected --force-device-scale-factor=$ELECTRON_FORCED_SCALE_FACTOR; an explicit --force-device-scale-factor arg overrides it"
+        ELECTRON_FORCED_SCALE_FACTOR=""
+    fi
+
     ELECTRON_LAUNCH_ARGS=(
         --no-sandbox
         --class="$CODEX_LINUX_APP_ID"
         --app-id="$CODEX_LINUX_APP_ID"
-        --disable-dev-shm-usage
         --disable-gpu-sandbox
     )
+
+    if should_disable_dev_shm_usage; then
+        ELECTRON_LAUNCH_ARGS+=(--disable-dev-shm-usage)
+        ELECTRON_DEV_SHM_USAGE_DISABLED=1
+    else
+        ELECTRON_DEV_SHM_USAGE_DISABLED=0
+    fi
 
     if should_disable_gpu_compositing; then
         ELECTRON_LAUNCH_ARGS+=(--disable-gpu-compositing)
@@ -2805,6 +3276,10 @@ build_electron_launch_args() {
         ELECTRON_LAUNCH_ARGS+=(--ozone-platform="$ELECTRON_OZONE_PLATFORM")
     elif [ -n "$ELECTRON_OZONE_HINT" ] && [ "$ELECTRON_OZONE_SWITCH_IN_ARGS" -eq 0 ]; then
         ELECTRON_LAUNCH_ARGS+=(--ozone-platform-hint="$ELECTRON_OZONE_HINT")
+    fi
+
+    if [ -n "$ELECTRON_FORCED_SCALE_FACTOR" ]; then
+        ELECTRON_LAUNCH_ARGS+=(--force-device-scale-factor="$ELECTRON_FORCED_SCALE_FACTOR")
     fi
 
     if [ "$ELECTRON_GPU_ENABLED" != "1" ]; then
@@ -2826,6 +3301,72 @@ build_electron_launch_args() {
         ELECTRON_LAUNCH_ARGS+=("$enable_features_arg")
     fi
 
+}
+
+print_scaling_diagnostics() {
+    local key arg
+
+    echo "$CODEX_LINUX_APP_DISPLAY_NAME scaling diagnostics"
+    echo ""
+    echo "Session environment:"
+    for key in XDG_SESSION_TYPE XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP WAYLAND_DISPLAY DISPLAY \
+        GDK_BACKEND GDK_SCALE GDK_DPI_SCALE QT_SCALE_FACTOR QT_AUTO_SCREEN_SCALE_FACTOR \
+        ELECTRON_OZONE_PLATFORM_HINT CODEX_OZONE_PLATFORM CODEX_FORCE_DEVICE_SCALE_FACTOR \
+        CODEX_LINUX_RENDERING_MODE; do
+        printf '  %s=%s\n' "$key" "${!key:-<unset>}"
+    done
+
+    echo ""
+    echo "GNOME settings:"
+    if command -v gsettings >/dev/null 2>&1; then
+        printf '  org.gnome.desktop.interface scaling-factor: %s\n' \
+            "$(gsettings get org.gnome.desktop.interface scaling-factor 2>/dev/null || echo unavailable)"
+        printf '  org.gnome.desktop.interface text-scaling-factor: %s\n' \
+            "$(gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null || echo unavailable)"
+        printf '  org.gnome.mutter experimental-features: %s\n' \
+            "$(gsettings get org.gnome.mutter experimental-features 2>/dev/null || echo unavailable)"
+    else
+        echo "  gsettings not available"
+    fi
+
+    echo ""
+    echo "X resources (on X11/XWayland Chromium derives its scale from Xft.dpi / 96, GDK_SCALE, and GDK_DPI_SCALE):"
+    if [ -n "${DISPLAY:-}" ] && command -v xrdb >/dev/null 2>&1; then
+        xrdb -query 2>/dev/null | grep -i 'Xft.dpi' | sed 's/^/  /' \
+            || echo "  Xft.dpi not set (Chromium assumes 96 dpi = scale 1)"
+    else
+        echo "  unavailable (no DISPLAY or xrdb missing)"
+    fi
+
+    echo ""
+    echo "Monitors:"
+    if [ -n "${DISPLAY:-}" ] && command -v xrandr >/dev/null 2>&1; then
+        xrandr --listmonitors 2>/dev/null | sed 's/^/  /' || echo "  xrandr query failed"
+    else
+        echo "  xrandr unavailable"
+    fi
+
+    echo ""
+    echo "Electron runtime:"
+    printf '  electron: %s\n' "$(cat "$SCRIPT_DIR/version" 2>/dev/null || echo unknown)"
+    printf '  binary: %s\n' "$SCRIPT_DIR/electron"
+
+    echo ""
+    echo "Computed Electron launch flags (feature launcher hooks are not executed here):"
+    load_feature_electron_args
+    load_user_electron_flags
+    set_electron_defaults "${FEATURE_ELECTRON_ARGS[@]}" "${USER_ELECTRON_FLAGS[@]}" "${LAUNCHER_ARGS[@]:1}"
+    build_electron_launch_args
+    for arg in "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"; do
+        printf '  %s\n' "$arg"
+    done
+
+    echo ""
+    echo "If the UI is oversized or blurry, try:"
+    echo "  CODEX_FORCE_DEVICE_SCALE_FACTOR=1 <launch command>"
+    echo "  CODEX_OZONE_PLATFORM=x11 <launch command>"
+    echo "  CODEX_OZONE_PLATFORM=wayland <launch command>"
+    echo "See docs/troubleshooting.md (Oversized or blurry UI) for details."
 }
 
 configure_side_by_side_app_env() {
@@ -2943,7 +3484,7 @@ launch_electron() {
 
     if [ "$WARM_START" -eq 1 ]; then
         release_launcher_lock
-        echo "Electron warm-start handoff: pid=$RUNNING_APP_PID rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED renderer_accessibility_forced=$ELECTRON_RENDERER_ACCESSIBILITY_FORCED"
+        echo "Electron warm-start handoff: pid=$RUNNING_APP_PID rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED dev_shm_usage_disabled=$ELECTRON_DEV_SHM_USAGE_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED renderer_accessibility_forced=$ELECTRON_RENDERER_ACCESSIBILITY_FORCED forced_scale=${ELECTRON_FORCED_SCALE_FACTOR:-none}"
         if [ "$ELECTRON_GPU_COMPOSITING_DISABLED" = "0" ] && [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
             echo "Rendering hint: if the side panel flickers or appears transparent on Wayland, retry with CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1"
         fi
@@ -2952,7 +3493,7 @@ launch_electron() {
         return $?
     fi
 
-    echo "Electron launch mode: rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED renderer_accessibility_forced=$ELECTRON_RENDERER_ACCESSIBILITY_FORCED"
+    echo "Electron launch mode: rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED dev_shm_usage_disabled=$ELECTRON_DEV_SHM_USAGE_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED renderer_accessibility_forced=$ELECTRON_RENDERER_ACCESSIBILITY_FORCED forced_scale=${ELECTRON_FORCED_SCALE_FACTOR:-none}"
     if [ "$ELECTRON_GPU_COMPOSITING_DISABLED" = "0" ] && [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
         echo "Rendering hint: if the side panel flickers or appears transparent on Wayland, retry with CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1"
     fi
@@ -2984,6 +3525,10 @@ export_feature_runtime_env
 load_packaged_runtime_helper
 prepend_managed_node_runtime_to_path
 source_feature_env_files
+if [ "$LAUNCHER_DIAGNOSE_SCALING" -eq 1 ]; then
+    print_scaling_diagnostics
+    exit 0
+fi
 register_url_scheme_handlers
 log_phase "initial_launch_state_refresh_start"
 refresh_launch_state
@@ -3011,7 +3556,7 @@ elif needs_cold_start; then
     log_phase "packaged_prelaunch_start"
     run_packaged_runtime_prelaunch
     log_phase "packaged_prelaunch"
-    ensure_webview_server
+    start_webview_server
 else
     echo "Skipping packaged prelaunch and webview setup for warm start"
     log_phase "warm_start_ready"
@@ -3070,18 +3615,31 @@ if needs_cold_start; then
     # recreate read-only plugin cache trees before the sync below replaces them.
     monitor_bundled_marketplace_tmp_permissions
     log_phase "bundled_marketplace_tmp_monitor_started"
-    sync_browser_use_bundled_plugin_cache
+    stage_bundled_marketplace_metadata
+    log_phase "bundled_marketplace_metadata_staged"
+    sync_browser_use_bundled_plugin_cache &
+    SYNC_BROWSER_USE_PID=$!
+    sync_chrome_bundled_plugin_cache &
+    SYNC_CHROME_PID=$!
+    sync_computer_use_bundled_plugin_cache &
+    SYNC_COMPUTER_USE_PID=$!
+    sync_read_aloud_bundled_plugin_cache &
+    SYNC_READ_ALOUD_PID=$!
+    sync_extra_bundled_plugin_cache &
+    SYNC_EXTRA_PID=$!
+    wait "$SYNC_BROWSER_USE_PID"
     log_phase "browser_use_plugin_cache_synced"
-    sync_chrome_bundled_plugin_cache
+    wait "$SYNC_CHROME_PID"
     log_phase "chrome_plugin_cache_synced"
-    sync_computer_use_bundled_plugin_cache
+    wait "$SYNC_COMPUTER_USE_PID"
     log_phase "computer_use_plugin_cache_synced"
-    sync_read_aloud_bundled_plugin_cache
+    wait "$SYNC_READ_ALOUD_PID"
     log_phase "read_aloud_plugin_cache_synced"
-    sync_extra_bundled_plugin_cache
+    wait "$SYNC_EXTRA_PID"
     log_phase "extra_bundled_plugin_cache_synced"
     run_cold_start_hooks
     log_phase "cold_start_hooks_dispatched"
+    await_webview_server_ready
 fi
 resolve_browser_use_runtime_env
 log_phase "browser_use_runtime_env_resolved"
@@ -3097,7 +3655,7 @@ if needs_cold_start; then
     fi
 fi
 
-echo "Using CODEX_CLI_PATH=${CODEX_CLI_PATH:-warm-start-skip}"
+log_codex_cli_path
 echo "Using managed Node.js runtime=${CODEX_MANAGED_NODE_RUNTIME_DIR:-$SCRIPT_DIR/resources/node-runtime}"
 
 launch_electron "${LAUNCHER_ARGS[@]}"

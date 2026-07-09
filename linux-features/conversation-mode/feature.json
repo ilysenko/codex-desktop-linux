@@ -3,6 +3,6 @@
   "name": "Conversation mode",
   "description": "Disabled-by-default Linux voice conversation loop for normal Codex turns using dictation and Read Aloud.",
   "entrypoints": {
-    "patches": "./patch.js"
+    "patchDescriptors": "./patch.js"
   }
 }

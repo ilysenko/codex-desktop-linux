@@ -1,10 +1,13 @@
 "use strict";
 
-const { patchProjectlessDocumentsAssets } = require("../../../../projectless-documents.js");
+const {
+  extractedAppPatch,
+} = require("../../../../descriptor.js");
+const { patchProjectlessDocumentsAssets } = require("../../../../impl/projectless-documents.js");
 
-module.exports = {
+module.exports = extractedAppPatch({
   id: "linux-projectless-xdg-documents-dir",
-  phase: "extracted-app",
+  phase: "extracted-app:pre-webview",
   order: 245,
   ciPolicy: "optional",
   apply: patchProjectlessDocumentsAssets,
@@ -18,4 +21,4 @@ module.exports = {
           : "skipped-optional",
     reason: result?.reason ?? warnings[0] ?? null,
   }),
-};
+});

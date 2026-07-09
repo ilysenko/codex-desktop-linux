@@ -1,11 +1,14 @@
 "use strict";
 
 const {
+  webviewAssetPatch,
+} = require("../../../../descriptor.js");
+const {
   applyLocalEnvironmentActionModalDraftPatch,
-} = require("../../../../webview-assets.js");
+} = require("../../../../impl/webview/index.js");
 
 module.exports = [
-  {
+  webviewAssetPatch({
     id: "local-environment-action-modal-draft",
     phase: "webview-asset",
     order: 1060,
@@ -14,5 +17,5 @@ module.exports = [
     missingDescription: "local conversation thread bundle",
     skipDescription: "local environment action modal draft patch",
     apply: applyLocalEnvironmentActionModalDraftPatch,
-  },
+  }),
 ];

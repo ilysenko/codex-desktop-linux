@@ -7,7 +7,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { applyMainBundlePatch } = require("./patch.js");
+const { descriptors } = require("./patch.js");
+const applyMainBundlePatch = descriptors[0].apply;
 const {
   discoverLinuxFeatureManifests,
   enabledLinuxFeatureIds,
@@ -15,15 +16,17 @@ const {
   enabledLinuxFeaturePackageHooks,
   enabledLinuxFeatureStageHooks,
   loadEnabledLinuxFeatures,
-  loadLinuxFeatureMainBundlePatches,
+  loadLinuxFeaturePatchDescriptors,
   stageEnabledLinuxFeatureInstall,
   stagedLinuxFeatureFiles,
 } = require("../../scripts/lib/linux-features.js");
 const {
   createPatchReport,
+} = require("../../scripts/lib/patch-report.js");
+const {
   patchExtractedApp,
   patchMainBundleSource,
-} = require("../../scripts/patch-linux-window-ui.js");
+} = require("../../scripts/patches/runner.js");
 
 function withTempFeatureRoot(enabled, fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-example-feature-test-"));
@@ -79,7 +82,7 @@ test("example feature stays disabled until listed in features.json", () => {
   withTempFeatureRoot([], (root) => {
     assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), []);
     assert.deepEqual(enabledLinuxFeatureStageHooks({ featuresRoot: root }), []);
-    assert.deepEqual(loadLinuxFeatureMainBundlePatches({ featuresRoot: root }), []);
+    assert.deepEqual(loadLinuxFeaturePatchDescriptors({ featuresRoot: root }), []);
   });
 });
 
@@ -92,9 +95,10 @@ test("example feature exposes its patch and stage hook when enabled", () => {
     assert.equal(hooks[0].id, "example-feature");
     assert.equal(path.basename(hooks[0].path), "stage.sh");
 
-    const patches = loadLinuxFeatureMainBundlePatches({ featuresRoot: root });
+    const patches = loadLinuxFeaturePatchDescriptors({ featuresRoot: root })
+      .filter((patch) => patch.phase === "main-bundle");
     assert.equal(patches.length, 1);
-    assert.equal(patches[0].name, "feature:example-feature");
+    assert.equal(patches[0].name, "feature:example-feature:example-feature-main-bundle");
     assert.equal(
       patches[0].apply("codexLinuxExampleFeatureDisabled()", {}),
       "codexLinuxExampleFeatureEnabled()",
@@ -460,7 +464,12 @@ test("example feature participates in main bundle patching and patch reports", (
       patchExtractedApp(tempApp, { report });
 
       assert.match(fs.readFileSync(path.join(buildDir, "main.js"), "utf8"), /codexLinuxExampleFeatureEnabled\(\)/);
-      assert.ok(report.patches.some((patch) => patch.name === "feature:example-feature" && patch.status === "applied"));
+      assert.ok(
+        report.patches.some((patch) =>
+          patch.name === "feature:example-feature:example-feature-main-bundle" &&
+          patch.status === "applied"
+        ),
+      );
     } finally {
       if (originalRoot == null) {
         delete process.env.CODEX_LINUX_FEATURES_ROOT;

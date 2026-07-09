@@ -52,6 +52,11 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Print read-only post-update/runtime diagnostics for support and smoke checks.
+    Diagnose {
+        #[arg(long)]
+        json: bool,
+    },
     /// Install the already rebuilt update package, if one is ready.
     InstallReady,
     /// Roll back to the last retained known-good package.

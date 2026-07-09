@@ -1,10 +1,13 @@
 "use strict";
 
 const {
+  webviewAssetPatch,
+} = require("../../../../descriptor.js");
+const {
   applyLinuxBrowserUseNonLocalNavigationPatch,
-} = require("../../../../webview-assets.js");
+} = require("../../../../impl/webview/index.js");
 
-module.exports = {
+module.exports = webviewAssetPatch({
   id: "linux-browser-use-non-local-navigation",
   phase: "webview-asset",
   order: 1091,
@@ -13,4 +16,4 @@ module.exports = {
   missingDescription: "webview app main bundle",
   skipDescription: "Linux Browser Use non-local navigation patch",
   apply: applyLinuxBrowserUseNonLocalNavigationPatch,
-};
+});

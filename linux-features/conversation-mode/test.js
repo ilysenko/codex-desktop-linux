@@ -8,13 +8,14 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   enabledLinuxFeatureIds,
-  loadLinuxFeatureMainBundlePatches,
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
   createPatchReport,
+} = require("../../scripts/lib/patch-report.js");
+const {
   patchExtractedApp,
-} = require("../../scripts/patch-linux-window-ui.js");
+} = require("../../scripts/patches/runner.js");
 const {
   applyAssistantRenderPatch,
   applyComposerControlPatch,
@@ -22,7 +23,7 @@ const {
   applyComposerRuntimePatch,
   applyDictationEndpointPatch,
   applyReadAloudMainBundlePatch,
-  patches: featurePatches,
+  descriptors: featurePatches,
 } = require("./patch.js");
 
 function twice(fn, source) {
@@ -409,7 +410,6 @@ function createCountingAudioContext({ level = () => 0 } = {}) {
 test("conversation mode stays disabled until listed in features.json", () => {
   withTempFeatureConfig([], (root) => {
     assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), []);
-    assert.deepEqual(loadLinuxFeatureMainBundlePatches({ featuresRoot: root }), []);
     assert.deepEqual(loadLinuxFeaturePatchDescriptors({ featuresRoot: root }), []);
   });
 });

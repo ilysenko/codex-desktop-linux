@@ -3,6 +3,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const {
+  PATCH_STATUS_APPLIED,
+  PATCH_STATUS_FAILED_REQUIRED,
+  PATCH_STATUS_SKIPPED_DISABLED,
+  PATCH_STATUS_SKIPPED_OPTIONAL,
+  PATCH_STATUS_SKIPPED_TARGET,
   captureWarnings,
   isCriticalPolicy,
   patchStatusFromChange,
@@ -13,19 +18,22 @@ const {
 } = require("../lib/linux-target-context.js");
 const {
   patchAssetFiles,
-} = require("./shared.js");
+} = require("./lib/assets.js");
+const {
+  CI_POLICIES,
+  PHASE_EXTRACTED_APP_POST_WEBVIEW,
+  PHASE_EXTRACTED_APP_PRE_WEBVIEW,
+  PHASE_MAIN_BUNDLE,
+  PHASE_WEBVIEW_ASSET,
+  PATCH_PHASES,
+} = require("./descriptor.js");
 const {
   drainStrategies,
 } = require("./strategy-telemetry.js");
 
-const FAILED_REQUIRED = "failed-required";
 const REQUIRED_UPSTREAM = "required-upstream";
 const OPTIONAL = "optional";
 const OPT_IN = "opt-in";
-const SKIPPED_DISABLED = "skipped-disabled";
-const SKIPPED_OPTIONAL = "skipped-optional";
-const SKIPPED_TARGET = "skipped-target";
-const CI_POLICIES = new Set([REQUIRED_UPSTREAM, OPTIONAL, OPT_IN]);
 
 function descriptorId(descriptor) {
   return descriptor.id ?? descriptor.name;
@@ -48,22 +56,26 @@ function normalizeDescriptor(descriptor, sourcePath = null, index = 0) {
       `Patch descriptor '${id}' has unsupported ciPolicy '${ciPolicy}' in ${sourcePath ?? "inline descriptor"}`,
     );
   }
-  return {
+  const normalized = {
     ...descriptor,
     ciPolicy,
     id,
     name: descriptor.name ?? id,
-    phase: descriptor.phase ?? "main-bundle",
+    phase: descriptor.phase ?? PHASE_MAIN_BUNDLE,
     sourceKind: descriptor.sourceKind ?? (descriptor.featureId != null ? "feature" : "core"),
     order: descriptor.order ?? 10_000 + index,
     sourcePath,
   };
+  if (!PATCH_PHASES.has(normalized.phase)) {
+    throw new Error(
+      `Patch descriptor '${id}' has unsupported phase '${normalized.phase}' in ${sourcePath ?? "inline descriptor"}`,
+    );
+  }
+  return normalized;
 }
 
 function descriptorListFromExports(moduleExports, sourcePath) {
   const exported = moduleExports?.descriptors ??
-    moduleExports?.patches ??
-    moduleExports?.default ??
     moduleExports;
   const descriptors = Array.isArray(exported) ? exported : [exported];
   return descriptors.map((descriptor, index) => normalizeDescriptor(descriptor, sourcePath, index));
@@ -143,7 +155,7 @@ function patchTargetSummary(descriptor, context) {
 }
 
 function descriptorFailureStatus(descriptor) {
-  return isCriticalPolicy(descriptor.ciPolicy) ? FAILED_REQUIRED : SKIPPED_OPTIONAL;
+  return isCriticalPolicy(descriptor.ciPolicy) ? PATCH_STATUS_FAILED_REQUIRED : PATCH_STATUS_SKIPPED_OPTIONAL;
 }
 
 function describePatchError(descriptor, error) {
@@ -178,8 +190,8 @@ function patchStatusFromDescriptorChange(descriptor, changed, warnings) {
 }
 
 function normalizeDescriptorStatus(descriptor, status) {
-  if (isCriticalPolicy(descriptor.ciPolicy) && status === SKIPPED_OPTIONAL) {
-    return FAILED_REQUIRED;
+  if (isCriticalPolicy(descriptor.ciPolicy) && status === PATCH_STATUS_SKIPPED_OPTIONAL) {
+    return PATCH_STATUS_FAILED_REQUIRED;
   }
   return status;
 }
@@ -233,13 +245,13 @@ function applyMainBundlePatchDescriptors(source, descriptors, context, report) {
   const warnings = [];
   const coreWarnings = [];
   const requiredCoreWarnings = [];
-  for (const descriptor of descriptors.filter((patch) => patch.phase === "main-bundle")) {
+  for (const descriptor of descriptors.filter((patch) => patch.phase === PHASE_MAIN_BUNDLE)) {
     if (!descriptorAppliesTo(descriptor, context)) {
-      recordDescriptorPatch(report, descriptor, SKIPPED_TARGET, null, context);
+      recordDescriptorPatch(report, descriptor, PATCH_STATUS_SKIPPED_TARGET, null, context);
       continue;
     }
     if (!descriptorEnabled(descriptor, context)) {
-      recordDescriptorPatch(report, descriptor, SKIPPED_DISABLED, null, context);
+      recordDescriptorPatch(report, descriptor, PATCH_STATUS_SKIPPED_DISABLED, null, context);
       continue;
     }
 
@@ -303,13 +315,13 @@ function recordAssetDescriptorPatch(report, descriptor, patchResult, warnings, c
 }
 
 function applyWebviewAssetPatchDescriptors(extractedDir, descriptors, context, report) {
-  for (const descriptor of descriptors.filter((patch) => patch.phase === "webview-asset")) {
+  for (const descriptor of descriptors.filter((patch) => patch.phase === PHASE_WEBVIEW_ASSET)) {
     if (!descriptorAppliesTo(descriptor, context)) {
-      recordDescriptorPatch(report, descriptor, SKIPPED_TARGET, null, context);
+      recordDescriptorPatch(report, descriptor, PATCH_STATUS_SKIPPED_TARGET, null, context);
       continue;
     }
     if (!descriptorEnabled(descriptor, context)) {
-      recordDescriptorPatch(report, descriptor, SKIPPED_DISABLED, null, context);
+      recordDescriptorPatch(report, descriptor, PATCH_STATUS_SKIPPED_DISABLED, null, context);
       continue;
     }
 
@@ -335,14 +347,17 @@ function applyWebviewAssetPatchDescriptors(extractedDir, descriptors, context, r
   }
 }
 
-function applyExtractedAppPatchDescriptors(extractedDir, descriptors, context, report) {
-  for (const descriptor of descriptors.filter((patch) => patch.phase === "extracted-app")) {
+function applyExtractedAppPatchDescriptors(extractedDir, descriptors, context, report, phase) {
+  if (phase !== PHASE_EXTRACTED_APP_PRE_WEBVIEW && phase !== PHASE_EXTRACTED_APP_POST_WEBVIEW) {
+    throw new Error(`Unsupported extracted-app patch phase '${phase}'`);
+  }
+  for (const descriptor of descriptors.filter((patch) => patch.phase === phase)) {
     if (!descriptorAppliesTo(descriptor, context)) {
-      recordDescriptorPatch(report, descriptor, SKIPPED_TARGET, null, context);
+      recordDescriptorPatch(report, descriptor, PATCH_STATUS_SKIPPED_TARGET, null, context);
       continue;
     }
     if (!descriptorEnabled(descriptor, context)) {
-      recordDescriptorPatch(report, descriptor, SKIPPED_DISABLED, null, context);
+      recordDescriptorPatch(report, descriptor, PATCH_STATUS_SKIPPED_DISABLED, null, context);
       continue;
     }
 
@@ -362,7 +377,7 @@ function applyExtractedAppPatchDescriptors(extractedDir, descriptors, context, r
       ? descriptor.status(result, warnings, context)
       : result?.changed != null
         ? patchStatusFromChange(Boolean(result.changed), warnings, descriptor.ciPolicy)
-        : "applied";
+        : PATCH_STATUS_APPLIED;
     const status = typeof statusResult === "object" && statusResult != null
       ? statusResult.status
       : statusResult;
@@ -375,8 +390,8 @@ function applyExtractedAppPatchDescriptors(extractedDir, descriptors, context, r
 }
 
 module.exports = {
-  SKIPPED_DISABLED,
-  SKIPPED_TARGET,
+  SKIPPED_DISABLED: PATCH_STATUS_SKIPPED_DISABLED,
+  SKIPPED_TARGET: PATCH_STATUS_SKIPPED_TARGET,
   applyExtractedAppPatchDescriptors,
   applyMainBundlePatchDescriptors,
   applyWebviewAssetPatchDescriptors,

@@ -1,8 +1,12 @@
 #!/bin/bash
 # install-deps.sh — Install system dependencies for Codex Desktop Linux
-# Supports: Debian/Ubuntu (apt), Fedora 41+ (dnf5), Fedora <41 (dnf), Arch (pacman), openSUSE (zypper)
+# Supports: Debian/Ubuntu (apt), Fedora 41+ (dnf5), Fedora <41 (dnf), Fedora Atomic detection (rpm-ostree), Arch (pacman), openSUSE (zypper)
 # Also installs the Rust toolchain (cargo) via rustup when not already present.
 set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/linux-target-detect.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -158,7 +162,7 @@ ensure_nodejs_compatible() {
         return
     fi
 
-    if [ "$distro" = "dnf5" ]; then
+    if [ "$distro" = "dnf5" ] || [ "$distro" = "rpm-ostree" ]; then
         info "Skipping system Node.js check; install.sh provides the managed Node.js runtime"
         return
     fi
@@ -187,86 +191,8 @@ Install a supported Node.js version for this distro, or use install.sh to downlo
 Check apt output above or install Node.js ${MIN_NODE_MAJOR}+ manually."
 }
 
-# ---------------------------------------------------------------------------
-# Distro detection
-# ---------------------------------------------------------------------------
-os_release_field() {
-    local field="$1"
-    local file line value
-
-    for file in ${OS_RELEASE_FILE:-} /etc/os-release /usr/lib/os-release; do
-        [ -n "$file" ] || continue
-        [ -r "$file" ] || continue
-        while IFS= read -r line; do
-            case "$line" in
-                "$field="*)
-                    value="${line#*=}"
-                    value="${value#\"}"
-                    value="${value%\"}"
-                    value="${value#\'}"
-                    value="${value%\'}"
-                    printf '%s\n' "${value,,}"
-                    return 0
-                    ;;
-            esac
-        done < "$file"
-    done
-
-    return 1
-}
-
-os_release_matches() {
-    local expected token
-    for expected in "$@"; do
-        [ "${OS_RELEASE_ID:-}" = "$expected" ] && return 0
-        for token in ${OS_RELEASE_ID_LIKE:-}; do
-            [ "$token" = "$expected" ] && return 0
-        done
-    done
-    return 1
-}
-
-os_release_version_major() {
-    local version="${OS_RELEASE_VERSION_ID:-}"
-    version="${version%%.*}"
-    case "$version" in
-        ''|*[!0-9]*) return 1 ;;
-        *) printf '%s\n' "$version" ;;
-    esac
-}
-
 detect_distro() {
-    if os_release_matches debian ubuntu linuxmint pop elementary zorin && command -v apt-get &>/dev/null; then
-        echo "apt"
-    elif os_release_matches arch archlinux manjaro endeavouros artix && command -v pacman &>/dev/null; then
-        echo "pacman"
-    elif os_release_matches opensuse suse sles && command -v zypper &>/dev/null; then
-        echo "zypper"
-    elif os_release_matches fedora rhel centos rocky almalinux ol; then
-        local major
-        major="$(os_release_version_major 2>/dev/null || true)"
-        if [ "${OS_RELEASE_ID:-}" = "fedora" ] && [ -n "$major" ] && [ "$major" -lt 41 ] && command -v dnf &>/dev/null; then
-            echo "dnf"
-        elif command -v dnf5 &>/dev/null; then
-            echo "dnf5"
-        elif command -v dnf &>/dev/null; then
-            echo "dnf"
-        else
-            echo "unknown"
-        fi
-    elif command -v apt-get &>/dev/null; then
-        echo "apt"
-    elif command -v dnf5 &>/dev/null; then
-        echo "dnf5"
-    elif command -v dnf &>/dev/null; then
-        echo "dnf"
-    elif command -v pacman &>/dev/null; then
-        echo "pacman"
-    elif command -v zypper &>/dev/null; then
-        echo "zypper"
-    else
-        echo "unknown"
-    fi
+    detect_package_manager
 }
 
 preferred_gui_prompt_package() {
@@ -311,6 +237,33 @@ install_dnf() {
         nodejs npm python3 \
         p7zip p7zip-plugins curl unzip rpm-build make gcc-c++
     sudo dnf groupinstall -y 'Development Tools'
+}
+
+install_rpm_ostree() {
+    info "Detected Fedora Atomic / rpm-ostree host"
+
+    local -a missing=()
+    command -v python3 >/dev/null 2>&1 || missing+=("python3")
+    if ! command -v 7zz >/dev/null 2>&1 && ! command -v 7z >/dev/null 2>&1; then
+        missing+=("7zip")
+    fi
+    command -v curl >/dev/null 2>&1 || missing+=("curl")
+    command -v unzip >/dev/null 2>&1 || missing+=("unzip")
+    command -v rpmbuild >/dev/null 2>&1 || missing+=("rpm-build")
+    command -v make >/dev/null 2>&1 || missing+=("make")
+    command -v g++ >/dev/null 2>&1 || missing+=("gcc-c++")
+
+    if [ "${#missing[@]}" -eq 0 ]; then
+        info "rpm-ostree layered build dependencies are already available"
+        return
+    fi
+
+    error "Fedora Atomic hosts layer packages with rpm-ostree and usually need a reboot before new tools are available.
+Review and run manually if this is the host you want to layer:
+  sudo rpm-ostree install python3 7zip curl unzip rpm-build make gcc-c++
+  systemctl reboot
+Then rerun this script after the reboot.
+Still missing: ${missing[*]}"
 }
 
 install_pacman() {
@@ -489,6 +442,7 @@ case "$DISTRO" in
     apt)     install_apt    ;;
     dnf5)    install_dnf5   ;;
     dnf)     install_dnf    ;;
+    rpm-ostree) install_rpm_ostree ;;
     pacman)  install_pacman ;;
     zypper)  install_zypper ;;
     *)

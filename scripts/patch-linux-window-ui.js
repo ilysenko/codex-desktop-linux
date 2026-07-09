@@ -7,133 +7,12 @@ const {
   writePatchReport,
 } = require("./lib/patch-report.js");
 const {
-  enabledLinuxFeatureIds,
-  enabledLinuxFeatureStageHooks,
-  loadEnabledLinuxFeatures,
-  loadLinuxFeaturePatchDescriptors,
-  loadLinuxFeatureMainBundlePatches,
-} = require("./lib/linux-features.js");
-const {
-  detectLinuxTargetContext,
-  linuxTargetSummary,
-  parseOsRelease,
-} = require("./lib/linux-target-context.js");
-const {
-  applyLinuxAppUpdaterBridgePatch,
-  applyLinuxAppUpdaterMenuPatch,
-  patchLinuxAppUpdaterBridge,
-} = require("./lib/linux-update-bridge-patch.js");
-const {
-  applyLinuxMultiInstanceBootstrapPatch,
-  patchLinuxMultiInstanceBootstrap,
-} = require("./patches/bootstrap.js");
-const {
-  applyAutomationScheduleMultiTimePatch,
-  patchAutomationScheduleAssets,
-} = require("./patches/automation-schedule.js");
-const {
-  applyLinuxChromeNativeHostRuntimePatch,
-  applyLinuxChromePluginAutoInstallPatch,
-  patchLinuxChromeNativeHostRuntimeAssets,
-} = require("./patches/chrome-plugin.js");
-const {
-  COMPUTER_USE_UI_ENV_VAR,
-  COMPUTER_USE_UI_SETTINGS_KEY,
-  applyLinuxComputerUseFeaturePatch,
-  applyLinuxComputerUseInstallFlowPatch,
-  applyLinuxNativeDesktopAppsHandlerPatch,
-  applyLinuxComputerUsePluginGatePatch,
-  applyLinuxComputerUseRendererAvailabilityPatch,
-  isComputerUseUiEnabled,
-} = require("./patches/computer-use.js");
-const {
-  applyKeybindsSettingsIndexPatch,
-  applyKeybindsSettingsSectionsPatch,
-  applyKeybindsSettingsSharedPatch,
-  applyLinuxDesktopSettingsIndexPatch,
-  applyLinuxDesktopSettingsSectionsPatch,
-  applyLinuxDesktopSettingsSharedPatch,
-  applyLinuxKeybindOverridesRuntimePatch,
-  patchKeybindsSettingsAssets,
-  resolveLinuxDesktopSettingsAsset,
-  resolveKeybindsSettingsAsset,
-} = require("./patches/keybinds-settings.js");
-const {
-  applyLinuxHotkeyWindowPrewarmPatch,
-  applyLinuxLaunchActionArgsPatch,
-  applyLinuxSettingsPersistencePatch,
-  applyLinuxTrayCloseSettingPatch,
-} = require("./patches/launch-actions.js");
-const {
-  applyLinuxProjectlessXdgDocumentsDirPatch,
-  patchProjectlessDocumentsAssets,
-} = require("./patches/projectless-documents.js");
-const {
-  applyBrowserUseNodeReplApprovalPatch,
-  applyLinuxAboutDialogPatch,
-  applyLinuxBrowserUseRouteLivenessPatch,
-  applyLinuxBuildInfoTrayPatch,
-  applyLinuxChromeExtensionStatusPatch,
-  applyLinuxExplicitIpcQuitPatch,
-  applyLinuxExplicitQuitPromptBypassPatch,
-  applyLinuxExplicitTrayQuitPatch,
-  applyLinuxExternalOpenEnvPatch,
-  applyLinuxFileManagerPatch,
-  applyLinuxGitOriginsSourceFallbackPatch,
-  applyLinuxTerminalUserPathPatch,
-  applyLinuxWorkerFileManagerPatch,
-  applyLinuxApplicationMenuPatch,
-  applyLinuxMenuPatch,
-  applyLinuxNativeTitlebarPatch,
-  applyLinuxLocalAppServerFeatureEnablementHandlerPatch,
-  applyLinuxOpaqueBackgroundPatch,
-  applyLinuxOwlFeatureBindingFallbackPatch,
-  applyLinuxQuitGuardPatch,
-  applyLinuxReadyToShowWindowStatePatch,
-  applyLinuxResizeRepaintPatch,
-  applyLinuxRemoteControlConfigPreservationPatch,
-  applyLinuxSetIconPatch,
-  applyLinuxSingleInstancePatch,
-  applyLinuxTrayPatch,
-  applyLinuxWillQuitDrainTimeoutPatch,
-  applyLinuxWindowOptionsPatch,
-  applyLinuxXdgDocumentsDirPatch,
-  patchLinuxOwlFeatureBindingFallbackAssets,
-  patchLinuxWorkerFileManagerTarget,
-} = require("./patches/main-process.js");
-const {
-  applyLinuxAvatarOverlayMousePassthroughPatch,
-} = require("./patches/avatar-overlay.js");
-const {
-  patchPackageJson,
-  resolveDesktopName,
-} = require("./patches/package-json.js");
-const {
-  discoverCorePatchDescriptors,
-  normalizePatchDescriptors,
-} = require("./patches/engine.js");
-const {
-  corePatchDescriptors,
-  createMainBundleContext,
-  legacyCorePatchDescriptors,
   patchExtractedApp,
-  patchMainBundleSource,
-} = require("./patches/registry.js");
+} = require("./patches/runner.js");
 const {
-  applyBrowserAnnotationScreenshotPatch,
-  applyLinuxAppSunsetPatch,
-  applyLinuxBrowserUseAvailabilityPatch,
-  applyLinuxBrowserUseExternalAvailabilityPatch,
-  applyLinuxBrowserUseNonLocalNavigationPatch,
-  applyLinuxConfigWriteVersionConflictPatch,
-  applyLinuxI18nGatePatch,
-  applyLinuxAppServerBackfillWaitPatch,
-  applyLinuxProfileSettingsMenuPatch,
-  applyLinuxOpaqueWindowsDefaultPatch,
-  applyLinuxFastModeModelGuardPatch,
-  applySubagentNicknameMetadataPatch,
-  patchCommentPreloadBundle,
-} = require("./patches/webview-assets.js");
+  createInventory,
+  findPostPatchIntegrityFindings,
+} = require("./lib/upstream-dmg-intel.js");
 
 const USAGE = "Usage: patch-linux-window-ui.js [--report-json path] [--enforce-critical] <extracted-app-asar-dir>";
 
@@ -172,6 +51,15 @@ function main() {
   // Enforcement needs the report data even when no --report-json was requested.
   const report = reportJson == null && !enforceCritical ? null : createPatchReport();
   patchExtractedApp(extractedDir, { report });
+  if (report != null) {
+    const inventory = createInventory({ sourcePath: extractedDir });
+    const findings = findPostPatchIntegrityFindings(inventory);
+    report.postPatchIntegrity = {
+      sourcePath: extractedDir,
+      findingCount: findings.length,
+      findings,
+    };
+  }
   // Write the report before gating so CI artifact upload sees it even on failure.
   writePatchReport(reportJson, report);
 
@@ -194,103 +82,3 @@ function main() {
 if (require.main === module) {
   main();
 }
-
-module.exports = {
-  COMPUTER_USE_UI_ENV_VAR,
-  COMPUTER_USE_UI_SETTINGS_KEY,
-  applyAutomationScheduleMultiTimePatch,
-  applyBrowserAnnotationScreenshotPatch,
-  applyBrowserUseNodeReplApprovalPatch,
-  applyKeybindsSettingsIndexPatch,
-  applyKeybindsSettingsSectionsPatch,
-  applyKeybindsSettingsSharedPatch,
-  applyLinuxDesktopSettingsIndexPatch,
-  applyLinuxDesktopSettingsSectionsPatch,
-  applyLinuxDesktopSettingsSharedPatch,
-  applyLinuxAboutDialogPatch,
-  applyLinuxAppSunsetPatch,
-  applyLinuxAppUpdaterBridgePatch,
-  applyLinuxAppUpdaterMenuPatch,
-  applyLinuxAppServerBackfillWaitPatch,
-  applyLinuxAvatarOverlayMousePassthroughPatch,
-  applyLinuxBrowserUseAvailabilityPatch,
-  applyLinuxBrowserUseExternalAvailabilityPatch,
-  applyLinuxBrowserUseNonLocalNavigationPatch,
-  applyLinuxBrowserUseRouteLivenessPatch,
-  applyLinuxBuildInfoTrayPatch,
-  applyLinuxChromeExtensionStatusPatch,
-  applyLinuxChromeNativeHostRuntimePatch,
-  applyLinuxChromePluginAutoInstallPatch,
-  applyLinuxConfigWriteVersionConflictPatch,
-  applyLinuxI18nGatePatch,
-  applyLinuxProfileSettingsMenuPatch,
-  applyLinuxComputerUseFeaturePatch,
-  applyLinuxComputerUseInstallFlowPatch,
-  applyLinuxNativeDesktopAppsHandlerPatch,
-  applyLinuxComputerUsePluginGatePatch,
-  applyLinuxComputerUseRendererAvailabilityPatch,
-  applyLinuxExplicitIpcQuitPatch,
-  applyLinuxExplicitQuitPromptBypassPatch,
-  applyLinuxExplicitTrayQuitPatch,
-  applyLinuxExternalOpenEnvPatch,
-  applyLinuxFileManagerPatch,
-  applyLinuxGitOriginsSourceFallbackPatch,
-  applyLinuxTerminalUserPathPatch,
-  applyLinuxWorkerFileManagerPatch,
-  applyLinuxHotkeyWindowPrewarmPatch,
-  applyLinuxKeybindOverridesRuntimePatch,
-  applyLinuxLaunchActionArgsPatch,
-  applyLinuxApplicationMenuPatch,
-  applyLinuxMenuPatch,
-  applyLinuxNativeTitlebarPatch,
-  applyLinuxLocalAppServerFeatureEnablementHandlerPatch,
-  applyLinuxProjectlessXdgDocumentsDirPatch,
-  applyLinuxMultiInstanceBootstrapPatch,
-  applyLinuxOpaqueBackgroundPatch,
-  applyLinuxOwlFeatureBindingFallbackPatch,
-  applyLinuxOpaqueWindowsDefaultPatch,
-  applyLinuxFastModeModelGuardPatch,
-  applyLinuxQuitGuardPatch,
-  applyLinuxReadyToShowWindowStatePatch,
-  applyLinuxResizeRepaintPatch,
-  applyLinuxRemoteControlConfigPreservationPatch,
-  applyLinuxSetIconPatch,
-  applyLinuxSettingsPersistencePatch,
-  applyLinuxSingleInstancePatch,
-  applyLinuxTrayCloseSettingPatch,
-  applyLinuxTrayPatch,
-  applyLinuxWillQuitDrainTimeoutPatch,
-  applyLinuxWindowOptionsPatch,
-  applyLinuxXdgDocumentsDirPatch,
-  applySubagentNicknameMetadataPatch,
-  createPatchReport,
-  corePatchDescriptors,
-  createMainBundleContext,
-  detectLinuxTargetContext,
-  discoverCorePatchDescriptors,
-  enabledLinuxFeatureIds,
-  enabledLinuxFeatureStageHooks,
-  isComputerUseUiEnabled,
-  legacyCorePatchDescriptors,
-  linuxTargetSummary,
-  loadEnabledLinuxFeatures,
-  loadLinuxFeaturePatchDescriptors,
-  loadLinuxFeatureMainBundlePatches,
-  normalizePatchDescriptors,
-  parseOsRelease,
-  patchCommentPreloadBundle,
-  patchAutomationScheduleAssets,
-  patchExtractedApp,
-  patchKeybindsSettingsAssets,
-  patchLinuxMultiInstanceBootstrap,
-  patchLinuxAppUpdaterBridge,
-  patchLinuxChromeNativeHostRuntimeAssets,
-  patchLinuxOwlFeatureBindingFallbackAssets,
-  patchLinuxWorkerFileManagerTarget,
-  patchProjectlessDocumentsAssets,
-  patchMainBundleSource,
-  patchPackageJson,
-  resolveDesktopName,
-  resolveLinuxDesktopSettingsAsset,
-  resolveKeybindsSettingsAsset,
-};

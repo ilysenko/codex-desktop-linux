@@ -1,6 +1,13 @@
-Before opening a pull request, read [CONTRIBUTING.md](https://github.com/ilysenko/codex-desktop-linux/blob/main/CONTRIBUTING.md).
+<p align="center">
+  <img src="assets/codex-linux.png" width="96" alt="Codex Desktop for Linux icon">
+</p>
 
-# Codex Desktop for Linux
+<h1 align="center">Codex Desktop for Linux</h1>
+
+<p align="center">
+  <a href="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/ci.yml"><img src="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/upstream-build-app.yml"><img src="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/upstream-build-app.yml/badge.svg" alt="Upstream Build App"></a>
+</p>
 
 Unofficial Linux build wrapper for [OpenAI Codex Desktop](https://openai.com/codex/).
 The official Codex app is available for macOS and Windows; this repository
@@ -11,9 +18,33 @@ The project builds native `.deb`, `.rpm`, and `.pkg.tar.zst` packages, supports
 local AppImage self-builds and Nix, and can install a local update manager that
 rebuilds future Linux packages from newer upstream DMGs.
 
-For implementation details, see [AGENTS.md](AGENTS.md).
+<p align="center">
+  <a href="#how-to-install">Install</a> ·
+  <a href="#uninstall">Uninstall</a> ·
+  <a href="#feature-matrix">Features</a> ·
+  <a href="#updates">Updates</a> ·
+  <a href="#build-package-and-run">Build</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="#project-docs">Docs</a>
+</p>
 
-## Install By Platform
+Before opening a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md). For
+implementation details, see [AGENTS.md](AGENTS.md).
+
+## How To Install
+
+Codex Desktop for Linux is built locally from the upstream `Codex.dmg`: the
+installer downloads or reuses the DMG, extracts the Electron app, applies Linux
+compatibility patches, rebuilds native modules, stages the Linux runtime, and
+packages the result. Optional Linux-only integrations live in `linux-features/`
+and stay disabled unless you enable them before building.
+
+For native packages and AppImage self-builds, start from a checkout:
+
+```bash
+git clone https://github.com/ilysenko/codex-desktop-linux.git
+cd codex-desktop-linux
+```
 
 | Platform | Recommended path | Notes |
 |---|---|---|
@@ -24,11 +55,9 @@ For implementation details, see [AGENTS.md](AGENTS.md).
 | NixOS / Nix | `nix run github:ilysenko/codex-desktop-linux` | See [Nix docs](docs/nix.md) |
 | Atomic desktops / other distros | `make build-app && make appimage` | Local self-build; no bundled updater |
 
-Native install:
+Recommended native install:
 
 ```bash
-git clone https://github.com/ilysenko/codex-desktop-linux.git
-cd codex-desktop-linux
 make bootstrap-native
 ```
 
@@ -63,6 +92,67 @@ make setup-native
 See [Native setup](docs/native-setup.md) for the wizard, non-interactive
 feature selection, cleanup flow, and `PACKAGE_WITH_UPDATER=0`.
 
+## Uninstall
+
+Close Codex Desktop first, then remove the native package with your distro's
+package manager:
+
+```bash
+# Debian / Ubuntu
+sudo apt remove codex-desktop
+
+# Fedora
+sudo dnf remove codex-desktop
+
+# openSUSE
+sudo zypper remove codex-desktop
+
+# Arch / Manjaro
+sudo pacman -R codex-desktop
+```
+
+Native package removal stops and disables `codex-update-manager.service` when
+the service is installed. If the service was left behind by an older package or
+a manual install, disable it explicitly:
+
+```bash
+systemctl --user disable --now codex-update-manager.service
+```
+
+AppImage builds are not installed system-wide by this repository; delete the
+AppImage file you created. A repo-only generated app can be removed from the
+checkout with:
+
+```bash
+rm -rf codex-app
+```
+
+`nix run github:ilysenko/codex-desktop-linux` is ephemeral. If you installed
+the flake through a Nix profile, Home Manager, or a NixOS module, remove that
+profile or configuration entry and rebuild your profile/system.
+
+User data is preserved for reinstall. To remove only this wrapper's local app
+state, logs, launcher flags, and updater state, delete these paths.
+
+If you enabled Remote Mobile Control, `~/.config/codex-desktop` can contain
+`remote-control-device-keys-v1.json`. Revoke paired devices in Codex
+Settings/Connections or ChatGPT before deleting that file or removing the whole
+directory. For feature-owned data, prefer the cleanup flow in
+[Native setup](docs/native-setup.md#feature-cleanup).
+
+```bash
+rm -rf \
+  ~/.config/codex-desktop \
+  ~/.local/state/codex-desktop \
+  ~/.cache/codex-desktop \
+  ~/.config/codex-update-manager \
+  ~/.local/state/codex-update-manager \
+  ~/.cache/codex-update-manager
+```
+
+Do not remove `~/.codex` unless you also want to delete your Codex CLI
+configuration and project state.
+
 ## Before You Install
 
 The generated app and native packages bundle a managed Linux Node.js runtime.
@@ -71,7 +161,10 @@ Use, Codex CLI install/update, or local auto-update rebuilds.
 
 The Codex CLI is still required at runtime. The first launch can install or
 update `@openai/codex` with the bundled `npm`, or you can manage the CLI
-yourself.
+yourself. The launcher does not rank installed CLIs by version; it uses an
+explicit `CODEX_CLI_PATH` first, then the normal lookup order, and logs the
+resolved CLI path plus best-effort version so GUI PATH issues are visible.
+Set `CODEX_CLI_PATH=/path/to/codex` when you want to pin a specific binary.
 
 X11 and Wayland sessions are supported. The launcher prefers XWayland on
 Wayland when available for better Electron popup positioning, then falls back
@@ -80,6 +173,8 @@ to Electron's automatic Wayland handling. See
 workarounds.
 
 ## Feature Matrix
+
+### Core And Platform Support
 
 | Feature | Default | Enable / use | Docs |
 |---|---|---|---|
@@ -98,24 +193,32 @@ workarounds.
 | Linux Computer Use backend | Bundled | MCP backend registers by default | [Linux Computer Use](docs/linux-computer-use.md) |
 | Linux Computer Use UI | Opt-in | `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1` or settings flag | [Linux Computer Use](docs/linux-computer-use.md#enable-the-in-app-ui) |
 | Linux Features framework | Opt-in | Edit `linux-features/features.json` | [Linux Features](linux-features/README.md) |
+
+### Opt-In Linux Features
+
+| Feature | Default / status | Enable / use | Docs |
+|---|---|---|---|
 | Record and Replay (alpha) | Opt-in alpha | `record-and-replay` | [Docs](linux-features/record-and-replay/README.md) |
 | Agent Workspaces | Opt-in | `agent-workspace` | [Docs](linux-features/agent-workspace/README.md) |
+| API key service tier | Opt-in | `api-key-service-tier` | [Docs](linux-features/api-key-service-tier/README.md) |
 | Linux AppShots | Opt-in | `appshots` | [Docs](linux-features/appshots/README.md) |
+| Authenticated proxy | Opt-in | `authenticated-proxy` | [Docs](linux-features/authenticated-proxy/README.md) |
 | Wrapper updater button | Opt-in | `codex-wrapper-updater` | [Docs](linux-features/codex-wrapper-updater/README.md) |
 | Conversation mode | Opt-in | `conversation-mode` | [Docs](linux-features/conversation-mode/README.md) |
 | Copilot reasoning effort defaults | Opt-in | `copilot-reasoning-effort` | [Docs](linux-features/copilot-reasoning-effort/README.md) |
 | Example Linux Feature | Developer example | `example-feature` | [Docs](linux-features/example-feature/README.md) |
+| Frameless titlebar | Opt-in | `frameless-titlebar` | [Docs](linux-features/frameless-titlebar/README.md) |
+| MCP helper reaper | Opt-in | `mcp-helper-reaper` | [Docs](linux-features/mcp-helper-reaper/README.md) |
+| Browser Use node_repl reaper | Opt-in | `node-repl-reaper` | [Docs](linux-features/node-repl-reaper/README.md) |
 | Open Target Discovery | Opt-in | `open-target-discovery` | [Docs](linux-features/open-target-discovery/README.md) |
-| API key service tier | Opt-in | `api-key-service-tier` | [Docs](linux-features/api-key-service-tier/README.md) |
+| Persistent status panel | Opt-in | `persistent-status-panel` | [Docs](linux-features/persistent-status-panel/README.md) |
 | Read Aloud button | Opt-in | `read-aloud` | [Docs](linux-features/read-aloud/README.md) |
 | Read Aloud MCP | Opt-in | `read-aloud-mcp` | [Docs](linux-features/read-aloud-mcp/README.md) |
 | Remote Control UI gates | Opt-in | `remote-control-ui` | [Docs](linux-features/remote-control-ui/README.md) |
 | Experimental Remote Mobile Control | Opt-in | `remote-mobile-control` | [Docs](linux-features/remote-mobile-control/README.md) |
 | Thorium Chrome Plugin Support | Opt-in | `thorium-chrome-plugin` | [Docs](linux-features/thorium-chrome-plugin/README.md) |
-
-Additional opt-in features, including proxy, titlebar, process cleanup,
-status-panel, and X11 Computer Use adapters, are documented under
-`linux-features/`.
+| UI tweaks | Opt-in | `ui-tweaks` | [Docs](linux-features/ui-tweaks/README.md) |
+| X11/EWMH Computer Use adapter | Opt-in | `x11-ewmh-computer-use` | [Docs](linux-features/x11-ewmh-computer-use/README.md) |
 
 Server-gated upstream features, such as model rollouts, are controlled by
 OpenAI per account. Rebuilding this wrapper does not unlock them.
@@ -219,8 +322,9 @@ not download or extract the DMG themselves. See
 |---|---|
 | `/tmp` is mounted `noexec` | Set `TMPDIR` and `XDG_CACHE_HOME` to executable directories under `$HOME` |
 | Blank window or splash stuck | Check `~/.cache/codex-desktop/launcher.log` and whether port `5175` is already in use |
-| `CODEX_CLI_PATH` or CLI install error | Reopen the app or install `@openai/codex` manually |
+| `CODEX_CLI_PATH` or CLI install error | Check `~/.cache/codex-desktop/launcher.log`, set `CODEX_CLI_PATH=/path/to/codex` to pin a binary, or install `@openai/codex` manually |
 | Wayland / GPU / Vulkan hang | Try `CODEX_LINUX_RENDERING_MODE=wayland-gpu ./codex-app/start.sh` or persistent launch flags |
+| UI oversized or blurry (HiDPI / fractional scaling) | Try `CODEX_FORCE_DEVICE_SCALE_FACTOR=1 ./codex-app/start.sh` or `CODEX_OZONE_PLATFORM=x11 ./codex-app/start.sh`; see `./codex-app/start.sh --diagnose-scaling` |
 | Resize ghosting or stale frame trails | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./codex-app/start.sh` or `--disable-gpu-compositing` |
 | Computer Use UI is hidden | Enable the UI opt-in; account/server rollouts may still hide upstream-gated parts |
 | Computer Use has no input backend | Check `/dev/uinput`, portal support, or `ydotoold` / `ydotool.service` |
@@ -242,12 +346,27 @@ Full list: [Troubleshooting](docs/troubleshooting.md).
 - [Linux Features architecture](docs/linux-features-architecture.md)
 - [Wayland input focus investigation](docs/wayland-input-focus-investigation.md)
 - [Webview server evaluation](docs/webview-server-evaluation.md)
+- [Launcher performance notes](docs/launcher-performance.md)
 
 ## Disclaimer
 
-This is an unofficial community project. Codex Desktop is a product of OpenAI.
-This tool does not redistribute any OpenAI software; it automates the conversion
-process that users perform on their own copies.
+This is an unofficial community project and is not affiliated with OpenAI.
+Codex Desktop, OpenAI services, trademarks, upstream application code, binaries,
+and assets remain the property of OpenAI or their respective owners.
+
+The MIT license in this repository applies only to this wrapper's source code,
+packaging scripts, documentation, and Linux compatibility glue. It does not
+grant any rights to OpenAI software or services.
+
+This repository does not redistribute OpenAI software or modified OpenAI
+application binaries. Users must obtain their own authorized copy of Codex
+Desktop through OpenAI's official channels. The build process performs a local
+Linux compatibility conversion on the user's own copy so it can run on Linux.
+In practice, it automates the conversion process that users perform on their
+own copies.
+
+Use of Codex Desktop remains subject to OpenAI's applicable terms and
+server-side feature availability.
 
 ## License
 

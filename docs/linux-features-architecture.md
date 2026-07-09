@@ -86,23 +86,27 @@ manifest and must clean up any feature-owned files themselves.
 
 ## Manifest Keys
 
-`entrypoints` keeps the existing patch and staging API:
+`entrypoints` declares optional feature code hooks. Feature patching uses only
+`patchDescriptors`; features that only stage resources, runtime hooks, package
+hooks, or `stageHook` are still valid without any patch entrypoint.
 
 ```json
 {
   "entrypoints": {
     "patchDescriptors": "./patch.js",
-    "patches": "./patch.js",
-    "mainBundlePatch": "./patch.js",
     "stageHook": "./stage.sh"
   }
 }
 ```
 
-Prefer `patchDescriptors` for new patches. Feature descriptor ids are reported
-as `feature:<feature-id>:<descriptor-id>` and are optional in CI by default.
-`mainBundlePatch` is the compatibility path for older features that export
-`applyMainBundlePatch(source, context)`.
+Patch descriptor modules may export an array directly or `{ "descriptors": [] }`
+from JavaScript. The old `entrypoints.patches`, `entrypoints.mainBundlePatch`,
+`.patches` module export, and `.default` descriptor aliases are not part of the
+contract. Feature descriptor ids are reported as
+`feature:<feature-id>:<descriptor-id>` and are optional in CI by default.
+Supported patch phases are `main-bundle`, `extracted-app:pre-webview`,
+`webview-asset`, and `extracted-app:post-webview`; `order` is sorted only
+inside each phase.
 
 Use `requires` and `conflicts` to declare feature relationships:
 

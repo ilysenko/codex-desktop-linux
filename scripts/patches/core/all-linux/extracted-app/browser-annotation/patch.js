@@ -1,12 +1,15 @@
 "use strict";
 
+const {
+  extractedAppPatch,
+} = require("../../../../descriptor.js");
 const { patchStatusFromChange } = require("../../../../../lib/patch-report.js");
-const { patchCommentPreloadBundle } = require("../../../../webview-assets.js");
+const { patchCommentPreloadBundle } = require("../../../../impl/webview/index.js");
 
 module.exports = [
-  {
+  extractedAppPatch({
     id: "browser-annotation-screenshot",
-    phase: "extracted-app",
+    phase: "extracted-app:post-webview",
     order: 2010,
     ciPolicy: "optional",
     apply: (extractedDir) => patchCommentPreloadBundle(extractedDir),
@@ -14,5 +17,5 @@ module.exports = [
       status: patchStatusFromChange(Boolean(result?.changed), warnings),
       reason: warnings[0] ?? null,
     }),
-  },
+  }),
 ];

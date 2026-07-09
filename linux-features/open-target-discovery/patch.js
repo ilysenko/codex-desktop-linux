@@ -2,7 +2,7 @@
 
 const {
   requireName,
-} = require("../../scripts/patches/shared.js");
+} = require("../../scripts/patches/lib/minified-js.js");
 
 const PATCH_NAME = "open-target-discovery feature patch";
 

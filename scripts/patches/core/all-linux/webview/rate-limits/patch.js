@@ -1,11 +1,14 @@
 "use strict";
 
 const {
+  webviewAssetPatch,
+} = require("../../../../descriptor.js");
+const {
   applyPersistentRateLimitFooterPatch,
-} = require("../../../../webview-assets.js");
+} = require("../../../../impl/webview/index.js");
 
 module.exports = [
-  {
+  webviewAssetPatch({
     id: "composer-persistent-rate-limit-footer",
     phase: "webview-asset",
     order: 1050,
@@ -14,5 +17,5 @@ module.exports = [
     missingDescription: "composer bundle",
     skipDescription: "persistent composer rate limit footer patch",
     apply: applyPersistentRateLimitFooterPatch,
-  },
+  }),
 ];

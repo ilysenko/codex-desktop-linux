@@ -1,11 +1,14 @@
 "use strict";
 
 const {
+  webviewAssetPatch,
+} = require("../../../../descriptor.js");
+const {
   applyLinuxAppServerBackfillWaitPatch,
-} = require("../../../../webview-assets.js");
+} = require("../../../../impl/webview/index.js");
 
 module.exports = [
-  {
+  webviewAssetPatch({
     id: "linux-app-server-backfill-wait",
     phase: "webview-asset",
     order: 1042,
@@ -14,5 +17,5 @@ module.exports = [
     missingDescription: "app-server manager webview bundle",
     skipDescription: "Linux app-server backfill wait patch",
     apply: applyLinuxAppServerBackfillWaitPatch,
-  },
+  }),
 ];

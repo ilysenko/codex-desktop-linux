@@ -1,16 +1,16 @@
 # Browser Use node_repl Reaper
 
-The upstream `codex app-server` spawns `node_repl` helper processes for
-Browser Use and does not always reap them: helpers accumulate over long
-sessions and survive their owner (observed in production: six helpers leaked
-in fifteen minutes, persisting for over a day under a hidden-to-tray
-instance). Each holds memory and file descriptors indefinitely.
+Codex spawns `node_repl` helper processes for Browser Use and does not always
+reap them: helpers accumulate over long sessions and survive their owner
+(observed in production: six helpers leaked in fifteen minutes, persisting for
+over a day under a hidden-to-tray instance). Each holds memory and file
+descriptors indefinitely.
 
 This feature reaps **leaked** helpers — those whose parent is no longer a
-live `codex app-server` process. Helpers with a live app-server parent are
-never touched, so active Browser Use sessions are unaffected. Matching is
-scoped to this install's `resources/node_repl` path, so side-by-side installs
-reap independently.
+live Codex owner process. Helpers with a live Desktop `codex app-server` parent
+or a live CLI Codex parent such as `codex resume` are never touched, so active
+Browser Use sessions are unaffected. Matching is scoped to this install's
+`resources/node_repl` path, so side-by-side installs reap independently.
 
 ## How it runs
 
@@ -25,6 +25,12 @@ reap independently.
 - Reaping sends SIGTERM, then SIGKILL after a grace period
   (`CODEX_NODE_REPL_REAPER_KILL_GRACE` seconds, default 5), re-checking
   process identity before escalating to guard against pid reuse.
+
+## Compatibility
+
+This feature can be enabled together with `mcp-helper-reaper`. If that feature
+wraps `resources/node_repl`, this reaper also matches
+`resources/node_repl.codex-linux-original` so leaked helpers remain in scope.
 
 ## Enable
 

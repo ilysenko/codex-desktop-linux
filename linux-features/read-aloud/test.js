@@ -19,13 +19,24 @@ const {
   applySettingsPatch,
   applySettingsSectionsNavPatch,
   applySettingsSharedNavPatch,
-  patches: featurePatches,
+  descriptors: featurePatches,
 } = require("./patch.js");
 
 function twice(fn, source) {
   const patched = fn(source);
   assert.equal(fn(patched), patched);
   return patched;
+}
+
+function captureWarnings(fn) {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    return { result: fn(), warnings };
+  } finally {
+    console.warn = originalWarn;
+  }
 }
 
 test("main bundle patch adds a Linux read aloud handler", () => {
@@ -854,6 +865,23 @@ test("assistant render patch adds an explicit read aloud button under the messag
   assert.doesNotMatch(patched, /children:"Read aloud"/);
   assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(n,p,o,e\.currentTarget\)/);
   assert.match(patched, /\$\.Fragment/);
+});
+
+test("assistant render patch ignores normalized assistant items without render props", () => {
+  const source = "case`agentMessage`:{let s=e.status===`inProgress`&&d>=0&&t===d,l=s&&Spt(i.content);a.push({type:`assistant-message`,content:m,completed:!s,renderPlaceholderWhileStreaming:l});break}";
+  const { result: patched, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
+
+  assert.equal(patched, source);
+  assert.deepEqual(warnings, []);
+});
+
+test("assistant render patch still warns when an assistant render candidate drifts", () => {
+  const source = "return renderMessage({item:n,assistantCopyText:p,conversationId:o,renderCodeBlocksAsWritingBlocks:V})";
+  const { result: patched, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
+
+  assert.equal(patched, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Could not find assistant message render call/);
 });
 
 test("assistant render patch preserves the current JSX runtime alias", () => {

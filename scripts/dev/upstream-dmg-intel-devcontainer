@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/dev/upstream-dmg-intel-devcontainer [--candidate PATH|latest] [options]
+
+Run upstream DMG intelligence inside the repo devcontainer image. This keeps
+7zz/Node/tooling requirements out of the host while writing reports under the
+gitignored reports/upstream-dmg/ tree by default.
+
+Options:
+  --candidate PATH       Candidate Codex.dmg, extracted .app, or resources dir
+  --candidate latest     Download current upstream DMG into reports/upstream-dmg/downloads/
+                         Default when no candidate is passed
+  --candidate-url URL    Upstream DMG URL for --candidate latest
+                         Default: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg
+  --baseline PATH        Optional known-good baseline DMG or extracted .app;
+                         defaults to repo ./Codex.dmg when different
+  --no-baseline          Do a candidate-only scan even when ./Codex.dmg exists
+  --patch-report PATH    Optional patch-report.json
+  --registry PATH        Optional protected-surface registry path
+  --output-dir DIR       Output dir inside this repo; default is tool default
+  --timestamp VALUE      Timestamp slug used when --output-dir is omitted
+  --image IMAGE          Devcontainer image (default: codex-desktop-linux-devcontainer:local)
+  --build-image          Build the devcontainer image if missing
+  --no-build-image       Fail if the devcontainer image is missing
+  -h, --help             Show this help
+
+Examples:
+  scripts/dev/upstream-dmg-intel-devcontainer
+  scripts/dev/upstream-dmg-intel-devcontainer --candidate /tmp/Codex-new.dmg
+EOF
+}
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+image="${CODEX_DMG_INTEL_IMAGE:-codex-desktop-linux-devcontainer:local}"
+candidate_url="${CODEX_DMG_INTEL_CANDIDATE_URL:-${CODEX_UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/Codex.dmg}}"
+build_image=auto
+candidate_path=""
+baseline_path=""
+auto_baseline=1
+patch_report_path=""
+registry_path=""
+output_dir=""
+timestamp=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --candidate)
+      candidate_path="${2:-}"
+      shift 2
+      ;;
+    --candidate-url)
+      candidate_url="${2:-}"
+      shift 2
+      ;;
+    --baseline)
+      baseline_path="${2:-}"
+      auto_baseline=0
+      shift 2
+      ;;
+    --no-baseline)
+      auto_baseline=0
+      baseline_path=""
+      shift
+      ;;
+    --patch-report)
+      patch_report_path="${2:-}"
+      shift 2
+      ;;
+    --registry)
+      registry_path="${2:-}"
+      shift 2
+      ;;
+    --output-dir)
+      output_dir="${2:-}"
+      shift 2
+      ;;
+    --timestamp)
+      timestamp="${2:-}"
+      shift 2
+      ;;
+    --image)
+      image="${2:-}"
+      shift 2
+      ;;
+    --build-image)
+      build_image=yes
+      shift
+      ;;
+    --no-build-image)
+      build_image=no
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      if [[ -z "$candidate_path" && "${1:0:1}" != "-" ]]; then
+        candidate_path="$1"
+        shift
+      else
+        echo "Unknown argument: $1" >&2
+        echo >&2
+        usage >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+if [[ -z "$candidate_path" ]]; then
+  candidate_path="latest"
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is required for upstream-dmg-intel-devcontainer" >&2
+  exit 127
+fi
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  case "$build_image" in
+    no)
+      echo "Docker image not found: $image" >&2
+      echo "Run with --build-image or build the devcontainer image first." >&2
+      exit 2
+      ;;
+    auto|yes)
+      docker build -t "$image" -f "$repo_root/.devcontainer/Dockerfile" "$repo_root"
+      ;;
+  esac
+fi
+
+resolve_existing() {
+  local label="$1"
+  local value="$2"
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+  if [[ ! -e "$value" ]]; then
+    echo "$label not found: $value" >&2
+    exit 2
+  fi
+  python3 - "$value" <<'PY'
+import sys
+from pathlib import Path
+
+print(Path(sys.argv[1]).expanduser().resolve())
+PY
+}
+
+repo_real="$(python3 - "$repo_root" <<'PY'
+import sys
+from pathlib import Path
+
+print(Path(sys.argv[1]).resolve())
+PY
+)"
+
+mounts=(-v "$repo_real:/workspaces/codex-desktop-linux")
+container_args=()
+mount_index=0
+mapped_path=""
+
+map_input_path() {
+  local label="$1"
+  local value="$2"
+  local abs rel base target
+  abs="$(resolve_existing "$label" "$value")"
+  case "$abs" in
+    "$repo_real"/*)
+      rel="${abs#"$repo_real"/}"
+      mapped_path="/workspaces/codex-desktop-linux/$rel"
+      ;;
+    "$repo_real")
+      mapped_path="/workspaces/codex-desktop-linux"
+      ;;
+    *)
+      base="$(basename "$abs")"
+      target="/mnt/upstream-dmg-intel/${mount_index}-${base}"
+      mount_index=$((mount_index + 1))
+      mounts+=(-v "$abs:$target:ro")
+      mapped_path="$target"
+      ;;
+  esac
+}
+
+map_output_dir() {
+  local value="$1"
+  local abs rel
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+  abs="$(python3 - "$value" <<'PY'
+import sys
+from pathlib import Path
+
+print(Path(sys.argv[1]).expanduser().resolve())
+PY
+)"
+  case "$abs" in
+    "$repo_real"/*)
+      rel="${abs#"$repo_real"/}"
+      mapped_path="/workspaces/codex-desktop-linux/$rel"
+      ;;
+    *)
+      echo "--output-dir must be inside the repository so report output stays scoped and gitignored: $value" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if [[ -z "$candidate_path" || "$candidate_path" == "latest" ]]; then
+  case "$candidate_url" in
+    https://*)
+      ;;
+    *)
+      echo "--candidate-url must be an HTTPS URL: $candidate_url" >&2
+      exit 2
+      ;;
+  esac
+  mapped_path="/workspaces/codex-desktop-linux/reports/upstream-dmg/downloads/Codex.dmg"
+  container_args+=(--candidate "$mapped_path")
+else
+  map_input_path "Candidate" "$candidate_path"
+  container_args+=(--candidate "$mapped_path")
+fi
+
+if [[ -n "$baseline_path" ]]; then
+  map_input_path "Baseline" "$baseline_path"
+  container_args+=(--baseline "$mapped_path")
+elif [[ "$auto_baseline" != "1" ]]; then
+  container_args+=(--no-baseline)
+fi
+
+if [[ -z "$patch_report_path" && -f "$repo_real/dist-next/rebuild/patch-report.json" ]]; then
+  patch_report_path="$repo_real/dist-next/rebuild/patch-report.json"
+fi
+if [[ -n "$patch_report_path" ]]; then
+  map_input_path "Patch report" "$patch_report_path"
+  container_args+=(--patch-report "$mapped_path")
+fi
+
+if [[ -n "$registry_path" ]]; then
+  map_input_path "Registry" "$registry_path"
+  container_args+=(--registry "$mapped_path")
+fi
+
+if [[ -n "$output_dir" ]]; then
+  map_output_dir "$output_dir"
+  container_args+=(--output-dir "$mapped_path")
+fi
+
+if [[ -n "$timestamp" ]]; then
+  container_args+=(--timestamp "$timestamp")
+fi
+
+docker_args=(--rm "${mounts[@]}" -w /workspaces/codex-desktop-linux)
+
+if [[ -z "$candidate_path" || "$candidate_path" == "latest" ]]; then
+  exec docker run \
+    "${docker_args[@]}" \
+    -e CODEX_DMG_INTEL_CANDIDATE_URL="$candidate_url" \
+    "$image" \
+    bash -lc '
+      set -euo pipefail
+      candidate_path="/workspaces/codex-desktop-linux/reports/upstream-dmg/downloads/Codex.dmg"
+      mkdir -p "$(dirname "$candidate_path")"
+      tmp_path="${candidate_path}.part"
+      curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
+        -o "$tmp_path" "$CODEX_DMG_INTEL_CANDIDATE_URL"
+      mv "$tmp_path" "$candidate_path"
+      node scripts/dev/upstream-dmg-intel.js "$@"
+    ' bash "${container_args[@]}"
+fi
+
+exec docker run \
+  "${docker_args[@]}" \
+  "$image" \
+  node scripts/dev/upstream-dmg-intel.js "${container_args[@]}"

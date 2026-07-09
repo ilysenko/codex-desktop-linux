@@ -20,13 +20,15 @@ const {
 } = require("./patch.js");
 const {
   enabledLinuxFeatureIds,
-  loadLinuxFeatureMainBundlePatches,
+  loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
   createPatchReport,
+} = require("../../scripts/lib/patch-report.js");
+const {
   patchExtractedApp,
   patchMainBundleSource,
-} = require("../../scripts/patch-linux-window-ui.js");
+} = require("../../scripts/patches/runner.js");
 
 const mainBundlePrefix =
   "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);";
@@ -1417,7 +1419,7 @@ test("open-target discovery upgrades the baseline file manager target", async ()
 test("open-target discovery stays disabled until listed in features.json", () => {
   withTempFeatureConfig([], (root) => {
     assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), []);
-    assert.deepEqual(loadLinuxFeatureMainBundlePatches({ featuresRoot: root }), []);
+    assert.deepEqual(loadLinuxFeaturePatchDescriptors({ featuresRoot: root }), []);
 
     withLinuxFeatureRootEnv(root, () => {
       const patched = captureWarns(() => patchMainBundleSource(openTargetsBundle, null)).value;
@@ -1431,7 +1433,11 @@ test("open-target discovery stays disabled until listed in features.json", () =>
 test("open-target discovery participates in feature loading and patch reports", () => {
   withTempFeatureConfig(["open-target-discovery"], (root) => {
     assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), ["open-target-discovery"]);
-    assert.equal(loadLinuxFeatureMainBundlePatches({ featuresRoot: root }).length, 1);
+    assert.equal(
+      loadLinuxFeaturePatchDescriptors({ featuresRoot: root })
+        .filter((patch) => patch.phase === "main-bundle").length,
+      1,
+    );
 
     withLinuxFeatureRootEnv(root, () => {
       const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-open-target-app-"));

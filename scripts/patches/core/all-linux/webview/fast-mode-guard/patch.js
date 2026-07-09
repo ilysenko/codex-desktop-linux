@@ -1,9 +1,12 @@
 "use strict";
 
-const { applyLinuxFastModeModelGuardPatch } = require("../../../../webview-assets.js");
+const {
+  webviewAssetPatch,
+} = require("../../../../descriptor.js");
+const { applyLinuxFastModeModelGuardPatch } = require("../../../../impl/webview/index.js");
 
 module.exports = [
-  {
+  webviewAssetPatch({
     id: "linux-fast-mode-model-guard",
     phase: "webview-asset",
     order: 1040,
@@ -15,5 +18,5 @@ module.exports = [
     missingDescription: "fast-mode/service-tier availability bundle",
     skipDescription: "fast-mode model guard patch",
     apply: applyLinuxFastModeModelGuardPatch,
-  },
+  }),
 ];

@@ -1,10 +1,13 @@
 "use strict";
 
 const {
+  webviewAssetPatch,
+} = require("../../../../descriptor.js");
+const {
   applyLinuxChatSearchHydrationPatch,
-} = require("../../../../webview-assets.js");
+} = require("../../../../impl/webview/index.js");
 
-module.exports = {
+module.exports = webviewAssetPatch({
   id: "linux-chat-search-hydration",
   phase: "webview-asset",
   order: 1092,
@@ -13,4 +16,4 @@ module.exports = {
   missingDescription: "webview app main bundle",
   skipDescription: "Linux chat search hydration patch",
   apply: applyLinuxChatSearchHydrationPatch,
-};
+});

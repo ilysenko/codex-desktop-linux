@@ -5,7 +5,7 @@ use crate::{
     cli::{Cli, Commands},
     codex_cli,
     config::{RuntimeConfig, RuntimePaths},
-    feature_picker, install, install_rollback, liveness, logging, notify, rollback,
+    diagnostics, feature_picker, install, install_rollback, liveness, logging, notify, rollback,
     state::{CliStatus, PersistedState, UpdateStatus},
     upstream, wrapper, wrapper_apply,
 };
@@ -51,6 +51,10 @@ const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
 /// Runs the updater command-line entrypoint.
 pub async fn run(cli: Cli) -> Result<()> {
     let paths = RuntimePaths::detect()?;
+    if let Commands::Diagnose { json } = &cli.command {
+        return run_diagnose_command(&paths, *json).await;
+    }
+
     paths.ensure_dirs()?;
     logging::init(&paths.log_file)?;
 
@@ -90,6 +94,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_path,
         } => run_prompt_install_cli(&mut state, &paths, cli_path, print_path),
         Commands::Status { json } => run_status(&config, &mut state, &paths, json),
+        Commands::Diagnose { .. } => unreachable!("diagnose is handled before runtime writes"),
         Commands::InstallReady => run_install_ready(&config, &mut state, &paths).await,
         Commands::Rollback => rollback::run(&config, &mut state, &paths).await,
         Commands::InstallDeb { path } => install::install_deb(&path),
@@ -99,6 +104,17 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::InstallRollbackRpm { path } => install_rollback::install_rpm(&path),
         Commands::InstallRollbackPacman { path } => install_rollback::install_pacman(&path),
     }
+}
+
+async fn run_diagnose_command(paths: &RuntimePaths, json: bool) -> Result<()> {
+    let mut config = RuntimeConfig::load_or_default(paths)?;
+    if let Some(enabled) = crate::config::settings_wrapper_updates_override() {
+        config.enable_wrapper_updates = enabled;
+    }
+    let mut state =
+        PersistedState::load_or_default(&paths.state_file, effective_auto_install(&config))?;
+    state.installed_version = install::installed_package_version();
+    diagnostics::run(&config, &state, paths, json).await
 }
 
 fn persist_state(paths: &RuntimePaths, state: &PersistedState) -> Result<()> {
@@ -617,7 +633,10 @@ fn run_status(
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(state)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status_json_value(state)?)?
+        );
     } else {
         println!("status: {:?}", state.status);
         println!("installed_version: {}", state.installed_version);
@@ -643,8 +662,18 @@ fn run_status(
             state.cli_installed_version.as_deref().unwrap_or("unknown")
         );
         println!(
-            "cli_latest_version: {}",
-            state.cli_latest_version.as_deref().unwrap_or("unknown")
+            "cli_official_latest_version: {}",
+            state
+                .cli_official_latest_version
+                .as_deref()
+                .unwrap_or("unknown")
+        );
+        println!(
+            "cli_package_manager_latest_version: {}",
+            state
+                .cli_package_manager_latest_version
+                .as_deref()
+                .unwrap_or("unknown")
         );
         println!(
             "cli_error: {}",
@@ -653,6 +682,17 @@ fn run_status(
     }
 
     Ok(())
+}
+
+fn status_json_value(state: &PersistedState) -> Result<serde_json::Value> {
+    let mut value = serde_json::to_value(state)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "cli_latest_version".to_string(),
+            serde_json::to_value(&state.cli_official_latest_version)?,
+        );
+    }
+    Ok(value)
 }
 
 fn update_error_status_line(state: &PersistedState) -> String {
@@ -3578,6 +3618,20 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(state.cli_status, CliStatus::Updating);
+        Ok(())
+    }
+
+    #[test]
+    fn status_json_keeps_legacy_cli_latest_version_alias() -> Result<()> {
+        let mut state = PersistedState::new(true);
+        state.cli_official_latest_version = Some("0.42.1".to_string());
+        state.cli_package_manager_latest_version = Some("0.42.0-1".to_string());
+
+        let value = status_json_value(&state)?;
+
+        assert_eq!(value["cli_latest_version"], "0.42.1");
+        assert_eq!(value["cli_official_latest_version"], "0.42.1");
+        assert_eq!(value["cli_package_manager_latest_version"], "0.42.0-1");
         Ok(())
     }
 

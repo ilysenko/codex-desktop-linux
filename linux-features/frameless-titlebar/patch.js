@@ -185,7 +185,7 @@ const patches = [
 ];
 
 module.exports = {
-  patches,
+  descriptors: patches,
   applyFramelessTitlebarBranchPatch,
   applyFramelessTitlebarMainPatch,
   applyFramelessTitlebarMenuPatch,

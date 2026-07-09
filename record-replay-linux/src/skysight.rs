@@ -475,6 +475,7 @@ pub fn run_skysight_daemon(
             Some("daemon"),
             ocr_policy.clone(),
             cached_ocr_readiness.clone(),
+            Some(std::process::id()),
         ) {
             let status = status_value(StatusValueInput {
                 paths,
@@ -567,7 +568,7 @@ pub fn capture_skysight_snapshot(
 ) -> Result<SkysightStatus> {
     let ocr_policy = crate::ocr::OcrPolicy::from_env();
     let ocr_readiness = ocr_policy.readiness();
-    capture_skysight_snapshot_with_ocr(paths, source, ocr_policy, ocr_readiness)
+    capture_skysight_snapshot_with_ocr(paths, source, ocr_policy, ocr_readiness, None)
 }
 
 fn capture_skysight_snapshot_with_ocr(
@@ -575,6 +576,7 @@ fn capture_skysight_snapshot_with_ocr(
     source: Option<&str>,
     ocr_policy: crate::ocr::OcrPolicy,
     ocr_readiness: crate::ocr::OcrReadiness,
+    running_daemon_pid: Option<u32>,
 ) -> Result<SkysightStatus> {
     ensure_layout(paths)?;
     if let Some(reason) = read_pause_reason(paths)? {
@@ -686,7 +688,7 @@ fn capture_skysight_snapshot_with_ocr(
         None => latest_resource_with_kind(paths, "-6h-")?,
     };
 
-    let pid = active_status_pid(paths);
+    let pid = running_daemon_pid.or_else(|| active_status_pid(paths));
     let is_running = pid.is_some();
     let status = status_value(StatusValueInput {
         paths,
@@ -3433,6 +3435,46 @@ mod tests {
         assert_eq!(status.ocr_status.as_deref(), Some("backend_unavailable"));
         assert_eq!(status.ocr_last_run_at, None);
         assert_eq!(status.ocr_last_error, None);
+    }
+
+    #[test]
+    fn daemon_snapshot_status_uses_current_daemon_pid_over_stale_status() {
+        let _guard = env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        let paths = SkysightPaths::new(temp.path().join("runtime"), temp.path().join("resources"));
+
+        let stopped = capture_skysight_snapshot(&paths, Some("snapshot-only")).unwrap();
+        assert_eq!(stopped.state, "stopped");
+        assert!(!stopped.is_running);
+
+        let daemon_pid = std::process::id();
+        let status = capture_skysight_snapshot_with_ocr(
+            &paths,
+            Some("daemon"),
+            crate::ocr::OcrPolicy::from_env(),
+            crate::ocr::OcrReadiness {
+                enabled: false,
+                available: false,
+                backend: "auto".to_string(),
+                status: "disabled".to_string(),
+                language: "eng".to_string(),
+                version: None,
+                dependency_hint: None,
+                error: None,
+            },
+            Some(daemon_pid),
+        )
+        .unwrap();
+
+        assert_eq!(status.state, "running");
+        assert!(status.is_running);
+        assert_eq!(status.pid, Some(daemon_pid));
+        assert_eq!(status.end_reason, None);
+        assert_eq!(
+            status.message.as_deref(),
+            Some("Skysight snapshot captured")
+        );
+        assert!(status.next_capture_at.is_some());
     }
 
     #[test]

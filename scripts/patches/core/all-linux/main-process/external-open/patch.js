@@ -1,11 +1,14 @@
 "use strict";
 
-const { applyLinuxExternalOpenEnvPatch } = require("../../../../main-process.js");
+const {
+  mainBundlePatch,
+} = require("../../../../descriptor.js");
+const { applyLinuxExternalOpenEnvPatch } = require("../../../../impl/main-process/browser.js");
 
-module.exports = {
+module.exports = mainBundlePatch({
   id: "linux-external-open-env",
   phase: "main-bundle",
   order: 900,
   ciPolicy: "optional",
   apply: applyLinuxExternalOpenEnvPatch,
-};
+});

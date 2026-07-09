@@ -478,7 +478,7 @@ module.exports = {
   applyComposerRuntimePatch,
   applyDictationEndpointPatch,
   applyReadAloudMainBundlePatch,
-  patches: [
+  descriptors: [
     {
       id: "read-aloud-conversation-source",
       phase: "main-bundle",

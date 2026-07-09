@@ -1,12 +1,15 @@
 "use strict";
 
 const {
+  extractedAppPatch,
+} = require("../../../../descriptor.js");
+const {
   patchAutomationScheduleAssets,
-} = require("../../../../automation-schedule.js");
+} = require("../../../../impl/automation-schedule.js");
 
-module.exports = {
+module.exports = extractedAppPatch({
   id: "automation-schedule-multi-time-rrule",
-  phase: "extracted-app",
+  phase: "extracted-app:pre-webview",
   order: 240,
   ciPolicy: "optional",
   apply: patchAutomationScheduleAssets,
@@ -20,4 +23,4 @@ module.exports = {
           : "skipped-optional",
     reason: result?.reason ?? warnings[0] ?? null,
   }),
-};
+});

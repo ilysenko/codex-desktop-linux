@@ -168,7 +168,7 @@ test("feature exposes optional patches and declarative apply hooks when enabled"
       [
         ["feature:codex-wrapper-updater:main-handler", "main-bundle", "optional"],
         ["feature:codex-wrapper-updater:webview-runtime", "webview-asset", "optional"],
-        ["feature:codex-wrapper-updater:settings-toggle", "extracted-app", "optional"],
+        ["feature:codex-wrapper-updater:settings-toggle", "extracted-app:post-webview", "optional"],
       ],
     );
 

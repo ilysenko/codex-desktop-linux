@@ -2,7 +2,7 @@
 
 `linux-features/` contains opt-in Linux integration modules for this wrapper.
 These are not upstream Codex plugins; they are Linux-side extensions that can
-add ASAR patches, staged resources, runtime hooks, package hooks, or legacy
+add ASAR patches, staged resources, runtime hooks, package hooks, or custom
 build/install hooks. The full architecture contract is documented in
 [`docs/linux-features-architecture.md`](../docs/linux-features-architecture.md).
 
@@ -86,8 +86,8 @@ Each feature directory must include:
 
 - `feature.json` — metadata and entrypoints
 - `README.md` — what it does, how to test it, and known risks
-- optional `patch.js` — exports `applyMainBundlePatch(source, context)`, or
-  descriptor patches when `feature.json` uses `entrypoints.patchDescriptors`
+- optional `patch.js` — descriptor patches when `feature.json` uses
+  `entrypoints.patchDescriptors`
 - optional declarative `resources`, `runtimeHooks`, and `packageHooks`
 - optional `stage.sh` — legacy install/build staging hook
 - optional `test.js` — self-contained tests for the feature
@@ -129,10 +129,16 @@ rebuilds may run outside the real user's session.
 `packageHooks` run during native package staging and receive `PACKAGE_FORMAT`,
 `PACKAGE_ROOT`, `PACKAGE_NAME`, `PACKAGE_VERSION`, and `APP_DIR`.
 
+Feature patching uses only `entrypoints.patchDescriptors`. Descriptor modules
+may export an array directly or `{ descriptors: [...] }`; `.patches`,
+`.default`, and `mainBundlePatch` feature entrypoint aliases are intentionally
+not supported.
+
 Descriptor patches use the same shape as `scripts/patches/core/**/patch.js`.
-They can target `main-bundle`, `webview-asset`, or `extracted-app` phases.
-Feature descriptor ids are namespaced as `feature:<feature-id>:<descriptor-id>`
-in patch reports and are optional by default.
+They can target `main-bundle`, `extracted-app:pre-webview`, `webview-asset`, or
+`extracted-app:post-webview`. Feature descriptor ids are namespaced as
+`feature:<feature-id>:<descriptor-id>` in patch reports and are optional by
+default.
 
 Feature self-tests live inside each feature directory. Run them with:
 

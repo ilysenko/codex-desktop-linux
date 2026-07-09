@@ -47,13 +47,13 @@ if (drift.length > 0) {
 const strategyDrift = [];
 for (const patch of report.patches ?? []) {
   for (const entry of patch.strategies ?? []) {
-    if (entry.strategy.startsWith("legacy:") || entry.strategy === "none") {
+    if (entry.strategy === "none") {
       strategyDrift.push(`${patch.name}: ${entry.group}=${entry.strategy}`);
     }
   }
 }
 if (strategyDrift.length > 0) {
-  console.error(`[INFO] legacy match strategies in use (${strategyDrift.length}):`);
+  console.error(`[INFO] match strategies needing attention (${strategyDrift.length}):`);
   for (const line of strategyDrift) {
     console.error(`  - ${line}`);
   }

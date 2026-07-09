@@ -14,5 +14,6 @@ To try it locally, copy `linux-features/features.example.json` to
 }
 ```
 
-The example `patch.js` replaces a synthetic marker used only in tests. The
-example `stage.sh` is a no-op hook that prints a short message.
+The example feature declares `entrypoints.patchDescriptors` in `feature.json`.
+Its `patch.js` exports `descriptors` that replace a synthetic marker used only
+in tests. The example `stage.sh` is a no-op hook that prints a short message.

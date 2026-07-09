@@ -460,8 +460,6 @@ function wrapFeaturePatchDescriptor(feature, descriptor, sourcePath, index, feat
 
 function featurePatchDescriptorListFromExports(feature, moduleExports, sourcePath, featureIndex) {
   const exported = moduleExports?.descriptors ??
-    moduleExports?.patches ??
-    moduleExports?.default ??
     moduleExports;
   if (exported == null) {
     console.warn(`WARN: Linux feature '${feature.id}' patchDescriptors entrypoint must export descriptors`);
@@ -479,28 +477,8 @@ function featurePatchDescriptorListFromExports(feature, moduleExports, sourcePat
 function loadLinuxFeaturePatchDescriptors(options = {}) {
   const descriptors = [];
   for (const [featureIndex, feature] of loadEnabledLinuxFeatures(options).entries()) {
-    const loaded = loadFeatureEntrypointModule(feature, "patchDescriptors") ??
-      loadFeatureEntrypointModule(feature, "patches");
+    const loaded = loadFeatureEntrypointModule(feature, "patchDescriptors");
     if (loaded == null) {
-      const legacyLoaded = loadFeatureEntrypointModule(feature, "mainBundlePatch");
-      if (legacyLoaded == null) {
-        continue;
-      }
-
-      const moduleExports = legacyLoaded.moduleExports;
-      const apply = moduleExports.applyMainBundlePatch ?? moduleExports.apply ?? moduleExports;
-      if (typeof apply !== "function") {
-        console.warn(`WARN: Linux feature '${feature.id}' mainBundlePatch must export a function`);
-        continue;
-      }
-
-      descriptors.push({
-        id: `feature:${feature.id}`,
-        name: `feature:${feature.id}`,
-        phase: "main-bundle",
-        ciPolicy: "optional",
-        apply: (source, context) => apply(source, featureContext(context, feature)),
-      });
       continue;
     }
     descriptors.push(
@@ -513,12 +491,6 @@ function loadLinuxFeaturePatchDescriptors(options = {}) {
     );
   }
   return descriptors;
-}
-
-function loadLinuxFeatureMainBundlePatches(options = {}) {
-  return loadLinuxFeaturePatchDescriptors(options)
-    .filter((patch) => (patch.phase ?? "main-bundle") === "main-bundle")
-    .map(({ apply, ciPolicy, id, name }) => ({ apply, ciPolicy, id, name }));
 }
 
 function enabledLinuxFeatureStageHooks(options = {}) {
@@ -644,7 +616,110 @@ function chmodRecursive(target, mode) {
   }
 }
 
-function copyInstallFile(source, target, mode) {
+function pathStaysInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+function assertNoSymbolicLinks(target, label) {
+  const stat = fs.lstatSync(target);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`${label} must not contain symbolic links`);
+  }
+  if (!stat.isDirectory()) {
+    return;
+  }
+  for (const name of fs.readdirSync(target)) {
+    assertNoSymbolicLinks(path.join(target, name), label);
+  }
+}
+
+function assertNoSymbolicLinksIfPresent(target, label) {
+  try {
+    assertNoSymbolicLinks(target, label);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+function assertNoInstallPathSymbolicLinks(installDir, relativePath, label) {
+  let current = installDir;
+  for (const part of relativePathParts(relativePath)) {
+    current = path.join(current, part);
+    try {
+      const stat = fs.lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`${label} must not contain symbolic links`);
+      }
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+  }
+}
+
+function assertInstallParentInside(installDir, target, label) {
+  const parent = path.dirname(target);
+  const relativeParent = path.relative(installDir, parent);
+  assertInstallPathInsideIfPresent(installDir, relativeParent, label);
+  fs.mkdirSync(parent, { recursive: true });
+  const installRoot = fs.realpathSync(installDir);
+  const realParent = fs.realpathSync(parent);
+  if (!pathStaysInside(installRoot, realParent)) {
+    throw new Error(`${label} must stay inside the install directory`);
+  }
+  if (relativeParent !== "" && !relativeParent.startsWith("..") && !path.isAbsolute(relativeParent)) {
+    assertNoInstallPathSymbolicLinks(installDir, relativeParent, label);
+  }
+}
+
+function assertInstallPathInsideIfPresent(installDir, relativePath, label) {
+  fs.mkdirSync(installDir, { recursive: true });
+  const installRoot = fs.realpathSync(installDir);
+  const parts = relativePathParts(relativePath);
+  for (let index = parts.length; index >= 0; index -= 1) {
+    const candidate = index === 0
+      ? installDir
+      : path.join(installDir, ...parts.slice(0, index));
+    try {
+      const realCandidate = fs.realpathSync(candidate);
+      if (!pathStaysInside(installRoot, realCandidate)) {
+        throw new Error(`${label} must stay inside the install directory`);
+      }
+      break;
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+  assertNoInstallPathSymbolicLinks(installDir, relativePath, label);
+}
+
+function installRelativeDirectoryExists(installDir, relativePath, label) {
+  const { normalized, resolved } = resolveInstallRelativePath(installDir, relativePath, label);
+  assertInstallPathInsideIfPresent(installDir, normalized, label);
+  try {
+    return fs.lstatSync(resolved).isDirectory();
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function copyInstallFile(installDir, source, target, mode) {
+  assertNoSymbolicLinks(source, "Linux feature source");
+  assertInstallParentInside(installDir, target, "Linux feature target");
+  assertNoSymbolicLinksIfPresent(target, "Linux feature target");
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.cpSync(source, target, { recursive: true, force: true });
   if (mode != null) {
@@ -710,6 +785,11 @@ function removeInstallRelativePath(installDir, relativePath) {
   if (normalized === STAGED_FEATURE_MANIFEST_RELATIVE_PATH) {
     return;
   }
+  assertInstallPathInsideIfPresent(
+    installDir,
+    normalized,
+    "Linux feature staged artifact target",
+  );
   fs.rmSync(resolved, { recursive: true, force: true });
 }
 
@@ -728,13 +808,14 @@ function removeLegacyDeclarativeRuntimeHooks(installDir, options = {}) {
     return;
   }
   for (const runtimeHook of Object.values(RUNTIME_HOOK_DIRS)) {
-    const hookDir = path.join(installDir, ".codex-linux", runtimeHook.dir);
-    if (!isDirectory(hookDir)) {
+    const hookDirRelative = [".codex-linux", runtimeHook.dir].join("/");
+    const hookDir = path.join(installDir, hookDirRelative);
+    if (!installRelativeDirectoryExists(installDir, hookDirRelative, "Linux feature runtime hook directory")) {
       continue;
     }
     for (const name of fs.readdirSync(hookDir)) {
       if (featureIds.some((id) => name.startsWith(`${id}-`))) {
-        fs.rmSync(path.join(hookDir, name), { recursive: true, force: true });
+        removeInstallRelativePath(installDir, path.join(hookDirRelative, name));
       }
     }
   }
@@ -763,12 +844,12 @@ function stageEnabledLinuxFeatureInstall(appDir, options = {}) {
     removePreviouslyStagedArtifacts(installDir, previousManifest);
   }
   for (const resource of plan.resources) {
-    copyInstallFile(resource.source, path.join(installDir, resource.target), resource.mode);
+    copyInstallFile(installDir, resource.source, path.join(installDir, resource.target), resource.mode);
     console.error(`Staged Linux feature resource: ${resource.id} -> ${resource.target}`);
   }
   for (const hook of plan.runtimeHooks) {
     const target = path.join(installDir, hook.target);
-    copyInstallFile(hook.source, target, hook.mode);
+    copyInstallFile(installDir, hook.source, target, hook.mode);
     console.error(`Staged Linux feature ${hook.key} hook: ${hook.id} -> ${path.relative(installDir, target)}`);
   }
   writeStagedFeatureManifest(installDir, plan);
@@ -891,7 +972,6 @@ module.exports = {
   featuresJsonSummary,
   loadEnabledLinuxFeatures,
   loadLinuxFeaturePatchDescriptors,
-  loadLinuxFeatureMainBundlePatches,
   linuxFeatureManifestMap,
   linuxFeaturesConfigPath,
   linuxFeaturesRoot,

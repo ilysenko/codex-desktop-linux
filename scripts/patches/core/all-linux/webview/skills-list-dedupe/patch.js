@@ -1,11 +1,14 @@
 "use strict";
 
 const {
+  webviewAssetPatch,
+} = require("../../../../descriptor.js");
+const {
   applyLinuxSkillsListDedupePatch,
-} = require("../../../../webview-assets.js");
+} = require("../../../../impl/webview/index.js");
 
 module.exports = [
-  {
+  webviewAssetPatch({
     id: "linux-skills-list-dedupe",
     phase: "webview-asset",
     order: 1043,
@@ -14,5 +17,5 @@ module.exports = [
     missingDescription: "skills list webview bundle",
     skipDescription: "Linux skills list dedupe patch",
     apply: applyLinuxSkillsListDedupePatch,
-  },
+  }),
 ];

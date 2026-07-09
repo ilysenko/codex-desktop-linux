@@ -3,7 +3,7 @@
   "name": "Read aloud",
   "description": "Opt-in Linux read-aloud button for assistant responses.",
   "entrypoints": {
-    "patches": "./patch.js",
+    "patchDescriptors": "./patch.js",
     "stageHook": "./stage.sh"
   }
 }

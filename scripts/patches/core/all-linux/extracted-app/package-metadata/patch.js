@@ -1,9 +1,12 @@
 "use strict";
 
+const {
+  extractedAppPatch,
+} = require("../../../../descriptor.js");
 const fs = require("fs");
 const path = require("path");
 
-const { patchPackageJson } = require("../../../../package-json.js");
+const { patchPackageJson } = require("../../../../impl/package-json.js");
 
 function readDesktopName(extractedDir) {
   const packageJsonPath = path.join(extractedDir, "package.json");
@@ -20,9 +23,9 @@ function readDesktopName(extractedDir) {
 }
 
 module.exports = [
-  {
+  extractedAppPatch({
     id: "package-desktop-name",
-    phase: "extracted-app",
+    phase: "extracted-app:post-webview",
     order: 2040,
     ciPolicy: "required-upstream",
     apply: (extractedDir, context) => {
@@ -48,5 +51,5 @@ module.exports = [
           : "already-applied",
       reason: result?.desktopName == null ? "package.json missing or unreadable" : null,
     }),
-  },
+  }),
 ];

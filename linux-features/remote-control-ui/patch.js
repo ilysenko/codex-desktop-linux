@@ -91,7 +91,7 @@ function applyMobileStatsigLinuxPatch(source, patchName) {
 }
 
 module.exports = {
-  patches: [
+  descriptors: [
     {
       id: "remote-connections-visibility",
       phase: "webview-asset",

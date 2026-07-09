@@ -225,7 +225,7 @@ fn write_kwin_window_script(
     write_kwin_script_file(plugin_name, &script)
 }
 
-fn kwin_window_script_source(
+pub(crate) fn kwin_window_script_source(
     service_name: &str,
     callback_object_path: &str,
     plugin_name: &str,
@@ -311,11 +311,30 @@ fn kwin_window_script_source(
         return null;
     }}
 
+    function listWindows() {{
+        try {{
+            if (typeof workspace.windowList === "function") {{
+                return workspace.windowList();
+            }}
+        }} catch (error) {{}}
+        try {{
+            if (typeof workspace.clientList === "function") {{
+                return workspace.clientList();
+            }}
+        }} catch (error) {{}}
+        try {{
+            if (workspace.stackingOrder && typeof workspace.stackingOrder.length === "number") {{
+                return workspace.stackingOrder;
+            }}
+        }} catch (error) {{}}
+        return [];
+    }}
+
     var activeWindow = null;
     try {{
-        activeWindow = workspace.activeWindow;
+        activeWindow = "activeWindow" in workspace ? workspace.activeWindow : workspace.activeClient;
     }} catch (error) {{}}
-    var windows = workspace.windowList().map(function(window) {{
+    var windows = listWindows().map(function(window) {{
         var geo = geometry(window);
         return {{
             uuid: read(window, "uuid"),
@@ -442,6 +461,11 @@ pub(crate) fn kwin_activate_script_source(
             }}
         }} catch (error) {{}}
         try {{
+            if (typeof workspace.clientList === "function") {{
+                return workspace.clientList();
+            }}
+        }} catch (error) {{}}
+        try {{
             if (workspace.stackingOrder && typeof workspace.stackingOrder.length === "number") {{
                 return workspace.stackingOrder;
             }}
@@ -482,13 +506,14 @@ pub(crate) fn kwin_activate_script_source(
 
         var activated = false;
         var activationError = null;
-        try {{
-            workspace.activeWindow = targetWindow;
-            activated = true;
-        }} catch (error) {{
-            activationError = error;
-        }}
-        if (!activated) {{
+        if ("activeWindow" in workspace) {{
+            try {{
+                workspace.activeWindow = targetWindow;
+                activated = true;
+            }} catch (error) {{
+                activationError = error;
+            }}
+        }} else {{
             try {{
                 workspace.activeClient = targetWindow;
                 activated = true;

@@ -22,7 +22,8 @@ mod tests {
     use super::backends::hyprland::{parse_hyprland_clients, HYPRLAND_BACKEND};
     use super::backends::i3::{parse_i3_tree, parse_xprop_pid, I3_BACKEND};
     use super::backends::kwin::{
-        kwin_activate_script_source, kwin_window_id_from_uuid, parse_kwin_windows, KWIN_BACKEND,
+        kwin_activate_script_source, kwin_window_id_from_uuid, kwin_window_script_source,
+        parse_kwin_windows, KWIN_BACKEND,
     };
     use super::registry::{
         descriptors, list_note, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND,
@@ -699,6 +700,23 @@ mod tests {
     }
 
     #[test]
+    fn kwin_window_script_supports_plasma5_and_plasma6_window_apis() {
+        let script = kwin_window_script_source(
+            ":1.234",
+            "/com/openai/Codex/KWinWindowQuery/test",
+            "codex_kwin_window_query_test",
+        )
+        .unwrap();
+
+        assert!(script.contains(r#"typeof workspace.windowList === "function""#));
+        assert!(script.contains("workspace.windowList()"));
+        assert!(script.contains(r#"typeof workspace.clientList === "function""#));
+        assert!(script.contains("workspace.clientList()"));
+        assert!(script
+            .contains(r#"activeWindow = "activeWindow" in workspace ? workspace.activeWindow : workspace.activeClient;"#));
+    }
+
+    #[test]
     fn kwin_activation_script_focuses_window_directly() {
         let script = kwin_activate_script_source(
             ":1.234",
@@ -711,6 +729,10 @@ mod tests {
         assert!(script.contains(r#"var targetUuid = "b4dfacf8-a559-43c9-8b1f-ecd5cfd78359";"#));
         assert!(script.contains("targetWindow.minimized = false;"));
         assert!(script.contains("workspace.activeWindow = targetWindow;"));
+        assert!(script.contains(r#"typeof workspace.clientList === "function""#));
+        assert!(script.contains("workspace.clientList()"));
+        assert!(script.contains(r#""activeWindow" in workspace"#));
+        assert!(script.contains("workspace.activeClient = targetWindow;"));
         assert!(script.contains(r#""ReceiveResult""#));
         assert!(!script.contains("WindowsRunner"));
     }

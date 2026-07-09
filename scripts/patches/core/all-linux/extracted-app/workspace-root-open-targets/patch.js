@@ -1,11 +1,14 @@
 "use strict";
 
+const {
+  extractedAppPatch,
+} = require("../../../../descriptor.js");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const {
   findMainBundle,
-} = require("../../../../shared.js");
+} = require("../../../../lib/assets.js");
 
 const PATCH_MARKER = "codexLinuxWorkspaceRootOpenTarget";
 const MISSING_FILE_MANAGER_ACTION_REASON =
@@ -327,9 +330,9 @@ function patchWorkspaceRootOpenTargets(extractedDir) {
   return { matched, changed };
 }
 
-module.exports = {
+module.exports = extractedAppPatch({
   id: "linux-workspace-root-open-targets",
-  phase: "extracted-app",
+  phase: "extracted-app:post-webview",
   order: 2060,
   ciPolicy: "optional",
   apply: patchWorkspaceRootOpenTargets,
@@ -349,4 +352,4 @@ module.exports = {
   },
   applyWorkspaceRootOpenTargetsPatch,
   enabledWorkspaceRootTargets,
-};
+});

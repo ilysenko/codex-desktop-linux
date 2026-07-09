@@ -4,7 +4,7 @@
   "description": "Disabled example showing the linux-features ASAR patch and stage hook contract.",
   "defaultEnabled": false,
   "entrypoints": {
-    "mainBundlePatch": "./patch.js",
+    "patchDescriptors": "./patch.js",
     "stageHook": "./stage.sh"
   }
 }

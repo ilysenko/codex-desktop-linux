@@ -4,7 +4,7 @@
 const fs = require("node:fs");
 const {
   requiredPatchNamesForProfile,
-} = require("../patches/registry.js");
+} = require("../patches/runner.js");
 const {
   SUCCESS_STATUSES,
   criticalFailuresFromReport,

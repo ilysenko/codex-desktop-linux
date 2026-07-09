@@ -1,11 +1,14 @@
 "use strict";
 
+const {
+  extractedAppPatch,
+} = require("../../../../descriptor.js");
 const { patchStatusFromChange } = require("../../../../../lib/patch-report.js");
-const { patchLinuxOwlFeatureBindingFallbackAssets } = require("../../../../main-process.js");
+const { patchLinuxOwlFeatureBindingFallbackAssets } = require("../../../../impl/main-process/misc.js");
 
-module.exports = {
+module.exports = extractedAppPatch({
   id: "linux-owl-feature-binding-fallback",
-  phase: "extracted-app",
+  phase: "extracted-app:pre-webview",
   order: 190,
   ciPolicy: "required-upstream",
   apply: patchLinuxOwlFeatureBindingFallbackAssets,
@@ -17,4 +20,4 @@ module.exports = {
       ? "Owl feature binding loader bundle missing"
       : result?.reason ?? warnings[0] ?? null,
   }),
-};
+});

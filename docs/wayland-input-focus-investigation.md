@@ -118,7 +118,7 @@ receives real WM keyboard focus, `document.hasFocus()` becomes true on click, an
 real keystrokes reach the (already-healthy) composer.
 
 Implementation: `applyDefinedBrowserWindowOptionsPatch()` in
-`scripts/patches/main-process/window.js`.
+`scripts/patches/impl/main-process/window.js`.
 
 ## Why every earlier attempt failed (and looked plausible)
 

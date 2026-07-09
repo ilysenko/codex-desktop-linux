@@ -171,7 +171,7 @@ impl RuntimeConfig {
 }
 
 const APP_SETTINGS_FILE: &str = "settings.json";
-const DEFAULT_APP_ID: &str = "codex-desktop";
+pub(crate) const DEFAULT_APP_ID: &str = "codex-desktop";
 const AUTO_INSTALL_SETTING_KEY: &str = "codex-linux-auto-update-on-exit";
 const WRAPPER_UPDATES_SETTING_KEY: &str = "codex-linux-wrapper-updates-enabled";
 
@@ -179,22 +179,40 @@ const WRAPPER_UPDATES_SETTING_KEY: &str = "codex-linux-wrapper-updates-enabled";
 /// bundle do: `CODEX_LINUX_APP_ID`, then `CODEX_APP_ID`, then `codex-desktop`.
 /// Invalid ids fall back to the default so a malformed env value can never point
 /// the lookup at an attacker-controlled path.
-fn resolve_app_id() -> String {
-    fn valid(id: &str) -> bool {
-        !id.is_empty()
-            && id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-    }
-
+pub(crate) fn resolve_app_id() -> String {
     for var in ["CODEX_LINUX_APP_ID", "CODEX_APP_ID"] {
         if let Ok(value) = std::env::var(var) {
-            if valid(&value) {
+            if valid_app_id(&value) {
                 return value;
             }
         }
     }
     DEFAULT_APP_ID.to_string()
+}
+
+pub(crate) fn valid_app_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+pub(crate) fn resolve_launch_instance_id() -> Option<String> {
+    std::env::var("CODEX_LINUX_INSTANCE_ID")
+        .ok()
+        .filter(|value| valid_app_id(value))
+}
+
+pub(crate) fn resolve_app_state_dir() -> Result<PathBuf> {
+    let base_dirs = BaseDirs::new().context("Could not resolve XDG base directories")?;
+    let state_root = base_dirs
+        .state_dir()
+        .unwrap_or_else(|| base_dirs.data_local_dir());
+    let app_state_dir = state_root.join(resolve_app_id());
+    Ok(match resolve_launch_instance_id() {
+        Some(instance) => app_state_dir.join("instances").join(instance),
+        None => app_state_dir,
+    })
 }
 
 /// Resolves the app `settings.json` path mirroring the launcher

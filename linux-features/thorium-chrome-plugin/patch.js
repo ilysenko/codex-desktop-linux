@@ -31,7 +31,7 @@ function applyThoriumChromeExtensionStatusPatch(source) {
 }
 
 module.exports = {
-  patches: [
+  descriptors: [
     {
       id: "chrome-extension-status",
       phase: "main-bundle",

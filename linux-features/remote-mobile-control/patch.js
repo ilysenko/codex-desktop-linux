@@ -42,6 +42,7 @@ const REMOTE_MOBILE_THREAD_RUNTIME_MARKER = "codexLinuxRemoteMobileThreadRuntime
 const REMOTE_MOBILE_UNKNOWN_TURN_MARKER = "codexLinuxRemoteMobileHydrateUnknownTurn";
 const REMOTE_MOBILE_NOTIFICATION_QUEUE_MARKER = "codexLinuxRemoteMobileNotificationQueue";
 const REMOTE_MOBILE_IN_FLIGHT_HYDRATION_MARKER = "codexLinuxRemoteMobileHydrationInFlight";
+const REMOTE_MOBILE_LATE_EVENT_HYDRATION_MARKER = "codexLinuxRemoteMobileHydrateLateEvent";
 const REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER = "codexLinuxRemoteControlEnablementBridge";
 const REMOTE_CONTROL_ENABLE_FOR_HOST_PARAMS_MARKER = "codexLinuxRemoteControlEnableForHostParams";
 const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoConnectCleanup";
@@ -1240,6 +1241,28 @@ function browserClientHasNativeChromeBackendPreferenceRouting(source) {
   );
 }
 
+function buildLateUnknownConversationHydrationReplacement(eventName, conversationIdVar, loggerVar) {
+  const pendingMapVar = "codexLinuxRemoteMobilePendingMap";
+  const queueVar = "codexLinuxRemoteMobileQueue";
+  const inFlightVar = "codexLinuxRemoteMobileInFlight";
+  const readVar = "codexLinuxRemoteMobileRead";
+  return (
+    `if(!this.conversations.get(${conversationIdVar})){/*${REMOTE_MOBILE_LATE_EVENT_HYDRATION_MARKER}*/` +
+    `let ${pendingMapVar}=this.codexLinuxRemoteMobilePendingNotifications??=new Map,${queueVar}=${pendingMapVar}.get(${conversationIdVar});` +
+    `${queueVar}||(${queueVar}=[],${pendingMapVar}.set(${conversationIdVar},${queueVar})),${queueVar}.push(n);` +
+    `let ${inFlightVar}=this.codexLinuxRemoteMobileInFlightHydrations??=new Set;` +
+    `if(${inFlightVar}.has(${conversationIdVar})){${loggerVar}.warning(\`Queueing ${eventName} for hydrating conversation\`,{safe:{conversationId:${conversationIdVar},queuedNotificationCount:${queueVar}.length},sensitive:{}});break}` +
+    `${loggerVar}.warning(\`Hydrating conversation for ${eventName}\`,{safe:{conversationId:${conversationIdVar},queuedNotificationCount:${queueVar}.length},sensitive:{}});` +
+    `let ${readVar}=(s=0)=>this.readThread(${conversationIdVar},{includeTurns:!0}).then(e=>{let t=e?.thread??e,c=this.codexLinuxRemoteMobilePendingNotifications?.get(${conversationIdVar})??[],codexLinuxRemoteMobileTurns=Array.isArray(e?.turns)?e.turns:Array.isArray(t?.turns)?t.turns:null;` +
+    `if(!t||!Array.isArray(codexLinuxRemoteMobileTurns)||codexLinuxRemoteMobileTurns.length===0){if(s<12){${loggerVar}.warning(\`Retrying hydration for missing conversation\`,{safe:{conversationId:${conversationIdVar},queuedNotificationCount:c.length,attempt:s+1},sensitive:{}}),setTimeout(()=>${readVar}(s+1),250);return}` +
+    `this.codexLinuxRemoteMobilePendingNotifications?.delete(${conversationIdVar}),this.codexLinuxRemoteMobileInFlightHydrations?.delete(${conversationIdVar}),${loggerVar}.warning(\`Skipping hydration for missing conversation\`,{safe:{conversationId:${conversationIdVar},queuedNotificationCount:c.length},sensitive:{}});return}` +
+    `this.upsertConversationFromThread(t),this.codexLinuxRemoteMobilePendingNotifications?.delete(${conversationIdVar}),this.codexLinuxRemoteMobileInFlightHydrations?.delete(${conversationIdVar});for(let e of c)this.onNotification(e.method,e.params)})` +
+    `.catch(e=>{if(s<12){${loggerVar}.warning(\`Retrying hydration for ${eventName}\`,{safe:{conversationId:${conversationIdVar},attempt:s+1},sensitive:{error:e}}),setTimeout(()=>${readVar}(s+1),250);return}` +
+    `this.codexLinuxRemoteMobilePendingNotifications?.delete(${conversationIdVar}),this.codexLinuxRemoteMobileInFlightHydrations?.delete(${conversationIdVar}),${loggerVar}.error(\`Failed to hydrate conversation for ${eventName}\`,{safe:{conversationId:${conversationIdVar}},sensitive:{error:e}})});` +
+    `${inFlightVar}.add(${conversationIdVar}),${readVar}();break}`
+  );
+}
+
 function applyLinuxRemoteMobileConversationHydrationPatch(source) {
   let patched = source;
 
@@ -1270,7 +1293,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       /(let\{threadId:([A-Za-z_$][\w$]*),turn:[A-Za-z_$][\w$]*\}=([A-Za-z_$][\w$]*)\.params,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\2\);)if\(!this\.conversations\.get\(\4\)\)\{([A-Za-z_$][\w$]*)\.error\(`Received turn\/started for unknown conversation`,\{safe:\{conversationId:\4\},sensitive:\{\}\}\);break\}/u;
     const unknownTurnReplacement =
       (_needle, prefix, _threadIdParamVar, notificationVar, conversationIdVar, normalizerFn, loggerVar) =>
-        `${prefix}if(!this.conversations.get(${conversationIdVar})){/*${REMOTE_MOBILE_UNKNOWN_TURN_MARKER}*//*${REMOTE_MOBILE_NOTIFICATION_QUEUE_MARKER}*//*${REMOTE_MOBILE_IN_FLIGHT_HYDRATION_MARKER}*/let l=${notificationVar}.params?.turn?.threadId??${notificationVar}.params?.thread?.id,d=l!=null?${normalizerFn}(l):null,u=${notificationVar}.params?.turn?.id??${notificationVar}.params?.turnId;if(d==null||u!=null&&d===${normalizerFn}(u)){${loggerVar}.warning(\`Skipping hydration for ambiguous turn/started\`,{safe:{conversationId:${conversationIdVar},resolvedConversationId:d,turnId:u??null},sensitive:{}});break}${notificationVar}={...${notificationVar},params:{...${notificationVar}.params,threadId:l}};if(this.conversations.get(d)){this.onNotification(${notificationVar}.method,${notificationVar}.params);break}let i=this.codexLinuxRemoteMobilePendingNotifications??=new Map,a=i.get(d);a||(a=[],i.set(d,a)),a.push(${notificationVar});let h=this.codexLinuxRemoteMobileInFlightHydrations??=new Map;if(h.has(d)){${loggerVar}.warning(\`Queueing turn/started for hydrating conversation\`,{safe:{conversationId:d,queuedNotificationCount:a.length},sensitive:{}});break}${loggerVar}.warning(\`Hydrating conversation for turn/started\`,{safe:{conversationId:d,queuedNotificationCount:a.length},sensitive:{}});let o=(s=0)=>this.readThread(d,{includeTurns:!1}).then(e=>{let t=e?.thread??e,c=this.codexLinuxRemoteMobilePendingNotifications?.get(d)??[];if(!t){if(s<12){${loggerVar}.warning(\`Retrying hydration for missing conversation\`,{safe:{conversationId:d,queuedNotificationCount:c.length,attempt:s+1},sensitive:{}}),setTimeout(()=>o(s+1),250);return}this.codexLinuxRemoteMobilePendingNotifications?.delete(d),this.codexLinuxRemoteMobileInFlightHydrations?.delete(d),${loggerVar}.warning(\`Skipping hydration for missing conversation\`,{safe:{conversationId:d,queuedNotificationCount:c.length},sensitive:{}});return}this.upsertConversationFromThread(t),this.codexLinuxRemoteMobilePendingNotifications?.delete(d),this.codexLinuxRemoteMobileInFlightHydrations?.delete(d);for(let e of c)this.onNotification(e.method,e.params)}).catch(e=>{if(s<12){${loggerVar}.warning(\`Retrying hydration for turn/started\`,{safe:{conversationId:d,attempt:s+1},sensitive:{error:e}}),setTimeout(()=>o(s+1),250);return}this.codexLinuxRemoteMobilePendingNotifications?.delete(d),this.codexLinuxRemoteMobileInFlightHydrations?.delete(d),${loggerVar}.error(\`Failed to hydrate conversation for turn/started\`,{safe:{conversationId:d},sensitive:{error:e}})});h.set(d,o),o();break}`;
+        `${prefix}if(!this.conversations.get(${conversationIdVar})){/*${REMOTE_MOBILE_UNKNOWN_TURN_MARKER}*//*${REMOTE_MOBILE_NOTIFICATION_QUEUE_MARKER}*//*${REMOTE_MOBILE_IN_FLIGHT_HYDRATION_MARKER}*/let l=${notificationVar}.params?.turn?.threadId??${notificationVar}.params?.thread?.id,d=l!=null?${normalizerFn}(l):null,u=${notificationVar}.params?.turn?.id??${notificationVar}.params?.turnId;if(d==null||u!=null&&d===${normalizerFn}(u)){${loggerVar}.warning(\`Skipping hydration for ambiguous turn/started\`,{safe:{conversationId:${conversationIdVar},resolvedConversationId:d,turnId:u??null},sensitive:{}});break}${notificationVar}={...${notificationVar},params:{...${notificationVar}.params,threadId:l}};if(this.conversations.get(d)){this.onNotification(${notificationVar}.method,${notificationVar}.params);break}let i=this.codexLinuxRemoteMobilePendingNotifications??=new Map,a=i.get(d);a||(a=[],i.set(d,a));let p=u!=null?a.findIndex(e=>{let t=e.params?.turn?.id??e.params?.turnId;return e.method===${notificationVar}.method&&t!=null&&${normalizerFn}(t)===${normalizerFn}(u)}):-1;p>=0?a[p]=${notificationVar}:a.push(${notificationVar});let h=this.codexLinuxRemoteMobileInFlightHydrations??=new Set;if(h.has(d)){${loggerVar}.warning(\`Queueing turn/started for hydrating conversation\`,{safe:{conversationId:d,queuedNotificationCount:a.length,dedupedNotification:p>=0},sensitive:{}});break}${loggerVar}.warning(\`Hydrating conversation for turn/started\`,{safe:{conversationId:d,queuedNotificationCount:a.length},sensitive:{}});let o=(s=0)=>this.readThread(d,{includeTurns:!0}).then(e=>{let t=e?.thread??e,c=this.codexLinuxRemoteMobilePendingNotifications?.get(d)??[],codexLinuxRemoteMobileTurns=Array.isArray(e?.turns)?e.turns:Array.isArray(t?.turns)?t.turns:null;if(!t||!Array.isArray(codexLinuxRemoteMobileTurns)||codexLinuxRemoteMobileTurns.length===0){if(s<12){${loggerVar}.warning(\`Retrying hydration for missing conversation\`,{safe:{conversationId:d,queuedNotificationCount:c.length,attempt:s+1},sensitive:{}}),setTimeout(()=>o(s+1),250);return}this.codexLinuxRemoteMobilePendingNotifications?.delete(d),this.codexLinuxRemoteMobileInFlightHydrations?.delete(d),${loggerVar}.warning(\`Skipping hydration for missing conversation\`,{safe:{conversationId:d,queuedNotificationCount:c.length},sensitive:{}});return}this.upsertConversationFromThread(t),this.codexLinuxRemoteMobilePendingNotifications?.delete(d),this.codexLinuxRemoteMobileInFlightHydrations?.delete(d);for(let e of c)this.onNotification(e.method,e.params)}).catch(e=>{if(s<12){${loggerVar}.warning(\`Retrying hydration for turn/started\`,{safe:{conversationId:d,attempt:s+1},sensitive:{error:e}}),setTimeout(()=>o(s+1),250);return}this.codexLinuxRemoteMobilePendingNotifications?.delete(d),this.codexLinuxRemoteMobileInFlightHydrations?.delete(d),${loggerVar}.error(\`Failed to hydrate conversation for turn/started\`,{safe:{conversationId:d},sensitive:{error:e}})});h.add(d),o();break}`;
     if (unknownTurnNeedle.test(patched)) {
       patched = patched.replace(unknownTurnNeedle, unknownTurnReplacement);
     } else if (patched.includes("Received turn/started for unknown conversation")) {
@@ -1283,7 +1306,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       patched = patched.replace(
         itemStartedNeedle,
         (_needle, conversationIdVar, loggerVar) =>
-          `if(!this.conversations.get(${conversationIdVar})){let o=this.codexLinuxRemoteMobilePendingNotifications?.get(${conversationIdVar});if(o){o.push(n),${loggerVar}.warning(\`Queueing item/started for hydrating conversation\`,{safe:{conversationId:${conversationIdVar},queuedNotificationCount:o.length},sensitive:{}});break}${loggerVar}.error(\`Received item/started for unknown conversation\`,{safe:{conversationId:${conversationIdVar}},sensitive:{}});break}`,
+          buildLateUnknownConversationHydrationReplacement("item/started", conversationIdVar, loggerVar),
       );
     } else if (patched.includes("Received item/started for unknown conversation")) {
       console.warn("WARN: Could not find unknown item/started needle - skipping remote mobile item queue patch");
@@ -1295,7 +1318,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       patched = patched.replace(
         itemCompletedNeedle,
         (_needle, conversationIdVar, loggerVar) =>
-          `if(!this.conversations.get(${conversationIdVar})){let o=this.codexLinuxRemoteMobilePendingNotifications?.get(${conversationIdVar});if(o){o.push(n),${loggerVar}.warning(\`Queueing item/completed for hydrating conversation\`,{safe:{conversationId:${conversationIdVar},queuedNotificationCount:o.length},sensitive:{}});break}${loggerVar}.error(\`Received item/completed for unknown conversation\`,{safe:{conversationId:${conversationIdVar}},sensitive:{}});break}`,
+          buildLateUnknownConversationHydrationReplacement("item/completed", conversationIdVar, loggerVar),
       );
     } else if (patched.includes("Received item/completed for unknown conversation")) {
       console.warn("WARN: Could not find unknown item/completed needle - skipping remote mobile item queue patch");
@@ -1305,7 +1328,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       /if\(!this\.conversations\.get\(([A-Za-z_$][\w$]*)\)\)\{([A-Za-z_$][\w$]*)\.error\(`Received turn\/completed for unknown conversation`,\{safe:\{conversationId:\1\},sensitive:\{\}\}\);break\}/u;
     const turnCompletedReplacement =
       (_needle, conversationIdVar, loggerVar) =>
-        `if(!this.conversations.get(${conversationIdVar})){let o=this.codexLinuxRemoteMobilePendingNotifications?.get(${conversationIdVar});if(o){o.push(n),${loggerVar}.warning(\`Queueing turn/completed for hydrating conversation\`,{safe:{conversationId:${conversationIdVar},queuedNotificationCount:o.length},sensitive:{}});break}${loggerVar}.error(\`Received turn/completed for unknown conversation\`,{safe:{conversationId:${conversationIdVar}},sensitive:{}});break}`;
+        buildLateUnknownConversationHydrationReplacement("turn/completed", conversationIdVar, loggerVar);
     if (turnCompletedNeedle.test(patched)) {
       patched = patched.replace(turnCompletedNeedle, turnCompletedReplacement);
     } else if (patched.includes("Received turn/completed for unknown conversation")) {
@@ -1588,7 +1611,7 @@ module.exports = [
   },
   {
     id: "linux-remote-mobile-app-server-remote-control",
-    phase: "extracted-app",
+    phase: "extracted-app:post-webview",
     order: 20_117,
     ciPolicy: "optional",
     apply: applyLinuxRemoteMobileAppServerRemoteControlExtractedAppPatch,
@@ -1676,7 +1699,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-conversation-hydration",
     phase: "webview-asset",
-    pattern: /^(?:app-server-manager-signals|thread-context-inputs|app-initial~app-main~worktree-init-v2-page~remote-conversation-page~new-thread-panel-page~o~).*\.js$/,
+    pattern: /^(?:app-server-manager-signals|thread-context-inputs|app-initial~app-main~worktree-init-v2-page~remote-conversation-page~).*\.js$/,
     order: 20_150,
     ciPolicy: "optional",
     missingDescription: "app-server manager signals bundle",
@@ -1726,7 +1749,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-projectless-remote-task",
     phase: "webview-asset",
-    pattern: /^(?:sidebar-project-groups|app-initial~app-main~worktree-init-v2-page~remote-conversation-page~pull-requests-page~plug~).*\.js$/,
+    pattern: /^app-initial~app-main~remote-conversation-page~new-thread-panel-page~onboarding-page~appgen-~.*\.js$/,
     order: 20_170,
     ciPolicy: "optional",
     missingDescription: "sidebar project groups bundle",

@@ -10,5 +10,13 @@ function applyMainBundlePatch(source) {
 }
 
 module.exports = {
-  applyMainBundlePatch,
+  descriptors: [
+    {
+      id: "example-feature-main-bundle",
+      phase: "main-bundle",
+      order: 20_000,
+      ciPolicy: "optional",
+      apply: applyMainBundlePatch,
+    },
+  ],
 };

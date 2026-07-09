@@ -4,10 +4,18 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const CRITICAL_CI_POLICY = "required-upstream";
-const SUCCESS_STATUSES = new Set(["applied", "already-applied"]);
+const PATCH_STATUS_APPLIED = "applied";
+const PATCH_STATUS_ALREADY_APPLIED = "already-applied";
+const PATCH_STATUS_APPLIED_WITH_WARNINGS = "applied-with-warnings";
+const PATCH_STATUS_FAILED_REQUIRED = "failed-required";
+const PATCH_STATUS_SKIPPED_DISABLED = "skipped-disabled";
+const PATCH_STATUS_SKIPPED_OPTIONAL = "skipped-optional";
+const PATCH_STATUS_SKIPPED_TARGET = "skipped-target";
+
+const SUCCESS_STATUSES = new Set([PATCH_STATUS_APPLIED, PATCH_STATUS_ALREADY_APPLIED]);
 // Statuses meaning "not applicable here" rather than "failed": the patch was
 // skipped because of platform targeting or an explicit enable gate.
-const NOT_APPLICABLE_STATUSES = new Set(["skipped-target", "skipped-disabled"]);
+const NOT_APPLICABLE_STATUSES = new Set([PATCH_STATUS_SKIPPED_TARGET, PATCH_STATUS_SKIPPED_DISABLED]);
 
 function isCriticalPolicy(ciPolicy) {
   return ciPolicy === CRITICAL_CI_POLICY;
@@ -87,17 +95,17 @@ function writePatchReport(reportPath, report) {
 }
 
 function patchStatusFromChange(changed, warnings, ciPolicy = "optional") {
-  const required = ciPolicy === "required-upstream";
+  const required = ciPolicy === CRITICAL_CI_POLICY;
   if (changed) {
     if (warnings.length > 0) {
-      return required ? "failed-required" : "applied-with-warnings";
+      return required ? PATCH_STATUS_FAILED_REQUIRED : PATCH_STATUS_APPLIED_WITH_WARNINGS;
     }
-    return "applied";
+    return PATCH_STATUS_APPLIED;
   }
   if (warnings.length > 0) {
-    return required ? "failed-required" : "skipped-optional";
+    return required ? PATCH_STATUS_FAILED_REQUIRED : PATCH_STATUS_SKIPPED_OPTIONAL;
   }
-  return "already-applied";
+  return PATCH_STATUS_ALREADY_APPLIED;
 }
 
 function patchGroupForEntry(entry) {
@@ -135,6 +143,15 @@ function summarizePatchReport(report) {
 }
 
 module.exports = {
+  CRITICAL_CI_POLICY,
+  NOT_APPLICABLE_STATUSES,
+  PATCH_STATUS_ALREADY_APPLIED,
+  PATCH_STATUS_APPLIED,
+  PATCH_STATUS_APPLIED_WITH_WARNINGS,
+  PATCH_STATUS_FAILED_REQUIRED,
+  PATCH_STATUS_SKIPPED_DISABLED,
+  PATCH_STATUS_SKIPPED_OPTIONAL,
+  PATCH_STATUS_SKIPPED_TARGET,
   SUCCESS_STATUSES,
   captureWarnings,
   createPatchReport,

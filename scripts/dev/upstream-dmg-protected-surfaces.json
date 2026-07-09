@@ -1,0 +1,845 @@
+{
+  "version": 1,
+  "description": "Protected upstream Codex Desktop macOS DMG surfaces that Linux packaging mirrors, patches, stages, or must explicitly classify before accepting a new upstream build.",
+  "surfaces": [
+    {
+      "id": "codex_chronicle",
+      "title": "Chronicle sidecar binary and event bundle schema",
+      "category": "native",
+      "pathPatterns": [
+        "(^|/)codex_chronicle$",
+        "chronicle"
+      ],
+      "contentNeedles": [
+        "codex_chronicle",
+        "Chronicle",
+        "session.json",
+        "events.jsonl",
+        "metadataPath",
+        "eventsPath"
+      ],
+      "nativeStringNeedles": [
+        "codex_chronicle",
+        "Chronicle",
+        "session.json",
+        "events.jsonl",
+        "metadataPath",
+        "eventsPath"
+      ],
+      "pluginIds": [
+        "record-and-replay"
+      ],
+      "patchNamePatterns": [
+        "chronicle",
+        "record.*replay"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "chronicle-binary",
+          "pathPatterns": [
+            "(^|/)codex_chronicle$"
+          ],
+          "nativeStringNeedles": [
+            "codex_chronicle"
+          ]
+        },
+        {
+          "id": "chronicle-event-bundle",
+          "nativeStringNeedles": [
+            "session.json",
+            "events.jsonl"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "record-replay-linux/src",
+          "linux-features/record-and-replay"
+        ]
+      }
+    },
+    {
+      "id": "chronicle_settings_toggles",
+      "title": "Chronicle Settings enable/disable toggle paths",
+      "category": "webview",
+      "pathPatterns": [
+        "personalization-settings.*\\.js$"
+      ],
+      "contentNeedles": [
+        "chronicleSidecarPresent",
+        "chronicleSidecarProcessState",
+        "rememberConsentAccepted",
+        "mutateAsync({enabled:!0})",
+        "mutateAsync({enabled:!1})",
+        "chronicleDisable",
+        "memoryFeatureEnabled",
+        "generateMemoriesEnabled",
+        "useMemoriesEnabled"
+      ],
+      "patchNamePatterns": [
+        "chronicle",
+        "memory",
+        "record.*replay",
+        "skysight"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "dedicated-chronicle-preview-row",
+          "pathPatterns": [
+            "personalization-settings.*\\.js$"
+          ],
+          "contentNeedles": [
+            "settings.general.experimentalFeatures.chronicle.name",
+            "chronicleSidecarPresent",
+            "chronicleSidecarProcessState",
+            "rememberConsentAccepted",
+            "mutateAsync({enabled:!0})",
+            "mutateAsync({enabled:!1})"
+          ]
+        },
+        {
+          "id": "memory-master-toggle-chronicle-disable",
+          "pathPatterns": [
+            "personalization-settings.*\\.js$"
+          ],
+          "contentNeedles": [
+            "function un",
+            "chronicleDisable",
+            "Promise.allSettled",
+            "memoryFeatureEnabled",
+            "generateMemoriesEnabled",
+            "useMemoriesEnabled"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "linux-features/record-and-replay",
+          "record-replay-linux/src"
+        ]
+      }
+    },
+    {
+      "id": "sky_computer_use_client",
+      "title": "Sky Computer Use client and Sky native module",
+      "category": "native",
+      "pathPatterns": [
+        "SkyComputerUseClient",
+        "Codex Computer Use\\.app",
+        "(^|/)native/sky(\\.node|/)",
+        "(^|/)sky\\.node$"
+      ],
+      "contentNeedles": [
+        "SkyComputerUseClient",
+        "SkyLinuxComputerUseClient",
+        "sky.node",
+        "recording_controls",
+        "event_stream",
+        "skysight"
+      ],
+      "nativeStringNeedles": [
+        "SkyComputerUseClient",
+        "recording_controls",
+        "event_stream",
+        "skysight",
+        "accessibility_snapshot"
+      ],
+      "pluginIds": [
+        "computer-use",
+        "record-and-replay"
+      ],
+      "patchNamePatterns": [
+        "computer.*use",
+        "sky",
+        "record.*replay"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "sky-native-runtime",
+          "nativeBinaryPatterns": [
+            "SkyComputerUseClient",
+            "(^|/)native/sky(\\.node|/)",
+            "(^|/)sky\\.node$"
+          ]
+        },
+        {
+          "id": "sky-control-strings",
+          "nativeStringNeedles": [
+            "metadataPath",
+            "eventsPath",
+            "skysight"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "computer-use-linux/src",
+          "linux-features/record-and-replay"
+        ]
+      }
+    },
+    {
+      "id": "skysight_bridge",
+      "title": "Skysight bridge and screenshot/status metadata",
+      "category": "bridge",
+      "pathPatterns": [
+        "skysight",
+        "sky"
+      ],
+      "contentNeedles": [
+        "skysight",
+        "accessibility_snapshot",
+        "desktop_snapshot",
+        "screenshot",
+        "window_id",
+        "app_id",
+        "wm_class",
+        "browser_trace"
+      ],
+      "nativeStringNeedles": [
+        "skysight",
+        "accessibility_snapshot",
+        "desktop_snapshot",
+        "screenshot"
+      ],
+      "patchNamePatterns": [
+        "skysight",
+        "desktop",
+        "computer.*use",
+        "record.*replay"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "skysight-status",
+          "contentNeedles": [
+            "skysight",
+            "screenshot"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "record-replay-linux/src/skysight.rs",
+          "record-replay-linux/src"
+        ]
+      }
+    },
+    {
+      "id": "event_stream_mcp",
+      "title": "event-stream MCP tools and browser/speech evidence paths",
+      "category": "mcp",
+      "pathPatterns": [
+        "event[-_]stream",
+        "\\.mcp\\.json$",
+        "record-and-replay"
+      ],
+      "contentNeedles": [
+        "event_stream_start",
+        "event_stream_stop",
+        "event_stream_cancel",
+        "browser_trace",
+        "speech_context",
+        "desktop_snapshot",
+        "skysight_start",
+        "skysight_snapshot"
+      ],
+      "pluginIds": [
+        "record-and-replay"
+      ],
+      "patchNamePatterns": [
+        "event.*stream",
+        "record.*replay"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "event-stream-tool-set",
+          "pluginIds": [
+            "record-and-replay"
+          ],
+          "mcpServerNames": [
+            "event-stream"
+          ],
+          "mcpCommandPatterns": [
+            "SkyComputerUseClient"
+          ],
+          "mcpArgs": [
+            "event-stream",
+            "mcp"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "record-replay-linux/src",
+          "linux-features/record-and-replay/plugin-template/.mcp.json"
+        ]
+      }
+    },
+    {
+      "id": "record_and_replay_plugin",
+      "title": "Record & Replay plugin, skill, MCP config, and bridge shell",
+      "category": "plugin",
+      "pathPatterns": [
+        "plugins/openai-bundled/plugins/record-and-replay",
+        "record-and-replay",
+        "Record & Replay"
+      ],
+      "contentNeedles": [
+        "record-and-replay",
+        "Record & Replay",
+        "Record a skill",
+        "event_stream_start",
+        "browser_trace",
+        "speech_context",
+        "SKILL.md"
+      ],
+      "pluginIds": [
+        "record-and-replay"
+      ],
+      "patchNamePatterns": [
+        "record.*replay"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "record-replay-plugin-manifest",
+          "pluginIds": [
+            "record-and-replay"
+          ]
+        },
+        {
+          "id": "record-replay-mcp-skill",
+          "pluginIds": [
+            "record-and-replay"
+          ],
+          "mcpServerNames": [
+            "event-stream"
+          ],
+          "pluginSkillPatterns": [
+            "record-and-replay/skills/record-and-replay/SKILL\\.md$"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "linux-features/record-and-replay",
+          "record-replay-linux"
+        ]
+      }
+    },
+    {
+      "id": "computer_use_plugin",
+      "title": "Computer Use plugin, gates, native helpers, and frontend enablement",
+      "category": "plugin",
+      "pathPatterns": [
+        "plugins/openai-bundled/plugins/computer-use",
+        "computer-use",
+        "Computer Use"
+      ],
+      "contentNeedles": [
+        "computer-use",
+        "Computer Use",
+        "codex-computer-use",
+        "SkyComputerUseClient",
+        "enableComputerUse",
+        "accessibility_snapshot"
+      ],
+      "pluginIds": [
+        "computer-use"
+      ],
+      "patchNamePatterns": [
+        "computer.*use",
+        "linux desktop settings"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "computer-use-plugin-manifest",
+          "pluginIds": [
+            "computer-use"
+          ]
+        },
+        {
+          "id": "computer-use-sky-client",
+          "nativeBinaryPatterns": [
+            "plugins/openai-bundled/plugins/computer-use/.*SkyComputerUseClient"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "computer-use-linux",
+          "plugins/openai-bundled/plugins/computer-use"
+        ]
+      }
+    },
+    {
+      "id": "browser_use_plugin",
+      "title": "Browser Use plugin manifest, client script, and skill shell",
+      "category": "plugin",
+      "pathPatterns": [
+        "plugins/openai-bundled/plugins/browser",
+        "browser-client\\.mjs",
+        "Browser"
+      ],
+      "contentNeedles": [
+        "browser",
+        "browser-client.mjs",
+        ".codex-plugin",
+        "skills"
+      ],
+      "pluginIds": [
+        "browser"
+      ],
+      "patchNamePatterns": [
+        "browser"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "browser-plugin-manifest",
+          "pluginIds": [
+            "browser"
+          ]
+        },
+        {
+          "id": "browser-client-script",
+          "pluginScriptPatterns": [
+            "plugins/openai-bundled/plugins/browser/.*browser-client\\.mjs"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "scripts/lib/bundled-plugins.sh",
+          "scripts/lib/patch-chrome-plugin.js"
+        ]
+      }
+    },
+    {
+      "id": "browser_use_node_repl_runtime",
+      "title": "Browser Use node_repl runtime staging contract",
+      "category": "native",
+      "pathPatterns": [
+        "cua_node/bin/node_repl",
+        "(^|/)node_repl$",
+        "resources/node_repl"
+      ],
+      "contentNeedles": [
+        "node_repl",
+        "globalThis.nodeRepl"
+      ],
+      "nativeStringNeedles": [
+        "node_repl"
+      ],
+      "patchNamePatterns": [
+        "node_repl",
+        "browser"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "node-repl-runtime",
+          "nativeBinaryPatterns": [
+            "cua_node/bin/node_repl",
+            "(^|/)node_repl$"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "scripts/lib/bundled-plugins.sh"
+        ]
+      }
+    },
+    {
+      "id": "browser_use_native_pipe_bridge",
+      "title": "Browser Use native pipe and nodeRepl bridge",
+      "category": "bridge",
+      "pathPatterns": [
+        "browser-client\\.mjs",
+        "nativePipe",
+        "nodeRepl"
+      ],
+      "contentNeedles": [
+        "nativePipe",
+        "import.meta.__codexNativePipe",
+        "globalThis.nodeRepl"
+      ],
+      "patchNamePatterns": [
+        "native.*pipe",
+        "nodeRepl",
+        "browser"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "native-pipe-bridge",
+          "contentNeedles": [
+            "nativePipe",
+            "globalThis.nodeRepl"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "scripts/lib/patch-chrome-plugin.js",
+          "scripts/lib/bundled-plugins.sh"
+        ]
+      }
+    },
+    {
+      "id": "browser_use_policy_shims",
+      "title": "Browser Use policy shims and site-status allowlist",
+      "category": "webview",
+      "pathPatterns": [
+        "browser-client\\.mjs",
+        "config\\.toml",
+        "site_status",
+        "codexLinuxFileUrlPolicy"
+      ],
+      "contentNeedles": [
+        "config.toml",
+        "/aura/site_status",
+        "codexLinuxFileUrlPolicy"
+      ],
+      "patchNamePatterns": [
+        "file.*url",
+        "site_status",
+        "browser"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "browser-policy-shim",
+          "pathPatterns": [
+            "browser-client\\.mjs"
+          ],
+          "contentNeedles": [
+            "config.toml",
+            "/aura/site_status"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "scripts/lib/patch-chrome-plugin.js"
+        ]
+      }
+    },
+    {
+      "id": "chrome_native_messaging",
+      "title": "Chrome plugin, native messaging host, and marketplace metadata",
+      "category": "plugin",
+      "pathPatterns": [
+        "plugins/openai-bundled/plugins/chrome",
+        "native[-_]messaging",
+        "codex-chrome-extension-host",
+        "chrome"
+      ],
+      "contentNeedles": [
+        "nativeMessaging",
+        "native-messaging",
+        "codex-chrome-extension-host",
+        "chrome-extension",
+        "browser-client.mjs",
+        "marketplace"
+      ],
+      "pluginIds": [
+        "chrome"
+      ],
+      "patchNamePatterns": [
+        "chrome",
+        "native.*messaging",
+        "browser"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "chrome-plugin-manifest",
+          "pluginIds": [
+            "chrome"
+          ]
+        },
+        {
+          "id": "chrome-browser-client",
+          "pluginScriptPatterns": [
+            "plugins/openai-bundled/plugins/chrome/.*browser-client\\.mjs",
+            "plugins/openai-bundled/plugins/chrome/.*installManifest\\.mjs"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "computer-use-linux/src/bin/codex-chrome-extension-host.rs",
+          "scripts/lib/patch-chrome-plugin.js"
+        ]
+      }
+    },
+    {
+      "id": "dictation_transcript_finalization",
+      "title": "Dictation and composer transcript finalization hooks",
+      "category": "webview",
+      "pathPatterns": [
+        "dictation",
+        "composer",
+        "transcript"
+      ],
+      "contentNeedles": [
+        "dictation",
+        "transcript",
+        "finalizeTranscript",
+        "speech_context",
+        "conversation_mode",
+        "composer"
+      ],
+      "patchNamePatterns": [
+        "dictation",
+        "conversation",
+        "composer"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "dictation-transcript-lifecycle",
+          "contentNeedles": [
+            "dictation",
+            "transcript"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "linux-features/conversation-mode"
+        ]
+      }
+    },
+    {
+      "id": "browser_window_metadata",
+      "title": "Browser and desktop window metadata APIs",
+      "category": "bridge",
+      "pathPatterns": [
+        "browser",
+        "window",
+        "metadata"
+      ],
+      "contentNeedles": [
+        "browser_trace",
+        "window_id",
+        "terminal_pid",
+        "terminal_cwd",
+        "app_id",
+        "wm_class",
+        "focused_window",
+        "list_windows"
+      ],
+      "patchNamePatterns": [
+        "browser",
+        "window",
+        "metadata",
+        "subagent"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "browser-window-contract",
+          "contentNeedles": [
+            "window_id"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "computer-use-linux/src/windowing",
+          "scripts/patches/core/all-linux/webview/subagent-metadata"
+        ]
+      }
+    },
+    {
+      "id": "electron_ipc_bridge_handlers",
+      "title": "Electron main-process IPC handlers for mirrored Linux systems",
+      "category": "bridge",
+      "pathPatterns": [
+        "main",
+        "bridge",
+        "ipc"
+      ],
+      "contentNeedles": [
+        "ipcMain.handle",
+        "ipcMain.on",
+        "contextBridge.exposeInMainWorld",
+        "recording_controls",
+        "event_stream",
+        "browser_trace",
+        "computerUse",
+        "dictation"
+      ],
+      "patchNamePatterns": [
+        "ipc",
+        "bridge",
+        "lifecycle",
+        "window"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "electron-ipc-entrypoint",
+          "contentNeedles": [
+            "ipcMain.handle"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "scripts/patches/core/all-linux/main-process",
+          "linux-features/record-and-replay/patch.js"
+        ]
+      }
+    },
+    {
+      "id": "plugin_manifests_marketplace",
+      "title": "Bundled plugin manifests and marketplace metadata",
+      "category": "plugin",
+      "pathPatterns": [
+        "plugins/openai-bundled",
+        "marketplace",
+        "\\.codex-plugin/plugin\\.json$",
+        "\\.mcp\\.json$"
+      ],
+      "contentNeedles": [
+        ".codex-plugin",
+        "mcpServers",
+        "marketplace",
+        "skills",
+        "record-and-replay",
+        "computer-use",
+        "chrome"
+      ],
+      "pluginIds": [
+        "record-and-replay",
+        "computer-use",
+        "chrome",
+        "browser"
+      ],
+      "patchNamePatterns": [
+        "plugin",
+        "marketplace",
+        "browser",
+        "chrome"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "bundled-plugin-manifests",
+          "pluginIds": [
+            "record-and-replay",
+            "computer-use",
+            "chrome",
+            "browser"
+          ]
+        },
+        {
+          "id": "bundled-mcp-manifests",
+          "mcpServerNames": [
+            "event-stream"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "scripts/lib/bundled-plugins.sh",
+          "plugins/openai-bundled"
+        ]
+      }
+    },
+    {
+      "id": "work_louder_control_surface",
+      "title": "Work Louder control-surface bundle hooks",
+      "category": "native",
+      "pathPatterns": [
+        "codex-micro-service.*\\.js$",
+        "@worklouder/(device-kit-oai|wl-device-kit)/package\\.json$",
+        "(^|/)node-hid/package\\.json$",
+        "(^|/)node-hid/prebuilds/[^/]+/node-napi-v[0-9]+\\.node$"
+      ],
+      "patchNamePatterns": [
+        "work.*louder",
+        "micro",
+        "hid",
+        "control.*surface"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "micro-service-entrypoint",
+          "pathPatterns": [
+            "codex-micro-service.*\\.js$"
+          ],
+          "contentNeedles": [
+            "@worklouder/device-kit-oai",
+            "DeviceType",
+            "Project2077"
+          ]
+        },
+        {
+          "id": "work-louder-device-kits",
+          "pathPatterns": [
+            "@worklouder/(device-kit-oai|wl-device-kit)"
+          ],
+          "contentNeedles": [
+            "@worklouder/device-kit-oai",
+            "@worklouder/wl-device-kit",
+            "node-hid"
+          ]
+        },
+        {
+          "id": "hid-runtime-package",
+          "pathPatterns": [
+            "(^|/)node-hid/package\\.json$",
+            "(^|/)node-hid/prebuilds/"
+          ],
+          "contentNeedles": [
+            "node-hid"
+          ],
+          "nativeBinaryPatterns": [
+            "(^|/)node-hid/prebuilds/[^/]+/node-napi-v[0-9]+\\.node$"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "native_bridge_sidecars",
+      "title": "Native bridge sidecars and mirrored plugin substrate",
+      "category": "native",
+      "pathPatterns": [
+        "Contents/MacOS",
+        "Contents/SharedSupport",
+        "\\.node$",
+        "\\.dylib$"
+      ],
+      "contentNeedles": [
+        "SkyComputerUseClient",
+        "codex_chronicle",
+        "node_repl",
+        "mcp"
+      ],
+      "nativeStringNeedles": [
+        "SkyComputerUseClient",
+        "codex_chronicle",
+        "node_repl",
+        "mcp"
+      ],
+      "patchNamePatterns": [
+        "native",
+        "bridge",
+        "node_repl"
+      ],
+      "requiredEvidence": [
+        {
+          "id": "native-bridge-binaries",
+          "nativeBinaryPatterns": [
+            "Contents/MacOS",
+            "Contents/SharedSupport",
+            "\\.node$",
+            "\\.dylib$"
+          ]
+        }
+      ],
+      "linuxSubstrate": {
+        "requiredPaths": [
+          "scripts/lib/bundled-plugins.sh",
+          "computer-use-linux",
+          "record-replay-linux"
+        ]
+      }
+    }
+  ]
+}

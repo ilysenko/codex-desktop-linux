@@ -1,6 +1,6 @@
 "use strict";
 
-const { requireName } = require("../../scripts/patches/shared.js");
+const { requireName } = require("../../scripts/patches/lib/minified-js.js");
 
 const RECORD_REPLAY_PLUGIN_NAME = "record-and-replay";
 const HUD_RUNTIME_VERSION = 5;

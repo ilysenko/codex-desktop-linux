@@ -15,14 +15,57 @@ It:
   command when no auth agent is available
 - performs best-effort Codex CLI preflight from the launcher
 
+Codex CLI preflight preserves the detected CLI install type. npm-managed
+installs continue to update through npm, while official standalone installs
+under `~/.codex/packages/standalone` are updated with the official standalone
+installer instead of being replaced through npm.
+
+System-package-managed CLI installs are reused but not mutated through npm or
+the standalone installer flow. On Arch-like hosts, when the resolved CLI lives
+under a system bin directory and `pacman -Qo` confirms package ownership, the
+updater tracks two separate version signals in state:
+`cli_official_latest_version` for the latest published `@openai/codex` npm
+release and `cli_package_manager_latest_version` for the latest package version
+currently known to pacman.
+
+For pacman-managed installs, `cli_status` follows the package-manager-actionable
+result, not the npm result:
+
+- if pacman currently offers a newer package, `cli_status` becomes
+  `UpdateRequired` and the stored status message tells the user to update
+  through pacman instead (for example: `sudo pacman -Syu`)
+- if pacman does not currently offer a newer package but npm upstream is newer,
+  `cli_status` stays `UpToDate` and the stored status message explains that the
+  distro package and official upstream have diverged so the user can decide
+  whether to stay on the distro-managed CLI or switch installation channels
+
+If the CLI resolves to a system-path binary but `pacman -Qo` cannot determine
+ownership, the updater still skips npm auto-updates and reports that ownership
+verification failed so the user can inspect the CLI source manually.
+
+The launcher does not choose the newest installed CLI. It resolves an explicit
+`CODEX_CLI_PATH` first, then falls back to the usual `PATH`, nvm, and known
+user/system locations. Startup logs include the resolved path plus a
+best-effort CLI version probe; set `CODEX_CLI_PATH=/path/to/codex` when you
+need to pin a particular binary from a GUI-launched session. `CODEX_CLI_PATH`
+does not bypass install-type detection; if it points at a pacman-managed CLI,
+the same non-npm guidance applies.
+
 ## Inspect State
 
 ```bash
 systemctl --user status codex-update-manager.service
 codex-update-manager status --json
+codex-update-manager diagnose --json
 sed -n '1,160p' ~/.local/state/codex-update-manager/state.json
 sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
 ```
+
+`diagnose` is read-only and intended for post-update support reports. It checks
+the persisted updater state, installed app executable, launcher `app.pid` and
+`webview.pid`, local webview HTTP endpoint, warm-start handoff socket, and
+Linux build metadata without starting, stopping, installing, or repairing
+anything.
 
 Runtime files:
 

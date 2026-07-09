@@ -4,7 +4,6 @@
   "description": "Adds opt-in Linux visibility patches for remote control, Codex mobile onboarding, and related settings surfaces.",
   "defaultEnabled": false,
   "entrypoints": {
-    "patches": "./patch.js"
+    "patchDescriptors": "./patch.js"
   }
 }
-

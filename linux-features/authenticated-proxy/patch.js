@@ -2,7 +2,7 @@
 
 const {
   inferModuleAlias,
-} = require("../../scripts/patches/shared.js");
+} = require("../../scripts/patches/lib/minified-js.js");
 
 function applyAuthenticatedProxyPatch(currentSource) {
   const electronVar = inferModuleAlias(currentSource, "electron");

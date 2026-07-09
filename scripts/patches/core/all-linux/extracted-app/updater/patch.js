@@ -1,12 +1,15 @@
 "use strict";
 
+const {
+  extractedAppPatch,
+} = require("../../../../descriptor.js");
 const { patchStatusFromChange } = require("../../../../../lib/patch-report.js");
 const { patchLinuxAppUpdaterBridge } = require("../../../../../lib/linux-update-bridge-patch.js");
 
 module.exports = [
-  {
+  extractedAppPatch({
     id: "linux-app-updater-bridge",
-    phase: "extracted-app",
+    phase: "extracted-app:post-webview",
     order: 2000,
     ciPolicy: "optional",
     apply: (extractedDir) => patchLinuxAppUpdaterBridge(extractedDir),
@@ -22,5 +25,5 @@ module.exports = [
         reason: warnings[0] ?? null,
       };
     },
-  },
+  }),
 ];

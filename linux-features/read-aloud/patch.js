@@ -5,8 +5,10 @@ const path = require("node:path");
 
 const {
   linuxSettingsKeys,
+} = require("../../scripts/patches/lib/settings-keys.js");
+const {
   requireName,
-} = require("../../scripts/patches/shared.js");
+} = require("../../scripts/patches/lib/minified-js.js");
 
 const SETTINGS_KEY = "codex-linux-read-aloud-enabled";
 const KOKORO_MODEL_KEY = "codex-linux-read-aloud-kokoro-model";
@@ -181,7 +183,9 @@ function applyAssistantRenderPatch(source) {
 
   const needle = "(0,$.jsx)(O6,{item:e,assistantCopyText:l,assistantRatingEventContext:f,after:u,conversationId:n,cwd:o,onFork:g})";
   if (!source.includes(needle)) {
-    if (source.includes("assistantCopyText") || source.includes("renderPlaceholderWhileStreaming")) {
+    // Turn normalizers can contain renderPlaceholderWhileStreaming without
+    // rendering assistant UI. assistantCopyText is the render-call signal here.
+    if (source.includes("assistantCopyText")) {
       warn("Could not find assistant message render call", "read aloud assistant render patch");
     }
     return source;
@@ -733,7 +737,7 @@ module.exports = {
   applySettingsPatch,
   applySettingsSectionsNavPatch,
   applySettingsSharedNavPatch,
-  patches: [
+  descriptors: [
     {
       id: "main-handler",
       phase: "main-bundle",
@@ -753,7 +757,7 @@ module.exports = {
     },
     {
       id: "settings-toggle",
-      phase: "extracted-app",
+      phase: "extracted-app:post-webview",
       order: 20640,
       ciPolicy: "optional",
       apply: applySettingsAssetPatch,

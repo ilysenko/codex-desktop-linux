@@ -1,10 +1,13 @@
 "use strict";
 
 const {
+  webviewAssetPatch,
+} = require("../../../../descriptor.js");
+const {
   applyLinuxBrowserUseAvailabilityPatch,
-} = require("../../../../webview-assets.js");
+} = require("../../../../impl/webview/index.js");
 
-module.exports = {
+module.exports = webviewAssetPatch({
   id: "linux-browser-use-availability",
   phase: "webview-asset",
   order: 1090,
@@ -13,4 +16,4 @@ module.exports = {
   missingDescription: "Browser Use availability bundle",
   skipDescription: "Linux Browser Use availability patch",
   apply: applyLinuxBrowserUseAvailabilityPatch,
-};
+});
