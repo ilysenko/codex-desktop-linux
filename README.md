@@ -9,14 +9,14 @@
   <a href="https://github.com/EricKrouss/chatgpt-desktop-linux">EricKrouss/chatgpt-desktop-linux</a>
 </p>
 
+This project builds on the original Codex Linux port created by **ilysenko**:
+[ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux).
+
 Unofficial Linux build wrapper for the [OpenAI ChatGPT desktop app](https://openai.com/chatgpt/download/).
 The official ChatGPT app is available for macOS and Windows; this repository
 covers Linux by converting the upstream macOS `ChatGPT.dmg` into a runnable Linux
 Electron app. The icon above is the official ChatGPT app artwork extracted from
 the supported upstream build.
-
-This project builds on the original Codex Linux port created by **ilysenko**:
-[ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux).
 
 The project builds native `.deb`, `.rpm`, and `.pkg.tar.zst` packages, supports
 local AppImage self-builds and Nix, and can install a local update manager that
