@@ -1,6 +1,6 @@
 # Open Target Discovery
 
-Optional Linux open-target integration for Codex Desktop.
+Optional Linux open-target integration for ChatGPT Desktop.
 
 When enabled, this feature augments the upstream open-target menu with:
 

@@ -1,6 +1,6 @@
 # UI Tweaks
 
-`ui-tweaks` is an optional Linux feature for small Codex Desktop UI
+`ui-tweaks` is an optional Linux feature for small ChatGPT Desktop UI
 customizations. It is disabled by default and is intended as a shared place for
 future visual tweaks that are useful to some Linux users but should not affect
 the baseline app.

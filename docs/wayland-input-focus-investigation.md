@@ -2,13 +2,13 @@
 
 Date: 2026-06-26
 Investigated live on: Ubuntu 25.10, GNOME, Wayland session (Electron 42.1.0 /
-Chromium 148, Codex 26.623.31921).
+Chromium 148, ChatGPT Desktop 26.623.31921).
 
 ## Symptom
 
 App opens, UI is clickable (model selector, "Full Access" dropdown, buttons all
 work), but the **main composer text input cannot be focused or typed into**.
-User observation that cracked the case: *clicking the Codex window does not give
+User observation that cracked the case: *clicking the ChatGPT window does not give
 it keyboard focus — keystrokes keep going to the previously-focused window (the
 terminal). The window "looks like a modal" / never focuses.*
 
@@ -56,11 +56,11 @@ between the **OS/compositor and Electron** — real keyboard events never reach
 the window.
 
 ### Finding 5 (root cause) — the window is override-redirect / unmanaged
-`xprop` on the real Codex window (under XWayland):
+`xprop` on the real ChatGPT window (under XWayland):
 
 ```
 WM_CLASS            = "chatgpt-desktop", "chatgpt-desktop"
-WM_NAME             = "Codex"
+WM_NAME             = "ChatGPT"
 _NET_WM_WINDOW_TYPE = _NET_WM_WINDOW_TYPE_NORMAL
 _NET_WM_STATE       = _NET_WM_STATE_SKIP_PAGER, _NET_WM_STATE_SKIP_TASKBAR
 WM_HINTS            = not found            <-- no input hint

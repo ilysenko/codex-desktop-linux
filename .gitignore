@@ -7,6 +7,7 @@ codex-app/
 codex-app.backup-*/
 codex-*-app/
 codex-app-next/
+chatgpt-app/
 bin/codex-*
 target/
 dist/

@@ -28,7 +28,7 @@ struct Args {
     #[arg(long)]
     all_codex_parents: bool,
 
-    /// Installed Codex Desktop app directory for bundled helper matching.
+    /// Installed ChatGPT Desktop app directory for bundled helper matching.
     #[arg(long, value_name = "PATH")]
     app_dir: Option<PathBuf>,
 

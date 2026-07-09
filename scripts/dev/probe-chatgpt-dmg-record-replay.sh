@@ -4,7 +4,7 @@ user_supplied_work_dir=0
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/dev/probe-codex-dmg-record-replay.sh [--dmg ChatGPT.dmg] [--work-dir /tmp/probe] [--keep]
+Usage: scripts/dev/probe-chatgpt-dmg-record-replay.sh [--dmg ChatGPT.dmg] [--work-dir /tmp/probe] [--keep]
 
 Extracts the smallest useful ChatGPT.dmg surfaces for Record & Replay/Sky/Chronicle
 reverse-engineering and prints a compact contract-search report.
@@ -59,8 +59,15 @@ if [[ ! -f "$dmg_path" ]]; then
   exit 1
 fi
 
-command -v 7z >/dev/null || {
-  echo "7z is required; run inside the repo devcontainer or install it there." >&2
+seven_zip_cmd=""
+for candidate in 7zz 7z 7za; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    seven_zip_cmd="$candidate"
+    break
+  fi
+done
+[ -n "$seven_zip_cmd" ] || {
+  echo "7zz, 7z, or 7za is required; run inside the repo devcontainer or install one there." >&2
   exit 1
 }
 command -v node >/dev/null || {
@@ -73,7 +80,7 @@ command -v strings >/dev/null || {
 }
 
 if [[ -z "$work_dir" ]]; then
-  work_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-record-replay-probe.XXXXXX")"
+  work_dir="$(mktemp -d "${TMPDIR:-/tmp}/chatgpt-record-replay-probe.XXXXXX")"
 else
   mkdir -p "$work_dir"
 fi
@@ -85,18 +92,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-app_resources="Codex Installer/Codex.app/Contents/Resources"
+app_resources="ChatGPT Installer/ChatGPT.app/Contents/Resources"
 record_plugin="$app_resources/plugins/openai-bundled/plugins/record-and-replay"
 sky_client="$record_plugin/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
 
 echo "== DMG resources =="
-7z l "$dmg_path" \
+"$seven_zip_cmd" l "$dmg_path" \
   | grep -E 'Contents/Resources/(app\.asar|native/sky\.node|codex_chronicle)$|plugins/openai-bundled/plugins/(browser|chrome|computer-use|record-and-replay)(/(\.mcp\.json|\.codex-plugin/plugin\.json|skills/.*/SKILL\.md|Codex Computer Use\.app/Contents/SharedSupport/SkyComputerUseClient\.app/Contents/MacOS/SkyComputerUseClient)|$)' \
   | sed -n '1,140p'
 
 echo
 echo "== Extracting probe files to $work_dir =="
-7z x -o"$work_dir" "$dmg_path" \
+"$seven_zip_cmd" x -o"$work_dir" "$dmg_path" \
   "$app_resources/app.asar" \
   "$app_resources/native/sky.node" \
   "$app_resources/codex_chronicle" \

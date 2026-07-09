@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=ChatGPT
+Name=ChatGPT Desktop
 Comment=OpenAI ChatGPT desktop wrapper for Linux
 Exec=env BAMF_DESKTOP_FILE_HINT=@HOME@/.local/share/applications/chatgpt-desktop.desktop CHROME_DESKTOP=chatgpt-desktop.desktop @HOME@/.local/bin/chatgpt-desktop %U
 TryExec=@HOME@/.local/bin/chatgpt-desktop

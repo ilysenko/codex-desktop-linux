@@ -97,7 +97,10 @@ async fn trigger_rollback(
         );
         state.save(&paths.state_file)?;
         let _ = cache_cleanup::prune_unreferenced_workspaces(&config.workspace_root, state);
-        println!("Rolled back ChatGPT Desktop to {}.", state.installed_version);
+        println!(
+            "Rolled back ChatGPT Desktop to {}.",
+            state.installed_version
+        );
         return Ok(());
     }
 

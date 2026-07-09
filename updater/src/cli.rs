@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "codex-update-manager")]
+#[command(name = "chatgpt-update-manager")]
 #[command(about = "Local update manager for ChatGPT Desktop on Linux")]
 pub struct Cli {
     #[command(subcommand)]

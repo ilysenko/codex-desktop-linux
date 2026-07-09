@@ -76,6 +76,9 @@ The installer:
 7. refreshes desktop metadata if available
 8. records local metadata and extracts the icon if `ChatGPT.dmg` already exists
 
+After installation, **ChatGPT Desktop** appears in the user desktop app menu and
+`chatgpt-desktop` is available from `~/.local/bin`.
+
 ## Commands
 
 After installation:

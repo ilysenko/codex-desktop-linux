@@ -7,17 +7,17 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DIR="${APP_DIR_OVERRIDE:-$REPO_DIR/chatgpt-app}"
 DIST_DIR="${DIST_DIR_OVERRIDE:-$REPO_DIR/dist}"
 PKGBUILD_TEMPLATE="$REPO_DIR/packaging/linux/PKGBUILD.template"
-INSTALL_HOOKS="$REPO_DIR/packaging/linux/codex-desktop.install"
-DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
-SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.service"
-USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh"
-ICON_SOURCE="$REPO_DIR/assets/codex-linux.png"
-PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
+INSTALL_HOOKS="$REPO_DIR/packaging/linux/chatgpt-desktop.install"
+DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-desktop.desktop"
+SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-update-manager.service"
+USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-update-manager-user-service.sh"
+ICON_SOURCE="$REPO_DIR/assets/chatgpt-linux.png"
+PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh"
 
 PACKAGE_NAME="${PACKAGE_NAME:-chatgpt-desktop}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
 MAX_BUILD_THREADS="${MAX_BUILD_THREADS:-0}"
-UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-update-manager}"
+UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/chatgpt-update-manager}"
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
 PACKAGED_RUNTIME_SOURCE="${PACKAGED_RUNTIME_SOURCE:-$PACKAGED_RUNTIME_TEMPLATE}"
 if [ -f "$APP_DIR/.codex-linux/$PACKAGE_NAME.png" ]; then
@@ -93,7 +93,7 @@ main() {
 		ensure_file_exists "$USER_SERVICE_HELPER_TEMPLATE" "updater user service helper"
 		ensure_file_exists "$PACKAGED_RUNTIME_SOURCE" "packaged launcher runtime helper"
 	else
-		info "Building package without codex-update-manager (PACKAGE_WITH_UPDATER=0)"
+		info "Building package without chatgpt-update-manager (PACKAGE_WITH_UPDATER=0)"
 	fi
 	command -v makepkg >/dev/null 2>&1 || error "makepkg is required (part of pacman)"
 
@@ -134,6 +134,12 @@ main() {
 	local pacman_pkgrel
 	local staging_dir
 	local arch_replacement
+	local legacy_conflicts=""
+	local legacy_replaces=""
+	if [ "$PACKAGE_NAME" = "chatgpt-desktop" ]; then
+		legacy_conflicts="conflicts=('codex-desktop')"
+		legacy_replaces="replaces=('codex-desktop')"
+	fi
 	package_name="$(sed_escape_replacement "$PACKAGE_NAME")"
 	pacman_pkgver="$(sed_escape_replacement "$PACMAN_PKGVER")"
 	pacman_pkgrel="$(sed_escape_replacement "$PACMAN_PKGREL")"
@@ -146,11 +152,11 @@ main() {
 		-e "s/__PKGREL__/$pacman_pkgrel/g" \
 		-e "s|__STAGING_DIR__|$staging_dir|g" \
 		-e "s/__ARCH__/$arch_replacement/g" \
+		-e "s/__LEGACY_CONFLICTS__/$legacy_conflicts/g" \
+		-e "s/__LEGACY_REPLACES__/$legacy_replaces/g" \
 		"$PKGBUILD_TEMPLATE" >"$build_root/PKGBUILD"
 	if package_with_updater_enabled; then
-		sed -e "s|/opt/codex-desktop|/opt/$PACKAGE_NAME|g" \
-			-e "s|codex_desktop_repair_system_package_shadow_entries codex-desktop|codex_desktop_repair_system_package_shadow_entries $PACKAGE_NAME|g" \
-			"$INSTALL_HOOKS" >"$build_root/${PACKAGE_NAME}.install"
+		sed -e "s/__PACKAGE_NAME__/$PACKAGE_NAME/g" "$INSTALL_HOOKS" >"$build_root/${PACKAGE_NAME}.install"
 	else
 		write_no_updater_pacman_install_hooks "$build_root/${PACKAGE_NAME}.install"
 		sed -i \

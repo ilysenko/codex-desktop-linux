@@ -8,7 +8,7 @@ pub use hyprland::HYPRLAND_BACKEND;
 pub use i3::I3_BACKEND;
 pub use kwin::KWIN_BACKEND;
 
-pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the Codex GNOME Shell extension, the COSMIC Wayland helper, KWin/Plasma DBus scripting, Hyprland hyprctl, or i3-msg. On GNOME, run setup_window_targeting to install the extension backend.";
+pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the ChatGPT GNOME Shell extension, the COSMIC Wayland helper, KWin/Plasma DBus scripting, Hyprland hyprctl, or i3-msg. On GNOME, run setup_window_targeting to install the extension backend.";
 
 #[derive(Debug, Clone, Copy)]
 pub struct BackendDescriptor {
@@ -51,8 +51,8 @@ const BACKEND_ORDER: &[BackendKind] = &[
 const DESCRIPTORS: &[BackendDescriptor] = &[
     BackendDescriptor {
         id: GNOME_SHELL_EXTENSION_BACKEND,
-        failure_label: "Codex GNOME Shell extension",
-        list_note: "Window list came from the Codex GNOME Shell extension. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
+        failure_label: "ChatGPT GNOME Shell extension",
+        list_note: "Window list came from the ChatGPT GNOME Shell extension. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
         missing_hint: "On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend.",
         can_exact_focus: true,
     },

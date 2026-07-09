@@ -4,8 +4,10 @@ pkgver=__PKGVER__
 pkgrel=__PKGREL__
 pkgdesc="ChatGPT Desktop for Linux — community-built from the macOS DMG"
 arch=('__ARCH__')
-url="https://github.com/ilysenko/chatgpt-desktop-linux"
+url="https://github.com/EricKrouss/chatgpt-desktop-linux"
 license=('MIT')
+__LEGACY_CONFLICTS__
+__LEGACY_REPLACES__
 depends=(
     'python'
     'p7zip'

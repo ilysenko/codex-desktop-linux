@@ -62,12 +62,28 @@ NODE
 }
 
 # ---- Extract and patch app.asar ----
+require_electron_app_asar() {
+    local app_dir="$1"
+    local resources_dir="$app_dir/Contents/Resources"
+    local electron_framework="$app_dir/Contents/Frameworks/Electron Framework.framework"
+
+    if [ -f "$resources_dir/app.asar" ]; then
+        return 0
+    fi
+
+    if [ ! -d "$electron_framework" ]; then
+        error "Unsupported ChatGPT app bundle: $(basename "$app_dir") does not contain Electron Framework.framework or Contents/Resources/app.asar. ChatGPT Classic is a native macOS app and cannot be converted by this Linux Electron port; use --new-chatgpt."
+    fi
+
+    error "app.asar not found in $resources_dir"
+}
+
 patch_asar() {
     local app_dir="$1"
     local resources_dir="$app_dir/Contents/Resources"
     local -a patch_args=()
 
-    [ -f "$resources_dir/app.asar" ] || error "app.asar not found in $resources_dir"
+    require_electron_app_asar "$app_dir"
 
     info "Extracting app.asar..."
     cd "$WORK_DIR"
@@ -118,7 +134,7 @@ inspect_rebuild_candidate() {
     local patch_report
     local rebuild_report
 
-    [ -f "$resources_dir/app.asar" ] || error "app.asar not found in $resources_dir"
+    require_electron_app_asar "$app_dir"
 
     report_dir="$(prepare_rebuild_report_dir "$report_dir")"
     patch_report="$report_dir/patch-report.json"

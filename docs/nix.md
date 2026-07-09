@@ -3,7 +3,7 @@
 Run ChatGPT Desktop for Linux directly with:
 
 ```bash
-nix run github:ilysenko/chatgpt-desktop-linux
+nix run github:EricKrouss/chatgpt-desktop-linux
 ```
 
 The flake handles dependencies and patches Electron for NixOS. A GitHub Actions
@@ -23,7 +23,7 @@ launcher, or a warm-start handoff to an already-running instance may not have
 your Nix profile on `PATH`, in which case ChatGPT Desktop fails with
 `Unable to locate the Codex CLI binary. Set CODEX_CLI_PATH ...`. Pinning the CLI
 explicitly avoids this. The Home Manager and NixOS modules can do this for you
-via [`programs.codexDesktopLinux.cliPackage`](#home-manager-nixos-module),
+via [`programs.chatgptDesktopLinux.cliPackage`](#home-manager-nixos-module),
 which wraps the launcher so `CODEX_CLI_PATH` is always set.
 
 One direct upstream install path is the npm package:
@@ -104,7 +104,7 @@ in
     codexCli
   ];
 
-  programs.codexDesktopLinux = {
+  programs.chatgptDesktopLinux = {
     enable = true;
     # Bake CODEX_CLI_PATH into the launcher so the Desktop app always finds this
     # CLI, even when launched from a graphical session that lacks the profile on
@@ -134,7 +134,7 @@ let
   codexCli = inputs.codex-cli-nix.packages.${pkgs.stdenv.hostPlatform.system}.default;
 in
 {
-  programs.codexDesktopLinux = {
+  programs.chatgptDesktopLinux = {
     enable = true;
     remoteControl = {
       enable = true;
@@ -153,7 +153,7 @@ If your graphical session does not put the selected profile on `PATH`, set
 ```nix
 {
   # Preferred: wrap the launcher so CODEX_CLI_PATH is always set.
-  programs.codexDesktopLinux.cliPackage = codexCli;
+  programs.chatgptDesktopLinux.cliPackage = codexCli;
 
   # Manual fallback if you are not using the module (needs a re-login to apply):
   # home.sessionVariables.CODEX_CLI_PATH = "${codexCli}/bin/codex";
@@ -174,19 +174,19 @@ file, so Nix exposes feature-specific app variants.
 Remote mobile control:
 
 ```bash
-nix run github:ilysenko/chatgpt-desktop-linux#remote-mobile-control
+nix run github:EricKrouss/chatgpt-desktop-linux#remote-mobile-control
 ```
 
 Computer Use UI plus remote mobile control:
 
 ```bash
-nix run github:ilysenko/chatgpt-desktop-linux#computer-use-ui-remote-mobile-control
+nix run github:EricKrouss/chatgpt-desktop-linux#computer-use-ui-remote-mobile-control
 ```
 
 Computer Use UI only:
 
 ```bash
-nix run github:ilysenko/chatgpt-desktop-linux#chatgpt-desktop-computer-use-ui
+nix run github:EricKrouss/chatgpt-desktop-linux#chatgpt-desktop-computer-use-ui
 ```
 
 ## Home Manager / NixOS Module
@@ -200,7 +200,7 @@ systemd instead of the Desktop launcher:
     inputs.chatgpt-desktop-linux.homeManagerModules.default
   ];
 
-  programs.codexDesktopLinux = {
+  programs.chatgptDesktopLinux = {
     enable = true;
     computerUseUi.enable = true;
     remoteMobileControl.enable = true;
@@ -222,7 +222,7 @@ configurations that prefer a global user unit.
 ## Development Shell
 
 ```bash
-nix develop github:ilysenko/chatgpt-desktop-linux
+nix develop github:EricKrouss/chatgpt-desktop-linux
 ```
 
 ## Cachix

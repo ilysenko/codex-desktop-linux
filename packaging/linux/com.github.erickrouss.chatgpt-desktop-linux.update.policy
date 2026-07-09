@@ -4,10 +4,10 @@
  "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
 <policyconfig>
   <vendor>ChatGPT Desktop Linux</vendor>
-  <vendor_url>https://github.com/ilysenko/chatgpt-desktop-linux</vendor_url>
+  <vendor_url>https://github.com/EricKrouss/chatgpt-desktop-linux</vendor_url>
   <icon_name>chatgpt-desktop</icon_name>
 
-  <action id="com.github.ilysenko.chatgpt-desktop-linux.update.install-deb">
+  <action id="com.github.erickrouss.chatgpt-desktop-linux.update.install-deb">
     <description>Install a ChatGPT Desktop update</description>
     <message>Authentication is required to install the ChatGPT Desktop update.</message>
     <defaults>
@@ -15,11 +15,11 @@
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/codex-update-manager</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/chatgpt-update-manager</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">install-deb</annotate>
   </action>
 
-  <action id="com.github.ilysenko.chatgpt-desktop-linux.update.install-rpm">
+  <action id="com.github.erickrouss.chatgpt-desktop-linux.update.install-rpm">
     <description>Install a ChatGPT Desktop update</description>
     <message>Authentication is required to install the ChatGPT Desktop update.</message>
     <defaults>
@@ -27,11 +27,11 @@
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/codex-update-manager</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/chatgpt-update-manager</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">install-rpm</annotate>
   </action>
 
-  <action id="com.github.ilysenko.chatgpt-desktop-linux.update.install-pacman">
+  <action id="com.github.erickrouss.chatgpt-desktop-linux.update.install-pacman">
     <description>Install a ChatGPT Desktop update</description>
     <message>Authentication is required to install the ChatGPT Desktop update.</message>
     <defaults>
@@ -39,11 +39,11 @@
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/codex-update-manager</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/chatgpt-update-manager</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">install-pacman</annotate>
   </action>
 
-  <action id="com.github.ilysenko.chatgpt-desktop-linux.update.rollback-deb">
+  <action id="com.github.erickrouss.chatgpt-desktop-linux.update.rollback-deb">
     <description>Roll back a ChatGPT Desktop update</description>
     <message>Authentication is required to roll back the ChatGPT Desktop update.</message>
     <defaults>
@@ -51,11 +51,11 @@
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/codex-update-manager</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/chatgpt-update-manager</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">install-rollback-deb</annotate>
   </action>
 
-  <action id="com.github.ilysenko.chatgpt-desktop-linux.update.rollback-rpm">
+  <action id="com.github.erickrouss.chatgpt-desktop-linux.update.rollback-rpm">
     <description>Roll back a ChatGPT Desktop update</description>
     <message>Authentication is required to roll back the ChatGPT Desktop update.</message>
     <defaults>
@@ -63,11 +63,11 @@
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/codex-update-manager</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/chatgpt-update-manager</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">install-rollback-rpm</annotate>
   </action>
 
-  <action id="com.github.ilysenko.chatgpt-desktop-linux.update.rollback-pacman">
+  <action id="com.github.erickrouss.chatgpt-desktop-linux.update.rollback-pacman">
     <description>Roll back a ChatGPT Desktop update</description>
     <message>Authentication is required to roll back the ChatGPT Desktop update.</message>
     <defaults>
@@ -75,7 +75,7 @@
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/codex-update-manager</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/chatgpt-update-manager</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">install-rollback-pacman</annotate>
   </action>
 </policyconfig>

@@ -69,9 +69,9 @@ printf '%s\n' "$$format"
 
 help:
 	@printf '\nChatGPT Desktop Linux Make Targets\n\n'
-	@printf '  %-18s %s\n' "make check" "Run cargo check for codex-update-manager"
+	@printf '  %-18s %s\n' "make check" "Run cargo check for chatgpt-update-manager"
 	@printf '  %-18s %s\n' "make test" "Run updater test suite"
-	@printf '  %-18s %s\n' "make build-updater" "Build codex-update-manager in release mode"
+	@printf '  %-18s %s\n' "make build-updater" "Build chatgpt-update-manager in release mode"
 	@printf '  %-18s %s\n' "make update" "Find a DMG, rebuild, and replace chatgpt-app/ with backup"
 	@printf '  %-18s %s\n' "make rebuild" "Inspect a DMG and build a side-by-side candidate"
 	@printf '  %-18s %s\n' "make rebuild-install" "Find a DMG, rebuild, and install into chatgpt-app/"
@@ -94,8 +94,8 @@ help:
 	@printf '  %-18s %s\n' "make appimage" "Build the AppImage into dist/ (local self-build)"
 	@printf '  %-18s %s\n' "make package" "Build native package (auto-detects deb, rpm, or pacman)"
 	@printf '  %-18s %s\n' "make install" "Install the latest generated native package"
-	@printf '  %-18s %s\n' "make service-enable" "Enable and start codex-update-manager.service for the current user"
-	@printf '  %-18s %s\n' "make service-status" "Show codex-update-manager.service status for the current user"
+	@printf '  %-18s %s\n' "make service-enable" "Enable and start chatgpt-update-manager.service for the current user"
+	@printf '  %-18s %s\n' "make service-status" "Show chatgpt-update-manager.service status for the current user"
 	@printf '  %-18s %s\n' "make clean-dist" "Remove generated dist/ artifacts"
 	@printf '  %-18s %s\n' "make clean-state" "Remove updater runtime state from XDG directories"
 	@printf '\nVariables:\n\n'
@@ -109,7 +109,7 @@ help:
 	@printf '  %-18s %s\n' "DEV_APP_ID=..." "Override side-by-side test app id/bin (default: chatgpt-cua-lab)"
 	@printf '  %-18s %s\n' "DEV_APP_NAME=..." "Override side-by-side test app display name"
 	@printf '  %-18s %s\n' "PACKAGE_VERSION=..." "Override the package version for make deb / make rpm / make pacman / make appimage"
-	@printf '  %-18s %s\n' "PACKAGE_WITH_UPDATER=0" "Build packages without codex-update-manager or the updater service"
+	@printf '  %-18s %s\n' "PACKAGE_WITH_UPDATER=0" "Build packages without chatgpt-update-manager or the updater service"
 	@printf '  %-18s %s\n' "MAX_BUILD_THREADS=8" "Set supported build jobs/compression threads (default: 0, tool/user defaults)"
 	@printf '  %-18s %s\n' "RPM_BINARY_PAYLOAD=..." "Advanced RPM payload flags override (default follows MAX_BUILD_THREADS)"
 	@printf '  %-18s %s\n' "APPIMAGETOOL=..." "Override the appimagetool executable for make appimage"
@@ -127,9 +127,9 @@ help:
 	@printf '  %s\n' "make install-native"
 	@printf '  %s\n' "PACKAGE_WITH_UPDATER=0 make update-native"
 	@printf '  %s\n' "make inspect-upstream DMG=/tmp/ChatGPT.dmg"
-	@printf '  %s\n' "make inspect-upstream-intel DMG=/tmp/Codex-new.dmg"
+	@printf '  %s\n' "make inspect-upstream-intel DMG=/tmp/ChatGPT-new.dmg"
 	@printf '  %s\n' "make inspect-upstream-intel-devcontainer"
-	@printf '  %s\n' "make inspect-upstream-intel-devcontainer DMG=/tmp/Codex-new.dmg"
+	@printf '  %s\n' "make inspect-upstream-intel-devcontainer DMG=/tmp/ChatGPT-new.dmg"
 	@printf '  %s\n' "make rebuild-next DMG=/tmp/ChatGPT.dmg"
 	@printf '  %s\n' "make run-app"
 	@printf '  %s\n' "make build-dev-app"
@@ -145,20 +145,20 @@ help:
 
 check:
 	@echo "[make] Running cargo check"
-	cargo check $(CARGO_JOBS_ARG) -p codex-update-manager
+	cargo check $(CARGO_JOBS_ARG) -p chatgpt-update-manager
 
 test:
 	@echo "[make] Running cargo test"
-	cargo test $(CARGO_JOBS_ARG) -p codex-update-manager
+	cargo test $(CARGO_JOBS_ARG) -p chatgpt-update-manager
 
 build-updater:
-	@echo "[make] Building codex-update-manager (release)"
-	cargo build $(CARGO_JOBS_ARG) --release -p codex-update-manager
+	@echo "[make] Building chatgpt-update-manager (release)"
+	cargo build $(CARGO_JOBS_ARG) --release -p chatgpt-update-manager
 
 maybe-build-updater:
 	@case "$(PACKAGE_WITH_UPDATER)" in \
 		0|false|False|FALSE|no|No|NO|off|Off|OFF) \
-			echo "[make] Skipping codex-update-manager build (PACKAGE_WITH_UPDATER=0)" ;; \
+			echo "[make] Skipping chatgpt-update-manager build (PACKAGE_WITH_UPDATER=0)" ;; \
 		*) \
 			$(MAKE) build-updater ;; \
 	esac
@@ -231,6 +231,7 @@ install-native:
 	$(MAKE) package
 	$(MAKE) install
 	@echo "[make] Native package install complete"
+	@echo "[make] Launch ChatGPT Desktop from your app menu, or run: chatgpt-desktop"
 
 update-native:
 	@echo "[make] Updating trusted checkout"
@@ -314,7 +315,8 @@ install:
 			echo "[make] No pacman package found. Run 'make pacman' first." >&2; exit 1; \
 		fi; \
 		echo "[make] Installing $$pkg"; \
-		sudo pacman -U --noconfirm "$$pkg"; \
+		# --ask 4 accepts ALPM_QUESTION_CONFLICT_PKG while --noconfirm handles the final transaction prompt. \
+		sudo pacman -U --noconfirm --ask 4 -- "$$pkg"; \
 	elif [ "$$format" = "rpm" ] && command -v dnf >/dev/null 2>&1; then \
 		rpm="$${RPM:-$$(latest_matching_file "$(RPM_GLOB)")}"; \
 		if [ -z "$$rpm" ]; then \
@@ -348,13 +350,13 @@ install:
 	fi
 
 service-enable:
-	@echo "[make] Enabling and starting codex-update-manager.service"
+	@echo "[make] Enabling and starting chatgpt-update-manager.service"
 	systemctl --user daemon-reload
-	systemctl --user enable --now codex-update-manager.service
+	systemctl --user enable --now chatgpt-update-manager.service
 
 service-status:
-	@echo "[make] Showing codex-update-manager.service status"
-	systemctl --user status codex-update-manager.service --no-pager
+	@echo "[make] Showing chatgpt-update-manager.service status"
+	systemctl --user status chatgpt-update-manager.service --no-pager
 
 clean-dist:
 	@echo "[make] Removing dist/"
@@ -363,6 +365,6 @@ clean-dist:
 clean-state:
 	@echo "[make] Removing updater runtime state"
 	rm -rf \
-		"$$HOME/.config/codex-update-manager" \
-		"$$HOME/.local/state/codex-update-manager" \
-		"$$HOME/.cache/codex-update-manager"
+		"$$HOME/.config/chatgpt-update-manager" \
+		"$$HOME/.local/state/chatgpt-update-manager" \
+		"$$HOME/.cache/chatgpt-update-manager"

@@ -1,6 +1,6 @@
 //! Applies a pending wrapper (repo) update for the current install type.
 //!
-//! Invoked by the optional `codex-wrapper-updater` Linux feature when it sees a
+//! Invoked by the optional `chatgpt-wrapper-updater` Linux feature when it sees a
 //! pending apply marker. Detection (see [`crate::wrapper`]) only records that a
 //! newer wrapper build exists; this module performs the actual rebuild + install:
 //!
@@ -519,12 +519,12 @@ fn derive_package_version(dmg_path: &Path) -> Result<String> {
 /// Returns the first missing build dependency needed for a packaged rebuild, or
 /// `None` when the toolchain is present.
 fn missing_build_dependency() -> Option<&'static str> {
-    // install.sh needs a DMG extractor (7z/7zz) and the package build runs cargo
+    // install.sh needs a DMG extractor (7zz/7z/7za) and the package build runs cargo
     // for the updater; node is provided by the bundled managed runtime.
     for (tool, label) in [("cargo", "cargo"), ("7zz", "7zz")] {
         if which(tool).is_none() {
-            // 7z is an acceptable alternative to 7zz.
-            if tool == "7zz" && which("7z").is_some() {
+            // 7z and 7za are acceptable alternatives to 7zz.
+            if tool == "7zz" && (which("7z").is_some() || which("7za").is_some()) {
                 continue;
             }
             return Some(label);
@@ -600,6 +600,32 @@ mod tests {
         std::fs::write(feature_dir.join("README.md"), "# Local Feature\n").unwrap();
         std::fs::write(feature_dir.join("nested/payload.txt"), "payload\n").unwrap();
         unix_fs::symlink("nested/payload.txt", feature_dir.join("payload-link")).unwrap();
+    }
+
+    fn write_executable(path: &Path) {
+        std::fs::write(path, b"#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[test]
+    fn missing_build_dependency_accepts_7za_as_dmg_extractor() {
+        let root = tempdir().unwrap();
+        let bin_dir = root.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        write_executable(&bin_dir.join("cargo"));
+        write_executable(&bin_dir.join("7za"));
+        let previous_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", &bin_dir);
+
+        assert_eq!(missing_build_dependency(), None);
+
+        if let Some(path) = previous_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
     }
 
     #[test]

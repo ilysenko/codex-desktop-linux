@@ -7,7 +7,7 @@ use std::{
     process::Command,
 };
 
-const INSTALLED_UPDATER_BINARY: &str = "/usr/bin/codex-update-manager";
+const INSTALLED_UPDATER_BINARY: &str = "/usr/bin/chatgpt-update-manager";
 const APT_CANDIDATES: &[&str] = &["/usr/bin/apt", "/bin/apt"];
 const DNF_CANDIDATES: &[&str] = &["/usr/bin/dnf", "/bin/dnf", "/usr/bin/dnf5", "/bin/dnf5"];
 const DPKG_CANDIDATES: &[&str] = &["/usr/bin/dpkg", "/bin/dpkg"];
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn builds_pkexec_command_for_privileged_rollback() {
         let command = pkexec_command(
-            Path::new("/usr/bin/codex-update-manager"),
+            Path::new("/usr/bin/chatgpt-update-manager"),
             Path::new("/tmp/update.rpm"),
         );
         let args: Vec<_> = command
@@ -304,7 +304,7 @@ mod tests {
             args,
             vec![
                 "--disable-internal-agent",
-                "/usr/bin/codex-update-manager",
+                "/usr/bin/chatgpt-update-manager",
                 "install-rollback-rpm",
                 "--path",
                 "/tmp/update.rpm"

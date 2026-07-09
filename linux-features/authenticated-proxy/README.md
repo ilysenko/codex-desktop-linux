@@ -23,7 +23,7 @@ Preferred explicit configuration:
 CODEX_LINUX_PROXY_SERVER='http://proxy.example:8080' \
 CODEX_LINUX_PROXY_USERNAME='user' \
 CODEX_LINUX_PROXY_PASSWORD='p@ss' \
-./codex-app/start.sh
+./chatgpt-app/start.sh
 ```
 
 `CODEX_LINUX_PROXY_USERNAME` and `CODEX_LINUX_PROXY_PASSWORD` are raw strings;
@@ -52,7 +52,7 @@ flatpak override --user \
   --env=CODEX_LINUX_PROXY_SERVER='http://proxy.example:8080' \
   --env=CODEX_LINUX_PROXY_USERNAME='user' \
   --env=CODEX_LINUX_PROXY_PASSWORD='p@ss' \
-  io.github.ilysenko.codex_desktop_linux
+  io.github.erickrouss.chatgpt_desktop_linux
 ```
 
 If a `--proxy-server` flag is already present in the merged Electron argument

@@ -56,9 +56,9 @@ enum ChromeClientRouteError {
 impl ChromeClientRouteError {
     fn message(&self) -> &'static str {
         match self {
-            Self::NoClients => "No Codex browser client is connected",
+            Self::NoClients => "No ChatGPT browser client is connected",
             Self::MultipleClients => {
-                "Multiple Codex browser clients are connected; Chrome requests require exactly one"
+                "Multiple ChatGPT browser clients are connected; Chrome requests require exactly one"
             }
         }
     }

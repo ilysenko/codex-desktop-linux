@@ -1,7 +1,7 @@
 {
   "id": "ui-tweaks",
   "title": "UI Tweaks",
-  "description": "Optional UI customization patches for Codex Desktop Linux.",
+  "description": "Optional UI customization patches for ChatGPT Desktop Linux.",
   "defaultEnabled": false,
   "entrypoints": {
     "patchDescriptors": "./patch.js"

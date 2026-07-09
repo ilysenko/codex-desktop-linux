@@ -14,17 +14,19 @@ const featureId = "x11-ewmh-computer-use";
 
 function upstreamRepoRoot() {
   const candidates = [
+    process.env.CHATGPT_DESKTOP_LINUX_REPO,
+    process.env.CHATGPT_DESKTOP_LINUX_FULL_PATH,
     process.env.CODEX_DESKTOP_LINUX_REPO,
     process.env.CODEX_DESKTOP_LINUX_FULL_PATH,
     path.resolve(featureDir, "..", ".."),
-    "/home/as/Документы/AI_PROJECTS/codex-desktop-linux",
+    "/home/as/Документы/AI_PROJECTS/chatgpt-desktop-linux",
   ].filter(Boolean);
   for (const candidate of candidates) {
     if (fs.existsSync(path.join(candidate, "scripts/lib/linux-features.js"))) {
       return candidate;
     }
   }
-  throw new Error("Could not locate codex-desktop-linux scripts/lib/linux-features.js; set CODEX_DESKTOP_LINUX_REPO");
+  throw new Error("Could not locate chatgpt-desktop-linux scripts/lib/linux-features.js; set CHATGPT_DESKTOP_LINUX_REPO");
 }
 
 function linuxFeaturesLib() {
@@ -115,7 +117,7 @@ function runStage(workspace, extraEnv = {}) {
       INSTALL_DIR: path.join(workspace, "install"),
       WORK_DIR: path.join(workspace, "work"),
       ARCH: "x86_64",
-      CODEX_UPSTREAM_APP_DIR: path.join(workspace, "Codex.app"),
+      CODEX_UPSTREAM_APP_DIR: path.join(workspace, "ChatGPT.app"),
       ...extraEnv,
     },
     stdio: "pipe",
@@ -270,7 +272,7 @@ test("x11-ewmh-computer-use stage hook records marketplace entry and preserves c
       INSTALL_DIR: installDir,
       WORK_DIR: workDir,
       ARCH: process.arch === "arm64" ? "aarch64" : "x86_64",
-      CODEX_UPSTREAM_APP_DIR: path.join(workspace, "Codex.app"),
+      CODEX_UPSTREAM_APP_DIR: path.join(workspace, "ChatGPT.app"),
       CODEX_X11_COMPUTER_USE_BINARY: fakeBinary,
     },
     stdio: "pipe",

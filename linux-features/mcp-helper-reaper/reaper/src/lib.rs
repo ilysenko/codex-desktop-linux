@@ -1047,13 +1047,15 @@ fn app_relative_path(path: &Path, app_dir: &Path) -> Option<PathBuf> {
 }
 
 fn app_dir_stable_marker(app_dir: &Path) -> Option<Vec<String>> {
-    let marker = Path::new("share").join("codex-desktop").join("app");
-    if app_dir.ends_with(&marker) {
-        return Some(vec![
-            "share".to_string(),
-            "codex-desktop".to_string(),
-            "app".to_string(),
-        ]);
+    for package_dir in ["chatgpt-desktop", "codex-desktop"] {
+        let marker = Path::new("share").join(package_dir).join("app");
+        if app_dir.ends_with(&marker) {
+            return Some(vec![
+                "share".to_string(),
+                package_dir.to_string(),
+                "app".to_string(),
+            ]);
+        }
     }
     None
 }
@@ -1222,6 +1224,29 @@ mod tests {
 
     #[test]
     fn reaps_replaced_app_generation_helper_under_same_codex_parent() {
+        let mut processes = BTreeMap::new();
+        let old_app =
+            "/home/linuxbrew/.linuxbrew/Caskroom/chatgpt-desktop/old/share/chatgpt-desktop/app";
+        let new_app =
+            "/home/linuxbrew/.linuxbrew/Caskroom/chatgpt-desktop/new/share/chatgpt-desktop/app";
+        let old_node_repl = format!("{old_app}/resources/node_repl.codex-linux-original");
+        let new_node_repl = format!("{new_app}/resources/node_repl.codex-linux-original");
+        processes.insert(100, proc(100, 1, 10, &["codex", "resume"], "/repo"));
+        processes.insert(101, proc(101, 100, 20, &[old_node_repl.as_str()], "/repo"));
+        processes.insert(102, proc(102, 100, 30, &[new_node_repl.as_str()], "/repo"));
+
+        assert_eq!(
+            plan_reap(100, &processes, &[], Some(Path::new(new_app))),
+            vec![ReapCandidate {
+                stale_pid: 101,
+                keep_pid: 102,
+                signature: "app-generation:resources/node_repl.codex-linux-original".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn reaps_replaced_legacy_codex_app_generation_helper_under_same_codex_parent() {
         let mut processes = BTreeMap::new();
         let old_app =
             "/home/linuxbrew/.linuxbrew/Caskroom/codex-desktop/old/share/codex-desktop/app";

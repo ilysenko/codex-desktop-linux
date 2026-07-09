@@ -42,8 +42,8 @@ const REQUIRED_BUNDLE_FILES: [(&str, &str); 19] = [
     ("scripts/patches", "scripts/patches"),
     ("scripts/lib", "scripts/lib"),
     ("packaging/linux", "packaging/linux"),
-    ("assets/codex.png", "assets/codex.png"),
-    ("assets/codex-linux.png", "assets/codex-linux.png"),
+    ("assets/chatgpt.png", "assets/chatgpt.png"),
+    ("assets/chatgpt-linux.png", "assets/chatgpt-linux.png"),
     ("linux-features", "linux-features"),
 ];
 const OPTIONAL_BUNDLE_FILES: [(&str, &str); 5] = [
@@ -160,7 +160,7 @@ pub async fn build_update_from(
                 "UPDATER_SERVICE_SOURCE",
                 workspace
                     .bundle_dir
-                    .join("packaging/linux/codex-update-manager.service"),
+                    .join("packaging/linux/chatgpt-update-manager.service"),
             )
             .env("PATH", &build_path)
             .current_dir(&workspace.bundle_dir),
@@ -613,7 +613,7 @@ touch "${DIST_DIR_OVERRIDE}/chatgpt-desktop-${VER}-1-x86_64.pkg.tar.zst"
         fs::create_dir_all(root.join("updater/src"))?;
         fs::write(
             root.join("updater/Cargo.toml"),
-            b"[package]\nname = \"codex-update-manager\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            b"[package]\nname = \"chatgpt-update-manager\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )?;
         fs::write(root.join("updater/src/main.rs"), b"fn main() {}\n")?;
         fs::create_dir_all(root.join("plugins/openai-bundled/plugins/computer-use/.codex-plugin"))?;
@@ -708,8 +708,8 @@ touch "${DIST_DIR_OVERRIDE}/chatgpt-desktop-${VER}-1-x86_64.pkg.tar.zst"
             bundle_root.join("launcher/webview-server.py"),
             b"# fake webview server\n",
         )?;
-        fs::write(bundle_root.join("assets/codex.png"), b"png")?;
-        fs::write(bundle_root.join("assets/codex-linux.png"), b"linux png")?;
+        fs::write(bundle_root.join("assets/chatgpt.png"), b"png")?;
+        fs::write(bundle_root.join("assets/chatgpt-linux.png"), b"linux png")?;
         fs::write(
             bundle_root.join("packaging/linux/control"),
             "Package: codex",
@@ -723,27 +723,27 @@ touch "${DIST_DIR_OVERRIDE}/chatgpt-desktop-${VER}-1-x86_64.pkg.tar.zst"
             "[Desktop Entry]",
         )?;
         fs::write(
-            bundle_root.join("packaging/linux/codex-update-manager.service"),
-            "[Unit]\nDescription=Codex Update Manager\n",
+            bundle_root.join("packaging/linux/chatgpt-update-manager.service"),
+            "[Unit]\nDescription=ChatGPT Update Manager\n",
         )?;
         fs::write(
-            bundle_root.join("packaging/linux/codex-update-manager-user-service.sh"),
+            bundle_root.join("packaging/linux/chatgpt-update-manager-user-service.sh"),
             "#!/bin/bash\n",
         )?;
         fs::write(
-            bundle_root.join("packaging/linux/codex-update-manager.postinst"),
+            bundle_root.join("packaging/linux/chatgpt-update-manager.postinst"),
             "#!/bin/sh\nexit 0\n",
         )?;
         fs::write(
-            bundle_root.join("packaging/linux/codex-update-manager.prerm"),
+            bundle_root.join("packaging/linux/chatgpt-update-manager.prerm"),
             "#!/bin/sh\nexit 0\n",
         )?;
         fs::write(
-            bundle_root.join("packaging/linux/codex-update-manager.postrm"),
+            bundle_root.join("packaging/linux/chatgpt-update-manager.postrm"),
             "#!/bin/sh\nexit 0\n",
         )?;
         fs::write(
-            bundle_root.join("packaging/linux/codex-packaged-runtime.sh"),
+            bundle_root.join("packaging/linux/chatgpt-packaged-runtime.sh"),
             "#!/bin/bash\n",
         )?;
         fs::write(
@@ -854,7 +854,7 @@ fi
             .exists());
         assert!(artifacts
             .workspace_dir
-            .join("builder/assets/codex-linux.png")
+            .join("builder/assets/chatgpt-linux.png")
             .exists());
         assert!(artifacts
             .workspace_dir
@@ -937,11 +937,11 @@ fi
             b"Package: codex\n",
         )?;
         fs::write(
-            source_root.join("packaging/linux/codex-update-manager.service"),
-            b"[Unit]\nDescription=Codex Update Manager\n",
+            source_root.join("packaging/linux/chatgpt-update-manager.service"),
+            b"[Unit]\nDescription=ChatGPT Update Manager\n",
         )?;
-        fs::write(source_root.join("assets/codex.png"), b"png")?;
-        fs::write(source_root.join("assets/codex-linux.png"), b"linux png")?;
+        fs::write(source_root.join("assets/chatgpt.png"), b"png")?;
+        fs::write(source_root.join("assets/chatgpt-linux.png"), b"linux png")?;
 
         copy_builder_bundle(&source_root, &destination_root)?;
 
@@ -955,7 +955,7 @@ fi
         assert!(destination_root.join("read-aloud-linux").exists());
         assert!(destination_root.join("record-replay-linux").exists());
         assert!(destination_root.join("updater").exists());
-        assert!(destination_root.join("assets/codex-linux.png").exists());
+        assert!(destination_root.join("assets/chatgpt-linux.png").exists());
         assert!(destination_root
             .join("plugins/openai-bundled/plugins/computer-use/.mcp.json")
             .exists());
@@ -983,7 +983,7 @@ fi
         fs::create_dir_all(source_root.join("assets"))?;
         fs::create_dir_all(source_root.join("record-replay-linux"))?;
         fs::create_dir_all(source_root.join("scripts"))?;
-        fs::write(source_root.join("assets/codex-linux.png"), b"linux png")?;
+        fs::write(source_root.join("assets/chatgpt-linux.png"), b"linux png")?;
         fs::write(
             source_root.join("record-replay-linux/Cargo.toml"),
             b"[package]\nname = \"codex-record-replay-linux\"\n",
@@ -991,12 +991,12 @@ fi
         fs::write(source_root.join("scripts/build-deb.sh"), b"#!/bin/bash\n")?;
         fs::write(
             source_root.join(UPDATE_BUILDER_MANIFEST),
-            b"# generated\nassets/codex-linux.png\nrecord-replay-linux/Cargo.toml\n",
+            b"# generated\nassets/chatgpt-linux.png\nrecord-replay-linux/Cargo.toml\n",
         )?;
 
         copy_builder_bundle(&source_root, &destination_root)?;
 
-        assert!(destination_root.join("assets/codex-linux.png").exists());
+        assert!(destination_root.join("assets/chatgpt-linux.png").exists());
         assert!(destination_root
             .join("record-replay-linux/Cargo.toml")
             .exists());

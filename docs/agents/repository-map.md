@@ -47,9 +47,9 @@ preserving the source-of-truth routing agents need before editing.
 - `launcher/webview-server.py`
   Standalone Python HTTP server for local webview assets, serving explicit
   no-store/no-cache headers. It is started and supervised by the launcher.
-- `packaging/linux/codex-packaged-runtime.sh`
+- `packaging/linux/chatgpt-packaged-runtime.sh`
   Native-package-only runtime helper loaded optionally by the launcher.
-- `packaging/appimage/codex-appimage-runtime.sh`
+- `packaging/appimage/chatgpt-appimage-runtime.sh`
   AppImage-only runtime helper.
 
 ## Build Pipeline (`scripts/lib/`)
@@ -179,13 +179,13 @@ extension point to core rather than moving the feature itself into core.
   Debian control files, RPM spec, pacman `PKGBUILD.template`/install hooks,
   desktop entry, icon policy, Polkit policy, packaged runtime helper, shared
   user-service maintainer-script helper, and
-  `codex-desktop-entry-doctor.sh`.
+  `chatgpt-desktop-entry-doctor.sh`.
 - `packaging/appimage/`
   AppImage `AppRun`, desktop file, and runtime helper.
 
 The native package payload installs the app under `/opt/chatgpt-desktop`, the
 launcher under `/usr/bin/chatgpt-desktop`, the updater under
-`/usr/bin/codex-update-manager`, the user service under
+`/usr/bin/chatgpt-update-manager`, the user service under
 `/usr/lib/systemd/user/`, desktop/icon metadata under `/usr/share/`, and an
 update-builder bundle under `/opt/chatgpt-desktop/update-builder`.
 
@@ -245,7 +245,7 @@ The updater runs unprivileged and only escalates through `pkexec` for
 
 `contrib/user-local-install/` is an opt-in install path for users who do not
 want a system-wide native package. The daily-driver flow remains `install.sh`
-plus a native package plus `codex-update-manager`.
+plus a native package plus `chatgpt-update-manager`.
 
 - `install-user-local.sh`
   Installs under `~/.local/opt/chatgpt-desktop-linux`, creates wrappers under

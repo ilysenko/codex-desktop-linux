@@ -11,7 +11,7 @@ The build flow: `install.sh` downloads/extracts `ChatGPT.dmg`, patches the
 extracted app through core and enabled Linux feature descriptors, rebuilds
 native modules, downloads Linux Electron, stages bundled resources, writes
 `chatgpt-app/start.sh`, and lets package builders produce native artifacts or
-AppImage. Native packages also include `codex-update-manager` and an
+AppImage. Native packages also include `chatgpt-update-manager` and an
 update-builder bundle.
 
 ## Maintainer Rules
@@ -44,8 +44,8 @@ update-builder bundle.
 Use source files, not generated artifacts. Main routing:
 
 - Launcher/webview: `launcher/start.sh.template`, `launcher/webview-server.py`.
-- Packaged runtimes: `packaging/linux/codex-packaged-runtime.sh`,
-  `packaging/appimage/codex-appimage-runtime.sh`.
+- Packaged runtimes: `packaging/linux/chatgpt-packaged-runtime.sh`,
+  `packaging/appimage/chatgpt-appimage-runtime.sh`.
 - Build pipeline: `scripts/lib/*.sh`.
 - Core patches: descriptors in `scripts/patches/core/**/patch.js`,
   implementations in `scripts/patches/impl/`, helpers in `scripts/patches/lib/`.
@@ -176,8 +176,8 @@ bash -n scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh script
 node --test scripts/patch-linux-window-ui.test.js
 node --test linux-features/*/test.js
 bash tests/scripts_smoke.sh
-cargo check -p codex-update-manager
-cargo test -p codex-update-manager
+cargo check -p chatgpt-update-manager
+cargo test -p chatgpt-update-manager
 ```
 
 Build the affected package formats when package payloads or shared package

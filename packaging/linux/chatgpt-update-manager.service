@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/codex-update-manager daemon
+ExecStart=/usr/bin/chatgpt-update-manager daemon
 Restart=on-failure
 RestartSec=10
 

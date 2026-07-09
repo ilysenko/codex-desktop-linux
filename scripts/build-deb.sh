@@ -8,19 +8,19 @@ APP_DIR="${APP_DIR_OVERRIDE:-$REPO_DIR/chatgpt-app}"
 PKG_ROOT="${PKG_ROOT_OVERRIDE:-$REPO_DIR/dist/deb-root}"
 DIST_DIR="${DIST_DIR_OVERRIDE:-$REPO_DIR/dist}"
 CONTROL_TEMPLATE="$REPO_DIR/packaging/linux/control"
-DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
-SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.service"
-USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh"
-ICON_SOURCE="$REPO_DIR/assets/codex-linux.png"
-PRERM_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.prerm"
-POSTRM_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.postrm"
-POSTINST_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.postinst"
-PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
+DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-desktop.desktop"
+SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-update-manager.service"
+USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-update-manager-user-service.sh"
+ICON_SOURCE="$REPO_DIR/assets/chatgpt-linux.png"
+PRERM_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-update-manager.prerm"
+POSTRM_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-update-manager.postrm"
+POSTINST_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-update-manager.postinst"
+PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh"
 
 PACKAGE_NAME="${PACKAGE_NAME:-chatgpt-desktop}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
 MAX_BUILD_THREADS="${MAX_BUILD_THREADS:-0}"
-UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-update-manager}"
+UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/chatgpt-update-manager}"
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
 PACKAGED_RUNTIME_SOURCE="${PACKAGED_RUNTIME_SOURCE:-$PACKAGED_RUNTIME_TEMPLATE}"
 if [ -f "$APP_DIR/.codex-linux/$PACKAGE_NAME.png" ]; then
@@ -61,7 +61,7 @@ main() {
         ensure_file_exists "$POSTINST_TEMPLATE" "Debian postinst template"
         ensure_file_exists "$PACKAGED_RUNTIME_SOURCE" "packaged launcher runtime helper"
     else
-        info "Building package without codex-update-manager (PACKAGE_WITH_UPDATER=0)"
+        info "Building package without chatgpt-update-manager (PACKAGE_WITH_UPDATER=0)"
     fi
     command -v dpkg-deb >/dev/null 2>&1 || error "dpkg-deb is required"
     command -v dpkg >/dev/null 2>&1 || error "dpkg is required"
@@ -85,10 +85,19 @@ main() {
     normalize_package_payload_permissions "$PKG_ROOT"
     restore_linux_feature_payload_permissions "$PKG_ROOT"
 
+    local legacy_conflicts=""
+    local legacy_replaces=""
+    if [ "$PACKAGE_NAME" = "chatgpt-desktop" ]; then
+        legacy_conflicts="Conflicts: codex-desktop"
+        legacy_replaces="Replaces: codex-desktop"
+    fi
+
     sed \
         -e "s/__PACKAGE_NAME__/$PACKAGE_NAME/g" \
         -e "s/__VERSION__/$PACKAGE_VERSION/g" \
         -e "s/__ARCH__/$arch/g" \
+        -e "s/__LEGACY_CONFLICTS__/$legacy_conflicts/g" \
+        -e "s/__LEGACY_REPLACES__/$legacy_replaces/g" \
         "$CONTROL_TEMPLATE" > "$PKG_ROOT/DEBIAN/control"
     if ! package_with_updater_enabled; then
         sed -i \
@@ -98,15 +107,12 @@ main() {
             -e '/use the bundled managed Node.js runtime plus the local packaging toolchain/d' \
             "$PKG_ROOT/DEBIAN/control"
         cat >> "$PKG_ROOT/DEBIAN/control" <<'CONTROL'
- This package was built without codex-update-manager. Update manually from a trusted checkout.
+ This package was built without chatgpt-update-manager. Update manually from a trusted checkout.
 CONTROL
     fi
     chmod 0644 "$PKG_ROOT/DEBIAN/control"
     if package_with_updater_enabled; then
-        sed \
-            -e "s|/opt/codex-desktop|/opt/$PACKAGE_NAME|g" \
-            -e "s|codex_desktop_repair_system_package_shadow_entries codex-desktop|codex_desktop_repair_system_package_shadow_entries $PACKAGE_NAME|g" \
-            "$POSTINST_TEMPLATE" > "$PKG_ROOT/DEBIAN/postinst"
+        sed -e "s/__PACKAGE_NAME__/$PACKAGE_NAME/g" "$POSTINST_TEMPLATE" > "$PKG_ROOT/DEBIAN/postinst"
         cp "$PRERM_TEMPLATE" "$PKG_ROOT/DEBIAN/prerm"
         cp "$POSTRM_TEMPLATE" "$PKG_ROOT/DEBIAN/postrm"
         chmod 0755 "$PKG_ROOT/DEBIAN/postinst" "$PKG_ROOT/DEBIAN/prerm" "$PKG_ROOT/DEBIAN/postrm"

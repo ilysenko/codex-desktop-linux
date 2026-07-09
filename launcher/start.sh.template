@@ -36,7 +36,7 @@ APP_PID_FILE="$APP_STATE_DIR/app.pid"
 WEBVIEW_PID_FILE="$APP_STATE_DIR/webview.pid"
 LAUNCH_ACTION_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$APP_STATE_DIR}/$CODEX_LINUX_APP_ID"
 LAUNCH_ACTION_SOCKET="$LAUNCH_ACTION_RUNTIME_DIR/launch-action.sock"
-PACKAGED_RUNTIME_HELPER="$SCRIPT_DIR/.codex-linux/codex-packaged-runtime.sh"
+PACKAGED_RUNTIME_HELPER="$SCRIPT_DIR/.codex-linux/chatgpt-packaged-runtime.sh"
 COLD_START_HOOK_DIR="$SCRIPT_DIR/.codex-linux/cold-start.d"
 FEATURE_ENV_DIR="$SCRIPT_DIR/.codex-linux/env.d"
 FEATURE_PRELAUNCH_HOOK_DIR="$SCRIPT_DIR/.codex-linux/prelaunch.d"
@@ -47,7 +47,7 @@ MANAGED_NODE_BIN_DIR="$SCRIPT_DIR/resources/node-runtime/bin"
 APP_NOTIFICATION_ICON_NAME="$CODEX_LINUX_APP_ID"
 APP_NOTIFICATION_ICON_BUNDLE="$SCRIPT_DIR/.codex-linux/$APP_NOTIFICATION_ICON_NAME.png"
 APP_NOTIFICATION_ICON_SYSTEM="/usr/share/icons/hicolor/256x256/apps/$APP_NOTIFICATION_ICON_NAME.png"
-APP_NOTIFICATION_ICON_REPO="$SCRIPT_DIR/../assets/codex.png"
+APP_NOTIFICATION_ICON_REPO="$SCRIPT_DIR/../assets/chatgpt.png"
 MULTI_LAUNCH_REQUESTED=0
 MULTI_LAUNCH_ACTIVE=0
 CODEX_LINUX_INSTANCE_ID=""
@@ -231,7 +231,8 @@ Options:
   --wayland                   Force native Wayland
   --diagnose-scaling          Print display/session scaling diagnostics and exit
 
-Default launch keeps Electron GPU enabled and lets Electron choose the platform.
+Default launch keeps Electron GPU enabled and prefers XWayland when available so
+movable overlay windows, including the pet, can follow the pointer correctly.
 Extra flags are passed directly to Electron.
 Persistent launch flags: $USER_ELECTRON_FLAGS_FILE
 
@@ -1555,10 +1556,10 @@ resolve_update_manager_path() {
 
     local candidate
     for candidate in \
-        "$SCRIPT_DIR/../target/release/codex-update-manager" \
-        "$SCRIPT_DIR/codex-update-manager" \
-        "/usr/bin/codex-update-manager" \
-        "/usr/local/bin/codex-update-manager"
+        "$SCRIPT_DIR/../target/release/chatgpt-update-manager" \
+        "$SCRIPT_DIR/chatgpt-update-manager" \
+        "/usr/bin/chatgpt-update-manager" \
+        "/usr/local/bin/chatgpt-update-manager"
     do
         if [ -x "$candidate" ]; then
             CODEX_UPDATE_MANAGER_PATH="$(canonical_path "$candidate")"
@@ -1567,8 +1568,8 @@ resolve_update_manager_path() {
         fi
     done
 
-    if command -v codex-update-manager >/dev/null 2>&1; then
-        CODEX_UPDATE_MANAGER_PATH="$(command -v codex-update-manager)"
+    if command -v chatgpt-update-manager >/dev/null 2>&1; then
+        CODEX_UPDATE_MANAGER_PATH="$(command -v chatgpt-update-manager)"
         export CODEX_UPDATE_MANAGER_PATH
         return 0
     fi
@@ -2685,6 +2686,13 @@ apply_electron_rendering_profile() {
                 [ "$ELECTRON_OZONE_SWITCH_IN_ARGS" -eq 0 ] &&
                 gnome_wayland_multi_monitor_detected; then
                 ELECTRON_RENDERING_MODE="gnome-wayland-multi-monitor"
+            elif [ "$ELECTRON_PLATFORM_EXPLICIT" -eq 0 ] &&
+                [ "$ELECTRON_OZONE_SWITCH_IN_ARGS" -eq 0 ] &&
+                [ -z "$ELECTRON_OZONE_PLATFORM" ] &&
+                [ "$ELECTRON_OZONE_HINT" = "auto" ] &&
+                [ "${XDG_SESSION_TYPE:-}" = "wayland" ] &&
+                [ -n "${DISPLAY:-}" ]; then
+                ELECTRON_RENDERING_MODE="wayland-xwayland"
             else
                 ELECTRON_RENDERING_MODE="default"
             fi
@@ -2705,6 +2713,13 @@ apply_electron_rendering_profile() {
         ELECTRON_OZONE_PLATFORM="x11"
         ELECTRON_OZONE_HINT=""
         echo "Detected GNOME Wayland multi-monitor session; forcing --ozone-platform=x11 for stable window scale/maximize behavior. Set CODEX_OZONE_PLATFORM=wayland or CODEX_LINUX_RENDERING_MODE=default to opt out."
+        return 0
+    fi
+
+    if [ "$ELECTRON_RENDERING_MODE" = "wayland-xwayland" ]; then
+        ELECTRON_OZONE_PLATFORM="x11"
+        ELECTRON_OZONE_HINT=""
+        echo "Detected Wayland with XWayland available; using --ozone-platform=x11 so popups and draggable pet windows can use global screen coordinates. Set CODEX_OZONE_PLATFORM=wayland or CODEX_LINUX_RENDERING_MODE=default to opt out."
         return 0
     fi
 
@@ -2773,6 +2788,8 @@ should_disable_dev_shm_usage() {
 }
 
 should_disable_gpu_compositing() {
+    local ozone_platform
+
     if [ "$ELECTRON_GPU_COMPOSITING_SWITCH_PROVIDED" -eq 1 ]; then
         return 0
     fi
@@ -2787,7 +2804,9 @@ should_disable_gpu_compositing() {
         echo "Invalid CODEX_ELECTRON_DISABLE_GPU_COMPOSITING='${CODEX_ELECTRON_DISABLE_GPU_COMPOSITING:-}'; using rendering profile default" >&2
     fi
 
+    ozone_platform="$(effective_electron_ozone_platform || true)"
     if [ "${XDG_SESSION_TYPE:-}" = "wayland" ] &&
+        [ "$ozone_platform" != "x11" ] &&
         [ "$ELECTRON_RENDERING_MODE" != "wayland-gpu" ] &&
         [ "$ELECTRON_RENDERING_MODE" != "wslg" ]; then
         echo "Detected Wayland session; adding --disable-gpu-compositing for side-panel rendering stability. Set CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 to opt out."

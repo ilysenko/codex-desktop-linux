@@ -90,10 +90,12 @@ jobs:
           test -n "$deb_file"
           dpkg-deb -I "$deb_file"
           dpkg-deb -c "$deb_file" | tee /tmp/deb-contents.txt >/dev/null
-          grep -q './usr/bin/codex-update-manager' /tmp/deb-contents.txt
-          grep -q './usr/lib/systemd/user/codex-update-manager.service' /tmp/deb-contents.txt
+          grep -q './usr/bin/chatgpt-desktop' /tmp/deb-contents.txt
+          grep -q './usr/bin/chatgpt-update-manager' /tmp/deb-contents.txt
+          grep -q './usr/lib/systemd/user/chatgpt-update-manager.service' /tmp/deb-contents.txt
+          grep -q './usr/share/applications/chatgpt-desktop.desktop' /tmp/deb-contents.txt
           grep -q './opt/chatgpt-desktop/update-builder/install.sh' /tmp/deb-contents.txt
-          grep -q './opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/deb-contents.txt
+          grep -q './opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh' /tmp/deb-contents.txt
           {
             echo "## Debian Package Validation"
             echo ""
@@ -258,10 +260,12 @@ jobs:
           test -n "$rpm_file"
           rpm -qip "$rpm_file"
           rpm -qlp "$rpm_file" | tee /tmp/rpm-contents.txt >/dev/null
-          grep -q '/usr/bin/codex-update-manager' /tmp/rpm-contents.txt
-          grep -q '/usr/lib/systemd/user/codex-update-manager.service' /tmp/rpm-contents.txt
+          grep -q '/usr/bin/chatgpt-desktop' /tmp/rpm-contents.txt
+          grep -q '/usr/bin/chatgpt-update-manager' /tmp/rpm-contents.txt
+          grep -q '/usr/lib/systemd/user/chatgpt-update-manager.service' /tmp/rpm-contents.txt
+          grep -q '/usr/share/applications/chatgpt-desktop.desktop' /tmp/rpm-contents.txt
           grep -q '/opt/chatgpt-desktop/update-builder/install.sh' /tmp/rpm-contents.txt
-          grep -q '/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/rpm-contents.txt
+          grep -q '/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh' /tmp/rpm-contents.txt
           {
             echo "## RPM Package Validation"
             echo ""
@@ -294,17 +298,19 @@ jobs:
                 rm -rf chatgpt-app dist
                 tests/fixtures/create-packaged-app-fixture.sh chatgpt-app
 
-                cargo build --release -p codex-update-manager
+                cargo build --release -p chatgpt-update-manager
                 PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-pacman.sh
 
                 pkg_file="$(find dist -maxdepth 1 -name "chatgpt-desktop-*.pkg.tar.*" -print -quit)"
                 test -n "$pkg_file"
                 pacman -Qip "$pkg_file"
                 pacman -Qlp "$pkg_file" | tee /tmp/pacman-contents.txt >/dev/null
-                grep -q "usr/bin/codex-update-manager" /tmp/pacman-contents.txt
-                grep -q "usr/lib/systemd/user/codex-update-manager.service" /tmp/pacman-contents.txt
+                grep -q "usr/bin/chatgpt-desktop" /tmp/pacman-contents.txt
+                grep -q "usr/bin/chatgpt-update-manager" /tmp/pacman-contents.txt
+                grep -q "usr/lib/systemd/user/chatgpt-update-manager.service" /tmp/pacman-contents.txt
+                grep -q "usr/share/applications/chatgpt-desktop.desktop" /tmp/pacman-contents.txt
                 grep -q "opt/chatgpt-desktop/update-builder/install.sh" /tmp/pacman-contents.txt
-                grep -q "opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" /tmp/pacman-contents.txt
+                grep -q "opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh" /tmp/pacman-contents.txt
                 printf "%s\n" "$(basename "$pkg_file")" > /tmp/pacman-package-name.txt
               '"'"'
               cp /tmp/pacman-package-name.txt /work/.pacman-package-name.txt

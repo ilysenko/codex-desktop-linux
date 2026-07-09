@@ -536,7 +536,7 @@ installed_package_version() {
 }
 
 updater_install_summary() {
-    if [ -x /usr/bin/codex-update-manager ] || [ -d "/opt/$PACKAGE_NAME/update-builder" ]; then
+    if [ -x /usr/bin/chatgpt-update-manager ] || [ -d "/opt/$PACKAGE_NAME/update-builder" ]; then
         printf 'updater artifacts detected'
     else
         printf 'not detected'
@@ -996,14 +996,14 @@ run_feature_cleanup() {
 
 print_package_mode_guidance() {
     if package_with_updater_enabled; then
-        info "Default native package mode includes codex-update-manager."
+        info "Default native package mode includes chatgpt-update-manager."
         info "Next rebuild/reinstall command: make install-native"
     else
         info "Manual-update native package mode selected (PACKAGE_WITH_UPDATER=0)."
         info "No-updater mode takes effect only after rebuilding and reinstalling the native package."
         info "Next rebuild/reinstall command: PACKAGE_WITH_UPDATER=0 make install-native"
     fi
-    info "AppImage builds never include codex-update-manager. Nix feature choices stay declarative in flake outputs, not linux-features/features.json."
+    info "AppImage builds never include chatgpt-update-manager. Nix feature choices stay declarative in flake outputs, not linux-features/features.json."
 }
 
 run_repo_command() {
@@ -1218,7 +1218,7 @@ prompt_for_feature_changes() {
 prompt_package_updater_mode() {
     local answer
     if package_with_updater_enabled; then
-        prompt_read answer "[setup] Keep codex-update-manager in the next native package? [Y/n]: " || true
+        prompt_read answer "[setup] Keep chatgpt-update-manager in the next native package? [Y/n]: " || true
         case "$answer" in
             n|N|no|No|NO)
                 PACKAGE_WITH_UPDATER=0

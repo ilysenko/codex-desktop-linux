@@ -1,6 +1,6 @@
 # X11/EWMH Computer Use Linux Feature
 
-This optional Linux Feature stages the standalone `codex-computer-use-x11` MCP plugin into Codex Desktop Linux. It stays disabled by default and is enabled only when listed in `linux-features/features.json`.
+This optional Linux Feature stages the standalone `codex-computer-use-x11` MCP plugin into ChatGPT Desktop Linux. It stays disabled by default and is enabled only when listed in `linux-features/features.json`.
 
 ## Enable
 

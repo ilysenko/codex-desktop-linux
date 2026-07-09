@@ -147,7 +147,7 @@ test_extract_webview_replaces_linux_icon_assets() {
     local workspace="$TMP_DIR/webview-icon"
     local install_dir="$workspace/install"
     local work_dir="$workspace/work"
-    local icon_source="$workspace/codex-linux.png"
+    local icon_source="$workspace/chatgpt-linux.png"
     local assets_dir="$install_dir/content/webview/assets"
     local output_log="$workspace/output.log"
 
@@ -165,7 +165,7 @@ test_extract_webview_replaces_linux_icon_assets() {
         CODEX_LINUX_ICON_SOURCE="$icon_source"
         # shellcheck disable=SC1091
         source "$REPO_DIR/scripts/lib/webview-install.sh"
-        extract_webview "$workspace/Codex.app"
+        extract_webview "$workspace/ChatGPT.app"
     ) >"$output_log" 2>&1
 
     assert_file_exists "$assets_dir/app-main.png"
@@ -251,8 +251,8 @@ test_stage_common_package_files_resolves_tray_icon_deterministically() {
         export PACKAGE_NAME="chatgpt-desktop"
         export PACKAGE_WITH_UPDATER=0
         export ICON_SOURCE="$icon_source"
-        export DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
-        export PACKAGED_RUNTIME_SOURCE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
+        export DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-desktop.desktop"
+        export PACKAGED_RUNTIME_SOURCE="$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh"
         # shellcheck disable=SC1091
         source "$REPO_DIR/scripts/lib/package-common.sh"
         stage_common_package_files "$root"
@@ -293,8 +293,8 @@ test_stage_common_package_files_tray_icon_fallbacks_when_ambiguous_or_missing() 
             export PACKAGE_NAME="chatgpt-desktop"
             export PACKAGE_WITH_UPDATER=0
             export ICON_SOURCE="$icon_source"
-            export DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
-            export PACKAGED_RUNTIME_SOURCE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
+            export DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-desktop.desktop"
+            export PACKAGED_RUNTIME_SOURCE="$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh"
             # shellcheck disable=SC1091
             source "$REPO_DIR/scripts/lib/package-common.sh"
             stage_common_package_files "$root"
@@ -316,7 +316,7 @@ test_deb_builder_smoke() {
     local app_dir="$workspace/app"
     local dist_dir="$workspace/dist"
     local pkg_root="$workspace/deb-root"
-    local updater_bin="$workspace/codex-update-manager"
+    local updater_bin="$workspace/chatgpt-update-manager"
     local capture_dir="$workspace/capture"
 
     mkdir -p "$workspace" "$dist_dir" "$capture_dir"
@@ -359,6 +359,8 @@ SCRIPT
     bash "$REPO_DIR/scripts/build-deb.sh"
 
     assert_file_exists "$dist_dir/chatgpt-desktop_2026.03.24.120000+deadbeef_amd64.deb"
+    assert_contains "$pkg_root/DEBIAN/control" "Conflicts: codex-desktop"
+    assert_contains "$pkg_root/DEBIAN/control" "Replaces: codex-desktop"
     [ "$(cat "$capture_dir/dpkg-deb-threads")" = "6" ] \
         || fail "Expected MAX_BUILD_THREADS to reach dpkg-deb"
     assert_file_exists "$pkg_root/DEBIAN/postinst"
@@ -369,6 +371,7 @@ SCRIPT
     assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Name=Check for Updates"
     assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Name=Install Ready Update"
     assert_file_exists "$pkg_root/DEBIAN/postrm"
+    assert_file_exists "$pkg_root/usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy"
     assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/package-common.sh"
     assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/patch-chrome-plugin.js"
     assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/scripts/lib/node-runtime.sh"
@@ -403,12 +406,13 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/updater/Cargo.toml"
     assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/plugins/openai-bundled/plugins/computer-use/.mcp.json"
     assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/plugins/openai-bundled/plugins/read-aloud/.mcp.json"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/packaging/linux/com.github.erickrouss.chatgpt-desktop-linux.update.policy"
     assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/.codex-linux/source-info.json"
-    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh"
-    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "is-enabled codex-update-manager.service"
-    assert_not_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "enable --now codex-update-manager.service"
-    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
-    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh"
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh" "is-enabled chatgpt-update-manager.service"
+    assert_not_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh" "enable --now chatgpt-update-manager.service"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/chatgpt-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/update-builder/packaging/linux/chatgpt-desktop-entry-doctor.sh"
     assert_file_exists "$pkg_root/opt/chatgpt-desktop/resources/node-runtime/bin/node"
 }
 
@@ -444,11 +448,11 @@ SCRIPT
 set -euo pipefail
 target_dir="${CARGO_TARGET_DIR:-target}"
 mkdir -p "$target_dir/release"
-cat > "$target_dir/release/codex-update-manager" <<'BIN'
+cat > "$target_dir/release/chatgpt-update-manager" <<'BIN'
 #!/usr/bin/env bash
 echo rebuilt updater
 BIN
-chmod +x "$target_dir/release/codex-update-manager"
+chmod +x "$target_dir/release/chatgpt-update-manager"
 SCRIPT
     chmod +x "$bin_dir/dpkg" "$bin_dir/dpkg-deb" "$bin_dir/cargo"
 
@@ -457,13 +461,13 @@ SCRIPT
     PKG_ROOT_OVERRIDE="$pkg_root" \
     DIST_DIR_OVERRIDE="$dist_dir" \
     CARGO_TARGET_DIR="$cargo_target_dir" \
-    UPDATER_BINARY_SOURCE="$workspace/codex-update-manager (deleted)" \
+    UPDATER_BINARY_SOURCE="$workspace/chatgpt-update-manager (deleted)" \
     PACKAGE_VERSION="2026.03.24.120000+rebuilt" \
     bash "$REPO_DIR/scripts/build-deb.sh"
 
     assert_file_exists "$dist_dir/chatgpt-desktop_2026.03.24.120000+rebuilt_amd64.deb"
-    assert_file_exists "$pkg_root/usr/bin/codex-update-manager"
-    assert_contains "$pkg_root/usr/bin/codex-update-manager" "rebuilt updater"
+    assert_file_exists "$pkg_root/usr/bin/chatgpt-update-manager"
+    assert_contains "$pkg_root/usr/bin/chatgpt-update-manager" "rebuilt updater"
 }
 
 test_update_builder_preserves_enabled_linux_features_config() {
@@ -515,7 +519,7 @@ JSON
     (
         export APP_DIR="$app_dir"
         export PACKAGE_NAME="chatgpt-desktop"
-        export UPDATER_SERVICE_SOURCE="$REPO_DIR/packaging/linux/codex-update-manager.service"
+        export UPDATER_SERVICE_SOURCE="$REPO_DIR/packaging/linux/chatgpt-update-manager.service"
         export CODEX_LINUX_FEATURES_ROOT="$features_root"
         export CODEX_LINUX_FEATURES_CONFIG="$feature_config"
         export CODEX_LINUX_SOURCE_REMOTE="https://builder:secret-token@example.com/org/repo.git"
@@ -536,7 +540,7 @@ JSON
     assert_not_contains "$staged_config" "localComment"
     assert_not_contains "$staged_config" "disabled-feature"
     assert_contains "$update_builder_manifest" "record-replay-linux/Cargo.toml"
-    assert_contains "$update_builder_manifest" "assets/codex-linux.png"
+    assert_contains "$update_builder_manifest" "assets/chatgpt-linux.png"
     assert_not_contains "$update_builder_manifest" "^node-runtime/"
 
     node - "$staged_config" <<'NODE' || fail "Expected staged Linux features config to be sanitized"
@@ -583,7 +587,7 @@ test_update_builder_source_info_survives_without_git_checkout() {
     mkdir -p "$update_builder/.codex-linux" "$update_builder/updater"
     cat > "$update_builder/updater/Cargo.toml" <<'TOML'
 [package]
-name = "codex-update-manager"
+name = "chatgpt-update-manager"
 version = "0.8.1"
 TOML
     cat > "$source_info" <<'JSON'
@@ -675,7 +679,7 @@ test_deb_builder_respects_package_identity() {
     local app_dir="$workspace/app"
     local dist_dir="$workspace/dist"
     local pkg_root="$workspace/deb-root"
-    local updater_bin="$workspace/codex-update-manager"
+    local updater_bin="$workspace/chatgpt-update-manager"
 
     mkdir -p "$workspace" "$dist_dir"
     make_stub_bin_dir "$bin_dir"
@@ -709,22 +713,24 @@ SCRIPT
     PKG_ROOT_OVERRIDE="$pkg_root" \
     DIST_DIR_OVERRIDE="$dist_dir" \
     UPDATER_BINARY_SOURCE="$updater_bin" \
-    PACKAGE_NAME="codex-cua-lab" \
-    PACKAGE_DISPLAY_NAME="Codex CUA Lab" \
+    PACKAGE_NAME="chatgpt-cua-lab" \
+    PACKAGE_DISPLAY_NAME="ChatGPT CUA Lab" \
     PACKAGE_VERSION="2026.03.24.120000+deadbeef" \
     bash "$REPO_DIR/scripts/build-deb.sh"
 
-    assert_file_exists "$dist_dir/codex-cua-lab_2026.03.24.120000+deadbeef_amd64.deb"
-    assert_file_exists "$pkg_root/usr/bin/codex-cua-lab"
-    assert_file_exists "$pkg_root/opt/codex-cua-lab/start.sh"
-    assert_contains "$pkg_root/DEBIAN/control" "Package: codex-cua-lab"
-    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "Name=Codex CUA Lab"
-    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "CHROME_DESKTOP=codex-cua-lab.desktop"
-    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "/usr/bin/codex-cua-lab %u"
-    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
-    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "StartupWMClass=codex-cua-lab"
-    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "X-GNOME-WMClass=codex-cua-lab"
-    assert_contains "$pkg_root/opt/codex-cua-lab/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-cua-lab.desktop"'
+    assert_file_exists "$dist_dir/chatgpt-cua-lab_2026.03.24.120000+deadbeef_amd64.deb"
+    assert_file_exists "$pkg_root/usr/bin/chatgpt-cua-lab"
+    assert_file_exists "$pkg_root/opt/chatgpt-cua-lab/start.sh"
+    assert_contains "$pkg_root/DEBIAN/control" "Package: chatgpt-cua-lab"
+    assert_not_contains "$pkg_root/DEBIAN/control" "Conflicts: codex-desktop"
+    assert_not_contains "$pkg_root/DEBIAN/control" "Replaces: codex-desktop"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-cua-lab.desktop" "Name=ChatGPT CUA Lab"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-cua-lab.desktop" "CHROME_DESKTOP=chatgpt-cua-lab.desktop"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-cua-lab.desktop" "/usr/bin/chatgpt-cua-lab %u"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-cua-lab.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-cua-lab.desktop" "StartupWMClass=chatgpt-cua-lab"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-cua-lab.desktop" "X-GNOME-WMClass=chatgpt-cua-lab"
+    assert_contains "$pkg_root/opt/chatgpt-cua-lab/.codex-linux/chatgpt-packaged-runtime.sh" 'CHROME_DESKTOP="chatgpt-cua-lab.desktop"'
 }
 
 test_deb_builder_without_updater() {
@@ -772,30 +778,36 @@ SCRIPT
     assert_file_exists "$pkg_root/usr/bin/chatgpt-desktop"
     assert_file_exists "$pkg_root/DEBIAN/postinst"
     assert_file_exists "$pkg_root/DEBIAN/prerm"
-    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh"
     assert_file_exists "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
-    assert_file_not_exists "$pkg_root/usr/bin/codex-update-manager"
-    assert_file_not_exists "$pkg_root/usr/lib/systemd/user/codex-update-manager.service"
-    assert_file_not_exists "$pkg_root/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy"
+    assert_file_not_exists "$pkg_root/usr/bin/chatgpt-update-manager"
+    assert_file_not_exists "$pkg_root/usr/lib/systemd/user/chatgpt-update-manager.service"
+    assert_file_not_exists "$pkg_root/usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy"
     assert_file_not_exists "$pkg_root/opt/chatgpt-desktop/update-builder"
     assert_file_not_exists "$pkg_root/DEBIAN/postrm"
     assert_not_contains "$pkg_root/DEBIAN/control" "pkexec"
     assert_not_contains "$pkg_root/DEBIAN/control" "polkit"
     assert_not_contains "$pkg_root/DEBIAN/control" "Local auto-updates"
-    assert_contains "$pkg_root/DEBIAN/control" "without codex-update-manager"
+    assert_contains "$pkg_root/DEBIAN/control" "without chatgpt-update-manager"
+    assert_contains "$pkg_root/usr/bin/chatgpt-desktop" 'exec /opt/chatgpt-desktop/start.sh "$@"'
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Name=ChatGPT Desktop"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Exec=env BAMF_DESKTOP_FILE_HINT=/usr/share/applications/chatgpt-desktop.desktop CHROME_DESKTOP=chatgpt-desktop.desktop /usr/bin/chatgpt-desktop %u"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Icon=chatgpt-desktop"
+    assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "StartupWMClass=chatgpt-desktop"
     assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Actions=new-window;"
     assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Desktop Action new-window"
     assert_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/chatgpt-desktop --new-instance"
     assert_not_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "Desktop Action CheckForUpdates"
     assert_not_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "InstallReadyUpdate"
-    assert_not_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "codex-update-manager"
-    assert_not_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "systemctl"
-    assert_not_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "codex-update-manager"
-    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="chatgpt-desktop.desktop"'
-    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-desktop-entry-doctor.sh" "codex_desktop_repair_system_package_shadow_entries"
+    assert_not_contains "$pkg_root/usr/share/applications/chatgpt-desktop.desktop" "chatgpt-update-manager"
+    assert_not_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh" "systemctl"
+    assert_not_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh" "chatgpt-update-manager"
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh" 'CHROME_DESKTOP="chatgpt-desktop.desktop"'
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/chatgpt-desktop-entry-doctor.sh" "codex_desktop_repair_system_package_shadow_entries"
     assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_update_manager_service"
-    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "stop \"\$SERVICE_NAME\""
-    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "disable \"\$SERVICE_NAME\""
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "chatgpt-update-manager.service codex-update-manager.service"
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "stop \"\$service_name\""
+    assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "disable \"\$service_name\""
     assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "daemon-reload"
     assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_user_enablement_links"
     assert_contains "$pkg_root/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "default.target.wants"
@@ -812,10 +824,12 @@ test_no_updater_cleanup_helper_removes_inactive_user_enablement() {
     local bin_dir="$workspace/bin"
     local helper="$workspace/codex-no-updater-transition-cleanup.sh"
     local fake_home="$workspace/home/codexuser"
-    local service_link="$fake_home/.config/systemd/user/default.target.wants/codex-update-manager.service"
+    local service_link="$fake_home/.config/systemd/user/default.target.wants/chatgpt-update-manager.service"
+    local legacy_service_link="$fake_home/.config/systemd/user/default.target.wants/codex-update-manager.service"
 
     mkdir -p "$bin_dir" "$(dirname "$service_link")"
-    ln -s /usr/lib/systemd/user/codex-update-manager.service "$service_link"
+    ln -s /usr/lib/systemd/user/chatgpt-update-manager.service "$service_link"
+    ln -s /usr/lib/systemd/user/codex-update-manager.service "$legacy_service_link"
 
     render_no_updater_transition_cleanup_helper "$helper"
 
@@ -846,6 +860,7 @@ SCRIPT
         _ "$helper"
 
     assert_file_not_exists "$service_link"
+    assert_file_not_exists "$legacy_service_link"
 }
 
 test_update_manager_service_helper_respects_disabled_service() {
@@ -853,8 +868,8 @@ test_update_manager_service_helper_respects_disabled_service() {
     local helper_log="$TMP_DIR/updater-service-helper.log"
     local helper_state=""
 
-    # shellcheck source=packaging/linux/codex-update-manager-user-service.sh
-    . "$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh"
+    # shellcheck source=packaging/linux/chatgpt-update-manager-user-service.sh
+    . "$REPO_DIR/packaging/linux/chatgpt-update-manager-user-service.sh"
 
     codex_run_systemctl_user() {
         local user_name="$1"
@@ -910,7 +925,7 @@ test_rpm_builder_smoke() {
     local bin_dir="$workspace/bin"
     local app_dir="$workspace/app"
     local dist_dir="$workspace/dist"
-    local updater_bin="$workspace/codex-update-manager"
+    local updater_bin="$workspace/chatgpt-update-manager"
     local capture_dir="$workspace/capture"
 
     mkdir -p "$workspace" "$dist_dir" "$capture_dir"
@@ -940,7 +955,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$rpmdir" ] || exit 1
 if [ -n "${CAPTURE_DIR:-}" ]; then
-    cp "$spec_file" "$CAPTURE_DIR/codex-desktop.spec"
+    cp "$spec_file" "$CAPTURE_DIR/chatgpt-desktop.spec"
     printf '%s\n' "$binary_payload" > "$CAPTURE_DIR/rpm-binary-payload"
     staging_dir="$(sed -n 's|cp -a "\(.*\)/\." "%{buildroot}/"|\1|p' "$spec_file" | head -n 1)"
     if [ -n "$staging_dir" ] && [ -d "$staging_dir" ]; then
@@ -966,8 +981,12 @@ SCRIPT
     bash "$REPO_DIR/scripts/build-rpm.sh"
 
     assert_file_exists "$dist_dir/chatgpt-desktop-2026.03.24.120000-deadbeef.x86_64.rpm"
+    assert_contains "$capture_dir/chatgpt-desktop.spec" "Conflicts:      codex-desktop"
+    assert_contains "$capture_dir/chatgpt-desktop.spec" "Obsoletes:      codex-desktop"
     [ "$(cat "$capture_dir/rpm-binary-payload")" = "" ] \
         || fail "Expected default RPM binary payload to use tool default"
+    assert_file_exists "$capture_dir/staging/usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy"
+    assert_contains "$capture_dir/chatgpt-desktop.spec" "/usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy"
 
     rm -rf "$dist_dir" "$capture_dir"
     mkdir -p "$dist_dir" "$capture_dir"
@@ -982,25 +1001,25 @@ SCRIPT
     bash "$REPO_DIR/scripts/build-rpm.sh"
 
     assert_file_exists "$dist_dir/chatgpt-desktop-2026.03.24.120000-manual.x86_64.rpm"
-    assert_file_exists "$capture_dir/codex-desktop.spec"
+    assert_file_exists "$capture_dir/chatgpt-desktop.spec"
     [ "$(cat "$capture_dir/rpm-binary-payload")" = "w19T8.zstdio" ] \
         || fail "Expected MAX_BUILD_THREADS to reach rpmbuild payload compression"
     assert_file_exists "$capture_dir/staging/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
-    assert_file_not_exists "$capture_dir/staging/usr/bin/codex-update-manager"
-    assert_file_not_exists "$capture_dir/staging/usr/lib/systemd/user/codex-update-manager.service"
-    assert_file_not_exists "$capture_dir/staging/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy"
+    assert_file_not_exists "$capture_dir/staging/usr/bin/chatgpt-update-manager"
+    assert_file_not_exists "$capture_dir/staging/usr/lib/systemd/user/chatgpt-update-manager.service"
+    assert_file_not_exists "$capture_dir/staging/usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy"
     assert_file_not_exists "$capture_dir/staging/opt/chatgpt-desktop/update-builder"
     assert_mode "$capture_dir/staging/opt/chatgpt-desktop" "755"
     assert_mode "$capture_dir/staging/opt/chatgpt-desktop/content/webview" "755"
     assert_mode "$capture_dir/staging/opt/chatgpt-desktop/start.sh" "755"
     assert_mode "$capture_dir/staging/opt/chatgpt-desktop/content/webview/index.html" "644"
-    assert_contains "$capture_dir/codex-desktop.spec" "%if 0"
-    assert_contains "$capture_dir/codex-desktop.spec" "codex_elf_suffix ()(64bit)"
-    assert_contains "$capture_dir/codex-desktop.spec" "libatk-bridge-2.0.so.0"
-    assert_contains "$capture_dir/codex-desktop.spec" "libgbm.so.1"
-    assert_not_contains "$capture_dir/codex-desktop.spec" "at-spi2-atk"
-    assert_not_contains "$capture_dir/codex-desktop.spec" "mesa-libgbm"
-    assert_contains "$capture_dir/codex-desktop.spec" "codex_no_updater_cleanup_update_manager_service"
+    assert_contains "$capture_dir/chatgpt-desktop.spec" "%if 0"
+    assert_contains "$capture_dir/chatgpt-desktop.spec" "codex_elf_suffix ()(64bit)"
+    assert_contains "$capture_dir/chatgpt-desktop.spec" "libatk-bridge-2.0.so.0"
+    assert_contains "$capture_dir/chatgpt-desktop.spec" "libgbm.so.1"
+    assert_not_contains "$capture_dir/chatgpt-desktop.spec" "at-spi2-atk"
+    assert_not_contains "$capture_dir/chatgpt-desktop.spec" "mesa-libgbm"
+    assert_contains "$capture_dir/chatgpt-desktop.spec" "codex_no_updater_cleanup_update_manager_service"
     assert_contains "$capture_dir/staging/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_user_enablement_links"
 
     rm -rf "$dist_dir" "$capture_dir"
@@ -1090,6 +1109,8 @@ SCRIPT
     assert_contains "$capture_dir/makepkg.conf" "COMPRESSZST=(zstd -c -z -T5 -)"
     assert_contains "$capture_dir/PKGBUILD" "pkgver=2026.03.24.120000+manual"
     assert_contains "$capture_dir/PKGBUILD" "pkgrel=1"
+    assert_contains "$capture_dir/PKGBUILD" "conflicts=('codex-desktop')"
+    assert_contains "$capture_dir/PKGBUILD" "replaces=('codex-desktop')"
     assert_contains "$capture_dir/PKGBUILD" "ampersand&tmp"
     assert_not_contains "$capture_dir/PKGBUILD" "__STAGING_DIR__"
     assert_contains "$capture_dir/PKGBUILD" "install=chatgpt-desktop.install"
@@ -1167,20 +1188,21 @@ SCRIPT
     assert_file_exists "$capture_dir/AppDir/usr/share/icons/hicolor/256x256/apps/chatgpt-desktop.png"
     assert_file_exists "$capture_dir/AppDir/opt/chatgpt-desktop/start.sh"
     assert_file_exists "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/chatgpt-desktop.png"
-    assert_file_exists "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_file_exists "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh"
     assert_file_exists "$capture_dir/AppDir/opt/chatgpt-desktop/resources/node-runtime/bin/node"
-    assert_file_not_exists "$capture_dir/AppDir/usr/bin/codex-update-manager"
-    assert_file_not_exists "$capture_dir/AppDir/usr/lib/systemd/user/codex-update-manager.service"
-    assert_file_not_exists "$capture_dir/AppDir/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy"
+    assert_file_not_exists "$capture_dir/AppDir/usr/bin/chatgpt-update-manager"
+    assert_file_not_exists "$capture_dir/AppDir/usr/lib/systemd/user/chatgpt-update-manager.service"
+    assert_file_not_exists "$capture_dir/AppDir/usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy"
     assert_file_not_exists "$capture_dir/AppDir/opt/chatgpt-desktop/update-builder"
+    assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "Name=ChatGPT Desktop"
     assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "Exec=AppRun %u"
     assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "Icon=chatgpt-desktop"
     assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "X-AppImage-Version=2026.03.24.120000+appimage"
     assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "Actions=new-window;"
     assert_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "[Desktop Action new-window]"
-    assert_not_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "codex-update-manager"
-    assert_contains "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="chatgpt-desktop.desktop"'
-    assert_not_contains "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh" "/usr/share/applications"
+    assert_not_contains "$capture_dir/AppDir/chatgpt-desktop.desktop" "chatgpt-update-manager"
+    assert_contains "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh" 'CHROME_DESKTOP="chatgpt-desktop.desktop"'
+    assert_not_contains "$capture_dir/AppDir/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh" "/usr/share/applications"
     [ "$(cat "$capture_dir/arch")" = "$arch" ] || fail "Expected appimagetool ARCH=$arch"
     [ "$(cat "$capture_dir/version")" = "2026.03.24.120000+appimage" ] || fail "Expected appimagetool VERSION override"
 }
@@ -1240,6 +1262,30 @@ test_make_install_reports_missing_native_packages() {
 
         assert_contains "$output_log" "$expected"
     done
+}
+
+test_make_install_accepts_legacy_pacman_package_replacement() {
+    info "Checking make install accepts the legacy pacman package replacement"
+    local workspace="$TMP_DIR/make-install-pacman-replacement"
+    local bin_dir="$workspace/bin"
+    local package_path="$workspace/chatgpt-desktop-test.pkg.tar.zst"
+    local sudo_log="$workspace/sudo.log"
+
+    mkdir -p "$bin_dir"
+    : > "$package_path"
+    cat > "$bin_dir/sudo" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '<%s>' "$@" > "$TEST_SUDO_LOG"
+SCRIPT
+    chmod +x "$bin_dir/sudo"
+
+    PATH="$bin_dir:$PATH" \
+    TEST_SUDO_LOG="$sudo_log" \
+    make -f "$REPO_DIR/Makefile" -C "$workspace" install \
+        NATIVE_PKG_FORMAT_CMD="printf pacman" \
+        PKG="$package_path" >/dev/null
+
+    assert_contains "$sudo_log" "<pacman><-U><--noconfirm><--ask><4><--><$package_path>"
 }
 
 test_make_run_app_reports_missing_launcher() {
@@ -1353,7 +1399,7 @@ test_installer_refreshes_stale_cached_dmg_metadata() {
     info "Checking installer DMG cache freshness metadata branches"
     local workspace="$TMP_DIR/dmg-cache-refresh"
     local bin_dir="$workspace/bin"
-    local url="https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg"
+    local url="https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg"
     local url_sha256
 
     url_sha256="$(printf '%s' "$url" | sha256sum | awk '{print $1}')"
@@ -1424,6 +1470,11 @@ WORK_DIR="$(mktemp -d)"
 source "$REPO_DIR/scripts/lib/install-helpers.sh"
 # shellcheck disable=SC1091
 source "$REPO_DIR/scripts/lib/dmg.sh"
+
+if [ -n "${TEST_INSTALL_ARGS:-}" ]; then
+    read -r -a install_args <<< "$TEST_INSTALL_ARGS"
+    parse_args "${install_args[@]}"
+fi
 
 dmg_path="$(get_dmg)"
 [ "$dmg_path" = "$TEST_SOURCE_DIR/ChatGPT.dmg" ]
@@ -1593,6 +1644,57 @@ EOF
     assert_not_contains "$secret_url/ChatGPT.dmg.metadata" "topsecret"
     assert_not_contains "$secret_url/ChatGPT.dmg.metadata" "fragsecret"
 
+    local classic_source="$workspace/classic-source"
+    mkdir -p "$classic_source"
+    if run_dmg_cache_case "$classic_source" "$classic_source/output.log" \
+        TEST_INSTALL_ARGS="--chatgpt-source classic" \
+        TEST_ETAG=classic-etag \
+        TEST_CONTENT_LENGTH=3 \
+        TEST_DOWNLOAD_CONTENT=classic
+    then
+        fail "Expected ChatGPT Classic source option to fail before downloading"
+    fi
+    assert_contains "$classic_source/output.log" "Upstream source: ChatGPT Classic"
+    assert_contains "$classic_source/output.log" "ChatGPT Classic is a native macOS app"
+    assert_not_contains "$classic_source/curl.log" "HEAD"
+    assert_not_contains "$classic_source/curl.log" "GET"
+
+    local new_alias="$workspace/new-alias"
+    mkdir -p "$new_alias"
+    run_dmg_cache_case "$new_alias" "$new_alias/output.log" \
+        TEST_INSTALL_ARGS="--new-chatgpt" \
+        TEST_ETAG=new-etag \
+        TEST_CONTENT_LENGTH=3 \
+        TEST_DOWNLOAD_CONTENT=new
+    assert_contains "$new_alias/output.log" "Upstream source: New ChatGPT"
+    assert_contains "$new_alias/ChatGPT.dmg.metadata" "url_sha256=$url_sha256"
+
+    local classic_alias="$workspace/classic-alias"
+    mkdir -p "$classic_alias"
+    if run_dmg_cache_case "$classic_alias" "$classic_alias/output.log" \
+        TEST_INSTALL_ARGS="--classic-chatgpt" \
+        TEST_ETAG=classic-alias-etag \
+        TEST_CONTENT_LENGTH=3 \
+        TEST_DOWNLOAD_CONTENT=classic
+    then
+        fail "Expected --classic-chatgpt to fail before downloading"
+    fi
+    assert_contains "$classic_alias/output.log" "Upstream source: ChatGPT Classic"
+    assert_contains "$classic_alias/output.log" "use --new-chatgpt"
+    assert_not_contains "$classic_alias/curl.log" "HEAD"
+    assert_not_contains "$classic_alias/curl.log" "GET"
+
+    local invalid_source="$workspace/invalid-source"
+    mkdir -p "$invalid_source"
+    if run_dmg_cache_case "$invalid_source" "$invalid_source/output.log" \
+        TEST_INSTALL_ARGS="--chatgpt-source beta"
+    then
+        fail "Expected invalid ChatGPT source to fail"
+    fi
+    assert_contains "$invalid_source/output.log" "Unknown ChatGPT DMG source: beta"
+    assert_not_contains "$invalid_source/curl.log" "HEAD"
+    assert_not_contains "$invalid_source/curl.log" "GET"
+
     local invalid_url="$workspace/invalid-url"
     mkdir -p "$invalid_url"
     if run_dmg_cache_case "$invalid_url" "$invalid_url/output.log" \
@@ -1603,13 +1705,33 @@ EOF
     assert_contains "$invalid_url/output.log" "Upstream DMG URL must be an HTTPS URL"
 }
 
+test_native_macos_app_bundle_fails_with_clear_message() {
+    info "Checking native macOS ChatGPT app bundle fails with a clear unsupported message"
+    local workspace="$TMP_DIR/native-macos-app-bundle"
+    local app_dir="$workspace/ChatGPT.app"
+    local output_log="$workspace/output.log"
+
+    mkdir -p "$app_dir/Contents/Resources" "$app_dir/Contents/Frameworks/ChatGPT.framework"
+
+    if CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+        'source "$1"; require_electron_app_asar "$2"' \
+        _ "$REPO_DIR/install.sh" "$app_dir" >"$output_log" 2>&1
+    then
+        fail "Expected native macOS app bundle to be rejected"
+    fi
+
+    assert_contains "$output_log" "Unsupported ChatGPT app bundle"
+    assert_contains "$output_log" "ChatGPT Classic is a native macOS app"
+    assert_contains "$output_log" "use --new-chatgpt"
+}
+
 test_extract_dmg_repairs_safe_7z_link_warnings() {
     info "Checking DMG extraction repairs safe 7z package symlink warnings"
     local workspace="$TMP_DIR/dmg-dangerous-link-paths"
     local bin_dir="$workspace/bin"
     local work_dir="$workspace/work"
     local output_log="$workspace/output.log"
-    local app_dir="$work_dir/dmg-extract/Codex Installer/Codex.app"
+    local app_dir="$work_dir/dmg-extract/ChatGPT Installer/ChatGPT.app"
     local node_modules="$app_dir/Contents/Resources/cua_node/lib/node_modules"
     local actual
 
@@ -1630,7 +1752,7 @@ for arg in "$@"; do
 done
 [ -n "$out" ] || exit 2
 
-app="$out/Codex Installer/Codex.app"
+app="$out/ChatGPT Installer/ChatGPT.app"
 node_modules="$app/Contents/Resources/cua_node/lib/node_modules"
 mkdir -p \
     "$node_modules/.bin" \
@@ -1662,15 +1784,15 @@ printf '%s\n' "target" >"$node_modules/@oai/sky/bin/linux/sky_linux_x64"
 : >"$node_modules/sharp/node_modules/.bin/semver"
 
 cat <<'LOG'
-ERROR: Dangerous link path was ignored : Codex Installer/Codex.app/Contents/Resources/cua_node/lib/node_modules/.bin/opencollective-postinstall : ../opencollective-postinstall/index.js
-ERROR: Dangerous link path was ignored : Codex Installer/Codex.app/Contents/Resources/cua_node/lib/node_modules/.bin/pixelmatch : ../pixelmatch/bin/pixelmatch
-ERROR: Dangerous link path was ignored : Codex Installer/Codex.app/Contents/Resources/cua_node/lib/node_modules/.bin/playwright : ../playwright/cli.js
-ERROR: Dangerous link path was ignored : Codex Installer/Codex.app/Contents/Resources/cua_node/lib/node_modules/.bin/playwright-core : ../playwright-core/cli.js
-ERROR: Dangerous link path was ignored : Codex Installer/Codex.app/Contents/Resources/cua_node/lib/node_modules/.bin/semver : ../semver/bin/semver.js
-ERROR: Dangerous link path was ignored : Codex Installer/Codex.app/Contents/Resources/cua_node/lib/node_modules/.bin/sky_linux_arm64 : ../@oai/sky/bin/linux/sky_linux_arm64
-ERROR: Dangerous link path was ignored : Codex Installer/Codex.app/Contents/Resources/cua_node/lib/node_modules/.bin/sky_linux_x64 : ../@oai/sky/bin/linux/sky_linux_x64
-ERROR: Dangerous link path was ignored : Codex Installer/Codex.app/Contents/Resources/cua_node/lib/node_modules/tesseract.js/node_modules/.bin/opencollective-postinstall : ../../../opencollective-postinstall/index.js
-ERROR: Dangerous link path was ignored : Codex Installer/Codex.app/Contents/Resources/cua_node/lib/node_modules/sharp/node_modules/.bin/semver : ../../../semver/bin/semver.js
+ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/opencollective-postinstall : ../opencollective-postinstall/index.js
+ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/pixelmatch : ../pixelmatch/bin/pixelmatch
+ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/playwright : ../playwright/cli.js
+ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/playwright-core : ../playwright-core/cli.js
+ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/semver : ../semver/bin/semver.js
+ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/sky_linux_arm64 : ../@oai/sky/bin/linux/sky_linux_arm64
+ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/sky_linux_x64 : ../@oai/sky/bin/linux/sky_linux_x64
+ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/tesseract.js/node_modules/.bin/opencollective-postinstall : ../../../opencollective-postinstall/index.js
+ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/sharp/node_modules/.bin/semver : ../../../semver/bin/semver.js
 
 Sub items Errors: 9
 
@@ -1697,7 +1819,7 @@ error() { echo "[ERROR] $*" >&2; exit 1; }
 source "$REPO_DIR/scripts/lib/dmg.sh"
 
 app_dir="$(extract_dmg "$TEST_DMG_PATH")"
-[ "$(basename "$app_dir")" = "Codex.app" ]
+[ "$(basename "$app_dir")" = "ChatGPT.app" ]
 SCRIPT
 
     assert_contains "$output_log" "7z reported 9 safe package symlink warnings; repaired and continuing"
@@ -1798,7 +1920,7 @@ test_fresh_reuse_dmg_uses_cache_when_metadata_matches() {
     local bin_dir="$workspace/bin"
     local source_dir="$workspace/source"
     local output_log="$workspace/output.log"
-    local url="https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg"
+    local url="https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg"
     local url_sha256
 
     url_sha256="$(printf '%s' "$url" | sha256sum | awk '{print $1}')"
@@ -2361,7 +2483,7 @@ JSON
 
     assert_json_enabled_equals "$config" '["remote-mobile-control"]'
     assert_contains "$output_log" "Enabled Linux features: remote-mobile-control"
-    assert_contains "$output_log" "Default native package mode includes codex-update-manager"
+    assert_contains "$output_log" "Default native package mode includes chatgpt-update-manager"
     assert_contains "$output_log" "make install-native"
 }
 
@@ -2723,7 +2845,7 @@ test_setup_native_wizard_blank_interactive_cleanup_ids_skip_cleanup() {
 
     assert_json_enabled_equals "$config" '["remote-mobile-control"]'
     assert_contains "$output_log" "No cleanup feature ids provided; skipping feature cleanup."
-    assert_contains "$output_log" "Default native package mode includes codex-update-manager"
+    assert_contains "$output_log" "Default native package mode includes chatgpt-update-manager"
 }
 
 test_setup_native_wizard_dry_run_cleanup_does_not_delete_confirmed_paths() {
@@ -2829,7 +2951,7 @@ make_update_nix_hash_fixture() {
   electronVersion = "42.1.0";
 
   chatgptDmg = pkgs.fetchurl {
-    url = "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg";
+    url = "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg";
     hash = "$hash_a";
   };
 
@@ -2996,7 +3118,7 @@ test_update_nix_hashes_verifies_changed_dmg_hash() {
 test_installer_detects_electron_version_from_plist() {
     info "Checking Electron version detection from app metadata"
     local workspace="$TMP_DIR/electron-version"
-    local app_dir="$workspace/Codex.app"
+    local app_dir="$workspace/ChatGPT.app"
     local plist_dir="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources"
     local output_log="$workspace/output.log"
 
@@ -3023,7 +3145,7 @@ PLIST
 test_installer_keeps_electron_fallback_for_bad_metadata() {
     info "Checking Electron version fallback for malformed metadata"
     local workspace="$TMP_DIR/electron-version-fallback"
-    local app_dir="$workspace/Codex.app"
+    local app_dir="$workspace/ChatGPT.app"
     local plist_dir="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources"
     local output_log="$workspace/output.log"
 
@@ -3083,8 +3205,8 @@ test_port_validation_rejects_oversized_numeric_values() {
     cat > "$start_script" <<'SCRIPT'
 #!/bin/bash
 set -euo pipefail
-CODEX_LINUX_APP_ID=codex-desktop
-CODEX_LINUX_APP_DISPLAY_NAME=Codex
+CODEX_LINUX_APP_ID=chatgpt-desktop
+CODEX_LINUX_APP_DISPLAY_NAME='ChatGPT Desktop'
 CODEX_LINUX_WEBVIEW_PORT=${CODEX_WEBVIEW_PORT:-5175}
 SCRIPT
     cat "$REPO_DIR/launcher/start.sh.template" >> "$start_script"
@@ -3100,7 +3222,7 @@ SCRIPT
 
     XDG_CONFIG_HOME="$workspace/help-config" bash "$start_script" --help >"$launcher_stdout" 2>"$launcher_stderr"
     assert_contains "$launcher_stdout" "electron-flags.conf"
-    assert_file_not_exists "$workspace/help-config/codex-desktop/electron-flags.conf"
+    assert_file_not_exists "$workspace/help-config/chatgpt-desktop/electron-flags.conf"
 
     cat > "$launcher_probe_script" <<'SCRIPT'
 #!/bin/bash
@@ -3930,7 +4052,7 @@ end = source.index("configure_side_by_side_app_env() {")
 probe = "#!/usr/bin/env bash\n" + source[start:end] + r'''
 set -Eeuo pipefail
 
-CODEX_LINUX_APP_ID="${CODEX_LINUX_APP_ID:-codex-desktop}"
+CODEX_LINUX_APP_ID="${CODEX_LINUX_APP_ID:-chatgpt-desktop}"
 SCRIPT_DIR="${SCRIPT_DIR:-/tmp/codex-launcher-probe-app}"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 APP_STATE_DIR="${APP_STATE_DIR:-/tmp/codex-launcher-probe-state}"
@@ -4035,6 +4157,13 @@ EOF
 
     output="$(env -i PATH="$PATH" HOME="$HOME" XDG_SESSION_TYPE=wayland CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe)"
     [[ "$output" == *"comp=1"* && "$output" == *"<--disable-gpu-compositing>"* ]] || fail "Wayland default profile must disable GPU compositing for side-panel stability: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_SESSION_TYPE=wayland "$launcher_probe" probe)"
+    [[ "$output" == *"mode=wayland-xwayland"* && "$output" == *"ozone_platform=x11"* && "$output" == *"<--ozone-platform=x11>"* ]] || fail "Wayland auto profile must prefer XWayland so draggable pet windows have global screen coordinates: $output"
+    [[ "$output" == *"comp=0"* && "$output" != *"<--disable-gpu-compositing>"* ]] || fail "XWayland pet-drag profile must keep GPU compositing enabled for smooth window movement: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_SESSION_TYPE=wayland CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe)"
+    [[ "$output" == *"mode=default"* && "$output" == *"ozone_hint=auto"* && "$output" != *"<--ozone-platform=x11>"* ]] || fail "explicit default rendering mode must preserve native Wayland auto-selection: $output"
 
     local drm_stub_dir="$TMP_DIR/drm-stubs/two"
     mkdir -p "$drm_stub_dir/card0-DP-2" "$drm_stub_dir/card0-HDMI-3"
@@ -4422,16 +4551,17 @@ EOF
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'detail=$(cat "$err" 2>/dev/null || true)'
     assert_contains "$REPO_DIR/updater/src/app.rs" "kdialog"
     assert_contains "$REPO_DIR/updater/src/app.rs" "zenity"
-    assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "CHROME_DESKTOP"
-    assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "is-enabled codex-update-manager.service"
-    assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "codex-update-manager-launch-check"
-    assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "codex-update-manager check-now --if-stale"
-    assert_not_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "enable --now codex-update-manager.service"
-    assert_not_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "restart codex-update-manager.service"
-    assert_contains "$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh" "codex_start_enabled_user_service"
-    assert_contains "$REPO_DIR/packaging/linux/codex-update-manager.postinst" "codex_start_enabled_user_service"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.install" "codex_start_enabled_user_service"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "codex_start_enabled_user_service"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh" "CHROME_DESKTOP"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh" "__PACKAGE_NAME__.desktop"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh" "is-enabled chatgpt-update-manager.service"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh" "chatgpt-update-manager-launch-check"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh" "chatgpt-update-manager check-now --if-stale"
+    assert_not_contains "$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh" "enable --now chatgpt-update-manager.service"
+    assert_not_contains "$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh" "restart chatgpt-update-manager.service"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-update-manager-user-service.sh" "codex_start_enabled_user_service"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-update-manager.postinst" "codex_start_enabled_user_service"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.install" "codex_start_enabled_user_service"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.spec" "codex_start_enabled_user_service"
     assert_contains "$REPO_DIR/scripts/install-deps.sh" 'NODEJS_MAJOR="${NODEJS_MAJOR:-22}"'
     assert_contains "$REPO_DIR/scripts/install-deps.sh" "apt_nodejs_candidate_major"
     assert_contains "$REPO_DIR/scripts/install-deps.sh" "Installing distro Node.js/npm candidate"
@@ -4440,8 +4570,8 @@ EOF
     assert_contains "$REPO_DIR/scripts/install-deps.sh" "https://deb.nodesource.com/node_"
     assert_not_contains "$REPO_DIR/packaging/linux/control" "Depends:.*nodejs"
     assert_not_contains "$REPO_DIR/packaging/linux/control" "Depends:.*npm"
-    assert_not_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "Requires:.*nodejs"
-    assert_not_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "Requires:.*npm"
+    assert_not_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.spec" "Requires:.*nodejs"
+    assert_not_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.spec" "Requires:.*npm"
     assert_not_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "'nodejs>=20'"
     assert_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "optional override for the bundled managed Node.js runtime"
     assert_contains "$REPO_DIR/scripts/lib/node-runtime.sh" "MANAGED_NODE_VERSION"
@@ -4460,16 +4590,16 @@ EOF
     assert_contains "$REPO_DIR/updater/src/builder.rs" "managed_node_bin_dirs"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "stage_common_package_files"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "PACKAGED_RUNTIME_SOURCE"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "BAMF_DESKTOP_FILE_HINT"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "/usr/bin/codex-desktop %u"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "StartupWMClass=codex-desktop"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "X-GNOME-WMClass=codex-desktop"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "Actions=new-window;CheckForUpdates;InstallReadyUpdate;"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "[Desktop Action new-window]"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/codex-desktop --new-instance"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "codex-update-manager check-now"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "codex-update-manager install-ready"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "BAMF_DESKTOP_FILE_HINT"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "/usr/bin/__PACKAGE_NAME__ %u"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "StartupWMClass=__PACKAGE_NAME__"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "X-GNOME-WMClass=__PACKAGE_NAME__"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "Actions=new-window;CheckForUpdates;InstallReadyUpdate;"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "[Desktop Action new-window]"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/__PACKAGE_NAME__ --new-instance"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "chatgpt-update-manager check-now"
+    assert_contains "$REPO_DIR/packaging/linux/chatgpt-desktop.desktop" "chatgpt-update-manager install-ready"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/chatgpt-desktop.desktop" "BAMF_DESKTOP_FILE_HINT=@HOME@/.local/share/applications/chatgpt-desktop.desktop"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/chatgpt-desktop.desktop" "@HOME@/.local/bin/chatgpt-desktop %U"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/chatgpt-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
@@ -4478,9 +4608,10 @@ EOF
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/chatgpt-desktop" "CODEX_USER_LOCAL_OZONE_PLATFORM"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/chatgpt-desktop" 'exec "${APP_DIR}/start.sh" --x11 "$@"'
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/bin/chatgpt-desktop" 'exec "${APP_DIR}/start.sh" --wayland "$@"'
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh" "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg"
     assert_contains "$REPO_DIR/contrib/user-local-install/install-user-local.sh" "--force-x11"
     assert_contains "$REPO_DIR/contrib/user-local-install/install-user-local.sh" "user-local.env"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh" "assets/codex-linux.png"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh" "assets/chatgpt-linux.png"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/chatgpt-desktop-linux/common.sh" "CODEX_USER_LOCAL_RECORD_DMG_FINGERPRINT"
     assert_contains "$REPO_DIR/contrib/user-local-install/README.md" "--force-x11"
 
@@ -4814,25 +4945,25 @@ test_side_by_side_launcher_identity() {
     local bin_dir="$workspace/bin"
     local help_log="$workspace/help.log"
     local symlink_help_log="$workspace/symlink-help.log"
-    local linux_icon_source="$workspace/codex-linux.png"
+    local linux_icon_source="$workspace/chatgpt-linux.png"
 
     mkdir -p "$app_dir" "$bin_dir"
     printf '%s\n' 'linux-icon' > "$linux_icon_source"
 
     CODEX_INSTALLER_SOURCE_ONLY=1 \
-    CODEX_APP_ID="codex-cua-lab" \
-    CODEX_APP_DISPLAY_NAME="Codex CUA Lab" \
+    CODEX_APP_ID="chatgpt-cua-lab" \
+    CODEX_APP_DISPLAY_NAME="ChatGPT CUA Lab" \
     CODEX_INSTALL_DIR="$app_dir" \
     CODEX_LINUX_ICON_SOURCE="$linux_icon_source" \
     bash -c 'source "$1"; validate_app_identity; create_start_script' _ "$REPO_DIR/install.sh"
 
     assert_file_exists "$app_dir/start.sh"
     assert_file_exists "$app_dir/.codex-linux/webview-server.py"
-    assert_file_exists "$app_dir/.codex-linux/codex-cua-lab.png"
-    cmp -s "$linux_icon_source" "$app_dir/.codex-linux/codex-cua-lab.png" \
+    assert_file_exists "$app_dir/.codex-linux/chatgpt-cua-lab.png"
+    cmp -s "$linux_icon_source" "$app_dir/.codex-linux/chatgpt-cua-lab.png" \
         || fail "Expected side-by-side launcher icon to use CODEX_LINUX_ICON_SOURCE"
-    assert_contains "$app_dir/start.sh" "CODEX_LINUX_APP_ID=codex-cua-lab"
-    assert_contains "$app_dir/start.sh" "CODEX_LINUX_APP_DISPLAY_NAME=Codex\\\\ CUA\\\\ Lab"
+    assert_contains "$app_dir/start.sh" "CODEX_LINUX_APP_ID=chatgpt-cua-lab"
+    assert_contains "$app_dir/start.sh" "CODEX_LINUX_APP_DISPLAY_NAME=ChatGPT\\\\ CUA\\\\ Lab"
     assert_contains "$app_dir/start.sh" 'CODEX_LINUX_WEBVIEW_PORT=${CODEX_WEBVIEW_PORT:-5176}'
     assert_contains "$app_dir/start.sh" 'CODEX_LINUX_SETTINGS_FILE="$APP_SETTINGS_FILE"'
     assert_contains "$app_dir/start.sh" 'export CODEX_HOME CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINUX_WEBVIEW_PORT CODEX_LINUX_SETTINGS_FILE CODEX_LINUX_FEATURES_DIR'
@@ -4850,12 +4981,12 @@ test_side_by_side_launcher_identity() {
     assert_contains "$app_dir/start.sh" "--force-renderer-accessibility"
     assert_contains "$app_dir/start.sh" 'LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/$CODEX_LINUX_APP_ID"'
     XDG_CACHE_HOME="$workspace/cache" XDG_STATE_HOME="$workspace/state" XDG_RUNTIME_DIR="$workspace/runtime" bash "$app_dir/start.sh" --help >"$help_log"
-    assert_contains "$help_log" "Launches the Codex CUA Lab app."
-    assert_contains "$help_log" "codex-cua-lab/launcher"
+    assert_contains "$help_log" "Launches the ChatGPT CUA Lab app."
+    assert_contains "$help_log" "chatgpt-cua-lab/launcher"
 
-    ln -s "$app_dir/start.sh" "$bin_dir/codex-cua-lab"
-    XDG_CACHE_HOME="$workspace/cache" XDG_STATE_HOME="$workspace/state" XDG_RUNTIME_DIR="$workspace/runtime" bash "$bin_dir/codex-cua-lab" --help >"$symlink_help_log"
-    assert_contains "$symlink_help_log" "Launches the Codex CUA Lab app."
+    ln -s "$app_dir/start.sh" "$bin_dir/chatgpt-cua-lab"
+    XDG_CACHE_HOME="$workspace/cache" XDG_STATE_HOME="$workspace/state" XDG_RUNTIME_DIR="$workspace/runtime" bash "$bin_dir/chatgpt-cua-lab" --help >"$symlink_help_log"
+    assert_contains "$symlink_help_log" "Launches the ChatGPT CUA Lab app."
 }
 
 test_browser_use_node_repl_fallback_runtime() {
@@ -4866,7 +4997,7 @@ test_browser_use_node_repl_fallback_runtime() {
     fi
 
     local workspace="$TMP_DIR/browser-use-node-repl-fallback"
-    local app_dir="$workspace/Codex.app"
+    local app_dir="$workspace/ChatGPT.app"
     local install_dir="$workspace/install"
     local archive_root="$workspace/archive-root"
     local archive="$workspace/runtime.tar.xz"
@@ -5002,7 +5133,7 @@ NODE
 test_browser_plugin_renamed_upstream_staging() {
     info "Checking Browser plugin staging from renamed upstream resources"
     local workspace="$TMP_DIR/browser-plugin-renamed"
-    local app_dir="$workspace/Codex.app"
+    local app_dir="$workspace/ChatGPT.app"
     local install_dir="$workspace/install"
     local output_log="$workspace/output.log"
     local browser_dir="$install_dir/resources/plugins/openai-bundled/plugins/browser"
@@ -5233,7 +5364,7 @@ JS
 test_chrome_plugin_staging() {
     info "Checking Chrome plugin staging"
     local workspace="$TMP_DIR/chrome-plugin"
-    local app_dir="$workspace/Codex.app"
+    local app_dir="$workspace/ChatGPT.app"
     local install_dir="$workspace/install"
     local output_log="$workspace/output.log"
     local chrome_dir="$install_dir/resources/plugins/openai-bundled/plugins/chrome"
@@ -5364,7 +5495,7 @@ JS
 test_chrome_marketplace_fallback_synthesis() {
     info "Checking Chrome marketplace fallback synthesis when upstream omits chrome"
     local workspace="$TMP_DIR/chrome-marketplace-fallback"
-    local app_dir="$workspace/Codex.app"
+    local app_dir="$workspace/ChatGPT.app"
     local install_dir="$workspace/install"
     local output_log="$workspace/output.log"
     local marketplace="$install_dir/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
@@ -6290,7 +6421,7 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
 
   resetCalls();
   state.primaryWindow = state.primary;
-  await runSecondInstance(["codex-desktop", "--new-chat"]);
+  await runSecondInstance(["chatgpt-desktop", "--new-chat"]);
   assert(state.queueArgs.length === 0, "--new-chat without a deeplink should not be consumed by deeplink routing");
   assert(state.createFreshLocalWindowCalls.length === 0, "--new-chat should reuse the warm primary window");
   assert(state.focusCalls.length === 1 && state.focusCalls[0] === "primary", "--new-chat should focus the warm primary window");
@@ -6299,7 +6430,7 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
 
   resetCalls();
   state.primaryWindow = state.primary;
-  await runSecondInstance(["codex-desktop", "--quick-chat"]);
+  await runSecondInstance(["chatgpt-desktop", "--quick-chat"]);
   assert(state.queueArgs.length === 0, "--quick-chat without a deeplink should not be consumed by deeplink routing");
   assert(state.createFreshLocalWindowCalls.length === 0, "--quick-chat should reuse the warm primary window");
   assert(state.focusCalls.length === 1 && state.focusCalls[0] === "primary", "--quick-chat should focus the warm primary window");
@@ -6308,7 +6439,7 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
 
   resetCalls();
   state.primaryWindow = state.primary;
-  await runSecondInstance(["codex-desktop", "--prompt-chat"]);
+  await runSecondInstance(["chatgpt-desktop", "--prompt-chat"]);
   assert(state.queueArgs.length === 0, "--prompt-chat without a deeplink should not be consumed by deeplink routing");
   assert(state.openHomeCalls === 1, "--prompt-chat should open the compact hotkey prompt on the new-chat home surface");
   assert(state.ensureHotkeyWindowControllerCalls === 1, "--prompt-chat should use the real hotkey window controller");
@@ -6320,14 +6451,14 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
 
   resetCalls();
   state.primaryWindow = state.primary;
-  await runSecondInstance(["codex-desktop", "--hotkey-window"]);
+  await runSecondInstance(["chatgpt-desktop", "--hotkey-window"]);
   assert(state.openHomeCalls === 1, "--hotkey-window should open the compact hotkey prompt on the new-chat home surface");
   assert(state.ensureHotkeyWindowControllerCalls === 1, "--hotkey-window should use the real hotkey window controller");
   assert(state.ensureHostWindowCalls.length === 0, "--hotkey-window should not open the main window when the compact prompt shows");
 
   resetCalls();
   state.primaryWindow = state.primary;
-  let socket = await runSocketArgs(["codex-desktop", "--prompt-chat"]);
+  let socket = await runSocketArgs(["chatgpt-desktop", "--prompt-chat"]);
   assert(socket.outputs[0] === "ok\n", "warm-start socket should acknowledge handled prompt args");
   assert(state.openHomeCalls === 1, "warm-start socket should open the compact prompt on the new-chat home surface");
   assert(state.ensureHotkeyWindowControllerCalls === 1, "warm-start socket prompt should use the real hotkey window controller");
@@ -6341,7 +6472,7 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
   assert(state.openHomeCalls === 0, "warm-start socket should not open the prompt when a deeplink is present");
 
   resetCalls();
-  socket = await runSocketArgs(["codex-desktop"]);
+  socket = await runSocketArgs(["chatgpt-desktop"]);
   assert(socket.outputs[0] === "ok\n", "warm-start socket should acknowledge fallback focus args");
   assert(state.ieCalls === 1, "warm-start socket should use the focus fallback for args without launch flags");
 
@@ -6370,33 +6501,33 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
   assert(state.ensureHostWindowCalls.length === 0, "deeplink+prompt flag should not fall back to the host window");
 
   resetCalls();
-  await runSecondInstance(["codex-desktop"]);
+  await runSecondInstance(["chatgpt-desktop"]);
   assert(state.queueArgs.length === 0, "no-flag args without a deeplink should not be consumed by deeplink routing");
   assert(state.ieCalls === 1, "no-flag args should use the focus fallback");
   assert(state.createFreshLocalWindowCalls.length === 1 && state.createFreshLocalWindowCalls[0] === "/", "fallback should create the default window");
 
   resetCalls();
   state.primaryWindow = state.primary;
-  await runInitialArgs(["codex-desktop", "--quick-chat"]);
+  await runInitialArgs(["chatgpt-desktop", "--quick-chat"]);
   assert(state.createFreshLocalWindowCalls.length === 0, "initial argv handler should reuse an existing primary window");
   assert(state.messages.length === 1 && state.messages[0].windowId === "primary" && state.messages[0].message.type === "new-quick-chat", "initial argv handler should open quick chat in the existing primary window");
 
   resetCalls();
   state.primaryWindow = state.primary;
-  await runInitialArgs(["codex-desktop", "--prompt-chat"]);
+  await runInitialArgs(["chatgpt-desktop", "--prompt-chat"]);
   assert(state.openHomeCalls === 1, "initial argv handler should open the compact prompt on the new-chat home surface");
   assert(state.ensureHotkeyWindowControllerCalls === 1, "initial argv handler should use the real hotkey window controller");
   assert(state.showCalls === 0, "initial argv handler should not reopen the last hotkey surface");
   assert(state.ensureHostWindowCalls.length === 0, "initial argv handler should not open the main window when the compact prompt shows");
 
   resetCalls();
-  await runInitialArgs(["codex-desktop", "--quick-chat"]);
+  await runInitialArgs(["chatgpt-desktop", "--quick-chat"]);
   assert(state.createFreshLocalWindowCalls.length === 1 && state.createFreshLocalWindowCalls[0] === "/", "initial argv handler should create a window when no primary exists");
   assert(state.messages.length === 1 && state.messages[0].windowId === "created" && state.messages[0].message.type === "new-quick-chat", "initial argv handler should open quick chat in the created window when no primary exists");
 
   resetCalls();
   state.primaryWindow = state.primary;
-  await runInitialArgs(["codex-desktop", "--new-chat"]);
+  await runInitialArgs(["chatgpt-desktop", "--new-chat"]);
   assert(state.createFreshLocalWindowCalls.length === 0, "initial --new-chat should reuse a warm primary window");
   assert(state.navigateCalls.length === 1 && state.navigateCalls[0].path === "/", "initial --new-chat should navigate an existing window to /");
   assert(state.focusCalls.length === 1 && state.focusCalls[0] === "primary", "initial --new-chat should focus the main window");
@@ -6411,7 +6542,7 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
 
   resetCalls();
   state.primaryWindow = state.primary;
-  await runSecondInstance(["codex-desktop", "--prompt-chat"]);
+  await runSecondInstance(["chatgpt-desktop", "--prompt-chat"]);
   assert(state.queueArgs.length === 0, "disabled prompt-chat args without a deeplink should not be consumed by deeplink routing");
   assert(state.openHomeCalls === 0, "disabled prompt-chat gate should not open the compact prompt");
   assert(state.ensureHotkeyWindowControllerCalls === 0, "disabled prompt-chat gate should not create the hotkey window controller");
@@ -6420,7 +6551,7 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
 
   resetCalls();
   state.primaryWindow = state.primary;
-  await runSecondInstance(["codex-desktop", "--hotkey-window"]);
+  await runSecondInstance(["chatgpt-desktop", "--hotkey-window"]);
   assert(state.openHomeCalls === 0, "disabled prompt-chat gate should also block --hotkey-window prompt opening");
   assert(state.ensureHotkeyWindowControllerCalls === 0, "disabled prompt-chat gate should not create a controller for --hotkey-window");
   assert(state.ieCalls === 1, "disabled --hotkey-window should fall back to main-window focus");
@@ -6978,7 +7109,7 @@ EOF
 
     (
         # shellcheck disable=SC1091
-        . "$REPO_DIR/packaging/linux/codex-desktop-entry-doctor.sh"
+        . "$REPO_DIR/packaging/linux/chatgpt-desktop-entry-doctor.sh"
         codex_desktop_write_user_local_entry "$template" "$current_entry" "/home/tester"
         codex_desktop_repair_shadow_entry "$stale_entry"
         if codex_desktop_repair_shadow_entry "$current_entry"; then
@@ -6996,6 +7127,7 @@ EOF
     assert_file_exists "$stale_entry.bak"
     assert_contains "$stale_entry.bak" "Actions=NewInstance;"
     assert_file_exists "$current_entry"
+    assert_contains "$current_entry" "Name=ChatGPT Desktop"
     assert_contains "$current_entry" "Actions=new-window;"
     assert_contains "$current_entry" "x-scheme-handler/codex-browser-sidebar"
     assert_file_exists "$custom_entry"
@@ -7440,6 +7572,7 @@ main() {
     test_appimage_builder_smoke
     test_missing_input_failure
     test_make_install_reports_missing_native_packages
+    test_make_install_accepts_legacy_pacman_package_replacement
     test_make_run_app_reports_missing_launcher
     test_make_build_app_uses_installer_download_flow_by_default
     test_make_build_app_fresh_uses_installer_fresh_flow

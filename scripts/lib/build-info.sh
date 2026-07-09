@@ -9,6 +9,9 @@ write_build_info() {
     local app_dir="$2"
 
     mkdir -p "$INSTALL_DIR/resources" "$INSTALL_DIR/.codex-linux"
+    CODEX_UPSTREAM_DMG_RESOLVED_SOURCE="${DMG_SOURCE:-}" \
+    CODEX_UPSTREAM_DMG_RESOLVED_SOURCE_NAME="${DMG_SOURCE_DISPLAY_NAME:-}" \
+    CODEX_UPSTREAM_DMG_RESOLVED_URL="${DMG_URL:-}" \
     node "$SCRIPT_DIR/scripts/lib/build-info.js" \
         "$SCRIPT_DIR" \
         "$INSTALL_DIR" \

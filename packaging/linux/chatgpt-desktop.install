@@ -1,11 +1,11 @@
-SERVICE_HELPER="/opt/codex-desktop/update-builder/packaging/linux/codex-update-manager-user-service.sh"
-DESKTOP_ENTRY_DOCTOR="/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
+SERVICE_HELPER="/opt/__PACKAGE_NAME__/update-builder/packaging/linux/chatgpt-update-manager-user-service.sh"
+DESKTOP_ENTRY_DOCTOR="/opt/__PACKAGE_NAME__/.codex-linux/chatgpt-desktop-entry-doctor.sh"
 if [ -f "$SERVICE_HELPER" ]; then
-    # shellcheck source=/opt/codex-desktop/update-builder/packaging/linux/codex-update-manager-user-service.sh
+    # shellcheck source=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/chatgpt-update-manager-user-service.sh
     . "$SERVICE_HELPER"
 fi
 if [ -f "$DESKTOP_ENTRY_DOCTOR" ]; then
-    # shellcheck source=/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh
+    # shellcheck source=/opt/__PACKAGE_NAME__/.codex-linux/chatgpt-desktop-entry-doctor.sh
     . "$DESKTOP_ENTRY_DOCTOR"
 fi
 
@@ -14,7 +14,7 @@ codex_desktop_post_transaction_common() {
         update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
     fi
     if [ -f "$DESKTOP_ENTRY_DOCTOR" ]; then
-        codex_desktop_repair_system_package_shadow_entries codex-desktop || true
+        codex_desktop_repair_system_package_shadow_entries __PACKAGE_NAME__ || true
     fi
 }
 

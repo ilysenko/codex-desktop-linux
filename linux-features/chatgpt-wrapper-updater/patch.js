@@ -6,7 +6,7 @@ const { linuxSettingsKeys } = require("../../scripts/patches/lib/settings-keys.j
 const { requireName } = require("../../scripts/patches/lib/minified-js.js");
 
 const HANDLER_NAME = "codex-linux-wrapper-updater";
-const RUNTIME_VERSION = "codex-wrapper-updater-v3";
+const RUNTIME_VERSION = "chatgpt-wrapper-updater-v3";
 const KEYBINDS_ASSET = "keybinds-settings-linux.js";
 const LINUX_DESKTOP_SETTINGS_ASSET = "linux-desktop-settings-linux.js";
 const WRAPPER_UPDATES_SETTING_KEY = linuxSettingsKeys.wrapperUpdates;
@@ -37,12 +37,12 @@ function applyMainBundlePatch(source) {
     `function codexLinuxWrapHome(){return process.env.HOME||\`\`}`,
     `function codexLinuxWrapAppId(){let i=process.env.CODEX_LINUX_APP_ID||process.env.CODEX_APP_ID||\`chatgpt-desktop\`;return /^[A-Za-z0-9._-]+$/.test(i)?i:\`chatgpt-desktop\`}`,
     `function codexLinuxWrapAppStateDir(){let e=process.env.CODEX_LINUX_APP_STATE_DIR;if(typeof e===\`string\`&&e.trim())return e;let h=codexLinuxWrapHome();let r=process.env.XDG_STATE_HOME||(h&&${pathVar}.join(h,\`.local\`,\`state\`));return r?${pathVar}.join(r,codexLinuxWrapAppId()):null}`,
-    `function codexLinuxWrapStatePath(){let h=codexLinuxWrapHome();let d=process.env.XDG_STATE_HOME||(h&&${pathVar}.join(h,\`.local\`,\`state\`));return d?${pathVar}.join(d,\`codex-update-manager\`,\`state.json\`):null}`,
-    `function codexLinuxWrapMarkerPath(){let d=codexLinuxWrapAppStateDir();return d?${pathVar}.join(d,\`codex-wrapper-updater\`,\`pending\`):null}`,
+    `function codexLinuxWrapStatePath(){let h=codexLinuxWrapHome();let d=process.env.XDG_STATE_HOME||(h&&${pathVar}.join(h,\`.local\`,\`state\`));return d?${pathVar}.join(d,\`chatgpt-update-manager\`,\`state.json\`):null}`,
+    `function codexLinuxWrapMarkerPath(){let d=codexLinuxWrapAppStateDir();return d?${pathVar}.join(d,\`chatgpt-wrapper-updater\`,\`pending\`):null}`,
     `function codexLinuxWrapReadStatus(){try{let p=codexLinuxWrapStatePath();if(!p||!${fsVar}.existsSync(p))return null;return JSON.parse(${fsVar}.readFileSync(p,\`utf8\`))}catch{return null}}`,
     `function codexLinuxWrapShouldShow(s){return !!(s&&typeof s===\`object\`&&s.wrapper_dev_mode!==!0&&typeof s.candidate_wrapper_commit===\`string\`&&s.candidate_wrapper_commit.length>0)}`,
     `function codexLinuxWrapStatusPayload(){let s=codexLinuxWrapReadStatus();return{ok:!0,show:codexLinuxWrapShouldShow(s),dev_mode:!!(s&&s.wrapper_dev_mode===!0),changelog:s?s.wrapper_changelog||\`\`:\`\`,commit:s?s.candidate_wrapper_commit||\`\`:\`\`,installed_commit:s?s.installed_wrapper_commit||\`\`:\`\`}}`,
-    `function codexLinuxWrapManagerPath(){let e=process.env.CODEX_UPDATE_MANAGER_PATH;return typeof e===\`string\`&&e.trim().length>0?e:\`codex-update-manager\`}`,
+    `function codexLinuxWrapManagerPath(){let e=process.env.CODEX_UPDATE_MANAGER_PATH;return typeof e===\`string\`&&e.trim().length>0?e:\`chatgpt-update-manager\`}`,
     `function codexLinuxWrapSpawnCheck(){try{let c=${childProcessVar}.spawn(codexLinuxWrapManagerPath(),[\`check-wrapper\`],{stdio:\`ignore\`,detached:!0,env:process.env});c.on(\`error\`,()=>{});c.unref()}catch{}}`,
     // Feature picker on update: resolve settings.json the same way the launcher
     // and launch-actions do, and gate the on-click picker on the

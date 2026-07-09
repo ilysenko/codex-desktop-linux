@@ -119,7 +119,7 @@ impl RecordingBundleManifest {
             started_at,
             ended_at: None,
             end_reason: None,
-            app_name: "codex-desktop-linux".to_string(),
+            app_name: "chatgpt-desktop-linux".to_string(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             goal: None,
             target: RecordingTarget::default(),

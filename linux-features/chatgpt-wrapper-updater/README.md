@@ -1,10 +1,10 @@
-# codex-wrapper-updater
+# chatgpt-wrapper-updater
 
 Optional Linux feature that adds a **separate** in-app update path for the
 ChatGPT Desktop Linux wrapper: this repository's Linux patches, bundled features,
-packaging glue, launcher, and `codex-update-manager`.
+packaging glue, launcher, and `chatgpt-update-manager`.
 
-This is intentionally distinct from the upstream Codex app update path. The
+This is intentionally distinct from the upstream ChatGPT app update path. The
 upstream path tracks the official macOS DMG. This feature tracks newer builds of
 `chatgpt-desktop-linux` itself.
 
@@ -14,14 +14,14 @@ upstream path tracks the official macOS DMG. This feature tracks newer builds of
 - Settings -> General also shows **Ask which features to enable on update**.
 - Both settings are off/on independently: wrapper update checks are off by
   default, and the feature picker prompt defaults on when this feature is built.
-- When wrapper update checks are on, `codex-update-manager` may check the
+- When wrapper update checks are on, `chatgpt-update-manager` may check the
   wrapper repository for a newer Linux wrapper commit.
 - If a newer wrapper build is available, a small top-right **Update** button is
-  shown inside Codex.
+  shown inside ChatGPT.
 - The button stays hidden when no wrapper update candidate is recorded.
 - The button tooltip includes the recorded wrapper changelog when available.
 - Clicking the button may show the feature picker, then writes a pending marker
-  and quits Codex. The feature hook applies the wrapper update while the app is
+  and quits ChatGPT. The feature hook applies the wrapper update while the app is
   stopped.
 
 ## Feature picker on update
@@ -29,7 +29,7 @@ upstream path tracks the official macOS DMG. This feature tracks newer builds of
 Before writing the marker, the button can run:
 
 ```text
-codex-update-manager pick-features
+chatgpt-update-manager pick-features
 ```
 
 This happens while the display session is still alive. The actual apply step
@@ -92,7 +92,7 @@ Add the feature id to the local feature config:
 
 ```json
 {
-  "enabled": ["codex-wrapper-updater"]
+  "enabled": ["chatgpt-wrapper-updater"]
 }
 ```
 
@@ -111,8 +111,8 @@ When enabled, the feature contributes three patch descriptors:
 
 The feature also stages the same runtime hook twice:
 
-- `.codex-linux/prelaunch.d/codex-wrapper-updater-apply-pending.sh`
-- `.codex-linux/after-exit.d/codex-wrapper-updater-apply-pending.sh`
+- `.codex-linux/prelaunch.d/chatgpt-wrapper-updater-apply-pending.sh`
+- `.codex-linux/after-exit.d/chatgpt-wrapper-updater-apply-pending.sh`
 
 Both staged hooks call `apply-pending.sh`.
 
@@ -134,7 +134,7 @@ The settings are stored in the normal Linux app settings file:
 For the default app id, that is:
 
 ```text
-~/.config/codex-desktop/settings.json
+~/.config/chatgpt-desktop/settings.json
 ```
 
 The settings are persisted through the app's `get-global-state` /
@@ -142,7 +142,7 @@ The settings are persisted through the app's `get-global-state` /
 important because these Linux-only keys do not exist in upstream's settings
 schema.
 
-`codex-update-manager` reads the same settings and treats
+`chatgpt-update-manager` reads the same settings and treats
 `codex-linux-wrapper-updates-enabled` as the runtime opt-in for wrapper update
 tracking. The static updater config still defaults wrapper tracking to disabled,
 so existing installs keep their current DMG-only behavior.
@@ -152,14 +152,14 @@ so existing installs keep their current DMG-only behavior.
 When wrapper updates are enabled, the app starts a best-effort background check:
 
 ```text
-codex-update-manager check-wrapper
+chatgpt-update-manager check-wrapper
 ```
 
 The command compares the installed wrapper metadata with the configured wrapper
 remote/branch and records the result in:
 
 ```text
-~/.local/state/codex-update-manager/state.json
+~/.local/state/chatgpt-update-manager/state.json
 ```
 
 The webview button is shown only when this state contains a non-empty
@@ -180,7 +180,7 @@ Relevant state fields:
 Clicking the in-app **Update** button calls the main-process bridge action
 `install`. The bridge:
 
-1. optionally runs `codex-update-manager pick-features`;
+1. optionally runs `chatgpt-update-manager pick-features`;
 2. resolves the current app state directory;
 3. writes the pending marker;
 4. exits Electron.
@@ -188,18 +188,18 @@ Clicking the in-app **Update** button calls the main-process bridge action
 For the default app id, the marker path is:
 
 ```text
-~/.local/state/codex-desktop/codex-wrapper-updater/pending
+~/.local/state/chatgpt-desktop/chatgpt-wrapper-updater/pending
 ```
 
 The feature hook then runs:
 
 ```text
-codex-update-manager apply-wrapper-update
+chatgpt-update-manager apply-wrapper-update
 ```
 
 Apply behavior depends on the install type:
 
-- **User-local install**: prefers `~/.local/bin/codex-desktop-update`, so it can
+- **User-local install**: prefers `~/.local/bin/chatgpt-desktop-update`, so it can
   update in place without privilege escalation.
 - **Packaged install**: fetches the wrapper source, rebuilds a fresh native
   package from the cached/current DMG, and installs it with `pkexec`.
@@ -211,7 +211,7 @@ cleared, and the app is relaunched by the after-exit hook.
 
 The hook is fail-closed:
 
-- if `codex-update-manager` is missing, the marker is kept;
+- if `chatgpt-update-manager` is missing, the marker is kept;
 - if rebuild/install fails, the marker is kept;
 - if required build tools are missing, the marker is kept;
 - a lock directory prevents concurrent apply attempts;
@@ -227,7 +227,7 @@ hook. It leaves a retry marker for a later launch/exit.
 Run the feature tests:
 
 ```bash
-node --test linux-features/codex-wrapper-updater/test.js
+node --test linux-features/chatgpt-wrapper-updater/test.js
 ```
 
 Build and package with the feature enabled:
@@ -240,29 +240,29 @@ MAX_BUILD_THREADS=8 make deb
 Verify the installed build has the feature:
 
 ```bash
-sed -n '1,160p' /opt/codex-desktop/resources/codex-linux-build-info.json
+sed -n '1,160p' /opt/chatgpt-desktop/resources/codex-linux-build-info.json
 ```
 
 Verify the settings patch landed in the installed webview bundle:
 
 ```bash
 rg "CodexLinuxWrapperUpdatesSetting|CodexLinuxFeaturePickerOnUpdateSetting|get-global-state|set-global-state" \
-  /opt/codex-desktop/content/webview/assets/general-settings-*.js
+  /opt/chatgpt-desktop/content/webview/assets/general-settings-*.js
 ```
 
 Toggle the settings in Settings -> General, then verify:
 
 ```bash
 rg "codex-linux-wrapper-updates-enabled|codex-linux-feature-picker-on-update" \
-  ~/.config/codex-desktop/settings.json
+  ~/.config/chatgpt-desktop/settings.json
 ```
 
 Inspect wrapper detection state and the picker command:
 
 ```bash
-codex-update-manager check-wrapper --json
-codex-update-manager status --json
-codex-update-manager pick-features --json
+chatgpt-update-manager check-wrapper --json
+chatgpt-update-manager status --json
+chatgpt-update-manager pick-features --json
 ```
 
 ## Troubleshooting
@@ -275,8 +275,8 @@ If the **Update** button does not appear, check:
 
 - the Settings -> General wrapper update toggle is on;
 - `check-wrapper --json` records `candidate_wrapper_commit`;
-- `~/.local/state/codex-update-manager/state.json` contains the candidate;
-- the installed build includes `codex-wrapper-updater` in
+- `~/.local/state/chatgpt-update-manager/state.json` contains the candidate;
+- the installed build includes `chatgpt-wrapper-updater` in
   `codex-linux-build-info.json`.
 
 If the feature picker does not appear before the update:
@@ -291,8 +291,8 @@ If the feature picker does not appear before the update:
 If the app keeps retrying an update, inspect the pending marker and updater log:
 
 ```bash
-ls -la ~/.local/state/codex-desktop/codex-wrapper-updater/
-tail -n 200 ~/.local/state/codex-update-manager/service.log
+ls -la ~/.local/state/chatgpt-desktop/chatgpt-wrapper-updater/
+tail -n 200 ~/.local/state/chatgpt-update-manager/service.log
 ```
 
 Removing the pending marker stops retries, but normally the marker should be

@@ -4,6 +4,8 @@ Release:        __RPM_RELEASE__%{?dist}
 Summary:        ChatGPT Desktop for Linux
 License:        Proprietary
 ExclusiveArch:  __ARCH__
+__LEGACY_CONFLICTS__
+__LEGACY_OBSOLETES__
 %global __requires_exclude_from ^/opt/__PACKAGE_NAME__/.*$
 %global __provides_exclude_from ^/opt/__PACKAGE_NAME__/.*$
 %global codex_elf_suffix %{nil}
@@ -32,7 +34,7 @@ Requires the Codex CLI to be available in PATH or CODEX_CLI_PATH.
 Local auto-updates rebuild a Linux package from the upstream ChatGPT.dmg and therefore
 use the bundled managed Node.js runtime plus the local packaging toolchain listed in Requires.
 %else
-This package was built without codex-update-manager. Update manually from a trusted checkout.
+This package was built without chatgpt-update-manager. Update manually from a trusted checkout.
 %endif
 
 %install
@@ -45,27 +47,27 @@ cp -a "__RPM_STAGING_DIR__/." "%{buildroot}/"
 /opt/__PACKAGE_NAME__/
 /usr/bin/__PACKAGE_NAME__
 %if __PACKAGE_WITH_UPDATER__
-/usr/bin/codex-update-manager
-/usr/lib/systemd/user/codex-update-manager.service
+/usr/bin/chatgpt-update-manager
+/usr/lib/systemd/user/chatgpt-update-manager.service
 %endif
 /usr/share/applications/__PACKAGE_NAME__.desktop
 /usr/share/icons/hicolor/256x256/apps/__PACKAGE_NAME__.png
 %if __PACKAGE_WITH_UPDATER__
-/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy
+/usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy
 %endif
 
 %post
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 fi
-DESKTOP_ENTRY_DOCTOR=/opt/__PACKAGE_NAME__/.codex-linux/codex-desktop-entry-doctor.sh
+DESKTOP_ENTRY_DOCTOR=/opt/__PACKAGE_NAME__/.codex-linux/chatgpt-desktop-entry-doctor.sh
 if [ -f "$DESKTOP_ENTRY_DOCTOR" ]; then
     . "$DESKTOP_ENTRY_DOCTOR"
     codex_desktop_repair_system_package_shadow_entries __PACKAGE_NAME__ || true
 fi
 
 %if __PACKAGE_WITH_UPDATER__
-SERVICE_HELPER=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/codex-update-manager-user-service.sh
+SERVICE_HELPER=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/chatgpt-update-manager-user-service.sh
 if [ -f "$SERVICE_HELPER" ]; then
     . "$SERVICE_HELPER"
     if [ "${1:-0}" -eq 1 ]; then
@@ -84,7 +86,7 @@ fi
 
 %if __PACKAGE_WITH_UPDATER__
 %preun
-SERVICE_HELPER=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/codex-update-manager-user-service.sh
+SERVICE_HELPER=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/chatgpt-update-manager-user-service.sh
 [ -f "$SERVICE_HELPER" ] && . "$SERVICE_HELPER"
 if [ $1 -eq 0 ] && [ -f "$SERVICE_HELPER" ]; then
     codex_cleanup_user_service stop || true
@@ -101,7 +103,7 @@ fi
 
 %if __PACKAGE_WITH_UPDATER__
 %postun
-SERVICE_HELPER=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/codex-update-manager-user-service.sh
+SERVICE_HELPER=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/chatgpt-update-manager-user-service.sh
 if [ -f "$SERVICE_HELPER" ]; then
     . "$SERVICE_HELPER"
     codex_reload_user_managers || true

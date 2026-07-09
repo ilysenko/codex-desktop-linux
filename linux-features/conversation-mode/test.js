@@ -166,7 +166,7 @@ function withConversationRuntime(fn, options = {}) {
     },
   };
   const fakeNavigator = options.navigator ?? {
-    userAgent: "Codex Desktop Linux",
+    userAgent: "ChatGPT Desktop Linux",
     mediaDevices: {},
   };
   const fakeLocalStorage = {
@@ -1559,7 +1559,7 @@ test("conversation runtime opens one pending interrupt monitor stream", () => {
     },
   };
   const navigator = {
-    userAgent: "Codex Desktop Linux",
+    userAgent: "ChatGPT Desktop Linux",
     mediaDevices: {
       getUserMedia() {
         getUserMediaCalls++;
@@ -1633,7 +1633,7 @@ test("conversation runtime invalidates pending interrupt monitors across mute to
     },
   };
   const navigator = {
-    userAgent: "Codex Desktop Linux",
+    userAgent: "ChatGPT Desktop Linux",
     mediaDevices: {
       getUserMedia() {
         getUserMediaCalls++;
@@ -1783,7 +1783,7 @@ test("conversation interrupt monitor paces microphone analysis below display fra
   const stream = createAudioStream();
   const { AudioContext, stats } = createCountingAudioContext({ level: () => 0.05 });
   const navigator = {
-    userAgent: "Codex Desktop Linux",
+    userAgent: "ChatGPT Desktop Linux",
     mediaDevices: {
       getUserMedia() {
         getUserMediaCalls++;
@@ -1869,7 +1869,7 @@ test("conversation interrupt monitor still triggers after sustained paced speech
   const stream = createAudioStream();
   const { AudioContext, stats } = createCountingAudioContext({ level: () => 0.06 });
   const navigator = {
-    userAgent: "Codex Desktop Linux",
+    userAgent: "ChatGPT Desktop Linux",
     mediaDevices: {
       getUserMedia() {
         return {

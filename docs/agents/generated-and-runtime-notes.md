@@ -27,13 +27,13 @@ that agents need without keeping them in the main quick-start.
   Gitignored user-local feature directory.
 - `chatgpt-app/.codex-linux/linux-features-staged.json`
   Staged declarative feature ownership manifest.
-- `~/.config/codex-update-manager/config.toml`
+- `~/.config/chatgpt-update-manager/config.toml`
   Runtime updater config.
-- `~/.local/state/codex-update-manager/state.json`
+- `~/.local/state/chatgpt-update-manager/state.json`
   Updater state-machine persistence.
-- `~/.local/state/codex-update-manager/service.log`
+- `~/.local/state/chatgpt-update-manager/service.log`
   Updater service log.
-- `~/.cache/codex-update-manager/`
+- `~/.cache/chatgpt-update-manager/`
   Downloaded DMGs, rebuild workspaces, staged package artifacts, and build logs.
 - `~/.cache/chatgpt-desktop/launcher.log`
   Launcher log for the default app identity.

@@ -60,7 +60,7 @@ class WindowControlDBus extends GObject.Object {
             SERVICE_NAME,
             Gio.BusNameOwnerFlags.NONE,
             null,
-            () => log(`Codex Window Control lost DBus name ${SERVICE_NAME}`));
+            () => log(`ChatGPT Window Control lost DBus name ${SERVICE_NAME}`));
     }
 
     destroy() {

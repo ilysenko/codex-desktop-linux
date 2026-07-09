@@ -143,7 +143,7 @@ test("read-aloud-mcp stage hook records marketplace entry", () => {
       INSTALL_DIR: installDir,
       WORK_DIR: path.join(workspace, "work"),
       ARCH: process.arch === "arm64" ? "aarch64" : "x86_64",
-      CODEX_UPSTREAM_APP_DIR: path.join(workspace, "Codex.app"),
+      CODEX_UPSTREAM_APP_DIR: path.join(workspace, "ChatGPT.app"),
       CODEX_LINUX_READ_ALOUD_MCP_SOURCE: fakeBackend,
       ICON_SOURCE: path.join(workspace, "missing-icon.png"),
     },

@@ -1362,7 +1362,7 @@ test("open-target discovery filters broad non-IDE desktop entries", () => {
       ["pinta", "Pinta", "Image Editor", "Graphics;2DGraphics;RasterGraphics;GTK;"],
       ["electron37", "Electron 37", "", "Development;GTK;"],
       ["cmake-gui", "CMake", "Cross-platform buildsystem", "Development;Building;"],
-      ["codex-desktop", "Codex Desktop", "Run Codex Desktop on Linux", "Development;"],
+      ["chatgpt-desktop", "ChatGPT", "Run ChatGPT on Linux", "Development;"],
       ["codex-monitor", "Codex Monitor", "Orchestrate Codex agents across local workspaces", "Development;"],
       ["stably-orca", "Orca", "Agentic Coding IDE", "Development;IDE;TextEditor;"],
     ];

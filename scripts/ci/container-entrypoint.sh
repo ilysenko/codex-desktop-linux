@@ -151,7 +151,7 @@ run_as_ci_user() {
         "CI_PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         "PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         "CI_DMG_PATH=${CI_DMG_PATH:-}"
-        "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg}"
+        "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg}"
         "UPSTREAM_DMG_PATH=${UPSTREAM_DMG_PATH:-/tmp/chatgpt-upstream-ci/ChatGPT.dmg}"
         "UPSTREAM_DMG_CACHE_HIT=${UPSTREAM_DMG_CACHE_HIT:-}"
         "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}"
@@ -262,7 +262,7 @@ run_deb_job() {
     local target_dir
     target_dir="$(package_target_dir)"
     CARGO_TARGET_DIR="$target_dir" \
-    UPDATER_BINARY_SOURCE="$target_dir/release/codex-update-manager" \
+    UPDATER_BINARY_SOURCE="$target_dir/release/chatgpt-update-manager" \
     PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
         ./scripts/build-deb.sh
 
@@ -270,11 +270,11 @@ run_deb_job() {
     deb_file="$(package_file_or_fail 'chatgpt-desktop_*.deb')"
     dpkg-deb -I "$deb_file"
     dpkg-deb -c "$deb_file" | tee /tmp/deb-contents.txt >/dev/null
-    assert_contains_file /tmp/deb-contents.txt './usr/bin/codex-update-manager'
-    assert_contains_file /tmp/deb-contents.txt './usr/lib/systemd/user/codex-update-manager.service'
+    assert_contains_file /tmp/deb-contents.txt './usr/bin/chatgpt-update-manager'
+    assert_contains_file /tmp/deb-contents.txt './usr/lib/systemd/user/chatgpt-update-manager.service'
     assert_contains_file /tmp/deb-contents.txt './opt/chatgpt-desktop/update-builder/install.sh'
     assert_contains_file /tmp/deb-contents.txt './opt/chatgpt-desktop/update-builder/launcher/webview-server.py'
-    assert_contains_file /tmp/deb-contents.txt './opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh'
+    assert_contains_file /tmp/deb-contents.txt './opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh'
 
     rm -rf dist
     CARGO_TARGET_DIR="$target_dir" \
@@ -290,11 +290,11 @@ run_deb_job() {
     mkdir -p /tmp/deb-no-updater-control /tmp/deb-no-updater-payload
     dpkg-deb -e "$deb_no_updater_file" /tmp/deb-no-updater-control
     dpkg-deb -x "$deb_no_updater_file" /tmp/deb-no-updater-payload
-    assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/bin/codex-update-manager'
-    assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/lib/systemd/user/codex-update-manager.service'
-    assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy'
+    assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/bin/chatgpt-update-manager'
+    assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/lib/systemd/user/chatgpt-update-manager.service'
+    assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy'
     assert_not_contains_file /tmp/deb-no-updater-contents.txt './opt/chatgpt-desktop/update-builder/'
-    assert_contains_file /tmp/deb-no-updater-contents.txt './opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh'
+    assert_contains_file /tmp/deb-no-updater-contents.txt './opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh'
     assert_contains_file /tmp/deb-no-updater-contents.txt './opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh'
     assert_contains_file /tmp/deb-no-updater-payload/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh 'codex_no_updater_cleanup_user_enablement_links'
     assert_contains_file /tmp/deb-no-updater-payload/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh 'default.target.wants'
@@ -317,7 +317,7 @@ run_rpm_job() {
     local target_dir
     target_dir="$(package_target_dir)"
     CARGO_TARGET_DIR="$target_dir" \
-    UPDATER_BINARY_SOURCE="$target_dir/release/codex-update-manager" \
+    UPDATER_BINARY_SOURCE="$target_dir/release/chatgpt-update-manager" \
     PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
         ./scripts/build-rpm.sh
 
@@ -325,11 +325,11 @@ run_rpm_job() {
     rpm_file="$(package_file_or_fail 'chatgpt-desktop-*.rpm')"
     rpm -qip "$rpm_file"
     rpm -qlp "$rpm_file" | tee /tmp/rpm-contents.txt >/dev/null
-    assert_contains_file /tmp/rpm-contents.txt '/usr/bin/codex-update-manager'
-    assert_contains_file /tmp/rpm-contents.txt '/usr/lib/systemd/user/codex-update-manager.service'
+    assert_contains_file /tmp/rpm-contents.txt '/usr/bin/chatgpt-update-manager'
+    assert_contains_file /tmp/rpm-contents.txt '/usr/lib/systemd/user/chatgpt-update-manager.service'
     assert_contains_file /tmp/rpm-contents.txt '/opt/chatgpt-desktop/update-builder/install.sh'
     assert_contains_file /tmp/rpm-contents.txt '/opt/chatgpt-desktop/update-builder/launcher/webview-server.py'
-    assert_contains_file /tmp/rpm-contents.txt '/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh'
+    assert_contains_file /tmp/rpm-contents.txt '/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh'
 
     rm -rf dist
     CARGO_TARGET_DIR="$target_dir" \
@@ -341,11 +341,11 @@ run_rpm_job() {
     rpm_no_updater_file="$(package_file_or_fail 'chatgpt-desktop-*.rpm')"
     rpm -qlp "$rpm_no_updater_file" | tee /tmp/rpm-no-updater-contents.txt >/dev/null
     rpm -qp --scripts "$rpm_no_updater_file" | tee /tmp/rpm-no-updater-scripts.txt >/dev/null
-    assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/bin/codex-update-manager'
-    assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/lib/systemd/user/codex-update-manager.service'
-    assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy'
+    assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/bin/chatgpt-update-manager'
+    assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/lib/systemd/user/chatgpt-update-manager.service'
+    assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy'
     assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/opt/chatgpt-desktop/update-builder/'
-    assert_contains_file /tmp/rpm-no-updater-contents.txt '/opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh'
+    assert_contains_file /tmp/rpm-no-updater-contents.txt '/opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh'
     assert_contains_file /tmp/rpm-no-updater-contents.txt '/opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh'
     assert_contains_file /tmp/rpm-no-updater-scripts.txt 'codex_no_updater_cleanup_update_manager_service'
     assert_not_contains_file /tmp/rpm-no-updater-scripts.txt 'update-builder'
@@ -364,9 +364,9 @@ run_pacman_job() {
 
     local target_dir
     target_dir="$(package_target_dir)"
-    CARGO_TARGET_DIR="$target_dir" cargo build --release -p codex-update-manager
+    CARGO_TARGET_DIR="$target_dir" cargo build --release -p chatgpt-update-manager
     CARGO_TARGET_DIR="$target_dir" \
-    UPDATER_BINARY_SOURCE="$target_dir/release/codex-update-manager" \
+    UPDATER_BINARY_SOURCE="$target_dir/release/chatgpt-update-manager" \
     PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
         ./scripts/build-pacman.sh
 
@@ -374,11 +374,11 @@ run_pacman_job() {
     pkg_file="$(package_file_or_fail 'chatgpt-desktop-*.pkg.tar.*')"
     pacman -Qip "$pkg_file"
     pacman -Qlp "$pkg_file" | tee /tmp/pacman-contents.txt >/dev/null
-    assert_contains_file /tmp/pacman-contents.txt 'usr/bin/codex-update-manager'
-    assert_contains_file /tmp/pacman-contents.txt 'usr/lib/systemd/user/codex-update-manager.service'
+    assert_contains_file /tmp/pacman-contents.txt 'usr/bin/chatgpt-update-manager'
+    assert_contains_file /tmp/pacman-contents.txt 'usr/lib/systemd/user/chatgpt-update-manager.service'
     assert_contains_file /tmp/pacman-contents.txt 'opt/chatgpt-desktop/update-builder/install.sh'
     assert_contains_file /tmp/pacman-contents.txt 'opt/chatgpt-desktop/update-builder/launcher/webview-server.py'
-    assert_contains_file /tmp/pacman-contents.txt 'opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh'
+    assert_contains_file /tmp/pacman-contents.txt 'opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh'
 
     rm -rf dist
     CARGO_TARGET_DIR="$target_dir" \
@@ -391,11 +391,11 @@ run_pacman_job() {
     pacman -Qlp "$pkg_no_updater_file" | tee /tmp/pacman-no-updater-contents.txt >/dev/null
     tar -xOf "$pkg_no_updater_file" .INSTALL | tee /tmp/pacman-no-updater-install.txt >/dev/null
     tar -xOf "$pkg_no_updater_file" opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh | tee /tmp/pacman-no-updater-cleanup.txt >/dev/null
-    assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/bin/codex-update-manager'
-    assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/lib/systemd/user/codex-update-manager.service'
-    assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/share/polkit-1/actions/com.github.ilysenko.chatgpt-desktop-linux.update.policy'
+    assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/bin/chatgpt-update-manager'
+    assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/lib/systemd/user/chatgpt-update-manager.service'
+    assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/share/polkit-1/actions/com.github.erickrouss.chatgpt-desktop-linux.update.policy'
     assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'opt/chatgpt-desktop/update-builder/'
-    assert_contains_file /tmp/pacman-no-updater-contents.txt 'opt/chatgpt-desktop/.codex-linux/codex-packaged-runtime.sh'
+    assert_contains_file /tmp/pacman-no-updater-contents.txt 'opt/chatgpt-desktop/.codex-linux/chatgpt-packaged-runtime.sh'
     assert_contains_file /tmp/pacman-no-updater-contents.txt 'opt/chatgpt-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh'
     assert_contains_file /tmp/pacman-no-updater-cleanup.txt 'codex_no_updater_cleanup_user_enablement_links'
     assert_contains_file /tmp/pacman-no-updater-cleanup.txt 'default.target.wants'

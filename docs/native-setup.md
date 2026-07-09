@@ -8,7 +8,7 @@ This project has two native install entrypoints:
 ## Fast Native Install
 
 ```bash
-git clone https://github.com/ilysenko/chatgpt-desktop-linux.git
+git clone https://github.com/EricKrouss/chatgpt-desktop-linux.git
 cd chatgpt-desktop-linux
 make bootstrap-native
 ```
@@ -17,6 +17,14 @@ make bootstrap-native
 validates the cached upstream `ChatGPT.dmg` and downloads it only when missing or
 stale, builds the matching native package, and installs the newest artifact
 from `dist/`.
+
+After the native package installs, the app appears in your desktop launcher as
+**ChatGPT Desktop** and is also available as the `chatgpt-desktop` command. A
+direct `./install.sh` run only rebuilds the local `chatgpt-app/` directory.
+
+New ChatGPT is the default and only supported DMG source for native installs.
+The ChatGPT Classic Sidekick DMG is a native macOS app, not an Electron bundle,
+so it cannot be converted by this Linux port.
 
 If dependencies are already installed:
 

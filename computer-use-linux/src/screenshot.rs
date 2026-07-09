@@ -345,17 +345,18 @@ async fn capture_with_gnome_extension() -> Result<RawScreenshotCapture> {
         identity::DBUS_SERVICE,
     )
     .await
-    .context("failed to create Codex GNOME Shell extension proxy")?;
+    .context("failed to create ChatGPT GNOME Shell extension proxy")?;
     let (ok, message): (bool, String) = match proxy.call("CaptureScreenshot", &(filename)).await {
         Ok(result) => result,
         Err(error) => {
             cleanup_gnome_requested_path(&path);
-            return Err(error).context("Codex GNOME Shell extension CaptureScreenshot call failed");
+            return Err(error)
+                .context("ChatGPT GNOME Shell extension CaptureScreenshot call failed");
         }
     };
     if !ok {
         cleanup_gnome_requested_path(&path);
-        bail!("Codex GNOME Shell extension refused screenshot: {message}");
+        bail!("ChatGPT GNOME Shell extension refused screenshot: {message}");
     }
 
     read_png_as_capture(
@@ -770,8 +771,8 @@ mod tests {
     #[test]
     fn decodes_file_uri_percent_escapes() {
         assert_eq!(
-            file_uri_to_path("file:///tmp/Codex%20Screenshot.png").unwrap(),
-            PathBuf::from("/tmp/Codex Screenshot.png")
+            file_uri_to_path("file:///tmp/ChatGPT%20Screenshot.png").unwrap(),
+            PathBuf::from("/tmp/ChatGPT Screenshot.png")
         );
     }
 

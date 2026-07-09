@@ -12,7 +12,7 @@ use std::{
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
 const PACKAGE_NAME: &str = "chatgpt-desktop";
-const INSTALLED_UPDATER_BINARY: &str = "/usr/bin/codex-update-manager";
+const INSTALLED_UPDATER_BINARY: &str = "/usr/bin/chatgpt-update-manager";
 const APT_CANDIDATES: &[&str] = &["/usr/bin/apt", "/bin/apt"];
 const DNF_CANDIDATES: &[&str] = &["/usr/bin/dnf", "/bin/dnf", "/usr/bin/dnf5", "/bin/dnf5"];
 const DPKG_CANDIDATES: &[&str] = &["/usr/bin/dpkg", "/bin/dpkg"];
@@ -362,7 +362,7 @@ fn create_private_temp_dir() -> Result<PathBuf> {
 
     for attempt in 0..100 {
         let dir = base.join(format!(
-            "codex-update-manager-{}-{nonce}-{attempt}",
+            "chatgpt-update-manager-{}-{nonce}-{attempt}",
             std::process::id()
         ));
         match create_private_dir(&dir) {
@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn builds_pkexec_command_for_privileged_deb_install() {
         let command = pkexec_command(
-            Path::new("/usr/bin/codex-update-manager"),
+            Path::new("/usr/bin/chatgpt-update-manager"),
             Path::new("/tmp/update.deb"),
         );
         let args: Vec<_> = command
@@ -832,7 +832,7 @@ mod tests {
             args,
             vec![
                 "--disable-internal-agent",
-                "/usr/bin/codex-update-manager",
+                "/usr/bin/chatgpt-update-manager",
                 "install-deb",
                 "--path",
                 "/tmp/update.deb"
@@ -843,7 +843,7 @@ mod tests {
     #[test]
     fn builds_pkexec_command_for_privileged_rpm_install() {
         let command = pkexec_command(
-            Path::new("/usr/bin/codex-update-manager"),
+            Path::new("/usr/bin/chatgpt-update-manager"),
             Path::new("/tmp/update.rpm"),
         );
         let args: Vec<_> = command
@@ -854,7 +854,7 @@ mod tests {
             args,
             vec![
                 "--disable-internal-agent",
-                "/usr/bin/codex-update-manager",
+                "/usr/bin/chatgpt-update-manager",
                 "install-rpm",
                 "--path",
                 "/tmp/update.rpm"
@@ -865,11 +865,11 @@ mod tests {
     #[test]
     fn prefers_installed_updater_path_for_pkexec() {
         let selected =
-            updater_binary_for_privileged_install(Path::new("/tmp/codex-update-manager-old"));
-        let expected = if Path::new("/usr/bin/codex-update-manager").is_file() {
-            PathBuf::from("/usr/bin/codex-update-manager")
+            updater_binary_for_privileged_install(Path::new("/tmp/chatgpt-update-manager-old"));
+        let expected = if Path::new("/usr/bin/chatgpt-update-manager").is_file() {
+            PathBuf::from("/usr/bin/chatgpt-update-manager")
         } else {
-            PathBuf::from("/tmp/codex-update-manager-old")
+            PathBuf::from("/tmp/chatgpt-update-manager-old")
         };
         assert_eq!(selected, expected);
     }
@@ -1113,7 +1113,7 @@ mod tests {
     #[test]
     fn builds_pkexec_command_for_privileged_pacman_install() {
         let command = pkexec_command(
-            Path::new("/usr/bin/codex-update-manager"),
+            Path::new("/usr/bin/chatgpt-update-manager"),
             Path::new("/tmp/update.pkg.tar.zst"),
         );
         let args: Vec<_> = command
@@ -1124,7 +1124,7 @@ mod tests {
             args,
             vec![
                 "--disable-internal-agent",
-                "/usr/bin/codex-update-manager",
+                "/usr/bin/chatgpt-update-manager",
                 "install-pacman",
                 "--path",
                 "/tmp/update.pkg.tar.zst"

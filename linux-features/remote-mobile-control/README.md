@@ -1,6 +1,6 @@
 # Experimental Remote Mobile Control
 
-This feature is disabled by default. It patches the upstream Codex Desktop main
+This feature is disabled by default. It patches the upstream ChatGPT main
 bundle so Linux can try the remote-control host and outbound control flows that
 upstream currently limits to macOS.
 
@@ -43,7 +43,7 @@ What it changes:
   the local Chrome plugin and native host are healthy, and adds a diagnostic
   when the native browser bridge is not exposed to the session.
 - Persists the private key material at
-  `~/.config/codex-desktop/remote-control-device-keys-v1.json` with `0600`
+  `~/.config/chatgpt-desktop/remote-control-device-keys-v1.json` with `0600`
   file permissions.
 - Preserves `remote_control = true` / `features.remote_control = true` in the
   local Codex config instead of letting upstream strip it before app-server
@@ -85,10 +85,10 @@ On NixOS, prefer the flake's Home Manager module instead of the launcher hook:
 ```nix
 {
   imports = [
-    inputs.codex-desktop-linux.homeManagerModules.default
+    inputs.chatgpt-desktop-linux.homeManagerModules.default
   ];
 
-  programs.codexDesktopLinux = {
+  programs.chatgptDesktopLinux = {
     enable = true;
     computerUseUi.enable = true;
     remoteMobileControl.enable = true;
@@ -130,8 +130,8 @@ enrolled. On Plasma/Wayland, verify that the KWin backend is ready after
 building or installing the package:
 
 ```bash
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux doctor
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux windows
+./chatgpt-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux doctor
+./chatgpt-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux windows
 ```
 
 The doctor report should show the KWin window backend, XDG Desktop Portal, and

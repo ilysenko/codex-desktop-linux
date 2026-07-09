@@ -1,6 +1,6 @@
 # Auto-Update Manager
 
-Default native packages install `codex-update-manager`, a companion
+Default native packages install `chatgpt-update-manager`, a companion
 `systemd --user` service.
 
 It:
@@ -11,7 +11,7 @@ It:
 - waits for Electron to exit before installing a ready update
 - runs unprivileged; the final package install uses `pkexec` when a graphical
   polkit authentication agent is available, or keeps the package ready and
-  reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...`
+  reports a terminal `sudo /usr/bin/chatgpt-update-manager ... --path ...`
   command when no auth agent is available
 - performs best-effort Codex CLI preflight from the launcher
 
@@ -54,11 +54,11 @@ the same non-npm guidance applies.
 ## Inspect State
 
 ```bash
-systemctl --user status codex-update-manager.service
-codex-update-manager status --json
-codex-update-manager diagnose --json
-sed -n '1,160p' ~/.local/state/codex-update-manager/state.json
-sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
+systemctl --user status chatgpt-update-manager.service
+chatgpt-update-manager status --json
+chatgpt-update-manager diagnose --json
+sed -n '1,160p' ~/.local/state/chatgpt-update-manager/state.json
+sed -n '1,160p' ~/.local/state/chatgpt-update-manager/service.log
 ```
 
 `diagnose` is read-only and intended for post-update support reports. It checks
@@ -70,10 +70,10 @@ anything.
 Runtime files:
 
 ```text
-~/.config/codex-update-manager/config.toml
-~/.local/state/codex-update-manager/state.json
-~/.local/state/codex-update-manager/service.log
-~/.cache/codex-update-manager/
+~/.config/chatgpt-update-manager/config.toml
+~/.local/state/chatgpt-update-manager/state.json
+~/.local/state/chatgpt-update-manager/service.log
+~/.cache/chatgpt-update-manager/
 ~/.cache/chatgpt-desktop/launcher.log
 ~/.local/state/chatgpt-desktop/app.pid
 ```
@@ -81,7 +81,7 @@ Runtime files:
 ## Generated Artifact Cleanup
 
 The updater always prunes unreferenced updater workspaces under
-`~/.cache/codex-update-manager/workspaces`. Local checkout build output such as
+`~/.cache/chatgpt-update-manager/workspaces`. Local checkout build output such as
 `dist/`, `target/`, and `chatgpt-app/` is cleaned only when explicitly enabled.
 
 Example:
@@ -105,7 +105,7 @@ If a rebuilt update installs but the previous retained package was better,
 close ChatGPT Desktop and run:
 
 ```bash
-codex-update-manager rollback
+chatgpt-update-manager rollback
 ```
 
 Rollback uses the last retained known-good package and refuses to run when no
@@ -120,12 +120,12 @@ PACKAGE_WITH_UPDATER=0 make package
 make install
 ```
 
-That package omits `codex-update-manager`, the user service unit, updater
+That package omits `chatgpt-update-manager`, the user service unit, updater
 polkit policy, `/opt/chatgpt-desktop/update-builder`, desktop updater actions,
 and launcher updater startup checks.
 
 Installing a no-updater package over a default package also stops and disables
-existing `codex-update-manager.service` instances for active user managers and
+existing `chatgpt-update-manager.service` instances for active user managers and
 removes stale per-user enablement links for inactive users.
 
 Manual updates should come from a checkout you trust:
@@ -142,17 +142,17 @@ fresh upstream `ChatGPT.dmg`, builds the native package, and installs it.
 ```bash
 make service-enable
 make service-status
-codex-update-manager status --json
+chatgpt-update-manager status --json
 ```
 
 `make service-enable` is meant for installed packages, not repo-only generated
 apps.
 
-To temporarily pause automatic package rebuilds and installs while keeping Codex
-Desktop usable, disable the user service:
+To temporarily pause automatic package rebuilds and installs while keeping
+ChatGPT Desktop usable, disable the user service:
 
 ```bash
-systemctl --user disable --now codex-update-manager.service
+systemctl --user disable --now chatgpt-update-manager.service
 ```
 
 Launching ChatGPT Desktop and upgrading the package will not re-enable a disabled
@@ -160,7 +160,7 @@ updater service. Re-enable updater behavior explicitly when you want automatic
 checks again:
 
 ```bash
-systemctl --user enable --now codex-update-manager.service
+systemctl --user enable --now chatgpt-update-manager.service
 ```
 
 ## Wrapper Updates
@@ -172,7 +172,7 @@ changes with:
 enable_wrapper_updates = true
 ```
 
-in `~/.config/codex-update-manager/config.toml`.
+in `~/.config/chatgpt-update-manager/config.toml`.
 
 This is intended for git-checkout/dev update-builder installs. Frozen
 native-package builders without a `.git` directory report no wrapper candidate

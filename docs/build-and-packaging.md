@@ -5,7 +5,7 @@
 You need:
 
 - `python3`, `7z`/`7za`/`7zz`, `curl`, `unzip`, `tar`, `make`, `g++`
-- Rust toolchain with `cargo` for `codex-update-manager`,
+- Rust toolchain with `cargo` for `chatgpt-update-manager`,
   `codex-computer-use-linux`, the Chrome extension host binary, and optional
   Rust-backed features such as Read Aloud MCP and Record & Replay
 
@@ -80,6 +80,14 @@ explicit `DMG=/path/to/ChatGPT.dmg` uses that file exactly.
 Native install shortcuts use `--fresh --reuse-dmg`, so they clean the generated
 app directory while still reusing the cached DMG when upstream metadata matches.
 
+By default, installer downloads use New ChatGPT from
+`https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg`. The
+`https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg` ChatGPT Classic
+DMG is a native macOS app and does not contain Electron `app.asar`, so this
+Linux conversion pipeline cannot build it. `--classic-chatgpt` is recognized and
+exits with that explanation before downloading. `CODEX_UPSTREAM_DMG_URL` remains
+available for custom Electron DMG endpoints.
+
 For deterministic test rounds, set `CODEX_DMG_REFRESH_MODE=pinned`. Pinned mode
 reuses the existing cached `ChatGPT.dmg` verbatim, skips upstream metadata checks,
 and fails instead of downloading when no cached DMG or explicit `DMG=...` path is
@@ -113,6 +121,10 @@ make run-app
 ./chatgpt-app/start.sh
 ```
 
+This local generated-app path is for development. To install a normal desktop
+launcher named **ChatGPT Desktop** plus the `chatgpt-desktop` command, build and
+install a native package with `make install-native`.
+
 ## Running The Generated App
 
 By default, second launches reuse the running app through the Linux warm-start
@@ -144,6 +156,10 @@ After `make build-app` or `make build-app-fresh`, build a package from
 | AppImage | `make appimage` | `dist/chatgpt-desktop-*.AppImage` | Run directly |
 | Auto-detect | `make package && make install` | matches host distro | handled by `make install` |
 
+Native packages install `/usr/bin/chatgpt-desktop`, a
+`chatgpt-desktop.desktop` app entry, and the app icon, so launching from the
+desktop menu does not require running `start.sh`.
+
 Override package version:
 
 ```bash
@@ -161,7 +177,7 @@ make appimage
 ./dist/chatgpt-desktop-*.AppImage
 ```
 
-The AppImage flow does not include `codex-update-manager`, the systemd user
+The AppImage flow does not include `chatgpt-update-manager`, the systemd user
 service, polkit policy, or the native-package update builder.
 
 When upstream ChatGPT Desktop changes:

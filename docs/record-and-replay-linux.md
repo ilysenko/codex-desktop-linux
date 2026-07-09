@@ -1,6 +1,7 @@
 # Record And Replay Compatibility On Linux
 
-This document tracks the Linux compatibility path for Codex Record & Replay.
+This document tracks the Linux compatibility path for upstream Record & Replay
+inside the ChatGPT Desktop Linux wrapper.
 Treat Record & Replay as a demo-to-skill compiler, not as a coordinate macro
 recorder. Parity on Linux means staging the same bundled Record & Replay plugin
 shell from the current upstream DMG, replacing the macOS Sky Computer Use
@@ -39,14 +40,14 @@ Kingdom, and Switzerland, and Computer Use must be available and enabled.
 The workflow is:
 
 1. The user starts "Record a skill" from the Plugins page overflow menu in the
-   Codex app.
-2. Codex asks for recording permission.
+   wrapped ChatGPT Desktop app.
+2. The app asks for recording permission.
 3. The user demonstrates a focused workflow on their Mac.
-4. Codex observes the actions, window content, and spoken user context needed
+4. The app observes the actions, window content, and spoken user context needed
    to learn the workflow.
-5. After recording stops, Codex drafts a reusable skill.
-6. Later, Codex uses that skill as context and completes the workflow with the
-   tools available in the current environment.
+5. After recording stops, the app drafts a reusable skill.
+6. Later, ChatGPT Desktop uses that skill as context and completes the workflow
+   with the tools available in the current environment.
 
 The important compatibility point is the contract: the bundled plugin launches
 an `event-stream` MCP server and the durable output is a Codex skill. The
@@ -117,7 +118,7 @@ Relevant upstream docs:
 
 - Record & Replay: <https://developers.openai.com/codex/record-and-replay>
 - Skills: <https://developers.openai.com/codex/skills>
-- Codex app: <https://developers.openai.com/codex/app>
+- Codex app docs: <https://developers.openai.com/codex/app>
 - Codex changelog: <https://developers.openai.com/codex/changelog>
 
 The June 18, 2026 changelog entry introduced Record & Replay in Codex app
@@ -189,7 +190,7 @@ semantic and provider-gated.
 
 | Layer | Linux Phase 1 status |
 | --- | --- |
-| Codex app | Wrapped upstream app; this repo cannot unlock server-gated upstream product features. |
+| ChatGPT Desktop app | Wrapped upstream app; this repo cannot unlock server-gated upstream product features. |
 | Direct skill folders | Targeted; verify `$HOME/.agents/skills`, repo `.agents/skills`, symlinks, and duplicate names. |
 | `${CODEX_HOME:-~/.codex}/skills` | Wrapper-specific; verify before documenting as a general import path. |
 | Explicit skill invocation | Targeted; support claim requires a smoke test in the wrapped app and/or CLI. |
@@ -310,7 +311,7 @@ Open verification items:
 - Confirm whether Record & Replay-generated skills are saved as ordinary skill
   directories with `SKILL.md`.
 - Confirm the exact save location and export path used by the macOS app.
-- Confirm whether the Linux wrapped Codex app and Codex CLI see
+- Confirm whether the Linux wrapped ChatGPT Desktop app and Codex CLI see
   `$HOME/.agents/skills`, repo `.agents/skills`, symlinks, and duplicates
   without additional patching.
 - Confirm whether `${CODEX_HOME:-~/.codex}/skills` is a general discovery path

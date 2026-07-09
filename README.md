@@ -1,19 +1,19 @@
 <p align="center">
-  <img src="assets/codex-linux.png" width="96" alt="ChatGPT Desktop for Linux icon">
+  <img src="assets/chatgpt-linux.png" width="96" alt="ChatGPT Desktop for Linux icon">
 </p>
 
 <h1 align="center">ChatGPT Desktop for Linux</h1>
 
 <p align="center">
-  <a href="https://github.com/ilysenko/chatgpt-desktop-linux/actions/workflows/ci.yml"><img src="https://github.com/ilysenko/chatgpt-desktop-linux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/ilysenko/chatgpt-desktop-linux/actions/workflows/upstream-build-app.yml"><img src="https://github.com/ilysenko/chatgpt-desktop-linux/actions/workflows/upstream-build-app.yml/badge.svg" alt="Upstream Build App"></a>
+  <strong>Official project repository:</strong>
+  <a href="https://github.com/EricKrouss/chatgpt-desktop-linux">EricKrouss/chatgpt-desktop-linux</a>
 </p>
 
 Unofficial Linux build wrapper for the [OpenAI ChatGPT desktop app](https://openai.com/chatgpt/download/).
 The official ChatGPT app is available for macOS and Windows; this repository
 covers Linux by converting the upstream macOS `ChatGPT.dmg` into a runnable Linux
-Electron app. It began as a ChatGPT-oriented fork of
-[ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux).
+Electron app. The icon above is the official ChatGPT app artwork extracted from
+the supported upstream build.
 
 The project builds native `.deb`, `.rpm`, and `.pkg.tar.zst` packages, supports
 local AppImage self-builds and Nix, and can install a local update manager that
@@ -26,7 +26,8 @@ rebuilds future Linux packages from newer upstream DMGs.
   <a href="#updates">Updates</a> ·
   <a href="#build-package-and-run">Build</a> ·
   <a href="#troubleshooting">Troubleshooting</a> ·
-  <a href="#project-docs">Docs</a>
+  <a href="#project-docs">Docs</a> ·
+  <a href="https://github.com/EricKrouss/chatgpt-desktop-linux">Repository</a>
 </p>
 
 Before opening a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md). For
@@ -43,7 +44,7 @@ and stay disabled unless you enable them before building.
 For native packages and AppImage self-builds, start from a checkout:
 
 ```bash
-git clone https://github.com/ilysenko/chatgpt-desktop-linux.git
+git clone https://github.com/EricKrouss/chatgpt-desktop-linux.git
 cd chatgpt-desktop-linux
 ```
 
@@ -53,7 +54,7 @@ cd chatgpt-desktop-linux
 | Fedora | `make bootstrap-native` | Builds and installs an `.rpm` |
 | openSUSE | `make bootstrap-native` | Builds and installs an `.rpm` |
 | Arch, Manjaro, EndeavourOS | `make bootstrap-native` | Builds and installs a pacman package |
-| NixOS / Nix | `nix run github:ilysenko/chatgpt-desktop-linux` | See [Nix docs](docs/nix.md) |
+| NixOS / Nix | `nix run github:EricKrouss/chatgpt-desktop-linux` | See [Nix docs](docs/nix.md) |
 | Atomic desktops / other distros | `make build-app && make appimage` | Local self-build; no bundled updater |
 
 Recommended native install:
@@ -72,6 +73,30 @@ make install-native
 upstream `ChatGPT.dmg`, downloads it only when missing or stale, builds
 `chatgpt-app/`, packages it for your distro, and installs the newest artifact
 from `dist/`.
+
+After a native install, launch it from your desktop app menu as **ChatGPT
+Desktop** or run `chatgpt-desktop` from a terminal. Running `./install.sh`
+directly only regenerates the local `chatgpt-app/` tree; it does not register a
+desktop entry.
+
+Native packages use the `chatgpt-desktop` package and application id. Installing
+one replaces the legacy `codex-desktop` package so only the current ChatGPT
+Desktop launcher remains in the app menu.
+
+This project supports the latest **New ChatGPT** Electron DMG:
+`https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg`. The
+`https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg` ChatGPT Classic
+DMG is a native macOS app, not an Electron bundle, so this Linux conversion
+pipeline cannot build it. If Classic is selected, the installer exits before
+downloading and points back to New ChatGPT:
+
+```bash
+./install.sh --classic-chatgpt
+```
+
+DMG extraction accepts any available `7z`, `7za`, or `7zz` command. Depending on
+the distribution, that command may be provided by a package named `p7zip`,
+`p7zip-full`, or `7zip`.
 
 If you are installing dependencies manually on Fedora:
 
@@ -112,12 +137,12 @@ sudo zypper remove chatgpt-desktop
 sudo pacman -R chatgpt-desktop
 ```
 
-Native package removal stops and disables `codex-update-manager.service` when
+Native package removal stops and disables `chatgpt-update-manager.service` when
 the service is installed. If the service was left behind by an older package or
 a manual install, disable it explicitly:
 
 ```bash
-systemctl --user disable --now codex-update-manager.service
+systemctl --user disable --now chatgpt-update-manager.service
 ```
 
 AppImage builds are not installed system-wide by this repository; delete the
@@ -128,7 +153,7 @@ checkout with:
 rm -rf chatgpt-app
 ```
 
-`nix run github:ilysenko/chatgpt-desktop-linux` is ephemeral. If you installed
+`nix run github:EricKrouss/chatgpt-desktop-linux` is ephemeral. If you installed
 the flake through a Nix profile, Home Manager, or a NixOS module, remove that
 profile or configuration entry and rebuild your profile/system.
 
@@ -136,9 +161,9 @@ User data is preserved for reinstall. To remove only this wrapper's local app
 state, logs, launcher flags, and updater state, delete these paths.
 
 If you enabled Remote Mobile Control, `~/.config/chatgpt-desktop` can contain
-`remote-control-device-keys-v1.json`. Revoke paired devices in Codex
-Settings/Connections or ChatGPT before deleting that file or removing the whole
-directory. For feature-owned data, prefer the cleanup flow in
+`remote-control-device-keys-v1.json`. Revoke paired devices in ChatGPT Desktop
+settings or ChatGPT before deleting that file or removing the whole directory.
+For feature-owned data, prefer the cleanup flow in
 [Native setup](docs/native-setup.md#feature-cleanup).
 
 ```bash
@@ -146,9 +171,9 @@ rm -rf \
   ~/.config/chatgpt-desktop \
   ~/.local/state/chatgpt-desktop \
   ~/.cache/chatgpt-desktop \
-  ~/.config/codex-update-manager \
-  ~/.local/state/codex-update-manager \
-  ~/.cache/codex-update-manager
+  ~/.config/chatgpt-update-manager \
+  ~/.local/state/chatgpt-update-manager \
+  ~/.cache/chatgpt-update-manager
 ```
 
 Do not remove `~/.codex` unless you also want to delete your Codex CLI
@@ -171,8 +196,10 @@ issues are visible. Set `CODEX_CLI_PATH=/path/to/codex` when you want to pin a
 specific binary.
 
 X11 and Wayland sessions are supported. The launcher prefers XWayland on
-Wayland when available for better Electron popup positioning, then falls back
-to Electron's automatic Wayland handling. See
+Wayland when available for reliable Electron popup positioning and the global
+screen coordinates needed by the draggable pet overlay. Pure Wayland sessions
+fall back to Electron's automatic backend selection; native Wayland can also be
+selected explicitly with `--wayland` or `CODEX_OZONE_PLATFORM=wayland`. See
 [Troubleshooting](docs/troubleshooting.md) for GPU, Vulkan, and `/tmp noexec`
 workarounds.
 
@@ -187,7 +214,7 @@ workarounds.
 | Native packages | Always | `make package && make install` | [Build and packaging](docs/build-and-packaging.md) |
 | Auto-update manager | Native packages | Included unless `PACKAGE_WITH_UPDATER=0` | [Updater](docs/updater.md) |
 | AppImage self-build | Manual | `make build-app && make appimage` | [Build and packaging](docs/build-and-packaging.md#appimage-local-self-build) |
-| Nix flake | Manual | `nix run github:ilysenko/chatgpt-desktop-linux` | [Nix](docs/nix.md) |
+| Nix flake | Manual | `nix run github:EricKrouss/chatgpt-desktop-linux` | [Nix](docs/nix.md) |
 | GUI install prompts | If installed | Uses `kdialog` / `zenity`, then terminal fallback | [Native setup](docs/native-setup.md) |
 | Linux file manager integration | Always | Built into core Linux patches | [Architecture](docs/architecture.md) |
 | Chrome plugin native host | Always | Installed with bundled plugins | [Architecture](docs/architecture.md) |
@@ -207,7 +234,7 @@ workarounds.
 | API key service tier | Opt-in | `api-key-service-tier` | [Docs](linux-features/api-key-service-tier/README.md) |
 | Linux AppShots | Opt-in | `appshots` | [Docs](linux-features/appshots/README.md) |
 | Authenticated proxy | Opt-in | `authenticated-proxy` | [Docs](linux-features/authenticated-proxy/README.md) |
-| Wrapper updater button | Opt-in | `codex-wrapper-updater` | [Docs](linux-features/codex-wrapper-updater/README.md) |
+| Wrapper updater button | Opt-in | `chatgpt-wrapper-updater` | [Docs](linux-features/chatgpt-wrapper-updater/README.md) |
 | Conversation mode | Opt-in | `conversation-mode` | [Docs](linux-features/conversation-mode/README.md) |
 | Copilot reasoning effort defaults | Opt-in | `copilot-reasoning-effort` | [Docs](linux-features/copilot-reasoning-effort/README.md) |
 | Example Linux Feature | Developer example | `example-feature` | [Docs](linux-features/example-feature/README.md) |
@@ -261,12 +288,12 @@ Full contract: [linux-features/README.md](linux-features/README.md) and
 
 ## Updates
 
-Default native packages install `codex-update-manager`, a `systemd --user`
+Default native packages install `chatgpt-update-manager`, a `systemd --user`
 service that checks for newer upstream DMGs, rebuilds a local native package,
 and installs it after ChatGPT Desktop exits. The final install uses `pkexec`.
 Minimal window-manager sessions need a graphical polkit authentication agent
 for the in-app install button; otherwise the updater keeps the package ready
-and reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...`
+and reports a terminal `sudo /usr/bin/chatgpt-update-manager ... --path ...`
 command.
 
 Manual-update package:
@@ -332,7 +359,7 @@ not download or extract the DMG themselves. See
 | Resize ghosting or stale frame trails | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./chatgpt-app/start.sh` or `--disable-gpu-compositing` |
 | Computer Use UI is hidden | Enable the UI opt-in; account/server rollouts may still hide upstream-gated parts |
 | Computer Use has no input backend | Check `/dev/uinput`, portal support, or `ydotoold` / `ydotool.service` |
-| Updater seems stuck | Check `codex-update-manager status --json` and service logs |
+| Updater seems stuck | Check `chatgpt-update-manager status --json` and service logs |
 
 Full list: [Troubleshooting](docs/troubleshooting.md).
 
@@ -352,6 +379,14 @@ Full list: [Troubleshooting](docs/troubleshooting.md).
 - [Webview server evaluation](docs/webview-server-evaluation.md)
 - [Launcher performance notes](docs/launcher-performance.md)
 
+## Credits
+
+The maintained project home, clone URL, issue tracker, and CI are all under
+[EricKrouss/chatgpt-desktop-linux](https://github.com/EricKrouss/chatgpt-desktop-linux).
+This project began as a ChatGPT-oriented fork of
+[ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux),
+which remains credited as the original Linux port foundation.
+
 ## Disclaimer
 
 This is an unofficial community project and is not affiliated with OpenAI.
@@ -363,7 +398,7 @@ packaging scripts, documentation, and Linux compatibility glue. It does not
 grant any rights to OpenAI software or services.
 
 This repository does not redistribute OpenAI software or modified OpenAI
-application binaries. Users must obtain their own authorized copy of Codex
+application binaries. Users must obtain their own authorized copy of ChatGPT
 Desktop through OpenAI's official channels. The build process performs a local
 Linux compatibility conversion on the user's own copy so it can run on Linux.
 In practice, it automates the conversion process that users perform on their

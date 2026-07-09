@@ -80,7 +80,7 @@
         '';
 
         chatgptDmg = pkgs.fetchurl {
-          url = "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg";
+          url = "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg";
           hash = "sha256-TukDFPYFaGI+WE63hQuBc3d307761tMCi9+oco6sImU=";
         };
 
@@ -169,7 +169,7 @@
         };
 
         codexNativeModules = pkgs.stdenv.mkDerivation {
-          pname = "codex-desktop-electron-native-modules";
+          pname = "chatgpt-desktop-electron-native-modules";
           version = electronVersion;
           dontUnpack = true;
 
@@ -534,10 +534,12 @@ PY
             install -Dm0644 "$out/opt/chatgpt-desktop/.codex-linux/chatgpt-desktop.png" \
               "$out/share/icons/hicolor/256x256/apps/chatgpt-desktop.png"
 
-            install -Dm0644 ${sourceRoot}/packaging/linux/codex-desktop.desktop \
+            install -Dm0644 ${sourceRoot}/packaging/linux/chatgpt-desktop.desktop \
               "$out/share/applications/chatgpt-desktop.desktop"
             substituteInPlace "$out/share/applications/chatgpt-desktop.desktop" \
-              --replace-fail "codex-desktop" "chatgpt-desktop" \
+              --replace-fail "__PACKAGE_NAME__" "chatgpt-desktop" \
+              --replace-fail "__PACKAGE_DISPLAY_NAME__" "ChatGPT Desktop" \
+              --replace-fail "__PACKAGE_COMMENT__" "Run ChatGPT on Linux" \
               --replace-fail "/usr/bin/chatgpt-desktop" "$out/bin/chatgpt-desktop" \
               --replace-fail "/usr/share/applications/chatgpt-desktop.desktop" "$out/share/applications/chatgpt-desktop.desktop"
 
@@ -560,7 +562,7 @@ PY
                 "ChatGPT Desktop for Linux"
               else
                 "ChatGPT Desktop for Linux with ${pkgs.lib.concatStringsSep ", " featureIds} enabled";
-            homepage = "https://github.com/ilysenko/chatgpt-desktop-linux";
+            homepage = "https://github.com/EricKrouss/chatgpt-desktop-linux";
             license = pkgs.lib.licenses.mit;
             platforms = pkgs.lib.platforms.linux;
             mainProgram = "chatgpt-desktop";

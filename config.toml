@@ -1,7 +1,7 @@
 [workflow]
 mode = "incremental"
 subagents_required = true
-runtime_config_path = "~/.config/codex-update-manager/config.toml"
+runtime_config_path = "~/.config/chatgpt-update-manager/config.toml"
 
 [commits]
 required = true

@@ -5,14 +5,14 @@
 | `Error: write EPIPE` | Run `start.sh` directly instead of piping output |
 | Blank window | Check whether the configured webview port is already in use: `ss -tlnp \| grep -E '5175\|5176'` |
 | `ERR_CONNECTION_REFUSED` on the webview port | Ensure `python3` works and the configured port is free |
-| Stuck on Codex logo splash | Check `~/.cache/chatgpt-desktop/launcher.log`; another process may be serving the webview port |
+| Stuck on ChatGPT splash | Check `~/.cache/chatgpt-desktop/launcher.log`; another process may be serving the webview port |
 | `CODEX_CLI_PATH` error | Reopen the app to retry automatic CLI install, or install manually with `npm i -g --include=optional @openai/codex` / `npm i -g --include=optional --prefix ~/.local @openai/codex` |
 | `Missing optional dependency @openai/codex-linux-x64` or malformed tool calls after a self-managed npm CLI install | Reinstall with optional dependencies: `npm i -g --include=optional @openai/codex`. To repair an existing nvm install, run `npm install --include=optional` from the installed `@openai/codex` package directory |
-| `codex-update-manager status --json` shows `cli_status: "update_required"` for `/usr/bin/codex` on Arch | Pacman itself has a newer package for the installed CLI. Update through pacman instead of npm, for example `sudo pacman -Syu`; pacman-managed CLI installs are intentionally not auto-updated through npm |
-| `codex-update-manager status --json` shows `/usr/bin/codex` with `cli_status: "up_to_date"` but `cli_official_latest_version` is newer than `cli_package_manager_latest_version` | The distro package is behind the official npm release, but pacman does not currently offer a newer package. ChatGPT Desktop will not auto-switch channels; read `cli_error_message` and decide whether to stay on the distro-managed CLI or replace it with another install method |
+| `chatgpt-update-manager status --json` shows `cli_status: "update_required"` for `/usr/bin/codex` on Arch | Pacman itself has a newer package for the installed CLI. Update through pacman instead of npm, for example `sudo pacman -Syu`; pacman-managed CLI installs are intentionally not auto-updated through npm |
+| `chatgpt-update-manager status --json` shows `/usr/bin/codex` with `cli_status: "up_to_date"` but `cli_official_latest_version` is newer than `cli_package_manager_latest_version` | The distro package is behind the official npm release, but pacman does not currently offer a newer package. ChatGPT Desktop will not auto-switch channels; read `cli_error_message` and decide whether to stay on the distro-managed CLI or replace it with another install method |
 | `nix run` exits with no window or terminal output | Check `~/.cache/chatgpt-desktop/launcher.log`; the Nix package still requires a user-provided `codex` CLI |
 | `gh auth status` works in terminal but fails inside ChatGPT Desktop | See [GitHub CLI auth in app-launched shells](github-cli-auth.md) |
-| Electron hangs while CLI is outdated | Re-run the launcher and check `~/.cache/chatgpt-desktop/launcher.log` plus `~/.local/state/codex-update-manager/service.log` |
+| Electron hangs while CLI is outdated | Re-run the launcher and check `~/.cache/chatgpt-desktop/launcher.log` plus `~/.local/state/chatgpt-update-manager/service.log` |
 | GPU / Vulkan / Wayland errors | Try `CODEX_LINUX_RENDERING_MODE=wayland-gpu ./chatgpt-app/start.sh` or persistent launch flags below |
 | UI massively oversized, tiny, or blurry | See [Oversized or blurry UI](#oversized-or-blurry-ui-hidpi--fractional-scaling); quick fix: `CODEX_FORCE_DEVICE_SCALE_FACTOR=1 ./chatgpt-app/start.sh` |
 | Window flickering, resize ghosting, or stale frame trails | Try `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 ./chatgpt-app/start.sh`, then `./chatgpt-app/start.sh --disable-gpu` if needed |
@@ -28,7 +28,7 @@
 | `ConnectTimeoutError` for Electron headers | Re-run `make build-app`; the installer uses `https://artifacts.electronjs.org/headers/dist` by default |
 | Computer Use AT-SPI tree empty | Run `codex-computer-use-linux setup`, then restart the target app |
 | `ERR_NO_SUPPORTED_PROXIES` with an authenticated proxy | Do not pass credentials inside Chromium's `--proxy-server` URL; enable the optional `authenticated-proxy` Linux feature |
-| `codex-update-manager` keeps running after package removal | Run `systemctl --user disable --now codex-update-manager.service` and confirm `/opt/chatgpt-desktop` is gone |
+| `chatgpt-update-manager` keeps running after package removal | Run `systemctl --user disable --now chatgpt-update-manager.service` and confirm `/opt/chatgpt-desktop` is gone |
 
 ## Persistent Launch Flags
 
@@ -62,7 +62,7 @@ running Electron process and will not pick up new flags.
 
 ## Oversized Or Blurry UI (HiDPI / Fractional Scaling)
 
-If the whole Codex UI renders far too large (or too small/blurry) inside its
+If the whole ChatGPT UI renders far too large (or too small/blurry) inside its
 window while other apps scale normally, Electron picked a wrong device scale
 factor for your display setup. Chromium computes the scale differently per
 backend: under native Wayland it uses the compositor's monitor scale, while
@@ -97,12 +97,13 @@ CODEX_OZONE_PLATFORM=x11 chatgpt-desktop
 CODEX_OZONE_PLATFORM=wayland chatgpt-desktop
 ```
 
-On GNOME Wayland with more than one monitor, the default `auto` rendering
-profile detects connected displays through `/sys/class/drm` and forces the
-X11/XWayland backend. This avoids Electron resizing or rescaling the maximized
-window when pointer focus crosses to another display. To opt back in to native
-Wayland, set `CODEX_OZONE_PLATFORM=wayland` or
-`CODEX_LINUX_RENDERING_MODE=default`.
+On Wayland, the default `auto` rendering profile uses XWayland when `DISPLAY`
+is available. Electron can then use global screen coordinates for popups and
+for moving the pet overlay while it is dragged. The same backend also avoids
+GNOME multi-monitor resize and scale changes when pointer focus crosses to
+another display. Pure Wayland sessions continue to use Electron's automatic
+backend selection. To opt back in to native Wayland, set
+`CODEX_OZONE_PLATFORM=wayland` or `CODEX_LINUX_RENDERING_MODE=default`.
 
 For a local self-build, replace `chatgpt-desktop` with `./chatgpt-app/start.sh`.
 Explicit launcher flags (`--x11`, `--wayland`, `--ozone-platform=*`,
@@ -132,7 +133,7 @@ Ubuntu GNOME notes:
   `CODEX_OZONE_PLATFORM=wayland` first; if it is blurry instead, try
   `CODEX_FORCE_DEVICE_SCALE_FACTOR` matching your monitor scale (e.g. `1.5`).
 - On GNOME 47+ the `xwayland-native-scaling` experimental feature changes how
-  XWayland apps are scaled; if you enabled it and Codex looks double-scaled
+  XWayland apps are scaled; if you enabled it and ChatGPT looks double-scaled
   under `CODEX_OZONE_PLATFORM=x11`, either disable that feature or run the
   app on native Wayland.
 - "Large Text" (accessibility) only sets `text-scaling-factor` and affects
@@ -140,7 +141,7 @@ Ubuntu GNOME notes:
 
 ## GNOME/X11 Title Bar Right-click Lockups
 
-On some GNOME/X11 setups, right-clicking the Codex title bar can leave the
+On some GNOME/X11 setups, right-clicking the ChatGPT title bar can leave the
 desktop input focused on the window-manager menu. Try `Esc` first. `Alt+Space`
 opens the same window menu through the keyboard path and can be a safer
 workaround while debugging.
@@ -202,7 +203,7 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 
-reports = sorted(Path("~/.cache/codex-update-manager/workspaces").expanduser().glob("*/reports/patch-report.json"))
+reports = sorted(Path("~/.cache/chatgpt-update-manager/workspaces").expanduser().glob("*/reports/patch-report.json"))
 report = reports[-1]
 data = json.loads(report.read_text())
 print(report)
@@ -217,7 +218,7 @@ from the same DMG or a fresh one:
 
 ```bash
 git pull --ff-only
-make build-app DMG=~/.cache/codex-update-manager/downloads/ChatGPT.dmg
+make build-app DMG=~/.cache/chatgpt-update-manager/downloads/ChatGPT.dmg
 make package
 make install
 ```
@@ -240,7 +241,7 @@ export XDG_CACHE_HOME=~/tmp/codex-cache
 
 ```bash
 sed -n '1,160p' ~/.cache/chatgpt-desktop/launcher.log
-sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
-codex-update-manager status --json
-systemctl --user status codex-update-manager.service
+sed -n '1,160p' ~/.local/state/chatgpt-update-manager/service.log
+chatgpt-update-manager status --json
+systemctl --user status chatgpt-update-manager.service
 ```

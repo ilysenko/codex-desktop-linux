@@ -29,7 +29,7 @@ under `reports/upstream-dmg/` by default.
 Inspect a specific candidate DMG without spelling out the baseline:
 
 ```bash
-make inspect-upstream-intel-devcontainer DMG=/tmp/Codex-new.dmg
+make inspect-upstream-intel-devcontainer DMG=/tmp/ChatGPT-new.dmg
 ```
 
 Host-side candidate-only inventory is still available when the host already has
@@ -52,7 +52,7 @@ Explicit baseline comparison remains available for older known-good builds:
 
 ```bash
 scripts/dev/upstream-dmg-intel.js \
-  --baseline /path/to/known-good/Codex.app \
+  --baseline /path/to/known-good/ChatGPT.app \
   --candidate /path/to/new/ChatGPT.dmg
 ```
 

@@ -7,7 +7,7 @@ the in-app Computer Use controls are disabled until you opt in.
 It supports:
 
 - app listing and accessibility trees through AT-SPI
-- screenshots through GNOME Shell DBus, the Codex GNOME Shell extension, or XDG Desktop Portal
+- screenshots through GNOME Shell DBus, the ChatGPT GNOME Shell extension, or XDG Desktop Portal
 - window listing and focusing on GNOME, KWin/Plasma, Hyprland, COSMIC, and i3
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
   RemoteDesktop portal, or `ydotool`
@@ -58,7 +58,7 @@ or screenshots:
 
 ## Verify Readiness
 
-Once Computer Use is visible in the Codex UI, ask Codex:
+Once Computer Use is visible in the ChatGPT UI, ask ChatGPT:
 
 > Check whether Linux Computer Use is ready
 
@@ -93,13 +93,13 @@ To opt back out, unset the env var and remove the settings flag or set it to
 Nix:
 
 ```bash
-nix run github:ilysenko/chatgpt-desktop-linux#chatgpt-desktop-computer-use-ui
+nix run github:EricKrouss/chatgpt-desktop-linux#chatgpt-desktop-computer-use-ui
 ```
 
 Combined with a Linux feature output:
 
 ```bash
-nix run github:ilysenko/chatgpt-desktop-linux#computer-use-ui-remote-mobile-control
+nix run github:EricKrouss/chatgpt-desktop-linux#computer-use-ui-remote-mobile-control
 ```
 
 ## Side-By-Side Dev Variant

@@ -575,7 +575,7 @@ fn kokoro_config(params: &ReadAloudParams) -> KokoroConfig {
         .or_else(|| settings_string(&settings, SETTINGS_KOKORO_PYTHON))
         .unwrap_or_else(|| {
             data_home
-                .join("codex-desktop/read-aloud/kokoro-venv/bin/python")
+                .join("chatgpt-desktop/read-aloud/kokoro-venv/bin/python")
                 .display()
                 .to_string()
         });
@@ -659,7 +659,7 @@ fn default_settings_path() -> PathBuf {
     let app_id = env_trimmed("CODEX_LINUX_APP_ID")
         .or_else(|| env_trimmed("CODEX_APP_ID"))
         .filter(|value| is_safe_app_id(value))
-        .unwrap_or_else(|| "codex-desktop".to_string());
+        .unwrap_or_else(|| "chatgpt-desktop".to_string());
     xdg_config_home().join(app_id).join("settings.json")
 }
 
@@ -897,7 +897,7 @@ mod tests {
 
         let path = default_settings_path();
 
-        assert!(path.ends_with("codex-desktop/settings.json"));
+        assert!(path.ends_with("chatgpt-desktop/settings.json"));
         restore_env("CODEX_LINUX_APP_ID", previous_app_id);
         restore_env("CODEX_APP_ID", previous_codex_app_id);
     }

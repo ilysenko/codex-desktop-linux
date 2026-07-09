@@ -137,7 +137,7 @@ fn collect_with_webview(
         pid_file: pid_file_diagnostics(&app_pid_file),
     };
     let report_without_warnings = DiagnosticsReport {
-        schema: "codex-update-manager/diagnostics/v1",
+        schema: "chatgpt-update-manager/diagnostics/v1",
         ok: false,
         warnings: Vec::new(),
         update: UpdateDiagnostics {
@@ -538,7 +538,7 @@ mod tests {
         let config = test_config(temp.path());
         let paths = test_paths(temp.path());
         let report = DiagnosticsReport {
-            schema: "codex-update-manager/diagnostics/v1",
+            schema: "chatgpt-update-manager/diagnostics/v1",
             ok: false,
             warnings: Vec::new(),
             update: UpdateDiagnostics {

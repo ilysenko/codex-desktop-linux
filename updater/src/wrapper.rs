@@ -547,7 +547,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("updater")).unwrap();
         std::fs::write(
             dir.join("updater/Cargo.toml"),
-            "[package]\nname = \"codex-update-manager\"\nversion = \"0.8.1\"\n",
+            "[package]\nname = \"chatgpt-update-manager\"\nversion = \"0.8.1\"\n",
         )
         .unwrap();
         std::fs::write(dir.join("CHANGELOG.md"), "# Changelog\n").unwrap();
@@ -645,7 +645,7 @@ exit 0
         // advance origin with a changelog bump
         std::fs::write(
             origin.path().join("updater/Cargo.toml"),
-            "[package]\nname = \"codex-update-manager\"\nversion = \"0.9.0\"\n",
+            "[package]\nname = \"chatgpt-update-manager\"\nversion = \"0.9.0\"\n",
         )
         .unwrap();
         std::fs::write(
@@ -761,7 +761,7 @@ exit 0
 
         std::fs::write(
             origin.path().join("updater/Cargo.toml"),
-            "[package]\nname = \"codex-update-manager\"\nversion = \"0.9.0\"\n",
+            "[package]\nname = \"chatgpt-update-manager\"\nversion = \"0.9.0\"\n",
         )
         .unwrap();
         std::fs::write(

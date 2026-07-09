@@ -1047,8 +1047,8 @@ test("generated agent workspace settings module is valid ESM syntax", () => {
   assert.match(source, /Reconnect/);
   assert.match(source, /Smoke test/);
   assert.match(source, /Checking workspace permissions/);
-  assert.match(source, /No workspace permission file detected; Codex session permissions apply/);
-  assert.match(source, /Codex session permissions apply after hidden-workspace approval\./);
+  assert.match(source, /No workspace permission file detected; ChatGPT session permissions apply/);
+  assert.match(source, /ChatGPT session permissions apply after hidden-workspace approval\./);
   assert.match(source, /callAgentWorkspace\("permissionConfig"\)/);
   assert.match(source, /callAgentWorkspace\("permissionSave",\{permissions:permissionPolicy\}\)/);
   assert.match(source, /reconnected:true/);
@@ -1164,7 +1164,7 @@ test("generated agent workspace settings module is valid ESM syntax", () => {
   assert.match(source, /callAgentWorkspace\(action,\{\.\.\.params,dryRun:true\}\)/);
   assert.match(source, /Approve hidden workspace/);
   assert.match(source, /Approval required/);
-  assert.match(source, /Codex wants to start an agent-controlled Linux workspace/);
+  assert.match(source, /ChatGPT Desktop wants to start an agent-controlled Linux workspace/);
   assert.match(source, /The native GPUI viewer opens after the workspace starts/);
   assert.match(source, /Approve and start/);
   assert.match(source, /approvalPreviewView\(pendingApproval,approvePendingStart/);

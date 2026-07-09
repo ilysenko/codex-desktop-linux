@@ -1,7 +1,7 @@
 {
   "uuid": "codex-window-control@openai.com",
-  "name": "Codex Window Control",
-  "description": "Local GNOME Shell window listing and focus bridge for Codex Computer Use on Linux.",
+  "name": "ChatGPT Window Control",
+  "description": "Local GNOME Shell window listing and focus bridge for ChatGPT Computer Use on Linux.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "version": 2
 }

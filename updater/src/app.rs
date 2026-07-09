@@ -1737,7 +1737,7 @@ fn manual_install_command(package_path: &Path) -> String {
         install::PackageKind::Pacman => "install-pacman",
     };
     format!(
-        "sudo /usr/bin/codex-update-manager {subcommand} --path {}",
+        "sudo /usr/bin/chatgpt-update-manager {subcommand} --path {}",
         shell_quote_path(package_path)
     )
 }
@@ -1775,7 +1775,7 @@ fn maybe_notify_manual_install_required(
         enabled,
         "manual_install_required",
         "ChatGPT Desktop update needs manual install",
-        "No graphical authentication agent was found for pkexec. Run codex-update-manager status for details.",
+        "No graphical authentication agent was found for pkexec. Run chatgpt-update-manager status for details.",
     )
 }
 
@@ -1783,7 +1783,7 @@ fn maybe_send_manual_install_required_notification(enabled: bool) {
     maybe_send_notification(
         enabled,
         "ChatGPT Desktop update needs manual install",
-        "No graphical authentication agent was found for pkexec. Run codex-update-manager status for details.",
+        "No graphical authentication agent was found for pkexec. Run chatgpt-update-manager status for details.",
     );
 }
 
@@ -2986,7 +2986,7 @@ mod tests {
         assert!(!state.waiting_for_app_exit_auto_install);
         let message = state.error_message.as_deref().unwrap_or("");
         assert!(message.contains("No graphical polkit authentication agent"));
-        assert!(message.contains("sudo /usr/bin/codex-update-manager install-pacman"));
+        assert!(message.contains("sudo /usr/bin/chatgpt-update-manager install-pacman"));
         assert!(message.contains("codex desktop.pkg.tar.zst'"));
         Ok(())
     }
@@ -3094,11 +3094,11 @@ mod tests {
     fn manual_install_command_selects_package_kind_and_quotes_path() {
         assert_eq!(
             manual_install_command(Path::new("/tmp/codex update.pkg.tar.zst")),
-            "sudo /usr/bin/codex-update-manager install-pacman --path '/tmp/codex update.pkg.tar.zst'"
+            "sudo /usr/bin/chatgpt-update-manager install-pacman --path '/tmp/codex update.pkg.tar.zst'"
         );
         assert_eq!(
             manual_install_command(Path::new("/tmp/codex'update.deb")),
-            "sudo /usr/bin/codex-update-manager install-deb --path '/tmp/codex'\\''update.deb'"
+            "sudo /usr/bin/chatgpt-update-manager install-deb --path '/tmp/codex'\\''update.deb'"
         );
     }
 

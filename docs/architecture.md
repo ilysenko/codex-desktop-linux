@@ -5,7 +5,7 @@ package artifacts.
 
 ## Build Pipeline
 
-1. `install.sh` extracts `ChatGPT.dmg` with `7z` / `7zz`.
+1. `install.sh` extracts `ChatGPT.dmg` with `7zz`, `7z`, or `7za`.
 2. It detects the Electron version from upstream metadata, with a pinned
    fallback.
 3. It extracts and patches `app.asar` with fail-soft Linux compatibility
@@ -18,7 +18,7 @@ package artifacts.
    `launcher/start.sh.template`.
 8. Package builders repackage `chatgpt-app/` into `.deb`, `.rpm`,
    `.pkg.tar.zst`, or AppImage artifacts.
-9. Default native packages install `codex-update-manager` and a
+9. Default native packages install `chatgpt-update-manager` and a
    `systemd --user` service.
 
 The installer replaces the macOS Electron binary with a Linux build, recompiles
@@ -83,7 +83,7 @@ Native-package-only launcher behavior, such as desktop-entry hints and default
 update-manager startup, lives in:
 
 ```text
-packaging/linux/codex-packaged-runtime.sh
+packaging/linux/chatgpt-packaged-runtime.sh
 ```
 
 The current evaluation for a future Rust replacement of the local webview
@@ -106,8 +106,8 @@ node --check scripts/patch-linux-window-ui.js
 node --test scripts/patch-linux-window-ui.test.js
 node --test linux-features/*/test.js
 bash tests/scripts_smoke.sh
-cargo check -p codex-update-manager
-cargo test -p codex-update-manager
+cargo check -p chatgpt-update-manager
+cargo test -p chatgpt-update-manager
 cargo check -p codex-computer-use-linux
 cargo test -p codex-computer-use-linux
 cargo check -p codex-read-aloud-linux

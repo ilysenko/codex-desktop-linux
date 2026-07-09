@@ -1,6 +1,6 @@
 # Agent Workspaces Linux Feature
 
-`agent-workspace` is an opt-in Codex Desktop for Linux feature that adds the
+`agent-workspace` is an opt-in ChatGPT Desktop for Linux feature that adds the
 `agent-workspace-linux` control surface to the app settings UI.
 
 Enable it in `linux-features/features.json` before running the install/build
@@ -21,7 +21,7 @@ the agent-facing progressive routing entrypoint; the feature does not write
 `~/.codex/config.toml` or register a generic MCP server at startup.
 
 The feature adds a Linux-only settings section named **Agent Workspaces**. The
-page can point Codex Desktop at an `agent-workspace-linux` binary, list and edit
+page can point ChatGPT Desktop at an `agent-workspace-linux` binary, list and edit
 saved profiles, validate profile JSON without saving, preview profile-backed
 workspace starts, require an explicit approval card before starting a hidden
 workspace, stop running workspaces, run stale workspace cleanup, and create a restricted Chrome
@@ -105,8 +105,8 @@ It does not patch the generic MCP settings page, general configuration page, or
 conversation/composer surfaces; those pages should remain byte-for-byte
 unchanged by this feature. Agent-facing workspace tools are expected to be
 introduced through the bundled skill's progressive, on-demand routing rather
-than by dumping the entire Agent Workspace MCP tool family into Codex startup
-context.
+than by dumping the entire Agent Workspace MCP tool family into ChatGPT Desktop
+startup context.
 
 **Reconnect** reruns the backend doctor check and refreshes page-owned state.
 **Smoke test** runs doctor, guardrails, profile path, profile list, workspace
@@ -126,13 +126,13 @@ If the page has a permission file path, the bridge prepends
 permission files fail before spawning the CLI, so the page can report the
 failure directly. If no permission file is configured, the page stays in the
 existing app-owned permission mode: after the user approves the hidden
-workspace, normal workspace-local actions follow the Codex session permission
+workspace, normal workspace-local actions follow the ChatGPT session permission
 choice, including full-access sessions that should not ask again for every
 click, launch, screenshot, or keystroke.
 
 The feature does not maintain its own hand-listed table of per-action approval
 defaults. Approval is gated once, at hidden-workspace start, via the dry-run plus
-approval card; after that the configured permission file and the Codex session
+approval card; after that the configured permission file and the ChatGPT session
 permission mode govern individual actions. Per-action classification is owned by
 the binary and is surfaced through the page instead of duplicated across Codex
 settings surfaces.
@@ -141,7 +141,7 @@ After the user approves a workspace start, the settings page opens the native
 GPUI viewer with `agent-workspace-linux viewer --id WORKSPACE_ID
 --exit-when-workspace-gone`. The active/stopped workspace controls can reopen
 the same viewer explicitly. This is a detached child process rather than another
-Codex conversation surface, keeps always-on-top disabled unless explicitly
+ChatGPT conversation surface, keeps always-on-top disabled unless explicitly
 requested, and uses the same page-owned `--permissions` path when one is
 configured.
 Viewer launch errors are reported through the bridge instead of falling back to
@@ -149,7 +149,7 @@ a shell or crashing the app on an asynchronous spawn failure.
 
 The feature intentionally does not inject a conversation workspace screen. The
 planned visible monitor is the native GPUI viewer launched by the settings
-page/bridge, so the Codex conversation stays focused on the thread instead of
+page/bridge, so the ChatGPT conversation stays focused on the thread instead of
 competing with the floating viewer.
 The feature only patches the Electron bridge and the Settings webview bundles;
 conversation and composer webview assets stay untouched.

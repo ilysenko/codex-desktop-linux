@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The live thread status pill now measures its step progress and green/red
+  change totals at their intrinsic combined width, preventing late-arriving
+  diff counts from collapsing into and overlapping the step number.
+- Wayland sessions with XWayland available now launch Electron through X11 by
+  default, restoring the global screen coordinates needed for the pet overlay
+  to follow the cursor continuously while it is dragged. Native Wayland remains
+  available through `--wayland`, `CODEX_OZONE_PLATFORM=wayland`, or the
+  `default` rendering profile.
 - Cold launches no longer stall for a full second between acquiring the
   launcher lock and spawning Electron. The CLI version log line reads the
   probe result through command substitution, and the probe's watchdog
@@ -19,6 +27,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Repository, package, launcher, and notification artwork now use the official
+  ChatGPT app icon. Native `chatgpt-desktop` packages also replace and conflict
+  with the old `codex-desktop` package so upgrades leave one desktop entry;
+  the Arch install target explicitly accepts that one package replacement.
+- The optional wrapper update feature is now named
+  `chatgpt-wrapper-updater` throughout its descriptor, hooks, state, and docs.
 - Cold starts overlap the webview server boot with the rest of launcher
   startup and run the five bundled plugin cache syncs concurrently. The
   launcher now spawns the Python webview server, does CLI lookup and cache
@@ -85,13 +99,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   version, and falls back to git commit subjects. Packaged frozen bundles
   without a git checkout degrade gracefully (no wrapper tracking; updates arrive
   via a normal package upgrade).
-- The opt-in `codex-wrapper-updater` update action can ask which optional Linux
+- The opt-in `chatgpt-wrapper-updater` update action can ask which optional Linux
   features to enable before rebuilding. The picker reads the recorded candidate
   wrapper source, preserves unknown/private feature ids from the existing
   config, saves selections to `~/.config/<appId>/linux-features.json`, and
   skips without blocking the update when there is no display, no dialog tool, a
   dialog launch failure, or a cancellation.
-- The opt-in `codex-wrapper-updater` toolbar now shows the installed short
+- The opt-in `chatgpt-wrapper-updater` toolbar now shows the installed short
   wrapper commit as a SHA chip when build metadata is available, and shows a
   disabled "dev mode" action when the installed commit is ahead of the tracked
   remote.

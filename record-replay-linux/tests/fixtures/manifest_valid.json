@@ -2,7 +2,7 @@
   "schema_version": 1,
   "session_id": "fixture-session",
   "started_at": "2026-06-28T12:00:00Z",
-  "app_name": "codex-desktop-linux",
+  "app_name": "chatgpt-desktop-linux",
   "app_version": "1.2.3",
   "goal": "Record a browser login workflow and turn it into a skill.",
   "target": {

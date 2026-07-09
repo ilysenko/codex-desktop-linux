@@ -206,9 +206,9 @@ function findAppDir(extractDir) {
 function extractDmgToApp({ dmgPath, workDir }) {
   const extractDir = path.join(workDir, "dmg-extract");
   fs.mkdirSync(extractDir, { recursive: true });
-  const sevenZipCommand = commandOnPath("7zz") ?? commandOnPath("7z");
+  const sevenZipCommand = commandOnPath("7zz") ?? commandOnPath("7z") ?? commandOnPath("7za");
   if (sevenZipCommand == null) {
-    throw new Error("7zz or 7z is required to inspect DMG files");
+    throw new Error("7zz, 7z, or 7za is required to inspect DMG files");
   }
   const seven = spawnSync(sevenZipCommand, ["x", "-y", "-snl", dmgPath, `-o${extractDir}`], {
     encoding: "utf8",

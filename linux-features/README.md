@@ -22,7 +22,7 @@ building packages, then list the feature ids you want:
 Feature choices are read during the install/build pipeline; if you change this
 file after an app has already been generated, rerun the install/build step.
 Native packages preserve the enabled feature id list and settings in the
-packaged update-builder bundle, so `codex-update-manager` rebuilds keep the
+packaged update-builder bundle, so `chatgpt-update-manager` rebuilds keep the
 same opt-in features across auto-updates.
 
 Feature-specific local settings can live in the same gitignored file under
@@ -95,7 +95,7 @@ Each feature directory must include:
 `stage.sh` hooks run with `SCRIPT_DIR`, `INSTALL_DIR`, `WORK_DIR`, `ARCH`, and
 `CODEX_UPSTREAM_APP_DIR` in the environment.
 
-Declarative runtime hooks are staged under `codex-app/.codex-linux/`:
+Declarative runtime hooks are staged under `chatgpt-app/.codex-linux/`:
 
 - `runtimeHooks.env` writes literal `KEY=VALUE` files consumed by the launcher
 - `runtimeHooks.prelaunch` runs synchronously before webview setup

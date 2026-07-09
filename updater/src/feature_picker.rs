@@ -1,7 +1,7 @@
 //! Interactive feature picker for the in-app wrapper Update button.
 //!
 //! When the user clicks the wrapper "Update" button, the renderer shells out to
-//! `codex-update-manager pick-features` *while the display is still alive* (the
+//! `chatgpt-update-manager pick-features` *while the display is still alive* (the
 //! detached `apply-wrapper-update` runs after the app exits → headless, so the
 //! dialog must run here, at click time). This subcommand:
 //!

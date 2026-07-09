@@ -245,7 +245,7 @@ function createFixtureApp(root, variant = "baseline") {
   const chromePlugin = path.join(resources, "plugins/openai-bundled/plugins/chrome");
 
   writeJson(path.join(resources, "package.json"), {
-    name: "codex-desktop",
+    name: "chatgpt-desktop",
     version: variant === "candidate" ? "2026.7.3" : "2026.7.2",
   });
 

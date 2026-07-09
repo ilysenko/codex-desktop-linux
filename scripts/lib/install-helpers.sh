@@ -53,6 +53,11 @@ Options:
   -h, --help     Show this help message and exit
   --fresh        Remove existing install directory and cached DMG before building
   --reuse-dmg    Reuse cached ChatGPT.dmg when upstream metadata still matches (default)
+  --chatgpt-source SOURCE
+                 Choose upstream app source: new (default) or classic
+  --new-chatgpt  Use the New ChatGPT upstream DMG (default)
+  --classic-chatgpt
+                 Explain why the ChatGPT Classic DMG cannot be converted
   --inspect      Inspect the DMG and write patch/rebuild reports without installing
   --report-dir DIR
                  Directory for --inspect reports (default: ./dist-next/rebuild)
@@ -63,8 +68,12 @@ Environment variables:
                       Allow overwriting INSTALL_DIR while Codex is running
   CODEX_APP_ID        Override Linux app id/bin identity (default: chatgpt-desktop)
   CODEX_APP_DISPLAY_NAME
-                      Override display name (default: ChatGPT)
+                      Override display name (default: ChatGPT Desktop)
   CODEX_WEBVIEW_PORT  Override webview HTTP port (default: 5175, or 5176 for non-default app ids)
+  CODEX_CHATGPT_SOURCE=new|classic
+                      Choose the upstream app source without passing a flag
+  CODEX_UPSTREAM_DMG_URL
+                      Override the upstream DMG URL directly
   CODEX_DMG_REFRESH_MODE=pinned
                       Reuse an existing cached ChatGPT.dmg verbatim and refuse
                       network refresh/download when no explicit DMG path is passed
@@ -75,12 +84,17 @@ Environment variables:
                       (example: https://npmmirror.com/mirrors/electron/)
   REBUILD_REPORT_DIR  Default report directory for --inspect and rebuild reports
 
-After install, launch with:
+This script builds the repo-local generated app. To launch that developer build:
   ./chatgpt-app/start.sh
+
+For a desktop app menu entry and `chatgpt-desktop` command, install the native package:
+  make install-native
 HELP
 }
 
 parse_args() {
+    local option
+
     while [ $# -gt 0 ]; do
         case "$1" in
             --fresh)
@@ -89,6 +103,21 @@ parse_args() {
                 ;;
             --reuse-dmg)
                 REUSE_CACHED_DMG=1
+                ;;
+            --chatgpt-source|--dmg-source)
+                option="$1"
+                shift
+                [ $# -gt 0 ] || error "$option requires a source: new or classic"
+                DMG_SOURCE="$1"
+                DMG_SOURCE_FROM_CLI=1
+                ;;
+            --new-chatgpt)
+                DMG_SOURCE="new"
+                DMG_SOURCE_FROM_CLI=1
+                ;;
+            --classic-chatgpt)
+                DMG_SOURCE="classic"
+                DMG_SOURCE_FROM_CLI=1
                 ;;
             --inspect)
                 INSPECT_ONLY=1

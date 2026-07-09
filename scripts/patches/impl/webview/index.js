@@ -46,6 +46,31 @@ function applyLinuxSafeMonospaceFontStackPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxStatusSummaryIntrinsicWidthPatch(currentSource) {
+  const constrainedSummaryClass =
+    "className:`flex w-max max-w-full min-w-0 items-center gap-2 rounded-3xl border border-token-border/80 bg-token-input-background/70 px-3 py-1.5 text-token-foreground backdrop-blur-sm`";
+  const intrinsicSummaryClass =
+    "className:`flex w-max min-w-0 items-center gap-2 rounded-3xl border border-token-border/80 bg-token-input-background/70 px-3 py-1.5 text-token-foreground backdrop-blur-sm`";
+
+  if (currentSource.includes(intrinsicSummaryClass)) {
+    return currentSource;
+  }
+  if (currentSource.includes(constrainedSummaryClass)) {
+    return currentSource.replace(constrainedSummaryClass, intrinsicSummaryClass);
+  }
+
+  if (
+    currentSource.includes("max-w-[min(100%,var(--thread-content-max-width))]") &&
+    currentSource.includes("bg-token-input-background/70 px-3 py-1.5")
+  ) {
+    console.warn(
+      "WARN: Could not find status summary intrinsic-width insertion point - skipping step and change-count layout patch",
+    );
+  }
+
+  return currentSource;
+}
+
 function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
   let patchedSource = currentSource;
   let warnedMissingNeedle = false;
@@ -2150,6 +2175,7 @@ module.exports = {
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
   applyLinuxSafeMonospaceFontStackPatch,
+  applyLinuxStatusSummaryIntrinsicWidthPatch,
   applyLinuxFastModeModelGuardPatch,
   applyLinuxSkillsListDedupePatch,
   applyLocalEnvironmentActionModalDraftPatch,

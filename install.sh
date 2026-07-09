@@ -8,7 +8,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CODEX_APP_ID="${CODEX_APP_ID:-chatgpt-desktop}"
-CODEX_APP_DISPLAY_NAME="${CODEX_APP_DISPLAY_NAME:-ChatGPT}"
+CODEX_APP_DISPLAY_NAME="${CODEX_APP_DISPLAY_NAME:-ChatGPT Desktop}"
 INSTALL_ROOT="${CODEX_INSTALL_ROOT:-$SCRIPT_DIR}"
 DEFAULT_INSTALL_DIR_NAME="chatgpt-app"
 DEFAULT_CODEX_WEBVIEW_PORT=5175
@@ -24,7 +24,7 @@ ELECTRON_MIRROR="${ELECTRON_MIRROR:-}"
 MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41="12.9.0"
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
-ICON_SOURCE="${CODEX_ICON_SOURCE:-$SCRIPT_DIR/assets/codex.png}"
+ICON_SOURCE="${CODEX_ICON_SOURCE:-$SCRIPT_DIR/assets/chatgpt.png}"
 LINUX_ICON_SOURCE="${CODEX_LINUX_ICON_SOURCE:-}"
 
 # ---- Source library helpers ----
@@ -87,8 +87,8 @@ resolve_upstream_icon_sources() {
         "$resources_dir/icon-chatgpt.png" \
         "$resources_dir/app.png" \
         "$resources_dir/icon-codex-dark-color.png" \
-        "$SCRIPT_DIR/assets/codex-linux.png" \
-        "$SCRIPT_DIR/assets/codex.png"; do
+        "$SCRIPT_DIR/assets/chatgpt-linux.png" \
+        "$SCRIPT_DIR/assets/chatgpt.png"; do
         if [ -f "$candidate" ]; then
             LINUX_ICON_SOURCE="$candidate"
             [ -f "$ICON_SOURCE" ] || ICON_SOURCE="$candidate"
@@ -105,6 +105,7 @@ main() {
     echo ""                                             >&2
 
     parse_args "$@"
+    validate_upstream_source_selection
     validate_app_identity
     check_deps
     if [ "$INSPECT_ONLY" -ne 1 ]; then
@@ -127,6 +128,7 @@ main() {
     local app_dir
     app_dir=$(extract_dmg "$dmg_path")
     resolve_upstream_icon_sources "$app_dir"
+    require_electron_app_asar "$app_dir"
 
     detect_electron_version "$app_dir"
     if [ "$INSPECT_ONLY" -eq 1 ]; then
@@ -164,7 +166,9 @@ main() {
     echo ""                                             >&2
     echo "============================================" >&2
     info "Installation complete!"
-    echo "  Run:  $INSTALL_DIR/start.sh"                >&2
+    echo "  Developer launch:  $INSTALL_DIR/start.sh"   >&2
+    echo "  Desktop app:       make install-native"     >&2
+    echo "  After native install, launch ChatGPT Desktop from the app menu or run: chatgpt-desktop" >&2
     echo "============================================" >&2
 }
 

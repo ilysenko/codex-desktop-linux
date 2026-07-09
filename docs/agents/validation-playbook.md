@@ -54,8 +54,8 @@ scripts/ci/validate-patch-report.js chatgpt-app/.codex-linux/patch-report.json
 Updater:
 
 ```bash
-cargo check -p codex-update-manager
-cargo test -p codex-update-manager
+cargo check -p chatgpt-update-manager
+cargo test -p chatgpt-update-manager
 ```
 
 Linux Computer Use:
@@ -109,10 +109,10 @@ PACKAGE_VERSION=2026.03.24.120000+deadbeef ./scripts/build-deb.sh
 When updater behavior changes, inspect service and state:
 
 ```bash
-systemctl --user status codex-update-manager.service
-codex-update-manager status --json
-sed -n '1,120p' ~/.local/state/codex-update-manager/state.json
-sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
+systemctl --user status chatgpt-update-manager.service
+chatgpt-update-manager status --json
+sed -n '1,120p' ~/.local/state/chatgpt-update-manager/state.json
+sed -n '1,160p' ~/.local/state/chatgpt-update-manager/service.log
 ```
 
 For rebuild candidates:

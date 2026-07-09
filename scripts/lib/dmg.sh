@@ -5,9 +5,74 @@
 # shellcheck shell=bash
 
 # ---- Download or find ChatGPT DMG ----
-DEFAULT_DMG_URL="https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg"
-DMG_URL="${CODEX_UPSTREAM_DMG_URL:-$DEFAULT_DMG_URL}"
+CHATGPT_NEW_DMG_URL="https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg"
+CHATGPT_CLASSIC_DMG_URL="https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg"
+DEFAULT_DMG_SOURCE="new"
+DEFAULT_DMG_URL="$CHATGPT_NEW_DMG_URL"
+DMG_SOURCE="${CODEX_CHATGPT_SOURCE:-${CODEX_UPSTREAM_DMG_SOURCE:-$DEFAULT_DMG_SOURCE}}"
+DMG_SOURCE_FROM_CLI=0
+DMG_SOURCE_DISPLAY_NAME=""
+DMG_URL="${CODEX_UPSTREAM_DMG_URL:-}"
 DMG_REMOTE_FINGERPRINT=""
+
+normalize_chatgpt_dmg_source() {
+    local source
+    source="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+
+    case "$source" in
+        ""|new|new-chatgpt|chatgpt-new)
+            printf '%s\n' "new"
+            ;;
+        classic|classic-chatgpt|chatgpt-classic)
+            printf '%s\n' "classic"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+resolve_dmg_url() {
+    local normalized_source
+
+    if [ -n "${CODEX_UPSTREAM_DMG_URL:-}" ] \
+            && [ "${DMG_SOURCE_FROM_CLI:-0}" -ne 1 ] \
+            && [ -z "${CODEX_CHATGPT_SOURCE:-}" ] \
+            && [ -z "${CODEX_UPSTREAM_DMG_SOURCE:-}" ]; then
+        DMG_SOURCE="custom"
+        DMG_SOURCE_DISPLAY_NAME="Custom ChatGPT"
+        DMG_URL="$CODEX_UPSTREAM_DMG_URL"
+        return 0
+    fi
+
+    if ! normalized_source="$(normalize_chatgpt_dmg_source "$DMG_SOURCE")"; then
+        error "Unknown ChatGPT DMG source: $DMG_SOURCE (expected: new or classic)"
+    fi
+
+    DMG_SOURCE="$normalized_source"
+    case "$DMG_SOURCE" in
+        new)
+            DMG_SOURCE_DISPLAY_NAME="New ChatGPT"
+            DMG_URL="$CHATGPT_NEW_DMG_URL"
+            ;;
+        classic)
+            DMG_SOURCE_DISPLAY_NAME="ChatGPT Classic"
+            DMG_URL="$CHATGPT_CLASSIC_DMG_URL"
+            ;;
+    esac
+}
+
+reject_unsupported_classic_chatgpt() {
+    error "ChatGPT Classic is a native macOS app and does not contain Electron app.asar. This Linux port can only convert the New ChatGPT Electron DMG; use --new-chatgpt."
+}
+
+validate_upstream_source_selection() {
+    resolve_dmg_url
+    if [ "$DMG_SOURCE" = "classic" ]; then
+        info "Upstream source: $DMG_SOURCE_DISPLAY_NAME"
+        reject_unsupported_classic_chatgpt
+    fi
+}
 
 redact_dmg_url() {
     local dmg_url="$1"
@@ -172,6 +237,12 @@ get_dmg() {
     local metadata_path="$CACHED_DMG_METADATA_PATH"
     local download_fingerprint=""
     local tmp_dest="$dmg_dest.part"
+
+    resolve_dmg_url
+    info "Upstream source: $DMG_SOURCE_DISPLAY_NAME"
+    if [ "$DMG_SOURCE" = "classic" ]; then
+        reject_unsupported_classic_chatgpt
+    fi
 
     if dmg_refresh_mode_is_pinned; then
         if [ -s "$dmg_dest" ]; then

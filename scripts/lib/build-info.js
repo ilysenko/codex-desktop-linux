@@ -13,6 +13,9 @@ const {
   linuxFeaturesRoot,
 } = require("./linux-features.js");
 
+const NEW_CHATGPT_DMG_URL = "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg";
+const CLASSIC_CHATGPT_DMG_URL = "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg";
+
 function runGit(repoDir, args) {
   const result = childProcess.spawnSync("git", ["-C", repoDir, ...args], {
     encoding: "utf8",
@@ -188,7 +191,7 @@ function packageProfile(target) {
       label: "NixOS / Nix",
       packageManager: "flake",
       format: "runnable directly",
-      notes: "nix run github:ilysenko/chatgpt-desktop-linux",
+      notes: "nix run github:EricKrouss/chatgpt-desktop-linux",
     };
   }
   if (["debian", "ubuntu", "pop", "linuxmint", "elementary"].some((value) => ids.has(value))) {
@@ -284,6 +287,23 @@ function linuxTargetInfo(target) {
   };
 }
 
+function upstreamDmgSourceInfo(env) {
+  const source = env.CODEX_UPSTREAM_DMG_RESOLVED_SOURCE || undefined;
+  const sourceName = env.CODEX_UPSTREAM_DMG_RESOLVED_SOURCE_NAME || undefined;
+  const resolvedUrl = env.CODEX_UPSTREAM_DMG_RESOLVED_URL || undefined;
+  const info = {};
+  if (source) {
+    info.source = source;
+  }
+  if (sourceName) {
+    info.sourceName = sourceName;
+  }
+  if (resolvedUrl === NEW_CHATGPT_DMG_URL || resolvedUrl === CLASSIC_CHATGPT_DMG_URL) {
+    info.url = resolvedUrl;
+  }
+  return info;
+}
+
 function buildInfo(options) {
   const repoDir = path.resolve(options.repoDir);
   const dmgPath = path.resolve(options.dmgPath);
@@ -291,6 +311,7 @@ function buildInfo(options) {
   const featuresRoot = linuxFeaturesRoot({ featuresRoot: options.featuresRoot });
   const env = options.env ?? process.env;
   const target = options.linuxTarget ?? detectLinuxTargetContext();
+  const upstreamSourceInfo = upstreamDmgSourceInfo(env);
   return {
     schemaVersion: 1,
     generatedAt: isoTimestamp(env),
@@ -303,6 +324,7 @@ function buildInfo(options) {
       sizeBytes: fs.statSync(dmgPath).size,
       sha256: sha256File(dmgPath),
       appVersion: appBundleVersion(appDir),
+      ...upstreamSourceInfo,
     },
     electronVersion: options.electronVersion,
     source: sourceInfo(repoDir, env),
@@ -363,5 +385,6 @@ module.exports = {
   sanitizeGitRemoteUrl,
   sourceInfo,
   sourceInfoFromGit,
+  upstreamDmgSourceInfo,
   writeBuildInfo,
 };

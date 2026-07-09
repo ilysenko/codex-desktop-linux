@@ -137,6 +137,7 @@ const {
   githubCommitUrl,
   packageProfile,
   sourceInfo,
+  upstreamDmgSourceInfo,
 } = require("./lib/build-info.js");
 const {
   createPatchReport,
@@ -165,6 +166,7 @@ const {
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxProfileSettingsMenuPatch,
   applyLinuxSafeMonospaceFontStackPatch,
+  applyLinuxStatusSummaryIntrinsicWidthPatch,
   applyLinuxSkillsListDedupePatch,
   applyLinuxThreadSidePanelNativeTooltipPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
@@ -386,6 +388,57 @@ test("Linux safe monospace font stack patch warns when the unsafe stack drifts",
   assert.match(warnings[0], /Could not find Linux monospace font stack insertion point/);
 });
 
+test("Linux status summary keeps step and change counts in separate flex space", () => {
+  const source = [
+    "function ZS(e){let t=(0,QS.c)(9),{children:n}=e,[r,i]=(0,$S.useState)(null);",
+    "let c=(0,tC.jsx)(`div`,{ref:o,className:`flex w-max max-w-full min-w-0 items-center gap-2 rounded-3xl border border-token-border/80 bg-token-input-background/70 px-3 py-1.5 text-token-foreground backdrop-blur-sm`,children:n});",
+    "return(0,tC.jsx)(Wt.div,{className:`relative z-10 w-fit max-w-[min(100%,var(--thread-content-max-width))] min-w-0 overflow-hidden rounded-3xl`,children:c})}",
+  ].join("");
+  const patched = applyPatchTwice(
+    applyLinuxStatusSummaryIntrinsicWidthPatch,
+    source,
+  );
+
+  assert.match(
+    patched,
+    /className:`flex w-max min-w-0 items-center gap-2 rounded-3xl/,
+  );
+  assert.doesNotMatch(patched, /flex w-max max-w-full min-w-0 items-center/);
+  assert.match(
+    patched,
+    /max-w-\[min\(100%,var\(--thread-content-max-width\)\)\]/,
+  );
+});
+
+test("Linux status summary layout patch warns when the upstream class drifts", () => {
+  const source =
+    "className:`flex w-max max-w-full items-center rounded-3xl bg-token-input-background/70 px-3 py-1.5`;className:`max-w-[min(100%,var(--thread-content-max-width))]`";
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxStatusSummaryIntrinsicWidthPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /status summary intrinsic-width insertion point/);
+});
+
+test("discovers the status summary layout patch for current thread bundles", () => {
+  const descriptor = corePatchDescriptors().find(
+    (patch) => patch.id === "linux-status-summary-intrinsic-width",
+  );
+
+  assert.ok(descriptor);
+  assert.equal(descriptor.phase, "webview-asset");
+  assert.equal(descriptor.ciPolicy, "optional");
+  assert.equal(
+    descriptor.pattern.test(
+      "app-initial~app-main~onboarding-page~hotkey-window-thread-page~editor-diff-page~thread-app-~g4rafana-CxARb6bs.js",
+    ),
+    true,
+  );
+  assert.equal(descriptor.pattern.test("composer-fixture.js"), false);
+});
+
 test("subagent nickname metadata patch accepts session metadata shape", () => {
   const source = [
     "function j(e){return e}",
@@ -516,16 +569,16 @@ test("Linux target context parses distro, package, and desktop details", () => {
 });
 
 test("build info captures DMG hash, features, distro profile, and source revision", () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-build-info-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-build-info-"));
   // This test reads features.json from its own featuresRoot, which the
   // file-level CODEX_LINUX_FEATURES_CONFIG pin would otherwise override.
   const pinnedFeaturesConfig = process.env.CODEX_LINUX_FEATURES_CONFIG;
   delete process.env.CODEX_LINUX_FEATURES_CONFIG;
   try {
-    const dmgPath = path.join(tempRoot, "Codex.dmg");
+    const dmgPath = path.join(tempRoot, "ChatGPT.dmg");
     fs.writeFileSync(dmgPath, "fake dmg payload", "utf8");
 
-    const appDir = path.join(tempRoot, "Codex.app");
+    const appDir = path.join(tempRoot, "ChatGPT.app");
     fs.mkdirSync(path.join(appDir, "Contents"), { recursive: true });
     fs.writeFileSync(
       path.join(appDir, "Contents", "Info.plist"),
@@ -552,13 +605,16 @@ test("build info captures DMG hash, features, distro profile, and source revisio
       dmgPath,
       appDir,
       electronVersion: "41.3.0",
-      appId: "codex-desktop",
-      appDisplayName: "Codex Desktop",
+      appId: "chatgpt-desktop",
+      appDisplayName: "ChatGPT",
       featuresRoot,
       env: {
         CODEX_LINUX_SOURCE_COMMIT: "abcdef1234567890",
         CODEX_LINUX_SOURCE_BRANCH: "main",
-        CODEX_LINUX_SOURCE_REMOTE: "https://ghp_secret-token@github.com/example/codex-desktop-linux.git",
+        CODEX_LINUX_SOURCE_REMOTE: "https://ghp_secret-token@github.com/EricKrouss/chatgpt-desktop-linux.git",
+        CODEX_UPSTREAM_DMG_RESOLVED_SOURCE: "classic",
+        CODEX_UPSTREAM_DMG_RESOLVED_SOURCE_NAME: "ChatGPT Classic",
+        CODEX_UPSTREAM_DMG_RESOLVED_URL: "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg",
         SOURCE_DATE_EPOCH: "1710000000",
       },
       linuxTarget: detectLinuxTargetContext({
@@ -576,9 +632,15 @@ test("build info captures DMG hash, features, distro profile, and source revisio
     assert.equal(info.upstreamDmg.path, undefined);
     assert.equal(info.upstreamDmg.sha256, "e33df8d941faed4fdc3bb688fea70572931e81a6e0c2603b810338177148dfa2");
     assert.equal(info.upstreamDmg.appVersion, "1.2.3");
+    assert.equal(info.upstreamDmg.source, "classic");
+    assert.equal(info.upstreamDmg.sourceName, "ChatGPT Classic");
+    assert.equal(info.upstreamDmg.url, "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg");
     assert.equal(info.source.shortCommit, "abcdef123456");
-    assert.equal(info.source.remote, "https://github.com/example/codex-desktop-linux.git");
-    assert.equal(info.source.commitUrl, "https://github.com/example/codex-desktop-linux/commit/abcdef1234567890");
+    assert.equal(info.source.remote, "https://github.com/EricKrouss/chatgpt-desktop-linux.git");
+    assert.equal(
+      info.source.commitUrl,
+      "https://github.com/EricKrouss/chatgpt-desktop-linux/commit/abcdef1234567890",
+    );
     assert.equal(info.packageProfile.id, "debian-family");
     assert.equal(info.packageProfile.packageManager, "apt");
     assert.deepEqual(info.linuxFeatures.enabled, ["read-aloud", "open-target-discovery"]);
@@ -589,6 +651,17 @@ test("build info captures DMG hash, features, distro profile, and source revisio
     }
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("build info omits custom upstream DMG URLs", () => {
+  const info = upstreamDmgSourceInfo({
+    CODEX_UPSTREAM_DMG_RESOLVED_SOURCE: "custom",
+    CODEX_UPSTREAM_DMG_RESOLVED_SOURCE_NAME: "Custom ChatGPT",
+    CODEX_UPSTREAM_DMG_RESOLVED_URL: "https://user:secret@example.com/ChatGPT.dmg?token=topsecret",
+  });
+  assert.equal(info.source, "custom");
+  assert.equal(info.sourceName, "Custom ChatGPT");
+  assert.equal(info.url, undefined);
 });
 
 test("build info sanitizes staged source metadata from packaged update-builder", () => {
@@ -620,12 +693,12 @@ test("build info sanitizes staged source metadata from packaged update-builder",
 
 test("build info derives GitHub commit links from common remote forms", () => {
   assert.equal(
-    githubCommitUrl("git@github.com:ilysenko/codex-desktop-linux.git", "0123456789abcdef"),
-    "https://github.com/ilysenko/codex-desktop-linux/commit/0123456789abcdef",
+    githubCommitUrl("git@github.com:EricKrouss/chatgpt-desktop-linux.git", "0123456789abcdef"),
+    "https://github.com/EricKrouss/chatgpt-desktop-linux/commit/0123456789abcdef",
   );
   assert.equal(
-    githubCommitUrl("ssh://git@github.com/ilysenko/codex-desktop-linux.git", "fedcba9876543210"),
-    "https://github.com/ilysenko/codex-desktop-linux/commit/fedcba9876543210",
+    githubCommitUrl("ssh://git@github.com/EricKrouss/chatgpt-desktop-linux.git", "fedcba9876543210"),
+    "https://github.com/EricKrouss/chatgpt-desktop-linux/commit/fedcba9876543210",
   );
   assert.equal(githubCommitUrl("https://example.com/org/repo.git", "0123456789abcdef"), null);
   assert.equal(githubCommitUrl("https://github.com/org/repo.git", "not-a-sha"), null);
@@ -889,6 +962,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-completed-item-recovery",
     "linux-remote-terminal-status-recovery",
     "linux-skills-list-dedupe",
+    "linux-status-summary-intrinsic-width",
     "linux-config-write-version-conflict",
     "linux-application-menu",
     "opaque-window-default-general-settings",
@@ -1633,7 +1707,7 @@ test("restores the user PATH for Linux local terminal sessions", () => {
   )?.[0];
   assert.ok(helperSource);
 
-  const managedRuntime = "/opt/codex-desktop/resources/node-runtime";
+  const managedRuntime = "/opt/chatgpt-desktop/resources/node-runtime";
   const managedBin = `${managedRuntime}/bin`;
   const runHelper = (terminalPath, processPath = `${managedBin}:/usr/bin:/bin`) => {
     const terminalEnv = {
@@ -2072,7 +2146,7 @@ test("patches remaining explicit quit handlers when another copy is already patc
   );
 });
 
-test("uses the frameless native Codex titlebar for primary Linux windows", () => {
+test("uses the frameless native ChatGPT titlebar for primary Linux windows", () => {
   const source = [
     "function A2(e){return e===`avatarOverlay`}",
     "function I2({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!A2(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?a2:o2,backgroundMaterial:e===`win32`?`none`:null}:e===`linux`&&!A2(t)?{backgroundColor:r?a2:o2,backgroundMaterial:null}:{backgroundColor:i2,backgroundMaterial:null}}",
@@ -4093,7 +4167,7 @@ test("keeps native desktop apps delegated to upstream outside Linux", async () =
       Buffer,
       require,
       console,
-      process: { env: {}, platform: "darwin", resourcesPath: "/Applications/Codex.app/Contents/Resources" },
+      process: { env: {}, platform: "darwin", resourcesPath: "/Applications/ChatGPT.app/Contents/Resources" },
     },
   );
 
@@ -4122,7 +4196,7 @@ test("inserts native desktop app icon handler before a final native apps handler
       Buffer,
       require,
       console,
-      process: { env: {}, platform: "darwin", resourcesPath: "/Applications/Codex.app/Contents/Resources" },
+      process: { env: {}, platform: "darwin", resourcesPath: "/Applications/ChatGPT.app/Contents/Resources" },
     },
   );
   assert.deepEqual(JSON.parse(JSON.stringify(darwinResult)), {
@@ -5512,7 +5586,8 @@ test("adds Linux package updater behind the existing app updater manager", () =>
   assert.match(patched, /grep -q "\^status: WaitingForAppExit"/);
   assert.match(patched, /status: Installing/);
   assert.match(patched, /grep -q "\^status: Installed"/);
-  assert.match(patched, /CODEX_LINUX_APP_ID:-\$\{CODEX_APP_ID:-chatgpt-desktop\}/);
+  assert.match(patched, /app="\$CODEX_LINUX_APP_ID";if \[ -z "\$app" \];then app="\$CODEX_APP_ID";fi;if \[ -z "\$app" \];then app=chatgpt-desktop;fi/);
+  assert.doesNotMatch(patched, /CODEX_LINUX_APP_ID:-\$\{/);
   assert.match(patched, /app=chatgpt-desktop/);
   assert.match(patched, /command -v "\$app" >\/dev\/null 2>&1/);
   assert.match(patched, /"\/usr\/bin\/\$app" >\/dev\/null 2>&1 &/);
@@ -5538,6 +5613,7 @@ test("adds Linux package updater behind the existing app updater manager", () =>
   assert.doesNotMatch(patched, /this\.options\.onInstallUpdatesRequested\?\.\(\)/);
   assert.match(patched, /n\.stdout\?\.includes\(`already installed`\)\?await codexLinuxShowUpdateMessage/);
   assert.match(patched, /if\(t\?\.status===`waiting_for_app_exit`\)/);
+  assert.doesNotThrow(() => new Function(patched));
 });
 
 test("migrates updater helpers away from captured Electron aliases", () => {
@@ -5773,13 +5849,15 @@ test("migrates an already-patched Linux updater bridge to relaunch after install
     /function codexLinuxInstallAfterQuit\(\)\{try\{let e=u\.spawn\(`\/bin\/sh`,\[`-c`,[^]*?e\.unref\?\.\(\)\}catch\{\}\}/,
     oldHelper,
   );
-  assert.doesNotMatch(oldPatched, /CODEX_LINUX_APP_ID:-\$\{CODEX_APP_ID:-chatgpt-desktop\}/);
+  assert.doesNotMatch(oldPatched, /app="\$CODEX_LINUX_APP_ID";if \[ -z "\$app" \];then app="\$CODEX_APP_ID";fi;if \[ -z "\$app" \];then app=chatgpt-desktop;fi/);
 
   const migrated = applyLinuxAppUpdaterBridgePatch(oldPatched);
 
   assert.match(migrated, /grep -q "\^status: Installed"/);
-  assert.match(migrated, /CODEX_LINUX_APP_ID:-\$\{CODEX_APP_ID:-chatgpt-desktop\}/);
+  assert.match(migrated, /app="\$CODEX_LINUX_APP_ID";if \[ -z "\$app" \];then app="\$CODEX_APP_ID";fi;if \[ -z "\$app" \];then app=chatgpt-desktop;fi/);
+  assert.doesNotMatch(migrated, /CODEX_LINUX_APP_ID:-\$\{/);
   assert.match(migrated, /"\/usr\/bin\/\$app" >\/dev\/null 2>&1 &/);
+  assert.doesNotThrow(() => new Function(migrated));
 });
 
 test("enables the existing app update menu on Linux", () => {

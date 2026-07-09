@@ -64,7 +64,7 @@ Good issue reports usually include:
 The recommended local setup is:
 
 ```bash
-git clone https://github.com/ilysenko/chatgpt-desktop-linux.git
+git clone https://github.com/EricKrouss/chatgpt-desktop-linux.git
 cd chatgpt-desktop-linux
 bash scripts/install-deps.sh
 ```
@@ -171,8 +171,8 @@ bash -n scripts/install-deps.sh
 bash -n scripts/build-deb.sh
 bash -n scripts/build-rpm.sh
 bash -n scripts/build-pacman.sh
-cargo check -p codex-update-manager
-cargo test -p codex-update-manager
+cargo check -p chatgpt-update-manager
+cargo test -p chatgpt-update-manager
 bash tests/scripts_smoke.sh
 ```
 
@@ -193,10 +193,10 @@ sed -n '1,160p' chatgpt-app/start.sh
 If your change affects updater behavior, inspect runtime state where appropriate:
 
 ```bash
-systemctl --user status codex-update-manager.service
-codex-update-manager status --json
-sed -n '1,160p' ~/.local/state/codex-update-manager/state.json
-sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
+systemctl --user status chatgpt-update-manager.service
+chatgpt-update-manager status --json
+sed -n '1,160p' ~/.local/state/chatgpt-update-manager/state.json
+sed -n '1,160p' ~/.local/state/chatgpt-update-manager/service.log
 ```
 
 When a command is not applicable or not available in your environment, mention that clearly in the pull request.

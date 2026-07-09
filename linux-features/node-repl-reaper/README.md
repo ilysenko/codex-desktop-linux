@@ -41,7 +41,7 @@ Add to `linux-features/features.json`:
 ```
 
 then rebuild/reinstall. Logs go to the launcher log
-(`~/.cache/codex-desktop/launcher.log`), prefixed `node-repl-reaper:`.
+(`~/.cache/chatgpt-desktop/launcher.log`), prefixed `node-repl-reaper:`.
 
 ## Test
 

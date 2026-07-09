@@ -31,7 +31,8 @@ env | grep -E '^(XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_STATE_HOME|XDG_CACHE_HOME|DBU
 
 ## Wrapper workaround
 
-Create a small wrapper on the host and ask Codex to use it for GitHub commands:
+Create a small wrapper on the host and ask ChatGPT Desktop to use it for GitHub
+commands:
 
 ```bash
 mkdir -p ~/.local/bin

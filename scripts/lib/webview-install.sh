@@ -9,7 +9,7 @@ replace_linux_webview_icon_assets() {
     local -a icon_assets=()
     local icon_asset linux_icon_source
 
-    linux_icon_source="${LINUX_ICON_SOURCE:-${CODEX_LINUX_ICON_SOURCE:-$SCRIPT_DIR/assets/codex-linux.png}}"
+    linux_icon_source="${LINUX_ICON_SOURCE:-${CODEX_LINUX_ICON_SOURCE:-$SCRIPT_DIR/assets/chatgpt-linux.png}}"
     [ -f "$linux_icon_source" ] || linux_icon_source="$ICON_SOURCE"
 
     [ -f "$linux_icon_source" ] || {

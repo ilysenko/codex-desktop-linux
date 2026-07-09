@@ -103,7 +103,7 @@ where
 
 fn repo_icon_from_exe(current_exe: &Path) -> Option<PathBuf> {
     let target_dir = current_exe.parent()?.parent()?;
-    Some(target_dir.parent()?.join("assets/codex.png"))
+    Some(target_dir.parent()?.join("assets/chatgpt.png"))
 }
 
 fn path_to_file_uri(path: &Path) -> String {

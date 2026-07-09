@@ -9,12 +9,12 @@ APP_DIR="${APP_DIR_OVERRIDE:-$REPO_DIR/chatgpt-app}"
 DIST_DIR="${DIST_DIR_OVERRIDE:-$REPO_DIR/dist}"
 APPDIR="${APPIMAGE_APPDIR_OVERRIDE:-$REPO_DIR/dist/appimage.AppDir}"
 APPRUN_TEMPLATE="$REPO_DIR/packaging/appimage/AppRun"
-DESKTOP_TEMPLATE="$REPO_DIR/packaging/appimage/codex-desktop.desktop"
-APPIMAGE_RUNTIME_TEMPLATE="$REPO_DIR/packaging/appimage/codex-appimage-runtime.sh"
-ICON_SOURCE="$REPO_DIR/assets/codex-linux.png"
+DESKTOP_TEMPLATE="$REPO_DIR/packaging/appimage/chatgpt-desktop.desktop"
+APPIMAGE_RUNTIME_TEMPLATE="$REPO_DIR/packaging/appimage/chatgpt-appimage-runtime.sh"
+ICON_SOURCE="$REPO_DIR/assets/chatgpt-linux.png"
 
 PACKAGE_NAME="${PACKAGE_NAME:-chatgpt-desktop}"
-PACKAGE_DISPLAY_NAME="${PACKAGE_DISPLAY_NAME:-ChatGPT}"
+PACKAGE_DISPLAY_NAME="${PACKAGE_DISPLAY_NAME:-ChatGPT Desktop}"
 PACKAGE_COMMENT="${PACKAGE_COMMENT:-Run ChatGPT on Linux}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
 if [ -f "$APP_DIR/.codex-linux/$PACKAGE_NAME.png" ]; then
@@ -88,8 +88,8 @@ prepare_appdir() {
 
     render_template \
         "$APPIMAGE_RUNTIME_TEMPLATE" \
-        "$APPDIR/opt/$PACKAGE_NAME/.codex-linux/codex-packaged-runtime.sh"
-    chmod 0644 "$APPDIR/opt/$PACKAGE_NAME/.codex-linux/codex-packaged-runtime.sh"
+        "$APPDIR/opt/$PACKAGE_NAME/.codex-linux/chatgpt-packaged-runtime.sh"
+    chmod 0644 "$APPDIR/opt/$PACKAGE_NAME/.codex-linux/chatgpt-packaged-runtime.sh"
 }
 
 main() {

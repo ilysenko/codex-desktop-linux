@@ -3,9 +3,15 @@
 use anyhow::{Context, Result};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-const SERVICE_NAME: &str = "codex-update-manager";
+const SERVICE_NAME: &str = "chatgpt-update-manager";
+const NEW_CHATGPT_DMG_URL: &str = "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg";
+const CLASSIC_CHATGPT_DMG_URL: &str =
+    "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Optional cleanup for generated wrapper checkout artifacts such as `dist/`
@@ -38,10 +44,85 @@ fn default_generated_artifact_cleanup_min_free_bytes() -> u64 {
 }
 
 fn default_generated_artifact_cleanup_entries() -> Vec<PathBuf> {
-    ["chatgpt-app", "chatgpt-app-next", "dist", "dist-next", "target"]
+    [
+        "chatgpt-app",
+        "chatgpt-app-next",
+        "dist",
+        "dist-next",
+        "target",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildInfoDmgSource {
+    upstream_dmg: Option<BuildInfoUpstreamDmg>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuildInfoUpstreamDmg {
+    source: Option<String>,
+    url: Option<String>,
+}
+
+fn trusted_chatgpt_dmg_url(url: &str) -> Option<&'static str> {
+    match url {
+        NEW_CHATGPT_DMG_URL => Some(NEW_CHATGPT_DMG_URL),
+        CLASSIC_CHATGPT_DMG_URL => Some(CLASSIC_CHATGPT_DMG_URL),
+        _ => None,
+    }
+}
+
+fn chatgpt_source_url(source: &str) -> Option<&'static str> {
+    if source.eq_ignore_ascii_case("new") || source.eq_ignore_ascii_case("new-chatgpt") {
+        return Some(NEW_CHATGPT_DMG_URL);
+    }
+    if source.eq_ignore_ascii_case("classic")
+        || source.eq_ignore_ascii_case("classic-chatgpt")
+        || source.eq_ignore_ascii_case("chatgpt-classic")
+    {
+        return Some(CLASSIC_CHATGPT_DMG_URL);
+    }
+    None
+}
+
+fn installed_build_info_paths_for_app(app_executable_path: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(app_root) = app_executable_path.parent() {
+        paths.push(app_root.join(".codex-linux/build-info.json"));
+        paths.push(app_root.join("resources/codex-linux-build-info.json"));
+    }
+    paths
+}
+
+fn upstream_dmg_url_from_build_info(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let build_info = serde_json::from_str::<BuildInfoDmgSource>(&content).ok()?;
+    let upstream_dmg = build_info.upstream_dmg?;
+
+    if let Some(url) = upstream_dmg
+        .url
+        .as_deref()
+        .and_then(trusted_chatgpt_dmg_url)
+    {
+        return Some(url.to_string());
+    }
+
+    upstream_dmg
+        .source
+        .as_deref()
+        .and_then(chatgpt_source_url)
+        .map(ToOwned::to_owned)
+}
+
+fn default_dmg_url_for_app(app_executable_path: &Path) -> String {
+    installed_build_info_paths_for_app(app_executable_path)
         .into_iter()
-        .map(PathBuf::from)
-        .collect()
+        .find_map(|path| upstream_dmg_url_from_build_info(&path))
+        .unwrap_or_else(|| NEW_CHATGPT_DMG_URL.to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -140,15 +221,17 @@ impl RuntimeConfig {
                 .to_path_buf()
         };
 
+        let app_executable_path = PathBuf::from("/opt/chatgpt-desktop/electron");
+
         Self {
-            dmg_url: "https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg".to_string(),
+            dmg_url: default_dmg_url_for_app(&app_executable_path),
             initial_check_delay_seconds: 30,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,
             notifications: true,
             workspace_root: paths.cache_dir.clone(),
             builder_bundle_root,
-            app_executable_path: PathBuf::from("/opt/chatgpt-desktop/electron"),
+            app_executable_path,
             enable_wrapper_updates: false,
             wrapper_remote: String::new(),
             wrapper_branch: default_wrapper_branch(),
@@ -456,7 +539,7 @@ mod tests {
         fs::create_dir_all(builder_feature_config.parent().unwrap())?;
         fs::write(
             &builder_feature_config,
-            r#"{"enabled":["codex-wrapper-updater"]}"#,
+            r#"{"enabled":["chatgpt-wrapper-updater"]}"#,
         )?;
         std::env::set_var("CODEX_LINUX_SETTINGS_FILE", &settings_file);
 
@@ -518,6 +601,60 @@ mod tests {
                 PathBuf::from("dist-next"),
                 PathBuf::from("target"),
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_dmg_url_uses_installed_classic_build_info() -> Result<()> {
+        let temp = tempdir()?;
+        let app_root = temp.path().join("opt/chatgpt-desktop");
+        let build_info_dir = app_root.join(".codex-linux");
+        fs::create_dir_all(&build_info_dir)?;
+        fs::write(
+            build_info_dir.join("build-info.json"),
+            r#"{"upstreamDmg":{"source":"classic","url":"https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg"}}"#,
+        )?;
+
+        assert_eq!(
+            default_dmg_url_for_app(&app_root.join("electron")),
+            CLASSIC_CHATGPT_DMG_URL
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_dmg_url_accepts_known_source_without_url() -> Result<()> {
+        let temp = tempdir()?;
+        let app_root = temp.path().join("opt/chatgpt-desktop");
+        let build_info_dir = app_root.join("resources");
+        fs::create_dir_all(&build_info_dir)?;
+        fs::write(
+            build_info_dir.join("codex-linux-build-info.json"),
+            r#"{"upstreamDmg":{"source":"new"}}"#,
+        )?;
+
+        assert_eq!(
+            default_dmg_url_for_app(&app_root.join("electron")),
+            NEW_CHATGPT_DMG_URL
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_dmg_url_ignores_custom_build_info_url() -> Result<()> {
+        let temp = tempdir()?;
+        let app_root = temp.path().join("opt/chatgpt-desktop");
+        let build_info_dir = app_root.join(".codex-linux");
+        fs::create_dir_all(&build_info_dir)?;
+        fs::write(
+            build_info_dir.join("build-info.json"),
+            r#"{"upstreamDmg":{"source":"custom","url":"https://user:secret@example.com/ChatGPT.dmg?token=topsecret"}}"#,
+        )?;
+
+        assert_eq!(
+            default_dmg_url_for_app(&app_root.join("electron")),
+            NEW_CHATGPT_DMG_URL
         );
         Ok(())
     }

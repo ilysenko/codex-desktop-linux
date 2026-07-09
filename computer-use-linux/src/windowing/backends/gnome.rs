@@ -84,8 +84,8 @@ pub async fn list_introspect_windows() -> Result<Vec<WindowInfo>> {
 
 pub async fn list_extension_windows() -> Result<Vec<WindowInfo>> {
     let json = call_extension_json("ListWindows").await?;
-    let mut windows: Vec<WindowInfo> =
-        serde_json::from_str(&json).context("Codex GNOME Shell extension returned invalid JSON")?;
+    let mut windows: Vec<WindowInfo> = serde_json::from_str(&json)
+        .context("ChatGPT GNOME Shell extension returned invalid JSON")?;
     for window in &mut windows {
         window.backend = GNOME_SHELL_EXTENSION_BACKEND.to_string();
     }
@@ -126,11 +126,11 @@ async fn call_extension_json(method: &str) -> Result<String> {
         GNOME_SHELL_EXTENSION_SERVICE,
     )
     .await
-    .context("failed to create Codex GNOME Shell extension proxy")?;
+    .context("failed to create ChatGPT GNOME Shell extension proxy")?;
     let json: String = proxy
         .call(method, &())
         .await
-        .with_context(|| format!("Codex GNOME Shell extension {method} call failed"))?;
+        .with_context(|| format!("ChatGPT GNOME Shell extension {method} call failed"))?;
     Ok(json)
 }
 
@@ -237,17 +237,17 @@ pub(crate) async fn activate_extension_window(window_id: u64) -> Result<()> {
         GNOME_SHELL_EXTENSION_SERVICE,
     )
     .await
-    .context("failed to create Codex GNOME Shell extension proxy")?;
+    .context("failed to create ChatGPT GNOME Shell extension proxy")?;
     let (ok, message): (bool, String) = proxy
         .call("ActivateWindow", &(window_id))
         .await
         .with_context(|| {
-            format!("Codex GNOME Shell extension ActivateWindow failed for {window_id}")
+            format!("ChatGPT GNOME Shell extension ActivateWindow failed for {window_id}")
         })?;
     if ok {
         Ok(())
     } else {
-        bail!("Codex GNOME Shell extension refused activation: {message}");
+        bail!("ChatGPT GNOME Shell extension refused activation: {message}");
     }
 }
 

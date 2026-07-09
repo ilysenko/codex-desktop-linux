@@ -1,6 +1,7 @@
 #!/bin/sh
 
-SERVICE_NAME="${SERVICE_NAME:-codex-update-manager.service}"
+SERVICE_NAME="${SERVICE_NAME:-chatgpt-update-manager.service}"
+LEGACY_SERVICE_NAME="${LEGACY_SERVICE_NAME:-codex-update-manager.service}"
 
 codex_foreach_user_manager() {
     if ! command -v runuser >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
@@ -55,12 +56,34 @@ codex_start_enabled_user_service() {
     codex_foreach_user_manager codex_start_one_enabled_user_service
 }
 
+codex_disable_legacy_user_service() {
+    if [ -z "$LEGACY_SERVICE_NAME" ] || [ "$LEGACY_SERVICE_NAME" = "$SERVICE_NAME" ]; then
+        return
+    fi
+
+    codex_foreach_user_manager codex_disable_one_legacy_user_service
+}
+
+codex_disable_one_legacy_user_service() {
+    user_name="$1"
+    runtime_dir="$2"
+    bus="$3"
+
+    if [ -z "$LEGACY_SERVICE_NAME" ] || [ "$LEGACY_SERVICE_NAME" = "$SERVICE_NAME" ]; then
+        return
+    fi
+
+    codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" stop "$LEGACY_SERVICE_NAME" || true
+    codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" disable "$LEGACY_SERVICE_NAME" || true
+}
+
 codex_ensure_one_user_service_running() {
     user_name="$1"
     runtime_dir="$2"
     bus="$3"
 
     codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" daemon-reload || true
+    codex_disable_one_legacy_user_service "$user_name" "$runtime_dir" "$bus"
 
     if codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" is-active "$SERVICE_NAME"; then
         return
@@ -79,6 +102,7 @@ codex_start_one_enabled_user_service() {
     bus="$3"
 
     codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" daemon-reload || true
+    codex_disable_one_legacy_user_service "$user_name" "$runtime_dir" "$bus"
 
     if codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" is-active "$SERVICE_NAME"; then
         return
@@ -101,5 +125,8 @@ codex_cleanup_one_user_service() {
     bus="$4"
 
     codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" "$action" "$SERVICE_NAME" || true
+    if [ -n "$LEGACY_SERVICE_NAME" ] && [ "$LEGACY_SERVICE_NAME" != "$SERVICE_NAME" ]; then
+        codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" "$action" "$LEGACY_SERVICE_NAME" || true
+    fi
     codex_run_systemctl_user "$user_name" "$runtime_dir" "$bus" daemon-reload || true
 }

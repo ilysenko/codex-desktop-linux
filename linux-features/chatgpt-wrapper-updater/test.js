@@ -25,7 +25,7 @@ const featuresRoot = path.resolve(featureDir, "..");
 
 function withTempFeatureConfig(enabled, fn) {
   const originalConfig = process.env.CODEX_LINUX_FEATURES_CONFIG;
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-config-"));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-wrapper-updater-config-"));
   process.env.CODEX_LINUX_FEATURES_CONFIG = path.join(tempDir, "features.json");
   try {
     fs.writeFileSync(process.env.CODEX_LINUX_FEATURES_CONFIG, JSON.stringify({ enabled }, null, 2));
@@ -41,7 +41,7 @@ function withTempFeatureConfig(enabled, fn) {
 }
 
 function fakeManager(temp, body = "exit ${CODEX_FAKE_MANAGER_STATUS:-0}\n") {
-  const manager = path.join(temp, "codex-update-manager");
+  const manager = path.join(temp, "chatgpt-update-manager");
   fs.writeFileSync(manager, `#!/usr/bin/env bash\n${body}`);
   fs.chmodSync(manager, 0o755);
   return manager;
@@ -58,7 +58,7 @@ test("main bundle patch writes app-state wrapper marker", () => {
   assert.match(patched, /CODEX_LINUX_APP_STATE_DIR/);
   assert.match(patched, /pick-features/);
   assert.match(patched, /codex-linux-feature-picker-on-update/);
-  assert.match(patched, /codex-wrapper-updater/);
+  assert.match(patched, /chatgpt-wrapper-updater/);
   assert.match(patched, /wrapper_dev_mode/);
   assert.match(patched, /installed_wrapper_commit/);
   assert.doesNotMatch(patched, /wrapper-update-pending/);
@@ -113,7 +113,7 @@ test("general settings patch adds wrapper update toggles for current upstream se
 });
 
 test("settings asset patch skips re-exported general settings bundles", () => {
-  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-settings-assets-"));
+  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-wrapper-updater-settings-assets-"));
   const assetsDir = path.join(appDir, "webview", "assets");
   fs.mkdirSync(assetsDir, { recursive: true });
   fs.writeFileSync(path.join(assetsDir, "general-settings-a.js"), `export{e as GeneralSettings};`);
@@ -133,7 +133,7 @@ test("settings asset patch skips re-exported general settings bundles", () => {
 });
 
 test("settings asset patch prefers generated Linux desktop settings bundle", () => {
-  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-linux-desktop-settings-"));
+  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-wrapper-updater-linux-desktop-settings-"));
   const assetsDir = path.join(appDir, "webview", "assets");
   fs.mkdirSync(assetsDir, { recursive: true });
   const linuxDesktopSettings =
@@ -159,43 +159,43 @@ test("settings asset patch prefers generated Linux desktop settings bundle", () 
 });
 
 test("feature exposes optional patches and declarative apply hooks when enabled", () => {
-  withTempFeatureConfig(["codex-wrapper-updater"], () => {
-    assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot }), ["codex-wrapper-updater"]);
+  withTempFeatureConfig(["chatgpt-wrapper-updater"], () => {
+    assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot }), ["chatgpt-wrapper-updater"]);
     assert.deepEqual(
       loadLinuxFeaturePatchDescriptors({ featuresRoot })
-        .filter((descriptor) => descriptor.id.startsWith("feature:codex-wrapper-updater:"))
+        .filter((descriptor) => descriptor.id.startsWith("feature:chatgpt-wrapper-updater:"))
         .map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
       [
-        ["feature:codex-wrapper-updater:main-handler", "main-bundle", "optional"],
-        ["feature:codex-wrapper-updater:webview-runtime", "webview-asset", "optional"],
-        ["feature:codex-wrapper-updater:settings-toggle", "extracted-app:post-webview", "optional"],
+        ["feature:chatgpt-wrapper-updater:main-handler", "main-bundle", "optional"],
+        ["feature:chatgpt-wrapper-updater:webview-runtime", "webview-asset", "optional"],
+        ["feature:chatgpt-wrapper-updater:settings-toggle", "extracted-app:post-webview", "optional"],
       ],
     );
 
-    const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-app-"));
+    const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-wrapper-updater-app-"));
     try {
       const plan = stageEnabledLinuxFeatureInstall(appDir, { featuresRoot });
       assert.deepEqual(
         plan.runtimeHooks.map((hook) => [hook.key, hook.target, hook.mode.toString(8)]),
         [
-          ["prelaunch", ".codex-linux/prelaunch.d/codex-wrapper-updater-apply-pending.sh", "755"],
-          ["afterExit", ".codex-linux/after-exit.d/codex-wrapper-updater-apply-pending.sh", "755"],
+          ["prelaunch", ".codex-linux/prelaunch.d/chatgpt-wrapper-updater-apply-pending.sh", "755"],
+          ["afterExit", ".codex-linux/after-exit.d/chatgpt-wrapper-updater-apply-pending.sh", "755"],
         ],
       );
       assert.equal(
         fs.existsSync(
-          path.join(appDir, ".codex-linux", "prelaunch.d", "codex-wrapper-updater-apply-pending.sh"),
+          path.join(appDir, ".codex-linux", "prelaunch.d", "chatgpt-wrapper-updater-apply-pending.sh"),
         ),
         true,
       );
       assert.equal(
         fs.existsSync(
-          path.join(appDir, ".codex-linux", "after-exit.d", "codex-wrapper-updater-apply-pending.sh"),
+          path.join(appDir, ".codex-linux", "after-exit.d", "chatgpt-wrapper-updater-apply-pending.sh"),
         ),
         true,
       );
       assert.equal(
-        fs.existsSync(path.join(appDir, ".codex-linux", "env.d", "codex-wrapper-updater-wrapper-updater.env")),
+        fs.existsSync(path.join(appDir, ".codex-linux", "env.d", "chatgpt-wrapper-updater-wrapper-updater.env")),
         false,
       );
     } finally {
@@ -205,8 +205,8 @@ test("feature exposes optional patches and declarative apply hooks when enabled"
 });
 
 test("apply hook preserves marker on failure and clears it on success", () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-"));
-  const markerDir = path.join(temp, "codex-wrapper-updater");
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-wrapper-updater-"));
+  const markerDir = path.join(temp, "chatgpt-wrapper-updater");
   const marker = path.join(markerDir, "pending");
   const manager = fakeManager(temp);
   fs.mkdirSync(markerDir, { recursive: true });
@@ -235,8 +235,8 @@ test("apply hook preserves marker on failure and clears it on success", () => {
 });
 
 test("apply hook bounds slow prelaunch apply and preserves marker", () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-timeout-"));
-  const markerDir = path.join(temp, "codex-wrapper-updater");
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-wrapper-updater-timeout-"));
+  const markerDir = path.join(temp, "chatgpt-wrapper-updater");
   const marker = path.join(markerDir, "pending");
   const manager = fakeManager(temp, "sleep 3\nexit 0\n");
   fs.mkdirSync(markerDir, { recursive: true });
@@ -271,8 +271,8 @@ test("apply hook keeps invalid and capped prelaunch timeout values numeric", () 
       stderrNeedle: /CODEX_WRAPPER_UPDATER_PRELAUNCH_TIMEOUT_SECONDS=999 is too high; using 300/,
     },
   ]) {
-    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-timeout-value-"));
-    const markerDir = path.join(temp, "codex-wrapper-updater");
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-wrapper-updater-timeout-value-"));
+    const markerDir = path.join(temp, "chatgpt-wrapper-updater");
     const marker = path.join(markerDir, "pending");
     const managerLog = path.join(temp, "manager.log");
     const manager = fakeManager(
@@ -303,8 +303,8 @@ test("apply hook keeps invalid and capped prelaunch timeout values numeric", () 
 });
 
 test("apply hook resolves marker from sanitized app id when app state dir is absent", () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-xdg-"));
-  const markerDir = path.join(temp, "codex-cua-lab", "codex-wrapper-updater");
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-wrapper-updater-xdg-"));
+  const markerDir = path.join(temp, "codex-cua-lab", "chatgpt-wrapper-updater");
   const marker = path.join(markerDir, "pending");
   const manager = fakeManager(temp);
   fs.mkdirSync(markerDir, { recursive: true });
@@ -327,8 +327,8 @@ test("apply hook resolves marker from sanitized app id when app state dir is abs
 });
 
 test("apply hook skip guard and lock keep marker without running manager", () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-guard-"));
-  const markerDir = path.join(temp, "codex-wrapper-updater");
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-wrapper-updater-guard-"));
+  const markerDir = path.join(temp, "chatgpt-wrapper-updater");
   const marker = path.join(markerDir, "pending");
   const invoked = path.join(temp, "manager-invoked");
   const manager = fakeManager(temp, `touch ${JSON.stringify(invoked)}\nexit 0\n`);

@@ -4,7 +4,7 @@
 set -uo pipefail
 
 log() {
-    echo "[codex-wrapper-updater] $*"
+    echo "[chatgpt-wrapper-updater] $*"
 }
 
 truthy() {
@@ -40,7 +40,7 @@ run_prelaunch_apply_with_watchdog() {
     local limit_ticks=$((timeout_seconds * 10))
     local ticks=0
     local apply_pid
-    local output_file="${TMPDIR:-/tmp}/codex-wrapper-updater-apply-$$-${RANDOM:-0}.log"
+    local output_file="${TMPDIR:-/tmp}/chatgpt-wrapper-updater-apply-$$-${RANDOM:-0}.log"
     local status
     local use_setsid=0
     local line
@@ -111,7 +111,7 @@ resolve_update_manager() {
         echo "$CODEX_UPDATE_MANAGER_PATH"
         return 0
     fi
-    command -v codex-update-manager 2>/dev/null
+    command -v chatgpt-update-manager 2>/dev/null
 }
 
 relaunch_app() {
@@ -130,7 +130,7 @@ state_dir="$(resolve_state_dir)" || {
     log "could not resolve app state directory"
     exit 0
 }
-marker_dir="$state_dir/codex-wrapper-updater"
+marker_dir="$state_dir/chatgpt-wrapper-updater"
 marker="$marker_dir/pending"
 phase="${CODEX_LINUX_FEATURE_HOOK_PHASE:-manual}"
 
@@ -149,7 +149,7 @@ fi
 trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 
 manager="$(resolve_update_manager)" || {
-    log "codex-update-manager is not available; leaving marker for retry"
+    log "chatgpt-update-manager is not available; leaving marker for retry"
     [ "$phase" = "after-exit" ] && relaunch_app failed
     exit 0
 }

@@ -5,18 +5,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DIR="${APP_DIR_OVERRIDE:-$REPO_DIR/chatgpt-app}"
 DIST_DIR="${DIST_DIR_OVERRIDE:-$REPO_DIR/dist}"
-SPEC_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.spec"
-DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
-SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.service"
-USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh"
-ICON_SOURCE="$REPO_DIR/assets/codex-linux.png"
-PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
+SPEC_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-desktop.spec"
+DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-desktop.desktop"
+SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-update-manager.service"
+USER_SERVICE_HELPER_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-update-manager-user-service.sh"
+ICON_SOURCE="$REPO_DIR/assets/chatgpt-linux.png"
+PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/chatgpt-packaged-runtime.sh"
 
 PACKAGE_NAME="${PACKAGE_NAME:-chatgpt-desktop}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
 MAX_BUILD_THREADS="${MAX_BUILD_THREADS:-0}"
 RPM_BINARY_PAYLOAD="${RPM_BINARY_PAYLOAD:-}"
-UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-update-manager}"
+UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/chatgpt-update-manager}"
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
 PACKAGED_RUNTIME_SOURCE="${PACKAGED_RUNTIME_SOURCE:-$PACKAGED_RUNTIME_TEMPLATE}"
 UPDATE_BUILDER_ROOT_PLACEHOLDER="__UPDATE_BUILDER_ROOT__"
@@ -77,7 +77,7 @@ main() {
         [ -f "$USER_SERVICE_HELPER_TEMPLATE" ] || error "Missing updater user service helper: $USER_SERVICE_HELPER_TEMPLATE"
         [ -f "$PACKAGED_RUNTIME_SOURCE" ] || error "Missing packaged launcher runtime helper: $PACKAGED_RUNTIME_SOURCE"
     else
-        info "Building package without codex-update-manager (PACKAGE_WITH_UPDATER=0)"
+        info "Building package without chatgpt-update-manager (PACKAGE_WITH_UPDATER=0)"
     fi
     command -v rpmbuild >/dev/null 2>&1 || error "rpmbuild is required (install rpm-build)"
 
@@ -108,7 +108,14 @@ SCRIPT
     normalize_package_payload_permissions "$staging_root"
     restore_linux_feature_payload_permissions "$staging_root"
 
-    local spec_file="$build_root/codex-desktop.spec"
+    local legacy_conflicts=""
+    local legacy_obsoletes=""
+    if [ "$PACKAGE_NAME" = "chatgpt-desktop" ]; then
+        legacy_conflicts="Conflicts:      codex-desktop"
+        legacy_obsoletes="Obsoletes:      codex-desktop"
+    fi
+
+    local spec_file="$build_root/chatgpt-desktop.spec"
     sed \
         -e "s/__PACKAGE_NAME__/$PACKAGE_NAME/g" \
         -e "s/__RPM_VERSION__/$rpm_ver/g" \
@@ -116,6 +123,8 @@ SCRIPT
         -e "s|__RPM_STAGING_DIR__|$staging_root|g" \
         -e "s/__ARCH__/$arch/g" \
         -e "s/__PACKAGE_WITH_UPDATER__/$(package_with_updater_enabled && echo 1 || echo 0)/g" \
+        -e "s/__LEGACY_CONFLICTS__/$legacy_conflicts/g" \
+        -e "s/__LEGACY_OBSOLETES__/$legacy_obsoletes/g" \
         "$SPEC_TEMPLATE" > "$spec_file"
 
     local rpmbuild_dir="$build_root/rpmbuild"
