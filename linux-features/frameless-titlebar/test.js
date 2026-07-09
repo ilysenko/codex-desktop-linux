@@ -22,6 +22,18 @@ function applyPatchTwice(patchFn, source) {
   return patched;
 }
 
+function captureWarnings(callback) {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(String(message));
+  try {
+    callback();
+  } finally {
+    console.warn = originalWarn;
+  }
+  return warnings;
+}
+
 function copyFeatureTo(featuresRoot) {
   const featureDir = path.join(featuresRoot, "frameless-titlebar");
   fs.mkdirSync(featureDir, { recursive: true });
@@ -140,4 +152,20 @@ test("frameless-titlebar maps Linux window controls chrome to native webview lay
   assert.doesNotMatch(patched, /showApplicationMenu/);
   assert.doesNotMatch(patched, /includes\(`linux`\)\?t\?\?eV\.applicationMenu/);
   assert.doesNotMatch(patched, /right:138/);
+});
+
+test("frameless-titlebar warns when only an unrelated disabled function matches bridge output", () => {
+  const source = [
+    "var eV=Object.freeze({default:Object.freeze({left:0,right:0}),applicationMenu:Object.freeze({left:0,right:138})});",
+    "function unrelated(){return!1}",
+    "function Nvt(){return vKe()&&window.electronBridge?.showAppMenu!=null}",
+    "function chrome(e){switch(e){case`win32`:case`linux`:return`something-else`;default:return`native`}}",
+    "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.appMenu:eV.default;",
+  ].join("");
+
+  const warnings = captureWarnings(() => applyFramelessTitlebarWebviewPatch(source));
+
+  assert.deepEqual(warnings, [
+    "WARN: Could not find Linux window controls chrome mapping - skipping frameless webview chrome patch",
+  ]);
 });

@@ -149,15 +149,13 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
     foundApplicationMenuBridge = true;
     return `function ${functionName}(){return!1}`;
   });
-  const hasDisabledApplicationMenuBridge = /function [A-Za-z_$][\w$]*\(\)\{return!1\}/.test(patchedSource);
 
   const recognizedChromeMapping = foundApplicationMenuChrome || hasNativeChrome;
   const recognizedBrowserGate = foundApplicationMenuBrowserGate || hasNativeBrowserGate;
-  const recognizedApplicationMenuBridge = foundApplicationMenuBridge || hasDisabledApplicationMenuBridge;
   if (
     !recognizedChromeMapping &&
     !recognizedBrowserGate &&
-    !recognizedApplicationMenuBridge &&
+    !foundApplicationMenuBridge &&
     currentSource.includes("applicationMenu:Object.freeze({left:0,right:")
   ) {
     console.warn("WARN: Could not find Linux window controls chrome mapping - skipping frameless webview chrome patch");
