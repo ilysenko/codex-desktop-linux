@@ -56,6 +56,14 @@ const latestOpenInCommandBundle =
   "function pP(e){return e.targets}function iP(e,t){return{target:t}}class App{constructor(){this.getOpenInWorker=()=>async()=>({command:null});this.settingsStore={targets:[{id:`linux-desktop-agent`,detect:async()=>`main-command`},{id:`missing`,detect:async()=>null}]}}getSettingsStore(){return this.settingsStore}async getOpenInTargetCommand(e){let{command:t}=await this.getOpenInWorker()({method:`get-target-command`,params:iP(this.getSettingsStore(),e)});if(t==null)throw Error(`Open target \"${e}\" is not available`);return t}}";
 const openInAvailabilityBundle =
   "function pP(e){return e.targets}function eP(e){return e.map(({id:e,label:t,icon:n,kind:r,hidden:i,supportsSsh:a})=>({id:e,label:t,icon:n,kind:r,hidden:i,supportsSsh:a}))}function rP(e){return eP(pP(e))}function iP(e,t){return{target:t}}function tP(){return{error(){},warning(){}}}async function aP(e,t){let n=await Promise.all(rP(e).map(async n=>{let r=iP(e,n.id),[i,a]=await Promise.all([t({method:`get-target-command`,params:r}).then(e=>e.command).catch(e=>(tP().error(`Failed to detect open target`,{safe:{},sensitive:{id:n.id,error:e}}),null)),process.platform===`win32`?t({method:`load-target-icon`,params:r}).then(e=>e.icon).catch(e=>(tP().warning(`Failed to resolve open target icon`,{safe:{},sensitive:{id:n.id,error:e}}),n.icon)):n.icon]);return{command:i,metadata:{...n,icon:a}}}));return{allAvailableTargets:n.flatMap(({command:e,metadata:t})=>e==null?[]:[t.id]),targetMetadata:n.map(({metadata:e})=>e)}}";
+const currentAppOpenTargetPrelude =
+  "var FN={source:`shortcut-reader`};function RN(e){return e.map(({id:e,label:t,icon:n,kind:r})=>({id:e,label:t,icon:n,kind:r}))}function HN(e){return RN(QN(e))}function UN(e,t){let n=QN(e).find(e=>e.id===t);return n?.configuredCommand==null?{target:t}:{target:t,customTarget:{command:n.configuredCommand}}}function QN(e){return e.targets}async function LN(e){let t=e.targets[0];return await t.detect(FN)}function zN(){return{error(){},warning(){}}}";
+const currentAppOpenInCommandBundle =
+  `${currentAppOpenTargetPrelude}function iP(){throw Error(\`unrelated helper called\`)}class App{constructor(e,t){this.settingsStore=e;this.requestOpenInWorker=t}getSettingsStore(){return this.settingsStore}getOpenInWorker(){return this.requestOpenInWorker}async getOpenInTargetCommand(e){let{command:t}=await this.getOpenInWorker()({method:\`get-target-command\`,params:UN(this.getSettingsStore(),e)});if(t==null)throw Error(\`Open target "\${e}" is not available\`);return t}}`;
+const currentAppOpenInAvailabilityBundle =
+  `${currentAppOpenTargetPrelude}async function WN(e,t){let n=await Promise.all(HN(e).map(async n=>{let r=UN(e,n.id),[i,a]=await Promise.all([t({method:\`get-target-command\`,params:r}).then(e=>e.command).catch(e=>(zN().error(\`Failed to detect open target\`,{safe:{},sensitive:{id:n.id,error:e}}),null)),process.platform===\`win32\`?t({method:\`load-target-icon\`,params:r}).then(e=>e.icon).catch(e=>(zN().warning(\`Failed to resolve open target icon\`,{safe:{},sensitive:{id:n.id,error:e}}),n.icon)):n.icon]);return{command:i,metadata:{...n,icon:a}}}));return{allAvailableTargets:n.flatMap(({command:e,metadata:t})=>e==null?[]:[t.id]),targetMetadata:n.map(({metadata:e})=>e)}}`;
+const currentAppOpenInBridgeBundle =
+  `${currentAppOpenTargetPrelude}class App{constructor(e,t){this.settingsStore=e;this.requestOpenInWorker=t}async detectTarget({target:e}){if(this.requestOpenInWorker==null)throw Error(\`Open in worker unavailable\`);let{command:t}=await this.requestOpenInWorker({method:\`get-target-command\`,params:UN(this.settingsStore,e)});return{available:t!=null}}}`;
 const openInBridgeBundle =
   "async function JN(){}function iP(e){return e.targets}var IN={};var bridge={options:{settingsStore:{targets:[{id:`linux-desktop-agent`,detect:async()=>`main-command`},{id:`missing`,detect:async()=>null}]},requestOpenInWorker:async()=>({command:`worker-command`})},openInTargets:{detectTarget:async({target:e})=>{if(this.options.requestOpenInWorker==null)throw Error(`Open in worker unavailable`);let{command:t}=await this.options.requestOpenInWorker({method:`get-target-command`,params:JN(this.options.settingsStore,e)});return{available:t!=null}},loadTargetIcon:()=>{}}}";
 const latestOpenInBridgeBundle =
@@ -66,6 +74,8 @@ const openInTargetsBundle =
   '"open-in-targets":async({cwd:e,deferEnrichment:n=!1,hostId:r,nativeBrowserDiscovery:i=`scan`,path:a})=>{let o=this.getRequestAppServerClient(r??void 0),s=this.getSettingsStore();let[c,l]=await Promise.all([XN(s),YN(s)]),u=a?.replace(/^([ab])[\\\\/]/,``)??null,d=u!=null&&_F(u)&&!t.Ta(o.hostConfig),f=u==null||d||t.Ta(o.hostConfig)?null:this.resolveOpenFilePath(this.mapAgentPathToLocalPath(u,o.hostConfig)??u,this.mapAgentPathToLocalPath(e,o.hostConfig)??this.getWorkspaceRoot()),p=oj(o.hostConfig,c,l),m=new Set(p),h=tP(s,e,m),g=d||f!=null&&t.wo(f),_=f!=null&&UA(f),v=f!=null&&GA(f),y=g?await gF({nativeBrowserDiscovery:i}):_?await hF({filePath:f}):[];return{preferredTarget:h,availableTargets:Array.from(m),mode:g||v?`native`:`editor`,targets:[...l.map(({id:e,label:t,icon:n,kind:r,hidden:i})=>({id:e,target:e,label:t,icon:n,kind:r,hidden:i,available:m.has(e),default:h===e||void 0})),...y]}}';
 const latestOpenInTargetsBundle =
   '"open-in-targets":async({cwd:e,deferEnrichment:n=!1,hostId:r,nativeBrowserDiscovery:i=`scan`,path:a})=>{let o=this.getRequestAppServerClient(r??void 0),s=this.getSettingsStore();if(n&&a==null){let t=dP(s,e);return{preferredTarget:t,availableTargets:[],mode:`editor`,targets:Ej(rP(s),o.hostConfig).map(({id:e,label:n,icon:r,kind:i,hidden:a})=>({id:e,target:e,label:n,icon:r,kind:i,hidden:a,default:t===e||void 0}))}}let{allAvailableTargets:c,targetMetadata:l}=await aP(s,this.getOpenInWorker()),u=a?.replace(/^([ab])[\\\\/]/,``)??null,d=u!=null&&PF(u)&&!t.Ha(o.hostConfig),f=u==null||d||t.Ha(o.hostConfig)?null:this.resolveOpenFilePath(this.mapAgentPathToLocalPath(u,o.hostConfig)??u,this.mapAgentPathToLocalPath(e,o.hostConfig)??this.getWorkspaceRoot()),p=Tj(o.hostConfig,c,l),m=new Set(p),h=uP(s,e,m),g=d||f!=null&&t.rs(f),_=f!=null&&cj(f),v=f!=null&&uj(f),y=g?await MF(i):_?await jF({filePath:f}):[];return{preferredTarget:h,availableTargets:Array.from(m),mode:g||v?`native`:`editor`,targets:[...l.map(({id:e,label:t,icon:n,kind:r,hidden:i})=>({id:e,target:e,label:t,icon:n,kind:r,hidden:i,available:m.has(e),default:h===e||void 0})),...y]}}';
+const currentAppOpenInTargetsBundle =
+  '"open-in-targets":async({cwd:e,deferEnrichment:t=!1,hostId:r,nativeBrowserDiscovery:i=`scan`,path:a})=>{let o=this.getRequestAppServerClient(r??void 0),s=this.getSettingsStore();if(t&&a==null){let t=XN(s,e);return{preferredTarget:t,availableTargets:[],mode:`editor`,targets:uj(HN(s),o.hostConfig)}}let{allAvailableTargets:c,targetMetadata:l}=await WN(s,this.getOpenInWorker()),u=a?.replace(/^([ab])[\\\\/]/,``)??null,d=u!=null&&xF(u)&&!n.eo(o.hostConfig),f=u==null||d||n.eo(o.hostConfig)?null:this.resolveOpenFilePath(u,e),p=lj(o.hostConfig,c,l),m=new Set(p),h=YN(s,e,m),g=d||f!=null&&n.ys(f),_=f!=null&&KA(f),v=f!=null&&JA(f),y=g?await yF(i):_?await vF({filePath:f}):[];return{preferredTarget:h,availableTargets:Array.from(m),mode:g||v?`native`:`editor`,targets:l}}';
 const openTargetSelectionBundle =
   "function e({targets:e,availableTargets:t,includeHiddenTargets:n=!1,mode:r=`editor`}){let i=e.filter(e=>e.appPath!=null);if(i.length>0)return i;if(r===`native`)return e.filter(e=>e.target===`systemDefault`||e.target===`fileManager`);let a=new Set(t);return e.filter(e=>a.has(e.target)&&(n||!e.hidden))}function t({preferredTarget:t,targets:n,availableTargets:r,includeHiddenTargets:i=!0,mode:a=`editor`}){let o=e({targets:n,availableTargets:r,includeHiddenTargets:i,mode:a});return o.length===0?null:t?o.find(e=>e.target===t)??o[0]??null:o[0]??null}function n(e){return e.appPath==null&&e.kind===`editor`}export{e as n,t as r,n as t};";
 const latestOpenTargetSelectionBundle =
@@ -1145,9 +1155,32 @@ test("open-target discovery patches latest command lookup shape", async () => {
   await assert.rejects(() => app.getOpenInTargetCommand("vscode"), /not available/);
 });
 
+test("open-target discovery patches current app command lookup through its registry", async () => {
+  let workerCalls = 0;
+  const settingsStore = {
+    targets: [
+      {
+        id: "linux-desktop-agent",
+        detect: async (context) => context?.source === "shortcut-reader" ? "main-command" : null,
+      },
+      { id: "broken", detect: async () => { throw new Error("probe failed"); } },
+    ],
+  };
+  const patched = applyPatchTwice(applyOpenInTargetCommandPatch, currentAppOpenInCommandBundle);
+  const app = new Function(`${patched};return new App(arguments[0],arguments[1]);`)(settingsStore, async () => {
+    workerCalls += 1;
+    return { command: "worker-command" };
+  });
+
+  assert.equal(await app.getOpenInTargetCommand("linux-desktop-agent"), "main-command");
+  await assert.rejects(() => app.getOpenInTargetCommand("broken"), /not available/);
+  assert.equal(workerCalls, 0);
+  assert.match(patched, /if\(process\.platform===`linux`\)\{let t=await codexLinuxOpenTargetRegistryCommand/);
+});
+
 test("open-target discovery command lookup tolerates param-builder target helper", async () => {
   const source =
-    "function JN(e,t){return{target:t}}function iP(e,t){return{target:t}}var IN={};class App{constructor(){this.requestOpenInWorker=async({params:e})=>({command:e.target===`vscode`?`worker-command`:null});this.settingsStore={targets:[{id:`linux-desktop-agent`,detect:async()=>`main-command`},{id:`missing`,detect:async()=>null}]}}getSettingsStore(){return this.settingsStore}async getOpenInTargetCommand(e){if(this.requestOpenInWorker==null)return;let{command:t}=await this.requestOpenInWorker({method:`get-target-command`,params:JN(this.getSettingsStore(),e)});if(t==null)throw Error(`Open target \"${e}\" is not available`);return t}}";
+    "function pP(e){return e.targets}function JN(e,t){return{target:t}}function iP(e,t){return{target:t}}var IN={};class App{constructor(){this.requestOpenInWorker=async({params:e})=>({command:e.target===`vscode`?`worker-command`:null});this.settingsStore={targets:[{id:`linux-desktop-agent`,detect:async()=>`main-command`},{id:`missing`,detect:async()=>null}]}}getSettingsStore(){return this.settingsStore}async getOpenInTargetCommand(e){if(this.requestOpenInWorker==null)return;let{command:t}=await this.requestOpenInWorker({method:`get-target-command`,params:JN(this.getSettingsStore(),e)});if(t==null)throw Error(`Open target \"${e}\" is not available`);return t}}";
   const patched = applyPatchTwice(applyOpenInTargetCommandPatch, source);
   const app = new Function(`${patched};return new App();`)();
 
@@ -1164,6 +1197,43 @@ test("open-target discovery uses main registry for target availability", async (
 
   assert.deepEqual(result.allAvailableTargets, ["linux-desktop-agent"]);
   assert.deepEqual(result.targetMetadata.map((target) => target.id), ["linux-desktop-agent", "missing"]);
+});
+
+test("open-target discovery patches current app availability through its registry", async () => {
+  let workerCalls = 0;
+  const settingsStore = {
+    targets: [
+      {
+        id: "linux-desktop-agent",
+        label: "Agent",
+        icon: "apps/terminal.png",
+        kind: "editor",
+        detect: async (context) => context?.source === "shortcut-reader" ? "/usr/bin/agent" : null,
+      },
+      {
+        id: "missing",
+        label: "Missing",
+        icon: "apps/terminal.png",
+        kind: "editor",
+        detect: async () => null,
+      },
+      {
+        id: "broken",
+        label: "Broken",
+        icon: "apps/terminal.png",
+        kind: "editor",
+        detect: async () => { throw new Error("probe failed"); },
+      },
+    ],
+  };
+  const patched = applyPatchTwice(applyOpenInTargetsAvailabilityPatch, currentAppOpenInAvailabilityBundle);
+  const result = await new Function(`${patched};return WN(arguments[0],arguments[1]);`)(settingsStore, async () => {
+    workerCalls += 1;
+    return { command: "worker-command" };
+  });
+
+  assert.deepEqual(result.allAvailableTargets, ["linux-desktop-agent"]);
+  assert.equal(workerCalls, 0);
 });
 
 test("open-target discovery bridge detection uses main registry on Linux", async () => {
@@ -1211,9 +1281,34 @@ test("open-target discovery patches latest bridge detection shape", async () => 
   });
 });
 
+test("open-target discovery patches current app bridge detection through its registry", async () => {
+  let workerCalls = 0;
+  const settingsStore = {
+    targets: [
+      {
+        id: "linux-desktop-agent",
+        detect: async (context) => context?.source === "shortcut-reader" ? "main-command" : null,
+      },
+      { id: "missing", detect: async () => null },
+      { id: "broken", detect: async () => { throw new Error("probe failed"); } },
+    ],
+  };
+  const patched = applyPatchTwice(applyOpenInTargetsBridgeDetectionPatch, currentAppOpenInBridgeBundle);
+  const app = new Function(`${patched};return new App(arguments[0],arguments[1]);`)(settingsStore, async () => {
+    workerCalls += 1;
+    return { command: "worker-command" };
+  });
+
+  assert.deepEqual(await app.detectTarget({ target: "linux-desktop-agent" }), { available: true });
+  assert.deepEqual(await app.detectTarget({ target: "missing" }), { available: false });
+  assert.deepEqual(await app.detectTarget({ target: "broken" }), { available: false });
+  assert.equal(workerCalls, 0);
+  assert.match(patched, /if\(process\.platform===`linux`\)\{let t=await codexLinuxOpenTargetRegistryCommand/);
+});
+
 test("open-target discovery bridge detection tolerates param-builder target helper", async () => {
   const source =
-    "function iP(e,t){return{target:t}}var IN={};var bridge={openInTargets:{detectTarget:async({target:e})=>{if(this.options.requestOpenInWorker==null)throw Error(`Open in worker unavailable`);let{command:t}=await this.options.requestOpenInWorker({method:`get-target-command`,params:iP(this.options.settingsStore,e)});return{available:t!=null}},loadTargetIcon:()=>{}}}";
+    "function pP(e){return e.targets}function iP(e,t){return{target:t}}var IN={};var bridge={openInTargets:{detectTarget:async({target:e})=>{if(this.options.requestOpenInWorker==null)throw Error(`Open in worker unavailable`);let{command:t}=await this.options.requestOpenInWorker({method:`get-target-command`,params:iP(this.options.settingsStore,e)});return{available:t!=null}},loadTargetIcon:()=>{}}}";
   const patched = applyPatchTwice(applyOpenInTargetsBridgeDetectionPatch, source);
   const options = {
     settingsStore: {
@@ -1253,6 +1348,15 @@ test("open-target discovery registry helper uses pP before worker params helper"
   assert.equal(command, "/usr/bin/kate");
 });
 
+test("open-target discovery reports missing current registry once per main patch", () => {
+  const source =
+    mainBundlePrefix +
+    currentAppOpenInAvailabilityBundle.replace("function QN(e){return e.targets}", "");
+  const { warnings } = captureWarns(() => applyMainBundlePatch(source));
+
+  assert.equal(warnings.filter((warning) => warning.includes("Could not find open target registry")).length, 1);
+});
+
 test("open-target discovery passes main registry into open execution", () => {
   const patched = applyPatchTwice(applyOpenInTargetExecutePatch, openInExecuteBundle);
 
@@ -1263,14 +1367,22 @@ test("open-target discovery treats directories as native open targets", () => {
   const patched = applyPatchTwice(applyOpenInTargetsDirectoryModePatch, openInTargetsBundle);
 
   assert.match(patched, /codexLinuxOpenTargetIsDirectory/);
-  assert.match(patched, /w=f!=null&&codexLinuxOpenTargetIsDirectory\(f\)/);
+  assert.match(patched, /_codexLinuxDirectory=f!=null&&codexLinuxOpenTargetIsDirectory\(f\)/);
 });
 
 test("open-target discovery patches latest directory mode expression", () => {
   const patched = applyPatchTwice(applyOpenInTargetsDirectoryModePatch, latestOpenInTargetsBundle);
 
   assert.match(patched, /codexLinuxOpenTargetIsDirectory/);
-  assert.match(patched, /w=f!=null&&codexLinuxOpenTargetIsDirectory\(f\)/);
+  assert.match(patched, /_codexLinuxDirectory=f!=null&&codexLinuxOpenTargetIsDirectory\(f\)/);
+});
+
+test("open-target discovery patches current app directory mode expression", () => {
+  const patched = applyPatchTwice(applyOpenInTargetsDirectoryModePatch, currentAppOpenInTargetsBundle);
+
+  assert.match(patched, /codexLinuxOpenTargetIsDirectory/);
+  assert.match(patched, /f!=null&&codexLinuxOpenTargetIsDirectory\(f\)/);
+  assert.match(patched, /g=d\|\|[^,]+\|\|f!=null&&n\.ys\(f\)/);
 });
 
 test("open-target discovery native selector includes available directory-capable targets", () => {

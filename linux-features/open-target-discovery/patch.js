@@ -124,6 +124,51 @@ function findPropertyBlock(source, propertyName) {
   };
 }
 
+function findAsyncFunctionBlockContaining(source, marker) {
+  let markerIndex = source.indexOf(marker);
+  while (markerIndex !== -1) {
+    const functionStart = source.lastIndexOf("async function ", markerIndex);
+    const blockStart = functionStart === -1 ? -1 : source.indexOf("{", functionStart);
+    const block = findBalancedBlock(source, blockStart);
+    if (block != null && block.end > markerIndex) {
+      return {
+        functionStart,
+        header: source.slice(functionStart, blockStart),
+        ...block,
+      };
+    }
+    markerIndex = source.indexOf(marker, markerIndex + marker.length);
+  }
+  return null;
+}
+
+function findOpenTargetRegistryBindings(source) {
+  const registryMatch = source.match(
+    /function [A-Za-z_$][\w$]*\(e,t\)\{let [A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(e\)\.find\(e=>e\.id===t\);/u,
+  );
+  const summaryMatch = source.match(
+    /function [A-Za-z_$][\w$]*\(e\)\{return [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\(e\)\)\}/u,
+  );
+  const directMatch = source.match(
+    /function ([A-Za-z_$][\w$]*)\(e\)\{return e\.targets\}/u,
+  );
+  const registryName = registryMatch?.[1] ?? summaryMatch?.[1] ?? directMatch?.[1] ?? null;
+  if (registryName == null || !source.includes(`function ${registryName}(`)) {
+    return null;
+  }
+
+  const anchor = registryMatch?.index ?? summaryMatch?.index ?? directMatch?.index ?? 0;
+  const nearbySource = source.slice(Math.max(0, anchor - 5000), Math.min(source.length, anchor + 5000));
+  const detectContextMatches = [
+    ...nearbySource.matchAll(/await [A-Za-z_$][\w$]*\.detect\(([A-Za-z_$][\w$]*)\)/gu),
+  ];
+
+  return {
+    registryExpression: `${registryName}(e)`,
+    detectContext: detectContextMatches.at(-1)?.[1] ?? "void 0",
+  };
+}
+
 function insertOpenTargetHelpers(currentSource, insertionIndex, { fsVar, pathVar }) {
   if (currentSource.includes("function codexLinuxFindExecutable(")) {
     return currentSource;
@@ -506,26 +551,28 @@ function applyLinuxIconSummaryResolutionPatch(currentSource) {
   return currentSource.replace(needle, replacement);
 }
 
-function applyOpenInTargetRegistryCommandPatch(currentSource) {
-  const helper =
-    "function codexLinuxOpenTargetRegistryTargets(e){let t=null;try{t=typeof pP===`function`?pP(e):iP(e)}catch{}return Array.isArray(t)?t:Array.isArray(e?.targets)?e.targets:[]}" +
-    "async function codexLinuxOpenTargetRegistryCommand(e,t){if(process.platform!==`linux`)return;let n=codexLinuxOpenTargetRegistryTargets(e).find(e=>e.id===t),r=typeof ZN!==`undefined`?ZN:typeof IN!==`undefined`?IN:void 0;return typeof n?.detect===`function`?await n.detect(r):null}";
-  const legacyHelpers = [
-    "async function codexLinuxOpenTargetRegistryCommand(e,t){if(process.platform!==`linux`)return;let n=(typeof pP===`function`?pP(e):iP(e)).find(e=>e.id===t),r=typeof ZN!==`undefined`?ZN:typeof IN!==`undefined`?IN:void 0;return typeof n?.detect===`function`?await n.detect(r):null}",
-    "async function codexLinuxOpenTargetRegistryCommand(e,t){if(process.platform!==`linux`)return;let n=iP(e).find(e=>e.id===t);return typeof n?.detect===`function`?await n.detect(IN):null}",
-  ];
-
-  if (currentSource.includes(helper)) {
-    return currentSource;
-  }
-  for (const legacyHelper of legacyHelpers) {
-    if (currentSource.includes(legacyHelper)) {
-      return currentSource.replace(legacyHelper, helper);
-    }
-  }
+function applyOpenInTargetRegistryCommandPatch(currentSource, { warnOnMissing = true } = {}) {
   if (currentSource.includes("async function codexLinuxOpenTargetRegistryCommand(")) {
     return currentSource;
   }
+
+  const bindings = findOpenTargetRegistryBindings(currentSource);
+  if (bindings == null) {
+    if (
+      warnOnMissing &&
+      (
+        currentSource.includes("get-target-command") ||
+        currentSource.includes("getOpenInTargetCommand") ||
+        currentSource.includes("allAvailableTargets")
+      )
+    ) {
+      warn("Could not find open target registry");
+    }
+    return currentSource;
+  }
+
+  const helper =
+    `async function codexLinuxOpenTargetRegistryCommand(e,t){if(process.platform!==\`linux\`)return;try{let n=${bindings.registryExpression}.find(e=>e.id===t);return typeof n?.detect===\`function\`?await n.detect(${bindings.detectContext}):null}catch{return null}}`;
 
   const insertionIndex = currentSource.indexOf("async function");
   const helperInsertionIndex = insertionIndex === -1 ? 0 : insertionIndex;
@@ -534,8 +581,11 @@ function applyOpenInTargetRegistryCommandPatch(currentSource) {
 }
 
 function applyOpenInTargetCommandPatch(currentSource) {
-  currentSource = applyOpenInTargetRegistryCommandPatch(currentSource);
+  currentSource = applyOpenInTargetRegistryCommandPatch(currentSource, { warnOnMissing: false });
   if (currentSource.includes("codexLinuxOpenTargetRegistryCommand(this.getSettingsStore(),e)")) {
+    return currentSource;
+  }
+  if (!currentSource.includes("async function codexLinuxOpenTargetRegistryCommand(")) {
     return currentSource;
   }
 
@@ -559,7 +609,7 @@ function applyOpenInTargetCommandPatch(currentSource) {
     const [needle, paramsFn] = currentShapeMatch;
     return currentSource.replace(
       needle,
-      `async getOpenInTargetCommand(e){let t=await codexLinuxOpenTargetRegistryCommand(this.getSettingsStore(),e);if(process.platform===\`linux\`){if(t==null)throw Error(\`Open target "\${e}" is not available\`);return t}let{command:n}=await this.getOpenInWorker()({method:\`get-target-command\`,params:${paramsFn}(this.getSettingsStore(),e)});if(n==null)throw Error(\`Open target "\${e}" is not available\`);return n}`,
+      `async getOpenInTargetCommand(e){if(process.platform===\`linux\`){let t=await codexLinuxOpenTargetRegistryCommand(this.getSettingsStore(),e);if(t==null)throw Error(\`Open target "\${e}" is not available\`);return t}let{command:n}=await this.getOpenInWorker()({method:\`get-target-command\`,params:${paramsFn}(this.getSettingsStore(),e)});if(n==null)throw Error(\`Open target "\${e}" is not available\`);return n}`,
     );
   }
 
@@ -570,31 +620,63 @@ function applyOpenInTargetCommandPatch(currentSource) {
 }
 
 function applyOpenInTargetsAvailabilityPatch(currentSource) {
-  currentSource = applyOpenInTargetRegistryCommandPatch(currentSource);
-  if (currentSource.includes("process.platform===`linux`?codexLinuxOpenTargetRegistryCommand(e,n.id)")) {
+  currentSource = applyOpenInTargetRegistryCommandPatch(currentSource, { warnOnMissing: false });
+  if (currentSource.includes("process.platform===`linux`?codexLinuxOpenTargetRegistryCommand(")) {
+    return currentSource;
+  }
+  if (!currentSource.includes("async function codexLinuxOpenTargetRegistryCommand(")) {
     return currentSource;
   }
 
-  const match = currentSource.match(
-    /async function ([A-Za-z_$][\w$]*)\(e,t\)\{let n=await Promise\.all\(rP\(e\)\.map\(async n=>\{let r=iP\(e,n\.id\),\[i,a\]=await Promise\.all\(\[t\(\{method:`get-target-command`,params:r\}\)\.then\(e=>e\.command\)\.catch\(e=>\(tP\(\)\.error\(`Failed to detect open target`,\{safe:\{\},sensitive:\{id:n\.id,error:e\}\}\),null\)\),process\.platform===`win32`\?t\(\{method:`load-target-icon`,params:r\}\)\.then\(e=>e\.icon\)\.catch\(e=>\(tP\(\)\.warning\(`Failed to resolve open target icon`,\{safe:\{\},sensitive:\{id:n\.id,error:e\}\}\),n\.icon\)\):n\.icon\]\);return\{command:i,metadata:\{\.\.\.n,icon:a\}\}\}\)\);return\{allAvailableTargets:n\.flatMap\(\(\{command:e,metadata:t\}\)=>e==null\?\[\]:\[t\.id\]\),targetMetadata:n\.map\(\(\{metadata:e\}\)=>e\)\}\}/u,
+  const block = findAsyncFunctionBlockContaining(currentSource, "allAvailableTargets");
+  const signature = block?.header.match(
+    /^async function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)$/u,
   );
-  if (match == null) {
+  const mapping = block?.text.match(
+    /[A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\.map\(async ([A-Za-z_$][\w$]*)=>\{let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(\1,\2\.id\),/u,
+  );
+  if (block == null || signature == null || mapping == null || signature[1] !== mapping[1]) {
     if (currentSource.includes("async function") && currentSource.includes("get-target-command") && currentSource.includes("allAvailableTargets")) {
       warn("Could not find open-in-targets availability detector");
     }
     return currentSource;
   }
 
-  const [needle, fnName] = match;
-  const replacement =
-    `async function ${fnName}(e,t){let n=await Promise.all(rP(e).map(async n=>{let r=iP(e,n.id),[i,a]=await Promise.all([process.platform===\`linux\`?codexLinuxOpenTargetRegistryCommand(e,n.id):t({method:\`get-target-command\`,params:r}).then(e=>e.command).catch(e=>(tP().error(\`Failed to detect open target\`,{safe:{},sensitive:{id:n.id,error:e}}),null)),process.platform===\`win32\`?t({method:\`load-target-icon\`,params:r}).then(e=>e.icon).catch(e=>(tP().warning(\`Failed to resolve open target icon\`,{safe:{},sensitive:{id:n.id,error:e}}),n.icon)):n.icon]);return{command:i,metadata:{...n,icon:a}}}));return{allAvailableTargets:n.flatMap(({command:e,metadata:t})=>e==null?[]:[t.id]),targetMetadata:n.map(({metadata:e})=>e)}}`;
-  return currentSource.replace(needle, replacement);
+  const [storeVar, workerVar] = signature.slice(1);
+  const [, , targetVar, paramsVar] = mapping;
+  const workerCall = `${workerVar}({method:\`get-target-command\`,params:${paramsVar}})`;
+  if (!block.text.includes(workerCall)) {
+    warn("Could not find open-in-targets availability worker call");
+    return currentSource;
+  }
+
+  const patchedBlock = block.text.replace(
+    workerCall,
+    `process.platform===\`linux\`?codexLinuxOpenTargetRegistryCommand(${storeVar},${targetVar}.id):${workerCall}`,
+  );
+  return currentSource.slice(0, block.start) + patchedBlock + currentSource.slice(block.end);
 }
 
 function applyOpenInTargetsBridgeDetectionPatch(currentSource) {
-  currentSource = applyOpenInTargetRegistryCommandPatch(currentSource);
-  if (currentSource.includes("codexLinuxOpenTargetRegistryCommand(this.options.settingsStore,e)")) {
+  currentSource = applyOpenInTargetRegistryCommandPatch(currentSource, { warnOnMissing: false });
+  if (
+    currentSource.includes("codexLinuxOpenTargetRegistryCommand(this.options.settingsStore,e)") ||
+    currentSource.includes("codexLinuxOpenTargetRegistryCommand(this.settingsStore,e)")
+  ) {
     return currentSource;
+  }
+  if (!currentSource.includes("async function codexLinuxOpenTargetRegistryCommand(")) {
+    return currentSource;
+  }
+
+  const currentClassMatch = currentSource.match(
+    /async detectTarget\(\{target:([A-Za-z_$][\w$]*)\}\)\{if\(this\.requestOpenInWorker==null\)throw Error\(`Open in worker unavailable`\);let\{command:([A-Za-z_$][\w$]*)\}=await this\.requestOpenInWorker\(\{method:`get-target-command`,params:([A-Za-z_$][\w$]*)\(this\.settingsStore,\1\)\}\);return\{available:\2!=null\}\}/u,
+  );
+  if (currentClassMatch != null) {
+    const [needle, targetVar, commandVar, paramsFn] = currentClassMatch;
+    const replacement =
+      `async detectTarget({target:${targetVar}}){if(process.platform===\`linux\`){let ${commandVar}=await codexLinuxOpenTargetRegistryCommand(this.settingsStore,${targetVar});return{available:${commandVar}!=null}}if(this.requestOpenInWorker==null)throw Error(\`Open in worker unavailable\`);let{command:_codexWorkerCommand}=await this.requestOpenInWorker({method:\`get-target-command\`,params:${paramsFn}(this.settingsStore,${targetVar})});return{available:_codexWorkerCommand!=null}}`;
+    return currentSource.replace(needle, replacement);
   }
 
   const match = currentSource.match(
@@ -602,7 +684,10 @@ function applyOpenInTargetsBridgeDetectionPatch(currentSource) {
   );
 
   if (match == null) {
-    if (currentSource.includes("openInTargets:{detectTarget")) {
+    if (
+      currentSource.includes("openInTargets:{detectTarget") ||
+      (currentSource.includes("async detectTarget({target:") && currentSource.includes("get-target-command"))
+    ) {
       warn("Could not find open-in bridge target detection");
     }
     return currentSource;
@@ -634,33 +719,48 @@ function applyOpenInTargetExecutePatch(currentSource) {
 
 function applyOpenInTargetsDirectoryModePatch(currentSource) {
   const helper = "function codexLinuxOpenTargetIsDirectory(";
-  const directoryNeedles = [
-    {
-      needle: "g=d||f!=null&&t.wo(f),_=f!=null&&UA(f),v=f!=null&&GA(f),y=g?await gF({nativeBrowserDiscovery:i}):_?await hF({filePath:f}):[]",
-      replacement: "w=f!=null&&codexLinuxOpenTargetIsDirectory(f),g=d||w||f!=null&&t.wo(f),_=f!=null&&UA(f),v=f!=null&&GA(f),y=g?await gF({nativeBrowserDiscovery:i}):_?await hF({filePath:f}):[]",
-    },
-    {
-      needle: "g=d||f!=null&&t.rs(f),_=f!=null&&cj(f),v=f!=null&&uj(f),y=g?await MF(i):_?await jF({filePath:f}):[]",
-      replacement: "w=f!=null&&codexLinuxOpenTargetIsDirectory(f),g=d||w||f!=null&&t.rs(f),_=f!=null&&cj(f),v=f!=null&&uj(f),y=g?await MF(i):_?await jF({filePath:f}):[]",
-    },
-  ];
-
   if (currentSource.includes(helper)) {
     return currentSource;
   }
-  if (!currentSource.includes('"open-in-targets":async')) {
+  const propertyIndex = currentSource.indexOf('"open-in-targets":async');
+  if (propertyIndex === -1) {
     return currentSource;
   }
-  const directoryPatch = directoryNeedles.find(({ needle }) => currentSource.includes(needle));
-  if (directoryPatch == null) {
+
+  const arrowIndex = currentSource.indexOf("=>{", propertyIndex);
+  const block = findBalancedBlock(currentSource, arrowIndex === -1 ? -1 : arrowIndex + 2);
+  if (block == null) {
     warn("Could not find open-in-targets path mode expression");
     return currentSource;
   }
 
+  const modeExpressions = [
+    ...block.text.matchAll(
+      /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\|\|([A-Za-z_$][\w$]*)!=null&&([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\(\3\),/gu,
+    ),
+  ];
+  const modeExpression = modeExpressions.find((match) =>
+    block.text.includes(`mode:${match[1]}||`),
+  );
+  if (modeExpression == null) {
+    warn("Could not find open-in-targets path mode expression");
+    return currentSource;
+  }
+
+  const [needle, modeVar, remoteVar, pathVar, pathModule, pathMethod] = modeExpression;
+  const directoryVar = "_codexLinuxDirectory";
+  if (block.text.includes(directoryVar)) {
+    warn("Could not reserve open-in-targets directory variable");
+    return currentSource;
+  }
+  const replacement =
+    `${directoryVar}=${pathVar}!=null&&codexLinuxOpenTargetIsDirectory(${pathVar}),` +
+    `${modeVar}=${remoteVar}||${directoryVar}||${pathVar}!=null&&${pathModule}.${pathMethod}(${pathVar}),`;
+
   const helperSource =
     `function codexLinuxOpenTargetIsDirectory(e){if(process.platform!==\`linux\`||typeof e!==\`string\`)return!1;try{return(0,codexLinuxNodeFs().existsSync)(e)&&(0,codexLinuxNodeFs().statSync)(e).isDirectory()}catch{return!1}}`;
   const patchedSource = helperSource + currentSource;
-  return patchedSource.replace(directoryPatch.needle, directoryPatch.replacement);
+  return patchedSource.replace(needle, replacement);
 }
 
 function applyNativeOpenTargetSelectionPatch(currentSource) {
