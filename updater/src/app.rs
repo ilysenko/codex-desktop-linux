@@ -11,7 +11,6 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use chrono::{Duration as ChronoDuration, Utc};
-use reqwest::Client;
 use serde::Deserialize;
 use std::{
     ffi::OsString,
@@ -933,7 +932,7 @@ async fn run_check_cycle(
         return Ok(());
     };
 
-    let client = Client::builder().build()?;
+    let client = upstream::http_client()?;
 
     sync_runtime_state(config, state);
     state.status = UpdateStatus::CheckingUpstream;

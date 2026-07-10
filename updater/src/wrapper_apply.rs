@@ -18,6 +18,7 @@ use serde_json::Value;
 use std::{
     collections::HashSet,
     fs,
+    io::{BufReader, Read},
     os::unix::fs::{self as unix_fs, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
@@ -489,7 +490,7 @@ async fn cached_or_downloaded_dmg(
         }
     }
 
-    let client = reqwest::Client::builder().build()?;
+    let client = upstream::http_client()?;
     let downloads_dir = config.workspace_root.join("downloads");
     let downloaded =
         upstream::download_dmg(&client, &config.dmg_url, &downloads_dir, chrono::Utc::now())
@@ -504,10 +505,20 @@ async fn cached_or_downloaded_dmg(
 /// contents, matching the DMG update path's scheme.
 fn derive_package_version(dmg_path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(dmg_path)
+    let file = fs::File::open(dmg_path)
         .with_context(|| format!("Failed to read {}", dmg_path.display()))?;
+    let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let bytes_read = reader
+            .read(&mut buffer)
+            .with_context(|| format!("Failed to read {}", dmg_path.display()))?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
     let sha = hasher
         .finalize()
         .iter()
@@ -579,6 +590,18 @@ mod tests {
             wrapper_branch: "main".to_string(),
             generated_artifact_cleanup: Default::default(),
         }
+    }
+
+    #[test]
+    fn derives_package_version_with_streamed_dmg_hash() -> Result<()> {
+        let root = tempdir()?;
+        let dmg = root.path().join("Codex.dmg");
+        std::fs::write(&dmg, b"codex-dmg-test-payload")?;
+
+        let version = derive_package_version(&dmg)?;
+
+        assert!(version.ends_with("+678cd508"));
+        Ok(())
     }
 
     fn write_local_feature(root: &Path, id: &str) {
