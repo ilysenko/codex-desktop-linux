@@ -86,6 +86,15 @@ function applyCopilotReasoningEffortSettingsPatch(currentSource) {
 function applyCopilotReasoningEffortModelListPatch(currentSource) {
   const copilotReasoningFilterRegex =
     /([A-Za-z_$][\w$]*)===`copilot`\?\[([A-Za-z_$][\w$]*)\.supportedReasoningEfforts\.find\([^)]*\)\?\?\{reasoningEffort:`medium`,description:`medium effort`\}\]:\[\.\.\.\2\.supportedReasoningEfforts\]/g;
+  const currentCopilotReasoningFilterRegex =
+    /([A-Za-z_$][\w$]*)=\(([A-Za-z_$][\w$]*)===`copilot`\?\[([A-Za-z_$][\w$]*)\.find\([^)]*\)\?\?\{reasoningEffort:`medium`,description:`medium effort`\}\]:\3\)\.filter\(/g;
+
+  if (currentCopilotReasoningFilterRegex.test(currentSource)) {
+    return currentSource.replace(
+      currentCopilotReasoningFilterRegex,
+      (_match, resultVar, _authMethodVar, effortsVar) => `${resultVar}=[...${effortsVar}].filter(`,
+    );
+  }
 
   if (!copilotReasoningFilterRegex.test(currentSource)) {
     if (currentSource.includes("reasoningEffort:`medium`") && currentSource.includes("supportedReasoningEfforts")) {
@@ -104,6 +113,43 @@ function applyCopilotReasoningEffortModelListPatch(currentSource) {
 
 function applyCopilotReasoningEffortUiPatch(currentSource) {
   let patchedSource = currentSource;
+
+  const currentComposerGateRegex =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\?\.authMethod===`copilot`,([A-Za-z_$][\w$]*)=!([A-Za-z_$][\w$]*)(?:&&!\1)?(?=,)/;
+  const currentComposerGateMatch = currentComposerGateRegex.exec(patchedSource);
+  if (currentComposerGateMatch) {
+    const authMethodVar = currentComposerGateMatch[1];
+    patchedSource = patchedSource.replace(
+      currentComposerGateRegex,
+      "$1=$2?.authMethod===`copilot`,$3=!$4",
+    );
+
+    const currentDropdownNeedle = `reasoningEffortDisabled:${authMethodVar}`;
+    const currentDropdownIndex = patchedSource.indexOf(
+      currentDropdownNeedle,
+      currentComposerGateMatch.index,
+    );
+    if (
+      currentDropdownIndex >= currentComposerGateMatch.index &&
+      currentDropdownIndex < currentComposerGateMatch.index + 10_000
+    ) {
+      patchedSource =
+        patchedSource.slice(0, currentDropdownIndex) +
+        "reasoningEffortDisabled:!1" +
+        patchedSource.slice(currentDropdownIndex + currentDropdownNeedle.length);
+    } else if (!patchedSource.includes("reasoningEffortDisabled:!1")) {
+      console.warn(
+        "WARN: Could not find current Copilot reasoning effort dropdown gate - skipping current dropdown patch",
+      );
+    }
+  } else if (
+    patchedSource.includes("composer.increaseReasoningEffort") &&
+    patchedSource.includes("reasoningEffortDisabled:")
+  ) {
+    console.warn(
+      "WARN: Could not find current Copilot reasoning effort shortcut gate - skipping current UI patch",
+    );
+  }
 
   const reasoningDropdownPatch = "disabled:!1,RightIcon:t===O?rg:void 0,onSelect:()=>{i.get(bh).log({eventName:`codex_composer_reasoning_effort_changed`";
   const reasoningDropdownRegex =
@@ -130,10 +176,22 @@ function applyCopilotReasoningEffortUiPatch(currentSource) {
 
   const slashCommandNeedle = "let w=s&&f&&!p,T;";
   const slashCommandPatch = "let w=s&&f,T;";
-  if (patchedSource.includes(slashCommandPatch)) {
+  const currentSlashCommandRegex =
+    /(composer\.reasoningSlashCommand\.title[\s\S]{0,1000}?let )([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)&&!([A-Za-z_$][\w$]*)&&!0,([A-Za-z_$][\w$]*);/;
+  const currentSlashCommandPatchedRegex =
+    /(composer\.reasoningSlashCommand\.title[\s\S]{0,1000}?let )([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)&&!0,([A-Za-z_$][\w$]*);/;
+  if (
+    patchedSource.includes(slashCommandPatch) ||
+    currentSlashCommandPatchedRegex.test(patchedSource)
+  ) {
     // Already patched.
   } else if (patchedSource.includes(slashCommandNeedle)) {
     patchedSource = patchedSource.replace(slashCommandNeedle, slashCommandPatch);
+  } else if (currentSlashCommandRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      currentSlashCommandRegex,
+      "$1$2=$3&&$4&&!0,$6;",
+    );
   } else if (patchedSource.includes("composer.reasoningSlashCommand.title")) {
     console.warn(
       "WARN: Could not find reasoning slash command enabled state - skipping Copilot reasoning slash command patch",
@@ -149,7 +207,7 @@ module.exports = {
       id: "settings",
       name: "copilot-reasoning-effort-settings",
       phase: "webview-asset",
-      pattern: /^(use-model-settings|use-collaboration-mode)-.*\.js$/,
+      pattern: /^(use-model-settings|use-collaboration-mode|app-initial~.*quick-chat-window-page~chatg~).*\.js$/,
       missingDescription: "model settings bundle",
       skipDescription: "Copilot reasoning effort settings patch",
       apply: applyCopilotReasoningEffortSettingsPatch,
@@ -158,7 +216,7 @@ module.exports = {
       id: "model-list",
       name: "copilot-reasoning-effort-model-list",
       phase: "webview-asset",
-      pattern: /^(font-settings|model-queries)-.*\.js$/,
+      pattern: /^(font-settings|model-queries|app-initial~.*quick-chat-window-page~chatg~).*\.js$/,
       missingDescription: "font settings bundle",
       skipDescription: "Copilot reasoning effort model list patch",
       apply: applyCopilotReasoningEffortModelListPatch,
@@ -167,7 +225,8 @@ module.exports = {
       id: "ui",
       name: "copilot-reasoning-effort-ui",
       phase: "webview-asset",
-      pattern: /^index-.*\.js$/,
+      pattern:
+        /^(index-.*|app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-.*)\.js$/,
       missingDescription: "webview index bundle",
       skipDescription: "Copilot reasoning effort UI patch",
       apply: applyCopilotReasoningEffortUiPatch,
