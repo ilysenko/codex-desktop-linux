@@ -823,7 +823,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20520,
       ciPolicy: "optional",
-      pattern: /^(?:open-target-selection-.*|app-initial~app-main~.*)\.js$/,
+      pattern: /^app-initial~app-main~pull-request-code-review~onboarding-page~hotkey-window-thread-page~cha~b76hmflu-[^.]+\.js$/,
       missingDescription: "open target selection webview bundle",
       skipDescription: "native open-target selection patch",
       apply: applyNativeOpenTargetSelectionPatch,

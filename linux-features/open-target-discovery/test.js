@@ -16,6 +16,7 @@ const {
   applyOpenInTargetsBridgeDetectionPatch,
   applyOpenInTargetsAvailabilityPatch,
   applyOpenInTargetsDirectoryModePatch,
+  descriptors,
 } = require("./patch.js");
 const {
   enabledLinuxFeatureIds,
@@ -1363,6 +1364,23 @@ test("open-target discovery stays disabled until listed in features.json", () =>
       assert.doesNotMatch(patched, /codexLinuxOpenFileManager\(e\)/);
     });
   });
+});
+
+test("open-target discovery targets only the current native selector bundle", () => {
+  const descriptor = descriptors.find(
+    (candidate) => candidate.id === "webview-native-open-target-selection",
+  );
+
+  assert.ok(descriptor);
+  assert.match(
+    "app-initial~app-main~pull-request-code-review~onboarding-page~hotkey-window-thread-page~cha~b76hmflu-y0KJWbm3.js",
+    descriptor.pattern,
+  );
+  assert.doesNotMatch("open-target-selection-legacy.js", descriptor.pattern);
+  assert.doesNotMatch(
+    "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~k0ede4gb-current.js",
+    descriptor.pattern,
+  );
 });
 
 test("open-target discovery participates in feature loading and patch reports", () => {
