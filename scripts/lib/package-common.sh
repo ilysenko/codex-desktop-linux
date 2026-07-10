@@ -22,6 +22,7 @@ ensure_file_exists() {
 ensure_app_layout() {
     [ -d "$APP_DIR" ] || error "Missing app directory: $APP_DIR. Run ./install.sh first."
     [ -x "$APP_DIR/start.sh" ] || error "Missing launcher: $APP_DIR/start.sh"
+    [ -f "$APP_DIR/content/webview/index.html" ] || error "Missing webview entrypoint: $APP_DIR/content/webview/index.html. Run ./install.sh first."
 }
 
 sed_escape_replacement() {
@@ -696,6 +697,8 @@ stage_common_package_files() {
     local root="$1"
     local app_root="$root/opt/$PACKAGE_NAME"
     local polkit_policy="$REPO_DIR/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy"
+
+    ensure_app_layout
 
     if package_with_updater_enabled; then
         ensure_file_exists "$polkit_policy" "polkit policy"

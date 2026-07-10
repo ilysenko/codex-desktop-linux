@@ -1,13 +1,27 @@
 "use strict";
 
 const TRAY_GUARD_LOOKAHEAD = 1200;
-const CLOSE_GATE_PREFIX_LOOKBACK = 8000;
 const HANDLER_PREFIX_LOOKBACK = 12000;
 
 function requireName(source, moduleName) {
   const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(new RegExp(`([A-Za-z_$][\\w$]*)=require\\(([\\\`"'])${escaped}\\2\\)`));
-  return match?.[1] ?? null;
+  const directMatch = source.match(
+    new RegExp(`([A-Za-z_$][\\w$]*)=require\\(([\\\`"'])${escaped}\\2\\)`),
+  );
+  if (directMatch != null) {
+    return directMatch[1];
+  }
+
+  if (moduleName === "electron") {
+    const wrappedMatch = source.match(
+      new RegExp(
+        `([A-Za-z_$][\\w$]*)=codexLinuxPatchExternalOpen\\(require\\(([\\\`"'])${escaped}\\2\\)\\)`,
+      ),
+    );
+    return wrappedMatch?.[1] ?? null;
+  }
+
+  return null;
 }
 
 function inferModuleAlias(source, moduleName) {
@@ -165,7 +179,6 @@ function findExportedAlias(source, localName) {
 }
 
 module.exports = {
-  CLOSE_GATE_PREFIX_LOOKBACK,
   HANDLER_PREFIX_LOOKBACK,
   TRAY_GUARD_LOOKAHEAD,
   escapeRegExp,

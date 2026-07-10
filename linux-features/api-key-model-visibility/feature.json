@@ -1,0 +1,9 @@
+{
+  "id": "api-key-model-visibility",
+  "title": "API Key Model Visibility",
+  "description": "Opt-in desktop model picker support for non-hidden models reported by API-key authenticated OpenAI-compatible providers.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

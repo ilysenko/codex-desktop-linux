@@ -1201,7 +1201,7 @@ async fn run_install_ready(
                 "No ChatGPT Desktop update ready",
                 "There is no rebuilt ChatGPT Desktop update waiting to install.",
             );
-            println!("No ChatGPT Desktop update is ready to install.");
+            println!("No update is ready to install.");
             return Ok(());
         }
     }

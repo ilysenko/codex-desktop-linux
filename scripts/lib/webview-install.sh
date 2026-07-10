@@ -33,6 +33,12 @@ replace_linux_webview_icon_assets() {
     info "Linux app icon applied to ${#icon_assets[@]} webview asset(s)"
 }
 
+require_webview_entrypoint() {
+    local webview_index="$INSTALL_DIR/content/webview/index.html"
+
+    [ -f "$webview_index" ] || error "Missing webview entrypoint: $webview_index. Upstream ASAR layout may have changed."
+}
+
 # ---- Extract webview files ----
 extract_webview() {
     local app_dir="$1"
@@ -40,20 +46,17 @@ extract_webview() {
 
     # Webview files are inside the extracted asar at webview/
     local asar_extracted="$WORK_DIR/app-extracted"
-    if [ -d "$asar_extracted/webview" ]; then
-        cp -r "$asar_extracted/webview/"* "$INSTALL_DIR/content/webview/"
-        # Replace transparent startup background with an opaque color for Linux.
-        # The upstream app relies on macOS vibrancy for the transparent effect;
-        # on Linux the transparent background causes flickering.
-        local webview_index="$INSTALL_DIR/content/webview/index.html"
-        if [ -f "$webview_index" ]; then
-            sed -i 's/--startup-background: transparent/--startup-background: #1e1e1e/' "$webview_index"
-        fi
-        replace_linux_webview_icon_assets
-        info "Webview files copied"
-    else
-        warn "Webview directory not found in asar — app may not work"
-    fi
+    [ -d "$asar_extracted/webview" ] || error "Webview directory not found in extracted asar: $asar_extracted/webview"
+
+    cp -a "$asar_extracted/webview/." "$INSTALL_DIR/content/webview/"
+    require_webview_entrypoint
+
+    # Replace transparent startup background with an opaque color for Linux.
+    # The upstream app relies on macOS vibrancy for the transparent effect;
+    # on Linux the transparent background causes flickering.
+    sed -i 's/--startup-background: transparent/--startup-background: #1e1e1e/' "$INSTALL_DIR/content/webview/index.html"
+    replace_linux_webview_icon_assets
+    info "Webview files copied"
 }
 
 # ---- Install app.asar ----

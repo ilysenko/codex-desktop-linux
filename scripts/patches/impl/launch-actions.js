@@ -1,7 +1,6 @@
 "use strict";
 
 const {
-  CLOSE_GATE_PREFIX_LOOKBACK,
   HANDLER_PREFIX_LOOKBACK,
   escapeRegExp,
   findDisposableVar,
@@ -99,41 +98,6 @@ function applyLinuxSettingsPersistencePatch(currentSource) {
     (_match, keyVar, valueVar, originVar, setterCall) =>
       `"set-global-state":async({key:${keyVar},value:${valueVar},origin:${originVar}})=>(${setterCall},codexLinuxPersistSettingsState(${keyVar},${valueVar}),`,
   );
-}
-
-function applyLinuxTrayCloseSettingPatch(currentSource) {
-  let patchedSource = currentSource;
-
-  const patchedCloseGateRegex = new RegExp(
-    `canHideLastLocalWindowToTray:\\(\\)=>[A-Za-z_$][\\w$]*&&\\(process\\.platform!==\`linux\`\\|\\|[^,{}]+\\.get\\(\`${escapeRegExp(linuxSettingsKeys.systemTray)}\`\\)!==!1\\),disposables:[A-Za-z_$][\\w$]*`,
-  );
-  if (patchedCloseGateRegex.test(patchedSource)) {
-    return patchedSource;
-  }
-
-  const closeGateRegex =
-    /canHideLastLocalWindowToTray:\(\)=>([A-Za-z_$][\w$]*),disposables:([A-Za-z_$][\w$]*)/;
-  const closeGateMatch = patchedSource.match(closeGateRegex);
-  if (closeGateMatch != null) {
-    const [, trayReadyVar, disposableVar] = closeGateMatch;
-    const prefix = patchedSource.slice(
-      Math.max(0, closeGateMatch.index - CLOSE_GATE_PREFIX_LOOKBACK),
-      closeGateMatch.index,
-    );
-    const globalStateExpr = findLinuxGlobalStateExpression(prefix);
-    if (globalStateExpr != null) {
-      return patchedSource.replace(
-        closeGateRegex,
-        `canHideLastLocalWindowToTray:()=>${trayReadyVar}&&(process.platform!==\`linux\`||${globalStateExpr}.get(\`${linuxSettingsKeys.systemTray}\`)!==!1),disposables:${disposableVar}`,
-      );
-    }
-  }
-
-  if (patchedSource.includes("canHideLastLocalWindowToTray") && patchedSource.includes("Launching app")) {
-    throw new Error("Required Linux tray settings patch failed: could not gate close-to-tray behavior");
-  }
-
-  return patchedSource;
 }
 
 function buildSemanticLinuxLaunchActionPatch({
@@ -349,5 +313,4 @@ module.exports = {
   applyLinuxHotkeyWindowPrewarmPatch,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxSettingsPersistencePatch,
-  applyLinuxTrayCloseSettingPatch,
 };

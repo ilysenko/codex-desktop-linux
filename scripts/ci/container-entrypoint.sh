@@ -151,7 +151,7 @@ run_as_ci_user() {
         "CI_PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         "PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         "CI_DMG_PATH=${CI_DMG_PATH:-}"
-        "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/Codex.dmg}"
+        "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg}"
         "UPSTREAM_DMG_PATH=${UPSTREAM_DMG_PATH:-/tmp/codex-upstream-ci/Codex.dmg}"
         "UPSTREAM_DMG_CACHE_HIT=${UPSTREAM_DMG_CACHE_HIT:-}"
         "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}"

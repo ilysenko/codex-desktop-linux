@@ -4,20 +4,12 @@ const {
   mainBundlePatch,
 } = require("../../../../descriptor.js");
 const {
-  applyLinuxTrayCloseSettingPatch,
   applyLinuxSettingsPersistencePatch,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxHotkeyWindowPrewarmPatch,
 } = require("../../../../impl/launch-actions.js");
 
 module.exports = [
-  mainBundlePatch({
-    id: "linux-tray-close-setting",
-    phase: "main-bundle",
-    order: 200,
-    ciPolicy: "optional",
-    apply: applyLinuxTrayCloseSettingPatch,
-  }),
   mainBundlePatch({
     id: "linux-settings-persistence",
     phase: "main-bundle",

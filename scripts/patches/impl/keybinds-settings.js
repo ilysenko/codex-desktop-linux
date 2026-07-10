@@ -199,12 +199,12 @@ function inferSettingsRowExportName(source) {
   }
 
   if (localName == null) {
-    return "n";
+    return null;
   }
 
   const exportMatch = source.match(/export\{([^}]*)\}/);
   if (exportMatch == null) {
-    return "n";
+    return null;
   }
 
   for (const rawExport of exportMatch[1].split(",")) {
@@ -218,7 +218,7 @@ function inferSettingsRowExportName(source) {
     }
   }
 
-  return "n";
+  return null;
 }
 
 function importBindings(source) {
@@ -322,19 +322,47 @@ function linuxSettingsFallbackComponents({ jsxRuntimeAsset, jsxRuntimeExportName
   };
 }
 
-function inferFirstExportName(source, fallback = "t") {
-  const exportMatch = source.match(/export\{([^}]*)\}/);
-  if (exportMatch == null) {
-    return fallback;
+function inferToggleExportName(source) {
+  const functionPattern = /function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/g;
+  let match;
+  while ((match = functionPattern.exec(source)) != null) {
+    const nextFunctionIndex = source.indexOf("function ", functionPattern.lastIndex);
+    const functionSource = source.slice(
+      match.index,
+      nextFunctionIndex === -1 ? source.length : nextFunctionIndex,
+    );
+    if (
+      !functionSource.includes("checked") ||
+      !functionSource.includes("onChange") ||
+      !(
+        functionSource.includes("ariaLabel") ||
+        functionSource.includes("aria-label") ||
+        functionSource.includes("aria-checked") ||
+        functionSource.includes('role:"switch"') ||
+        functionSource.includes("role:`switch`")
+      )
+    ) {
+      continue;
+    }
+
+    const exportMatch = source.match(/export\{([^}]*)\}/);
+    if (exportMatch == null) {
+      return null;
+    }
+    for (const rawExport of exportMatch[1].split(",")) {
+      const exportPart = rawExport.trim();
+      const aliasedMatch = exportPart.match(
+        new RegExp(`^${escapeRegExp(match[1])}\\s+as\\s+([A-Za-z_$][\\w$]*)$`),
+      );
+      if (aliasedMatch != null) {
+        return aliasedMatch[1];
+      }
+      if (exportPart === match[1]) {
+        return match[1];
+      }
+    }
   }
-
-  const exportedNames = exportMatch[1].split(",").map((rawExport) => {
-    const exportPart = rawExport.trim();
-    const aliasedMatch = exportPart.match(/^[A-Za-z_$][\w$]*\s+as\s+([A-Za-z_$][\w$]*)$/);
-    return aliasedMatch?.[1] ?? exportPart;
-  }).filter((name) => /^[A-Za-z_$][\w$]*$/.test(name));
-
-  return exportedNames.includes(fallback) ? fallback : exportedNames[0] ?? fallback;
+  return null;
 }
 
 function inferToggleDependencyFromSettingsSource(source) {
@@ -359,16 +387,19 @@ function inferToggleDependencyFromSettingsSource(source) {
 }
 
 function resolveSettingsToggleDependency(webviewAssetsDir, fallbackComponents, generatedAssets) {
-  const directToggleAsset = fs
+  const directToggleAssets = fs
     .readdirSync(webviewAssetsDir)
     .filter((name) => /^toggle-.*\.js$/.test(name))
-    .sort()[0] ?? null;
-  if (directToggleAsset != null) {
+    .sort();
+  for (const directToggleAsset of directToggleAssets) {
     const source = fs.readFileSync(path.join(webviewAssetsDir, directToggleAsset), "utf8");
-    return {
-      assetName: directToggleAsset,
-      exportName: inferFirstExportName(source),
-    };
+    const exportName = inferToggleExportName(source);
+    if (exportName != null) {
+      return {
+        assetName: directToggleAsset,
+        exportName,
+      };
+    }
   }
 
   const settingsAssets = fs
@@ -459,12 +490,19 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
     return component;
   };
 
-  const settingsRowCandidate = tryFindRequiredWebviewAsset(webviewAssetsDir, /^settings-row-.*\.js$/, null, "settings row asset");
+  let settingsRowCandidate = null;
+  let settingsRowExportName = null;
+  for (const candidate of fs.readdirSync(webviewAssetsDir).filter((name) => /^settings-row-.*\.js$/.test(name)).sort()) {
+    const source = fs.readFileSync(path.join(webviewAssetsDir, candidate), "utf8");
+    const exportName = inferSettingsRowExportName(source);
+    if (exportName != null) {
+      settingsRowCandidate = candidate;
+      settingsRowExportName = exportName;
+      break;
+    }
+  }
   const settingsRowFallback = settingsRowCandidate == null ? useFallbackComponent("settingsRow") : null;
   const settingsRowAsset = settingsRowCandidate ?? settingsRowFallback.assetName;
-  const settingsRowSource = settingsRowCandidate == null
-    ? settingsRowFallback.source
-    : fs.readFileSync(path.join(webviewAssetsDir, settingsRowAsset), "utf8");
   const settingsLayoutCandidate = tryFindRequiredWebviewAsset(
     webviewAssetsDir,
     /^settings-content-layout-.*\.js$/,
@@ -495,7 +533,7 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
     vscodeApiExportName,
     hotkeySettingsAsset,
     settingsRowAsset,
-    settingsRowExportName: inferSettingsRowExportName(settingsRowSource),
+    settingsRowExportName: settingsRowExportName ?? settingsRowFallback.exportName,
     settingsPageAsset: settingsLayoutAsset,
     settingsPageExportName: settingsLayoutFallback == null ? "t" : settingsLayoutFallback.exportName,
     settingsSectionAsset: settingsGroupCandidate ?? settingsSectionFallback.assetName,

@@ -141,7 +141,7 @@ impl RuntimeConfig {
         };
 
         Self {
-            dmg_url: "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg".to_string(),
+            dmg_url: "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg".to_string(),
             initial_check_delay_seconds: 30,
             check_interval_hours: 6,
             auto_install_on_app_exit: true,

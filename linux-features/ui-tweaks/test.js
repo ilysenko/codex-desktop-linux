@@ -21,12 +21,33 @@ const {
   descriptors: patches,
   sidebarProjectNameCss,
 } = require("./patches/sidebar-project-name.js");
+const {
+  ENGLISH_REASONING_LABELS,
+  ZH_CN_LOCALE_ASSET_PATTERN,
+  applyEnglishReasoningLabels,
+} = require("./patches/reasoning-effort-labels.js");
 
 function projectBundleFixture() {
   return [
     "function row(){let j=Pn(`group/folder-row group relative flex h-[var(--height-token-row)] text-sm text-token-foreground`);",
     "let V=(0,Iy.jsx)(`span`,{className:`text-fade-truncate pr-1`,children:p});return [j,V]}",
   ].join("");
+}
+
+function simplifiedChineseLocaleFixture() {
+  const labels = {
+    "composer.mode.local.reasoning.none.label": "无",
+    "composer.mode.local.reasoning.minimal.label": "极低",
+    "composer.mode.local.reasoning.low.label": "轻度",
+    "composer.mode.local.reasoning.medium.label": "中",
+    "composer.mode.local.reasoning.high.label": "高",
+    "composer.mode.local.reasoning.xhigh.label": "极高",
+    "composer.mode.local.reasoning.max.label": "最高",
+    "composer.mode.local.reasoning.ultra.label": "极高",
+  };
+  return Object.entries(labels)
+    .map(([key, value]) => `"${key}":\`${value}\``)
+    .join(",");
 }
 
 function applyPatchTwice(source, context) {
@@ -73,11 +94,45 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
     const descriptors = loadLinuxFeaturePatchDescriptors({ featuresRoot });
     assert.deepEqual(
       descriptors.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
-      [["feature:ui-tweaks:sidebar-project-name-style", "webview-asset", "optional"]],
+      [
+        ["feature:ui-tweaks:sidebar-project-name-style", "webview-asset", "optional"],
+        ["feature:ui-tweaks:reasoning-effort-labels-english", "webview-asset", "optional"],
+      ],
     );
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("reasoning effort labels stay in English in the Simplified Chinese locale", () => {
+  const source = simplifiedChineseLocaleFixture();
+  const patched = applyEnglishReasoningLabels(source);
+
+  for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
+    assert.match(patched, new RegExp(`"${key.replaceAll(".", "\\.")}":\\\`${label}\\\``));
+  }
+  assert.equal(applyEnglishReasoningLabels(patched), patched);
+  assert.match("zh-CN-BPHwMaw8.js", ZH_CN_LOCALE_ASSET_PATTERN);
+  assert.doesNotMatch("zh-TW-rBlCyjlT.js", ZH_CN_LOCALE_ASSET_PATTERN);
+});
+
+test("English reasoning effort labels can be disabled", () => {
+  const source = simplifiedChineseLocaleFixture();
+  const context = {
+    feature: {
+      settings: {
+        tweaks: {
+          reasoning: {
+            keepEffortLabelsEnglish: {
+              enabled: false,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  assert.equal(applyEnglishReasoningLabels(source, context), source);
 });
 
 test("sidebar project descriptor targets only the current project sidebar asset", () => {

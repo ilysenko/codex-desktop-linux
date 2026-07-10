@@ -85,7 +85,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-app_resources="Codex Installer/Codex.app/Contents/Resources"
+app_resources="ChatGPT Installer/ChatGPT.app/Contents/Resources"
 record_plugin="$app_resources/plugins/openai-bundled/plugins/record-and-replay"
 sky_client="$record_plugin/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
 

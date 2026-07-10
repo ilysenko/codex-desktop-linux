@@ -72,6 +72,7 @@ const TRAY_GUARD_LOOKAHEAD = 1200;
 const CLOSE_GATE_PREFIX_LOOKBACK = 8000;
 const HANDLER_PREFIX_LOOKBACK = 12000;
 const DIRECT_HANDLER_PROXIMITY = 1200;
+const NATIVE_APPS_PLATFORM_GATE_LOOKAHEAD = 2400;
 
 const linuxSettingsKeys = {
   promptWindow: "codex-linux-prompt-window-enabled",
@@ -147,8 +148,24 @@ function hasComputerUseNativeAppsMention(source) {
       hasComputerUseLiteral(source) ||
       source.includes("computer-use-native-desktop-app-icon") ||
       source.includes("computerUse.nativeApps") ||
-      source.includes("computerUse.label")
+      source.includes("computerUse.label") ||
+      hasComputerUseNativeAppsResultShape(source)
     );
+}
+
+function hasComputerUseNativeAppsResultShape(source) {
+  return /nativeApps:[A-Za-z_$][\w$]*/.test(source) &&
+    /isLoading:[A-Za-z_$][\w$]*/.test(source) &&
+    /[A-Za-z_$][\w$]*\.data\?\.apps/.test(source);
+}
+
+function isNativeAppsPlatformGateContext(source, matchEnd, nextPlatformGatePattern) {
+  const rest = source.slice(matchEnd);
+  const nextGateIndex = rest.search(nextPlatformGatePattern);
+  const contextLength = nextGateIndex === -1
+    ? NATIVE_APPS_PLATFORM_GATE_LOOKAHEAD
+    : Math.min(nextGateIndex, NATIVE_APPS_PLATFORM_GATE_LOOKAHEAD);
+  return rest.slice(0, contextLength).includes("native-desktop-apps");
 }
 
 function isComputerUseNameExpr(nameExpr, computerUseNameVar) {
@@ -550,9 +567,14 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
   if (hasComputerUseNativeAppsMention(patchedSource)) {
     const nativeAppsPlatformPattern =
       /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)===`macOS`\|\|\3===`windows`\)/g;
+    const nativeAppsPlatformBoundaryPattern =
+      /[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*&&\(([A-Za-z_$][\w$]*)===`macOS`\|\|\1===`windows`(?:\|\|\1===`linux`)?\)/;
     patchedSource = patchedSource.replace(
       nativeAppsPlatformPattern,
-      (match, availableVar, enabledVar, platformVar) => {
+      (match, availableVar, enabledVar, platformVar, offset) => {
+        if (!isNativeAppsPlatformGateContext(patchedSource, offset + match.length, nativeAppsPlatformBoundaryPattern)) {
+          return match;
+        }
         nativeAppsGateChanged = true;
         return `${availableVar}=${enabledVar}&&(${platformVar}===\`macOS\`||${platformVar}===\`windows\`||${platformVar}===\`linux\`)`;
       },

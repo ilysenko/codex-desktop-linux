@@ -3,7 +3,7 @@ set -euo pipefail
 
 OPT_ROOT="${HOME}/.local/opt/codex-desktop-linux"
 APP_DIR="${OPT_ROOT}/codex-app"
-DMG_URL="https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
+DMG_URL="https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg"
 
 XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
@@ -486,7 +486,7 @@ extract_icon() {
     tmp_dir="$(mktemp -d)"
     trap 'rm -rf "$tmp_dir"' RETURN
 
-    7z e -y "$dmg_file" "Codex Installer/Codex.app/Contents/Resources/electron.icns" "-o${tmp_dir}" >/dev/null
+    7z e -y "$dmg_file" "ChatGPT Installer/ChatGPT.app/Contents/Resources/electron.icns" "-o${tmp_dir}" >/dev/null
     python3 - "$tmp_dir/electron.icns" "$ICON_PATH" <<'PY'
 from PIL import Image
 import sys

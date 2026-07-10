@@ -75,7 +75,11 @@ SCRIPT
 
 select_linux_icon_source() {
     if [ -n "$LINUX_ICON_SOURCE" ]; then
-        return 0
+        if is_x11_safe_png_icon "$LINUX_ICON_SOURCE"; then
+            return 0
+        fi
+        warn "Configured Linux icon is missing, invalid, or larger than 512x512; using automatic icon selection"
+        LINUX_ICON_SOURCE=""
     fi
 
     local assets_dir="$WORK_DIR/app-extracted/webview/assets"
@@ -87,7 +91,8 @@ select_linux_icon_source() {
         )
     fi
 
-    if [ "${#chatgpt_icon_candidates[@]}" -eq 1 ]; then
+    if [ "${#chatgpt_icon_candidates[@]}" -eq 1 ] &&
+       is_x11_safe_png_icon "${chatgpt_icon_candidates[0]}"; then
         LINUX_ICON_SOURCE="${chatgpt_icon_candidates[0]}"
         info "Using upstream ChatGPT icon"
         return 0
@@ -96,9 +101,33 @@ select_linux_icon_source() {
     LINUX_ICON_SOURCE="$SCRIPT_DIR/assets/codex-linux.png"
     if [ "${#chatgpt_icon_candidates[@]}" -gt 1 ]; then
         warn "Found multiple compact upstream ChatGPT icons; using the bundled Linux icon"
+    elif [ "${#chatgpt_icon_candidates[@]}" -eq 1 ]; then
+        warn "Upstream ChatGPT icon is invalid or larger than 512x512; using the bundled Linux icon"
     else
         warn "Compact upstream ChatGPT icon not found; using the bundled Linux icon"
     fi
+}
+
+is_x11_safe_png_icon() {
+    local icon_path="$1"
+    [ -f "$icon_path" ] || return 1
+
+    python3 - "$icon_path" <<'PY'
+import struct
+import sys
+
+try:
+    with open(sys.argv[1], "rb") as icon_file:
+        header = icon_file.read(24)
+except OSError:
+    raise SystemExit(1)
+
+if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+    raise SystemExit(1)
+
+width, height = struct.unpack(">II", header[16:24])
+raise SystemExit(0 if 0 < width <= 512 and 0 < height <= 512 else 1)
+PY
 }
 
 # ---- Main ----

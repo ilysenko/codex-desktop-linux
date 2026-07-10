@@ -8,14 +8,15 @@ function applyLinuxQuitGuardPatch(currentSource) {
     return currentSource;
   }
 
-  const modulePreludeRegex =
-    /let ([A-Za-z_$][\w$]*)=require\(`node:url`\),([A-Za-z_$][\w$]*)=require\(`electron`\);\2=[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\(\2\);/;
-  const modulePreludeMatch = currentSource.match(modulePreludeRegex);
-  if (modulePreludeMatch != null) {
-    return currentSource.replace(modulePreludeRegex, `${modulePreludeMatch[0]}${quitGuardSuffix}`);
+  const currentBundlerQuitGuardNeedle =
+    /(?:let|,)\s*([A-Za-z_$][\w$]*)=require\(`electron`\);\1=[^;]+;[\s\S]{0,500}?(?:let|,)\s*([A-Za-z_$][\w$]*)=require\(`node:path`\);\2=[^;]+;[\s\S]{0,500}?(?:let|,)\s*([A-Za-z_$][\w$]*)=require\(`node:fs`\);\3=[^;]+;/;
+  const currentBundlerQuitGuardMatch = currentSource.match(currentBundlerQuitGuardNeedle);
+  if (currentBundlerQuitGuardMatch != null) {
+    const matchedPrefix = currentBundlerQuitGuardMatch[0];
+    return currentSource.replace(matchedPrefix, `${matchedPrefix}${quitGuardSuffix}`);
   }
 
-  if (currentSource.includes("require(`electron`)")) {
+  if (currentSource.includes("require(`electron`)") && currentSource.includes("require(`node:path`)")) {
     console.warn("WARN: Could not find Linux quit guard insertion point — skipping explicit quit-state patch");
   }
 

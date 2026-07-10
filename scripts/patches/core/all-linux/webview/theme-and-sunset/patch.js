@@ -47,7 +47,7 @@ module.exports = [
     phase: "webview-asset",
     order: 1040,
     ciPolicy: "optional",
-    pattern: /^app-initial~app-main~appgen-settings-page~settings-page~skills-settings~plugins-settings~re~.*\.js$/,
+    pattern: /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~.*\.js$/,
     missingDescription: "window controls safe-area bundle",
     skipDescription: "Linux window controls safe-area patch",
     apply: applyLinuxWindowControlsSafeAreaPatch,
