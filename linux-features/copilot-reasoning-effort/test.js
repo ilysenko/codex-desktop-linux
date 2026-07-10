@@ -39,27 +39,12 @@ function withCapturedWarns(fn) {
 function copilotReasoningEffortSettingsFixture() {
   return [
     "function bwe(){let e=(0,Y.c)(3),t=wr(),{data:n,isLoading:r}=or(`copilot-default-model`),i=n??t.defaultModel,a;return e[0]!==r||e[1]!==i?(a={model:i,reasoningEffort:`medium`,profile:null,isLoading:r},e[0]=r,e[1]=i,e[2]=a):a=e[2],a}",
-    "function $9(e=null){let t=j(fe),m=a?.authMethod===`copilot`,g=(0,q.useCallback)(async(t,n)=>!1,[]),c={profile:null},i=!0,r=`local`,s=`/tmp`,v=()=>{},y=()=>{};return{setModelAndReasoningEffort:(0,q.useCallback)(async(e,n)=>{try{if(await g(e,n))return;if(m){Jn(t,`copilot-default-model`,e);return}if(h.info(`Setting default model and reasoning effort`,{safe:{newModel:e,newEffort:n,profile:c.profile}}),!i)return;await Gt(`set-default-model-config-for-host`,{hostId:r,model:e,reasoningEffort:n,profile:c.profile}),await v(),await t.query.fetch(Ss,{hostId:r,cwd:s})}catch(e){y(e)}},[m,g,c.profile,v,i,r,t,y,s])}}",
+    "function $9(e=null){let t=j(fe),m=a?.authMethod===`copilot`,g=(0,q.useCallback)(async(t,n)=>!1,[]),c={profile:null},i=!0,r=`local`,s=`/tmp`,v=()=>{},y=()=>{};return{setModelAndReasoningEffort:(0,q.useCallback)(async(e,n)=>{try{if(await g(e,n))return;if(m){await Jn(t,`copilot-default-model`,e,{throwOnFailure:!0});return}if(h.info(`Setting default model and reasoning effort`,{safe:{newModel:e,newEffort:n,profile:c.profile}}),!i)throw Error(`Model settings host is unavailable`);await Gt(`set-default-model-config-for-host`,{hostId:r,model:e,reasoningEffort:n,profile:c.profile}),await v(),await t.query.fetch(Ss,{hostId:r,cwd:s})}catch(e){y(e)}},[m,g,c.profile,v,i,r,t,y,s])}}",
   ].join("");
-}
-
-function copilotReasoningEffortModelListFixture() {
-  return "function Ge(){let s=`copilot`,d={};return e.forEach(e=>{let t=s===`copilot`?[e.supportedReasoningEfforts.find(Ue)??{reasoningEffort:`medium`,description:`medium effort`}]:[...e.supportedReasoningEfforts];d.models.push({...e,supportedReasoningEfforts:t})})}";
-}
-
-function currentCopilotReasoningEffortModelListFixture() {
-  return "function Ge(){let t=`copilot`;return r.forEach(e=>{let n=t===`copilot`?[e.supportedReasoningEfforts.find(e=>e.reasoningEffort===`medium`)??{reasoningEffort:`medium`,description:`medium effort`}]:[...e.supportedReasoningEfforts];i.push({...e,supportedReasoningEfforts:n})})}";
 }
 
 function currentFilteredCopilotReasoningEffortModelListFixture() {
   return "function Jv({authMethod:e,availableModels:t,defaultModel:n,enabledReasoningEfforts:r,includeUltraReasoningEffort:i,models:a,useHiddenModels:o}){let s=[],c=null,l=o&&e!==`amazonBedrock`,u=a.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`max`)),d=i&&a.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`ultra`));return a.forEach(n=>{if(l?t.has(n.model):!n.hidden){let t=i?n.supportedReasoningEfforts:n.supportedReasoningEfforts.filter(({reasoningEffort:e})=>e!==`ultra`),a=(e===`copilot`?[t.find(e=>e.reasoningEffort===`medium`)??{reasoningEffort:`medium`,description:`medium effort`}]:t).filter(({reasoningEffort:e})=>vg(e)&&r.has(e)),o={...n,supportedReasoningEfforts:a};s.push(o),n.isDefault&&(c=o)}}),c??=s.find(e=>e.model===n)??null,{models:s,defaultModel:c,hasModelSupportingMaxReasoningEffort:u,hasModelSupportingUltraReasoningEffort:d}}";
-}
-
-function copilotReasoningEffortUiFixture() {
-  return [
-    "function qU(){let E=o?.authMethod===`copilot`,D=ZH(T,f.model),O=QH(f.reasoningEffort,D),le=D.map(e=>{let{reasoningEffort:t}=e;return(0,$.jsx)(jm.Item,{\"data-reasoning-selected\":t===O?`true`:void 0,disabled:E,RightIcon:t===O?rg:void 0,onSelect:()=>{i.get(bh).log({eventName:`codex_composer_reasoning_effort_changed`,metadata:{reasoning_effort:t}}),p(f.model,t),H()},children:(0,$.jsx)(nM,{effort:t})},t)})}",
-    "function bY(e){let p=o?.authMethod===`copilot`;let w=s&&f&&!p,T;return{enabled:w,dependencies:T}}",
-  ].join("");
 }
 
 function currentCopilotReasoningEffortUiFixture() {
@@ -118,32 +103,10 @@ test("persists Copilot reasoning effort with the default Copilot model", () => {
   assert.match(patched, /isLoading:r\|\|codexCopilotReasoningEffortLoading/);
   assert.match(
     patched,
-    /Jn\(t,`copilot-default-model`,e\),Jn\(t,`copilot-default-reasoning-effort`,n\);return/,
+    /await Jn\(t,`copilot-default-model`,e,\{throwOnFailure:!0\}\);await Jn\(t,`copilot-default-reasoning-effort`,n,\{throwOnFailure:!0\}\);return/,
   );
   assert.doesNotMatch(patched, /reasoningEffort:`medium`,profile:null,isLoading:r/);
-  assert.doesNotMatch(patched, /Jn\(t,`copilot-default-model`,e\);return/);
-});
-
-test("keeps all model reasoning efforts available for Copilot auth", () => {
-  const patched = applyPatchTwice(
-    applyCopilotReasoningEffortModelListPatch,
-    copilotReasoningEffortModelListFixture(),
-  );
-
-  assert.match(patched, /let t=\[\.\.\.e\.supportedReasoningEfforts\]/);
-  assert.doesNotMatch(patched, /s===`copilot`\?\[/);
-  assert.doesNotMatch(patched, /description:`medium effort`/);
-});
-
-test("keeps all model reasoning efforts for current Copilot model query chunks", () => {
-  const patched = applyPatchTwice(
-    applyCopilotReasoningEffortModelListPatch,
-    currentCopilotReasoningEffortModelListFixture(),
-  );
-
-  assert.match(patched, /let n=\[\.\.\.e\.supportedReasoningEfforts\]/);
-  assert.doesNotMatch(patched, /t===`copilot`\?\[/);
-  assert.doesNotMatch(patched, /description:`medium effort`/);
+  assert.doesNotMatch(patched, /await Jn\(t,`copilot-default-model`,e,\{throwOnFailure:!0\}\);return/);
 });
 
 test("keeps filtered current app reasoning efforts for Copilot auth", () => {
@@ -156,18 +119,11 @@ test("keeps filtered current app reasoning efforts for Copilot auth", () => {
   assert.match(patched, /a=\[\.\.\.t\]\.filter\(\(\{reasoningEffort:e\}\)=>vg\(e\)&&r\.has\(e\)\)/);
   assert.doesNotMatch(patched, /e===`copilot`\?\[/);
   assert.doesNotMatch(patched, /description:`medium effort`/);
-});
-
-test("allows Copilot auth to change reasoning effort from the UI", () => {
-  const patched = applyPatchTwice(
-    applyCopilotReasoningEffortUiPatch,
-    copilotReasoningEffortUiFixture(),
+  const { value, warnings } = withCapturedWarns(() =>
+    applyCopilotReasoningEffortModelListPatch(patched),
   );
-
-  assert.match(patched, /disabled:!1,RightIcon:t===O\?rg:void 0/);
-  assert.match(patched, /let w=s&&f,T;/);
-  assert.doesNotMatch(patched, /disabled:E,RightIcon:t===O\?rg:void 0/);
-  assert.doesNotMatch(patched, /let w=s&&f&&!p,T;/);
+  assert.equal(value, patched);
+  assert.deepEqual(warnings, []);
 });
 
 test("allows Copilot auth to use the current app effort controls", () => {
@@ -226,36 +182,14 @@ test("feature descriptor loader exposes the Copilot webview asset patches only w
       ["webview-asset", "webview-asset", "webview-asset"],
     );
     assert.ok(descriptors.every((descriptor) => descriptor.ciPolicy === "optional"));
-  });
-});
-
-test("enabled feature descriptors patch matching webview assets", () => {
-  const featuresRoot = path.resolve(__dirname, "..");
-
-  withTempFeatureConfig(["copilot-reasoning-effort"], () => {
-    withTempDir((extractedDir) => {
-      writeAsset(extractedDir, "use-collaboration-mode-fixture.js", copilotReasoningEffortSettingsFixture());
-      writeAsset(extractedDir, "model-queries-fixture.js", currentCopilotReasoningEffortModelListFixture());
-      writeAsset(extractedDir, "index-fixture.js", copilotReasoningEffortUiFixture());
-
-      const descriptors = normalizePatchDescriptors(
-        loadLinuxFeaturePatchDescriptors({ featuresRoot }),
-      );
-      applyWebviewAssetPatchDescriptors(extractedDir, descriptors, {}, null);
-
-      assert.match(
-        readAsset(extractedDir, "use-collaboration-mode-fixture.js"),
-        /copilot-default-reasoning-effort/,
-      );
-      assert.match(
-        readAsset(extractedDir, "model-queries-fixture.js"),
-        /\[\.\.\.e\.supportedReasoningEfforts\]/,
-      );
-      assert.match(
-        readAsset(extractedDir, "index-fixture.js"),
-        /disabled:!1,RightIcon:t===O\?rg:void 0/,
-      );
-    });
+    const currentSettingsChunk =
+      "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~k0ede4gb-current.js";
+    const currentUiChunk =
+      "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-current.js";
+    assert.match(currentSettingsChunk, descriptors[0].pattern);
+    assert.match(currentSettingsChunk, descriptors[1].pattern);
+    assert.match(currentUiChunk, descriptors[2].pattern);
+    assert.ok(descriptors.every((descriptor) => !descriptor.pattern.test("unrelated-bundle.js")));
   });
 });
 
@@ -274,7 +208,6 @@ test("enabled feature descriptors patch the current app settings chunk", () => {
         `${copilotReasoningEffortSettingsFixture()};${currentFilteredCopilotReasoningEffortModelListFixture()}`,
       );
       writeAsset(extractedDir, currentUiChunk, currentCopilotReasoningEffortUiFixture());
-      writeAsset(extractedDir, "index-fixture.js", copilotReasoningEffortUiFixture());
 
       const descriptors = normalizePatchDescriptors(
         loadLinuxFeaturePatchDescriptors({ featuresRoot }),
