@@ -272,82 +272,28 @@ test("registers Linux proxy authentication before Electron app ready", async () 
 
   assert.equal(prevented, 1);
   assert.equal(credentials, null);
-});
 
-test("routes authenticated proxy desktop fetches through ClientRequest login", async () => {
-  const source = [
-    "let a=require(`electron`);",
-    "async function boot(){await a.app.whenReady()}",
-    "class Fetcher{",
-    "async performDesktopFetch({body:e,headers:n,method:r,onUploadProgress:i,resolvedUrl:o,signal:s,useSessionCookies:c}){let p=()=>e,m=async e=>{let t=this.cloneHeaders(n);let d=i==null?await a.net.fetch(o,{method:r,headers:t,body:p(),signal:s,credentials:c?`include`:`same-origin`}):await this.performProgressRequest({body:p(),headers:t,method:r,onUploadProgress:i,resolvedUrl:o,signal:s,useSessionCookies:c});return d};return m({})}",
-    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,signal:o,useSessionCookies:s}){return new Promise((c,l)=>{let u=a.net.request({method:n,url:i,headers:t,useSessionCookies:s}),d=-1,f=()=>{let e=u.getUploadProgress();!e.started||e.current===d||(d=e.current,r({loaded:e.current,total:e.total}))};if(o.addEventListener(`abort`,()=>{},{}),o.aborted)return;u.on(`error`,e=>l(e)),u.on(`response`,e=>{f();let t=[];e.on(`data`,e=>{t.push(e)}),e.on(`end`,()=>{let n=Buffer.concat(t),r=new Headers;for(let[t,n]of Object.entries(e.headers))for(let e of Array.isArray(n)?n:[n])r.append(t,e);c(new Response(n.length===0?null:n,{status:e.statusCode,statusText:e.statusMessage,headers:r}))})});let g=e instanceof ArrayBuffer?Buffer.from(e):e;u.end(g)})}",
-    "cloneHeaders(e){return e}",
-    "}",
-    "globalThis.Fetcher=Fetcher;",
-  ].join("");
-  const patched = applyPatchTwiceWithoutWarnings(applyAuthenticatedProxyPatch, source);
-
-  assert.match(patched, /function codexLinuxAttachProxyAuthToRequest\(e\)/);
-  assert.match(patched, /i==null&&!codexLinuxProxyAuthEntry\(\)\?await a\.net\.fetch/);
-  assert.match(
-    patched,
-    /codexLinuxAttachProxyAuthToRequest\(u\);let d=-1,f=\(\)=>\{if\(r==null\)return;/,
+  handlers.login(
+    { preventDefault() { prevented += 1; } },
+    null,
+    null,
+    { isProxy: true, host: "proxy.example" },
+    (username, password) => {
+      credentials = { username, password };
+    },
   );
 
-  let fetchCalls = 0;
-  let requestCalls = 0;
-  let credentials = null;
-  const app = {
-    on() {},
-    whenReady() {
-      return Promise.resolve();
-    },
-  };
-  const net = {
-    fetch() {
-      fetchCalls += 1;
-      return Promise.resolve(new Response("fetch"));
-    },
-    request() {
-      requestCalls += 1;
-      const handlers = {};
-      return {
-        on(event, handler) {
-          handlers[event] = handler;
-          return this;
-        },
-        getUploadProgress() {
-          return { started: false, current: 0, total: 0 };
-        },
-        end() {
-          handlers.login?.(
-            { isProxy: true, host: "PROXY.EXAMPLE", port: 8080 },
-            (username, password) => {
-              credentials = { username, password };
-            },
-          );
-          const responseHandlers = {};
-          handlers.response?.({
-            statusCode: 200,
-            statusMessage: "OK",
-            headers: { "content-type": "text/plain" },
-            on(event, handler) {
-              responseHandlers[event] = handler;
-              return this;
-            },
-          });
-          responseHandlers.data?.(Buffer.from("request"));
-          responseHandlers.end?.();
-        },
-      };
-    },
-  };
+  assert.equal(prevented, 1);
+  assert.equal(credentials, null);
+});
+
+test("ClientRequest proxy authentication refuses unrelated challenges", () => {
+  const source = [
+    "let n=require(`electron`);",
+    "async function boot(){await n.app.whenReady()}",
+  ].join("");
+  const patched = applyPatchTwiceWithoutWarnings(applyAuthenticatedProxyPatch, source);
   const context = {
-    ArrayBuffer,
-    Buffer,
-    DOMException,
-    Headers,
-    Response,
     globalThis: {},
     process: {
       platform: "linux",
@@ -360,20 +306,189 @@ test("routes authenticated proxy desktop fetches through ClientRequest login", a
     },
     require(name) {
       assert.equal(name, "electron");
-      return { app, net };
+      return { app: { on() {}, whenReady() { return Promise.resolve(); } } };
     },
   };
-
-  await vm.runInNewContext(`${patched};boot()`, context);
-  const response = await vm.runInNewContext(
-    "new globalThis.Fetcher().performDesktopFetch({body:null,headers:{},method:`GET`,resolvedUrl:`https://chatgpt.com/wham/usage`,signal:{aborted:false,addEventListener(){},removeEventListener(){}}})",
+  vm.runInNewContext(
+    `${patched};globalThis.attachProxyAuth=codexLinuxAttachProxyAuthToRequest`,
     context,
   );
 
-  assert.equal(fetchCalls, 0);
+  function credentialsFor(authInfo) {
+    let handler = null;
+    context.globalThis.attachProxyAuth({
+      on(event, callback) {
+        assert.equal(event, "login");
+        handler = callback;
+      },
+    });
+    assert.equal(typeof handler, "function");
+    let args = null;
+    handler(authInfo, (...values) => {
+      args = values;
+    });
+    return args;
+  }
+
+  assert.deepEqual(credentialsFor({ isProxy: false, host: "proxy.example", port: 8080 }), []);
+  assert.deepEqual(credentialsFor({ isProxy: true, host: "other.example", port: 8080 }), []);
+  assert.deepEqual(credentialsFor({ isProxy: true, host: "proxy.example", port: 3128 }), []);
+  assert.deepEqual(credentialsFor({ isProxy: true, host: "proxy.example" }), []);
+  assert.deepEqual(credentialsFor({ isProxy: true, host: "PROXY.EXAMPLE", port: 8080 }), [
+    "user",
+    "p@ss",
+  ]);
+});
+
+test("leaves an incomplete existing proxy helper set untouched", () => {
+  const source = [
+    "let c=require(`electron`);",
+    "function codexLinuxInstallProxyAuthHandler(e){return e}",
+    "async function boot(){await c.app.whenReady()}",
+    "class Fetcher{",
+    "async performDesktopFetch(){let t={},r=`GET`,i=null,a=`https://example.test`,o={},s=false,m=()=>null;let n=this.cloneHeaders(t);let f=i==null?await c.net.fetch(a,{method:r,headers:n,body:m(),signal:o,credentials:s?`include`:`same-origin`}):await this.performProgressRequest({body:m(),headers:n,method:r,onUploadProgress:i,resolvedUrl:a,signal:o,useSessionCookies:s});return f}",
+    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,signal:a,useSessionCookies:o}){let u=c.net.request({method:n,url:i,headers:t,useSessionCookies:o}),d=-1,f=()=>{let e=u.getUploadProgress();!e.started||e.current===d||(d=e.current,r({loaded:e.current,total:e.total}))}}",
+    "cloneHeaders(e){return e}",
+    "}",
+  ].join("");
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    assert.equal(applyAuthenticatedProxyPatch(source), source);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.deepEqual(warnings, [
+    "WARN: Found incomplete Linux proxy authentication helpers - skipping patch",
+  ]);
+});
+
+test("routes current authenticated proxy desktop fetch shape through ClientRequest", async () => {
+  const source = [
+    "let c=require(`electron`);",
+    "async function boot(){await c.app.whenReady()}",
+    "class Fetcher{",
+    "async performDesktopFetch(){let t={},r=`GET`,i=null,a=`https://chatgpt.com/wham/usage`,o={aborted:false,addEventListener(){},removeEventListener(){}},s=true,m=()=>null,h=async e=>{let n=this.cloneHeaders(t);let f=i==null?await c.net.fetch(a,{method:r,headers:n,body:m(),signal:o,credentials:s?`include`:`same-origin`}):await this.performProgressRequest({body:m(),headers:n,method:r,onUploadProgress:i,resolvedUrl:a,signal:o,useSessionCookies:s});return f};return h({})}",
+    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,signal:a,useSessionCookies:o}){return new Promise((s,l)=>{let u=c.net.request({method:n,url:i,headers:t,useSessionCookies:o}),d=-1,f=()=>{let e=u.getUploadProgress();!e.started||e.current===d||(d=e.current,r({loaded:e.current,total:e.total}))},p=setInterval(f,50),m=()=>{clearInterval(p)},h=()=>{m(),a.removeEventListener(`abort`,g)},g=()=>{h(),u.abort(),l(new DOMException(`The operation was aborted`,`AbortError`))};if(a.addEventListener(`abort`,g,{once:!0}),a.aborted){g();return}u.on(`error`,e=>{h(),l(e)}),u.on(`response`,e=>{f(),m();let t=[];e.on(`data`,e=>{t.push(e)}),e.on(`error`,e=>{h(),l(e)}),e.on(`end`,()=>{h();let n=Buffer.concat(t),r=new Headers;for(let[t,n]of Object.entries(e.headers))for(let e of Array.isArray(n)?n:[n])r.append(t,e);s(new Response(n.length===0?null:n,{status:e.statusCode,statusText:e.statusMessage,headers:r}))})});let _=e instanceof ArrayBuffer?Buffer.from(e):e;u.end(_)})}",
+    "cloneHeaders(e){return e}",
+    "}",
+    "globalThis.Fetcher=Fetcher;",
+  ].join("");
+  const patched = applyPatchTwiceWithoutWarnings(applyAuthenticatedProxyPatch, source);
+
+  assert.match(patched, /i==null&&!codexLinuxProxyAuthEntry\(\)\?await c\.net\.fetch/);
+  assert.match(
+    patched,
+    /codexLinuxAttachProxyAuthToRequest\(u\);let d=-1,f=\(\)=>\{if\(r==null\)return;/,
+  );
+
+  let fetchCalls = 0;
+  const context = {
+    Response,
+    globalThis: {},
+    process: { platform: "linux", env: {} },
+    require(name) {
+      assert.equal(name, "electron");
+      return {
+        app: { on() {}, whenReady() { return Promise.resolve(); } },
+        net: {
+          fetch() {
+            fetchCalls += 1;
+            return Promise.resolve(new Response("fetch"));
+          },
+          request() {
+            assert.fail("ClientRequest must stay unused without proxy credentials");
+          },
+        },
+      };
+    },
+  };
+  await vm.runInNewContext(`${patched};boot()`, context);
+  const response = await vm.runInNewContext(
+    "new globalThis.Fetcher().performDesktopFetch()",
+    context,
+  );
+
+  assert.equal(fetchCalls, 1);
+  assert.equal(await response.text(), "fetch");
+
+  let requestCalls = 0;
+  let credentials = null;
+  const authContext = {
+    ArrayBuffer,
+    Buffer,
+    DOMException,
+    Headers,
+    Response,
+    clearInterval,
+    globalThis: {},
+    process: {
+      platform: "linux",
+      env: {
+        CODEX_LINUX_PROXY_AUTH_HOST: "proxy.example",
+        CODEX_LINUX_PROXY_AUTH_PORT: "8080",
+        CODEX_LINUX_PROXY_USERNAME: "user",
+        CODEX_LINUX_PROXY_PASSWORD: "p@ss",
+      },
+    },
+    require(name) {
+      assert.equal(name, "electron");
+      return {
+        app: { on() {}, whenReady() { return Promise.resolve(); } },
+        net: {
+          fetch() {
+            assert.fail("net.fetch must be bypassed when proxy credentials are configured");
+          },
+          request() {
+            requestCalls += 1;
+            const handlers = {};
+            return {
+              abort() {},
+              end() {
+                handlers.login?.(
+                  { isProxy: true, host: "PROXY.EXAMPLE", port: 8080 },
+                  (username, password) => {
+                    credentials = { username, password };
+                  },
+                );
+                const responseHandlers = {};
+                handlers.response?.({
+                  statusCode: 200,
+                  statusMessage: "OK",
+                  headers: { "content-type": "text/plain" },
+                  on(event, handler) {
+                    responseHandlers[event] = handler;
+                    return this;
+                  },
+                });
+                responseHandlers.data?.(Buffer.from("request"));
+                responseHandlers.end?.();
+              },
+              getUploadProgress() {
+                return { started: false, current: 0, total: 0 };
+              },
+              on(event, handler) {
+                handlers[event] = handler;
+                return this;
+              },
+            };
+          },
+        },
+      };
+    },
+    setInterval,
+  };
+  await vm.runInNewContext(`${patched};boot()`, authContext);
+  const authenticatedResponse = await vm.runInNewContext(
+    "new globalThis.Fetcher().performDesktopFetch()",
+    authContext,
+  );
+
   assert.equal(requestCalls, 1);
-  assert.equal(response.status, 200);
-  assert.equal(await response.text(), "request");
+  assert.equal(authenticatedResponse.status, 200);
+  assert.equal(await authenticatedResponse.text(), "request");
   assert.deepEqual(credentials, { username: "user", password: "p@ss" });
 });
 
