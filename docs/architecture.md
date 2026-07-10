@@ -89,7 +89,20 @@ packaging/linux/codex-packaged-runtime.sh
 The current evaluation for a future Rust replacement of the local webview
 server lives in [webview-server-evaluation.md](webview-server-evaluation.md).
 
-## Chrome Plugin
+## Bundled Plugins
+
+The build preserves portable upstream Sites, Deep Research, and Visualize
+plugins when they are listed in the official DMG marketplace. Their payloads
+must match the expected local path and contain no symlinks, privileged entries,
+native executables, or platform-specific bundles. Availability in the app can
+still depend on upstream account entitlements or rollout gates.
+
+Plugins with native macOS payloads are not copied through this portable path.
+Linux Computer Use and opt-in Record and Replay use repository-owned Linux
+replacements instead. The bundled LaTeX plugin remains excluded until its
+Tectonic runtime has a verified Linux staging path.
+
+### Chrome Plugin
 
 The build stages the upstream Chrome plugin, patches its Linux compatibility
 paths, builds the native messaging host from Rust, and installs browser

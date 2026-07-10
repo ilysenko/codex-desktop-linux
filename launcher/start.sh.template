@@ -1110,6 +1110,7 @@ sync_extra_bundled_plugin_cache() {
     local cache_plugin
     local cache_parent
     local tmp_plugin
+    local backup_plugin
     local marketplace_root
     local marketplace_plugins_dir
     local marketplace_plugin_link
@@ -1135,28 +1136,66 @@ sync_extra_bundled_plugin_cache() {
         cache_plugin="$cache_root/$version"
         cache_parent="$(dirname "$cache_plugin")"
         tmp_plugin="$cache_parent/.$plugin_name-$version.tmp.$$"
-        remove_tree_if_exists "$tmp_plugin"
-        mkdir -p "$cache_parent"
+        backup_plugin="$cache_parent/.$plugin_name-$version.backup.$$"
+        if ! remove_tree_if_exists "$tmp_plugin" || \
+           ! remove_tree_if_exists "$backup_plugin" || \
+           ! mkdir -p "$cache_parent"; then
+            echo "Extra bundled plugin cache preparation failed for $plugin_name; continuing with existing cache."
+            continue
+        fi
 
         if cp -R "$source_plugin" "$tmp_plugin"; then
             make_tree_owner_writable "$tmp_plugin"
-            find "$tmp_plugin" -type f -name '*:com.apple.*' -delete
-            remove_tree_if_exists "$cache_plugin"
-            mv "$tmp_plugin" "$cache_plugin"
+            if ! find "$tmp_plugin" -type f -name '*:com.apple.*' -delete; then
+                remove_tree_if_exists "$tmp_plugin" || true
+                echo "Extra bundled plugin cache cleanup failed for $plugin_name; continuing with existing cache."
+                continue
+            fi
+            if [ -e "$cache_plugin" ] || [ -L "$cache_plugin" ]; then
+                if ! mv -- "$cache_plugin" "$backup_plugin"; then
+                    remove_tree_if_exists "$tmp_plugin" || true
+                    echo "Extra bundled plugin cache sync failed for $plugin_name; existing cache was preserved."
+                    continue
+                fi
+            else
+                backup_plugin=""
+            fi
+            if ! mv -- "$tmp_plugin" "$cache_plugin"; then
+                remove_tree_if_exists "$tmp_plugin" || true
+                if [ -n "$backup_plugin" ]; then
+                    if mv -- "$backup_plugin" "$cache_plugin"; then
+                        echo "Extra bundled plugin cache sync failed for $plugin_name; previous cache was restored."
+                    else
+                        echo "Extra bundled plugin cache sync failed for $plugin_name and the previous cache could not be restored."
+                    fi
+                else
+                    echo "Extra bundled plugin cache sync failed for $plugin_name; continuing without a new cache."
+                fi
+                continue
+            fi
+            if [ -n "$backup_plugin" ]; then
+                remove_tree_if_exists "$backup_plugin" || \
+                    echo "Extra bundled plugin cache backup cleanup failed for $plugin_name: $backup_plugin"
+            fi
             echo "Extra bundled plugin cache synced from bundled resources: $cache_plugin"
         else
-            remove_tree_if_exists "$tmp_plugin"
+            remove_tree_if_exists "$tmp_plugin" || true
             echo "Extra bundled plugin cache sync failed for $plugin_name; continuing with existing cache."
             continue
         fi
 
-        replace_symlink "$version" "$cache_root/latest"
+        if ! replace_symlink "$version" "$cache_root/latest"; then
+            echo "Extra bundled plugin latest link failed for $plugin_name; continuing with the staged cache."
+            continue
+        fi
 
         marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
         marketplace_plugins_dir="$marketplace_root/.agents/plugins"
         marketplace_plugin_link="$marketplace_root/plugins/$plugin_dir_name"
-        mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-        replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
+        if ! mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins" || \
+           ! replace_symlink "$cache_root/latest" "$marketplace_plugin_link"; then
+            echo "Extra bundled plugin marketplace link failed for $plugin_name; continuing with the staged cache."
+        fi
     done
 }
 

@@ -186,6 +186,7 @@ workarounds.
 | GUI install prompts | If installed | Uses `kdialog` / `zenity`, then terminal fallback | [Native setup](docs/native-setup.md) |
 | Linux file manager integration | Always | Built into core Linux patches | [Architecture](docs/architecture.md) |
 | Chrome plugin native host | Always | Installed with bundled plugins | [Architecture](docs/architecture.md) |
+| Portable upstream plugins | When shipped upstream | Sites, Deep Research, and Visualize are staged automatically; upstream rollout still applies | [Architecture](docs/architecture.md#bundled-plugins) |
 | Browser annotations | Always | Built into the patched webview | [Architecture](docs/architecture.md) |
 | Tray and warm-start handoff | Always | Normal app launch | [Architecture](docs/architecture.md) |
 | Multiple app instances | Opt-in | `./codex-app/start.sh --new-instance` | [Build and packaging](docs/build-and-packaging.md#running-the-generated-app) |

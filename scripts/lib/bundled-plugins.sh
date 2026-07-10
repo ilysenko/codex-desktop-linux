@@ -5,6 +5,226 @@
 # shellcheck shell=bash
 
 # ---- Install Linux-safe bundled plugin resources ----
+list_portable_bundled_plugins() {
+    local marketplace="$1"
+
+    node - "$marketplace" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const marketplacePath = process.argv[2];
+const marketplace = JSON.parse(fs.readFileSync(marketplacePath, "utf8"));
+const plugins = Array.isArray(marketplace.plugins) ? marketplace.plugins : [];
+const portableNames = new Set(["sites", "deep-research", "visualize"]);
+const emittedNames = new Set();
+
+for (const plugin of plugins) {
+  if (plugin == null || typeof plugin !== "object" || !portableNames.has(plugin.name)) {
+    continue;
+  }
+  const source = plugin.source;
+  if (source == null || source.source !== "local" || typeof source.path !== "string") {
+    continue;
+  }
+  const normalized = path.posix.normalize(source.path.replace(/\\/g, "/"));
+  if (normalized === `plugins/${plugin.name}` && !emittedNames.has(plugin.name)) {
+    emittedNames.add(plugin.name);
+    process.stdout.write(`${plugin.name}\n`);
+  }
+}
+NODE
+}
+
+validate_portable_bundled_plugin() {
+    local plugin_dir="$1"
+    local expected_name="$2"
+
+    python3 - "$plugin_dir" "$expected_name" <<'PY'
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+root = Path(sys.argv[1])
+expected_name = sys.argv[2]
+manifest_path = root / ".codex-plugin" / "plugin.json"
+
+if root.is_symlink():
+    print("plugin root cannot be a symlink", file=sys.stderr)
+    sys.exit(1)
+if not root.is_dir():
+    print("plugin root must be a directory", file=sys.stderr)
+    sys.exit(1)
+if manifest_path.is_symlink():
+    print("plugin manifest cannot be a symlink", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    print(f"invalid plugin manifest: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+if manifest.get("name") != expected_name:
+    print("plugin manifest name does not match its marketplace entry", file=sys.stderr)
+    sys.exit(1)
+version = manifest.get("version")
+if not isinstance(version, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", version.strip()) is None:
+    print("plugin manifest version is missing or invalid", file=sys.stderr)
+    sys.exit(1)
+
+native_suffixes = {
+    ".app",
+    ".dll",
+    ".dylib",
+    ".exe",
+    ".framework",
+    ".node",
+    ".so",
+}
+native_magics = {
+    b"\x7fELF",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+    b"\xca\xfe\xba\xbf",
+    b"\xbf\xba\xfe\xca",
+    b"\xfe\xed\xfa\xce",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+}
+
+def fail_walk(error):
+    print(f"cannot inspect plugin tree: {error}", file=sys.stderr)
+    sys.exit(1)
+
+
+for current_root, directories, files in os.walk(root, followlinks=False, onerror=fail_walk):
+    current = Path(current_root)
+    for name in directories:
+        path = current / name
+        if path.is_symlink():
+            print(f"symlink is not allowed: {path.relative_to(root)}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            print(f"cannot inspect {path.relative_to(root)}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not stat.S_ISDIR(metadata.st_mode):
+            print(f"non-directory entry is not allowed: {path.relative_to(root)}", file=sys.stderr)
+            sys.exit(1)
+        if metadata.st_mode & 0o6000:
+            print(f"privileged mode is not allowed: {path.relative_to(root)}", file=sys.stderr)
+            sys.exit(1)
+        if path.suffix.lower() in native_suffixes:
+            print(f"native bundle is not portable: {path.relative_to(root)}", file=sys.stderr)
+            sys.exit(1)
+
+    for name in files:
+        path = current / name
+        if path.is_symlink():
+            print(f"symlink is not allowed: {path.relative_to(root)}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            print(f"cannot inspect {path.relative_to(root)}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not stat.S_ISREG(metadata.st_mode):
+            print(f"non-regular file is not allowed: {path.relative_to(root)}", file=sys.stderr)
+            sys.exit(1)
+        if metadata.st_mode & 0o6000:
+            print(f"privileged mode is not allowed: {path.relative_to(root)}", file=sys.stderr)
+            sys.exit(1)
+        if path.suffix.lower() in native_suffixes:
+            print(f"native file is not portable: {path.relative_to(root)}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            with path.open("rb") as stream:
+                header = stream.read(4)
+        except OSError as exc:
+            print(f"cannot read {path.relative_to(root)}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if header in native_magics or header[:2] == b"MZ":
+            print(f"native executable is not portable: {path.relative_to(root)}", file=sys.stderr)
+            sys.exit(1)
+PY
+}
+
+stage_portable_bundled_plugin_from_upstream() {
+    local source_plugin="$1"
+    local target_plugins="$2"
+    local plugin_name="$3"
+    local target_plugin="$target_plugins/$plugin_name"
+    local staging_plugin=""
+    local backup_plugin="$target_plugins/.${plugin_name}.backup.$$"
+
+    if [ ! -d "$source_plugin" ]; then
+        info "Portable bundled plugin $plugin_name not present in upstream app; skipping"
+        return 1
+    fi
+    if ! validate_portable_bundled_plugin "$source_plugin" "$plugin_name"; then
+        warn "Portable bundled plugin $plugin_name contains unsupported content; skipping"
+        return 1
+    fi
+
+    if ! staging_plugin="$(mktemp -d "$target_plugins/.${plugin_name}.tmp.XXXXXX")"; then
+        warn "Failed to create staging directory for portable bundled plugin $plugin_name"
+        return 1
+    fi
+    if ! cp -R "$source_plugin/." "$staging_plugin/"; then
+        rm -rf -- "$staging_plugin" || warn "Failed to clean staging directory for portable bundled plugin $plugin_name"
+        warn "Failed to stage portable bundled plugin $plugin_name"
+        return 1
+    fi
+    if ! remove_macos_sidecar_files "$staging_plugin"; then
+        rm -rf -- "$staging_plugin" || warn "Failed to clean staging directory for portable bundled plugin $plugin_name"
+        warn "Failed to clean macOS sidecar files for portable bundled plugin $plugin_name"
+        return 1
+    fi
+    if ! validate_portable_bundled_plugin "$staging_plugin" "$plugin_name"; then
+        rm -rf -- "$staging_plugin" || warn "Failed to clean staging directory for portable bundled plugin $plugin_name"
+        warn "Portable bundled plugin $plugin_name failed post-copy validation"
+        return 1
+    fi
+
+    if ! rm -rf -- "$backup_plugin"; then
+        rm -rf -- "$staging_plugin" || warn "Failed to clean staging directory for portable bundled plugin $plugin_name"
+        warn "Failed to prepare backup for portable bundled plugin $plugin_name"
+        return 1
+    fi
+    if [ -e "$target_plugin" ] || [ -L "$target_plugin" ]; then
+        if ! mv -- "$target_plugin" "$backup_plugin"; then
+            rm -rf -- "$staging_plugin" || warn "Failed to clean staging directory for portable bundled plugin $plugin_name"
+            warn "Failed to preserve existing portable bundled plugin $plugin_name"
+            return 1
+        fi
+    else
+        backup_plugin=""
+    fi
+    if ! mv -- "$staging_plugin" "$target_plugin"; then
+        rm -rf -- "$staging_plugin" || warn "Failed to clean staging directory for portable bundled plugin $plugin_name"
+        if [ -n "$backup_plugin" ]; then
+            if mv -- "$backup_plugin" "$target_plugin"; then
+                warn "Failed to install portable bundled plugin $plugin_name; previous target was restored"
+            else
+                warn "Failed to install portable bundled plugin $plugin_name and previous target could not be restored"
+            fi
+        else
+            warn "Failed to install portable bundled plugin $plugin_name"
+        fi
+        return 1
+    fi
+    if [ -n "$backup_plugin" ] && ! rm -rf -- "$backup_plugin"; then
+        warn "Failed to clean previous portable bundled plugin backup: $backup_plugin"
+    fi
+    info "Portable bundled plugin $plugin_name staged from upstream DMG"
+    return 0
+}
+
 find_cargo_for_linux_computer_use() {
     if command -v cargo >/dev/null 2>&1; then
         command -v cargo
@@ -1098,7 +1318,9 @@ write_bundled_plugins_marketplace() {
     local include_chrome="$4"
     local include_computer_use="$5"
 
-    node - "$source" "$destination" "$include_browser" "$include_chrome" "$include_computer_use" <<'NODE'
+    shift 5
+
+    node - "$source" "$destination" "$include_browser" "$include_chrome" "$include_computer_use" "$@" <<'NODE'
 const fs = require("fs");
 const path = require("path");
 
@@ -1107,6 +1329,7 @@ const destinationPath = process.argv[3];
 const includeBrowser = process.argv[4] === "1";
 const includeChrome = process.argv[5] === "1";
 const includeComputerUse = process.argv[6] === "1";
+const portablePluginNames = process.argv.slice(7);
 const marketplace = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
 const sourcePlugins = marketplace.plugins || [];
 const plugins = [];
@@ -1236,6 +1459,37 @@ if (includeComputerUse) {
   });
 }
 
+for (const name of portablePluginNames) {
+  const plugin = sourcePlugins.find((entry) => {
+    if (entry == null || typeof entry !== "object" || entry.name !== name) {
+      return false;
+    }
+    const source = entry.source;
+    if (source == null || source.source !== "local" || typeof source.path !== "string") {
+      return false;
+    }
+    const normalized = path.posix.normalize(source.path.replace(/\\/g, "/"));
+    return normalized === `plugins/${name}`;
+  });
+  if (plugin == null) {
+    throw new Error(`Bundled marketplace does not contain ${name} plugin`);
+  }
+  plugins.push({
+    ...plugin,
+    source: {
+      source: "local",
+      path: `./plugins/${name}`,
+    },
+  });
+}
+
+const sourceOrder = new Map(sourcePlugins.map((plugin, index) => [plugin?.name, index]));
+plugins.sort((left, right) => {
+  const leftIndex = sourceOrder.get(left.name) ?? Number.MAX_SAFE_INTEGER;
+  const rightIndex = sourceOrder.get(right.name) ?? Number.MAX_SAFE_INTEGER;
+  return leftIndex - rightIndex;
+});
+
 marketplace.plugins = plugins;
 fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
 fs.writeFileSync(destinationPath, `${JSON.stringify(marketplace, null, 2)}\n`);
@@ -1254,6 +1508,8 @@ install_bundled_plugin_resources() {
     local include_browser=0
     local include_chrome=0
     local include_computer_use=0
+    local portable_plugin_names=""
+    local portable_plugins=()
 
     if [ ! -f "$source_marketplace" ]; then
         warn "Bundled plugin marketplace not found in upstream app; skipping bundled plugins"
@@ -1261,6 +1517,20 @@ install_bundled_plugin_resources() {
     fi
 
     mkdir -p "$bundled_plugins_dir/plugins" "$bundled_plugins_dir/.agents/plugins"
+
+    if ! portable_plugin_names="$(list_portable_bundled_plugins "$source_marketplace")"; then
+        warn "Could not parse portable bundled plugins from upstream marketplace"
+        portable_plugin_names=""
+    fi
+    while IFS= read -r plugin_name; do
+        [ -n "$plugin_name" ] || continue
+        if stage_portable_bundled_plugin_from_upstream \
+            "$bundled_source_root/plugins/$plugin_name" \
+            "$bundled_plugins_dir/plugins" \
+            "$plugin_name"; then
+            portable_plugins+=("$plugin_name")
+        fi
+    done <<< "$portable_plugin_names"
 
     if source_browser_plugin="$(find_browser_plugin_source "$bundled_source_root" "$source_marketplace")" &&
         stage_browser_plugin_from_upstream "$source_browser_plugin" "$bundled_plugins_dir/plugins"; then
@@ -1279,12 +1549,18 @@ install_bundled_plugin_resources() {
         warn "Linux Computer Use plugin will be unavailable"
     fi
 
-    if [ "$include_browser" -eq 0 ] && [ "$include_chrome" -eq 0 ] && [ "$include_computer_use" -eq 0 ]; then
+    if [ "$include_browser" -eq 0 ] && [ "$include_chrome" -eq 0 ] && [ "$include_computer_use" -eq 0 ] && [ "${#portable_plugins[@]}" -eq 0 ]; then
         warn "No Linux-safe bundled plugins were staged"
         return 0
     fi
 
-    write_bundled_plugins_marketplace "$source_marketplace" "$bundled_plugins_dir/.agents/plugins/marketplace.json" "$include_browser" "$include_chrome" "$include_computer_use"
+    write_bundled_plugins_marketplace \
+        "$source_marketplace" \
+        "$bundled_plugins_dir/.agents/plugins/marketplace.json" \
+        "$include_browser" \
+        "$include_chrome" \
+        "$include_computer_use" \
+        "${portable_plugins[@]}"
 
     install_linux_executable_resource "$upstream_resources/node" "$resources_dir/node" "node runtime" "info" || true
     install_browser_use_node_repl_resource "$upstream_resources" "$resources_dir/node_repl" || true

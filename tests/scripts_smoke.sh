@@ -132,6 +132,42 @@ function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:voi
 JS
 }
 
+make_fake_portable_plugins_upstream_app() {
+    local app_dir="$1"
+    local resources_dir="$app_dir/Contents/Resources"
+    local plugins_dir="$resources_dir/plugins/openai-bundled/plugins"
+
+    mkdir -p \
+        "$resources_dir/plugins/openai-bundled/.agents/plugins" \
+        "$plugins_dir/sites/.codex-plugin" \
+        "$plugins_dir/sites/scripts" \
+        "$plugins_dir/sites/mcp" \
+        "$plugins_dir/deep-research/.codex-plugin" \
+        "$plugins_dir/deep-research/skills/deep-research" \
+        "$plugins_dir/visualize/.codex-plugin" \
+        "$plugins_dir/visualize/skills/visualize/scripts" \
+        "$plugins_dir/latex/.codex-plugin" \
+        "$plugins_dir/latex/bin" \
+        "$plugins_dir/record-and-replay/.codex-plugin" \
+        "$plugins_dir/record-and-replay/Codex Computer Use.app"
+
+    cat > "$resources_dir/plugins/openai-bundled/.agents/plugins/marketplace.json" <<'JSON'
+{"plugins":[{"name":"sites","source":{"source":"local","path":"./plugins/sites"},"policy":{"installation":"AVAILABLE","authentication":"ON_INSTALL"},"category":"Productivity"},{"name":"record-and-replay","source":{"source":"local","path":"./plugins/record-and-replay"},"policy":{"installation":"AVAILABLE"}},{"name":"latex","source":{"source":"local","path":"./plugins/latex"},"policy":{"installation":"AVAILABLE"}},{"name":"deep-research","source":{"source":"local","path":"./plugins/deep-research"},"policy":{"installation":"AVAILABLE"},"category":"Research"},{"name":"visualize","source":{"source":"local","path":"./plugins/visualize"},"policy":{"installation":"AVAILABLE"},"category":"Productivity"}]}
+JSON
+    printf '%s\n' '{"name":"sites","version":"1.0.0","mcpServers":"./.mcp.json"}' > "$plugins_dir/sites/.codex-plugin/plugin.json"
+    printf '%s\n' '#!/bin/bash' 'set -euo pipefail' > "$plugins_dir/sites/scripts/init-site.sh"
+    chmod 0755 "$plugins_dir/sites/scripts/init-site.sh"
+    printf '%s\n' 'console.log("sites");' > "$plugins_dir/sites/mcp/server.mjs"
+    printf '%s\n' '{"name":"deep-research","version":"1.0.0"}' > "$plugins_dir/deep-research/.codex-plugin/plugin.json"
+    printf '%s\n' '# Deep Research' > "$plugins_dir/deep-research/skills/deep-research/SKILL.md"
+    printf '%s\n' '{"name":"visualize","version":"1.0.0"}' > "$plugins_dir/visualize/.codex-plugin/plugin.json"
+    printf '%s\n' 'print("visualize")' > "$plugins_dir/visualize/skills/visualize/scripts/render.py"
+    printf '%s\n' '{"name":"latex","version":"1.0.0"}' > "$plugins_dir/latex/.codex-plugin/plugin.json"
+    printf '\xcf\xfa\xed\xfe' > "$plugins_dir/latex/bin/tectonic"
+    chmod 0755 "$plugins_dir/latex/bin/tectonic"
+    printf '%s\n' '{"name":"record-and-replay","version":"1.0.0"}' > "$plugins_dir/record-and-replay/.codex-plugin/plugin.json"
+}
+
 make_fake_app() {
     local app_dir="$1"
     bash "$REPO_DIR/tests/fixtures/create-packaged-app-fixture.sh" "$app_dir"
@@ -3879,6 +3915,82 @@ SCRIPT
     assert_contains "$launcher_log" "Skipping packaged webview setup because ELECTRON_RENDERER_URL override is enabled"
 }
 
+test_launcher_extra_bundled_plugin_cache_rollback() {
+    info "Checking extra bundled plugin cache rollback"
+    local workspace="$TMP_DIR/extra-bundled-plugin-cache-rollback"
+    local app_dir="$workspace/app"
+    local fake_home="$workspace/home"
+    local source_plugin="$app_dir/resources/plugins/openai-bundled/plugins/sites"
+    local cache_root="$fake_home/.codex/plugins/cache/openai-bundled/sites"
+    local cache_plugin="$cache_root/1.2.3"
+    local launcher_defs="$workspace/launcher-defs.sh"
+    local initial_log="$workspace/initial.log"
+    local failure_log="$workspace/failure.log"
+    local no_cache_log="$workspace/no-cache.log"
+    local visualize_source="$app_dir/resources/plugins/openai-bundled/plugins/visualize"
+    local visualize_cache="$fake_home/.codex/plugins/cache/openai-bundled/visualize/2.0.0"
+
+    mkdir -p "$source_plugin/.codex-plugin" "$fake_home"
+    printf '%s\n' '{"name":"sites","version":"1.2.3"}' > "$source_plugin/.codex-plugin/plugin.json"
+    printf '%s\n' "initial" > "$source_plugin/content.txt"
+    sed '/^hydrate_graphical_session_env$/,$d' "$REPO_DIR/launcher/start.sh.template" > "$launcher_defs"
+
+    (
+        export HOME="$fake_home"
+        export CODEX_HOME="$fake_home/.codex"
+        export CODEX_LINUX_APP_ID="codex-desktop"
+        export CODEX_LINUX_APP_DISPLAY_NAME="Codex Desktop"
+        export CODEX_LINUX_WEBVIEW_PORT="5175"
+        exec 7>&1 8>&2
+        # shellcheck disable=SC1090
+        source "$launcher_defs"
+        exec 1>&7 2>&8
+        SCRIPT_DIR="$app_dir"
+
+        sync_extra_bundled_plugin_cache > "$initial_log" 2>&1
+        printf '%s\n' "replacement" > "$source_plugin/content.txt"
+
+        mv() {
+            local args=("$@")
+            local offset=0
+            if [ "${args[0]}" = "--" ]; then
+                offset=1
+            fi
+            local source="${args[$offset]}"
+            local destination="${args[$((offset + 1))]}"
+            if [[ "$source" == *".tmp."* ]] && [ "$destination" = "$cache_plugin" ]; then
+                return 73
+            fi
+            command mv "$@"
+        }
+
+        sync_extra_bundled_plugin_cache > "$failure_log" 2>&1
+
+        rm -rf "$source_plugin"
+        mkdir -p "$visualize_source/.codex-plugin"
+        printf '%s\n' '{"name":"visualize","version":"2.0.0"}' > "$visualize_source/.codex-plugin/plugin.json"
+        printf '%s\n' "visualize" > "$visualize_source/content.txt"
+        sync_extra_bundled_plugin_cache > "$no_cache_log" 2>&1
+    )
+
+    assert_contains "$initial_log" "Extra bundled plugin cache synced from bundled resources"
+    assert_contains "$failure_log" "previous cache was restored"
+    assert_contains "$cache_plugin/content.txt" "initial"
+    assert_not_contains "$cache_plugin/content.txt" "replacement"
+    [ "$(readlink "$cache_root/latest")" = "1.2.3" ] || fail "Expected latest to keep the restored plugin version"
+    [ -L "$fake_home/.codex/.tmp/bundled-marketplaces/openai-bundled/plugins/sites" ] \
+        || fail "Expected marketplace plugin link to remain available"
+    [ -z "$(find "$cache_root" -mindepth 1 -maxdepth 1 -type d \( -name '*.tmp.*' -o -name '*.backup.*' \) -print -quit)" ] \
+        || fail "Expected failed extra plugin sync to clean temporary and backup directories"
+    assert_contains "$no_cache_log" "continuing without a new cache"
+    [ ! -e "$visualize_cache" ] || fail "Expected failed first cache install to leave no plugin payload"
+    [ ! -L "${visualize_cache%/*}/latest" ] || fail "Expected failed first cache install to leave no latest link"
+    [ ! -L "$fake_home/.codex/.tmp/bundled-marketplaces/openai-bundled/plugins/visualize" ] \
+        || fail "Expected failed first cache install to leave no marketplace link"
+    [ -z "$(find "${visualize_cache%/*}" -mindepth 1 -maxdepth 1 -type d \( -name '*.tmp.*' -o -name '*.backup.*' \) -print -quit)" ] \
+        || fail "Expected failed first cache install to clean temporary and backup directories"
+}
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
@@ -5365,6 +5477,295 @@ test_browser_plugin_renamed_upstream_staging() {
     assert_contains "$marketplace" '"path": "./plugins/browser"'
     assert_contains "$output_log" "Browser plugin staged from upstream DMG"
     assert_not_contains "$output_log" "Browser bundled plugin resources not present"
+}
+
+test_portable_bundled_plugins_staging() {
+    info "Checking portable upstream bundled plugin staging"
+    local workspace="$TMP_DIR/portable-bundled-plugins"
+    local app_dir="$workspace/ChatGPT.app"
+    local install_dir="$workspace/install"
+    local output_log="$workspace/output.log"
+    local marketplace="$install_dir/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
+    local plugins_dir="$install_dir/resources/plugins/openai-bundled/plugins"
+
+    mkdir -p "$workspace" "$install_dir/resources"
+    make_fake_portable_plugins_upstream_app "$app_dir"
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        INSTALL_DIR="$install_dir"
+        WORK_DIR="$workspace/work"
+        ARCH="x86_64"
+        ICON_SOURCE="$workspace/missing-icon.png"
+        CODEX_APP_ID="codex-desktop"
+        mkdir -p "$WORK_DIR"
+        warn() { echo "[WARN] $*" >&2; }
+        info() { echo "[INFO] $*" >&2; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        stage_linux_computer_use_plugin() { return 1; }
+        stage_browser_plugin_from_upstream() { return 1; }
+        stage_chrome_plugin_from_upstream() { return 1; }
+        install_browser_use_node_repl_resource() { return 0; }
+        install_bundled_plugin_resources "$app_dir"
+    ) >"$output_log" 2>&1
+
+    assert_file_exists "$plugins_dir/sites/.codex-plugin/plugin.json"
+    assert_file_exists "$plugins_dir/deep-research/.codex-plugin/plugin.json"
+    assert_file_exists "$plugins_dir/visualize/.codex-plugin/plugin.json"
+    assert_mode "$plugins_dir/sites/scripts/init-site.sh" "755"
+    [ ! -e "$plugins_dir/latex" ] || fail "Expected native LaTeX plugin to remain unstaged"
+    [ ! -e "$plugins_dir/record-and-replay" ] || fail "Expected native Record and Replay plugin to remain unstaged"
+    assert_contains "$output_log" "Portable bundled plugin sites staged from upstream DMG"
+    assert_contains "$output_log" "Portable bundled plugin deep-research staged from upstream DMG"
+    assert_contains "$output_log" "Portable bundled plugin visualize staged from upstream DMG"
+
+    node - "$marketplace" <<'NODE'
+const fs = require("fs");
+const marketplace = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const names = marketplace.plugins.map((plugin) => plugin.name);
+const expected = ["sites", "deep-research", "visualize"];
+if (JSON.stringify(names) !== JSON.stringify(expected)) {
+  throw new Error(`expected ${JSON.stringify(expected)}, got ${JSON.stringify(names)}`);
+}
+for (const plugin of marketplace.plugins) {
+  if (plugin.source?.source !== "local" || plugin.source.path !== `./plugins/${plugin.name}`) {
+    throw new Error(`unsafe marketplace source for ${plugin.name}`);
+  }
+}
+NODE
+    node --check "$plugins_dir/sites/mcp/server.mjs"
+    python3 -m py_compile "$plugins_dir/visualize/skills/visualize/scripts/render.py"
+}
+
+test_portable_bundled_plugins_reject_unsafe_content() {
+    info "Checking unsafe portable bundled plugin rejection"
+    local workspace="$TMP_DIR/portable-bundled-plugins-unsafe"
+    local app_dir="$workspace/ChatGPT.app"
+    local install_dir="$workspace/install"
+    local output_log="$workspace/output.log"
+    local source_plugins="$app_dir/Contents/Resources/plugins/openai-bundled/plugins"
+    local target_plugins="$install_dir/resources/plugins/openai-bundled/plugins"
+    local victim="$workspace/private.txt"
+
+    mkdir -p "$workspace" "$install_dir/resources"
+    make_fake_portable_plugins_upstream_app "$app_dir"
+    printf '%s\n' 'do-not-copy' > "$victim"
+    ln -s "$victim" "$source_plugins/sites/private-link"
+    printf '\x7fELF' > "$source_plugins/deep-research/native-helper"
+    chmod 0755 "$source_plugins/deep-research/native-helper"
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        INSTALL_DIR="$install_dir"
+        WORK_DIR="$workspace/work"
+        ARCH="x86_64"
+        ICON_SOURCE="$workspace/missing-icon.png"
+        CODEX_APP_ID="codex-desktop"
+        mkdir -p "$WORK_DIR"
+        warn() { echo "[WARN] $*" >&2; }
+        info() { echo "[INFO] $*" >&2; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        stage_linux_computer_use_plugin() { return 1; }
+        stage_browser_plugin_from_upstream() { return 1; }
+        stage_chrome_plugin_from_upstream() { return 1; }
+        install_browser_use_node_repl_resource() { return 0; }
+        install_bundled_plugin_resources "$app_dir"
+    ) >"$output_log" 2>&1
+
+    [ ! -e "$target_plugins/sites" ] || fail "Expected symlink-bearing Sites plugin to be rejected"
+    [ ! -e "$target_plugins/deep-research" ] || fail "Expected native Deep Research payload to be rejected"
+    assert_file_exists "$target_plugins/visualize/.codex-plugin/plugin.json"
+    assert_contains "$output_log" "symlink is not allowed: private-link"
+    assert_contains "$output_log" "native executable is not portable: native-helper"
+    assert_contains "$victim" "do-not-copy"
+}
+
+test_portable_bundled_plugin_validator_guards() {
+    info "Checking portable bundled plugin manifest and filesystem guards"
+    local workspace="$TMP_DIR/portable-bundled-plugin-validator-guards"
+    local base_plugin="$workspace/base"
+    local case_dir=""
+    local case_name=""
+    local output_log=""
+
+    mkdir -p "$base_plugin/.codex-plugin"
+    printf '%s\n' '{"name":"sites","version":"1.0.0"}' > "$base_plugin/.codex-plugin/plugin.json"
+    printf '%s\n' "portable" > "$base_plugin/content.txt"
+
+    # shellcheck disable=SC1091
+    source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+
+    for case_name in invalid-version manifest-symlink privileged-directory native-bundle named-pipe; do
+        case_dir="$workspace/$case_name"
+        output_log="$workspace/$case_name.log"
+        cp -R "$base_plugin" "$case_dir"
+
+        case "$case_name" in
+            invalid-version)
+                printf '%s\n' '{"name":"sites","version":"../invalid"}' > "$case_dir/.codex-plugin/plugin.json"
+                ;;
+            manifest-symlink)
+                printf '%s\n' '{"name":"sites","version":"1.0.0"}' > "$workspace/external-manifest.json"
+                rm "$case_dir/.codex-plugin/plugin.json"
+                ln -s "$workspace/external-manifest.json" "$case_dir/.codex-plugin/plugin.json"
+                ;;
+            privileged-directory)
+                mkdir "$case_dir/privileged"
+                chmod 2755 "$case_dir/privileged"
+                ;;
+            native-bundle)
+                mkdir "$case_dir/helper.app"
+                ;;
+            named-pipe)
+                mkfifo "$case_dir/channel"
+                ;;
+        esac
+
+        if validate_portable_bundled_plugin "$case_dir" sites >"$output_log" 2>&1; then
+            fail "Expected portable plugin validator to reject $case_name"
+        fi
+    done
+
+    assert_contains "$workspace/invalid-version.log" "plugin manifest version is missing or invalid"
+    assert_contains "$workspace/manifest-symlink.log" "plugin manifest cannot be a symlink"
+    assert_contains "$workspace/privileged-directory.log" "privileged mode is not allowed: privileged"
+    assert_contains "$workspace/native-bundle.log" "native bundle is not portable: helper.app"
+    assert_contains "$workspace/named-pipe.log" "non-regular file is not allowed: channel"
+}
+
+test_portable_bundled_plugin_stage_failures() {
+    info "Checking portable bundled plugin stage failure propagation"
+    local workspace="$TMP_DIR/portable-bundled-plugin-stage-failures"
+    local failure=""
+
+    for failure in sidecar-cleanup target-backup final-move; do
+        local case_dir="$workspace/$failure"
+        local app_dir="$case_dir/ChatGPT.app"
+        local source_plugin="$app_dir/Contents/Resources/plugins/openai-bundled/plugins/sites"
+        local target_plugins="$case_dir/target"
+        local output_log="$case_dir/output.log"
+
+        mkdir -p "$target_plugins"
+        make_fake_portable_plugins_upstream_app "$app_dir"
+        if [ "$failure" = "target-backup" ] || [ "$failure" = "final-move" ]; then
+            mkdir -p "$target_plugins/sites"
+            printf '%s\n' "keep-existing" > "$target_plugins/sites/existing.txt"
+        fi
+
+        if ! (
+            warn() { echo "[WARN] $*" >&2; }
+            info() { echo "[INFO] $*" >&2; }
+            # shellcheck disable=SC1091
+            source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+
+            case "$failure" in
+                sidecar-cleanup)
+                    remove_macos_sidecar_files() { return 71; }
+                    ;;
+                target-backup)
+                    mv() {
+                        local args=("$@")
+                        local offset=0
+                        if [ "${args[0]}" = "--" ]; then
+                            offset=1
+                        fi
+                        if [ "${args[$offset]}" = "$target_plugins/sites" ]; then
+                            return 72
+                        fi
+                        command mv "$@"
+                    }
+                    ;;
+                final-move)
+                    mv() {
+                        local args=("$@")
+                        local offset=0
+                        if [ "${args[0]}" = "--" ]; then
+                            offset=1
+                        fi
+                        local source="${args[$offset]}"
+                        local destination="${args[$((offset + 1))]}"
+                        if [[ "$source" == *".sites.tmp."* ]] && [ "$destination" = "$target_plugins/sites" ]; then
+                            return 73
+                        fi
+                        command mv "$@"
+                    }
+                    ;;
+            esac
+
+            if stage_portable_bundled_plugin_from_upstream "$source_plugin" "$target_plugins" sites; then
+                echo "stage unexpectedly succeeded for $failure" >&2
+                exit 1
+            fi
+        ) >"$output_log" 2>&1; then
+            fail "Expected $failure to propagate as a staging failure"
+        fi
+
+        assert_not_contains "$output_log" "Portable bundled plugin sites staged from upstream DMG"
+        [ -z "$(find "$target_plugins" -mindepth 1 -maxdepth 1 -type d \( -name '.sites.tmp.*' -o -name '.sites.backup.*' \) -print -quit)" ] \
+            || fail "Expected $failure staging and backup cleanup"
+
+        case "$failure" in
+            sidecar-cleanup)
+                assert_contains "$output_log" "Failed to clean macOS sidecar files for portable bundled plugin sites"
+                [ ! -e "$target_plugins/sites" ] || fail "Expected sidecar cleanup failure to leave no target"
+                ;;
+            target-backup)
+                assert_contains "$output_log" "Failed to preserve existing portable bundled plugin sites"
+                assert_contains "$target_plugins/sites/existing.txt" "keep-existing"
+                ;;
+            final-move)
+                assert_contains "$output_log" "previous target was restored"
+                assert_contains "$target_plugins/sites/existing.txt" "keep-existing"
+                ;;
+        esac
+    done
+}
+
+test_portable_bundled_plugin_marketplace_path_guard() {
+    info "Checking portable bundled plugin marketplace path guard"
+    local workspace="$TMP_DIR/portable-bundled-plugin-path-guard"
+    local marketplace="$workspace/marketplace.json"
+    local listed="$workspace/listed.txt"
+    local rewritten="$workspace/rewritten/.agents/plugins/marketplace.json"
+
+    mkdir -p "$workspace"
+    cat > "$marketplace" <<'JSON'
+{"plugins":[{"name":"sites","source":{"source":"local","path":"../../outside"},"category":"unsafe-first"},{"name":"sites","source":{"source":"local","path":"./plugins/sites"},"category":"safe-sites"},{"name":"sites","source":{"source":"local","path":"./plugins/sites"},"category":"duplicate-safe"},{"name":"deep-research","source":{"source":"git","path":"./plugins/deep-research"}},{"name":"visualize","source":{"source":"local","path":".\\plugins\\visualize"},"category":"safe-visualize"}]}
+JSON
+
+    (
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        list_portable_bundled_plugins "$marketplace"
+    ) > "$listed"
+
+    [ "$(grep -Fxc 'sites' "$listed")" -eq 1 ] || fail "Expected one safe Sites marketplace entry"
+    [ "$(grep -Fxc 'visualize' "$listed")" -eq 1 ] || fail "Expected one safe Visualize marketplace entry"
+    assert_not_contains "$listed" "deep-research"
+
+    (
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        write_bundled_plugins_marketplace "$marketplace" "$rewritten" 0 0 0 sites visualize
+    )
+    node - "$rewritten" <<'NODE'
+const fs = require("fs");
+const marketplace = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const byName = new Map(marketplace.plugins.map((plugin) => [plugin.name, plugin]));
+if (byName.get("sites")?.category !== "safe-sites") {
+  throw new Error("Sites metadata did not come from the accepted marketplace entry");
+}
+if (byName.get("visualize")?.category !== "safe-visualize") {
+  throw new Error("Visualize metadata did not come from the accepted marketplace entry");
+}
+for (const [name, plugin] of byName) {
+  if (plugin.source?.source !== "local" || plugin.source.path !== `./plugins/${name}`) {
+    throw new Error(`unsafe rewritten source for ${name}`);
+  }
+}
+NODE
 }
 
 test_browser_use_node_repl_glibc_pidfd_patch_static() {
@@ -7827,6 +8228,11 @@ main() {
     test_browser_use_node_repl_fallback_runtime
     test_browser_use_file_url_policy_patch_behavior
     test_browser_plugin_renamed_upstream_staging
+    test_portable_bundled_plugins_staging
+    test_portable_bundled_plugins_reject_unsafe_content
+    test_portable_bundled_plugin_validator_guards
+    test_portable_bundled_plugin_stage_failures
+    test_portable_bundled_plugin_marketplace_path_guard
     test_browser_use_node_repl_glibc_pidfd_patch_static
     test_browser_use_node_repl_ldd_output_compatibility
     test_chrome_plugin_staging
@@ -7834,6 +8240,7 @@ main() {
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
     test_launcher_managed_node_handles_unset_path
+    test_launcher_extra_bundled_plugin_cache_rollback
     test_launcher_rejects_missing_webview_entrypoint
     test_launcher_template_sanity
     test_launcher_cli_resolution_policy
