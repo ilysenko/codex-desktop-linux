@@ -11,6 +11,7 @@ const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
+  applyFramelessTitlebarApplicationMenuPatch,
   applyFramelessTitlebarBranchPatch,
   applyFramelessTitlebarMainPatch,
   applyFramelessTitlebarOverlaySyncPatch,
@@ -92,6 +93,7 @@ test("frameless-titlebar removes current Linux overlay controls without changing
     "setWindowZoom(e,t){let n=c.BrowserWindow.fromWebContents(e),r=n&&this.windowAppearances.get(n.id);n==null||r!==`primary`&&r!==`quickChat`||(process.platform===`darwin`?n.setWindowButtonPosition(A9(t)):(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(process.platform===`linux`?codexLinuxTitleBarOverlay(t):j9(t))))}",
     "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`quickChat`)return;let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(process.platform===`linux`?codexLinuxTitleBarOverlay(this.windowZooms.get(e.id)):j9(this.windowZooms.get(e.id)))};return c.nativeTheme.on(`updated`,n),n(),()=>{c.nativeTheme.off(`updated`,n)}}",
     "(process.platform===`win32`||process.platform===`linux`)&&k.removeMenu(),",
+    "let Bt=c.Menu.buildFromTemplate(zt);c.Menu.setApplicationMenu(Bt);",
   ].join("");
   let patched;
   const warnings = captureWarnings(() => {
@@ -116,6 +118,7 @@ test("frameless-titlebar removes current Linux overlay controls without changing
     patched,
     /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&k\.removeMenu\(\),/,
   );
+  assert.match(patched, /c\.Menu\.setApplicationMenu\(process\.platform===`linux`\?null:Bt\)/);
   assert.doesNotMatch(patched, /titleBarOverlay:codexLinuxTitleBarOverlay/);
   assert.doesNotMatch(patched, /process\.platform===`linux`[^;]*setTitleBarOverlay/);
 });
@@ -138,6 +141,18 @@ test("frameless-titlebar composes with the current native-titlebar patch shape",
     /n===`linux`\?\{titleBarStyle:`hidden`,\.\.\.e===`quickChat`\?\{resizable:!0\}:\{\}\}/,
   );
   assert.doesNotMatch(patched, /titleBarOverlay:n===`linux`/);
+});
+
+test("frameless-titlebar suppresses the global Electron application menu on Linux", () => {
+  const source =
+    "let Bt=c.Menu.buildFromTemplate(zt);c.Menu.setApplicationMenu(Bt);";
+
+  const patched = applyPatchTwice(applyFramelessTitlebarApplicationMenuPatch, source);
+
+  assert.equal(
+    patched,
+    "let Bt=c.Menu.buildFromTemplate(zt);c.Menu.setApplicationMenu(process.platform===`linux`?null:Bt);",
+  );
 });
 
 test("frameless-titlebar reports current main-process drift", () => {

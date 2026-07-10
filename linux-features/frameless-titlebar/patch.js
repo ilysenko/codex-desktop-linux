@@ -72,9 +72,19 @@ function applyFramelessTitlebarOverlaySyncPatch(currentSource) {
   return patchedSource;
 }
 
+function applyFramelessTitlebarApplicationMenuPatch(currentSource) {
+  return currentSource.replace(
+    /([A-Za-z_$][\w$]*)\.Menu\.setApplicationMenu\(([A-Za-z_$][\w$]*)\)/g,
+    (_match, electronAlias, menuAlias) =>
+      `${electronAlias}.Menu.setApplicationMenu(process.platform===\`linux\`?null:${menuAlias})`,
+  );
+}
+
 function applyFramelessTitlebarMainPatch(currentSource) {
-  return applyFramelessTitlebarOverlaySyncPatch(
-    applyFramelessTitlebarBranchPatch(currentSource),
+  return applyFramelessTitlebarApplicationMenuPatch(
+    applyFramelessTitlebarOverlaySyncPatch(
+      applyFramelessTitlebarBranchPatch(currentSource),
+    ),
   );
 }
 
@@ -175,6 +185,7 @@ const patches = [
 
 module.exports = {
   descriptors: patches,
+  applyFramelessTitlebarApplicationMenuPatch,
   applyFramelessTitlebarBranchPatch,
   applyFramelessTitlebarMainPatch,
   applyFramelessTitlebarOverlaySyncPatch,
