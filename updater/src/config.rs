@@ -402,7 +402,7 @@ fn write_settings_bool_at_path(
         fs::create_dir_all(dir).with_context(|| format!("Failed to create {}", dir.display()))?;
     }
     let _lock = SettingsFileLock::acquire(path, lock_timeout, stale_after)?;
-    let mut object = fs::read_to_string(&path)
+    let mut object = fs::read_to_string(path)
         .ok()
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
         .and_then(|value| value.as_object().cloned())
