@@ -1,5 +1,39 @@
 "use strict";
 
+const MENU_SHADOW_STYLE_ID = "codex-linux-frameless-menu-shadow-style";
+const MENU_SHADOW_RUNTIME_MARKER = "codexLinuxFramelessMenuShadowStyleRuntime";
+const MENU_SHADOW_SELECTORS = [
+  "[data-radix-popper-content-wrapper]>*",
+  "[role=\"menu\"][data-side]",
+  "[role=\"menu\"][data-state]",
+  "[data-radix-context-menu-content]",
+  "[data-radix-dropdown-menu-content]",
+  "[data-radix-menu-content]",
+].join(",");
+const MENU_SHADOW_CSS = `${MENU_SHADOW_SELECTORS}{box-shadow:none!important;filter:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}`;
+
+function framelessTitlebarMenuShadowRuntimeSource() {
+  return [
+    `;(()=>{const ${MENU_SHADOW_RUNTIME_MARKER}=true;`,
+    `const STYLE_ID=${JSON.stringify(MENU_SHADOW_STYLE_ID)};`,
+    `const CSS=${JSON.stringify(MENU_SHADOW_CSS)};`,
+    `function install(){if(typeof document==="undefined")return;const target=document.head||document.documentElement;if(!target)return;let style=document.getElementById(STYLE_ID);if(style){style.textContent!==CSS&&(style.textContent=CSS);return}style=document.createElement("style");style.id=STYLE_ID;style.textContent=CSS;target.appendChild(style)}`,
+    `document.readyState==="loading"&&document.addEventListener("DOMContentLoaded",install,{once:true});install();})();`,
+  ].join("");
+}
+
+function applyFramelessTitlebarMenuShadowPatch(currentSource) {
+  if (
+    typeof currentSource !== "string" ||
+    currentSource.includes(MENU_SHADOW_RUNTIME_MARKER) ||
+    currentSource.includes(MENU_SHADOW_STYLE_ID)
+  ) {
+    return currentSource;
+  }
+
+  return `${currentSource}\n${framelessTitlebarMenuShadowRuntimeSource()}`;
+}
+
 function applyFramelessTitlebarBranchPatch(currentSource) {
   const splitLinuxTitlebarRegex =
     /([A-Za-z_$][\w$]*)===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:codexLinuxTitleBarOverlay\(([A-Za-z_$][\w$]*)\),(\.\.\.[A-Za-z_$][\w$]*===`quickChat`\?\{resizable:!0\}:\{\})\}:/g;
@@ -160,7 +194,7 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
     console.warn("WARN: Could not identify frameless titlebar webview target - skipping frameless webview patch");
   }
 
-  return patchedSource;
+  return applyFramelessTitlebarMenuShadowPatch(patchedSource);
 }
 
 const patches = [
@@ -184,10 +218,16 @@ const patches = [
 ];
 
 module.exports = {
+  MENU_SHADOW_CSS,
+  MENU_SHADOW_RUNTIME_MARKER,
+  MENU_SHADOW_SELECTORS,
+  MENU_SHADOW_STYLE_ID,
   descriptors: patches,
   applyFramelessTitlebarApplicationMenuPatch,
   applyFramelessTitlebarBranchPatch,
   applyFramelessTitlebarMainPatch,
+  applyFramelessTitlebarMenuShadowPatch,
   applyFramelessTitlebarOverlaySyncPatch,
   applyFramelessTitlebarWebviewPatch,
+  framelessTitlebarMenuShadowRuntimeSource,
 };

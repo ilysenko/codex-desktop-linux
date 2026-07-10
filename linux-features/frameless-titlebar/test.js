@@ -11,11 +11,17 @@ const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
+  MENU_SHADOW_CSS,
+  MENU_SHADOW_RUNTIME_MARKER,
+  MENU_SHADOW_SELECTORS,
+  MENU_SHADOW_STYLE_ID,
   applyFramelessTitlebarApplicationMenuPatch,
   applyFramelessTitlebarBranchPatch,
   applyFramelessTitlebarMainPatch,
+  applyFramelessTitlebarMenuShadowPatch,
   applyFramelessTitlebarOverlaySyncPatch,
   applyFramelessTitlebarWebviewPatch,
+  framelessTitlebarMenuShadowRuntimeSource,
 } = require("./patch.js");
 
 function applyPatchTwice(patchFn, source) {
@@ -153,6 +159,26 @@ test("frameless-titlebar suppresses the global Electron application menu on Linu
     patched,
     "let Bt=c.Menu.buildFromTemplate(zt);c.Menu.setApplicationMenu(process.platform===`linux`?null:Bt);",
   );
+});
+
+test("frameless-titlebar injects a webview style to remove menu shadows", () => {
+  const source = "function app(){return `ready`}";
+  const runtimeSource = framelessTitlebarMenuShadowRuntimeSource();
+
+  assert.match(runtimeSource, new RegExp(MENU_SHADOW_RUNTIME_MARKER));
+  assert.match(runtimeSource, new RegExp(MENU_SHADOW_STYLE_ID));
+  assert.match(runtimeSource, /data-radix-popper-content-wrapper/);
+  assert.match(runtimeSource, /box-shadow:none!important/);
+
+  const patched = applyPatchTwice(applyFramelessTitlebarMenuShadowPatch, source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, new RegExp(MENU_SHADOW_RUNTIME_MARKER));
+  assert.match(patched, new RegExp(MENU_SHADOW_STYLE_ID));
+  assert.match(patched, /box-shadow:none!important/);
+  assert.equal((patched.match(new RegExp(MENU_SHADOW_RUNTIME_MARKER, "g")) ?? []).length, 1);
+  assert.match(MENU_SHADOW_SELECTORS, /^\[data-radix-popper-content-wrapper\]>\*,\[role="menu"\]\[data-side\]/);
+  assert.equal(MENU_SHADOW_CSS.includes("[role=\"menu\"][data-state]"), true);
 });
 
 test("frameless-titlebar reports current main-process drift", () => {
