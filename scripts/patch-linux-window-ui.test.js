@@ -4261,9 +4261,13 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
     assert.match(linuxDesktopSource, /import\{r as SettingsRow\}from"\.\/settings-row-A\.js"/);
     assert.match(linuxDesktopSource, /import\{z as __post\}from"\.\/shared-app-A\.js"/);
     assert.match(linuxDesktopSource, /import\{t as Toggle\}from"\.\/toggle-A\.js"/);
+    assert.doesNotMatch(linuxDesktopSource, /React\.use(State|Effect|Callback)/);
+    assert.doesNotMatch(linuxDesktopSource, /function useLinuxSetting/);
+    assert.match(linuxDesktopSource, /class LinuxToggle extends React\.Component/);
+    assert.match(linuxDesktopSource, /class LinuxBuildInfoPanel extends React\.Component/);
     assert.match(
       linuxDesktopSource,
-      /control:\$\.jsx\(Toggle,\{checked:value,disabled:isLoading,onChange:update,ariaLabel:label\}\)/,
+      /control:\$\.jsx\(Toggle,\{checked:value,disabled:isLoading,onChange:this\.update,ariaLabel:label\}\)/,
     );
     assert.doesNotMatch(linuxDesktopSource, /function LinuxSwitch/);
     assert.doesNotMatch(linuxDesktopSource, /bg-token-text-primary/);
@@ -4362,7 +4366,7 @@ test("uses a themed fallback toggle when upstream settings toggle is unavailable
     assert.match(linuxDesktopSource, /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js"/);
     assert.match(
       linuxDesktopSource,
-      /control:\$\.jsx\(Toggle,\{checked:value,disabled:isLoading,onChange:update,ariaLabel:label\}\)/,
+      /control:\$\.jsx\(Toggle,\{checked:value,disabled:isLoading,onChange:this\.update,ariaLabel:label\}\)/,
     );
     assert.doesNotMatch(linuxDesktopSource, /function LinuxSwitch/);
     assert.doesNotMatch(linuxDesktopSource, /bg-token-text-primary/);
@@ -4451,7 +4455,7 @@ test("infers the current upstream settings toggle from settings row controls", (
     assert.match(linuxDesktopSource, /import\{vn as Toggle\}from"\.\/shared-toggle-A\.js"/);
     assert.match(
       linuxDesktopSource,
-      /control:\$\.jsx\(Toggle,\{checked:value,disabled:isLoading,onChange:update,ariaLabel:label\}\)/,
+      /control:\$\.jsx\(Toggle,\{checked:value,disabled:isLoading,onChange:this\.update,ariaLabel:label\}\)/,
     );
     assert.doesNotMatch(linuxDesktopSource, /function LinuxSwitch/);
     assert.doesNotMatch(linuxDesktopSource, /bg-token-text-primary/);

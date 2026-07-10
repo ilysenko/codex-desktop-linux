@@ -35,6 +35,7 @@ const {
   applyLinuxRemoteMobileChromeBridgePatch,
   applyLinuxRemoteMobileConversationHydrationPatch,
   applyLinuxRemoteControlStatusReadGuardPatch,
+  applyLinuxRemoteControlStatusWaitPatch,
   applyLinuxRemoteMobileProjectlessRemoteTaskPatch,
   applyLinuxRemoteConnectionsRefreshPatch,
   applyLinuxRemoteControlSettingsUxPatch,
@@ -47,6 +48,8 @@ const REMOTE_CONTROL_GATE_ASSET =
   "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-test.js";
 const APP_SERVER_MANAGER_ASSET =
   "app-initial~app-main~hotkey-window-thread-page~thread-app-shell-chrome~header~remote-conver~test.js";
+const REMOTE_CONTROL_STATUS_ASSET =
+  "app-initial~app-main~pull-request-code-review~onboarding-page~hotkey-window-thread-page~cha~b76hmflu-test.js";
 const PROJECTLESS_REMOTE_TASK_ASSET =
   REMOTE_CONTROL_GATE_ASSET;
 
@@ -289,6 +292,14 @@ function syntheticAppServerManagerStatusBundle() {
     "function TO(e,t,n){return e.current(t)===n}",
     "function PO(e,t,n){return e.set(bO,t,n)}",
     "function SO(e,t){let n=t.getHostId(),r=wO(e,n),i=e.get(bO,n);t.addNotificationCallback(`remoteControl/status/changed`,({params:t})=>{TO(e,n,r)&&PO(e,n,t)}),t.sendRequest(`remoteControl/status/read`,void 0).then(t=>{e.get(bO,n)===i&&TO(e,n,r)&&PO(e,n,t)}).catch(t=>{TO(e,n,r)&&z.error(`Failed to read remote-control status`,{safe:{},sensitive:{error:t}})})}",
+  ].join("");
+}
+
+function syntheticCurrentStatusWaitBundle() {
+  return [
+    "function A5t(e,t,{ignoreCurrentError:n=!1}={}){return new Promise((n,r)=>{let a=!1,o,s=e=>{a||(a=!0,clearTimeout(c),o?.(),e instanceof Error?r(e):n(e))},c=setTimeout(()=>{s(Error(`Timed out waiting for remote control to connect`))},F5t);o=e.watch(()=>{})})}",
+    "function V5t(e){return e.subscribe(`remoteControl/status/changed`,()=>{})}",
+    "var F5t,SP,CP,wP;F5t=5e3,SP=va(G,e=>null),CP=va(G,e=>!1),wP=ya(G,(e,{get:t})=>t(SP,e));",
   ].join("");
 }
 
@@ -711,6 +722,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-connections-refresh",
       "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration",
       "feature:remote-mobile-control:linux-remote-control-status-read-guard",
+      "feature:remote-mobile-control:linux-remote-control-status-wait",
       "feature:remote-mobile-control:linux-remote-control-enable-for-host-params",
       "feature:remote-mobile-control:linux-remote-control-enablement-bridge",
       "feature:remote-mobile-control:linux-remote-mobile-active-status",
@@ -722,6 +734,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "main-bundle",
       "main-bundle",
       "extracted-app:post-webview",
+      "webview-asset",
       "webview-asset",
       "webview-asset",
       "webview-asset",
@@ -750,8 +763,16 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       descriptor.id === "feature:remote-mobile-control:linux-remote-control-status-read-guard"
     );
     assert.ok(statusGuardDescriptor);
-    assert.equal(statusGuardDescriptor.pattern.test(APP_SERVER_MANAGER_ASSET), true);
+    assert.equal(statusGuardDescriptor.pattern.test(REMOTE_CONTROL_STATUS_ASSET), true);
+    assert.equal(statusGuardDescriptor.pattern.test(APP_SERVER_MANAGER_ASSET), false);
     assert.equal(statusGuardDescriptor.pattern.test("app-server-manager-signals-test.js"), false);
+
+    const statusWaitDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-control-status-wait"
+    );
+    assert.ok(statusWaitDescriptor);
+    assert.equal(statusWaitDescriptor.pattern.test(REMOTE_CONTROL_STATUS_ASSET), true);
+    assert.equal(statusWaitDescriptor.pattern.test(APP_SERVER_MANAGER_ASSET), false);
 
     const hydrationDescriptor = descriptors.find((descriptor) =>
       descriptor.id === "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration"
@@ -2055,6 +2076,28 @@ test("Linux remote-control status guard skips remote-control environment status 
   assert.equal(codexLinuxRemoteControlShouldReadStatus("local"), true);
 });
 
+test("Linux remote-control status wait supports the current 26.707 app bundle", () => {
+  const source = syntheticCurrentStatusWaitBundle();
+  const patched = applyLinuxRemoteControlStatusWaitPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteControlStatusWaitMs/);
+  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)\?3e4:5e3/);
+  assert.equal(applyLinuxRemoteControlStatusWaitPatch(patched), patched);
+});
+
+test("Linux remote-control status wait ignores matching atom initializer decoys", () => {
+  const decoy =
+    "var D,A,B,C;D=5e3,A=va(X,e=>null),B=va(X,e=>!1),C=ya(X,(e,{get:t})=>t(A,e));";
+  const patched = applyLinuxRemoteControlStatusWaitPatch(decoy + syntheticCurrentStatusWaitBundle());
+
+  assert.match(patched, /D=5e3,A=va\(X,e=>null\)/);
+  assert.match(
+    patched,
+    /F5t=typeof navigator!=`undefined`&&navigator\.userAgent\.includes\(`Linux`\)\?3e4:5e3/,
+  );
+});
+
 test("Linux remote-control settings UX patch warns when SSH release handling drifts after partial patching", () => {
   const source = (syntheticSettingsBundle() + syntheticSshInstallSettingsBundle()).replace(
     "installedCodexVersion:h",
@@ -2431,7 +2474,11 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
         fs.writeFileSync(
           path.join(assetsDir, APP_SERVER_MANAGER_ASSET),
-          syntheticAppServerManagerSignalsBundle() + syntheticAppServerManagerStatusBundle(),
+          syntheticAppServerManagerSignalsBundle(),
+        );
+        fs.writeFileSync(
+          path.join(assetsDir, REMOTE_CONTROL_STATUS_ASSET),
+          syntheticAppServerManagerStatusBundle() + syntheticCurrentStatusWaitBundle(),
         );
         fs.writeFileSync(
           path.join(assetsDir, "app-server-manager-signals-test.js"),
@@ -2479,6 +2526,10 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           path.join(assetsDir, APP_SERVER_MANAGER_ASSET),
           "utf8",
         );
+        const patchedStatusFile = fs.readFileSync(
+          path.join(assetsDir, REMOTE_CONTROL_STATUS_ASSET),
+          "utf8",
+        );
         const patchedSidebarProjectGroupsFile = fs.readFileSync(
           path.join(assetsDir, PROJECTLESS_REMOTE_TASK_ASSET),
           "utf8",
@@ -2500,7 +2551,8 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedMobileConnectedSettingsFile, /apps on this Linux desktop/);
         assert.match(patchedSignalsFile, /codexLinuxRemoteMobileHydrateUnknownTurn/);
         assert.match(patchedSignalsFile, /codexLinuxRemoteMobileThreadRuntimeStatus/);
-        assert.match(patchedSignalsFile, /codexLinuxRemoteControlShouldReadStatus/);
+        assert.match(patchedStatusFile, /codexLinuxRemoteControlShouldReadStatus/);
+        assert.match(patchedStatusFile, /codexLinuxRemoteControlStatusWaitMs/);
         assert.match(patchedSidebarProjectGroupsFile, /codexLinuxRemoteMobileProjectlessRemoteTaskId/);
         assert.match(patchedAppMainFile, /codexLinuxRemoteControlEnablementBridge/);
         assert.match(patchedAppMainFile, /codexLinuxRemoteMobileActiveStatus/);
@@ -2585,6 +2637,12 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.ok(
           report.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-control-status-read-guard" &&
+            patch.status === "applied",
+          ),
+        );
+        assert.ok(
+          report.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-control-status-wait" &&
             patch.status === "applied",
           ),
         );
