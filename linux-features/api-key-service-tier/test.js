@@ -8,12 +8,20 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  createPatchReport,
+} = require("../../scripts/lib/patch-report.js");
+const {
+  patchExtractedApp,
+} = require("../../scripts/patches/runner.js");
+const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
   applyApiKeyModelMarkerPatch,
   applyApiKeyServiceTierPatch,
   applyApiKeyServiceTierGatePatch,
+  applyCurrentGateAndModelPatch,
+  applyCurrentFallbackFastTierPatch,
   applyFallbackFastTierPatch,
   descriptors,
   hasApiKeyServiceTierGateShape,
@@ -67,18 +75,119 @@ test("api-key-service-tier stays disabled until listed in features.json", () => 
     const loaded = loadLinuxFeaturePatchDescriptors({ featuresRoot });
     assert.deepEqual(
       loaded.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
-      [["feature:api-key-service-tier:api-key-service-tier-ui", "webview-asset", "optional"]],
+      [
+        ["feature:api-key-service-tier:api-key-service-tier-gate-model", "webview-asset", "optional"],
+        ["feature:api-key-service-tier:api-key-service-tier-fallback", "webview-asset", "optional"],
+      ],
     );
   });
 });
 
-test("descriptor is optional and targets app main webview chunks", () => {
+test("descriptors are optional and target only the two current app bundles", () => {
   assert.deepEqual(
     descriptors.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
-    [["api-key-service-tier-ui", "webview-asset", "optional"]],
+    [
+      ["api-key-service-tier-gate-model", "webview-asset", "optional"],
+      ["api-key-service-tier-fallback", "webview-asset", "optional"],
+    ],
   );
-  assert.equal(descriptors[0].pattern.test("app-initial~app-main~onboarding-page-abc.js"), true);
-  assert.equal(descriptors[0].pattern.test("settings-page-abc.js"), false);
+  assert.equal(
+    descriptors[0].pattern.test(
+      "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~k0ede4gb-C17KDkOa.js",
+    ),
+    true,
+  );
+  assert.equal(
+    descriptors[1].pattern.test(
+      "app-initial~app-main~pull-request-code-review~onboarding-page~hotkey-window-thread-page~cha~b76hmflu-y0KJWbm3.js",
+    ),
+    true,
+  );
+  assert.equal(descriptors[0].pattern.test("app-initial~app-main~onboarding-page-abc.js"), false);
+  assert.equal(descriptors[1].pattern.test("app-initial~app-main~onboarding-page-abc.js"), false);
+});
+
+test("current target wrappers warn when an exact contract disappears", () => {
+  assert.deepEqual(captureWarnings(() => {
+    assert.equal(applyCurrentGateAndModelPatch("function driftedGateAndModel(){}"), "function driftedGateAndModel(){}");
+  }), [
+    "WARN: Could not identify current service tier auth gate - skipping API key service tier gate patch",
+    "WARN: Could not identify current model list mapping - skipping API key model service tier marker patch",
+  ]);
+  assert.deepEqual(captureWarnings(() => {
+    assert.equal(applyCurrentFallbackFastTierPatch("function driftedFallback(){}"), "function driftedFallback(){}");
+  }), [
+    "WARN: Could not identify current service tier option helpers - skipping API key fallback fast tier patch",
+  ]);
+});
+
+test("partial current drift is reported when the other exact target still applies", () => {
+  withFeatureConfig(["api-key-service-tier"], () => {
+    const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "api-key-service-tier-partial-drift-"));
+    try {
+      const assetsDir = path.join(tempApp, "webview", "assets");
+      fs.mkdirSync(assetsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(
+          assetsDir,
+          "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~k0ede4gb-drifted.js",
+        ),
+        "function driftedGateAndModel(){return `priority_mode reasoningEfforts`}",
+      );
+      fs.writeFileSync(
+        path.join(
+          assetsDir,
+          "app-initial~app-main~pull-request-code-review~onboarding-page~hotkey-window-thread-page~cha~b76hmflu-current.js",
+        ),
+        [
+          "let defaultServiceTier=null;",
+          "function pQ(e,t){return t==null?null:t===`fast`?mQ(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
+          "function tEe(e){return[{description:yQ.standardDescription,iconKind:null,label:yQ.standardLabel,tier:null,value:null},...(e?.serviceTiers??[]).map(e=>({description:eEe(e),iconKind:fQ(e.id,e.name),label:$Te(e),tier:e,value:e.id}))]}",
+          "function mQ(e){return e?.serviceTiers?.find(e=>fQ(e.id,e.name)===`fast`||e.name.trim().toLowerCase()===`priority`)??null}",
+        ].join(""),
+      );
+
+      const report = createPatchReport();
+      const warnings = captureWarnings(() => patchExtractedApp(tempApp, { report }));
+      const gateModel = report.patches.find(
+        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-gate-model",
+      );
+      const fallback = report.patches.find(
+        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-fallback",
+      );
+
+      assert.ok(warnings.some((warning) => warning.includes("current service tier auth gate")));
+      assert.ok(warnings.some((warning) => warning.includes("current model list mapping")));
+      assert.equal(gateModel?.status, "skipped-optional");
+      assert.equal(fallback?.status, "applied");
+    } finally {
+      fs.rmSync(tempApp, { recursive: true, force: true });
+    }
+  });
+});
+
+test("a missing exact current target gets its own skipped report entry", () => {
+  withFeatureConfig(["api-key-service-tier"], () => {
+    const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "api-key-service-tier-missing-target-"));
+    try {
+      fs.mkdirSync(path.join(tempApp, "webview", "assets"), { recursive: true });
+      const report = createPatchReport();
+      const warnings = captureWarnings(() => patchExtractedApp(tempApp, { report }));
+      const gateModel = report.patches.find(
+        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-gate-model",
+      );
+      const fallback = report.patches.find(
+        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-fallback",
+      );
+
+      assert.ok(warnings.some((warning) => warning.includes("current API key service tier gate/model bundle")));
+      assert.ok(warnings.some((warning) => warning.includes("current API key service tier fallback bundle")));
+      assert.equal(gateModel?.status, "skipped-optional");
+      assert.equal(fallback?.status, "skipped-optional");
+    } finally {
+      fs.rmSync(tempApp, { recursive: true, force: true });
+    }
+  });
 });
 
 test("service tier auth gate allows API-key hosts while preserving ChatGPT requirements", () => {
