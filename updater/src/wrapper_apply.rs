@@ -506,7 +506,7 @@ async fn cached_or_downloaded_dmg(
 fn derive_package_version(dmg_path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
     let file = fs::File::open(dmg_path)
-        .with_context(|| format!("Failed to read {}", dmg_path.display()))?;
+        .with_context(|| format!("Failed to open {}", dmg_path.display()))?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
