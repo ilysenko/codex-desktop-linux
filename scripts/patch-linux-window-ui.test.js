@@ -1129,6 +1129,13 @@ function currentChromeNativeHostRuntimeBundleFixture() {
   ].join("");
 }
 
+function currentBrowserUseTrustedHashesRuntimeBuilderFixture() {
+  return "\"use strict\";let l=require(`node:fs`),s=require(`node:path`),u=require(`node:crypto`);function build({codexHome:t,nodePath:i,nodeReplPath:a,trustedBrowserClientSha256s:h=[],shouldUseWslPaths:f}){return h}";
+}
+
+const currentBrowserUseTrustedHashesInsertionRegex =
+  /trustedBrowserClientSha256s:h=\[\],shouldUseWslPaths:f\}\)\{h=codexLinuxTrustedBrowserClientSha256s\(h\);return h/;
+
 function electron42BrowserUseRuntimeResolverBundleFixture() {
   return [
     "let s=require(`node:path`),l=require(`node:fs`);",
@@ -6709,9 +6716,8 @@ test("uses xdg-open path when CODEX_LINUX_DISABLE_EXTERNAL_OPEN_PATCH is not 1",
   assert.equal(spawnCalls[0].command, "xdg-open");
 });
 
-test("trusts the current Browser Use setup function", () => {
-  const source =
-    "\"use strict\";let l=require(`node:fs`),s=require(`node:path`),u=require(`node:crypto`),d=[`upstream-hash`];async function build({resourcesPath:p,trustedBrowserClientSha256s:h=d}){return h}";
+test("trusts the current direct Browser Use node_repl runtime config builder", () => {
+  const source = currentBrowserUseTrustedHashesRuntimeBuilderFixture();
 
   const { value: patched, warnings } = captureWarns(() =>
     applyPatchTwice(applyBrowserUseNodeReplApprovalPatch, source),
@@ -6719,14 +6725,22 @@ test("trusts the current Browser Use setup function", () => {
 
   assert.deepEqual(warnings, []);
   assert.doesNotMatch(patched, /tools:\{js:\{approval_mode:`approve`\}\}/);
-  assert.match(
-    patched,
-    /trustedBrowserClientSha256s:h=codexLinuxTrustedBrowserClientSha256s\(d,p\)/,
-  );
+  assert.match(patched, currentBrowserUseTrustedHashesInsertionRegex);
   assert.equal(
     (patched.match(/function codexLinuxTrustedBrowserClientSha256s/g) || []).length,
     1,
   );
+});
+
+test("ignores the removed Browser Use async trusted-hash setup shape", () => {
+  const source =
+    "\"use strict\";let l=require(`node:fs`),s=require(`node:path`),u=require(`node:crypto`),d=[`upstream-hash`];async function build({resourcesPath:p,trustedBrowserClientSha256s:h=d}){return h}";
+  const { value, warnings } = captureWarns(() =>
+    applyBrowserUseNodeReplApprovalPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, []);
 });
 
 test("ignores Browser Use schema-only trusted hash fields", () => {
@@ -6749,7 +6763,7 @@ test("patches re-chunked Browser Use trust hash and approval assets", () => {
     const srcChunk = path.join(buildDir, "src-current.js");
     fs.writeFileSync(
       mainChunk,
-      "\"use strict\";let l=require(`node:fs`),s=require(`node:path`),u=require(`node:crypto`),d=[`upstream-hash`];async function build({resourcesPath:p,trustedBrowserClientSha256s:h=d}){return h}",
+      currentBrowserUseTrustedHashesRuntimeBuilderFixture(),
       "utf8",
     );
     fs.writeFileSync(
@@ -6764,17 +6778,14 @@ test("patches re-chunked Browser Use trust hash and approval assets", () => {
     const patchedMain = fs.readFileSync(mainChunk, "utf8");
     const patchedSrc = fs.readFileSync(srcChunk, "utf8");
     assert.match(patchedMain, /function codexLinuxTrustedBrowserClientSha256s/);
-    assert.match(
-      patchedMain,
-      /trustedBrowserClientSha256s:h=codexLinuxTrustedBrowserClientSha256s\(d,p\)/,
-    );
+    assert.match(patchedMain, currentBrowserUseTrustedHashesInsertionRegex);
     assert.match(patchedSrc, /tools:\{js:\{approval_mode:`approve`\}\}/);
   } finally {
     fs.rmSync(extractedDir, { recursive: true, force: true });
   }
 });
 
-test("trusts Linux patched bundled Browser Use clients through the current setup function", async () => {
+test("trusts Linux patched bundled Browser Use clients through the current direct builder", async () => {
   const resourcesRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-current-browser-client-hash-"));
   try {
     const browserClient = path.join(
@@ -6801,26 +6812,24 @@ test("trusts Linux patched bundled Browser Use clients through the current setup
     fs.writeFileSync(chromeClient, "patched current chrome client\n", "utf8");
     const browserHash = cryptoHash("patched current browser client\n");
     const chromeHash = cryptoHash("patched current chrome client\n");
-    const source =
-      "\"use strict\";let o=require(`node:fs`),a=require(`node:path`),s=require(`node:crypto`),d=[`upstream-hash`];async function build({resourcesPath:p,trustedBrowserClientSha256s:h=d}){return h}";
+    const source = currentBrowserUseTrustedHashesRuntimeBuilderFixture();
 
     const patched = applyPatchTwice(applyBrowserUseNodeReplApprovalPatch, source);
 
     assert.match(patched, /^"use strict";function codexLinuxTrustedBrowserClientSha256s/);
     assert.doesNotMatch(patched, /tools:\{js:\{approval_mode:`approve`\}\}/);
-    assert.match(
-      patched,
-      /trustedBrowserClientSha256s:h=codexLinuxTrustedBrowserClientSha256s\(d,p\)/,
-    );
+    assert.match(patched, currentBrowserUseTrustedHashesInsertionRegex);
     assert.equal(
       (patched.match(/function codexLinuxTrustedBrowserClientSha256s/g) || []).length,
       1,
     );
-    assert.doesNotMatch(patched, /for\(let a of/);
-    const linuxHashes = await vm.runInNewContext(`${patched};build({resourcesPath:process.resourcesPath});`, {
-      require,
-      process: { platform: "linux", resourcesPath: resourcesRoot },
-    });
+    const linuxHashes = await vm.runInNewContext(
+      `${patched};build({trustedBrowserClientSha256s:[\`upstream-hash\`]});`,
+      {
+        require,
+        process: { platform: "linux", resourcesPath: resourcesRoot },
+      },
+    );
     assert.deepEqual(Array.from(linuxHashes), ["upstream-hash", browserHash, chromeHash]);
   } finally {
     fs.rmSync(resourcesRoot, { recursive: true, force: true });

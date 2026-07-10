@@ -10,21 +10,27 @@ const {
 function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   let patchedSource = currentSource;
   let patchedTrustedHashes = false;
-  const hasTrustedHashesSetup =
-    /async function [A-Za-z_$][\w$]*\(\{[^{}]*resourcesPath:[^{}]*trustedBrowserClientSha256s:/.test(currentSource);
+  const hasTrustedHashesRuntimeBuilder =
+    /(?<!async )function [A-Za-z_$][\w$]*\(\{(?=[^{}]*nodePath:)(?=[^{}]*nodeReplPath:)(?=[^{}]*shouldUseWslPaths:)[^{}]*trustedBrowserClientSha256s:[A-Za-z_$][\w$]*(?:=\[\])?[^{}]*\}\)\{/.test(currentSource);
 
-  const setupTrustedHashesRegex =
-    /(async function [A-Za-z_$][\w$]*\(\{[^{}]*?resourcesPath:([A-Za-z_$][\w$]*)[^{}]*?trustedBrowserClientSha256s:[A-Za-z_$][\w$]*=)(?!codexLinuxTrustedBrowserClientSha256s\()([A-Za-z_$][\w$]*)(\}\))/g;
+  const runtimeBuilderTrustedHashesRegex =
+    /(?<!async )function ([A-Za-z_$][\w$]*)\(\{(?=[^{}]*nodePath:)(?=[^{}]*nodeReplPath:)(?=[^{}]*shouldUseWslPaths:)([^{}]*?trustedBrowserClientSha256s:)([A-Za-z_$][\w$]*)([^{}]*?\})\)\{(?![A-Za-z_$][\w$]*=codexLinuxTrustedBrowserClientSha256s\()/g;
   if (
     requireName(patchedSource, "node:fs") != null &&
     requireName(patchedSource, "node:path") != null &&
     requireName(patchedSource, "node:crypto") != null
   ) {
     patchedSource = patchedSource.replace(
-      setupTrustedHashesRegex,
-      (match, configPrefix, resourcesPathVar, trustedHashesVar, configSuffix) => {
+      runtimeBuilderTrustedHashesRegex,
+      (
+        _match,
+        functionName,
+        configPrefix,
+        trustedHashesVar,
+        configSuffix,
+      ) => {
         patchedTrustedHashes = true;
-        return `${configPrefix}codexLinuxTrustedBrowserClientSha256s(${trustedHashesVar},${resourcesPathVar})${configSuffix}`;
+        return `function ${functionName}({${configPrefix}${trustedHashesVar}${configSuffix}){${trustedHashesVar}=codexLinuxTrustedBrowserClientSha256s(${trustedHashesVar});`;
       },
     );
   }
@@ -73,7 +79,7 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   if (
     !patchedTrustedHashes &&
     !patchedSource.includes("codexLinuxTrustedBrowserClientSha256s(") &&
-    hasTrustedHashesSetup
+    hasTrustedHashesRuntimeBuilder
   ) {
     console.warn(
       "WARN: Could not find Browser Use trusted hash insertion point — skipping Linux Browser Use trusted hash patch",
