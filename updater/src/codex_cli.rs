@@ -504,7 +504,14 @@ fn post_install_cli_path_candidates(explicit_path: Option<&Path>) -> Vec<PathBuf
 
 fn known_cli_locations() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(active_dir) = std::env::var_os("FNM_MULTISHELL_PATH").map(PathBuf::from) {
+        candidates.push(active_dir.join("bin/codex"));
+    }
+    for root in fnm_roots(home.as_deref()) {
+        append_fnm_cli_locations(&mut candidates, root);
+    }
+    if let Some(home) = home {
         append_nvm_cli_locations(&mut candidates, xdg_nvm_root(&home));
         append_nvm_cli_locations(&mut candidates, home.join(".nvm"));
         candidates.push(home.join(".npm-global/bin/codex"));
@@ -529,6 +536,15 @@ fn append_nvm_cli_locations(candidates: &mut Vec<PathBuf>, nvm_root: PathBuf) {
         versioned_paths.reverse();
         candidates.extend(versioned_paths);
     }
+}
+
+fn append_fnm_cli_locations(candidates: &mut Vec<PathBuf>, fnm_root: PathBuf) {
+    candidates.push(fnm_root.join("aliases/default/bin/codex"));
+    candidates.extend(
+        fnm_installation_dirs(&fnm_root)
+            .into_iter()
+            .map(|path| path.join("bin/codex")),
+    );
 }
 
 fn include_system_cli_locations() -> bool {
@@ -1327,6 +1343,54 @@ fn xdg_nvm_root(home: &Path) -> PathBuf {
         .join("nvm")
 }
 
+fn xdg_fnm_root(home: &Path) -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local/share"))
+        .join("fnm")
+}
+
+fn fnm_roots(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(root) = std::env::var_os("FNM_DIR").filter(|value| !value.is_empty()) {
+        roots.push(PathBuf::from(root));
+    }
+    if let Some(home) = home {
+        roots.push(xdg_fnm_root(home));
+        roots.push(home.join(".fnm"));
+    }
+    dedupe_paths(roots)
+}
+
+fn fnm_installation_dirs(fnm_root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(fnm_root.join("node-versions")) else {
+        return Vec::new();
+    };
+    let mut versions = entries
+        .filter_map(|entry| entry.ok().map(|item| item.path()))
+        .collect::<Vec<_>>();
+    versions.sort_by(|left, right| {
+        let left_version = left
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| Version::parse(name.trim_start_matches('v')).ok());
+        let right_version = right
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| Version::parse(name.trim_start_matches('v')).ok());
+        match (left_version, right_version) {
+            (Some(left), Some(right)) => right.cmp(&left),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => right.file_name().cmp(&left.file_name()),
+        }
+    });
+    versions
+        .into_iter()
+        .map(|path| path.join("installation"))
+        .collect()
+}
+
 fn default_nvm_root() -> Option<PathBuf> {
     if let Some(nvm_dir) = std::env::var_os("NVM_DIR") {
         return Some(PathBuf::from(nvm_dir));
@@ -1342,11 +1406,26 @@ fn default_nvm_root() -> Option<PathBuf> {
 }
 
 fn preferred_node_bin_dirs() -> Vec<PathBuf> {
-    let Some(nvm_root) = default_nvm_root() else {
-        return Vec::new();
-    };
-
     let mut directories = Vec::new();
+    if let Some(nvm_root) = default_nvm_root() {
+        append_nvm_node_toolchain_dirs(&mut directories, nvm_root);
+    }
+
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(active_dir) = std::env::var_os("FNM_MULTISHELL_PATH").map(PathBuf::from) {
+        let active_bin = active_dir.join("bin");
+        if node_toolchain_dir(&active_bin) {
+            directories.push(active_bin);
+        }
+    }
+    for root in fnm_roots(home.as_deref()) {
+        append_fnm_node_toolchain_dirs(&mut directories, root);
+    }
+
+    dedupe_paths(directories)
+}
+
+fn append_nvm_node_toolchain_dirs(directories: &mut Vec<PathBuf>, nvm_root: PathBuf) {
     let current_bin = nvm_root.join("versions/node/current/bin");
     if node_toolchain_dir(&current_bin) {
         directories.push(current_bin);
@@ -1362,8 +1441,19 @@ fn preferred_node_bin_dirs() -> Vec<PathBuf> {
         version_bins.reverse();
         directories.extend(version_bins);
     }
+}
 
-    directories
+fn append_fnm_node_toolchain_dirs(directories: &mut Vec<PathBuf>, fnm_root: PathBuf) {
+    let default_bin = fnm_root.join("aliases/default/bin");
+    if node_toolchain_dir(&default_bin) {
+        directories.push(default_bin);
+    }
+    directories.extend(
+        fnm_installation_dirs(&fnm_root)
+            .into_iter()
+            .map(|path| path.join("bin"))
+            .filter(|path| node_toolchain_dir(path)),
+    );
 }
 
 fn node_toolchain_dir(path: &Path) -> bool {
@@ -1453,6 +1543,9 @@ mod tests {
             "HOME",
             "PATH",
             "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
             "DECOY_NPM_LOG",
@@ -1671,6 +1764,8 @@ exit 1
             "PATH",
             "NVM_DIR",
             "XDG_CONFIG_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
         ]);
@@ -1678,12 +1773,102 @@ exit 1
         std::env::set_var("PATH", temp.path().join("missing-bin"));
         std::env::remove_var("NVM_DIR");
         std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
         let command_path = command_path_env();
         assert!(std::env::split_paths(&command_path).any(|path| path == nvm_bin.as_path()));
         assert_eq!(resolve_cli_path(None), Some(codex_path));
+        Ok(())
+    }
+
+    #[test]
+    fn fnm_custom_root_uses_newest_version_without_shell_env() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let home = temp.path().join("home");
+        let fnm_root = temp.path().join("custom-fnm");
+        let old_bin = fnm_root.join("node-versions/v9.11.2/installation/bin");
+        let fnm_bin = fnm_root.join("node-versions/v24.14.0/installation/bin");
+        fs::create_dir_all(&old_bin)?;
+        fs::create_dir_all(&fnm_bin)?;
+
+        for bin in [&old_bin, &fnm_bin] {
+            for binary in ["node", "npm", "npx"] {
+                fs::write(bin.join(binary), "")?;
+            }
+            write_executable_script(&bin.join("codex"), "#!/bin/sh\necho 'codex-cli v0.144.1'\n")?;
+        }
+        let codex_path = fnm_bin.join("codex");
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+        ]);
+        std::env::set_var("HOME", &home);
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::set_var("FNM_DIR", &fnm_root);
+        std::env::remove_var("FNM_MULTISHELL_PATH");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+
+        let command_path = command_path_env();
+        assert!(std::env::split_paths(&command_path).any(|path| path == fnm_bin.as_path()));
+        assert_eq!(resolve_cli_path(None), Some(codex_path));
+        Ok(())
+    }
+
+    #[test]
+    fn fnm_default_alias_is_preferred_over_newest_version() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let fnm_root = temp.path().join("fnm");
+        let default_install = fnm_root.join("node-versions/v20.19.0/installation");
+        let newest_install = fnm_root.join("node-versions/v24.14.0/installation");
+        for install in [&default_install, &newest_install] {
+            let bin = install.join("bin");
+            fs::create_dir_all(&bin)?;
+            for binary in ["node", "npm", "npx"] {
+                fs::write(bin.join(binary), "")?;
+            }
+            write_executable_script(&bin.join("codex"), "#!/bin/sh\necho 'codex-cli v0.144.1'\n")?;
+        }
+        fs::create_dir_all(fnm_root.join("aliases"))?;
+        std::os::unix::fs::symlink(&default_install, fnm_root.join("aliases/default"))?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+        ]);
+        std::env::set_var("HOME", temp.path().join("home"));
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::remove_var("NVM_DIR");
+        std::env::set_var("FNM_DIR", &fnm_root);
+        std::env::remove_var("FNM_MULTISHELL_PATH");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+
+        assert_eq!(
+            resolve_cli_path(None),
+            Some(fnm_root.join("aliases/default/bin/codex"))
+        );
         Ok(())
     }
 
@@ -1906,6 +2091,9 @@ exit 1
         std::env::set_var("HOME", temp.path());
         set_test_path_with_tool_bin(&tool_bin)?;
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::remove_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP");
         std::env::set_var("CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT", &system_root);
@@ -1984,6 +2172,9 @@ exit 1
             "HOME",
             "PATH",
             "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
             "CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT",
@@ -1993,6 +2184,9 @@ exit 1
         std::env::set_var("HOME", temp.path());
         set_test_path_with_tool_bin(&tool_bin)?;
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::remove_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP");
         std::env::set_var("CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT", &system_root);
@@ -2066,6 +2260,9 @@ exit 1
             "HOME",
             "PATH",
             "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
             "CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT",
@@ -2075,6 +2272,9 @@ exit 1
         std::env::set_var("HOME", temp.path());
         set_test_path_with_tool_bin(&tool_bin)?;
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::remove_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP");
         std::env::set_var("CODEX_UPDATE_MANAGER_TEST_SYSTEM_CLI_ROOT", &system_root);
@@ -2112,6 +2312,8 @@ exit 1
     #[test]
     fn refresh_cached_status_invalidates_missing_cached_cli_path() -> Result<()> {
         let _env_guard = env_lock();
+        let _restore_fnm_env =
+            EnvRestoreGuard::capture(&["XDG_DATA_HOME", "FNM_DIR", "FNM_MULTISHELL_PATH"]);
         let temp = tempdir()?;
         let paths = test_runtime_paths(temp.path());
         paths.ensure_dirs()?;
@@ -2125,6 +2327,9 @@ exit 1
         std::env::set_var("HOME", temp.path());
         std::env::set_var("PATH", temp.path().join("missing-bin"));
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
@@ -2177,6 +2382,8 @@ exit 1
     #[test]
     fn refresh_status_marks_missing_cli_as_not_installed() -> Result<()> {
         let _env_guard = env_lock();
+        let _restore_fnm_env =
+            EnvRestoreGuard::capture(&["XDG_DATA_HOME", "FNM_DIR", "FNM_MULTISHELL_PATH"]);
         let temp = tempdir()?;
         let paths = test_runtime_paths(temp.path());
         paths.ensure_dirs()?;
@@ -2190,6 +2397,9 @@ exit 1
         std::env::set_var("HOME", temp.path());
         std::env::set_var("PATH", temp.path().join("missing-bin"));
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
@@ -2250,6 +2460,9 @@ exit 1
             "HOME",
             "PATH",
             "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
         ]);
@@ -2308,6 +2521,9 @@ exit 1
         std::env::set_var("HOME", &home);
         set_test_path_with_tool_bin(&tool_bin)?;
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
@@ -2361,12 +2577,18 @@ exit 1
             "HOME",
             "PATH",
             "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
         ]);
         std::env::set_var("HOME", &home);
         set_test_path_with_tool_bin(&tool_bin)?;
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
 
@@ -2611,6 +2833,8 @@ exit 1
     #[test]
     fn reconcile_if_present_upgrades_outdated_cli() -> Result<()> {
         let _env_guard = env_lock();
+        let _restore_fnm_env =
+            EnvRestoreGuard::capture(&["XDG_DATA_HOME", "FNM_DIR", "FNM_MULTISHELL_PATH"]);
         let temp = tempdir()?;
         let paths = test_runtime_paths(temp.path());
         paths.ensure_dirs()?;
@@ -2636,6 +2860,9 @@ exit 1
         std::env::set_var("HOME", temp.path());
         std::env::set_var("PATH", std::env::join_paths([bin_dir.clone()])?);
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::set_var("FAKE_CODEX_PATH", &codex_path);
 
         assert_eq!(npm_program(), npm_path);
@@ -2715,10 +2942,21 @@ exit 1
 "#,
         )?;
 
-        let _restore_env = EnvRestoreGuard::capture(&["HOME", "PATH", "NVM_DIR", "CODEX_CLI_PATH"]);
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
+            "CODEX_CLI_PATH",
+        ]);
         std::env::set_var("HOME", &home);
         std::env::set_var("PATH", std::env::join_paths([npm_bin, system_bin])?);
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::remove_var("CODEX_CLI_PATH");
 
         let mut state = PersistedState::new(true);
@@ -2765,10 +3003,20 @@ exit 1
             "#!/bin/sh\nif [ \"$1\" = \"view\" ] && [ \"$2\" = \"@openai/codex\" ] && [ \"$3\" = \"version\" ]; then\n  echo '0.42.1'\n  exit 0\nfi\necho 'npm install should not run for newer installed Codex CLI' >&2\nexit 42\n",
         )?;
 
-        let _restore_env = EnvRestoreGuard::capture(&["HOME", "PATH", "NVM_DIR"]);
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
+        ]);
         std::env::set_var("HOME", temp.path());
         std::env::set_var("PATH", std::env::join_paths([bin_dir.clone()])?);
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
 
         assert_eq!(npm_program(), npm_path);
 

@@ -1366,6 +1366,52 @@ resolve_notification_icon() {
     echo "$APP_NOTIFICATION_ICON_NAME"
 }
 
+cached_codex_cli_path() {
+    local state_file="${XDG_STATE_HOME:-$HOME/.local/state}/codex-update-manager/state.json"
+    [ -r "$state_file" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+
+    python3 - "$state_file" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        value = json.load(handle).get("cli_path")
+except Exception:
+    sys.exit(1)
+if isinstance(value, str) and value:
+    print(value)
+PY
+}
+
+find_fnm_codex_cli() {
+    local candidate root
+
+    if [ -n "${FNM_MULTISHELL_PATH:-}" ]; then
+        candidate="$FNM_MULTISHELL_PATH/bin/codex"
+        if [ -x "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    fi
+
+    for root in \
+        "${FNM_DIR:-}" \
+        "${XDG_DATA_HOME:-$HOME/.local/share}/fnm" \
+        "$HOME/.fnm"
+    do
+        [ -n "$root" ] || continue
+        candidate="$root/aliases/default/bin/codex"
+        if [ -x "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 find_codex_cli() {
     if command -v codex >/dev/null 2>&1; then
         command -v codex
@@ -1392,12 +1438,14 @@ find_codex_cli() {
 
     local candidate
     for candidate in \
+        "$(cached_codex_cli_path || true)" \
         "$HOME/.bun/bin/codex" \
         "$HOME/.npm-global/bin/codex" \
         "${XDG_CONFIG_HOME:-$HOME/.config}/nvm/versions/node/current/bin/codex" \
         "${XDG_CONFIG_HOME:-$HOME/.config}/nvm/versions/node"/*/bin/codex \
         "$HOME/.nvm/versions/node/current/bin/codex" \
         "$HOME/.nvm/versions/node"/*/bin/codex \
+        "$(find_fnm_codex_cli || true)" \
         "$HOME/.local/share/pnpm/codex" \
         "$HOME/.local/bin/codex" \
         "/usr/local/bin/codex" \
