@@ -1474,14 +1474,20 @@ function legacySettingsPersistenceBundleFixture() {
 }
 
 function runSettingsPersistence(patchedSource, env, key, value) {
-  vm.runInNewContext(
+  const sandboxProcess = Object.create(process);
+  Object.defineProperties(sandboxProcess, {
+    env: { value: env },
+    platform: { value: "linux" },
+  });
+  return vm.runInNewContext(
     `${patchedSource};codexLinuxPersistSettingsState(${JSON.stringify(key)},${JSON.stringify(value)});`,
     {
       console,
       JSON,
       Promise,
       require,
-      process: { env, platform: "linux" },
+      process: sandboxProcess,
+      setTimeout,
     },
   );
 }
@@ -3815,14 +3821,14 @@ test("recognizes bootstrap-owned single-instance handoff in current bundles", ()
   assert.equal(patched, source);
 });
 
-test("persists Linux settings to the launcher-provided settings file", () => {
+test("persists Linux settings to the launcher-provided settings file", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-path-"));
   try {
     const settingsFile = path.join(tempRoot, "config", "codex-cua-lab", "settings.json");
     const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, settingsPersistenceBundleFixture());
 
     assert.match(patched, /process\.env\.CODEX_LINUX_SETTINGS_FILE/);
-    runSettingsPersistence(
+    await runSettingsPersistence(
       patched,
       {
         CODEX_LINUX_APP_ID: "codex-cua-lab",
@@ -3843,14 +3849,14 @@ test("persists Linux settings to the launcher-provided settings file", () => {
   }
 });
 
-test("persists Linux settings under the effective side-by-side app id", () => {
+test("persists Linux settings under the effective side-by-side app id", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-app-id-"));
   try {
     const xdgConfig = path.join(tempRoot, "xdg-config");
     const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, settingsPersistenceBundleFixture());
 
     assert.match(patched, /process\.env\.CODEX_LINUX_APP_ID\|\|process\.env\.CODEX_APP_ID/);
-    runSettingsPersistence(
+    await runSettingsPersistence(
       patched,
       {
         CODEX_LINUX_APP_ID: "codex-cua-lab",
@@ -3870,7 +3876,7 @@ test("persists Linux settings under the effective side-by-side app id", () => {
   }
 });
 
-test("persists Linux settings with current setGlobalStateValue handler shape", () => {
+test("persists Linux settings with current setGlobalStateValue handler shape", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-current-shape-"));
   try {
     const settingsFile = path.join(tempRoot, "config", "codex-desktop", "settings.json");
@@ -3878,8 +3884,8 @@ test("persists Linux settings with current setGlobalStateValue handler shape", (
 
     assert.match(patched, /var s=`\.codex-global-state\.json`;function codexLinuxSettingsAppId/);
     assert.match(patched, /var c=`config\.toml`/);
-    assert.match(patched, /this\.setGlobalStateValue\(a,b,c\),codexLinuxPersistSettingsState\(a,b\)/);
-    runSettingsPersistence(
+    assert.match(patched, /this\.setGlobalStateValue\(a,b,c\),await codexLinuxPersistSettingsState\(a,b\)/);
+    await runSettingsPersistence(
       patched,
       {
         CODEX_LINUX_SETTINGS_FILE: settingsFile,
@@ -3888,7 +3894,7 @@ test("persists Linux settings with current setGlobalStateValue handler shape", (
       "codex-linux-read-aloud-enabled",
       true,
     );
-    runSettingsPersistence(
+    await runSettingsPersistence(
       patched,
       {
         CODEX_LINUX_SETTINGS_FILE: settingsFile,
@@ -3906,7 +3912,81 @@ test("persists Linux settings with current setGlobalStateValue handler shape", (
   }
 });
 
-test("migrates already-patched Linux settings persistence away from codex-desktop", () => {
+test("serializes competing Linux settings writers and cleans atomic sidecars", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-race-"));
+  try {
+    const settingsFile = path.join(tempRoot, "settings.json");
+    fs.writeFileSync(settingsFile, JSON.stringify({ preserved: true }));
+    const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, settingsPersistenceBundleFixture());
+    const env = { CODEX_LINUX_SETTINGS_FILE: settingsFile };
+
+    await Promise.all([
+      runSettingsPersistence(patched, env, "codex-linux-warm-start-enabled", false),
+      runSettingsPersistence(patched, env, "codex-linux-system-tray-enabled", true),
+    ]);
+
+    const settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+    assert.equal(settings.preserved, true);
+    assert.equal(settings["codex-linux-warm-start-enabled"], false);
+    assert.equal(settings["codex-linux-system-tray-enabled"], true);
+    assert.deepEqual(
+      fs.readdirSync(tempRoot).filter((name) => name.includes(".lock") || name.includes(".tmp.")),
+      [],
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("recovers stale Linux settings locks after a crashed first claimant", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-stale-"));
+  try {
+    const settingsFile = path.join(tempRoot, "settings.json");
+    const lockFile = `${settingsFile}.lock`;
+    fs.writeFileSync(lockFile, "0-stale-owner\nrecover:0-crashed-claim\n");
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lockFile, old, old);
+    const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, settingsPersistenceBundleFixture());
+
+    const env = { CODEX_LINUX_SETTINGS_FILE: settingsFile };
+    await Promise.all([
+      runSettingsPersistence(patched, env, "codex-linux-warm-start-enabled", true),
+      runSettingsPersistence(patched, env, "codex-linux-system-tray-enabled", false),
+    ]);
+
+    const settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+    assert.equal(settings["codex-linux-warm-start-enabled"], true);
+    assert.equal(settings["codex-linux-system-tray-enabled"], false);
+    assert.equal(fs.existsSync(lockFile), false);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("times out fail-soft without removing an active Linux settings lock", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-timeout-"));
+  try {
+    const settingsFile = path.join(tempRoot, "settings.json");
+    const lockFile = `${settingsFile}.lock`;
+    const activeOwner = `${process.pid}-active-owner`;
+    fs.writeFileSync(lockFile, `${activeOwner}\n`);
+    const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, settingsPersistenceBundleFixture());
+
+    await runSettingsPersistence(
+      patched,
+      { CODEX_LINUX_SETTINGS_FILE: settingsFile },
+      "codex-linux-warm-start-enabled",
+      true,
+    );
+
+    assert.equal(fs.readFileSync(lockFile, "utf8"), `${activeOwner}\n`);
+    assert.equal(fs.existsSync(settingsFile), false);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("migrates already-patched Linux settings persistence away from codex-desktop", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-migrate-"));
   try {
     const xdgConfig = path.join(tempRoot, "xdg-config");
@@ -3914,7 +3994,7 @@ test("migrates already-patched Linux settings persistence away from codex-deskto
 
     assert.match(patched, /process\.env\.CODEX_LINUX_SETTINGS_FILE/);
     assert.doesNotMatch(patched, /join\(e,`codex-desktop`,`settings\.json`\)/);
-    runSettingsPersistence(
+    await runSettingsPersistence(
       patched,
       {
         CODEX_LINUX_APP_ID: "codex-cua-lab",
@@ -3928,7 +4008,7 @@ test("migrates already-patched Linux settings persistence away from codex-deskto
       JSON.parse(fs.readFileSync(path.join(xdgConfig, "codex-cua-lab", "settings.json"), "utf8"))["codex-linux-prompt-window-enabled"],
       false,
     );
-    runSettingsPersistence(
+    await runSettingsPersistence(
       patched,
       {
         CODEX_LINUX_APP_ID: "codex-cua-lab",
@@ -3958,7 +4038,7 @@ test("adds Linux settings persistence after current global-state handler drift",
   assert.match(patched, /var c=`config\.toml`;/);
   assert.match(
     patched,
-    /"set-global-state":async\(\{key:a,value:b,origin:c\}\)=>\(this\.setGlobalStateValue\(a,b,c\),codexLinuxPersistSettingsState\(a,b\),\{success:!0\}\)/,
+    /"set-global-state":async\(\{key:a,value:b,origin:c\}\)=>\(this\.setGlobalStateValue\(a,b,c\),await codexLinuxPersistSettingsState\(a,b\),\{success:!0\}\)/,
   );
 });
 
@@ -3974,7 +4054,7 @@ test("adds Linux settings persistence when upstream removed the state-file marke
   assert.match(patched, /^"use strict";function codexLinuxSettingsAppId\(\)/);
   assert.match(
     patched,
-    /"set-global-state":async\(\{key:a,value:b,origin:c\}\)=>\(this\.setGlobalStateValue\(a,b,c\),codexLinuxPersistSettingsState\(a,b\),\{success:!0\}\)/,
+    /"set-global-state":async\(\{key:a,value:b,origin:c\}\)=>\(this\.setGlobalStateValue\(a,b,c\),await codexLinuxPersistSettingsState\(a,b\),\{success:!0\}\)/,
   );
 });
 

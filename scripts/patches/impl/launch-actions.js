@@ -22,6 +22,21 @@ function persistedLinuxSettingsKeysSource() {
   return `[${Object.values(linuxSettingsKeys).map((key) => `\`${key}\``).join(",")}]`;
 }
 
+function settingsPersistenceHelpersSource(pathVar, fsVar, stateFileVar) {
+  return [
+    stateFileVar == null ? "" : `var ${stateFileVar}=\`.codex-global-state.json\`;`,
+    `function codexLinuxSettingsAppId(){let codexLinuxAppId=process.env.CODEX_LINUX_APP_ID||process.env.CODEX_APP_ID||\`codex-desktop\`;return/^[A-Za-z0-9._-]+$/.test(codexLinuxAppId)?codexLinuxAppId:\`codex-desktop\`}`,
+    `function codexLinuxSettingsPath(){let codexLinuxExplicitSettingsPath=process.env.CODEX_LINUX_SETTINGS_FILE;if(typeof codexLinuxExplicitSettingsPath===\`string\`&&codexLinuxExplicitSettingsPath.length>0)return codexLinuxExplicitSettingsPath;let codexLinuxConfigHome=process.env.XDG_CONFIG_HOME||process.env.HOME&&${pathVar}.join(process.env.HOME,\`.config\`);return codexLinuxConfigHome?${pathVar}.join(codexLinuxConfigHome,codexLinuxSettingsAppId(),\`settings.json\`):null}`,
+    `function codexLinuxReadSettingsFile(){let codexLinuxSettingsPathValue=codexLinuxSettingsPath();if(!codexLinuxSettingsPathValue||!${fsVar}.existsSync(codexLinuxSettingsPathValue))return{};try{let codexLinuxSettingsContents=${fsVar}.readFileSync(codexLinuxSettingsPathValue,\`utf8\`),codexLinuxSettingsValue=JSON.parse(codexLinuxSettingsContents);return codexLinuxSettingsValue&&typeof codexLinuxSettingsValue===\`object\`&&!Array.isArray(codexLinuxSettingsValue)?codexLinuxSettingsValue:{}}catch(codexLinuxSettingsReadError){return{}}}`,
+    `function codexLinuxSettingsOwner(){return\`${"${process.pid??0}"}-${"${Date.now()}"}-${"${Math.random().toString(16).slice(2)}"}\`}`,
+    `async function codexLinuxReleaseSettingsLock(codexLinuxLock){try{(await ${fsVar}.promises.readFile(codexLinuxLock.path,\`utf8\`)).split(\`\\n\`,1)[0]===codexLinuxLock.owner&&await ${fsVar}.promises.unlink(codexLinuxLock.path)}catch{}}`,
+    `function codexLinuxSettingsOwnerIsAlive(codexLinuxOwner){let codexLinuxOwnerPid=Number(codexLinuxOwner.split(\`-\`,1)[0]);if(!Number.isInteger(codexLinuxOwnerPid)||codexLinuxOwnerPid<=0)return!1;try{return process.kill(codexLinuxOwnerPid,0),!0}catch(codexLinuxOwnerError){return codexLinuxOwnerError?.code===\`EPERM\`}}`,
+    `async function codexLinuxRecoverSettingsLock(codexLinuxLockPath,codexLinuxClaimOwner){let codexLinuxLockSnapshot=await ${fsVar}.promises.readFile(codexLinuxLockPath,\`utf8\`),codexLinuxOriginalOwner=codexLinuxLockSnapshot.split(\`\\n\`,1)[0],codexLinuxLockStat=await ${fsVar}.promises.stat(codexLinuxLockPath);if(Date.now()-codexLinuxLockStat.mtimeMs<=3e4||codexLinuxSettingsOwnerIsAlive(codexLinuxOriginalOwner))return;let codexLinuxClaim=\`recover:${"${codexLinuxClaimOwner}"}\`,codexLinuxRecoveryRecords=codexLinuxLockSnapshot.split(\`\\n\`).slice(1,-1);if(!codexLinuxRecoveryRecords.includes(codexLinuxClaim)){let codexLinuxRecoveryFile=await ${fsVar}.promises.open(codexLinuxLockPath,\`a\`);try{await codexLinuxRecoveryFile.write((codexLinuxLockSnapshot.endsWith(\`\\n\`)?\`\`:\`\\n\`)+codexLinuxClaim+\`\\n\`),await codexLinuxRecoveryFile.sync()}finally{await codexLinuxRecoveryFile.close()}codexLinuxLockSnapshot=await ${fsVar}.promises.readFile(codexLinuxLockPath,\`utf8\`)}if(!codexLinuxLockSnapshot.endsWith(\`\\n\`)||codexLinuxLockSnapshot.split(\`\\n\`,1)[0]!==codexLinuxOriginalOwner)return;let codexLinuxFirstLiveClaim=codexLinuxLockSnapshot.split(\`\\n\`).slice(1,-1).find(codexLinuxRecord=>codexLinuxRecord.startsWith(\`recover:\`)&&codexLinuxSettingsOwnerIsAlive(codexLinuxRecord.slice(8)));codexLinuxFirstLiveClaim===codexLinuxClaim&&await ${fsVar}.promises.readFile(codexLinuxLockPath,\`utf8\`)===codexLinuxLockSnapshot&&await ${fsVar}.promises.unlink(codexLinuxLockPath)}`,
+    `async function codexLinuxAcquireSettingsLock(codexLinuxSettingsPathValue){let codexLinuxLockPath=\`${"${codexLinuxSettingsPathValue}"}.lock\`,codexLinuxLockOwner=codexLinuxSettingsOwner(),codexLinuxLockDeadline=Date.now()+2e3;for(;;)try{let codexLinuxLockFile=await ${fsVar}.promises.open(codexLinuxLockPath,\`wx\`,384),codexLinuxLockInitError=null;try{await codexLinuxLockFile.writeFile(codexLinuxLockOwner+\`\\n\`),await codexLinuxLockFile.sync()}catch(codexLinuxLockWriteError){codexLinuxLockInitError=codexLinuxLockWriteError}finally{await codexLinuxLockFile.close()}if(codexLinuxLockInitError!=null){try{await ${fsVar}.promises.unlink(codexLinuxLockPath)}catch{}throw codexLinuxLockInitError}return{path:codexLinuxLockPath,owner:codexLinuxLockOwner}}catch(codexLinuxLockError){if(codexLinuxLockError?.code!==\`EEXIST\`)throw codexLinuxLockError;try{await codexLinuxRecoverSettingsLock(codexLinuxLockPath,codexLinuxLockOwner)}catch(codexLinuxRecoveryError){if(codexLinuxRecoveryError?.code!==\`ENOENT\`)throw codexLinuxRecoveryError}if(Date.now()>=codexLinuxLockDeadline)throw Error(\`Timed out waiting for settings lock ${"${codexLinuxLockPath}"}\`);await new Promise(codexLinuxRetry=>setTimeout(codexLinuxRetry,25))}}`,
+    `async function codexLinuxPersistSettingsState(codexLinuxSettingsKey,codexLinuxSettingsNewValue){if(process.platform!==\`linux\`||!${persistedLinuxSettingsKeysSource()}.includes(codexLinuxSettingsKey))return;let codexLinuxSettingsLock=null,codexLinuxSettingsTempPath=null;try{let codexLinuxSettingsPathValue=codexLinuxSettingsPath();if(!codexLinuxSettingsPathValue)return;await ${fsVar}.promises.mkdir(${pathVar}.dirname(codexLinuxSettingsPathValue),{recursive:!0,mode:448}),codexLinuxSettingsLock=await codexLinuxAcquireSettingsLock(codexLinuxSettingsPathValue);let codexLinuxSettingsObject=codexLinuxReadSettingsFile();codexLinuxSettingsNewValue===void 0?delete codexLinuxSettingsObject[codexLinuxSettingsKey]:codexLinuxSettingsObject[codexLinuxSettingsKey]=codexLinuxSettingsNewValue,codexLinuxSettingsTempPath=\`${"${codexLinuxSettingsPathValue}"}.tmp.${"${codexLinuxSettingsOwner()}"}\`;let codexLinuxSettingsTempFile=await ${fsVar}.promises.open(codexLinuxSettingsTempPath,\`wx\`,384);try{await codexLinuxSettingsTempFile.writeFile(JSON.stringify(codexLinuxSettingsObject,null,2)+\`\\n\`,\`utf8\`),await codexLinuxSettingsTempFile.sync()}finally{await codexLinuxSettingsTempFile.close()}await ${fsVar}.promises.rename(codexLinuxSettingsTempPath,codexLinuxSettingsPathValue),codexLinuxSettingsTempPath=null}catch(codexLinuxSettingsWriteError){}finally{if(codexLinuxSettingsTempPath!=null)try{await ${fsVar}.promises.unlink(codexLinuxSettingsTempPath)}catch{}codexLinuxSettingsLock!=null&&await codexLinuxReleaseSettingsLock(codexLinuxSettingsLock)}}`,
+  ].join("");
+}
+
 function applyLinuxSettingsPersistencePatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -32,12 +47,15 @@ function applyLinuxSettingsPersistencePatch(currentSource) {
     return patchedSource;
   }
 
+  const pathVar = inferModuleAlias(patchedSource, "node:path");
+  const fsVar = inferModuleAlias(patchedSource, "node:fs");
+  if (pathVar == null || fsVar == null) {
+    console.warn("WARN: Could not infer Linux settings path or fs module");
+    return patchedSource;
+  }
   if (!patchedSource.includes("function codexLinuxPersistSettingsState(")) {
-    const pathVar = inferModuleAlias(patchedSource, "node:path");
-    const fsVar = inferModuleAlias(patchedSource, "node:fs");
-    const stateFileHelperSource =
-      (stateFileVar) =>
-        `${stateFileVar == null ? "" : `var ${stateFileVar}=\`.codex-global-state.json\`;`}function codexLinuxSettingsAppId(){let e=process.env.CODEX_LINUX_APP_ID||process.env.CODEX_APP_ID||\`codex-desktop\`;return/^[A-Za-z0-9._-]+$/.test(e)?e:\`codex-desktop\`}function codexLinuxSettingsPath(){let e=process.env.CODEX_LINUX_SETTINGS_FILE;if(typeof e===\`string\`&&e.length>0)return e;let t=process.env.XDG_CONFIG_HOME||process.env.HOME&&${pathVar}.join(process.env.HOME,\`.config\`);return t?${pathVar}.join(t,codexLinuxSettingsAppId(),\`settings.json\`):null}function codexLinuxReadSettingsFile(){let e=codexLinuxSettingsPath();if(!e||!${fsVar}.existsSync(e))return{};try{let t=${fsVar}.readFileSync(e,\`utf8\`),n=JSON.parse(t);return n&&typeof n===\`object\`&&!Array.isArray(n)?n:{}}catch(e){return{}}}function codexLinuxPersistSettingsState(e,t){if(process.platform!==\`linux\`||!${persistedLinuxSettingsKeysSource()}.includes(e))return;try{let n=codexLinuxSettingsPath();if(!n)return;let r=codexLinuxReadSettingsFile();t===void 0?delete r[e]:r[e]=t,${fsVar}.mkdirSync(${pathVar}.dirname(n),{recursive:!0,mode:448}),${fsVar}.writeFileSync(n,JSON.stringify(r,null,2)+\`\\n\`,\`utf8\`)}catch(e){}}`;
+    const stateFileHelperSource = (stateFileVar) =>
+      settingsPersistenceHelpersSource(pathVar, fsVar, stateFileVar);
     const stateFileCommaRegex = /var ([A-Za-z_$][\w$]*)=`\.codex-global-state\.json`,/;
     const stateFileSemicolonRegex = /var ([A-Za-z_$][\w$]*)=`\.codex-global-state\.json`;/;
     if (pathVar == null || fsVar == null) {
@@ -80,10 +98,10 @@ function applyLinuxSettingsPersistencePatch(currentSource) {
     patchedSource = patchedSource.replace(oldSettingsKeysGuardRegex, settingsKeysGuard);
   }
 
-  if (/"set-global-state":async\(\{key:[A-Za-z_$][\w$]*,value:[A-Za-z_$][\w$]*,origin:[A-Za-z_$][\w$]*\}\)=>\([\s\S]{0,300}?codexLinuxPersistSettingsState\(/.test(patchedSource)) {
+  if (/"set-global-state":async\(\{key:[A-Za-z_$][\w$]*,value:[A-Za-z_$][\w$]*,origin:[A-Za-z_$][\w$]*\}\)=>\([\s\S]{0,300}?await codexLinuxPersistSettingsState\(/.test(patchedSource)) {
     return patchedSource;
   }
-  if (/"set-global-state":async\(\{key:[A-Za-z_$][\w$]*,value:[A-Za-z_$][\w$]*,origin:[A-Za-z_$][\w$]*\}\)=>\(this\.setGlobalStateValue\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\),codexLinuxPersistSettingsState\(/.test(patchedSource)) {
+  if (/"set-global-state":async\(\{key:[A-Za-z_$][\w$]*,value:[A-Za-z_$][\w$]*,origin:[A-Za-z_$][\w$]*\}\)=>\(this\.setGlobalStateValue\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\),await codexLinuxPersistSettingsState\(/.test(patchedSource)) {
     return patchedSource;
   }
   const setGlobalStateRegex =
@@ -96,7 +114,7 @@ function applyLinuxSettingsPersistencePatch(currentSource) {
   return patchedSource.replace(
     setGlobalStateRegex,
     (_match, keyVar, valueVar, originVar, setterCall) =>
-      `"set-global-state":async({key:${keyVar},value:${valueVar},origin:${originVar}})=>(${setterCall},codexLinuxPersistSettingsState(${keyVar},${valueVar}),`,
+      `"set-global-state":async({key:${keyVar},value:${valueVar},origin:${originVar}})=>(${setterCall},await codexLinuxPersistSettingsState(${keyVar},${valueVar}),`,
   );
 }
 

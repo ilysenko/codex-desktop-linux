@@ -5,15 +5,24 @@ use chrono::Duration as ChronoDuration;
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
-    path::PathBuf,
-    time::{Duration, Instant},
+    ffi::OsString,
+    fs::{self, OpenOptions},
+    io::Write,
+    path::{Path, PathBuf},
+    process,
+    sync::atomic::{AtomicU64, Ordering},
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tracing::warn;
 
 const SERVICE_NAME: &str = "codex-update-manager";
 const SECONDS_PER_HOUR: u64 = 60 * 60;
 const DEFAULT_CHECK_INTERVAL_HOURS: u64 = 6;
+const SETTINGS_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+const SETTINGS_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(25);
+const SETTINGS_LOCK_STALE_AFTER: Duration = Duration::from_secs(30);
+static SETTINGS_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Optional cleanup for generated wrapper checkout artifacts such as `dist/`
@@ -373,9 +382,26 @@ pub fn write_feature_picker_on_update(value: bool) -> Result<()> {
 /// existing file is replaced with a fresh object rather than failing.
 fn write_settings_bool(key: &str, value: bool) -> Result<()> {
     let path = app_settings_path().context("could not resolve settings.json path")?;
+    write_settings_bool_at_path(
+        &path,
+        key,
+        value,
+        SETTINGS_LOCK_TIMEOUT,
+        SETTINGS_LOCK_STALE_AFTER,
+    )
+}
+
+fn write_settings_bool_at_path(
+    path: &Path,
+    key: &str,
+    value: bool,
+    lock_timeout: Duration,
+    stale_after: Duration,
+) -> Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).with_context(|| format!("Failed to create {}", dir.display()))?;
     }
+    let _lock = SettingsFileLock::acquire(path, lock_timeout, stale_after)?;
     let mut object = fs::read_to_string(&path)
         .ok()
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
@@ -384,9 +410,180 @@ fn write_settings_bool(key: &str, value: bool) -> Result<()> {
     object.insert(key.to_string(), serde_json::Value::Bool(value));
     let serialized = serde_json::to_string_pretty(&serde_json::Value::Object(object))
         .context("Failed to serialize settings.json")?;
-    fs::write(&path, format!("{serialized}\n"))
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+    atomic_write_settings(path, format!("{serialized}\n").as_bytes())?;
     Ok(())
+}
+
+struct SettingsFileLock {
+    path: PathBuf,
+    owner: String,
+}
+
+impl SettingsFileLock {
+    fn acquire(settings_path: &Path, timeout: Duration, stale_after: Duration) -> Result<Self> {
+        let path = adjacent_path(settings_path, ".lock");
+        let owner = settings_write_owner();
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    let write_result = (|| -> Result<()> {
+                        file.write_all(format!("{owner}\n").as_bytes())?;
+                        file.sync_all()?;
+                        Ok(())
+                    })();
+                    if let Err(error) = write_result {
+                        let _ = fs::remove_file(&path);
+                        return Err(error).with_context(|| {
+                            format!("Failed to initialize settings lock {}", path.display())
+                        });
+                    }
+                    return Ok(Self { path, owner });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    recover_stale_settings_lock(&path, &owner, stale_after);
+                    if Instant::now() >= deadline {
+                        anyhow::bail!("Timed out waiting for settings lock {}", path.display());
+                    }
+                    thread::sleep(SETTINGS_LOCK_RETRY_INTERVAL.min(timeout));
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("Failed to create settings lock {}", path.display())
+                    })
+                }
+            }
+        }
+    }
+}
+
+impl Drop for SettingsFileLock {
+    fn drop(&mut self) {
+        remove_owned_settings_lock(&self.path, &self.owner);
+    }
+}
+
+fn remove_owned_settings_lock(path: &Path, owner: &str) {
+    if fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| contents.lines().next().map(str::to_owned))
+        .as_deref()
+        == Some(owner)
+    {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn recover_stale_settings_lock(path: &Path, claim_owner: &str, stale_after: Duration) {
+    let Ok(mut snapshot) = fs::read_to_string(path) else {
+        return;
+    };
+    let Some(owner) = snapshot.lines().next().map(str::to_owned) else {
+        return;
+    };
+    let is_stale = fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|age| age > stale_after);
+    if !is_stale || settings_owner_is_alive(&owner) {
+        return;
+    }
+    let claim = format!("recover:{claim_owner}");
+    if !snapshot.lines().any(|line| line == claim) {
+        let record = format!("{claim}\n");
+        let Ok(mut file) = OpenOptions::new().append(true).open(path) else {
+            return;
+        };
+        if file
+            .write_all(record.as_bytes())
+            .and_then(|()| file.sync_all())
+            .is_err()
+        {
+            return;
+        }
+        let Ok(updated) = fs::read_to_string(path) else {
+            return;
+        };
+        snapshot = updated;
+    }
+    if !snapshot.ends_with('\n') || snapshot.lines().next() != Some(owner.as_str()) {
+        return;
+    }
+    let first_live_claim = snapshot
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.strip_prefix("recover:"))
+        .find(|candidate| settings_owner_is_alive(candidate));
+    if first_live_claim == Some(claim_owner)
+        && fs::read_to_string(path).ok().as_deref() == Some(snapshot.as_str())
+    {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn settings_owner_is_alive(owner: &str) -> bool {
+    let Some(pid) = owner
+        .split_once('-')
+        .and_then(|(pid, _)| pid.parse::<u32>().ok())
+        .filter(|pid| *pid != 0)
+    else {
+        return false;
+    };
+
+    #[cfg(target_os = "linux")]
+    {
+        Path::new("/proc").join(pid.to_string()).exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        pid == process::id()
+    }
+}
+
+fn atomic_write_settings(path: &Path, contents: &[u8]) -> Result<()> {
+    let owner = settings_write_owner();
+    let temp_path = adjacent_path(path, &format!(".tmp.{owner}"));
+    let result = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .with_context(|| format!("Failed to create {}", temp_path.display()))?;
+        file.write_all(contents)
+            .with_context(|| format!("Failed to write {}", temp_path.display()))?;
+        file.sync_all()
+            .with_context(|| format!("Failed to sync {}", temp_path.display()))?;
+        drop(file);
+        fs::rename(&temp_path, path).with_context(|| {
+            format!(
+                "Failed to atomically replace {} with {}",
+                path.display(),
+                temp_path.display()
+            )
+        })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+fn adjacent_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut value = OsString::from(path.as_os_str());
+    value.push(suffix);
+    PathBuf::from(value)
+}
+
+fn settings_write_owner() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let counter = SETTINGS_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{timestamp}-{counter}", process::id())
 }
 
 #[cfg(test)]
@@ -394,6 +591,7 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use std::path::Path;
+    use std::sync::{Arc, Barrier};
     use tempfile::tempdir;
 
     fn test_paths(root: &Path) -> RuntimePaths {
@@ -522,6 +720,188 @@ app_executable_path = "/opt/codex-desktop/electron"
             ),
             Some(false)
         );
+    }
+
+    #[test]
+    fn settings_write_atomically_merges_and_cleans_sidecars() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("settings.json");
+        fs::write(&path, r#"{"preserved":"value"}"#)?;
+
+        write_settings_bool_at_path(
+            &path,
+            "new-setting",
+            true,
+            Duration::from_millis(100),
+            SETTINGS_LOCK_STALE_AFTER,
+        )?;
+
+        let settings: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+        assert_eq!(settings["preserved"], "value");
+        assert_eq!(settings["new-setting"], true);
+        assert!(!adjacent_path(&path, ".lock").exists());
+        assert!(fs::read_dir(temp.path())?
+            .filter_map(|entry| entry.ok())
+            .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp.")));
+        Ok(())
+    }
+
+    #[test]
+    fn settings_write_recovers_stale_lock() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("settings.json");
+        let lock_path = adjacent_path(&path, ".lock");
+        fs::write(&lock_path, "0-stale-owner\n")?;
+        thread::sleep(Duration::from_millis(2));
+
+        write_settings_bool_at_path(
+            &path,
+            "recovered",
+            true,
+            Duration::from_millis(100),
+            Duration::ZERO,
+        )?;
+
+        let settings: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+        assert_eq!(settings["recovered"], true);
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn competing_stale_recoverers_do_not_remove_replacement_lock() -> Result<()> {
+        let temp = tempdir()?;
+        let path = Arc::new(temp.path().join("settings.json"));
+        let lock_path = adjacent_path(&path, ".lock");
+        fs::write(&lock_path, "0-stale-owner\n")?;
+        thread::sleep(Duration::from_millis(2));
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+
+        for key in ["first", "second"] {
+            let path = Arc::clone(&path);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                write_settings_bool_at_path(
+                    &path,
+                    key,
+                    true,
+                    Duration::from_secs(1),
+                    Duration::ZERO,
+                )
+            }));
+        }
+        barrier.wait();
+        for handle in handles {
+            handle.join().expect("settings writer panicked")?;
+        }
+
+        let settings: serde_json::Value = serde_json::from_str(&fs::read_to_string(&*path)?)?;
+        assert_eq!(settings["first"], true);
+        assert_eq!(settings["second"], true);
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn settings_write_timeout_preserves_foreign_lock_and_cleans_temps() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("settings.json");
+        let lock_path = adjacent_path(&path, ".lock");
+        fs::write(&lock_path, "active-owner")?;
+
+        let error = write_settings_bool_at_path(
+            &path,
+            "blocked",
+            true,
+            Duration::from_millis(30),
+            Duration::from_secs(60),
+        )
+        .expect_err("active lock should time out");
+
+        assert!(error
+            .to_string()
+            .contains("Timed out waiting for settings lock"));
+        assert_eq!(fs::read_to_string(&lock_path)?, "active-owner");
+        assert!(!path.exists());
+        assert!(fs::read_dir(temp.path())?
+            .filter_map(|entry| entry.ok())
+            .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp.")));
+        Ok(())
+    }
+
+    #[test]
+    fn settings_write_skips_crashed_recovery_claim() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("settings.json");
+        let lock_path = adjacent_path(&path, ".lock");
+        fs::write(&lock_path, "0-stale-owner\nrecover:0-crashed-claim\n")?;
+        thread::sleep(Duration::from_millis(2));
+
+        write_settings_bool_at_path(
+            &path,
+            "recovered-after-crash",
+            true,
+            Duration::from_secs(1),
+            Duration::ZERO,
+        )?;
+
+        let settings: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+        assert_eq!(settings["recovered-after-crash"], true);
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn settings_lock_release_does_not_remove_replacement_owner() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("settings.json");
+        let lock = SettingsFileLock::acquire(
+            &path,
+            Duration::from_millis(100),
+            SETTINGS_LOCK_STALE_AFTER,
+        )?;
+        fs::write(&lock.path, "replacement-owner")?;
+
+        drop(lock);
+
+        assert_eq!(
+            fs::read_to_string(adjacent_path(&path, ".lock"))?,
+            "replacement-owner"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn competing_settings_writes_are_serialized() -> Result<()> {
+        let temp = tempdir()?;
+        let path = Arc::new(temp.path().join("settings.json"));
+        let barrier = Arc::new(Barrier::new(3));
+        let mut workers = Vec::new();
+        for (key, value) in [("first", true), ("second", false)] {
+            let path = Arc::clone(&path);
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                write_settings_bool_at_path(
+                    &path,
+                    key,
+                    value,
+                    Duration::from_secs(1),
+                    SETTINGS_LOCK_STALE_AFTER,
+                )
+            }));
+        }
+        barrier.wait();
+        for worker in workers {
+            worker.join().expect("settings writer panicked")?;
+        }
+
+        let settings: serde_json::Value = serde_json::from_str(&fs::read_to_string(&*path)?)?;
+        assert_eq!(settings["first"], true);
+        assert_eq!(settings["second"], false);
+        Ok(())
     }
 
     #[test]

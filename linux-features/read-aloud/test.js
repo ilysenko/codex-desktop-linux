@@ -360,6 +360,51 @@ test("kokoro stdin runner waits for first PCM before launching aplay", (t) => {
   }
 });
 
+test("main handler serializes and awaits atomic read aloud settings writes", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-settings-"));
+  try {
+    const settingsPath = path.join(root, "settings.json");
+    fs.writeFileSync(settingsPath, JSON.stringify({ preserved: "value" }));
+    const source = [
+      "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+    ].join("");
+    const patched = twice(applyMainBundlePatch, source);
+    const requireStub = (name) => {
+      if (name === "node:child_process") return { spawnSync: () => ({ status: 1 }) };
+      if (name === "node:fs") return fs;
+      if (name === "node:path") return path;
+      if (name === "node:os") return { homedir: () => root };
+      return require(name);
+    };
+    const processStub = {
+      platform: "linux",
+      pid: process.pid,
+      kill: process.kill.bind(process),
+      env: { HOME: root, CODEX_LINUX_SETTINGS_FILE: settingsPath },
+      resourcesPath: path.join(root, "resources"),
+    };
+
+    assert.match(patched, /await codexLinuxReadAloudWriteSettings/);
+    await new Function(
+      "require",
+      "process",
+      `${patched};return Promise.all([codexLinuxReadAloudWriteSettings({first:true}),codexLinuxReadAloudWriteSettings({second:false})]);`,
+    )(requireStub, processStub);
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    assert.equal(settings.preserved, "value");
+    assert.equal(settings.first, true);
+    assert.equal(settings.second, false);
+    assert.deepEqual(
+      fs.readdirSync(root).filter((name) => name.includes(".lock") || name.includes(".tmp.")),
+      [],
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("main handler stores a chosen Kokoro model folder", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-main-"));
   try {
