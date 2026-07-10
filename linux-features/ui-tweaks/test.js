@@ -137,6 +137,10 @@ test("English reasoning effort labels can be disabled", () => {
 
 test("sidebar project descriptor targets only the current project sidebar asset", () => {
   assert.match(
+    "app-initial~app-main~projects-index-page~remote-conversation-page-CFT2LLOB.js",
+    PROJECTS_SIDEBAR_ASSET_PATTERN,
+  );
+  assert.doesNotMatch(
     "app-initial~app-main~page-BF1QkwFT.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
