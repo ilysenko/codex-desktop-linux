@@ -3952,12 +3952,9 @@ test_launcher_extra_bundled_plugin_cache_rollback() {
 
         mv() {
             local args=("$@")
-            local offset=0
-            if [ "${args[0]}" = "--" ]; then
-                offset=1
-            fi
-            local source="${args[$offset]}"
-            local destination="${args[$((offset + 1))]}"
+            local argc="${#args[@]}"
+            local source="${args[$((argc - 2))]}"
+            local destination="${args[$((argc - 1))]}"
             if [[ "$source" == *".tmp."* ]] && [ "$destination" = "$cache_plugin" ]; then
                 return 73
             fi
@@ -3989,6 +3986,70 @@ test_launcher_extra_bundled_plugin_cache_rollback() {
         || fail "Expected failed first cache install to leave no marketplace link"
     [ -z "$(find "${visualize_cache%/*}" -mindepth 1 -maxdepth 1 -type d \( -name '*.tmp.*' -o -name '*.backup.*' \) -print -quit)" ] \
         || fail "Expected failed first cache install to clean temporary and backup directories"
+}
+
+test_launcher_extra_bundled_plugin_cache_concurrent_destination() {
+    info "Checking extra bundled plugin cache concurrent destination handling"
+    local workspace="$TMP_DIR/extra-bundled-plugin-cache-concurrent-destination"
+    local app_dir="$workspace/app"
+    local fake_home="$workspace/home"
+    local source_plugin="$app_dir/resources/plugins/openai-bundled/plugins/sites"
+    local cache_root="$fake_home/.codex/plugins/cache/openai-bundled/sites"
+    local cache_plugin="$cache_root/1.2.3"
+    local launcher_defs="$workspace/launcher-defs.sh"
+    local race_log="$workspace/race.log"
+    local backup_plugin=""
+
+    mkdir -p "$source_plugin/.codex-plugin" "$fake_home"
+    printf '%s\n' '{"name":"sites","version":"1.2.3"}' > "$source_plugin/.codex-plugin/plugin.json"
+    printf '%s\n' "initial" > "$source_plugin/content.txt"
+    sed '/^hydrate_graphical_session_env$/,$d' "$REPO_DIR/launcher/start.sh.template" > "$launcher_defs"
+
+    (
+        export HOME="$fake_home"
+        export CODEX_HOME="$fake_home/.codex"
+        export CODEX_LINUX_APP_ID="codex-desktop"
+        export CODEX_LINUX_APP_DISPLAY_NAME="ChatGPT Desktop"
+        export CODEX_LINUX_WEBVIEW_PORT="5175"
+        exec 7>&1 8>&2
+        # shellcheck disable=SC1090
+        source "$launcher_defs"
+        exec 1>&7 2>&8
+        SCRIPT_DIR="$app_dir"
+
+        sync_extra_bundled_plugin_cache >/dev/null 2>&1
+        printf '%s\n' "replacement" > "$source_plugin/content.txt"
+
+        concurrent_destination_injected=0
+        mv() {
+            local args=("$@")
+            local argc="${#args[@]}"
+            local source="${args[$((argc - 2))]}"
+            local destination="${args[$((argc - 1))]}"
+            if [[ "$source" == *".tmp."* ]] && \
+               [ "$destination" = "$cache_plugin" ] && \
+               [ "$concurrent_destination_injected" -eq 0 ]; then
+                mkdir -p "$cache_plugin"
+                printf '%s\n' "concurrent" > "$cache_plugin/content.txt"
+                concurrent_destination_injected=1
+            fi
+            command mv "$@"
+        }
+
+        sync_extra_bundled_plugin_cache > "$race_log" 2>&1
+    )
+
+    assert_contains "$race_log" "previous cache could not be restored"
+    assert_not_contains "$race_log" "Extra bundled plugin cache synced from bundled resources"
+    assert_contains "$cache_plugin/content.txt" "concurrent"
+    assert_not_contains "$cache_plugin/content.txt" "replacement"
+    [ -z "$(find "$cache_plugin" -mindepth 1 -maxdepth 1 -type d -name '*.tmp.*' -print -quit)" ] \
+        || fail "Expected collision-safe move to avoid nesting the temporary payload"
+    [ -z "$(find "$cache_root" -mindepth 1 -maxdepth 1 -type d -name '*.tmp.*' -print -quit)" ] \
+        || fail "Expected failed concurrent cache install to clean its temporary directory"
+    backup_plugin="$(find "$cache_root" -mindepth 1 -maxdepth 1 -type d -name '*.backup.*' -print -quit)"
+    [ -n "$backup_plugin" ] || fail "Expected concurrent cache collision to preserve the previous cache backup"
+    assert_contains "$backup_plugin/content.txt" "initial"
 }
 
 test_launcher_template_sanity() {
@@ -8241,6 +8302,7 @@ main() {
     test_chrome_native_host_manifest_writer
     test_launcher_managed_node_handles_unset_path
     test_launcher_extra_bundled_plugin_cache_rollback
+    test_launcher_extra_bundled_plugin_cache_concurrent_destination
     test_launcher_rejects_missing_webview_entrypoint
     test_launcher_template_sanity
     test_launcher_cli_resolution_policy

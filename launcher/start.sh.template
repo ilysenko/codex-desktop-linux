@@ -1152,7 +1152,7 @@ sync_extra_bundled_plugin_cache() {
                 continue
             fi
             if [ -e "$cache_plugin" ] || [ -L "$cache_plugin" ]; then
-                if ! mv -- "$cache_plugin" "$backup_plugin"; then
+                if ! mv -T -- "$cache_plugin" "$backup_plugin"; then
                     remove_tree_if_exists "$tmp_plugin" || true
                     echo "Extra bundled plugin cache sync failed for $plugin_name; existing cache was preserved."
                     continue
@@ -1160,10 +1160,10 @@ sync_extra_bundled_plugin_cache() {
             else
                 backup_plugin=""
             fi
-            if ! mv -- "$tmp_plugin" "$cache_plugin"; then
+            if ! mv -T -- "$tmp_plugin" "$cache_plugin"; then
                 remove_tree_if_exists "$tmp_plugin" || true
                 if [ -n "$backup_plugin" ]; then
-                    if mv -- "$backup_plugin" "$cache_plugin"; then
+                    if mv -T -- "$backup_plugin" "$cache_plugin"; then
                         echo "Extra bundled plugin cache sync failed for $plugin_name; previous cache was restored."
                     else
                         echo "Extra bundled plugin cache sync failed for $plugin_name and the previous cache could not be restored."
