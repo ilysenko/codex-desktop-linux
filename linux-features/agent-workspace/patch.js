@@ -1899,10 +1899,16 @@ function isAgentWorkspaceSettingsSharedMetadataBundleSource(currentSource) {
   );
 }
 
+const LEGACY_SETTINGS_ROUTE_PATTERN =
+  /"general-settings":(?=\(0,([A-Za-z_$][\w$]*)\.lazy\)\(\(\)=>([A-Za-z_$][\w$]*)\()/;
+const CURRENT_SETTINGS_ROUTE_PATTERN =
+  /"general-settings":(?=([A-Za-z_$][\w$]*)\(async\(\)=>\(await ([A-Za-z_$][\w$]*)\(async\(\)=>\{let\{GeneralSettings:[A-Za-z_$][\w$]*\}=await import\()/;
+
 function isAgentWorkspaceSettingsRouteBundleSource(currentSource) {
   return (
     currentSource.includes(SETTINGS_ASSET) ||
-    /"general-settings":\(0,[A-Za-z_$][\w$]*\.lazy\)\(\(\)=>[A-Za-z_$][\w$]*\(/.test(currentSource)
+    LEGACY_SETTINGS_ROUTE_PATTERN.test(currentSource) ||
+    CURRENT_SETTINGS_ROUTE_PATTERN.test(currentSource)
   );
 }
 
@@ -1995,15 +2001,21 @@ function applyAgentWorkspaceSettingsIndexPatch(currentSource) {
   let patchedSource = currentSource;
 
   if (!patchedSource.includes(SETTINGS_ASSET)) {
-    const routePattern = /"general-settings":(?=\(0,([A-Za-z_$][\w$]*)\.lazy\)\(\(\)=>([A-Za-z_$][\w$]*)\()/;
-    if (!routePattern.test(patchedSource)) {
+    if (CURRENT_SETTINGS_ROUTE_PATTERN.test(patchedSource)) {
+      patchedSource = patchedSource.replace(
+        CURRENT_SETTINGS_ROUTE_PATTERN,
+        (_match, lazyAlias, preloadAlias) =>
+          `"${SETTINGS_SLUG}":${lazyAlias}(async()=>(await ${preloadAlias}(async()=>{let{default:e}=await import(\`./${SETTINGS_ASSET}\`);return{default:e}},[],import.meta.url)).default),"general-settings":`,
+      );
+    } else if (LEGACY_SETTINGS_ROUTE_PATTERN.test(patchedSource)) {
+      patchedSource = patchedSource.replace(
+        LEGACY_SETTINGS_ROUTE_PATTERN,
+        (_match, lazyAlias, preloadAlias) =>
+          `"${SETTINGS_SLUG}":(0,${lazyAlias}.lazy)(()=>${preloadAlias}(()=>import(\`./${SETTINGS_ASSET}\`),[],import.meta.url)),"general-settings":`,
+      );
+    } else {
       throw new Error("could not add agent workspace settings route");
     }
-    patchedSource = patchedSource.replace(
-      routePattern,
-      (_match, lazyAlias, preloadAlias) =>
-        `"${SETTINGS_SLUG}":(0,${lazyAlias}.lazy)(()=>${preloadAlias}(()=>import(\`./${SETTINGS_ASSET}\`),[],import.meta.url)),"general-settings":`,
-    );
   }
 
   return patchedSource;
