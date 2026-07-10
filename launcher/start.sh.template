@@ -702,13 +702,22 @@ stage_bundled_marketplace_metadata() {
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
     local marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
     local marketplace_plugins_dir="$marketplace_root/.agents/plugins"
+    local marketplace_target="$marketplace_plugins_dir/marketplace.json"
+    local marketplace_temp=""
 
     [ -f "$source_marketplace" ] || return 0
     mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
-    rm -f "$marketplace_plugins_dir/marketplace.json"
-    cp "$source_marketplace" "$marketplace_plugins_dir/marketplace.json" && \
-        chmod u+w "$marketplace_plugins_dir/marketplace.json" || \
+    marketplace_temp="$(mktemp "$marketplace_plugins_dir/.marketplace.json.tmp.XXXXXX")" || {
         echo "Bundled marketplace metadata sync failed; continuing with existing marketplace cache."
+        return 0
+    }
+    if cp "$source_marketplace" "$marketplace_temp" && \
+       chmod u+w "$marketplace_temp" && \
+       mv -f -- "$marketplace_temp" "$marketplace_target"; then
+        return 0
+    fi
+    rm -f -- "$marketplace_temp"
+    echo "Bundled marketplace metadata sync failed; continuing with existing marketplace cache."
 }
 
 sync_browser_use_bundled_plugin_cache() {

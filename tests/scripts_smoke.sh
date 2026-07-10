@@ -4198,6 +4198,68 @@ test_launcher_extra_bundled_plugin_cache_concurrent_destination() {
     assert_contains "$backup_plugin/content.txt" "initial"
 }
 
+test_launcher_marketplace_metadata_atomic_staging() (
+    info "Checking atomic bundled marketplace metadata staging"
+    local workspace="$TMP_DIR/launcher-marketplace-metadata"
+    local app_dir="$workspace/app"
+    local codex_home="$workspace/codex-home"
+    local source_marketplace="$app_dir/resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
+    local target_dir="$codex_home/.tmp/bundled-marketplaces/openai-bundled/.agents/plugins"
+    local target_marketplace="$target_dir/marketplace.json"
+    local function_file="$workspace/stage-function.sh"
+    local failing_command
+    local observed_temp
+    local observed_target
+
+    mkdir -p "$(dirname "$source_marketplace")" "$target_dir"
+    printf '%s\n' 'new metadata' > "$source_marketplace"
+    awk '/^stage_bundled_marketplace_metadata\(\) \{/{copy=1} copy{print} copy && /^}/{exit}' \
+        "$REPO_DIR/launcher/start.sh.template" > "$function_file"
+    # shellcheck source=/dev/null
+    source "$function_file"
+    SCRIPT_DIR="$app_dir"
+    CODEX_HOME="$codex_home"
+
+    for failing_command in cp chmod mv; do
+        printf '%s\n' 'existing metadata' > "$target_marketplace"
+        observed_temp=""
+        observed_target=""
+        cp() {
+            observed_temp="$2"
+            [ "$failing_command" != "cp" ] || return 1
+            command cp "$@"
+        }
+        chmod() {
+            [ "$failing_command" != "chmod" ] || return 1
+            command chmod "$@"
+        }
+        mv() {
+            observed_temp="${@: -2:1}"
+            observed_target="${@: -1}"
+            [ "$failing_command" != "mv" ] || return 1
+            command mv "$@"
+        }
+
+        stage_bundled_marketplace_metadata
+
+        assert_contains "$target_marketplace" "existing metadata"
+        [ "$(dirname "$observed_temp")" = "$target_dir" ] \
+            || fail "Marketplace metadata temp must be created beside the destination"
+        [ -z "$(find "$target_dir" -maxdepth 1 -type f -name '.marketplace.json.tmp.*' -print -quit)" ] \
+            || fail "Failed marketplace metadata staging must clean its temporary file"
+        if [ "$failing_command" = "mv" ]; then
+            [ "$observed_target" = "$target_marketplace" ] \
+                || fail "Marketplace metadata staging must atomically replace the final target"
+        fi
+        unset -f cp chmod mv
+    done
+
+    stage_bundled_marketplace_metadata
+    assert_contains "$target_marketplace" "new metadata"
+    [ -z "$(find "$target_dir" -maxdepth 1 -type f -name '.marketplace.json.tmp.*' -print -quit)" ] \
+        || fail "Successful marketplace metadata staging must leave no temporary file"
+)
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
@@ -4396,10 +4458,15 @@ if "clear_bundled_marketplace_tmp_cache\nmonitor_bundled_marketplace_tmp_permiss
 if not re.search(r'if needs_cold_start; then\s+log_phase "cold_start_cache_sync_start"\s+clear_bundled_marketplace_tmp_cache.*?monitor_bundled_marketplace_tmp_permissions.*?stage_bundled_marketplace_metadata.*?sync_browser_use_bundled_plugin_cache &.*?sync_chrome_bundled_plugin_cache &.*?sync_computer_use_bundled_plugin_cache &.*?sync_read_aloud_bundled_plugin_cache &.*?sync_extra_bundled_plugin_cache &.*?run_cold_start_hooks.*?log_phase "cold_start_hooks_dispatched"\s+await_webview_server_ready\s+fi', runtime_body, re.S):
     raise SystemExit("bundled marketplace cleanup, staged metadata, concurrent plugin syncs, cold-start hooks, and the webview readiness wait must run only on cold start")
 # The plugin syncs run concurrently, so the shared marketplace.json is staged
-# exactly once beforehand instead of racing rm+cp per sync, and every sync is
-# awaited before cold-start hooks so the app never sees a partial cache.
-if source.count('rm -f "$marketplace_plugins_dir/marketplace.json"') != 1:
-    raise SystemExit("bundled marketplace metadata must be staged exactly once, not per plugin sync")
+# exactly once beforehand and every sync is awaited before cold-start hooks.
+if source.count('\n    stage_bundled_marketplace_metadata\n') != 1:
+    raise SystemExit("bundled marketplace metadata must be staged exactly once")
+if 'rm -f "$marketplace_plugins_dir/marketplace.json"' in source:
+    raise SystemExit("bundled marketplace metadata must not delete the live target before copying")
+if 'mktemp "$marketplace_plugins_dir/.marketplace.json.tmp.XXXXXX"' not in source:
+    raise SystemExit("bundled marketplace metadata temp must be unique and destination-adjacent")
+if 'mv -f -- "$marketplace_temp" "$marketplace_target"' not in source:
+    raise SystemExit("bundled marketplace metadata must atomically replace the live target")
 for sync_pid_var in ("SYNC_BROWSER_USE_PID", "SYNC_CHROME_PID", "SYNC_COMPUTER_USE_PID", "SYNC_READ_ALOUD_PID", "SYNC_EXTRA_PID"):
     if 'wait "$' + sync_pid_var + '"' not in runtime_body:
         raise SystemExit(f"cold start must await concurrent plugin sync {sync_pid_var}")
@@ -8455,6 +8522,7 @@ main() {
     test_launcher_extra_bundled_plugin_cache_rollback
     test_launcher_extra_bundled_plugin_cache_concurrent_destination
     test_launcher_rejects_missing_webview_entrypoint
+    test_launcher_marketplace_metadata_atomic_staging
     test_launcher_template_sanity
     test_launcher_cli_resolution_policy
     test_webview_server_cache_policy
