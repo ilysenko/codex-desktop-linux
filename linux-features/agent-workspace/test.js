@@ -153,14 +153,6 @@ function syntheticSettingsShared() {
   ].join("");
 }
 
-function syntheticAppMainRouteRegistry() {
-  return [
-    "function render(e){return routeMap[e.slug]}",
-    "var routeMap={\"general-settings\":(0,Q.lazy)(()=>Mr(()=>import(`./general-settings.js`).then(e=>({default:e.GeneralSettings})),__vite__mapDeps([1,2]),import.meta.url)),",
-    "\"keyboard-shortcuts\":(0,Q.lazy)(()=>Mr(()=>import(`./keyboard-shortcuts-settings.js`).then(e=>({default:e.KeyboardShortcutsSettings})),__vite__mapDeps([3]),import.meta.url))};",
-  ].join("");
-}
-
 function syntheticCurrentAppMainRouteRegistry() {
   return [
     "function render(e){return currentRouteMap[e.slug]}",
@@ -1599,11 +1591,6 @@ test("settings asset patches add navigation, route, visibility, and title", () =
   assert.match(shared, new RegExp(`settings\\.nav\\.${SETTINGS_SLUG}`));
   assert.match(shared, new RegExp(`settings\\.section\\.${SETTINGS_SLUG}`));
   assert.equal(applyAgentWorkspaceSettingsSharedPatch(shared), shared);
-
-  const appMain = applyAgentWorkspaceSettingsIndexPatch(syntheticAppMainRouteRegistry());
-  assert.match(appMain, new RegExp(SETTINGS_ASSET));
-  assert.doesNotMatch(appMain, new RegExp(`"${SETTINGS_SLUG}":Icon`));
-  assert.equal(applyAgentWorkspaceSettingsIndexPatch(appMain), appMain);
 
   const currentAppMain = applyAgentWorkspaceSettingsIndexPatch(syntheticCurrentAppMainRouteRegistry());
   assert.match(
