@@ -203,6 +203,7 @@ workarounds.
 |---|---|---|---|
 | Record and Replay (alpha) | Opt-in alpha | `record-and-replay` | [Docs](linux-features/record-and-replay/README.md) |
 | Agent Workspaces | Opt-in | `agent-workspace` | [Docs](linux-features/agent-workspace/README.md) |
+| API key model visibility | Opt-in | `api-key-model-visibility` | [Docs](linux-features/api-key-model-visibility/README.md) |
 | API key service tier | Opt-in | `api-key-service-tier` | [Docs](linux-features/api-key-service-tier/README.md) |
 | Linux AppShots | Opt-in | `appshots` | [Docs](linux-features/appshots/README.md) |
 | Authenticated proxy | Opt-in | `authenticated-proxy` | [Docs](linux-features/authenticated-proxy/README.md) |
@@ -223,8 +224,10 @@ workarounds.
 | UI tweaks | Opt-in | `ui-tweaks` | [Docs](linux-features/ui-tweaks/README.md) |
 | X11/EWMH Computer Use adapter | Opt-in | `x11-ewmh-computer-use` | [Docs](linux-features/x11-ewmh-computer-use/README.md) |
 
-Server-gated upstream features, such as model rollouts, are controlled by
-OpenAI per account. Rebuilding this wrapper does not unlock them.
+ChatGPT-account model rollouts remain controlled by OpenAI per account.
+Rebuilding this wrapper does not unlock them. API-key-authenticated custom
+providers can opt in to their own visible CLI model catalog with
+`api-key-model-visibility`.
 
 ## Optional Linux Features
 
