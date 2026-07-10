@@ -119,6 +119,13 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
       `for(let e of o){let t=${electronVar}.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}${linuxIconFallback}return{defaultIcon:await ${electronVar}.app.getFileIcon(process.execPath,{size:${legacyGetFileIconSize}}),chronicleRunningIcon:null}}`;
     const trayIconFallbackRegex =
       /for\(let ([A-Za-z_$][\w$]*) of ([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.nativeImage\.createFromPath\(\1\);if\(!\3\.isEmpty\(\)\)return\{defaultIcon:\3,chronicleRunningIcon:null\}\}return\{defaultIcon:await \4\.app\.getFileIcon\(process\.execPath,\{size:((?:process\.platform===`win32`\?`small`:`normal`)|`small`|`normal`)\}\),chronicleRunningIcon:null\}\}/;
+    // Newer upstream marks the resolved icon as a template image and derives a
+    // monochrome chronicle-running icon via a helper (setTemplateImage + q9),
+    // and splits the getFileIcon fallback onto its own statement. Match that
+    // shape and insert the Linux packaged-icon fallback ahead of it while
+    // leaving upstream's loop and fallback bodies untouched.
+    const trayIconFallbackCurrentRegex =
+      /for\(let ([A-Za-z_$][\w$]*) of ([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.nativeImage\.createFromPath\(\1\);if\(!\3\.isEmpty\(\)\)return \3\.setTemplateImage\(!0\),\{defaultIcon:\3,chronicleRunningIcon:([A-Za-z_$][\w$]*)\(\3\)\}\}(let ([A-Za-z_$][\w$]*)=await \4\.app\.getFileIcon\(process\.execPath,\{size:(?:(?:process\.platform===`win32`\?`small`:`normal`)|`small`|`normal`)\}\);return\{defaultIcon:\7,chronicleRunningIcon:\5\(\7\)\}\})/;
     if (
       patchedSource.includes(`nativeImage.createFromPath(${packagedTrayIconPathExpression})`) ||
       patchedSource.includes(`nativeImage.createFromPath(${packagedAppIconPathExpression})`)
@@ -131,6 +138,12 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
         trayIconFallbackRegex,
         (_match, iconPathVar, candidatesVar, imageVar, electronAlias, sizeExpression) =>
           `for(let ${iconPathVar} of ${candidatesVar}){let ${imageVar}=${electronAlias}.nativeImage.createFromPath(${iconPathVar});if(!${imageVar}.isEmpty())return{defaultIcon:${imageVar},chronicleRunningIcon:null}}if(process.platform===\`linux\`){let __codexLinuxTrayIcon=${electronAlias}.nativeImage.createFromPath(${packagedTrayIconPathExpression});if(!__codexLinuxTrayIcon.isEmpty())return{defaultIcon:__codexLinuxTrayIcon,chronicleRunningIcon:null};let __codexLinuxAppIcon=${electronAlias}.nativeImage.createFromPath(${packagedAppIconPathExpression});if(!__codexLinuxAppIcon.isEmpty())return{defaultIcon:__codexLinuxAppIcon,chronicleRunningIcon:null};let __codexLinuxUpstreamTrayIcon=${electronAlias}.nativeImage.createFromPath(${iconPathExpression});if(!__codexLinuxUpstreamTrayIcon.isEmpty())return{defaultIcon:__codexLinuxUpstreamTrayIcon,chronicleRunningIcon:null}}return{defaultIcon:await ${electronAlias}.app.getFileIcon(process.execPath,{size:${sizeExpression}}),chronicleRunningIcon:null}}`,
+      );
+    } else if (trayIconFallbackCurrentRegex.test(patchedSource)) {
+      patchedSource = patchedSource.replace(
+        trayIconFallbackCurrentRegex,
+        (_match, iconPathVar, candidatesVar, imageVar, electronAlias, chronicleFn, postLoopFallback) =>
+          `for(let ${iconPathVar} of ${candidatesVar}){let ${imageVar}=${electronAlias}.nativeImage.createFromPath(${iconPathVar});if(!${imageVar}.isEmpty())return ${imageVar}.setTemplateImage(!0),{defaultIcon:${imageVar},chronicleRunningIcon:${chronicleFn}(${imageVar})}}if(process.platform===\`linux\`){let __codexLinuxTrayIcon=${electronAlias}.nativeImage.createFromPath(${packagedTrayIconPathExpression});if(!__codexLinuxTrayIcon.isEmpty())return{defaultIcon:__codexLinuxTrayIcon,chronicleRunningIcon:null};let __codexLinuxAppIcon=${electronAlias}.nativeImage.createFromPath(${packagedAppIconPathExpression});if(!__codexLinuxAppIcon.isEmpty())return{defaultIcon:__codexLinuxAppIcon,chronicleRunningIcon:null};let __codexLinuxUpstreamTrayIcon=${electronAlias}.nativeImage.createFromPath(${iconPathExpression});if(!__codexLinuxUpstreamTrayIcon.isEmpty())return{defaultIcon:__codexLinuxUpstreamTrayIcon,chronicleRunningIcon:null}}${postLoopFallback}`,
       );
     } else {
       console.warn("WARN: Could not find tray icon fallback — skipping Linux tray icon patch");

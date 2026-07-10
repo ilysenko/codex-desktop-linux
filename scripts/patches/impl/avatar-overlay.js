@@ -186,11 +186,27 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
       `${i3SessionMethod}${compositorHintsMethod}${shapeBackendMethod}codexLinuxStopAvatarPassthroughRecovery(){`,
     )
     .replaceAll(previousSetShapePolicyPatch, setShapePolicyPatch);
+  // Newer upstream keeps applyPointerInteractivityPolicy byte-identical but the
+  // method that follows it is no longer refreshCursorAtCurrentMousePosition, so
+  // the needle's trailing anchor drifts. Re-anchor on the method's own closing
+  // braces and splice the Linux methods in ahead of whatever follows.
+  const interactivityCursorTail = "refreshCursorAtCurrentMousePosition(e){";
+  const interactivityNeedleCurrent = interactivityNeedle.slice(
+    0,
+    interactivityNeedle.lastIndexOf(interactivityCursorTail),
+  );
+  const interactivityPatchCurrent = interactivityPatch.slice(
+    0,
+    interactivityPatch.lastIndexOf(interactivityCursorTail),
+  );
 
   if (!patchedSource.includes("codexLinuxIsI3Session")) {
     if (patchedSource.includes(interactivityNeedle)) {
       recordStrategy("avatar-interactivity", "upstream");
       patchedSource = patchedSource.replace(interactivityNeedle, interactivityPatch);
+    } else if (patchedSource.includes(interactivityNeedleCurrent)) {
+      recordStrategy("avatar-interactivity", "upstream");
+      patchedSource = patchedSource.replace(interactivityNeedleCurrent, interactivityPatchCurrent);
     } else if (
       patchedSource.includes("avatar-overlay") &&
       patchedSource.includes("applyPointerInteractivityPolicy(){let e=this.window")
@@ -275,6 +291,19 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
         "this.dragState=null,this.reclampWindowToVisibleDisplay({shouldPersist:!0}),process.platform===`linux`&&this.applyPointerInteractivityPolicy()",
       ),
     );
+  } else if (endDragMethod?.text.includes("this.reclampWindowToVisibleDisplay({shouldPersist:!0})")) {
+    // Newer upstream detaches the reclamp call from the `this.dragState=null`
+    // assignment (drag cleanup grew window-server-drag branches), so append the
+    // interactivity re-sync directly after the reclamp expression instead.
+    recordStrategy("avatar-end-drag", "upstream-method");
+    patchedSource = replaceAvatarMethodText(
+      patchedSource,
+      endDragMethod,
+      endDragMethod.text.replace(
+        "this.reclampWindowToVisibleDisplay({shouldPersist:!0})",
+        "this.reclampWindowToVisibleDisplay({shouldPersist:!0}),process.platform===`linux`&&this.applyPointerInteractivityPolicy()",
+      ),
+    );
   } else if (patchedSource.includes("avatar-overlay")) {
     recordStrategy("avatar-end-drag", "none");
     console.warn(
@@ -284,7 +313,7 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
 
   const setElementSizeMethod = findAvatarOverlayMethod(
     patchedSource,
-    /setElementSize\([A-Za-z_$][\w$]*,\{(?:[^{}]*,)?mascot:[A-Za-z_$][\w$]*,tray:[A-Za-z_$][\w$]*(?:,[^{}]*)?\}\)\{/,
+    /setElementSize\([A-Za-z_$][\w$]*,\{(?:[^{}]*,)?mascot:[A-Za-z_$][\w$]*,(?:[^{}]*,)?tray:[A-Za-z_$][\w$]*(?:,[^{}]*)?\}\)\{/,
   );
   if (setElementSizeMethod != null) {
     if (
@@ -325,6 +354,13 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
     /traySize:this\.traySize\?\?([A-Za-z_$][\w$]*|\([^{};]*?\))\}\);this\.anchor=/;
   const i3TrayFallbackPatch =
     "traySize:process.platform===`linux`&&typeof this.codexLinuxIsI3Session==`function`&&this.codexLinuxIsI3Session()?this.traySize:this.traySize??$1});this.anchor=";
+  // Newer upstream moved the default tray layout into getLayout, so the value
+  // is no longer followed by `});this.anchor=`. Anchor on the `??` default and
+  // its object/call close (`})`) instead, which uniquely identifies it.
+  const i3TrayFallbackCurrentRegex =
+    /traySize:this\.traySize\?\?([A-Za-z_$][\w$]*|\([^{};]*?\))\}\)/;
+  const i3TrayFallbackCurrentPatch =
+    "traySize:process.platform===`linux`&&typeof this.codexLinuxIsI3Session==`function`&&this.codexLinuxIsI3Session()?this.traySize:this.traySize??$1})";
   if (
     !patchedSource.includes(
       "traySize:process.platform===`linux`&&typeof this.codexLinuxIsI3Session==`function`&&this.codexLinuxIsI3Session()",
@@ -333,6 +369,9 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
     if (i3TrayFallbackRegex.test(patchedSource)) {
       recordStrategy("avatar-i3-tray-fallback", "upstream");
       patchedSource = patchedSource.replace(i3TrayFallbackRegex, i3TrayFallbackPatch);
+    } else if (i3TrayFallbackCurrentRegex.test(patchedSource)) {
+      recordStrategy("avatar-i3-tray-fallback", "upstream");
+      patchedSource = patchedSource.replace(i3TrayFallbackCurrentRegex, i3TrayFallbackCurrentPatch);
     } else if (patchedSource.includes("avatar-overlay")) {
       recordStrategy("avatar-i3-tray-fallback", "none");
       console.warn(
@@ -362,6 +401,22 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
       applyLayoutMethod.text.replace(
         /this\.setWindowBounds\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\.windowBounds((?:,[A-Za-z_$][\w$]*)*)\),this\.sendLayoutToRenderer\(\1((?:,[A-Za-z_$][\w$]*)*)\)/,
         "this.setWindowBounds($1,$2.windowBounds$3),this.sendLayoutToRenderer($1$4),process.platform===`linux`&&this.applyPointerInteractivityPolicy()",
+      ),
+    );
+  } else if (
+    applyLayoutMethod != null &&
+    /this\.sendLayoutToRenderer\([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*)*\)/.test(applyLayoutMethod.text)
+  ) {
+    // Newer upstream interleaves other calls (e.g. updateMascotRect) between
+    // setWindowBounds and sendLayoutToRenderer, so anchor on the layout push
+    // alone and re-sync interactivity right after it.
+    recordStrategy("avatar-apply-layout", "upstream");
+    patchedSource = replaceAvatarMethodText(
+      patchedSource,
+      applyLayoutMethod,
+      applyLayoutMethod.text.replace(
+        /(this\.sendLayoutToRenderer\([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*)*\))/,
+        "$1,process.platform===`linux`&&this.applyPointerInteractivityPolicy()",
       ),
     );
   } else if (
