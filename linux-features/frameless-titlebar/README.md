@@ -41,8 +41,8 @@ For a manual check, enable the feature as above, rebuild, and launch the app:
   compositor's bindings (for example Hyprland's `bindm` mouse binds and
   `killactive`/`fullscreen` dispatchers).
 - Changing the system dark/light theme must not crash the app or repaint a
-  titlebar strip; the patch removes all Linux `setTitleBarOverlay` calls,
-  which would otherwise throw on a window created without `titleBarOverlay`.
+  titlebar strip in the primary window; the patch removes its Linux
+  `setTitleBarOverlay` calls while preserving the Quick Chat overlay.
 - On GNOME/X11, right-click the same titlebar area that previously locked input
   and verify whether clicks outside the window recover normally. If the issue
   still reproduces, disable the feature again and report the distro, GNOME
