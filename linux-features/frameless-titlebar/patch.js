@@ -1,32 +1,22 @@
 "use strict";
 
 function applyFramelessTitlebarBranchPatch(currentSource) {
-  const splitLinuxTitlebarRegex =
-    /([A-Za-z_$][\w$]*)===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:codexLinuxTitleBarOverlay\(([A-Za-z_$][\w$]*)\),(\.\.\.[A-Za-z_$][\w$]*===`quickChat`\?\{resizable:!0\}:\{\})\}:/g;
   let patchedTitlebar = false;
-  let patchedSource = currentSource.replace(
-    splitLinuxTitlebarRegex,
-    (_match, platformAlias, _zoomAlias, quickChatOptions) => {
-      patchedTitlebar = true;
-      return `${platformAlias}===\`linux\`?{titleBarStyle:\`hidden\`,${quickChatOptions}}:`;
-    },
-  );
-
   const combinedLinuxTitlebarRegex =
-    /([A-Za-z_$][\w$]*)===`win32`\|\|\1===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\1===`linux`\?codexLinuxTitleBarOverlay\(([A-Za-z_$][\w$]*)\):([A-Za-z_$][\w$]*)\(\2\),(\.\.\.[A-Za-z_$][\w$]*===`quickChat`\?\{resizable:!0\}:\{\})\}:/g;
-  patchedSource = patchedSource.replace(
+    /([A-Za-z_$][\w$]*)===`win32`\|\|\1===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\1===`linux`\?codexLinuxTitleBarOverlay\(([A-Za-z_$][\w$]*)\):([A-Za-z_$][\w$]*)\(\2\),(\.\.\.([A-Za-z_$][\w$]*)===`quickChat`\?\{resizable:!0\}:\{\})\}:/g;
+  const patchedSource = currentSource.replace(
     combinedLinuxTitlebarRegex,
-    (_match, platformAlias, zoomAlias, overlayHelperAlias, quickChatOptions) => {
+    (_match, platformAlias, zoomAlias, overlayHelperAlias, quickChatOptions, windowTypeAlias) => {
       patchedTitlebar = true;
       return (
         `${platformAlias}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelperAlias}(${zoomAlias}),${quickChatOptions}}:` +
-        `${platformAlias}===\`linux\`?{titleBarStyle:\`hidden\`,${quickChatOptions}}:`
+        `${platformAlias}===\`linux\`?{titleBarStyle:\`hidden\`,...${windowTypeAlias}===\`quickChat\`?{titleBarOverlay:codexLinuxTitleBarOverlay(${zoomAlias}),resizable:!0}:{}}:`
       );
     },
   );
 
   const patchedLinuxTitlebarRegex =
-    /[A-Za-z_$][\w$]*===`linux`\?\{titleBarStyle:`hidden`,\.\.\.[A-Za-z_$][\w$]*===`quickChat`\?\{resizable:!0\}:\{\}\}:/;
+    /[A-Za-z_$][\w$]*===`linux`\?\{titleBarStyle:`hidden`,\.\.\.[A-Za-z_$][\w$]*===`quickChat`\?\{titleBarOverlay:codexLinuxTitleBarOverlay\([A-Za-z_$][\w$]*\),resizable:!0\}:\{\}\}:/;
   if (!patchedTitlebar && !patchedLinuxTitlebarRegex.test(patchedSource)) {
     console.warn("WARN: Could not find primary BrowserWindow titlebar snippet - skipping frameless titlebar branch patch");
   }
@@ -37,30 +27,30 @@ function applyFramelessTitlebarBranchPatch(currentSource) {
 function applyFramelessTitlebarOverlaySyncPatch(currentSource) {
   let patchedZoom = false;
   let patchedSource = currentSource.replace(
-    /(setWindowZoom\([^)]*\)\{[\s\S]{0,600}?)\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\2\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(\3\):([A-Za-z_$][\w$]*)\(\3\)\)\)/g,
-    (_match, functionPrefix, windowAlias, zoomAlias, overlayHelperAlias) => {
+    /(setWindowZoom\([^)]*\)\{(?=[\s\S]{0,600}?,([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*&&this\.windowAppearances\.get\()[\s\S]{0,600}?)\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\3\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(\4\):([A-Za-z_$][\w$]*)\(\4\)\)\)/g,
+    (_match, functionPrefix, appearanceAlias, windowAlias, zoomAlias, overlayHelperAlias) => {
       patchedZoom = true;
-      return `${functionPrefix}process.platform===\`win32\`&&(this.windowZooms.set(${windowAlias}.id,${zoomAlias}),${windowAlias}.setTitleBarOverlay(${overlayHelperAlias}(${zoomAlias})))`;
+      return `${functionPrefix}(process.platform===\`win32\`||process.platform===\`linux\`&&${appearanceAlias}===\`quickChat\`)&&(this.windowZooms.set(${windowAlias}.id,${zoomAlias}),${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?codexLinuxTitleBarOverlay(${zoomAlias}):${overlayHelperAlias}(${zoomAlias})))`;
     },
   );
 
   const patchedZoomRegex =
-    /setWindowZoom\([^)]*\)\{[\s\S]{0,600}?process\.platform===`win32`&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\([A-Za-z_$][\w$]*\(\2\)\)\)/;
+    /setWindowZoom\([^)]*\)\{(?=[\s\S]{0,600}?,([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*&&this\.windowAppearances\.get\()[\s\S]{0,600}?\(process\.platform===`win32`\|\|process\.platform===`linux`&&\1===`quickChat`\)&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\2\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(\3\):[A-Za-z_$][\w$]*\(\3\)\)\)/;
   if (currentSource.includes("setWindowZoom(") && !patchedZoom && !patchedZoomRegex.test(patchedSource)) {
     console.warn("WARN: Could not find setWindowZoom titlebar overlay snippet - skipping frameless zoom patch");
   }
 
   let patchedSync = false;
   patchedSource = patchedSource.replace(
-    /(install(?:Windows|ApplicationMenu)TitleBarOverlaySync)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(process\.platform!==`win32`&&process\.platform!==`linux`\|\|\3!==`primary`&&\3!==`quickChat`\)return;let ([A-Za-z_$][\w$]*)=\(\)=>\{\2\.isDestroyed\(\)\|\|\2\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(this\.windowZooms\.get\(\2\.id\)\):([A-Za-z_$][\w$]*)\(this\.windowZooms\.get\(\2\.id\)\)\)\};return ([A-Za-z_$][\w$]*)\.nativeTheme\.on\(`updated`,\4\),\4\(\),\(\)=>\{\6\.nativeTheme\.off\(`updated`,\4\)\}\}/g,
-    (_match, methodName, windowAlias, windowTypeAlias, updateAlias, overlayHelperAlias, electronAlias) => {
+    /installApplicationMenuTitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(process\.platform!==`win32`&&process\.platform!==`linux`\|\|\2!==`primary`&&\2!==`quickChat`\)return;let ([A-Za-z_$][\w$]*)=\(\)=>\{\1\.isDestroyed\(\)\|\|\1\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(this\.windowZooms\.get\(\1\.id\)\):([A-Za-z_$][\w$]*)\(this\.windowZooms\.get\(\1\.id\)\)\)\};return ([A-Za-z_$][\w$]*)\.nativeTheme\.on\(`updated`,\3\),\3\(\),\(\)=>\{\5\.nativeTheme\.off\(`updated`,\3\)\}\}/g,
+    (_match, windowAlias, windowTypeAlias, updateAlias, overlayHelperAlias, electronAlias) => {
       patchedSync = true;
-      return `${methodName}(${windowAlias},${windowTypeAlias}){if(process.platform!==\`win32\`||${windowTypeAlias}!==\`primary\`&&${windowTypeAlias}!==\`quickChat\`)return;let ${updateAlias}=()=>{${windowAlias}.isDestroyed()||${windowAlias}.setTitleBarOverlay(${overlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))};return ${electronAlias}.nativeTheme.on(\`updated\`,${updateAlias}),${updateAlias}(),()=>{${electronAlias}.nativeTheme.off(\`updated\`,${updateAlias})}}`;
+      return `installApplicationMenuTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if(process.platform!==\`win32\`&&(process.platform!==\`linux\`||${windowTypeAlias}!==\`quickChat\`)||${windowTypeAlias}!==\`primary\`&&${windowTypeAlias}!==\`quickChat\`)return;let ${updateAlias}=()=>{${windowAlias}.isDestroyed()||${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?codexLinuxTitleBarOverlay(this.windowZooms.get(${windowAlias}.id)):${overlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))};return ${electronAlias}.nativeTheme.on(\`updated\`,${updateAlias}),${updateAlias}(),()=>{${electronAlias}.nativeTheme.off(\`updated\`,${updateAlias})}}`;
     },
   );
 
   const patchedSyncRegex =
-    /installApplicationMenuTitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(process\.platform!==`win32`\|\|\2!==`primary`&&\2!==`quickChat`\)return;let ([A-Za-z_$][\w$]*)=\(\)=>\{\1\.isDestroyed\(\)\|\|\1\.setTitleBarOverlay\([A-Za-z_$][\w$]*\(this\.windowZooms\.get\(\1\.id\)\)\)\}/;
+    /installApplicationMenuTitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(process\.platform!==`win32`&&\(process\.platform!==`linux`\|\|\2!==`quickChat`\)\|\|\2!==`primary`&&\2!==`quickChat`\)return;let ([A-Za-z_$][\w$]*)=\(\)=>\{\1\.isDestroyed\(\)\|\|\1\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(this\.windowZooms\.get\(\1\.id\)\):[A-Za-z_$][\w$]*\(this\.windowZooms\.get\(\1\.id\)\)\)\}/;
   if (
     currentSource.includes("installApplicationMenuTitleBarOverlaySync(") &&
     !patchedSync &&

@@ -88,7 +88,7 @@ test("frameless-titlebar stays disabled until listed in features.json", () => {
 
 test("frameless-titlebar removes current Linux overlay controls without changing quick chat", () => {
   const source = [
-    "case`quickChat`:case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`,trafficLightPosition:A9(r),...e===`quickChat`?{hasShadow:!0,resizable:!0,transparent:!0}:{},...t?{}:{vibrancy:`menu`}}:n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:j9(r),...e===`quickChat`?{resizable:!0}:{}}:n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:codexLinuxTitleBarOverlay(r),...e===`quickChat`?{resizable:!0}:{}}:{titleBarStyle:`default`,...e===`quickChat`?{resizable:!0}:{}};",
+    "case`quickChat`:case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`,trafficLightPosition:A9(r),...e===`quickChat`?{hasShadow:!0,resizable:!0,transparent:!0}:{},...t?{}:{vibrancy:`menu`}}:n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:n===`linux`?codexLinuxTitleBarOverlay(r):j9(r),...e===`quickChat`?{resizable:!0}:{}}:{titleBarStyle:`default`,...e===`quickChat`?{resizable:!0}:{}};",
     "setWindowZoom(e,t){let n=c.BrowserWindow.fromWebContents(e),r=n&&this.windowAppearances.get(n.id);n==null||r!==`primary`&&r!==`quickChat`||(process.platform===`darwin`?n.setWindowButtonPosition(A9(t)):(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(process.platform===`linux`?codexLinuxTitleBarOverlay(t):j9(t))))}",
     "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`quickChat`)return;let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(process.platform===`linux`?codexLinuxTitleBarOverlay(this.windowZooms.get(e.id)):j9(this.windowZooms.get(e.id)))};return c.nativeTheme.on(`updated`,n),n(),()=>{c.nativeTheme.off(`updated`,n)}}",
     "(process.platform===`win32`||process.platform===`linux`)&&k.removeMenu(),",
@@ -105,19 +105,28 @@ test("frameless-titlebar removes current Linux overlay controls without changing
   );
   assert.match(
     patched,
-    /n===`linux`\?\{titleBarStyle:`hidden`,\.\.\.e===`quickChat`\?\{resizable:!0\}:\{\}\}/,
+    /n===`linux`\?\{titleBarStyle:`hidden`,\.\.\.e===`quickChat`\?\{titleBarOverlay:codexLinuxTitleBarOverlay\(r\),resizable:!0\}:\{\}\}/,
   );
   assert.match(
     patched,
-    /process\.platform===`win32`&&\(this\.windowZooms\.set\(n\.id,t\),n\.setTitleBarOverlay\(j9\(t\)\)\)/,
+    /\(process\.platform===`win32`\|\|process\.platform===`linux`&&r===`quickChat`\)&&\(this\.windowZooms\.set\(n\.id,t\),n\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(t\):j9\(t\)\)\)/,
   );
-  assert.match(patched, /if\(process\.platform!==`win32`\|\|t!==`primary`&&t!==`quickChat`\)return/);
+  assert.match(
+    patched,
+    /if\(process\.platform!==`win32`&&\(process\.platform!==`linux`\|\|t!==`quickChat`\)\|\|t!==`primary`&&t!==`quickChat`\)return/,
+  );
+  assert.match(
+    patched,
+    /e\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(this\.windowZooms\.get\(e\.id\)\):j9\(this\.windowZooms\.get\(e\.id\)\)\)/,
+  );
   assert.match(
     patched,
     /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&k\.removeMenu\(\),/,
   );
-  assert.doesNotMatch(patched, /titleBarOverlay:codexLinuxTitleBarOverlay/);
-  assert.doesNotMatch(patched, /process\.platform===`linux`[^;]*setTitleBarOverlay/);
+  assert.doesNotMatch(
+    patched,
+    /n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:codexLinuxTitleBarOverlay/,
+  );
 });
 
 test("frameless-titlebar composes with the current native-titlebar patch shape", () => {
@@ -135,7 +144,7 @@ test("frameless-titlebar composes with the current native-titlebar patch shape",
   );
   assert.match(
     patched,
-    /n===`linux`\?\{titleBarStyle:`hidden`,\.\.\.e===`quickChat`\?\{resizable:!0\}:\{\}\}/,
+    /n===`linux`\?\{titleBarStyle:`hidden`,\.\.\.e===`quickChat`\?\{titleBarOverlay:codexLinuxTitleBarOverlay\(r\),resizable:!0\}:\{\}\}/,
   );
   assert.doesNotMatch(patched, /titleBarOverlay:n===`linux`/);
 });
