@@ -1234,9 +1234,12 @@ while True:
         )
         .unwrap();
         fs::set_permissions(&fake_cli, fs::Permissions::from_mode(0o700)).unwrap();
+        let fake_node = root.join("fake-node");
+        fs::write(&fake_node, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&fake_node, fs::Permissions::from_mode(0o700)).unwrap();
 
         let extension_id = "abcdefghijklmnopabcdefghijklmnop";
-        let current_exe = env::current_exe().unwrap();
+        let extension_host_path = trusted_current_exe_link(&root);
         let manifest_path = root.join("chrome-native-hosts-v2.json");
         fs::write(
             &manifest_path,
@@ -1258,8 +1261,8 @@ while True:
                     "paths": {
                         "codexCliPath": fake_cli,
                         "codexHome": codex_home,
-                        "extensionHostPath": current_exe.clone(),
-                        "nodePath": current_exe,
+                        "extensionHostPath": extension_host_path,
+                        "nodePath": fake_node,
                         "resourcesPath": resources
                     },
                     "proxyHost": "127.0.0.1",
@@ -1336,6 +1339,15 @@ while True:
                 })
             })
             .unwrap_or_else(|| panic!("could not resolve test executable from PATH: {name}"))
+    }
+
+    fn trusted_current_exe_link(root: &Path) -> PathBuf {
+        let target = root.join("extension-host");
+        fs::hard_link(env::current_exe().unwrap(), &target)
+            .expect("extension host tests require hard-link support in the temp directory");
+        let mode = fs::metadata(&target).unwrap().permissions().mode() & !0o022;
+        fs::set_permissions(&target, fs::Permissions::from_mode(mode)).unwrap();
+        target
     }
 
     #[test]

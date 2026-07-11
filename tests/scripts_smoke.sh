@@ -5856,6 +5856,8 @@ EOF
     assert_contains "$REPO_DIR/launcher/start.sh.template" "sync_chrome_bundled_plugin_cache"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "sync_read_aloud_bundled_plugin_cache"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "make_tree_owner_writable"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "make_path_owner_trusted"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "make_tree_owner_trusted"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "clear_bundled_marketplace_tmp_cache"
     assert_not_contains "$REPO_DIR/launcher/start.sh.template" "monitor_bundled_marketplace_tmp_permissions"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-id.json"
@@ -5974,10 +5976,78 @@ assertCacheLinks({
   body: functionBody("sync_read_aloud_bundled_plugin_cache", "resolve_browser_use_runtime_env"),
   plugin: "read-aloud",
 });
+const chromeBody = functionBody("sync_chrome_bundled_plugin_cache", "sync_computer_use_bundled_plugin_cache");
+for (const required of [
+  'make_path_owner_trusted',
+  'make_tree_owner_trusted "$tmp_plugin"',
+  'make_tree_owner_trusted "$cache_plugin"',
+  'write_chrome_native_host_manifests "$host_path" "$cache_root/latest"',
+]) {
+  if (!chromeBody.includes(required)) {
+    throw new Error(`Chrome plugin runtime cache sync missing ${required}`);
+  }
+}
+const mkdirCacheParent = chromeBody.indexOf('mkdir -p "$cache_parent"');
+if (mkdirCacheParent === -1 || chromeBody.indexOf('"$cache_parent"', mkdirCacheParent) === -1) {
+  throw new Error("Chrome plugin runtime cache sync must harden newly created cache parents");
+}
 if (!launcher.includes('ln -sfnT "$target" "$link_path"')) {
   throw new Error("replace_symlink must replace plugin links as paths, not as directory children");
 }
 NODE
+
+    local trust_probe="$TMP_DIR/chrome-cache-permissions-probe.sh"
+    python3 - "$REPO_DIR/launcher/start.sh.template" "$trust_probe" <<'PY'
+import pathlib
+import re
+import sys
+
+launcher = pathlib.Path(sys.argv[1]).read_text()
+helpers = []
+for name in ("make_path_owner_trusted", "make_tree_owner_trusted"):
+    match = re.search(rf"{name}\(\) \{{[\s\S]*?\n\}}\n", launcher)
+    if match is None:
+        raise SystemExit(f"missing {name}")
+    helpers.append(match.group(0))
+
+pathlib.Path(sys.argv[2]).write_text(
+    """#!/usr/bin/env bash
+set -euo pipefail
+
+"""
+    + "\n".join(helpers)
+    + r'''
+root="$1"
+cache="$root/.codex/plugins/cache/openai-bundled/chrome"
+plugin="$cache/26.test"
+mkdir -p "$plugin/extension-host"
+touch "$plugin/extension-host/host"
+chmod 775 "$root/.codex" \
+    "$root/.codex/plugins" \
+    "$root/.codex/plugins/cache" \
+    "$root/.codex/plugins/cache/openai-bundled" \
+    "$cache" \
+    "$plugin" \
+    "$plugin/extension-host"
+chmod 664 "$plugin/extension-host/host"
+
+make_path_owner_trusted \
+    "$root/.codex" \
+    "$root/.codex/plugins" \
+    "$root/.codex/plugins/cache" \
+    "$root/.codex/plugins/cache/openai-bundled" \
+    "$cache"
+make_tree_owner_trusted "$plugin"
+
+if find "$root/.codex" -perm /022 -print -quit | grep -q .; then
+    exit 1
+fi
+test -w "$plugin/extension-host/host"
+'''
+)
+PY
+    chmod +x "$trust_probe"
+    "$trust_probe" "$TMP_DIR/chrome-cache-permissions"
 }
 
 test_launcher_cli_resolution_policy() {

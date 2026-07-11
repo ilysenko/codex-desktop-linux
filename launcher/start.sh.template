@@ -376,6 +376,22 @@ make_tree_owner_writable() {
     chmod -R u+rwX "$path" 2>/dev/null || true
 }
 
+make_path_owner_trusted() {
+    local path
+
+    for path in "$@"; do
+        [ -e "$path" ] || continue
+        chmod u+rwX,go-w "$path" 2>/dev/null || true
+    done
+}
+
+make_tree_owner_trusted() {
+    local path="$1"
+
+    [ -e "$path" ] || return 0
+    chmod -R u+rwX,go-w "$path" 2>/dev/null || true
+}
+
 remove_tree_if_exists() {
     local path="$1"
 
@@ -962,6 +978,13 @@ sync_chrome_bundled_plugin_cache() {
     cache_client="$cache_plugin/scripts/browser-client.mjs"
     cache_install_manifest="$cache_plugin/scripts/installManifest.mjs"
 
+    make_path_owner_trusted \
+        "$codex_home" \
+        "$codex_home/plugins" \
+        "$codex_home/plugins/cache" \
+        "$codex_home/plugins/cache/openai-bundled" \
+        "$cache_root"
+
     if [ -f "$cache_plugin/.codex-plugin/plugin.json" ] && \
         [ -f "$cache_host" ] && \
         [ -f "$cache_client" ] && \
@@ -995,9 +1018,16 @@ sync_chrome_bundled_plugin_cache() {
         tmp_plugin="$cache_parent/.chrome-$version.tmp.$$"
         remove_tree_if_exists "$tmp_plugin"
         mkdir -p "$cache_parent"
+        make_path_owner_trusted \
+            "$codex_home" \
+            "$codex_home/plugins" \
+            "$codex_home/plugins/cache" \
+            "$codex_home/plugins/cache/openai-bundled" \
+            "$cache_root" \
+            "$cache_parent"
 
         if cp -R "$source_plugin" "$tmp_plugin"; then
-            make_tree_owner_writable "$tmp_plugin"
+            make_tree_owner_trusted "$tmp_plugin"
             find "$tmp_plugin" -type f -name '*:com.apple.*' -delete
             remove_tree_if_exists "$cache_plugin"
             mv "$tmp_plugin" "$cache_plugin"
@@ -1009,6 +1039,7 @@ sync_chrome_bundled_plugin_cache() {
         fi
     fi
 
+    make_tree_owner_trusted "$cache_plugin"
     replace_symlink "$version" "$cache_root/latest"
 
     marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"
