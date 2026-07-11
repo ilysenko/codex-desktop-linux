@@ -1,3 +1,22 @@
+codex_capture_original_ld_library_path() {
+    # Packaged runtimes may extend LD_LIBRARY_PATH after this point. Main-process
+    # host children use this three-state snapshot instead of inheriting those paths.
+    if [ "${LD_LIBRARY_PATH+x}" != x ]; then
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE="unset"
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE=""
+    elif [ -z "$LD_LIBRARY_PATH" ]; then
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE="empty"
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE=""
+    else
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE="value"
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE="$LD_LIBRARY_PATH"
+    fi
+    export CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE
+}
+
+# Capture before package-specific launcher patches add application runtime paths.
+codex_capture_original_ld_library_path
+
 resolve_script_dir() {
     local source="${BASH_SOURCE[0]}"
     local dir

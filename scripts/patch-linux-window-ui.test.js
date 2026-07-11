@@ -87,9 +87,11 @@ const {
   applyLinuxWillQuitDrainTimeoutPatch,
 } = require("./patches/impl/main-process/quit-lifecycle.js");
 const {
+  applyLinuxChildProcessEnvironmentPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxLocalAppServerFeatureEnablementHandlerPatch,
+  applyLinuxLocalEnvironmentNotDirectoryPatch,
   applyLinuxOwlFeatureBindingFallbackPatch,
   applyLinuxRemoteControlConfigPreservationPatch,
   applyLinuxTerminalUserPathPatch,
@@ -155,6 +157,7 @@ const {
 const {
   applyBrowserAnnotationScreenshotPatch,
   applyLocalEnvironmentActionModalDraftPatch,
+  applyLocalEnvironmentEmptyProjectPatch,
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppServerBackfillWaitPatch,
   applyLinuxCompletedItemRecoveryPatch,
@@ -1013,6 +1016,8 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-browser-use-external-availability",
     "linux-chat-search-hydration",
     "linux-file-manager",
+    "linux-host-child-process-environment",
+    "linux-local-environment-not-directory",
     "linux-worker-file-manager",
     "linux-terminal-user-path",
     "linux-tray",
@@ -1063,6 +1068,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-safe-monospace-font-stack",
     "subagent-nickname-metadata-shape",
     "local-environment-action-modal-draft",
+    "local-environment-empty-project",
     "linux-computer-use-ui-availability",
     "linux-computer-use-install-flow",
     "linux-app-updater-bridge",
@@ -1909,6 +1915,98 @@ test("adds Linux file manager support to the worker open target registry", () =>
   assert.match(patched, /i\.dirname\(t\)/);
   assert.doesNotMatch(patched, /open:async\(\{path:e\}\)=>\{let [^}]*require\(`node:fs`\)/);
   assert.match(patched, /import\(`electron`\)\)\.shell\.openPath\(t\)/);
+});
+
+function evaluatePatchedChildProcessEnvironment(env) {
+  const calls = [];
+  const childProcess = {};
+  for (const method of [
+    "spawn",
+    "spawnSync",
+    "exec",
+    "execSync",
+    "execFile",
+    "execFileSync",
+    "fork",
+  ]) {
+    childProcess[method] = (...args) => {
+      calls.push({ method, args });
+      return { method, args };
+    };
+  }
+  const source =
+    '"use strict";const shellError=`Failed to load shell env`,request=`local-environments`,childProcess=require(`node:child_process`);';
+  const patched = applyPatchTwice(applyLinuxChildProcessEnvironmentPatch, source);
+  const context = {
+    process: { platform: "linux", env },
+    require(name) {
+      if (name === "node:child_process") return childProcess;
+      throw new Error(`unexpected module: ${name}`);
+    },
+  };
+  vm.runInNewContext(patched, context);
+  return { calls, childProcess, patched };
+}
+
+test("removes application-added library paths from Linux host child processes", () => {
+  const { calls, childProcess, patched } = evaluatePatchedChildProcessEnvironment({
+    PATH: "/usr/bin",
+    LD_LIBRARY_PATH: "/nix/app:/nix/runtime",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: "unset",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: "",
+    CODEX_LINUX_APP_LD_LIBRARY_PATH: "/nix/app:/nix/runtime",
+  });
+
+  childProcess.spawn("flatpak", ["--version"]);
+  childProcess.execFile("codex", ["app-server"], () => {});
+  childProcess.spawnSync("bash", ["-ilc", "env"], { env: { EXTRA: "1" } });
+
+  assert.match(patched, /codexLinuxPatchChildProcessEnvironment/);
+  assert.equal(calls.length, 3);
+  for (const call of calls) {
+    const options = call.args.find(
+      (arg) => arg != null && typeof arg === "object" && !Array.isArray(arg) && "env" in arg,
+    );
+    assert.ok(options, `${call.method} should receive options.env`);
+    assert.equal(Object.hasOwn(options.env, "LD_LIBRARY_PATH"), false);
+    assert.equal(Object.hasOwn(options.env, "CODEX_LINUX_APP_LD_LIBRARY_PATH"), false);
+    assert.equal(Object.hasOwn(options.env, "CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE"), false);
+  }
+});
+
+test("treats ENOTDIR as a missing local environment config", () => {
+  const source =
+    '"use strict";const handlers={"local-environment-config":async({configPath:e,hostId:t})=>{let r=this.getRequestAppServerClient(t),i=r.hostConfig,a=i.id===`local`,o=e,s=await n.Ct(r,o),c=z(o,a);return s.exists?{configPath:c,exists:!0}:{configPath:c,exists:!1}},"local-environment-config-save":async()=>({success:!0})};';
+  const patched = applyPatchTwice(applyLinuxLocalEnvironmentNotDirectoryPatch, source);
+
+  assert.match(patched, /codexLinuxReadEnvironmentConfig/);
+  assert.match(patched, /e\?\.code!==`ENOTDIR`/);
+  assert.match(patched, /return\{exists:!1\}/);
+});
+
+test("preserves empty and non-empty user LD_LIBRARY_PATH values for host children", () => {
+  for (const [state, value] of [
+    ["empty", ""],
+    ["value", "/home/user/lib:/opt/vendor/lib"],
+  ]) {
+    const { calls, childProcess } = evaluatePatchedChildProcessEnvironment({
+      LD_LIBRARY_PATH: `/nix/app:${value}`,
+      CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: state,
+      CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: value,
+    });
+    childProcess.exec("printenv", { env: { LD_LIBRARY_PATH: "/nix/explicit" } }, () => {});
+    assert.equal(calls[0].args[1].env.LD_LIBRARY_PATH, value);
+  }
+});
+
+test("leaves packaged Electron process environment augmented", () => {
+  const env = {
+    LD_LIBRARY_PATH: "/nix/app:/home/user/lib",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: "value",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: "/home/user/lib",
+  };
+  evaluatePatchedChildProcessEnvironment(env);
+  assert.equal(env.LD_LIBRARY_PATH, "/nix/app:/home/user/lib");
 });
 
 test("restores the user PATH for Linux local terminal sessions", () => {
@@ -5225,6 +5323,22 @@ test("adds the Linux desktop section title when the JSX message component identi
   );
   // The original general-settings case is preserved untouched.
   assert.match(patched, /case`general-settings`:\{let e;return o\[5\]===Symbol\.for\(`react\.memo_cache_sentinel`\)/);
+});
+
+test("loads the default local environment config path for an empty project", () => {
+  const source =
+    "function page(){let u={configPath:null},ye=!0,M=`/work/project`,B=[],x=null,we=null," +
+    "Ce=u!=null&&u.configPath==null&&ye&&M!=null?Ae(B,M):null;" +
+    "let Te=x??we,De=M!=null&&Te!=null,{data:H}=N(`local-environment-config`,{params:{configPath:Te??``,hostId:`local`},queryConfig:{enabled:De}});" +
+    "return `settings.localEnvironments.unavailable.title`}";
+
+  const patched = applyPatchTwice(applyLocalEnvironmentEmptyProjectPatch, source);
+
+  assert.match(patched, /function codexLinuxDefaultEnvironmentConfigPath/);
+  assert.match(
+    patched,
+    /let Te=codexLinuxDefaultEnvironmentConfigPath\(x\?\?we,M,B,Ae\),De=M!=null&&Te!=null/,
+  );
 });
 
 test("keeps local environment action modal inputs editable inside stored modal content", () => {

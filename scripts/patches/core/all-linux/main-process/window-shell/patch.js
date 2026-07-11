@@ -16,6 +16,8 @@ const {
   applyLinuxOpaqueBackgroundPatch,
 } = require("../../../../impl/main-process/window.js");
 const {
+  applyLinuxChildProcessEnvironmentPatch,
+  applyLinuxLocalEnvironmentNotDirectoryPatch,
   applyLinuxFileManagerPatch,
   patchLinuxWorkerFileManagerTarget,
   applyLinuxTerminalUserPathPatch,
@@ -30,6 +32,20 @@ const {
 const { applyLinuxAvatarOverlayMousePassthroughPatch } = require("../../../../impl/avatar-overlay.js");
 
 module.exports = [
+  mainBundlePatch({
+    id: "linux-host-child-process-environment",
+    phase: "main-bundle",
+    order: -10,
+    ciPolicy: "required-upstream",
+    apply: applyLinuxChildProcessEnvironmentPatch,
+  }),
+  mainBundlePatch({
+    id: "linux-local-environment-not-directory",
+    phase: "main-bundle",
+    order: -9,
+    ciPolicy: "required-upstream",
+    apply: applyLinuxLocalEnvironmentNotDirectoryPatch,
+  }),
   mainBundlePatch({
     id: "linux-about-dialog",
     phase: "main-bundle",

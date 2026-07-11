@@ -4441,6 +4441,35 @@ EOF
     "$BASH_BIN" "$probe" || fail "Expected managed Node PATH setup to tolerate an unset PATH"
 }
 
+test_launcher_captures_original_ld_library_path_state() {
+    info "Checking launcher LD_LIBRARY_PATH snapshot semantics"
+    local probe="$TMP_DIR/launcher-ld-library-path-probe.sh"
+
+    awk '
+        /^codex_capture_original_ld_library_path\(\) \{/ { capture = 1 }
+        capture { print }
+        capture && /^}/ { exit }
+    ' "$REPO_DIR/launcher/start.sh.template" > "$probe"
+    cat >> "$probe" <<'EOF'
+unset LD_LIBRARY_PATH
+codex_capture_original_ld_library_path
+[ "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE" = unset ] || exit 2
+[ -z "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE" ] || exit 3
+
+LD_LIBRARY_PATH=""
+codex_capture_original_ld_library_path
+[ "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE" = empty ] || exit 4
+[ -z "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE" ] || exit 5
+
+LD_LIBRARY_PATH="/home/user/lib:/opt/vendor/lib"
+codex_capture_original_ld_library_path
+[ "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE" = value ] || exit 6
+[ "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE" = "/home/user/lib:/opt/vendor/lib" ] || exit 7
+EOF
+
+    "$BASH_BIN" "$probe" || fail "Expected launcher to preserve all LD_LIBRARY_PATH states"
+}
+
 test_packaged_runtime_keeps_managed_node_out_of_user_service_path() {
     info "Checking packaged runtime exports the user PATH to user services"
     local workspace="$TMP_DIR/packaged-runtime-user-path"
@@ -4728,6 +4757,9 @@ test_launcher_extra_bundled_plugin_cache_concurrent_destination() {
 
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "codex_capture_original_ld_library_path"
+    assert_contains "$REPO_DIR/flake.nix" 'CODEX_LINUX_APP_LD_LIBRARY_PATH="${electronLibPath}:${runtimeLibPath}"'
+    assert_not_contains "$REPO_DIR/flake.nix" '--prefix LD_LIBRARY_PATH'
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
     assert_contains "$REPO_DIR/install.sh" "inspect_rebuild_candidate"
     assert_contains "$REPO_DIR/scripts/lib/install-helpers.sh" "--inspect"
@@ -8940,6 +8972,7 @@ main() {
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
     test_launcher_managed_node_handles_unset_path
+    test_launcher_captures_original_ld_library_path_state
     test_packaged_runtime_keeps_managed_node_out_of_user_service_path
     test_launcher_extra_bundled_plugin_cache_rollback
     test_launcher_extra_bundled_plugin_cache_concurrent_destination

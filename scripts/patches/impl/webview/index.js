@@ -1375,6 +1375,49 @@ function applyLocalEnvironmentActionModalDraftPatch(currentSource) {
   return `${beforeFunction}${patchedFunction}${afterFunction}`;
 }
 
+function applyLocalEnvironmentEmptyProjectPatch(currentSource) {
+  if (currentSource.includes("function codexLinuxDefaultEnvironmentConfigPath(")) {
+    return currentSource;
+  }
+  if (
+    !currentSource.includes("settings.localEnvironments.unavailable.title") ||
+    !currentSource.includes("local-environment-config")
+  ) {
+    return currentSource;
+  }
+
+  const defaultPathPattern =
+    /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*!=null&&[A-Za-z_$][\w$]*\.configPath==null&&[A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)!=null\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\2\):null/u;
+  const defaultPathMatch = currentSource.match(defaultPathPattern);
+  if (defaultPathMatch == null) {
+    console.warn(
+      "WARN: Could not find local environment default config path builder — skipping empty-project patch",
+    );
+    return currentSource;
+  }
+  const [, , workspaceVar, defaultPathFn, environmentsVar] = defaultPathMatch;
+
+  const selectionPattern = new RegExp(
+    String.raw`let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=${workspaceVar}!=null&&\1!=null,\{data:`,
+    "u",
+  );
+  const selectionMatch = currentSource.match(selectionPattern);
+  if (selectionMatch == null) {
+    console.warn(
+      "WARN: Could not find local environment selected config path — skipping empty-project patch",
+    );
+    return currentSource;
+  }
+  const [selectionNeedle, configPathVar, explicitPathVar, discoveredPathVar, enabledVar] = selectionMatch;
+  const helper =
+    "function codexLinuxDefaultEnvironmentConfigPath(e,t,n,r){return e??(t!=null?r(n,t):null)}";
+  const selectionPatch =
+    `let ${configPathVar}=codexLinuxDefaultEnvironmentConfigPath(${explicitPathVar}??${discoveredPathVar},${workspaceVar},${environmentsVar},${defaultPathFn}),` +
+    `${enabledVar}=${workspaceVar}!=null&&${configPathVar}!=null,{data:`;
+
+  return `${helper}${currentSource.replace(selectionNeedle, selectionPatch)}`;
+}
+
 function applyBrowserAnnotationScreenshotPatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -2102,6 +2145,7 @@ module.exports = {
   applyLinuxSettingsSearchVisibilityPatch,
   applyLinuxFastModeModelGuardPatch,
   applyLinuxSkillsListDedupePatch,
+  applyLocalEnvironmentEmptyProjectPatch,
   applyLocalEnvironmentActionModalDraftPatch,
   applySubagentNicknameMetadataPatch,
   patchCommentPreloadBundle,

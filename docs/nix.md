@@ -11,6 +11,13 @@ bot refreshes the upstream `Codex.dmg` hash and verifies the Nix package outputs
 in `main`. If you hit a hash mismatch right after an upstream release, wait for
 the next bot run and retry.
 
+The launcher adds Nix library directories only to packaged application
+processes that need them. It records whether the incoming `LD_LIBRARY_PATH` was
+unset, empty, or user-defined before doing so; Codex CLI processes, terminals,
+login shells, and other host commands receive that original state. This keeps
+host executables from resolving incompatible Nix libraries without discarding a
+legitimate user-defined library path.
+
 ## Codex CLI Requirement
 
 ChatGPT Desktop still needs the Codex CLI at runtime. The Nix package in this

@@ -186,7 +186,7 @@ function applyLinuxTerminalUserPathPatch(currentSource) {
   }
 
   const helper =
-    "function codexLinuxRestoreUserTerminalPath(e){try{let t=process.env.CODEX_LINUX_USER_PATH,n=process.env.CODEX_MANAGED_NODE_RUNTIME_DIR,r=typeof n==`string`&&n.length>0?`${n}/bin`:null,i=typeof e.PATH==`string`?e.PATH:null;if(typeof t==`string`&&t.length>0){if(r!=null&&i!=null&&i.split(`:`).includes(r)&&i!==process.env.PATH){let n=[];for(let e of i.split(`:`))e===r?n.push(...t.split(`:`)):n.push(e);e.PATH=n.join(`:`)}else(i==null||i.length===0||i===process.env.PATH)&&(e.PATH=t)}delete e.CODEX_LINUX_USER_PATH}catch{}return e}";
+    "function codexLinuxRestoreUserTerminalPath(e){try{let t=process.env.CODEX_LINUX_USER_PATH,n=process.env.CODEX_MANAGED_NODE_RUNTIME_DIR,r=typeof n==`string`&&n.length>0?`${n}/bin`:null,i=typeof e.PATH==`string`?e.PATH:null;if(typeof t==`string`&&t.length>0){if(r!=null&&i!=null&&i.split(`:`).includes(r)&&i!==process.env.PATH){let n=[];for(let e of i.split(`:`))e===r?n.push(...t.split(`:`)):n.push(e);e.PATH=n.join(`:`)}else(i==null||i.length===0||i===process.env.PATH)&&(e.PATH=t)}let a=process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE,o=process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE;a===`unset`?delete e.LD_LIBRARY_PATH:a===`empty`?e.LD_LIBRARY_PATH=``:a===`value`&&typeof o==`string`&&(e.LD_LIBRARY_PATH=o);for(let t of[`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE`,`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE`,`CODEX_LINUX_APP_LD_LIBRARY_PATH`])delete e[t];delete e.CODEX_LINUX_USER_PATH}catch{}return e}";
   const method = match[0];
   const returnNeedle = `return process.platform!==\`win32\`&&(${envVar}.TERM=`;
   const insertion =
@@ -212,6 +212,63 @@ function applyLinuxTerminalUserPathPatch(currentSource) {
   }
 
   return patchedSource;
+}
+
+function applyLinuxChildProcessEnvironmentPatch(currentSource) {
+  const marker = "function codexLinuxPatchChildProcessEnvironment(";
+  if (currentSource.includes(marker)) {
+    return currentSource;
+  }
+  if (
+    !currentSource.includes("Failed to load shell env") ||
+    !currentSource.includes("local-environments") ||
+    (!currentSource.includes('require(`node:child_process`)') &&
+      !currentSource.includes('require("node:child_process")'))
+  ) {
+    return currentSource;
+  }
+
+  const helper =
+    "function codexLinuxHostChildEnv(e){let t={...(e??process.env)},n=process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE,r=process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE;n===`unset`?delete t.LD_LIBRARY_PATH:n===`empty`?t.LD_LIBRARY_PATH=``:n===`value`&&typeof r==`string`&&(t.LD_LIBRARY_PATH=r);for(let e of[`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE`,`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE`,`CODEX_LINUX_APP_LD_LIBRARY_PATH`])delete t[e];return t}function codexLinuxChildOptions(e){return{...(e??{}),env:codexLinuxHostChildEnv(e?.env)}}function codexLinuxPatchChildProcessEnvironment(e){if(process.platform!==`linux`||e?.__codexLinuxHostEnvPatched)return e;let t=(t,n)=>{let r=e[t];typeof r===`function`&&(e[t]=n(r.bind(e)))};t(`spawn`,e=>(t,n,r)=>Array.isArray(n)?e(t,n,codexLinuxChildOptions(r)):e(t,codexLinuxChildOptions(n)));t(`spawnSync`,e=>(t,n,r)=>Array.isArray(n)?e(t,n,codexLinuxChildOptions(r)):e(t,codexLinuxChildOptions(n)));for(let n of[`exec`,`execSync`])t(n,e=>(t,n,r)=>typeof n===`function`?e(t,codexLinuxChildOptions(),n):e(t,codexLinuxChildOptions(n),r));for(let n of[`execFile`,`execFileSync`,`fork`])t(n,e=>(t,n,r,i)=>Array.isArray(n)?typeof r===`function`?e(t,n,codexLinuxChildOptions(),r):e(t,n,codexLinuxChildOptions(r),i):typeof n===`function`?e(t,codexLinuxChildOptions(),n):e(t,codexLinuxChildOptions(n),r));Object.defineProperty(e,`__codexLinuxHostEnvPatched`,{value:!0});return e}codexLinuxPatchChildProcessEnvironment(require(`node:child_process`));";
+
+  const strictPrefix = /^(?:"use strict"|'use strict');?/u;
+  return strictPrefix.test(currentSource)
+    ? currentSource.replace(strictPrefix, (match) => `${match}${helper}`)
+    : `${helper}${currentSource}`;
+}
+
+function applyLinuxLocalEnvironmentNotDirectoryPatch(currentSource) {
+  const handlerStart = currentSource.indexOf('"local-environment-config":async');
+  const handlerEnd = currentSource.indexOf('"local-environment-config-save":async', handlerStart);
+  if (handlerStart === -1 || handlerEnd === -1) {
+    return currentSource;
+  }
+
+  const handler = currentSource.slice(handlerStart, handlerEnd);
+  if (currentSource.includes("function codexLinuxReadEnvironmentConfig(")) {
+    return currentSource;
+  }
+  const readPattern =
+    /([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=/u;
+  const match = handler.match(readPattern);
+  if (match == null) {
+    console.warn(
+      "WARN: Could not find local environment config read — skipping ENOTDIR fallback patch",
+    );
+    return currentSource;
+  }
+
+  const [needle, resultVar, readFn, clientVar, pathVar, nextVar] = match;
+  const replacement =
+    `${resultVar}=await codexLinuxReadEnvironmentConfig(${readFn},${clientVar},${pathVar}),${nextVar}=`;
+  const patchedHandler = handler.replace(needle, replacement);
+  const patchedSource = `${currentSource.slice(0, handlerStart)}${patchedHandler}${currentSource.slice(handlerEnd)}`;
+  const helper =
+    "async function codexLinuxReadEnvironmentConfig(e,t,n){try{return await e(t,n)}catch(e){if(e?.code!==`ENOTDIR`)throw e;return{exists:!1}}}";
+  const strictPrefix = /^(?:"use strict"|'use strict');?/u;
+  return strictPrefix.test(patchedSource)
+    ? patchedSource.replace(strictPrefix, (match) => `${match}${helper}`)
+    : `${helper}${patchedSource}`;
 }
 
 function applyLinuxGitOriginsSourceFallbackPatch(currentSource) {
@@ -466,6 +523,8 @@ function applyLinuxLocalAppServerFeatureEnablementHandlerPatch(currentSource) {
 }
 
 module.exports = {
+  applyLinuxChildProcessEnvironmentPatch,
+  applyLinuxLocalEnvironmentNotDirectoryPatch,
   applyLinuxFileManagerPatch,
   applyLinuxX11ProjectPickerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
