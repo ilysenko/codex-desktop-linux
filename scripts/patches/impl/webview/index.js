@@ -1376,7 +1376,9 @@ function applyLocalEnvironmentActionModalDraftPatch(currentSource) {
 }
 
 function applyLocalEnvironmentEmptyProjectPatch(currentSource) {
-  if (currentSource.includes("function codexLinuxDefaultEnvironmentConfigPath(")) {
+  const patchedCandidatePattern =
+    /[A-Za-z_$][\w$]*=\([A-Za-z_$][\w$]*==null\|\|[A-Za-z_$][\w$]*\.configPath==null\)&&[A-Za-z_$][\w$]*&&[A-Za-z_$][\w$]*!=null\?[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\):null/u;
+  if (patchedCandidatePattern.test(currentSource)) {
     return currentSource;
   }
   if (
@@ -1386,36 +1388,21 @@ function applyLocalEnvironmentEmptyProjectPatch(currentSource) {
     return currentSource;
   }
 
-  const defaultPathPattern =
-    /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*!=null&&[A-Za-z_$][\w$]*\.configPath==null&&[A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)!=null\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\2\):null/u;
-  const defaultPathMatch = currentSource.match(defaultPathPattern);
-  if (defaultPathMatch == null) {
+  const candidatePattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)!=null&&\2\.configPath==null&&([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)!=null\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\4\):null/u;
+  const candidateMatch = currentSource.match(candidatePattern);
+  if (candidateMatch == null) {
     console.warn(
-      "WARN: Could not find local environment default config path builder — skipping empty-project patch",
+      "WARN: Could not find guarded local environment default config candidate — skipping empty-project patch",
     );
     return currentSource;
   }
-  const [, , workspaceVar, defaultPathFn, environmentsVar] = defaultPathMatch;
-
-  const selectionPattern = new RegExp(
-    String.raw`let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=${workspaceVar}!=null&&\1!=null,\{data:`,
-    "u",
-  );
-  const selectionMatch = currentSource.match(selectionPattern);
-  if (selectionMatch == null) {
-    console.warn(
-      "WARN: Could not find local environment selected config path — skipping empty-project patch",
-    );
-    return currentSource;
-  }
-  const [selectionNeedle, configPathVar, explicitPathVar, discoveredPathVar, enabledVar] = selectionMatch;
-  const helper =
-    "function codexLinuxDefaultEnvironmentConfigPath(e,t,n,r){return e??(t!=null?r(n,t):null)}";
-  const selectionPatch =
-    `let ${configPathVar}=codexLinuxDefaultEnvironmentConfigPath(${explicitPathVar}??${discoveredPathVar},${workspaceVar},${environmentsVar},${defaultPathFn}),` +
-    `${enabledVar}=${workspaceVar}!=null&&${configPathVar}!=null,{data:`;
-
-  return `${helper}${currentSource.replace(selectionNeedle, selectionPatch)}`;
+  const [candidateNeedle, candidateVar, navigationVar, loadedVar, workspaceVar, defaultPathFn, environmentsVar] =
+    candidateMatch;
+  const candidatePatch =
+    `${candidateVar}=(${navigationVar}==null||${navigationVar}.configPath==null)&&${loadedVar}&&${workspaceVar}!=null` +
+    `?${defaultPathFn}(${environmentsVar},${workspaceVar}):null`;
+  return currentSource.replace(candidateNeedle, candidatePatch);
 }
 
 function applyBrowserAnnotationScreenshotPatch(currentSource) {

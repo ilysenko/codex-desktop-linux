@@ -13,10 +13,12 @@ the next bot run and retry.
 
 The launcher adds Nix library directories only to packaged application
 processes that need them. It records whether the incoming `LD_LIBRARY_PATH` was
-unset, empty, or user-defined before doing so; Codex CLI processes, terminals,
-login shells, and other host commands receive that original state. This keeps
-host executables from resolving incompatible Nix libraries without discarding a
-legitimate user-defined library path.
+unset, empty, or user-defined before doing so. Environments derived internally
+for the Codex CLI, local terminals, and login-shell discovery restore that
+original state, while explicitly supplied child environments remain untouched.
+This keeps those host executables from resolving incompatible Nix libraries
+without discarding a legitimate user-defined library path or changing bundled
+runtime children.
 
 ## Codex CLI Requirement
 

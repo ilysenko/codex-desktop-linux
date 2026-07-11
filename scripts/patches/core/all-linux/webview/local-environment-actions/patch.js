@@ -13,7 +13,7 @@ module.exports = [
     id: "local-environment-empty-project",
     phase: "webview-asset",
     order: 1059,
-    ciPolicy: "required-upstream",
+    ciPolicy: "optional",
     pattern: /^local-environments-settings-page-.*\.js$/,
     missingDescription: "local environments settings page bundle",
     skipDescription: "local environment empty-project patch",

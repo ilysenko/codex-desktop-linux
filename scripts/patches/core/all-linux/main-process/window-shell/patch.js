@@ -16,10 +16,10 @@ const {
   applyLinuxOpaqueBackgroundPatch,
 } = require("../../../../impl/main-process/window.js");
 const {
-  applyLinuxChildProcessEnvironmentPatch,
   applyLinuxLocalEnvironmentNotDirectoryPatch,
   applyLinuxFileManagerPatch,
   patchLinuxWorkerFileManagerTarget,
+  patchLinuxHostProcessEnvironmentTargets,
   applyLinuxTerminalUserPathPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxX11ProjectPickerPatch,
@@ -32,18 +32,27 @@ const {
 const { applyLinuxAvatarOverlayMousePassthroughPatch } = require("../../../../impl/avatar-overlay.js");
 
 module.exports = [
-  mainBundlePatch({
+  extractedAppPatch({
     id: "linux-host-child-process-environment",
-    phase: "main-bundle",
+    phase: "extracted-app:pre-webview",
     order: -10,
-    ciPolicy: "required-upstream",
-    apply: applyLinuxChildProcessEnvironmentPatch,
+    ciPolicy: "optional",
+    apply: patchLinuxHostProcessEnvironmentTargets,
+    status: (result, warnings) => {
+      if (result?.changed) {
+        return warnings.length > 0 ? "applied-with-warnings" : "applied";
+      }
+      if (warnings.length > 0 || result?.matched === 0 || result?.reason != null) {
+        return { status: "skipped-optional", reason: result?.reason ?? warnings[0] };
+      }
+      return "already-applied";
+    },
   }),
   mainBundlePatch({
     id: "linux-local-environment-not-directory",
     phase: "main-bundle",
     order: -9,
-    ciPolicy: "required-upstream",
+    ciPolicy: "optional",
     apply: applyLinuxLocalEnvironmentNotDirectoryPatch,
   }),
   mainBundlePatch({

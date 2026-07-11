@@ -215,26 +215,94 @@ function applyLinuxTerminalUserPathPatch(currentSource) {
 }
 
 function applyLinuxChildProcessEnvironmentPatch(currentSource) {
-  const marker = "function codexLinuxPatchChildProcessEnvironment(";
+  const marker = "function codexLinuxHostProcessEnv(";
   if (currentSource.includes(marker)) {
     return currentSource;
   }
-  if (
-    !currentSource.includes("Failed to load shell env") ||
-    !currentSource.includes("local-environments") ||
-    (!currentSource.includes('require(`node:child_process`)') &&
-      !currentSource.includes('require("node:child_process")'))
-  ) {
+  const hasShellEnvironmentLoader = currentSource.includes("Failed to load shell env");
+  const hasCliEnvironmentBuilder = currentSource.includes("Unable to locate the Codex CLI binary");
+  if (!hasShellEnvironmentLoader && !hasCliEnvironmentBuilder) {
     return currentSource;
   }
 
   const helper =
-    "function codexLinuxHostChildEnv(e){let t={...(e??process.env)},n=process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE,r=process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE;n===`unset`?delete t.LD_LIBRARY_PATH:n===`empty`?t.LD_LIBRARY_PATH=``:n===`value`&&typeof r==`string`&&(t.LD_LIBRARY_PATH=r);for(let e of[`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE`,`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE`,`CODEX_LINUX_APP_LD_LIBRARY_PATH`])delete t[e];return t}function codexLinuxChildOptions(e){return{...(e??{}),env:codexLinuxHostChildEnv(e?.env)}}function codexLinuxPatchChildProcessEnvironment(e){if(process.platform!==`linux`||e?.__codexLinuxHostEnvPatched)return e;let t=(t,n)=>{let r=e[t];typeof r===`function`&&(e[t]=n(r.bind(e)))};t(`spawn`,e=>(t,n,r)=>Array.isArray(n)?e(t,n,codexLinuxChildOptions(r)):e(t,codexLinuxChildOptions(n)));t(`spawnSync`,e=>(t,n,r)=>Array.isArray(n)?e(t,n,codexLinuxChildOptions(r)):e(t,codexLinuxChildOptions(n)));for(let n of[`exec`,`execSync`])t(n,e=>(t,n,r)=>typeof n===`function`?e(t,codexLinuxChildOptions(),n):e(t,codexLinuxChildOptions(n),r));for(let n of[`execFile`,`execFileSync`,`fork`])t(n,e=>(t,n,r,i)=>Array.isArray(n)?typeof r===`function`?e(t,n,codexLinuxChildOptions(),r):e(t,n,codexLinuxChildOptions(r),i):typeof n===`function`?e(t,codexLinuxChildOptions(),n):e(t,codexLinuxChildOptions(n),r));Object.defineProperty(e,`__codexLinuxHostEnvPatched`,{value:!0});return e}codexLinuxPatchChildProcessEnvironment(require(`node:child_process`));";
+    "function codexLinuxHostProcessEnv(e){let t={...e},n=process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE,r=process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE;if(n==null)return t;n===`unset`?delete t.LD_LIBRARY_PATH:n===`empty`?t.LD_LIBRARY_PATH=``:n===`value`&&typeof r==`string`&&(t.LD_LIBRARY_PATH=r);for(let e of[`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE`,`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE`,`CODEX_LINUX_APP_LD_LIBRARY_PATH`])delete t[e];return t}function codexLinuxShellEnvResult(e){let t={...e};if(process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE==null)return t;for(let e of[`LD_LIBRARY_PATH`,`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE`,`CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE`,`CODEX_LINUX_APP_LD_LIBRARY_PATH`])delete t[e];return t}";
+
+  const shellLoadPattern =
+    /([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\(\{interactive:!0,extraEnv:\{\[\1\.([A-Za-z_$][\w$]*)\]:`1`\},signal:([A-Za-z_$][\w$]*)\.signal\}\)/u;
+  const shellAssignPattern = /Object\.assign\(process\.env,([A-Za-z_$][\w$]*)\.userEnv\)/u;
+  const cliEnvPattern =
+    /let ([A-Za-z_$][\w$]*)=(\{\.\.\.process\.env,LOG_FORMAT:`json`,RUST_LOG:process\.env\.RUST_LOG\?\?`warn`,CODEX_INTERNAL_ORIGINATOR_OVERRIDE:[^}]+\}),([A-Za-z_$][\w$]*)=/u;
+  let patchedSource = currentSource;
+  if (hasShellEnvironmentLoader) {
+    const shellLoadMatch = currentSource.match(shellLoadPattern);
+    if (shellLoadMatch == null || !shellAssignPattern.test(currentSource)) {
+      console.warn(
+        "WARN: Could not find inherited login-shell environment builder — skipping Linux host process environment patch",
+      );
+      return currentSource;
+    }
+    const [, shellModule, shellMethod, shellMarker, abortController] = shellLoadMatch;
+    patchedSource = patchedSource.replace(
+      shellLoadPattern,
+      `${shellModule}.${shellMethod}({interactive:!0,extraEnv:codexLinuxHostProcessEnv({...process.env,[${shellModule}.${shellMarker}]:\`1\`}),signal:${abortController}.signal})`,
+    );
+    patchedSource = patchedSource.replace(
+      shellAssignPattern,
+      "Object.assign(process.env,codexLinuxShellEnvResult($1.userEnv))",
+    );
+  }
+  if (hasCliEnvironmentBuilder) {
+    if (!cliEnvPattern.test(currentSource)) {
+      console.warn(
+        "WARN: Could not find inherited Codex CLI environment builder — skipping Linux host process environment patch",
+      );
+      return currentSource;
+    }
+    patchedSource = patchedSource.replace(
+      cliEnvPattern,
+      "let $1=codexLinuxHostProcessEnv($2),$3=",
+    );
+  }
 
   const strictPrefix = /^(?:"use strict"|'use strict');?/u;
-  return strictPrefix.test(currentSource)
-    ? currentSource.replace(strictPrefix, (match) => `${match}${helper}`)
-    : `${helper}${currentSource}`;
+  return strictPrefix.test(patchedSource)
+    ? patchedSource.replace(strictPrefix, (match) => `${match}${helper}`)
+    : `${helper}${patchedSource}`;
+}
+
+function patchLinuxHostProcessEnvironmentTargets(extractedDir) {
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  if (!fs.existsSync(buildDir)) {
+    return { matched: 0, changed: 0, reason: "Vite build directory not found" };
+  }
+  const candidates = fs
+    .readdirSync(buildDir)
+    .filter((name) => name.endsWith(".js"))
+    .sort()
+    .map((name) => path.join(buildDir, name))
+    .filter((candidate) => {
+      const source = fs.readFileSync(candidate, "utf8");
+      return (
+        source.includes("Failed to load shell env") ||
+        source.includes("Unable to locate the Codex CLI binary")
+      );
+    });
+
+  let changed = 0;
+  for (const candidate of candidates) {
+    const source = fs.readFileSync(candidate, "utf8");
+    const patchedSource = applyLinuxChildProcessEnvironmentPatch(source);
+    if (patchedSource !== source) {
+      fs.writeFileSync(candidate, patchedSource);
+      changed += 1;
+    }
+  }
+  return {
+    matched: candidates.length,
+    changed,
+    ...(candidates.length === 0 ? { reason: "host environment bundles not found" } : {}),
+  };
 }
 
 function applyLinuxLocalEnvironmentNotDirectoryPatch(currentSource) {
@@ -533,6 +601,7 @@ module.exports = {
   applyLinuxOwlFeatureBindingFallbackPatch,
   applyLinuxWorkerFileManagerPatch,
   patchLinuxOwlFeatureBindingFallbackAssets,
+  patchLinuxHostProcessEnvironmentTargets,
   patchLinuxWorkerFileManagerTarget,
   applyLinuxRemoteControlConfigPreservationPatch,
   applyLinuxXdgDocumentsDirPatch,

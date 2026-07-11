@@ -99,6 +99,7 @@ const {
   applyLinuxXdgDocumentsDirPatch,
   applyLinuxX11ProjectPickerPatch,
   patchLinuxOwlFeatureBindingFallbackAssets,
+  patchLinuxHostProcessEnvironmentTargets,
 } = require("./patches/impl/main-process/misc.js");
 const {
   applyLinuxHotkeyWindowPrewarmPatch,
@@ -1097,6 +1098,17 @@ test("default core patch descriptors are grouped and unique", () => {
     descriptors.find((descriptor) => descriptor.id === "local-environment-action-modal-draft")?.ciPolicy,
     "optional",
   );
+  for (const id of [
+    "linux-host-child-process-environment",
+    "linux-local-environment-not-directory",
+    "local-environment-empty-project",
+  ]) {
+    assert.equal(
+      descriptors.find((descriptor) => descriptor.id === id)?.ciPolicy,
+      "optional",
+      `${id} must remain fail-soft when the upstream bundle drifts`,
+    );
+  }
   assert.equal(
     descriptors.find(
       (descriptor) => descriptor.id === "linux-bundled-plugin-reconcile-stale-snapshot",
@@ -1917,39 +1929,30 @@ test("adds Linux file manager support to the worker open target registry", () =>
   assert.match(patched, /import\(`electron`\)\)\.shell\.openPath\(t\)/);
 });
 
-function evaluatePatchedChildProcessEnvironment(env) {
-  const calls = [];
-  const childProcess = {};
-  for (const method of [
-    "spawn",
-    "spawnSync",
-    "exec",
-    "execSync",
-    "execFile",
-    "execFileSync",
-    "fork",
-  ]) {
-    childProcess[method] = (...args) => {
-      calls.push({ method, args });
-      return { method, args };
-    };
-  }
+function evaluatePatchedHostProcessEnvironment(env) {
   const source =
-    '"use strict";const shellError=`Failed to load shell env`,request=`local-environments`,childProcess=require(`node:child_process`);';
+    '"use strict";const shellError=`Failed to load shell env`,cliError=`Unable to locate the Codex CLI binary`;async function ky(){let a=new AbortController,s=await n.rr({interactive:!0,extraEnv:{[n.ir]:`1`},signal:a.signal}).then(e=>({status:`loaded`,userEnv:e}));if(s.status===`loaded`)return Object.assign(process.env,s.userEnv),s}function cB(e){let r={...process.env,LOG_FORMAT:`json`,RUST_LOG:process.env.RUST_LOG??`warn`,CODEX_INTERNAL_ORIGINATOR_OVERRIDE:e.defaultOriginator??`Codex Desktop`},a=`next`;return{executablePath:`codex`,args:[`app-server`],env:t.t(r),a}}';
   const patched = applyPatchTwice(applyLinuxChildProcessEnvironmentPatch, source);
   const context = {
-    process: { platform: "linux", env },
-    require(name) {
-      if (name === "node:child_process") return childProcess;
-      throw new Error(`unexpected module: ${name}`);
+    AbortController: class {
+      signal = {};
     },
+    process: { platform: "linux", env: { ...env } },
+    n: {
+      ir: "CODEX_SHELL",
+      rr: async ({ extraEnv }) => extraEnv,
+    },
+    t: { t: (value) => value },
   };
-  vm.runInNewContext(patched, context);
-  return { calls, childProcess, patched };
+  vm.runInNewContext(
+    `${patched};globalThis.hostConfig=cB({});globalThis.loadShell=ky`,
+    context,
+  );
+  return { context, patched };
 }
 
-test("removes application-added library paths from Linux host child processes", () => {
-  const { calls, childProcess, patched } = evaluatePatchedChildProcessEnvironment({
+test("restores inherited library paths only at known Linux host-process boundaries", async () => {
+  const { context, patched } = evaluatePatchedHostProcessEnvironment({
     PATH: "/usr/bin",
     LD_LIBRARY_PATH: "/nix/app:/nix/runtime",
     CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: "unset",
@@ -1957,21 +1960,19 @@ test("removes application-added library paths from Linux host child processes", 
     CODEX_LINUX_APP_LD_LIBRARY_PATH: "/nix/app:/nix/runtime",
   });
 
-  childProcess.spawn("flatpak", ["--version"]);
-  childProcess.execFile("codex", ["app-server"], () => {});
-  childProcess.spawnSync("bash", ["-ilc", "env"], { env: { EXTRA: "1" } });
+  assert.match(patched, /codexLinuxHostProcessEnv/);
+  assert.doesNotMatch(patched, /PatchChildProcessEnvironment/);
+  assert.doesNotMatch(patched, /require\(`node:child_process`\)/);
+  assert.equal(Object.hasOwn(context.hostConfig.env, "LD_LIBRARY_PATH"), false);
+  assert.equal(Object.hasOwn(context.hostConfig.env, "CODEX_LINUX_APP_LD_LIBRARY_PATH"), false);
 
-  assert.match(patched, /codexLinuxPatchChildProcessEnvironment/);
-  assert.equal(calls.length, 3);
-  for (const call of calls) {
-    const options = call.args.find(
-      (arg) => arg != null && typeof arg === "object" && !Array.isArray(arg) && "env" in arg,
-    );
-    assert.ok(options, `${call.method} should receive options.env`);
-    assert.equal(Object.hasOwn(options.env, "LD_LIBRARY_PATH"), false);
-    assert.equal(Object.hasOwn(options.env, "CODEX_LINUX_APP_LD_LIBRARY_PATH"), false);
-    assert.equal(Object.hasOwn(options.env, "CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE"), false);
-  }
+  const shellResult = await context.loadShell();
+  assert.equal(Object.hasOwn(shellResult.userEnv, "LD_LIBRARY_PATH"), false);
+  assert.equal(
+    context.process.env.LD_LIBRARY_PATH,
+    "/nix/app:/nix/runtime",
+    "loading the user shell must not discard Electron's packaged runtime path",
+  );
 });
 
 test("treats ENOTDIR as a missing local environment config", () => {
@@ -1984,29 +1985,74 @@ test("treats ENOTDIR as a missing local environment config", () => {
   assert.match(patched, /return\{exists:!1\}/);
 });
 
-test("preserves empty and non-empty user LD_LIBRARY_PATH values for host children", () => {
+test("preserves empty and non-empty user LD_LIBRARY_PATH values for inherited host environments", () => {
   for (const [state, value] of [
     ["empty", ""],
     ["value", "/home/user/lib:/opt/vendor/lib"],
   ]) {
-    const { calls, childProcess } = evaluatePatchedChildProcessEnvironment({
+    const { context } = evaluatePatchedHostProcessEnvironment({
       LD_LIBRARY_PATH: `/nix/app:${value}`,
       CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: state,
       CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: value,
+      CODEX_LINUX_APP_LD_LIBRARY_PATH: "/nix/app",
     });
-    childProcess.exec("printenv", { env: { LD_LIBRARY_PATH: "/nix/explicit" } }, () => {});
-    assert.equal(calls[0].args[1].env.LD_LIBRARY_PATH, value);
+    assert.equal(context.hostConfig.env.LD_LIBRARY_PATH, value);
   }
 });
 
-test("leaves packaged Electron process environment augmented", () => {
+test("leaves packaged Electron and explicit child-process environments untouched", () => {
   const env = {
     LD_LIBRARY_PATH: "/nix/app:/home/user/lib",
     CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: "value",
     CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: "/home/user/lib",
+    CODEX_LINUX_APP_LD_LIBRARY_PATH: "/nix/app",
   };
-  evaluatePatchedChildProcessEnvironment(env);
+  const explicitOptions = { env: { LD_LIBRARY_PATH: "/nix/explicit", ONLY: "caller" } };
+  const { context, patched } = evaluatePatchedHostProcessEnvironment(env);
   assert.equal(env.LD_LIBRARY_PATH, "/nix/app:/home/user/lib");
+  assert.equal(context.process.env.LD_LIBRARY_PATH, "/nix/app:/home/user/lib");
+  assert.deepEqual(explicitOptions, { env: { LD_LIBRARY_PATH: "/nix/explicit", ONLY: "caller" } });
+  assert.doesNotMatch(patched, /execFile\s*=/);
+});
+
+test("preserves development shell and CLI environments without launcher snapshot markers", async () => {
+  const { context } = evaluatePatchedHostProcessEnvironment({
+    LD_LIBRARY_PATH: "/developer/lib",
+  });
+  assert.equal(context.hostConfig.env.LD_LIBRARY_PATH, "/developer/lib");
+  const shellResult = await context.loadShell();
+  assert.equal(shellResult.userEnv.LD_LIBRARY_PATH, "/developer/lib");
+  assert.equal(context.process.env.LD_LIBRARY_PATH, "/developer/lib");
+});
+
+test("patches startup shell and Codex CLI environments in separate Vite bundles", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-host-env-bundles-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(buildDir, "main-current.js"),
+      '"use strict";const shellError=`Failed to load shell env`;async function ky(){let a=new AbortController,s=await n.rr({interactive:!0,extraEnv:{[n.ir]:`1`},signal:a.signal}).then(e=>({status:`loaded`,userEnv:e}));if(s.status===`loaded`)return Object.assign(process.env,s.userEnv),s}',
+    );
+    fs.writeFileSync(
+      path.join(buildDir, "src-current.js"),
+      '"use strict";const cliError=`Unable to locate the Codex CLI binary`;function cB(e){let r={...process.env,LOG_FORMAT:`json`,RUST_LOG:process.env.RUST_LOG??`warn`,CODEX_INTERNAL_ORIGINATOR_OVERRIDE:e.defaultOriginator??`Codex Desktop`},a=`next`;return{env:t.t(r),a}}',
+    );
+
+    const result = patchLinuxHostProcessEnvironmentTargets(tempRoot);
+    const mainSource = fs.readFileSync(path.join(buildDir, "main-current.js"), "utf8");
+    const sharedSource = fs.readFileSync(path.join(buildDir, "src-current.js"), "utf8");
+    assert.deepEqual(result, { matched: 2, changed: 2 });
+    assert.match(mainSource, /extraEnv:codexLinuxHostProcessEnv/);
+    assert.match(mainSource, /codexLinuxShellEnvResult/);
+    assert.match(sharedSource, /let r=codexLinuxHostProcessEnv\(\{\.\.\.process\.env/);
+    assert.deepEqual(patchLinuxHostProcessEnvironmentTargets(tempRoot), {
+      matched: 2,
+      changed: 0,
+    });
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("restores the user PATH for Linux local terminal sessions", () => {
@@ -5327,18 +5373,33 @@ test("adds the Linux desktop section title when the JSX message component identi
 
 test("loads the default local environment config path for an empty project", () => {
   const source =
-    "function page(){let u={configPath:null},ye=!0,M=`/work/project`,B=[],x=null,we=null," +
+    "function page(){let u=null,ye=!0,M=`/work/project`,B=[],x=null,we=null," +
     "Ce=u!=null&&u.configPath==null&&ye&&M!=null?Ae(B,M):null;" +
     "let Te=x??we,De=M!=null&&Te!=null,{data:H}=N(`local-environment-config`,{params:{configPath:Te??``,hostId:`local`},queryConfig:{enabled:De}});" +
     "return `settings.localEnvironments.unavailable.title`}";
 
   const patched = applyPatchTwice(applyLocalEnvironmentEmptyProjectPatch, source);
 
-  assert.match(patched, /function codexLinuxDefaultEnvironmentConfigPath/);
   assert.match(
     patched,
-    /let Te=codexLinuxDefaultEnvironmentConfigPath\(x\?\?we,M,B,Ae\),De=M!=null&&Te!=null/,
+    /Ce=\(u==null\|\|u\.configPath==null\)&&ye&&M!=null\?Ae\(B,M\):null/,
   );
+  assert.match(patched, /let Te=x\?\?we,De=M!=null&&Te!=null/);
+  assert.doesNotMatch(patched, /codexLinuxDefaultEnvironmentConfigPath/);
+});
+
+test("keeps upstream local environment default-path eligibility guards", () => {
+  const source =
+    "function page(){let u=null,ye=!1,M=null,B=[],x=null,we=null," +
+    "Ce=u!=null&&u.configPath==null&&ye&&M!=null?Ae(B,M):null;" +
+    "let Te=x??we,De=M!=null&&Te!=null,{data:H}=N(`local-environment-config`,{queryConfig:{enabled:De}});" +
+    "return `settings.localEnvironments.unavailable.title`}";
+
+  const patched = applyPatchTwice(applyLocalEnvironmentEmptyProjectPatch, source);
+
+  assert.match(patched, /&&ye&&M!=null\?Ae\(B,M\):null/);
+  assert.doesNotMatch(patched, /Ae\(B,M\).*let Te=.*Ae\(B,M\)/);
+  assert.match(patched, /De=M!=null&&Te!=null/);
 });
 
 test("keeps local environment action modal inputs editable inside stored modal content", () => {
@@ -7658,7 +7719,10 @@ test("sanitizes Linux external-open environment before xdg-open", async () => {
   const env = {
     PATH: "/usr/bin",
     DISPLAY: ":1",
-    LD_LIBRARY_PATH: "/tmp/bad",
+    LD_LIBRARY_PATH: "/nix/app:/home/user/lib",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: "value",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: "/home/user/lib",
+    CODEX_LINUX_APP_LD_LIBRARY_PATH: "/nix/app",
     LD_PRELOAD: "/tmp/preload.so",
     NODE_OPTIONS: "--require /tmp/hook.js",
     CODEX_LINUX_WEBVIEW_PORT: "1234",
@@ -7681,13 +7745,40 @@ test("sanitizes Linux external-open environment before xdg-open", async () => {
   assert.equal(spawnCalls[0].options.stdio, "ignore");
   assert.equal(spawnCalls[0].options.env.PATH, "/usr/bin");
   assert.equal(spawnCalls[0].options.env.DISPLAY, ":1");
+  assert.equal(spawnCalls[0].options.env.LD_LIBRARY_PATH, "/home/user/lib");
   for (const key of [
-    "LD_LIBRARY_PATH",
     "LD_PRELOAD",
     "NODE_OPTIONS",
     "CODEX_LINUX_WEBVIEW_PORT",
+    "CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE",
+    "CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE",
+    "CODEX_LINUX_APP_LD_LIBRARY_PATH",
   ]) {
     assert.equal(Object.hasOwn(spawnCalls[0].options.env, key), false);
+  }
+});
+
+test("preserves unset and empty original LD_LIBRARY_PATH for xdg-open", async () => {
+  for (const [state, value, expectedPresent] of [
+    ["unset", "", false],
+    ["empty", "", true],
+  ]) {
+    const spawnCalls = [];
+    const { openExternal } = evaluatePatchedExternalOpen({
+      env: {
+        LD_LIBRARY_PATH: "/nix/app",
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: state,
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: value,
+        CODEX_LINUX_APP_LD_LIBRARY_PATH: "/nix/app",
+      },
+      spawn(command, args, options) {
+        spawnCalls.push({ command, args, options });
+        return externalOpenChildClosingWith(0);
+      },
+    });
+    await openExternal("https://example.test/docs");
+    assert.equal(Object.hasOwn(spawnCalls[0].options.env, "LD_LIBRARY_PATH"), expectedPresent);
+    if (expectedPresent) assert.equal(spawnCalls[0].options.env.LD_LIBRARY_PATH, "");
   }
 });
 
