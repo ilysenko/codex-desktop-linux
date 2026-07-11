@@ -7,7 +7,12 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 
-const { evaluateUpstreamDmg, httpIdentity } = require("../lib/upstream-dmg-acceptance.js");
+const {
+  evaluateUpstreamDmg,
+  httpIdentity,
+  selectAcceptanceDecision,
+} = require("../lib/upstream-dmg-acceptance.js");
+const { parseArgs } = require("../validate-upstream-dmg.js");
 
 function withFixture(fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "upstream-acceptance-"));
@@ -45,6 +50,7 @@ function evaluate(root, dmg, overrides = {}) {
     coreReportPath: overrides.corePath ?? core,
     buildStatus: overrides.buildStatus ?? "success",
     repoRoot: root,
+    requirements: overrides.requirements,
   });
 }
 
@@ -85,6 +91,61 @@ test("rejects drift from a user-enabled feature", () => withFixture(({ root, dmg
   const decision = evaluate(root, dmg, { core });
   assert.equal(decision.verdict, "rejected");
   assert.ok(decision.blockers.some((item) => item.code === "enabled-feature-drift"));
+}));
+
+test("rejects a missing required descriptor from an enabled feature profile", () => withFixture(({ root, dmg }) => {
+  const core = requiredCoreReport();
+  core.enabledFeatures = ["remote-mobile-control"];
+  const decision = evaluate(root, dmg, {
+    core,
+    requirements: {
+      requiredEnabledFeatures: ["remote-mobile-control"],
+      requiredSuccessfulPatches: ["feature:remote-mobile-control:missing-patch"],
+    },
+  });
+  assert.equal(decision.verdict, "rejected");
+  assert.ok(decision.blockers.some((item) => item.name === "feature:remote-mobile-control:missing-patch"));
+}));
+
+test("parses repeatable feature-profile requirements", () => {
+  const args = parseArgs([
+    "--dmg", "/tmp/Codex.dmg",
+    "--core-report", "/tmp/report.json",
+    "--output", "/tmp/decision.json",
+    "--require-enabled-feature", "remote-mobile-control",
+    "--require-success", "feature:remote-mobile-control:first",
+    "--require-success", "feature:remote-mobile-control:second",
+    "--require-applied", "feature:remote-mobile-control:first",
+  ]);
+  assert.deepEqual(args.requirements, {
+    requiredAppliedPatches: ["feature:remote-mobile-control:first"],
+    requiredEnabledFeatures: ["remote-mobile-control"],
+    requiredSuccessfulPatches: [
+      "feature:remote-mobile-control:first",
+      "feature:remote-mobile-control:second",
+    ],
+  });
+});
+
+test("the CLI rejects a missing required feature descriptor", () => withFixture(({ root, dmg }) => {
+  const core = requiredCoreReport();
+  core.enabledFeatures = ["remote-mobile-control"];
+  const reportPath = writeJson(root, "required-cli-core.json", core);
+  const outputPath = path.join(root, "required-cli-decision.json");
+  const result = spawnSync(process.execPath, [
+    path.join(__dirname, "../validate-upstream-dmg.js"),
+    "--dmg", dmg,
+    "--core-report", reportPath,
+    "--build-status", "success",
+    "--output", outputPath,
+    "--require-enabled-feature", "remote-mobile-control",
+    "--require-success", "feature:remote-mobile-control:missing-patch",
+    "--enforce",
+  ], { encoding: "utf8" });
+  assert.equal(result.status, 2, result.stderr);
+  const decision = JSON.parse(fs.readFileSync(outputPath, "utf8"));
+  assert.equal(decision.verdict, "rejected");
+  assert.ok(decision.blockers.some((item) => item.name === "feature:remote-mobile-control:missing-patch"));
 }));
 
 test("does not probe or block a disabled feature", () => withFixture(({ root, dmg }) => {
@@ -166,4 +227,49 @@ test("upstream workflow concurrency is isolated per PR or ref", () => {
     /group: upstream-dmg-acceptance-\$\{\{ github\.event_name \}\}-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}/,
   );
   assert.doesNotMatch(workflow, /group: upstream-dmg-acceptance-\$\{\{ github\.event_name \}\}\s*$/m);
+});
+
+test("upstream workflow pins the complete post-config-cleanup remote mobile descriptor contract", () => {
+  const workflow = fs.readFileSync(
+    path.resolve(__dirname, "../../.github/workflows/upstream-build-app.yml"),
+    "utf8",
+  );
+  const required = [...workflow.matchAll(
+    /--require-success feature:remote-mobile-control:([a-z0-9-]+)/g,
+  )].map((match) => match[1]).sort();
+  const expected = require("../../linux-features/remote-mobile-control/patch.js")
+    .map((descriptor) => descriptor.id)
+    .filter((id) => id !== "linux-remote-control-preserve-config")
+    .sort();
+  assert.deepEqual(required, expected);
+});
+
+test("reconciliation selects the most severe acceptance decision", () => {
+  const accepted = { verdict: "accepted", inconclusiveReasons: [] };
+  const warned = { verdict: "accepted_with_warnings", inconclusiveReasons: [] };
+  const rejected = { verdict: "rejected", inconclusiveReasons: [] };
+  assert.equal(selectAcceptanceDecision([accepted, warned]), warned);
+  assert.equal(selectAcceptanceDecision([accepted, rejected, warned]), rejected);
+});
+
+test("a missing compatibility decision makes reconciliation inconclusive", () => {
+  const accepted = { verdict: "accepted", inconclusiveReasons: [], dmg: { sha256: "a".repeat(64) } };
+  const selected = selectAcceptanceDecision(
+    [accepted],
+    ["remote-mobile compatibility decision missing"],
+  );
+  assert.equal(selected.verdict, "inconclusive");
+  assert.deepEqual(selected.inconclusiveReasons, ["remote-mobile compatibility decision missing"]);
+  assert.equal(selected.dmg.sha256, accepted.dmg.sha256);
+});
+
+test("a proven rejection remains selected when another probe is missing", () => {
+  const rejected = { verdict: "rejected", inconclusiveReasons: [] };
+  assert.equal(selectAcceptanceDecision([rejected], ["probe missing"]), rejected);
+});
+
+test("an unknown decision verdict is normalized to inconclusive", () => {
+  const selected = selectAcceptanceDecision([{ verdict: "partial", inconclusiveReasons: [] }]);
+  assert.equal(selected.verdict, "inconclusive");
+  assert.deepEqual(selected.inconclusiveReasons, ["unknown acceptance verdict: partial"]);
 });

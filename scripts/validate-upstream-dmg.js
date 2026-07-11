@@ -19,12 +19,23 @@ Options:
   --run-id VALUE
   --run-attempt VALUE
   --run-url URL
+  --require-enabled-feature FEATURE_ID
+  --require-success PATCH_NAME
+  --require-applied PATCH_NAME
   --enforce
 `;
 }
 
 function parseArgs(argv) {
-  const args = { buildStatus: "unknown", source: "local" };
+  const args = {
+    buildStatus: "unknown",
+    source: "local",
+    requirements: {
+      requiredAppliedPatches: [],
+      requiredEnabledFeatures: [],
+      requiredSuccessfulPatches: [],
+    },
+  };
   const valueOptions = new Map([
     ["--dmg", "dmgPath"], ["--core-report", "coreReportPath"],
     ["--build-info", "buildInfoPath"],
@@ -37,6 +48,18 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--enforce") {
       args.enforce = true;
+    } else if (arg === "--require-enabled-feature") {
+      const value = argv[++index];
+      if (!value) throw new Error(`${arg} requires a value`);
+      args.requirements.requiredEnabledFeatures.push(value);
+    } else if (arg === "--require-success") {
+      const value = argv[++index];
+      if (!value) throw new Error(`${arg} requires a value`);
+      args.requirements.requiredSuccessfulPatches.push(value);
+    } else if (arg === "--require-applied") {
+      const value = argv[++index];
+      if (!value) throw new Error(`${arg} requires a value`);
+      args.requirements.requiredAppliedPatches.push(value);
     } else if (arg === "--help" || arg === "-h") {
       args.help = true;
     } else if (valueOptions.has(arg)) {
@@ -46,6 +69,9 @@ function parseArgs(argv) {
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
+  }
+  for (const name of Object.keys(args.requirements)) {
+    args.requirements[name] = [...new Set(args.requirements[name])];
   }
   return args;
 }

@@ -10,6 +10,9 @@ on:
       - scripts/patch-linux-window-ui.js
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
+      - linux-features/remote-mobile-control/**
+      - scripts/ci/patch-rerun-check.js
+      - scripts/ci/patch-rerun-check.test.js
       - scripts/ci/validate-patch-report.js
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js
@@ -27,6 +30,9 @@ on:
       - scripts/patch-linux-window-ui.js
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
+      - linux-features/remote-mobile-control/**
+      - scripts/ci/patch-rerun-check.js
+      - scripts/ci/patch-rerun-check.test.js
       - scripts/ci/validate-patch-report.js
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js
@@ -161,6 +167,52 @@ jobs:
           REBUILD_REPORT_DIR: ${{ github.workspace }}/upstream-acceptance
         run: make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg
 
+      - name: Validate remote mobile feature against upstream DMG
+        run: |
+          set -euo pipefail
+
+          features_config="$(mktemp)"
+          report_dir="$GITHUB_WORKSPACE/remote-mobile-upstream-inspect"
+          trap 'rm -f "$features_config"' EXIT
+          printf '%s\n' '{"enabled":["remote-mobile-control"]}' > "$features_config"
+
+          CODEX_LINUX_FEATURES_CONFIG="$features_config" \
+          CODEX_PATCH_MATRIX_JSON="$report_dir/patch-matrix.json" \
+            make inspect-upstream DMG="$UPSTREAM_DMG_PATH" REBUILD_REPORT_DIR="$report_dir"
+
+          node scripts/validate-upstream-dmg.js \
+            --dmg "$UPSTREAM_DMG_PATH" \
+            --core-report "$report_dir/patch-report.json" \
+            --build-status success \
+            --metadata "$GITHUB_WORKSPACE/upstream-dmg-metadata.json" \
+            --output "$report_dir/decision.json" \
+            --source github-actions \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --require-enabled-feature remote-mobile-control \
+            --require-success feature:remote-mobile-control:linux-remote-control-device-key \
+            --require-success feature:remote-mobile-control:linux-remote-control-client-account-compatibility \
+            --require-success feature:remote-mobile-control:linux-remote-control-client-revocation-recovery \
+            --require-success feature:remote-mobile-control:linux-remote-mobile-app-server-remote-control \
+            --require-success feature:remote-mobile-control:linux-remote-control-load-gate \
+            --require-success feature:remote-mobile-control:linux-remote-control-feature-sync \
+            --require-success feature:remote-mobile-control:linux-remote-control-visibility \
+            --require-success feature:remote-mobile-control:linux-remote-control-copy \
+            --require-success feature:remote-mobile-control:linux-remote-control-settings-ux \
+            --require-success feature:remote-mobile-control:linux-remote-control-selected-tab \
+            --require-success feature:remote-mobile-control:linux-remote-control-client-revoke-setup-reset \
+            --require-success feature:remote-mobile-control:linux-remote-connections-refresh \
+            --require-success feature:remote-mobile-control:linux-remote-mobile-conversation-hydration \
+            --require-success feature:remote-mobile-control:linux-remote-mobile-completed-item-recovery \
+            --require-success feature:remote-mobile-control:linux-remote-terminal-status-recovery \
+            --require-success feature:remote-mobile-control:linux-remote-control-status-read-guard \
+            --require-success feature:remote-mobile-control:linux-remote-control-status-wait \
+            --require-success feature:remote-mobile-control:linux-remote-control-enable-for-host-params \
+            --require-success feature:remote-mobile-control:linux-remote-control-enablement-bridge \
+            --require-success feature:remote-mobile-control:linux-remote-mobile-active-status \
+            --enforce
+
       - name: Upload upstream DMG metadata artifact
         # The transactional installer records a decision before returning a
         # rejected status, so diagnostics remain available on failed runs.
@@ -172,6 +224,7 @@ jobs:
             upstream-dmg-metadata.json
             upstream-dmg-decision.json
             upstream-acceptance/**/*.json
+            remote-mobile-upstream-inspect/*.json
           if-no-files-found: ignore
 
       - name: Record missing decision in the summary
@@ -244,9 +297,17 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const { httpIdentity } = require('./scripts/lib/upstream-dmg-acceptance.js');
+            const { httpIdentity, selectAcceptanceDecision } = require('./scripts/lib/upstream-dmg-acceptance.js');
             const { reconcileUpstreamDmgIssue } = require('./scripts/ci/upstream-dmg-issue.js');
-            const decision = JSON.parse(fs.readFileSync('acceptance-artifact/upstream-dmg-decision.json', 'utf8'));
+            const decisions = [JSON.parse(fs.readFileSync('acceptance-artifact/upstream-dmg-decision.json', 'utf8'))];
+            const missingReasons = [];
+            const remoteDecisionPath = 'acceptance-artifact/remote-mobile-upstream-inspect/decision.json';
+            if (fs.existsSync(remoteDecisionPath)) {
+              decisions.push(JSON.parse(fs.readFileSync(remoteDecisionPath, 'utf8')));
+            } else {
+              missingReasons.push('remote-mobile compatibility decision missing');
+            }
+            const decision = selectAcceptanceDecision(decisions, missingReasons);
             const currentMetadata = JSON.parse(fs.readFileSync('current-upstream-identity.json', 'utf8'));
             const result = await reconcileUpstreamDmgIssue({
               github,

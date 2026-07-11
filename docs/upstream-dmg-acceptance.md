@@ -20,6 +20,18 @@ feature for diagnostics. Disabled features are not checked; any patch drift in
 a user-enabled feature rejects the candidate so the working installation keeps
 that feature intact. The user can disable the feature and retry the update.
 
+The upstream workflow also runs a separate read-only compatibility probe for
+`remote-mobile-control` when that feature or the shared patch infrastructure
+changes. This does not enable the feature in normal builds. It checks the
+current DMG with the feature selected, requires its current descriptor contract,
+then reapplies the patcher and rejects a second pass that changes the extracted
+app tree. Both reports and the descriptor status matrix are uploaded with the
+workflow artifacts.
+
+The scheduled drift reconciler evaluates both the shared decision and this
+feature probe. A missing probe is inconclusive and cannot close an existing
+drift issue.
+
 ## Transactional Local Install
 
 `install.sh` builds into a hidden sibling candidate directory. It evaluates the

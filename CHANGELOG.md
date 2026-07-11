@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   rejections create one fingerprinted drift issue and supersede issues for
   older DMGs. Acceptance evaluates only the user's enabled Linux features and
   preserves the working app if any enabled feature drifts.
+- Upstream DMG CI now validates the opt-in `remote-mobile-control` descriptor
+  contract on the current app, records first- and second-pass patch statuses,
+  and rejects non-idempotent source transformations.
 - Nix module configurations can select the opt-in `mcp-helper-reaper`
   feature. Its Rust helper is supplied by a reproducible Nix derivation and is
   not added to the default package closure.

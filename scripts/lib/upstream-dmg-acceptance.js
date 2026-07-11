@@ -143,7 +143,10 @@ function evaluateUpstreamDmg(options) {
       ? enabledFeatureFailuresFromReport(core.report)
       : [];
     const enabledFeatureFailureNames = new Set(enabledFeatureFailures.map((failure) => failure.name));
-    blockers.push(...validationBlockers("core", validatePatchReport(core.report, profile.corePatchProfile)));
+    blockers.push(...validationBlockers(
+      "core",
+      validatePatchReport(core.report, profile.corePatchProfile, options.requirements),
+    ));
     blockers.push(...integrityFailures(core.report));
     blockers.push(...enabledFeatureFailures.map((failure) => ({
       code: "enabled-feature-drift",
@@ -201,6 +204,51 @@ function evaluateUpstreamDmg(options) {
   };
 }
 
+function selectAcceptanceDecision(decisions, missingReasons = []) {
+  const knownVerdicts = new Set(["accepted", "accepted_with_warnings", "inconclusive", "rejected"]);
+  const candidates = decisions
+    .filter((decision) => decision && typeof decision === "object")
+    .map((decision) => (
+      knownVerdicts.has(decision.verdict)
+        ? decision
+        : {
+          ...decision,
+          verdict: "inconclusive",
+          inconclusiveReasons: [
+            ...new Set([
+              ...(decision.inconclusiveReasons ?? []),
+              `unknown acceptance verdict: ${String(decision.verdict)}`,
+            ]),
+          ],
+        }
+    ));
+  if (candidates.length === 0) {
+    throw new Error("At least one upstream DMG acceptance decision is required");
+  }
+  const severity = new Map([
+    ["accepted", 0],
+    ["accepted_with_warnings", 1],
+    ["inconclusive", 2],
+    ["rejected", 3],
+  ]);
+  const selected = candidates.reduce((current, candidate) => (
+    severity.get(candidate.verdict) > severity.get(current.verdict)
+      ? candidate
+      : current
+  ));
+  const reasons = [...new Set(missingReasons.filter(Boolean))];
+  if (reasons.length === 0 || selected.verdict === "rejected") {
+    return selected;
+  }
+  return {
+    ...selected,
+    verdict: "inconclusive",
+    inconclusiveReasons: [
+      ...new Set([...(selected.inconclusiveReasons ?? []), ...reasons]),
+    ],
+  };
+}
+
 function decisionMarkdown(decision) {
   const lines = [
     "## Upstream DMG acceptance",
@@ -228,4 +276,5 @@ module.exports = {
   decisionMarkdown,
   evaluateUpstreamDmg,
   httpIdentity,
+  selectAcceptanceDecision,
 };
