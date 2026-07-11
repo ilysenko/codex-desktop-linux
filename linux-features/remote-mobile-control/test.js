@@ -2243,42 +2243,25 @@ test("Linux remote terminal status recovery treats stale waiting input as idle",
   });
 });
 
-test("Linux remote terminal status recovery upgrades older patched bundles", () => {
-  const source =
-    "function nT({hasInProgressSideChat:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){let codexLinuxRemoteTerminalStatusActive=i?.type===`active`,codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&(t===!0||!Array.isArray(i.activeFlags)||i.activeFlags.length>0);return e?`loading`:i?.type===`systemError`?`error`:codexLinuxRemoteTerminalStatusLoading?`loading`:r===`needs_resume`?`idle`:n?`error`:t===!0?`loading`:`idle`}function rT({pendingRequestType:e,requests:t,resumeState:n,threadRuntimeStatus:r}){return t==null||n==null?null:n===`needs_resume`?r?.type===`active`&&r.activeFlags.includes(`waitingOnApproval`)&&yi(t)?`approval`:r?.type===`active`&&r.activeFlags.includes(`waitingOnUserInput`)?`response`:null:Zr(e)?`approval`:e===`userInput`?`response`:null}var iT,aT,oT=e((()=>{G(),Lr(),tT(),Ni(),kt(),iT=s(V,(e,{get:t})=>{let n=t(rr,e);return nT({hasInProgressSideChat:t(Qw,e),isResponseInProgress:t(ki,e),resumeState:t(si,e)??(n==null?null:`needs_resume`),threadRuntimeStatus:t(Or,e)??n?.threadRuntimeStatus??null,latestTurnHasSystemError:t(Ui,e)===!0})}),aT=s(V,(e,{get:t})=>rT({pendingRequestType:t(wr,e)?.type??null,requests:t(fi,e),resumeState:t(si,e),threadRuntimeStatus:t(Or,e)}))}))";
+test("Linux remote terminal status recovery rejects partial current-bundle drift", () => {
+  const source = syntheticRemoteTerminalStatusBundle();
+  const driftedSources = [
+    source.replace("threadRuntimeStatus:i}){return", "threadRuntimeStatus:i,extra:o}){return"),
+    source.replace("pendingRequestType:e,requests:t", "pendingRequestType:e,extra:o,requests:t"),
+    source.replace("return LQt({hasInProgressSideChat:", "return LQt({extra:!0,hasInProgressSideChat:"),
+  ];
 
-  const patched = applyPatchTwice(applyLinuxRemoteTerminalStatusRecoveryPatch, source);
-  assert.match(
-    patched,
-    /hasUserInputRequest:codexLinuxRemoteHasUserInputRequest\(t\(fi,e\)\)/,
-  );
-  assert.doesNotMatch(
-    patched,
-    /codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&\(t===!0\|\|!Array\.isArray\(i\.activeFlags\)\|\|i\.activeFlags\.length>0\)/,
-  );
-
-  const context = {};
-  const runtimeSource = patched.slice(0, patched.indexOf("var iT"));
-  vm.runInNewContext(
-    `function yi(e){return Array.isArray(e)&&e.some(e=>e.method===\`item/commandExecution/requestApproval\`)}
-     function Zr(e){return e===\`approval\`}
-     ${runtimeSource};result={
-      staleStatus:nT({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:false}),
-      realStatus:nT({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:true}),
-      missingWiringStatus:nT({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
-      stalePending:rT({pendingRequestType:null,requests:[],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
-      realPending:rT({pendingRequestType:null,requests:[{method:\`item/tool/requestOptionPicker\`}],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}})
-     };`,
-    context,
-  );
-
-  assert.deepEqual(JSON.parse(JSON.stringify(context.result)), {
-    staleStatus: "idle",
-    realStatus: "loading",
-    missingWiringStatus: "loading",
-    stalePending: null,
-    realPending: "response",
-  });
+  for (const driftedSource of driftedSources) {
+    const { result, warnings } = captureWarnings(() =>
+      applyLinuxRemoteTerminalStatusRecoveryPatch(driftedSource),
+    );
+    assert.equal(result, driftedSource);
+    assert.ok(
+      warnings.some((warning) =>
+        warning.includes("skipping Linux remote terminal status recovery patch"),
+      ),
+    );
+  }
 });
 
 test("Linux remote-control status wait supports the current 26.707 app bundle", () => {

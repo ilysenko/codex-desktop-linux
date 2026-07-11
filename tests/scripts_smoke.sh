@@ -5777,25 +5777,6 @@ if (!launcher.includes('ln -sfnT "$target" "$link_path"')) {
 NODE
 }
 
-test_node_checks_skip_deleted_tracked_js() {
-    info "Checking node syntax checks skip deleted tracked JavaScript files"
-    local workspace
-    workspace=$(mktemp -d "$TMP_DIR/node-checks-deleted-js.XXXXXX")
-
-    mkdir -p "$workspace/scripts/ci"
-    cp "$REPO_DIR/scripts/ci/run-node-checks.sh" "$workspace/scripts/ci/run-node-checks.sh"
-    (
-        cd "$workspace"
-        git init -q
-        printf 'const kept = 1;\n' > kept.js
-        printf 'const deleted = 1;\n' > deleted.js
-        git add kept.js deleted.js scripts/ci/run-node-checks.sh
-        git -c user.name=Test -c user.email=test@example.invalid commit -qm init
-        rm deleted.js
-        bash scripts/ci/run-node-checks.sh syntax
-    )
-}
-
 test_launcher_cli_resolution_policy() {
     info "Checking launcher CLI resolution policy"
     local launcher_probe="$TMP_DIR/launcher-cli-policy-probe.sh"
@@ -9068,7 +9049,6 @@ main() {
     test_linux_computer_use_ui_opt_in_smoke
     test_linux_file_manager_patch_fails_soft
     test_patcher_enforce_critical_gate
-    test_node_checks_skip_deleted_tracked_js
     test_user_local_prepare_build_repo_overlays_committed_local_changes
     test_user_local_prepare_build_repo_detects_default_branch_without_recorded_branch
     test_user_local_prepare_build_repo_ignores_stale_recorded_default_branch

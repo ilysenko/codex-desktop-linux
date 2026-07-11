@@ -1387,13 +1387,8 @@ function applyLinuxRemoteTerminalStatusRecoveryPatch(source) {
     return source;
   }
 
-  let patched = source;
   const userInputRequestHelper =
     "function codexLinuxRemoteHasUserInputRequest(e){try{return Array.isArray(e)&&e.some(e=>e?.method===`item/tool/requestUserInput`||e?.method===`item/tool/requestOptionPicker`||e?.method===`item/tool/requestSetupCodexContextPicker`||e?.method===`item/tool/call`&&(e?.params?.tool===`request_onboarding_input`||e?.params?.tool===`request_option_picker`||e?.params?.tool===`setup_codex_context_picker`||e?.params?.tool===`setup_codex_step`))}catch{return!1}}";
-  const withUserInputHelper = (replacement) =>
-    patched.includes("function codexLinuxRemoteHasUserInputRequest(")
-      ? replacement
-      : `${userInputRequestHelper}${replacement}`;
   const buildTerminalStatusReplacement = (
     fnName,
     sideChatVar,
@@ -1406,104 +1401,78 @@ function applyLinuxRemoteTerminalStatusRecoveryPatch(source) {
 
   const terminalStatusPattern =
     /function ([A-Za-z_$][\w$]*)\(\{hasInProgressSideChat:([A-Za-z_$][\w$]*),isResponseInProgress:([A-Za-z_$][\w$]*),latestTurnHasSystemError:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{return \2\?`loading`:\6\?\.type===`systemError`\?`error`:\6\?\.type===`active`\?`loading`:\5===`needs_resume`\?`idle`:\4\?`error`:\3===!0\?`loading`:`idle`\}/u;
-  const oldPatchedTerminalStatusPattern =
-    /function ([A-Za-z_$][\w$]*)\(\{hasInProgressSideChat:([A-Za-z_$][\w$]*),isResponseInProgress:([A-Za-z_$][\w$]*),latestTurnHasSystemError:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{let codexLinuxRemoteTerminalStatusActive=\6\?\.type===`active`,codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&\(\3===!0\|\|!Array\.isArray\(\6\.activeFlags\)\|\|\6\.activeFlags\.length>0\);return \2\?`loading`:\6\?\.type===`systemError`\?`error`:codexLinuxRemoteTerminalStatusLoading\?`loading`:\5===`needs_resume`\?`idle`:\4\?`error`:\3===!0\?`loading`:`idle`\}/u;
-
-  let terminalStatusFnName = null;
-
-  if (terminalStatusPattern.test(patched)) {
-    patched = patched.replace(
-      terminalStatusPattern,
-      (_match, fnName, sideChatVar, responseProgressVar, systemErrorVar, resumeStateVar, runtimeStatusVar) => {
-        terminalStatusFnName = fnName;
-        return withUserInputHelper(
-          buildTerminalStatusReplacement(
-            fnName,
-            sideChatVar,
-            responseProgressVar,
-            systemErrorVar,
-            resumeStateVar,
-            runtimeStatusVar,
-          ),
-        );
-      },
+  const terminalStatusMatch = source.match(terminalStatusPattern);
+  if (terminalStatusMatch == null) {
+    console.warn(
+      "WARN: Could not find remote terminal status function - skipping Linux remote terminal status recovery patch",
     );
-  } else if (oldPatchedTerminalStatusPattern.test(patched)) {
-    patched = patched.replace(
-      oldPatchedTerminalStatusPattern,
-      (_match, fnName, sideChatVar, responseProgressVar, systemErrorVar, resumeStateVar, runtimeStatusVar) => {
-        terminalStatusFnName = fnName;
-        return withUserInputHelper(
-          buildTerminalStatusReplacement(
-            fnName,
-            sideChatVar,
-            responseProgressVar,
-            systemErrorVar,
-            resumeStateVar,
-            runtimeStatusVar,
-          ),
-        );
-      },
-    );
+    return source;
   }
+  const [
+    ,
+    terminalStatusFnName,
+    sideChatVar,
+    responseProgressVar,
+    systemErrorVar,
+    resumeStateVar,
+    runtimeStatusVar,
+  ] = terminalStatusMatch;
 
   const pendingRequestPattern =
     /function ([A-Za-z_$][\w$]*)\(\{pendingRequestType:([A-Za-z_$][\w$]*),requests:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{return \3==null\|\|\4==null\?null:\4===`needs_resume`\?\5\?\.type===`active`&&\5\.activeFlags\.includes\(`waitingOnApproval`\)&&([A-Za-z_$][\w$]*)\(\3\)\?`approval`:\5\?\.type===`active`&&\5\.activeFlags\.includes\(`waitingOnUserInput`\)\?`response`:null:([A-Za-z_$][\w$]*)\(\2\)\?`approval`:\2===`userInput`\?`response`:null\}/u;
-  let pendingRequestFnName = null;
-  if (pendingRequestPattern.test(patched)) {
-    patched = patched.replace(
-      pendingRequestPattern,
-      (_match, fnName, pendingTypeVar, requestsVar, resumeStateVar, runtimeStatusVar, approvalRequestFn, approvalTypeFn) => {
-        pendingRequestFnName = fnName;
-        return withUserInputHelper(
-          `function ${fnName}({pendingRequestType:${pendingTypeVar},requests:${requestsVar},resumeState:${resumeStateVar},threadRuntimeStatus:${runtimeStatusVar}}){return ${requestsVar}==null||${resumeStateVar}==null?null:${resumeStateVar}===\`needs_resume\`?${runtimeStatusVar}?.type===\`active\`&&Array.isArray(${runtimeStatusVar}?.activeFlags)&&${runtimeStatusVar}.activeFlags.includes(\`waitingOnApproval\`)&&${approvalRequestFn}(${requestsVar})?\`approval\`:${runtimeStatusVar}?.type===\`active\`&&Array.isArray(${runtimeStatusVar}?.activeFlags)&&${runtimeStatusVar}.activeFlags.includes(\`waitingOnUserInput\`)&&codexLinuxRemoteHasUserInputRequest(${requestsVar})?\`response\`:null:${approvalTypeFn}(${pendingTypeVar})?\`approval\`:${pendingTypeVar}===\`userInput\`?\`response\`:null}`,
-        );
-      },
-    );
-  } else {
-    const existingPendingRequestPattern =
-      /function ([A-Za-z_$][\w$]*)\(\{pendingRequestType:[A-Za-z_$][\w$]*,requests:[A-Za-z_$][\w$]*,resumeState:[A-Za-z_$][\w$]*,threadRuntimeStatus:[A-Za-z_$][\w$]*\}\)\{[^}]*codexLinuxRemoteHasUserInputRequest/u;
-    const match = patched.match(existingPendingRequestPattern);
-    pendingRequestFnName = match?.[1] ?? null;
-  }
-
-  if (terminalStatusFnName != null && pendingRequestFnName != null) {
-    const pendingCallPattern = new RegExp(
-      `${pendingRequestFnName}\\(\\{pendingRequestType:[^{}]+?,requests:([^{}]*\\([^{}]*\\)[^{}]*?),resumeState:[^{}]+?,threadRuntimeStatus:[^{}]+?\\}\\)`,
-      "u",
-    );
-    const pendingCallMatch = patched.match(pendingCallPattern);
-    const requestExpression = pendingCallMatch?.[1] ?? null;
-    const terminalCallPattern = new RegExp(
-      `${terminalStatusFnName}\\(\\{hasInProgressSideChat:([^{}]+?),isResponseInProgress:([^{}]+?),resumeState:([^{}]+?),threadRuntimeStatus:([^{}]+?),latestTurnHasSystemError:([^{}]+?)\\}\\)`,
-      "u",
-    );
-    if (requestExpression != null && terminalCallPattern.test(patched)) {
-      patched = patched.replace(
-        terminalCallPattern,
-        `${terminalStatusFnName}({hasInProgressSideChat:$1,isResponseInProgress:$2,resumeState:$3,threadRuntimeStatus:$4,latestTurnHasSystemError:$5,hasUserInputRequest:codexLinuxRemoteHasUserInputRequest(${requestExpression})})`,
-      );
-    } else if (
-      patched.includes("pendingRequestType") &&
-      patched.includes("hasInProgressSideChat") &&
-      !patched.includes("hasUserInputRequest:codexLinuxRemoteHasUserInputRequest")
-    ) {
-      console.warn(
-        "WARN: Could not wire remote terminal status to pending user-input requests - stale waiting-user-input recovery may be incomplete",
-      );
-    }
-  }
-
-  if (
-    source.includes("hasInProgressSideChat") &&
-    source.includes("isResponseInProgress") &&
-    source.includes("threadRuntimeStatus") &&
-    patched === source
-  ) {
+  const pendingRequestMatch = source.match(pendingRequestPattern);
+  if (pendingRequestMatch == null) {
     console.warn(
-      "WARN: Could not find remote terminal status insertion point - skipping Linux remote terminal status recovery patch",
+      "WARN: Could not find remote pending-request function - skipping Linux remote terminal status recovery patch",
     );
+    return source;
   }
+  const [
+    ,
+    pendingRequestFnName,
+    pendingTypeVar,
+    requestsVar,
+    pendingResumeStateVar,
+    pendingRuntimeStatusVar,
+    approvalRequestFn,
+    approvalTypeFn,
+  ] = pendingRequestMatch;
+
+  const pendingCallPattern = new RegExp(
+    `${pendingRequestFnName}\\(\\{pendingRequestType:[^{}]+?,requests:([^{}]*\\([^{}]*\\)[^{}]*?),resumeState:[^{}]+?,threadRuntimeStatus:[^{}]+?\\}\\)`,
+    "u",
+  );
+  const requestExpression = source.match(pendingCallPattern)?.[1] ?? null;
+  const terminalCallPattern = new RegExp(
+    `${terminalStatusFnName}\\(\\{hasInProgressSideChat:([^{}]+?),isResponseInProgress:([^{}]+?),resumeState:([^{}]+?),threadRuntimeStatus:([^{}]+?),latestTurnHasSystemError:([^{}]+?)\\}\\)`,
+    "u",
+  );
+  if (requestExpression == null || !terminalCallPattern.test(source)) {
+    console.warn(
+      "WARN: Could not wire remote terminal status to pending user-input requests - skipping Linux remote terminal status recovery patch",
+    );
+    return source;
+  }
+
+  let patched = source.replace(
+    terminalStatusPattern,
+    `${userInputRequestHelper}${buildTerminalStatusReplacement(
+      terminalStatusFnName,
+      sideChatVar,
+      responseProgressVar,
+      systemErrorVar,
+      resumeStateVar,
+      runtimeStatusVar,
+    )}`,
+  );
+  patched = patched.replace(
+    pendingRequestPattern,
+    `function ${pendingRequestFnName}({pendingRequestType:${pendingTypeVar},requests:${requestsVar},resumeState:${pendingResumeStateVar},threadRuntimeStatus:${pendingRuntimeStatusVar}}){return ${requestsVar}==null||${pendingResumeStateVar}==null?null:${pendingResumeStateVar}===\`needs_resume\`?${pendingRuntimeStatusVar}?.type===\`active\`&&Array.isArray(${pendingRuntimeStatusVar}?.activeFlags)&&${pendingRuntimeStatusVar}.activeFlags.includes(\`waitingOnApproval\`)&&${approvalRequestFn}(${requestsVar})?\`approval\`:${pendingRuntimeStatusVar}?.type===\`active\`&&Array.isArray(${pendingRuntimeStatusVar}?.activeFlags)&&${pendingRuntimeStatusVar}.activeFlags.includes(\`waitingOnUserInput\`)&&codexLinuxRemoteHasUserInputRequest(${requestsVar})?\`response\`:null:${approvalTypeFn}(${pendingTypeVar})?\`approval\`:${pendingTypeVar}===\`userInput\`?\`response\`:null}`,
+  );
+  patched = patched.replace(
+    terminalCallPattern,
+    `${terminalStatusFnName}({hasInProgressSideChat:$1,isResponseInProgress:$2,resumeState:$3,threadRuntimeStatus:$4,latestTurnHasSystemError:$5,hasUserInputRequest:codexLinuxRemoteHasUserInputRequest(${requestExpression})})`,
+  );
 
   return patched;
 }
