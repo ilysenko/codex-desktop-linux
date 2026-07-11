@@ -179,33 +179,6 @@ function applyLinuxRemoteControlDeviceKeyPatch(source) {
     .replace(DEVICE_KEY_GUARD, DEVICE_KEY_GUARD_REPLACEMENT);
 }
 
-function applyLinuxRemoteControlPreserveConfigPatch(source) {
-  const stripperGuardRegex =
-    /async function [A-Za-z_$][\w$]*\(\{codexHome:[A-Za-z_$][\w$]*,hostConfig:([A-Za-z_$][\w$]*),logger:[A-Za-z_$][\w$]*=[^}]*\}\)\{if\(\1\.kind===`local`\)try\{/gu;
-  const patched = source.replace(stripperGuardRegex, (needle, hostConfigVar) =>
-    needle.replace(
-      `if(${hostConfigVar}.kind===\`local\`)try{`,
-      `if(${hostConfigVar}.kind===\`local\`&&process.platform!==\`linux\`)try{`,
-    ),
-  );
-  if (patched !== source) {
-    return patched;
-  }
-
-  const alreadyPatchedRegex =
-    /async function [A-Za-z_$][\w$]*\(\{codexHome:[A-Za-z_$][\w$]*,hostConfig:([A-Za-z_$][\w$]*),logger:[A-Za-z_$][\w$]*=[^}]*\}\)\{if\(\1\.kind===`local`&&process\.platform!==`linux`\)try\{/u;
-  if (
-    alreadyPatchedRegex.test(source) ||
-    !source.includes("Removed remote_control from config before app-server start") &&
-      !source.includes("Failed to remove remote_control before app-server start")
-  ) {
-    return source;
-  }
-
-  console.warn("WARN: Could not find remote-control config stripping needle - skipping Linux remote-control config patch");
-  return source;
-}
-
 function applyLinuxRemoteControlClientAccountCompatibilityPatch(source) {
   if (source.includes(CLIENT_ACCOUNT_COMPAT_MARKER)) {
     return source;
@@ -1692,13 +1665,6 @@ module.exports = [
     apply: applyLinuxRemoteControlDeviceKeyPatch,
   },
   {
-    id: "linux-remote-control-preserve-config",
-    phase: "main-bundle",
-    order: 20_110,
-    ciPolicy: "optional",
-    apply: applyLinuxRemoteControlPreserveConfigPatch,
-  },
-  {
     id: "linux-remote-control-client-account-compatibility",
     phase: "main-bundle",
     order: 20_115,
@@ -1895,7 +1861,6 @@ module.exports.applyLinuxRemoteControlEnablementBridgePatch = applyLinuxRemoteCo
 module.exports.applyLinuxRemoteControlEnableForHostParamsPatch =
   applyLinuxRemoteControlEnableForHostParamsPatch;
 module.exports.applyLinuxRemoteMobileActiveStatusPatch = applyLinuxRemoteMobileActiveStatusPatch;
-module.exports.applyLinuxRemoteControlPreserveConfigPatch = applyLinuxRemoteControlPreserveConfigPatch;
 module.exports.applyLinuxRemoteControlClientAccountCompatibilityPatch =
   applyLinuxRemoteControlClientAccountCompatibilityPatch;
 module.exports.applyLinuxRemoteControlClientRevocationRecoveryPatch =

@@ -25,7 +25,6 @@ const {
   applyLinuxRemoteControlClientRevokeSetupResetPatch,
   applyLinuxRemoteControlClientRevocationRecoveryPatch,
   applyLinuxRemoteControlCopyPatch,
-  applyLinuxRemoteControlPreserveConfigPatch,
   applyLinuxRemoteControlFeatureSyncPatch,
   applyLinuxRemoteControlEnableForHostParamsPatch,
   applyLinuxRemoteControlLoadGatePatch,
@@ -735,7 +734,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     const descriptors = loadLinuxFeaturePatchDescriptors({ featuresRoot: root });
     assert.deepEqual(descriptors.map((descriptor) => descriptor.id), [
       "feature:remote-mobile-control:linux-remote-control-device-key",
-      "feature:remote-mobile-control:linux-remote-control-preserve-config",
       "feature:remote-mobile-control:linux-remote-control-client-account-compatibility",
       "feature:remote-mobile-control:linux-remote-control-client-revocation-recovery",
       "feature:remote-mobile-control:linux-remote-mobile-app-server-remote-control",
@@ -757,7 +755,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-mobile-active-status",
     ]);
     assert.deepEqual(descriptors.map((descriptor) => descriptor.phase), [
-      "main-bundle",
       "main-bundle",
       "main-bundle",
       "main-bundle",
@@ -847,31 +844,26 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
   });
 });
 
-test("Linux remote-control patches update the device-key provider and preserve config", () => {
+test("Linux remote-control feature patch updates the device-key provider", () => {
   const source = syntheticMainBundle();
-  const patched = applyLinuxRemoteControlPreserveConfigPatch(
-    applyLinuxRemoteControlDeviceKeyPatch(source),
-  );
+  const patched = applyLinuxRemoteControlDeviceKeyPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteControlDeviceKeyClient/);
   assert.match(patched, /process\.platform===`linux`\)return codexLinuxRemoteControlDeviceKeyClient\(\)/);
-  assert.match(patched, /n\.kind===`local`&&process\.platform!==`linux`/);
-  assert.equal(
-    applyLinuxRemoteControlPreserveConfigPatch(applyLinuxRemoteControlDeviceKeyPatch(patched)),
-    patched,
-  );
+  assert.doesNotMatch(patched, /n\.kind===`local`&&process\.platform!==`linux`/);
+  assert.equal(applyLinuxRemoteControlDeviceKeyPatch(patched), patched);
 });
 
 test("Linux remote-control device-key patch handles current minified aliases", () => {
   const source = syntheticCurrentMainBundle();
-  const patched = applyLinuxRemoteControlPreserveConfigPatch(applyLinuxRemoteControlDeviceKeyPatch(source));
+  const patched = applyLinuxRemoteControlDeviceKeyPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteControlDeviceKeyClient/);
   assert.match(patched, /process\.platform===`linux`\)return codexLinuxRemoteControlDeviceKeyClient\(\)/);
-  assert.match(patched, /n\.kind===`local`&&process\.platform!==`linux`/);
-  assert.equal(applyLinuxRemoteControlPreserveConfigPatch(applyLinuxRemoteControlDeviceKeyPatch(patched)), patched);
+  assert.doesNotMatch(patched, /n\.kind===`local`&&process\.platform!==`linux`/);
+  assert.equal(applyLinuxRemoteControlDeviceKeyPatch(patched), patched);
 });
 
 test("Linux remote-control device-key provider avoids upstream minified alias collisions", async () => {
@@ -2774,11 +2766,11 @@ test("remote mobile control feature participates in ASAR patching and reports", 
             patch.status === "applied",
           ),
         );
-        assert.ok(
-          report.patches.some((patch) =>
-            patch.name === "feature:remote-mobile-control:linux-remote-control-preserve-config" &&
-            patch.status === "already-applied",
+        assert.equal(
+          report.patches.some(
+            (patch) => patch.name === "feature:remote-mobile-control:linux-remote-control-preserve-config",
           ),
+          false,
         );
         assert.ok(
           report.patches.some((patch) =>

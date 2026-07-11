@@ -26,6 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Remote notification hydration, replay, completed-item recovery, and remote
   terminal-status recovery are no longer part of the default Linux patch set and
   remain owned by the disabled-by-default `remote-mobile-control` feature.
+- The `remote-mobile-control` feature no longer duplicates the generic Linux
+  `remote_control` config preservation patch already owned by the core patch
+  set.
 
 ### Fixed
 
