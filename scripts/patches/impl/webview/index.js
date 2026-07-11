@@ -869,6 +869,71 @@ function applyLinuxAppServerBackfillWaitPatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxTurnStartDuplicateGuardPatch(currentSource) {
+  if (currentSource.includes("codexLinuxTurnStartDuplicateKey")) {
+    return currentSource;
+  }
+
+  const buildDuplicateKeyExpression = (methodVar, paramsVar) =>
+    "((codexLinuxTurnStartMethod,codexLinuxTurnStartParams)=>{" +
+    "if(codexLinuxTurnStartMethod!==`turn/start`||codexLinuxTurnStartParams==null||typeof codexLinuxTurnStartParams!==`object`)return null;" +
+    "let codexLinuxTurnStartRead=(e,t)=>{for(let n of t){let t=e?.[n];if(t!=null)return t}return null}," +
+    "codexLinuxTurnStartString=e=>{if(e==null)return null;if(typeof e===`string`)return e;if(typeof e===`number`||typeof e===`boolean`)return String(e);try{return JSON.stringify(e)}catch{return null}}," +
+    "codexLinuxTurnStartId=codexLinuxTurnStartRead(codexLinuxTurnStartParams,[`turn_id`,`turnId`])??codexLinuxTurnStartRead(codexLinuxTurnStartParams.turn,[`id`,`turn_id`,`turnId`])," +
+    "codexLinuxTurnStartThread=codexLinuxTurnStartRead(codexLinuxTurnStartParams,[`thread_id`,`threadId`,`conversation_id`,`conversationId`])??codexLinuxTurnStartRead(codexLinuxTurnStartParams.thread,[`id`,`thread_id`,`threadId`])??codexLinuxTurnStartRead(codexLinuxTurnStartParams.turn,[`thread_id`,`threadId`])," +
+    "codexLinuxTurnStartMessage=codexLinuxTurnStartRead(codexLinuxTurnStartParams,[`message`,`user_message`,`userMessage`,`input`,`text`])??codexLinuxTurnStartRead(codexLinuxTurnStartParams.item,[`content`,`text`])??codexLinuxTurnStartRead(codexLinuxTurnStartParams.turn,[`message`,`input`,`text`])," +
+    "codexLinuxTurnStartMessageBody=typeof codexLinuxTurnStartMessage===`object`&&codexLinuxTurnStartMessage!=null?codexLinuxTurnStartRead(codexLinuxTurnStartMessage,[`content`,`text`,`input`,`message`])??codexLinuxTurnStartMessage:codexLinuxTurnStartMessage," +
+    "codexLinuxTurnStartText=codexLinuxTurnStartString(codexLinuxTurnStartMessageBody);" +
+    "return codexLinuxTurnStartId==null||codexLinuxTurnStartText==null?null:`${codexLinuxTurnStartThread??``}\\n${codexLinuxTurnStartId}\\n${codexLinuxTurnStartText.slice(0,4096)}`" +
+    `})(${methodVar},${paramsVar})`;
+  const buildGuardPrefix = (keyExpression) =>
+    `let codexLinuxTurnStartDuplicateKey=${keyExpression};` +
+    "if(codexLinuxTurnStartDuplicateKey!=null){" +
+    "let codexLinuxTurnStartPending=this.codexLinuxTurnStartPendingRequests?.get(codexLinuxTurnStartDuplicateKey);" +
+    "if(codexLinuxTurnStartPending!=null)return codexLinuxTurnStartPending}";
+  const buildTrackPending = (promiseVar) =>
+    "if(codexLinuxTurnStartDuplicateKey!=null){" +
+    "let codexLinuxTurnStartPendingMap=this.codexLinuxTurnStartPendingRequests??=new Map;" +
+    `codexLinuxTurnStartPendingMap.set(codexLinuxTurnStartDuplicateKey,${promiseVar});` +
+    `let codexLinuxTurnStartCleanup=()=>{codexLinuxTurnStartPendingMap.get(codexLinuxTurnStartDuplicateKey)===${promiseVar}&&codexLinuxTurnStartPendingMap.delete(codexLinuxTurnStartDuplicateKey)};` +
+    `${promiseVar}.then(codexLinuxTurnStartCleanup,codexLinuxTurnStartCleanup)}`;
+  const enqueueRequestNeedle =
+    /let\{request:([A-Za-z_$][\w$]*),promise:([A-Za-z_$][\w$]*)\}=this\.createRequest\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\);return this\.queuedRequests\.push\(\{dispatch:\(\)=>\{this\.startRequest\(\1\),([A-Za-z_$][\w$]*)\(\1\)\},priority:([A-Za-z_$][\w$]*)\}\),this\.pumpQueue\(\),\2/;
+  let patchedSource = currentSource;
+  let changed = false;
+
+  if (enqueueRequestNeedle.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      enqueueRequestNeedle,
+      (_match, requestVar, promiseVar, methodVar, paramsVar, optionsVar, dispatchVar, priorityVar) => {
+        const duplicateKey = buildDuplicateKeyExpression(methodVar, paramsVar);
+        return (
+          buildGuardPrefix(duplicateKey) +
+          `let{request:${requestVar},promise:${promiseVar}}=this.createRequest(${methodVar},${paramsVar},${optionsVar});` +
+          buildTrackPending(promiseVar) +
+          `return this.queuedRequests.push({dispatch:()=>{this.startRequest(${requestVar}),${dispatchVar}(${requestVar})},priority:${priorityVar}}),this.pumpQueue(),${promiseVar}`
+        );
+      },
+    );
+    changed = true;
+  }
+
+  if (!changed) {
+    if (
+      currentSource.includes("enqueueRequest(") &&
+      currentSource.includes("queuedRequests") &&
+      currentSource.includes("createRequest(")
+    ) {
+      console.warn(
+        "WARN: Could not find turn/start request guard insertion point — duplicate submit guard not applied",
+      );
+    }
+    return currentSource;
+  }
+
+  return patchedSource;
+}
+
 function applyLinuxCompletedItemRecoveryPatch(currentSource) {
   if (currentSource.includes("codexLinuxCompletedItemExists=")) {
     return currentSource;
@@ -2009,6 +2074,7 @@ function patchCommentPreloadBundle(extractedDir) {
 module.exports = {
   applyBrowserAnnotationScreenshotPatch,
   applyLinuxAppServerBackfillWaitPatch,
+  applyLinuxTurnStartDuplicateGuardPatch,
   applyLinuxCompletedItemRecoveryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxAppServerFeatureEnablementPatch,

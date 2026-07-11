@@ -157,6 +157,7 @@ const {
   applyLocalEnvironmentActionModalDraftPatch,
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppServerBackfillWaitPatch,
+  applyLinuxTurnStartDuplicateGuardPatch,
   applyLinuxCompletedItemRecoveryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxAppServerFeatureEnablementPatch,
@@ -1046,6 +1047,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-app-sunset-gate",
     "linux-app-server-feature-enablement",
     "linux-app-server-backfill-wait",
+    "linux-turn-start-duplicate-guard",
     "linux-completed-item-recovery",
     "linux-remote-terminal-status-recovery",
     "linux-skills-list-dedupe",
@@ -5627,6 +5629,67 @@ test("extends app-server startup waits in current manager signals bundle", () =>
   assert.match(patched, /i=codexLinuxAppServerBackfillTimeoutMs\(e,i\);let a=si\(t\)/);
 });
 
+test("coalesces duplicate queued turn starts before request creation", async () => {
+  const source = [
+    "class RequestClient{constructor(){this.requests=[];this.queuedRequests=[];this.dispatched=[]}async sendRequest(e,t,n){if(e===`config/read`)return this.sendConfigReadRequest(t,n);return this.enqueueRequest(e,t,n)}sendConfigReadRequest(e,t){return Promise.resolve({config:e,options:t})}createRequest(e,t,n){let r=this.requests.length+1,i,a,o=new Promise((e,t)=>{i=e,a=t});return this.requests.push({request:{id:r,method:e,params:t},resolve:i,reject:a,options:n}),{request:{id:r,method:e,params:t},promise:o}}enqueueRequest(e,t,n,r=e=>{this.dispatched.push(e)}){let i=n?.priority??`interactive`;if(i===`background`&&this.queuedRequests.filter(({priority:e})=>e===`background`).length>=1)return Promise.reject(Error(`App server request queue is full`));let{request:a,promise:o}=this.createRequest(e,t,n);return this.queuedRequests.push({dispatch:()=>{this.startRequest(a),r(a)},priority:i}),this.pumpQueue(),o}startRequest(e){this.started=e}pumpQueue(){}}",
+  ].join("");
+
+  const { value: patched, warnings } = captureWarns(() =>
+    applyPatchTwice(applyLinuxTurnStartDuplicateGuardPatch, source),
+  );
+
+  assert.deepEqual(warnings, []);
+  assert.match(patched, /codexLinuxTurnStartDuplicateKey/);
+  assert.match(patched, /codexLinuxTurnStartPendingRequests/);
+
+  const context = {};
+  vm.runInNewContext(`${patched};client=new RequestClient();`, context);
+
+  assert.equal(
+    JSON.stringify(await context.client.sendRequest("config/read", { key: "theme" }, { timeoutMs: 1 })),
+    JSON.stringify({ config: { key: "theme" }, options: { timeoutMs: 1 } }),
+  );
+  assert.equal(context.client.requests.length, 0);
+
+  const first = context.client.sendRequest("turn/start", {
+    thread_id: "thread-1",
+    turn_id: "turn-1",
+    message: { client_id: "client-a", content: "same message" },
+  }, {});
+  const second = context.client.sendRequest("turn/start", {
+    thread_id: "thread-1",
+    turn_id: "turn-1",
+    message: { client_id: "client-b", content: "same message" },
+  }, {});
+  assert.equal(context.client.requests.length, 1);
+  assert.equal(context.client.queuedRequests.length, 1);
+  context.client.requests[0].resolve({ ok: true });
+  assert.deepEqual(await first, { ok: true });
+  assert.deepEqual(await second, { ok: true });
+  await Promise.resolve();
+
+  const retry = context.client.sendRequest("turn/start", {
+    thread_id: "thread-1",
+    turn_id: "turn-1",
+    message: { client_id: "client-c", content: "same message" },
+  }, {});
+  assert.equal(context.client.requests.length, 2);
+  assert.equal(context.client.queuedRequests.length, 2);
+  context.client.requests[1].reject(new Error("boom"));
+  await assert.rejects(retry, /boom/);
+  await Promise.resolve();
+
+  const afterFailure = context.client.sendRequest("turn/start", {
+    thread_id: "thread-1",
+    turn_id: "turn-1",
+    message: { client_id: "client-d", content: "same message" },
+  }, {});
+  assert.equal(context.client.requests.length, 3);
+  assert.equal(context.client.queuedRequests.length, 3);
+  context.client.requests[2].resolve({ afterFailure: true });
+  assert.deepEqual(await afterFailure, { afterFailure: true });
+});
+
 test("keeps current app-server backfill helpers visible outside the Sentry handler", () => {
   const source =
     "function fi(e,t){let n=hi(t.originalException);return n==null?e:{...e,...n,extra:{...e.extra,...n.extra}}}var gi=e(oi(),1),_i=z({code:Pe([He(),I()]),message:I().min(1)}).passthrough(),vi=class{requestLifecycleListeners=new Set;requestPromises=new Map;createRequest(e,t,n){let r=F(V()),i=n?.timeoutMs??0,a=si(t),o=this.requestPromises.size,s=Date.now();return{request:{id:r,method:e,params:t},conversationId:a,pending:o,startedAtMs:s,timeoutMs:i}}};";
@@ -5670,6 +5733,37 @@ test("keeps remote conversation hydration out of core", () => {
     );
   }
   assert.ok(descriptors.some((patch) => patch.id === "linux-completed-item-recovery"));
+});
+
+test("turn/start duplicate guard descriptor follows current request client chunks", () => {
+  const descriptor = corePatchDescriptors().find(
+    (candidate) => candidate.id === "linux-turn-start-duplicate-guard",
+  );
+
+  assert.ok(descriptor);
+  assert.equal(descriptor.phase, "webview-asset");
+  assert.equal(descriptor.ciPolicy, "optional");
+  assert.equal(
+    descriptor.pattern.test(
+      "app-initial~app-main~pull-request-code-review~onboarding-page~hotkey-window-thread-page~cha~b76hmflu-y0KJWbm3.js",
+    ),
+    true,
+  );
+  descriptor.pattern.lastIndex = 0;
+  assert.equal(
+    descriptor.pattern.test(
+      "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-Bj9ubaFn.js",
+    ),
+    true,
+  );
+  descriptor.pattern.lastIndex = 0;
+  assert.equal(descriptor.pattern.test("app-server-manager-signals-test.js"), true);
+  descriptor.pattern.lastIndex = 0;
+  assert.equal(descriptor.pattern.test("src-CoIhwwHr.js"), true);
+  descriptor.pattern.lastIndex = 0;
+  assert.equal(descriptor.pattern.test("remote-conversation-page-fPJAD_qJ.js"), false);
+  descriptor.pattern.lastIndex = 0;
+  assert.equal(descriptor.pattern.test("local-conversation-thread-imfIBhy0.js"), false);
 });
 
 test("recovers completed stream items that arrive after local state lost their started item", () => {
