@@ -780,6 +780,20 @@ patch_chrome_plugin_for_linux() {
     fi
 }
 
+patch_browser_client_iab_socket_scope() {
+    local client="$1"
+    local patcher="$SCRIPT_DIR/scripts/lib/patch-browser-client-iab-socket-scope.js"
+
+    if [ ! -f "$patcher" ]; then
+        warn "IAB Browser socket scope patch helper not found at $patcher; leaving browser-client.mjs unchanged"
+        return 0
+    fi
+
+    if ! node "$patcher" "$client" >&2; then
+        warn "IAB Browser socket scope patch helper failed; leaving browser-client.mjs unchanged"
+    fi
+}
+
 normalize_plugin_script_executable_modes() {
     local target_plugin="$1"
     local scripts_dir="$target_plugin/scripts"
@@ -1306,6 +1320,7 @@ stage_browser_plugin_from_upstream() {
     patch_browser_use_native_pipe_import_meta_bridge "$target_client"
     patch_browser_use_site_status_allowlist_fallback "$target_client"
     patch_browser_use_file_url_policy "$target_client"
+    patch_browser_client_iab_socket_scope "$target_client"
 
     info "Browser plugin staged from upstream DMG"
     return 0
