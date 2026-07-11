@@ -713,7 +713,7 @@ stage_bundled_marketplace_metadata() {
     }
     if cp "$source_marketplace" "$marketplace_temp" && \
        chmod u+w "$marketplace_temp" && \
-       mv -f -- "$marketplace_temp" "$marketplace_target"; then
+       mv -fT -- "$marketplace_temp" "$marketplace_target"; then
         return 0
     fi
     rm -f -- "$marketplace_temp"

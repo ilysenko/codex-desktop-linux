@@ -4258,6 +4258,16 @@ test_launcher_marketplace_metadata_atomic_staging() (
     assert_contains "$target_marketplace" "new metadata"
     [ -z "$(find "$target_dir" -maxdepth 1 -type f -name '.marketplace.json.tmp.*' -print -quit)" ] \
         || fail "Successful marketplace metadata staging must leave no temporary file"
+
+    rm -f "$target_marketplace"
+    mkdir -p "$workspace/symlink-target"
+    ln -s "$workspace/symlink-target" "$target_marketplace"
+    stage_bundled_marketplace_metadata
+    [ ! -L "$target_marketplace" ] \
+        || fail "Marketplace metadata staging must replace a destination symlink"
+    assert_contains "$target_marketplace" "new metadata"
+    [ -z "$(find "$workspace/symlink-target" -mindepth 1 -print -quit)" ] \
+        || fail "Marketplace metadata staging must not follow a destination directory symlink"
 )
 
 test_launcher_template_sanity() {
@@ -4465,7 +4475,7 @@ if 'rm -f "$marketplace_plugins_dir/marketplace.json"' in source:
     raise SystemExit("bundled marketplace metadata must not delete the live target before copying")
 if 'mktemp "$marketplace_plugins_dir/.marketplace.json.tmp.XXXXXX"' not in source:
     raise SystemExit("bundled marketplace metadata temp must be unique and destination-adjacent")
-if 'mv -f -- "$marketplace_temp" "$marketplace_target"' not in source:
+if 'mv -fT -- "$marketplace_temp" "$marketplace_target"' not in source:
     raise SystemExit("bundled marketplace metadata must atomically replace the live target")
 for sync_pid_var in ("SYNC_BROWSER_USE_PID", "SYNC_CHROME_PID", "SYNC_COMPUTER_USE_PID", "SYNC_READ_ALOUD_PID", "SYNC_EXTRA_PID"):
     if 'wait "$' + sync_pid_var + '"' not in runtime_body:
