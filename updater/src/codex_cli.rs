@@ -46,7 +46,13 @@ pub fn preflight(
     let requested_path = explicit_cli_path.as_deref();
     let cli_path = match resolve_cli_path(requested_path) {
         Some(path) => path,
-        None if allow_install_missing => install_missing_cli(state, paths, requested_path)?,
+        None if allow_install_missing => match install_missing_cli(state, paths, requested_path) {
+            Ok(path) => path,
+            Err(error) => {
+                persist_cli_failure(state, paths, &error)?;
+                return Err(error);
+            }
+        },
         None => anyhow::bail!("Codex CLI not found in PATH or known install locations"),
     };
     let path_env = command_path_env();
@@ -2803,6 +2809,38 @@ exit 1
             .cli_error_message
             .as_deref()
             .is_some_and(|message| message.contains("repair failed")));
+        let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(persisted.cli_status, CliStatus::Failed);
+        assert_eq!(persisted.cli_error_message, state.cli_error_message);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_missing_cli_install_persists_failed_status() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("npm"),
+            "#!/bin/sh\necho 'registry unavailable' >&2\nexit 42\n",
+        )?;
+
+        let _restore_env = configure_cli_test_env(temp.path(), [bin_dir])?;
+
+        let mut state = PersistedState::new(true);
+        let error = preflight(&mut state, &paths, None, true)
+            .expect_err("a failed missing CLI install should bubble up");
+
+        assert!(format!("{error:#}").contains("registry unavailable"));
+        assert_eq!(state.cli_status, CliStatus::Failed);
+        assert!(state
+            .cli_error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("registry unavailable")));
         let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
         assert_eq!(persisted.cli_status, CliStatus::Failed);
         assert_eq!(persisted.cli_error_message, state.cli_error_message);
