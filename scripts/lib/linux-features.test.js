@@ -8,6 +8,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  discoverLinuxFeatureManifests,
   stageEnabledLinuxFeatureInstall,
 } = require("./linux-features.js");
 
@@ -34,6 +35,25 @@ function writeStagedManifest(appDir, manifest) {
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
+
+test("Linux feature discovery can exclude local manifests", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-repo-only-discovery-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const featuresRoot = path.join(root, "linux-features");
+  const featureDir = path.join(featuresRoot, "alpha");
+  const localDir = path.join(featuresRoot, "local", "broken");
+  fs.mkdirSync(featureDir, { recursive: true });
+  fs.mkdirSync(localDir, { recursive: true });
+  fs.writeFileSync(path.join(featureDir, "README.md"), "# Alpha\n");
+  fs.writeFileSync(path.join(featureDir, "feature.json"), '{"id":"alpha","title":"Alpha"}\n');
+  fs.writeFileSync(path.join(localDir, "README.md"), "# Broken\n");
+  fs.writeFileSync(path.join(localDir, "feature.json"), "{broken-json\n");
+
+  const features = discoverLinuxFeatureManifests({ featuresRoot, includeLocal: false });
+
+  assert.deepEqual(features.map((feature) => feature.id), ["alpha"]);
+});
 
 test("Linux feature staging rejects duplicate resource targets", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-duplicate-resource-"));

@@ -20,6 +20,22 @@ feature for diagnostics. Disabled features are not checked; any patch drift in
 a user-enabled feature rejects the candidate so the working installation keeps
 that feature intact. The user can disable the feature and retry the update.
 
+## Pull Request Feature Acceptance
+
+Pull requests that change tracked files under `linux-features/<id>/` run the
+upstream DMG workflow with those repository features enabled. The workflow
+maps changed paths through the existing feature manifest loader, expands
+transitive `requires`, rejects conflicting combinations, and writes an
+uncommitted temporary feature config for one current-DMG build. Changes under
+`linux-features/local/` does not trigger this workflow. Top-level feature
+documentation, unknown directories, and non-feature paths do not enable a
+feature when another relevant change triggers the workflow.
+
+The scheduled workflow and normal pushes keep the default feature config and
+do not probe disabled opt-ins. A scheduled canary rotation across compatible
+feature groups remains a separate follow-up so its runtime cost and grouping
+can be measured independently.
+
 ## Transactional Local Install
 
 `install.sh` builds into a hidden sibling candidate directory. It evaluates the

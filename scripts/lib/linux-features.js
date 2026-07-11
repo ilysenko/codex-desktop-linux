@@ -193,7 +193,7 @@ function isDirectory(filePath) {
   }
 }
 
-function featureManifestCandidates(featuresRoot) {
+function featureManifestCandidates(featuresRoot, options = {}) {
   if (!fs.existsSync(featuresRoot)) {
     return [];
   }
@@ -210,7 +210,7 @@ function featureManifestCandidates(featuresRoot) {
   }
 
   const localRoot = path.join(featuresRoot, LOCAL_FEATURES_DIR);
-  if (isDirectory(localRoot)) {
+  if (options.includeLocal !== false && isDirectory(localRoot)) {
     for (const name of fs.readdirSync(localRoot).sort()) {
       if (name.startsWith(".")) {
         continue;
@@ -262,7 +262,7 @@ function discoverLinuxFeatureManifests(options = {}) {
   const featuresRoot = linuxFeaturesRoot(options);
   const features = [];
   const seen = new Map();
-  for (const candidate of featureManifestCandidates(featuresRoot)) {
+  for (const candidate of featureManifestCandidates(featuresRoot, options)) {
     const feature = normalizeLinuxFeatureManifest(featuresRoot, candidate);
     const previous = seen.get(feature.id);
     if (previous != null) {

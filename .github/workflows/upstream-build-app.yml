@@ -5,15 +5,19 @@ on:
     - cron: '30 6 * * *'
   pull_request:
     paths:
+      - linux-features/*/**
+      - '!linux-features/local/**'
       - install.sh
       - Makefile
       - scripts/patch-linux-window-ui.js
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
       - scripts/ci/validate-patch-report.js
+      - scripts/ci/changed-linux-features*.js
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js
       - scripts/lib/candidate-install.sh
+      - scripts/lib/linux-features.js
       - scripts/lib/patch-validation.js
       - scripts/lib/upstream-dmg-acceptance.js
       - scripts/lib/upstream-dmg-release-profile.js
@@ -28,9 +32,11 @@ on:
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
       - scripts/ci/validate-patch-report.js
+      - scripts/ci/changed-linux-features*.js
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js
       - scripts/lib/candidate-install.sh
+      - scripts/lib/linux-features.js
       - scripts/lib/patch-validation.js
       - scripts/lib/upstream-dmg-acceptance.js
       - scripts/lib/upstream-dmg-release-profile.js
@@ -58,11 +64,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Configure changed Linux Features
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" \
+            | node scripts/ci/changed-linux-features.js --output "$GITHUB_WORKSPACE/upstream-linux-features.json"
+          echo "CODEX_LINUX_FEATURES_CONFIG=$GITHUB_WORKSPACE/upstream-linux-features.json" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: |
@@ -171,6 +190,7 @@ jobs:
           path: |
             upstream-dmg-metadata.json
             upstream-dmg-decision.json
+            upstream-linux-features.json
             upstream-acceptance/**/*.json
           if-no-files-found: ignore
 
