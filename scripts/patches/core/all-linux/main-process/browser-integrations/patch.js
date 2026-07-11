@@ -7,6 +7,7 @@ const {
 const { patchStatusFromChange } = require("../../../../../lib/patch-report.js");
 const {
   applyBrowserUseNodeReplApprovalAssets,
+  applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxChromeExtensionStatusPatch,
@@ -44,6 +45,13 @@ module.exports = [
     order: 164,
     ciPolicy: "optional",
     apply: applyLinuxBundledPluginReconcileStaleSnapshotPatch,
+  }),
+  mainBundlePatch({
+    id: "linux-bundled-plugin-copy-permissions",
+    phase: "main-bundle",
+    order: 165,
+    ciPolicy: "optional",
+    apply: applyLinuxBundledPluginCopyPermissionsPatch,
   }),
   mainBundlePatch({
     id: "linux-browser-use-route-liveness",

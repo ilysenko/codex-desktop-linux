@@ -8,6 +8,54 @@ const {
   requireName,
 } = require("../../lib/minified-js.js");
 
+function applyLinuxBundledPluginCopyPermissionsPatch(currentSource) {
+  const helperName = "codexLinuxMakeBundledPluginTreeWritable";
+  if (currentSource.includes(`async function ${helperName}(`)) {
+    return currentSource;
+  }
+
+  const pathVar = requireName(currentSource, "node:path");
+  if (pathVar == null) {
+    if (currentSource.includes("verbatimSymlinks")) {
+      console.warn(
+        "WARN: Could not find node:path binding — skipping Linux plugin permissions patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const copyBranchRegex =
+    /if\(([A-Za-z_$][\w$]*)\.default\.platform!==`win32`\)\{await ([A-Za-z_$][\w$]*)\.default\.cp\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),\{recursive:!0,verbatimSymlinks:!0\}\);return\}/;
+  let patchedCopyBranch = false;
+  const patchedSource = currentSource.replace(
+    copyBranchRegex,
+    (_match, platformVar, fsPromisesVar, sourceVar, targetVar) => {
+      patchedCopyBranch = true;
+      return `if(${platformVar}.default.platform!==\`win32\`){await ${fsPromisesVar}.default.cp(${sourceVar},${targetVar},{recursive:!0,verbatimSymlinks:!0});if(process.platform===\`linux\`)await ${helperName}(${targetVar},${fsPromisesVar}.default);return}`;
+    },
+  );
+  if (!patchedCopyBranch) {
+    if (currentSource.includes("verbatimSymlinks")) {
+      console.warn(
+        "WARN: Could not find bundled plugin copy branch — skipping Linux plugin permissions patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const helper =
+    `async function ${helperName}(e,t){let n=await t.lstat(e);if(n.isSymbolicLink())return;await t.chmod(e,n.mode|128);if(n.isDirectory())for(let n of await t.readdir(e))await ${helperName}((0,${pathVar}.join)(e,n),t)}`;
+  const strictDirective = '"use strict";';
+  const helperInsertionIndex = currentSource.startsWith(strictDirective)
+    ? strictDirective.length
+    : 0;
+  return (
+    patchedSource.slice(0, helperInsertionIndex) +
+    helper +
+    patchedSource.slice(helperInsertionIndex)
+  );
+}
+
 function applyLinuxBundledPluginReconcileStaleSnapshotPatch(currentSource) {
   const marker = "/*codex-linux-skip-stale-bundled-plugin-reconcile*/";
   if (currentSource.includes(marker)) {
@@ -465,6 +513,7 @@ function applyLinuxExternalOpenEnvPatch(currentSource) {
 module.exports = {
   applyBrowserUseNodeReplApprovalPatch,
   applyBrowserUseNodeReplApprovalAssets,
+  applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
   applyLinuxExternalOpenEnvPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
