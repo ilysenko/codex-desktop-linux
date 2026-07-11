@@ -1378,6 +1378,136 @@ function applyLinuxRemoteMobileCompletedItemRecoveryPatch(source) {
   return source;
 }
 
+function applyLinuxRemoteTerminalStatusRecoveryPatch(source) {
+  if (
+    source.includes("codexLinuxRemoteTerminalStatusWaitingOnUserInput") &&
+    source.includes("hasUserInputRequest:codexLinuxRemoteHasUserInputRequest") &&
+    source.includes("&&codexLinuxRemoteHasUserInputRequest")
+  ) {
+    return source;
+  }
+
+  let patched = source;
+  const userInputRequestHelper =
+    "function codexLinuxRemoteHasUserInputRequest(e){try{return Array.isArray(e)&&e.some(e=>e?.method===`item/tool/requestUserInput`||e?.method===`item/tool/requestOptionPicker`||e?.method===`item/tool/requestSetupCodexContextPicker`||e?.method===`item/tool/call`&&(e?.params?.tool===`request_onboarding_input`||e?.params?.tool===`request_option_picker`||e?.params?.tool===`setup_codex_context_picker`||e?.params?.tool===`setup_codex_step`))}catch{return!1}}";
+  const withUserInputHelper = (replacement) =>
+    patched.includes("function codexLinuxRemoteHasUserInputRequest(")
+      ? replacement
+      : `${userInputRequestHelper}${replacement}`;
+  const buildTerminalStatusReplacement = (
+    fnName,
+    sideChatVar,
+    responseProgressVar,
+    systemErrorVar,
+    resumeStateVar,
+    runtimeStatusVar,
+  ) =>
+    `function ${fnName}({hasInProgressSideChat:${sideChatVar},isResponseInProgress:${responseProgressVar},latestTurnHasSystemError:${systemErrorVar},resumeState:${resumeStateVar},threadRuntimeStatus:${runtimeStatusVar},hasUserInputRequest:codexLinuxRemoteHasUserInputRequestPending=!0}){let codexLinuxRemoteTerminalStatusActive=${runtimeStatusVar}?.type===\`active\`,codexLinuxRemoteTerminalStatusActiveFlags=Array.isArray(${runtimeStatusVar}?.activeFlags)?${runtimeStatusVar}.activeFlags:null,codexLinuxRemoteTerminalStatusWaitingOnUserInput=codexLinuxRemoteTerminalStatusActiveFlags?.includes(\`waitingOnUserInput\`)===!0,codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&(${responseProgressVar}===!0||codexLinuxRemoteTerminalStatusActiveFlags==null||codexLinuxRemoteTerminalStatusActiveFlags.length>0&&(!codexLinuxRemoteTerminalStatusWaitingOnUserInput||codexLinuxRemoteHasUserInputRequestPending===!0));return ${sideChatVar}?\`loading\`:${runtimeStatusVar}?.type===\`systemError\`?\`error\`:codexLinuxRemoteTerminalStatusLoading?\`loading\`:${resumeStateVar}===\`needs_resume\`?\`idle\`:${systemErrorVar}?\`error\`:${responseProgressVar}===!0?\`loading\`:\`idle\`}`;
+
+  const terminalStatusPattern =
+    /function ([A-Za-z_$][\w$]*)\(\{hasInProgressSideChat:([A-Za-z_$][\w$]*),isResponseInProgress:([A-Za-z_$][\w$]*),latestTurnHasSystemError:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{return \2\?`loading`:\6\?\.type===`systemError`\?`error`:\6\?\.type===`active`\?`loading`:\5===`needs_resume`\?`idle`:\4\?`error`:\3===!0\?`loading`:`idle`\}/u;
+  const oldPatchedTerminalStatusPattern =
+    /function ([A-Za-z_$][\w$]*)\(\{hasInProgressSideChat:([A-Za-z_$][\w$]*),isResponseInProgress:([A-Za-z_$][\w$]*),latestTurnHasSystemError:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{let codexLinuxRemoteTerminalStatusActive=\6\?\.type===`active`,codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&\(\3===!0\|\|!Array\.isArray\(\6\.activeFlags\)\|\|\6\.activeFlags\.length>0\);return \2\?`loading`:\6\?\.type===`systemError`\?`error`:codexLinuxRemoteTerminalStatusLoading\?`loading`:\5===`needs_resume`\?`idle`:\4\?`error`:\3===!0\?`loading`:`idle`\}/u;
+
+  let terminalStatusFnName = null;
+
+  if (terminalStatusPattern.test(patched)) {
+    patched = patched.replace(
+      terminalStatusPattern,
+      (_match, fnName, sideChatVar, responseProgressVar, systemErrorVar, resumeStateVar, runtimeStatusVar) => {
+        terminalStatusFnName = fnName;
+        return withUserInputHelper(
+          buildTerminalStatusReplacement(
+            fnName,
+            sideChatVar,
+            responseProgressVar,
+            systemErrorVar,
+            resumeStateVar,
+            runtimeStatusVar,
+          ),
+        );
+      },
+    );
+  } else if (oldPatchedTerminalStatusPattern.test(patched)) {
+    patched = patched.replace(
+      oldPatchedTerminalStatusPattern,
+      (_match, fnName, sideChatVar, responseProgressVar, systemErrorVar, resumeStateVar, runtimeStatusVar) => {
+        terminalStatusFnName = fnName;
+        return withUserInputHelper(
+          buildTerminalStatusReplacement(
+            fnName,
+            sideChatVar,
+            responseProgressVar,
+            systemErrorVar,
+            resumeStateVar,
+            runtimeStatusVar,
+          ),
+        );
+      },
+    );
+  }
+
+  const pendingRequestPattern =
+    /function ([A-Za-z_$][\w$]*)\(\{pendingRequestType:([A-Za-z_$][\w$]*),requests:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{return \3==null\|\|\4==null\?null:\4===`needs_resume`\?\5\?\.type===`active`&&\5\.activeFlags\.includes\(`waitingOnApproval`\)&&([A-Za-z_$][\w$]*)\(\3\)\?`approval`:\5\?\.type===`active`&&\5\.activeFlags\.includes\(`waitingOnUserInput`\)\?`response`:null:([A-Za-z_$][\w$]*)\(\2\)\?`approval`:\2===`userInput`\?`response`:null\}/u;
+  let pendingRequestFnName = null;
+  if (pendingRequestPattern.test(patched)) {
+    patched = patched.replace(
+      pendingRequestPattern,
+      (_match, fnName, pendingTypeVar, requestsVar, resumeStateVar, runtimeStatusVar, approvalRequestFn, approvalTypeFn) => {
+        pendingRequestFnName = fnName;
+        return withUserInputHelper(
+          `function ${fnName}({pendingRequestType:${pendingTypeVar},requests:${requestsVar},resumeState:${resumeStateVar},threadRuntimeStatus:${runtimeStatusVar}}){return ${requestsVar}==null||${resumeStateVar}==null?null:${resumeStateVar}===\`needs_resume\`?${runtimeStatusVar}?.type===\`active\`&&Array.isArray(${runtimeStatusVar}?.activeFlags)&&${runtimeStatusVar}.activeFlags.includes(\`waitingOnApproval\`)&&${approvalRequestFn}(${requestsVar})?\`approval\`:${runtimeStatusVar}?.type===\`active\`&&Array.isArray(${runtimeStatusVar}?.activeFlags)&&${runtimeStatusVar}.activeFlags.includes(\`waitingOnUserInput\`)&&codexLinuxRemoteHasUserInputRequest(${requestsVar})?\`response\`:null:${approvalTypeFn}(${pendingTypeVar})?\`approval\`:${pendingTypeVar}===\`userInput\`?\`response\`:null}`,
+        );
+      },
+    );
+  } else {
+    const existingPendingRequestPattern =
+      /function ([A-Za-z_$][\w$]*)\(\{pendingRequestType:[A-Za-z_$][\w$]*,requests:[A-Za-z_$][\w$]*,resumeState:[A-Za-z_$][\w$]*,threadRuntimeStatus:[A-Za-z_$][\w$]*\}\)\{[^}]*codexLinuxRemoteHasUserInputRequest/u;
+    const match = patched.match(existingPendingRequestPattern);
+    pendingRequestFnName = match?.[1] ?? null;
+  }
+
+  if (terminalStatusFnName != null && pendingRequestFnName != null) {
+    const pendingCallPattern = new RegExp(
+      `${pendingRequestFnName}\\(\\{pendingRequestType:[^{}]+?,requests:([^{}]*\\([^{}]*\\)[^{}]*?),resumeState:[^{}]+?,threadRuntimeStatus:[^{}]+?\\}\\)`,
+      "u",
+    );
+    const pendingCallMatch = patched.match(pendingCallPattern);
+    const requestExpression = pendingCallMatch?.[1] ?? null;
+    const terminalCallPattern = new RegExp(
+      `${terminalStatusFnName}\\(\\{hasInProgressSideChat:([^{}]+?),isResponseInProgress:([^{}]+?),resumeState:([^{}]+?),threadRuntimeStatus:([^{}]+?),latestTurnHasSystemError:([^{}]+?)\\}\\)`,
+      "u",
+    );
+    if (requestExpression != null && terminalCallPattern.test(patched)) {
+      patched = patched.replace(
+        terminalCallPattern,
+        `${terminalStatusFnName}({hasInProgressSideChat:$1,isResponseInProgress:$2,resumeState:$3,threadRuntimeStatus:$4,latestTurnHasSystemError:$5,hasUserInputRequest:codexLinuxRemoteHasUserInputRequest(${requestExpression})})`,
+      );
+    } else if (
+      patched.includes("pendingRequestType") &&
+      patched.includes("hasInProgressSideChat") &&
+      !patched.includes("hasUserInputRequest:codexLinuxRemoteHasUserInputRequest")
+    ) {
+      console.warn(
+        "WARN: Could not wire remote terminal status to pending user-input requests - stale waiting-user-input recovery may be incomplete",
+      );
+    }
+  }
+
+  if (
+    source.includes("hasInProgressSideChat") &&
+    source.includes("isResponseInProgress") &&
+    source.includes("threadRuntimeStatus") &&
+    patched === source
+  ) {
+    console.warn(
+      "WARN: Could not find remote terminal status insertion point - skipping Linux remote terminal status recovery patch",
+    );
+  }
+
+  return patched;
+}
+
 function applyLinuxRemoteControlStatusReadGuardPatch(source) {
   if (source.includes(REMOTE_CONTROL_STATUS_READ_GUARD_MARKER)) {
     return source;
@@ -1712,10 +1842,20 @@ module.exports = [
     apply: applyLinuxRemoteMobileCompletedItemRecoveryPatch,
   },
   {
-    id: "linux-remote-control-status-read-guard",
+    id: "linux-remote-terminal-status-recovery",
     phase: "webview-asset",
     pattern: REMOTE_MOBILE_CONVERSATION_ASSET_PATTERN,
     order: 20_152,
+    ciPolicy: "optional",
+    missingDescription: "app-server conversation manager bundle",
+    skipDescription: "Linux remote terminal status recovery patch",
+    apply: applyLinuxRemoteTerminalStatusRecoveryPatch,
+  },
+  {
+    id: "linux-remote-control-status-read-guard",
+    phase: "webview-asset",
+    pattern: REMOTE_MOBILE_CONVERSATION_ASSET_PATTERN,
+    order: 20_153,
     ciPolicy: "optional",
     missingDescription: "app-server manager signals bundle",
     skipDescription: "Linux remote-control status read guard patch",
@@ -1725,7 +1865,7 @@ module.exports = [
     id: "linux-remote-control-status-wait",
     phase: "webview-asset",
     pattern: /^app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~[^.]+\.js$/,
-    order: 20_153,
+    order: 20_154,
     ciPolicy: "optional",
     missingDescription: "app-server manager signals bundle",
     skipDescription: "Linux remote-control status wait patch",
@@ -1735,7 +1875,7 @@ module.exports = [
     id: "linux-remote-control-enable-for-host-params",
     phase: "webview-asset",
     pattern: /^(?:app-main|app-initial~app-main~automations-page)-.*\.js$/,
-    order: 20_154,
+    order: 20_155,
     ciPolicy: "optional",
     missingDescription: "app main remote-control host toggle bundle",
     skipDescription: "Linux remote-control host toggle params patch",
@@ -1745,7 +1885,7 @@ module.exports = [
     id: "linux-remote-control-enablement-bridge",
     phase: "webview-asset",
     pattern: /^app-main-.*\.js$/,
-    order: 20_155,
+    order: 20_156,
     ciPolicy: "optional",
     missingDescription: "app main bundle",
     skipDescription: "Linux remote-control enablement bridge patch",
@@ -1770,6 +1910,7 @@ module.exports.applyLinuxRemoteMobileChromeBridgePatch = applyLinuxRemoteMobileC
 module.exports.applyLinuxRemoteMobileCompletedItemRecoveryPatch =
   applyLinuxRemoteMobileCompletedItemRecoveryPatch;
 module.exports.applyLinuxRemoteMobileConversationHydrationPatch = applyLinuxRemoteMobileConversationHydrationPatch;
+module.exports.applyLinuxRemoteTerminalStatusRecoveryPatch = applyLinuxRemoteTerminalStatusRecoveryPatch;
 module.exports.applyLinuxRemoteControlStatusReadGuardPatch = applyLinuxRemoteControlStatusReadGuardPatch;
 module.exports.applyLinuxRemoteControlStatusWaitPatch = applyLinuxRemoteControlStatusWaitPatch;
 module.exports.applyLinuxRemoteControlEnablementBridgePatch = applyLinuxRemoteControlEnablementBridgePatch;

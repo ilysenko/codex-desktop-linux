@@ -35,6 +35,7 @@ const {
   applyLinuxRemoteMobileChromeBridgePatch,
   applyLinuxRemoteMobileCompletedItemRecoveryPatch,
   applyLinuxRemoteMobileConversationHydrationPatch,
+  applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxRemoteControlStatusReadGuardPatch,
   applyLinuxRemoteControlStatusWaitPatch,
   applyLinuxRemoteConnectionsRefreshPatch,
@@ -302,6 +303,14 @@ function syntheticCompletedItemRecoveryBundle() {
   ].join("");
 }
 
+function syntheticRemoteTerminalStatusBundle() {
+  return [
+    "function LQt({hasInProgressSideChat:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){return e?`loading`:i?.type===`systemError`?`error`:i?.type===`active`?`loading`:r===`needs_resume`?`idle`:n?`error`:t===!0?`loading`:`idle`}",
+    "function RQt({pendingRequestType:e,requests:t,resumeState:n,threadRuntimeStatus:r}){return t==null||n==null?null:n===`needs_resume`?r?.type===`active`&&r.activeFlags.includes(`waitingOnApproval`)&&yi(t)?`approval`:r?.type===`active`&&r.activeFlags.includes(`waitingOnUserInput`)?`response`:null:Zr(e)?`approval`:e===`userInput`?`response`:null}",
+    "var IQt,AQt,OQt=e((()=>{G(),Lr(),Tt(),Ni(),kt(),IQt=s(V,(e,{get:t})=>{let n=t(rr,e);return LQt({hasInProgressSideChat:t(Qw,e),isResponseInProgress:t(ki,e),resumeState:t(si,e)??(n==null?null:`needs_resume`),threadRuntimeStatus:t(Or,e)??n?.threadRuntimeStatus??null,latestTurnHasSystemError:t(Ui,e)===!0})}),AQt=s(V,(e,{get:t})=>RQt({pendingRequestType:t(wr,e)?.type??null,requests:t(fi,e),resumeState:t(si,e),threadRuntimeStatus:t(Or,e)}))}))",
+  ].join("");
+}
+
 function syntheticAppServerManagerStatusBundle() {
   return [
     "var z={error(){}};",
@@ -363,6 +372,12 @@ function withTempFeatureRoot(enabled, fn) {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+function applyPatchTwice(patchFn, source, ...args) {
+  const patched = patchFn(source, ...args);
+  assert.equal(patchFn(patched, ...args), patched);
+  return patched;
 }
 
 function withFeatureRootEnv(root, fn) {
@@ -734,6 +749,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-connections-refresh",
       "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration",
       "feature:remote-mobile-control:linux-remote-mobile-completed-item-recovery",
+      "feature:remote-mobile-control:linux-remote-terminal-status-recovery",
       "feature:remote-mobile-control:linux-remote-control-status-read-guard",
       "feature:remote-mobile-control:linux-remote-control-status-wait",
       "feature:remote-mobile-control:linux-remote-control-enable-for-host-params",
@@ -746,6 +762,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "main-bundle",
       "main-bundle",
       "extracted-app:post-webview",
+      "webview-asset",
       "webview-asset",
       "webview-asset",
       "webview-asset",
@@ -807,6 +824,14 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.ok(completedItemDescriptor);
     assert.equal(completedItemDescriptor.pattern.test(UNIFIED_REMOTE_CONVERSATION_ASSET), true);
     assert.equal(completedItemDescriptor.pattern.test(OLD_APP_SERVER_MANAGER_ASSET), false);
+
+    const terminalStatusDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-terminal-status-recovery"
+    );
+    assert.ok(terminalStatusDescriptor);
+    assert.equal(terminalStatusDescriptor.pattern.test(UNIFIED_REMOTE_CONVERSATION_ASSET), true);
+    assert.equal(terminalStatusDescriptor.pattern.test(OLD_APP_SERVER_MANAGER_ASSET), false);
+    assert.equal(terminalStatusDescriptor.pattern.test("remote-connections-settings-fixture.js"), false);
 
     const loadGateDescriptor = descriptors.find((descriptor) =>
       descriptor.id === "feature:remote-mobile-control:linux-remote-control-load-gate"
@@ -2156,6 +2181,106 @@ test("Linux remote-control status guard skips remote-control environment status 
   assert.equal(codexLinuxRemoteControlShouldReadStatus("local"), true);
 });
 
+test("Linux remote terminal status recovery treats stale waiting input as idle", () => {
+  const source =
+    "function LQt({hasInProgressSideChat:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){return e?`loading`:i?.type===`systemError`?`error`:i?.type===`active`?`loading`:r===`needs_resume`?`idle`:n?`error`:t===!0?`loading`:`idle`}function RQt({pendingRequestType:e,requests:t,resumeState:n,threadRuntimeStatus:r}){return t==null||n==null?null:n===`needs_resume`?r?.type===`active`&&r.activeFlags.includes(`waitingOnApproval`)&&yi(t)?`approval`:r?.type===`active`&&r.activeFlags.includes(`waitingOnUserInput`)?`response`:null:Zr(e)?`approval`:e===`userInput`?`response`:null}var IQt,AQt,OQt=e((()=>{G(),Lr(),Tt(),Ni(),kt(),IQt=s(V,(e,{get:t})=>{let n=t(rr,e);return LQt({hasInProgressSideChat:t(Qw,e),isResponseInProgress:t(ki,e),resumeState:t(si,e)??(n==null?null:`needs_resume`),threadRuntimeStatus:t(Or,e)??n?.threadRuntimeStatus??null,latestTurnHasSystemError:t(Ui,e)===!0})}),AQt=s(V,(e,{get:t})=>RQt({pendingRequestType:t(wr,e)?.type??null,requests:t(fi,e),resumeState:t(si,e),threadRuntimeStatus:t(Or,e)}))}))";
+
+  const patched = applyPatchTwice(applyLinuxRemoteTerminalStatusRecoveryPatch, source);
+
+  assert.match(patched, /codexLinuxRemoteTerminalStatusActive=i\?\.type===`active`/);
+  assert.match(patched, /codexLinuxRemoteTerminalStatusWaitingOnUserInput/);
+  assert.match(patched, /function codexLinuxRemoteHasUserInputRequest/);
+  assert.match(
+    patched,
+    /hasUserInputRequest:codexLinuxRemoteHasUserInputRequest\(t\(fi,e\)\)/,
+  );
+  assert.doesNotMatch(
+    patched,
+    /i\?\.type===`active`\?`loading`:r===`needs_resume`/,
+  );
+
+  const context = {};
+  const runtimeSource = patched.slice(0, patched.indexOf("var IQt"));
+  vm.runInNewContext(
+    `function yi(e){return Array.isArray(e)&&e.some(e=>e.method===\`item/commandExecution/requestApproval\`||e.method===\`item/fileChange/requestApproval\`||e.method===\`item/permissions/requestApproval\`)}
+     function Zr(e){return e===\`approval\`}
+     ${runtimeSource};result={
+      stale:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[]}}),
+      nullStatus:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:null}),
+      streaming:LQt({hasInProgressSideChat:false,isResponseInProgress:true,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[]}}),
+      waitingStale:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:false}),
+      waitingWithRequest:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:true}),
+      waitingWithoutWiredRequest:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
+      unknownShape:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`}}),
+      sideChat:LQt({hasInProgressSideChat:true,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[]}}),
+      systemError:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`systemError\`}}),
+      turnError:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:true,resumeState:null,threadRuntimeStatus:{type:\`idle\`}}),
+      needsResume:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`idle\`}}),
+      pendingStale:RQt({pendingRequestType:null,requests:[],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
+      pendingWithRequest:RQt({pendingRequestType:null,requests:[{method:\`item/tool/requestUserInput\`}],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
+      pendingMalformedActive:RQt({pendingRequestType:null,requests:[{method:\`item/tool/requestUserInput\`}],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`}}),
+      pendingApproval:RQt({pendingRequestType:null,requests:[{method:\`item/commandExecution/requestApproval\`}],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnApproval\`]}})
+    };`,
+    context,
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.result)), {
+    stale: "idle",
+    nullStatus: "idle",
+    streaming: "loading",
+    waitingStale: "idle",
+    waitingWithRequest: "loading",
+    waitingWithoutWiredRequest: "loading",
+    unknownShape: "loading",
+    sideChat: "loading",
+    systemError: "error",
+    turnError: "error",
+    needsResume: "idle",
+    pendingStale: null,
+    pendingWithRequest: "response",
+    pendingMalformedActive: null,
+    pendingApproval: "approval",
+  });
+});
+
+test("Linux remote terminal status recovery upgrades older patched bundles", () => {
+  const source =
+    "function nT({hasInProgressSideChat:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){let codexLinuxRemoteTerminalStatusActive=i?.type===`active`,codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&(t===!0||!Array.isArray(i.activeFlags)||i.activeFlags.length>0);return e?`loading`:i?.type===`systemError`?`error`:codexLinuxRemoteTerminalStatusLoading?`loading`:r===`needs_resume`?`idle`:n?`error`:t===!0?`loading`:`idle`}function rT({pendingRequestType:e,requests:t,resumeState:n,threadRuntimeStatus:r}){return t==null||n==null?null:n===`needs_resume`?r?.type===`active`&&r.activeFlags.includes(`waitingOnApproval`)&&yi(t)?`approval`:r?.type===`active`&&r.activeFlags.includes(`waitingOnUserInput`)?`response`:null:Zr(e)?`approval`:e===`userInput`?`response`:null}var iT,aT,oT=e((()=>{G(),Lr(),tT(),Ni(),kt(),iT=s(V,(e,{get:t})=>{let n=t(rr,e);return nT({hasInProgressSideChat:t(Qw,e),isResponseInProgress:t(ki,e),resumeState:t(si,e)??(n==null?null:`needs_resume`),threadRuntimeStatus:t(Or,e)??n?.threadRuntimeStatus??null,latestTurnHasSystemError:t(Ui,e)===!0})}),aT=s(V,(e,{get:t})=>rT({pendingRequestType:t(wr,e)?.type??null,requests:t(fi,e),resumeState:t(si,e),threadRuntimeStatus:t(Or,e)}))}))";
+
+  const patched = applyPatchTwice(applyLinuxRemoteTerminalStatusRecoveryPatch, source);
+  assert.match(
+    patched,
+    /hasUserInputRequest:codexLinuxRemoteHasUserInputRequest\(t\(fi,e\)\)/,
+  );
+  assert.doesNotMatch(
+    patched,
+    /codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&\(t===!0\|\|!Array\.isArray\(i\.activeFlags\)\|\|i\.activeFlags\.length>0\)/,
+  );
+
+  const context = {};
+  const runtimeSource = patched.slice(0, patched.indexOf("var iT"));
+  vm.runInNewContext(
+    `function yi(e){return Array.isArray(e)&&e.some(e=>e.method===\`item/commandExecution/requestApproval\`)}
+     function Zr(e){return e===\`approval\`}
+     ${runtimeSource};result={
+      staleStatus:nT({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:false}),
+      realStatus:nT({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:true}),
+      missingWiringStatus:nT({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
+      stalePending:rT({pendingRequestType:null,requests:[],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
+      realPending:rT({pendingRequestType:null,requests:[{method:\`item/tool/requestOptionPicker\`}],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}})
+     };`,
+    context,
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.result)), {
+    staleStatus: "idle",
+    realStatus: "loading",
+    missingWiringStatus: "loading",
+    stalePending: null,
+    realPending: "response",
+  });
+});
+
 test("Linux remote-control status wait supports the current 26.707 app bundle", () => {
   const source = syntheticCurrentStatusWaitBundle();
   const patched = applyLinuxRemoteControlStatusWaitPatch(source);
@@ -2207,7 +2332,8 @@ test("remote mobile feature patch report records feature metadata and partial wa
         syntheticRemoteConnectionVisibilityBundle() +
           syntheticAppServerManagerSignalsBundle() +
           syntheticAppServerManagerStatusBundle() +
-          syntheticCompletedItemRecoveryBundle(),
+          syntheticCompletedItemRecoveryBundle() +
+          syntheticRemoteTerminalStatusBundle(),
       );
       fs.writeFileSync(path.join(assetsDir, "app-main-test.js"), syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle() + syntheticAppMainActiveStatusBundle());
       fs.writeFileSync(
@@ -2534,7 +2660,8 @@ test("remote mobile control feature participates in ASAR patching and reports", 
             syntheticAppServerManagerSignalsBundle() +
             syntheticAppServerManagerStatusBundle() +
             syntheticCurrentStatusWaitBundle() +
-            syntheticCompletedItemRecoveryBundle(),
+            syntheticCompletedItemRecoveryBundle() +
+            syntheticRemoteTerminalStatusBundle(),
         );
         fs.writeFileSync(
           path.join(assetsDir, "remote-control-connections-visibility-test.js"),
@@ -2718,6 +2845,15 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           !report.patches.some((patch) => patch.name === "linux-completed-item-recovery"),
         );
         assert.ok(
+          !report.patches.some((patch) => patch.name === "linux-remote-terminal-status-recovery"),
+        );
+        assert.ok(
+          report.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-terminal-status-recovery" &&
+            patch.status === "applied",
+          ),
+        );
+        assert.ok(
           report.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-control-status-read-guard" &&
             patch.status === "applied",
@@ -2747,6 +2883,12 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.ok(
           secondReport.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-mobile-completed-item-recovery" &&
+            patch.status === "already-applied",
+          ),
+        );
+        assert.ok(
+          secondReport.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-terminal-status-recovery" &&
             patch.status === "already-applied",
           ),
         );

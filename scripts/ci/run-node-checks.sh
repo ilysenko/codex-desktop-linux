@@ -10,6 +10,7 @@ run_node_syntax_checks() {
     local file
 
     while IFS= read -r file; do
+        [ -f "$file" ] || continue
         node --check "$file"
     done < <(git ls-files '*.js')
 }

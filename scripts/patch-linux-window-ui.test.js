@@ -157,7 +157,6 @@ const {
   applyLocalEnvironmentActionModalDraftPatch,
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppServerBackfillWaitPatch,
-  applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyAutomationUpdateEagerToolPatch,
   applyLinuxAppSunsetPatch,
@@ -1045,7 +1044,6 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-app-sunset-gate",
     "linux-app-server-feature-enablement",
     "linux-app-server-backfill-wait",
-    "linux-remote-terminal-status-recovery",
     "linux-skills-list-dedupe",
     "linux-config-write-version-conflict",
     "linux-application-menu",
@@ -5662,115 +5660,13 @@ test("keeps remote conversation hydration out of core", () => {
     "linux-completed-resume-recovery",
     "linux-unowned-turn-claim",
     "linux-completed-item-recovery",
+    "linux-remote-terminal-status-recovery",
   ]) {
     assert.equal(
       descriptors.some((patch) => patch.id === removedPatchId),
       false,
     );
   }
-});
-
-test("treats empty active runtime status as stale once response rendering has completed", () => {
-  const source =
-    "function LQt({hasInProgressSideChat:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){return e?`loading`:i?.type===`systemError`?`error`:i?.type===`active`?`loading`:r===`needs_resume`?`idle`:n?`error`:t===!0?`loading`:`idle`}function RQt({pendingRequestType:e,requests:t,resumeState:n,threadRuntimeStatus:r}){return t==null||n==null?null:n===`needs_resume`?r?.type===`active`&&r.activeFlags.includes(`waitingOnApproval`)&&yi(t)?`approval`:r?.type===`active`&&r.activeFlags.includes(`waitingOnUserInput`)?`response`:null:Zr(e)?`approval`:e===`userInput`?`response`:null}var IQt,AQt,OQt=e((()=>{G(),Lr(),Tt(),Ni(),kt(),IQt=s(V,(e,{get:t})=>{let n=t(rr,e);return LQt({hasInProgressSideChat:t(Qw,e),isResponseInProgress:t(ki,e),resumeState:t(si,e)??(n==null?null:`needs_resume`),threadRuntimeStatus:t(Or,e)??n?.threadRuntimeStatus??null,latestTurnHasSystemError:t(Ui,e)===!0})}),AQt=s(V,(e,{get:t})=>RQt({pendingRequestType:t(wr,e)?.type??null,requests:t(fi,e),resumeState:t(si,e),threadRuntimeStatus:t(Or,e)}))}))";
-
-  const patched = applyPatchTwice(applyLinuxRemoteTerminalStatusRecoveryPatch, source);
-
-  assert.match(patched, /codexLinuxRemoteTerminalStatusActive=i\?\.type===`active`/);
-  assert.match(
-    patched,
-    /codexLinuxRemoteTerminalStatusWaitingOnUserInput/,
-  );
-  assert.match(patched, /function codexLinuxRemoteHasUserInputRequest/);
-  assert.match(
-    patched,
-    /hasUserInputRequest:codexLinuxRemoteHasUserInputRequest\(t\(fi,e\)\)/,
-  );
-  assert.doesNotMatch(
-    patched,
-    /i\?\.type===`active`\?`loading`:r===`needs_resume`/,
-  );
-
-  const context = {};
-  const runtimeSource = patched.slice(0, patched.indexOf("var IQt"));
-  vm.runInNewContext(
-    `function yi(e){return Array.isArray(e)&&e.some(e=>e.method===\`item/commandExecution/requestApproval\`||e.method===\`item/fileChange/requestApproval\`||e.method===\`item/permissions/requestApproval\`)}
-     function Zr(e){return e===\`approval\`}
-     ${runtimeSource};result={
-      stale:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[]}}),
-      nullStatus:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:null}),
-      streaming:LQt({hasInProgressSideChat:false,isResponseInProgress:true,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[]}}),
-      waitingStale:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:false}),
-      waitingWithRequest:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:true}),
-      waitingWithoutWiredRequest:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
-      unknownShape:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`}}),
-      sideChat:LQt({hasInProgressSideChat:true,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[]}}),
-      systemError:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`systemError\`}}),
-      turnError:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:true,resumeState:null,threadRuntimeStatus:{type:\`idle\`}}),
-      needsResume:LQt({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`idle\`}}),
-      pendingStale:RQt({pendingRequestType:null,requests:[],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
-      pendingWithRequest:RQt({pendingRequestType:null,requests:[{method:\`item/tool/requestUserInput\`}],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
-      pendingMalformedActive:RQt({pendingRequestType:null,requests:[{method:\`item/tool/requestUserInput\`}],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`}}),
-      pendingApproval:RQt({pendingRequestType:null,requests:[{method:\`item/commandExecution/requestApproval\`}],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnApproval\`]}})
-    };`,
-    context,
-  );
-
-  assert.deepEqual(JSON.parse(JSON.stringify(context.result)), {
-    stale: "idle",
-    nullStatus: "idle",
-    streaming: "loading",
-    waitingStale: "idle",
-    waitingWithRequest: "loading",
-    waitingWithoutWiredRequest: "loading",
-    unknownShape: "loading",
-    sideChat: "loading",
-    systemError: "error",
-    turnError: "error",
-    needsResume: "idle",
-    pendingStale: null,
-    pendingWithRequest: "response",
-    pendingMalformedActive: null,
-    pendingApproval: "approval",
-  });
-});
-
-test("upgrades already-patched remote status recovery for stale waiting user input", () => {
-  const source =
-    "function nT({hasInProgressSideChat:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){let codexLinuxRemoteTerminalStatusActive=i?.type===`active`,codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&(t===!0||!Array.isArray(i.activeFlags)||i.activeFlags.length>0);return e?`loading`:i?.type===`systemError`?`error`:codexLinuxRemoteTerminalStatusLoading?`loading`:r===`needs_resume`?`idle`:n?`error`:t===!0?`loading`:`idle`}function rT({pendingRequestType:e,requests:t,resumeState:n,threadRuntimeStatus:r}){return t==null||n==null?null:n===`needs_resume`?r?.type===`active`&&r.activeFlags.includes(`waitingOnApproval`)&&yi(t)?`approval`:r?.type===`active`&&r.activeFlags.includes(`waitingOnUserInput`)?`response`:null:Zr(e)?`approval`:e===`userInput`?`response`:null}var iT,aT,oT=e((()=>{G(),Lr(),tT(),Ni(),kt(),iT=s(V,(e,{get:t})=>{let n=t(rr,e);return nT({hasInProgressSideChat:t(Qw,e),isResponseInProgress:t(ki,e),resumeState:t(si,e)??(n==null?null:`needs_resume`),threadRuntimeStatus:t(Or,e)??n?.threadRuntimeStatus??null,latestTurnHasSystemError:t(Ui,e)===!0})}),aT=s(V,(e,{get:t})=>rT({pendingRequestType:t(wr,e)?.type??null,requests:t(fi,e),resumeState:t(si,e),threadRuntimeStatus:t(Or,e)}))}))";
-
-  const patched = applyPatchTwice(applyLinuxRemoteTerminalStatusRecoveryPatch, source);
-  assert.match(
-    patched,
-    /hasUserInputRequest:codexLinuxRemoteHasUserInputRequest\(t\(fi,e\)\)/,
-  );
-  assert.doesNotMatch(
-    patched,
-    /codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&\(t===!0\|\|!Array\.isArray\(i\.activeFlags\)\|\|i\.activeFlags\.length>0\)/,
-  );
-
-  const context = {};
-  const runtimeSource = patched.slice(0, patched.indexOf("var iT"));
-  vm.runInNewContext(
-    `function yi(e){return Array.isArray(e)&&e.some(e=>e.method===\`item/commandExecution/requestApproval\`)}
-     function Zr(e){return e===\`approval\`}
-     ${runtimeSource};result={
-      staleStatus:nT({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:false}),
-      realStatus:nT({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]},hasUserInputRequest:true}),
-      missingWiringStatus:nT({hasInProgressSideChat:false,isResponseInProgress:false,latestTurnHasSystemError:false,resumeState:null,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
-      stalePending:rT({pendingRequestType:null,requests:[],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}}),
-      realPending:rT({pendingRequestType:null,requests:[{method:\`item/tool/requestOptionPicker\`}],resumeState:\`needs_resume\`,threadRuntimeStatus:{type:\`active\`,activeFlags:[\`waitingOnUserInput\`]}})
-     };`,
-    context,
-  );
-
-  assert.deepEqual(JSON.parse(JSON.stringify(context.result)), {
-    staleStatus: "idle",
-    realStatus: "loading",
-    missingWiringStatus: "loading",
-    stalePending: null,
-    realPending: "response",
-  });
 });
 
 test("skips app-server timeout rewrite when the helper insertion anchor drifts", () => {
