@@ -23,9 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- Remote notification hydration and replay are no longer part of the default
-  Linux patch set and remain owned by the disabled-by-default
-  `remote-mobile-control` feature.
+- Remote notification hydration, replay, and completed-item recovery are no
+  longer part of the default Linux patch set and remain owned by the
+  disabled-by-default `remote-mobile-control` feature.
 
 ### Fixed
 

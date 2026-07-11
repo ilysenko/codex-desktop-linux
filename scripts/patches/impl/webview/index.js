@@ -869,43 +869,6 @@ function applyLinuxAppServerBackfillWaitPatch(currentSource) {
   return patchedSource;
 }
 
-function applyLinuxCompletedItemRecoveryPatch(currentSource) {
-  if (currentSource.includes("codexLinuxCompletedItemExists=")) {
-    return currentSource;
-  }
-
-  const completedItemDropPattern =
-    /([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)&&\(([A-Za-z_$][\w$]*)\.firstTurnWorkItemStartedAtMs=\3\.firstTurnWorkItemStartedAtMs\?\?Date\.now\(\)\),!\(\2\.type!==`subAgentActivity`&&!([A-Za-z_$][\w$]*)\(\3,\2\.id,\2\.type\)\)&&\(\2\.type,([A-Za-z_$][\w$]*)\(\3,([A-Za-z_$][\w$]*)\)\)/u;
-
-  if (completedItemDropPattern.test(currentSource)) {
-    return currentSource.replace(
-      completedItemDropPattern,
-      (
-        _match,
-        workItemPredicate,
-        completedItemVar,
-        turnVar,
-        findItemFn,
-        upsertItemFn,
-        viewItemVar,
-      ) =>
-        `${workItemPredicate}(${completedItemVar})&&(${turnVar}.firstTurnWorkItemStartedAtMs=${turnVar}.firstTurnWorkItemStartedAtMs??Date.now());let codexLinuxCompletedItemExists=${turnVar}.items.some(e=>e.id===${viewItemVar}.id);if(${completedItemVar}.type!==\`subAgentActivity\`&&codexLinuxCompletedItemExists&&!${findItemFn}(${turnVar},${completedItemVar}.id,${completedItemVar}.type))return;${upsertItemFn}(${turnVar},${viewItemVar})`,
-    );
-  }
-
-  if (
-    currentSource.includes("Item not found in turn state") &&
-    currentSource.includes("case`item/completed`") &&
-    currentSource.includes("item/agentMessage/delta")
-  ) {
-    console.warn(
-      "WARN: Could not find completed item recovery insertion point — skipping Linux completed item recovery patch",
-    );
-  }
-
-  return currentSource;
-}
-
 function applyLinuxRemoteTerminalStatusRecoveryPatch(currentSource) {
   if (
     currentSource.includes("codexLinuxRemoteTerminalStatusWaitingOnUserInput") &&
@@ -2009,7 +1972,6 @@ function patchCommentPreloadBundle(extractedDir) {
 module.exports = {
   applyBrowserAnnotationScreenshotPatch,
   applyLinuxAppServerBackfillWaitPatch,
-  applyLinuxCompletedItemRecoveryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyAutomationUpdateEagerToolPatch,

@@ -43,6 +43,7 @@ const REMOTE_MOBILE_UNKNOWN_TURN_MARKER = "codexLinuxRemoteMobileHydrateUnknownT
 const REMOTE_MOBILE_NOTIFICATION_QUEUE_MARKER = "codexLinuxRemoteMobileNotificationQueue";
 const REMOTE_MOBILE_IN_FLIGHT_HYDRATION_MARKER = "codexLinuxRemoteMobileHydrationInFlight";
 const REMOTE_MOBILE_LATE_EVENT_HYDRATION_MARKER = "codexLinuxRemoteMobileHydrateLateEvent";
+const REMOTE_MOBILE_COMPLETED_ITEM_MARKER = "codexLinuxCompletedItemExists=";
 const REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER = "codexLinuxRemoteControlEnablementBridge";
 const REMOTE_CONTROL_ENABLE_FOR_HOST_PARAMS_MARKER = "codexLinuxRemoteControlEnableForHostParams";
 const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoConnectCleanup";
@@ -1340,6 +1341,43 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
   return patched;
 }
 
+function applyLinuxRemoteMobileCompletedItemRecoveryPatch(source) {
+  if (source.includes(REMOTE_MOBILE_COMPLETED_ITEM_MARKER)) {
+    return source;
+  }
+
+  const completedItemDropPattern =
+    /([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)&&\(([A-Za-z_$][\w$]*)\.firstTurnWorkItemStartedAtMs=\3\.firstTurnWorkItemStartedAtMs\?\?Date\.now\(\)\),!\(\2\.type!==`subAgentActivity`&&!([A-Za-z_$][\w$]*)\(\3,\2\.id,\2\.type\)\)&&\(\2\.type,([A-Za-z_$][\w$]*)\(\3,([A-Za-z_$][\w$]*)\)\)/u;
+
+  if (completedItemDropPattern.test(source)) {
+    return source.replace(
+      completedItemDropPattern,
+      (
+        _match,
+        workItemPredicate,
+        completedItemVar,
+        turnVar,
+        findItemFn,
+        upsertItemFn,
+        viewItemVar,
+      ) =>
+        `${workItemPredicate}(${completedItemVar})&&(${turnVar}.firstTurnWorkItemStartedAtMs=${turnVar}.firstTurnWorkItemStartedAtMs??Date.now());let codexLinuxCompletedItemExists=${turnVar}.items.some(e=>e.id===${viewItemVar}.id);if(${completedItemVar}.type!==\`subAgentActivity\`&&codexLinuxCompletedItemExists&&!${findItemFn}(${turnVar},${completedItemVar}.id,${completedItemVar}.type))return;${upsertItemFn}(${turnVar},${viewItemVar})`,
+    );
+  }
+
+  if (
+    source.includes("Item not found in turn state") &&
+    source.includes("case`item/completed`") &&
+    source.includes("item/agentMessage/delta")
+  ) {
+    console.warn(
+      "WARN: Could not find completed item recovery insertion point - skipping remote mobile completed item recovery patch",
+    );
+  }
+
+  return source;
+}
+
 function applyLinuxRemoteControlStatusReadGuardPatch(source) {
   if (source.includes(REMOTE_CONTROL_STATUS_READ_GUARD_MARKER)) {
     return source;
@@ -1664,10 +1702,20 @@ module.exports = [
     apply: applyLinuxRemoteMobileConversationHydrationPatch,
   },
   {
-    id: "linux-remote-control-status-read-guard",
+    id: "linux-remote-mobile-completed-item-recovery",
     phase: "webview-asset",
     pattern: REMOTE_MOBILE_CONVERSATION_ASSET_PATTERN,
     order: 20_151,
+    ciPolicy: "optional",
+    missingDescription: "app-server conversation manager bundle",
+    skipDescription: "Linux remote-mobile completed item recovery patch",
+    apply: applyLinuxRemoteMobileCompletedItemRecoveryPatch,
+  },
+  {
+    id: "linux-remote-control-status-read-guard",
+    phase: "webview-asset",
+    pattern: REMOTE_MOBILE_CONVERSATION_ASSET_PATTERN,
+    order: 20_152,
     ciPolicy: "optional",
     missingDescription: "app-server manager signals bundle",
     skipDescription: "Linux remote-control status read guard patch",
@@ -1677,7 +1725,7 @@ module.exports = [
     id: "linux-remote-control-status-wait",
     phase: "webview-asset",
     pattern: /^app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~[^.]+\.js$/,
-    order: 20_152,
+    order: 20_153,
     ciPolicy: "optional",
     missingDescription: "app-server manager signals bundle",
     skipDescription: "Linux remote-control status wait patch",
@@ -1719,6 +1767,8 @@ module.exports.applyLinuxRemoteControlDeviceKeyPatch = applyLinuxRemoteControlDe
 module.exports.applyLinuxRemoteMobileAppServerRemoteControlPatch =
   applyLinuxRemoteMobileAppServerRemoteControlPatch;
 module.exports.applyLinuxRemoteMobileChromeBridgePatch = applyLinuxRemoteMobileChromeBridgePatch;
+module.exports.applyLinuxRemoteMobileCompletedItemRecoveryPatch =
+  applyLinuxRemoteMobileCompletedItemRecoveryPatch;
 module.exports.applyLinuxRemoteMobileConversationHydrationPatch = applyLinuxRemoteMobileConversationHydrationPatch;
 module.exports.applyLinuxRemoteControlStatusReadGuardPatch = applyLinuxRemoteControlStatusReadGuardPatch;
 module.exports.applyLinuxRemoteControlStatusWaitPatch = applyLinuxRemoteControlStatusWaitPatch;

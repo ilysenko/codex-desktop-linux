@@ -157,7 +157,6 @@ const {
   applyLocalEnvironmentActionModalDraftPatch,
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppServerBackfillWaitPatch,
-  applyLinuxCompletedItemRecoveryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyAutomationUpdateEagerToolPatch,
@@ -1046,7 +1045,6 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-app-sunset-gate",
     "linux-app-server-feature-enablement",
     "linux-app-server-backfill-wait",
-    "linux-completed-item-recovery",
     "linux-remote-terminal-status-recovery",
     "linux-skills-list-dedupe",
     "linux-config-write-version-conflict",
@@ -5663,75 +5661,13 @@ test("keeps remote conversation hydration out of core", () => {
     "linux-app-server-conversation-hydration",
     "linux-completed-resume-recovery",
     "linux-unowned-turn-claim",
+    "linux-completed-item-recovery",
   ]) {
     assert.equal(
       descriptors.some((patch) => patch.id === removedPatchId),
       false,
     );
   }
-  assert.ok(descriptors.some((patch) => patch.id === "linux-completed-item-recovery"));
-});
-
-test("recovers completed stream items that arrive after local state lost their started item", () => {
-  const source = [
-    "class T{onNotification(e,t){let n={method:e,params:t};switch(n.method){case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;",
-    "let{item:e,threadId:t,turnId:r,completedAtMs:i}=n.params,a=qf(t);if(!this.conversations.get(a)){$.error(`Received item/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}",
-    "this.updateConversationState(a,t=>{let n=e.type===`userMessage`?gI(t,r):r==null?uI(t):fI(t,e=>e.turnId===r);if(!n)return;aR(n);",
-    "let a=Jtt({item:e,threadsById:this.threadStore.threadsById,onCollabAgentToolCall:e=>{this.hydrateCollabThreads(e.receiverThreadIds)}}),o=a.type===`contextCompaction`?n.items.find(e=>e.type===`contextCompaction`&&e.id===a.id):null;",
-    "if(a.type===`commandExecution`){let e=a.durationMs==null?null:i-a.durationMs;e!=null&&(n.commandExecutionStartedAtMsById??={},n.commandExecutionStartedAtMsById[a.id]??=e)}",
-    "let s=FF(a.type===`contextCompaction`?{...a,completed:!0,source:o?.type===`contextCompaction`&&`source`in o?o.source:`automatic`}:a);",
-    "if(e.type===`userMessage`){let t=Put(n.items,e.content,n.turnId,n.turnStartedAtMs,!1);if(t!=null){t.status=`accepted`,HI(n,FF({type:`steered`,id:e.id}));return}HI(n,s);return}",
-    "if(e.type===`hookPrompt`){bP(n,s);return}",
-    "yV(e)&&(n.firstTurnWorkItemStartedAtMs=n.firstTurnWorkItemStartedAtMs??Date.now()),!(e.type!==`subAgentActivity`&&!LB(n,e.id,e.type))&&(e.type,bP(n,s))});break}}}}",
-  ].join("");
-
-  const patched = applyPatchTwice(applyLinuxCompletedItemRecoveryPatch, source);
-
-  assert.match(patched, /codexLinuxCompletedItemExists=n\.items\.some\(e=>e\.id===s\.id\)/);
-  assert.match(
-    patched,
-    /if\(e\.type!==`subAgentActivity`&&codexLinuxCompletedItemExists&&!LB\(n,e\.id,e\.type\)\)return;bP\(n,s\)/,
-  );
-  assert.doesNotMatch(
-    patched,
-    /!\(e\.type!==`subAgentActivity`&&!LB\(n,e\.id,e\.type\)\)&&\(e\.type,bP\(n,s\)\)/,
-  );
-
-  const context = {};
-  vm.runInNewContext(
-    [
-      "let errors=[];",
-      "var $={error:(message,details)=>errors.push({message,details})};",
-      "function qf(e){return e}",
-      "function fI(e,t){return e.turns.find(t)}",
-      "function gI(){throw Error(`unexpected userMessage path`)}",
-      "function uI(){throw Error(`unexpected null turn path`)}",
-      "function aR(){}",
-      "function yV(){return true}",
-      "function Jtt({item:e}){return {type:e.type,id:e.id,text:e.text??null}}",
-      "function FF(e){return e}",
-      "function bP(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
-      "function LB(e,t,n){let r=e.items.find(e=>e.id===t&&e.type===n);if(r)return r;$.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}});return null}",
-      "function Put(){return null}",
-      patched,
-      "function run(items){errors=[];let turn={turnId:`turn-1`,items:items.map(e=>({...e}))},conversation={turns:[turn]},manager=new T;manager.frameTextDeltaQueue={drainBefore:()=>false};manager.conversations=new Map([[`thread-1`,{}]]);manager.threadStore={threadsById:new Map};manager.hydrateCollabThreads=()=>{};manager.updateConversationState=(id,fn)=>fn(conversation);manager.onNotification(`item/completed`,{item:{type:`agentMessage`,id:`assistant-1`,text:`done`},threadId:`thread-1`,turnId:`turn-1`,completedAtMs:100});return {items:turn.items,errors}}",
-      "result={missing:run([]),existing:run([{type:`agentMessage`,id:`assistant-1`,text:`old`}]),wrongType:run([{type:`plan`,id:`assistant-1`,text:`old`}])};",
-    ].join(";"),
-    context,
-  );
-  const behavior = JSON.parse(JSON.stringify(context.result));
-  assert.deepEqual(behavior.missing.items, [
-    { type: "agentMessage", id: "assistant-1", text: "done" },
-  ]);
-  assert.deepEqual(behavior.existing.items, [
-    { type: "agentMessage", id: "assistant-1", text: "done" },
-  ]);
-  assert.deepEqual(behavior.wrongType.items, [
-    { type: "plan", id: "assistant-1", text: "old" },
-  ]);
-  assert.equal(behavior.missing.errors.length, 0);
-  assert.equal(behavior.existing.errors.length, 0);
-  assert.equal(behavior.wrongType.errors.length, 1);
 });
 
 test("treats empty active runtime status as stale once response rendering has completed", () => {

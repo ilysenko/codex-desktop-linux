@@ -33,6 +33,7 @@ const {
   applyLinuxRemoteMobileActiveStatusPatch,
   applyLinuxRemoteMobileAppServerRemoteControlPatch,
   applyLinuxRemoteMobileChromeBridgePatch,
+  applyLinuxRemoteMobileCompletedItemRecoveryPatch,
   applyLinuxRemoteMobileConversationHydrationPatch,
   applyLinuxRemoteControlStatusReadGuardPatch,
   applyLinuxRemoteControlStatusWaitPatch,
@@ -284,6 +285,20 @@ function syntheticAppServerManagerSignalsBundle() {
   return [
     "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
     "class T{onNotification(e,t){let n={method:e,params:t};switch(n.method){case`turn/started`:{let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/started for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}this.markConversationStreaming(r),this.updateConversationState(r,e=>{});break}case`turn/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`turn/completed`,n.params)}))break;let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}break}case`item/started`:{let{item:e,threadId:t,turnId:r,startedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/started for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.markConversationStreaming(a),this.updateConversationState(a,t=>{});break}case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;let{item:e,threadId:t,turnId:r,completedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.updateConversationState(a,t=>{});break}}}}",
+  ].join("");
+}
+
+function syntheticCompletedItemRecoveryBundle() {
+  return [
+    "class U{onNotification(e,t){let n={method:e,params:t};switch(n.method){case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;",
+    "let{item:e,threadId:t,turnId:r,completedAtMs:i}=n.params,a=qf(t);if(!this.conversations.get(a)){$.error(`Received item/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}",
+    "this.updateConversationState(a,t=>{let n=e.type===`userMessage`?gI(t,r):r==null?uI(t):fI(t,e=>e.turnId===r);if(!n)return;aR(n);",
+    "let a=Jtt({item:e,threadsById:this.threadStore.threadsById,onCollabAgentToolCall:e=>{this.hydrateCollabThreads(e.receiverThreadIds)}}),o=a.type===`contextCompaction`?n.items.find(e=>e.type===`contextCompaction`&&e.id===a.id):null;",
+    "if(a.type===`commandExecution`){let e=a.durationMs==null?null:i-a.durationMs;e!=null&&(n.commandExecutionStartedAtMsById??={},n.commandExecutionStartedAtMsById[a.id]??=e)}",
+    "let s=FF(a.type===`contextCompaction`?{...a,completed:!0,source:o?.type===`contextCompaction`&&`source`in o?o.source:`automatic`}:a);",
+    "if(e.type===`userMessage`){let t=Put(n.items,e.content,n.turnId,n.turnStartedAtMs,!1);if(t!=null){t.status=`accepted`,HI(n,FF({type:`steered`,id:e.id}));return}HI(n,s);return}",
+    "if(e.type===`hookPrompt`){bP(n,s);return}",
+    "yV(e)&&(n.firstTurnWorkItemStartedAtMs=n.firstTurnWorkItemStartedAtMs??Date.now()),!(e.type!==`subAgentActivity`&&!LB(n,e.id,e.type))&&(e.type,bP(n,s))});break}}}}",
   ].join("");
 }
 
@@ -718,6 +733,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-control-client-revoke-setup-reset",
       "feature:remote-mobile-control:linux-remote-connections-refresh",
       "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration",
+      "feature:remote-mobile-control:linux-remote-mobile-completed-item-recovery",
       "feature:remote-mobile-control:linux-remote-control-status-read-guard",
       "feature:remote-mobile-control:linux-remote-control-status-wait",
       "feature:remote-mobile-control:linux-remote-control-enable-for-host-params",
@@ -730,6 +746,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "main-bundle",
       "main-bundle",
       "extracted-app:post-webview",
+      "webview-asset",
       "webview-asset",
       "webview-asset",
       "webview-asset",
@@ -783,6 +800,13 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.equal(hydrationDescriptor.pattern.test("app-server-manager-signals-test.js"), false);
     assert.equal(hydrationDescriptor.pattern.test("remote-connections-settings-fixture.js"), false);
     assert.equal(hydrationDescriptor.pattern.test(CURRENT_PROJECTLESS_REMOTE_TASK_ASSET), false);
+
+    const completedItemDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-mobile-completed-item-recovery"
+    );
+    assert.ok(completedItemDescriptor);
+    assert.equal(completedItemDescriptor.pattern.test(UNIFIED_REMOTE_CONVERSATION_ASSET), true);
+    assert.equal(completedItemDescriptor.pattern.test(OLD_APP_SERVER_MANAGER_ASSET), false);
 
     const loadGateDescriptor = descriptors.find((descriptor) =>
       descriptor.id === "feature:remote-mobile-control:linux-remote-control-load-gate"
@@ -2000,6 +2024,55 @@ test("Linux remote mobile conversation hydration patch warns when only part of t
   assert.ok(warnings.some((warning) => warning.includes("unknown turn/completed needle")));
 });
 
+test("remote mobile completed-item recovery restores a missing started item", () => {
+  const source = syntheticCompletedItemRecoveryBundle();
+  const patched = applyLinuxRemoteMobileCompletedItemRecoveryPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.equal(applyLinuxRemoteMobileCompletedItemRecoveryPatch(patched), patched);
+  assert.match(patched, /codexLinuxCompletedItemExists=n\.items\.some\(e=>e\.id===s\.id\)/);
+  assert.match(
+    patched,
+    /if\(e\.type!==`subAgentActivity`&&codexLinuxCompletedItemExists&&!LB\(n,e\.id,e\.type\)\)return;bP\(n,s\)/,
+  );
+
+  const context = {};
+  vm.runInNewContext(
+    [
+      "let errors=[];",
+      "var $={error:(message,details)=>errors.push({message,details})};",
+      "function qf(e){return e}",
+      "function fI(e,t){return e.turns.find(t)}",
+      "function gI(){throw Error(`unexpected userMessage path`)}",
+      "function uI(){throw Error(`unexpected null turn path`)}",
+      "function aR(){}",
+      "function yV(){return true}",
+      "function Jtt({item:e}){return {type:e.type,id:e.id,text:e.text??null}}",
+      "function FF(e){return e}",
+      "function bP(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
+      "function LB(e,t,n){let r=e.items.find(e=>e.id===t&&e.type===n);if(r)return r;$.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}});return null}",
+      "function Put(){return null}",
+      patched,
+      "function run(items){errors=[];let turn={turnId:`turn-1`,items:items.map(e=>({...e}))},conversation={turns:[turn]},manager=new U;manager.frameTextDeltaQueue={drainBefore:()=>false};manager.conversations=new Map([[`thread-1`,{}]]);manager.threadStore={threadsById:new Map};manager.hydrateCollabThreads=()=>{};manager.updateConversationState=(id,fn)=>fn(conversation);manager.onNotification(`item/completed`,{item:{type:`agentMessage`,id:`assistant-1`,text:`done`},threadId:`thread-1`,turnId:`turn-1`,completedAtMs:100});return {items:turn.items,errors}}",
+      "result={missing:run([]),existing:run([{type:`agentMessage`,id:`assistant-1`,text:`old`}]),wrongType:run([{type:`plan`,id:`assistant-1`,text:`old`}])};",
+    ].join(";"),
+    context,
+  );
+  const behavior = JSON.parse(JSON.stringify(context.result));
+  assert.deepEqual(behavior.missing.items, [
+    { type: "agentMessage", id: "assistant-1", text: "done" },
+  ]);
+  assert.deepEqual(behavior.existing.items, [
+    { type: "agentMessage", id: "assistant-1", text: "done" },
+  ]);
+  assert.deepEqual(behavior.wrongType.items, [
+    { type: "plan", id: "assistant-1", text: "old" },
+  ]);
+  assert.equal(behavior.missing.errors.length, 0);
+  assert.equal(behavior.existing.errors.length, 0);
+  assert.equal(behavior.wrongType.errors.length, 1);
+});
+
 test("Linux remote-control status guard skips slow remote SSH status reads", async () => {
   const source = syntheticAppServerManagerStatusBundle();
   const patched = applyLinuxRemoteControlStatusReadGuardPatch(source);
@@ -2133,7 +2206,8 @@ test("remote mobile feature patch report records feature metadata and partial wa
         path.join(assetsDir, UNIFIED_REMOTE_CONVERSATION_ASSET),
         syntheticRemoteConnectionVisibilityBundle() +
           syntheticAppServerManagerSignalsBundle() +
-          syntheticAppServerManagerStatusBundle(),
+          syntheticAppServerManagerStatusBundle() +
+          syntheticCompletedItemRecoveryBundle(),
       );
       fs.writeFileSync(path.join(assetsDir, "app-main-test.js"), syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle() + syntheticAppMainActiveStatusBundle());
       fs.writeFileSync(
@@ -2179,6 +2253,17 @@ test("remote mobile feature patch report records feature metadata and partial wa
       );
       assert.equal(featureHydrationPatch.sourceKind, "feature");
       assert.equal(featureHydrationPatch.status, "applied");
+
+      const completedItemPatch = report.patches.find(
+        (patch) => patch.name === "feature:remote-mobile-control:linux-remote-mobile-completed-item-recovery",
+      );
+      assert.equal(completedItemPatch.sourceKind, "feature");
+      assert.equal(completedItemPatch.featureId, "remote-mobile-control");
+      assert.equal(completedItemPatch.status, "applied");
+      assert.equal(
+        report.patches.some((patch) => patch.name === "linux-completed-item-recovery"),
+        false,
+      );
     } finally {
       fs.rmSync(tempApp, { recursive: true, force: true });
     }
@@ -2448,7 +2533,8 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           syntheticRemoteConnectionVisibilityBundle() +
             syntheticAppServerManagerSignalsBundle() +
             syntheticAppServerManagerStatusBundle() +
-            syntheticCurrentStatusWaitBundle(),
+            syntheticCurrentStatusWaitBundle() +
+            syntheticCompletedItemRecoveryBundle(),
         );
         fs.writeFileSync(
           path.join(assetsDir, "remote-control-connections-visibility-test.js"),
@@ -2540,6 +2626,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedMobileConnectedSettingsFile, /apps on this Linux desktop/);
         assert.match(patchedSignalsFile, /codexLinuxRemoteMobileHydrateUnknownTurn/);
         assert.match(patchedSignalsFile, /codexLinuxRemoteMobileThreadRuntimeStatus/);
+        assert.match(patchedSignalsFile, /codexLinuxCompletedItemExists=/);
         assert.match(patchedStatusFile, /codexLinuxRemoteControlShouldReadStatus/);
         assert.match(patchedStatusFile, /codexLinuxRemoteControlStatusWaitMs/);
         assert.match(patchedAppMainFile, /codexLinuxRemoteControlEnablementBridge/);
@@ -2623,6 +2710,15 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
         assert.ok(
           report.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-mobile-completed-item-recovery" &&
+            patch.status === "applied",
+          ),
+        );
+        assert.ok(
+          !report.patches.some((patch) => patch.name === "linux-completed-item-recovery"),
+        );
+        assert.ok(
+          report.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-control-status-read-guard" &&
             patch.status === "applied",
           ),
@@ -2643,6 +2739,15 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           report.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-mobile-active-status" &&
             patch.status === "applied",
+          ),
+        );
+
+        const secondReport = createPatchReport();
+        patchExtractedApp(tempApp, { report: secondReport });
+        assert.ok(
+          secondReport.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-mobile-completed-item-recovery" &&
+            patch.status === "already-applied",
           ),
         );
       } finally {
