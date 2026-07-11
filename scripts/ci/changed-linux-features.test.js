@@ -165,7 +165,7 @@ test("upstream workflow runs feature-aware acceptance for feature PRs only", () 
   assert.match(pullRequestBlock, /- scripts\/lib\/linux-features\.js/);
   assert.doesNotMatch(pushBlock, /- linux-features\//);
   assert.match(pushBlock, /- scripts\/lib\/linux-features\.js/);
-  assert.match(workflow, /fetch-depth: \$\{\{ github\.event_name == 'pull_request' && 0 \|\| 1 \}\}/);
+  assert.match(workflow, /fetch-depth: \$\{\{ github\.event_name == 'pull_request' && '0' \|\| '1' \}\}/);
   assert.match(configureStep, /if: github\.event_name == 'pull_request'/);
   assert.match(configureStep, /git diff --no-renames --name-only -z/);
   assert.match(configureStep, /changed-linux-features\.js/);
