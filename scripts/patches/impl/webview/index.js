@@ -1375,36 +1375,6 @@ function applyLocalEnvironmentActionModalDraftPatch(currentSource) {
   return `${beforeFunction}${patchedFunction}${afterFunction}`;
 }
 
-function applyLocalEnvironmentEmptyProjectPatch(currentSource) {
-  const patchedCandidatePattern =
-    /[A-Za-z_$][\w$]*=\([A-Za-z_$][\w$]*==null\|\|[A-Za-z_$][\w$]*\.configPath==null\)&&[A-Za-z_$][\w$]*&&[A-Za-z_$][\w$]*!=null\?[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\):null/u;
-  if (patchedCandidatePattern.test(currentSource)) {
-    return currentSource;
-  }
-  if (
-    !currentSource.includes("settings.localEnvironments.unavailable.title") ||
-    !currentSource.includes("local-environment-config")
-  ) {
-    return currentSource;
-  }
-
-  const candidatePattern =
-    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)!=null&&\2\.configPath==null&&([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)!=null\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\4\):null/u;
-  const candidateMatch = currentSource.match(candidatePattern);
-  if (candidateMatch == null) {
-    console.warn(
-      "WARN: Could not find guarded local environment default config candidate — skipping empty-project patch",
-    );
-    return currentSource;
-  }
-  const [candidateNeedle, candidateVar, navigationVar, loadedVar, workspaceVar, defaultPathFn, environmentsVar] =
-    candidateMatch;
-  const candidatePatch =
-    `${candidateVar}=(${navigationVar}==null||${navigationVar}.configPath==null)&&${loadedVar}&&${workspaceVar}!=null` +
-    `?${defaultPathFn}(${environmentsVar},${workspaceVar}):null`;
-  return currentSource.replace(candidateNeedle, candidatePatch);
-}
-
 function applyBrowserAnnotationScreenshotPatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -2132,7 +2102,6 @@ module.exports = {
   applyLinuxSettingsSearchVisibilityPatch,
   applyLinuxFastModeModelGuardPatch,
   applyLinuxSkillsListDedupePatch,
-  applyLocalEnvironmentEmptyProjectPatch,
   applyLocalEnvironmentActionModalDraftPatch,
   applySubagentNicknameMetadataPatch,
   patchCommentPreloadBundle,

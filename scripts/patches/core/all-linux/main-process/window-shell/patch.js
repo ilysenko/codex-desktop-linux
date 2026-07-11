@@ -16,7 +16,6 @@ const {
   applyLinuxOpaqueBackgroundPatch,
 } = require("../../../../impl/main-process/window.js");
 const {
-  applyLinuxLocalEnvironmentNotDirectoryPatch,
   applyLinuxFileManagerPatch,
   patchLinuxWorkerFileManagerTarget,
   patchLinuxHostProcessEnvironmentTargets,
@@ -47,13 +46,6 @@ module.exports = [
       }
       return "already-applied";
     },
-  }),
-  mainBundlePatch({
-    id: "linux-local-environment-not-directory",
-    phase: "main-bundle",
-    order: -9,
-    ciPolicy: "optional",
-    apply: applyLinuxLocalEnvironmentNotDirectoryPatch,
   }),
   mainBundlePatch({
     id: "linux-about-dialog",
