@@ -99,6 +99,15 @@ function wrapperRuntimeSource() {
 
 function applyWebviewRuntimePatch(source) {
   if (source.includes(`codexLinuxWrapperUpdaterVersion=`)) {
+    const runtimeNeedle = `;(()=>{const VERSION=${JSON.stringify(RUNTIME_VERSION)};`;
+    const runtimeIndex = source.indexOf(runtimeNeedle);
+    if (runtimeIndex > 0) {
+      const lineStart = source.lastIndexOf("\n", runtimeIndex - 1) + 1;
+      const sameLinePrefix = source.slice(lineStart, runtimeIndex);
+      if (sameLinePrefix.startsWith("//# sourceMappingURL=")) {
+        return `${source.slice(0, runtimeIndex)}\n${source.slice(runtimeIndex)}`;
+      }
+    }
     return source;
   }
   return source.endsWith("\n") ? source + wrapperRuntimeSource() : `${source}\n${wrapperRuntimeSource()}`;

@@ -108,6 +108,18 @@ test("webview runtime is not swallowed by a trailing sourcemap comment", () => {
   assert.doesNotMatch(patched, /sourceMappingURL=index\.js\.map;\(\(\)=>/);
 });
 
+test("webview runtime repairs previously swallowed sourcemap runtime", () => {
+  const patched = applyWebviewRuntimePatch("console.log('codex');\n//# sourceMappingURL=index.js.map");
+  const swallowed = patched.replace(
+    /sourceMappingURL=index\.js\.map\n;\(\(\)=>/,
+    "sourceMappingURL=index.js.map;(()=>",
+  );
+
+  const repaired = applyWebviewRuntimePatch(swallowed);
+
+  assert.equal(repaired, patched);
+});
+
 test("settings patch adds wrapper update toggle", () => {
   const source =
     `var KEYS={autoUpdateOnExit:"codex-linux-auto-update-on-exit"};` +
