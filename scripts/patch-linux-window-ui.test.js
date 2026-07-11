@@ -3828,6 +3828,7 @@ test("persists Linux settings to the launcher-provided settings file", async () 
     const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, settingsPersistenceBundleFixture());
 
     assert.match(patched, /process\.env\.CODEX_LINUX_SETTINGS_FILE/);
+    assert.match(patched, /codexLinuxSettingsDirectory\.sync\(\)/);
     await runSettingsPersistence(
       patched,
       {
@@ -3958,6 +3959,83 @@ test("recovers stale Linux settings locks after a crashed first claimant", async
     assert.equal(settings["codex-linux-warm-start-enabled"], true);
     assert.equal(settings["codex-linux-system-tray-enabled"], false);
     assert.equal(fs.existsSync(lockFile), false);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("recovers an empty stale Linux settings lock", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-empty-lock-"));
+  try {
+    const settingsFile = path.join(tempRoot, "settings.json");
+    const lockFile = `${settingsFile}.lock`;
+    fs.writeFileSync(lockFile, "");
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lockFile, old, old);
+    const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, settingsPersistenceBundleFixture());
+
+    await runSettingsPersistence(
+      patched,
+      { CODEX_LINUX_SETTINGS_FILE: settingsFile },
+      "codex-linux-warm-start-enabled",
+      true,
+    );
+
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile, "utf8"))["codex-linux-warm-start-enabled"], true);
+    assert.equal(fs.existsSync(lockFile), false);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects Linux settings lock symlinks without following them", async (context) => {
+  if (process.platform === "win32") {
+    context.skip("symlink creation requires elevated privileges on Windows");
+    return;
+  }
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-lock-symlink-"));
+  try {
+    const settingsFile = path.join(tempRoot, "settings.json");
+    const lockFile = `${settingsFile}.lock`;
+    const unrelatedFile = path.join(tempRoot, "unrelated.txt");
+    fs.writeFileSync(unrelatedFile, "0-unrelated-owner\n");
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(unrelatedFile, old, old);
+    fs.symlinkSync(unrelatedFile, lockFile);
+    const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, settingsPersistenceBundleFixture());
+
+    await runSettingsPersistence(
+      patched,
+      { CODEX_LINUX_SETTINGS_FILE: settingsFile },
+      "codex-linux-warm-start-enabled",
+      true,
+    );
+
+    assert.equal(fs.readFileSync(unrelatedFile, "utf8"), "0-unrelated-owner\n");
+    assert.equal(fs.lstatSync(lockFile).isSymbolicLink(), true);
+    assert.equal(fs.existsSync(settingsFile), false);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects non-regular Linux settings lock sidecars", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-lock-directory-"));
+  try {
+    const settingsFile = path.join(tempRoot, "settings.json");
+    const lockFile = `${settingsFile}.lock`;
+    fs.mkdirSync(lockFile);
+    const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, settingsPersistenceBundleFixture());
+
+    await runSettingsPersistence(
+      patched,
+      { CODEX_LINUX_SETTINGS_FILE: settingsFile },
+      "codex-linux-warm-start-enabled",
+      true,
+    );
+
+    assert.equal(fs.statSync(lockFile).isDirectory(), true);
+    assert.equal(fs.existsSync(settingsFile), false);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

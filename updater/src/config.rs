@@ -6,8 +6,8 @@ use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsString,
-    fs::{self, OpenOptions},
-    io::Write,
+    fs::{self, File, Metadata, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process,
     sync::atomic::{AtomicU64, Ordering},
@@ -22,6 +22,7 @@ const DEFAULT_CHECK_INTERVAL_HOURS: u64 = 6;
 const SETTINGS_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const SETTINGS_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(25);
 const SETTINGS_LOCK_STALE_AFTER: Duration = Duration::from_secs(30);
+const SETTINGS_RECOVERY_CLAIM_TTL: Duration = Duration::from_secs(1);
 static SETTINGS_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -442,7 +443,9 @@ impl SettingsFileLock {
                     return Ok(Self { path, owner });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    recover_stale_settings_lock(&path, &owner, stale_after);
+                    if recover_stale_settings_lock(&path, &owner, stale_after)? {
+                        return Ok(Self { path, owner });
+                    }
                     if Instant::now() >= deadline {
                         anyhow::bail!("Timed out waiting for settings lock {}", path.display());
                     }
@@ -465,62 +468,164 @@ impl Drop for SettingsFileLock {
 }
 
 fn remove_owned_settings_lock(path: &Path, owner: &str) {
-    if fs::read_to_string(path)
-        .ok()
-        .and_then(|contents| contents.lines().next().map(str::to_owned))
-        .as_deref()
-        == Some(owner)
-    {
+    let Ok((mut file, _)) = open_regular_settings_lock(path, false) else {
+        return;
+    };
+    let Ok(contents) = read_settings_lock(&mut file) else {
+        return;
+    };
+    if contents.lines().next() == Some(owner) {
         let _ = fs::remove_file(path);
     }
 }
 
-fn recover_stale_settings_lock(path: &Path, claim_owner: &str, stale_after: Duration) {
-    let Ok(mut snapshot) = fs::read_to_string(path) else {
-        return;
+fn recover_stale_settings_lock(
+    path: &Path,
+    claim_owner: &str,
+    stale_after: Duration,
+) -> Result<bool> {
+    recover_stale_settings_lock_with_hook(path, claim_owner, stale_after, || {})
+}
+
+fn recover_stale_settings_lock_with_hook<F>(
+    path: &Path,
+    claim_owner: &str,
+    stale_after: Duration,
+    before_takeover: F,
+) -> Result<bool>
+where
+    F: FnOnce(),
+{
+    let (mut file, opened_metadata) = match open_regular_settings_lock(path, true) {
+        Ok(opened) => opened,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to open settings lock {}", path.display()))
+        }
     };
-    let Some(owner) = snapshot.lines().next().map(str::to_owned) else {
-        return;
-    };
-    let is_stale = fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
+    let mut snapshot = read_settings_lock(&mut file)
+        .with_context(|| format!("Failed to read settings lock {}", path.display()))?;
+    let owner = snapshot.lines().next().unwrap_or_default().to_owned();
+    let is_stale = opened_metadata
+        .modified()
         .ok()
         .and_then(|modified| modified.elapsed().ok())
         .is_some_and(|age| age > stale_after);
     if !is_stale || settings_owner_is_alive(&owner) {
-        return;
+        return Ok(false);
     }
-    let claim = format!("recover:{claim_owner}");
-    if !snapshot.lines().any(|line| line == claim) {
-        let record = format!("{claim}\n");
-        let Ok(mut file) = OpenOptions::new().append(true).open(path) else {
-            return;
-        };
-        if file
-            .write_all(record.as_bytes())
-            .and_then(|()| file.sync_all())
-            .is_err()
-        {
-            return;
+
+    let now_millis = unix_time_millis();
+    let claim_expires = now_millis + SETTINGS_RECOVERY_CLAIM_TTL.as_millis();
+    let claim = format!("recover:{claim_owner}:{claim_expires}");
+    let prefix = if snapshot.ends_with('\n') { "" } else { "\n" };
+    file.write_all(format!("{prefix}{claim}\n").as_bytes())?;
+    file.sync_all()?;
+
+    let (mut current_file, current_metadata) = match open_regular_settings_lock(path, false) {
+        Ok(opened) => opened,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to reopen settings lock {}", path.display()))
         }
-        let Ok(updated) = fs::read_to_string(path) else {
-            return;
-        };
-        snapshot = updated;
+    };
+    if !same_settings_lock(&opened_metadata, &current_metadata) {
+        return Ok(false);
     }
-    if !snapshot.ends_with('\n') || snapshot.lines().next() != Some(owner.as_str()) {
-        return;
+    snapshot = read_settings_lock(&mut current_file)?;
+    if !snapshot.ends_with('\n') || snapshot.lines().next().unwrap_or_default() != owner {
+        return Ok(false);
     }
     let first_live_claim = snapshot
         .lines()
         .skip(1)
-        .filter_map(|line| line.strip_prefix("recover:"))
-        .find(|candidate| settings_owner_is_alive(candidate));
-    if first_live_claim == Some(claim_owner)
-        && fs::read_to_string(path).ok().as_deref() == Some(snapshot.as_str())
-    {
-        let _ = fs::remove_file(path);
+        .find_map(|line| live_recovery_claim_owner(line, now_millis));
+    if first_live_claim != Some(claim_owner) {
+        return Ok(false);
     }
+
+    before_takeover();
+    file.set_len(0)?;
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(format!("{claim_owner}\n").as_bytes())?;
+    file.sync_all()?;
+
+    let (mut current_file, current_metadata) = match open_regular_settings_lock(path, false) {
+        Ok(opened) => opened,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to verify settings lock {}", path.display()))
+        }
+    };
+    if !same_settings_lock(&opened_metadata, &current_metadata) {
+        return Ok(false);
+    }
+    let current_owner = read_settings_lock(&mut current_file)?;
+    Ok(current_owner.lines().next() == Some(claim_owner))
+}
+
+fn open_regular_settings_lock(path: &Path, writable: bool) -> std::io::Result<(File, Metadata)> {
+    if !fs::symlink_metadata(path)?.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "settings lock is not a regular file",
+        ));
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    if writable {
+        options.write(true).append(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "settings lock is not a regular file",
+        ));
+    }
+    Ok((file, metadata))
+}
+
+fn read_settings_lock(file: &mut File) -> std::io::Result<String> {
+    let mut contents = String::new();
+    file.seek(SeekFrom::Start(0))?;
+    file.read_to_string(&mut contents)?;
+    Ok(contents)
+}
+
+fn same_settings_lock(left: &Metadata, right: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        left.dev() == right.dev() && left.ino() == right.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        left.len() == right.len() && left.modified().ok() == right.modified().ok()
+    }
+}
+
+fn live_recovery_claim_owner(record: &str, now_millis: u128) -> Option<&str> {
+    let claim = record.strip_prefix("recover:")?;
+    let (owner, expires) = claim.rsplit_once(':')?;
+    let expires = expires.parse::<u128>().ok()?;
+    (expires > now_millis && settings_owner_is_alive(owner)).then_some(owner)
+}
+
+fn unix_time_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 fn settings_owner_is_alive(owner: &str) -> bool {
@@ -563,12 +668,30 @@ fn atomic_write_settings(path: &Path, contents: &[u8]) -> Result<()> {
                 temp_path.display()
             )
         })?;
+        sync_settings_parent(path)?;
         Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
     }
     result
+}
+
+fn sync_settings_parent(path: &Path) -> Result<()> {
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .with_context(|| format!("Failed to sync settings directory {}", parent.display()))
+    }
 }
 
 fn adjacent_path(path: &Path, suffix: &str) -> PathBuf {
@@ -765,6 +888,103 @@ app_executable_path = "/opt/codex-desktop/electron"
         let settings: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
         assert_eq!(settings["recovered"], true);
         assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn settings_write_recovers_empty_stale_lock() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("settings.json");
+        let lock_path = adjacent_path(&path, ".lock");
+        fs::write(&lock_path, "")?;
+        thread::sleep(Duration::from_millis(2));
+
+        write_settings_bool_at_path(
+            &path,
+            "recovered-empty-lock",
+            true,
+            Duration::from_millis(100),
+            Duration::ZERO,
+        )?;
+
+        let settings: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+        assert_eq!(settings["recovered-empty-lock"], true);
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn stale_recovery_does_not_replace_a_new_lock_inode() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("settings.json");
+        let lock_path = adjacent_path(&path, ".lock");
+        let replacement_path = adjacent_path(&path, ".replacement-lock");
+        fs::write(&lock_path, "0-stale-owner\n")?;
+        thread::sleep(Duration::from_millis(2));
+        let claim_owner = settings_write_owner();
+
+        let recovered = recover_stale_settings_lock_with_hook(
+            &lock_path,
+            &claim_owner,
+            Duration::ZERO,
+            || {
+                fs::write(&replacement_path, "replacement-owner\n").unwrap();
+                fs::rename(&replacement_path, &lock_path).unwrap();
+            },
+        )?;
+
+        assert!(!recovered);
+        assert_eq!(fs::read_to_string(&lock_path)?, "replacement-owner\n");
+        Ok(())
+    }
+
+    #[test]
+    fn settings_write_rejects_non_regular_lock() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("settings.json");
+        let lock_path = adjacent_path(&path, ".lock");
+        fs::create_dir(&lock_path)?;
+
+        let error = write_settings_bool_at_path(
+            &path,
+            "blocked",
+            true,
+            Duration::from_millis(100),
+            Duration::ZERO,
+        )
+        .expect_err("directory lock must be rejected");
+
+        assert!(error.to_string().contains("Failed to open settings lock"));
+        assert!(lock_path.is_dir());
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn settings_write_rejects_lock_symlink_without_following_it() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir()?;
+        let path = temp.path().join("settings.json");
+        let lock_path = adjacent_path(&path, ".lock");
+        let symlink_target = temp.path().join("unrelated.txt");
+        fs::write(&symlink_target, "do not modify\n")?;
+        symlink(&symlink_target, &lock_path)?;
+
+        let error = write_settings_bool_at_path(
+            &path,
+            "blocked",
+            true,
+            Duration::from_millis(100),
+            Duration::ZERO,
+        )
+        .expect_err("symlink lock must be rejected");
+
+        assert!(error.to_string().contains("Failed to open settings lock"));
+        assert_eq!(fs::read_to_string(&symlink_target)?, "do not modify\n");
+        assert!(fs::symlink_metadata(&lock_path)?.file_type().is_symlink());
+        assert!(!path.exists());
         Ok(())
     }
 

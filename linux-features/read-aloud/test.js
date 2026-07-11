@@ -386,6 +386,7 @@ test("main handler serializes and awaits atomic read aloud settings writes", asy
     };
 
     assert.match(patched, /await codexLinuxReadAloudWriteSettings/);
+    assert.match(patched, /codexLinuxReadAloudSettingsDirectory\.sync\(\)/);
     await new Function(
       "require",
       "process",
@@ -400,6 +401,87 @@ test("main handler serializes and awaits atomic read aloud settings writes", asy
       fs.readdirSync(root).filter((name) => name.includes(".lock") || name.includes(".tmp.")),
       [],
     );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("main handler rejects non-regular read aloud settings locks", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-lock-directory-"));
+  try {
+    const settingsPath = path.join(root, "settings.json");
+    fs.mkdirSync(`${settingsPath}.lock`);
+    const source = [
+      "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+    ].join("");
+    const patched = twice(applyMainBundlePatch, source);
+    const processStub = {
+      platform: "linux",
+      pid: process.pid,
+      kill: process.kill.bind(process),
+      env: { HOME: root, CODEX_LINUX_SETTINGS_FILE: settingsPath },
+      resourcesPath: path.join(root, "resources"),
+    };
+
+    await assert.rejects(
+      new Function(
+        "require",
+        "process",
+        `${patched};return codexLinuxReadAloudWriteSettings({blocked:true});`,
+      )(
+        (name) => name === "node:fs" ? fs : name === "node:path" ? path : name === "node:os" ? { homedir: () => root } : name === "node:child_process" ? { spawnSync: () => ({ status: 1 }) } : require(name),
+        processStub,
+      ),
+    );
+
+    assert.equal(fs.statSync(`${settingsPath}.lock`).isDirectory(), true);
+    assert.equal(fs.existsSync(settingsPath), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("main handler rejects read aloud lock symlinks without following them", async (context) => {
+  if (process.platform === "win32") {
+    context.skip("symlink creation requires elevated privileges on Windows");
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-lock-symlink-"));
+  try {
+    const settingsPath = path.join(root, "settings.json");
+    const unrelatedPath = path.join(root, "unrelated.txt");
+    fs.writeFileSync(unrelatedPath, "0-unrelated-owner\n");
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(unrelatedPath, old, old);
+    fs.symlinkSync(unrelatedPath, `${settingsPath}.lock`);
+    const source = [
+      "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+    ].join("");
+    const patched = twice(applyMainBundlePatch, source);
+    const processStub = {
+      platform: "linux",
+      pid: process.pid,
+      kill: process.kill.bind(process),
+      env: { HOME: root, CODEX_LINUX_SETTINGS_FILE: settingsPath },
+      resourcesPath: path.join(root, "resources"),
+    };
+
+    await assert.rejects(
+      new Function(
+        "require",
+        "process",
+        `${patched};return codexLinuxReadAloudWriteSettings({blocked:true});`,
+      )(
+        (name) => name === "node:fs" ? fs : name === "node:path" ? path : name === "node:os" ? { homedir: () => root } : name === "node:child_process" ? { spawnSync: () => ({ status: 1 }) } : require(name),
+        processStub,
+      ),
+    );
+
+    assert.equal(fs.readFileSync(unrelatedPath, "utf8"), "0-unrelated-owner\n");
+    assert.equal(fs.lstatSync(`${settingsPath}.lock`).isSymbolicLink(), true);
+    assert.equal(fs.existsSync(settingsPath), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
