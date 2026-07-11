@@ -36,7 +36,10 @@ const MAX_ACCEPTED_FRAME_BYTES: usize = 64 * 1024 * 1024;
 const PENDING_REQUEST_TTL: Duration = Duration::from_secs(10 * 60);
 /// Bounds unanswered correlations independently in each bridge direction.
 const MAX_PENDING_REQUESTS_PER_DIRECTION: usize = 1024;
+/// Bounds retained string IDs to about 4 MiB per direction at the entry cap.
+const MAX_PENDING_REQUEST_ID_STRING_BYTES: usize = 4 * 1024;
 const PENDING_REQUEST_LIMIT_ERROR_CODE: i64 = -32001;
+const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
 type SharedState = Arc<Mutex<HostState>>;
 type SharedChromeWriter = Arc<Mutex<Box<dyn Write + Send>>>;
@@ -614,8 +617,15 @@ fn handle_client_message(state: &SharedState, client_id: usize, message: Value) 
         return;
     }
 
-    let Some(client_request_id) = message.get("id").cloned() else {
-        return;
+    let client_request_id = match bounded_pending_request_id(&message) {
+        Ok(id) => id,
+        Err(error) => {
+            let state = state.lock().expect("host state mutex poisoned");
+            if state.clients.contains_key(&client_id) {
+                state.send_client(client_id, &invalid_request_id_error(error));
+            }
+            return;
+        }
     };
     let fallback_extension_info = message.get("method").and_then(Value::as_str) == Some("getInfo");
 
@@ -702,7 +712,14 @@ fn handle_chrome_message(state: &SharedState, message: Value) {
         return;
     }
 
-    let chrome_request_id = message.get("id").cloned().unwrap_or(Value::Null);
+    let chrome_request_id = match bounded_pending_request_id(&message) {
+        Ok(id) => id,
+        Err(error) => {
+            let state = state.lock().expect("host state mutex poisoned");
+            state.send_chrome(&invalid_request_id_error(error));
+            return;
+        }
+    };
     let mut state = state.lock().expect("host state mutex poisoned");
     let client_id = match select_single_client_id(&state.clients) {
         Ok(client_id) => client_id,
@@ -767,6 +784,30 @@ fn pending_request_limit_error(id: Value, message: &str) -> Value {
         "id": id,
         "error": {
             "code": PENDING_REQUEST_LIMIT_ERROR_CODE,
+            "message": message
+        }
+    })
+}
+
+fn bounded_pending_request_id(message: &Value) -> std::result::Result<Value, &'static str> {
+    match message.get("id") {
+        Some(Value::String(id)) if id.len() <= MAX_PENDING_REQUEST_ID_STRING_BYTES => {
+            Ok(Value::String(id.clone()))
+        }
+        Some(Value::String(_)) => Err("JSON-RPC request id exceeds the retained size limit"),
+        Some(Value::Number(id)) => Ok(Value::Number(id.clone())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(_) => Err("JSON-RPC request id must be a string, number, or null"),
+        None => Err("JSON-RPC request id is missing"),
+    }
+}
+
+fn invalid_request_id_error(message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": Value::Null,
+        "error": {
+            "code": INVALID_REQUEST_ERROR_CODE,
             "message": message
         }
     })
@@ -1557,6 +1598,78 @@ while True:
         let live_client = &state.pending_client_requests["live-client"];
         assert_eq!(live_client.client_id, 4);
         assert_eq!(live_client.chrome_request_id, json!("live-chrome-id"));
+    }
+
+    #[test]
+    fn pending_request_ids_accept_only_bounded_json_rpc_scalars() {
+        let max_string = "x".repeat(MAX_PENDING_REQUEST_ID_STRING_BYTES);
+        assert_eq!(
+            bounded_pending_request_id(&json!({ "id": max_string })).unwrap(),
+            Value::String("x".repeat(MAX_PENDING_REQUEST_ID_STRING_BYTES))
+        );
+        assert_eq!(
+            bounded_pending_request_id(&json!({ "id": 42 })).unwrap(),
+            json!(42)
+        );
+        assert_eq!(
+            bounded_pending_request_id(&json!({ "id": null })).unwrap(),
+            Value::Null
+        );
+        assert!(bounded_pending_request_id(&json!({
+            "id": "x".repeat(MAX_PENDING_REQUEST_ID_STRING_BYTES + 1)
+        }))
+        .is_err());
+        assert!(bounded_pending_request_id(&json!({ "id": { "nested": true } })).is_err());
+    }
+
+    #[test]
+    fn oversized_client_request_id_is_rejected_without_retention() {
+        let (client_writer, mut client_reader) = UnixStream::pair().unwrap();
+        let (mut state, chrome_output) = test_host_state_with_output();
+        state.clients.insert(
+            1,
+            Client {
+                writer: Arc::new(Mutex::new(client_writer)),
+            },
+        );
+        let state = Arc::new(Mutex::new(state));
+
+        handle_client_message(
+            &state,
+            1,
+            json!({
+                "jsonrpc": "2.0",
+                "id": "x".repeat(MAX_PENDING_REQUEST_ID_STRING_BYTES + 1),
+                "method": "getTabs"
+            }),
+        );
+
+        let response = read_frame(&mut client_reader).unwrap().unwrap();
+        assert_eq!(response["id"], Value::Null);
+        assert_eq!(response["error"]["code"], INVALID_REQUEST_ERROR_CODE);
+        assert!(chrome_output.lock().unwrap().is_empty());
+        assert!(state.lock().unwrap().pending_chrome_requests.is_empty());
+    }
+
+    #[test]
+    fn oversized_chrome_request_id_is_rejected_without_retention() {
+        let (mut state, chrome_output) = test_host_state_with_output();
+        state.clients.insert(1, test_client());
+        let state = Arc::new(Mutex::new(state));
+
+        handle_chrome_message(
+            &state,
+            json!({
+                "jsonrpc": "2.0",
+                "id": "x".repeat(MAX_PENDING_REQUEST_ID_STRING_BYTES + 1),
+                "method": "browserCommand"
+            }),
+        );
+
+        let response = read_captured_message(&chrome_output);
+        assert_eq!(response["id"], Value::Null);
+        assert_eq!(response["error"]["code"], INVALID_REQUEST_ERROR_CODE);
+        assert!(state.lock().unwrap().pending_client_requests.is_empty());
     }
 
     #[test]
