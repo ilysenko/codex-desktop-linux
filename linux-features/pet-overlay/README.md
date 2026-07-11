@@ -101,12 +101,16 @@ Hyprland command failures are ignored so launching Codex does not depend on
 
 When `niri` is enabled, the feature reads `niri msg --json windows`, selects
 only an unambiguous window with the exact `Codex Pet Overlay` title and the
-current process ID, then targets that numeric window id with `move-window-to-floating`
-and `move-floating-window`. The actions are skipped if the window is ambiguous,
-foreign, malformed, stale, or if `niri` is unavailable.
+current process ID, then targets that numeric window id with
+`move-window-to-floating` and `move-floating-window`. Movement uses the
+output-local coordinates of the Electron working area, not global desktop
+coordinates. The actions are skipped if the window is ambiguous, foreign,
+malformed, stale, or if `niri` is unavailable.
 
-For the cleanest first frame on Niri, add a window rule that matches the pet
-overlay and lets Niri float it without focusing it:
+The runtime keeps the first presentation non-focusable while using
+`showInactive()`, then restores focusability for interactive mode so inline
+replies can still receive focus. For the cleanest first compositor frame on
+Niri, you can also add a window rule that matches the pet overlay:
 
 ```kdl
 window-rule {
@@ -132,8 +136,8 @@ For a manual check, enable the feature, rebuild, and launch the app:
 - The pet overlay should remain transparent.
 - Selecting a different pet should update the open overlay without restarting Codex.
 - On Hyprland, the pet should have no visible compositor border or shadow.
-- On Niri, the pet should open floating, avoid initial focus when the window
-  rule above is configured, and move by targeted window id.
+- On Niri, the pet should open floating, avoid initial focus, and move by
+  targeted window id.
 - The pet should remain above normal windows and visible across workspaces where
   the compositor honors those hints.
 - With `lockPosition: false`, dragging the pet should not snap it back on the

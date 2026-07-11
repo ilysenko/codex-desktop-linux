@@ -203,7 +203,7 @@ test("patches current avatar overlay layout, transparency, and window sync", () 
   const patched = applyPatchTwice(currentAvatarOverlayBundleFixture());
 
   assert.match(patched, /codexPetOverlayLayoutForDisplay\(t,this\.getLayoutForDisplay\(t\),e\)/);
-  assert.match(patched, /codexPetOverlaySyncWindow\(e\)/);
+  assert.match(patched, /codexPetOverlaySyncWindow\(e,!0\)/);
   assert.match(patched, /title:`Codex Pet Overlay`,width:zB\.width/);
   assert.match(patched, /setVisibleOnAllWorkspaces/);
   assert.match(patched, /setAlwaysOnTop/);
@@ -452,10 +452,18 @@ test("syncs overlay window hints without requiring Hyprland", () => {
   const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
   const calls = [];
   const handlers = {};
-  const { controller } = controllerFromPatchedSource(patched);
-  controller.window = { isDestroyed: () => false, isVisible: () => false };
-  controller.showWindow({
+  const timers = [];
+  const { controller } = controllerFromPatchedSource(patched, {
+    setTimeout(callback, delay) {
+      const timer = { callback, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+  });
+  const window = {
     isDestroyed: () => false,
+    isVisible: () => true,
+    focus: () => calls.push("focus"),
     moveTop: () => calls.push("moveTop"),
     setAlwaysOnTop: (value) => calls.push(["always", value]),
     setBackgroundColor: (value) => calls.push(["background", value]),
@@ -464,6 +472,7 @@ test("syncs overlay window hints without requiring Hyprland", () => {
     setSkipTaskbar: (value) => calls.push(["skip", value]),
     setTitle: (value) => calls.push(["title", value]),
     setVisibleOnAllWorkspaces: (value, options) => calls.push(["workspaces", value, options.visibleOnFullScreen]),
+    show: () => calls.push("show"),
     showInactive: () => calls.push("showInactive"),
     webContents: {
       executeJavaScript: (script) => calls.push(["js", script]),
@@ -474,11 +483,13 @@ test("syncs overlay window hints without requiring Hyprland", () => {
         calls.push(["on", event]);
       },
     },
-  });
+  };
+  controller.window = window;
+  controller.showWindow(window);
 
   assert.deepEqual(calls.slice(0, 5), [
     ["title", "Codex Pet Overlay"],
-    ["focusable", true],
+    ["focusable", false],
     ["skip", true],
     ["always", true],
     ["background", "#00000000"],
@@ -490,6 +501,12 @@ test("syncs overlay window hints without requiring Hyprland", () => {
   assert.match(calls[6][1], /background:transparent!important/);
   assert.match(calls[7][1], /document\.documentElement\.style\.background/);
   assert.deepEqual(calls.slice(8), [["opacity", 1], ["workspaces", true, true], "moveTop", "showInactive"]);
+  assert.deepEqual(timers.map((timer) => timer.delay), [0]);
+  assert.equal(calls.includes("focus"), false);
+  assert.equal(calls.includes("show"), false);
+
+  timers[0].callback();
+  assert.deepEqual(calls.at(-1), ["focusable", true]);
 
   handlers["did-finish-load"]();
   assert.equal(calls.filter(([kind]) => kind === "css").length, 2);
@@ -505,6 +522,60 @@ test("passive mode makes the overlay non-focusable", () => {
     patched,
     /appearance:`avatarOverlay`,alwaysOnTop:process\.platform===`linux`,skipTaskbar:process\.platform===`linux`,focusable:!1/,
   );
+});
+
+test("interactive Niri show releases initial focus before restoring inline reply focusability", () => {
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const calls = [];
+  const timers = [];
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env: { XDG_CURRENT_DESKTOP: "niri" } },
+    childProcess: {
+      execFile(_command, args, _options, callback) {
+        calls.push(["niri", args]);
+        callback?.(null, "[]");
+      },
+    },
+    setTimeout(callback, delay) {
+      const timer = { callback, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+  });
+  const window = {
+    focus: () => calls.push("focus"),
+    isDestroyed: () => false,
+    isVisible: () => true,
+    moveTop: () => calls.push("moveTop"),
+    setAlwaysOnTop: (value) => calls.push(["always", value]),
+    setBackgroundColor: (value) => calls.push(["background", value]),
+    setFocusable: (value) => calls.push(["focusable", value]),
+    setOpacity: (value) => calls.push(["opacity", value]),
+    setSkipTaskbar: (value) => calls.push(["skip", value]),
+    setTitle: (value) => calls.push(["title", value]),
+    setVisibleOnAllWorkspaces: (value, options) => calls.push(["workspaces", value, options.visibleOnFullScreen]),
+    show: () => calls.push("show"),
+    showInactive: () => calls.push("showInactive"),
+  };
+  controller.window = window;
+
+  controller.showWindow(window);
+
+  assert.deepEqual(timers.map((timer) => timer.delay), [0, 0, 80, 300, 1000]);
+  assert.deepEqual(calls.filter((call) => Array.isArray(call) && call[0] === "focusable"), [["focusable", false]]);
+  assert.ok(
+    calls.findIndex((call) => Array.isArray(call) && call[0] === "focusable" && call[1] === false) <
+      calls.indexOf("showInactive"),
+  );
+  assert.equal(calls.includes("focus"), false);
+  assert.equal(calls.includes("show"), false);
+  assert.equal(calls.some((call) => Array.isArray(call) && call[0] === "niri"), false);
+
+  timers[0].callback();
+  assert.deepEqual(calls.filter((call) => Array.isArray(call) && call[0] === "focusable"), [
+    ["focusable", false],
+    ["focusable", true],
+  ]);
 });
 
 test("disabled window hints are actively applied as false", () => {
@@ -638,7 +709,15 @@ function runHyprlandHintScenario({ clientsJson, execError = null, settings = {},
   return calls;
 }
 
-function runNiriHintScenario({ windowsJson, execError = null, settings = {}, env = { XDG_CURRENT_DESKTOP: "niri" } }) {
+function runNiriHintScenario({
+  windowsJson,
+  execError = null,
+  settings = {},
+  env = { XDG_CURRENT_DESKTOP: "niri" },
+  desiredDisplayBounds = { x: 0, y: 0, width: 1920, height: 1080 },
+  desiredWindowBounds = { x: 1540, y: 736, width: 356, height: 320 },
+  windowBounds = desiredWindowBounds,
+}) {
   const calls = [];
   const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture(), {
     feature: { manifest: { petOverlay: { niri: true } }, settings },
@@ -661,11 +740,12 @@ function runNiriHintScenario({ windowsJson, execError = null, settings = {}, env
   });
 
   const window = {
-    getBounds: () => ({ x: 1540, y: 736, width: 356, height: 320 }),
+    getBounds: () => windowBounds,
     isDestroyed: () => false,
   };
   controller.window = window;
-  controller.codexPetOverlayDesiredWindowBounds = { x: 1540, y: 736, width: 356, height: 320 };
+  controller.codexPetOverlayDesiredWindowBounds = desiredWindowBounds;
+  controller.codexPetOverlayDesiredDisplayBounds = desiredDisplayBounds;
   controller.codexPetOverlayApplyNiriHints(window);
 
   return calls;
@@ -1137,6 +1217,96 @@ test("targets a tiled Niri pet window by id and moves it without focus actions",
   assert.ok(calls.every((args) => !args.join(" ").includes("focus")));
 });
 
+test("Niri move coordinates are output-local to the remembered work area", () => {
+  const cases = [
+    {
+      label: "secondary output",
+      desiredDisplayBounds: { x: 1920, y: 40, width: 1600, height: 860 },
+      desiredWindowBounds: { x: 2044, y: 84, width: 356, height: 320 },
+      expected: ["124", "44"],
+    },
+    {
+      label: "negative-origin output",
+      desiredDisplayBounds: { x: -1280, y: -200, width: 1280, height: 900 },
+      desiredWindowBounds: { x: -1180, y: -150, width: 356, height: 320 },
+      expected: ["100", "50"],
+    },
+  ];
+
+  for (const { label, desiredDisplayBounds, desiredWindowBounds, expected } of cases) {
+    const calls = runNiriHintScenario({
+      desiredDisplayBounds,
+      desiredWindowBounds,
+      windowsJson: JSON.stringify([{
+        id: 9,
+        is_floating: true,
+        layout: { window_size: [356, 320] },
+        pid: 4242,
+        title: "Codex Pet Overlay",
+      }]),
+    });
+
+    assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify([
+      "msg",
+      "action",
+      "move-floating-window",
+      "--id",
+      "9",
+      "-x",
+      expected[0],
+      "-y",
+      expected[1],
+    ])), label);
+  }
+});
+
+test("Niri movement stays fail-closed until a display work area is known", () => {
+  const calls = runNiriHintScenario({
+    desiredDisplayBounds: null,
+    windowsJson: JSON.stringify([{
+      id: 9,
+      is_floating: false,
+      layout: { window_size: [356, 320] },
+      pid: 4242,
+      title: "Codex Pet Overlay",
+    }]),
+  });
+
+  assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify([
+    "msg",
+    "action",
+    "move-window-to-floating",
+    "--id",
+    "9",
+  ])));
+  assert.equal(calls.some((args) => args.includes("move-floating-window")), false);
+});
+
+test("layout remembers the working area used for later Niri local moves", () => {
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const { controller } = controllerFromPatchedSource(patched);
+  const layout = {
+    anchor: { x: 10, y: 10, width: 40, height: 40 },
+    mascot: { left: 10, top: 10, width: 40, height: 40 },
+    placement: "top-end",
+    tray: null,
+    windowBounds: { x: 2044, y: 84, width: 356, height: 320 },
+  };
+
+  controller.codexPetOverlayLayoutForDisplay(
+    { workArea: { x: 1920, y: 40, width: 1600, height: 860 } },
+    layout,
+    { isDestroyed: () => false },
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(controller.codexPetOverlayDesiredDisplayBounds)), {
+    x: 1920,
+    y: 40,
+    width: 1600,
+    height: 860,
+  });
+});
+
 test("Niri matching rejects foreign, malformed, and ambiguous pet candidates", () => {
   const calls = runNiriHintScenario({
     windowsJson: JSON.stringify([
@@ -1152,6 +1322,20 @@ test("Niri matching rejects foreign, malformed, and ambiguous pet candidates", (
         is_floating: true,
         layout: { window_size: [356, 320] },
         pid: 4242,
+        title: "Codex Pet Overlay",
+      },
+      {
+        id: "13",
+        is_floating: true,
+        layout: { window_size: [356, 320] },
+        pid: 4242,
+        title: "Codex Pet Overlay",
+      },
+      {
+        id: 14,
+        is_floating: true,
+        layout: { window_size: [356, 320] },
+        pid: "4242",
         title: "Codex Pet Overlay",
       },
       {
