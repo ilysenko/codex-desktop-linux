@@ -41,6 +41,7 @@ const {
   applyLinuxRemoteControlSettingsUxPatch,
   applyLinuxRemoteControlVisibilityPatch,
 } = require("./patch.js");
+const remoteMobilePatchDescriptors = require("./patch.js");
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
 const OLD_REMOTE_CONTROL_GATE_ASSET =
@@ -61,6 +62,44 @@ const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET =
   "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-test.js";
 const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
+
+test("remote mobile README assigns every descriptor to one control topology", () => {
+  const readme = fs.readFileSync(path.join(__dirname, "README.md"), "utf8");
+  const rows = [...readme.matchAll(
+    /^\| `(linux-remote-[^`]+)` \| `(mobile-host|outbound-control|remote-ssh|shared-boundary)` \|/gm,
+  )];
+  const documented = new Map(rows.map((match) => [match[1], match[2]]));
+  const descriptorIds = remoteMobilePatchDescriptors.map((descriptor) => descriptor.id);
+  const expected = new Map([
+    ["linux-remote-control-device-key", "outbound-control"],
+    ["linux-remote-control-client-revocation-recovery", "outbound-control"],
+    ["linux-remote-mobile-app-server-remote-control", "mobile-host"],
+    ["linux-remote-control-load-gate", "outbound-control"],
+    ["linux-remote-control-feature-sync", "shared-boundary"],
+    ["linux-remote-control-visibility", "outbound-control"],
+    ["linux-remote-control-copy", "shared-boundary"],
+    ["linux-remote-control-settings-ux", "shared-boundary"],
+    ["linux-remote-control-client-revoke-setup-reset", "mobile-host"],
+    ["linux-remote-connections-refresh", "shared-boundary"],
+    ["linux-remote-mobile-conversation-hydration", "mobile-host"],
+    ["linux-remote-mobile-completed-item-recovery", "mobile-host"],
+    ["linux-remote-terminal-status-recovery", "mobile-host"],
+    ["linux-remote-control-status-read-guard", "shared-boundary"],
+    ["linux-remote-control-status-wait", "shared-boundary"],
+    ["linux-remote-control-enable-for-host-params", "shared-boundary"],
+    ["linux-remote-control-enablement-bridge", "shared-boundary"],
+    ["linux-remote-mobile-active-status", "mobile-host"],
+  ]);
+
+  assert.equal(documented.size, rows.length, "topology table must not repeat descriptor ids");
+  assert.deepEqual([...documented.keys()].sort(), descriptorIds.sort());
+  assert.deepEqual([...documented].sort(), [...expected].sort());
+  assert.match(readme, /`applyLinuxRemoteControlSshInstallActionPatch`[\s\S]*`remote-ssh`/);
+  assert.match(readme, /`applyLinuxRemoteControlSshInstallReleasePatch`[\s\S]*`remote-ssh`/);
+  assert.match(readme, /`set-experimental-feature-enablement-for-host`/);
+  assert.match(readme, /`refresh-remote-connections`/);
+  assert.match(readme, /`get-global-state`/);
+});
 
 function syntheticMainBundle() {
   return [

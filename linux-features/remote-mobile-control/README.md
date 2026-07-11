@@ -64,6 +64,75 @@ What it changes:
   when it is missing, then starts the managed app-server daemon with
   `remote-control start`.
 
+## Control topology boundaries
+
+This feature touches three different control paths. They must stay independent:
+
+- `mobile-host`: a mobile client controls this Linux installation. This owns the
+  local remote-control runtime, host enablement, and mobile conversation state.
+- `outbound-control`: this Desktop controls an enrolled remote-control host. This
+  owns client enrollment, connection discovery, and the `Control other devices`
+  flow.
+- `remote-ssh`: this Desktop manages a Remote SSH host. It shares part of the
+  Connections UI but not remote-control enrollment or status RPCs.
+- `shared-boundary`: code that selects or isolates two or more paths. A boundary
+  patch must not enable one topology as a side effect of another.
+
+The current patch ownership is explicit below. The test suite requires every
+feature descriptor to appear exactly once in this table.
+
+| Descriptor | Primary responsibility | Contract |
+| --- | --- | --- |
+| `linux-remote-control-device-key` | `outbound-control` | Provides the client key used to enroll this Desktop against another remote-control host. |
+| `linux-remote-control-client-revocation-recovery` | `outbound-control` | Clears revoked client material before re-enrollment. |
+| `linux-remote-mobile-app-server-remote-control` | `mobile-host` | Starts this Desktop app-server with remote-control host support. |
+| `linux-remote-control-load-gate` | `outbound-control` | Allows remote-control environments to load in Connections. |
+| `linux-remote-control-feature-sync` | `shared-boundary` | Enables `remote_control` only for the local host and excludes Remote SSH hosts. |
+| `linux-remote-control-visibility` | `outbound-control` | Exposes remote-control Connections UI when the server permits it. |
+| `linux-remote-control-copy` | `shared-boundary` | Rewrites Linux copy shared by host setup and outbound Connections. |
+| `linux-remote-control-settings-ux` | `shared-boundary` | Composes outbound remote-control and Remote SSH actions in the shared settings bundle. |
+| `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state only after the last external controller is removed. |
+| `linux-remote-connections-refresh` | `shared-boundary` | Refreshes the shared Connections list without starting or enabling any host runtime. |
+| `linux-remote-mobile-conversation-hydration` | `mobile-host` | Hydrates and replays mobile notifications for conversations missing locally. |
+| `linux-remote-mobile-completed-item-recovery` | `mobile-host` | Reconciles a completed mobile item with missing local started state. |
+| `linux-remote-terminal-status-recovery` | `mobile-host` | Reconciles stale mobile terminal state with actual pending requests. |
+| `linux-remote-control-status-read-guard` | `shared-boundary` | Sends `remoteControl/status/read` only to the local host, never Remote SSH or remote-control environment hosts. |
+| `linux-remote-control-status-wait` | `shared-boundary` | Gives the selected host a Linux-specific connection convergence window without changing host ownership. |
+| `linux-remote-control-enable-for-host-params` | `shared-boundary` | Uses the current enable/disable RPC parameter contract without choosing which host is targeted. |
+| `linux-remote-control-enablement-bridge` | `shared-boundary` | Loads outbound clients while auto-connecting only the remote-control environment owned by this Desktop. |
+| `linux-remote-mobile-active-status` | `mobile-host` | Derives mobile active state from the local thread runtime. |
+
+Remote SSH behavior is nested inside the shared settings descriptor rather than
+registered as a separate descriptor. `applyLinuxRemoteControlSshInstallActionPatch`
+keeps the install action visible, and
+`applyLinuxRemoteControlSshInstallReleasePatch` selects the requested Codex
+release for install or update. Both remain `remote-ssh` responsibilities;
+neither function enables remote-control on the SSH host.
+
+Feature-owned surfaces outside the descriptor array are also topology-scoped:
+
+| Surface | Primary responsibility | Contract |
+| --- | --- | --- |
+| `stage.sh` | `mobile-host` | Stages the host marker, cold-start hook, and optional Chrome bridge patch. |
+| `cold-start-hook.sh` | `mobile-host` | Elects one local remote-control runtime owner and starts only the standalone fallback. |
+| `applyLinuxRemoteMobileChromeBridgePatch` | `mobile-host` | Keeps local Browser Use available to an authorized mobile-controlled session. |
+| Nix `codex-remote-control.service` | `mobile-host` | Replaces the mutable standalone fallback with one declarative local app-server owner. |
+| `applyLinuxRemoteControlSshInstallActionPatch` | `remote-ssh` | Keeps the existing Remote SSH install action available. |
+| `applyLinuxRemoteControlSshInstallReleasePatch` | `remote-ssh` | Sends an explicit Codex release only to the Remote SSH install/update action. |
+
+The main RPC boundaries are:
+
+- local host: `remoteControl/enable`, `remoteControl/disable`,
+  `remoteControl/pairing/start`, `remoteControl/status/read`, and
+  `remoteControl/status/changed`;
+- outbound Connections: `set-remote-control-connections-enabled`,
+  `refresh-remote-control-connections`, and
+  `set-remote-connection-auto-connect`;
+- shared host routing: `set-experimental-feature-enablement-for-host`,
+  `refresh-remote-connections`, and `get-global-state` for the local
+  installation identity used by auto-connect;
+- Remote SSH: the existing `install-codex` action and its release parameter.
+
 Remote mobile daemon requirement:
 
 The interactive Codex CLI and the remote-control daemon are separate concerns.
