@@ -2264,6 +2264,27 @@ test("Linux remote terminal status recovery rejects partial current-bundle drift
   }
 });
 
+test("Linux remote terminal status recovery ignores unrelated matching chunks", () => {
+  const source = "const remoteMobileConversationChunk={threadRuntimeStatus:null};";
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteTerminalStatusRecoveryPatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.deepEqual(warnings, []);
+});
+
+test("Linux remote terminal status recovery escapes current minified function aliases", () => {
+  const source = syntheticRemoteTerminalStatusBundle().split("LQt").join("$yn");
+  const patched = applyLinuxRemoteTerminalStatusRecoveryPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(
+    patched,
+    /hasUserInputRequest:codexLinuxRemoteHasUserInputRequest\(t\(fi,e\)\)/,
+  );
+});
+
 test("Linux remote-control status wait supports the current 26.707 app bundle", () => {
   const source = syntheticCurrentStatusWaitBundle();
   const patched = applyLinuxRemoteControlStatusWaitPatch(source);

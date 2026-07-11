@@ -1387,6 +1387,15 @@ function applyLinuxRemoteTerminalStatusRecoveryPatch(source) {
     return source;
   }
 
+  if (
+    !source.includes("hasInProgressSideChat") ||
+    !source.includes("isResponseInProgress") ||
+    !source.includes("threadRuntimeStatus") ||
+    !source.includes("pendingRequestType")
+  ) {
+    return source;
+  }
+
   const userInputRequestHelper =
     "function codexLinuxRemoteHasUserInputRequest(e){try{return Array.isArray(e)&&e.some(e=>e?.method===`item/tool/requestUserInput`||e?.method===`item/tool/requestOptionPicker`||e?.method===`item/tool/requestSetupCodexContextPicker`||e?.method===`item/tool/call`&&(e?.params?.tool===`request_onboarding_input`||e?.params?.tool===`request_option_picker`||e?.params?.tool===`setup_codex_context_picker`||e?.params?.tool===`setup_codex_step`))}catch{return!1}}";
   const buildTerminalStatusReplacement = (
@@ -1439,12 +1448,12 @@ function applyLinuxRemoteTerminalStatusRecoveryPatch(source) {
   ] = pendingRequestMatch;
 
   const pendingCallPattern = new RegExp(
-    `${pendingRequestFnName}\\(\\{pendingRequestType:[^{}]+?,requests:([^{}]*\\([^{}]*\\)[^{}]*?),resumeState:[^{}]+?,threadRuntimeStatus:[^{}]+?\\}\\)`,
+    `${escapeRegExp(pendingRequestFnName)}\\(\\{pendingRequestType:[^{}]+?,requests:([^{}]*\\([^{}]*\\)[^{}]*?),resumeState:[^{}]+?,threadRuntimeStatus:[^{}]+?\\}\\)`,
     "u",
   );
   const requestExpression = source.match(pendingCallPattern)?.[1] ?? null;
   const terminalCallPattern = new RegExp(
-    `${terminalStatusFnName}\\(\\{hasInProgressSideChat:([^{}]+?),isResponseInProgress:([^{}]+?),resumeState:([^{}]+?),threadRuntimeStatus:([^{}]+?),latestTurnHasSystemError:([^{}]+?)\\}\\)`,
+    `${escapeRegExp(terminalStatusFnName)}\\(\\{hasInProgressSideChat:([^{}]+?),isResponseInProgress:([^{}]+?),resumeState:([^{}]+?),threadRuntimeStatus:([^{}]+?),latestTurnHasSystemError:([^{}]+?)\\}\\)`,
     "u",
   );
   if (requestExpression == null || !terminalCallPattern.test(source)) {
