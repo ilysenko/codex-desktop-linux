@@ -7,6 +7,7 @@ let
     "node-repl-reaper"
     "open-target-discovery"
     "persistent-status-panel"
+    "pet-overlay"
     "remote-mobile-control"
   ];
 

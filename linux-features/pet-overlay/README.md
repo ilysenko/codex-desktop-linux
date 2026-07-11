@@ -36,7 +36,8 @@ Feature settings can be overridden in the gitignored `features.json` file:
         "skipTaskbar": true,
         "lockPosition": false,
         "mode": "interactive",
-        "hyprland": true
+        "hyprland": true,
+        "niri": true
       }
     }
   }
@@ -59,6 +60,7 @@ the configured screen corner on every layout pass.
 | `lockPosition` | `true` or `false` | `false` | Pins to `gravity` when true; otherwise keeps a visible manual position. |
 | `mode` | `interactive` or `passive` | `interactive` | `passive` makes the pet window non-focusable. |
 | `hyprland` | `true` or `false` | `true` | Uses `hyprctl` only in detected Hyprland sessions. |
+| `niri` | `true` or `false` | `true` | Uses `niri msg` only in detected Niri sessions. |
 
 Runtime overrides are also supported after restart:
 
@@ -68,6 +70,7 @@ CODEX_PET_OVERLAY_GRAVITY=bottom-left
 CODEX_PET_OVERLAY_MODE=passive
 CODEX_PET_OVERLAY_LOCK_POSITION=1
 CODEX_PET_OVERLAY_HYPRLAND=0
+CODEX_PET_OVERLAY_NIRI=0
 ```
 
 The feature keeps GPU compositing enabled by default so the transparent overlay
@@ -94,6 +97,28 @@ Electron hint and stops issuing that Hyprland action.
 Hyprland command failures are ignored so launching Codex does not depend on
 `hyprctl` being present.
 
+## Niri Notes
+
+When `niri` is enabled, the feature reads `niri msg --json windows`, selects
+only an unambiguous window with the exact `Codex Pet Overlay` title and the
+current process ID, then targets that numeric window id with `move-window-to-floating`
+and `move-floating-window`. The actions are skipped if the window is ambiguous,
+foreign, malformed, stale, or if `niri` is unavailable.
+
+For the cleanest first frame on Niri, add a window rule that matches the pet
+overlay and lets Niri float it without focusing it:
+
+```kdl
+window-rule {
+    match title="^Codex Pet Overlay$"
+    open-floating true
+    open-focused false
+}
+```
+
+The runtime IPC path still applies after launch, so manual unlocked placement
+and locked gravity can continue to sync through the same opt-in feature.
+
 ## Testing
 
 Run the feature unit tests from the repository root:
@@ -107,6 +132,8 @@ For a manual check, enable the feature, rebuild, and launch the app:
 - The pet overlay should remain transparent.
 - Selecting a different pet should update the open overlay without restarting Codex.
 - On Hyprland, the pet should have no visible compositor border or shadow.
+- On Niri, the pet should open floating, avoid initial focus when the window
+  rule above is configured, and move by targeted window id.
 - The pet should remain above normal windows and visible across workspaces where
   the compositor honors those hints.
 - With `lockPosition: false`, dragging the pet should not snap it back on the
@@ -116,5 +143,5 @@ For a manual check, enable the feature, rebuild, and launch the app:
 ## Known Risks
 
 Wayland compositors may reject app-driven positioning, all-workspace visibility,
-or z-order changes. Hyprland support is best-effort and deliberately scoped to a
-single unambiguous matched avatar window.
+or z-order changes. Hyprland and Niri support is best-effort and deliberately
+scoped to a single unambiguous matched avatar window.

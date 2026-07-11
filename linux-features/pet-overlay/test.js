@@ -86,6 +86,7 @@ function controllerFromPatchedSource(patched, overrides = {}) {
       platform: "linux",
       ...overrides.process,
     },
+    clearTimeout: overrides.clearTimeout ?? clearTimeout,
     require(moduleName) {
       if (moduleName === "node:child_process") {
         return overrides.childProcess ?? { execFile() {} };
@@ -101,6 +102,7 @@ function controllerFromPatchedSource(patched, overrides = {}) {
       }
       throw new Error(`Unexpected module: ${moduleName}`);
     },
+    setTimeout: overrides.setTimeout ?? setTimeout,
     UB: overrides.UB ?? (() => ({
       anchor: { x: 10, y: 10, width: 40, height: 40 },
       mascot: { left: 10, top: 10, width: 40, height: 40 },
@@ -202,6 +204,7 @@ test("patches current avatar overlay layout, transparency, and window sync", () 
 
   assert.match(patched, /codexPetOverlayLayoutForDisplay\(t,this\.getLayoutForDisplay\(t\),e\)/);
   assert.match(patched, /codexPetOverlaySyncWindow\(e\)/);
+  assert.match(patched, /title:`Codex Pet Overlay`,width:zB\.width/);
   assert.match(patched, /setVisibleOnAllWorkspaces/);
   assert.match(patched, /setAlwaysOnTop/);
   assert.match(patched, /setSkipTaskbar/);
@@ -635,6 +638,39 @@ function runHyprlandHintScenario({ clientsJson, execError = null, settings = {},
   return calls;
 }
 
+function runNiriHintScenario({ windowsJson, execError = null, settings = {}, env = { XDG_CURRENT_DESKTOP: "niri" } }) {
+  const calls = [];
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture(), {
+    feature: { manifest: { petOverlay: { niri: true } }, settings },
+  });
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env },
+    childProcess: {
+      execFile(command, args, _options, callback) {
+        assert.equal(command, "niri");
+        assert.equal(_options.timeout, 1200);
+        assert.notEqual(_options.shell, true);
+        calls.push(args);
+        if (JSON.stringify(args) === JSON.stringify(["msg", "--json", "windows"])) {
+          callback(execError, windowsJson);
+          return;
+        }
+        callback?.(null, "ok");
+      },
+    },
+  });
+
+  const window = {
+    getBounds: () => ({ x: 1540, y: 736, width: 356, height: 320 }),
+    isDestroyed: () => false,
+  };
+  controller.window = window;
+  controller.codexPetOverlayDesiredWindowBounds = { x: 1540, y: 736, width: 356, height: 320 };
+  controller.codexPetOverlayApplyNiriHints(window);
+
+  return calls;
+}
+
 test("targets only the unambiguous Hyprland pet window address", () => {
   const calls = runHyprlandHintScenario({
     clientsJson: JSON.stringify([
@@ -1059,6 +1095,210 @@ test("environment overrides can turn Hyprland handling off", () => {
   assert.deepEqual(calls, []);
 });
 
+test("targets a tiled Niri pet window by id and moves it without focus actions", () => {
+  const calls = runNiriHintScenario({
+    windowsJson: JSON.stringify([
+      {
+        id: 7,
+        is_floating: false,
+        layout: { window_size: [1920, 1080] },
+        pid: 4242,
+        title: "Codex",
+      },
+      {
+        id: 9,
+        is_floating: false,
+        layout: { window_size: [356, 320] },
+        pid: 4242,
+        title: "Codex Pet Overlay",
+      },
+    ]),
+  });
+
+  assert.equal(JSON.stringify(calls[0]), JSON.stringify(["msg", "--json", "windows"]));
+  assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify([
+    "msg",
+    "action",
+    "move-window-to-floating",
+    "--id",
+    "9",
+  ])));
+  assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify([
+    "msg",
+    "action",
+    "move-floating-window",
+    "--id",
+    "9",
+    "-x",
+    "1540",
+    "-y",
+    "736",
+  ])));
+  assert.ok(calls.every((args) => !args.join(" ").includes("focus")));
+});
+
+test("Niri matching rejects foreign, malformed, and ambiguous pet candidates", () => {
+  const calls = runNiriHintScenario({
+    windowsJson: JSON.stringify([
+      {
+        id: 11,
+        is_floating: true,
+        layout: { window_size: [356, 320] },
+        pid: 9999,
+        title: "Codex Pet Overlay",
+      },
+      {
+        id: "not-safe",
+        is_floating: true,
+        layout: { window_size: [356, 320] },
+        pid: 4242,
+        title: "Codex Pet Overlay",
+      },
+      {
+        id: 12,
+        is_floating: "yes",
+        layout: { window_size: [356, 320] },
+        pid: 4242,
+        title: "Codex Pet Overlay",
+      },
+    ]),
+  });
+
+  assert.equal(JSON.stringify(calls), JSON.stringify([["msg", "--json", "windows"]]));
+
+  const ambiguousCalls = runNiriHintScenario({
+    windowsJson: JSON.stringify([
+      {
+        id: 21,
+        is_floating: true,
+        layout: { window_size: [356, 320] },
+        pid: 4242,
+        title: "Codex Pet Overlay",
+      },
+      {
+        id: 22,
+        is_floating: false,
+        layout: { window_size: [356, 320] },
+        pid: 4242,
+        title: "Codex Pet Overlay",
+      },
+    ]),
+  });
+
+  assert.equal(JSON.stringify(ambiguousCalls), JSON.stringify([["msg", "--json", "windows"]]));
+});
+
+test("Niri callbacks ignore stale overlay windows", () => {
+  const calls = [];
+  let windowsCallback;
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env: { XDG_CURRENT_DESKTOP: "niri" } },
+    childProcess: {
+      execFile(_command, args, _options, callback) {
+        calls.push(args);
+        if (JSON.stringify(args) === JSON.stringify(["msg", "--json", "windows"])) {
+          windowsCallback = callback;
+        }
+      },
+    },
+  });
+  const oldWindow = {
+    getBounds: () => ({ x: 100, y: 100, width: 356, height: 320 }),
+    isDestroyed: () => false,
+  };
+  controller.window = oldWindow;
+  controller.codexPetOverlayDesiredWindowBounds = { x: 100, y: 100, width: 356, height: 320 };
+  controller.codexPetOverlayApplyNiriHints(oldWindow);
+  controller.window = { isDestroyed: () => false };
+
+  windowsCallback(null, JSON.stringify([{
+    id: 42,
+    is_floating: false,
+    layout: { window_size: [356, 320] },
+    pid: 4242,
+    title: "Codex Pet Overlay",
+  }]));
+
+  assert.equal(JSON.stringify(calls), JSON.stringify([["msg", "--json", "windows"]]));
+});
+
+test("missing niri does not keep spawning compositor probes", () => {
+  const calls = [];
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env: { XDG_CURRENT_DESKTOP: "niri" } },
+    childProcess: {
+      execFile(_command, args, _options, callback) {
+        calls.push(args);
+        const error = new Error("missing niri");
+        error.code = "ENOENT";
+        callback(error, "");
+      },
+    },
+  });
+  const window = {
+    getBounds: () => ({ x: 0, y: 0, width: 356, height: 320 }),
+    isDestroyed: () => false,
+  };
+  controller.window = window;
+
+  controller.codexPetOverlayApplyNiriHints(window);
+  controller.codexPetOverlayApplyNiriHints(window);
+
+  assert.equal(JSON.stringify(calls), JSON.stringify([["msg", "--json", "windows"]]));
+});
+
+test("settings and environment can turn Niri handling off", () => {
+  const settingsCalls = runNiriHintScenario({
+    windowsJson: JSON.stringify([{
+      id: 9,
+      is_floating: true,
+      layout: { window_size: [356, 320] },
+      pid: 4242,
+      title: "Codex Pet Overlay",
+    }]),
+    settings: { petOverlay: { niri: false } },
+  });
+  const envCalls = runNiriHintScenario({
+    windowsJson: JSON.stringify([{
+      id: 9,
+      is_floating: true,
+      layout: { window_size: [356, 320] },
+      pid: 4242,
+      title: "Codex Pet Overlay",
+    }]),
+    env: { XDG_CURRENT_DESKTOP: "niri", CODEX_PET_OVERLAY_NIRI: "0" },
+  });
+
+  assert.deepEqual(settingsCalls, []);
+  assert.deepEqual(envCalls, []);
+});
+
+test("Niri scheduling is coalesced when desired bounds change repeatedly", () => {
+  const timers = [];
+  const cleared = [];
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env: { XDG_CURRENT_DESKTOP: "niri" } },
+    setTimeout(callback, delay) {
+      const timer = { callback, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      cleared.push(timer);
+    },
+  });
+  const window = { isDestroyed: () => false };
+
+  controller.codexPetOverlayScheduleNiriHints(window);
+  controller.codexPetOverlayScheduleNiriHints(window);
+
+  assert.deepEqual(timers.map((timer) => timer.delay), [0, 80, 300, 1000, 0, 80, 300, 1000]);
+  assert.deepEqual(cleared, timers.slice(0, 4));
+});
+
 test("settings validation falls back to safe defaults", () => {
   assert.deepEqual(
     mergedPetOverlaySettings({
@@ -1075,6 +1315,7 @@ test("settings validation falls back to safe defaults", () => {
       lockPosition: true,
       margin: 512,
       mode: "interactive",
+      niri: true,
       skipTaskbar: true,
     },
   );

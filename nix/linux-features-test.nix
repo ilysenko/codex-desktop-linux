@@ -16,6 +16,7 @@ let
     "global-dictation"
     "mcp-helper-reaper"
     "remote-mobile-control"
+    "pet-overlay"
     "open-target-discovery"
     "appshots"
   ];
@@ -25,6 +26,7 @@ let
     "mcp-helper-reaper"
     "open-target-discovery"
     "persistent-status-panel"
+    "pet-overlay"
     "remote-mobile-control"
   ];
 
@@ -124,6 +126,7 @@ let
       "global-dictation"
       "persistent-status-panel"
       "mcp-helper-reaper"
+      "pet-overlay"
       "open-target-discovery"
       "appshots"
       "appshots"
