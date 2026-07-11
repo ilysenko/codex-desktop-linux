@@ -133,6 +133,17 @@ inspect_rebuild_candidate() {
     fi
 
     node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" --report-json "$patch_report" "$inspect_dir"
+    if [ -n "${CODEX_PATCH_MATRIX_JSON:-}" ]; then
+        local second_patch_report="${CODEX_PATCH_SECOND_REPORT_JSON:-$report_dir/patch-report-second.json}"
+        node "$SCRIPT_DIR/scripts/ci/patch-rerun-check.js" \
+            --app "$inspect_dir" \
+            --patcher "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" \
+            --first-report "$patch_report" \
+            --second-report "$second_patch_report" \
+            --output "$CODEX_PATCH_MATRIX_JSON"
+        info "Second-pass patch report: $second_patch_report"
+        info "Patch matrix: $CODEX_PATCH_MATRIX_JSON"
+    fi
     write_rebuild_report_json "$rebuild_report" "$dmg_path" "$ELECTRON_VERSION" "$patch_report" ""
 
     info "Patch report: $patch_report"
