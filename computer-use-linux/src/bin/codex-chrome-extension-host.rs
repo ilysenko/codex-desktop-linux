@@ -1090,9 +1090,13 @@ mod tests {
         fs::set_permissions(&resources, fs::Permissions::from_mode(0o700)).unwrap();
 
         let fake_cli = root.join("fake-app-server");
+        let python = test_executable("python3");
         fs::write(
             &fake_cli,
-            r#"#!/usr/bin/python3
+            format!(
+                "#!{}\n{}",
+                python.display(),
+                r#"
 import signal
 import socket
 import subprocess
@@ -1110,13 +1114,14 @@ server.listen()
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 while True:
     time.sleep(0.1)
-"#,
+"#
+            ),
         )
         .unwrap();
         fs::set_permissions(&fake_cli, fs::Permissions::from_mode(0o700)).unwrap();
 
         let extension_id = "abcdefghijklmnopabcdefghijklmnop";
-        let current_exe = PathBuf::from("/proc/self/exe");
+        let current_exe = env::current_exe().unwrap();
         let manifest_path = root.join("chrome-native-hosts-v2.json");
         fs::write(
             &manifest_path,
@@ -1138,8 +1143,8 @@ while True:
                     "paths": {
                         "codexCliPath": fake_cli,
                         "codexHome": codex_home,
-                        "extensionHostPath": current_exe,
-                        "nodePath": "/bin/true",
+                        "extensionHostPath": current_exe.clone(),
+                        "nodePath": current_exe,
                         "resourcesPath": resources
                     },
                     "proxyHost": "127.0.0.1",
@@ -1203,6 +1208,19 @@ while True:
         }
         assert!(!process_is_live(descendant_pid));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn test_executable(name: &str) -> PathBuf {
+        let path = env::var_os("PATH").expect("PATH is required for extension host tests");
+        env::split_paths(&path)
+            .filter(|directory| directory.is_absolute())
+            .map(|directory| directory.join(name))
+            .find(|candidate| {
+                fs::metadata(candidate).is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                })
+            })
+            .unwrap_or_else(|| panic!("could not resolve test executable from PATH: {name}"))
     }
 
     #[test]

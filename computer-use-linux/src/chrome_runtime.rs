@@ -2756,13 +2756,14 @@ mod tests {
         let root = test_root("manifest-selection");
         fs::create_dir_all(&root).unwrap();
         let manifest_path = root.join(MANIFEST_FILE_NAME);
-        let current_host = PathBuf::from("/proc/self/exe");
+        let current_host = env::current_exe().unwrap();
+        let other_host = test_executable("true");
         fs::write(
             &manifest_path,
             serde_json::to_vec(&json!({
                 "schemaVersion": 2,
                 "entries": [
-                    manifest_entry_json("other-host", Path::new("/bin/true"), "2099-01-01T00:00:00Z"),
+                    manifest_entry_json("other-host", &other_host, "2099-01-01T00:00:00Z"),
                     manifest_entry_json("current-host", &current_host, "2026-07-10T00:00:00Z")
                 ]
             }))
@@ -2797,13 +2798,14 @@ mod tests {
         );
 
         let no_match = root.join("no-match.json");
+        let current_host = env::current_exe().unwrap();
         fs::write(
             &no_match,
             serde_json::to_vec(&json!({
                 "schemaVersion": 2,
                 "entries": [manifest_entry_json(
                     "wrong-extension",
-                    Path::new("/proc/self/exe"),
+                    &current_host,
                     "2026-07-10T00:00:00Z"
                 )]
             }))
@@ -3078,6 +3080,7 @@ mod tests {
     }
 
     fn test_entry() -> RuntimeEntry {
+        let executable = env::current_exe().unwrap();
         RuntimeEntry {
             schema_version: 2,
             app_server_protocol_version: 2,
@@ -3093,10 +3096,10 @@ mod tests {
             native_host_version: "1.2.3".to_string(),
             paths: RuntimePaths {
                 browser_client_path: None,
-                codex_cli_path: PathBuf::from("/bin/true"),
+                codex_cli_path: executable.clone(),
                 codex_home: PathBuf::from("/tmp"),
-                extension_host_path: PathBuf::from("/bin/true"),
-                node_path: PathBuf::from("/bin/true"),
+                extension_host_path: executable.clone(),
+                node_path: executable,
                 node_module_dirs: Vec::new(),
                 node_repl_path: None,
                 resources_path: PathBuf::from("/tmp"),
@@ -3108,6 +3111,7 @@ mod tests {
     }
 
     fn manifest_entry_json(entry_id: &str, extension_host_path: &Path, updated_at: &str) -> Value {
+        let executable = env::current_exe().unwrap();
         json!({
             "schemaVersion": 2,
             "appServerProtocolVersion": 2,
@@ -3122,10 +3126,10 @@ mod tests {
             "nativeHostProtocolVersion": 2,
             "nativeHostVersion": "1.2.3",
             "paths": {
-                "codexCliPath": "/bin/true",
+                "codexCliPath": executable,
                 "codexHome": "/tmp",
                 "extensionHostPath": extension_host_path,
-                "nodePath": "/bin/true",
+                "nodePath": executable,
                 "resourcesPath": "/tmp"
             },
             "proxyHost": "127.0.0.1",
@@ -3142,11 +3146,28 @@ mod tests {
         ))
     }
 
+    fn test_executable(name: &str) -> PathBuf {
+        let path = env::var_os("PATH").expect("PATH is required for runtime tests");
+        env::split_paths(&path)
+            .filter(|directory| directory.is_absolute())
+            .map(|directory| directory.join(name))
+            .find(|candidate| {
+                fs::metadata(candidate).is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                })
+            })
+            .unwrap_or_else(|| panic!("could not resolve test executable from PATH: {name}"))
+    }
+
     fn fake_socket_app_server(root: &Path) -> PathBuf {
         let path = root.join("fake-app-server.py");
+        let python = test_executable("python3");
         fs::write(
             &path,
-            r#"#!/usr/bin/python3
+            format!(
+                "#!{}\n{}",
+                python.display(),
+                r#"
 import signal
 import socket
 import sys
@@ -3160,7 +3181,8 @@ server.listen()
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 while True:
     time.sleep(0.1)
-"#,
+"#
+            ),
         )
         .unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
