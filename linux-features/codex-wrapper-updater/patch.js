@@ -3,11 +3,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { linuxSettingsKeys } = require("../../scripts/patches/lib/settings-keys.js");
-const { requireName } = require("../../scripts/patches/lib/minified-js.js");
 
 const HANDLER_NAME = "codex-linux-wrapper-updater";
 const RUNTIME_VERSION = "codex-wrapper-updater-v3";
-const KEYBINDS_ASSET = "keybinds-settings-linux.js";
 const LINUX_DESKTOP_SETTINGS_ASSET = "linux-desktop-settings-linux.js";
 const WRAPPER_UPDATES_SETTING_KEY = linuxSettingsKeys.wrapperUpdates;
 const FEATURE_PICKER_ON_UPDATE_SETTING_KEY = linuxSettingsKeys.featurePickerOnUpdate;
@@ -21,41 +19,32 @@ function applyMainBundlePatch(source) {
     return source;
   }
 
-  const fsVar = requireName(source, "node:fs");
-  const pathVar = requireName(source, "node:path");
-  const childProcessVar =
-    requireName(source, "node:child_process") ?? requireName(source, "child_process");
-  if (fsVar == null || pathVar == null || childProcessVar == null) {
-    warn(
-      "Could not find node:fs/node:path/node:child_process deps",
-      "codex wrapper updater main-bundle patch",
-    );
-    return source;
-  }
-
   const helper = [
+    `function codexLinuxWrapFs(){return require(\`node:fs\`)}`,
+    `function codexLinuxWrapPath(){return require(\`node:path\`)}`,
+    `function codexLinuxWrapChildProcess(){return require(\`node:child_process\`)}`,
     `function codexLinuxWrapHome(){return process.env.HOME||\`\`}`,
     `function codexLinuxWrapAppId(){let i=process.env.CODEX_LINUX_APP_ID||process.env.CODEX_APP_ID||\`codex-desktop\`;return /^[A-Za-z0-9._-]+$/.test(i)?i:\`codex-desktop\`}`,
-    `function codexLinuxWrapAppStateDir(){let e=process.env.CODEX_LINUX_APP_STATE_DIR;if(typeof e===\`string\`&&e.trim())return e;let h=codexLinuxWrapHome();let r=process.env.XDG_STATE_HOME||(h&&${pathVar}.join(h,\`.local\`,\`state\`));return r?${pathVar}.join(r,codexLinuxWrapAppId()):null}`,
-    `function codexLinuxWrapStatePath(){let h=codexLinuxWrapHome();let d=process.env.XDG_STATE_HOME||(h&&${pathVar}.join(h,\`.local\`,\`state\`));return d?${pathVar}.join(d,\`codex-update-manager\`,\`state.json\`):null}`,
-    `function codexLinuxWrapMarkerPath(){let d=codexLinuxWrapAppStateDir();return d?${pathVar}.join(d,\`codex-wrapper-updater\`,\`pending\`):null}`,
-    `function codexLinuxWrapReadStatus(){try{let p=codexLinuxWrapStatePath();if(!p||!${fsVar}.existsSync(p))return null;return JSON.parse(${fsVar}.readFileSync(p,\`utf8\`))}catch{return null}}`,
+    `function codexLinuxWrapAppStateDir(){let __codexWrapExplicitStateDir=process.env.CODEX_LINUX_APP_STATE_DIR;if(typeof __codexWrapExplicitStateDir===\`string\`&&__codexWrapExplicitStateDir.trim())return __codexWrapExplicitStateDir;let __codexWrapHome=codexLinuxWrapHome();let __codexWrapStateRoot=process.env.XDG_STATE_HOME||(__codexWrapHome&&codexLinuxWrapPath().join(__codexWrapHome,\`.local\`,\`state\`));return __codexWrapStateRoot?codexLinuxWrapPath().join(__codexWrapStateRoot,codexLinuxWrapAppId()):null}`,
+    `function codexLinuxWrapStatePath(){let __codexWrapHome=codexLinuxWrapHome();let __codexWrapStateRoot=process.env.XDG_STATE_HOME||(__codexWrapHome&&codexLinuxWrapPath().join(__codexWrapHome,\`.local\`,\`state\`));return __codexWrapStateRoot?codexLinuxWrapPath().join(__codexWrapStateRoot,\`codex-update-manager\`,\`state.json\`):null}`,
+    `function codexLinuxWrapMarkerPath(){let __codexWrapStateDir=codexLinuxWrapAppStateDir();return __codexWrapStateDir?codexLinuxWrapPath().join(__codexWrapStateDir,\`codex-wrapper-updater\`,\`pending\`):null}`,
+    `function codexLinuxWrapReadStatus(){try{let __codexWrapStatePath=codexLinuxWrapStatePath();if(!__codexWrapStatePath||!codexLinuxWrapFs().existsSync(__codexWrapStatePath))return null;return JSON.parse(codexLinuxWrapFs().readFileSync(__codexWrapStatePath,\`utf8\`))}catch{return null}}`,
     `function codexLinuxWrapShouldShow(s){return !!(s&&typeof s===\`object\`&&s.wrapper_dev_mode!==!0&&typeof s.candidate_wrapper_commit===\`string\`&&s.candidate_wrapper_commit.length>0)}`,
     `function codexLinuxWrapStatusPayload(){let s=codexLinuxWrapReadStatus();return{ok:!0,show:codexLinuxWrapShouldShow(s),dev_mode:!!(s&&s.wrapper_dev_mode===!0),changelog:s?s.wrapper_changelog||\`\`:\`\`,commit:s?s.candidate_wrapper_commit||\`\`:\`\`,installed_commit:s?s.installed_wrapper_commit||\`\`:\`\`}}`,
     `function codexLinuxWrapManagerPath(){let e=process.env.CODEX_UPDATE_MANAGER_PATH;return typeof e===\`string\`&&e.trim().length>0?e:\`codex-update-manager\`}`,
-    `function codexLinuxWrapSpawnCheck(){try{let c=${childProcessVar}.spawn(codexLinuxWrapManagerPath(),[\`check-wrapper\`],{stdio:\`ignore\`,detached:!0,env:process.env});c.on(\`error\`,()=>{});c.unref()}catch{}}`,
+    `function codexLinuxWrapSpawnCheck(){try{let __codexWrapCheckProcess=codexLinuxWrapChildProcess().spawn(codexLinuxWrapManagerPath(),[\`check-wrapper\`],{stdio:\`ignore\`,detached:!0,env:process.env});__codexWrapCheckProcess.on(\`error\`,()=>{});__codexWrapCheckProcess.unref()}catch{}}`,
     // Feature picker on update: resolve settings.json the same way the launcher
     // and launch-actions do, and gate the on-click picker on the
     // `codex-linux-feature-picker-on-update` toggle (absent ⇒ ask) plus a live
     // display. The picker runs synchronously here, at click time, because the
     // detached apply runs after the app exits with no display.
     `function codexLinuxWrapSettingsAppId(){let e=process.env.CODEX_LINUX_APP_ID||process.env.CODEX_APP_ID||\`codex-desktop\`;return/^[A-Za-z0-9._-]+$/.test(e)?e:\`codex-desktop\`}`,
-    `function codexLinuxWrapSettingsPath(){let e=process.env.CODEX_LINUX_SETTINGS_FILE;if(typeof e===\`string\`&&e.length>0)return e;let h=codexLinuxWrapHome();let t=process.env.XDG_CONFIG_HOME||(h&&${pathVar}.join(h,\`.config\`));return t?${pathVar}.join(t,codexLinuxWrapSettingsAppId(),\`settings.json\`):null}`,
-    `function codexLinuxWrapPickerEnabled(){try{let p=codexLinuxWrapSettingsPath();if(!p||!${fsVar}.existsSync(p))return!0;let s=JSON.parse(${fsVar}.readFileSync(p,\`utf8\`));if(!s||typeof s!==\`object\`)return!0;let v=s[\`codex-linux-feature-picker-on-update\`];if(v==null)return!0;if(typeof v===\`boolean\`)return v;if(typeof v===\`number\`)return v!==0;if(typeof v===\`string\`){let n=v.trim().toLowerCase();return!([\`0\`,\`false\`,\`no\`,\`off\`].includes(n))}return!0}catch{return!0}}`,
+    `function codexLinuxWrapSettingsPath(){let __codexWrapSettingsFile=process.env.CODEX_LINUX_SETTINGS_FILE;if(typeof __codexWrapSettingsFile===\`string\`&&__codexWrapSettingsFile.length>0)return __codexWrapSettingsFile;let __codexWrapHome=codexLinuxWrapHome();let __codexWrapConfigRoot=process.env.XDG_CONFIG_HOME||(__codexWrapHome&&codexLinuxWrapPath().join(__codexWrapHome,\`.config\`));return __codexWrapConfigRoot?codexLinuxWrapPath().join(__codexWrapConfigRoot,codexLinuxWrapSettingsAppId(),\`settings.json\`):null}`,
+    `function codexLinuxWrapPickerEnabled(){try{let __codexWrapSettingsPath=codexLinuxWrapSettingsPath();if(!__codexWrapSettingsPath||!codexLinuxWrapFs().existsSync(__codexWrapSettingsPath))return!0;let s=JSON.parse(codexLinuxWrapFs().readFileSync(__codexWrapSettingsPath,\`utf8\`));if(!s||typeof s!==\`object\`)return!0;let v=s[\`codex-linux-feature-picker-on-update\`];if(v==null)return!0;if(typeof v===\`boolean\`)return v;if(typeof v===\`number\`)return v!==0;if(typeof v===\`string\`){let n=v.trim().toLowerCase();return!([\`0\`,\`false\`,\`no\`,\`off\`].includes(n))}return!0}catch{return!0}}`,
     `function codexLinuxWrapHasDisplay(){let d=process.env.DISPLAY,w=process.env.WAYLAND_DISPLAY;return!!((d&&d.trim())||(w&&w.trim()))}`,
-    `function codexLinuxWrapRunPicker(){try{${childProcessVar}.spawnSync(codexLinuxWrapManagerPath(),[\`pick-features\`,\`--json\`],{stdio:\`ignore\`,env:process.env})}catch{}}`,
-    `function codexLinuxWrapWriteMarker(){let p=codexLinuxWrapMarkerPath();if(!p)return{ok:!1,reason:\`no-marker-path\`};try{${fsVar}.mkdirSync(${pathVar}.dirname(p),{recursive:!0});${fsVar}.writeFileSync(p,new Date().toISOString());return{ok:!0,path:p}}catch(e){return{ok:!1,error:String(e?.message||e)}}}`,
-    `function codexLinuxWrapInstallNow(){if(codexLinuxWrapHasDisplay()&&codexLinuxWrapPickerEnabled())codexLinuxWrapRunPicker();let m=codexLinuxWrapWriteMarker();if(!m.ok)return m;try{let a=require(\`electron\`).app;setTimeout(()=>a.exit(0),120);return{ok:!0,path:m.path}}catch(e){return{ok:!1,error:String(e?.message||e)}}}`,
+    `function codexLinuxWrapRunPicker(){try{codexLinuxWrapChildProcess().spawnSync(codexLinuxWrapManagerPath(),[\`pick-features\`,\`--json\`],{stdio:\`ignore\`,env:process.env})}catch{}}`,
+    `function codexLinuxWrapWriteMarker(){let __codexWrapMarkerPath=codexLinuxWrapMarkerPath();if(!__codexWrapMarkerPath)return{ok:!1,reason:\`no-marker-path\`};try{codexLinuxWrapFs().mkdirSync(codexLinuxWrapPath().dirname(__codexWrapMarkerPath),{recursive:!0});codexLinuxWrapFs().writeFileSync(__codexWrapMarkerPath,new Date().toISOString());return{ok:!0,path:__codexWrapMarkerPath}}catch(e){return{ok:!1,error:String(e?.message||e)}}}`,
+    `function codexLinuxWrapInstallNow(){if(codexLinuxWrapHasDisplay()&&codexLinuxWrapPickerEnabled())codexLinuxWrapRunPicker();let __codexWrapMarker=codexLinuxWrapWriteMarker();if(!__codexWrapMarker.ok)return __codexWrapMarker;try{let __codexWrapElectronApp=require(\`electron\`).app;setTimeout(()=>__codexWrapElectronApp.exit(0),120);return{ok:!0,path:__codexWrapMarker.path}}catch(e){return{ok:!1,error:String(e?.message||e)}}}`,
     `function codexLinuxWrapHandle(e={}){let action=e&&e.action;if(action===\`status\`)return codexLinuxWrapStatusPayload();if(action===\`check\`){codexLinuxWrapSpawnCheck();return{ok:!0}}if(action===\`install\`)return codexLinuxWrapInstallNow();return{ok:!1,reason:\`unknown-action\`}}`,
     `(()=>{if(process.env.CODEX_LINUX_MULTI_LAUNCH!==\`1\`)codexLinuxWrapSpawnCheck()})();`,
   ].join("");
@@ -112,7 +101,7 @@ function applyWebviewRuntimePatch(source) {
   if (source.includes(`codexLinuxWrapperUpdaterVersion=`)) {
     return source;
   }
-  return source + wrapperRuntimeSource();
+  return source.endsWith("\n") ? source + wrapperRuntimeSource() : `${source}\n${wrapperRuntimeSource()}`;
 }
 
 function applyWrapperUpdateSettingsPatch(source) {
@@ -163,51 +152,6 @@ function applyWrapperUpdateSettingsPatch(source) {
   return next;
 }
 
-function applyWrapperUpdateGeneralSettingsPatch(source) {
-  const hasWrapperSetting = source.includes("Check for ChatGPT Desktop for Linux updates");
-  const hasFeaturePickerSetting = source.includes("Ask which features to enable on update");
-  if (hasWrapperSetting && hasFeaturePickerSetting) {
-    return source;
-  }
-
-  const functionNeedle = "function Br(){";
-  if (!source.includes(functionNeedle)) {
-    throw new Error("could not find general power settings function");
-  }
-
-  const wrapperSettingFunction = hasWrapperSetting
-    ? ""
-    :
-    `function CodexLinuxWrapperUpdatesSetting(){let[e,t]=(0,X.useState)(!1),[n,r]=(0,X.useState)(!0),[i,a]=(0,X.useState)(null),o=x();(0,X.useEffect)(()=>{let e=!0;return r(!0),N(\`get-global-state\`,{params:{key:${JSON.stringify(WRAPPER_UPDATES_SETTING_KEY)}}}).then(n=>{e&&(t(n?.value??!1),a(null))}).catch(t=>{e&&a(t instanceof Error?t.message:String(t))}).finally(()=>{e&&r(!1)}),()=>{e=!1}},[]);let s=(0,$.jsx)(w,{id:\`settings.general.wrapperUpdates.label\`,defaultMessage:\`Check for ChatGPT Desktop for Linux updates\`,description:\`Label for Linux wrapper update checks setting\`}),c=(0,$.jsx)(w,{id:\`settings.general.wrapperUpdates.description\`,defaultMessage:\`Check for Linux wrapper updates from codex-desktop-linux in addition to upstream ChatGPT app updates.\`,description:\`Description for Linux wrapper update checks setting\`});i&&(c=(0,$.jsxs)(\`div\`,{className:\`flex flex-col gap-1\`,children:[c,(0,$.jsx)(\`span\`,{className:\`text-token-error-foreground\`,children:i})]}));let l=o.formatMessage({id:\`settings.general.wrapperUpdates.label\`,defaultMessage:\`Check for ChatGPT Desktop for Linux updates\`,description:\`Label for Linux wrapper update checks setting\`});return(0,$.jsx)(J,{label:s,description:c,control:(0,$.jsx)(q,{checked:e===!0,disabled:n,onChange:o=>{let s=e;t(o),a(null),N(\`set-global-state\`,{params:{key:${JSON.stringify(WRAPPER_UPDATES_SETTING_KEY)},value:o}}).catch(e=>{t(s),a(e instanceof Error?e.message:String(e))})},ariaLabel:l})})}`;
-  const featurePickerSettingFunction = hasFeaturePickerSetting
-    ? ""
-    :
-    `function CodexLinuxFeaturePickerOnUpdateSetting(){let[e,t]=(0,X.useState)(!0),[n,r]=(0,X.useState)(!0),[i,a]=(0,X.useState)(null),o=x();(0,X.useEffect)(()=>{let e=!0;return r(!0),N(\`get-global-state\`,{params:{key:${JSON.stringify(FEATURE_PICKER_ON_UPDATE_SETTING_KEY)}}}).then(n=>{e&&(t(n?.value??!0),a(null))}).catch(t=>{e&&a(t instanceof Error?t.message:String(t))}).finally(()=>{e&&r(!1)}),()=>{e=!1}},[]);let s=(0,$.jsx)(w,{id:\`settings.general.featurePickerOnUpdate.label\`,defaultMessage:\`Ask which features to enable on update\`,description:\`Label for Linux feature picker on update setting\`}),c=(0,$.jsx)(w,{id:\`settings.general.featurePickerOnUpdate.description\`,defaultMessage:\`When on, clicking Update opens a checklist to pick optional Linux features before rebuilding. Turn off to keep your current feature selection without prompting.\`,description:\`Description for Linux feature picker on update setting\`});i&&(c=(0,$.jsxs)(\`div\`,{className:\`flex flex-col gap-1\`,children:[c,(0,$.jsx)(\`span\`,{className:\`text-token-error-foreground\`,children:i})]}));let l=o.formatMessage({id:\`settings.general.featurePickerOnUpdate.label\`,defaultMessage:\`Ask which features to enable on update\`,description:\`Label for Linux feature picker on update setting\`});return(0,$.jsx)(J,{label:s,description:c,control:(0,$.jsx)(q,{checked:e===!0,disabled:n,onChange:o=>{let s=e;t(o),a(null),N(\`set-global-state\`,{params:{key:${JSON.stringify(FEATURE_PICKER_ON_UPDATE_SETTING_KEY)},value:o}}).catch(e=>{t(s),a(e instanceof Error?e.message:String(e))})},ariaLabel:l})})}`;
-
-  let next = source.replace(
-    functionNeedle,
-    `${wrapperSettingFunction}${featurePickerSettingFunction}${functionNeedle}`,
-  );
-
-  const powerRowNeedle = `D=(0,$.jsx)(K,{electron:!0,children:(0,$.jsx)(Br,{})})`;
-  const powerRowPatch =
-    `D=(0,$.jsx)(K,{electron:!0,children:(0,$.jsxs)($.Fragment,{children:[(0,$.jsx)(Br,{}),(0,$.jsx)(CodexLinuxWrapperUpdatesSetting,{}),(0,$.jsx)(CodexLinuxFeaturePickerOnUpdateSetting,{})]})})`;
-  if (next.includes(powerRowNeedle)) {
-    next = next.replace(powerRowNeedle, powerRowPatch);
-    return next;
-  }
-
-  const existingWrapperRowNeedle = `children:[(0,$.jsx)(Br,{}),(0,$.jsx)(CodexLinuxWrapperUpdatesSetting,{})]`;
-  const existingWrapperRowPatch =
-    `children:[(0,$.jsx)(Br,{}),(0,$.jsx)(CodexLinuxWrapperUpdatesSetting,{}),(0,$.jsx)(CodexLinuxFeaturePickerOnUpdateSetting,{})]`;
-  if (next.includes(existingWrapperRowNeedle)) {
-    next = next.replace(existingWrapperRowNeedle, existingWrapperRowPatch);
-    return next;
-  }
-
-  throw new Error("could not find general power settings row");
-}
-
 function patchWrapperUpdateSettingsAssets(extractedDir) {
   try {
     const assetsDir = path.join(extractedDir, "webview", "assets");
@@ -215,58 +159,18 @@ function patchWrapperUpdateSettingsAssets(extractedDir) {
       return { matched: false, changed: 0, reason: `missing webview assets directory ${assetsDir}` };
     }
 
-    for (const settingsAsset of [LINUX_DESKTOP_SETTINGS_ASSET, KEYBINDS_ASSET]) {
-      const settingsPath = path.join(assetsDir, settingsAsset);
-      if (!fs.existsSync(settingsPath)) {
-        continue;
-      }
-      const current = fs.readFileSync(settingsPath, "utf8");
-      const patched = applyWrapperUpdateSettingsPatch(current);
-      if (patched === current) {
-        return { matched: true, changed: 0 };
-      }
-      fs.writeFileSync(settingsPath, patched, "utf8");
-      return { matched: true, changed: 1 };
+    const settingsPath = path.join(assetsDir, LINUX_DESKTOP_SETTINGS_ASSET);
+    if (!fs.existsSync(settingsPath)) {
+      return { matched: false, changed: 0, reason: `${LINUX_DESKTOP_SETTINGS_ASSET} is not present` };
     }
 
-    const generalSettingsAssets = fs
-      .readdirSync(assetsDir)
-      .filter((name) => /^general-settings-.*\.js$/.test(name));
-    if (generalSettingsAssets.length === 0) {
-      return { matched: false, changed: 0, reason: `${LINUX_DESKTOP_SETTINGS_ASSET}, ${KEYBINDS_ASSET}, and general settings asset are not present` };
+    const current = fs.readFileSync(settingsPath, "utf8");
+    const patched = applyWrapperUpdateSettingsPatch(current);
+    if (patched === current) {
+      return { matched: true, changed: 0 };
     }
-
-    let lastError = null;
-    for (const generalSettingsAsset of generalSettingsAssets) {
-      const generalPath = path.join(assetsDir, generalSettingsAsset);
-      const current = fs.readFileSync(generalPath, "utf8");
-      try {
-        const patched = applyWrapperUpdateGeneralSettingsPatch(current);
-        if (patched === current) {
-          return { matched: true, changed: 0 };
-        }
-        fs.writeFileSync(generalPath, patched, "utf8");
-        return { matched: true, changed: 1 };
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-      }
-    }
-
-    if (
-      lastError != null &&
-      (
-        lastError.includes("could not find general power settings function") ||
-        lastError.includes("could not find general power settings row")
-      )
-    ) {
-      return {
-        matched: true,
-        changed: 0,
-        reason: "upstream settings shape does not expose the legacy wrapper update toggle extension point",
-      };
-    }
-
-    return { matched: false, changed: 0, reason: lastError ?? "could not patch general settings asset" };
+    fs.writeFileSync(settingsPath, patched, "utf8");
+    return { matched: true, changed: 1 };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`WARN: Wrapper update settings patch skipped: ${message}`);
@@ -281,7 +185,6 @@ module.exports = {
   WRAPPER_UPDATES_SETTING_KEY,
   applyMainBundlePatch,
   applyWebviewRuntimePatch,
-  applyWrapperUpdateGeneralSettingsPatch,
   applyWrapperUpdateSettingsPatch,
   patchWrapperUpdateSettingsAssets,
   descriptors: [
