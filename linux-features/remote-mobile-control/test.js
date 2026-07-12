@@ -10,6 +10,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const {
+  enabledLinuxFeatureStageHooks,
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
@@ -458,38 +459,48 @@ function writeDesktopAppServerRemoteControlMarker(appDir) {
 test("remote mobile control feature stays disabled until listed in features.json", () => {
   withTempFeatureRoot([], (root) => {
     assert.deepEqual(loadLinuxFeaturePatchDescriptors({ featuresRoot: root }), []);
+    assert.deepEqual(enabledLinuxFeatureStageHooks({ featuresRoot: root }), []);
   });
 });
 
-test("remote mobile stage hook writes installed Desktop app-server ownership marker from patched app layout", () => {
+test("remote mobile stage hook is idempotent and stages its markers and executable hook", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-stage-"));
   try {
     const installDir = path.join(tempRoot, "package", "opt", "codex-desktop");
     const workDir = path.join(tempRoot, "work");
     const buildDir = path.join(workDir, "app-extracted", ".vite", "build");
+    const featureMarker = path.join(installDir, ".codex-linux", "remote-mobile-control-enabled");
     const marker = path.join(installDir, ".codex-linux", "desktop-app-server-remote-control-enabled");
     const coldStartHook = path.join(installDir, ".codex-linux", "cold-start.d", "remote-mobile-control");
-
-    fs.mkdirSync(buildDir, { recursive: true });
-    fs.writeFileSync(path.join(buildDir, "main.js"), "globalThis.codexLinuxRemoteMobileAppServerArgs=true;");
-
-    const result = runStageHook({
+    const env = {
       ARCH: "x64",
       CODEX_UPSTREAM_APP_DIR: path.join(tempRoot, "upstream-app"),
       INSTALL_DIR: installDir,
       SCRIPT_DIR: REPO_ROOT,
       WORK_DIR: workDir,
-    });
+    };
 
-    assert.equal(result.status, 0, result.stderr || result.stdout);
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "main.js"), "globalThis.codexLinuxRemoteMobileAppServerArgs=true;");
+
+    const first = runStageHook(env);
+    const second = runStageHook(env);
+
+    assert.equal(first.status, 0, first.stderr || first.stdout);
+    assert.equal(second.status, 0, second.stderr || second.stdout);
+    assert.equal(fs.readFileSync(featureMarker, "utf8"), "remote-mobile-control\n");
     assert.equal(fs.readFileSync(marker, "utf8"), "desktop-app-server-remote-control\n");
-    assert.equal(fs.existsSync(coldStartHook), true);
+    assert.equal(fs.statSync(coldStartHook).mode & 0o777, 0o755);
+    assert.equal(
+      fs.readFileSync(coldStartHook, "utf8"),
+      fs.readFileSync(path.join(__dirname, "cold-start-hook.sh"), "utf8"),
+    );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
 
-test("remote mobile stage hook leaves Desktop ownership marker absent when patch marker is missing", () => {
+test("remote mobile stage hook removes a stale ownership marker when the patch marker is missing", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-stage-"));
   try {
     const installDir = path.join(tempRoot, "package", "opt", "codex-desktop");
@@ -498,7 +509,9 @@ test("remote mobile stage hook leaves Desktop ownership marker absent when patch
     const marker = path.join(installDir, ".codex-linux", "desktop-app-server-remote-control-enabled");
 
     fs.mkdirSync(buildDir, { recursive: true });
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
     fs.writeFileSync(path.join(buildDir, "main.js"), "globalThis.someOtherPatch=true;");
+    fs.writeFileSync(marker, "stale\n");
 
     const result = runStageHook({
       ARCH: "x64",
