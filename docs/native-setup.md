@@ -24,6 +24,19 @@ If dependencies are already installed:
 make install-native
 ```
 
+To play a best-effort sound immediately before an interactive `sudo` password
+prompt, opt in with `CODEX_SUDO_ALERT=1`:
+
+```bash
+CODEX_SUDO_ALERT=1 make install-native
+CODEX_SUDO_ALERT=1 make bootstrap-native
+CODEX_SUDO_ALERT=1 make update-native
+```
+
+The alert is skipped while the existing `sudo` credential timestamp is valid.
+It tries the desktop sound system first and falls back to the terminal bell.
+Missing audio tools, sound files, or audio services never block installation.
+
 ## Guided Setup
 
 ```bash

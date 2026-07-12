@@ -2777,6 +2777,104 @@ test_native_shortcut_targets_compose_existing_flows() {
     assert_contains "$setup_log" 'bash scripts/bootstrap-wizard.sh'
 }
 
+test_sudo_alert_wrapper() {
+    info "Checking opt-in sudo password alerts"
+    local workspace="$TMP_DIR/sudo-alert"
+    local bin_dir="$workspace/bin"
+    local log_file="$workspace/events.log"
+    local wrapper="$REPO_DIR/scripts/sudo-with-alert.sh"
+    mkdir -p "$bin_dir"
+
+    cat > "$bin_dir/sudo" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf 'sudo:%s\n' "$*" >> "$SUDO_ALERT_TEST_LOG"
+if [ "${1-}" = "-n" ] && [ "${2-}" = "-v" ]; then
+    exit "${SUDO_ALERT_TEST_CACHE_STATUS:-0}"
+fi
+if [ "${1-}" = "-v" ]; then
+    exit "${SUDO_ALERT_TEST_AUTH_STATUS:-0}"
+fi
+exit "${SUDO_ALERT_TEST_COMMAND_STATUS:-0}"
+EOF
+    chmod +x "$bin_dir/sudo"
+
+    cat > "$bin_dir/pw-play" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf 'alert:%s\n' "$*" >> "$SUDO_ALERT_TEST_LOG"
+exit "${SUDO_ALERT_TEST_SOUND_STATUS:-0}"
+EOF
+    chmod +x "$bin_dir/pw-play"
+
+    : > "$log_file"
+    PATH="$bin_dir:$HOST_TOOL_PATH" SUDO_ALERT_TEST_LOG="$log_file" \
+        "$wrapper" true
+    assert_occurrence_count "$log_file" '^sudo:true$' 1
+    assert_not_contains "$log_file" 'sudo:-n -v'
+    assert_not_contains "$log_file" 'alert:'
+
+    : > "$log_file"
+    CODEX_SUDO_ALERT=1 PATH="$bin_dir:$HOST_TOOL_PATH" SUDO_ALERT_TEST_LOG="$log_file" \
+        "$wrapper" true
+    assert_contains "$log_file" 'sudo:-n -v'
+    assert_not_contains "$log_file" 'alert:'
+    assert_contains "$log_file" 'sudo:true'
+
+    : > "$log_file"
+    CODEX_SUDO_ALERT=1 SUDO_ALERT_TEST_CACHE_STATUS=1 \
+        PATH="$bin_dir:$HOST_TOOL_PATH" SUDO_ALERT_TEST_LOG="$log_file" \
+        "$wrapper" true
+    [ "$(sed -n '1p' "$log_file")" = 'sudo:-n -v' ] || fail "Expected cached sudo check first"
+    [ "$(sed -n '2p' "$log_file")" = 'alert:/usr/share/sounds/freedesktop/stereo/dialog-warning.oga' ] \
+        || fail "Expected alert before authentication"
+    [ "$(sed -n '3p' "$log_file")" = 'sudo:-v' ] || fail "Expected sudo authentication after alert"
+    [ "$(sed -n '4p' "$log_file")" = 'sudo:true' ] || fail "Expected command after authentication"
+
+    : > "$log_file"
+    CODEX_SUDO_ALERT=1 SUDO_ALERT_TEST_CACHE_STATUS=1 SUDO_ALERT_TEST_SOUND_STATUS=1 \
+        PATH="$bin_dir:$HOST_TOOL_PATH" SUDO_ALERT_TEST_LOG="$log_file" \
+        "$wrapper" true 2>/dev/null
+    assert_contains "$log_file" 'sudo:-v'
+    assert_contains "$log_file" 'sudo:true'
+
+    : > "$log_file"
+    local status=0
+    CODEX_SUDO_ALERT=1 SUDO_ALERT_TEST_CACHE_STATUS=1 SUDO_ALERT_TEST_AUTH_STATUS=23 \
+        PATH="$bin_dir:$HOST_TOOL_PATH" SUDO_ALERT_TEST_LOG="$log_file" \
+        "$wrapper" true 2>/dev/null || status=$?
+    [ "$status" -eq 23 ] || fail "Expected sudo authentication failure status, got $status"
+    assert_not_contains "$log_file" 'sudo:true'
+
+    : > "$log_file"
+    status=0
+    CODEX_SUDO_ALERT=1 SUDO_ALERT_TEST_COMMAND_STATUS=17 \
+        PATH="$bin_dir:$HOST_TOOL_PATH" SUDO_ALERT_TEST_LOG="$log_file" \
+        "$wrapper" true || status=$?
+    [ "$status" -eq 17 ] || fail "Expected privileged command status, got $status"
+}
+
+test_native_sudo_alert_wiring() {
+    info "Checking native targets route sudo through the alert wrapper"
+    local install_log="$TMP_DIR/make-install-sudo-alert.log"
+    local bootstrap_log="$TMP_DIR/make-bootstrap-sudo-alert.log"
+    local update_log="$TMP_DIR/make-update-sudo-alert.log"
+
+    CODEX_SUDO_ALERT=1 make -n -C "$REPO_DIR" install >"$install_log"
+    assert_occurrence_count "$install_log" 'scripts/sudo-with-alert.sh' 5
+
+    CODEX_SUDO_ALERT=1 make -n -C "$REPO_DIR" bootstrap-native >"$bootstrap_log"
+    assert_contains "$bootstrap_log" 'bash scripts/install-deps.sh'
+    assert_contains "$bootstrap_log" 'install-native'
+
+    CODEX_SUDO_ALERT=1 make -n -C "$REPO_DIR" update-native >"$update_log"
+    assert_contains "$update_log" 'git pull --ff-only'
+    assert_contains "$update_log" 'install-native'
+
+    assert_contains "$REPO_DIR/scripts/install-deps.sh" 'sudo-with-alert.sh'
+    assert_contains "$REPO_DIR/Makefile" 'CODEX_SUDO_ALERT=1'
+}
+
 test_fedora_dependency_bootstrap_installs_rpmbuild() {
     info "Checking Fedora dependency bootstrap includes rpmbuild and C++ build tools"
     local install_deps="$REPO_DIR/scripts/install-deps.sh"
@@ -9082,6 +9180,8 @@ main() {
     test_transactional_install_uses_managed_node_and_isolated_reports
     test_installer_cleanup_handles_readonly_trees
     test_native_shortcut_targets_compose_existing_flows
+    test_sudo_alert_wrapper
+    test_native_sudo_alert_wiring
     test_fedora_dependency_bootstrap_installs_rpmbuild
     test_fedora_atomic_rpm_ostree_target_detection
     test_setup_native_wizard_noninteractive_feature_writer
