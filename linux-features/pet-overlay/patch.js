@@ -3,6 +3,7 @@
 const VALID_GRAVITIES = new Set(["bottom-right", "bottom-left", "top-right", "top-left"]);
 const DESCRIPTOR_ID = "pet-overlay-main";
 const AVATAR_SELECTION_REFRESH_MARKER = "codexPetOverlayRefreshAvatarWindows";
+const PET_OVERLAY_METHODS_VERSION = 2;
 
 function findMatchingBrace(source, openIndex) {
   let depth = 0;
@@ -148,6 +149,7 @@ function firstMethodArgument(methodText, methodName, index) {
 
 function buildPetOverlayMethods(settings) {
   return [
+    `codexPetOverlayMethodsVersion(){return ${PET_OVERLAY_METHODS_VERSION}}`,
     `codexPetOverlaySettings(){let e={margin:${settings.margin},gravity:\`${settings.gravity}\`,allWorkspaces:${boolLiteral(settings.allWorkspaces)},alwaysOnTop:${boolLiteral(settings.alwaysOnTop)},skipTaskbar:${boolLiteral(settings.skipTaskbar)},lockPosition:${boolLiteral(settings.lockPosition)},mode:\`${settings.mode}\`,hyprland:${boolLiteral(settings.hyprland)},niri:${boolLiteral(settings.niri)}};try{let t=process.env.CODEX_PET_OVERLAY_MARGIN??process.env.CODEX_PET_LINUX_MARGIN,n=Number(t);Number.isFinite(n)&&(e.margin=Math.max(0,Math.min(512,Math.round(n))));let r=process.env.CODEX_PET_OVERLAY_GRAVITY??process.env.CODEX_PET_LINUX_GRAVITY;[\`bottom-right\`,\`bottom-left\`,\`top-right\`,\`top-left\`].includes(r)&&(e.gravity=r);let i=process.env.CODEX_PET_OVERLAY_MODE??process.env.CODEX_PET_LINUX_MODE;(i===\`interactive\`||i===\`passive\`)&&(e.mode=i);let a=process.env.CODEX_PET_OVERLAY_LOCK_POSITION??process.env.CODEX_PET_LINUX_LOCK_POSITION;a===\`1\`&&(e.lockPosition=!0),a===\`0\`&&(e.lockPosition=!1);let o=process.env.CODEX_PET_OVERLAY_HYPRLAND??process.env.CODEX_PET_LINUX_HYPRLAND;o===\`1\`&&(e.hyprland=!0),o===\`0\`&&(e.hyprland=!1);let s=process.env.CODEX_PET_OVERLAY_NIRI;s===\`1\`&&(e.niri=!0),s===\`0\`&&(e.niri=!1)}catch{}return e}`,
     "codexPetOverlayRect(e){if(e==null)return null;let t=Number(e.x),n=Number(e.y),r=Number(e.width),i=Number(e.height);return[t,n,r,i].every(Number.isFinite)&&r>0&&i>0?{x:t,y:n,width:r,height:i}:null}",
     "codexPetOverlayDisplayRect(e){return this.codexPetOverlayRect(e?.workArea??e?.bounds??e)}",
@@ -158,7 +160,7 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlayLayoutAtWindowPosition(e,t){if(e==null||t==null||t.windowBounds==null)return t;let n={...t.windowBounds,x:Math.round(e.x),y:Math.round(e.y)},r=this.codexPetOverlayMascotRect(t),i=r==null?{x:n.x,y:n.y,width:t.anchor?.width??n.width,height:t.anchor?.height??n.height}:{x:n.x+r.left,y:n.y+r.top,width:r.width,height:r.height},a=t.anchor==null?t.anchor:{...t.anchor,x:Math.round(i.x),y:Math.round(i.y),width:t.anchor.width??i.width,height:t.anchor.height??i.height};return{...t,anchor:a,windowBounds:n}}",
     "codexPetOverlayGravityBounds(e,t,n){if(e==null||t==null||t.windowBounds==null)return null;let r={...t.windowBounds},i=this.codexPetOverlayMascotRect(t)??{left:0,top:0,width:Number(r.width),height:Number(r.height)},a=Number(i.left),o=Number(i.top),s=Number(i.width),c=Number(i.height);if(![a,o,s,c].every(Number.isFinite)||s<=0||c<=0)return null;let l=Math.max(0,Math.min(512,Number(n?.margin)||0)),u=String(n?.gravity??`bottom-right`);return r.x=u.endsWith(`left`)?Math.round(e.x+l-a):Math.round(e.x+e.width-l-a-s),r.y=u.startsWith(`top`)?Math.round(e.y+l-o):Math.round(e.y+e.height-l-o-c),r}",
     "codexPetOverlayTrayAboveLeft(e){if(process.platform!==`linux`||e==null||e.windowBounds==null||e.mascot==null||e.tray==null)return e;let t=Number(e.windowBounds.width),n=Number(e.windowBounds.height),r=Number(e.mascot.width),i=Number(e.mascot.height),a=Number(e.tray.width),o=Number(e.tray.height);if(![t,n,r,i,a,o].every(Number.isFinite)||t<=0||n<=0||r<=0||i<=0||a<=0||o<=0)return e;let s=Math.max(0,Math.round(t-r)),c=Math.max(0,Math.round(n-i)),l=Math.max(0,Math.min(Math.round(t-a),Math.round(s+r-a))),u=Math.max(0,Math.min(Math.round(n-o),Math.round(c-o-4))),d=e.anchor??{x:Number(e.windowBounds.x)+(Number(e.mascot.left)||0),y:Number(e.windowBounds.y)+(Number(e.mascot.top)||0),width:r,height:i},p={...e.windowBounds,x:Math.round(Number(d.x)-s),y:Math.round(Number(d.y)-c)},h={...d,x:Math.round(Number(d.x)),y:Math.round(Number(d.y)),width:d.width??r,height:d.height??i};return{...e,anchor:h,mascot:{...e.mascot,left:s,top:c,width:r,height:i},tray:{...e.tray,left:l,top:u,width:a,height:o},placement:`top-end`,windowBounds:p}}",
-    "codexPetOverlayRememberLayout(e,t){let n=this.codexPetOverlayRect(t);this.codexPetOverlayDesiredDisplayBounds=n==null?null:{x:Math.round(n.x),y:Math.round(n.y),width:Math.round(n.width),height:Math.round(n.height)};let r=this.codexPetOverlayRect(e?.windowBounds);if(r!=null){let i={x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)},a=this.codexPetOverlayDesiredWindowBounds,o=a==null||a.x!==i.x||a.y!==i.y||a.width!==i.width||a.height!==i.height;this.codexPetOverlayDesiredWindowBounds=i;if(o&&this.window!=null){let e=this.codexPetOverlaySettings();try{e.lockPosition===!0&&this.codexPetOverlayScheduleHyprlandHints(this.window)}catch{}try{this.codexPetOverlayScheduleNiriHints(this.window)}catch{}}}return e}",
+    "codexPetOverlayRememberLayout(e,t){let n=this.codexPetOverlayRect(t);this.codexPetOverlayDesiredDisplayBounds=n==null?null:{x:Math.round(n.x),y:Math.round(n.y),width:Math.round(n.width),height:Math.round(n.height)};let r=this.codexPetOverlayRect(e?.windowBounds);if(r!=null){let i={x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)},a=this.codexPetOverlayDesiredWindowBounds,o=a==null||a.x!==i.x||a.y!==i.y||a.width!==i.width||a.height!==i.height;this.codexPetOverlayDesiredWindowBounds=i;if(o&&this.window!=null){let e=this.codexPetOverlaySettings();try{e.lockPosition===!0&&this.codexPetOverlayScheduleHyprlandHints(this.window)}catch{}try{this.dragState!=null?this.codexPetOverlayQueueNiriDrag(this.window):this.codexPetOverlayScheduleNiriHints(this.window)}catch{}}}return e}",
     "codexPetOverlayLayoutForDisplay(e,t,n){if(process.platform!==`linux`||t==null||t.windowBounds==null)return this.codexPetOverlayRememberLayout(this.codexPetOverlayTrayAboveLeft(t));let r=this.codexPetOverlayDisplayRect(e),i=this.codexPetOverlaySettings(),a=t;if(i.lockPosition===!0&&r!=null){let e=this.codexPetOverlayGravityBounds(r,a,i);e!=null&&(a=this.codexPetOverlayLayoutAtWindowPosition(e,a))}else if(this.dragState==null){let e=this.codexPetOverlayWindowBounds(n),o=!1;try{o=n?.isVisible?.()===!0}catch{}e!=null&&r!=null&&this.codexPetOverlayBoundsNearDisplay(e,r)&&(o||this.codexPetOverlayInitialPositionDone===!0||this.codexPetOverlayManualPosition===!0)?(this.codexPetOverlayInitialPositionDone=!0,this.codexPetOverlayMoved(e,a.windowBounds)&&(this.codexPetOverlayManualPosition=!0),a=this.codexPetOverlayLayoutAtWindowPosition(e,a)):this.codexPetOverlayInitialPositionDone=!0}return this.codexPetOverlayRememberLayout(this.codexPetOverlayTrayAboveLeft(a),r)}",
     "codexPetOverlayInstallTransparentRenderer(e){try{if(e.__codexPetOverlayTransparentRendererInstalled)return;e.__codexPetOverlayTransparentRendererInstalled=!0;let t=e.webContents,n=()=>{try{t==null||t.isDestroyed?.()||t.insertCSS?.(`html,body,#root,main,[data-avatar-overlay-content-frame=\"true\"]{background:transparent!important;background-color:transparent!important;}[data-codex-window-type=\"electron\"].electron-opaque,[data-codex-window-type=\"electron\"].electron-opaque body{background:transparent!important;background-color:transparent!important;background-image:none!important;}`,{cssOrigin:`author`}),t==null||t.isDestroyed?.()||t.executeJavaScript?.(`try{document.documentElement.style.background=\"transparent\";document.body&&(document.body.style.background=\"transparent\")}catch{}`,!0)}catch{}};t?.on?.(`did-finish-load`,n),n()}catch{}}",
     "codexPetOverlayRestoreFocusableAfterInactiveShow(e){try{let t=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.window!==e||this.codexPetOverlaySettings().mode===`passive`||e.setFocusable?.(!0)}catch{}},0);try{t.unref?.()}catch{}}catch{}}",
@@ -176,14 +178,22 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlayScheduleHyprlandHints(e){if(!this.codexPetOverlayShouldUseHyprland())return;try{this.codexPetOverlayHyprlandTimers?.forEach(clearTimeout)}catch{}this.codexPetOverlayHyprlandTimers=[0,80,300,1000,2500,5000,10000].map(t=>{let n=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.codexPetOverlayApplyHyprlandHints(e)}catch{}},t);try{n.unref?.()}catch{}return n})}",
     "codexPetOverlayNiriSession(){if(process.platform!==`linux`)return!1;let e=[process.env.NIRI_SOCKET,process.env.XDG_CURRENT_DESKTOP,process.env.DESKTOP_SESSION].filter(Boolean).join(`:`).toLowerCase();return e.includes(`niri`)}",
     "codexPetOverlayShouldUseNiri(){return process.platform===`linux`&&this.codexPetOverlaySettings().niri===!0&&this.codexPetOverlayNiriSession()}",
-    "codexPetOverlayNiri(e,t){if(this.codexPetOverlayNiriUnavailable)return;try{let n=typeof require==`function`?require(`node:child_process`):null;if(typeof n?.execFile!=`function`){this.codexPetOverlayNiriUnavailable=!0;return}n.execFile(`niri`,[`msg`,...e],{timeout:1200},(e,...n)=>{e?.code===`ENOENT`&&(this.codexPetOverlayNiriUnavailable=!0),typeof t==`function`&&t(e,...n)})}catch(e){e?.code===`ENOENT`&&(this.codexPetOverlayNiriUnavailable=!0);try{typeof t==`function`&&t(e)}catch{}}}",
+    "codexPetOverlayNiri(e,t){if(this.codexPetOverlayNiriUnavailable){try{typeof t==`function`&&t({code:`ENOENT`})}catch{}return}try{let n=typeof require==`function`?require(`node:child_process`):null;if(typeof n?.execFile!=`function`){this.codexPetOverlayNiriUnavailable=!0;try{typeof t==`function`&&t({code:`ENOENT`})}catch{}return}n.execFile(`niri`,[`msg`,...e],{timeout:1200},(e,...n)=>{e?.code===`ENOENT`&&(this.codexPetOverlayNiriUnavailable=!0),typeof t==`function`&&t(e,...n)})}catch(e){e?.code===`ENOENT`&&(this.codexPetOverlayNiriUnavailable=!0);try{typeof t==`function`&&t(e)}catch{}}}",
     "codexPetOverlayNiriWindowSize(e){let t=e?.layout?.window_size??e?.layout?.windowSize??e?.window_size??e?.size;if(!Array.isArray(t))return null;let n=Number(t[0]),r=Number(t[1]);return[n,r].every(Number.isFinite)&&n>0&&r>0?{width:n,height:r}:null}",
     "codexPetOverlayNiriPositiveInteger(e){return typeof e==`number`&&Number.isSafeInteger(e)&&e>0?e:null}",
     "codexPetOverlayNiriLocalMove(){let e=this.codexPetOverlayRect(this.codexPetOverlayDesiredWindowBounds),t=this.codexPetOverlayRect(this.codexPetOverlayDesiredDisplayBounds);if(e==null||t==null)return null;let n=e.x-t.x,r=e.y-t.y;return[n,r].every(Number.isFinite)?{x:Math.round(n),y:Math.round(r)}:null}",
     "codexPetOverlaySelectNiriWindow(e,t){if(!Array.isArray(e))return null;let n=this.codexPetOverlayRect(t),r=[];for(let i of e){let e=this.codexPetOverlayNiriPositiveInteger(i?.id),t=this.codexPetOverlayNiriPositiveInteger(i?.pid);if(e==null||t!==process.pid||String(i?.title??``)!==`Codex Pet Overlay`)continue;if(i.is_floating!=null&&typeof i.is_floating!=`boolean`)continue;let a=this.codexPetOverlayNiriWindowSize(i),o=a==null?0:Math.abs(a.width-Number(n?.width??a.width))+Math.abs(a.height-Number(n?.height??a.height)),s=a==null?0:a.width*a.height;r.push({window:i,id:e,sizeScore:o,area:s})}if(n!=null){let e=r.filter(e=>e.sizeScore<=16);return e.length===1?e[0].window:null}let i=r.filter(e=>e.area>0&&e.area<=300000);return i.length===1?i[0].window:r.length===1?r[0].window:null}",
-    "codexPetOverlayFindNiriWindow(e,t){if(!this.codexPetOverlayShouldUseNiri())return;let n=this.codexPetOverlayWindowBounds(e);this.codexPetOverlayNiri([`--json`,`windows`],(e,r)=>{if(e)return;let i;try{i=JSON.parse(String(r??``))}catch{return}let a=this.codexPetOverlaySelectNiriWindow(i,n);a!=null&&typeof t==`function`&&t(a)})}",
-    "codexPetOverlayApplyNiriHints(e){if(process.platform!==`linux`||e==null||e.isDestroyed?.()||!this.codexPetOverlayShouldUseNiri())return;this.codexPetOverlayFindNiriWindow(e,t=>{if(e.isDestroyed?.()||this.window!==e)return;let n=this.codexPetOverlayNiriPositiveInteger(t?.id);if(n==null)return;t.is_floating!==!0&&this.codexPetOverlayNiri([`action`,`move-window-to-floating`,`--id`,String(n)]);let r=this.codexPetOverlayNiriLocalMove();r!=null&&this.codexPetOverlayNiri([`action`,`move-floating-window`,`--id`,String(n),`-x`,String(r.x),`-y`,String(r.y)])})}",
-    "codexPetOverlayScheduleNiriHints(e){if(!this.codexPetOverlayShouldUseNiri())return;try{this.codexPetOverlayNiriTimers?.forEach(clearTimeout)}catch{}this.codexPetOverlayNiriTimers=[0,80,300,1000].map(t=>{let n=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.codexPetOverlayApplyNiriHints(e)}catch{}},t);try{n.unref?.()}catch{}return n})}",
+    "codexPetOverlayFindNiriWindow(e,t){if(!this.codexPetOverlayShouldUseNiri()){try{typeof t==`function`&&t({code:`DISABLED`})}catch{}return}let n=this.codexPetOverlayWindowBounds(e);this.codexPetOverlayNiri([`--json`,`windows`],(e,r)=>{if(e){try{typeof t==`function`&&t(e)}catch{}return}let i;try{i=JSON.parse(String(r??``))}catch{try{typeof t==`function`&&t({code:`INVALID_JSON`})}catch{}return}let a=this.codexPetOverlaySelectNiriWindow(i,n);try{typeof t==`function`&&t(null,a)}catch{}})}",
+    "codexPetOverlayApplyNiriHints(e,t=this.codexPetOverlayNiriEpoch){if(process.platform!==`linux`||e==null||e.isDestroyed?.()||!this.codexPetOverlayShouldUseNiri()||this.codexPetOverlayNiriDragState!=null)return;this.codexPetOverlayFindNiriWindow(e,(n,r)=>{if(n||e.isDestroyed?.()||this.window!==e||t!==this.codexPetOverlayNiriEpoch||this.codexPetOverlayNiriDragState!=null)return;let i=this.codexPetOverlayNiriPositiveInteger(r?.id);if(i==null)return;let a=()=>{if(e.isDestroyed?.()||this.window!==e||t!==this.codexPetOverlayNiriEpoch||this.codexPetOverlayNiriDragState!=null)return;let n=this.codexPetOverlayNiriLocalMove();n!=null&&this.codexPetOverlayNiri([`action`,`move-floating-window`,`--id`,String(i),`-x`,String(n.x),`-y`,String(n.y)])};r.is_floating===!0?a():this.codexPetOverlayNiri([`action`,`move-window-to-floating`,`--id`,String(i)],n=>{n||a()})})}",
+    "codexPetOverlayScheduleNiriHints(e){if(!this.codexPetOverlayShouldUseNiri()||this.dragState!=null||this.codexPetOverlayNiriDragState!=null)return;try{this.codexPetOverlayNiriTimers?.forEach(clearTimeout)}catch{}let t=(this.codexPetOverlayNiriEpoch??0)+1;this.codexPetOverlayNiriEpoch=t,this.codexPetOverlayNiriTimers=[0,80,300,1000].map(n=>{let r=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.codexPetOverlayApplyNiriHints(e,t)}catch{}},n);try{r.unref?.()}catch{}return r})}",
+    "codexPetOverlayBeginNiriDrag(e){if(e==null||e.isDestroyed?.()||this.window!==e||!this.codexPetOverlayShouldUseNiri())return;try{this.codexPetOverlayNiriTimers?.forEach(clearTimeout),this.codexPetOverlayNiriDragState?.retryTimer!=null&&clearTimeout(this.codexPetOverlayNiriDragState.retryTimer)}catch{}this.codexPetOverlayNiriEpoch=(this.codexPetOverlayNiriEpoch??0)+1;let t=(this.codexPetOverlayNiriDragGeneration??0)+1;this.codexPetOverlayNiriDragGeneration=t;let n=this.codexPetOverlayNiriLocalMove();this.codexPetOverlayNiriDragState={generation:t,window:e,id:null,floating:!1,latestTarget:n==null?null:{x:n.x,y:n.y},inFlight:!1,released:!1,persisted:!1,display:null,retryIndex:0,retryTimer:null},this.codexPetOverlayPumpNiriDrag(this.codexPetOverlayNiriDragState)}",
+    "codexPetOverlayNiriDragCurrent(e){return e!=null&&this.codexPetOverlayNiriDragState===e&&this.codexPetOverlayNiriDragGeneration===e.generation&&this.window===e.window&&!e.window?.isDestroyed?.()}",
+    "codexPetOverlayQueueNiriDrag(e){let t=this.codexPetOverlayNiriDragState;if(!this.codexPetOverlayNiriDragCurrent(t)||t.window!==e)return;let n=this.codexPetOverlayNiriLocalMove();n!=null&&(t.latestTarget={x:n.x,y:n.y}),this.codexPetOverlayPumpNiriDrag(t)}",
+    "codexPetOverlayRetryNiriDrag(e,t){if(!this.codexPetOverlayNiriDragCurrent(e))return;if(t?.code===`ENOENT`){this.codexPetOverlayAbortNiriDrag(e);return}if(e.retryIndex>=3){this.codexPetOverlayAbortNiriDrag(e);return}let n=[0,80,300][e.retryIndex]??300;e.retryTimer=setTimeout(()=>{e.retryTimer=null,this.codexPetOverlayNiriDragCurrent(e)&&this.codexPetOverlayPumpNiriDrag(e)},n);try{e.retryTimer.unref?.()}catch{}}",
+    "codexPetOverlayAbortNiriDrag(e){if(!this.codexPetOverlayNiriDragCurrent(e))return;try{e.retryTimer!=null&&clearTimeout(e.retryTimer)}catch{}e.inFlight=!1,e.retryTimer=null,e.released?this.codexPetOverlayFinalizeNiriDrag(e):this.codexPetOverlayNiriDragState=null}",
+    "codexPetOverlayFinalizeNiriDrag(e){if(!this.codexPetOverlayNiriDragCurrent(e)||!e.released||e.persisted)return;e.persisted=!0;let t=e.window,n=e.display;this.codexPetOverlayNiriDragState=null;try{n==null?this.persistWindowBounds(t):this.persistWindowBounds(t,n)}catch{}}",
+    "codexPetOverlayPumpNiriDrag(e){if(!this.codexPetOverlayNiriDragCurrent(e)||e.inFlight||e.retryTimer!=null)return;if(e.id==null){if(e.retryIndex>=3){this.codexPetOverlayAbortNiriDrag(e);return}e.retryIndex+=1,e.inFlight=!0,this.codexPetOverlayFindNiriWindow(e.window,(t,n)=>{if(!this.codexPetOverlayNiriDragCurrent(e))return;e.inFlight=!1;let r=this.codexPetOverlayNiriPositiveInteger(n?.id);if(t||r==null){this.codexPetOverlayRetryNiriDrag(e,t);return}e.id=r,e.floating=n.is_floating===!0,this.codexPetOverlayPumpNiriDrag(e)});return}if(!e.floating){e.inFlight=!0;let t=e.id;this.codexPetOverlayNiri([`action`,`move-window-to-floating`,`--id`,String(t)],n=>{if(!this.codexPetOverlayNiriDragCurrent(e))return;e.inFlight=!1;if(n){e.id=null,e.floating=!1,this.codexPetOverlayRetryNiriDrag(e,n);return}e.floating=!0,this.codexPetOverlayPumpNiriDrag(e)});return}let t=e.latestTarget;if(t!=null){e.latestTarget=null,e.inFlight=!0;let n=e.id;this.codexPetOverlayNiri([`action`,`move-floating-window`,`--id`,String(n),`-x`,String(t.x),`-y`,String(t.y)],n=>{if(!this.codexPetOverlayNiriDragCurrent(e))return;e.inFlight=!1;if(n){e.latestTarget??=t,e.id=null,e.floating=!1,this.codexPetOverlayRetryNiriDrag(e,n);return}this.codexPetOverlayPumpNiriDrag(e)});return}e.released&&this.codexPetOverlayFinalizeNiriDrag(e)}",
+    "codexPetOverlayEndNiriDrag(e,t){let n=this.codexPetOverlayNiriDragState;if(!this.codexPetOverlayNiriDragCurrent(n)||n.window!==e)return!1;n.released=!0,n.display=t;let r=this.codexPetOverlayNiriLocalMove();r!=null&&(n.latestTarget={x:r.x,y:r.y}),this.codexPetOverlayPumpNiriDrag(n);return!0}",
     "codexPetOverlayShouldLockPosition(){return process.platform===`linux`&&this.codexPetOverlaySettings().lockPosition===!0}",
   ].join("");
 }
@@ -209,8 +219,35 @@ function patchCreateWindowTitle(source) {
 }
 
 function ensurePetOverlayMethods(source, settings) {
-  if (source.includes("codexPetOverlaySettings(){")) {
+  const versionMarker = `codexPetOverlayMethodsVersion(){return ${PET_OVERLAY_METHODS_VERSION}}`;
+  if (source.includes(versionMarker)) {
     return source;
+  }
+  if (source.includes("codexPetOverlaySettings(){")) {
+    const overlayClass = findAvatarOverlayClass(source);
+    if (overlayClass == null) {
+      console.warn("WARN: Could not find avatar overlay class for pet method upgrade - skipping pet overlay patch");
+      return source;
+    }
+    const firstMethod = findMethodAfter(
+      source,
+      /codexPetOverlaySettings\(\)\{/,
+      overlayClass.start,
+      overlayClass.end,
+    );
+    const lastMethod = findMethodAfter(
+      source,
+      /codexPetOverlayShouldLockPosition\(\)\{/,
+      overlayClass.start,
+      overlayClass.end,
+    );
+    if (firstMethod == null || lastMethod == null || lastMethod.end <= firstMethod.start) {
+      console.warn("WARN: Could not identify existing pet method block - skipping pet overlay patch");
+      return source;
+    }
+    return source.slice(0, firstMethod.start) +
+      buildPetOverlayMethods(settings) +
+      source.slice(lastMethod.end);
   }
   const insertionPoint =
     findAvatarOverlayMethod(source, /(?<![\w$.])applyLayout\([^{}]*\)\{/) ??
@@ -223,6 +260,51 @@ function ensurePetOverlayMethods(source, settings) {
   return source.slice(0, insertionPoint.start) +
     buildPetOverlayMethods(settings) +
     source.slice(insertionPoint.start);
+}
+
+function patchNiriDragLifecycle(source) {
+  let patched = source;
+  const startMethod = findAvatarOverlayMethod(patched, /startDrag\([^)]*\)\{/);
+  if (startMethod == null) {
+    console.warn("WARN: Could not find avatar overlay startDrag for Niri transport - skipping pet overlay patch");
+    return patched;
+  }
+  if (!startMethod.text.includes("codexPetOverlayBeginNiriDrag(")) {
+    const windowMatch = startMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/);
+    if (windowMatch == null || !startMethod.text.includes("this.dragState=")) {
+      console.warn("WARN: Could not identify current avatar overlay drag start shape - skipping Niri transport hook");
+      return patched;
+    }
+    patched = replaceMethodText(
+      patched,
+      startMethod,
+      `${startMethod.text.slice(0, -1)},this.codexPetOverlayBeginNiriDrag(${windowMatch[1]})}`,
+    );
+  }
+
+  const endMethod = findAvatarOverlayMethod(patched, /endDrag\([^)]*\)\{/);
+  if (endMethod == null) {
+    console.warn("WARN: Could not find avatar overlay endDrag for Niri transport - skipping pet overlay patch");
+    return patched;
+  }
+  if (endMethod.text.includes("codexPetOverlayEndNiriDrag(")) {
+    return patched;
+  }
+  const persistPattern = /([A-Za-z_$][\w$]*)\?this\.persistWindowBounds\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*\?\?this\.getCurrentDisplay\(\))\):this\.reclampWindowToVisibleDisplay\(\{shouldPersist:!0\}\)/;
+  const persistMatch = endMethod.text.match(persistPattern);
+  if (persistMatch == null) {
+    console.warn("WARN: Could not identify current avatar overlay drag persistence shape - skipping Niri transport hook");
+    return patched;
+  }
+  const [persistNeedle, , windowVar, displayExpr] = persistMatch;
+  return replaceMethodText(
+    patched,
+    endMethod,
+    endMethod.text.replace(
+      persistNeedle,
+      `this.codexPetOverlayEndNiriDrag(${windowVar},${displayExpr})||(${persistNeedle})`,
+    ),
+  );
 }
 
 function patchApplyLayout(source) {
@@ -323,10 +405,13 @@ function patchAvatarSelectionRefresh(source) {
 
 function hasCompletePetOverlayPatch(source, settings, avatarSelectionRefreshExpected) {
   const requiredMarkers = [
+    source.includes(`codexPetOverlayMethodsVersion(){return ${PET_OVERLAY_METHODS_VERSION}}`),
     source.includes("codexPetOverlaySettings(){"),
     /let [A-Za-z_$][\w$]*=this\.codexPetOverlayLayoutForDisplay\([A-Za-z_$][\w$]*,this\.getLayoutForDisplay\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\);/.test(source),
     /process\.platform===`linux`\?this\.codexPetOverlaySyncWindow\([A-Za-z_$][\w$]*,!0\):[A-Za-z_$][\w$]*\.moveTop\(\),[A-Za-z_$][\w$]*\.showInactive\(\),/.test(source),
     source.includes("if(this.codexPetOverlayShouldLockPosition())return;"),
+    source.includes("this.codexPetOverlayBeginNiriDrag("),
+    source.includes("this.codexPetOverlayEndNiriDrag("),
     source.includes("===`avatarOverlay`?{backgroundColor:`#00000000`,backgroundMaterial:null}:"),
     source.includes("title:`Codex Pet Overlay`,width:"),
   ];
@@ -375,6 +460,7 @@ function applyPetOverlayPatch(source, context) {
   patched = patchApplyLayout(patched);
   patched = patchShowWindow(patched);
   patched = patchLockedDrag(patched);
+  patched = patchNiriDragLifecycle(patched);
   patched = ensurePetOverlayMethods(patched, settings);
   patched = patchPassiveCreateWindow(patched, settings);
   if (avatarSelectionRefreshExpected) {

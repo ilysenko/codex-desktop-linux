@@ -107,6 +107,15 @@ output-local coordinates of the Electron working area, not global desktop
 coordinates. The actions are skipped if the window is ambiguous, foreign,
 malformed, stale, or if `niri` is unavailable.
 
+Live drag movement uses a separate single-flight transport. At most one Niri
+action is active at a time, pending pointer positions replace each other, and
+only the latest target is sent after the active action completes. A tiled Pet
+is moved to the floating layout before its first position action. On release,
+the final target is drained before the overlay bounds are persisted, preventing
+late compositor callbacks from snapping the Pet back to an older position.
+Discovery and action recovery are bounded for each drag, and callbacks are
+scoped to the current overlay window and drag generation.
+
 The runtime keeps the first presentation non-focusable while using
 `showInactive()`, then restores focusability for interactive mode so inline
 replies can still receive focus. For the cleanest first compositor frame on
@@ -138,6 +147,9 @@ For a manual check, enable the feature, rebuild, and launch the app:
 - On Hyprland, the pet should have no visible compositor border or shadow.
 - On Niri, the pet should open floating, avoid initial focus, and move by
   targeted window id.
+- On Niri with `lockPosition: false`, rapidly reverse a horizontal drag; the
+  pet should follow the latest pointer target without delayed overshoot or a
+  snap-back after release.
 - The pet should remain above normal windows and visible across workspaces where
   the compositor honors those hints.
 - With `lockPosition: false`, dragging the pet should not snap it back on the

@@ -51,16 +51,17 @@ function currentAvatarOverlayBundleFixture() {
     "var settingsHandlers={\"set-setting\":async({key:e,value:t})=>(this.setSettingValue(e,t),{success:!0})};",
     "var rV=`/avatar-overlay`,zB={width:356,height:320},oV={width:112,height:121},k2={width:0,height:0},O2={width:276,height:131};",
     "var h2=class{constructor(e,t,n,r){this.cursorSource=e;this.pointerAnchorX=t;this.pointerAnchorY=n;this.displayBounds=r}};",
-    "var fV=class{window=null;rendererReady=!1;layout=null;mascotSize=oV;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;windowStagedForNativePresentation=!1;layoutMode=`native`;compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},getCursorPosition(){return null},updateMascotRect(){}};nativePositionController={clear(){}};",
+    "var fV=class{window=null;rendererReady=!1;layout=null;mascotSize=oV;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;windowStagedForNativePresentation=!1;layoutMode=`native`;compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},getCursorPosition(){return null},performWindowDrag(){return!1},updateMascotRect(){}};nativePositionController={clear(){}};",
     "constructor(e,t){this.windowManager=e,this.globalState=t}",
     "isOpen(){let e=this.window;return e!=null&&!e.isDestroyed()&&e.isVisible()&&!this.windowStagedForNativePresentation}",
-    "startDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;this.cancelMomentum(),this.suppressNextRendererThrow=!1;let r=this.getLayout(n);this.nativePositionController.clear();let i=null,o=t.pointerScreenX!=null&&t.pointerScreenY!=null?{x:t.pointerScreenX,y:t.pointerScreenY}:a.screen.getCursorScreenPoint(),s=i??o,c=t.pointerWindowX-r.mascot.left,l=t.pointerWindowY-r.mascot.top;this.dragState=new h2(i==null?`renderer`:`native`,c,l,a.screen.getDisplayNearestPoint(s).bounds)}",
+    "startDrag(e,t,n=!1){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e)return;this.cancelMomentum();let i=this.getLayout(r),o=this.compositionHost.getCursorPosition(),s=t.pointerScreenX!=null?{x:t.pointerScreenX,y:t.pointerScreenY}:a.screen.getCursorScreenPoint();this.dragState=new h2(o==null?`renderer`:`native`,t.pointerWindowX-i.mascot.left,t.pointerWindowY-i.mascot.top,a.screen.getDisplayNearestPoint(s).bounds,n),this.windowServerDragActive=this.layoutMode===`native`&&!n&&this.compositionHost.performWindowDrag(),this.windowServerDragActive||(this.windowServerDragWindowX=null)}",
+    "endDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;let r=this.dragState,i=this.windowServerDragActive,a=null;this.dragState=null,this.windowServerDragActive=!1,this.windowServerDragWindowX=null,i?this.persistWindowBounds(n,a??this.getCurrentDisplay()):this.reclampWindowToVisibleDisplay({shouldPersist:!0});let o=this.dockTarget;o!=null&&this.dockPresentation(o.anchor,o.onDock)}",
     "setElementSize(e,{elementSizeRevision:t,isTrayVisible:n,mascot:r,nativeCompositionEnabled:a,tray:o}){let i=this.window;i==null||i.isDestroyed()||i.webContents.id!==e||(this.cancelMomentum(),this.layoutMode=n==null?`native`:`legacy`,this.mascotSize=r,this.traySize=o,this.applyLatestElementSizes(i),this.stageWindowForNativePresentation(i),this.showWindowIfReady(i))}",
     "applyLatestElementSizes(e){this.anchor={...this.anchor,width:this.mascotSize.width,height:this.mascotSize.height},this.applyLayout(e)}",
     "async createWindow(e){let t=await this.windowManager.createWindow({title:a.app.getName(),width:zB.width,height:zB.height,appearance:`avatarOverlay`,alwaysOnTop:process.platform===`linux`,skipTaskbar:process.platform===`linux`,focusable:process.platform===`linux`?!0:!1,show:!1,initialRoute:rV});return this.window=t,this.compositionHost.setOverlayWindow(t),this.rendererReady=this.windowManager.isWebContentsReady(t.webContents.id),this.displayBounds=null,this.displayId=null,this.dragState=null,this.layout=null,this.mascotSize=oV,this.mousePassthroughEnabled=!1,this.traySize=null,t.on(`closed`,()=>{this.window===t&&(this.cancelMomentum(),this.window=null,this.dragState=null,this.layout=null,this.rendererReady=!1,this.pointerInteractive=!1,this.mousePassthroughEnabled=!1,this.compositionHost.setOverlayWindow(null),this.broadcastOpenState())}),t}",
     "applyLayout(e,t=this.getCurrentDisplay(),n=!1,r=!0,i=null){if(e.isDestroyed())return;let o=this.getLayoutForDisplay(t);this.displayId=t.id,this.layout=o,this.setWindowBounds(e,o.windowBounds,n,r),this.compositionHost.updateMascotRect(o.mascot),this.sendLayoutToRenderer(e,i)}getLayoutForDisplay(e){return UB({anchor:this.anchor,displayBounds:this.layoutMode===`native`?e.workArea:e.bounds,mode:this.layoutMode,mascotSize:this.mascotSize,nativeMaterialAttached:this.compositionHost.isNativeMaterialAttached(),previousPlacement:this.placement,traySize:this.traySize??(this.layoutMode===`native`?k2:O2)})}getLayout(e){if(this.layout??this.applyLayout(e),this.layout==null)throw Error(`Expected avatar overlay layout`);return this.layout}",
     "showWindow(e){if(e.isDestroyed())return;let t=this.isOpen();this.windowStagedForNativePresentation&&=(e.setOpacity(1),!1),e.moveTop(),e.showInactive(),!t&&this.isOpen()&&(this.finishPendingPresentation(),this.broadcastOpenState())}showWindowIfReady(e){!this.rendererReady||this.initialPresentationState!==`ready`||(this.showWindow(e),this.applyPointerInteractivityPolicy())}stageWindowForNativePresentation(e){e.isDestroyed()||this.applyPointerInteractivityPolicy()}broadcastOpenState(){this.windowManager.sendMessageToAllRegisteredWindows({type:`avatar-overlay-open-state-changed`,isOpen:this.isOpen()})}",
-    "applyPointerInteractivityPolicy(){return null}cancelMomentum(){}finishPendingPresentation(){}sendLayoutToRenderer(){}setWindowBounds(){}getCurrentDisplay(){return{id:1,bounds:{x:0,y:0,width:1920,height:1080},workArea:{x:0,y:0,width:1920,height:1080}}}};",
+    "applyPointerInteractivityPolicy(){return null}cancelMomentum(){}finishPendingPresentation(){}sendLayoutToRenderer(){}setWindowBounds(){}persistWindowBounds(){}reclampWindowToVisibleDisplay({shouldPersist:e}){e&&this.persistWindowBounds(this.window,this.getCurrentDisplay())}dockPresentation(){}getCurrentDisplay(){return{id:1,bounds:{x:0,y:0,width:1920,height:1080},workArea:{x:0,y:0,width:1920,height:1080}}}};",
     "function L9({platform:e,appearance:t,opaqueWindowSurfaceEnabled:n,prefersDarkColors:r}){return n?{backgroundColor:r?_ne:vne,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`?{backgroundColor:k9,backgroundMaterial:`mica`}:{backgroundColor:k9,backgroundMaterial:null}}",
   ].join("");
 }
@@ -749,6 +750,58 @@ function runNiriHintScenario({
   controller.codexPetOverlayApplyNiriHints(window);
 
   return calls;
+}
+
+function createAsyncNiriDragScenario() {
+  const calls = [];
+  const pending = [];
+  const timers = [];
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env: { XDG_CURRENT_DESKTOP: "niri" } },
+    childProcess: {
+      execFile(command, args, options, callback) {
+        assert.equal(command, "niri");
+        assert.equal(options.timeout, 1200);
+        calls.push(args);
+        pending.push({ args, callback });
+      },
+    },
+    setTimeout(callback, delay) {
+      const timer = { callback, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      timer.cleared = true;
+    },
+  });
+  const window = {
+    getBounds: () => ({ x: 100, y: 100, width: 356, height: 320 }),
+    isDestroyed: () => false,
+    webContents: { id: 1 },
+  };
+  controller.window = window;
+  controller.codexPetOverlayDesiredDisplayBounds = { x: 0, y: 0, width: 1920, height: 1080 };
+  controller.codexPetOverlayDesiredWindowBounds = { x: 100, y: 100, width: 356, height: 320 };
+  return { calls, controller, pending, timers, window };
+}
+
+function completePendingNiriCall(scenario, { error = null, stdout = "ok" } = {}) {
+  const call = scenario.pending.shift();
+  assert.ok(call, "expected a pending niri call");
+  call.callback(error, stdout);
+  return call.args;
+}
+
+function niriPetWindow(id, isFloating = true) {
+  return JSON.stringify([{
+    id,
+    is_floating: isFloating,
+    layout: { window_size: [356, 320] },
+    pid: 4242,
+    title: "Codex Pet Overlay",
+  }]);
 }
 
 test("targets only the unambiguous Hyprland pet window address", () => {
@@ -1481,6 +1534,186 @@ test("Niri scheduling is coalesced when desired bounds change repeatedly", () =>
 
   assert.deepEqual(timers.map((timer) => timer.delay), [0, 80, 300, 1000, 0, 80, 300, 1000]);
   assert.deepEqual(cleared, timers.slice(0, 4));
+});
+
+test("Niri drag keeps one move in flight and emits only the latest queued target", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, window } = scenario;
+
+  controller.codexPetOverlayBeginNiriDrag(window);
+  assert.equal(pending.length, 1);
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(9) });
+  assert.equal(pending.length, 1);
+  assert.equal(JSON.stringify(pending[0].args.slice(-4)), JSON.stringify(["-x", "100", "-y", "100"]));
+
+  controller.codexPetOverlayDesiredWindowBounds = { x: 600, y: 100, width: 356, height: 320 };
+  controller.codexPetOverlayQueueNiriDrag(window);
+  controller.codexPetOverlayDesiredWindowBounds = { x: 120, y: 100, width: 356, height: 320 };
+  controller.codexPetOverlayQueueNiriDrag(window);
+
+  assert.equal(pending.length, 1, "a second compositor move must not overlap the first");
+  completePendingNiriCall(scenario);
+  assert.equal(pending.length, 1);
+  assert.equal(JSON.stringify(pending[0].args.slice(-4)), JSON.stringify(["-x", "120", "-y", "100"]));
+  assert.equal(scenario.calls.some((args) => args.includes("600")), false);
+});
+
+test("Niri drag floats a tiled pet before its first move", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, window } = scenario;
+
+  controller.codexPetOverlayBeginNiriDrag(window);
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(9, false) });
+
+  assert.equal(pending.length, 1);
+  assert.equal(
+    JSON.stringify(pending[0].args),
+    JSON.stringify(["msg", "action", "move-window-to-floating", "--id", "9"]),
+  );
+  assert.equal(scenario.calls.some((args) => args.includes("move-floating-window")), false);
+
+  completePendingNiriCall(scenario);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].args.includes("move-floating-window"), true);
+});
+
+test("Niri endDrag drains the final move before persisting once", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, window } = scenario;
+  const persisted = [];
+  controller.getLayout = () => ({ mascot: { left: 0, top: 0 } });
+  controller.persistWindowBounds = (target, display) => persisted.push([target, display]);
+
+  controller.startDrag(1, {
+    pointerScreenX: 100,
+    pointerScreenY: 100,
+    pointerWindowX: 20,
+    pointerWindowY: 20,
+  });
+  controller.codexPetOverlayDesiredWindowBounds = { x: 120, y: 100, width: 356, height: 320 };
+  controller.codexPetOverlayQueueNiriDrag(window);
+  controller.endDrag(1, {});
+
+  assert.deepEqual(persisted, []);
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(9) });
+  assert.equal(pending.length, 1);
+  assert.equal(JSON.stringify(pending[0].args.slice(-4)), JSON.stringify(["-x", "120", "-y", "100"]));
+  completePendingNiriCall(scenario);
+
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0][0], window);
+  assert.equal(controller.codexPetOverlayNiriDragState, null);
+});
+
+test("stale Niri discovery callbacks cannot continue a replacement window drag", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, window: oldWindow } = scenario;
+  controller.codexPetOverlayBeginNiriDrag(oldWindow);
+
+  const newWindow = {
+    getBounds: () => ({ x: 300, y: 200, width: 356, height: 320 }),
+    isDestroyed: () => false,
+    webContents: { id: 2 },
+  };
+  controller.window = newWindow;
+  controller.codexPetOverlayDesiredWindowBounds = { x: 300, y: 200, width: 356, height: 320 };
+  controller.codexPetOverlayBeginNiriDrag(newWindow);
+  assert.equal(pending.length, 2);
+
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(41) });
+  assert.equal(pending.length, 1, "the stale callback must not enqueue an action");
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(42) });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].args.includes("42"), true);
+  assert.equal(scenario.calls.some((args) => args.includes("41") && args.includes("action")), false);
+});
+
+test("Niri drag discovery recovery is bounded and ENOENT aborts immediately", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, timers, window } = scenario;
+  controller.codexPetOverlayBeginNiriDrag(window);
+
+  completePendingNiriCall(scenario, { error: new Error("discovery failed"), stdout: "" });
+  assert.deepEqual(timers.map((timer) => timer.delay), [80]);
+  timers.shift().callback();
+  completePendingNiriCall(scenario, { error: new Error("discovery failed"), stdout: "" });
+  assert.deepEqual(timers.map((timer) => timer.delay), [300]);
+  timers.shift().callback();
+  completePendingNiriCall(scenario, { stdout: "[]" });
+
+  assert.equal(scenario.calls.filter((args) => args.includes("windows")).length, 3);
+  assert.equal(controller.codexPetOverlayNiriDragState, null);
+  assert.equal(pending.length, 0);
+
+  const missingScenario = createAsyncNiriDragScenario();
+  missingScenario.controller.codexPetOverlayBeginNiriDrag(missingScenario.window);
+  const missingError = new Error("missing niri");
+  missingError.code = "ENOENT";
+  completePendingNiriCall(missingScenario, { error: missingError, stdout: "" });
+  assert.equal(missingScenario.controller.codexPetOverlayNiriDragState, null);
+  assert.deepEqual(missingScenario.timers, []);
+});
+
+test("Niri drag action failure invalidates the cached id and rediscovers once serialized", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, timers, window } = scenario;
+  controller.codexPetOverlayBeginNiriDrag(window);
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(9) });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].args.includes("move-floating-window"), true);
+
+  completePendingNiriCall(scenario, { error: new Error("move failed"), stdout: "" });
+  assert.equal(pending.length, 0);
+  assert.deepEqual(timers.map((timer) => timer.delay), [80]);
+  timers.shift().callback();
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].args.includes("windows"), true);
+
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(10) });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].args.includes("10"), true);
+  assert.equal(scenario.calls.filter((args) => args.includes("move-floating-window")).length, 2);
+});
+
+test("stale Niri action completion cannot continue a replacement drag", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, window: oldWindow } = scenario;
+  controller.codexPetOverlayBeginNiriDrag(oldWindow);
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(41) });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].args.includes("41"), true);
+
+  const newWindow = {
+    getBounds: () => ({ x: 300, y: 200, width: 356, height: 320 }),
+    isDestroyed: () => false,
+    webContents: { id: 2 },
+  };
+  controller.window = newWindow;
+  controller.codexPetOverlayDesiredWindowBounds = { x: 300, y: 200, width: 356, height: 320 };
+  controller.codexPetOverlayBeginNiriDrag(newWindow);
+  assert.equal(pending.length, 2);
+
+  completePendingNiriCall(scenario);
+  assert.equal(pending.length, 1, "the old action callback must not enqueue another action");
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(42) });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].args.includes("42"), true);
+});
+
+test("upgrades a previous pet method block to the current version exactly once", () => {
+  const current = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const previous = current
+    .replace("codexPetOverlayMethodsVersion(){return 2}", "")
+    .replace(
+      "codexPetOverlayShouldLockPosition(){",
+      "codexPetOverlayLegacyNiriQueue(){return!0}codexPetOverlayShouldLockPosition(){",
+    );
+
+  const upgraded = applyPetOverlayPatch(previous);
+  assert.match(upgraded, /codexPetOverlayMethodsVersion\(\)\{return 2\}/);
+  assert.doesNotMatch(upgraded, /codexPetOverlayLegacyNiriQueue/);
+  assert.equal(applyPetOverlayPatch(upgraded), upgraded);
+  assert.equal((upgraded.match(/codexPetOverlayMethodsVersion/g) ?? []).length, 1);
 });
 
 test("settings validation falls back to safe defaults", () => {
