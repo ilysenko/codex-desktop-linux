@@ -3,7 +3,6 @@
 const VALID_GRAVITIES = new Set(["bottom-right", "bottom-left", "top-right", "top-left"]);
 const DESCRIPTOR_ID = "pet-overlay-main";
 const AVATAR_SELECTION_REFRESH_MARKER = "codexPetOverlayRefreshAvatarWindows";
-const PET_OVERLAY_METHODS_VERSION = 2;
 
 function findMatchingBrace(source, openIndex) {
   let depth = 0;
@@ -149,7 +148,6 @@ function firstMethodArgument(methodText, methodName, index) {
 
 function buildPetOverlayMethods(settings) {
   return [
-    `codexPetOverlayMethodsVersion(){return ${PET_OVERLAY_METHODS_VERSION}}`,
     `codexPetOverlaySettings(){let e={margin:${settings.margin},gravity:\`${settings.gravity}\`,allWorkspaces:${boolLiteral(settings.allWorkspaces)},alwaysOnTop:${boolLiteral(settings.alwaysOnTop)},skipTaskbar:${boolLiteral(settings.skipTaskbar)},lockPosition:${boolLiteral(settings.lockPosition)},mode:\`${settings.mode}\`,hyprland:${boolLiteral(settings.hyprland)},niri:${boolLiteral(settings.niri)}};try{let t=process.env.CODEX_PET_OVERLAY_MARGIN??process.env.CODEX_PET_LINUX_MARGIN,n=Number(t);Number.isFinite(n)&&(e.margin=Math.max(0,Math.min(512,Math.round(n))));let r=process.env.CODEX_PET_OVERLAY_GRAVITY??process.env.CODEX_PET_LINUX_GRAVITY;[\`bottom-right\`,\`bottom-left\`,\`top-right\`,\`top-left\`].includes(r)&&(e.gravity=r);let i=process.env.CODEX_PET_OVERLAY_MODE??process.env.CODEX_PET_LINUX_MODE;(i===\`interactive\`||i===\`passive\`)&&(e.mode=i);let a=process.env.CODEX_PET_OVERLAY_LOCK_POSITION??process.env.CODEX_PET_LINUX_LOCK_POSITION;a===\`1\`&&(e.lockPosition=!0),a===\`0\`&&(e.lockPosition=!1);let o=process.env.CODEX_PET_OVERLAY_HYPRLAND??process.env.CODEX_PET_LINUX_HYPRLAND;o===\`1\`&&(e.hyprland=!0),o===\`0\`&&(e.hyprland=!1);let s=process.env.CODEX_PET_OVERLAY_NIRI;s===\`1\`&&(e.niri=!0),s===\`0\`&&(e.niri=!1)}catch{}return e}`,
     "codexPetOverlayRect(e){if(e==null)return null;let t=Number(e.x),n=Number(e.y),r=Number(e.width),i=Number(e.height);return[t,n,r,i].every(Number.isFinite)&&r>0&&i>0?{x:t,y:n,width:r,height:i}:null}",
     "codexPetOverlayDisplayRect(e){return this.codexPetOverlayRect(e?.workArea??e?.bounds??e)}",
@@ -219,35 +217,8 @@ function patchCreateWindowTitle(source) {
 }
 
 function ensurePetOverlayMethods(source, settings) {
-  const versionMarker = `codexPetOverlayMethodsVersion(){return ${PET_OVERLAY_METHODS_VERSION}}`;
-  if (source.includes(versionMarker)) {
-    return source;
-  }
   if (source.includes("codexPetOverlaySettings(){")) {
-    const overlayClass = findAvatarOverlayClass(source);
-    if (overlayClass == null) {
-      console.warn("WARN: Could not find avatar overlay class for pet method upgrade - skipping pet overlay patch");
-      return source;
-    }
-    const firstMethod = findMethodAfter(
-      source,
-      /codexPetOverlaySettings\(\)\{/,
-      overlayClass.start,
-      overlayClass.end,
-    );
-    const lastMethod = findMethodAfter(
-      source,
-      /codexPetOverlayShouldLockPosition\(\)\{/,
-      overlayClass.start,
-      overlayClass.end,
-    );
-    if (firstMethod == null || lastMethod == null || lastMethod.end <= firstMethod.start) {
-      console.warn("WARN: Could not identify existing pet method block - skipping pet overlay patch");
-      return source;
-    }
-    return source.slice(0, firstMethod.start) +
-      buildPetOverlayMethods(settings) +
-      source.slice(lastMethod.end);
+    return source;
   }
   const insertionPoint =
     findAvatarOverlayMethod(source, /(?<![\w$.])applyLayout\([^{}]*\)\{/) ??
@@ -405,7 +376,6 @@ function patchAvatarSelectionRefresh(source) {
 
 function hasCompletePetOverlayPatch(source, settings, avatarSelectionRefreshExpected) {
   const requiredMarkers = [
-    source.includes(`codexPetOverlayMethodsVersion(){return ${PET_OVERLAY_METHODS_VERSION}}`),
     source.includes("codexPetOverlaySettings(){"),
     /let [A-Za-z_$][\w$]*=this\.codexPetOverlayLayoutForDisplay\([A-Za-z_$][\w$]*,this\.getLayoutForDisplay\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\);/.test(source),
     /process\.platform===`linux`\?this\.codexPetOverlaySyncWindow\([A-Za-z_$][\w$]*,!0\):[A-Za-z_$][\w$]*\.moveTop\(\),[A-Za-z_$][\w$]*\.showInactive\(\),/.test(source),

@@ -1700,22 +1700,6 @@ test("stale Niri action completion cannot continue a replacement drag", () => {
   assert.equal(pending[0].args.includes("42"), true);
 });
 
-test("upgrades a previous pet method block to the current version exactly once", () => {
-  const current = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
-  const previous = current
-    .replace("codexPetOverlayMethodsVersion(){return 2}", "")
-    .replace(
-      "codexPetOverlayShouldLockPosition(){",
-      "codexPetOverlayLegacyNiriQueue(){return!0}codexPetOverlayShouldLockPosition(){",
-    );
-
-  const upgraded = applyPetOverlayPatch(previous);
-  assert.match(upgraded, /codexPetOverlayMethodsVersion\(\)\{return 2\}/);
-  assert.doesNotMatch(upgraded, /codexPetOverlayLegacyNiriQueue/);
-  assert.equal(applyPetOverlayPatch(upgraded), upgraded);
-  assert.equal((upgraded.match(/codexPetOverlayMethodsVersion/g) ?? []).length, 1);
-});
-
 test("settings validation falls back to safe defaults", () => {
   assert.deepEqual(
     mergedPetOverlaySettings({
