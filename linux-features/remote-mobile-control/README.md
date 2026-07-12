@@ -53,9 +53,9 @@ What it changes:
   when the native browser bridge is not exposed to the session.
 - Persists the private key material at
   `~/.config/codex-desktop/remote-control-device-keys-v1.json` with `0600`
-  file permissions. Updates are serialized with `flock`, written through a
-  crash-durable atomic replacement, and rejected when the store has unsafe
-  ownership, permissions, file types, schema, or size.
+  file permissions. Updates are serialized with a safely resolved `flock`/`sh`
+  helper, written through a crash-durable atomic replacement, and rejected when
+  the store has unsafe ownership, permissions, file types, schema, or size.
 - Preserves `remote_control = true` / `features.remote_control = true` in the
   local Codex config instead of letting upstream strip it before app-server
   startup.

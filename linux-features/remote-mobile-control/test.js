@@ -130,7 +130,7 @@ function syntheticCryptoAliasCollisionMainBundle() {
   ].join("");
 }
 
-function createPatchedDeviceKeyClient(configHome, moduleOverrides = {}) {
+function createPatchedDeviceKeyClient(configHome, moduleOverrides = {}, processEnv = {}) {
   const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
   const context = {
     Buffer,
@@ -143,7 +143,7 @@ function createPatchedDeviceKeyClient(configHome, moduleOverrides = {}) {
     __filename: path.join(path.resolve(configHome), "main.js"),
     module: { exports: {} },
     process: {
-      env: { XDG_CONFIG_HOME: configHome },
+      env: { XDG_CONFIG_HOME: configHome, ...processEnv },
       getuid: typeof process.getuid === "function" ? process.getuid.bind(process) : undefined,
       pid: process.pid,
       platform: "linux",
@@ -153,6 +153,18 @@ function createPatchedDeviceKeyClient(configHome, moduleOverrides = {}) {
   };
   vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, context);
   return context.module.exports;
+}
+
+function findExecutableOnPath(name) {
+  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
+    if (!directory) continue;
+    const candidate = path.join(directory, name);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+  return null;
 }
 
 function remoteControlKeyStorePaths(configHome) {
@@ -2781,7 +2793,7 @@ test("Linux device-key store contends on its validated lock file", async () => {
     const client = createPatchedDeviceKeyClient(configHome);
     await client.createDeviceKey("test");
     const { lock } = remoteControlKeyStorePaths(configHome);
-    holder = spawn("flock", ["-x", lock, "/bin/sh", "-c", "printf 'ready\\n'; sleep 0.25"], {
+    holder = spawn("flock", ["-x", lock, "sh", "-c", "printf 'ready\\n'; sleep 0.25"], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     await new Promise((resolve, reject) => {
@@ -2799,6 +2811,81 @@ test("Linux device-key store contends on its validated lock file", async () => {
   } finally {
     holder?.kill();
     fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("Linux device-key lock helper resolves flock and sh outside usr bin fallbacks", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-nix-lock-"));
+  const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-nix-bin-"));
+  try {
+    const realFlock = findExecutableOnPath("flock");
+    const realShell = findExecutableOnPath("sh");
+    assert.ok(realFlock, "flock must be available for the lock helper test");
+    assert.ok(realShell, "sh must be available for the lock helper test");
+
+    const fakeFlock = path.join(fakeBin, "flock");
+    const fakeShell = path.join(fakeBin, "sh");
+    fs.writeFileSync(fakeFlock, `#!${realShell}\nexec ${JSON.stringify(realFlock)} "$@"\n`, {
+      mode: 0o755,
+    });
+    fs.writeFileSync(fakeShell, `#!${realShell}\nexec ${JSON.stringify(realShell)} "$@"\n`, {
+      mode: 0o755,
+    });
+
+    const hiddenFallbacks = new Set(["/usr/bin/flock", "/bin/flock", "/usr/bin/sh", "/bin/sh"]);
+    const nativeFs = require("node:fs");
+    const fsOverride = {
+      ...nativeFs,
+      realpathSync(candidate, ...args) {
+        if (hiddenFallbacks.has(String(candidate))) {
+          const error = new Error("hidden fallback");
+          error.code = "ENOENT";
+          throw error;
+        }
+        return nativeFs.realpathSync(candidate, ...args);
+      },
+      statSync(candidate, ...args) {
+        if (hiddenFallbacks.has(String(candidate))) {
+          const error = new Error("hidden fallback");
+          error.code = "ENOENT";
+          throw error;
+        }
+        return nativeFs.statSync(candidate, ...args);
+      },
+      accessSync(candidate, ...args) {
+        if (hiddenFallbacks.has(String(candidate))) {
+          const error = new Error("hidden fallback");
+          error.code = "ENOENT";
+          throw error;
+        }
+        return nativeFs.accessSync(candidate, ...args);
+      },
+    };
+    const childProcess = require("node:child_process");
+    const spawnCalls = [];
+    const client = createPatchedDeviceKeyClient(
+      configHome,
+      {
+        "node:child_process": {
+          ...childProcess,
+          spawn(command, args, options) {
+            spawnCalls.push({ args, command });
+            return childProcess.spawn(command, args, options);
+          },
+        },
+        "node:fs": fsOverride,
+      },
+      { PATH: fakeBin },
+    );
+
+    await client.createDeviceKey("allow_os_protected_nonextractable");
+
+    assert.ok(spawnCalls.length >= 1);
+    assert.equal(spawnCalls[0].command, fakeFlock);
+    assert.equal(spawnCalls[0].args[4], fakeShell);
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+    fs.rmSync(fakeBin, { recursive: true, force: true });
   }
 });
 
