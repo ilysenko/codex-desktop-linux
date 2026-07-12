@@ -175,7 +175,7 @@ rebuild:
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" \
 	REBUILD_REPORT_DIR="$(REBUILD_REPORT_DIR)" \
 	CODEX_NEXT_APP_DIR="$(NEXT_APP_DIR)" \
-		./scripts/rebuild-candidate.sh "$(DMG)"
+		./scripts/rebuild-candidate.sh $(if $(strip $(DMG)),"$(DMG)")
 
 rebuild-install:
 	@echo "[make] Running rebuild and local install flow"
@@ -183,7 +183,7 @@ rebuild-install:
 	REBUILD_REPORT_DIR="$(REBUILD_REPORT_DIR)" \
 	CODEX_NEXT_APP_DIR="$(NEXT_APP_DIR)" \
 	CODEX_FINAL_APP_DIR="$(APP_DIR)" \
-		./scripts/rebuild-candidate.sh --install "$(DMG)"
+		./scripts/rebuild-candidate.sh --install $(if $(strip $(DMG)),"$(DMG)")
 
 inspect-upstream:
 	@echo "[make] Inspecting upstream DMG"
