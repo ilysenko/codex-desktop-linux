@@ -197,6 +197,7 @@ The Home Manager and NixOS modules accept these feature IDs through
 | Feature ID | Purpose |
 | --- | --- |
 | `appshots` | Linux AppShots capture integration |
+| `frameless-titlebar` | Hide app-provided titlebar controls for compositor-managed decorations |
 | `mcp-helper-reaper` | Cleanup for stale configured MCP helper processes |
 | `node-repl-reaper` | Cleanup for leaked Browser Use `node_repl` helpers |
 | `open-target-discovery` | Linux terminal, editor, and file-manager discovery |

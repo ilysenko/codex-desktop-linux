@@ -13,6 +13,7 @@ let
   testFeatureIds = [
     "persistent-status-panel"
     "appshots"
+    "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
     "remote-mobile-control"
@@ -22,6 +23,7 @@ let
   ];
   normalizedTestFeatureIds = [
     "appshots"
+    "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
     "open-target-discovery"
@@ -123,6 +125,7 @@ let
     enableComputerUseUi = true;
     linuxFeatureIds = [
       "remote-mobile-control"
+      "frameless-titlebar"
       "global-dictation"
       "persistent-status-panel"
       "mcp-helper-reaper"

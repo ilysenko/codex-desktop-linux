@@ -658,6 +658,7 @@ PY
         codexDesktopNixFeatureCheck = codexDesktop.override {
           linuxFeatureIds = [
             "appshots"
+            "frameless-titlebar"
             "global-dictation"
             "mcp-helper-reaper"
             "node-repl-reaper"
