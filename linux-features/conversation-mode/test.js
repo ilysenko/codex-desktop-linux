@@ -586,13 +586,16 @@ test("conversation runtime exits when the unified shell opens ChatGPT in a non-E
   let chatOpen = false;
   let mutationCallback = null;
   const stopActions = [];
+  const queriedSelectors = [];
   const document = createFakeDocument();
   const closeButton = { getAttribute: (name) => name === "aria-label" ? "Fechar chat" : null };
   const chatSurface = { querySelector: () => closeButton };
-  document.querySelector = (selector) =>
-    selector === 'section[role="dialog"][data-pip-obstacle="quick-chat"][data-state="open"]' && chatOpen
+  document.querySelector = (selector) => {
+    queriedSelectors.push(selector);
+    return selector === 'section[role="dialog"][data-pip-obstacle="quick-chat"][data-state="open"]' && chatOpen
       ? chatSurface
       : null;
+  };
   class FakeMutationObserver {
     constructor(callback) {
       mutationCallback = callback;
@@ -618,6 +621,8 @@ test("conversation runtime exits when the unified shell opens ChatGPT in a non-E
 
     assert.equal(globalThis.codexLinuxConversationIsActive("thread-a"), false);
     assert.deepEqual(stopActions, ["discard"]);
+    assert.equal(closeButton.getAttribute("aria-label"), "Fechar chat");
+    assert.equal(queriedSelectors.some((selector) => selector.includes("aria-label")), false);
   }, { document, MutationObserver: FakeMutationObserver });
 });
 
