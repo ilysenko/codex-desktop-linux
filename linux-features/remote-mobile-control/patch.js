@@ -61,13 +61,6 @@ const REMOTE_CONTROL_VISIBILITY_ASSET_PATTERN =
   /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-[^.]+\.js$/u;
 const REMOTE_MOBILE_ACTIVE_STATUS_ASSET_PATTERN =
   /^app-initial~app-main~projects-index-page~remote-conversation-page-[^.]+\.js$/u;
-const REMOTE_CONTROL_SELECTED_TAB_NEEDLE =
-  "function rr({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}";
-const REMOTE_CONTROL_SELECTED_TAB_REPLACEMENT =
-  "function rr({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){let i=typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`);if(i){if(!n)return`ssh`;if(e===`control-this-mac`&&!t)return`access-other-devices`;if(e===`ssh`&&!r)return`access-other-devices`;return e}return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}";
-const REMOTE_CONTROL_SELECTED_TAB_REGEX =
-  /function ([A-Za-z_$][\w$]*)\(\{selectedConnectionsTab:([A-Za-z_$][\w$]*),showControlThisMacTab:([A-Za-z_$][\w$]*),showRemoteControlConnectionsSection:([A-Za-z_$][\w$]*),showTabbedSshPage:([A-Za-z_$][\w$]*)\}\)\{return \4\?\2===`control-this-mac`&&!\3\|\|\2===`ssh`&&!\5\?`access-other-devices`:\2:`ssh`\}/u;
-const REMOTE_CONTROL_SELECTED_TAB_MARKER = "codexLinuxRemoteControlSelectedTab";
 const REMOTE_CONTROL_LINUX_COPY_REPLACEMENTS = [
   ["defaultMessage:`Mac`", "defaultMessage:`Linux`"],
   ["Keep this Mac awake", "Keep this Linux desktop awake"],
@@ -91,7 +84,6 @@ const REMOTE_CONTROL_LINUX_COPY_REPLACEMENTS = [
   ["this Mac", "this Linux desktop"],
   ["local Mac", "local Linux desktop"],
 ];
-const CLIENT_ACCOUNT_COMPAT_MARKER = "codexLinuxRemoteControlAccountMatches";
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -102,21 +94,6 @@ function replaceOnce(source, needle, replacement) {
     return null;
   }
   return source.replace(needle, replacement);
-}
-
-function linuxRemoteControlClientAccountCompatibilityHelpers(loadEnrollmentFn, enrollmentKeyFn) {
-  return [
-    "function codexLinuxRemoteControlEnrollmentAccountUserIds(e){",
-    "return[...new Set([e.tokenAccountUserId,e.tokenAuthUserId].filter(e=>e!=null))]",
-    "}",
-    "function codexLinuxRemoteControlAccountMatches({candidateAccountId:e,candidateAccountUserId:t,candidateUserId:n,expectedAccountId:r,expectedAccountUserId:i}){",
-    "return t===i||r!=null&&e===r&&n===i",
-    "}",
-    "async function codexLinuxRemoteControlLoadEnrollment({authIdentity:e,deviceKeyClient:t,enrollmentKey:n,globalState:r}){",
-    `let i=(await Promise.all(codexLinuxRemoteControlEnrollmentAccountUserIds(e).map(async e=>{let i=${enrollmentKeyFn}(n,e);return{enrollment:await ${loadEnrollmentFn}({deviceKeyClient:t,enrollmentKey:i,globalState:r}),enrollmentRecordKey:i}}))).find(e=>e.enrollment!=null);`,
-    "return i?.enrollment==null?null:i",
-    "}",
-  ].join("");
 }
 
 function linuxDeviceKeyProviderSource({ cryptoVar, fsVar, pathVar }) {
@@ -181,234 +158,6 @@ function applyLinuxRemoteControlDeviceKeyPatch(source) {
   return source
     .replace(insertionNeedle, `${provider}${insertionNeedle}`)
     .replace(DEVICE_KEY_GUARD, DEVICE_KEY_GUARD_REPLACEMENT);
-}
-
-function applyLinuxRemoteControlClientAccountCompatibilityPatch(source) {
-  if (source.includes(CLIENT_ACCOUNT_COMPAT_MARKER)) {
-    return source;
-  }
-
-  if (
-    source.includes("function ep({authIdentity:e,connectionKey:t,deviceKeyClient:n,globalState:r})") &&
-    source.includes("Promise.all(tp(e).map(async e=>{let i=jf(t,e);") &&
-    source.includes("function tp(e){if(e.tokenAccountUserId==null)return[];") &&
-    source.includes("tokenAuthUserId!==e.tokenAccountUserId&&t.push(e.tokenAuthUserId)") &&
-    source.includes("u.account_user_id!==c&&!(s.tokenAccountId!=null&&s.headerChatGptAccountId===s.tokenAccountId&&s.tokenAuthUserId===u.account_user_id)")
-  ) {
-    return source;
-  }
-  if (
-    source.includes("function tp({authIdentity:e,connectionKey:t,deviceKeyClient:n,globalState:r}){let i=(await Promise.all(np(e).map(async e=>{let i=Mf(t,e);return{key:i,record:await ip({deviceKeyClient:n,enrollmentKey:i,globalState:r})}}))).find(e=>e.record!=null);return i?.record==null?null:{key:i.key,record:i.record}}") &&
-    source.includes("function np(e){if(e.tokenAccountUserId==null)return[];let t=[e.tokenAccountUserId];return e.tokenAccountId!=null&&e.headerChatGptAccountId===e.tokenAccountId&&e.tokenAuthUserId!=null&&e.tokenAuthUserId!==e.tokenAccountUserId&&t.push(e.tokenAuthUserId),t}") &&
-    source.includes("u?.key??Mf(r,c)")
-  ) {
-    return source;
-  }
-
-  // 26.527.x ships the multi-account enrollment compatibility natively (the
-  // helpers were renamed, e.g. ep->wh / tp->Th). Detect both the candidate-id
-  // list builder and the account/Auth-user compatibility check so the workaround
-  // stays a clean no-op without masking partially migrated shapes.
-  const nativeCandidateListStatementRegex =
-    /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{if\(\1\.tokenAccountUserId==null\)return\[\];let ([A-Za-z_$][\w$]*)=\[\1\.tokenAccountUserId\];(?:\1\.tokenAccountId!=null&&\1\.headerChatGptAccountId===\1\.tokenAccountId&&\1\.tokenAuthUserId!=null&&)?\1\.tokenAuthUserId!==\1\.tokenAccountUserId&&\2\.push\(\1\.tokenAuthUserId\);return \2\}/u;
-  const nativeCandidateListReturnRegex =
-    /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{if\(\1\.tokenAccountUserId==null\)return\[\];let ([A-Za-z_$][\w$]*)=\[\1\.tokenAccountUserId\];return (?:\1\.tokenAccountId!=null&&\1\.headerChatGptAccountId===\1\.tokenAccountId&&\1\.tokenAuthUserId!=null&&)?\1\.tokenAuthUserId!==\1\.tokenAccountUserId&&\2\.push\(\1\.tokenAuthUserId\),\2\}/u;
-  const nativeAccountCheckRegex =
-    /[A-Za-z_$][\w$]*\.account_user_id!==[A-Za-z_$][\w$]*&&!\([A-Za-z_$][\w$]*\.tokenAccountId!=null&&[A-Za-z_$][\w$]*\.headerChatGptAccountId===[A-Za-z_$][\w$]*\.tokenAccountId&&[A-Za-z_$][\w$]*\.tokenAuthUserId===[A-Za-z_$][\w$]*\.account_user_id\)/u;
-  if (
-    (nativeCandidateListStatementRegex.test(source) ||
-      nativeCandidateListReturnRegex.test(source)) &&
-    nativeAccountCheckRegex.test(source) &&
-    source.includes("remote_control_client_enrollment_start_account_mismatch")
-  ) {
-    return source;
-  }
-
-  if (!source.includes("Remote control enrollment start does not match current account.")) {
-    return source;
-  }
-
-  const enrollmentKeyHelperRegex = /function ([A-Za-z_$][\w$]*)\(e,t\)\{return`\$\{e\}\\n\$\{t\}`\}/u;
-  const helpersMatch = source.match(enrollmentKeyHelperRegex);
-  if (helpersMatch == null) {
-    console.warn("WARN: Could not find remote-control enrollment key helper - skipping account compatibility patch");
-    return source;
-  }
-  const enrollmentKeyFn = helpersMatch[1];
-
-  const enrollmentStartRegex = new RegExp(
-    `let ([A-Za-z_$][\\w$]*)=([A-Za-z_$][\\w$]*)\\(([A-Za-z_$][\\w$]*)\\),[\\s\\S]{0,240}?` +
-      `([A-Za-z_$][\\w$]*)=\\1\\.tokenAccountUserId(?:\\?\\?null)?(?:,[^;]{0,160})?;` +
-      `if\\(\\4==null\\)throw Error\\(\`Remote control enrollment requires the current ChatGPT account user id\\.\`\\);` +
-      `[\\s\\S]{0,240}?let ([A-Za-z_$][\\w$]*)=${enrollmentKeyFn}\\(([A-Za-z_$][\\w$]*),\\4\\),[\\s\\S]{0,120}?` +
-      `([A-Za-z_$][\\w$]*)=await ([A-Za-z_$][\\w$]*)\\(\\{deviceKeyClient:([A-Za-z_$][\\w$]*),enrollmentKey:\\5,globalState:([A-Za-z_$][\\w$]*)\\}\\),` +
-      `([A-Za-z_$][\\w$]*)=\\7,([A-Za-z_$][\\w$]*);`,
-    "u",
-  );
-  const startMatch = source.match(enrollmentStartRegex);
-  if (startMatch == null) {
-    console.warn("WARN: Could not find remote-control enrollment start shape - skipping account compatibility patch");
-    return source;
-  }
-
-  const [
-    startNeedle,
-    authIdentityVar,
-    authIdentityFn,
-    headersVar,
-    tokenAccountUserIdVar,
-    enrollmentRecordKeyVar,
-    enrollmentKeyVar,
-    loadedEnrollmentVar,
-    loadEnrollmentFn,
-    deviceKeyClientVar,
-    globalStateVar,
-    enrollmentVar,
-    tokenResponseVar,
-  ] = startMatch;
-
-  const stepUpValidatorRegex =
-    /function ([A-Za-z_$][\w$]*)\(\{accountUserId:([A-Za-z_$][\w$]*),stepUpToken:([A-Za-z_$][\w$]*)\}\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\3\);([A-Za-z_$][\w$]*)\(\{payload:\4\}\);let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\.parse\(\4\),([A-Za-z_$][\w$]*)=\7\[`https:\/\/api\.openai\.com\/auth`\],([A-Za-z_$][\w$]*)=\9\.chatgpt_account_user_id\?\?\9\.account_user_id,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\7\);if\(\10!==\2\)throw (?:Error\(`Remote control enrollment step-up token does not match current account\.`\)|new [A-Za-z_$][\w$]*);if\(Math\.floor\(Date\.now\(\)\/1e3\)-\7\.iat>([A-Za-z_$][\w$]*)\)throw Error\(`Remote control enrollment step-up token is not fresh\.`\);if\(Date\.now\(\)-\7\.pwd_auth_time>\13\*1e3\)throw Error\(`Remote control enrollment step-up token does not have fresh password auth\.`\);if\(\11\.length!==1\|\|\11\[0\]!==([A-Za-z_$][\w$]*)\)throw Error\(`Remote control enrollment step-up token is missing required authorization\.`\);return\{accountUserId:\10\?\?null,issuedAt:\7\.iat,passwordAuthTime:\7\.pwd_auth_time,scopes:\11\}\}/u;
-  const validatorMatch = source.match(stepUpValidatorRegex);
-  if (validatorMatch == null) {
-    console.warn("WARN: Could not find remote-control step-up token validator - skipping account compatibility patch");
-    return source;
-  }
-
-  const [
-    validatorNeedle,
-    stepUpValidatorFn,
-    ,
-    ,
-    ,
-    decodeTokenFn,
-    logPayloadFn,
-    ,
-    tokenParserVar,
-    ,
-    ,
-    ,
-    readScopesFn,
-    freshnessWindowVar,
-    requiredScopeVar,
-  ] = validatorMatch;
-
-  let patched = source;
-  patched = patched.replace(
-    enrollmentKeyHelperRegex,
-    `${helpersMatch[0]}${linuxRemoteControlClientAccountCompatibilityHelpers(loadEnrollmentFn, enrollmentKeyFn)}`,
-  );
-
-  patched = patched.replace(
-    startNeedle,
-    [
-      `let ${authIdentityVar}=${authIdentityFn}(${headersVar}),${tokenAccountUserIdVar}=${authIdentityVar}.tokenAccountUserId;`,
-      `if(${tokenAccountUserIdVar}==null)throw Error(\`Remote control enrollment requires the current ChatGPT account user id.\`);`,
-      `let codexLinuxRemoteControlCurrentAccountId=${authIdentityVar}.tokenAccountId??${authIdentityVar}.headerChatGptAccountId,`,
-      `codexLinuxRemoteControlEnrollmentKey=${enrollmentKeyVar},`,
-      `codexLinuxRemoteControlExistingEnrollment=await codexLinuxRemoteControlLoadEnrollment({authIdentity:${authIdentityVar},deviceKeyClient:${deviceKeyClientVar},enrollmentKey:${enrollmentKeyVar},globalState:${globalStateVar}}),`,
-      `${enrollmentRecordKeyVar}=codexLinuxRemoteControlExistingEnrollment?.enrollmentRecordKey??${enrollmentKeyFn}(${enrollmentKeyVar},${tokenAccountUserIdVar}),`,
-      `${loadedEnrollmentVar}=codexLinuxRemoteControlExistingEnrollment?.enrollment??null,`,
-      `${enrollmentVar}=${loadedEnrollmentVar},${tokenResponseVar};`,
-    ].join(""),
-  );
-
-  const authCheckRegex =
-    /remote_control_client_enrollment_start_response[\s\S]{0,500}?\),([A-Za-z_$][\w$]*)\.account_user_id!==([A-Za-z_$][\w$]*)/u;
-  const authCheckMatch = patched.match(authCheckRegex);
-  if (authCheckMatch == null) {
-    console.warn("WARN: Could not find remote-control enrollment account check - skipping account compatibility patch");
-    return source;
-  }
-  const responseVar = authCheckMatch[1];
-  const checkedAccountUserVar = authCheckMatch[2];
-  if (checkedAccountUserVar !== tokenAccountUserIdVar) {
-    console.warn("WARN: Remote-control enrollment account check used unexpected token variable - skipping account compatibility patch");
-    return source;
-  }
-  patched = replaceOnce(
-    patched,
-    `${responseVar}.account_user_id!==${tokenAccountUserIdVar}`,
-    `!codexLinuxRemoteControlAccountMatches({candidateAccountId:codexLinuxRemoteControlCurrentAccountId,candidateAccountUserId:${authIdentityVar}.tokenAccountUserId,candidateUserId:${authIdentityVar}.tokenAuthUserId,expectedAccountId:codexLinuxRemoteControlCurrentAccountId,expectedAccountUserId:${responseVar}.account_user_id})`,
-  );
-  if (patched == null) {
-    console.warn("WARN: Could not replace remote-control enrollment account check - skipping account compatibility patch");
-    return source;
-  }
-
-  const createEnrollmentRegex = new RegExp(
-    `${escapeRegExp(enrollmentVar)}=await ([A-Za-z_$][\\w$]*)\\(\\{accountUserId:(?:${escapeRegExp(tokenAccountUserIdVar)}|${escapeRegExp(responseVar)}\\.account_user_id),clientId:${escapeRegExp(responseVar)}\\.client_id,deviceKeyClient:${escapeRegExp(deviceKeyClientVar)}\\}\\);try\\{`,
-    "u",
-  );
-  const createEnrollmentMatch = patched.match(createEnrollmentRegex);
-  if (createEnrollmentMatch == null) {
-    console.warn("WARN: Could not find remote-control enrollment creation - skipping account compatibility patch");
-    return source;
-  }
-  const createEnrollmentFn = createEnrollmentMatch[1];
-  const createdEnrollmentRecordKeyUpdate =
-    responseVar === enrollmentRecordKeyVar
-      ? ""
-      : `${enrollmentRecordKeyVar}=${enrollmentKeyFn}(codexLinuxRemoteControlEnrollmentKey,${enrollmentVar}.accountUserId);`;
-  patched = patched.replace(
-    createEnrollmentRegex,
-    `${enrollmentVar}=await ${createEnrollmentFn}({accountUserId:${responseVar}.account_user_id,clientId:${responseVar}.client_id,deviceKeyClient:${deviceKeyClientVar}});${createdEnrollmentRecordKeyUpdate}try{`,
-  );
-
-  const stepUpCallRegex = new RegExp(
-    `let ([A-Za-z_$][\\w$]*)=await ([A-Za-z_$][\\w$]*)\\(\\),([A-Za-z_$][\\w$]*)=${escapeRegExp(stepUpValidatorFn)}\\(\\{accountUserId:${escapeRegExp(tokenAccountUserIdVar)},stepUpToken:\\1\\}\\),`,
-    "u",
-  );
-  const stepUpCallMatch = patched.match(stepUpCallRegex);
-  if (stepUpCallMatch == null) {
-    console.warn("WARN: Could not find remote-control step-up validation call - skipping account compatibility patch");
-    return source;
-  }
-  const [, stepUpTokenVar, requestStepUpVar, parsedStepUpVar] = stepUpCallMatch;
-  patched = patched.replace(
-    stepUpCallRegex,
-    `let ${stepUpTokenVar}=await ${requestStepUpVar}({accountId:codexLinuxRemoteControlCurrentAccountId}),${parsedStepUpVar}=${stepUpValidatorFn}({accountId:codexLinuxRemoteControlCurrentAccountId,accountUserId:${enrollmentVar}.accountUserId,stepUpToken:${stepUpTokenVar}}),`,
-  );
-
-  patched = patched.replace(
-    validatorNeedle,
-    [
-      `function ${stepUpValidatorFn}({accountId:codexLinuxExpectedAccountId,accountUserId:codexLinuxExpectedAccountUserId,stepUpToken:codexLinuxStepUpToken}){`,
-      `let codexLinuxStepUpPayload=${decodeTokenFn}(codexLinuxStepUpToken);${logPayloadFn}({payload:codexLinuxStepUpPayload});`,
-      `let codexLinuxStepUpClaims=${tokenParserVar}.parse(codexLinuxStepUpPayload),codexLinuxStepUpAuth=codexLinuxStepUpClaims[\`https://api.openai.com/auth\`],`,
-      `codexLinuxStepUpAccountUserId=codexLinuxStepUpAuth.chatgpt_account_user_id??codexLinuxStepUpAuth.account_user_id??null,`,
-      `codexLinuxStepUpAccountId=codexLinuxStepUpAuth.chatgpt_account_id??codexLinuxStepUpAuth.account_id??null,codexLinuxStepUpScopes=${readScopesFn}(codexLinuxStepUpClaims);`,
-      "if(!codexLinuxRemoteControlAccountMatches({candidateAccountId:codexLinuxStepUpAccountId,candidateAccountUserId:codexLinuxStepUpAccountUserId,candidateUserId:codexLinuxStepUpAuth.user_id??null,expectedAccountId:codexLinuxExpectedAccountId,expectedAccountUserId:codexLinuxExpectedAccountUserId}))",
-      "throw Error(`Remote control enrollment step-up token does not match current account.`);",
-      `if(Math.floor(Date.now()/1e3)-codexLinuxStepUpClaims.iat>${freshnessWindowVar})throw Error(\`Remote control enrollment step-up token is not fresh.\`);`,
-      `if(Date.now()-codexLinuxStepUpClaims.pwd_auth_time>${freshnessWindowVar}*1e3)throw Error(\`Remote control enrollment step-up token does not have fresh password auth.\`);`,
-      `if(codexLinuxStepUpScopes.length!==1||codexLinuxStepUpScopes[0]!==${requiredScopeVar})throw Error(\`Remote control enrollment step-up token is missing required authorization.\`);`,
-      "return{accountUserId:codexLinuxStepUpAccountUserId??null,issuedAt:codexLinuxStepUpClaims.iat,passwordAuthTime:codexLinuxStepUpClaims.pwd_auth_time,scopes:codexLinuxStepUpScopes}}",
-    ].join(""),
-  );
-
-  const authorizationCheckRegex =
-    new RegExp(
-      `async function ([A-Za-z_$][\\w$]*)\\(\\{appServerClient:([A-Za-z_$][\\w$]*),desktopApiOptions:([A-Za-z_$][\\w$]*),deviceKeyClient:([A-Za-z_$][\\w$]*),globalState:([A-Za-z_$][\\w$]*)\\}\\)\\{` +
-        `let ([A-Za-z_$][\\w$]*)=([A-Za-z_$][\\w$]*)\\(await ([A-Za-z_$][\\w$]*)\\(\\{action:\`check remote control authorization\`,appServerClient:\\2,desktopApiOptions:\\3\\}\\)\\)\\.tokenAccountUserId;` +
-        `if\\(\\6==null\\)return\\{clientAuthorized:!1,clientId:null\\};` +
-        `let ([A-Za-z_$][\\w$]*)=await ([A-Za-z_$][\\w$]*)\\(\\{deviceKeyClient:\\4,enrollmentKey:${enrollmentKeyFn}\\(([A-Za-z_$][\\w$]*)\\(\\3\\),\\6\\),globalState:\\5\\}\\);` +
-        `return\\{clientAuthorized:\\9!=null,clientId:\\9\\?\\.clientId\\?\\?null\\}\\}`,
-      "u",
-    );
-  const authorizationCheckMatch = patched.match(authorizationCheckRegex);
-  if (authorizationCheckMatch == null) {
-    console.warn("WARN: Could not find remote-control authorization status check - skipping account compatibility patch");
-    return source;
-  }
-  const [, authCheckFn, appServerClientVar, desktopApiOptionsVar, authDeviceKeyClientVar, authGlobalStateVar, authStatusIdentityVar, authStatusIdentityFn, authHeadersFn, enrollmentVarForStatus, , statusBaseEnrollmentKeyFn] =
-    authorizationCheckMatch;
-  patched = patched.replace(
-    authorizationCheckRegex,
-    `async function ${authCheckFn}({appServerClient:${appServerClientVar},desktopApiOptions:${desktopApiOptionsVar},deviceKeyClient:${authDeviceKeyClientVar},globalState:${authGlobalStateVar}}){let ${authStatusIdentityVar}=${authStatusIdentityFn}(await ${authHeadersFn}({action:\`check remote control authorization\`,appServerClient:${appServerClientVar},desktopApiOptions:${desktopApiOptionsVar}}));if(${authStatusIdentityVar}.tokenAccountUserId==null)return{clientAuthorized:!1,clientId:null};let ${enrollmentVarForStatus}=await codexLinuxRemoteControlLoadEnrollment({authIdentity:${authStatusIdentityVar},deviceKeyClient:${authDeviceKeyClientVar},enrollmentKey:${statusBaseEnrollmentKeyFn}(${desktopApiOptionsVar}),globalState:${authGlobalStateVar}});return{clientAuthorized:${enrollmentVarForStatus}!=null,clientId:${enrollmentVarForStatus}?.enrollment.clientId??null}}`,
-  );
-
-  return patched;
 }
 
 function applyLinuxRemoteControlClientRevocationRecoveryPatch(source) {
@@ -1032,52 +781,6 @@ function applyLinuxRemoteControlSettingsUxPatch(source) {
   return patched;
 }
 
-function applyLinuxRemoteControlSelectedTabPatch(source) {
-  if (
-    source.includes(REMOTE_CONTROL_SELECTED_TAB_MARKER) ||
-    source.includes(REMOTE_CONTROL_SELECTED_TAB_REPLACEMENT)
-  ) {
-    return source;
-  }
-
-  // 26.527.x moved the selected-tab resolver into the plugin-install-flow bundle
-  // and added showControlOtherDevices / showRemoteSshConnections params. Keep
-  // outbound control reachable on Linux while still avoiding hidden tabs.
-  const newRegex =
-    /function ([A-Za-z_$][\w$]*)\(\{selectedConnectionsTab:([A-Za-z_$][\w$]*),showControlOtherDevices:([A-Za-z_$][\w$]*),showControlThisMacTab:([A-Za-z_$][\w$]*),showRemoteControlConnectionsSection:([A-Za-z_$][\w$]*),showRemoteSshConnections:([A-Za-z_$][\w$]*),showTabbedSshPage:([A-Za-z_$][\w$]*)\}\)\{return ([^{}]*)\}/u;
-  const newMatch = source.match(newRegex);
-  if (newMatch != null) {
-    const [, fn, sel, otherDevices, controlThisMac, section, sshConns, tabbedSsh, body] = newMatch;
-    const replacement =
-      `function ${fn}({selectedConnectionsTab:${sel},showControlOtherDevices:${otherDevices},showControlThisMacTab:${controlThisMac},showRemoteControlConnectionsSection:${section},showRemoteSshConnections:${sshConns},showTabbedSshPage:${tabbedSsh}}){` +
-      `/*${REMOTE_CONTROL_SELECTED_TAB_MARKER}*/if(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)){` +
-      `if(!${section})return ${sshConns}?\`ssh\`:\`access-other-devices\`;` +
-      `if(${sel}===\`control-this-mac\`&&!${controlThisMac})return ${otherDevices}?\`access-other-devices\`:\`ssh\`;` +
-      `if(${sel}===\`access-other-devices\`&&!${otherDevices})return ${controlThisMac}?\`control-this-mac\`:\`ssh\`;` +
-      `if(${sel}===\`ssh\`&&!${tabbedSsh})return ${otherDevices}?\`access-other-devices\`:${controlThisMac}?\`control-this-mac\`:\`ssh\`;return ${sel}}` +
-      `return ${body}}`;
-    return source.replace(newRegex, replacement);
-  }
-
-  // Legacy 4-param shape (pre-26.527.x).
-  const oldMatch = source.match(REMOTE_CONTROL_SELECTED_TAB_REGEX);
-  if (oldMatch != null) {
-    const [, functionName, selectedVar, controlThisMacVar, sectionVar, sshVar] = oldMatch;
-    const replacement =
-      `function ${functionName}({selectedConnectionsTab:${selectedVar},showControlThisMacTab:${controlThisMacVar},showRemoteControlConnectionsSection:${sectionVar},showTabbedSshPage:${sshVar}}){` +
-      `/*${REMOTE_CONTROL_SELECTED_TAB_MARKER}*/let i=typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`);` +
-      `if(i){if(!${sectionVar})return\`ssh\`;if(${selectedVar}===\`control-this-mac\`&&!${controlThisMacVar})return\`access-other-devices\`;` +
-      `if(${selectedVar}===\`ssh\`&&!${sshVar})return\`access-other-devices\`;return ${selectedVar}}` +
-      `return ${sectionVar}?${selectedVar}===\`control-this-mac\`&&!${controlThisMacVar}||${selectedVar}===\`ssh\`&&!${sshVar}?\`access-other-devices\`:${selectedVar}:\`ssh\`}`;
-    return source.replace(REMOTE_CONTROL_SELECTED_TAB_REGEX, replacement);
-  }
-
-  if (/function [A-Za-z_$][\w$]*\(\{selectedConnectionsTab:/u.test(source)) {
-    console.warn("WARN: Could not find remote-control selected-tab needle - skipping Linux remote-control selected-tab patch");
-  }
-  return source;
-}
-
 function applyLinuxRemoteConnectionsRefreshPatch(source) {
   if (source.includes(REMOTE_CONNECTIONS_REFRESH_MARKER)) {
     return source;
@@ -1628,13 +1331,6 @@ module.exports = [
     apply: applyLinuxRemoteControlDeviceKeyPatch,
   },
   {
-    id: "linux-remote-control-client-account-compatibility",
-    phase: "main-bundle",
-    order: 20_115,
-    ciPolicy: "optional",
-    apply: applyLinuxRemoteControlClientAccountCompatibilityPatch,
-  },
-  {
     id: "linux-remote-control-client-revocation-recovery",
     phase: "main-bundle",
     order: 20_116,
@@ -1697,16 +1393,6 @@ module.exports = [
     missingDescription: "remote connections settings bundle",
     skipDescription: "Linux remote-control settings UX patch",
     apply: applyLinuxRemoteControlSettingsUxPatch,
-  },
-  {
-    id: "linux-remote-control-selected-tab",
-    phase: "webview-asset",
-    pattern: /^(?:use-plugin-install-flow|remote-connections-settings)-.*\.js$/,
-    order: 20_136,
-    ciPolicy: "optional",
-    missingDescription: "remote-control selected-tab bundle",
-    skipDescription: "Linux remote-control selected-tab patch",
-    apply: applyLinuxRemoteControlSelectedTabPatch,
   },
   {
     id: "linux-remote-control-client-revoke-setup-reset",
@@ -1824,8 +1510,6 @@ module.exports.applyLinuxRemoteControlEnablementBridgePatch = applyLinuxRemoteCo
 module.exports.applyLinuxRemoteControlEnableForHostParamsPatch =
   applyLinuxRemoteControlEnableForHostParamsPatch;
 module.exports.applyLinuxRemoteMobileActiveStatusPatch = applyLinuxRemoteMobileActiveStatusPatch;
-module.exports.applyLinuxRemoteControlClientAccountCompatibilityPatch =
-  applyLinuxRemoteControlClientAccountCompatibilityPatch;
 module.exports.applyLinuxRemoteControlClientRevocationRecoveryPatch =
   applyLinuxRemoteControlClientRevocationRecoveryPatch;
 module.exports.applyLinuxRemoteControlClientRevokeSetupResetPatch =
@@ -1838,4 +1522,3 @@ module.exports.applyLinuxRemoteControlCopyPatch = applyLinuxRemoteControlCopyPat
 module.exports.applyLinuxRemoteControlSshInstallActionPatch = applyLinuxRemoteControlSshInstallActionPatch;
 module.exports.applyLinuxRemoteControlSshInstallReleasePatch = applyLinuxRemoteControlSshInstallReleasePatch;
 module.exports.applyLinuxRemoteControlSettingsUxPatch = applyLinuxRemoteControlSettingsUxPatch;
-module.exports.applyLinuxRemoteControlSelectedTabPatch = applyLinuxRemoteControlSelectedTabPatch;

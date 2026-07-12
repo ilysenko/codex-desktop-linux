@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Remote mobile control now relies on the current upstream account-enrollment
+  compatibility and Connections tab resolver instead of patching duplicate
+  Linux-specific fallbacks into those paths.
 - Remote notification hydration, replay, completed-item recovery, and remote
   terminal-status recovery are no longer part of the default Linux patch set and
   remain owned by the disabled-by-default `remote-mobile-control` feature.
