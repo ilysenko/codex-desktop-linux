@@ -249,17 +249,17 @@ function syntheticCurrentSettingsRefreshBundle() {
   ].join("");
 }
 
-function syntheticRevokeSetupResetBundle() {
+function syntheticCurrentRevokeSetupResetBundle() {
   return [
-    "function b(e,t){e.events.push(t)}",
-    "let J={},t={ADDED_REMOTE_CONTROL_ENV_IDS:`added-remote-control-env-ids`},e={},ye=[];",
-    "function ie(e,t,n){e.globalState[t]=n}",
-    "function ee(e){return e}",
-    "var vt=`remote-control-client-revoke-success`,yt=`remote-control-client-revoke-error`;",
-    "function Ct(){let i={events:[],globalState:{\"codex-mobile-has-connected-device\":!0},get(){return{success(){}}},query:{snapshot(){return{data:[],setData(e){this.data=e(this.data)},invalidate(){this.invalidated=!0}}}}},v=i.query.snapshot(tt),y;",
-    "y=(e,t)=>{let{clientId:n}=t;b(i,{eventName:`codex_remote_control_client_revoke_result`,metadata:{result:`succeeded`}}),v.setData(e=>e?.filter(e=>e.client_id!==n)),v.invalidate(),i.get(J).success(`Revoked device access`,{id:vt})};",
-    "return{handler:y,query:v,store:i}}",
-    "var Ue=ee({mutationFn:n=>ie(e,t.ADDED_REMOTE_CONTROL_ENV_IDS,[...ye,...n])}),tt={};",
+    "let Rt={},_r={},ht={},ot={CODEX_MOBILE_SETUP_COMPLETED:`mobile-setup-completed`,keepRemoteControlAwakeWhilePluggedIn:`keep-awake`};",
+    "function we(){return{globalState:{\"mobile-setup-completed\":!0},query:{snapshot(){return{data:[],setData(e){this.data=e(this.data)},invalidate(){this.invalidated=!0}}}},events:[]}}",
+    "function Fe(e,t,n){e.globalState[t]=n}",
+    "function qe(e,t,n){e.events.push(n)}",
+    "function i(){return[`desktop_1`]}",
+    "var Kr=`remote-control-client-revoke-success`,qr=`remote-control-client-revoke-error`;",
+    "function $r(){return ot.CODEX_MOBILE_SETUP_COMPLETED}",
+    "function ei(){let i=we(Rt),s=!1,m=e=>{Fe(i,ot.keepRemoteControlAwakeWhilePluggedIn,e)};return{s,m}}",
+    "function ni(e){let t={},{mode:n,oneToOnePairingInAppEnabled:r}=e,a=we(Rt),[m]=i(`local_remote_control_client_id`),k=a.query.snapshot(_r),Se={onRevoked:e=>{k.setData(t=>t?.filter(t=>t.clientId!==e)),k.invalidate()},onRevokeResult:e=>{qe(a,ht,{result:e})}};return{handler:Se.onRevoked,query:k,store:a}}",
   ].join("");
 }
 
@@ -1069,38 +1069,102 @@ test("Linux remote mobile app-server launch keeps a leading use strict directive
   assert.equal(applyLinuxRemoteMobileAppServerRemoteControlPatch(patched), patched);
 });
 
-test("Linux remote-control client revoke clears setup completion after last client is removed", () => {
-  const source = syntheticRevokeSetupResetBundle();
-  const patched = applyLinuxRemoteControlClientRevokeSetupResetPatch(source);
+test("Linux remote-control client revoke resets current setup state after the last client is removed", () => {
+  const source = syntheticCurrentRevokeSetupResetBundle();
+  const { result: patched, warnings } = captureWarnings(() =>
+    applyLinuxRemoteControlClientRevokeSetupResetPatch(source),
+  );
 
   assert.notEqual(patched, source);
+  assert.deepEqual(warnings, []);
   assert.match(patched, /codexLinuxRemoteControlResetMobileSetupAfterRevoke/);
-  assert.match(patched, /codex-mobile-has-connected-device/);
   assert.equal(applyLinuxRemoteControlClientRevokeSetupResetPatch(patched), patched);
 
   const context = { module: { exports: {} } };
-  vm.runInNewContext(`${patched};module.exports=Ct();`, context);
+  vm.runInNewContext(`${patched};module.exports=ni({mode:\`manage\`,oneToOnePairingInAppEnabled:true});`, context);
   const { handler, query, store } = context.module.exports;
-  query.data = [{ client_id: "phone_1" }];
+  query.data = [{ clientId: "desktop_1" }, { clientId: "phone_1" }];
 
-  handler(null, { clientId: "phone_1" });
+  handler("phone_1");
 
-  assert.deepEqual(query.data, []);
-  assert.equal(store.globalState["codex-mobile-has-connected-device"], false);
+  assert.deepEqual(query.data, [{ clientId: "desktop_1" }]);
+  assert.equal(store.globalState["mobile-setup-completed"], false);
   assert.equal(query.invalidated, true);
 });
 
-test("Linux remote-control client revoke keeps setup completion while other clients remain", () => {
-  const patched = applyLinuxRemoteControlClientRevokeSetupResetPatch(syntheticRevokeSetupResetBundle());
+test("Linux remote-control client revoke handles snake-case cached client identities", () => {
+  const patched = applyLinuxRemoteControlClientRevokeSetupResetPatch(syntheticCurrentRevokeSetupResetBundle());
   const context = { module: { exports: {} } };
-  vm.runInNewContext(`${patched};module.exports=Ct();`, context);
+  vm.runInNewContext(`${patched};module.exports=ni({mode:\`manage\`,oneToOnePairingInAppEnabled:true});`, context);
   const { handler, query, store } = context.module.exports;
-  query.data = [{ client_id: "phone_1" }, { client_id: "tablet_1" }];
+  query.data = [{ client_id: "desktop_1" }, { client_id: "phone_1" }];
 
-  handler(null, { clientId: "phone_1" });
+  handler("phone_1");
 
-  assert.deepEqual(query.data, [{ client_id: "tablet_1" }]);
-  assert.equal(store.globalState["codex-mobile-has-connected-device"], true);
+  assert.deepEqual(query.data, [{ client_id: "desktop_1" }]);
+  assert.equal(store.globalState["mobile-setup-completed"], false);
+});
+
+test("Linux remote-control client revoke keeps current setup state while another client remains", () => {
+  const patched = applyLinuxRemoteControlClientRevokeSetupResetPatch(syntheticCurrentRevokeSetupResetBundle());
+  const context = { module: { exports: {} } };
+  vm.runInNewContext(`${patched};module.exports=ni({mode:\`manage\`,oneToOnePairingInAppEnabled:true});`, context);
+  const { handler, query, store } = context.module.exports;
+  query.data = [{ clientId: "desktop_1" }, { clientId: "phone_1" }, { clientId: "tablet_1" }];
+
+  handler("phone_1");
+
+  assert.deepEqual(query.data, [{ clientId: "desktop_1" }, { clientId: "tablet_1" }]);
+  assert.equal(store.globalState["mobile-setup-completed"], true);
+});
+
+test("Linux remote-control client revoke resets current setup when the cache omits the local client", () => {
+  const patched = applyLinuxRemoteControlClientRevokeSetupResetPatch(syntheticCurrentRevokeSetupResetBundle());
+  const context = { module: { exports: {} } };
+  vm.runInNewContext(`${patched};module.exports=ni({mode:\`manage\`,oneToOnePairingInAppEnabled:true});`, context);
+  const { handler, query, store } = context.module.exports;
+  query.data = [{ clientId: "phone_1" }];
+
+  handler("phone_1");
+
+  assert.deepEqual(query.data, []);
+  assert.equal(store.globalState["mobile-setup-completed"], false);
+});
+
+test("Linux remote-control client revoke preserves current setup when the cache is unknown", () => {
+  const patched = applyLinuxRemoteControlClientRevokeSetupResetPatch(syntheticCurrentRevokeSetupResetBundle());
+  const context = { module: { exports: {} } };
+  vm.runInNewContext(`${patched};module.exports=ni({mode:\`manage\`,oneToOnePairingInAppEnabled:true});`, context);
+  const { handler, query, store } = context.module.exports;
+  query.data = undefined;
+
+  handler("phone_1");
+
+  assert.equal(query.data, undefined);
+  assert.equal(store.globalState["mobile-setup-completed"], true);
+  assert.equal(query.invalidated, true);
+});
+
+test("Linux remote-control client revoke warns when a recognized bundle shape drifts", () => {
+  const source = syntheticCurrentRevokeSetupResetBundle().replace(
+    "onRevoked:e=>{k.setData(t=>t?.filter(t=>t.clientId!==e)),k.invalidate()}",
+    "onRevoked:e=>{k.invalidate(),k.setData(t=>t?.filter(t=>t.clientId!==e))}",
+  );
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlClientRevokeSetupResetPatch(source));
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("revoke success handler")));
+});
+
+test("Linux remote-control client revoke rejects distant current-bundle anchors", () => {
+  const source = syntheticCurrentRevokeSetupResetBundle().replace(
+    "function ni(e)",
+    `${"x".repeat(16_385)}function ni(e)`,
+  );
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlClientRevokeSetupResetPatch(source));
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("anchors are too far apart")));
 });
 
 test("Linux remote-control load gate enables remote-control environment loading", () => {
@@ -2725,7 +2789,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           syntheticSettingsBundle() +
             syntheticRemoteConnectionsSettingsCopyBundle() +
             syntheticSettingsRefreshBundle() +
-            syntheticRevokeSetupResetBundle(),
+            syntheticCurrentRevokeSetupResetBundle(),
         );
         fs.writeFileSync(
           path.join(assetsDir, "codex-mobile-setup-flow-test.js"),

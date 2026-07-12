@@ -506,72 +506,60 @@ function applyLinuxRemoteControlClientRevokeSetupResetPatch(source) {
     return source;
   }
 
-  const currentStateKeysVar = source.match(/([A-Za-z_$][\w$]*)\.CODEX_MOBILE_SETUP_COMPLETED/u)?.[1] ?? null;
-  const currentStateSetterVar =
-    source.match(/([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\.keepRemoteControlAwakeWhilePluggedIn,/u)?.[1] ??
-    null;
-  const currentScopeMatch = source.match(
-    /function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\{let [A-Za-z_$][\w$]*=\(0,[A-Za-z_$][\w$]*\.c\)\(\d+\),[\s\S]*?([A-Za-z_$][\w$]*)=a\(s\)[\s\S]*?`local_remote_control_client_id`[\s\S]*?onRevoked:[A-Za-z_$][\w$]*=>\{[A-Za-z_$][\w$]*\.setData[\s\S]*?onRevokeResult:/u,
+  const currentStateKeysMatch = source.match(/([A-Za-z_$][\w$]*)\.CODEX_MOBILE_SETUP_COMPLETED/u);
+  const currentStateSetterMatch = source.match(
+    /([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\.keepRemoteControlAwakeWhilePluggedIn,/u,
   );
-  const currentLocalRevokePattern =
-    /onRevoked:([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.setData\(([A-Za-z_$][\w$]*)=>\3\?\.filter\(\3=>\3\.clientId!==\1\)\),\2\.invalidate\(\)\},onRevokeResult:/u;
-  if (
-    currentStateKeysVar != null &&
-    currentStateSetterVar != null &&
-    currentScopeMatch != null &&
-    currentLocalRevokePattern.test(source)
-  ) {
-    const helperNeedle = source.match(/var [A-Za-z_$][\w$]*=`remote-control-client-revoke-success`/u)?.[0] ?? null;
-    if (helperNeedle == null) {
+  const currentStateKeysVar = currentStateKeysMatch?.[1] ?? null;
+  const currentStateSetterVar = currentStateSetterMatch?.[1] ?? null;
+  const currentRevokePattern =
+    /onRevoked:([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.setData\(([A-Za-z_$][\w$]*)=>\3\?\.filter\(\3=>\3\.clientId!==\1\)\),\2\.invalidate\(\)\},onRevokeResult:([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),\{result:\4\}\)\}/u;
+  const currentRevokeMatch = source.match(currentRevokePattern);
+  if (currentStateKeysVar != null && currentStateSetterVar != null && currentRevokeMatch != null) {
+    const ownerFunctionStart = source.lastIndexOf("function ", currentRevokeMatch.index);
+    if (
+      ownerFunctionStart < 0 ||
+      !/^function [A-Za-z_$][\w$]*\(/u.test(source.slice(ownerFunctionStart, ownerFunctionStart + 128))
+    ) {
+      console.warn("WARN: Could not find remote-control revoke helper insertion point - skipping setup reset patch");
+      return source;
+    }
+    const ownerPrefix = source.slice(ownerFunctionStart, currentRevokeMatch.index);
+    const localClientIdMatch = ownerPrefix.match(
+      /\[([A-Za-z_$][\w$]*)\]=[A-Za-z_$][\w$]*\(`local_remote_control_client_id`\)/u,
+    );
+    if (localClientIdMatch == null) {
+      console.warn("WARN: Could not find local remote-control client id - skipping setup reset patch");
+      return source;
+    }
+    const localClientIdVar = localClientIdMatch[1];
+    const anchorPositions = [
+      currentStateKeysMatch.index,
+      currentStateSetterMatch.index,
+      currentRevokeMatch.index,
+      ownerFunctionStart,
+      ownerFunctionStart + localClientIdMatch.index,
+    ];
+    if (Math.max(...anchorPositions) - Math.min(...anchorPositions) > 16_384) {
+      console.warn("WARN: Remote-control revoke setup-reset anchors are too far apart - skipping setup reset patch");
       return source;
     }
     const helper = [
-      `function ${REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER}(e,t,n,r,i){`,
+      `function ${REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER}(e,t,n,r,i,o){`,
       "let a=e?.filter(e=>(e.clientId??e.client_id)!==t);",
-      "return a?.length===0&&i(n,r.CODEX_MOBILE_SETUP_COMPLETED,!1),a",
+      "let s=a?.filter(e=>(e.clientId??e.client_id)!==o);",
+      "return s?.length===0&&i(n,r.CODEX_MOBILE_SETUP_COMPLETED,!1),a",
       "}",
     ].join("");
-    return source
-      .replace(helperNeedle, `${helper}${helperNeedle}`)
+    return `${source.slice(0, ownerFunctionStart)}${helper}${source.slice(ownerFunctionStart)}`
       .replace(
-        currentLocalRevokePattern,
-        (_needle, clientIdVar, querySnapshotVar, dataVar) =>
-          `onRevoked:${clientIdVar}=>{${querySnapshotVar}.setData(${dataVar}=>${REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER}(${dataVar},${clientIdVar},${currentScopeMatch[1]},${currentStateKeysVar},${currentStateSetterVar})),${querySnapshotVar}.invalidate()},onRevokeResult:`,
+        currentRevokePattern,
+        (_needle, clientIdVar, querySnapshotVar, dataVar, resultVar, trackFn, desktopHostVar, revokeEventVar) =>
+          `onRevoked:${clientIdVar}=>{${querySnapshotVar}.setData(${dataVar}=>${REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER}(${dataVar},${clientIdVar},${desktopHostVar},${currentStateKeysVar},${currentStateSetterVar},${localClientIdVar})),${querySnapshotVar}.invalidate()},onRevokeResult:${resultVar}=>{${trackFn}(${desktopHostVar},${revokeEventVar},{result:${resultVar}})}`,
       );
   }
-
-  const setGlobalStateMatch = source.match(
-    /mutationFn:[A-Za-z_$][\w$]*=>([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\.ADDED_REMOTE_CONTROL_ENV_IDS,/u,
-  );
-  if (setGlobalStateMatch == null) {
-    return source;
-  }
-
-  const setGlobalStateFn = setGlobalStateMatch[1];
-  const helperNeedle = source.match(/var [A-Za-z_$][\w$]*=`remote-control-client-revoke-success`/u)?.[0] ?? null;
-  if (helperNeedle == null) {
-    return source;
-  }
-
-  const helper = [
-    `function ${REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER}(e,t,n){`,
-    "let r=e?.filter(e=>(e.client_id??e.clientId)!==t);",
-    `return r?.length===0&&${setGlobalStateFn}(n,\`codex-mobile-has-connected-device\`,!1),r`,
-    "}",
-  ].join("");
-
-  const patched = source.replace(helperNeedle, `${helper}${helperNeedle}`);
-  const successPattern =
-    /([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\{eventName:`codex_remote_control_client_revoke_result`,metadata:\{result:`succeeded`\}\}\),([A-Za-z_$][\w$]*)\.setData\(([A-Za-z_$][\w$]*)=>\4\?\.filter\(\4=>\4\.client_id!==([A-Za-z_$][\w$]*)\)\)/u;
-  if (!successPattern.test(patched)) {
-    return source;
-  }
-
-  return patched.replace(
-    successPattern,
-    (_needle, trackFn, queryClientVar, querySnapshotVar, dataVar, clientIdVar) =>
-      `${trackFn}(${queryClientVar},{eventName:\`codex_remote_control_client_revoke_result\`,metadata:{result:\`succeeded\`}}),${querySnapshotVar}.setData(${dataVar}=>${REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER}(${dataVar},${clientIdVar},${queryClientVar}))`,
-  );
+  console.warn("WARN: Could not find remote-control revoke success handler - skipping setup reset patch");
+  return source;
 }
 
 function applyLinuxRemoteControlLoadGatePatch(source) {
