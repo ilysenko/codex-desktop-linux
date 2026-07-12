@@ -201,7 +201,7 @@ The Home Manager and NixOS modules accept these feature IDs through
 | `node-repl-reaper` | Cleanup for leaked Browser Use `node_repl` helpers |
 | `open-target-discovery` | Linux terminal, editor, and file-manager discovery |
 | `persistent-status-panel` | Persistent `/status` panel state |
-| `remote-mobile-control` | Experimental mobile remote-control host enrollment |
+| `remote-mobile-control` | Experimental Linux Remote host and outbound-control adaptation |
 
 The list is validated during module evaluation, then deduplicated and sorted so
 equivalent configurations produce the same derivation. Features that are not in

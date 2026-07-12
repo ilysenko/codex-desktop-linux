@@ -1,8 +1,13 @@
 # Experimental Remote Mobile Control
 
-This feature is disabled by default. It patches the upstream ChatGPT Desktop main
-bundle so Linux can try the remote-control host and outbound control flows that
-upstream currently limits to macOS.
+This feature is disabled by default. OpenAI currently documents Remote hosts on
+macOS and Windows, with control from ChatGPT on iOS or Android and, when the
+rollout is available, from another Mac or Windows device. This feature adapts
+the upstream host and outbound-control flows for experimental Linux use; it
+does not make Linux an officially supported Remote host.
+
+See the [official Remote documentation](https://learn.chatgpt.com/docs/remote-connections)
+for account, workspace, mobile app, and rollout requirements.
 
 Enable it by adding the feature id to `linux-features/features.json` before
 building:
@@ -31,7 +36,7 @@ nix run .#computer-use-ui-remote-mobile-control
 
 What it changes:
 
-- Replaces the macOS-only `remote-control-device-key.node` requirement with a
+- Replaces the upstream native `remote-control-device-key.node` path with a
   Linux JavaScript ECDSA P-256 key provider.
 - Lets the remote-control Connections UI render on Linux when upstream marks
   the feature unavailable or withholds the remote-control visibility rollout.
@@ -52,7 +57,7 @@ What it changes:
 - Preserves `remote_control = true` / `features.remote_control = true` in the
   local Codex config instead of letting upstream strip it before app-server
   startup.
-- Updates remote-control settings and Codex mobile setup copy so the Linux flow
+- Updates Remote settings and mobile setup copy so the experimental Linux flow
   is not described as Mac-only.
 - Stages `.codex-linux/cold-start.d/remote-mobile-control`, a feature-owned
   cold-start hook that provisions the upstream managed standalone daemon runtime
@@ -63,8 +68,8 @@ Remote mobile daemon requirement:
 
 The interactive Codex CLI and the remote-control daemon are separate concerns.
 You can keep using a Homebrew-installed `codex` for normal terminal and Desktop
-app-server usage, but Android remote control currently expects the upstream
-managed standalone daemon runtime at:
+app-server usage. Outside the declarative Nix service described below, this
+feature uses the upstream managed standalone daemon runtime at:
 
 ```bash
 ~/.codex/packages/standalone/current/codex
@@ -144,11 +149,12 @@ a non-empty `windows` list.
 
 Known risks:
 
-- This is not equivalent to macOS Secure Enclave-backed storage. Private key
-  material is file-backed and protected by ordinary user file permissions.
-- OpenAI may still reject Linux host enrollment or outbound authorization
-  server-side. This feature only removes local macOS-only blockers in the
-  repackaged app.
+- The Linux key provider is file-backed and protected by ordinary user file
+  permissions. It is not equivalent to OS- or hardware-backed non-extractable
+  key storage.
+- Linux host enrollment or outbound authorization can still fail server-side.
+  The official Remote documentation does not list Linux as a supported host
+  platform.
 - Treat this as experimental account-level remote-control plumbing.
 
 Run the feature tests with:
