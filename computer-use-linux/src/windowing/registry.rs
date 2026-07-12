@@ -1,4 +1,4 @@
-use crate::windowing::backends::{cosmic, gnome, hyprland, i3, kwin};
+use crate::windowing::backends::{cosmic, gnome, hyprland, i3, kwin, niri};
 use crate::windowing::types::WindowInfo;
 use anyhow::{anyhow, Result};
 
@@ -7,8 +7,9 @@ pub use gnome::{GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND};
 pub use hyprland::HYPRLAND_BACKEND;
 pub use i3::I3_BACKEND;
 pub use kwin::KWIN_BACKEND;
+pub use niri::NIRI_BACKEND;
 
-pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the Codex GNOME Shell extension, the COSMIC Wayland helper, KWin/Plasma DBus scripting, Hyprland hyprctl, or i3-msg. On GNOME, run setup_window_targeting to install the extension backend.";
+pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the Codex GNOME Shell extension, the COSMIC Wayland helper, KWin/Plasma DBus scripting, Hyprland hyprctl, Niri IPC, or i3-msg. On GNOME, run setup_window_targeting to install the extension backend.";
 
 #[derive(Debug, Clone, Copy)]
 pub struct BackendDescriptor {
@@ -36,6 +37,7 @@ enum BackendKind {
     Cosmic,
     Kwin,
     Hyprland,
+    Niri,
     I3,
 }
 
@@ -45,6 +47,7 @@ const BACKEND_ORDER: &[BackendKind] = &[
     BackendKind::Cosmic,
     BackendKind::Kwin,
     BackendKind::Hyprland,
+    BackendKind::Niri,
     BackendKind::I3,
 ];
 
@@ -82,6 +85,13 @@ const DESCRIPTORS: &[BackendDescriptor] = &[
         failure_label: "Hyprland",
         list_note: "Window list came from Hyprland hyprctl. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
         missing_hint: "On Hyprland, ensure hyprctl is available in the session.",
+        can_exact_focus: true,
+    },
+    BackendDescriptor {
+        id: NIRI_BACKEND,
+        failure_label: "Niri",
+        list_note: "Window list came from Niri IPC. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
+        missing_hint: "On Niri, ensure NIRI_SOCKET is available and niri msg can reach the active compositor.",
         can_exact_focus: true,
     },
     BackendDescriptor {
@@ -152,6 +162,7 @@ async fn list_windows_for(backend: BackendKind) -> Result<Vec<WindowInfo>> {
         BackendKind::Cosmic => cosmic::list_windows(),
         BackendKind::Kwin => kwin::list_windows().await,
         BackendKind::Hyprland => hyprland::list_windows(),
+        BackendKind::Niri => niri::list_windows(),
         BackendKind::I3 => i3::list_windows(),
     }
 }
@@ -175,6 +186,7 @@ pub async fn activate_window(window: &WindowInfo) -> Result<()> {
         COSMIC_WAYLAND_BACKEND => cosmic::activate_window(window.window_id),
         KWIN_BACKEND => kwin::activate_window(window.window_id).await,
         HYPRLAND_BACKEND => hyprland::activate_window(window.window_id),
+        NIRI_BACKEND => niri::activate_window(window.window_id),
         I3_BACKEND => i3::activate_window(window.window_id),
         backend => Err(anyhow!(
             "Unsupported window backend for activation: {backend}"
@@ -193,6 +205,7 @@ pub fn probe_backends() -> Vec<BackendProbe> {
         cosmic::probe(),
         kwin::probe(),
         hyprland::probe(),
+        niri::probe(),
         i3::probe(),
     ]
 }
@@ -205,6 +218,7 @@ impl BackendKind {
             BackendKind::Cosmic => COSMIC_WAYLAND_BACKEND,
             BackendKind::Kwin => KWIN_BACKEND,
             BackendKind::Hyprland => HYPRLAND_BACKEND,
+            BackendKind::Niri => NIRI_BACKEND,
             BackendKind::I3 => I3_BACKEND,
         }
     }

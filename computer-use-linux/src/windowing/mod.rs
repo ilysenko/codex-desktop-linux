@@ -6,7 +6,7 @@ pub mod types;
 #[allow(unused_imports)]
 pub use registry::{
     COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, WINDOW_PERMISSION_HINT,
+    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, NIRI_BACKEND, WINDOW_PERMISSION_HINT,
 };
 #[allow(unused_imports)]
 pub use target::{
@@ -25,9 +25,10 @@ mod tests {
         kwin_activate_script_source, kwin_window_id_from_uuid, kwin_window_script_source,
         parse_kwin_windows, KWIN_BACKEND,
     };
+    use super::backends::niri::{niri_focus_args, parse_niri_windows, NIRI_BACKEND};
     use super::registry::{
-        descriptors, list_note, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND,
-        GNOME_SHELL_INTROSPECT_BACKEND,
+        backend_can_exact_focus, descriptors, list_note, COSMIC_WAYLAND_BACKEND,
+        GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
     };
     use super::target::ensure_backend_can_focus_target;
     use super::*;
@@ -55,8 +56,92 @@ mod tests {
                 COSMIC_WAYLAND_BACKEND,
                 KWIN_BACKEND,
                 HYPRLAND_BACKEND,
+                NIRI_BACKEND,
                 I3_BACKEND,
             ]
+        );
+    }
+
+    #[test]
+    fn niri_backend_can_exact_focus_targets() {
+        assert!(backend_can_exact_focus(NIRI_BACKEND));
+    }
+
+    #[test]
+    fn niri_parses_window_records_without_inventing_global_coordinates() {
+        let json = r#"[
+          {
+            "id": 42,
+            "title": "Niri Computer Use Test",
+            "app_id": "com.mitchellh.ghostty",
+            "pid": 1234,
+            "workspace_id": 7,
+            "is_focused": true,
+            "is_floating": false,
+            "unknown_future_field": "ignored",
+            "layout": {
+              "window_size": [1200, 800],
+              "tile_pos_in_workspace_view": null,
+              "window_offset_in_tile": [0.0, 0.0]
+            }
+          }
+        ]"#;
+
+        let windows = parse_niri_windows(json).unwrap();
+
+        assert_eq!(windows.len(), 1);
+        let window = &windows[0];
+        assert_eq!(window.window_id, 42);
+        assert_eq!(window.title.as_deref(), Some("Niri Computer Use Test"));
+        assert_eq!(window.app_id.as_deref(), Some("com.mitchellh.ghostty"));
+        assert_eq!(window.wm_class.as_deref(), Some("com.mitchellh.ghostty"));
+        assert_eq!(window.pid, Some(1234));
+        assert_eq!(window.workspace, Some(7));
+        assert!(window.focused);
+        assert!(!window.hidden);
+        assert_eq!(window.client_type, None);
+        assert_eq!(window.backend, NIRI_BACKEND);
+        let bounds = window.bounds.as_ref().unwrap();
+        assert_eq!(bounds.x, None);
+        assert_eq!(bounds.y, None);
+        assert_eq!(bounds.width, 1200);
+        assert_eq!(bounds.height, 800);
+    }
+
+    #[test]
+    fn niri_tolerates_nullable_metadata_and_rejects_unsafe_numeric_values() {
+        let json = r#"[
+          {
+            "id": 9,
+            "title": null,
+            "app_id": null,
+            "pid": -1,
+            "workspace_id": 2147483648,
+            "is_focused": false,
+            "layout": { "window_size": [0, 600] }
+          }
+        ]"#;
+
+        let windows = parse_niri_windows(json).unwrap();
+        let window = &windows[0];
+
+        assert_eq!(window.title, None);
+        assert_eq!(window.app_id, None);
+        assert_eq!(window.pid, None);
+        assert_eq!(window.workspace, None);
+        assert!(window.bounds.is_none());
+    }
+
+    #[test]
+    fn niri_accepts_an_empty_window_list() {
+        assert!(parse_niri_windows("[]").unwrap().is_empty());
+    }
+
+    #[test]
+    fn niri_builds_exact_focus_arguments() {
+        assert_eq!(
+            niri_focus_args(42),
+            ["msg", "action", "focus-window", "--id", "42"]
         );
     }
 

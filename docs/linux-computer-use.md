@@ -8,7 +8,8 @@ It supports:
 
 - app listing and accessibility trees through AT-SPI
 - screenshots through GNOME Shell DBus, the Codex GNOME Shell extension, or XDG Desktop Portal
-- window listing and focusing on GNOME, KWin/Plasma, Hyprland, COSMIC, and i3
+- window listing and focusing on GNOME, KWin/Plasma, Hyprland, Niri, COSMIC,
+  and i3
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
   RemoteDesktop portal, or `ydotool`
 
@@ -55,6 +56,11 @@ or screenshots:
 - sway/wlroots: `xdg-desktop-portal-wlr`
 - Hyprland: `xdg-desktop-portal-hyprland`
 - GNOME: usually available by default
+
+Niri window listing and exact focus use the `niri` command and the active
+session's `NIRI_SOCKET`. The Computer Use backend hydrates `NIRI_SOCKET` for GUI
+starts, but the socket must still belong to the active Niri session and be
+reachable by the desktop user.
 
 ## Verify Readiness
 
