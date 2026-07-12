@@ -2,7 +2,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -103,7 +103,7 @@ test("remote mobile README assigns every descriptor to one control topology", ()
 
 function syntheticMainBundle() {
   return [
-    "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),b={createRequire:()=>()=>({})};",
+    "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),h=require(`node:child_process`),b={createRequire:()=>()=>({})};",
     "function TV(e){return Buffer.from(JSON.stringify(e),`utf8`)}",
     "var bV=(0,b.createRequire)(__filename),xV=`remote-control-device-key.node`,SV=`codex-device-key-sign-payload/v1`;",
     "function wV({resourcesPath:e}){let t=null,n=()=>{if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=bV(i.join(e,`native`,xV)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=TV(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
@@ -113,7 +113,7 @@ function syntheticMainBundle() {
 
 function syntheticCurrentMainBundle() {
   return [
-    "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),b={createRequire:()=>()=>({})};",
+    "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),h=require(`node:child_process`),b={createRequire:()=>()=>({})};",
     "function mz(e){return Buffer.from(JSON.stringify({domain:`codex-device-key-sign-payload/v1`,payload:e}),`utf8`)}",
     "var lz=(0,b.createRequire)(__filename),uz=`remote-control-device-key.node`,dz=`codex-device-key-sign-payload/v1`;",
     "function pz({resourcesPath:e}){let t=null,n=()=>{if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=lz((0,i.join)(e,`native`,uz)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=mz(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
@@ -123,11 +123,42 @@ function syntheticCurrentMainBundle() {
 
 function syntheticCryptoAliasCollisionMainBundle() {
   return [
-    "let a=require(`node:path`),o=require(`node:fs`),c=require(`node:crypto`),b={createRequire:()=>()=>({})};",
+    "let a=require(`node:path`),o=require(`node:fs`),c=require(`node:crypto`),h=require(`node:child_process`),b={createRequire:()=>()=>({})};",
     "function mz(e){return Buffer.from(JSON.stringify({domain:`codex-device-key-sign-payload/v1`,payload:e}),`utf8`)}",
     "var lz=(0,b.createRequire)(__filename),uz=`remote-control-device-key.node`,dz=`codex-device-key-sign-payload/v1`;",
     "function pz({resourcesPath:e}){let t=null,n=()=>{if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=lz((0,a.join)(e,`native`,uz)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=mz(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
   ].join("");
+}
+
+function createPatchedDeviceKeyClient(configHome, moduleOverrides = {}) {
+  const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
+  const context = {
+    Buffer,
+    clearTimeout,
+    Date,
+    Error,
+    JSON,
+    Promise,
+    console,
+    __filename: path.join(path.resolve(configHome), "main.js"),
+    module: { exports: {} },
+    process: {
+      env: { XDG_CONFIG_HOME: configHome },
+      getuid: typeof process.getuid === "function" ? process.getuid.bind(process) : undefined,
+      pid: process.pid,
+      platform: "linux",
+    },
+    require: (moduleName) => moduleOverrides[moduleName] ?? require(moduleName),
+    setTimeout,
+  };
+  vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, context);
+  return context.module.exports;
+}
+
+function remoteControlKeyStorePaths(configHome) {
+  const directory = path.join(configHome, "codex-desktop");
+  const store = path.join(directory, "remote-control-device-keys-v1.json");
+  return { directory, lock: `${store}.lock`, store };
 }
 
 function syntheticRecoverableErrorPredicateBundle() {
@@ -1086,6 +1117,7 @@ test("Linux remote-control device-key provider avoids upstream minified alias co
 
     const context = {
       Buffer,
+      clearTimeout,
       Date,
       Error,
       JSON,
@@ -1099,6 +1131,7 @@ test("Linux remote-control device-key provider avoids upstream minified alias co
         platform: "linux",
       },
       require,
+      setTimeout,
     };
 
     vm.runInNewContext(`${patched};module.exports=pz({resourcesPath:null});`, context);
@@ -2668,6 +2701,7 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
     const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
     const context = {
       Buffer,
+      clearTimeout,
       Date,
       Error,
       JSON,
@@ -2681,6 +2715,7 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
         platform: "linux",
       },
       require,
+      setTimeout,
     };
 
     vm.runInNewContext(`${patched};module.exports=wV({resourcesPath:null});`, context);
@@ -2706,6 +2741,253 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
 
     await client.deleteDeviceKey(created.keyId);
     await assert.rejects(() => client.getDeviceKeyPublic(created.keyId), /not found/);
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("Linux device-key store serializes concurrent updates", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-concurrency-"));
+  try {
+    const client = createPatchedDeviceKeyClient(configHome);
+    const created = await Promise.all(
+      Array.from({ length: 8 }, () => client.createDeviceKey("allow_os_protected_nonextractable")),
+    );
+    const { directory, lock, store } = remoteControlKeyStorePaths(configHome);
+    const persisted = JSON.parse(fs.readFileSync(store, "utf8"));
+
+    assert.equal(persisted.version, 1);
+    assert.deepEqual(new Set(Object.keys(persisted.keys)), new Set(created.map((key) => key.keyId)));
+    assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(store).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(lock).mode & 0o777, 0o600);
+
+    const replacementPromise = client.createDeviceKey("allow_os_protected_nonextractable");
+    const deletionPromise = client.deleteDeviceKey(created[0].keyId);
+    const [replacement] = await Promise.all([replacementPromise, deletionPromise]);
+    const updated = JSON.parse(fs.readFileSync(store, "utf8"));
+    assert.equal(updated.keys[created[0].keyId], undefined);
+    assert.ok(updated.keys[replacement.keyId]);
+    assert.equal(Object.keys(updated.keys).length, 8);
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("Linux device-key store contends on its validated lock file", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-lock-"));
+  let holder;
+  try {
+    const client = createPatchedDeviceKeyClient(configHome);
+    await client.createDeviceKey("test");
+    const { lock } = remoteControlKeyStorePaths(configHome);
+    holder = spawn("flock", ["-x", lock, "/bin/sh", "-c", "printf 'ready\\n'; sleep 0.25"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await new Promise((resolve, reject) => {
+      let output = "";
+      holder.once("error", reject);
+      holder.stdout.on("data", (chunk) => {
+        output += String(chunk);
+        if (output.includes("ready\n")) resolve();
+      });
+    });
+
+    const startedAt = Date.now();
+    await client.createDeviceKey("test");
+    assert.ok(Date.now() - startedAt >= 150, "key update must wait for the existing file lock");
+  } finally {
+    holder?.kill();
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("Linux device-key store migrates the legacy schema on the next write", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-migration-"));
+  try {
+    const client = createPatchedDeviceKeyClient(configHome);
+    const first = await client.createDeviceKey("allow_os_protected_nonextractable");
+    const { store } = remoteControlKeyStorePaths(configHome);
+    const legacy = JSON.parse(fs.readFileSync(store, "utf8"));
+    delete legacy.version;
+    fs.writeFileSync(store, `${JSON.stringify(legacy)}\n`, { mode: 0o600 });
+    fs.chmodSync(store, 0o600);
+
+    const second = await client.createDeviceKey("allow_os_protected_nonextractable");
+    const migrated = JSON.parse(fs.readFileSync(store, "utf8"));
+    assert.equal(migrated.version, 1);
+    assert.ok(migrated.keys[first.keyId]);
+    assert.ok(migrated.keys[second.keyId]);
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("Linux device-key store rejects corruption without replacing it", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-corrupt-"));
+  try {
+    const { directory, store } = remoteControlKeyStorePaths(configHome);
+    fs.mkdirSync(directory, { mode: 0o700 });
+    fs.writeFileSync(store, "{truncated", { mode: 0o600 });
+    const client = createPatchedDeviceKeyClient(configHome);
+
+    await assert.rejects(
+      () => client.createDeviceKey("allow_os_protected_nonextractable"),
+      /contains invalid JSON/,
+    );
+    assert.equal(fs.readFileSync(store, "utf8"), "{truncated");
+    assert.deepEqual(
+      fs.readdirSync(directory).filter((entry) => entry.includes(".tmp-")),
+      [],
+    );
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("Linux device-key store does not remove a colliding temporary file", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-temp-"));
+  try {
+    const { directory, store } = remoteControlKeyStorePaths(configHome);
+    fs.mkdirSync(directory, { mode: 0o700 });
+    const collisionPath = `${store}.tmp-collision`;
+    fs.writeFileSync(collisionPath, "keep", { mode: 0o600 });
+    const crypto = require("node:crypto");
+    const randomValues = ["key-id", "collision"];
+    const client = createPatchedDeviceKeyClient(configHome, {
+      "node:crypto": { ...crypto, randomUUID: () => randomValues.shift() ?? crypto.randomUUID() },
+    });
+
+    await assert.rejects(() => client.createDeviceKey("test"), /EEXIST|file already exists/);
+    assert.equal(fs.readFileSync(collisionPath, "utf8"), "keep");
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
+test("Linux device-key store rejects unsafe filesystem objects", { timeout: 2_000 }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-fs-"));
+  try {
+    const directorySymlinkHome = path.join(root, "directory-symlink");
+    const directoryTarget = path.join(root, "directory-target");
+    fs.mkdirSync(directorySymlinkHome, { mode: 0o700 });
+    fs.mkdirSync(directoryTarget, { mode: 0o700 });
+    fs.symlinkSync(directoryTarget, path.join(directorySymlinkHome, "codex-desktop"));
+    await assert.rejects(
+      () => createPatchedDeviceKeyClient(directorySymlinkHome).createDeviceKey("test"),
+      /directory must be a regular directory/,
+    );
+
+    const storeSymlinkHome = path.join(root, "store-symlink");
+    const storeSymlinkPaths = remoteControlKeyStorePaths(storeSymlinkHome);
+    fs.mkdirSync(storeSymlinkPaths.directory, { recursive: true, mode: 0o700 });
+    const target = path.join(root, "sensitive-target");
+    fs.writeFileSync(target, "unchanged", { mode: 0o600 });
+    fs.symlinkSync(target, storeSymlinkPaths.store);
+    await assert.rejects(
+      () => createPatchedDeviceKeyClient(storeSymlinkHome).createDeviceKey("test"),
+      /must be a regular file/,
+    );
+    assert.equal(fs.readFileSync(target, "utf8"), "unchanged");
+
+    const fifoHome = path.join(root, "fifo");
+    const fifoPaths = remoteControlKeyStorePaths(fifoHome);
+    fs.mkdirSync(fifoPaths.directory, { recursive: true, mode: 0o700 });
+    const mkfifo = spawnSync("mkfifo", [fifoPaths.store], { encoding: "utf8" });
+    assert.equal(mkfifo.status, 0, mkfifo.stderr);
+    fs.chmodSync(fifoPaths.store, 0o600);
+    await assert.rejects(
+      () => createPatchedDeviceKeyClient(fifoHome).getDeviceKeyPublic("missing"),
+      /must be a regular file/,
+    );
+
+    const lockSymlinkHome = path.join(root, "lock-symlink");
+    const lockClient = createPatchedDeviceKeyClient(lockSymlinkHome);
+    await lockClient.createDeviceKey("test");
+    const lockPaths = remoteControlKeyStorePaths(lockSymlinkHome);
+    fs.rmSync(lockPaths.lock);
+    fs.symlinkSync(target, lockPaths.lock);
+    await assert.rejects(
+      () => lockClient.createDeviceKey("test"),
+      /ELOOP|too many symbolic links|must be a regular file/,
+    );
+    assert.equal(fs.readFileSync(target, "utf8"), "unchanged");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Linux device-key store enforces paths, permissions, and size bounds", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-bounds-"));
+  try {
+    await assert.rejects(
+      () => createPatchedDeviceKeyClient("relative-config").createDeviceKey("test"),
+      /config root must be absolute/,
+    );
+
+    const directoryModeHome = path.join(root, "directory-mode");
+    const directoryModePaths = remoteControlKeyStorePaths(directoryModeHome);
+    fs.mkdirSync(directoryModePaths.directory, { recursive: true, mode: 0o755 });
+    await assert.rejects(
+      () => createPatchedDeviceKeyClient(directoryModeHome).createDeviceKey("test"),
+      /directory permissions must be 0700/,
+    );
+
+    const storeModeHome = path.join(root, "store-mode");
+    const storeModeClient = createPatchedDeviceKeyClient(storeModeHome);
+    const storeModeKey = await storeModeClient.createDeviceKey("test");
+    const storeModePaths = remoteControlKeyStorePaths(storeModeHome);
+    fs.chmodSync(storeModePaths.store, 0o640);
+    await assert.rejects(
+      () => storeModeClient.getDeviceKeyPublic(storeModeKey.keyId),
+      /permissions must be 0600/,
+    );
+
+    const oversizedHome = path.join(root, "oversized");
+    const oversizedPaths = remoteControlKeyStorePaths(oversizedHome);
+    fs.mkdirSync(oversizedPaths.directory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(oversizedPaths.store, Buffer.alloc(1_048_577), { mode: 0o600 });
+    await assert.rejects(
+      () => createPatchedDeviceKeyClient(oversizedHome).getDeviceKeyPublic("missing"),
+      /exceeds size limit/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Linux device-key store enforces its schema and key-count boundary", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-count-"));
+  try {
+    const client = createPatchedDeviceKeyClient(configHome);
+    const created = await client.createDeviceKey("test");
+    const { store } = remoteControlKeyStorePaths(configHome);
+    const persisted = JSON.parse(fs.readFileSync(store, "utf8"));
+    const record = persisted.keys[created.keyId];
+    const records = (length) => Object.fromEntries(
+      Array.from({ length }, (_, index) => {
+        const keyId = `key-${index}`;
+        return [keyId, { ...record, keyId }];
+      }),
+    );
+    persisted.keys = records(64);
+    fs.writeFileSync(store, `${JSON.stringify(persisted)}\n`, { mode: 0o600 });
+    fs.chmodSync(store, 0o600);
+    assert.equal((await client.getDeviceKeyPublic("key-0")).keyId, "key-0");
+
+    persisted.keys = records(65);
+    fs.writeFileSync(store, `${JSON.stringify(persisted)}\n`, { mode: 0o600 });
+    await assert.rejects(() => client.getDeviceKeyPublic("key-0"), /exceeds key limit/);
+
+    persisted.keys = records(1);
+    persisted.keys["key-0"].algorithm = "unexpected";
+    fs.writeFileSync(store, `${JSON.stringify(persisted)}\n`, { mode: 0o600 });
+    await assert.rejects(() => client.getDeviceKeyPublic("key-0"), /record is invalid/);
+
+    persisted.keys["key-0"] = { ...record, keyId: "key-0" };
+    persisted.version = 2;
+    fs.writeFileSync(store, `${JSON.stringify(persisted)}\n`, { mode: 0o600 });
+    await assert.rejects(() => client.getDeviceKeyPublic("key-0"), /schema is invalid/);
   } finally {
     fs.rmSync(configHome, { recursive: true, force: true });
   }

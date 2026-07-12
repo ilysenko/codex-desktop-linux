@@ -39,6 +39,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   Explicit systemd user-service configuration takes precedence over the
   Desktop app-server and standalone fallback, while a versioned Desktop marker
   prevents stale or forged marker content from suppressing the fallback.
+- Remote mobile device keys now use a bounded, versioned file store with
+  serialized read-modify-write updates and crash-durable atomic replacement.
+  Unsafe paths, file types, ownership, permissions, malformed records, and
+  oversized stores fail closed instead of being followed or silently erased.
 - Remote mobile control now patches the current upstream webview chunks for
   feature sync, settings visibility, host enablement, and active conversation
   status. Revoking the final controller now also clears the current mobile setup
