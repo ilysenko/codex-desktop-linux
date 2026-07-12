@@ -463,6 +463,17 @@ test("remote mobile control feature stays disabled until listed in features.json
   });
 });
 
+test("remote mobile control feature exposes its stage hook when enabled", () => {
+  withTempFeatureRoot(["remote-mobile-control"], (root) => {
+    assert.deepEqual(enabledLinuxFeatureStageHooks({ featuresRoot: root }), [
+      {
+        id: "remote-mobile-control",
+        path: path.join(root, "remote-mobile-control", "stage.sh"),
+      },
+    ]);
+  });
+});
+
 test("remote mobile stage hook is idempotent and stages its markers and executable hook", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-stage-"));
   try {
