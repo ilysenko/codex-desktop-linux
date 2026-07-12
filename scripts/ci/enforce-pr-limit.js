@@ -142,72 +142,76 @@ async function closePullRequestWithRetries({ context, core, github, pullNumber }
   throw lastError;
 }
 
-async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOverrides }) {
-  const pullRequest = context.payload.pull_request;
-  if (!pullRequest) {
-    throw new Error("The workflow event does not contain a pull request.");
-  }
-
-  if (pullRequest.user?.type === "Bot") {
-    core.info(`Skipping pull request #${pullRequest.number} from a bot account.`);
-    return { action: "skipped-bot" };
-  }
-
-  const author = pullRequest.user.login;
-  const resolvedLimit = resolvePullRequestLimit({
-    author,
-    rawLimit,
-    rawOverrides,
-    warn: (message) => core.warning(message),
-  });
-  const { limit } = resolvedLimit;
-  core.info(`${author}: effective pull request limit is ${limit} (${resolvedLimit.source}).`);
-  const authorLogin = author.toLowerCase();
+async function enforcePullRequestLimits({ context, core, github, rawLimit, rawOverrides }) {
   const allOpenPullRequests = await github.paginate(github.rest.pulls.list, {
     ...context.repo,
     state: "open",
     per_page: 100,
   });
-  const authorOpenPullRequests = allOpenPullRequests.filter(
-    (candidate) => candidate.user?.login?.toLowerCase() === authorLogin,
-  );
-
-  const pullRequestsToClose = selectExcessPullRequests({
-    limit,
-    openPullRequests: authorOpenPullRequests,
-  });
-
-  if (pullRequestsToClose.length === 0) {
-    core.info(
-      `${author} has ${authorOpenPullRequests.length} open pull request(s); the configured limit is ${limit}.`,
-    );
-    return { action: "allowed", count: authorOpenPullRequests.length, limit };
+  const pullRequestsByAuthor = new Map();
+  for (const pullRequest of allOpenPullRequests) {
+    if (!pullRequest.user?.login || pullRequest.user.type === "Bot") {
+      continue;
+    }
+    const authorLogin = pullRequest.user.login.toLowerCase();
+    const entry = pullRequestsByAuthor.get(authorLogin) || {
+      author: pullRequest.user.login,
+      pullRequests: [],
+    };
+    entry.pullRequests.push(pullRequest);
+    pullRequestsByAuthor.set(authorLogin, entry);
   }
 
-  const body = buildLimitComment(limit, authorOpenPullRequests.length);
-  for (const excessPullRequest of pullRequestsToClose) {
-    await ensureLimitComment({
-      body,
-      context,
-      github,
-      pullNumber: excessPullRequest.number,
+  const closedPullRequests = [];
+  const authors = [];
+  for (const { author, pullRequests } of pullRequestsByAuthor.values()) {
+    const resolvedLimit = resolvePullRequestLimit({
+      author,
+      rawLimit,
+      rawOverrides,
+      warn: (message) => core.warning(message),
     });
-    await closePullRequestWithRetries({
-      context,
-      core,
-      github,
-      pullNumber: excessPullRequest.number,
+    const { limit } = resolvedLimit;
+    const pullRequestsToClose = selectExcessPullRequests({
+      limit,
+      openPullRequests: pullRequests,
     });
-    core.notice(
-      `Closed pull request #${excessPullRequest.number} because ${author} exceeded the limit.`,
+    core.info(
+      `${author}: ${pullRequests.length} open pull request(s), effective limit ${limit} (${resolvedLimit.source}).`,
     );
+
+    const body = buildLimitComment(limit, pullRequests.length);
+    for (const excessPullRequest of pullRequestsToClose) {
+      await ensureLimitComment({
+        body,
+        context,
+        github,
+        pullNumber: excessPullRequest.number,
+      });
+      await closePullRequestWithRetries({
+        context,
+        core,
+        github,
+        pullNumber: excessPullRequest.number,
+      });
+      closedPullRequests.push(excessPullRequest.number);
+      core.notice(
+        `Closed pull request #${excessPullRequest.number} because ${author} exceeded the limit.`,
+      );
+    }
+
+    authors.push({
+      author,
+      closedPullRequests: pullRequestsToClose.map((candidate) => candidate.number),
+      count: pullRequests.length,
+      limit,
+    });
   }
 
   return {
-    action: "closed",
-    closedPullRequests: pullRequestsToClose.map((candidate) => candidate.number),
-    count: authorOpenPullRequests.length,
-    limit,
+    action: "reconciled",
+    authors,
+    closedPullRequests,
   };
 }
 
@@ -215,7 +219,7 @@ module.exports = {
   DEFAULT_MAX_OPEN_PRS,
   LIMIT_COMMENT_MARKER,
   buildLimitComment,
-  enforcePullRequestLimit,
+  enforcePullRequestLimits,
   parseMaxOpenPullRequests,
   parsePullRequestLimitOverrides,
   resolvePullRequestLimit,

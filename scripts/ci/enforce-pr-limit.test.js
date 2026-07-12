@@ -9,7 +9,7 @@ const {
   DEFAULT_MAX_OPEN_PRS,
   LIMIT_COMMENT_MARKER,
   buildLimitComment,
-  enforcePullRequestLimit,
+  enforcePullRequestLimits,
   parseMaxOpenPullRequests,
   parsePullRequestLimitOverrides,
   resolvePullRequestLimit,
@@ -192,47 +192,44 @@ test("selectExcessPullRequests returns every newer PR outside the limit", () => 
   );
 });
 
-test("enforcePullRequestLimit skips bot accounts", async () => {
+test("enforcePullRequestLimits excludes bot accounts from repository-wide reconciliation", async () => {
   const current = pullRequest(3, "automation[bot]", { user: { login: "automation[bot]", type: "Bot" } });
   const harness = createHarness({ current, open: [current] });
 
-  const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
+  const result = await enforcePullRequestLimits({ ...harness, rawLimit: "2" });
 
-  assert.deepEqual(result, { action: "skipped-bot" });
-  assert.deepEqual(harness.calls, []);
+  assert.deepEqual(result, { action: "reconciled", authors: [], closedPullRequests: [] });
+  assert.equal(harness.calls.length, 1);
 });
 
-test("enforcePullRequestLimit counts drafts across all base branches without closing at the limit", async () => {
+test("enforcePullRequestLimits counts drafts across all base branches without closing at the limit", async () => {
   const current = pullRequest(2, "Contributor", { draft: true });
   const harness = createHarness({
     current,
     open: [pullRequest(1, "contributor"), current, pullRequest(4, "someone-else")],
   });
 
-  const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
+  const result = await enforcePullRequestLimits({ ...harness, rawLimit: "2" });
 
-  assert.deepEqual(result, {
-    action: "allowed",
+  assert.deepEqual(result.closedPullRequests, []);
+  assert.deepEqual(result.authors.find(({ author }) => author === "contributor"), {
+    author: "contributor",
+    closedPullRequests: [],
     count: 2,
     limit: 2,
   });
 });
 
-test("enforcePullRequestLimit comments in English before closing the excess PR", async () => {
+test("enforcePullRequestLimits comments in English before closing the excess PR", async () => {
   const current = pullRequest(3);
   const harness = createHarness({
     current,
     open: [pullRequest(1), pullRequest(2, "CONTRIBUTOR", { draft: true }), current],
   });
 
-  const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
+  const result = await enforcePullRequestLimits({ ...harness, rawLimit: "2" });
 
-  assert.deepEqual(result, {
-    action: "closed",
-    closedPullRequests: [3],
-    count: 3,
-    limit: 2,
-  });
+  assert.deepEqual(result.closedPullRequests, [3]);
   const commentCall = harness.calls.find(([operation]) => operation === "comment");
   assert.deepEqual(commentCall[1], {
     owner: "owner",
@@ -249,53 +246,76 @@ test("enforcePullRequestLimit comments in English before closing the excess PR",
   });
 });
 
-test("enforcePullRequestLimit closes against a lower personal limit", async () => {
+test("enforcePullRequestLimits closes against a lower personal limit", async () => {
   const current = pullRequest(2, "One-PR-User");
   const harness = createHarness({ current, open: [pullRequest(1, "one-pr-user"), current] });
 
-  const result = await enforcePullRequestLimit({
+  const result = await enforcePullRequestLimits({
     ...harness,
     rawLimit: "2",
     rawOverrides: '{"one-pr-user":1}',
   });
 
-  assert.deepEqual(result, {
-    action: "closed",
-    closedPullRequests: [2],
-    count: 2,
-    limit: 1,
-  });
-  assert.match(harness.messages.info[0], /limit is 1 \(personal override\)/);
+  assert.deepEqual(result.closedPullRequests, [2]);
+  assert.equal(result.authors[0].limit, 1);
+  assert.match(harness.messages.info[0], /effective limit 1 \(personal override\)/);
   assert.equal(
     harness.calls.find(([operation]) => operation === "comment")[1].body,
     buildLimitComment(1, 2),
   );
 });
 
-test("enforcePullRequestLimit allows more PRs under a higher personal limit", async () => {
+test("enforcePullRequestLimits allows more PRs under a higher personal limit", async () => {
   const current = pullRequest(3, "trusted-user");
   const harness = createHarness({
     current,
     open: [pullRequest(1, "trusted-user"), pullRequest(2, "trusted-user"), current],
   });
 
-  const result = await enforcePullRequestLimit({
+  const result = await enforcePullRequestLimits({
     ...harness,
     rawLimit: "2",
     rawOverrides: '{"trusted-user":3}',
   });
 
-  assert.deepEqual(result, {
-    action: "allowed",
-    count: 3,
-    limit: 3,
-  });
-  assert.match(harness.messages.info[0], /limit is 3 \(personal override\)/);
+  assert.deepEqual(result.closedPullRequests, []);
+  assert.equal(result.authors[0].limit, 3);
+  assert.match(harness.messages.info[0], /effective limit 3 \(personal override\)/);
   assert.equal(harness.calls.some(([operation]) => operation === "comment"), false);
   assert.equal(harness.calls.some(([operation]) => operation === "close"), false);
 });
 
-test("enforcePullRequestLimit closes every excess PR left by a burst of events", async () => {
+test("enforcePullRequestLimits groups all open PRs and applies each author's limit", async () => {
+  const current = pullRequest(7, "trigger-user");
+  const harness = createHarness({
+    current,
+    open: [
+      pullRequest(1, "default-user"),
+      pullRequest(2, "one-pr-user"),
+      pullRequest(3, "default-user"),
+      pullRequest(4, "one-pr-user"),
+      pullRequest(5, "default-user"),
+      pullRequest(6, "automation[bot]", { user: { login: "automation[bot]", type: "Bot" } }),
+    ],
+  });
+
+  const result = await enforcePullRequestLimits({
+    ...harness,
+    rawLimit: "2",
+    rawOverrides: '{"one-pr-user":1}',
+  });
+
+  assert.deepEqual([...result.closedPullRequests].sort((left, right) => left - right), [4, 5]);
+  assert.deepEqual(
+    result.authors.map(({ author, count, limit }) => ({ author, count, limit })),
+    [
+      { author: "default-user", count: 3, limit: 2 },
+      { author: "one-pr-user", count: 2, limit: 1 },
+    ],
+  );
+});
+
+test("enforcePullRequestLimits closes every excess PR left by a burst of events", async () => {
   const current = pullRequest(5);
   const harness = createHarness({
     current,
@@ -308,14 +328,9 @@ test("enforcePullRequestLimit closes every excess PR left by a burst of events",
     ],
   });
 
-  const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
+  const result = await enforcePullRequestLimits({ ...harness, rawLimit: "2" });
 
-  assert.deepEqual(result, {
-    action: "closed",
-    closedPullRequests: [3, 4, 5],
-    count: 5,
-    limit: 2,
-  });
+  assert.deepEqual(result.closedPullRequests, [3, 4, 5]);
   assert.deepEqual(
     harness.calls.filter(([operation]) => operation === "comment").map(([, options]) => options.issue_number),
     [3, 4, 5],
@@ -326,14 +341,14 @@ test("enforcePullRequestLimit closes every excess PR left by a burst of events",
   );
 });
 
-test("enforcePullRequestLimit reconciles every newer PR after a limit decrease", async () => {
+test("enforcePullRequestLimits reconciles every newer PR after a limit decrease", async () => {
   const current = pullRequest(4);
   const harness = createHarness({
     current,
     open: [pullRequest(1), pullRequest(2), pullRequest(3), current],
   });
 
-  const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
+  const result = await enforcePullRequestLimits({ ...harness, rawLimit: "2" });
 
   assert.deepEqual(result.closedPullRequests, [3, 4]);
   assert.deepEqual(
@@ -342,25 +357,20 @@ test("enforcePullRequestLimit reconciles every newer PR after a limit decrease",
   );
 });
 
-test("enforcePullRequestLimit still reconciles when the triggering PR is already closed", async () => {
+test("enforcePullRequestLimits still reconciles when the triggering PR is already closed", async () => {
   const current = pullRequest(3);
   const harness = createHarness({
     current,
     open: [pullRequest(1), pullRequest(2), pullRequest(4)],
   });
 
-  const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
+  const result = await enforcePullRequestLimits({ ...harness, rawLimit: "2" });
 
-  assert.deepEqual(result, {
-    action: "closed",
-    closedPullRequests: [4],
-    count: 3,
-    limit: 2,
-  });
+  assert.deepEqual(result.closedPullRequests, [4]);
   assert.equal(harness.calls.find(([operation]) => operation === "close")[1].pull_number, 4);
 });
 
-test("enforcePullRequestLimit reuses an existing marker comment after a partial failure", async () => {
+test("enforcePullRequestLimits reuses an existing marker comment after a partial failure", async () => {
   const current = pullRequest(3);
   const harness = createHarness({
     commentsByIssue: {
@@ -370,14 +380,14 @@ test("enforcePullRequestLimit reuses an existing marker comment after a partial 
     open: [pullRequest(1), pullRequest(2), current],
   });
 
-  const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
+  const result = await enforcePullRequestLimits({ ...harness, rawLimit: "2" });
 
   assert.deepEqual(result.closedPullRequests, [3]);
   assert.equal(harness.calls.some(([operation]) => operation === "comment"), false);
   assert.equal(harness.calls.find(([operation]) => operation === "close")[1].pull_number, 3);
 });
 
-test("enforcePullRequestLimit updates a stale marker comment with the effective limit", async () => {
+test("enforcePullRequestLimits updates a stale marker comment with the effective limit", async () => {
   const current = pullRequest(2, "one-pr-user");
   const harness = createHarness({
     commentsByIssue: {
@@ -387,7 +397,7 @@ test("enforcePullRequestLimit updates a stale marker comment with the effective 
     open: [pullRequest(1, "one-pr-user"), current],
   });
 
-  const result = await enforcePullRequestLimit({
+  const result = await enforcePullRequestLimits({
     ...harness,
     rawLimit: "2",
     rawOverrides: '{"one-pr-user":1}',
@@ -404,7 +414,7 @@ test("enforcePullRequestLimit updates a stale marker comment with the effective 
   assert.equal(harness.calls.find(([operation]) => operation === "close")[1].pull_number, 2);
 });
 
-test("enforcePullRequestLimit retries closing before failing", async () => {
+test("enforcePullRequestLimits retries closing before failing", async () => {
   const current = pullRequest(3);
   const closeError = new Error("close failed");
   const harness = createHarness({
@@ -414,7 +424,7 @@ test("enforcePullRequestLimit retries closing before failing", async () => {
   });
 
   await assert.rejects(
-    enforcePullRequestLimit({ ...harness, rawLimit: "2" }),
+    enforcePullRequestLimits({ ...harness, rawLimit: "2" }),
     closeError,
   );
 
@@ -434,7 +444,7 @@ test("workflow uses the trusted pull_request_target configuration", () => {
   assert.doesNotMatch(workflow, /pr-limit-pending|addLabels|queue-event/);
   assert.match(
     workflow,
-    /group: contributor-pr-limit-\$\{\{ github\.event\.pull_request\.user\.login \}\}\n\s+cancel-in-progress: false/,
+    /group: contributor-pr-limit\n\s+cancel-in-progress: false/,
   );
   assert.match(workflow, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
   assert.match(workflow, /persist-credentials: false/);

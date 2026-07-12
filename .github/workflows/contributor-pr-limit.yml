@@ -11,10 +11,9 @@ permissions:
 jobs:
   enforce-limit:
     name: Enforce contributor pull request limit
-    if: github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
     concurrency:
-      group: contributor-pr-limit-${{ github.event.pull_request.user.login }}
+      group: contributor-pr-limit
       cancel-in-progress: false
     steps:
       # pull_request_target grants write access for fork PRs. Always load the
@@ -32,8 +31,8 @@ jobs:
           MAX_OPEN_PRS_PER_CONTRIBUTOR_OVERRIDES: ${{ vars.MAX_OPEN_PRS_PER_CONTRIBUTOR_OVERRIDES }}
         with:
           script: |
-            const { enforcePullRequestLimit } = require('./scripts/ci/enforce-pr-limit.js');
-            await enforcePullRequestLimit({
+            const { enforcePullRequestLimits } = require('./scripts/ci/enforce-pr-limit.js');
+            await enforcePullRequestLimits({
               context,
               core,
               github,
