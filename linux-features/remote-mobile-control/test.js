@@ -1633,6 +1633,9 @@ test("Linux remote mobile conversation hydration patch handles current app-serve
   assert.match(patched, /Queueing item\/started for hydrating conversation/);
   assert.match(patched, /Queueing item\/completed for hydrating conversation/);
   assert.match(patched, /Queueing turn\/completed for hydrating conversation/);
+  assert.doesNotMatch(patched, /safe:\{[^}]*\b(?:conversationId|resolvedConversationId|turnId):/);
+  assert.match(patched, /sensitive:\{conversationId:[^}]+resolvedConversationId:[^}]+turnId:/);
+  assert.match(patched, /sensitive:\{conversationId:[^}]+error:/);
   assert.doesNotMatch(patched, /captureBrowserUseTurnRoute/);
   assert.doesNotMatch(patched, /releaseBrowserUseTurnRoute/);
   assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(patched), patched);
@@ -2616,6 +2619,9 @@ test("Linux remote-control enablement bridge warns when host toggle params needl
 test("Linux remote-control enablement bridge auto-connects only this Desktop host", async () => {
   const source = syntheticAppMainEnablementBridgeBundle();
   const patched = applyLinuxRemoteControlEnablementBridgePatch(source);
+
+  assert.doesNotMatch(patched, /safe:\{[^}]*\bhostId:/);
+  assert.match(patched, /sensitive:\{hostId:[^}]+error:/);
 
   const calls = [];
   const context = {
