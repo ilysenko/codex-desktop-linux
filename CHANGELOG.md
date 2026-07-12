@@ -39,6 +39,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   Explicit systemd user-service configuration takes precedence over the
   Desktop app-server and standalone fallback, while a versioned Desktop marker
   prevents stale or forged marker content from suppressing the fallback.
+- Remote mobile cleanup now validates daemon PID records against the process
+  owner, recorded start time, and managed standalone executable before
+  preserving them. Recycled or foreign PIDs no longer make stale state appear
+  live, while incomplete in-flight reservations are left untouched.
 - Remote mobile control now patches the current upstream webview chunks for
   feature sync, settings visibility, host enablement, and active conversation
   status. Revoking the final controller now also clears the current mobile setup

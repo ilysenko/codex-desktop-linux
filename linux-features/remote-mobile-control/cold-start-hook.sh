@@ -99,18 +99,90 @@ remote_mobile_control_daemon_pid() {
     sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$pid_file" | head -n 1
 }
 
+remote_mobile_control_daemon_start_time() {
+    local pid_file="$1"
+
+    [ -f "$pid_file" ] || return 1
+    sed -n 's/.*"processStartTime"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$pid_file" | head -n 1
+}
+
+remote_mobile_control_pid_record_is_active() {
+    local pid_file="$1"
+    local standalone_root="$2"
+    local pid=""
+    local pid_file_owner=""
+    local pid_file_size=""
+    local recorded_start_time=""
+    local current_start_time=""
+    local process_owner=""
+    local current_owner=""
+    local process_executable=""
+
+    [ -f "$pid_file" ] && [ ! -L "$pid_file" ] || return 1
+    current_owner="$(id -u 2>/dev/null || true)"
+    pid_file_owner="$(stat -c '%u' "$pid_file" 2>/dev/null || true)"
+    pid_file_size="$(stat -c '%s' "$pid_file" 2>/dev/null || true)"
+    if [ -z "$current_owner" ] || [ -z "$pid_file_owner" ] ||
+        [ "$pid_file_owner" != "$current_owner" ]; then
+        return 2
+    fi
+    case "$pid_file_size" in
+        ''|*[!0-9]*) return 2 ;;
+    esac
+    if [ "$pid_file_size" -gt 4096 ]; then
+        return 1
+    fi
+    pid="$(remote_mobile_control_daemon_pid "$pid_file" || true)"
+    recorded_start_time="$(remote_mobile_control_daemon_start_time "$pid_file" || true)"
+    if [ -z "$pid" ] || [ -z "$recorded_start_time" ]; then
+        return 2
+    fi
+    if [ "$pid" -le 1 ]; then
+        return 1
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+
+    process_owner="$(stat -c '%u' "/proc/$pid" 2>/dev/null || true)"
+    current_start_time="$(LC_ALL=C ps -p "$pid" -o lstart= 2>/dev/null | sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}')"
+    process_executable="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+    process_executable="${process_executable% (deleted)}"
+    standalone_root="$(readlink -f "$standalone_root" 2>/dev/null || true)"
+
+    if [ -z "$process_owner" ] || [ -z "$current_owner" ] ||
+        [ -z "$current_start_time" ] || [ -z "$process_executable" ] ||
+        [ -z "$standalone_root" ]; then
+        return 2
+    fi
+    if [ "$process_owner" != "$current_owner" ] ||
+        [ "$current_start_time" != "$recorded_start_time" ]; then
+        return 1
+    fi
+    case "$process_executable" in
+        "$standalone_root"/releases/*/bin/codex) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 cleanup_stale_remote_mobile_daemon_state() {
     local codex_home="$1"
     local pid_file=""
-    local pid=""
+    local record_status=0
+    local standalone_root="$codex_home/packages/standalone"
 
     for pid_file in \
         "$codex_home/app-server-daemon/app-server.pid" \
         "$codex_home/app-server-daemon/app-server-updater.pid"
     do
         [ -e "$pid_file" ] || continue
-        pid="$(remote_mobile_control_daemon_pid "$pid_file" || true)"
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        record_status=0
+        remote_mobile_control_pid_record_is_active "$pid_file" "$standalone_root" || record_status=$?
+        if [ "$record_status" -eq 0 ]; then
+            continue
+        fi
+        if [ "$record_status" -eq 2 ]; then
+            echo "Preserved remote mobile control daemon pid file with unverifiable identity: $pid_file" >&2
             continue
         fi
         if rm -f "$pid_file"; then

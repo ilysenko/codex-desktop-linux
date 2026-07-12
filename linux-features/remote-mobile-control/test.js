@@ -2,7 +2,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -403,6 +403,7 @@ const COLD_START_TEST_ENV_KEYS = [
   "TEST_SYSTEMCTL_ACTIVE_STATUS",
   "TEST_SYSTEMCTL_CAT_STATUS",
   "TEST_SYSTEMCTL_ENABLED_STATUS",
+  "TEST_REQUIRE_C_LOCALE",
 ];
 
 function coldStartTestEnv(env) {
@@ -429,6 +430,24 @@ function runColdStartHook(env) {
     ].join("\n"));
     fs.chmodSync(systemctl, 0o755);
 
+    const hostPs = (process.env.PATH ?? "")
+      .split(path.delimiter)
+      .filter((directory) => path.isAbsolute(directory))
+      .map((directory) => path.join(directory, "ps"))
+      .find((candidate) => fs.existsSync(candidate));
+    assert.ok(hostPs, "ps must be available for cold-start tests");
+    const ps = path.join(tempBin, "ps");
+    fs.writeFileSync(ps, [
+      "#!/usr/bin/env sh",
+      "if [ \"${TEST_REQUIRE_C_LOCALE:-}\" = 1 ] && [ \"${LC_ALL:-}\" != C ]; then",
+      "  printf '%s\\n' 'localized timestamp'",
+      "  exit 0",
+      "fi",
+      `exec ${JSON.stringify(fs.realpathSync(hostPs))} \"$@\"`,
+      "",
+    ].join("\n"));
+    fs.chmodSync(ps, 0o755);
+
     const childEnv = coldStartTestEnv(env);
     childEnv.PATH = `${tempBin}${path.delimiter}${childEnv.PATH ?? ""}`;
     return spawnSync("bash", [path.join(__dirname, "cold-start-hook.sh"), "--run-main"], {
@@ -451,6 +470,12 @@ function writeDesktopAppServerRemoteControlMarker(appDir) {
   const marker = path.join(appDir, ".codex-linux", "desktop-app-server-remote-control-enabled");
   fs.mkdirSync(path.dirname(marker), { recursive: true });
   fs.writeFileSync(marker, "version=1\nowner=desktop\n");
+}
+
+function processStartTime(pid) {
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
 }
 
 test("remote mobile control feature stays disabled until listed in features.json", () => {
@@ -886,29 +911,187 @@ test("remote mobile cold-start hook removes dead standalone daemon pid files whe
 
 test("remote mobile cold-start hook preserves live standalone daemon pid files when Desktop app-server owns remote-control", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  let child;
   try {
     const home = path.join(tempRoot, "home");
     const codexHome = path.join(tempRoot, "codex-home");
     const daemonDir = path.join(codexHome, "app-server-daemon");
     const appDir = path.join(tempRoot, "package", "share", "codex-desktop", "app");
     const pidFile = path.join(daemonDir, "app-server.pid");
+    const managedExecutable = path.join(codexHome, "packages", "standalone", "releases", "test", "bin", "codex");
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(daemonDir, { recursive: true });
     fs.mkdirSync(appDir, { recursive: true });
+    fs.mkdirSync(path.dirname(managedExecutable), { recursive: true });
+    fs.copyFileSync("/bin/sleep", managedExecutable);
+    fs.chmodSync(managedExecutable, 0o755);
     writeDesktopAppServerRemoteControlMarker(appDir);
-    fs.writeFileSync(pidFile, JSON.stringify({ pid: process.pid, processStartTime: "fixture" }));
+    child = spawn(managedExecutable, ["30"], { stdio: "ignore" });
+    fs.writeFileSync(pidFile, JSON.stringify({ pid: child.pid, processStartTime: processStartTime(child.pid) }));
 
     const result = runColdStartHook({
       CODEX_HOME: codexHome,
       CODEX_LINUX_APP_DIR: appDir,
       HOME: home,
+      TEST_REQUIRE_C_LOCALE: "1",
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(fs.existsSync(pidFile), true);
     assert.doesNotMatch(result.stdout, /Removed stale remote mobile control daemon pid file/);
     assert.match(result.stdout, /owner: desktop \(app-server launches with remote-control enabled\)/);
+  } finally {
+    child?.kill("SIGTERM");
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook removes a recycled daemon pid record", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const daemonDir = path.join(codexHome, "app-server-daemon");
+    const appDir = path.join(tempRoot, "app");
+    const pidFile = path.join(daemonDir, "app-server.pid");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(daemonDir, { recursive: true });
+    fs.mkdirSync(path.join(codexHome, "packages", "standalone", "releases"), { recursive: true });
+    writeDesktopAppServerRemoteControlMarker(appDir);
+    fs.writeFileSync(pidFile, JSON.stringify({ pid: process.pid, processStartTime: "recycled" }));
+
+    const result = runColdStartHook({ CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDir, HOME: home });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.existsSync(pidFile), false);
+    assert.match(result.stdout, /Removed stale remote mobile control daemon pid file/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook removes a pid record for an executable outside managed standalone", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const daemonDir = path.join(codexHome, "app-server-daemon");
+    const appDir = path.join(tempRoot, "app");
+    const pidFile = path.join(daemonDir, "app-server.pid");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(daemonDir, { recursive: true });
+    fs.mkdirSync(path.join(codexHome, "packages", "standalone", "releases"), { recursive: true });
+    writeDesktopAppServerRemoteControlMarker(appDir);
+    fs.writeFileSync(pidFile, JSON.stringify({ pid: process.pid, processStartTime: processStartTime(process.pid) }));
+
+    const result = runColdStartHook({ CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDir, HOME: home });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.existsSync(pidFile), false);
+    assert.match(result.stdout, /Removed stale remote mobile control daemon pid file/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook preserves an incomplete pid reservation", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const daemonDir = path.join(codexHome, "app-server-daemon");
+    const appDir = path.join(tempRoot, "app");
+    const pidFile = path.join(daemonDir, "app-server.pid");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(daemonDir, { recursive: true });
+    writeDesktopAppServerRemoteControlMarker(appDir);
+    fs.writeFileSync(pidFile, "");
+
+    const result = runColdStartHook({ CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDir, HOME: home });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.existsSync(pidFile), true);
+    assert.match(result.stderr, /pid file with unverifiable identity/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook removes an oversized pid record without parsing it", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const daemonDir = path.join(codexHome, "app-server-daemon");
+    const appDir = path.join(tempRoot, "app");
+    const pidFile = path.join(daemonDir, "app-server.pid");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(daemonDir, { recursive: true });
+    writeDesktopAppServerRemoteControlMarker(appDir);
+    fs.writeFileSync(pidFile, "x".repeat(4097));
+
+    const result = runColdStartHook({ CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDir, HOME: home });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.existsSync(pidFile), false);
+    assert.match(result.stdout, /Removed stale remote mobile control daemon pid file/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook removes a non-process pid record", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const daemonDir = path.join(codexHome, "app-server-daemon");
+    const appDir = path.join(tempRoot, "app");
+    const pidFile = path.join(daemonDir, "app-server.pid");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(daemonDir, { recursive: true });
+    writeDesktopAppServerRemoteControlMarker(appDir);
+    fs.writeFileSync(pidFile, JSON.stringify({ pid: 0, processStartTime: "fixture" }));
+
+    const result = runColdStartHook({ CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDir, HOME: home });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.existsSync(pidFile), false);
+    assert.match(result.stdout, /Removed stale remote mobile control daemon pid file/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook unlinks a pid-file symlink without touching its target", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const daemonDir = path.join(codexHome, "app-server-daemon");
+    const appDir = path.join(tempRoot, "app");
+    const pidFile = path.join(daemonDir, "app-server.pid");
+    const target = path.join(tempRoot, "pid-record-target");
+    const contents = JSON.stringify({ pid: process.pid, processStartTime: processStartTime(process.pid) });
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(daemonDir, { recursive: true });
+    writeDesktopAppServerRemoteControlMarker(appDir);
+    fs.writeFileSync(target, contents);
+    fs.symlinkSync(target, pidFile);
+
+    const result = runColdStartHook({ CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDir, HOME: home });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.existsSync(pidFile), false);
+    assert.equal(fs.readFileSync(target, "utf8"), contents);
+    assert.match(result.stdout, /Removed stale remote mobile control daemon pid file/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
