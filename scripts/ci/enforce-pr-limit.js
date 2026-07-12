@@ -2,7 +2,6 @@
 
 const DEFAULT_MAX_OPEN_PRS = 2;
 const LIMIT_COMMENT_MARKER = "<!-- contributor-pr-limit -->";
-const PENDING_LABEL = "pr-limit-pending";
 
 function parsePositiveInteger(rawValue) {
   const value = typeof rawValue === "string" ? rawValue.trim() : "";
@@ -119,46 +118,28 @@ async function ensureLimitComment({ body, context, github, pullNumber }) {
   }
 }
 
-function hasPendingLabel(pullRequest) {
-  return pullRequest.labels?.some((label) => {
-    const name = typeof label === "string" ? label : label.name;
-    return name === PENDING_LABEL;
-  });
+function selectExcessPullRequests({ limit, openPullRequests }) {
+  return [...openPullRequests]
+    .sort((left, right) => left.number - right.number)
+    .slice(limit);
 }
 
-function selectPendingPullRequests({ limit, openPullRequests }) {
-  const pendingPullRequests = openPullRequests
-    .filter(hasPendingLabel)
-    .sort((left, right) => left.number - right.number);
-  const grandfatheredCount = openPullRequests.length - pendingPullRequests.length;
-  const availableSlots = Math.max(0, limit - grandfatheredCount);
-
-  return {
-    allowed: pendingPullRequests.slice(0, availableSlots),
-    close: pendingPullRequests.slice(availableSlots),
-  };
-}
-
-async function removePendingLabel({ context, github, pullNumber }) {
-  try {
-    await github.rest.issues.removeLabel({
-      ...context.repo,
-      issue_number: pullNumber,
-      name: PENDING_LABEL,
-    });
-  } catch (error) {
-    if (error.status !== 404) {
-      throw error;
+async function closePullRequestWithRetries({ context, core, github, pullNumber }) {
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await github.rest.pulls.update({
+        ...context.repo,
+        pull_number: pullNumber,
+        state: "closed",
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      core.warning(`Failed to close pull request #${pullNumber} on attempt ${attempt} of 3.`);
     }
   }
-}
-
-async function addPendingLabel({ context, github, pullNumber }) {
-  await github.rest.issues.addLabels({
-    ...context.repo,
-    issue_number: pullNumber,
-    labels: [PENDING_LABEL],
-  });
+  throw lastError;
 }
 
 async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOverrides }) {
@@ -191,63 +172,32 @@ async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOve
     (candidate) => candidate.user?.login?.toLowerCase() === authorLogin,
   );
 
-  const selection = selectPendingPullRequests({
+  const pullRequestsToClose = selectExcessPullRequests({
     limit,
     openPullRequests: authorOpenPullRequests,
   });
 
-  if (selection.allowed.length === 0 && selection.close.length === 0) {
-    core.info(`${author} has no queued pull request limit checks.`);
-    return { action: "no-pending", count: authorOpenPullRequests.length, limit };
-  }
-
-  for (const allowedPullRequest of selection.allowed) {
-    await removePendingLabel({
-      context,
-      github,
-      pullNumber: allowedPullRequest.number,
-    });
-  }
-
-  if (selection.close.length === 0) {
+  if (pullRequestsToClose.length === 0) {
     core.info(
       `${author} has ${authorOpenPullRequests.length} open pull request(s); the configured limit is ${limit}.`,
     );
-    return {
-      action: "allowed",
-      allowedPullRequests: selection.allowed.map((candidate) => candidate.number),
-      count: authorOpenPullRequests.length,
-      limit,
-    };
+    return { action: "allowed", count: authorOpenPullRequests.length, limit };
   }
 
   const body = buildLimitComment(limit, authorOpenPullRequests.length);
-  for (const excessPullRequest of selection.close) {
+  for (const excessPullRequest of pullRequestsToClose) {
     await ensureLimitComment({
       body,
       context,
       github,
       pullNumber: excessPullRequest.number,
     });
-    await removePendingLabel({
+    await closePullRequestWithRetries({
       context,
+      core,
       github,
       pullNumber: excessPullRequest.number,
     });
-    try {
-      await github.rest.pulls.update({
-        ...context.repo,
-        pull_number: excessPullRequest.number,
-        state: "closed",
-      });
-    } catch (error) {
-      await addPendingLabel({
-        context,
-        github,
-        pullNumber: excessPullRequest.number,
-      });
-      throw error;
-    }
     core.notice(
       `Closed pull request #${excessPullRequest.number} because ${author} exceeded the limit.`,
     );
@@ -255,8 +205,7 @@ async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOve
 
   return {
     action: "closed",
-    allowedPullRequests: selection.allowed.map((candidate) => candidate.number),
-    closedPullRequests: selection.close.map((candidate) => candidate.number),
+    closedPullRequests: pullRequestsToClose.map((candidate) => candidate.number),
     count: authorOpenPullRequests.length,
     limit,
   };
@@ -265,11 +214,10 @@ async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOve
 module.exports = {
   DEFAULT_MAX_OPEN_PRS,
   LIMIT_COMMENT_MARKER,
-  PENDING_LABEL,
   buildLimitComment,
   enforcePullRequestLimit,
   parseMaxOpenPullRequests,
   parsePullRequestLimitOverrides,
   resolvePullRequestLimit,
-  selectPendingPullRequests,
+  selectExcessPullRequests,
 };
