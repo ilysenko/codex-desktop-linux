@@ -1558,6 +1558,20 @@ test("Niri drag keeps one move in flight and emits only the latest queued target
   assert.equal(scenario.calls.some((args) => args.includes("600")), false);
 });
 
+test("Niri drag waits for an already-running bootstrap compositor action", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, window } = scenario;
+
+  controller.codexPetOverlayNiri(["action", "move-floating-window", "--id", "9", "-x", "40", "-y", "40"]);
+  assert.equal(pending.length, 1);
+  controller.codexPetOverlayBeginNiriDrag(window);
+  assert.equal(pending.length, 1, "drag discovery must wait for the bootstrap action");
+
+  completePendingNiriCall(scenario);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].args.includes("windows"), true);
+});
+
 test("Niri drag floats a tiled pet before its first move", () => {
   const scenario = createAsyncNiriDragScenario();
   const { controller, pending, window } = scenario;
@@ -1577,12 +1591,14 @@ test("Niri drag floats a tiled pet before its first move", () => {
   assert.equal(pending[0].args.includes("move-floating-window"), true);
 });
 
-test("Niri endDrag drains the final move before persisting once", () => {
+test("Niri endDrag drains the final move before persisting and docking", () => {
   const scenario = createAsyncNiriDragScenario();
   const { controller, pending, window } = scenario;
-  const persisted = [];
+  const completed = [];
   controller.getLayout = () => ({ mascot: { left: 0, top: 0 } });
-  controller.persistWindowBounds = (target, display) => persisted.push([target, display]);
+  controller.persistWindowBounds = (target, display) => completed.push(["persist", target, display]);
+  controller.dockTarget = { anchor: "dock-anchor", onDock: "dock-handler" };
+  controller.dockPresentation = (anchor, onDock) => completed.push(["dock", anchor, onDock]);
 
   controller.startDrag(1, {
     pointerScreenX: 100,
@@ -1594,15 +1610,37 @@ test("Niri endDrag drains the final move before persisting once", () => {
   controller.codexPetOverlayQueueNiriDrag(window);
   controller.endDrag(1, {});
 
-  assert.deepEqual(persisted, []);
+  assert.deepEqual(completed, []);
   completePendingNiriCall(scenario, { stdout: niriPetWindow(9) });
   assert.equal(pending.length, 1);
   assert.equal(JSON.stringify(pending[0].args.slice(-4)), JSON.stringify(["-x", "120", "-y", "100"]));
+  assert.deepEqual(completed, []);
   completePendingNiriCall(scenario);
 
-  assert.equal(persisted.length, 1);
-  assert.equal(persisted[0][0], window);
+  assert.equal(completed.length, 2);
+  assert.equal(completed[0][0], "persist");
+  assert.equal(completed[0][1], window);
+  assert.equal(completed[0][2]?.id, 1);
+  assert.deepEqual(completed[1], ["dock", "dock-anchor", "dock-handler"]);
   assert.equal(controller.codexPetOverlayNiriDragState, null);
+});
+
+test("stale Niri callbacks clear drag state and reschedule hints for a replacement window", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, timers, window: oldWindow } = scenario;
+  controller.codexPetOverlayBeginNiriDrag(oldWindow);
+  assert.equal(pending.length, 1);
+
+  const newWindow = {
+    getBounds: () => ({ x: 300, y: 200, width: 356, height: 320 }),
+    isDestroyed: () => false,
+    webContents: { id: 2 },
+  };
+  controller.window = newWindow;
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(41) });
+
+  assert.equal(controller.codexPetOverlayNiriDragState, null);
+  assert.deepEqual(timers.map((timer) => timer.delay), [0, 80, 300, 1000]);
 });
 
 test("stale Niri discovery callbacks cannot continue a replacement window drag", () => {
@@ -1618,10 +1656,10 @@ test("stale Niri discovery callbacks cannot continue a replacement window drag",
   controller.window = newWindow;
   controller.codexPetOverlayDesiredWindowBounds = { x: 300, y: 200, width: 356, height: 320 };
   controller.codexPetOverlayBeginNiriDrag(newWindow);
-  assert.equal(pending.length, 2);
+  assert.equal(pending.length, 1, "replacement discovery must wait for the previous call");
 
   completePendingNiriCall(scenario, { stdout: niriPetWindow(41) });
-  assert.equal(pending.length, 1, "the stale callback must not enqueue an action");
+  assert.equal(pending.length, 1, "the replacement discovery starts only after the stale call completes");
   completePendingNiriCall(scenario, { stdout: niriPetWindow(42) });
   assert.equal(pending.length, 1);
   assert.equal(pending[0].args.includes("42"), true);
@@ -1691,10 +1729,10 @@ test("stale Niri action completion cannot continue a replacement drag", () => {
   controller.window = newWindow;
   controller.codexPetOverlayDesiredWindowBounds = { x: 300, y: 200, width: 356, height: 320 };
   controller.codexPetOverlayBeginNiriDrag(newWindow);
-  assert.equal(pending.length, 2);
+  assert.equal(pending.length, 1, "replacement drag must not overlap the previous compositor action");
 
   completePendingNiriCall(scenario);
-  assert.equal(pending.length, 1, "the old action callback must not enqueue another action");
+  assert.equal(pending.length, 1, "replacement discovery starts after the old action completes");
   completePendingNiriCall(scenario, { stdout: niriPetWindow(42) });
   assert.equal(pending.length, 1);
   assert.equal(pending[0].args.includes("42"), true);
