@@ -56,6 +56,12 @@ const CURRENT_PROJECTLESS_REMOTE_TASK_ASSET =
   "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-test.js";
 const UNIFIED_REMOTE_CONVERSATION_ASSET =
   "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-test.js";
+const CURRENT_APP_MAIN_PAGE_ASSET =
+  "app-initial~app-main~page-test.js";
+const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET =
+  "app-initial~app-main~appgen-settings-page~plugin-detail-page~new-thread-panel-page~onboardi~lxr449xn-test.js";
+const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET =
+  "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
 
 function syntheticMainBundle() {
   return [
@@ -347,6 +353,13 @@ function syntheticCurrentAppMainEnablementBridgeBundle() {
     "var fH=`[remote-connections/slingshot-gate-bridge]`;",
     "function mH(){let e=(0,Q.c)(6),{checkGate:t,isLoading:n}=eo(),r;e[0]===t?r=e[1]:(r=t(`1042620455`),e[0]=t,e[1]=r);let i=r,a,o;return e[2]!==n||e[3]!==i?(a=()=>{n||qt(`set-remote-control-connections-enabled`,{params:{enabled:i}}).catch(e=>{Y.warning(`${fH} sync_failed`,{safe:{slingshotEnabled:i},sensitive:{error:e}})})},o=[n,i],e[2]=n,e[3]=i,e[4]=a,e[5]=o):(a=e[4],o=e[5]),(0,$.useEffect)(a,o),null}",
     "var handlers={\"set-remote-control-enabled-for-host\":pU((e,{enabled:t})=>e.sendRequest(t?`remoteControl/enable`:`remoteControl/disable`,null))};",
+  ].join("");
+}
+
+function syntheticLatestAppMainEnablementBridgeBundle() {
+  return [
+    "function vZe(){let e=(0,m7.c)(6),{checkGate:t,isLoading:n}=Wp(),r;e[0]===t?r=e[1]:(r=t(`1042620455`),e[0]=t,e[1]=r);let i=r,a,o;return e[2]!==n||e[3]!==i?(a=()=>{n||Qm(`set-remote-control-connections-enabled`,{params:{enabled:i}}).catch(e=>{yu.warning(`${_7} sync_failed`,{safe:{slingshotEnabled:i},sensitive:{error:e}})})},o=[n,i],e[2]=n,e[3]=i,e[4]=a,e[5]=o):(a=e[4],o=e[5]),(0,h7.useEffect)(a,o),null}",
+    "var _7=`[remote-connections/slingshot-gate-bridge]`;",
   ].join("");
 }
 
@@ -781,9 +794,38 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       descriptor.id === "feature:remote-mobile-control:linux-remote-control-visibility"
     );
     assert.ok(visibilityDescriptor);
-    assert.equal(visibilityDescriptor.pattern.test("remote-connections-settings-fixture.js"), true);
-    assert.equal(visibilityDescriptor.pattern.test("use-plugin-install-flow-fixture.js"), true);
+    assert.equal(visibilityDescriptor.pattern.test("remote-connections-settings-fixture.js"), false);
+    assert.equal(visibilityDescriptor.pattern.test(CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET), true);
+    assert.equal(visibilityDescriptor.pattern.test("use-plugin-install-flow-fixture.js"), false);
     assert.equal(visibilityDescriptor.pattern.test("app-main-fixture.js"), false);
+
+    const featureSyncDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-control-feature-sync"
+    );
+    assert.ok(featureSyncDescriptor);
+    assert.equal(featureSyncDescriptor.pattern.test(CURRENT_APP_MAIN_PAGE_ASSET), true);
+    assert.equal(featureSyncDescriptor.pattern.test("app-main-fixture.js"), false);
+
+    const enableForHostDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-control-enable-for-host-params"
+    );
+    assert.ok(enableForHostDescriptor);
+    assert.equal(enableForHostDescriptor.pattern.test(CURRENT_APP_MAIN_PAGE_ASSET), true);
+    assert.equal(enableForHostDescriptor.pattern.test("app-main-fixture.js"), false);
+
+    const enablementBridgeDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-control-enablement-bridge"
+    );
+    assert.ok(enablementBridgeDescriptor);
+    assert.equal(enablementBridgeDescriptor.pattern.test(CURRENT_APP_MAIN_PAGE_ASSET), true);
+    assert.equal(enablementBridgeDescriptor.pattern.test("app-main-fixture.js"), false);
+
+    const activeStatusDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-mobile-active-status"
+    );
+    assert.ok(activeStatusDescriptor);
+    assert.equal(activeStatusDescriptor.pattern.test(CURRENT_REMOTE_CONVERSATION_STATUS_ASSET), true);
+    assert.equal(activeStatusDescriptor.pattern.test("app-main-fixture.js"), false);
 
     const statusGuardDescriptor = descriptors.find((descriptor) =>
       descriptor.id === "feature:remote-mobile-control:linux-remote-control-status-read-guard"
@@ -2325,13 +2367,23 @@ test("remote mobile feature patch report records feature metadata and partial wa
       fs.writeFileSync(path.join(assetsDir, "app-test.png"), "");
       fs.writeFileSync(
         path.join(assetsDir, UNIFIED_REMOTE_CONVERSATION_ASSET),
-        syntheticRemoteConnectionVisibilityBundle() +
-          syntheticAppServerManagerSignalsBundle() +
+        syntheticAppServerManagerSignalsBundle() +
           syntheticAppServerManagerStatusBundle() +
           syntheticCompletedItemRecoveryBundle() +
           syntheticRemoteTerminalStatusBundle(),
       );
-      fs.writeFileSync(path.join(assetsDir, "app-main-test.js"), syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle() + syntheticAppMainActiveStatusBundle());
+      fs.writeFileSync(
+        path.join(assetsDir, CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET),
+        syntheticRemoteConnectionVisibilityBundle(),
+      );
+      fs.writeFileSync(
+        path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
+        syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle(),
+      );
+      fs.writeFileSync(
+        path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_STATUS_ASSET),
+        syntheticAppMainActiveStatusBundle(),
+      );
       fs.writeFileSync(
         path.join(assetsDir, "remote-connections-settings-test.js"),
         (syntheticSettingsBundle() + syntheticSshInstallSettingsBundle()).replace(
@@ -2459,6 +2511,30 @@ test("Linux remote-control enablement bridge loads remote-control clients on Lin
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, "set-remote-control-connections-enabled");
   assert.equal(calls[0].params.enabled, true);
+});
+
+test("Linux remote-control enablement bridge handles the current marker order", () => {
+  const source = syntheticLatestAppMainEnablementBridgeBundle();
+  const patched = applyLinuxRemoteControlEnablementBridgePatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteControlEnablementBridge/);
+  assert.match(patched, /codexLinuxRemoteControlSelfAutoConnect/);
+  assert.equal(applyLinuxRemoteControlEnablementBridgePatch(patched), patched);
+});
+
+test("Linux remote-control enablement bridge rejects distant anchors", () => {
+  const source = [
+    "var DF=`[remote-connections/slingshot-gate-bridge]`;",
+    "x".repeat(4_501),
+    "function OF(){return $o(`set-remote-control-connections-enabled`,{params:{enabled:true}})}",
+  ].join("");
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteControlEnablementBridgePatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("anchors are too far apart")));
 });
 
 test("Linux remote-control enablement bridge omits params for current host toggle handler", async () => {
@@ -2660,7 +2736,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
             syntheticRemoteTerminalStatusBundle(),
         );
         fs.writeFileSync(
-          path.join(assetsDir, "remote-control-connections-visibility-test.js"),
+          path.join(assetsDir, CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET),
           syntheticVisibilityBundle(),
         );
         fs.writeFileSync(
@@ -2687,10 +2763,13 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           syntheticAppServerManagerSignalsBundle(),
         );
         fs.writeFileSync(
-          path.join(assetsDir, "app-main-test.js"),
+          path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
           syntheticAppMainFeatureSyncBundle() +
-            syntheticAppMainEnablementBridgeBundle() +
-            syntheticAppMainActiveStatusBundle(),
+            syntheticAppMainEnablementBridgeBundle(),
+        );
+        fs.writeFileSync(
+          path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_STATUS_ASSET),
+          syntheticAppMainActiveStatusBundle(),
         );
         const report = createPatchReport();
         patchExtractedApp(tempApp, { report });
@@ -2701,7 +2780,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           "utf8",
         );
         const patchedVisibilityFile = fs.readFileSync(
-          path.join(assetsDir, "remote-control-connections-visibility-test.js"),
+          path.join(assetsDir, CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET),
           "utf8",
         );
         const patchedRemoteConnectionVisibilityFile = fs.readFileSync(
@@ -2709,7 +2788,11 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           "utf8",
         );
         const patchedAppMainFile = fs.readFileSync(
-          path.join(assetsDir, "app-main-test.js"),
+          path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
+          "utf8",
+        );
+        const patchedActiveStatusFile = fs.readFileSync(
+          path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_STATUS_ASSET),
           "utf8",
         );
         const patchedRemoteConnectionsSettingsFile = fs.readFileSync(
@@ -2753,7 +2836,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedStatusFile, /codexLinuxRemoteControlShouldReadStatus/);
         assert.match(patchedStatusFile, /codexLinuxRemoteControlStatusWaitMs/);
         assert.match(patchedAppMainFile, /codexLinuxRemoteControlEnablementBridge/);
-        assert.match(patchedAppMainFile, /codexLinuxRemoteMobileActiveStatus/);
+        assert.match(patchedActiveStatusFile, /codexLinuxRemoteMobileActiveStatus/);
         assert.ok(
           report.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-control-device-key" &&

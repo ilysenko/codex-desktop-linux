@@ -57,6 +57,12 @@ const REMOTE_MOBILE_APP_SERVER_ARGS_NEEDLE =
   "[`-c`,`features.code_mode_host=true`,`app-server`,`--analytics-default-enabled`]";
 const REMOTE_MOBILE_CONVERSATION_ASSET_PATTERN =
   /^app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~[^.]+\.js$/u;
+const REMOTE_CONTROL_APP_MAIN_PAGE_ASSET_PATTERN =
+  /^app-initial~app-main~page-[^.]+\.js$/u;
+const REMOTE_CONTROL_VISIBILITY_ASSET_PATTERN =
+  /^app-initial~app-main~appgen-settings-page~plugin-detail-page~new-thread-panel-page~onboardi~[^.]+\.js$/u;
+const REMOTE_MOBILE_ACTIVE_STATUS_ASSET_PATTERN =
+  /^app-initial~app-main~projects-index-page~remote-conversation-page-[^.]+\.js$/u;
 const REMOTE_CONTROL_SELECTED_TAB_NEEDLE =
   "function rr({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}";
 const REMOTE_CONTROL_SELECTED_TAB_REPLACEMENT =
@@ -1543,11 +1549,20 @@ function applyLinuxRemoteControlEnablementBridgePatch(source) {
   patched = applyLinuxRemoteControlEnableForHostParamsPatch(patched);
 
   const markerIndex = patched.indexOf("[remote-connections/slingshot-gate-bridge]");
-  if (markerIndex < 0 || patched.indexOf("set-remote-control-connections-enabled", markerIndex) < 0) {
+  const enablementIndex = patched.indexOf("set-remote-control-connections-enabled");
+  if (markerIndex < 0 || enablementIndex < 0) {
+    return patched;
+  }
+  if (Math.abs(markerIndex - enablementIndex) > 4_500) {
+    console.warn("WARN: Remote-control enablement bridge anchors are too far apart - skipping Linux remote-control bridge patch");
     return patched;
   }
 
-  let region = patched.slice(markerIndex, markerIndex + 4_500);
+  const regionStart = Math.max(0, Math.min(markerIndex, enablementIndex) - 1_000);
+  const regionEnd = Math.min(patched.length, Math.max(markerIndex, enablementIndex) + 4_500);
+  const prefix = patched.slice(0, regionStart);
+  const suffix = patched.slice(regionEnd);
+  let region = patched.slice(regionStart, regionEnd);
 
   if (!patched.includes(REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER)) {
     const currentBridgePattern =
@@ -1572,12 +1587,11 @@ function applyLinuxRemoteControlEnablementBridgePatch(source) {
       return patched;
     }
 
-    patched = patched.slice(0, markerIndex) + patchedRegion + patched.slice(markerIndex + region.length);
-    region = patched.slice(markerIndex, markerIndex + 4_500);
+    region = patchedRegion;
   }
 
-  if (patched.includes(REMOTE_CONTROL_SELF_AUTO_CONNECT_MARKER)) {
-    return patched;
+  if (region.includes(REMOTE_CONTROL_SELF_AUTO_CONNECT_MARKER)) {
+    return prefix + region + suffix;
   }
 
   const selfAutoConnectReplacement = (desktopHostRequestFn, enabledVar, errorVar, loggerVar, logPrefixVar) =>
@@ -1602,10 +1616,10 @@ function applyLinuxRemoteControlEnablementBridgePatch(source) {
 
   if (selfAutoConnectRegion === region) {
     console.warn("WARN: Could not find remote-control self auto-connect needle - skipping Linux remote-control auto-connect patch");
-    return patched;
+    return prefix + region + suffix;
   }
 
-  return patched.slice(0, markerIndex) + selfAutoConnectRegion + patched.slice(markerIndex + region.length);
+  return prefix + selfAutoConnectRegion + suffix;
 }
 
 function applyLinuxRemoteControlEnableForHostParamsPatch(source) {
@@ -1698,7 +1712,7 @@ module.exports = [
   {
     id: "linux-remote-control-feature-sync",
     phase: "webview-asset",
-    pattern: /^(?:app-main|index)-.*\.js$/,
+    pattern: REMOTE_CONTROL_APP_MAIN_PAGE_ASSET_PATTERN,
     order: 20_119,
     ciPolicy: "optional",
     missingDescription: "webview app main bundle",
@@ -1708,7 +1722,7 @@ module.exports = [
   {
     id: "linux-remote-control-visibility",
     phase: "webview-asset",
-    pattern: /^(?:remote-control-connections-visibility|remote-connections-settings|use-plugin-install-flow)-.*\.js$/,
+    pattern: REMOTE_CONTROL_VISIBILITY_ASSET_PATTERN,
     order: 20_120,
     ciPolicy: "optional",
     missingDescription: "remote-control connections visibility bundle",
@@ -1818,7 +1832,7 @@ module.exports = [
   {
     id: "linux-remote-control-enable-for-host-params",
     phase: "webview-asset",
-    pattern: /^(?:app-main|app-initial~app-main~automations-page)-.*\.js$/,
+    pattern: REMOTE_CONTROL_APP_MAIN_PAGE_ASSET_PATTERN,
     order: 20_155,
     ciPolicy: "optional",
     missingDescription: "app main remote-control host toggle bundle",
@@ -1828,7 +1842,7 @@ module.exports = [
   {
     id: "linux-remote-control-enablement-bridge",
     phase: "webview-asset",
-    pattern: /^app-main-.*\.js$/,
+    pattern: REMOTE_CONTROL_APP_MAIN_PAGE_ASSET_PATTERN,
     order: 20_156,
     ciPolicy: "optional",
     missingDescription: "app main bundle",
@@ -1838,7 +1852,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-active-status",
     phase: "webview-asset",
-    pattern: /^(?:app-main|avatar-overlay-realtime-voice-button)-.*\.js$/,
+    pattern: REMOTE_MOBILE_ACTIVE_STATUS_ASSET_PATTERN,
     order: 20_160,
     ciPolicy: "optional",
     missingDescription: "app main bundle",

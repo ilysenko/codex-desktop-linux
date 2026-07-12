@@ -32,6 +32,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Remote mobile control now patches the current upstream webview chunks for
+  feature sync, settings visibility, host enablement, and active conversation
+  status. The enablement bridge also accepts the current bundle ordering where
+  its log marker is declared after the request handler.
 - Automated user-local updates no longer inherit or set developer overrides
   that could replace a running Electron app or bypass DMG acceptance. Manual
   and timer rebuilds now fail safely at promotion, transactional installs retain
