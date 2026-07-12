@@ -1572,6 +1572,18 @@ test("Niri drag waits for an already-running bootstrap compositor action", () =>
   assert.equal(pending[0].args.includes("windows"), true);
 });
 
+test("completed Niri processes do not schedule another hint batch without a pending request", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, timers } = scenario;
+
+  controller.codexPetOverlayNiri(["--json", "windows"]);
+  assert.equal(pending.length, 1);
+  completePendingNiriCall(scenario, { stdout: "[]" });
+
+  assert.equal(pending.length, 0);
+  assert.deepEqual(timers, []);
+});
+
 test("Niri drag floats a tiled pet before its first move", () => {
   const scenario = createAsyncNiriDragScenario();
   const { controller, pending, window } = scenario;
@@ -1638,6 +1650,28 @@ test("stale Niri callbacks clear drag state and reschedule hints for a replaceme
   };
   controller.window = newWindow;
   completePendingNiriCall(scenario, { stdout: niriPetWindow(41) });
+
+  assert.equal(controller.codexPetOverlayNiriDragState, null);
+  assert.deepEqual(timers.map((timer) => timer.delay), [0, 80, 300, 1000]);
+});
+
+test("Niri hint scheduling clears an idle drag state left by a replaced window", () => {
+  const scenario = createAsyncNiriDragScenario();
+  const { controller, pending, timers, window: oldWindow } = scenario;
+  controller.codexPetOverlayBeginNiriDrag(oldWindow);
+  completePendingNiriCall(scenario, { stdout: niriPetWindow(9) });
+  completePendingNiriCall(scenario);
+  assert.equal(pending.length, 0);
+  assert.notEqual(controller.codexPetOverlayNiriDragState, null);
+
+  const newWindow = {
+    getBounds: () => ({ x: 300, y: 200, width: 356, height: 320 }),
+    isDestroyed: () => false,
+    webContents: { id: 2 },
+  };
+  controller.window = newWindow;
+  controller.dragState = null;
+  controller.codexPetOverlayScheduleNiriHints(newWindow);
 
   assert.equal(controller.codexPetOverlayNiriDragState, null);
   assert.deepEqual(timers.map((timer) => timer.delay), [0, 80, 300, 1000]);
