@@ -1239,7 +1239,9 @@ while True:
         fs::set_permissions(&fake_node, fs::Permissions::from_mode(0o700)).unwrap();
 
         let extension_id = "abcdefghijklmnopabcdefghijklmnop";
-        let extension_host_path = trusted_current_exe_link(&root);
+        let extension_host_path = root.join("extension-host");
+        fs::copy(env::current_exe().unwrap(), &extension_host_path).unwrap();
+        fs::set_permissions(&extension_host_path, fs::Permissions::from_mode(0o700)).unwrap();
         let manifest_path = root.join("chrome-native-hosts-v2.json");
         fs::write(
             &manifest_path,
@@ -1275,10 +1277,11 @@ while True:
         .unwrap();
         fs::set_permissions(&manifest_path, fs::Permissions::from_mode(0o600)).unwrap();
 
-        let runtime_manager = Arc::new(RuntimeManager::for_test(
+        let runtime_manager = Arc::new(RuntimeManager::for_test_with_current_executable_path(
             extension_id.to_string(),
             runtime_root.clone(),
             manifest_path,
+            &extension_host_path,
         ));
         let (mut host_state, output) = test_host_state_with_output();
         host_state.runtime_manager = Arc::clone(&runtime_manager);
@@ -1339,15 +1342,6 @@ while True:
                 })
             })
             .unwrap_or_else(|| panic!("could not resolve test executable from PATH: {name}"))
-    }
-
-    fn trusted_current_exe_link(root: &Path) -> PathBuf {
-        let target = root.join("extension-host");
-        fs::hard_link(env::current_exe().unwrap(), &target)
-            .expect("extension host tests require hard-link support in the temp directory");
-        let mode = fs::metadata(&target).unwrap().permissions().mode() & !0o022;
-        fs::set_permissions(&target, fs::Permissions::from_mode(mode)).unwrap();
-        target
     }
 
     #[test]

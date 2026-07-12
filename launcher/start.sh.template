@@ -969,6 +969,15 @@ sync_chrome_bundled_plugin_cache() {
     [ -f "$source_client" ] || return 0
     [ -f "$source_install_manifest" ] || return 0
 
+    make_path_owner_trusted \
+        "$SCRIPT_DIR" \
+        "$SCRIPT_DIR/resources" \
+        "$SCRIPT_DIR/resources/plugins" \
+        "$SCRIPT_DIR/resources/plugins/openai-bundled" \
+        "$SCRIPT_DIR/resources/plugins/openai-bundled/plugins" \
+        "$source_plugin"
+    make_tree_owner_trusted "$source_plugin"
+
     version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
 

@@ -314,6 +314,8 @@ pub struct RuntimeManager {
     cleanup_join: Mutex<Option<thread::JoinHandle<()>>>,
     cleanup_timing: ProcessCleanupTiming,
     extension_id: Option<String>,
+    #[cfg(test)]
+    current_executable_identity_override: Option<FileIdentity>,
     lifecycle: Mutex<()>,
     manifest_paths_override: Option<Vec<PathBuf>>,
     next_process_instance: AtomicU64,
@@ -352,6 +354,8 @@ impl RuntimeManager {
             cleanup_join: Mutex::new(None),
             cleanup_timing,
             extension_id,
+            #[cfg(test)]
+            current_executable_identity_override: None,
             lifecycle: Mutex::new(()),
             manifest_paths_override,
             next_process_instance: AtomicU64::new(1),
@@ -414,9 +418,13 @@ impl RuntimeManager {
         })?)?;
         self.validate_invocation(&constraints)?;
         let client_id = normalized_client_id(params.get("clientId"))?;
-        let mut entry =
-            select_runtime_entry(&constraints, self.manifest_paths_override.as_deref())?;
-        validate_runtime_entry(&mut entry)?;
+        let current_executable_identity = self.current_executable_identity()?;
+        let mut entry = select_runtime_entry_for_host(
+            &constraints,
+            self.manifest_paths_override.as_deref(),
+            &current_executable_identity,
+        )?;
+        validate_runtime_entry_for_host(&mut entry, &current_executable_identity)?;
         let _lifecycle = self
             .lifecycle
             .lock()
@@ -1036,6 +1044,30 @@ impl RuntimeManager {
     }
 
     #[cfg(test)]
+    pub(crate) fn for_test_with_current_executable_path(
+        extension_id: String,
+        runtime_root: PathBuf,
+        manifest_path: PathBuf,
+        current_executable_path: &Path,
+    ) -> Self {
+        let mut manager = Self::for_test(extension_id, runtime_root, manifest_path);
+        manager.current_executable_identity_override = Some(
+            file_identity(current_executable_path)
+                .expect("test current executable path should identify a file"),
+        );
+        manager
+    }
+
+    fn current_executable_identity(&self) -> RuntimeResult<FileIdentity> {
+        #[cfg(test)]
+        if let Some(identity) = &self.current_executable_identity_override {
+            return Ok(identity.clone());
+        }
+
+        current_executable_identity()
+    }
+
+    #[cfg(test)]
     pub(crate) fn running_process_count(&self) -> usize {
         let processes = self
             .processes
@@ -1100,6 +1132,15 @@ fn select_runtime_entry(
     constraints: &RuntimeConstraints,
     manifest_paths_override: Option<&[PathBuf]>,
 ) -> RuntimeResult<RuntimeEntry> {
+    let current_host = current_executable_identity()?;
+    select_runtime_entry_for_host(constraints, manifest_paths_override, &current_host)
+}
+
+fn select_runtime_entry_for_host(
+    constraints: &RuntimeConstraints,
+    manifest_paths_override: Option<&[PathBuf]>,
+    current_host: &FileIdentity,
+) -> RuntimeResult<RuntimeEntry> {
     let manifest_paths = manifest_paths_override
         .map(<[PathBuf]>::to_vec)
         .unwrap_or_else(manifest_paths);
@@ -1140,7 +1181,6 @@ fn select_runtime_entry(
         ));
     }
 
-    let current_host = current_executable_identity()?;
     let mut matching = entries
         .into_iter()
         .filter_map(|entry| serde_json::from_value::<RuntimeEntry>(entry).ok())
@@ -1149,7 +1189,7 @@ fn select_runtime_entry(
                 && fs::canonicalize(&entry.paths.extension_host_path)
                     .ok()
                     .and_then(|path| file_identity(&path).ok())
-                    .is_some_and(|identity| identity == current_host)
+                    .is_some_and(|identity| &identity == current_host)
         })
         .collect::<Vec<_>>();
     matching.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -1188,7 +1228,10 @@ fn manifest_paths() -> Vec<PathBuf> {
     paths
 }
 
-fn validate_runtime_entry(entry: &mut RuntimeEntry) -> RuntimeResult<()> {
+fn validate_runtime_entry_for_host(
+    entry: &mut RuntimeEntry,
+    current_exe: &FileIdentity,
+) -> RuntimeResult<()> {
     if entry.entry_id.trim().is_empty()
         || entry.install_id.trim().is_empty()
         || entry.app_version.trim().is_empty()
@@ -1215,10 +1258,9 @@ fn validate_runtime_entry(entry: &mut RuntimeEntry) -> RuntimeResult<()> {
         validate_owned_dir(path, false)?;
     }
 
-    let current_exe = current_executable_identity()?;
     let configured_host = file_identity(&entry.paths.extension_host_path)
         .map_err(|_| required_path_error("extensionHostPath"))?;
-    if current_exe != configured_host {
+    if current_exe != &configured_host {
         return Err(RuntimeError::typed(
             "no_matching_codex_install",
             "No compatible Codex app-server entry was found",

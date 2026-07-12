@@ -5979,6 +5979,7 @@ assertCacheLinks({
 const chromeBody = functionBody("sync_chrome_bundled_plugin_cache", "sync_computer_use_bundled_plugin_cache");
 for (const required of [
   'make_path_owner_trusted',
+  'make_tree_owner_trusted "$source_plugin"',
   'make_tree_owner_trusted "$tmp_plugin"',
   'make_tree_owner_trusted "$cache_plugin"',
   'write_chrome_native_host_manifests "$host_path" "$cache_root/latest"',
@@ -6020,29 +6021,56 @@ set -euo pipefail
 root="$1"
 cache="$root/.codex/plugins/cache/openai-bundled/chrome"
 plugin="$cache/26.test"
+source_plugin="$root/app/resources/plugins/openai-bundled/plugins/chrome"
 mkdir -p "$plugin/extension-host"
+mkdir -p "$source_plugin/scripts" "$source_plugin/extension-host/linux/x64"
 touch "$plugin/extension-host/host"
+touch "$source_plugin/scripts/browser-client.mjs" "$source_plugin/extension-host/linux/x64/extension-host"
 chmod 775 "$root/.codex" \
-    "$root/.codex/plugins" \
-    "$root/.codex/plugins/cache" \
-    "$root/.codex/plugins/cache/openai-bundled" \
-    "$cache" \
-    "$plugin" \
-    "$plugin/extension-host"
+  "$root/.codex/plugins" \
+  "$root/.codex/plugins/cache" \
+  "$root/.codex/plugins/cache/openai-bundled" \
+  "$cache" \
+  "$plugin" \
+  "$plugin/extension-host"
 chmod 664 "$plugin/extension-host/host"
+chmod 775 "$root/app" \
+  "$root/app/resources" \
+  "$root/app/resources/plugins" \
+  "$root/app/resources/plugins/openai-bundled" \
+  "$root/app/resources/plugins/openai-bundled/plugins" \
+  "$source_plugin" \
+  "$source_plugin/scripts" \
+  "$source_plugin/extension-host" \
+  "$source_plugin/extension-host/linux" \
+  "$source_plugin/extension-host/linux/x64" \
+  "$source_plugin/extension-host/linux/x64/extension-host"
+chmod 664 "$source_plugin/scripts/browser-client.mjs"
 
 make_path_owner_trusted \
-    "$root/.codex" \
-    "$root/.codex/plugins" \
-    "$root/.codex/plugins/cache" \
-    "$root/.codex/plugins/cache/openai-bundled" \
-    "$cache"
+  "$root/.codex" \
+  "$root/.codex/plugins" \
+  "$root/.codex/plugins/cache" \
+  "$root/.codex/plugins/cache/openai-bundled" \
+  "$cache"
 make_tree_owner_trusted "$plugin"
+make_path_owner_trusted \
+  "$root/app" \
+  "$root/app/resources" \
+  "$root/app/resources/plugins" \
+  "$root/app/resources/plugins/openai-bundled" \
+  "$root/app/resources/plugins/openai-bundled/plugins" \
+  "$source_plugin"
+make_tree_owner_trusted "$source_plugin"
 
 if find "$root/.codex" -perm /022 -print -quit | grep -q .; then
-    exit 1
+  exit 1
+fi
+if find "$root/app" -perm /022 -print -quit | grep -q .; then
+  exit 1
 fi
 test -w "$plugin/extension-host/host"
+test -w "$source_plugin/scripts/browser-client.mjs"
 '''
 )
 PY
