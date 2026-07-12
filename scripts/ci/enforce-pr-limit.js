@@ -90,21 +90,28 @@ function buildLimitComment(limit, count) {
   return `Thanks for contributing. This repository allows a maximum of **${activePullRequests}**. You currently have **${openPullRequests}**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.`;
 }
 
-function shouldClosePullRequest({ action, currentNumber, limit, openPullRequests }) {
+function selectPullRequestsToClose({ action, currentNumber, limit, openPullRequests }) {
   if (openPullRequests.length <= limit) {
-    return false;
+    return [];
   }
+
+  const sortedPullRequests = [...openPullRequests].sort(
+    (left, right) => left.number - right.number,
+  );
 
   if (action === "reopened") {
-    return true;
+    const retainedNumbers = sortedPullRequests
+      .filter((pullRequest) => pullRequest.number !== currentNumber)
+      .slice(0, limit)
+      .map((pullRequest) => pullRequest.number);
+
+    return sortedPullRequests.filter(
+      (pullRequest) =>
+        pullRequest.number === currentNumber || !retainedNumbers.includes(pullRequest.number),
+    );
   }
 
-  const retainedNumbers = openPullRequests
-    .map((pullRequest) => pullRequest.number)
-    .sort((left, right) => left - right)
-    .slice(0, limit);
-
-  return !retainedNumbers.includes(currentNumber);
+  return sortedPullRequests.slice(limit);
 }
 
 async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOverrides }) {
@@ -144,14 +151,14 @@ async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOve
     return { action: "skipped-missing", count: authorOpenPullRequests.length, limit };
   }
 
-  const shouldClose = shouldClosePullRequest({
+  const pullRequestsToClose = selectPullRequestsToClose({
     action: context.payload.action,
     currentNumber: pullRequest.number,
     limit,
     openPullRequests: authorOpenPullRequests,
   });
 
-  if (!shouldClose) {
+  if (pullRequestsToClose.length === 0) {
     core.info(
       `${author} has ${authorOpenPullRequests.length} open pull request(s); the configured limit is ${limit}.`,
     );
@@ -159,19 +166,28 @@ async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOve
   }
 
   const body = buildLimitComment(limit, authorOpenPullRequests.length);
-  await github.rest.issues.createComment({
-    ...context.repo,
-    issue_number: pullRequest.number,
-    body,
-  });
-  await github.rest.pulls.update({
-    ...context.repo,
-    pull_number: pullRequest.number,
-    state: "closed",
-  });
+  for (const excessPullRequest of pullRequestsToClose) {
+    await github.rest.issues.createComment({
+      ...context.repo,
+      issue_number: excessPullRequest.number,
+      body,
+    });
+    await github.rest.pulls.update({
+      ...context.repo,
+      pull_number: excessPullRequest.number,
+      state: "closed",
+    });
+    core.notice(
+      `Closed pull request #${excessPullRequest.number} because ${author} exceeded the limit.`,
+    );
+  }
 
-  core.notice(`Closed pull request #${pullRequest.number} because ${author} exceeded the limit.`);
-  return { action: "closed", count: authorOpenPullRequests.length, limit };
+  return {
+    action: "closed",
+    closedPullRequests: pullRequestsToClose.map((candidate) => candidate.number),
+    count: authorOpenPullRequests.length,
+    limit,
+  };
 }
 
 module.exports = {
@@ -181,5 +197,5 @@ module.exports = {
   parseMaxOpenPullRequests,
   parsePullRequestLimitOverrides,
   resolvePullRequestLimit,
-  shouldClosePullRequest,
+  selectPullRequestsToClose,
 };

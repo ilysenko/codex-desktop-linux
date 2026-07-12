@@ -12,7 +12,7 @@ const {
   parseMaxOpenPullRequests,
   parsePullRequestLimitOverrides,
   resolvePullRequestLimit,
-  shouldClosePullRequest,
+  selectPullRequestsToClose,
 } = require("./enforce-pr-limit");
 
 function pullRequest(number, login = "contributor", extra = {}) {
@@ -154,43 +154,35 @@ test("buildLimitComment uses correct singular English grammar", () => {
   );
 });
 
-test("shouldClosePullRequest allows counts at or below the limit", () => {
-  assert.equal(
-    shouldClosePullRequest({
+test("selectPullRequestsToClose allows counts at or below the limit", () => {
+  assert.deepEqual(
+    selectPullRequestsToClose({
       action: "opened",
       currentNumber: 2,
       limit: 2,
       openPullRequests: [pullRequest(1), pullRequest(2)],
     }),
-    false,
+    [],
   );
 });
 
-test("shouldClosePullRequest preserves earlier PRs during concurrent openings", () => {
+test("selectPullRequestsToClose preserves earlier PRs and reconciles every concurrent opening", () => {
   const openPullRequests = [pullRequest(3), pullRequest(1), pullRequest(2), pullRequest(4)];
-  assert.equal(
-    shouldClosePullRequest({ action: "opened", currentNumber: 1, limit: 2, openPullRequests }),
-    false,
-  );
-  assert.equal(
-    shouldClosePullRequest({ action: "opened", currentNumber: 3, limit: 2, openPullRequests }),
-    true,
-  );
-  assert.equal(
-    shouldClosePullRequest({ action: "opened", currentNumber: 4, limit: 2, openPullRequests }),
-    true,
+  assert.deepEqual(
+    selectPullRequestsToClose({ action: "opened", currentNumber: 4, limit: 2, openPullRequests }),
+    [pullRequest(3), pullRequest(4)],
   );
 });
 
-test("shouldClosePullRequest closes the current reopened PR above the limit", () => {
-  assert.equal(
-    shouldClosePullRequest({
+test("selectPullRequestsToClose closes the current reopened PR and reconciles remaining excess", () => {
+  assert.deepEqual(
+    selectPullRequestsToClose({
       action: "reopened",
-      currentNumber: 1,
+      currentNumber: 4,
       limit: 2,
-      openPullRequests: [pullRequest(1), pullRequest(2), pullRequest(3)],
+      openPullRequests: [pullRequest(1), pullRequest(2), pullRequest(3), pullRequest(4)],
     }),
-    true,
+    [pullRequest(3), pullRequest(4)],
   );
 });
 
@@ -232,7 +224,12 @@ test("enforcePullRequestLimit comments in English before closing the excess PR",
 
   const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
 
-  assert.deepEqual(result, { action: "closed", count: 3, limit: 2 });
+  assert.deepEqual(result, {
+    action: "closed",
+    closedPullRequests: [3],
+    count: 3,
+    limit: 2,
+  });
   assert.equal(harness.calls[1][0], "comment");
   assert.deepEqual(harness.calls[1][1], {
     owner: "owner",
@@ -259,7 +256,12 @@ test("enforcePullRequestLimit closes against a lower personal limit", async () =
     rawOverrides: '{"one-pr-user":1}',
   });
 
-  assert.deepEqual(result, { action: "closed", count: 2, limit: 1 });
+  assert.deepEqual(result, {
+    action: "closed",
+    closedPullRequests: [2],
+    count: 2,
+    limit: 1,
+  });
   assert.match(harness.messages.info[0], /limit is 1 \(personal override\)/);
   assert.equal(harness.calls[1][1].body, buildLimitComment(1, 2));
 });
@@ -282,6 +284,31 @@ test("enforcePullRequestLimit allows more PRs under a higher personal limit", as
   assert.equal(harness.calls.length, 1);
 });
 
+test("enforcePullRequestLimit closes every excess PR left by a burst of events", async () => {
+  const current = pullRequest(5);
+  const harness = createHarness({
+    current,
+    open: [pullRequest(1), pullRequest(2), pullRequest(3), pullRequest(4), current],
+  });
+
+  const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
+
+  assert.deepEqual(result, {
+    action: "closed",
+    closedPullRequests: [3, 4, 5],
+    count: 5,
+    limit: 2,
+  });
+  assert.deepEqual(
+    harness.calls.filter(([operation]) => operation === "comment").map(([, options]) => options.issue_number),
+    [3, 4, 5],
+  );
+  assert.deepEqual(
+    harness.calls.filter(([operation]) => operation === "close").map(([, options]) => options.pull_number),
+    [3, 4, 5],
+  );
+});
+
 test("enforcePullRequestLimit leaves an already-closed current PR unchanged on rerun", async () => {
   const current = pullRequest(3);
   const harness = createHarness({ current, open: [pullRequest(1), pullRequest(2)] });
@@ -300,9 +327,22 @@ test("workflow uses the trusted pull_request_target configuration", () => {
   );
 
   assert.match(workflow, /pull_request_target:\n\s+types: \[opened, reopened\]/);
-  assert.match(workflow, /contents: read\n\s+issues: write\n\s+pull-requests: write/);
+  assert.match(workflow, /contents: read\n\s+pull-requests: write/);
+  assert.doesNotMatch(workflow, /issues: write/);
+  assert.match(
+    workflow,
+    /group: contributor-pr-limit-\$\{\{ github\.event\.pull_request\.user\.login \}\}\n\s+cancel-in-progress: false/,
+  );
   assert.match(workflow, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
   assert.match(workflow, /persist-credentials: false/);
+  assert.match(
+    workflow,
+    /actions\/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4/,
+  );
+  assert.match(
+    workflow,
+    /actions\/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7/,
+  );
   assert.match(
     workflow,
     /MAX_OPEN_PRS_PER_CONTRIBUTOR: \$\{\{ vars\.MAX_OPEN_PRS_PER_CONTRIBUTOR \}\}/,
