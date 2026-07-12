@@ -447,7 +447,7 @@ test("main bundle patch preserves explicit button speech while adding conversati
 
 test("composer runtime appends one browser-side conversation controller", () => {
   const patched = twice(applyComposerRuntimePatch, "console.log(`composer`);");
-  assert.match(patched, /conversation-mode-v25/);
+  assert.match(patched, /conversation-mode-v26/);
   assert.match(patched, /activeConversationId/);
   assert.match(patched, /seenAssistantKeys/);
   assert.match(patched, /assistantKey/);
@@ -550,6 +550,35 @@ test("conversation runtime is scoped to the active conversation id", () => {
     assert.equal(bodies.filter((body) => body.action === "speak").length, speakCountBeforeSwitch);
     assert.ok(bodies.filter((body) => body.action === "stop").length >= 2);
   });
+});
+
+test("conversation runtime completes task switch cleanup when the dictation callback rejects render-time calls", () => {
+  const fakeDocument = createFakeDocument();
+  withConversationRuntime(() => {
+    let stopCalls = 0;
+    const controls = {
+      conversationId: "thread-a",
+      isResponseInProgress: false,
+      startDictation() {},
+      stopDictation() {
+        stopCalls++;
+        throw new Error("A function wrapped in useStableCallback can't be called during rendering.");
+      },
+      onStop() {},
+    };
+
+    assert.equal(globalThis.codexLinuxConversationToggle(controls), true);
+    assert.equal(fakeDocument.bodyClassList.contains("codex-linux-conversation-active"), true);
+
+    assert.doesNotThrow(() => globalThis.codexLinuxConversationSync("thread-b", controls));
+    assert.equal(globalThis.codexLinuxConversationIsActive("thread-a"), false);
+    assert.equal(globalThis.codexLinuxConversationStop(), false);
+    assert.equal(fakeDocument.bodyClassList.contains("codex-linux-conversation-active"), false);
+    assert.equal(fakeDocument.composerClassList.contains("codex-linux-conversation-composer-aura"), false);
+    assert.equal(fakeDocument.getElementById("codex-linux-conversation-stop").hidden, true);
+    assert.equal(fakeDocument.getElementById("codex-linux-conversation-mute").hidden, true);
+    assert.equal(stopCalls, 1);
+  }, { document: fakeDocument });
 });
 
 test("conversation runtime can be explicitly exited from the active voice control", () => {

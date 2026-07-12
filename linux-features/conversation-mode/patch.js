@@ -1,7 +1,7 @@
 "use strict";
 
 const HANDLER_NAME = "linux-read-aloud";
-const RUNTIME_VERSION = "conversation-mode-v25";
+const RUNTIME_VERSION = "conversation-mode-v26";
 const CURRENT_COMPOSER_ASSET_PATTERN =
   /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~[A-Za-z0-9_-]+\.js$/;
 
@@ -63,7 +63,7 @@ function conversationRuntimeSource() {
     `function stopConversation(){if(!state.active)return false;deactivate("discard");return true}`,
     `function cancelInterruptMonitor(){state.interruptSerial++;state.interruptPendingEpoch=0;stopInterruptMonitor()}`,
     `function toggleMute(force){if(!state.active)return false;let muted=typeof force==="boolean"?force:!state.muted;if(muted===state.muted){updateUi();return true}state.muted=muted;state.speechCooldownUntil=0;clearTimeout(state.restartTimer);state.restartTimer=null;if(state.muted){cancelInterruptMonitor();state.listening=false;state.controls?.stopDictation?.("discard")}else if(isResponseInProgress()||state.speaking||state.queue.length>0)startInterruptMonitor();else{state.listening=false;startListeningSoon(0,!0)}updateUi();return true}`,
-    `function deactivate(stopAction="insert"){if(!state.active)return;state.active=false;state.muted=false;state.epoch++;state.interruptPendingEpoch=0;clearTimeout(state.restartTimer);state.restartTimer=null;stopSpeech();cancelInterruptMonitor();state.controls?.stopDictation?.(stopAction);state.controls=null;state.activeConversationId=null;state.seenAssistantKeys.clear();state.spokenAssistant.clear();state.spokenAssistantTexts=[];state.cursorSentAtMs=0;resetTranscriptState();resetTurnState();updateUi()}`,
+    `function deactivate(stopAction="insert"){if(!state.active)return;let controls=state.controls;state.active=false;state.muted=false;state.epoch++;state.interruptPendingEpoch=0;clearTimeout(state.restartTimer);state.restartTimer=null;stopSpeech();cancelInterruptMonitor();state.controls=null;state.activeConversationId=null;state.seenAssistantKeys.clear();state.spokenAssistant.clear();state.spokenAssistantTexts=[];state.cursorSentAtMs=0;resetTranscriptState();resetTurnState();updateUi();try{controls?.stopDictation?.(stopAction)}catch{}}`,
     `function mergeControls(controls){if(controls&&typeof controls==="object")state.controls={...state.controls,...controls}}`,
     `function sync(conversation,controls){updateTrigger();if(!state.active)return false;let id=conversationId(conversation);if(id!==state.activeConversationId){deactivate("insert");return false}let was=isResponseInProgress();mergeControls(controls);let now=isResponseInProgress();if(now&&!was){(!state.allowAssistant||state.awaitingUserTranscript)&&stopSpeech(!0);state.awaitingUserTranscript=false;state.allowAssistant=true;state.muted||startInterruptMonitor()}else if(now&&!state.muted)startInterruptMonitor();if(was&&!now){state.finalizing=true;finishAssistantSoon(650)}updateComposerAura();return true}`,
     `function isActive(conversation){return state.active&&conversationId(conversation)===state.activeConversationId}`,
