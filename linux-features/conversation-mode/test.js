@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 const {
   enabledLinuxFeatureIds,
   loadLinuxFeaturePatchDescriptors,
@@ -444,16 +445,9 @@ test("main bundle patch preserves explicit button speech while adding conversati
   assert.match(patched, /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:!1\}\)/);
 });
 
-test("main bundle patch upgrades older conversation speech gates", () => {
-  const alreadyAllowed =
-    "function codexLinuxReadAloudHandle(e={}){return e.action===`config`?codexLinuxReadAloudConfig():e.action===`setup`?codexLinuxReadAloudSetup(e):e.action===`stop`?codexLinuxReadAloudStop():e.action===`speak`&&(e.source===`button`||e.source===`conversation`)?codexLinuxReadAloudSpeak(e.text):codexLinuxReadAloudReport({spoken:!1,reason:`not-explicit`})}var h={handlers:{\"linux-read-aloud\":async(e)=>codexLinuxReadAloudHandle(e),\"native-desktop-apps\":async()=>({apps:[]})}};";
-  const patched = twice(applyReadAloudMainBundlePatch, alreadyAllowed);
-  assert.match(patched, /codexLinuxReadAloudSpeak\(e\.text,\{requireEnabled:!1\}\)/);
-});
-
 test("composer runtime appends one browser-side conversation controller", () => {
   const patched = twice(applyComposerRuntimePatch, "console.log(`composer`);");
-  assert.match(patched, /conversation-mode-v24/);
+  assert.match(patched, /conversation-mode-v25/);
   assert.match(patched, /activeConversationId/);
   assert.match(patched, /seenAssistantKeys/);
   assert.match(patched, /assistantKey/);
@@ -585,6 +579,7 @@ test("conversation runtime can be explicitly exited from the active voice contro
 test("conversation runtime exits when the unified shell opens ChatGPT in a non-English locale", () => {
   let chatOpen = false;
   let mutationCallback = null;
+  let mutationOptions = null;
   const stopActions = [];
   const queriedSelectors = [];
   const document = createFakeDocument();
@@ -600,7 +595,9 @@ test("conversation runtime exits when the unified shell opens ChatGPT in a non-E
     constructor(callback) {
       mutationCallback = callback;
     }
-    observe() {}
+    observe(_target, options) {
+      mutationOptions = options;
+    }
   }
 
   withConversationRuntime(() => {
@@ -623,6 +620,12 @@ test("conversation runtime exits when the unified shell opens ChatGPT in a non-E
     assert.deepEqual(stopActions, ["discard"]);
     assert.equal(closeButton.getAttribute("aria-label"), "Fechar chat");
     assert.equal(queriedSelectors.some((selector) => selector.includes("aria-label")), false);
+    assert.deepEqual(mutationOptions, {
+      attributes: true,
+      attributeFilter: ["data-state"],
+      childList: true,
+      subtree: true,
+    });
   }, { document, MutationObserver: FakeMutationObserver });
 });
 
@@ -2014,17 +2017,104 @@ test("composer control patch wires the current dictation control into conversati
   );
   assert.match(patched, /isVisible:W\|\|N&&globalThis\.codexLinuxConversationAvailable\?\.\(\)/);
   assert.match(patched, /className:N\?`codex-linux-conversation-trigger`:void 0/);
-  assert.match(patched, /startDictation:\(\)=>\{if\(globalThis\.codexLinuxConversationToggle/);
+  assert.match(patched, /startDictation:\(\)=>globalThis\.codexLinuxConversationToggle/);
+});
+
+test("composer control preserves the current async startDictation contract", async () => {
+  const patched = applyComposerControlPatch(currentComposerControlSource);
+  const originalResult = Promise.resolve("started");
+  let originalStarts = 0;
+  const context = {
+    Bk: {},
+    Ewe: "dictation-control",
+    LEa: () => ({}),
+    Nn: () => ({}),
+    RZ: () => ({}),
+    Rk: () => "thread-a",
+    Twe: "waveform",
+    _ka: "composer-anchor",
+    _: null,
+    g: "host-a",
+    t: null,
+    x7: {
+      jsx(component, props) {
+        return component === "dictation-control" ? props : {};
+      },
+    },
+  };
+  context.globalThis = context;
+  vm.runInNewContext(`${patched};globalThis.renderCurrentComposer=Vka`, context);
+  context.codexLinuxConversationAvailable = () => true;
+  context.codexLinuxConversationSync = () => {};
+  const voiceControls = {
+    canRetryDictation: false,
+    dictationShortcutLabel: "D",
+    isDictating: false,
+    isDictationButtonVisible: true,
+    isDictationSupported: true,
+    isTranscribing: false,
+    isVoiceFooterVisible: true,
+    recordingDurationMs: 0,
+    retryDictation() {},
+    startDictation() {
+      originalStarts++;
+      return originalResult;
+    },
+    stopDictation() {},
+    restrictedSession: { thread: { phase: "inactive" } },
+    waveformCanvasRef: {},
+  };
+  const render = () => context.renderCurrentComposer({
+    isResponseInProgress: false,
+    onStop() {},
+    submitBlockReason: null,
+    voiceControls,
+  });
+
+  context.codexLinuxConversationToggle = () => false;
+  assert.equal(render().startDictation(), originalResult);
+  assert.equal(originalStarts, 1);
+
+  context.codexLinuxConversationToggle = () => true;
+  const handledResult = render().startDictation();
+  assert.equal(typeof handledResult?.finally, "function");
+  await handledResult;
+  assert.equal(originalStarts, 1);
 });
 
 test("composer control patch fails soft when the current conversation binding drifts", () => {
   const drifted = currentComposerControlSource.replace("conversationId:N,hostId:g", "conversationKey:N,hostId:g");
-  const { value: patched, warnings } = captureWarns(() => twice(applyComposerControlPatch, drifted));
+  const { value: patched, warnings } = captureWarns(() => twice(applyComposerPatch, drifted));
 
   assert.equal(patched, drifted);
   assert.match(warnings.join("\n"), /Could not resolve composer prop aliases/);
   assert.doesNotMatch(patched, /codexLinuxConversationSync/);
   assert.doesNotMatch(patched, /codexLinuxConversationToggle/);
+});
+
+test("current composer marker drift is reported as skipped instead of already applied", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-conversation-mode-composer-drift-"));
+  try {
+    const assetsDir = path.join(root, "webview", "assets");
+    fs.mkdirSync(assetsDir, { recursive: true });
+    const assetPath = path.join(assetsDir, currentComposerAsset);
+    const drifted = "console.log(`current composer contract drifted`);";
+    fs.writeFileSync(assetPath, drifted);
+    const descriptor = featurePatches.find((patch) => patch.id === "composer-control");
+    const descriptors = normalizePatchDescriptors([
+      { ...descriptor, featureId: "conversation-mode", sourceKind: "feature" },
+    ]);
+    const report = createPatchReport();
+
+    applyWebviewAssetPatchDescriptors(root, descriptors, {}, report);
+
+    assert.equal(fs.readFileSync(assetPath, "utf8"), drifted);
+    assert.equal(report.patches.length, 1);
+    assert.equal(report.patches[0].status, "skipped-optional");
+    assert.match(report.patches[0].reason, /Could not find current composer controls/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("composer patch ignores adjacent composer chunks", () => {
@@ -2053,6 +2143,31 @@ test("assistant observer targets only the current primary thread bundle", () => 
   assert.equal(descriptor.pattern.test("local-conversation-turn-old.js"), false);
   assert.equal(descriptor.pattern.test("local-conversation-thread-old.js"), false);
   assert.equal(descriptor.pattern.test("index-old.js"), false);
+});
+
+test("current assistant observer drift is reported as skipped instead of already applied", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-conversation-mode-assistant-drift-"));
+  try {
+    const assetsDir = path.join(root, "webview", "assets");
+    fs.mkdirSync(assetsDir, { recursive: true });
+    const assetPath = path.join(assetsDir, "app-initial~app-main~onboarding-page-current.js");
+    const drifted = "console.log(`current assistant renderer drifted`);";
+    fs.writeFileSync(assetPath, drifted);
+    const descriptor = featurePatches.find((patch) => patch.id === "assistant-observer");
+    const descriptors = normalizePatchDescriptors([
+      { ...descriptor, featureId: "conversation-mode", sourceKind: "feature" },
+    ]);
+    const report = createPatchReport();
+
+    applyWebviewAssetPatchDescriptors(root, descriptors, {}, report);
+
+    assert.equal(fs.readFileSync(assetPath, "utf8"), drifted);
+    assert.equal(report.patches.length, 1);
+    assert.equal(report.patches[0].status, "skipped-optional");
+    assert.match(report.patches[0].reason, /Could not find assistant message render call/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("conversation mode patches matching app assets and records report entries", () => {

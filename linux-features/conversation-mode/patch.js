@@ -1,7 +1,7 @@
 "use strict";
 
 const HANDLER_NAME = "linux-read-aloud";
-const RUNTIME_VERSION = "conversation-mode-v24";
+const RUNTIME_VERSION = "conversation-mode-v25";
 const CURRENT_COMPOSER_ASSET_PATTERN =
   /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~[A-Za-z0-9_-]+\.js$/;
 
@@ -22,16 +22,7 @@ function applyReadAloudMainBundlePatch(source) {
   const explicitButton =
     "e.action===`speak`&&e.source===`button`?codexLinuxReadAloudSpeak(e.text,{requireEnabled:!1})";
   const buttonOnly = "e.action===`speak`&&e.source===`button`?codexLinuxReadAloudSpeak(e.text)";
-  const oldConversation = "e.action===`speak`&&(e.source===`button`||e.source===`conversation`)?codexLinuxReadAloudSpeak(e.text)";
-  const oldConversationGate =
-    "e.action===`speak`&&(e.source===`button`||e.source===`conversation`)?codexLinuxReadAloudSpeak(e.text,{requireEnabled:e.source!==`conversation`})";
   const withConversation = "e.action===`speak`&&(e.source===`button`||e.source===`conversation`)?codexLinuxReadAloudSpeak(e.text,{requireEnabled:!1})";
-  if (source.includes(oldConversationGate)) {
-    return source.replace(oldConversationGate, withConversation);
-  }
-  if (source.includes(oldConversation)) {
-    return source.replace(oldConversation, withConversation);
-  }
   if (source.includes(explicitButton)) {
     return source.replace(explicitButton, withConversation);
   }
@@ -67,7 +58,7 @@ function conversationRuntimeSource() {
     `function updateTrigger(){if(typeof document==="undefined")return;let buttons=document.querySelectorAll?.("button.codex-linux-conversation-trigger")??[],label=state.active?"Stop conversation mode":"Start conversation mode";for(let button of buttons){button.setAttribute?.("aria-label",label);button.title=label}}`,
     `function chatSurfaceOpen(){return typeof document!=="undefined"&&!!document.querySelector?.('section[role="dialog"][data-pip-obstacle="quick-chat"][data-state="open"]')}`,
     `function guardSurface(){state.active&&chatSurfaceOpen()&&deactivate("discard")}`,
-    `function installSurfaceGuard(){if(state.surfaceObserver||typeof document==="undefined"||!document.body||!window.MutationObserver)return;state.surfaceObserver=new window.MutationObserver(guardSurface);state.surfaceObserver.observe(document.body,{childList:!0,subtree:!0})}`,
+    `function installSurfaceGuard(){if(state.surfaceObserver||typeof document==="undefined"||!document.body||!window.MutationObserver)return;state.surfaceObserver=new window.MutationObserver(guardSurface);state.surfaceObserver.observe(document.body,{attributes:!0,attributeFilter:["data-state"],childList:!0,subtree:!0})}`,
     `function updateUi(){try{if(typeof document==="undefined")return;if(!document.body){state.active&&setTimeout(updateUi,250);return}installUi();updateTrigger();document.documentElement?.classList?.toggle?.("codex-linux-conversation-active",state.active);document.body.classList?.toggle?.("codex-linux-conversation-active",state.active);document.documentElement?.classList?.toggle?.("codex-linux-conversation-muted",state.active&&state.muted);document.body.classList?.toggle?.("codex-linux-conversation-muted",state.active&&state.muted);updateComposerAura();if(state.stopButton)state.stopButton.hidden=!state.active;if(state.muteButton){let label=state.muted?"Unmute microphone":"Mute microphone";state.muteButton.hidden=!state.active;state.muteButton.title=label;state.muteButton.setAttribute("aria-label",label);state.muteButton.setAttribute("aria-pressed",state.muted?"true":"false");state.muteButton.innerHTML=conversationMuteIcon(state.muted)}}catch{}}`,
     `function stopConversation(){if(!state.active)return false;deactivate("discard");return true}`,
     `function cancelInterruptMonitor(){state.interruptSerial++;state.interruptPendingEpoch=0;stopInterruptMonitor()}`,
@@ -240,7 +231,7 @@ function applyComposerControlPatch(source) {
   const toggleCall = `globalThis.codexLinuxConversationToggle?.({${composerTogglePayload(vars, props)}})`;
   patched = patched.replace(
     controlPattern,
-    `{isVisible:${vars.isDictationButtonVisible}||${props.conversationId}&&globalThis.codexLinuxConversationAvailable?.(),className:${props.conversationId}?\`codex-linux-conversation-trigger\`:void 0,disabled:$1,isTranscribing:${vars.isTranscribing},canRetryDictation:${vars.canRetryDictation},shortcutLabel:${vars.dictationShortcutLabel},retryDictation:${vars.retryDictation},startDictation:()=>{if(${toggleCall})return;${vars.startDictation}()},stopDictation:${vars.stopDictation}}`,
+    `{isVisible:${vars.isDictationButtonVisible}||${props.conversationId}&&globalThis.codexLinuxConversationAvailable?.(),className:${props.conversationId}?\`codex-linux-conversation-trigger\`:void 0,disabled:$1,isTranscribing:${vars.isTranscribing},canRetryDictation:${vars.canRetryDictation},shortcutLabel:${vars.dictationShortcutLabel},retryDictation:${vars.retryDictation},startDictation:()=>${toggleCall}?Promise.resolve():${vars.startDictation}(),stopDictation:${vars.stopDictation}}`,
   );
   return patched;
 }
@@ -328,17 +319,23 @@ function applyAssistantRenderPatch(source) {
   if (patched !== source) {
     return patched;
   }
-  if (source.includes("assistantCopyText")) {
-    warn("Could not find assistant message render call", "conversation mode assistant observer patch");
-  }
+  warn("Could not find assistant message render call", "conversation mode assistant observer patch");
   return source;
 }
 
 function applyComposerPatch(source) {
   if (!source.includes("voiceControls") || !source.includes("isDictationButtonVisible")) {
+    warn("Could not find current composer controls", "conversation mode composer control patch");
     return source;
   }
-  return applyComposerRuntimePatch(applyComposerControlPatch(source));
+  const patched = applyComposerControlPatch(source);
+  if (
+    patched === source &&
+    (!source.includes("codexLinuxConversationSync?.(") || !source.includes("codexLinuxConversationToggle?.("))
+  ) {
+    return source;
+  }
+  return applyComposerRuntimePatch(patched);
 }
 
 module.exports = {
