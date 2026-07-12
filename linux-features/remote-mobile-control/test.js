@@ -168,7 +168,7 @@ function findExecutableOnPath(name) {
 }
 
 function remoteControlKeyStorePaths(configHome) {
-  const directory = path.join(configHome, "codex-desktop");
+  const directory = path.join(configHome, "codex-desktop", "remote-control-device-keys");
   const store = path.join(directory, "remote-control-device-keys-v1.json");
   return { directory, lock: `${store}.lock`, store };
 }
@@ -1117,6 +1117,14 @@ test("Linux remote-control device-key patch handles current minified aliases", (
   assert.match(patched, /process\.platform===`linux`\)return codexLinuxRemoteControlDeviceKeyClient\(\)/);
   assert.doesNotMatch(patched, /n\.kind===`local`&&process\.platform!==`linux`/);
   assert.equal(applyLinuxRemoteControlDeviceKeyPatch(patched), patched);
+});
+
+test("Linux remote-control device-key provider does not capture a function-local child-process alias", () => {
+  const source = `function injectedFeature(){let __codexChild=require(\`node:child_process\`);return __codexChild}${syntheticMainBundle()}`;
+  const patched = applyLinuxRemoteControlDeviceKeyPatch(source);
+
+  assert.match(patched, /require\(`node:child_process`\)\.spawn\(/);
+  assert.doesNotMatch(patched, /__codexChild\.spawn\(/);
 });
 
 test("Linux remote-control device-key provider avoids upstream minified alias collisions", async () => {
@@ -2716,6 +2724,8 @@ test("Linux remote-control enablement bridge auto-connects only this Desktop hos
 test("patched Linux device-key provider can create, sign with, and delete a key", async () => {
   const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-store-"));
   try {
+    const sharedConfigDirectory = path.join(configHome, "codex-desktop");
+    fs.mkdirSync(sharedConfigDirectory, { mode: 0o755 });
     const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticMainBundle());
     const context = {
       Buffer,
@@ -2754,7 +2764,10 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
     assert.match(signature.signatureDerBase64, /^[A-Za-z0-9+/]+=*$/);
     assert.match(signature.signedPayloadBase64, /^[A-Za-z0-9+/]+=*$/);
 
-    const storePath = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    const storeDirectory = path.join(sharedConfigDirectory, "remote-control-device-keys");
+    const storePath = path.join(storeDirectory, "remote-control-device-keys-v1.json");
+    assert.equal(fs.statSync(sharedConfigDirectory).mode & 0o777, 0o755);
+    assert.equal(fs.statSync(storeDirectory).mode & 0o777, 0o700);
     assert.equal(fs.statSync(storePath).mode & 0o777, 0o600);
 
     await client.deleteDeviceKey(created.keyId);
@@ -2916,11 +2929,32 @@ test("Linux device-key store migrates the legacy schema on the next write", asyn
   }
 });
 
+test("Linux device-key store moves the previous key file into its private directory", async () => {
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-path-migration-"));
+  try {
+    const client = createPatchedDeviceKeyClient(configHome);
+    const created = await client.createDeviceKey("allow_os_protected_nonextractable");
+    const { directory, lock, store } = remoteControlKeyStorePaths(configHome);
+    const legacyStore = path.join(configHome, "codex-desktop", "remote-control-device-keys-v1.json");
+    fs.rmSync(lock, { force: true });
+    fs.renameSync(store, legacyStore);
+    fs.rmdirSync(directory);
+
+    const migratedClient = createPatchedDeviceKeyClient(configHome);
+    assert.equal((await migratedClient.getDeviceKeyPublic(created.keyId)).keyId, created.keyId);
+    assert.equal(fs.existsSync(legacyStore), false);
+    assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(store).mode & 0o777, 0o600);
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
+});
+
 test("Linux device-key store rejects corruption without replacing it", async () => {
   const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-corrupt-"));
   try {
     const { directory, store } = remoteControlKeyStorePaths(configHome);
-    fs.mkdirSync(directory, { mode: 0o700 });
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     fs.writeFileSync(store, "{truncated", { mode: 0o600 });
     const client = createPatchedDeviceKeyClient(configHome);
 
@@ -2942,7 +2976,7 @@ test("Linux device-key store does not remove a colliding temporary file", async 
   const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-temp-"));
   try {
     const { directory, store } = remoteControlKeyStorePaths(configHome);
-    fs.mkdirSync(directory, { mode: 0o700 });
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const collisionPath = `${store}.tmp-collision`;
     fs.writeFileSync(collisionPath, "keep", { mode: 0o600 });
     const crypto = require("node:crypto");
@@ -2968,7 +3002,7 @@ test("Linux device-key store rejects unsafe filesystem objects", { timeout: 2_00
     fs.symlinkSync(directoryTarget, path.join(directorySymlinkHome, "codex-desktop"));
     await assert.rejects(
       () => createPatchedDeviceKeyClient(directorySymlinkHome).createDeviceKey("test"),
-      /directory must be a regular directory/,
+      /config path must be a regular directory/,
     );
 
     const storeSymlinkHome = path.join(root, "store-symlink");

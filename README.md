@@ -131,9 +131,9 @@ User data is preserved for reinstall. To remove only this wrapper's local app
 state, logs, launcher flags, and updater state, delete these paths.
 
 If you enabled Remote Mobile Control, `~/.config/codex-desktop` can contain
-`remote-control-device-keys-v1.json`. Revoke paired devices in Codex
-Settings/Connections or ChatGPT before deleting that file or removing the whole
-directory. For feature-owned data, prefer the cleanup flow in
+the private `remote-control-device-keys/` directory. Revoke paired devices in
+Codex Settings/Connections or ChatGPT before deleting it or removing the whole
+`codex-desktop` directory. For feature-owned data, prefer the cleanup flow in
 [Native setup](docs/native-setup.md#feature-cleanup).
 
 ```bash
