@@ -7,6 +7,7 @@ const test = require("node:test");
 
 const {
   DEFAULT_MAX_OPEN_PRS,
+  LIMIT_COMMENT_MARKER,
   buildLimitComment,
   enforcePullRequestLimit,
   parseMaxOpenPullRequests,
@@ -23,18 +24,32 @@ function pullRequest(number, login = "contributor", extra = {}) {
   };
 }
 
-function createHarness({ action = "opened", current = pullRequest(3), open = [] } = {}) {
+function createHarness({
+  action = "opened",
+  commentsByIssue = {},
+  current = pullRequest(3),
+  open = [],
+} = {}) {
   const calls = [];
   const messages = { info: [], notice: [], warning: [] };
   const list = Symbol("pulls.list");
+  const listComments = Symbol("issues.listComments");
   const github = {
     paginate: async (method, options) => {
-      calls.push(["paginate", method, options]);
-      return open;
+      if (method === list) {
+        calls.push(["paginate", method, options]);
+        return open;
+      }
+      if (method === listComments) {
+        calls.push(["paginate-comments", method, options]);
+        return commentsByIssue[options.issue_number] || [];
+      }
+      throw new Error("Unexpected pagination method");
     },
     rest: {
       issues: {
         createComment: async (options) => calls.push(["comment", options]),
+        listComments,
       },
       pulls: {
         list,
@@ -52,7 +67,7 @@ function createHarness({ action = "opened", current = pullRequest(3), open = [] 
     warning: (message) => messages.warning.push(message),
   };
 
-  return { calls, context, core, github, list, messages };
+  return { calls, context, core, github, list, listComments, messages };
 }
 
 test("parseMaxOpenPullRequests accepts positive integers", () => {
@@ -143,14 +158,14 @@ test("resolvePullRequestLimit uses the global limit or built-in fallback", () =>
 test("buildLimitComment returns the required English comment", () => {
   assert.equal(
     buildLimitComment(2, 3),
-    "Thanks for contributing. This repository allows a maximum of **2 active pull requests per contributor**. You currently have **3 open pull requests**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.",
+    `Thanks for contributing. This repository allows a maximum of **2 active pull requests per contributor**. You currently have **3 open pull requests**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.\n\n${LIMIT_COMMENT_MARKER}`,
   );
 });
 
 test("buildLimitComment uses correct singular English grammar", () => {
   assert.equal(
     buildLimitComment(1, 2),
-    "Thanks for contributing. This repository allows a maximum of **1 active pull request per contributor**. You currently have **2 open pull requests**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.",
+    `Thanks for contributing. This repository allows a maximum of **1 active pull request per contributor**. You currently have **2 open pull requests**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.\n\n${LIMIT_COMMENT_MARKER}`,
   );
 });
 
@@ -230,15 +245,15 @@ test("enforcePullRequestLimit comments in English before closing the excess PR",
     count: 3,
     limit: 2,
   });
-  assert.equal(harness.calls[1][0], "comment");
-  assert.deepEqual(harness.calls[1][1], {
+  const commentCall = harness.calls.find(([operation]) => operation === "comment");
+  assert.deepEqual(commentCall[1], {
     owner: "owner",
     repo: "repository",
     issue_number: 3,
     body: buildLimitComment(2, 3),
   });
-  assert.equal(harness.calls[2][0], "close");
-  assert.deepEqual(harness.calls[2][1], {
+  const closeCall = harness.calls.find(([operation]) => operation === "close");
+  assert.deepEqual(closeCall[1], {
     owner: "owner",
     repo: "repository",
     pull_number: 3,
@@ -263,7 +278,10 @@ test("enforcePullRequestLimit closes against a lower personal limit", async () =
     limit: 1,
   });
   assert.match(harness.messages.info[0], /limit is 1 \(personal override\)/);
-  assert.equal(harness.calls[1][1].body, buildLimitComment(1, 2));
+  assert.equal(
+    harness.calls.find(([operation]) => operation === "comment")[1].body,
+    buildLimitComment(1, 2),
+  );
 });
 
 test("enforcePullRequestLimit allows more PRs under a higher personal limit", async () => {
@@ -309,15 +327,40 @@ test("enforcePullRequestLimit closes every excess PR left by a burst of events",
   );
 });
 
-test("enforcePullRequestLimit leaves an already-closed current PR unchanged on rerun", async () => {
+test("enforcePullRequestLimit still reconciles when the triggering PR is already closed", async () => {
   const current = pullRequest(3);
-  const harness = createHarness({ current, open: [pullRequest(1), pullRequest(2)] });
+  const harness = createHarness({
+    current,
+    open: [pullRequest(1), pullRequest(2), pullRequest(4)],
+  });
 
   const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
 
-  assert.deepEqual(result, { action: "skipped-missing", count: 2, limit: 2 });
+  assert.deepEqual(result, {
+    action: "closed",
+    closedPullRequests: [4],
+    count: 3,
+    limit: 2,
+  });
   assert.equal(harness.messages.warning.length, 1);
-  assert.equal(harness.calls.length, 1);
+  assert.equal(harness.calls.find(([operation]) => operation === "close")[1].pull_number, 4);
+});
+
+test("enforcePullRequestLimit reuses an existing marker comment after a partial failure", async () => {
+  const current = pullRequest(3);
+  const harness = createHarness({
+    commentsByIssue: {
+      3: [{ body: buildLimitComment(2, 3), user: { login: "github-actions[bot]" } }],
+    },
+    current,
+    open: [pullRequest(1), pullRequest(2), current],
+  });
+
+  const result = await enforcePullRequestLimit({ ...harness, rawLimit: "2" });
+
+  assert.deepEqual(result.closedPullRequests, [3]);
+  assert.equal(harness.calls.some(([operation]) => operation === "comment"), false);
+  assert.equal(harness.calls.find(([operation]) => operation === "close")[1].pull_number, 3);
 });
 
 test("workflow uses the trusted pull_request_target configuration", () => {

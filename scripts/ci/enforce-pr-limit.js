@@ -1,6 +1,7 @@
 "use strict";
 
 const DEFAULT_MAX_OPEN_PRS = 2;
+const LIMIT_COMMENT_MARKER = "<!-- contributor-pr-limit -->";
 
 function parsePositiveInteger(rawValue) {
   const value = typeof rawValue === "string" ? rawValue.trim() : "";
@@ -87,7 +88,28 @@ function resolvePullRequestLimit({ author, rawLimit, rawOverrides, warn = () => 
 function buildLimitComment(limit, count) {
   const activePullRequests = `${limit} active pull request${limit === 1 ? "" : "s"} per contributor`;
   const openPullRequests = `${count} open pull request${count === 1 ? "" : "s"}`;
-  return `Thanks for contributing. This repository allows a maximum of **${activePullRequests}**. You currently have **${openPullRequests}**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.`;
+  return `Thanks for contributing. This repository allows a maximum of **${activePullRequests}**. You currently have **${openPullRequests}**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.\n\n${LIMIT_COMMENT_MARKER}`;
+}
+
+async function ensureLimitComment({ body, context, github, pullNumber }) {
+  const comments = await github.paginate(github.rest.issues.listComments, {
+    ...context.repo,
+    issue_number: pullNumber,
+    per_page: 100,
+  });
+  const alreadyCommented = comments.some(
+    (comment) =>
+      comment.user?.login === "github-actions[bot]" &&
+      comment.body?.includes(LIMIT_COMMENT_MARKER),
+  );
+
+  if (!alreadyCommented) {
+    await github.rest.issues.createComment({
+      ...context.repo,
+      issue_number: pullNumber,
+      body,
+    });
+  }
 }
 
 function selectPullRequestsToClose({ action, currentNumber, limit, openPullRequests }) {
@@ -144,15 +166,17 @@ async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOve
     (candidate) => candidate.user?.login?.toLowerCase() === authorLogin,
   );
 
-  if (!authorOpenPullRequests.some((candidate) => candidate.number === pullRequest.number)) {
+  const currentPullRequestIsOpen = authorOpenPullRequests.some(
+    (candidate) => candidate.number === pullRequest.number,
+  );
+  if (!currentPullRequestIsOpen) {
     core.warning(
-      `Pull request #${pullRequest.number} was not present in the open pull request list; leaving it unchanged.`,
+      `Pull request #${pullRequest.number} was not present in the open pull request list; reconciling the remaining open pull requests.`,
     );
-    return { action: "skipped-missing", count: authorOpenPullRequests.length, limit };
   }
 
   const pullRequestsToClose = selectPullRequestsToClose({
-    action: context.payload.action,
+    action: currentPullRequestIsOpen ? context.payload.action : "opened",
     currentNumber: pullRequest.number,
     limit,
     openPullRequests: authorOpenPullRequests,
@@ -167,10 +191,11 @@ async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOve
 
   const body = buildLimitComment(limit, authorOpenPullRequests.length);
   for (const excessPullRequest of pullRequestsToClose) {
-    await github.rest.issues.createComment({
-      ...context.repo,
-      issue_number: excessPullRequest.number,
+    await ensureLimitComment({
       body,
+      context,
+      github,
+      pullNumber: excessPullRequest.number,
     });
     await github.rest.pulls.update({
       ...context.repo,
@@ -192,6 +217,7 @@ async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOve
 
 module.exports = {
   DEFAULT_MAX_OPEN_PRS,
+  LIMIT_COMMENT_MARKER,
   buildLimitComment,
   enforcePullRequestLimit,
   parseMaxOpenPullRequests,
