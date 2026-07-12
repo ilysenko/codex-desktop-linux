@@ -380,16 +380,44 @@ make_path_owner_trusted() {
     local path
 
     for path in "$@"; do
+        [ ! -L "$path" ] || return 1
         [ -e "$path" ] || continue
-        chmod u+rwX,go-w "$path" 2>/dev/null || true
+        chmod u+rwX,go-w "$path" 2>/dev/null || return 1
     done
 }
 
 make_tree_owner_trusted() {
     local path="$1"
 
+    [ ! -L "$path" ] || return 1
     [ -e "$path" ] || return 0
-    chmod -R u+rwX,go-w "$path" 2>/dev/null || true
+    if find "$path" -xdev -type l -print -quit 2>/dev/null | grep -q .; then
+        return 1
+    fi
+    chmod -R u+rwX,go-w "$path" 2>/dev/null || return 1
+}
+
+path_has_unsafe_write() {
+    local path
+
+    for path in "$@"; do
+        if [ -L "$path" ]; then
+            return 0
+        fi
+        [ -e "$path" ] || continue
+        if find "$path" -maxdepth 0 -perm /022 -print -quit 2>/dev/null | grep -q .; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+tree_has_unsafe_write() {
+    local path="$1"
+
+    [ ! -L "$path" ] || return 0
+    [ -e "$path" ] || return 1
+    find "$path" -xdev \( -type l -o -perm /022 \) -print -quit 2>/dev/null | grep -q .
 }
 
 remove_tree_if_exists() {
@@ -954,6 +982,7 @@ sync_chrome_bundled_plugin_cache() {
     local marketplace_plugin_link
     local host_path
     local needs_copy=1
+    local cache_was_untrusted=0
 
     [ -f "$plugin_json" ] || return 0
     [ -d "$source_plugin" ] || return 0
@@ -969,14 +998,16 @@ sync_chrome_bundled_plugin_cache() {
     [ -f "$source_client" ] || return 0
     [ -f "$source_install_manifest" ] || return 0
 
-    make_path_owner_trusted \
+    if path_has_unsafe_write \
         "$SCRIPT_DIR" \
         "$SCRIPT_DIR/resources" \
         "$SCRIPT_DIR/resources/plugins" \
         "$SCRIPT_DIR/resources/plugins/openai-bundled" \
         "$SCRIPT_DIR/resources/plugins/openai-bundled/plugins" \
-        "$source_plugin"
-    make_tree_owner_trusted "$source_plugin"
+        "$source_plugin" || tree_has_unsafe_write "$source_plugin"; then
+        echo "Chrome bundled plugin source is not trusted; skipping cache and native-host manifest sync."
+        return 0
+    fi
 
     version="$(bundled_plugin_version "$plugin_json" 2>/dev/null || true)"
     [ -n "$version" ] || return 0
@@ -987,14 +1018,27 @@ sync_chrome_bundled_plugin_cache() {
     cache_client="$cache_plugin/scripts/browser-client.mjs"
     cache_install_manifest="$cache_plugin/scripts/installManifest.mjs"
 
-    make_path_owner_trusted \
+    if path_has_unsafe_write \
         "$codex_home" \
         "$codex_home/plugins" \
         "$codex_home/plugins/cache" \
         "$codex_home/plugins/cache/openai-bundled" \
-        "$cache_root"
+        "$cache_root" || tree_has_unsafe_write "$cache_plugin"; then
+        cache_was_untrusted=1
+    fi
 
-    if [ -f "$cache_plugin/.codex-plugin/plugin.json" ] && \
+    if ! make_path_owner_trusted \
+        "$codex_home" \
+        "$codex_home/plugins" \
+        "$codex_home/plugins/cache" \
+        "$codex_home/plugins/cache/openai-bundled" \
+        "$cache_root"; then
+        echo "Chrome plugin cache ancestors could not be hardened; skipping cache and native-host manifest sync."
+        return 0
+    fi
+
+    if [ "$cache_was_untrusted" -eq 0 ] && \
+        [ -f "$cache_plugin/.codex-plugin/plugin.json" ] && \
         [ -f "$cache_host" ] && \
         [ -f "$cache_client" ] && \
         [ -f "$cache_install_manifest" ] && \
@@ -1027,16 +1071,23 @@ sync_chrome_bundled_plugin_cache() {
         tmp_plugin="$cache_parent/.chrome-$version.tmp.$$"
         remove_tree_if_exists "$tmp_plugin"
         mkdir -p "$cache_parent"
-        make_path_owner_trusted \
+        if ! make_path_owner_trusted \
             "$codex_home" \
             "$codex_home/plugins" \
             "$codex_home/plugins/cache" \
             "$codex_home/plugins/cache/openai-bundled" \
             "$cache_root" \
-            "$cache_parent"
+            "$cache_parent"; then
+            echo "Chrome plugin cache parent could not be hardened; skipping cache and native-host manifest sync."
+            return 0
+        fi
 
         if cp -R "$source_plugin" "$tmp_plugin"; then
-            make_tree_owner_trusted "$tmp_plugin"
+            if ! make_tree_owner_trusted "$tmp_plugin"; then
+                remove_tree_if_exists "$tmp_plugin"
+                echo "Chrome plugin cache copy could not be hardened; continuing without a new cache."
+                return 0
+            fi
             find "$tmp_plugin" -type f -name '*:com.apple.*' -delete
             remove_tree_if_exists "$cache_plugin"
             mv "$tmp_plugin" "$cache_plugin"
@@ -1048,7 +1099,10 @@ sync_chrome_bundled_plugin_cache() {
         fi
     fi
 
-    make_tree_owner_trusted "$cache_plugin"
+    if ! make_tree_owner_trusted "$cache_plugin"; then
+        echo "Chrome plugin cache could not be hardened; skipping native-host manifest sync."
+        return 0
+    fi
     replace_symlink "$version" "$cache_root/latest"
 
     marketplace_root="$codex_home/.tmp/bundled-marketplaces/openai-bundled"

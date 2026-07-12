@@ -1643,5 +1643,10 @@ install_bundled_plugin_resources() {
     install_linux_executable_resource "$upstream_resources/node" "$resources_dir/node" "node runtime" "info" || true
     install_browser_use_node_repl_resource "$upstream_resources" "$resources_dir/node_repl" || true
 
+    # These files become the trust root for user-cache refreshes at runtime.
+    # Normalize them while staging from the accepted DMG instead of blessing a
+    # potentially modified installed tree during launcher startup.
+    chmod -R u+rwX,go-w "$bundled_plugins_dir"
+
     info "Linux-safe bundled plugins installed"
 }
