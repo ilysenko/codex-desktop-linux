@@ -1,0 +1,9 @@
+{
+  "id": "project-task-sort",
+  "title": "Project Task Created Sorting",
+  "description": "Restores Created sorting for local tasks in the alternate Projects sidebar.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
