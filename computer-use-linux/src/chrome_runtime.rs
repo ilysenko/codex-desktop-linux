@@ -1061,7 +1061,7 @@ impl RuntimeManager {
     fn current_executable_identity(&self) -> RuntimeResult<FileIdentity> {
         #[cfg(test)]
         if let Some(identity) = &self.current_executable_identity_override {
-            return Ok(identity.clone());
+            return Ok(*identity);
         }
 
         current_executable_identity()
@@ -1128,6 +1128,7 @@ fn parse_constraints(value: &Value) -> RuntimeResult<RuntimeConstraints> {
         .map_err(|_| RuntimeError::invalid_params("Invalid Codex runtime constraints"))
 }
 
+#[cfg(test)]
 fn select_runtime_entry(
     constraints: &RuntimeConstraints,
     manifest_paths_override: Option<&[PathBuf]>,
