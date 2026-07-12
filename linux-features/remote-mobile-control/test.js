@@ -419,6 +419,9 @@ const COLD_START_TEST_ENV_KEYS = [
   "CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_TIMEOUT_SECONDS",
   "CODEX_REMOTE_CONTROL_FORCE_COLD_START_DAEMON",
   "CODEX_REMOTE_CONTROL_RUNTIME_AUTO_INSTALL_DISABLED",
+  "TEST_SYSTEMCTL_ACTIVE_STATUS",
+  "TEST_SYSTEMCTL_CAT_STATUS",
+  "TEST_SYSTEMCTL_ENABLED_STATUS",
 ];
 
 function coldStartTestEnv(env) {
@@ -433,7 +436,16 @@ function runColdStartHook(env) {
   const tempBin = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-bin-"));
   try {
     const systemctl = path.join(tempBin, "systemctl");
-    fs.writeFileSync(systemctl, "#!/usr/bin/env sh\nexit 3\n");
+    fs.writeFileSync(systemctl, [
+      "#!/usr/bin/env sh",
+      "case \"$*\" in",
+      "  '--user is-active --quiet codex-remote-control.service') exit \"${TEST_SYSTEMCTL_ACTIVE_STATUS:-3}\" ;;",
+      "  '--user is-enabled --quiet codex-remote-control.service') exit \"${TEST_SYSTEMCTL_ENABLED_STATUS:-3}\" ;;",
+      "  '--user cat codex-remote-control.service') exit \"${TEST_SYSTEMCTL_CAT_STATUS:-3}\" ;;",
+      "esac",
+      "exit 3",
+      "",
+    ].join("\n"));
     fs.chmodSync(systemctl, 0o755);
 
     const childEnv = coldStartTestEnv(env);
@@ -457,7 +469,7 @@ function runStageHook(env) {
 function writeDesktopAppServerRemoteControlMarker(appDir) {
   const marker = path.join(appDir, ".codex-linux", "desktop-app-server-remote-control-enabled");
   fs.mkdirSync(path.dirname(marker), { recursive: true });
-  fs.writeFileSync(marker, "desktop-app-server-remote-control\n");
+  fs.writeFileSync(marker, "version=1\nowner=desktop\n");
 }
 
 test("remote mobile control feature stays disabled until listed in features.json", () => {
@@ -504,7 +516,7 @@ test("remote mobile stage hook is idempotent and stages its markers and executab
     assert.equal(first.status, 0, first.stderr || first.stdout);
     assert.equal(second.status, 0, second.stderr || second.stdout);
     assert.equal(fs.readFileSync(featureMarker, "utf8"), "remote-mobile-control\n");
-    assert.equal(fs.readFileSync(marker, "utf8"), "desktop-app-server-remote-control\n");
+    assert.equal(fs.readFileSync(marker, "utf8"), "version=1\nowner=desktop\n");
     assert.equal(fs.statSync(coldStartHook).mode & 0o777, 0o755);
     assert.equal(
       fs.readFileSync(coldStartHook, "utf8"),
@@ -539,6 +551,38 @@ test("remote mobile stage hook removes a stale ownership marker when the patch m
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(fs.existsSync(marker), false);
     assert.match(result.stderr, /Desktop app-server remote-control marker not found/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile stage hook replaces an ownership marker symlink without following it", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-stage-"));
+  try {
+    const installDir = path.join(tempRoot, "package", "opt", "codex-desktop");
+    const workDir = path.join(tempRoot, "work");
+    const buildDir = path.join(workDir, "app-extracted", ".vite", "build");
+    const marker = path.join(installDir, ".codex-linux", "desktop-app-server-remote-control-enabled");
+    const target = path.join(tempRoot, "must-not-change");
+
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "main.js"), "globalThis.codexLinuxRemoteMobileAppServerArgs=true;");
+    fs.writeFileSync(target, "preserved\n");
+    fs.symlinkSync(target, marker);
+
+    const result = runStageHook({
+      ARCH: "x64",
+      CODEX_UPSTREAM_APP_DIR: path.join(tempRoot, "upstream-app"),
+      INSTALL_DIR: installDir,
+      SCRIPT_DIR: REPO_ROOT,
+      WORK_DIR: workDir,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.readFileSync(target, "utf8"), "preserved\n");
+    assert.equal(fs.lstatSync(marker).isSymbolicLink(), false);
+    assert.equal(fs.readFileSync(marker, "utf8"), "version=1\nowner=desktop\n");
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -685,7 +729,138 @@ test("remote mobile cold-start hook skips daemon when Desktop app-server owns re
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(fs.existsSync(callsLog), false);
-    assert.match(result.stdout, /Desktop app-server launches with remote-control enabled/);
+    assert.match(result.stdout, /owner: desktop \(app-server launches with remote-control enabled\)/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook rejects an invalid Desktop owner marker", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const appDir = path.join(tempRoot, "app");
+    const standaloneCodex = path.join(codexHome, "packages", "standalone", "current", "codex");
+    const callsLog = path.join(tempRoot, "calls.log");
+
+    fs.mkdirSync(path.dirname(standaloneCodex), { recursive: true });
+    fs.mkdirSync(path.join(appDir, ".codex-linux"), { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(
+      path.join(appDir, ".codex-linux", "desktop-app-server-remote-control-enabled"),
+      "desktop-app-server-remote-control\n",
+    );
+    fs.writeFileSync(standaloneCodex, `#!/usr/bin/env sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(callsLog)}\n`);
+    fs.chmodSync(standaloneCodex, 0o755);
+
+    const result = runColdStartHook({ CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDir, HOME: home });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stderr, /Ignoring invalid remote mobile control Desktop owner marker/);
+    assert.match(result.stdout, /owner: standalone fallback/);
+    assert.equal(fs.readFileSync(callsLog, "utf8"), "remote-control start\n");
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook keeps explicit disablement ahead of the Desktop marker", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const appDir = path.join(tempRoot, "app");
+    fs.mkdirSync(home, { recursive: true });
+    writeDesktopAppServerRemoteControlMarker(appDir);
+
+    const result = runColdStartHook({
+      CODEX_HOME: codexHome,
+      CODEX_LINUX_APP_DIR: appDir,
+      CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED: "1",
+      HOME: home,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /owner: disabled by CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook keeps an enabled inactive systemd owner without starting fallback", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const standaloneCodex = path.join(codexHome, "packages", "standalone", "current", "codex");
+    const callsLog = path.join(tempRoot, "calls.log");
+
+    fs.mkdirSync(path.dirname(standaloneCodex), { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(standaloneCodex, `#!/usr/bin/env sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(callsLog)}\n`);
+    fs.chmodSync(standaloneCodex, 0o755);
+
+    const result = runColdStartHook({
+      CODEX_HOME: codexHome,
+      CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED: "1",
+      HOME: home,
+      TEST_SYSTEMCTL_ACTIVE_STATUS: "3",
+      TEST_SYSTEMCTL_ENABLED_STATUS: "0",
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /owner: systemd \(codex-remote-control.service is configured but inactive\)/);
+    assert.equal(fs.existsSync(callsLog), false);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook reports an active systemd owner", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    fs.mkdirSync(home, { recursive: true });
+
+    const result = runColdStartHook({
+      CODEX_HOME: codexHome,
+      HOME: home,
+      TEST_SYSTEMCTL_ACTIVE_STATUS: "0",
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /owner: systemd \(codex-remote-control.service is active\)/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("remote mobile cold-start hook does not bypass a present disabled systemd unit", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
+  try {
+    const home = path.join(tempRoot, "home");
+    const codexHome = path.join(tempRoot, "codex-home");
+    const standaloneCodex = path.join(codexHome, "packages", "standalone", "current", "codex");
+    const callsLog = path.join(tempRoot, "calls.log");
+
+    fs.mkdirSync(path.dirname(standaloneCodex), { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(standaloneCodex, `#!/usr/bin/env sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(callsLog)}\n`);
+    fs.chmodSync(standaloneCodex, 0o755);
+
+    const result = runColdStartHook({
+      CODEX_HOME: codexHome,
+      HOME: home,
+      TEST_SYSTEMCTL_ACTIVE_STATUS: "3",
+      TEST_SYSTEMCTL_CAT_STATUS: "0",
+      TEST_SYSTEMCTL_ENABLED_STATUS: "1",
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /owner: systemd \(codex-remote-control.service is configured but inactive\)/);
+    assert.equal(fs.existsSync(callsLog), false);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -722,7 +897,7 @@ test("remote mobile cold-start hook removes dead standalone daemon pid files whe
     assert.equal(fs.existsSync(path.join(daemonDir, "app-server.pid")), false);
     assert.equal(fs.existsSync(path.join(daemonDir, "app-server-updater.pid")), false);
     assert.match(result.stdout, /Removed stale remote mobile control daemon pid file/);
-    assert.match(result.stdout, /Desktop app-server launches with remote-control enabled/);
+    assert.match(result.stdout, /owner: desktop \(app-server launches with remote-control enabled\)/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -752,7 +927,7 @@ test("remote mobile cold-start hook preserves live standalone daemon pid files w
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(fs.existsSync(pidFile), true);
     assert.doesNotMatch(result.stdout, /Removed stale remote mobile control daemon pid file/);
-    assert.match(result.stdout, /Desktop app-server launches with remote-control enabled/);
+    assert.match(result.stdout, /owner: desktop \(app-server launches with remote-control enabled\)/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

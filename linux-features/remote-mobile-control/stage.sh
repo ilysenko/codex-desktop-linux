@@ -15,7 +15,8 @@ install -m 0755 "$SCRIPT_DIR/linux-features/remote-mobile-control/cold-start-hoo
 
 if [ -d "$WORK_DIR/app-extracted/.vite/build" ] &&
     grep -R -q "codexLinuxRemoteMobileAppServerArgs" "$WORK_DIR/app-extracted/.vite/build" 2>/dev/null; then
-    printf '%s\n' "desktop-app-server-remote-control" > "$desktop_remote_control_marker"
+    rm -f "$desktop_remote_control_marker"
+    printf '%s\n' "version=1" "owner=desktop" > "$desktop_remote_control_marker"
 else
     rm -f "$desktop_remote_control_marker"
     echo "WARN: Desktop app-server remote-control marker not found; standalone remote mobile daemon remains enabled" >&2

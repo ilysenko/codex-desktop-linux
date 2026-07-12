@@ -112,6 +112,12 @@ The module installs the remote-mobile package variant and manages
 `CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED=1` so the launcher does not
 start a second mutable standalone daemon.
 
+At cold start, an active, enabled, or otherwise installed systemd user unit is
+the remote-control runtime owner. Without that unit, the launcher defers to a
+explicit autostart disablement, then to a valid Desktop app-server marker, and
+uses the standalone runtime only as the final fallback. The selected owner is
+written to the launcher log.
+
 This is compatible with immutable Linux systems such as Bluefin / Universal
 Blue because the managed daemon runtime is user-scoped state under
 `~/.codex/packages/standalone`. It does not require `dnf`, `rpm-ostree`, host

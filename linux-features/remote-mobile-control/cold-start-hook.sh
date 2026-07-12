@@ -122,6 +122,7 @@ cleanup_stale_remote_mobile_daemon_state() {
 desktop_app_server_remote_control_enabled() {
     local app_dir="${CODEX_LINUX_APP_DIR:-}"
     local marker=""
+    local marker_value=""
 
     if truthy_env_value "${CODEX_REMOTE_CONTROL_FORCE_COLD_START_DAEMON:-}"; then
         return 1
@@ -129,28 +130,71 @@ desktop_app_server_remote_control_enabled() {
 
     [ -n "$app_dir" ] || return 1
     marker="$app_dir/.codex-linux/desktop-app-server-remote-control-enabled"
-    [ -f "$marker" ]
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+    marker_value="$(cat "$marker" 2>/dev/null || true)"
+    if [ "$marker_value" = "version=1
+owner=desktop" ]; then
+        return 0
+    fi
+    echo "Ignoring invalid remote mobile control Desktop owner marker: $marker" >&2
+    return 1
+}
+
+remote_mobile_control_systemd_state() {
+    command -v systemctl >/dev/null 2>&1 || return 1
+    if systemctl --user is-active --quiet codex-remote-control.service 2>/dev/null; then
+        printf '%s\n' "active"
+    elif systemctl --user is-enabled --quiet codex-remote-control.service 2>/dev/null ||
+        systemctl --user cat codex-remote-control.service >/dev/null 2>&1; then
+        printf '%s\n' "configured"
+    else
+        return 1
+    fi
+}
+
+remote_mobile_control_owner() {
+    local systemd_state=""
+
+    if systemd_state="$(remote_mobile_control_systemd_state)"; then
+        printf '%s:%s\n' "systemd" "$systemd_state"
+    elif truthy_env_value "${CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED:-}"; then
+        printf '%s\n' "disabled"
+    elif desktop_app_server_remote_control_enabled; then
+        printf '%s\n' "desktop"
+    else
+        printf '%s\n' "standalone"
+    fi
 }
 
 remote_mobile_control_main() {
     local codex_home="${CODEX_HOME:-$HOME/.codex}"
+    local owner=""
 
     cleanup_remote_mobile_control_interactive_symlink "$codex_home"
+    owner="$(remote_mobile_control_owner)"
 
-    if truthy_env_value "${CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED:-}"; then
-        echo "Remote mobile control daemon autostart disabled by CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED"
-        return 0
-    fi
-    if command -v systemctl >/dev/null 2>&1 &&
-        systemctl --user is-active --quiet codex-remote-control.service 2>/dev/null; then
-        echo "Remote mobile control daemon autostart skipped; codex-remote-control.service is already active"
-        return 0
-    fi
-    if desktop_app_server_remote_control_enabled; then
-        cleanup_stale_remote_mobile_daemon_state "$codex_home"
-        echo "Remote mobile control daemon autostart skipped; Desktop app-server launches with remote-control enabled"
-        return 0
-    fi
+    case "$owner" in
+        systemd:active)
+            echo "Remote mobile control owner: systemd (codex-remote-control.service is active)"
+            return 0
+            ;;
+        systemd:configured)
+            echo "Remote mobile control owner: systemd (codex-remote-control.service is configured but inactive)"
+            return 0
+            ;;
+        disabled)
+            echo "Remote mobile control owner: disabled by CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED"
+            return 0
+            ;;
+        desktop)
+            cleanup_stale_remote_mobile_daemon_state "$codex_home"
+            echo "Remote mobile control owner: desktop (app-server launches with remote-control enabled)"
+            return 0
+            ;;
+        standalone)
+            echo "Remote mobile control owner: standalone fallback"
+            ;;
+    esac
 
     local standalone_codex="${CODEX_REMOTE_CONTROL_CODEX_PATH:-$codex_home/packages/standalone/current/codex}"
 

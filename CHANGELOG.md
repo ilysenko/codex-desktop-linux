@@ -32,6 +32,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Remote mobile cold starts now select one runtime owner deterministically.
+  Explicit systemd user-service configuration takes precedence over the
+  Desktop app-server and standalone fallback, while a versioned Desktop marker
+  prevents stale or forged marker content from suppressing the fallback.
 - Remote mobile control now patches the current upstream webview chunks for
   feature sync, settings visibility, host enablement, and active conversation
   status. Revoking the final controller now also clears the current mobile setup
