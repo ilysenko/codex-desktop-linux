@@ -453,7 +453,7 @@ test("main bundle patch upgrades older conversation speech gates", () => {
 
 test("composer runtime appends one browser-side conversation controller", () => {
   const patched = twice(applyComposerRuntimePatch, "console.log(`composer`);");
-  assert.match(patched, /conversation-mode-v23/);
+  assert.match(patched, /conversation-mode-v24/);
   assert.match(patched, /activeConversationId/);
   assert.match(patched, /seenAssistantKeys/);
   assert.match(patched, /assistantKey/);
@@ -582,13 +582,17 @@ test("conversation runtime can be explicitly exited from the active voice contro
   });
 });
 
-test("conversation runtime exits when the unified shell opens ChatGPT", () => {
+test("conversation runtime exits when the unified shell opens ChatGPT in a non-English locale", () => {
   let chatOpen = false;
   let mutationCallback = null;
   const stopActions = [];
   const document = createFakeDocument();
+  const closeButton = { getAttribute: (name) => name === "aria-label" ? "Fechar chat" : null };
+  const chatSurface = { querySelector: () => closeButton };
   document.querySelector = (selector) =>
-    selector === 'button[aria-label="Close chat"]' && chatOpen ? {} : null;
+    selector === 'section[role="dialog"][data-pip-obstacle="quick-chat"][data-state="open"]' && chatOpen
+      ? chatSurface
+      : null;
   class FakeMutationObserver {
     constructor(callback) {
       mutationCallback = callback;
