@@ -113,6 +113,44 @@ function applyLinuxSettingsSearchVisibilityPatch(currentSource) {
   return `${currentSource.slice(0, settingsSearchFunction.start)}${helper}${patchedFunction}${currentSource.slice(settingsSearchFunction.end)}`;
 }
 
+function applyRendererErrorStackPreservationPatch(currentSource) {
+  const markerPattern =
+    /originalErrorStack:typeof ([A-Za-z_$][\w$]*)\?\.stack===`string`\?\1\.stack:``/u;
+  if (markerPattern.test(currentSource)) {
+    return currentSource;
+  }
+
+  const errorBoundaryLogPattern =
+    /try\{([A-Za-z_$][\w$]*)\.error\(`error boundary`,\{safe:\{name:this\.props\.name\},sensitive:\{error:([A-Za-z_$][\w$]*),componentStack:([A-Za-z_$][\w$]*)\?\?``\}\}\)\}catch\{\}/u;
+  const match = errorBoundaryLogPattern.exec(currentSource);
+  if (match == null) {
+    if (
+      currentSource.includes("componentDidCatch") &&
+      currentSource.includes("error boundary") &&
+      currentSource.includes("componentStack")
+    ) {
+      console.warn(
+        "WARN: Could not find renderer error stack preservation insertion point — skipping renderer error stack preservation patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const errorVar = match[2];
+  const patchedLog = match[0].replace(
+    `sensitive:{error:${errorVar},componentStack:`,
+    `sensitive:{error:${errorVar},originalErrorStack:typeof ${errorVar}?.stack===\`string\`?${errorVar}.stack:\`\`,componentStack:`,
+  );
+  if (patchedLog === match[0]) {
+    console.warn(
+      "WARN: Could not find renderer error stack preservation insertion point — skipping renderer error stack preservation patch",
+    );
+    return currentSource;
+  }
+
+  return `${currentSource.slice(0, match.index)}${patchedLog}${currentSource.slice(match.index + match[0].length)}`;
+}
+
 function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
   if (
     /navigator\.userAgent\.includes\(`Linux`\)&&[A-Za-z_$][\w$]*\?\.opaqueWindows==null/u.test(
@@ -1824,6 +1862,7 @@ module.exports = {
   applyLinuxWindowControlsSafeAreaPatch,
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxSettingsSearchVisibilityPatch,
+  applyRendererErrorStackPreservationPatch,
   applyLinuxFastModeModelGuardPatch,
   applyLinuxSkillsListDedupePatch,
   applyLocalEnvironmentActionModalDraftPatch,

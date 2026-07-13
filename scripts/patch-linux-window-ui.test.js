@@ -174,6 +174,7 @@ const {
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxSettingsSearchVisibilityPatch,
   applyLinuxSkillsListDedupePatch,
+  applyRendererErrorStackPreservationPatch,
   applyLinuxThreadSidePanelNativeTooltipPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
@@ -454,6 +455,49 @@ test("Linux settings search visibility patch warns on current-bundle drift", () 
   assert.equal(value, source);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /settings search visibility insertion point/);
+});
+
+test("renderer error boundary preserves the original stack before logging", () => {
+  const source =
+    "var bA=class extends React.Component{componentDidCatch(e,{componentStack:t}){try{Bt.error(`error boundary`,{safe:{name:this.props.name},sensitive:{error:e,componentStack:t??``}})}catch{}}}";
+  const patched = applyPatchTwice(applyRendererErrorStackPreservationPatch, source);
+
+  assert.match(
+    patched,
+    /originalErrorStack:typeof e\?\.stack===`string`\?e\.stack:``/,
+  );
+
+  const captured = [];
+  const context = {
+    React: { Component: class {} },
+    Bt: {
+      error(message, tags) {
+        captured.push({ message, tags });
+      },
+    },
+  };
+  vm.runInNewContext(`${patched};globalThis.Boundary=bA`, context);
+  const error = new Error("original renderer failure");
+  const boundary = new context.Boundary();
+  boundary.props = { name: "LinuxDesktopSettings" };
+  boundary.componentDidCatch(error, { componentStack: "at LinuxToggle" });
+
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].tags.sensitive.error, error);
+  assert.equal(captured[0].tags.sensitive.originalErrorStack, error.stack);
+  assert.equal(captured[0].tags.sensitive.componentStack, "at LinuxToggle");
+});
+
+test("renderer error stack preservation warns and stays atomic on current-bundle drift", () => {
+  const source =
+    "componentDidCatch(e,{componentStack:t}){diagnostics.error(`error boundary`,{sensitive:{error:e,componentStack:t}})}";
+  const { value, warnings } = captureWarns(() =>
+    applyRendererErrorStackPreservationPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /renderer error stack preservation insertion point/);
 });
 
 test("subagent nickname metadata patch accepts session metadata shape", () => {
@@ -970,6 +1014,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-thread-side-panel-native-tooltip",
     "linux-fast-mode-model-guard",
     "linux-safe-monospace-font-stack",
+    "renderer-error-stack-preservation",
     "subagent-nickname-metadata-shape",
     "local-environment-action-modal-draft",
     "linux-computer-use-ui-availability",
