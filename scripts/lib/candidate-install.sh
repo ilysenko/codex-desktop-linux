@@ -144,12 +144,17 @@ promote_candidate_install() {
         backup="$(candidate_backup_path "$final_dir")"
         journal_file="$(candidate_promotion_journal_path "$final_dir")"
         transaction_id="$(date -u +%Y%m%dT%H%M%S)-$$-${RANDOM:-0}"
-        python3 "$CANDIDATE_PROMOTION_HELPER" prepare \
+        if ! python3 "$CANDIDATE_PROMOTION_HELPER" prepare \
             --candidate "$candidate_dir" \
             --final "$final_dir" \
             --backup "$backup" \
             --journal "$journal_file" \
-            --transaction "$transaction_id"
+            --transaction "$transaction_id"; then
+            warn "Could not prepare the candidate promotion journal; the current app was not changed"
+            flock -u "$promotion_lock_fd"
+            exec {promotion_lock_fd}>&-
+            return 1
+        fi
         info "Atomically exchanging accepted candidate with the current app"
         if ! python3 "$CANDIDATE_PROMOTION_HELPER" exchange \
             --left "$candidate_dir" --right "$final_dir"; then
@@ -185,7 +190,12 @@ promote_candidate_install() {
         cleanup_managed_candidate_backups_locked "$final_dir" "$backup"
     else
         info "Promoting accepted candidate: $final_dir"
-        mv "$candidate_dir" "$final_dir"
+        if ! mv "$candidate_dir" "$final_dir"; then
+            warn "Could not promote the accepted candidate; the app was not installed"
+            flock -u "$promotion_lock_fd"
+            exec {promotion_lock_fd}>&-
+            return 1
+        fi
         backup=""
         cleanup_managed_candidate_backups_locked "$final_dir"
     fi

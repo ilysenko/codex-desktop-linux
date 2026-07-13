@@ -2536,6 +2536,67 @@ test_candidate_install_is_transactional() {
     )
 }
 
+test_candidate_promotion_stops_when_journal_prepare_fails() {
+    info "Checking journal preparation failure cannot reach atomic exchange"
+    local workspace="$TMP_DIR/candidate-prepare-failure"
+    local helper="$workspace/promotion-helper"
+    local helper_log="$workspace/promotion-helper.log"
+    mkdir -p "$workspace/final" "$workspace/candidate"
+    printf '%s' "old" >"$workspace/final/version"
+    printf '%s' "new" >"$workspace/candidate/version"
+    cat >"$helper" <<'PY'
+#!/usr/bin/env python3
+import os
+import sys
+
+with open(os.environ["CODEX_PROMOTION_TEST_HELPER_LOG"], "a", encoding="utf-8") as handle:
+    handle.write(f"{sys.argv[1]}\n")
+if sys.argv[1] == "prepare":
+    raise SystemExit(1)
+PY
+    chmod +x "$helper"
+
+    (
+        info() { :; }
+        warn() { :; }
+        error() { echo "$*" >&2; return 1; }
+        assert_install_target_not_running() { :; }
+        export CODEX_CANDIDATE_PROMOTION_HELPER="$helper"
+        export CODEX_PROMOTION_TEST_HELPER_LOG="$helper_log"
+        # shellcheck source=scripts/lib/candidate-install.sh
+        . "$REPO_DIR/scripts/lib/candidate-install.sh"
+        if promote_candidate_install "$workspace/candidate" "$workspace/final"; then
+            fail "Expected journal preparation failure to stop promotion"
+        fi
+    )
+    assert_contains "$helper_log" "prepare"
+    assert_not_contains "$helper_log" "exchange"
+    [ "$(cat "$workspace/final/version")" = "old" ] || fail "Journal preparation failure changed the current app"
+    [ "$(cat "$workspace/candidate/version")" = "new" ] || fail "Journal preparation failure changed the candidate"
+}
+
+test_candidate_first_install_rename_failure_propagates() {
+    info "Checking first-install rename failure fails promotion"
+    local workspace="$TMP_DIR/candidate-rename-failure"
+    mkdir -p "$workspace/candidate"
+    printf '%s' "new" >"$workspace/candidate/version"
+
+    (
+        info() { :; }
+        warn() { :; }
+        error() { echo "$*" >&2; return 1; }
+        assert_install_target_not_running() { :; }
+        mv() { return 1; }
+        # shellcheck source=scripts/lib/candidate-install.sh
+        . "$REPO_DIR/scripts/lib/candidate-install.sh"
+        if promote_candidate_install "$workspace/candidate" "$workspace/final"; then
+            fail "Expected first-install rename failure to fail promotion"
+        fi
+    )
+    [ "$(cat "$workspace/candidate/version")" = "new" ] || fail "Rename failure changed the candidate"
+    [ ! -e "$workspace/final" ] || fail "Rename failure unexpectedly created the final app"
+}
+
 test_candidate_promotion_refuses_a_running_final_app() {
     info "Checking user-local promotion cannot replace a running app"
     local workspace="$TMP_DIR/candidate-running-app"
@@ -9545,6 +9606,8 @@ main() {
     test_rebuild_candidate_uses_validated_default_dmg
     test_make_rebuild_targets_omit_empty_dmg_argument
     test_candidate_install_is_transactional
+    test_candidate_promotion_stops_when_journal_prepare_fails
+    test_candidate_first_install_rename_failure_propagates
     test_candidate_promotion_refuses_a_running_final_app
     test_candidate_backup_retention_is_bounded
     test_candidate_promotion_recovers_after_sigkill

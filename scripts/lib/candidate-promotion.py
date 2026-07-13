@@ -66,7 +66,7 @@ def remove_marker(directory: Path) -> None:
 
 def identity(path: Path) -> tuple[int, int] | None:
     try:
-        value = path.stat(follow_symlinks=False)
+        value = path.lstat()
     except FileNotFoundError:
         return None
     return value.st_dev, value.st_ino
