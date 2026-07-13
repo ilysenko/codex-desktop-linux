@@ -21,8 +21,10 @@ rebuilding:
 ```
 
 The feature is disabled by default. A session starts only after the user clicks
-the composer voice control. `read-aloud` should be enabled too because
-conversation mode speaks through the local Kokoro Read Aloud handler.
+the composer voice control. Enable `read-aloud` explicitly alongside
+`conversation-mode`; it is required because conversation mode speaks through
+the local Read Aloud backend. The Read Aloud settings toggle can remain off
+because Conversation Mode invokes the backend for its own responses.
 
 ## Scope
 

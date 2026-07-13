@@ -436,11 +436,25 @@ test("conversation mode stays disabled until listed in features.json", () => {
   });
 });
 
-test("conversation mode exposes optional patch descriptors when enabled", () => {
+test("conversation mode requires Read Aloud to be enabled explicitly", () => {
   withTempFeatureConfig(["conversation-mode"], (root) => {
-    assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), ["conversation-mode"]);
+    assert.throws(
+      () => loadLinuxFeaturePatchDescriptors({ featuresRoot: root }),
+      /requires 'read-aloud' to be enabled/,
+    );
+  });
+});
 
-    const patches = loadLinuxFeaturePatchDescriptors({ featuresRoot: root });
+test("conversation mode exposes optional patch descriptors when enabled", () => {
+  withTempFeatureConfig(["read-aloud", "conversation-mode"], (root) => {
+    assert.deepEqual(
+      enabledLinuxFeatureIds({ featuresRoot: root }),
+      ["read-aloud", "conversation-mode"],
+    );
+
+    const patches = loadLinuxFeaturePatchDescriptors({ featuresRoot: root }).filter(
+      (patch) => patch.featureId === "conversation-mode",
+    );
     assert.deepEqual(
       patches.map((patch) => [patch.name, patch.phase, patch.ciPolicy]),
       [
@@ -2220,7 +2234,7 @@ test("current assistant observer drift is reported as skipped instead of already
 });
 
 test("conversation mode patches matching app assets and records report entries", () => {
-  withTempFeatureConfig(["conversation-mode"], (root) => {
+  withTempFeatureConfig(["read-aloud", "conversation-mode"], (root) => {
     withLinuxFeatureRootEnv(root, () => {
       const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-conversation-mode-app-"));
       try {
