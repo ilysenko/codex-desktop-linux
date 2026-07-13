@@ -180,28 +180,35 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
 });
 
 test("model picker descriptors target the current state and menu bundles", () => {
-  assert.match(
+  const stateAsset = "app-initial~app-main~page-CMpPiY3-.js";
+  const allowlistAsset =
+    "app-initial~app-main~new-thread-panel-page~onboarding-page~login-route~appgen-library-page~~gpgl9un5-_t04Xpau.js";
+  const menuAsset =
+    "app-initial~app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~lpb6mnim-Bawo32lF.js";
+
+  assert.match(stateAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
+  assert.match(allowlistAsset, MODEL_PICKER_ALLOWLIST_ASSET_PATTERN);
+  assert.match(menuAsset, MODEL_PICKER_MENU_ASSET_PATTERN);
+
+  assert.doesNotMatch(stateAsset, MODEL_PICKER_ALLOWLIST_ASSET_PATTERN);
+  assert.doesNotMatch(stateAsset, MODEL_PICKER_MENU_ASSET_PATTERN);
+  assert.doesNotMatch(allowlistAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
+  assert.doesNotMatch(allowlistAsset, MODEL_PICKER_MENU_ASSET_PATTERN);
+  assert.doesNotMatch(menuAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
+  assert.doesNotMatch(menuAsset, MODEL_PICKER_ALLOWLIST_ASSET_PATTERN);
+
+  // The previous DMG colocated all four patches in this chunk. Current-DMG-only
+  // targeting must not retain it as a compatibility fallback.
+  assert.doesNotMatch(
     "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-k1satKyX.js",
     MODEL_PICKER_STATE_ASSET_PATTERN,
   );
-  assert.match(
+  assert.doesNotMatch(
     "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-k1satKyX.js",
     MODEL_PICKER_ALLOWLIST_ASSET_PATTERN,
   );
-  assert.match(
+  assert.doesNotMatch(
     "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-k1satKyX.js",
-    MODEL_PICKER_MENU_ASSET_PATTERN,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~page-hSvsQcNf.js",
-    MODEL_PICKER_STATE_ASSET_PATTERN,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~k0ede4gb-C17KDkOa.js",
-    MODEL_PICKER_ALLOWLIST_ASSET_PATTERN,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~k0ede4gb-C17KDkOa.js",
     MODEL_PICKER_MENU_ASSET_PATTERN,
   );
 });
