@@ -14,6 +14,17 @@ const {
   enabledWorkspaceRootTargets,
 } = workspaceRootOpenTargetsPatch;
 
+function captureWarnings(callback) {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  try {
+    return { result: callback(), warnings };
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
 test("workspace root dropdown adds Linux open targets alongside File Manager", () => {
   const mainSource = [
     "function codexLinuxIdeCommand(){}",
@@ -130,8 +141,11 @@ test("workspace root open targets patch scans current shared app main project ch
         "var Hj={id:`terminal`,platforms:{linux:{label:`Terminal`}}};",
       ].join(""),
     );
-    fs.writeFileSync(path.join(assetsDir, "app-main-current.js"), "console.log(`shell`);");
-    const sharedChunkName = "app-initial~app-main~remote-conversation-page~projects-index-page-current.js";
+    fs.writeFileSync(
+      path.join(assetsDir, "app-main-current.js"),
+      "function decoy(){return{target:`fileManager`}}",
+    );
+    const sharedChunkName = "app-initial~app-main~projects-index-page~remote-conversation-page-current.js";
     fs.writeFileSync(
       path.join(assetsDir, sharedChunkName),
       [
@@ -145,14 +159,20 @@ test("workspace root open targets patch scans current shared app main project ch
       ].join(""),
     );
 
-    const result = patchWorkspaceRootOpenTargets(root);
+    const first = captureWarnings(() => patchWorkspaceRootOpenTargets(root));
     const patched = fs.readFileSync(path.join(assetsDir, sharedChunkName), "utf8");
 
-    assert.equal(result.changed, 1);
+    assert.equal(first.result.changed, 1);
+    assert.deepEqual(first.warnings, []);
     assert.match(patched, /codexLinuxWorkspaceRootOpenTarget:vscode/);
     assert.match(patched, /codexLinuxWorkspaceRootOpenTarget:vscodeInsiders/);
     assert.match(patched, /codexLinuxWorkspaceRootOpenTarget:zed/);
     assert.match(patched, /codexLinuxWorkspaceRootOpenTarget:terminal/);
+
+    const second = captureWarnings(() => patchWorkspaceRootOpenTargets(root));
+    assert.equal(second.result.changed, 0);
+    assert.deepEqual(second.warnings, []);
+    assert.equal(workspaceRootOpenTargetsPatch.status(second.result, second.warnings), "already-applied");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

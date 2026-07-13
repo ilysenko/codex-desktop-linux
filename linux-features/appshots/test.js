@@ -139,16 +139,16 @@ test("appshots availability descriptor matches the current bundle", () => {
   );
 
   assert.equal(descriptor.pattern.test("appshot-availability-BoK-Z77O.js"), false);
-  assert.equal(
-    descriptor.pattern.test(
-      "app-initial~app-main~page-hSvsQcNf.js",
-    ),
-    false,
-  );
   assert.ok(
+    descriptor.pattern.test(
+      "app-initial~app-main~page-CMpPiY3-.js",
+    ),
+  );
+  assert.equal(
     descriptor.pattern.test(
       "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-MXsOJYYa.js",
     ),
+    false,
   );
 });
 
