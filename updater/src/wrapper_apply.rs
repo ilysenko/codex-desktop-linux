@@ -561,6 +561,17 @@ fn derive_package_version(dmg_path: &Path) -> Result<String> {
     upstream::derive_candidate_version(&sha, chrono::Utc::now())
 }
 
+const REQUIRED_BUILD_DEPENDENCIES: &[(&str, &str)] = &[
+    ("cargo", "cargo"),
+    ("python3", "python3"),
+    ("curl", "curl"),
+    ("unzip", "unzip"),
+    ("tar", "tar"),
+    ("flock", "flock"),
+    ("make", "make"),
+    ("g++", "g++"),
+];
+
 /// Returns the first missing build dependency needed for a packaged rebuild, or
 /// `None` when the toolchain is present.
 fn missing_build_dependency(builder_bundle_root: &Path) -> Option<&'static str> {
@@ -575,16 +586,15 @@ fn missing_build_dependency(builder_bundle_root: &Path) -> Option<&'static str> 
 }
 
 fn missing_build_dependency_on_path(path: &OsStr) -> Option<&'static str> {
-    // install.sh needs a DMG extractor (7z/7zz) and the package build runs cargo
-    // for the updater; node is provided by the bundled managed runtime.
-    for (tool, label) in [("cargo", "cargo"), ("7zz", "7zz")] {
+    // Keep this aligned with install.sh's check_deps plus the package builder's
+    // updater compilation. Node is supplied by the bundled managed runtime.
+    for &(tool, label) in REQUIRED_BUILD_DEPENDENCIES {
         if which_on_path(tool, path).is_none() {
-            // 7z is an acceptable alternative to 7zz.
-            if tool == "7zz" && which_on_path("7z", path).is_some() {
-                continue;
-            }
             return Some(label);
         }
+    }
+    if which_on_path("7zz", path).is_none() && which_on_path("7z", path).is_none() {
+        return Some("7z or 7zz");
     }
     None
 }
@@ -639,6 +649,13 @@ mod tests {
         }
     }
 
+    fn write_executable_tool(directory: &Path, tool: &str) -> Result<()> {
+        let path = directory.join(tool);
+        fs::write(&path, b"tool")?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+        Ok(())
+    }
+
     #[test]
     fn automated_user_local_commands_force_safety_overrides_off() {
         for program in ["codex-desktop-update", "install.sh"] {
@@ -671,11 +688,10 @@ mod tests {
         let root = tempdir()?;
         let user_bin = root.path().join("user-bin");
         fs::create_dir_all(&user_bin)?;
-        for tool in ["cargo", "7zz"] {
-            let path = user_bin.join(tool);
-            fs::write(&path, b"untrusted")?;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+        for &(tool, _) in REQUIRED_BUILD_DEPENDENCIES {
+            write_executable_tool(&user_bin, tool)?;
         }
+        write_executable_tool(&user_bin, "7zz")?;
         std::env::set_var("PATH", std::env::join_paths([&user_bin])?);
 
         assert_eq!(
@@ -690,14 +706,45 @@ mod tests {
         let root = tempdir()?;
         let build_bin = root.path().join("build-bin");
         fs::create_dir_all(&build_bin)?;
-        for tool in ["cargo", "7z"] {
-            let path = build_bin.join(tool);
-            fs::write(&path, b"tool")?;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+        for &(tool, _) in REQUIRED_BUILD_DEPENDENCIES {
+            write_executable_tool(&build_bin, tool)?;
         }
+        write_executable_tool(&build_bin, "7z")?;
         let build_path = std::env::join_paths([&build_bin])?;
 
         assert_eq!(missing_build_dependency_on_path(&build_path), None);
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_preflight_reports_each_required_tool() -> Result<()> {
+        let root = tempdir()?;
+        for &(missing_tool, missing_label) in REQUIRED_BUILD_DEPENDENCIES {
+            let build_bin = root.path().join(format!("without-{missing_label}"));
+            fs::create_dir_all(&build_bin)?;
+            for &(tool, _) in REQUIRED_BUILD_DEPENDENCIES {
+                if tool != missing_tool {
+                    write_executable_tool(&build_bin, tool)?;
+                }
+            }
+            write_executable_tool(&build_bin, "7zz")?;
+            let build_path = std::env::join_paths([&build_bin])?;
+            assert_eq!(
+                missing_build_dependency_on_path(&build_path),
+                Some(missing_label)
+            );
+        }
+
+        let without_extractor = root.path().join("without-extractor");
+        fs::create_dir_all(&without_extractor)?;
+        for &(tool, _) in REQUIRED_BUILD_DEPENDENCIES {
+            write_executable_tool(&without_extractor, tool)?;
+        }
+        let build_path = std::env::join_paths([&without_extractor])?;
+        assert_eq!(
+            missing_build_dependency_on_path(&build_path),
+            Some("7z or 7zz")
+        );
         Ok(())
     }
 
