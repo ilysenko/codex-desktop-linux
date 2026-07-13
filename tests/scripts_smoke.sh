@@ -2575,6 +2575,41 @@ PY
     [ "$(cat "$workspace/candidate/version")" = "new" ] || fail "Journal preparation failure changed the candidate"
 }
 
+test_candidate_prepare_failure_cleans_transaction_metadata() {
+    info "Checking failed journal preparation cleans its transaction metadata"
+    local workspace="$TMP_DIR/candidate-prepare-cleanup"
+    local journal="$workspace/.final.promotion.json"
+    mkdir -p "$workspace/final" "$workspace/candidate"
+    printf '%s' "old" >"$workspace/final/version"
+    printf '%s' "new" >"$workspace/candidate/version"
+
+    (
+        info() { :; }
+        warn() { :; }
+        error() { echo "$*" >&2; return 1; }
+        assert_install_target_not_running() { :; }
+        # shellcheck source=scripts/lib/candidate-install.sh
+        . "$REPO_DIR/scripts/lib/candidate-install.sh"
+        if CODEX_PROMOTION_TEST_FAIL_PREPARE_AFTER_JOURNAL=1 \
+            promote_candidate_install "$workspace/candidate" "$workspace/final"; then
+            fail "Expected simulated post-journal preparation failure"
+        fi
+    )
+    [ ! -e "$journal" ] || fail "Failed preparation left a promotion journal"
+    [ ! -e "$workspace/candidate/.codex-promotion-transaction" ] \
+        || fail "Failed preparation left a candidate transaction marker"
+    [ "$(cat "$workspace/final/version")" = "old" ] || fail "Failed preparation changed the current app"
+    [ "$(cat "$workspace/candidate/version")" = "new" ] || fail "Failed preparation changed the candidate"
+
+    python3 "$REPO_DIR/scripts/lib/candidate-promotion.py" prepare \
+        --candidate "$workspace/candidate" \
+        --final "$workspace/final" \
+        --backup "$workspace/final.backup-retry" \
+        --journal "$journal" \
+        --transaction retry
+    python3 "$REPO_DIR/scripts/lib/candidate-promotion.py" abort --journal "$journal"
+}
+
 test_candidate_first_install_rename_failure_propagates() {
     info "Checking first-install rename failure fails promotion"
     local workspace="$TMP_DIR/candidate-rename-failure"
@@ -9607,6 +9642,7 @@ main() {
     test_make_rebuild_targets_omit_empty_dmg_argument
     test_candidate_install_is_transactional
     test_candidate_promotion_stops_when_journal_prepare_fails
+    test_candidate_prepare_failure_cleans_transaction_metadata
     test_candidate_first_install_rename_failure_propagates
     test_candidate_promotion_refuses_a_running_final_app
     test_candidate_backup_retention_is_bounded

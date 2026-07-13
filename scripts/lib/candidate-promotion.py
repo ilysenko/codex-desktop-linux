@@ -91,6 +91,23 @@ def remove_journal(path: Path) -> None:
         pass
 
 
+def cleanup_failed_prepare(candidate: Path, journal_path: Path, transaction: str) -> None:
+    try:
+        journal = load_journal(journal_path)
+    except FileNotFoundError:
+        journal = None
+    if journal is not None:
+        if str(journal.get("transactionId")) != transaction:
+            raise RuntimeError(
+                f"Refusing to remove a promotion journal for another transaction: {journal_path}"
+            )
+        # Remove the journal first. If cleanup is interrupted afterward, a
+        # leftover marker on the disposable candidate cannot block recovery.
+        remove_journal(journal_path)
+    if read_marker(candidate) == transaction:
+        remove_marker(candidate)
+
+
 def atomic_exchange(left: Path, right: Path) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
     try:
@@ -138,17 +155,28 @@ def prepare(args: argparse.Namespace) -> None:
     if old_identity is None or not candidate.is_dir():
         raise RuntimeError("Both the current app and candidate must exist before exchange")
 
-    write_file_durably(marker_path(candidate), f"{args.transaction}\n")
-    journal = {
-        "schemaVersion": 1,
-        "transactionId": args.transaction,
-        "candidate": str(candidate),
-        "final": str(final),
-        "backup": str(backup),
-        "oldDevice": old_identity[0],
-        "oldInode": old_identity[1],
-    }
-    write_file_durably(journal_path, f"{json.dumps(journal, indent=2, sort_keys=True)}\n")
+    try:
+        write_file_durably(marker_path(candidate), f"{args.transaction}\n")
+        journal = {
+            "schemaVersion": 1,
+            "transactionId": args.transaction,
+            "candidate": str(candidate),
+            "final": str(final),
+            "backup": str(backup),
+            "oldDevice": old_identity[0],
+            "oldInode": old_identity[1],
+        }
+        write_file_durably(journal_path, f"{json.dumps(journal, indent=2, sort_keys=True)}\n")
+        if os.environ.get("CODEX_PROMOTION_TEST_FAIL_PREPARE_AFTER_JOURNAL") == "1":
+            raise OSError("Simulated failure after writing the promotion journal")
+    except Exception as error:
+        try:
+            cleanup_failed_prepare(candidate, journal_path, args.transaction)
+        except Exception as cleanup_error:
+            raise RuntimeError(
+                f"{error}; additionally failed to clean up promotion preparation: {cleanup_error}"
+            ) from error
+        raise
 
 
 def abort(args: argparse.Namespace) -> None:
