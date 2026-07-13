@@ -1,10 +1,11 @@
 "use strict";
 
-const MODEL_PICKER_STATE_ASSET_PATTERN = /^app-initial~app-main~page-[^.]+\.js$/;
+const MODEL_PICKER_STATE_ASSET_PATTERN =
+  /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-[^.]+\.js$/;
 const MODEL_PICKER_ALLOWLIST_ASSET_PATTERN =
-  /^app-initial~app-main~new-thread-panel-page~onboarding-page~login-route~appgen-library-page~~gpgl9un5-[^.]+\.js$/;
+  /^app-initial~app-main~hotkey-window-thread-page~keyboard-shortcuts-settings~thread-app-shell~cf704xib-[^.]+\.js$/;
 const MODEL_PICKER_MENU_ASSET_PATTERN =
-  /^app-initial~app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~lpb6mnim-[^.]+\.js$/;
+  /^app-initial~app-main~onboarding-page~projects-index-page~hotkey-window-thread-page~quick-ch~iiv1g666-[^.]+\.js$/;
 const SIMPLE_MENU_VIEW_PATTERN =
   /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`composer-model-picker-menu-view-v1`,`simple`\)/;
 const ADVANCED_MENU_VIEW_PATTERN =

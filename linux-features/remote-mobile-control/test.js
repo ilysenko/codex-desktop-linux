@@ -53,7 +53,7 @@ const CURRENT_REMOTE_CONVERSATION_ASSET =
 const LATEST_REMOTE_CONVERSATION_ASSET =
   "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~glxlkd48-test.js";
 const CURRENT_REMOTE_RUNTIME_ASSET =
-  "app-initial~app-main~new-thread-panel-page~onboarding-page~login-route~appgen-library-page~~gpgl9un5-test.js";
+  "app-initial~app-main~quick-chat-window-page~work-home-page~chatgpt-conversation-page-test.js";
 const UNIFIED_REMOTE_CONVERSATION_ASSET =
   "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-test.js";
 const CURRENT_APP_MAIN_PAGE_ASSET =
