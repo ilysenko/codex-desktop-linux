@@ -6,6 +6,7 @@ const {
 const {
   applyLinuxQuitGuardPatch,
   applyLinuxExplicitQuitPromptBypassPatch,
+  applyLinuxSqliteBackfillQuitClosePatch,
   applyLinuxWillQuitDrainTimeoutPatch,
   applyLinuxExplicitTrayQuitPatch,
   applyLinuxExplicitIpcQuitPatch,
@@ -25,6 +26,13 @@ module.exports = [
     order: 10,
     ciPolicy: "required-upstream",
     apply: applyLinuxExplicitQuitPromptBypassPatch,
+  }),
+  mainBundlePatch({
+    id: "linux-sqlite-backfill-quit-close",
+    phase: "main-bundle",
+    order: 15,
+    ciPolicy: "required-upstream",
+    apply: applyLinuxSqliteBackfillQuitClosePatch,
   }),
   mainBundlePatch({
     id: "linux-explicit-quit-drain-timeout",

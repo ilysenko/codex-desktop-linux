@@ -171,6 +171,24 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     console.warn("WARN: Could not find tray platform guard — skipping Linux tray guard patch");
   }
 
+  const upstreamTrayQuitTeardownPatchMarker =
+    "process.platform===`linux`?`will-quit`:`before-quit`";
+  const upstreamTrayQuitTeardownRegex =
+    /([A-Za-z_$][\w$]*)\|\|=\(([A-Za-z_$][\w$]*)\.app\.on\(`before-quit`,\(\)=>\{([A-Za-z_$][\w$]*)\(\)\}\),!0\)/;
+  if (patchedSource.includes(upstreamTrayQuitTeardownPatchMarker)) {
+    // Already patched.
+  } else if (upstreamTrayQuitTeardownRegex.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      upstreamTrayQuitTeardownRegex,
+      (_match, onceFlag, electronAlias, teardownFn) =>
+        `${onceFlag}||=(${electronAlias}.app.on(process.platform===\`linux\`?\`will-quit\`:\`before-quit\`,()=>{try{${teardownFn}()}catch{}}),!0)`,
+    );
+  } else {
+    console.warn(
+      "WARN: Could not find upstream tray before-quit listener — skipping Linux upstream tray quit teardown patch",
+    );
+  }
+
   if (iconPathExpression != null) {
     const linuxIconFallback =
       `if(process.platform===\`linux\`){let __codexLinuxTrayIcon=${electronVar}.nativeImage.createFromPath(${packagedTrayIconPathExpression});if(!__codexLinuxTrayIcon.isEmpty())return{defaultIcon:__codexLinuxTrayIcon,chronicleRunningIcon:null};let __codexLinuxAppIcon=${electronVar}.nativeImage.createFromPath(${packagedAppIconPathExpression});if(!__codexLinuxAppIcon.isEmpty())return{defaultIcon:__codexLinuxAppIcon,chronicleRunningIcon:null};let __codexLinuxUpstreamTrayIcon=${electronVar}.nativeImage.createFromPath(${iconPathExpression});if(!__codexLinuxUpstreamTrayIcon.isEmpty())return{defaultIcon:__codexLinuxUpstreamTrayIcon,chronicleRunningIcon:null}}`;
@@ -193,7 +211,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   }
 
   const patchedCloseToTrayRegex =
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)\{[A-Za-z_$][\w$]*\.preventDefault\(\),[A-Za-z_$][\w$]*\.hide\(\);return\}/;
+    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&\(typeof codexLinuxIsQuitInProgress!==`function`\|\|!codexLinuxIsQuitInProgress\(\)\)&&\(process\.platform!==`linux`\|\|typeof codexLinuxIsTrayAlive===`function`&&codexLinuxIsTrayAlive\(\)===!0\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)\{[A-Za-z_$][\w$]*\.preventDefault\(\),[A-Za-z_$][\w$]*\.hide\(\);return\}/;
   if (patchedCloseToTrayRegex.test(patchedSource)) {
     // Already patched with a newer minifier's window variable.
   } else {
@@ -204,7 +222,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
       const [, gateMethodName, hasOtherWindowVar, eventVar, windowVar] = closeToTrayMatch;
       patchedSource = patchedSource.replace(
         closeToTrayRegex,
-        `if((process.platform===\`win32\`||process.platform===\`linux\`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress())&&this.options.${gateMethodName}?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
+        `if((process.platform===\`win32\`||process.platform===\`linux\`)&&!this.isAppQuitting&&(typeof codexLinuxIsQuitInProgress!==\`function\`||!codexLinuxIsQuitInProgress())&&(process.platform!==\`linux\`||typeof codexLinuxIsTrayAlive===\`function\`&&codexLinuxIsTrayAlive()===!0)&&this.options.${gateMethodName}?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
       );
     } else {
       console.warn("WARN: Could not find close-to-tray condition — skipping Linux close-to-tray patch");
@@ -214,16 +232,18 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   const trayContextMethodNeedle =
     "trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(";
   const trayContextMethodPatch =
-    `trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};setLinuxTrayContextMenu(){let e=${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());this.tray.setContextMenu?.(e);return e}constructor(`;
+    `trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};setLinuxTrayContextMenu(){if(this.tray==null||typeof this.tray.isDestroyed===\`function\`&&this.tray.isDestroyed())return null;let e=${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());this.tray.setContextMenu?.(e);return e}constructor(`;
   const trayControllerClassPrefix =
     "nativeTrayClickSuppressionReason=null;clearNativeTrayClickSuppressionTimeout=null;chronicleTrayIconRefreshInterval=null;chronicleTrayIconState=`default`;isNativeTrayMenuOpen=!1;trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};";
   const trayRecoveryHelpers =
     `let codexLinuxTrayController=null,codexLinuxTrayRecoveryRegistered=!1,codexLinuxTrayRecoveryHandler=()=>{let e=codexLinuxTrayController;e?.setLinuxTrayContextMenu?.()},codexLinuxStopTrayRecovery=()=>{codexLinuxTrayRecoveryRegistered&&(${electronVar}.powerMonitor.removeListener?.(\`unlock-screen\`,codexLinuxTrayRecoveryHandler),${electronVar}.powerMonitor.removeListener?.(\`resume\`,codexLinuxTrayRecoveryHandler),${electronVar}.app.removeListener?.(\`will-quit\`,codexLinuxTrayQuitHandler),codexLinuxTrayRecoveryRegistered=!1),codexLinuxTrayController=null},codexLinuxTrayQuitHandler=()=>{codexLinuxStopTrayRecovery()},codexLinuxStartTrayRecovery=()=>{codexLinuxTrayRecoveryRegistered||(${electronVar}.powerMonitor.on(\`unlock-screen\`,codexLinuxTrayRecoveryHandler),${electronVar}.powerMonitor.on(\`resume\`,codexLinuxTrayRecoveryHandler),${electronVar}.app.once(\`will-quit\`,codexLinuxTrayQuitHandler),codexLinuxTrayRecoveryRegistered=!0)},codexLinuxSetTrayController=e=>(codexLinuxTrayController=e,codexLinuxStartTrayRecovery(),e);`;
   if (patchedSource.includes("setLinuxTrayContextMenu(){")) {
-    patchedSource = patchedSource.replace(
-      /setLinuxTrayContextMenu\(\)\{let e=[A-Za-z_$][\w$]*\.Menu\.buildFromTemplate\(this\.getNativeTrayMenuItems\(\)\);/,
-      `setLinuxTrayContextMenu(){let e=${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());`,
-    );
+    if (!patchedSource.includes("setLinuxTrayContextMenu(){if(this.tray==null||typeof this.tray.isDestroyed===`function`&&this.tray.isDestroyed())return null;")) {
+      patchedSource = patchedSource.replace(
+        /setLinuxTrayContextMenu\(\)\{let e=[A-Za-z_$][\w$]*\.Menu\.buildFromTemplate\(this\.getNativeTrayMenuItems\(\)\);/,
+        `setLinuxTrayContextMenu(){if(this.tray==null||typeof this.tray.isDestroyed===\`function\`&&this.tray.isDestroyed())return null;let e=${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());`,
+      );
+    }
   } else if (patchedSource.includes(trayContextMethodNeedle)) {
     patchedSource = patchedSource.replace(trayContextMethodNeedle, trayContextMethodPatch);
   } else {
@@ -531,17 +551,13 @@ function applyLinuxSingleInstancePatch(currentSource) {
 
   const secondInstanceHandlerNeedle =
     "l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=";
-  const secondInstanceHandlerExistingPatch =
-    "let codexLinuxSecondInstanceHandler=(e,t)=>{R.deepLinks.queueProcessArgs(t)||ie()};process.platform===`linux`&&(n.app.on(`second-instance`,codexLinuxSecondInstanceHandler),k.add(()=>{n.app.off(`second-instance`,codexLinuxSecondInstanceHandler)})),l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=";
   const secondInstanceHandlerPatch =
-    "let codexLinuxSecondInstanceHandler=(e,t)=>{(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())?void 0:R.deepLinks.queueProcessArgs(t)||ie()},codexLinuxBeforeQuitHandler=()=>{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress()};process.platform===`linux`&&(n.app.on(`before-quit`,codexLinuxBeforeQuitHandler),k.add(()=>{n.app.off(`before-quit`,codexLinuxBeforeQuitHandler)}),n.app.on(`second-instance`,codexLinuxSecondInstanceHandler),k.add(()=>{n.app.off(`second-instance`,codexLinuxSecondInstanceHandler)})),l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=";
+    "let codexLinuxSecondInstanceHandler=(e,t)=>{(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())?void 0:R.deepLinks.queueProcessArgs(t)||ie()};process.platform===`linux`&&(n.app.on(`second-instance`,codexLinuxSecondInstanceHandler),k.add(()=>{n.app.off(`second-instance`,codexLinuxSecondInstanceHandler)})),l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=";
   if (
-    patchedSource.includes("codexLinuxBeforeQuitHandler=()=>{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress()}") &&
-    patchedSource.includes("(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())?void 0:R.deepLinks.queueProcessArgs(t)||ie()")
+    patchedSource.includes("(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())?void 0:R.deepLinks.queueProcessArgs(t)||ie()") &&
+    patchedSource.includes("n.app.on(`second-instance`,codexLinuxSecondInstanceHandler)")
   ) {
     // Already patched.
-  } else if (patchedSource.includes(secondInstanceHandlerExistingPatch)) {
-    patchedSource = patchedSource.replace(secondInstanceHandlerExistingPatch, secondInstanceHandlerPatch);
   } else if (patchedSource.includes(secondInstanceHandlerNeedle)) {
     patchedSource = patchedSource.replace(secondInstanceHandlerNeedle, secondInstanceHandlerPatch);
   } else if (patchedSource.includes("setSecondInstanceArgsHandler")) {

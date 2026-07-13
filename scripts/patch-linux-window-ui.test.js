@@ -84,6 +84,7 @@ const {
   applyLinuxExplicitQuitPromptBypassPatch,
   applyLinuxExplicitTrayQuitPatch,
   applyLinuxQuitGuardPatch,
+  applyLinuxSqliteBackfillQuitClosePatch,
   applyLinuxWillQuitDrainTimeoutPatch,
 } = require("./patches/impl/main-process/quit-lifecycle.js");
 const {
@@ -905,6 +906,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-quit-guard",
     "linux-ready-to-show-window-state",
     "linux-explicit-quit-prompt-bypass",
+    "linux-sqlite-backfill-quit-close",
     "linux-explicit-quit-drain-timeout",
     "linux-explicit-tray-quit",
     "linux-explicit-ipc-quit",
@@ -983,6 +985,15 @@ test("default core patch descriptors are grouped and unique", () => {
 
   assert.equal(new Set(ids).size, ids.length);
   assert.deepEqual([...ids].sort(), [...expectedIds].sort());
+  const lifecycleOrder = [
+    "linux-quit-guard",
+    "linux-explicit-quit-prompt-bypass",
+    "linux-explicit-quit-drain-timeout",
+    "linux-tray",
+    "linux-single-instance",
+    "linux-launch-actions",
+  ].map((id) => ids.indexOf(id));
+  assert.ok(lifecycleOrder.every((index, position) => position === 0 || lifecycleOrder[position - 1] < index));
   assert.ok(descriptors.every((descriptor) => descriptor.sourcePath.includes(`${path.sep}core${path.sep}`)));
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "package-desktop-name")?.phase,
@@ -1179,7 +1190,7 @@ test("subagent nickname metadata descriptor follows upstream metadata bundle nam
 
 function trayBundleFixture() {
   return [
-    "async function Hw(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(zw=!0,Lw??Rw??(Rw=(async()=>{let r=await Ww(e.buildFlavor,e.appBrand,e.repoRoot),i=new n.Tray(r.defaultIcon);return i})()))}",
+    "var ire=!1;function G9(){zw=!1}async function Hw(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(zw=!0,Lw??Rw??(ire||=(n.app.on(`before-quit`,()=>{G9()}),!0),Rw=(async()=>{let r=await Ww(e.buildFlavor,e.appBrand,e.repoRoot),i=new n.Tray(r.defaultIcon);return i})()))}",
     "async function Ww(e,t,i){if(process.platform===`darwin`){return null}let r=K9(e,t,i);return r==null?{defaultIcon:await n.app.getFileIcon(process.execPath,{size:`small`}),chronicleRunningIcon:null}:{defaultIcon:r,chronicleRunningIcon:null}}",
     "function K9(e,t,r){let a=[(0,i.join)(r,`electron`,`src`,`icons`,`tray.png`)];for(let e of a){let t=n.nativeImage.createFromPath(e);if(!t.isEmpty())return t}return null}",
     "var pb=class{nativeTrayClickSuppressionReason=null;clearNativeTrayClickSuppressionTimeout=null;chronicleTrayIconRefreshInterval=null;chronicleTrayIconState=`default`;isNativeTrayMenuOpen=!1;trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(){this.tray={on(){},setContextMenu(){},popUpContextMenu(){}};this.onTrayButtonClick=()=>{};this.tray.on(`click`,()=>{this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}async handleMessage(e){switch(e.type){case`tray-menu-threads-changed`:this.trayMenuThreads=e.trayMenuThreads;return}}openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());e.once(`menu-will-show`,()=>{this.isNativeTrayMenuOpen=!0}),e.once(`menu-will-close`,()=>{this.isNativeTrayMenuOpen=!1,this.handleNativeTrayMenuClosed()}),this.tray.popUpContextMenu(e)}updateChronicleTrayIcon(){}getNativeTrayMenuItems(){return[]}}",
@@ -1210,8 +1221,12 @@ function explicitQuitBundleFixture() {
 
 function beforeQuitConfirmationBundleFixture() {
   return [
-    "n.app.on(`before-quit`,o=>{let s=BI(),c=t.sr().some(e=>e.status===`ACTIVE`);if(e||i.canQuitWithoutPrompt()||r||!s&&!c){g=!0,a.markAppQuitting();return}let l=n.app.getName();if(n.dialog.showMessageBoxSync({type:`warning`,buttons:[`Quit`,`Cancel`],defaultId:0,cancelId:1,noLink:!0,title:`Quit ${l}?`,message:`Quit ${l}?`,detail:vB({hasInProgressLocalConversation:s,hasEnabledAutomations:c})})!==0){o.preventDefault();return}i.markQuitApproved(),g=!0,a.markAppQuitting()});",
+    "n.app.on(`before-quit`,o=>{let s=BI(),c=t.sr().some(e=>e.status===`ACTIVE`);if(e||i.canQuitWithoutPrompt()||r||!s&&!c){g=!0,a.markAppQuitting();return}let l=n.app.getName(),u=h.H(),f=u.formatMessage({messageId:x6,defaultMessage:S6,values:{appName:l}});if(n.dialog.showMessageBoxSync({type:`warning`,buttons:[u.formatMessage({messageId:`desktop.quitConfirmation.quit`,defaultMessage:`Quit`}),u.formatMessage({messageId:`desktop.quitConfirmation.cancel`,defaultMessage:`Cancel`})],defaultId:0,cancelId:1,noLink:!0,title:f,message:f,detail:K6({nativeIntl:u,appName:l,hasInProgressLocalConversation:s,hasEnabledAutomations:c})})!==0){o.preventDefault();return}i.markQuitApproved(),g=!0,a.markAppQuitting()});",
   ].join("");
+}
+
+function sqliteBackfillQuitCloseBundleFixture() {
+  return "s.on(`close`,t=>{if(!(i||o)){t.preventDefault(),o=!0;try{e()}finally{o=!1}}})";
 }
 
 function willQuitDrainBundleFixture() {
@@ -2340,12 +2355,18 @@ test("adds the Linux quit guard to the current comma-declared Electron prelude",
 
   const patched = applyPatchTwice(applyLinuxQuitGuardPatch, source);
 
-  assert.match(patched, /codexLinuxQuitInProgress=!1/);
-  assert.match(patched, /codexLinuxExplicitQuitApproved=!1/);
-  assert.match(patched, /codexLinuxMarkQuitInProgress=\(\)=>\{codexLinuxQuitInProgress=!0,codexLinuxDestroyTray\(\)\}/);
-  assert.match(patched, /codexLinuxPrepareForExplicitQuit=\(\)=>\{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress\(\)\}/);
-  assert.match(patched, /codexLinuxShouldBypassQuitPrompt=\(\)=>codexLinuxExplicitQuitApproved===!0/);
-  assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitInProgress===!0/);
+  assert.match(patched, /codexLinuxQuitCommitted=!1/);
+  assert.match(patched, /codexLinuxQuitAttempting=!1/);
+  assert.match(patched, /codexLinuxQuitCommitCallback=null/);
+  assert.match(patched, /codexLinuxExplicitQuitTicket=!1/);
+  assert.match(patched, /codexLinuxQuitWatchdogTimer=null/);
+  assert.match(patched, /codexLinuxPrepareForExplicitQuit=\(\)=>\{codexLinuxExplicitQuitTicket=!0,queueMicrotask\(\(\)=>\{codexLinuxExplicitQuitTicket=!1\}\)\}/);
+  assert.match(patched, /codexLinuxShouldBypassQuitPrompt=\(\)=>\{if\(codexLinuxQuitCommitted===!0\)return!0;if\(codexLinuxExplicitQuitTicket!==!0\)return!1;codexLinuxExplicitQuitTicket=!1;return!0\}/);
+  assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitAttempting===!0\|\|codexLinuxQuitCommitted===!0/);
+  assert.match(patched, /codexLinuxAcceptQuitAttempt=\(e,t\)=>\{if\(process\.platform!==`linux`\)\{e\(\);return\}/);
+  assert.match(patched, /codexLinuxArmQuitWatchdog=\(\)=>\{if\(process\.platform!==`linux`\)return;/);
+  assert.match(patched, /c\.app\.on\(`will-quit`,\(\)=>\{process\.platform===`linux`&&codexLinuxCommitQuit\(\)\}\)/);
+  assert.doesNotMatch(patched, /app\.on\(`before-quit`,\(\)=>codexLinuxDestroyTray/);
 });
 
 test("keeps the current Linux quit guard module-scoped after helper declarations", () => {
@@ -2354,9 +2375,9 @@ test("keeps the current Linux quit guard module-scoped after helper declarations
   const patched = applyPatchTwice(applyLinuxQuitGuardPatch, source);
 
   assert.match(patched, /p=e\.o\(p\);let codexLinuxTray=null/);
-  assert.match(patched, /codexLinuxExplicitQuitApproved=!1/);
-  assert.match(patched, /codexLinuxPrepareForExplicitQuit=\(\)=>\{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress\(\)\}/);
-  assert.equal((patched.match(/codexLinuxQuitInProgress=!1/g) ?? []).length, 1);
+  assert.match(patched, /codexLinuxExplicitQuitTicket=!1/);
+  assert.match(patched, /codexLinuxPrepareForExplicitQuit=\(\)=>\{codexLinuxExplicitQuitTicket=!0,queueMicrotask/);
+  assert.equal((patched.match(/codexLinuxQuitCommitted=!1/g) ?? []).length, 1);
 });
 
 test("adds the Linux quit guard for the current interleaved bundler prelude", () => {
@@ -2366,12 +2387,12 @@ test("adds the Linux quit guard for the current interleaved bundler prelude", ()
 
   assert.match(patched, /let m=require\(`node:fs\/promises`\);/);
   assert.match(patched, /p=e\.o\(p\);let codexLinuxTray=null/);
-  assert.match(patched, /codexLinuxExplicitQuitApproved=!1/);
-  assert.match(patched, /codexLinuxPrepareForExplicitQuit=\(\)=>\{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress\(\)\}/);
-  assert.equal((patched.match(/codexLinuxQuitInProgress=!1/g) ?? []).length, 1);
+  assert.match(patched, /codexLinuxExplicitQuitTicket=!1/);
+  assert.match(patched, /codexLinuxPrepareForExplicitQuit=\(\)=>\{codexLinuxExplicitQuitTicket=!0,queueMicrotask/);
+  assert.equal((patched.match(/codexLinuxQuitCommitted=!1/g) ?? []).length, 1);
 });
 
-test("destroys the registered Linux tray before the app exits", () => {
+test("destroys the registered Linux tray only after quit is committed", () => {
   const source = `${currentMainBundlePrefix}${trayBundleFixture()}`;
   const patched = applyPatchTwice(
     applyLinuxTrayPatch,
@@ -2382,19 +2403,20 @@ test("destroys the registered Linux tray before the app exits", () => {
   assert.match(patched, /codexLinuxRegisterTray=e=>\(codexLinuxTray=e,e\)/);
   assert.match(patched, /codexLinuxDestroyTray=\(\)=>\{if\(process\.platform!==`linux`\)return;/);
   assert.match(patched, /codexLinuxTray=null;try\{e\?\.destroy\(\)\}catch\{\}/);
-  assert.match(patched, /codexLinuxMarkQuitInProgress=\(\)=>\{codexLinuxQuitInProgress=!0,codexLinuxDestroyTray\(\)\}/);
-  assert.match(patched, /c\.app\.on\(`before-quit`,\(\)=>codexLinuxDestroyTray\(\)\)/);
+  assert.match(patched, /codexLinuxCommitQuit=\(\)=>\{if\(codexLinuxQuitCommitted===!0\)return;/);
+  assert.match(patched, /c\.app\.on\(`will-quit`,\(\)=>\{process\.platform===`linux`&&codexLinuxCommitQuit\(\)\}\)/);
   assert.match(patched, /i=typeof codexLinuxRegisterTray===`function`\?codexLinuxRegisterTray\(new n\.Tray\(r\.defaultIcon\)\):new n\.Tray\(r\.defaultIcon\)/);
   assert.doesNotMatch(patched, /codexLinuxTrayQuitDelayMs/);
 
   const helperStart = patched.indexOf("let codexLinuxTray=null");
-  const helperEnd = patched.indexOf(";c.app.on(`before-quit`", helperStart) + 1;
+  const helperEnd = patched.indexOf(";c.app.on(`will-quit`", helperStart) + 1;
   const helperSource = patched.slice(helperStart, helperEnd);
   const runDestroy = new Function(
     "process",
-    `${helperSource}let calls=0;codexLinuxRegisterTray({destroy(){calls+=1}});codexLinuxMarkQuitInProgress();codexLinuxMarkQuitInProgress();return calls;`,
+    "setTimeout",
+    `${helperSource}let calls=0;codexLinuxRegisterTray({destroy(){calls+=1}});codexLinuxCommitQuit();codexLinuxCommitQuit();return calls;`,
   );
-  assert.equal(runDestroy({ platform: "linux" }), 1);
+  assert.equal(runDestroy({ platform: "linux" }, () => ({ unref() {} })), 1);
 });
 
 test("bypasses the upstream before-quit confirmation after a Linux explicit quit", () => {
@@ -2406,12 +2428,72 @@ test("bypasses the upstream before-quit confirmation after a Linux explicit quit
 
   assert.match(
     patched,
-    /if\(\(typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt\(\)\)\|\|e\|\|i\.canQuitWithoutPrompt\(\)\|\|r\|\|!s&&!c\)\{process\.platform===`linux`&&typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),g=!0,a\.markAppQuitting\(\);return\}/,
+    /if\(\(typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt\(\)\)\|\|e\|\|i\.canQuitWithoutPrompt\(\)\|\|r\|\|!s&&!c\)\{if\(process\.platform===`linux`&&typeof codexLinuxAcceptQuitAttempt===`function`\)\{codexLinuxAcceptQuitAttempt\(\(\)=>\{g=!0,a\.markAppQuitting\(\)\},o\);return\}g=!0,a\.markAppQuitting\(\);return\}/,
   );
   assert.match(
     patched,
-    /process\.platform===`linux`&&typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),i\.markQuitApproved\(\),g=!0,a\.markAppQuitting\(\)/,
+    /i\.markQuitApproved\(\);if\(process\.platform===`linux`&&typeof codexLinuxAcceptQuitAttempt===`function`\)\{codexLinuxAcceptQuitAttempt\(\(\)=>\{g=!0,a\.markAppQuitting\(\)\},o\);return\}g=!0,a\.markAppQuitting\(\)/,
   );
+  assert.doesNotMatch(
+    patched,
+    /if\(\(typeof codexLinuxShouldBypassQuitPrompt[^}]+codexLinuxArmQuitWatchdog\(\)/,
+  );
+  assert.doesNotMatch(
+    patched,
+    /markQuitApproved\(\),typeof codexLinuxArmQuitWatchdog/,
+  );
+});
+
+test("bypasses a semantically matched before-quit guard without arming before commit", () => {
+  const source = `${currentMainBundlePrefix}${beforeQuitConfirmationBundleFixture()
+    .replace("if(e||", "if(U||")}`;
+  const patched = applyPatchTwice(
+    applyLinuxExplicitQuitPromptBypassPatch,
+    applyLinuxQuitGuardPatch(source),
+  );
+
+  assert.match(
+    patched,
+    /if\(\(typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt\(\)\)\|\|U\|\|i\.canQuitWithoutPrompt\(\)\|\|r\|\|!s&&!c\)\{if\(process\.platform===`linux`&&typeof codexLinuxAcceptQuitAttempt===`function`\)\{codexLinuxAcceptQuitAttempt\(\(\)=>\{g=!0,a\.markAppQuitting\(\)\},o\);return\}g=!0,a\.markAppQuitting\(\);return\}/,
+  );
+  assert.doesNotMatch(
+    patched,
+    /if\(\(typeof codexLinuxShouldBypassQuitPrompt[^}]+codexLinuxArmQuitWatchdog\(\)/,
+  );
+});
+
+test("lets an accepted Linux quit close the SQLite backfill progress window", () => {
+  const source = sqliteBackfillQuitCloseBundleFixture();
+  const patched = applyPatchTwice(applyLinuxSqliteBackfillQuitClosePatch, source);
+
+  assert.match(
+    patched,
+    /if\(!\(i\|\|o\|\|process\.platform===`linux`&&typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)\)/,
+  );
+
+  const runClose = (quitInProgress) => {
+    const state = { onQuitCalls: 0, preventDefaultCalls: 0 };
+    const window = new EventEmitter();
+    vm.runInNewContext(patched, {
+      s: window,
+      i: false,
+      o: false,
+      e: () => {
+        state.onQuitCalls += 1;
+      },
+      process: { platform: "linux" },
+      codexLinuxIsQuitInProgress: () => quitInProgress,
+    });
+    window.emit("close", {
+      preventDefault() {
+        state.preventDefaultCalls += 1;
+      },
+    });
+    return state;
+  };
+
+  assert.deepEqual(runClose(false), { onQuitCalls: 1, preventDefaultCalls: 1 });
+  assert.deepEqual(runClose(true), { onQuitCalls: 0, preventDefaultCalls: 0 });
 });
 
 test("adds a bounded will-quit drain fallback for Linux explicit quit", () => {
@@ -2423,7 +2505,8 @@ test("adds a bounded will-quit drain fallback for Linux explicit quit", () => {
 
   assert.match(patched, /codexLinuxExplicitQuitDrainTimeoutMs=3e3/);
   assert.match(patched, /\(\(\)=>\{let codexLinuxFinalizeQuit=\(\)=>\{d\(\),f\.dispose\(\),n\.app\.quit\(\)\},codexLinuxDrainPromise=Promise\.all\(\[u\.flush\(\),p\.flush\(\)\]\);/);
-  assert.match(patched, /if\(process\.platform===`linux`&&\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)\)\{Promise\.race\(\[codexLinuxDrainPromise,new Promise\(e=>setTimeout\(e,typeof codexLinuxExplicitQuitDrainTimeoutMs===`number`\?codexLinuxExplicitQuitDrainTimeoutMs:3e3\)\)\]\)\.finally\(codexLinuxFinalizeQuit\);return\}/);
+  assert.match(patched, /if\(process\.platform===`linux`\)\{typeof codexLinuxCommitQuit===`function`&&codexLinuxCommitQuit\(\);let codexLinuxLinuxFinalizeQuit=\(\)=>/);
+  assert.match(patched, /Promise\.race\(\[codexLinuxDrainPromise\.catch\(\(\)=>\{\}\),new Promise\(e=>setTimeout\(e,typeof codexLinuxExplicitQuitDrainTimeoutMs===`number`\?codexLinuxExplicitQuitDrainTimeoutMs:3e3\)\)\]\)\.finally\(codexLinuxLinuxFinalizeQuit\)/);
   assert.doesNotMatch(patched, /\\`number\\`/);
   assert.match(patched, /codexLinuxDrainPromise\.finally\(codexLinuxFinalizeQuit\)\}\)\(\)/);
   assert.doesNotThrow(() => new Function(patched));
@@ -2438,7 +2521,7 @@ test("marks Linux quit-in-progress for the tray quit path", () => {
 
   assert.match(
     patched,
-    /\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/,
+    /\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit\(\),n\.app\.quit\(\)\}\}/,
   );
 });
 
@@ -2451,7 +2534,7 @@ test("marks Linux quit-in-progress for the quit-app IPC path", () => {
 
   assert.match(
     patched,
-    /if\(o\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\);return\}/,
+    /if\(o\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit\(\),n\.app\.quit\(\);return\}/,
   );
 });
 
@@ -2462,7 +2545,7 @@ test("supports explicit tray quit patching when minified aliases drift", () => {
 
   assert.match(
     patched,
-    /\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),x\.app\.quit\(\)\}\}/,
+    /\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit\(\),x\.app\.quit\(\)\}\}/,
   );
 });
 
@@ -2473,7 +2556,7 @@ test("supports explicit tray quit patching when upstream renames the quit label 
 
   assert.match(
     patched,
-    /\{label:mH\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/,
+    /\{label:mH\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit\(\),n\.app\.quit\(\)\}\}/,
   );
 });
 
@@ -2484,13 +2567,13 @@ test("supports explicit IPC quit patching when minified aliases drift", () => {
 
   assert.match(
     patched,
-    /if\(m\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),x\.app\.quit\(\);return\}/,
+    /if\(m\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit\(\),x\.app\.quit\(\);return\}/,
   );
 });
 
 test("patches remaining explicit quit handlers when another copy is already patched", () => {
   const quitMarkerExpression =
-    "typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),";
+    "typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit(),";
   const patchedTrayQuit = `{label:rB(this.appName),click:()=>{${quitMarkerExpression}n.app.quit()}}`;
   const unpatchedTrayQuit = "{label:rB(this.appName),click:()=>{n.app.quit()}}";
   const patchedIpcQuit = `if(o.type===\`quit-app\`){${quitMarkerExpression}n.app.quit();return}`;
@@ -2508,13 +2591,465 @@ test("patches remaining explicit quit handlers when another copy is already patc
   assert.equal((patchedTray.match(/codexLinuxPrepareForExplicitQuit\(\)/g) ?? []).length, 2);
   assert.match(
     patchedTray,
-    /function createSecondTray\(\)\{return \{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}\}/,
+    /function createSecondTray\(\)\{return \{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit\(\),n\.app\.quit\(\)\}\}\}/,
   );
   assert.equal((patchedIpc.match(/codexLinuxPrepareForExplicitQuit\(\)/g) ?? []).length, 2);
   assert.match(
     patchedIpc,
-    /function createSecondIpc\(\)\{if\(o\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\);return\}\}/,
+    /function createSecondIpc\(\)\{if\(o\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit\(\),n\.app\.quit\(\);return\}\}/,
   );
+});
+
+function createLinuxQuitLifecycleHarness() {
+  const patched = applyPatchTwice(applyLinuxQuitGuardPatch, currentMainBundlePrefix);
+  const helperStart = patched.indexOf("let codexLinuxTray=null");
+  const listener = "c.app.on(`will-quit`,()=>{process.platform===`linux`&&codexLinuxCommitQuit()});";
+  const helperEnd = patched.indexOf(listener, helperStart) + listener.length;
+  const app = new EventEmitter();
+  const timers = [];
+  const state = { appExitCalls: 0, appExitCodes: [], processExitCalls: 0 };
+  app.exit = (code) => {
+    state.appExitCalls += 1;
+    state.appExitCodes.push(code);
+  };
+  const context = {
+    c: { app },
+    process: {
+      platform: "linux",
+      exit: () => {
+        state.processExitCalls += 1;
+      },
+    },
+    setTimeout: (callback, delay) => {
+      timers.push({ callback, delay });
+      return { unref() {} };
+    },
+    queueMicrotask,
+  };
+  vm.runInNewContext(
+    `${patched.slice(helperStart, helperEnd)}globalThis.lifecycle={register:codexLinuxRegisterTray,isTrayAlive:codexLinuxIsTrayAlive,prepare:codexLinuxPrepareForExplicitQuit,bypass:codexLinuxShouldBypassQuitPrompt,isQuitInProgress:codexLinuxIsQuitInProgress,commit:codexLinuxCommitQuit};`,
+    context,
+  );
+  return { app, lifecycle: context.lifecycle, state, timers };
+}
+
+test("keeps ordinary cancelled quit attempts repeatable without destroying the tray", () => {
+  const { lifecycle } = createLinuxQuitLifecycleHarness();
+  let destroyCalls = 0;
+  lifecycle.register({
+    isDestroyed: () => false,
+    destroy: () => {
+      destroyCalls += 1;
+    },
+  });
+
+  assert.equal(lifecycle.bypass(), false);
+  assert.equal(lifecycle.isQuitInProgress(), false);
+  assert.equal(lifecycle.isTrayAlive(), true);
+  assert.equal(lifecycle.bypass(), false);
+  assert.equal(lifecycle.isQuitInProgress(), false);
+  assert.equal(lifecycle.isTrayAlive(), true);
+  assert.equal(destroyCalls, 0);
+});
+
+test("a vetoed before-quit prompts again and leaves quit recoverable", () => {
+  const app = new EventEmitter();
+  let promptCalls = 0;
+  let preventDefaultCalls = 0;
+  let destroyCalls = 0;
+  let hideCalls = 0;
+  const timers = [];
+  const electron = {
+    app: Object.assign(app, { getName: () => "Codex", exit() {} }),
+    dialog: {
+      showMessageBoxSync: () => {
+        promptCalls += 1;
+        return 1;
+      },
+    },
+  };
+  const source = `${currentMainBundlePrefix}${beforeQuitConfirmationBundleFixture()
+    .replace("if(e||", "if(U||")}`;
+  const patched = applyLinuxExplicitQuitPromptBypassPatch(
+    applyLinuxQuitGuardPatch(source),
+  );
+  const context = {
+    U: false,
+    n: electron,
+    BI: () => true,
+    t: { sr: () => [{ status: "ACTIVE" }] },
+    i: { canQuitWithoutPrompt: () => false, markQuitApproved() {} },
+    r: false,
+    g: false,
+    a: { markAppQuitting() {} },
+    h: { H: () => ({ formatMessage: ({ defaultMessage }) => defaultMessage }) },
+    x6: "desktop.quitConfirmation.title",
+    S6: "Quit Codex?",
+    K6: () => "detail",
+    process: { platform: "linux", exit() {} },
+    setTimeout: (callback) => {
+      timers.push(callback);
+      return { unref() {} };
+    },
+    queueMicrotask,
+    require: (name) => name === "electron" ? electron : {},
+  };
+  vm.runInNewContext(
+    `${patched};globalThis.lifecycle={register:codexLinuxRegisterTray,isTrayAlive:codexLinuxIsTrayAlive,isQuitInProgress:codexLinuxIsQuitInProgress};`,
+    context,
+  );
+  context.lifecycle.register({
+    isDestroyed: () => false,
+    destroy() {
+      destroyCalls += 1;
+    },
+  });
+  const event = { preventDefault: () => { preventDefaultCalls += 1; } };
+
+  app.emit("before-quit", event);
+  app.emit("before-quit", event);
+
+  assert.equal(promptCalls, 2);
+  assert.equal(preventDefaultCalls, 2);
+  assert.equal(context.lifecycle.isTrayAlive(), true);
+  assert.equal(context.lifecycle.isQuitInProgress(), false);
+  assert.equal(timers.length, 0);
+  assert.equal(destroyCalls, 0);
+
+  const closeSource = captureWarns(() => applyLinuxTrayPatch(
+    "let n=require(`electron`);v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if(process.platform===`win32`&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}});",
+    null,
+  )).value;
+  const window = new EventEmitter();
+  window.hide = () => {
+    hideCalls += 1;
+  };
+  const closeContext = {
+    process: { platform: "linux" },
+    require: () => electron,
+    v: true,
+    k: window,
+    persistPrimaryWindowBounds() {},
+    getPrimaryWindows: () => [],
+    isAppQuitting: false,
+    options: { canHideLastWindowToTray: () => true },
+    codexLinuxIsQuitInProgress: context.lifecycle.isQuitInProgress,
+    codexLinuxIsTrayAlive: context.lifecycle.isTrayAlive,
+  };
+  vm.runInNewContext(closeSource, closeContext);
+  window.emit("close", event);
+  assert.equal(hideCalls, 1);
+  assert.equal(preventDefaultCalls, 3);
+});
+
+test("a later before-quit veto preserves upstream state before a successful retry", async () => {
+  const app = new EventEmitter();
+  const timers = [];
+  const state = {
+    appExitCalls: 0,
+    beforeQuitVetoes: 0,
+    destroyCalls: 0,
+    hideCalls: 0,
+    isAppQuitting: false,
+    markAppQuittingCalls: 0,
+    preventDefaultCalls: 0,
+    processExitCalls: 0,
+    quickChatDisposeCalls: 0,
+  };
+  app.exit = () => {
+    state.appExitCalls += 1;
+  };
+  const electron = {
+    app: Object.assign(app, { getName: () => "Codex" }),
+    dialog: { showMessageBoxSync: () => 1 },
+  };
+  const source = `${currentMainBundlePrefix}${beforeQuitConfirmationBundleFixture()
+    .replace("if(e||", "if(U||")}`;
+  const patched = applyPatchTwice(
+    applyLinuxExplicitQuitPromptBypassPatch,
+    applyLinuxQuitGuardPatch(source),
+  );
+  const context = {
+    U: false,
+    n: electron,
+    BI: () => true,
+    t: { sr: () => [{ status: "ACTIVE" }] },
+    i: { canQuitWithoutPrompt: () => false, markQuitApproved() {} },
+    r: false,
+    g: false,
+    a: {
+      markAppQuitting() {
+        state.markAppQuittingCalls += 1;
+        state.isAppQuitting = true;
+        state.quickChatDisposeCalls += 1;
+      },
+    },
+    h: { H: () => ({ formatMessage: ({ defaultMessage }) => defaultMessage }) },
+    x6: "desktop.quitConfirmation.title",
+    S6: "Quit Codex?",
+    K6: () => "detail",
+    process: {
+      platform: "linux",
+      exit: () => {
+        state.processExitCalls += 1;
+      },
+    },
+    setTimeout: (callback, delay) => {
+      timers.push({ callback, delay });
+      return { unref() {} };
+    },
+    queueMicrotask,
+    require: (name) => name === "electron" ? electron : {},
+  };
+  vm.runInNewContext(
+    `${patched};globalThis.lifecycle={register:codexLinuxRegisterTray,isTrayAlive:codexLinuxIsTrayAlive,prepare:codexLinuxPrepareForExplicitQuit,isQuitInProgress:codexLinuxIsQuitInProgress};`,
+    context,
+  );
+  let trayDestroyed = false;
+  context.lifecycle.register({
+    isDestroyed: () => trayDestroyed,
+    destroy() {
+      trayDestroyed = true;
+      state.destroyCalls += 1;
+    },
+  });
+
+  let vetoNextQuit = true;
+  app.on("before-quit", (event) => {
+    if (!vetoNextQuit) return;
+    vetoNextQuit = false;
+    state.beforeQuitVetoes += 1;
+    event.preventDefault();
+  });
+
+  context.lifecycle.prepare();
+  const vetoedEvent = {
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  };
+  app.emit("before-quit", vetoedEvent);
+  await Promise.resolve();
+
+  assert.equal(state.beforeQuitVetoes, 1);
+  assert.equal(state.markAppQuittingCalls, 0);
+  assert.equal(state.isAppQuitting, false);
+  assert.equal(state.quickChatDisposeCalls, 0);
+  assert.equal(state.appExitCalls, 0);
+  assert.equal(state.processExitCalls, 0);
+  assert.equal(state.destroyCalls, 0);
+  assert.equal(context.lifecycle.isTrayAlive(), true);
+  assert.equal(context.lifecycle.isQuitInProgress(), false);
+  assert.equal(timers.length, 0);
+
+  const closeSource = captureWarns(() => applyLinuxTrayPatch(
+    "let n=require(`electron`);v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if(process.platform===`win32`&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}});",
+    null,
+  )).value;
+  const window = new EventEmitter();
+  window.hide = () => {
+    state.hideCalls += 1;
+  };
+  vm.runInNewContext(closeSource, {
+    process: { platform: "linux" },
+    require: () => electron,
+    v: true,
+    k: window,
+    persistPrimaryWindowBounds() {},
+    getPrimaryWindows: () => [],
+    isAppQuitting: state.isAppQuitting,
+    options: { canHideLastWindowToTray: () => true },
+    codexLinuxIsQuitInProgress: context.lifecycle.isQuitInProgress,
+    codexLinuxIsTrayAlive: context.lifecycle.isTrayAlive,
+  });
+  window.emit("close", {
+    preventDefault() {
+      state.preventDefaultCalls += 1;
+    },
+  });
+
+  assert.equal(state.hideCalls, 1);
+  assert.equal(state.preventDefaultCalls, 1);
+  assert.equal(context.lifecycle.isTrayAlive(), true);
+
+  context.lifecycle.prepare();
+  app.emit("before-quit", { defaultPrevented: false, preventDefault() {} });
+  await Promise.resolve();
+
+  assert.equal(state.markAppQuittingCalls, 0);
+  assert.equal(state.isAppQuitting, false);
+  assert.equal(state.quickChatDisposeCalls, 0);
+  assert.equal(context.lifecycle.isQuitInProgress(), true);
+
+  window.emit("close", {
+    preventDefault() {
+      state.preventDefaultCalls += 1;
+    },
+  });
+
+  assert.equal(state.hideCalls, 1);
+  assert.equal(state.preventDefaultCalls, 1);
+
+  app.emit("will-quit", {});
+
+  assert.equal(state.markAppQuittingCalls, 1);
+  assert.equal(state.isAppQuitting, true);
+  assert.equal(state.quickChatDisposeCalls, 1);
+  assert.equal(state.destroyCalls, 1);
+  assert.equal(context.lifecycle.isTrayAlive(), false);
+  assert.equal(context.lifecycle.isQuitInProgress(), true);
+  assert.equal(timers.length, 1);
+});
+
+test("warns when the localized before-quit bypass guard drifts despite an intact accepted prompt", () => {
+  const source = beforeQuitConfirmationBundleFixture().replace(
+    "if(e||i.canQuitWithoutPrompt()",
+    "if(Boolean(e)||i.canQuitWithoutPrompt()",
+  );
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxExplicitQuitPromptBypassPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.doesNotMatch(value, /codexLinuxShouldBypassQuitPrompt\(\)/);
+  assert.match(value, /i\.markQuitApproved\(\),g=!0,a\.markAppQuitting\(\)/);
+  assert.doesNotMatch(value, /markQuitApproved\(\),typeof codexLinuxArmQuitWatchdog/);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find before-quit confirmation guard — skipping Linux explicit quit prompt bypass patch",
+  ]);
+});
+
+test("warns when the localized before-quit anchor is renamed", () => {
+  const source = beforeQuitConfirmationBundleFixture().replaceAll(
+    ".canQuitWithoutPrompt()",
+    ".canQuitImmediately()",
+  );
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxExplicitQuitPromptBypassPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.doesNotMatch(value, /codexLinuxShouldBypassQuitPrompt/);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find before-quit confirmation guard — skipping Linux explicit quit prompt bypass patch",
+  ]);
+});
+
+test("patches the intact localized before-quit prompt without warnings", () => {
+  const { value, warnings } = captureWarns(() =>
+    applyPatchTwice(
+      applyLinuxExplicitQuitPromptBypassPatch,
+      beforeQuitConfirmationBundleFixture(),
+    ),
+  );
+
+  assert.match(value, /codexLinuxShouldBypassQuitPrompt\(\)/);
+  assert.match(value, /desktop\.quitConfirmation\.quit/);
+  assert.match(value, /desktop\.quitConfirmation\.cancel/);
+  assert.deepEqual(warnings, []);
+});
+
+test("expires an unconsumed explicit quit ticket before a later quit", async () => {
+  const { lifecycle } = createLinuxQuitLifecycleHarness();
+
+  lifecycle.prepare();
+  await Promise.resolve();
+
+  assert.equal(lifecycle.bypass(), false);
+  assert.equal(lifecycle.isQuitInProgress(), false);
+});
+
+test("consumes explicit tray and IPC quit approvals as one-shot tickets", () => {
+  for (const quitPath of ["tray", "ipc"]) {
+    const { lifecycle } = createLinuxQuitLifecycleHarness();
+    lifecycle.prepare();
+    assert.equal(lifecycle.bypass(), true, quitPath);
+    assert.equal(lifecycle.bypass(), false, quitPath);
+    assert.equal(lifecycle.isQuitInProgress(), false, quitPath);
+  }
+});
+
+test("commits will-quit, bypasses re-entrant prompts, and arms hard exit", () => {
+  const { app, lifecycle, state, timers } = createLinuxQuitLifecycleHarness();
+  let destroyCalls = 0;
+  lifecycle.register({
+    isDestroyed: () => false,
+    destroy: () => {
+      destroyCalls += 1;
+    },
+  });
+
+  app.emit("will-quit");
+  assert.equal(lifecycle.isQuitInProgress(), true);
+  assert.equal(lifecycle.bypass(), true);
+  assert.equal(destroyCalls, 1);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 8000);
+  timers[0].callback();
+  assert.equal(state.appExitCalls, 1);
+  assert.deepEqual(state.appExitCodes, [0]);
+  assert.equal(state.processExitCalls, 1);
+});
+
+test("reports null and destroyed registered trays as not alive", () => {
+  const { lifecycle } = createLinuxQuitLifecycleHarness();
+  lifecycle.register(null);
+  assert.equal(lifecycle.isTrayAlive(), false);
+  lifecycle.register({ isDestroyed: () => true });
+  assert.equal(lifecycle.isTrayAlive(), false);
+  lifecycle.register({ isDestroyed: () => { throw new Error("destroyed"); } });
+  assert.equal(lifecycle.isTrayAlive(), false);
+});
+
+test("Linux drain timeout reaches app.exit even when cleanup fails", async () => {
+  const patched = applyPatchTwice(
+    applyLinuxWillQuitDrainTimeoutPatch,
+    willQuitDrainBundleFixture(),
+  );
+  const app = new EventEmitter();
+  let appExitCalls = 0;
+  let processExitCalls = 0;
+  let commitCalls = 0;
+  app.exit = () => {
+    appExitCalls += 1;
+  };
+  const never = new Promise(() => {});
+  const context = {
+    n: { app },
+    g: false,
+    h: false,
+    i: { shouldSkipDrainBeforeQuit: () => false },
+    mB() {},
+    c: { dispose() {} },
+    l: { dispose() {} },
+    d: () => { throw new Error("flush cleanup failed"); },
+    f: { dispose: () => { throw new Error("dispose cleanup failed"); } },
+    u: { flush: () => never },
+    p: { flush: () => never },
+    codexLinuxCommitQuit: () => {
+      commitCalls += 1;
+    },
+    codexLinuxExplicitQuitDrainTimeoutMs: 0,
+    process: {
+      platform: "linux",
+      exit: () => {
+        processExitCalls += 1;
+      },
+    },
+    setTimeout: (callback) => {
+      queueMicrotask(callback);
+      return 1;
+    },
+  };
+  vm.runInNewContext(patched, context);
+
+  app.emit("will-quit", { preventDefault() {} });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(commitCalls, 1);
+  assert.equal(appExitCalls, 1);
+  assert.equal(processExitCalls, 1);
 });
 
 test("uses the frameless native Codex titlebar for primary Linux windows", () => {
@@ -3604,9 +4139,9 @@ test("adds Linux tray support including the platform guard", () => {
   );
   assert.match(
     patched,
-    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)/,
+    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&\(typeof codexLinuxIsQuitInProgress!==`function`\|\|!codexLinuxIsQuitInProgress\(\)\)&&\(process\.platform!==`linux`\|\|typeof codexLinuxIsTrayAlive===`function`&&codexLinuxIsTrayAlive\(\)===!0\)/,
   );
-  assert.match(patched, /setLinuxTrayContextMenu\(\)\{let e=n\.Menu\.buildFromTemplate/);
+  assert.match(patched, /setLinuxTrayContextMenu\(\)\{if\(this\.tray==null\|\|typeof this\.tray\.isDestroyed===`function`&&this\.tray\.isDestroyed\(\)\)return null;let e=n\.Menu\.buildFromTemplate/);
   assert.match(
     patched,
     /process\.platform===`linux`&&\(codexLinuxSetTrayController\(this\),this\.setLinuxTrayContextMenu\(\)\),this\.tray\.on\(`click`/,
@@ -3629,6 +4164,86 @@ test("adds Linux tray support including the platform guard", () => {
     /\(E\|\|process\.platform===`linux`&&\(typeof codexLinuxIsTrayEnabled!==`function`\|\|codexLinuxIsTrayEnabled\(\)\)\)&&oe\(\);/,
   );
   assert.doesNotMatch(patched, /process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)/);
+});
+
+test("moves the upstream tray teardown to the Linux quit commit point", () => {
+  const source = `${mainBundlePrefix}${trayBundleFixture()}`;
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
+
+  assert.match(
+    patched,
+    /process\.platform===`linux`\?`will-quit`:`before-quit`/,
+  );
+  assert.match(
+    patched,
+    /ire\|\|=\(n\.app\.on\(process\.platform===`linux`\?`will-quit`:`before-quit`,\(\)=>\{try\{G9\(\)\}catch\{\}\}\),!0\)/,
+  );
+  assert.doesNotMatch(
+    patched,
+    /n\.app\.on\(`before-quit`,\(\)=>\{G9\(\)\}\)/,
+  );
+  assert.equal(applyLinuxTrayPatch(patched, null), patched);
+});
+
+test("keeps the upstream tray quit teardown patch fail-soft when its needle drifts", () => {
+  const emittedListener =
+    "ire||=(n.app.on(process.platform===`linux`?`will-quit`:`before-quit`,()=>{try{G9()}catch{}}),!0)";
+  const patched = captureWarns(() =>
+    applyPatchTwice(applyLinuxTrayPatch, `${mainBundlePrefix}${trayBundleFixture()}`, null),
+  ).value;
+  const sourceWithoutNeedle = patched.replace(emittedListener, "ire||=!0");
+
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxTrayPatch(sourceWithoutNeedle, null),
+  );
+
+  assert.equal(value, sourceWithoutNeedle);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find upstream tray before-quit listener — skipping Linux upstream tray quit teardown patch",
+  ]);
+});
+
+test("hides the last Linux window only while a live tray is registered", () => {
+  const source = [
+    "let n=require(`electron`);",
+    "v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if(process.platform===`win32`&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}});",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
+  const runClose = (trayAlive, quitInProgress, trayEnabled = true) => {
+    const window = new EventEmitter();
+    let prevented = 0;
+    let hidden = 0;
+    window.hide = () => {
+      hidden += 1;
+    };
+    const context = {
+      require: () => ({}),
+      process: { platform: "linux" },
+      v: true,
+      k: window,
+      persistPrimaryWindowBounds() {},
+      getPrimaryWindows: () => [window],
+      isAppQuitting: false,
+      options: { canHideLastWindowToTray: () => trayEnabled },
+      codexLinuxIsQuitInProgress: () => quitInProgress,
+    };
+    if (trayAlive !== undefined) {
+      context.codexLinuxIsTrayAlive = () => trayAlive;
+    }
+    vm.runInNewContext(patched, context);
+    window.emit("close", {
+      preventDefault: () => {
+        prevented += 1;
+      },
+    });
+    return { hidden, prevented };
+  };
+
+  assert.deepEqual(runClose(true, false), { hidden: 1, prevented: 1 });
+  assert.deepEqual(runClose(false, false), { hidden: 0, prevented: 0 });
+  assert.deepEqual(runClose(undefined, false), { hidden: 0, prevented: 0 });
+  assert.deepEqual(runClose(true, true), { hidden: 0, prevented: 0 });
+  assert.deepEqual(runClose(true, false, false), { hidden: 0, prevented: 0 });
 });
 
 test("refreshes only the live Linux tray controller after session recovery", () => {
@@ -3670,6 +4285,9 @@ test("refreshes only the live Linux tray controller after session recovery", () 
           this.menuSetCount += 1;
         },
         popUpContextMenu() {},
+        isDestroyed() {
+          return this.destroyed;
+        },
         destroy() {
           this.destroyed = true;
         },
@@ -3961,7 +4579,7 @@ test("adds Linux tray support for current minified window and startup identifier
 
   assert.match(
     patched,
-    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)/,
+    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&\(typeof codexLinuxIsQuitInProgress!==`function`\|\|!codexLinuxIsQuitInProgress\(\)\)&&\(process\.platform!==`linux`\|\|typeof codexLinuxIsTrayAlive===`function`&&codexLinuxIsTrayAlive\(\)===!0\)/,
   );
   assert.match(patched, /e\.preventDefault\(\),j\.hide\(\);return/);
   assert.match(
@@ -4054,7 +4672,7 @@ test("scopes close-to-tray already-patched detection to the handler", () => {
 
   assert.match(
     patched,
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),j\.hide\(\);return\}/,
+    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&\(typeof codexLinuxIsQuitInProgress!==`function`\|\|!codexLinuxIsQuitInProgress\(\)\)&&\(process\.platform!==`linux`\|\|typeof codexLinuxIsTrayAlive===`function`&&codexLinuxIsTrayAlive\(\)===!0\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),j\.hide\(\);return\}/,
   );
 });
 
@@ -4066,12 +4684,12 @@ test("adds Linux single-instance lock and second-instance handoff", () => {
     /process\.platform===`linux`&&process\.env\.CODEX_LINUX_MULTI_LAUNCH!==`1`&&!n\.app\.requestSingleInstanceLock\(\)/,
   );
   assert.match(patched, /n\.app\.quit\(\);return/);
-  assert.match(patched, /codexLinuxBeforeQuitHandler=\(\)=>\{typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\)\}/);
-  assert.match(patched, /n\.app\.on\(`before-quit`,codexLinuxBeforeQuitHandler\)/);
-  assert.match(patched, /n\.app\.off\(`before-quit`,codexLinuxBeforeQuitHandler\)/);
   assert.match(patched, /codexLinuxSecondInstanceHandler/);
+  assert.match(patched, /\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)\?void 0:R\.deepLinks\.queueProcessArgs\(t\)\|\|ie\(\)/);
   assert.match(patched, /n\.app\.on\(`second-instance`,codexLinuxSecondInstanceHandler\)/);
   assert.match(patched, /n\.app\.off\(`second-instance`,codexLinuxSecondInstanceHandler\)/);
+  assert.doesNotMatch(patched, /codexLinuxBeforeQuitHandler/);
+  assert.doesNotMatch(patched, /app\.(?:on|off)\(`before-quit`/);
 });
 
 test("forces the bootstrap single-instance lock on Linux even when upstream disables it", () => {
@@ -4349,6 +4967,33 @@ test("adds Linux launch actions through current setSecondInstanceArgsHandler bun
   );
 });
 
+test("keeps quit lifecycle declarations module-scoped when launch actions share a bundle", () => {
+  const launchBody = currentLaunchActionBundleFixture().slice(
+    currentLaunchActionBundleFixture().indexOf("async function CN"),
+  );
+  const patched = applyLinuxLaunchActionArgsPatch(
+    applyLinuxQuitGuardPatch(`${currentMainBundlePrefix}${launchBody}`),
+  );
+
+  assert.equal((patched.match(/codexLinuxQuitCommitted=!1/g) ?? []).length, 1);
+  assert.ok(patched.indexOf("codexLinuxQuitCommitted=!1") < patched.indexOf("async function CN"));
+  assert.doesNotMatch(patched.slice(patched.indexOf("async function CN")), /codexLinuxQuitCommitted=!1/);
+});
+
+test("standalone launch-action output stays strict-mode parseable and lifecycle-free", () => {
+  const patched = applyPatchTwice(
+    applyLinuxLaunchActionArgsPatch,
+    currentLaunchActionBundleFixture(),
+  );
+
+  assert.doesNotThrow(() => new Function(`"use strict";${patched}`));
+  assert.match(patched, /let codexLinuxGetSetting=e=>/);
+  assert.doesNotMatch(
+    patched,
+    /codexLinuxQuitCommitted|codexLinuxExplicitQuitTicket|codexLinuxPrepareForExplicitQuit|codexLinuxShouldBypassQuitPrompt|codexLinuxBeforeQuitHandler/,
+  );
+});
+
 test("uses collision-safe modules for launch-action socket in shadowed startup scopes", () => {
   const source = currentLaunchActionBundleFixture().replace(
     "async function CN(){let{setSecondInstanceArgsHandler:l}=t.y(),g={reportNonFatal(){}}",
@@ -4375,16 +5020,10 @@ test("adds Linux launch actions when captured window identifiers contain dollar 
 
   assert.match(patched, /codexLinuxHandleLaunchActionArgs/);
   assert.match(patched, /z\.navigateToRoute\(r\$,e\),ae\(r\$\)/);
-  assert.match(patched, /codexLinuxQuitInProgress=!1/);
-  assert.match(patched, /codexLinuxExplicitQuitApproved=!1/);
-  assert.match(patched, /codexLinuxMarkQuitInProgress=\(\)=>\{codexLinuxQuitInProgress=!0\}/);
-  assert.match(patched, /codexLinuxPrepareForExplicitQuit=\(\)=>\{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress\(\)\}/);
-  assert.match(patched, /codexLinuxShouldBypassQuitPrompt=\(\)=>codexLinuxExplicitQuitApproved===!0/);
-  assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitInProgress===!0/);
+  assert.doesNotMatch(patched, /codexLinuxQuitCommitted|codexLinuxExplicitQuitTicket/);
+  assert.doesNotMatch(patched, /codexLinuxPrepareForExplicitQuit|codexLinuxShouldBypassQuitPrompt|codexLinuxBeforeQuitHandler/);
   assert.match(patched, /codexLinuxGetSetting=e=>/);
   assert.match(patched, /codexLinuxHandleLaunchActionArgs=async e=>/);
-  assert.match(patched, /codexLinuxHandleLaunchActionArgs=async e=>\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)\?!0:/);
-  assert.match(patched, /codexLinuxHandleLaunchActionArgsFallback=\(e,t\)=>\{if\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)return;/);
   assert.match(patched, /codexLinuxStartLaunchActionSocket=\(\)=>/);
   assert.match(patched, /codexLinuxDefaultLaunchActionSocket=\(\)=>/);
   assert.match(patched, /codexLinuxPrewarmHotkeyWindow=\(\)=>/);
@@ -8262,11 +8901,15 @@ test("patchMainBundleSource keeps non-icon patches active without an icon asset"
 
   const patched = applyPatchTwice(patchMainBundleSource, source, null);
 
-  assert.match(patched, /codexLinuxQuitInProgress=!1/);
-  assert.match(patched, /codexLinuxExplicitQuitApproved=!1/);
-  assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitInProgress===!0/);
-  assert.match(patched, /codexLinuxShouldBypassQuitPrompt=\(\)=>codexLinuxExplicitQuitApproved===!0/);
-  assert.match(patched, /n\.app\.on\(`before-quit`,codexLinuxBeforeQuitHandler\)/);
+  assert.match(patched, /codexLinuxQuitCommitted=!1/);
+  assert.match(patched, /codexLinuxQuitAttempting=!1/);
+  assert.match(patched, /codexLinuxExplicitQuitTicket=!1/);
+  assert.match(
+    patched,
+    /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitAttempting===!0\|\|codexLinuxQuitCommitted===!0/,
+  );
+  assert.match(patched, /codexLinuxShouldBypassQuitPrompt=\(\)=>\{if\(codexLinuxQuitCommitted===!0\)return!0;/);
+  assert.doesNotMatch(patched, /codexLinuxBeforeQuitHandler/);
   assert.match(patched, /process\.platform===`linux`&&k\.removeMenu\(\)/);
   assert.match(patched, /linux:\{label:`File Manager`/);
   assert.match(
@@ -8296,11 +8939,11 @@ test("patchMainBundleSource stays idempotent after wrapping the Electron require
   assert.equal(patchMainBundleSource(patched, "app-test.png"), patched);
   assert.match(
     patched,
-    /setLinuxTrayContextMenu\(\)\{let e=c\.Menu\.buildFromTemplate/,
+    /setLinuxTrayContextMenu\(\)\{if\(this\.tray==null\|\|typeof this\.tray\.isDestroyed===`function`&&this\.tray\.isDestroyed\(\)\)return null;let e=c\.Menu\.buildFromTemplate/,
   );
   assert.doesNotMatch(
     patched,
-    /setLinuxTrayContextMenu\(\)\{let e=n\.Menu\.buildFromTemplate/,
+    /setLinuxTrayContextMenu\(\).*let e=n\.Menu\.buildFromTemplate/,
   );
 });
 

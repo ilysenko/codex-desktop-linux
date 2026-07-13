@@ -7599,7 +7599,9 @@ async function la(e){let t=ua(e);if(t&&(0,a.statSync)(t).isFile()){n.shell.showI
 function ua(e){return e}
 var Ua=Mi({id:`systemDefault`,label:`System Default App`,icon:`apps/file-explorer.png`,kind:`systemDefault`,hidden:!0,darwin:{icon:`apps/finder.png`,detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},win32:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},linux:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)}});
 async function Wa(e){return e}
-async function Hw(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(zw=!0,Lw??Rw??(Rw=(async()=>{let r=await Ww(e.buildFlavor,e.appBrand,e.repoRoot),i=new n.Tray(r.defaultIcon);return i})()))}
+var ire=!1;
+function G9(){zw=!1}
+async function Hw(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(zw=!0,Lw??Rw??(ire||=(n.app.on(`before-quit`,()=>{G9()}),!0),Rw=(async()=>{let r=await Ww(e.buildFlavor,e.appBrand,e.repoRoot),i=new n.Tray(r.defaultIcon);return i})()))}
 async function Ww(e,t,i){if(process.platform===`darwin`){return null}let r=K9(e,t,i);return r==null?{defaultIcon:await n.app.getFileIcon(process.execPath,{size:`small`}),chronicleRunningIcon:null}:{defaultIcon:r,chronicleRunningIcon:null}}
 function K9(e,t,r){let a=[(0,i.join)(r,`electron`,`src`,`icons`,`tray.png`)];for(let e of a){let t=n.nativeImage.createFromPath(e);if(!t.isEmpty())return t}return null}
 var pb=class{nativeTrayClickSuppressionReason=null;clearNativeTrayClickSuppressionTimeout=null;chronicleTrayIconRefreshInterval=null;chronicleTrayIconState=`default`;isNativeTrayMenuOpen=!1;trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(){this.tray={on(){},setContextMenu(){},popUpContextMenu(){}};this.onTrayButtonClick=()=>{};this.tray.on(`click`,()=>{this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}async handleMessage(e){switch(e.type){case`tray-menu-threads-changed`:this.trayMenuThreads=e.trayMenuThreads;return}}openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());e.once(`menu-will-show`,()=>{this.isNativeTrayMenuOpen=!0}),e.once(`menu-will-close`,()=>{this.isNativeTrayMenuOpen=!1,this.handleNativeTrayMenuClosed()}),this.tray.popUpContextMenu(e)}updateChronicleTrayIcon(){}getNativeTrayMenuItems(){return[]}}
@@ -7616,8 +7618,9 @@ JS
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform!==`win32`&&process.platform!==`darwin`&&process.platform!==`linux`?null:'
     assert_contains "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)'
     assert_contains "$extracted/.vite/build/main-test.js" '(process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting'
-    assert_contains "$extracted/.vite/build/main-test.js" '!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())'
-    assert_contains "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems())'
+    assert_contains "$extracted/.vite/build/main-test.js" '!this.isAppQuitting&&(typeof codexLinuxIsQuitInProgress!==`function`||!codexLinuxIsQuitInProgress())'
+    assert_contains "$extracted/.vite/build/main-test.js" '(process.platform!==`linux`||typeof codexLinuxIsTrayAlive===`function`&&codexLinuxIsTrayAlive()===!0)'
+    assert_contains "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){if(this.tray==null||typeof this.tray.isDestroyed===`function`&&this.tray.isDestroyed())return null;let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems())'
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(codexLinuxSetTrayController(this),this.setLinuxTrayContextMenu()),this.tray.on(`click`'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxTrayRecoveryHandler=()=>{let e=codexLinuxTrayController;e?.setLinuxTrayContextMenu?.()}'
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()'
@@ -7626,6 +7629,8 @@ JS
     assert_contains "$extracted/.vite/build/main-test.js" 'if(process.platform===`linux`)return;e.once(`menu-will-show`'
     assert_contains "$extracted/.vite/build/main-test.js" 'this.trayMenuThreads=e.trayMenuThreads,process.platform===`linux`&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())&&this.setLinuxTrayContextMenu?.()'
     assert_contains "$extracted/.vite/build/main-test.js" '(E||process.platform===`linux`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&oe();'
+    assert_contains "$extracted/.vite/build/main-test.js" 'ire||=(n.app.on(process.platform===`linux`?`will-quit`:`before-quit`,()=>{try{G9()}catch{}}),!0)'
+    assert_not_contains "$extracted/.vite/build/main-test.js" 'n.app.on(`before-quit`,()=>{G9()})'
     assert_not_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&this.tray.setContextMenu?.(e),this.tray.popUpContextMenu(e)'
     assert_not_contains "$output_log" 'WARN: Could not find tray'
 
@@ -7638,7 +7643,7 @@ if (!closeSnippet) {
   throw new Error("Could not extract patched Linux close handler");
 }
 
-function registerCloseHandler({ quitInProgress = false, isAppQuitting = false, trayEnabled = true } = {}) {
+function registerCloseHandler({ quitInProgress = false, isAppQuitting = false, trayEnabled = true, trayAlive = true } = {}) {
   const state = { hideCalls: 0 };
   const controller = {
     isAppQuitting,
@@ -7651,10 +7656,11 @@ function registerCloseHandler({ quitInProgress = false, isAppQuitting = false, t
   const factory = new Function(
     "process",
     "codexLinuxIsQuitInProgress",
+    "codexLinuxIsTrayAlive",
     "state",
     `return function(){const v=true;const f=\`local\`;const k={handlers:{},on(event,handler){this.handlers[event]=handler},hide(){state.hideCalls+=1}};${closeSnippet};return k.handlers.close;};`,
   );
-  const makeHandler = factory({ platform: "linux" }, () => quitInProgress, state);
+  const makeHandler = factory({ platform: "linux" }, () => quitInProgress, () => trayAlive, state);
   const handler = makeHandler.call(controller);
   return { handler, state };
 }
@@ -7713,8 +7719,13 @@ if (result.event.prevented || result.state.hideCalls !== 0) {
 }
 
 result = runCloseWithoutHelper({ trayEnabled: true, isAppQuitting: false });
-if (!result.event.prevented || result.state.hideCalls !== 1) {
-  throw new Error("Linux close should still hide to tray when the quit helper is unavailable");
+if (result.event.prevented || result.state.hideCalls !== 0) {
+  throw new Error("Linux close should fail closed when the tray liveness helper is unavailable");
+}
+
+result = runClose({ trayEnabled: true, trayAlive: false, quitInProgress: false, isAppQuitting: false });
+if (result.event.prevented || result.state.hideCalls !== 0) {
+  throw new Error("Linux close should not hide when the registered tray is unavailable");
 }
 NODE
 
@@ -7724,20 +7735,23 @@ NODE
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop-tray.png`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop.png`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`)&&!this.isAppQuitting' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform!==`linux`||typeof codexLinuxIsTrayAlive===`function`&&codexLinuxIsTrayAlive()===!0' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(codexLinuxSetTrayController(this),this.setLinuxTrayContextMenu()),this.tray.on(`click`' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()' '3'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()' '2'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxIsQuitInProgress!==`function`||!codexLinuxIsQuitInProgress()' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'openNativeTrayMenu(){if(process.platform===`linux`&&(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()))return;' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'if(process.platform===`linux`)return;e.once(`menu-will-show`' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())&&this.setLinuxTrayContextMenu?.()' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&oe' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'ire||=(n.app.on(process.platform===`linux`?`will-quit`:`before-quit`,()=>{try{G9()}catch{}}),!0)' '1'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxRegisterTray=e=>(codexLinuxTray=e,e)'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxDestroyTray=()=>{if(process.platform!==`linux`)return;'
-    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0,codexLinuxDestroyTray()}'
-    assert_contains "$extracted/.vite/build/main-test.js" 'n.app.on(`before-quit`,()=>codexLinuxDestroyTray())'
+    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxCommitQuit=()=>{if(codexLinuxQuitCommitted===!0)return;'
+    assert_contains "$extracted/.vite/build/main-test.js" 'n.app.on(`will-quit`,()=>{process.platform===`linux`&&codexLinuxCommitQuit()})'
+    assert_not_contains "$extracted/.vite/build/main-test.js" 'n.app.on(`before-quit`,()=>codexLinuxDestroyTray())'
     assert_contains "$extracted/.vite/build/main-test.js" 'i=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new n.Tray(r.defaultIcon)):new n.Tray(r.defaultIcon)'
     assert_not_contains "$extracted/.vite/build/main-test.js" 'codexLinuxTrayQuitDelayMs'
 }
@@ -7754,19 +7768,23 @@ test_linux_explicit_quit_patch_smoke() {
 const x={o:e=>e};let s=require(`node:url`),n=require(`electron`);n=x.o(n);let l=require(`node:os`);l=x.o(l);let i=require(`node:path`);i=x.o(i);let d=require(`node:util`),q=require(`node:crypto`),a=require(`node:fs`);a=x.o(a);
 var pb=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{n.app.quit()}}]}};
 function qB(r,o){if(o.type===`quit-app`){n.app.quit();return}return o}
-n.app.on(`before-quit`,o=>{let s=BI(),c=t.sr().some(e=>e.status===`ACTIVE`);if(e||i.canQuitWithoutPrompt()||r||!s&&!c){g=!0,a.markAppQuitting();return}let l=n.app.getName();if(n.dialog.showMessageBoxSync({type:`warning`,buttons:[`Quit`,`Cancel`],defaultId:0,cancelId:1,noLink:!0,title:`Quit ${l}?`,message:`Quit ${l}?`,detail:vB({hasInProgressLocalConversation:s,hasEnabledAutomations:c})})!==0){o.preventDefault();return}i.markQuitApproved(),g=!0,a.markAppQuitting()});
+n.app.on(`before-quit`,o=>{let s=BI(),c=t.sr().some(e=>e.status===`ACTIVE`);if(e||i.canQuitWithoutPrompt()||r||!s&&!c){g=!0,a.markAppQuitting();return}let l=n.app.getName(),u=h.H(),f=u.formatMessage({messageId:x6,defaultMessage:S6,values:{appName:l}});if(n.dialog.showMessageBoxSync({type:`warning`,buttons:[u.formatMessage({messageId:`desktop.quitConfirmation.quit`,defaultMessage:`Quit`}),u.formatMessage({messageId:`desktop.quitConfirmation.cancel`,defaultMessage:`Cancel`})],defaultId:0,cancelId:1,noLink:!0,title:f,message:f,detail:K6({nativeIntl:u,appName:l,hasInProgressLocalConversation:s,hasEnabledAutomations:c})})!==0){o.preventDefault();return}i.markQuitApproved(),g=!0,a.markAppQuitting()});
 n.app.on(`will-quit`,e=>{if(g=!0,!h){if(i.shouldSkipDrainBeforeQuit()){mB({hotkeyWindowLifecycleManager:c,globalDictationLifecycleManager:l,flushAndDisposeContexts:d,disposables:f});return}e.preventDefault(),h=!0,c.dispose(),l.dispose(),Promise.all([u.flush(),p.flush()]).finally(()=>{d(),f.dispose(),n.app.quit()})}});
 JS
 )"
     make_fake_extracted_asar "$extracted" "$bundle_body"
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxPrepareForExplicitQuit=()=>{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress()}'
-    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxShouldBypassQuitPrompt=()=>codexLinuxExplicitQuitApproved===!0'
-    assert_contains "$extracted/.vite/build/main-test.js" '{label:rB(this.appName),click:()=>{typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),n.app.quit()}}'
-    assert_contains "$extracted/.vite/build/main-test.js" 'if(o.type===`quit-app`){typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),n.app.quit();return}'
-    assert_contains "$extracted/.vite/build/main-test.js" 'if((typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt())||e||i.canQuitWithoutPrompt()||r||!s&&!c){process.platform===`linux`&&typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),g=!0,a.markAppQuitting();return}'
-    assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),i.markQuitApproved(),g=!0,a.markAppQuitting()'
+    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxPrepareForExplicitQuit=()=>{codexLinuxExplicitQuitTicket=!0,queueMicrotask(()=>{codexLinuxExplicitQuitTicket=!1})}'
+    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxArmQuitWatchdog=()=>{if(process.platform!==`linux`)return;'
+    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxAcceptQuitAttempt=(e,t)=>{if(process.platform!==`linux`){e();return}codexLinuxQuitAttempting=!0,codexLinuxQuitCommitCallback=e,queueMicrotask(()=>{t?.defaultPrevented&&codexLinuxCancelQuitAttempt()})}'
+    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxShouldBypassQuitPrompt=()=>{if(codexLinuxQuitCommitted===!0)return!0;if(codexLinuxExplicitQuitTicket!==!0)return!1;codexLinuxExplicitQuitTicket=!1;return!0}'
+    assert_contains "$extracted/.vite/build/main-test.js" '{label:rB(this.appName),click:()=>{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit(),n.app.quit()}}'
+    assert_contains "$extracted/.vite/build/main-test.js" 'if(o.type===`quit-app`){typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit(),n.app.quit();return}'
+    assert_contains "$extracted/.vite/build/main-test.js" 'if((typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt())||e||i.canQuitWithoutPrompt()||r||!s&&!c){if(process.platform===`linux`&&typeof codexLinuxAcceptQuitAttempt===`function`){codexLinuxAcceptQuitAttempt(()=>{g=!0,a.markAppQuitting()},o);return}g=!0,a.markAppQuitting();return}'
+    assert_contains "$extracted/.vite/build/main-test.js" 'i.markQuitApproved();if(process.platform===`linux`&&typeof codexLinuxAcceptQuitAttempt===`function`){codexLinuxAcceptQuitAttempt(()=>{g=!0,a.markAppQuitting()},o);return}g=!0,a.markAppQuitting()'
+    assert_not_contains "$extracted/.vite/build/main-test.js" 'if((typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt())||e||i.canQuitWithoutPrompt()||r||!s&&!c){typeof codexLinuxArmQuitWatchdog'
+    assert_not_contains "$extracted/.vite/build/main-test.js" 'markQuitApproved(),typeof codexLinuxArmQuitWatchdog'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxFinalizeQuit=()=>{d(),f.dispose(),n.app.quit()},codexLinuxDrainPromise=Promise.all('
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxExplicitQuitDrainTimeoutMs'
     assert_contains "$extracted/.vite/build/main-test.js" 'setTimeout(e,typeof codexLinuxExplicitQuitDrainTimeoutMs'
@@ -7781,45 +7799,41 @@ const fs = require("fs");
 
 const source = fs.readFileSync(process.argv[2], "utf8");
 const helperStart = source.indexOf("let codexLinuxTray=null");
-const helperEnd = source.indexOf(";n.app.on(`before-quit`,()=>codexLinuxDestroyTray())", helperStart) + 1;
+const helperEnd = source.indexOf(";n.app.on(`will-quit`,()=>{process.platform===`linux`&&codexLinuxCommitQuit()})", helperStart) + 1;
 const helperSnippet = helperStart === -1 || helperEnd === 0 ? null : source.slice(helperStart, helperEnd);
-const traySnippet = source.match(/\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/)?.[0];
-const quitAppSnippet = source.match(/if\(o\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\);return\}/)?.[0];
-const beforeQuitSnippet = source.match(/if\(\(typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt\(\)\)\|\|e\|\|i\.canQuitWithoutPrompt\(\)\|\|r\|\|!s&&!c\)\{process\.platform===`linux`&&typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),g=!0,a\.markAppQuitting\(\);return\}/)?.[0];
+const traySnippet = source.match(/\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit\(\),n\.app\.quit\(\)\}\}/)?.[0];
+const quitAppSnippet = source.match(/if\(o\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit\(\),n\.app\.quit\(\);return\}/)?.[0];
+const beforeQuitSnippet = source.match(/if\(\(typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt\(\)\)\|\|e\|\|i\.canQuitWithoutPrompt\(\)\|\|r\|\|!s&&!c\)\{if\(process\.platform===`linux`&&typeof codexLinuxAcceptQuitAttempt===`function`\)\{codexLinuxAcceptQuitAttempt\(\(\)=>\{g=!0,a\.markAppQuitting\(\)\},o\);return\}g=!0,a\.markAppQuitting\(\);return\}/)?.[0];
 if (!helperSnippet || !traySnippet || !quitAppSnippet || !beforeQuitSnippet) {
   throw new Error("Could not extract explicit quit snippets");
 }
 
 function runTrayQuit({ withHelper = true } = {}) {
-  const state = { markCalls: 0, prepareCalls: 0, quitCalls: 0 };
+  const state = { prepareCalls: 0, quitCalls: 0 };
   const app = { quit() { state.quitCalls += 1; } };
-  const mark = () => { state.markCalls += 1; };
-  const prepare = withHelper ? () => { state.prepareCalls += 1; mark(); } : undefined;
+  const prepare = withHelper ? () => { state.prepareCalls += 1; } : undefined;
   const factory = new Function(
     "n",
     "rB",
     "codexLinuxPrepareForExplicitQuit",
-    "codexLinuxMarkQuitInProgress",
     `return (${traySnippet}).click;`,
   );
-  const click = factory({ app }, () => "Quit", prepare, mark);
+  const click = factory({ app }, () => "Quit", prepare);
   click();
   return state;
 }
 
 function runQuitApp({ withHelper = true } = {}) {
-  const state = { markCalls: 0, prepareCalls: 0, quitCalls: 0 };
+  const state = { prepareCalls: 0, quitCalls: 0 };
   const app = { quit() { state.quitCalls += 1; } };
-  const mark = () => { state.markCalls += 1; };
-  const prepare = withHelper ? () => { state.prepareCalls += 1; mark(); } : undefined;
+  const prepare = withHelper ? () => { state.prepareCalls += 1; } : undefined;
   const handler = new Function(
     "n",
     "codexLinuxPrepareForExplicitQuit",
-    "codexLinuxMarkQuitInProgress",
     "o",
     `${quitAppSnippet};return null;`,
   );
-  handler({ app }, prepare, mark, { type: "quit-app" });
+  handler({ app }, prepare, { type: "quit-app" });
   return state;
 }
 
@@ -7828,7 +7842,7 @@ function runBeforeQuitBypass() {
   const scope = new Function(
     "BI",
     "t",
-    `${helperSnippet}return {runBeforeQuitCheck(e,i,r,a){let s=BI(),c=t.sr().some(e=>e.status===\`ACTIVE\`);${beforeQuitSnippet}return \`prompt\`;},prepare:codexLinuxPrepareForExplicitQuit,bypass:codexLinuxShouldBypassQuitPrompt,marked:codexLinuxIsQuitInProgress};`,
+    `${helperSnippet}return {runBeforeQuitCheck(o,e,i,r,a){let s=BI(),c=t.sr().some(e=>e.status===\`ACTIVE\`);${beforeQuitSnippet}return \`prompt\`;},prepare:codexLinuxPrepareForExplicitQuit,bypass:codexLinuxShouldBypassQuitPrompt,inProgress:codexLinuxIsQuitInProgress,commit:codexLinuxCommitQuit};`,
   )(
     () => true,
     { sr: () => [{ status: "ACTIVE" }] },
@@ -7839,40 +7853,43 @@ function runBeforeQuitBypass() {
   };
   const appQuitting = { markAppQuitting() { state.markCalls += 1; } };
   scope.prepare();
-  const bypassed = scope.runBeforeQuitCheck(false, controller, false, appQuitting);
-  return { state, bypassed, shouldBypass: scope.bypass(), marked: scope.marked() };
+  const bypassed = scope.runBeforeQuitCheck({ defaultPrevented: false }, false, controller, false, appQuitting);
+  const preCommit = { markCalls: state.markCalls, inProgress: scope.inProgress() };
+  scope.commit();
+  return { state, bypassed, shouldBypass: scope.bypass(), preCommit, committed: scope.inProgress() };
 }
 
 let state = runTrayQuit();
-if (state.prepareCalls !== 1 || state.markCalls !== 1 || state.quitCalls !== 1) {
+if (state.prepareCalls !== 1 || state.quitCalls !== 1) {
   throw new Error("tray quit should prepare explicit quit before quitting");
 }
 
 state = runQuitApp();
-if (state.prepareCalls !== 1 || state.markCalls !== 1 || state.quitCalls !== 1) {
+if (state.prepareCalls !== 1 || state.quitCalls !== 1) {
   throw new Error("quit-app IPC should prepare explicit quit before quitting");
 }
 
 state = runTrayQuit({ withHelper: false });
-if (state.prepareCalls !== 0 || state.markCalls !== 1 || state.quitCalls !== 1) {
-  throw new Error("tray quit should still fall back to the quit-in-progress marker");
+if (state.prepareCalls !== 0 || state.quitCalls !== 1) {
+  throw new Error("tray quit should remain fail-soft when the explicit quit helper is unavailable");
 }
 
 state = runQuitApp({ withHelper: false });
-if (state.prepareCalls !== 0 || state.markCalls !== 1 || state.quitCalls !== 1) {
-  throw new Error("quit-app IPC should still fall back to the quit-in-progress marker");
+if (state.prepareCalls !== 0 || state.quitCalls !== 1) {
+  throw new Error("quit-app IPC should remain fail-soft when the explicit quit helper is unavailable");
 }
 
 state = runBeforeQuitBypass();
-if (!state.shouldBypass || state.bypassed !== undefined || state.state.markCalls !== 1 || !state.marked) {
-  throw new Error("before-quit should bypass the Linux quit confirmation after an explicit quit");
+if (state.shouldBypass !== true || state.bypassed !== undefined || state.preCommit.markCalls !== 0 || !state.preCommit.inProgress || state.state.markCalls !== 1 || !state.committed) {
+  throw new Error("before-quit should defer upstream quit state until will-quit commits");
 }
 NODE
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxPrepareForExplicitQuit=()=>{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress()}' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxShouldBypassQuitPrompt=()=>codexLinuxExplicitQuitApproved===!0' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress()' '2'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxPrepareForExplicitQuit=()=>{codexLinuxExplicitQuitTicket=!0,queueMicrotask(()=>{codexLinuxExplicitQuitTicket=!1})}' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxArmQuitWatchdog=()=>{' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxShouldBypassQuitPrompt=()=>{if(codexLinuxQuitCommitted===!0)return!0;' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxPrepareForExplicitQuit===`function`&&codexLinuxPrepareForExplicitQuit()' '2'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt()' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxDrainPromise=Promise.all(' '1'
 }
@@ -8497,11 +8514,10 @@ NODE
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_occurrence_count "$extracted/.vite/build/main-test.js" '!n.app.requestSingleInstanceLock()' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxQuitInProgress=!1' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0' '1'
+    assert_not_contains "$extracted/.vite/build/main-test.js" 'codexLinuxQuitCommitted=!1'
+    assert_not_contains "$extracted/.vite/build/main-test.js" 'codexLinuxIsQuitInProgress=()=>codexLinuxQuitCommitted===!0'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxHandleLaunchActionArgs=' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxHandleLaunchActionArgs=async e=>(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())?!0:' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxHandleLaunchActionArgsFallback=(e,t)=>{if(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())return;' '1'
+    assert_not_contains "$extracted/.vite/build/main-test.js" 'codexLinuxBeforeQuitHandler'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'e.includes(`--new-chat`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'e.includes(`--quick-chat`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'e.includes(`--prompt-chat`)' '1'
