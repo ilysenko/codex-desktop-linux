@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
@@ -21,6 +22,11 @@ const linuxDesktopSettingsAsset = "linux-desktop-settings-linux.js";
 const linuxKeybindOverridesKey = "codex-linux-keybind-overrides";
 const linuxReactRuntimeExport = "codexLinuxReact";
 const linuxJsxRuntimeExport = "codexLinuxJsx";
+
+function versionedAssetSpecifier(assetName, source) {
+  const digest = crypto.createHash("sha256").update(source).digest("hex").slice(0, 12);
+  return `${assetName}?v=${digest}`;
+}
 
 function linuxBuildInfoPanelSource() {
   return `function codexLinuxBuildInfoValue(value,fallback="unknown"){return typeof value=="string"&&value.trim().length>0?value:Array.isArray(value)&&value.length>0?value.join(", "):value==null?fallback:String(value)}function codexLinuxBuildInfoRows(payload){let info=payload?.info;if(!info)return [["Metadata file",codexLinuxBuildInfoValue(payload?.path,"not found")]];let target=info.linuxTarget??{},distro=target.distro??{},dmg=info.upstreamDmg??{},source=info.source??{},features=info.linuxFeatures?.enabled??[],profile=info.packageProfile??{},commit=source.commit||source.shortCommit||"",commitValue=commit?source.dirty?commit+" (dirty)":commit:"unknown",distroValue=distro.prettyName||[distro.id,distro.versionId].filter(Boolean).join(" ")||"unknown";return [["Metadata file",codexLinuxBuildInfoValue(payload?.path)],["Linux package profile",codexLinuxBuildInfoValue(profile.label)],["Linux source commit",commitValue,payload?.commitUrl],["Source branch",codexLinuxBuildInfoValue(source.branch)],["Generated",codexLinuxBuildInfoValue(info.generatedAt)],["Distro",distroValue],["Package manager",codexLinuxBuildInfoValue(target.packageManager??profile.packageManager)],["Package format",codexLinuxBuildInfoValue(target.packageFormat??profile.format)],["Enabled features",features.length>0?features.join(", "):"none"],["Upstream app version",codexLinuxBuildInfoValue(dmg.appVersion)],["Electron",codexLinuxBuildInfoValue(info.electronVersion)],["Upstream DMG SHA256",codexLinuxBuildInfoValue(dmg.sha256)]].filter(row=>row[1]!=null)}class LinuxBuildInfoPanel extends React.Component{constructor(props){super(props),this._alive=!1,this.state={data:null,isLoading:!0,error:null,copied:!1},this.load=this.load.bind(this),this.copyCommit=this.copyCommit.bind(this),this.openCommit=this.openCommit.bind(this),this.showDetails=this.showDetails.bind(this),this.fail=this.fail.bind(this)}componentDidMount(){this._alive=!0,this.load()}componentWillUnmount(){this._alive=!1}fail(err){this._alive&&this.setState({error:err instanceof Error?err.message:String(err)})}load(){this.setState({isLoading:!0,error:null}),__post("codex-linux-get-build-info",{}).then(result=>{this._alive&&this.setState({data:result})}).catch(this.fail).finally(()=>{this._alive&&this.setState({isLoading:!1})})}copyCommit(){let info=this.state.data?.info,commit=info?.source?.commit||"";commit&&(navigator.clipboard?.writeText?navigator.clipboard.writeText(commit).then(()=>{this._alive&&(this.setState({copied:!0}),setTimeout(()=>{this._alive&&this.setState({copied:!1})},1500))}).catch(this.fail):this.fail("Clipboard API is unavailable"))}openCommit(){(this.state.data?.commitUrl||"")&&__post("codex-linux-open-build-info-commit",{}).catch(this.fail)}showDetails(){__post("codex-linux-show-build-info",{}).catch(this.fail)}render(){let{data,isLoading,error,copied}=this.state,info=data?.info,commit=info?.source?.commit||"",commitUrl=data?.commitUrl||"",buttonClass="h-8 cursor-pointer rounded-md border border-token-border-default px-3 text-sm text-token-text-primary hover:bg-token-surface-secondary disabled:cursor-not-allowed disabled:opacity-60",rows=codexLinuxBuildInfoRows(data),actionsByLabel={"Metadata file":[{key:"details",label:"Details",disabled:!1,onClick:this.showDetails}],"Linux source commit":[{key:"copyCommit",label:"Copy commit",disabled:!commit,onClick:this.copyCommit},{key:"openCommit",label:"Open on GitHub",disabled:!commitUrl,onClick:this.openCommit}],"Generated":[{key:"refresh",label:"Refresh",disabled:isLoading,onClick:this.load}]},description=isLoading?$.jsx("span",{children:"Loading build metadata..."}):$.jsxs("div",{className:"flex flex-col gap-2 text-sm",children:[$.jsx("dl",{className:"grid gap-x-4 gap-y-3 rounded-md border border-token-border-default bg-token-bg-secondary p-3 sm:grid-cols-[150px_minmax(0,1fr)]",children:rows.map(([label,value,url])=>{let valueNode=url?$.jsx("a",{href:url,title:url,onClick:event=>{event.preventDefault(),this.openCommit()},className:"select-text break-all rounded bg-token-bg-primary px-1.5 py-0.5 font-mono text-xs text-token-text-primary underline decoration-token-text-tertiary underline-offset-2 hover:decoration-token-text-primary",children:value}):$.jsx("code",{className:"select-text break-all rounded bg-token-bg-primary px-1.5 py-0.5 font-mono text-xs text-token-text-primary",children:value}),actions=actionsByLabel[label]??[],rowContent=actions.length>0?$.jsxs("div",{className:"flex min-w-0 flex-col items-start gap-2",children:[valueNode,$.jsx("div",{className:"flex flex-wrap items-center gap-2",children:actions.map(action=>$.jsx("button",{type:"button",className:buttonClass,disabled:action.disabled,onClick:action.onClick,children:action.label},action.key))})]}):valueNode;return $.jsxs(React.Fragment,{children:[$.jsx("dt",{className:"text-token-text-tertiary",children:label}),$.jsx("dd",{className:"min-w-0",children:rowContent})]},label)})}),error?$.jsx("span",{className:"text-token-error-foreground",children:error}):null,copied?$.jsx("span",{className:"text-token-text-secondary",children:"Commit copied"}):null]});return $.jsx(SettingsRow,{label:"Build information",description,control:null})}}`;
@@ -455,7 +461,10 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
       filePath: path.join(webviewAssetsDir, component.assetName),
       source: component.source,
     });
-    return component;
+    return {
+      ...component,
+      assetSpecifier: versionedAssetSpecifier(component.assetName, component.source),
+    };
   };
 
   let settingsRowCandidate = null;
@@ -470,7 +479,7 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
     }
   }
   const settingsRowFallback = settingsRowCandidate == null ? useFallbackComponent("settingsRow") : null;
-  const settingsRowAsset = settingsRowCandidate ?? settingsRowFallback.assetName;
+  const settingsRowAsset = settingsRowCandidate ?? settingsRowFallback.assetSpecifier;
   const settingsLayoutCandidate = tryFindRequiredWebviewAsset(
     webviewAssetsDir,
     /^settings-content-layout-.*\.js$/,
@@ -478,7 +487,7 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
     "settings content layout asset",
   );
   const settingsLayoutFallback = settingsLayoutCandidate == null ? useFallbackComponent("settingsPage") : null;
-  const settingsLayoutAsset = settingsLayoutCandidate ?? settingsLayoutFallback.assetName;
+  const settingsLayoutAsset = settingsLayoutCandidate ?? settingsLayoutFallback.assetSpecifier;
   const settingsGroupCandidate = fs
     .readdirSync(webviewAssetsDir)
     .filter((name) => /^settings-group-.*\.js$/.test(name))
@@ -505,11 +514,11 @@ function resolveSettingsAssetDependencies(extractedDir, { includeHotkeySettings 
     settingsRowExportName: settingsRowExportName ?? settingsRowFallback.exportName,
     settingsPageAsset: settingsLayoutAsset,
     settingsPageExportName: settingsLayoutFallback == null ? "t" : settingsLayoutFallback.exportName,
-    settingsSectionAsset: settingsGroupCandidate ?? settingsSectionFallback.assetName,
+    settingsSectionAsset: settingsGroupCandidate ?? settingsSectionFallback.assetSpecifier,
     settingsSectionExportName: settingsGroupCandidate == null ? settingsSectionFallback.exportName : "t",
-    settingsGroupAsset: settingsSurfaceCandidate ?? settingsGroupFallback.assetName,
+    settingsGroupAsset: settingsSurfaceCandidate ?? settingsGroupFallback.assetSpecifier,
     settingsGroupExportName: settingsSurfaceCandidate == null ? settingsGroupFallback.exportName : "t",
-    toggleAsset: toggleDependency.assetName,
+    toggleAsset: toggleDependency.assetSpecifier,
     toggleExportName: toggleDependency.exportName,
     generatedAssets,
   };
@@ -521,9 +530,11 @@ function resolveLinuxDesktopSettingsAsset(extractedDir) {
     includeHotkeySettings: false,
   });
 
+  const source = buildLinuxDesktopSettingsSource(dependencies);
   return {
     filePath: path.join(webviewAssetsDir, linuxDesktopSettingsAsset),
-    source: buildLinuxDesktopSettingsSource(dependencies),
+    source,
+    routeAssetSpecifier: versionedAssetSpecifier(linuxDesktopSettingsAsset, source),
     generatedAssets: dependencies.generatedAssets,
   };
 }
@@ -617,7 +628,10 @@ function collectOptionalMatchingAssetPatches(extractedDir, predicate, patchFn) {
 
   return patches;
 }
-function collectLinuxDesktopRouteAndNavigationPatches(extractedDir) {
+function collectLinuxDesktopRouteAndNavigationPatches(
+  extractedDir,
+  routeAssetSpecifier = linuxDesktopSettingsAsset,
+) {
   const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
   if (!fs.existsSync(webviewAssetsDir)) {
     throw new Error(`Required Keybinds settings patch failed: missing webview assets directory ${webviewAssetsDir}`);
@@ -642,7 +656,7 @@ function collectLinuxDesktopRouteAndNavigationPatches(extractedDir) {
     let patchedSource = currentSource;
     if (isSettingsRouteBundleSource(currentSource)) {
       routeMatched = true;
-      patchedSource = applyLinuxDesktopSettingsRoutePatch(patchedSource);
+      patchedSource = applyLinuxDesktopSettingsRoutePatch(patchedSource, routeAssetSpecifier);
     }
     if (isSettingsNavigationBundleSource(currentSource)) {
       navigationMatched = true;
@@ -656,7 +670,7 @@ function collectLinuxDesktopRouteAndNavigationPatches(extractedDir) {
         patchFn(source) {
           let nextSource = source;
           if (isSettingsRouteBundleSource(nextSource)) {
-            nextSource = applyLinuxDesktopSettingsRoutePatch(nextSource);
+            nextSource = applyLinuxDesktopSettingsRoutePatch(nextSource, routeAssetSpecifier);
           }
           if (isSettingsNavigationBundleSource(nextSource)) {
             nextSource = applyLinuxDesktopSettingsNavigationPatch(nextSource);
@@ -777,7 +791,10 @@ function patchKeybindsSettingsAssets(extractedDir) {
         isLinuxShortcutPhysicalKeyFallbackBundleSource,
         applyLinuxShortcutPhysicalKeyFallbackPatch,
       ),
-      ...collectLinuxDesktopRouteAndNavigationPatches(extractedDir),
+      ...collectLinuxDesktopRouteAndNavigationPatches(
+        extractedDir,
+        settingsAsset.routeAssetSpecifier,
+      ),
     ];
 
     fs.writeFileSync(settingsAsset.filePath, settingsAsset.source, "utf8");
@@ -1084,10 +1101,21 @@ function isSettingsNavigationBundleSource(currentSource) {
   );
 }
 
-function applyLinuxDesktopSettingsRoutePatch(currentSource) {
+function applyLinuxDesktopSettingsRoutePatch(
+  currentSource,
+  routeAssetSpecifier = linuxDesktopSettingsAsset,
+) {
   let patchedSource = currentSource;
 
-  if (!patchedSource.includes(`${linuxDesktopSettingsAsset}`)) {
+  if (patchedSource.includes(linuxDesktopSettingsAsset)) {
+    const existingSpecifierPattern = new RegExp(
+      `${escapeRegExp(linuxDesktopSettingsAsset)}(?:\\?v=[a-f0-9]+)?`,
+      "g",
+    );
+    return patchedSource.replace(existingSpecifierPattern, routeAssetSpecifier);
+  }
+
+  if (!patchedSource.includes(routeAssetSpecifier)) {
     const routePattern =
       /((?:var )?[A-Za-z_$][\w$]*=\{)(?="general-settings":([A-Za-z_$][\w$]*)\(async\(\)=>\(await ([A-Za-z_$][\w$]*)\(async\(\)=>\{let\{GeneralSettings:[A-Za-z_$][\w$]*\}=await import\(`)/u;
     if (!routePattern.test(patchedSource)) {
@@ -1096,7 +1124,7 @@ function applyLinuxDesktopSettingsRoutePatch(currentSource) {
     patchedSource = patchedSource.replace(
       routePattern,
       (_match, routeMapPrefix, routeLoader, preloadAlias) =>
-        `${routeMapPrefix}"linux-desktop":${routeLoader}(async()=>(await ${preloadAlias}(async()=>{let{LinuxDesktopSettings:e}=await import(\`./${linuxDesktopSettingsAsset}\`);return{LinuxDesktopSettings:e}},[],import.meta.url)).LinuxDesktopSettings),`,
+        `${routeMapPrefix}"linux-desktop":${routeLoader}(async()=>(await ${preloadAlias}(async()=>{let{LinuxDesktopSettings:e}=await import(\`./${routeAssetSpecifier}\`);return{LinuxDesktopSettings:e}},[],import.meta.url)).LinuxDesktopSettings),`,
     );
   }
 

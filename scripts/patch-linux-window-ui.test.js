@@ -5189,7 +5189,7 @@ test("writes only missing Linux settings fallback components after required chec
     assert.equal(fs.existsSync(path.join(assetsDir, "linux-settings-group-linux.js")), false);
     assert.match(
       fs.readFileSync(path.join(assetsDir, linuxDesktopSettingsAsset), "utf8"),
-      /import\{n as SettingsRow\}from"\.\/linux-settings-row-linux\.js"/,
+      /import\{n as SettingsRow\}from"\.\/linux-settings-row-linux\.js\?v=[a-f0-9]{12}"/,
     );
 
     const settingsPageSource = fs.readFileSync(
@@ -5218,7 +5218,7 @@ test("uses a themed fallback toggle when upstream settings toggle is unavailable
       path.join(assetsDir, linuxDesktopSettingsAsset),
       "utf8",
     );
-    assert.match(linuxDesktopSource, /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js"/);
+    assert.match(linuxDesktopSource, /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js\?v=[a-f0-9]{12}"/);
     assert.match(
       linuxDesktopSource,
       /control:\$\.jsx\(Toggle,\{checked:value,disabled:isLoading,onChange:this\.update,ariaLabel:label\}\)/,
@@ -5273,11 +5273,11 @@ test("ignores settings row and toggle icon decoys from the current DMG", () => {
     );
     assert.match(
       linuxDesktopSource,
-      /import\{n as SettingsRow\}from"\.\/linux-settings-row-linux\.js"/,
+      /import\{n as SettingsRow\}from"\.\/linux-settings-row-linux\.js\?v=[a-f0-9]{12}"/,
     );
     assert.match(
       linuxDesktopSource,
-      /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js"/,
+      /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js\?v=[a-f0-9]{12}"/,
     );
     assert.doesNotMatch(linuxDesktopSource, /settings-row-disclosure-A\.js/);
     assert.doesNotMatch(linuxDesktopSource, /toggle-left-A\.js/);
@@ -5309,7 +5309,7 @@ test("does not import an upstream settings toggle with private lazy initializati
     );
     assert.match(
       linuxDesktopSource,
-      /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js"/,
+      /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js\?v=[a-f0-9]{12}"/,
     );
     assert.doesNotMatch(linuxDesktopSource, /shared-toggle-A\.js/);
     assert.match(
@@ -5383,11 +5383,33 @@ test("adds Linux desktop settings when native shortcuts use a consolidated setti
     );
     assert.match(
       linuxDesktopSource,
-      /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js"/,
+      /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js\?v=[a-f0-9]{12}"/,
     );
     assert.doesNotMatch(linuxDesktopSource, /function LinuxSwitch/);
 
     const settingsPageSource = fs.readFileSync(path.join(assetsDir, "settings-page-A.js"), "utf8");
+    const linuxDesktopDigest = crypto
+      .createHash("sha256")
+      .update(linuxDesktopSource)
+      .digest("hex")
+      .slice(0, 12);
+    assert.match(
+      settingsPageSource,
+      new RegExp(`linux-desktop-settings-linux\\.js\\?v=${linuxDesktopDigest}`),
+    );
+    const fallbackToggleSource = fs.readFileSync(
+      path.join(assetsDir, "linux-settings-toggle-linux.js"),
+      "utf8",
+    );
+    const fallbackToggleDigest = crypto
+      .createHash("sha256")
+      .update(fallbackToggleSource)
+      .digest("hex")
+      .slice(0, 12);
+    assert.match(
+      linuxDesktopSource,
+      new RegExp(`linux-settings-toggle-linux\\.js\\?v=${fallbackToggleDigest}`),
+    );
     assert.match(settingsPageSource, /linux-desktop-settings-linux\.js/);
     assert.match(settingsPageSource, /"linux-desktop":[A-Za-z_$][\w$]*,"general-settings"/);
     assert.match(settingsPageSource, /=\[`general-settings`,`linux-desktop`,`profile`/);
@@ -5434,7 +5456,7 @@ test("adds Linux desktop settings when the lazy route map is hoisted into a sepa
     );
     assert.match(
       linuxDesktopSource,
-      /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js"/,
+      /import\{t as Toggle\}from"\.\/linux-settings-toggle-linux\.js\?v=[a-f0-9]{12}"/,
     );
     assert.doesNotMatch(linuxDesktopSource, /function LinuxSwitch/);
 
@@ -5457,7 +5479,7 @@ test("adds Linux desktop settings when the lazy route map is hoisted into a sepa
     );
     assert.match(
       routeChunkSource,
-      /"linux-desktop":Ya\(async\(\)=>\(await Pr\(async\(\)=>\{let\{LinuxDesktopSettings:e\}=await import\(`\.\/linux-desktop-settings-linux\.js`\);return\{LinuxDesktopSettings:e\}\},\[\],import\.meta\.url\)\)\.LinuxDesktopSettings\),"general-settings":/,
+      /"linux-desktop":Ya\(async\(\)=>\(await Pr\(async\(\)=>\{let\{LinuxDesktopSettings:e\}=await import\(`\.\/linux-desktop-settings-linux\.js\?v=[a-f0-9]{12}`\);return\{LinuxDesktopSettings:e\}\},\[\],import\.meta\.url\)\)\.LinuxDesktopSettings\),"general-settings":/,
     );
 
     const secondResult = patchKeybindsSettingsAssets(extractedDir);
@@ -5493,7 +5515,7 @@ test("composes Linux desktop section metadata and route patches in the same asse
     const routeChunkSource = fs.readFileSync(routeChunkPath, "utf8");
     assert.match(
       routeChunkSource,
-      /"linux-desktop":Ya\(async\(\)=>\(await Pr\(async\(\)=>\{let\{LinuxDesktopSettings:e\}=await import\(`\.\/linux-desktop-settings-linux\.js`\);return\{LinuxDesktopSettings:e\}\},\[\],import\.meta\.url\)\)\.LinuxDesktopSettings\),"general-settings":/,
+      /"linux-desktop":Ya\(async\(\)=>\(await Pr\(async\(\)=>\{let\{LinuxDesktopSettings:e\}=await import\(`\.\/linux-desktop-settings-linux\.js\?v=[a-f0-9]{12}`\);return\{LinuxDesktopSettings:e\}\},\[\],import\.meta\.url\)\)\.LinuxDesktopSettings\),"general-settings":/,
     );
     assert.match(routeChunkSource, /Bj=`general-settings\.linux-desktop\.import\.profile\.keyboard-shortcuts/);
     assert.match(routeChunkSource, /Uj=\[\{slug:`general-settings`\},\{slug:`linux-desktop`\},\{slug:`import`\}/);
@@ -5521,7 +5543,7 @@ test("finds Linux desktop settings route map in hashed settings-page chunks", ()
     const routeChunkSource = fs.readFileSync(path.join(assetsDir, routeChunkName), "utf8");
     assert.match(
       routeChunkSource,
-      /"linux-desktop":Ya\(async\(\)=>\(await Pr\(async\(\)=>\{let\{LinuxDesktopSettings:e\}=await import\(`\.\/linux-desktop-settings-linux\.js`\);return\{LinuxDesktopSettings:e\}\},\[\],import\.meta\.url\)\)\.LinuxDesktopSettings\),"general-settings":/,
+      /"linux-desktop":Ya\(async\(\)=>\(await Pr\(async\(\)=>\{let\{LinuxDesktopSettings:e\}=await import\(`\.\/linux-desktop-settings-linux\.js\?v=[a-f0-9]{12}`\);return\{LinuxDesktopSettings:e\}\},\[\],import\.meta\.url\)\)\.LinuxDesktopSettings\),"general-settings":/,
     );
 
     const settingsPageSource = fs.readFileSync(path.join(assetsDir, "settings-page-A.js"), "utf8");

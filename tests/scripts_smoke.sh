@@ -7911,7 +7911,7 @@ JS
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-system-tray-enabled"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-warm-start-enabled"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-prompt-window-enabled"
-    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'import{t as Toggle}from"./linux-settings-toggle-linux.js"'
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'import{t as Toggle}from"./linux-settings-toggle-linux.js?v='
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'import{codexLinuxReact as React,codexLinuxJsx as $}from"./index-test.js"'
     assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "__reactFactory"
     assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "__jsxFactory"
@@ -7921,7 +7921,7 @@ JS
     assert_contains "$extracted/webview/assets/settings-sections-test.js" 'slug:`linux-desktop`'
     assert_contains "$extracted/webview/assets/settings-shared-test.js" "settings.nav.linux-desktop"
     assert_contains "$extracted/webview/assets/settings-shared-test.js" "settings.section.linux-desktop"
-    assert_contains "$extracted/webview/assets/index-test.js" "linux-desktop-settings-linux.js"
+    assert_contains "$extracted/webview/assets/index-test.js" "linux-desktop-settings-linux.js?v="
     assert_contains "$extracted/webview/assets/index-test.js" 'export{RouteReact as codexLinuxReact,RouteJsx as codexLinuxJsx}'
     assert_contains "$extracted/webview/assets/index-test.js" '"linux-desktop":'
     assert_contains "$extracted/webview/assets/index-test.js" 'Zge=\[`general-settings`,`linux-desktop`'
