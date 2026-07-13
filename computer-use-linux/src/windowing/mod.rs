@@ -133,6 +133,26 @@ mod tests {
     }
 
     #[test]
+    fn niri_keeps_listing_windows_when_workspace_id_exceeds_internal_range() {
+        let json = format!(
+            r#"[{{
+              "id": 10,
+              "title": "Large workspace id",
+              "app_id": "example",
+              "workspace_id": {},
+              "is_focused": false
+            }}]"#,
+            u64::MAX
+        );
+
+        let windows = parse_niri_windows(&json).unwrap();
+
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].window_id, 10);
+        assert_eq!(windows[0].workspace, None);
+    }
+
+    #[test]
     fn niri_accepts_an_empty_window_list() {
         assert!(parse_niri_windows("[]").unwrap().is_empty());
     }

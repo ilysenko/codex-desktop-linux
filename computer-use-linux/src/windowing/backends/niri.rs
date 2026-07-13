@@ -115,7 +115,7 @@ struct NiriWindow {
     title: Option<String>,
     app_id: Option<String>,
     pid: Option<i64>,
-    workspace_id: Option<i64>,
+    workspace_id: Option<u64>,
     #[serde(default)]
     is_focused: bool,
     layout: Option<NiriWindowLayout>,
