@@ -156,7 +156,7 @@ const patches = [
     phase: "webview-asset",
     order: 20_730,
     ciPolicy: "optional",
-    pattern: /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-.*\.js$/,
+    pattern: /^(?:app-initial~app-main~quick-chat-window-page~work-home-page~chatgpt-conversation-page|app-initial~artifact-tab-content\.electron~app-main~new-thread-panel-page~onboarding-page~pr~el73lghr)-[^.]+\.js$/,
     missingDescription: "main app chrome bundle",
     skipDescription: "frameless titlebar webview layout patch",
     apply: applyFramelessTitlebarWebviewPatch,
