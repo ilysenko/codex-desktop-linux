@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   escapeRegExp,
+  findMatchingBrace,
 } = require("../lib/minified-js.js");
 const {
   findCodexRequestWebviewAsset,
@@ -241,19 +242,62 @@ function importBindings(source) {
 }
 
 function inferRuntimeDependenciesFromSettingsSource(source) {
-  const jsxLocal = source.match(/\(0,([A-Za-z_$][\w$]*)\.jsx\)/)?.[1] ?? null;
-  const reactLocal = source.match(/\(0,([A-Za-z_$][\w$]*)\.useState\)/)?.[1] ?? null;
-  if (jsxLocal == null || reactLocal == null) {
+  const routeFactoryLocal = source.match(
+    /["'](?:linux-desktop|general-settings)["']:\s*([A-Za-z_$][\w$]*)\(async\(\)=>/,
+  )?.[1] ?? null;
+  if (routeFactoryLocal == null) {
     return null;
   }
 
-  const jsxFactoryLocal = source.match(
-    new RegExp(`${escapeRegExp(jsxLocal)}=([A-Za-z_$][\\w$]*)\\(\\)`),
+  const functionMarker = `function ${routeFactoryLocal}(`;
+  const functionStart = source.indexOf(functionMarker);
+  const bodyStart = functionStart === -1
+    ? -1
+    : source.indexOf("{", functionStart + functionMarker.length);
+  const bodyEnd = bodyStart === -1 ? -1 : findMatchingBrace(source, bodyStart);
+  if (bodyStart === -1 || bodyEnd === -1) {
+    return null;
+  }
+
+  const routeFactorySource = source.slice(bodyStart + 1, bodyEnd);
+  const lazyReactLocal = routeFactorySource.match(
+    /\(0,([A-Za-z_$][\w$]*)\.lazy\)/,
   )?.[1] ?? null;
-  const reactFactoryLocal = source.match(
-    new RegExp(`${escapeRegExp(reactLocal)}=[A-Za-z_$][\\w$]*\\(([A-Za-z_$][\\w$]*)\\(\\),1\\)`),
+  const stateReactLocal = routeFactorySource.match(
+    /\(0,([A-Za-z_$][\w$]*)\.useState\)/,
   )?.[1] ?? null;
+  const jsxLocal = routeFactorySource.match(
+    /\(0,([A-Za-z_$][\w$]*)\.jsx(?:s)?\)/,
+  )?.[1] ?? null;
+  if (
+    lazyReactLocal == null
+    || stateReactLocal == null
+    || lazyReactLocal !== stateReactLocal
+    || jsxLocal == null
+  ) {
+    return null;
+  }
+
+  const reactLocal = lazyReactLocal;
+  const jsxFactoryMatch = new RegExp(
+    `${escapeRegExp(jsxLocal)}=([A-Za-z_$][\\w$]*)\\(\\)`,
+  ).exec(source);
+  const reactFactoryMatch = new RegExp(
+    `${escapeRegExp(reactLocal)}=[A-Za-z_$][\\w$]*\\(([A-Za-z_$][\\w$]*)\\(\\),1\\)`,
+  ).exec(source);
+  const jsxFactoryLocal = jsxFactoryMatch?.[1] ?? null;
+  const reactFactoryLocal = reactFactoryMatch?.[1] ?? null;
   if (jsxFactoryLocal == null || reactFactoryLocal == null) {
+    return null;
+  }
+
+  const initializationStart = source.lastIndexOf(";", reactFactoryMatch.index) + 1;
+  const initializationEnd = source.indexOf(";", reactFactoryMatch.index);
+  if (
+    initializationEnd === -1
+    || jsxFactoryMatch.index < initializationStart
+    || jsxFactoryMatch.index > initializationEnd
+  ) {
     return null;
   }
 

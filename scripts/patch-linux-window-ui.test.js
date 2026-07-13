@@ -1425,7 +1425,7 @@ function keybindsIndexBundleFixture() {
   return [
     'import{n as routeModule,s as routeToESM}from"./rolldown-runtime-A.js";',
     'import{I as routeJsxFactory,R as routeReactFactory}from"./shared-runtime-A.js";',
-    "function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(`div`,{children:t})}",
+    "function Z(e){let r=(0,RouteReact.lazy)(e);function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(r,{children:t})}return SettingsRouteWrapper}",
     "var RouteReact,RouteJsx;routeModule(()=>{RouteReact=routeToESM(routeReactFactory(),1),RouteJsx=routeJsxFactory()})();",
     "var Kge={\"general-settings\":xh,appearance:Pf,\"git-settings\":t1};",
     "var i_e={\"general-settings\":Z(async()=>(await s(async()=>{let{GeneralSettings:e}=await import(`./general-settings-DsLl9t6Z.js`);return{GeneralSettings:e}},[],import.meta.url)).GeneralSettings),appearance:Z(async()=>(await s(async()=>{let{Appearance:e}=await import(`./appearance.js`);return{Appearance:e}},[],import.meta.url)).Appearance)};",
@@ -1459,7 +1459,7 @@ function linuxDesktopRouteBundleFixture() {
   return [
     'import{n as routeModule,s as routeToESM}from"./rolldown-runtime-A.js";',
     'import{I as routeJsxFactory,R as routeReactFactory}from"./shared-runtime-A.js";',
-    "function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(`div`,{children:t})}",
+    "function $(e){let r=(0,RouteReact.lazy)(e);function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(r,{children:t})}return SettingsRouteWrapper}",
     "var RouteReact,RouteJsx;routeModule(()=>{RouteReact=routeToESM(routeReactFactory(),1),RouteJsx=routeJsxFactory()})();",
     "var DE={",
     '"general-settings":$(async()=>(await Xr(async()=>{let{GeneralSettings:e}=await import(`./general-settings-A.js`);return{GeneralSettings:e}},[],import.meta.url)).GeneralSettings),',
@@ -1524,7 +1524,10 @@ function createModernNativeKeyboardShortcutsSettingsFixture() {
     [
       'import{n as routeModule,s as routeToESM}from"./rolldown-runtime-A.js";',
       'import{I as routeJsxFactory,R as routeReactFactory}from"./shared-runtime-A.js";',
-      "function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(`div`,{children:t})}",
+      "function DecoyState(){let t=(0,DecoyReact.useState)(null);return t}",
+      "function DecoyView(){return (0,DecoyJsx.jsx)(`div`,{})}",
+      "var DecoyReact,DecoyJsx;routeModule(()=>{DecoyReact=routeToESM(routeReactFactory(),1)});routeModule(()=>{DecoyJsx=routeJsxFactory()})();",
+      "function Ya(e){let r=(0,RouteReact.lazy)(e);function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(r,{children:t})}return SettingsRouteWrapper}",
       "var RouteReact,RouteJsx;routeModule(()=>{RouteReact=routeToESM(routeReactFactory(),1),RouteJsx=routeJsxFactory()})();",
       'var Zn={"general-settings":Ya(async()=>(await Pr(async()=>{let{GeneralSettings:e}=await import(`./general-settings-A.js`);return{GeneralSettings:e}},[],import.meta.url)).GeneralSettings),"keyboard-shortcuts":Ya(async()=>(await Pr(async()=>{let{KeyboardShortcutsSettings:e}=await import(`./keyboard-shortcuts-settings-A.js`);return{KeyboardShortcutsSettings:e}},[],import.meta.url)).KeyboardShortcutsSettings)};',
       'var Hn={"general-settings":wt,"keyboard-shortcuts":xn};',
@@ -1645,7 +1648,7 @@ function createSplitRouteNativeKeyboardShortcutsSettingsFixture({
     [
       'import{n as routeModule,s as routeToESM}from"./rolldown-runtime-A.js";',
       'import{I as routeJsxFactory,R as routeReactFactory}from"./shared-runtime-A.js";',
-      "function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(`div`,{children:t})}",
+      "function Ya(e){let r=(0,RouteReact.lazy)(e);function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(r,{children:t})}return SettingsRouteWrapper}",
       "var RouteReact,RouteJsx;routeModule(()=>{RouteReact=routeToESM(routeReactFactory(),1),RouteJsx=routeJsxFactory()})();",
       "var Bn,Ya,Pr,FW,Xn=e((()=>{Bn=s(),Ya=t(f(),1),Pr=o(),",
       'FW={"general-settings":Ya(async()=>(await Pr(async()=>{let{GeneralSettings:e}=await import(`./general-settings-A.js`);return{GeneralSettings:e}},[],import.meta.url)).GeneralSettings),',
@@ -5031,6 +5034,10 @@ test("renders the generated Linux desktop settings page with working switches", 
     assert.match(
       routeSettingsSource,
       /RouteReact as codexLinuxReact,RouteJsx as codexLinuxJsx/,
+    );
+    assert.doesNotMatch(
+      routeSettingsSource,
+      /DecoyReact as codexLinuxReact|DecoyJsx as codexLinuxJsx/,
     );
     const nativeRuntime = { React, $: jsxRuntime };
     assert.equal(nativeRuntime.React, React);
