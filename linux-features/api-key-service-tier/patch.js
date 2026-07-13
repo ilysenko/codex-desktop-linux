@@ -87,7 +87,20 @@ function hasApiKeyModelListMappingShape(source) {
   return MODEL_LIST_MAPPING_SHAPE.test(source);
 }
 
+function hasCompleteFallbackFastTierPatch(source) {
+  return (
+    source.includes(`function ${PATCH_MARKER}(`) &&
+    source.includes(`??${PATCH_MARKER}(`) &&
+    source.includes(`[${PATCH_MARKER}(`) &&
+    source.includes(".filter(Boolean)).map")
+  );
+}
+
 function applyFallbackFastTierPatch(source) {
+  if (hasCompleteFallbackFastTierPatch(source)) {
+    return source;
+  }
+
   let patched = source;
 
   if (!patched.includes(`function ${PATCH_MARKER}(`)) {
@@ -124,8 +137,13 @@ function applyFallbackFastTierPatch(source) {
     `...(($1?.serviceTiers?.length?$1.serviceTiers:[${PATCH_MARKER}($1)]).filter(Boolean)).map($2=>({description:$3($2),iconKind:$4($2.id,$2.name),label:$5($2),tier:$2,value:$2.id}))`,
   );
 
-  if (patched !== source || source.includes(PATCH_MARKER)) {
+  if (hasCompleteFallbackFastTierPatch(patched)) {
     return patched;
+  }
+
+  if (patched !== source || source.includes(PATCH_MARKER)) {
+    warn("Could not apply all current service tier option helpers", "API key fallback fast tier patch");
+    return source;
   }
 
   if (source.includes("serviceTiers") && source.includes("defaultServiceTier")) {

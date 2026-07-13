@@ -326,6 +326,52 @@ test("fallback fast tier is synthesized only for API-key model catalog entries",
   assert.doesNotMatch(patched, /\)\?\?null\}function nEe/);
 });
 
+test("fallback fast tier leaves the asset byte-identical when one insertion point drifts", () => {
+  const source = [
+    "let defaultServiceTier=null;",
+    "function Tdt(e,t){return t==null?null:t===`fast`?Odt(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
+    "function Odt(e){return e?.serviceTiers?.find(e=>gz(e.id,e.name)===`fast`||e.name.trim().toLowerCase()===`priority`)??null}",
+  ].join("");
+
+  assert.deepEqual(captureWarnings(() => {
+    assert.equal(applyCurrentFallbackFastTierPatch(source), source);
+  }), [
+    "WARN: Could not apply all current service tier option helpers - skipping API key fallback fast tier patch",
+  ]);
+});
+
+test("fallback descriptor reports skipped when one insertion point drifts", () => {
+  withFeatureConfig(["api-key-service-tier"], () => {
+    const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "api-key-service-tier-fallback-drift-"));
+    try {
+      const assetsDir = path.join(tempApp, "webview", "assets");
+      const targetPath = path.join(
+        assetsDir,
+        "app-initial~app-main~quick-chat-window-page~work-home-page~chatgpt-conversation-page-drifted.js",
+      );
+      const source = [
+        "let defaultServiceTier=null;",
+        "function Tdt(e,t){return t==null?null:t===`fast`?Odt(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
+        "function Odt(e){return e?.serviceTiers?.find(e=>gz(e.id,e.name)===`fast`||e.name.trim().toLowerCase()===`priority`)??null}",
+      ].join("");
+      fs.mkdirSync(assetsDir, { recursive: true });
+      fs.writeFileSync(targetPath, source);
+
+      const report = createPatchReport();
+      const warnings = captureWarnings(() => patchExtractedApp(tempApp, { report }));
+      const fallback = report.patches.find(
+        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-fallback",
+      );
+
+      assert.ok(warnings.some((warning) => warning.includes("all current service tier option helpers")));
+      assert.equal(fallback?.status, "skipped-optional");
+      assert.equal(fs.readFileSync(targetPath, "utf8"), source);
+    } finally {
+      fs.rmSync(tempApp, { recursive: true, force: true });
+    }
+  });
+});
+
 test("combined patch updates both service tier gate and fallback options", () => {
   const source = [
     "function sxe(e){let t=(0,cxe.c)(6),n=X(os),r=e?.hostId??n,i=Cf(r),a=i?.authMethod===`chatgpt`,o=i?.authMethod??null,s;t[0]!==r||t[1]!==o?(s={authMethod:o,hostId:r},t[0]=r,t[1]=o,t[2]=s):s=t[2];let{data:c,isPending:l}=ye(is,s),u=!!i?.isLoading||a&&l,d=a&&!u&&c!=null&&c?.requirements?.featureRequirements?.fast_mode!==!1,f;return t[3]!==u||t[4]!==d?(f={isServiceTierAllowed:d,isLoading:u},t[3]=u,t[4]=d,t[5]=f):f=t[5],f}",
