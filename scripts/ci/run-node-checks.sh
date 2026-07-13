@@ -10,7 +10,14 @@ run_node_syntax_checks() {
     local file
 
     while IFS= read -r file; do
-        node --check "$file"
+        # GNOME Shell requires extension.js while its source is native ESM.
+        # Node 18 otherwise parses every .js file as CommonJS and makes the
+        # local Ubuntu 24.04 matrix fail after all Rust tests have completed.
+        if grep -Eq '^[[:space:]]*(import[[:space:]{*(]|export[[:space:]{*])' "$file"; then
+            node --input-type=module --check < "$file"
+        else
+            node --check "$file"
+        fi
     done < <(git ls-files '*.js')
 }
 

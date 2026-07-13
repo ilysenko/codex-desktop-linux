@@ -52,6 +52,8 @@ Use source files, not generated artifacts. Main routing:
 - Linux features: `linux-features/<id>/`.
 - Package builders: `scripts/build-*.sh` and `scripts/lib/package-common.sh`.
 - Updater: `updater/src/`.
+- Upstream DMG automation: `scripts/automation/upstream-dmg-watchdog/` and
+  `docs/upstream-dmg-watchdog.md`.
 - Computer Use: `computer-use-linux/`; compositor backends under
   `computer-use-linux/src/windowing/backends/`.
 - Nix: `flake.nix`, `flake.lock`, and `nix/`.

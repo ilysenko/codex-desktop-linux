@@ -2822,8 +2822,10 @@ test_sudo_alert_wrapper() {
     local workspace="$TMP_DIR/sudo-alert"
     local bin_dir="$workspace/bin"
     local log_file="$workspace/events.log"
+    local sound_file="$workspace/dialog-warning.oga"
     local wrapper="$REPO_DIR/scripts/sudo-with-alert.sh"
     mkdir -p "$bin_dir"
+    : > "$sound_file"
 
     cat > "$bin_dir/sudo" <<'EOF'
 #!/usr/bin/env bash
@@ -2862,17 +2864,17 @@ EOF
     assert_contains "$log_file" 'sudo:true'
 
     : > "$log_file"
-    CODEX_SUDO_ALERT=1 SUDO_ALERT_TEST_CACHE_STATUS=1 \
+    CODEX_SUDO_ALERT=1 CODEX_SUDO_ALERT_SOUND_FILE="$sound_file" SUDO_ALERT_TEST_CACHE_STATUS=1 \
         PATH="$bin_dir:$HOST_TOOL_PATH" SUDO_ALERT_TEST_LOG="$log_file" \
         "$wrapper" true
     [ "$(sed -n '1p' "$log_file")" = 'sudo:-n -v' ] || fail "Expected cached sudo check first"
-    [ "$(sed -n '2p' "$log_file")" = 'alert:/usr/share/sounds/freedesktop/stereo/dialog-warning.oga' ] \
+    [ "$(sed -n '2p' "$log_file")" = "alert:$sound_file" ] \
         || fail "Expected alert before authentication"
     [ "$(sed -n '3p' "$log_file")" = 'sudo:-v' ] || fail "Expected sudo authentication after alert"
     [ "$(sed -n '4p' "$log_file")" = 'sudo:true' ] || fail "Expected command after authentication"
 
     : > "$log_file"
-    CODEX_SUDO_ALERT=1 SUDO_ALERT_TEST_CACHE_STATUS=1 SUDO_ALERT_TEST_SOUND_STATUS=1 \
+    CODEX_SUDO_ALERT=1 CODEX_SUDO_ALERT_SOUND_FILE="$sound_file" SUDO_ALERT_TEST_CACHE_STATUS=1 SUDO_ALERT_TEST_SOUND_STATUS=1 \
         PATH="$bin_dir:$HOST_TOOL_PATH" SUDO_ALERT_TEST_LOG="$log_file" \
         "$wrapper" true 2>/dev/null
     assert_contains "$log_file" 'sudo:-v'
@@ -3915,6 +3917,7 @@ run_update_nix_hash_fixture() {
         CALL_LOG="$fixture/calls.log" \
         VALIDATE_PIN_CHANGE="$validate_pin_change" \
         NIX_HASH="$nix_hash" \
+        NIX_VERIFY_OUTPUTS="${NIX_VERIFY_OUTPUTS:-}" \
         bash "$fixture/scripts/ci/update-nix-hashes.sh" > "$fixture/output.log" 2>&1
 }
 
@@ -3952,6 +3955,69 @@ test_update_nix_hashes_verifies_changed_dmg_hash() {
     assert_contains "$fixture/output.log" "Nix builds succeeded after refreshing the upstream pins and Codex.dmg hash."
     assert_contains "$fixture/calls.log" "nix-store --add-fixed"
     assert_contains "$fixture/calls.log" "nix build"
+}
+
+test_update_nix_hashes_supports_focused_verification_output() {
+    info "Checking Nix hash refresh can verify one focused feature output"
+    local fixture="$TMP_DIR/nix-hash-refresh-focused-output"
+    local hash_b="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+    NIX_VERIFY_OUTPUTS=".#checks.x86_64-linux.nix-linux-features-multi-feature" \
+        run_update_nix_hash_fixture "$(basename "$fixture")" 0 "$hash_b"
+
+    assert_contains "$fixture/calls.log" "nix build .#checks.x86_64-linux.nix-linux-features-multi-feature"
+    assert_not_contains "$fixture/calls.log" ".#codex-desktop-computer-use-ui"
+}
+
+test_update_nix_hashes_skips_output_build_when_refresh_ref_already_matches() {
+    info "Checking a serialized duplicate Nix refresh adopts matching pin files"
+    local fixture="$TMP_DIR/nix-hash-refresh-matching-ref"
+    local hash_b="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    local initial_branch
+
+    make_update_nix_hash_fixture "$fixture"
+    initial_branch="$(git -C "$fixture" branch --show-current)"
+    git -C "$fixture" checkout -q -b existing-refresh
+    python3 - "$fixture/flake.nix" "$hash_b" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+text = re.sub(
+    r'(codexDmg = pkgs\.fetchurl \{.*?hash = ")[^"]+(";)',
+    rf'\g<1>{sys.argv[2]}\2',
+    text,
+    count=1,
+    flags=re.DOTALL,
+)
+path.write_text(text)
+PY
+    git -C "$fixture" add flake.nix
+    git -C "$fixture" commit -q -m "existing refresh"
+    git -C "$fixture" checkout -q "$initial_branch"
+    : > "$fixture/calls.log"
+
+    PATH="$fixture/bin:$PATH" \
+        REPO_DIR="$fixture" \
+        FLAKE_FILE="$fixture/flake.nix" \
+        UPSTREAM_DMG_PATH="$fixture/Codex.dmg" \
+        VERIFY_LOG="$fixture/verify.log" \
+        CALL_LOG="$fixture/calls.log" \
+        NIX_HASH="$hash_b" \
+        NIX_COMPARE_REF=existing-refresh \
+        bash "$fixture/scripts/ci/update-nix-hashes.sh" > "$fixture/output.log" 2>&1
+
+    assert_contains "$fixture/output.log" "Nix pins already match existing-refresh"
+    assert_not_contains "$fixture/calls.log" "nix-store"
+    assert_not_contains "$fixture/calls.log" "nix build"
+}
+
+test_ci_local_mounts_shared_git_metadata_for_linked_worktrees() {
+    info "Checking ci-local supports linked Git worktrees"
+    assert_contains "$REPO_DIR/scripts/ci-local.sh" 'rev-parse --path-format=absolute --git-common-dir'
+    assert_contains "$REPO_DIR/scripts/ci-local.sh" 'git_common_dir:$git_common_dir:ro'
 }
 
 test_installer_detects_electron_version_from_plist() {
@@ -9405,6 +9471,9 @@ main() {
     test_update_nix_hashes_skips_unchanged_package_verification
     test_update_nix_hashes_verifies_changed_pins
     test_update_nix_hashes_verifies_changed_dmg_hash
+    test_update_nix_hashes_supports_focused_verification_output
+    test_update_nix_hashes_skips_output_build_when_refresh_ref_already_matches
+    test_ci_local_mounts_shared_git_metadata_for_linked_worktrees
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
     test_port_validation_rejects_oversized_numeric_values

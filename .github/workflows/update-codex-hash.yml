@@ -1,9 +1,17 @@
 name: Update Nix upstream hashes
+run-name: Nix refresh ${{ inputs.expected_main_sha }}:${{ inputs.expected_dmg_sha256 }}
 
 on:
-  schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Main commit selected by the DMG campaign watcher
+        required: true
+        type: string
+      expected_dmg_sha256:
+        description: Raw SHA256 of the DMG selected by the campaign watcher
+        required: true
+        type: string
 
 permissions:
   actions: write
@@ -25,39 +33,113 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.expected_main_sha }}
+
+      - name: Deduplicate an already materialized campaign
+        id: dedupe
+        env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+          REFRESH_BRANCH: codex/nix-upstream-refresh
+        run: |
+          set -euo pipefail
+          echo "skip_refresh=false" >> "$GITHUB_OUTPUT"
+
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [ -n "$EXPECTED_MAIN_SHA" ] && [ "$checked_out_sha" != "$EXPECTED_MAIN_SHA" ]; then
+            echo "Expected main $EXPECTED_MAIN_SHA, but workflow checked out $checked_out_sha." >&2
+            exit 1
+          fi
+
+          refresh_branch_available=false
+          if git fetch origin "$REFRESH_BRANCH:refs/remotes/origin/$REFRESH_BRANCH"; then
+            refresh_branch_available=true
+          fi
+          if [ -z "$EXPECTED_MAIN_SHA" ] || [ -z "$EXPECTED_DMG_SHA256" ] \
+              || [ "$refresh_branch_available" != "true" ]; then
+            exit 0
+          fi
+
+          source_main="$(git log -1 --format='%(trailers:key=Source-Main-SHA,valueonly)' "origin/$REFRESH_BRANCH" | tr -d '[:space:]')"
+          dmg_sha="$(git log -1 --format='%(trailers:key=Upstream-DMG-SHA256,valueonly)' "origin/$REFRESH_BRANCH" | tr -d '[:space:]')"
+          if [ "$source_main" = "$EXPECTED_MAIN_SHA" ] && [ "$dmg_sha" = "$EXPECTED_DMG_SHA256" ]; then
+            echo "Campaign $EXPECTED_MAIN_SHA:$EXPECTED_DMG_SHA256 is already present on $REFRESH_BRANCH."
+            echo "skip_refresh=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-node@v4
+        if: steps.dedupe.outputs.skip_refresh != 'true'
         with:
           node-version: 24
 
       - uses: cachix/install-nix-action@v31
+        if: steps.dedupe.outputs.skip_refresh != 'true'
 
       - name: Configure Cachix for hash refresh builds
-        if: env.CACHIX_AUTH_TOKEN != ''
+        if: steps.dedupe.outputs.skip_refresh != 'true' && env.CACHIX_AUTH_TOKEN != ''
         uses: cachix/cachix-action@v17
         with:
           name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: ${{ env.CACHIX_AUTH_TOKEN }}
 
       - name: Install validation dependencies
+        if: steps.dedupe.outputs.skip_refresh != 'true'
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y p7zip-full
 
       - name: Refresh Nix upstream hash
-        run: scripts/ci/update-nix-hashes.sh
+        if: steps.dedupe.outputs.skip_refresh != 'true'
+        env:
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+          NIX_COMPARE_REF: origin/codex/nix-upstream-refresh
+        run: |
+          set -euo pipefail
+          scripts/ci/update-nix-hashes.sh
+          if [ -n "$EXPECTED_DMG_SHA256" ]; then
+            actual_dmg_sha256="$(sha256sum /tmp/Codex.dmg | awk '{print $1}')"
+            if [ "$actual_dmg_sha256" != "$EXPECTED_DMG_SHA256" ]; then
+              echo "Expected DMG $EXPECTED_DMG_SHA256, but downloaded $actual_dmg_sha256." >&2
+              exit 1
+            fi
+          fi
 
-      - name: Open refreshed hashes pull request
+      - name: Reconcile refreshed hashes pull request and exact-head CI
         env:
           GH_TOKEN: ${{ github.token }}
           REFRESH_BRANCH: codex/nix-upstream-refresh
+          SKIP_REFRESH: ${{ steps.dedupe.outputs.skip_refresh }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json; then
+          pin_paths=(flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json)
+
+          if [ "$SKIP_REFRESH" = "true" ]; then
+            git checkout -B "$REFRESH_BRANCH" "origin/$REFRESH_BRANCH"
+          elif git diff --quiet -- "${pin_paths[@]}"; then
             echo "Nix pins unchanged, nothing to do."
             exit 0
+          else
+            CODEX_DMG_HASH="$(scripts/ci/update-nix-hashes.sh read-flake-hash 'codexDmg = pkgs.fetchurl {' 'hash = ')"
+            CODEX_VERSION="$(scripts/ci/update-nix-hashes.sh read-flake-string codexVersion)"
+            DMG_SHA256="$(sha256sum /tmp/Codex.dmg | awk '{print $1}')"
+
+            git config user.name  "codex-dmg-hash-bot"
+            git config user.email "actions@github.com"
+            git checkout -B "$REFRESH_BRANCH"
+            git add "${pin_paths[@]}"
+            git commit \
+              -m "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
+              -m "Refreshed Codex.dmg SRI hash to $CODEX_DMG_HASH and synced codexVersion / electronVersion / native-module pins to the current upstream DMG." \
+              -m "Verified all ChatGPT Desktop Nix package outputs against the refreshed DMG." \
+              -m "[skip ci]" \
+              -m "Source-Main-SHA: $EXPECTED_MAIN_SHA" \
+              -m "Upstream-DMG-SHA256: $DMG_SHA256"
+            git push --force-with-lease origin "$REFRESH_BRANCH"
           fi
 
           CODEX_DMG_HASH="$(scripts/ci/update-nix-hashes.sh read-flake-hash 'codexDmg = pkgs.fetchurl {' 'hash = ')"
@@ -70,17 +152,6 @@ jobs:
           else
             APPCAST_NOTE="- Sparkle appcast version could not be read during PR creation; pins follow the verified DMG payload."
           fi
-
-          git config user.name  "codex-dmg-hash-bot"
-          git config user.email "actions@github.com"
-          git checkout -B "$REFRESH_BRANCH"
-          git add flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json
-          git commit \
-            -m "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
-            -m "Refreshed Codex.dmg SRI hash to $CODEX_DMG_HASH and synced codexVersion / electronVersion / native-module pins to the current upstream DMG." \
-            -m "Verified all ChatGPT Desktop Nix package outputs against the refreshed DMG." \
-            -m "[skip ci]"
-          git push --force origin "$REFRESH_BRANCH"
 
           pr_body="$RUNNER_TEMP/nix-refresh-pr-body.md"
           cat >"$pr_body" <<EOF
@@ -114,4 +185,16 @@ jobs:
           # Branch pushes made with GITHUB_TOKEN do not trigger normal push/PR
           # workflows. Dispatch CI explicitly so required checks attach to the
           # bot branch head SHA and the PR can satisfy the repository ruleset.
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$REFRESH_BRANCH"
+          # A serialized duplicate run adopts the existing exact-head CI rather
+          # than creating a second copy of the same matrix.
+          refresh_head="$(git rev-parse HEAD)"
+          exact_head_runs="$(
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$REFRESH_BRANCH" \
+              --limit 20 --json headSha \
+              | python3 -c 'import json, sys; head=sys.argv[1]; print(sum(run.get("headSha") == head for run in json.load(sys.stdin)))' "$refresh_head"
+          )"
+          if [ "$exact_head_runs" -eq 0 ]; then
+            gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$REFRESH_BRANCH"
+          else
+            echo "Exact-head CI already exists for $refresh_head; skipping duplicate dispatch."
+          fi

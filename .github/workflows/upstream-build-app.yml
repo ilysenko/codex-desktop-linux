@@ -17,6 +17,8 @@ on:
       - scripts/lib/patch-validation.js
       - scripts/lib/upstream-dmg-acceptance.js
       - scripts/lib/upstream-dmg-release-profile.js
+      - scripts/lib/linux-features.js
+      - linux-features/**
       - .github/workflows/upstream-build-app.yml
   push:
     branches:
@@ -34,6 +36,8 @@ on:
       - scripts/lib/patch-validation.js
       - scripts/lib/upstream-dmg-acceptance.js
       - scripts/lib/upstream-dmg-release-profile.js
+      - scripts/lib/linux-features.js
+      - linux-features/**
       - .github/workflows/upstream-build-app.yml
   workflow_dispatch:
 

@@ -150,6 +150,15 @@ run_container_job() {
         -w /work
     )
 
+    # Linked worktrees keep only a pointer in /work/.git. Mount the shared Git
+    # metadata at its original absolute path so git ls-files/diff work inside
+    # the container without copying or mutating the user's primary checkout.
+    if [ -f "$REPO_DIR/.git" ]; then
+        local git_common_dir
+        git_common_dir="$(git -C "$REPO_DIR" rev-parse --path-format=absolute --git-common-dir)"
+        args+=(-v "$git_common_dir:$git_common_dir:ro")
+    fi
+
     if [ -n "${CI_DMG_PATH:-}" ]; then
         args+=(-e "CI_DMG_PATH=$CI_DMG_PATH")
     fi

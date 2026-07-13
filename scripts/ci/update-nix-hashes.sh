@@ -18,6 +18,22 @@ PACKAGE_OUTPUTS=(
     ".#installer"
 )
 
+if [ -n "${NIX_VERIFY_OUTPUTS:-}" ]; then
+    PACKAGE_OUTPUTS=()
+    while IFS= read -r output; do
+        [ -n "$output" ] || continue
+        if [[ ! "$output" =~ ^\.#[A-Za-z0-9._+-]+$ ]]; then
+            echo "Invalid Nix verification output: $output" >&2
+            exit 2
+        fi
+        PACKAGE_OUTPUTS+=("$output")
+    done <<< "$NIX_VERIFY_OUTPUTS"
+    if [ "${#PACKAGE_OUTPUTS[@]}" -eq 0 ]; then
+        echo "NIX_VERIFY_OUTPUTS did not contain any outputs." >&2
+        exit 2
+    fi
+fi
+
 NIX_PIN_DIFF_PATHS=(
     "flake.nix"
     "nix/native-modules/package.json"
@@ -204,6 +220,15 @@ main() {
     if ! nix_pin_files_changed; then
         echo "Nix pins unchanged; skipping package-output verification."
         return 0
+    fi
+
+    if [ -n "${NIX_COMPARE_REF:-}" ]; then
+        if ! git -C "$REPO_DIR" rev-parse --verify --quiet "$NIX_COMPARE_REF^{commit}" >/dev/null; then
+            echo "Nix comparison ref is unavailable; continuing with verification: $NIX_COMPARE_REF"
+        elif git -C "$REPO_DIR" diff --quiet "$NIX_COMPARE_REF" -- "${NIX_PIN_DIFF_PATHS[@]}"; then
+            echo "Nix pins already match $NIX_COMPARE_REF; skipping duplicate package-output verification."
+            return 0
+        fi
     fi
 
     # Seed the Nix store so the verification build can reuse the DMG that was
