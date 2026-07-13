@@ -17,6 +17,7 @@ mod server;
 mod terminal;
 mod windowing;
 mod windows;
+mod ydotool;
 
 use anyhow::{Context, Result};
 

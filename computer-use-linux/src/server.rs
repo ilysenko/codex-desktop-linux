@@ -21,6 +21,7 @@ use crate::windows::{
     window_permission_hint, WindowFocusResult, WindowInfo, WindowTarget,
     GNOME_SHELL_INTROSPECT_BACKEND,
 };
+use crate::ydotool;
 use anyhow::Result;
 use rmcp::{
     handler::server::wrapper::{Json, Parameters},
@@ -3281,6 +3282,7 @@ async fn run_ydotool_sequence(
 }
 
 async fn run_ydotool(args: &[String]) -> std::result::Result<Output, String> {
+    ydotool::ensure_supported()?;
     let mut command = TokioCommand::new("ydotool");
     command.args(args);
     if let Some(socket) = ydotool_socket() {
@@ -3291,7 +3293,13 @@ async fn run_ydotool(args: &[String]) -> std::result::Result<Output, String> {
 
     match command.spawn() {
         Ok(child) => match wait_for_ydotool_output(child).await {
-            Ok(output) if output.status.success() => Ok(output),
+            Ok(output) if output.status.success() => {
+                if let Some(error) = ydotool::cli_error(&output.stderr) {
+                    Err(error)
+                } else {
+                    Ok(output)
+                }
+            }
             Ok(output) => Err(ydotool_output_error(output)),
             Err(error) => Err(error),
         },
@@ -3300,6 +3308,7 @@ async fn run_ydotool(args: &[String]) -> std::result::Result<Output, String> {
 }
 
 async fn run_ydotool_type_text(text: &str) -> std::result::Result<Output, String> {
+    ydotool::ensure_supported()?;
     let mut command = TokioCommand::new("ydotool");
     command.args(["type", "--file", "-"]);
     if let Some(socket) = ydotool_socket() {
@@ -3320,7 +3329,11 @@ async fn run_ydotool_type_text(text: &str) -> std::result::Result<Output, String
             let output =
                 wait_for_ydotool_output_with_timeout(child, ydotool_type_timeout(text)).await?;
             if output.status.success() {
-                Ok(output)
+                if let Some(error) = ydotool::cli_error(&output.stderr) {
+                    Err(error)
+                } else {
+                    Ok(output)
+                }
             } else {
                 Err(ydotool_output_error(output))
             }

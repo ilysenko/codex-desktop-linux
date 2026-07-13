@@ -2,6 +2,7 @@ use crate::windowing::registry::{
     self, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
     HYPRLAND_BACKEND, KWIN_BACKEND, NIRI_BACKEND,
 };
+use crate::ydotool;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::{
@@ -211,7 +212,7 @@ fn capability_map(
     if portals.remote_desktop.ok {
         input_backends.push("portal".to_string());
     }
-    if input.ydotool_socket.ok {
+    if input.ydotool.ok && input.ydotoold.ok && input.ydotool_socket.ok {
         input_backends.push("ydotool".to_string());
     }
 
@@ -635,7 +636,10 @@ fn check_from_backend_probe(probe: &registry::BackendProbe) -> Check {
 
 fn input_report() -> InputReport {
     InputReport {
-        ydotool: command_path_check("ydotool"),
+        ydotool: match ydotool::ensure_supported() {
+            Ok(detail) => Check::ok(detail),
+            Err(detail) => Check::fail(detail),
+        },
         ydotoold: process_check("ydotoold"),
         ydotool_socket: ydotool_socket_check(),
         uinput: read_write_path_check(Path::new("/dev/uinput")),
@@ -803,10 +807,6 @@ fn user_id() -> Option<String> {
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn command_path_check(command: &str) -> Check {
-    command_check("sh", &["-c", &format!("command -v {command}")])
 }
 
 fn process_check(process_name: &str) -> Check {
@@ -1243,6 +1243,29 @@ mod tests {
             capabilities.preferred.window_control.as_deref(),
             Some(NIRI_BACKEND)
         );
+    }
+
+    #[test]
+    fn capability_map_rejects_incompatible_ydotool_with_live_daemon() {
+        let platform = platform_report();
+        let portals = portal_report(Check::fail("missing"));
+        let accessibility = accessibility_report(Check::ok("bus"), Check::ok("true"));
+        let windowing = windowing_report(true, true);
+        let input = input_report_parts(
+            Check::fail("unsupported legacy ydotool CLI"),
+            Check::ok("ydotoold"),
+            Check::ok("connectable socket"),
+            Check::fail("/dev/uinput: Permission denied"),
+        );
+
+        let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+        let readiness = readiness_report(&platform, &portals, &accessibility, &windowing, &input);
+
+        assert!(!capabilities
+            .input
+            .iter()
+            .any(|backend| backend == "ydotool"));
+        assert!(!readiness.can_send_development_input);
     }
 
     #[test]

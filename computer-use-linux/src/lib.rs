@@ -10,3 +10,4 @@ pub mod server;
 pub mod terminal;
 pub mod windowing;
 pub mod windows;
+pub(crate) mod ydotool;
