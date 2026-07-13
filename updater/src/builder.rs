@@ -6,9 +6,13 @@ use crate::{
     state::{ArtifactPaths, PersistedState, UpdateStatus},
 };
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use std::{
-    ffi::OsString,
-    fs,
+    collections::{BTreeMap, BTreeSet},
+    ffi::{OsStr, OsString},
+    fs::{self, OpenOptions},
+    io::Write,
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Component, Path, PathBuf},
 };
 use tokio::process::Command;
@@ -109,7 +113,7 @@ pub async fn build_update_from(
     dmg_path: &Path,
 ) -> Result<BuildArtifacts> {
     let workspace = BuilderWorkspace::prepare(&config.workspace_root, candidate_version)?;
-    let build_path = build_command_path(&config.builder_bundle_root);
+    let build_path = build_command_path(&config.builder_bundle_root)?;
     let managed_node_source = if config.builder_bundle_root.join("node-runtime").exists() {
         config.builder_bundle_root.join("node-runtime")
     } else {
@@ -121,10 +125,19 @@ pub async fn build_update_from(
     state.save(&paths.state_file)?;
 
     copy_builder_bundle(bundle_source, &workspace.bundle_dir)?;
+    let feature_root = workspace.bundle_dir.join("linux-features");
+    let feature_config = prepare_automated_feature_config(config, &workspace)?;
 
     state.status = UpdateStatus::PatchingApp;
     state.save(&paths.state_file)?;
     let mut install = Command::new(workspace.bundle_dir.join("install.sh"));
+    configure_automated_build_command(
+        &mut install,
+        &workspace,
+        &build_path,
+        &feature_root,
+        &feature_config,
+    );
     install
         .arg(dmg_path)
         .env("CODEX_INSTALL_DIR", &workspace.app_dir)
@@ -137,16 +150,10 @@ pub async fn build_update_from(
             workspace.reports_dir.join("rebuild-report.json"),
         )
         .env("CODEX_ACCEPTANCE_OVERRIDE", "0")
+        .env("CODEX_INSTALL_ALLOW_RUNNING", "0")
+        .env("CODEX_KEEP_REJECTED_CANDIDATE", "0")
         .env("CODEX_MANAGED_NODE_SOURCE", managed_node_source)
-        .env("PATH", &build_path)
         .current_dir(&workspace.bundle_dir);
-    // Honor the user's saved feature selection (the in-app Update feature picker
-    // writes it to a stable per-user path) so the rebuild stages exactly those
-    // features. Only set it when the file actually exists; an absent path would
-    // make linux-features.js see an empty enabled set and stage nothing.
-    if let Some(feature_config) = crate::config::effective_feature_config_path(config) {
-        install.env("CODEX_LINUX_FEATURES_CONFIG", &feature_config);
-    }
     run_and_log(&mut install, &workspace.install_log)
         .await
         .context("install.sh failed during local rebuild")?;
@@ -155,8 +162,16 @@ pub async fn build_update_from(
     state.save(&paths.state_file)?;
 
     let build_script = package_build_script(&workspace.bundle_dir);
+    let mut package_build = Command::new(&build_script);
+    configure_automated_build_command(
+        &mut package_build,
+        &workspace,
+        &build_path,
+        &feature_root,
+        &feature_config,
+    );
     run_and_log(
-        Command::new(&build_script)
+        package_build
             .env("PACKAGE_VERSION", candidate_version)
             .env("APP_DIR_OVERRIDE", &workspace.app_dir)
             .env("DIST_DIR_OVERRIDE", &workspace.dist_dir)
@@ -167,7 +182,6 @@ pub async fn build_update_from(
                     .bundle_dir
                     .join("packaging/linux/codex-update-manager.service"),
             )
-            .env("PATH", &build_path)
             .current_dir(&workspace.bundle_dir),
         &workspace.build_log,
     )
@@ -198,6 +212,11 @@ struct BuilderWorkspace {
     dist_dir: PathBuf,
     app_dir: PathBuf,
     reports_dir: PathBuf,
+    build_inputs_dir: PathBuf,
+    build_home_dir: PathBuf,
+    build_cache_dir: PathBuf,
+    build_config_dir: PathBuf,
+    build_tmp_dir: PathBuf,
     install_log: PathBuf,
     build_log: PathBuf,
 }
@@ -210,6 +229,11 @@ impl BuilderWorkspace {
         let app_dir = workspace_dir.join("codex-app");
         let logs_dir = workspace_dir.join("logs");
         let reports_dir = workspace_dir.join("reports");
+        let build_inputs_dir = workspace_dir.join("build-inputs");
+        let build_home_dir = workspace_dir.join("build-home");
+        let build_cache_dir = workspace_dir.join("build-cache");
+        let build_config_dir = workspace_dir.join("build-config");
+        let build_tmp_dir = workspace_dir.join("build-tmp");
         let install_log = logs_dir.join("install.log");
         let build_log = logs_dir.join("build-package.log");
 
@@ -222,6 +246,15 @@ impl BuilderWorkspace {
             .with_context(|| format!("Failed to create {}", logs_dir.display()))?;
         fs::create_dir_all(&reports_dir)
             .with_context(|| format!("Failed to create {}", reports_dir.display()))?;
+        for private_dir in [
+            &build_inputs_dir,
+            &build_home_dir,
+            &build_cache_dir,
+            &build_config_dir,
+            &build_tmp_dir,
+        ] {
+            create_private_build_dir(private_dir)?;
+        }
 
         Ok(Self {
             workspace_dir,
@@ -229,10 +262,177 @@ impl BuilderWorkspace {
             dist_dir,
             app_dir,
             reports_dir,
+            build_inputs_dir,
+            build_home_dir,
+            build_cache_dir,
+            build_config_dir,
+            build_tmp_dir,
             install_log,
             build_log,
         })
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct FeatureSelection {
+    #[serde(default)]
+    enabled: Vec<String>,
+    #[serde(default)]
+    settings: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FeatureManifestIdentity {
+    id: String,
+}
+
+fn create_private_build_dir(path: &Path) -> Result<()> {
+    fs::create_dir_all(path).with_context(|| format!("Failed to create {}", path.display()))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("Failed to secure {}", path.display()))
+}
+
+fn prepare_automated_feature_config(
+    config: &RuntimeConfig,
+    workspace: &BuilderWorkspace,
+) -> Result<PathBuf> {
+    let feature_root = workspace.bundle_dir.join("linux-features");
+    let (enabled, settings) = match crate::config::effective_feature_config_path(config) {
+        Some(source_path) => {
+            let content = fs::read_to_string(&source_path)
+                .with_context(|| format!("Failed to read {}", source_path.display()))?;
+            let selection = serde_json::from_str::<FeatureSelection>(&content)
+                .with_context(|| format!("Failed to parse {}", source_path.display()))?;
+            let enabled = validate_enabled_feature_ids(&selection.enabled, &feature_root)?;
+            let settings = validated_feature_settings(&selection.settings, &enabled)?;
+            (enabled, settings)
+        }
+        None => (Vec::new(), BTreeMap::new()),
+    };
+
+    let feature_config = workspace.build_inputs_dir.join("linux-features.json");
+    let mut private_config = serde_json::json!({ "enabled": enabled });
+    if !settings.is_empty() {
+        private_config["settings"] = serde_json::to_value(settings)?;
+    }
+    let mut serialized = serde_json::to_vec_pretty(&private_config)?;
+    serialized.push(b'\n');
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&feature_config)
+        .with_context(|| format!("Failed to create {}", feature_config.display()))?;
+    output
+        .write_all(&serialized)
+        .with_context(|| format!("Failed to write {}", feature_config.display()))?;
+    output
+        .sync_all()
+        .with_context(|| format!("Failed to sync {}", feature_config.display()))?;
+    Ok(feature_config)
+}
+
+fn validate_enabled_feature_ids(ids: &[String], feature_root: &Path) -> Result<Vec<String>> {
+    let mut enabled = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for configured_id in ids {
+        let id = canonical_feature_id(configured_id);
+        if !is_valid_feature_id(id) {
+            anyhow::bail!("Invalid enabled Linux feature id: {configured_id}");
+        }
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+
+        let manifest_candidates = [
+            feature_root.join(id).join("feature.json"),
+            feature_root.join("local").join(id).join("feature.json"),
+        ];
+        let manifests = manifest_candidates
+            .iter()
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        if manifests.len() != 1 {
+            anyhow::bail!(
+                "Enabled Linux feature '{id}' must resolve to exactly one bundled manifest under {}",
+                feature_root.display()
+            );
+        }
+
+        let manifest_path = manifests[0];
+        let manifest = fs::read_to_string(manifest_path)
+            .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
+        let identity = serde_json::from_str::<FeatureManifestIdentity>(&manifest)
+            .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
+        if identity.id != id {
+            anyhow::bail!(
+                "Enabled Linux feature '{id}' does not match bundled manifest id '{}' at {}",
+                identity.id,
+                manifest_path.display()
+            );
+        }
+        enabled.push(id.to_string());
+    }
+
+    Ok(enabled)
+}
+
+fn validated_feature_settings(
+    configured: &BTreeMap<String, serde_json::Value>,
+    enabled: &[String],
+) -> Result<BTreeMap<String, serde_json::Value>> {
+    let enabled = enabled.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let mut settings = BTreeMap::new();
+
+    for (configured_id, value) in configured {
+        let id = canonical_feature_id(configured_id);
+        if !enabled.contains(id) {
+            continue;
+        }
+        if !is_valid_feature_id(id) || !value.is_object() {
+            anyhow::bail!("Invalid settings for enabled Linux feature '{configured_id}'");
+        }
+        if settings.insert(id.to_string(), value.clone()).is_some() {
+            anyhow::bail!("Multiple settings entries resolve to enabled Linux feature '{id}'");
+        }
+    }
+
+    Ok(settings)
+}
+
+fn canonical_feature_id(id: &str) -> &str {
+    match id {
+        "zed-opener" => "open-target-discovery",
+        _ => id,
+    }
+}
+
+fn is_valid_feature_id(id: &str) -> bool {
+    let mut characters = id.bytes();
+    matches!(characters.next(), Some(b'a'..=b'z' | b'0'..=b'9'))
+        && characters.all(|character| matches!(character, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+}
+
+fn configure_automated_build_command<'a>(
+    command: &'a mut Command,
+    workspace: &BuilderWorkspace,
+    build_path: &OsStr,
+    feature_root: &Path,
+    feature_config: &Path,
+) -> &'a mut Command {
+    command
+        .env_clear()
+        .env("PATH", build_path)
+        .env("HOME", &workspace.build_home_dir)
+        .env("XDG_CACHE_HOME", &workspace.build_cache_dir)
+        .env("XDG_CONFIG_HOME", &workspace.build_config_dir)
+        .env("TMPDIR", &workspace.build_tmp_dir)
+        .env("LANG", "C")
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .env("CODEX_LINUX_FEATURES_ROOT", feature_root)
+        .env("CODEX_LINUX_FEATURES_CONFIG", feature_config)
 }
 
 /// Returns the path to the native-package build script appropriate for the running system.
@@ -408,34 +608,19 @@ fn is_native_package_file(path: &Path) -> bool {
             .any(|suffix| name.ends_with(suffix))
 }
 
-fn build_command_path(builder_bundle_root: &Path) -> OsString {
+fn build_command_path(builder_bundle_root: &Path) -> Result<OsString> {
     let mut entries = managed_node_bin_dirs(builder_bundle_root);
-    entries.extend(preferred_user_bin_dirs());
-    entries.extend(preferred_node_bin_dirs());
-    entries.extend(preferred_rust_bin_dirs());
-    entries.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
     entries.extend(system_bin_dirs());
-    std::env::join_paths(entries).unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
-}
-
-fn preferred_user_bin_dirs() -> Vec<PathBuf> {
-    let Some(home) = std::env::var_os("HOME") else {
-        return Vec::new();
-    };
-
-    let user_bin = PathBuf::from(home).join(".local/bin");
-    if user_bin.is_dir() {
-        vec![user_bin]
-    } else {
-        Vec::new()
+    if entries.is_empty() {
+        anyhow::bail!("No trusted root-owned executable directories are available for rebuild");
     }
+    std::env::join_paths(entries)
+        .map_err(|error| anyhow::anyhow!("Failed to construct trusted rebuild PATH: {error}"))
 }
 
 fn managed_node_bin_dirs(builder_bundle_root: &Path) -> Vec<PathBuf> {
     let bin_dir = builder_bundle_root.join("node-runtime/bin");
-    if is_node_toolchain_dir(&bin_dir) {
+    if is_trusted_root_owned_directory(&bin_dir) && is_node_toolchain_dir(&bin_dir) {
         vec![bin_dir]
     } else {
         Vec::new()
@@ -453,67 +638,36 @@ fn system_bin_dirs() -> Vec<PathBuf> {
     ]
     .into_iter()
     .map(PathBuf::from)
+    .filter(|path| is_trusted_root_owned_directory(path))
     .collect()
 }
 
-fn preferred_node_bin_dirs() -> Vec<PathBuf> {
-    let nvm_root = std::env::var_os("NVM_DIR")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".nvm")));
-
-    let Some(nvm_root) = nvm_root else {
-        return Vec::new();
+fn is_trusted_root_owned_directory(path: &Path) -> bool {
+    let Ok(canonical) = fs::canonicalize(path) else {
+        return false;
     };
-
-    collect_nvm_bin_dirs(&nvm_root)
-}
-
-fn preferred_rust_bin_dirs() -> Vec<PathBuf> {
-    let Some(home) = std::env::var_os("HOME") else {
-        return Vec::new();
+    let Ok(metadata) = fs::metadata(&canonical) else {
+        return false;
     };
-
-    let cargo_bin = PathBuf::from(home).join(".cargo/bin");
-    if cargo_bin.join("cargo").is_file() {
-        vec![cargo_bin]
-    } else {
-        Vec::new()
-    }
-}
-
-fn collect_nvm_bin_dirs(nvm_root: &Path) -> Vec<PathBuf> {
-    let mut directories = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-
-    let current_bin = nvm_root.join("versions/node/current/bin");
-    if is_node_toolchain_dir(&current_bin) {
-        seen.insert(current_bin.clone());
-        directories.push(current_bin);
+    if !metadata.is_dir() {
+        return false;
     }
 
-    let versions_root = nvm_root.join("versions/node");
-    if let Ok(entries) = fs::read_dir(&versions_root) {
-        let mut version_bins = entries
-            .filter_map(|entry| entry.ok().map(|item| item.path().join("bin")))
-            .filter(|path| is_node_toolchain_dir(path))
-            .collect::<Vec<_>>();
-        version_bins.sort();
-        version_bins.reverse();
-
-        for path in version_bins {
-            if seen.insert(path.clone()) {
-                directories.push(path);
-            }
-        }
-    }
-
-    directories
+    canonical.ancestors().all(|ancestor| {
+        fs::metadata(ancestor)
+            .is_ok_and(|metadata| metadata.uid() == 0 && metadata.permissions().mode() & 0o022 == 0)
+    })
 }
 
 fn is_node_toolchain_dir(path: &Path) -> bool {
-    ["node", "npm", "npx"]
-        .into_iter()
-        .all(|binary| path.join(binary).is_file())
+    ["node", "npm", "npx"].into_iter().all(|binary| {
+        fs::metadata(path.join(binary)).is_ok_and(|metadata| {
+            metadata.is_file()
+                && metadata.uid() == 0
+                && metadata.permissions().mode() & 0o022 == 0
+                && metadata.permissions().mode() & 0o111 != 0
+        })
+    })
 }
 
 async fn run_and_log(command: &mut Command, log_path: &Path) -> Result<()> {
@@ -585,18 +739,30 @@ mod tests {
         let script_body = match output {
             FakePackageOutput::Deb => {
                 r#"set -euo pipefail
+reports_dir="$(dirname "$DIST_DIR_OVERRIDE")/reports"
+printf '%s\n' "${CODEX_LINUX_FEATURES_ROOT:-}" > "$reports_dir/package-feature-root.txt"
+printf '%s\n' "${CODEX_LINUX_FEATURES_CONFIG:-}" > "$reports_dir/package-feature-config-path.txt"
+printf '%s\n' "${PATH:-}" > "$reports_dir/package-build-path.txt"
 mkdir -p "${DIST_DIR_OVERRIDE}"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop_${PACKAGE_VERSION}_amd64.deb"
 "#
             }
             FakePackageOutput::Rpm => {
                 r#"set -euo pipefail
+reports_dir="$(dirname "$DIST_DIR_OVERRIDE")/reports"
+printf '%s\n' "${CODEX_LINUX_FEATURES_ROOT:-}" > "$reports_dir/package-feature-root.txt"
+printf '%s\n' "${CODEX_LINUX_FEATURES_CONFIG:-}" > "$reports_dir/package-feature-config-path.txt"
+printf '%s\n' "${PATH:-}" > "$reports_dir/package-build-path.txt"
 mkdir -p "${DIST_DIR_OVERRIDE}"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
 "#
             }
             FakePackageOutput::Pacman => {
                 r#"set -euo pipefail
+reports_dir="$(dirname "$DIST_DIR_OVERRIDE")/reports"
+printf '%s\n' "${CODEX_LINUX_FEATURES_ROOT:-}" > "$reports_dir/package-feature-root.txt"
+printf '%s\n' "${CODEX_LINUX_FEATURES_CONFIG:-}" > "$reports_dir/package-feature-config-path.txt"
+printf '%s\n' "${PATH:-}" > "$reports_dir/package-build-path.txt"
 VER="${PACKAGE_VERSION%%+*}"
 mkdir -p "${DIST_DIR_OVERRIDE}"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
@@ -717,6 +883,13 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
     #[test]
     fn builds_update_with_fake_bundle() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "CODEX_LINUX_FEATURES_ROOT",
+            "CODEX_LINUX_SETTINGS_FILE",
+            "HOME",
+            "NVM_DIR",
+            "PATH",
+        ]);
         let runtime = tokio::runtime::Runtime::new()?;
         let temp = tempdir()?;
         let bundle_root = temp.path().join("bundle");
@@ -804,6 +977,13 @@ if [ -n "${CODEX_REBUILD_REPORT_JSON:-}" ]; then
   mkdir -p "$(dirname "$CODEX_REBUILD_REPORT_JSON")"
   printf '{"appDir":"%s"}\n' "${CODEX_INSTALL_DIR}" > "${CODEX_REBUILD_REPORT_JSON}"
 fi
+reports_dir="$(dirname "$CODEX_PATCH_REPORT_JSON")"
+printf '%s\n' "${CODEX_LINUX_FEATURES_ROOT:-}" > "$reports_dir/feature-root.txt"
+printf '%s\n' "${CODEX_LINUX_FEATURES_CONFIG:-}" > "$reports_dir/feature-config-path.txt"
+cp "${CODEX_LINUX_FEATURES_CONFIG}" "$reports_dir/feature-config.json"
+printf '%s\n' "${PATH:-}" > "$reports_dir/build-path.txt"
+printf '%s\n' "${HOME:-}" > "$reports_dir/build-home.txt"
+printf '%s\n' "${NVM_DIR:-}" > "$reports_dir/build-nvm-dir.txt"
 "#,
             )?,
         )?;
@@ -875,6 +1055,35 @@ fi
         let dmg_path = temp.path().join("Codex.dmg");
         fs::write(&dmg_path, b"dmg")?;
 
+        let malicious_feature_root = temp.path().join("malicious-features");
+        fs::create_dir_all(&malicious_feature_root)?;
+        let settings_file = temp.path().join("settings/settings.json");
+        fs::create_dir_all(settings_file.parent().unwrap())?;
+        fs::write(
+            settings_file.parent().unwrap().join("linux-features.json"),
+            b"{\"enabled\":[\"example-feature\"],\"settings\":{\"example-feature\":{\"mode\":\"safe\"},\"disabled-feature\":{\"ignored\":true}}}\n",
+        )?;
+        let poisoned_bin = temp.path().join("poisoned-bin");
+        let nvm_bin = temp.path().join("nvm/versions/node/current/bin");
+        let hijacked_home = temp.path().join("hijacked-home");
+        let cargo_bin = hijacked_home.join(".cargo/bin");
+        fs::create_dir_all(&poisoned_bin)?;
+        fs::create_dir_all(&nvm_bin)?;
+        fs::create_dir_all(&cargo_bin)?;
+        for binary in ["node", "npm", "npx"] {
+            fs::write(nvm_bin.join(binary), b"untrusted")?;
+        }
+        fs::write(cargo_bin.join("cargo"), b"untrusted")?;
+
+        let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut inherited_entries = vec![poisoned_bin.clone()];
+        inherited_entries.extend(std::env::split_paths(&inherited_path));
+        std::env::set_var("PATH", std::env::join_paths(inherited_entries)?);
+        std::env::set_var("HOME", &hijacked_home);
+        std::env::set_var("NVM_DIR", temp.path().join("nvm"));
+        std::env::set_var("CODEX_LINUX_FEATURES_ROOT", &malicious_feature_root);
+        std::env::set_var("CODEX_LINUX_SETTINGS_FILE", &settings_file);
+
         let mut state = PersistedState::new(true);
         let artifacts = runtime.block_on(build_update(
             &config,
@@ -927,6 +1136,58 @@ fi
             .workspace_dir
             .join("reports/rebuild-report.json")
             .exists());
+        let reports_dir = artifacts.workspace_dir.join("reports");
+        let expected_feature_root = artifacts.workspace_dir.join("builder/linux-features");
+        let expected_feature_config = artifacts
+            .workspace_dir
+            .join("build-inputs/linux-features.json");
+        assert_eq!(
+            fs::read_to_string(reports_dir.join("feature-root.txt"))?.trim(),
+            expected_feature_root.to_string_lossy()
+        );
+        assert_eq!(
+            fs::read_to_string(reports_dir.join("feature-config-path.txt"))?.trim(),
+            expected_feature_config.to_string_lossy()
+        );
+        assert_eq!(
+            fs::read_to_string(reports_dir.join("package-feature-root.txt"))?.trim(),
+            expected_feature_root.to_string_lossy()
+        );
+        assert_eq!(
+            fs::read_to_string(reports_dir.join("package-feature-config-path.txt"))?.trim(),
+            expected_feature_config.to_string_lossy()
+        );
+        let feature_config: serde_json::Value =
+            serde_json::from_slice(&fs::read(reports_dir.join("feature-config.json"))?)?;
+        assert_eq!(
+            feature_config,
+            serde_json::json!({
+                "enabled":["example-feature"],
+                "settings":{"example-feature":{"mode":"safe"}}
+            })
+        );
+
+        let build_path = std::env::split_paths(&OsString::from(
+            fs::read_to_string(reports_dir.join("build-path.txt"))?.trim(),
+        ))
+        .collect::<Vec<_>>();
+        assert!(!build_path.contains(&poisoned_bin));
+        assert!(!build_path.contains(&nvm_bin));
+        assert!(!build_path.contains(&cargo_bin));
+        let package_build_path = std::env::split_paths(&OsString::from(
+            fs::read_to_string(reports_dir.join("package-build-path.txt"))?.trim(),
+        ))
+        .collect::<Vec<_>>();
+        assert!(!package_build_path.contains(&poisoned_bin));
+        assert!(!package_build_path.contains(&nvm_bin));
+        assert!(!package_build_path.contains(&cargo_bin));
+        assert_eq!(
+            fs::read_to_string(reports_dir.join("build-home.txt"))?.trim(),
+            artifacts.workspace_dir.join("build-home").to_string_lossy()
+        );
+        assert!(fs::read_to_string(reports_dir.join("build-nvm-dir.txt"))?
+            .trim()
+            .is_empty());
         assert!(
             is_native_package_file(&artifacts.package_path),
             "expected a native package (.deb, .rpm, or .pkg.tar.zst), got {}",
@@ -1108,103 +1369,90 @@ fi
     }
 
     #[test]
-    fn collects_nvm_toolchain_bins_with_current_first() -> Result<()> {
-        let temp = tempdir()?;
-        let nvm_root = temp.path().join(".nvm");
-        let current_bin = nvm_root.join("versions/node/current/bin");
-        let version_bin = nvm_root.join("versions/node/v24.2.0/bin");
-
-        fs::create_dir_all(&current_bin)?;
-        fs::create_dir_all(&version_bin)?;
-        for dir in [&current_bin, &version_bin] {
-            for binary in ["node", "npm", "npx"] {
-                fs::write(dir.join(binary), b"bin")?;
-            }
-        }
-
-        let directories = collect_nvm_bin_dirs(&nvm_root);
-        assert_eq!(directories.first(), Some(&current_bin));
-        assert!(directories.contains(&version_bin));
-        Ok(())
-    }
-
-    #[test]
-    fn build_command_path_includes_system_dirs() {
-        let path = build_command_path(Path::new("/tmp/missing-codex-builder"));
+    fn build_command_path_includes_system_dirs() -> Result<()> {
+        let path = build_command_path(Path::new("/tmp/missing-codex-builder"))?;
         let directories = std::env::split_paths(&path).collect::<Vec<_>>();
 
         assert!(directories.iter().any(|dir| dir == Path::new("/usr/bin")));
         assert!(directories.iter().any(|dir| dir == Path::new("/bin")));
-    }
-
-    #[test]
-    fn build_command_path_includes_user_local_bin_from_home() -> Result<()> {
-        let _env_guard = crate::test_util::env_lock();
-        let temp = tempdir()?;
-        let user_bin = temp.path().join(".local/bin");
-        fs::create_dir_all(&user_bin)?;
-
-        let original_home = std::env::var_os("HOME");
-        std::env::set_var("HOME", temp.path());
-
-        let path = build_command_path(Path::new("/tmp/missing-codex-builder"));
-
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        } else {
-            std::env::remove_var("HOME");
-        }
-
-        let directories = std::env::split_paths(&path).collect::<Vec<_>>();
-        let user_bin_index = directories
-            .iter()
-            .position(|dir| dir == &user_bin)
-            .expect("user-local bin should be included");
-        let system_bin_index = directories
-            .iter()
-            .position(|dir| dir == Path::new("/usr/bin"))
-            .expect("system bin should be included");
-        assert!(user_bin_index < system_bin_index);
         Ok(())
     }
 
     #[test]
-    fn build_command_path_prefers_packaged_managed_node_runtime() -> Result<()> {
+    fn build_command_path_rejects_user_owned_managed_node_runtime() -> Result<()> {
         let temp = tempdir()?;
         let runtime_bin = temp.path().join("node-runtime/bin");
         fs::create_dir_all(&runtime_bin)?;
         for binary in ["node", "npm", "npx"] {
             fs::write(runtime_bin.join(binary), b"bin")?;
+            fs::set_permissions(runtime_bin.join(binary), fs::Permissions::from_mode(0o755))?;
         }
 
-        let path = build_command_path(temp.path());
+        let path = build_command_path(temp.path())?;
         let directories = std::env::split_paths(&path).collect::<Vec<_>>();
-        assert_eq!(directories.first(), Some(&runtime_bin));
+        assert!(!directories.contains(&runtime_bin));
         Ok(())
     }
 
     #[test]
-    fn build_command_path_includes_cargo_bin_from_home() -> Result<()> {
-        let _env_guard = crate::test_util::env_lock();
+    fn enabled_features_must_exist_in_the_bundled_catalog() -> Result<()> {
         let temp = tempdir()?;
-        let home_dir = temp.path().join("home");
-        let cargo_bin = home_dir.join(".cargo/bin");
+        let feature_root = temp.path().join("linux-features");
+        fs::create_dir_all(&feature_root)?;
+
+        let error = validate_enabled_feature_ids(&["external-hook".to_string()], &feature_root)
+            .expect_err("unbundled feature should be rejected");
+        assert!(error
+            .to_string()
+            .contains("must resolve to exactly one bundled manifest"));
+        Ok(())
+    }
+
+    #[test]
+    fn enabled_features_must_match_the_bundled_manifest_identity() -> Result<()> {
+        let temp = tempdir()?;
+        let feature_root = temp.path().join("linux-features");
+        let feature_dir = feature_root.join("expected-id");
+        fs::create_dir_all(&feature_dir)?;
+        fs::write(
+            feature_dir.join("feature.json"),
+            b"{\"id\":\"different-id\"}\n",
+        )?;
+
+        let error = validate_enabled_feature_ids(&["expected-id".to_string()], &feature_root)
+            .expect_err("mismatched manifest should be rejected");
+        assert!(error
+            .to_string()
+            .contains("does not match bundled manifest id"));
+        Ok(())
+    }
+
+    #[test]
+    fn automated_build_path_rejects_inherited_and_user_managed_tool_dirs() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME", "NVM_DIR", "PATH"]);
+        let temp = tempdir()?;
+        let inherited_bin = temp.path().join("inherited-bin");
+        let nvm_root = temp.path().join("nvm");
+        let nvm_bin = nvm_root.join("versions/node/current/bin");
+        let home = temp.path().join("home");
+        let cargo_bin = home.join(".cargo/bin");
+        fs::create_dir_all(&inherited_bin)?;
+        fs::create_dir_all(&nvm_bin)?;
         fs::create_dir_all(&cargo_bin)?;
-        fs::write(cargo_bin.join("cargo"), b"bin")?;
-
-        let original_home = std::env::var_os("HOME");
-        std::env::set_var("HOME", &home_dir);
-
-        let path = build_command_path(Path::new("/tmp/missing-codex-builder"));
-
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        } else {
-            std::env::remove_var("HOME");
+        for binary in ["node", "npm", "npx"] {
+            fs::write(nvm_bin.join(binary), b"untrusted")?;
         }
+        fs::write(cargo_bin.join("cargo"), b"untrusted")?;
+        std::env::set_var("PATH", std::env::join_paths([&inherited_bin])?);
+        std::env::set_var("NVM_DIR", &nvm_root);
+        std::env::set_var("HOME", &home);
 
+        let path = build_command_path(Path::new("/tmp/missing-codex-builder"))?;
         let directories = std::env::split_paths(&path).collect::<Vec<_>>();
-        assert!(directories.iter().any(|dir| dir == &cargo_bin));
+        assert!(!directories.contains(&inherited_bin));
+        assert!(!directories.contains(&nvm_bin));
+        assert!(!directories.contains(&cargo_bin));
         Ok(())
     }
 }

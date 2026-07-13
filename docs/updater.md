@@ -153,6 +153,17 @@ is refused and the working app remains unchanged until Electron exits. Failed
 promotion candidates are disposable by default; opt in to diagnostic retention
 with `CODEX_KEEP_REJECTED_CANDIDATE=1`.
 
+Automated rebuild commands run with a clean environment, a private temporary
+home/config/cache tree, and an executable search path limited to root-owned,
+non-writable system directories and a trusted packaged Node.js runtime. User
+`PATH`, nvm, Cargo home, and Linux feature source overrides are not inherited.
+The updater copies only the saved enabled feature IDs and their data-only
+settings into a private build input after verifying that every ID resolves to
+the matching manifest in the bundled feature catalog. Automatic rebuilds
+therefore fail closed when their required build tools are available only from
+user-managed toolchain directories; install those tools system-wide or use the
+documented manual update flow instead.
+
 Transactional user-local installs retain one previous-app directory for manual
 recovery. Each successful promotion replaces that retained backup with the
 version that was working immediately beforehand; older exact managed backup
