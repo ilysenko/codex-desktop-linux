@@ -608,7 +608,7 @@ fn is_native_package_file(path: &Path) -> bool {
             .any(|suffix| name.ends_with(suffix))
 }
 
-fn build_command_path(builder_bundle_root: &Path) -> Result<OsString> {
+pub(crate) fn build_command_path(builder_bundle_root: &Path) -> Result<OsString> {
     let mut entries = managed_node_bin_dirs(builder_bundle_root);
     entries.extend(system_bin_dirs());
     if entries.is_empty() {

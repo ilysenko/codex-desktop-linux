@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use std::{
     collections::HashSet,
+    ffi::OsStr,
     fs,
     io::{BufReader, Read},
     os::unix::fs::{self as unix_fs, PermissionsExt},
@@ -373,7 +374,7 @@ async fn apply_packaged(
     paths: &RuntimePaths,
     candidate_commit: Option<&str>,
 ) -> Result<()> {
-    if let Some(missing) = missing_build_dependency() {
+    if let Some(missing) = missing_build_dependency(&config.builder_bundle_root) {
         let body = format!(
             "A newer ChatGPT Desktop for Linux build is available, but '{missing}' is needed to rebuild it. Install the build tools or update the package manually."
         );
@@ -562,13 +563,24 @@ fn derive_package_version(dmg_path: &Path) -> Result<String> {
 
 /// Returns the first missing build dependency needed for a packaged rebuild, or
 /// `None` when the toolchain is present.
-fn missing_build_dependency() -> Option<&'static str> {
+fn missing_build_dependency(builder_bundle_root: &Path) -> Option<&'static str> {
+    let build_path = match builder::build_command_path(builder_bundle_root) {
+        Ok(path) => path,
+        Err(error) => {
+            warn!(?error, "could not construct trusted wrapper rebuild PATH");
+            return Some("trusted system build tools");
+        }
+    };
+    missing_build_dependency_on_path(&build_path)
+}
+
+fn missing_build_dependency_on_path(path: &OsStr) -> Option<&'static str> {
     // install.sh needs a DMG extractor (7z/7zz) and the package build runs cargo
     // for the updater; node is provided by the bundled managed runtime.
     for (tool, label) in [("cargo", "cargo"), ("7zz", "7zz")] {
-        if which(tool).is_none() {
+        if which_on_path(tool, path).is_none() {
             // 7z is an acceptable alternative to 7zz.
-            if tool == "7zz" && which("7z").is_some() {
+            if tool == "7zz" && which_on_path("7z", path).is_some() {
                 continue;
             }
             return Some(label);
@@ -577,9 +589,11 @@ fn missing_build_dependency() -> Option<&'static str> {
     None
 }
 
-fn which(tool: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
+fn which_on_path(tool: &str, path: &OsStr) -> Option<PathBuf> {
     for dir in std::env::split_paths(&path) {
+        if !dir.is_absolute() {
+            continue;
+        }
         let candidate = dir.join(tool);
         if candidate.is_file()
             && candidate
@@ -648,6 +662,43 @@ mod tests {
                 "{program} must not bypass acceptance"
             );
         }
+    }
+
+    #[test]
+    fn dependency_preflight_does_not_fall_back_to_inherited_path() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["PATH"]);
+        let root = tempdir()?;
+        let user_bin = root.path().join("user-bin");
+        fs::create_dir_all(&user_bin)?;
+        for tool in ["cargo", "7zz"] {
+            let path = user_bin.join(tool);
+            fs::write(&path, b"untrusted")?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+        }
+        std::env::set_var("PATH", std::env::join_paths([&user_bin])?);
+
+        assert_eq!(
+            missing_build_dependency_on_path(OsStr::new("/missing-trusted-bin")),
+            Some("cargo")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_preflight_checks_the_supplied_build_path() -> Result<()> {
+        let root = tempdir()?;
+        let build_bin = root.path().join("build-bin");
+        fs::create_dir_all(&build_bin)?;
+        for tool in ["cargo", "7z"] {
+            let path = build_bin.join(tool);
+            fs::write(&path, b"tool")?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+        }
+        let build_path = std::env::join_paths([&build_bin])?;
+
+        assert_eq!(missing_build_dependency_on_path(&build_path), None);
+        Ok(())
     }
 
     #[test]
