@@ -55,6 +55,7 @@ const {
   applyBrowserUseNodeReplApprovalAssets,
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
+  applyLinuxBrowserUseAttachTimeoutDiagnosticPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxExternalOpenEnvPatch,
@@ -165,6 +166,8 @@ const {
   applyLinuxAppSunsetPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
+  applyLinuxBrowserUseWebviewHostRecoveryPatch,
+  applyLinuxBrowserUseWebviewRemountStorePatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxChatSearchHydrationPatch,
   applyLinuxConfigWriteVersionConflictPatch,
@@ -178,6 +181,7 @@ const {
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
   applySubagentNicknameMetadataPatch,
+  codexLinuxWatchBrowserWebviewAttachment,
 } = require("./patches/impl/webview/index.js");
 const {
   findCodexRequestWebviewAsset,
@@ -921,6 +925,8 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-browser-use-availability",
     "linux-browser-use-non-local-navigation",
     "linux-browser-use-external-availability",
+    "linux-browser-use-webview-remount-store",
+    "linux-browser-use-webview-attach-recovery",
     "linux-chat-search-hydration",
     "linux-file-manager",
     "linux-host-child-process-environment",
@@ -939,6 +945,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-bundled-plugin-reconcile-stale-snapshot",
     "linux-bundled-plugin-copy-permissions",
     "linux-browser-use-route-liveness",
+    "linux-browser-use-attach-timeout-diagnostic",
     "linux-chrome-extension-status",
     "linux-notification-actions",
     "linux-local-app-server-feature-enablement-handler",
@@ -7301,6 +7308,262 @@ test("patches later Browser Use navigation dispatches when an earlier one is alr
     2,
   );
   assert.doesNotMatch(patched, /browser-use-non-local-sites-allowed-changed`,\{allowed:p\}/);
+});
+
+test("remounts a delayed active Browser webview exactly once and preserves its logical tab", () => {
+  const timers = [];
+  const timerApi = {
+    clearTimeout(timer) {
+      timer.cleared = true;
+    },
+    setTimeout(callback) {
+      const timer = { callback, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+  };
+  const warnings = [];
+  const errors = [];
+  const logger = {
+    error: (message, details) => errors.push({ details, message }),
+    warn: (message, details) => warnings.push({ details, message }),
+  };
+  const recoveryRef = { current: { attempt: 0, key: "conversation-1\0tab-1" } };
+  const logicalTab = {
+    browserTabId: "tab-1",
+    conversationId: "conversation-1",
+    url: "http://localhost:4173/demo",
+  };
+  let currentHost = null;
+  let hostGeneration = 0;
+  let remounts = 0;
+  const createHost = () => {
+    const host = {
+      generation: ++hostGeneration,
+      listener: null,
+      logicalTab,
+      listenForDidAttach(listener) {
+        this.listener = listener;
+        return () => {
+          if (this.listener === listener) this.listener = null;
+        };
+      },
+    };
+    currentHost = host;
+    return host;
+  };
+  const firstHost = createHost();
+
+  const inactiveCleanup = codexLinuxWatchBrowserWebviewAttachment({
+    active: false,
+    browserTabId: logicalTab.browserTabId,
+    conversationId: logicalTab.conversationId,
+    host: firstHost,
+    logger,
+    recoveryRef,
+    remount: () => false,
+    timerApi,
+  });
+  inactiveCleanup();
+  assert.equal(timers.length, 0);
+
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: logicalTab.browserTabId,
+    conversationId: logicalTab.conversationId,
+    host: firstHost,
+    logger,
+    recoveryRef,
+    remount: () => {
+      remounts += 1;
+      createHost();
+      return true;
+    },
+    timerApi,
+  });
+  timers[0].callback();
+
+  assert.equal(remounts, 1);
+  assert.equal(currentHost.generation, 2);
+  assert.equal(currentHost.logicalTab, logicalTab);
+  assert.equal(currentHost.logicalTab.url, "http://localhost:4173/demo");
+  assert.equal(recoveryRef.current.attempt, 1);
+  assert.equal(warnings.length, 1);
+
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: logicalTab.browserTabId,
+    conversationId: logicalTab.conversationId,
+    host: currentHost,
+    logger,
+    recoveryRef,
+    remount: () => {
+      remounts += 1;
+      return true;
+    },
+    timerApi,
+  });
+  currentHost.listener();
+  timers[1].callback();
+
+  assert.equal(remounts, 1);
+  assert.equal(recoveryRef.current.attempt, 2);
+  assert.equal(errors.length, 0);
+});
+
+test("fails Browser webview attachment deterministically after one remount", () => {
+  const timers = [];
+  const timerApi = {
+    clearTimeout(timer) {
+      timer.cleared = true;
+    },
+    setTimeout(callback) {
+      const timer = { callback, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+  };
+  const errors = [];
+  const logger = {
+    error: (message, details) => errors.push({ details, message }),
+    warn: () => {},
+  };
+  const recoveryRef = { current: { attempt: 0, key: "conversation-1\0tab-1" } };
+  const createHost = () => ({ listenForDidAttach: () => () => {} });
+  let remounts = 0;
+
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-1",
+    conversationId: "conversation-1",
+    host: createHost(),
+    logger,
+    recoveryRef,
+    remount: () => {
+      remounts += 1;
+      return true;
+    },
+    timerApi,
+  });
+  timers[0].callback();
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-1",
+    conversationId: "conversation-1",
+    host: createHost(),
+    logger,
+    recoveryRef,
+    remount: () => {
+      remounts += 1;
+      return true;
+    },
+    timerApi,
+  });
+  timers[1].callback();
+
+  assert.equal(remounts, 1);
+  assert.equal(recoveryRef.current.attempt, 2);
+  assert.equal(errors.length, 1);
+  assert.equal(
+    errors[0].message,
+    "IAB_LIFECYCLE Linux Browser webview attachment failed after one remount",
+  );
+  assert.deepEqual(errors[0].details, {
+    browserTabId: "tab-1",
+    conversationId: "conversation-1",
+  });
+});
+
+test("patches the Browser webview store and host lifecycle for one bounded remount", () => {
+  const storeSource =
+    "function Af(e,t){return t??e}function Ef(e,t){return`${e}\\0${t}`}var Pf=class{webviews=new Map;registrationAttempts=new WeakMap;nextHostGeneration=0;getSnapshot(e,t){return this.snapshots.get(Ef(e,t))??null}registerWebviewHost(e,t){return true}setBrowserUseActive(e,...t){let n=typeof t[0]==`boolean`?Af(e,void 0):t[0],r=typeof t[0]==`boolean`?t[0]:t[1],i=Ef(e,n);return i}disposeWebviewHost(e,t,n,r){this.webviews.delete(n)}emitChange(){for(let e of this.listeners)e()}}";
+  const hostSource =
+    "function hT({adoptionLease:e,adoptedWebContentsId:t,bounds:n,browserTabId:r,children:i,conversationId:a,hostKind:o=`right-panel`,initialUrl:s,isVisible:c,persistedTabsEnabled:l=!1,scale:u,shouldBootstrapWhenHidden:d,shouldPaint:f,webviewRef:p,windowZoom:m}){let h=(0,vT.useRef)(null),g=(0,vT.useId)(),y=(0,vT.useRef)(Up.getMountGeneration(a,r)),x=(0,vT.useSyncExternalStore)(Up.subscribe,()=>Up.getCursorOverlayHost(a,r),()=>null);let S=c&&n!=null;return(0,vT.useLayoutEffect)(()=>{let _=Up.getWebview(a,r,s,{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l});h.current=_,Up.syncElectronWebview(_,{bounds:n,isVisible:S,mountGeneration:y.current,scale:u,shouldBootstrap:d,shouldPaint:f,windowZoom:m},p,o)},[r,a,o,s,e,t,n,S,g,l,u,f,d,p,m]),x==null||i==null?null:createPortal(i,x)}";
+
+  const patchedStore = applyPatchTwice(
+    applyLinuxBrowserUseWebviewRemountStorePatch,
+    storeSource,
+  );
+  const patchedHost = applyPatchTwice(
+    applyLinuxBrowserUseWebviewHostRecoveryPatch,
+    hostSource,
+  );
+
+  assert.match(patchedStore, /linuxRemountWebview\(e,t,n\)/);
+  assert.match(
+    patchedStore,
+    /let r=Ef\(e,t\);return this\.webviews\.get\(r\)!==n/,
+  );
+  assert.match(patchedStore, /linuxBrowserUseRemountKeys\.has\(r\)/);
+  assert.match(
+    patchedStore,
+    /r\|\|this\.linuxBrowserUseRemountKeys\.delete\(Ef\(e,n\)\)/,
+  );
+  assert.match(patchedHost, /function codexLinuxWatchBrowserWebviewAttachment/);
+  assert.match(
+    patchedHost,
+    /Up\.linuxRemountWebview\(a,r,_\)/,
+  );
+  assert.match(
+    patchedHost,
+    /Up\.getWebview\(a,r,s,\{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l\}\)/,
+  );
+  assert.match(
+    patchedHost,
+    /useSyncExternalStore\)\(Up\.subscribe,\(\)=>Up\.isBrowserUseActive\(a,r\),\(\)=>!1\)/,
+  );
+  assert.match(patchedHost, /codexLinuxBrowserUseActive,x\]\)/);
+  assert.doesNotThrow(() => new vm.Script(`${patchedStore};${patchedHost}`));
+
+  const Store = vm.runInNewContext(`${patchedStore};Pf`);
+  const store = new Store();
+  store.listeners = new Set();
+  const firstHost = { generation: 1 };
+  const secondHost = { generation: 2 };
+  store.webviews.set("conversation-1\0tab-1", firstHost);
+  assert.equal(
+    store.linuxRemountWebview("conversation-1", "tab-1", firstHost),
+    true,
+  );
+  store.webviews.set("conversation-1\0tab-1", secondHost);
+  assert.equal(
+    store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
+    false,
+  );
+  store.setBrowserUseActive("conversation-1", "tab-1", false);
+  assert.equal(
+    store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
+    true,
+  );
+});
+
+test("Browser webview recovery descriptors match the current split renderer chunks", () => {
+  const descriptors = require("./patches/core/all-linux/webview/browser-use-attach-recovery/patch.js");
+  const [storeDescriptor, hostDescriptor] = descriptors;
+
+  assert.match(
+    "app-initial~artifact-tab-content.electron~app-main~new-thread-panel-page~onboarding-page~pr~el73lghr-current.js",
+    storeDescriptor.pattern,
+  );
+  assert.match(
+    "app-initial~app-main~onboarding-page-current.js",
+    hostDescriptor.pattern,
+  );
+});
+
+test("reports the bounded Linux Browser remount in the main-process timeout", () => {
+  const source =
+    "let i=Error(`Timed out waiting for the Browser webview to attach for this browser-use page`);this.recordDebugEvent({kind:`browser-open-wait-timeout`,message:`Timed out waiting for Browser webview attach`})";
+  const patched = applyPatchTwice(
+    applyLinuxBrowserUseAttachTimeoutDiagnosticPatch,
+    source,
+  );
+
+  assert.match(
+    patched,
+    /Timed out waiting for the Browser webview to attach after one bounded Linux remount attempt/,
+  );
+  assert.match(patched, /browser-open-wait-timeout-after-linux-remount/);
 });
 
 test("hydrates local chat search results before navigating", () => {
