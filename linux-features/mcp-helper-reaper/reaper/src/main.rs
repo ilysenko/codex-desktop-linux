@@ -2,9 +2,8 @@ use anyhow::{bail, Context, Result};
 use clap::{ArgGroup, Parser};
 use codex_mcp_helper_reaper::{
     all_processes, codex_home_for_parent, discover_config_paths, escalate_orphan_helpers,
-    escalate_stale_helpers, is_codex_process, load_config_server_specs,
-    load_plugin_cache_server_specs, plan_orphan_reap, plan_reap, read_proc, same_process,
-    sleep_duration, terminate_orphan_helpers, terminate_stale_helpers, ProcInfo, ServerSpec,
+    is_codex_process, load_config_server_specs, load_plugin_cache_server_specs, plan_orphan_reap,
+    read_proc, same_process, sleep_duration, terminate_orphan_helpers, ProcInfo, ServerSpec,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -12,7 +11,7 @@ use std::time::Duration;
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "Reap stale duplicate and orphaned MCP helper generations for Codex parent processes.",
+    about = "Reap MCP helpers whose Codex owner has exited.",
     group(
         ArgGroup::new("target")
             .required(true)
@@ -20,11 +19,11 @@ use std::time::Duration;
     )
 )]
 struct Args {
-    /// Reap duplicate direct helper children under this Codex parent PID.
+    /// Load MCP configuration relative to this live Codex parent PID.
     #[arg(long, value_name = "PID")]
     codex_parent: Option<i32>,
 
-    /// Scan all visible live Codex parent processes independently.
+    /// Load MCP configuration from all visible live Codex parent processes.
     #[arg(long)]
     all_codex_parents: bool,
 
@@ -113,7 +112,6 @@ fn run(args: Args) -> Result<()> {
         for parent in targets {
             let specs = load_server_specs(&parent, &args)?;
             push_specs_dedup(&mut orphan_specs, &mut seen_specs, specs.clone());
-            reap_for_parent(&args, &parent, &processes, &specs)?;
         }
 
         if args.include_orphans {
@@ -141,28 +139,6 @@ fn discover_codex_parents(processes: &BTreeMap<i32, ProcInfo>) -> Vec<ProcInfo> 
         .filter(|process| is_codex_process(process))
         .cloned()
         .collect()
-}
-
-fn reap_for_parent(
-    args: &Args,
-    parent: &ProcInfo,
-    processes: &BTreeMap<i32, ProcInfo>,
-    specs: &[ServerSpec],
-) -> Result<()> {
-    let candidates = plan_reap(parent.pid, processes, specs, args.app_dir.as_deref());
-    if candidates.is_empty() {
-        return Ok(());
-    }
-
-    terminate_stale_helpers(&candidates, processes, args.dry_run, args.quiet);
-    if args.dry_run {
-        return Ok(());
-    }
-
-    sleep_duration(Duration::from_secs(args.term_timeout));
-    let current_processes = all_processes();
-    escalate_stale_helpers(&candidates, processes, &current_processes, args.quiet);
-    Ok(())
 }
 
 fn reap_orphans(

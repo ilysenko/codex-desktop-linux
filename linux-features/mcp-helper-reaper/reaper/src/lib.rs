@@ -25,184 +25,9 @@ pub struct ServerSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReapCandidate {
-    pub stale_pid: i32,
-    pub keep_pid: i32,
-    pub signature: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OrphanReapCandidate {
     pub stale_pid: i32,
     pub signature: String,
-}
-
-pub fn plan_reap(
-    parent_pid: i32,
-    processes: &BTreeMap<i32, ProcInfo>,
-    server_specs: &[ServerSpec],
-    app_dir: Option<&Path>,
-) -> Vec<ReapCandidate> {
-    let mut groups: BTreeMap<String, Vec<&ProcInfo>> = BTreeMap::new();
-    let direct_children = processes
-        .values()
-        .filter(|process| process.ppid == parent_pid)
-        .collect::<Vec<_>>();
-    for process in &direct_children {
-        if let Some(signature) = helper_signature(process, server_specs, app_dir) {
-            groups.entry(signature).or_default().push(*process);
-        }
-    }
-
-    let mut candidates = Vec::new();
-    let mut seen_stale_pids = BTreeSet::new();
-    for (signature, members) in groups {
-        if members.len() <= 1 {
-            continue;
-        }
-        let newest_pid = members
-            .iter()
-            .max_by_key(|process| (process.start_time, process.pid))
-            .expect("non-empty duplicate group")
-            .pid;
-        for process in members {
-            if process.pid == newest_pid {
-                continue;
-            }
-            push_reap_candidate(
-                &mut candidates,
-                &mut seen_stale_pids,
-                process.pid,
-                newest_pid,
-                signature.clone(),
-            );
-        }
-    }
-
-    append_generation_reap_candidates(
-        &mut candidates,
-        &mut seen_stale_pids,
-        &direct_children,
-        app_dir,
-    );
-    candidates.sort_by(|left, right| {
-        left.signature
-            .cmp(&right.signature)
-            .then(left.stale_pid.cmp(&right.stale_pid))
-    });
-    candidates
-}
-
-fn push_reap_candidate(
-    candidates: &mut Vec<ReapCandidate>,
-    seen_stale_pids: &mut BTreeSet<i32>,
-    stale_pid: i32,
-    keep_pid: i32,
-    signature: String,
-) {
-    if !seen_stale_pids.insert(stale_pid) {
-        return;
-    }
-    candidates.push(ReapCandidate {
-        stale_pid,
-        keep_pid,
-        signature,
-    });
-}
-
-fn append_generation_reap_candidates(
-    candidates: &mut Vec<ReapCandidate>,
-    seen_stale_pids: &mut BTreeSet<i32>,
-    direct_children: &[&ProcInfo],
-    app_dir: Option<&Path>,
-) {
-    append_app_generation_reap_candidates(candidates, seen_stale_pids, direct_children, app_dir);
-    append_deleted_mcp_generation_reap_candidates(candidates, seen_stale_pids, direct_children);
-}
-
-fn append_app_generation_reap_candidates(
-    candidates: &mut Vec<ReapCandidate>,
-    seen_stale_pids: &mut BTreeSet<i32>,
-    direct_children: &[&ProcInfo],
-    app_dir: Option<&Path>,
-) {
-    let Some(app_dir) = app_dir else {
-        return;
-    };
-    let mut groups: BTreeMap<String, Vec<&ProcInfo>> = BTreeMap::new();
-    for process in direct_children {
-        if !is_helper_candidate(process) {
-            continue;
-        }
-        if let Some(signature) = app_generation_signature(process, app_dir) {
-            groups.entry(signature).or_default().push(*process);
-        }
-    }
-
-    for (signature, members) in groups {
-        if members.len() <= 1
-            || !members
-                .iter()
-                .any(|process| looks_like_app_helper(process, Some(app_dir)))
-        {
-            continue;
-        }
-        let newest_pid = members
-            .iter()
-            .max_by_key(|process| (process.start_time, process.pid))
-            .expect("non-empty app generation group")
-            .pid;
-        for process in members {
-            if process.pid == newest_pid {
-                continue;
-            }
-            push_reap_candidate(
-                candidates,
-                seen_stale_pids,
-                process.pid,
-                newest_pid,
-                signature.clone(),
-            );
-        }
-    }
-}
-
-fn append_deleted_mcp_generation_reap_candidates(
-    candidates: &mut Vec<ReapCandidate>,
-    seen_stale_pids: &mut BTreeSet<i32>,
-    direct_children: &[&ProcInfo],
-) {
-    let mut groups: BTreeMap<String, Vec<&ProcInfo>> = BTreeMap::new();
-    for process in direct_children {
-        if !is_helper_candidate(process) || !looks_like_mcp_convention(process) {
-            continue;
-        }
-        let signature = format!("deleted-generation:argv:{}", process.argv.join("\0"));
-        groups.entry(signature).or_default().push(*process);
-    }
-
-    for (signature, members) in groups {
-        if members.len() <= 1 || !members.iter().any(|process| has_deleted_path(process)) {
-            continue;
-        }
-        let newest_pid = members
-            .iter()
-            .max_by_key(|process| (process.start_time, process.pid))
-            .expect("non-empty deleted generation group")
-            .pid;
-        for process in members {
-            if process.pid == newest_pid || !has_deleted_path(process) {
-                continue;
-            }
-            push_reap_candidate(
-                candidates,
-                seen_stale_pids,
-                process.pid,
-                newest_pid,
-                signature.clone(),
-            );
-        }
-    }
 }
 
 pub fn plan_orphan_reap(
@@ -500,30 +325,6 @@ pub fn load_plugin_cache_server_specs(codex_home: &Path) -> Vec<ServerSpec> {
     specs
 }
 
-pub fn terminate_stale_helpers(
-    candidates: &[ReapCandidate],
-    processes: &BTreeMap<i32, ProcInfo>,
-    dry_run: bool,
-    quiet: bool,
-) {
-    for candidate in candidates {
-        log(
-            quiet,
-            &format!(
-                "{} stale MCP helper pid={} keeping pid={} signature={}",
-                if dry_run { "would reap" } else { "reaping" },
-                candidate.stale_pid,
-                candidate.keep_pid,
-                candidate.signature
-            ),
-        );
-        if dry_run {
-            continue;
-        }
-        signal_tree(candidate.stale_pid, libc::SIGTERM, processes);
-    }
-}
-
 pub fn terminate_orphan_helpers(
     candidates: &[OrphanReapCandidate],
     processes: &BTreeMap<i32, ProcInfo>,
@@ -544,33 +345,6 @@ pub fn terminate_orphan_helpers(
             continue;
         }
         signal_tree(candidate.stale_pid, libc::SIGTERM, processes);
-    }
-}
-
-pub fn escalate_stale_helpers(
-    candidates: &[ReapCandidate],
-    original_processes: &BTreeMap<i32, ProcInfo>,
-    current_processes: &BTreeMap<i32, ProcInfo>,
-    quiet: bool,
-) {
-    for candidate in candidates {
-        let Some(original) = original_processes.get(&candidate.stale_pid) else {
-            continue;
-        };
-        let Some(current) = current_processes.get(&candidate.stale_pid) else {
-            continue;
-        };
-        if current.ppid != original.ppid || current.start_time != original.start_time {
-            continue;
-        }
-        log(
-            quiet,
-            &format!(
-                "SIGKILL stale MCP helper pid={} signature={}",
-                candidate.stale_pid, candidate.signature
-            ),
-        );
-        signal_tree(candidate.stale_pid, libc::SIGKILL, current_processes);
     }
 }
 
@@ -687,28 +461,10 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     result
 }
 
-fn helper_signature(
-    process: &ProcInfo,
-    server_specs: &[ServerSpec],
-    app_dir: Option<&Path>,
-) -> Option<String> {
-    helper_signature_with_options(process, server_specs, app_dir, true, false)
-}
-
 fn helper_signature_for_orphan(
     process: &ProcInfo,
     server_specs: &[ServerSpec],
     app_dir: Option<&Path>,
-) -> Option<String> {
-    helper_signature_with_options(process, server_specs, app_dir, false, true)
-}
-
-fn helper_signature_with_options(
-    process: &ProcInfo,
-    server_specs: &[ServerSpec],
-    app_dir: Option<&Path>,
-    allow_mcp_convention: bool,
-    app_helper_requires_mcp_convention: bool,
 ) -> Option<String> {
     if process.argv.is_empty()
         || is_shell_command(process)
@@ -736,10 +492,7 @@ fn helper_signature_with_options(
         return None;
     }
     let mcp_convention = looks_like_mcp_convention(process);
-    if (looks_like_app_helper(process, app_dir)
-        && (!app_helper_requires_mcp_convention || mcp_convention))
-        || (allow_mcp_convention && mcp_convention)
-    {
+    if looks_like_app_helper(process, app_dir) && mcp_convention {
         return Some(format!("argv:{}", process.argv.join("\0")));
     }
     None
@@ -1002,107 +755,6 @@ fn looks_like_app_helper(process: &ProcInfo, app_dir: Option<&Path>) -> bool {
         })
 }
 
-fn is_helper_candidate(process: &ProcInfo) -> bool {
-    !process.argv.is_empty()
-        && !is_shell_command(process)
-        && !is_self(process)
-        && !is_codex_non_owner_process(process)
-}
-
-fn app_generation_signature(process: &ProcInfo, app_dir: &Path) -> Option<String> {
-    process
-        .argv
-        .iter()
-        .take(4)
-        .enumerate()
-        .find_map(|(index, arg)| {
-            let relative = app_relative_path_for_arg(process, arg, app_dir)?;
-            let mut parts = vec![relative.display().to_string()];
-            parts.extend(process.argv.iter().skip(index + 1).cloned());
-            Some(format!("app-generation:{}", parts.join("\0")))
-        })
-}
-
-fn app_relative_path_for_arg(process: &ProcInfo, arg: &str, app_dir: &Path) -> Option<PathBuf> {
-    let arg_path = Path::new(arg);
-    let path = if arg_path.is_absolute() {
-        arg_path.to_path_buf()
-    } else {
-        process.cwd.join(arg_path)
-    };
-    app_relative_path(&strip_deleted_path_suffix(&path), app_dir)
-}
-
-fn app_relative_path(path: &Path, app_dir: &Path) -> Option<PathBuf> {
-    let app_dir = normalize_path(app_dir);
-    let path = normalize_path(path);
-    if let Ok(relative) = path.strip_prefix(&app_dir) {
-        if !relative.as_os_str().is_empty() {
-            return Some(relative.to_path_buf());
-        }
-    }
-
-    let marker = app_dir_stable_marker(&app_dir)?;
-    relative_after_marker(&path, &marker)
-}
-
-fn app_dir_stable_marker(app_dir: &Path) -> Option<Vec<String>> {
-    let marker = Path::new("share").join("codex-desktop").join("app");
-    if app_dir.ends_with(&marker) {
-        return Some(vec![
-            "share".to_string(),
-            "codex-desktop".to_string(),
-            "app".to_string(),
-        ]);
-    }
-    None
-}
-
-fn relative_after_marker(path: &Path, marker: &[String]) -> Option<PathBuf> {
-    let components = normal_components(path);
-    let marker_start = components
-        .windows(marker.len())
-        .position(|item| item == marker)?;
-    let relative_components = &components[marker_start + marker.len()..];
-    if relative_components.is_empty() {
-        return None;
-    }
-    let mut relative = PathBuf::new();
-    for component in relative_components {
-        relative.push(component);
-    }
-    Some(relative)
-}
-
-fn normal_components(path: &Path) -> Vec<String> {
-    path.components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn has_deleted_path(process: &ProcInfo) -> bool {
-    path_has_deleted_suffix(&process.cwd)
-        || process
-            .argv
-            .iter()
-            .take(4)
-            .any(|arg| path_has_deleted_suffix(Path::new(arg)))
-}
-
-fn path_has_deleted_suffix(path: &Path) -> bool {
-    path.to_string_lossy().ends_with(" (deleted)")
-}
-
-fn strip_deleted_path_suffix(path: &Path) -> PathBuf {
-    let path = path.to_string_lossy();
-    path.strip_suffix(" (deleted)")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(path.as_ref()))
-}
-
 fn normalize_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -1146,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_newest_duplicate_under_same_codex_parent() {
+    fn keeps_duplicate_helpers_under_same_live_codex_parent() {
         let mut processes = BTreeMap::new();
         processes.insert(100, proc(100, 1, 10, &["codex", "resume"], "/repo"));
         processes.insert(
@@ -1157,28 +809,18 @@ mod tests {
             102,
             proc(102, 100, 30, &["/tmp/example-helper", "serve"], "/repo"),
         );
-        let specs = vec![ServerSpec {
+        let specs = [ServerSpec {
             name: "code-index".to_string(),
             command: "/tmp/example-helper".to_string(),
             args: vec!["serve".to_string()],
             cwd: None,
         }];
 
-        let candidates = plan_reap(100, &processes, &specs, None);
-
-        assert_eq!(
-            candidates,
-            vec![ReapCandidate {
-                stale_pid: 101,
-                keep_pid: 102,
-                signature: "config:code-index\u{0}/tmp/example-helper\u{0}serve\u{0}/repo"
-                    .to_string(),
-            }]
-        );
+        assert!(plan_orphan_reap(&processes, &specs, None).is_empty());
     }
 
     #[test]
-    fn reaps_deleted_mcp_generation_when_current_helper_matches_config() {
+    fn keeps_deleted_mcp_generation_under_live_codex_parent() {
         let mut processes = BTreeMap::new();
         let plugin_dir = "/home/me/.codex/plugins/cache/example/record-and-replay/1.0.0";
         processes.insert(100, proc(100, 1, 10, &["codex", "resume"], "/repo"));
@@ -1202,45 +844,53 @@ mod tests {
                 plugin_dir,
             ),
         );
-        let specs = vec![ServerSpec {
+        let specs = [ServerSpec {
             name: "event-stream".to_string(),
             command: "./bin/helper".to_string(),
             args: vec!["event-stream".to_string(), "mcp".to_string()],
             cwd: Some(PathBuf::from(plugin_dir)),
         }];
 
-        assert_eq!(
-            plan_reap(100, &processes, &specs, None),
-            vec![ReapCandidate {
-                stale_pid: 101,
-                keep_pid: 102,
-                signature: "deleted-generation:argv:./bin/helper\u{0}event-stream\u{0}mcp"
-                    .to_string(),
-            }]
-        );
+        assert!(plan_orphan_reap(&processes, &specs, None).is_empty());
     }
 
     #[test]
-    fn reaps_replaced_app_generation_helper_under_same_codex_parent() {
+    fn keeps_replaced_app_generation_helper_under_live_codex_parent() {
         let mut processes = BTreeMap::new();
         let old_app =
             "/home/linuxbrew/.linuxbrew/Caskroom/codex-desktop/old/share/codex-desktop/app";
         let new_app =
             "/home/linuxbrew/.linuxbrew/Caskroom/codex-desktop/new/share/codex-desktop/app";
-        let old_node_repl = format!("{old_app}/resources/node_repl.codex-linux-original");
-        let new_node_repl = format!("{new_app}/resources/node_repl.codex-linux-original");
+        let old_helper = format!("{old_app}/resources/mcp-helper");
+        let new_helper = format!("{new_app}/resources/mcp-helper");
         processes.insert(100, proc(100, 1, 10, &["codex", "resume"], "/repo"));
-        processes.insert(101, proc(101, 100, 20, &[old_node_repl.as_str()], "/repo"));
-        processes.insert(102, proc(102, 100, 30, &[new_node_repl.as_str()], "/repo"));
+        processes.insert(101, proc(101, 100, 20, &[old_helper.as_str()], "/repo"));
+        processes.insert(102, proc(102, 100, 30, &[new_helper.as_str()], "/repo"));
 
-        assert_eq!(
-            plan_reap(100, &processes, &[], Some(Path::new(new_app))),
-            vec![ReapCandidate {
-                stale_pid: 101,
-                keep_pid: 102,
-                signature: "app-generation:resources/node_repl.codex-linux-original".to_string(),
-            }]
+        assert!(plan_orphan_reap(&processes, &[], Some(Path::new(new_app))).is_empty());
+    }
+
+    #[test]
+    fn keeps_browser_use_node_repl_helpers_under_live_codex_parent() {
+        let mut processes = BTreeMap::new();
+        let app_dir = "/opt/codex-desktop";
+        let wrapped_node_repl = format!("{app_dir}/resources/node_repl.codex-linux-original");
+        let direct_node_repl = format!("{app_dir}/resources/node_repl");
+        processes.insert(100, proc(100, 1, 10, &["codex", "app-server"], "/repo"));
+        processes.insert(
+            101,
+            proc(101, 100, 20, &[wrapped_node_repl.as_str()], "/repo"),
         );
+        processes.insert(
+            102,
+            proc(102, 100, 30, &[wrapped_node_repl.as_str()], "/repo"),
+        );
+        processes.insert(
+            103,
+            proc(103, 100, 40, &[direct_node_repl.as_str()], "/repo"),
+        );
+
+        assert!(plan_orphan_reap(&processes, &[], Some(Path::new(app_dir))).is_empty());
     }
 
     #[test]
@@ -1256,15 +906,14 @@ mod tests {
             201,
             proc(201, 200, 21, &["/tmp/example-helper", "serve"], "/repo-b"),
         );
-        let specs = vec![ServerSpec {
+        let specs = [ServerSpec {
             name: "code-index".to_string(),
             command: "/tmp/example-helper".to_string(),
             args: vec!["serve".to_string()],
             cwd: None,
         }];
 
-        assert!(plan_reap(100, &processes, &specs, None).is_empty());
-        assert!(plan_reap(200, &processes, &specs, None).is_empty());
+        assert!(plan_orphan_reap(&processes, &specs, None).is_empty());
     }
 
     #[test]
@@ -1280,7 +929,7 @@ mod tests {
             proc(102, 100, 30, &["bash", "-c", "echo mcp"], "/repo"),
         );
 
-        assert!(plan_reap(100, &processes, &[], None).is_empty());
+        assert!(plan_orphan_reap(&processes, &[], None).is_empty());
     }
 
     #[test]
@@ -1312,7 +961,7 @@ mod tests {
             ),
         );
 
-        assert!(plan_reap(100, &processes, &[], None).is_empty());
+        assert!(plan_orphan_reap(&processes, &[], None).is_empty());
     }
 
     #[test]
@@ -1355,7 +1004,7 @@ mod tests {
                 "/repo",
             ),
         );
-        let specs = vec![ServerSpec {
+        let specs = [ServerSpec {
             name: "language-tools".to_string(),
             command: "uvx".to_string(),
             args: vec![
@@ -1367,16 +1016,10 @@ mod tests {
             cwd: None,
         }];
 
-        assert_eq!(
-            plan_reap(100, &processes, &specs, None),
-            vec![ReapCandidate {
-                stale_pid: 101,
-                keep_pid: 102,
-                signature:
-                    "config:language-tools\u{0}uvx\u{0}--from\u{0}repo\u{0}server\u{0}mcp\u{0}/repo"
-                        .to_string(),
-            }]
-        );
+        assert!(configured_server_matches(
+            processes.get(&101).unwrap(),
+            &specs[0]
+        ));
     }
 
     #[test]
@@ -1391,22 +1034,17 @@ mod tests {
             102,
             proc(102, 100, 30, &["python3", "/repo/bin/server.py"], "/repo"),
         );
-        let specs = vec![ServerSpec {
+        let specs = [ServerSpec {
             name: "script-server".to_string(),
             command: "/repo/bin/server.py".to_string(),
             args: Vec::new(),
             cwd: None,
         }];
 
-        assert_eq!(
-            plan_reap(100, &processes, &specs, None),
-            vec![ReapCandidate {
-                stale_pid: 101,
-                keep_pid: 102,
-                signature: "config:script-server\u{0}/repo/bin/server.py\u{0}\u{0}/repo"
-                    .to_string(),
-            }]
-        );
+        assert!(configured_server_matches(
+            processes.get(&101).unwrap(),
+            &specs[0]
+        ));
     }
 
     #[test]
@@ -1433,21 +1071,17 @@ mod tests {
                 "/repo",
             ),
         );
-        let specs = vec![ServerSpec {
+        let specs = [ServerSpec {
             name: "wrapped-server".to_string(),
             command: "/repo/bin/server".to_string(),
             args: Vec::new(),
             cwd: None,
         }];
 
-        assert_eq!(
-            plan_reap(100, &processes, &specs, None),
-            vec![ReapCandidate {
-                stale_pid: 101,
-                keep_pid: 102,
-                signature: "config:wrapped-server\u{0}/repo/bin/server\u{0}\u{0}/repo".to_string(),
-            }]
-        );
+        assert!(configured_server_matches(
+            processes.get(&101).unwrap(),
+            &specs[0]
+        ));
     }
 
     #[test]
@@ -1471,7 +1105,9 @@ mod tests {
             },
         ];
 
-        assert!(plan_reap(100, &processes, &specs, None).is_empty());
+        let repo_a = helper_signature_for_orphan(processes.get(&101).unwrap(), &specs, None);
+        let repo_b = helper_signature_for_orphan(processes.get(&102).unwrap(), &specs, None);
+        assert_ne!(repo_a, repo_b);
     }
 
     #[test]
@@ -1549,7 +1185,7 @@ mod tests {
             ),
         );
 
-        assert!(plan_reap(100, &processes, &[], None).is_empty());
+        assert!(plan_orphan_reap(&processes, &[], None).is_empty());
     }
 
     #[test]
