@@ -5197,6 +5197,7 @@ test("writes only missing Linux settings fallback components after required chec
       "utf8",
     );
     assert.match(settingsPageSource, /main-surface flex h-full min-h-0 flex-col/);
+    assert.match(settingsPageSource, /draggable flex items-center px-panel electron:h-toolbar extension:h-toolbar-sm/);
     assert.match(settingsPageSource, /scrollbar-stable flex-1 overflow-y-auto p-panel/);
     assert.match(settingsPageSource, /mx-auto flex w-full max-w-3xl flex-col/);
     assert.match(settingsPageSource, /heading-lg[^"\n]*font-normal/);
@@ -5283,6 +5284,7 @@ test("generated Linux settings controls match the current native settings visual
     assert.match(groupSource, /after:bg-token-border/);
 
     const pageSource = fs.readFileSync(path.join(assetsDir, "linux-settings-page-linux.js"), "utf8");
+    assert.match(pageSource, /draggable flex items-center px-panel electron:h-toolbar extension:h-toolbar-sm/);
     assert.match(pageSource, /max-w-3xl/);
     assert.match(pageSource, /heading-lg[^"\n]*font-normal/);
     assert.match(pageSource, /text-base text-token-text-secondary/);
