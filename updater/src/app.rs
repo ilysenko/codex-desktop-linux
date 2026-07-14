@@ -395,6 +395,22 @@ fn update_check_should_retry(status: &UpdateStatus) -> bool {
     )
 }
 
+fn prepare_upstream_check(state: &mut PersistedState, paths: &RuntimePaths) -> Result<bool> {
+    let retrying_update = update_check_should_retry(&state.status);
+
+    // Keep a retryable status durable until the metadata request completes. If
+    // the updater exits while that request is in flight, the next run must not
+    // mistake the interrupted rebuild for an ordinary unchanged-upstream check.
+    if !retrying_update {
+        state.status = UpdateStatus::CheckingUpstream;
+    }
+    state.last_check_at = Some(Utc::now());
+    state.error_message = None;
+    persist_state(paths, state)?;
+
+    Ok(retrying_update)
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum PendingInstallRecovery {
     NoChange,
@@ -959,8 +975,6 @@ async fn run_check_cycle(
         );
     }
 
-    let retrying_update = update_check_should_retry(&state.status);
-
     let Some(_check_lock) = try_acquire_check_lock(paths)? else {
         return Ok(());
     };
@@ -968,10 +982,7 @@ async fn run_check_cycle(
     let client = upstream::http_client()?;
 
     sync_runtime_state(config, state);
-    state.status = UpdateStatus::CheckingUpstream;
-    state.last_check_at = Some(Utc::now());
-    state.error_message = None;
-    persist_state(paths, state)?;
+    let retrying_update = prepare_upstream_check(state, paths)?;
 
     let result: Result<()> = async {
         let metadata = upstream::fetch_remote_metadata(&client, &config.dmg_url).await?;
@@ -2047,6 +2058,41 @@ mod tests {
         ] {
             assert!(!update_check_should_retry(&status), "status: {status:?}");
         }
+    }
+
+    #[test]
+    fn upstream_check_setup_preserves_persisted_retry_intent() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        for status in [
+            UpdateStatus::Failed,
+            UpdateStatus::DownloadingDmg,
+            UpdateStatus::UpdateDetected,
+            UpdateStatus::PreparingWorkspace,
+            UpdateStatus::PatchingApp,
+            UpdateStatus::BuildingPackage,
+        ] {
+            let mut state = PersistedState::new(true);
+            state.status = status.clone();
+            state.error_message = Some("previous failure".to_string());
+
+            assert!(prepare_upstream_check(&mut state, &paths)?);
+            assert_eq!(state.status, status);
+            assert!(state.last_check_at.is_some());
+            assert_eq!(state.error_message, None);
+
+            let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
+            assert_eq!(persisted.status, status);
+        }
+
+        let mut fresh_state = PersistedState::new(true);
+        assert!(!prepare_upstream_check(&mut fresh_state, &paths)?);
+        assert_eq!(fresh_state.status, UpdateStatus::CheckingUpstream);
+        let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(persisted.status, UpdateStatus::CheckingUpstream);
+        Ok(())
     }
 
     #[test]
