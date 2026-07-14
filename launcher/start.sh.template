@@ -42,6 +42,11 @@ codex_run_host_command() (
 # Capture before package-specific launcher patches add application runtime paths.
 codex_capture_original_ld_library_path
 
+# Codex-managed runtimes are later consumed by trust checks that reject
+# group/other-writable files and parents. Keep this launcher and its children
+# from reproducing modes caused by an inherited cooperative umask such as 0002.
+umask 022
+
 resolve_script_dir() {
     local source="${BASH_SOURCE[0]}"
     local dir
@@ -398,6 +403,41 @@ make_tree_owner_trusted() {
         return 1
     fi
     chmod -R u+rwX,go-w "$path" 2>/dev/null || return 1
+}
+
+make_managed_codex_cli_owner_trusted() {
+    local codex_home="$1"
+    local cli_path="$2"
+    local packages_root="$codex_home/packages"
+    local standalone_root="$packages_root/standalone"
+    local canonical_root
+    local canonical_cli
+    local current
+
+    [ -n "$codex_home" ] && [ -n "$cli_path" ] || return 0
+    [ -d "$standalone_root" ] || return 0
+    [ ! -L "$packages_root" ] && [ ! -L "$standalone_root" ] || return 0
+
+    canonical_root="$(readlink -f -- "$standalone_root" 2>/dev/null || true)"
+    canonical_cli="$(readlink -f -- "$cli_path" 2>/dev/null || true)"
+    [ -n "$canonical_root" ] && [ -n "$canonical_cli" ] || return 0
+    case "$canonical_cli" in
+        "$canonical_root"/*) ;;
+        *) return 0 ;;
+    esac
+    [ -f "$canonical_cli" ] || return 1
+
+    make_path_owner_trusted "$codex_home" "$packages_root" "$standalone_root" || return 1
+    current="$(dirname "$canonical_cli")"
+    while [ "$current" != "$canonical_root" ]; do
+        case "$current" in
+            "$canonical_root"/*) ;;
+            *) return 1 ;;
+        esac
+        make_path_owner_trusted "$current" || return 1
+        current="$(dirname "$current")"
+    done
+    make_path_owner_trusted "$canonical_root" "$canonical_cli"
 }
 
 path_has_unsafe_write() {
@@ -1037,6 +1077,11 @@ sync_chrome_bundled_plugin_cache() {
         "$codex_home/plugins/cache/openai-bundled" \
         "$cache_root"; then
         echo "Chrome plugin cache ancestors could not be hardened; skipping cache and native-host manifest sync."
+        return 0
+    fi
+
+    if ! make_managed_codex_cli_owner_trusted "$codex_home" "${CODEX_CLI_PATH:-}"; then
+        echo "Managed Codex CLI path could not be hardened; skipping Chrome native-host manifest sync."
         return 0
     fi
 

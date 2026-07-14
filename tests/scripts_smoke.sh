@@ -6089,6 +6089,8 @@ EOF
     assert_contains "$REPO_DIR/launcher/start.sh.template" "make_tree_owner_writable"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "make_path_owner_trusted"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "make_tree_owner_trusted"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "make_managed_codex_cli_owner_trusted"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "umask 022"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "clear_bundled_marketplace_tmp_cache"
     assert_not_contains "$REPO_DIR/launcher/start.sh.template" "monitor_bundled_marketplace_tmp_permissions"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-id.json"
@@ -6116,6 +6118,7 @@ EOF
     assert_not_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "enable --now codex-update-manager.service"
     assert_not_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "restart codex-update-manager.service"
     assert_contains "$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh" "codex_start_enabled_user_service"
+    assert_contains "$REPO_DIR/packaging/linux/codex-update-manager.service" "UMask=0022"
     assert_contains "$REPO_DIR/packaging/linux/codex-update-manager.postinst" "codex_start_enabled_user_service"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.install" "codex_start_enabled_user_service"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "codex_start_enabled_user_service"
@@ -6210,6 +6213,7 @@ assertCacheLinks({
 const chromeBody = functionBody("sync_chrome_bundled_plugin_cache", "sync_computer_use_bundled_plugin_cache");
 for (const required of [
   'make_path_owner_trusted',
+  'make_managed_codex_cli_owner_trusted "$codex_home" "${CODEX_CLI_PATH:-}"',
   'path_has_unsafe_write',
   'tree_has_unsafe_write "$cache_plugin"',
   'cache_was_untrusted=1',
@@ -6245,6 +6249,7 @@ for name in (
     "make_tree_owner_writable",
     "make_path_owner_trusted",
     "make_tree_owner_trusted",
+    "make_managed_codex_cli_owner_trusted",
     "path_has_unsafe_write",
     "tree_has_unsafe_write",
     "remove_tree_if_exists",
@@ -6278,6 +6283,8 @@ CODEX_HOME="$HOME/.codex"
 source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/chrome"
 cache_root="$CODEX_HOME/plugins/cache/openai-bundled/chrome"
 cache_plugin="$cache_root/26.test"
+standalone_release="$CODEX_HOME/packages/standalone/releases/0.test-x86_64-unknown-linux-musl"
+CODEX_CLI_PATH="$CODEX_HOME/packages/standalone/current/codex"
 
 chrome_extension_host_arch() { printf '%s\n' x64; }
 bundled_plugin_version() { printf '%s\n' 26.test; }
@@ -6290,13 +6297,18 @@ mkdir -p \
   "$source_plugin/scripts/node_modules" \
   "$cache_plugin/.codex-plugin" \
   "$cache_plugin/extension-host/linux/x64" \
-  "$cache_plugin/scripts/node_modules"
+  "$cache_plugin/scripts/node_modules" \
+  "$standalone_release/bin"
 printf '%s\n' '{"name":"chrome","version":"26.test"}' > "$source_plugin/.codex-plugin/plugin.json"
 printf '%s\n' trusted-host > "$source_plugin/extension-host/linux/x64/extension-host"
 printf '%s\n' trusted-client > "$source_plugin/scripts/browser-client.mjs"
 printf '%s\n' trusted-manifest > "$source_plugin/scripts/installManifest.mjs"
 printf '%s\n' trusted-module > "$source_plugin/scripts/node_modules/classic-level.mjs"
 chmod +x "$source_plugin/extension-host/linux/x64/extension-host"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$standalone_release/bin/codex"
+chmod 775 "$standalone_release/bin/codex"
+ln -s bin/codex "$standalone_release/codex"
+ln -s "$standalone_release" "$CODEX_HOME/packages/standalone/current"
 cp -R "$source_plugin/." "$cache_plugin/"
 printf '%s\n' tampered-module > "$cache_plugin/scripts/node_modules/classic-level.mjs"
 
@@ -6304,7 +6316,10 @@ printf '%s\n' tampered-module > "$cache_plugin/scripts/node_modules/classic-leve
 # files used by the old partial comparison still match, while an imported
 # module that was not compared has been changed.
 chmod 775 "$CODEX_HOME" "$CODEX_HOME/plugins" "$CODEX_HOME/plugins/cache" \
-  "$CODEX_HOME/plugins/cache/openai-bundled" "$cache_root" "$cache_plugin"
+  "$CODEX_HOME/plugins/cache/openai-bundled" "$cache_root" "$cache_plugin" \
+  "$CODEX_HOME/packages" "$CODEX_HOME/packages/standalone" \
+  "$CODEX_HOME/packages/standalone/releases" "$standalone_release" \
+  "$standalone_release/bin"
 chmod 664 "$cache_plugin/scripts/node_modules/classic-level.mjs"
 chmod -R go-w "$SCRIPT_DIR"
 
@@ -6324,6 +6339,29 @@ for trusted_path in \
 done
 if find "$cache_plugin" ! -type l -perm /022 -print -quit | grep -q .; then
   echo "Chrome plugin cache remained group/world writable" >&2
+  exit 1
+fi
+for trusted_path in \
+  "$CODEX_HOME/packages" \
+  "$CODEX_HOME/packages/standalone" \
+  "$CODEX_HOME/packages/standalone/releases" \
+  "$standalone_release" \
+  "$standalone_release/bin" \
+  "$standalone_release/bin/codex"; do
+  if find "$trusted_path" -maxdepth 0 ! -type l -perm /022 -print -quit | grep -q .; then
+    echo "Managed Codex CLI path remained group/world writable: $trusted_path" >&2
+    exit 1
+  fi
+done
+
+# A user-selected CLI outside Codex's standalone package root is not owned by
+# this launcher and must not be chmodded as part of Chrome cache repair.
+external_cli="$root/external-codex"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$external_cli"
+chmod 775 "$external_cli"
+make_managed_codex_cli_owner_trusted "$CODEX_HOME" "$external_cli"
+if ! find "$external_cli" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+  echo "External Codex CLI permissions were unexpectedly changed: $external_cli" >&2
   exit 1
 fi
 test -L "$cache_root/latest"
