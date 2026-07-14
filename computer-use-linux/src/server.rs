@@ -1906,8 +1906,9 @@ impl ComputerUseLinux {
     }
 
     // The Wayland remote-desktop portal is now a *fallback* for input: when a
-    // working `ydotoold` socket is present we prefer ydotool, because it injects
-    // input without a permission prompt. GNOME refuses to persist remote-desktop
+    // compatible ydotool CLI and working `ydotoold` socket are present we prefer
+    // ydotool, because it injects input without a permission prompt. GNOME
+    // refuses to persist remote-desktop
     // grants (`org.freedesktop.portal.Error: Remote desktop sessions cannot
     // persist`), so the portal would otherwise re-prompt on every new session.
     // `COMPUTER_USE_LINUX_FORCE_YDOTOOL_*=1` always uses ydotool;
@@ -1927,7 +1928,10 @@ impl ComputerUseLinux {
         ]) {
             return self.is_wayland_session();
         }
-        self.is_wayland_session() && ydotool_socket().is_none()
+        should_prefer_portal_backend_by_default(
+            self.is_wayland_session(),
+            ydotool_backend_available(),
+        )
     }
 
     fn should_prefer_portal_keyboard_backend(&self) -> bool {
@@ -1943,7 +1947,11 @@ impl ComputerUseLinux {
         ]) {
             return self.is_wayland_session() && !self.is_kde_wayland_session();
         }
-        self.is_wayland_session() && !self.is_kde_wayland_session() && ydotool_socket().is_none()
+        !self.is_kde_wayland_session()
+            && should_prefer_portal_backend_by_default(
+                self.is_wayland_session(),
+                ydotool_backend_available(),
+            )
     }
 
     fn should_prefer_kde_clipboard_text_backend(&self) -> bool {
@@ -3554,6 +3562,28 @@ fn ydotool_socket() -> Option<String> {
         .map(|path| path.display().to_string())
 }
 
+fn ydotool_backend_available() -> bool {
+    ydotool_backend_available_from(
+        ydotool_socket_connectable(),
+        ydotool::ensure_supported().is_ok(),
+    )
+}
+
+fn ydotool_socket_connectable() -> bool {
+    if let Some(socket) = explicit_ydotool_socket() {
+        return ydotool_socket_connects(&PathBuf::from(socket));
+    }
+    connectable_ydotool_socket_from(fallback_ydotool_socket_candidates()).is_some()
+}
+
+fn ydotool_backend_available_from(socket_available: bool, cli_supported: bool) -> bool {
+    socket_available && cli_supported
+}
+
+fn should_prefer_portal_backend_by_default(is_wayland: bool, ydotool_available: bool) -> bool {
+    is_wayland && !ydotool_available
+}
+
 fn explicit_ydotool_socket() -> Option<String> {
     if let Ok(socket) = env::var("YDOTOOL_SOCKET") {
         let socket = socket.trim();
@@ -4528,6 +4558,25 @@ mod tests {
                 "930".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn legacy_ydotool_socket_does_not_suppress_portal_fallback() {
+        let legacy_ydotool_available = ydotool_backend_available_from(true, false);
+        let current_ydotool_available = ydotool_backend_available_from(true, true);
+
+        assert!(should_prefer_portal_backend_by_default(
+            true,
+            legacy_ydotool_available
+        ));
+        assert!(!should_prefer_portal_backend_by_default(
+            true,
+            current_ydotool_available
+        ));
+        assert!(!should_prefer_portal_backend_by_default(
+            false,
+            legacy_ydotool_available
+        ));
     }
 
     #[test]
