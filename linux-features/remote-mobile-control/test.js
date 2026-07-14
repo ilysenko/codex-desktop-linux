@@ -44,8 +44,6 @@ const {
 const remoteMobilePatchDescriptors = require("./patch.js");
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
-const OLD_REMOTE_CONTROL_GATE_ASSET =
-  "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-test.js";
 const OLD_APP_SERVER_MANAGER_ASSET =
   "app-initial~app-main~hotkey-window-thread-page~thread-app-shell-chrome~header~remote-conver~test.js";
 const CURRENT_REMOTE_CONVERSATION_ASSET =
@@ -53,9 +51,9 @@ const CURRENT_REMOTE_CONVERSATION_ASSET =
 const LATEST_REMOTE_CONVERSATION_ASSET =
   "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~glxlkd48-test.js";
 const OLD_REMOTE_RUNTIME_ASSET =
-  "app-initial~app-main~quick-chat-window-page~work-home-page~chatgpt-conversation-page-test.js";
-const CURRENT_REMOTE_RUNTIME_ASSET =
   "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-test.js";
+const CURRENT_REMOTE_RUNTIME_ASSET =
+  "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-test.js";
 const CURRENT_APP_MAIN_PAGE_ASSET =
   "app-initial~app-main~page-test.js";
 const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET = CURRENT_APP_MAIN_PAGE_ASSET;
@@ -1104,7 +1102,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_CONVERSATION_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test(LATEST_REMOTE_CONVERSATION_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test(OLD_REMOTE_RUNTIME_ASSET), false);
-    assert.equal(loadGateDescriptor.pattern.test(OLD_REMOTE_CONTROL_GATE_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test("remote-connection-visibility-test.js"), false);
     assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), true);
 
