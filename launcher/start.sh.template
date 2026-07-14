@@ -1497,20 +1497,85 @@ run_cli_preflight_background() {
     ) &
 }
 
-run_cli_launch_path_helper() {
-    python3 "$SCRIPT_DIR/.codex-linux/cli-launch-path.py" "$1"
+standalone_root_from_path() {
+    local path="$1"
+    case "$path" in
+        */packages/standalone/current/*)
+            printf '%s\n' "${path%%/packages/standalone/current/*}/packages/standalone"
+            ;;
+        */packages/standalone/releases/*)
+            printf '%s\n' "${path%%/packages/standalone/releases/*}/packages/standalone"
+            ;;
+    esac
+}
+
+trusted_cli_target() {
+    local path="$1"
+    local current="$path"
+    local euid uid mode numeric_mode
+    euid="$(id -u)"
+
+    while :; do
+        read -r uid mode < <(stat -Lc '%u %a' -- "$current") || return 1
+        if [ "$uid" != "$euid" ] && [ "$uid" != "0" ]; then
+            return 1
+        fi
+        numeric_mode=$((8#$mode))
+        if (( numeric_mode & 0022 )); then
+            if [ "$current" = "$path" ] || [ "$uid" != "0" ] ||
+                (( !(numeric_mode & 01000) || !(numeric_mode & 0002) )); then
+                return 1
+            fi
+        fi
+        if [ "$current" = "$path" ]; then
+            [ -f "$current" ] && [ -x "$current" ] || return 1
+        else
+            [ -d "$current" ] && [ ! -L "$current" ] || return 1
+        fi
+        [ "$current" != "/" ] || break
+        current="$(dirname -- "$current")"
+    done
 }
 
 verify_cli_launch_path() {
-    local verified_path=""
-    if ! verified_path="$(run_cli_launch_path_helper "$CODEX_CLI_PATH")"; then
-        return 1
-    fi
-    if [ -z "$verified_path" ]; then
-        return 1
-    fi
+    local selected_path="$CODEX_CLI_PATH"
+    local lexical_path canonical_path raw_target standalone_root canonical_root
 
-    CODEX_CLI_PATH="$verified_path"
+    if [[ "$selected_path" != */* ]]; then
+        selected_path="$(type -P -- "$selected_path" 2>/dev/null || true)"
+    fi
+    [ -n "$selected_path" ] || return 1
+    lexical_path="$(realpath -ms -- "$selected_path" 2>/dev/null || true)"
+    canonical_path="$(readlink -f -- "$selected_path" 2>/dev/null || true)"
+    [ -n "$lexical_path" ] && [ -n "$canonical_path" ] || return 1
+
+    standalone_root="$(standalone_root_from_path "$lexical_path")"
+    raw_target="$(readlink -- "$lexical_path" 2>/dev/null || true)"
+    if [ -n "$raw_target" ]; then
+        case "$raw_target" in
+            /*) ;;
+            *) raw_target="$(dirname -- "$lexical_path")/$raw_target" ;;
+        esac
+        raw_target="$(realpath -ms -- "$raw_target" 2>/dev/null || true)"
+        if [ -z "$standalone_root" ]; then
+            standalone_root="$(standalone_root_from_path "$raw_target")"
+        fi
+    fi
+    if [ -z "$standalone_root" ]; then
+        standalone_root="$(standalone_root_from_path "$canonical_path")"
+    fi
+    [ -n "$standalone_root" ] || return 0
+
+    [ -d "$standalone_root" ] && [ ! -L "$standalone_root" ] || return 1
+    canonical_root="$(readlink -f -- "$standalone_root" 2>/dev/null || true)"
+    [ -n "$canonical_root" ] || return 1
+    case "$canonical_path" in
+        "$canonical_root"/*) ;;
+        *) return 1 ;;
+    esac
+    trusted_cli_target "$canonical_path" || return 1
+
+    CODEX_CLI_PATH="$canonical_path"
     export CODEX_CLI_PATH
 }
 

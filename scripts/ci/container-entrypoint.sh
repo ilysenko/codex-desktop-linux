@@ -274,14 +274,12 @@ run_deb_job() {
     assert_contains_file /tmp/deb-contents.txt './usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/launcher/webview-server.py'
-    assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/launcher/cli-launch-path.py'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-intel.js'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/patch-browser-client-iab-socket-scope.js'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-acceptance.js'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/validate-upstream-dmg.js'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
-    assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/.codex-linux/cli-launch-path.py'
 
     rm -rf dist
     CARGO_TARGET_DIR="$target_dir" \
@@ -302,7 +300,6 @@ run_deb_job() {
     assert_not_contains_file /tmp/deb-no-updater-contents.txt './usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy'
     assert_not_contains_file /tmp/deb-no-updater-contents.txt './opt/codex-desktop/update-builder/'
     assert_contains_file /tmp/deb-no-updater-contents.txt './opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
-    assert_contains_file /tmp/deb-no-updater-contents.txt './opt/codex-desktop/.codex-linux/cli-launch-path.py'
     assert_contains_file /tmp/deb-no-updater-contents.txt './opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh'
     assert_contains_file /tmp/deb-no-updater-payload/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh 'codex_no_updater_cleanup_user_enablement_links'
     assert_contains_file /tmp/deb-no-updater-payload/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh 'default.target.wants'
@@ -337,14 +334,12 @@ run_rpm_job() {
     assert_contains_file /tmp/rpm-contents.txt '/usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/launcher/webview-server.py'
-    assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/launcher/cli-launch-path.py'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-intel.js'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/patch-browser-client-iab-socket-scope.js'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-acceptance.js'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/validate-upstream-dmg.js'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
-    assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/.codex-linux/cli-launch-path.py'
 
     rm -rf dist
     CARGO_TARGET_DIR="$target_dir" \
@@ -361,7 +356,6 @@ run_rpm_job() {
     assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy'
     assert_not_contains_file /tmp/rpm-no-updater-contents.txt '/opt/codex-desktop/update-builder/'
     assert_contains_file /tmp/rpm-no-updater-contents.txt '/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
-    assert_contains_file /tmp/rpm-no-updater-contents.txt '/opt/codex-desktop/.codex-linux/cli-launch-path.py'
     assert_contains_file /tmp/rpm-no-updater-contents.txt '/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh'
     assert_contains_file /tmp/rpm-no-updater-scripts.txt 'codex_no_updater_cleanup_update_manager_service'
     assert_not_contains_file /tmp/rpm-no-updater-scripts.txt 'update-builder'
@@ -394,14 +388,12 @@ run_pacman_job() {
     assert_contains_file /tmp/pacman-contents.txt 'usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/launcher/webview-server.py'
-    assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/launcher/cli-launch-path.py'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-intel.js'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/patch-browser-client-iab-socket-scope.js'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-acceptance.js'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/validate-upstream-dmg.js'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
-    assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/.codex-linux/cli-launch-path.py'
 
     rm -rf dist
     CARGO_TARGET_DIR="$target_dir" \
@@ -419,7 +411,6 @@ run_pacman_job() {
     assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy'
     assert_not_contains_file /tmp/pacman-no-updater-contents.txt 'opt/codex-desktop/update-builder/'
     assert_contains_file /tmp/pacman-no-updater-contents.txt 'opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
-    assert_contains_file /tmp/pacman-no-updater-contents.txt 'opt/codex-desktop/.codex-linux/cli-launch-path.py'
     assert_contains_file /tmp/pacman-no-updater-contents.txt 'opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh'
     assert_contains_file /tmp/pacman-no-updater-cleanup.txt 'codex_no_updater_cleanup_user_enablement_links'
     assert_contains_file /tmp/pacman-no-updater-cleanup.txt 'default.target.wants'

@@ -88,11 +88,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_path,
             allow_install_missing,
         ),
-        Commands::RecoverStandaloneCli {
-            codex_home,
-            install_dir,
-            print_path,
-        } => run_recover_standalone_cli(codex_home, install_dir, print_path),
+        Commands::RecoverStandaloneCli { print_path } => run_recover_standalone_cli(print_path),
         Commands::PromptInstallCli {
             cli_path,
             print_path,
@@ -758,12 +754,8 @@ fn run_cli_preflight(
     Ok(())
 }
 
-fn run_recover_standalone_cli(
-    codex_home: Option<PathBuf>,
-    install_dir: Option<PathBuf>,
-    print_path: bool,
-) -> Result<()> {
-    let launch_path = codex_cli::recover_standalone_cli(codex_home, install_dir)?;
+fn run_recover_standalone_cli(print_path: bool) -> Result<()> {
+    let launch_path = codex_cli::recover_standalone_cli()?;
     if print_path {
         println!("{}", launch_path.display());
     }
