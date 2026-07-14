@@ -1918,6 +1918,40 @@ function isAgentWorkspaceSettingsNavigationBundleSource(currentSource) {
   );
 }
 
+const CURRENT_SETTINGS_CATALOG_SLUGS = "local-environments.worktrees.environments";
+const PATCHED_SETTINGS_CATALOG_SLUGS = "local-environments.agent-workspaces.worktrees.environments";
+const CURRENT_SETTINGS_CATALOG_ITEMS = "{slug:`local-environments`},{slug:`worktrees`}";
+const PATCHED_SETTINGS_CATALOG_ITEMS = "{slug:`local-environments`},{slug:`agent-workspaces`},{slug:`worktrees`}";
+
+function isAgentWorkspaceSettingsCatalogBundleSource(currentSource) {
+  return (
+    (currentSource.includes(CURRENT_SETTINGS_CATALOG_SLUGS) ||
+      currentSource.includes(PATCHED_SETTINGS_CATALOG_SLUGS)) &&
+    (currentSource.includes(CURRENT_SETTINGS_CATALOG_ITEMS) ||
+      currentSource.includes(PATCHED_SETTINGS_CATALOG_ITEMS))
+  );
+}
+
+function applyAgentWorkspaceSettingsCatalogPatch(currentSource) {
+  const slugsPatched = currentSource.includes(PATCHED_SETTINGS_CATALOG_SLUGS);
+  const itemsPatched = currentSource.includes(PATCHED_SETTINGS_CATALOG_ITEMS);
+  if (slugsPatched && itemsPatched) {
+    return currentSource;
+  }
+  if (slugsPatched !== itemsPatched) {
+    throw new Error("agent workspace settings catalog is partially patched");
+  }
+  if (
+    currentSource.split(CURRENT_SETTINGS_CATALOG_SLUGS).length !== 2 ||
+    currentSource.split(CURRENT_SETTINGS_CATALOG_ITEMS).length !== 2
+  ) {
+    throw new Error("could not add agent workspace to current settings catalog");
+  }
+  return currentSource
+    .replace(CURRENT_SETTINGS_CATALOG_SLUGS, PATCHED_SETTINGS_CATALOG_SLUGS)
+    .replace(CURRENT_SETTINGS_CATALOG_ITEMS, PATCHED_SETTINGS_CATALOG_ITEMS);
+}
+
 function addAgentWorkspaceToSettingsSlugLists(currentSource) {
   return currentSource
     .replaceAll(
@@ -2063,6 +2097,7 @@ function collectAgentWorkspaceRouteAndNavigationPatches(extractedDir) {
   let metadataMatched = false;
   let routeMatched = false;
   let navigationMatched = false;
+  let catalogMatched = false;
   const patches = [];
 
   for (const candidate of candidates) {
@@ -2081,6 +2116,10 @@ function collectAgentWorkspaceRouteAndNavigationPatches(extractedDir) {
       navigationMatched = true;
       patchedSource = applyAgentWorkspaceSettingsPagePatch(patchedSource);
     }
+    if (isAgentWorkspaceSettingsCatalogBundleSource(currentSource)) {
+      catalogMatched = true;
+      patchedSource = applyAgentWorkspaceSettingsCatalogPatch(patchedSource);
+    }
     if (patchedSource !== currentSource) {
       patches.push({ filePath, currentSource, patchedSource });
     }
@@ -2094,6 +2133,9 @@ function collectAgentWorkspaceRouteAndNavigationPatches(extractedDir) {
   }
   if (!navigationMatched) {
     throw new Error("could not find webview settings navigation bundle");
+  }
+  if (!catalogMatched) {
+    throw new Error("could not find current webview settings catalog bundle");
   }
 
   return patches;
@@ -2155,6 +2197,7 @@ module.exports = {
   SETTINGS_SLUG,
   applyAgentWorkspaceMainBridgePatch,
   applyAgentWorkspaceSettingsIndexPatch,
+  applyAgentWorkspaceSettingsCatalogPatch,
   applyAgentWorkspaceSettingsPagePatch,
   applyAgentWorkspaceSettingsSharedPatch,
   buildAgentWorkspaceSettingsSource,
