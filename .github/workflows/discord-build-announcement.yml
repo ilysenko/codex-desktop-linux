@@ -1,0 +1,40 @@
+name: Announce upstream build on Discord
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    name: Announce merged upstream build
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'codex/upstream-dmg-')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: discord-build-announcement-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out trusted announcement code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Post build announcement
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          DISCORD_BUILD_ANNOUNCEMENTS_WEBHOOK_URL: ${{ secrets.DISCORD_BUILD_ANNOUNCEMENTS_WEBHOOK_URL }}
+        with:
+          script: |
+            const { announceMergedBuild } = require('./scripts/ci/discord-build-announcement.js');
+            await announceMergedBuild({
+              context,
+              core,
+              webhookUrl: process.env.DISCORD_BUILD_ANNOUNCEMENTS_WEBHOOK_URL,
+            });

@@ -87,6 +87,20 @@ core patches, the shared feature loader, installer, updater, packaging, or a
 mixture of feature and shared paths. Reuse the immutable DMG download, feature
 snapshot, extracted app, native-module cache, and Nix store within a round.
 
+## Discord build announcements
+
+The `discord-build-announcement.yml` workflow announces a completed upstream
+build campaign when its canonical repair pull request is merged. It accepts
+only an internal `codex/upstream-dmg-SHA` branch targeting `main`, requires the
+matching `upstream-dmg-sha256` body marker and the versioned
+`Fix upstream DMG drift for VERSION` title, and extracts the announcement text
+from the pull request's `Summary` section.
+
+Create an incoming webhook for the announcements channel and store its URL as
+the repository Actions secret `DISCORD_BUILD_ANNOUNCEMENTS_WEBHOOK_URL`. The
+workflow reads the pull request event with trusted default-branch code and does
+not allow Discord mentions from pull request content.
+
 ## Nix refresh and recovery
 
 The probe adopts the exact workflow run and stores its run ID, head SHA,
