@@ -1497,85 +1497,20 @@ run_cli_preflight_background() {
     ) &
 }
 
-standalone_root_from_path() {
-    local path="$1"
-    case "$path" in
-        */packages/standalone/current/*)
-            printf '%s\n' "${path%%/packages/standalone/current/*}/packages/standalone"
-            ;;
-        */packages/standalone/releases/*)
-            printf '%s\n' "${path%%/packages/standalone/releases/*}/packages/standalone"
-            ;;
-    esac
-}
-
-trusted_cli_target() {
-    local path="$1"
-    local current="$path"
-    local euid uid mode numeric_mode
-    euid="$(id -u)"
-
-    while :; do
-        read -r uid mode < <(stat -Lc '%u %a' -- "$current") || return 1
-        if [ "$uid" != "$euid" ] && [ "$uid" != "0" ]; then
-            return 1
-        fi
-        numeric_mode=$((8#$mode))
-        if (( numeric_mode & 0022 )); then
-            if [ "$current" = "$path" ] || [ "$uid" != "0" ] ||
-                (( !(numeric_mode & 01000) || !(numeric_mode & 0002) )); then
-                return 1
-            fi
-        fi
-        if [ "$current" = "$path" ]; then
-            [ -f "$current" ] && [ -x "$current" ] || return 1
-        else
-            [ -d "$current" ] && [ ! -L "$current" ] || return 1
-        fi
-        [ "$current" != "/" ] || break
-        current="$(dirname -- "$current")"
-    done
+run_cli_launch_path_helper() {
+    python3 "$SCRIPT_DIR/.codex-linux/cli-launch-path.py" "$1"
 }
 
 verify_cli_launch_path() {
-    local selected_path="$CODEX_CLI_PATH"
-    local lexical_path canonical_path raw_target standalone_root canonical_root
-
-    if [[ "$selected_path" != */* ]]; then
-        selected_path="$(type -P -- "$selected_path" 2>/dev/null || true)"
+    local verified_path=""
+    if ! verified_path="$(run_cli_launch_path_helper "$CODEX_CLI_PATH")"; then
+        return 1
     fi
-    [ -n "$selected_path" ] || return 1
-    lexical_path="$(realpath -ms -- "$selected_path" 2>/dev/null || true)"
-    canonical_path="$(readlink -f -- "$selected_path" 2>/dev/null || true)"
-    [ -n "$lexical_path" ] && [ -n "$canonical_path" ] || return 1
-
-    standalone_root="$(standalone_root_from_path "$lexical_path")"
-    raw_target="$(readlink -- "$lexical_path" 2>/dev/null || true)"
-    if [ -n "$raw_target" ]; then
-        case "$raw_target" in
-            /*) ;;
-            *) raw_target="$(dirname -- "$lexical_path")/$raw_target" ;;
-        esac
-        raw_target="$(realpath -ms -- "$raw_target" 2>/dev/null || true)"
-        if [ -z "$standalone_root" ]; then
-            standalone_root="$(standalone_root_from_path "$raw_target")"
-        fi
+    if [ -z "$verified_path" ]; then
+        return 1
     fi
-    if [ -z "$standalone_root" ]; then
-        standalone_root="$(standalone_root_from_path "$canonical_path")"
-    fi
-    [ -n "$standalone_root" ] || return 0
 
-    [ -d "$standalone_root" ] && [ ! -L "$standalone_root" ] || return 1
-    canonical_root="$(readlink -f -- "$standalone_root" 2>/dev/null || true)"
-    [ -n "$canonical_root" ] || return 1
-    case "$canonical_path" in
-        "$canonical_root"/*) ;;
-        *) return 1 ;;
-    esac
-    trusted_cli_target "$canonical_path" || return 1
-
-    CODEX_CLI_PATH="$canonical_path"
+    CODEX_CLI_PATH="$verified_path"
     export CODEX_CLI_PATH
 }
 
@@ -1721,6 +1656,7 @@ find_codex_cli() {
     for candidate in \
         "$(cached_codex_cli_path || true)" \
         "$HOME/.bun/bin/codex" \
+        "$HOME/.codex-cli-npm/bin/codex" \
         "$HOME/.npm-global/bin/codex" \
         "${XDG_CONFIG_HOME:-$HOME/.config}/nvm/versions/node/current/bin/codex" \
         "${XDG_CONFIG_HOME:-$HOME/.config}/nvm/versions/node"/*/bin/codex \
@@ -4262,24 +4198,24 @@ if needs_cold_start && [ -z "$CODEX_CLI_PATH" ]; then
     if is_interactive_terminal; then
         if prompt_install_missing_cli; then
             if ! run_cli_preflight 1; then
-                notify_error "Codex CLI installation was attempted but did not succeed. Retry by reopening the app, or install it manually with: npm i -g --include=optional @openai/codex or npm i -g --include=optional --prefix ~/.local @openai/codex"
+                notify_error "Codex CLI installation was attempted but did not succeed. Retry by reopening the app, or install into a fresh safe prefix: (umask 0022; npm i -g --include=optional --prefix ~/.codex-cli-npm @openai/codex)"
                 exit 1
             fi
         fi
     elif ! run_gui_cli_prompt; then
-        notify_error "Codex CLI is required but is not installed. Reopen the app to retry the automatic install flow, or install it manually with: npm i -g --include=optional @openai/codex or npm i -g --include=optional --prefix ~/.local @openai/codex"
+        notify_error "Codex CLI is required but is not installed. Reopen the app to retry the automatic install flow, or install into a fresh safe prefix: (umask 0022; npm i -g --include=optional --prefix ~/.codex-cli-npm @openai/codex)"
         exit 1
     fi
 fi
 
 if needs_cold_start && [ -z "$CODEX_CLI_PATH" ]; then
-    notify_error "Codex CLI is required but is not installed. Reopen the app to retry the automatic install flow, or install it manually with: npm i -g --include=optional @openai/codex or npm i -g --include=optional --prefix ~/.local @openai/codex"
+    notify_error "Codex CLI is required but is not installed. Reopen the app to retry the automatic install flow, or install into a fresh safe prefix: (umask 0022; npm i -g --include=optional --prefix ~/.codex-cli-npm @openai/codex)"
     exit 1
 fi
 
 if [ -n "$CODEX_CLI_PATH" ]; then
     if ! verify_cli_launch_path; then
-        notify_error "The selected Codex CLI failed its execution-free trust check and will not be executed. If it is a rejected managed standalone install, stop active Codex installers and remove its standalone tree. Updater-enabled native packages can then run: codex-update-manager recover-standalone-cli --print-path"
+        notify_error "The selected Codex CLI failed its execution-free trust check and will not be executed. If it is a rejected managed standalone install, stop active Codex installers and remove its standalone tree. Updater-enabled native packages can then run: codex-update-manager recover-standalone-cli --print-path. With AppImage, Nix, or updaterless packages, reinstall from a verified package channel into a fresh path owned by you or root with no group/world-writable file or parent directory; do not reuse the rejected tree. To switch away from standalone intentionally, also remove ~/.codex-standalone-provenance."
         exit 1
     fi
     log_phase "cli_launch_path_verified"

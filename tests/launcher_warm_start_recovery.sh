@@ -121,6 +121,7 @@ PY
 } > "$APP_DIR/start.sh"
 chmod +x "$APP_DIR/start.sh"
 cp "$REPO_DIR/launcher/webview-server.py" "$APP_DIR/.codex-linux/webview-server.py"
+cp "$REPO_DIR/launcher/cli-launch-path.py" "$APP_DIR/.codex-linux/cli-launch-path.py"
 ln -s "$(command -v node)" "$APP_DIR/resources/node-runtime/bin/node"
 printf '%s\n' '<!doctype html><title>Codex</title><div id="startup-loader"></div>' \
     > "$APP_DIR/content/webview/index.html"

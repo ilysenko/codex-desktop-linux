@@ -111,10 +111,13 @@ runs with stdout/stderr detached (`>/dev/null 2>&1`), which cut the
 caller pipe — an orphaned `sleep` holding an inherited fd blocks command
 substitution until it exits.
 
-The default update/version preflight remains asynchronous, but before probing a
-CLI or starting Electron the generated launcher runs a synchronous,
-execution-free trust check. An unsafe managed standalone CLI blocks startup,
-while a valid one is pinned to its canonical release binary.
+The default update/version preflight remains asynchronous, but every generated
+launcher first runs its bundled synchronous, execution-free trust check. This
+applies to native packages with or without the updater, AppImage, Nix, and
+user-local installs, without depending on the version of any system updater. A
+managed standalone CLI that fails this check blocks startup before any CLI
+version probe; a successful check pins launch to the canonical verified release
+binary so replacement of its visible symlink cannot redirect execution.
 `CODEX_SYNC_CLI_PREFLIGHT=1` still opts into the full synchronous check while
 preserving fail-soft behavior for a CLI that is not known broken. A detected
 npm-managed CLI missing

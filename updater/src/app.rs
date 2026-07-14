@@ -88,7 +88,11 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_path,
             allow_install_missing,
         ),
-        Commands::RecoverStandaloneCli { print_path } => run_recover_standalone_cli(print_path),
+        Commands::RecoverStandaloneCli {
+            codex_home,
+            install_dir,
+            print_path,
+        } => run_recover_standalone_cli(codex_home, install_dir, print_path),
         Commands::PromptInstallCli {
             cli_path,
             print_path,
@@ -754,8 +758,12 @@ fn run_cli_preflight(
     Ok(())
 }
 
-fn run_recover_standalone_cli(print_path: bool) -> Result<()> {
-    let launch_path = codex_cli::recover_standalone_cli()?;
+fn run_recover_standalone_cli(
+    codex_home: Option<PathBuf>,
+    install_dir: Option<PathBuf>,
+    print_path: bool,
+) -> Result<()> {
+    let launch_path = codex_cli::recover_standalone_cli(codex_home, install_dir)?;
     if print_path {
         println!("{}", launch_path.display());
     }
@@ -3169,6 +3177,7 @@ mod tests {
     fn prompt_install_cli_does_not_treat_non_executable_file_as_installed() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
         let temp = tempfile::tempdir()?;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))?;
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
             state_file: temp.path().join("state/state.json"),
@@ -3590,6 +3599,7 @@ mod tests {
     fn status_preserves_cli_reconciliation_failure() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
         let temp = tempfile::tempdir()?;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))?;
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
             state_file: temp.path().join("state/state.json"),
@@ -3602,6 +3612,7 @@ mod tests {
 
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir)?;
+        fs::set_permissions(&bin_dir, fs::Permissions::from_mode(0o755))?;
         let codex_path = bin_dir.join("codex");
         fs::write(
             &codex_path,
@@ -3619,6 +3630,9 @@ mod tests {
         let mut permissions = fs::metadata(&npm_path)?.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&npm_path, permissions)?;
+        let node_path = bin_dir.join("node");
+        fs::write(&node_path, "#!/bin/sh\nexec /bin/sh \"$@\"\n")?;
+        fs::set_permissions(node_path, fs::Permissions::from_mode(0o755))?;
 
         let original_home = std::env::var_os("HOME");
         let original_path = std::env::var_os("PATH");

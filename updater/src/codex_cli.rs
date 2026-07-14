@@ -14,13 +14,13 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Output, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
     thread,
-    time::{Duration as StdDuration, Instant},
+    time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tracing::{info, warn};
 
@@ -33,6 +33,7 @@ const NPM_REPAIR_INSTALL_TIMEOUT: StdDuration = StdDuration::from_secs(90);
 const NPM_REPAIR_REGISTRY_TIMEOUT: StdDuration = StdDuration::from_secs(20);
 const CLI_PREFLIGHT_VERSION_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 const BOUNDED_COMMAND_POLL_INTERVAL: StdDuration = StdDuration::from_millis(50);
+const STANDALONE_PROVENANCE_FILE: &str = ".codex-standalone-provenance";
 const BOUNDED_COMMAND_TERMINATION_GRACE: StdDuration = StdDuration::from_millis(500);
 const BOUNDED_COMMAND_OUTPUT_DRAIN_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 const BOUNDED_COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
@@ -91,7 +92,7 @@ fn preflight_with_version_timeout(
     let cli_path = match stable_cli_launch_path(&selected_cli_path) {
         Ok(path) => path,
         Err(trust_error) => {
-            let error = standalone_trust_error(&selected_cli_path, trust_error);
+            let error = cli_trust_error(&selected_cli_path, trust_error);
             persist_cli_failure(state, paths, &error)?;
             return Err(error);
         }
@@ -589,6 +590,7 @@ fn known_cli_locations() -> Vec<PathBuf> {
     if let Some(home) = home {
         append_nvm_cli_locations(&mut candidates, xdg_nvm_root(&home));
         append_nvm_cli_locations(&mut candidates, home.join(".nvm"));
+        candidates.push(home.join(".codex-cli-npm/bin/codex"));
         candidates.push(home.join(".npm-global/bin/codex"));
         candidates.push(home.join(".local/share/pnpm/codex"));
         candidates.push(home.join(".local/bin/codex"));
@@ -879,8 +881,8 @@ fn missing_platform_optional_dependency(error: &anyhow::Error) -> Option<String>
 }
 
 fn read_latest_version() -> Result<String> {
-    let npm = npm_program();
-    read_latest_version_with_npm(&npm, &command_path_env())
+    let (npm, path_env) = npm_program()?;
+    read_latest_version_with_npm(&npm, &path_env)
 }
 
 fn read_latest_version_with_npm(npm: &Path, path_env: &OsString) -> Result<String> {
@@ -903,7 +905,7 @@ fn read_latest_version_with_npm_bounded(
         OsString::from(CLI_PACKAGE_NAME),
         OsString::from("version"),
     ];
-    let output = run_bounded_command_output(npm, path_env, None, &args, timeout)?;
+    let output = run_bounded_command_output(npm, path_env, None, &args, timeout, false)?;
 
     parse_latest_version_output(npm, &output)
 }
@@ -937,15 +939,14 @@ fn parse_latest_version_output(npm: &Path, output: &Output) -> Result<String> {
 struct NpmCliInstall {
     package_root: PathBuf,
     npm_program: PathBuf,
+    toolchain_bin: PathBuf,
 }
 
 impl NpmCliInstall {
     fn command_path_env(&self) -> OsString {
         let fallback = command_path_env();
-        let Some(toolchain_bin) = self.npm_program.parent() else {
-            return fallback;
-        };
-        let mut entries = vec![toolchain_bin.to_path_buf()];
+        let toolchain_bin = &self.toolchain_bin;
+        let mut entries = vec![toolchain_bin.clone()];
         entries.extend(std::env::split_paths(&fallback).filter(|entry| entry != toolchain_bin));
         std::env::join_paths(entries).unwrap_or(fallback)
     }
@@ -965,15 +966,6 @@ struct CodexNpmPackageBins {
 }
 
 fn npm_cli_install(cli_path: &Path, missing_dependency: &str) -> Option<NpmCliInstall> {
-    if cli_path.file_name()? != OsStr::new("codex")
-        || !fs::symlink_metadata(cli_path)
-            .ok()?
-            .file_type()
-            .is_symlink()
-    {
-        return None;
-    }
-
     let entrypoint = fs::canonicalize(cli_path).ok()?;
     if entrypoint.file_name()? != OsStr::new("codex.js") {
         return None;
@@ -1003,13 +995,21 @@ fn npm_cli_install(cli_path: &Path, missing_dependency: &str) -> Option<NpmCliIn
         return None;
     }
     let toolchain_bin = prefix.join("bin");
-    if fs::canonicalize(cli_path.parent()?).ok()? != fs::canonicalize(&toolchain_bin).ok()? {
+    let visible_symlink = cli_path.file_name()? == OsStr::new("codex")
+        && fs::symlink_metadata(cli_path)
+            .ok()?
+            .file_type()
+            .is_symlink();
+    if visible_symlink
+        && fs::canonicalize(cli_path.parent()?).ok()? != fs::canonicalize(&toolchain_bin).ok()?
+    {
         return None;
     }
-    let npm_program = toolchain_bin.join("npm");
-    if !is_executable(&npm_program) {
+    if !visible_symlink && cli_path != entrypoint {
         return None;
     }
+    let npm_program = validate_cli_target(&toolchain_bin.join("npm")).ok()?;
+    validate_cli_target(&toolchain_bin.join("node")).ok()?;
 
     let manifest = fs::read(package_root.join("package.json"))
         .ok()
@@ -1026,6 +1026,7 @@ fn npm_cli_install(cli_path: &Path, missing_dependency: &str) -> Option<NpmCliIn
     Some(NpmCliInstall {
         package_root: package_root.to_path_buf(),
         npm_program,
+        toolchain_bin,
     })
 }
 
@@ -1054,6 +1055,7 @@ fn repair_npm_optional_dependency_with_timeout(
         Some(&install.package_root),
         &args,
         timeout,
+        true,
     )?;
 
     anyhow::ensure!(
@@ -1074,7 +1076,7 @@ fn run_bounded_command(
     args: &[OsString],
     timeout: StdDuration,
 ) -> Result<String> {
-    let output = run_bounded_command_output(program, path_env, None, args, timeout)?;
+    let output = run_bounded_command_output(program, path_env, None, args, timeout, false)?;
     if !output.status.success() {
         anyhow::bail!(
             "{} exited with {}{}",
@@ -1092,6 +1094,7 @@ fn run_bounded_command_output(
     current_dir: Option<&Path>,
     args: &[OsString],
     timeout: StdDuration,
+    safe_umask: bool,
 ) -> Result<Output> {
     let mut command = Command::new(program);
     command
@@ -1102,6 +1105,9 @@ fn run_bounded_command_output(
         .stderr(Stdio::piped());
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);
+    }
+    if safe_umask {
+        apply_safe_child_umask(&mut command);
     }
     command.process_group(0);
 
@@ -1267,7 +1273,8 @@ fn standalone_cli_install(cli_path: &Path) -> Option<StandaloneCliInstall> {
             unresolved_symlink_target(cli_path)
                 .as_deref()
                 .and_then(standalone_home_from_path)
-        })?;
+        })
+        .or_else(existing_default_standalone_home)?;
     let cli_path_is_standalone = standalone_home_from_path(cli_path).is_some();
     let install_dir = if cli_path_is_standalone {
         None
@@ -1285,6 +1292,16 @@ fn standalone_cli_install(cli_path: &Path) -> Option<StandaloneCliInstall> {
         codex_home,
         install_dir,
     })
+}
+
+fn existing_default_standalone_home() -> Option<PathBuf> {
+    #[cfg(test)]
+    std::env::var_os("CODEX_UPDATE_MANAGER_TEST_STANDALONE_PROVENANCE")?;
+
+    let codex_home = default_codex_home().ok()?;
+    fs::symlink_metadata(codex_home.join("packages/standalone"))
+        .ok()
+        .map(|_| codex_home)
 }
 
 fn unresolved_symlink_target(path: &Path) -> Option<PathBuf> {
@@ -1324,25 +1341,72 @@ fn standalone_home_from_path(path: &Path) -> Option<PathBuf> {
 }
 
 fn stable_cli_launch_path(cli_path: &Path) -> Result<PathBuf> {
-    let Some(install) = standalone_cli_install(cli_path) else {
-        return Ok(cli_path.to_path_buf());
+    let detected_install = standalone_cli_install(cli_path);
+    let recorded_home = read_standalone_provenance()?;
+    let should_record = recorded_home.is_none() && detected_install.is_some();
+    let install = match (detected_install, recorded_home) {
+        (None, None) => return validate_cli_identity(cli_path),
+        (Some(install), None) => install,
+        (detected, Some(codex_home)) => {
+            if let Some(ref detected) = detected {
+                anyhow::ensure!(
+                    detected.codex_home == codex_home,
+                    "Selected Codex CLI provenance {} conflicts with recorded standalone home {}",
+                    detected.codex_home.display(),
+                    codex_home.display()
+                );
+            }
+            StandaloneCliInstall {
+                codex_home,
+                install_dir: detected
+                    .and_then(|install| install.install_dir)
+                    .or_else(|| {
+                        cli_path
+                            .parent()
+                            .filter(|parent| !parent.as_os_str().is_empty())
+                            .map(Path::to_path_buf)
+                    }),
+            }
+        }
     };
 
-    let canonical_cli = fs::canonicalize(cli_path).with_context(|| {
-        format!(
-            "Failed to resolve managed standalone Codex CLI path {}",
+    let validate_selection = || -> Result<PathBuf> {
+        let canonical_cli = fs::canonicalize(cli_path)
+            .with_context(|| format!("Failed to resolve Codex CLI path {}", cli_path.display()))?;
+        validate_standalone_cli_tree(&install)?;
+        let canonical_root = fs::canonicalize(install.standalone_root()).with_context(|| {
+            format!(
+                "Failed to resolve managed standalone Codex CLI root {}",
+                install.standalone_root().display()
+            )
+        })?;
+        anyhow::ensure!(
+            canonical_cli.starts_with(&canonical_root),
+            "Managed standalone Codex CLI path {} resolves outside its trusted root",
             cli_path.display()
-        )
-    })?;
-    validate_standalone_cli_target(&install, &canonical_cli)?;
-
-    Ok(canonical_cli)
+        );
+        validate_cli_target(cli_path)
+    };
+    let mut launch_path = validate_selection()?;
+    if should_record {
+        record_standalone_provenance(&install.codex_home, cli_path)?;
+        launch_path = validate_selection()?;
+    }
+    Ok(launch_path)
 }
 
-fn validate_standalone_cli_target(
-    install: &StandaloneCliInstall,
-    canonical_cli: &Path,
-) -> Result<()> {
+fn trusted_owner(uid: u32, euid: u32) -> bool {
+    uid == euid || uid == 0
+}
+
+fn cli_trust_error(cli_path: &Path, trust_error: anyhow::Error) -> anyhow::Error {
+    trust_error.context(format!(
+        "Refusing to execute the untrusted Codex CLI at {}; for a rejected managed standalone install, stop active Codex installers, remove its standalone tree, then run the official Codex installer through codex-update-manager recover-standalone-cli",
+        cli_path.display()
+    ))
+}
+
+fn validate_standalone_cli_tree(install: &StandaloneCliInstall) -> Result<()> {
     let standalone_root = install.standalone_root();
     let root_metadata = fs::symlink_metadata(&standalone_root).with_context(|| {
         format!(
@@ -1361,61 +1425,219 @@ fn validate_standalone_cli_target(
             standalone_root.display()
         )
     })?;
-    anyhow::ensure!(
-        canonical_cli.starts_with(&canonical_root),
-        "Managed standalone Codex CLI path {} resolves outside its trusted root",
-        canonical_cli.display()
-    );
-    let metadata = fs::metadata(canonical_cli).with_context(|| {
+    validate_standalone_parent_chain(&canonical_root)?;
+
+    let mut pending = vec![standalone_root];
+    while let Some(path) = pending.pop() {
+        let metadata = fs::symlink_metadata(&path).with_context(|| {
+            format!(
+                "Failed to inspect managed standalone Codex CLI path {}",
+                path.display()
+            )
+        })?;
+
+        if metadata.file_type().is_symlink() {
+            let target = fs::canonicalize(&path).with_context(|| {
+                format!(
+                    "Managed standalone Codex CLI contains a broken symlink at {}",
+                    path.display()
+                )
+            })?;
+            anyhow::ensure!(
+                target.starts_with(&canonical_root),
+                "Managed standalone Codex CLI contains an external symlink at {}",
+                path.display()
+            );
+            continue;
+        }
+
+        anyhow::ensure!(
+            metadata.is_dir() || metadata.is_file(),
+            "Managed standalone Codex CLI contains an unsupported file type at {}",
+            path.display()
+        );
+        let euid = unsafe { libc::geteuid() };
+        anyhow::ensure!(
+            trusted_owner(metadata.uid(), euid),
+            "Managed standalone Codex CLI path {} is owned by untrusted uid {}",
+            path.display(),
+            metadata.uid()
+        );
+        anyhow::ensure!(
+            metadata.permissions().mode() & 0o022 == 0,
+            "Managed standalone Codex CLI path {} is group/world-writable and therefore untrusted",
+            path.display()
+        );
+
+        if metadata.is_dir() {
+            let entries = fs::read_dir(&path).with_context(|| {
+                format!(
+                    "Failed to enumerate managed standalone Codex CLI directory {}",
+                    path.display()
+                )
+            })?;
+            for entry in entries {
+                pending.push(entry?.path());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_standalone_parent_chain(path: &Path) -> Result<()> {
+    validate_trusted_parent_chain(path, "Managed standalone Codex CLI")
+}
+
+fn standalone_provenance_path() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME").context("HOME is not set")?;
+    let canonical_home = fs::canonicalize(&home).with_context(|| {
         format!(
-            "Failed to inspect managed standalone Codex CLI target {}",
-            canonical_cli.display()
+            "Failed to resolve HOME for standalone CLI provenance: {}",
+            Path::new(&home).display()
+        )
+    })?;
+    Ok(canonical_home.join(STANDALONE_PROVENANCE_FILE))
+}
+
+fn read_standalone_provenance() -> Result<Option<PathBuf>> {
+    #[cfg(test)]
+    if std::env::var_os("CODEX_UPDATE_MANAGER_TEST_STANDALONE_PROVENANCE").is_none() {
+        return Ok(None);
+    }
+
+    let path = standalone_provenance_path()?;
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("Failed to inspect standalone CLI provenance"),
+    };
+    let euid = unsafe { libc::geteuid() };
+    anyhow::ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "Standalone Codex CLI provenance {} is not a regular file",
+        path.display()
+    );
+    anyhow::ensure!(
+        trusted_owner(metadata.uid(), euid) && metadata.permissions().mode() & 0o022 == 0,
+        "Standalone Codex CLI provenance {} is not trusted",
+        path.display()
+    );
+    validate_trusted_parent_chain(&path, "Standalone Codex CLI provenance")?;
+    let value = fs::read_to_string(&path)?;
+    let codex_home = PathBuf::from(value.trim());
+    anyhow::ensure!(
+        codex_home.is_absolute(),
+        "Standalone Codex CLI provenance {} is invalid",
+        path.display()
+    );
+    Ok(Some(codex_home))
+}
+
+fn record_standalone_provenance(codex_home: &Path, cli_path: &Path) -> Result<()> {
+    #[cfg(test)]
+    if std::env::var_os("CODEX_UPDATE_MANAGER_TEST_STANDALONE_PROVENANCE").is_none() {
+        return Ok(());
+    }
+
+    let path = standalone_provenance_path()?;
+    let entry_metadata = fs::symlink_metadata(cli_path)
+        .with_context(|| format!("Failed to inspect Codex CLI entry {}", cli_path.display()))?;
+    let euid = unsafe { libc::geteuid() };
+    anyhow::ensure!(
+        trusted_owner(entry_metadata.uid(), euid),
+        "Selected Codex CLI entry {} is owned by untrusted uid {}",
+        cli_path.display(),
+        entry_metadata.uid()
+    );
+    validate_trusted_parent_chain(&path, "Standalone Codex CLI provenance")?;
+    let temp_path = path.with_file_name(format!(
+        ".{STANDALONE_PROVENANCE_FILE}.{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp_path)
+        .context("Failed to create standalone CLI provenance")?;
+    let write_result = (|| -> Result<()> {
+        writeln!(file, "{}", codex_home.display())?;
+        file.sync_all()?;
+        fs::rename(&temp_path, &path)?;
+        fs::File::open(path.parent().context("Provenance path has no parent")?)?.sync_all()?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    write_result
+}
+
+fn validate_cli_target(cli_path: &Path) -> Result<PathBuf> {
+    let canonical_cli = validate_cli_identity(cli_path)?;
+    let lexical_cli = absolute_lexical_cli_path(cli_path)?;
+    validate_trusted_parent_chain(&lexical_cli, "Selected Codex CLI")?;
+    Ok(canonical_cli)
+}
+
+fn absolute_lexical_cli_path(cli_path: &Path) -> Result<PathBuf> {
+    if cli_path.is_absolute() {
+        return Ok(cli_path.to_path_buf());
+    }
+    Ok(std::env::current_dir()
+        .context("Failed to resolve the current directory for Codex CLI validation")?
+        .join(cli_path))
+}
+
+fn validate_cli_identity(cli_path: &Path) -> Result<PathBuf> {
+    let lexical_cli = absolute_lexical_cli_path(cli_path)?;
+    let entry_metadata = fs::symlink_metadata(&lexical_cli).with_context(|| {
+        format!(
+            "Failed to inspect Codex CLI entry {}",
+            lexical_cli.display()
         )
     })?;
     let euid = unsafe { libc::geteuid() };
     anyhow::ensure!(
-        metadata.is_file(),
-        "Managed standalone Codex CLI target {} is not a regular file",
-        canonical_cli.display()
+        trusted_owner(entry_metadata.uid(), euid),
+        "Selected Codex CLI entry {} is owned by untrusted uid {}",
+        lexical_cli.display(),
+        entry_metadata.uid()
     );
-    anyhow::ensure!(
-        metadata.uid() == euid || metadata.uid() == 0,
-        "Managed standalone Codex CLI target {} is owned by untrusted uid {}",
-        canonical_cli.display(),
-        metadata.uid()
-    );
-    anyhow::ensure!(
-        metadata.permissions().mode() & 0o022 == 0,
-        "Managed standalone Codex CLI target {} is group/world-writable and therefore untrusted",
-        canonical_cli.display()
-    );
-    anyhow::ensure!(
-        metadata.permissions().mode() & 0o111 != 0,
-        "Managed standalone Codex CLI target {} is not executable",
-        canonical_cli.display()
-    );
-    validate_standalone_parent_chain(canonical_cli)
-}
-
-fn standalone_trust_error(cli_path: &Path, trust_error: anyhow::Error) -> anyhow::Error {
-    trust_error.context(format!(
-        "Refusing to execute the untrusted managed standalone Codex CLI at {}; stop active Codex installers, remove its standalone tree, then recover it from the official installer with codex-update-manager recover-standalone-cli",
-        cli_path.display()
-    ))
-}
-
-fn validate_standalone_cli_tree(install: &StandaloneCliInstall) -> Result<()> {
-    let current_cli = install.standalone_root().join("current/bin/codex");
-    let canonical_cli = fs::canonicalize(&current_cli).with_context(|| {
+    let canonical_cli = fs::canonicalize(&lexical_cli)
+        .with_context(|| format!("Failed to resolve Codex CLI path {}", lexical_cli.display()))?;
+    let target_metadata = fs::metadata(&canonical_cli).with_context(|| {
         format!(
-            "Failed to resolve managed standalone Codex CLI path {}",
-            current_cli.display()
+            "Failed to inspect Codex CLI target {}",
+            canonical_cli.display()
         )
     })?;
-    validate_standalone_cli_target(install, &canonical_cli)
+    anyhow::ensure!(
+        target_metadata.is_file() && is_executable(&canonical_cli),
+        "Selected Codex CLI target {} is not an executable file",
+        canonical_cli.display()
+    );
+    anyhow::ensure!(
+        trusted_owner(target_metadata.uid(), euid),
+        "Selected Codex CLI target {} is owned by untrusted uid {}",
+        canonical_cli.display(),
+        target_metadata.uid()
+    );
+    anyhow::ensure!(
+        target_metadata.permissions().mode() & 0o022 == 0,
+        "Selected Codex CLI target {} is group/world-writable and therefore untrusted",
+        canonical_cli.display()
+    );
+    validate_trusted_parent_chain(&canonical_cli, "Selected Codex CLI target")?;
+    Ok(canonical_cli)
 }
 
-fn validate_standalone_parent_chain(path: &Path) -> Result<()> {
+fn validate_trusted_parent_chain(path: &Path, subject: &str) -> Result<()> {
     let euid = unsafe { libc::geteuid() };
     for parent in path.ancestors().skip(1) {
         let metadata = fs::symlink_metadata(parent).with_context(|| {
@@ -1426,12 +1648,12 @@ fn validate_standalone_parent_chain(path: &Path) -> Result<()> {
         })?;
         anyhow::ensure!(
             metadata.is_dir() && !metadata.file_type().is_symlink(),
-            "Managed standalone Codex CLI ancestor {} is not a trusted directory",
+            "{subject} ancestor {} is not a trusted directory",
             parent.display()
         );
         anyhow::ensure!(
-            metadata.uid() == euid || metadata.uid() == 0,
-            "Managed standalone Codex CLI ancestor {} is owned by untrusted uid {}",
+            trusted_owner(metadata.uid(), euid),
+            "{subject} ancestor {} is owned by untrusted uid {}",
             parent.display(),
             metadata.uid()
         );
@@ -1441,7 +1663,7 @@ fn validate_standalone_parent_chain(path: &Path) -> Result<()> {
             metadata.uid() == 0 && mode & libc::S_ISVTX != 0 && mode & 0o002 != 0;
         anyhow::ensure!(
             mode & 0o022 == 0 || root_owned_sticky_directory,
-            "Managed standalone Codex CLI ancestor {} is group/world-writable and therefore untrusted",
+            "{subject} ancestor {} is group/world-writable and therefore untrusted",
             parent.display()
         );
     }
@@ -1450,10 +1672,19 @@ fn validate_standalone_parent_chain(path: &Path) -> Result<()> {
 }
 
 fn update_standalone_cli(install: &StandaloneCliInstall, latest_version: &str) -> Result<()> {
-    let downloader = standalone_installer_downloader()?;
-    let installer_script = downloader.download_installer()?;
-    run_standalone_cli_installer(install, Some(latest_version), &installer_script, None)?;
-    validate_standalone_cli_tree(install)
+    let install = standalone_install_with_effective_dir(install)?;
+    validate_standalone_installer_directory(install.install_dir.as_deref().unwrap())?;
+    let tool_path = trusted_standalone_installer_path()?;
+    let downloader = standalone_installer_downloader(&tool_path)?;
+    let installer_script = downloader.download_installer(&tool_path)?;
+    run_standalone_cli_installer(
+        &install,
+        Some(latest_version),
+        &installer_script,
+        None,
+        &tool_path,
+    )?;
+    validate_standalone_cli_tree(&install)
 }
 
 #[cfg(test)]
@@ -1462,35 +1693,62 @@ fn update_standalone_cli_with_umask_override(
     latest_version: &str,
     inherited_umask: u32,
 ) -> Result<()> {
-    let downloader = standalone_installer_downloader()?;
-    let installer_script = downloader.download_installer()?;
+    let install = standalone_install_with_effective_dir(install)?;
+    validate_standalone_installer_directory(install.install_dir.as_deref().unwrap())?;
+    let tool_path = command_path_env();
+    let downloader = standalone_installer_downloader(&tool_path)?;
+    let installer_script = downloader.download_installer(&tool_path)?;
     run_standalone_cli_installer(
-        install,
+        &install,
         Some(latest_version),
         &installer_script,
         Some(inherited_umask),
+        &tool_path,
     )?;
-    validate_standalone_cli_tree(install)
+    validate_standalone_cli_tree(&install)
 }
 
 /// Reinstall a standalone CLI after the caller has removed a rejected tree.
 /// The official installer runs with a child-only safe umask and the result is
 /// validated before a stable launch target is returned.
-pub fn recover_standalone_cli() -> Result<PathBuf> {
-    recover_standalone_cli_with_umask_override(None)
+pub fn recover_standalone_cli(
+    codex_home: Option<PathBuf>,
+    install_dir: Option<PathBuf>,
+) -> Result<PathBuf> {
+    let tool_path = trusted_standalone_installer_path()?;
+    recover_standalone_cli_with_options(codex_home, install_dir, None, &tool_path)
 }
 
+#[cfg(test)]
 fn recover_standalone_cli_with_umask_override(
+    codex_home: Option<PathBuf>,
+    install_dir: Option<PathBuf>,
     inherited_umask_override: Option<u32>,
 ) -> Result<PathBuf> {
-    let codex_home = default_codex_home()?;
-    let install_dir = default_standalone_install_dir()?;
-    validate_recovery_path(&codex_home, "Codex home")?;
-    validate_recovery_path(&install_dir, "standalone install directory")?;
-    let install = StandaloneCliInstall {
-        codex_home: codex_home.clone(),
-        install_dir: Some(install_dir.clone()),
-    };
+    let tool_path = command_path_env();
+    recover_standalone_cli_with_options(
+        codex_home,
+        install_dir,
+        inherited_umask_override,
+        &tool_path,
+    )
+}
+
+fn recover_standalone_cli_with_options(
+    codex_home: Option<PathBuf>,
+    install_dir: Option<PathBuf>,
+    inherited_umask_override: Option<u32>,
+    tool_path: &OsStr,
+) -> Result<PathBuf> {
+    let codex_home = codex_home.map_or_else(default_codex_home, Ok)?;
+    validate_absolute_recovery_path(&codex_home, "Codex home")?;
+    if let Some(install_dir) = install_dir.as_deref() {
+        validate_absolute_recovery_path(install_dir, "standalone install directory")?;
+    }
+    let install = standalone_install_with_effective_dir(&StandaloneCliInstall {
+        codex_home,
+        install_dir,
+    })?;
     let standalone_root = install.standalone_root();
     match fs::symlink_metadata(&standalone_root) {
         Ok(_) => anyhow::bail!(
@@ -1507,22 +1765,46 @@ fn recover_standalone_cli_with_umask_override(
             });
         }
     }
-    let packages_dir = codex_home.join("packages");
-    for directory in [&codex_home, &packages_dir] {
-        secure_existing_recovery_directory(directory)?;
-    }
-    validate_recovery_creation_path(&packages_dir)?;
+    prepare_standalone_recovery_parent(&install.codex_home)?;
+    secure_standalone_recovery_directory_chain(install.install_dir.as_deref().unwrap())?;
+    validate_standalone_installer_directory(install.install_dir.as_deref().unwrap())?;
 
-    let downloader = standalone_installer_downloader()?;
-    let installer_script = downloader.download_installer()?;
-    run_standalone_cli_installer(&install, None, &installer_script, inherited_umask_override)?;
+    let downloader = standalone_installer_downloader(tool_path)?;
+    let installer_script = downloader.download_installer(tool_path)?;
+    run_standalone_cli_installer(
+        &install,
+        None,
+        &installer_script,
+        inherited_umask_override,
+        tool_path,
+    )?;
+    validate_standalone_cli_tree(&install)?;
 
-    let visible_cli = install_dir.join("codex");
+    let visible_cli = install
+        .install_dir
+        .as_deref()
+        .map(|directory| directory.join("codex"))
+        .unwrap_or_else(|| standalone_root.join("current/bin/codex"));
     stable_cli_launch_path(&visible_cli).with_context(|| {
         format!(
             "Standalone Codex CLI recovery completed but did not produce a trusted executable at {}",
             visible_cli.display()
         )
+    })
+}
+
+fn standalone_install_with_effective_dir(
+    install: &StandaloneCliInstall,
+) -> Result<StandaloneCliInstall> {
+    let install_dir = install
+        .install_dir
+        .clone()
+        .map_or_else(default_standalone_install_dir, Ok)?;
+    validate_absolute_recovery_path(&install.codex_home, "Codex home")?;
+    validate_absolute_recovery_path(&install_dir, "standalone install directory")?;
+    Ok(StandaloneCliInstall {
+        codex_home: install.codex_home.clone(),
+        install_dir: Some(install_dir),
     })
 }
 
@@ -1533,7 +1815,7 @@ fn default_standalone_install_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".local/bin"))
 }
 
-fn validate_recovery_path(path: &Path, label: &str) -> Result<()> {
+fn validate_absolute_recovery_path(path: &Path, label: &str) -> Result<()> {
     anyhow::ensure!(path.is_absolute(), "{label} must be an absolute path");
     anyhow::ensure!(
         !path.components().any(|component| matches!(
@@ -1545,23 +1827,90 @@ fn validate_recovery_path(path: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn secure_existing_recovery_directory(path: &Path) -> Result<()> {
+fn prepare_standalone_recovery_parent(codex_home: &Path) -> Result<()> {
+    let packages_dir = codex_home.join("packages");
+    secure_standalone_recovery_directory_chain(&packages_dir)?;
+    let existing_parent = packages_dir
+        .ancestors()
+        .find(|candidate| fs::symlink_metadata(candidate).is_ok())
+        .context("Standalone Codex CLI recovery path has no existing parent")?;
+    let metadata = fs::symlink_metadata(existing_parent).with_context(|| {
+        format!(
+            "Failed to inspect standalone Codex CLI recovery ancestor {}",
+            existing_parent.display()
+        )
+    })?;
+    let euid = unsafe { libc::geteuid() };
+    anyhow::ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "Standalone Codex CLI recovery ancestor {} is not a trusted directory",
+        existing_parent.display()
+    );
+    anyhow::ensure!(
+        metadata.uid() == euid || metadata.uid() == 0,
+        "Standalone Codex CLI recovery ancestor {} is owned by untrusted uid {}",
+        existing_parent.display(),
+        metadata.uid()
+    );
+    let mode = metadata.permissions().mode();
+    let root_owned_sticky_directory =
+        metadata.uid() == 0 && mode & libc::S_ISVTX != 0 && mode & 0o002 != 0;
+    anyhow::ensure!(
+        mode & 0o022 == 0 || root_owned_sticky_directory,
+        "Standalone Codex CLI recovery ancestor {} is group/world-writable; secure it before retrying recovery",
+        existing_parent.display()
+    );
+    let canonical_parent = fs::canonicalize(existing_parent).with_context(|| {
+        format!(
+            "Failed to resolve standalone Codex CLI recovery ancestor {}",
+            existing_parent.display()
+        )
+    })?;
+    validate_standalone_parent_chain(&canonical_parent)
+}
+
+fn secure_standalone_recovery_directory_chain(target: &Path) -> Result<()> {
+    validate_absolute_recovery_path(target, "standalone recovery directory")?;
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+
+    if let Some(home) = home.as_deref().filter(|home| target.starts_with(home)) {
+        let relative = target.strip_prefix(home).unwrap();
+        let mut current = home.to_path_buf();
+        for component in relative.components() {
+            current.push(component.as_os_str());
+            match fs::symlink_metadata(&current) {
+                Ok(_) => secure_owned_recovery_directory(&current)?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "Failed to inspect standalone recovery directory {}",
+                            current.display()
+                        )
+                    });
+                }
+            }
+        }
+    } else if fs::symlink_metadata(target).is_ok() {
+        secure_owned_recovery_directory(target)?;
+    }
+
+    Ok(())
+}
+
+fn secure_owned_recovery_directory(path: &Path) -> Result<()> {
     let directory = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW)
-        .open(path);
-    let directory = match directory {
-        Ok(directory) => directory,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "Standalone recovery path {} is not a trusted directory",
-                    path.display()
-                )
-            });
-        }
-    };
+        .open(path)
+        .with_context(|| {
+            format!(
+                "Standalone recovery path {} is not a trusted directory",
+                path.display()
+            )
+        })?;
     let metadata = directory.metadata()?;
     let euid = unsafe { libc::geteuid() };
     anyhow::ensure!(
@@ -1583,51 +1932,54 @@ fn secure_existing_recovery_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_recovery_creation_path(path: &Path) -> Result<()> {
-    for candidate in path.ancestors() {
-        match fs::symlink_metadata(candidate) {
-            Ok(metadata) => {
-                anyhow::ensure!(
-                    metadata.is_dir() && !metadata.file_type().is_symlink(),
-                    "Standalone recovery ancestor {} is not a trusted directory",
-                    candidate.display()
-                );
-                let canonical = fs::canonicalize(candidate).with_context(|| {
-                    format!(
-                        "Failed to resolve standalone recovery ancestor {}",
-                        candidate.display()
-                    )
-                })?;
-                return validate_standalone_parent_chain(&canonical.join("pending"));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "Failed to inspect standalone recovery ancestor {}",
-                        candidate.display()
-                    )
-                });
-            }
-        }
-    }
-    anyhow::bail!("Standalone recovery path has no existing parent")
+fn validate_standalone_installer_directory(path: &Path) -> Result<()> {
+    let existing_parent = path
+        .ancestors()
+        .find(|candidate| fs::symlink_metadata(candidate).is_ok())
+        .context("Standalone Codex CLI install directory has no existing parent")?;
+    let metadata = fs::symlink_metadata(existing_parent).with_context(|| {
+        format!(
+            "Failed to inspect standalone Codex CLI install ancestor {}",
+            existing_parent.display()
+        )
+    })?;
+    let euid = unsafe { libc::geteuid() };
+    anyhow::ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "Standalone Codex CLI install ancestor {} is not a trusted directory",
+        existing_parent.display()
+    );
+    anyhow::ensure!(
+        metadata.uid() == euid || metadata.uid() == 0,
+        "Standalone Codex CLI install ancestor {} is owned by untrusted uid {}",
+        existing_parent.display(),
+        metadata.uid()
+    );
+    let mode = metadata.permissions().mode();
+    let root_owned_sticky_directory =
+        metadata.uid() == 0 && mode & libc::S_ISVTX != 0 && mode & 0o002 != 0;
+    anyhow::ensure!(
+        mode & 0o022 == 0 || root_owned_sticky_directory,
+        "Standalone Codex CLI install ancestor {} is group/world-writable and therefore untrusted",
+        existing_parent.display()
+    );
+    let canonical_parent = fs::canonicalize(existing_parent).with_context(|| {
+        format!(
+            "Failed to resolve standalone Codex CLI install ancestor {}",
+            existing_parent.display()
+        )
+    })?;
+    validate_standalone_parent_chain(&canonical_parent)
 }
 
 fn default_codex_home() -> Result<PathBuf> {
+    if let Some(codex_home) = std::env::var_os("CODEX_HOME").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(codex_home));
+    }
     let home = std::env::var_os("HOME")
         .filter(|value| !value.is_empty())
-        .context("HOME is required to recover the standalone Codex CLI")?;
-    let codex_home = PathBuf::from(home).join(".codex");
-    if let Some(configured_home) = std::env::var_os("CODEX_HOME").filter(|value| !value.is_empty())
-    {
-        anyhow::ensure!(
-            Path::new(&configured_home) == codex_home,
-            "Standalone CLI recovery supports only the managed Codex home {}",
-            codex_home.display()
-        );
-    }
-    Ok(codex_home)
+        .context("HOME or CODEX_HOME is required to recover the standalone Codex CLI")?;
+    Ok(PathBuf::from(home).join(".codex"))
 }
 
 fn run_standalone_cli_installer(
@@ -1635,9 +1987,11 @@ fn run_standalone_cli_installer(
     latest_version: Option<&str>,
     installer_script: &[u8],
     inherited_umask_override: Option<u32>,
+    tool_path: &OsStr,
 ) -> Result<()> {
-    let tool_path = command_path_env();
-    let mut command = Command::new("sh");
+    let shell = resolved_program_in_path("sh", tool_path)
+        .context("A trusted sh executable is required to run the standalone Codex CLI installer")?;
+    let mut command = Command::new(&shell);
     command
         .arg("-s")
         .env("PATH", tool_path)
@@ -1701,10 +2055,10 @@ enum StandaloneInstallerDownloader {
 }
 
 impl StandaloneInstallerDownloader {
-    fn download_installer(&self) -> Result<Vec<u8>> {
+    fn download_installer(&self, tool_path: &OsStr) -> Result<Vec<u8>> {
         let output = match self {
             Self::Curl(program) => Command::new(program)
-                .env("PATH", command_path_env())
+                .env("PATH", tool_path)
                 .args(["-fsSL", STANDALONE_INSTALLER_URL])
                 .output()
                 .with_context(|| {
@@ -1714,7 +2068,7 @@ impl StandaloneInstallerDownloader {
                     )
                 })?,
             Self::Wget(program) => Command::new(program)
-                .env("PATH", command_path_env())
+                .env("PATH", tool_path)
                 .args(["-q", "-O", "-", STANDALONE_INSTALLER_URL])
                 .output()
                 .with_context(|| {
@@ -1740,17 +2094,12 @@ impl StandaloneInstallerDownloader {
     }
 }
 
-fn standalone_installer_downloader() -> Result<StandaloneInstallerDownloader> {
-    let path_env = command_path_env();
-    if let Some(path) = find_in_path("curl", &path_env) {
-        return Ok(StandaloneInstallerDownloader::Curl(resolved_program_path(
-            path,
-        )));
+fn standalone_installer_downloader(path_env: &OsStr) -> Result<StandaloneInstallerDownloader> {
+    if let Some(path) = resolved_program_in_path("curl", path_env) {
+        return Ok(StandaloneInstallerDownloader::Curl(path));
     }
-    if let Some(path) = find_in_path("wget", &path_env) {
-        return Ok(StandaloneInstallerDownloader::Wget(resolved_program_path(
-            path,
-        )));
+    if let Some(path) = resolved_program_in_path("wget", path_env) {
+        return Ok(StandaloneInstallerDownloader::Wget(path));
     }
 
     anyhow::bail!(
@@ -1758,53 +2107,151 @@ fn standalone_installer_downloader() -> Result<StandaloneInstallerDownloader> {
     );
 }
 
+fn resolved_program_in_path(name: &str, path_env: &OsStr) -> Option<PathBuf> {
+    find_in_path(name, &path_env.to_os_string()).map(resolved_program_path)
+}
+
+fn trusted_standalone_installer_path() -> Result<OsString> {
+    #[cfg(test)]
+    if let Some(path) = std::env::var_os("CODEX_UPDATE_MANAGER_TEST_STANDALONE_TOOL_PATH")
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(path);
+    }
+
+    const CANDIDATES: &[&str] = &[
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        "/run/current-system/sw/bin",
+    ];
+
+    let mut directories = Vec::new();
+    for candidate in CANDIDATES {
+        let candidate = Path::new(candidate);
+        let canonical = match fs::canonicalize(candidate) {
+            Ok(path) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to resolve trusted standalone installer tool directory {}",
+                        candidate.display()
+                    )
+                });
+            }
+        };
+        validate_trusted_system_directory(&canonical)?;
+        if !directories.iter().any(|existing| existing == &canonical) {
+            directories.push(canonical);
+        }
+    }
+
+    let path_env = std::env::join_paths(directories)
+        .context("Failed to construct trusted standalone installer tool PATH")?;
+    let shell = resolved_program_in_path("sh", &path_env)
+        .context("No trusted system sh executable is available for standalone CLI recovery")?;
+    validate_trusted_system_program(&shell)?;
+    let downloader = resolved_program_in_path("curl", &path_env)
+        .or_else(|| resolved_program_in_path("wget", &path_env))
+        .context(
+            "No trusted system curl or wget executable is available for standalone CLI recovery",
+        )?;
+    validate_trusted_system_program(&downloader)?;
+    Ok(path_env)
+}
+
+fn validate_trusted_system_program(path: &Path) -> Result<()> {
+    let metadata = fs::metadata(path).with_context(|| {
+        format!(
+            "Failed to inspect trusted standalone installer tool {}",
+            path.display()
+        )
+    })?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.uid() == 0 && metadata.permissions().mode() & 0o022 == 0,
+        "Standalone installer tool {} is not a root-owned, non-writable regular file",
+        path.display()
+    );
+    anyhow::ensure!(
+        metadata.permissions().mode() & 0o111 != 0,
+        "Standalone installer tool {} is not executable",
+        path.display()
+    );
+    if let Some(parent) = path.parent() {
+        validate_trusted_system_directory(parent)?;
+    }
+    Ok(())
+}
+
+fn validate_trusted_system_directory(path: &Path) -> Result<()> {
+    for directory in path.ancestors() {
+        let metadata = fs::symlink_metadata(directory).with_context(|| {
+            format!(
+                "Failed to inspect trusted standalone installer tool ancestor {}",
+                directory.display()
+            )
+        })?;
+        anyhow::ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink() && metadata.uid() == 0,
+            "Standalone installer tool ancestor {} is not a root-owned directory",
+            directory.display()
+        );
+        let mode = metadata.permissions().mode();
+        let root_owned_sticky_directory = mode & libc::S_ISVTX != 0;
+        anyhow::ensure!(
+            mode & 0o022 == 0 || root_owned_sticky_directory,
+            "Standalone installer tool ancestor {} is group/world-writable and therefore untrusted",
+            directory.display()
+        );
+    }
+    Ok(())
+}
+
 fn resolved_program_path(path: PathBuf) -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
 }
 
 fn install_latest_cli(latest_version: &str) -> Result<()> {
-    let npm = npm_program();
+    let (npm, path_env) = npm_program()?;
     let package_spec = format!("{CLI_PACKAGE_NAME}@{latest_version}");
-    let global_args = vec![
+    let local_prefix = local_npm_prefix();
+    prepare_safe_npm_prefix(&local_prefix)?;
+    let local_args = vec![
         OsString::from("install"),
         OsString::from("-g"),
         OsString::from("--include=optional"),
+        OsString::from("--prefix"),
+        local_prefix.as_os_str().to_os_string(),
         OsString::from(&package_spec),
     ];
+    run_npm_command(&npm, &path_env, &local_args)
+        .with_context(|| format!("npm install into {} failed", local_prefix.display()))
+}
 
-    match run_npm_command(&npm, &global_args) {
-        Ok(()) => Ok(()),
-        Err(global_error) => {
-            warn!(
-                ?global_error,
-                "global npm install failed; retrying Codex CLI upgrade with a user-local prefix"
-            );
-
-            let local_prefix = local_npm_prefix();
-            fs::create_dir_all(&local_prefix).with_context(|| {
-                format!(
-                    "Failed to create local npm prefix {}",
-                    local_prefix.display()
-                )
-            })?;
-
-            let local_args = vec![
-                OsString::from("install"),
-                OsString::from("-g"),
-                OsString::from("--include=optional"),
-                OsString::from("--prefix"),
-                local_prefix.as_os_str().to_os_string(),
-                OsString::from(&package_spec),
-            ];
-
-            run_npm_command(&npm, &local_args).with_context(|| {
-                format!(
-                    "npm install -g failed first ({global_error}); fallback install into {} also failed",
-                    local_prefix.display()
-                )
-            })
+fn prepare_safe_npm_prefix(prefix: &Path) -> Result<()> {
+    match fs::symlink_metadata(prefix) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(prefix)
+                .with_context(|| format!("Failed to create npm prefix {}", prefix.display()))?;
         }
+        Err(error) => return Err(error).context("Failed to inspect dedicated npm prefix"),
     }
+    let metadata = fs::symlink_metadata(prefix)?;
+    let euid = unsafe { libc::geteuid() };
+    anyhow::ensure!(
+        metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+            && trusted_owner(metadata.uid(), euid)
+            && metadata.permissions().mode() & 0o022 == 0,
+        "Dedicated npm prefix {} is not a trusted directory",
+        prefix.display()
+    );
+    validate_trusted_parent_chain(prefix, "Dedicated npm prefix")
 }
 
 fn install_missing_cli(
@@ -1890,21 +2337,33 @@ fn normalize_version_token(token: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-fn npm_program() -> PathBuf {
-    find_in_path("npm", &command_path_env()).unwrap_or_else(|| PathBuf::from("npm"))
+fn npm_program() -> Result<(PathBuf, OsString)> {
+    let npm = find_in_path("npm", &command_path_env()).context("npm was not found in PATH")?;
+    validate_cli_target(&npm).context("npm executable failed its trust check")?;
+    let toolchain_bin = npm
+        .parent()
+        .context("npm executable has no parent directory")?;
+    validate_cli_target(&toolchain_bin.join("node"))
+        .context("node executable beside npm failed its trust check")?;
+    let fallback = command_path_env();
+    let mut entries = vec![toolchain_bin.to_path_buf()];
+    entries.extend(std::env::split_paths(&fallback).filter(|entry| entry != toolchain_bin));
+    let path_env = std::env::join_paths(entries).unwrap_or(fallback);
+    Ok((npm, path_env))
 }
 
 fn local_npm_prefix() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local")
+        .join(".codex-cli-npm")
 }
 
-fn run_npm_command(npm: &Path, args: &[OsString]) -> Result<()> {
-    let output = Command::new(npm)
-        .env("PATH", command_path_env())
-        .args(args)
+fn run_npm_command(npm: &Path, path_env: &OsString, args: &[OsString]) -> Result<()> {
+    let mut command = Command::new(npm);
+    command.env("PATH", path_env).args(args);
+    apply_safe_child_umask(&mut command);
+    let output = command
         .output()
         .with_context(|| format!("Failed to spawn {}", npm.display()))?;
 
@@ -1918,6 +2377,16 @@ fn run_npm_command(npm: &Path, args: &[OsString]) -> Result<()> {
     );
 
     Ok(())
+}
+
+fn apply_safe_child_umask(command: &mut Command) {
+    unsafe {
+        command.pre_exec(|| {
+            let inherited = libc::umask(0);
+            libc::umask(inherited | 0o022);
+            Ok(())
+        });
+    }
 }
 
 fn format_command_args(args: &[OsString]) -> String {
@@ -2115,10 +2584,26 @@ mod tests {
     use tempfile::tempdir;
 
     fn write_executable_script(path: &Path, contents: &str) -> Result<()> {
+        let temp_root = std::env::temp_dir();
+        for directory in path.parent().into_iter().flat_map(Path::ancestors) {
+            if directory == temp_root || !directory.starts_with(&temp_root) {
+                break;
+            }
+            if directory.is_dir() {
+                fs::set_permissions(directory, fs::Permissions::from_mode(0o755))?;
+            }
+        }
         fs::write(path, contents)?;
         let mut permissions = fs::metadata(path)?.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(path, permissions)?;
+        if path.file_name() == Some(OsStr::new("npm")) {
+            let node = path.with_file_name("node");
+            if !node.exists() {
+                fs::write(&node, "#!/bin/sh\nexec /bin/sh \"$@\"\n")?;
+                fs::set_permissions(node, fs::Permissions::from_mode(0o755))?;
+            }
+        }
         Ok(())
     }
 
@@ -2136,6 +2621,7 @@ mod tests {
         let toolchain_bin = prefix.join("bin");
         let visible_cli = toolchain_bin.join("codex");
         let npm_program = toolchain_bin.join("npm");
+        let node_program = toolchain_bin.join("node");
 
         fs::create_dir_all(
             entrypoint
@@ -2143,6 +2629,19 @@ mod tests {
                 .context("npm CLI entrypoint has no parent")?,
         )?;
         fs::create_dir_all(&toolchain_bin)?;
+        if let Some(test_root) = prefix.parent() {
+            fs::set_permissions(test_root, fs::Permissions::from_mode(0o755))?;
+        }
+        for directory in entrypoint
+            .parent()
+            .into_iter()
+            .flat_map(Path::ancestors)
+            .take_while(|directory| directory.starts_with(prefix))
+            .chain(std::iter::once(toolchain_bin.as_path()))
+        {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o755))?;
+        }
+        write_executable_script(&node_program, "#!/bin/sh\nexec /bin/sh \"$@\"\n")?;
         write_executable_script(&entrypoint, entrypoint_contents)?;
         fs::write(
             package_root.join("package.json"),
@@ -2360,11 +2859,6 @@ set -eu
 release="${CODEX_RELEASE:-0.42.2}"
 release_dir="$CODEX_HOME/packages/standalone/releases/$release-test-target"
 mkdir -p "$release_dir/bin" "$CODEX_INSTALL_DIR"
-if [ -n "${INSTALLER_UMASK_LOG:-}" ]; then
-  umask > "$INSTALLER_UMASK_LOG"
-  : > "$release_dir/created-by-installer"
-  sh -c 'umask > "$CHILD_UMASK_LOG"; : > "$CHILD_CREATED_FILE"'
-fi
 cat > "$release_dir/bin/codex" <<CODEX_BIN
 #!/bin/sh
 if [ "\$1" = "--version" ] || [ "\$1" = "version" ]; then
@@ -2372,6 +2866,36 @@ if [ "\$1" = "--version" ] || [ "\$1" = "version" ]; then
   exit 0
 fi
 exit 1
+CODEX_BIN
+chmod 0755 "$release_dir/bin/codex"
+ln -sfn "$release_dir" "$CODEX_HOME/packages/standalone/current"
+ln -sfn "$CODEX_HOME/packages/standalone/current/bin/codex" "$CODEX_INSTALL_DIR/codex"
+"$CODEX_INSTALL_DIR/codex" --version >/dev/null
+SCRIPT
+  exit 0
+fi
+exit 1
+"#,
+        )
+    }
+
+    fn write_umask_recording_standalone_installer_curl(tool_bin: &Path) -> Result<()> {
+        write_executable_script(
+            &tool_bin.join("curl"),
+            r#"#!/bin/sh
+if [ "$1" = "-fsSL" ]; then
+  cat <<'SCRIPT'
+#!/bin/sh
+set -eu
+release="${CODEX_RELEASE:-0.42.2}"
+release_dir="$CODEX_HOME/packages/standalone/releases/$release-test-target"
+mkdir -p "$release_dir/bin" "$CODEX_INSTALL_DIR"
+umask > "$INSTALLER_UMASK_LOG"
+: > "$release_dir/created-by-installer"
+sh -c 'umask > "$CHILD_UMASK_LOG"; : > "$CHILD_CREATED_FILE"'
+cat > "$release_dir/bin/codex" <<CODEX_BIN
+#!/bin/sh
+echo 'codex-cli v$release'
 CODEX_BIN
 chmod 0755 "$release_dir/bin/codex"
 ln -sfn "$release_dir" "$CODEX_HOME/packages/standalone/current"
@@ -3174,7 +3698,9 @@ exit 1
                 tamper_marker.display()
             ),
         )?;
-        fs::set_permissions(&initial_release, fs::Permissions::from_mode(0o775))?;
+        let mut permissions = fs::metadata(&tampered_cli)?.permissions();
+        permissions.set_mode(0o775);
+        fs::set_permissions(&tampered_cli, permissions)?;
 
         let visible_codex = link_standalone_cli(&codex_home, &install_dir, &initial_release)?;
         let _restore_env = configure_cli_test_env(&home, [install_dir])?;
@@ -3184,17 +3710,60 @@ exit 1
         let error = preflight(&mut state, &paths, Some(visible_codex), false)
             .expect_err("an untrusted managed CLI must be rejected");
 
-        assert!(format!("{error:#}").contains("untrusted managed standalone"));
+        assert!(error.to_string().contains("official Codex installer"));
+        assert_eq!(state.cli_status, CliStatus::Failed);
+        assert!(state
+            .cli_error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("group/world-writable"));
+        assert!(
+            !tamper_marker.exists(),
+            "the untrusted managed CLI must not execute before rejection"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn untrusted_standalone_cli_ancestor_is_rejected_before_execution() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let home = temp.path().join("home");
+        let install_dir = home.join(".local/bin");
+        let codex_home = home.join(".codex");
+        let initial_release =
+            write_standalone_codex_release(&codex_home, "0.42.0", "x86_64-unknown-linux-musl")?;
+        let execution_marker = temp.path().join("unsafe-ancestor-cli-executed");
+        write_executable_script(
+            &initial_release.join("bin/codex"),
+            &format!(
+                "#!/bin/sh\n: > '{}'\necho 'codex-cli v0.42.0'\n",
+                execution_marker.display()
+            ),
+        )?;
+        fs::set_permissions(
+            codex_home.join("packages"),
+            fs::Permissions::from_mode(0o775),
+        )?;
+        let visible_codex = link_standalone_cli(&codex_home, &install_dir, &initial_release)?;
+        let _restore_env = configure_cli_test_env(&home, [install_dir])?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(visible_codex.clone());
+        let error = preflight(&mut state, &paths, Some(visible_codex), false)
+            .expect_err("an unsafe managed CLI ancestor must be rejected");
+
+        assert!(error.to_string().contains("official Codex installer"));
         assert_eq!(state.cli_status, CliStatus::Failed);
         assert!(state
             .cli_error_message
             .as_deref()
             .unwrap_or_default()
             .contains("ancestor"));
-        assert!(
-            !tamper_marker.exists(),
-            "the untrusted managed CLI must not execute before rejection"
-        );
+        assert!(!execution_marker.exists());
         Ok(())
     }
 
@@ -3208,6 +3777,19 @@ exit 1
         let codex_home = home.join(".codex");
         let release = write_standalone_codex_release(&codex_home, "0.42.0", "test-target")?;
         let visible_codex = link_standalone_cli(&codex_home, &install_dir, &release)?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "CODEX_HOME",
+            "CODEX_UPDATE_MANAGER_TEST_STANDALONE_PROVENANCE",
+        ]);
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("CODEX_HOME");
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_STANDALONE_PROVENANCE", "1");
+        assert_eq!(
+            stable_cli_launch_path(&visible_codex)?,
+            release.join("bin/codex")
+        );
 
         let launch_path = stable_cli_launch_path(&visible_codex)?;
         assert_eq!(launch_path, fs::canonicalize(release.join("bin/codex"))?);
@@ -3229,6 +3811,101 @@ exit 1
             !replacement_marker.exists(),
             "replacing the visible symlink must not redirect the verified launch target"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn cli_launch_path_rejects_unsafe_visible_replacement_before_validation() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))?;
+        let home = temp.path().join("home");
+        let install_dir = home.join(".local/bin");
+        let codex_home = home.join(".codex");
+        let release = write_standalone_codex_release(&codex_home, "0.42.0", "test-target")?;
+        let visible_codex = link_standalone_cli(&codex_home, &install_dir, &release)?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "CODEX_HOME",
+            "CODEX_UPDATE_MANAGER_TEST_STANDALONE_PROVENANCE",
+        ]);
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("CODEX_HOME");
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_STANDALONE_PROVENANCE", "1");
+        assert_eq!(
+            stable_cli_launch_path(&visible_codex)?,
+            release.join("bin/codex")
+        );
+
+        let replacement_marker = temp.path().join("pre-validation-replacement-executed");
+        let replacement = temp.path().join("replacement-codex");
+        write_executable_script(
+            &replacement,
+            &format!(
+                "#!/bin/sh\n: > '{}'\necho 'codex-cli v9.9.9'\n",
+                replacement_marker.display()
+            ),
+        )?;
+        fs::set_permissions(&install_dir, fs::Permissions::from_mode(0o775))?;
+        fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755))?;
+        fs::remove_file(&visible_codex)?;
+        std::os::unix::fs::symlink(&replacement, &visible_codex)?;
+        fs::rename(
+            codex_home.join("packages/standalone"),
+            codex_home.join("packages/standalone-rejected"),
+        )?;
+
+        let error = stable_cli_launch_path(&visible_codex)
+            .expect_err("an unsafe entry replacement must fail before execution");
+        assert!(error.to_string().contains("root") && error.to_string().contains("missing"));
+        assert!(!replacement_marker.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_standalone_does_not_record_provenance() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))?;
+        let home = temp.path().join("home");
+        let install_dir = home.join("custom-bin");
+        let codex_home = home.join("custom-codex-home");
+        let release = write_standalone_codex_release(&codex_home, "0.42.0", "test-target")?;
+        let visible_codex = link_standalone_cli(&codex_home, &install_dir, &release)?;
+        fs::set_permissions(release.join("bin/codex"), fs::Permissions::from_mode(0o775))?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "CODEX_HOME",
+            "CODEX_UPDATE_MANAGER_TEST_STANDALONE_PROVENANCE",
+        ]);
+        std::env::set_var("HOME", &home);
+        std::env::set_var("CODEX_HOME", &codex_home);
+        std::env::set_var("CODEX_UPDATE_MANAGER_TEST_STANDALONE_PROVENANCE", "1");
+
+        stable_cli_launch_path(&visible_codex)
+            .expect_err("an invalid standalone tree must be rejected");
+        assert!(!home.join(STANDALONE_PROVENANCE_FILE).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn cli_trust_accepts_only_current_or_root_owner() {
+        let euid = unsafe { libc::geteuid() };
+        assert!(trusted_owner(euid, euid));
+        assert!(trusted_owner(0, euid));
+        let untrusted_uid = if euid == 1 { 2 } else { 1 };
+        assert!(!trusted_owner(untrusted_uid, euid));
+    }
+
+    #[test]
+    fn dedicated_npm_prefix_is_created_private() -> Result<()> {
+        let temp = tempdir()?;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))?;
+        let prefix = temp.path().join(".codex-cli-npm");
+        prepare_safe_npm_prefix(&prefix)?;
+        assert_eq!(fs::metadata(prefix)?.permissions().mode() & 0o777, 0o700);
         Ok(())
     }
 
@@ -3259,8 +3936,40 @@ exit 1
 
         let error = stable_cli_launch_path(&visible_codex)
             .expect_err("an external current symlink must be rejected");
-        assert!(error.to_string().contains("outside its trusted root"));
+        assert!(error.to_string().contains("external symlink"));
         assert!(!external_marker.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn preflight_trust_failure_is_persisted_without_version_probe() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+        let home = temp.path().join("home");
+        let install_dir = home.join(".local/bin");
+        let codex_home = home.join(".codex");
+        let release = write_standalone_codex_release(&codex_home, "0.42.0", "test-target")?;
+        let probe_marker = temp.path().join("version-probed");
+        let cli = release.join("bin/codex");
+        write_executable_script(
+            &cli,
+            &format!(
+                "#!/bin/sh\n: > '{}'\necho 'codex-cli v0.42.0'\n",
+                probe_marker.display()
+            ),
+        )?;
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o775))?;
+        let visible_codex = link_standalone_cli(&codex_home, &install_dir, &release)?;
+        let _restore_env = configure_cli_test_env(&home, [install_dir])?;
+
+        let mut state = PersistedState::new(true);
+        let error = preflight(&mut state, &paths, Some(visible_codex.clone()), false)
+            .expect_err("the updater preflight trust gate must fail closed");
+        assert!(error.to_string().contains("recover-standalone-cli"));
+        assert_eq!(state.cli_status, CliStatus::Failed);
+        assert!(!probe_marker.exists());
         Ok(())
     }
 
@@ -3271,7 +3980,7 @@ exit 1
         fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))?;
         let tool_bin = temp.path().join("tool-bin");
         fs::create_dir_all(&tool_bin)?;
-        write_fake_standalone_installer_curl(&tool_bin)?;
+        write_umask_recording_standalone_installer_curl(&tool_bin)?;
 
         let _restore_env = EnvRestoreGuard::capture(&[
             "HOME",
@@ -3355,6 +4064,8 @@ exit 1
         let installer_umask_log = case_root.join("installer-umask.log");
         let child_umask_log = case_root.join("child-umask.log");
         let child_created_file = release_dir.join("created-by-child");
+        let malicious_curl_marker = case_root.join("malicious-curl-executed");
+        let malicious_shell_marker = case_root.join("malicious-shell-executed");
         fs::create_dir_all(&tool_bin)?;
         fs::create_dir_all(&install_dir)?;
         fs::set_permissions(&case_root, fs::Permissions::from_mode(0o755))?;
@@ -3368,24 +4079,46 @@ exit 1
         ] {
             fs::set_permissions(path, fs::Permissions::from_mode(0o775))?;
         }
-        write_fake_standalone_installer_curl(&tool_bin)?;
+        write_executable_script(
+            &install_dir.join("curl"),
+            &format!(
+                "#!/bin/sh\n: > '{}'\nexit 99\n",
+                malicious_curl_marker.display()
+            ),
+        )?;
+        write_executable_script(
+            &install_dir.join("sh"),
+            &format!(
+                "#!/bin/sh\n: > '{}'\nexit 99\n",
+                malicious_shell_marker.display()
+            ),
+        )?;
+        write_umask_recording_standalone_installer_curl(&tool_bin)?;
 
         let _restore_env = EnvRestoreGuard::capture(&[
             "HOME",
-            "CODEX_HOME",
             "PATH",
             "INSTALLER_UMASK_LOG",
             "CHILD_UMASK_LOG",
             "CHILD_CREATED_FILE",
         ]);
         std::env::set_var("HOME", &home);
-        std::env::set_var("CODEX_HOME", &codex_home);
         set_test_path_with_tool_bin(&tool_bin)?;
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths([install_dir.clone(), tool_bin.clone()])?,
+        );
         std::env::set_var("INSTALLER_UMASK_LOG", &installer_umask_log);
         std::env::set_var("CHILD_UMASK_LOG", &child_umask_log);
         std::env::set_var("CHILD_CREATED_FILE", &child_created_file);
 
-        let launch_path = recover_standalone_cli_with_umask_override(Some(0o002))?;
+        let trusted_test_path = std::env::join_paths([tool_bin])?;
+        let launch_path = recover_standalone_cli_with_options(
+            Some(codex_home.clone()),
+            Some(install_dir.clone()),
+            Some(0o002),
+            &trusted_test_path,
+        )?;
 
         assert_eq!(
             launch_path,
@@ -3393,19 +4126,17 @@ exit 1
         );
         assert_eq!(fs::read_to_string(&installer_umask_log)?.trim(), "0022");
         assert_eq!(fs::read_to_string(&child_umask_log)?.trim(), "0022");
-        for path in [codex_home.clone(), codex_home.join("packages")] {
+        for path in [
+            codex_home.clone(),
+            codex_home.join("packages"),
+            home.join(".local"),
+            install_dir.clone(),
+        ] {
             assert_eq!(
                 fs::metadata(&path)?.permissions().mode() & 0o022,
                 0,
                 "recovery must secure installer-created directory {}",
                 path.display()
-            );
-        }
-        for path in [home.join(".local"), install_dir.clone()] {
-            assert_eq!(
-                fs::metadata(path)?.permissions().mode() & 0o777,
-                0o775,
-                "recovery must not change cooperative non-managed directories"
             );
         }
         validate_standalone_cli_tree(&StandaloneCliInstall {
@@ -3415,23 +4146,165 @@ exit 1
         for path in [release_dir.join("created-by-installer"), child_created_file] {
             assert_eq!(fs::metadata(path)?.permissions().mode() & 0o022, 0);
         }
-        let error = recover_standalone_cli_with_umask_override(Some(0o002))
-            .expect_err("recovery must not overwrite the newly installed tree");
-        assert!(error.to_string().contains("Refusing to overwrite"));
+        assert!(
+            !malicious_curl_marker.exists() && !malicious_shell_marker.exists(),
+            "recovery must not execute tools planted in a formerly writable install directory"
+        );
+        Ok(())
+    }
 
-        let shared_root = case_root.join("shared-project");
-        fs::create_dir_all(&shared_root)?;
-        fs::set_permissions(&shared_root, fs::Permissions::from_mode(0o775))?;
-        std::env::set_var("CODEX_HOME", &shared_root);
-        let error = recover_standalone_cli_with_umask_override(Some(0o002))
-            .expect_err("recovery must reject a custom Codex home");
-        assert!(error
-            .to_string()
-            .contains("supports only the managed Codex home"));
-        assert_eq!(
-            fs::metadata(shared_root)?.permissions().mode() & 0o777,
-            0o775,
-            "rejected custom roots must not be chmodded"
+    #[test]
+    fn trusted_standalone_installer_path_ignores_inherited_user_tools() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let user_bin = temp.path().join("home/.local/bin");
+        let marker = temp.path().join("user-tool-executed");
+        fs::create_dir_all(&user_bin)?;
+        for name in ["curl", "wget", "sh"] {
+            write_executable_script(
+                &user_bin.join(name),
+                &format!("#!/bin/sh\n: > '{}'\nexit 99\n", marker.display()),
+            )?;
+        }
+
+        let _restore_env =
+            EnvRestoreGuard::capture(&["PATH", "CODEX_UPDATE_MANAGER_TEST_STANDALONE_TOOL_PATH"]);
+        std::env::set_var("PATH", std::env::join_paths([user_bin.clone()])?);
+        std::env::remove_var("CODEX_UPDATE_MANAGER_TEST_STANDALONE_TOOL_PATH");
+        let trusted_path = trusted_standalone_installer_path()?;
+
+        assert!(
+            std::env::split_paths(&trusted_path).all(|entry| entry != user_bin),
+            "trusted recovery PATH must not inherit user-writable command directories"
+        );
+        for name in ["curl", "sh"] {
+            let selected = resolved_program_in_path(name, &trusted_path)
+                .with_context(|| format!("trusted recovery PATH is missing {name}"))?;
+            assert!(!selected.starts_with(temp.path()));
+        }
+        assert!(!marker.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_update_rejects_unsafe_install_directory_before_download() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))?;
+        let home = temp.path().join("home");
+        let codex_home = home.join(".codex");
+        let install_dir = home.join(".local/bin");
+        let tool_bin = temp.path().join("tool-bin");
+        let curl_call_log = temp.path().join("curl-called.log");
+        fs::create_dir_all(&install_dir)?;
+        fs::create_dir_all(&tool_bin)?;
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(home.join(".local"), fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(&install_dir, fs::Permissions::from_mode(0o775))?;
+        write_failing_standalone_installer_curl(&tool_bin, &curl_call_log)?;
+
+        let _restore_env = EnvRestoreGuard::capture(&["HOME", "PATH"]);
+        std::env::set_var("HOME", &home);
+        set_test_path_with_tool_bin(&tool_bin)?;
+
+        let error = update_standalone_cli_with_umask_override(
+            &StandaloneCliInstall {
+                codex_home,
+                install_dir: Some(install_dir),
+            },
+            "0.42.1",
+            0o002,
+        )
+        .expect_err("an unsafe install directory must be rejected before download");
+        assert!(error.to_string().contains("group/world-writable"));
+        assert!(
+            !curl_call_log.exists(),
+            "installer download must not start through an unsafe visible-command directory"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_recovery_refuses_to_overwrite_an_existing_tree() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))?;
+        let codex_home = temp.path().join("home/.codex");
+        write_standalone_codex_release(&codex_home, "0.42.0", "test-target")?;
+
+        let error = recover_standalone_cli_with_umask_override(
+            Some(codex_home),
+            Some(temp.path().join("home/.local/bin")),
+            Some(0o002),
+        )
+        .expect_err("recovery must not mutate an existing standalone tree");
+        assert!(error.to_string().contains("Refusing to overwrite"));
+        assert!(error.to_string().contains("remove this rejected tree"));
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_recovery_rejects_ambiguous_paths_before_downloading() -> Result<()> {
+        let _env_guard = env_lock();
+        let relative_error = recover_standalone_cli_with_umask_override(
+            Some(PathBuf::from("relative/.codex")),
+            None,
+            Some(0o002),
+        )
+        .expect_err("relative recovery paths must be rejected");
+        assert!(relative_error.to_string().contains("absolute path"));
+
+        let parent_error = recover_standalone_cli_with_umask_override(
+            Some(PathBuf::from("/tmp/safe/../unsafe/.codex")),
+            None,
+            Some(0o002),
+        )
+        .expect_err("parent traversal in recovery paths must be rejected");
+        assert!(parent_error.to_string().contains("must not contain"));
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_status_rejects_untrusted_standalone_cli_without_executing_it() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let home = temp.path().join("home");
+        let install_dir = home.join(".local/bin");
+        let codex_home = home.join(".codex");
+        let initial_release =
+            write_standalone_codex_release(&codex_home, "0.42.0", "x86_64-unknown-linux-musl")?;
+        let tamper_marker = temp.path().join("refresh-executed-tampered-cli");
+        let tampered_cli = initial_release.join("bin/codex");
+        write_executable_script(
+            &tampered_cli,
+            &format!(
+                "#!/bin/sh\n: > '{}'\necho 'codex-cli v0.42.0'\n",
+                tamper_marker.display()
+            ),
+        )?;
+        let mut permissions = fs::metadata(&tampered_cli)?.permissions();
+        permissions.set_mode(0o775);
+        fs::set_permissions(&tampered_cli, permissions)?;
+        let visible_codex = link_standalone_cli(&codex_home, &install_dir, &initial_release)?;
+        let _restore_env = configure_cli_test_env(&home, [install_dir])?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(visible_codex);
+        refresh_status(&mut state, &paths)?;
+
+        assert_eq!(state.cli_status, CliStatus::Failed);
+        assert_eq!(state.cli_installed_version, None);
+        assert!(state
+            .cli_error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("group/world-writable"));
+        assert!(
+            !tamper_marker.exists(),
+            "status refresh must reject the untrusted managed CLI before execution"
         );
         Ok(())
     }
@@ -3464,9 +4337,14 @@ exit 1
             "NVM_DIR",
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            "CODEX_UPDATE_MANAGER_TEST_STANDALONE_TOOL_PATH",
         ]);
         std::env::set_var("HOME", &home);
         set_test_path_with_tool_bin(&tool_bin)?;
+        std::env::set_var(
+            "CODEX_UPDATE_MANAGER_TEST_STANDALONE_TOOL_PATH",
+            std::env::join_paths([tool_bin.clone()])?,
+        );
         std::env::remove_var("NVM_DIR");
         std::env::remove_var("XDG_DATA_HOME");
         std::env::remove_var("FNM_DIR");
@@ -3585,9 +4463,14 @@ exit 1
             "NVM_DIR",
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            "CODEX_UPDATE_MANAGER_TEST_STANDALONE_TOOL_PATH",
         ]);
         std::env::set_var("HOME", &home);
         set_test_path_with_tool_bin(&tool_bin)?;
+        std::env::set_var(
+            "CODEX_UPDATE_MANAGER_TEST_STANDALONE_TOOL_PATH",
+            std::env::join_paths([tool_bin.clone()])?,
+        );
         std::env::remove_var("NVM_DIR");
         std::env::remove_var("CODEX_CLI_PATH");
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
@@ -3685,7 +4568,7 @@ exit 1
         let outcome = preflight(&mut state, &paths, Some(fixture.visible_cli.clone()), false)?;
 
         assert!(outcome.updated);
-        assert_eq!(outcome.cli_path, fixture.visible_cli);
+        assert_eq!(outcome.cli_path, fixture.entrypoint);
         assert_eq!(outcome.installed_version, "0.42.1");
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert_eq!(state.cli_error_message, None);
@@ -3822,6 +4705,7 @@ exit 1
         std::env::set_var("NPM_CHILD_PID", &child_pid);
         let install = NpmCliInstall {
             package_root: temp.path().to_path_buf(),
+            toolchain_bin: npm_program.parent().unwrap().to_path_buf(),
             npm_program,
         };
 
@@ -3918,7 +4802,7 @@ exit 1
         let codex_path = bin_dir.join("codex");
         write_executable_script(
             &bin_dir.join("npm"),
-            "#!/bin/sh\nif [ \"$1\" = \"view\" ]; then\n  echo '0.42.1'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ]; then\n  printf '%s\\n' '#!/bin/sh' \"echo 'version probe failed' >&2\" 'exit 43' > \"$FAKE_CODEX_PATH\"\n  /bin/chmod +x \"$FAKE_CODEX_PATH\"\n  exit 0\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"view\" ]; then\n  echo '0.42.1'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ]; then\n  printf '%s\\n' '#!/bin/sh' \"echo 'version probe failed' >&2\" 'exit 43' > \"$FAKE_CODEX_PATH\"\n  /bin/chmod 0755 \"$FAKE_CODEX_PATH\"\n  exit 0\nfi\nexit 1\n",
         )?;
 
         let _restore_env = configure_cli_test_env(temp.path(), [bin_dir])?;
@@ -3994,7 +4878,7 @@ exit 1
         std::env::remove_var("FNM_MULTISHELL_PATH");
         std::env::set_var("FAKE_CODEX_PATH", &codex_path);
 
-        assert_eq!(npm_program(), npm_path);
+        assert_eq!(npm_program()?.0, npm_path);
 
         let mut state = PersistedState::new(true);
         state.cli_path = Some(codex_path.clone());
@@ -4147,7 +5031,7 @@ exit 1
         std::env::remove_var("FNM_DIR");
         std::env::remove_var("FNM_MULTISHELL_PATH");
 
-        assert_eq!(npm_program(), npm_path);
+        assert_eq!(npm_program()?.0, npm_path);
 
         let mut state = PersistedState::new(true);
         state.cli_path = Some(codex_path.clone());
