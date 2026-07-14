@@ -20,6 +20,22 @@ installs continue to update through npm, while official standalone installs
 under `~/.codex/packages/standalone` are updated with the official standalone
 installer instead of being replaced through npm.
 
+The updater scopes permission hardening to the official standalone installer
+process. New managed releases use the caller's existing umask plus the
+group/world write restrictions from `0022`; stricter policies such as `0027`
+and `0077` remain intact, and the launcher, Electron, app-server, hooks, and
+unrelated child processes keep the caller's original mask.
+
+Before executing a managed standalone CLI, the updater verifies that its tree
+and canonical parent chain are owned by the current user or root and are not
+group/world-writable (apart from root-owned sticky directories such as
+`/tmp`). An unsafe tree is rejected without executing it, changing its modes,
+or deleting it; updater state records a failed preflight with clean-reinstall
+guidance. Stop any active updater/installer first, then remove the untrusted
+standalone tree and reinstall it with the official Codex installer. Removing
+write bits from the existing tree is not sufficient because its contents may
+already have been modified.
+
 System-package-managed CLI installs are reused but not mutated through npm or
 the standalone installer flow. On Arch-like hosts, when the resolved CLI lives
 under a system bin directory and `pacman -Qo` confirms package ownership, the

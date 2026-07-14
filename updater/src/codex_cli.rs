@@ -14,7 +14,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{MetadataExt, PermissionsExt},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Output, Stdio},
@@ -88,6 +88,16 @@ fn preflight_with_version_timeout(
         },
         None => anyhow::bail!("Codex CLI not found in PATH or known install locations"),
     };
+    if let Some(install) = standalone_cli_install(&cli_path) {
+        if let Err(trust_error) = validate_standalone_cli_tree(&install) {
+            let error = anyhow!(trust_error).context(format!(
+                "Refusing to execute the untrusted managed standalone Codex CLI at {}; remove it and reinstall it from the official Codex installer",
+                cli_path.display()
+            ));
+            persist_cli_failure(state, paths, &error)?;
+            return Err(error);
+        }
+    }
     let path_env = command_path_env();
     let managed_cli = cli_management::detect_system_package_managed_cli(&cli_path, &path_env);
     let mut repaired_npm_install = None;
@@ -808,6 +818,7 @@ fn installed_cli_version_satisfies_latest(installed_version: &str, latest_versio
 }
 
 fn read_installed_version(cli_path: &Path) -> Result<String> {
+    validate_managed_standalone_cli_before_execution(cli_path)?;
     let primary = run_command(cli_path, ["--version"])?;
     if let Some(version) = extract_version(&primary) {
         return Ok(version);
@@ -823,6 +834,7 @@ fn read_installed_version(cli_path: &Path) -> Result<String> {
 }
 
 fn read_installed_version_bounded(cli_path: &Path, timeout: StdDuration) -> Result<String> {
+    validate_managed_standalone_cli_before_execution(cli_path)?;
     let primary = run_bounded_command(
         cli_path,
         &command_path_env(),
@@ -1222,6 +1234,12 @@ struct StandaloneCliInstall {
     install_dir: Option<PathBuf>,
 }
 
+impl StandaloneCliInstall {
+    fn standalone_root(&self) -> PathBuf {
+        self.codex_home.join("packages/standalone")
+    }
+}
+
 fn update_existing_cli(cli_path: &Path, latest_version: &str) -> Result<()> {
     match classify_cli_install(cli_path) {
         CliInstallKind::Standalone(install) => update_standalone_cli(&install, latest_version),
@@ -1287,9 +1305,156 @@ fn standalone_home_from_path(path: &Path) -> Option<PathBuf> {
     None
 }
 
+fn validate_managed_standalone_cli_before_execution(cli_path: &Path) -> Result<()> {
+    if let Some(install) = standalone_cli_install(cli_path) {
+        validate_standalone_cli_tree(&install)?;
+    }
+    Ok(())
+}
+
+fn validate_standalone_cli_tree(install: &StandaloneCliInstall) -> Result<()> {
+    let standalone_root = install.standalone_root();
+    let root_metadata = fs::symlink_metadata(&standalone_root).with_context(|| {
+        format!(
+            "Managed standalone Codex CLI root {} is missing",
+            standalone_root.display()
+        )
+    })?;
+    anyhow::ensure!(
+        root_metadata.is_dir() && !root_metadata.file_type().is_symlink(),
+        "Managed standalone Codex CLI root {} is not a trusted directory",
+        standalone_root.display()
+    );
+    let canonical_root = fs::canonicalize(&standalone_root).with_context(|| {
+        format!(
+            "Failed to resolve managed standalone Codex CLI root {}",
+            standalone_root.display()
+        )
+    })?;
+    validate_standalone_parent_chain(&canonical_root)?;
+
+    let mut pending = vec![standalone_root];
+    while let Some(path) = pending.pop() {
+        let metadata = fs::symlink_metadata(&path).with_context(|| {
+            format!(
+                "Failed to inspect managed standalone Codex CLI path {}",
+                path.display()
+            )
+        })?;
+
+        if metadata.file_type().is_symlink() {
+            let target = fs::canonicalize(&path).with_context(|| {
+                format!(
+                    "Managed standalone Codex CLI contains a broken symlink at {}",
+                    path.display()
+                )
+            })?;
+            anyhow::ensure!(
+                target.starts_with(&canonical_root),
+                "Managed standalone Codex CLI contains an external symlink at {}",
+                path.display()
+            );
+            continue;
+        }
+
+        anyhow::ensure!(
+            metadata.is_dir() || metadata.is_file(),
+            "Managed standalone Codex CLI contains an unsupported file type at {}",
+            path.display()
+        );
+        let euid = unsafe { libc::geteuid() };
+        anyhow::ensure!(
+            metadata.uid() == euid || metadata.uid() == 0,
+            "Managed standalone Codex CLI path {} is owned by untrusted uid {}",
+            path.display(),
+            metadata.uid()
+        );
+        anyhow::ensure!(
+            metadata.permissions().mode() & 0o022 == 0,
+            "Managed standalone Codex CLI path {} is group/world-writable and therefore untrusted",
+            path.display()
+        );
+
+        if metadata.is_dir() {
+            let entries = fs::read_dir(&path).with_context(|| {
+                format!(
+                    "Failed to enumerate managed standalone Codex CLI directory {}",
+                    path.display()
+                )
+            })?;
+            for entry in entries {
+                pending.push(entry?.path());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_standalone_parent_chain(path: &Path) -> Result<()> {
+    let euid = unsafe { libc::geteuid() };
+    for parent in path.ancestors().skip(1) {
+        let metadata = fs::symlink_metadata(parent).with_context(|| {
+            format!(
+                "Failed to inspect managed standalone Codex CLI ancestor {}",
+                parent.display()
+            )
+        })?;
+        anyhow::ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "Managed standalone Codex CLI ancestor {} is not a trusted directory",
+            parent.display()
+        );
+        anyhow::ensure!(
+            metadata.uid() == euid || metadata.uid() == 0,
+            "Managed standalone Codex CLI ancestor {} is owned by untrusted uid {}",
+            parent.display(),
+            metadata.uid()
+        );
+
+        let mode = metadata.permissions().mode();
+        let root_owned_sticky_directory =
+            metadata.uid() == 0 && mode & libc::S_ISVTX != 0 && mode & 0o002 != 0;
+        anyhow::ensure!(
+            mode & 0o022 == 0 || root_owned_sticky_directory,
+            "Managed standalone Codex CLI ancestor {} is group/world-writable and therefore untrusted",
+            parent.display()
+        );
+    }
+
+    Ok(())
+}
+
 fn update_standalone_cli(install: &StandaloneCliInstall, latest_version: &str) -> Result<()> {
     let downloader = standalone_installer_downloader()?;
     let installer_script = downloader.download_installer()?;
+    run_standalone_cli_installer(install, latest_version, &installer_script, None)?;
+    validate_standalone_cli_tree(install)
+}
+
+#[cfg(test)]
+fn update_standalone_cli_with_umask_override(
+    install: &StandaloneCliInstall,
+    latest_version: &str,
+    inherited_umask: u32,
+) -> Result<()> {
+    let downloader = standalone_installer_downloader()?;
+    let installer_script = downloader.download_installer()?;
+    run_standalone_cli_installer(
+        install,
+        latest_version,
+        &installer_script,
+        Some(inherited_umask),
+    )?;
+    validate_standalone_cli_tree(install)
+}
+
+fn run_standalone_cli_installer(
+    install: &StandaloneCliInstall,
+    latest_version: &str,
+    installer_script: &[u8],
+    inherited_umask_override: Option<u32>,
+) -> Result<()> {
     let mut command = Command::new("sh");
     command
         .arg("-s")
@@ -1303,6 +1468,20 @@ fn update_standalone_cli(install: &StandaloneCliInstall, latest_version: &str) -
     if let Some(install_dir) = &install.install_dir {
         command.env("CODEX_INSTALL_DIR", install_dir);
     }
+    // SAFETY: `umask` is async-signal-safe and this hook only changes the
+    // installer child's mask. OR-ing write restrictions preserves stricter
+    // user policies while preventing new managed files from being created
+    // group/world-writable.
+    unsafe {
+        command.pre_exec(move || {
+            if let Some(mask) = inherited_umask_override {
+                libc::umask(mask as libc::mode_t);
+            }
+            let inherited = libc::umask(0);
+            libc::umask(inherited | 0o022);
+            Ok(())
+        });
+    }
 
     let mut child = command
         .spawn()
@@ -1314,7 +1493,7 @@ fn update_standalone_cli(install: &StandaloneCliInstall, latest_version: &str) -
             .take()
             .context("Failed to open standalone Codex CLI installer stdin")?;
         stdin
-            .write_all(&installer_script)
+            .write_all(installer_script)
             .with_context(|| "Failed to write standalone Codex CLI installer script")?;
     }
 
@@ -1855,6 +2034,19 @@ mod tests {
             .join(format!("{version}-{target}"));
         let release_bin = release_dir.join("bin");
         fs::create_dir_all(&release_bin)?;
+        for ancestor in codex_home.ancestors().skip(1).take(2) {
+            fs::set_permissions(ancestor, fs::Permissions::from_mode(0o755))?;
+        }
+        for directory in [
+            codex_home.to_path_buf(),
+            codex_home.join("packages"),
+            codex_home.join("packages/standalone"),
+            codex_home.join("packages/standalone/releases"),
+            release_dir.clone(),
+            release_bin.clone(),
+        ] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o755))?;
+        }
         write_executable_script(
             &release_bin.join("codex"),
             &format!(
@@ -1981,6 +2173,34 @@ if [ "\$1" = "--version" ] || [ "\$1" = "version" ]; then
   exit 0
 fi
 exit 1
+CODEX_BIN
+chmod 0755 "$release_dir/bin/codex"
+ln -sfn "$release_dir" "$CODEX_HOME/packages/standalone/current"
+ln -sfn "$CODEX_HOME/packages/standalone/current/bin/codex" "$CODEX_INSTALL_DIR/codex"
+SCRIPT
+  exit 0
+fi
+exit 1
+"#,
+        )
+    }
+
+    fn write_umask_recording_standalone_installer_curl(tool_bin: &Path) -> Result<()> {
+        write_executable_script(
+            &tool_bin.join("curl"),
+            r#"#!/bin/sh
+if [ "$1" = "-fsSL" ]; then
+  cat <<'SCRIPT'
+#!/bin/sh
+set -eu
+release_dir="$CODEX_HOME/packages/standalone/releases/$CODEX_RELEASE-test-target"
+mkdir -p "$release_dir/bin" "$CODEX_INSTALL_DIR"
+umask > "$INSTALLER_UMASK_LOG"
+: > "$release_dir/created-by-installer"
+sh -c 'umask > "$CHILD_UMASK_LOG"; : > "$CHILD_CREATED_FILE"'
+cat > "$release_dir/bin/codex" <<CODEX_BIN
+#!/bin/sh
+echo 'codex-cli v$CODEX_RELEASE'
 CODEX_BIN
 chmod 0755 "$release_dir/bin/codex"
 ln -sfn "$release_dir" "$CODEX_HOME/packages/standalone/current"
@@ -2757,6 +2977,217 @@ exit 1
             .as_deref()
             .unwrap_or_default()
             .contains("Could not read the installed"));
+        Ok(())
+    }
+
+    #[test]
+    fn untrusted_standalone_cli_is_rejected_before_execution() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let home = temp.path().join("home");
+        let install_dir = home.join(".local/bin");
+        let codex_home = home.join(".codex");
+
+        let initial_release =
+            write_standalone_codex_release(&codex_home, "0.42.0", "x86_64-unknown-linux-musl")?;
+        let tamper_marker = temp.path().join("tampered-cli-executed");
+        let tampered_cli = initial_release.join("bin/codex");
+        write_executable_script(
+            &tampered_cli,
+            &format!(
+                "#!/bin/sh\n: > '{}'\necho 'codex-cli v0.42.0'\n",
+                tamper_marker.display()
+            ),
+        )?;
+        let mut permissions = fs::metadata(&tampered_cli)?.permissions();
+        permissions.set_mode(0o775);
+        fs::set_permissions(&tampered_cli, permissions)?;
+
+        let visible_codex = link_standalone_cli(&codex_home, &install_dir, &initial_release)?;
+        let _restore_env = configure_cli_test_env(&home, [install_dir])?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(visible_codex.clone());
+        let error = preflight(&mut state, &paths, Some(visible_codex), false)
+            .expect_err("an untrusted managed CLI must be rejected");
+
+        assert!(error.to_string().contains("official Codex installer"));
+        assert_eq!(state.cli_status, CliStatus::Failed);
+        assert!(state
+            .cli_error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("group/world-writable"));
+        assert!(
+            !tamper_marker.exists(),
+            "the untrusted managed CLI must not execute before rejection"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn untrusted_standalone_cli_ancestor_is_rejected_before_execution() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let home = temp.path().join("home");
+        let install_dir = home.join(".local/bin");
+        let codex_home = home.join(".codex");
+        let initial_release =
+            write_standalone_codex_release(&codex_home, "0.42.0", "x86_64-unknown-linux-musl")?;
+        let execution_marker = temp.path().join("unsafe-ancestor-cli-executed");
+        write_executable_script(
+            &initial_release.join("bin/codex"),
+            &format!(
+                "#!/bin/sh\n: > '{}'\necho 'codex-cli v0.42.0'\n",
+                execution_marker.display()
+            ),
+        )?;
+        fs::set_permissions(
+            codex_home.join("packages"),
+            fs::Permissions::from_mode(0o775),
+        )?;
+        let visible_codex = link_standalone_cli(&codex_home, &install_dir, &initial_release)?;
+        let _restore_env = configure_cli_test_env(&home, [install_dir])?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(visible_codex.clone());
+        let error = preflight(&mut state, &paths, Some(visible_codex), false)
+            .expect_err("an unsafe managed CLI ancestor must be rejected");
+
+        assert!(error.to_string().contains("official Codex installer"));
+        assert_eq!(state.cli_status, CliStatus::Failed);
+        assert!(state
+            .cli_error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("ancestor"));
+        assert!(!execution_marker.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_installer_scopes_umask_and_preserves_stricter_policies() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))?;
+        let tool_bin = temp.path().join("tool-bin");
+        fs::create_dir_all(&tool_bin)?;
+        write_umask_recording_standalone_installer_curl(&tool_bin)?;
+
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "INSTALLER_UMASK_LOG",
+            "CHILD_UMASK_LOG",
+            "CHILD_CREATED_FILE",
+        ]);
+        std::env::set_var("HOME", temp.path().join("home"));
+        set_test_path_with_tool_bin(&tool_bin)?;
+        let read_unrelated_child_umask = || -> Result<String> {
+            let output = Command::new(tool_bin.join("sh"))
+                .arg("-c")
+                .arg("umask")
+                .output()?;
+            anyhow::ensure!(output.status.success(), "failed to read child umask");
+            Ok(String::from_utf8(output.stdout)?.trim().to_string())
+        };
+        let ambient_child_umask = read_unrelated_child_umask()?;
+
+        for (inherited_umask, expected_umask) in
+            [(0o002_u32, 0o022_u32), (0o027, 0o027), (0o077, 0o077)]
+        {
+            let case_root = temp.path().join(format!("mask-{inherited_umask:04o}"));
+            let codex_home = case_root.join(".codex");
+            let install_dir = case_root.join("bin");
+            let release_dir = codex_home
+                .join("packages/standalone/releases")
+                .join("0.42.1-test-target");
+            let installer_umask_log = case_root.join("installer-umask.log");
+            let child_umask_log = case_root.join("child-umask.log");
+            let child_created_file = release_dir.join("created-by-child");
+            fs::create_dir_all(&case_root)?;
+            fs::set_permissions(&case_root, fs::Permissions::from_mode(0o755))?;
+            std::env::set_var("INSTALLER_UMASK_LOG", &installer_umask_log);
+            std::env::set_var("CHILD_UMASK_LOG", &child_umask_log);
+            std::env::set_var("CHILD_CREATED_FILE", &child_created_file);
+
+            let install = StandaloneCliInstall {
+                codex_home,
+                install_dir: Some(install_dir),
+            };
+            update_standalone_cli_with_umask_override(&install, "0.42.1", inherited_umask)?;
+            assert_eq!(read_unrelated_child_umask()?, ambient_child_umask);
+
+            let parse_umask = |path: &Path| -> Result<u32> {
+                let raw = fs::read_to_string(path)?;
+                u32::from_str_radix(raw.trim(), 8)
+                    .with_context(|| format!("invalid umask recorded in {}", path.display()))
+            };
+            assert_eq!(parse_umask(&installer_umask_log)?, expected_umask);
+            assert_eq!(parse_umask(&child_umask_log)?, expected_umask);
+            assert_eq!(
+                fs::metadata(&release_dir)?.permissions().mode() & 0o777,
+                0o777 & !expected_umask
+            );
+            for created_file in [release_dir.join("created-by-installer"), child_created_file] {
+                assert_eq!(
+                    fs::metadata(created_file)?.permissions().mode() & 0o777,
+                    0o666 & !expected_umask
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_status_rejects_untrusted_standalone_cli_without_executing_it() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let home = temp.path().join("home");
+        let install_dir = home.join(".local/bin");
+        let codex_home = home.join(".codex");
+        let initial_release =
+            write_standalone_codex_release(&codex_home, "0.42.0", "x86_64-unknown-linux-musl")?;
+        let tamper_marker = temp.path().join("refresh-executed-tampered-cli");
+        let tampered_cli = initial_release.join("bin/codex");
+        write_executable_script(
+            &tampered_cli,
+            &format!(
+                "#!/bin/sh\n: > '{}'\necho 'codex-cli v0.42.0'\n",
+                tamper_marker.display()
+            ),
+        )?;
+        let mut permissions = fs::metadata(&tampered_cli)?.permissions();
+        permissions.set_mode(0o775);
+        fs::set_permissions(&tampered_cli, permissions)?;
+        let visible_codex = link_standalone_cli(&codex_home, &install_dir, &initial_release)?;
+        let _restore_env = configure_cli_test_env(&home, [install_dir])?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(visible_codex);
+        refresh_status(&mut state, &paths)?;
+
+        assert_eq!(state.cli_status, CliStatus::Failed);
+        assert_eq!(state.cli_installed_version, None);
+        assert!(state
+            .cli_error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("group/world-writable"));
+        assert!(
+            !tamper_marker.exists(),
+            "status refresh must reject the untrusted managed CLI before execution"
+        );
         Ok(())
     }
 

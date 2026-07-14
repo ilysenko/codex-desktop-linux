@@ -5,7 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-UMask=0022
 ExecStart=/usr/bin/codex-update-manager daemon
 Restart=on-failure
 RestartSec=10
