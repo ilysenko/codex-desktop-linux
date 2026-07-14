@@ -34,6 +34,7 @@ const {
   applyLinuxRemoteMobileChromeBridgePatch,
   applyLinuxRemoteMobileCompletedItemRecoveryPatch,
   applyLinuxRemoteMobileConversationHydrationPatch,
+  applyLinuxRemoteMobileReasoningSummaryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxRemoteControlStatusReadGuardPatch,
   applyLinuxRemoteControlStatusWaitPatch,
@@ -61,6 +62,10 @@ const OLD_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
 const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET = CURRENT_APP_MAIN_PAGE_ASSET;
 
+function syntheticReasoningSummaryTurnStartBundle() {
+  return "async function yY(e,t,n){let s=n,D=n.latestThreadSettings,ee=n.initialParams,me=!fm(e.getHostId());let Ee=e.getDefaultFeatureOverride(vJ)===!0,De=ee?.summary??`none`;D?.summary!==void 0&&(De=D.summary),Ee&&(De=`detailed`),s.summary!==void 0&&(De=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{concurrentReasoningSummariesFeatureOverrideEnabled:Ee,summary:De}});return{featureOverride:Ee,summary:De}}";
+}
+
 test("remote mobile README assigns every descriptor to one control topology", () => {
   const readme = fs.readFileSync(path.join(__dirname, "README.md"), "utf8");
   const rows = [...readme.matchAll(
@@ -79,6 +84,7 @@ test("remote mobile README assigns every descriptor to one control topology", ()
     ["linux-remote-control-settings-ux", "shared-boundary"],
     ["linux-remote-control-client-revoke-setup-reset", "mobile-host"],
     ["linux-remote-connections-refresh", "shared-boundary"],
+    ["linux-remote-mobile-reasoning-summary-none", "mobile-host"],
     ["linux-remote-mobile-conversation-hydration", "mobile-host"],
     ["linux-remote-mobile-completed-item-recovery", "mobile-host"],
     ["linux-remote-terminal-status-recovery", "mobile-host"],
@@ -970,6 +976,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-control-settings-ux",
       "feature:remote-mobile-control:linux-remote-control-client-revoke-setup-reset",
       "feature:remote-mobile-control:linux-remote-connections-refresh",
+      "feature:remote-mobile-control:linux-remote-mobile-reasoning-summary-none",
       "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration",
       "feature:remote-mobile-control:linux-remote-mobile-completed-item-recovery",
       "feature:remote-mobile-control:linux-remote-terminal-status-recovery",
@@ -983,6 +990,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "main-bundle",
       "main-bundle",
       "extracted-app:post-webview",
+      "webview-asset",
       "webview-asset",
       "webview-asset",
       "webview-asset",
@@ -1217,6 +1225,79 @@ test("Linux remote mobile app-server launch keeps a leading use strict directive
   assert.notEqual(patched, source);
   assert.match(patched, /^"use strict";function codexLinuxRemoteMobileAppServerArgs/);
   assert.equal(applyLinuxRemoteMobileAppServerRemoteControlPatch(patched), patched);
+});
+
+test("Linux remote mobile turns suppress inherited reasoning summaries on the local host", async () => {
+  const source = syntheticReasoningSummaryTurnStartBundle();
+  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteMobileReasoningSummaryNone/);
+  assert.equal(applyLinuxRemoteMobileReasoningSummaryPatch(patched), patched);
+
+  const context = {
+    logger: { info() {} },
+    module: { exports: {} },
+    navigator: { userAgent: "X11; Linux x86_64" },
+    fm: (hostId) => hostId !== "local",
+    vJ: "concurrent_reasoning_summaries",
+  };
+  vm.runInNewContext(`${patched};module.exports=yY;`, context);
+  const startTurn = context.module.exports;
+  const manager = {
+    getDefaultFeatureOverride: () => true,
+    getHostId: () => "local",
+  };
+
+  const localResult = await startTurn(manager, "thread", {
+    initialParams: { summary: "auto" },
+    latestThreadSettings: { summary: "detailed" },
+  });
+  assert.equal(localResult.featureOverride, false);
+  assert.equal(localResult.summary, "none");
+});
+
+test("Linux remote mobile reasoning-summary patch preserves explicit and non-local settings", async () => {
+  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(
+    syntheticReasoningSummaryTurnStartBundle(),
+  );
+  const context = {
+    logger: { info() {} },
+    module: { exports: {} },
+    navigator: { userAgent: "X11; Linux x86_64" },
+    fm: (hostId) => hostId !== "local",
+    vJ: "concurrent_reasoning_summaries",
+  };
+  vm.runInNewContext(`${patched};module.exports=yY;`, context);
+  const startTurn = context.module.exports;
+
+  const explicitResult = await startTurn(
+    { getDefaultFeatureOverride: () => true, getHostId: () => "local" },
+    "thread",
+    { summary: "auto", latestThreadSettings: { summary: "detailed" } },
+  );
+  assert.equal(explicitResult.featureOverride, true);
+  assert.equal(explicitResult.summary, "auto");
+
+  const remoteResult = await startTurn(
+    { getDefaultFeatureOverride: () => true, getHostId: () => "remote-ssh:dev" },
+    "thread",
+    { latestThreadSettings: { summary: "auto" } },
+  );
+  assert.equal(remoteResult.featureOverride, true);
+  assert.equal(remoteResult.summary, "detailed");
+});
+
+test("Linux remote mobile reasoning-summary patch reports upstream drift", () => {
+  const source = "async function yY(){return 1}";
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find reasoning-summary turn-start log marker - skipping Linux remote mobile summary patch",
+  ]);
 });
 
 test("Linux remote-control client revoke resets current setup state after the last client is removed", () => {
