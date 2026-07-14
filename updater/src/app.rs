@@ -2455,7 +2455,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn interrupted_download_retries_an_unchanged_remote_fingerprint() -> Result<()> {
+    async fn interrupted_download_with_cached_hash_reaches_build_path() -> Result<()> {
         let server = MockServer::start().await;
         let body = b"codex-dmg-test-payload";
         let sha256 = "678cd508ffe0071e217020a7a4eecbebe25362c022ac78c13a5ae87b7a3a0c92";
@@ -2486,19 +2486,32 @@ mod tests {
         paths.ensure_dirs()?;
         let mut config = test_config(temp.path());
         config.dmg_url = format!("{}/Codex.dmg", server.uri());
-        write_installed_build_info(&config, sha256)?;
+        write_installed_build_info(
+            &config,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )?;
 
         let mut state = PersistedState::new(true);
         state.status = UpdateStatus::DownloadingDmg;
         state.remote_headers_fingerprint = Some(headers_fingerprint);
         state.dmg_sha256 = Some(sha256.to_string());
 
-        run_check_cycle(&config, &mut state, &paths).await?;
+        let error = run_check_cycle(&config, &mut state, &paths)
+            .await
+            .expect_err("retry should reach the intentionally missing builder bundle");
         server.verify().await;
 
-        assert_eq!(state.status, UpdateStatus::Idle);
-        assert_eq!(state.candidate_version, None);
+        assert!(error
+            .to_string()
+            .contains("Required builder bundle path is missing"));
+        assert_eq!(state.status, UpdateStatus::Failed);
+        assert!(state.candidate_version.is_some());
         assert_eq!(state.dmg_sha256.as_deref(), Some(sha256));
+        assert!(state.artifact_paths.workspace_dir.is_some());
+        assert!(state
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("Required builder bundle path is missing")));
         assert!(state.last_successful_check_at.is_some());
         Ok(())
     }
