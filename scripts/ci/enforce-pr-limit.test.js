@@ -341,6 +341,26 @@ test("enforcePullRequestLimits closes every excess PR left by a burst of events"
   );
 });
 
+test("enforcePullRequestLimits never mutates an excess manual-only PR", async () => {
+  const manualOnly = pullRequest(3, "contributor", {
+    labels: [{ name: "workflow: manual only" }],
+  });
+  const harness = createHarness({
+    current: pullRequest(4),
+    open: [pullRequest(1), pullRequest(2), manualOnly, pullRequest(4)],
+  });
+
+  const result = await enforcePullRequestLimits({ ...harness, rawLimit: "2" });
+
+  assert.deepEqual(result.closedPullRequests, [4]);
+  assert.deepEqual(result.authors[0].closedPullRequests, [4]);
+  assert.equal(
+    harness.calls.some(([, options]) => options.issue_number === 3 || options.pull_number === 3),
+    false,
+  );
+  assert.match(harness.messages.notice[0], /manual only/);
+});
+
 test("enforcePullRequestLimits reconciles every newer PR after a limit decrease", async () => {
   const current = pullRequest(4);
   const harness = createHarness({

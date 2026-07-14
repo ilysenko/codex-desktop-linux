@@ -39,6 +39,37 @@ update-builder bundle.
   cross-format changes unless the code explicitly scopes them to one package
   format or desktop target.
 
+## Issue And Pull Request Labels
+
+- [`.github/labels.json`](.github/labels.json) is the source of truth for label
+  names, colors, descriptions, groups, migrations, and retirements. Follow
+  [label governance](docs/label-governance.md) when classifying an issue or
+  pull request.
+- Labels are staff-managed. Contributors without repository label permission
+  do not determine their own labels. An agent without explicit delegated label
+  authority may propose a classification to an authorized maintainer or
+  collaborator, but it must not mutate repository labels.
+- An authorized agent operation must show a read-only plan first and use the
+  trusted manual workflow or `scripts/ci/manage-labels.js` with the required
+  typed confirmation. Never run write-capable label code from a fork pull
+  request or other untrusted ref.
+- After triage starts, issues have one `type:`, one or more `area:`, and one
+  active `status:` label. Pull requests have one `type:`, one or more `area:`,
+  and one `risk:` label. Use multiple areas only for real ownership boundaries.
+- Read native checks, draft state, mergeability, reviews, timestamps, and
+  open/closed state directly from GitHub. Do not duplicate them with labels.
+- `workflow: manual only` is a hard stop for item-specific automation: it may
+  inspect the item but must not comment, edit, classify, close, or merge it.
+  Only an owner-approved catalog migration declared in `.github/labels.json`
+  may preserve an existing classification under a replacement name.
+  `risk: low` never grants merge authority.
+- Do not infer labels from a title alone. Preserve uncertainty with the
+  appropriate triage status. Apply `resolution: duplicate` only after the
+  canonical item is verified and linked.
+- Never expose suspected secrets or an undisclosed vulnerability through a
+  public label. Use `type: security` only for public hardening or an already
+  disclosed concern.
+
 ## Source Routing
 
 Use source files, not generated artifacts. Main routing:
@@ -67,6 +98,8 @@ Primary human docs: [architecture](docs/architecture.md),
 [Linux features](docs/linux-features-architecture.md),
 [updater](docs/updater.md), [Linux Computer Use](docs/linux-computer-use.md),
 [Nix](docs/nix.md), and [troubleshooting](docs/troubleshooting.md).
+
+Repository governance: [issue and pull request labels](docs/label-governance.md).
 
 ## Patch And Feature Rules
 

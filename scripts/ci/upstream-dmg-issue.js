@@ -1,7 +1,30 @@
 "use strict";
 
-const LABEL = "upstream-dmg-drift";
+const labelPolicy = require("../../.github/labels.json");
+
+const LABEL = "area: upstream dmg";
+const MANUAL_ONLY_LABEL = "workflow: manual only";
+const ISSUE_LABELS = ["type: bug", LABEL, "status: ready for work"];
+const LEGACY_LABELS = labelPolicy.migrations
+  .filter(({ to }) => to === LABEL)
+  .map(({ from }) => from);
 const FINGERPRINT_PATTERN = /<!-- upstream-dmg-fingerprint:([a-f0-9]{64}) -->/i;
+
+function labelDefinition(name) {
+  const definition = labelPolicy.labels.find((candidate) => candidate.name === name);
+  if (!definition) {
+    throw new Error(`Missing ${name} in .github/labels.json`);
+  }
+  return definition;
+}
+
+const ISSUE_LABEL_DEFINITIONS = ISSUE_LABELS.map(labelDefinition);
+
+function hasLabel(issue, name) {
+  return (issue.labels || []).some((label) => (
+    typeof label === "string" ? label === name : label?.name === name
+  ));
+}
 
 function fingerprintMarker(fingerprint) {
   return `<!-- upstream-dmg-fingerprint:${fingerprint} -->`;
@@ -47,27 +70,41 @@ function issueBody(decision) {
 }
 
 async function listTrackingIssues(github, repo) {
-  const params = { ...repo, state: "all", labels: LABEL, per_page: 100 };
-  const issues = github.paginate
-    ? await github.paginate(github.rest.issues.listForRepo, params)
-    : (await github.rest.issues.listForRepo(params)).data;
+  const issuesByNumber = new Map();
+  for (const label of [LABEL, ...LEGACY_LABELS]) {
+    const params = { ...repo, state: "all", labels: label, per_page: 100 };
+    let issues;
+    try {
+      issues = github.paginate
+        ? await github.paginate(github.rest.issues.listForRepo, params)
+        : (await github.rest.issues.listForRepo(params)).data;
+    } catch (error) {
+      if (error?.status === 404) continue;
+      throw error;
+    }
+    for (const issue of issues) issuesByNumber.set(issue.number, issue);
+  }
   // The label is public repository metadata and may also be useful on a
   // maintainer-created issue. Only the hidden fingerprint marker proves that
   // this automation owns an issue and may mutate its lifecycle.
-  return issues.filter((issue) => issue.pull_request == null && issueFingerprint(issue) !== null);
+  return [...issuesByNumber.values()].filter(
+    (issue) => issue.pull_request == null && issueFingerprint(issue) !== null,
+  );
 }
 
-async function ensureLabel(github, repo) {
-  try {
-    await github.rest.issues.getLabel({ ...repo, name: LABEL });
-  } catch (error) {
-    if (error?.status !== 404) throw error;
-    await github.rest.issues.createLabel({
-      ...repo,
-      name: LABEL,
-      color: "d93f0b",
-      description: "Current upstream DMG failed the shared acceptance profile",
-    });
+async function ensureLabels(github, repo) {
+  for (const definition of ISSUE_LABEL_DEFINITIONS) {
+    try {
+      await github.rest.issues.getLabel({ ...repo, name: definition.name });
+    } catch (error) {
+      if (error?.status !== 404) throw error;
+      await github.rest.issues.createLabel({
+        ...repo,
+        name: definition.name,
+        color: definition.color,
+        description: definition.description,
+      });
+    }
   }
 }
 
@@ -96,18 +133,12 @@ async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpId
     return { action: "ignored-stale-candidate" };
   }
 
-  let issues;
-  try {
-    issues = await listTrackingIssues(github, repo);
-  } catch (error) {
-    if (error?.status === 404 && decision.verdict !== "rejected") {
-      return { action: "no-tracking-label" };
-    }
-    throw error;
-  }
+  const issues = await listTrackingIssues(github, repo);
 
   if (decision.verdict === "accepted" || decision.verdict === "accepted_with_warnings") {
-    const openIssues = issues.filter((issue) => issue.state === "open");
+    const openIssues = issues.filter(
+      (issue) => issue.state === "open" && !hasLabel(issue, MANUAL_ONLY_LABEL),
+    );
     for (const issue of openIssues) {
       await closeIssue(
         github,
@@ -120,10 +151,14 @@ async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpId
     return { action: "closed-resolved", count: openIssues.length };
   }
 
-  await ensureLabel(github, repo);
+  await ensureLabels(github, repo);
   const fingerprint = decision.dmg.sha256.toLowerCase();
   const matching = issues.find((issue) => issueFingerprint(issue) === fingerprint);
-  const obsolete = issues.filter((issue) => issue.state === "open" && issueFingerprint(issue) !== fingerprint);
+  const obsolete = issues.filter((issue) => (
+    issue.state === "open" &&
+    issueFingerprint(issue) !== fingerprint &&
+    !hasLabel(issue, MANUAL_ONLY_LABEL)
+  ));
   for (const issue of obsolete) {
     await closeIssue(
       github,
@@ -137,8 +172,16 @@ async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpId
   const title = issueTitle(decision);
   const body = issueBody(decision);
   if (matching) {
+    if (hasLabel(matching, MANUAL_ONLY_LABEL)) {
+      return { action: "manual-only", issueNumber: matching.number };
+    }
     const wasOpen = matching.state === "open";
     const alreadyReported = matching.body?.includes(runMarker(decision.run.id));
+    await github.rest.issues.addLabels({
+      ...repo,
+      issue_number: matching.number,
+      labels: ISSUE_LABELS,
+    });
     await github.rest.issues.update({
       ...repo,
       issue_number: matching.number,
@@ -156,7 +199,7 @@ async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpId
     return { action: wasOpen ? "updated" : "reopened", issueNumber: matching.number };
   }
 
-  const created = await github.rest.issues.create({ ...repo, title, body, labels: [LABEL] });
+  const created = await github.rest.issues.create({ ...repo, title, body, labels: ISSUE_LABELS });
   return { action: "created", issueNumber: created.data.number };
 }
 

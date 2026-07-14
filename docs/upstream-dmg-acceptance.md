@@ -64,14 +64,16 @@ symlinks are ignored.
 ## Drift Issue Lifecycle
 
 Scheduled runs use the DMG SHA-256 as the identity and the app version only as
-a display value. One `upstream-dmg-drift` issue is kept per rejected fingerprint.
+a display value. One `area: upstream dmg` issue is kept per rejected fingerprint.
 When a new fingerprint arrives, open issues for older DMGs are closed as
 superseded. An accepted new DMG closes all remaining drift issues. Before any
 mutation, the issue job compares the tested HTTP identity with the current DMG
 headers so rerunning an obsolete workflow cannot reopen an old issue. The
 identity must contain an ETag or both Last-Modified and Content-Length. If
 either the tested or current identity is unavailable, reconciliation makes no
-issue changes.
+issue changes. The reconciler reads its classification from
+`.github/labels.json` and leaves any issue carrying `workflow: manual only`
+untouched.
 Only issues carrying both the label and a valid hidden 64-character fingerprint
 marker are managed. Manually created labeled issues and malformed markers are
 never updated, reopened, superseded, or closed by the workflow.

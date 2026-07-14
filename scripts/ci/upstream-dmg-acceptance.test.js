@@ -169,6 +169,9 @@ test("upstream workflow concurrency is isolated per PR or ref", () => {
   assert.doesNotMatch(workflow, /group: upstream-dmg-acceptance-\$\{\{ github\.event_name \}\}\s*$/m);
   assert.equal((workflow.match(/- linux-features\/\*\*/g) ?? []).length, 2);
   assert.equal((workflow.match(/- scripts\/lib\/linux-features\.js/g) ?? []).length, 2);
+  assert.doesNotMatch(workflow, /uses:\s+[^\s]+@v\d/);
+  assert.match(workflow, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
+  assert.match(workflow, /persist-credentials: false/);
 });
 
 test("Nix refresh serializes campaigns and deduplicates refresh and exact-head CI", () => {

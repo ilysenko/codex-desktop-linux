@@ -1,0 +1,337 @@
+{
+  "schemaVersion": 1,
+  "staffManaged": true,
+  "groups": [
+    {
+      "id": "type",
+      "appliesTo": ["issue", "pull_request"],
+      "cardinality": "exactly_one"
+    },
+    {
+      "id": "area",
+      "appliesTo": ["issue", "pull_request"],
+      "cardinality": "one_or_more"
+    },
+    {
+      "id": "status",
+      "appliesTo": ["issue"],
+      "cardinality": "exactly_one"
+    },
+    {
+      "id": "impact",
+      "appliesTo": ["issue"],
+      "cardinality": "zero_or_one"
+    },
+    {
+      "id": "risk",
+      "appliesTo": ["pull_request"],
+      "cardinality": "exactly_one"
+    },
+    {
+      "id": "community",
+      "appliesTo": ["issue"],
+      "cardinality": "zero_or_more"
+    },
+    {
+      "id": "workflow",
+      "appliesTo": ["issue", "pull_request"],
+      "cardinality": "zero_or_one"
+    },
+    {
+      "id": "resolution",
+      "appliesTo": ["issue", "pull_request"],
+      "cardinality": "zero_or_one"
+    },
+    {
+      "id": "sync",
+      "appliesTo": ["issue"],
+      "cardinality": "zero_or_more"
+    }
+  ],
+  "labels": [
+    {
+      "name": "type: bug",
+      "color": "D73A4A",
+      "description": "A reproducible defect or regression in supported behavior.",
+      "group": "type"
+    },
+    {
+      "name": "type: feature",
+      "color": "A2EEEF",
+      "description": "A new user-facing capability or opt-in Linux feature.",
+      "group": "type"
+    },
+    {
+      "name": "type: documentation",
+      "color": "0075CA",
+      "description": "A documentation-only improvement or correction.",
+      "group": "type"
+    },
+    {
+      "name": "type: maintenance",
+      "color": "6F42C1",
+      "description": "Tests, refactoring, dependencies, CI, or repository maintenance.",
+      "group": "type"
+    },
+    {
+      "name": "type: question",
+      "color": "D876E3",
+      "description": "A usage or contribution question that needs an answer.",
+      "group": "type"
+    },
+    {
+      "name": "type: security",
+      "color": "B60205",
+      "description": "Public security hardening or a disclosed security concern.",
+      "group": "type"
+    },
+    {
+      "name": "area: build and install",
+      "color": "C5DEF5",
+      "description": "DMG extraction, dependencies, native modules, or installation flow.",
+      "group": "area"
+    },
+    {
+      "name": "area: launcher and runtime",
+      "color": "C5DEF5",
+      "description": "Launcher, process lifecycle, webview, or packaged runtime behavior.",
+      "group": "area"
+    },
+    {
+      "name": "area: updater",
+      "color": "C5DEF5",
+      "description": "Update detection, rebuild, install, rollback, or updater state.",
+      "group": "area"
+    },
+    {
+      "name": "area: native packaging",
+      "color": "C5DEF5",
+      "description": "Debian, RPM, or pacman package build and installation.",
+      "group": "area"
+    },
+    {
+      "name": "area: appimage",
+      "color": "C5DEF5",
+      "description": "AppImage build, runtime, or desktop integration.",
+      "group": "area"
+    },
+    {
+      "name": "area: nix",
+      "color": "C5DEF5",
+      "description": "Nix flake, modules, hashes, or package outputs.",
+      "group": "area"
+    },
+    {
+      "name": "area: upstream dmg",
+      "color": "C5DEF5",
+      "description": "Compatibility or drift in the latest supported upstream DMG.",
+      "group": "area"
+    },
+    {
+      "name": "area: linux features",
+      "color": "C5DEF5",
+      "description": "The opt-in linux-features framework or one of its modules.",
+      "group": "area"
+    },
+    {
+      "name": "area: computer use",
+      "color": "C5DEF5",
+      "description": "Linux Computer Use backends, helpers, or desktop control.",
+      "group": "area"
+    },
+    {
+      "name": "area: integrations",
+      "color": "C5DEF5",
+      "description": "Browser, desktop environment, portal, or external integration.",
+      "group": "area"
+    },
+    {
+      "name": "area: ci and tooling",
+      "color": "C5DEF5",
+      "description": "GitHub Actions, developer tooling, fixtures, or validation infrastructure.",
+      "group": "area"
+    },
+    {
+      "name": "status: needs triage",
+      "color": "EDEDED",
+      "description": "Not yet classified or validated through project triage.",
+      "group": "status"
+    },
+    {
+      "name": "status: needs information",
+      "color": "FBCA04",
+      "description": "Waiting for specific details from the reporter or author.",
+      "group": "status"
+    },
+    {
+      "name": "status: needs reproduction",
+      "color": "F9D0C4",
+      "description": "Needs a reliable reproduction or a failing test.",
+      "group": "status"
+    },
+    {
+      "name": "status: ready for work",
+      "color": "0E8A16",
+      "description": "Confirmed, scoped, and ready for implementation.",
+      "group": "status"
+    },
+    {
+      "name": "status: awaiting upstream",
+      "color": "D4C5F9",
+      "description": "Blocked on an upstream DMG, dependency, or external project.",
+      "group": "status"
+    },
+    {
+      "name": "status: needs maintainer decision",
+      "color": "5319E7",
+      "description": "Requires a product, architecture, scope, or policy decision.",
+      "group": "status"
+    },
+    {
+      "name": "status: blocked",
+      "color": "B60205",
+      "description": "Cannot progress until the documented blocker is resolved.",
+      "group": "status"
+    },
+    {
+      "name": "impact: critical",
+      "color": "B60205",
+      "description": "Security exposure, data loss, privilege failure, or widespread breakage.",
+      "group": "impact"
+    },
+    {
+      "name": "impact: high",
+      "color": "D93F0B",
+      "description": "A major supported workflow is broken without a reasonable workaround.",
+      "group": "impact"
+    },
+    {
+      "name": "impact: medium",
+      "color": "FBCA04",
+      "description": "Supported behavior is impaired, but a workaround or limited scope exists.",
+      "group": "impact"
+    },
+    {
+      "name": "impact: low",
+      "color": "98D362",
+      "description": "Minor, cosmetic, or narrowly scoped impact.",
+      "group": "impact"
+    },
+    {
+      "name": "risk: low",
+      "color": "0E8A16",
+      "description": "Small, isolated change with straightforward validation and rollback.",
+      "group": "risk"
+    },
+    {
+      "name": "risk: medium",
+      "color": "FBCA04",
+      "description": "Behavioral change with bounded compatibility or cross-surface risk.",
+      "group": "risk"
+    },
+    {
+      "name": "risk: high",
+      "color": "D93F0B",
+      "description": "Touches security, privileges, updates, persistence, or multiple package paths.",
+      "group": "risk"
+    },
+    {
+      "name": "good first issue",
+      "color": "7057FF",
+      "description": "Small, well-scoped work with clear acceptance criteria.",
+      "group": "community"
+    },
+    {
+      "name": "help wanted",
+      "color": "008672",
+      "description": "Maintainers welcome a contributor to take ownership.",
+      "group": "community"
+    },
+    {
+      "name": "feedback wanted",
+      "color": "96DB3E",
+      "description": "Community input is requested before a decision or implementation.",
+      "group": "community"
+    },
+    {
+      "name": "workflow: manual only",
+      "color": "6A737D",
+      "description": "Automation may inspect, but must not comment, edit, label, or merge.",
+      "group": "workflow"
+    },
+    {
+      "name": "resolution: duplicate",
+      "color": "CFD3D7",
+      "description": "Another issue or pull request already tracks the same work.",
+      "group": "resolution"
+    },
+    {
+      "name": "sync: computer use",
+      "color": "FBCA04",
+      "description": "Pending synchronization with agent-sh/computer-use-linux.",
+      "group": "sync"
+    }
+  ],
+  "migrations": [
+    { "from": "autoreview/area-bug", "to": "type: bug" },
+    { "from": "bug", "to": "type: bug" },
+    { "from": "autoreview/area-feature", "to": "type: feature" },
+    { "from": "enhancement", "to": "type: feature" },
+    { "from": "documentation", "to": "type: documentation" },
+    { "from": "autoreview/area-question", "to": "type: question" },
+    { "from": "question", "to": "type: question" },
+    { "from": "autoreview/needs-info", "to": "status: needs information" },
+    { "from": "autoreview/severity-high", "to": "impact: high" },
+    { "from": "autoreview/severity-medium", "to": "impact: medium" },
+    { "from": "autoreview/severity-low", "to": "impact: low" },
+    { "from": "autoreview/risk-high", "to": "risk: high" },
+    { "from": "autoreview/risk-medium", "to": "risk: medium" },
+    { "from": "autoreview/risk-low", "to": "risk: low" },
+    { "from": "autoreview/risk-trivial", "to": "risk: low" },
+    { "from": "users-feedback-needed", "to": "feedback wanted" },
+    { "from": "autoreview/skip", "to": "workflow: manual only" },
+    { "from": "duplicate", "to": "resolution: duplicate" },
+    { "from": "computer-use-sync", "to": "sync: computer use" },
+    { "from": "upstream-dmg-drift", "to": "area: upstream dmg" }
+  ],
+  "retiredLabels": [
+    { "name": "autoreview/area-bug", "reason": "Replaced by type: bug." },
+    { "name": "autoreview/area-feature", "reason": "Replaced by type: feature." },
+    { "name": "autoreview/area-question", "reason": "Replaced by type: question." },
+    { "name": "autoreview/auto-merged", "reason": "Use the native merged state." },
+    { "name": "autoreview/awaiting-tests", "reason": "Use GitHub Checks." },
+    { "name": "autoreview/changes-requested", "reason": "Use the native review state." },
+    { "name": "autoreview/conflict", "reason": "Use the native mergeability state." },
+    { "name": "autoreview/draft", "reason": "Use the native draft state." },
+    { "name": "autoreview/dryrun-would-merge", "reason": "Keep dry-run results in checks or logs." },
+    { "name": "autoreview/duplicate-suspect", "reason": "A suspicion is not a staff-confirmed resolution." },
+    { "name": "autoreview/error", "reason": "Keep automation errors in checks or logs." },
+    { "name": "autoreview/fork", "reason": "Use native pull request metadata." },
+    { "name": "autoreview/in-progress", "reason": "Use GitHub Checks." },
+    { "name": "autoreview/needs-human", "reason": "Replace through staff triage based on the actual decision needed." },
+    { "name": "autoreview/needs-info", "reason": "Replaced by status: needs information." },
+    { "name": "autoreview/queued", "reason": "Use GitHub Checks." },
+    { "name": "autoreview/risk-high", "reason": "Replaced by risk: high." },
+    { "name": "autoreview/risk-low", "reason": "Replaced by risk: low." },
+    { "name": "autoreview/risk-medium", "reason": "Replaced by risk: medium." },
+    { "name": "autoreview/risk-trivial", "reason": "Merged into risk: low." },
+    { "name": "autoreview/secrets-detected", "reason": "Use a blocking private security check, never a public label." },
+    { "name": "autoreview/severity-high", "reason": "Replaced by impact: high." },
+    { "name": "autoreview/severity-low", "reason": "Replaced by impact: low." },
+    { "name": "autoreview/severity-medium", "reason": "Replaced by impact: medium." },
+    { "name": "autoreview/skip", "reason": "Replaced by workflow: manual only." },
+    { "name": "autoreview/stale", "reason": "Use native activity timestamps." },
+    { "name": "autoreview/tests-failed", "reason": "Use GitHub Checks." },
+    { "name": "autoreview/triaged", "reason": "Triage completion is represented by the current governed status." },
+    { "name": "bug", "reason": "Replaced by type: bug." },
+    { "name": "computer-use-sync", "reason": "Replaced by sync: computer use." },
+    { "name": "documentation", "reason": "Replaced by type: documentation." },
+    { "name": "duplicate", "reason": "Replaced by resolution: duplicate." },
+    { "name": "enhancement", "reason": "Replaced by type: feature." },
+    { "name": "invalid", "reason": "Use the native not-planned close reason and a staff explanation." },
+    { "name": "question", "reason": "Replaced by type: question." },
+    { "name": "upstream-dmg-drift", "reason": "Replaced by area: upstream dmg." },
+    { "name": "users-feedback-needed", "reason": "Replaced by feedback wanted." },
+    { "name": "wontfix", "reason": "Use the native not-planned close reason and a staff explanation." }
+  ]
+}

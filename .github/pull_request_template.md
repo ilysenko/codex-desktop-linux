@@ -5,6 +5,10 @@
 ## Summary
 
 <!-- What changed, why, and which issue it resolves. -->
+<!--
+Repository labels are assigned by maintainers and authorized collaborators
+during triage. Describe the facts and scope; do not self-classify.
+-->
 
 ## Validation
 

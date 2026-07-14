@@ -2,6 +2,13 @@
 
 const DEFAULT_MAX_OPEN_PRS = 2;
 const LIMIT_COMMENT_MARKER = "<!-- contributor-pr-limit -->";
+const MANUAL_ONLY_LABEL = "workflow: manual only";
+
+function hasLabel(pullRequest, name) {
+  return (pullRequest.labels || []).some((label) => (
+    typeof label === "string" ? label === name : label?.name === name
+  ));
+}
 
 function parsePositiveInteger(rawValue) {
   const value = typeof rawValue === "string" ? rawValue.trim() : "";
@@ -181,7 +188,14 @@ async function enforcePullRequestLimits({ context, core, github, rawLimit, rawOv
     );
 
     const body = buildLimitComment(limit, pullRequests.length);
+    const closedForAuthor = [];
     for (const excessPullRequest of pullRequestsToClose) {
+      if (hasLabel(excessPullRequest, MANUAL_ONLY_LABEL)) {
+        core.notice(
+          `Skipped pull request #${excessPullRequest.number} because it is marked ${MANUAL_ONLY_LABEL}.`,
+        );
+        continue;
+      }
       await ensureLimitComment({
         body,
         context,
@@ -195,6 +209,7 @@ async function enforcePullRequestLimits({ context, core, github, rawLimit, rawOv
         pullNumber: excessPullRequest.number,
       });
       closedPullRequests.push(excessPullRequest.number);
+      closedForAuthor.push(excessPullRequest.number);
       core.notice(
         `Closed pull request #${excessPullRequest.number} because ${author} exceeded the limit.`,
       );
@@ -202,7 +217,7 @@ async function enforcePullRequestLimits({ context, core, github, rawLimit, rawOv
 
     authors.push({
       author,
-      closedPullRequests: pullRequestsToClose.map((candidate) => candidate.number),
+      closedPullRequests: closedForAuthor,
       count: pullRequests.length,
       limit,
     });

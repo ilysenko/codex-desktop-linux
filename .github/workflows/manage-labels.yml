@@ -1,0 +1,169 @@
+name: Manage repository labels
+run-name: Labels ${{ inputs.operation }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Plan triage and catalog changes, converge labels, or retire obsolete labels
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - apply
+          - retire
+      confirmation:
+        description: Enter APPLY or RETIRE for the matching write operation
+        required: false
+        type: string
+
+permissions: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: repository-label-governance
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: inputs.operation == 'plan'
+    name: plan labels
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Check out trusted governance code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Validate read-only operation and policy
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test -z "$CONFIRMATION" || {
+            echo "Plan requires an empty confirmation." >&2
+            exit 2
+          }
+          node scripts/ci/manage-labels.js --check
+
+      - name: Show the live plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/manage-labels.js --repo "$GITHUB_REPOSITORY"
+
+      - name: Record the result
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Repository label governance"
+            echo
+            echo "- Operation: \`plan\`"
+            echo "- Trusted ref: \`$DEFAULT_BRANCH\`"
+            echo "- Result: read-only; no repository label was changed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  mutate:
+    if: inputs.operation != 'plan'
+    name: ${{ inputs.operation }} labels
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      # A write-capable dispatch must run only code already reviewed on the
+      # default branch, even when the dispatcher selects another ref in the UI.
+      - name: Check out trusted governance code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Validate write operation and policy
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          case "$OPERATION:$CONFIRMATION" in
+            apply:APPLY|retire:RETIRE) ;;
+            *)
+              echo "Use APPLY for apply or RETIRE for retire." >&2
+              exit 2
+              ;;
+          esac
+          node scripts/ci/manage-labels.js --check
+
+      - name: Show the live plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/manage-labels.js --repo "$GITHUB_REPOSITORY"
+
+      - name: Capture the pre-change audit snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/manage-labels.js \
+            --repo "$GITHUB_REPOSITORY" \
+            --snapshot "$RUNNER_TEMP/repository-labels-before.json"
+
+      - name: Preserve the pre-change audit snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: repository-labels-before-${{ github.run_id }}
+          path: ${{ runner.temp }}/repository-labels-before.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Converge desired labels and migrate associations
+        if: inputs.operation == 'apply'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/manage-labels.js \
+            --repo "$GITHUB_REPOSITORY" \
+            --apply \
+            --confirm APPLY
+
+      - name: Retire obsolete labels
+        if: inputs.operation == 'retire'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/manage-labels.js \
+            --repo "$GITHUB_REPOSITORY" \
+            --retire "$RUNNER_TEMP/repository-labels-before.json" \
+            --confirm RETIRE
+
+      - name: Record the result
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Repository label governance"
+            echo
+            echo "- Operation: \`$OPERATION\`"
+            echo "- Trusted ref: \`$DEFAULT_BRANCH\`"
+            echo "- Result: completed with a pre-change audit snapshot."
+          } >> "$GITHUB_STEP_SUMMARY"

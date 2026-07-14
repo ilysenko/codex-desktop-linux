@@ -23,6 +23,7 @@ function fakeGithub(initialIssues = []) {
   rest.issues.listForRepo = async () => ({ data: issues });
   rest.issues.getLabel = async () => ({ data: {} });
   rest.issues.createLabel = async (args) => { calls.push(["createLabel", args]); return { data: {} }; };
+  rest.issues.addLabels = async (args) => { calls.push(["addLabels", args]); return { data: {} }; };
   rest.issues.createComment = async (args) => { calls.push(["comment", args]); return { data: {} }; };
   rest.issues.update = async (args) => {
     calls.push(["update", args]);
@@ -47,6 +48,11 @@ test("creates one issue for a rejected current fingerprint", async () => {
   });
   assert.equal(result.action, "created");
   assert.equal(fixture.calls.filter(([name]) => name === "create").length, 1);
+  assert.deepEqual(fixture.calls.find(([name]) => name === "create")[1].labels, [
+    "type: bug",
+    "area: upstream dmg",
+    "status: ready for work",
+  ]);
 });
 
 test("closes old fingerprints before creating the new issue", async () => {
@@ -87,6 +93,35 @@ test("does not add a duplicate comment for the same workflow run", async () => {
   });
   assert.equal(result.action, "updated");
   assert.equal(fixture.calls.filter(([name]) => name === "comment").length, 0);
+  assert.deepEqual(fixture.calls.find(([name]) => name === "addLabels")[1].labels, [
+    "type: bug",
+    "area: upstream dmg",
+    "status: ready for work",
+  ]);
+});
+
+test("manual-only tracking issues are never edited, commented on, or closed", async () => {
+  const sha = "9".repeat(64);
+  for (const verdict of ["accepted", "rejected"]) {
+    const fixture = fakeGithub([{
+      number: 30,
+      state: "open",
+      body: fingerprintMarker(sha),
+      labels: [{ name: "workflow: manual only" }],
+    }]);
+    const result = await reconcileUpstreamDmgIssue({
+      github: fixture.github,
+      repo: { owner: "o", repo: "r" },
+      decision: decision(verdict, sha),
+      currentHttpIdentityKey: "current",
+    });
+
+    if (verdict === "rejected") assert.equal(result.action, "manual-only");
+    assert.equal(
+      fixture.calls.some(([name]) => ["addLabels", "comment", "update"].includes(name)),
+      false,
+    );
+  }
 });
 
 test("does not mutate issues for stale or inconclusive runs", async () => {

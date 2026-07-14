@@ -25,6 +25,8 @@ run_node_tests() {
     local file
     local -a test_files=()
 
+    node scripts/ci/manage-labels.js --check
+
     while IFS= read -r file; do
         test_files+=("$file")
     done < <(git ls-files '*.test.js' 'linux-features/*/test.js')

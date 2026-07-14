@@ -61,6 +61,22 @@ Good issue reports usually include:
 - expected behavior
 - actual behavior
 
+### Labels and maintainer triage
+
+Repository labels are assigned by maintainers and authorized collaborators
+during triage. Contributors without repository label permission should provide
+the facts needed to classify the work; they should not self-assign, request,
+or guess labels. A new item with no labels is waiting for triage, not rejected.
+
+Coding agents follow the same boundary. Without explicit delegated label
+authority, an agent may propose a classification to authorized staff but must
+not create, apply, remove, or rename labels. Staff-authorized repository
+automation may apply deterministic classifications from the policy. Bulk
+catalog changes remain restricted to the trusted manual workflow.
+
+Read [issue and pull request label governance](docs/label-governance.md) for
+the authority model, taxonomy, selection rules, and migration process.
+
 ## Development Setup
 
 The recommended local setup is:
