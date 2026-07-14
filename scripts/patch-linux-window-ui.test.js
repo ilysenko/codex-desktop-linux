@@ -7546,6 +7546,8 @@ test("does not give synthetic Computer Use plugin cards an invalid marketplace d
 
   const patched = applyPatchTwice(applyLinuxComputerUseRendererAvailabilityPatch, source);
 
+  assert.match(patched, /marketplaceName:`openai-bundled`/);
+  assert.doesNotMatch(patched, /marketplaceName:`openai-curated`/);
   assert.match(patched, /marketplacePath:marketplacePath/);
   assert.doesNotMatch(patched, /marketplacePath:`openai-bundled\/plugins\/computer-use`/);
 });
