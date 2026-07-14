@@ -3,7 +3,7 @@
 const HANDLER_NAME = "linux-read-aloud";
 const RUNTIME_VERSION = "conversation-mode-v26";
 const CURRENT_DICTATION_ASSET_PATTERN =
-  /^app-initial~app-main~quick-chat-window-page~work-home-page~chatgpt-conversation-page-[^.]+\.js$/;
+  /^app-initial~app-main~onboarding-page-[A-Za-z0-9_-]+\.js$/;
 const CURRENT_COMPOSER_ASSET_PATTERN =
   /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-[^.]+\.js$/;
 
