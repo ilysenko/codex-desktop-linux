@@ -1497,6 +1497,23 @@ run_cli_preflight_background() {
     ) &
 }
 
+run_cli_launch_path_helper() {
+    python3 "$SCRIPT_DIR/.codex-linux/cli-launch-path.py" "$1"
+}
+
+verify_cli_launch_path() {
+    local verified_path=""
+    if ! verified_path="$(run_cli_launch_path_helper "$CODEX_CLI_PATH")"; then
+        return 1
+    fi
+    if [ -z "$verified_path" ]; then
+        return 1
+    fi
+
+    CODEX_CLI_PATH="$verified_path"
+    export CODEX_CLI_PATH
+}
+
 is_interactive_terminal() {
     [ "$LAUNCHER_INTERACTIVE_TERMINAL" -eq 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ]
 }
@@ -4193,6 +4210,14 @@ fi
 if needs_cold_start && [ -z "$CODEX_CLI_PATH" ]; then
     notify_error "Codex CLI is required but is not installed. Reopen the app to retry the automatic install flow, or install it manually with: npm i -g --include=optional @openai/codex or npm i -g --include=optional --prefix ~/.local @openai/codex"
     exit 1
+fi
+
+if [ -n "$CODEX_CLI_PATH" ]; then
+    if ! verify_cli_launch_path; then
+        notify_error "The selected Codex CLI failed its execution-free trust check and will not be executed. If it is a rejected managed standalone install, stop active Codex installers and remove its standalone tree. Updater-enabled native packages can then run: codex-update-manager recover-standalone-cli --print-path"
+        exit 1
+    fi
+    log_phase "cli_launch_path_verified"
 fi
 
 if needs_cold_start; then

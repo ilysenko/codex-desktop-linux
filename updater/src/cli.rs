@@ -42,6 +42,16 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         allow_install_missing: bool,
     },
+    /// Reinstall a removed standalone CLI tree with a permission-safe installer
+    /// child. This command never overwrites an existing standalone tree.
+    RecoverStandaloneCli {
+        #[arg(long)]
+        codex_home: Option<PathBuf>,
+        #[arg(long)]
+        install_dir: Option<PathBuf>,
+        #[arg(long)]
+        print_path: bool,
+    },
     PromptInstallCli {
         #[arg(long)]
         cli_path: Option<PathBuf>,

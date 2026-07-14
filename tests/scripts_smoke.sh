@@ -655,6 +655,7 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/node-runtime/bin/node"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/CHANGELOG.md"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/launcher/cli-launch-path.py"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/computer-use-linux/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/notification-actions-linux/Cargo.toml"
     assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder/global-dictation-linux/Cargo.toml"
@@ -667,6 +668,7 @@ SCRIPT
         >"$workspace/update-builder-patcher-help.txt"
     assert_contains "$workspace/update-builder-patcher-help.txt" "Usage: patch-linux-window-ui.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/cli-launch-path.py"
     assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "is-enabled codex-update-manager.service"
     assert_not_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "enable --now codex-update-manager.service"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
@@ -1049,6 +1051,7 @@ SCRIPT
     assert_file_exists "$pkg_root/DEBIAN/postinst"
     assert_file_exists "$pkg_root/DEBIAN/prerm"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/cli-launch-path.py"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
     assert_file_not_exists "$pkg_root/usr/bin/codex-update-manager"
     assert_file_not_exists "$pkg_root/usr/lib/systemd/user/codex-update-manager.service"
@@ -1461,6 +1464,7 @@ SCRIPT
     assert_file_exists "$capture_dir/AppDir/usr/share/icons/hicolor/256x256/apps/codex-desktop.png"
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/start.sh"
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-desktop.png"
+    assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/cli-launch-path.py"
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/resources/node-runtime/bin/node"
     assert_file_exists "$capture_dir/AppDir/opt/codex-desktop/resources/codex-cli/preserve.txt"
@@ -4923,6 +4927,7 @@ test_launcher_rejects_missing_webview_entrypoint() {
     } > "$app_dir/start.sh"
     chmod +x "$app_dir/start.sh"
     cp "$REPO_DIR/launcher/webview-server.py" "$app_dir/.codex-linux/webview-server.py"
+    cp "$REPO_DIR/launcher/cli-launch-path.py" "$app_dir/.codex-linux/cli-launch-path.py"
     ln -s "$(command -v node)" "$app_dir/resources/node-runtime/bin/node"
 
     cat > "$app_dir/electron" <<'SCRIPT'
@@ -5207,9 +5212,11 @@ test_launcher_template_sanity() {
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "CODEX_ELECTRON_CACHE_DIR"
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "--continue-at -"
     assert_file_exists "$REPO_DIR/launcher/webview-server.py"
+    assert_file_exists "$REPO_DIR/launcher/cli-launch-path.py"
     assert_contains "$REPO_DIR/launcher/webview-server.py" "Cache-Control"
     assert_contains "$REPO_DIR/launcher/webview-server.py" "If-Modified-Since"
     assert_contains "$REPO_DIR/install.sh" "webview-server.py"
+    assert_contains "$REPO_DIR/install.sh" "cli-launch-path.py"
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "WEBVIEW_PID_FILE"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "owned_webview_server_pid"
@@ -6386,14 +6393,29 @@ esac
 preflight_match = re.search(r"^run_cli_preflight\(\) \{[\s\S]*?^\}\n", source, re.M)
 if preflight_match is None:
     raise SystemExit("missing run_cli_preflight")
-routing_start = source.index('if needs_cold_start; then\n    cli_repair_required=0')
+trust_match = re.search(r"^verify_cli_launch_path\(\) \{[\s\S]*?^\}\n", source, re.M)
+if trust_match is None:
+    raise SystemExit("missing verify_cli_launch_path")
+routing_start = source.index('if [ -n "$CODEX_CLI_PATH" ]; then\n    if ! verify_cli_launch_path')
 routing_end = source.index("\nexport_packaged_runtime_env", routing_start)
+final_version_log = source.index("\nlog_codex_cli_path\n", routing_end)
+electron_launch = source.index("\nlaunch_electron ", final_version_log)
+if not routing_start < routing_end < final_version_log < electron_launch:
+    raise SystemExit("CLI trust gate must precede the final version log and Electron launch")
 pathlib.Path(sys.argv[3]).write_text(
     "#!/usr/bin/env bash\n"
     "set -Eeuo pipefail\n\n"
     + r'''
 CODEX_CLI_PATH=/tmp/codex
 has_update_manager() { [ "${UPDATE_MANAGER_AVAILABLE:-0}" = "1" ]; }
+run_cli_launch_path_helper() {
+    printf 'trust=called\n' >> "$ROUTING_LOG"
+    if [ "${TRUST_RESULT:-success}" = "success" ]; then
+        printf '%s\n' /tmp/verified-codex
+        return 0
+    fi
+    return 1
+}
 run_update_manager() {
     if [ "${UPDATE_MANAGER_RESULT:-failure}" = "success" ]; then
         printf '%s\n' /tmp/repaired-codex
@@ -6403,14 +6425,20 @@ run_update_manager() {
 }
 notify_error() { printf 'notify=%s\n' "$1" >> "$ROUTING_LOG"; }
 log_phase() { printf 'phase=%s\n' "$1" >> "$ROUTING_LOG"; }
-needs_cold_start() { return 0; }
-codex_cli_missing_optional_dependency() { [ "${BROKEN_CLI:-0}" = "1" ]; }
+needs_cold_start() { [ "${COLD_START:-1}" = "1" ]; }
+codex_cli_missing_optional_dependency() {
+    printf 'probe=missing-optional\n' >> "$ROUTING_LOG"
+    [ "${BROKEN_CLI:-0}" = "1" ]
+}
 run_cli_preflight_background() { printf 'background=1\n' >> "$ROUTING_LOG"; }
+log_codex_cli_path() { printf 'version=final\n' >> "$ROUTING_LOG"; }
+launch_electron() { printf 'electron=launch\n' >> "$ROUTING_LOG"; }
 '''
     + preflight_match.group(0)
+    + trust_match.group(0)
     + "\n"
     + source[routing_start:routing_end]
-    + "\n",
+    + "\nlog_codex_cli_path\nlaunch_electron\n",
     encoding="utf-8",
 )
 PY
@@ -6561,6 +6589,28 @@ PY
 
     local routing_log="$workspace/preflight-routing.log"
     if env -i PATH="$HOST_TOOL_PATH" ROUTING_LOG="$routing_log" \
+        UPDATE_MANAGER_AVAILABLE=0 TRUST_RESULT=failure BROKEN_CLI=1 \
+        "$routing_probe"; then
+        fail "standalone trust failure must abort launcher startup"
+    fi
+    grep -q '^notify=The selected Codex CLI failed its execution-free trust check' "$routing_log" || \
+        fail "standalone trust failure must show safe recovery guidance"
+    if grep -qE '^(probe=|background=|version=|electron=)' "$routing_log"; then
+        fail "standalone trust failure must block every CLI probe, final version log, and Electron startup"
+    fi
+
+    : > "$routing_log"
+    if env -i PATH="$HOST_TOOL_PATH" ROUTING_LOG="$routing_log" \
+        COLD_START=0 UPDATE_MANAGER_AVAILABLE=0 TRUST_RESULT=failure \
+        "$routing_probe"; then
+        fail "standalone trust failure must also abort second-instance handoff"
+    fi
+    if grep -qE '^(probe=|background=|version=|electron=)' "$routing_log"; then
+        fail "second-instance trust failure must not reach any CLI probe or Electron startup"
+    fi
+
+    : > "$routing_log"
+    if env -i PATH="$HOST_TOOL_PATH" ROUTING_LOG="$routing_log" \
         CODEX_SYNC_CLI_PREFLIGHT=1 BROKEN_CLI=1 UPDATE_MANAGER_AVAILABLE=0 \
         "$routing_probe"; then
         fail "sync preflight must abort when a known-broken CLI cannot be repaired"
@@ -6595,6 +6645,74 @@ PY
         fail "healthy default preflight must stay asynchronous"
     grep -qx 'phase=cli_preflight_backgrounded' "$routing_log" || \
         fail "healthy default preflight must record the background path"
+
+    : > "$routing_log"
+    env -i PATH="$HOST_TOOL_PATH" ROUTING_LOG="$routing_log" \
+        BROKEN_CLI=0 UPDATE_MANAGER_AVAILABLE=1 TRUST_RESULT=success \
+        "$routing_probe"
+    grep -qx 'trust=called' "$routing_log" || \
+        fail "native launcher must synchronously validate the selected CLI"
+    grep -qx 'phase=cli_launch_path_verified' "$routing_log" || \
+        fail "successful trust validation must be recorded before normal preflight"
+    grep -qx 'probe=missing-optional' "$routing_log" || \
+        fail "healthy CLI must be probed only after trust validation succeeds"
+    grep -qx 'version=final' "$routing_log" || \
+        fail "successful trust validation must allow the final CLI version log"
+    grep -qx 'electron=launch' "$routing_log" || \
+        fail "successful trust validation must allow Electron startup"
+    [ "$(sed -n '/^trust=called$/=' "$routing_log")" -lt "$(sed -n '/^probe=missing-optional$/=' "$routing_log")" ] || \
+        fail "trust validation must precede every CLI version probe"
+
+    local trust_workspace="$workspace/standalone-trust"
+    local codex_home="$trust_workspace/home/.codex"
+    local release="$codex_home/packages/standalone/releases/0.42.0-test-target"
+    local visible_cli="$trust_workspace/home/.local/bin/codex"
+    local stable_path
+    mkdir -p "$release/bin" "$(dirname "$visible_cli")"
+    chmod go-w "$workspace"
+    find "$trust_workspace" -type d -exec chmod go-w {} +
+    cat > "$release/bin/codex" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s\n' 'codex-cli 0.42.0'
+SCRIPT
+    chmod 0755 "$release/bin/codex"
+    ln -s "$release" "$codex_home/packages/standalone/current"
+    ln -s "$codex_home/packages/standalone/current/bin/codex" "$visible_cli"
+
+    stable_path="$(python3 "$REPO_DIR/launcher/cli-launch-path.py" "$visible_cli")"
+    [ "$stable_path" = "$(realpath "$release/bin/codex")" ] || \
+        fail "launcher trust helper must return the canonical standalone release target"
+
+    local replacement_marker="$trust_workspace/replacement-executed"
+    local replacement_cli="$trust_workspace/replacement-codex"
+    cat > "$replacement_cli" <<SCRIPT
+#!/usr/bin/env bash
+: > "$replacement_marker"
+printf '%s\n' 'codex-cli 9.9.9'
+SCRIPT
+    chmod 0755 "$replacement_cli"
+    rm "$visible_cli"
+    ln -s "$replacement_cli" "$visible_cli"
+    "$stable_path" --version >/dev/null
+    [ ! -e "$replacement_marker" ] || \
+        fail "replacing the visible CLI symlink must not redirect the verified launch target"
+
+    rm "$visible_cli"
+    ln -s "$codex_home/packages/standalone/current/bin/codex" "$visible_cli"
+    chmod 0775 "$release/bin/codex"
+    if python3 "$REPO_DIR/launcher/cli-launch-path.py" "$visible_cli" >/dev/null 2>&1; then
+        fail "launcher trust helper must reject a group-writable standalone binary"
+    fi
+    chmod 0755 "$release/bin/codex"
+
+    local external_root="$trust_workspace/external"
+    mkdir -p "$external_root/bin"
+    cp "$release/bin/codex" "$external_root/bin/codex"
+    rm "$codex_home/packages/standalone/current"
+    ln -s "$external_root" "$codex_home/packages/standalone/current"
+    if python3 "$REPO_DIR/launcher/cli-launch-path.py" "$visible_cli" >/dev/null 2>&1; then
+        fail "launcher trust helper must reject an external standalone current symlink"
+    fi
 }
 
 test_webview_server_cache_policy() {
@@ -6744,6 +6862,7 @@ test_side_by_side_launcher_identity() {
 
     assert_file_exists "$app_dir/start.sh"
     assert_file_exists "$app_dir/.codex-linux/webview-server.py"
+    assert_file_exists "$app_dir/.codex-linux/cli-launch-path.py"
     assert_file_exists "$app_dir/.codex-linux/codex-cua-lab.png"
     cmp -s "$linux_icon_source" "$app_dir/.codex-linux/codex-cua-lab.png" \
         || fail "Expected side-by-side launcher icon to use CODEX_LINUX_ICON_SOURCE"

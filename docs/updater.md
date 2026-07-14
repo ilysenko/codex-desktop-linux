@@ -29,12 +29,38 @@ unrelated child processes keep the caller's original mask.
 Before executing a managed standalone CLI, the updater verifies that its tree
 and canonical parent chain are owned by the current user or root and are not
 group/world-writable (apart from root-owned sticky directories such as
-`/tmp`). An unsafe tree is rejected without executing it, changing its modes,
-or deleting it; updater state records a failed preflight with clean-reinstall
-guidance. Stop any active updater/installer first, then remove the untrusted
-standalone tree and reinstall it with the official Codex installer. Removing
-write bits from the existing tree is not sufficient because its contents may
-already have been modified.
+`/tmp`). Every generated launcher performs the same trust-only check through a
+bundled helper before any CLI version probe, including AppImage and native
+packages built without the updater. The helper executes the returned canonical
+release binary rather than a replaceable visible symlink and does not depend on
+an installed updater version. An unsafe tree is rejected without
+executing it, changing its modes, or deleting it; updater state records a
+failed preflight with clean-reinstall guidance.
+
+To recover, stop any active updater or Codex installer, remove the rejected
+`~/.codex/packages/standalone` tree, and run:
+
+```bash
+codex-update-manager recover-standalone-cli --print-path
+```
+
+If the standalone installer link belongs in a non-default directory, add
+`--install-dir /absolute/path/to/bin`. Recovery refuses to overwrite any
+existing standalone tree. It downloads the official installer and runs only
+that child with the caller's umask plus the `0022` write restrictions, so the
+flow remains safe even when the desktop session uses `umask 0002`. Before the
+download, recovery removes group/world write access from existing
+current-user-owned directories below `$HOME` along both installer paths (for
+example `.codex`, `packages`, `.local`, and `bin`) and rejects symlinks,
+untrusted ownership, or unsafe ancestors it cannot safely narrow. Automatic
+standalone updates reject an unsafe visible-command directory before
+downloading or spawning the installer. Both update and recovery resolve the
+installer shell, downloader, and child commands only from root-controlled
+system tool directories; they never reuse programs already present in a
+formerly writable user directory. Do not run the official installer directly
+for this recovery: it would inherit the ambient mask. Removing write bits from
+the rejected standalone tree or its command directory is not sufficient because
+their contents may already have been modified.
 
 System-package-managed CLI installs are reused but not mutated through npm or
 the standalone installer flow. On Arch-like hosts, when the resolved CLI lives
