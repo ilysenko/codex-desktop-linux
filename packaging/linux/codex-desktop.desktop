@@ -1,5 +1,6 @@
 [Desktop Entry]
 Name=ChatGPT
+GenericName=Codex Desktop
 Comment=Run ChatGPT Desktop on Linux
 Exec=env BAMF_DESKTOP_FILE_HINT=/usr/share/applications/codex-desktop.desktop CHROME_DESKTOP=codex-desktop.desktop /usr/bin/codex-desktop %u
 Icon=codex-desktop
@@ -7,6 +8,7 @@ Terminal=false
 Type=Application
 Categories=Development;
 MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;
+Keywords=codex;chatgpt;openai;ai;coding;
 StartupNotify=true
 StartupWMClass=codex-desktop
 X-GNOME-WMClass=codex-desktop

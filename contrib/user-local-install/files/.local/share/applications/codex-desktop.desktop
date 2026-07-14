@@ -2,13 +2,14 @@
 Type=Application
 Version=1.0
 Name=ChatGPT
+GenericName=Codex Desktop
 Comment=OpenAI ChatGPT Desktop wrapper for Linux
 Exec=env BAMF_DESKTOP_FILE_HINT=@HOME@/.local/share/applications/codex-desktop.desktop CHROME_DESKTOP=codex-desktop.desktop @HOME@/.local/bin/codex-desktop %U
 TryExec=@HOME@/.local/bin/codex-desktop
 Terminal=false
 Categories=Development;IDE;
 MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;
-Keywords=codex;openai;ai;coding;
+Keywords=codex;chatgpt;openai;ai;coding;
 StartupNotify=true
 StartupWMClass=codex-desktop
 X-GNOME-WMClass=codex-desktop
