@@ -65,20 +65,20 @@ test("frameless-titlebar stays disabled until listed in features.json", () => {
     const webviewPatch = descriptors.find(
       (descriptor) => descriptor.id === "feature:frameless-titlebar:webview-window-controls-layout",
     );
-    assert.doesNotMatch(
-      "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-abc.js",
+    assert.match(
+      "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-CnQKtQ6U.js",
       webviewPatch.pattern,
     );
     assert.match(
+      "app-initial~artifact-tab-content.electron~app-main~appgen-settings-page~page~pull-request-r~napudbu0-BLPFEZVT.js",
+      webviewPatch.pattern,
+    );
+    assert.doesNotMatch(
       "app-initial~app-main~quick-chat-window-page~work-home-page~chatgpt-conversation-page-BqLP6EDd.js",
       webviewPatch.pattern,
     );
-    assert.match(
-      "app-initial~artifact-tab-content.electron~app-main~new-thread-panel-page~onboarding-page~pr~el73lghr-qHKfocxV.js",
-      webviewPatch.pattern,
-    );
     assert.doesNotMatch(
-      "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~duyd76c5-abc.js",
+      "app-initial~artifact-tab-content.electron~app-main~new-thread-panel-page~onboarding-page~pr~el73lghr-qHKfocxV.js",
       webviewPatch.pattern,
     );
     assert.doesNotMatch("app-initial~app-main~onboarding-page-abc.js", webviewPatch.pattern);

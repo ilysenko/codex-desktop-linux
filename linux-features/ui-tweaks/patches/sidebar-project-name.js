@@ -2,7 +2,7 @@
 
 const DEFAULT_PROJECT_NAME_STYLE = "font-weight: 700 !important; padding-top: 0.25rem;";
 const PROJECTS_SIDEBAR_ASSET_PATTERN =
-  /^app-initial~app-main~projects-index-page~remote-conversation-page-[^.]+\.js$/;
+  /^app-initial~app-main~page-[^.]+\.js$/;
 const PROJECT_NAME_SELECTOR = ".group\\/folder-row .text-fade-truncate.pr-1";
 const STYLE_ID = "codex-linux-ui-tweaks-sidebar-project-name-style";
 const RUNTIME_MARKER = "codexLinuxUiTweaksSidebarProjectNameStyleRuntime";

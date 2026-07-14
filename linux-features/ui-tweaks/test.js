@@ -183,9 +183,8 @@ test("model picker descriptors target the current state and menu bundles", () =>
   const stateAsset =
     "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-DRU9Ekz0.js";
   const allowlistAsset =
-    "app-initial~app-main~hotkey-window-thread-page~keyboard-shortcuts-settings~thread-app-shell~cf704xib-BpnUyB2R.js";
-  const menuAsset =
-    "app-initial~app-main~onboarding-page~projects-index-page~hotkey-window-thread-page~quick-ch~iiv1g666-EGSyoZAU.js";
+    "app-initial~app-main~onboarding-page-qmFVRsFx.js";
+  const menuAsset = allowlistAsset;
 
   assert.match(stateAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
   assert.match(allowlistAsset, MODEL_PICKER_ALLOWLIST_ASSET_PATTERN);
@@ -194,9 +193,7 @@ test("model picker descriptors target the current state and menu bundles", () =>
   assert.doesNotMatch(stateAsset, MODEL_PICKER_ALLOWLIST_ASSET_PATTERN);
   assert.doesNotMatch(stateAsset, MODEL_PICKER_MENU_ASSET_PATTERN);
   assert.doesNotMatch(allowlistAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
-  assert.doesNotMatch(allowlistAsset, MODEL_PICKER_MENU_ASSET_PATTERN);
   assert.doesNotMatch(menuAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
-  assert.doesNotMatch(menuAsset, MODEL_PICKER_ALLOWLIST_ASSET_PATTERN);
 
   // The previous DMG split these patches across different chunks.
   // Current-DMG-only targeting must not retain those chunks as fallbacks.
@@ -210,6 +207,14 @@ test("model picker descriptors target the current state and menu bundles", () =>
   );
   assert.doesNotMatch(
     "app-initial~app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~lpb6mnim-Bawo32lF.js",
+    MODEL_PICKER_MENU_ASSET_PATTERN,
+  );
+  assert.doesNotMatch(
+    "app-initial~app-main~hotkey-window-thread-page~keyboard-shortcuts-settings~thread-app-shell~cf704xib-BpnUyB2R.js",
+    MODEL_PICKER_ALLOWLIST_ASSET_PATTERN,
+  );
+  assert.doesNotMatch(
+    "app-initial~app-main~onboarding-page~projects-index-page~hotkey-window-thread-page~quick-ch~iiv1g666-EGSyoZAU.js",
     MODEL_PICKER_MENU_ASSET_PATTERN,
   );
 });
@@ -391,11 +396,11 @@ test("English reasoning effort labels can be disabled", () => {
 
 test("sidebar project descriptor targets only the current project sidebar asset", () => {
   assert.match(
-    "app-initial~app-main~projects-index-page~remote-conversation-page-CFT2LLOB.js",
+    "app-initial~app-main~page-kMhXWEru.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
   assert.doesNotMatch(
-    "app-initial~app-main~page-BF1QkwFT.js",
+    "app-initial~app-main~projects-index-page~remote-conversation-page-CFT2LLOB.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
   assert.doesNotMatch(
