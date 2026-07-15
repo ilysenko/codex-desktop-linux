@@ -7854,6 +7854,36 @@ test("keeps shared Browser recovery active when another watcher wins remount", (
   assert.equal(timers[2].delay, 1_000);
 });
 
+test("does not poison shared Browser recovery when a stale host timer fires", () => {
+  let failures = 0;
+  const timers = [];
+  const recoveryRef = { current: null };
+
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-1",
+    conversationId: "conversation-1",
+    failRecovery: () => {
+      failures += 1;
+    },
+    host: { listenForDidAttach: () => () => {} },
+    recoveryRef,
+    recoveryState: { attempt: 0, deadlineAt: 5_000 },
+    remount: () => null,
+    timerApi: {
+      clearTimeout() {},
+      setTimeout(callback) {
+        timers.push(callback);
+        return callback;
+      },
+    },
+  });
+  timers[0]();
+
+  assert.equal(failures, 0);
+  assert.equal(recoveryRef.current.attempt, 2);
+});
+
 test("patches the current Browser webview store and host atomically", () => {
   const storeSource =
     "function Af(e,t){return t??e}function Ef(e,t){return`${e}\\0${t}`}var Pf=class{webviews=new Map;snapshots=new Map;tabPersistenceStates=new Map;browserUseActiveTabKeys=new Set;browserUseViewportSizes=new Map;transferredWebviewKeys=new Set;registrationAttempts=new WeakMap;nextHostGeneration=0;getSnapshot(e,t){return this.snapshots.get(Ef(e,t))??null}setBrowserUseActive(e,...t){let n=typeof t[0]==`boolean`?Af(e,void 0):t[0],r=typeof t[0]==`boolean`?t[0]:t[1],i=Ef(e,n),a=this.browserUseActiveTabKeys.has(i);if(r){let t=`${e}\\0`;for(let e of Array.from(this.browserUseActiveTabKeys)){if(e===i||!e.startsWith(t))continue;this.browserUseActiveTabKeys.delete(e);let n=null}this.browserUseActiveTabKeys.add(i)}else this.browserUseActiveTabKeys.delete(i);return a}releaseBrowserUseTab(e,t){let n=Ef(e,t),r=this.browserUseActiveTabKeys.delete(n);return r}removeTab(e,t){let n=Ef(e,t),r=this.webviews.get(n);this.webviews.delete(n)}registerWebviewHost(e,t){return true}removeConversationTabs(e){let t=`${e}\\0`;for(let e of this.snapshots.keys())e.startsWith(t)&&this.snapshots.delete(e)}reassociateTabState(e,...t){let n=t[0],r=t[1],i=t[2],o=`transfer`,s=Ef(e,n),c=Ef(r,i);if(s===c||this.transferredWebviewKeys.has(o))return;if(this.webviews.has(c))return;let m=this.browserUseViewportSizes.get(s)??null,h=this.browserUseActiveTabKeys.delete(s);h&&this.browserUseActiveTabKeys.add(c);return m}disposeAll(){this.electronPageHandoff.disposeAll(),this.webviews.clear()}disposeWebviewHost(e,t,n,r){this.webviews.delete(n)}emitChange(){for(let e of this.listeners)e()}}";
@@ -7868,7 +7898,7 @@ test("patches the current Browser webview store and host atomically", () => {
   assert.match(patched, /linuxRemountWebview\(e,t,n,r\)/);
   assert.match(
     patched,
-    /let i=Ef\(e,t\),a=this\.linuxBrowserUseRecoveryStates\.get\(i\);if\(this\.webviews\.get\(i\)!==n\)return null/,
+    /let i=Ef\(e,t\),a=this\.linuxBrowserUseRecoveryStates\.get\(i\);if\(a\?\.attempt>=1\)return\{started:!1,state:a\};if\(this\.webviews\.get\(i\)!==n\)return null/,
   );
   assert.match(patched, /linuxBrowserUseRecoveryStates\.get\(i\)/);
   assert.match(patched, /linuxStartWebviewRecovery\(e,t,n\)/);
@@ -7942,6 +7972,13 @@ test("patches the current Browser webview store and host atomically", () => {
     store.tabPersistenceStates.get("conversation-1\0tab-1"),
     persistence,
   );
+  const losingWatcherResult = store.linuxRemountWebview(
+    "conversation-1",
+    "tab-1",
+    firstHost,
+  );
+  assert.equal(losingWatcherResult.started, false);
+  assert.equal(losingWatcherResult.state.attempt, 1);
   store.webviews.set("conversation-1\0tab-1", secondHost);
   assert.equal(
     store.linuxRemountWebview("conversation-1", "tab-1", secondHost).started,
