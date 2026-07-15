@@ -16,7 +16,9 @@ const {
 } = require("../../scripts/lib/linux-features.js");
 const {
   DESCRIPTOR_ID,
+  POINTER_REGION_DESCRIPTOR_ID,
   applyPetOverlayPatch,
+  applyPetOverlayPointerRegionPatch,
   mergedPetOverlaySettings,
 } = require("./patch.js");
 
@@ -92,6 +94,15 @@ function controllerFromPatchedSource(patched, overrides = {}) {
       if (moduleName === "node:child_process") {
         return overrides.childProcess ?? { execFile() {} };
       }
+      if (moduleName === "node:fs") {
+        return fs;
+      }
+      if (moduleName === "node:os") {
+        return os;
+      }
+      if (moduleName === "node:path") {
+        return path;
+      }
       if (moduleName === "electron") {
         return {
           app: { getName: () => "Codex" },
@@ -152,7 +163,10 @@ test("pet-overlay is discoverable and disabled until listed in features.json", (
     const descriptors = loadLinuxFeaturePatchDescriptors({ featuresRoot });
     assert.deepEqual(
       descriptors.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
-      [[`feature:pet-overlay:${DESCRIPTOR_ID}`, "main-bundle", "optional"]],
+      [
+        [`feature:pet-overlay:${DESCRIPTOR_ID}`, "main-bundle", "optional"],
+        [`feature:pet-overlay:${POINTER_REGION_DESCRIPTOR_ID}`, "webview-asset", "optional"],
+      ],
     );
     const plan = enabledLinuxFeatureInstallPlan({ featuresRoot });
     assert.deepEqual(
@@ -211,6 +225,28 @@ test("patches current avatar overlay layout, transparency, and window sync", () 
   assert.match(patched, /setSkipTaskbar/);
   assert.match(patched, /t===`avatarOverlay`\?\{backgroundColor:`#00000000`,backgroundMaterial:null\}/);
   assert.equal((patched.match(/codexPetOverlayLayoutForDisplay/g) ?? []).length, 2);
+});
+
+test("limits renderer drag starts to visible pet and tray hit regions", () => {
+  const unrelated = "a=e=>{e.button!==0||!(e.target instanceof Element)||e.target.closest(`.no-drag`)!=null||(e.preventDefault(),k.dispatchMessage(`unrelated-drag-start`,{}))};";
+  const avatar = "Ge=e=>{e.button!==0||!(e.target instanceof Element)||e.target.closest(`.no-drag`)!=null||(e.preventDefault(),k.dispatchMessage(`avatar-overlay-drag-start`,{}))}";
+  const source = unrelated + avatar;
+  const patched = applyPetOverlayPointerRegionPatch(source);
+
+  assert.match(patched, new RegExp(unrelated.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(
+    patched,
+    /e\.target\.closest\(`\[data-avatar-overlay-hit-region\]`\)==null\|\|e\.target\.closest\(`\.no-drag`\)!=null/,
+  );
+  assert.equal(applyPetOverlayPointerRegionPatch(patched), patched);
+});
+
+test("pointer-region patch fails closed when the current pointer guard drifts", () => {
+  const source = "Ge=e=>{if(e.button===0)k.dispatchMessage(`avatar-overlay-drag-start`,{})}";
+  const { result, warnings } = captureWarnings(() => applyPetOverlayPointerRegionPatch(source));
+
+  assert.equal(result, source);
+  assert.match(warnings.join("\n"), /Could not find avatar overlay pointer-down guard/);
 });
 
 test("refreshes only the avatar overlay after the selected pet changes", async () => {
@@ -304,6 +340,20 @@ test("discards every change when a required current hook drifts", () => {
   assert.equal(result, source);
   assert.match(warnings.join("\n"), /Could not identify avatar overlay showWindow display point/);
   assert.match(warnings.join("\n"), /Pet overlay patch is incomplete/);
+});
+
+test("patches the current dock-threshold drag completion shape", () => {
+  const source = currentAvatarOverlayBundleFixture().replace(
+    "i?this.persistWindowBounds(n,a??this.getCurrentDisplay()):this.reclampWindowToVisibleDisplay({shouldPersist:!0});let o=this.dockTarget;o!=null&&this.dockPresentation(o.anchor,o.onDock)",
+    "i?this.persistWindowBounds(n,a??this.getCurrentDisplay()):this.reclampWindowToVisibleDisplay({shouldPersist:!0});let o=this.dockTarget,s=this.anchor;o!=null&&shouldDock({current:s,target:o.anchor}).shouldDock&&this.dockPresentation(o.anchor,o.onDock)",
+  );
+  const { result, warnings } = captureWarnings(() => applyPetOverlayPatch(source));
+
+  assert.notEqual(result, source);
+  assert.doesNotMatch(warnings.join("\n"), /drag completion shape/);
+  assert.match(result, /this\.codexPetOverlayEndKWinDrag\(n,\(\)=>\{i\?this\.persistWindowBounds/);
+  assert.match(result, /this\.codexPetOverlayEndNiriDrag\(n,\(\)=>\{i\?this\.persistWindowBounds/);
+  assert.match(result, /let o=this\.dockTarget,s=this\.anchor;o!=null&&shouldDock/);
 });
 
 test("passive mode fails closed when the current create-window shape drifts", () => {
@@ -1228,6 +1278,202 @@ test("environment overrides can turn Hyprland handling off", () => {
   assert.deepEqual(calls, []);
 });
 
+test("KWin bridge applies keep-above hints and exact Wayland geometry to only the matching pet", () => {
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture(), {
+    feature: { manifest: { petOverlay: { kwin: true, lockPosition: true } }, settings: {} },
+  });
+  const calls = [];
+  let script = null;
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env: { XDG_CURRENT_DESKTOP: "KDE" } },
+    childProcess: {
+      execFile(command, args, options, callback) {
+        calls.push([command, args]);
+        assert.equal(command, "qdbus6");
+        assert.equal(options.timeout, 1500);
+        if (args.includes("org.kde.kwin.Scripting.loadScript")) {
+          script = fs.readFileSync(args[3], "utf8");
+        }
+        callback(null, "ok");
+      },
+    },
+  });
+  const window = { isDestroyed: () => false };
+  controller.window = window;
+  controller.codexPetOverlayDesiredWindowBounds = { x: 610, y: 330, width: 356, height: 320 };
+
+  controller.codexPetOverlayApplyKWinHints(window);
+
+  assert.deepEqual(
+    calls.map(([, args]) => args[2]),
+    [
+      "org.kde.kwin.Scripting.loadScript",
+      "org.kde.kwin.Scripting.start",
+      "org.kde.kwin.Scripting.unloadScript",
+    ],
+  );
+  assert.ok(script);
+  const pet = {
+    caption: "Codex Pet Overlay",
+    frameGeometry: { x: 10, y: 20, width: 356, height: 320 },
+    pid: 4242,
+  };
+  const main = {
+    caption: "ChatGPT",
+    frameGeometry: { x: 0, y: 0, width: 1280, height: 820 },
+    pid: 4242,
+  };
+  const raised = [];
+  vm.runInNewContext(script, {
+    workspace: {
+      raiseWindow: (target) => raised.push(target),
+      windowList: () => [main, pet],
+    },
+  });
+
+  assert.equal(pet.keepAbove, true);
+  assert.equal(pet.onAllDesktops, true);
+  assert.equal(pet.skipTaskbar, true);
+  assert.equal(pet.skipPager, true);
+  assert.equal(pet.noBorder, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(pet.frameGeometry)), { x: 610, y: 330, width: 356, height: 320 });
+  assert.deepEqual(raised, [pet]);
+  assert.equal(main.keepAbove, undefined);
+
+  const duplicateA = { caption: "Codex Pet Overlay", frameGeometry: {}, pid: 4242 };
+  const duplicateB = { caption: "Codex Pet Overlay", frameGeometry: {}, pid: 4242 };
+  vm.runInNewContext(script, {
+    workspace: {
+      raiseWindow() {},
+      windowList: () => [duplicateA, duplicateB],
+    },
+  });
+  assert.equal(duplicateA.keepAbove, undefined);
+  assert.equal(duplicateB.keepAbove, undefined);
+});
+
+test("KWin drag follows compositor cursor changes without losing the grab offset", () => {
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const calls = [];
+  let script = null;
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env: { XDG_CURRENT_DESKTOP: "KDE" } },
+    childProcess: {
+      execFileSync(command, args, options) {
+        calls.push([command, args, options]);
+        if (args.includes("org.kde.kwin.Scripting.loadScript")) {
+          script = fs.readFileSync(args[3], "utf8");
+        }
+      },
+    },
+  });
+  const window = {
+    getContentBounds: () => ({ x: 145, y: 210, width: 356, height: 320 }),
+    isDestroyed: () => false,
+  };
+  let persisted = false;
+  controller.window = window;
+
+  controller.codexPetOverlayBeginKWinDrag(window);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][0], "qdbus6");
+  assert.equal(calls[0][1][2], "org.kde.kwin.Scripting.loadScript");
+  assert.equal(calls[1][1][2], "org.kde.kwin.Scripting.start");
+  assert.equal(calls[0][2].timeout, 750);
+  assert.equal(controller.windowServerDragActive, true);
+  assert.equal(controller.windowServerDragWindowX, 145);
+  assert.ok(script);
+
+  const cursorSignal = { callback: null, connect(callback) { this.callback = callback; }, disconnect() {} };
+  const removedSignal = { connect() {} };
+  const pet = {
+    caption: "Codex Pet Overlay",
+    frameGeometry: { x: 100, y: 200, width: 356, height: 320 },
+    pid: 4242,
+  };
+  const workspace = {
+    cursorPos: { x: 130, y: 250 },
+    cursorPosChanged: cursorSignal,
+    raiseWindow() {},
+    windowList: () => [pet],
+    windowRemoved: removedSignal,
+  };
+  vm.runInNewContext(script, { workspace });
+  assert.equal(typeof cursorSignal.callback, "function");
+  workspace.cursorPos = { x: 300, y: 410 };
+  cursorSignal.callback();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(pet.frameGeometry)),
+    { x: 270, y: 360, width: 356, height: 320 },
+  );
+
+  controller.codexPetOverlayQueueKWinDrag(window);
+  assert.equal(calls.length, 2, "pointer updates must not spawn compositor processes");
+  const scriptPath = controller.codexPetOverlayKWinDragState.scriptPath;
+  assert.equal(fs.existsSync(scriptPath), true);
+  assert.equal(controller.codexPetOverlayEndKWinDrag(window, () => { persisted = true; }), true);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2][1][2], "org.kde.kwin.Scripting.unloadScript");
+  assert.equal(fs.existsSync(scriptPath), false);
+  assert.equal(persisted, true);
+  assert.equal(controller.codexPetOverlayKWinDragState, null);
+});
+
+test("KWin drag falls back without repeatedly probing missing qdbus commands", () => {
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  let calls = 0;
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env: { XDG_CURRENT_DESKTOP: "KDE" } },
+    childProcess: {
+      execFileSync() {
+        calls += 1;
+        const error = new Error("qdbus missing");
+        error.code = "ENOENT";
+        throw error;
+      },
+    },
+  });
+  const window = { isDestroyed: () => false };
+  controller.window = window;
+
+  controller.codexPetOverlayBeginKWinDrag(window);
+
+  assert.equal(calls, 2);
+  assert.equal(controller.codexPetOverlayKWinDragState, undefined);
+  assert.equal(controller.windowServerDragActive, undefined);
+
+  controller.codexPetOverlayBeginKWinDrag(window);
+  assert.equal(calls, 2);
+});
+
+test("settings and environment can disable KWin handling", () => {
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture(), {
+    feature: { manifest: { petOverlay: { kwin: true } }, settings: { petOverlay: { kwin: false } } },
+  });
+  const disabled = controllerFromPatchedSource(patched, {
+    process: { env: { XDG_CURRENT_DESKTOP: "KDE" } },
+  }).controller;
+  assert.equal(disabled.codexPetOverlayShouldUseKWin(), false);
+
+  const overridden = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()),
+    { process: { env: { XDG_CURRENT_DESKTOP: "KDE", CODEX_PET_OVERLAY_KWIN: "0" } } },
+  ).controller;
+  assert.equal(overridden.codexPetOverlayShouldUseKWin(), false);
+
+  const kdeSession = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()),
+    { process: { env: { KDE_SESSION_VERSION: "6" } } },
+  ).controller;
+  assert.equal(kdeSession.codexPetOverlayShouldUseKWin(), true);
+
+  const falseKdeSession = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()),
+    { process: { env: { KDE_FULL_SESSION: "false" } } },
+  ).controller;
+  assert.equal(falseKdeSession.codexPetOverlayShouldUseKWin(), false);
+});
+
 test("targets a tiled Niri pet window by id and moves it without focus actions", () => {
   const calls = runNiriHintScenario({
     windowsJson: JSON.stringify([
@@ -1785,6 +2031,7 @@ test("settings validation falls back to safe defaults", () => {
       alwaysOnTop: true,
       gravity: "bottom-right",
       hyprland: true,
+      kwin: true,
       lockPosition: true,
       margin: 512,
       mode: "interactive",

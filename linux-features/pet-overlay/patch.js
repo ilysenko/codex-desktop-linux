@@ -2,6 +2,7 @@
 
 const VALID_GRAVITIES = new Set(["bottom-right", "bottom-left", "top-right", "top-left"]);
 const DESCRIPTOR_ID = "pet-overlay-main";
+const POINTER_REGION_DESCRIPTOR_ID = "pet-overlay-pointer-region";
 const AVATAR_SELECTION_REFRESH_MARKER = "codexPetOverlayRefreshAvatarWindows";
 
 function findMatchingBrace(source, openIndex) {
@@ -64,6 +65,7 @@ function mergedPetOverlaySettings(context = {}) {
     alwaysOnTop: booleanSetting(overrides.alwaysOnTop, booleanSetting(defaults.alwaysOnTop, true)),
     gravity,
     hyprland: booleanSetting(overrides.hyprland, booleanSetting(defaults.hyprland, true)),
+    kwin: booleanSetting(overrides.kwin, booleanSetting(defaults.kwin, true)),
     lockPosition: booleanSetting(overrides.lockPosition, booleanSetting(defaults.lockPosition, false)),
     margin: integerSetting(overrides.margin ?? defaults.margin, 24, 0, 512),
     mode,
@@ -148,7 +150,7 @@ function firstMethodArgument(methodText, methodName, index) {
 
 function buildPetOverlayMethods(settings) {
   return [
-    `codexPetOverlaySettings(){let e={margin:${settings.margin},gravity:\`${settings.gravity}\`,allWorkspaces:${boolLiteral(settings.allWorkspaces)},alwaysOnTop:${boolLiteral(settings.alwaysOnTop)},skipTaskbar:${boolLiteral(settings.skipTaskbar)},lockPosition:${boolLiteral(settings.lockPosition)},mode:\`${settings.mode}\`,hyprland:${boolLiteral(settings.hyprland)},niri:${boolLiteral(settings.niri)}};try{let t=process.env.CODEX_PET_OVERLAY_MARGIN??process.env.CODEX_PET_LINUX_MARGIN,n=Number(t);Number.isFinite(n)&&(e.margin=Math.max(0,Math.min(512,Math.round(n))));let r=process.env.CODEX_PET_OVERLAY_GRAVITY??process.env.CODEX_PET_LINUX_GRAVITY;[\`bottom-right\`,\`bottom-left\`,\`top-right\`,\`top-left\`].includes(r)&&(e.gravity=r);let i=process.env.CODEX_PET_OVERLAY_MODE??process.env.CODEX_PET_LINUX_MODE;(i===\`interactive\`||i===\`passive\`)&&(e.mode=i);let a=process.env.CODEX_PET_OVERLAY_LOCK_POSITION??process.env.CODEX_PET_LINUX_LOCK_POSITION;a===\`1\`&&(e.lockPosition=!0),a===\`0\`&&(e.lockPosition=!1);let o=process.env.CODEX_PET_OVERLAY_HYPRLAND??process.env.CODEX_PET_LINUX_HYPRLAND;o===\`1\`&&(e.hyprland=!0),o===\`0\`&&(e.hyprland=!1);let s=process.env.CODEX_PET_OVERLAY_NIRI;s===\`1\`&&(e.niri=!0),s===\`0\`&&(e.niri=!1)}catch{}return e}`,
+    `codexPetOverlaySettings(){let e={margin:${settings.margin},gravity:\`${settings.gravity}\`,allWorkspaces:${boolLiteral(settings.allWorkspaces)},alwaysOnTop:${boolLiteral(settings.alwaysOnTop)},skipTaskbar:${boolLiteral(settings.skipTaskbar)},lockPosition:${boolLiteral(settings.lockPosition)},mode:\`${settings.mode}\`,hyprland:${boolLiteral(settings.hyprland)},kwin:${boolLiteral(settings.kwin)},niri:${boolLiteral(settings.niri)}};try{let t=process.env.CODEX_PET_OVERLAY_MARGIN??process.env.CODEX_PET_LINUX_MARGIN,n=Number(t);Number.isFinite(n)&&(e.margin=Math.max(0,Math.min(512,Math.round(n))));let r=process.env.CODEX_PET_OVERLAY_GRAVITY??process.env.CODEX_PET_LINUX_GRAVITY;[\`bottom-right\`,\`bottom-left\`,\`top-right\`,\`top-left\`].includes(r)&&(e.gravity=r);let i=process.env.CODEX_PET_OVERLAY_MODE??process.env.CODEX_PET_LINUX_MODE;(i===\`interactive\`||i===\`passive\`)&&(e.mode=i);let a=process.env.CODEX_PET_OVERLAY_LOCK_POSITION??process.env.CODEX_PET_LINUX_LOCK_POSITION;a===\`1\`&&(e.lockPosition=!0),a===\`0\`&&(e.lockPosition=!1);let o=process.env.CODEX_PET_OVERLAY_HYPRLAND??process.env.CODEX_PET_LINUX_HYPRLAND;o===\`1\`&&(e.hyprland=!0),o===\`0\`&&(e.hyprland=!1);let s=process.env.CODEX_PET_OVERLAY_KWIN;s===\`1\`&&(e.kwin=!0),s===\`0\`&&(e.kwin=!1);let c=process.env.CODEX_PET_OVERLAY_NIRI;c===\`1\`&&(e.niri=!0),c===\`0\`&&(e.niri=!1)}catch{}return e}`,
     "codexPetOverlayRect(e){if(e==null)return null;let t=Number(e.x),n=Number(e.y),r=Number(e.width),i=Number(e.height);return[t,n,r,i].every(Number.isFinite)&&r>0&&i>0?{x:t,y:n,width:r,height:i}:null}",
     "codexPetOverlayDisplayRect(e){return this.codexPetOverlayRect(e?.workArea??e?.bounds??e)}",
     "codexPetOverlayWindowBounds(e){try{return this.codexPetOverlayRect(e?.getBounds?.()??e?.getContentBounds?.())}catch{return null}}",
@@ -158,11 +160,11 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlayLayoutAtWindowPosition(e,t){if(e==null||t==null||t.windowBounds==null)return t;let n={...t.windowBounds,x:Math.round(e.x),y:Math.round(e.y)},r=this.codexPetOverlayMascotRect(t),i=r==null?{x:n.x,y:n.y,width:t.anchor?.width??n.width,height:t.anchor?.height??n.height}:{x:n.x+r.left,y:n.y+r.top,width:r.width,height:r.height},a=t.anchor==null?t.anchor:{...t.anchor,x:Math.round(i.x),y:Math.round(i.y),width:t.anchor.width??i.width,height:t.anchor.height??i.height};return{...t,anchor:a,windowBounds:n}}",
     "codexPetOverlayGravityBounds(e,t,n){if(e==null||t==null||t.windowBounds==null)return null;let r={...t.windowBounds},i=this.codexPetOverlayMascotRect(t)??{left:0,top:0,width:Number(r.width),height:Number(r.height)},a=Number(i.left),o=Number(i.top),s=Number(i.width),c=Number(i.height);if(![a,o,s,c].every(Number.isFinite)||s<=0||c<=0)return null;let l=Math.max(0,Math.min(512,Number(n?.margin)||0)),u=String(n?.gravity??`bottom-right`);return r.x=u.endsWith(`left`)?Math.round(e.x+l-a):Math.round(e.x+e.width-l-a-s),r.y=u.startsWith(`top`)?Math.round(e.y+l-o):Math.round(e.y+e.height-l-o-c),r}",
     "codexPetOverlayTrayAboveLeft(e){if(process.platform!==`linux`||e==null||e.windowBounds==null||e.mascot==null||e.tray==null)return e;let t=Number(e.windowBounds.width),n=Number(e.windowBounds.height),r=Number(e.mascot.width),i=Number(e.mascot.height),a=Number(e.tray.width),o=Number(e.tray.height);if(![t,n,r,i,a,o].every(Number.isFinite)||t<=0||n<=0||r<=0||i<=0||a<=0||o<=0)return e;let s=Math.max(0,Math.round(t-r)),c=Math.max(0,Math.round(n-i)),l=Math.max(0,Math.min(Math.round(t-a),Math.round(s+r-a))),u=Math.max(0,Math.min(Math.round(n-o),Math.round(c-o-4))),d=e.anchor??{x:Number(e.windowBounds.x)+(Number(e.mascot.left)||0),y:Number(e.windowBounds.y)+(Number(e.mascot.top)||0),width:r,height:i},p={...e.windowBounds,x:Math.round(Number(d.x)-s),y:Math.round(Number(d.y)-c)},h={...d,x:Math.round(Number(d.x)),y:Math.round(Number(d.y)),width:d.width??r,height:d.height??i};return{...e,anchor:h,mascot:{...e.mascot,left:s,top:c,width:r,height:i},tray:{...e.tray,left:l,top:u,width:a,height:o},placement:`top-end`,windowBounds:p}}",
-    "codexPetOverlayRememberLayout(e,t){let n=this.codexPetOverlayRect(t);this.codexPetOverlayDesiredDisplayBounds=n==null?null:{x:Math.round(n.x),y:Math.round(n.y),width:Math.round(n.width),height:Math.round(n.height)};let r=this.codexPetOverlayRect(e?.windowBounds);if(r!=null){let i={x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)},a=this.codexPetOverlayDesiredWindowBounds,o=a==null||a.x!==i.x||a.y!==i.y||a.width!==i.width||a.height!==i.height;this.codexPetOverlayDesiredWindowBounds=i;if(o&&this.window!=null){let e=this.codexPetOverlaySettings();try{e.lockPosition===!0&&this.codexPetOverlayScheduleHyprlandHints(this.window)}catch{}try{this.dragState!=null?this.codexPetOverlayQueueNiriDrag(this.window):this.codexPetOverlayScheduleNiriHints(this.window)}catch{}}}return e}",
+    "codexPetOverlayRememberLayout(e,t){let n=this.codexPetOverlayRect(t);this.codexPetOverlayDesiredDisplayBounds=n==null?null:{x:Math.round(n.x),y:Math.round(n.y),width:Math.round(n.width),height:Math.round(n.height)};let r=this.codexPetOverlayRect(e?.windowBounds);if(r!=null){let i={x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)},a=this.codexPetOverlayDesiredWindowBounds,o=a==null||a.x!==i.x||a.y!==i.y||a.width!==i.width||a.height!==i.height;this.codexPetOverlayDesiredWindowBounds=i;if(o&&this.window!=null){let e=this.codexPetOverlaySettings();try{e.lockPosition===!0&&this.codexPetOverlayScheduleHyprlandHints(this.window)}catch{}try{this.dragState!=null?this.codexPetOverlayQueueKWinDrag(this.window):this.codexPetOverlayScheduleKWinHints(this.window)}catch{}try{this.dragState!=null?this.codexPetOverlayQueueNiriDrag(this.window):this.codexPetOverlayScheduleNiriHints(this.window)}catch{}}}return e}",
     "codexPetOverlayLayoutForDisplay(e,t,n){if(process.platform!==`linux`||t==null||t.windowBounds==null)return this.codexPetOverlayRememberLayout(this.codexPetOverlayTrayAboveLeft(t));let r=this.codexPetOverlayDisplayRect(e),i=this.codexPetOverlaySettings(),a=t;if(i.lockPosition===!0&&r!=null){let e=this.codexPetOverlayGravityBounds(r,a,i);e!=null&&(a=this.codexPetOverlayLayoutAtWindowPosition(e,a))}else if(this.dragState==null){let e=this.codexPetOverlayWindowBounds(n),o=!1;try{o=n?.isVisible?.()===!0}catch{}e!=null&&r!=null&&this.codexPetOverlayBoundsNearDisplay(e,r)&&(o||this.codexPetOverlayInitialPositionDone===!0||this.codexPetOverlayManualPosition===!0)?(this.codexPetOverlayInitialPositionDone=!0,this.codexPetOverlayMoved(e,a.windowBounds)&&(this.codexPetOverlayManualPosition=!0),a=this.codexPetOverlayLayoutAtWindowPosition(e,a)):this.codexPetOverlayInitialPositionDone=!0}return this.codexPetOverlayRememberLayout(this.codexPetOverlayTrayAboveLeft(a),r)}",
     "codexPetOverlayInstallTransparentRenderer(e){try{if(e.__codexPetOverlayTransparentRendererInstalled)return;e.__codexPetOverlayTransparentRendererInstalled=!0;let t=e.webContents,n=()=>{try{t==null||t.isDestroyed?.()||t.insertCSS?.(`html,body,#root,main,[data-avatar-overlay-content-frame=\"true\"]{background:transparent!important;background-color:transparent!important;}[data-codex-window-type=\"electron\"].electron-opaque,[data-codex-window-type=\"electron\"].electron-opaque body{background:transparent!important;background-color:transparent!important;background-image:none!important;}`,{cssOrigin:`author`}),t==null||t.isDestroyed?.()||t.executeJavaScript?.(`try{document.documentElement.style.background=\"transparent\";document.body&&(document.body.style.background=\"transparent\")}catch{}`,!0)}catch{}};t?.on?.(`did-finish-load`,n),n()}catch{}}",
     "codexPetOverlayRestoreFocusableAfterInactiveShow(e){try{let t=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.window!==e||this.codexPetOverlaySettings().mode===`passive`||e.setFocusable?.(!0)}catch{}},0);try{t.unref?.()}catch{}}catch{}}",
-    "codexPetOverlaySyncWindow(e,t=!1){if(process.platform!==`linux`||e==null||e.isDestroyed?.())return;let n=this.codexPetOverlaySettings(),r=n.mode!==`passive`;try{e.setTitle?.(`Codex Pet Overlay`)}catch{}try{e.setFocusable?.(r&&!t)}catch{}try{t&&r&&this.codexPetOverlayRestoreFocusableAfterInactiveShow(e)}catch{}try{e.setSkipTaskbar?.(!!n.skipTaskbar)}catch{}try{e.setAlwaysOnTop?.(!!n.alwaysOnTop)}catch{}try{e.setBackgroundColor?.(`#00000000`)}catch{}try{this.codexPetOverlayInstallTransparentRenderer(e)}catch{}try{e.setOpacity?.(1)}catch{}try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces,{visibleOnFullScreen:!!n.allWorkspaces})}catch{try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces)}catch{}}try{n.alwaysOnTop&&e.moveTop?.()}catch{}try{this.codexPetOverlayScheduleHyprlandHints(e)}catch{}try{this.codexPetOverlayScheduleNiriHints(e)}catch{}}",
+    "codexPetOverlaySyncWindow(e,t=!1){if(process.platform!==`linux`||e==null||e.isDestroyed?.())return;let n=this.codexPetOverlaySettings(),r=n.mode!==`passive`;try{e.setTitle?.(`Codex Pet Overlay`)}catch{}try{e.setFocusable?.(r&&!t)}catch{}try{t&&r&&this.codexPetOverlayRestoreFocusableAfterInactiveShow(e)}catch{}try{e.setSkipTaskbar?.(!!n.skipTaskbar)}catch{}try{e.setAlwaysOnTop?.(!!n.alwaysOnTop)}catch{}try{e.setBackgroundColor?.(`#00000000`)}catch{}try{this.codexPetOverlayInstallTransparentRenderer(e)}catch{}try{e.setOpacity?.(1)}catch{}try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces,{visibleOnFullScreen:!!n.allWorkspaces})}catch{try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces)}catch{}}try{n.alwaysOnTop&&e.moveTop?.()}catch{}try{this.codexPetOverlayScheduleHyprlandHints(e)}catch{}try{this.codexPetOverlayScheduleKWinHints(e)}catch{}try{this.codexPetOverlayScheduleNiriHints(e)}catch{}}",
     "codexPetOverlayHyprlandSession(){if(process.platform!==`linux`)return!1;let e=[process.env.HYPRLAND_INSTANCE_SIGNATURE,process.env.XDG_CURRENT_DESKTOP,process.env.DESKTOP_SESSION].filter(Boolean).join(`:`).toLowerCase();return e.includes(`hyprland`)}",
     "codexPetOverlayShouldUseHyprland(){return process.platform===`linux`&&this.codexPetOverlaySettings().hyprland===!0&&this.codexPetOverlayHyprlandSession()}",
     "codexPetOverlayHyprctl(e,t){if(this.codexPetOverlayHyprctlUnavailable)return;try{let n=typeof require==`function`?require(`node:child_process`):null;if(typeof n?.execFile!=`function`){this.codexPetOverlayHyprctlUnavailable=!0;return}n.execFile(`hyprctl`,e,{timeout:1200},(e,...n)=>{e?.code===`ENOENT`&&(this.codexPetOverlayHyprctlUnavailable=!0),typeof t==`function`&&t(e,...n)})}catch(e){e?.code===`ENOENT`&&(this.codexPetOverlayHyprctlUnavailable=!0);try{typeof t==`function`&&t(e)}catch{}}}",
@@ -174,6 +176,21 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlayFindHyprlandClient(e,t){if(!this.codexPetOverlayShouldUseHyprland())return;let n=this.codexPetOverlayWindowBounds(e);this.codexPetOverlayHyprctl([`clients`,`-j`],(e,r)=>{if(e)return;let i;try{i=JSON.parse(String(r??``))}catch{return}let a=this.codexPetOverlaySelectHyprlandClient(i,n);a!=null&&typeof t==`function`&&t(a)})}",
     "codexPetOverlayApplyHyprlandHints(e){let t=this.codexPetOverlaySettings();if(process.platform!==`linux`||e==null||e.isDestroyed?.()||!this.codexPetOverlayShouldUseHyprland())return;this.codexPetOverlayFindHyprlandClient(e,n=>{if(e.isDestroyed?.()||this.window!==e)return;let r=`address:${n.address}`,i=this.codexPetOverlayDesiredWindowBounds,a=Number(i?.x),o=Number(i?.y),s=Math.round(a),c=Math.round(o);t.lockPosition&&[a,o].every(Number.isFinite)&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.move({ window = \"${r}\", x = ${s}, y = ${c} })`,[`movewindowpixel`,`exact ${s} ${c},${r}`]);t.allWorkspaces&&n.pinned!==!0&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.pin({ action = \"on\", window = \"${r}\" })`,[`pin`,r]);this.codexPetOverlayHyprlandSetProp(r,`decorate`,`0`);this.codexPetOverlayHyprlandSetProp(r,`no_shadow`,`1`);this.codexPetOverlayHyprlandSetProp(r,`no_blur`,`1`);this.codexPetOverlayHyprlandSetProp(r,`no_anim`,`1`);this.codexPetOverlayHyprlandSetProp(r,`border_size`,`0`);this.codexPetOverlayHyprlandSetProp(r,`rounding`,`0`);this.codexPetOverlayHyprlandSetProp(r,`opacity`,`1.0 override 1.0 override 1.0 override`);this.codexPetOverlayHyprlandSetProp(r,`opaque`,`0`);this.codexPetOverlayHyprlandSetProp(r,`force_rgbx`,`0`);t.alwaysOnTop&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.alter_zorder({ mode = \"top\", window = \"${r}\" })`,[`alterzorder`,`top,${r}`])})}",
     "codexPetOverlayScheduleHyprlandHints(e){if(!this.codexPetOverlayShouldUseHyprland())return;try{this.codexPetOverlayHyprlandTimers?.forEach(clearTimeout)}catch{}this.codexPetOverlayHyprlandTimers=[0,80,300,1000,2500,5000,10000].map(t=>{let n=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.codexPetOverlayApplyHyprlandHints(e)}catch{}},t);try{n.unref?.()}catch{}return n})}",
+    "codexPetOverlayKWinSession(){if(process.platform!==`linux`)return!1;let e=String(process.env.KDE_FULL_SESSION??``).toLowerCase();if(process.env.KDE_SESSION_VERSION||e===`1`||e===`true`)return!0;let t=[process.env.XDG_CURRENT_DESKTOP,process.env.DESKTOP_SESSION].filter(Boolean).join(`:`).toLowerCase();return t.includes(`kde`)||t.includes(`plasma`)}",
+    "codexPetOverlayShouldUseKWin(){return process.platform===`linux`&&this.codexPetOverlaySettings().kwin===!0&&this.codexPetOverlayKWinSession()}",
+    "codexPetOverlayKWinQdbus(e,t,n=!1){if(this.codexPetOverlayKWinUnavailable){try{typeof t==`function`&&t({code:`ENOENT`})}catch{}return}let r=e;try{let i=typeof require==`function`?require(`node:child_process`):null;if(typeof i?.execFile!=`function`){this.codexPetOverlayKWinUnavailable=!0;try{typeof t==`function`&&t({code:`ENOENT`})}catch{}return}i.execFile(n?`qdbus`:`qdbus6`,r,{timeout:1500},(e,...i)=>{if(e?.code===`ENOENT`&&!n){this.codexPetOverlayKWinQdbus(r,t,!0);return}e?.code===`ENOENT`&&(this.codexPetOverlayKWinUnavailable=!0);try{typeof t==`function`&&t(e,...i)}catch{}})}catch(e){if(e?.code===`ENOENT`&&!n){this.codexPetOverlayKWinQdbus(r,t,!0);return}e?.code===`ENOENT`&&(this.codexPetOverlayKWinUnavailable=!0);try{typeof t==`function`&&t(e)}catch{}}}",
+    "codexPetOverlayKWinScript(e,t){let n=this.codexPetOverlayRect(e),r=this.codexPetOverlaySettings(),i={pid:Number(process.pid),title:`Codex Pet Overlay`,alwaysOnTop:!!r.alwaysOnTop,allWorkspaces:!!r.allWorkspaces,skipTaskbar:!!r.skipTaskbar,move:!!t,x:Math.round(Number(n?.x)),y:Math.round(Number(n?.y)),width:Math.round(Number(n?.width)),height:Math.round(Number(n?.height))};return `(function(){var d=${JSON.stringify(i)};function windows(){try{if(typeof workspace.windowList==='function')return workspace.windowList()}catch(e){}try{if(typeof workspace.clientList==='function')return workspace.clientList()}catch(e){}try{if(workspace.stackingOrder&&typeof workspace.stackingOrder.length==='number')return workspace.stackingOrder}catch(e){}return[]}var a=windows().filter(function(w){try{return String(w.caption||'')===d.title&&Number(w.pid)===d.pid}catch(e){return false}});if(a.length!==1)return;var w=a[0];try{w.keepAbove=d.alwaysOnTop}catch(e){}try{w.skipTaskbar=d.skipTaskbar}catch(e){}try{w.skipPager=d.skipTaskbar}catch(e){}try{w.onAllDesktops=d.allWorkspaces}catch(e){}try{w.noBorder=true}catch(e){}if(d.move&&isFinite(d.x)&&isFinite(d.y)){try{var g=w.frameGeometry;w.frameGeometry={x:d.x,y:d.y,width:isFinite(d.width)&&d.width>0?d.width:g.width,height:isFinite(d.height)&&d.height>0?d.height:g.height}}catch(e){}}if(d.alwaysOnTop){try{if(typeof workspace.raiseWindow==='function')workspace.raiseWindow(w)}catch(e){}}})()`}",
+    "codexPetOverlayKWinRun(e,t,n){if(!this.codexPetOverlayShouldUseKWin()){try{typeof n==`function`&&n({code:`DISABLED`})}catch{}return}let r;try{let i=require(`node:fs`),a=require(`node:os`),o=require(`node:path`),s=(this.codexPetOverlayKWinScriptGeneration??0)+1;this.codexPetOverlayKWinScriptGeneration=s;let c=`codex_pet_overlay_${process.pid}_${Date.now()}_${s}`,l=o.join(a.tmpdir(),`${c}.js`);i.writeFileSync(l,this.codexPetOverlayKWinScript(e,t),{encoding:`utf8`,flag:`wx`,mode:384}),r=()=>{try{i.unlinkSync(l)}catch{}};let u=[`org.kde.KWin`,`/Scripting`,`org.kde.kwin.Scripting.loadScript`,l,c];this.codexPetOverlayKWinQdbus(u,e=>{if(e){r();try{typeof n==`function`&&n(e)}catch{}return}this.codexPetOverlayKWinQdbus([`org.kde.KWin`,`/Scripting`,`org.kde.kwin.Scripting.start`],e=>{this.codexPetOverlayKWinQdbus([`org.kde.KWin`,`/Scripting`,`org.kde.kwin.Scripting.unloadScript`,c],()=>{r();try{typeof n==`function`&&n(e)}catch{}})})})}catch(e){try{r?.()}catch{}try{typeof n==`function`&&n(e)}catch{}}}",
+    "codexPetOverlayApplyKWinHints(e){if(e==null||e.isDestroyed?.()||this.window!==e||!this.codexPetOverlayShouldUseKWin()||this.dragState!=null||this.codexPetOverlayKWinDragState!=null||this.codexPetOverlayKWinHintInFlight)return;this.codexPetOverlayKWinHintInFlight=!0;let t=this.codexPetOverlaySettings();this.codexPetOverlayKWinRun(this.codexPetOverlayDesiredWindowBounds,t.lockPosition===!0,()=>{this.codexPetOverlayKWinHintInFlight=!1,this.codexPetOverlayKWinDragState==null&&this.window===e&&!e.isDestroyed?.()&&this.codexPetOverlayKWinPendingHints&&(this.codexPetOverlayKWinPendingHints=!1,this.codexPetOverlayScheduleKWinHints(e))})}",
+    "codexPetOverlayScheduleKWinHints(e){if(!this.codexPetOverlayShouldUseKWin()||this.dragState!=null||this.codexPetOverlayKWinDragState!=null)return;if(this.codexPetOverlayKWinHintInFlight){this.codexPetOverlayKWinPendingHints=!0;return}this.codexPetOverlayKWinPendingHints=!1;try{this.codexPetOverlayKWinTimers?.forEach(clearTimeout)}catch{}this.codexPetOverlayKWinTimers=[0,80,300,1000,2500].map(t=>{let n=setTimeout(()=>{try{this.codexPetOverlayApplyKWinHints(e)}catch{}},t);try{n.unref?.()}catch{}return n})}",
+    "codexPetOverlayKWinExecSync(e){if(this.codexPetOverlayKWinUnavailable||!this.codexPetOverlayShouldUseKWin())return!1;try{let t=typeof require==`function`?require(`node:child_process`):null;if(typeof t?.execFileSync!=`function`)return!1;for(let n of [`qdbus6`,`qdbus`])try{t.execFileSync(n,e,{timeout:750,stdio:`ignore`});return!0}catch(e){if(e?.code!==`ENOENT`)return!1}this.codexPetOverlayKWinUnavailable=!0}catch{}return!1}",
+    "codexPetOverlayKWinDragScript(){let e={pid:Number(process.pid),title:`Codex Pet Overlay`};return `(function(){var d=${JSON.stringify(e)};function windows(){try{if(typeof workspace.windowList==='function')return workspace.windowList()}catch(e){}try{if(typeof workspace.clientList==='function')return workspace.clientList()}catch(e){}return[]}var a=windows().filter(function(w){try{return String(w.caption||'')===d.title&&Number(w.pid)===d.pid}catch(e){return false}});if(a.length!==1)return;var w=a[0],p=workspace.cursorPos,g=w.frameGeometry,dx=Number(p.x)-Number(g.x),dy=Number(p.y)-Number(g.y),active=true;function move(){if(!active)return;try{var p=workspace.cursorPos,g=w.frameGeometry;w.frameGeometry={x:Math.round(Number(p.x)-dx),y:Math.round(Number(p.y)-dy),width:g.width,height:g.height}}catch(e){stop()}}function stop(){if(!active)return;active=false;try{workspace.cursorPosChanged.disconnect(move)}catch(e){}}try{workspace.cursorPosChanged.connect(move)}catch(e){return}try{workspace.windowRemoved.connect(function(v){if(v===w)stop()})}catch(e){}try{if(typeof workspace.raiseWindow==='function')workspace.raiseWindow(w)}catch(e){}})()`}",
+    "codexPetOverlayReleaseKWinDrag(e){if(e==null)return;try{this.codexPetOverlayKWinExecSync([`org.kde.KWin`,`/Scripting`,`org.kde.kwin.Scripting.unloadScript`,e.pluginName])}catch{}try{require(`node:fs`).unlinkSync(e.scriptPath)}catch{}}",
+    "codexPetOverlayStartKWinDrag(e){let t;try{let n=require(`node:fs`),r=require(`node:os`),i=require(`node:path`),a=(this.codexPetOverlayKWinDragGeneration??0)+1,o=`codex_pet_overlay_drag_${process.pid}_${Date.now()}_${a}`,s=i.join(r.tmpdir(),`${o}.js`);n.writeFileSync(s,this.codexPetOverlayKWinDragScript(),{encoding:`utf8`,flag:`wx`,mode:384}),t={generation:a,window:e,pluginName:o,scriptPath:s};let c=[`org.kde.KWin`,`/Scripting`,`org.kde.kwin.Scripting.loadScript`,s,o];if(!this.codexPetOverlayKWinExecSync(c)||!this.codexPetOverlayKWinExecSync([`org.kde.KWin`,`/Scripting`,`org.kde.kwin.Scripting.start`])){this.codexPetOverlayReleaseKWinDrag(t);return null}return t}catch(e){this.codexPetOverlayReleaseKWinDrag(t);return null}}",
+    "codexPetOverlayBeginKWinDrag(e){if(e==null||e.isDestroyed?.()||this.window!==e||!this.codexPetOverlayShouldUseKWin())return;try{this.codexPetOverlayKWinTimers?.forEach(clearTimeout)}catch{}let t=this.codexPetOverlayKWinDragState;t!=null&&(this.codexPetOverlayKWinDragState=null,this.codexPetOverlayReleaseKWinDrag(t));let n=this.codexPetOverlayStartKWinDrag(e);if(n==null)return;let r=null;try{r=Number(e.getContentBounds?.().x)}catch{}this.codexPetOverlayKWinDragGeneration=n.generation,this.codexPetOverlayKWinDragState=n,this.windowServerDragActive=!0,Number.isFinite(r)&&(this.windowServerDragWindowX=r)}",
+    "codexPetOverlayKWinDragCurrent(e){if(e==null||this.codexPetOverlayKWinDragState!==e||this.codexPetOverlayKWinDragGeneration!==e.generation)return!1;if(this.window===e.window&&!e.window?.isDestroyed?.())return!0;this.codexPetOverlayKWinDragState=null,this.codexPetOverlayReleaseKWinDrag(e);return!1}",
+    "codexPetOverlayQueueKWinDrag(e){let t=this.codexPetOverlayKWinDragState;this.codexPetOverlayKWinDragCurrent(t)&&t.window===e&&(this.windowServerDragActive=!0)}",
+    "codexPetOverlayEndKWinDrag(e,t){let n=this.codexPetOverlayKWinDragState;if(!this.codexPetOverlayKWinDragCurrent(n)||n.window!==e)return!1;this.codexPetOverlayKWinDragState=null,this.codexPetOverlayReleaseKWinDrag(n);try{typeof t==`function`&&t()}catch{}try{this.window!=null&&!this.window.isDestroyed?.()&&this.codexPetOverlayScheduleKWinHints(this.window)}catch{}return!0}",
     "codexPetOverlayNiriSession(){if(process.platform!==`linux`)return!1;let e=[process.env.NIRI_SOCKET,process.env.XDG_CURRENT_DESKTOP,process.env.DESKTOP_SESSION].filter(Boolean).join(`:`).toLowerCase();return e.includes(`niri`)}",
     "codexPetOverlayShouldUseNiri(){return process.platform===`linux`&&this.codexPetOverlaySettings().niri===!0&&this.codexPetOverlayNiriSession()}",
     "codexPetOverlayFinishNiriProcess(){this.codexPetOverlayNiriProcessCount=Math.max(0,(this.codexPetOverlayNiriProcessCount??1)-1);if(this.codexPetOverlayNiriProcessCount===0){let e=this.codexPetOverlayNiriDragState;if(e!=null)this.codexPetOverlayPumpNiriDrag(e);else{let e=this.codexPetOverlayNiriPendingHintsWindow;this.codexPetOverlayNiriPendingHintsWindow=null;try{e!=null&&!e.isDestroyed?.()&&this.window===e&&this.codexPetOverlayScheduleNiriHints(e)}catch{}}}}",
@@ -236,48 +253,57 @@ function ensurePetOverlayMethods(source, settings) {
     source.slice(insertionPoint.start);
 }
 
-function patchNiriDragLifecycle(source) {
+function patchCompositorDragLifecycle(source) {
   let patched = source;
   const startMethod = findAvatarOverlayMethod(patched, /startDrag\([^)]*\)\{/);
   if (startMethod == null) {
-    console.warn("WARN: Could not find avatar overlay startDrag for Niri transport - skipping pet overlay patch");
+    console.warn("WARN: Could not find avatar overlay startDrag for compositor transport - skipping pet overlay patch");
     return patched;
   }
-  if (!startMethod.text.includes("codexPetOverlayBeginNiriDrag(")) {
+  const needsKWinStart = !startMethod.text.includes("codexPetOverlayBeginKWinDrag(");
+  const needsNiriStart = !startMethod.text.includes("codexPetOverlayBeginNiriDrag(");
+  if (needsKWinStart || needsNiriStart) {
     const windowMatch = startMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/);
     if (windowMatch == null || !startMethod.text.includes("this.dragState=")) {
-      console.warn("WARN: Could not identify current avatar overlay drag start shape - skipping Niri transport hook");
+      console.warn("WARN: Could not identify current avatar overlay drag start shape - skipping compositor transport hook");
       return patched;
     }
+    const hooks = [
+      needsKWinStart ? `this.codexPetOverlayBeginKWinDrag(${windowMatch[1]})` : null,
+      needsNiriStart ? `this.codexPetOverlayBeginNiriDrag(${windowMatch[1]})` : null,
+    ].filter(Boolean).join(",");
     patched = replaceMethodText(
       patched,
       startMethod,
-      `${startMethod.text.slice(0, -1)},this.codexPetOverlayBeginNiriDrag(${windowMatch[1]})}`,
+      `${startMethod.text.slice(0, -1)},${hooks}}`,
     );
   }
 
   const endMethod = findAvatarOverlayMethod(patched, /endDrag\([^)]*\)\{/);
   if (endMethod == null) {
-    console.warn("WARN: Could not find avatar overlay endDrag for Niri transport - skipping pet overlay patch");
+    console.warn("WARN: Could not find avatar overlay endDrag for compositor transport - skipping pet overlay patch");
     return patched;
   }
-  if (endMethod.text.includes("codexPetOverlayEndNiriDrag(")) {
+  if (
+    endMethod.text.includes("codexPetOverlayEndKWinDrag(") &&
+    endMethod.text.includes("codexPetOverlayEndNiriDrag(")
+  ) {
     return patched;
   }
-  const completionPattern = /([A-Za-z_$][\w$]*)\?this\.persistWindowBounds\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*\?\?this\.getCurrentDisplay\(\))\):this\.reclampWindowToVisibleDisplay\(\{shouldPersist:!0\}\);let ([A-Za-z_$][\w$]*)=this\.dockTarget;\4!=null&&this\.dockPresentation\(\4\.anchor,\4\.onDock\)/;
+  const completionPattern = /[A-Za-z_$][\w$]*\?this\.persistWindowBounds\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*\?\?this\.getCurrentDisplay\(\)\):this\.reclampWindowToVisibleDisplay\(\{shouldPersist:!0\}\)/;
   const completionMatch = endMethod.text.match(completionPattern);
   if (completionMatch == null) {
-    console.warn("WARN: Could not identify current avatar overlay drag completion shape - skipping Niri transport hook");
+    console.warn("WARN: Could not identify current avatar overlay drag completion shape - skipping compositor transport hook");
     return patched;
   }
-  const [completionNeedle, , windowVar] = completionMatch;
+  const windowVar = completionMatch[1];
+  const completionNeedle = endMethod.text.slice(completionMatch.index, -1);
   return replaceMethodText(
     patched,
     endMethod,
-    endMethod.text.replace(
-      completionNeedle,
-      `this.codexPetOverlayEndNiriDrag(${windowVar},()=>{${completionNeedle}})||(()=>{${completionNeedle}})()`,
-    ),
+    endMethod.text.slice(0, completionMatch.index) +
+      `this.codexPetOverlayEndKWinDrag(${windowVar},()=>{${completionNeedle}})||this.codexPetOverlayEndNiriDrag(${windowVar},()=>{${completionNeedle}})||(()=>{${completionNeedle}})()` +
+      "}",
   );
 }
 
@@ -383,6 +409,8 @@ function hasCompletePetOverlayPatch(source, settings, avatarSelectionRefreshExpe
     /let [A-Za-z_$][\w$]*=this\.codexPetOverlayLayoutForDisplay\([A-Za-z_$][\w$]*,this\.getLayoutForDisplay\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\);/.test(source),
     /process\.platform===`linux`\?this\.codexPetOverlaySyncWindow\([A-Za-z_$][\w$]*,!0\):[A-Za-z_$][\w$]*\.moveTop\(\),[A-Za-z_$][\w$]*\.showInactive\(\),/.test(source),
     source.includes("if(this.codexPetOverlayShouldLockPosition())return;"),
+    source.includes("this.codexPetOverlayBeginKWinDrag("),
+    source.includes("this.codexPetOverlayEndKWinDrag("),
     source.includes("this.codexPetOverlayBeginNiriDrag("),
     source.includes("this.codexPetOverlayEndNiriDrag("),
     source.includes("===`avatarOverlay`?{backgroundColor:`#00000000`,backgroundMaterial:null}:"),
@@ -433,7 +461,7 @@ function applyPetOverlayPatch(source, context) {
   patched = patchApplyLayout(patched);
   patched = patchShowWindow(patched);
   patched = patchLockedDrag(patched);
-  patched = patchNiriDragLifecycle(patched);
+  patched = patchCompositorDragLifecycle(patched);
   patched = ensurePetOverlayMethods(patched, settings);
   patched = patchPassiveCreateWindow(patched, settings);
   if (avatarSelectionRefreshExpected) {
@@ -446,6 +474,34 @@ function applyPetOverlayPatch(source, context) {
   return patched;
 }
 
+function applyPetOverlayPointerRegionPatch(source) {
+  const marker = "closest(`[data-avatar-overlay-hit-region]`)==null";
+  if (source.includes(marker)) {
+    return source;
+  }
+  const dragMarkers = [...source.matchAll(/avatar-overlay-drag-start/g)];
+  if (dragMarkers.length !== 1) {
+    console.warn("WARN: Expected one avatar overlay drag marker - skipping pet pointer-region patch");
+    return source;
+  }
+  const dragMarkerIndex = dragMarkers[0].index;
+  // Scope the generic pointer predicate to the minified handler that owns the
+  // avatar drag dispatch. Other handlers in this asset use the same predicate.
+  const handlerStart = source.lastIndexOf("=>{", dragMarkerIndex);
+  const handlerPrefix = handlerStart === -1 ? "" : source.slice(handlerStart + 3, dragMarkerIndex);
+  const pointerGuard = /([A-Za-z_$][\w$]*)\.button!==0\|\|!\(\1\.target instanceof Element\)\|\|\1\.target\.closest\(`\.no-drag`\)!=null\|\|\(/g;
+  const matches = [...handlerPrefix.matchAll(pointerGuard)];
+  if (matches.length !== 1) {
+    console.warn("WARN: Could not find avatar overlay pointer-down guard - skipping pet pointer-region patch");
+    return source;
+  }
+  const [match] = matches;
+  const matchIndex = handlerStart + 3 + match.index;
+  const eventVar = match[1];
+  const replacement = `${eventVar}.button!==0||!(${eventVar}.target instanceof Element)||${eventVar}.target.closest(\`[data-avatar-overlay-hit-region]\`)==null||${eventVar}.target.closest(\`.no-drag\`)!=null||(`;
+  return source.slice(0, matchIndex) + replacement + source.slice(matchIndex + match[0].length);
+}
+
 const descriptors = [
   {
     id: DESCRIPTOR_ID,
@@ -454,11 +510,23 @@ const descriptors = [
     ciPolicy: "optional",
     apply: applyPetOverlayPatch,
   },
+  {
+    id: POINTER_REGION_DESCRIPTOR_ID,
+    phase: "webview-asset",
+    order: 20_510,
+    ciPolicy: "optional",
+    pattern: /^avatar-overlay-page-[^.]+\.js$/,
+    missingDescription: "avatar overlay page bundle",
+    skipDescription: "pet pointer-region patch",
+    apply: applyPetOverlayPointerRegionPatch,
+  },
 ];
 
 module.exports = {
   DESCRIPTOR_ID,
+  POINTER_REGION_DESCRIPTOR_ID,
   descriptors,
   applyPetOverlayPatch,
+  applyPetOverlayPointerRegionPatch,
   mergedPetOverlaySettings,
 };
