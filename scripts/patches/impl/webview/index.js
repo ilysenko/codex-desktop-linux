@@ -515,7 +515,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
           ? inheritedRecoveryState()
         : { attempt: 0, deadlineAt: null, host, key };
   }
-  if (!active || recoveryRef.current.attempt >= 2) {
+  if (!active) {
     return () => {};
   }
 
@@ -531,6 +531,10 @@ function codexLinuxWatchBrowserWebviewAttachment({
       return false;
     }
   };
+  if (recoveryRef.current.attempt >= 2) {
+    if (isHostAttached()) completeRecovery();
+    return () => {};
+  }
   if (isHostAttached()) {
     completeRecovery();
     recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
@@ -577,7 +581,12 @@ function codexLinuxWatchBrowserWebviewAttachment({
     const details = { browserTabId, conversationId };
     if (state.attempt === 0) {
       const remountDeadlineAt = now() + timeoutMs;
-      if (!remount(remountDeadlineAt)) {
+      const remountResult = remount(remountDeadlineAt);
+      if (
+        remountResult == null ||
+        remountResult === false ||
+        remountResult.state?.attempt >= 2
+      ) {
         failRecovery();
         recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
         logger.error(
@@ -586,16 +595,22 @@ function codexLinuxWatchBrowserWebviewAttachment({
         );
         return;
       }
+      const sharedState =
+        remountResult === true
+          ? { attempt: 1, deadlineAt: remountDeadlineAt }
+          : remountResult.state;
       recoveryRef.current = {
         attempt: 1,
-        deadlineAt: remountDeadlineAt,
+        deadlineAt: sharedState.deadlineAt,
         host,
         key,
       };
-      logger.warn(
-        "IAB_LIFECYCLE Linux Browser webview attachment timed out; remounting once",
-        details,
-      );
+      if (remountResult === true || remountResult.started) {
+        logger.warn(
+          "IAB_LIFECYCLE Linux Browser webview attachment timed out; remounting once",
+          details,
+        );
+      }
       return;
     }
     failRecovery();
@@ -744,7 +759,7 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
   ] = activeMethodMatch;
   const activeMethodPatch =
     `setBrowserUseActive(${activeConversationVar},...${activeArgsVar}){let ${activeBrowserTabVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeDefaultTabHelper}(${activeConversationVar},void 0):${activeArgsVar}[0],${activeValueVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeArgsVar}[0]:${activeArgsVar}[1];${activeValueVar}||this.linuxBrowserUseRecoveryStates.delete(${keyHelper}(${activeConversationVar},${activeBrowserTabVar}));let `;
-  const method = `linuxStartWebviewRecovery(e,t,n){let r=${keyHelper}(e,t),i=this.linuxBrowserUseRecoveryStates.get(r);return i??(i={attempt:0,deadlineAt:n},this.linuxBrowserUseRecoveryStates.set(r,i)),i}linuxCompleteWebviewRecovery(e,t){this.linuxBrowserUseRecoveryStates.delete(${keyHelper}(e,t))}linuxFailWebviewRecovery(e,t){this.linuxBrowserUseRecoveryStates.set(${keyHelper}(e,t),{attempt:2,deadlineAt:null})}linuxRemountWebview(e,t,n,r){let i=${keyHelper}(e,t),a=this.linuxBrowserUseRecoveryStates.get(i);return this.webviews.get(i)!==n||a?.attempt>=1?!1:(this.linuxBrowserUseRecoveryStates.set(i,{attempt:1,deadlineAt:r}),this.disposeWebviewHost(e,t,i,\`web\`),this.emitChange(),!0)}`;
+  const method = `linuxStartWebviewRecovery(e,t,n){let r=${keyHelper}(e,t),i=this.linuxBrowserUseRecoveryStates.get(r);return i??(i={attempt:0,deadlineAt:n},this.linuxBrowserUseRecoveryStates.set(r,i)),i}linuxCompleteWebviewRecovery(e,t){this.linuxBrowserUseRecoveryStates.delete(${keyHelper}(e,t))}linuxFailWebviewRecovery(e,t){this.linuxBrowserUseRecoveryStates.set(${keyHelper}(e,t),{attempt:2,deadlineAt:null})}linuxRemountWebview(e,t,n,r){let i=${keyHelper}(e,t),a=this.linuxBrowserUseRecoveryStates.get(i);if(this.webviews.get(i)!==n)return null;if(a?.attempt>=1)return{started:!1,state:a};let o={attempt:1,deadlineAt:r};return this.linuxBrowserUseRecoveryStates.set(i,o),this.disposeWebviewHost(e,t,i,\`web\`),this.emitChange(),{started:!0,state:o}}`;
   const [
     removeTabNeedle,
     removeTabConversationVar,

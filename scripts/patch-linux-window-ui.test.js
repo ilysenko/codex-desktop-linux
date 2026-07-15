@@ -7414,9 +7414,13 @@ test("does not remount a retained Browser webview that is already attached", () 
   const recoveryRef = { current: { attempt: 0, key: "conversation-1\0tab-1" } };
   let listenerCount = 0;
   let remounts = 0;
+  let completions = 0;
   const cleanup = codexLinuxWatchBrowserWebviewAttachment({
     active: true,
     browserTabId: "tab-1",
+    completeRecovery: () => {
+      completions += 1;
+    },
     conversationId: "conversation-1",
     host: {
       listenForDidAttach() {
@@ -7446,7 +7450,28 @@ test("does not remount a retained Browser webview that is already attached", () 
   assert.equal(listenerCount, 0);
   assert.equal(timers.length, 0);
   assert.equal(remounts, 0);
+  assert.equal(completions, 1);
   assert.equal(recoveryRef.current.attempt, 2);
+
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-1",
+    completeRecovery: () => {
+      completions += 1;
+    },
+    conversationId: "conversation-1",
+    host: recoveryRef.current.host,
+    recoveryRef,
+    recoveryState: { attempt: 0, deadlineAt: 5_000 },
+    remount: () => true,
+    timerApi: {
+      clearTimeout() {},
+      setTimeout() {
+        throw new Error("attached host must not schedule recovery");
+      },
+    },
+  });
+  assert.equal(completions, 2);
 });
 
 test("closes the attachment race after registering the Browser webview listener", () => {
@@ -7773,6 +7798,62 @@ test("fails Browser webview attachment deterministically when remount is rejecte
   });
 });
 
+test("keeps shared Browser recovery active when another watcher wins remount", () => {
+  let clock = 5_000;
+  let sharedState = { attempt: 0, deadlineAt: 5_000 };
+  let failures = 0;
+  const timers = [];
+  const host = { listenForDidAttach: () => () => {} };
+  const remount = (deadlineAt) => {
+    if (sharedState.attempt >= 1) {
+      return { started: false, state: sharedState };
+    }
+    sharedState = { attempt: 1, deadlineAt };
+    return { started: true, state: sharedState };
+  };
+  const watch = (recoveryRef, recoveryState = { attempt: 0, deadlineAt: 5_000 }) =>
+    codexLinuxWatchBrowserWebviewAttachment({
+      active: true,
+      browserTabId: "tab-1",
+      conversationId: "conversation-1",
+      failRecovery: () => {
+        failures += 1;
+        sharedState = { attempt: 2, deadlineAt: null };
+      },
+      host,
+      logger: { error() {}, warn() {} },
+      now: () => clock,
+      recoveryRef,
+      recoveryState,
+      remount,
+      timerApi: {
+        clearTimeout() {},
+        setTimeout(callback, delay) {
+          timers.push({ callback, delay });
+          return callback;
+        },
+      },
+    });
+
+  const firstRef = { current: null };
+  const secondRef = { current: null };
+  watch(firstRef);
+  watch(secondRef);
+  timers[0].callback();
+  timers[1].callback();
+
+  assert.equal(failures, 0);
+  assert.deepEqual(sharedState, { attempt: 1, deadlineAt: 10_000 });
+  assert.equal(firstRef.current.attempt, 1);
+  assert.equal(secondRef.current.attempt, 1);
+
+  clock = 9_000;
+  const replacementRef = { current: null };
+  watch(replacementRef, sharedState);
+  assert.equal(replacementRef.current.deadlineAt, 10_000);
+  assert.equal(timers[2].delay, 1_000);
+});
+
 test("patches the current Browser webview store and host atomically", () => {
   const storeSource =
     "function Af(e,t){return t??e}function Ef(e,t){return`${e}\\0${t}`}var Pf=class{webviews=new Map;snapshots=new Map;tabPersistenceStates=new Map;browserUseActiveTabKeys=new Set;browserUseViewportSizes=new Map;transferredWebviewKeys=new Set;registrationAttempts=new WeakMap;nextHostGeneration=0;getSnapshot(e,t){return this.snapshots.get(Ef(e,t))??null}setBrowserUseActive(e,...t){let n=typeof t[0]==`boolean`?Af(e,void 0):t[0],r=typeof t[0]==`boolean`?t[0]:t[1],i=Ef(e,n),a=this.browserUseActiveTabKeys.has(i);if(r){let t=`${e}\\0`;for(let e of Array.from(this.browserUseActiveTabKeys)){if(e===i||!e.startsWith(t))continue;this.browserUseActiveTabKeys.delete(e);let n=null}this.browserUseActiveTabKeys.add(i)}else this.browserUseActiveTabKeys.delete(i);return a}releaseBrowserUseTab(e,t){let n=Ef(e,t),r=this.browserUseActiveTabKeys.delete(n);return r}removeTab(e,t){let n=Ef(e,t),r=this.webviews.get(n);this.webviews.delete(n)}registerWebviewHost(e,t){return true}removeConversationTabs(e){let t=`${e}\\0`;for(let e of this.snapshots.keys())e.startsWith(t)&&this.snapshots.delete(e)}reassociateTabState(e,...t){let n=t[0],r=t[1],i=t[2],o=`transfer`,s=Ef(e,n),c=Ef(r,i);if(s===c||this.transferredWebviewKeys.has(o))return;if(this.webviews.has(c))return;let m=this.browserUseViewportSizes.get(s)??null,h=this.browserUseActiveTabKeys.delete(s);h&&this.browserUseActiveTabKeys.add(c);return m}disposeAll(){this.electronPageHandoff.disposeAll(),this.webviews.clear()}disposeWebviewHost(e,t,n,r){this.webviews.delete(n)}emitChange(){for(let e of this.listeners)e()}}";
@@ -7787,7 +7868,7 @@ test("patches the current Browser webview store and host atomically", () => {
   assert.match(patched, /linuxRemountWebview\(e,t,n,r\)/);
   assert.match(
     patched,
-    /let i=Ef\(e,t\),a=this\.linuxBrowserUseRecoveryStates\.get\(i\);return this\.webviews\.get\(i\)!==n/,
+    /let i=Ef\(e,t\),a=this\.linuxBrowserUseRecoveryStates\.get\(i\);if\(this\.webviews\.get\(i\)!==n\)return null/,
   );
   assert.match(patched, /linuxBrowserUseRecoveryStates\.get\(i\)/);
   assert.match(patched, /linuxStartWebviewRecovery\(e,t,n\)/);
@@ -7853,7 +7934,7 @@ test("patches the current Browser webview store and host atomically", () => {
   store.snapshots.set("conversation-1\0tab-1", snapshot);
   store.tabPersistenceStates.set("conversation-1\0tab-1", persistence);
   assert.equal(
-    store.linuxRemountWebview("conversation-1", "tab-1", firstHost),
+    store.linuxRemountWebview("conversation-1", "tab-1", firstHost).started,
     true,
   );
   assert.equal(store.snapshots.get("conversation-1\0tab-1"), snapshot);
@@ -7863,31 +7944,31 @@ test("patches the current Browser webview store and host atomically", () => {
   );
   store.webviews.set("conversation-1\0tab-1", secondHost);
   assert.equal(
-    store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
+    store.linuxRemountWebview("conversation-1", "tab-1", secondHost).started,
     false,
   );
   store.setBrowserUseActive("conversation-1", "tab-1", false);
   assert.equal(
-    store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
+    store.linuxRemountWebview("conversation-1", "tab-1", secondHost).started,
     true,
   );
   store.webviews.set("conversation-1\0tab-1", secondHost);
   store.removeTab("conversation-1", "tab-1");
   store.webviews.set("conversation-1\0tab-1", secondHost);
   assert.equal(
-    store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
+    store.linuxRemountWebview("conversation-1", "tab-1", secondHost).started,
     true,
   );
   const thirdHost = { generation: 3 };
   store.webviews.set("conversation-2\0tab-2", thirdHost);
   assert.equal(
-    store.linuxRemountWebview("conversation-2", "tab-2", thirdHost),
+    store.linuxRemountWebview("conversation-2", "tab-2", thirdHost).started,
     true,
   );
   store.removeConversationTabs("conversation-2");
   store.webviews.set("conversation-2\0tab-2", thirdHost);
   assert.equal(
-    store.linuxRemountWebview("conversation-2", "tab-2", thirdHost),
+    store.linuxRemountWebview("conversation-2", "tab-2", thirdHost).started,
     true,
   );
   store.webviews.set("conversation-1\0tab-1", secondHost);
@@ -7895,14 +7976,14 @@ test("patches the current Browser webview store and host atomically", () => {
   store.setBrowserUseActive("conversation-1", "tab-2", true);
   store.webviews.set("conversation-1\0tab-1", secondHost);
   assert.equal(
-    store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
+    store.linuxRemountWebview("conversation-1", "tab-1", secondHost).started,
     true,
   );
   store.webviews.set("conversation-1\0tab-1", secondHost);
   store.releaseBrowserUseTab("conversation-1", "tab-1");
   store.webviews.set("conversation-1\0tab-1", secondHost);
   assert.equal(
-    store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
+    store.linuxRemountWebview("conversation-1", "tab-1", secondHost).started,
     true,
   );
   store.linuxBrowserUseRecoveryStates.set("conversation-1\0tab-1", {
