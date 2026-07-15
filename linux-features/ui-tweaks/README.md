@@ -17,6 +17,7 @@ Enable it in the local, gitignored feature config:
 
 | Tweak | Patch module | What it does | Settings |
 | --- | --- | --- | --- |
+| `appearance.dockIcon` | `patches/dock-icon.js` | Exposes the upstream Appearance setting for switching Linux windows and the system tray between the official ChatGPT and Codex icons. | `tweaks.appearance.dockIcon.enabled` |
 | `modelPicker.showModelsByDefault` | `patches/model-picker-model-list.js` | Opens the advanced picker by default and shows model choices inline instead of hiding them behind the compact Power slider and a nested Model submenu. | `tweaks.modelPicker.showModelsByDefault.enabled` |
 | `reasoning.keepEffortLabelsEnglish` | `patches/reasoning-effort-labels.js` | Keeps reasoning effort values in English in the Simplified Chinese UI while leaving the surrounding interface translated. | `tweaks.reasoning.keepEffortLabelsEnglish.enabled` |
 | `sidebar.projectName` | `patches/sidebar-project-name.js` | Styles project names in the left sidebar project list. It does not style `Projects` / `Chats` section headings and does not style chat rows. | `tweaks.sidebar.projectName.enabled`, `tweaks.sidebar.projectName.style` |
@@ -47,6 +48,39 @@ Example local config:
 ```
 
 Each tweak documents its own config keys below.
+
+### `appearance.dockIcon`
+
+Exposes the upstream Dock icon selector on Linux and stages the original PNG
+resources from the current macOS bundle. The selected icon is applied to open
+and restored Electron windows and to the system tray. A desktop environment may
+continue to use the icon declared by a pinned `.desktop` launcher.
+
+This tweak is independently disabled by default. Enable it while keeping the
+rest of `ui-tweaks` configurable:
+
+```json
+{
+  "enabled": ["ui-tweaks"],
+  "settings": {
+    "ui-tweaks": {
+      "tweaks": {
+        "appearance": {
+          "dockIcon": {
+            "enabled": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Config keys:
+
+- `enabled`: `true` applies the three Dock icon descriptors and stages their
+  resources. `false` skips Dock-specific asset checks and removes any staged
+  Dock icon payload without disabling other UI tweaks.
 
 ### `modelPicker.showModelsByDefault`
 
@@ -109,9 +143,10 @@ Config keys:
 ## Drift Behavior
 
 The patches are fail-soft. If upstream bundle markers drift, the feature writes
-a `WARN` message and leaves the asset unchanged. Invalid style values also warn
-and fall back to the default bold style. The feature should not block install,
-rebuild, or packaging flows.
+a `WARN` message and leaves the asset unchanged. Missing Dock icon resources
+also warn, remove only the Dock icon payload, and do not fail the build. Invalid
+style values warn and fall back to the default bold style. The feature should
+not block install, rebuild, or packaging flows.
 
 ## Adding Tweaks
 

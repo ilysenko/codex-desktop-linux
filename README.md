@@ -215,7 +215,6 @@ workarounds.
 | Wrapper updater button | Opt-in | `codex-wrapper-updater` | [Docs](linux-features/codex-wrapper-updater/README.md) |
 | Conversation mode | Opt-in | `conversation-mode` | [Docs](linux-features/conversation-mode/README.md) |
 | Copilot reasoning effort defaults | Opt-in | `copilot-reasoning-effort` | [Docs](linux-features/copilot-reasoning-effort/README.md) |
-| Dock icon selection | Opt-in | `dock-icon` | [Docs](linux-features/dock-icon/README.md) |
 | Example Linux Feature | Developer example | `example-feature` | [Docs](linux-features/example-feature/README.md) |
 | Frameless titlebar | Opt-in | `frameless-titlebar` | [Docs](linux-features/frameless-titlebar/README.md) |
 | Global Dictation | Opt-in | `global-dictation` | [Docs](linux-features/global-dictation/README.md) |

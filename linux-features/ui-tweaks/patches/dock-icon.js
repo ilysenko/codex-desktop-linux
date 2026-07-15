@@ -58,6 +58,19 @@ function countOccurrences(source, needle) {
   return source.split(needle).length - 1;
 }
 
+function dockIconConfig(context) {
+  const defaults = context?.feature?.manifest?.tweaks?.appearance?.dockIcon;
+  const settings = context?.feature?.settings?.tweaks?.appearance?.dockIcon;
+  return {
+    ...(defaults != null && typeof defaults === "object" && !Array.isArray(defaults) ? defaults : {}),
+    ...(settings != null && typeof settings === "object" && !Array.isArray(settings) ? settings : {}),
+  };
+}
+
+function dockIconEnabled(context) {
+  return dockIconConfig(context).enabled === true;
+}
+
 function applyDockIconMainPatch(source) {
   const currentCounts = currentMainContracts.map((needle) => countOccurrences(source, needle));
   const patchedCounts = patchedMainContracts.map((needle) => countOccurrences(source, needle));
@@ -121,30 +134,33 @@ function applyDockIconSearchPatch(source) {
 
 const descriptors = [
   {
-    id: "main-process",
+    id: "appearance-dock-icon-main-process",
     phase: "main-bundle",
     order: 20_940,
     ciPolicy: "optional",
+    enabled: dockIconEnabled,
     apply: applyDockIconMainPatch,
   },
   {
-    id: "settings-row",
+    id: "appearance-dock-icon-settings-row",
     phase: "webview-asset",
     order: 20_950,
     ciPolicy: "optional",
     pattern: /^general-settings-C0l3c9YI\.js$/,
     missingDescription: "General settings Dock icon bundle",
     skipDescription: "Dock icon settings row patch",
+    enabled: dockIconEnabled,
     apply: applyDockIconSettingsPatch,
   },
   {
-    id: "settings-search",
+    id: "appearance-dock-icon-settings-search",
     phase: "webview-asset",
     order: 20_960,
     ciPolicy: "optional",
     pattern: /^settings-page-[A-Za-z0-9_-]+\.js$/,
     missingDescription: "Settings search bundle",
     skipDescription: "Dock icon settings search patch",
+    enabled: dockIconEnabled,
     apply: applyDockIconSearchPatch,
   },
 ];
@@ -154,4 +170,6 @@ module.exports = {
   applyDockIconSearchPatch,
   applyDockIconSettingsPatch,
   descriptors,
+  dockIconConfig,
+  dockIconEnabled,
 };

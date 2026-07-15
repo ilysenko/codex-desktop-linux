@@ -17,7 +17,8 @@ const {
   applyDockIconSearchPatch,
   applyDockIconSettingsPatch,
   descriptors,
-} = require("./patch.js");
+  dockIconEnabled,
+} = require("./patches/dock-icon.js");
 
 const currentAppInfoSource = [
   "function S_(e,t,r){return`icon-chatgpt`}",
@@ -61,12 +62,12 @@ function captureWarns(fn) {
   }
 }
 
-function withFeatureConfig(enabled, fn) {
+function withFeatureConfig(config, fn) {
   const originalConfig = process.env.CODEX_LINUX_FEATURES_CONFIG;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dock-icon-config-"));
   process.env.CODEX_LINUX_FEATURES_CONFIG = path.join(tempDir, "features.json");
   try {
-    fs.writeFileSync(process.env.CODEX_LINUX_FEATURES_CONFIG, JSON.stringify({ enabled }));
+    fs.writeFileSync(process.env.CODEX_LINUX_FEATURES_CONFIG, JSON.stringify(config));
     return fn();
   } finally {
     if (originalConfig == null) {
@@ -78,23 +79,37 @@ function withFeatureConfig(enabled, fn) {
   }
 }
 
-test("feature is disabled until selected", () => {
+test("Dock icon descriptors remain disabled until the nested tweak is enabled", () => {
   const featuresRoot = path.resolve(__dirname, "..");
-  withFeatureConfig([], () => {
-    assert.equal(
-      loadLinuxFeaturePatchDescriptors({ featuresRoot })
-        .some((descriptor) => descriptor.id.startsWith("feature:dock-icon:")),
-      false,
+  withFeatureConfig({ enabled: ["ui-tweaks"] }, () => {
+    const dockDescriptors = loadLinuxFeaturePatchDescriptors({ featuresRoot }).filter(
+      (descriptor) => descriptor.id.includes(":appearance-dock-icon-"),
     );
+    assert.equal(dockDescriptors.length, 3);
+    assert.equal(dockDescriptors.every((descriptor) => descriptor.enabled({}) === false), true);
   });
-  withFeatureConfig(["dock-icon"], () => {
-    assert.equal(
-      loadLinuxFeaturePatchDescriptors({ featuresRoot })
-        .filter((descriptor) => descriptor.id.startsWith("feature:dock-icon:"))
-        .length,
-      3,
-    );
-  });
+  withFeatureConfig(
+    {
+      enabled: ["ui-tweaks"],
+      settings: {
+        "ui-tweaks": {
+          tweaks: {
+            appearance: {
+              dockIcon: { enabled: true },
+            },
+          },
+        },
+      },
+    },
+    () => {
+      const dockDescriptors = loadLinuxFeaturePatchDescriptors({ featuresRoot }).filter(
+        (descriptor) => descriptor.id.includes(":appearance-dock-icon-"),
+      );
+      assert.equal(dockDescriptors.length, 3);
+      assert.equal(dockDescriptors.every((descriptor) => descriptor.enabled({}) === true), true);
+    },
+  );
+  assert.equal(dockIconEnabled({}), false);
 });
 
 test("main patch enables official previews and synchronizes Linux window and tray icons", () => {
@@ -205,45 +220,131 @@ test("descriptor targets current main, settings, and search assets", () => {
   }
 });
 
-test("stage and cleanup hooks own only the official Dock icon resources", () => {
+function dockIconFeatureConfig(enabled) {
+  const config = { enabled: ["ui-tweaks"] };
+  if (enabled != null) {
+    config.settings = {
+      "ui-tweaks": {
+        tweaks: {
+          appearance: {
+            dockIcon: { enabled },
+          },
+        },
+      },
+    };
+  }
+  return config;
+}
+
+function createDockIconHookFixture() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dock-icon-stage-"));
   const upstreamResources = path.join(tempDir, "ChatGPT.app", "Contents", "Resources");
   const installDir = path.join(tempDir, "install");
+  const configPath = path.join(tempDir, "features.json");
   const iconNames = [
     "icon-chatgpt.png",
     "icon-codex-dark-color.png",
     "icon-codex-light.png",
   ];
-  try {
-    fs.mkdirSync(upstreamResources, { recursive: true });
-    for (const name of iconNames) {
-      fs.writeFileSync(path.join(upstreamResources, name), name);
-    }
-
-    const env = {
+  fs.mkdirSync(upstreamResources, { recursive: true });
+  for (const name of iconNames) {
+    fs.writeFileSync(path.join(upstreamResources, name), name);
+  }
+  return {
+    configPath,
+    env: {
       ...process.env,
+      CODEX_LINUX_FEATURES_CONFIG: configPath,
       CODEX_UPSTREAM_APP_DIR: path.join(tempDir, "ChatGPT.app"),
       INSTALL_DIR: installDir,
-    };
-    const staged = childProcess.spawnSync("bash", [path.join(__dirname, "stage.sh")], {
-      encoding: "utf8",
-      env,
-    });
+      SCRIPT_DIR: path.resolve(__dirname, "..", ".."),
+    },
+    iconNames,
+    installDir,
+    targetDir: path.join(installDir, "resources", "dock-icon"),
+    tempDir,
+    upstreamResources,
+  };
+}
+
+function runDockIconHook(name, env) {
+  return childProcess.spawnSync("bash", [path.join(__dirname, name)], {
+    encoding: "utf8",
+    env,
+  });
+}
+
+test("Dock icon staging is disabled by default and removes stale resources", () => {
+  const fixture = createDockIconHookFixture();
+  try {
+    fs.mkdirSync(fixture.targetDir, { recursive: true });
+    fs.writeFileSync(path.join(fixture.targetDir, "stale.png"), "stale");
+    fs.writeFileSync(fixture.configPath, JSON.stringify(dockIconFeatureConfig()));
+
+    const result = runDockIconHook("stage.sh", fixture.env);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.existsSync(fixture.targetDir), false);
+  } finally {
+    fs.rmSync(fixture.tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Dock icon staging copies only the official resources when enabled", () => {
+  const fixture = createDockIconHookFixture();
+  try {
+    fs.writeFileSync(fixture.configPath, JSON.stringify(dockIconFeatureConfig(true)));
+
+    const staged = runDockIconHook("stage.sh", fixture.env);
+
     assert.equal(staged.status, 0, staged.stderr);
-    for (const name of iconNames) {
+    for (const name of fixture.iconNames) {
       assert.equal(
-        fs.readFileSync(path.join(installDir, "resources", "dock-icon", name), "utf8"),
+        fs.readFileSync(path.join(fixture.targetDir, name), "utf8"),
         name,
       );
     }
-
-    const cleaned = childProcess.spawnSync("bash", [path.join(__dirname, "cleanup.sh")], {
-      encoding: "utf8",
-      env,
-    });
-    assert.equal(cleaned.status, 0, cleaned.stderr);
-    assert.equal(fs.existsSync(path.join(installDir, "resources", "dock-icon")), false);
+    assert.deepEqual(fs.readdirSync(fixture.targetDir).sort(), fixture.iconNames.slice().sort());
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    fs.rmSync(fixture.tempDir, { recursive: true, force: true });
+  }
+});
+
+test("missing upstream Dock icon resources warn and do not fail the build", () => {
+  const fixture = createDockIconHookFixture();
+  try {
+    fs.writeFileSync(fixture.configPath, JSON.stringify(dockIconFeatureConfig(true)));
+    fs.rmSync(path.join(fixture.upstreamResources, fixture.iconNames[0]));
+    fs.mkdirSync(fixture.targetDir, { recursive: true });
+    fs.writeFileSync(path.join(fixture.targetDir, "stale.png"), "stale");
+
+    const result = runDockIconHook("stage.sh", fixture.env);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /WARN: Upstream Dock icon resource is unavailable/);
+    assert.equal(fs.existsSync(fixture.targetDir), false);
+  } finally {
+    fs.rmSync(fixture.tempDir, { recursive: true, force: true });
+  }
+});
+
+test("disabling the Dock icon tweak removes its payload while ui-tweaks stays enabled", () => {
+  const fixture = createDockIconHookFixture();
+  try {
+    fs.writeFileSync(fixture.configPath, JSON.stringify(dockIconFeatureConfig(true)));
+    const staged = runDockIconHook("stage.sh", fixture.env);
+    assert.equal(staged.status, 0, staged.stderr);
+    assert.equal(fs.existsSync(fixture.targetDir), true);
+
+    fs.writeFileSync(fixture.configPath, JSON.stringify(dockIconFeatureConfig(false)));
+    const disabled = runDockIconHook("stage.sh", fixture.env);
+    assert.equal(disabled.status, 0, disabled.stderr);
+    assert.equal(fs.existsSync(fixture.targetDir), false);
+
+    const cleaned = runDockIconHook("cleanup.sh", fixture.env);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    assert.equal(fs.existsSync(fixture.targetDir), false);
+  } finally {
+    fs.rmSync(fixture.tempDir, { recursive: true, force: true });
   }
 });

@@ -4,9 +4,16 @@
   "description": "Optional UI customization patches for ChatGPT Desktop for Linux.",
   "defaultEnabled": false,
   "entrypoints": {
-    "patchDescriptors": "./patch.js"
+    "patchDescriptors": "./patch.js",
+    "stageHook": "./stage.sh",
+    "cleanupHook": "./cleanup.sh"
   },
   "tweaks": {
+    "appearance": {
+      "dockIcon": {
+        "enabled": false
+      }
+    },
     "modelPicker": {
       "showModelsByDefault": {
         "enabled": true
