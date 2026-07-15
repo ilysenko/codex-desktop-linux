@@ -14,7 +14,7 @@ const patchedWindowResource =
 const currentApplyIcon =
   "j=r=>{if(r===`app-default`&&t!==i.a.Dev&&(c.app.isPackaged||e===n.Vc.ChatGPT)){let e=c.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=r===`codex-system`?A():null,o=(a==null?null:E(a))??O(),s=o==null?c.nativeImage.createEmpty():c.nativeImage.createFromPath(o);s.isEmpty()||c.app.dock?.setIcon(s)}";
 const patchedApplyIcon =
-  "j=function codexLinuxApplyDockIcon(r){if(r===`app-default`&&process.platform!==`linux`&&t!==i.a.Dev&&(c.app.isPackaged||e===n.Vc.ChatGPT)){let e=c.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=r===`codex-system`?A():null,o=(a==null?null:E(a))??O(),s=o==null?c.nativeImage.createEmpty():c.nativeImage.createFromPath(o);if(s.isEmpty())return;if(process.platform===`linux`){for(let e of c.BrowserWindow.getAllWindows())e.isDestroyed()||e.setIcon(s);return}c.app.dock?.setIcon(s)}";
+  "j=function codexLinuxApplyDockIcon(r){if(r===`app-default`&&process.platform!==`linux`&&t!==i.a.Dev&&(c.app.isPackaged||e===n.Vc.ChatGPT)){let e=c.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=r===`codex-system`?A():null,o=(a==null?null:E(a))??O(),s=o==null?c.nativeImage.createEmpty():c.nativeImage.createFromPath(o);if(s.isEmpty())return;if(process.platform===`linux`){globalThis.codexLinuxDockIconImage=s;for(let e of c.BrowserWindow.getAllWindows())e.isDestroyed()||e.setIcon(s);let e=are()?.tray;e!=null&&!e.isDestroyed()&&e.setImage(s);return}c.app.dock?.setIcon(s)}";
 const currentUpdateGate =
   "M=()=>{if(!g)return;let e=D();j(e),AA({preference:e,resourceName:e===`codex-system`?k.light:null}).then(e=>{e&&j(D())})}";
 const patchedUpdateGate =
@@ -27,6 +27,10 @@ const currentWindowRegistration =
   "onWindowRegistered:e=>{N?.registerWindow(e),x?.(e)}";
 const patchedWindowRegistration =
   "onWindowRegistered:e=>{N?.registerWindow(e),x?.(e),process.platform===`linux`&&M()}";
+const currentTrayRegistration =
+  "n=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!W9)return";
+const patchedTrayRegistration =
+  "n=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(process.platform===`linux`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty())n.setImage(globalThis.codexLinuxDockIconImage);if(!W9)return";
 
 const currentMainContracts = [
   currentPreviewGate,
@@ -36,6 +40,7 @@ const currentMainContracts = [
   currentUpdateGate,
   currentThemeGate,
   currentWindowRegistration,
+  currentTrayRegistration,
 ];
 
 const patchedMainContracts = [
@@ -46,6 +51,7 @@ const patchedMainContracts = [
   patchedUpdateGate,
   patchedThemeGate,
   patchedWindowRegistration,
+  patchedTrayRegistration,
 ];
 
 function countOccurrences(source, needle) {

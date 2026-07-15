@@ -38,7 +38,10 @@ const currentRuntimeSource = [
   "return{updateDockIcon:M,windowManager:P}}",
 ].join("");
 
-const currentMainSource = currentAppInfoSource + currentRuntimeSource;
+const currentTraySource =
+  "async function ore(e){let t=await sre(e.buildFlavor,e.appBrand,e.repoRoot),n=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!W9)return n.destroy(),null;return n}";
+
+const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
 
 const currentSettingsSource =
   "function na(){let e=(0,Q.c)(27),t=z(R),n=L(),{platform:r}=Bt(),{data:i}=s(Kn),a=I(P.dockIconPreference),o;e[0]===t?o=e[1]:(o=function(e){x(t,P.dockIconPreference,e)},e[0]=t,e[1]=o);let c=o;if(r!==`macOS`||Fe.ChatGPT!==`chatgpt`||st.Agent===`prod`)return null;let l=i?.dockIconPreviews;if(l==null)return null;return H(l,c)}";
@@ -93,7 +96,7 @@ test("feature is disabled until selected", () => {
   });
 });
 
-test("main patch enables official previews and Linux window icon updates", () => {
+test("main patch enables official previews and synchronizes Linux window and tray icons", () => {
   const patched = applyDockIconMainPatch(currentMainSource);
   const secondPass = captureWarns(() => applyDockIconMainPatch(patched));
 
@@ -109,6 +112,10 @@ test("main patch enables official previews and Linux window icon updates", () =>
   );
   assert.match(patched, /if\(!c\.app\.isPackaged&&process\.platform!==`linux`\)return null/);
   assert.match(patched, /BrowserWindow\.getAllWindows\(\)/);
+  assert.match(patched, /globalThis\.codexLinuxDockIconImage=s/);
+  assert.match(patched, /are\(\)\?\.tray/);
+  assert.match(patched, /codexLinuxDockIconImage\.isEmpty\(\)/);
+  assert.match(patched, /n\.setImage\(globalThis\.codexLinuxDockIconImage\)/);
   assert.match(patched, /onWindowRegistered:e=>\{N\?\.registerWindow\(e\),x\?\.\(e\),process\.platform===`linux`&&M\(\)\}/);
 });
 
