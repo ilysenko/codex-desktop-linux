@@ -95,8 +95,10 @@ Detailed agent docs: [repository map](docs/agents/repository-map.md),
 
 Primary human docs: [architecture](docs/architecture.md),
 [build and packaging](docs/build-and-packaging.md),
+[native setup](docs/native-setup.md),
 [Linux features](docs/linux-features-architecture.md),
 [updater](docs/updater.md), [Linux Computer Use](docs/linux-computer-use.md),
+[Record and Replay](docs/record-and-replay-linux.md),
 [Nix](docs/nix.md), and [troubleshooting](docs/troubleshooting.md).
 
 Repository governance: [issue and pull request labels](docs/label-governance.md).

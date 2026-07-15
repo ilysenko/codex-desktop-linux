@@ -85,8 +85,8 @@ that agents need without keeping them in the main quick-start.
 
 ## Runtime Expectations
 
-- `python3`, `7z`, `curl`, `unzip`, `tar`, `make`, and `g++` are required for
-  `install.sh`.
+- `python3`, `7z`, `curl`, `unzip`, `tar`, `flock`, `make`, and `g++` are
+  required for `install.sh`.
 - Native package builders require their format-specific tools (`dpkg-deb`,
   `rpmbuild`, `makepkg`/pacman tooling, or `appimagetool`).
 - `scripts/install-deps.sh` bootstraps common host dependencies. On apt-based

@@ -303,9 +303,22 @@ plus a native package plus `codex-update-manager`.
   Linux Computer Use backend, windowing, and desktop integration notes.
 - `docs/record-and-replay-linux.md`
   Linux Record & Replay compatibility and tester acceptance notes.
+- `docs/upstream-dmg-acceptance.md`
+  Shared acceptance policy for local installs, updater rebuilds, and CI.
+- `docs/upstream-dmg-intelligence.md`
+  Protected-surface inspection and upstream drift intelligence.
+- `docs/upstream-dmg-watchdog.md`
+  Scheduled upstream DMG campaign and issue lifecycle.
 - `docs/nix.md`
   Nix flake, modules, and hash-pin workflow.
 - `docs/troubleshooting.md`
   Common install/runtime issues and diagnostics.
+- `docs/label-governance.md`
+  Staff-managed issue and pull request label policy.
+- `docs/github-cli-auth.md`
+  GitHub CLI authentication behavior in app-launched shells.
+- `docs/wayland-input-focus-investigation.md` and
+  `docs/linux-chronicle-skysight.md`
+  Focused investigation and integration notes for Linux-specific workflows.
 - `docs/webview-server-evaluation.md` and `docs/launcher-performance.md`
   Decision records for the webview server and launcher performance defaults.
