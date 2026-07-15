@@ -7761,38 +7761,40 @@ test("patches the current Browser webview store and host atomically", () => {
     patched,
     /let r=Ef\(e,t\);return this\.webviews\.get\(r\)!==n/,
   );
-  assert.match(patched, /linuxBrowserUseRemountKeys\.has\(r\)/);
+  assert.match(patched, /linuxBrowserUseRemountDeadlines\.has\(r\)/);
+  assert.match(patched, /linuxGetWebviewRemountDeadline\(e,t\)/);
   assert.match(
     patched,
-    /r\|\|this\.linuxBrowserUseRemountKeys\.delete\(Ef\(e,n\)\)/,
+    /r\|\|this\.linuxBrowserUseRemountDeadlines\.delete\(Ef\(e,n\)\)/,
   );
   assert.match(
     patched,
-    /removeTab\(e,t\)\{let n=Ef\(e,t\);this\.linuxBrowserUseRemountKeys\.delete\(n\);let r=/,
+    /removeTab\(e,t\)\{let n=Ef\(e,t\);this\.linuxBrowserUseRemountDeadlines\.delete\(n\);let r=/,
   );
   assert.match(
     patched,
-    /removeConversationTabs\(e\)\{let t=`\$\{e\}\\0`;for\(let e of this\.linuxBrowserUseRemountKeys\)/,
+    /removeConversationTabs\(e\)\{let t=`\$\{e\}\\0`;for\(let e of this\.linuxBrowserUseRemountDeadlines\.keys\(\)\)/,
   );
   assert.match(
     patched,
-    /releaseBrowserUseTab\(e,t\)\{let n=Ef\(e,t\);this\.linuxBrowserUseRemountKeys\.delete\(n\);let r=/,
+    /releaseBrowserUseTab\(e,t\)\{let n=Ef\(e,t\);this\.linuxBrowserUseRemountDeadlines\.delete\(n\);let r=/,
   );
   assert.match(
     patched,
-    /browserUseActiveTabKeys\.delete\(e\);this\.linuxBrowserUseRemountKeys\.delete\(e\);let n=/,
+    /browserUseActiveTabKeys\.delete\(e\);this\.linuxBrowserUseRemountDeadlines\.delete\(e\);let n=/,
   );
   assert.match(
     patched,
-    /linuxBrowserUseRemountKeys\.delete\(s\)&&this\.linuxBrowserUseRemountKeys\.add\(c\)/,
+    /linuxBrowserUseRemountDeadlines\.delete\(s\),this\.linuxBrowserUseRemountDeadlines\.set\(c,codexLinuxRemountDeadline\)/,
   );
-  assert.match(patched, /disposeAll\(\)\{this\.electronPageHandoff\.disposeAll\(\),this\.linuxBrowserUseRemountKeys\.clear\(\),/);
+  assert.match(patched, /disposeAll\(\)\{this\.electronPageHandoff\.disposeAll\(\),this\.linuxBrowserUseRemountDeadlines\.clear\(\),/);
   assert.match(patched, /function codexLinuxWatchBrowserWebviewAttachment/);
   assert.match(
     patched,
     /Up\.linuxRemountWebview\(a,r,_\)/,
   );
   assert.match(patched, /typeof Up\.linuxRemountWebview==`function`/);
+  assert.match(patched, /Up\.linuxGetWebviewRemountDeadline\(a,r\)/);
   assert.match(
     patched,
     /Up\.getWebview\(a,r,s,\{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l\}\)/,
@@ -7871,17 +7873,19 @@ test("patches the current Browser webview store and host atomically", () => {
     store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
     true,
   );
+  store.linuxBrowserUseRemountDeadlines.set("conversation-1\0tab-1", 11_000);
   store.reassociateTabState(
     "conversation-1",
     "tab-1",
     "conversation-2",
     "tab-2",
   );
-  assert.equal(store.linuxBrowserUseRemountKeys.has("conversation-1\0tab-1"), false);
-  assert.equal(store.linuxBrowserUseRemountKeys.has("conversation-2\0tab-2"), true);
+  assert.equal(store.linuxBrowserUseRemountDeadlines.has("conversation-1\0tab-1"), false);
+  assert.equal(store.linuxGetWebviewRemountDeadline("conversation-2", "tab-2"), 11_000);
   const reassociatedHost = { listenForDidAttach: () => () => {} };
   const reassociatedTimers = [];
   const reassociatedRecoveryRef = { current: null };
+  let reassociatedClock = 9_000;
   store.webviews.set("conversation-2\0tab-2", reassociatedHost);
   codexLinuxWatchBrowserWebviewAttachment({
     active: true,
@@ -7889,6 +7893,7 @@ test("patches the current Browser webview store and host atomically", () => {
     conversationId: "conversation-2",
     host: reassociatedHost,
     logger: { error() {}, warn() {} },
+    now: () => reassociatedClock,
     recoveryRef: reassociatedRecoveryRef,
     remount: () =>
       store.linuxRemountWebview(
@@ -7896,20 +7901,28 @@ test("patches the current Browser webview store and host atomically", () => {
         "tab-2",
         reassociatedHost,
       ),
+    remountDeadlineAt: store.linuxGetWebviewRemountDeadline(
+      "conversation-2",
+      "tab-2",
+    ),
     timerApi: {
       clearTimeout() {},
-      setTimeout(callback) {
-        reassociatedTimers.push(callback);
+      setTimeout(callback, delay) {
+        reassociatedTimers.push({ callback, delay });
         return callback;
       },
     },
   });
-  reassociatedTimers[0]();
+  assert.equal(reassociatedRecoveryRef.current.attempt, 1);
+  assert.equal(reassociatedRecoveryRef.current.deadlineAt, 11_000);
+  assert.equal(reassociatedTimers[0].delay, 2_000);
+  reassociatedClock = 11_000;
+  reassociatedTimers[0].callback();
   assert.equal(reassociatedRecoveryRef.current.attempt, 2);
   assert.equal(store.webviews.get("conversation-2\0tab-2"), reassociatedHost);
   store.electronPageHandoff = { disposeAll() {} };
   store.disposeAll();
-  assert.equal(store.linuxBrowserUseRemountKeys.size, 0);
+  assert.equal(store.linuxBrowserUseRemountDeadlines.size, 0);
 });
 
 test("Browser webview recovery descriptor targets the current combined renderer chunk", () => {
