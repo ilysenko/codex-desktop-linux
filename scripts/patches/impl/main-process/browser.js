@@ -371,36 +371,6 @@ function applyLinuxBrowserUseRouteLivenessPatch(currentSource) {
   return currentSource.replace(original, replacement);
 }
 
-function applyLinuxBrowserUseAttachTimeoutDiagnosticPatch(currentSource) {
-  const patchedMessage =
-    "Timed out waiting for the Browser webview to attach after the bounded Linux recovery window";
-  if (currentSource.includes(patchedMessage)) {
-    return currentSource;
-  }
-
-  const originalMessage =
-    "Timed out waiting for the Browser webview to attach for this browser-use page";
-  const originalEvent = "kind:`browser-open-wait-timeout`";
-  if (!currentSource.includes(originalMessage)) {
-    if (
-      currentSource.includes("Timed out waiting for the Browser webview to attach") ||
-      currentSource.includes("browser-open-wait-timeout")
-    ) {
-      console.warn(
-        "WARN: Could not find Browser webview attachment timeout diagnostic — skipping Linux remount diagnostic patch",
-      );
-    }
-    return currentSource;
-  }
-
-  return currentSource
-    .replace(originalMessage, patchedMessage)
-    .replace(
-      originalEvent,
-      "kind:`browser-open-wait-timeout-after-linux-recovery-window`",
-    );
-}
-
 function applyLinuxChromeExtensionStatusPatch(currentSource) {
   if (currentSource.includes("codexLinuxChromeProfileRoots")) {
     return currentSource;
@@ -545,7 +515,6 @@ module.exports = {
   applyBrowserUseNodeReplApprovalAssets,
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
-  applyLinuxBrowserUseAttachTimeoutDiagnosticPatch,
   applyLinuxExternalOpenEnvPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxChromeExtensionStatusPatch,

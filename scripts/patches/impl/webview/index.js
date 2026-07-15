@@ -485,11 +485,12 @@ function codexLinuxWatchBrowserWebviewAttachment({
   remount,
   timerApi = window,
   logger = console,
+  now = Date.now,
   timeoutMs = 5e3,
 }) {
   const key = `${conversationId}\0${browserTabId}`;
   if (recoveryRef.current?.key !== key || !active) {
-    recoveryRef.current = { attempt: 0, key };
+    recoveryRef.current = { attempt: 0, deadlineAt: null, key };
   }
   if (!active || recoveryRef.current.attempt >= 2) {
     return () => {};
@@ -508,7 +509,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
     }
   };
   if (isHostAttached()) {
-    recoveryRef.current = { attempt: 2, key };
+    recoveryRef.current = { attempt: 2, deadlineAt: null, key };
     return () => {};
   }
 
@@ -517,7 +518,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
   let removeDidAttachListener = () => {};
   const markAttached = () => {
     if (disposed) return;
-    recoveryRef.current = { attempt: 2, key };
+    recoveryRef.current = { attempt: 2, deadlineAt: null, key };
     if (timer != null) {
       timerApi.clearTimeout(timer);
       timer = null;
@@ -537,6 +538,11 @@ function codexLinuxWatchBrowserWebviewAttachment({
     markAttached();
     return cleanup;
   }
+  const state = recoveryRef.current;
+  const deadlineAt = state.deadlineAt ?? now() + timeoutMs;
+  if (state.deadlineAt == null) {
+    recoveryRef.current = { ...state, deadlineAt };
+  }
   timer = timerApi.setTimeout(() => {
     timer = null;
     if (disposed) return;
@@ -546,30 +552,40 @@ function codexLinuxWatchBrowserWebviewAttachment({
     const details = { browserTabId, conversationId };
     if (state.attempt === 0) {
       if (!remount()) return;
-      recoveryRef.current = { attempt: 1, key };
+      recoveryRef.current = {
+        attempt: 1,
+        deadlineAt: now() + timeoutMs,
+        key,
+      };
       logger.warn(
         "IAB_LIFECYCLE Linux Browser webview attachment timed out; remounting once",
         details,
       );
       return;
     }
-    recoveryRef.current = { attempt: 2, key };
+    recoveryRef.current = { attempt: 2, deadlineAt: null, key };
     logger.error(
       "IAB_LIFECYCLE Linux Browser webview attachment failed after one remount",
       details,
     );
-  }, timeoutMs);
+  }, Math.max(0, deadlineAt - now()));
 
   return cleanup;
 }
 
-function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
-  const hasCompleteStorePatch = (source) =>
+function hasCompleteLinuxBrowserUseWebviewRemountStorePatch(source) {
+  return (
     source.includes("linuxBrowserUseRemountKeys=new Set") &&
     source.includes("linuxRemountWebview(e,t,n)") &&
-    source.includes(";this.linuxBrowserUseRemountKeys.delete(") &&
-    source.includes("for(let e of this.linuxBrowserUseRemountKeys)");
-  if (hasCompleteStorePatch(currentSource)) {
+    source.includes("for(let e of this.linuxBrowserUseRemountKeys)") &&
+    source.includes("this.linuxBrowserUseRemountKeys.clear()") &&
+    source.includes("&&this.linuxBrowserUseRemountKeys.add(") &&
+    (source.match(/linuxBrowserUseRemountKeys\.delete\(/gu) ?? []).length >= 6
+  );
+}
+
+function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
+  if (hasCompleteLinuxBrowserUseWebviewRemountStorePatch(currentSource)) {
     return currentSource;
   }
 
@@ -610,6 +626,47 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     /removeConversationTabs\(([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=`\$\{\1\}\\0`;/u.exec(
       classSource,
     );
+  const releaseBrowserUseTabMatch =
+    keyHelper == null
+      ? null
+      : new RegExp(
+          `releaseBrowserUseTab\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{let ([A-Za-z_$][\\w$]*)=${escapeRegExp(keyHelper)}\\(\\1,\\2\\),`,
+          "u",
+        ).exec(classSource);
+  const siblingDeactivateMatch =
+    /for\(let ([A-Za-z_$][\w$]*) of Array\.from\(this\.browserUseActiveTabKeys\)\)\{if\(\1===([A-Za-z_$][\w$]*)\|\|!\1\.startsWith\(([A-Za-z_$][\w$]*)\)\)continue;this\.browserUseActiveTabKeys\.delete\(\1\);let /u.exec(
+      classSource,
+    );
+  const reassociateMethodIndex = classSource.indexOf("reassociateTabState(");
+  const reassociateMethodOpenIndex =
+    reassociateMethodIndex === -1
+      ? -1
+      : classSource.indexOf("{", reassociateMethodIndex);
+  const reassociateMethodCloseIndex =
+    reassociateMethodOpenIndex === -1
+      ? -1
+      : findMatchingBrace(classSource, reassociateMethodOpenIndex);
+  const reassociateMethodSource =
+    reassociateMethodCloseIndex === -1
+      ? ""
+      : classSource.slice(reassociateMethodIndex, reassociateMethodCloseIndex + 1);
+  const reassociateKeysMatch =
+    keyHelper == null
+      ? null
+      : new RegExp(
+          `,([A-Za-z_$][\\w$]*)=${escapeRegExp(keyHelper)}\\([^)]*\\),([A-Za-z_$][\\w$]*)=${escapeRegExp(keyHelper)}\\([^)]*\\);if\\(\\1===\\2\\|\\|this\\.transferredWebviewKeys\\.has\\(`,
+          "u",
+        ).exec(reassociateMethodSource);
+  const reassociateStateMatch =
+    reassociateKeysMatch == null
+      ? null
+      : new RegExp(
+          `;let ([A-Za-z_$][\\w$]*)=this\\.browserUseViewportSizes\\.get\\(${escapeRegExp(reassociateKeysMatch[1])}\\)\\?\\?null,`,
+          "u",
+        ).exec(reassociateMethodSource);
+  const disposeAllMatch = /disposeAll\(\)\{this\.electronPageHandoff\.disposeAll\(\),/u.exec(
+    classSource,
+  );
   if (
     markerIndex === -1 ||
     classOpenIndex === -1 ||
@@ -618,6 +675,11 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     activeMethodMatch == null ||
     removeTabMatch == null ||
     removeConversationTabsMatch == null ||
+    releaseBrowserUseTabMatch == null ||
+    siblingDeactivateMatch == null ||
+    reassociateKeysMatch == null ||
+    reassociateStateMatch == null ||
+    disposeAllMatch == null ||
     keyHelper == null ||
     !classSource.includes("disposeWebviewHost(") ||
     !classSource.includes("emitChange()")
@@ -656,6 +718,28 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     `removeTab(${removeTabConversationVar},${removeTabBrowserTabVar}){let ${removeTabKeyVar}=${keyHelper}(${removeTabConversationVar},${removeTabBrowserTabVar});` +
     `this.linuxBrowserUseRemountKeys.delete(${removeTabKeyVar});let `;
   const removeConversationPatch = `${removeConversationNeedle}for(let e of this.linuxBrowserUseRemountKeys)e.startsWith(${removeConversationPrefixVar})&&this.linuxBrowserUseRemountKeys.delete(e);`;
+  const [
+    releaseBrowserUseTabNeedle,
+    releaseConversationVar,
+    releaseBrowserTabVar,
+    releaseKeyVar,
+  ] = releaseBrowserUseTabMatch;
+  const releaseBrowserUseTabPatch =
+    `releaseBrowserUseTab(${releaseConversationVar},${releaseBrowserTabVar}){let ${releaseKeyVar}=${keyHelper}(${releaseConversationVar},${releaseBrowserTabVar});` +
+    `this.linuxBrowserUseRemountKeys.delete(${releaseKeyVar});let `;
+  const [siblingDeactivateNeedle, siblingKeyVar] = siblingDeactivateMatch;
+  const siblingDeactivatePatch = siblingDeactivateNeedle.replace(
+    ";let ",
+    `;this.linuxBrowserUseRemountKeys.delete(${siblingKeyVar});let `,
+  );
+  const reassociateStateNeedle = reassociateStateMatch[0];
+  const reassociateStateVar = reassociateStateMatch[1];
+  const reassociateSourceKeyVar = reassociateKeysMatch[1];
+  const reassociateTargetKeyVar = reassociateKeysMatch[2];
+  const reassociateStatePatch =
+    `;this.linuxBrowserUseRemountKeys.delete(${reassociateSourceKeyVar})&&this.linuxBrowserUseRemountKeys.add(${reassociateTargetKeyVar});` +
+    `let ${reassociateStateVar}=this.browserUseViewportSizes.get(${reassociateSourceKeyVar})??null,`;
+  const disposeAllPatch = `${disposeAllMatch[0]}this.linuxBrowserUseRemountKeys.clear(),`;
   const registrationAttemptsNeedle = "registrationAttempts=new WeakMap;";
   let patchedClass = classSource
     .replace(
@@ -665,8 +749,12 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     .replace(activeMethodNeedle, activeMethodPatch)
     .replace(registerMethodMatch[0], `${method}${registerMethodMatch[0]}`)
     .replace(removeTabNeedle, removeTabPatch)
-    .replace(removeConversationNeedle, removeConversationPatch);
-  if (!hasCompleteStorePatch(patchedClass)) {
+    .replace(removeConversationNeedle, removeConversationPatch)
+    .replace(releaseBrowserUseTabNeedle, releaseBrowserUseTabPatch)
+    .replace(siblingDeactivateNeedle, siblingDeactivatePatch)
+    .replace(reassociateStateNeedle, reassociateStatePatch)
+    .replace(disposeAllMatch[0], disposeAllPatch);
+  if (!hasCompleteLinuxBrowserUseWebviewRemountStorePatch(patchedClass)) {
     console.warn(
       "WARN: Browser webview store remount patch was incomplete — skipping Linux attachment recovery store patch",
     );
@@ -800,18 +888,21 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
 }
 
 function applyLinuxBrowserUseWebviewAttachRecoveryPatch(currentSource) {
-  const hasStorePatch = (source) =>
-    source.includes("linuxBrowserUseRemountKeys=new Set") &&
-    source.includes("linuxRemountWebview(e,t,n)");
   const hasHostPatch = (source) =>
     source.includes("function codexLinuxWatchBrowserWebviewAttachment(");
-  if (hasStorePatch(currentSource) && hasHostPatch(currentSource)) {
+  if (
+    hasCompleteLinuxBrowserUseWebviewRemountStorePatch(currentSource) &&
+    hasHostPatch(currentSource)
+  ) {
     return currentSource;
   }
 
   const patchedStore = applyLinuxBrowserUseWebviewRemountStorePatch(currentSource);
   const patchedSource = applyLinuxBrowserUseWebviewHostRecoveryPatch(patchedStore);
-  if (!hasStorePatch(patchedSource) || !hasHostPatch(patchedSource)) {
+  if (
+    !hasCompleteLinuxBrowserUseWebviewRemountStorePatch(patchedSource) ||
+    !hasHostPatch(patchedSource)
+  ) {
     if (
       currentSource.includes("registrationAttempts=new WeakMap") ||
       currentSource.includes("shouldBootstrapWhenHidden")

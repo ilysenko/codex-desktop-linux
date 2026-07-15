@@ -9,7 +9,6 @@ const {
   applyBrowserUseNodeReplApprovalAssets,
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
-  applyLinuxBrowserUseAttachTimeoutDiagnosticPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxChromeExtensionStatusPatch,
 } = require("../../../../impl/main-process/browser.js");
@@ -60,13 +59,6 @@ module.exports = [
     order: 170,
     ciPolicy: "optional",
     apply: applyLinuxBrowserUseRouteLivenessPatch,
-  }),
-  mainBundlePatch({
-    id: "linux-browser-use-attach-timeout-diagnostic",
-    phase: "main-bundle",
-    order: 171,
-    ciPolicy: "optional",
-    apply: applyLinuxBrowserUseAttachTimeoutDiagnosticPatch,
   }),
   mainBundlePatch({
     id: "linux-chrome-extension-status",
