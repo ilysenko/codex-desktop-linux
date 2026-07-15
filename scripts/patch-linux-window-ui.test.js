@@ -7557,6 +7557,7 @@ test("keeps Browser webview attachment deadlines bounded across effect restarts"
   };
   const recoveryRef = { current: { attempt: 0, key: "conversation-1\0tab-1" } };
   const host = { listenForDidAttach: () => () => {} };
+  const replacementHost = { listenForDidAttach: () => () => {} };
   let remounts = 0;
   const watch = (
     conversationId = "conversation-1",
@@ -7581,7 +7582,7 @@ test("keeps Browser webview attachment deadlines bounded across effect restarts"
   assert.equal(timers[0].delay, 5_000);
   clock = 4_000;
   cleanup();
-  cleanup = watch();
+  cleanup = watch("conversation-1", "tab-1", replacementHost);
   assert.equal(timers[1].delay, 2_000);
   clock = 6_000;
   timers[1].callback();
@@ -7591,14 +7592,49 @@ test("keeps Browser webview attachment deadlines bounded across effect restarts"
 
   clock = 9_000;
   cleanup();
-  cleanup = watch("conversation-2", "tab-2", {
-    listenForDidAttach: () => () => {},
-  });
+  cleanup = watch("conversation-2", "tab-2", replacementHost);
   assert.equal(timers[2].delay, 2_000);
   assert.equal(recoveryRef.current.attempt, 1);
   assert.equal(recoveryRef.current.deadlineAt, 11_000);
   assert.equal(recoveryRef.current.key, "conversation-2\0tab-2");
   cleanup();
+});
+
+test("starts a fresh Browser recovery window for a different logical tab", () => {
+  const oldHost = { listenForDidAttach: () => () => {} };
+  const newHost = { listenForDidAttach: () => () => {} };
+  const recoveryRef = {
+    current: {
+      attempt: 1,
+      deadlineAt: 11_000,
+      host: oldHost,
+      key: "conversation-1\0tab-1",
+    },
+  };
+  const timers = [];
+
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-2",
+    conversationId: "conversation-1",
+    host: newHost,
+    now: () => 9_000,
+    recoveryRef,
+    remount: () => true,
+    timerApi: {
+      clearTimeout() {},
+      setTimeout(callback, delay) {
+        timers.push({ callback, delay });
+        return callback;
+      },
+    },
+  });
+
+  assert.equal(recoveryRef.current.attempt, 0);
+  assert.equal(recoveryRef.current.deadlineAt, 14_000);
+  assert.equal(recoveryRef.current.host, newHost);
+  assert.equal(recoveryRef.current.key, "conversation-1\0tab-2");
+  assert.equal(timers[0].delay, 5_000);
 });
 
 test("fails Browser webview attachment deterministically after one remount", () => {

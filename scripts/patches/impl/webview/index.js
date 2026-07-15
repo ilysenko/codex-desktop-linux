@@ -493,12 +493,12 @@ function codexLinuxWatchBrowserWebviewAttachment({
     recoveryRef.current = { attempt: 0, deadlineAt: null, host, key };
   } else if (recoveryRef.current?.key !== key) {
     recoveryRef.current =
-      recoveryRef.current?.attempt === 1
+      recoveryRef.current?.attempt === 1 && recoveryRef.current.host === host
         ? { ...recoveryRef.current, host, key }
         : { attempt: 0, deadlineAt: null, host, key };
   } else if (recoveryRef.current.host !== host) {
     recoveryRef.current =
-      recoveryRef.current.attempt === 1
+      recoveryRef.current.attempt < 2
         ? { ...recoveryRef.current, host }
         : { attempt: 0, deadlineAt: null, host, key };
   }
