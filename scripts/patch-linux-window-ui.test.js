@@ -49,6 +49,7 @@ const {
 } = require("./patches/impl/keybinds-settings.js");
 const {
   applyLinuxAvatarOverlayMousePassthroughPatch,
+  applyLinuxQueryCacheInvalidationBroadcastPatch,
 } = require("./patches/impl/avatar-overlay.js");
 const {
   applyBrowserUseNodeReplApprovalPatch,
@@ -922,6 +923,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-opaque-background",
     "linux-owl-feature-binding-fallback",
     "linux-avatar-overlay-mouse-passthrough",
+    "linux-avatar-settings-sync",
     "linux-browser-use-availability",
     "linux-browser-use-non-local-navigation",
     "linux-browser-use-external-availability",
@@ -3142,6 +3144,28 @@ test("adds Linux avatar overlay mouse passthrough recovery", () => {
   assert.match(patched, /e\.moveTop\(\),e\.showInactive\(\),process\.platform===`linux`&&this\.codexLinuxApplyAvatarCompositorHints\(e\),process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)/);
   assert.doesNotMatch(patched, /codexLinuxRecoverAvatarPointerInteractivity/);
   assert.match(patched, /if\(this\.window!==e\)return;let t=this\.presentationVisibility!=null;this\.codexLinuxStopAvatarPassthroughRecovery\(\),this\.codexLinuxAvatarInputShapeKey=null,this\.codexLinuxAvatarCompositorHintsApplied=!1,this\.codexLinuxAvatarCompositorHintsApplying=!1,this\.cancelMomentum\(\)/);
+});
+
+test("broadcasts query cache invalidations to the avatar overlay window", () => {
+  const source = [
+    "const n={fc:e=>1};",
+    "class Handler{constructor(){this.hostId=`local`,this.windowManager={sendMessageToAllRegisteredWindows(){}}}getAppServerConnection(){return null}getIpcClientForWebContents(){return{sendBroadcast:async()=>{}}}async handle(e,t){switch(t.type){case`query-cache-invalidate`:{t.queryKey[0]===`plugins`&&Sr(this.getAppServerConnection(this.hostId));let n=this.getIpcClientForWebContents(e);n&&await n.sendBroadcast(`query-cache-invalidate`,{queryKey:t.queryKey});break}}}}",
+    "let config={version:n.fc(`query-cache-invalidate`)};",
+  ].join("");
+
+  const patched = applyPatchTwice(
+    applyLinuxQueryCacheInvalidationBroadcastPatch,
+    source,
+  );
+
+  assert.match(
+    patched,
+    /let r=this\.getIpcClientForWebContents\(e\);r&&await r\.sendBroadcast\(`query-cache-invalidate`,\{queryKey:t\.queryKey\}\);process\.platform===`linux`&&this\.windowManager\.sendMessageToAllRegisteredWindows\(/,
+  );
+  assert.match(
+    patched,
+    /sourceClientId:`desktop`,version:n\.fc\(`query-cache-invalidate`\),params:\{queryKey:t\.queryKey\}/,
+  );
 });
 
 test("keeps the avatar overlay core patch idempotent after pet overlay composition", () => {

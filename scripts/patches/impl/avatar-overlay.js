@@ -100,6 +100,40 @@ function patchAvatarOverlayWindowOptions(source) {
   );
 }
 
+function applyLinuxQueryCacheInvalidationBroadcastPatch(currentSource) {
+  const marker = "process.platform===`linux`&&this.windowManager.sendMessageToAllRegisteredWindows({type:`ipc-broadcast`,method:`query-cache-invalidate`";
+  if (currentSource.includes(marker)) {
+    return currentSource;
+  }
+
+  const original =
+    "case`query-cache-invalidate`:{t.queryKey[0]===`plugins`&&Sr(this.getAppServerConnection(this.hostId));let n=this.getIpcClientForWebContents(e);n&&await n.sendBroadcast(`query-cache-invalidate`,{queryKey:t.queryKey});break}";
+  if (!currentSource.includes(original)) {
+    console.warn(
+      "WARN: Could not find query cache invalidation handler - skipping Linux avatar settings sync patch",
+    );
+    return currentSource;
+  }
+
+  const versionMatch = currentSource.match(
+    /version:([A-Za-z_$][\w$]*)\.fc\(`query-cache-invalidate`\)/,
+  );
+  if (versionMatch == null) {
+    console.warn(
+      "WARN: Could not find query cache invalidation protocol version - skipping Linux avatar settings sync patch",
+    );
+    return currentSource;
+  }
+
+  const protocol = versionMatch[1];
+  const replacement =
+    "case`query-cache-invalidate`:{t.queryKey[0]===`plugins`&&Sr(this.getAppServerConnection(this.hostId));let r=this.getIpcClientForWebContents(e);r&&await r.sendBroadcast(`query-cache-invalidate`,{queryKey:t.queryKey});process.platform===`linux`&&this.windowManager.sendMessageToAllRegisteredWindows({type:`ipc-broadcast`,method:`query-cache-invalidate`,sourceClientId:`desktop`,version:" +
+    protocol +
+    ".fc(`query-cache-invalidate`),params:{queryKey:t.queryKey}});break}";
+  recordStrategy("avatar-settings-sync", "upstream");
+  return currentSource.replace(original, replacement);
+}
+
 function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
   if (!currentSource.includes("`/avatar-overlay`")) {
     return currentSource;
@@ -390,4 +424,5 @@ function applyLinuxAvatarOverlayMousePassthroughPatch(currentSource) {
 
 module.exports = {
   applyLinuxAvatarOverlayMousePassthroughPatch,
+  applyLinuxQueryCacheInvalidationBroadcastPatch,
 };
