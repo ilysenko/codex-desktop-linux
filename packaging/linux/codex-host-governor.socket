@@ -1,0 +1,12 @@
+[Unit]
+Description=Codex host resource-governor socket
+
+[Socket]
+ListenStream=%t/codex/host-governor.sock
+SocketMode=0600
+DirectoryMode=0700
+RemoveOnStop=yes
+Service=codex-host-governor.service
+
+[Install]
+WantedBy=sockets.target

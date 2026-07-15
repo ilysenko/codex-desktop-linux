@@ -192,25 +192,6 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     }
   }
 
-  const patchedCloseToTrayRegex =
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)\{[A-Za-z_$][\w$]*\.preventDefault\(\),[A-Za-z_$][\w$]*\.hide\(\);return\}/;
-  if (patchedCloseToTrayRegex.test(patchedSource)) {
-    // Already patched with a newer minifier's window variable.
-  } else {
-    const closeToTrayRegex =
-      /if\(process\.platform===`win32`&&!this\.isAppQuitting&&this\.options\.(canHideLastWindowToTray)\?\.\(\)===!0&&!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)\.preventDefault\(\),([A-Za-z_$][\w$]*)\.hide\(\);return\}/;
-    const closeToTrayMatch = patchedSource.match(closeToTrayRegex);
-    if (closeToTrayMatch != null) {
-      const [, gateMethodName, hasOtherWindowVar, eventVar, windowVar] = closeToTrayMatch;
-      patchedSource = patchedSource.replace(
-        closeToTrayRegex,
-        `if((process.platform===\`win32\`||process.platform===\`linux\`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress())&&this.options.${gateMethodName}?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
-      );
-    } else {
-      console.warn("WARN: Could not find close-to-tray condition — skipping Linux close-to-tray patch");
-    }
-  }
-
   const trayContextMethodNeedle =
     "trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(";
   const trayContextMethodPatch =

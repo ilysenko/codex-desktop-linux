@@ -6,6 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/bin/codex-update-manager daemon
+Slice=codex-maintenance.slice
+Nice=10
+Environment=CARGO_BUILD_JOBS=2
 Restart=on-failure
 RestartSec=10
 

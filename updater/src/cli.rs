@@ -26,7 +26,12 @@ pub enum Commands {
         json: bool,
     },
     /// Apply the recorded wrapper update candidate for the running install.
-    ApplyWrapperUpdate,
+    ApplyWrapperUpdate {
+        /// Refuse the apply if the recorded candidate changed after the UI
+        /// created its restart intent.
+        #[arg(long)]
+        expected_generation: Option<String>,
+    },
     /// Show a GUI checklist of optional Linux features and save the selection to
     /// the per-user feature config, so the next wrapper rebuild honors it.
     /// Invoked by the in-app Update button at click time (display still alive).

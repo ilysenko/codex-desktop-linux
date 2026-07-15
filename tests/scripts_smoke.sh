@@ -1049,6 +1049,15 @@ SCRIPT
 
     assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+manual_amd64.deb"
     assert_file_exists "$pkg_root/usr/bin/codex-desktop"
+    assert_file_exists "$pkg_root/usr/libexec/codex-host-governor"
+    assert_mode "$pkg_root/usr/libexec/codex-host-governor" "755"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-desktop.service"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex.slice"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-runtime.slice"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-maintenance.slice"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-host-governor.service"
+    assert_file_exists "$pkg_root/usr/lib/systemd/user/codex-host-governor.socket"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-host-governor-user-service.sh"
     assert_file_exists "$pkg_root/DEBIAN/postinst"
     assert_file_exists "$pkg_root/DEBIAN/prerm"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
@@ -1065,7 +1074,8 @@ SCRIPT
     assert_contains "$pkg_root/DEBIAN/control" "without codex-update-manager"
     assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Actions=new-window;"
     assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Desktop Action new-window"
-    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/codex-desktop --new-instance"
+    assert_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "/usr/bin/codex-desktop --new-window"
+    assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "CODEX_MULTI_LAUNCH"
     assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Desktop Action CheckForUpdates"
     assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "InstallReadyUpdate"
     assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "codex-update-manager"
@@ -5475,6 +5485,12 @@ for name, body in (("prelaunch", prelaunch_hooks_body), ("cold-start", cold_star
         raise SystemExit(f"launcher {name} hooks must not inherit packaged LD_LIBRARY_PATH")
 if 'codex_run_host_command "$hook"' not in after_exit_hooks_body:
     raise SystemExit("launcher after-exit hooks must not inherit packaged LD_LIBRARY_PATH")
+if 'hook_status" -eq 85' not in after_exit_hooks_body:
+    raise SystemExit("launcher after-exit hooks must support the generic restart-request status")
+if after_exit_hooks_body.index('hook_status" -eq 85') > after_exit_hooks_body.index('Relaunching ChatGPT Desktop'):
+    raise SystemExit("launcher must collect restart requests before relaunching")
+if 'after all after-exit hooks completed' not in after_exit_hooks_body:
+    raise SystemExit("launcher must defer requested relaunch until cleanup hooks complete")
 if 'codex_exec_host_command "$@"' not in cli_probe_body:
     raise SystemExit("launcher CLI version probes must not inherit packaged LD_LIBRARY_PATH")
 if "CODEX_CLI_PROBE_STDERR_FILE" in source:
@@ -6164,7 +6180,8 @@ EOF
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "X-GNOME-WMClass=codex-desktop"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "Actions=new-window;CheckForUpdates;InstallReadyUpdate;"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "[Desktop Action new-window]"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "CODEX_MULTI_LAUNCH=1 /usr/bin/codex-desktop --new-instance"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "/usr/bin/codex-desktop --new-window"
+    assert_not_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "CODEX_MULTI_LAUNCH"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "codex-update-manager check-now"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "codex-update-manager install-ready"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "BAMF_DESKTOP_FILE_HINT=@HOME@/.local/share/applications/codex-desktop.desktop"
@@ -8200,8 +8217,8 @@ JS
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform!==`win32`&&process.platform!==`darwin`&&process.platform!==`linux`?null:'
     assert_contains "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)'
-    assert_contains "$extracted/.vite/build/main-test.js" '(process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting'
-    assert_contains "$extracted/.vite/build/main-test.js" '!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())'
+    assert_contains "$extracted/.vite/build/main-test.js" 'if(process.platform===`linux`&&!this.isAppQuitting&&!t){e.preventDefault(),n.app.quit();return}'
+    assert_contains "$extracted/.vite/build/main-test.js" 'if(process.platform===`win32`&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}'
     assert_contains "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems())'
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(codexLinuxSetTrayController(this),this.setLinuxTrayContextMenu()),this.tray.on(`click`'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxTrayRecoveryHandler=()=>{let e=codexLinuxTrayController;e?.setLinuxTrayContextMenu?.()}'
@@ -8224,7 +8241,7 @@ if (!closeSnippet) {
 }
 
 function registerCloseHandler({ quitInProgress = false, isAppQuitting = false, trayEnabled = true } = {}) {
-  const state = { hideCalls: 0 };
+  const state = { hideCalls: 0, quitCalls: 0 };
   const controller = {
     isAppQuitting,
     options: { canHideLastWindowToTray: () => trayEnabled },
@@ -8235,11 +8252,17 @@ function registerCloseHandler({ quitInProgress = false, isAppQuitting = false, t
   };
   const factory = new Function(
     "process",
+    "n",
     "codexLinuxIsQuitInProgress",
     "state",
     `return function(){const v=true;const f=\`local\`;const k={handlers:{},on(event,handler){this.handlers[event]=handler},hide(){state.hideCalls+=1}};${closeSnippet};return k.handlers.close;};`,
   );
-  const makeHandler = factory({ platform: "linux" }, () => quitInProgress, state);
+  const makeHandler = factory(
+    { platform: "linux" },
+    { app: { quit() { state.quitCalls += 1; } } },
+    () => quitInProgress,
+    state,
+  );
   const handler = makeHandler.call(controller);
   return { handler, state };
 }
@@ -8251,7 +8274,7 @@ function runCloseWithoutHelper({ trayEnabled = true, isAppQuitting = false } = {
       this.prevented = true;
     },
   };
-  const state = { hideCalls: 0 };
+  const state = { hideCalls: 0, quitCalls: 0 };
   const controller = {
     isAppQuitting,
     options: { canHideLastWindowToTray: () => trayEnabled },
@@ -8262,10 +8285,15 @@ function runCloseWithoutHelper({ trayEnabled = true, isAppQuitting = false } = {
   };
   const factory = new Function(
     "process",
+    "n",
     "state",
     `return function(){const v=true;const f=\`local\`;const k={handlers:{},on(event,handler){this.handlers[event]=handler},hide(){state.hideCalls+=1}};${closeSnippet};return k.handlers.close;};`,
   );
-  const handler = factory({ platform: "linux" }, state).call(controller);
+  const handler = factory(
+    { platform: "linux" },
+    { app: { quit() { state.quitCalls += 1; } } },
+    state,
+  ).call(controller);
   handler(event);
   return { event, state };
 }
@@ -8283,23 +8311,18 @@ function runClose(options) {
 }
 
 let result = runClose({ trayEnabled: true, quitInProgress: false, isAppQuitting: false });
-if (!result.event.prevented || result.state.hideCalls !== 1) {
-  throw new Error("normal Linux close should still hide to tray");
-}
-
-result = runClose({ trayEnabled: true, quitInProgress: true, isAppQuitting: false });
-if (result.event.prevented || result.state.hideCalls !== 0) {
-  throw new Error("quit-in-progress Linux close should not hide to tray");
+if (!result.event.prevented || result.state.hideCalls !== 0 || result.state.quitCalls !== 1) {
+  throw new Error("normal Linux close should quit instead of hiding to tray");
 }
 
 result = runClose({ trayEnabled: true, quitInProgress: false, isAppQuitting: true });
-if (result.event.prevented || result.state.hideCalls !== 0) {
+if (result.event.prevented || result.state.hideCalls !== 0 || result.state.quitCalls !== 0) {
   throw new Error("app.quit close should not hide to tray when upstream quit flag is already set");
 }
 
 result = runCloseWithoutHelper({ trayEnabled: true, isAppQuitting: false });
-if (!result.event.prevented || result.state.hideCalls !== 1) {
-  throw new Error("Linux close should still hide to tray when the quit helper is unavailable");
+if (!result.event.prevented || result.state.hideCalls !== 0 || result.state.quitCalls !== 1) {
+  throw new Error("Linux close should quit when the quit helper is unavailable");
 }
 NODE
 
@@ -8309,11 +8332,11 @@ NODE
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop-tray.png`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../.codex-linux/codex-desktop.png`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`)&&!this.isAppQuitting' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&!this.isAppQuitting&&!t' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(codexLinuxSetTrayController(this),this.setLinuxTrayContextMenu()),this.tray.on(`click`' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()' '3'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()' '2'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'openNativeTrayMenu(){if(process.platform===`linux`&&(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()))return;' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'if(process.platform===`linux`)return;e.once(`menu-will-show`' '1'
@@ -10080,6 +10103,11 @@ test_launcher_warm_start_recovery() {
     CODEX_TEST_KILL_DURING_PRELAUNCH=1 bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
 }
 
+test_desktop_systemd_guardrails() {
+    info "Checking packaged Desktop systemd guardrails"
+    bash "$REPO_DIR/tests/desktop_systemd_guardrails_smoke.sh"
+}
+
 test_notification_actions_bridge_accepts_prebuilt_binary() {
     local workspace="$TMP_DIR/notification-actions-bridge"
     local source_binary="$workspace/prebuilt/codex-notification-actions-linux"
@@ -10104,6 +10132,7 @@ test_notification_actions_bridge_accepts_prebuilt_binary() {
 }
 
 main() {
+    test_desktop_systemd_guardrails
     test_common_helper_sourcing
     test_package_icon_source_resolution
     test_extract_webview_replaces_linux_icon_assets

@@ -16,8 +16,8 @@ upstream path tracks the official macOS DMG. This feature tracks newer builds of
   default, and the feature picker prompt defaults on when this feature is built.
 - When wrapper update checks are on, `codex-update-manager` may check the
   wrapper repository for a newer Linux wrapper commit.
-- If a newer wrapper build is available, a small top-right **Update** button is
-  shown inside Codex.
+- If a newer wrapper build is available, a small top-right **Update and reopen**
+  button is shown inside Codex.
 - The button stays hidden when no wrapper update candidate is recorded.
 - The button tooltip includes the recorded wrapper changelog when available.
 - Clicking the button may show the feature picker, then writes a pending marker
@@ -113,7 +113,9 @@ The feature also stages the same runtime hook twice:
 - `.codex-linux/prelaunch.d/codex-wrapper-updater-apply-pending.sh`
 - `.codex-linux/after-exit.d/codex-wrapper-updater-apply-pending.sh`
 
-Both staged hooks call `apply-pending.sh`.
+Both staged hooks call `apply-pending.sh`. A successful after-exit apply returns
+the generic restart-request status `85`; the launcher waits for every
+after-exit cleanup hook to finish before honoring that request.
 
 ## Runtime opt-in
 
@@ -176,12 +178,13 @@ Relevant state fields:
 
 ## Install/apply flow
 
-Clicking the in-app **Update** button calls the main-process bridge action
+Clicking the in-app **Update and reopen** button calls the main-process bridge action
 `install`. The bridge:
 
 1. optionally runs `codex-update-manager pick-features`;
 2. resolves the current app state directory;
-3. writes the pending marker;
+3. writes the candidate commit to both the pending marker and a matching
+   `restart-intent` file;
 4. exits Electron.
 
 For the default app id, the marker path is:
@@ -193,7 +196,7 @@ For the default app id, the marker path is:
 The feature hook then runs:
 
 ```text
-codex-update-manager apply-wrapper-update
+codex-update-manager apply-wrapper-update --expected-generation <commit>
 ```
 
 Apply behavior depends on the install type:
@@ -203,23 +206,29 @@ Apply behavior depends on the install type:
 - **Packaged install**: fetches the wrapper source, rebuilds a fresh native
   package from the cached/current DMG, and installs it with `pkexec`.
 
-After a successful apply, the marker is removed, wrapper candidate fields are
-cleared, and the app is relaunched by the after-exit hook.
+After a successful apply, both markers are removed and wrapper candidate fields
+are cleared. The app is relaunched only when the after-exit hook sees a clean
+Electron exit plus matching generation-bound restart intent. The launcher does
+that relaunch after every other after-exit hook has completed. A normal close,
+a crash, a prelaunch retry, and a failed apply never relaunch the app.
 
 ## Failure and retry behavior
 
 The hook is fail-closed:
 
 - if `codex-update-manager` is missing, the marker is kept;
-- if rebuild/install fails, the marker is kept;
-- if required build tools are missing, the marker is kept;
+- if rebuild/install fails or the candidate generation changes, the marker is
+  moved under `codex-wrapper-updater/quarantine/` and restart intent is cleared;
+- invalid or legacy timestamp-only markers are quarantined without invoking the
+  updater;
 - a lock directory prevents concurrent apply attempts;
-- after a failed after-exit apply, relaunch uses
-  `CODEX_WRAPPER_UPDATER_SKIP_PRELAUNCH_ONCE=1` so the next prelaunch hook does
-  not immediately retry before the user sees the app again.
+- a bounded prelaunch timeout keeps the valid pending marker but clears restart
+  intent, so a later retry cannot unexpectedly reopen an intentionally closed
+  app.
 
-This means a failed update does not leave the app half-updated by the feature
-hook. It leaves a retry marker for a later launch/exit.
+This means a failed update does not leave the app half-updated or trap it in a
+close/relaunch loop. Clicking **Update and reopen** again creates a fresh intent for the
+currently advertised candidate.
 
 ## Local testing
 
@@ -294,8 +303,9 @@ ls -la ~/.local/state/codex-desktop/codex-wrapper-updater/
 tail -n 200 ~/.local/state/codex-update-manager/service.log
 ```
 
-Removing the pending marker stops retries, but normally the marker should be
-left in place until the underlying apply problem is fixed.
+Quarantined markers are diagnostic receipts and are never retried
+automatically. A valid pending marker without restart intent may be retried at
+the next prelaunch, but it cannot reopen the app after an ordinary close.
 
 ## Known costs and risks
 
@@ -303,5 +313,5 @@ left in place until the underlying apply problem is fixed.
   native Linux package locally.
 - Packaged applies require `pkexec` and a graphical polkit authentication agent.
 - Detection needs network access to inspect the configured wrapper remote.
-- Missing build tools are reported as an apply failure; the marker is preserved
-  for retry after tools are installed.
+- Missing build tools are reported as an apply failure and quarantine the
+  candidate; click **Update** again after installing the tools.

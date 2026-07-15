@@ -1,0 +1,17 @@
+[Unit]
+Description=Codex host resource governor
+Requires=codex-host-governor.socket
+After=codex-host-governor.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/codex-host-governor
+Slice=codex.slice
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+StateDirectory=codex-host-governor
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+UMask=0077

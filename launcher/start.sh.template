@@ -1422,6 +1422,7 @@ run_feature_after_exit_hooks() {
 
     local electron_status="${1:-0}"
     local hook hook_status
+    local restart_requested=0
     for hook in "$FEATURE_AFTER_EXIT_HOOK_DIR"/*; do
         [ -f "$hook" ] || continue
         [ -x "$hook" ] || continue
@@ -1439,10 +1440,31 @@ run_feature_after_exit_hooks() {
             codex_run_host_command "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR" "$electron_status"
         hook_status=$?
         set -e
-        if [ "$hook_status" -ne 0 ]; then
+        if [ "$hook_status" -eq 85 ]; then
+            restart_requested=1
+            echo "Linux feature requested a post-cleanup app relaunch: $hook"
+        elif [ "$hook_status" -ne 0 ]; then
             echo "Linux feature after-exit hook failed with status $hook_status: $hook"
         fi
     done
+
+    if [ "$restart_requested" -eq 1 ]; then
+        if declare -F codex_packaged_runtime_request_relaunch >/dev/null 2>&1; then
+            if codex_packaged_runtime_request_relaunch; then
+                echo "Scheduled one packaged app relaunch after all after-exit hooks completed"
+            else
+                echo "Skipping requested app relaunch because the packaged relaunch request failed"
+            fi
+        else
+            local launcher="${CODEX_LINUX_LAUNCHER_CMD:-$SCRIPT_DIR/start.sh}"
+            if [ ! -x "$launcher" ]; then
+                echo "Skipping requested app relaunch because launcher is unavailable: $launcher"
+                return 0
+            fi
+            echo "Relaunching ChatGPT Desktop after all after-exit hooks completed"
+            ( sleep 1; "$launcher" >/dev/null 2>&1 ) &
+        fi
+    fi
 }
 
 run_cli_preflight() {
@@ -2159,7 +2181,8 @@ set_detected_running_app() {
     RUNNING_APP_PID="$1"
     echo "$RUNNING_APP_PID" > "$APP_PID_FILE"
 
-    if ! linux_setting_enabled "codex-linux-warm-start-enabled" 1; then
+    if ! truthy_env_value "${CODEX_LINUX_SYSTEMD_HANDOFF_ONLY:-0}" \
+        && ! linux_setting_enabled "codex-linux-warm-start-enabled" 1; then
         WARM_START=0
         echo "Warm-start handoff disabled by $APP_SETTINGS_FILE"
         echo "Detected running ChatGPT Desktop pid=$RUNNING_APP_PID; preserving liveness marker for second-instance handoff"
@@ -4055,6 +4078,37 @@ refresh_launch_state_quick() {
     fi
 }
 
+systemd_handoff_wait_seconds() {
+    local value="${CODEX_LINUX_SYSTEMD_HANDOFF_WAIT_SECONDS:-20}"
+
+    case "$value" in
+        ""|*[!0-9]*) value=20 ;;
+    esac
+    [ "$value" -le 60 ] || value=60
+    printf '%s\n' "$value"
+}
+
+run_systemd_handoff_only() {
+    local wait_seconds
+    local attempts
+    local service_label="${CODEX_PACKAGED_DESKTOP_SERVICE:-the systemd user service}"
+
+    wait_seconds="$(systemd_handoff_wait_seconds)"
+    attempts=$((wait_seconds * 20 + 1))
+    for _ in $(seq 1 "$attempts"); do
+        refresh_launch_state_quick
+        if send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"; then
+            echo "Sent launch args to the systemd-owned app singleton"
+            log_phase "systemd_handoff_ipc_sent"
+            return 0
+        fi
+        sleep 0.05
+    done
+
+    notify_error "$CODEX_LINUX_APP_DISPLAY_NAME did not become ready through $service_label. No second app process was started."
+    return 1
+}
+
 prepare_launch_state_under_lock() {
     running_app_is_active && return 0
 
@@ -4151,6 +4205,11 @@ trap cleanup_launcher EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+if truthy_env_value "${CODEX_LINUX_SYSTEMD_HANDOFF_ONLY:-0}"; then
+    run_systemd_handoff_only
+    exit $?
+fi
 
 recover_unhealthy_running_app
 prepare_launch_state_under_lock

@@ -1,5 +1,7 @@
 "use strict";
 
+const { requireName } = require("../../lib/minified-js.js");
+
 function applyLinuxQuitGuardPatch(currentSource) {
   if (currentSource.includes("codexLinuxExplicitQuitApproved=!1")) {
     return currentSource;
@@ -25,6 +27,37 @@ function applyLinuxQuitGuardPatch(currentSource) {
 
 function linuxExplicitQuitExpression() {
   return "typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),";
+}
+
+function applyLinuxWindowCloseQuitPatch(currentSource) {
+  const closeQuitMarker =
+    /if\(process\.platform===`linux`&&!this\.isAppQuitting&&![A-Za-z_$][\w$]*\)\{[A-Za-z_$][\w$]*\.preventDefault\(\),[A-Za-z_$][\w$]*\.app\.quit\(\);return\}/;
+  if (closeQuitMarker.test(currentSource)) {
+    return currentSource;
+  }
+
+  const electronVar = requireName(currentSource, "electron");
+  if (electronVar == null) {
+    if (currentSource.includes("canHideLastWindowToTray")) {
+      console.warn("WARN: Could not find Electron binding — skipping Linux window-close quit patch");
+    }
+    return currentSource;
+  }
+
+  const closeToTrayRegex =
+    /if\(process\.platform===`win32`&&!this\.isAppQuitting&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)\.preventDefault\(\),([A-Za-z_$][\w$]*)\.hide\(\);return\}/;
+  const closeToTrayMatch = currentSource.match(closeToTrayRegex);
+  if (closeToTrayMatch == null) {
+    if (currentSource.includes("canHideLastWindowToTray")) {
+      console.warn("WARN: Could not find primary window close handler — skipping Linux window-close quit patch");
+    }
+    return currentSource;
+  }
+
+  const [, hasOtherWindowVar, eventVar] = closeToTrayMatch;
+  const linuxCloseQuit =
+    `if(process.platform===\`linux\`&&!this.isAppQuitting&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${electronVar}.app.quit();return}`;
+  return currentSource.replace(closeToTrayRegex, `${linuxCloseQuit}$&`);
 }
 
 function applyLinuxWillQuitDrainTimeoutPatch(currentSource) {
@@ -190,5 +223,6 @@ module.exports = {
   applyLinuxExplicitQuitPromptBypassPatch,
   applyLinuxExplicitTrayQuitPatch,
   applyLinuxQuitGuardPatch,
+  applyLinuxWindowCloseQuitPatch,
   applyLinuxWillQuitDrainTimeoutPatch,
 };

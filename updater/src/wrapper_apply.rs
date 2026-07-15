@@ -71,6 +71,7 @@ pub async fn run_apply_wrapper_update(
     config: &RuntimeConfig,
     state: &mut PersistedState,
     paths: &RuntimePaths,
+    expected_generation: Option<&str>,
 ) -> Result<()> {
     if !config.enable_wrapper_updates {
         println!("Wrapper update tracking is disabled; nothing to apply.");
@@ -86,6 +87,16 @@ pub async fn run_apply_wrapper_update(
     if state.candidate_wrapper_commit.as_deref().is_none() {
         println!("No wrapper update candidate is ready; nothing to apply.");
         return Ok(());
+    }
+
+    if let Some(expected) = expected_generation {
+        let valid = expected.len() == 40 && expected.bytes().all(|byte| byte.is_ascii_hexdigit());
+        if !valid {
+            anyhow::bail!("invalid expected wrapper generation");
+        }
+        if state.candidate_wrapper_commit.as_deref() != Some(expected) {
+            anyhow::bail!("wrapper candidate generation changed before apply");
+        }
     }
 
     let candidate_commit = state.candidate_wrapper_commit.clone();
@@ -775,7 +786,7 @@ mod tests {
         state.candidate_wrapper_commit = Some("a".repeat(40));
         state.candidate_wrapper_version = Some("0.9.0".to_string());
 
-        run_apply_wrapper_update(&config, &mut state, &paths)
+        run_apply_wrapper_update(&config, &mut state, &paths, None)
             .await
             .expect("dev-mode apply should silently skip");
 
@@ -787,5 +798,26 @@ mod tests {
             Some(expected_commit.as_str())
         );
         assert_eq!(state.candidate_wrapper_version.as_deref(), Some("0.9.0"));
+    }
+
+    #[tokio::test]
+    async fn expected_generation_rejects_candidate_changed_after_restart_intent() {
+        let root = tempdir().unwrap();
+        let config = test_config(root.path());
+        let paths = test_paths(root.path());
+        let mut state = PersistedState::new(true);
+        state.candidate_wrapper_commit = Some("b".repeat(40));
+
+        let error = run_apply_wrapper_update(&config, &mut state, &paths, Some(&"a".repeat(40)))
+            .await
+            .expect_err("a changed candidate must fail closed");
+
+        assert!(error
+            .to_string()
+            .contains("wrapper candidate generation changed before apply"));
+        assert_eq!(
+            state.candidate_wrapper_commit.as_deref(),
+            Some("b".repeat(40).as_str())
+        );
     }
 }

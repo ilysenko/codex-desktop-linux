@@ -3,6 +3,7 @@ set -eu
 
 SERVICE_HELPER="/opt/codex-desktop/update-builder/packaging/linux/codex-update-manager-user-service.sh"
 DESKTOP_ENTRY_DOCTOR="/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
+GOVERNOR_HELPER="/opt/codex-desktop/.codex-linux/codex-host-governor-user-service.sh"
 if [ -f "$SERVICE_HELPER" ]; then
     # shellcheck source=/opt/codex-desktop/update-builder/packaging/linux/codex-update-manager-user-service.sh
     . "$SERVICE_HELPER"
@@ -11,6 +12,11 @@ if [ -f "$SERVICE_HELPER" ]; then
     else
         codex_start_enabled_user_service || true
     fi
+fi
+if [ -f "$GOVERNOR_HELPER" ]; then
+    # shellcheck source=/opt/codex-desktop/.codex-linux/codex-host-governor-user-service.sh
+    . "$GOVERNOR_HELPER"
+    codex_host_governor_ensure_running || true
 fi
 if [ -f "$DESKTOP_ENTRY_DOCTOR" ]; then
     # shellcheck source=/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh

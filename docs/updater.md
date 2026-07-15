@@ -3,6 +3,11 @@
 Default native packages install `codex-update-manager`, a companion
 `systemd --user` service.
 
+The service and transient rebuild/check scopes run in
+`codex-maintenance.slice` with `Nice=10` and `CARGO_BUILD_JOBS=2`. This keeps
+maintenance separate from the interactive Desktop tree in
+`codex-runtime.slice`.
+
 It:
 
 - checks upstream `Codex.dmg` on daemon startup, every 6 hours, and in the
@@ -14,6 +19,11 @@ It:
   reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...`
   command when no auth agent is available
 - performs best-effort Codex CLI preflight from the launcher
+
+An ordinary close may apply a ready automatic update but never reopens the app.
+Only the explicit, generation-bound **Update and reopen** action returns the
+one-shot relaunch request, and packaged installs schedule that reopen outside
+the stopping Desktop control group.
 
 Codex CLI preflight preserves the detected CLI install type. npm-managed
 installs continue to update through npm, while official standalone installs

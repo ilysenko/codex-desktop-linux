@@ -85,6 +85,7 @@ const {
   applyLinuxExplicitQuitPromptBypassPatch,
   applyLinuxExplicitTrayQuitPatch,
   applyLinuxQuitGuardPatch,
+  applyLinuxWindowCloseQuitPatch,
   applyLinuxWillQuitDrainTimeoutPatch,
 } = require("./patches/impl/main-process/quit-lifecycle.js");
 const {
@@ -908,6 +909,7 @@ test("default core patch descriptors are grouped and unique", () => {
   const ids = descriptors.map((descriptor) => descriptor.id);
   const expectedIds = [
     "linux-quit-guard",
+    "linux-window-close-quit",
     "linux-ready-to-show-window-state",
     "linux-explicit-quit-prompt-bypass",
     "linux-explicit-quit-drain-timeout",
@@ -1053,6 +1055,7 @@ test("default core patch descriptors are grouped and unique", () => {
   );
   for (const id of [
     "linux-window-options",
+    "linux-window-close-quit",
     "linux-native-titlebar",
     "linux-opaque-background",
     "linux-avatar-overlay-mouse-passthrough",
@@ -2402,6 +2405,51 @@ test("keeps the current Linux quit guard module-scoped after helper declarations
   assert.match(patched, /codexLinuxExplicitQuitApproved=!1/);
   assert.match(patched, /codexLinuxPrepareForExplicitQuit=\(\)=>\{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress\(\)\}/);
   assert.equal((patched.match(/codexLinuxQuitInProgress=!1/g) ?? []).length, 1);
+});
+
+test("quits the Linux app when the last ordinary primary window closes", () => {
+  const closeHandler =
+    "v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if(process.platform===`win32`&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}if(process.platform===`darwin`&&!this.isAppQuitting&&!t){e.preventDefault(),k.hide()}});";
+  const source = `${currentMainBundlePrefix}${closeHandler}`;
+
+  const patched = applyPatchTwice(applyLinuxWindowCloseQuitPatch, source);
+
+  assert.match(
+    patched,
+    /if\(process\.platform===`linux`&&!this\.isAppQuitting&&!t\)\{e\.preventDefault\(\),c\.app\.quit\(\);return\}/,
+  );
+  assert.match(
+    patched,
+    /if\(process\.platform===`win32`&&!this\.isAppQuitting&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),k\.hide\(\);return\}/,
+  );
+  assert.equal((patched.match(/process\.platform===`linux`&&!this\.isAppQuitting&&!t/g) ?? []).length, 1);
+
+  const snippet = patched.match(/v&&k\.on\(`close`,e=>\{.*?\}\);/)?.[0];
+  assert.ok(snippet, "patched close handler should remain extractable");
+  const state = { hideCalls: 0, quitCalls: 0 };
+  const controller = {
+    isAppQuitting: false,
+    options: { canHideLastWindowToTray: () => true },
+    persistPrimaryWindowBounds() {},
+    getPrimaryWindows() { return []; },
+  };
+  const makeHandler = new Function(
+    "process",
+    "c",
+    "state",
+    `return function(){const v=true;const k={handlers:{},on(event,handler){this.handlers[event]=handler},hide(){state.hideCalls+=1}};${snippet};return k.handlers.close;};`,
+  );
+  const event = { prevented: false, preventDefault() { this.prevented = true; } };
+  const handler = makeHandler(
+    { platform: "linux" },
+    { app: { quit() { state.quitCalls += 1; } } },
+    state,
+  ).call(controller);
+  handler(event);
+
+  assert.equal(event.prevented, true);
+  assert.equal(state.quitCalls, 1);
+  assert.equal(state.hideCalls, 0);
 });
 
 test("adds the Linux quit guard for the current interleaved bundler prelude", () => {
@@ -3860,7 +3908,11 @@ test("adds Linux tray support including the platform guard", () => {
   );
   assert.match(
     patched,
-    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)/,
+    /process\.platform===`win32`&&!this\.isAppQuitting&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0/,
+  );
+  assert.doesNotMatch(
+    patched,
+    /\(process\.platform===`win32`\|\|process\.platform===`linux`\).*canHideLastWindowToTray/,
   );
   assert.match(patched, /setLinuxTrayContextMenu\(\)\{let e=n\.Menu\.buildFromTemplate/);
   assert.match(
@@ -4215,10 +4267,8 @@ test("adds Linux tray support for current minified window and startup identifier
 
   const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
 
-  assert.match(
-    patched,
-    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)/,
-  );
+  assert.doesNotMatch(patched, /process\.platform===`win32`\|\|process\.platform===`linux`/);
+  assert.match(patched, /process\.platform===`win32`&&!this\.isAppQuitting/);
   assert.match(patched, /e\.preventDefault\(\),j\.hide\(\);return/);
   assert.match(
     patched,
@@ -4299,7 +4349,7 @@ test("logs Linux tray setup failures when the catch body contains nested objects
   );
 });
 
-test("scopes close-to-tray already-patched detection to the handler", () => {
+test("does not broaden the Windows close-to-tray handler on Linux", () => {
   const source = [
     mainBundlePrefix,
     "let unrelated=(process.platform===`win32`||process.platform===`linux`)&&x===`local`;",
@@ -4310,8 +4360,9 @@ test("scopes close-to-tray already-patched detection to the handler", () => {
 
   assert.match(
     patched,
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),j\.hide\(\);return\}/,
+    /if\(process\.platform===`win32`&&!this\.isAppQuitting&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),j\.hide\(\);return\}/,
   );
+  assert.doesNotMatch(patched, /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)/);
 });
 
 test("adds Linux single-instance lock and second-instance handoff", () => {
@@ -4584,6 +4635,7 @@ test("adds Linux launch actions through current setSecondInstanceArgsHandler bun
   const prewarmPatched = applyPatchTwice(applyLinuxHotkeyWindowPrewarmPatch, launchPatched);
 
   assert.match(launchPatched, /codexLinuxGetSetting=e=>process\.platform!==`linux`\|\|j\.globalState\.get\(e\)!==!1/);
+  assert.match(launchPatched, /codexLinuxIsWarmStartEnabled=\(\)=>process\.env\.CODEX_LINUX_SYSTEMD_SERVICE===`1`\|\|/);
   assert.match(launchPatched, /codexLinuxStartLaunchActionSocket=\(\)=>/);
   assert.match(launchPatched, /codexLinuxDefaultLaunchActionSocket=\(\)=>/);
   assert.match(launchPatched, /process\.env\.CODEX_DESKTOP_LAUNCH_ACTION_SOCKET\?\.trim\(\)\|\|codexLinuxDefaultLaunchActionSocket\(\)/);
@@ -4595,6 +4647,8 @@ test("adds Linux launch actions through current setSecondInstanceArgsHandler bun
   assert.match(launchPatched, /R\.desktopNotificationManager\.dismissByNavigationPath\(e\)/);
   assert.match(launchPatched, /codexLinuxHasDeepLink\(e\)&&z\.deepLinks\.queueProcessArgs\(e\)/);
   assert.match(launchPatched, /e\.includes\(`--prompt-chat`\)/);
+  assert.match(launchPatched, /e\.includes\(`--new-window`\)/);
+  assert.match(launchPatched, /codexLinuxOpenNewWindow=async\(\)=>/);
   assert.match(launchPatched, /e\.includes\(`--quick-chat`\)/);
   assert.match(launchPatched, /e\.includes\(`--new-chat`\)/);
   assert.match(launchPatched, /process\.platform===`linux`&&codexLinuxStartLaunchActionSocket\(\);l\(e=>/);
@@ -4645,6 +4699,7 @@ test("adds Linux launch actions when captured window identifiers contain dollar 
   assert.match(patched, /codexLinuxDefaultLaunchActionSocket=\(\)=>/);
   assert.match(patched, /codexLinuxPrewarmHotkeyWindow=\(\)=>/);
   assert.match(patched, /e\.includes\(`--new-chat`\)/);
+  assert.match(patched, /e\.includes\(`--new-window`\)/);
   assert.match(patched, /e\.includes\(`--quick-chat`\)/);
   assert.match(patched, /e\.includes\(`--prompt-chat`\)/);
   assert.match(patched, /e\.includes\(`--hotkey-window`\)/);

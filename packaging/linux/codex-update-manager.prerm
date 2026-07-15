@@ -1,6 +1,16 @@
 #!/bin/sh
 set -eu
 
+GOVERNOR_HELPER="/opt/codex-desktop/.codex-linux/codex-host-governor-user-service.sh"
+case "${1:-}" in
+    remove|purge|deconfigure)
+        if [ -f "$GOVERNOR_HELPER" ]; then
+            . "$GOVERNOR_HELPER"
+            codex_host_governor_cleanup || true
+        fi
+        ;;
+esac
+
 SERVICE_NAME="codex-update-manager.service"
 
 for runtime_dir in /run/user/*; do

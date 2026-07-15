@@ -1,8 +1,13 @@
 SERVICE_HELPER="/opt/codex-desktop/update-builder/packaging/linux/codex-update-manager-user-service.sh"
 DESKTOP_ENTRY_DOCTOR="/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
+GOVERNOR_HELPER="/opt/codex-desktop/.codex-linux/codex-host-governor-user-service.sh"
 if [ -f "$SERVICE_HELPER" ]; then
     # shellcheck source=/opt/codex-desktop/update-builder/packaging/linux/codex-update-manager-user-service.sh
     . "$SERVICE_HELPER"
+fi
+if [ -f "$GOVERNOR_HELPER" ]; then
+    # shellcheck source=/opt/codex-desktop/.codex-linux/codex-host-governor-user-service.sh
+    . "$GOVERNOR_HELPER"
 fi
 if [ -f "$DESKTOP_ENTRY_DOCTOR" ]; then
     # shellcheck source=/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh
@@ -23,12 +28,18 @@ post_install() {
     if [ -f "$SERVICE_HELPER" ]; then
         codex_ensure_user_service_running || true
     fi
+    if [ -f "$GOVERNOR_HELPER" ]; then
+        codex_host_governor_ensure_running || true
+    fi
 }
 
 post_upgrade() {
     codex_desktop_post_transaction_common
     if [ -f "$SERVICE_HELPER" ]; then
         codex_start_enabled_user_service || true
+    fi
+    if [ -f "$GOVERNOR_HELPER" ]; then
+        codex_host_governor_ensure_running || true
     fi
 }
 
@@ -37,10 +48,16 @@ pre_remove() {
         codex_cleanup_user_service stop || true
         codex_cleanup_user_service disable || true
     fi
+    if [ -f "$GOVERNOR_HELPER" ]; then
+        codex_host_governor_cleanup || true
+    fi
 }
 
 post_remove() {
     if [ -f "$SERVICE_HELPER" ]; then
         codex_reload_user_managers || true
+    fi
+    if [ -f "$GOVERNOR_HELPER" ]; then
+        codex_host_governor_reload_managers || true
     fi
 }

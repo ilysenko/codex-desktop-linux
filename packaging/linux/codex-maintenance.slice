@@ -1,0 +1,13 @@
+[Unit]
+Description=ChatGPT Desktop maintenance budget
+
+# Nice=10 is applied by maintenance services and transient scopes because Nice=
+# is an execution property, not a slice resource-control property.
+[Slice]
+CPUQuota=200%
+CPUWeight=25
+IOWeight=25
+TasksMax=192
+MemoryHigh=3500M
+MemoryMax=4G
+MemorySwapMax=1G

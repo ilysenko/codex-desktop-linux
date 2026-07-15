@@ -18,8 +18,9 @@ package artifacts.
    `launcher/start.sh.template`.
 8. Package builders repackage `codex-app/` into `.deb`, `.rpm`,
    `.pkg.tar.zst`, or AppImage artifacts.
-9. Default native packages install `codex-update-manager` and a
-   `systemd --user` service.
+9. Native packages install a fixed `codex-desktop.service`, hierarchical
+   `codex*.slice` resource budgets, and the socket-activated host governor.
+   Default packages also install `codex-update-manager`.
 
 The installer replaces the macOS Electron binary with a Linux build, recompiles
 native modules, and removes macOS-only pieces such as Sparkle.
@@ -78,6 +79,18 @@ then starts Electron.
 
 Warm-start launches hand off actions such as `--new-chat` over a Unix-domain
 socket instead of spawning a second app process.
+
+The native `/usr/bin/codex-desktop` dispatcher owns exactly one fixed user
+service in `codex-runtime.slice`. Repeated launches, URLs, and legacy
+`--new-instance` requests hand off to that process; `--new-instance` is
+normalized to a new window in the same Electron tree. Closing the last ordinary
+primary window calls `app.quit()`, so the service becomes inactive and, with
+`Restart=no`, stays stopped.
+
+Native packages also install `codex-host-governor.socket` and its Python daemon.
+The governor reserves root capacity without bypassing pressure limits, holds
+admission until 120 continuously green seconds after pressure, then drains the
+recovery queue one lane per five-second sample.
 
 Native-package-only launcher behavior, such as desktop-entry hints and default
 update-manager startup, lives in:

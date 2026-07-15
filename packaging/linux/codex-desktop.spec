@@ -44,6 +44,13 @@ cp -a "__RPM_STAGING_DIR__/." "%{buildroot}/"
 %defattr(-,root,root,-)
 /opt/__PACKAGE_NAME__/
 /usr/bin/__PACKAGE_NAME__
+/usr/libexec/codex-host-governor
+/usr/lib/systemd/user/__PACKAGE_NAME__.service
+/usr/lib/systemd/user/codex.slice
+/usr/lib/systemd/user/codex-runtime.slice
+/usr/lib/systemd/user/codex-maintenance.slice
+/usr/lib/systemd/user/codex-host-governor.service
+/usr/lib/systemd/user/codex-host-governor.socket
 %if __PACKAGE_WITH_UPDATER__
 /usr/bin/codex-update-manager
 /usr/lib/systemd/user/codex-update-manager.service
@@ -59,9 +66,14 @@ if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 fi
 DESKTOP_ENTRY_DOCTOR=/opt/__PACKAGE_NAME__/.codex-linux/codex-desktop-entry-doctor.sh
+GOVERNOR_HELPER=/opt/__PACKAGE_NAME__/.codex-linux/codex-host-governor-user-service.sh
 if [ -f "$DESKTOP_ENTRY_DOCTOR" ]; then
     . "$DESKTOP_ENTRY_DOCTOR"
     codex_desktop_repair_system_package_shadow_entries __PACKAGE_NAME__ || true
+fi
+if [ -f "$GOVERNOR_HELPER" ]; then
+    . "$GOVERNOR_HELPER"
+    codex_host_governor_ensure_running || true
 fi
 
 %if __PACKAGE_WITH_UPDATER__
@@ -84,6 +96,11 @@ fi
 
 %if __PACKAGE_WITH_UPDATER__
 %preun
+GOVERNOR_HELPER=/opt/__PACKAGE_NAME__/.codex-linux/codex-host-governor-user-service.sh
+if [ $1 -eq 0 ] && [ -f "$GOVERNOR_HELPER" ]; then
+    . "$GOVERNOR_HELPER"
+    codex_host_governor_cleanup || true
+fi
 SERVICE_HELPER=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/codex-update-manager-user-service.sh
 [ -f "$SERVICE_HELPER" ] && . "$SERVICE_HELPER"
 if [ $1 -eq 0 ] && [ -f "$SERVICE_HELPER" ]; then
@@ -92,6 +109,11 @@ if [ $1 -eq 0 ] && [ -f "$SERVICE_HELPER" ]; then
 fi
 %else
 %preun
+GOVERNOR_HELPER=/opt/__PACKAGE_NAME__/.codex-linux/codex-host-governor-user-service.sh
+if [ $1 -eq 0 ] && [ -f "$GOVERNOR_HELPER" ]; then
+    . "$GOVERNOR_HELPER"
+    codex_host_governor_cleanup || true
+fi
 CLEANUP_HELPER=/opt/__PACKAGE_NAME__/.codex-linux/codex-no-updater-transition-cleanup.sh
 if [ -f "$CLEANUP_HELPER" ]; then
     . "$CLEANUP_HELPER"

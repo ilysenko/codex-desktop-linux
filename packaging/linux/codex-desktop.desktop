@@ -15,12 +15,12 @@ Actions=new-window;CheckForUpdates;InstallReadyUpdate;
 
 [Desktop Action new-window]
 Name=New Window
-Exec=env BAMF_DESKTOP_FILE_HINT=/usr/share/applications/codex-desktop.desktop CHROME_DESKTOP=codex-desktop.desktop CODEX_MULTI_LAUNCH=1 /usr/bin/codex-desktop --new-instance
+Exec=env BAMF_DESKTOP_FILE_HINT=/usr/share/applications/codex-desktop.desktop CHROME_DESKTOP=codex-desktop.desktop /usr/bin/codex-desktop --new-window
 
 [Desktop Action CheckForUpdates]
 Name=Check for Updates
-Exec=/usr/bin/codex-update-manager check-now
+Exec=systemd-run --user --scope --collect --quiet --slice=codex-maintenance.slice --nice=10 --setenv=CARGO_BUILD_JOBS=2 /usr/bin/codex-update-manager check-now
 
 [Desktop Action InstallReadyUpdate]
 Name=Install Ready Update
-Exec=/usr/bin/codex-update-manager install-ready
+Exec=systemd-run --user --scope --collect --quiet --slice=codex-maintenance.slice --nice=10 --setenv=CARGO_BUILD_JOBS=2 /usr/bin/codex-update-manager install-ready

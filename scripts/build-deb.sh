@@ -104,7 +104,8 @@ CONTROL
             -e "s|/opt/codex-desktop|/opt/$PACKAGE_NAME|g" \
             -e "s|codex_desktop_repair_system_package_shadow_entries codex-desktop|codex_desktop_repair_system_package_shadow_entries $PACKAGE_NAME|g" \
             "$POSTINST_TEMPLATE" > "$PKG_ROOT/DEBIAN/postinst"
-        cp "$PRERM_TEMPLATE" "$PKG_ROOT/DEBIAN/prerm"
+        sed -e "s|/opt/codex-desktop|/opt/$PACKAGE_NAME|g" \
+            "$PRERM_TEMPLATE" > "$PKG_ROOT/DEBIAN/prerm"
         cp "$POSTRM_TEMPLATE" "$PKG_ROOT/DEBIAN/postrm"
         chmod 0755 "$PKG_ROOT/DEBIAN/postinst" "$PKG_ROOT/DEBIAN/prerm" "$PKG_ROOT/DEBIAN/postrm"
     else

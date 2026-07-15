@@ -1,0 +1,10 @@
+[Unit]
+Description=ChatGPT Desktop interactive runtime budget
+
+[Slice]
+CPUQuota=500%
+IOWeight=50
+TasksMax=768
+MemoryHigh=4G
+MemoryMax=5500M
+MemorySwapMax=1G

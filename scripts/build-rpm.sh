@@ -96,11 +96,7 @@ main() {
     stage_common_package_files "$staging_root"
     stage_optional_update_builder_bundle "$staging_root"
 
-    cat > "$staging_root/usr/bin/$PACKAGE_NAME" <<SCRIPT
-#!/usr/bin/env bash
-exec /opt/$PACKAGE_NAME/start.sh "\$@"
-SCRIPT
-    chmod 0755 "$staging_root/usr/bin/$PACKAGE_NAME"
+    write_launcher_stub "$staging_root"
     run_linux_feature_package_hooks "$staging_root" "rpm"
     normalize_package_payload_permissions "$staging_root"
     restore_linux_feature_payload_permissions "$staging_root"

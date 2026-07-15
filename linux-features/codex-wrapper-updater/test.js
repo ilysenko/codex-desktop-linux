@@ -21,6 +21,7 @@ const {
 
 const featureDir = __dirname;
 const featuresRoot = path.resolve(featureDir, "..");
+const GENERATION = "a".repeat(40);
 
 function withTempFeatureConfig(enabled, fn) {
   const originalConfig = process.env.CODEX_LINUX_FEATURES_CONFIG;
@@ -68,6 +69,9 @@ test("main bundle patch writes app-state wrapper marker", () => {
   assert.match(patched, /pick-features/);
   assert.match(patched, /codex-linux-feature-picker-on-update/);
   assert.match(patched, /codex-wrapper-updater/);
+  assert.match(patched, /restart-intent/);
+  assert.match(patched, /candidate_wrapper_commit/);
+  assert.match(patched, /no-valid-candidate-generation/);
   assert.match(patched, /wrapper_dev_mode/);
   assert.match(patched, /installed_wrapper_commit/);
   assert.doesNotMatch(patched, /wrapper-update-pending/);
@@ -84,7 +88,8 @@ test("main bundle helper does not shadow minified module variables", () => {
   assert.match(patched, /codexLinuxWrapFs\(\)\.existsSync\(__codexWrapStatePath\)/);
   assert.match(patched, /codexLinuxWrapFs\(\)\.readFileSync\(__codexWrapStatePath,`utf8`\)/);
   assert.match(patched, /codexLinuxWrapFs\(\)\.mkdirSync\(codexLinuxWrapPath\(\)\.dirname\(__codexWrapMarkerPath\),\{recursive:!0\}\)/);
-  assert.match(patched, /codexLinuxWrapFs\(\)\.writeFileSync\(__codexWrapMarkerPath,new Date\(\)\.toISOString\(\)\)/);
+  assert.match(patched, /codexLinuxWrapFs\(\)\.writeFileSync\(__codexWrapMarkerPath,__codexWrapGeneration/);
+  assert.match(patched, /codexLinuxWrapFs\(\)\.writeFileSync\(__codexWrapRestartIntentPath,__codexWrapGeneration/);
   assert.match(patched, /let __codexWrapCheckProcess=codexLinuxWrapChildProcess\(\)\.spawn\(/);
   assert.doesNotMatch(patched, /let p=codexLinuxWrapStatePath\(\)/);
   assert.doesNotMatch(patched, /let c=c\.spawn\(/);
@@ -99,6 +104,9 @@ test("webview runtime renders dev-mode and installed-sha chips", () => {
   assert.match(patched, /dev-mode/);
   assert.match(patched, /\\u2699/);
   assert.match(patched, /\\u2193/);
+  assert.match(patched, /Update and reopen ChatGPT Desktop for Linux/);
+  assert.match(patched, /Update and reopen/);
+  assert.match(patched, /Reopening\\u2026/);
 });
 
 test("webview runtime is not swallowed by a trailing sourcemap comment", () => {
@@ -237,13 +245,13 @@ test("feature exposes optional patches and declarative apply hooks when enabled"
   });
 });
 
-test("apply hook preserves marker on failure and clears it on success", () => {
+test("apply hook clears a generation marker on success", () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-"));
   const markerDir = path.join(temp, "codex-wrapper-updater");
   const marker = path.join(markerDir, "pending");
   const manager = fakeManager(temp);
   fs.mkdirSync(markerDir, { recursive: true });
-  fs.writeFileSync(marker, "pending\n");
+  fs.writeFileSync(marker, `${GENERATION}\n`);
 
   const env = {
     ...process.env,
@@ -251,13 +259,6 @@ test("apply hook preserves marker on failure and clears it on success", () => {
     CODEX_LINUX_FEATURE_HOOK_PHASE: "prelaunch",
     CODEX_UPDATE_MANAGER_PATH: manager,
   };
-
-  const failed = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
-    env: { ...env, CODEX_FAKE_MANAGER_STATUS: "42" },
-    encoding: "utf8",
-  });
-  assert.equal(failed.status, 0, failed.stderr);
-  assert.equal(fs.existsSync(marker), true);
 
   const succeeded = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
     env,
@@ -267,13 +268,180 @@ test("apply hook preserves marker on failure and clears it on success", () => {
   assert.equal(fs.existsSync(marker), false);
 });
 
+test("after-exit relaunch requires a matching generation-bound restart intent", () => {
+  for (const { intent, exitStatus, expectedStatus } of [
+    { intent: GENERATION, exitStatus: "0", expectedStatus: 85 },
+    { intent: null, exitStatus: "0", expectedStatus: 0 },
+    { intent: "b".repeat(40), exitStatus: "0", expectedStatus: 0 },
+    { intent: GENERATION, exitStatus: "1", expectedStatus: 0 },
+  ]) {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-intent-"));
+    const markerDir = path.join(temp, "codex-wrapper-updater");
+    const marker = path.join(markerDir, "pending");
+    const restartIntent = path.join(markerDir, "restart-intent");
+    const manager = fakeManager(temp);
+    fs.mkdirSync(markerDir, { recursive: true });
+    fs.writeFileSync(marker, `${GENERATION}\n`);
+    if (intent != null) fs.writeFileSync(restartIntent, `${intent}\n`);
+
+    const result = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
+      env: {
+        ...process.env,
+        CODEX_LINUX_APP_STATE_DIR: temp,
+        CODEX_LINUX_FEATURE_HOOK_PHASE: "after-exit",
+        CODEX_LINUX_ELECTRON_EXIT_STATUS: exitStatus,
+        CODEX_UPDATE_MANAGER_PATH: manager,
+      },
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, expectedStatus, result.stderr);
+    assert.equal(fs.existsSync(marker), false);
+    assert.equal(fs.existsSync(restartIntent), false);
+    if (expectedStatus === 85) {
+      assert.match(result.stdout, /requesting relaunch after all after-exit hooks complete/);
+    } else {
+      assert.doesNotMatch(result.stdout, /requesting relaunch/);
+    }
+  }
+});
+
+test("matching Update and reopen intent is consumed exactly once", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-once-"));
+  const markerDir = path.join(temp, "codex-wrapper-updater");
+  const marker = path.join(markerDir, "pending");
+  const restartIntent = path.join(markerDir, "restart-intent");
+  const managerLog = path.join(temp, "manager.log");
+  const manager = fakeManager(
+    temp,
+    'printf "%s\\n" "$*" >> "$CODEX_TEST_MANAGER_LOG"\nexit 0\n',
+  );
+  fs.mkdirSync(markerDir, { recursive: true });
+  fs.writeFileSync(marker, `${GENERATION}\n`);
+  fs.writeFileSync(restartIntent, `${GENERATION}\n`);
+
+  const env = {
+    ...process.env,
+    CODEX_LINUX_APP_STATE_DIR: temp,
+    CODEX_LINUX_FEATURE_HOOK_PHASE: "after-exit",
+    CODEX_LINUX_ELECTRON_EXIT_STATUS: "0",
+    CODEX_UPDATE_MANAGER_PATH: manager,
+    CODEX_TEST_MANAGER_LOG: managerLog,
+  };
+  const first = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
+    env,
+    encoding: "utf8",
+  });
+  const second = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
+    env,
+    encoding: "utf8",
+  });
+
+  assert.equal(first.status, 85, first.stderr);
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(
+    fs.readFileSync(managerLog, "utf8"),
+    `apply-wrapper-update --expected-generation ${GENERATION}\n`,
+  );
+  assert.equal(fs.existsSync(marker), false);
+  assert.equal(fs.existsSync(restartIntent), false);
+});
+
+test("service-owned wrapper apply runs in the maintenance slice", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-slice-"));
+  const binDir = path.join(temp, "bin");
+  const markerDir = path.join(temp, "state", "codex-wrapper-updater");
+  const marker = path.join(markerDir, "pending");
+  const managerLog = path.join(temp, "manager.log");
+  const systemdRunLog = path.join(temp, "systemd-run.log");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.mkdirSync(markerDir, { recursive: true });
+  fs.writeFileSync(marker, `${GENERATION}\n`);
+
+  const systemctl = path.join(binDir, "systemctl");
+  fs.writeFileSync(systemctl, "#!/usr/bin/env bash\nexit 0\n");
+  fs.chmodSync(systemctl, 0o755);
+  const systemdRun = path.join(binDir, "systemd-run");
+  fs.writeFileSync(
+    systemdRun,
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "$CODEX_TEST_SYSTEMD_RUN_LOG"\nwhile [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done\n[ "$#" -eq 0 ] || shift\nexec "$@"\n`,
+  );
+  fs.chmodSync(systemdRun, 0o755);
+  const manager = fakeManager(
+    temp,
+    'printf "%s\\n" "$*" > "$CODEX_TEST_MANAGER_LOG"\nexit 0\n',
+  );
+
+  const result = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      CODEX_LINUX_APP_STATE_DIR: path.join(temp, "state"),
+      CODEX_LINUX_FEATURE_HOOK_PHASE: "after-exit",
+      CODEX_LINUX_ELECTRON_EXIT_STATUS: "0",
+      CODEX_LINUX_SYSTEMD_SERVICE: "1",
+      CODEX_UPDATE_MANAGER_PATH: manager,
+      CODEX_TEST_MANAGER_LOG: managerLog,
+      CODEX_TEST_SYSTEMD_RUN_LOG: systemdRunLog,
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const systemdArgs = fs.readFileSync(systemdRunLog, "utf8");
+  assert.match(systemdArgs, /--unit=codex-wrapper-update-apply/);
+  assert.match(systemdArgs, /--scope/);
+  assert.match(systemdArgs, /--slice=codex-maintenance\.slice/);
+  assert.match(systemdArgs, /--nice=10/);
+  assert.match(systemdArgs, /--setenv=CARGO_BUILD_JOBS=2/);
+  assert.equal(
+    fs.readFileSync(managerLog, "utf8"),
+    `apply-wrapper-update --expected-generation ${GENERATION}\n`,
+  );
+});
+
+test("failed and invalid generations are quarantined without relaunch", () => {
+  for (const { markerBody, managerStatus, reason } of [
+    { markerBody: `${GENERATION}\n`, managerStatus: "42", reason: /apply failed/ },
+    { markerBody: "legacy timestamp\n", managerStatus: "0", reason: /invalid-generation/ },
+  ]) {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-quarantine-"));
+    const markerDir = path.join(temp, "codex-wrapper-updater");
+    const marker = path.join(markerDir, "pending");
+    const restartIntent = path.join(markerDir, "restart-intent");
+    const manager = fakeManager(temp);
+    fs.mkdirSync(markerDir, { recursive: true });
+    fs.writeFileSync(marker, markerBody);
+    fs.writeFileSync(restartIntent, `${GENERATION}\n`);
+
+    const result = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
+      env: {
+        ...process.env,
+        CODEX_LINUX_APP_STATE_DIR: temp,
+        CODEX_LINUX_FEATURE_HOOK_PHASE: "after-exit",
+        CODEX_LINUX_ELECTRON_EXIT_STATUS: "0",
+        CODEX_UPDATE_MANAGER_PATH: manager,
+        CODEX_FAKE_MANAGER_STATUS: managerStatus,
+      },
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.existsSync(marker), false);
+    assert.equal(fs.existsSync(restartIntent), false);
+    assert.match(result.stdout, reason);
+    assert.equal(fs.readdirSync(path.join(markerDir, "quarantine")).length, 1);
+    assert.doesNotMatch(result.stdout, /requesting relaunch/);
+  }
+});
+
 test("apply hook bounds slow prelaunch apply and preserves marker", () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-timeout-"));
   const markerDir = path.join(temp, "codex-wrapper-updater");
   const marker = path.join(markerDir, "pending");
   const manager = fakeManager(temp, "sleep 3\nexit 0\n");
   fs.mkdirSync(markerDir, { recursive: true });
-  fs.writeFileSync(marker, "pending\n");
+  fs.writeFileSync(marker, `${GENERATION}\n`);
 
   const started = Date.now();
   const result = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
@@ -313,7 +481,7 @@ test("apply hook keeps invalid and capped prelaunch timeout values numeric", () 
       'echo "manager-ran" >> "$CODEX_TEST_MANAGER_LOG"\nexit 0\n',
     );
     fs.mkdirSync(markerDir, { recursive: true });
-    fs.writeFileSync(marker, "pending\n");
+    fs.writeFileSync(marker, `${GENERATION}\n`);
 
     const result = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
       env: {
@@ -341,7 +509,7 @@ test("apply hook resolves marker from sanitized app id when app state dir is abs
   const marker = path.join(markerDir, "pending");
   const manager = fakeManager(temp);
   fs.mkdirSync(markerDir, { recursive: true });
-  fs.writeFileSync(marker, "pending\n");
+  fs.writeFileSync(marker, `${GENERATION}\n`);
 
   const result = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
     env: {
@@ -359,14 +527,14 @@ test("apply hook resolves marker from sanitized app id when app state dir is abs
   assert.equal(fs.existsSync(marker), false);
 });
 
-test("apply hook skip guard and lock keep marker without running manager", () => {
+test("apply hook lock keeps marker without running manager", () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-wrapper-updater-guard-"));
   const markerDir = path.join(temp, "codex-wrapper-updater");
   const marker = path.join(markerDir, "pending");
   const invoked = path.join(temp, "manager-invoked");
   const manager = fakeManager(temp, `touch ${JSON.stringify(invoked)}\nexit 0\n`);
   fs.mkdirSync(markerDir, { recursive: true });
-  fs.writeFileSync(marker, "pending\n");
+  fs.writeFileSync(marker, `${GENERATION}\n`);
 
   const env = {
     ...process.env,
@@ -374,14 +542,6 @@ test("apply hook skip guard and lock keep marker without running manager", () =>
     CODEX_LINUX_FEATURE_HOOK_PHASE: "prelaunch",
     CODEX_UPDATE_MANAGER_PATH: manager,
   };
-
-  const skipped = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {
-    env: { ...env, CODEX_WRAPPER_UPDATER_SKIP_PRELAUNCH_ONCE: "1" },
-    encoding: "utf8",
-  });
-  assert.equal(skipped.status, 0, skipped.stderr);
-  assert.equal(fs.existsSync(marker), true);
-  assert.equal(fs.existsSync(invoked), false);
 
   fs.mkdirSync(path.join(markerDir, "apply.lock"));
   const locked = spawnSync("bash", [path.join(featureDir, "apply-pending.sh")], {

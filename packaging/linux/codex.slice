@@ -1,0 +1,11 @@
+[Unit]
+Description=ChatGPT Desktop aggregate resource budget
+
+[Slice]
+CPUQuota=600%
+CPUWeight=75
+IOWeight=50
+TasksMax=896
+MemoryHigh=6G
+MemoryMax=8G
+MemorySwapMax=1536M

@@ -173,6 +173,12 @@ make appimage
 The AppImage flow does not include `codex-update-manager`, the systemd user
 service, polkit policy, or the native-package update builder.
 
+Native packages do include the fixed `codex-desktop.service`, the
+`codex-runtime.slice` and `codex-maintenance.slice` budgets, and the
+socket-activated `/usr/libexec/codex-host-governor`. Their launcher keeps one
+Desktop process tree; legacy `--new-instance` requests open a window in that
+tree rather than creating another service or app scope.
+
 To make a local AppImage self-contained, install the CLI with its optional
 Linux package and pass the package directory to the AppImage build:
 

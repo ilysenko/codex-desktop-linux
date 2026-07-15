@@ -73,8 +73,16 @@ pub async fn run(cli: Cli) -> Result<()> {
             run_check_now(&config, &mut state, &paths, if_stale).await
         }
         Commands::CheckWrapper { json } => run_check_wrapper(&config, &mut state, &paths, json),
-        Commands::ApplyWrapperUpdate => {
-            wrapper_apply::run_apply_wrapper_update(&config, &mut state, &paths).await
+        Commands::ApplyWrapperUpdate {
+            expected_generation,
+        } => {
+            wrapper_apply::run_apply_wrapper_update(
+                &config,
+                &mut state,
+                &paths,
+                expected_generation.as_deref(),
+            )
+            .await
         }
         Commands::PickFeatures { json } => feature_picker::run_pick_features(&config, &paths, json),
         Commands::CliPreflight {

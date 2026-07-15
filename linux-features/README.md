@@ -126,6 +126,11 @@ or other user-home artifact, stage the source with `resources` and copy it from
 Avoid writing user-home files from `stage.sh`, because install/package/update
 rebuilds may run outside the real user's session.
 
+An after-exit hook may return status `85` to request one app relaunch. The
+launcher records the request, finishes all remaining after-exit hooks, and only
+then starts ChatGPT Desktop again. Hooks must return `85` only for an explicit,
+validated user restart intent; ordinary close and failure paths return `0`.
+
 `packageHooks` run during native package staging and receive `PACKAGE_FORMAT`,
 `PACKAGE_ROOT`, `PACKAGE_NAME`, `PACKAGE_VERSION`, and `APP_DIR`.
 

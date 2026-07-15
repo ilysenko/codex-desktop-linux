@@ -395,6 +395,7 @@ fi
 
 CLEANUP_HELPER="/opt/$package_name/.codex-linux/codex-no-updater-transition-cleanup.sh"
 DESKTOP_ENTRY_DOCTOR="/opt/$package_name/.codex-linux/codex-desktop-entry-doctor.sh"
+GOVERNOR_HELPER="/opt/$package_name/.codex-linux/codex-host-governor-user-service.sh"
 if [ -f "\$CLEANUP_HELPER" ]; then
     # shellcheck source=/opt/$package_name/.codex-linux/codex-no-updater-transition-cleanup.sh
     . "\$CLEANUP_HELPER"
@@ -404,6 +405,10 @@ if [ -f "\$DESKTOP_ENTRY_DOCTOR" ]; then
     # shellcheck source=/opt/$package_name/.codex-linux/codex-desktop-entry-doctor.sh
     . "\$DESKTOP_ENTRY_DOCTOR"
     codex_desktop_repair_system_package_shadow_entries $package_name || true
+fi
+if [ -f "\$GOVERNOR_HELPER" ]; then
+    . "\$GOVERNOR_HELPER"
+    codex_host_governor_ensure_running || true
 fi
 
 exit 0
@@ -421,11 +426,20 @@ write_no_updater_deb_prerm() {
 set -eu
 
 CLEANUP_HELPER="/opt/$package_name/.codex-linux/codex-no-updater-transition-cleanup.sh"
+GOVERNOR_HELPER="/opt/$package_name/.codex-linux/codex-host-governor-user-service.sh"
 if [ -f "\$CLEANUP_HELPER" ]; then
     # shellcheck source=/opt/$package_name/.codex-linux/codex-no-updater-transition-cleanup.sh
     . "\$CLEANUP_HELPER"
     codex_no_updater_cleanup_update_manager_service || true
 fi
+case "\${1:-}" in
+    remove|purge|deconfigure)
+        if [ -f "\$GOVERNOR_HELPER" ]; then
+            . "\$GOVERNOR_HELPER"
+            codex_host_governor_cleanup || true
+        fi
+        ;;
+esac
 
 exit 0
 SCRIPT
@@ -440,6 +454,7 @@ write_no_updater_pacman_install_hooks() {
     cat > "$target" <<SCRIPT
 CLEANUP_HELPER="/opt/$package_name/.codex-linux/codex-no-updater-transition-cleanup.sh"
 DESKTOP_ENTRY_DOCTOR="/opt/$package_name/.codex-linux/codex-desktop-entry-doctor.sh"
+GOVERNOR_HELPER="/opt/$package_name/.codex-linux/codex-host-governor-user-service.sh"
 
 codex_no_updater_cleanup_if_present() {
     if [ -f "\$CLEANUP_HELPER" ]; then
@@ -457,12 +472,20 @@ codex_desktop_repair_if_present() {
     fi
 }
 
+codex_host_governor_ensure_if_present() {
+    if [ -f "\$GOVERNOR_HELPER" ]; then
+        . "\$GOVERNOR_HELPER"
+        codex_host_governor_ensure_running || true
+    fi
+}
+
 post_install() {
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
     fi
     codex_desktop_repair_if_present
     codex_no_updater_cleanup_if_present
+    codex_host_governor_ensure_if_present
 }
 
 post_upgrade() {
@@ -471,6 +494,10 @@ post_upgrade() {
 
 pre_remove() {
     codex_no_updater_cleanup_if_present
+    if [ -f "\$GOVERNOR_HELPER" ]; then
+        . "\$GOVERNOR_HELPER"
+        codex_host_governor_cleanup || true
+    fi
 }
 SCRIPT
     chmod 0644 "$target"
@@ -718,25 +745,64 @@ write_update_builder_manifest() {
     )
 }
 
+stage_desktop_systemd_units() {
+    local root="$1"
+    local unit_dir="$root/usr/lib/systemd/user"
+    local desktop_service_source="$REPO_DIR/packaging/linux/codex-desktop.service"
+    local unit_source
+
+    ensure_file_exists "$desktop_service_source" "desktop systemd service template"
+    for unit_source in \
+        "$REPO_DIR/packaging/linux/codex.slice" \
+        "$REPO_DIR/packaging/linux/codex-runtime.slice" \
+        "$REPO_DIR/packaging/linux/codex-maintenance.slice" \
+        "$REPO_DIR/packaging/linux/codex-host-governor.service" \
+        "$REPO_DIR/packaging/linux/codex-host-governor.socket"
+    do
+        ensure_file_exists "$unit_source" "systemd slice template"
+    done
+
+    mkdir -p "$unit_dir"
+    sed -e "s/codex-desktop/$PACKAGE_NAME/g" \
+        "$desktop_service_source" > "$unit_dir/$PACKAGE_NAME.service"
+    cp "$REPO_DIR/packaging/linux/codex.slice" "$unit_dir/codex.slice"
+    cp "$REPO_DIR/packaging/linux/codex-runtime.slice" "$unit_dir/codex-runtime.slice"
+    cp "$REPO_DIR/packaging/linux/codex-maintenance.slice" "$unit_dir/codex-maintenance.slice"
+    cp "$REPO_DIR/packaging/linux/codex-host-governor.service" "$unit_dir/codex-host-governor.service"
+    cp "$REPO_DIR/packaging/linux/codex-host-governor.socket" "$unit_dir/codex-host-governor.socket"
+    chmod 0644 \
+        "$unit_dir/$PACKAGE_NAME.service" \
+        "$unit_dir/codex.slice" \
+        "$unit_dir/codex-runtime.slice" \
+        "$unit_dir/codex-maintenance.slice" \
+        "$unit_dir/codex-host-governor.service" \
+        "$unit_dir/codex-host-governor.socket"
+}
+
 stage_common_package_files() {
     local root="$1"
     local app_root="$root/opt/$PACKAGE_NAME"
     local polkit_policy="$REPO_DIR/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy"
+    local host_governor_source="$REPO_DIR/packaging/linux/codex-host-governor"
+    local host_governor_helper="$REPO_DIR/packaging/linux/codex-host-governor-user-service.sh"
 
     ensure_app_layout
 
     if package_with_updater_enabled; then
         ensure_file_exists "$polkit_policy" "polkit policy"
     fi
+    ensure_file_exists "$host_governor_source" "Codex host governor"
+    ensure_file_exists "$host_governor_helper" "Codex host governor user-service helper"
 
     mkdir -p \
         "$root/opt" \
         "$root/usr/bin" \
+        "$root/usr/libexec" \
+        "$root/usr/lib/systemd/user" \
         "$root/usr/share/applications" \
         "$root/usr/share/icons/hicolor/256x256/apps"
     if package_with_updater_enabled; then
         mkdir -p \
-            "$root/usr/lib/systemd/user" \
             "$root/usr/share/polkit-1/actions"
     fi
 
@@ -748,6 +814,11 @@ stage_common_package_files() {
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"
     render_desktop_entry "$root/usr/share/applications/$PACKAGE_NAME.desktop"
     cp "$ICON_SOURCE" "$root/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
+    cp "$host_governor_source" "$root/usr/libexec/codex-host-governor"
+    chmod 0755 "$root/usr/libexec/codex-host-governor"
+    cp "$host_governor_helper" "$app_root/.codex-linux/codex-host-governor-user-service.sh"
+    chmod 0644 "$app_root/.codex-linux/codex-host-governor-user-service.sh"
+    stage_desktop_systemd_units "$root"
     if package_with_updater_enabled; then
         cp "$UPDATER_BINARY_SOURCE" "$root/usr/bin/codex-update-manager"
         chmod 0755 "$root/usr/bin/codex-update-manager"
@@ -858,6 +929,15 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/packaging/linux/codex-desktop-entry-doctor.sh" \
         "$update_builder_root/packaging/linux/codex-desktop-entry-doctor.sh"
     cp "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "$update_builder_root/packaging/linux/codex-packaged-runtime.sh"
+    cp "$REPO_DIR/packaging/linux/codex-systemd-launcher.sh" "$update_builder_root/packaging/linux/codex-systemd-launcher.sh"
+    cp "$REPO_DIR/packaging/linux/codex-host-governor" "$update_builder_root/packaging/linux/codex-host-governor"
+    cp "$REPO_DIR/packaging/linux/codex-host-governor-user-service.sh" "$update_builder_root/packaging/linux/codex-host-governor-user-service.sh"
+    cp "$REPO_DIR/packaging/linux/codex-desktop.service" "$update_builder_root/packaging/linux/codex-desktop.service"
+    cp "$REPO_DIR/packaging/linux/codex.slice" "$update_builder_root/packaging/linux/codex.slice"
+    cp "$REPO_DIR/packaging/linux/codex-runtime.slice" "$update_builder_root/packaging/linux/codex-runtime.slice"
+    cp "$REPO_DIR/packaging/linux/codex-maintenance.slice" "$update_builder_root/packaging/linux/codex-maintenance.slice"
+    cp "$REPO_DIR/packaging/linux/codex-host-governor.service" "$update_builder_root/packaging/linux/codex-host-governor.service"
+    cp "$REPO_DIR/packaging/linux/codex-host-governor.socket" "$update_builder_root/packaging/linux/codex-host-governor.socket"
     cp "$REPO_DIR/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy" \
         "$update_builder_root/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy"
     cp "$REPO_DIR/packaging/linux/codex-update-manager-user-service.sh" \
@@ -965,10 +1045,9 @@ normalize_package_payload_permissions() {
 
 write_launcher_stub() {
     local root="$1"
+    local launcher_source="$REPO_DIR/packaging/linux/codex-systemd-launcher.sh"
 
-    cat > "$root/usr/bin/$PACKAGE_NAME" <<SCRIPT
-#!/usr/bin/env bash
-exec /opt/$PACKAGE_NAME/start.sh "\$@"
-SCRIPT
+    ensure_file_exists "$launcher_source" "systemd launcher template"
+    sed -e "s/codex-desktop/$PACKAGE_NAME/g" "$launcher_source" > "$root/usr/bin/$PACKAGE_NAME"
     chmod 0755 "$root/usr/bin/$PACKAGE_NAME"
 }

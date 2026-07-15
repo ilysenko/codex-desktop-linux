@@ -1,0 +1,695 @@
+#!/usr/bin/env python3
+"""Laptop-wide admission governor for local Codex runtimes.
+
+The service owns no Codex process.  Clients hold a Unix-socket connection for
+the lifetime of a loaded runtime; closing the connection releases the permit.
+Pressure only blocks new permits.  Existing work is never revoked.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections import OrderedDict, deque
+from dataclasses import dataclass, field
+import json
+import os
+from pathlib import Path
+import re
+import socket
+import subprocess
+import sys
+import time
+import uuid
+from typing import Any
+
+
+SCHEMA_VERSION = 1
+SAMPLE_SECONDS = 5.0
+RECOVERY_SECONDS = 120.0
+NORMAL_TOTAL = 8
+BURST_TOTAL = 12
+RESERVED_ROOTS = 2
+RUNTIME_TASK_ADMISSION = 640
+RUNTIME_TASK_ALERT = 700
+RUNTIME_MEMORY_ADMISSION = 4_250 * 1024 * 1024
+RUNTIME_MEMORY_ALERT = 5_000 * 1024 * 1024
+
+RESOURCE_RESERVATIONS = {
+    "cli-root": (80, 768 * 1024 * 1024),
+    "desktop-root": (160, 1_280 * 1024 * 1024),
+    "slim": (24, 256 * 1024 * 1024),
+    "web": (48, 384 * 1024 * 1024),
+    "heavy-gui": (96, 768 * 1024 * 1024),
+}
+
+UID = os.getuid()
+RUNTIME_ROOT = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{UID}"))
+SOCKET_PATH = RUNTIME_ROOT / "codex" / "host-governor.sock"
+STATE_ROOT = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "codex-host-governor"
+TRANSITION_LOG = STATE_ROOT / "transitions.jsonl"
+CGROUP_ROOT = Path(f"/sys/fs/cgroup/user.slice/user-{UID}.slice/user@{UID}.service")
+RUNTIME_CGROUP = CGROUP_ROOT / "codex-runtime.slice"
+MAINTENANCE_CGROUP = CGROUP_ROOT / "codex-maintenance.slice"
+
+
+def read_text(path: Path, default: str = "") -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (FileNotFoundError, PermissionError, OSError):
+        return default
+
+
+def read_int(path: Path, default: int = 0) -> int:
+    try:
+        return int(read_text(path).strip())
+    except ValueError:
+        return default
+
+
+def keyed_counter(path: Path, key: str) -> int:
+    for line in read_text(path).splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == key:
+            try:
+                return int(fields[1])
+            except ValueError:
+                return 0
+    return 0
+
+
+def pressure_value(name: str, group: str, field_name: str = "avg10") -> float:
+    pattern = re.compile(rf"^{re.escape(group)}\s+.*\b{re.escape(field_name)}=([0-9.]+)")
+    for line in read_text(Path("/proc/pressure") / name).splitlines():
+        match = pattern.search(line)
+        if match:
+            return float(match.group(1))
+    return 0.0
+
+
+def mem_available_bytes() -> int:
+    for line in read_text(Path("/proc/meminfo")).splitlines():
+        if line.startswith("MemAvailable:"):
+            try:
+                return int(line.split()[1]) * 1024
+            except (IndexError, ValueError):
+                return 0
+    return 0
+
+
+def package_temperature_c() -> float:
+    values: list[float] = []
+    for pattern in ("/sys/class/hwmon/hwmon*/temp*_input", "/sys/class/thermal/thermal_zone*/temp"):
+        for path in Path("/").glob(pattern.lstrip("/")):
+            try:
+                value = float(path.read_text(encoding="utf-8").strip()) / 1000.0
+            except (OSError, ValueError):
+                continue
+            if 20.0 <= value <= 120.0:
+                values.append(value)
+    return max(values, default=0.0)
+
+
+def swap_pages() -> tuple[int, int]:
+    found = {"pswpin": 0, "pswpout": 0}
+    for line in read_text(Path("/proc/vmstat")).splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] in found:
+            try:
+                found[fields[0]] = int(fields[1])
+            except ValueError:
+                pass
+    return found["pswpin"], found["pswpout"]
+
+
+def cgroup_populated(path: Path) -> bool:
+    return bool(read_text(path / "cgroup.procs").strip())
+
+
+def external_provider_counts() -> dict[str, int]:
+    counts = {"claude": 0, "agy": 0}
+    proc = Path("/proc")
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        raw = read_text(entry / "cmdline").replace("\x00", " ").lower()
+        if not raw:
+            continue
+        executable = raw.split(maxsplit=1)[0]
+        if "claude" in executable:
+            counts["claude"] += 1
+        if Path(executable).name == "agy" or "antigravity" in executable:
+            counts["agy"] += 1
+    return counts
+
+
+@dataclass
+class Health:
+    sampled_at: float
+    tasks: int
+    memory: int
+    mem_available: int
+    cpu_psi: float
+    memory_psi: float
+    io_psi: float
+    temperature: float
+    swap_bytes_per_second: float
+    maintenance_active: bool
+    pids_max_events: int
+    memory_max_events: int
+    block_reasons: list[str] = field(default_factory=list)
+    green: bool = False
+    near_hard: bool = False
+
+
+@dataclass
+class Lease:
+    lease_id: str
+    writer: asyncio.StreamWriter
+    kind: str
+    client: str
+    project: str
+    root_thread_id: str
+    thread_id: str
+    resource_class: str
+    pid: int
+    queued_at: float
+    granted: bool = False
+    queue_key: tuple[str, str] | None = None
+
+    @property
+    def reservation(self) -> tuple[int, int]:
+        return RESOURCE_RESERVATIONS.get(self.resource_class, RESOURCE_RESERVATIONS["slim"])
+
+
+class Governor:
+    def __init__(self) -> None:
+        self.leases: dict[str, Lease] = {}
+        self.queues: "OrderedDict[tuple[str, str], deque[str]]" = OrderedDict()
+        self.queue_ring: deque[tuple[str, str]] = deque()
+        self.health: Health | None = None
+        self.healthy_since: float | None = None
+        self.last_swap_pages: tuple[int, int] | None = None
+        self.last_sample_monotonic: float | None = None
+        self.last_state = "starting"
+        self.last_pids_max_events = 0
+        self.last_memory_max_events = 0
+        # Startup begins permissive at the normal tier. After real pressure is
+        # observed, admissions stay closed until RECOVERY_SECONDS of
+        # continuously green samples have elapsed.
+        self.recovery_required = False
+        self.recovery_draining = False
+        self.lock = asyncio.Lock()
+
+    def granted(self) -> list[Lease]:
+        return [lease for lease in self.leases.values() if lease.granted]
+
+    def queued(self) -> list[Lease]:
+        return [lease for lease in self.leases.values() if not lease.granted]
+
+    def tier(self, now: float | None = None) -> str:
+        if self.health is None:
+            return "normal"
+        if self.health.block_reasons or self.recovery_required or self.recovery_draining:
+            return "blocked"
+        current = time.monotonic() if now is None else now
+        if self.healthy_since is not None and current - self.healthy_since >= RECOVERY_SECONDS:
+            return "burst"
+        return "normal"
+
+    def capacity(self) -> int:
+        return BURST_TOTAL if self.tier() == "burst" else NORMAL_TOTAL
+
+    def can_grant(self, lease: Lease, *, allow_recovery_drain: bool = False) -> tuple[bool, list[str]]:
+        current = self.granted()
+        total = len(current)
+        roots = sum(item.kind == "root" for item in current)
+        children = total - roots
+        health = self.health
+        reasons: list[str] = []
+
+        if health is not None:
+            reasons.extend(health.block_reasons)
+        if self.recovery_required:
+            reasons.append("recovery-window")
+        if self.recovery_draining and not allow_recovery_drain:
+            reasons.append("recovery-drain")
+        cap = self.capacity()
+        if total >= cap:
+            reasons.append("runtime-capacity")
+        if lease.kind == "child" and children >= max(0, cap - RESERVED_ROOTS):
+            reasons.append("child-capacity")
+        tasks_reservation, memory_reservation = lease.reservation
+        if health is not None:
+            reserved_tasks = sum(item.reservation[0] for item in current)
+            reserved_memory = sum(item.reservation[1] for item in current)
+            effective_tasks = max(health.tasks, reserved_tasks)
+            effective_memory = max(health.memory, reserved_memory)
+            if effective_tasks + tasks_reservation > RUNTIME_TASK_ADMISSION:
+                reasons.append("projected-tasks")
+            if effective_memory + memory_reservation > RUNTIME_MEMORY_ADMISSION:
+                reasons.append("projected-memory")
+        if lease.resource_class == "heavy-gui" and sum(
+            item.granted and item.resource_class == "heavy-gui" for item in self.leases.values()
+        ) >= 2:
+            reasons.append("heavy-gui-capacity")
+        return not reasons, sorted(set(reasons))
+
+    def observe_health(self, health: Health, now: float | None = None) -> None:
+        """Record one sample and advance the pressure-recovery state machine."""
+        current = time.monotonic() if now is None else now
+        self.health = health
+        if health.block_reasons:
+            self.recovery_required = True
+            self.recovery_draining = False
+            self.healthy_since = None
+            return
+        if not health.green:
+            self.healthy_since = None
+            return
+        if self.healthy_since is None:
+            self.healthy_since = current
+        if self.recovery_required and current - self.healthy_since >= RECOVERY_SECONDS:
+            self.recovery_required = False
+            self.recovery_draining = True
+
+    async def send(self, lease: Lease, payload: dict[str, Any]) -> bool:
+        try:
+            lease.writer.write((json.dumps(payload, separators=(",", ":")) + "\n").encode())
+            await lease.writer.drain()
+            return True
+        except (ConnectionError, BrokenPipeError, RuntimeError):
+            return False
+
+    def enqueue(self, lease: Lease) -> None:
+        key = (lease.project, lease.root_thread_id)
+        lease.queue_key = key
+        if key not in self.queues:
+            self.queues[key] = deque()
+            self.queue_ring.append(key)
+        self.queues[key].append(lease.lease_id)
+
+    def dequeue_id(self, lease: Lease) -> None:
+        key = lease.queue_key
+        if key is None or key not in self.queues:
+            return
+        queue = self.queues[key]
+        try:
+            queue.remove(lease.lease_id)
+        except ValueError:
+            pass
+        if not queue:
+            self.queues.pop(key, None)
+            self.queue_ring = deque(item for item in self.queue_ring if item != key)
+        lease.queue_key = None
+
+    async def grant_queued(
+        self,
+        *,
+        limit: int | None = None,
+        allow_recovery_drain: bool = False,
+    ) -> None:
+        async with self.lock:
+            if not self.queue_ring:
+                return
+            granted_count = 0
+            attempts = len(self.queue_ring)
+            while attempts > 0 and self.queue_ring:
+                key = self.queue_ring.popleft()
+                queue = self.queues.get(key)
+                if not queue:
+                    self.queues.pop(key, None)
+                    attempts -= 1
+                    continue
+                lease = self.leases.get(queue[0])
+                if lease is None:
+                    queue.popleft()
+                    if queue:
+                        self.queue_ring.append(key)
+                    else:
+                        self.queues.pop(key, None)
+                    attempts -= 1
+                    continue
+                allowed, reasons = self.can_grant(
+                    lease,
+                    allow_recovery_drain=allow_recovery_drain,
+                )
+                if not allowed:
+                    self.queue_ring.append(key)
+                    attempts -= 1
+                    continue
+                queue.popleft()
+                if queue:
+                    self.queue_ring.append(key)
+                else:
+                    self.queues.pop(key, None)
+                lease.queue_key = None
+                lease.granted = True
+                if not await self.send(lease, self.lease_payload(lease, "granted")):
+                    self.leases.pop(lease.lease_id, None)
+                granted_count += 1
+                if limit is not None and granted_count >= limit:
+                    break
+                attempts = len(self.queue_ring)
+
+    async def grant_monitor_queue(self) -> None:
+        staged_recovery = self.recovery_draining
+        await self.grant_queued(
+            limit=1 if staged_recovery else None,
+            allow_recovery_drain=staged_recovery,
+        )
+        if staged_recovery and not self.queued():
+            self.recovery_draining = False
+
+    def lease_payload(self, lease: Lease, state: str, reasons: list[str] | None = None) -> dict[str, Any]:
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "ok": True,
+            "state": state,
+            "leaseId": lease.lease_id,
+            "tier": self.tier(),
+            "normalTotal": NORMAL_TOTAL,
+            "burstTotal": BURST_TOTAL,
+            "reasons": reasons or [],
+        }
+
+    async def acquire(self, request: dict[str, Any], writer: asyncio.StreamWriter) -> Lease:
+        lease = Lease(
+            lease_id=str(uuid.uuid4()),
+            writer=writer,
+            kind=request["kind"],
+            client=request["client"],
+            project=request.get("project", "other"),
+            root_thread_id=request.get("rootThreadId", request["threadId"]),
+            thread_id=request["threadId"],
+            resource_class=request.get("resourceClass", "slim"),
+            pid=int(request.get("pid", 0)),
+            queued_at=time.time(),
+        )
+        async with self.lock:
+            self.leases[lease.lease_id] = lease
+            allowed, reasons = self.can_grant(lease)
+            if allowed:
+                lease.granted = True
+                payload = self.lease_payload(lease, "granted")
+            else:
+                self.enqueue(lease)
+                payload = self.lease_payload(lease, "queued", reasons)
+        await self.send(lease, payload)
+        return lease
+
+    async def release(self, lease: Lease) -> None:
+        async with self.lock:
+            self.dequeue_id(lease)
+            self.leases.pop(lease.lease_id, None)
+        await self.grant_queued()
+
+    def snapshot(self) -> dict[str, Any]:
+        health = self.health
+        granted = self.granted()
+        roots = sum(lease.kind == "root" for lease in granted)
+        external = external_provider_counts()
+        pressure_reasons = [] if health is None else list(health.block_reasons)
+        if self.recovery_required and "recovery-window" not in pressure_reasons:
+            pressure_reasons.append("recovery-window")
+        if self.recovery_draining and "recovery-drain" not in pressure_reasons:
+            pressure_reasons.append("recovery-drain")
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "ok": True,
+            "tier": self.tier(),
+            "normalTotal": NORMAL_TOTAL,
+            "burstTotal": BURST_TOTAL,
+            "reservedRoots": RESERVED_ROOTS,
+            "loadedRuntimes": len(granted),
+            "roots": roots,
+            "children": len(granted) - roots,
+            "queued": len(self.queued()),
+            "projects": sorted({lease.project for lease in granted}),
+            "pressureReasons": pressure_reasons,
+            "runtimeTasks": 0 if health is None else health.tasks,
+            "runtimeMemoryBytes": 0 if health is None else health.memory,
+            "memAvailableBytes": 0 if health is None else health.mem_available,
+            "cpuPsiAvg10": 0.0 if health is None else health.cpu_psi,
+            "memoryPsiFullAvg10": 0.0 if health is None else health.memory_psi,
+            "ioPsiFullAvg10": 0.0 if health is None else health.io_psi,
+            "temperatureC": 0.0 if health is None else health.temperature,
+            "swapBytesPerSecond": 0.0 if health is None else health.swap_bytes_per_second,
+            "nearHardLimit": False if health is None else health.near_hard,
+            "externalTelemetry": external,
+        }
+
+    def sample_health(self) -> Health:
+        now = time.monotonic()
+        pages = swap_pages()
+        swap_rate = 0.0
+        if self.last_swap_pages is not None and self.last_sample_monotonic is not None:
+            delta_pages = max(0, pages[0] - self.last_swap_pages[0]) + max(0, pages[1] - self.last_swap_pages[1])
+            elapsed = max(0.001, now - self.last_sample_monotonic)
+            swap_rate = delta_pages * os.sysconf("SC_PAGE_SIZE") / elapsed
+        self.last_swap_pages = pages
+        self.last_sample_monotonic = now
+
+        pids_max = keyed_counter(RUNTIME_CGROUP / "pids.events", "max")
+        memory_max = keyed_counter(RUNTIME_CGROUP / "memory.events", "max")
+        health = Health(
+            sampled_at=time.time(),
+            tasks=read_int(RUNTIME_CGROUP / "pids.current"),
+            memory=read_int(RUNTIME_CGROUP / "memory.current"),
+            mem_available=mem_available_bytes(),
+            cpu_psi=pressure_value("cpu", "some"),
+            memory_psi=pressure_value("memory", "full"),
+            io_psi=pressure_value("io", "full"),
+            temperature=package_temperature_c(),
+            swap_bytes_per_second=swap_rate,
+            maintenance_active=cgroup_populated(MAINTENANCE_CGROUP),
+            pids_max_events=pids_max,
+            memory_max_events=memory_max,
+        )
+        gib = 1024 * 1024 * 1024
+        mib = 1024 * 1024
+        if len(self.granted()) >= BURST_TOTAL:
+            health.block_reasons.append("runtime-capacity")
+        if health.tasks >= RUNTIME_TASK_ADMISSION:
+            health.block_reasons.append("runtime-tasks")
+        if health.memory >= RUNTIME_MEMORY_ADMISSION:
+            health.block_reasons.append("runtime-memory")
+        if health.mem_available and health.mem_available < 3.5 * gib:
+            health.block_reasons.append("host-memory")
+        if health.cpu_psi >= 25.0:
+            health.block_reasons.append("cpu-pressure")
+        if health.memory_psi >= 3.0:
+            health.block_reasons.append("memory-pressure")
+        if health.io_psi >= 10.0:
+            health.block_reasons.append("io-pressure")
+        if health.temperature >= 88.0:
+            health.block_reasons.append("temperature")
+        if health.swap_bytes_per_second >= 64 * mib:
+            health.block_reasons.append("swap-pressure")
+        if pids_max > self.last_pids_max_events:
+            health.block_reasons.append("pids-limit-event")
+        if memory_max > self.last_memory_max_events:
+            health.block_reasons.append("memory-limit-event")
+        self.last_pids_max_events = pids_max
+        self.last_memory_max_events = memory_max
+        health.near_hard = health.tasks >= RUNTIME_TASK_ALERT or health.memory >= RUNTIME_MEMORY_ALERT
+        health.green = (
+            not health.block_reasons
+            and health.mem_available >= 5 * gib
+            and health.tasks <= 448
+            and health.memory <= 3 * gib
+            and health.cpu_psi <= 10.0
+            and health.memory_psi <= 1.0
+            and health.io_psi <= 5.0
+            and health.temperature <= 80.0
+            and health.swap_bytes_per_second <= 16 * mib
+            and not health.maintenance_active
+        )
+        return health
+
+    async def monitor(self) -> None:
+        while True:
+            health = self.sample_health()
+            now = time.monotonic()
+            self.observe_health(health, now)
+            state = self.tier(now)
+            if health.near_hard:
+                state = "near-hard"
+            if state != self.last_state:
+                self.record_transition(self.last_state, state)
+                self.notify_transition(state)
+                self.last_state = state
+            await self.grant_monitor_queue()
+            await asyncio.sleep(SAMPLE_SECONDS)
+
+    def record_transition(self, previous: str, current: str) -> None:
+        STATE_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+        receipt = {
+            "schemaVersion": SCHEMA_VERSION,
+            "at": int(time.time()),
+            "previous": previous,
+            "current": current,
+            "pressureReasons": [] if self.health is None else self.health.block_reasons,
+            "runtimeTasks": 0 if self.health is None else self.health.tasks,
+            "runtimeMemoryBytes": 0 if self.health is None else self.health.memory,
+            "loadedRuntimes": len(self.granted()),
+            "queued": len(self.queued()),
+        }
+        with TRANSITION_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(receipt, separators=(",", ":")) + "\n")
+
+    def notify_transition(self, state: str) -> None:
+        if not shutil_which("notify-send"):
+            return
+        if state not in {"blocked", "near-hard", "normal", "burst"}:
+            return
+        message = {
+            "blocked": "New Codex workers are queued until the laptop recovers.",
+            "near-hard": "Codex is near its hard resource ceiling; new workers remain blocked.",
+            "normal": "Codex capacity is available again at the normal tier.",
+            "burst": "Codex burst capacity is available.",
+        }[state]
+        try:
+            subprocess.run(
+                ["notify-send", "Codex resource governor", message],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def shutil_which(binary: str) -> str | None:
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(directory) / binary
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def validate_acquire(request: dict[str, Any]) -> str | None:
+    if request.get("schemaVersion") != SCHEMA_VERSION:
+        return "schema-version"
+    if request.get("op") != "acquire":
+        return "unsupported-operation"
+    if request.get("kind") not in {"root", "child"}:
+        return "invalid-kind"
+    if request.get("client") not in {"desktop", "cli"}:
+        return "invalid-client"
+    if not isinstance(request.get("threadId"), str) or not request["threadId"]:
+        return "invalid-thread-id"
+    return None
+
+
+async def handle_client(governor: Governor, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    lease: Lease | None = None
+    try:
+        raw = await asyncio.wait_for(reader.readline(), timeout=10)
+        if not raw:
+            return
+        try:
+            request = json.loads(raw)
+        except json.JSONDecodeError:
+            writer.write(b'{"schemaVersion":1,"ok":false,"error":"invalid-json"}\n')
+            await writer.drain()
+            return
+        if request.get("op") == "status":
+            writer.write((json.dumps(governor.snapshot(), separators=(",", ":")) + "\n").encode())
+            await writer.drain()
+            return
+        error = validate_acquire(request)
+        if error:
+            writer.write((json.dumps({"schemaVersion": 1, "ok": False, "error": error}) + "\n").encode())
+            await writer.drain()
+            return
+        lease = await governor.acquire(request, writer)
+        while True:
+            raw = await reader.readline()
+            if not raw:
+                break
+            try:
+                update = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if update.get("op") == "cancel":
+                break
+            if update.get("op") == "state" and update.get("state") in {
+                "loading",
+                "idle",
+                "running",
+                "completed",
+            }:
+                await governor.send(lease, {"schemaVersion": 1, "ok": True, "state": "ack"})
+    except (asyncio.TimeoutError, ConnectionError, BrokenPipeError):
+        pass
+    finally:
+        if lease is not None:
+            await governor.release(lease)
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except (ConnectionError, BrokenPipeError):
+            pass
+
+
+async def serve() -> None:
+    governor = Governor()
+    if int(os.environ.get("LISTEN_FDS", "0")) >= 1:
+        inherited = socket.socket(fileno=3)
+        inherited.setblocking(False)
+        server = await asyncio.start_unix_server(
+            lambda reader, writer: handle_client(governor, reader, writer),
+            sock=inherited,
+        )
+    else:
+        SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            SOCKET_PATH.unlink()
+        except FileNotFoundError:
+            pass
+        server = await asyncio.start_unix_server(
+            lambda reader, writer: handle_client(governor, reader, writer),
+            path=SOCKET_PATH,
+        )
+        SOCKET_PATH.chmod(0o600)
+    monitor = asyncio.create_task(governor.monitor())
+    try:
+        async with server:
+            await server.serve_forever()
+    finally:
+        monitor.cancel()
+        await asyncio.gather(monitor, return_exceptions=True)
+
+
+def status_client() -> int:
+    request = json.dumps({"schemaVersion": 1, "op": "status"}, separators=(",", ":")) + "\n"
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(5)
+            client.connect(str(SOCKET_PATH))
+            client.sendall(request.encode())
+            chunks = bytearray()
+            while not chunks.endswith(b"\n"):
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                chunks.extend(chunk)
+    except OSError as exc:
+        print(json.dumps({"schemaVersion": 1, "ok": False, "error": str(exc)}))
+        return 1
+    print(chunks.decode().strip())
+    return 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "status":
+        raise SystemExit(status_client())
+    if len(sys.argv) != 1:
+        print(f"usage: {sys.argv[0]} [status]", file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        asyncio.run(serve())
+    except KeyboardInterrupt:
+        pass

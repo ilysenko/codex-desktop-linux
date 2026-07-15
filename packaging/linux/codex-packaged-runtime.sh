@@ -63,11 +63,32 @@ codex_packaged_runtime_trigger_update_check() {
             --unit=codex-update-manager-launch-check \
             --collect \
             --quiet \
+            --slice=codex-maintenance.slice \
+            --nice=10 \
+            --setenv=CARGO_BUILD_JOBS=2 \
             /usr/bin/codex-update-manager check-now --if-stale >/dev/null 2>&1 || true
         return 0
     fi
 
     codex-update-manager check-now --if-stale >/dev/null 2>&1 || true
+}
+
+codex_packaged_runtime_request_relaunch() {
+    local systemctl_bin
+
+    command -v systemd-run >/dev/null 2>&1 || return 1
+    systemctl_bin="$(command -v systemctl)" || return 1
+    systemctl --user show-environment >/dev/null 2>&1 || return 1
+
+    systemd-run --user \
+        --unit=codex-desktop-update-reopen \
+        --collect \
+        --quiet \
+        --on-active=1s \
+        --slice=codex-maintenance.slice \
+        --nice=10 \
+        --setenv=CARGO_BUILD_JOBS=2 \
+        "$systemctl_bin" --user start codex-desktop.service >/dev/null 2>&1
 }
 
 codex_packaged_runtime_export_env() {

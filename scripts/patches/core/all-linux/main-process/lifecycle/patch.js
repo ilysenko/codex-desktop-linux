@@ -9,6 +9,7 @@ const {
   applyLinuxWillQuitDrainTimeoutPatch,
   applyLinuxExplicitTrayQuitPatch,
   applyLinuxExplicitIpcQuitPatch,
+  applyLinuxWindowCloseQuitPatch,
 } = require("../../../../impl/main-process/quit-lifecycle.js");
 
 module.exports = [
@@ -18,6 +19,13 @@ module.exports = [
     order: 0,
     ciPolicy: "required-upstream",
     apply: applyLinuxQuitGuardPatch,
+  }),
+  mainBundlePatch({
+    id: "linux-window-close-quit",
+    phase: "main-bundle",
+    order: 5,
+    ciPolicy: "required-upstream",
+    apply: applyLinuxWindowCloseQuitPatch,
   }),
   mainBundlePatch({
     id: "linux-explicit-quit-prompt-bypass",

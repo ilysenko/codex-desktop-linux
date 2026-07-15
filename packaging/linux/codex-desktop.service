@@ -1,0 +1,16 @@
+[Unit]
+Description=ChatGPT Desktop
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/codex-desktop --systemd-service-owner
+Restart=no
+KillMode=control-group
+TimeoutStopSec=20
+Slice=codex-runtime.slice
+RuntimeDirectory=codex-desktop
+RuntimeDirectoryMode=0700
+Environment=CODEX_LINUX_SYSTEMD_SERVICE=1
+UnsetEnvironment=CODEX_MULTI_LAUNCH CODEX_LINUX_MULTI_LAUNCH

@@ -138,6 +138,7 @@ pub async fn build_update_from(
         )
         .env("CODEX_ACCEPTANCE_OVERRIDE", "0")
         .env("CODEX_MANAGED_NODE_SOURCE", managed_node_source)
+        .env("CARGO_BUILD_JOBS", "2")
         .env("PATH", &build_path)
         .current_dir(&workspace.bundle_dir);
     // Honor the user's saved feature selection (the in-app Update feature picker
@@ -161,6 +162,7 @@ pub async fn build_update_from(
             .env("APP_DIR_OVERRIDE", &workspace.app_dir)
             .env("DIST_DIR_OVERRIDE", &workspace.dist_dir)
             .env("UPDATER_BINARY_SOURCE", std::env::current_exe()?)
+            .env("CARGO_BUILD_JOBS", "2")
             .env(
                 "UPDATER_SERVICE_SOURCE",
                 workspace
