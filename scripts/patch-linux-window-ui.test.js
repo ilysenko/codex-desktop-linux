@@ -7488,6 +7488,60 @@ test("closes the attachment race after registering the Browser webview listener"
   assert.equal(removed, 2);
 });
 
+test("watches a replacement Browser webview host for the same logical tab", () => {
+  const timers = [];
+  const recoveryRef = { current: null };
+  let remounts = 0;
+  const attachedHost = {
+    webview: {
+      getWebContentsId: () => 44,
+      isConnected: true,
+    },
+  };
+
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-1",
+    conversationId: "conversation-1",
+    host: attachedHost,
+    recoveryRef,
+    remount: () => true,
+    timerApi: {
+      clearTimeout() {},
+      setTimeout(callback) {
+        timers.push(callback);
+        return callback;
+      },
+    },
+  });
+  assert.equal(recoveryRef.current.attempt, 2);
+
+  const replacementHost = { listenForDidAttach: () => () => {} };
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-1",
+    conversationId: "conversation-1",
+    host: replacementHost,
+    recoveryRef,
+    remount: () => {
+      remounts += 1;
+      return true;
+    },
+    timerApi: {
+      clearTimeout() {},
+      setTimeout(callback) {
+        timers.push(callback);
+        return callback;
+      },
+    },
+  });
+  assert.equal(recoveryRef.current.attempt, 0);
+  assert.equal(recoveryRef.current.host, replacementHost);
+  timers[0]();
+  assert.equal(remounts, 1);
+  assert.equal(recoveryRef.current.attempt, 1);
+});
+
 test("keeps Browser webview attachment deadlines bounded across effect restarts", () => {
   let clock = 1_000;
   const timers = [];
@@ -7598,6 +7652,51 @@ test("fails Browser webview attachment deterministically after one remount", () 
   assert.deepEqual(errors[0].details, {
     browserTabId: "tab-1",
     conversationId: "conversation-1",
+  });
+});
+
+test("fails Browser webview attachment deterministically when remount is rejected", () => {
+  const timers = [];
+  const errors = [];
+  const recoveryRef = { current: { attempt: 0, key: "conversation-2\0tab-2" } };
+  let remounts = 0;
+
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-2",
+    conversationId: "conversation-2",
+    host: { listenForDidAttach: () => () => {} },
+    logger: {
+      error: (message, details) => errors.push({ details, message }),
+      warn: () => {},
+    },
+    recoveryRef,
+    remount: () => {
+      remounts += 1;
+      return false;
+    },
+    timerApi: {
+      clearTimeout() {},
+      setTimeout(callback) {
+        timers.push(callback);
+        return callback;
+      },
+    },
+  });
+  timers[0]();
+
+  assert.equal(remounts, 1);
+  assert.equal(recoveryRef.current.attempt, 2);
+  assert.equal(recoveryRef.current.deadlineAt, null);
+  assert.equal(recoveryRef.current.key, "conversation-2\0tab-2");
+  assert.equal(errors.length, 1);
+  assert.equal(
+    errors[0].message,
+    "IAB_LIFECYCLE Linux Browser webview attachment recovery remount was rejected",
+  );
+  assert.deepEqual(errors[0].details, {
+    browserTabId: "tab-2",
+    conversationId: "conversation-2",
   });
 });
 
@@ -7731,6 +7830,34 @@ test("patches the current Browser webview store and host atomically", () => {
   );
   assert.equal(store.linuxBrowserUseRemountKeys.has("conversation-1\0tab-1"), false);
   assert.equal(store.linuxBrowserUseRemountKeys.has("conversation-2\0tab-2"), true);
+  const reassociatedHost = { listenForDidAttach: () => () => {} };
+  const reassociatedTimers = [];
+  const reassociatedRecoveryRef = { current: null };
+  store.webviews.set("conversation-2\0tab-2", reassociatedHost);
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-2",
+    conversationId: "conversation-2",
+    host: reassociatedHost,
+    logger: { error() {}, warn() {} },
+    recoveryRef: reassociatedRecoveryRef,
+    remount: () =>
+      store.linuxRemountWebview(
+        "conversation-2",
+        "tab-2",
+        reassociatedHost,
+      ),
+    timerApi: {
+      clearTimeout() {},
+      setTimeout(callback) {
+        reassociatedTimers.push(callback);
+        return callback;
+      },
+    },
+  });
+  reassociatedTimers[0]();
+  assert.equal(reassociatedRecoveryRef.current.attempt, 2);
+  assert.equal(store.webviews.get("conversation-2\0tab-2"), reassociatedHost);
   store.electronPageHandoff = { disposeAll() {} };
   store.disposeAll();
   assert.equal(store.linuxBrowserUseRemountKeys.size, 0);

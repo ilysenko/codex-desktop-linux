@@ -490,7 +490,12 @@ function codexLinuxWatchBrowserWebviewAttachment({
 }) {
   const key = `${conversationId}\0${browserTabId}`;
   if (recoveryRef.current?.key !== key || !active) {
-    recoveryRef.current = { attempt: 0, deadlineAt: null, key };
+    recoveryRef.current = { attempt: 0, deadlineAt: null, host, key };
+  } else if (recoveryRef.current.host !== host) {
+    recoveryRef.current =
+      recoveryRef.current.attempt === 1
+        ? { ...recoveryRef.current, host }
+        : { attempt: 0, deadlineAt: null, host, key };
   }
   if (!active || recoveryRef.current.attempt >= 2) {
     return () => {};
@@ -509,7 +514,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
     }
   };
   if (isHostAttached()) {
-    recoveryRef.current = { attempt: 2, deadlineAt: null, key };
+    recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
     return () => {};
   }
 
@@ -518,7 +523,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
   let removeDidAttachListener = () => {};
   const markAttached = () => {
     if (disposed) return;
-    recoveryRef.current = { attempt: 2, deadlineAt: null, key };
+    recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
     if (timer != null) {
       timerApi.clearTimeout(timer);
       timer = null;
@@ -551,10 +556,18 @@ function codexLinuxWatchBrowserWebviewAttachment({
     if (state?.key !== key || state.attempt >= 2) return;
     const details = { browserTabId, conversationId };
     if (state.attempt === 0) {
-      if (!remount()) return;
+      if (!remount()) {
+        recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
+        logger.error(
+          "IAB_LIFECYCLE Linux Browser webview attachment recovery remount was rejected",
+          details,
+        );
+        return;
+      }
       recoveryRef.current = {
         attempt: 1,
         deadlineAt: now() + timeoutMs,
+        host,
         key,
       };
       logger.warn(
@@ -563,7 +576,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
       );
       return;
     }
-    recoveryRef.current = { attempt: 2, deadlineAt: null, key };
+    recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
     logger.error(
       "IAB_LIFECYCLE Linux Browser webview attachment failed after one remount",
       details,
