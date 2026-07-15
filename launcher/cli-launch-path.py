@@ -67,11 +67,7 @@ def validate_parent_chain(path: Path, subject: str) -> None:
                 f"{subject} ancestor {parent} is owned by untrusted uid {metadata.st_uid}"
             )
         writable = metadata.st_mode & 0o022
-        root_owned_sticky = (
-            metadata.st_uid == 0
-            and metadata.st_mode & stat.S_ISVTX
-            and metadata.st_mode & 0o002
-        )
+        root_owned_sticky = metadata.st_uid == 0 and metadata.st_mode & stat.S_ISVTX
         if writable and not root_owned_sticky:
             raise TrustError(
                 f"{subject} ancestor {parent} is group/world-writable and therefore untrusted"

@@ -6716,7 +6716,10 @@ SCRIPT
 import importlib.util
 import os
 import pathlib
+import stat
 import sys
+from types import SimpleNamespace
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("cli_launch_path", pathlib.Path(sys.argv[1]))
 module = importlib.util.module_from_spec(spec)
@@ -6727,6 +6730,31 @@ untrusted_uid = 2 if euid == 1 else 1
 assert module.trusted_owner(euid)
 assert module.trusted_owner(0)
 assert not module.trusted_owner(untrusted_uid)
+
+trusted_ancestors = {
+    pathlib.Path("/"): SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0),
+    pathlib.Path("/nix"): SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0),
+    pathlib.Path("/nix/store"): SimpleNamespace(st_mode=stat.S_IFDIR | stat.S_ISVTX | 0o775, st_uid=0),
+    pathlib.Path("/nix/store/example"): SimpleNamespace(st_mode=stat.S_IFDIR | 0o555, st_uid=0),
+    pathlib.Path("/nix/store/example/bin"): SimpleNamespace(st_mode=stat.S_IFDIR | 0o555, st_uid=0),
+}
+with mock.patch.object(pathlib.Path, "lstat", autospec=True, side_effect=trusted_ancestors.__getitem__):
+    module.validate_parent_chain(
+        pathlib.Path("/nix/store/example/bin/codex"),
+        "Selected Codex CLI target",
+    )
+
+trusted_ancestors[pathlib.Path("/nix/store")].st_mode = stat.S_IFDIR | 0o775
+with mock.patch.object(pathlib.Path, "lstat", autospec=True, side_effect=trusted_ancestors.__getitem__):
+    try:
+        module.validate_parent_chain(
+            pathlib.Path("/nix/store/example/bin/codex"),
+            "Selected Codex CLI target",
+        )
+    except module.TrustError:
+        pass
+    else:
+        raise AssertionError("root-owned group-writable ancestors without sticky must remain untrusted")
 PY
 
     rm "$visible_cli"
