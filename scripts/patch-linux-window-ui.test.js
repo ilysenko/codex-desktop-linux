@@ -7856,6 +7856,7 @@ test("keeps shared Browser recovery active when another watcher wins remount", (
 
 test("does not poison shared Browser recovery when a stale host timer fires", () => {
   let failures = 0;
+  let errors = 0;
   const timers = [];
   const recoveryRef = { current: null };
 
@@ -7867,6 +7868,12 @@ test("does not poison shared Browser recovery when a stale host timer fires", ()
       failures += 1;
     },
     host: { listenForDidAttach: () => () => {} },
+    logger: {
+      error() {
+        errors += 1;
+      },
+      warn() {},
+    },
     recoveryRef,
     recoveryState: { attempt: 0, deadlineAt: 5_000 },
     remount: () => null,
@@ -7881,6 +7888,7 @@ test("does not poison shared Browser recovery when a stale host timer fires", ()
   timers[0]();
 
   assert.equal(failures, 0);
+  assert.equal(errors, 0);
   assert.equal(recoveryRef.current.attempt, 2);
 });
 
@@ -7902,8 +7910,8 @@ test("patches the current Browser webview store and host atomically", () => {
   );
   assert.match(patched, /linuxBrowserUseRecoveryStates\.get\(i\)/);
   assert.match(patched, /linuxStartWebviewRecovery\(e,t,n\)/);
-  assert.match(patched, /linuxCompleteWebviewRecovery\(e,t\)/);
-  assert.match(patched, /linuxFailWebviewRecovery\(e,t\)/);
+  assert.match(patched, /linuxCompleteWebviewRecovery\(e,t,n\)/);
+  assert.match(patched, /linuxFailWebviewRecovery\(e,t,n\)/);
   assert.match(
     patched,
     /r\|\|this\.linuxBrowserUseRecoveryStates\.delete\(Ef\(e,n\)\)/,
@@ -7936,8 +7944,8 @@ test("patches the current Browser webview store and host atomically", () => {
   );
   assert.match(patched, /typeof Up\.linuxRemountWebview==`function`/);
   assert.match(patched, /Up\.linuxStartWebviewRecovery\(a,r,Date\.now\(\)\+5e3\)/);
-  assert.match(patched, /Up\.linuxCompleteWebviewRecovery\(a,r\)/);
-  assert.match(patched, /Up\.linuxFailWebviewRecovery\(a,r\)/);
+  assert.match(patched, /Up\.linuxCompleteWebviewRecovery\(a,r,_\)/);
+  assert.match(patched, /Up\.linuxFailWebviewRecovery\(a,r,_\)/);
   assert.match(
     patched,
     /Up\.getWebview\(a,r,s,\{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l\}\)/,
@@ -7980,6 +7988,16 @@ test("patches the current Browser webview store and host atomically", () => {
   assert.equal(losingWatcherResult.started, false);
   assert.equal(losingWatcherResult.state.attempt, 1);
   store.webviews.set("conversation-1\0tab-1", secondHost);
+  store.linuxCompleteWebviewRecovery("conversation-1", "tab-1", firstHost);
+  assert.equal(
+    store.linuxBrowserUseRecoveryStates.get("conversation-1\0tab-1").attempt,
+    1,
+  );
+  store.linuxFailWebviewRecovery("conversation-1", "tab-1", firstHost);
+  assert.equal(
+    store.linuxBrowserUseRecoveryStates.get("conversation-1\0tab-1").attempt,
+    1,
+  );
   assert.equal(
     store.linuxRemountWebview("conversation-1", "tab-1", secondHost).started,
     false,
@@ -8049,7 +8067,11 @@ test("patches the current Browser webview store and host atomically", () => {
     conversationId: "conversation-2",
     host: reassociatedHost,
     failRecovery: () =>
-      store.linuxFailWebviewRecovery("conversation-2", "tab-2"),
+      store.linuxFailWebviewRecovery(
+        "conversation-2",
+        "tab-2",
+        reassociatedHost,
+      ),
     logger: { error() {}, warn() {} },
     now: () => reassociatedClock,
     recoveryRef: reassociatedRecoveryRef,
