@@ -26,7 +26,7 @@ const patchedThemeGate =
 const currentWindowRegistration =
   "onWindowRegistered:e=>{N?.registerWindow(e),x?.(e)}";
 const patchedWindowRegistration =
-  "onWindowRegistered:e=>{N?.registerWindow(e),x?.(e),process.platform===`linux`&&M()}";
+  "onWindowRegistered:e=>{N?.registerWindow(e),x?.(e),process.platform===`linux`&&setImmediate(M)}";
 const currentTrayRegistration =
   "n=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!W9)return";
 const patchedTrayRegistration =

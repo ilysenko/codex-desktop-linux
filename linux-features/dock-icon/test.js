@@ -35,6 +35,7 @@ const currentRuntimeSource = [
   "M=()=>{if(!g)return;let e=D();j(e),AA({preference:e,resourceName:e===`codex-system`?k.light:null}).then(e=>{e&&j(D())})};",
   "if(g){M();let e=()=>{let e=D();e===`codex-system`&&j(e)};c.nativeTheme.on(`updated`,e),S.add(()=>{c.nativeTheme.off(`updated`,e)})}",
   "let N=null,P=new Nne({onWindowRegistered:e=>{N?.registerWindow(e),x?.(e)}});",
+  "w&&process.platform===`linux`&&M.setIcon(process.resourcesPath+`/../content/webview/assets/app-current.png`);",
   "return{updateDockIcon:M,windowManager:P}}",
 ].join("");
 
@@ -116,7 +117,14 @@ test("main patch enables official previews and synchronizes Linux window and tra
   assert.match(patched, /are\(\)\?\.tray/);
   assert.match(patched, /codexLinuxDockIconImage\.isEmpty\(\)/);
   assert.match(patched, /n\.setImage\(globalThis\.codexLinuxDockIconImage\)/);
-  assert.match(patched, /onWindowRegistered:e=>\{N\?\.registerWindow\(e\),x\?\.\(e\),process\.platform===`linux`&&M\(\)\}/);
+  assert.match(
+    patched,
+    /onWindowRegistered:e=>\{N\?\.registerWindow\(e\),x\?\.\(e\),process\.platform===`linux`&&setImmediate\(M\)\}/,
+  );
+  assert.ok(
+    patched.indexOf("setImmediate(M)") <
+      patched.indexOf("M.setIcon(process.resourcesPath+`/../content/webview/assets/app-current.png`)"),
+  );
 });
 
 test("main patch rejects partial current-DMG drift byte-identically", () => {
