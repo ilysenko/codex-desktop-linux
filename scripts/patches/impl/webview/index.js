@@ -480,19 +480,21 @@ function codexLinuxWatchBrowserWebviewAttachment({
   active,
   browserTabId,
   conversationId,
+  completeRecovery = () => {},
   host,
+  failRecovery = () => {},
+  recoveryState = null,
   recoveryRef,
   remount,
-  remountDeadlineAt = null,
   timerApi = window,
   logger = console,
   now = Date.now,
   timeoutMs = 5e3,
 }) {
   const key = `${conversationId}\0${browserTabId}`;
-  const inheritedRemountState = () => ({
-    attempt: 1,
-    deadlineAt: remountDeadlineAt,
+  const inheritedRecoveryState = () => ({
+    attempt: recoveryState.attempt,
+    deadlineAt: recoveryState.deadlineAt,
     host,
     key,
   });
@@ -500,17 +502,17 @@ function codexLinuxWatchBrowserWebviewAttachment({
     recoveryRef.current = { attempt: 0, deadlineAt: null, host, key };
   } else if (recoveryRef.current?.key !== key) {
     recoveryRef.current =
-      recoveryRef.current?.attempt === 1 && recoveryRef.current.host === host
+      recoveryRef.current?.attempt < 2 && recoveryRef.current.host === host
         ? { ...recoveryRef.current, host, key }
-        : remountDeadlineAt != null
-          ? inheritedRemountState()
+        : recoveryState != null
+          ? inheritedRecoveryState()
         : { attempt: 0, deadlineAt: null, host, key };
   } else if (recoveryRef.current.host !== host) {
     recoveryRef.current =
       recoveryRef.current.attempt < 2 && recoveryRef.current.host != null
         ? { ...recoveryRef.current, host }
-        : remountDeadlineAt != null
-          ? inheritedRemountState()
+        : recoveryState != null
+          ? inheritedRecoveryState()
         : { attempt: 0, deadlineAt: null, host, key };
   }
   if (!active || recoveryRef.current.attempt >= 2) {
@@ -530,6 +532,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
     }
   };
   if (isHostAttached()) {
+    completeRecovery();
     recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
     return () => {};
   }
@@ -539,6 +542,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
   let removeDidAttachListener = () => {};
   const markAttached = () => {
     if (disposed) return;
+    completeRecovery();
     recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
     if (timer != null) {
       timerApi.clearTimeout(timer);
@@ -572,7 +576,9 @@ function codexLinuxWatchBrowserWebviewAttachment({
     if (state?.key !== key || state.attempt >= 2) return;
     const details = { browserTabId, conversationId };
     if (state.attempt === 0) {
-      if (!remount()) {
+      const remountDeadlineAt = now() + timeoutMs;
+      if (!remount(remountDeadlineAt)) {
+        failRecovery();
         recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
         logger.error(
           "IAB_LIFECYCLE Linux Browser webview attachment recovery remount was rejected",
@@ -582,7 +588,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
       }
       recoveryRef.current = {
         attempt: 1,
-        deadlineAt: now() + timeoutMs,
+        deadlineAt: remountDeadlineAt,
         host,
         key,
       };
@@ -592,6 +598,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
       );
       return;
     }
+    failRecovery();
     recoveryRef.current = { attempt: 2, deadlineAt: null, host, key };
     logger.error(
       "IAB_LIFECYCLE Linux Browser webview attachment failed after one remount",
@@ -604,13 +611,15 @@ function codexLinuxWatchBrowserWebviewAttachment({
 
 function hasCompleteLinuxBrowserUseWebviewRemountStorePatch(source) {
   return (
-    source.includes("linuxBrowserUseRemountDeadlines=new Map") &&
-    source.includes("linuxGetWebviewRemountDeadline(e,t)") &&
-    source.includes("linuxRemountWebview(e,t,n)") &&
-    source.includes("for(let e of this.linuxBrowserUseRemountDeadlines.keys())") &&
-    source.includes("this.linuxBrowserUseRemountDeadlines.clear()") &&
-    source.includes("this.linuxBrowserUseRemountDeadlines.set(") &&
-    (source.match(/linuxBrowserUseRemountDeadlines\.delete\(/gu) ?? []).length >= 6
+    source.includes("linuxBrowserUseRecoveryStates=new Map") &&
+    source.includes("linuxStartWebviewRecovery(e,t,n)") &&
+    source.includes("linuxCompleteWebviewRecovery(e,t)") &&
+    source.includes("linuxFailWebviewRecovery(e,t)") &&
+    source.includes("linuxRemountWebview(e,t,n,r)") &&
+    source.includes("for(let e of this.linuxBrowserUseRecoveryStates.keys())") &&
+    source.includes("this.linuxBrowserUseRecoveryStates.clear()") &&
+    source.includes("this.linuxBrowserUseRecoveryStates.set(") &&
+    (source.match(/linuxBrowserUseRecoveryStates\.delete\(/gu) ?? []).length >= 7
   );
 }
 
@@ -734,8 +743,8 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     activeValueVar,
   ] = activeMethodMatch;
   const activeMethodPatch =
-    `setBrowserUseActive(${activeConversationVar},...${activeArgsVar}){let ${activeBrowserTabVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeDefaultTabHelper}(${activeConversationVar},void 0):${activeArgsVar}[0],${activeValueVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeArgsVar}[0]:${activeArgsVar}[1];${activeValueVar}||this.linuxBrowserUseRemountDeadlines.delete(${keyHelper}(${activeConversationVar},${activeBrowserTabVar}));let `;
-  const method = `linuxGetWebviewRemountDeadline(e,t){return this.linuxBrowserUseRemountDeadlines.get(${keyHelper}(e,t))??null}linuxRemountWebview(e,t,n){let r=${keyHelper}(e,t);return this.webviews.get(r)!==n||this.linuxBrowserUseRemountDeadlines.has(r)?!1:(this.linuxBrowserUseRemountDeadlines.set(r,Date.now()+5e3),this.disposeWebviewHost(e,t,r,\`web\`),this.emitChange(),!0)}`;
+    `setBrowserUseActive(${activeConversationVar},...${activeArgsVar}){let ${activeBrowserTabVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeDefaultTabHelper}(${activeConversationVar},void 0):${activeArgsVar}[0],${activeValueVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeArgsVar}[0]:${activeArgsVar}[1];${activeValueVar}||this.linuxBrowserUseRecoveryStates.delete(${keyHelper}(${activeConversationVar},${activeBrowserTabVar}));let `;
+  const method = `linuxStartWebviewRecovery(e,t,n){let r=${keyHelper}(e,t),i=this.linuxBrowserUseRecoveryStates.get(r);return i??(i={attempt:0,deadlineAt:n},this.linuxBrowserUseRecoveryStates.set(r,i)),i}linuxCompleteWebviewRecovery(e,t){this.linuxBrowserUseRecoveryStates.delete(${keyHelper}(e,t))}linuxFailWebviewRecovery(e,t){this.linuxBrowserUseRecoveryStates.set(${keyHelper}(e,t),{attempt:2,deadlineAt:null})}linuxRemountWebview(e,t,n,r){let i=${keyHelper}(e,t),a=this.linuxBrowserUseRecoveryStates.get(i);return this.webviews.get(i)!==n||a?.attempt>=1?!1:(this.linuxBrowserUseRecoveryStates.set(i,{attempt:1,deadlineAt:r}),this.disposeWebviewHost(e,t,i,\`web\`),this.emitChange(),!0)}`;
   const [
     removeTabNeedle,
     removeTabConversationVar,
@@ -746,8 +755,8 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     removeConversationTabsMatch;
   const removeTabPatch =
     `removeTab(${removeTabConversationVar},${removeTabBrowserTabVar}){let ${removeTabKeyVar}=${keyHelper}(${removeTabConversationVar},${removeTabBrowserTabVar});` +
-    `this.linuxBrowserUseRemountDeadlines.delete(${removeTabKeyVar});let `;
-  const removeConversationPatch = `${removeConversationNeedle}for(let e of this.linuxBrowserUseRemountDeadlines.keys())e.startsWith(${removeConversationPrefixVar})&&this.linuxBrowserUseRemountDeadlines.delete(e);`;
+    `this.linuxBrowserUseRecoveryStates.delete(${removeTabKeyVar});let `;
+  const removeConversationPatch = `${removeConversationNeedle}for(let e of this.linuxBrowserUseRecoveryStates.keys())e.startsWith(${removeConversationPrefixVar})&&this.linuxBrowserUseRecoveryStates.delete(e);`;
   const [
     releaseBrowserUseTabNeedle,
     releaseConversationVar,
@@ -756,25 +765,25 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
   ] = releaseBrowserUseTabMatch;
   const releaseBrowserUseTabPatch =
     `releaseBrowserUseTab(${releaseConversationVar},${releaseBrowserTabVar}){let ${releaseKeyVar}=${keyHelper}(${releaseConversationVar},${releaseBrowserTabVar});` +
-    `this.linuxBrowserUseRemountDeadlines.delete(${releaseKeyVar});let `;
+    `this.linuxBrowserUseRecoveryStates.delete(${releaseKeyVar});let `;
   const [siblingDeactivateNeedle, siblingKeyVar] = siblingDeactivateMatch;
   const siblingDeactivatePatch = siblingDeactivateNeedle.replace(
     ";let ",
-    `;this.linuxBrowserUseRemountDeadlines.delete(${siblingKeyVar});let `,
+    `;this.linuxBrowserUseRecoveryStates.delete(${siblingKeyVar});let `,
   );
   const reassociateStateNeedle = reassociateStateMatch[0];
   const reassociateStateVar = reassociateStateMatch[1];
   const reassociateSourceKeyVar = reassociateKeysMatch[1];
   const reassociateTargetKeyVar = reassociateKeysMatch[2];
   const reassociateStatePatch =
-    `;let codexLinuxRemountDeadline=this.linuxBrowserUseRemountDeadlines.get(${reassociateSourceKeyVar});codexLinuxRemountDeadline==null||(this.linuxBrowserUseRemountDeadlines.delete(${reassociateSourceKeyVar}),this.linuxBrowserUseRemountDeadlines.set(${reassociateTargetKeyVar},codexLinuxRemountDeadline));` +
+    `;let codexLinuxRecoveryState=this.linuxBrowserUseRecoveryStates.get(${reassociateSourceKeyVar});codexLinuxRecoveryState==null||(this.linuxBrowserUseRecoveryStates.delete(${reassociateSourceKeyVar}),this.linuxBrowserUseRecoveryStates.set(${reassociateTargetKeyVar},codexLinuxRecoveryState));` +
     `let ${reassociateStateVar}=this.browserUseViewportSizes.get(${reassociateSourceKeyVar})??null,`;
-  const disposeAllPatch = `${disposeAllMatch[0]}this.linuxBrowserUseRemountDeadlines.clear(),`;
+  const disposeAllPatch = `${disposeAllMatch[0]}this.linuxBrowserUseRecoveryStates.clear(),`;
   const registrationAttemptsNeedle = "registrationAttempts=new WeakMap;";
   let patchedClass = classSource
     .replace(
       registrationAttemptsNeedle,
-      `${registrationAttemptsNeedle}linuxBrowserUseRemountDeadlines=new Map;`,
+      `${registrationAttemptsNeedle}linuxBrowserUseRecoveryStates=new Map;`,
     )
     .replace(activeMethodNeedle, activeMethodPatch)
     .replace(registerMethodMatch[0], `${method}${registerMethodMatch[0]}`)
@@ -889,7 +898,7 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
     `let codexLinuxBrowserWebviewRecoveryRef=(0,${reactVar}.useRef)({attempt:0,key:${conversationIdVar}+\`\\0\`+${browserTabIdVar}}),codexLinuxBrowserUseActive=(0,${reactVar}.useSyncExternalStore)(${storeVar}.subscribe,()=>${storeVar}.isBrowserUseActive(${conversationIdVar},${browserTabIdVar}),()=>!1);` +
     `(0,${reactVar}.useEffect)(()=>{codexLinuxBrowserUseActive||(codexLinuxBrowserWebviewRecoveryRef.current={attempt:0,deadlineAt:null,host:null,key:${conversationIdVar}+\`\\0\`+${browserTabIdVar}})},[codexLinuxBrowserUseActive,${conversationIdVar},${browserTabIdVar}]);`;
   const watchSource =
-    `let codexLinuxBrowserWebviewRecoveryCleanup=codexLinuxWatchBrowserWebviewAttachment({active:codexLinuxBrowserUseActive,browserTabId:${browserTabIdVar},conversationId:${conversationIdVar},host:${webviewVar},recoveryRef:codexLinuxBrowserWebviewRecoveryRef,remount:()=>typeof ${storeVar}.linuxRemountWebview==\`function\`&&${storeVar}.linuxRemountWebview(${conversationIdVar},${browserTabIdVar},${webviewVar}),remountDeadlineAt:typeof ${storeVar}.linuxGetWebviewRemountDeadline==\`function\`?${storeVar}.linuxGetWebviewRemountDeadline(${conversationIdVar},${browserTabIdVar}):null});`;
+    `let codexLinuxBrowserWebviewRecoveryCleanup=codexLinuxWatchBrowserWebviewAttachment({active:codexLinuxBrowserUseActive,browserTabId:${browserTabIdVar},completeRecovery:()=>typeof ${storeVar}.linuxCompleteWebviewRecovery==\`function\`&&${storeVar}.linuxCompleteWebviewRecovery(${conversationIdVar},${browserTabIdVar}),conversationId:${conversationIdVar},failRecovery:()=>typeof ${storeVar}.linuxFailWebviewRecovery==\`function\`&&${storeVar}.linuxFailWebviewRecovery(${conversationIdVar},${browserTabIdVar}),host:${webviewVar},recoveryRef:codexLinuxBrowserWebviewRecoveryRef,recoveryState:codexLinuxBrowserUseActive&&typeof ${storeVar}.linuxStartWebviewRecovery==\`function\`?${storeVar}.linuxStartWebviewRecovery(${conversationIdVar},${browserTabIdVar},Date.now()+5e3):null,remount:codexLinuxRemountDeadline=>typeof ${storeVar}.linuxRemountWebview==\`function\`&&${storeVar}.linuxRemountWebview(${conversationIdVar},${browserTabIdVar},${webviewVar},codexLinuxRemountDeadline)});`;
   const componentBodyOpenIndex = openBraceIndex - match.index;
   let patchedComponent = `${componentSource.slice(0, componentBodyOpenIndex + 1)}${declarations}${componentSource.slice(componentBodyOpenIndex + 1)}`;
   const patchedSyncIndex = patchedComponent.indexOf(syncNeedle);

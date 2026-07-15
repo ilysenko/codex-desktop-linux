@@ -7637,6 +7637,34 @@ test("starts a fresh Browser recovery window for a different logical tab", () =>
   assert.equal(timers[0].delay, 5_000);
 });
 
+test("inherits the initial Browser recovery deadline in a fresh component", () => {
+  const timers = [];
+  const recoveryRef = { current: null };
+  const recoveryState = { attempt: 0, deadlineAt: 11_000 };
+
+  codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-2",
+    conversationId: "conversation-2",
+    host: { listenForDidAttach: () => () => {} },
+    now: () => 9_000,
+    recoveryRef,
+    recoveryState,
+    remount: () => true,
+    timerApi: {
+      clearTimeout() {},
+      setTimeout(callback, delay) {
+        timers.push({ callback, delay });
+        return callback;
+      },
+    },
+  });
+
+  assert.equal(recoveryRef.current.attempt, 0);
+  assert.equal(recoveryRef.current.deadlineAt, 11_000);
+  assert.equal(timers[0].delay, 2_000);
+});
+
 test("fails Browser webview attachment deterministically after one remount", () => {
   const timers = [];
   const timerApi = {
@@ -7756,45 +7784,49 @@ test("patches the current Browser webview store and host atomically", () => {
     source,
   );
 
-  assert.match(patched, /linuxRemountWebview\(e,t,n\)/);
+  assert.match(patched, /linuxRemountWebview\(e,t,n,r\)/);
   assert.match(
     patched,
-    /let r=Ef\(e,t\);return this\.webviews\.get\(r\)!==n/,
+    /let i=Ef\(e,t\),a=this\.linuxBrowserUseRecoveryStates\.get\(i\);return this\.webviews\.get\(i\)!==n/,
   );
-  assert.match(patched, /linuxBrowserUseRemountDeadlines\.has\(r\)/);
-  assert.match(patched, /linuxGetWebviewRemountDeadline\(e,t\)/);
+  assert.match(patched, /linuxBrowserUseRecoveryStates\.get\(i\)/);
+  assert.match(patched, /linuxStartWebviewRecovery\(e,t,n\)/);
+  assert.match(patched, /linuxCompleteWebviewRecovery\(e,t\)/);
+  assert.match(patched, /linuxFailWebviewRecovery\(e,t\)/);
   assert.match(
     patched,
-    /r\|\|this\.linuxBrowserUseRemountDeadlines\.delete\(Ef\(e,n\)\)/,
-  );
-  assert.match(
-    patched,
-    /removeTab\(e,t\)\{let n=Ef\(e,t\);this\.linuxBrowserUseRemountDeadlines\.delete\(n\);let r=/,
+    /r\|\|this\.linuxBrowserUseRecoveryStates\.delete\(Ef\(e,n\)\)/,
   );
   assert.match(
     patched,
-    /removeConversationTabs\(e\)\{let t=`\$\{e\}\\0`;for\(let e of this\.linuxBrowserUseRemountDeadlines\.keys\(\)\)/,
+    /removeTab\(e,t\)\{let n=Ef\(e,t\);this\.linuxBrowserUseRecoveryStates\.delete\(n\);let r=/,
   );
   assert.match(
     patched,
-    /releaseBrowserUseTab\(e,t\)\{let n=Ef\(e,t\);this\.linuxBrowserUseRemountDeadlines\.delete\(n\);let r=/,
+    /removeConversationTabs\(e\)\{let t=`\$\{e\}\\0`;for\(let e of this\.linuxBrowserUseRecoveryStates\.keys\(\)\)/,
   );
   assert.match(
     patched,
-    /browserUseActiveTabKeys\.delete\(e\);this\.linuxBrowserUseRemountDeadlines\.delete\(e\);let n=/,
+    /releaseBrowserUseTab\(e,t\)\{let n=Ef\(e,t\);this\.linuxBrowserUseRecoveryStates\.delete\(n\);let r=/,
   );
   assert.match(
     patched,
-    /linuxBrowserUseRemountDeadlines\.delete\(s\),this\.linuxBrowserUseRemountDeadlines\.set\(c,codexLinuxRemountDeadline\)/,
+    /browserUseActiveTabKeys\.delete\(e\);this\.linuxBrowserUseRecoveryStates\.delete\(e\);let n=/,
   );
-  assert.match(patched, /disposeAll\(\)\{this\.electronPageHandoff\.disposeAll\(\),this\.linuxBrowserUseRemountDeadlines\.clear\(\),/);
+  assert.match(
+    patched,
+    /linuxBrowserUseRecoveryStates\.delete\(s\),this\.linuxBrowserUseRecoveryStates\.set\(c,codexLinuxRecoveryState\)/,
+  );
+  assert.match(patched, /disposeAll\(\)\{this\.electronPageHandoff\.disposeAll\(\),this\.linuxBrowserUseRecoveryStates\.clear\(\),/);
   assert.match(patched, /function codexLinuxWatchBrowserWebviewAttachment/);
   assert.match(
     patched,
-    /Up\.linuxRemountWebview\(a,r,_\)/,
+    /Up\.linuxRemountWebview\(a,r,_,codexLinuxRemountDeadline\)/,
   );
   assert.match(patched, /typeof Up\.linuxRemountWebview==`function`/);
-  assert.match(patched, /Up\.linuxGetWebviewRemountDeadline\(a,r\)/);
+  assert.match(patched, /Up\.linuxStartWebviewRecovery\(a,r,Date\.now\(\)\+5e3\)/);
+  assert.match(patched, /Up\.linuxCompleteWebviewRecovery\(a,r\)/);
+  assert.match(patched, /Up\.linuxFailWebviewRecovery\(a,r\)/);
   assert.match(
     patched,
     /Up\.getWebview\(a,r,s,\{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l\}\)/,
@@ -7873,15 +7905,21 @@ test("patches the current Browser webview store and host atomically", () => {
     store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
     true,
   );
-  store.linuxBrowserUseRemountDeadlines.set("conversation-1\0tab-1", 11_000);
+  store.linuxBrowserUseRecoveryStates.set("conversation-1\0tab-1", {
+    attempt: 1,
+    deadlineAt: 11_000,
+  });
   store.reassociateTabState(
     "conversation-1",
     "tab-1",
     "conversation-2",
     "tab-2",
   );
-  assert.equal(store.linuxBrowserUseRemountDeadlines.has("conversation-1\0tab-1"), false);
-  assert.equal(store.linuxGetWebviewRemountDeadline("conversation-2", "tab-2"), 11_000);
+  assert.equal(store.linuxBrowserUseRecoveryStates.has("conversation-1\0tab-1"), false);
+  assert.deepEqual(store.linuxStartWebviewRecovery("conversation-2", "tab-2", 14_000), {
+    attempt: 1,
+    deadlineAt: 11_000,
+  });
   const reassociatedHost = { listenForDidAttach: () => () => {} };
   const reassociatedTimers = [];
   const reassociatedRecoveryRef = { current: null };
@@ -7892,19 +7930,23 @@ test("patches the current Browser webview store and host atomically", () => {
     browserTabId: "tab-2",
     conversationId: "conversation-2",
     host: reassociatedHost,
+    failRecovery: () =>
+      store.linuxFailWebviewRecovery("conversation-2", "tab-2"),
     logger: { error() {}, warn() {} },
     now: () => reassociatedClock,
     recoveryRef: reassociatedRecoveryRef,
-    remount: () =>
+    recoveryState: store.linuxStartWebviewRecovery(
+      "conversation-2",
+      "tab-2",
+      14_000,
+    ),
+    remount: (deadlineAt) =>
       store.linuxRemountWebview(
         "conversation-2",
         "tab-2",
         reassociatedHost,
+        deadlineAt,
       ),
-    remountDeadlineAt: store.linuxGetWebviewRemountDeadline(
-      "conversation-2",
-      "tab-2",
-    ),
     timerApi: {
       clearTimeout() {},
       setTimeout(callback, delay) {
@@ -7919,10 +7961,28 @@ test("patches the current Browser webview store and host atomically", () => {
   reassociatedClock = 11_000;
   reassociatedTimers[0].callback();
   assert.equal(reassociatedRecoveryRef.current.attempt, 2);
+  assert.equal(
+    store.linuxStartWebviewRecovery("conversation-2", "tab-2", 20_000).attempt,
+    2,
+  );
   assert.equal(store.webviews.get("conversation-2\0tab-2"), reassociatedHost);
+  store.linuxBrowserUseRecoveryStates.set("conversation-3\0tab-3", {
+    attempt: 0,
+    deadlineAt: 15_000,
+  });
+  store.reassociateTabState(
+    "conversation-3",
+    "tab-3",
+    "conversation-4",
+    "tab-4",
+  );
+  assert.deepEqual(
+    store.linuxStartWebviewRecovery("conversation-4", "tab-4", 20_000),
+    { attempt: 0, deadlineAt: 15_000 },
+  );
   store.electronPageHandoff = { disposeAll() {} };
   store.disposeAll();
-  assert.equal(store.linuxBrowserUseRemountDeadlines.size, 0);
+  assert.equal(store.linuxBrowserUseRecoveryStates.size, 0);
 });
 
 test("Browser webview recovery descriptor targets the current combined renderer chunk", () => {
