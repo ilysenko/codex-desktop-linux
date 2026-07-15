@@ -489,8 +489,13 @@ function codexLinuxWatchBrowserWebviewAttachment({
   timeoutMs = 5e3,
 }) {
   const key = `${conversationId}\0${browserTabId}`;
-  if (recoveryRef.current?.key !== key || !active) {
+  if (!active) {
     recoveryRef.current = { attempt: 0, deadlineAt: null, host, key };
+  } else if (recoveryRef.current?.key !== key) {
+    recoveryRef.current =
+      recoveryRef.current?.attempt === 1
+        ? { ...recoveryRef.current, host, key }
+        : { attempt: 0, deadlineAt: null, host, key };
   } else if (recoveryRef.current.host !== host) {
     recoveryRef.current =
       recoveryRef.current.attempt === 1
@@ -869,7 +874,8 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
 
   const helperSource = codexLinuxWatchBrowserWebviewAttachment.toString();
   const declarations =
-    `let codexLinuxBrowserWebviewRecoveryRef=(0,${reactVar}.useRef)({attempt:0,key:${conversationIdVar}+\`\\0\`+${browserTabIdVar}}),codexLinuxBrowserUseActive=(0,${reactVar}.useSyncExternalStore)(${storeVar}.subscribe,()=>${storeVar}.isBrowserUseActive(${conversationIdVar},${browserTabIdVar}),()=>!1);`;
+    `let codexLinuxBrowserWebviewRecoveryRef=(0,${reactVar}.useRef)({attempt:0,key:${conversationIdVar}+\`\\0\`+${browserTabIdVar}}),codexLinuxBrowserUseActive=(0,${reactVar}.useSyncExternalStore)(${storeVar}.subscribe,()=>${storeVar}.isBrowserUseActive(${conversationIdVar},${browserTabIdVar}),()=>!1);` +
+    `(0,${reactVar}.useEffect)(()=>{codexLinuxBrowserUseActive||(codexLinuxBrowserWebviewRecoveryRef.current={attempt:0,deadlineAt:null,host:null,key:${conversationIdVar}+\`\\0\`+${browserTabIdVar}})},[codexLinuxBrowserUseActive,${conversationIdVar},${browserTabIdVar}]);`;
   const watchSource =
     `let codexLinuxBrowserWebviewRecoveryCleanup=codexLinuxWatchBrowserWebviewAttachment({active:codexLinuxBrowserUseActive,browserTabId:${browserTabIdVar},conversationId:${conversationIdVar},host:${webviewVar},recoveryRef:codexLinuxBrowserWebviewRecoveryRef,remount:()=>typeof ${storeVar}.linuxRemountWebview==\`function\`&&${storeVar}.linuxRemountWebview(${conversationIdVar},${browserTabIdVar},${webviewVar})});`;
   const componentBodyOpenIndex = openBraceIndex - match.index;

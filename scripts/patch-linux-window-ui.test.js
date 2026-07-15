@@ -7558,12 +7558,16 @@ test("keeps Browser webview attachment deadlines bounded across effect restarts"
   const recoveryRef = { current: { attempt: 0, key: "conversation-1\0tab-1" } };
   const host = { listenForDidAttach: () => () => {} };
   let remounts = 0;
-  const watch = () =>
+  const watch = (
+    conversationId = "conversation-1",
+    browserTabId = "tab-1",
+    watchedHost = host,
+  ) =>
     codexLinuxWatchBrowserWebviewAttachment({
       active: true,
-      browserTabId: "tab-1",
-      conversationId: "conversation-1",
-      host,
+      browserTabId,
+      conversationId,
+      host: watchedHost,
       now: () => clock,
       recoveryRef,
       remount: () => {
@@ -7587,8 +7591,13 @@ test("keeps Browser webview attachment deadlines bounded across effect restarts"
 
   clock = 9_000;
   cleanup();
-  cleanup = watch();
+  cleanup = watch("conversation-2", "tab-2", {
+    listenForDidAttach: () => () => {},
+  });
   assert.equal(timers[2].delay, 2_000);
+  assert.equal(recoveryRef.current.attempt, 1);
+  assert.equal(recoveryRef.current.deadlineAt, 11_000);
+  assert.equal(recoveryRef.current.key, "conversation-2\0tab-2");
   cleanup();
 });
 
@@ -7757,6 +7766,10 @@ test("patches the current Browser webview store and host atomically", () => {
     /useSyncExternalStore\)\(Up\.subscribe,\(\)=>Up\.isBrowserUseActive\(a,r\),\(\)=>!1\)/,
   );
   assert.match(patched, /codexLinuxBrowserUseActive,x\]\)/);
+  assert.match(
+    patched,
+    /useEffect\)\(\(\)=>\{codexLinuxBrowserUseActive\|\|\(codexLinuxBrowserWebviewRecoveryRef\.current=\{attempt:0,deadlineAt:null,host:null,key:a\+`\\0`\+r\}\)\},\[codexLinuxBrowserUseActive,a,r\]\)/,
+  );
   assert.doesNotThrow(() => new vm.Script(patched));
 
   const Store = vm.runInNewContext(`${patched};Pf`);
