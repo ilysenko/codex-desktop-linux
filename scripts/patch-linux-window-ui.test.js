@@ -165,6 +165,7 @@ const {
   applyAutomationUpdateEagerToolPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxBrowserUseAvailabilityPatch,
+  applyLinuxBrowserUseWebviewAttachRecoveryPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
@@ -925,7 +926,6 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-browser-use-availability",
     "linux-browser-use-non-local-navigation",
     "linux-browser-use-external-availability",
-    "linux-browser-use-webview-remount-store",
     "linux-browser-use-webview-attach-recovery",
     "linux-chat-search-hydration",
     "linux-file-manager",
@@ -7411,6 +7411,85 @@ test("remounts a delayed active Browser webview exactly once and preserves its l
   assert.equal(errors.length, 0);
 });
 
+test("does not remount a retained Browser webview that is already attached", () => {
+  const timers = [];
+  const recoveryRef = { current: { attempt: 0, key: "conversation-1\0tab-1" } };
+  let listenerCount = 0;
+  let remounts = 0;
+  const cleanup = codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-1",
+    conversationId: "conversation-1",
+    host: {
+      listenForDidAttach() {
+        listenerCount += 1;
+        return () => {};
+      },
+      webview: {
+        getWebContentsId: () => 42,
+        isConnected: true,
+      },
+    },
+    recoveryRef,
+    remount: () => {
+      remounts += 1;
+      return true;
+    },
+    timerApi: {
+      clearTimeout() {},
+      setTimeout(callback) {
+        timers.push(callback);
+        return callback;
+      },
+    },
+  });
+
+  cleanup();
+  assert.equal(listenerCount, 0);
+  assert.equal(timers.length, 0);
+  assert.equal(remounts, 0);
+  assert.equal(recoveryRef.current.attempt, 2);
+});
+
+test("closes the attachment race after registering the Browser webview listener", () => {
+  const timers = [];
+  const recoveryRef = { current: { attempt: 0, key: "conversation-1\0tab-1" } };
+  const webview = {
+    getWebContentsId: () => 0,
+    isConnected: true,
+  };
+  let removed = 0;
+  const cleanup = codexLinuxWatchBrowserWebviewAttachment({
+    active: true,
+    browserTabId: "tab-1",
+    conversationId: "conversation-1",
+    host: {
+      listenForDidAttach() {
+        webview.getWebContentsId = () => 43;
+        return () => {
+          removed += 1;
+        };
+      },
+      webview,
+    },
+    recoveryRef,
+    remount: () => true,
+    timerApi: {
+      clearTimeout() {},
+      setTimeout(callback) {
+        timers.push(callback);
+        return callback;
+      },
+    },
+  });
+
+  assert.equal(timers.length, 0);
+  assert.equal(recoveryRef.current.attempt, 2);
+  assert.equal(removed, 1);
+  cleanup();
+  assert.equal(removed, 2);
+});
+
 test("fails Browser webview attachment deterministically after one remount", () => {
   const timers = [];
   const timerApi = {
@@ -7474,56 +7553,70 @@ test("fails Browser webview attachment deterministically after one remount", () 
   });
 });
 
-test("patches the Browser webview store and host lifecycle for one bounded remount", () => {
+test("patches the current Browser webview store and host atomically", () => {
   const storeSource =
-    "function Af(e,t){return t??e}function Ef(e,t){return`${e}\\0${t}`}var Pf=class{webviews=new Map;registrationAttempts=new WeakMap;nextHostGeneration=0;getSnapshot(e,t){return this.snapshots.get(Ef(e,t))??null}registerWebviewHost(e,t){return true}setBrowserUseActive(e,...t){let n=typeof t[0]==`boolean`?Af(e,void 0):t[0],r=typeof t[0]==`boolean`?t[0]:t[1],i=Ef(e,n);return i}disposeWebviewHost(e,t,n,r){this.webviews.delete(n)}emitChange(){for(let e of this.listeners)e()}}";
+    "function Af(e,t){return t??e}function Ef(e,t){return`${e}\\0${t}`}var Pf=class{webviews=new Map;snapshots=new Map;tabPersistenceStates=new Map;registrationAttempts=new WeakMap;nextHostGeneration=0;getSnapshot(e,t){return this.snapshots.get(Ef(e,t))??null}setBrowserUseActive(e,...t){let n=typeof t[0]==`boolean`?Af(e,void 0):t[0],r=typeof t[0]==`boolean`?t[0]:t[1],i=Ef(e,n);return i}removeTab(e,t){let n=Ef(e,t),r=this.webviews.get(n);this.webviews.delete(n)}registerWebviewHost(e,t){return true}removeConversationTabs(e){let t=`${e}\\0`;for(let e of this.snapshots.keys())e.startsWith(t)&&this.snapshots.delete(e)}disposeWebviewHost(e,t,n,r){this.webviews.delete(n)}emitChange(){for(let e of this.listeners)e()}}";
   const hostSource =
     "function hT({adoptionLease:e,adoptedWebContentsId:t,bounds:n,browserTabId:r,children:i,conversationId:a,hostKind:o=`right-panel`,initialUrl:s,isVisible:c,persistedTabsEnabled:l=!1,scale:u,shouldBootstrapWhenHidden:d,shouldPaint:f,webviewRef:p,windowZoom:m}){let h=(0,vT.useRef)(null),g=(0,vT.useId)(),y=(0,vT.useRef)(Up.getMountGeneration(a,r)),x=(0,vT.useSyncExternalStore)(Up.subscribe,()=>Up.getCursorOverlayHost(a,r),()=>null);let S=c&&n!=null;return(0,vT.useLayoutEffect)(()=>{let _=Up.getWebview(a,r,s,{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l});h.current=_,Up.syncElectronWebview(_,{bounds:n,isVisible:S,mountGeneration:y.current,scale:u,shouldBootstrap:d,shouldPaint:f,windowZoom:m},p,o)},[r,a,o,s,e,t,n,S,g,l,u,f,d,p,m]),x==null||i==null?null:createPortal(i,x)}";
-
-  const patchedStore = applyPatchTwice(
-    applyLinuxBrowserUseWebviewRemountStorePatch,
-    storeSource,
-  );
-  const patchedHost = applyPatchTwice(
-    applyLinuxBrowserUseWebviewHostRecoveryPatch,
-    hostSource,
+  const source = `${storeSource};${hostSource}`;
+  const patched = applyPatchTwice(
+    applyLinuxBrowserUseWebviewAttachRecoveryPatch,
+    source,
   );
 
-  assert.match(patchedStore, /linuxRemountWebview\(e,t,n\)/);
+  assert.match(patched, /linuxRemountWebview\(e,t,n\)/);
   assert.match(
-    patchedStore,
+    patched,
     /let r=Ef\(e,t\);return this\.webviews\.get\(r\)!==n/,
   );
-  assert.match(patchedStore, /linuxBrowserUseRemountKeys\.has\(r\)/);
+  assert.match(patched, /linuxBrowserUseRemountKeys\.has\(r\)/);
   assert.match(
-    patchedStore,
+    patched,
     /r\|\|this\.linuxBrowserUseRemountKeys\.delete\(Ef\(e,n\)\)/,
   );
-  assert.match(patchedHost, /function codexLinuxWatchBrowserWebviewAttachment/);
   assert.match(
-    patchedHost,
-    /Up\.linuxRemountWebview\(a,r,_\)/,
+    patched,
+    /removeTab\(e,t\)\{let n=Ef\(e,t\);this\.linuxBrowserUseRemountKeys\.delete\(n\);let r=/,
   );
   assert.match(
-    patchedHost,
+    patched,
+    /removeConversationTabs\(e\)\{let t=`\$\{e\}\\0`;for\(let e of this\.linuxBrowserUseRemountKeys\)/,
+  );
+  assert.match(patched, /function codexLinuxWatchBrowserWebviewAttachment/);
+  assert.match(
+    patched,
+    /Up\.linuxRemountWebview\(a,r,_\)/,
+  );
+  assert.match(patched, /typeof Up\.linuxRemountWebview==`function`/);
+  assert.match(
+    patched,
     /Up\.getWebview\(a,r,s,\{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l\}\)/,
   );
   assert.match(
-    patchedHost,
+    patched,
     /useSyncExternalStore\)\(Up\.subscribe,\(\)=>Up\.isBrowserUseActive\(a,r\),\(\)=>!1\)/,
   );
-  assert.match(patchedHost, /codexLinuxBrowserUseActive,x\]\)/);
-  assert.doesNotThrow(() => new vm.Script(`${patchedStore};${patchedHost}`));
+  assert.match(patched, /codexLinuxBrowserUseActive,x\]\)/);
+  assert.doesNotThrow(() => new vm.Script(patched));
 
-  const Store = vm.runInNewContext(`${patchedStore};Pf`);
+  const Store = vm.runInNewContext(`${patched};Pf`);
   const store = new Store();
   store.listeners = new Set();
   const firstHost = { generation: 1 };
   const secondHost = { generation: 2 };
+  const snapshot = { url: "http://localhost:4173/demo" };
+  const persistence = { browserStorageId: "browser-1", mode: "persistent" };
   store.webviews.set("conversation-1\0tab-1", firstHost);
+  store.snapshots.set("conversation-1\0tab-1", snapshot);
+  store.tabPersistenceStates.set("conversation-1\0tab-1", persistence);
   assert.equal(
     store.linuxRemountWebview("conversation-1", "tab-1", firstHost),
     true,
+  );
+  assert.equal(store.snapshots.get("conversation-1\0tab-1"), snapshot);
+  assert.equal(
+    store.tabPersistenceStates.get("conversation-1\0tab-1"),
+    persistence,
   );
   store.webviews.set("conversation-1\0tab-1", secondHost);
   assert.equal(
@@ -7535,20 +7628,55 @@ test("patches the Browser webview store and host lifecycle for one bounded remou
     store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
     true,
   );
+  store.webviews.set("conversation-1\0tab-1", secondHost);
+  store.removeTab("conversation-1", "tab-1");
+  store.webviews.set("conversation-1\0tab-1", secondHost);
+  assert.equal(
+    store.linuxRemountWebview("conversation-1", "tab-1", secondHost),
+    true,
+  );
+  const thirdHost = { generation: 3 };
+  store.webviews.set("conversation-2\0tab-2", thirdHost);
+  assert.equal(
+    store.linuxRemountWebview("conversation-2", "tab-2", thirdHost),
+    true,
+  );
+  store.removeConversationTabs("conversation-2");
+  store.webviews.set("conversation-2\0tab-2", thirdHost);
+  assert.equal(
+    store.linuxRemountWebview("conversation-2", "tab-2", thirdHost),
+    true,
+  );
 });
 
-test("Browser webview recovery descriptors match the current split renderer chunks", () => {
-  const descriptors = require("./patches/core/all-linux/webview/browser-use-attach-recovery/patch.js");
-  const [storeDescriptor, hostDescriptor] = descriptors;
+test("Browser webview recovery descriptor targets the current combined renderer chunk", () => {
+  const descriptor = require("./patches/core/all-linux/webview/browser-use-attach-recovery/patch.js");
 
   assert.match(
-    "app-initial~artifact-tab-content.electron~app-main~new-thread-panel-page~onboarding-page~pr~el73lghr-current.js",
-    storeDescriptor.pattern,
-  );
-  assert.match(
     "app-initial~app-main~onboarding-page-current.js",
-    hostDescriptor.pattern,
+    descriptor.pattern,
   );
+  assert.doesNotMatch(
+    "app-initial~artifact-tab-content.electron~app-main~new-thread-panel-page-current.js",
+    descriptor.pattern,
+  );
+});
+
+test("Browser webview recovery stays fail-soft when only the host seam matches", () => {
+  const hostOnlySource =
+    "function hT({adoptionLease:e,adoptedWebContentsId:t,bounds:n,browserTabId:r,children:i,conversationId:a,hostKind:o=`right-panel`,initialUrl:s,isVisible:c,persistedTabsEnabled:l=!1,scale:u,shouldBootstrapWhenHidden:d,shouldPaint:f,webviewRef:p,windowZoom:m}){let h=(0,vT.useRef)(null),g=(0,vT.useId)(),y=(0,vT.useRef)(Up.getMountGeneration(a,r)),x=(0,vT.useSyncExternalStore)(Up.subscribe,()=>Up.getCursorOverlayHost(a,r),()=>null);let S=c&&n!=null;return(0,vT.useLayoutEffect)(()=>{let _=Up.getWebview(a,r,s,{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l});h.current=_,Up.syncElectronWebview(_,{bounds:n,isVisible:S,mountGeneration:y.current,scale:u,shouldBootstrap:d,shouldPaint:f,windowZoom:m},p,o)},[r,a,o,s,e,t,n,S,g,l,u,f,d,p,m]),x==null||i==null?null:createPortal(i,x)}";
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(message);
+  try {
+    assert.equal(
+      applyLinuxBrowserUseWebviewAttachRecoveryPatch(hostOnlySource),
+      hostOnlySource,
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.ok(warnings.some((message) => message.includes("did not patch atomically")));
 });
 
 test("reports the bounded Linux Browser remount in the main-process timeout", () => {
@@ -7561,9 +7689,9 @@ test("reports the bounded Linux Browser remount in the main-process timeout", ()
 
   assert.match(
     patched,
-    /Timed out waiting for the Browser webview to attach after one bounded Linux remount attempt/,
+    /Timed out waiting for the Browser webview to attach after the bounded Linux recovery window/,
   );
-  assert.match(patched, /browser-open-wait-timeout-after-linux-remount/);
+  assert.match(patched, /browser-open-wait-timeout-after-linux-recovery-window/);
 });
 
 test("hydrates local chat search results before navigating", () => {

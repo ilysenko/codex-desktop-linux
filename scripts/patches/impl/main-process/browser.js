@@ -373,7 +373,7 @@ function applyLinuxBrowserUseRouteLivenessPatch(currentSource) {
 
 function applyLinuxBrowserUseAttachTimeoutDiagnosticPatch(currentSource) {
   const patchedMessage =
-    "Timed out waiting for the Browser webview to attach after one bounded Linux remount attempt";
+    "Timed out waiting for the Browser webview to attach after the bounded Linux recovery window";
   if (currentSource.includes(patchedMessage)) {
     return currentSource;
   }
@@ -397,7 +397,7 @@ function applyLinuxBrowserUseAttachTimeoutDiagnosticPatch(currentSource) {
     .replace(originalMessage, patchedMessage)
     .replace(
       originalEvent,
-      "kind:`browser-open-wait-timeout-after-linux-remount`",
+      "kind:`browser-open-wait-timeout-after-linux-recovery-window`",
     );
 }
 
