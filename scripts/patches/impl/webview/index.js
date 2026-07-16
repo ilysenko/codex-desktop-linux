@@ -626,6 +626,7 @@ function codexLinuxWatchBrowserWebviewAttachment({
 
 function hasCompleteLinuxBrowserUseWebviewRemountStorePatch(source) {
   return (
+    source.includes("codexLinuxDeferEmptyPagePersistenceRegistration") &&
     source.includes("linuxBrowserUseRecoveryStates=new Map") &&
     source.includes("linuxStartWebviewRecovery(e,t,n)") &&
     source.includes("linuxCompleteWebviewRecovery(e,t,n)") &&
@@ -648,16 +649,45 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
   const classOpenIndex = classPrefixIndex === -1 ? -1 : classPrefixIndex + "=class".length;
   const classCloseIndex =
     classOpenIndex === -1 ? -1 : findMatchingBrace(currentSource, classOpenIndex);
-  const registerMethodMatch =
-    markerIndex === -1
-      ? null
-      : /registerWebviewHost\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\{/gu.exec(
-          currentSource.slice(markerIndex),
-        );
   const classSource =
     classOpenIndex === -1 || classCloseIndex === -1
       ? ""
       : currentSource.slice(classOpenIndex, classCloseIndex + 1);
+  const registerMethodMatch =
+    markerIndex === -1
+      ? null
+      : /registerWebviewHost\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{/gu.exec(
+          currentSource.slice(markerIndex),
+        );
+  const registerMethodIndex =
+    registerMethodMatch == null
+      ? -1
+      : markerIndex - classOpenIndex + registerMethodMatch.index;
+  const registerMethodOpenIndex =
+    registerMethodIndex === -1
+      ? -1
+      : classSource.indexOf("{", registerMethodIndex);
+  const registerMethodCloseIndex =
+    registerMethodOpenIndex === -1
+      ? -1
+      : findMatchingBrace(classSource, registerMethodOpenIndex);
+  const registerMethodSource =
+    registerMethodCloseIndex === -1
+      ? ""
+      : classSource.slice(registerMethodIndex, registerMethodCloseIndex + 1);
+  const registrationHostVar = registerMethodMatch?.[1] ?? null;
+  const registrationPersistenceVar = registerMethodMatch?.[2] ?? null;
+  const registrationAttemptTokenMatch =
+    registrationHostVar == null
+      ? null
+      : new RegExp(
+          `this\\.registrationAttempts\\.set\\(${escapeRegExp(registrationHostVar)},([A-Za-z_$][\\w$]*)\\)`,
+          "u",
+        ).exec(registerMethodSource);
+  const registrationStartNeedle = "this.rendererSessionRegistration.then(";
+  const registrationDelayAlreadyPatched = currentSource.includes(
+    "codexLinuxDeferEmptyPagePersistenceRegistration",
+  );
   const keyHelper =
     classSource.match(
       /this\.webviews\.get\(([A-Za-z_$][\w$]*)\(/u,
@@ -726,6 +756,11 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     classOpenIndex === -1 ||
     classCloseIndex === -1 ||
     registerMethodMatch == null ||
+    (!registrationDelayAlreadyPatched &&
+      (registrationAttemptTokenMatch == null ||
+        registrationHostVar == null ||
+        registrationPersistenceVar == null ||
+        !registerMethodSource.includes(registrationStartNeedle))) ||
     activeMethodMatch == null ||
     removeTabMatch == null ||
     removeConversationTabsMatch == null ||
@@ -760,6 +795,8 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
   const activeMethodPatch =
     `setBrowserUseActive(${activeConversationVar},...${activeArgsVar}){let ${activeBrowserTabVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeDefaultTabHelper}(${activeConversationVar},void 0):${activeArgsVar}[0],${activeValueVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeArgsVar}[0]:${activeArgsVar}[1];${activeValueVar}||this.linuxBrowserUseRecoveryStates.delete(${keyHelper}(${activeConversationVar},${activeBrowserTabVar}));let `;
   const method = `linuxStartWebviewRecovery(e,t,n){let r=${keyHelper}(e,t),i=this.linuxBrowserUseRecoveryStates.get(r);return i??(i={attempt:0,deadlineAt:n},this.linuxBrowserUseRecoveryStates.set(r,i)),i}linuxCompleteWebviewRecovery(e,t,n){let r=${keyHelper}(e,t);this.webviews.get(r)===n&&this.linuxBrowserUseRecoveryStates.delete(r)}linuxFailWebviewRecovery(e,t,n){let r=${keyHelper}(e,t);this.webviews.get(r)===n&&this.linuxBrowserUseRecoveryStates.set(r,{attempt:2,deadlineAt:null})}linuxRemountWebview(e,t,n,r){let i=${keyHelper}(e,t),a=this.linuxBrowserUseRecoveryStates.get(i);if(a?.attempt>=1)return{started:!1,state:a};if(this.webviews.get(i)!==n)return null;let o={attempt:1,deadlineAt:r};return this.linuxBrowserUseRecoveryStates.set(i,o),this.disposeWebviewHost(e,t,i,\`web\`),this.emitChange(),{started:!0,state:o}}`;
+  const registrationDelayPatch =
+    `(${registrationPersistenceVar}==null?new Promise(codexLinuxDeferEmptyPagePersistenceRegistration=>setTimeout(codexLinuxDeferEmptyPagePersistenceRegistration,25)).then(()=>this.registrationAttempts.get(${registrationHostVar})===${registrationAttemptTokenMatch?.[1]}?this.rendererSessionRegistration:!1):this.rendererSessionRegistration).then(`;
   const [
     removeTabNeedle,
     removeTabConversationVar,
@@ -808,7 +845,17 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     .replace(siblingDeactivateNeedle, siblingDeactivatePatch)
     .replace(reassociateStateNeedle, reassociateStatePatch)
     .replace(disposeAllMatch[0], disposeAllPatch);
-  if (!hasCompleteLinuxBrowserUseWebviewRemountStorePatch(patchedClass)) {
+  if (!registrationDelayAlreadyPatched) {
+    patchedClass = patchedClass.replace(
+      registrationStartNeedle,
+      registrationDelayPatch,
+    );
+  }
+  if (
+    !hasCompleteLinuxBrowserUseWebviewRemountStorePatch(
+      patchedClass,
+    )
+  ) {
     console.warn(
       "WARN: Browser webview store remount patch was incomplete — skipping Linux attachment recovery store patch",
     );
@@ -940,35 +987,6 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
     `${currentSource.slice(0, match.index)}${helperSource}` +
     `${patchedComponent}${currentSource.slice(closeBraceIndex + 1)}`
   );
-}
-
-function applyLinuxBrowserUseWebviewAttachRecoveryPatch(currentSource) {
-  const hasHostPatch = (source) =>
-    source.includes("function codexLinuxWatchBrowserWebviewAttachment(");
-  if (
-    hasCompleteLinuxBrowserUseWebviewRemountStorePatch(currentSource) &&
-    hasHostPatch(currentSource)
-  ) {
-    return currentSource;
-  }
-
-  const patchedStore = applyLinuxBrowserUseWebviewRemountStorePatch(currentSource);
-  const patchedSource = applyLinuxBrowserUseWebviewHostRecoveryPatch(patchedStore);
-  if (
-    !hasCompleteLinuxBrowserUseWebviewRemountStorePatch(patchedSource) ||
-    !hasHostPatch(patchedSource)
-  ) {
-    if (
-      currentSource.includes("registrationAttempts=new WeakMap") ||
-      currentSource.includes("shouldBootstrapWhenHidden")
-    ) {
-      console.warn(
-        "WARN: Browser webview store and host recovery seams did not patch atomically — skipping Linux attachment recovery patch",
-      );
-    }
-    return currentSource;
-  }
-  return patchedSource;
 }
 
 function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
@@ -2309,7 +2327,6 @@ module.exports = {
   applyAutomationUpdateEagerToolPatch,
   applyLinuxChatSearchHydrationPatch,
   applyLinuxBrowserUseAvailabilityPatch,
-  applyLinuxBrowserUseWebviewAttachRecoveryPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,

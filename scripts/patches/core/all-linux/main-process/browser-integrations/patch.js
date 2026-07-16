@@ -9,6 +9,7 @@ const {
   applyBrowserUseNodeReplApprovalAssets,
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
+  applyLinuxBrowserUseStaleHostRegistrationPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxChromeExtensionStatusPatch,
 } = require("../../../../impl/main-process/browser.js");
@@ -52,6 +53,13 @@ module.exports = [
     order: 165,
     ciPolicy: "optional",
     apply: applyLinuxBundledPluginCopyPermissionsPatch,
+  }),
+  mainBundlePatch({
+    id: "linux-browser-use-stale-host-registration",
+    phase: "main-bundle",
+    order: 169,
+    ciPolicy: "required-upstream",
+    apply: applyLinuxBrowserUseStaleHostRegistrationPatch,
   }),
   mainBundlePatch({
     id: "linux-browser-use-route-liveness",

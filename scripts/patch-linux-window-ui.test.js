@@ -56,6 +56,7 @@ const {
   applyBrowserUseNodeReplApprovalAssets,
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
+  applyLinuxBrowserUseStaleHostRegistrationPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxExternalOpenEnvPatch,
@@ -166,7 +167,6 @@ const {
   applyAutomationUpdateEagerToolPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxBrowserUseAvailabilityPatch,
-  applyLinuxBrowserUseWebviewAttachRecoveryPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
@@ -928,7 +928,9 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-browser-use-availability",
     "linux-browser-use-non-local-navigation",
     "linux-browser-use-external-availability",
-    "linux-browser-use-webview-attach-recovery",
+    "linux-browser-use-stale-host-registration",
+    "linux-browser-use-webview-attach-recovery-store",
+    "linux-browser-use-webview-attach-recovery-host",
     "linux-chat-search-hydration",
     "linux-file-manager",
     "linux-host-child-process-environment",
@@ -8154,17 +8156,26 @@ test("does not poison shared Browser recovery when a stale host timer fires", ()
   assert.equal(recoveryRef.current.attempt, 2);
 });
 
-test("patches the current Browser webview store and host atomically", () => {
+test("patches the current split Browser webview store and host chunks", async () => {
   const storeSource =
-    "function Af(e,t){return t??e}function Ef(e,t){return`${e}\\0${t}`}var Pf=class{webviews=new Map;snapshots=new Map;tabPersistenceStates=new Map;browserUseActiveTabKeys=new Set;browserUseViewportSizes=new Map;transferredWebviewKeys=new Set;registrationAttempts=new WeakMap;nextHostGeneration=0;getSnapshot(e,t){return this.snapshots.get(Ef(e,t))??null}setBrowserUseActive(e,...t){let n=typeof t[0]==`boolean`?Af(e,void 0):t[0],r=typeof t[0]==`boolean`?t[0]:t[1],i=Ef(e,n),a=this.browserUseActiveTabKeys.has(i);if(r){let t=`${e}\\0`;for(let e of Array.from(this.browserUseActiveTabKeys)){if(e===i||!e.startsWith(t))continue;this.browserUseActiveTabKeys.delete(e);let n=null}this.browserUseActiveTabKeys.add(i)}else this.browserUseActiveTabKeys.delete(i);return a}releaseBrowserUseTab(e,t){let n=Ef(e,t),r=this.browserUseActiveTabKeys.delete(n);return r}removeTab(e,t){let n=Ef(e,t),r=this.webviews.get(n);this.webviews.delete(n)}registerWebviewHost(e,t){return true}removeConversationTabs(e){let t=`${e}\\0`;for(let e of this.snapshots.keys())e.startsWith(t)&&this.snapshots.delete(e)}reassociateTabState(e,...t){let n=t[0],r=t[1],i=t[2],o=`transfer`,s=Ef(e,n),c=Ef(r,i);if(s===c||this.transferredWebviewKeys.has(o))return;if(this.webviews.has(c))return;let m=this.browserUseViewportSizes.get(s)??null,h=this.browserUseActiveTabKeys.delete(s);h&&this.browserUseActiveTabKeys.add(c);return m}disposeAll(){this.electronPageHandoff.disposeAll(),this.webviews.clear()}disposeWebviewHost(e,t,n,r){this.webviews.delete(n)}emitChange(){for(let e of this.listeners)e()}}";
+    "function Af(e,t){return t??e}function Ef(e,t){return`${e}\\0${t}`}var Pf=class{webviews=new Map;snapshots=new Map;tabPersistenceStates=new Map;browserUseActiveTabKeys=new Set;browserUseViewportSizes=new Map;transferredWebviewKeys=new Set;registrationAttempts=new WeakMap;nextHostGeneration=0;getSnapshot(e,t){return this.snapshots.get(Ef(e,t))??null}setBrowserUseActive(e,...t){let n=typeof t[0]==`boolean`?Af(e,void 0):t[0],r=typeof t[0]==`boolean`?t[0]:t[1],i=Ef(e,n),a=this.browserUseActiveTabKeys.has(i);if(r){let t=`${e}\\0`;for(let e of Array.from(this.browserUseActiveTabKeys)){if(e===i||!e.startsWith(t))continue;this.browserUseActiveTabKeys.delete(e);let n=null}this.browserUseActiveTabKeys.add(i)}else this.browserUseActiveTabKeys.delete(i);return a}releaseBrowserUseTab(e,t){let n=Ef(e,t),r=this.browserUseActiveTabKeys.delete(n);return r}removeTab(e,t){let n=Ef(e,t),r=this.webviews.get(n);this.webviews.delete(n)}registerWebviewHost(e,t){let n=Api.browserSidebar;if(n==null){this.disposeCurrentWebviewHost(e);return}let r=e.getBrowserTabId(),i=e.getConversationId(),a={};this.registrationAttempts.set(e,a),this.rendererSessionRegistration??=n.registerWebviewHostSession({rendererInstanceId:this.rendererInstanceId}),this.rendererSessionRegistration.then(o=>o&&this.registrationAttempts.get(e)===a?n.registerWebviewHost({browserTabId:r,conversationId:i,hostGeneration:e.getHostGeneration(),pagePersistence:t,rendererInstanceId:this.rendererInstanceId}):!1).then(t=>{this.registrationAttempts.get(e)!==a||!this.isCurrentWebviewHost(e)||e.getBrowserTabId()!==r||e.getConversationId()!==i||(t?e.markRegistered()&&this.emitChange():(this.disposeCurrentWebviewHost(e),this.emitChange()))}).catch(()=>{this.registrationAttempts.get(e)!==a||!this.isCurrentWebviewHost(e)||(this.disposeCurrentWebviewHost(e),this.emitChange())})}isCurrentWebviewHost(e){return this.webviews.get(Ef(e.getConversationId(),e.getBrowserTabId()))===e}disposeCurrentWebviewHost(e){let t=e.getConversationId(),n=e.getBrowserTabId(),r=Ef(t,n);this.webviews.get(r)===e&&this.disposeWebviewHost(t,n,r,`web`)}removeConversationTabs(e){let t=`${e}\\0`;for(let e of this.snapshots.keys())e.startsWith(t)&&this.snapshots.delete(e)}reassociateTabState(e,...t){let n=t[0],r=t[1],i=t[2],o=`transfer`,s=Ef(e,n),c=Ef(r,i);if(s===c||this.transferredWebviewKeys.has(o))return;if(this.webviews.has(c))return;let m=this.browserUseViewportSizes.get(s)??null,h=this.browserUseActiveTabKeys.delete(s);h&&this.browserUseActiveTabKeys.add(c);return m}disposeAll(){this.electronPageHandoff.disposeAll(),this.webviews.clear()}disposeWebviewHost(e,t,n,r){this.webviews.delete(n)}emitChange(){for(let e of this.listeners)e()}}";
   const hostSource =
     "function hT({adoptionLease:e,adoptedWebContentsId:t,bounds:n,browserTabId:r,children:i,conversationId:a,hostKind:o=`right-panel`,initialUrl:s,isVisible:c,persistedTabsEnabled:l=!1,scale:u,shouldBootstrapWhenHidden:d,shouldPaint:f,webviewRef:p,windowZoom:m}){let h=(0,vT.useRef)(null),g=(0,vT.useId)(),y=(0,vT.useRef)(Up.getMountGeneration(a,r)),x=(0,vT.useSyncExternalStore)(Up.subscribe,()=>Up.getCursorOverlayHost(a,r),()=>null);let S=c&&n!=null;return(0,vT.useLayoutEffect)(()=>{let _=Up.getWebview(a,r,s,{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l});h.current=_,Up.syncElectronWebview(_,{bounds:n,isVisible:S,mountGeneration:y.current,scale:u,shouldBootstrap:d,shouldPaint:f,windowZoom:m},p,o)},[r,a,o,s,e,t,n,S,g,l,u,f,d,p,m]),x==null||i==null?null:createPortal(i,x)}";
-  const source = `${storeSource};${hostSource}`;
-  const patched = applyPatchTwice(
-    applyLinuxBrowserUseWebviewAttachRecoveryPatch,
-    source,
+  const patchedStore = applyPatchTwice(
+    applyLinuxBrowserUseWebviewRemountStorePatch,
+    storeSource,
   );
+  const patchedHost = applyPatchTwice(
+    applyLinuxBrowserUseWebviewHostRecoveryPatch,
+    hostSource,
+  );
+  const patched = `${patchedStore};${patchedHost}`;
 
+  assert.doesNotMatch(patched, /codexLinuxRegisterBrowserWebviewHostWithRetry/);
+  assert.match(
+    patched,
+    /t==null\?new Promise\(codexLinuxDeferEmptyPagePersistenceRegistration=>setTimeout\(codexLinuxDeferEmptyPagePersistenceRegistration,25\)\)/,
+  );
   assert.match(patched, /linuxRemountWebview\(e,t,n,r\)/);
   assert.match(
     patched,
@@ -8223,9 +8234,46 @@ test("patches the current Browser webview store and host atomically", () => {
   );
   assert.doesNotThrow(() => new vm.Script(patched));
 
-  const Store = vm.runInNewContext(`${patched};Pf`);
+  const registrations = [];
+  const Store = vm.runInNewContext(`${patched};Pf`, {
+    Api: {
+      browserSidebar: {
+        registerWebviewHost(payload) {
+          registrations.push(payload);
+          return Promise.resolve(true);
+        },
+        registerWebviewHostSession() {
+          return Promise.resolve(true);
+        },
+      },
+    },
+    clearTimeout,
+    console,
+    Promise,
+    setTimeout,
+  });
   const store = new Store();
   store.listeners = new Set();
+  store.rendererInstanceId = "renderer-1";
+  const registrationHost = {
+    getBrowserTabId: () => "tab-registration",
+    getConversationId: () => "conversation-registration",
+    getHostGeneration: () => 1,
+    markRegistered: () => true,
+  };
+  store.webviews.set(
+    "conversation-registration\0tab-registration",
+    registrationHost,
+  );
+  store.registerWebviewHost(registrationHost, null);
+  const currentPersistence = {
+    browserStorageId: "browser-registration",
+    restore: "none",
+  };
+  store.registerWebviewHost(registrationHost, currentPersistence);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0].pagePersistence, currentPersistence);
   const firstHost = { generation: 1 };
   const secondHost = { generation: 2 };
   const snapshot = { url: "http://localhost:4173/demo" };
@@ -8387,34 +8435,46 @@ test("patches the current Browser webview store and host atomically", () => {
   assert.equal(store.linuxBrowserUseRecoveryStates.size, 0);
 });
 
-test("Browser webview recovery descriptor targets the current combined renderer chunk", () => {
-  const descriptor = require("./patches/core/all-linux/webview/browser-use-attach-recovery/patch.js");
+test("Browser webview recovery descriptors target the current split renderer chunks", () => {
+  const descriptors = require("./patches/core/all-linux/webview/browser-use-attach-recovery/patch.js");
+  const storeDescriptor = descriptors.find(
+    (descriptor) => descriptor.id === "linux-browser-use-webview-attach-recovery-store",
+  );
+  const hostDescriptor = descriptors.find(
+    (descriptor) => descriptor.id === "linux-browser-use-webview-attach-recovery-host",
+  );
 
   assert.match(
-    "app-initial~app-main~onboarding-page-current.js",
-    descriptor.pattern,
+    "app-initial~app-main~projects-index-page~remote-conversation-page-current.js",
+    storeDescriptor.pattern,
   );
   assert.doesNotMatch(
-    "app-initial~artifact-tab-content.electron~app-main~new-thread-panel-page-current.js",
-    descriptor.pattern,
+    "app-initial~app-main~onboarding-page-current.js",
+    storeDescriptor.pattern,
   );
+  assert.match(
+    "app-initial~app-main~onboarding-page-current.js",
+    hostDescriptor.pattern,
+  );
+  assert.doesNotMatch(
+    "app-initial~app-main~projects-index-page~remote-conversation-page-current.js",
+    hostDescriptor.pattern,
+  );
+  assert.equal(storeDescriptor.ciPolicy, "required-upstream");
+  assert.equal(hostDescriptor.ciPolicy, "required-upstream");
 });
 
-test("Browser webview recovery stays fail-soft when only the host seam matches", () => {
+test("Browser webview recovery patches remain isolated to their split chunks", () => {
   const hostOnlySource =
     "function hT({adoptionLease:e,adoptedWebContentsId:t,bounds:n,browserTabId:r,children:i,conversationId:a,hostKind:o=`right-panel`,initialUrl:s,isVisible:c,persistedTabsEnabled:l=!1,scale:u,shouldBootstrapWhenHidden:d,shouldPaint:f,webviewRef:p,windowZoom:m}){let h=(0,vT.useRef)(null),g=(0,vT.useId)(),y=(0,vT.useRef)(Up.getMountGeneration(a,r)),x=(0,vT.useSyncExternalStore)(Up.subscribe,()=>Up.getCursorOverlayHost(a,r),()=>null);let S=c&&n!=null;return(0,vT.useLayoutEffect)(()=>{let _=Up.getWebview(a,r,s,{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l});h.current=_,Up.syncElectronWebview(_,{bounds:n,isVisible:S,mountGeneration:y.current,scale:u,shouldBootstrap:d,shouldPaint:f,windowZoom:m},p,o)},[r,a,o,s,e,t,n,S,g,l,u,f,d,p,m]),x==null||i==null?null:createPortal(i,x)}";
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (message) => warnings.push(message);
-  try {
-    assert.equal(
-      applyLinuxBrowserUseWebviewAttachRecoveryPatch(hostOnlySource),
-      hostOnlySource,
-    );
-  } finally {
-    console.warn = originalWarn;
-  }
-  assert.ok(warnings.some((message) => message.includes("did not patch atomically")));
+  assert.equal(
+    applyLinuxBrowserUseWebviewRemountStorePatch(hostOnlySource),
+    hostOnlySource,
+  );
+  assert.notEqual(
+    applyLinuxBrowserUseWebviewHostRecoveryPatch(hostOnlySource),
+    hostOnlySource,
+  );
 });
 
 test("hydrates local chat search results before navigating", () => {
@@ -8470,6 +8530,175 @@ test("hydrates current local chat search route helper before navigating", () => 
     patched,
     /async function MI\(e,t,n,r\)\{switch\(e\.kind\)\{case`local`:await codexLinuxHydrateSearchConversation\(e,e\.threadKey\);Yh\(e\.threadKey,t,n\);return;case`remote`:Yh\(e\.threadKey,t,n\);return;case`chatgpt`:return\}\}/,
   );
+});
+
+test("replaces a stale unattached Linux Browser snapshot without weakening storage ownership checks", () => {
+  const source =
+    "function yQ(){return null}" +
+    "var BrowserManager=class{ensureCurrentWindowState(){return this.windowState}ensureThreadStateForWindow(){return this.threadState}registerWebviewHost(e,t,n,r,i,a){let o=this.ensureCurrentWindowState(e);if(o==null||o.rendererInstanceId!==a)return!1;let s=this.browserPersistence.getPagePersistence(o.window,i),c=yQ(o,n,t)??this.ensureThreadStateForWindow(o,n,t);return c.hostGeneration!=null&&c.hostGeneration>r||!this.browserPersistence.reconcileBrowserStorageId(o,c,s)||this.browserPersistence.preparePage(o,c,s).kind===`missing`?!1:(c.hostGeneration=r,this.browserPersistence.registerWebviewHost(o,c,s),!0)}attachWebview(){} }";
+  const patched = applyPatchTwice(
+    applyLinuxBrowserUseStaleHostRegistrationPatch,
+    source,
+  );
+  const BrowserManager = vm.runInNewContext(`${patched};BrowserManager`, {
+    process: { platform: "linux" },
+  });
+  const manager = new BrowserManager();
+  const persistence = { browserStorageId: "persisted-id", restore: "none" };
+  const calls = [];
+  manager.windowState = { rendererInstanceId: "renderer-1", window: {} };
+  manager.threadState = {
+    browserStorageId: "stale-id",
+    hostGeneration: null,
+    pendingTeardown: null,
+    sessionState: "cold",
+    isBrowserUsePage: false,
+    page: {
+      browserStorageId: "stale-id",
+      isColdRestore: false,
+      isRestoring: false,
+      isSuspended: false,
+      pendingSuspensionId: null,
+      view: { webContents: null },
+    },
+  };
+  manager.browserPersistence = {
+    getPagePersistence: () => persistence,
+    reconcileBrowserStorageId: (_windowState, threadState, value) => {
+      calls.push(["reconcile", value]);
+      return threadState.browserStorageId === value.browserStorageId;
+    },
+    hasBrowserStorageOwner: () => false,
+    browserPageSnapshots: {
+      hasDurableStorageIdentity: (browserStorageId) =>
+        browserStorageId === "stale-id",
+      deleteClosedPageAndFlush: (page) => calls.push(["delete", page]),
+    },
+    preparePage: (_windowState, _threadState, value) => {
+      calls.push(["prepare", value]);
+      return { kind: "not-requested" };
+    },
+    registerWebviewHost: (_windowState, _threadState, value) => {
+      calls.push(["register", value]);
+    },
+  };
+
+  assert.equal(
+    manager.registerWebviewHost({}, "tab-1", "conversation-1", 1, persistence, "renderer-1"),
+    true,
+  );
+  assert.deepEqual(
+    calls.map(([kind, value]) => [kind, value?.restore]),
+    [["reconcile", "none"], ["delete", undefined], ["prepare", "none"], ["register", "none"]],
+  );
+  assert.equal(calls[1][1].browserStorageId, "persisted-id");
+  assert.equal(manager.threadState.page.browserStorageId, "persisted-id");
+  assert.match(patched, /codex-linux-browser-stale-host-registration/);
+});
+
+test("keeps owned and live Browser storage mismatches strict on Linux", () => {
+  const source =
+    "function yQ(){return null}" +
+    "var BrowserManager=class{ensureCurrentWindowState(){return this.windowState}ensureThreadStateForWindow(){return this.threadState}registerWebviewHost(e,t,n,r,i,a){let o=this.ensureCurrentWindowState(e);if(o==null||o.rendererInstanceId!==a)return!1;let s=this.browserPersistence.getPagePersistence(o.window,i),c=yQ(o,n,t)??this.ensureThreadStateForWindow(o,n,t);return c.hostGeneration!=null&&c.hostGeneration>r||!this.browserPersistence.reconcileBrowserStorageId(o,c,s)||this.browserPersistence.preparePage(o,c,s).kind===`missing`?!1:(c.hostGeneration=r,this.browserPersistence.registerWebviewHost(o,c,s),!0)}attachWebview(){} }";
+  const patched = applyLinuxBrowserUseStaleHostRegistrationPatch(source);
+  const BrowserManager = vm.runInNewContext(`${patched};BrowserManager`, {
+    process: { platform: "linux" },
+  });
+
+  for (const scenario of [
+    { desiredIsOwned: true, webContents: null },
+    { desiredIsOwned: false, webContents: {} },
+  ]) {
+    const manager = new BrowserManager();
+    let deleteCalls = 0;
+    manager.windowState = { rendererInstanceId: "renderer-1", window: {} };
+    manager.threadState = {
+      browserStorageId: "stale-id",
+      hostGeneration: null,
+      pendingTeardown: null,
+      sessionState: "cold",
+      isBrowserUsePage: false,
+      page: {
+        browserStorageId: "stale-id",
+        isColdRestore: false,
+        isRestoring: false,
+        isSuspended: false,
+        pendingSuspensionId: null,
+        view: { webContents: scenario.webContents },
+      },
+    };
+    manager.browserPersistence = {
+      getPagePersistence: () => ({
+        browserStorageId: "desired-id",
+        restore: "none",
+      }),
+      reconcileBrowserStorageId: () => false,
+      hasBrowserStorageOwner: () => scenario.desiredIsOwned,
+      browserPageSnapshots: {
+        hasDurableStorageIdentity: (browserStorageId) =>
+          browserStorageId === "stale-id",
+        deleteClosedPageAndFlush: () => {
+          deleteCalls += 1;
+        },
+      },
+      preparePage: () => ({ kind: "not-requested" }),
+      registerWebviewHost: () => {},
+    };
+
+    assert.equal(
+      manager.registerWebviewHost(
+        {},
+        "tab-1",
+        "conversation-1",
+        1,
+        { browserStorageId: "desired-id", restore: "none" },
+        "renderer-1",
+      ),
+      false,
+    );
+    assert.equal(deleteCalls, 0);
+    assert.equal(manager.threadState.browserStorageId, "stale-id");
+  }
+});
+
+test("keeps required Browser restore persistence strict on Linux", () => {
+  const source =
+    "function yQ(){return null}" +
+    "var BrowserManager=class{ensureCurrentWindowState(){return this.windowState}ensureThreadStateForWindow(){return this.threadState}registerWebviewHost(e,t,n,r,i,a){let o=this.ensureCurrentWindowState(e);if(o==null||o.rendererInstanceId!==a)return!1;let s=this.browserPersistence.getPagePersistence(o.window,i),c=yQ(o,n,t)??this.ensureThreadStateForWindow(o,n,t);return c.hostGeneration!=null&&c.hostGeneration>r||!this.browserPersistence.reconcileBrowserStorageId(o,c,s)||this.browserPersistence.preparePage(o,c,s).kind===`missing`?!1:(c.hostGeneration=r,this.browserPersistence.registerWebviewHost(o,c,s),!0)}attachWebview(){} }";
+  const patched = applyLinuxBrowserUseStaleHostRegistrationPatch(source);
+  const BrowserManager = vm.runInNewContext(`${patched};BrowserManager`, {
+    process: { platform: "linux" },
+  });
+  const manager = new BrowserManager();
+  const persistence = { browserStorageId: "persisted-id", restore: "required" };
+  let prepareCalls = 0;
+  manager.windowState = { rendererInstanceId: "renderer-1", window: {} };
+  manager.threadState = { hostGeneration: null };
+  manager.browserPersistence = {
+    getPagePersistence: () => persistence,
+    reconcileBrowserStorageId: () => false,
+    preparePage: () => {
+      prepareCalls += 1;
+      return { kind: "not-requested" };
+    },
+    registerWebviewHost: () => {},
+  };
+
+  assert.equal(
+    manager.registerWebviewHost({}, "tab-1", "conversation-1", 1, persistence, "renderer-1"),
+    false,
+  );
+  assert.equal(prepareCalls, 0);
+});
+
+test("stale Browser host registration descriptor is required for the current upstream bundle", () => {
+  const descriptors = require("./patches/core/all-linux/main-process/browser-integrations/patch.js");
+  const descriptor = descriptors.find(
+    ({ id }) => id === "linux-browser-use-stale-host-registration",
+  );
+
+  assert.equal(descriptor.phase, "main-bundle");
+  assert.equal(descriptor.ciPolicy, "required-upstream");
 });
 
 test("resolves the requested live Linux Browser Use route window by id", () => {

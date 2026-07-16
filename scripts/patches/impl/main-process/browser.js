@@ -191,6 +191,59 @@ function applyLinuxBundledPluginReconcileStaleSnapshotPatch(currentSource) {
   );
 }
 
+function applyLinuxBrowserUseStaleHostRegistrationPatch(currentSource) {
+  const marker = "/*codex-linux-browser-stale-host-registration*/";
+  if (currentSource.includes(marker)) {
+    return currentSource;
+  }
+
+  const registrationPattern =
+    /registerWebviewHost\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=this\.ensureCurrentWindowState\(\1\);if\(\7==null\|\|\7\.rendererInstanceId!==\6\)return!1;let ([A-Za-z_$][\w$]*)=this\.browserPersistence\.getPagePersistence\(\7\.window,\5\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(\7,\3,\2\)\?\?this\.ensureThreadStateForWindow\(\7,\3,\2\);return /u;
+  const match = registrationPattern.exec(currentSource);
+  if (match == null) {
+    if (
+      currentSource.includes("registerWebviewHostSession(") ||
+      currentSource.includes("reconcileBrowserStorageId(")
+    ) {
+      console.warn(
+        "WARN: Could not find Browser webview host registration boundary — skipping Linux stale-host persistence recovery",
+      );
+    }
+    return currentSource;
+  }
+
+  const windowStateVar = match[7];
+  const persistenceVar = match[8];
+  const threadStateVar = match[9];
+  const reconcileNeedle =
+    `!this.browserPersistence.reconcileBrowserStorageId(${windowStateVar},${threadStateVar},${persistenceVar})`;
+  const methodEnd = currentSource.indexOf("}attachWebview(", match.index);
+  if (methodEnd === -1) {
+    console.warn(
+      "WARN: Could not find Browser webview attach boundary — skipping Linux stale-host persistence recovery",
+    );
+    return currentSource;
+  }
+  const methodSource = currentSource.slice(match.index, methodEnd);
+  if (!methodSource.includes(reconcileNeedle)) {
+    console.warn(
+      "WARN: Could not find Browser webview persistence reconciliation — skipping Linux stale-host persistence recovery",
+    );
+    return currentSource;
+  }
+
+  // A persisted Browser route can outlive the renderer's in-memory persistence
+  // map. Replace that stale identity only for a cold, unattached page and a
+  // brand-new unowned renderer identity; live pages and restores stay strict.
+  const reconcilePatch =
+    `${reconcileNeedle}&&!(process.platform===\`linux\`&&${persistenceVar}?.restore===\`none\`&&${threadStateVar}.hostGeneration==null&&${threadStateVar}.pendingTeardown==null&&${threadStateVar}.sessionState===\`cold\`&&!${threadStateVar}.isBrowserUsePage&&${threadStateVar}.page!=null&&${threadStateVar}.page.browserStorageId===${threadStateVar}.browserStorageId&&${threadStateVar}.page.view?.webContents==null&&!${threadStateVar}.page.isColdRestore&&!${threadStateVar}.page.isRestoring&&!${threadStateVar}.page.isSuspended&&${threadStateVar}.page.pendingSuspensionId==null&&this.browserPersistence.browserPageSnapshots.hasDurableStorageIdentity(${threadStateVar}.browserStorageId)&&!this.browserPersistence.browserPageSnapshots.hasDurableStorageIdentity(${persistenceVar}.browserStorageId)&&!this.browserPersistence.hasBrowserStorageOwner(${persistenceVar}.browserStorageId,${threadStateVar})&&(()=>{this.browserPersistence.browserPageSnapshots.deleteClosedPageAndFlush(${threadStateVar}.page);${threadStateVar}.browserStorageId=${persistenceVar}.browserStorageId;${threadStateVar}.page.browserStorageId=${persistenceVar}.browserStorageId;return!0})())${marker}`;
+  return (
+    currentSource.slice(0, match.index) +
+    methodSource.replace(reconcileNeedle, reconcilePatch) +
+    currentSource.slice(methodEnd)
+  );
+}
+
 function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   let patchedSource = currentSource;
   let patchedTrustedHashes = false;
@@ -515,6 +568,7 @@ module.exports = {
   applyBrowserUseNodeReplApprovalAssets,
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
+  applyLinuxBrowserUseStaleHostRegistrationPatch,
   applyLinuxExternalOpenEnvPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxChromeExtensionStatusPatch,
