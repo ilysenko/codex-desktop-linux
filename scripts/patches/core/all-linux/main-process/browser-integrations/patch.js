@@ -11,6 +11,7 @@ const {
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxBrowserUseSocketDirectoryPatch,
+  applyLinuxBrowserUseUserAgentPatch,
   applyLinuxChromeExtensionStatusPatch,
 } = require("../../../../impl/main-process/browser.js");
 const { applyLinuxChromePluginAutoInstallPatch } = require("../../../../impl/chrome-plugin.js");
@@ -60,6 +61,13 @@ module.exports = [
     order: 168,
     ciPolicy: "optional",
     apply: applyLinuxBrowserUseSocketDirectoryPatch,
+  }),
+  mainBundlePatch({
+    id: "linux-browser-use-user-agent",
+    phase: "main-bundle",
+    order: 171,
+    ciPolicy: "optional",
+    apply: applyLinuxBrowserUseUserAgentPatch,
   }),
   mainBundlePatch({
     id: "linux-browser-use-route-liveness",

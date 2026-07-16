@@ -429,6 +429,57 @@ function applyLinuxBrowserUseSocketDirectoryPatch(currentSource) {
   );
 }
 
+function applyLinuxBrowserUseUserAgentPatch(currentSource) {
+  const helperName = "codexLinuxNormalizeBrowserUseUserAgent";
+  if (currentSource.includes(`function ${helperName}(`)) {
+    return currentSource;
+  }
+
+  const browserWebviewPreferencesPattern =
+    /function ([A-Za-z_$][\w$]*)\(\{configureBrowserSession:([A-Za-z_$][\w$]*),params:([A-Za-z_$][\w$]*),preloadPath:([A-Za-z_$][\w$]*),webPreferences:([A-Za-z_$][\w$]*)\}\)\{\3\.partition=([A-Za-z_$][\w$]*)\(`app`\),\5\.session=\2\(\),\5\.preload=\4,([A-Za-z_$][\w$]*)\(\3,\5\)\}/u;
+  const match = currentSource.match(browserWebviewPreferencesPattern);
+  if (match == null) {
+    if (
+      currentSource.includes("configureBrowserSession") &&
+      currentSource.includes("preloadPath")
+    ) {
+      console.warn(
+        "WARN: Could not find Browser sidebar webview preferences — skipping Linux Browser Use user agent patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [
+    originalFunction,
+    functionName,
+    configureSessionVar,
+    paramsVar,
+    preloadPathVar,
+    webPreferencesVar,
+    partitionHelperVar,
+    hardenPreferencesVar,
+  ] = match;
+  const helper =
+    `function ${helperName}(e,t){if(process.platform!==\`linux\`||e==null||t?.session==null)return;try{let n=typeof e.useragent===\`string\`?e.useragent:t.session.getUserAgent?.();if(typeof n!==\`string\`)return;let r=n.replace(/\\s+(?:ChatGPT|Electron)\\/\\S+/g,\`\`);r!==n&&(e.useragent=r)}catch{}}`;
+  const patchedFunction =
+    `function ${functionName}({configureBrowserSession:${configureSessionVar},params:${paramsVar},preloadPath:${preloadPathVar},webPreferences:${webPreferencesVar}}){` +
+    `${paramsVar}.partition=${partitionHelperVar}(\`app\`),${webPreferencesVar}.session=${configureSessionVar}(),` +
+    `${webPreferencesVar}.preload=${preloadPathVar},${hardenPreferencesVar}(${paramsVar},${webPreferencesVar}),` +
+    `${helperName}(${paramsVar},${webPreferencesVar})}`;
+  const strictDirective = '"use strict";';
+  const helperInsertionIndex = currentSource.startsWith(strictDirective)
+    ? strictDirective.length
+    : 0;
+  const patchedSource = currentSource.replace(originalFunction, patchedFunction);
+
+  return (
+    patchedSource.slice(0, helperInsertionIndex) +
+    helper +
+    patchedSource.slice(helperInsertionIndex)
+  );
+}
+
 function applyLinuxChromeExtensionStatusPatch(currentSource) {
   if (currentSource.includes("codexLinuxChromeProfileRoots")) {
     return currentSource;
@@ -576,5 +627,6 @@ module.exports = {
   applyLinuxExternalOpenEnvPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxBrowserUseSocketDirectoryPatch,
+  applyLinuxBrowserUseUserAgentPatch,
   applyLinuxChromeExtensionStatusPatch,
 };
