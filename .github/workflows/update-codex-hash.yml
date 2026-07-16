@@ -30,6 +30,13 @@ jobs:
       NIX_CONFIG: experimental-features = nix-command flakes
       CACHIX_CACHE_NAME: codex-desktop-linux
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      NIX_VERIFY_OUTPUTS: |
+        .#codex-desktop
+        .#codex-desktop-computer-use-ui
+        .#codex-desktop-remote-mobile-control
+        .#codex-desktop-computer-use-ui-remote-mobile-control
+        .#checks.x86_64-linux.watchdog-linux-features
+        .#installer
     steps:
       - uses: actions/checkout@v7
         with:
