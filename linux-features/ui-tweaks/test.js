@@ -181,10 +181,11 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
 
 test("model picker descriptors target the current state and menu bundles", () => {
   const stateAsset =
-    "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-DRU9Ekz0.js";
+    "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-DtuASjaM.js";
   const allowlistAsset =
-    "app-initial~app-main~onboarding-page~projects-index-page~hotkey-window-thread-page~quick-ch~iiv1g666-BjNKtmac.js";
-  const menuAsset = allowlistAsset;
+    "app-initial~app-main~projects-index-page~remote-conversation-page-ClV_ycdc.js";
+  const menuAsset =
+    "app-initial~app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~lpb6mnim-BiQtt1Kd.js";
 
   assert.match(stateAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
   assert.match(allowlistAsset, MODEL_PICKER_ALLOWLIST_ASSET_PATTERN);
@@ -195,28 +196,8 @@ test("model picker descriptors target the current state and menu bundles", () =>
   assert.doesNotMatch(allowlistAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
   assert.doesNotMatch(menuAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
 
-  // The previous DMG split these patches across different chunks.
-  // Current-DMG-only targeting must not retain those chunks as fallbacks.
-  assert.doesNotMatch(
-    "app-initial~app-main~page-CMpPiY3-.js",
-    MODEL_PICKER_STATE_ASSET_PATTERN,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~new-thread-panel-page~onboarding-page~login-route~appgen-library-page~~gpgl9un5-_t04Xpau.js",
-    MODEL_PICKER_ALLOWLIST_ASSET_PATTERN,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~lpb6mnim-Bawo32lF.js",
-    MODEL_PICKER_MENU_ASSET_PATTERN,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~hotkey-window-thread-page~keyboard-shortcuts-settings~thread-app-shell~cf704xib-BpnUyB2R.js",
-    MODEL_PICKER_ALLOWLIST_ASSET_PATTERN,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~onboarding-page-qmFVRsFx.js",
-    MODEL_PICKER_MENU_ASSET_PATTERN,
-  );
+  assert.doesNotMatch(menuAsset, MODEL_PICKER_ALLOWLIST_ASSET_PATTERN);
+  assert.doesNotMatch(allowlistAsset, MODEL_PICKER_MENU_ASSET_PATTERN);
 });
 
 test("model picker opens advanced view and renders model choices inline", () => {
@@ -396,20 +377,11 @@ test("English reasoning effort labels can be disabled", () => {
 
 test("sidebar project descriptor targets only the current project sidebar asset", () => {
   assert.match(
-    "app-initial~app-main~page-kMhXWEru.js",
+    "app-initial~app-main~projects-index-page~remote-conversation-page-ClV_ycdc.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
   assert.doesNotMatch(
-    "app-initial~app-main~projects-index-page~remote-conversation-page-CFT2LLOB.js",
-    PROJECTS_SIDEBAR_ASSET_PATTERN,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~automations-page-BcHjEK7e.js",
-    PROJECTS_SIDEBAR_ASSET_PATTERN,
-  );
-  assert.doesNotMatch("projects-index-page-TFjtVwC4.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
-  assert.doesNotMatch(
-    "app-initial~app-main~remote-conversation-page~projects-index-page-By2_tGIM.js",
+    "app-initial~app-main~page-CtzZUdyW.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
 });

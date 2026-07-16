@@ -1400,24 +1400,11 @@ test("open-target discovery targets only the current native selector bundle", ()
 
   assert.ok(descriptor);
   assert.match(
-    "app-initial~app-main~new-thread-panel-page~onboarding-page~appgen-library-page~hotkey-windo~nrw3o0ql-CI1_Z0oj.js",
+    "app-initial~artifact-tab-content.electron~app-main~pull-request-route~pull-request-code-rev~jgoqfqy2-gdph-otp.js",
     descriptor.pattern,
   );
   assert.doesNotMatch(
-    "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-CnQKtQ6U.js",
-    descriptor.pattern,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~quick-chat-window-page~work-home-page~chatgpt-conversation-page-BqLP6EDd.js",
-    descriptor.pattern,
-  );
-  assert.doesNotMatch(
-    "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-MXsOJYYa.js",
-    descriptor.pattern,
-  );
-  assert.doesNotMatch("open-target-selection-legacy.js", descriptor.pattern);
-  assert.doesNotMatch(
-    "app-initial~app-main~pull-request-code-review~onboarding-page~hotkey-window-thread-page~cha~b76hmflu-y0KJWbm3.js",
+    "app-initial~app-main~pull-request-route~new-thread-panel-page~onboarding-page~settings-page~i2dgsl27-Cg6hAhRO.js",
     descriptor.pattern,
   );
 });
@@ -1440,6 +1427,9 @@ test("open-target discovery participates in feature loading and patch reports", 
         fs.mkdirSync(assetsDir, { recursive: true });
         fs.writeFileSync(path.join(buildDir, "main.js"), openTargetsBundle);
         fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
+        const selectorAsset =
+          "app-initial~artifact-tab-content.electron~app-main~pull-request-route~pull-request-code-rev~jgoqfqy2-gdph-otp.js";
+        fs.writeFileSync(path.join(assetsDir, selectorAsset), currentAppOpenTargetSelectionBundle);
 
         const report = createPatchReport();
         captureWarns(() => patchExtractedApp(tempApp, { report }));
@@ -1447,9 +1437,19 @@ test("open-target discovery participates in feature loading and patch reports", 
 
         assert.match(patched, /linux:\{label:`Terminal`/);
         assert.match(patched, /\.\.\.codexLinuxDiscoveredIdeTargets\(\)/);
+        assert.match(
+          fs.readFileSync(path.join(assetsDir, selectorAsset), "utf8"),
+          /function codexLinuxDirectoryOpenTarget/,
+        );
         assert.ok(
           report.patches.some((patch) =>
             patch.name === "feature:open-target-discovery:main-bundle-open-target-discovery" &&
+            patch.status === "applied",
+          ),
+        );
+        assert.ok(
+          report.patches.some((patch) =>
+            patch.name === "feature:open-target-discovery:webview-native-open-target-selection" &&
             patch.status === "applied",
           ),
         );

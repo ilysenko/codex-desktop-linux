@@ -20,6 +20,11 @@ const {
   descriptors: featurePatches,
 } = require("./patch.js");
 
+const CURRENT_REMOTE_CONVERSATION_ASSET =
+  "app-initial~app-main~projects-index-page~remote-conversation-page-ClV_ycdc.js";
+const CURRENT_APP_SERVER_MANAGER_ASSET =
+  "app-initial~app-main~pull-request-route~new-thread-panel-page~onboarding-page~settings-page~i2dgsl27-Cg6hAhRO.js";
+
 function withTempFeatureConfig(enabled, fn) {
   const originalConfig = process.env.CODEX_LINUX_FEATURES_CONFIG;
   const root = path.resolve(__dirname, "..");
@@ -172,16 +177,10 @@ test("remote-control UI descriptors match the current app chunks", () => {
   const experimentalFeaturesPatch = featurePatches.find((patch) => patch.id === "experimental-features");
 
   assert.ok(
-    remoteConnectionsPatch.pattern.test(
-      "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-D9zyQF1n.js",
-    ),
+    remoteConnectionsPatch.pattern.test(CURRENT_REMOTE_CONVERSATION_ASSET),
   );
-  assert.equal(
-    remoteConnectionsPatch.pattern.test(
-      "app-initial~app-main~hotkey-window-thread-page~keyboard-shortcuts-settings~thread-app-shell~cf704xib-BhQogfRL.js",
-    ),
-    false,
-  );
+  assert.ok(remoteConnectionsPatch.pattern.test(CURRENT_APP_SERVER_MANAGER_ASSET));
+  assert.equal(remoteConnectionsPatch.pattern.test("remote-connections-settings-DsrEAESC.js"), false);
 
   assert.ok(
     remoteControlConnectionsPatch.pattern.test(
@@ -215,11 +214,12 @@ test("remote-control UI feature patches matching webview assets and records patc
         fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
 
         fs.writeFileSync(
-          path.join(
-            assetsDir,
-            "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-D9zyQF1n.js",
-          ),
-          "function Twt(){let e=(0,kwt.c)(3),{data:t}=Vr(y4,Br(B2)),n=BN(`4114442250`);if(t?.config[`features.remote_connections`]===!0)return!0;let r=t?.config.features;if(typeof r!=`object`||!r||Array.isArray(r))return n;let i;return e[0]!==r||e[1]!==n?(i=Object.getOwnPropertyDescriptor(r,`remote_connections`)?.value===!0||n,e[0]=r,e[1]=n,e[2]=i):i=e[2],i}function D8(e){return e(RN,`4114442250`)?`enabled`:`disabled`}",
+          path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_ASSET),
+          "function D8(e){return e(RN,`4114442250`)?`enabled`:`disabled`}",
+        );
+        fs.writeFileSync(
+          path.join(assetsDir, CURRENT_APP_SERVER_MANAGER_ASSET),
+          "function Twt(){let e=(0,kwt.c)(3),{data:t}=Vr(y4,Br(B2)),n=BN(`4114442250`);if(t?.config[`features.remote_connections`]===!0)return!0;let r=t?.config.features;if(typeof r!=`object`||!r||Array.isArray(r))return n;let i;return e[0]!==r||e[1]!==n?(i=Object.getOwnPropertyDescriptor(r,`remote_connections`)?.value===!0||n,e[0]=r,e[1]=n,e[2]=i):i=e[2],i}",
         );
         fs.writeFileSync(
           path.join(
@@ -242,12 +242,13 @@ test("remote-control UI feature patches matching webview assets and records patc
 
         assert.match(
           fs.readFileSync(
-            path.join(
-              assetsDir,
-              "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-D9zyQF1n.js",
-            ),
+            path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_ASSET),
             "utf8",
           ),
+          /navigator\.userAgent\.includes\(`Linux`\)/,
+        );
+        assert.match(
+          fs.readFileSync(path.join(assetsDir, CURRENT_APP_SERVER_MANAGER_ASSET), "utf8"),
           /navigator\.userAgent\.includes\(`Linux`\)/,
         );
         assert.match(
