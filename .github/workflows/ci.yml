@@ -134,6 +134,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           changed=false
@@ -143,14 +145,24 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
               --paginate \
               --jq '.[].filename' | tee "$changed_files"
-            if grep -Eq '^(flake\.nix|flake\.lock|nix/native-modules/package\.json|nix/native-modules/package-lock\.json|scripts/ci/update-nix-hashes\.sh|scripts/ci/validate-nix-pins\.sh)$' "$changed_files"; then
+            guarded_paths='^(flake\.lock|nix/native-modules/package\.json|nix/native-modules/package-lock\.json|scripts/ci/update-nix-hashes\.sh|scripts/ci/validate-nix-pins\.sh)$'
+            if grep -Eq "$guarded_paths" "$changed_files"; then
               changed=true
+            elif grep -qx 'flake.nix' "$changed_files"; then
+              git fetch --no-tags --depth=1 origin "$PR_BASE_SHA" "$PR_HEAD_SHA"
+              if git diff --unified=0 "$PR_BASE_SHA" "$PR_HEAD_SHA" -- flake.nix \
+                  | grep -Eq '^[+-][[:space:]]*(codexVersion|electronVersion|hash) = '; then
+                changed=true
+              fi
+            fi
+
+            if [ "$changed" = "true" ]; then
               {
                 echo "## Nix Pin File Changes"
                 echo ""
-                echo "- Rollout skip is disabled because this PR changes Nix pin source-of-truth files."
+                echo "- Rollout skip is disabled because this PR changes Nix pin source-of-truth content."
                 echo "- Changed guarded files:"
-                grep -E '^(flake\.nix|flake\.lock|nix/native-modules/package\.json|nix/native-modules/package-lock\.json|scripts/ci/update-nix-hashes\.sh|scripts/ci/validate-nix-pins\.sh)$' "$changed_files" | sed 's/^/  - `/' | sed 's/$/`/'
+                grep -E "$guarded_paths|^flake\.nix$" "$changed_files" | sed 's/^/  - `/' | sed 's/$/`/'
               } >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
