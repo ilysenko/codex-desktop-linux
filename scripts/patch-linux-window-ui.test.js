@@ -6888,7 +6888,7 @@ test("auto-installs the current Chrome plugin gate shape", () => {
   assert.equal((patched.match(/installWhenMissing:!0,name:o\.s/g) || []).length, 0);
 });
 
-test("makes Linux bundled plugin staging writable after copying read-only resources", async () => {
+test("makes Linux bundled plugin staging owner-writable without cooperative write bits", async () => {
   const patched = applyPatchTwice(
     applyLinuxBundledPluginCopyPermissionsPatch,
     currentBundledPluginCopyBundleFixture(),
@@ -6897,21 +6897,29 @@ test("makes Linux bundled plugin staging writable after copying read-only resour
   const sourcePlugin = path.join(root, "source-plugin");
   const sourceManifestDir = path.join(sourcePlugin, ".codex-plugin");
   const sourceManifest = path.join(sourceManifestDir, "plugin.json");
+  const sourceCooperativeFile = path.join(sourceManifestDir, "cooperative.txt");
   const externalFile = path.join(root, "external-read-only-file");
   const sourceLink = path.join(sourcePlugin, "external-link");
   const targetPlugin = path.join(root, "target-plugin");
   const targetManifest = path.join(targetPlugin, ".codex-plugin", "plugin.json");
+  const targetCooperativeFile = path.join(
+    targetPlugin,
+    ".codex-plugin",
+    "cooperative.txt",
+  );
   const targetLink = path.join(targetPlugin, "external-link");
 
   try {
     fs.mkdirSync(sourceManifestDir, { recursive: true });
     fs.writeFileSync(sourceManifest, '{"name":"computer-use"}\n');
+    fs.writeFileSync(sourceCooperativeFile, "cooperative\n");
     fs.writeFileSync(externalFile, "external\n");
     fs.chmodSync(externalFile, 0o444);
     fs.symlinkSync(externalFile, sourceLink);
     fs.chmodSync(sourceManifest, 0o444);
-    fs.chmodSync(sourceManifestDir, 0o555);
-    fs.chmodSync(sourcePlugin, 0o555);
+    fs.chmodSync(sourceCooperativeFile, 0o664);
+    fs.chmodSync(sourceManifestDir, 0o775);
+    fs.chmodSync(sourcePlugin, 0o775);
 
     const copyPlugin = new Function("process", "require", `${patched};return fl;`)(
       { platform: "linux" },
@@ -6923,6 +6931,9 @@ test("makes Linux bundled plugin staging writable after copying read-only resour
     assert.match(patched, /async function codexLinuxMakeBundledPluginTreeWritable/);
     assert.equal(fs.statSync(targetPlugin).mode & 0o200, 0o200);
     assert.equal(fs.statSync(targetManifest).mode & 0o200, 0o200);
+    assert.equal(fs.statSync(targetPlugin).mode & 0o022, 0);
+    assert.equal(fs.statSync(targetManifest).mode & 0o022, 0);
+    assert.equal(fs.statSync(targetCooperativeFile).mode & 0o022, 0);
     assert.equal(fs.lstatSync(targetLink).isSymbolicLink(), true);
     assert.equal(fs.statSync(externalFile).mode & 0o200, 0);
   } finally {

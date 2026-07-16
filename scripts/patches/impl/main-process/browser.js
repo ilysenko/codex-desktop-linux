@@ -44,7 +44,7 @@ function applyLinuxBundledPluginCopyPermissionsPatch(currentSource) {
   }
 
   const helper =
-    `async function ${helperName}(e,t){let n=await t.lstat(e);if(n.isSymbolicLink())return;await t.chmod(e,n.mode|128);if(n.isDirectory())for(let n of await t.readdir(e))await ${helperName}((0,${pathVar}.join)(e,n),t)}`;
+    `async function ${helperName}(e,t){let n=await t.lstat(e);if(n.isSymbolicLink())return;await t.chmod(e,(n.mode|128)&~18);if(n.isDirectory())for(let n of await t.readdir(e))await ${helperName}((0,${pathVar}.join)(e,n),t)}`;
   const strictDirective = '"use strict";';
   const helperInsertionIndex = currentSource.startsWith(strictDirective)
     ? strictDirective.length
