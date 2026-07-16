@@ -5,7 +5,6 @@ const {
 } = require("../../../../descriptor.js");
 const {
   applyLinuxComputerUseRendererAvailabilityPatch,
-  applyLinuxComputerUseInstallFlowPatch,
 } = require("../../../../impl/computer-use.js");
 
 module.exports = [
@@ -16,7 +15,7 @@ module.exports = [
     ciPolicy: "opt-in",
     enabled: (context) => context.enableComputerUseUi,
     pattern: /^computer-use-settings.*\.js$/,
-    missingDescription: "Computer Use availability bundle",
+    missingDescription: "Computer Use settings bundle",
     skipDescription: "Linux Computer Use UI availability patch",
     apply: applyLinuxComputerUseRendererAvailabilityPatch,
   }),
@@ -26,9 +25,10 @@ module.exports = [
     order: 1110,
     ciPolicy: "opt-in",
     enabled: (context) => context.enableComputerUseUi,
-    pattern: /^app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~[^.]+\.js$/,
+    pattern:
+      /^app-initial~artifact-tab-content\.electron~app-main~pull-request-route~pull-request-code-rev~.*\.js$/,
     missingDescription: "current Computer Use install flow bundle",
     skipDescription: "Linux Computer Use install flow patch",
-    apply: applyLinuxComputerUseInstallFlowPatch,
+    apply: applyLinuxComputerUseRendererAvailabilityPatch,
   }),
 ];

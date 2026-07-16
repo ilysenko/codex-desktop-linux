@@ -601,57 +601,6 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
   return platformPredicateChanged ? patchedSource : currentSource;
 }
 
-function applyLinuxComputerUseInstallFlowPatch(currentSource) {
-  const currentRequiredFeaturesObjectPattern =
-    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{areRequiredFeaturesEnabled:([A-Za-z_$][\w$]*),enabled:([A-Za-z_$][\w$]*),isAnyFeatureLoading:([A-Za-z_$][\w$]*),isComputerUseGateEnabled:([A-Za-z_$][\w$]*),isHostCompatiblePlatform:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),isPlatformLoading:([A-Za-z_$][\w$]*),windowType:`electron`\}\)/g;
-
-  let changed = false;
-  let patchedSource = currentSource;
-
-  patchedSource = patchedSource.replace(
-    currentRequiredFeaturesObjectPattern,
-    (
-      match,
-      resultVar,
-      helperVar,
-      requiredFeaturesVar,
-      enabledVar,
-      featureLoadingVar,
-      rolloutVar,
-      platformPredicateVar,
-      platformVar,
-      platformLoadingVar,
-      offset,
-    ) => {
-      const contextStart = Math.max(0, offset - 1200);
-      const context = patchedSource.slice(contextStart, offset + match.length);
-      if (!context.includes("featureName:`computer_use`")) {
-        return match;
-      }
-      changed = true;
-      return `${resultVar}=${helperVar}({areRequiredFeaturesEnabled:${requiredFeaturesVar},enabled:${enabledVar},isAnyFeatureLoading:${featureLoadingVar},isComputerUseGateEnabled:${rolloutVar},isHostCompatiblePlatform:${platformVar}===\`linux\`||${platformPredicateVar}(${platformVar}),isPlatformLoading:${platformLoadingVar},windowType:\`electron\`})`;
-    },
-  );
-
-  if (changed) {
-    return patchedSource;
-  }
-
-  if (
-    /featureName:`computer_use`[\s\S]{0,2200}?areRequiredFeaturesEnabled:[A-Za-z_$][\w$]*,enabled:[A-Za-z_$][\w$]*,isAnyFeatureLoading:[A-Za-z_$][\w$]*,isComputerUseGateEnabled:[A-Za-z_$][\w$]*,isHostCompatiblePlatform:([A-Za-z_$][\w$]*)===`linux`\|\|[A-Za-z_$][\w$]*\(\1\),isPlatformLoading:/.test(currentSource)
-  ) {
-    return currentSource;
-  }
-
-  if (currentSource.includes("featureName:`computer_use`")) {
-    console.warn(
-      "WARN: Could not find Computer Use install flow gate — skipping Linux Computer Use install flow patch",
-    );
-  }
-
-  return currentSource;
-}
-
 function findHandlerValue(source, methodName) {
   const key = `${JSON.stringify(methodName)}:`;
   const keyIndex = source.indexOf(key);
@@ -830,7 +779,6 @@ module.exports = {
   COMPUTER_USE_UI_ENV_VAR,
   COMPUTER_USE_UI_SETTINGS_KEY,
   applyLinuxComputerUseFeaturePatch,
-  applyLinuxComputerUseInstallFlowPatch,
   applyLinuxNativeDesktopAppsHandlerPatch,
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxComputerUseRendererAvailabilityPatch,

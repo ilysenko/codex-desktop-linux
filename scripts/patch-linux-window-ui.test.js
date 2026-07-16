@@ -31,7 +31,6 @@ const {
   COMPUTER_USE_UI_ENV_VAR,
   COMPUTER_USE_UI_SETTINGS_KEY,
   applyLinuxComputerUseFeaturePatch,
-  applyLinuxComputerUseInstallFlowPatch,
   applyLinuxNativeDesktopAppsHandlerPatch,
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxComputerUseRendererAvailabilityPatch,
@@ -1032,23 +1031,6 @@ test("default core patch descriptors are grouped and unique", () => {
     descriptors.find((descriptor) => descriptor.id === "linux-computer-use-native-desktop-apps")?.ciPolicy,
     "opt-in",
   );
-  const computerUseInstallFlow = descriptors.find((descriptor) => descriptor.id === "linux-computer-use-install-flow");
-  assert.equal(
-    computerUseInstallFlow.pattern.test(
-      "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-current.js",
-    ),
-    true,
-  );
-  for (const legacyName of [
-    "app-initial~app-main~pull-request-code-review~onboarding-page~hotkey-window-thread-page~cha~b76hmflu-current.js",
-    "app-initial~app-main~remote-conversation-page~new-thread-panel-page~onboarding-page~appgen-~current.js",
-    "plugins-availability-current.js",
-    "use-plugin-install-flow-current.js",
-    "app-initial~app-main~remote-conversation-page~plugin-detail-page~new-thread-panel-page~current.js",
-    "app-initial~app-main~remote-conversation-page~pull-requests-page~plug~current.js",
-  ]) {
-    assert.equal(computerUseInstallFlow.pattern.test(legacyName), false, legacyName);
-  }
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "linux-terminal-user-path")?.ciPolicy,
     "optional",
@@ -8687,13 +8669,54 @@ test("keeps object-helper Computer Use host compatibility on Linux when platform
   );
 });
 
-test("Computer Use availability descriptor matches the current settings bundle name", () => {
-  const [descriptor] = require("./patches/core/all-linux/webview/computer-use-ui/patch.js");
+test("Computer Use availability descriptors independently match current settings and install-flow bundles", () => {
+  const [settingsDescriptor, installFlowDescriptor] = require(
+    "./patches/core/all-linux/webview/computer-use-ui/patch.js"
+  );
 
-  assert.match("computer-use-settings-B1QCeMSP.js", descriptor.pattern);
-  assert.doesNotMatch("use-model-settings-5PHNqYL4.js", descriptor.pattern);
-  assert.doesNotMatch("use-is-plugins-enabled-current.js", descriptor.pattern);
-  assert.doesNotMatch("use-native-apps.electron-DhuUEit1.js", descriptor.pattern);
+  assert.match("computer-use-settings-B1QCeMSP.js", settingsDescriptor.pattern);
+  assert.doesNotMatch(
+    "app-initial~artifact-tab-content.electron~app-main~pull-request-route~pull-request-code-rev~jgoqfqy2-gdph-otp.js",
+    settingsDescriptor.pattern,
+  );
+  assert.match(
+    "app-initial~artifact-tab-content.electron~app-main~pull-request-route~pull-request-code-rev~jgoqfqy2-gdph-otp.js",
+    installFlowDescriptor.pattern,
+  );
+  assert.doesNotMatch("computer-use-settings-B1QCeMSP.js", installFlowDescriptor.pattern);
+  assert.doesNotMatch(
+    "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-current.js",
+    installFlowDescriptor.pattern,
+  );
+  assert.doesNotMatch("use-model-settings-5PHNqYL4.js", settingsDescriptor.pattern);
+  assert.doesNotMatch("use-is-plugins-enabled-current.js", settingsDescriptor.pattern);
+  assert.doesNotMatch("use-native-apps.electron-DhuUEit1.js", settingsDescriptor.pattern);
+});
+
+test("Computer Use install-flow drift stays visible when the settings bundle still exists", () => {
+  const [, installFlowDescriptor] = require(
+    "./patches/core/all-linux/webview/computer-use-ui/patch.js"
+  );
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-computer-use-install-flow-drift-"));
+  try {
+    const assetsDir = path.join(tempRoot, "webview", "assets");
+    fs.mkdirSync(assetsDir, { recursive: true });
+    fs.writeFileSync(path.join(assetsDir, "computer-use-settings-current.js"), "settings");
+
+    const { value: result, warnings } = captureWarns(() =>
+      patchAssetFiles(
+        tempRoot,
+        installFlowDescriptor.pattern,
+        installFlowDescriptor.apply,
+        "missing Computer Use install flow bundle",
+      ),
+    );
+
+    assert.deepEqual(result, { matched: 0, changed: 0 });
+    assert.deepEqual(warnings, ["missing Computer Use install flow bundle"]);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("keeps current Computer Use settings availability enabled on Linux", () => {
@@ -8794,20 +8817,6 @@ test("does not enable unrelated native desktop app queries on Linux", () => {
     "function useNativeApps(e){let{enabled:n}=e,{platform:r,isLoading:i}=yt(),a=n&&(r===`macOS`||r===`windows`),o={params:{order:`usage`},queryConfig:{enabled:a}};return Ce(`native-desktop-apps`,o)}";
 
   assert.equal(applyLinuxComputerUseRendererAvailabilityPatch(source), source);
-});
-
-test("allows the current Computer Use platform while preserving upstream gates", () => {
-  const source =
-    "function Rj(e){return e===`macOS`||e===`windows`}" +
-    "function zj(e){let t=(0,Uj.c)(16),{enabled:n,hostId:r}=e,i=n===void 0?!0:n,{isLoading:a,platform:o}=Xt(),s=cn(`1506311413`),c;t[0]===r?c=t[1]:(c={featureName:`computer_use`,hostId:r},t[0]=r,t[1]=c);let l=Fj(c),u=o===`windows`&&!a,d=i&&u,f;t[2]===d?f=t[3]:(f={enabled:d},t[2]=d,t[3]=f);let p=Bj(f),m=l.isLoading||u&&p.isLoading,h=l.enabled&&(!u||p.enabled),g;t[4]!==h||t[5]!==i||t[6]!==m||t[7]!==s||t[8]!==a||t[9]!==o?(g=Hj({areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:Rj(o),isPlatformLoading:a,windowType:`electron`}),t[4]=h,t[5]=i,t[6]=m,t[7]=s,t[8]=a,t[9]=o,t[10]=g):g=t[10];return g}";
-
-  const patched = applyPatchTwice(applyLinuxComputerUseInstallFlowPatch, source);
-
-  assert.match(
-    patched,
-    /g=Hj\(\{areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:o===`linux`\|\|Rj\(o\),isPlatformLoading:a,windowType:`electron`\}\)/,
-  );
-  assert.doesNotMatch(patched, /areRequiredFeaturesEnabled:o===`linux`|isComputerUseGateEnabled:o===`linux`/);
 });
 
 function externalOpenChildClosingWith(code) {
@@ -9683,7 +9692,7 @@ test("patchExtractedApp scans current Computer Use settings bundles when UI is e
       fs.writeFileSync(
         path.join(
           assetsDir,
-          "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-current.js",
+          "app-initial~artifact-tab-content.electron~app-main~pull-request-route~pull-request-code-rev~jgoqfqy2-current.js",
         ),
         "function _p(e){return e===`macOS`||e===`windows`}" +
           "function vp(e){let t=(0,Sp.c)(16),{enabled:n,hostId:r}=e,i=n===void 0?!0:n,{isLoading:a,platform:o}=ba(),s=gr(`1506311413`),c;t[0]===r?c=t[1]:(c={featureName:`computer_use`,hostId:r},t[0]=r,t[1]=c);let l=mp(c),u=o===`windows`&&!a,d=i&&u,f;t[2]===d?f=t[3]:(f={enabled:d},t[2]=d,t[3]=f);let p=yp(f),m=l.isLoading||u&&p.isLoading,h=l.enabled&&(!u||p.enabled),g;t[4]!==h||t[5]!==i||t[6]!==m||t[7]!==s||t[8]!==a||t[9]!==o?(g=xp({areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:_p(o),isPlatformLoading:a,windowType:`electron`}),t[4]=h,t[5]=i,t[6]=m,t[7]=s,t[8]=a,t[9]=o,t[10]=g):g=t[10];return g}",
@@ -9714,11 +9723,11 @@ test("patchExtractedApp scans current Computer Use settings bundles when UI is e
         fs.readFileSync(
           path.join(
             assetsDir,
-            "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-current.js",
+            "app-initial~artifact-tab-content.electron~app-main~pull-request-route~pull-request-code-rev~jgoqfqy2-current.js",
           ),
           "utf8",
         ),
-        /g=xp\(\{areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:o===`linux`\|\|_p\(o\),isPlatformLoading:a,windowType:`electron`\}\)/,
+        /g=xp\(\{areRequiredFeaturesEnabled:o===`linux`\|\|h,enabled:i,isAnyFeatureLoading:o===`linux`\?!1:m,isComputerUseGateEnabled:o===`linux`\|\|s,isHostCompatiblePlatform:o===`linux`\|\|_p\(o\),isPlatformLoading:a,windowType:`electron`\}\)/,
       );
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
