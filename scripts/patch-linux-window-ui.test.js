@@ -57,6 +57,7 @@ const {
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
+  applyLinuxBrowserUseUserAgentPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxExternalOpenEnvPatch,
 } = require("./patches/impl/main-process/browser.js");
@@ -947,6 +948,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-bundled-plugin-reconcile-stale-snapshot",
     "linux-bundled-plugin-copy-permissions",
     "linux-browser-use-route-liveness",
+    "linux-browser-use-user-agent",
     "linux-chrome-extension-status",
     "linux-notification-actions",
     "linux-local-app-server-feature-enablement-handler",
@@ -8242,6 +8244,163 @@ test("keeps Browser Use route liveness fallback inactive when ambiguous", () => 
 
   assert.equal(result, null);
   assert.equal(warnings, 1);
+});
+
+test("sets the Linux Browser sidebar user agent before navigation without mutating its session", () => {
+  const source =
+    '"use strict";' +
+    "function oB({configureBrowserSession:e,params:t,preloadPath:n,webPreferences:r}){t.partition=Ox(`app`),r.session=e(),r.preload=n,cB(t,r)}";
+  const patched = applyPatchTwice(applyLinuxBrowserUseUserAgentPatch, source);
+  const sessionUserAgent =
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ChatGPT/26.707.71524 Chrome/148.0.7778.97 Electron/42.1.0 Safari/537.36";
+  let sessionSetUserAgentCalls = 0;
+  const browserSession = {
+    getUserAgent: () => sessionUserAgent,
+    setUserAgent: () => {
+      sessionSetUserAgentCalls += 1;
+    },
+  };
+  const params = {};
+  const webPreferences = {};
+  const context = {
+    Ox: (value) => `partition:${value}`,
+    cB: () => {},
+    browserSession,
+    params,
+    process: { platform: "linux" },
+    webPreferences,
+  };
+
+  vm.runInNewContext(
+    `${patched};oB({configureBrowserSession:()=>browserSession,params,preloadPath:"/browser-preload.js",webPreferences})`,
+    context,
+  );
+
+  assert.equal(
+    params.useragent,
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.97 Safari/537.36",
+  );
+  assert.equal(browserSession.getUserAgent(), sessionUserAgent);
+  assert.equal(sessionSetUserAgentCalls, 0);
+  assert.equal(params.partition, "partition:app");
+  assert.equal(webPreferences.session, browserSession);
+  assert.equal(webPreferences.preload, "/browser-preload.js");
+  assert.doesNotMatch(patched, /userAgentFallback|\.setUserAgent\(/);
+  assert.equal((patched.match(/function codexLinuxNormalizeBrowserUseUserAgent/g) || []).length, 1);
+  assert.equal((patched.match(/codexLinuxNormalizeBrowserUseUserAgent\(t,r\)/g) || []).length, 1);
+});
+
+test("leaves unrelated renderers, webviews, and sessions on their original user agents", () => {
+  const source =
+    "function oB({configureBrowserSession:e,params:t,preloadPath:n,webPreferences:r}){t.partition=Ox(`app`),r.session=e(),r.preload=n,cB(t,r)}" +
+    "function sB({configureBrowserSession:e,params:t,webPreferences:n}){t.partition=Ox(`app`),n.session=e(),delete n.preload,cB(t,n)}";
+  const patched = applyLinuxBrowserUseUserAgentPatch(source);
+  const browserUserAgent =
+    "Mozilla/5.0 (X11; Linux x86_64) ChatGPT/26.707.71524 Chrome/148.0.7778.97 Electron/42.1.0 Safari/537.36";
+  const unrelatedUserAgent =
+    "Mozilla/5.0 (X11; Linux x86_64) ChatGPT/unchanged Electron/unchanged";
+  const mainRenderer = { userAgent: unrelatedUserAgent };
+  let browserSessionSetCalls = 0;
+  let unrelatedSessionGetCalls = 0;
+  let unrelatedSessionSetCalls = 0;
+  const browserSession = {
+    getUserAgent: () => browserUserAgent,
+    setUserAgent: () => {
+      browserSessionSetCalls += 1;
+    },
+  };
+  const unrelatedSession = {
+    getUserAgent: () => {
+      unrelatedSessionGetCalls += 1;
+      return unrelatedUserAgent;
+    },
+    setUserAgent: () => {
+      unrelatedSessionSetCalls += 1;
+    },
+  };
+  const browserParams = {};
+  const browserPreferences = {};
+  const settingsParams = {};
+  const settingsPreferences = {};
+  const context = {
+    Ox: (value) => value,
+    browserParams,
+    browserPreferences,
+    browserSession,
+    cB: () => {},
+    process: { platform: "linux" },
+    settingsParams,
+    settingsPreferences,
+    unrelatedSession,
+  };
+
+  vm.runInNewContext(
+    `${patched};` +
+      `oB({configureBrowserSession:()=>browserSession,params:browserParams,preloadPath:"/browser.js",webPreferences:browserPreferences});` +
+      `sB({configureBrowserSession:()=>unrelatedSession,params:settingsParams,webPreferences:settingsPreferences})`,
+    context,
+  );
+
+  assert.equal(
+    browserParams.useragent,
+    "Mozilla/5.0 (X11; Linux x86_64) Chrome/148.0.7778.97 Safari/537.36",
+  );
+  assert.equal(browserSession.getUserAgent(), browserUserAgent);
+  assert.equal(browserSessionSetCalls, 0);
+  assert.equal(settingsParams.useragent, undefined);
+  assert.equal(unrelatedSessionGetCalls, 0);
+  assert.equal(unrelatedSessionSetCalls, 0);
+  assert.equal(unrelatedSession.getUserAgent(), unrelatedUserAgent);
+  assert.equal(mainRenderer.userAgent, unrelatedUserAgent);
+});
+
+test("leaves non-Linux and already-browser Browser sidebar user agents unchanged", () => {
+  const source =
+    "function oB({configureBrowserSession:e,params:t,preloadPath:n,webPreferences:r}){t.partition=Ox(`app`),r.session=e(),r.preload=n,cB(t,r)}";
+  const patched = applyLinuxBrowserUseUserAgentPatch(source);
+
+  for (const [platform, initialUserAgent] of [
+    [
+      "linux",
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/148.0.7778.97 Safari/537.36",
+    ],
+    [
+      "win32",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ChatGPT/26.707.71524 Chrome/148.0.7778.97 Electron/42.1.0 Safari/537.36",
+    ],
+  ]) {
+    const params = {};
+    const webPreferences = {};
+    const browserSession = { getUserAgent: () => initialUserAgent };
+    const context = {
+      Ox: (value) => value,
+      browserSession,
+      cB: () => {},
+      params,
+      process: { platform },
+      webPreferences,
+    };
+
+    vm.runInNewContext(
+      `${patched};oB({configureBrowserSession:()=>browserSession,params,preloadPath:"/browser.js",webPreferences})`,
+      context,
+    );
+
+    assert.equal(params.useragent, undefined);
+    assert.equal(browserSession.getUserAgent(), initialUserAgent);
+  }
+});
+
+test("warns and skips when the Browser sidebar webview preference seam drifts", () => {
+  const source =
+    "function oB({configureBrowserSession:e,params:t,preloadPath:n,webPreferences:r}){r.session=e(),r.preload=n,cB(t,r)}";
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxBrowserUseUserAgentPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /skipping Linux Browser Use user agent patch/);
 });
 
 test("Computer Use availability descriptor matches the current settings bundle name", () => {
