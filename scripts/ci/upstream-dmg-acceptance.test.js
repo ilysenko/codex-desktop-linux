@@ -202,9 +202,32 @@ test("Nix hash refresh accepts a validated focused output override", () => {
     path.resolve(__dirname, "update-nix-hashes.sh"),
     "utf8",
   );
+  const workflow = fs.readFileSync(
+    path.resolve(__dirname, "../../.github/workflows/ci.yml"),
+    "utf8",
+  );
+  const watchdogProfile = JSON.parse(fs.readFileSync(
+    path.resolve(__dirname, "watchdog-linux-features.json"),
+    "utf8",
+  ));
 
+  assert.deepEqual(watchdogProfile.enabled, [
+    "appshots",
+    "codex-wrapper-updater",
+    "frameless-titlebar",
+    "global-dictation",
+    "mcp-helper-reaper",
+    "node-repl-reaper",
+    "open-target-discovery",
+    "persistent-status-panel",
+    "remote-control-ui",
+    "remote-mobile-control",
+    "ui-tweaks",
+  ]);
   assert.match(script, /NIX_VERIFY_OUTPUTS/);
   assert.match(script, /NIX_COMPARE_REF/);
+  assert.match(script, /\.#checks\.x86_64-linux\.watchdog-linux-features/);
+  assert.match(workflow, /\.#checks\.x86_64-linux\.watchdog-linux-features/);
   assert.match(script, /Invalid Nix verification output/);
   assert.match(script, /run_nix_build "\$VERIFY_LOG" "\$\{PACKAGE_OUTPUTS\[@\]\}"/);
 });

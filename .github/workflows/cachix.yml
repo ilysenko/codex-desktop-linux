@@ -56,7 +56,7 @@ jobs:
             .#codex-desktop-computer-use-ui \
             .#codex-desktop-remote-mobile-control \
             .#codex-desktop-computer-use-ui-remote-mobile-control \
-            .#checks.x86_64-linux.nix-linux-features-multi-feature \
+            .#checks.x86_64-linux.watchdog-linux-features \
             .#installer \
             --no-link \
             --print-build-logs
@@ -68,6 +68,6 @@ jobs:
             echo "- Built: \`.#codex-desktop-computer-use-ui\`"
             echo "- Built: \`.#codex-desktop-remote-mobile-control\`"
             echo "- Built: \`.#codex-desktop-computer-use-ui-remote-mobile-control\`"
-            echo "- Built: \`.#checks.x86_64-linux.nix-linux-features-multi-feature\`"
+            echo "- Built: \`.#checks.x86_64-linux.watchdog-linux-features\`"
             echo "- Built: \`.#installer\`"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,16 @@
+{
+  "enabled": [
+    "appshots",
+    "codex-wrapper-updater",
+    "frameless-titlebar",
+    "global-dictation",
+    "mcp-helper-reaper",
+    "node-repl-reaper",
+    "open-target-discovery",
+    "persistent-status-panel",
+    "remote-control-ui",
+    "remote-mobile-control",
+    "ui-tweaks"
+  ],
+  "settings": {}
+}

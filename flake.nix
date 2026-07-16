@@ -464,10 +464,25 @@ PY
           fi
         '';
 
+        linuxFeaturesConfigFile = config:
+          pkgs.writeText "codex-linux-features.json" (builtins.toJSON config);
+
         linuxFeaturesConfig = linuxFeatureIds:
-          pkgs.writeText "codex-linux-features.json" (builtins.toJSON {
+          linuxFeaturesConfigFile {
             enabled = linuxFeatureIds;
-          });
+          };
+
+        normalizeLinuxFeaturesConfig = config:
+          let
+            enabled = nixLinuxFeatures.normalize (config.enabled or [ ]);
+          in
+          config // {
+            inherit enabled;
+          };
+
+        watchdogLinuxFeaturesConfig = normalizeLinuxFeaturesConfig (
+          builtins.fromJSON (builtins.readFile ./scripts/ci/watchdog-linux-features.json)
+        );
 
         enabledFeatureIds = { enableComputerUseUi ? false, linuxFeatureIds ? [ ] }:
           pkgs.lib.optionals enableComputerUseUi [ "computer-use-ui" ]
@@ -479,9 +494,17 @@ PY
           in
           if featureIds == [ ] then "" else "-${pkgs.lib.concatStringsSep "-" featureIds}";
 
-        mkCodexDesktopPayload = { enableComputerUseUi ? false, linuxFeatureIds ? [ ] }:
+        mkCodexDesktopPayload = { enableComputerUseUi ? false, linuxFeatureIds ? [ ], linuxFeaturesConfigOverride ? null }:
+        let
+          effectiveLinuxFeaturesConfig =
+            if linuxFeaturesConfigOverride == null then
+              normalizeLinuxFeaturesConfig { enabled = linuxFeatureIds; }
+            else
+              normalizeLinuxFeaturesConfig linuxFeaturesConfigOverride;
+          effectiveLinuxFeatureIds = effectiveLinuxFeaturesConfig.enabled;
+        in
         pkgs.stdenv.mkDerivation {
-          pname = "codex-desktop${packageSuffix { inherit enableComputerUseUi linuxFeatureIds; }}-payload";
+          pname = "codex-desktop${packageSuffix { inherit enableComputerUseUi; linuxFeatureIds = effectiveLinuxFeatureIds; }}-payload";
           version = codexVersion;
           src = sourceRoot;
           __structuredAttrs = true;
@@ -528,7 +551,7 @@ PY
             export CXXFLAGS="''${CXXFLAGS:-} -ffile-prefix-map=$TMPDIR=/build -fdebug-prefix-map=$TMPDIR=/build -fmacro-prefix-map=$TMPDIR=/build"
             export RUSTFLAGS="''${RUSTFLAGS:-} --remap-path-prefix=$TMPDIR=/build -C link-arg=-Wl,--build-id=none"
             export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
-            export CODEX_LINUX_FEATURES_CONFIG="${linuxFeaturesConfig linuxFeatureIds}"
+            export CODEX_LINUX_FEATURES_CONFIG="${linuxFeaturesConfigFile effectiveLinuxFeaturesConfig}"
             export CODEX_ELECTRON_ZIP_SOURCE="${electronZip}"
             export CODEX_NATIVE_MODULES_SOURCE="${codexNativeModules}"
             ${pkgs.lib.optionalString (browserUseNodeRepl != null) ''
@@ -538,10 +561,10 @@ PY
             export CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE="${codexComputerUseBinaries}/bin/codex-computer-use-cosmic"
             export CODEX_CHROME_EXTENSION_HOST_SOURCE="${codexComputerUseBinaries}/bin/codex-chrome-extension-host"
             export CODEX_NOTIFICATION_ACTIONS_SOURCE="${codexNotificationActionsBinary}/bin/codex-notification-actions-linux"
-            ${pkgs.lib.optionalString (builtins.elem "mcp-helper-reaper" linuxFeatureIds) ''
+            ${pkgs.lib.optionalString (builtins.elem "mcp-helper-reaper" effectiveLinuxFeatureIds) ''
             export CODEX_MCP_HELPER_REAPER_SOURCE="${codexMcpHelperReaper}/bin/codex-mcp-helper-reaper"
             ''}
-            ${pkgs.lib.optionalString (builtins.elem "global-dictation" linuxFeatureIds) ''
+            ${pkgs.lib.optionalString (builtins.elem "global-dictation" effectiveLinuxFeatureIds) ''
             export CODEX_GLOBAL_DICTATION_LINUX_SOURCE="${codexGlobalDictationBinary}/bin/codex-global-dictation-linux"
             ''}
             mkdir -p "$HOME" "$npm_config_cache" "$CARGO_HOME"
@@ -571,9 +594,14 @@ PY
           '';
         };
 
-        buildCodexDesktop = { enableComputerUseUi ? false, linuxFeatureIds ? [ ] }:
+        buildCodexDesktop = { enableComputerUseUi ? false, linuxFeatureIds ? [ ], linuxFeaturesConfigOverride ? null }:
         let
-          normalizedLinuxFeatureIds = nixLinuxFeatures.normalize linuxFeatureIds;
+          effectiveLinuxFeaturesConfig =
+            if linuxFeaturesConfigOverride == null then
+              normalizeLinuxFeaturesConfig { enabled = linuxFeatureIds; }
+            else
+              normalizeLinuxFeaturesConfig linuxFeaturesConfigOverride;
+          normalizedLinuxFeatureIds = effectiveLinuxFeaturesConfig.enabled;
           featureArgs = {
             inherit enableComputerUseUi;
             linuxFeatureIds = normalizedLinuxFeatureIds;
@@ -581,6 +609,7 @@ PY
           payload = mkCodexDesktopPayload {
             inherit enableComputerUseUi;
             linuxFeatureIds = normalizedLinuxFeatureIds;
+            linuxFeaturesConfigOverride = effectiveLinuxFeaturesConfig;
           };
           payloadLauncherPath = launcherPath + pkgs.lib.optionalString
             (builtins.elem "global-dictation" normalizedLinuxFeatureIds)
@@ -696,16 +725,8 @@ PY
           linuxFeatureIds = [ "remote-mobile-control" ];
         };
 
-        codexDesktopNixFeatureCheck = codexDesktop.override {
-          linuxFeatureIds = [
-            "appshots"
-            "frameless-titlebar"
-            "global-dictation"
-            "mcp-helper-reaper"
-            "node-repl-reaper"
-            "open-target-discovery"
-            "persistent-status-panel"
-          ];
+        codexDesktopWatchdogFeatureCheck = codexDesktop.override {
+          linuxFeaturesConfigOverride = watchdogLinuxFeaturesConfig;
         };
 
         installer = pkgs.writeShellApplication {
@@ -769,7 +790,8 @@ PY
           nix-linux-features-evaluation = import ./nix/linux-features-test.nix {
             inherit pkgs self system;
           };
-          nix-linux-features-multi-feature = codexDesktopNixFeatureCheck;
+          watchdog-linux-features = codexDesktopWatchdogFeatureCheck;
+          nix-linux-features-multi-feature = codexDesktopWatchdogFeatureCheck;
         };
 
         apps.default = {

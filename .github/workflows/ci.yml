@@ -202,7 +202,7 @@ jobs:
             .#codex-desktop-computer-use-ui
             .#codex-desktop-remote-mobile-control
             .#codex-desktop-computer-use-ui-remote-mobile-control
-            .#checks.x86_64-linux.nix-linux-features-multi-feature
+            .#checks.x86_64-linux.watchdog-linux-features
           )
           for output in "${outputs[@]}"; do
             build_log="$(mktemp)"

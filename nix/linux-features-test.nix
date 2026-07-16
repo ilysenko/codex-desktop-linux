@@ -13,23 +13,43 @@ let
   testFeatureIds = [
     "persistent-status-panel"
     "appshots"
+    "codex-wrapper-updater"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
     "remote-mobile-control"
     "pet-overlay"
     "open-target-discovery"
+    "remote-control-ui"
+    "ui-tweaks"
     "appshots"
   ];
   normalizedTestFeatureIds = [
     "appshots"
+    "codex-wrapper-updater"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
     "open-target-discovery"
     "persistent-status-panel"
     "pet-overlay"
+    "remote-control-ui"
     "remote-mobile-control"
+    "ui-tweaks"
+  ];
+  watchdogFeatureIds = (builtins.fromJSON (builtins.readFile ../scripts/ci/watchdog-linux-features.json)).enabled;
+  normalizedWatchdogFeatureIds = [
+    "appshots"
+    "codex-wrapper-updater"
+    "frameless-titlebar"
+    "global-dictation"
+    "mcp-helper-reaper"
+    "node-repl-reaper"
+    "open-target-discovery"
+    "persistent-status-panel"
+    "remote-control-ui"
+    "remote-mobile-control"
+    "ui-tweaks"
   ];
 
   evalHomeManager = moduleConfig:
@@ -126,11 +146,14 @@ let
     linuxFeatureIds = [
       "remote-mobile-control"
       "frameless-titlebar"
+      "codex-wrapper-updater"
       "global-dictation"
       "persistent-status-panel"
       "mcp-helper-reaper"
       "pet-overlay"
       "open-target-discovery"
+      "remote-control-ui"
+      "ui-tweaks"
       "appshots"
       "appshots"
     ];
@@ -260,6 +283,9 @@ in
 assert lib.assertMsg
   (linuxFeatures.normalize testFeatureIds == normalizedTestFeatureIds)
   "Nix Linux feature IDs must be sorted and deduplicated";
+assert lib.assertMsg
+  (linuxFeatures.normalize watchdogFeatureIds == normalizedWatchdogFeatureIds)
+  "the committed watchdog Linux feature profile drifted from the Nix-supported profile";
 assert lib.assertMsg
   ((homePackage defaultConfig).drvPath == packages.codex-desktop.drvPath)
   "the Home Manager default package changed";
