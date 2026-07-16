@@ -593,7 +593,7 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
 
   if (hasComputerUseAvailabilityGate() || availabilityGateFound) {
     console.warn(
-      "WARN: Could not find Computer Use renderer availability gate — skipping Linux Computer Use UI availability patch",
+      "WARN: Could not find Computer Use renderer availability gate — skipping Linux Computer Use renderer patch",
     );
     return currentSource;
   }

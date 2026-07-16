@@ -8708,12 +8708,12 @@ test("Computer Use install-flow drift stays visible when the settings bundle sti
         tempRoot,
         installFlowDescriptor.pattern,
         installFlowDescriptor.apply,
-        "missing Computer Use install flow bundle",
+        installFlowDescriptor.missingDescription,
       ),
     );
 
     assert.deepEqual(result, { matched: 0, changed: 0 });
-    assert.deepEqual(warnings, ["missing Computer Use install flow bundle"]);
+    assert.deepEqual(warnings, [installFlowDescriptor.missingDescription]);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -8759,7 +8759,7 @@ test("warns without partially patching when Computer Use renderer availability g
 
   assert.equal(patched, source);
   assert.deepEqual(warnings, [
-    "WARN: Could not find Computer Use renderer availability gate — skipping Linux Computer Use UI availability patch",
+    "WARN: Could not find Computer Use renderer availability gate — skipping Linux Computer Use renderer patch",
   ]);
 });
 
