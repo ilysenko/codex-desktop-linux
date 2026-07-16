@@ -173,12 +173,17 @@ test("remote-control UI descriptors match the current app chunks", () => {
 
   assert.ok(
     remoteConnectionsPatch.pattern.test(
-      "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-D9zyQF1n.js",
+      "app-initial~app-main~projects-index-page~remote-conversation-page-ClV_ycdc.js",
+    ),
+  );
+  assert.ok(
+    remoteConnectionsPatch.pattern.test(
+      "app-initial~app-main~pull-request-route~new-thread-panel-page~onboarding-page~settings-page~i2dgsl27-Cg6hAhRO.js",
     ),
   );
   assert.equal(
     remoteConnectionsPatch.pattern.test(
-      "app-initial~app-main~hotkey-window-thread-page~keyboard-shortcuts-settings~thread-app-shell~cf704xib-BhQogfRL.js",
+      "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-D9zyQF1n.js",
     ),
     false,
   );
@@ -217,7 +222,7 @@ test("remote-control UI feature patches matching webview assets and records patc
         fs.writeFileSync(
           path.join(
             assetsDir,
-            "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-D9zyQF1n.js",
+            "app-initial~app-main~projects-index-page~remote-conversation-page-ClV_ycdc.js",
           ),
           "function Twt(){let e=(0,kwt.c)(3),{data:t}=Vr(y4,Br(B2)),n=BN(`4114442250`);if(t?.config[`features.remote_connections`]===!0)return!0;let r=t?.config.features;if(typeof r!=`object`||!r||Array.isArray(r))return n;let i;return e[0]!==r||e[1]!==n?(i=Object.getOwnPropertyDescriptor(r,`remote_connections`)?.value===!0||n,e[0]=r,e[1]=n,e[2]=i):i=e[2],i}function D8(e){return e(RN,`4114442250`)?`enabled`:`disabled`}",
         );
@@ -244,7 +249,7 @@ test("remote-control UI feature patches matching webview assets and records patc
           fs.readFileSync(
             path.join(
               assetsDir,
-              "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-D9zyQF1n.js",
+              "app-initial~app-main~projects-index-page~remote-conversation-page-ClV_ycdc.js",
             ),
             "utf8",
           ),
