@@ -9,8 +9,9 @@ const {
 } = require("../../lib/minified-js.js");
 
 function applyLinuxBundledPluginCopyPermissionsPatch(currentSource) {
-  const helperName = "codexLinuxMakeBundledPluginTreeWritable";
-  if (currentSource.includes(`async function ${helperName}(`)) {
+  const sourceValidatorName = "codexLinuxValidateBundledPluginSource";
+  const writableHelperName = "codexLinuxMakeBundledPluginTreeWritable";
+  if (currentSource.includes(`async function ${sourceValidatorName}(`)) {
     return currentSource;
   }
 
@@ -24,14 +25,40 @@ function applyLinuxBundledPluginCopyPermissionsPatch(currentSource) {
     return currentSource;
   }
 
+  const privateStagingRegex =
+    /([A-Za-z_$][\w$]*)=`create_staging`,await ([A-Za-z_$][\w$]*)\.default\.mkdir\(\(0,([A-Za-z_$][\w$]*)\.join\)\(([A-Za-z_$][\w$]*),\.\.\.([A-Za-z_$][\w$]*)\.slice\(0,-1\)\),\{recursive:!0\}\)/;
+  let patchedPrivateStaging = false;
+  const privateStagingSource = currentSource.replace(
+    privateStagingRegex,
+    (
+      _match,
+      phaseVar,
+      fsPromisesVar,
+      stagingPathVar,
+      stagingRootVar,
+      manifestSegmentsVar,
+    ) => {
+      patchedPrivateStaging = true;
+      return `${phaseVar}=\`create_staging\`,process.platform===\`linux\`&&await ${fsPromisesVar}.default.mkdir(${stagingRootVar},{recursive:!0,mode:448}),await ${fsPromisesVar}.default.mkdir((0,${stagingPathVar}.join)(${stagingRootVar},...${manifestSegmentsVar}.slice(0,-1)),{recursive:!0})`;
+    },
+  );
+  if (!patchedPrivateStaging) {
+    if (currentSource.includes("create_staging")) {
+      console.warn(
+        "WARN: Could not find bundled plugin private staging boundary — skipping Linux plugin permissions patch",
+      );
+    }
+    return currentSource;
+  }
+
   const copyBranchRegex =
     /if\(([A-Za-z_$][\w$]*)\.default\.platform!==`win32`\)\{await ([A-Za-z_$][\w$]*)\.default\.cp\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),\{recursive:!0,verbatimSymlinks:!0\}\);return\}/;
   let patchedCopyBranch = false;
-  const patchedSource = currentSource.replace(
+  const patchedSource = privateStagingSource.replace(
     copyBranchRegex,
     (_match, platformVar, fsPromisesVar, sourceVar, targetVar) => {
       patchedCopyBranch = true;
-      return `if(${platformVar}.default.platform!==\`win32\`){await ${fsPromisesVar}.default.cp(${sourceVar},${targetVar},{recursive:!0,verbatimSymlinks:!0});if(process.platform===\`linux\`)await ${helperName}(${targetVar},${fsPromisesVar}.default);return}`;
+      return `if(${platformVar}.default.platform!==\`win32\`){if(process.platform===\`linux\`)await ${sourceValidatorName}(${sourceVar},${fsPromisesVar}.default);await ${fsPromisesVar}.default.cp(${sourceVar},${targetVar},{recursive:!0,verbatimSymlinks:!0});if(process.platform===\`linux\`)await ${writableHelperName}(${targetVar},${fsPromisesVar}.default);return}`;
     },
   );
   if (!patchedCopyBranch) {
@@ -43,15 +70,15 @@ function applyLinuxBundledPluginCopyPermissionsPatch(currentSource) {
     return currentSource;
   }
 
-  const helper =
-    `async function ${helperName}(e,t){let n=await t.lstat(e);if(n.isSymbolicLink())return;await t.chmod(e,(n.mode|128)&~18);if(n.isDirectory())for(let n of await t.readdir(e))await ${helperName}((0,${pathVar}.join)(e,n),t)}`;
+  const helpers =
+    `async function ${sourceValidatorName}(e,t){let n=(0,${pathVar}.resolve)(e),r=await t.realpath(e);if(n!==r)throw Error(\`bundled plugin source is not trusted\`);let i=typeof process.getuid===\`function\`?process.getuid():null,a=async e=>{let n=await t.lstat(e),r=n.uid===0&&n.isDirectory()&&(n.mode&512)!==0;if(n.isSymbolicLink()||!n.isDirectory()&&!n.isFile()||n.uid!==0&&n.uid!==i||(n.mode&18)!==0&&!r)throw Error(\`bundled plugin source is not trusted\`);return n},o=(0,${pathVar}.parse)(r).root,s=o;await a(s);for(let e of r.slice(o.length).split(${pathVar}.sep).filter(Boolean))s=(0,${pathVar}.join)(s,e),await a(s);let c=async e=>{let n=await a(e);if(n.isDirectory())for(let r of await t.readdir(e))await c((0,${pathVar}.join)(e,r))};await c(r)}async function ${writableHelperName}(e,t){let n=await t.lstat(e);if(n.isSymbolicLink())return;await t.chmod(e,n.mode|128);if(n.isDirectory())for(let n of await t.readdir(e))await ${writableHelperName}((0,${pathVar}.join)(e,n),t)}`;
   const strictDirective = '"use strict";';
   const helperInsertionIndex = currentSource.startsWith(strictDirective)
     ? strictDirective.length
     : 0;
   return (
     patchedSource.slice(0, helperInsertionIndex) +
-    helper +
+    helpers +
     patchedSource.slice(helperInsertionIndex)
   );
 }

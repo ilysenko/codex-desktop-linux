@@ -1290,6 +1290,8 @@ function currentBundledPluginCopyBundleFixture() {
     "let p=require(`node:path`);" +
     "let m=require(`node:fs/promises`);m={default:m};" +
     "let g={default:{platform:process.platform}};" +
+    "let sc=[`.agents`,`plugins`,`marketplace.json`];" +
+    "async function stage(a){let o=`cleanup_staging_before_write`;o=`create_staging`,await m.default.mkdir((0,p.join)(a,...sc.slice(0,-1)),{recursive:!0});return o}" +
     "async function fl(e,t){if(g.default.platform===`darwin`){return}if(g.default.platform!==`win32`){await m.default.cp(e,t,{recursive:!0,verbatimSymlinks:!0});return}}"
   );
 }
@@ -6888,7 +6890,7 @@ test("auto-installs the current Chrome plugin gate shape", () => {
   assert.equal((patched.match(/installWhenMissing:!0,name:o\.s/g) || []).length, 0);
 });
 
-test("makes Linux bundled plugin staging owner-writable without cooperative write bits", async () => {
+test("materializes trusted Linux bundled plugins through private staging", async () => {
   const patched = applyPatchTwice(
     applyLinuxBundledPluginCopyPermissionsPatch,
     currentBundledPluginCopyBundleFixture(),
@@ -6897,48 +6899,92 @@ test("makes Linux bundled plugin staging owner-writable without cooperative writ
   const sourcePlugin = path.join(root, "source-plugin");
   const sourceManifestDir = path.join(sourcePlugin, ".codex-plugin");
   const sourceManifest = path.join(sourceManifestDir, "plugin.json");
-  const sourceCooperativeFile = path.join(sourceManifestDir, "cooperative.txt");
-  const externalFile = path.join(root, "external-read-only-file");
-  const sourceLink = path.join(sourcePlugin, "external-link");
-  const targetPlugin = path.join(root, "target-plugin");
-  const targetManifest = path.join(targetPlugin, ".codex-plugin", "plugin.json");
-  const targetCooperativeFile = path.join(
-    targetPlugin,
-    ".codex-plugin",
-    "cooperative.txt",
+  const sourceScriptsDir = path.join(sourcePlugin, "scripts");
+  const sourceClient = path.join(sourceScriptsDir, "browser-client.mjs");
+  const stagingRoot = path.join(
+    root,
+    "missing-parent",
+    "runtime-marketplace.staging-test",
   );
-  const targetLink = path.join(targetPlugin, "external-link");
+  const targetPlugin = path.join(stagingRoot, "plugins", "chrome");
+  const targetManifest = path.join(targetPlugin, ".codex-plugin", "plugin.json");
+  let copiedFromPrivateStaging = false;
 
   try {
-    fs.mkdirSync(sourceManifestDir, { recursive: true });
-    fs.writeFileSync(sourceManifest, '{"name":"computer-use"}\n');
-    fs.writeFileSync(sourceCooperativeFile, "cooperative\n");
-    fs.writeFileSync(externalFile, "external\n");
-    fs.chmodSync(externalFile, 0o444);
-    fs.symlinkSync(externalFile, sourceLink);
+    fs.mkdirSync(sourceManifestDir, { recursive: true, mode: 0o755 });
+    fs.mkdirSync(sourceScriptsDir, { mode: 0o755 });
+    fs.writeFileSync(sourceManifest, '{"name":"chrome"}\n');
+    fs.writeFileSync(sourceClient, "trusted client\n");
     fs.chmodSync(sourceManifest, 0o444);
-    fs.chmodSync(sourceCooperativeFile, 0o664);
-    fs.chmodSync(sourceManifestDir, 0o775);
-    fs.chmodSync(sourcePlugin, 0o775);
+    fs.chmodSync(sourceClient, 0o644);
 
-    const copyPlugin = new Function("process", "require", `${patched};return fl;`)(
-      { platform: "linux" },
-      require,
-    );
-    await copyPlugin(sourcePlugin, targetPlugin);
+    const guardedFsPromises = new Proxy(fs.promises, {
+      get(target, property) {
+        if (property === "cp") {
+          return async (...args) => {
+            assert.equal(fs.statSync(stagingRoot).mode & 0o777, 0o700);
+            copiedFromPrivateStaging = true;
+            return target.cp(...args);
+          };
+        }
+        return Reflect.get(target, property);
+      },
+    });
+    const requireForFixture = (specifier) =>
+      specifier === "node:fs/promises" ? guardedFsPromises : require(specifier);
+    const materializer = new Function(
+      "process",
+      "require",
+      `${patched};return {copy:fl,stage};`,
+    )({ platform: "linux", getuid: () => process.getuid() }, requireForFixture);
+
+    await materializer.stage(stagingRoot);
+    fs.mkdirSync(path.dirname(targetPlugin), { recursive: true });
+    await materializer.copy(sourcePlugin, targetPlugin);
     fs.appendFileSync(targetManifest, "\n");
 
     assert.match(patched, /async function codexLinuxMakeBundledPluginTreeWritable/);
+    assert.match(patched, /async function codexLinuxValidateBundledPluginSource/);
+    assert.equal(copiedFromPrivateStaging, true);
+    assert.equal(fs.statSync(stagingRoot).mode & 0o777, 0o700);
     assert.equal(fs.statSync(targetPlugin).mode & 0o200, 0o200);
     assert.equal(fs.statSync(targetManifest).mode & 0o200, 0o200);
     assert.equal(fs.statSync(targetPlugin).mode & 0o022, 0);
     assert.equal(fs.statSync(targetManifest).mode & 0o022, 0);
-    assert.equal(fs.statSync(targetCooperativeFile).mode & 0o022, 0);
-    assert.equal(fs.lstatSync(targetLink).isSymbolicLink(), true);
-    assert.equal(fs.statSync(externalFile).mode & 0o200, 0);
   } finally {
-    fs.chmodSync(sourcePlugin, 0o755);
-    fs.chmodSync(sourceManifestDir, 0o755);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a tampered bundled browser client before materialization", async () => {
+  const patched = applyPatchTwice(
+    applyLinuxBundledPluginCopyPermissionsPatch,
+    currentBundledPluginCopyBundleFixture(),
+  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-bundled-plugin-tamper-"));
+  const sourcePlugin = path.join(root, "source-plugin");
+  const sourceManifestDir = path.join(sourcePlugin, ".codex-plugin");
+  const sourceScriptsDir = path.join(sourcePlugin, "scripts");
+  const sourceClient = path.join(sourceScriptsDir, "browser-client.mjs");
+  const targetPlugin = path.join(root, "target-plugin");
+
+  try {
+    fs.mkdirSync(sourceManifestDir, { recursive: true, mode: 0o755 });
+    fs.mkdirSync(sourceScriptsDir, { mode: 0o755 });
+    fs.writeFileSync(path.join(sourceManifestDir, "plugin.json"), '{"name":"chrome"}\n');
+    fs.writeFileSync(sourceClient, "tampered client\n");
+    fs.chmodSync(sourceClient, 0o664);
+
+    const copyPlugin = new Function("process", "require", `${patched};return fl;`)(
+      { platform: "linux", getuid: () => process.getuid() },
+      require,
+    );
+    await assert.rejects(
+      copyPlugin(sourcePlugin, targetPlugin),
+      /bundled plugin source is not trusted/,
+    );
+    assert.equal(fs.existsSync(targetPlugin), false);
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
