@@ -56,7 +56,9 @@ const {
   applyBrowserUseNodeReplApprovalAssets,
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
+  applyLinuxBrowserUsePopupEnablementPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
+  applyLinuxBrowserUseWindowOpenRoutingPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxExternalOpenEnvPatch,
 } = require("./patches/impl/main-process/browser.js");
@@ -166,11 +168,12 @@ const {
   applyAutomationUpdateEagerToolPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxBrowserUseAvailabilityPatch,
+  applyLinuxBrowserUseWindowOpenConversationPatch,
+  applyLinuxBrowserUseWindowOpenDedicatedTabPatch,
   applyLinuxBrowserUseWebviewAttachRecoveryPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
-  applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxChatSearchHydrationPatch,
   applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxFastModeModelGuardPatch,
@@ -926,9 +929,10 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-avatar-overlay-mouse-passthrough",
     "linux-avatar-settings-sync",
     "linux-browser-use-availability",
-    "linux-browser-use-non-local-navigation",
     "linux-browser-use-external-availability",
     "linux-browser-use-webview-attach-recovery",
+    "linux-browser-use-window-open-conversation",
+    "linux-browser-use-window-open-dedicated-tab",
     "linux-chat-search-hydration",
     "linux-file-manager",
     "linux-host-child-process-environment",
@@ -947,6 +951,8 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-bundled-plugin-reconcile-stale-snapshot",
     "linux-bundled-plugin-copy-permissions",
     "linux-browser-use-route-liveness",
+    "linux-browser-use-popup-enablement",
+    "linux-browser-use-window-open-routing",
     "linux-chrome-extension-status",
     "linux-notification-actions",
     "linux-local-app-server-feature-enablement-handler",
@@ -7601,31 +7607,175 @@ test("external Browser Use availability descriptor matches the current bundle na
   assert.match("use-in-app-browser-use-availability-B4Bdb14G.js", descriptor.pattern);
 });
 
-test("allows Browser Use non-local navigation on Linux without the upstream rollout flag", () => {
+test("keeps temporary new-task Browser window-open tabs routable", () => {
   const source =
-    "function mx(){let e=(0,Z.c)(20),t=q(Ss).value,n;e[0]===t?n=e[1]:(n=vs(t),e[0]=t,e[1]=n);let r=n,i=J(fl.activeTab$),a=J(Xn),o=ka(`3903563814`),s=ka(`2327881676`),c,l;e[2]!==i||e[3]!==r||e[4]!==a||e[5]!==t.pathname||e[6]!==t.search?(c=()=>{if(r==null)return;let e=ml(i,r);ci.dispatchMessage(`browser-sidebar-owner-sync`,{conversationId:r})},l=[i,r,a,t.pathname,t.search],e[2]=i,e[3]=r,e[4]=a,e[5]=t.pathname,e[6]=t.search,e[7]=c,e[8]=l):(c=e[7],l=e[8]),(0,$.useLayoutEffect)(c,l);let u,d;e[9]===o?(u=e[10],d=e[11]):(u=()=>{ux||ci.dispatchMessage(`browser-use-non-local-sites-allowed-changed`,{allowed:o})},d=[o],e[9]=o,e[10]=u,e[11]=d),(0,$.useEffect)(u,d);return null}";
-
-  const patched = applyPatchTwice(applyLinuxBrowserUseNonLocalNavigationPatch, source);
-
-  assert.match(
-    patched,
-    /dispatchMessage\(`browser-use-non-local-sites-allowed-changed`,\{allowed:!0\}\)/,
+    '"use strict";' +
+    "function install(e,t,i){let r=W$({...e,isMultiBrowserTabsEnabled:!0}),a=e.conversationId==null?i:Cn(t,e.conversationId);if(a==null)return;let s=D({browserTabId:e.browserTabId,conversationId:a,insertToRightOfTabId:e.insertToRightOfTabId});return a}Ce(`open-browser-tab`,install,[])";
+  const patched = applyPatchTwice(
+    applyLinuxBrowserUseWindowOpenConversationPatch,
+    source,
   );
-  assert.match(patched, /ka\(`3903563814`\)/);
-});
+  const context = {
+    Ce: () => {},
+    Cn: (_store, conversationId) =>
+      conversationId === "client-new-thread:resolved"
+        ? "conversation-resolved"
+        : conversationId === "conversation-1"
+          ? "conversation-1"
+          : null,
+    D: (value) => value,
+    W$: (value) => value,
+  };
 
-test("patches later Browser Use navigation dispatches when an earlier one is already patched", () => {
-  const source =
-    "function first(){let o=ka(`3903563814`);return()=>ci.dispatchMessage(`browser-use-non-local-sites-allowed-changed`,{allowed:!0})}" +
-    "function second(){let p=ka(`3903563814`);return()=>ci.dispatchMessage(`browser-use-non-local-sites-allowed-changed`,{allowed:p})}";
-
-  const patched = applyPatchTwice(applyLinuxBrowserUseNonLocalNavigationPatch, source);
+  vm.runInNewContext(patched, context);
 
   assert.equal(
-    (patched.match(/browser-use-non-local-sites-allowed-changed`,\{allowed:!0\}/g) || []).length,
+    context.install(
+      { conversationId: "client-new-thread:temporary" },
+      {},
+      "conversation-active",
+    ),
+    "client-new-thread:temporary",
+  );
+  assert.equal(
+    context.install(
+      { conversationId: "client-new-thread:resolved" },
+      {},
+      "conversation-active",
+    ),
+    "conversation-resolved",
+  );
+  assert.equal(
+    context.install({ conversationId: "conversation-1" }, {}, "conversation-active"),
+    "conversation-1",
+  );
+  assert.equal(
+    context.install({ conversationId: null }, {}, "conversation-active"),
+    "conversation-active",
+  );
+  assert.equal(context.install({ conversationId: "unknown" }, {}, null), undefined);
+  assert.equal(
+    (patched.match(/function codexLinuxResolveBrowserTabConversationId/g) || []).length,
+    1,
+  );
+  assert.equal(
+    (patched.match(/codexLinuxResolveBrowserTabConversationId\(/g) || []).length,
     2,
   );
-  assert.doesNotMatch(patched, /browser-use-non-local-sites-allowed-changed`,\{allowed:p\}/);
+});
+
+test("Browser window-open conversation descriptor matches the current bundle", () => {
+  const descriptor = require("./patches/core/all-linux/webview/browser-use-window-open-conversation/patch.js");
+
+  assert.match("app-initial~app-main~page-CtzZUdyW.js", descriptor.pattern);
+  assert.doesNotMatch(
+    "app-initial~artifact-tab-content.electron~app-main~page-CtzZUdyW.js",
+    descriptor.pattern,
+  );
+});
+
+test("keeps only Bing Linux window-open requests as dedicated tabs without Owl capabilities", () => {
+  const source =
+    '"use strict";' +
+    "function U$(e){return e?.startsWith(`chrome://`)===!0}" +
+    "function W$({adoptedWebContentsId:e,adoptionLease:t,initialUrl:n,isMultiBrowserTabsEnabled:r}){return r&&t!=null&&e!=null||U$(n)}" +
+    "function install(e){let r=W$({...e,isMultiBrowserTabsEnabled:e.multiTab});return r}Ce(`open-browser-tab`,install,[])";
+  const patched = applyPatchTwice(
+    applyLinuxBrowserUseWindowOpenDedicatedTabPatch,
+    source,
+  );
+  const context = { Ce: () => {}, URL };
+
+  vm.runInNewContext(patched, context);
+
+  assert.equal(
+    context.install({
+      initialUrl: "https://openai.com/",
+      initiator: "window_open",
+      initiatorUrl: "https://www.bing.com/search?q=codex",
+      multiTab: true,
+    }),
+    true,
+  );
+  assert.equal(
+    context.install({
+      initialUrl:
+        "https://www.bing.com/ck/a?!&&p=result&u=target&ntb=1",
+      initiator: "window_open",
+      initiatorUrl: null,
+      multiTab: false,
+    }),
+    true,
+  );
+  assert.equal(
+    context.install({
+      initialUrl: "https://openai.com/",
+      initiator: "window_open",
+      initiatorUrl: "https://www.google.com/search?q=codex",
+      multiTab: true,
+    }),
+    false,
+  );
+  assert.equal(
+    context.install({
+      adoptedWebContentsId: 42,
+      adoptionLease: "lease-1",
+      initialUrl: "https://openai.com/",
+      initiator: "window_open",
+      initiatorUrl: "https://www.google.com/search?q=codex",
+      multiTab: true,
+    }),
+    true,
+  );
+  assert.equal(
+    context.install({
+      initialUrl: "chrome://settings/content",
+      initiator: "app_menu",
+      multiTab: false,
+    }),
+    true,
+  );
+  assert.equal(
+    context.install({
+      initialUrl: "https://openai.com/",
+      initiator: "window_open",
+      initiatorUrl: "not a URL",
+      multiTab: false,
+    }),
+    false,
+  );
+  assert.equal(
+    context.install({
+      initialUrl: "https://www.bing.com/search?q=codex",
+      initiator: "window_open",
+      initiatorUrl: null,
+      multiTab: false,
+    }),
+    false,
+  );
+  assert.equal(
+    context.install({
+      initialUrl: "https://notbing.com/ck/a?ntb=1",
+      initiator: "window_open",
+      initiatorUrl: null,
+      multiTab: false,
+    }),
+    false,
+  );
+  assert.equal(
+    (patched.match(/function codexLinuxIsBingWindowOpen/g) || []).length,
+    1,
+  );
+});
+
+test("Browser window-open dedicated-tab descriptor matches the current bundle", () => {
+  const descriptor = require("./patches/core/all-linux/webview/browser-use-window-open-dedicated-tab/patch.js");
+
+  assert.match("app-initial~app-main~page-CtzZUdyW.js", descriptor.pattern);
+  assert.doesNotMatch(
+    "app-initial~artifact-tab-content.electron~app-main~page-CtzZUdyW.js",
+    descriptor.pattern,
+  );
 });
 
 test("remounts a delayed active Browser webview exactly once and preserves its logical tab", () => {
@@ -8627,6 +8777,333 @@ test("keeps Browser Use route liveness fallback inactive when ambiguous", () => 
 
   assert.equal(result, null);
   assert.equal(warnings, 1);
+});
+
+test("enables target-blank popups for ordinary Linux Browser sidebar webviews", () => {
+  const source =
+    '"use strict";' +
+    "function oB({configureBrowserSession:e,params:t,preloadPath:n,webPreferences:r}){t.partition=Ox(`app`),r.session=e(),r.preload=n,cB(t,r)}" +
+    "function cB(e,t){delete e.allowpopups,Object.assign(t,{disablePopups:!0})}" +
+    "function Ox(e){return `persist:${e}`}";
+  const patched = applyPatchTwice(applyLinuxBrowserUsePopupEnablementPatch, source);
+
+  for (const [platform, expectedAllowPopups, expectedDisablePopups] of [
+    ["linux", "", false],
+    ["win32", undefined, true],
+  ]) {
+    const params = { allowpopups: "stale" };
+    const webPreferences = {};
+    const context = {
+      Object,
+      params,
+      process: { platform },
+      webPreferences,
+    };
+
+    vm.runInNewContext(
+      `${patched};oB({configureBrowserSession:()=>({id:"browser-session"}),params,preloadPath:"/browser-preload.js",webPreferences})`,
+      context,
+    );
+
+    assert.equal(params.partition, "persist:app");
+    assert.equal(params.allowpopups, expectedAllowPopups);
+    assert.equal(webPreferences.disablePopups, expectedDisablePopups);
+    assert.equal(webPreferences.preload, "/browser-preload.js");
+  }
+
+  assert.equal(
+    (patched.match(/function codexLinuxEnableBrowserUsePopups/g) || []).length,
+    1,
+  );
+  assert.equal(
+    (patched.match(/codexLinuxEnableBrowserUsePopups\(/g) || []).length,
+    2,
+  );
+});
+
+test("warns and skips when the Browser sidebar webview preferences seam drifts", () => {
+  const source =
+    "function oB({configureBrowserSession:e,params:t,webPreferences:r}){r.session=e(),cB(t,r)}" +
+    "function cB(e,t){Object.assign(t,{disablePopups:!0})}";
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxBrowserUsePopupEnablementPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /popup enablement patch/);
+});
+
+test("normalizes Linux Browser Use HTTP window-open requests through the upstream tab route", () => {
+  const source =
+    '"use strict";' +
+    "function install(i,e,t,r){i.setWindowOpenHandler(({disposition:n,referrer:a,url:o})=>e.openBrowserSidebarExternalUrl({initiatorUrl:a?.url??null,pageState:r,url:o,webContents:i})||e.isRestrictedBrowserSidebarNavigation(i.id,o)||n===`other`?{action:`deny`}:n===`background-tab`?(e.windowManager.sendMessageToWebContents(t.owner,YZ({active:!1,conversationId:r.conversationId,initialUrl:o,insertToRightOfTabId:r.browserTabId})),{action:`deny`}):(e.windowManager.sendMessageToWebContents(t.owner,YZ({conversationId:r.conversationId,initialUrl:o,insertToRightOfTabId:r.browserTabId})),{action:`deny`}))}";
+  const patched = applyPatchTwice(applyLinuxBrowserUseWindowOpenRoutingPatch, source);
+  const sentMessages = [];
+  let handler = null;
+  const context = {
+    URL,
+    YZ: ({
+      active = true,
+      conversationId,
+      initiatorUrl,
+      initialUrl,
+      insertToRightOfTabId,
+    }) => ({
+      type: "open-browser-tab",
+      conversationId,
+      initiatorUrl,
+      initialUrl,
+      insertToRightOfTabId,
+      ...(active ? {} : { active }),
+      source: "manual",
+      initiator: "window_open",
+    }),
+    guest: {
+      id: 17,
+      setWindowOpenHandler: (value) => {
+        handler = value;
+      },
+    },
+    manager: {
+      isRestrictedBrowserSidebarNavigation: () => false,
+      openBrowserSidebarExternalUrl: () => false,
+      windowManager: {
+        sendMessageToWebContents: (owner, message) => sentMessages.push({ message, owner }),
+      },
+    },
+    ownerState: { owner: { id: 23 } },
+    pageState: { browserTabId: "tab-1", conversationId: "conversation-1" },
+    process: { platform: "linux" },
+    XZ: () => false,
+  };
+
+  vm.runInNewContext(`${patched};install(guest,manager,ownerState,pageState)`, context);
+  const otherResult = handler({
+    disposition: "other",
+    referrer: { url: "https://www.bing.com/search?q=codex" },
+    url: "https://openai.com/codex/",
+  });
+  const backgroundResult = handler({
+    disposition: "background-tab",
+    referrer: { url: "https://www.bing.com/search?q=codex" },
+    url: "https://platform.openai.com/docs/",
+  });
+
+  assert.equal(otherResult.action, "deny");
+  assert.equal(backgroundResult.action, "deny");
+  assert.deepEqual(JSON.parse(JSON.stringify(sentMessages)), [
+    {
+      message: {
+        conversationId: "conversation-1",
+        initialUrl: "https://openai.com/codex/",
+        initiator: "window_open",
+        initiatorUrl: "https://www.bing.com/search?q=codex",
+        insertToRightOfTabId: "tab-1",
+        source: "manual",
+        type: "open-browser-tab",
+      },
+      owner: { id: 23 },
+    },
+    {
+      message: {
+        active: false,
+        conversationId: "conversation-1",
+        initialUrl: "https://platform.openai.com/docs/",
+        initiator: "window_open",
+        initiatorUrl: "https://www.bing.com/search?q=codex",
+        insertToRightOfTabId: "tab-1",
+        source: "manual",
+        type: "open-browser-tab",
+      },
+      owner: { id: 23 },
+    },
+  ]);
+  assert.equal(
+    (patched.match(/function codexLinuxNormalizeBrowserUseWindowOpenDisposition/g) || [])
+      .length,
+    1,
+  );
+  assert.equal(
+    (patched.match(/codexLinuxNormalizeBrowserUseWindowOpenDisposition\(/g) || []).length,
+    2,
+  );
+});
+
+test("preserves temporary Linux client-new-thread window-open routes for the renderer", () => {
+  const source =
+    '"use strict";' +
+    "function install(i,e,t,r){i.setWindowOpenHandler(({disposition:n,referrer:a,url:o})=>e.openBrowserSidebarExternalUrl({initiatorUrl:a?.url??null,pageState:r,url:o,webContents:i})||e.isRestrictedBrowserSidebarNavigation(i.id,o)||n===`other`?{action:`deny`}:(e.windowManager.sendMessageToWebContents(t.owner,YZ({conversationId:r.conversationId,initialUrl:o,insertToRightOfTabId:r.browserTabId})),{action:`deny`}))}";
+  const patched = applyPatchTwice(applyLinuxBrowserUseWindowOpenRoutingPatch, source);
+  const sentMessages = [];
+  let handler = null;
+  const context = {
+    URL,
+    YZ: (message) => ({
+      type: "open-browser-tab",
+      ...message,
+      source: "manual",
+      initiator: "window_open",
+    }),
+    guest: {
+      id: 17,
+      setWindowOpenHandler: (value) => {
+        handler = value;
+      },
+    },
+    manager: {
+      isRestrictedBrowserSidebarNavigation: () => false,
+      openBrowserSidebarExternalUrl: () => false,
+      windowManager: {
+        sendMessageToWebContents: (owner, message) => sentMessages.push({ message, owner }),
+      },
+    },
+    ownerState: { owner: { id: 23 } },
+    pageState: {
+      browserTabId: "client-new-thread:temp:legacy",
+      conversationId: "client-new-thread:temp",
+    },
+    process: { platform: "linux" },
+  };
+
+  vm.runInNewContext(`${patched};install(guest,manager,ownerState,pageState)`, context);
+  const result = handler({
+    disposition: "other",
+    referrer: { url: "https://www.google.com/search?q=baidu" },
+    url: "https://www.baidu.com/",
+  });
+
+  assert.equal(result.action, "deny");
+  assert.deepEqual(JSON.parse(JSON.stringify(sentMessages)), [
+    {
+      message: {
+        conversationId: "client-new-thread:temp",
+        initialUrl: "https://www.baidu.com/",
+        initiator: "window_open",
+        initiatorUrl: "https://www.google.com/search?q=baidu",
+        insertToRightOfTabId: "client-new-thread:temp:legacy",
+        source: "manual",
+        type: "open-browser-tab",
+      },
+      owner: { id: 23 },
+    },
+  ]);
+});
+
+test("preserves upstream Browser Use web contents adoption for Linux HTTP window-open requests", () => {
+  const source =
+    '"use strict";' +
+    "function install(i,e,t,r){i.setWindowOpenHandler(({disposition:n,referrer:a,url:o})=>e.openBrowserSidebarExternalUrl({initiatorUrl:a?.url??null,pageState:r,url:o,webContents:i})||e.isRestrictedBrowserSidebarNavigation(i.id,o)||n===`other`?{action:`deny`}:XZ(i)&&(n===`foreground-tab`||n===`background-tab`)?{action:`allow`,createWindow:i=>{let a=ZZ(i,t.owner);return t.pendingAdoptedInitialUrlsByWebContents.set(a.webContents,o),e.windowManager.sendMessageToWebContents(t.owner,YZ({...n===`background-tab`?{active:!1}:{},adoptionLease:a.adoptionLease,adoptedWebContentsId:a.webContents.id,conversationId:r.conversationId,initialUrl:o,insertToRightOfTabId:r.browserTabId})),a.webContents}}:n===`background-tab`?(e.windowManager.sendMessageToWebContents(t.owner,YZ({active:!1,conversationId:r.conversationId,initialUrl:o,insertToRightOfTabId:r.browserTabId})),{action:`deny`}):(e.windowManager.sendMessageToWebContents(t.owner,YZ({conversationId:r.conversationId,initialUrl:o,insertToRightOfTabId:r.browserTabId})),{action:`deny`}))}";
+  const patched = applyLinuxBrowserUseWindowOpenRoutingPatch(source);
+  const pendingUrls = new Map();
+  const sentMessages = [];
+  const adoptedWebContents = { id: 31 };
+  let handler = null;
+  const context = {
+    URL,
+    XZ: () => true,
+    YZ: (message) => ({
+      type: "open-browser-tab",
+      ...message,
+      source: "manual",
+      initiator: "window_open",
+    }),
+    ZZ: () => ({ adoptionLease: "lease-1", webContents: adoptedWebContents }),
+    guest: {
+      id: 17,
+      setWindowOpenHandler: (value) => {
+        handler = value;
+      },
+    },
+    manager: {
+      isRestrictedBrowserSidebarNavigation: () => false,
+      openBrowserSidebarExternalUrl: () => false,
+      windowManager: {
+        sendMessageToWebContents: (owner, message) => sentMessages.push({ message, owner }),
+      },
+    },
+    ownerState: {
+      owner: { id: 23 },
+      pendingAdoptedInitialUrlsByWebContents: pendingUrls,
+    },
+    pageState: { browserTabId: "tab-1", conversationId: "conversation-1" },
+    process: { platform: "linux" },
+  };
+
+  vm.runInNewContext(`${patched};install(guest,manager,ownerState,pageState)`, context);
+  const result = handler({
+    disposition: "other",
+    referrer: { url: "https://www.bing.com/search?q=codex" },
+    url: "https://openai.com/codex/",
+  });
+
+  assert.equal(result.action, "allow");
+  assert.equal(result.createWindow({}), adoptedWebContents);
+  assert.equal(pendingUrls.get(adoptedWebContents), "https://openai.com/codex/");
+  assert.deepEqual(JSON.parse(JSON.stringify(sentMessages)), [
+    {
+      message: {
+        adoptionLease: "lease-1",
+        adoptedWebContentsId: 31,
+        conversationId: "conversation-1",
+        initialUrl: "https://openai.com/codex/",
+        initiator: "window_open",
+        insertToRightOfTabId: "tab-1",
+        source: "manual",
+        type: "open-browser-tab",
+      },
+      owner: { id: 23 },
+    },
+  ]);
+});
+
+test("preserves Browser Use window-open policy checks and non-Linux behavior", () => {
+  const source =
+    "function install(i,e,t,r){i.setWindowOpenHandler(({disposition:n,referrer:a,url:o})=>e.openBrowserSidebarExternalUrl({initiatorUrl:a?.url??null,pageState:r,url:o,webContents:i})||e.isRestrictedBrowserSidebarNavigation(i.id,o)||n===`other`?{action:`deny`}:n===`background-tab`?(e.windowManager.sendMessageToWebContents(t.owner,YZ({active:!1,conversationId:r.conversationId,initialUrl:o,insertToRightOfTabId:r.browserTabId})),{action:`deny`}):(e.windowManager.sendMessageToWebContents(t.owner,YZ({conversationId:r.conversationId,initialUrl:o,insertToRightOfTabId:r.browserTabId})),{action:`deny`}))}";
+  const patched = applyLinuxBrowserUseWindowOpenRoutingPatch(source);
+
+  for (const [platform, restricted, url] of [
+    ["linux", true, "https://example.com/restricted"],
+    ["linux", false, "file:///tmp/not-web.html"],
+    ["win32", false, "https://example.com/windows"],
+  ]) {
+    const sentMessages = [];
+    let handler = null;
+    const context = {
+      URL,
+      YZ: (message) => message,
+      guest: { id: 17, setWindowOpenHandler: (value) => { handler = value; } },
+      manager: {
+        isRestrictedBrowserSidebarNavigation: () => restricted,
+        openBrowserSidebarExternalUrl: () => false,
+        windowManager: {
+          sendMessageToWebContents: (owner, message) => sentMessages.push({ message, owner }),
+        },
+      },
+      ownerState: { owner: { id: 23 } },
+      pageState: { browserTabId: "tab-1", conversationId: "conversation-1" },
+      process: { platform },
+      XZ: () => false,
+    };
+
+    vm.runInNewContext(`${patched};install(guest,manager,ownerState,pageState)`, context);
+    const result = handler({ disposition: "other", referrer: null, url });
+
+    assert.equal(result.action, "deny");
+    assert.equal(sentMessages.length, 0);
+  }
+});
+
+test("warns and skips when the Browser Use window-open handler seam drifts", () => {
+  const source =
+    "function install(i,e,r){i.setWindowOpenHandler(({disposition:n,referrer:a,url:o})=>e.openBrowserSidebarExternalUrl({initiatorUrl:a?.url??null,pageState:r,url:o,webContents:i})||e.isRestrictedBrowserSidebarNavigation(i.id,o)||n===`new-window`?{action:`deny`}:{action:`allow`})}";
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxBrowserUseWindowOpenRoutingPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /skipping Linux Browser Use window-open routing patch/);
 });
 
 test("shows object-helper Computer Use plugin UI on Linux", () => {

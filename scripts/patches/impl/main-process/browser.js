@@ -371,6 +371,128 @@ function applyLinuxBrowserUseRouteLivenessPatch(currentSource) {
   return currentSource.replace(original, replacement);
 }
 
+function applyLinuxBrowserUsePopupEnablementPatch(currentSource) {
+  const helperName = "codexLinuxEnableBrowserUsePopups";
+  if (currentSource.includes(`function ${helperName}(`)) {
+    return currentSource;
+  }
+
+  const browserWebviewPreferencesPattern =
+    /function ([A-Za-z_$][\w$]*)\(\{configureBrowserSession:([A-Za-z_$][\w$]*),params:([A-Za-z_$][\w$]*),preloadPath:([A-Za-z_$][\w$]*),webPreferences:([A-Za-z_$][\w$]*)\}\)\{\3\.partition=([A-Za-z_$][\w$]*)\(`app`\),\5\.session=\2\(\),\5\.preload=\4,([A-Za-z_$][\w$]*)\(\3,\5\)\}/u;
+  const match = currentSource.match(browserWebviewPreferencesPattern);
+  if (match == null) {
+    if (
+      currentSource.includes("configureBrowserSession") &&
+      currentSource.includes("disablePopups")
+    ) {
+      console.warn(
+        "WARN: Could not find Browser sidebar webview preferences — skipping Linux Browser Use popup enablement patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [
+    originalFunction,
+    functionName,
+    configureSessionVar,
+    paramsVar,
+    preloadPathVar,
+    webPreferencesVar,
+    partitionHelperVar,
+    hardenPreferencesVar,
+  ] = match;
+  const patchedFunction =
+    `function ${functionName}({configureBrowserSession:${configureSessionVar},params:${paramsVar},preloadPath:${preloadPathVar},webPreferences:${webPreferencesVar}}){` +
+    `${paramsVar}.partition=${partitionHelperVar}(\`app\`),${webPreferencesVar}.session=${configureSessionVar}(),` +
+    `${webPreferencesVar}.preload=${preloadPathVar},${hardenPreferencesVar}(${paramsVar},${webPreferencesVar}),` +
+    `${helperName}(${paramsVar},${webPreferencesVar})}`;
+  const helper =
+    `function ${helperName}(e,t){process.platform===\`linux\`&&(e.allowpopups=\`\`,Object.assign(t,{disablePopups:!1}))}`;
+  const strictDirective = '"use strict";';
+  const helperInsertionIndex = currentSource.startsWith(strictDirective)
+    ? strictDirective.length
+    : 0;
+  const patchedSource = currentSource.replace(originalFunction, patchedFunction);
+
+  return (
+    patchedSource.slice(0, helperInsertionIndex) +
+    helper +
+    patchedSource.slice(helperInsertionIndex)
+  );
+}
+
+function applyLinuxBrowserUseWindowOpenRoutingPatch(currentSource) {
+  const helperName = "codexLinuxNormalizeBrowserUseWindowOpenDisposition";
+  if (currentSource.includes(`function ${helperName}(`)) {
+    return currentSource;
+  }
+
+  const handlerPrefixPattern =
+    /([A-Za-z_$][\w$]*)\.setWindowOpenHandler\(\(\{disposition:([A-Za-z_$][\w$]*),referrer:([A-Za-z_$][\w$]*),url:([A-Za-z_$][\w$]*)\}\)=>([A-Za-z_$][\w$]*)\.openBrowserSidebarExternalUrl\(\{initiatorUrl:\3\?\.url\?\?null,pageState:([A-Za-z_$][\w$]*),url:\4,webContents:\1\}\)\|\|\5\.isRestrictedBrowserSidebarNavigation\(\1\.id,\4\)\|\|/u;
+  const match = currentSource.match(handlerPrefixPattern);
+  if (match == null || match.index == null) {
+    if (
+      currentSource.includes("setWindowOpenHandler") &&
+      currentSource.includes("openBrowserSidebarExternalUrl")
+    ) {
+      console.warn(
+        "WARN: Could not find Browser sidebar window-open handler — skipping Linux Browser Use window-open routing patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [originalPrefix, _guestWebContentsVar, dispositionVar, referrerVar, urlVar] =
+    match;
+  const condition = `${dispositionVar}===\`other\``;
+  const conditionIndex = match.index + originalPrefix.length;
+  if (!currentSource.startsWith(condition, conditionIndex)) {
+    console.warn(
+      "WARN: Could not find Browser sidebar other-disposition branch — skipping Linux Browser Use window-open routing patch",
+    );
+    return currentSource;
+  }
+
+  const helper =
+    `function ${helperName}(e,t){if(process.platform!==\`linux\`||e!==\`other\`||typeof t!==\`string\`)return e;try{let n=new URL(t);return n.protocol===\`http:\`||n.protocol===\`https:\`?\`foreground-tab\`:e}catch{return e}}`;
+  const patchedCondition = `(${dispositionVar}=${helperName}(${dispositionVar},${urlVar}),${condition})`;
+  let patchedSource =
+    currentSource.slice(0, conditionIndex) +
+    patchedCondition +
+    currentSource.slice(conditionIndex + condition.length);
+  const messageNeedle =
+    `conversationId:${match[6]}.conversationId,initialUrl:${urlVar},insertToRightOfTabId:${match[6]}.browserTabId`;
+  const messageReplacement =
+    `conversationId:${match[6]}.conversationId,initiatorUrl:${referrerVar}?.url??null,initialUrl:${urlVar},insertToRightOfTabId:${match[6]}.browserTabId`;
+  const foregroundMessageNeedle = `{${messageNeedle}`;
+  const backgroundMessageNeedle = `{active:!1,${messageNeedle}`;
+  if (
+    !patchedSource.includes(foregroundMessageNeedle) &&
+    !patchedSource.includes(backgroundMessageNeedle)
+  ) {
+    console.warn(
+      "WARN: Could not find Browser sidebar window-open message payload — skipping Linux Browser Use window-open routing patch",
+    );
+    return currentSource;
+  }
+  patchedSource = patchedSource
+    .split(foregroundMessageNeedle)
+    .join(`{${messageReplacement}`)
+    .split(backgroundMessageNeedle)
+    .join(`{active:!1,${messageReplacement}`);
+  const strictDirective = '"use strict";';
+  const helperInsertionIndex = currentSource.startsWith(strictDirective)
+    ? strictDirective.length
+    : 0;
+
+  return (
+    patchedSource.slice(0, helperInsertionIndex) +
+    helper +
+    patchedSource.slice(helperInsertionIndex)
+  );
+}
+
 function applyLinuxChromeExtensionStatusPatch(currentSource) {
   if (currentSource.includes("codexLinuxChromeProfileRoots")) {
     return currentSource;
@@ -516,6 +638,8 @@ module.exports = {
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
   applyLinuxExternalOpenEnvPatch,
+  applyLinuxBrowserUsePopupEnablementPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
+  applyLinuxBrowserUseWindowOpenRoutingPatch,
   applyLinuxChromeExtensionStatusPatch,
 };

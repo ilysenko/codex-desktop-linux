@@ -9,7 +9,9 @@ const {
   applyBrowserUseNodeReplApprovalAssets,
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
+  applyLinuxBrowserUsePopupEnablementPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
+  applyLinuxBrowserUseWindowOpenRoutingPatch,
   applyLinuxChromeExtensionStatusPatch,
 } = require("../../../../impl/main-process/browser.js");
 const { applyLinuxChromePluginAutoInstallPatch } = require("../../../../impl/chrome-plugin.js");
@@ -59,6 +61,20 @@ module.exports = [
     order: 170,
     ciPolicy: "optional",
     apply: applyLinuxBrowserUseRouteLivenessPatch,
+  }),
+  mainBundlePatch({
+    id: "linux-browser-use-popup-enablement",
+    phase: "main-bundle",
+    order: 172,
+    ciPolicy: "optional",
+    apply: applyLinuxBrowserUsePopupEnablementPatch,
+  }),
+  mainBundlePatch({
+    id: "linux-browser-use-window-open-routing",
+    phase: "main-bundle",
+    order: 173,
+    ciPolicy: "optional",
+    apply: applyLinuxBrowserUseWindowOpenRoutingPatch,
   }),
   mainBundlePatch({
     id: "linux-chrome-extension-status",

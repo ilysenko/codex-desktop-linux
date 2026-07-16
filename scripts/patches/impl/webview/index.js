@@ -317,37 +317,126 @@ function applyLinuxBrowserUseAvailabilityPatch(currentSource) {
   return currentSource;
 }
 
-function applyLinuxBrowserUseNonLocalNavigationPatch(currentSource) {
-  const messageNeedle = "browser-use-non-local-sites-allowed-changed";
-  const statsigNeedle = "3903563814";
-  let changed = false;
-
-  const dispatchPattern =
-    /((?:[A-Za-z_$][\w$]*=)?[A-Za-z_$][\w$]*\(`3903563814`\)[\s\S]{0,1800}?dispatchMessage\(`browser-use-non-local-sites-allowed-changed`,\{allowed:)([A-Za-z_$][\w$]*)(\}\))/g;
-
-  const patchedSource = currentSource.replace(
-    dispatchPattern,
-    (match, prefix, allowedVar, suffix) => {
-      changed = true;
-      return `${prefix}!0${suffix}`;
-    },
-  );
-
-  if (changed) {
-    return patchedSource;
-  }
-
-  if (currentSource.includes(`${messageNeedle}\`,{allowed:!0}`)) {
+function applyLinuxBrowserUseWindowOpenConversationPatch(currentSource) {
+  const helperName = "codexLinuxResolveBrowserTabConversationId";
+  if (
+    currentSource.includes(`function ${helperName}(`) &&
+    currentSource.includes(`:${helperName}(`)
+  ) {
     return currentSource;
   }
 
-  if (currentSource.includes(messageNeedle) && currentSource.includes(statsigNeedle)) {
-    console.warn(
-      "WARN: Could not find Browser Use non-local navigation gate — skipping Linux Browser Use navigation patch",
-    );
+  if (
+    !currentSource.includes("open-browser-tab") ||
+    !currentSource.includes("isMultiBrowserTabsEnabled")
+  ) {
+    return currentSource;
   }
 
-  return currentSource;
+  const conversationPattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.conversationId==null\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\2\.conversationId\);if\(\1==null\)return;/gu;
+  let match;
+  let selectedMatch = null;
+  while ((match = conversationPattern.exec(currentSource)) != null) {
+    const contextStart = Math.max(0, match.index - 700);
+    const contextEnd = Math.min(currentSource.length, match.index + match[0].length + 1400);
+    const context = currentSource.slice(contextStart, contextEnd);
+    if (
+      context.includes("isMultiBrowserTabsEnabled") &&
+      context.includes("open-browser-tab") &&
+      context.includes("insertToRightOfTabId")
+    ) {
+      selectedMatch = match;
+      break;
+    }
+  }
+
+  if (selectedMatch == null || selectedMatch.index == null) {
+    console.warn(
+      "WARN: Could not find Browser new-tab conversation resolver — skipping Linux Browser window-open conversation patch",
+    );
+    return currentSource;
+  }
+
+  const [
+    original,
+    conversationVar,
+    messageVar,
+    activeConversationVar,
+    resolverVar,
+    storeVar,
+  ] = selectedMatch;
+  const replacement =
+    `${conversationVar}=${messageVar}.conversationId==null?${activeConversationVar}:${helperName}(${resolverVar},${storeVar},${messageVar}.conversationId);if(${conversationVar}==null)return;`;
+  const helper =
+    `function ${helperName}(e,t,n){let r=e(t,n);return r??(typeof n===\`string\`&&n.startsWith(\`client-new-thread:\`)?n:void 0)}`;
+  const patchedSource =
+    currentSource.slice(0, selectedMatch.index) +
+    replacement +
+    currentSource.slice(selectedMatch.index + original.length);
+  const strictDirective = '"use strict";';
+  const helperInsertionIndex = patchedSource.startsWith(strictDirective)
+    ? strictDirective.length
+    : 0;
+
+  return (
+    patchedSource.slice(0, helperInsertionIndex) +
+    helper +
+    patchedSource.slice(helperInsertionIndex)
+  );
+}
+
+function applyLinuxBrowserUseWindowOpenDedicatedTabPatch(currentSource) {
+  const helperName = "codexLinuxIsBingWindowOpen";
+  const initiatorVar = "__codexLinuxWindowOpenInitiator";
+  const initiatorUrlVar = "__codexLinuxWindowOpenInitiatorUrl";
+  if (currentSource.includes(`function ${helperName}(`)) {
+    return currentSource;
+  }
+
+  if (
+    !currentSource.includes("open-browser-tab") ||
+    !currentSource.includes("isMultiBrowserTabsEnabled") ||
+    !currentSource.includes("adoptedWebContentsId")
+  ) {
+    return currentSource;
+  }
+
+  const dedicatedTabPattern =
+    /function ([A-Za-z_$][\w$]*)\(\{adoptedWebContentsId:([A-Za-z_$][\w$]*),adoptionLease:([A-Za-z_$][\w$]*),initialUrl:([A-Za-z_$][\w$]*),isMultiBrowserTabsEnabled:([A-Za-z_$][\w$]*)\}\)\{return \5&&\3!=null&&\2!=null\|\|([A-Za-z_$][\w$]*)\(\4\)\}/u;
+  const match = currentSource.match(dedicatedTabPattern);
+  if (match == null) {
+    console.warn(
+      "WARN: Could not find Browser dedicated-tab classifier — skipping Linux Browser window-open dedicated-tab patch",
+    );
+    return currentSource;
+  }
+
+  const [
+    original,
+    functionName,
+    adoptedWebContentsVar,
+    adoptionLeaseVar,
+    initialUrlVar,
+    multiTabEnabledVar,
+    privilegedUrlVar,
+  ] = match;
+  const replacement =
+    `function ${functionName}({adoptedWebContentsId:${adoptedWebContentsVar},adoptionLease:${adoptionLeaseVar},initialUrl:${initialUrlVar},initiator:${initiatorVar},initiatorUrl:${initiatorUrlVar},isMultiBrowserTabsEnabled:${multiTabEnabledVar}}){` +
+    `return ${multiTabEnabledVar}&&${adoptionLeaseVar}!=null&&${adoptedWebContentsVar}!=null||${helperName}(${initiatorVar},${initiatorUrlVar},${initialUrlVar})||${privilegedUrlVar}(${initialUrlVar})}`;
+  const helper =
+    `function ${helperName}(e,t,n){if(e!==\`window_open\`)return!1;for(let[e,o]of[[t,!1],[n,!0]])if(typeof e===\`string\`)try{let t=new URL(e);if((t.protocol===\`http:\`||t.protocol===\`https:\`)&&(t.hostname===\`bing.com\`||t.hostname.endsWith(\`.bing.com\`))&&(!o||t.pathname===\`/ck/a\`))return!0}catch{}return!1}`;
+  const patchedSource = currentSource.replace(original, replacement);
+  const strictDirective = '"use strict";';
+  const helperInsertionIndex = patchedSource.startsWith(strictDirective)
+    ? strictDirective.length
+    : 0;
+
+  return (
+    patchedSource.slice(0, helperInsertionIndex) +
+    helper +
+    patchedSource.slice(helperInsertionIndex)
+  );
 }
 
 function applyLinuxChatSearchHydrationPatch(currentSource) {
@@ -2309,9 +2398,10 @@ module.exports = {
   applyAutomationUpdateEagerToolPatch,
   applyLinuxChatSearchHydrationPatch,
   applyLinuxBrowserUseAvailabilityPatch,
+  applyLinuxBrowserUseWindowOpenConversationPatch,
+  applyLinuxBrowserUseWindowOpenDedicatedTabPatch,
   applyLinuxBrowserUseWebviewAttachRecoveryPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
-  applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
   applyLinuxConfigWriteVersionConflictPatch,
