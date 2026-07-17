@@ -23,6 +23,7 @@ env:
 jobs:
   detect-codex-dmg-hash:
     name: Detect Codex DMG hash change
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.codex-dmg-hash.outputs.changed }}

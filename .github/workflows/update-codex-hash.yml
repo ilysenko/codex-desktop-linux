@@ -138,6 +138,8 @@ jobs:
             git config user.email "actions@github.com"
             git checkout -B "$REFRESH_BRANCH"
             git add "${pin_paths[@]}"
+            # GITHUB_TOKEN already suppresses branch push workflows. Do not add
+            # a skip marker: squash merges copy it to main and suppress Cachix.
             git commit \
               -m "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
               -m "Refreshed Codex.dmg SRI hash to $CODEX_DMG_HASH and synced codexVersion / electronVersion / native-module pins to the current upstream DMG." \
