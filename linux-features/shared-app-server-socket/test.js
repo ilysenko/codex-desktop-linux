@@ -303,12 +303,13 @@ test("injected transport serializes startup and removes only its owned socket", 
   const servers = new Map();
   const children = [];
   let replacement;
-  let installReplacementBeforeClose = false;
+  let replacementError;
+  let installReplacementBeforeChildClose = false;
   const identityFs = {
     ...fs,
     lstatSync(candidate, ...args) {
       const stat = fs.lstatSync(candidate, ...args);
-      if (candidate !== socketPath || !installReplacementBeforeClose) return stat;
+      if (candidate !== socketPath || !installReplacementBeforeChildClose) return stat;
       return new Proxy(stat, {
         get(target, property, receiver) {
           if (property === "ino") return target.ino + 1;
@@ -329,9 +330,19 @@ test("injected transport serializes startup and removes only its owned socket", 
         child.kill = () => {
           child.killed = true;
           child.signalCode = "SIGTERM";
-          server.close(async () => {
-            if (installReplacementBeforeClose) replacement = await listenUnix(target);
-            child.emit("close", null, "SIGTERM");
+          server.close(() => {
+            setImmediate(() => {
+              Promise.resolve()
+                .then(async () => {
+                  if (installReplacementBeforeChildClose) replacement = await listenUnix(target);
+                })
+                .catch((error) => {
+                  replacementError = error;
+                })
+                .finally(() => {
+                  child.emit("close", null, "SIGTERM");
+                });
+            });
           });
           return true;
         };
@@ -348,10 +359,11 @@ test("injected transport serializes startup and removes only its owned socket", 
     assert.equal(fs.existsSync(`${socketPath}.lock`), true);
     await assert.rejects(second.ensureAuthority(), /already owned/);
 
-    installReplacementBeforeClose = true;
+    installReplacementBeforeChildClose = true;
     const childClosed = once(children[0], "close");
     first.dispose();
     await childClosed;
+    assert.ifError(replacementError);
     assert.equal(fs.lstatSync(socketPath).isSocket(), true, "replacement socket must survive dispose");
     await closeServer(replacement);
   } finally {
