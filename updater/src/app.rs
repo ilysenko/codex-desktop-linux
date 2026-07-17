@@ -2261,6 +2261,7 @@ mod tests {
 
     #[test]
     fn packaged_builder_detects_wrapper_update_from_managed_checkout() -> Result<()> {
+        let _guard = crate::test_util::env_lock();
         let temp = tempfile::tempdir()?;
         let paths = test_paths(temp.path());
         paths.ensure_dirs()?;
