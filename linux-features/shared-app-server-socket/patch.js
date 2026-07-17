@@ -3,7 +3,11 @@
 const IDENT = "[A-Za-z_$][\\w$]*";
 
 function findTransportSymbols(source) {
-  const classMatch = source.match(new RegExp(`var (${IDENT})=class\\{kind=\\\`websocket\\\``));
+  const classMatch = source.match(
+    new RegExp(
+      `var (${IDENT})=class\\{options;kind=\\\`websocket\\\`;logger=${IDENT}\\.${IDENT}\\(\\\`AppServerTransportSshWebsocket\\\`\\)`,
+    ),
+  );
   const selectionLogIndex = source.indexOf("selected app-server transport");
   if (classMatch == null || selectionLogIndex < 0 || classMatch.index >= selectionLogIndex) return null;
 
@@ -65,7 +69,7 @@ function applySharedAppServerSocketPatch(source) {
   }
   const factorySource = source.slice(factoryStart, factoryEnd);
   const localFallbackPattern = new RegExp(
-    `(if\\(${symbols.namespace}\\.(${IDENT})\\(e\\.hostConfig\\)\\)return [^;]+;)(let (${IDENT})=(${IDENT})\\(e\\.hostConfig\\);return \\4\\?)`,
+    `(if\\(${symbols.namespace}\\.(${IDENT})\\(e\\.hostConfig\\)\\)return new (${IDENT})\\(\\{hostConfig:e\\.hostConfig,repoRoot:e\\.repoRoot,resourcesPath:e\\.resourcesPath,defaultOriginator:e\\.defaultOriginator\\}\\);)(?=let (${IDENT})=(${IDENT})\\(e\\.hostConfig\\);if\\(\\4\\)\\{)`,
   );
   const localFallbackMatch = factorySource.match(localFallbackPattern);
   if (localFallbackMatch == null) {
@@ -77,7 +81,8 @@ function applySharedAppServerSocketPatch(source) {
 
   const patchedFactory = factorySource.replace(
     localFallbackPattern,
-    `$1if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&e.hostConfig.kind===\`local\`)return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET);$3`,
+    (match) =>
+      `${match}if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&e.hostConfig.kind===\`local\`)return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET);`,
   );
   return source.slice(0, factoryStart) + classSource + patchedFactory + source.slice(factoryEnd);
 }
