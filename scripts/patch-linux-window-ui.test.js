@@ -1215,9 +1215,10 @@ test("subagent nickname metadata descriptor follows upstream metadata bundle nam
 
 function trayBundleFixture() {
   return [
-    "async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new n.Tray(t.defaultIcon);r.setToolTip(n.app.getName());let i=new pb(r);return i}",
-    "async function pae(e,t,r){if(process.platform===`darwin`)return null;if(process.platform===`linux`){let e=n.nativeImage.createFromPath(`tray.png`);return{defaultIcon:e,chronicleRunningIcon:null}}return null}",
-    "var pb=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(e={on(){},setContextMenu(){}}){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(n.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}}",
+    "async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return process.platform!==`linux`;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():process.platform!==`linux`}",
+    "async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new c.Tray(t.defaultIcon);r.setToolTip(c.app.getName());let i=new pb(r);return!await i.waitForReady()?(i.destroy(),null):i}",
+    "async function pae(e,t,n){if(process.platform===`darwin`)return null;if(process.platform===`linux`){let r=`${fv(e,t)}.png`,i=c.nativeImage.createFromPath(c.app.isPackaged?(0,u.join)(process.resourcesPath,r):(0,u.join)(n,`electron`,`src`,`icons`,r));if(i.isEmpty())throw Error(`Linux tray application icon is unavailable`);return{defaultIcon:i.resize({width:V9,height:V9,quality:`best`}),chronicleRunningIcon:null}}return null}",
+    "var pb=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(e={on(){},setContextMenu(){}}){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}destroy(){this.tray.destroy()}isReady(){return _j(this.tray)}waitForReady(){return gj(this.tray)}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(c.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}}",
     "v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if((process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}if(process.platform===`darwin`&&!this.isAppQuitting&&!t){e.preventDefault(),k.hide()}});",
     "let oe=async()=>{try{await fae({appBrand:a.U(),buildFlavor:b,repoRoot:j.repoRoot})}catch(e){v.reportNonFatal(e)}};(E||process.platform===`linux`)&&oe();",
   ].join("");
@@ -2403,10 +2404,11 @@ test("adds the Linux quit guard for the current interleaved bundler prelude", ()
 
 test("destroys the registered Linux tray before the app exits", () => {
   const source = `${currentMainBundlePrefix}${trayBundleFixture()}`;
+  const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
   const patched = applyPatchTwice(
     applyLinuxTrayPatch,
     applyLinuxQuitGuardPatch(source),
-    null,
+    iconPathExpression,
   );
 
   assert.match(patched, /codexLinuxRegisterTray=e=>\(codexLinuxTray=e,e\)/);
@@ -2414,7 +2416,7 @@ test("destroys the registered Linux tray before the app exits", () => {
   assert.match(patched, /codexLinuxTray=null;try\{e\?\.destroy\(\)\}catch\{\}/);
   assert.match(patched, /codexLinuxMarkQuitInProgress=\(\)=>\{codexLinuxQuitInProgress=!0,codexLinuxDestroyTray\(\)\}/);
   assert.match(patched, /c\.app\.on\(`before-quit`,\(\)=>codexLinuxDestroyTray\(\)\)/);
-  assert.match(patched, /r=typeof codexLinuxRegisterTray===`function`\?codexLinuxRegisterTray\(new n\.Tray\(t\.defaultIcon\)\):new n\.Tray\(t\.defaultIcon\)/);
+  assert.match(patched, /r=typeof codexLinuxRegisterTray===`function`\?codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon\)\):new c\.Tray\(t\.defaultIcon\)/);
   assert.doesNotMatch(patched, /codexLinuxTrayQuitDelayMs/);
 
   const helperStart = patched.indexOf("let codexLinuxTray=null");
@@ -2425,6 +2427,104 @@ test("destroys the registered Linux tray before the app exits", () => {
     `${helperSource}let calls=0;codexLinuxRegisterTray({destroy(){calls+=1}});codexLinuxMarkQuitInProgress();codexLinuxMarkQuitInProgress();return calls;`,
   );
   assert.equal(runDestroy({ platform: "linux" }), 1);
+});
+
+test("accepts stock Electron tray readiness and falls back to the Linux app icon", async () => {
+  const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
+  const source = `${currentMainBundlePrefix}${trayBundleFixture()}`;
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, iconPathExpression);
+
+  assert.match(
+    patched,
+    /if\(typeof t\.whenReady!=`function`\)return!0;try\{return await t\.whenReady\(\),!0\}catch\{return!1\}/,
+  );
+  assert.match(
+    patched,
+    /return typeof t\.isReady==`function`\?t\.isReady\(\):!0/,
+  );
+  assert.match(
+    patched,
+    new RegExp(
+      `let __codexLinuxTrayFallbackIcon=c\\.nativeImage\\.createFromPath\\(${escapeRegExp(iconPathExpression)}\\)`,
+    ),
+  );
+  assert.match(
+    patched,
+    /if\(!__codexLinuxTrayFallbackIcon\.isEmpty\(\)\)i=__codexLinuxTrayFallbackIcon/,
+  );
+
+  const readinessHelpers = patched.match(
+    /async function gj\(e\)\{let t=e;[^]*?\}function _j\(e\)\{let t=e;[^}]+\}/,
+  )?.[0];
+  assert.ok(readinessHelpers);
+  const context = { process: { platform: "linux" }, result: null };
+  await vm.runInNewContext(
+    `${readinessHelpers};result=(async()=>({stockWait:await gj({}),stockReady:_j({}),nativeWait:await gj({whenReady:async()=>{}}),nativeReady:_j({isReady:()=>!1}),failedWait:await gj({whenReady:async()=>{throw Error(\`not ready\`)}})}))()`,
+    context,
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await context.result)),
+    {
+      stockWait: true,
+      stockReady: true,
+      nativeWait: true,
+      nativeReady: false,
+      failedWait: false,
+    },
+  );
+
+  const iconLoaderStart = patched.indexOf("async function pae(");
+  const iconLoaderEnd = patched.indexOf("var pb=class", iconLoaderStart);
+  assert.notEqual(iconLoaderStart, -1);
+  assert.notEqual(iconLoaderEnd, -1);
+  const iconLoaderSource = patched.slice(iconLoaderStart, iconLoaderEnd);
+  const iconCalls = [];
+  const iconContext = {
+    process: { platform: "linux", resourcesPath: "/resources" },
+    upstreamEmpty: true,
+    iconCalls,
+    c: {
+      app: { isPackaged: true },
+      nativeImage: {
+        createFromPath(iconPath) {
+          iconCalls.push(iconPath);
+          const fallback = iconPath.includes("content/webview/assets/app-test.png");
+          return {
+            isEmpty: () => fallback ? false : iconContext.upstreamEmpty,
+            resize: () => ({ source: fallback ? "fallback" : "upstream" }),
+          };
+        },
+      },
+    },
+    u: path,
+    fv: () => "icon-chatgpt",
+    V9: 16,
+    result: null,
+  };
+  await vm.runInNewContext(
+    `${iconLoaderSource};result=pae(\`prod\`,\`chatgpt\`,\`/repo\`)`,
+    iconContext,
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(await iconContext.result)), {
+    defaultIcon: { source: "fallback" },
+    chronicleRunningIcon: null,
+  });
+  assert.deepEqual(iconCalls, [
+    "/resources/icon-chatgpt.png",
+    "/resources/../content/webview/assets/app-test.png",
+  ]);
+
+  iconContext.upstreamEmpty = false;
+  iconCalls.length = 0;
+  await vm.runInNewContext(
+    `${iconLoaderSource};result=pae(\`prod\`,\`chatgpt\`,\`/repo\`)`,
+    iconContext,
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(await iconContext.result)), {
+    defaultIcon: { source: "upstream" },
+    chronicleRunningIcon: null,
+  });
+  assert.deepEqual(iconCalls, ["/resources/icon-chatgpt.png"]);
 });
 
 test("bypasses the upstream before-quit confirmation after a Linux explicit quit", () => {

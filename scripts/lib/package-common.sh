@@ -248,7 +248,7 @@ resolve_package_icon_source() {
         while IFS= read -r -d '' candidate; do
             candidates+=("$candidate")
         done < <(
-            find "$icon_dir" -maxdepth 1 -type f -name '*.png' ! -name '*-tray.png' -print0 |
+            find "$icon_dir" -maxdepth 1 -type f -name '*.png' -print0 |
                 sort -z
         )
     fi
@@ -744,7 +744,6 @@ stage_common_package_files() {
     cp -aT "$APP_DIR" "$app_root"
     mkdir -p "$app_root/.codex-linux"
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
-    cp "$(resolve_tray_icon_source "$app_root")" "$app_root/.codex-linux/$PACKAGE_NAME-tray.png"
     cp "$REPO_DIR/launcher/cli-launch-path.py" "$app_root/.codex-linux/cli-launch-path.py"
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"
     render_desktop_entry "$root/usr/share/applications/$PACKAGE_NAME.desktop"
@@ -761,31 +760,6 @@ stage_common_package_files() {
             "$app_root/.codex-linux/codex-no-updater-transition-cleanup.sh"
     fi
     render_packaged_runtime_helper "$app_root/.codex-linux/codex-packaged-runtime.sh"
-}
-
-resolve_tray_icon_source() {
-    local app_root="$1"
-    local assets_dir="$app_root/content/webview/assets"
-    local -a candidates=()
-    local candidate
-
-    if [ -d "$assets_dir" ]; then
-        while IFS= read -r -d '' candidate; do
-            candidates+=("$candidate")
-        done < <(find "$assets_dir" -maxdepth 1 -type f -name 'app-*.png' -print0 | sort -z)
-    fi
-
-    if [ "${#candidates[@]}" -eq 1 ]; then
-        printf '%s\n' "${candidates[0]}"
-        return 0
-    fi
-
-    if [ "${#candidates[@]}" -gt 1 ]; then
-        warn "Multiple tray icon candidates found in $assets_dir; falling back to package icon"
-    else
-        warn "Could not resolve a unique tray icon in $assets_dir; falling back to package icon"
-    fi
-    printf '%s\n' "$ICON_SOURCE"
 }
 
 stage_update_builder_bundle() {

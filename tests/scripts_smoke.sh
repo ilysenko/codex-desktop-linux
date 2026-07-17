@@ -481,85 +481,6 @@ JSON
     assert_mode "$private_file" "600"
 }
 
-test_stage_common_package_files_resolves_tray_icon_deterministically() {
-    info "Checking stage_common_package_files tray icon resolution"
-    local workspace="$TMP_DIR/package-common-tray"
-    local app_dir="$workspace/app"
-    local root="$workspace/root"
-    local output_log="$workspace/output.log"
-    local icon_source="$workspace/icon-source.png"
-    local tray_output="$root/opt/codex-desktop/.codex-linux/codex-desktop-tray.png"
-    local package_icon="$root/opt/codex-desktop/.codex-linux/codex-desktop.png"
-
-    mkdir -p "$workspace" "$root"
-    make_fake_app "$app_dir"
-    mkdir -p "$app_dir/content/webview/assets"
-    printf '%s\n' 'package-icon' > "$icon_source"
-    printf '%s\n' 'upstream-tray' > "$app_dir/content/webview/assets/app-main.png"
-
-    (
-        export APP_DIR="$app_dir"
-        export PACKAGE_NAME="codex-desktop"
-        export PACKAGE_WITH_UPDATER=0
-        export ICON_SOURCE="$icon_source"
-        export DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
-        export PACKAGED_RUNTIME_SOURCE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
-        # shellcheck disable=SC1091
-        source "$REPO_DIR/scripts/lib/package-common.sh"
-        stage_common_package_files "$root"
-    ) >"$output_log" 2>&1
-
-    assert_file_exists "$package_icon"
-    assert_file_exists "$tray_output"
-    cmp -s "$icon_source" "$package_icon" || fail "Expected package icon copy to come from ICON_SOURCE"
-    cmp -s "$app_dir/content/webview/assets/app-main.png" "$tray_output" \
-        || fail "Expected tray icon copy to come from the unique upstream asset"
-    assert_not_contains "$output_log" "falling back to package icon"
-}
-
-test_stage_common_package_files_tray_icon_fallbacks_when_ambiguous_or_missing() {
-    info "Checking stage_common_package_files tray icon fallback behavior"
-    local workspace="$TMP_DIR/package-common-tray-fallback"
-    local icon_source="$workspace/icon-source.png"
-    local output_log="$workspace/output.log"
-
-    mkdir -p "$workspace"
-    printf '%s\n' 'package-icon' > "$icon_source"
-
-    for scenario in ambiguous missing; do
-        local app_dir="$workspace/$scenario-app"
-        local root="$workspace/$scenario-root"
-        local tray_output="$root/opt/codex-desktop/.codex-linux/codex-desktop-tray.png"
-
-        mkdir -p "$root"
-        make_fake_app "$app_dir"
-        mkdir -p "$app_dir/content/webview/assets"
-        if [ "$scenario" = "ambiguous" ]; then
-            printf '%s\n' 'upstream-a' > "$app_dir/content/webview/assets/app-alpha.png"
-            printf '%s\n' 'upstream-b' > "$app_dir/content/webview/assets/app-beta.png"
-        fi
-
-        (
-            export APP_DIR="$app_dir"
-            export PACKAGE_NAME="codex-desktop"
-            export PACKAGE_WITH_UPDATER=0
-            export ICON_SOURCE="$icon_source"
-            export DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
-            export PACKAGED_RUNTIME_SOURCE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
-            # shellcheck disable=SC1091
-            source "$REPO_DIR/scripts/lib/package-common.sh"
-            stage_common_package_files "$root"
-        ) >>"$output_log" 2>&1
-
-        assert_file_exists "$tray_output"
-        cmp -s "$icon_source" "$tray_output" \
-            || fail "Expected tray icon fallback to come from ICON_SOURCE for $scenario"
-    done
-
-    assert_contains "$output_log" "Multiple tray icon candidates found"
-    assert_contains "$output_log" "Could not resolve a unique tray icon"
-}
-
 test_deb_builder_smoke() {
     info "Running Debian packaging smoke test"
     local workspace="$TMP_DIR/deb"
@@ -8347,9 +8268,10 @@ test_linux_tray_patch_smoke() {
     mkdir -p "$workspace"
     bundle_body="$(cat <<'JS'
 const x={o:e=>e};let s=require(`node:url`),n=require(`electron`);n=x.o(n);let l=require(`node:os`);l=x.o(l);let i=require(`node:path`);i=x.o(i);let d=require(`node:util`),q=require(`node:crypto`),a=require(`node:fs`);a=x.o(a);
-async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new n.Tray(t.defaultIcon);r.setToolTip(n.app.getName());let i=new pb(r);return i}
-async function pae(e,t,r){if(process.platform===`darwin`)return null;if(process.platform===`linux`){let e=n.nativeImage.createFromPath(`tray.png`);return{defaultIcon:e,chronicleRunningIcon:null}}return null}
-var pb=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(e={on(){},setContextMenu(){}}){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(n.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}};
+async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return process.platform!==`linux`;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():process.platform!==`linux`}
+async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new n.Tray(t.defaultIcon);r.setToolTip(n.app.getName());let i=new pb(r);return!await i.waitForReady()?(i.destroy(),null):i}
+async function pae(e,t,r){if(process.platform===`darwin`)return null;if(process.platform===`linux`){let a=`${fv(e,t)}.png`,o=n.nativeImage.createFromPath(n.app.isPackaged?(0,i.join)(process.resourcesPath,a):(0,i.join)(r,`electron`,`src`,`icons`,a));if(o.isEmpty())throw Error(`Linux tray application icon is unavailable`);return{defaultIcon:o.resize({width:V9,height:V9,quality:`best`}),chronicleRunningIcon:null}}return null}
+var pb=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(e={on(){},setContextMenu(){}}){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}destroy(){this.tray.destroy()}isReady(){return _j(this.tray)}waitForReady(){return gj(this.tray)}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(n.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}};
 v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if((process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}if(process.platform===`darwin`&&!this.isAppQuitting&&!t){e.preventDefault(),k.hide()}});
 let oe=async()=>{try{await fae({appBrand:a.U(),buildFlavor:b,repoRoot:j.repoRoot})}catch(e){v.reportNonFatal(e)}};(E||process.platform===`linux`)&&oe();
 JS
@@ -8359,6 +8281,10 @@ JS
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$extracted/.vite/build/main-test.js" '(process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())'
     assert_contains "$extracted/.vite/build/main-test.js" 'r=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new n.Tray(t.defaultIcon)):new n.Tray(t.defaultIcon)'
+    assert_contains "$extracted/.vite/build/main-test.js" 'if(typeof t.whenReady!=`function`)return!0'
+    assert_contains "$extracted/.vite/build/main-test.js" 'return typeof t.isReady==`function`?t.isReady():!0'
+    assert_contains "$extracted/.vite/build/main-test.js" 'let __codexLinuxTrayFallbackIcon=n.nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)'
+    assert_contains "$extracted/.vite/build/main-test.js" 'if(!__codexLinuxTrayFallbackIcon.isEmpty())o=__codexLinuxTrayFallbackIcon'
     assert_contains "$extracted/.vite/build/main-test.js" 'updatePersistentTrayMenu(){process.platform===`linux`'
     assert_contains "$extracted/.vite/build/main-test.js" '(E||process.platform===`linux`)&&oe();'
     assert_not_contains "$output_log" 'WARN: Could not find current Linux'
@@ -8453,6 +8379,9 @@ NODE
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxRegisterTray(new n.Tray(t.defaultIcon))' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'let __codexLinuxTrayFallbackIcon=' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'if(typeof t.whenReady!=`function`)return!0' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'return typeof t.isReady==`function`?t.isReady():!0' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" '!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())' '1'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxRegisterTray=e=>(codexLinuxTray=e,e)'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxDestroyTray=()=>{if(process.platform!==`linux`)return;'
