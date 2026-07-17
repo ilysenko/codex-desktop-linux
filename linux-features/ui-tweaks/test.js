@@ -184,7 +184,7 @@ test("model picker descriptors target the current state and menu bundles", () =>
   const stateAsset =
     "app-initial~app-main~settings-command-menu-section-items~new-thread-panel-page~settings-pag~unq8yzli-twtaboLE.js";
   const allowlistAsset =
-    "app-initial~artifact-tab-content.electron~app-main~settings-command-menu-section-items~firs~mknl0a7l-BXBV9E7p.js";
+    "app-initial~avatarOverlayCompositionSurface~artifact-tab-content.electron~app-main~plugin-d~kw7nl1sl-Dt2LYVtU.js";
   const effortAsset =
     "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~jhj9i1pn-CLC3YBho.js";
 
@@ -202,6 +202,10 @@ test("model picker descriptors target the current state and menu bundles", () =>
   assert.doesNotMatch(
     "app-initial~app-main~page-CMpPiY3-.js",
     MODEL_PICKER_STATE_ASSET_PATTERN,
+  );
+  assert.doesNotMatch(
+    "app-initial~artifact-tab-content.electron~app-main~settings-command-menu-section-items~firs~mknl0a7l-BXBV9E7p.js",
+    MODEL_PICKER_ALLOWLIST_ASSET_PATTERN,
   );
   assert.doesNotMatch(
     "app-initial~app-main~new-thread-panel-page~onboarding-page~login-route~appgen-library-page~~gpgl9un5-_t04Xpau.js",

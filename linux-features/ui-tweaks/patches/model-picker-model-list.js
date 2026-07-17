@@ -3,7 +3,7 @@
 const MODEL_PICKER_STATE_ASSET_PATTERN =
   /^app-initial~app-main~settings-command-menu-section-items~new-thread-panel-page~settings-pag~unq8yzli-[^.]+\.js$/;
 const MODEL_PICKER_ALLOWLIST_ASSET_PATTERN =
-  /^app-initial~artifact-tab-content\.electron~app-main~settings-command-menu-section-items~firs~mknl0a7l-[^.]+\.js$/;
+  /^app-initial~avatarOverlayCompositionSurface~artifact-tab-content\.electron~app-main~plugin-d~kw7nl1sl-[^.]+\.js$/;
 const MODEL_PICKER_INLINE_ASSET_PATTERN = MODEL_PICKER_STATE_ASSET_PATTERN;
 const MODEL_PICKER_EFFORT_ASSET_PATTERN =
   /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~jhj9i1pn-[^.]+\.js$/;
