@@ -142,7 +142,6 @@ jobs:
               -m "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
               -m "Refreshed Codex.dmg SRI hash to $CODEX_DMG_HASH and synced codexVersion / electronVersion / native-module pins to the current upstream DMG." \
               -m "Verified all ChatGPT Desktop Nix package outputs against the refreshed DMG." \
-              -m "[skip ci]" \
               -m "Source-Main-SHA: $EXPECTED_MAIN_SHA" \
               -m "Upstream-DMG-SHA256: $DMG_SHA256"
             git push --force-with-lease origin "$REFRESH_BRANCH"

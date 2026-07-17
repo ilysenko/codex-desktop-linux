@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - flake.nix
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -35,6 +36,7 @@ jobs:
       - name: Compare Codex DMG hashes
         id: codex-dmg-hash
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
@@ -46,7 +48,10 @@ jobs:
           previous_flake="$(mktemp)"
           trap 'rm -f "$previous_flake"' EXIT
 
-          if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            changed=true
+            previous_hash=manual-backfill
+          elif [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
             changed=true
             previous_hash=missing
           else
