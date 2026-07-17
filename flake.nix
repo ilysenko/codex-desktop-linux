@@ -94,10 +94,10 @@
 
         codexDmg = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg";
-          hash = "sha256-YVm2HsuQI2msEIhZYzp2sM821O/fURaXqnSZinoQpYg=";
+          hash = "sha256-/0WRUJkWEgB1SScNLSjF54zsa9asIAp62l7WwDE2m4c=";
         };
 
-        codexVersion = "26.715.21316";
+        codexVersion = "26.715.21425";
         electronVersion = "42.3.0";
         electronPlatform =
           {
