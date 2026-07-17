@@ -5,7 +5,7 @@
   "dependencies": {
     "@electron/rebuild": "4.0.4",
     "better-sqlite3": "12.9.0",
-    "electron": "42.1.0",
+    "electron": "42.3.0",
     "node-abi": "^4.31.0",
     "node-pty": "1.1.0"
   }
