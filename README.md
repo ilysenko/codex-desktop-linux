@@ -224,6 +224,7 @@ workarounds.
 | Open Target Discovery | Opt-in | `open-target-discovery` | [Docs](linux-features/open-target-discovery/README.md) |
 | Persistent status panel | Opt-in | `persistent-status-panel` | [Docs](linux-features/persistent-status-panel/README.md) |
 | Pet overlay | Opt-in | `pet-overlay` | [Docs](linux-features/pet-overlay/README.md) |
+| Project group Last updated sorting | Opt-in | `project-group-last-updated-sort` | [Docs](linux-features/project-group-last-updated-sort/README.md) |
 | Project task Created sorting | Opt-in | `project-task-sort` | [Docs](linux-features/project-task-sort/README.md) |
 | Read Aloud button | Opt-in | `read-aloud` | [Docs](linux-features/read-aloud/README.md) |
 | Read Aloud MCP | Opt-in | `read-aloud-mcp` | [Docs](linux-features/read-aloud-mcp/README.md) |

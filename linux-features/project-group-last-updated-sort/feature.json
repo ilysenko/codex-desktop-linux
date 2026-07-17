@@ -1,0 +1,9 @@
+{
+  "id": "project-group-last-updated-sort",
+  "title": "Project Group Last Updated Sorting",
+  "description": "Makes Last updated reorder project groups as well as their tasks in the Projects sidebar.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
