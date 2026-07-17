@@ -9,9 +9,9 @@
 //! read. The actual rebuild reuses the existing DMG rebuild path against the
 //! refreshed checkout.
 //!
-//! When the builder bundle is a frozen packaged copy (no `.git`), the wrapper
-//! axis degrades gracefully: detection reports "not a git checkout" and the
-//! caller leaves wrapper updates to a normal package upgrade.
+//! When the builder bundle is a frozen packaged copy (no `.git`), callers can
+//! prepare a managed checkout using the trusted remote recorded in packaged
+//! source metadata, then run the same detection against that checkout.
 
 use anyhow::Result;
 use serde_json::Value;
@@ -276,6 +276,21 @@ fn origin_url(repo: &Path) -> Option<String> {
     git_capture(repo, &["remote", "get-url", "origin"])
 }
 
+fn metadata_remote(bundle_root: &Path) -> Option<String> {
+    ["source-info.json", "build-info.json"]
+        .into_iter()
+        .map(|name| bundle_root.join(".codex-linux").join(name))
+        .find_map(|path| {
+            let content = std::fs::read_to_string(path).ok()?;
+            let value = serde_json::from_str::<Value>(&content).ok()?;
+            let source = metadata_source(&value)?;
+            string_field(source, "remote")
+                .map(str::trim)
+                .filter(|remote| !remote.is_empty())
+                .map(str::to_string)
+        })
+}
+
 /// Resolves the configured wrapper remote into either an explicit URL/name or
 /// the builder checkout's origin URL.
 pub fn resolve_remote(config_remote: &str, bundle_root: &Path) -> String {
@@ -283,7 +298,9 @@ pub fn resolve_remote(config_remote: &str, bundle_root: &Path) -> String {
     if !trimmed.is_empty() {
         return trimmed.to_string();
     }
-    origin_url(bundle_root).unwrap_or_else(|| "origin".to_string())
+    origin_url(bundle_root)
+        .or_else(|| metadata_remote(bundle_root))
+        .unwrap_or_else(|| "origin".to_string())
 }
 
 /// Queries the remote head commit for `branch` via `git ls-remote`.

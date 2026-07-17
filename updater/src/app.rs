@@ -534,8 +534,9 @@ async fn run_check_now(
 
 /// Detects a newer wrapper release and records it into state. Returns
 /// `Ok(true)` when an update was found and recorded. No-ops (returning
-/// `Ok(false)`) when wrapper tracking is disabled, the builder bundle is not a
-/// git checkout, or no newer commit is available. Never mutates the checkout.
+/// `Ok(false)`) when wrapper tracking is disabled or no newer commit is
+/// available. Frozen packaged builders use a managed checkout under the updater
+/// cache; the installed bundle and any user checkout remain untouched.
 fn detect_and_record_wrapper_update(
     config: &RuntimeConfig,
     state: &mut PersistedState,
@@ -556,8 +557,28 @@ fn detect_and_record_wrapper_update(
 
     use wrapper::WrapperDetectionState::*;
 
+    let detection_root = if wrapper::is_git_checkout(&config.builder_bundle_root) {
+        config.builder_bundle_root.clone()
+    } else {
+        match wrapper_apply::ensure_wrapper_source(config, paths, None) {
+            Ok(source) => source,
+            Err(error) => {
+                warn!(
+                    ?error,
+                    "could not prepare managed wrapper source for detection"
+                );
+                let original_state = state.clone();
+                state.installed_wrapper_version = installed.version;
+                state.installed_wrapper_commit = Some(installed.commit);
+                state.clear_wrapper_update_candidate();
+                persist_if_changed(paths, state, &original_state)?;
+                return Ok(false);
+            }
+        }
+    };
+
     let detection = match wrapper::detect_state_from_bundle_root(
-        &config.builder_bundle_root,
+        &detection_root,
         &installed,
         &config.wrapper_remote,
         &config.wrapper_branch,
@@ -1983,6 +2004,7 @@ fn notify_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -2014,6 +2036,56 @@ mod tests {
             wrapper_branch: "main".to_string(),
             generated_artifact_cleanup: Default::default(),
         }
+    }
+
+    fn test_git(repo: &std::path::Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("spawn git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn init_wrapper_remote(repo: &std::path::Path) -> (String, String) {
+        std::fs::create_dir_all(repo.join("updater")).unwrap();
+        test_git(repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(
+            repo.join("updater/Cargo.toml"),
+            "[package]\nname = \"codex-update-manager\"\nversion = \"0.8.1\"\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("CHANGELOG.md"), "# Changelog\n").unwrap();
+        test_git(repo, &["add", "-A"]);
+        test_git(repo, &["commit", "-q", "-m", "initial wrapper"]);
+        let installed_commit = test_git(repo, &["rev-parse", "HEAD"]);
+
+        std::fs::write(
+            repo.join("updater/Cargo.toml"),
+            "[package]\nname = \"codex-update-manager\"\nversion = \"0.10.1\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("CHANGELOG.md"),
+            "# Changelog\n\n## [0.10.1] - 2026-07-17\n\n### Fixed\n\n- Packaged detection.\n",
+        )
+        .unwrap();
+        test_git(repo, &["add", "-A"]);
+        test_git(repo, &["commit", "-q", "-m", "advance wrapper"]);
+        let candidate_commit = test_git(repo, &["rev-parse", "HEAD"]);
+        (installed_commit, candidate_commit)
     }
 
     fn write_installed_build_info(config: &RuntimeConfig, sha256: &str) -> Result<()> {
@@ -2184,6 +2256,51 @@ mod tests {
         assert_eq!(persisted.candidate_wrapper_commit, None);
         assert_eq!(persisted.wrapper_changelog, None);
         assert_eq!(persisted.wrapper_dev_mode, None);
+        Ok(())
+    }
+
+    #[test]
+    fn packaged_builder_detects_wrapper_update_from_managed_checkout() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let remote = temp.path().join("remote");
+        let (installed_commit, candidate_commit) = init_wrapper_remote(&remote);
+
+        let mut config = test_config(temp.path());
+        config.enable_wrapper_updates = true;
+        std::fs::create_dir_all(config.builder_bundle_root.join(".codex-linux"))?;
+        std::fs::write(
+            config
+                .builder_bundle_root
+                .join(".codex-linux/source-info.json"),
+            format!(
+                r#"{{
+  "commit": "{installed_commit}",
+  "version": "0.8.1",
+  "remote": "file://{}",
+  "provenance": "packaged-update-builder"
+}}
+"#,
+                remote.canonicalize()?.display()
+            ),
+        )?;
+
+        let mut state = PersistedState::new(true);
+        let found = detect_and_record_wrapper_update(&config, &mut state, &paths)?;
+
+        assert!(found);
+        assert_eq!(
+            state.installed_wrapper_commit.as_deref(),
+            Some(installed_commit.as_str())
+        );
+        assert_eq!(
+            state.candidate_wrapper_commit.as_deref(),
+            Some(candidate_commit.as_str())
+        );
+        assert_eq!(state.candidate_wrapper_version.as_deref(), Some("0.10.1"));
+        assert!(paths.cache_dir.join("wrapper-src/.git").is_dir());
+        assert!(!paths.cache_dir.join("wrapper-src/.git/shallow").exists());
         Ok(())
     }
 

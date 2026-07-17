@@ -69,8 +69,9 @@ features the rebuild stages.
     ahead of the tracked remote, so updating would be a downgrade; the update
     action is suppressed and the apply path refuses.
 - "Ahead of upstream" is decided by fetching the tracked branch and checking
-  whether the candidate descends from the installed commit. Offline or
-  non-git/frozen bundles clear stale candidates and show no update action.
+  whether the candidate descends from the installed commit. Offline checks
+  clear stale candidates and show no update action. Frozen packaged bundles use
+  a managed checkout under the updater cache for detection.
 
 ## Why this is a Linux feature
 
@@ -160,6 +161,16 @@ remote/branch and records the result in:
 ```text
 ~/.local/state/codex-update-manager/state.json
 ```
+
+For frozen native-package builders, detection clones or refreshes the remote
+recorded in packaged source metadata under:
+
+```text
+~/.cache/codex-update-manager/wrapper-src
+```
+
+This managed checkout preserves commit history for the no-downgrade ancestry
+check and never mutates the installed `/opt/codex-desktop/update-builder` copy.
 
 The webview button is shown only when this state contains a non-empty
 `candidate_wrapper_commit`.

@@ -435,16 +435,13 @@ pub(crate) fn ensure_wrapper_source(
     let dest = paths.cache_dir.join("wrapper-src");
 
     if dest.join(".git").is_dir() {
-        run_git(&[
-            "-C",
-            &dest.to_string_lossy(),
-            "fetch",
-            "--depth",
-            "1",
-            "--quiet",
-            &remote,
-            branch,
-        ])?;
+        let dest_text = dest.to_string_lossy().into_owned();
+        let mut fetch_args = vec!["-C", dest_text.as_str(), "fetch"];
+        if dest.join(".git/shallow").is_file() {
+            fetch_args.push("--unshallow");
+        }
+        fetch_args.extend(["--quiet", &remote, branch]);
+        run_git(&fetch_args)?;
         run_git(&[
             "-C",
             &dest.to_string_lossy(),
@@ -460,8 +457,7 @@ pub(crate) fn ensure_wrapper_source(
         let _ = std::fs::remove_dir_all(&dest);
         run_git(&[
             "clone",
-            "--depth",
-            "1",
+            "--filter=blob:none",
             "--branch",
             branch,
             "--single-branch",

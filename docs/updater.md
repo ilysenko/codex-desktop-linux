@@ -245,6 +245,9 @@ enable_wrapper_updates = true
 
 in `~/.config/codex-update-manager/config.toml`.
 
-This is intended for git-checkout/dev update-builder installs. Frozen
-native-package builders without a `.git` directory report no wrapper candidate
-and receive wrapper changes through normal package upgrades.
+This remains opt-in. Git-checkout/dev builders inspect their configured remote
+without changing the working tree. Frozen native-package builders prepare a
+managed checkout under `~/.cache/codex-update-manager/wrapper-src`, using the
+remote recorded in the package's source metadata, and inspect updates there.
+The installed bundle is not modified until the user applies a detected wrapper
+update through the optional `codex-wrapper-updater` feature.
