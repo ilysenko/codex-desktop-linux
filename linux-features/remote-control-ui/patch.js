@@ -1,6 +1,8 @@
 "use strict";
 
 const LINUX_GATE = "navigator.userAgent.includes(`Linux`)";
+const REMOTE_MOBILE_VISIBILITY_MARKER = "codexLinuxRemoteControlVisibilityEnabled";
+const REMOTE_CONTROL_UI_VISIBILITY_MARKER = "codexLinuxRemoteControlUiVisibilityEnabled";
 
 function warn(message, patchName) {
   console.warn(`WARN: ${message} — skipping ${patchName}`);
@@ -23,6 +25,15 @@ function applyRemoteConnectionsVisibilityPatch(source) {
 }
 
 function applyRemoteControlConnectionsVisibilityPatch(source) {
+  if (source.includes(REMOTE_CONTROL_UI_VISIBILITY_MARKER)) {
+    return source;
+  }
+  if (source.includes(REMOTE_MOBILE_VISIBILITY_MARKER)) {
+    return source.replace(
+      REMOTE_MOBILE_VISIBILITY_MARKER,
+      `${REMOTE_MOBILE_VISIBILITY_MARKER}*//*${REMOTE_CONTROL_UI_VISIBILITY_MARKER}`,
+    );
+  }
   const patched = source.replace(
     /return\s+([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\?\.available\?\?!0\)&&\2\?\.accessRequired!==!0(?!&&navigator\.userAgent\.includes\(`Linux`\))/g,
     `return ($1||${LINUX_GATE})&&($2?.available??!0)&&$2?.accessRequired!==!0`,
@@ -63,7 +74,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20500,
       ciPolicy: "optional",
-      pattern: /^(?:app-initial~app-main~projects-index-page~remote-conversation-page|app-initial~app-main~pull-request-route~new-thread-panel-page~onboarding-page~settings-page~i2dgsl27)-[^.]+\.js$/,
+      pattern: /^app-initial~(?:app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~cci0ubce|artifact-tab-content\.electron~notebook-preview-panel~app-main~business-checkout~d7o11fcp)-[^.]+\.js$/,
       missingDescription: "remote connection visibility bundle",
       skipDescription: "remote control UI remote connections visibility patch",
       apply: applyRemoteConnectionsVisibilityPatch,
@@ -73,7 +84,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20510,
       ciPolicy: "optional",
-      pattern: /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-[^.]+\.js$/,
+      pattern: /^app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-[^.]+\.js$/,
       missingDescription: "remote control connections visibility bundle",
       skipDescription: "remote control UI remote control connections visibility patch",
       apply: applyRemoteControlConnectionsVisibilityPatch,

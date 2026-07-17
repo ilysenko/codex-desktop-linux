@@ -55,17 +55,21 @@ const LATEST_REMOTE_CONVERSATION_ASSET =
 const OLD_REMOTE_RUNTIME_ASSET =
   "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-test.js";
 const CURRENT_REMOTE_RUNTIME_ASSET =
-  "app-initial~app-main~pull-request-route~new-thread-panel-page~onboarding-page~settings-page~i2dgsl27-test.js";
+  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~oxnpxkxc-test.js";
 const CURRENT_REMOTE_RUNTIME_DECOY_ASSET =
-  "app-initial~app-main~pull-request-route~new-thread-panel-page~onboarding-page~settings-page~on662h0v-test.js";
+  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~oldshape-test.js";
 const CURRENT_REMOTE_TERMINAL_STATUS_ASSET =
-  "app-initial~artifact-tab-content.electron~app-main~pull-request-route~pull-request-code-rev~jgoqfqy2-test.js";
+  CURRENT_REMOTE_RUNTIME_ASSET;
 const CURRENT_APP_MAIN_PAGE_ASSET =
-  "app-initial~app-main~page-test.js";
-const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET = CURRENT_APP_MAIN_PAGE_ASSET;
+  "app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-test.js";
+const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET =
+  "app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-test.js";
+const CURRENT_REMOTE_LOAD_GATE_ASSET =
+  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~d7o11fcp-test.js";
 const OLD_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
-const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET = CURRENT_APP_MAIN_PAGE_ASSET;
+const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET =
+  "app-initial~notebook-preview-panel~app-main~pull-request-route~projects-index-page~cloud-en~lpx9dmpy-test.js";
 
 function syntheticReasoningSummaryTurnStartBundle() {
   return "async function yY(e,t,n){let s=n,D=n.latestThreadSettings,ee=n.initialParams,me=!fm(e.getHostId());let Ee=e.getDefaultFeatureOverride(vJ)===!0,De=ee?.summary??`none`;D?.summary!==void 0&&(De=D.summary),Ee&&(De=`detailed`),s.summary!==void 0&&(De=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{concurrentReasoningSummariesFeatureOverrideEnabled:Ee,summary:De}});return{featureOverride:Ee,summary:De}}";
@@ -112,7 +116,7 @@ test("remote mobile README assigns every descriptor to one control topology", ()
 
 function syntheticMainBundle() {
   return [
-    "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),h=require(`node:child_process`),b={createRequire:()=>()=>({})};",
+    'let i=require("node:path"),o=require("node:fs"),s=require("node:crypto"),h=require("node:child_process"),b={createRequire:()=>()=>({})};',
     "function TV(e){return Buffer.from(JSON.stringify(e),`utf8`)}",
     "var bV=(0,b.createRequire)(__filename),xV=`remote-control-device-key.node`,SV=`codex-device-key-sign-payload/v1`;",
     "function wV({resourcesPath:e}){let t=null,n=()=>{if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=bV(i.join(e,`native`,xV)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=TV(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
@@ -122,7 +126,7 @@ function syntheticMainBundle() {
 
 function syntheticCurrentMainBundle() {
   return [
-    "let i=require(`node:path`),o=require(`node:fs`),s=require(`node:crypto`),h=require(`node:child_process`),b={createRequire:()=>()=>({})};",
+    'let i=require("node:path"),o=require("node:fs"),s=require("node:crypto"),h=require("node:child_process"),b={createRequire:()=>()=>({})};',
     "function mz(e){return Buffer.from(JSON.stringify({domain:`codex-device-key-sign-payload/v1`,payload:e}),`utf8`)}",
     "var lz=(0,b.createRequire)(__filename),uz=`remote-control-device-key.node`,dz=`codex-device-key-sign-payload/v1`;",
     "function pz({resourcesPath:e}){let t=null,n=()=>{if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=lz((0,i.join)(e,`native`,uz)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=mz(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
@@ -132,7 +136,7 @@ function syntheticCurrentMainBundle() {
 
 function syntheticCryptoAliasCollisionMainBundle() {
   return [
-    "let a=require(`node:path`),o=require(`node:fs`),c=require(`node:crypto`),h=require(`node:child_process`),b={createRequire:()=>()=>({})};",
+    'let a=require("node:path"),o=require("node:fs"),c=require("node:crypto"),h=require("node:child_process"),b={createRequire:()=>()=>({})};',
     "function mz(e){return Buffer.from(JSON.stringify({domain:`codex-device-key-sign-payload/v1`,payload:e}),`utf8`)}",
     "var lz=(0,b.createRequire)(__filename),uz=`remote-control-device-key.node`,dz=`codex-device-key-sign-payload/v1`;",
     "function pz({resourcesPath:e}){let t=null,n=()=>{if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);if(e==null)throw Error(`Remote control device keys require resourcesPath`);return t??=lz((0,a.join)(e,`native`,uz)),t};return{createDeviceKey:e=>n().createDeviceKey(e??`hardware_only`),deleteDeviceKey:e=>n().deleteDeviceKey(e),getDeviceKeyPublic:e=>n().getDeviceKeyPublic(e),signDeviceKey:async(e,t)=>{let r=mz(t);return{...await n().signDeviceKey(e,r),signedPayloadBase64:r.toString(`base64`)}}}}",
@@ -336,7 +340,7 @@ function syntheticModernChromeBrowserClientBundle() {
 function syntheticAppServerManagerSignalsBundle() {
   return [
     "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
-    "class T{onNotification(e,t){let n={method:e,params:t};switch(n.method){case`turn/started`:{let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/started for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}this.markConversationStreaming(r),this.updateConversationState(r,e=>{});break}case`turn/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`turn/completed`,n.params)}))break;let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}break}case`item/started`:{let{item:e,threadId:t,turnId:r,startedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/started for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.markConversationStreaming(a),this.updateConversationState(a,t=>{});break}case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;let{item:e,threadId:t,turnId:r,completedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.updateConversationState(a,t=>{});break}}}}",
+    "function cleanup(){}class T{unread={discardTurn(){}};itemStreamState={clearItemTerminalInputBuffer(){}};onNotification(e,t){let n={method:e,params:t};switch(n.method){case`turn/started`:{let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/started for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}this.markConversationStreaming(r),this.updateConversationState(r,e=>{});break}case`turn/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`turn/completed`,n.params)}))break;let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){cleanup(this.hostId,e,t.id),this.unread.discardTurn(r,t.id),z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}break}case`item/started`:{let{item:e,threadId:t,turnId:r,startedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/started for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.markConversationStreaming(a),this.updateConversationState(a,t=>{});break}case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;let{item:e,threadId:t,turnId:r,completedAtMs:i}=n.params,a=I(t);if(e.type===`commandExecution`&&this.itemStreamState.clearItemTerminalInputBuffer(a,e.id),!this.conversations.get(a)){z.error(`Received item/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.updateConversationState(a,t=>{});break}}}}",
   ].join("");
 }
 
@@ -1105,7 +1109,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     );
     assert.ok(terminalStatusDescriptor);
     assert.equal(terminalStatusDescriptor.pattern.test(OLD_REMOTE_RUNTIME_ASSET), false);
-    assert.equal(terminalStatusDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
+    assert.equal(terminalStatusDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), true);
     assert.equal(terminalStatusDescriptor.pattern.test(CURRENT_REMOTE_TERMINAL_STATUS_ASSET), true);
     assert.equal(terminalStatusDescriptor.pattern.test(OLD_APP_SERVER_MANAGER_ASSET), false);
     assert.equal(terminalStatusDescriptor.pattern.test("remote-connections-settings-fixture.js"), false);
@@ -1118,7 +1122,8 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.equal(loadGateDescriptor.pattern.test(LATEST_REMOTE_CONVERSATION_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test(OLD_REMOTE_RUNTIME_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test("remote-connection-visibility-test.js"), false);
-    assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), true);
+    assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
+    assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_LOAD_GATE_ASSET), true);
 
   });
 });
@@ -2255,8 +2260,8 @@ test("Linux remote mobile conversation hydration patch retries transient and mis
 
 test("Linux remote mobile conversation hydration patch warns when only part of the queue drifted", () => {
   const source = syntheticAppServerManagerSignalsBundle().replace(
-    "if(!this.conversations.get(r)){z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}",
-    "if(!this.conversations.get(r)){z.error(`Received turn/completed for unknown conversation`,{safe:{id:r},sensitive:{}});break}",
+    "if(!this.conversations.get(r)){cleanup(this.hostId,e,t.id),this.unread.discardTurn(r,t.id),z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}",
+    "if(!this.conversations.get(r)){cleanup(this.hostId,e,t.id),this.unread.discardTurn(r,t.id),z.error(`Received turn/completed for unknown conversation`,{safe:{id:r},sensitive:{}});break}",
   );
   const { result, warnings } = captureWarnings(() => applyLinuxRemoteMobileConversationHydrationPatch(source));
 
@@ -2553,16 +2558,25 @@ test("remote mobile feature patch report records feature metadata and partial wa
           syntheticAppServerManagerStatusBundle() +
           syntheticCompletedItemRecoveryBundle(),
       );
-      fs.writeFileSync(
+      fs.appendFileSync(
         path.join(assetsDir, CURRENT_REMOTE_TERMINAL_STATUS_ASSET),
         syntheticRemoteTerminalStatusBundle(),
       );
       fs.writeFileSync(
         path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
-        syntheticRemoteConnectionVisibilityBundle() +
-          syntheticAppMainFeatureSyncBundle() +
-          syntheticAppMainEnablementBridgeBundle() +
-          syntheticAppMainActiveStatusBundle(),
+        syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle(),
+      );
+      fs.writeFileSync(
+        path.join(assetsDir, CURRENT_REMOTE_LOAD_GATE_ASSET),
+        syntheticRemoteConnectionVisibilityBundle(),
+      );
+      fs.writeFileSync(
+        path.join(assetsDir, CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET),
+        syntheticCurrentUsePluginVisibilityBundle(),
+      );
+      fs.writeFileSync(
+        path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_STATUS_ASSET),
+        syntheticAppMainActiveStatusBundle(),
       );
       fs.writeFileSync(
         path.join(assetsDir, "remote-connections-settings-test.js"),
@@ -3289,7 +3303,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
             syntheticCurrentStatusWaitBundle() +
             syntheticCompletedItemRecoveryBundle(),
         );
-        fs.writeFileSync(
+        fs.appendFileSync(
           path.join(assetsDir, CURRENT_REMOTE_TERMINAL_STATUS_ASSET),
           syntheticRemoteTerminalStatusBundle(),
         );
@@ -3314,10 +3328,19 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
         fs.writeFileSync(
           path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
-          syntheticCurrentUsePluginVisibilityBundle() +
-            syntheticAppMainFeatureSyncBundle() +
-            syntheticAppMainEnablementBridgeBundle() +
-            syntheticAppMainActiveStatusBundle(),
+          syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle(),
+        );
+        fs.writeFileSync(
+          path.join(assetsDir, CURRENT_REMOTE_LOAD_GATE_ASSET),
+          syntheticRemoteConnectionVisibilityBundle(),
+        );
+        fs.writeFileSync(
+          path.join(assetsDir, CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET),
+          syntheticCurrentUsePluginVisibilityBundle(),
+        );
+        fs.writeFileSync(
+          path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_STATUS_ASSET),
+          syntheticAppMainActiveStatusBundle(),
         );
         const report = createPatchReport();
         patchExtractedApp(tempApp, { report });
@@ -3332,7 +3355,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           "utf8",
         );
         const patchedRemoteConnectionVisibilityFile = fs.readFileSync(
-          path.join(assetsDir, CURRENT_REMOTE_RUNTIME_ASSET),
+          path.join(assetsDir, CURRENT_REMOTE_LOAD_GATE_ASSET),
           "utf8",
         );
         const patchedAppMainFile = fs.readFileSync(

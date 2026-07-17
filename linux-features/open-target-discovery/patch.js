@@ -692,12 +692,12 @@ function applyOpenInTargetsBridgeDetectionPatch(currentSource) {
   }
 
   const currentClassMatch = currentSource.match(
-    /async detectTarget\(\{target:([A-Za-z_$][\w$]*)\}\)\{if\(this\.requestOpenInWorker==null\)throw Error\(`Open in worker unavailable`\);let\{command:([A-Za-z_$][\w$]*)\}=await this\.requestOpenInWorker\(\{method:`get-target-command`,params:([A-Za-z_$][\w$]*)\(this\.settingsStore,\1\)\}\);return\{available:\2!=null\}\}/u,
+    /async detectTarget\(\{target:([A-Za-z_$][\w$]*)\}\)\{let\{command:([A-Za-z_$][\w$]*)\}=await this\.#[A-Za-z_$][\w$]*\(\)\(\{method:`get-target-command`,params:([A-Za-z_$][\w$]*)\(this\.settingsStore,\1\)\}\);return\{available:\2!=null\}\}/u,
   );
   if (currentClassMatch != null) {
     const [needle, targetVar, commandVar, paramsFn] = currentClassMatch;
     const replacement =
-      `async detectTarget({target:${targetVar}}){if(process.platform===\`linux\`){let ${commandVar}=await codexLinuxOpenTargetRegistryCommand(this.settingsStore,${targetVar});return{available:${commandVar}!=null}}if(this.requestOpenInWorker==null)throw Error(\`Open in worker unavailable\`);let{command:_codexWorkerCommand}=await this.requestOpenInWorker({method:\`get-target-command\`,params:${paramsFn}(this.settingsStore,${targetVar})});return{available:_codexWorkerCommand!=null}}`;
+      `async detectTarget({target:${targetVar}}){if(process.platform===\`linux\`){let ${commandVar}=await codexLinuxOpenTargetRegistryCommand(this.settingsStore,${targetVar});return{available:${commandVar}!=null}}let{command:_codexWorkerCommand}=await this.#n()({method:\`get-target-command\`,params:${paramsFn}(this.settingsStore,${targetVar})});return{available:_codexWorkerCommand!=null}}`;
     return currentSource.replace(needle, replacement);
   }
 
@@ -829,7 +829,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20520,
       ciPolicy: "optional",
-      pattern: /^app-initial~artifact-tab-content\.electron~app-main~pull-request-route~pull-request-code-rev~jgoqfqy2-[^.]+\.js$/,
+      pattern: /^app-initial~artifact-tab-content\.electron~notebook-preview-panel~app-main~pull-request-rout~ns5rw1zk-[^.]+\.js$/,
       missingDescription: "open target selection webview bundle",
       skipDescription: "native open-target selection patch",
       apply: applyNativeOpenTargetSelectionPatch,

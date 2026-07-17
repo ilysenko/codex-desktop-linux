@@ -1,11 +1,12 @@
 "use strict";
 
 const MODEL_PICKER_STATE_ASSET_PATTERN =
-  /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-[^.]+\.js$/;
+  /^app-initial~app-main~settings-command-menu-section-items~new-thread-panel-page~settings-pag~unq8yzli-[^.]+\.js$/;
 const MODEL_PICKER_ALLOWLIST_ASSET_PATTERN =
-  /^app-initial~app-main~projects-index-page~remote-conversation-page-[^.]+\.js$/;
-const MODEL_PICKER_MENU_ASSET_PATTERN =
-  /^app-initial~app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~lpb6mnim-[^.]+\.js$/;
+  /^app-initial~artifact-tab-content\.electron~app-main~settings-command-menu-section-items~firs~mknl0a7l-[^.]+\.js$/;
+const MODEL_PICKER_INLINE_ASSET_PATTERN = MODEL_PICKER_STATE_ASSET_PATTERN;
+const MODEL_PICKER_EFFORT_ASSET_PATTERN =
+  /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~jhj9i1pn-[^.]+\.js$/;
 const SIMPLE_MENU_VIEW_PATTERN =
   /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`composer-model-picker-menu-view-v1`,`simple`\)/;
 const ADVANCED_MENU_VIEW_PATTERN =
@@ -73,7 +74,7 @@ function findInlineModelListVariable(source) {
 
   const section = source.slice(titleIndex, rowIndex);
   const assignments = [
-    ...section.matchAll(/let\s+([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*;/g),
+    ...section.matchAll(/,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*);let/g),
   ];
   return assignments.at(-1)?.[1] ?? null;
 }
@@ -99,7 +100,7 @@ function applyInlineModelListPatch(source, context = {}) {
 
     const tail = source.slice(effortIndex);
     const advancedChildrenPattern =
-      /(let\s+[A-Za-z_$][\w$]*=\(0,([A-Za-z_$][\w$]*)\.jsxs\)\(\2\.Fragment,\{children:\[)([A-Za-z_$][\w$]*),/;
+      /(([A-Za-z_$][\w$]*)=\(0,([A-Za-z_$][\w$]*)\.jsxs\)\(\3\.Fragment,\{children:\[)([A-Za-z_$][\w$]*),/;
     const match = tail.match(advancedChildrenPattern);
     if (match == null) {
       if (context.warnOnMissingMarkers === true) {
@@ -254,7 +255,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_796,
     ciPolicy: "optional",
-    pattern: MODEL_PICKER_MENU_ASSET_PATTERN,
+    pattern: MODEL_PICKER_INLINE_ASSET_PATTERN,
     missingDescription: "composer model picker menu bundle",
     skipDescription: "ui-tweaks model picker inline model list patch",
     apply: (source, context = {}) =>
@@ -265,7 +266,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_797,
     ciPolicy: "optional",
-    pattern: MODEL_PICKER_MENU_ASSET_PATTERN,
+    pattern: MODEL_PICKER_EFFORT_ASSET_PATTERN,
     missingDescription: "composer model picker menu bundle",
     skipDescription: "ui-tweaks dynamic supported reasoning efforts patch",
     apply: (source, context = {}) =>
@@ -284,7 +285,8 @@ module.exports = {
   INLINE_MODEL_LIST_RUNTIME_MARKER,
   MODEL_ALLOWLIST_MARKER,
   MODEL_PICKER_ALLOWLIST_ASSET_PATTERN,
-  MODEL_PICKER_MENU_ASSET_PATTERN,
+  MODEL_PICKER_EFFORT_ASSET_PATTERN,
+  MODEL_PICKER_INLINE_ASSET_PATTERN,
   MODEL_PICKER_STATE_ASSET_PATTERN,
   MODEL_ROW_MARKER,
   MODEL_TITLE_MARKER,

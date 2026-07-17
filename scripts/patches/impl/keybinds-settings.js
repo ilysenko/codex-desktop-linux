@@ -1091,14 +1091,8 @@ function isSettingsSharedMetadataBundleSource(currentSource) {
 }
 
 function isSettingsNavigationBundleSource(currentSource) {
-  return (
-    /[A-Za-z_$][\w$]*=\{[^;]*"linux-desktop":[A-Za-z_$][\w$]*,/.test(currentSource)
-    && currentSource.includes("slugs:[`general-settings`,`linux-desktop`")
-  ) || (
-    /[A-Za-z_$][\w$]*=\{[^;]*"general-settings":[A-Za-z_$][\w$]*,/.test(currentSource)
-    && /[A-Za-z_$][\w$]*=\[`general-settings`,/.test(currentSource)
-    && currentSource.includes("slugs:[`general-settings`,")
-  );
+  return /[A-Za-z_$][\w$]*=\[`general-settings`,(?:`linux-desktop`,)?`import`,/.test(currentSource)
+    && currentSource.includes("slugs:[`general-settings`,");
 }
 
 function applyLinuxDesktopSettingsRoutePatch(
@@ -1134,19 +1128,8 @@ function applyLinuxDesktopSettingsRoutePatch(
 function applyLinuxDesktopSettingsNavigationPatch(currentSource) {
   let patchedSource = currentSource;
 
-  if (!/[,{]"linux-desktop":[A-Za-z_$][\w$]*,"general-settings":/.test(patchedSource)) {
-    const iconPattern = /([A-Za-z_$][\w$]*=\{)"general-settings":([A-Za-z_$][\w$]*),/;
-    if (!iconPattern.test(patchedSource)) {
-      throw new Error("Required Keybinds settings patch failed: could not add Linux desktop icon");
-    }
-    patchedSource = patchedSource.replace(
-      iconPattern,
-      (_match, prefix, icon) => `${prefix}"linux-desktop":${icon},"general-settings":${icon},`,
-    );
-  }
-
   if (!/=\[`general-settings`,`linux-desktop`/.test(patchedSource)) {
-    const orderPattern = /([A-Za-z_$][\w$]*=\[`general-settings`,)(?!`linux-desktop`)/;
+    const orderPattern = /([A-Za-z_$][\w$]*=\[`general-settings`,)(?=`import`,)/;
     if (!orderPattern.test(patchedSource)) {
       throw new Error("Required Keybinds settings patch failed: could not add Linux desktop nav order");
     }
@@ -1159,47 +1142,6 @@ function applyLinuxDesktopSettingsNavigationPatch(currentSource) {
       throw new Error("Required Keybinds settings patch failed: could not add Linux desktop nav group");
     }
     patchedSource = patchedSource.replace(groupPattern, "$1`linux-desktop`,");
-  }
-
-  if (
-    !patchedSource.includes("case`linux-desktop`:return l===`electron`")
-    && !patchedSource.includes("case`linux-desktop`:case`general-settings`:case`agent`:case`personalization`:return!0;")
-  ) {
-    const visibilityNeedle =
-      "case`appearance`:case`git-settings`:case`worktrees`:case`local-environments`:case`data-controls`:case`environments`:return l===`electron`;";
-    const visibilityPatch =
-      "case`linux-desktop`:return l===`electron`;case`appearance`:case`git-settings`:case`worktrees`:case`local-environments`:case`data-controls`:case`environments`:return l===`electron`;";
-    if (!patchedSource.includes(visibilityNeedle)) {
-      const currentVisibilityNeedle =
-        "case`general-settings`:case`agent`:case`personalization`:return!0;";
-      const currentVisibilityPatch =
-        "case`linux-desktop`:case`general-settings`:case`agent`:case`personalization`:return!0;";
-      if (!patchedSource.includes(currentVisibilityNeedle)) {
-        throw new Error("Required Keybinds settings patch failed: could not add Linux desktop visibility");
-      }
-      patchedSource = patchedSource.replace(currentVisibilityNeedle, currentVisibilityPatch);
-    } else {
-      patchedSource = patchedSource.replace(visibilityNeedle, visibilityPatch);
-    }
-  }
-
-  if (!/case`linux-desktop`:[A-Za-z_$][\w$]*=!1;break [A-Za-z_$][\w$]*;/.test(patchedSource)) {
-    const redirectNeedle =
-      "case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`account`:case`data-controls`:case`personalization`:k=!1;break bb0;";
-    const redirectPatch =
-      "case`linux-desktop`:k=!1;break bb0;case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`account`:case`data-controls`:case`personalization`:k=!1;break bb0;";
-    if (patchedSource.includes(redirectNeedle)) {
-      patchedSource = patchedSource.replace(redirectNeedle, redirectPatch);
-    } else {
-      const currentLoadingPattern = /(case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`data-controls`:case`personalization`:([A-Za-z_$][\w$]*)=!1;break ([A-Za-z_$][\w$]*);)/;
-      if (currentLoadingPattern.test(patchedSource)) {
-        patchedSource = patchedSource.replace(
-          currentLoadingPattern,
-          (_match, existingCases, loadingAlias, breakLabel) =>
-            `case\`linux-desktop\`:${loadingAlias}=!1;break ${breakLabel};${existingCases}`,
-        );
-      }
-    }
   }
 
   return patchedSource;

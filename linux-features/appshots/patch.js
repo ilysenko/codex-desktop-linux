@@ -43,9 +43,8 @@ function applyLinuxAppshotMainProcessPatch(currentSource) {
     return currentSource;
   }
 
-  const sendMessageFn = findMessageForViewSendFunction(currentSource);
-  if (sendMessageFn == null) {
-    warn("Could not find direct renderer message sender", "Linux AppShots main-process patch");
+  if (!currentSource.includes(".sendInlineMessageForView(")) {
+    warn("Could not find inline renderer message sender", "Linux AppShots main-process patch");
     return currentSource;
   }
 
@@ -63,7 +62,7 @@ function applyLinuxAppshotMainProcessPatch(currentSource) {
     /"computer-use-start-capture":async\(\{animationDestination:([A-Za-z_$][\w$]*),bundleIdentifier:([A-Za-z_$][\w$]*),origin:([A-Za-z_$][\w$]*),requestId:([A-Za-z_$][\w$]*)\}\)=>\{if\(process\.platform!==`darwin`\|\|this\.requestComputerUseCaptureWorker==null\|\|this\.subscribeComputerUseCaptureWorkerEvent==null\)return null;/g,
     (match, animationDestinationVar, bundleIdentifierVar, originVar, requestIdVar) => {
       patchedCapture = true;
-      return `"computer-use-start-capture":async({animationDestination:${animationDestinationVar},bundleIdentifier:${bundleIdentifierVar},origin:${originVar},requestId:${requestIdVar}})=>{if(process.platform===\`linux\`)return codexLinuxAppshotStartCapture({origin:${originVar},requestId:${requestIdVar},bundleIdentifier:${bundleIdentifierVar}});if(process.platform!==\`darwin\`||this.requestComputerUseCaptureWorker==null||this.subscribeComputerUseCaptureWorkerEvent==null)return null;`;
+      return `"computer-use-start-capture":async({animationDestination:${animationDestinationVar},bundleIdentifier:${bundleIdentifierVar},origin:${originVar},requestId:${requestIdVar}})=>{if(process.platform===\`linux\`)return codexLinuxAppshotStartCapture({origin:${originVar},requestId:${requestIdVar},bundleIdentifier:${bundleIdentifierVar},windowManager:this.windowManager});if(process.platform!==\`darwin\`||this.requestComputerUseCaptureWorker==null||this.subscribeComputerUseCaptureWorkerEvent==null)return null;`;
     },
   );
 
@@ -74,7 +73,7 @@ function applyLinuxAppshotMainProcessPatch(currentSource) {
     return currentSource;
   }
 
-  return appendLinuxAppshotHelper(patchedSource, sendMessageFn);
+  return appendLinuxAppshotHelper(patchedSource);
 }
 
 function applyLinuxAppshotHotkeyPatch(currentSource) {
@@ -236,22 +235,7 @@ function withLinuxAppshotWaylandHelper(source) {
   return `${linuxAppshotWaylandHelperSource()}${source}`;
 }
 
-function findMessageForViewSendFunction(source) {
-  const channelVar = source.match(
-    /(?:^|[;,\n])\s*(?:(?:var|let|const)\s+)?([A-Za-z_$][\w$]*)=`codex_desktop:message-for-view`/,
-  )?.[1];
-  if (channelVar == null) {
-    return null;
-  }
-
-  const escapedChannelVar = escapeRegExp(channelVar);
-  const sendFnMatch = source.match(new RegExp(
-    String.raw`function\s+([A-Za-z_$][\w$]*)\(\s*([A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)\s*\)\{\s*\2\.isDestroyed\(\)\|\|\2\.send\(${escapedChannelVar},\3\)\s*\}`,
-  ));
-  return sendFnMatch?.[1] ?? null;
-}
-
-function appendLinuxAppshotHelper(source, sendMessageFn) {
+function appendLinuxAppshotHelper(source) {
   return `${source}
 ;function codexLinuxAppshotRequire(e){return require(e)}
 function codexLinuxAppshotBackendPath(){let e=codexLinuxAppshotRequire(\`node:fs\`),t=codexLinuxAppshotRequire(\`node:path\`),n=codexLinuxAppshotRequire(\`node:os\`),r=process.env.CODEX_ELECTRON_RESOURCES_PATH||process.resourcesPath,i=process.env.CODEX_HOME||(process.env.HOME?t.join(process.env.HOME,\`.codex\`):t.join(n.homedir(),\`.codex\`)),a=[process.env.CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE,r&&t.join(r,\`plugins\`,\`openai-bundled\`,\`plugins\`,\`computer-use\`,\`bin\`,\`codex-computer-use-linux\`),i&&t.join(i,\`plugins\`,\`cache\`,\`openai-bundled\`,\`computer-use\`,\`latest\`,\`bin\`,\`codex-computer-use-linux\`)];for(let t of a){if(typeof t!=\`string\`||t.length===0)continue;try{if(e.existsSync(t))return t}catch{}}return null}
@@ -261,9 +245,9 @@ function codexLinuxAppshotWindowForRenderer(e){if(e==null||typeof e!=\`object\`)
 function codexLinuxAppshotFocusedWindowFromReport(e){let t=Array.isArray(e?.windows)?e.windows:[],n=t.find(e=>e?.focused)||null;return{focusedWindow:n,windows:t,backend:codexLinuxAppshotFirstString(e?.backend)}}
 async function codexLinuxAppshotFocusedWindow(){let e=await codexLinuxAppshotBackendJson([\`windows\`],5000);return codexLinuxAppshotFocusedWindowFromReport(e)}
 async function codexLinuxAppshotFrontmostWindow(){if(process.platform!==\`linux\`)return null;try{let e=await codexLinuxAppshotFocusedWindow();return codexLinuxAppshotWindowForRenderer(e.focusedWindow)}catch{return null}}
-function codexLinuxAppshotSend(e,t,n){try{${sendMessageFn}(e,{requestId:t,type:\`computer-use-capture-updated\`,update:n})}catch{}}
-function codexLinuxAppshotStartCapture({origin:e,requestId:t,bundleIdentifier:n}){if(process.platform!==\`linux\`)return null;setTimeout(()=>{codexLinuxAppshotCapture({origin:e,requestId:t,bundleIdentifier:n}).catch(()=>codexLinuxAppshotSend(e,t,{type:\`failed\`}))},0);return{animationDuration:0,transitionSnapshotHeight:140,transitionSpringDampingFraction:1,transitionSpringResponse:0}}
-async function codexLinuxAppshotCapture({origin:e,requestId:t,bundleIdentifier:n}){let r=await codexLinuxAppshotFocusedWindow(),i=codexLinuxAppshotWindowForRenderer(r.focusedWindow);if(i==null){codexLinuxAppshotSend(e,t,{type:\`failed\`});return}codexLinuxAppshotSend(e,t,{type:\`metadata\`,app:{bundleIdentifier:i.bundleIdentifier,name:i.name,windowTitle:i.windowTitle,iconSmallDataURL:null}});let a=await codexLinuxAppshotAccessibilityNodes(r.focusedWindow,n),o=codexLinuxAppshotAccessibilityText(r.focusedWindow,a.nodes,a.error);typeof o==\`string\`&&o.length>0&&codexLinuxAppshotSend(e,t,{type:\`axText\`,text:o});let s=await codexLinuxAppshotScreenshot(r.focusedWindow,r.windows);if(s==null||typeof s.dataURL!=\`string\`||s.dataURL.length===0){codexLinuxAppshotSend(e,t,{type:\`failed\`});return}codexLinuxAppshotSend(e,t,{type:\`screenshot\`,screenshotDataURL:s.dataURL});codexLinuxAppshotSend(e,t,{type:\`completed\`,transitionSnapshotDataURL:s.dataURL})}
+function codexLinuxAppshotSend(e,t,n,r){try{e.sendInlineMessageForView(t,{requestId:n,type:\`computer-use-capture-updated\`,update:r})}catch{}}
+function codexLinuxAppshotStartCapture({origin:e,requestId:t,bundleIdentifier:n,windowManager:r}){if(process.platform!==\`linux\`)return null;setTimeout(()=>{codexLinuxAppshotCapture({origin:e,requestId:t,bundleIdentifier:n,windowManager:r}).catch(()=>codexLinuxAppshotSend(r,e,t,{type:\`failed\`}))},0);return{animationDuration:0,transitionSnapshotHeight:140,transitionSpringDampingFraction:1,transitionSpringResponse:0}}
+async function codexLinuxAppshotCapture({origin:e,requestId:t,bundleIdentifier:n,windowManager:r}){let i=await codexLinuxAppshotFocusedWindow(),a=codexLinuxAppshotWindowForRenderer(i.focusedWindow);if(a==null){codexLinuxAppshotSend(r,e,t,{type:\`failed\`});return}codexLinuxAppshotSend(r,e,t,{type:\`metadata\`,app:{bundleIdentifier:a.bundleIdentifier,name:a.name,windowTitle:a.windowTitle,iconSmallDataURL:null}});let o=await codexLinuxAppshotAccessibilityNodes(i.focusedWindow,n),s=codexLinuxAppshotAccessibilityText(i.focusedWindow,o.nodes,o.error);typeof s==\`string\`&&s.length>0&&codexLinuxAppshotSend(r,e,t,{type:\`axText\`,text:s});let c=await codexLinuxAppshotScreenshot(i.focusedWindow,i.windows);if(c==null||typeof c.dataURL!=\`string\`||c.dataURL.length===0){codexLinuxAppshotSend(r,e,t,{type:\`failed\`});return}codexLinuxAppshotSend(r,e,t,{type:\`screenshot\`,screenshotDataURL:c.dataURL});codexLinuxAppshotSend(r,e,t,{type:\`completed\`,transitionSnapshotDataURL:c.dataURL})}
 async function codexLinuxAppshotAccessibilityNodes(e,t){let n=[],r=new Set,a=o=>{let s=codexLinuxAppshotFirstString(o);s!=null&&!r.has(s)&&(r.add(s),n.push(s))};a(t),a(e?.app_id),a(e?.wm_class),a(e?.title),a(\`electron\`);let o=null;for(let e of n){try{let t=await codexLinuxAppshotBackendJson([\`state\`,e],10000);if(Array.isArray(t)&&t.length>0)return{nodes:t,candidate:e,error:null}}catch(e){o=e}}return{nodes:[],candidate:null,error:o instanceof Error?o.message:String(o||\`\`)}}
 function codexLinuxAppshotAccessibilityText(e,t,n){let r=codexLinuxAppshotFirstString(e?.app_id,e?.wm_class,\`Linux app\`),i=codexLinuxAppshotFirstString(e?.title,\`\`),a=[\`Linux AppShot accessibility snapshot\`,\`Application: \${r}\`,\`Window: "\${i}"\`,\`\`,\`Elements:\`];if(!Array.isArray(t)||t.length===0){n&&a.push(\`- error text="\${String(n).slice(0,240)}"\`);return a.join(\`\\n\`)}for(let e of t.slice(0,120))a.push(codexLinuxAppshotNodeLine(e));return a.join(\`\\n\`)}
 function codexLinuxAppshotNodeLine(e){let t=Number.isFinite(e?.depth)?Math.max(0,Math.min(12,e.depth)):0,n=\`  \`.repeat(t),r=codexLinuxAppshotFirstString(e?.role,\`node\`),i=codexLinuxAppshotFirstString(e?.name),a=codexLinuxAppshotFirstString(e?.text),o=Array.isArray(e?.states)?e.states.filter(Boolean).slice(0,8).join(\`,\`):null,s=e?.bounds?\` bounds=\${Math.round(Number(e.bounds.width)||0)}x\${Math.round(Number(e.bounds.height)||0)}+\${Math.round(Number(e.bounds.x)||0)}+\${Math.round(Number(e.bounds.y)||0)}\`:\`\`;return\`\${n}- \${r}\${i?\` name="\${codexLinuxAppshotCleanText(i,120)}"\`:\`\`}\${a?\` text="\${codexLinuxAppshotCleanText(a,160)}"\`:\`\`}\${s}\${o?\` states=\${o}\`:\`\`}\`}
@@ -298,10 +282,6 @@ function codexLinuxAppshotUniqueCropRects(e){let t=new Set,n=[];for(let r of e){
 function codexLinuxAppshotFirstValidCrop(e,t){for(let n of e){let e=codexLinuxAppshotClampCrop(n,t);if(e!=null)return e}return null}
 function codexLinuxAppshotClampCrop(e,t){if(!Number.isFinite(t?.width)||!Number.isFinite(t?.height)||t.width<=0||t.height<=0)return null;let n=Math.max(0,e.x),r=Math.max(0,e.y),i=Math.min(e.width,t.width-n),a=Math.min(e.height,t.height-r);return!Number.isFinite(i)||!Number.isFinite(a)||i<=0||a<=0?null:{x:n,y:r,width:i,height:a}}
 `;
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function replaceIdentifierCall(source, identifier, method, replacement) {
@@ -342,7 +322,7 @@ const descriptors = [
     id: "linux-appshots-availability",
     phase: "webview-asset",
     order: 1090,
-    pattern: /^app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-[^.]+\.js$/,
+    pattern: /^app-initial~app-main~settings-command-menu-section-items~new-thread-panel-page~settings-pag~unq8yzli-[^.]+\.js$/,
     missingDescription: "AppShots availability bundle",
     skipDescription: "Linux AppShots availability patch",
     apply: applyLinuxAppshotAvailabilityPatch,
@@ -370,5 +350,4 @@ module.exports = {
   applyLinuxAppshotMainProcessPatch,
   applyLinuxAppshotSettingsHotkeyPatch,
   descriptors,
-  findMessageForViewSendFunction,
 };

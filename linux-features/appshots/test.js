@@ -18,7 +18,6 @@ const {
   applyLinuxAppshotMainProcessPatch,
   applyLinuxAppshotSettingsHotkeyPatch,
   descriptors,
-  findMessageForViewSendFunction,
 } = require("./patch.js");
 
 function applyPatchTwice(patchFn, source) {
@@ -53,12 +52,10 @@ function appshotAvailabilityAtomBundleFixture() {
 
 function appshotMainProcessBundleFixture() {
   return [
-    "var Ts=`codex_desktop:message-from-view`,F=`codex_desktop:message-for-view`,eS=new Map;",
-    "function tS({origin:n,requestId:r,subscribeComputerUseCaptureWorkerEvent:a}){let l=a(`update`,e=>{e.requestId===r&&nS(e.requestId,e.update)});eS.set(r,{origin:n,unsubscribe:l})}",
-    "function nS(e,t){let n=eS.get(e);n!=null&&(rS(n.origin,{requestId:e,type:`computer-use-capture-updated`,update:t}),(t.type===`completed`||t.type===`failed`)&&iS(e,n))}",
-    "function rS(e,t){e.isDestroyed()||e.send(F,t)}",
+    "var FO=new Map;",
+    "function HO(e,t){let n=FO.get(e);n!=null&&(n.windowManager.sendInlineMessageForView(n.origin,{requestId:e,type:`computer-use-capture-updated`,update:t}),done(e,n))}",
     "\"computer-use-frontmost-window\":async()=>process.platform===`darwin`?Xo():null,",
-    "\"computer-use-start-capture\":async({animationDestination:e,bundleIdentifier:t,origin:n,requestId:r})=>{if(process.platform!==`darwin`||this.requestComputerUseCaptureWorker==null||this.subscribeComputerUseCaptureWorkerEvent==null)return null;let i=GO({backgroundColor:e.backgroundColor,cornerRadius:e.cornerRadius,primaryTextColor:e.primaryTextColor,viewportFrame:e.viewportFrame,webContents:n});return i==null?null:eS({animationTarget:i,bundleIdentifier:t,origin:n,requestComputerUseCaptureWorker:this.requestComputerUseCaptureWorker,requestId:r,subscribeComputerUseCaptureWorkerEvent:this.subscribeComputerUseCaptureWorkerEvent})}",
+    "\"computer-use-start-capture\":async({animationDestination:e,bundleIdentifier:t,origin:n,requestId:r})=>{if(process.platform!==`darwin`||this.requestComputerUseCaptureWorker==null||this.subscribeComputerUseCaptureWorkerEvent==null)return null;let i=GO({backgroundColor:e.backgroundColor,cornerRadius:e.cornerRadius,primaryTextColor:e.primaryTextColor,viewportFrame:e.viewportFrame,webContents:n});return i==null?null:VO({animationTarget:i,bundleIdentifier:t,origin:n,requestComputerUseCaptureWorker:this.requestComputerUseCaptureWorker,requestId:r,subscribeComputerUseCaptureWorkerEvent:this.subscribeComputerUseCaptureWorkerEvent,windowManager:this.windowManager})}",
   ].join("");
 }
 
@@ -147,7 +144,7 @@ test("appshots availability descriptor matches the current bundle", () => {
   );
   assert.ok(
     descriptor.pattern.test(
-      "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-DRU9Ekz0.js",
+      "app-initial~app-main~settings-command-menu-section-items~new-thread-panel-page~settings-pag~unq8yzli-twtaboLE.js",
     ),
   );
 });
@@ -282,12 +279,9 @@ test("enables AppShots availability atom on Linux", () => {
   assert.match(patched, /requirements\?\.allowAppshots!==!1/);
 });
 
-test("finds only the raw renderer message sender", () => {
-  assert.equal(findMessageForViewSendFunction(appshotMainProcessBundleFixture()), "rS");
-  assert.equal(
-    findMessageForViewSendFunction("var F=`codex_desktop:message-for-view`;function nS(e,t){}"),
-    null,
-  );
+test("rejects the obsolete raw renderer message sender shape", () => {
+  const obsolete = "var F=`codex_desktop:message-for-view`;function nS(e,t){e.send(F,t)}";
+  assert.equal(applyLinuxAppshotMainProcessPatch(obsolete), obsolete);
 });
 
 test("routes AppShots capture through the self-contained Linux feature", () => {
@@ -302,7 +296,7 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
   );
   assert.match(
     patched,
-    /if\(process\.platform===`linux`\)return codexLinuxAppshotStartCapture\(\{origin:n,requestId:r,bundleIdentifier:t\}\);/,
+    /if\(process\.platform===`linux`\)return codexLinuxAppshotStartCapture\(\{origin:n,requestId:r,bundleIdentifier:t,windowManager:this\.windowManager\}\);/,
   );
   assert.match(patched, /function codexLinuxAppshotBackendPath/);
   assert.match(patched, /codexLinuxAppshotBackendJson\(\[`windows`\],5000\)/);
@@ -327,17 +321,17 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
   assert.doesNotMatch(patched, /bare-modifier-monitor/);
   assert.match(
     patched,
-    /function codexLinuxAppshotSend\(e,t,n\)\{try\{rS\(e,\{requestId:t,type:`computer-use-capture-updated`,update:n\}\)\}catch\{\}\}/,
+    /function codexLinuxAppshotSend\(e,t,n,r\)\{try\{e\.sendInlineMessageForView\(t,\{requestId:n,type:`computer-use-capture-updated`,update:r\}\)\}catch\{\}\}/,
   );
   assert.doesNotMatch(
     patched,
-    /function codexLinuxAppshotSend\(e,t,n\)\{try\{nS\(e,\{requestId:t,type:`computer-use-capture-updated`,update:n\}\)\}catch\{\}\}/,
+    /codex_desktop:message-for-view/,
   );
   assert.match(patched, /transitionSnapshotHeight:140/);
-  assert.match(patched, /type:`metadata`,app:\{bundleIdentifier:i\.bundleIdentifier/);
-  assert.match(patched, /type:`axText`,text:o/);
-  assert.match(patched, /type:`screenshot`,screenshotDataURL:s\.dataURL/);
-  assert.match(patched, /type:`completed`,transitionSnapshotDataURL:s\.dataURL/);
+  assert.match(patched, /type:`metadata`,app:\{bundleIdentifier:a\.bundleIdentifier/);
+  assert.match(patched, /type:`axText`,text:s/);
+  assert.match(patched, /type:`screenshot`,screenshotDataURL:c\.dataURL/);
+  assert.match(patched, /type:`completed`,transitionSnapshotDataURL:c\.dataURL/);
 });
 
 test("AppShots capture uses and removes its private temporary directory", async () => {
