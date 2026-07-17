@@ -1,0 +1,9 @@
+{
+  "id": "directory-only-working-tree-watch",
+  "title": "Directory-Only Working-Tree Watch",
+  "description": "Replaces the Linux recursive working-tree watcher with bounded non-recursive directory watches and skips Git-ignored untracked subtrees.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

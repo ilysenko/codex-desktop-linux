@@ -14,6 +14,7 @@ let
     "persistent-status-panel"
     "appshots"
     "codex-wrapper-updater"
+    "directory-only-working-tree-watch"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
@@ -27,6 +28,7 @@ let
   normalizedTestFeatureIds = [
     "appshots"
     "codex-wrapper-updater"
+    "directory-only-working-tree-watch"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
@@ -41,6 +43,7 @@ let
   normalizedWatchdogFeatureIds = [
     "appshots"
     "codex-wrapper-updater"
+    "directory-only-working-tree-watch"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
@@ -147,6 +150,7 @@ let
       "remote-mobile-control"
       "frameless-titlebar"
       "codex-wrapper-updater"
+      "directory-only-working-tree-watch"
       "global-dictation"
       "persistent-status-panel"
       "mcp-helper-reaper"
