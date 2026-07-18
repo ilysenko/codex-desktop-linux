@@ -183,8 +183,8 @@ function onSelectNameCandidates(source, callbackName, searchStart) {
   return [...names];
 }
 
-function openTargetItem({ jsxVar, menuVar, openFn, pathVar, cwdVar, openFileVar, closeVar, target }) {
-  return `(0,${jsxVar}.jsx)(${menuVar}.Item,{key:\`${PATCH_MARKER}:${target.id}\`,onSelect:()=>{${openFn}({path:${pathVar},cwd:${cwdVar},target:\`${target.id}\`,openFile:${openFileVar}.mutate}),${closeVar}(!1)},children:\`${target.label}\`})`;
+function openTargetItem({ jsxVar, menuVar, openFn, pathVar, cwdVar, closeVar, target }) {
+  return `(0,${jsxVar}.jsx)(${menuVar}.Item,{key:\`${PATCH_MARKER}:${target.id}\`,onSelect:()=>{${openFn}({path:${pathVar},cwd:${cwdVar},target:\`${target.id}\`}),${closeVar}(!1)},children:\`${target.label}\`})`;
 }
 
 function applyWorkspaceRootOpenTargetsPatch(currentSource, targets) {
@@ -192,12 +192,12 @@ function applyWorkspaceRootOpenTargetsPatch(currentSource, targets) {
     return currentSource;
   }
 
-  const openCallPattern = /([A-Za-z_$][\w$]*)\(\{path:([A-Za-z_$][\w$]*),cwd:([A-Za-z_$][\w$]*),target:`fileManager`,openFile:([A-Za-z_$][\w$]*)\.mutate\}\)/gu;
+  const openCallPattern = /([A-Za-z_$][\w$]*)\(\{path:([A-Za-z_$][\w$]*),cwd:([A-Za-z_$][\w$]*),target:`fileManager`\}\)/gu;
   const edits = [];
   let matchedOpenCall = false;
   for (const openCallMatch of currentSource.matchAll(openCallPattern)) {
     matchedOpenCall = true;
-    const [openCall, openFn, pathVar, cwdVar, openFileVar] = openCallMatch;
+    const [openCall, openFn, pathVar, cwdVar] = openCallMatch;
     const callbackPattern = /([A-Za-z_$][\w$]*)=\(\)=>\{/g;
     let callbackMatch = null;
     const callbackSearchSource = currentSource.slice(0, openCallMatch.index);
@@ -250,7 +250,6 @@ function applyWorkspaceRootOpenTargetsPatch(currentSource, targets) {
         openFn,
         pathVar,
         cwdVar,
-        openFileVar,
         closeVar,
         target,
       }),
@@ -303,7 +302,11 @@ function patchWorkspaceRootOpenTargets(extractedDir) {
   let changed = 0;
 
   for (const name of fs.readdirSync(assetsDir)) {
-    if (!/^app-initial~app-main~page-[^.]+\.js$/u.test(name)) {
+    if (
+      !/^app-initial~notebook-preview-panel~app-main~pull-request-route~projects-index-page~cloud-en~[^.]+\.js$/u.test(
+        name,
+      )
+    ) {
       continue;
     }
     const filePath = path.join(assetsDir, name);

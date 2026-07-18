@@ -8805,12 +8805,12 @@ test("current upstream Chrome extension integration supports Linux natively", ()
   );
 });
 
-test("current upstream has removed the workspace-root File Manager action", () => {
+test("current upstream retains the workspace-root File Manager action without the legacy openFile mutation", () => {
   const upstream =
-    "function _O(e){switch(e){case`macOS`:return vO.finder;case`windows`:return vO.explorer;case`linux`:return vO.fileManager}}var vO=K({fileManager:{id:`sidebarElectron.openWorkspaceRootInFileManager`,defaultMessage:`Open in File Manager`}});function artifactTemplateResult(c,l,o,d){let U=()=>{l.get(me).mutate({cwd:null,hostId:c,path:o,target:`fileManager`})};return d===`macOS`?finder:(0,$.jsx)(q,{..._O(d)})}";
+    "function Ng(e){let{platform:h}=Zn(),y=e.path,o=e.onOpenChange,C,w,E;C=()=>{if(y==null)return;let e=B(y);fr({path:y,cwd:e,target:`fileManager`}),o(!1)},w=C,E=y==null?null:(0,$.jsx)(Uo.Item,{LeftIcon:ru,onSelect:w,children:(0,$.jsx)(Vg,{platform:h})});return (0,$.jsx)(J,{id:`sidebarElectron.createStableWorktree`,defaultMessage:`Create permanent worktree`})}";
 
-  assert.match(upstream, /sidebarElectron\.openWorkspaceRootInFileManager/);
-  assert.match(upstream, /mutate\(\{cwd:null,hostId:c,path:o,target:`fileManager`\}\)/);
+  assert.match(upstream, /sidebarElectron\.createStableWorktree/);
+  assert.match(upstream, /fr\(\{path:y,cwd:e,target:`fileManager`\}\),o\(!1\)/);
   assert.doesNotMatch(
     upstream,
     /\(\{path:[A-Za-z_$][\w$]*,cwd:[A-Za-z_$][\w$]*,target:`fileManager`,openFile:/,
