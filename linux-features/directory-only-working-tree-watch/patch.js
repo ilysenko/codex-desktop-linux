@@ -16,6 +16,7 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
     const childProcess = require("node:child_process");
     const GIT_QUERY_TIMEOUT_MS = 5000;
     const FAIR_RESERVATION_CHUNK = 256;
+    const MAX_TRACKED_ASYNC_WATCH_FAILURES = 1024;
     const MAX_PENDING_DIRECTORY_SYNCS = 256;
     const RETRY_INITIAL_MS = 1000;
     const RETRY_MAX_MS = 30_000;
@@ -24,6 +25,7 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
     const WATCH_ERROR = "watch-error";
     const WATCH_EXISTING = "existing";
     const WATCH_RETRY_PENDING = "retry-pending";
+    const WATCH_RETRY_REQUIRED = "retry-required";
     const WATCH_RETRY_AFTER_RELEASE = "retry-after-release";
     const WATCH_SKIPPED = "skipped";
     const root = path.resolve(host.getFileSystemPath(options.path));
@@ -32,18 +34,25 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
     const budgetOwner = Symbol("directory-watch-budget-owner");
     const watchers = new Map();
     const refreshWatchers = new Map();
+    const asynchronousWatchFailures = new Map();
+    const asynchronousRefreshWatchFailures = new Map();
+    const asynchronousWatchResourceFailures = new Map();
     const refreshTargetPaths = new Map();
     const refreshTargets = new Map();
     const lifecycleAbortController = new AbortController();
     let disposed = false;
     let directorySyncHandle = null;
     let directorySyncFlushCount = 0;
+    let directorySyncNeedsFullInvalidation = false;
+    let directorySyncNeedsRefreshInvalidation = false;
     let directorySyncNeedsFullReconcile = false;
     let directorySyncWorkPending = false;
     let refreshRetryTimer = null;
     let refreshRetryDelayMs = RETRY_INITIAL_MS;
     let refreshTargetsNeedRetry = false;
+    let refreshTargetMappingInvalidated = false;
     let refreshWatchesNeedRetry = false;
+    let rootWatchInvalidated = false;
     let rootMetadataRetryAttempts = 0;
     let rootMetadataRetryDelayMs = RETRY_INITIAL_MS;
     let rootMetadataRetryNeedsGit = false;
@@ -194,6 +203,76 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       return true;
     }
 
+    function asynchronousWatchFailureIsExhausted(kind, directory, identity) {
+      const key = `${kind}\0${directory}`;
+      const previous = asynchronousWatchFailures.get(key);
+      const attempts = previous?.identity === identity ? previous.attempts + 1 : 1;
+      rememberAsynchronousWatchFailure(
+        asynchronousWatchFailures,
+        key,
+        { attempts, identity },
+      );
+      return attempts >= 3;
+    }
+
+    function rememberAsynchronousWatchFailure(failures, key, value) {
+      if (failures.has(key)) {
+        failures.delete(key);
+      } else if (failures.size >= MAX_TRACKED_ASYNC_WATCH_FAILURES) {
+        failures.delete(failures.keys().next().value);
+      }
+      failures.set(key, value);
+    }
+
+    function noteAsynchronousWatchResourceFailure(kind, directory, identity) {
+      const key = `${kind}\0${directory}`;
+      const previous = asynchronousWatchResourceFailures.get(key);
+      const attempts = previous?.identity === identity ? previous.attempts + 1 : 1;
+      rememberAsynchronousWatchFailure(
+        asynchronousWatchResourceFailures,
+        key,
+        { attempts, identity },
+      );
+      const minimumDelay = Math.min(
+        RETRY_INITIAL_MS * (2 ** (attempts - 1)),
+        RETRY_MAX_MS,
+      );
+      const previousDelay = watchResourceRetryDelayMs;
+      watchResourceRetryDelayMs = Math.max(watchResourceRetryDelayMs, minimumDelay);
+      if (watchResourceRetryDelayMs > previousDelay && watchResourceRetryTimer != null) {
+        clearTimeout(watchResourceRetryTimer);
+        watchResourceRetryTimer = null;
+      }
+    }
+
+    function noteAsynchronousRefreshWatchFailure(directory, identity) {
+      const previous = asynchronousRefreshWatchFailures.get(directory);
+      const attempts = previous?.identity === identity ? previous.attempts + 1 : 1;
+      rememberAsynchronousWatchFailure(
+        asynchronousRefreshWatchFailures,
+        directory,
+        { attempts, identity },
+      );
+      const minimumDelay = Math.min(
+        RETRY_INITIAL_MS * (2 ** (attempts - 1)),
+        RETRY_MAX_MS,
+      );
+      const previousDelay = refreshRetryDelayMs;
+      refreshRetryDelayMs = Math.max(refreshRetryDelayMs, minimumDelay);
+      if (refreshRetryDelayMs > previousDelay && refreshRetryTimer != null) {
+        clearTimeout(refreshRetryTimer);
+        refreshRetryTimer = null;
+      }
+    }
+
+    function resetAsynchronousRefreshWatchFailure(directory) {
+      asynchronousRefreshWatchFailures.delete(directory);
+    }
+
+    function resetAsynchronousWatchResourceFailure(kind, directory) {
+      asynchronousWatchResourceFailures.delete(`${kind}\0${directory}`);
+    }
+
     function resetWatchResourceRetry(expectedGeneration) {
       if (watchResourceFailureGeneration !== expectedGeneration) return;
       if (watchResourceRetryTimer != null) clearTimeout(watchResourceRetryTimer);
@@ -235,13 +314,28 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
             watchResourceRetryWorkPending = false;
             if (disposed) return;
             if (watchResourceFailureGeneration !== attemptGeneration) {
-              watchResourceRetryDelayMs = Math.min(retryDelay * 2, RETRY_MAX_MS);
+              watchResourceRetryDelayMs = Math.max(
+                watchResourceRetryDelayMs,
+                Math.min(retryDelay * 2, RETRY_MAX_MS),
+              );
               scheduleWatchResourceRetry();
               return;
             }
             if (watchResourceRetryProbeFailed) {
-              watchResourceRetryDelayMs = Math.min(retryDelay * 2, RETRY_MAX_MS);
+              watchResourceRetryDelayMs = Math.max(
+                watchResourceRetryDelayMs,
+                Math.min(retryDelay * 2, RETRY_MAX_MS),
+              );
               scheduleWatchResourceRetry();
+              return;
+            }
+            if (scanResult?.metadataUnavailable || scanResult?.topologyRetryNeeded) {
+              resetWatchResourceRetry(attemptGeneration);
+              rootMetadataRetryDelayMs = Math.max(
+                rootMetadataRetryDelayMs,
+                Math.min(retryDelay * 2, RETRY_MAX_MS),
+              );
+              scheduleRootMetadataRetry(configuration.honorGitIgnore, true);
               return;
             }
             const refreshCoverageComplete = refreshRetryTimer != null || (
@@ -299,12 +393,15 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
         return;
       }
       if (rootMetadataRetryAttempts >= 2) {
-        // A root whose identity is unknown may still be attached to a stale
-        // inode. Hand it back to Codex's existing watcher retry path.
+        // Persistent incomplete coverage may leave stale or missing watches.
+        // Hand it back to Codex's existing watcher retry path after the two
+        // bounded in-feature recovery attempts.
         if (rootMetadataRetryRequiresRestart || !watchers.has(root)) {
           finish({
             reason: "watch-error",
-            error: new Error(`Could not read working-tree root metadata: ${options.path}`),
+            error: new Error(
+              `Could not restore complete working-tree watch coverage: ${options.path}`,
+            ),
           });
         }
         return;
@@ -346,11 +443,9 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
 
     function updateRootMetadataRetry(result, reloadGitIgnores) {
       if (disposed || result == null) return;
-      if (result.metadataUnavailable) {
-        scheduleRootMetadataRetry(
-          reloadGitIgnores,
-          result.rootMetadataUnavailable === true,
-        );
+      if (result.metadataUnavailable || result.topologyRetryNeeded) {
+        if (watchResourceRetryWorkPending) return;
+        scheduleRootMetadataRetry(reloadGitIgnores, true);
       } else {
         resetRootMetadataRetry();
       }
@@ -893,6 +988,37 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       } catch {}
     }
 
+    function closeRefreshSubtrees(directories) {
+      const subtreeRoots = new Set(
+        [...directories].filter((directory) => isWithin(directory, root)),
+      );
+      if (subtreeRoots.size === 0) return;
+      for (const directory of [...refreshWatchers.keys()]) {
+        if (hasAncestorInSet(directory, subtreeRoots)) closeRefreshWatch(directory);
+      }
+    }
+
+    function hasRefreshWatchInSubtree(directory) {
+      for (const refreshDirectory of refreshWatchers.keys()) {
+        if (isWithin(refreshDirectory, directory)) return true;
+      }
+      return false;
+    }
+
+    function consumeRefreshTargetMappingInvalidation() {
+      if (!refreshTargetMappingInvalidated) return false;
+      refreshTargetMappingInvalidated = false;
+      for (const directory of [...refreshWatchers.keys()]) closeRefreshWatch(directory);
+      refreshTargetPaths.clear();
+      refreshTargets.clear();
+      asynchronousRefreshWatchFailures.clear();
+      resetRefreshRetry();
+      gitIgnoredRoots = new Set([path.join(root, ".git")]);
+      refreshTargetsNeedRetry = configuration.honorGitIgnore;
+      refreshWatchesNeedRetry = false;
+      return true;
+    }
+
     function scheduleRefreshRetry() {
       if (disposed || refreshRetryTimer != null) return;
       const retryDelay = refreshRetryDelayMs;
@@ -1023,6 +1149,10 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           needsRetry = true;
           continue;
         }
+        if (refreshRetryTimer != null) {
+          needsRetry = true;
+          continue;
+        }
         if (budget.notificationQueued) {
           needsRetry = true;
           continue;
@@ -1040,18 +1170,30 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           watcher = fs.watch(directory, { recursive: false }, (eventType, filename) => {
             if (refreshWatchers.get(directory)?.watcher !== watcher) return;
             if (
-              eventType === "rename" &&
-              refreshDirectoryIdentity(directory) !== identity
+              filename == null ||
+              (
+                eventType === "rename" &&
+                (
+                  // Node reports a watched directory's self-rename with its
+                  // basename, which is ambiguous with a same-named child.
+                  // Conservatively rewatch the refresh directory in either case.
+                  filename.toString() === path.basename(directory) ||
+                  refreshDirectoryIdentity(directory) !== identity
+                )
+              )
             ) {
+              refreshWatchesNeedRetry = true;
               closeRefreshWatch(directory, watcher);
               scheduleTopologyRefresh(true);
               scheduleRefreshRetry();
               return;
             }
+            resetAsynchronousRefreshWatchFailure(directory);
+            resetAsynchronousWatchResourceFailure("refresh", directory);
             if (filename == null || names.has(filename.toString())) scheduleTopologyRefresh(true);
           });
         } catch (error) {
-          noteWatchResourceRetryProbeFailure();
+          if (isWatchResourceError(error)) noteWatchResourceRetryProbeFailure();
           if (!noteWatchResourceFailure(error)) needsRetry = true;
           continue;
         }
@@ -1061,14 +1203,16 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
         coverageChanged = true;
         watcher.on("error", (error) => {
           if (refreshWatchers.get(directory)?.watcher !== watcher) return;
-          const resourceError = noteWatchResourceFailure(error);
-          closeRefreshWatch(directory, watcher);
-          if (resourceError) {
-            options.onChange({ changedPaths: [] });
+          if (isWatchResourceError(error)) {
+            noteAsynchronousWatchResourceFailure("refresh", directory, identity);
           } else {
-            scheduleTopologyRefresh(true);
-            scheduleRefreshRetry();
+            noteAsynchronousRefreshWatchFailure(directory, identity);
           }
+          const resourceError = noteWatchResourceFailure(error);
+          refreshWatchesNeedRetry = true;
+          closeRefreshWatch(directory, watcher);
+          options.onChange({ changedPaths: [] });
+          if (!resourceError) scheduleRefreshRetry();
         });
       }
       refreshWatchesNeedRetry = needsRetry;
@@ -1122,12 +1266,19 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       releaseReservations(budgetOwner);
       if (directorySyncHandle != null) clearImmediate(directorySyncHandle);
       directorySyncHandle = null;
+      directorySyncNeedsFullInvalidation = false;
+      directorySyncNeedsRefreshInvalidation = false;
       directorySyncNeedsFullReconcile = false;
       directorySyncWorkPending = false;
       pendingDirectorySyncs.clear();
+      asynchronousWatchFailures.clear();
+      asynchronousRefreshWatchFailures.clear();
+      asynchronousWatchResourceFailures.clear();
       budgetRecoveryWorkPending = false;
       if (refreshRetryTimer != null) clearTimeout(refreshRetryTimer);
       refreshRetryTimer = null;
+      refreshTargetMappingInvalidated = false;
+      rootWatchInvalidated = false;
       if (rootMetadataRetryTimer != null) clearTimeout(rootMetadataRetryTimer);
       rootMetadataRetryTimer = null;
       if (watchResourceRetryTimer != null) clearTimeout(watchResourceRetryTimer);
@@ -1163,18 +1314,31 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
         if (
           entry == null ||
           metadata == null ||
-          metadataIdentity(metadata) !== entry.identity
+          metadataIdentity(metadata) !== entry.identity ||
+          filename == null ||
+          filename.toString() === path.basename(root)
         ) {
           options.onChange({ changedPaths: [] });
+          // The basename self-event shape is ambiguous with a same-named
+          // child. Serialize the conservative root rewatch with topology work.
+          rootWatchInvalidated = true;
+          refreshTargetMappingInvalidated = true;
           scheduleTopologyRefresh(true);
           return;
         }
       }
       if (filename == null) {
         options.onChange({ changedPaths: [] });
+        if (directory === root) {
+          rootWatchInvalidated = true;
+          refreshTargetMappingInvalidated = true;
+        } else {
+          scheduleDirectorySync(directory);
+        }
         scheduleTopologyRefresh(true);
         return;
       }
+      resetAsynchronousWatchResourceFailure("working-tree", directory);
       const name = filename.toString();
       const physicalPath = path.join(directory, name);
       const changedPath = logicalChangedPath(physicalPath);
@@ -1197,6 +1361,9 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
         path.basename(physicalPath) === ".gitignore" ||
         physicalPath === path.join(root, ".git")
       ) {
+        if (physicalPath === path.join(root, ".git")) {
+          refreshTargetMappingInvalidated = true;
+        }
         scheduleTopologyRefresh(true);
       }
     }
@@ -1208,6 +1375,7 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       const existing = watchers.get(directory);
       if (existing != null) {
         if (existing.identity === identity) return WATCH_EXISTING;
+        if (directory === root) refreshTargetMappingInvalidated = true;
         closeSubtree(directory);
         if (directory === root) closeDirectoryWatch(root);
         return WATCH_RETRY_AFTER_RELEASE;
@@ -1233,11 +1401,13 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           emitChange(directory, eventType, filename);
         });
       } catch (error) {
-        if (directory !== root) noteWatchResourceRetryProbeFailure();
+        if (directory !== root && isWatchResourceError(error)) {
+          noteWatchResourceRetryProbeFailure();
+        }
         if (directory === root) {
           reportWatchLimitError(error);
-        } else {
-          noteWatchResourceFailure(error);
+        } else if (!noteWatchResourceFailure(error)) {
+          return WATCH_RETRY_REQUIRED;
         }
         return WATCH_ERROR;
       }
@@ -1251,10 +1421,26 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           finish({ reason: "watch-error", error });
           return;
         }
+        if (isWatchResourceError(error)) {
+          noteAsynchronousWatchResourceFailure("working-tree", directory, identity);
+        }
         const resourceError = noteWatchResourceFailure(error);
+        const recoveryExhausted = !resourceError &&
+          asynchronousWatchFailureIsExhausted("working-tree", directory, identity);
         closeSubtree(directory);
         options.onChange({ changedPaths: [] });
-        if (!resourceError) scheduleTopologyRefresh(false);
+        if (recoveryExhausted) {
+          finish({
+            reason: "watch-error",
+            error: new Error(
+              `Could not restore complete working-tree watch coverage: ${options.path}`,
+            ),
+          });
+        } else if (!resourceError) {
+          scheduleTopologyRefresh(
+            configuration.honorGitIgnore && refreshRetryTimer == null,
+          );
+        }
       });
       return WATCH_ADDED;
     }
@@ -1268,6 +1454,7 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       const incompleteDirectories = new Set();
       let metadataUnavailable = false;
       let rootMetadataUnavailable = false;
+      let topologyRetryNeeded = false;
       const readRetryCounts = new Map();
       const resourceFailureGenerationAtStart = watchResourceFailureGeneration;
       let index = 0;
@@ -1282,12 +1469,18 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           };
         }
         closeSubtree(startAncestorValidation.ancestor ?? start);
-        if (startAncestorValidation.ancestor === root) closeDirectoryWatch(root);
-        scheduleTopologyRefresh(configuration.honorGitIgnore);
+        if (startAncestorValidation.ancestor === root) {
+          refreshTargetMappingInvalidated = true;
+          closeDirectoryWatch(root);
+        }
+        if (rootMetadataRetryTimer == null) {
+          scheduleTopologyRefresh(configuration.honorGitIgnore);
+        }
         return {
-          coverageComplete: true,
+          coverageComplete: false,
           metadataUnavailable: false,
           rootMetadataUnavailable: false,
+          topologyRetryNeeded: true,
         };
       }
       while (!disposed) {
@@ -1326,7 +1519,8 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
         if (
           watchStatus === WATCH_BUDGET_EXHAUSTED ||
           watchStatus === WATCH_ERROR ||
-          watchStatus === WATCH_RETRY_PENDING
+          watchStatus === WATCH_RETRY_PENDING ||
+          watchStatus === WATCH_RETRY_REQUIRED
         ) {
           if (
             watchStatus === WATCH_BUDGET_EXHAUSTED &&
@@ -1337,11 +1531,15 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           if (
             watchStatus === WATCH_BUDGET_EXHAUSTED ||
             watchStatus === WATCH_RETRY_PENDING ||
+            watchStatus === WATCH_RETRY_REQUIRED ||
             !initialState.absent
           ) {
             incompleteDirectories.add(directory);
           } else {
             incompleteDirectories.delete(directory);
+          }
+          if (watchStatus === WATCH_RETRY_REQUIRED) {
+            topologyRetryNeeded = true;
           }
           if (watchStatus === WATCH_ERROR) {
             if (!initialState.absent && metadata == null) {
@@ -1404,6 +1602,8 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           if (!resourceError && isTransientDirectoryReadError(error) && retries < 2) {
             readRetryCounts.set(directory, retries + 1);
             retryDirectoryRead = true;
+          } else if (!resourceError) {
+            topologyRetryNeeded = true;
           }
         }
         if (disposed) return;
@@ -1431,7 +1631,9 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
         }
         if (metadataIdentity(currentMetadata) !== metadataIdentity(metadata)) {
           if (directory === root) {
+            refreshTargetMappingInvalidated = true;
             closeDirectoryWatch(root);
+            if (rootMetadataRetryTimer == null) scheduleTopologyRefresh(true);
           } else {
             closeSubtree(directory);
           }
@@ -1442,6 +1644,7 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
             incompleteDirectories.add(directory);
           } else {
             incompleteDirectories.add(directory);
+            topologyRetryNeeded = true;
           }
           continue;
         }
@@ -1457,6 +1660,7 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           coverageComplete: false,
           metadataUnavailable,
           rootMetadataUnavailable,
+          topologyRetryNeeded,
         };
       }
       const coverageComplete = incompleteDirectories.size === 0;
@@ -1476,29 +1680,47 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       ) {
         resetWatchResourceRetry(resourceFailureGenerationAtStart);
       }
-      return { coverageComplete, metadataUnavailable, rootMetadataUnavailable };
+      return {
+        coverageComplete,
+        metadataUnavailable,
+        rootMetadataUnavailable,
+        topologyRetryNeeded,
+      };
     }
 
     async function flushDirectorySyncs() {
       if (disposed) return;
       directorySyncFlushCount += 1;
+      const needsFullInvalidation = directorySyncNeedsFullInvalidation;
+      directorySyncNeedsFullInvalidation = false;
+      const needsRefreshInvalidation = directorySyncNeedsRefreshInvalidation;
+      directorySyncNeedsRefreshInvalidation = false;
       const needsFullReconcile = directorySyncNeedsFullReconcile;
       directorySyncNeedsFullReconcile = false;
       const pendingDirectories = [...pendingDirectorySyncs];
       pendingDirectorySyncs.clear();
       if (needsFullReconcile) {
+        if (needsFullInvalidation) {
+          // At least one discarded rename path owned a directory watch. Rebuild
+          // descendants so inode-number reuse cannot hide its replacement.
+          closeSubtree(root);
+        }
+        if (needsRefreshInvalidation) closeRefreshSubtrees([root]);
         await reconcileTopology(configuration.honorGitIgnore);
         return;
       }
       const directories = [];
       const subtreesToClose = new Set();
       let metadataRetryNeeded = false;
+      // A parent rename invalidates any watch at the affected pathname. The
+      // replacement may reuse the same dev/ino pair after the old inode is
+      // released, so identity comparison alone cannot prove the watch is live.
+      closeSubtrees(pendingDirectories);
+      closeRefreshSubtrees(pendingDirectories);
       for (const directory of pendingDirectories) {
         const state = directoryMetadataState(directory);
         if (state.metadata != null) {
           directories.push(directory);
-        } else if (state.absent && watchers.has(directory)) {
-          subtreesToClose.add(directory);
         } else if (!state.absent) {
           metadataRetryNeeded = true;
         }
@@ -1524,7 +1746,9 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       closeSubtrees(subtreesToClose);
       for (const directory of directoriesToScan) {
         const result = await scanDirectoryTree(directory);
-        metadataRetryNeeded ||= result?.metadataUnavailable === true;
+        metadataRetryNeeded ||=
+          result?.metadataUnavailable === true ||
+          result?.topologyRetryNeeded === true;
       }
       if (metadataRetryNeeded) scheduleTopologyRefresh(configuration.honorGitIgnore);
     }
@@ -1561,6 +1785,8 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
 
     function scheduleDirectorySync(directory) {
       if (disposed || !isWithin(directory, root)) return;
+      directorySyncNeedsFullInvalidation ||= watchers.has(directory);
+      directorySyncNeedsRefreshInvalidation ||= hasRefreshWatchInSubtree(directory);
       if (budget.suspendedOwners.delete(budgetOwner) && budgetCoveragePartial) {
         notifyBudgetListeners();
       }
@@ -1582,6 +1808,13 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       if (disposed) return;
       await yieldBudgetNotifications();
       if (disposed) return;
+      if (rootWatchInvalidated) {
+        rootWatchInvalidated = false;
+        refreshTargetMappingInvalidated = true;
+        const entry = watchers.get(root);
+        closeSubtree(root);
+        closeDirectoryWatch(root, entry?.watcher);
+      }
       if (!watchers.has(root)) {
         const initialRootState = directoryMetadataState(root);
         if (initialRootState.metadata == null && !initialRootState.absent) {
@@ -1602,7 +1835,10 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           return;
         }
       }
-      if (reloadGitIgnores) await reloadGitStateAndPrune();
+      const refreshTargetsWereInvalidated = consumeRefreshTargetMappingInvalidation();
+      if (reloadGitIgnores || refreshTargetsWereInvalidated) {
+        await reloadGitStateAndPrune();
+      }
       if (disposed) return;
       for (const [directory, entry] of [...watchers.entries()]) {
         const state = directoryMetadataState(directory);
@@ -1613,7 +1849,10 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           (directory !== root && isIgnoredDirectory(directory))
         ) {
           closeSubtree(directory);
-          if (directory === root) closeDirectoryWatch(root, entry.watcher);
+          if (directory === root) {
+            refreshTargetMappingInvalidated = true;
+            closeDirectoryWatch(root, entry.watcher);
+          }
         }
       }
       await yieldBudgetNotifications();
@@ -1638,6 +1877,10 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       }
       if (rootStatus === WATCH_RETRY_AFTER_RELEASE) {
         await yieldBudgetNotifications();
+        if (disposed) return;
+      }
+      if (consumeRefreshTargetMappingInvalidation()) {
+        await reloadGitStateAndPrune();
         if (disposed) return;
       }
       if (retryRefreshWatches && ensureRefreshWatches()) {

@@ -632,7 +632,7 @@ test("rename-driven directory syncs queue at most one follow-up flush", async ()
   });
 });
 
-test("a transient rename-path metadata failure retains coverage and schedules reconciliation", async () => {
+test("a transient rename-path metadata failure restores coverage through reconciliation", async () => {
   await withTempTree(async (root) => {
     spawnSync("git", ["init", "-q", root]);
     const child = path.join(root, "child");
@@ -696,7 +696,7 @@ test("a transient rename-path metadata failure retains coverage and schedules re
       assert.equal(
         session.codexLinuxDirectoryWatchCount(),
         3,
-        "transient metadata failure discarded a live watched subtree",
+        "transient metadata failure did not restore the watched subtree",
       );
     } finally {
       childProcess.execFile = originalExecFile;
@@ -757,6 +757,54 @@ test("a scan-time metadata failure after a rename schedules one full reconciliat
       assert.ok(childMetadataReads >= 4, "full reconciliation did not retry child metadata");
     } finally {
       fs.lstatSync = originalLstat;
+      await session?.dispose();
+      fs.watch = originalWatch;
+    }
+  });
+});
+
+test("a rename-path child watch failure schedules topology recovery", async () => {
+  await withTempTree(async (root) => {
+    const child = path.join(root, "child");
+    const originalWatch = fs.watch;
+    const callbacks = new Map();
+    let childWatchAttempts = 0;
+    class FakeWatcher extends EventEmitter {
+      close() {}
+    }
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      if (resolved === child) {
+        childWatchAttempts += 1;
+        if (childWatchAttempts === 1) {
+          const error = new Error("child watch is temporarily unavailable");
+          error.code = "EIO";
+          throw error;
+        }
+      }
+      callbacks.set(resolved, callback);
+      return new FakeWatcher();
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      fs.mkdirSync(child);
+      callbacks.get(path.resolve(root))("rename", "child");
+      await waitFor(
+        () => session.codexLinuxDirectoryWatchCount() === 2,
+        "rename-path watch failure did not recover through full reconciliation",
+      );
+      assert.equal(childWatchAttempts, 2);
+    } finally {
       await session?.dispose();
       fs.watch = originalWatch;
     }
@@ -942,7 +990,7 @@ test("persistent initial root metadata failures close after bounded retries", as
       retryTimers.fire(retryTimers.live()[0]);
       const closed = await session.closed;
       assert.equal(closed.reason, "watch-error");
-      assert.match(closed.error.message, /Could not read working-tree root metadata/);
+      assert.match(closed.error.message, /Could not restore complete working-tree watch coverage/);
       assert.equal(rootMetadataReads, 3);
       assert.deepEqual(retryTimers.live(), []);
     } finally {
@@ -1033,11 +1081,14 @@ test("large file-rename bursts collapse before scanning every active watcher", a
     }
     const originalWatch = fs.watch;
     const callbacks = new Map();
+    const watchCalls = [];
     class FakeWatcher extends EventEmitter {
       close() {}
     }
     fs.watch = (directory, _options, callback) => {
-      callbacks.set(path.resolve(directory), callback);
+      const resolved = path.resolve(directory);
+      callbacks.set(resolved, callback);
+      watchCalls.push(resolved);
       return new FakeWatcher();
     };
     let session;
@@ -1088,10 +1139,75 @@ test("large file-rename bursts collapse before scanning every active watcher", a
         syntheticFileStats < 300,
         `rename burst synchronously statted ${syntheticFileStats} individual file paths`,
       );
+      assert.equal(
+        watchCalls.length,
+        65,
+        "a pure-file rename burst rebuilt stable directory watches",
+      );
     } finally {
       path.relative = originalRelative;
       fs.lstatSync = originalLstatSync;
       await session?.dispose();
+      fs.watch = originalWatch;
+    }
+  });
+});
+
+test("a collapsed rename burst refreshes a replaced watched directory", async () => {
+  await withTempTree(async (root) => {
+    const child = path.join(root, "child");
+    fs.mkdirSync(path.join(child, "stale-nested"), { recursive: true });
+    const staleIdentity = fs.lstatSync(child);
+    const originalLstat = fs.lstatSync;
+    const originalWatch = fs.watch;
+    const callbacks = new Map();
+    const watchCalls = [];
+    let reuseStaleIdentity = false;
+    class FakeWatcher extends EventEmitter {
+      close() {}
+    }
+    fs.lstatSync = (target, ...args) => {
+      const metadata = originalLstat.call(fs, target, ...args);
+      if (reuseStaleIdentity && path.resolve(target) === child) {
+        metadata.dev = staleIdentity.dev;
+        metadata.ino = staleIdentity.ino;
+      }
+      return metadata;
+    };
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      callbacks.set(resolved, callback);
+      watchCalls.push(resolved);
+      return new FakeWatcher();
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      const rootCallback = callbacks.get(path.resolve(root));
+      fs.rmSync(child, { recursive: true, force: true });
+      fs.mkdirSync(child);
+      reuseStaleIdentity = true;
+      rootCallback("rename", "child");
+      for (let index = 0; index < 256; index += 1) {
+        rootCallback("rename", `burst-file-${index}.txt`);
+      }
+      await waitFor(
+        () => watchCalls.filter((directory) => directory === child).length === 2,
+        "collapsed reconciliation retained a replaced directory watch",
+      );
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 2);
+    } finally {
+      await session?.dispose();
+      fs.lstatSync = originalLstat;
       fs.watch = originalWatch;
     }
   });
@@ -1419,6 +1535,120 @@ test("a transient whole-directory readdir failure is retried in place", async ()
   });
 });
 
+test("an exhausted transient readdir retry schedules bounded topology recovery", async () => {
+  await withTempTree(async (root) => {
+    fs.mkdirSync(path.join(root, "child"));
+    const originalReaddir = fs.promises.readdir;
+    const retryTimers = captureRetryTimers();
+    let rootReadAttempts = 0;
+    fs.promises.readdir = async (directory, ...args) => {
+      if (path.resolve(directory) === path.resolve(root)) {
+        rootReadAttempts += 1;
+        if (rootReadAttempts <= 3) {
+          const error = new Error("directory remains temporarily unavailable");
+          error.code = "EIO";
+          throw error;
+        }
+      }
+      return originalReaddir.call(fs.promises, directory, ...args);
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      assert.equal(rootReadAttempts, 3);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 1);
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => session.codexLinuxDirectoryWatchCount() === 2,
+        "delayed topology recovery did not restore directory traversal coverage",
+      );
+      assert.deepEqual(retryTimers.live(), []);
+    } finally {
+      await session?.dispose();
+      fs.promises.readdir = originalReaddir;
+      retryTimers.restore();
+    }
+  });
+});
+
+test("persistent non-root identity churn closes after two full-tree recoveries", async () => {
+  await withTempTree(async (root) => {
+    const child = path.join(root, "child");
+    fs.mkdirSync(child);
+    const originalLstat = fs.lstatSync;
+    const originalWatch = fs.watch;
+    const retryTimers = captureRetryTimers();
+    const childIdentity = originalLstat.call(fs, child);
+    let childMetadataCalls = 0;
+    let childWatchAttempts = 0;
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.lstatSync = (target, ...args) => {
+      const metadata = originalLstat.call(fs, target, ...args);
+      if (path.resolve(target) === child) {
+        childMetadataCalls += 1;
+        metadata.dev = childIdentity.dev;
+        metadata.ino = childIdentity.ino + (childMetadataCalls % 2);
+      }
+      return metadata;
+    };
+    fs.watch = (directory) => {
+      if (path.resolve(directory) === child) childWatchAttempts += 1;
+      return new FakeWatcher();
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      assert.equal(childWatchAttempts, 3);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 1);
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => childWatchAttempts === 6 && retryTimers.live().length === 1,
+        "persistent identity churn did not schedule its final bounded recovery",
+      );
+      assert.equal(retryTimers.live()[0].delay, 2000);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      const closed = await session.closed;
+      assert.equal(closed.reason, "watch-error");
+      assert.match(closed.error.message, /Could not restore complete working-tree watch coverage/);
+      assert.equal(childWatchAttempts, 9);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 0);
+      assert.deepEqual(retryTimers.live(), []);
+    } finally {
+      await session?.dispose();
+      fs.lstatSync = originalLstat;
+      fs.watch = originalWatch;
+      retryTimers.restore();
+    }
+  });
+});
+
 test("a filename-less rename event reconciles the watched directory topology", async () => {
   await withTempTree(async (root) => {
     const originalWatch = fs.watch;
@@ -1452,17 +1682,27 @@ test("a filename-less rename event reconciles the watched directory topology", a
   });
 });
 
-test("a directory replaced at the same path receives a fresh inode watch", async () => {
+test("a filename-less rename refreshes a replaced directory with a reused inode number", async () => {
   await withTempTree(async (root) => {
     const child = path.join(root, "child");
-    const staleNested = path.join(child, "stale-nested");
-    fs.mkdirSync(staleNested, { recursive: true });
+    fs.mkdirSync(path.join(child, "stale-nested"), { recursive: true });
+    const staleIdentity = fs.lstatSync(child);
+    const originalLstat = fs.lstatSync;
     const originalWatch = fs.watch;
     const callbacks = new Map();
     const watchCalls = [];
+    let reuseStaleIdentity = false;
     class FakeWatcher extends EventEmitter {
       close() {}
     }
+    fs.lstatSync = (target, ...args) => {
+      const metadata = originalLstat.call(fs, target, ...args);
+      if (reuseStaleIdentity && path.resolve(target) === child) {
+        metadata.dev = staleIdentity.dev;
+        metadata.ino = staleIdentity.ino;
+      }
+      return metadata;
+    };
     fs.watch = (directory, _options, callback) => {
       const resolved = path.resolve(directory);
       callbacks.set(resolved, callback);
@@ -1483,6 +1723,64 @@ test("a directory replaced at the same path receives a fresh inode watch", async
       );
       fs.rmSync(child, { recursive: true, force: true });
       fs.mkdirSync(child);
+      reuseStaleIdentity = true;
+      callbacks.get(path.resolve(root))("rename", null);
+      await waitFor(
+        () => watchCalls.filter((directory) => directory === child).length === 2,
+        "filename-less reconciliation retained a replaced directory watch",
+      );
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 2);
+    } finally {
+      await session?.dispose();
+      fs.lstatSync = originalLstat;
+      fs.watch = originalWatch;
+    }
+  });
+});
+
+test("a directory replaced at the same path receives a fresh watch when its inode number is reused", async () => {
+  await withTempTree(async (root) => {
+    const child = path.join(root, "child");
+    const staleNested = path.join(child, "stale-nested");
+    fs.mkdirSync(staleNested, { recursive: true });
+    const staleIdentity = fs.lstatSync(child);
+    const originalLstat = fs.lstatSync;
+    const originalWatch = fs.watch;
+    const callbacks = new Map();
+    const watchCalls = [];
+    let reuseStaleIdentity = false;
+    class FakeWatcher extends EventEmitter {
+      close() {}
+    }
+    fs.lstatSync = (target, ...args) => {
+      const metadata = originalLstat.call(fs, target, ...args);
+      if (reuseStaleIdentity && path.resolve(target) === child) {
+        metadata.dev = staleIdentity.dev;
+        metadata.ino = staleIdentity.ino;
+      }
+      return metadata;
+    };
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      callbacks.set(resolved, callback);
+      watchCalls.push(resolved);
+      return new FakeWatcher();
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      fs.rmSync(child, { recursive: true, force: true });
+      fs.mkdirSync(child);
+      reuseStaleIdentity = true;
       callbacks.get(path.resolve(root))("rename", "child");
       await waitFor(
         () => watchCalls.filter((directory) => directory === child).length === 2,
@@ -1495,6 +1793,7 @@ test("a directory replaced at the same path receives a fresh inode watch", async
       );
     } finally {
       await session?.dispose();
+      fs.lstatSync = originalLstat;
       fs.watch = originalWatch;
     }
   });
@@ -1556,7 +1855,7 @@ test("full reconciliation closes descendant watches under an invalid ancestor", 
   });
 });
 
-test("queued descendant work cannot restore watches below a closed ancestor", async () => {
+test("stale descendant callbacks cannot restore watches below a closed ancestor", async () => {
   await withTempTree(async (root) => {
     spawnSync("git", ["init", "-q", root]);
     const child = path.join(root, "child");
@@ -1621,9 +1920,11 @@ test("queued descendant work cannot restore watches below a closed ancestor", as
         () => watchersByPath.has(movedLate),
         "full reconciliation did not rebuild the moved subtree",
       );
-      await waitFor(
-        () => session.codexLinuxDirectorySyncFlushCount() >= 1,
-        "queued descendant work did not flush",
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal(
+        session.codexLinuxDirectorySyncFlushCount(),
+        0,
+        "a stale descendant callback queued work after its watch was invalidated",
       );
       assert.equal(
         watchersByPath.has(aliasLate),
@@ -1680,6 +1981,157 @@ test("moving the watched root closes the stale inode watch", async () => {
       );
     } finally {
       await session?.dispose();
+      fs.watch = originalWatch;
+      fs.rmSync(movedRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("a replaced root receives a fresh watch when its inode number is reused", async () => {
+  await withTempTree(async (root) => {
+    const movedRoot = `${root}-moved`;
+    const staleIdentity = fs.statSync(root);
+    const originalStat = fs.statSync;
+    const originalWatch = fs.watch;
+    const callbacks = new Map();
+    const rootWatchers = [];
+    const events = [];
+    let reuseStaleIdentity = false;
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.statSync = (target, ...args) => {
+      const metadata = originalStat.call(fs, target, ...args);
+      if (reuseStaleIdentity && path.resolve(target) === path.resolve(root)) {
+        metadata.dev = staleIdentity.dev;
+        metadata.ino = staleIdentity.ino;
+      }
+      return metadata;
+    };
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      const watcher = new FakeWatcher();
+      callbacks.set(resolved, callback);
+      if (resolved === path.resolve(root)) rootWatchers.push(watcher);
+      return watcher;
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: (event) => events.push(event),
+        },
+        configuration(),
+      );
+      const staleRootCallback = callbacks.get(path.resolve(root));
+      fs.renameSync(root, movedRoot);
+      fs.mkdirSync(root);
+      reuseStaleIdentity = true;
+      staleRootCallback("rename", path.basename(root));
+      await waitFor(
+        () => rootWatchers.length === 2,
+        "replacement root reused its stale watch",
+      );
+      assert.equal(rootWatchers[0].closed, true);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 1);
+      assert.ok(events.some((event) => event.changedPaths.length === 0));
+      assert.ok(
+        !events.some((event) => event.changedPaths.includes(path.join(root, path.basename(root)))),
+        "root self-replacement was reported as a child path",
+      );
+    } finally {
+      await session?.dispose();
+      fs.statSync = originalStat;
+      fs.watch = originalWatch;
+      fs.rmSync(movedRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("a replaced Git root re-watches refresh targets when inode numbers are reused", async () => {
+  await withTempTree(async (root) => {
+    spawnSync("git", ["init", "-q", root]);
+    const movedRoot = `${root}-moved`;
+    const infoDirectory = path.join(root, ".git", "info");
+    const staleRootIdentity = fs.statSync(root);
+    const staleInfoIdentity = fs.statSync(infoDirectory);
+    const originalStat = fs.statSync;
+    const originalWatch = fs.watch;
+    const callbacksByPath = new Map();
+    const watchersByPath = new Map();
+    let reuseStaleIdentities = false;
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.statSync = (target, ...args) => {
+      const metadata = originalStat.call(fs, target, ...args);
+      if (reuseStaleIdentities) {
+        const resolved = path.resolve(target);
+        if (resolved === path.resolve(root)) {
+          metadata.dev = staleRootIdentity.dev;
+          metadata.ino = staleRootIdentity.ino;
+        } else if (resolved === infoDirectory) {
+          metadata.dev = staleInfoIdentity.dev;
+          metadata.ino = staleInfoIdentity.ino;
+        }
+      }
+      return metadata;
+    };
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      const watcher = new FakeWatcher();
+      const callbacks = callbacksByPath.get(resolved) ?? [];
+      callbacks.push(callback);
+      callbacksByPath.set(resolved, callbacks);
+      const watched = watchersByPath.get(resolved) ?? [];
+      watched.push(watcher);
+      watchersByPath.set(resolved, watched);
+      return watcher;
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration({ honorGitIgnore: true }),
+      );
+      const staleRootCallback = callbacksByPath.get(path.resolve(root))[0];
+      const staleRootWatcher = watchersByPath.get(path.resolve(root))[0];
+      const staleInfoWatcher = watchersByPath.get(infoDirectory)[0];
+      assert.equal(callbacksByPath.get(infoDirectory).length, 1);
+
+      fs.renameSync(root, movedRoot);
+      fs.mkdirSync(root);
+      spawnSync("git", ["init", "-q", root]);
+      reuseStaleIdentities = true;
+      staleRootCallback("rename", path.basename(root));
+
+      await waitFor(
+        () => (
+          callbacksByPath.get(path.resolve(root)).length === 2 &&
+          callbacksByPath.get(infoDirectory).length === 2
+        ),
+        "replacement Git root retained stale working-tree or refresh watches",
+      );
+      assert.equal(staleRootWatcher.closed, true);
+      assert.equal(staleInfoWatcher.closed, true);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 1);
+    } finally {
+      await session?.dispose();
+      fs.statSync = originalStat;
       fs.watch = originalWatch;
       fs.rmSync(movedRoot, { recursive: true, force: true });
     }
@@ -2091,6 +2543,405 @@ test("a replaced Git refresh directory receives a fresh inode watch", async () =
   });
 });
 
+test("a replaced Git refresh directory is rewatched when its inode number is reused", async () => {
+  await withTempTree(async (root) => {
+    spawnSync("git", ["init", "-q", root]);
+    const infoDirectory = path.join(root, ".git", "info");
+    const excludePath = path.join(infoDirectory, "exclude");
+    const ignoredDirectory = path.join(root, "ignored");
+    fs.writeFileSync(excludePath, "");
+    fs.mkdirSync(ignoredDirectory);
+    const staleIdentity = fs.statSync(infoDirectory);
+    const originalStat = fs.statSync;
+    const originalWatch = fs.watch;
+    const callbacks = new Map();
+    let reuseStaleIdentity = false;
+    class FakeWatcher extends EventEmitter {
+      close() {}
+    }
+    fs.statSync = (target, ...args) => {
+      const metadata = originalStat.call(fs, target, ...args);
+      if (reuseStaleIdentity && path.resolve(target) === infoDirectory) {
+        metadata.dev = staleIdentity.dev;
+        metadata.ino = staleIdentity.ino;
+      }
+      return metadata;
+    };
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      const directoryCallbacks = callbacks.get(resolved) ?? [];
+      directoryCallbacks.push(callback);
+      callbacks.set(resolved, directoryCallbacks);
+      return new FakeWatcher();
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration({ honorGitIgnore: true }),
+      );
+      const staleRefreshCallback = callbacks.get(infoDirectory)[0];
+      fs.rmSync(infoDirectory, { recursive: true, force: true });
+      fs.mkdirSync(infoDirectory);
+      fs.writeFileSync(excludePath, "ignored/\n");
+      reuseStaleIdentity = true;
+      staleRefreshCallback("rename", path.basename(infoDirectory));
+      await waitFor(
+        () => (
+          callbacks.get(infoDirectory).length === 2 &&
+          session.codexLinuxDirectoryWatchCount() === 1
+        ),
+        "replacement Git refresh directory reused its stale watch",
+      );
+    } finally {
+      await session?.dispose();
+      fs.statSync = originalStat;
+      fs.watch = originalWatch;
+    }
+  });
+});
+
+test("replacing .git re-watches a refresh target whose inode number is reused", async () => {
+  await withTempTree(async (root) => {
+    spawnSync("git", ["init", "-q", root]);
+    const gitDirectory = path.join(root, ".git");
+    const infoDirectory = path.join(gitDirectory, "info");
+    const staleInfoIdentity = fs.statSync(infoDirectory);
+    const originalStat = fs.statSync;
+    const originalWatch = fs.watch;
+    const callbacksByPath = new Map();
+    const watchersByPath = new Map();
+    let reuseStaleIdentity = false;
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.statSync = (target, ...args) => {
+      const metadata = originalStat.call(fs, target, ...args);
+      if (reuseStaleIdentity && path.resolve(target) === infoDirectory) {
+        metadata.dev = staleInfoIdentity.dev;
+        metadata.ino = staleInfoIdentity.ino;
+      }
+      return metadata;
+    };
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      const watcher = new FakeWatcher();
+      const callbacks = callbacksByPath.get(resolved) ?? [];
+      callbacks.push(callback);
+      callbacksByPath.set(resolved, callbacks);
+      const watched = watchersByPath.get(resolved) ?? [];
+      watched.push(watcher);
+      watchersByPath.set(resolved, watched);
+      return watcher;
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration({ honorGitIgnore: true }),
+      );
+      const rootCallback = callbacksByPath.get(path.resolve(root))[0];
+      const staleInfoWatcher = watchersByPath.get(infoDirectory)[0];
+      assert.equal(callbacksByPath.get(infoDirectory).length, 1);
+
+      fs.rmSync(gitDirectory, { recursive: true, force: true });
+      spawnSync("git", ["init", "-q", root]);
+      reuseStaleIdentity = true;
+      rootCallback("rename", ".git");
+
+      await waitFor(
+        () => callbacksByPath.get(infoDirectory).length === 2,
+        "replacement .git directory retained its stale refresh watch",
+      );
+      assert.equal(staleInfoWatcher.closed, true);
+      assert.equal(callbacksByPath.get(path.resolve(root)).length, 1);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 1);
+    } finally {
+      await session?.dispose();
+      fs.statSync = originalStat;
+      fs.watch = originalWatch;
+    }
+  });
+});
+
+test("asynchronous Git refresh watch failures retain a resettable backoff", async () => {
+  await withTempTree(async (root) => {
+    spawnSync("git", ["init", "-q", root]);
+    const infoDirectory = path.join(root, ".git", "info");
+    const originalWatch = fs.watch;
+    const retryTimers = captureRetryTimers();
+    const infoWatchers = [];
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.watch = (directory, _options, callback) => {
+      const watcher = new FakeWatcher();
+      watcher.callback = callback;
+      if (path.resolve(directory) === infoDirectory) infoWatchers.push(watcher);
+      return watcher;
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration({ honorGitIgnore: true }),
+      );
+
+      const error = new Error("Git refresh watcher failed asynchronously");
+      error.code = "EIO";
+      infoWatchers[0].emit("error", error);
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => infoWatchers.length === 2,
+        "asynchronous Git refresh watch failure was not recovered",
+      );
+      infoWatchers[1].emit("error", error);
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [2000]);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => infoWatchers.length === 3,
+        "repeated Git refresh watch failure was not recovered",
+      );
+      infoWatchers[2].callback("change", "exclude");
+      infoWatchers[2].emit("error", error);
+      assert.deepEqual(
+        retryTimers.live().map((timer) => timer.delay),
+        [1000],
+        "a healthy refresh event did not reset the asynchronous failure backoff",
+      );
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 1);
+    } finally {
+      await session?.dispose();
+      fs.watch = originalWatch;
+      retryTimers.restore();
+    }
+  });
+});
+
+test("a higher Git refresh failure minimum replaces another path's pending timer", async () => {
+  await withTempTree(async (root) => {
+    spawnSync("git", ["init", "-q", root]);
+    const gitDirectory = path.join(root, ".git");
+    const infoDirectory = path.join(gitDirectory, "info");
+    const originalWatch = fs.watch;
+    const retryTimers = captureRetryTimers();
+    const refreshWatchersByPath = new Map();
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      const watcher = new FakeWatcher();
+      watcher.callback = callback;
+      if (resolved === gitDirectory || resolved === infoDirectory) {
+        const pathWatchers = refreshWatchersByPath.get(resolved) ?? [];
+        pathWatchers.push(watcher);
+        refreshWatchersByPath.set(resolved, pathWatchers);
+      }
+      return watcher;
+    };
+    const emitRefreshError = (watcher) => {
+      const error = new Error("Git refresh watcher failed asynchronously");
+      error.code = "EIO";
+      watcher.emit("error", error);
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration({ honorGitIgnore: true }),
+      );
+      assert.equal(refreshWatchersByPath.get(gitDirectory).length, 1);
+      assert.equal(refreshWatchersByPath.get(infoDirectory).length, 1);
+
+      emitRefreshError(refreshWatchersByPath.get(infoDirectory).at(-1));
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => refreshWatchersByPath.get(infoDirectory).length === 2,
+        "first Git info refresh failure did not recover",
+      );
+
+      emitRefreshError(refreshWatchersByPath.get(infoDirectory).at(-1));
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [2000]);
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => refreshWatchersByPath.get(infoDirectory).length === 3,
+        "second Git info refresh failure did not recover",
+      );
+
+      emitRefreshError(refreshWatchersByPath.get(gitDirectory).at(-1));
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+      const lowerTimer = retryTimers.live()[0];
+
+      emitRefreshError(refreshWatchersByPath.get(infoDirectory).at(-1));
+      assert.equal(lowerTimer.cleared, true, "higher Git retry minimum retained a 1s timer");
+      assert.deepEqual(
+        retryTimers.live().map((timer) => timer.delay),
+        [4000],
+        "higher Git retry minimum did not rearm the pending refresh timer",
+      );
+    } finally {
+      await session?.dispose();
+      fs.watch = originalWatch;
+      retryTimers.restore();
+    }
+  });
+});
+
+for (const refreshInvalidation of [
+  {
+    name: "an asynchronous Git refresh error cannot lose its backoff to an in-flight ignore reload",
+    invalidate(watcher) {
+      const error = new Error("Git refresh watcher failed during ignore reload");
+      error.code = "EIO";
+      watcher.emit("error", error);
+    },
+    expectedChangeCount: 3,
+  },
+  {
+    name: "Git refresh self-invalidation cannot lose its backoff to an in-flight ignore reload",
+    invalidate(watcher, infoDirectory) {
+      watcher.callback("rename", path.basename(infoDirectory));
+    },
+    expectedChangeCount: 2,
+  },
+]) {
+  test(refreshInvalidation.name, async () => {
+    await withTempTree(async (root) => {
+      spawnSync("git", ["init", "-q", root]);
+      const infoDirectory = path.join(root, ".git", "info");
+      const originalExecFile = childProcess.execFile;
+      const originalWatch = fs.watch;
+      const retryTimers = captureRetryTimers();
+      const callbacksByPath = new Map();
+      const infoWatchers = [];
+      let blockedIgnoreQuery = null;
+      let ignoreQueryWasBlocked = false;
+      let ignoreQueryBlocked = false;
+      let releaseBlockedIgnoreQuery = () => {};
+      let changeCount = 0;
+      class FakeWatcher extends EventEmitter {
+        close() {
+          this.closed = true;
+        }
+      }
+      fs.watch = (directory, _options, callback) => {
+        const resolved = path.resolve(directory);
+        const watcher = new FakeWatcher();
+        watcher.callback = callback;
+        callbacksByPath.set(resolved, callback);
+        if (resolved === infoDirectory) infoWatchers.push(watcher);
+        return watcher;
+      };
+      let session;
+      try {
+        session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+          fakeHost(),
+          {
+            path: root,
+            recursive: true,
+            renameEventHandling: "changed-path-with-parent-directory",
+            onChange: () => {
+              changeCount += 1;
+            },
+          },
+          configuration({ honorGitIgnore: true }),
+        );
+        assert.equal(infoWatchers.length, 1);
+
+        childProcess.execFile = (command, args, options, callback) => {
+          if (!ignoreQueryWasBlocked && args.includes("ls-files")) {
+            ignoreQueryWasBlocked = true;
+            blockedIgnoreQuery = { command, args, options, callback };
+            ignoreQueryBlocked = true;
+            releaseBlockedIgnoreQuery = () => {
+              const query = blockedIgnoreQuery;
+              blockedIgnoreQuery = null;
+              releaseBlockedIgnoreQuery = () => {};
+              originalExecFile(query.command, query.args, query.options, query.callback);
+            };
+            return new FakeWatcher();
+          }
+          return originalExecFile(command, args, options, callback);
+        };
+
+        callbacksByPath.get(path.resolve(root))("change", ".gitignore");
+        await waitFor(
+          () => ignoreQueryBlocked,
+          "Git ignore reload did not reach its blocked query",
+        );
+        const staleInfoWatcher = infoWatchers[0];
+        refreshInvalidation.invalidate(staleInfoWatcher, infoDirectory);
+        assert.equal(staleInfoWatcher.closed, true);
+        assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+
+        releaseBlockedIgnoreQuery();
+        await waitFor(
+          () => changeCount >= refreshInvalidation.expectedChangeCount,
+          "in-flight ignore reload did not finish after its query was released",
+        );
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        assert.deepEqual(
+          retryTimers.live().map((timer) => timer.delay),
+          [1000],
+          "in-flight ignore reload cleared the Git refresh retry",
+        );
+        assert.equal(
+          infoWatchers.length,
+          1,
+          "in-flight ignore reload reinstalled the Git refresh watch before its backoff",
+        );
+
+        retryTimers.fire(retryTimers.live()[0]);
+        await waitFor(
+          () => infoWatchers.length === 2,
+          "Git refresh watch was not restored after its retained backoff fired",
+        );
+      } finally {
+        releaseBlockedIgnoreQuery();
+        childProcess.execFile = originalExecFile;
+        await session?.dispose();
+        fs.watch = originalWatch;
+        retryTimers.restore();
+      }
+    });
+  });
+}
+
 test("new directories are watched and deleted subtrees release their watches", async () => {
   await withTempTree(async (root) => {
     const events = [];
@@ -2154,6 +3005,173 @@ test("the shared watch budget bounds large directory trees", async () => {
   });
 });
 
+test("a transient non-resource child watch failure schedules bounded topology recovery", async () => {
+  await withTempTree(async (root) => {
+    const child = path.join(root, "child");
+    fs.mkdirSync(child);
+    const originalWatch = fs.watch;
+    const retryTimers = captureRetryTimers();
+    let childWatchAttempts = 0;
+    class FakeWatcher extends EventEmitter {
+      close() {}
+    }
+    fs.watch = (directory) => {
+      if (path.resolve(directory) === child) {
+        childWatchAttempts += 1;
+        if (childWatchAttempts === 1) {
+          const error = new Error("child watch is temporarily unavailable");
+          error.code = "EIO";
+          throw error;
+        }
+      }
+      return new FakeWatcher();
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      assert.equal(childWatchAttempts, 1);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 1);
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => session.codexLinuxDirectoryWatchCount() === 2,
+        "delayed topology recovery did not restore the child watch",
+      );
+      assert.equal(childWatchAttempts, 2);
+      assert.deepEqual(retryTimers.live(), []);
+    } finally {
+      await session?.dispose();
+      fs.watch = originalWatch;
+      retryTimers.restore();
+    }
+  });
+});
+
+test("persistent non-resource child watch failures return recovery to Codex", async () => {
+  await withTempTree(async (root) => {
+    const child = path.join(root, "child");
+    fs.mkdirSync(child);
+    const originalWatch = fs.watch;
+    const retryTimers = captureRetryTimers();
+    let childWatchAttempts = 0;
+    class FakeWatcher extends EventEmitter {
+      close() {}
+    }
+    fs.watch = (directory) => {
+      if (path.resolve(directory) === child) {
+        childWatchAttempts += 1;
+        const error = new Error("child watch remains unavailable");
+        error.code = "EACCES";
+        throw error;
+      }
+      return new FakeWatcher();
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => retryTimers.live().length === 1,
+        "persistent child watch failure did not schedule its final bounded retry",
+      );
+      assert.equal(retryTimers.live()[0].delay, 2000);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      const closed = await session.closed;
+      assert.equal(closed.reason, "watch-error");
+      assert.match(closed.error.message, /Could not restore complete working-tree watch coverage/);
+      assert.equal(childWatchAttempts, 3);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 0);
+      assert.deepEqual(retryTimers.live(), []);
+    } finally {
+      await session?.dispose();
+      fs.watch = originalWatch;
+      retryTimers.restore();
+    }
+  });
+});
+
+test("persistent asynchronous child watch failures close after two recoveries", async () => {
+  await withTempTree(async (root) => {
+    const child = path.join(root, "child");
+    fs.mkdirSync(child);
+    const originalWatch = fs.watch;
+    const childCallbacks = [];
+    const childWatchers = [];
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      const watcher = new FakeWatcher();
+      if (resolved === child) {
+        childCallbacks.push(callback);
+        childWatchers.push(watcher);
+      }
+      return watcher;
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        assert.equal(childWatchers.length, attempt + 1);
+        childCallbacks[attempt]("change", "observed.txt");
+        const error = new Error("child watcher failed asynchronously");
+        error.code = "EIO";
+        childWatchers[attempt].emit("error", error);
+        if (attempt < 2) {
+          await waitFor(
+            () => childWatchers.length === attempt + 2,
+            "asynchronous child watch failure was not recovered",
+          );
+        }
+      }
+
+      const closed = await session.closed;
+      assert.equal(closed.reason, "watch-error");
+      assert.match(closed.error.message, /Could not restore complete working-tree watch coverage/);
+      assert.equal(childWatchers.length, 3);
+      assert.equal(childWatchers.every((watcher) => watcher.closed), true);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 0);
+    } finally {
+      await session?.dispose();
+      fs.watch = originalWatch;
+    }
+  });
+});
+
 test("child watch resource failures recover with a resettable backoff", async () => {
   await withTempTree(async (root) => {
     const child = path.join(root, "child");
@@ -2168,7 +3186,7 @@ test("child watch resource failures recover with a resettable backoff", async ()
     class FakeWatcher extends EventEmitter {
       close() {}
     }
-    fs.watch = (directory, _options, _callback) => {
+    fs.watch = (directory, _options, callback) => {
       if (path.resolve(directory) === child) {
         childWatchAttempts += 1;
         if (!allowChildWatch) {
@@ -2178,6 +3196,7 @@ test("child watch resource failures recover with a resettable backoff", async ()
         }
       }
       const watcher = new FakeWatcher();
+      watcher.callback = callback;
       if (path.resolve(directory) === child) childWatcher = watcher;
       return watcher;
     };
@@ -2243,7 +3262,31 @@ test("child watch resource failures recover with a resettable backoff", async ()
       childWatcher.emit("error", asyncError);
       await waitFor(
         () => retryTimers.live().length === 1,
-        "final resource failure did not leave a disposable retry timer",
+        "repeated asynchronous resource failure did not schedule recovery",
+      );
+      assert.equal(
+        retryTimers.live()[0].delay,
+        2000,
+        "repeated asynchronous resource failure reset its backoff",
+      );
+      allowChildWatch = true;
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => session.codexLinuxDirectoryWatchCount() === 2,
+        "repeated asynchronous resource failure did not recover",
+      );
+
+      childWatcher.callback("change", "healthy.txt");
+      allowChildWatch = false;
+      childWatcher.emit("error", asyncError);
+      await waitFor(
+        () => retryTimers.live().length === 1,
+        "post-event resource failure did not schedule recovery",
+      );
+      assert.equal(
+        retryTimers.live()[0].delay,
+        1000,
+        "a healthy watcher event did not reset the asynchronous resource backoff",
       );
       const pendingTimer = retryTimers.live()[0];
       await session.dispose();
@@ -2359,7 +3402,10 @@ test("resource recovery does not bypass same-owner root metadata backoff", async
       failChildWatch = false;
       retryTimers.fire(rootTimer);
       await waitFor(
-        () => retryTimers.live().length === 1,
+        () => (
+          retryTimers.live().length === 1 &&
+          session.codexLinuxDirectoryWatchCount() === 1
+        ),
         "root retry did not leave recovery to the resource timer",
       );
       assert.equal(session.codexLinuxDirectoryWatchCount(), 1);
@@ -2511,7 +3557,7 @@ test("failed resource recovery does not wake another root's metadata backoff", a
   }
 });
 
-test("a non-resource watch failure retains exponential resource-retry backoff", async () => {
+test("a non-resource resource probe failure returns to bounded topology recovery", async () => {
   await withTempTree(async (root) => {
     const child = path.join(root, "child");
     fs.mkdirSync(child);
@@ -2558,9 +3604,270 @@ test("a non-resource watch failure retains exponential resource-retry backoff", 
       await waitFor(() => retryTimers.live().length === 1, "third retry was not scheduled");
       assert.equal(childWatchAttempts, 3);
       assert.equal(retryTimers.live()[0].delay, 4000);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      const closed = await session.closed;
+      assert.equal(closed.reason, "watch-error");
+      assert.match(closed.error.message, /Could not restore complete working-tree watch coverage/);
+      assert.equal(childWatchAttempts, 4);
+      assert.deepEqual(retryTimers.live(), []);
     } finally {
       await session?.dispose();
       fs.watch = originalWatch;
+      console.error = originalError;
+      retryTimers.restore();
+    }
+  });
+});
+
+test("a resource readdir probe that becomes non-resource returns to bounded recovery", async () => {
+  await withTempTree(async (root) => {
+    const originalReaddir = fs.promises.readdir;
+    const originalError = console.error;
+    const retryTimers = captureRetryTimers();
+    let failureCode = "ENOSPC";
+    let rootReadAttempts = 0;
+    fs.promises.readdir = async (directory, ...args) => {
+      if (path.resolve(directory) === path.resolve(root)) {
+        rootReadAttempts += 1;
+        const error = new Error("root directory read failed");
+        error.code = failureCode;
+        throw error;
+      }
+      return originalReaddir.call(fs.promises, directory, ...args);
+    };
+    console.error = () => {};
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      assert.equal(rootReadAttempts, 1);
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+
+      failureCode = "EACCES";
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => rootReadAttempts === 2 && retryTimers.live().length === 1,
+        "non-resource readdir probe did not transfer to bounded recovery",
+      );
+      assert.equal(retryTimers.live()[0].delay, 2000);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => rootReadAttempts === 3 && retryTimers.live().length === 1,
+        "first bounded readdir retry did not retain recovery",
+      );
+      assert.equal(retryTimers.live()[0].delay, 4000);
+
+      retryTimers.fire(retryTimers.live()[0]);
+      const closed = await session.closed;
+      assert.equal(closed.reason, "watch-error");
+      assert.match(closed.error.message, /Could not restore complete working-tree watch coverage/);
+      assert.equal(rootReadAttempts, 4);
+      assert.deepEqual(retryTimers.live(), []);
+    } finally {
+      await session?.dispose();
+      fs.promises.readdir = originalReaddir;
+      console.error = originalError;
+      retryTimers.restore();
+    }
+  });
+});
+
+test("a higher asynchronous resource minimum replaces another path's pending timer", async () => {
+  await withTempTree(async (root) => {
+    const firstChild = path.join(root, "a");
+    const secondChild = path.join(root, "b");
+    fs.mkdirSync(firstChild);
+    fs.mkdirSync(secondChild);
+    const originalWatch = fs.watch;
+    const originalError = console.error;
+    const retryTimers = captureRetryTimers();
+    const watchersByPath = new Map();
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      const watcher = new FakeWatcher();
+      watcher.callback = callback;
+      const pathWatchers = watchersByPath.get(resolved) ?? [];
+      pathWatchers.push(watcher);
+      watchersByPath.set(resolved, pathWatchers);
+      return watcher;
+    };
+    console.error = () => {};
+    const emitResourceError = (watcher) => {
+      const error = new Error("watch resources exhausted asynchronously");
+      error.code = "ENOSPC";
+      watcher.emit("error", error);
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      const firstPath = path.resolve(firstChild);
+      const secondPath = path.resolve(secondChild);
+
+      emitResourceError(watchersByPath.get(firstPath).at(-1));
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => watchersByPath.get(firstPath).length === 2,
+        "first path did not recover from its initial resource failure",
+      );
+
+      emitResourceError(watchersByPath.get(firstPath).at(-1));
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [2000]);
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => watchersByPath.get(firstPath).length === 3,
+        "first path did not recover from its repeated resource failure",
+      );
+
+      emitResourceError(watchersByPath.get(secondPath).at(-1));
+      assert.deepEqual(retryTimers.live().map((timer) => timer.delay), [1000]);
+      const lowerTimer = retryTimers.live()[0];
+
+      emitResourceError(watchersByPath.get(firstPath).at(-1));
+      assert.equal(lowerTimer.cleared, true, "higher resource minimum retained a 1s timer");
+      assert.deepEqual(
+        retryTimers.live().map((timer) => timer.delay),
+        [4000],
+        "higher resource minimum did not rearm the pending retry timer",
+      );
+    } finally {
+      await session?.dispose();
+      fs.watch = originalWatch;
+      console.error = originalError;
+      retryTimers.restore();
+    }
+  });
+});
+
+test("an in-flight resource retry preserves another path's higher asynchronous backoff", async () => {
+  await withTempTree(async (root) => {
+    const firstChild = path.join(root, "a");
+    const secondChild = path.join(root, "b");
+    fs.mkdirSync(firstChild);
+    fs.mkdirSync(secondChild);
+    const originalWatch = fs.watch;
+    const originalReaddir = fs.promises.readdir;
+    const originalError = console.error;
+    const retryTimers = captureRetryTimers();
+    const watchersByPath = new Map();
+    let blockRootRead = false;
+    let releaseBlockedRead = () => {};
+    let resolveReadBlocked;
+    const readBlocked = new Promise((resolve) => {
+      resolveReadBlocked = resolve;
+    });
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      const watcher = new FakeWatcher();
+      watcher.callback = callback;
+      const pathWatchers = watchersByPath.get(resolved) ?? [];
+      pathWatchers.push(watcher);
+      watchersByPath.set(resolved, pathWatchers);
+      return watcher;
+    };
+    fs.promises.readdir = async (directory, ...args) => {
+      if (blockRootRead && path.resolve(directory) === path.resolve(root)) {
+        blockRootRead = false;
+        resolveReadBlocked();
+        await new Promise((resolve) => {
+          releaseBlockedRead = resolve;
+        });
+      }
+      return originalReaddir.call(fs.promises, directory, ...args);
+    };
+    console.error = () => {};
+    let session;
+    const emitResourceError = (watcher) => {
+      const error = new Error("watch resources exhausted asynchronously");
+      error.code = "ENOSPC";
+      watcher.emit("error", error);
+    };
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration(),
+      );
+      const firstPath = path.resolve(firstChild);
+      const secondPath = path.resolve(secondChild);
+      assert.equal(watchersByPath.get(firstPath).length, 1);
+      assert.equal(watchersByPath.get(secondPath).length, 1);
+
+      emitResourceError(watchersByPath.get(firstPath).at(-1));
+      await waitFor(() => retryTimers.live().length === 1, "first retry was not armed");
+      assert.equal(retryTimers.live()[0].delay, 1000);
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => watchersByPath.get(firstPath).length === 2 && retryTimers.live().length === 0,
+        "first path did not recover from its initial resource failure",
+      );
+
+      emitResourceError(watchersByPath.get(firstPath).at(-1));
+      await waitFor(() => retryTimers.live().length === 1, "second retry was not armed");
+      assert.equal(retryTimers.live()[0].delay, 2000);
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => watchersByPath.get(firstPath).length === 3 && retryTimers.live().length === 0,
+        "first path did not recover from its repeated resource failure",
+      );
+
+      emitResourceError(watchersByPath.get(secondPath).at(-1));
+      await waitFor(() => retryTimers.live().length === 1, "other-path retry was not armed");
+      assert.equal(retryTimers.live()[0].delay, 1000);
+      blockRootRead = true;
+      retryTimers.fire(retryTimers.live()[0]);
+      await readBlocked;
+
+      emitResourceError(watchersByPath.get(firstPath).at(-1));
+      releaseBlockedRead();
+      await waitFor(
+        () => retryTimers.live().length === 1,
+        "in-flight recovery did not retain the asynchronous resource failure",
+      );
+      assert.equal(
+        retryTimers.live()[0].delay,
+        4000,
+        "another path's in-flight retry clobbered the higher asynchronous backoff",
+      );
+    } finally {
+      releaseBlockedRead();
+      await session?.dispose();
+      fs.watch = originalWatch;
+      fs.promises.readdir = originalReaddir;
       console.error = originalError;
       retryTimers.restore();
     }
@@ -2825,6 +4132,62 @@ test("resource recovery reloads nested Git ignores missed without coverage", asy
   });
 });
 
+test("non-resource child recovery reloads nested Git ignores missed without coverage", async () => {
+  await withTempTree(async (root) => {
+    spawnSync("git", ["init", "-q", root]);
+    const blocked = path.join(root, "blocked");
+    const nested = path.join(blocked, "nested");
+    const generated = path.join(nested, "generated");
+    fs.mkdirSync(path.join(generated, "deep"), { recursive: true });
+    const nestedIgnore = path.join(nested, ".gitignore");
+    fs.writeFileSync(nestedIgnore, "generated/\n");
+    const originalWatch = fs.watch;
+    const watchersByPath = new Map();
+    class FakeWatcher extends EventEmitter {
+      close() {
+        this.closed = true;
+      }
+    }
+    fs.watch = (directory, _options, callback) => {
+      const resolved = path.resolve(directory);
+      const watcher = new FakeWatcher();
+      watcher.callback = callback;
+      const pathWatchers = watchersByPath.get(resolved) ?? [];
+      pathWatchers.push(watcher);
+      watchersByPath.set(resolved, pathWatchers);
+      return watcher;
+    };
+    let session;
+    try {
+      session = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+        fakeHost(),
+        {
+          path: root,
+          recursive: true,
+          renameEventHandling: "changed-path-with-parent-directory",
+          onChange: () => {},
+        },
+        configuration({ honorGitIgnore: true }),
+      );
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 3);
+
+      const error = new Error("child watcher failed asynchronously");
+      error.code = "EIO";
+      watchersByPath.get(blocked).at(-1).emit("error", error);
+      assert.equal(session.codexLinuxDirectoryWatchCount(), 1);
+      fs.writeFileSync(nestedIgnore, "");
+
+      await waitFor(
+        () => session.codexLinuxDirectoryWatchCount() === 5,
+        "non-resource recovery retained stale nested Git-ignore state",
+      );
+    } finally {
+      await session?.dispose();
+      fs.watch = originalWatch;
+    }
+  });
+});
+
 test("Git refresh watch resource failures retain their recovery timer", async () => {
   await withTempTree(async (root) => {
     spawnSync("git", ["init", "-q", root]);
@@ -2838,8 +4201,9 @@ test("Git refresh watch resource failures retain their recovery timer", async ()
     class FakeWatcher extends EventEmitter {
       close() {}
     }
-    fs.watch = (directory) => {
+    fs.watch = (directory, _options, callback) => {
       const watcher = new FakeWatcher();
+      watcher.callback = callback;
       if (path.resolve(directory) === failedDirectory) {
         refreshWatchAttempts += 1;
         if (!allowRefreshWatch) {
@@ -2890,6 +4254,7 @@ test("Git refresh watch resource failures retain their recovery timer", async ()
         () => retryTimers.live().length === 1,
         "asynchronous Git refresh failure did not schedule recovery",
       );
+      assert.equal(retryTimers.live()[0].delay, 1000);
       await new Promise((resolve) => setTimeout(resolve, 150));
       assert.equal(
         refreshWatchAttempts,
@@ -2902,6 +4267,38 @@ test("Git refresh watch resource failures retain their recovery timer", async ()
       await waitFor(
         () => session.codexLinuxDirectoryWatchBudget().active === 3,
         "asynchronous Git refresh failure did not recover",
+      );
+
+      allowRefreshWatch = false;
+      refreshWatcher.emit("error", asyncError);
+      await waitFor(
+        () => retryTimers.live().length === 1,
+        "repeated asynchronous Git refresh failure did not schedule recovery",
+      );
+      assert.equal(
+        retryTimers.live()[0].delay,
+        2000,
+        "repeated asynchronous Git refresh failure reset its backoff",
+      );
+      allowRefreshWatch = true;
+      retryTimers.fire(retryTimers.live()[0]);
+      await waitFor(
+        () => session.codexLinuxDirectoryWatchBudget().active === 3,
+        "repeated asynchronous Git refresh failure did not recover",
+      );
+
+      refreshWatcher.callback("change", "exclude");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      allowRefreshWatch = false;
+      refreshWatcher.emit("error", asyncError);
+      await waitFor(
+        () => retryTimers.live().length === 1,
+        "post-event Git refresh resource failure did not schedule recovery",
+      );
+      assert.equal(
+        retryTimers.live()[0].delay,
+        1000,
+        "a healthy Git refresh target callback did not reset asynchronous backoff",
       );
     } finally {
       await session?.dispose();

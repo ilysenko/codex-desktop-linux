@@ -120,8 +120,13 @@ covered by the dedicated metadata watches:
 - Transient operating-system resource failures during Git metadata discovery,
   directory-topology traversal, or creation of a non-root working-tree or
   metadata directory watch are retried with capped exponential backoff.
+  Non-resource Git metadata-watch failures use the same bounded-backoff refresh
+  path so conservative working-tree coverage can remain active.
   Intentional exhaustion of this feature's configured watch budget uses the
   separate released-capacity recovery path and does not poll.
+- Other working-tree directory-watch or traversal failures that leave topology
+  coverage incomplete receive two bounded full-tree recovery attempts before
+  the session returns control to Codex's existing watcher retry path.
 - Directory topology scans read one directory at a time with promise
   `readdir`, yield while processing large results, and are serialized with Git
   refreshes. Promise `readdir` deliberately trades per-directory array
