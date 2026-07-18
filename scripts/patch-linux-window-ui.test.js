@@ -50,7 +50,6 @@ const {
 } = require("./patches/impl/keybinds-settings.js");
 const {
   applyLinuxAvatarOverlayMousePassthroughPatch,
-  applyLinuxQueryCacheInvalidationBroadcastPatch,
 } = require("./patches/impl/avatar-overlay.js");
 const {
   applyBrowserUseNodeReplApprovalPatch,
@@ -58,7 +57,6 @@ const {
   applyLinuxBundledPluginCopyPermissionsPatch,
   applyLinuxBundledPluginReconcileStaleSnapshotPatch,
   applyLinuxBrowserUseRouteLivenessPatch,
-  applyLinuxChromeExtensionStatusPatch,
   applyLinuxExternalOpenEnvPatch,
 } = require("./patches/impl/main-process/browser.js");
 const {
@@ -167,7 +165,6 @@ const {
   applyAutomationUpdateEagerToolPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxBrowserUseAvailabilityPatch,
-  applyLinuxBrowserUseWebviewAttachRecoveryPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
@@ -925,7 +922,6 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-opaque-background",
     "linux-owl-feature-binding-fallback",
     "linux-avatar-overlay-mouse-passthrough",
-    "linux-avatar-settings-sync",
     "linux-browser-use-availability",
     "linux-browser-use-non-local-navigation",
     "linux-browser-use-external-availability",
@@ -949,7 +945,6 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-bundled-plugin-copy-permissions",
     "linux-browser-use-socket-directory",
     "linux-browser-use-route-liveness",
-    "linux-chrome-extension-status",
     "linux-notification-actions",
     "linux-local-app-server-feature-enablement-handler",
     "linux-remote-control-config-preservation",
@@ -1078,9 +1073,8 @@ test("default core patch descriptors are grouped and unique", () => {
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "linux-workspace-root-open-targets")?.ciPolicy,
     "optional",
-    "workspace-root open targets should not block app builds when upstream removes the File Manager insertion point",
+    "workspace-root open targets should stay fail-soft after upstream removes the action",
   );
-
   const descriptorOrder = new Map(descriptors.map((descriptor) => [descriptor.id, descriptor.order]));
   assert.ok(
     descriptorOrder.get("linux-native-titlebar") > descriptorOrder.get("linux-opaque-background"),
@@ -1133,19 +1127,33 @@ test("optional webview descriptors follow the current upstream chunk split", () 
   const automationUpdate = descriptors.find(
     (descriptor) => descriptor.id === "automation-update-eager-tool",
   );
+  const monospaceFont = descriptors.find(
+    (descriptor) => descriptor.id === "linux-safe-monospace-font-stack",
+  );
   const tooltipCollision = descriptors.find(
     (descriptor) => descriptor.id === "linux-tooltip-window-controls-collision",
   );
 
   assert.ok(automationUpdate);
   assert.equal(
-    automationUpdate.pattern.test("app-initial~app-main~onboarding-page-CIkoyvFz.js"),
+    automationUpdate.pattern.test(
+      "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~f5p8e1kp-C7PO0bKT.js",
+    ),
     true,
   );
   assert.equal(
-    automationUpdate.pattern.test(
-      "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~legacy.js",
+    automationUpdate.pattern.test("app-initial~app-main~onboarding-page-CIkoyvFz.js"),
+    false,
+  );
+  assert.ok(monospaceFont);
+  assert.equal(
+    monospaceFont.pattern.test(
+      "app-initial~app-main~hotkey-window-thread-page~local-environments-settings-page~thread-app-~nhni7vug-DxDb26Nd.js",
     ),
+    true,
+  );
+  assert.equal(
+    monospaceFont.pattern.test("app-initial~app-main~page-legacy.js"),
     false,
   );
   assert.ok(tooltipCollision);
@@ -1378,40 +1386,6 @@ function computerUseFeatureBundleFixture() {
 
 function currentComputerUseFeatureBundleFixture() {
   return "function ye(e,{buildFlavor:n=t.D.resolve(),env:r=d.default.env,platform:i=d.default.platform}={}){let a=i===`win32`&&r.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{...e,computerUse:!0,computerUseNodeRepl:!0}:e,o=n===t.D.Dev?be(r):null;return o==null?a:{...a,...o}}";
-}
-
-function chromeExtensionStatusBundleFixture() {
-  return [
-    "let r=require(`node:os`),i=require(`node:path`),o=require(`node:fs`);",
-    "var am=`com.google.Chrome`,om=`/usr/bin/open`,sm=/^[a-p]{32}$/;",
-    "function pm(e){if(!sm.test(e))throw Error(`Invalid extension id`);return e}",
-    "function cm(e){return`chrome://extensions/?id=${pm(e)}`}",
-    "function lm({extensionId:e,homeDir:t=(0,r.homedir)(),localAppDataDir:n=process.env.LOCALAPPDATA,platform:a=process.platform}){let s=pm(e),c=mm({homeDir:t,localAppDataDir:n,platform:a});return c==null||!(0,o.existsSync)(c)?!1:(0,o.readdirSync)(c,{withFileTypes:!0}).some(e=>e.isDirectory()&&(0,o.existsSync)((0,i.join)(c,e.name,`Extensions`,s)))}async function um({extensionId:e,platform:t=process.platform,detectChromeCommand:n=dm,runCommand:r=Hp}){if(t===`darwin`){await r(om,[`-b`,am,cm(e)]);return}if(t===`win32`){let t=n();if(t==null)throw Error(`Google Chrome is not installed`);await r(t,[cm(e)]);return}throw Error(`Opening Chrome extension settings is only supported on macOS and Windows`)}function dm(){return Rp(`google-chrome`)}",
-    "function mm({homeDir:e,localAppDataDir:t,platform:n}){return n===`darwin`?(0,i.join)(e,`Library`,`Application Support`,`Google`,`Chrome`):n===`win32`?(0,i.join)(t??(0,i.join)(e,`AppData`,`Local`),`Google`,`Chrome`,`User Data`):null}",
-    "function Rp(e){return e}async function Hp(){}",
-  ].join("");
-}
-
-function currentChromeExtensionStatusBundleFixture() {
-  return [
-    "let r=require(`node:os`),i=require(`node:path`),o=require(`node:fs`);",
-    "var nm=`com.google.Chrome`,rm=`/usr/bin/open`,im=/^[a-p]{32}$/;",
-    "function am(e){return`chrome://extensions/?id=${um(e)}`}",
-    "function om({extensionId:e,homeDir:t=(0,r.homedir)(),localAppDataDir:n=process.env.LOCALAPPDATA,platform:a=process.platform}){let s=um(e),c=dm({homeDir:t,localAppDataDir:n,platform:a});return c==null||!(0,o.existsSync)(c)?!1:(0,o.readdirSync)(c,{withFileTypes:!0}).some(e=>e.isDirectory()&&(0,o.existsSync)((0,i.join)(c,e.name,`Extensions`,s)))}async function sm({extensionId:e,platform:t=process.platform,detectChromeCommand:n=cm,runCommand:r=zp}){if(t===`darwin`){await r(rm,[`-b`,nm,am(e)]);return}if(t===`win32`){let t=n();if(t==null)throw Error(`Google Chrome is not installed`);await r(t,[am(e)]);return}throw Error(`Opening Chrome extension settings is only supported on macOS and Windows`)}function cm(){return Fp(`chrome.exe`)}",
-    "function lm(){return null}function um(e){let t=e.trim();if(!im.test(t))throw Error(`Invalid Chrome extension id`);return t}function dm({homeDir:e,localAppDataDir:t,platform:n}){return n===`darwin`?(0,i.join)(e,`Library`,`Application Support`,`Google`,`Chrome`):n===`win32`?(0,i.join)(t??(0,i.join)(e,`AppData`,`Local`),`Google`,`Chrome`,`User Data`):null}",
-    "function Fp(e){return e}async function zp(){}",
-  ].join("");
-}
-
-function currentChromeExtensionStatusAliasCollisionBundleFixture() {
-  return [
-    "let a=require(`node:os`),t=require(`node:path`),o=require(`node:fs`);",
-    "var nm=`com.google.Chrome`,rm=`/usr/bin/open`,im=/^[a-p]{32}$/;",
-    "function am(e){return`chrome://extensions/?id=${um(e)}`}",
-    "function om({extensionId:e,homeDir:n=(0,a.homedir)(),localAppDataDir:r=process.env.LOCALAPPDATA,platform:a=process.platform}){let s=um(e),c=dm({homeDir:n,localAppDataDir:r,platform:a});return c==null||!(0,o.existsSync)(c)?!1:(0,o.readdirSync)(c,{withFileTypes:!0}).some(e=>e.isDirectory()&&(0,o.existsSync)((0,t.join)(c,e.name,`Extensions`,s)))}async function sm({extensionId:e,platform:t=process.platform,detectChromeCommand:n=cm,runCommand:r=zp}){if(t===`darwin`){await r(rm,[`-b`,nm,am(e)]);return}if(t===`win32`){let t=n();if(t==null)throw Error(`Google Chrome is not installed`);await r(t,[am(e)]);return}throw Error(`Opening Chrome extension settings is only supported on macOS and Windows`)}function cm(){return Fp(`chrome.exe`)}",
-    "function lm(){return null}function um(e){let t=e.trim();if(!im.test(t))throw Error(`Invalid Chrome extension id`);return t}function dm({homeDir:e,localAppDataDir:n,platform:r}){return r===`darwin`?(0,t.join)(e,`Library`,`Application Support`,`Google`,`Chrome`):r===`win32`?(0,t.join)(n??(0,t.join)(e,`AppData`,`Local`),`Google`,`Chrome`,`User Data`):null}",
-    "function Fp(e){return e}async function zp(){}",
-  ].join("");
 }
 
 function currentLaunchActionBundleFixture() {
@@ -1733,24 +1707,16 @@ function appSunsetBundleWithDriftingGateFixture() {
   return appSunsetBundleFixture().replace("if(ms(`2929582856`)){", "if(ms?.(`2929582856`)){");
 }
 
-function appUpdaterBundleFixture() {
-  return [
-    "let t=require(`electron`),i=require(`node:path`),s=require(`node:fs`),u=require(`node:child_process`);",
-    "var ZE=()=>({warning(){},error(){}});",
-    "var tD=class{updater=null;isUpdateReady=!1;updateLifecycleState=`idle`;installProgressPercent=null;lastUnavailableReason=null;constructor(e){this.options=e}async initialize(){if(!this.options.enableUpdater){this.lastUnavailableReason=process.platform!==`darwin`&&process.platform!==`win32`?`unsupported platform`:`disabled for build flavor (${this.options.buildFlavor})`;return}try{if(process.platform===`win32`?await this.initializeWindowsUpdater():await this.initializeMacSparkle(),t.ipcMain.handle(`codex_desktop:check-for-updates`,async e=>{this.options.isTrustedIpcEvent(e)&&await this.checkForUpdates()}),this.hasUpdater())return}catch(e){this.lastUnavailableReason=`updater initialization failed`,this.updater=null}}hasUpdater(){return this.updater!=null}getIsUpdateReady(){return this.isUpdateReady}getInstallProgressPercent(){return this.installProgressPercent}getUpdateLifecycleState(){return this.updateLifecycleState}async checkForUpdates(){if(!this.updater)return;try{await this.updater.checkForUpdates()}catch(e){}}async installUpdatesIfAvailable(){if(!this.updater)return;try{this.isUpdateReady&&this.setUpdateLifecycleState(`installing`),await this.updater.installUpdatesIfAvailable()}catch(e){}}getUnavailableReason(){return this.lastUnavailableReason}async initializeWindowsUpdater(){}async initializeMacSparkle(){}setUpdateReady(e){this.isUpdateReady=e}setUpdateLifecycleState(e){this.updateLifecycleState=e}setInstallProgressPercent(e){this.installProgressPercent=e}};",
-  ].join("");
-}
-
 function currentBootstrapUpdaterBundleFixture() {
   return [
     "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);",
     "c({onUpdateReadyChanged:e=>{a.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})}});",
     "var rK={enabled:!1,running:!1,state:`disabled`};",
     "async function iK(){",
-    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.x(),d=t.T.shouldIncludeSparkle(a,process.platform,process.env);",
-    "let M=oG({});let ee=pB(),te=()=>{ee.allowQuitTemporarilyForUpdateInstall(),n.app.quit()};",
+    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:P,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.x(),d=t.T.shouldIncludeSparkle(a,process.platform,process.env);",
+    "let M=oG({});let ee=new G5,ce=null,te=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),n.app.quit()},B=iae({});",
     "c({onInstallProgressChanged:e=>{E&&M.sendMessageToAllRegisteredWindows({type:`app-update-install-progress-changed`,installProgressPercent:e})},onUpdateReadyChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})},onUpdateLifecycleStateChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-lifecycle-state-changed`,lifecycleState:e})},onInstallUpdatesRequested:()=>{te()},isTrustedIpcEvent:N});",
-    "}",
+    "}exports.runMainAppStartup=iK;",
   ].join("");
 }
 
@@ -1760,10 +1726,10 @@ function currentBootstrapUpdaterBundleWithParametrizedQuitFixture() {
     "c({onUpdateReadyChanged:e=>{a.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})}});",
     "var rK={enabled:!1,running:!1,state:`disabled`};",
     "async function iK(){",
-    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.x(),d=t.T.shouldIncludeSparkle(a,process.platform,process.env);",
-    "let M=oG({});let ee=pB(),te=null,ne=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),n.app.quit()};",
+    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:P,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.x(),d=t.T.shouldIncludeSparkle(a,process.platform,process.env);",
+    "let M=oG({});let ee=new G5,te=null,ne=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),n.app.quit()},B=iae({});",
     "c({onInstallProgressChanged:e=>{E&&M.sendMessageToAllRegisteredWindows({type:`app-update-install-progress-changed`,installProgressPercent:e})},onUpdateReadyChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})},onUpdateLifecycleStateChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-lifecycle-state-changed`,lifecycleState:e})},onInstallUpdatesRequested:e=>{ne(e)},isTrustedIpcEvent:N});",
-    "}",
+    "}exports.runMainAppStartup=iK;",
   ].join("");
 }
 
@@ -1772,10 +1738,10 @@ function currentBootstrapUpdaterBundleWithAppUpdateStateBroadcastFixture() {
     "let r=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);",
     "var g6={enabled:!1,running:!1,state:`disabled`};",
     "async function v6(){",
-    "let{startedAtMs:e,buildFlavor:i,desktopSentry:o,sparkleManager:s,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=n.k(),d=n.P.shouldIncludeSparkle(i,process.platform,process.env)||process.platform===`linux`;",
-    "let ee=FZ(),P=null,te=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),r.app.quit()};let F=F3({}),oe=iZ({}),se=oe.getWindowContext();",
+    "let{startedAtMs:e,buildFlavor:i,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:Q,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=n.k(),d=n.P.shouldIncludeSparkle(i,process.platform,process.env)||process.platform===`linux`;",
+    "let ee=new G5,P=null,te=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),r.app.quit()},F=F3({}),oe=iZ({}),se=oe.getWindowContext();",
     "c({onDownloadProgressChanged:()=>{se.broadcastAppUpdateState()},onInstallProgressChanged:()=>{T&&se.broadcastAppUpdateState()},onUpdateReadyChanged:()=>{se.broadcastAppUpdateState()},onUpdateLifecycleStateChanged:()=>{se.broadcastAppUpdateState()},onRelaunchNoticeChanged:()=>{se.broadcastAppUpdateState()},onInstallUpdatesRequested:e=>{te(e)},isTrustedIpcEvent:M});",
-    "}",
+    "}exports.runMainAppStartup=v6;",
   ].join("");
 }
 
@@ -3498,25 +3464,21 @@ test("adds Linux avatar overlay mouse passthrough recovery", () => {
   assert.match(patched, /if\(this\.window!==e\)return;let t=this\.presentationVisibility!=null;this\.codexLinuxStopAvatarPassthroughRecovery\(\),this\.codexLinuxAvatarInputShapeKey=null,this\.codexLinuxAvatarCompositorHintsApplied=!1,this\.codexLinuxAvatarCompositorHintsApplying=!1,this\.cancelMomentum\(\)/);
 });
 
-test("broadcasts query cache invalidations to the avatar overlay window", () => {
-  const source = [
-    "const n={fc:e=>1};",
-    "class Handler{constructor(){this.hostId=`local`,this.windowManager={sendMessageToAllRegisteredWindows(){}}}getAppServerConnection(){return null}getIpcClientForWebContents(){return{sendBroadcast:async()=>{}}}async handle(e,t){switch(t.type){case`query-cache-invalidate`:{t.queryKey[0]===`plugins`&&Sr(this.getAppServerConnection(this.hostId));let n=this.getIpcClientForWebContents(e);n&&await n.sendBroadcast(`query-cache-invalidate`,{queryKey:t.queryKey});break}}}}",
-    "let config={version:n.fc(`query-cache-invalidate`)};",
-  ].join("");
+test("current upstream client coordination synchronizes avatar query invalidations", () => {
+  const upstreamMain =
+    "async invalidateQueryCache(e){await this.ipcClient.waitUntilInitialized({timeoutMs:C9}),await this.ipcClient.sendBroadcast(`query-cache-invalidate`,e)}case`query-cache-invalidate`:await t.invalidateQueryCache({sourceClientId:e.sourceClientId,params:e.params});return";
+  const upstreamAvatarSurface =
+    "invalidateQueryCache(e){G(`query-cache-invalidate`,e)}function ir(e){$?.clientCoordination?.invalidateQueryCache({queryKey:[...e]})}";
+  const upstreamAppShell =
+    "Wi(`query-cache-invalidate`,e=>{l.invalidateQueries({queryKey:e.params.queryKey})})";
 
-  const patched = applyPatchTwice(
-    applyLinuxQueryCacheInvalidationBroadcastPatch,
-    source,
-  );
-
-  assert.match(
-    patched,
-    /let r=this\.getIpcClientForWebContents\(e\);r&&await r\.sendBroadcast\(`query-cache-invalidate`,\{queryKey:t\.queryKey\}\);process\.platform===`linux`&&this\.windowManager\.sendMessageToAllRegisteredWindows\(/,
-  );
-  assert.match(
-    patched,
-    /sourceClientId:`desktop`,version:n\.fc\(`query-cache-invalidate`\),params:\{queryKey:t\.queryKey\}/,
+  assert.match(upstreamMain, /sendBroadcast\(`query-cache-invalidate`,e\)/);
+  assert.match(upstreamMain, /case`query-cache-invalidate`:await t\.invalidateQueryCache/);
+  assert.match(upstreamAvatarSurface, /clientCoordination\?\.invalidateQueryCache/);
+  assert.match(upstreamAppShell, /invalidateQueries\(\{queryKey:e\.params\.queryKey\}\)/);
+  assert.equal(
+    corePatchDescriptors().some((descriptor) => descriptor.id === "linux-avatar-settings-sync"),
+    false,
   );
 });
 
@@ -4211,7 +4173,7 @@ function currentAboutDialogBundleFixture() {
   return [
     "let c=require(`electron`),a={s:()=>null};",
     "var q6=`codex.aboutDialog.title`,i8=72;",
-    "async function h8(e){let t=process.platform===`darwin`,n=process.platform===`win32`,r=process.execPath;t?r=a.s():n&&(r=`icon`);let[i,o]=await Promise.all([t?GD(r):null,n?c.nativeImage.createFromPath(r):c.app.getFileIcon(r,{size:`normal`})]);return{htmlIconDataUrl:i??(o.isEmpty()?null:o.resize({width:i8,height:i8,quality:`best`}).toDataURL()),windowIcon:o}}",
+    "async function h8(e){let t=process.platform===`darwin`,n=process.platform===`win32`,r=process.execPath;t?r=a.s():n&&(r=`icon`);let[i,o]=await Promise.all([t?GD(r):null,n?c.nativeImage.createFromPath(r):c.app.getFileIcon(r,{size:`normal`}).catch(()=>c.nativeImage.createEmpty())]);return{htmlIconDataUrl:i??(o.isEmpty()?null:o.resize({width:i8,height:i8,quality:`best`}).toDataURL()),windowIcon:o}}",
     "let p={windowIcon:null},S={...p.windowIcon.isEmpty()?{}:{icon:p.windowIcon}};",
   ].join("");
 }
@@ -6296,52 +6258,8 @@ test("skips app-server timeout rewrite when the helper insertion anchor drifts",
   assert.doesNotMatch(patched, /codexLinuxAppServerBackfillTimeoutMs\(/);
 });
 
-test("adds Linux package updater behind the existing app updater manager", () => {
-  const patched = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, appUpdaterBundleFixture());
-
-  assert.match(patched, /function codexLinuxGetElectronModule\(\)/);
-  assert.match(patched, /function codexLinuxReadUpdateState\(\)/);
-  assert.match(patched, /function codexLinuxUpdateLifecycleState\(e\)/);
-  assert.match(patched, /function codexLinuxUpdateManagerPath\(\)/);
-  assert.match(patched, /function codexLinuxUpdateManagerEnv\(\)/);
-  assert.match(patched, /async function codexLinuxShowUpdateMessage\(codexLinuxMessage,codexLinuxDetail\)/);
-  assert.match(patched, /function codexLinuxInstallAfterQuit\(\)/);
-  assert.match(patched, /function codexLinuxQuitForUpdate\(\)/);
-  assert.match(patched, /let e=codexLinuxGetElectronModule\(\);if\(!e\)return;await e\.dialog\?\.showMessageBox\(\{type:`info`/);
-  assert.match(patched, /u\.spawn\(`\/bin\/sh`/);
-  assert.match(patched, /install-ready\|\|exit \$\?/);
-  assert.match(patched, /grep -q "\^status: WaitingForAppExit"/);
-  assert.match(patched, /status: Installing/);
-  assert.match(patched, /grep -q "\^status: Installed"/);
-  assert.match(patched, /\/usr\/bin\/codex-desktop >\/dev\/null 2>&1 &/);
-  assert.match(patched, /detached:!0,stdio:`ignore`/);
-  assert.match(patched, /windowsHide:!0,env:codexLinuxUpdateManagerEnv\(\)/);
-  assert.match(patched, /codexLinuxInstallAfterQuit\(\);let t=codexLinuxGetElectronModule\(\);if\(!t\)return;let e=setTimeout/);
-  assert.match(patched, /t\.app\?\.quit\?\.\(\)/);
-  assert.match(patched, /t\.app\?\.exit\?\.\(0\)/);
-  assert.match(patched, /execFile\(codexLinuxUpdateManagerPath\(\),e/);
-  assert.match(patched, /encoding:`utf8`,windowsHide:!0,env:codexLinuxUpdateManagerEnv\(\)/);
-  assert.match(patched, /async function codexLinuxProbeUpdateManager\(\)/);
-  assert.match(patched, /codexLinuxRunUpdateManager\(\[`--help`\]\)/);
-  assert.match(patched, /async function codexLinuxRefreshUpdateState\(\)/);
-  assert.match(patched, /async function codexLinuxRefreshUpdateState\(\)\{return codexLinuxReadUpdateState\(\)\}/);
-  assert.doesNotMatch(patched, /codexLinuxRunUpdateManager\(\[`status`,`--json`\]\)/);
-  assert.match(patched, /await codexLinuxProbeUpdateManager\(\),e\(\)/);
-  assert.match(patched, /if\(!this\.options\.enableUpdater&&process\.platform!==`linux`\)/);
-  assert.match(patched, /process\.platform===`linux`\?await this\.initializeLinuxPackageUpdater\(\)/);
-  assert.match(patched, /async initializeLinuxPackageUpdater\(\)/);
-  assert.match(patched, /this\.updater=\{setAutomaticBackgroundDownloadsEnabled:\(\)=>\{\},checkForUpdates/);
-  assert.match(patched, /codexLinuxRunUpdateManager\(\[`check-now`\]\)/);
-  assert.match(patched, /codexLinuxRunUpdateManager\(\[`install-ready`\]\)/);
-  assert.match(patched, /this\.setInstallProgressPercent\(0\),this\.setUpdateLifecycleState\(`installing`\)/);
-  assert.match(patched, /this\.setInstallProgressPercent\(null\),codexLinuxQuitForUpdate\(\)/);
-  assert.doesNotMatch(patched, /this\.options\.onInstallUpdatesRequested\?\.\(\)/);
-  assert.match(patched, /n\.stdout\?\.includes\(`already installed`\)\?await codexLinuxShowUpdateMessage/);
-  assert.match(patched, /if\(t\?\.status===`waiting_for_app_exit`\)/);
-});
-
 test("restores host LD_LIBRARY_PATH for Electron updater bridge commands", () => {
-  const patched = applyLinuxAppUpdaterBridgePatch(appUpdaterBundleFixture());
+  const patched = applyLinuxAppUpdaterBridgePatch(currentBootstrapUpdaterBundleFixture());
   const helperSource = patched.match(
     /function codexLinuxUpdateManagerEnv\(\)\{[\s\S]*?return e\}/,
   )?.[0];
@@ -6373,40 +6291,6 @@ test("restores host LD_LIBRARY_PATH for Electron updater bridge commands", () =>
   });
   assert.equal(developmentResult.LD_LIBRARY_PATH, "/developer/lib");
   assert.equal(Object.hasOwn(developmentResult, "CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE"), false);
-});
-
-test("migrates updater helpers away from captured Electron aliases", () => {
-  const patched = applyLinuxAppUpdaterBridgePatch(appUpdaterBundleFixture());
-  const oldPatched = patched
-    .replace(
-      "function codexLinuxGetElectronModule(){try{return require(`electron`)}catch{return null}}",
-      "",
-    )
-    .replace(
-      "async function codexLinuxShowUpdateMessage(codexLinuxMessage,codexLinuxDetail){try{let e=codexLinuxGetElectronModule();if(!e)return;await e.dialog?.showMessageBox({type:`info`,buttons:[`OK`],defaultId:0,noLink:!0,message:codexLinuxMessage,detail:codexLinuxDetail})}catch{}}",
-      "async function codexLinuxShowUpdateMessage(codexLinuxMessage,codexLinuxDetail){try{await electron.dialog?.showMessageBox({type:`info`,buttons:[`OK`],defaultId:0,noLink:!0,message:codexLinuxMessage,detail:codexLinuxDetail})}catch{}}",
-    )
-    .replace(
-      "function codexLinuxQuitForUpdate(){try{codexLinuxInstallAfterQuit();let t=codexLinuxGetElectronModule();if(!t)return;let e=setTimeout(()=>t.app?.exit?.(0),1500);e.unref?.(),t.app?.quit?.()}catch{}}",
-      "function codexLinuxQuitForUpdate(){try{codexLinuxInstallAfterQuit();let e=setTimeout(()=>electron.app?.exit?.(0),1500);e.unref?.(),electron.app?.quit?.()}catch{}}",
-    );
-
-  const migrated = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, oldPatched);
-
-  assert.match(migrated, /function codexLinuxGetElectronModule\(\)\{try\{return require\(`electron`\)\}catch\{return null\}\}/);
-  assert.match(migrated, /function codexLinuxQuitForUpdate\(\)\{try\{codexLinuxInstallAfterQuit\(\);let t=codexLinuxGetElectronModule\(\);if\(!t\)return;let e=setTimeout\(\(\)=>t\.app\?\.exit\?\.\(0\),1500\);e\.unref\?\.\(\),t\.app\?\.quit\?\.\(\)\}catch\{\}\}/);
-  assert.doesNotMatch(migrated, /setTimeout\(\(\)=>electron\.app\?\.exit\?\.\(0\),1500\)/);
-  assert.doesNotMatch(migrated, /await electron\.dialog\?\.showMessageBox/);
-});
-
-test("does not run bootstrap probe-state migration on class-style updater bundles", () => {
-  const source = `function unrelated(){i();let o=1;return o}${appUpdaterBundleFixture()}`;
-  const patched = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, source);
-
-  assert.match(patched, /function unrelated\(\)\{i\(\);let o=1;return o\}/);
-  assert.match(patched, /await codexLinuxProbeUpdateManager\(\),e\(\)/);
-  assert.doesNotMatch(patched, /let s=!1,c=codexLinuxProbeUpdateManager/);
-  assert.doesNotMatch(patched, /getIsUpdateReady:\(\)=>s&&t/);
 });
 
 test("adds Linux package updater to current bootstrap updater wiring", () => {
@@ -6464,12 +6348,12 @@ test("adds Linux package updater to current bootstrap updater wiring when dispat
     "c({onUpdateReadyChanged:e=>{a.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})}});",
     "var rK={enabled:!1,running:!1,state:`disabled`};",
     "async function iK(){",
-    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.x(),d=t.T.shouldIncludeSparkle(a,process.platform,process.env);",
-    "let M=oG({});let ee=pB(),te=()=>{ee.allowQuitTemporarilyForUpdateInstall(),n.app.quit()};",
+    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:P,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.x(),d=t.T.shouldIncludeSparkle(a,process.platform,process.env);",
+    "let M=oG({});let ee=new G5,ce=null,te=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),n.app.quit()},B=iae({});",
     "c({onInstallProgressChanged:e=>{E&&M.sendMessageToAllRegisteredWindows({type:`app-update-install-progress-changed`,installProgressPercent:e})},onUpdateReadyChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})},onUpdateLifecycleStateChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-lifecycle-state-changed`,lifecycleState:e})},",
     "let codexLinuxPadding=`" + "x".repeat(2000) + "`;",
     "onInstallUpdatesRequested:()=>{te()},isTrustedIpcEvent:N});",
-    "}",
+    "}exports.runMainAppStartup=iK;",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, source);
@@ -6556,69 +6440,9 @@ test("migrates previous bootstrap updater bridge without leaving undefined probe
   assert.match(migrated, /refresh:async\(\)=>\{if\(await c\)\{try\{await codexLinuxRefreshUpdateState\(\)\}/);
 });
 
-test("migrates already-patched Linux updater bridge to probe without mutating refresh", () => {
-  const patched = applyLinuxAppUpdaterBridgePatch(appUpdaterBundleFixture());
-  const oldPatched = patched
-    .replace(
-      "async function codexLinuxProbeUpdateManager(){await codexLinuxRunUpdateManager([`--help`])}",
-      "",
-    )
-    .replace(
-      "async function codexLinuxRefreshUpdateState(){return codexLinuxReadUpdateState()}",
-      "async function codexLinuxRefreshUpdateState(){await codexLinuxRunUpdateManager([`status`,`--json`]);return codexLinuxReadUpdateState()}",
-    )
-    .replace(
-      "await codexLinuxProbeUpdateManager(),e()",
-      "await codexLinuxRefreshUpdateState(),e()",
-    );
-
-  const migrated = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, oldPatched);
-
-  assert.match(migrated, /async function codexLinuxProbeUpdateManager\(\)\{await codexLinuxRunUpdateManager\(\[`--help`\]\)\}/);
-  assert.match(migrated, /async function codexLinuxRefreshUpdateState\(\)\{return codexLinuxReadUpdateState\(\)\}/);
-  assert.match(migrated, /await codexLinuxProbeUpdateManager\(\),e\(\)/);
-  assert.doesNotMatch(migrated, /codexLinuxRunUpdateManager\(\[`status`,`--json`\]\)/);
-});
-
-test("migrates an already-patched Linux updater bridge to quit before install", () => {
-  const patched = applyLinuxAppUpdaterBridgePatch(appUpdaterBundleFixture());
-  const oldPatched = patched
-    .replace(/function codexLinuxInstallAfterQuit\(\)\{try\{let e=u\.spawn\(`\/bin\/sh`,\[`-c`,[^]*?\);e\.unref\?\.\(\)\}catch\{\}\}/, "")
-    .replace(
-      /function codexLinuxQuitForUpdate\(\)\{try\{codexLinuxInstallAfterQuit\(\);let t=codexLinuxGetElectronModule\(\);if\(!t\)return;let e=setTimeout\(\(\)=>t\.app\?\.exit\?\.\(0\),1500\);e\.unref\?\.\(\),t\.app\?\.quit\?\.\(\)\}catch\{\}\}/,
-      "function codexLinuxQuitForUpdate(){try{let e=setTimeout(()=>t.app?.exit?.(0),1500);e.unref?.(),t.app?.quit?.()}catch{}}",
-    )
-    .replace("codexLinuxQuitForUpdate();return", "this.options.onInstallUpdatesRequested?.();return");
-  assert.doesNotMatch(oldPatched, /function codexLinuxInstallAfterQuit\(\)/);
-  assert.match(oldPatched, /this\.options\.onInstallUpdatesRequested\?\.\(\)/);
-  const migrated = applyLinuxAppUpdaterBridgePatch(oldPatched);
-
-  assert.match(migrated, /function codexLinuxInstallAfterQuit\(\)/);
-  assert.match(migrated, /function codexLinuxQuitForUpdate\(\)/);
-  assert.match(migrated, /codexLinuxInstallAfterQuit\(\);let t=codexLinuxGetElectronModule\(\);if\(!t\)return;let e=setTimeout/);
-  assert.match(migrated, /this\.setInstallProgressPercent\(null\),codexLinuxQuitForUpdate\(\)/);
-  assert.doesNotMatch(migrated, /this\.options\.onInstallUpdatesRequested\?\.\(\)/);
-});
-
-test("migrates an already-patched Linux updater bridge to relaunch after install", () => {
-  const patched = applyLinuxAppUpdaterBridgePatch(appUpdaterBundleFixture());
-  const oldHelper =
-    "function codexLinuxInstallAfterQuit(){try{let e=u.spawn(`/bin/sh`,[`-c`,`for i in 1 2 3 4 5 6 7 8 9 10;do sleep 1;\"$1\" install-ready||exit $?;\"$1\" status|grep -q \"^status: WaitingForAppExit\"||exit 0;done`,`codex-linux-update-install`,codexLinuxUpdateManagerPath()],{detached:!0,stdio:`ignore`,windowsHide:!0});e.unref?.()}catch{}}";
-  const oldPatched = patched.replace(
-    /function codexLinuxInstallAfterQuit\(\)\{try\{let e=u\.spawn\(`\/bin\/sh`,\[`-c`,[^]*?e\.unref\?\.\(\)\}catch\{\}\}/,
-    oldHelper,
-  );
-  assert.doesNotMatch(oldPatched, /\/usr\/bin\/codex-desktop/);
-
-  const migrated = applyLinuxAppUpdaterBridgePatch(oldPatched);
-
-  assert.match(migrated, /grep -q "\^status: Installed"/);
-  assert.match(migrated, /\/usr\/bin\/codex-desktop >\/dev\/null 2>&1 &/);
-});
-
 test("enables the existing app update menu on Linux", () => {
   const source =
-    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.y(),u=t.Z(a),d=t.C.shouldIncludeSparkle(a,process.platform,process.env),f=t.C.shouldIncludeUpdater(a,process.platform,process.env);Yb({enableSparkle:d});";
+    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:P,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.y(),u=t.Z(a),d=t.C.shouldIncludeSparkle(a,process.platform,process.env),f=t.C.shouldIncludeUpdater(a,process.platform,process.env);Yb({enableSparkle:d});";
   const patched = applyPatchTwice(applyLinuxAppUpdaterMenuPatch, source);
 
   assert.match(
@@ -6632,20 +6456,18 @@ test("patchLinuxAppUpdaterBridge scans build bundles and stays idempotent", () =
   try {
     const buildDir = path.join(tempRoot, ".vite", "build");
     fs.mkdirSync(buildDir, { recursive: true });
-    fs.writeFileSync(path.join(buildDir, "workspace-root-drop-handler.js"), appUpdaterBundleFixture());
     fs.writeFileSync(
       path.join(buildDir, "main.js"),
-      "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.y(),u=t.Z(a),d=t.C.shouldIncludeSparkle(a,process.platform,process.env),f=t.C.shouldIncludeUpdater(a,process.platform,process.env);Yb({enableSparkle:d});",
+      currentBootstrapUpdaterBundleFixture(),
     );
 
     const first = patchLinuxAppUpdaterBridge(tempRoot);
-    const manager = fs.readFileSync(path.join(buildDir, "workspace-root-drop-handler.js"), "utf8");
     const main = fs.readFileSync(path.join(buildDir, "main.js"), "utf8");
     const second = patchLinuxAppUpdaterBridge(tempRoot);
 
-    assert.deepEqual(first, { matched: 2, changed: 2 });
-    assert.deepEqual(second, { matched: 2, changed: 0 });
-    assert.match(manager, /initializeLinuxPackageUpdater/);
+    assert.deepEqual(first, { matched: 1, changed: 1 });
+    assert.deepEqual(second, { matched: 1, changed: 0 });
+    assert.match(main, /codexLinuxPackageUpdateBridge=process\.platform===`linux`/);
     assert.match(main, /\|\|process\.platform===`linux`/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -8116,16 +7938,20 @@ test("does not poison shared Browser recovery when a stale host timer fires", ()
   assert.equal(recoveryRef.current.attempt, 2);
 });
 
-test("patches the current Browser webview store and host atomically", () => {
+test("patches the current split Browser webview store and host seams", () => {
   const storeSource =
     "function Af(e,t){return t??e}function Ef(e,t){return`${e}\\0${t}`}var Pf=class{webviews=new Map;snapshots=new Map;tabPersistenceStates=new Map;browserUseActiveTabKeys=new Set;browserUseViewportSizes=new Map;transferredWebviewKeys=new Set;registrationAttempts=new WeakMap;nextHostGeneration=0;getSnapshot(e,t){return this.snapshots.get(Ef(e,t))??null}setBrowserUseActive(e,...t){let n=typeof t[0]==`boolean`?Af(e,void 0):t[0],r=typeof t[0]==`boolean`?t[0]:t[1],i=Ef(e,n),a=this.browserUseActiveTabKeys.has(i);if(r){let t=`${e}\\0`;for(let e of Array.from(this.browserUseActiveTabKeys)){if(e===i||!e.startsWith(t))continue;this.browserUseActiveTabKeys.delete(e);let n=null}this.browserUseActiveTabKeys.add(i)}else this.browserUseActiveTabKeys.delete(i);return a}releaseBrowserUseTab(e,t){let n=Ef(e,t),r=this.browserUseActiveTabKeys.delete(n);return r}removeTab(e,t){let n=Ef(e,t),r=this.webviews.get(n);this.webviews.delete(n)}registerWebviewHost(e,t){return true}removeConversationTabs(e){let t=`${e}\\0`;for(let e of this.snapshots.keys())e.startsWith(t)&&this.snapshots.delete(e)}reassociateTabState(e,...t){let n=t[0],r=t[1],i=t[2],o=`transfer`,s=Ef(e,n),c=Ef(r,i);if(s===c||this.transferredWebviewKeys.has(o))return;if(this.webviews.has(c))return;let m=this.browserUseViewportSizes.get(s)??null,h=this.browserUseActiveTabKeys.delete(s);h&&this.browserUseActiveTabKeys.add(c);return m}disposeAll(){this.electronPageHandoff.disposeAll(),this.webviews.clear()}disposeWebviewHost(e,t,n,r){this.webviews.delete(n)}emitChange(){for(let e of this.listeners)e()}}";
   const hostSource =
-    "function hT({adoptionLease:e,adoptedWebContentsId:t,bounds:n,browserTabId:r,children:i,conversationId:a,hostKind:o=`right-panel`,initialUrl:s,isVisible:c,persistedTabsEnabled:l=!1,scale:u,shouldBootstrapWhenHidden:d,shouldPaint:f,webviewRef:p,windowZoom:m}){let h=(0,vT.useRef)(null),g=(0,vT.useId)(),y=(0,vT.useRef)(Up.getMountGeneration(a,r)),x=(0,vT.useSyncExternalStore)(Up.subscribe,()=>Up.getCursorOverlayHost(a,r),()=>null);let S=c&&n!=null;return(0,vT.useLayoutEffect)(()=>{let _=Up.getWebview(a,r,s,{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l});h.current=_,Up.syncElectronWebview(_,{bounds:n,isVisible:S,mountGeneration:y.current,scale:u,shouldBootstrap:d,shouldPaint:f,windowZoom:m},p,o)},[r,a,o,s,e,t,n,S,g,l,u,f,d,p,m]),x==null||i==null?null:createPortal(i,x)}";
-  const source = `${storeSource};${hostSource}`;
-  const patched = applyPatchTwice(
-    applyLinuxBrowserUseWebviewAttachRecoveryPatch,
-    source,
+    "function hT({adoptionLease:e,adoptedWebContentsId:t,bounds:n,browserTabId:r,children:i,conversationId:a,hostKind:o=`right-panel`,initialUrl:s,isVisible:c,scale:u,shouldBootstrapWhenHidden:d,shouldPaint:f,webviewRef:p,windowZoom:m}){let h=(0,vT.useRef)(null),g=(0,vT.useId)(),y=(0,vT.useRef)(Up.getMountGeneration(a,r)),x=(0,vT.useSyncExternalStore)(Up.subscribe,()=>Up.getCursorOverlayHost(a,r),()=>null);let S=c&&n!=null;return(0,vT.useLayoutEffect)(()=>{let _=Up.getWebview(a,r,s,{adoptionLease:e,adoptedWebContentsId:t,hostKind:o});h.current=_,Up.syncElectronWebview(_,{bounds:n,isVisible:S,mountGeneration:y.current,scale:u,shouldBootstrap:d,shouldPaint:f,windowZoom:m},p,o)},[r,a,o,s,e,t,n,S,g,u,f,d,p,m]),x==null||i==null?null:createPortal(i,x)}";
+  const patchedStore = applyPatchTwice(
+    applyLinuxBrowserUseWebviewRemountStorePatch,
+    storeSource,
   );
+  const patchedHost = applyPatchTwice(
+    applyLinuxBrowserUseWebviewHostRecoveryPatch,
+    hostSource,
+  );
+  const patched = `${patchedStore};${patchedHost}`;
 
   assert.match(patched, /linuxRemountWebview\(e,t,n,r\)/);
   assert.match(
@@ -8172,7 +7998,7 @@ test("patches the current Browser webview store and host atomically", () => {
   assert.match(patched, /Up\.linuxFailWebviewRecovery\(a,r,_\)/);
   assert.match(
     patched,
-    /Up\.getWebview\(a,r,s,\{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l\}\)/,
+    /Up\.getWebview\(a,r,s,\{adoptionLease:e,adoptedWebContentsId:t,hostKind:o\}\)/,
   );
   assert.match(
     patched,
@@ -8349,34 +8175,46 @@ test("patches the current Browser webview store and host atomically", () => {
   assert.equal(store.linuxBrowserUseRecoveryStates.size, 0);
 });
 
-test("Browser webview recovery descriptor targets the current combined renderer chunk", () => {
+test("Browser webview recovery descriptor targets the current split renderer chunks", () => {
   const descriptor = require("./patches/core/all-linux/webview/browser-use-attach-recovery/patch.js");
 
   assert.match(
-    "app-initial~app-main~onboarding-page-current.js",
-    descriptor.pattern,
+    "app-initial~artifact-tab-content.electron~app-main~appgen-settings-page~page~pull-request-r~mxek7o2y-CuoM2ay2.js",
+    descriptor.storePattern,
+  );
+  assert.match(
+    "app-initial~app-main~pull-request-route~onboarding-page~hotkey-window-thread-page~quick-cha~mo2avlln-D0N6NDu2.js",
+    descriptor.hostPattern,
   );
   assert.doesNotMatch(
-    "app-initial~artifact-tab-content.electron~app-main~new-thread-panel-page-current.js",
-    descriptor.pattern,
+    "app-initial~app-main~onboarding-page-current.js",
+    descriptor.hostPattern,
   );
 });
 
 test("Browser webview recovery stays fail-soft when only the host seam matches", () => {
+  const descriptor = require("./patches/core/all-linux/webview/browser-use-attach-recovery/patch.js");
   const hostOnlySource =
-    "function hT({adoptionLease:e,adoptedWebContentsId:t,bounds:n,browserTabId:r,children:i,conversationId:a,hostKind:o=`right-panel`,initialUrl:s,isVisible:c,persistedTabsEnabled:l=!1,scale:u,shouldBootstrapWhenHidden:d,shouldPaint:f,webviewRef:p,windowZoom:m}){let h=(0,vT.useRef)(null),g=(0,vT.useId)(),y=(0,vT.useRef)(Up.getMountGeneration(a,r)),x=(0,vT.useSyncExternalStore)(Up.subscribe,()=>Up.getCursorOverlayHost(a,r),()=>null);let S=c&&n!=null;return(0,vT.useLayoutEffect)(()=>{let _=Up.getWebview(a,r,s,{adoptionLease:e,adoptedWebContentsId:t,hostKind:o,persistedTabsEnabled:l});h.current=_,Up.syncElectronWebview(_,{bounds:n,isVisible:S,mountGeneration:y.current,scale:u,shouldBootstrap:d,shouldPaint:f,windowZoom:m},p,o)},[r,a,o,s,e,t,n,S,g,l,u,f,d,p,m]),x==null||i==null?null:createPortal(i,x)}";
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (message) => warnings.push(message);
+    "function hT({adoptionLease:e,adoptedWebContentsId:t,bounds:n,browserTabId:r,children:i,conversationId:a,hostKind:o=`right-panel`,initialUrl:s,isVisible:c,scale:u,shouldBootstrapWhenHidden:d,shouldPaint:f,webviewRef:p,windowZoom:m}){let h=(0,vT.useRef)(null),g=(0,vT.useId)(),y=(0,vT.useRef)(Up.getMountGeneration(a,r)),x=(0,vT.useSyncExternalStore)(Up.subscribe,()=>Up.getCursorOverlayHost(a,r),()=>null);let S=c&&n!=null;return(0,vT.useLayoutEffect)(()=>{let _=Up.getWebview(a,r,s,{adoptionLease:e,adoptedWebContentsId:t,hostKind:o});h.current=_,Up.syncElectronWebview(_,{bounds:n,isVisible:S,mountGeneration:y.current,scale:u,shouldBootstrap:d,shouldPaint:f,windowZoom:m},p,o)},[r,a,o,s,e,t,n,S,g,u,f,d,p,m]),x==null||i==null?null:createPortal(i,x)}";
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-browser-recovery-host-only-"));
   try {
-    assert.equal(
-      applyLinuxBrowserUseWebviewAttachRecoveryPatch(hostOnlySource),
-      hostOnlySource,
+    const assetsDir = path.join(tempRoot, "webview", "assets");
+    const hostPath = path.join(
+      assetsDir,
+      "app-initial~app-main~pull-request-route~onboarding-page~hotkey-window-thread-page~quick-cha~mo2avlln-D0N6NDu2.js",
     );
+    fs.mkdirSync(assetsDir, { recursive: true });
+    fs.writeFileSync(hostPath, hostOnlySource, "utf8");
+
+    const result = descriptor.apply(tempRoot);
+
+    assert.equal(result.matched, 0);
+    assert.equal(result.changed, 0);
+    assert.match(result.reason, /store or host bundle is absent/);
+    assert.equal(fs.readFileSync(hostPath, "utf8"), hostOnlySource);
   } finally {
-    console.warn = originalWarn;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   }
-  assert.ok(warnings.some((message) => message.includes("did not patch atomically")));
 });
 
 test("hydrates local chat search results before navigating", () => {
@@ -8949,133 +8787,40 @@ test("patchMainBundleSource does not force the in-app browser panel visible", ()
   assert.doesNotMatch(patched, /codexLinuxBrowserUseAutoVisible/);
 });
 
-test("detects Chrome extension installation from Linux browser profiles", () => {
-  const patched = applyPatchTwice(
-    applyLinuxChromeExtensionStatusPatch,
-    chromeExtensionStatusBundleFixture(),
-  );
+test("current upstream Chrome extension integration supports Linux natively", () => {
+  const upstream = [
+    "function $s({extensionId:e,platform:i=process.platform}){let o=ac(e);return sc({platform:i}).some(e=>oc(e,o))}",
+    "async function ec({extensionId:e,platform:t=process.platform,detectChromeCommand:n}){if(t===`win32`||t===`linux`){let i=(n??(t===`linux`?()=>nc(e):tc))();if(i==null)throw Error(t===`linux`?`Google Chrome or Chromium is not installed`:`Google Chrome is not installed`);await r(i,[Qs(e)]);return}throw Error(`Opening Chrome extension settings is only supported on macOS, Windows, and Linux`)}",
+    "function nc(e){for(let t of n.In){if(!oc(join(n.Ln({}),t.userDataDirName),e))continue;let i=rc(t);if(i!=null)return i}}",
+    "function sc({platform:i}){if(i===`linux`){let r=n.Ln({});return n.In.map(e=>join(r,e.userDataDirName))}return[]}",
+  ].join("");
 
-  assert.match(patched, /function codexLinuxChromeProfileRoots/);
-  assert.match(patched, /`BraveSoftware`,`Brave-Browser`/);
-  assert.match(patched, /`google-chrome-unstable`/);
-  assert.match(
-    patched,
-    /if\(__codexPlatform===`linux`\)return codexLinuxChromeHasExtension\(\{extensionId:__codexExtensionId,homeDir:__codexHomeDir,platform:__codexPlatform\}\)/,
-  );
-  assert.match(
-    patched,
-    /if\(__codexPlatform===`linux`\)\{let __codexChromeCommand=codexLinuxChromeCommand\(\)\?\?__codexDetectChromeCommand\(\);if\(__codexChromeCommand==null\)throw Error\(`Google Chrome, Brave, or Chromium is not installed`\);await __codexRunCommand\(__codexChromeCommand,\[cm\(__codexExtensionId\)\]\);return\}/,
-  );
-  assert.match(patched, /process\.env\.PATH\?\?``/);
-  assert.doesNotMatch(patched, /function codexLinuxChromeCommand\(\)\{for\(let e of\[[^\]]+\]\)\{let t=Rp/);
-});
-
-test("detects Chrome extension installation after upstream minifier renames", () => {
-  const patched = applyPatchTwice(
-    applyLinuxChromeExtensionStatusPatch,
-    currentChromeExtensionStatusBundleFixture(),
-  );
-
-  assert.match(patched, /function codexLinuxChromeProfileRoots/);
-  assert.match(
-    patched,
-    /let __codexValidatedExtensionId=um\(__codexExtensionId\);for\(let __codexProfileRoot of codexLinuxChromeProfileRoots/,
-  );
-  assert.match(
-    patched,
-    /function om\(\{extensionId:__codexExtensionId,homeDir:__codexHomeDir=\(0,r\.homedir\)\(\)/,
-  );
-  assert.match(
-    patched,
-    /__codexProfileDir=dm\(\{homeDir:__codexHomeDir,localAppDataDir:__codexLocalAppDataDir,platform:__codexPlatform\}\)/,
-  );
-  assert.match(
-    patched,
-    /async function sm\(\{extensionId:__codexExtensionId,platform:__codexPlatform=process\.platform,detectChromeCommand:__codexDetectChromeCommand=cm,runCommand:__codexRunCommand=zp\}\)/,
-  );
-  assert.match(patched, /await __codexRunCommand\(rm,\[`-b`,nm,am\(__codexExtensionId\)\]\)/);
-  assert.match(
-    patched,
-    /if\(__codexPlatform===`linux`\)\{let __codexChromeCommand=codexLinuxChromeCommand\(\)\?\?__codexDetectChromeCommand\(\);if\(__codexChromeCommand==null\)throw Error\(`Google Chrome, Brave, or Chromium is not installed`\);await __codexRunCommand\(__codexChromeCommand,\[am\(__codexExtensionId\)\]\);return\}/,
+  assert.match(upstream, /t===`win32`\|\|t===`linux`/);
+  assert.match(upstream, /t===`linux`\?\(\)=>nc\(e\):tc/);
+  assert.match(upstream, /n\.In\.map\(e=>join\(r,e\.userDataDirName\)\)/);
+  assert.match(upstream, /supported on macOS, Windows, and Linux/);
+  assert.equal(
+    corePatchDescriptors().some((descriptor) => descriptor.id === "linux-chrome-extension-status"),
+    false,
   );
 });
 
-test("opens Linux Chrome extension settings without command helper TDZ", async () => {
-  const patched = applyPatchTwice(
-    applyLinuxChromeExtensionStatusPatch,
-    currentChromeExtensionStatusBundleFixture(),
+test("current upstream has removed the workspace-root File Manager action", () => {
+  const upstream =
+    "function _O(e){switch(e){case`macOS`:return vO.finder;case`windows`:return vO.explorer;case`linux`:return vO.fileManager}}var vO=K({fileManager:{id:`sidebarElectron.openWorkspaceRootInFileManager`,defaultMessage:`Open in File Manager`}});function artifactTemplateResult(c,l,o,d){let U=()=>{l.get(me).mutate({cwd:null,hostId:c,path:o,target:`fileManager`})};return d===`macOS`?finder:(0,$.jsx)(q,{..._O(d)})}";
+
+  assert.match(upstream, /sidebarElectron\.openWorkspaceRootInFileManager/);
+  assert.match(upstream, /mutate\(\{cwd:null,hostId:c,path:o,target:`fileManager`\}\)/);
+  assert.doesNotMatch(
+    upstream,
+    /\(\{path:[A-Za-z_$][\w$]*,cwd:[A-Za-z_$][\w$]*,target:`fileManager`,openFile:/,
   );
-  const commands = [];
-
-  await vm.runInNewContext(
-    `${patched};sm({extensionId:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",platform:"linux",detectChromeCommand:()=>null,runCommand:async(e,t)=>commands.push([e,t])});`,
-    {
-      commands,
-      require(moduleName) {
-        if (moduleName === "node:os") {
-          return { homedir: () => "/home/josh" };
-        }
-        if (moduleName === "node:path") {
-          return path;
-        }
-        if (moduleName === "node:fs") {
-          return {
-            existsSync: (filePath) => filePath === "/opt/bin/brave-browser",
-            statSync: (filePath) => {
-              if (filePath !== "/opt/bin/brave-browser") {
-                throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-              }
-              return { isFile: () => true };
-            },
-            readdirSync: () => [],
-          };
-        }
-        return require(moduleName);
-      },
-      process: {
-        platform: "linux",
-        env: { PATH: "/opt/bin" },
-      },
-    },
+  assert.equal(
+    corePatchDescriptors().some(
+      (descriptor) => descriptor.id === "linux-workspace-root-open-targets",
+    ),
+    true,
   );
-
-  assert.deepEqual(JSON.parse(JSON.stringify(commands)), [
-    ["/opt/bin/brave-browser", ["chrome://extensions/?id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]],
-  ]);
-});
-
-test("checks Linux Chrome extension status when minifier aliases collide", () => {
-  const patched = applyPatchTwice(
-    applyLinuxChromeExtensionStatusPatch,
-    currentChromeExtensionStatusAliasCollisionBundleFixture(),
-  );
-
-  const result = vm.runInNewContext(
-    `${patched};om({extensionId:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",platform:"linux"});`,
-    {
-      require(moduleName) {
-        if (moduleName === "node:os") {
-          return { homedir: () => "/home/josh" };
-        }
-        if (moduleName === "node:path") {
-          return path;
-        }
-        if (moduleName === "node:fs") {
-          return {
-            existsSync: () => false,
-            readdirSync: () => [],
-          };
-        }
-        return require(moduleName);
-      },
-      process: {
-        platform: "linux",
-        env: {},
-      },
-    },
-  );
-
-  assert.equal(result, false);
 });
 
 function withIsolatedHome(body) {

@@ -13,7 +13,7 @@ module.exports = [
     phase: "webview-asset",
     order: 1045,
     ciPolicy: "optional",
-    pattern: /^app-initial~app-main~onboarding-page-[^.]+\.js$/,
+    pattern: /^app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~f5p8e1kp-[^.]+\.js$/,
     missingDescription: "dynamic Codex app tools bundle",
     skipDescription: "automation_update eager dynamic tool patch",
     apply: applyAutomationUpdateEagerToolPatch,

@@ -657,7 +657,7 @@ function applyLinuxAboutDialogPatch(currentSource, iconPathExpression) {
   }
 
   const currentAboutIconPromiseRegex =
-    /\[([A-Za-z_$][\w$]*)\?([A-Za-z_$][\w$]*)\(([^()]+)\):null,([A-Za-z_$][\w$]*)\?([A-Za-z_$][\w$]*)\.nativeImage\.createFromPath\(([^()]+)\):([A-Za-z_$][\w$]*)\.app\.getFileIcon\(([^()]+),\{size:`normal`\}\)\]/;
+    /\[([A-Za-z_$][\w$]*)\?([A-Za-z_$][\w$]*)\(([^()]+)\):null,([A-Za-z_$][\w$]*)\?([A-Za-z_$][\w$]*)\.nativeImage\.createFromPath\(([^()]+)\):([A-Za-z_$][\w$]*)\.app\.getFileIcon\(([^()]+),\{size:`normal`\}\)\.catch\(\(\)=>\7\.nativeImage\.createEmpty\(\)\)\]/;
   if (
     !currentAboutIconPromiseRegex.test(currentSource) ||
     !aboutHtmlIconUnsafeRegex.test(currentSource) ||

@@ -844,7 +844,7 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
   }
 
   const componentPattern =
-    /function ([A-Za-z_$][\w$]*)\(\{adoptionLease:([A-Za-z_$][\w$]*),adoptedWebContentsId:([A-Za-z_$][\w$]*),bounds:([A-Za-z_$][\w$]*),browserTabId:([A-Za-z_$][\w$]*),children:([A-Za-z_$][\w$]*),conversationId:([A-Za-z_$][\w$]*),hostKind:([A-Za-z_$][\w$]*)=`right-panel`,initialUrl:([A-Za-z_$][\w$]*),isVisible:([A-Za-z_$][\w$]*),persistedTabsEnabled:([A-Za-z_$][\w$]*)=!1,scale:([A-Za-z_$][\w$]*),shouldBootstrapWhenHidden:([A-Za-z_$][\w$]*),shouldPaint:([A-Za-z_$][\w$]*),webviewRef:([A-Za-z_$][\w$]*),windowZoom:([A-Za-z_$][\w$]*)\}\)\{/u;
+    /function ([A-Za-z_$][\w$]*)\(\{adoptionLease:([A-Za-z_$][\w$]*),adoptedWebContentsId:([A-Za-z_$][\w$]*),bounds:([A-Za-z_$][\w$]*),browserTabId:([A-Za-z_$][\w$]*),children:([A-Za-z_$][\w$]*),conversationId:([A-Za-z_$][\w$]*),hostKind:([A-Za-z_$][\w$]*)=`right-panel`,initialUrl:([A-Za-z_$][\w$]*),isVisible:([A-Za-z_$][\w$]*),scale:([A-Za-z_$][\w$]*),shouldBootstrapWhenHidden:([A-Za-z_$][\w$]*),shouldPaint:([A-Za-z_$][\w$]*),webviewRef:([A-Za-z_$][\w$]*),windowZoom:([A-Za-z_$][\w$]*)\}\)\{/u;
   const match = componentPattern.exec(currentSource);
   const openBraceIndex = match == null ? -1 : match.index + match[0].length - 1;
   const closeBraceIndex =
@@ -958,35 +958,6 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
     `${currentSource.slice(0, match.index)}${helperSource}` +
     `${patchedComponent}${currentSource.slice(closeBraceIndex + 1)}`
   );
-}
-
-function applyLinuxBrowserUseWebviewAttachRecoveryPatch(currentSource) {
-  const hasHostPatch = (source) =>
-    source.includes("function codexLinuxWatchBrowserWebviewAttachment(");
-  if (
-    hasCompleteLinuxBrowserUseWebviewRemountStorePatch(currentSource) &&
-    hasHostPatch(currentSource)
-  ) {
-    return currentSource;
-  }
-
-  const patchedStore = applyLinuxBrowserUseWebviewRemountStorePatch(currentSource);
-  const patchedSource = applyLinuxBrowserUseWebviewHostRecoveryPatch(patchedStore);
-  if (
-    !hasCompleteLinuxBrowserUseWebviewRemountStorePatch(patchedSource) ||
-    !hasHostPatch(patchedSource)
-  ) {
-    if (
-      currentSource.includes("registrationAttempts=new WeakMap") ||
-      currentSource.includes("shouldBootstrapWhenHidden")
-    ) {
-      console.warn(
-        "WARN: Browser webview store and host recovery seams did not patch atomically — skipping Linux attachment recovery patch",
-      );
-    }
-    return currentSource;
-  }
-  return patchedSource;
 }
 
 function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
@@ -2327,11 +2298,11 @@ module.exports = {
   applyAutomationUpdateEagerToolPatch,
   applyLinuxChatSearchHydrationPatch,
   applyLinuxBrowserUseAvailabilityPatch,
-  applyLinuxBrowserUseWebviewAttachRecoveryPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
+  hasCompleteLinuxBrowserUseWebviewRemountStorePatch,
   applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxI18nGatePatch,
   applyPersistentRateLimitFooterPatch,
