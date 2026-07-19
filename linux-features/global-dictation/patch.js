@@ -1,6 +1,5 @@
 "use strict";
 
-const LEGACY_PATCH_MARKER = "codex-linux-global-dictation-v1";
 const PATCH_MARKER = "codex-linux-global-dictation-v2";
 const IDENT = "[A-Za-z_$][\\w$]*";
 
@@ -266,51 +265,9 @@ function helperSource() {
     .join("");
 }
 
-function migrateLegacyLinuxGlobalDictationPatch(source) {
-  let patched = replaceUnique(
-    source,
-    new RegExp(
-      `var codexLinuxGlobalDictationPatch=${escapeRegexLiteral(
-        JSON.stringify(LEGACY_PATCH_MARKER),
-      )};`,
-      "u",
-    ),
-    `var codexLinuxGlobalDictationPatch=${JSON.stringify(
-      PATCH_MARKER,
-    )};${codexLinuxGlobalDictationPasteX11}`,
-    "legacy Linux global dictation marker",
-  );
-  patched = replaceUnique(
-    patched,
-    /function codexLinuxGlobalDictationReleaseWatcher\(accelerator\) \{\n  const helperPath = codexLinuxGlobalDictationNativePath\("global-dictation-release-monitor"\);\n  if \(helperPath == null\) return null;\n  return require\("node:child_process"\)\.spawn\(helperPath, \["--accelerator", accelerator\], \{\n    stdio: "ignore",\n    windowsHide: true,\n  \}\);\n\}/u,
-    String(codexLinuxGlobalDictationReleaseWatcher),
-    "legacy Linux release watcher helper",
-  );
-  patched = replaceUnique(
-    patched,
-    /case`linux`:\{let n=codexLinuxGlobalDictationReleaseWatcher\(e\);if\(n==null\)throw Error\(`Global dictation hotkey release watching is not supported\.`\);return _A\(n,t\)\}/u,
-    "case`linux`:{let n=codexLinuxGlobalDictationReleaseWatcher(e,t);if(n==null)throw Error(`Global dictation hotkey release watching is not supported.`);return n}",
-    "legacy Linux release watcher branch",
-  );
-  return replaceUnique(
-    patched,
-    /await k7\(`xdotool`,\[`key`,`--clearmodifiers`,`ctrl\+v`\]\)/u,
-    "await codexLinuxGlobalDictationPasteX11()",
-    "legacy Linux X11 paste branch",
-  );
-}
-
 function applyLinuxGlobalDictationMainProcessPatch(source) {
   if (source.includes(PATCH_MARKER)) {
     return source;
-  }
-  if (source.includes(LEGACY_PATCH_MARKER)) {
-    try {
-      return migrateLegacyLinuxGlobalDictationPatch(source);
-    } catch (error) {
-      warn(error instanceof Error ? error.message : String(error));
-      return source;
-    }
   }
   if (!source.includes("Global dictation hotkey release watching is not supported.")) {
     warn("release watcher sentinel was not found");

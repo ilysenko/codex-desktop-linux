@@ -70,38 +70,6 @@ function mainBundleFixture() {
   ].join("");
 }
 
-function legacyPatchedMainBundleFixture() {
-  let legacy = applyLinuxGlobalDictationMainProcessPatch(mainBundleFixture());
-  legacy = legacy.replace(
-    'var codexLinuxGlobalDictationPatch="codex-linux-global-dictation-v2";',
-    'var codexLinuxGlobalDictationPatch="codex-linux-global-dictation-v1";',
-  );
-  legacy = legacy.replace(/function codexLinuxGlobalDictationPasteX11\(\) \{[\s\S]*?\n\}/u, "");
-  legacy = legacy.replace(
-    /function codexLinuxGlobalDictationReleaseWatcher\(accelerator, onReleased\) \{[\s\S]*?\n\}/u,
-    `function codexLinuxGlobalDictationReleaseWatcher(accelerator) {
-  const helperPath = codexLinuxGlobalDictationNativePath("global-dictation-release-monitor");
-  if (helperPath == null) return null;
-  return require("node:child_process").spawn(helperPath, ["--accelerator", accelerator], {
-    stdio: "ignore",
-    windowsHide: true,
-  });
-}`,
-  );
-  legacy = legacy.replace(
-    "case`linux`:{let n=codexLinuxGlobalDictationReleaseWatcher(e,t);if(n==null)throw Error(`Global dictation hotkey release watching is not supported.`);return n}",
-    "case`linux`:{let n=codexLinuxGlobalDictationReleaseWatcher(e);if(n==null)throw Error(`Global dictation hotkey release watching is not supported.`);return _A(n,t)}",
-  );
-  legacy = legacy.replace(
-    "await codexLinuxGlobalDictationPasteX11()",
-    "await k7(`xdotool`,[`key`,`--clearmodifiers`,`ctrl+v`])",
-  );
-  assert.match(legacy, /codex-linux-global-dictation-v1/);
-  assert.match(legacy, /return _A\(n,t\)/);
-  assert.match(legacy, /await k7\(`xdotool`/);
-  return legacy;
-}
-
 function fakeHelperChild() {
   const child = new EventEmitter();
   child.stdin = {
@@ -250,39 +218,6 @@ test("main patch handles dollar signs in minified identifiers", () => {
   assert.match(patched, /function e\$A\(e,t,n\)/);
   assert.match(patched, /e\$A\(e,\{onPressed:/);
   assert.match(patched, /L\$k\(e\)\?`Modifier-only shortcuts/);
-});
-
-test("main patch upgrades the legacy v1 minifier aliases atomically", () => {
-  const legacy = legacyPatchedMainBundleFixture();
-  const migrated = applyLinuxGlobalDictationMainProcessPatch(legacy);
-
-  assert.notEqual(migrated, legacy);
-  assert.match(migrated, /codex-linux-global-dictation-v2/);
-  assert.doesNotMatch(migrated, /codex-linux-global-dictation-v1/);
-  assert.doesNotMatch(migrated, /return _A\(n,t\)/);
-  assert.doesNotMatch(migrated, /await k7\(`xdotool`/);
-  assert.match(migrated, /codexLinuxGlobalDictationReleaseWatcher\(e,t\)/);
-  assert.match(migrated, /await codexLinuxGlobalDictationPasteX11\(\)/);
-  assert.doesNotThrow(() => new vm.Script(migrated));
-  assert.equal(applyLinuxGlobalDictationMainProcessPatch(migrated), migrated);
-});
-
-test("legacy v1 migration fails closed when only part of the old patch is present", () => {
-  const legacy = legacyPatchedMainBundleFixture().replace(
-    "await k7(`xdotool`,[`key`,`--clearmodifiers`,`ctrl+v`])",
-    "await changedPasteHelper()",
-  );
-  const warnings = [];
-  const previousWarn = console.warn;
-  console.warn = (message) => warnings.push(message);
-
-  try {
-    assert.equal(applyLinuxGlobalDictationMainProcessPatch(legacy), legacy);
-  } finally {
-    console.warn = previousWarn;
-  }
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /legacy Linux X11 paste branch matched 0 times/);
 });
 
 test("Wayland registration uses a release-aware portal helper", () => {
