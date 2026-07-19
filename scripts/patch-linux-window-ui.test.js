@@ -130,6 +130,7 @@ const {
   featurePatchDescriptors,
 } = require("./patches/runner.js");
 const {
+  applyMainBundlePatchDescriptors,
   discoverCorePatchDescriptors,
   normalizePatchDescriptors,
 } = require("./patches/engine.js");
@@ -1061,12 +1062,16 @@ test("default core patch descriptors are grouped and unique", () => {
     descriptors.find((descriptor) => descriptor.id === "linux-terminal-user-path")?.ciPolicy,
     "optional",
   );
+  assert.equal(
+    descriptors.find((descriptor) => descriptor.id === "linux-computer-use-avatar-cursor")?.ciPolicy,
+    "optional",
+    "pet cursor feedback drift should warn without blocking install/rebuild",
+  );
   for (const id of [
     "linux-window-options",
     "linux-native-titlebar",
     "linux-opaque-background",
     "linux-avatar-overlay-mouse-passthrough",
-    "linux-computer-use-avatar-cursor",
     "linux-tray",
   ]) {
     assert.equal(
@@ -3857,6 +3862,34 @@ test("registers a private Linux Computer Use cursor bridge without changing Darw
     (patched.match(/function codexLinuxRegisterComputerUseCursorHandler/g) ?? []).length,
     1,
   );
+});
+
+test("warns when the upstream Computer Use cursor handler marker is absent", () => {
+  const source = "function unrelatedCursorHandler(){return!0}";
+  const descriptor = corePatchDescriptors().find(
+    (candidate) => candidate.id === "linux-computer-use-avatar-cursor",
+  );
+  const report = createPatchReport();
+  const { value: result, warnings } = captureWarns(() =>
+    applyMainBundlePatchDescriptors(source, [descriptor], {}, report),
+  );
+
+  assert.equal(result.patchedSource, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find the Computer Use cursor handler marker - skipping Linux avatar cursor bridge patch",
+  ]);
+  assert.deepEqual(report.patches, [
+    {
+      name: "linux-computer-use-avatar-cursor",
+      status: "skipped-optional",
+      reason: warnings[0],
+      phase: "main-bundle",
+      targetSummary: "all-linux",
+      ciPolicy: "optional",
+      sourceKind: "core",
+      warnings,
+    },
+  ]);
 });
 
 test("Linux Computer Use cursor bridge is local, bounded, and returns to idle", async () => {

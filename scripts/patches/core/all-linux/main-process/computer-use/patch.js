@@ -15,7 +15,7 @@ module.exports = [
     id: "linux-computer-use-avatar-cursor",
     phase: "main-bundle",
     order: 125,
-    ciPolicy: "required-upstream",
+    ciPolicy: "optional",
     apply: applyLinuxComputerUseAvatarCursorBridgePatch,
   }),
   mainBundlePatch({

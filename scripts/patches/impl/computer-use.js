@@ -57,11 +57,10 @@ function applyLinuxComputerUseAvatarCursorBridgePatch(currentSource) {
     /platform:([A-Za-z_$][\w$]*)=process\.platform/,
   )?.[1] ?? null;
   if (registration == null || handlerVar == null || platformVar == null) {
-    if (currentSource.includes(COMPUTER_USE_CURSOR_HANDLER_MARKER)) {
-      console.warn(
-        "WARN: Could not identify the Computer Use cursor registration function - skipping Linux avatar cursor bridge patch",
-      );
-    }
+    const reason = currentSource.includes(COMPUTER_USE_CURSOR_HANDLER_MARKER)
+      ? "Could not identify the Computer Use cursor registration function"
+      : "Could not find the Computer Use cursor handler marker";
+    console.warn(`WARN: ${reason} - skipping Linux avatar cursor bridge patch`);
     return currentSource;
   }
 
