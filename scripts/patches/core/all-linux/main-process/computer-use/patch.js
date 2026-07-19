@@ -4,12 +4,20 @@ const {
   mainBundlePatch,
 } = require("../../../../descriptor.js");
 const {
+  applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxNativeDesktopAppsHandlerPatch,
   applyLinuxComputerUsePluginGatePatch,
 } = require("../../../../impl/computer-use.js");
 
 module.exports = [
+  mainBundlePatch({
+    id: "linux-computer-use-avatar-cursor",
+    phase: "main-bundle",
+    order: 125,
+    ciPolicy: "required-upstream",
+    apply: applyLinuxComputerUseAvatarCursorBridgePatch,
+  }),
   mainBundlePatch({
     id: "linux-computer-use-ui-feature",
     phase: "main-bundle",

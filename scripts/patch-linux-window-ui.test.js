@@ -5,6 +5,7 @@ const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -28,6 +29,7 @@ const {
   patchAutomationScheduleAssets,
 } = require("./patches/impl/automation-schedule.js");
 const {
+  applyLinuxComputerUseAvatarCursorBridgePatch,
   COMPUTER_USE_UI_ENV_VAR,
   COMPUTER_USE_UI_SETTINGS_KEY,
   applyLinuxComputerUseFeaturePatch,
@@ -37,6 +39,7 @@ const {
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxComputerUseRendererAvailabilityPatch,
   isComputerUseUiEnabled,
+  linuxComputerUseCursorBridgeRuntimeSource,
 } = require("./patches/impl/computer-use.js");
 const {
   keybindsSettingsAsset,
@@ -939,6 +942,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-tray",
     "linux-build-info-tray",
     "linux-single-instance",
+    "linux-computer-use-avatar-cursor",
     "linux-computer-use-ui-feature",
     "linux-computer-use-plugin-gate",
     "linux-computer-use-native-desktop-apps",
@@ -1062,6 +1066,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-native-titlebar",
     "linux-opaque-background",
     "linux-avatar-overlay-mouse-passthrough",
+    "linux-computer-use-avatar-cursor",
     "linux-tray",
   ]) {
     assert.equal(
@@ -1782,6 +1787,7 @@ function currentBootstrapUpdaterBundleWithAppUpdateStateBroadcastFixture() {
 function latestAvatarOverlayBundleFixture() {
   return [
     "let c=require(`electron`),h=require(`node:child_process`);",
+    "function eo(e,{addon:t,electronAppPath:n,platform:r=process.platform,resourcesPath:i=process.resourcesPath}={}){if(r!==`darwin`)return!1;try{return(t??Sa({electronAppPath:n??c.app.getAppPath(),resourcesPath:i})).setRemoteHostedPIPContentComputerUseCursorLocationHandler(e)}catch{return!1}}",
     "var d5=`/avatar-overlay`,of={width:356,height:320},m5={width:112,height:121},y5={width:0,height:0},v5={width:276,height:131};",
     "var fV=class{window=null;layout=null;mascotSize=m5;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;layoutMode=`native`;compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},getCursorPosition(){return null},performWindowDrag(){return!1},updateMascotRect(){},publishRemoteHostedPIPContentHost(){}};nativePositionController={clear(){}};",
     "startDrag(e,t,n=!1){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e)return;this.cancelMomentum();let i=this.getLayout(r),a=this.compositionHost.getCursorPosition(),o=t.pointerScreenX!=null?{x:t.pointerScreenX,y:t.pointerScreenY}:c.screen.getCursorScreenPoint();this.dragState=new a5(a==null?`renderer`:`native`,t.pointerWindowX-i.mascot.left,t.pointerWindowY-i.mascot.top,c.screen.getDisplayNearestPoint(o).bounds,n),this.windowServerDragActive=this.layoutMode===`native`&&!n&&this.compositionHost.performWindowDrag(),this.windowServerDragActive||(this.windowServerDragWindowX=null)}",
@@ -3834,6 +3840,183 @@ test("patches the latest avatar overlay class without depending on adjacent meth
   assert.match(patched, /this\.compositionHost\.updateMascotRect\(a\.mascot\)[\s\S]*?process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)\}showWindow/);
   assert.match(patched, /if\(this\.window!==e\)return;let t=this\.presentationVisibility!=null;this\.codexLinuxStopAvatarPassthroughRecovery\(\)/);
   assert.match(patched, /traySize:process\.platform===`linux`&&typeof this\.codexLinuxIsI3Session==`function`/);
+});
+
+test("registers a private Linux Computer Use cursor bridge without changing Darwin", () => {
+  const source = latestAvatarOverlayBundleFixture();
+  const patched = applyPatchTwice(applyLinuxComputerUseAvatarCursorBridgePatch, source);
+
+  assert.match(
+    patched,
+    /if\(r===`linux`\)return codexLinuxRegisterComputerUseCursorHandler\(e\);if\(r!==`darwin`\)return!1/,
+  );
+  assert.match(patched, /Buffer\.byteLength\(i,`utf8`\)<=100/);
+  assert.match(patched, /i\.chmodSync\(n,384\)/);
+  assert.match(patched, /r\.dev===e\.dev&&r\.ino===e\.ino&&r\.isSocket\(\)/);
+  assert.equal(
+    (patched.match(/function codexLinuxRegisterComputerUseCursorHandler/g) ?? []).length,
+    1,
+  );
+});
+
+test("Linux Computer Use cursor bridge is local, bounded, and returns to idle", async () => {
+  const root = fs.mkdtempSync("/tmp/cu-cursor-");
+  const app = new EventEmitter();
+  const cursorEvents = [];
+  const timers = new Map();
+  let nextTimerId = 1;
+  const scheduleTimer = (callback, delay) => {
+    const handle = { id: nextTimerId, unref() {} };
+    nextTimerId += 1;
+    timers.set(handle, { callback, delay });
+    return handle;
+  };
+  const context = {
+    Buffer,
+    clearTimeout(handle) {
+      timers.delete(handle);
+    },
+    process: {
+      env: {
+        XDG_RUNTIME_DIR: root,
+        CODEX_LINUX_APP_ID: "codex-desktop-test",
+        CODEX_LINUX_INSTANCE_ID: "secondary",
+      },
+      getuid: process.getuid.bind(process),
+    },
+    require(name) {
+      if (name === "electron") {
+        return {
+          app,
+          screen: { getCursorScreenPoint: () => ({ x: 321, y: 654 }) },
+        };
+      }
+      return require(name);
+    },
+    setTimeout: scheduleTimer,
+  };
+  vm.runInNewContext(
+    `${linuxComputerUseCursorBridgeRuntimeSource()};globalThis.bridge={path:codexLinuxComputerUseCursorSocketPath,register:codexLinuxRegisterComputerUseCursorHandler}`,
+    context,
+  );
+
+  context.process.env.CODEX_LINUX_INSTANCE_ID = "..";
+  assert.equal(context.bridge.path(), null);
+  context.process.env.CODEX_LINUX_INSTANCE_ID = "secondary";
+
+  assert.equal(context.bridge.register((event) => cursorEvents.push({ ...event })), true);
+  const socketPath = context.bridge.path();
+  for (
+    let attempt = 0;
+    attempt < 50 &&
+      (!fs.existsSync(socketPath) || (fs.statSync(socketPath).mode & 0o777) !== 0o600);
+    attempt += 1
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(fs.existsSync(socketPath), true);
+  assert.equal(fs.statSync(path.dirname(socketPath)).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(socketPath).mode & 0o777, 0o600);
+
+  await new Promise((resolve, reject) => {
+    const client = net.createConnection(socketPath, () => client.end("ignored\n"));
+    client.on("close", resolve);
+    client.on("error", reject);
+  });
+  assert.deepEqual(cursorEvents, []);
+
+  await new Promise((resolve, reject) => {
+    const client = net.createConnection(socketPath, () => client.end("pointer\n"));
+    client.on("close", resolve);
+    client.on("error", reject);
+  });
+  for (let attempt = 0; attempt < 50 && cursorEvents.length === 0; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.deepEqual(cursorEvents[0], { isActive: true, x: 321, y: 654 });
+  assert.equal(timers.size, 1);
+
+  await new Promise((resolve, reject) => {
+    const client = net.createConnection(socketPath, () => client.end("pointer\n"));
+    client.on("close", resolve);
+    client.on("error", reject);
+  });
+  for (let attempt = 0; attempt < 50 && cursorEvents.length < 2; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(timers.size, 1);
+  assert.deepEqual(cursorEvents[1], { isActive: true, x: 321, y: 654 });
+  const [[timerHandle, timer]] = timers.entries();
+  assert.equal(timer.delay, 900);
+  timers.delete(timerHandle);
+  timer.callback();
+  assert.deepEqual(cursorEvents.at(-1), { isActive: false, x: 321, y: 654 });
+
+  app.emit("before-quit");
+  for (let attempt = 0; attempt < 50 && fs.existsSync(socketPath); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(fs.existsSync(socketPath), false);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("Linux Computer Use cursor bridge refuses to replace a regular file", () => {
+  const root = fs.mkdtempSync("/tmp/cu-cursor-file-");
+  const socketDir = path.join(root, "codex-desktop-test");
+  const socketPath = path.join(socketDir, "computer-use-cursor.sock");
+  fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(socketPath, "preserve");
+  const context = {
+    Buffer,
+    clearTimeout,
+    process: {
+      env: { XDG_RUNTIME_DIR: root, CODEX_LINUX_APP_ID: "codex-desktop-test" },
+      getuid: process.getuid.bind(process),
+    },
+    require(name) {
+      if (name === "electron") {
+        return { app: new EventEmitter(), screen: { getCursorScreenPoint: () => ({ x: 0, y: 0 }) } };
+      }
+      return require(name);
+    },
+    setTimeout,
+  };
+  vm.runInNewContext(
+    `${linuxComputerUseCursorBridgeRuntimeSource()};globalThis.register=codexLinuxRegisterComputerUseCursorHandler`,
+    context,
+  );
+
+  assert.equal(context.register(() => {}), false);
+  assert.equal(fs.readFileSync(socketPath, "utf8"), "preserve");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("Linux Computer Use cursor bridge rejects an unsafe runtime directory", () => {
+  const root = fs.mkdtempSync("/tmp/cu-cursor-runtime-");
+  fs.chmodSync(root, 0o755);
+  const context = {
+    Buffer,
+    clearTimeout,
+    process: {
+      env: { XDG_RUNTIME_DIR: root, CODEX_LINUX_APP_ID: "codex-desktop-test" },
+      getuid: process.getuid.bind(process),
+    },
+    require(name) {
+      if (name === "electron") {
+        return { app: new EventEmitter(), screen: { getCursorScreenPoint: () => ({ x: 0, y: 0 }) } };
+      }
+      return require(name);
+    },
+    setTimeout,
+  };
+  vm.runInNewContext(
+    `${linuxComputerUseCursorBridgeRuntimeSource()};globalThis.register=codexLinuxRegisterComputerUseCursorHandler`,
+    context,
+  );
+
+  assert.equal(context.register(() => {}), false);
+  assert.equal(fs.existsSync(path.join(root, "codex-desktop-test")), false);
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test("scopes avatar overlay method matching away from unrelated earlier classes", () => {

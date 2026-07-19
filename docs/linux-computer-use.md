@@ -12,6 +12,8 @@ It supports:
   and i3
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
   RemoteDesktop portal, or `ydotool`
+- pointer-direction feedback for the built-in V2 pet after successful click,
+  scroll, and drag actions
 
 ## Runtime Dependencies
 
