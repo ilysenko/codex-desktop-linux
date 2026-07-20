@@ -14,6 +14,7 @@ let
     "persistent-status-panel"
     "appshots"
     "codex-wrapper-updater"
+    "cross-provider-thread-history"
     "directory-only-working-tree-watch"
     "frameless-titlebar"
     "global-dictation"
@@ -28,6 +29,7 @@ let
   normalizedTestFeatureIds = [
     "appshots"
     "codex-wrapper-updater"
+    "cross-provider-thread-history"
     "directory-only-working-tree-watch"
     "frameless-titlebar"
     "global-dictation"
@@ -43,6 +45,7 @@ let
   normalizedWatchdogFeatureIds = [
     "appshots"
     "codex-wrapper-updater"
+    "cross-provider-thread-history"
     "directory-only-working-tree-watch"
     "frameless-titlebar"
     "global-dictation"
@@ -150,6 +153,7 @@ let
       "remote-mobile-control"
       "frameless-titlebar"
       "codex-wrapper-updater"
+      "cross-provider-thread-history"
       "directory-only-working-tree-watch"
       "global-dictation"
       "persistent-status-panel"

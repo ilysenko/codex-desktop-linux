@@ -1,0 +1,9 @@
+{
+  "id": "cross-provider-thread-history",
+  "title": "Cross-Provider Thread History",
+  "description": "Keeps local threads visible across model providers and resumes them through the currently active provider.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

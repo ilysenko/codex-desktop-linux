@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- An opt-in `cross-provider-thread-history` Linux feature keeps local Recent,
+  Projects, archive, and lookup lists visible after the active model provider
+  changes. It requests an explicit unfiltered provider list and binds cold
+  resume to the active provider without rewriting persisted thread provenance
+  or authentication state.
 - A shared upstream DMG acceptance profile now produces the same structured
   decision for local installs, updater rebuilds, and scheduled CI. Scheduled
   rejections create one fingerprinted drift issue and supersede issues for

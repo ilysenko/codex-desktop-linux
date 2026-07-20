@@ -3,6 +3,7 @@ let
   supportedFeatureIds = [
     "appshots"
     "codex-wrapper-updater"
+    "cross-provider-thread-history"
     "directory-only-working-tree-watch"
     "frameless-titlebar"
     "global-dictation"
