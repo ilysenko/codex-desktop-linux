@@ -1258,6 +1258,16 @@ function trayBundleFixture() {
   ].join("");
 }
 
+function currentTrayLifecycleBundleFixture() {
+  return [
+    "let codexLinuxQuitInProgress=!1,codexLinuxExplicitQuitApproved=!1,codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0},codexLinuxPrepareForExplicitQuit=()=>{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress()},codexLinuxShouldBypassQuitPrompt=()=>codexLinuxExplicitQuitApproved===!0,codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0;",
+    "v&&k.on(`close`,e=>{let t=this.getPrimaryWindows().some(e=>e!==k);if((process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}});",
+    "async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return!0;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():!0}",
+    "var H9=null,U9=null,G9=!1;async function fae(e){return G9=!0,U9??H9??(U9=(async()=>{let t={defaultIcon:e},r=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!G9)return r.destroy(),null;r.setToolTip(c.app.getName());let i=new pb(r);return H9=i,!await i.waitForReady()||H9!==i?(H9===i&&(H9=null,i.destroy()),null):i})().finally(()=>{U9=null}),U9)}",
+    "var pb=class{constructor(e){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}destroy(){this.tray.destroy()}isReady(){return _j(this.tray)}waitForReady(){return gj(this.tray)}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(c.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}}",
+  ].join("");
+}
+
 function currentTrayMenuBundleFixture() {
   return [
     "var sW=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(){this.tray={on(){},setContextMenu(){},popUpContextMenu(){}}}getNativeTrayMenuItems(){let{pinnedThreads:e,recentThreads:t,runningThreads:r,unreadThreads:i,usageLimits:a}=this.trayMenuThreads,o=this.nativeIntl.formatMessage({messageId:vc,defaultMessage:yc}),s=this.nativeIntl.formatMessage({messageId:gc,defaultMessage:_c}),c=uW({label:this.nativeIntl.formatMessage({messageId:oc,defaultMessage:sc}),moreLabel:s,threads:r,projectlessLabel:o,onOpenThread:this.onTrayMenuOpenRecentThread}),h=[c].filter(e=>e.length>0).flatMap((e,t)=>t===0?e:[{type:`separator`},...e]);return[...h,...h.length>0?[{type:`separator`}]:[],{label:this.nativeIntl.formatMessage({messageId:nc,defaultMessage:rc}),click:()=>{this.onTrayMenuOpenNewThread()}},{type:`separator`},{label:fW(this.appName),click:()=>{n.app.quit()}}]}};",
@@ -2446,12 +2456,12 @@ test("destroys the registered Linux tray before the app exits", () => {
     iconPathExpression,
   );
 
-  assert.match(patched, /codexLinuxRegisterTray=e=>\(codexLinuxTray=e,e\)/);
+  assert.match(patched, /codexLinuxRegisterTray=e=>\(codexLinuxTray=e,process\.platform===`linux`&&console\.info\(`\[codex-linux\] System tray registered`\),e\)/);
   assert.match(patched, /codexLinuxDestroyTray=\(\)=>\{if\(process\.platform!==`linux`\)return;/);
   assert.match(patched, /codexLinuxTray=null;try\{e\?\.destroy\(\)\}catch\{\}/);
   assert.match(patched, /codexLinuxMarkQuitInProgress=\(\)=>\{codexLinuxQuitInProgress=!0,codexLinuxDestroyTray\(\)\}/);
   assert.match(patched, /c\.app\.on\(`before-quit`,\(\)=>codexLinuxDestroyTray\(\)\)/);
-  assert.match(patched, /r=typeof codexLinuxRegisterTray===`function`\?codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon\)\):new c\.Tray\(t\.defaultIcon\)/);
+  assert.match(patched, /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon\)\)/);
   assert.doesNotMatch(patched, /codexLinuxTrayQuitDelayMs/);
 
   const helperStart = patched.indexOf("let codexLinuxTray=null");
@@ -2560,6 +2570,20 @@ test("accepts stock Electron tray readiness and falls back to the Linux app icon
     chronicleRunningIcon: null,
   });
   assert.deepEqual(iconCalls, ["/resources/icon-chatgpt.png"]);
+});
+
+test("retains the current native Linux tray when quit-state helpers already exist", () => {
+  const patched = applyPatchTwice(
+    applyLinuxTrayPatch,
+    currentTrayLifecycleBundleFixture(),
+    null,
+  );
+
+  assert.equal((patched.match(/codexLinuxRegisterTray=e=>/g) ?? []).length, 1);
+  assert.match(patched, /let codexLinuxTray=null,codexLinuxRegisterTray=e=>/);
+  assert.match(patched, /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon\)\)/);
+  assert.doesNotMatch(patched, /typeof codexLinuxRegisterTray===`function`/);
+  assert.match(patched, /\[codex-linux\] System tray registered/);
 });
 
 test("bypasses the upstream before-quit confirmation after a Linux explicit quit", () => {
@@ -10188,7 +10212,7 @@ test("patchMainBundleSource keeps non-icon patches active without an icon asset"
   assert.match(patched, /linux:\{label:`File Manager`/);
   assert.match(
     patched,
-    /r=typeof codexLinuxRegisterTray===`function`\?codexLinuxRegisterTray\(new [A-Za-z_$][\w$]*\.Tray\(t\.defaultIcon\)\):new [A-Za-z_$][\w$]*\.Tray\(t\.defaultIcon\)/,
+    /r=codexLinuxRegisterTray\(new [A-Za-z_$][\w$]*\.Tray\(t\.defaultIcon\)\)/,
   );
   assert.match(
     patched,

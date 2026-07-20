@@ -8322,7 +8322,7 @@ JS
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$extracted/.vite/build/main-test.js" '(process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())'
-    assert_contains "$extracted/.vite/build/main-test.js" 'r=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new n.Tray(t.defaultIcon)):new n.Tray(t.defaultIcon)'
+    assert_contains "$extracted/.vite/build/main-test.js" 'r=codexLinuxRegisterTray(new n.Tray(t.defaultIcon))'
     assert_contains "$extracted/.vite/build/main-test.js" 'if(typeof t.whenReady!=`function`)return!0'
     assert_contains "$extracted/.vite/build/main-test.js" 'return typeof t.isReady==`function`?t.isReady():!0'
     assert_contains "$extracted/.vite/build/main-test.js" 'let __codexLinuxTrayFallbackIcon=n.nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)'
@@ -8425,7 +8425,8 @@ NODE
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'if(typeof t.whenReady!=`function`)return!0' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'return typeof t.isReady==`function`?t.isReady():!0' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" '!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())' '1'
-    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxRegisterTray=e=>(codexLinuxTray=e,e)'
+    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxRegisterTray=e=>'
+    assert_contains "$extracted/.vite/build/main-test.js" 'System tray registered'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxDestroyTray=()=>{if(process.platform!==`linux`)return;'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0,codexLinuxDestroyTray()}'
     assert_contains "$extracted/.vite/build/main-test.js" 'n.app.on(`before-quit`,()=>codexLinuxDestroyTray())'

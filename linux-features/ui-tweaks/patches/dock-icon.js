@@ -28,9 +28,9 @@ const currentWindowRegistration =
 const patchedWindowRegistration =
   "onWindowRegistered:e=>{F?.registerWindow(e),C?.(e),process.platform===`linux`&&setImmediate(P)}";
 const currentTrayRegistration =
-  "n=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!G9)return";
+  "n=codexLinuxRegisterTray(new c.Tray(t.defaultIcon));if(!G9)return";
 const patchedTrayRegistration =
-  "n=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(process.platform===`linux`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:t.defaultIcon)):new c.Tray(process.platform===`linux`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:t.defaultIcon);if(!G9)return";
+  "n=codexLinuxRegisterTray(new c.Tray(process.platform===`linux`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:t.defaultIcon));if(!G9)return";
 
 const currentMainContracts = [
   currentPreviewGate,

@@ -70,23 +70,47 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     );
   }
 
-  if (!patchedSource.includes("codexLinuxRegisterTray(")) {
-    const trayConstructorPattern =
-      /([A-Za-z_$][\w$]*)=new ([A-Za-z_$][\w$]*)\.Tray\(([^;)]+)\)/;
-    const match = patchedSource.match(trayConstructorPattern);
-    if (
-      match == null ||
-      !patchedSource.includes("if(process.platform===`linux`){") ||
-      !patchedSource.includes("updatePersistentTrayMenu(){process.platform===`linux`")
-    ) {
-      console.warn("WARN: Could not find current Linux tray factory — skipping Linux tray teardown registration patch");
+  const conditionalTrayConstructorPattern =
+    /([A-Za-z_$][\w$]*)=typeof codexLinuxRegisterTray===`function`\?codexLinuxRegisterTray\(new ([A-Za-z_$][\w$]*)\.Tray\(([^;]+?)\)\):new \2\.Tray\(\3\)/;
+  const retainedTrayConstructorPattern =
+    /([A-Za-z_$][\w$]*)=codexLinuxRegisterTray\(new ([A-Za-z_$][\w$]*)\.Tray\(([^;]+?)\)\)/;
+  const trayConstructorPattern =
+    /([A-Za-z_$][\w$]*)=new ([A-Za-z_$][\w$]*)\.Tray\(([^;)]+)\)/;
+  const constructorMatch =
+    patchedSource.match(conditionalTrayConstructorPattern) ??
+    patchedSource.match(retainedTrayConstructorPattern) ??
+    patchedSource.match(trayConstructorPattern);
+  if (
+    constructorMatch == null ||
+    !patchedSource.includes("if(process.platform===`linux`){") ||
+    !patchedSource.includes("updatePersistentTrayMenu(){process.platform===`linux`")
+  ) {
+    console.warn("WARN: Could not find current Linux tray factory — skipping Linux tray retention patch");
+    return currentSource;
+  }
+
+  const [, trayVar, electronVar, constructorArgs] = constructorMatch;
+  const retainedConstructor =
+    `${trayVar}=codexLinuxRegisterTray(new ${electronVar}.Tray(${constructorArgs}))`;
+  if (conditionalTrayConstructorPattern.test(patchedSource)) {
+    patchedSource = patchedSource.replace(conditionalTrayConstructorPattern, retainedConstructor);
+  } else if (!retainedTrayConstructorPattern.test(patchedSource)) {
+    patchedSource = patchedSource.replace(trayConstructorPattern, retainedConstructor);
+  }
+
+  if (!patchedSource.includes("codexLinuxRegisterTray=e=>")) {
+    const constructorIndex = patchedSource.indexOf(retainedConstructor);
+    const factoryIndex = patchedSource.lastIndexOf("async function ", constructorIndex);
+    if (constructorIndex === -1 || factoryIndex === -1) {
+      console.warn("WARN: Could not find current Linux tray helper insertion point — skipping Linux tray retention patch");
       return currentSource;
     }
-    const [, trayVar, electronVar, constructorArgs] = match;
-    patchedSource = patchedSource.replace(
-      trayConstructorPattern,
-      `${trayVar}=typeof codexLinuxRegisterTray===\`function\`?codexLinuxRegisterTray(new ${electronVar}.Tray(${constructorArgs})):new ${electronVar}.Tray(${constructorArgs})`,
-    );
+    const retentionHelper =
+      "let codexLinuxTray=null,codexLinuxRegisterTray=e=>(codexLinuxTray=e,process.platform===`linux`&&console.info(`[codex-linux] System tray registered`),e);";
+    patchedSource =
+      patchedSource.slice(0, factoryIndex) +
+      retentionHelper +
+      patchedSource.slice(factoryIndex);
   }
 
   return patchedSource;

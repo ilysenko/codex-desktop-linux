@@ -45,7 +45,7 @@ const currentRuntimeSource = [
 ].join("");
 
 const currentTraySource =
-  "async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),n=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!G9)return n.destroy(),null;return n}";
+  "async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),n=codexLinuxRegisterTray(new c.Tray(t.defaultIcon));if(!G9)return n.destroy(),null;return n}";
 
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
 
