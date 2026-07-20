@@ -2456,7 +2456,7 @@ test("destroys the registered Linux tray before the app exits", () => {
     iconPathExpression,
   );
 
-  assert.match(patched, /codexLinuxRegisterTray=e=>\(codexLinuxTray=e,process\.platform===`linux`&&console\.info\(`\[codex-linux\] System tray registered`\),e\)/);
+  assert.match(patched, /codexLinuxRegisterTray=e=>\(codexLinuxTray=e,e\)/);
   assert.match(patched, /codexLinuxDestroyTray=\(\)=>\{if\(process\.platform!==`linux`\)return;/);
   assert.match(patched, /codexLinuxTray=null;try\{e\?\.destroy\(\)\}catch\{\}/);
   assert.match(patched, /codexLinuxMarkQuitInProgress=\(\)=>\{codexLinuxQuitInProgress=!0,codexLinuxDestroyTray\(\)\}/);
@@ -2583,7 +2583,6 @@ test("retains the current native Linux tray when quit-state helpers already exis
   assert.match(patched, /let codexLinuxTray=null,codexLinuxRegisterTray=e=>/);
   assert.match(patched, /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon\)\)/);
   assert.doesNotMatch(patched, /typeof codexLinuxRegisterTray===`function`/);
-  assert.match(patched, /\[codex-linux\] System tray registered/);
 });
 
 test("bypasses the upstream before-quit confirmation after a Linux explicit quit", () => {

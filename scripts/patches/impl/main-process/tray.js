@@ -106,7 +106,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
       return currentSource;
     }
     const retentionHelper =
-      "let codexLinuxTray=null,codexLinuxRegisterTray=e=>(codexLinuxTray=e,process.platform===`linux`&&console.info(`[codex-linux] System tray registered`),e);";
+      "let codexLinuxTray=null,codexLinuxRegisterTray=e=>(codexLinuxTray=e,e);";
     patchedSource =
       patchedSource.slice(0, factoryIndex) +
       retentionHelper +
