@@ -108,8 +108,10 @@ node_toolchain_compatible() {
 # `#!/usr/bin/node` shebang.  That makes the managed runtime unexpectedly
 # depend on a system Node installation when a caller executes `npx` directly
 # (as the installer does while patching app.asar).  Keep the launchers inside
-# the managed runtime self-contained by pointing their shebangs at its node
-# binary.  Resolve symlinks first so npm/npx remain symlinks in bin/.
+# copied managed runtime self-contained by pointing their shebangs at its node
+# binary. Do not run this on pre-existing runtimes: Nix supplies those as
+# read-only store symlinks. Resolve symlinks first so npm/npx remain symlinks
+# in bin/.
 repair_managed_node_launchers() {
     local runtime_dir="$1"
     local node_path="$runtime_dir/bin/node"
@@ -208,7 +210,6 @@ ensure_managed_node_runtime() {
     local source_dir
 
     if node_toolchain_compatible "$destination_dir"; then
-        repair_managed_node_launchers "$destination_dir" || error "Failed to repair managed Node.js launchers"
         info "Managed Node.js runtime ready: $destination_dir"
         export_managed_node_runtime "$destination_dir"
         return 0

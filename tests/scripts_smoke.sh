@@ -3214,6 +3214,49 @@ SCRIPT
     [ -L "$install_dir/resources/node-runtime/bin/npx" ] || fail "Expected npx to remain a symlink"
 }
 
+test_managed_node_runtime_leaves_existing_runtime_untouched() {
+    info "Checking managed Node.js runtime leaves an existing runtime untouched"
+    local workspace="$TMP_DIR/managed-node-existing-runtime"
+    local runtime_dir="$workspace/install/resources/node-runtime"
+    local output_log="$workspace/output.log"
+
+    mkdir -p "$runtime_dir/bin" "$runtime_dir/lib/node_modules/npm/bin"
+    cat > "$runtime_dir/bin/node" <<'SCRIPT'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-e" ]; then
+    printf '%s' 'codex-node-runtime-ok:22.22.2'
+else
+    printf 'existing node ran %s\n' "${1:-}"
+fi
+SCRIPT
+    chmod +x "$runtime_dir/bin/node"
+    for launcher in npm npx; do
+        cat > "$runtime_dir/lib/node_modules/npm/bin/${launcher}-cli.js" <<'SCRIPT'
+#!/usr/bin/node
+console.log('launcher')
+SCRIPT
+        chmod +x "$runtime_dir/lib/node_modules/npm/bin/${launcher}-cli.js"
+        ln -s "../lib/node_modules/npm/bin/${launcher}-cli.js" "$runtime_dir/bin/$launcher"
+    done
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        WORK_DIR="$workspace/work"
+        ARCH="x86_64"
+        CODEX_MANAGED_NODE_SOURCE="$workspace/missing-source"
+        mkdir -p "$WORK_DIR"
+        info() { echo "[INFO] $*" >&2; }
+        warn() { echo "[WARN] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/node-runtime.sh"
+        ensure_managed_node_runtime "$runtime_dir"
+    ) > "$output_log" 2>&1
+
+    assert_contains "$output_log" "Managed Node.js runtime ready: $runtime_dir"
+    assert_contains "$runtime_dir/lib/node_modules/npm/bin/npx-cli.js" "#!/usr/bin/node"
+}
+
 test_managed_node_runtime_rejects_version_only_stub() {
     info "Checking managed Node.js runtime rejects version-only stubs"
     local workspace="$TMP_DIR/managed-node-runtime-stub"
@@ -7579,6 +7622,7 @@ main() {
     test_port_validation_rejects_oversized_numeric_values
     test_managed_node_runtime_source_install
     test_managed_node_runtime_repairs_npx_shebang
+    test_managed_node_runtime_leaves_existing_runtime_untouched
     test_managed_node_runtime_rejects_version_only_stub
     test_better_sqlite3_electron_42_source_patch
     test_v8_nullptr_workaround_skips_when_included_probe_succeeds
