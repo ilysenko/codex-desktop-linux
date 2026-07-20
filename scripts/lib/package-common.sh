@@ -762,6 +762,7 @@ stage_update_builder_bundle() {
     cp -r "$REPO_DIR/scripts/patches/." "$update_builder_root/scripts/patches/"
     cp "$REPO_DIR/scripts/lib/package-common.sh" "$update_builder_root/scripts/lib/package-common.sh"
     cp "$REPO_DIR/scripts/lib/patch-chrome-plugin.js" "$update_builder_root/scripts/lib/patch-chrome-plugin.js"
+    cp "$REPO_DIR/scripts/lib/upstream-dmg-intel.js" "$update_builder_root/scripts/lib/upstream-dmg-intel.js"
     cp "$REPO_DIR/scripts/lib/node-runtime.sh" "$update_builder_root/scripts/lib/node-runtime.sh"
     cp "$REPO_DIR/scripts/lib/install-helpers.sh" "$update_builder_root/scripts/lib/install-helpers.sh"
     cp "$REPO_DIR/scripts/lib/process-detection.sh" "$update_builder_root/scripts/lib/process-detection.sh"
