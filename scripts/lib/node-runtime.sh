@@ -125,8 +125,12 @@ repair_managed_node_launchers() {
         launcher_target="$(readlink -f "$launcher" 2>/dev/null || true)"
         [ -n "$launcher_target" ] && [ -f "$launcher_target" ] || continue
         first_line="$(head -n 1 "$launcher_target" 2>/dev/null || true)"
+        # Only correct the non-portable launcher shipped in the upstream Node
+        # archive. Nix has already patched its launchers to use its own
+        # immutable store Node; replacing that shebang would both fail and be
+        # unnecessary.
         case "$first_line" in
-            '#!'*node)
+            '#!/usr/bin/node')
                 sed -i "1s|^#!.*node$|#!$node_path|" "$launcher_target"
                 ;;
         esac

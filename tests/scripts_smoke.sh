@@ -3257,6 +3257,48 @@ SCRIPT
     assert_contains "$runtime_dir/lib/node_modules/npm/bin/npx-cli.js" "#!/usr/bin/node"
 }
 
+test_managed_node_runtime_preserves_nix_launchers() {
+    info "Checking managed Node.js runtime preserves Nix-patched launchers"
+    local workspace="$TMP_DIR/managed-node-nix-launchers"
+    local source_dir="$workspace/source"
+    local install_dir="$workspace/install"
+    local output_log="$workspace/output.log"
+
+    mkdir -p "$source_dir/bin" "$source_dir/lib/node_modules/npm/bin"
+    cat > "$source_dir/bin/node" <<'SCRIPT'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-e" ]; then
+    printf '%s' 'codex-node-runtime-ok:22.22.2'
+fi
+SCRIPT
+    chmod +x "$source_dir/bin/node"
+    for launcher in npm npx; do
+        cat > "$source_dir/lib/node_modules/npm/bin/${launcher}-cli.js" <<'SCRIPT'
+#!/nix/store/example-node/bin/node
+console.log('launcher')
+SCRIPT
+        chmod +x "$source_dir/lib/node_modules/npm/bin/${launcher}-cli.js"
+        ln -s "../lib/node_modules/npm/bin/${launcher}-cli.js" "$source_dir/bin/$launcher"
+    done
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        WORK_DIR="$workspace/work"
+        ARCH="x86_64"
+        CODEX_MANAGED_NODE_SOURCE="$source_dir"
+        mkdir -p "$WORK_DIR"
+        info() { echo "[INFO] $*" >&2; }
+        warn() { echo "[WARN] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/node-runtime.sh"
+        ensure_managed_node_runtime "$install_dir/resources/node-runtime"
+    ) > "$output_log" 2>&1
+
+    assert_contains "$output_log" "Managed Node.js runtime copied from $source_dir"
+    assert_contains "$install_dir/resources/node-runtime/lib/node_modules/npm/bin/npx-cli.js" "#!/nix/store/example-node/bin/node"
+}
+
 test_managed_node_runtime_rejects_version_only_stub() {
     info "Checking managed Node.js runtime rejects version-only stubs"
     local workspace="$TMP_DIR/managed-node-runtime-stub"
@@ -7623,6 +7665,7 @@ main() {
     test_managed_node_runtime_source_install
     test_managed_node_runtime_repairs_npx_shebang
     test_managed_node_runtime_leaves_existing_runtime_untouched
+    test_managed_node_runtime_preserves_nix_launchers
     test_managed_node_runtime_rejects_version_only_stub
     test_better_sqlite3_electron_42_source_patch
     test_v8_nullptr_workaround_skips_when_included_probe_succeeds
