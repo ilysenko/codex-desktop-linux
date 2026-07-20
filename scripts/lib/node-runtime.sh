@@ -104,6 +104,33 @@ node_toolchain_compatible() {
         && [ -x "$runtime_dir/bin/npx" ]
 }
 
+# The official Linux Node archives currently ship npm and npx with a
+# `#!/usr/bin/node` shebang.  That makes the managed runtime unexpectedly
+# depend on a system Node installation when a caller executes `npx` directly
+# (as the installer does while patching app.asar).  Keep the launchers inside
+# the managed runtime self-contained by pointing their shebangs at its node
+# binary.  Resolve symlinks first so npm/npx remain symlinks in bin/.
+repair_managed_node_launchers() {
+    local runtime_dir="$1"
+    local node_path="$runtime_dir/bin/node"
+    local launcher
+    local launcher_target
+    local first_line
+
+    [ -x "$node_path" ] || return 1
+    for launcher in "$runtime_dir/bin/npm" "$runtime_dir/bin/npx"; do
+        [ -e "$launcher" ] || continue
+        launcher_target="$(readlink -f "$launcher" 2>/dev/null || true)"
+        [ -n "$launcher_target" ] && [ -f "$launcher_target" ] || continue
+        first_line="$(head -n 1 "$launcher_target" 2>/dev/null || true)"
+        case "$first_line" in
+            '#!'*node)
+                sed -i "1s|^#!.*node$|#!$node_path|" "$launcher_target"
+                ;;
+        esac
+    done
+}
+
 copy_node_runtime() {
     local source_dir="$1"
     local destination_dir="$2"
@@ -121,6 +148,7 @@ copy_node_runtime() {
     cp -a "$source_dir/." "$tmp_dir/"
     rm -rf "$destination_dir"
     mv "$tmp_dir" "$destination_dir"
+    repair_managed_node_launchers "$destination_dir" || return 1
 }
 
 managed_node_archive_url() {
@@ -180,6 +208,7 @@ ensure_managed_node_runtime() {
     local source_dir
 
     if node_toolchain_compatible "$destination_dir"; then
+        repair_managed_node_launchers "$destination_dir" || error "Failed to repair managed Node.js launchers"
         info "Managed Node.js runtime ready: $destination_dir"
         export_managed_node_runtime "$destination_dir"
         return 0
