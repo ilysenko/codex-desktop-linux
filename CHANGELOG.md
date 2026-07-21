@@ -35,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Updater rebuild workspaces now retain the Git identity of the wrapper source
+  after `.git` is stripped, so installed build metadata and packaged
+  update-builder metadata report the wrapper commit instead of `unknown`.
 - V2 pets now look toward the live pointer position after successful Linux
   Computer Use click, scroll, and drag actions, then return to their normal
   animation. The bridge is isolated per app instance and fails softly when its

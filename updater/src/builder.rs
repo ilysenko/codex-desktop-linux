@@ -6,10 +6,12 @@ use crate::{
     state::{ArtifactPaths, PersistedState, UpdateStatus},
 };
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::{
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
+    process::Command as StdCommand,
 };
 use tokio::process::Command;
 use tracing::info;
@@ -123,6 +125,7 @@ pub async fn build_update_from(
     state.save(&paths.state_file)?;
 
     copy_builder_bundle(bundle_source, &workspace.bundle_dir)?;
+    stage_git_source_info(bundle_source, &workspace.bundle_dir)?;
 
     state.status = UpdateStatus::PatchingApp;
     state.save(&paths.state_file)?;
@@ -268,6 +271,114 @@ fn copy_builder_bundle(source_root: &Path, destination_root: &Path) -> Result<()
         )?;
     }
 
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitSourceInfo {
+    commit: String,
+    short_commit: String,
+    branch: Option<String>,
+    remote: Option<String>,
+    describe: Option<String>,
+    dirty: Option<bool>,
+    provenance: &'static str,
+}
+
+impl GitSourceInfo {
+    fn capture(source_root: &Path) -> Option<Self> {
+        let top_level = git_capture(source_root, &["rev-parse", "--show-toplevel"])?;
+        let source_root = fs::canonicalize(source_root).ok()?;
+        let top_level = fs::canonicalize(top_level).ok()?;
+        if source_root != top_level {
+            return None;
+        }
+
+        let commit = git_capture(source_root.as_path(), &["rev-parse", "HEAD"])?;
+        let status = git_capture(
+            source_root.as_path(),
+            &["status", "--porcelain", "--untracked-files=normal"],
+        );
+        Some(Self {
+            short_commit: commit.chars().take(12).collect(),
+            commit,
+            branch: non_empty(git_capture(
+                source_root.as_path(),
+                &["branch", "--show-current"],
+            )),
+            remote: sanitize_git_remote(non_empty(git_capture(
+                source_root.as_path(),
+                &["remote", "get-url", "origin"],
+            ))),
+            describe: non_empty(git_capture(
+                source_root.as_path(),
+                &["describe", "--always", "--dirty", "--tags"],
+            )),
+            dirty: status.map(|value| !value.trim().is_empty()),
+            provenance: "git",
+        })
+    }
+}
+
+fn git_capture(repo: &Path, args: &[&str]) -> Option<String> {
+    let output = StdCommand::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|value| value.trim().to_string())
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|item| !item.is_empty())
+}
+
+fn sanitize_git_remote(remote: Option<String>) -> Option<String> {
+    let value = remote?.trim().to_string();
+    if value.is_empty()
+        || Path::new(&value).is_absolute()
+        || value.starts_with("./")
+        || value.starts_with("../")
+    {
+        return None;
+    }
+
+    if let Ok(mut url) = reqwest::Url::parse(&value) {
+        if url.scheme() == "file" {
+            return None;
+        }
+        if matches!(url.scheme(), "http" | "https") {
+            url.set_username("").ok()?;
+            url.set_password(None).ok()?;
+            return Some(url.to_string());
+        }
+    }
+
+    Some(value)
+}
+
+fn stage_git_source_info(source_root: &Path, destination_root: &Path) -> Result<()> {
+    let Some(source_info) = GitSourceInfo::capture(source_root) else {
+        return Ok(());
+    };
+    let info_path = destination_root.join(".codex-linux/source-info.json");
+    let info_dir = info_path
+        .parent()
+        .context("Source info path has no parent directory")?;
+    fs::create_dir_all(info_dir)
+        .with_context(|| format!("Failed to create {}", info_dir.display()))?;
+    fs::write(
+        &info_path,
+        format!("{}\n", serde_json::to_string_pretty(&source_info)?),
+    )
+    .with_context(|| format!("Failed to write {}", info_path.display()))?;
     Ok(())
 }
 
@@ -583,11 +694,63 @@ mod tests {
         Ok(format!("#!{}\n{body}", host_tool("bash")?.display()))
     }
 
+    fn install_fake_git(root: &Path, top_level: &Path, dirty: bool) -> Result<()> {
+        let bin_dir = root.join("fake-git-bin");
+        let git_path = bin_dir.join("git");
+        fs::create_dir_all(&bin_dir)?;
+        fs::write(
+            &git_path,
+            host_bash_script(
+                r#"set -euo pipefail
+if [ "$1" != "-C" ]; then
+  exit 2
+fi
+shift 2
+case "$*" in
+  "rev-parse --show-toplevel") printf '%s\n' "$FAKE_GIT_TOP_LEVEL" ;;
+  "rev-parse HEAD") printf '%s\n' "$FAKE_GIT_COMMIT" ;;
+  "status --porcelain --untracked-files=normal") printf '%s' "$FAKE_GIT_STATUS" ;;
+  "branch --show-current") printf 'main\n' ;;
+  "remote get-url origin") printf 'https://builder:secret-token@github.com/example/codex-desktop-linux.git\n' ;;
+  "describe --always --dirty --tags") printf '%s\n' "$FAKE_GIT_DESCRIBE" ;;
+  *) exit 1 ;;
+esac
+"#,
+            )?,
+        )?;
+        fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755))?;
+
+        let mut path_entries = vec![bin_dir];
+        path_entries.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        std::env::set_var("PATH", std::env::join_paths(path_entries)?);
+        std::env::set_var("FAKE_GIT_TOP_LEVEL", top_level);
+        std::env::set_var(
+            "FAKE_GIT_COMMIT",
+            "0123456789abcdef0123456789abcdef01234567",
+        );
+        std::env::set_var(
+            "FAKE_GIT_DESCRIBE",
+            if dirty { "v0.10.2-dirty" } else { "v0.10.2" },
+        );
+        std::env::set_var(
+            "FAKE_GIT_STATUS",
+            if dirty {
+                " M updater/src/builder.rs\n"
+            } else {
+                ""
+            },
+        );
+        Ok(())
+    }
+
     fn write_fake_build_script(path: &Path, output: FakePackageOutput) -> Result<()> {
         let script_body = match output {
             FakePackageOutput::Deb => {
                 r#"set -euo pipefail
 mkdir -p "${DIST_DIR_OVERRIDE}"
+cp .codex-linux/source-info.json "${DIST_DIR_OVERRIDE}/package-source-info.json"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop_${PACKAGE_VERSION}_amd64.deb"
 "#
             }
@@ -728,6 +891,13 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
     #[test]
     fn builds_update_with_fake_bundle() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "PATH",
+            "FAKE_GIT_TOP_LEVEL",
+            "FAKE_GIT_COMMIT",
+            "FAKE_GIT_DESCRIBE",
+            "FAKE_GIT_STATUS",
+        ]);
         let runtime = tokio::runtime::Runtime::new()?;
         let temp = tempdir()?;
         let bundle_root = temp.path().join("bundle");
@@ -737,15 +907,10 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
         fs::create_dir_all(bundle_root.join("launcher"))?;
         fs::create_dir_all(bundle_root.join("packaging/linux"))?;
         fs::create_dir_all(bundle_root.join("assets"))?;
-        fs::create_dir_all(bundle_root.join(".codex-linux"))?;
         write_fake_computer_use_bundle(&bundle_root)?;
         write_fake_linux_features_bundle(&bundle_root)?;
         write_fake_patch_bundle(&bundle_root)?;
         fs::write(bundle_root.join("CHANGELOG.md"), b"# Changelog\n")?;
-        fs::write(
-            bundle_root.join(".codex-linux/source-info.json"),
-            b"{\"commit\":\"0123456789012345678901234567890123456789\",\"version\":\"0.8.1\"}\n",
-        )?;
         fs::write(
             bundle_root.join("launcher/start.sh.template"),
             b"# fake launcher template\n",
@@ -811,6 +976,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
 mkdir -p "${CODEX_INSTALL_DIR}"
 echo launcher > "${CODEX_INSTALL_DIR}/start.sh"
 chmod +x "${CODEX_INSTALL_DIR}/start.sh"
+cp .codex-linux/source-info.json "${CODEX_INSTALL_DIR}/app-source-info.json"
 if [ -n "${CODEX_PATCH_REPORT_JSON:-}" ]; then
   mkdir -p "$(dirname "$CODEX_PATCH_REPORT_JSON")"
   printf '{"patches":[]}\n' > "${CODEX_PATCH_REPORT_JSON}"
@@ -863,6 +1029,10 @@ fi
             bundle_root.join("scripts/lib/node-runtime.sh"),
             b"#!/bin/bash\n",
         )?;
+        fs::create_dir_all(bundle_root.join(".git"))?;
+        install_fake_git(temp.path(), &bundle_root, false)?;
+        let expected_commit = "0123456789abcdef0123456789abcdef01234567";
+        let expected_describe = "v0.10.2";
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
             state_file: state_root.join("state.json"),
@@ -917,10 +1087,24 @@ fi
             .workspace_dir
             .join("builder/CHANGELOG.md")
             .exists());
-        assert!(artifacts
-            .workspace_dir
-            .join("builder/.codex-linux/source-info.json")
-            .exists());
+        assert!(!artifacts.workspace_dir.join("builder/.git").exists());
+        for relative_path in [
+            "codex-app/app-source-info.json",
+            "dist/package-source-info.json",
+        ] {
+            let source_info: serde_json::Value =
+                serde_json::from_slice(&fs::read(artifacts.workspace_dir.join(relative_path))?)?;
+            assert_eq!(source_info["commit"], expected_commit);
+            assert_eq!(source_info["shortCommit"], &expected_commit[..12]);
+            assert_eq!(source_info["branch"], "main");
+            assert_eq!(
+                source_info["remote"],
+                "https://github.com/example/codex-desktop-linux.git"
+            );
+            assert_eq!(source_info["describe"], expected_describe);
+            assert_eq!(source_info["dirty"], false);
+            assert_eq!(source_info["provenance"], "git");
+        }
         assert!(artifacts
             .workspace_dir
             .join("builder/launcher/cli-launch-path.py")
@@ -950,6 +1134,85 @@ fi
             is_native_package_file(&artifacts.package_path),
             "expected a native package (.deb, .rpm, or .pkg.tar.zst), got {}",
             artifacts.package_path.display()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stages_dirty_git_source_identity() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "PATH",
+            "FAKE_GIT_TOP_LEVEL",
+            "FAKE_GIT_COMMIT",
+            "FAKE_GIT_DESCRIBE",
+            "FAKE_GIT_STATUS",
+        ]);
+        let temp = tempdir()?;
+        let source_root = temp.path().join("source");
+        let destination_root = temp.path().join("destination");
+        fs::create_dir_all(&source_root)?;
+        install_fake_git(temp.path(), &source_root, true)?;
+
+        stage_git_source_info(&source_root, &destination_root)?;
+
+        let source_info: serde_json::Value = serde_json::from_slice(&fs::read(
+            destination_root.join(".codex-linux/source-info.json"),
+        )?)?;
+        assert_eq!(
+            source_info["commit"],
+            "0123456789abcdef0123456789abcdef01234567"
+        );
+        assert_eq!(source_info["dirty"], true);
+        assert_eq!(source_info["describe"], "v0.10.2-dirty");
+        assert_eq!(
+            source_info["remote"],
+            "https://github.com/example/codex-desktop-linux.git"
+        );
+        assert_eq!(source_info["provenance"], "git");
+        Ok(())
+    }
+
+    #[test]
+    fn source_identity_does_not_leak_from_parent_checkout() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "PATH",
+            "FAKE_GIT_TOP_LEVEL",
+            "FAKE_GIT_COMMIT",
+            "FAKE_GIT_DESCRIBE",
+            "FAKE_GIT_STATUS",
+        ]);
+        let temp = tempdir()?;
+        let parent_root = temp.path().join("parent");
+        let source_root = parent_root.join("nested-builder");
+        let destination_root = temp.path().join("destination");
+        fs::create_dir_all(&source_root)?;
+        install_fake_git(temp.path(), &parent_root, false)?;
+
+        stage_git_source_info(&source_root, &destination_root)?;
+
+        assert!(!destination_root
+            .join(".codex-linux/source-info.json")
+            .exists());
+        Ok(())
+    }
+
+    #[test]
+    fn no_git_source_leaves_packaged_metadata_unchanged() -> Result<()> {
+        let temp = tempdir()?;
+        let source_root = temp.path().join("source");
+        let destination_root = temp.path().join("destination");
+        let source_info = destination_root.join(".codex-linux/source-info.json");
+        fs::create_dir_all(&source_root)?;
+        fs::create_dir_all(source_info.parent().unwrap())?;
+        fs::write(&source_info, "{\"commit\":\"packaged\"}\n")?;
+
+        stage_git_source_info(&source_root, &destination_root)?;
+
+        assert_eq!(
+            fs::read_to_string(source_info)?,
+            "{\"commit\":\"packaged\"}\n"
         );
         Ok(())
     }
