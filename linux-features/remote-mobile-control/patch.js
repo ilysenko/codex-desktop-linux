@@ -61,7 +61,7 @@ const REMOTE_CONTROL_APP_MAIN_PAGE_ASSET_PATTERN =
 const REMOTE_CONTROL_VISIBILITY_ASSET_PATTERN =
   /^app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-[^.]+\.js$/u;
 const REMOTE_CONTROL_LOAD_GATE_ASSET_PATTERN =
-  /^app-initial~artifact-tab-content\.electron~notebook-preview-panel~app-main~business-checkout~hm0a50up-[^.]+\.js$/u;
+  /^app-initial~artifact-tab-content\.electron~notebook-preview-panel~app-main~business-checkout~k87y25tw-[^.]+\.js$/u;
 const REMOTE_MOBILE_ACTIVE_STATUS_ASSET_PATTERN =
   /^app-initial~notebook-preview-panel~app-main~pull-request-route~projects-index-page~cloud-en~lpx9dmpy-[^.]+\.js$/u;
 const REMOTE_CONTROL_LINUX_COPY_REPLACEMENTS = [

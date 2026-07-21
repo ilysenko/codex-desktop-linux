@@ -65,9 +65,9 @@ const CURRENT_APP_MAIN_PAGE_ASSET =
 const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET =
   "app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-test.js";
 const CURRENT_REMOTE_LOAD_GATE_ASSET =
-  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~hm0a50up-test.js";
+  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~k87y25tw-test.js";
 const OLD_REMOTE_LOAD_GATE_ASSET =
-  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~d7o11fcp-test.js";
+  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~hm0a50up-test.js";
 const OLD_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
 const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET =
