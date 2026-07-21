@@ -193,19 +193,18 @@ test("unrecognized contracts warn instead of reporting false already-applied", (
 });
 
 test("Suggested Prompts descriptors target only current-DMG active assets", () => {
-  assert.match("general-settings-CsA3Lt9Z.js", GENERAL_SETTINGS_ASSET_PATTERN);
-  assert.doesNotMatch("general-settings-Boi5S8Wz.js", GENERAL_SETTINGS_ASSET_PATTERN);
-  assert.doesNotMatch("general-settings-B8bUS3xL.js", GENERAL_SETTINGS_ASSET_PATTERN);
+  assert.match("general-settings-BWZCvLqI.js", GENERAL_SETTINGS_ASSET_PATTERN);
+  assert.doesNotMatch("general-settings-CsA3Lt9Z.js", GENERAL_SETTINGS_ASSET_PATTERN);
 
   assert.match(
-    "app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-CrEakH0Y.js",
+    "app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-DEXL3aWU.js",
     APP_PAGE_ASSET_PATTERN,
   );
   assert.doesNotMatch(
-    "app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-Ccxu2qV_.js",
+    "app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-CrEakH0Y.js",
     APP_PAGE_ASSET_PATTERN,
   );
 
-  assert.match("home-ambient-suggestions-content-C01Mwmkt.js", HOME_CONTENT_ASSET_PATTERN);
-  assert.doesNotMatch("home-ambient-suggestions-content-DNeFqrrf.js", HOME_CONTENT_ASSET_PATTERN);
+  assert.match("home-ambient-suggestions-content-C7Hrlu7B.js", HOME_CONTENT_ASSET_PATTERN);
+  assert.doesNotMatch("home-ambient-suggestions-content-C01Mwmkt.js", HOME_CONTENT_ASSET_PATTERN);
 });

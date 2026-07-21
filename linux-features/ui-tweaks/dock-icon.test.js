@@ -277,8 +277,8 @@ test("descriptor targets the current General settings asset", () => {
   try {
     const assetsDir = path.join(tempDir, "webview", "assets");
     fs.mkdirSync(assetsDir, { recursive: true });
-    const settingsPath = path.join(assetsDir, "general-settings-CsA3Lt9Z.js");
-    const searchPath = path.join(assetsDir, "settings-page-BOdFN1v1.js");
+    const settingsPath = path.join(assetsDir, "general-settings-BWZCvLqI.js");
+    const searchPath = path.join(assetsDir, "settings-page-CpgnnFjp.js");
     fs.writeFileSync(settingsPath, currentSettingsSource);
     fs.writeFileSync(searchPath, currentSearchSource);
 
@@ -296,11 +296,11 @@ test("descriptor targets the current General settings asset", () => {
       "missing",
     );
     assert.deepEqual(searchResult, { matched: 1, changed: 1 });
-    assert.equal(descriptors[1].pattern.test("general-settings-CsA3Lt9Z.js"), true);
-    assert.equal(descriptors[1].pattern.test("general-settings-Boi5S8Wz.js"), false);
+    assert.equal(descriptors[1].pattern.test("general-settings-BWZCvLqI.js"), true);
+    assert.equal(descriptors[1].pattern.test("general-settings-CsA3Lt9Z.js"), false);
     assert.equal(descriptors[1].pattern.test("general-settings-stale.js"), false);
-    assert.equal(descriptors[2].pattern.test("settings-page-BOdFN1v1.js"), true);
-    assert.equal(descriptors[2].pattern.test("settings-page-SrGKyWwG.js"), false);
+    assert.equal(descriptors[2].pattern.test("settings-page-CpgnnFjp.js"), true);
+    assert.equal(descriptors[2].pattern.test("settings-page-BOdFN1v1.js"), false);
     assert.equal(descriptors[2].pattern.test("settings-page-stale.js"), false);
     assert.equal(descriptors[1].pattern.test("general-settings-DMO9G9gL.js"), false);
   } finally {

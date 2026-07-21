@@ -1,9 +1,9 @@
 "use strict";
 
 const APP_PAGE_ASSET_PATTERN =
-  /^app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-CrEakH0Y\.js$/;
-const GENERAL_SETTINGS_ASSET_PATTERN = /^general-settings-CsA3Lt9Z\.js$/;
-const HOME_CONTENT_ASSET_PATTERN = /^home-ambient-suggestions-content-C01Mwmkt\.js$/;
+  /^app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-DEXL3aWU\.js$/;
+const GENERAL_SETTINGS_ASSET_PATTERN = /^general-settings-BWZCvLqI\.js$/;
+const HOME_CONTENT_ASSET_PATTERN = /^home-ambient-suggestions-content-C7Hrlu7B\.js$/;
 const FEATURE_GATE_ID = "2425897452";
 const RUNTIME_MARKER = "codexLinuxUiTweaksSuggestedPromptsEnabled";
 const APP_PAGE_ELIGIBILITY_MARKER = "codexLinuxUiTweaksSuggestedPromptsAppPageEligible";
