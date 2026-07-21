@@ -39,6 +39,8 @@ For a manual check, enable the feature as above, rebuild, and launch the app:
 - The primary and Quick Chat windows should show no Electron-drawn titlebar
   overlay buttons (minimize/maximize/close in the top-right corner) and no menu
   bar.
+- The rightmost app-header control should retain the standard 8px end padding
+  instead of touching the window edge or an overlay scrollbar.
 - Window move, resize, and close/minimize/maximize should work through your
   compositor's bindings (for example Hyprland's `bindm` mouse binds and
   `killactive`/`fullscreen` dispatchers).
