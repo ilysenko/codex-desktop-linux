@@ -170,7 +170,7 @@ Tracked default in `feature.json`:
     "sidebar": {
       "projectName": {
         "enabled": true,
-        "style": "font-weight: 700 !important; padding-top: 0.25rem;"
+        "style": "font-weight: 700 !important;"
       }
     }
   }
@@ -184,8 +184,8 @@ Config keys:
 - `style`: CSS declaration list inserted into the project-name rule, such as
   `font-weight: 800 !important; color: red;`. It is not arbitrary CSS; unsafe
   syntax that could escape the scoped rule warns and falls back to the default.
-  The default is `font-weight: 700 !important; padding-top: 0.25rem;`, so
-  project names are bold with a small top offset and no color is forced.
+  The default is `font-weight: 700 !important;`, so project names are bold
+  without changing the fixed row geometry or forcing a color.
 
 ## Drift Behavior
 

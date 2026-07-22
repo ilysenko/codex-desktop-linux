@@ -1,6 +1,6 @@
 "use strict";
 
-const DEFAULT_PROJECT_NAME_STYLE = "font-weight: 700 !important; padding-top: 0.25rem;";
+const DEFAULT_PROJECT_NAME_STYLE = "font-weight: 700 !important;";
 const PROJECTS_SIDEBAR_ASSET_PATTERN =
   /^app-initial~notebook-preview-panel~app-main~pull-request-route~projects-index-page~cloud-en~lpx9dmpy-[^.]+\.js$/;
 const PROJECT_NAME_SELECTOR = ".group\\/folder-row .text-fade-truncate.pr-1";
