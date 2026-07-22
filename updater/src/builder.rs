@@ -785,6 +785,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop_${PACKAGE_VERSION}_amd64.deb"
             FakePackageOutput::Rpm => {
                 r#"set -euo pipefail
 mkdir -p "${DIST_DIR_OVERRIDE}"
+cp .codex-linux/source-info.json "${DIST_DIR_OVERRIDE}/package-source-info.json"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
 "#
             }
@@ -792,6 +793,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
                 r#"set -euo pipefail
 VER="${PACKAGE_VERSION%%+*}"
 mkdir -p "${DIST_DIR_OVERRIDE}"
+cp .codex-linux/source-info.json "${DIST_DIR_OVERRIDE}/package-source-info.json"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
 "#
             }
@@ -1280,6 +1282,40 @@ fi
                 "remote should be rejected: {remote}"
             );
         }
+    }
+
+    #[test]
+    fn fake_package_builders_emit_source_info() -> Result<()> {
+        let temp = tempdir()?;
+        for (index, output) in [
+            FakePackageOutput::Deb,
+            FakePackageOutput::Rpm,
+            FakePackageOutput::Pacman,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let bundle_root = temp.path().join(format!("bundle-{index}"));
+            let source_info = bundle_root.join(".codex-linux/source-info.json");
+            let script_path = bundle_root.join("build-package.sh");
+            let dist_dir = bundle_root.join("dist");
+            fs::create_dir_all(source_info.parent().unwrap())?;
+            fs::write(&source_info, "{\"commit\":\"test-commit\"}\n")?;
+            write_fake_build_script(&script_path, output)?;
+
+            let status = StdCommand::new(&script_path)
+                .current_dir(&bundle_root)
+                .env("DIST_DIR_OVERRIDE", &dist_dir)
+                .env("PACKAGE_VERSION", "2026.07.22+test")
+                .status()?;
+
+            assert!(status.success(), "fake package builder {index} failed");
+            assert_eq!(
+                fs::read_to_string(dist_dir.join("package-source-info.json"))?,
+                "{\"commit\":\"test-commit\"}\n"
+            );
+        }
+        Ok(())
     }
 
     #[test]
