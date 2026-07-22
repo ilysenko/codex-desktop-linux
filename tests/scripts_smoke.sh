@@ -6359,6 +6359,13 @@ for name in (
         raise SystemExit(f"missing {name}")
     helpers.append(match.group(0))
 
+native_launcher = re.search(
+    r"write_chrome_native_host_launcher\(\) \{[\s\S]*?\n\}\n",
+    launcher,
+)
+if native_launcher is not None:
+    helpers.append(native_launcher.group(0))
+
 sync_match = re.search(
     r"sync_chrome_bundled_plugin_cache\(\) \{[\s\S]*?\n\}\n\nsync_computer_use_bundled_plugin_cache\(\)",
     launcher,
@@ -6387,7 +6394,7 @@ cache_plugin="$cache_root/26.test"
 chrome_extension_host_arch() { printf '%s\n' x64; }
 bundled_plugin_version() { printf '%s\n' 26.test; }
 replace_symlink() { ln -sfnT "$1" "$2"; }
-write_chrome_native_host_manifests() { :; }
+write_chrome_native_host_manifests() { printf '%s\n' "$1" > "$root/native-host-path"; }
 
 mkdir -p \
   "$source_plugin/.codex-plugin" \
@@ -6397,7 +6404,12 @@ mkdir -p \
   "$cache_plugin/extension-host/linux/x64" \
   "$cache_plugin/scripts/node_modules"
 printf '%s\n' '{"name":"chrome","version":"26.test"}' > "$source_plugin/.codex-plugin/plugin.json"
-printf '%s\n' trusted-host > "$source_plugin/extension-host/linux/x64/extension-host"
+cat > "$source_plugin/extension-host/linux/x64/extension-host" <<'HOST'
+#!/usr/bin/env bash
+printf '%s\n' \
+  "${HTTP_PROXY-}" "${HTTPS_PROXY-}" "${ALL_PROXY-}" \
+  "${http_proxy-}" "${https_proxy-}" "${all_proxy-}"
+HOST
 printf '%s\n' trusted-client > "$source_plugin/scripts/browser-client.mjs"
 printf '%s\n' trusted-manifest > "$source_plugin/scripts/installManifest.mjs"
 printf '%s\n' trusted-module > "$source_plugin/scripts/node_modules/classic-level.mjs"
@@ -6433,6 +6445,62 @@ if find "$cache_plugin" ! -type l -perm /022 -print -quit | grep -q .; then
 fi
 test -L "$cache_root/latest"
 test "$(readlink "$cache_root/latest")" = 26.test
+
+native_host_path="$(cat "$root/native-host-path")"
+stub_bin="$root/stub-bin"
+mkdir -p "$stub_bin"
+cat > "$stub_bin/systemctl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' \
+  'HTTP_PROXY=http://127.0.0.1:7897' \
+  'HTTPS_PROXY=http://127.0.0.1:7897' \
+  'ALL_PROXY=socks5://127.0.0.1:7897/' \
+  'http_proxy=http://127.0.0.1:7897' \
+  'https_proxy=http://127.0.0.1:7897' \
+  'all_proxy=socks5://127.0.0.1:7897/'
+STUB
+cat > "$stub_bin/gsettings" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
+
+proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy \
+  PATH="$stub_bin:$PATH" "$native_host_path")"
+test "$proxy_output" = "$(printf '%s\n' \
+  'http://127.0.0.1:7897' \
+  'http://127.0.0.1:7897' \
+  'socks5://127.0.0.1:7897/' \
+  'http://127.0.0.1:7897' \
+  'http://127.0.0.1:7897' \
+  'socks5://127.0.0.1:7897/')"
+
+cat > "$stub_bin/systemctl" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+cat > "$stub_bin/gsettings" <<'STUB'
+#!/usr/bin/env bash
+case "$2:$3" in
+  org.gnome.system.proxy:mode) printf "'manual'\n" ;;
+  org.gnome.system.proxy.http:host|org.gnome.system.proxy.https:host|org.gnome.system.proxy.socks:host) printf "'127.0.0.1'\n" ;;
+  org.gnome.system.proxy.http:port|org.gnome.system.proxy.https:port|org.gnome.system.proxy.socks:port) printf '7897\n' ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
+
+proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy \
+  PATH="$stub_bin:$PATH" "$native_host_path")"
+test "$proxy_output" = "$(printf '%s\n' \
+  'http://127.0.0.1:7897' \
+  'http://127.0.0.1:7897' \
+  'socks5://127.0.0.1:7897/' \
+  'http://127.0.0.1:7897' \
+  'http://127.0.0.1:7897' \
+  'socks5://127.0.0.1:7897/')"
 '''
 )
 PY
