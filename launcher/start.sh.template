@@ -958,6 +958,84 @@ chrome_extension_host_arch() {
     esac
 }
 
+write_chrome_native_host_launcher() {
+    local cache_root="$1"
+    local launcher_path="$cache_root/native-host"
+    local tmp_path="$launcher_path.tmp.$$"
+
+    if [ -x "$launcher_path" ] && \
+        grep -q '^CODEX_CHROME_NATIVE_HOST_LAUNCHER_V1=1$' "$launcher_path" 2>/dev/null && \
+        ! path_has_unsafe_write "$launcher_path"; then
+        printf '%s\n' "$launcher_path"
+        return 0
+    fi
+
+    make_path_owner_trusted "$cache_root" || return 1
+    if ! (umask 0077; printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'set -euo pipefail' \
+        'CODEX_CHROME_NATIVE_HOST_LAUNCHER_V1=1' \
+        'cache_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"' \
+        'while IFS="=" read -r name value; do' \
+        '    case "$name" in' \
+        '        HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|http_proxy|https_proxy|all_proxy)' \
+        '            if [ -z "${!name+x}" ]; then' \
+        '                export "$name=$value"' \
+        '            fi' \
+        '            ;;' \
+        '    esac' \
+        'done < <(systemctl --user show-environment 2>/dev/null || true)' \
+        'copy_proxy_pair() {' \
+        '    local upper_name="$1" lower_name="$2"' \
+        '    if [ -z "${!upper_name+x}" ] && [ -n "${!lower_name+x}" ]; then' \
+        '        export "$upper_name=${!lower_name}"' \
+        '    elif [ -z "${!lower_name+x}" ] && [ -n "${!upper_name+x}" ]; then' \
+        '        export "$lower_name=${!upper_name}"' \
+        '    fi' \
+        '}' \
+        'read_gnome_proxy_value() {' \
+        '    local schema="$1" key="$2" value' \
+        '    value="$(gsettings get "$schema" "$key" 2>/dev/null)" || return 1' \
+        '    value="$(printf "%s" "$value" | tr -d "\047")"' \
+        '    printf "%s\\n" "$value"' \
+        '}' \
+        'set_gnome_proxy_pair() {' \
+        '    local upper_name="$1" lower_name="$2" schema="$3" scheme="$4"' \
+        '    local host port value' \
+        '    [ -z "${!upper_name+x}" ] && [ -z "${!lower_name+x}" ] || return 0' \
+        '    host="$(read_gnome_proxy_value "$schema" host)" || return 0' \
+        '    port="$(read_gnome_proxy_value "$schema" port)" || return 0' \
+        '    [ -n "$host" ] || return 0' \
+        '    case "$port" in ""|*[!0-9]*) return 0 ;; esac' \
+        '    [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 0' \
+        '    value="$scheme://$host:$port"' \
+        '    [ "$scheme" != socks5 ] || value="$value/"' \
+        '    export "$upper_name=$value" "$lower_name=$value"' \
+        '}' \
+        'copy_proxy_pair HTTP_PROXY http_proxy' \
+        'copy_proxy_pair HTTPS_PROXY https_proxy' \
+        'copy_proxy_pair ALL_PROXY all_proxy' \
+        'gnome_proxy_mode="$(read_gnome_proxy_value org.gnome.system.proxy mode 2>/dev/null || true)"' \
+        'if [ "$gnome_proxy_mode" = manual ]; then' \
+        '    set_gnome_proxy_pair HTTP_PROXY http_proxy org.gnome.system.proxy.http http' \
+        '    set_gnome_proxy_pair HTTPS_PROXY https_proxy org.gnome.system.proxy.https http' \
+        '    set_gnome_proxy_pair ALL_PROXY all_proxy org.gnome.system.proxy.socks socks5' \
+        'fi' \
+        'case "$(uname -m)" in' \
+        '    x86_64) extension_arch=x64 ;;' \
+        '    aarch64|arm64) extension_arch=arm64 ;;' \
+        '    *) exit 1 ;;' \
+        'esac' \
+        'host_path="$cache_root/latest/extension-host/linux/$extension_arch/extension-host"' \
+        'exec "$host_path" "$@"' > "$tmp_path"); then
+        rm -f "$tmp_path"
+        return 1
+    fi
+    chmod 0755 "$tmp_path" || return 1
+    mv -f "$tmp_path" "$launcher_path" || return 1
+    printf '%s\n' "$launcher_path"
+}
+
 write_chrome_native_host_manifests() {
     local host_path="$1"
     local plugin_dir="$2"
@@ -1194,8 +1272,8 @@ sync_chrome_bundled_plugin_cache() {
     mkdir -p "$marketplace_plugins_dir" "$marketplace_root/plugins"
     replace_symlink "$cache_root/latest" "$marketplace_plugin_link"
 
-    host_path="$cache_root/latest/extension-host/linux/$extension_arch/extension-host"
-    [ -x "$host_path" ] || return 0
+    [ -x "$cache_root/latest/extension-host/linux/$extension_arch/extension-host" ] || return 0
+    host_path="$(write_chrome_native_host_launcher "$cache_root")" || return 0
     write_chrome_native_host_manifests "$host_path" "$cache_root/latest" || \
         echo "Chrome native host manifest sync failed; continuing with existing browser manifests."
 }
