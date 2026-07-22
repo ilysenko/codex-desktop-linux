@@ -347,6 +347,33 @@ patchFileFirstMatch(path.join(scriptsDir, "installManifest.mjs"), {
     'linux:[".config/google-chrome/NativeMessagingHosts",".config/google-chrome-beta/NativeMessagingHosts",".config/google-chrome-unstable/NativeMessagingHosts",".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",".config/chromium/NativeMessagingHosts"]',
 });
 
+patchFileFirstMatch(path.join(scriptsDir, "installManifest.mjs"), {
+  label: "Linux browser native host manifest realpath import",
+  oldTexts: [
+    'import{existsSync as A}from"node:fs";',
+  ],
+  newText:
+    'import{existsSync as A,realpathSync as Z}from"node:fs";',
+});
+
+patchFileFirstMatch(path.join(scriptsDir, "installManifest.mjs"), {
+  label: "Linux browser native host manifest canonical path resolution",
+  oldTexts: [
+    'let e=P.resolve(t).split(P.sep),o=e.lastIndexOf("cache");return o<1||e[o-1]!=="plugins"||e.length<=o+3?t:P.resolve(t,"..","latest")',
+  ],
+  newText:
+    'let e=P.resolve(t).split(P.sep),o=e.lastIndexOf("cache");if(o<1||e[o-1]!=="plugins"||e.length<=o+3)return t;let r=P.resolve(t,"..","latest");try{return A(r)?Z(r):r}catch{return r}',
+});
+
+patchFileFirstMatch(path.join(scriptsDir, "installManifest.mjs"), {
+  label: "Linux browser native host manifest directory permission normalization",
+  oldTexts: [
+    'await w(x(d),{recursive:!0})',
+  ],
+  newText:
+    'await w(x(d),{recursive:!0,mode:493})',
+});
+
 patchFile(path.join(scriptsDir, "check-native-host-manifest.js"), [
   {
     label: "Linux native host manifest locations",
