@@ -346,22 +346,50 @@ fn sanitize_git_remote(remote: Option<String>) -> Option<String> {
         || Path::new(&value).is_absolute()
         || value.starts_with("./")
         || value.starts_with("../")
+        || value.starts_with('~')
+        || value.contains('\\')
     {
         return None;
     }
 
     if let Ok(mut url) = reqwest::Url::parse(&value) {
-        if url.scheme() == "file" {
+        if !matches!(url.scheme(), "http" | "https" | "ssh" | "git") || url.host_str().is_none() {
             return None;
         }
-        if matches!(url.scheme(), "http" | "https") {
-            url.set_username("").ok()?;
-            url.set_password(None).ok()?;
-            return Some(url.to_string());
-        }
+        url.set_username("").ok()?;
+        url.set_password(None).ok()?;
+        url.set_query(None);
+        url.set_fragment(None);
+        return Some(url.to_string());
     }
 
-    Some(value)
+    sanitize_scp_like_git_remote(&value)
+}
+
+fn sanitize_scp_like_git_remote(remote: &str) -> Option<String> {
+    if remote.contains("::")
+        || remote.chars().any(char::is_whitespace)
+        || remote.contains(['?', '#'])
+    {
+        return None;
+    }
+
+    let host_start = remote.rfind('@').map_or(0, |index| index + 1);
+    let separator = host_start + remote[host_start..].find(':')?;
+    let authority = &remote[..separator];
+    let path = &remote[separator + 1..];
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if host.is_empty()
+        || host.contains(['/', '\\', ':'])
+        || path.is_empty()
+        || path.starts_with(['/', '.', '~'])
+    {
+        return None;
+    }
+
+    Some(format!("{host}:{path}"))
 }
 
 fn stage_git_source_info(source_root: &Path, destination_root: &Path) -> Result<()> {
@@ -1215,6 +1243,43 @@ fi
             "{\"commit\":\"packaged\"}\n"
         );
         Ok(())
+    }
+
+    #[test]
+    fn sanitizes_credential_bearing_network_remotes() {
+        assert_eq!(
+            sanitize_git_remote(Some(
+                "ssh://builder:secret-token@github.com/example/codex-desktop-linux.git".to_string()
+            )),
+            Some("ssh://github.com/example/codex-desktop-linux.git".to_string())
+        );
+        assert_eq!(
+            sanitize_git_remote(Some(
+                "private-user@github.com:example/codex-desktop-linux.git".to_string()
+            )),
+            Some("github.com:example/codex-desktop-linux.git".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_local_and_custom_git_remotes() {
+        for remote in [
+            "/home/builder/private/codex-desktop-linux",
+            "./private/codex-desktop-linux",
+            "../private/codex-desktop-linux",
+            "~/private/codex-desktop-linux",
+            "private/codex-desktop-linux",
+            "file:///home/builder/private/codex-desktop-linux",
+            "C:\\Users\\builder\\private\\codex-desktop-linux",
+            "ext::ssh -i /home/builder/.ssh/private_key github.com %S",
+            "custom://builder:secret@internal.example/private/repo.git",
+        ] {
+            assert_eq!(
+                sanitize_git_remote(Some(remote.to_string())),
+                None,
+                "remote should be rejected: {remote}"
+            );
+        }
     }
 
     #[test]
