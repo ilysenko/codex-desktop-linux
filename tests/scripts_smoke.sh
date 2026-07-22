@@ -8438,6 +8438,7 @@ test_linux_tray_patch_smoke() {
     mkdir -p "$workspace"
     bundle_body="$(cat <<'JS'
 const x={o:e=>e};let s=require(`node:url`),n=require(`electron`);n=x.o(n);let l=require(`node:os`);l=x.o(l);let i=require(`node:path`);i=x.o(i);let d=require(`node:util`),q=require(`node:crypto`),a=require(`node:fs`);a=x.o(a);
+var H9=null,K9=!1;function q9(){return K9&&H9?.isReady()===!0}
 async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return process.platform!==`linux`;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():process.platform!==`linux`}
 async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new n.Tray(t.defaultIcon);r.setToolTip(n.app.getName());let i=new pb(r);return!await i.waitForReady()?(i.destroy(),null):i}
 async function pae(e,t,r){if(process.platform===`darwin`)return null;if(process.platform===`linux`){let a=`${fv(e,t)}.png`,o=n.nativeImage.createFromPath(n.app.isPackaged?(0,i.join)(process.resourcesPath,a):(0,i.join)(r,`electron`,`src`,`icons`,a));if(o.isEmpty())throw Error(`Linux tray application icon is unavailable`);return{defaultIcon:o.resize({width:V9,height:V9,quality:`best`}),chronicleRunningIcon:null}}return null}
@@ -8449,14 +8450,15 @@ JS
     make_fake_extracted_asar "$extracted" "$bundle_body"
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_contains "$extracted/.vite/build/main-test.js" '(process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())'
+    assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`win32`&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())&&this.options.canHideLastWindowToTray?.()===!0'
+    assert_contains "$extracted/.vite/build/main-test.js" 'function q9(){return process.platform!==`linux`&&K9&&H9?.isReady()===!0}'
     assert_contains "$extracted/.vite/build/main-test.js" 'r=codexLinuxRegisterTray(new n.Tray(t.defaultIcon))'
     assert_contains "$extracted/.vite/build/main-test.js" 'if(typeof t.whenReady!=`function`)return!0'
     assert_contains "$extracted/.vite/build/main-test.js" 'return typeof t.isReady==`function`?t.isReady():!0'
     assert_contains "$extracted/.vite/build/main-test.js" 'let __codexLinuxTrayFallbackIcon=n.nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)'
     assert_contains "$extracted/.vite/build/main-test.js" 'if(!__codexLinuxTrayFallbackIcon.isEmpty())o=__codexLinuxTrayFallbackIcon'
     assert_contains "$extracted/.vite/build/main-test.js" 'updatePersistentTrayMenu(){process.platform===`linux`'
-    assert_contains "$extracted/.vite/build/main-test.js" '(E||process.platform===`linux`)&&oe();'
+    assert_contains "$extracted/.vite/build/main-test.js" '(E||process.platform===`linux`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&oe();'
     assert_not_contains "$output_log" 'WARN: Could not find current Linux'
     node - "$extracted/.vite/build/main-test.js" <<'NODE'
 const fs = require("fs");
@@ -8527,8 +8529,8 @@ function runClose(options) {
 }
 
 let result = runClose({ trayEnabled: true, quitInProgress: false, isAppQuitting: false });
-if (!result.event.prevented || result.state.hideCalls !== 1) {
-  throw new Error("normal Linux close should still hide to tray");
+if (result.event.prevented || result.state.hideCalls !== 0) {
+  throw new Error("normal Linux close should exit instead of hiding to tray");
 }
 
 result = runClose({ trayEnabled: true, quitInProgress: true, isAppQuitting: false });
@@ -8542,8 +8544,8 @@ if (result.event.prevented || result.state.hideCalls !== 0) {
 }
 
 result = runCloseWithoutHelper({ trayEnabled: true, isAppQuitting: false });
-if (!result.event.prevented || result.state.hideCalls !== 1) {
-  throw new Error("Linux close should still hide to tray when the quit helper is unavailable");
+if (result.event.prevented || result.state.hideCalls !== 0) {
+  throw new Error("Linux close should exit when the quit helper is unavailable");
 }
 NODE
 
@@ -8552,7 +8554,7 @@ NODE
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'let __codexLinuxTrayFallbackIcon=' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'if(typeof t.whenReady!=`function`)return!0' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'return typeof t.isReady==`function`?t.isReady():!0' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" '!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'function q9(){return process.platform!==`linux`&&K9&&H9?.isReady()===!0}' '1'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxRegisterTray=e=>(codexLinuxTray=e,e)'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxDestroyTray=()=>{if(process.platform!==`linux`)return;'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0,codexLinuxDestroyTray()}'

@@ -1334,6 +1334,7 @@ test("subagent nickname metadata descriptor follows upstream metadata bundle nam
 
 function trayBundleFixture() {
   return [
+    "var H9=null,K9=!1;function q9(){return K9&&H9?.isReady()===!0}",
     "async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return process.platform!==`linux`;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():process.platform!==`linux`}",
     "async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new c.Tray(t.defaultIcon);r.setToolTip(c.app.getName());let i=new pb(r);return!await i.waitForReady()?(i.destroy(),null):i}",
     "async function pae(e,t,n){if(process.platform===`darwin`)return null;if(process.platform===`linux`){let r=`${fv(e,t)}.png`,i=c.nativeImage.createFromPath(c.app.isPackaged?(0,u.join)(process.resourcesPath,r):(0,u.join)(n,`electron`,`src`,`icons`,r));if(i.isEmpty())throw Error(`Linux tray application icon is unavailable`);return{defaultIcon:i.resize({width:V9,height:V9,quality:`best`}),chronicleRunningIcon:null}}return null}",
@@ -1348,8 +1349,9 @@ function currentTrayLifecycleBundleFixture() {
     "let codexLinuxQuitInProgress=!1,codexLinuxExplicitQuitApproved=!1,codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0},codexLinuxPrepareForExplicitQuit=()=>{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress()},codexLinuxShouldBypassQuitPrompt=()=>codexLinuxExplicitQuitApproved===!0,codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0;",
     "v&&k.on(`close`,e=>{let t=this.getPrimaryWindows().some(e=>e!==k);if((process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}});",
     "async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return!0;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():!0}",
-    "var H9=null,U9=null,G9=!1;async function fae(e){return G9=!0,U9??H9??(U9=(async()=>{let t={defaultIcon:e},r=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!G9)return r.destroy(),null;r.setToolTip(c.app.getName());let i=new pb(r);return H9=i,!await i.waitForReady()||H9!==i?(H9===i&&(H9=null,i.destroy()),null):i})().finally(()=>{U9=null}),U9)}",
+    "var H9=null,U9=null,G9=!1,K9=!1;function q9(){return K9&&H9?.isReady()===!0}async function fae(e){return G9=!0,U9??H9??(U9=(async()=>{let t={defaultIcon:e},r=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!G9)return r.destroy(),null;r.setToolTip(c.app.getName());let i=new pb(r);return H9=i,!await i.waitForReady()||H9!==i?(H9===i&&(H9=null,i.destroy()),null):i})().finally(()=>{U9=null}),U9)}",
     "var pb=class{constructor(e){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}destroy(){this.tray.destroy()}isReady(){return _j(this.tray)}waitForReady(){return gj(this.tray)}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(c.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}}",
+    "let oe=async()=>{await fae({})};(E||process.platform===`linux`)&&oe();",
   ].join("");
 }
 
@@ -2529,6 +2531,36 @@ test("accepts stock Electron tray readiness and falls back to the Linux app icon
     patched,
     /if\(!__codexLinuxTrayFallbackIcon\.isEmpty\(\)\)i=__codexLinuxTrayFallbackIcon/,
   );
+  assert.match(
+    patched,
+    /if\(process\.platform===`win32`&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastWindowToTray/,
+  );
+  assert.doesNotMatch(
+    patched,
+    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting/,
+  );
+  assert.match(
+    patched,
+    /function q9\(\)\{return process\.platform!==`linux`&&K9&&H9\?\.isReady\(\)===!0\}/,
+  );
+  assert.match(
+    patched,
+    /\(E\|\|process\.platform===`linux`&&\(typeof codexLinuxIsTrayEnabled!==`function`\|\|codexLinuxIsTrayEnabled\(\)\)\)&&oe\(\)/,
+  );
+
+  const trayLivenessPredicate = patched.match(
+    /function q9\(\)\{[^}]+\}/,
+  )?.[0];
+  assert.ok(trayLivenessPredicate);
+  const trayReady = { isReady: () => true };
+  const evaluateTrayLiveness = (platform) => new Function(
+    "process",
+    "K9",
+    "H9",
+    `${trayLivenessPredicate};return q9();`,
+  )({ platform }, true, trayReady);
+  assert.equal(evaluateTrayLiveness("linux"), false);
+  assert.equal(evaluateTrayLiveness("win32"), true);
 
   const readinessHelpers = patched.match(
     /async function gj\(e\)\{let t=e;[^]*?\}function _j\(e\)\{let t=e;[^}]+\}/,
@@ -4861,6 +4893,35 @@ test("persists Linux settings under the effective side-by-side app id", () => {
   }
 });
 
+test("uses collision-safe modules for Linux settings persistence", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-collision-"));
+  try {
+    const settingsFile = path.join(tempRoot, "config", "codex-desktop", "settings.json");
+    const source = [
+      "function unrelated(){let f=require(`node:path`),r=require(`node:fs`);return[f,r]}",
+      "var s=`.codex-global-state.json`;",
+      "const h={\"set-global-state\":async({key:a,value:b,origin:c})=>(this.globalState.set(a,b),Promise.resolve())};",
+    ].join("");
+    const patched = applyPatchTwice(applyLinuxSettingsPersistencePatch, source);
+
+    assert.match(patched, /let __codexLinuxFs=require\(`node:fs`\)/);
+    assert.match(patched, /__codexLinuxPath=require\(`node:path`\)/);
+    runSettingsPersistence(
+      patched,
+      { CODEX_LINUX_SETTINGS_FILE: settingsFile },
+      "codex-linux-system-tray-enabled",
+      false,
+    );
+
+    assert.equal(
+      JSON.parse(fs.readFileSync(settingsFile, "utf8"))["codex-linux-system-tray-enabled"],
+      false,
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("persists Linux settings with current setGlobalStateValue handler shape", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-current-shape-"));
   try {
@@ -4976,7 +5037,10 @@ test("adds Linux launch actions through current setSecondInstanceArgsHandler bun
   );
   const prewarmPatched = applyPatchTwice(applyLinuxHotkeyWindowPrewarmPatch, launchPatched);
 
-  assert.match(launchPatched, /codexLinuxGetSetting=e=>process\.platform!==`linux`\|\|j\.globalState\.get\(e\)!==!1/);
+  assert.match(
+    launchPatched,
+    /codexLinuxGetSetting=e=>process\.platform!==`linux`\|\|\(typeof codexLinuxReadSettingsFile===`function`&&codexLinuxReadSettingsFile\(\)\[e\]===!1\?!1:j\.globalState\.get\(e\)!==!1\)/,
+  );
   assert.match(launchPatched, /codexLinuxStartLaunchActionSocket=\(\)=>/);
   assert.match(launchPatched, /codexLinuxDefaultLaunchActionSocket=\(\)=>/);
   assert.match(launchPatched, /process\.env\.CODEX_DESKTOP_LAUNCH_ACTION_SOCKET\?\.trim\(\)\|\|codexLinuxDefaultLaunchActionSocket\(\)/);

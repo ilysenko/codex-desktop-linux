@@ -5,20 +5,37 @@ const { requireName } = require("../../lib/minified-js.js");
 function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   let patchedSource = currentSource;
 
+  // Linux follows the native window-control contract: minimize keeps the app
+  // available in the tray, while closing the last window exits the app.
   const closeToTrayPattern =
     /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)\.preventDefault\(\),([A-Za-z_$][\w$]*)\.hide\(\);return\}/;
-  const guardedCloseToTrayPattern =
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)/;
-  if (!guardedCloseToTrayPattern.test(patchedSource)) {
+  const linuxCloseExitsPattern =
+    /if\(process\.platform===`win32`&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)/;
+  if (!linuxCloseExitsPattern.test(patchedSource)) {
     const match = patchedSource.match(closeToTrayPattern);
     if (match == null) {
-      console.warn("WARN: Could not find current Linux close-to-tray condition — skipping Linux tray quit guard patch");
+      console.warn("WARN: Could not find current Linux close-to-tray condition — skipping Linux close-button patch");
       return currentSource;
     }
     const [, hasOtherWindowVar, eventVar, windowVar] = match;
     patchedSource = patchedSource.replace(
       closeToTrayPattern,
-      `if((process.platform===\`win32\`||process.platform===\`linux\`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress())&&this.options.canHideLastWindowToTray?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
+      `if(process.platform===\`win32\`&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress())&&this.options.canHideLastWindowToTray?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
+    );
+  }
+
+  const trayKeepsLinuxAlivePattern =
+    /function ([A-Za-z_$][\w$]*)\(\)\{return ([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\?\.isReady\(\)===!0\}/;
+  const trayDoesNotKeepLinuxAlivePattern =
+    /function ([A-Za-z_$][\w$]*)\(\)\{return process\.platform!==`linux`&&([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\?\.isReady\(\)===!0\}/;
+  if (!trayDoesNotKeepLinuxAlivePattern.test(patchedSource)) {
+    if (!trayKeepsLinuxAlivePattern.test(patchedSource)) {
+      console.warn("WARN: Could not find current tray liveness predicate — skipping Linux close-button patch");
+      return currentSource;
+    }
+    patchedSource = patchedSource.replace(
+      trayKeepsLinuxAlivePattern,
+      "function $1(){return process.platform!==`linux`&&$2&&$3?.isReady()===!0}",
     );
   }
 
@@ -111,6 +128,21 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
       patchedSource.slice(0, factoryIndex) +
       retentionHelper +
       patchedSource.slice(factoryIndex);
+  }
+
+  const unconditionalLinuxTrayStartupPattern =
+    /\(([A-Za-z_$][\w$]*)\|\|process\.platform===`linux`\)&&([A-Za-z_$][\w$]*)\(\);/;
+  const settingsAwareLinuxTrayStartupPattern =
+    /\(([A-Za-z_$][\w$]*)\|\|process\.platform===`linux`&&\(typeof codexLinuxIsTrayEnabled!==`function`\|\|codexLinuxIsTrayEnabled\(\)\)\)&&([A-Za-z_$][\w$]*)\(\);/;
+  if (!settingsAwareLinuxTrayStartupPattern.test(patchedSource)) {
+    if (!unconditionalLinuxTrayStartupPattern.test(patchedSource)) {
+      console.warn("WARN: Could not find current Linux tray startup condition — skipping tray setting patch");
+      return currentSource;
+    }
+    patchedSource = patchedSource.replace(
+      unconditionalLinuxTrayStartupPattern,
+      "($1||process.platform===`linux`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&$2();",
+    );
   }
 
   return patchedSource;
