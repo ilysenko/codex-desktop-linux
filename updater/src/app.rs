@@ -66,9 +66,11 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
     let mut state =
         PersistedState::load_or_default(&paths.state_file, effective_auto_install(&config))?;
-    let original_state = state.clone();
-    state.installed_version = install::installed_package_version();
-    persist_if_changed(&paths, &state, &original_state)?;
+    if !matches!(&cli.command, Commands::Daemon | Commands::CheckNow { .. }) {
+        let original_state = state.clone();
+        state.installed_version = install::installed_package_version();
+        persist_if_changed(&paths, &state, &original_state)?;
+    }
 
     match cli.command {
         Commands::Daemon => run_daemon(&config, &mut state, &paths).await,
@@ -264,6 +266,44 @@ fn maybe_prune_caches(config: &RuntimeConfig, state: &PersistedState) {
     maybe_prune_generated_artifacts(config);
 }
 
+fn run_daemon_startup_maintenance(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<()> {
+    let _check_lock = match try_acquire_check_lock(paths) {
+        Ok(Some(check_lock)) => check_lock,
+        Ok(None) => {
+            info!("skipping updater startup maintenance because another check is already active");
+            return Ok(());
+        }
+        Err(error) => {
+            warn!(
+                ?error,
+                "skipping updater startup maintenance because the check lock is unavailable"
+            );
+            return Ok(());
+        }
+    };
+
+    if let Err(error) = reload_state_from_disk(config, state, paths) {
+        warn!(
+            ?error,
+            "skipping updater startup maintenance because persisted state could not be reloaded"
+        );
+        return Ok(());
+    }
+
+    sync_and_persist(config, state, paths)?;
+    recover_interrupted_install(state, paths)?;
+    complete_current_dmg_update_if_already_installed(config, state, paths)?;
+    codex_cli::reconcile_if_present(state, paths)?;
+    normalize_workspace_dir_and_persist(state, paths)?;
+    maybe_prune_caches(config, state);
+    maybe_notify_cli_missing(state, paths, config.notifications)?;
+    Ok(())
+}
+
 fn clear_wrapper_update_candidate_and_persist(
     state: &mut PersistedState,
     paths: &RuntimePaths,
@@ -350,6 +390,12 @@ struct CheckLock {
     _file: fs::File,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum CheckLockBehavior {
+    SkipIfBusy,
+    Wait,
+}
+
 fn try_acquire_check_lock(paths: &RuntimePaths) -> Result<Option<CheckLock>> {
     let lock_path = paths.state_dir.join("check.lock");
     let mut file = OpenOptions::new()
@@ -363,7 +409,6 @@ fn try_acquire_check_lock(paths: &RuntimePaths) -> Result<Option<CheckLock>> {
     match file.try_lock() {
         Ok(()) => {}
         Err(fs::TryLockError::WouldBlock) => {
-            info!("skipping upstream check because another check is already active");
             return Ok(None);
         }
         Err(fs::TryLockError::Error(error)) => {
@@ -379,6 +424,28 @@ fn try_acquire_check_lock(paths: &RuntimePaths) -> Result<Option<CheckLock>> {
         .with_context(|| format!("Failed to write {}", lock_path.display()))?;
 
     Ok(Some(CheckLock { _file: file }))
+}
+
+async fn acquire_check_lock(
+    paths: &RuntimePaths,
+    behavior: CheckLockBehavior,
+) -> Result<Option<CheckLock>> {
+    let mut logged_wait = false;
+    loop {
+        if let Some(check_lock) = try_acquire_check_lock(paths)? {
+            return Ok(Some(check_lock));
+        }
+
+        if behavior == CheckLockBehavior::SkipIfBusy {
+            return Ok(None);
+        }
+
+        if !logged_wait {
+            info!("waiting for the active updater flow before forcing an upstream check");
+            logged_wait = true;
+        }
+        time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 fn update_install_is_pending(status: &UpdateStatus) -> bool {
@@ -441,13 +508,7 @@ async fn run_daemon(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
-    sync_and_persist(config, state, paths)?;
-    recover_interrupted_install(state, paths)?;
-    complete_current_dmg_update_if_already_installed(config, state, paths)?;
-    codex_cli::reconcile_if_present(state, paths)?;
-    normalize_workspace_dir_and_persist(state, paths)?;
-    maybe_prune_caches(config, state);
-    maybe_notify_cli_missing(state, paths, config.notifications)?;
+    run_daemon_startup_maintenance(config, state, paths)?;
     if packaged_runtime_removed(config) {
         info!("packaged app files are gone; stopping updater daemon");
         return Ok(());
@@ -508,28 +569,12 @@ async fn run_check_now(
     paths: &RuntimePaths,
     if_stale: bool,
 ) -> Result<()> {
-    sync_and_persist(config, state, paths)?;
-    recover_interrupted_install(state, paths)?;
-    complete_current_dmg_update_if_already_installed(config, state, paths)?;
-    codex_cli::reconcile_if_present(state, paths)?;
-    normalize_workspace_dir_and_persist(state, paths)?;
-    maybe_prune_caches(config, state);
-    maybe_notify_cli_missing(state, paths, config.notifications)?;
-    if if_stale
-        && !update_check_should_retry(&state.status)
-        && upstream_check_is_fresh(config, state)
-    {
-        if let Err(error) = detect_and_record_wrapper_update(config, state, paths) {
-            warn!(
-                ?error,
-                "wrapper update detection failed during fresh check-now"
-            );
-        }
-        info!("skipping check-now because the last successful upstream check is still fresh");
-        return reconcile_pending_install(config, state, paths).await;
-    }
-    run_check_cycle(config, state, paths).await?;
-    reconcile_pending_install(config, state, paths).await
+    let lock_behavior = if if_stale {
+        CheckLockBehavior::SkipIfBusy
+    } else {
+        CheckLockBehavior::Wait
+    };
+    run_check_cycle_with_options(config, state, paths, lock_behavior, if_stale, true, true).await
 }
 
 /// Detects a newer wrapper release and records it into state. Returns
@@ -976,15 +1021,62 @@ async fn run_check_cycle_from_disk(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
-    reload_state_from_disk(config, state, paths)?;
-    run_check_cycle(config, state, paths).await
+    run_check_cycle_with_options(
+        config,
+        state,
+        paths,
+        CheckLockBehavior::SkipIfBusy,
+        false,
+        false,
+        false,
+    )
+    .await
 }
 
+#[cfg(test)]
 async fn run_check_cycle(
     config: &RuntimeConfig,
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
+    state.save(&paths.state_file)?;
+    run_check_cycle_with_options(
+        config,
+        state,
+        paths,
+        CheckLockBehavior::SkipIfBusy,
+        false,
+        false,
+        false,
+    )
+    .await
+}
+
+async fn run_check_cycle_with_options(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    lock_behavior: CheckLockBehavior,
+    if_stale: bool,
+    recover_entrypoint_state: bool,
+    reconcile_after_check: bool,
+) -> Result<()> {
+    let Some(_check_lock) = acquire_check_lock(paths, lock_behavior).await? else {
+        info!("skipping upstream check because another check is already active");
+        return Ok(());
+    };
+
+    // Reload only after entering the serialization boundary. Every operation
+    // below can persist the complete state document, so using a snapshot read
+    // before the lock could overwrite an active checker's workspace metadata.
+    reload_state_from_disk(config, state, paths)?;
+    if recover_entrypoint_state {
+        recover_interrupted_install(state, paths)?;
+        complete_current_dmg_update_if_already_installed(config, state, paths)?;
+        normalize_workspace_dir_and_persist(state, paths)?;
+        maybe_notify_cli_missing(state, paths, config.notifications)?;
+    }
+
     // Keep wrapper state fresh even while a DMG package is pending; otherwise
     // `status --json` could keep advertising stale wrapper candidates.
     if let Err(error) = detect_and_record_wrapper_update(config, state, paths) {
@@ -993,6 +1085,10 @@ async fn run_check_cycle(
 
     if update_install_is_pending(&state.status) {
         info!("skipping upstream check because an update is already pending");
+        maybe_prune_caches(config, state);
+        if reconcile_after_check {
+            reconcile_pending_install(config, state, paths).await?;
+        }
         return Ok(());
     }
 
@@ -1003,13 +1099,20 @@ async fn run_check_cycle(
         );
     }
 
-    let Some(_check_lock) = try_acquire_check_lock(paths)? else {
+    if if_stale
+        && !update_check_should_retry(&state.status)
+        && upstream_check_is_fresh(config, state)
+    {
+        info!("skipping check-now because the last successful upstream check is still fresh");
+        maybe_prune_caches(config, state);
+        if reconcile_after_check {
+            reconcile_pending_install(config, state, paths).await?;
+        }
         return Ok(());
-    };
+    }
 
     let client = upstream::http_client()?;
 
-    sync_runtime_state(config, state);
     let retrying_update = prepare_upstream_check(state, paths)?;
 
     let result: Result<()> = async {
@@ -1103,6 +1206,10 @@ async fn run_check_cycle(
         return Err(error);
     }
 
+    if reconcile_after_check {
+        reconcile_pending_install(config, state, paths).await?;
+    }
+
     Ok(())
 }
 
@@ -1111,6 +1218,10 @@ async fn reconcile_pending_install_from_disk(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
+    let Some(_check_lock) = acquire_check_lock(paths, CheckLockBehavior::SkipIfBusy).await? else {
+        info!("skipping pending install reconciliation because another updater flow is active");
+        return Ok(());
+    };
     reload_state_from_disk(config, state, paths)?;
     reconcile_pending_install(config, state, paths).await
 }
@@ -2285,6 +2396,7 @@ mod tests {
         state.candidate_wrapper_version = Some("0.9.0".to_string());
         state.wrapper_changelog = Some("old changelog".to_string());
         state.wrapper_dev_mode = Some(true);
+        state.save(&paths.state_file)?;
 
         runtime.block_on(run_check_now(&config, &mut state, &paths, true))?;
 
@@ -2600,6 +2712,220 @@ mod tests {
         }
 
         assert!(reacquired_lock.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn forced_check_now_waits_for_startup_maintenance_lock_then_checks_upstream() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let server = MockServer::start().await;
+            let body_len = 42;
+            Mock::given(method("HEAD"))
+                .and(path("/Codex.dmg"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("ETag", "\"unchanged\"")
+                        .insert_header("Content-Length", body_len.to_string()),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let temp = tempfile::tempdir()?;
+            let paths = test_paths(temp.path());
+            paths.ensure_dirs()?;
+            let mut config = test_config(temp.path());
+            config.dmg_url = format!("{}/Codex.dmg", server.uri());
+            let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+                "HOME",
+                "PATH",
+                "NVM_DIR",
+                "XDG_CONFIG_HOME",
+                "CODEX_CLI_PATH",
+                "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            ]);
+            std::env::set_var("HOME", temp.path());
+            std::env::set_var("PATH", temp.path().join("missing-bin"));
+            std::env::remove_var("NVM_DIR");
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::remove_var("CODEX_CLI_PATH");
+            std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+
+            let mut persisted_state = PersistedState::new(true);
+            persisted_state.remote_headers_fingerprint = Some(format!(
+                "etag=\"unchanged\"|last_modified=|content_length={body_len}"
+            ));
+            persisted_state.dmg_sha256 = Some("cached-dmg".to_string());
+            persisted_state.last_successful_check_at = Some(Utc::now());
+            persisted_state.save(&paths.state_file)?;
+
+            let active_maintenance =
+                try_acquire_check_lock(&paths)?.expect("startup maintenance should hold the lock");
+            let started = tokio::time::Instant::now();
+            let release_maintenance = async move {
+                time::sleep(Duration::from_millis(100)).await;
+                drop(active_maintenance);
+            };
+            let mut stale_state = PersistedState::new(true);
+            let forced_check = run_check_now(&config, &mut stale_state, &paths, false);
+
+            let (check_result, ()) = tokio::join!(forced_check, release_maintenance);
+            check_result?;
+            server.verify().await;
+
+            assert!(started.elapsed() >= Duration::from_millis(75));
+            assert!(stale_state.last_check_at.is_some());
+            assert_eq!(stale_state.status, UpdateStatus::Idle);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn daemon_startup_does_not_persist_stale_state_or_prune_while_check_is_active() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let workspace = config.workspace_root.join("workspaces/active-build");
+        std::fs::create_dir_all(workspace.join("builder"))?;
+        std::fs::write(workspace.join("builder/install.sh"), b"#!/bin/sh\n")?;
+
+        let mut persisted_state = PersistedState::new(true);
+        persisted_state.status = UpdateStatus::PatchingApp;
+        persisted_state.candidate_version = Some("2999.07.23.010927+05a76850".to_string());
+        persisted_state.artifact_paths.workspace_dir = Some(workspace.clone());
+        persisted_state.save(&paths.state_file)?;
+
+        let _active_check =
+            try_acquire_check_lock(&paths)?.expect("active check should acquire the lock");
+        let mut stale_state = PersistedState::new(true);
+        stale_state.installed_version = "stale-entrypoint-snapshot".to_string();
+
+        run_daemon_startup_maintenance(&config, &mut stale_state, &paths)?;
+
+        let after = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(after.status, UpdateStatus::PatchingApp);
+        assert_eq!(
+            after.candidate_version.as_deref(),
+            Some("2999.07.23.010927+05a76850")
+        );
+        assert_eq!(
+            after.artifact_paths.workspace_dir.as_deref(),
+            Some(workspace.as_path())
+        );
+        assert!(workspace.join("builder/install.sh").exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn daemon_reconcile_does_not_persist_stale_state_while_check_is_active() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let workspace = config.workspace_root.join("workspaces/active-build");
+        std::fs::create_dir_all(workspace.join("builder"))?;
+
+        let mut persisted_state = PersistedState::new(true);
+        persisted_state.status = UpdateStatus::BuildingPackage;
+        persisted_state.candidate_version = Some("2999.07.23.010927+05a76850".to_string());
+        persisted_state.artifact_paths.workspace_dir = Some(workspace.clone());
+        persisted_state.save(&paths.state_file)?;
+
+        let _active_check =
+            try_acquire_check_lock(&paths)?.expect("active check should acquire the lock");
+        let mut stale_state = PersistedState::new(true);
+
+        reconcile_pending_install_from_disk(&config, &mut stale_state, &paths).await?;
+
+        let after = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(after.status, UpdateStatus::BuildingPackage);
+        assert_eq!(
+            after.artifact_paths.workspace_dir.as_deref(),
+            Some(workspace.as_path())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn daemon_startup_reloads_active_workspace_state_after_locking() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_CONFIG_HOME",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+        ]);
+        std::env::set_var("HOME", temp.path());
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+
+        let workspace = config.workspace_root.join("workspaces/active-build");
+        std::fs::create_dir_all(workspace.join("builder"))?;
+        std::fs::write(workspace.join("builder/install.sh"), b"#!/bin/sh\n")?;
+
+        let mut persisted_state = PersistedState::new(true);
+        persisted_state.status = UpdateStatus::PatchingApp;
+        persisted_state.artifact_paths.workspace_dir = Some(workspace.clone());
+        persisted_state.save(&paths.state_file)?;
+
+        let mut stale_state = PersistedState::new(true);
+        run_daemon_startup_maintenance(&config, &mut stale_state, &paths)?;
+
+        assert_eq!(stale_state.status, UpdateStatus::PatchingApp);
+        assert_eq!(
+            stale_state.artifact_paths.workspace_dir.as_deref(),
+            Some(workspace.as_path())
+        );
+        assert!(workspace.join("builder/install.sh").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn daemon_startup_check_lock_failure_is_fail_soft() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let workspace = config.workspace_root.join("workspaces/unreferenced");
+        std::fs::create_dir_all(workspace.join("builder"))?;
+        std::fs::write(workspace.join("builder/install.sh"), b"#!/bin/sh\n")?;
+        std::fs::create_dir(paths.state_dir.join("check.lock"))?;
+        let mut state = PersistedState::new(true);
+
+        run_daemon_startup_maintenance(&config, &mut state, &paths)?;
+
+        assert!(workspace.join("builder/install.sh").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn daemon_startup_state_reload_failure_is_fail_soft() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let workspace = config.workspace_root.join("workspaces/unreferenced");
+        std::fs::create_dir_all(workspace.join("builder"))?;
+        std::fs::write(workspace.join("builder/install.sh"), b"#!/bin/sh\n")?;
+        std::fs::write(&paths.state_file, b"not json")?;
+        let mut state = PersistedState::new(true);
+
+        run_daemon_startup_maintenance(&config, &mut state, &paths)?;
+
+        assert!(workspace.join("builder/install.sh").exists());
+        assert_eq!(std::fs::read(&paths.state_file)?, b"not json");
         Ok(())
     }
 
