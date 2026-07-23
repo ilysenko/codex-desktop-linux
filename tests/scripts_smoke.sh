@@ -8836,7 +8836,7 @@ test_linux_explicit_quit_patch_smoke() {
     mkdir -p "$workspace"
     bundle_body="$(cat <<'JS'
 const x={o:e=>e};let s=require(`node:url`),n=require(`electron`);n=x.o(n);let l=require(`node:os`);l=x.o(l);let i=require(`node:path`);i=x.o(i);let d=require(`node:util`),q=require(`node:crypto`),a=require(`node:fs`);a=x.o(a);
-var pb=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{n.app.quit()}}]}};
+var pb=class{getNativeTrayMenuItems(){return[{label:this.systemQuitMenuItemLabel,click:()=>{n.app.quit()}}]}};
 function qB(r,o){if(o.type===`quit-app`){n.app.quit();return}return o}
 n.app.on(`before-quit`,o=>{let s=BI(),c=t.sr().some(e=>e.status===`ACTIVE`);if(e||i.canQuitWithoutPrompt()||r||!s&&!c){g=!0,a.markAppQuitting();return}let l=n.app.getName();if(n.dialog.showMessageBoxSync({type:`warning`,buttons:[`Quit`,`Cancel`],defaultId:0,cancelId:1,noLink:!0,title:`Quit ${l}?`,message:`Quit ${l}?`,detail:vB({hasInProgressLocalConversation:s,hasEnabledAutomations:c})})!==0){o.preventDefault();return}i.markQuitApproved(),g=!0,a.markAppQuitting()});
 n.app.on(`will-quit`,e=>{if(g=!0,!h){if(i.shouldSkipDrainBeforeQuit()){mB({hotkeyWindowLifecycleManager:c,globalDictationLifecycleManager:l,flushAndDisposeContexts:d,disposables:f});return}e.preventDefault(),h=!0,c.dispose(),l.dispose(),Promise.all([u.flush(),p.flush()]).finally(()=>{d(),f.dispose(),n.app.quit()})}});
@@ -8847,7 +8847,7 @@ JS
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxPrepareForExplicitQuit=()=>{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress()}'
     assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxShouldBypassQuitPrompt=()=>codexLinuxExplicitQuitApproved===!0'
-    assert_contains "$extracted/.vite/build/main-test.js" '{label:rB(this.appName),click:()=>{typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),n.app.quit()}}'
+    assert_contains "$extracted/.vite/build/main-test.js" '{label:this.systemQuitMenuItemLabel,click:()=>{typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),n.app.quit()}}'
     assert_contains "$extracted/.vite/build/main-test.js" 'if(o.type===`quit-app`){typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),n.app.quit();return}'
     assert_contains "$extracted/.vite/build/main-test.js" 'if((typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt())||e||i.canQuitWithoutPrompt()||r||!s&&!c){process.platform===`linux`&&typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),g=!0,a.markAppQuitting();return}'
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),i.markQuitApproved(),g=!0,a.markAppQuitting()'
@@ -8867,7 +8867,7 @@ const source = fs.readFileSync(process.argv[2], "utf8");
 const helperStart = source.indexOf("let codexLinuxTray=null");
 const helperEnd = source.indexOf(";n.app.on(`before-quit`,()=>codexLinuxDestroyTray())", helperStart) + 1;
 const helperSnippet = helperStart === -1 || helperEnd === 0 ? null : source.slice(helperStart, helperEnd);
-const traySnippet = source.match(/\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/)?.[0];
+const traySnippet = source.match(/\{label:this\.systemQuitMenuItemLabel,click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/)?.[0];
 const quitAppSnippet = source.match(/if\(o\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\);return\}/)?.[0];
 const beforeQuitSnippet = source.match(/if\(\(typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt\(\)\)\|\|e\|\|i\.canQuitWithoutPrompt\(\)\|\|r\|\|!s&&!c\)\{process\.platform===`linux`&&typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),g=!0,a\.markAppQuitting\(\);return\}/)?.[0];
 if (!helperSnippet || !traySnippet || !quitAppSnippet || !beforeQuitSnippet) {
@@ -8881,12 +8881,11 @@ function runTrayQuit({ withHelper = true } = {}) {
   const prepare = withHelper ? () => { state.prepareCalls += 1; mark(); } : undefined;
   const factory = new Function(
     "n",
-    "rB",
     "codexLinuxPrepareForExplicitQuit",
     "codexLinuxMarkQuitInProgress",
     `return (${traySnippet}).click;`,
   );
-  const click = factory({ app }, () => "Quit", prepare, mark);
+  const click = factory({ app }, prepare, mark);
   click();
   return state;
 }
@@ -8979,8 +8978,8 @@ JS
     cat > "$extracted/webview/assets/use-visible-settings-sections-test.js" <<'JS'
 var Xge={"general-settings":xh,"keyboard-shortcuts":ks,appearance:Pf,agent:gU};function n_e(){let e=e=>{switch(e.slug){case`general-settings`:case`agent`:case`personalization`:return!0;case`keyboard-shortcuts`:return!0}}}
 JS
-    cat > "$extracted/webview/assets/index-test.js" <<'JS'
-import{n as routeModule,s as routeToESM}from"./rolldown-runtime-test.js";import{I as routeJsxFactory,R as routeReactFactory}from"./shared-runtime-test.js";function Z(e){let r=(0,RouteReact.lazy)(e);function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(r,{children:t})}return SettingsRouteWrapper}var RouteReact,RouteJsx;routeModule(()=>{RouteReact=routeToESM(routeReactFactory(),1),RouteJsx=routeJsxFactory()})();var H7={},Zge=[`general-settings`,`import`,`profile`,`keyboard-shortcuts`,`appearance`,`agent`,`personalization`,`mcp-settings`,`connections`,`git-settings`,`local-environments`,`worktrees`,`browser-use`,`computer-use`,`data-controls`],Qge=[{key:`app`,heading:H7.appHeading,slugs:[`general-settings`,`import`,`profile`,`keyboard-shortcuts`,`appearance`,`connections`,`git-settings`,`usage`]}];function n_e(){if(O)bb0:switch(D.slug){case`usage`:k=g;break bb0;case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`account`:case`data-controls`:case`personalization`:k=!1;break bb0;case`keyboard-shortcuts`:k=!1;break bb0;}}function s_e(e){let{slug:n}=e,r=c_e[n];return (0,$.jsx)(r,{})}var c_e={"general-settings":Z(async()=>(await s(async()=>{let{GeneralSettings:e}=await import(`./general-settings-DZbwMmWz.js`);return{GeneralSettings:e}},[],import.meta.url)).GeneralSettings),"keyboard-shortcuts":Z(async()=>(await s(async()=>{let{KeyboardShortcutsSettings:e}=await import(`./keyboard-shortcuts-settings-test.js`);return{KeyboardShortcutsSettings:e}},[],import.meta.url)).KeyboardShortcutsSettings)};export{Z};
+    cat > "$extracted/webview/assets/app-initial-BTphDPeq.js" <<'JS'
+import{n as routeModule,s as routeToESM}from"./rolldown-runtime-test.js";import{I as routeJsxFactory,R as routeReactFactory}from"./shared-runtime-test.js";function Z(e){let r=(0,RouteReact.lazy)(e);function SettingsRouteWrapper(){let t=(0,RouteReact.useState)(null);return (0,RouteJsx.jsx)(r,{children:t})}return SettingsRouteWrapper}var RouteReact,RouteJsx;routeModule(()=>{RouteReact=routeToESM(routeReactFactory(),1),RouteJsx=routeJsxFactory()})();var c_e={"general-settings":Z(async()=>(await s(async()=>{let{GeneralSettings:e}=await import(`./general-settings-DZbwMmWz.js`);return{GeneralSettings:e}},[],import.meta.url)).GeneralSettings),"keyboard-shortcuts":Z(async()=>(await s(async()=>{let{KeyboardShortcutsSettings:e}=await import(`./keyboard-shortcuts-settings-test.js`);return{KeyboardShortcutsSettings:e}},[],import.meta.url)).KeyboardShortcutsSettings)};export{Z};
 JS
     cat > "$extracted/webview/assets/keyboard-shortcuts-settings-test.js" <<'JS'
 import{s as __toESM}from"./chunk-test.js";import{t as __reactFactory}from"./react-test.js";import{t as __jsxFactory}from"./jsx-runtime-test.js";function KeyboardShortcutsSettings(){let t=(0,React.useState)(null);return (0,$.jsx)(`div`,{children:t})}var React,$;initialize(()=>{React=__toESM(__reactFactory(),1),$=__jsxFactory()})();slug:`keyboard-shortcuts`;export{KeyboardShortcutsSettings};
@@ -8999,7 +8998,7 @@ JS
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-warm-start-enabled"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-prompt-window-enabled"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'import{t as Toggle}from"./linux-settings-toggle-linux.js?v='
-    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'import{codexLinuxReact as React,codexLinuxJsx as $}from"./index-test.js"'
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'import{codexLinuxReact as React,codexLinuxJsx as $}from"./app-initial-BTphDPeq.js"'
     assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "__reactFactory"
     assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "__jsxFactory"
     assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "function LinuxSwitch"
@@ -9010,14 +9009,12 @@ JS
     assert_contains "$extracted/webview/assets/settings-shared-test.js" "settings.section.linux-desktop"
     assert_contains "$extracted/webview/assets/use-visible-settings-sections-test.js" '"linux-desktop":xh,"general-settings":xh'
     assert_contains "$extracted/webview/assets/use-visible-settings-sections-test.js" 'case`linux-desktop`:return!0;case`general-settings`'
-    assert_contains "$extracted/webview/assets/index-test.js" "linux-desktop-settings-linux.js?v="
-    assert_contains "$extracted/webview/assets/index-test.js" 'export{Z,'
-    assert_contains "$extracted/webview/assets/index-test.js" 'RouteReact as codexLinuxReact,RouteJsx as codexLinuxJsx'
-    assert_contains "$extracted/webview/assets/index-test.js" '"linux-desktop":'
-    assert_contains "$extracted/webview/assets/index-test.js" 'Zge=\[`general-settings`,`linux-desktop`'
-    assert_contains "$extracted/webview/assets/index-test.js" 'slugs:\[`general-settings`,`linux-desktop`'
-    assert_not_contains "$extracted/webview/assets/index-test.js" "keybinds-settings-linux.js"
-    assert_not_contains "$extracted/webview/assets/index-test.js" "codexLinuxKeybindOverridesRuntime"
+    assert_contains "$extracted/webview/assets/app-initial-BTphDPeq.js" "linux-desktop-settings-linux.js?v="
+    assert_contains "$extracted/webview/assets/app-initial-BTphDPeq.js" 'export{Z,'
+    assert_contains "$extracted/webview/assets/app-initial-BTphDPeq.js" 'RouteReact as codexLinuxReact,RouteJsx as codexLinuxJsx'
+    assert_contains "$extracted/webview/assets/app-initial-BTphDPeq.js" '"linux-desktop":'
+    assert_not_contains "$extracted/webview/assets/app-initial-BTphDPeq.js" "keybinds-settings-linux.js"
+    assert_not_contains "$extracted/webview/assets/app-initial-BTphDPeq.js" "codexLinuxKeybindOverridesRuntime"
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_occurrence_count "$extracted/webview/assets/settings-sections-test.js" 'slug:`linux-desktop`' '1'
@@ -9025,7 +9022,7 @@ JS
     assert_occurrence_count "$extracted/webview/assets/settings-shared-test.js" "settings.section.linux-desktop" '1'
     assert_occurrence_count "$extracted/webview/assets/use-visible-settings-sections-test.js" '"linux-desktop"' '1'
     assert_occurrence_count "$extracted/webview/assets/use-visible-settings-sections-test.js" 'case`linux-desktop`' '1'
-    assert_occurrence_count "$extracted/webview/assets/index-test.js" "linux-desktop-settings-linux.js" '1'
+    assert_occurrence_count "$extracted/webview/assets/app-initial-BTphDPeq.js" "linux-desktop-settings-linux.js" '1'
 }
 
 test_keybinds_settings_patch_warns_on_bundle_shape_miss() {
@@ -9049,7 +9046,7 @@ JS
     cat > "$extracted/webview/assets/use-visible-settings-sections-test.js" <<'JS'
 var Xge={"general-settings":xh,appearance:Pf};
 JS
-    cat > "$extracted/webview/assets/index-test.js" <<'JS'
+    cat > "$extracted/webview/assets/app-initial-drift-test.js" <<'JS'
 var H7={},Zge=[`general-settings`,`appearance`],Qge=[{key:`app`,heading:H7.appHeading,slugs:[`general-settings`,`appearance`,`connections`,`git-settings`,`usage`]}];
 JS
 
@@ -9060,7 +9057,7 @@ JS
     [ ! -f "$extracted/webview/assets/linux-settings-section-linux.js" ] || fail "Fallback section asset should not be written when route bundle is missing"
     [ ! -f "$extracted/webview/assets/linux-settings-group-linux.js" ] || fail "Fallback group asset should not be written when route bundle is missing"
     assert_not_contains "$extracted/webview/assets/settings-sections-test.js" 'slug:`linux-desktop`'
-    assert_not_contains "$extracted/webview/assets/index-test.js" "linux-desktop-settings-linux.js"
+    assert_not_contains "$extracted/webview/assets/app-initial-drift-test.js" "linux-desktop-settings-linux.js"
 }
 
 test_browser_annotation_screenshot_patch_smoke() {

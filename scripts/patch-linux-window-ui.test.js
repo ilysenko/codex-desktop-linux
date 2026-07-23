@@ -2673,7 +2673,7 @@ test("marks Linux quit-in-progress for the quit-app IPC path", () => {
 
 test("supports explicit IPC quit patching when minified aliases drift", () => {
   const source =
-    "let x=require(`electron`);var q=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{x.app.quit()}}]}};if(m.type===`quit-app`){x.app.quit();return}";
+    "let x=require(`electron`);if(m.type===`quit-app`){x.app.quit();return}";
   const patched = applyPatchTwice(applyLinuxExplicitIpcQuitPatch, source);
 
   assert.match(
