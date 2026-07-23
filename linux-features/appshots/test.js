@@ -143,9 +143,7 @@ test("appshots availability descriptor matches the current bundle", () => {
     false,
   );
   assert.ok(
-    descriptor.pattern.test(
-      "app-initial~app-main~settings-command-menu-section-items~new-thread-panel-page~settings-pag~unq8yzli-twtaboLE.js",
-    ),
+    descriptor.pattern.test("app-initial-BTphDPeq.js"),
   );
 });
 

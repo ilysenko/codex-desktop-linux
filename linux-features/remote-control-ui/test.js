@@ -172,14 +172,7 @@ test("remote-control UI descriptors match the current app chunks", () => {
   const experimentalFeaturesPatch = featurePatches.find((patch) => patch.id === "experimental-features");
 
   assert.ok(
-    remoteConnectionsPatch.pattern.test(
-      "app-initial~app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~cci0ubce-CMWaEe8R.js",
-    ),
-  );
-  assert.ok(
-    remoteConnectionsPatch.pattern.test(
-      "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~d7o11fcp-DvxrzROJ.js",
-    ),
+    remoteConnectionsPatch.pattern.test("app-initial-BTphDPeq.js"),
   );
   assert.equal(
     remoteConnectionsPatch.pattern.test(
@@ -189,9 +182,7 @@ test("remote-control UI descriptors match the current app chunks", () => {
   );
 
   assert.ok(
-    remoteControlConnectionsPatch.pattern.test(
-      "app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-tqPfJ0ig.js",
-    ),
+    remoteControlConnectionsPatch.pattern.test("app-initial-BTphDPeq.js"),
   );
   assert.equal(
     remoteControlConnectionsPatch.pattern.test(
@@ -219,19 +210,10 @@ test("remote-control UI feature patches matching webview assets and records patc
         fs.writeFileSync(path.join(buildDir, "main.js"), "console.log('main bundle');");
         fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
 
+        const appInitialAsset = "app-initial-BTphDPeq.js";
         fs.writeFileSync(
-          path.join(
-            assetsDir,
-            "app-initial~app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~cci0ubce-CMWaEe8R.js",
-          ),
-          "function Twt(){let e=(0,kwt.c)(3),{data:t}=Vr(y4,Br(B2)),n=BN(`4114442250`);if(t?.config[`features.remote_connections`]===!0)return!0;let r=t?.config.features;if(typeof r!=`object`||!r||Array.isArray(r))return n;let i;return e[0]!==r||e[1]!==n?(i=Object.getOwnPropertyDescriptor(r,`remote_connections`)?.value===!0||n,e[0]=r,e[1]=n,e[2]=i):i=e[2],i}function D8(e){return e(RN,`4114442250`)?`enabled`:`disabled`}",
-        );
-        fs.writeFileSync(
-          path.join(
-            assetsDir,
-            "app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-tqPfJ0ig.js",
-          ),
-          "function a({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}",
+          path.join(assetsDir, appInitialAsset),
+          "function Twt(){let e=(0,kwt.c)(3),{data:t}=Vr(y4,Br(B2)),n=BN(`4114442250`);if(t?.config[`features.remote_connections`]===!0)return!0;let r=t?.config.features;if(typeof r!=`object`||!r||Array.isArray(r))return n;let i;return e[0]!==r||e[1]!==n?(i=Object.getOwnPropertyDescriptor(r,`remote_connections`)?.value===!0||n,e[0]=r,e[1]=n,e[2]=i):i=e[2],i}function D8(e){return e(RN,`4114442250`)?`enabled`:`disabled`}function a({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}",
         );
         fs.writeFileSync(
           path.join(assetsDir, "settings-route-state-BwIfDYxh.js"),
@@ -247,20 +229,14 @@ test("remote-control UI feature patches matching webview assets and records patc
 
         assert.match(
           fs.readFileSync(
-            path.join(
-              assetsDir,
-              "app-initial~app-main~new-thread-panel-page~onboarding-page~projects-index-page~appgen-libra~cci0ubce-CMWaEe8R.js",
-            ),
+            path.join(assetsDir, appInitialAsset),
             "utf8",
           ),
           /navigator\.userAgent\.includes\(`Linux`\)/,
         );
         assert.match(
           fs.readFileSync(
-            path.join(
-              assetsDir,
-              "app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-tqPfJ0ig.js",
-            ),
+            path.join(assetsDir, appInitialAsset),
             "utf8",
           ),
           /navigator\.userAgent\.includes\(`Linux`\)/,

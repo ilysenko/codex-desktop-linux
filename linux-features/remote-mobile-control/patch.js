@@ -52,18 +52,7 @@ const REMOTE_CONTROL_COPY_MARKER = "codexLinuxRemoteControlCopy";
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER = "codexLinuxRemoteMobileAppServerArgs";
 const REMOTE_MOBILE_APP_SERVER_ARGS_NEEDLE =
   "[`-c`,`features.code_mode_host=true`,`app-server`,`--analytics-default-enabled`]";
-const REMOTE_MOBILE_RUNTIME_ASSET_PATTERN =
-  /^app-initial~artifact-tab-content\.electron~notebook-preview-panel~app-main~business-checkout~oxnpxkxc-[^.]+\.js$/u;
-const REMOTE_MOBILE_TERMINAL_STATUS_ASSET_PATTERN =
-  /^app-initial~artifact-tab-content\.electron~notebook-preview-panel~app-main~business-checkout~oxnpxkxc-[^.]+\.js$/u;
-const REMOTE_CONTROL_APP_MAIN_PAGE_ASSET_PATTERN =
-  /^app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-[^.]+\.js$/u;
-const REMOTE_CONTROL_VISIBILITY_ASSET_PATTERN =
-  /^app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-[^.]+\.js$/u;
-const REMOTE_CONTROL_LOAD_GATE_ASSET_PATTERN =
-  /^app-initial~artifact-tab-content\.electron~notebook-preview-panel~app-main~business-checkout~k87y25tw-[^.]+\.js$/u;
-const REMOTE_MOBILE_ACTIVE_STATUS_ASSET_PATTERN =
-  /^app-initial~notebook-preview-panel~app-main~pull-request-route~projects-index-page~cloud-en~lpx9dmpy-[^.]+\.js$/u;
+const REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN = /^app-initial-[^.]+\.js$/u;
 const REMOTE_CONTROL_LINUX_COPY_REPLACEMENTS = [
   ["defaultMessage:`Mac`", "defaultMessage:`Linux`"],
   ["Keep this Mac awake", "Keep this Linux desktop awake"],
@@ -1445,7 +1434,7 @@ module.exports = [
   {
     id: "linux-remote-control-load-gate",
     phase: "webview-asset",
-    pattern: REMOTE_CONTROL_LOAD_GATE_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_118,
     ciPolicy: "optional",
     missingDescription: "remote-control loader gate bundle",
@@ -1455,7 +1444,7 @@ module.exports = [
   {
     id: "linux-remote-control-feature-sync",
     phase: "webview-asset",
-    pattern: REMOTE_CONTROL_APP_MAIN_PAGE_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_119,
     ciPolicy: "optional",
     missingDescription: "webview app main bundle",
@@ -1465,7 +1454,7 @@ module.exports = [
   {
     id: "linux-remote-control-visibility",
     phase: "webview-asset",
-    pattern: REMOTE_CONTROL_VISIBILITY_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_120,
     ciPolicy: "optional",
     missingDescription: "remote-control connections visibility bundle",
@@ -1515,7 +1504,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-reasoning-summary-none",
     phase: "webview-asset",
-    pattern: REMOTE_MOBILE_RUNTIME_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_149,
     ciPolicy: "optional",
     missingDescription: "turn-start reasoning summary resolver",
@@ -1525,7 +1514,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-conversation-hydration",
     phase: "webview-asset",
-    pattern: REMOTE_MOBILE_RUNTIME_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_150,
     ciPolicy: "optional",
     missingDescription: "app-server manager signals bundle",
@@ -1535,7 +1524,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-completed-item-recovery",
     phase: "webview-asset",
-    pattern: REMOTE_MOBILE_RUNTIME_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_151,
     ciPolicy: "optional",
     missingDescription: "app-server conversation manager bundle",
@@ -1545,7 +1534,7 @@ module.exports = [
   {
     id: "linux-remote-terminal-status-recovery",
     phase: "webview-asset",
-    pattern: REMOTE_MOBILE_TERMINAL_STATUS_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_152,
     ciPolicy: "optional",
     missingDescription: "app-server conversation manager bundle",
@@ -1555,7 +1544,7 @@ module.exports = [
   {
     id: "linux-remote-control-status-read-guard",
     phase: "webview-asset",
-    pattern: REMOTE_MOBILE_RUNTIME_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_153,
     ciPolicy: "optional",
     missingDescription: "app-server manager signals bundle",
@@ -1565,7 +1554,7 @@ module.exports = [
   {
     id: "linux-remote-control-status-wait",
     phase: "webview-asset",
-    pattern: REMOTE_MOBILE_RUNTIME_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_154,
     ciPolicy: "optional",
     missingDescription: "app-server manager signals bundle",
@@ -1575,7 +1564,7 @@ module.exports = [
   {
     id: "linux-remote-control-enable-for-host-params",
     phase: "webview-asset",
-    pattern: REMOTE_CONTROL_APP_MAIN_PAGE_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_155,
     ciPolicy: "optional",
     missingDescription: "app main remote-control host toggle bundle",
@@ -1585,7 +1574,7 @@ module.exports = [
   {
     id: "linux-remote-control-enablement-bridge",
     phase: "webview-asset",
-    pattern: REMOTE_CONTROL_APP_MAIN_PAGE_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_156,
     ciPolicy: "optional",
     missingDescription: "app main bundle",
@@ -1595,7 +1584,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-active-status",
     phase: "webview-asset",
-    pattern: REMOTE_MOBILE_ACTIVE_STATUS_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_160,
     ciPolicy: "optional",
     missingDescription: "app main bundle",

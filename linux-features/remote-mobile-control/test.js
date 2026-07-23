@@ -54,24 +54,19 @@ const LATEST_REMOTE_CONVERSATION_ASSET =
   "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~glxlkd48-test.js";
 const OLD_REMOTE_RUNTIME_ASSET =
   "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-test.js";
-const CURRENT_REMOTE_RUNTIME_ASSET =
-  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~oxnpxkxc-test.js";
+const CURRENT_REMOTE_RUNTIME_ASSET = "app-initial-BTphDPeq.js";
 const CURRENT_REMOTE_RUNTIME_DECOY_ASSET =
   "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~oldshape-test.js";
 const CURRENT_REMOTE_TERMINAL_STATUS_ASSET =
   CURRENT_REMOTE_RUNTIME_ASSET;
-const CURRENT_APP_MAIN_PAGE_ASSET =
-  "app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-test.js";
-const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET =
-  "app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-test.js";
-const CURRENT_REMOTE_LOAD_GATE_ASSET =
-  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~k87y25tw-test.js";
+const CURRENT_APP_MAIN_PAGE_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
+const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
+const CURRENT_REMOTE_LOAD_GATE_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
 const OLD_REMOTE_LOAD_GATE_ASSET =
   "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~hm0a50up-test.js";
 const OLD_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
-const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET =
-  "app-initial~notebook-preview-panel~app-main~pull-request-route~projects-index-page~cloud-en~lpx9dmpy-test.js";
+const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
 
 function syntheticReasoningSummaryTurnStartBundle() {
   return "async function yY(e,t,n){let s=n,D=n.latestThreadSettings,ee=n.initialParams,me=!fm(e.getHostId());let Ee=e.getDefaultFeatureOverride(vJ)===!0,De=ee?.summary??`none`;D?.summary!==void 0&&(De=D.summary),Ee&&(De=`detailed`),s.summary!==void 0&&(De=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{concurrentReasoningSummariesFeatureOverrideEnabled:Ee,summary:De}});return{featureOverride:Ee,summary:De}}";
@@ -1147,7 +1142,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.equal(loadGateDescriptor.pattern.test(LATEST_REMOTE_CONVERSATION_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test(OLD_REMOTE_RUNTIME_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test("remote-connection-visibility-test.js"), false);
-    assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
+    assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), true);
     assert.equal(loadGateDescriptor.pattern.test(OLD_REMOTE_LOAD_GATE_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_LOAD_GATE_ASSET), true);
 
@@ -2594,19 +2589,19 @@ test("remote mobile feature patch report records feature metadata and partial wa
         path.join(assetsDir, CURRENT_REMOTE_TERMINAL_STATUS_ASSET),
         syntheticRemoteTerminalStatusBundle(),
       );
-      fs.writeFileSync(
+      fs.appendFileSync(
         path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
         syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle(),
       );
-      fs.writeFileSync(
+      fs.appendFileSync(
         path.join(assetsDir, CURRENT_REMOTE_LOAD_GATE_ASSET),
         syntheticRemoteConnectionVisibilityBundle(),
       );
-      fs.writeFileSync(
+      fs.appendFileSync(
         path.join(assetsDir, CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET),
         syntheticCurrentUsePluginVisibilityBundle(),
       );
-      fs.writeFileSync(
+      fs.appendFileSync(
         path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_STATUS_ASSET),
         syntheticAppMainActiveStatusBundle(),
       );
@@ -3504,19 +3499,19 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           path.join(assetsDir, "app-server-manager-signals-test.js"),
           syntheticAppServerManagerSignalsBundle(),
         );
-        fs.writeFileSync(
+        fs.appendFileSync(
           path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
           syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle(),
         );
-        fs.writeFileSync(
+        fs.appendFileSync(
           path.join(assetsDir, CURRENT_REMOTE_LOAD_GATE_ASSET),
           syntheticRemoteConnectionVisibilityBundle(),
         );
-        fs.writeFileSync(
+        fs.appendFileSync(
           path.join(assetsDir, CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET),
           syntheticCurrentUsePluginVisibilityBundle(),
         );
-        fs.writeFileSync(
+        fs.appendFileSync(
           path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_STATUS_ASSET),
           syntheticAppMainActiveStatusBundle(),
         );

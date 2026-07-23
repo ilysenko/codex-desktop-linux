@@ -829,7 +829,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20520,
       ciPolicy: "optional",
-      pattern: /^app-initial~artifact-tab-content\.electron~notebook-preview-panel~app-main~pull-request-rout~ns5rw1zk-[^.]+\.js$/,
+      pattern: /^app-initial-[^.]+\.js$/,
       missingDescription: "open target selection webview bundle",
       skipDescription: "native open-target selection patch",
       apply: applyNativeOpenTargetSelectionPatch,

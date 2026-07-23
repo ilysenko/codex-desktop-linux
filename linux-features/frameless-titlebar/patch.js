@@ -112,20 +112,8 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
   );
   const hasNativeBrowserGate = nativeApplicationMenuBrowserGateRegex.test(patchedSource);
 
-  const applicationMenuBridgeRegex =
-    /function ([A-Za-z_$][\w$]*)\(\)\{return ([A-Za-z_$][\w$]*)\(\)&&window\.electronBridge\?\.showApplicationMenu!=null\}/g;
-  let foundApplicationMenuBridge = false;
-  patchedSource = patchedSource.replace(applicationMenuBridgeRegex, (_match, functionName) => {
-    foundApplicationMenuBridge = true;
-    return `function ${functionName}(){return!1}`;
-  });
-  const disabledApplicationMenuBridgeRegex =
-    /function ([A-Za-z_$][\w$]*)\(\)\{return!1\}[\s\S]{0,1600}?if\(!\1\(\)\)return null;[\s\S]{0,1600}?showApplicationMenu/;
-
   const recognizedChromeMapping = foundApplicationMenuChrome || hasNativeChrome;
   const recognizedBrowserGate = foundApplicationMenuBrowserGate || hasNativeBrowserGate;
-  const recognizedApplicationMenuBridge =
-    foundApplicationMenuBridge || disabledApplicationMenuBridgeRegex.test(patchedSource);
   const hasApplicationMenuChromeConsumer =
     currentSource.includes("dataset.codexWindowChrome===`application-menu`");
 
@@ -134,9 +122,6 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
   }
   if (hasApplicationMenuLayout && !recognizedBrowserGate) {
     console.warn("WARN: Could not find application menu browser gate - skipping frameless webview platform patch");
-  }
-  if (hasApplicationMenuLayout && !recognizedApplicationMenuBridge) {
-    console.warn("WARN: Could not find application menu bridge guard - skipping frameless webview bridge patch");
   }
   if (hasHeaderSafeArea && !recognizedHeaderSafeArea) {
     console.warn("WARN: Could not disable the Linux window controls safe area - skipping frameless header padding patch");
@@ -169,7 +154,7 @@ const patches = [
     phase: "webview-asset",
     order: 20_730,
     ciPolicy: "optional",
-    pattern: /^app-initial~(?:artifact-tab-content\.electron~notebook-preview-panel~app-main~business-checkout~c1u3yp5s|avatarOverlayCompositionSurface~artifact-tab-content\.electron~app-main~appgen-s~j5d6n91g)-[^.]+\.js$/,
+    pattern: /^app-initial-[^.]+\.js$/,
     missingDescription: "main app chrome bundle",
     skipDescription: "frameless titlebar webview layout patch",
     apply: applyFramelessTitlebarWebviewPatch,

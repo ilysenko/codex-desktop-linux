@@ -77,7 +77,7 @@ const patches = [
     phase: "webview-asset",
     order: 20_800,
     ciPolicy: "optional",
-    pattern: /^app-initial~app-main~settings-command-menu-section-items~new-thread-panel-page~settings-pag~unq8yzli-[^.]+\.js$/,
+    pattern: /^app-initial-[^.]+\.js$/,
     missingDescription: "composer status panel bundle",
     skipDescription: "persistent status panel patch",
     apply: applyPersistentStatusPanelPatch,

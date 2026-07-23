@@ -15,12 +15,22 @@ function warn(message, patchName) {
 }
 
 function applyLinuxAppshotAvailabilityPatch(currentSource) {
-  if (currentSource.includes("!==`linux`&&(") && currentSource.includes("!==`macOS`||")) {
+  if (
+    currentSource.includes("codexLinuxAppshotsPlatformAvailable") &&
+    currentSource.includes("!==`linux`&&(")
+  ) {
     return currentSource;
   }
 
   let changed = false;
-  const patchedSource = currentSource.replace(
+  let patchedSource = currentSource.replace(
+    /async function ([A-Za-z_$][\w$]*)\(\{hostId:([A-Za-z_$][\w$]*),queryClient:([A-Za-z_$][\w$]*),scope:([A-Za-z_$][\w$]*)\}\)\{return \4\.get\(([A-Za-z_$][\w$]*)\)!==`macOS`\|\|!([A-Za-z_$][\w$]*)\(\4,`1304276663`\)\?!1:/g,
+    (match, functionName, hostIdVar, queryClientVar, scopeVar, platformAtomVar, flagGetFn) => {
+      changed = true;
+      return `async function ${functionName}({hostId:${hostIdVar},queryClient:${queryClientVar},scope:${scopeVar}}){return !codexLinuxAppshotsPlatformAvailable(${scopeVar}.get(${platformAtomVar}))||!${flagGetFn}(${scopeVar},\`1304276663\`)?!1:`;
+    },
+  );
+  patchedSource = patchedSource.replace(
     /if\(([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)!==`macOS`\|\|!([A-Za-z_$][\w$]*)\(([^)]*?)\)\)return!1;/g,
     (match, platformGetFn, platformAtomVar, flagGetFn, flagArgs) => {
       changed = true;
@@ -29,7 +39,7 @@ function applyLinuxAppshotAvailabilityPatch(currentSource) {
   );
 
   if (changed) {
-    return patchedSource;
+    return `${patchedSource}function codexLinuxAppshotsPlatformAvailable(e){return e===\`macOS\`||e===\`linux\`}`;
   }
 
   if (currentSource.includes("macOS") || currentSource.includes("appshot")) {
@@ -322,7 +332,7 @@ const descriptors = [
     id: "linux-appshots-availability",
     phase: "webview-asset",
     order: 1090,
-    pattern: /^app-initial~app-main~settings-command-menu-section-items~new-thread-panel-page~settings-pag~unq8yzli-[^.]+\.js$/,
+    pattern: /^app-initial-[^.]+\.js$/,
     missingDescription: "AppShots availability bundle",
     skipDescription: "Linux AppShots availability patch",
     apply: applyLinuxAppshotAvailabilityPatch,

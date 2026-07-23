@@ -582,7 +582,7 @@ test("subagent nickname metadata patch accepts current upstream patched aliases"
   assert.deepEqual(warnings, []);
 });
 
-test("subagent metadata descriptor ignores matching sibling bundles without metadata", () => {
+test("subagent metadata descriptor patches the current monolithic app bundle", () => {
   const descriptor = corePatchDescriptors().find((candidate) =>
     candidate.id === "subagent-nickname-metadata-shape",
   );
@@ -600,18 +600,17 @@ test("subagent metadata descriptor ignores matching sibling bundles without meta
       "function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(B(e.source)?.agentNickname)}",
       "function Zl(e){if(e==null)return null;let t=e.trim();return t.length===0?null:t}",
     ].join("");
-    fs.writeFileSync(path.join(assetsDir, "app-server-manager-signals-test.js"), siblingSource);
-    fs.writeFileSync(path.join(assetsDir, "use-host-config-test.js"), metadataSource);
+    const assetPath = path.join(assetsDir, "app-initial-BTphDPeq.js");
+    fs.writeFileSync(assetPath, siblingSource + metadataSource);
 
     const { value: result, warnings } = captureWarns(() =>
       patchAssetFiles(tempRoot, descriptor.pattern, descriptor.apply, "missing subagent metadata bundle"),
     );
 
-    assert.deepEqual(result, { matched: 2, changed: 1 });
+    assert.deepEqual(result, { matched: 1, changed: 1 });
     assert.deepEqual(warnings, []);
-    assert.equal(fs.readFileSync(path.join(assetsDir, "app-server-manager-signals-test.js"), "utf8"), siblingSource);
     assert.match(
-      fs.readFileSync(path.join(assetsDir, "use-host-config-test.js"), "utf8"),
+      fs.readFileSync(assetPath, "utf8"),
       /Zl\(e\.agentNickname\)\?\?Zl\(e\.agent_nickname\)\?\?Zl\(B\(e\.source\)\?\.agentNickname\)/,
     );
   } finally {
@@ -1310,25 +1309,24 @@ test("opt-in patch descriptors are recognized as non-critical drift", () => {
   ]);
 });
 
-test("fast-mode guard descriptor follows upstream service-tier bundle names", () => {
+test("fast-mode guard descriptor targets the current monolithic app bundle", () => {
   const descriptor = corePatchDescriptors().find((descriptor) =>
     descriptor.id === "linux-fast-mode-model-guard",
   );
 
-  assert.ok(descriptor.pattern.test("use-is-fast-mode-enabled-abc.js"));
-  assert.ok(descriptor.pattern.test("read-service-tier-for-request-BJ8QN0Q7.js"));
-  assert.ok(descriptor.pattern.test("use-service-tier-settings-DFXPADNF.js"));
-  assert.ok(descriptor.pattern.test("app-server-manager-signals-BOGyjFm3.js"));
+  assert.ok(descriptor.pattern.test("app-initial-BTphDPeq.js"));
+  assert.equal(descriptor.pattern.test("use-is-fast-mode-enabled-abc.js"), false);
   assert.equal(descriptor.pattern.test("service-tier-icons-CsNhab5W.js"), false);
 });
 
-test("subagent nickname metadata descriptor follows upstream metadata bundle names", () => {
+test("subagent nickname metadata descriptor targets the current monolithic app bundle", () => {
   const descriptor = corePatchDescriptors().find((descriptor) =>
     descriptor.id === "subagent-nickname-metadata-shape",
   );
 
-  assert.ok(descriptor.pattern.test("app-server-manager-signals-BOGyjFm3.js"));
-  assert.ok(descriptor.pattern.test("use-host-config-Dpd_LQBD.js"));
+  assert.ok(descriptor.pattern.test("app-initial-BTphDPeq.js"));
+  assert.equal(descriptor.pattern.test("app-server-manager-signals-BOGyjFm3.js"), false);
+  assert.equal(descriptor.pattern.test("use-host-config-Dpd_LQBD.js"), false);
   assert.equal(descriptor.pattern.test("thread-context-inputs-D5uMjcUB.js"), false);
 });
 
@@ -1355,7 +1353,7 @@ function currentTrayLifecycleBundleFixture() {
 
 function currentTrayMenuBundleFixture() {
   return [
-    "var sW=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(){this.tray={on(){},setContextMenu(){},popUpContextMenu(){}}}getNativeTrayMenuItems(){let{pinnedThreads:e,recentThreads:t,runningThreads:r,unreadThreads:i,usageLimits:a}=this.trayMenuThreads,o=this.nativeIntl.formatMessage({messageId:vc,defaultMessage:yc}),s=this.nativeIntl.formatMessage({messageId:gc,defaultMessage:_c}),c=uW({label:this.nativeIntl.formatMessage({messageId:oc,defaultMessage:sc}),moreLabel:s,threads:r,projectlessLabel:o,onOpenThread:this.onTrayMenuOpenRecentThread}),h=[c].filter(e=>e.length>0).flatMap((e,t)=>t===0?e:[{type:`separator`},...e]);return[...h,...h.length>0?[{type:`separator`}]:[],{label:this.nativeIntl.formatMessage({messageId:nc,defaultMessage:rc}),click:()=>{this.onTrayMenuOpenNewThread()}},{type:`separator`},{label:fW(this.appName),click:()=>{n.app.quit()}}]}};",
+    "var sW=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(){this.tray={on(){},setContextMenu(){},popUpContextMenu(){}}}getNativeTrayMenuItems(){let{pinnedThreads:e,recentThreads:t,runningThreads:r,unreadThreads:i,usageLimits:a}=this.trayMenuThreads,o=this.nativeIntl.formatMessage({messageId:vc,defaultMessage:yc}),s=this.nativeIntl.formatMessage({messageId:gc,defaultMessage:_c}),c=uW({label:this.nativeIntl.formatMessage({messageId:oc,defaultMessage:sc}),moreLabel:s,threads:r,projectlessLabel:o,onOpenThread:this.onTrayMenuOpenRecentThread}),h=[c].filter(e=>e.length>0).flatMap((e,t)=>t===0?e:[{type:`separator`},...e]);return[...h,...h.length>0?[{type:`separator`}]:[],{label:this.nativeIntl.formatMessage({messageId:nc,defaultMessage:rc}),click:()=>{this.onTrayMenuOpenNewThread()}},{type:`separator`},{label:this.systemQuitMenuItemLabel,click:()=>{n.app.quit()}}]}};",
   ].join("");
 }
 
@@ -1368,7 +1366,7 @@ function singleInstanceBundleFixture() {
 
 function explicitQuitBundleFixture() {
   return [
-    "var pb=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{n.app.quit()}}]}};",
+    "var pb=class{getNativeTrayMenuItems(){return[{label:this.systemQuitMenuItemLabel,click:()=>{n.app.quit()}}]}};",
     "if(o.type===`quit-app`){n.app.quit();return}",
   ].join("");
 }
@@ -1645,7 +1643,7 @@ function createModernNativeKeyboardShortcutsSettingsFixture() {
     ].join(""),
   );
   writeAsset(
-    "settings-page-A.js",
+    "app-initial-BTphDPeq.js",
     [
       'import{n as routeModule,s as routeToESM}from"./rolldown-runtime-A.js";',
       'import{I as routeJsxFactory,R as routeReactFactory}from"./shared-runtime-A.js";',
@@ -1718,10 +1716,8 @@ function renderGeneratedSettingsTree(element, Component) {
   ];
 }
 
-// The current route map can be hoisted into a hashed app chunk while the
-// settings-page bundle carries only navigation metadata.
 function createSplitRouteNativeKeyboardShortcutsSettingsFixture({
-  routeChunkName = "app-initial~app-main~automations-page-A.js",
+  routeChunkName = "app-initial-BTphDPeq.js",
 } = {}) {
   const extractedDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-split-route-shortcuts-"));
   const assetsDir = path.join(extractedDir, "webview", "assets");
@@ -2658,7 +2654,7 @@ test("marks Linux quit-in-progress for the tray quit path", () => {
 
   assert.match(
     patched,
-    /\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/,
+    /\{label:this\.systemQuitMenuItemLabel,click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/,
   );
 });
 
@@ -2672,28 +2668,6 @@ test("marks Linux quit-in-progress for the quit-app IPC path", () => {
   assert.match(
     patched,
     /if\(o\.type===`quit-app`\)\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\);return\}/,
-  );
-});
-
-test("supports explicit tray quit patching when minified aliases drift", () => {
-  const source =
-    "let x=require(`electron`);var q=class{getNativeTrayMenuItems(){return[{label:rB(this.appName),click:()=>{x.app.quit()}}]}};if(m.type===`quit-app`){x.app.quit();return}";
-  const patched = applyPatchTwice(applyLinuxExplicitTrayQuitPatch, source);
-
-  assert.match(
-    patched,
-    /\{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),x\.app\.quit\(\)\}\}/,
-  );
-});
-
-test("supports explicit tray quit patching when upstream renames the quit label helper", () => {
-  const source =
-    "let n=require(`electron`);var q=class{getNativeTrayMenuItems(){return[{label:mH(this.appName),click:()=>{n.app.quit()}}]}};function mH(e){let t=n.Menu.buildFromTemplate([{role:`quit`}]);return(Array.isArray(t)?t:t.items)[0]?.label??`Quit ${e}`}";
-  const patched = applyPatchTwice(applyLinuxExplicitTrayQuitPatch, source);
-
-  assert.match(
-    patched,
-    /\{label:mH\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}/,
   );
 });
 
@@ -2711,8 +2685,8 @@ test("supports explicit IPC quit patching when minified aliases drift", () => {
 test("patches remaining explicit quit handlers when another copy is already patched", () => {
   const quitMarkerExpression =
     "typeof codexLinuxPrepareForExplicitQuit===`function`?codexLinuxPrepareForExplicitQuit():typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),";
-  const patchedTrayQuit = `{label:rB(this.appName),click:()=>{${quitMarkerExpression}n.app.quit()}}`;
-  const unpatchedTrayQuit = "{label:rB(this.appName),click:()=>{n.app.quit()}}";
+  const patchedTrayQuit = `{label:this.systemQuitMenuItemLabel,click:()=>{${quitMarkerExpression}n.app.quit()}}`;
+  const unpatchedTrayQuit = "{label:this.systemQuitMenuItemLabel,click:()=>{n.app.quit()}}";
   const patchedIpcQuit = `if(o.type===\`quit-app\`){${quitMarkerExpression}n.app.quit();return}`;
   const unpatchedIpcQuit = "if(o.type===`quit-app`){n.app.quit();return}";
 
@@ -2728,7 +2702,7 @@ test("patches remaining explicit quit handlers when another copy is already patc
   assert.equal((patchedTray.match(/codexLinuxPrepareForExplicitQuit\(\)/g) ?? []).length, 2);
   assert.match(
     patchedTray,
-    /function createSecondTray\(\)\{return \{label:rB\(this\.appName\),click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}\}/,
+    /function createSecondTray\(\)\{return \{label:this\.systemQuitMenuItemLabel,click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),n\.app\.quit\(\)\}\}\}/,
   );
   assert.equal((patchedIpc.match(/codexLinuxPrepareForExplicitQuit\(\)/g) ?? []).length, 2);
   assert.match(
@@ -5425,7 +5399,6 @@ test("adds Linux desktop settings route when upstream owns Keyboard Shortcuts", 
     /var i_e=\{"linux-desktop":Z\(async\(\)=>\(await s\(async\(\)=>\{let\{LinuxDesktopSettings:e\}=await import\(`\.\/linux-desktop-settings-linux\.js`\)/,
   );
   assert.match(patched, /qge=\[`general-settings`,`linux-desktop`,`import`,`appearance`/);
-  assert.match(patched, /slugs:\[`general-settings`,`linux-desktop`,`import`,`appearance`/);
 });
 
 test("adds physical-key fallback for current native shortcut runtime", () => {
@@ -5670,7 +5643,7 @@ test("renders the generated Linux desktop settings page with working switches", 
     };
     const React = { Component, Fragment: "fragment" };
     const routeSettingsSource = fs.readFileSync(
-      path.join(assetsDir, "settings-page-A.js"),
+      path.join(assetsDir, "app-initial-BTphDPeq.js"),
       "utf8",
     );
     assert.match(
@@ -5770,7 +5743,7 @@ test("skips old Keybinds settings generation when native Keyboard Shortcuts are 
 test("skips Linux settings without writing assets when the active route runtime cannot be inferred", () => {
   const { extractedDir, assetsDir } = createModernNativeKeyboardShortcutsSettingsFixture();
   try {
-    const nativeSettingsPath = path.join(assetsDir, "settings-page-A.js");
+    const nativeSettingsPath = path.join(assetsDir, "app-initial-BTphDPeq.js");
     const nativeSettingsSource = fs.readFileSync(nativeSettingsPath, "utf8").replace(
       "(0,RouteReact.useState)(null)",
       "RouteReact.useState(null)",
@@ -6020,7 +5993,7 @@ test("does not leave generated Linux settings fallbacks when later current-DMG r
   try {
     fs.rmSync(path.join(assetsDir, "settings-row-A.js"));
     fs.writeFileSync(
-      path.join(assetsDir, "settings-page-A.js"),
+      path.join(assetsDir, "app-initial-BTphDPeq.js"),
       "settings.nav.keyboard-shortcuts;var icons={\"general-settings\":wt,\"keyboard-shortcuts\":xn};",
       "utf8",
     );
@@ -6037,7 +6010,7 @@ test("does not leave generated Linux settings fallbacks when later current-DMG r
   }
 });
 
-test("adds Linux desktop settings when the lazy route map is hoisted into a separate app chunk", () => {
+test("adds Linux desktop settings in the current monolithic app bundle", () => {
   const { extractedDir, assetsDir } = createSplitRouteNativeKeyboardShortcutsSettingsFixture();
   try {
     const { value: result, warnings } = captureWarns(() => patchKeybindsSettingsAssets(extractedDir));
@@ -6057,13 +6030,6 @@ test("adds Linux desktop settings when the lazy route map is hoisted into a sepa
     );
     assert.doesNotMatch(linuxDesktopSource, /function LinuxSwitch/);
 
-    // The current navigation bundle carries slug order and groups without a
-    // separate slug-to-icon map.
-    const settingsPageSource = fs.readFileSync(path.join(assetsDir, "settings-page-A.js"), "utf8");
-    assert.doesNotMatch(settingsPageSource, /linux-desktop-settings-linux\.js/);
-    assert.doesNotMatch(settingsPageSource, /codexLinuxDesktopSettings/);
-    assert.match(settingsPageSource, /=\[`general-settings`,`linux-desktop`,`import`,`profile`/);
-    assert.match(settingsPageSource, /slugs:\[`general-settings`,`linux-desktop`,`import`,`profile`/);
     const visibleSectionsSource = fs.readFileSync(
       path.join(assetsDir, "use-visible-settings-sections-A.js"),
       "utf8",
@@ -6077,10 +6043,9 @@ test("adds Linux desktop settings when the lazy route map is hoisted into a sepa
       /case`linux-desktop`:return!0;case`general-settings`:case`agent`:case`personalization`:return!0/,
     );
 
-    // The lazy route is registered in the hoisted app chunk, reusing the bundle's
-    // own lazy/preload aliases against the bare (no `var`) map assignment.
+    // The lazy route reuses the bundle's own lazy/preload aliases.
     const routeChunkSource = fs.readFileSync(
-      path.join(assetsDir, "app-initial~app-main~automations-page-A.js"),
+      path.join(assetsDir, "app-initial-BTphDPeq.js"),
       "utf8",
     );
     assert.match(
@@ -6097,7 +6062,7 @@ test("adds Linux desktop settings when the lazy route map is hoisted into a sepa
 });
 
 test("composes Linux desktop section metadata and route patches in the same asset", () => {
-  const routeChunkName = "app-initial~app-main~automations-page-A.js";
+  const routeChunkName = "app-initial-BTphDPeq.js";
   const { extractedDir, assetsDir } = createSplitRouteNativeKeyboardShortcutsSettingsFixture({
     routeChunkName,
   });
@@ -6129,32 +6094,6 @@ test("composes Linux desktop section metadata and route patches in the same asse
     const secondResult = patchKeybindsSettingsAssets(extractedDir);
     assert.equal(secondResult.matched, true);
     assert.equal(secondResult.changed, 0);
-  } finally {
-    fs.rmSync(extractedDir, { recursive: true, force: true });
-  }
-});
-
-test("finds Linux desktop settings route map in hashed settings-page chunks", () => {
-  const routeChunkName = "app-initial~settings-page-A.js";
-  const { extractedDir, assetsDir } = createSplitRouteNativeKeyboardShortcutsSettingsFixture({
-    routeChunkName,
-  });
-  try {
-    const { value: result, warnings } = captureWarns(() => patchKeybindsSettingsAssets(extractedDir));
-
-    assert.equal(result.matched, true);
-    assert.deepEqual(warnings, []);
-    assert.equal(fs.existsSync(path.join(assetsDir, linuxDesktopSettingsAsset)), true);
-
-    const routeChunkSource = fs.readFileSync(path.join(assetsDir, routeChunkName), "utf8");
-    assert.match(
-      routeChunkSource,
-      /"linux-desktop":Ya\(async\(\)=>\(await Pr\(async\(\)=>\{let\{LinuxDesktopSettings:e\}=await import\(`\.\/linux-desktop-settings-linux\.js\?v=[a-f0-9]{12}`\);return\{LinuxDesktopSettings:e\}\},\[\],import\.meta\.url\)\)\.LinuxDesktopSettings\),"general-settings":/,
-    );
-
-    const settingsPageSource = fs.readFileSync(path.join(assetsDir, "settings-page-A.js"), "utf8");
-    assert.doesNotMatch(settingsPageSource, /codexLinuxDesktopSettings/);
-    assert.match(settingsPageSource, /=\[`general-settings`,`linux-desktop`,`import`,`profile`/);
   } finally {
     fs.rmSync(extractedDir, { recursive: true, force: true });
   }

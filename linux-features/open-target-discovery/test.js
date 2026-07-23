@@ -1399,10 +1399,7 @@ test("open-target discovery targets only the current native selector bundle", ()
   );
 
   assert.ok(descriptor);
-  assert.match(
-    "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~pull-request-rout~ns5rw1zk-CI7AKGww.js",
-    descriptor.pattern,
-  );
+  assert.match("app-initial-BTphDPeq.js", descriptor.pattern);
   assert.doesNotMatch(
     "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-CnQKtQ6U.js",
     descriptor.pattern,

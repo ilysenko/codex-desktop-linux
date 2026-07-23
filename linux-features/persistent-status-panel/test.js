@@ -84,7 +84,7 @@ test("descriptor patches the current app-initial composer status bundle", () => 
     const assetsDir = path.join(tempDir, "webview", "assets");
     const assetPath = path.join(
       assetsDir,
-      "app-initial~app-main~settings-command-menu-section-items~new-thread-panel-page~settings-pag~unq8yzli-twtaboLE.js",
+      "app-initial-BTphDPeq.js",
     );
     fs.mkdirSync(assetsDir, { recursive: true });
     fs.writeFileSync(assetPath, currentComposerSource);
