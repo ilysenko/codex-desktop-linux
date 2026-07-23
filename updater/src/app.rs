@@ -264,6 +264,25 @@ fn maybe_prune_caches(config: &RuntimeConfig, state: &PersistedState) {
     maybe_prune_generated_artifacts(config);
 }
 
+fn maybe_prune_caches_if_check_idle(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<()> {
+    let Some(_check_lock) = try_acquire_check_lock(paths)? else {
+        info!("skipping updater cache cleanup because another check is already active");
+        return Ok(());
+    };
+
+    // A long-lived daemon or a concurrently launched check-now process may
+    // hold state that predates the active workspace recorded by the previous
+    // checker. Refresh only after acquiring the shared check lock so cleanup
+    // cannot race a checker between the reload and filesystem pruning.
+    reload_state_from_disk(config, state, paths)?;
+    maybe_prune_caches(config, state);
+    Ok(())
+}
+
 fn clear_wrapper_update_candidate_and_persist(
     state: &mut PersistedState,
     paths: &RuntimePaths,
@@ -363,7 +382,6 @@ fn try_acquire_check_lock(paths: &RuntimePaths) -> Result<Option<CheckLock>> {
     match file.try_lock() {
         Ok(()) => {}
         Err(fs::TryLockError::WouldBlock) => {
-            info!("skipping upstream check because another check is already active");
             return Ok(None);
         }
         Err(fs::TryLockError::Error(error)) => {
@@ -446,7 +464,7 @@ async fn run_daemon(
     complete_current_dmg_update_if_already_installed(config, state, paths)?;
     codex_cli::reconcile_if_present(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
-    maybe_prune_caches(config, state);
+    maybe_prune_caches_if_check_idle(config, state, paths)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     if packaged_runtime_removed(config) {
         info!("packaged app files are gone; stopping updater daemon");
@@ -513,7 +531,7 @@ async fn run_check_now(
     complete_current_dmg_update_if_already_installed(config, state, paths)?;
     codex_cli::reconcile_if_present(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
-    maybe_prune_caches(config, state);
+    maybe_prune_caches_if_check_idle(config, state, paths)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     if if_stale
         && !update_check_should_retry(&state.status)
@@ -1004,6 +1022,7 @@ async fn run_check_cycle(
     }
 
     let Some(_check_lock) = try_acquire_check_lock(paths)? else {
+        info!("skipping upstream check because another check is already active");
         return Ok(());
     };
 
@@ -2600,6 +2619,54 @@ mod tests {
         }
 
         assert!(reacquired_lock.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn held_check_lock_prevents_startup_cache_cleanup_from_pruning_active_workspace() -> Result<()>
+    {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let workspace = config.workspace_root.join("workspaces/active-build");
+        std::fs::create_dir_all(workspace.join("builder"))?;
+        std::fs::write(workspace.join("builder/install.sh"), b"#!/bin/sh\n")?;
+
+        let _active_check =
+            try_acquire_check_lock(&paths)?.expect("active check should acquire the lock");
+        let mut stale_state = PersistedState::new(true);
+
+        maybe_prune_caches_if_check_idle(&config, &mut stale_state, &paths)?;
+
+        assert!(workspace.join("builder/install.sh").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn startup_cache_cleanup_reloads_active_workspace_state_after_locking() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let workspace = config.workspace_root.join("workspaces/active-build");
+        std::fs::create_dir_all(workspace.join("builder"))?;
+        std::fs::write(workspace.join("builder/install.sh"), b"#!/bin/sh\n")?;
+
+        let mut persisted_state = PersistedState::new(true);
+        persisted_state.status = UpdateStatus::PatchingApp;
+        persisted_state.artifact_paths.workspace_dir = Some(workspace.clone());
+        persisted_state.save(&paths.state_file)?;
+
+        let mut stale_state = PersistedState::new(true);
+        maybe_prune_caches_if_check_idle(&config, &mut stale_state, &paths)?;
+
+        assert_eq!(stale_state.status, UpdateStatus::PatchingApp);
+        assert_eq!(
+            stale_state.artifact_paths.workspace_dir.as_deref(),
+            Some(workspace.as_path())
+        );
+        assert!(workspace.join("builder/install.sh").exists());
         Ok(())
     }
 
