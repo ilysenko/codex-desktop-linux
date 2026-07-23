@@ -112,6 +112,13 @@ MULTI_LAUNCH_ACTIVE=0
 CODEX_LINUX_INSTANCE_ID=""
 LAUNCHER_ARGS=()
 
+# Multi-launch requests are one launcher invocation wide. Keep the public
+# compatibility flag long enough to parse this invocation, but do not leak it
+# into Electron or descendants where it would turn later normal launches into
+# additional side-by-side instances.
+CODEX_MULTI_LAUNCH_REQUEST="${CODEX_MULTI_LAUNCH:-}"
+unset CODEX_MULTI_LAUNCH
+
 # Internal marker consumed by patched Electron bundles; never trust inheritance.
 unset CODEX_LINUX_MULTI_LAUNCH
 
@@ -197,7 +204,7 @@ parse_launcher_args() {
     local passthrough=0
 
     LAUNCHER_ARGS=()
-    if early_truthy_env_value "${CODEX_MULTI_LAUNCH:-}"; then
+    if early_truthy_env_value "$CODEX_MULTI_LAUNCH_REQUEST"; then
         MULTI_LAUNCH_REQUESTED=1
     fi
 
@@ -350,7 +357,7 @@ Environment:
   CODEX_FORCE_RENDERER_ACCESSIBILITY=auto|0|1
                               Override --force-renderer-accessibility; auto forces it only when assistive
                               technology is detected and never under WSLg or native wayland-gpu
-  CODEX_MULTI_LAUNCH=1        Treat normal launches like --new-instance
+  CODEX_MULTI_LAUNCH=1        Treat this launcher invocation like --new-instance
   CODEX_MULTI_LAUNCH_PORT_RANGE=START-END
                               Port allocation range for --new-instance (default: CODEX_WEBVIEW_PORT through +4)
 

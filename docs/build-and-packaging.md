@@ -140,6 +140,10 @@ CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh --new-instance
 CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh
 ```
 
+`CODEX_MULTI_LAUNCH=1` applies only to that launcher invocation. The launcher
+does not forward it into Electron, so a normal launch from an app descendant
+does not recursively create another side-by-side instance.
+
 ## Package Formats
 
 After `make build-app` or `make build-app-fresh`, build a package from

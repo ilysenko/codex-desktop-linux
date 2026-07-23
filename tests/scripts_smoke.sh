@@ -5392,6 +5392,16 @@ if 'configure_multi_launch_instance "$@"' not in source:
     raise SystemExit("launcher must configure multi-launch before deriving WEBVIEW_ORIGIN")
 if 'unset CODEX_LINUX_MULTI_LAUNCH' not in source.split('parse_launcher_args() {', 1)[0]:
     raise SystemExit("launcher must clear inherited internal multi-launch markers before parsing args")
+multi_launch_prefix = source.split('parse_launcher_args() {', 1)[0]
+multi_launch_capture = 'CODEX_MULTI_LAUNCH_REQUEST="${CODEX_MULTI_LAUNCH:-}"'
+if multi_launch_capture not in multi_launch_prefix:
+    raise SystemExit("launcher must capture the public multi-launch request for the current invocation")
+if multi_launch_prefix.index(multi_launch_capture) > multi_launch_prefix.index("unset CODEX_MULTI_LAUNCH"):
+    raise SystemExit("launcher must capture the public multi-launch request before clearing it")
+if 'early_truthy_env_value "$CODEX_MULTI_LAUNCH_REQUEST"' not in source.split("parse_launcher_args() {", 1)[1].split("configure_multi_launch_instance() {", 1)[0]:
+    raise SystemExit("launcher must parse multi-launch from the one-shot request snapshot")
+if "unset CODEX_MULTI_LAUNCH" not in multi_launch_prefix:
+    raise SystemExit("launcher must not leak the public multi-launch request into Electron descendants")
 if '$((CODEX_LINUX_WEBVIEW_PORT + 4))' not in source:
     raise SystemExit("multi-launch default range must cap the default at five ports")
 if '( trap - EXIT\n      exec 3<>/dev/tcp/127.0.0.1/"$CODEX_LINUX_WEBVIEW_PORT" || exit 1\n      exec 3>&- 3<&-\n      exit 0 )' not in webview_probe_body:
