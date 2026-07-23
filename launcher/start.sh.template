@@ -973,7 +973,10 @@ write_chrome_native_host_launcher() {
         'run_proxy_probe() {' \
         '    local output_file timeout_file probe_pid watchdog_pid rc=0 use_process_group=0' \
         '    output_file="$(mktemp "${TMPDIR:-/tmp}/codex-chrome-proxy-probe.XXXXXX")" || return 1' \
-        '    timeout_file="$output_file.timeout"' \
+        '    timeout_file="$(mktemp "${TMPDIR:-/tmp}/codex-chrome-proxy-timeout.XXXXXX")" || {' \
+        '        rm -f -- "$output_file"' \
+        '        return 1' \
+        '    }' \
         '    if command -v setsid >/dev/null 2>&1; then' \
         '        setsid "$@" >"$output_file" 2>/dev/null &' \
         '        use_process_group=1' \
@@ -983,7 +986,7 @@ write_chrome_native_host_launcher() {
         '    probe_pid=$!' \
         '    (' \
         '        sleep 0.5' \
-        '        : > "$timeout_file"' \
+        '        printf 1 > "$timeout_file"' \
         '        if kill -0 "$probe_pid" 2>/dev/null; then' \
         '            if [ "$use_process_group" -eq 1 ]; then' \
         '                kill -TERM -- "-$probe_pid" 2>/dev/null || kill -TERM "$probe_pid" 2>/dev/null || true' \
@@ -998,7 +1001,7 @@ write_chrome_native_host_launcher() {
         '    ) >/dev/null 2>&1 &' \
         '    watchdog_pid=$!' \
         '    wait "$probe_pid" || rc=$?' \
-        '    if [ -e "$timeout_file" ]; then' \
+        '    if [ -s "$timeout_file" ]; then' \
         '        wait "$watchdog_pid" 2>/dev/null || true' \
         '    else' \
         '        kill "$watchdog_pid" 2>/dev/null || true' \
