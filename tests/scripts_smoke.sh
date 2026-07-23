@@ -6473,6 +6473,16 @@ if grep -q PRESEEDED_PAYLOAD "$cache_root/native-host"; then
   exit 1
 fi
 
+rm -f "$cache_root/native-host"
+mkdir "$cache_root/native-host"
+printf '%s\n' PRESEEDED_DIRECTORY_PAYLOAD > "$cache_root/native-host/payload"
+native_host_path="$(write_chrome_native_host_launcher "$cache_root")"
+test -f "$native_host_path"
+if grep -q PRESEEDED_DIRECTORY_PAYLOAD "$native_host_path"; then
+  echo "Chrome native host launcher retained a pre-seeded directory" >&2
+  exit 1
+fi
+
 native_host_path="$(cat "$root/native-host-path")"
 stub_bin="$root/stub-bin"
 mkdir -p "$stub_bin"
@@ -6512,6 +6522,37 @@ test "$proxy_output" = "$(printf '%s\n' \
   'socks5://127.0.0.1:7897/' \
   'localhost,127.0.0.0/8' \
   'localhost,127.0.0.0/8')"
+
+cat > "$stub_bin/systemctl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' \
+  'HTTP_PROXY=http://manager.invalid:8080' \
+  'http_proxy=http://stale.invalid:8080' \
+  'HTTPS_PROXY=http://127.0.0.1:7897' \
+  'ALL_PROXY=socks5://127.0.0.1:7897/' \
+  'NO_PROXY=localhost'
+STUB
+cat > "$stub_bin/gsettings" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
+
+proxy_output="$(env -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy -u no_proxy \
+  HTTP_PROXY=http://inherited.example:3128 \
+  STUB_UNAME_MACHINE=x86_64 \
+  PATH="$stub_bin:$PATH" "$native_host_path")"
+test "$proxy_output" = "$(printf '%s\n' \
+  'ARCH=x64' \
+  'http://inherited.example:3128' \
+  'http://127.0.0.1:7897' \
+  'socks5://127.0.0.1:7897/' \
+  'http://inherited.example:3128' \
+  'http://127.0.0.1:7897' \
+  'socks5://127.0.0.1:7897/' \
+  'localhost' \
+  'localhost')"
 
 cat > "$stub_bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
@@ -6557,9 +6598,9 @@ case "$2:$3" in
   org.gnome.system.proxy:ignore-hosts) printf "['example.internal']\n" ;;
   org.gnome.system.proxy.http:host) printf "'192.0.2.10'\n" ;;
   org.gnome.system.proxy.http:port) printf '8080\n' ;;
-  org.gnome.system.proxy.https:host) printf "'192.0.2.11'\n" ;;
+  org.gnome.system.proxy.https:host) printf "'2001:db8::11'\n" ;;
   org.gnome.system.proxy.https:port) printf '8443\n' ;;
-  org.gnome.system.proxy.socks:host) printf "'192.0.2.12'\n" ;;
+  org.gnome.system.proxy.socks:host) printf "'::1'\n" ;;
   org.gnome.system.proxy.socks:port) printf '1080\n' ;;
   *) exit 1 ;;
 esac
@@ -6573,11 +6614,11 @@ proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
 test "$proxy_output" = "$(printf '%s\n' \
   'ARCH=x64' \
   'http://192.0.2.10:8080' \
-  'http://192.0.2.11:8443' \
-  'socks5://192.0.2.12:1080/' \
+  'http://[2001:db8::11]:8443' \
+  'socks5://[::1]:1080/' \
   'http://192.0.2.10:8080' \
-  'http://192.0.2.11:8443' \
-  'socks5://192.0.2.12:1080/' \
+  'http://[2001:db8::11]:8443' \
+  'socks5://[::1]:1080/' \
   'example.internal' \
   'example.internal')"
 

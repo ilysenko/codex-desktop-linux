@@ -973,6 +973,7 @@ write_chrome_native_host_launcher() {
         'run_proxy_probe() {' \
         '    local output_file timeout_file probe_pid watchdog_pid rc=0 self_pid' \
         '    command -v setsid >/dev/null 2>&1 || return 1' \
+        '    [ -r /proc/self/stat ] || return 1' \
         '    output_file="$(mktemp "${TMPDIR:-/tmp}/codex-chrome-proxy-probe.XXXXXX")" || return 1' \
         '    timeout_file="$(mktemp "${TMPDIR:-/tmp}/codex-chrome-proxy-timeout.XXXXXX")" || {' \
         '        rm -f -- "$output_file"' \
@@ -1011,13 +1012,20 @@ write_chrome_native_host_launcher() {
         '    rm -f -- "$output_file" "$timeout_file"' \
         '    return "$rc"' \
         '}' \
+        'http_proxy_inherited=0' \
+        'https_proxy_inherited=0' \
+        'all_proxy_inherited=0' \
+        'no_proxy_inherited=0' \
+        '[ -z "${HTTP_PROXY+x}" ] && [ -z "${http_proxy+x}" ] || http_proxy_inherited=1' \
+        '[ -z "${HTTPS_PROXY+x}" ] && [ -z "${https_proxy+x}" ] || https_proxy_inherited=1' \
+        '[ -z "${ALL_PROXY+x}" ] && [ -z "${all_proxy+x}" ] || all_proxy_inherited=1' \
+        '[ -z "${NO_PROXY+x}" ] && [ -z "${no_proxy+x}" ] || no_proxy_inherited=1' \
         'while IFS="=" read -r name value; do' \
         '    case "$name" in' \
-        '        HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|http_proxy|https_proxy|all_proxy|no_proxy)' \
-        '            if [ -z "${!name+x}" ]; then' \
-        '                export "$name=$value"' \
-        '            fi' \
-        '            ;;' \
+        '        HTTP_PROXY|http_proxy) [ "$http_proxy_inherited" -eq 1 ] || export "$name=$value" ;;' \
+        '        HTTPS_PROXY|https_proxy) [ "$https_proxy_inherited" -eq 1 ] || export "$name=$value" ;;' \
+        '        ALL_PROXY|all_proxy) [ "$all_proxy_inherited" -eq 1 ] || export "$name=$value" ;;' \
+        '        NO_PROXY|no_proxy) [ "$no_proxy_inherited" -eq 1 ] || export "$name=$value" ;;' \
         '    esac' \
         'done < <(run_proxy_probe systemctl --user show-environment 2>/dev/null || true)' \
         'copy_proxy_pair() {' \
@@ -1064,6 +1072,7 @@ write_chrome_native_host_launcher() {
         '    [ -n "$host" ] || return 0' \
         '    case "$port" in ""|*[!0-9]*) return 0 ;; esac' \
         '    [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 0' \
+        '    case "$host" in \[*\]) ;; *:*) host="[$host]" ;; esac' \
         '    value="$scheme://$host:$port"' \
         '    [ "$scheme" != socks5 ] || value="$value/"' \
         '    export "$upper_name=$value" "$lower_name=$value"' \
@@ -1101,6 +1110,9 @@ write_chrome_native_host_launcher() {
         'exec "$host_path" "$@"' > "$tmp_path"; then
         rm -f -- "$tmp_path"
         return 1
+    fi
+    if [ -d "$launcher_path" ] && [ ! -L "$launcher_path" ]; then
+        remove_tree_if_exists "$launcher_path"
     fi
     if ! chmod 0755 "$tmp_path" || ! mv -fT -- "$tmp_path" "$launcher_path"; then
         rm -f -- "$tmp_path"
