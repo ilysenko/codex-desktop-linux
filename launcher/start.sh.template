@@ -961,30 +961,53 @@ chrome_extension_host_arch() {
 write_chrome_native_host_launcher() {
     local cache_root="$1"
     local launcher_path="$cache_root/native-host"
-    local tmp_path="$launcher_path.tmp.$$"
-
-    if [ -x "$launcher_path" ] && \
-        grep -q '^CODEX_CHROME_NATIVE_HOST_LAUNCHER_V1=1$' "$launcher_path" 2>/dev/null && \
-        ! path_has_unsafe_write "$launcher_path"; then
-        printf '%s\n' "$launcher_path"
-        return 0
-    fi
+    local tmp_path
 
     make_path_owner_trusted "$cache_root" || return 1
-    if ! (umask 0077; printf '%s\n' \
+    tmp_path="$(mktemp "$cache_root/.native-host.tmp.XXXXXX")" || return 1
+    if ! printf '%s\n' \
         '#!/usr/bin/env bash' \
         'set -euo pipefail' \
-        'CODEX_CHROME_NATIVE_HOST_LAUNCHER_V1=1' \
+        'CODEX_CHROME_NATIVE_HOST_LAUNCHER_V2=1' \
         'cache_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"' \
+        'run_proxy_probe() {' \
+        '    local probe_pid watchdog_pid rc=0 use_process_group=0' \
+        '    if command -v setsid >/dev/null 2>&1; then' \
+        '        setsid "$@" &' \
+        '        use_process_group=1' \
+        '    else' \
+        '        "$@" &' \
+        '    fi' \
+        '    probe_pid=$!' \
+        '    (' \
+        '        sleep 0.5' \
+        '        if kill -0 "$probe_pid" 2>/dev/null; then' \
+        '            if [ "$use_process_group" -eq 1 ]; then' \
+        '                kill -TERM -- "-$probe_pid" 2>/dev/null || kill -TERM "$probe_pid" 2>/dev/null || true' \
+        '                sleep 0.1' \
+        '                kill -KILL -- "-$probe_pid" 2>/dev/null || kill -KILL "$probe_pid" 2>/dev/null || true' \
+        '            else' \
+        '                kill -TERM "$probe_pid" 2>/dev/null || true' \
+        '                sleep 0.1' \
+        '                kill -KILL "$probe_pid" 2>/dev/null || true' \
+        '            fi' \
+        '        fi' \
+        '    ) >/dev/null 2>&1 &' \
+        '    watchdog_pid=$!' \
+        '    wait "$probe_pid" || rc=$?' \
+        '    kill "$watchdog_pid" 2>/dev/null || true' \
+        '    wait "$watchdog_pid" 2>/dev/null || true' \
+        '    return "$rc"' \
+        '}' \
         'while IFS="=" read -r name value; do' \
         '    case "$name" in' \
-        '        HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|http_proxy|https_proxy|all_proxy)' \
+        '        HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|http_proxy|https_proxy|all_proxy|no_proxy)' \
         '            if [ -z "${!name+x}" ]; then' \
         '                export "$name=$value"' \
         '            fi' \
         '            ;;' \
         '    esac' \
-        'done < <(systemctl --user show-environment 2>/dev/null || true)' \
+        'done < <(run_proxy_probe systemctl --user show-environment 2>/dev/null || true)' \
         'copy_proxy_pair() {' \
         '    local upper_name="$1" lower_name="$2"' \
         '    if [ -z "${!upper_name+x}" ] && [ -n "${!lower_name+x}" ]; then' \
@@ -993,10 +1016,31 @@ write_chrome_native_host_launcher() {
         '        export "$lower_name=${!upper_name}"' \
         '    fi' \
         '}' \
+        'copy_proxy_family() {' \
+        '    local source_upper="$1" source_lower="$2" target_upper="$3" target_lower="$4" value' \
+        '    [ -z "${!target_upper+x}" ] && [ -z "${!target_lower+x}" ] || return 0' \
+        '    if [ -n "${!source_upper+x}" ]; then' \
+        '        value="${!source_upper}"' \
+        '    elif [ -n "${!source_lower+x}" ]; then' \
+        '        value="${!source_lower}"' \
+        '    else' \
+        '        return 0' \
+        '    fi' \
+        '    export "$target_upper=$value" "$target_lower=$value"' \
+        '}' \
         'read_gnome_proxy_value() {' \
         '    local schema="$1" key="$2" value' \
-        '    value="$(gsettings get "$schema" "$key" 2>/dev/null)" || return 1' \
+        '    value="$(run_proxy_probe gsettings get "$schema" "$key" 2>/dev/null)" || return 1' \
         '    value="$(printf "%s" "$value" | tr -d "\047")"' \
+        '    printf "%s\\n" "$value"' \
+        '}' \
+        'read_gnome_proxy_ignore_hosts() {' \
+        '    local value' \
+        '    value="$(run_proxy_probe gsettings get org.gnome.system.proxy ignore-hosts 2>/dev/null)" || return 1' \
+        '    value="${value#@as }"' \
+        '    value="${value#[}"' \
+        '    value="${value%]}"' \
+        '    value="$(printf "%s" "$value" | tr -d "\047" | sed "s/, */,/g")"' \
         '    printf "%s\\n" "$value"' \
         '}' \
         'set_gnome_proxy_pair() {' \
@@ -1012,14 +1056,29 @@ write_chrome_native_host_launcher() {
         '    [ "$scheme" != socks5 ] || value="$value/"' \
         '    export "$upper_name=$value" "$lower_name=$value"' \
         '}' \
+        'set_gnome_no_proxy_pair() {' \
+        '    local value' \
+        '    [ -z "${NO_PROXY+x}" ] && [ -z "${no_proxy+x}" ] || return 0' \
+        '    value="$(read_gnome_proxy_ignore_hosts)" || return 0' \
+        '    [ -n "$value" ] || return 0' \
+        '    export "NO_PROXY=$value" "no_proxy=$value"' \
+        '}' \
         'copy_proxy_pair HTTP_PROXY http_proxy' \
         'copy_proxy_pair HTTPS_PROXY https_proxy' \
         'copy_proxy_pair ALL_PROXY all_proxy' \
+        'copy_proxy_pair NO_PROXY no_proxy' \
         'gnome_proxy_mode="$(read_gnome_proxy_value org.gnome.system.proxy mode 2>/dev/null || true)"' \
         'if [ "$gnome_proxy_mode" = manual ]; then' \
         '    set_gnome_proxy_pair HTTP_PROXY http_proxy org.gnome.system.proxy.http http' \
-        '    set_gnome_proxy_pair HTTPS_PROXY https_proxy org.gnome.system.proxy.https http' \
-        '    set_gnome_proxy_pair ALL_PROXY all_proxy org.gnome.system.proxy.socks socks5' \
+        '    gnome_use_same_proxy="$(read_gnome_proxy_value org.gnome.system.proxy use-same-proxy 2>/dev/null || true)"' \
+        '    if [ "$gnome_use_same_proxy" = true ]; then' \
+        '        copy_proxy_family HTTP_PROXY http_proxy HTTPS_PROXY https_proxy' \
+        '        copy_proxy_family HTTP_PROXY http_proxy ALL_PROXY all_proxy' \
+        '    else' \
+        '        set_gnome_proxy_pair HTTPS_PROXY https_proxy org.gnome.system.proxy.https http' \
+        '        set_gnome_proxy_pair ALL_PROXY all_proxy org.gnome.system.proxy.socks socks5' \
+        '    fi' \
+        '    set_gnome_no_proxy_pair' \
         'fi' \
         'case "$(uname -m)" in' \
         '    x86_64) extension_arch=x64 ;;' \
@@ -1027,12 +1086,14 @@ write_chrome_native_host_launcher() {
         '    *) exit 1 ;;' \
         'esac' \
         'host_path="$cache_root/latest/extension-host/linux/$extension_arch/extension-host"' \
-        'exec "$host_path" "$@"' > "$tmp_path"); then
-        rm -f "$tmp_path"
+        'exec "$host_path" "$@"' > "$tmp_path"; then
+        rm -f -- "$tmp_path"
         return 1
     fi
-    chmod 0755 "$tmp_path" || return 1
-    mv -f "$tmp_path" "$launcher_path" || return 1
+    if ! chmod 0755 "$tmp_path" || ! mv -fT -- "$tmp_path" "$launcher_path"; then
+        rm -f -- "$tmp_path"
+        return 1
+    fi
     printf '%s\n' "$launcher_path"
 }
 

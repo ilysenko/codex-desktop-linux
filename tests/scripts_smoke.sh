@@ -6353,6 +6353,7 @@ for name in (
     "path_has_unsafe_write",
     "tree_has_unsafe_write",
     "remove_tree_if_exists",
+    "chrome_extension_host_arch",
 ):
     match = re.search(rf"{name}\(\) \{{[\s\S]*?\n\}}\n", launcher)
     if match is None:
@@ -6391,7 +6392,6 @@ source_plugin="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/chrome"
 cache_root="$CODEX_HOME/plugins/cache/openai-bundled/chrome"
 cache_plugin="$cache_root/26.test"
 
-chrome_extension_host_arch() { printf '%s\n' x64; }
 bundled_plugin_version() { printf '%s\n' 26.test; }
 replace_symlink() { ln -sfnT "$1" "$2"; }
 write_chrome_native_host_manifests() { printf '%s\n' "$1" > "$root/native-host-path"; }
@@ -6399,23 +6399,38 @@ write_chrome_native_host_manifests() { printf '%s\n' "$1" > "$root/native-host-p
 mkdir -p \
   "$source_plugin/.codex-plugin" \
   "$source_plugin/extension-host/linux/x64" \
+  "$source_plugin/extension-host/linux/arm64" \
   "$source_plugin/scripts/node_modules" \
   "$cache_plugin/.codex-plugin" \
   "$cache_plugin/extension-host/linux/x64" \
+  "$cache_plugin/extension-host/linux/arm64" \
   "$cache_plugin/scripts/node_modules"
 printf '%s\n' '{"name":"chrome","version":"26.test"}' > "$source_plugin/.codex-plugin/plugin.json"
 cat > "$source_plugin/extension-host/linux/x64/extension-host" <<'HOST'
 #!/usr/bin/env bash
 printf '%s\n' \
   "${HTTP_PROXY-}" "${HTTPS_PROXY-}" "${ALL_PROXY-}" \
-  "${http_proxy-}" "${https_proxy-}" "${all_proxy-}"
+  "${http_proxy-}" "${https_proxy-}" "${all_proxy-}" \
+  "${NO_PROXY-}" "${no_proxy-}"
 HOST
+cp "$source_plugin/extension-host/linux/x64/extension-host" \
+  "$source_plugin/extension-host/linux/arm64/extension-host"
 printf '%s\n' trusted-client > "$source_plugin/scripts/browser-client.mjs"
 printf '%s\n' trusted-manifest > "$source_plugin/scripts/installManifest.mjs"
 printf '%s\n' trusted-module > "$source_plugin/scripts/node_modules/classic-level.mjs"
-chmod +x "$source_plugin/extension-host/linux/x64/extension-host"
+chmod +x \
+  "$source_plugin/extension-host/linux/x64/extension-host" \
+  "$source_plugin/extension-host/linux/arm64/extension-host"
 cp -R "$source_plugin/." "$cache_plugin/"
 printf '%s\n' tampered-module > "$cache_plugin/scripts/node_modules/classic-level.mjs"
+printf '%s\n' untouched > "$root/predictable-temp-target"
+ln -s "$root/predictable-temp-target" "$cache_root/native-host.tmp.$$"
+cat > "$cache_root/native-host" <<'HOST'
+#!/usr/bin/env bash
+CODEX_CHROME_NATIVE_HOST_LAUNCHER_V1=1
+printf '%s\n' PRESEEDED_PAYLOAD
+HOST
+chmod 0755 "$cache_root/native-host"
 
 # Simulate a cache and relevant ancestor created under umask 0002. The four
 # files used by the old partial comparison still match, while an imported
@@ -6445,6 +6460,11 @@ if find "$cache_plugin" ! -type l -perm /022 -print -quit | grep -q .; then
 fi
 test -L "$cache_root/latest"
 test "$(readlink "$cache_root/latest")" = 26.test
+grep -qx untouched "$root/predictable-temp-target"
+if grep -q PRESEEDED_PAYLOAD "$cache_root/native-host"; then
+  echo "Chrome native host launcher retained a pre-seeded executable" >&2
+  exit 1
+fi
 
 native_host_path="$(cat "$root/native-host-path")"
 stub_bin="$root/stub-bin"
@@ -6457,7 +6477,9 @@ printf '%s\n' \
   'ALL_PROXY=socks5://127.0.0.1:7897/' \
   'http_proxy=http://127.0.0.1:7897' \
   'https_proxy=http://127.0.0.1:7897' \
-  'all_proxy=socks5://127.0.0.1:7897/'
+  'all_proxy=socks5://127.0.0.1:7897/' \
+  'NO_PROXY=localhost,127.0.0.0/8' \
+  'no_proxy=localhost,127.0.0.0/8'
 STUB
 cat > "$stub_bin/gsettings" <<'STUB'
 #!/usr/bin/env bash
@@ -6466,7 +6488,7 @@ STUB
 chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
 
 proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-  -u http_proxy -u https_proxy -u all_proxy \
+  -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
   PATH="$stub_bin:$PATH" "$native_host_path")"
 test "$proxy_output" = "$(printf '%s\n' \
   'http://127.0.0.1:7897' \
@@ -6474,7 +6496,9 @@ test "$proxy_output" = "$(printf '%s\n' \
   'socks5://127.0.0.1:7897/' \
   'http://127.0.0.1:7897' \
   'http://127.0.0.1:7897' \
-  'socks5://127.0.0.1:7897/')"
+  'socks5://127.0.0.1:7897/' \
+  'localhost,127.0.0.0/8' \
+  'localhost,127.0.0.0/8')"
 
 cat > "$stub_bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
@@ -6484,23 +6508,47 @@ cat > "$stub_bin/gsettings" <<'STUB'
 #!/usr/bin/env bash
 case "$2:$3" in
   org.gnome.system.proxy:mode) printf "'manual'\n" ;;
-  org.gnome.system.proxy.http:host|org.gnome.system.proxy.https:host|org.gnome.system.proxy.socks:host) printf "'127.0.0.1'\n" ;;
-  org.gnome.system.proxy.http:port|org.gnome.system.proxy.https:port|org.gnome.system.proxy.socks:port) printf '7897\n' ;;
+  org.gnome.system.proxy:use-same-proxy) printf 'true\n' ;;
+  org.gnome.system.proxy:ignore-hosts) printf "['localhost', '127.0.0.0/8']\n" ;;
+  org.gnome.system.proxy.http:host) printf "'127.0.0.1'\n" ;;
+  org.gnome.system.proxy.http:port) printf '7897\n' ;;
   *) exit 1 ;;
 esac
 STUB
 chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
 
 proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-  -u http_proxy -u https_proxy -u all_proxy \
+  -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
   PATH="$stub_bin:$PATH" "$native_host_path")"
 test "$proxy_output" = "$(printf '%s\n' \
   'http://127.0.0.1:7897' \
   'http://127.0.0.1:7897' \
-  'socks5://127.0.0.1:7897/' \
   'http://127.0.0.1:7897' \
   'http://127.0.0.1:7897' \
-  'socks5://127.0.0.1:7897/')"
+  'http://127.0.0.1:7897' \
+  'http://127.0.0.1:7897' \
+  'localhost,127.0.0.0/8' \
+  'localhost,127.0.0.0/8')"
+
+cat > "$stub_bin/systemctl" <<'STUB'
+#!/usr/bin/env bash
+sleep 5
+STUB
+cat > "$stub_bin/gsettings" <<'STUB'
+#!/usr/bin/env bash
+sleep 5
+STUB
+chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
+
+started_at="$(date +%s)"
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
+  PATH="$stub_bin:$PATH" "$native_host_path" >/dev/null
+elapsed="$(( $(date +%s) - started_at ))"
+if [ "$elapsed" -ge 4 ]; then
+  echo "Chrome native host proxy probes exceeded their fail-soft deadline" >&2
+  exit 1
+fi
 '''
 )
 PY
