@@ -6583,6 +6583,7 @@ test "$proxy_output" = "$(printf '%s\n' \
 
 cat > "$stub_bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
+printf '%s\n' 'HTTP_PROXY=http://partial.invalid:9999'
 trap 'exit 0' TERM
 (
   trap '' TERM
@@ -6599,21 +6600,48 @@ chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
 
 probe_child_pid_file="$root/probe-child-pid"
 started_at="$(date +%s)"
-env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
   -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
   PROBE_CHILD_PID_FILE="$probe_child_pid_file" \
   STUB_UNAME_MACHINE=aarch64 \
-  PATH="$stub_bin:$PATH" "$native_host_path" >/dev/null
+  PATH="$stub_bin:$PATH" "$native_host_path")"
 elapsed="$(( $(date +%s) - started_at ))"
 if [ "$elapsed" -ge 4 ]; then
   echo "Chrome native host proxy probes exceeded their fail-soft deadline" >&2
   exit 1
 fi
+test "$proxy_output" = 'ARCH=arm64'
 probe_child_pid="$(cat "$probe_child_pid_file")"
 if kill -0 "$probe_child_pid" 2>/dev/null; then
   echo "Chrome native host proxy watchdog left a TERM-resistant child running" >&2
   exit 1
 fi
+
+no_setsid_bin="$root/no-setsid-bin"
+mkdir -p "$no_setsid_bin"
+ln -s "$(type -P bash)" "$no_setsid_bin/bash"
+ln -s "$(type -P dirname)" "$no_setsid_bin/dirname"
+cat > "$no_setsid_bin/uname" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' x86_64
+STUB
+cat > "$no_setsid_bin/systemctl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' called > "${PROBE_CALLED_FILE:?}"
+STUB
+cat > "$no_setsid_bin/gsettings" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' called > "${PROBE_CALLED_FILE:?}"
+STUB
+chmod 0755 "$no_setsid_bin/uname" "$no_setsid_bin/systemctl" "$no_setsid_bin/gsettings"
+
+probe_called_file="$root/probe-called-without-setsid"
+proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
+  PROBE_CALLED_FILE="$probe_called_file" \
+  PATH="$no_setsid_bin" "$native_host_path")"
+test "$proxy_output" = 'ARCH=x64'
+test ! -e "$probe_called_file"
 '''
 )
 PY
