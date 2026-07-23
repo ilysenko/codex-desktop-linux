@@ -6408,13 +6408,20 @@ mkdir -p \
 printf '%s\n' '{"name":"chrome","version":"26.test"}' > "$source_plugin/.codex-plugin/plugin.json"
 cat > "$source_plugin/extension-host/linux/x64/extension-host" <<'HOST'
 #!/usr/bin/env bash
+printf '%s\n' ARCH=x64
 printf '%s\n' \
   "${HTTP_PROXY-}" "${HTTPS_PROXY-}" "${ALL_PROXY-}" \
   "${http_proxy-}" "${https_proxy-}" "${all_proxy-}" \
   "${NO_PROXY-}" "${no_proxy-}"
 HOST
-cp "$source_plugin/extension-host/linux/x64/extension-host" \
-  "$source_plugin/extension-host/linux/arm64/extension-host"
+cat > "$source_plugin/extension-host/linux/arm64/extension-host" <<'HOST'
+#!/usr/bin/env bash
+printf '%s\n' ARCH=arm64
+printf '%s\n' \
+  "${HTTP_PROXY-}" "${HTTPS_PROXY-}" "${ALL_PROXY-}" \
+  "${http_proxy-}" "${https_proxy-}" "${all_proxy-}" \
+  "${NO_PROXY-}" "${no_proxy-}"
+HOST
 printf '%s\n' trusted-client > "$source_plugin/scripts/browser-client.mjs"
 printf '%s\n' trusted-manifest > "$source_plugin/scripts/installManifest.mjs"
 printf '%s\n' trusted-module > "$source_plugin/scripts/node_modules/classic-level.mjs"
@@ -6469,6 +6476,10 @@ fi
 native_host_path="$(cat "$root/native-host-path")"
 stub_bin="$root/stub-bin"
 mkdir -p "$stub_bin"
+cat > "$stub_bin/uname" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "${STUB_UNAME_MACHINE:-x86_64}"
+STUB
 cat > "$stub_bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' \
@@ -6485,12 +6496,14 @@ cat > "$stub_bin/gsettings" <<'STUB'
 #!/usr/bin/env bash
 exit 1
 STUB
-chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
+chmod 0755 "$stub_bin/uname" "$stub_bin/systemctl" "$stub_bin/gsettings"
 
 proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
   -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
+  STUB_UNAME_MACHINE=x86_64 \
   PATH="$stub_bin:$PATH" "$native_host_path")"
 test "$proxy_output" = "$(printf '%s\n' \
+  'ARCH=x64' \
   'http://127.0.0.1:7897' \
   'http://127.0.0.1:7897' \
   'socks5://127.0.0.1:7897/' \
@@ -6519,8 +6532,10 @@ chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
 
 proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
   -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
+  STUB_UNAME_MACHINE=aarch64 \
   PATH="$stub_bin:$PATH" "$native_host_path")"
 test "$proxy_output" = "$(printf '%s\n' \
+  'ARCH=arm64' \
   'http://127.0.0.1:7897' \
   'http://127.0.0.1:7897' \
   'http://127.0.0.1:7897' \
@@ -6532,7 +6547,49 @@ test "$proxy_output" = "$(printf '%s\n' \
 
 cat > "$stub_bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
-sleep 5
+exit 0
+STUB
+cat > "$stub_bin/gsettings" <<'STUB'
+#!/usr/bin/env bash
+case "$2:$3" in
+  org.gnome.system.proxy:mode) printf "'manual'\n" ;;
+  org.gnome.system.proxy:use-same-proxy) printf 'false\n' ;;
+  org.gnome.system.proxy:ignore-hosts) printf "['example.internal']\n" ;;
+  org.gnome.system.proxy.http:host) printf "'192.0.2.10'\n" ;;
+  org.gnome.system.proxy.http:port) printf '8080\n' ;;
+  org.gnome.system.proxy.https:host) printf "'192.0.2.11'\n" ;;
+  org.gnome.system.proxy.https:port) printf '8443\n' ;;
+  org.gnome.system.proxy.socks:host) printf "'192.0.2.12'\n" ;;
+  org.gnome.system.proxy.socks:port) printf '1080\n' ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
+
+proxy_output="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
+  STUB_UNAME_MACHINE=x86_64 \
+  PATH="$stub_bin:$PATH" "$native_host_path")"
+test "$proxy_output" = "$(printf '%s\n' \
+  'ARCH=x64' \
+  'http://192.0.2.10:8080' \
+  'http://192.0.2.11:8443' \
+  'socks5://192.0.2.12:1080/' \
+  'http://192.0.2.10:8080' \
+  'http://192.0.2.11:8443' \
+  'socks5://192.0.2.12:1080/' \
+  'example.internal' \
+  'example.internal')"
+
+cat > "$stub_bin/systemctl" <<'STUB'
+#!/usr/bin/env bash
+trap 'exit 0' TERM
+(
+  trap '' TERM
+  printf '%s\n' "$BASHPID" > "${PROBE_CHILD_PID_FILE:?}"
+  exec sleep 5
+) &
+wait
 STUB
 cat > "$stub_bin/gsettings" <<'STUB'
 #!/usr/bin/env bash
@@ -6540,13 +6597,21 @@ sleep 5
 STUB
 chmod 0755 "$stub_bin/systemctl" "$stub_bin/gsettings"
 
+probe_child_pid_file="$root/probe-child-pid"
 started_at="$(date +%s)"
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
   -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
+  PROBE_CHILD_PID_FILE="$probe_child_pid_file" \
+  STUB_UNAME_MACHINE=aarch64 \
   PATH="$stub_bin:$PATH" "$native_host_path" >/dev/null
 elapsed="$(( $(date +%s) - started_at ))"
 if [ "$elapsed" -ge 4 ]; then
   echo "Chrome native host proxy probes exceeded their fail-soft deadline" >&2
+  exit 1
+fi
+probe_child_pid="$(cat "$probe_child_pid_file")"
+if kill -0 "$probe_child_pid" 2>/dev/null; then
+  echo "Chrome native host proxy watchdog left a TERM-resistant child running" >&2
   exit 1
 fi
 '''

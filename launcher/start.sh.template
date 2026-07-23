@@ -971,16 +971,19 @@ write_chrome_native_host_launcher() {
         'CODEX_CHROME_NATIVE_HOST_LAUNCHER_V2=1' \
         'cache_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"' \
         'run_proxy_probe() {' \
-        '    local probe_pid watchdog_pid rc=0 use_process_group=0' \
+        '    local output_file timeout_file probe_pid watchdog_pid rc=0 use_process_group=0' \
+        '    output_file="$(mktemp "${TMPDIR:-/tmp}/codex-chrome-proxy-probe.XXXXXX")" || return 1' \
+        '    timeout_file="$output_file.timeout"' \
         '    if command -v setsid >/dev/null 2>&1; then' \
-        '        setsid "$@" &' \
+        '        setsid "$@" >"$output_file" 2>/dev/null &' \
         '        use_process_group=1' \
         '    else' \
-        '        "$@" &' \
+        '        "$@" >"$output_file" 2>/dev/null &' \
         '    fi' \
         '    probe_pid=$!' \
         '    (' \
         '        sleep 0.5' \
+        '        : > "$timeout_file"' \
         '        if kill -0 "$probe_pid" 2>/dev/null; then' \
         '            if [ "$use_process_group" -eq 1 ]; then' \
         '                kill -TERM -- "-$probe_pid" 2>/dev/null || kill -TERM "$probe_pid" 2>/dev/null || true' \
@@ -995,8 +998,16 @@ write_chrome_native_host_launcher() {
         '    ) >/dev/null 2>&1 &' \
         '    watchdog_pid=$!' \
         '    wait "$probe_pid" || rc=$?' \
-        '    kill "$watchdog_pid" 2>/dev/null || true' \
-        '    wait "$watchdog_pid" 2>/dev/null || true' \
+        '    if [ -e "$timeout_file" ]; then' \
+        '        wait "$watchdog_pid" 2>/dev/null || true' \
+        '    else' \
+        '        kill "$watchdog_pid" 2>/dev/null || true' \
+        '        wait "$watchdog_pid" 2>/dev/null || true' \
+        '    fi' \
+        '    if [ "$rc" -eq 0 ]; then' \
+        '        cat "$output_file"' \
+        '    fi' \
+        '    rm -f -- "$output_file" "$timeout_file"' \
         '    return "$rc"' \
         '}' \
         'while IFS="=" read -r name value; do' \
