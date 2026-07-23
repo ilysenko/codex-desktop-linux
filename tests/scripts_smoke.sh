@@ -163,7 +163,7 @@ JSON
 {"name":"browser","version":"0.1.0-alpha2","interface":{"category":"Engineering"}}
 JSON
     cat > "$resources_dir/plugins/openai-bundled/plugins/browser/scripts/browser-client.mjs" <<'JS'
-function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}function th(){let e=import.meta.__codexNativePipe;return e==null||typeof e.createConnection!="function"?null:e}var I2=new Set(["about:blank"]);function Gb(e){if(I2.has(e))return!0;let t;try{t=new URL(e)}catch{return!1}return t.protocol==="http:"||t.protocol==="https:"}class Uf{async fetchBlocked(e,t){let r=await bS(e.endpoint,{method:"GET"});if(!r.ok)throw new Error(ae(`${t} cannot determine if ${e.displayUrl} is allowed. Please try again later or use another source.`));let n=await r.json();return TF(n)}}var kE=t=>t==="win32"?"\\\\.\\pipe\\codex-browser-use":"/tmp/codex-browser-use";var Cb=kE(hV.platform()),EV=()=>_P()==="win32"?TV():CV(),CV=async()=>(await yP(Cb)).map(e=>wP.resolve(Cb,e)),TV=async()=>[];export function setupAtlasRuntime() {}
+import{env as Ub}from"node:process";function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}function th(){let e=import.meta.__codexNativePipe;return e==null||typeof e.createConnection!="function"?null:e}var I2=new Set(["about:blank"]);function Gb(e){if(I2.has(e))return!0;let t;try{t=new URL(e)}catch{return!1}return t.protocol==="http:"||t.protocol==="https:"}class Uf{async fetchBlocked(e,t){let r=await bS(e.endpoint,{method:"GET"});if(!r.ok)throw new Error(ae(`${t} cannot determine if ${e.displayUrl} is allowed. Please try again later or use another source.`));let n=await r.json();return TF(n)}}var kE=t=>t==="win32"?"\\\\.\\pipe\\codex-browser-use":"/tmp/codex-browser-use";var Cb=kE(hV.platform()),EV=()=>_P()==="win32"?TV():CV(),CV=async()=>(await yP(Cb)).map(e=>wP.resolve(Cb,e)),TV=async()=>[];export function setupAtlasRuntime() {return Ub.XDG_CONFIG_HOME}
 JS
 }
 
@@ -7636,6 +7636,8 @@ test_browser_plugin_renamed_upstream_staging() {
 
     assert_file_exists "$browser_dir/scripts/browser-client.mjs"
     assert_contains "$browser_dir/.codex-plugin/plugin.json" '"name":"browser"'
+    assert_contains "$browser_dir/scripts/browser-client.mjs" "codexLinuxBrowserUseProcessEnv"
+    assert_not_contains "$browser_dir/scripts/browser-client.mjs" '"node:process"'
     assert_contains "$browser_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env?.\[e\]'
     assert_not_contains "$browser_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env\[e\]'
     assert_contains "$browser_dir/scripts/browser-client.mjs" "nativePipe??import.meta.__codexNativePipe"
@@ -8298,7 +8300,7 @@ const browserPreference={};function preferredWindowIdFor(){}function getForUrl()
 var kE=t=>t==="win32"?"\\\\.\\pipe\\codex-browser-use":"/tmp/codex-browser-use";var Cb=kE(hV.platform()),EV=()=>_P()==="win32"?TV():CV(),CV=async()=>(await yP(Cb)).map(e=>wP.resolve(Cb,e)),TV=async()=>[];
 function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}
 function Me(){let e=globalThis.nodeRepl;return e?.config==null?void 0:e}
-import{platform as yT}from"node:os";function eh(){return"privileged native pipe bridge is not available; browser-client is not trusted"}function th(){let e=globalThis.nodeRepl?.nativePipe;return e==null||typeof e.createConnection!="function"?null:e}var ml=class e{constructor(t){this.socket=t}static async create(t){let r=th();if(r!=null){let n=await r.createConnection(t);return new e(n)}throw new Error(eh())}};
+import{platform as yT}from"node:os";import{env as Ub}from"node:process";function eh(){return"privileged native pipe bridge is not available; browser-client is not trusted"}function th(){let e=globalThis.nodeRepl?.nativePipe;return e==null||typeof e.createConnection!="function"?null:e}var ml=class e{constructor(t){this.socket=t}static async create(t){let r=th();if(r!=null){let n=await r.createConnection(t);return new e(n)}throw new Error(eh())}};var chromeConfigHome=Ub.CHROME_CONFIG_HOME;
 async fetchBlocked(e,t){let r=await bS(e.endpoint,{method:"GET"});if(!r.ok)throw new Error(ae(`${t} cannot determine if ${e.displayUrl} is allowed. Please try again later or use another source.`));let n=await r.json();return TF(n)}
 JS
     cat > "$chrome_dir/scripts/check-native-host-manifest.js" <<'JS'
@@ -8479,6 +8481,8 @@ test_chrome_plugin_staging() {
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "browserPreference"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "preferredWindowIdFor"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "getForUrl"
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxBrowserUseProcessEnv"
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" '"node:process"'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env?.\[e\]'
     assert_not_contains "$chrome_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env\[e\]'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxBrowserUseConfigShim"
@@ -8623,7 +8627,7 @@ make_fake_extracted_asar() {
     printf 'import{t as e}from"./chunk-test.js";Symbol.for(`react.transitional.element`);export{e as t};\n' > "$root/webview/assets/react-test.js"
     printf 'import{t as e}from"./chunk-test.js";Symbol.for(`react.transitional.element`);export{e as t};\n' > "$root/webview/assets/jsx-runtime-test.js"
     printf 'async function send(e,t,n,r,i){return fetch(`vscode://codex/${e}`)}function request(...e){let[t,n]=e,{params:r,select:i,signal:a,source:o}=n??{};return send(t,r,i,a,o)}export{request as l};\n' > "$root/webview/assets/setting-storage-test.js"
-    cat > "$root/webview/assets/app-server-manager-signals-test.js" <<'JS'
+    cat > "$root/webview/assets/app-initial-test.js" <<'JS'
 function j(e){return e}function B(e){if(e==null||typeof e==`string`)return null;let t=Mi(e);return t==null?null:Ni(t)}function Mi(e){return`subAgent`in e?e.subAgent:null}function Ni(e){return typeof e==`string`?Pi():`thread_spawn`in e?{parentThreadId:j(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:Pi()}function Pi(){return{parentThreadId:null,depth:null,agentNickname:null,agentRole:null}}function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(B(e.source)?.agentNickname)}function Zl(e){if(e==null)return null;let t=e.trim();return t.length===0?null:t}
 JS
     printf 'let marker=`hotkey-window-hotkey-state`;function i(){}export{i};\n' > "$root/webview/assets/general-settings-hotkey-test.js"
@@ -8657,13 +8661,13 @@ test_linux_file_manager_patch_smoke() {
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(D.on(`system-context-menu`,e=>e.preventDefault()),D.removeMenu()),process.platform===`win32`&&D.removeMenu(),'
     assert_not_contains "$extracted/.vite/build/main-test.js" 'D.setMenuBarVisibility(!1)'
     assert_contains "$extracted/.vite/build/main-test.js" '&&D.setIcon('
-    assert_contains "$extracted/webview/assets/app-server-manager-signals-test.js" '`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null'
-    assert_contains "$extracted/webview/assets/app-server-manager-signals-test.js" 'Zl(e.agentNickname)??Zl(e.agent_nickname)??Zl(B(e.source)?.agentNickname)'
+    assert_contains "$extracted/webview/assets/app-initial-test.js" '`subAgent`in e?e.subAgent:`subagent`in e?e.subagent:null'
+    assert_contains "$extracted/webview/assets/app-initial-test.js" 'Zl(e.agentNickname)??Zl(e.agent_nickname)??Zl(B(e.source)?.agentNickname)'
     assert_not_contains "$output_log" 'Failed to apply Linux File Manager Patch'
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_occurrence_count "$extracted/webview/assets/app-server-manager-signals-test.js" '`subagent`in e?e.subagent' '1'
-    assert_occurrence_count "$extracted/webview/assets/app-server-manager-signals-test.js" 'Zl(e.agent_nickname)' '1'
+    assert_occurrence_count "$extracted/webview/assets/app-initial-test.js" '`subagent`in e?e.subagent' '1'
+    assert_occurrence_count "$extracted/webview/assets/app-initial-test.js" 'Zl(e.agent_nickname)' '1'
     assert_not_contains "$output_log" 'Failed to apply Linux File Manager Patch'
 }
 
