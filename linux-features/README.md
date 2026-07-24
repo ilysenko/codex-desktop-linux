@@ -88,7 +88,8 @@ Each feature directory must include:
 - `README.md` — what it does, how to test it, and known risks
 - optional `patch.js` — descriptor patches when `feature.json` uses
   `entrypoints.patchDescriptors`
-- optional declarative `resources`, `runtimeHooks`, and `packageHooks`
+- optional declarative `resources`, `runtimeHooks`, `packageResources`,
+  `packageDependencies`, and `packageHooks`
 - optional `stage.sh` — legacy install/build staging hook
 - optional `test.js` — self-contained tests for the feature
 
@@ -126,7 +127,13 @@ or other user-home artifact, stage the source with `resources` and copy it from
 Avoid writing user-home files from `stage.sh`, because install/package/update
 rebuilds may run outside the real user's session.
 
-`packageHooks` run during native package staging and receive `PACKAGE_FORMAT`,
+`packageResources` stage feature-owned files outside the app directory for
+native packages. `packageDependencies` adds per-format runtime dependencies.
+Both apply only while their feature is enabled; see the architecture document
+for the field contract.
+
+`packageHooks` run after declarative native package resources are staged and
+receive `PACKAGE_FORMAT`,
 `PACKAGE_ROOT`, `PACKAGE_NAME`, `PACKAGE_VERSION`, and `APP_DIR`.
 
 Feature patching uses only `entrypoints.patchDescriptors`. Descriptor modules

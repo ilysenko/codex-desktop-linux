@@ -121,6 +121,18 @@
           hash = "sha256-ghAJ+cGDAFDYlK755hkGywpTeyAAstm77ZmF//HV4NA=";
         };
 
+        codexMicroNodeHidArchive = pkgs.fetchurl {
+          name = "node-hid-3.3.0.tgz";
+          url = "https://registry.npmjs.org/node-hid/-/node-hid-3.3.0.tgz";
+          hash = "sha512-j+dFgJLRAE0nufQKXk3IfS6T6YuHhCgMvz4TrG0sgtb6DSCdYpfJ1etcdmeCmPQjUgO+yo32ktVrRliNs/+fmg==";
+        };
+
+        codexMicroUdevRules = pkgs.runCommand "codex-micro-udev-rules" { } ''
+          install -Dm0644 \
+            ${sourceRoot}/linux-features/codex-micro/resources/70-codex-micro.rules \
+            "$out/lib/udev/rules.d/70-codex-micro.rules"
+        '';
+
         browserUseNodeReplRuntime = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-primary-runtime/26.426.12240/codex-primary-runtime-linux-x64-26.426.12240.tar.xz";
           hash = "sha256-21Yk6276NrZuxvbdBIjO+5ZuSWNoYqq2IJpDNsHKkMQ=";
@@ -345,6 +357,12 @@
           stdenv.cc.cc.lib
           zlib
         ]);
+        codexMicroRuntimeLibPath = pkgs.lib.makeLibraryPath (with pkgs; [
+          systemd
+          libusb1
+          stdenv.cc.cc.lib
+          glibc
+        ]);
         gsettingsSchemaPackages = with pkgs; [
           gsettings-desktop-schemas
           gtk3
@@ -511,6 +529,7 @@ PY
             else
               normalizeLinuxFeaturesConfig linuxFeaturesConfigOverride;
           effectiveLinuxFeatureIds = effectiveLinuxFeaturesConfig.enabled;
+          codexMicroEnabled = builtins.elem "codex-micro" effectiveLinuxFeatureIds;
         in
         pkgs.stdenv.mkDerivation {
           pname = "codex-desktop${packageSuffix { inherit enableComputerUseUi; linuxFeatureIds = effectiveLinuxFeatureIds; }}-payload";
@@ -533,6 +552,13 @@ PY
             pkgs.python3
             pkgs.unzip
             pkgs.util-linux
+          ] ++ pkgs.lib.optionals codexMicroEnabled [
+            pkgs.pkg-config
+          ];
+
+          buildInputs = pkgs.lib.optionals codexMicroEnabled [
+            pkgs.systemd
+            pkgs.libusb1
           ];
 
           dontConfigure = true;
@@ -563,6 +589,11 @@ PY
             export CODEX_LINUX_FEATURES_CONFIG="${linuxFeaturesConfigFile effectiveLinuxFeaturesConfig}"
             export CODEX_ELECTRON_ZIP_SOURCE="${electronZip}"
             export CODEX_NATIVE_MODULES_SOURCE="${codexNativeModules}"
+            ${pkgs.lib.optionalString codexMicroEnabled ''
+            export CODEX_MICRO_NODE_HID_ARCHIVE="${codexMicroNodeHidArchive}"
+            export CODEX_ELECTRON_VERSION="${electronVersion}"
+            export CODEX_MICRO_REQUIRE_PREBUILD=1
+            ''}
             ${pkgs.lib.optionalString (browserUseNodeRepl != null) ''
             export CODEX_LINUX_NODE_REPL_SOURCE="${browserUseNodeRepl}/bin/node_repl"
             ''}
@@ -611,6 +642,7 @@ PY
             else
               normalizeLinuxFeaturesConfig linuxFeaturesConfigOverride;
           normalizedLinuxFeatureIds = effectiveLinuxFeaturesConfig.enabled;
+          codexMicroEnabled = builtins.elem "codex-micro" normalizedLinuxFeatureIds;
           featureArgs = {
             inherit enableComputerUseUi;
             linuxFeatureIds = normalizedLinuxFeatureIds;
@@ -657,6 +689,31 @@ PY
               --ordering "$TMPDIR/app.asar.ordering" \
               --unpack "{*.node,*.so,*.dylib}"
             rm -rf "$resources_dir/app-extracted"
+
+            ${pkgs.lib.optionalString codexMicroEnabled ''
+            codex_micro_node_count=0
+            while IFS= read -r codex_micro_node; do
+              codex_micro_node_count=$((codex_micro_node_count + 1))
+              patchelf --set-rpath "${codexMicroRuntimeLibPath}" "$codex_micro_node"
+              actual_rpath="$(patchelf --print-rpath "$codex_micro_node")"
+              if [ "$actual_rpath" != "${codexMicroRuntimeLibPath}" ]; then
+                echo "codex-micro node-hid RPATH verification failed: $actual_rpath" >&2
+                exit 1
+              fi
+            done < <(
+              find "$resources_dir/app.asar.unpacked" -type f \
+                -path '*/node-hid/prebuilds/HID_hidraw-linux-*/node-napi-v4.node' \
+                -print
+            )
+            if [ "$codex_micro_node_count" -ne 1 ]; then
+              echo "expected exactly one codex-micro node-hid Linux binding, found $codex_micro_node_count" >&2
+              exit 1
+            fi
+
+            install -Dm0644 \
+              "${codexMicroUdevRules}/lib/udev/rules.d/70-codex-micro.rules" \
+              "$out/lib/udev/rules.d/70-codex-micro.rules"
+            ''}
 
             for node_repl_binary in \
               "$resources_dir/node_repl" \
@@ -789,6 +846,7 @@ PY
           codex-desktop-computer-use-ui = codexDesktopComputerUseUi;
           codex-desktop-remote-mobile-control = codexDesktopRemoteMobileControl;
           codex-desktop-computer-use-ui-remote-mobile-control = codexDesktopComputerUseUiRemoteMobileControl;
+          codex-micro-udev-rules = codexMicroUdevRules;
           installer = installer;
         };
 

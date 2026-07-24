@@ -1,0 +1,10 @@
+{
+  "name": "codex-micro-node-hid-source-toolchain",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@electron/rebuild": "4.0.4",
+    "node-addon-api": "3.2.1",
+    "pkg-prebuilds": "1.0.0"
+  }
+}

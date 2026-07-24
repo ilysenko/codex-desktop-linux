@@ -1,0 +1,9 @@
+[Trigger]
+Operation = Remove
+Type = Path
+Target = usr/lib/udev/rules.d/70-codex-micro.rules
+
+[Action]
+Description = Reloading udev rules after removing Codex Micro access policy
+When = PostTransaction
+Exec = /bin/sh -c "if command -v udevadm >/dev/null 2>&1; then udevadm control --reload-rules >/dev/null 2>&1 || true; fi"

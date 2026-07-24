@@ -8,7 +8,12 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  enabledLinuxFeaturePackageDependencies,
+  enabledLinuxFeaturePackageFiles,
+  enabledLinuxFeaturePackagePlan,
+  enabledLinuxFeaturePackageResourceMetadata,
   loadLinuxFeaturePatchDescriptors,
+  stageEnabledLinuxFeaturePackageResources,
   stageEnabledLinuxFeatureInstall,
 } = require("./linux-features.js");
 
@@ -352,4 +357,396 @@ test("Linux feature staging does not clean legacy hooks through symlinked hook d
     /must (stay inside the install directory|not contain symbolic links)/,
   );
   assert.equal(fs.readFileSync(path.join(outside, "unsafe-link-old-hook.sh"), "utf8"), "outside\n");
+});
+
+test("disabled Linux features do not add package resources or dependencies", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-disabled-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+    id: "unsafe-link",
+    title: "Unsafe Link",
+    packageResources: [
+      {
+        source: "70-unsafe-link.rules",
+        target: "usr/lib/udev/rules.d/70-unsafe-link.rules",
+        mode: "0644",
+        formats: ["deb", "rpm", "pacman"],
+      },
+    ],
+    packageDependencies: {
+      deb: ["libudev1"],
+      rpm: ["systemd-udev"],
+      pacman: ["systemd-libs"],
+    },
+  });
+  fs.writeFileSync(path.join(featureDir, "70-unsafe-link.rules"), "SUBSYSTEM==\"hidraw\"\n");
+  fs.writeFileSync(path.join(featuresRoot, "features.json"), '{"enabled":[]}\n');
+
+  const options = { featuresRoot, packageFormat: "deb" };
+  assert.deepEqual(enabledLinuxFeaturePackagePlan(options), {
+    resources: [],
+    dependencies: [],
+  });
+  assert.deepEqual(enabledLinuxFeaturePackageDependencies(options), []);
+  assert.deepEqual(enabledLinuxFeaturePackageFiles(options), []);
+
+  const packageRoot = path.join(root, "package-root");
+  fs.mkdirSync(packageRoot);
+  fs.writeFileSync(path.join(packageRoot, "sentinel"), "preserved\n");
+  assert.deepEqual(stageEnabledLinuxFeaturePackageResources(packageRoot, options), {
+    resources: [],
+    dependencies: [],
+  });
+  assert.deepEqual(fs.readdirSync(packageRoot), ["sentinel"]);
+});
+
+test("enabled Linux features stage package resources with exact modes and reject payload collisions", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-stage-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const target = "usr/lib/udev/rules.d/70-unsafe-link.rules";
+  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+    id: "unsafe-link",
+    title: "Unsafe Link",
+    packageResources: [
+      {
+        source: "70-unsafe-link.rules",
+        target,
+        mode: "0640",
+        formats: ["deb", "rpm"],
+      },
+    ],
+    packageDependencies: {
+      deb: ["libudev1"],
+      rpm: ["systemd-udev"],
+      pacman: ["systemd-libs"],
+    },
+  });
+  const rule = 'SUBSYSTEM=="hidraw", TAG+="uaccess"\n';
+  fs.writeFileSync(path.join(featureDir, "70-unsafe-link.rules"), rule);
+
+  const options = { featuresRoot, packageFormat: "deb" };
+  const plan = enabledLinuxFeaturePackagePlan(options);
+  assert.deepEqual(plan.dependencies, ["libudev1"]);
+  assert.equal(plan.resources.length, 1);
+  assert.equal(plan.resources[0].id, "unsafe-link");
+  assert.equal(plan.resources[0].target, target);
+  assert.equal(plan.resources[0].mode, 0o640);
+  assert.deepEqual(plan.resources[0].formats, ["deb", "rpm"]);
+  assert.deepEqual(enabledLinuxFeaturePackageResourceMetadata(options), [
+    { target, mode: "0640" },
+  ]);
+
+  const packageRoot = path.join(root, "package-root");
+  assert.deepEqual(stageEnabledLinuxFeaturePackageResources(packageRoot, options), plan);
+  const stagedTarget = path.join(packageRoot, target);
+  assert.equal(fs.readFileSync(stagedTarget, "utf8"), rule);
+  assert.equal(fs.statSync(stagedTarget).mode & 0o777, 0o640);
+
+  fs.writeFileSync(stagedTarget, "tampered\n");
+  fs.chmodSync(stagedTarget, 0o777);
+  assert.throws(
+    () => stageEnabledLinuxFeaturePackageResources(packageRoot, options),
+    /conflicts with existing package payload/i,
+  );
+  assert.equal(fs.readFileSync(stagedTarget, "utf8"), "tampered\n");
+  assert.equal(fs.statSync(stagedTarget).mode & 0o777, 0o777);
+});
+
+test("Linux feature package dependencies and files are sorted, deduplicated, and format-specific", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-lists-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+    id: "unsafe-link",
+    title: "Unsafe Link",
+    packageResources: [
+      {
+        source: "90-last.rules",
+        target: "usr/lib/udev/rules.d/90-last.rules",
+        formats: ["rpm", "deb", "deb"],
+      },
+      {
+        source: "70-first.rules",
+        target: "etc/udev/rules.d/70-first.rules",
+        formats: ["deb"],
+      },
+      {
+        source: "80-shared.rules",
+        target: "usr/lib/udev/rules.d/80-shared.rules",
+      },
+    ],
+    packageDependencies: {
+      deb: ["zlib1g", "libudev1", "zlib1g"],
+      rpm: ["zlib", "systemd-udev", "zlib"],
+      pacman: ["zlib", "systemd-libs", "zlib"],
+    },
+  });
+  for (const name of ["90-last.rules", "70-first.rules", "80-shared.rules"]) {
+    fs.writeFileSync(path.join(featureDir, name), `${name}\n`);
+  }
+
+  const debOptions = { featuresRoot, packageFormat: "deb" };
+  assert.deepEqual(enabledLinuxFeaturePackageDependencies(debOptions), ["libudev1", "zlib1g"]);
+  assert.deepEqual(enabledLinuxFeaturePackageFiles(debOptions), [
+    "/etc/udev/rules.d/70-first.rules",
+    "/usr/lib/udev/rules.d/80-shared.rules",
+    "/usr/lib/udev/rules.d/90-last.rules",
+  ]);
+  assert.deepEqual(
+    enabledLinuxFeaturePackagePlan(debOptions).resources.map((resource) => resource.target),
+    [
+      "etc/udev/rules.d/70-first.rules",
+      "usr/lib/udev/rules.d/80-shared.rules",
+      "usr/lib/udev/rules.d/90-last.rules",
+    ],
+  );
+
+  const rpmOptions = { featuresRoot, packageFormat: "rpm" };
+  assert.deepEqual(enabledLinuxFeaturePackageDependencies(rpmOptions), ["systemd-udev", "zlib"]);
+  assert.deepEqual(enabledLinuxFeaturePackageFiles(rpmOptions), [
+    "/usr/lib/udev/rules.d/80-shared.rules",
+    "/usr/lib/udev/rules.d/90-last.rules",
+  ]);
+
+  const pacmanOptions = { featuresRoot, packageFormat: "pacman" };
+  assert.deepEqual(enabledLinuxFeaturePackageDependencies(pacmanOptions), ["systemd-libs", "zlib"]);
+  assert.deepEqual(enabledLinuxFeaturePackageFiles(pacmanOptions), [
+    "/usr/lib/udev/rules.d/80-shared.rules",
+  ]);
+});
+
+test("Linux feature package resources reject traversal and package-root targets", () => {
+  const cases = [
+    { target: ".", error: /must not target the package root/i },
+    { target: "./", error: /must not target the package root/i },
+    { target: "../escape.rules", error: /must stay inside the package root/i },
+    { target: "usr/lib/udev/../../escape.rules", error: /must stay inside the package root/i },
+    { target: "DEBIAN", error: /reserved Debian control namespace/i },
+    { target: "DEBIAN/preinst", error: /reserved Debian control namespace/i },
+    { target: "usr/lib/udev/rules.d/bad\npath.rules", error: /unsafe package path component/i },
+    { target: "usr/%{_libdir}/bad.rules", error: /unsafe package path component/i },
+    { target: "usr/lib/udev/rules.d/*.rules", error: /unsafe package path component/i },
+    { target: "usr/lib/udev/rules.d/-bad.rules", error: /unsafe package path component/i },
+  ];
+
+  for (const { target, error } of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-target-"));
+    try {
+      const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+        id: "unsafe-link",
+        title: "Unsafe Link",
+        packageResources: [{ source: "payload.rules", target, mode: "0644", formats: ["deb"] }],
+      });
+      fs.writeFileSync(path.join(featureDir, "payload.rules"), "payload\n");
+
+      assert.throws(
+        () => enabledLinuxFeaturePackagePlan({ featuresRoot, packageFormat: "deb" }),
+        error,
+        target,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("Linux feature package resources reject ancestor and descendant target overlaps", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-overlap-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+    id: "unsafe-link",
+    title: "Unsafe Link",
+    packageResources: [
+      { source: "tree", target: "usr/share/unsafe-link", mode: "0644", formats: ["deb"] },
+      { source: "child.txt", target: "usr/share/unsafe-link/child.txt", mode: "0644", formats: ["deb"] },
+    ],
+  });
+  fs.mkdirSync(path.join(featureDir, "tree"));
+  fs.writeFileSync(path.join(featureDir, "tree", "payload.txt"), "tree\n");
+  fs.writeFileSync(path.join(featureDir, "child.txt"), "child\n");
+
+  assert.throws(
+    () => enabledLinuxFeaturePackagePlan({ featuresRoot, packageFormat: "deb" }),
+    /overlapping Linux feature package target/i,
+  );
+});
+
+test("Linux feature package staging rejects symlinked resource sources", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-source-link-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const outside = path.join(root, "outside.rules");
+  const target = "usr/lib/udev/rules.d/70-unsafe-link.rules";
+  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+    id: "unsafe-link",
+    title: "Unsafe Link",
+    packageResources: [
+      { source: "payload-link.rules", target, mode: "0644", formats: ["deb"] },
+    ],
+  });
+  fs.writeFileSync(outside, "outside\n");
+  fs.symlinkSync(outside, path.join(featureDir, "payload-link.rules"));
+
+  const packageRoot = path.join(root, "package-root");
+  assert.throws(
+    () => stageEnabledLinuxFeaturePackageResources(packageRoot, { featuresRoot, packageFormat: "deb" }),
+    /must not contain symbolic links/i,
+  );
+  assert.equal(fs.existsSync(path.join(packageRoot, target)), false);
+});
+
+test("Linux feature package staging rejects symlinked source ancestors", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-source-ancestor-link-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const outside = path.join(root, "outside");
+  const target = "usr/lib/udev/rules.d/70-unsafe-link.rules";
+  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+    id: "unsafe-link",
+    title: "Unsafe Link",
+    packageResources: [
+      { source: "linked/payload.rules", target, mode: "0644", formats: ["deb"] },
+    ],
+  });
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, "payload.rules"), "outside\n");
+  fs.symlinkSync(outside, path.join(featureDir, "linked"), "junction");
+
+  assert.throws(
+    () => enabledLinuxFeaturePackagePlan({ featuresRoot, packageFormat: "deb" }),
+    /must not contain symbolic links/i,
+  );
+});
+
+test("Linux feature package staging rejects symlinked target parents", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-target-link-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const outside = path.join(root, "outside");
+  const packageRoot = path.join(root, "package-root");
+  const target = "usr/lib/udev/rules.d/70-unsafe-link.rules";
+  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+    id: "unsafe-link",
+    title: "Unsafe Link",
+    packageResources: [
+      { source: "payload.rules", target, mode: "0644", formats: ["deb"] },
+    ],
+  });
+  fs.writeFileSync(path.join(featureDir, "payload.rules"), "payload\n");
+  fs.mkdirSync(path.join(packageRoot, "usr", "lib", "udev"), { recursive: true });
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, path.join(packageRoot, "usr", "lib", "udev", "rules.d"), "junction");
+
+  assert.throws(
+    () => stageEnabledLinuxFeaturePackageResources(packageRoot, { featuresRoot, packageFormat: "deb" }),
+    /must (stay inside the package root|not contain symbolic links)/i,
+  );
+  assert.equal(fs.existsSync(path.join(outside, "70-unsafe-link.rules")), false);
+});
+
+test("Linux feature package resources reject invalid modes and formats", () => {
+  const invalidResources = [
+    {
+      resource: {
+        source: "payload.rules",
+        target: "usr/lib/udev/rules.d/payload.rules",
+        mode: 644,
+        formats: ["deb"],
+      },
+      error: /file mode must be a quoted octal string/i,
+    },
+    {
+      resource: {
+        source: "payload.rules",
+        target: "usr/lib/udev/rules.d/payload.rules",
+        mode: "0899",
+        formats: ["deb"],
+      },
+      error: /file mode must be a quoted octal string/i,
+    },
+    {
+      resource: {
+        source: "payload.rules",
+        target: "usr/lib/udev/rules.d/payload.rules",
+        mode: "0644",
+        formats: ["deb", "appimage"],
+      },
+      error: /unsupported package format.*appimage/i,
+    },
+    {
+      resource: {
+        source: "payload.rules",
+        target: "usr/lib/udev/rules.d/payload.rules",
+        mode: "0644",
+        formats: "deb",
+      },
+      error: /formats must be an array/i,
+    },
+  ];
+
+  for (const { resource, error } of invalidResources) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-invalid-resource-"));
+    try {
+      const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+        id: "unsafe-link",
+        title: "Unsafe Link",
+        packageResources: [resource],
+      });
+      fs.writeFileSync(path.join(featureDir, "payload.rules"), "payload\n");
+      assert.throws(
+        () => enabledLinuxFeaturePackagePlan({ featuresRoot, packageFormat: "deb" }),
+        error,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-invalid-format-"));
+  try {
+    const { featuresRoot } = makeFeatureRoot(root, {
+      id: "unsafe-link",
+      title: "Unsafe Link",
+    });
+    assert.throws(
+      () => enabledLinuxFeaturePackagePlan({ featuresRoot, packageFormat: "appimage" }),
+      /unsupported package format.*appimage/i,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Linux feature package dependencies reject unsafe tokens and unsupported formats", () => {
+  const invalidDependencies = [
+    { packageDependencies: { deb: ["libudev1;curl"] }, error: /invalid.*dependency/i },
+    { packageDependencies: { deb: [""] }, error: /invalid.*dependency/i },
+    { packageDependencies: { deb: "libudev1" }, error: /dependencies.*array/i },
+    { packageDependencies: { appimage: ["libudev1"] }, error: /unsupported package format.*appimage/i },
+    { packageDependencies: { rpm: ["libudev.so.1%(id)"] }, error: /invalid.*dependency/i },
+    { packageDependencies: { rpm: ["libudev.so.1%{_libdir}"] }, error: /invalid.*dependency/i },
+    {
+      packageDependencies: { rpm: ["libudev.so.1%{codex_elf_suffix}%(id)"] },
+      error: /invalid.*dependency/i,
+    },
+  ];
+
+  for (const { packageDependencies, error } of invalidDependencies) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-package-invalid-dependency-"));
+    try {
+      const { featuresRoot } = makeFeatureRoot(root, {
+        id: "unsafe-link",
+        title: "Unsafe Link",
+        packageDependencies,
+      });
+      assert.throws(
+        () => enabledLinuxFeaturePackagePlan({ featuresRoot, packageFormat: "deb" }),
+        error,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
 });

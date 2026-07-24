@@ -217,6 +217,7 @@ test("Nix hash refresh accepts a validated focused output override", () => {
 
   assert.deepEqual(watchdogProfile.enabled, [
     "appshots",
+    "codex-micro",
     "codex-wrapper-updater",
     "directory-only-working-tree-watch",
     "frameless-titlebar",

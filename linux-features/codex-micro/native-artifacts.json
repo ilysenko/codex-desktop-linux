@@ -1,0 +1,27 @@
+{
+  "name": "node-hid",
+  "version": "3.3.0",
+  "license": "(MIT OR X11)",
+  "integrity": "sha512-j+dFgJLRAE0nufQKXk3IfS6T6YuHhCgMvz4TrG0sgtb6DSCdYpfJ1etcdmeCmPQjUgO+yo32ktVrRliNs/+fmg==",
+  "shasum": "2b00639e8bb9fc96592e8366fda7ae380826a7ee",
+  "loaderContract": {
+    "main": "./nodehid.js",
+    "napiVersions": [
+      4
+    ],
+    "files": {
+      "nodehid.js": "84053a6ea19b238e61368f5220a9a8af96b27e752569f14d63dba2127a37988b",
+      "binding-options.js": "e7c820107f3b6571ca1505a5ffbe17511088336e4c410ec718ea9ec200c6b1e6"
+    }
+  },
+  "prebuilds": {
+    "x64": {
+      "path": "prebuilds/HID_hidraw-linux-x64/node-napi-v4.node",
+      "sha256": "6c7f3b3fcc238a74e7e3237b50b2ff05181e94862b1963e8074ff8fc75885021"
+    },
+    "arm64": {
+      "path": "prebuilds/HID_hidraw-linux-arm64/node-napi-v4.node",
+      "sha256": "06ea97f377e2246a1e9bf3770186727e72ff3c166579d9c259c6d32a07aeaa60"
+    }
+  }
+}

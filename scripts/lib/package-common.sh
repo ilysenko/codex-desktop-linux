@@ -165,6 +165,152 @@ run_linux_feature_package_hooks() {
     done <<< "$hooks_output"
 }
 
+stage_linux_feature_package_resources() {
+    local staging_root="$1"
+    local package_format="$2"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+
+    [ -d "$staging_root" ] || error "Missing package staging root: $staging_root"
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+    node_bin="$(package_node_binary)"
+    "$node_bin" "$helper" --stage-package-resources "$package_format" "$staging_root"
+}
+
+linux_feature_package_dependencies() {
+    local package_format="$1"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+    node_bin="$(package_node_binary)"
+    "$node_bin" "$helper" --package-dependencies "$package_format"
+}
+
+linux_feature_package_files() {
+    local package_format="$1"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+    node_bin="$(package_node_binary)"
+    "$node_bin" "$helper" --package-files "$package_format"
+}
+
+linux_feature_package_dependency_suffix() {
+    local package_format="$1"
+    local dependency
+    local suffix=""
+
+    while IFS= read -r dependency; do
+        [ -n "$dependency" ] || continue
+        suffix+=", $dependency"
+    done < <(linux_feature_package_dependencies "$package_format")
+    printf '%s' "$suffix"
+}
+
+linux_feature_package_has_udev_rules() {
+    local package_format="$1"
+    local package_file
+    local has_udev_rules=1
+
+    while IFS= read -r package_file; do
+        case "$package_file" in
+            /usr/lib/udev/rules.d/*.rules|/etc/udev/rules.d/*.rules)
+                has_udev_rules=0
+                ;;
+        esac
+    done < <(linux_feature_package_files "$package_format")
+    return "$has_udev_rules"
+}
+
+replace_literal_file_token() {
+    local target="$1"
+    local token="$2"
+    local replacement="$3"
+    local node_bin
+
+    node_bin="$(package_node_binary)"
+    "$node_bin" - "$target" "$token" "$replacement" <<'NODE'
+const fs = require("node:fs");
+const [target, token, replacement] = process.argv.slice(2);
+const source = fs.readFileSync(target, "utf8");
+if (!source.includes(token)) {
+  throw new Error(`Template token not found in ${target}: ${token}`);
+}
+fs.writeFileSync(target, source.split(token).join(replacement));
+NODE
+}
+
+inject_udev_reload_before_exit() {
+    local target="$1"
+    local node_bin
+
+    node_bin="$(package_node_binary)"
+    "$node_bin" - "$target" <<'NODE'
+const fs = require("node:fs");
+const target = process.argv[2];
+const marker = "\nexit 0\n";
+const block = [
+  "",
+  "if command -v udevadm >/dev/null 2>&1; then",
+  "    udevadm control --reload-rules >/dev/null 2>&1 || true",
+  "fi",
+].join("\n");
+const source = fs.readFileSync(target, "utf8");
+const index = source.lastIndexOf(marker);
+if (index < 0) throw new Error(`Final exit marker not found in ${target}`);
+fs.writeFileSync(target, `${source.slice(0, index)}${block}${source.slice(index)}`);
+NODE
+}
+
+write_udev_reload_script() {
+    local target="$1"
+    cat > "$target" <<'SCRIPT'
+#!/bin/sh
+set -eu
+
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules >/dev/null 2>&1 || true
+fi
+
+exit 0
+SCRIPT
+    chmod 0755 "$target"
+}
+
+enable_pacman_udev_reload_hooks() {
+    local target="$1"
+    local node_bin
+
+    node_bin="$(package_node_binary)"
+    "$node_bin" - "$target" <<'NODE'
+const fs = require("node:fs");
+const target = process.argv[2];
+let source = fs.readFileSync(target, "utf8");
+const helper = [
+  "codex_desktop_reload_udev_rules() {",
+  "    if command -v udevadm >/dev/null 2>&1; then",
+  "        udevadm control --reload-rules >/dev/null 2>&1 || true",
+  "    fi",
+  "}",
+  "",
+].join("\n");
+source = `${helper}${source}`;
+for (const hook of ["post_install", "post_upgrade", "post_remove"]) {
+  const marker = `${hook}() {\n`;
+  if (source.includes(marker)) {
+    source = source.replace(marker, `${marker}    codex_desktop_reload_udev_rules\n`);
+  } else if (hook === "post_remove") {
+    source += `\npost_remove() {\n    codex_desktop_reload_udev_rules\n}\n`;
+  } else {
+    throw new Error(`${hook} hook not found in ${target}`);
+  }
+}
+fs.writeFileSync(target, source);
+NODE
+}
+
 render_desktop_entry() {
     local target="$1"
     local package_name
@@ -926,6 +1072,120 @@ for (const entry of entries) {
 NODE
     then
         error "Failed to restore Linux feature staged file permissions"
+    fi
+}
+
+restore_linux_feature_package_resource_permissions() {
+    local root="$1"
+    local package_format="$2"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+    local resources_json
+
+    [ -d "$root" ] || error "Missing package root: $root"
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+
+    node_bin="$(package_node_binary)"
+    if ! resources_json="$("$node_bin" "$helper" --package-resources-json "$package_format")"; then
+        error "Failed to read Linux feature package resource metadata"
+    fi
+
+    if ! "$node_bin" - "$root" "$resources_json" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [packageRoot, rawJson] = process.argv.slice(2);
+const resolvedPackageRoot = path.resolve(packageRoot);
+const packageRootStat = fs.lstatSync(resolvedPackageRoot);
+if (packageRootStat.isSymbolicLink()) {
+  throw new Error(`Linux feature package root must not be a symbolic link: ${resolvedPackageRoot}`);
+}
+const realPackageRoot = fs.realpathSync(resolvedPackageRoot);
+const entries = JSON.parse(rawJson);
+if (!Array.isArray(entries)) {
+  throw new Error("Linux feature package resource metadata must be an array");
+}
+
+function staysInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === ""
+    || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+function resolveTarget(target) {
+  if (typeof target !== "string" || target.length === 0) {
+    throw new Error("Linux feature package resource target must be a relative path");
+  }
+  const parts = target.split(/[\\/]+/).filter(Boolean);
+  if (path.isAbsolute(target) || parts.includes("..")) {
+    throw new Error(`Unsafe Linux feature package resource target: ${target}`);
+  }
+  const resolved = path.resolve(resolvedPackageRoot, ...parts);
+  const relative = path.relative(resolvedPackageRoot, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Unsafe Linux feature package resource target: ${target}`);
+  }
+
+  let current = resolvedPackageRoot;
+  for (const part of parts) {
+    current = path.join(current, part);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return resolved;
+      }
+      throw error;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Linux feature package resource must not contain symbolic links: ${target}`);
+    }
+  }
+  const realTarget = fs.realpathSync(resolved);
+  if (!staysInside(realPackageRoot, realTarget)) {
+    throw new Error(`Linux feature package resource must stay inside the package root: ${target}`);
+  }
+  return resolved;
+}
+
+function chmodRecursive(target, mode) {
+  const stat = fs.lstatSync(target);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Linux feature package resource must not be a symbolic link: ${target}`);
+  }
+  const targetMode = stat.isDirectory()
+    ? mode
+      | ((mode & 0o400) ? 0o100 : 0)
+      | ((mode & 0o040) ? 0o010 : 0)
+      | ((mode & 0o004) ? 0o001 : 0)
+    : mode;
+  fs.chmodSync(target, targetMode);
+  if (stat.isDirectory()) {
+    for (const name of fs.readdirSync(target)) {
+      chmodRecursive(path.join(target, name), mode);
+    }
+  }
+}
+
+for (const entry of entries) {
+  if (entry == null || typeof entry !== "object") {
+    throw new Error("Linux feature package resource entry must be an object");
+  }
+  if (typeof entry.mode !== "string" || !/^[0-7]{3,4}$/.test(entry.mode)) {
+    throw new Error(`Invalid Linux feature package resource mode for ${entry.target}: ${entry.mode}`);
+  }
+  const target = resolveTarget(entry.target);
+  if (!fs.existsSync(target)) {
+    throw new Error(`Linux feature package resource is missing from payload: ${entry.target}`);
+  }
+  chmodRecursive(target, Number.parseInt(entry.mode, 8));
+}
+NODE
+    then
+        error "Failed to restore Linux feature package resource permissions"
     fi
 }
 

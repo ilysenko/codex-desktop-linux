@@ -66,8 +66,9 @@ The build pipeline loads enabled features in these phases:
    `codex-app/`.
 3. Legacy staging: optional `stage.sh` hooks run for features that still need
    custom install-time logic.
-4. Native packaging: optional package hooks can mutate the `.deb`, `.rpm`, or
-   pacman staging root.
+4. Native packaging: declarative package resources and dependencies are added
+   to `.deb`, `.rpm`, or pacman payloads, then optional package hooks can mutate
+   the staging root.
 5. Runtime: the launcher consumes staged environment files, prelaunch hooks,
    Electron args, and cold-start hooks.
 
@@ -88,7 +89,8 @@ manifest and must clean up any feature-owned files themselves.
 
 `entrypoints` declares optional feature code hooks. Feature patching uses only
 `patchDescriptors`; features that only stage resources, runtime hooks, package
-hooks, or `stageHook` are still valid without any patch entrypoint.
+resources, package dependencies, package hooks, or `stageHook` are still valid
+without any patch entrypoint.
 
 ```json
 {
@@ -188,6 +190,17 @@ such as Codex skills: stage the source file with `resources` under
 `$CODEX_LINUX_FEATURES_DIR/<feature-id>/...` to `$CODEX_HOME/skills/...` in a
 `runtimeHooks.prelaunch` script. Do not write user-home files from `stage.sh`;
 install, package, and updater rebuilds may run outside the real user's session.
+
+## Declarative Native Package Staging
+
+`packageResources` copies feature-owned files outside the app directory into
+`.deb`, RPM, or pacman payloads. Each entry uses `source`, `target`, `mode`, and
+an optional `formats` list. Sources must remain inside the feature directory,
+targets must remain inside the package root, and modes use quoted octal strings.
+
+`packageDependencies` maps each native package format to its additional runtime
+dependencies. Resources and dependencies are validated and included only when
+their feature is enabled.
 
 ## Package Hooks
 

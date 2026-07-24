@@ -2,6 +2,7 @@
 let
   supportedFeatureIds = [
     "appshots"
+    "codex-micro"
     "codex-wrapper-updater"
     "directory-only-working-tree-watch"
     "frameless-titlebar"

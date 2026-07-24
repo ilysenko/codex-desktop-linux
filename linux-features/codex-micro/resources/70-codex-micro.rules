@@ -1,0 +1,4 @@
+# OpenAI x Work Louder Codex Micro vendor HID channel (interface 00 only).
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ENV{ID_VENDOR_ID}=="303a", ENV{ID_MODEL_ID}=="8360", ENV{ID_USB_INTERFACE_NUM}=="00", TAG+="uaccess", MODE="0660"
+# BlueZ exposes the same vendor HID channel through UHID on Bluetooth bus 0005.
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0005:303A:8360.*", TAG+="uaccess", MODE="0660"

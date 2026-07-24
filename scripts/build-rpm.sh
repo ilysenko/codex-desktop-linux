@@ -101,9 +101,11 @@ main() {
 exec /opt/$PACKAGE_NAME/start.sh "\$@"
 SCRIPT
     chmod 0755 "$staging_root/usr/bin/$PACKAGE_NAME"
+    stage_linux_feature_package_resources "$staging_root" "rpm"
     run_linux_feature_package_hooks "$staging_root" "rpm"
     normalize_package_payload_permissions "$staging_root"
     restore_linux_feature_payload_permissions "$staging_root"
+    restore_linux_feature_package_resource_permissions "$staging_root" "rpm"
 
     local spec_file="$build_root/codex-desktop.spec"
     sed \
@@ -114,6 +116,32 @@ SCRIPT
         -e "s/__ARCH__/$arch/g" \
         -e "s/__PACKAGE_WITH_UPDATER__/$(package_with_updater_enabled && echo 1 || echo 0)/g" \
         "$SPEC_TEMPLATE" > "$spec_file"
+    replace_literal_file_token \
+        "$spec_file" \
+        "__LINUX_FEATURE_DEPENDENCY_SUFFIX__" \
+        "$(linux_feature_package_dependency_suffix rpm)"
+    replace_literal_file_token \
+        "$spec_file" \
+        "__LINUX_FEATURE_FILES__" \
+        "$(linux_feature_package_files rpm)"
+    if linux_feature_package_has_udev_rules rpm; then
+        replace_literal_file_token \
+            "$spec_file" \
+            "__LINUX_FEATURE_UDEV_POST__" \
+            $'if command -v udevadm >/dev/null 2>&1; then\n    udevadm control --reload-rules >/dev/null 2>&1 || true\nfi'
+        local udev_reload_body=$'if command -v udevadm >/dev/null 2>&1; then\n    udevadm control --reload-rules >/dev/null 2>&1 || true\nfi'
+        if package_with_updater_enabled; then
+            replace_literal_file_token "$spec_file" "__LINUX_FEATURE_UDEV_POSTUN_BODY__" "$udev_reload_body"
+            replace_literal_file_token "$spec_file" "__LINUX_FEATURE_UDEV_POSTUN_SECTION__" ""
+        else
+            replace_literal_file_token "$spec_file" "__LINUX_FEATURE_UDEV_POSTUN_BODY__" ""
+            replace_literal_file_token "$spec_file" "__LINUX_FEATURE_UDEV_POSTUN_SECTION__" $'%postun\n'"$udev_reload_body"
+        fi
+    else
+        replace_literal_file_token "$spec_file" "__LINUX_FEATURE_UDEV_POST__" ""
+        replace_literal_file_token "$spec_file" "__LINUX_FEATURE_UDEV_POSTUN_BODY__" ""
+        replace_literal_file_token "$spec_file" "__LINUX_FEATURE_UDEV_POSTUN_SECTION__" ""
+    fi
 
     local rpmbuild_dir="$build_root/rpmbuild"
     mkdir -p \

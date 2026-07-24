@@ -25,6 +25,10 @@ const RUNTIME_HOOK_DIRS = {
   afterExit: { dir: "after-exit.d", executable: true },
 };
 const STAGED_FEATURE_MANIFEST_RELATIVE_PATH = ".codex-linux/linux-features-staged.json";
+const SUPPORTED_PACKAGE_FORMATS = new Set(["deb", "rpm", "pacman"]);
+const PACKAGE_DEPENDENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9+._:@()=<>~\/-]*$/;
+const RPM_ELF_DEPENDENCY_SUFFIX = "%{codex_elf_suffix}";
+const PACKAGE_PATH_COMPONENT_PATTERN = /^(?!-)(?!\.\.?$)[A-Za-z0-9._+@:-]+$/;
 
 function defaultLinuxFeaturesRoot() {
   return path.resolve(__dirname, "..", "..", "linux-features");
@@ -739,10 +743,12 @@ function installRelativeDirectoryExists(installDir, relativePath, label) {
   }
 }
 
-function copyInstallFile(installDir, source, target, mode) {
-  assertNoSymbolicLinks(source, "Linux feature source");
-  assertInstallParentInside(installDir, target, "Linux feature target");
-  assertNoSymbolicLinksIfPresent(target, "Linux feature target");
+function copyInstallFile(installDir, source, target, mode, labels = {}) {
+  const sourceLabel = labels.source ?? "Linux feature source";
+  const targetLabel = labels.target ?? "Linux feature target";
+  assertNoSymbolicLinks(source, sourceLabel);
+  assertInstallParentInside(installDir, target, targetLabel);
+  assertNoSymbolicLinksIfPresent(target, targetLabel);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.cpSync(source, target, { recursive: true, force: true });
   if (mode != null) {
@@ -901,6 +907,228 @@ function enabledLinuxFeaturePackageHooks(options = {}) {
   return hooks;
 }
 
+function normalizePackageFormat(value, label = "package format") {
+  if (typeof value !== "string" || !SUPPORTED_PACKAGE_FORMATS.has(value)) {
+    throw new Error(`Unsupported ${label} '${String(value)}'`);
+  }
+  return value;
+}
+
+function normalizePackageFormats(value, featureId, label) {
+  if (value == null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Linux feature '${featureId}' ${label} formats must be an array`);
+  }
+  const formats = [];
+  for (const rawFormat of value) {
+    const format = normalizePackageFormat(rawFormat, `package format for Linux feature '${featureId}'`);
+    if (!formats.includes(format)) {
+      formats.push(format);
+    }
+  }
+  return formats.sort();
+}
+
+function normalizePackageTarget(value, featureId) {
+  const label = `Linux feature '${featureId}' package resource target`;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a relative path inside the package root`);
+  }
+  const parts = relativePathParts(value);
+  if (path.isAbsolute(value) || parts.includes("..")) {
+    throw new Error(`${label} must stay inside the package root`);
+  }
+  if (parts.length === 0) {
+    throw new Error(`${label} must not target the package root`);
+  }
+  for (const part of parts) {
+    if (!PACKAGE_PATH_COMPONENT_PATTERN.test(part)) {
+      throw new Error(`${label} contains an unsafe package path component: ${JSON.stringify(part)}`);
+    }
+  }
+  return parts.join("/");
+}
+
+function assertNoSymbolicLinkAncestors(root, target, label) {
+  const relative = path.relative(root, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`${label} must stay inside the feature directory`);
+  }
+  let current = root;
+  for (const part of relativePathParts(relative)) {
+    current = path.join(current, part);
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`${label} must not contain symbolic links`);
+    }
+  }
+}
+
+function normalizePackageDependencies(feature) {
+  const value = feature.manifest.packageDependencies;
+  if (value == null) {
+    return new Map();
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Linux feature '${feature.id}' packageDependencies must be an object`);
+  }
+
+  const dependencies = new Map();
+  for (const [rawFormat, entries] of Object.entries(value)) {
+    const format = normalizePackageFormat(
+      rawFormat,
+      `package format in Linux feature '${feature.id}' packageDependencies`,
+    );
+    if (!Array.isArray(entries)) {
+      throw new Error(`Linux feature '${feature.id}' dependencies for ${format} must be an array`);
+    }
+    const normalized = [];
+    for (const entry of entries) {
+      const dependencyToken = typeof entry === "string"
+        && format === "rpm"
+        && entry.endsWith(RPM_ELF_DEPENDENCY_SUFFIX)
+        ? entry.slice(0, -RPM_ELF_DEPENDENCY_SUFFIX.length)
+        : entry;
+      if (
+        typeof entry !== "string"
+        || !PACKAGE_DEPENDENCY_PATTERN.test(dependencyToken)
+      ) {
+        throw new Error(`Linux feature '${feature.id}' has invalid ${format} package dependency '${String(entry)}'`);
+      }
+      if (!normalized.includes(entry)) {
+        normalized.push(entry);
+      }
+    }
+    dependencies.set(format, normalized.sort());
+  }
+  return dependencies;
+}
+
+function enabledLinuxFeaturePackagePlan(options = {}) {
+  const packageFormat = normalizePackageFormat(options.packageFormat);
+  const resources = [];
+  const dependencies = [];
+  const targetOwners = new Map();
+
+  for (const feature of loadEnabledLinuxFeatures(options)) {
+    const featureDependencies = normalizePackageDependencies(feature);
+    dependencies.push(...(featureDependencies.get(packageFormat) ?? []));
+
+    const entries = feature.manifest.packageResources;
+    if (entries == null) {
+      continue;
+    }
+    if (!Array.isArray(entries)) {
+      throw new Error(`Linux feature '${feature.id}' packageResources must be an array`);
+    }
+    for (const [index, entry] of entries.entries()) {
+      if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new Error(`Linux feature '${feature.id}' package resource ${index + 1} must be an object`);
+      }
+      const source = resolveFeatureRelativePath(
+        feature,
+        entry.source ?? entry.path,
+        `package resource ${index + 1}`,
+      );
+      assertNoSymbolicLinkAncestors(
+        feature.dir,
+        source,
+        `Linux feature '${feature.id}' package resource ${index + 1}`,
+      );
+      const target = normalizePackageTarget(entry.target, feature.id);
+      const formats = normalizePackageFormats(entry.formats, feature.id, `package resource ${index + 1}`);
+      if (formats.length > 0 && !formats.includes(packageFormat)) {
+        continue;
+      }
+      if (
+        packageFormat === "deb"
+        && (target === "DEBIAN" || target.startsWith("DEBIAN/"))
+      ) {
+        throw new Error(
+          `Linux feature '${feature.id}' package resource target '${target}' uses the reserved Debian control namespace`,
+        );
+      }
+      for (const [existingTarget, previousOwner] of targetOwners) {
+        const duplicate = target === existingTarget;
+        const overlap = duplicate
+          || target.startsWith(`${existingTarget}/`)
+          || existingTarget.startsWith(`${target}/`);
+        if (overlap) {
+          const kind = duplicate ? "Duplicate" : "Overlapping";
+          throw new Error(
+            `${kind} Linux feature package target '${target}': feature '${feature.id}' conflicts with '${existingTarget}' from ${previousOwner}`,
+          );
+        }
+      }
+      targetOwners.set(target, `feature '${feature.id}'`);
+      resources.push({
+        id: feature.id,
+        source,
+        target,
+        mode: parseFileMode(entry.mode, 0o644),
+        formats,
+        index,
+      });
+    }
+  }
+
+  resources.sort((left, right) => left.target.localeCompare(right.target));
+  return {
+    resources,
+    dependencies: [...new Set(dependencies)].sort(),
+  };
+}
+
+function enabledLinuxFeaturePackageDependencies(options = {}) {
+  return enabledLinuxFeaturePackagePlan(options).dependencies;
+}
+
+function enabledLinuxFeaturePackageFiles(options = {}) {
+  return enabledLinuxFeaturePackagePlan(options).resources.map((resource) => `/${resource.target}`);
+}
+
+function enabledLinuxFeaturePackageResourceMetadata(options = {}) {
+  return enabledLinuxFeaturePackagePlan(options).resources.map((resource) => ({
+    target: resource.target,
+    mode: modeString(resource.mode),
+  }));
+}
+
+function stageEnabledLinuxFeaturePackageResources(packageRoot, options = {}) {
+  const installDir = path.resolve(packageRoot);
+  const plan = enabledLinuxFeaturePackagePlan(options);
+  fs.mkdirSync(installDir, { recursive: true });
+  for (const resource of plan.resources) {
+    const targetPath = path.join(installDir, resource.target);
+    if (fs.lstatSync(targetPath, { throwIfNoEntry: false }) != null) {
+      throw new Error(
+        `Linux feature package target conflicts with existing package payload: ${resource.target}`,
+      );
+    }
+    try {
+      copyInstallFile(
+        installDir,
+        resource.source,
+        targetPath,
+        resource.mode,
+        {
+          source: "Linux feature package source",
+          target: "Linux feature package target",
+        },
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("inside the install directory")) {
+        throw new Error(error.message.replace("inside the install directory", "inside the package root"));
+      }
+      throw error;
+    }
+    console.error(`Staged Linux feature package resource: ${resource.id} -> ${resource.target}`);
+  }
+  return plan;
+}
+
 function featuresJsonSummary(options = {}) {
   return discoverLinuxFeatureManifests(options).map((feature) => ({
     id: feature.id,
@@ -939,6 +1167,35 @@ function main() {
     }
     return;
   }
+  if (command === "--stage-package-resources") {
+    const packageFormat = process.argv[3] ?? "";
+    const packageRoot = process.argv[4] ?? process.env.PACKAGE_ROOT;
+    if (!packageRoot) {
+      console.error("Usage: linux-features.js --stage-package-resources <format> <package-root>");
+      process.exit(1);
+    }
+    stageEnabledLinuxFeaturePackageResources(packageRoot, { packageFormat });
+    return;
+  }
+  if (command === "--package-dependencies") {
+    const packageFormat = process.argv[3] ?? "";
+    for (const dependency of enabledLinuxFeaturePackageDependencies({ packageFormat })) {
+      process.stdout.write(`${dependency}\n`);
+    }
+    return;
+  }
+  if (command === "--package-files") {
+    const packageFormat = process.argv[3] ?? "";
+    for (const file of enabledLinuxFeaturePackageFiles({ packageFormat })) {
+      process.stdout.write(`${file}\n`);
+    }
+    return;
+  }
+  if (command === "--package-resources-json") {
+    const packageFormat = process.argv[3] ?? "";
+    process.stdout.write(`${JSON.stringify(enabledLinuxFeaturePackageResourceMetadata({ packageFormat }), null, 2)}\n`);
+    return;
+  }
   if (command === "--stage-install") {
     const appDir = process.argv[3] ?? process.env.INSTALL_DIR;
     if (!appDir) {
@@ -971,7 +1228,7 @@ function main() {
     process.stdout.write(`${linuxFeaturesRoot()}\n`);
     return;
   }
-  console.error("Usage: linux-features.js --enabled | --features-json | --features-root | --stage-install <install-dir> | --staged-files-json <install-dir> | --stage-hooks | --cleanup-hooks | --package-hooks <format>");
+  console.error("Usage: linux-features.js --enabled | --features-json | --features-root | --stage-install <install-dir> | --staged-files-json <install-dir> | --stage-hooks | --cleanup-hooks | --package-hooks <format> | --stage-package-resources <format> <package-root> | --package-dependencies <format> | --package-files <format> | --package-resources-json <format>");
   process.exit(1);
 }
 
@@ -990,7 +1247,11 @@ module.exports = {
   enabledLinuxFeaturesConfig,
   enabledLinuxFeatureIds,
   enabledLinuxFeatureInstallPlan,
+  enabledLinuxFeaturePackageDependencies,
+  enabledLinuxFeaturePackageFiles,
+  enabledLinuxFeaturePackageResourceMetadata,
   enabledLinuxFeaturePackageHooks,
+  enabledLinuxFeaturePackagePlan,
   enabledLinuxFeatureStageHooks,
   featuresJsonSummary,
   loadEnabledLinuxFeatures,
@@ -1000,5 +1261,6 @@ module.exports = {
   linuxFeaturesRoot,
   resolveFeatureEntrypoint,
   stageEnabledLinuxFeatureInstall,
+  stageEnabledLinuxFeaturePackageResources,
   stagedLinuxFeatureFiles,
 };

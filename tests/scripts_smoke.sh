@@ -444,6 +444,10 @@ test_package_payload_permission_normalization() {
     local root="$TMP_DIR/package-permissions"
     local app_root="$root/opt/codex-desktop"
     local private_file="$app_root/.codex-linux/features/private/secret.txt"
+    local features_root="$TMP_DIR/package-permissions-features"
+    local feature_dir="$features_root/private-package"
+    local feature_config="$features_root/features.json"
+    local package_resource="$root/usr/share/private-package/secret.txt"
 
     mkdir -p "$app_root/content/webview" "$root/usr/bin" "$(dirname "$private_file")"
     printf '%s\n' "#!$BASH_BIN" 'echo start' > "$app_root/start.sh"
@@ -468,10 +472,37 @@ JSON
     chmod 0700 "$app_root/start.sh" "$root/usr/bin/codex-desktop"
     chmod 0600 "$app_root/content/webview/index.html" "$private_file"
 
+    mkdir -p "$feature_dir"
+    printf '%s\n' '# Private package resource' > "$feature_dir/README.md"
+    printf '%s\n' 'package secret' > "$feature_dir/secret.txt"
+    cat > "$feature_dir/feature.json" <<'JSON'
+{
+  "id": "private-package",
+  "packageResources": [
+    {
+      "source": "secret.txt",
+      "target": "usr/share/private-package/secret.txt",
+      "mode": "0640",
+      "formats": ["deb"]
+    }
+  ]
+}
+JSON
+    printf '%s\n' '{"enabled":[]}' > "$features_root/features.example.json"
+    printf '%s\n' '{"enabled":["private-package"]}' > "$feature_config"
+
     # shellcheck disable=SC1091
     source "$REPO_DIR/scripts/lib/package-common.sh"
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
+    PACKAGE_NAME="codex-desktop" \
+        stage_linux_feature_package_resources "$root" "deb"
     normalize_package_payload_permissions "$root"
     PACKAGE_NAME="codex-desktop" restore_linux_feature_payload_permissions "$root"
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
+    PACKAGE_NAME="codex-desktop" \
+        restore_linux_feature_package_resource_permissions "$root" "deb"
 
     assert_mode "$app_root" "755"
     assert_mode "$app_root/content/webview" "755"
@@ -479,6 +510,31 @@ JSON
     assert_mode "$root/usr/bin/codex-desktop" "755"
     assert_mode "$app_root/content/webview/index.html" "644"
     assert_mode "$private_file" "600"
+    assert_mode "$package_resource" "640"
+
+    local attack_root="$TMP_DIR/package-permissions-symlink-attack"
+    local external_root="$TMP_DIR/package-permissions-external"
+    local external_file="$external_root/private-package/secret.txt"
+    local attack_log="$TMP_DIR/package-permissions-symlink-attack.log"
+    mkdir -p "$attack_root/usr" "$(dirname "$external_file")"
+    printf '%s\n' 'external secret' > "$external_file"
+    chmod 0600 "$external_file"
+    ln -s "$external_root" "$attack_root/usr/share"
+
+    set +e
+    (
+        CODEX_LINUX_FEATURES_ROOT="$features_root" \
+        CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
+        PACKAGE_NAME="codex-desktop" \
+            restore_linux_feature_package_resource_permissions "$attack_root" "deb"
+    ) >"$attack_log" 2>&1
+    local attack_rc=$?
+    set -e
+
+    [ "$attack_rc" -ne 0 ] \
+        || fail "package resource permission restoration followed a symlinked target ancestor"
+    assert_contains "$attack_log" "must not contain symbolic links"
+    assert_mode "$external_file" "600"
 }
 
 test_deb_builder_smoke() {
@@ -490,11 +546,13 @@ test_deb_builder_smoke() {
     local pkg_root="$workspace/deb-root"
     local updater_bin="$workspace/codex-update-manager"
     local capture_dir="$workspace/capture"
+    local feature_config="$workspace/features.json"
 
     mkdir -p "$workspace" "$dist_dir" "$capture_dir"
     make_stub_bin_dir "$bin_dir"
     make_fake_app "$app_dir"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$updater_bin"
+    printf '%s\n' '{"enabled":["codex-micro"]}' > "$feature_config"
     chmod +x "$updater_bin"
 
     cat > "$bin_dir/dpkg" <<'SCRIPT'
@@ -525,6 +583,7 @@ SCRIPT
     PKG_ROOT_OVERRIDE="$pkg_root" \
     DIST_DIR_OVERRIDE="$dist_dir" \
     CAPTURE_DIR="$capture_dir" \
+    CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
     UPDATER_BINARY_SOURCE="$updater_bin" \
     MAX_BUILD_THREADS=6 \
     PACKAGE_VERSION="2026.03.24.120000+deadbeef" \
@@ -573,7 +632,10 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/core/package/deb/README.md"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/README.md"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/example-feature/feature.json"
-    assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/features.json"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/features.json"
+    assert_contains "$pkg_root/opt/codex-desktop/update-builder/linux-features/features.json" "codex-micro"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/codex-micro/source-build/package.json"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/linux-features/codex-micro/source-build/package-lock.json"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/node-runtime/bin/node"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/CHANGELOG.md"
@@ -596,6 +658,15 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_file_exists "$pkg_root/usr/lib/udev/rules.d/70-codex-micro.rules"
+    assert_mode "$pkg_root/usr/lib/udev/rules.d/70-codex-micro.rules" "644"
+    assert_contains "$pkg_root/usr/lib/udev/rules.d/70-codex-micro.rules" 'ENV{ID_VENDOR_ID}=="303a"'
+    assert_contains "$pkg_root/usr/lib/udev/rules.d/70-codex-micro.rules" 'ENV{ID_MODEL_ID}=="8360"'
+    assert_contains "$pkg_root/usr/lib/udev/rules.d/70-codex-micro.rules" 'ENV{ID_USB_INTERFACE_NUM}=="00"'
+    assert_contains "$pkg_root/usr/lib/udev/rules.d/70-codex-micro.rules" 'KERNELS=="0005:303A:8360.*"'
+    assert_contains "$pkg_root/DEBIAN/control" "libudev1, libusb-1.0-0"
+    assert_contains "$pkg_root/DEBIAN/postinst" "udevadm control --reload-rules"
+    assert_contains "$pkg_root/DEBIAN/postrm" "udevadm control --reload-rules"
 }
 
 test_deb_builder_rebuilds_deleted_updater_source() {
@@ -1113,6 +1184,8 @@ test_rpm_builder_smoke() {
     local dist_dir="$workspace/dist"
     local updater_bin="$workspace/codex-update-manager"
     local capture_dir="$workspace/capture"
+    local enabled_feature_config="$workspace/features-enabled.json"
+    local disabled_feature_config="$workspace/features-disabled.json"
 
     mkdir -p "$workspace" "$dist_dir" "$capture_dir"
     make_stub_bin_dir "$bin_dir"
@@ -1121,6 +1194,8 @@ test_rpm_builder_smoke() {
     chmod 0700 "$app_dir/start.sh"
     chmod 0600 "$app_dir/content/webview/index.html"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$updater_bin"
+    printf '%s\n' '{"enabled":["codex-micro"]}' > "$enabled_feature_config"
+    printf '%s\n' '{"enabled":[]}' > "$disabled_feature_config"
     chmod +x "$updater_bin"
 
     cat > "$bin_dir/rpmbuild" <<'SCRIPT'
@@ -1160,6 +1235,7 @@ SCRIPT
 
     PATH="$bin_dir:$PATH" \
     CAPTURE_DIR="$capture_dir" \
+    CODEX_LINUX_FEATURES_CONFIG="$enabled_feature_config" \
     APP_DIR_OVERRIDE="$app_dir" \
     DIST_DIR_OVERRIDE="$dist_dir" \
     UPDATER_BINARY_SOURCE="$updater_bin" \
@@ -1169,12 +1245,19 @@ SCRIPT
     assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000-deadbeef.x86_64.rpm"
     [ "$(cat "$capture_dir/rpm-binary-payload")" = "" ] \
         || fail "Expected default RPM binary payload to use tool default"
+    assert_file_exists "$capture_dir/staging/usr/lib/udev/rules.d/70-codex-micro.rules"
+    assert_mode "$capture_dir/staging/usr/lib/udev/rules.d/70-codex-micro.rules" "644"
+    assert_contains "$capture_dir/codex-desktop.spec" 'libudev.so.1%{codex_elf_suffix}'
+    assert_contains "$capture_dir/codex-desktop.spec" 'libusb-1.0.so.0%{codex_elf_suffix}'
+    assert_contains "$capture_dir/codex-desktop.spec" '/usr/lib/udev/rules.d/70-codex-micro.rules'
+    assert_contains "$capture_dir/codex-desktop.spec" 'udevadm control --reload-rules'
 
     rm -rf "$dist_dir" "$capture_dir"
     mkdir -p "$dist_dir" "$capture_dir"
 
     PATH="$bin_dir:$PATH" \
     CAPTURE_DIR="$capture_dir" \
+    CODEX_LINUX_FEATURES_CONFIG="$disabled_feature_config" \
     APP_DIR_OVERRIDE="$app_dir" \
     DIST_DIR_OVERRIDE="$dist_dir" \
     PACKAGE_WITH_UPDATER=0 \
@@ -1209,6 +1292,7 @@ SCRIPT
 
     PATH="$bin_dir:$PATH" \
     CAPTURE_DIR="$capture_dir" \
+    CODEX_LINUX_FEATURES_CONFIG="$disabled_feature_config" \
     APP_DIR_OVERRIDE="$app_dir" \
     DIST_DIR_OVERRIDE="$dist_dir" \
     UPDATER_BINARY_SOURCE="$updater_bin" \
@@ -1234,17 +1318,25 @@ test_pacman_builder_without_updater_transition_hook() {
     local capture_dir="$workspace/capture"
     local ampersand_tmpdir="$workspace/ampersand&tmp"
     local base_makepkg_conf="$workspace/base-makepkg.conf"
+    local feature_config="$workspace/features.json"
+    local disabled_feature_config="$workspace/features-disabled.json"
 
     mkdir -p "$workspace" "$dist_dir" "$capture_dir" "$ampersand_tmpdir"
     make_stub_bin_dir "$bin_dir"
     make_fake_app "$app_dir"
     printf 'MAKEFLAGS="-j12"\n' > "$base_makepkg_conf"
+    printf '%s\n' '{"enabled":["codex-micro"]}' > "$feature_config"
+    printf '%s\n' '{"enabled":[]}' > "$disabled_feature_config"
 
     cat > "$bin_dir/makepkg" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 cp PKGBUILD "$CAPTURE_DIR/PKGBUILD"
 cp codex-desktop.install "$CAPTURE_DIR/codex-desktop.install"
+staging_dir="$(sed -n 's|.*cp -a "\(.*\)/\.".*|\1|p' PKGBUILD | head -n 1)"
+if [ -n "$staging_dir" ] && [ -d "$staging_dir" ]; then
+    cp -a "$staging_dir" "$CAPTURE_DIR/staging"
+fi
 printf '%s\n' "${MAKEPKG_CONF:-}" > "$CAPTURE_DIR/makepkg-conf-path"
 if [ -n "${MAKEPKG_CONF:-}" ]; then
     cp "$MAKEPKG_CONF" "$CAPTURE_DIR/makepkg.conf"
@@ -1269,6 +1361,7 @@ SCRIPT
         TMPDIR="$ampersand_tmpdir" \
         PATH="$bin_dir:$PATH" \
         CAPTURE_DIR="$capture_dir" \
+        CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
         APP_DIR_OVERRIDE="$app_dir" \
         DIST_DIR_OVERRIDE="$dist_dir" \
         MAKEPKG_CONF="$base_makepkg_conf" \
@@ -1300,6 +1393,34 @@ SCRIPT
     assert_contains "$capture_dir/codex-desktop.install" "pre_remove"
     assert_contains "$capture_dir/codex-desktop.install" "codex-no-updater-transition-cleanup.sh"
     assert_not_contains "$capture_dir/codex-desktop.install" "update-builder"
+    assert_contains "$capture_dir/PKGBUILD" "'libusb'"
+    assert_contains "$capture_dir/PKGBUILD" "'systemd-libs'"
+    assert_contains "$capture_dir/codex-desktop.install" "udevadm control --reload-rules"
+    assert_file_exists "$capture_dir/staging/usr/lib/udev/rules.d/70-codex-micro.rules"
+    assert_mode "$capture_dir/staging/usr/lib/udev/rules.d/70-codex-micro.rules" "644"
+    assert_file_exists "$capture_dir/staging/usr/share/libalpm/hooks/codex-micro-udev.hook"
+    assert_mode "$capture_dir/staging/usr/share/libalpm/hooks/codex-micro-udev.hook" "644"
+    assert_contains "$capture_dir/staging/usr/share/libalpm/hooks/codex-micro-udev.hook" "Operation = Remove"
+
+    rm -rf "$dist_dir" "$capture_dir"
+    mkdir -p "$dist_dir" "$capture_dir"
+    package_path="$(
+        TMPDIR="$ampersand_tmpdir" \
+        PATH="$bin_dir:$PATH" \
+        CAPTURE_DIR="$capture_dir" \
+        CODEX_LINUX_FEATURES_CONFIG="$disabled_feature_config" \
+        APP_DIR_OVERRIDE="$app_dir" \
+        DIST_DIR_OVERRIDE="$dist_dir" \
+        MAKEPKG_CONF="$base_makepkg_conf" \
+        PACKAGE_WITH_UPDATER=0 \
+        PACKAGE_VERSION="2026.03.24.120000+disabled" \
+        bash "$REPO_DIR/scripts/build-pacman.sh"
+    )"
+
+    assert_file_exists "$package_path"
+    assert_file_not_exists "$capture_dir/staging/usr/lib/udev/rules.d/70-codex-micro.rules"
+    assert_file_not_exists "$capture_dir/staging/usr/share/libalpm/hooks/codex-micro-udev.hook"
+    assert_not_contains "$capture_dir/codex-desktop.install" "udevadm control --reload-rules"
 }
 
 test_appimage_builder_smoke() {
