@@ -1321,7 +1321,9 @@ value = match.group("value")
 shim = r'''
 function codexLinuxBrowserUseConfigShim() {
   let repl = globalThis.nodeRepl;
-  if (repl == null || repl.config != null) return;
+  if (repl == null) return;
+  codexLinuxBrowserUseNodeReplMethodShim(repl);
+  if (repl.config != null) return;
   let config = {
     read: async () => ({ config: await codexLinuxBrowserUseReadToml("config.toml") }),
     readRequirements: async () => ({ requirements: null }),
@@ -1342,6 +1344,30 @@ function codexLinuxBrowserUseConfigShim() {
       Object.defineProperty(prototype, "config", {
         configurable: true,
         get: () => config,
+      });
+    }
+  } catch {}
+}
+
+function codexLinuxBrowserUseNodeReplMethodShim(repl) {
+  // Older Linux node_repl builds do not expose browser notification hooks.
+  codexLinuxBrowserUseDefineNodeReplMethod(repl, "addAfterSubmittedCodeHook", () => () => undefined);
+}
+
+function codexLinuxBrowserUseDefineNodeReplMethod(repl, name, value) {
+  if (typeof repl?.[name] == "function") return;
+
+  try {
+    repl[name] = value;
+    if (typeof repl[name] == "function") return;
+  } catch {}
+
+  try {
+    let prototype = Object.getPrototypeOf(repl);
+    if (prototype != null && Object.getOwnPropertyDescriptor(prototype, name) == null) {
+      Object.defineProperty(prototype, name, {
+        configurable: true,
+        value,
       });
     }
   } catch {}
