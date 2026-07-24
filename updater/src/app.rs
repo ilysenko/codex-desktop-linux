@@ -66,6 +66,11 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
     let mut state =
         PersistedState::load_or_default(&paths.state_file, effective_auto_install(&config))?;
+    #[cfg(test)]
+    wait_for_process_test_barrier(
+        "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_LOADED",
+        "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_CONTINUE",
+    )?;
     if !matches!(
         &cli.command,
         Commands::Daemon | Commands::CheckNow { .. } | Commands::InstallReady
@@ -74,6 +79,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         state.installed_version = install::installed_package_version();
         persist_if_changed(&paths, &state, &original_state)?;
     }
+    #[cfg(test)]
+    signal_process_test_marker("CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_PRE_DISPATCH")?;
 
     match cli.command {
         Commands::Daemon => run_daemon(&config, &mut state, &paths).await,
@@ -1357,7 +1364,50 @@ async fn run_install_ready(
         unreachable!("waiting for the updater flow lock always returns a lock");
     };
     reload_state_from_disk(config, state, paths)?;
+    #[cfg(test)]
+    wait_for_process_test_barrier(
+        "CODEX_UPDATE_MANAGER_TEST_INSTALL_READY_RELOADED",
+        "CODEX_UPDATE_MANAGER_TEST_INSTALL_READY_CONTINUE",
+    )?;
     run_install_ready_locked(config, state, paths).await
+}
+
+#[cfg(test)]
+fn signal_process_test_marker(variable: &str) -> Result<()> {
+    let Some(path) = std::env::var_os(variable).map(PathBuf::from) else {
+        return Ok(());
+    };
+    std::fs::write(&path, b"ready")
+        .with_context(|| format!("Failed to write process test marker {}", path.display()))
+}
+
+#[cfg(test)]
+fn wait_for_process_test_barrier(marker_variable: &str, release_variable: &str) -> Result<()> {
+    let Some(marker_path) = std::env::var_os(marker_variable).map(PathBuf::from) else {
+        return Ok(());
+    };
+    let release_path = std::env::var_os(release_variable)
+        .map(PathBuf::from)
+        .with_context(|| {
+            format!("{release_variable} must be set when {marker_variable} is used")
+        })?;
+    std::fs::write(&marker_path, b"ready").with_context(|| {
+        format!(
+            "Failed to write process test marker {}",
+            marker_path.display()
+        )
+    })?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !release_path.exists() {
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "Timed out waiting for process test release {}",
+            release_path.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    Ok(())
 }
 
 async fn run_install_ready_locked(
@@ -2880,97 +2930,301 @@ mod tests {
         Ok(())
     }
 
+    fn process_test_paths(root: &Path) -> RuntimePaths {
+        let config_dir = root.join("xdg-config/codex-update-manager");
+        let state_dir = root.join("xdg-state/codex-update-manager");
+        RuntimePaths {
+            config_file: config_dir.join("config.toml"),
+            state_file: state_dir.join("state.json"),
+            log_file: state_dir.join("service.log"),
+            cache_dir: root.join("xdg-cache/codex-update-manager"),
+            state_dir,
+            config_dir,
+        }
+    }
+
+    fn configure_process_test_command(
+        command: &mut std::process::Command,
+        root: &Path,
+        role: &str,
+    ) {
+        command
+            .arg("--exact")
+            .arg("app::tests::updater_flow_process_child")
+            .arg("--nocapture")
+            .env("CODEX_UPDATE_MANAGER_TEST_PROCESS_ROLE", role)
+            .env("HOME", root.join("home"))
+            .env("XDG_CONFIG_HOME", root.join("xdg-config"))
+            .env("XDG_STATE_HOME", root.join("xdg-state"))
+            .env("XDG_CACHE_HOME", root.join("xdg-cache"))
+            .env(
+                "CODEX_LINUX_SETTINGS_FILE",
+                root.join("missing-settings.json"),
+            )
+            .env_remove("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT")
+            .env("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
+    }
+
+    fn spawn_process_test_child(
+        root: &Path,
+        role: &str,
+        env: &[(&str, &Path)],
+    ) -> Result<std::process::Child> {
+        let mut command = std::process::Command::new(std::env::current_exe()?);
+        configure_process_test_command(&mut command, root, role);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        command
+            .spawn()
+            .with_context(|| format!("Failed to spawn updater process test child {role}"))
+    }
+
+    fn wait_for_process_test_path(path: &Path, description: &str) -> Result<()> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !path.exists() {
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "Timed out waiting for {description}: {}",
+                path.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Ok(())
+    }
+
+    fn wait_for_process_test_child(mut child: std::process::Child, role: &str) -> Result<()> {
+        let status = child
+            .wait()
+            .with_context(|| format!("Failed to wait for updater process test child {role}"))?;
+        anyhow::ensure!(
+            status.success(),
+            "Updater process test child {role} exited with {status}"
+        );
+        Ok(())
+    }
+
+    fn prepare_process_install_fixture(root: &Path) -> Result<(RuntimePaths, PathBuf, PathBuf)> {
+        let paths = process_test_paths(root);
+        paths.ensure_dirs()?;
+        std::fs::create_dir_all(root.join("home"))?;
+
+        let mut config = test_config(root);
+        config.workspace_root = paths.cache_dir.clone();
+        std::fs::write(&paths.config_file, toml::to_string(&config)?)?;
+
+        let package_path = root.join("dist/codex.deb");
+        std::fs::create_dir_all(
+            package_path
+                .parent()
+                .expect("package path should have parent"),
+        )?;
+        std::fs::write(&package_path, b"deb")?;
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::WaitingForAppExit;
+        state.installed_version = "stale-entrypoint-snapshot".to_string();
+        state.candidate_version = Some("2999.07.24.010203+deadbeef".to_string());
+        state.waiting_for_app_exit_auto_install = true;
+        state.artifact_paths.package_path = Some(package_path);
+        state.save(&paths.state_file)?;
+
+        let install_log = root.join("install.log");
+        let fake_pkexec = root.join("pkexec");
+        std::fs::write(
+            &fake_pkexec,
+            "#!/bin/sh\n\
+             printf 'install\\n' >> \"$CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG\"\n\
+             if [ -n \"${CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED:-}\" ]; then\n\
+               /bin/touch \"$CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED\"\n\
+             fi\n\
+             if [ -n \"${CODEX_UPDATE_MANAGER_TEST_INSTALL_RELEASE:-}\" ]; then\n\
+               while [ ! -e \"$CODEX_UPDATE_MANAGER_TEST_INSTALL_RELEASE\" ]; do\n\
+                 /bin/sleep 0.01\n\
+               done\n\
+             fi\n",
+        )?;
+        let mut permissions = std::fs::metadata(&fake_pkexec)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_pkexec, permissions)?;
+        Ok((paths, fake_pkexec, install_log))
+    }
+
     #[test]
-    fn install_ready_and_daemon_reconcile_launch_only_one_install() -> Result<()> {
-        let _env_guard = crate::test_util::env_lock();
-        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
-            "CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT",
-            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH",
-            "CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG",
-            "CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED",
-        ]);
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()?;
-        runtime.block_on(async {
-            let temp = tempfile::tempdir()?;
-            let paths = test_paths(temp.path());
-            paths.ensure_dirs()?;
-            let config = test_config(temp.path());
-
-            let package_path = temp.path().join("dist/codex.deb");
-            std::fs::create_dir_all(
-                package_path
-                    .parent()
-                    .expect("package path should have parent"),
-            )?;
-            std::fs::write(&package_path, b"deb")?;
-
-            let mut persisted_state = PersistedState::new(true);
-            persisted_state.status = UpdateStatus::WaitingForAppExit;
-            persisted_state.candidate_version = Some("2999.07.24.010203+deadbeef".to_string());
-            persisted_state.waiting_for_app_exit_auto_install = true;
-            persisted_state.artifact_paths.package_path = Some(package_path);
-            persisted_state.save(&paths.state_file)?;
-
-            let fake_pkexec = temp.path().join("pkexec");
-            std::fs::write(
-                &fake_pkexec,
-                "#!/bin/sh\n\
-                 printf 'install\\n' >> \"$CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG\"\n\
-                 /bin/touch \"$CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED\"\n\
-                 /bin/sleep 0.2\n",
-            )?;
-            let mut permissions = std::fs::metadata(&fake_pkexec)?.permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&fake_pkexec, permissions)?;
-
-            let install_log = temp.path().join("install.log");
-            let install_started = temp.path().join("install.started");
-            std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
-            std::env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec);
-            std::env::set_var("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log);
-            std::env::set_var(
-                "CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED",
-                &install_started,
-            );
-
-            let daemon_config = config.clone();
-            let daemon_paths = paths.clone();
-            let daemon = tokio::spawn(async move {
-                let mut state = PersistedState::new(true);
-                reconcile_pending_install_from_disk(&daemon_config, &mut state, &daemon_paths)
-                    .await?;
-                Ok::<_, anyhow::Error>(state)
-            });
-
-            for _ in 0..100 {
-                if install_started.exists() {
-                    break;
-                }
-                time::sleep(Duration::from_millis(10)).await;
+    fn updater_flow_process_child() -> Result<()> {
+        let Some(role) = std::env::var_os("CODEX_UPDATE_MANAGER_TEST_PROCESS_ROLE") else {
+            return Ok(());
+        };
+        let role = role.to_string_lossy();
+        let runtime = tokio::runtime::Runtime::new()?;
+        match role.as_ref() {
+            "install-ready" => runtime.block_on(run(Cli {
+                command: Commands::InstallReady,
+            })),
+            "daemon-reconcile" => {
+                let paths = RuntimePaths::detect()?;
+                let config = RuntimeConfig::load_or_default(&paths)?;
+                let mut state = PersistedState::load_or_default(
+                    &paths.state_file,
+                    effective_auto_install(&config),
+                )?;
+                runtime.block_on(reconcile_pending_install_from_disk(
+                    &config, &mut state, &paths,
+                ))
             }
-            assert!(
-                install_started.exists(),
-                "daemon reconciliation should start the install"
+            other => anyhow::bail!("Unknown updater process test role {other}"),
+        }
+    }
+
+    #[test]
+    fn install_ready_entrypoint_does_not_overwrite_active_install_state() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let (paths, fake_pkexec, install_log) = prepare_process_install_fixture(temp.path())?;
+        let entrypoint_loaded = temp.path().join("entrypoint.loaded");
+        let entrypoint_continue = temp.path().join("entrypoint.continue");
+        let pre_dispatch = temp.path().join("entrypoint.pre-dispatch");
+        let install_started = temp.path().join("install.started");
+        let install_release = temp.path().join("install.release");
+
+        let install_ready = spawn_process_test_child(
+            temp.path(),
+            "install-ready",
+            &[
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_LOADED",
+                    &entrypoint_loaded,
+                ),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_CONTINUE",
+                    &entrypoint_continue,
+                ),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_PRE_DISPATCH",
+                    &pre_dispatch,
+                ),
+                ("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec),
+                ("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log),
+            ],
+        )?;
+        wait_for_process_test_path(&entrypoint_loaded, "install-ready state load")?;
+
+        let daemon_reconcile = spawn_process_test_child(
+            temp.path(),
+            "daemon-reconcile",
+            &[
+                ("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec),
+                ("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED",
+                    &install_started,
+                ),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_INSTALL_RELEASE",
+                    &install_release,
+                ),
+            ],
+        )?;
+        wait_for_process_test_path(&install_started, "daemon reconciliation install")?;
+
+        std::fs::write(&entrypoint_continue, b"continue")?;
+        wait_for_process_test_path(&pre_dispatch, "install-ready pre-dispatch boundary")?;
+        let state_while_installing = PersistedState::load_or_default(&paths.state_file, true)?;
+
+        std::fs::write(&install_release, b"continue")?;
+        wait_for_process_test_child(daemon_reconcile, "daemon-reconcile")?;
+        wait_for_process_test_child(install_ready, "install-ready")?;
+
+        assert_eq!(state_while_installing.status, UpdateStatus::Installing);
+        let final_state = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(final_state.status, UpdateStatus::Installed);
+        assert_eq!(std::fs::read_to_string(&install_log)?.lines().count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_install_ready_entrypoints_launch_only_one_install() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let (paths, fake_pkexec, install_log) = prepare_process_install_fixture(temp.path())?;
+        let first_loaded = temp.path().join("first.loaded");
+        let second_loaded = temp.path().join("second.loaded");
+        let entrypoint_continue = temp.path().join("entrypoint.continue");
+        let first_reloaded = temp.path().join("first.reloaded");
+        let second_reloaded = temp.path().join("second.reloaded");
+        let reload_continue = temp.path().join("reload.continue");
+
+        let common_env = [
+            (
+                "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_CONTINUE",
+                entrypoint_continue.as_path(),
+            ),
+            (
+                "CODEX_UPDATE_MANAGER_TEST_INSTALL_READY_CONTINUE",
+                reload_continue.as_path(),
+            ),
+            (
+                "CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH",
+                fake_pkexec.as_path(),
+            ),
+            (
+                "CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG",
+                install_log.as_path(),
+            ),
+        ];
+        let mut first_env = common_env.to_vec();
+        first_env.extend([
+            (
+                "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_LOADED",
+                first_loaded.as_path(),
+            ),
+            (
+                "CODEX_UPDATE_MANAGER_TEST_INSTALL_READY_RELOADED",
+                first_reloaded.as_path(),
+            ),
+        ]);
+        let mut second_env = common_env.to_vec();
+        second_env.extend([
+            (
+                "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_LOADED",
+                second_loaded.as_path(),
+            ),
+            (
+                "CODEX_UPDATE_MANAGER_TEST_INSTALL_READY_RELOADED",
+                second_reloaded.as_path(),
+            ),
+        ]);
+
+        let first = spawn_process_test_child(temp.path(), "install-ready", &first_env)?;
+        let second = spawn_process_test_child(temp.path(), "install-ready", &second_env)?;
+        wait_for_process_test_path(&first_loaded, "first install-ready state load")?;
+        wait_for_process_test_path(&second_loaded, "second install-ready state load")?;
+
+        std::fs::write(&entrypoint_continue, b"continue")?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !first_reloaded.exists() && !second_reloaded.exists() {
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "Timed out waiting for an install-ready process to reload state"
             );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let reloads_before_release =
+            usize::from(first_reloaded.exists()) + usize::from(second_reloaded.exists());
 
-            let install_config = config.clone();
-            let install_paths = paths.clone();
-            let install_ready = tokio::spawn(async move {
-                let mut state = PersistedState::new(true);
-                run_install_ready(&install_config, &mut state, &install_paths).await?;
-                Ok::<_, anyhow::Error>(state)
-            });
+        std::fs::write(&reload_continue, b"continue")?;
+        wait_for_process_test_child(first, "first install-ready")?;
+        wait_for_process_test_child(second, "second install-ready")?;
 
-            let daemon_state = daemon.await??;
-            let install_ready_state = install_ready.await??;
-            assert_eq!(daemon_state.status, UpdateStatus::Installed);
-            assert_eq!(install_ready_state.status, UpdateStatus::Installed);
-            assert_eq!(std::fs::read_to_string(&install_log)?.lines().count(), 1);
-            Ok::<_, anyhow::Error>(())
-        })
+        assert_eq!(
+            reloads_before_release, 1,
+            "only the lock holder may reload state before serialization is released"
+        );
+        let final_state = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(final_state.status, UpdateStatus::Installed);
+        assert_eq!(std::fs::read_to_string(&install_log)?.lines().count(), 1);
+        Ok(())
     }
 
     #[test]
