@@ -13,6 +13,15 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function countOccurrences(source, needle) {
+  return source.split(needle).length - 1;
+}
+
+function regexMatchCount(source, pattern) {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  return [...source.matchAll(new RegExp(pattern.source, flags))].length;
+}
+
 function pluginNameExpressionRegex(pluginName) {
   const escaped = escapeRegExp(pluginName);
   return String.raw`(?:\`${escaped}\`|"${escaped}"|'${escaped}')`;
@@ -196,9 +205,13 @@ function hasCompleteRecordReplayMainBridgePatch(source) {
     return false;
   }
 
-  return source.includes(recordReplayHelperSource({ childProcessVar, fsVar, pathVar }))
-    && source.includes(recordReplayBridgeSource({ childProcessVar, fsVar, pathVar }))
-    && recordReplayChronicleTrayPatchedPattern().test(source);
+  const helperPayload = recordReplayHelperSource({ childProcessVar, fsVar, pathVar });
+  const bridgePayload = recordReplayBridgeSource({ childProcessVar, fsVar, pathVar });
+  const bridgeInsertion = `${bridgePayload},"get-global-state":async({key:`;
+  return countOccurrences(source, helperPayload) === 1
+    && countOccurrences(source, bridgePayload) === 1
+    && countOccurrences(source, bridgeInsertion) === 1
+    && regexMatchCount(source, recordReplayChronicleTrayPatchedPattern()) === 1;
 }
 
 function applyRecordReplayChronicleTrayPatch(currentSource) {

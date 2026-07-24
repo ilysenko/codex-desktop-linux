@@ -110,7 +110,6 @@ stage_record_replay_plugin_base() {
 
     if source_plugin="$(find_upstream_record_replay_plugin)"; then
         cp -R "$source_plugin/." "$target_plugin/"
-        rm -rf "$target_plugin/Codex Computer Use.app"
         find "$target_plugin" \( -name '*:com.apple.*' -o -name '.gitkeep' -o -name '.DS_Store' \) -delete
         echo "Record & Replay plugin base staged from upstream DMG" >&2
         return 0

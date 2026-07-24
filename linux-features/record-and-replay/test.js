@@ -22,6 +22,7 @@ const {
   applyRecordReplayPluginGatePatch,
   applyRecordReplayMainBridgePatch,
   descriptors,
+  recordReplayBridgeSource,
   recordReplayHelperSource,
   recordReplayHudRuntimeSource,
 } = require("./patch.js");
@@ -220,6 +221,19 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
     'var bridge={"get-global-state":async({key:e})=>null};',
   ].join("");
   const patched = applyRecordReplayMainBridgePatch(source);
+  const bridgePayload = recordReplayBridgeSource({
+    childProcessVar: "cp",
+    fsVar: "fs",
+    pathVar: "path",
+  });
+  const helperPayload = recordReplayHelperSource({
+    childProcessVar: "cp",
+    fsVar: "fs",
+    pathVar: "path",
+  });
+  const trayStart = patched.indexOf("var tray=");
+  const trayEnd = patched.indexOf(";var bridge=", trayStart);
+  const trayStatement = patched.slice(trayStart, trayEnd + 1);
   const variants = {
     "legacy tray shape": patched
       .replace(":tt().skysight?$9:", ":")
@@ -232,6 +246,16 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
       '"linux-record-replay-status":async',
       '"linux-record-replay-status-missing":async',
     ),
+    "misplaced bridge payload": `${patched.replace(
+      `${bridgePayload},"get-global-state":async`,
+      '"get-global-state":async',
+    )}var misplaced={${bridgePayload}};`,
+    "duplicate bridge payload": patched.replace(
+      `${bridgePayload},"get-global-state":async`,
+      `${bridgePayload},${bridgePayload},"get-global-state":async`,
+    ),
+    "duplicate helper payload": `${helperPayload}\n${patched}`,
+    "duplicate patched tray": `${patched}${trayStatement}`,
   };
 
   for (const [name, drifted] of Object.entries(variants)) {
@@ -976,26 +1000,26 @@ test("launcher rejects unsafe bundled plugin version path components", () => {
   }
 });
 
-test("record-and-replay stage hook uses upstream plugin shell when present", () => {
+test("record-and-replay stage hook uses the current upstream plugin shell when present", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-record-replay-stage-upstream-"));
   try {
     const installDir = path.join(workspace, "install");
     const fakeBinary = path.join(workspace, "codex-record-replay-linux");
     const upstreamPlugin = path.join(
       workspace,
-      "upstream/Codex.app/Contents/Resources/plugins/openai-bundled/plugins/record-and-replay",
+      "upstream/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/record-and-replay",
     );
     const marketplace = path.join(installDir, "resources/plugins/openai-bundled/.agents/plugins/marketplace.json");
     fs.mkdirSync(path.join(upstreamPlugin, ".codex-plugin"), { recursive: true });
     fs.mkdirSync(path.join(upstreamPlugin, "assets"), { recursive: true });
+    fs.mkdirSync(path.join(upstreamPlugin, "bin"), { recursive: true });
     fs.mkdirSync(path.join(upstreamPlugin, "skills/record-and-replay"), { recursive: true });
-    fs.mkdirSync(path.join(upstreamPlugin, "Codex Computer Use.app/Contents/MacOS"), { recursive: true });
     fs.mkdirSync(path.dirname(marketplace), { recursive: true });
     fs.writeFileSync(
       path.join(upstreamPlugin, ".codex-plugin/plugin.json"),
       JSON.stringify({
         name: "record-and-replay",
-        version: "1.0.857",
+        version: "1.0.1000502",
         description: "Record what I'm doing on my Mac",
         author: { name: "OpenAI" },
         mcpServers: "./.mcp.json",
@@ -1014,16 +1038,17 @@ test("record-and-replay stage hook uses upstream plugin shell when present", () 
       JSON.stringify({
         mcpServers: {
           "event-stream": {
-            command: "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
+            command: "./bin/computer-use-client-launcher",
             args: ["event-stream", "mcp"],
             cwd: ".",
+            env_vars: ["CODEX_HOME"],
           },
         },
       }),
     );
     fs.writeFileSync(path.join(upstreamPlugin, "assets/app-icon.png"), "official-png");
+    fs.writeFileSync(path.join(upstreamPlugin, "bin/computer-use-client-launcher"), "#!/bin/sh\nexec false\n");
     fs.writeFileSync(path.join(upstreamPlugin, "skills/record-and-replay/SKILL.md"), "official mac skill");
-    fs.writeFileSync(path.join(upstreamPlugin, "Codex Computer Use.app/Contents/MacOS/SkyComputerUseClient"), "mach-o");
     fs.writeFileSync(marketplace, JSON.stringify({ plugins: [] }));
     fs.writeFileSync(fakeBinary, "#!/bin/sh\nprintf '{\"ok\":true}\\n'\n");
     fs.chmodSync(fakeBinary, 0o755);
@@ -1034,7 +1059,7 @@ test("record-and-replay stage hook uses upstream plugin shell when present", () 
         ...process.env,
         SCRIPT_DIR: repoRoot(),
         INSTALL_DIR: installDir,
-        CODEX_UPSTREAM_APP_DIR: path.join(workspace, "upstream/Codex.app"),
+        CODEX_UPSTREAM_APP_DIR: path.join(workspace, "upstream/ChatGPT.app"),
         CODEX_RECORD_REPLAY_LINUX_SOURCE: fakeBinary,
       },
       stdio: "pipe",
@@ -1045,9 +1070,9 @@ test("record-and-replay stage hook uses upstream plugin shell when present", () 
     const stagedMcp = JSON.parse(fs.readFileSync(path.join(pluginDir, ".mcp.json"), "utf8"));
     const stagedSkill = fs.readFileSync(path.join(pluginDir, "skills/record-and-replay/SKILL.md"), "utf8");
 
-    assert.equal(fs.existsSync(path.join(pluginDir, "Codex Computer Use.app")), false);
+    assert.equal(fs.readFileSync(path.join(pluginDir, "bin/computer-use-client-launcher"), "utf8"), "#!/bin/sh\nexec false\n");
     assert.equal(fs.readFileSync(path.join(pluginDir, "assets/app-icon.png"), "utf8"), "official-png");
-    assert.equal(stagedPlugin.version, "1.0.857");
+    assert.equal(stagedPlugin.version, "1.0.1000502");
     assert.equal(stagedPlugin.description, "Record what I'm doing on Linux");
     assert.equal(stagedPlugin.interface.shortDescription, "Record what I'm doing on Linux and turn it into a Skill");
     assert.equal(stagedPlugin.interface.logo, "./assets/record-and-replay-plugin-icon.png");

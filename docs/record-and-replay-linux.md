@@ -50,8 +50,8 @@ The workflow is:
 
 The important compatibility point is the contract: the bundled plugin launches
 an `event-stream` MCP server and the durable output is a Codex skill. The
-official macOS bundle supplies that server through
-`SkyComputerUseClient event-stream mcp`; the Linux feature supplies
+current macOS bundle supplies that server through
+`computer-use-client-launcher event-stream mcp`; the Linux feature supplies
 `SkyLinuxComputerUseClient event-stream mcp`, backed by the Rust
 `codex-record-replay-linux` backend.
 

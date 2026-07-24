@@ -67,11 +67,6 @@ command -v node >/dev/null || {
   echo "node is required; run inside the repo devcontainer." >&2
   exit 1
 }
-command -v strings >/dev/null || {
-  echo "strings is required; run inside the repo devcontainer." >&2
-  exit 1
-}
-
 if [[ -z "$work_dir" ]]; then
   work_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-record-replay-probe.XXXXXX")"
 else
@@ -87,11 +82,11 @@ trap cleanup EXIT
 
 app_resources="ChatGPT Installer/ChatGPT.app/Contents/Resources"
 record_plugin="$app_resources/plugins/openai-bundled/plugins/record-and-replay"
-sky_client="$record_plugin/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+record_replay_launcher="$record_plugin/bin/computer-use-client-launcher"
 
 echo "== DMG resources =="
 7z l "$dmg_path" \
-  | grep -E 'Contents/Resources/(app\.asar|native/sky\.node|codex_chronicle)$|plugins/openai-bundled/plugins/(browser|chrome|computer-use|record-and-replay)(/(\.mcp\.json|\.codex-plugin/plugin\.json|skills/.*/SKILL\.md|Codex Computer Use\.app/Contents/SharedSupport/SkyComputerUseClient\.app/Contents/MacOS/SkyComputerUseClient)|$)' \
+  | grep -E 'Contents/Resources/(app\.asar|native/sky\.node|codex_chronicle)$|plugins/openai-bundled/plugins/(browser|chrome|computer-use|record-and-replay)(/(\.mcp\.json|\.codex-plugin/plugin\.json|skills/.*/SKILL\.md|bin/computer-use-client-launcher)|$)' \
   | sed -n '1,140p'
 
 echo
@@ -103,14 +98,13 @@ echo "== Extracting probe files to $work_dir =="
   "$record_plugin/.mcp.json" \
   "$record_plugin/.codex-plugin/plugin.json" \
   "$record_plugin/skills/*" \
-  "$sky_client" \
+  "$record_replay_launcher" \
   >/dev/null
 
 extracted_resources="$work_dir/$app_resources"
 asar_path="$extracted_resources/app.asar"
 plugin_root="$work_dir/$record_plugin"
-sky_client_path="$work_dir/$sky_client"
-sky_strings_file="$work_dir/skyclient.strings.txt"
+record_replay_launcher_path="$work_dir/$record_replay_launcher"
 asar_contract_json="$work_dir/record-replay-asar-contract.json"
 missing_required=0
 
@@ -133,7 +127,7 @@ require_file "native/sky.node extracted" "$extracted_resources/native/sky.node"
 require_file "codex_chronicle extracted" "$extracted_resources/codex_chronicle"
 require_file "record-and-replay .mcp.json" "$plugin_root/.mcp.json"
 require_file "record-and-replay plugin.json" "$plugin_root/.codex-plugin/plugin.json"
-require_file "SkyComputerUseClient extracted" "$sky_client_path"
+require_file "Record & Replay launcher extracted" "$record_replay_launcher_path"
 
 if (( missing_required )); then
   echo "Required probe artifacts are missing; aborting." >&2
@@ -171,25 +165,20 @@ NODE
 
 echo
 echo "== Native resource file types =="
-file "$extracted_resources/native/sky.node" "$extracted_resources/codex_chronicle" "$sky_client_path"
-
-strings "$sky_client_path" > "$sky_strings_file"
+file "$extracted_resources/native/sky.node" "$extracted_resources/codex_chronicle" "$record_replay_launcher_path"
 
 echo
-echo "== SkyComputerUseClient contract strings =="
-sky_match_patterns='event_stream|skysight_|recording_controls|metadataPath|eventsPath|session\.json|events\.jsonl|Start recording|Stop the active|Start the replay|Stop recording'
-if ! grep -E "$sky_match_patterns" "$sky_strings_file" | sort -u | sed -n '1,200p'; then
-  echo "no contract strings matched"
-fi
+echo "== Record & Replay launcher contract =="
+sed -n '1,160p' "$record_replay_launcher_path"
 
 echo
 echo "== ASAR contract search =="
-node - "$asar_path" "$asar_contract_json" "$sky_strings_file" <<'NODE'
+node - "$asar_path" "$asar_contract_json" "$record_replay_launcher_path" <<'NODE'
 const fs = require("node:fs");
 
 const asarPath = process.argv[2];
 const reportPath = process.argv[3];
-const skyStringsPath = process.argv[4];
+const launcherPath = process.argv[4];
 
 const archive = fs.readFileSync(asarPath);
 const headerSize = archive.readUInt32LE(4);
@@ -222,7 +211,7 @@ walk("", header.files);
 
 const pathNeedles = {
   record_and_replay_path: /record-and-replay/i,
-  sky_client_path: /SkyComputerUseClient\.app\/Contents\/SharedSupport\/SkyComputerUseClient/i,
+  record_replay_launcher_path: /record-and-replay\/bin\/computer-use-client-launcher/i,
   chronicle_path: /codex_chronicle/i,
   computer_use_path: /computer.?use/i,
   event_stream_path: /event[_-]?stream/i,
@@ -277,7 +266,7 @@ const driftContract = {
     contentHits: contentContract.event_stream.count > 0 || contentContract["event.stream"].count > 0,
   },
   sky_computer_use: {
-    pathHits: pathContract.sky_client_path.count > 0 || pathContract.computer_use_path.count > 0,
+    pathHits: pathContract.record_replay_launcher_path.count > 0 || pathContract.computer_use_path.count > 0,
     contentHits: contentContract.SkyComputerUseClient.count > 0 || contentContract.recording_controls.count > 0,
   },
   chronicle: {
@@ -298,12 +287,11 @@ for (const [name, c] of Object.entries(driftContract)) {
   console.log(`  ${name}: ${status[name]} (path=${c.pathHits ? "yes" : "no"}, content=${c.contentHits ? "yes" : "no"})`);
 }
 
-const skyStrings = fs.existsSync(skyStringsPath) ? fs.readFileSync(skyStringsPath, "utf8") : "";
-const skyStringHits = {
-  event_stream: /event_stream/i.test(skyStrings),
-  skysight: /skysight_/i.test(skyStrings),
-  recording_controls: /recording_controls/i.test(skyStrings),
-  metadata_events: /metadataPath|eventsPath|events\.jsonl|session\.json/i.test(skyStrings),
+const launcherSource = fs.existsSync(launcherPath) ? fs.readFileSync(launcherPath, "utf8") : "";
+const launcherContract = {
+  codex_home: /CODEX_HOME/.test(launcherSource),
+  sky_client: /SkyComputerUseClient/.test(launcherSource),
+  forwards_argv: /exec "\$\{client\}" "\$@"/.test(launcherSource),
 };
 
 const contract = {
@@ -312,7 +300,7 @@ const contract = {
   contentContract,
   driftContract,
   asarStatus: status,
-  skyClientStringState: skyStringHits,
+  recordReplayLauncherContract: launcherContract,
 };
 
 console.log("== ASAR contract JSON ==");
@@ -329,16 +317,13 @@ console.log(`event_stream: ${contract.asarStatus.event_stream}`);
 console.log(`sky_computer_use: ${contract.asarStatus.sky_computer_use}`);
 console.log(`chronicle: ${contract.asarStatus.chronicle}`);
 console.log(`record_and_replay: ${contract.asarStatus.record_and_replay}`);
-console.log(`sky_client_strings_event_stream: ${contract.skyClientStringState.event_stream ? "PASS" : "MISSING"}`);
-console.log(`sky_client_strings_skysight: ${contract.skyClientStringState.skysight ? "PASS" : "MISSING"}`);
-console.log(`sky_client_strings_recording_controls: ${contract.skyClientStringState.recording_controls ? "PASS" : "MISSING"}`);
-console.log(`sky_client_strings_metadata_events: ${contract.skyClientStringState.metadata_events ? "PASS" : "MISSING"}`);
+console.log(`record_replay_launcher_codex_home: ${contract.recordReplayLauncherContract.codex_home ? "PASS" : "MISSING"}`);
+console.log(`record_replay_launcher_sky_client: ${contract.recordReplayLauncherContract.sky_client ? "PASS" : "MISSING"}`);
+console.log(`record_replay_launcher_forwards_argv: ${contract.recordReplayLauncherContract.forwards_argv ? "PASS" : "MISSING"}`);
 NODE
 
 if [[ "$keep" -eq 1 ]]; then
   echo
   echo "contract json: $asar_contract_json"
   echo "kept work dir: $work_dir"
-else
-  rm -f "$sky_strings_file"
 fi
