@@ -18,9 +18,9 @@ function pluginNameExpressionRegex(pluginName) {
   return String.raw`(?:\`${escaped}\`|"${escaped}"|'${escaped}')`;
 }
 
-function recordReplayPluginDescriptorPattern(flags = "") {
+function recordReplayPluginNamePattern(flags = "") {
   return new RegExp(
-    String.raw`\{(?:[^{}]*,)?installWhenMissing:!0,name:${pluginNameExpressionRegex(RECORD_REPLAY_PLUGIN_NAME)},`,
+    String.raw`name:${pluginNameExpressionRegex(RECORD_REPLAY_PLUGIN_NAME)}`,
     flags,
   );
 }
@@ -32,18 +32,18 @@ function hasRecordReplayPluginGate(source) {
   }
 
   const expectedDescriptor = buildRecordReplayDescriptor();
-  const sourceDescriptorCount = [...source.matchAll(recordReplayPluginDescriptorPattern("g"))].length;
-  const arrayDescriptorCount = [
-    ...pluginGateArray.text.matchAll(recordReplayPluginDescriptorPattern("g")),
+  const sourceNameCount = [...source.matchAll(recordReplayPluginNamePattern("g"))].length;
+  const arrayNameCount = [
+    ...pluginGateArray.text.matchAll(recordReplayPluginNamePattern("g")),
   ].length;
-  return sourceDescriptorCount === 1
-    && arrayDescriptorCount === 1
+  return sourceNameCount === 1
+    && arrayNameCount === 1
     && source.split(expectedDescriptor).length - 1 === 1
     && pluginGateArray.text.split(expectedDescriptor).length - 1 === 1;
 }
 
-function hasAnyRecordReplayPluginDescriptor(source) {
-  return recordReplayPluginDescriptorPattern().test(source);
+function hasAnyRecordReplayPluginName(source) {
+  return recordReplayPluginNamePattern().test(source);
 }
 
 function hasObsoleteRecordReplayPluginGate(source) {
@@ -110,7 +110,7 @@ function applyRecordReplayPluginGatePatch(currentSource) {
   if (hasRecordReplayPluginGate(currentSource)) {
     return currentSource;
   }
-  if (hasAnyRecordReplayPluginDescriptor(currentSource)) {
+  if (hasAnyRecordReplayPluginName(currentSource)) {
     throw new Error("Optional Record & Replay plugin gate patch drift: invalid isAvailable availability contract");
   }
   const pluginGateArray = findBundledPluginGateArray(currentSource);
