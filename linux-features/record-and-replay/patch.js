@@ -18,12 +18,32 @@ function pluginNameExpressionRegex(pluginName) {
   return String.raw`(?:\`${escaped}\`|"${escaped}"|'${escaped}')`;
 }
 
+function recordReplayPluginDescriptorPattern(flags = "") {
+  return new RegExp(
+    String.raw`\{(?:[^{}]*,)?installWhenMissing:!0,name:${pluginNameExpressionRegex(RECORD_REPLAY_PLUGIN_NAME)},`,
+    flags,
+  );
+}
+
 function hasRecordReplayPluginGate(source) {
   const pluginGateArray = findBundledPluginGateArray(source);
-  const target = pluginGateArray?.text ?? source;
-  return new RegExp(
-    String.raw`\{(?:[^{}]*,)?installWhenMissing:!0,name:${pluginNameExpressionRegex(RECORD_REPLAY_PLUGIN_NAME)},isAvailable:`,
-  ).test(target);
+  if (pluginGateArray == null) {
+    return false;
+  }
+
+  const expectedDescriptor = buildRecordReplayDescriptor();
+  const sourceDescriptorCount = [...source.matchAll(recordReplayPluginDescriptorPattern("g"))].length;
+  const arrayDescriptorCount = [
+    ...pluginGateArray.text.matchAll(recordReplayPluginDescriptorPattern("g")),
+  ].length;
+  return sourceDescriptorCount === 1
+    && arrayDescriptorCount === 1
+    && source.split(expectedDescriptor).length - 1 === 1
+    && pluginGateArray.text.split(expectedDescriptor).length - 1 === 1;
+}
+
+function hasAnyRecordReplayPluginDescriptor(source) {
+  return recordReplayPluginDescriptorPattern().test(source);
 }
 
 function hasObsoleteRecordReplayPluginGate(source) {
@@ -89,6 +109,9 @@ function applyRecordReplayPluginGatePatch(currentSource) {
   }
   if (hasRecordReplayPluginGate(currentSource)) {
     return currentSource;
+  }
+  if (hasAnyRecordReplayPluginDescriptor(currentSource)) {
+    throw new Error("Optional Record & Replay plugin gate patch drift: invalid isAvailable availability contract");
   }
   const pluginGateArray = findBundledPluginGateArray(currentSource);
   if (pluginGateArray == null) {

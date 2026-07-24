@@ -779,6 +779,31 @@ test("record-and-replay plugin gate rejects mixed current and obsolete availabil
   );
 });
 
+test("record-and-replay plugin gate rejects a misplaced current availability contract", () => {
+  const source = [
+    "var misplaced={installWhenMissing:!0,name:`record-and-replay`,isAvailable:({platform:e})=>e===`linux`};",
+    "var lt=`browser-use`,ft=`computer-use`,pt=`latex-tectonic`;",
+    "var Kr=[{forceReload:!0,installWhenMissing:!0,name:lt,isAvailable:({features:e})=>e.inAppBrowserUseAllowed},{name:ft,isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:vr},{name:pt,isAvailable:()=>!0}];",
+  ].join("");
+
+  assert.throws(
+    () => applyRecordReplayPluginGatePatch(source),
+    /invalid isAvailable availability contract/,
+  );
+});
+
+test("record-and-replay plugin gate rejects a non-Linux current availability predicate", () => {
+  const source = [
+    "var lt=`browser-use`,ft=`computer-use`,pt=`latex-tectonic`;",
+    "var Kr=[{forceReload:!0,installWhenMissing:!0,name:lt,isAvailable:({features:e})=>e.inAppBrowserUseAllowed},{installWhenMissing:!0,name:`record-and-replay`,isAvailable:()=>!0},{name:ft,isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:vr},{name:pt,isAvailable:()=>!0}];",
+  ].join("");
+
+  assert.throws(
+    () => applyRecordReplayPluginGatePatch(source),
+    /invalid isAvailable availability contract/,
+  );
+});
+
 test("record-and-replay plugin template matches upstream-shaped plugin UX", () => {
   const plugin = JSON.parse(fs.readFileSync(path.join(featureDir, "plugin-template/.codex-plugin/plugin.json"), "utf8"));
   const mcp = JSON.parse(fs.readFileSync(path.join(featureDir, "plugin-template/.mcp.json"), "utf8"));
