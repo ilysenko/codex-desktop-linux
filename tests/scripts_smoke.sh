@@ -10565,6 +10565,15 @@ test_launcher_warm_start_recovery() {
         bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
 }
 
+test_launcher_window_reopen_behavior() {
+    info "Checking healthy resident window-reopen behavior"
+    bash "$REPO_DIR/tests/launcher_window_reopen_behavior.sh"
+    if CODEX_TEST_FORCE_RESIDENT_REPLACEMENT=1 \
+        bash "$REPO_DIR/tests/launcher_window_reopen_behavior.sh"; then
+        fail "Window-reopen behavior harness did not detect resident replacement"
+    fi
+}
+
 test_notification_actions_bridge_accepts_prebuilt_binary() {
     local workspace="$TMP_DIR/notification-actions-bridge"
     local source_binary="$workspace/prebuilt/codex-notification-actions-linux"
@@ -10712,6 +10721,7 @@ main() {
     test_launcher_marketplace_metadata_atomic_staging
     test_launcher_template_sanity
     test_launcher_warm_start_recovery
+    test_launcher_window_reopen_behavior
     test_launcher_cli_resolution_policy
     test_webview_server_cache_policy
     test_process_detection_helper_cmdline_shapes
