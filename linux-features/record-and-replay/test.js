@@ -124,8 +124,12 @@ test("record-and-replay patch descriptor loads only when feature is enabled", ()
 test("record-and-replay dictation descriptor tracks moved upstream composer bundle", () => {
   const descriptor = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
   assert.ok(descriptor);
-  assert.equal(descriptor.pattern.test("app-initial~app-main~onboarding-page-BUwCKIcU.js"), true);
-  assert.equal(descriptor.pattern.test("use-dictation-BUwCKIcU.js"), true);
+  assert.equal(descriptor.pattern.test("app-initial-C-fROkKo.js"), true);
+  assert.equal(descriptor.assetMatch(
+    "let a=i.trim();a.length>0&&(qf.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:a}),t===`send`?r.onTranscriptSend(a):r.onTranscriptInsert(a))",
+  ), true);
+  assert.equal(descriptor.pattern.test("app-initial~app-main~onboarding-page-BUwCKIcU.js"), false);
+  assert.equal(descriptor.pattern.test("use-dictation-BUwCKIcU.js"), false);
   assert.equal(descriptor.pattern.test("use-dictation-hotkey-BUwCKIcU.js"), false);
 });
 
@@ -426,7 +430,7 @@ test("record-and-replay generic Skysight start can pass summary agent true or fa
 test("record-and-replay patch wires Linux Chronicle tray controls to Skysight", () => {
   const source = [
     'const cp=require("node:child_process"),fs=require("node:fs"),path=require("node:path");',
-    "var tray={getChronicleSidecarControlState:()=>ue.appServerConnectionRegistry.getMaybeConnection(`local`)?.getChronicleSidecarControlState()??$9,toggleChronicleSidecar:async()=>{let e=ue.appServerConnectionRegistry.getMaybeConnection(B);return e==null?$9:e.getChronicleSidecarControlState().running?e.pauseChronicleSidecar():e.resumeChronicleSidecar()}};",
+    "var tray={getChronicleSidecarControlState:()=>tt().skysight?$9:Se.appServerConnectionRegistry.getMaybeConnection(`local`)?.getChronicleSidecarControlState()??$9,toggleChronicleSidecar:async()=>{if(tt().skysight)return $9;let e=Se.appServerConnectionRegistry.getMaybeConnection(V);return e==null?$9:e.getChronicleSidecarControlState().running?e.pauseChronicleSidecar():e.resumeChronicleSidecar()}};",
     'var bridge={"get-global-state":async({key:e})=>null};',
   ].join("");
   const patched = applyRecordReplayMainBridgePatch(source);
@@ -435,7 +439,18 @@ test("record-and-replay patch wires Linux Chronicle tray controls to Skysight", 
   assert.equal(applyRecordReplayMainBridgePatch(patched), patched);
   assert.match(patched, /getChronicleSidecarControlState:\(\)=>process\.platform===`linux`\?codexLinuxChronicleSidecarControlState\(\)/);
   assert.match(patched, /toggleChronicleSidecar:async\(\)=>\{if\(process\.platform===`linux`\)return codexLinuxChronicleToggleSidecar\(\)/);
+  assert.match(patched, /if\(tt\(\)\.skysight\)return \$9/);
   assert.match(patched, /e\.pauseChronicleSidecar\(\):e\.resumeChronicleSidecar\(\)/);
+});
+
+test("record-and-replay rejects partial current Chronicle tray drift byte-identically", () => {
+  const source = [
+    'const cp=require("node:child_process"),fs=require("node:fs"),path=require("node:path");',
+    "var tray={getChronicleSidecarControlState:()=>tt().skysight?$9:Se.appServerConnectionRegistry.getMaybeConnection(`local`)?.getChronicleSidecarControlState()??$9,toggleChronicleSidecar:async()=>{if(tt().skysight)return $9;let e=Se.appServerConnectionRegistry.getMaybeConnection(V);return e==null?$9:e.getChronicleSidecarControlState().running?e.stopChronicleSidecar():e.resumeChronicleSidecar()}};",
+    'var bridge={"get-global-state":async({key:e})=>null};',
+  ].join("");
+
+  assert.equal(applyRecordReplayMainBridgePatch(source), source);
 });
 
 test("record-and-replay bridge patch upgrades old patched bundles with active speech endpoint", () => {

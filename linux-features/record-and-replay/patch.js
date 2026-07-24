@@ -191,14 +191,22 @@ function upgradeRecordReplayBridgeSource(currentSource) {
   return patchedSource;
 }
 
+function recordReplayChronicleTrayControlPattern() {
+  return /getChronicleSidecarControlState:\(\)=>([A-Za-z_$][\w$]*)\(\)\.skysight\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\(`local`\)\?\.getChronicleSidecarControlState\(\)\?\?\2),toggleChronicleSidecar:async\(\)=>\{if\(\1\(\)\.skysight\)return \2;let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\([A-Za-z_$][\w$]*\));return \4==null\?\2:\4\.getChronicleSidecarControlState\(\)\.running\?\4\.pauseChronicleSidecar\(\):\4\.resumeChronicleSidecar\(\)\}/u;
+}
+
+function hasRecordReplayChronicleTrayCallbacks(source) {
+  return source.includes("getChronicleSidecarControlState:()=>")
+    && source.includes("toggleChronicleSidecar:async()=>");
+}
+
 function applyRecordReplayChronicleTrayPatch(currentSource) {
   const patchName = "Record & Replay Chronicle tray bridge patch";
   if (currentSource.includes("process.platform===`linux`?codexLinuxChronicleSidecarControlState()")) {
     return currentSource;
   }
 
-  const trayControlPattern =
-    /getChronicleSidecarControlState:\(\)=>([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\(`local`\)\?\.getChronicleSidecarControlState\(\)\?\?([A-Za-z_$][\w$]*)),toggleChronicleSidecar:async\(\)=>\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\([A-Za-z_$][\w$]*\));return \3==null\?\2:\3\.getChronicleSidecarControlState\(\)\.running\?\3\.pauseChronicleSidecar\(\):\3\.resumeChronicleSidecar\(\)\}/u;
+  const trayControlPattern = recordReplayChronicleTrayControlPattern();
   if (!trayControlPattern.test(currentSource)) {
     warn("Could not find Chronicle tray control callbacks", patchName);
     return currentSource;
@@ -208,17 +216,26 @@ function applyRecordReplayChronicleTrayPatch(currentSource) {
     trayControlPattern,
     (
       _match,
-      upstreamStateExpression,
+      availabilityFunction,
       disabledStateVar,
+      upstreamStateExpression,
       connectionVar,
       connectionExpression,
     ) =>
-      `getChronicleSidecarControlState:()=>process.platform===\`linux\`?codexLinuxChronicleSidecarControlState():${upstreamStateExpression},toggleChronicleSidecar:async()=>{if(process.platform===\`linux\`)return codexLinuxChronicleToggleSidecar();let ${connectionVar}=${connectionExpression};return ${connectionVar}==null?${disabledStateVar}:${connectionVar}.getChronicleSidecarControlState().running?${connectionVar}.pauseChronicleSidecar():${connectionVar}.resumeChronicleSidecar()}`,
+      `getChronicleSidecarControlState:()=>process.platform===\`linux\`?codexLinuxChronicleSidecarControlState():${availabilityFunction}().skysight?${disabledStateVar}:${upstreamStateExpression},toggleChronicleSidecar:async()=>{if(process.platform===\`linux\`)return codexLinuxChronicleToggleSidecar();if(${availabilityFunction}().skysight)return ${disabledStateVar};let ${connectionVar}=${connectionExpression};return ${connectionVar}==null?${disabledStateVar}:${connectionVar}.getChronicleSidecarControlState().running?${connectionVar}.pauseChronicleSidecar():${connectionVar}.resumeChronicleSidecar()}`,
   );
 }
 
 function applyRecordReplayMainBridgePatch(currentSource) {
   const patchName = "Record & Replay main bridge patch";
+  if (
+    hasRecordReplayChronicleTrayCallbacks(currentSource)
+    && !currentSource.includes("process.platform===`linux`?codexLinuxChronicleSidecarControlState()")
+    && !recordReplayChronicleTrayControlPattern().test(currentSource)
+  ) {
+    warn("Could not find Chronicle tray control callbacks", patchName);
+    return currentSource;
+  }
   let patchedSource = currentSource;
   if (currentSource.includes('"linux-record-replay-doctor":async')) {
     return applyRecordReplayChronicleTrayPatch(upgradeRecordReplayBridgeSource(currentSource));
@@ -301,6 +318,14 @@ function recordReplayActiveSpeechContextExpression(dispatchVar, transcriptVar) {
   return `(()=>{let t=String(${transcriptVar}??"").trim();if(t.length>0){let n="codex-linux-record-replay-global-dictation-"+Date.now()+"-"+Math.random().toString(36).slice(2);${dispatchVar}.dispatchMessage("fetch",{hostId:"local",requestId:n,method:"POST",url:"vscode://codex/linux-record-replay-speech-context-active",body:JSON.stringify({transcript:t,source:"codex-global-dictation"})})}})()`;
 }
 
+function recordReplayConversationTranscriptPattern() {
+  return /([A-Za-z_$][\w$]*)\.length>0&&([A-Za-z_$][\w$]*)!==`discard`&&globalThis\.codexLinuxConversationShouldSendTranscript\?\.\(\1,\2\)!==!1&&\((([A-Za-z_$][\w$]*)\.getInstance\(\)\.dispatchMessage\(`global-dictation-record-history-item`,\{text:\1\}\),\2===`send`\?([A-Za-z_$][\w$]*)\.onTranscriptSend\(\1\):\5\.onTranscriptInsert\(\1\))\)/u;
+}
+
+function recordReplayUpstreamTranscriptPattern() {
+  return /([A-Za-z_$][\w$]*)\.length>0&&\((([A-Za-z_$][\w$]*)\.getInstance\(\)\.dispatchMessage\(`global-dictation-record-history-item`,\{text:\1\}\),([A-Za-z_$][\w$]*)===`send`\?([A-Za-z_$][\w$]*)\.onTranscriptSend\(\1\):\5\.onTranscriptInsert\(\1\))\)/u;
+}
+
 function applyRecordReplayHudPatch(currentSource) {
   if (currentSource.includes("codexLinuxRecordReplayHudVersion=")) {
     return currentSource;
@@ -318,26 +343,7 @@ function applyRecordReplayDictationTranscriptPatch(currentSource) {
     return currentSource;
   }
 
-  const upstreamNeedle =
-    "i.length>0&&(j.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))";
-  if (currentSource.includes(upstreamNeedle)) {
-    return currentSource.replace(
-      upstreamNeedle,
-      `i.length>0&&(${recordReplayTranscriptCaptureExpression("i", "e")},j.getInstance().dispatchMessage(\`global-dictation-record-history-item\`,{text:i}),e===\`send\`?n.onTranscriptSend(i):n.onTranscriptInsert(i))`,
-    );
-  }
-
-  const conversationNeedle =
-    "i.length>0&&e!==`discard`&&globalThis.codexLinuxConversationShouldSendTranscript?.(i,e)!==!1&&(j.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))";
-  if (currentSource.includes(conversationNeedle)) {
-    return currentSource.replace(
-      conversationNeedle,
-      `i.length>0&&e!==\`discard\`&&globalThis.codexLinuxConversationShouldSendTranscript?.(i,e)!==!1&&(${recordReplayTranscriptCaptureExpression("i", "e")},j.getInstance().dispatchMessage(\`global-dictation-record-history-item\`,{text:i}),e===\`send\`?n.onTranscriptSend(i):n.onTranscriptInsert(i))`,
-    );
-  }
-
-  const conversationPattern =
-    /([A-Za-z_$][\w$]*)\.length>0&&([A-Za-z_$][\w$]*)!==`discard`&&globalThis\.codexLinuxConversationShouldSendTranscript\?\.\(\1,\2\)!==!1&&\((([A-Za-z_$][\w$]*)\.getInstance\(\)\.dispatchMessage\(`global-dictation-record-history-item`,\{text:\1\}\),\2===`send`\?([A-Za-z_$][\w$]*)\.onTranscriptSend\(\1\):\5\.onTranscriptInsert\(\1\))\)/u;
+  const conversationPattern = recordReplayConversationTranscriptPattern();
   if (conversationPattern.test(currentSource)) {
     return currentSource.replace(
       conversationPattern,
@@ -346,8 +352,7 @@ function applyRecordReplayDictationTranscriptPatch(currentSource) {
     );
   }
 
-  const upstreamPattern =
-    /([A-Za-z_$][\w$]*)\.length>0&&\((([A-Za-z_$][\w$]*)\.getInstance\(\)\.dispatchMessage\(`global-dictation-record-history-item`,\{text:\1\}\),([A-Za-z_$][\w$]*)===`send`\?([A-Za-z_$][\w$]*)\.onTranscriptSend\(\1\):\5\.onTranscriptInsert\(\1\))\)/u;
+  const upstreamPattern = recordReplayUpstreamTranscriptPattern();
   if (upstreamPattern.test(currentSource)) {
     return currentSource.replace(
       upstreamPattern,
@@ -358,6 +363,17 @@ function applyRecordReplayDictationTranscriptPatch(currentSource) {
 
   warn("Could not find dictation transcript send point", patchName);
   return currentSource;
+}
+
+function hasRecordReplayDictationTranscriptContract(source) {
+  if (typeof source !== "string" || !source.includes("global-dictation-record-history-item")) {
+    return false;
+  }
+  if (source.includes("codexLinuxRecordReplayCaptureTranscript")) {
+    return true;
+  }
+  return recordReplayConversationTranscriptPattern().test(source)
+    || recordReplayUpstreamTranscriptPattern().test(source);
 }
 
 function applyRecordReplayGlobalDictationTranscriptPatch(currentSource) {
@@ -412,8 +428,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 20695,
     ciPolicy: "optional",
-    pattern:
-      /^(?:(?:browser-sidebar-comment-light-dismiss|use-dictation(?!-hotkey))-|app-initial~app-main~.*onboarding-page).*\.js$/,
+    pattern: /^app-initial-[A-Za-z0-9_-]+\.js$/,
+    assetMatch: hasRecordReplayDictationTranscriptContract,
     missingDescription: "composer dictation bundle",
     skipDescription: "Record & Replay dictation transcript patch",
     apply: applyRecordReplayDictationTranscriptPatch,
