@@ -270,6 +270,7 @@ run_deb_job() {
     deb_file="$(package_file_or_fail 'codex-desktop_*.deb')"
     dpkg-deb -I "$deb_file"
     dpkg-deb -c "$deb_file" | tee /tmp/deb-contents.txt >/dev/null
+    dpkg-deb -f "$deb_file" Depends | tee /tmp/deb-depends.txt >/dev/null
     assert_contains_file /tmp/deb-contents.txt './usr/bin/codex-update-manager'
     assert_contains_file /tmp/deb-contents.txt './usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/install.sh'
@@ -280,6 +281,8 @@ run_deb_job() {
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/validate-upstream-dmg.js'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
+    assert_not_contains_file /tmp/deb-contents.txt './usr/share/codex-package-framework/fixture.txt'
+    assert_not_contains_file /tmp/deb-depends.txt 'codex-package-framework-runtime'
 
     rm -rf dist
     CARGO_TARGET_DIR="$target_dir" \
@@ -308,10 +311,37 @@ run_deb_job() {
     assert_not_contains_file /tmp/deb-no-updater-control/postinst 'update-builder'
     assert_not_contains_file /tmp/deb-no-updater-control/prerm 'update-builder'
 
+    rm -rf codex-app dist
+    CODEX_FIXTURE_LINUX_FEATURES_JSON='["package-framework-fixture"]' \
+        tests/fixtures/create-packaged-app-fixture.sh codex-app
+    CARGO_TARGET_DIR="$target_dir" \
+    UPDATER_BINARY_SOURCE="$target_dir/release/codex-update-manager" \
+    CODEX_LINUX_FEATURES_ROOT="$REPO_DIR/tests/fixtures/linux-features" \
+    CODEX_LINUX_FEATURES_CONFIG="$REPO_DIR/tests/fixtures/linux-features/features-enabled.json" \
+    PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
+        ./scripts/build-deb.sh
+
+    local deb_feature_file
+    local deb_feature_mode
+    deb_feature_file="$(package_file_or_fail 'codex-desktop_*.deb')"
+    dpkg-deb -I "$deb_feature_file"
+    dpkg-deb -c "$deb_feature_file" | tee /tmp/deb-feature-contents.txt >/dev/null
+    dpkg-deb -f "$deb_feature_file" Depends | tee /tmp/deb-feature-depends.txt >/dev/null
+    assert_contains_file /tmp/deb-feature-contents.txt './usr/share/codex-package-framework/fixture.txt'
+    assert_contains_file /tmp/deb-feature-depends.txt 'codex-package-framework-runtime'
+    deb_feature_mode="$(
+        awk '$NF == "./usr/share/codex-package-framework/fixture.txt" { print $1 }' \
+            /tmp/deb-feature-contents.txt
+    )"
+    [ "$deb_feature_mode" = '-rw-r-----' ] \
+        || error "Expected Debian fixture mode 0640, got: ${deb_feature_mode:-missing}"
+
     append_summary "Debian Package Validation" \
         "Built: \`$(basename "$deb_file")\`" \
         "Verified updater binary, user service, update-builder bundle, and packaged runtime helper." \
-        "Verified PACKAGE_WITH_UPDATER=0 omits updater artifacts."
+        "Verified PACKAGE_WITH_UPDATER=0 omits updater artifacts." \
+        "Feature-enabled build: \`$(basename "$deb_feature_file")\`." \
+        "Verified generic feature resource, 0640 mode, and runtime dependency."
 }
 
 run_rpm_job() {
@@ -330,6 +360,7 @@ run_rpm_job() {
     rpm_file="$(package_file_or_fail 'codex-desktop-*.rpm')"
     rpm -qip "$rpm_file"
     rpm -qlp "$rpm_file" | tee /tmp/rpm-contents.txt >/dev/null
+    rpm -qp --requires "$rpm_file" | tee /tmp/rpm-requires.txt >/dev/null
     assert_contains_file /tmp/rpm-contents.txt '/usr/bin/codex-update-manager'
     assert_contains_file /tmp/rpm-contents.txt '/usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/install.sh'
@@ -340,6 +371,8 @@ run_rpm_job() {
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/validate-upstream-dmg.js'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
+    assert_not_contains_file /tmp/rpm-contents.txt '/usr/share/codex-package-framework/fixture.txt'
+    assert_not_contains_file /tmp/rpm-requires.txt 'codex-package-framework-runtime'
 
     rm -rf dist
     CARGO_TARGET_DIR="$target_dir" \
@@ -361,10 +394,38 @@ run_rpm_job() {
     assert_not_contains_file /tmp/rpm-no-updater-scripts.txt 'update-builder'
     assert_not_contains_file /tmp/rpm-no-updater-scripts.txt 'codex_ensure_user_service_running'
 
+    rm -rf codex-app dist
+    CODEX_FIXTURE_LINUX_FEATURES_JSON='["package-framework-fixture"]' \
+        tests/fixtures/create-packaged-app-fixture.sh codex-app
+    CARGO_TARGET_DIR="$target_dir" \
+    UPDATER_BINARY_SOURCE="$target_dir/release/codex-update-manager" \
+    CODEX_LINUX_FEATURES_ROOT="$REPO_DIR/tests/fixtures/linux-features" \
+    CODEX_LINUX_FEATURES_CONFIG="$REPO_DIR/tests/fixtures/linux-features/features-enabled.json" \
+    PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
+        ./scripts/build-rpm.sh
+
+    local rpm_feature_file
+    local rpm_feature_mode
+    rpm_feature_file="$(package_file_or_fail 'codex-desktop-*.rpm')"
+    rpm -qip "$rpm_feature_file"
+    rpm -qlp "$rpm_feature_file" | tee /tmp/rpm-feature-contents.txt >/dev/null
+    rpm -qlvp "$rpm_feature_file" | tee /tmp/rpm-feature-long-contents.txt >/dev/null
+    rpm -qp --requires "$rpm_feature_file" | tee /tmp/rpm-feature-requires.txt >/dev/null
+    assert_contains_file /tmp/rpm-feature-contents.txt '/usr/share/codex-package-framework/fixture.txt'
+    assert_contains_file /tmp/rpm-feature-requires.txt '^codex-package-framework-runtime$'
+    rpm_feature_mode="$(
+        awk '$NF == "/usr/share/codex-package-framework/fixture.txt" { print $1 }' \
+            /tmp/rpm-feature-long-contents.txt
+    )"
+    [ "$rpm_feature_mode" = '-rw-r-----' ] \
+        || error "Expected RPM fixture mode 0640, got: ${rpm_feature_mode:-missing}"
+
     append_summary "RPM Package Validation" \
         "Built: \`$(basename "$rpm_file")\`" \
         "Verified updater binary, user service, update-builder bundle, and packaged runtime helper." \
-        "Verified PACKAGE_WITH_UPDATER=0 omits updater artifacts."
+        "Verified PACKAGE_WITH_UPDATER=0 omits updater artifacts." \
+        "Feature-enabled build: \`$(basename "$rpm_feature_file")\`." \
+        "Verified generic feature resource, 0640 mode, and runtime dependency."
 }
 
 run_pacman_job() {
@@ -384,6 +445,7 @@ run_pacman_job() {
     pkg_file="$(package_file_or_fail 'codex-desktop-*.pkg.tar.*')"
     pacman -Qip "$pkg_file"
     pacman -Qlp "$pkg_file" | tee /tmp/pacman-contents.txt >/dev/null
+    tar -xOf "$pkg_file" .PKGINFO | tee /tmp/pacman-pkginfo.txt >/dev/null
     assert_contains_file /tmp/pacman-contents.txt 'usr/bin/codex-update-manager'
     assert_contains_file /tmp/pacman-contents.txt 'usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/install.sh'
@@ -394,6 +456,8 @@ run_pacman_job() {
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/validate-upstream-dmg.js'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
+    assert_not_contains_file /tmp/pacman-contents.txt 'usr/share/codex-package-framework/fixture.txt'
+    assert_not_contains_file /tmp/pacman-pkginfo.txt '^depend = codex-package-framework-runtime$'
 
     rm -rf dist
     CARGO_TARGET_DIR="$target_dir" \
@@ -419,10 +483,37 @@ run_pacman_job() {
     assert_contains_file /tmp/pacman-no-updater-install.txt 'pre_remove'
     assert_not_contains_file /tmp/pacman-no-updater-install.txt 'update-builder'
 
+    rm -rf codex-app dist
+    CODEX_FIXTURE_LINUX_FEATURES_JSON='["package-framework-fixture"]' \
+        tests/fixtures/create-packaged-app-fixture.sh codex-app
+    CARGO_TARGET_DIR="$target_dir" \
+    UPDATER_BINARY_SOURCE="$target_dir/release/codex-update-manager" \
+    CODEX_LINUX_FEATURES_ROOT="$REPO_DIR/tests/fixtures/linux-features" \
+    CODEX_LINUX_FEATURES_CONFIG="$REPO_DIR/tests/fixtures/linux-features/features-enabled.json" \
+    PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
+        ./scripts/build-pacman.sh
+
+    local pkg_feature_file
+    local pkg_feature_mode
+    pkg_feature_file="$(package_file_or_fail 'codex-desktop-*.pkg.tar.*')"
+    pacman -Qip "$pkg_feature_file"
+    pacman -Qlp "$pkg_feature_file" | tee /tmp/pacman-feature-contents.txt >/dev/null
+    tar -xOf "$pkg_feature_file" .PKGINFO | tee /tmp/pacman-feature-pkginfo.txt >/dev/null
+    tar -tvf "$pkg_feature_file" \
+        usr/share/codex-package-framework/fixture.txt \
+        | tee /tmp/pacman-feature-long-contents.txt >/dev/null
+    assert_contains_file /tmp/pacman-feature-contents.txt 'usr/share/codex-package-framework/fixture.txt'
+    assert_contains_file /tmp/pacman-feature-pkginfo.txt '^depend = codex-package-framework-runtime$'
+    pkg_feature_mode="$(awk 'NR == 1 { print $1 }' /tmp/pacman-feature-long-contents.txt)"
+    [ "$pkg_feature_mode" = '-rw-r-----' ] \
+        || error "Expected pacman fixture mode 0640, got: ${pkg_feature_mode:-missing}"
+
     append_summary "Pacman Package Validation" \
         "Built: \`$(basename "$pkg_file")\`" \
         "Verified updater binary, user service, update-builder bundle, and packaged runtime helper." \
-        "Verified PACKAGE_WITH_UPDATER=0 omits updater artifacts."
+        "Verified PACKAGE_WITH_UPDATER=0 omits updater artifacts." \
+        "Feature-enabled build: \`$(basename "$pkg_feature_file")\`." \
+        "Verified generic feature resource, 0640 mode, and runtime dependency."
 }
 
 run_install_deps_job_as_root() {

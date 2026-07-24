@@ -22,7 +22,7 @@ Requires:       libdrm.so.2%{codex_elf_suffix}, libnspr4.so%{codex_elf_suffix}, 
 Requires:       libpango-1.0.so.0%{codex_elf_suffix}, libstdc++.so.6%{codex_elf_suffix}, libX11.so.6%{codex_elf_suffix}
 Requires:       libxcb.so.1%{codex_elf_suffix}, libXcomposite.so.1%{codex_elf_suffix}, libXdamage.so.1%{codex_elf_suffix}
 Requires:       libXext.so.6%{codex_elf_suffix}, libXfixes.so.3%{codex_elf_suffix}, libxkbcommon.so.0%{codex_elf_suffix}
-Requires:       libXrandr.so.2%{codex_elf_suffix}, libgbm.so.1%{codex_elf_suffix}
+Requires:       libXrandr.so.2%{codex_elf_suffix}, libgbm.so.1%{codex_elf_suffix}, __LINUX_FEATURE_DEPENDENCIES__
 Recommends:     zenity, kdialog
 
 %description
@@ -50,6 +50,7 @@ cp -a "__RPM_STAGING_DIR__/." "%{buildroot}/"
 %endif
 /usr/share/applications/__PACKAGE_NAME__.desktop
 /usr/share/icons/hicolor/256x256/apps/__PACKAGE_NAME__.png
+__LINUX_FEATURE_FILES__
 %if __PACKAGE_WITH_UPDATER__
 /usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy
 %endif

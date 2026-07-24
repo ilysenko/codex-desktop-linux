@@ -1,0 +1,28 @@
+{
+  "id": "package-framework-fixture",
+  "title": "Package Framework Fixture",
+  "defaultEnabled": false,
+  "packageResources": [
+    {
+      "source": "fixture.txt",
+      "target": "usr/share/codex-package-framework/fixture.txt",
+      "mode": "0640",
+      "formats": [
+        "deb",
+        "rpm",
+        "pacman"
+      ]
+    }
+  ],
+  "packageDependencies": {
+    "deb": [
+      "codex-package-framework-runtime"
+    ],
+    "rpm": [
+      "codex-package-framework-runtime"
+    ],
+    "pacman": [
+      "codex-package-framework-runtime"
+    ]
+  }
+}

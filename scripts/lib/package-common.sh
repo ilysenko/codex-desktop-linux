@@ -143,7 +143,7 @@ run_linux_feature_package_hooks() {
     [ -f "$helper" ] || error "Missing Linux features helper: $helper"
 
     node_bin="$(package_node_binary)"
-    if ! hooks_output="$("$node_bin" "$helper" --package-hooks "$package_format")"; then
+    if ! hooks_output="$("$node_bin" "$helper" --package-hooks "$package_format" "$app_dir")"; then
         error "Failed to discover Linux feature package hooks for $package_format"
     fi
 
@@ -163,6 +163,76 @@ run_linux_feature_package_hooks() {
             PACKAGE_STAGING_ROOT="$staging_root" \
             bash "$hook_path"
     done <<< "$hooks_output"
+}
+
+stage_linux_feature_package_resources() {
+    local staging_root="$1"
+    local package_format="$2"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+    local app_dir="$staging_root/opt/$PACKAGE_NAME"
+
+    [ -d "$staging_root" ] || error "Missing package staging root: $staging_root"
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+    node_bin="$(package_node_binary)"
+    "$node_bin" "$helper" --stage-package-resources "$package_format" "$staging_root" "$app_dir"
+}
+
+linux_feature_package_dependencies() {
+    local package_format="$1"
+    local app_dir="$2"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+    node_bin="$(package_node_binary)"
+    "$node_bin" "$helper" --package-dependencies "$package_format" "$app_dir"
+}
+
+linux_feature_package_files() {
+    local package_format="$1"
+    local app_dir="$2"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+    node_bin="$(package_node_binary)"
+    "$node_bin" "$helper" --package-files "$package_format" "$app_dir"
+}
+
+linux_feature_package_dependency_suffix() {
+    local package_format="$1"
+    local app_dir="$2"
+    local dependencies_output
+    local dependency
+    local suffix=""
+
+    if ! dependencies_output="$(linux_feature_package_dependencies "$package_format" "$app_dir")"; then
+        return 1
+    fi
+    while IFS= read -r dependency; do
+        [ -n "$dependency" ] || continue
+        suffix+=", $dependency"
+    done <<< "$dependencies_output"
+    printf '%s' "$suffix"
+}
+
+replace_literal_file_token() {
+    local target="$1"
+    local token="$2"
+    local replacement="$3"
+    local node_bin
+
+    node_bin="$(package_node_binary)"
+    "$node_bin" - "$target" "$token" "$replacement" <<'NODE'
+const fs = require("node:fs");
+const [target, token, replacement] = process.argv.slice(2);
+const source = fs.readFileSync(target, "utf8");
+if (!source.includes(token)) {
+  throw new Error(`Template token not found in ${target}: ${token}`);
+}
+fs.writeFileSync(target, source.split(token).join(replacement));
+NODE
 }
 
 render_desktop_entry() {
@@ -926,6 +996,23 @@ for (const entry of entries) {
 NODE
     then
         error "Failed to restore Linux feature staged file permissions"
+    fi
+}
+
+restore_linux_feature_package_resource_permissions() {
+    local root="$1"
+    local package_format="$2"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+    local app_dir="$root/opt/$PACKAGE_NAME"
+
+    [ -d "$root" ] || error "Missing package root: $root"
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+
+    node_bin="$(package_node_binary)"
+    if ! "$node_bin" "$helper" \
+        --restore-package-resource-permissions "$package_format" "$root" "$app_dir"; then
+        error "Failed to restore Linux feature package resource permissions"
     fi
 }
 

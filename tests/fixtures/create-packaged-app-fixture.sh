@@ -6,6 +6,11 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 mkdir -p "$app_dir/.codex-linux" "$app_dir/content/webview" "$app_dir/resources/node-runtime/bin"
 
+enabled_linux_features_json="${CODEX_FIXTURE_LINUX_FEATURES_JSON:-[]}"
+printf '{"schemaVersion":1,"linuxFeatures":{"enabled":%s}}\n' \
+    "$enabled_linux_features_json" \
+    > "$app_dir/.codex-linux/build-info.json"
+
 printf '%s\n' '#!/usr/bin/env bash' 'echo "codex desktop fixture"' > "$app_dir/start.sh"
 chmod +x "$app_dir/start.sh"
 printf '%s\n' '<!doctype html><title>Codex fixture</title>' > "$app_dir/content/webview/index.html"

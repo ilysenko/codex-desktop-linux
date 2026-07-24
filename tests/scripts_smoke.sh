@@ -444,6 +444,10 @@ test_package_payload_permission_normalization() {
     local root="$TMP_DIR/package-permissions"
     local app_root="$root/opt/codex-desktop"
     local private_file="$app_root/.codex-linux/features/private/secret.txt"
+    local features_root="$TMP_DIR/package-permissions-features"
+    local feature_dir="$features_root/private-package"
+    local feature_config="$features_root/features.json"
+    local package_resource="$root/usr/share/private-package/secret.txt"
 
     mkdir -p "$app_root/content/webview" "$root/usr/bin" "$(dirname "$private_file")"
     printf '%s\n' "#!$BASH_BIN" 'echo start' > "$app_root/start.sh"
@@ -468,10 +472,39 @@ JSON
     chmod 0700 "$app_root/start.sh" "$root/usr/bin/codex-desktop"
     chmod 0600 "$app_root/content/webview/index.html" "$private_file"
 
+    mkdir -p "$feature_dir"
+    printf '%s\n' '# Private package resource' > "$feature_dir/README.md"
+    printf '%s\n' 'package secret' > "$feature_dir/secret.txt"
+    cat > "$feature_dir/feature.json" <<'JSON'
+{
+  "id": "private-package",
+  "packageResources": [
+    {
+      "source": "secret.txt",
+      "target": "usr/share/private-package/secret.txt",
+      "mode": "0640",
+      "formats": ["deb"]
+    }
+  ]
+}
+JSON
+    printf '%s\n' '{"enabled":[]}' > "$features_root/features.example.json"
+    printf '%s\n' '{"enabled":["private-package"]}' > "$feature_config"
+    printf '%s\n' '{"schemaVersion":1,"linuxFeatures":{"enabled":["private-package"]}}' \
+        > "$app_root/.codex-linux/build-info.json"
+
     # shellcheck disable=SC1091
     source "$REPO_DIR/scripts/lib/package-common.sh"
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
+    PACKAGE_NAME="codex-desktop" \
+        stage_linux_feature_package_resources "$root" "deb"
     normalize_package_payload_permissions "$root"
     PACKAGE_NAME="codex-desktop" restore_linux_feature_payload_permissions "$root"
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
+    PACKAGE_NAME="codex-desktop" \
+        restore_linux_feature_package_resource_permissions "$root" "deb"
 
     assert_mode "$app_root" "755"
     assert_mode "$app_root/content/webview" "755"
@@ -479,6 +512,34 @@ JSON
     assert_mode "$root/usr/bin/codex-desktop" "755"
     assert_mode "$app_root/content/webview/index.html" "644"
     assert_mode "$private_file" "600"
+    assert_mode "$package_resource" "640"
+
+    local attack_root="$TMP_DIR/package-permissions-symlink-attack"
+    local external_root="$TMP_DIR/package-permissions-external"
+    local external_file="$external_root/private-package/secret.txt"
+    local attack_log="$TMP_DIR/package-permissions-symlink-attack.log"
+    mkdir -p "$attack_root/usr" "$(dirname "$external_file")"
+    mkdir -p "$attack_root/opt/codex-desktop/.codex-linux"
+    cp "$app_root/.codex-linux/build-info.json" \
+        "$attack_root/opt/codex-desktop/.codex-linux/build-info.json"
+    printf '%s\n' 'external secret' > "$external_file"
+    chmod 0600 "$external_file"
+    ln -s "$external_root" "$attack_root/usr/share"
+
+    set +e
+    (
+        CODEX_LINUX_FEATURES_ROOT="$features_root" \
+        CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
+        PACKAGE_NAME="codex-desktop" \
+            restore_linux_feature_package_resource_permissions "$attack_root" "deb"
+    ) >"$attack_log" 2>&1
+    local attack_rc=$?
+    set -e
+
+    [ "$attack_rc" -ne 0 ] \
+        || fail "package resource permission restoration followed a symlinked target ancestor"
+    assert_contains "$attack_log" "must not contain symbolic links"
+    assert_mode "$external_file" "600"
 }
 
 test_deb_builder_smoke() {
@@ -596,6 +657,8 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
+    assert_contains "$pkg_root/DEBIAN/control" "libgtk-3-0t64 | libgtk-3-0"
+    assert_not_contains "$pkg_root/DEBIAN/control" "libgtk-3.0-0"
 }
 
 test_deb_builder_rebuilds_deleted_updater_source() {
@@ -849,6 +912,9 @@ test_linux_feature_package_hook_discovery_failure_blocks_build() {
 JSON
     printf '%s\n' '# Bad Package Hook' > "$features_root/bad-package-hook/README.md"
     printf '%s\n' '{"enabled":["bad-package-hook"]}' > "$feature_config"
+    mkdir -p "$root/opt/codex-desktop/.codex-linux"
+    printf '%s\n' '{"schemaVersion":1,"linuxFeatures":{"enabled":["bad-package-hook"]}}' \
+        > "$root/opt/codex-desktop/.codex-linux/build-info.json"
 
     if (
         export APP_DIR="$app_dir"
@@ -866,6 +932,53 @@ JSON
 
     assert_contains "$output_log" "Failed to discover Linux feature package hooks for deb"
     assert_contains "$output_log" "packageHook 1 not found"
+}
+
+test_linux_feature_package_dependency_failure_propagates() {
+    info "Checking Linux feature dependency discovery failure blocks metadata rendering"
+    local workspace="$TMP_DIR/package-dependency-discovery-failure"
+    local app_dir="$workspace/app"
+    local features_root="$workspace/linux-features"
+    local feature_config="$features_root/features.json"
+    local output_log="$workspace/output.log"
+
+    make_fake_app "$app_dir"
+    mkdir -p "$features_root/bad-package-dependency"
+    printf '%s\n' '{"enabled":[]}' > "$features_root/features.example.json"
+    printf '%s\n' '# Bad Package Dependency' \
+        > "$features_root/bad-package-dependency/README.md"
+    cat > "$features_root/bad-package-dependency/feature.json" <<'JSON'
+{
+  "id": "bad-package-dependency",
+  "title": "Bad Package Dependency",
+  "packageDependencies": {
+    "deb": [
+      "runtime;unexpected-command"
+    ]
+  }
+}
+JSON
+    printf '%s\n' '{"enabled":["bad-package-dependency"]}' > "$feature_config"
+    printf '%s\n' '{"schemaVersion":1,"linuxFeatures":{"enabled":["bad-package-dependency"]}}' \
+        > "$app_dir/.codex-linux/build-info.json"
+
+    set +e
+    (
+        export APP_DIR="$app_dir"
+        export PACKAGE_NAME="codex-desktop"
+        export CODEX_LINUX_FEATURES_ROOT="$features_root"
+        export CODEX_LINUX_FEATURES_CONFIG="$feature_config"
+
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/package-common.sh"
+        linux_feature_package_dependency_suffix deb "$app_dir"
+    ) >"$output_log" 2>&1
+    local rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] \
+        || fail "Invalid Linux feature dependencies were silently omitted"
+    assert_contains "$output_log" "invalid deb package dependency"
 }
 
 test_deb_builder_respects_package_identity() {
@@ -918,6 +1031,7 @@ SCRIPT
     assert_file_exists "$pkg_root/usr/bin/codex-cua-lab"
     assert_file_exists "$pkg_root/opt/codex-cua-lab/start.sh"
     assert_contains "$pkg_root/DEBIAN/control" "Package: codex-cua-lab"
+    assert_not_contains "$pkg_root/DEBIAN/control" "__LINUX_FEATURE_DEPENDENCIES__"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "Name=Codex CUA Lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "CHROME_DESKTOP=codex-cua-lab.desktop"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "/usr/bin/codex-cua-lab %u"
@@ -1184,6 +1298,7 @@ SCRIPT
 
     assert_file_exists "$dist_dir/codex-desktop-2026.03.24.120000-manual.x86_64.rpm"
     assert_file_exists "$capture_dir/codex-desktop.spec"
+    assert_not_contains "$capture_dir/codex-desktop.spec" "__LINUX_FEATURE_DEPENDENCIES__"
     [ "$(cat "$capture_dir/rpm-binary-payload")" = "w19T8.zstdio" ] \
         || fail "Expected MAX_BUILD_THREADS to reach rpmbuild payload compression"
     assert_file_exists "$capture_dir/staging/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh"
@@ -10602,6 +10717,7 @@ main() {
     test_update_builder_preserves_enabled_linux_features_config
     test_update_builder_source_info_survives_without_git_checkout
     test_linux_feature_package_hook_discovery_failure_blocks_build
+    test_linux_feature_package_dependency_failure_propagates
     test_deb_builder_respects_package_identity
     test_deb_builder_without_updater
     test_no_updater_cleanup_helper_removes_inactive_user_enablement

@@ -123,9 +123,11 @@ main() {
 	stage_common_package_files "$staging_root"
 	stage_optional_update_builder_bundle "$staging_root"
 	write_launcher_stub "$staging_root"
+	stage_linux_feature_package_resources "$staging_root" "pacman"
 	run_linux_feature_package_hooks "$staging_root" "pacman"
 	normalize_package_payload_permissions "$staging_root"
 	restore_linux_feature_payload_permissions "$staging_root"
+	restore_linux_feature_package_resource_permissions "$staging_root" "pacman"
 
 	local package_name
 	local pacman_pkgver
@@ -145,6 +147,22 @@ main() {
 		-e "s|__STAGING_DIR__|$staging_dir|g" \
 		-e "s/__ARCH__/$arch_replacement/g" \
 		"$PKGBUILD_TEMPLATE" >"$build_root/PKGBUILD"
+	local feature_dependency_lines=""
+	local feature_dependencies
+	local feature_dependency
+	if ! feature_dependencies="$(
+		linux_feature_package_dependencies pacman "$staging_root/opt/$PACKAGE_NAME"
+	)"; then
+		error "Failed to render Linux feature dependencies for pacman"
+	fi
+	while IFS= read -r feature_dependency; do
+		[ -n "$feature_dependency" ] || continue
+		feature_dependency_lines+="    '$feature_dependency'"$'\n'
+	done <<<"$feature_dependencies"
+	replace_literal_file_token \
+		"$build_root/PKGBUILD" \
+		"__LINUX_FEATURE_DEPENDENCIES__" \
+		"$feature_dependency_lines"
 	if package_with_updater_enabled; then
 		sed -e "s|/opt/codex-desktop|/opt/$PACKAGE_NAME|g" \
 			-e "s|codex_desktop_repair_system_package_shadow_entries codex-desktop|codex_desktop_repair_system_package_shadow_entries $PACKAGE_NAME|g" \

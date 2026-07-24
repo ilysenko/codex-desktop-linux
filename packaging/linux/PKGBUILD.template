@@ -37,6 +37,7 @@ depends=(
     'nspr'
     'nss'
     'pango'
+__LINUX_FEATURE_DEPENDENCIES__
 )
 optdepends=(
     'nodejs>=22.22.0: optional override for the bundled managed Node.js runtime'

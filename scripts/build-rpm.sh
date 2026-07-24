@@ -101,9 +101,11 @@ main() {
 exec /opt/$PACKAGE_NAME/start.sh "\$@"
 SCRIPT
     chmod 0755 "$staging_root/usr/bin/$PACKAGE_NAME"
+    stage_linux_feature_package_resources "$staging_root" "rpm"
     run_linux_feature_package_hooks "$staging_root" "rpm"
     normalize_package_payload_permissions "$staging_root"
     restore_linux_feature_payload_permissions "$staging_root"
+    restore_linux_feature_package_resource_permissions "$staging_root" "rpm"
 
     local spec_file="$build_root/codex-desktop.spec"
     sed \
@@ -114,6 +116,26 @@ SCRIPT
         -e "s/__ARCH__/$arch/g" \
         -e "s/__PACKAGE_WITH_UPDATER__/$(package_with_updater_enabled && echo 1 || echo 0)/g" \
         "$SPEC_TEMPLATE" > "$spec_file"
+    local feature_dependency_suffix
+    local feature_files
+    if ! feature_dependency_suffix="$(
+        linux_feature_package_dependency_suffix rpm "$staging_root/opt/$PACKAGE_NAME"
+    )"; then
+        error "Failed to render Linux feature dependencies for rpm"
+    fi
+    if ! feature_files="$(
+        linux_feature_package_files rpm "$staging_root/opt/$PACKAGE_NAME"
+    )"; then
+        error "Failed to render Linux feature files for rpm"
+    fi
+    replace_literal_file_token \
+        "$spec_file" \
+        ", __LINUX_FEATURE_DEPENDENCIES__" \
+        "$feature_dependency_suffix"
+    replace_literal_file_token \
+        "$spec_file" \
+        "__LINUX_FEATURE_FILES__" \
+        "$feature_files"
 
     local rpmbuild_dir="$build_root/rpmbuild"
     mkdir -p \

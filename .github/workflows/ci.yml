@@ -95,15 +95,52 @@ jobs:
           test -n "$deb_file"
           dpkg-deb -I "$deb_file"
           dpkg-deb -c "$deb_file" | tee /tmp/deb-contents.txt >/dev/null
+          dpkg-deb -f "$deb_file" Depends | tee /tmp/deb-depends.txt >/dev/null
           grep -q './usr/bin/codex-update-manager' /tmp/deb-contents.txt
           grep -q './usr/lib/systemd/user/codex-update-manager.service' /tmp/deb-contents.txt
           grep -q './opt/codex-desktop/update-builder/install.sh' /tmp/deb-contents.txt
           grep -q './opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/deb-contents.txt
+          ! grep -q './usr/share/codex-package-framework/fixture.txt' /tmp/deb-contents.txt
+          ! grep -q 'codex-package-framework-runtime' /tmp/deb-depends.txt
           {
             echo "## Debian Package Validation"
             echo ""
             echo "- Built: \`$(basename "$deb_file")\`"
             echo "- Verified updater binary, user service, update-builder bundle, and packaged runtime helper."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create feature-enabled packaged app fixture
+        env:
+          CODEX_FIXTURE_LINUX_FEATURES_JSON: '["package-framework-fixture"]'
+        run: |
+          set -euo pipefail
+          rm -rf codex-app dist
+          tests/fixtures/create-packaged-app-fixture.sh codex-app
+
+      - name: Build feature-enabled Debian package
+        env:
+          CODEX_LINUX_FEATURES_ROOT: ${{ github.workspace }}/tests/fixtures/linux-features
+          CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/tests/fixtures/linux-features/features-enabled.json
+        run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-deb.sh
+
+      - name: Inspect feature-enabled Debian package
+        run: |
+          set -euo pipefail
+          deb_file="$(find dist -maxdepth 1 -name 'codex-desktop_*.deb' -print -quit)"
+          test -n "$deb_file"
+          dpkg-deb -I "$deb_file"
+          dpkg-deb -c "$deb_file" | tee /tmp/deb-feature-contents.txt >/dev/null
+          dpkg-deb -f "$deb_file" Depends | tee /tmp/deb-feature-depends.txt >/dev/null
+          grep -q './usr/share/codex-package-framework/fixture.txt' /tmp/deb-feature-contents.txt
+          grep -q 'codex-package-framework-runtime' /tmp/deb-feature-depends.txt
+          fixture_mode="$(
+            awk '$NF == "./usr/share/codex-package-framework/fixture.txt" { print $1 }' \
+              /tmp/deb-feature-contents.txt
+          )"
+          test "$fixture_mode" = '-rw-r-----'
+          {
+            echo "- Feature-enabled build: \`$(basename "$deb_file")\`"
+            echo "- Verified generic feature resource, 0640 mode, and runtime dependency."
           } >> "$GITHUB_STEP_SUMMARY"
 
   nix:
@@ -277,15 +314,53 @@ jobs:
           test -n "$rpm_file"
           rpm -qip "$rpm_file"
           rpm -qlp "$rpm_file" | tee /tmp/rpm-contents.txt >/dev/null
+          rpm -qp --requires "$rpm_file" | tee /tmp/rpm-requires.txt >/dev/null
           grep -q '/usr/bin/codex-update-manager' /tmp/rpm-contents.txt
           grep -q '/usr/lib/systemd/user/codex-update-manager.service' /tmp/rpm-contents.txt
           grep -q '/opt/codex-desktop/update-builder/install.sh' /tmp/rpm-contents.txt
           grep -q '/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/rpm-contents.txt
+          ! grep -q '/usr/share/codex-package-framework/fixture.txt' /tmp/rpm-contents.txt
+          ! grep -q '^codex-package-framework-runtime$' /tmp/rpm-requires.txt
           {
             echo "## RPM Package Validation"
             echo ""
             echo "- Built: \`$(basename "$rpm_file")\`"
             echo "- Verified updater binary, user service, update-builder bundle, and packaged runtime helper."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create feature-enabled packaged app fixture
+        env:
+          CODEX_FIXTURE_LINUX_FEATURES_JSON: '["package-framework-fixture"]'
+        run: |
+          set -euo pipefail
+          rm -rf codex-app dist
+          tests/fixtures/create-packaged-app-fixture.sh codex-app
+
+      - name: Build feature-enabled RPM package
+        env:
+          CODEX_LINUX_FEATURES_ROOT: ${{ github.workspace }}/tests/fixtures/linux-features
+          CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/tests/fixtures/linux-features/features-enabled.json
+        run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-rpm.sh
+
+      - name: Inspect feature-enabled RPM package
+        run: |
+          set -euo pipefail
+          rpm_file="$(find dist -maxdepth 1 -name 'codex-desktop-*.rpm' -print -quit)"
+          test -n "$rpm_file"
+          rpm -qip "$rpm_file"
+          rpm -qlp "$rpm_file" | tee /tmp/rpm-feature-contents.txt >/dev/null
+          rpm -qlvp "$rpm_file" | tee /tmp/rpm-feature-long-contents.txt >/dev/null
+          rpm -qp --requires "$rpm_file" | tee /tmp/rpm-feature-requires.txt >/dev/null
+          grep -q '/usr/share/codex-package-framework/fixture.txt' /tmp/rpm-feature-contents.txt
+          grep -q '^codex-package-framework-runtime$' /tmp/rpm-feature-requires.txt
+          fixture_mode="$(
+            awk '$NF == "/usr/share/codex-package-framework/fixture.txt" { print $1 }' \
+              /tmp/rpm-feature-long-contents.txt
+          )"
+          test "$fixture_mode" = '-rw-r-----'
+          {
+            echo "- Feature-enabled build: \`$(basename "$rpm_file")\`"
+            echo "- Verified generic feature resource, 0640 mode, and runtime dependency."
           } >> "$GITHUB_STEP_SUMMARY"
 
   package-pacman:
@@ -320,22 +395,52 @@ jobs:
                 test -n "$pkg_file"
                 pacman -Qip "$pkg_file"
                 pacman -Qlp "$pkg_file" | tee /tmp/pacman-contents.txt >/dev/null
+                tar -xOf "$pkg_file" .PKGINFO | tee /tmp/pacman-pkginfo.txt >/dev/null
                 grep -q "usr/bin/codex-update-manager" /tmp/pacman-contents.txt
                 grep -q "usr/lib/systemd/user/codex-update-manager.service" /tmp/pacman-contents.txt
                 grep -q "opt/codex-desktop/update-builder/install.sh" /tmp/pacman-contents.txt
                 grep -q "opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" /tmp/pacman-contents.txt
+                ! grep -q "usr/share/codex-package-framework/fixture.txt" /tmp/pacman-contents.txt
+                ! grep -q "^depend = codex-package-framework-runtime$" /tmp/pacman-pkginfo.txt
                 printf "%s\n" "$(basename "$pkg_file")" > /tmp/pacman-package-name.txt
+
+                rm -rf codex-app dist
+                CODEX_FIXTURE_LINUX_FEATURES_JSON="[\"package-framework-fixture\"]" \
+                  tests/fixtures/create-packaged-app-fixture.sh codex-app
+
+                CODEX_LINUX_FEATURES_ROOT=/work/tests/fixtures/linux-features \
+                CODEX_LINUX_FEATURES_CONFIG=/work/tests/fixtures/linux-features/features-enabled.json \
+                PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
+                  ./scripts/build-pacman.sh
+
+                feature_pkg_file="$(find dist -maxdepth 1 -name "codex-desktop-*.pkg.tar.*" -print -quit)"
+                test -n "$feature_pkg_file"
+                pacman -Qip "$feature_pkg_file"
+                pacman -Qlp "$feature_pkg_file" | tee /tmp/pacman-feature-contents.txt >/dev/null
+                tar -xOf "$feature_pkg_file" .PKGINFO | tee /tmp/pacman-feature-pkginfo.txt >/dev/null
+                tar -tvf "$feature_pkg_file" \
+                  usr/share/codex-package-framework/fixture.txt \
+                  | tee /tmp/pacman-feature-long-contents.txt >/dev/null
+                grep -q "usr/share/codex-package-framework/fixture.txt" /tmp/pacman-feature-contents.txt
+                grep -q "^depend = codex-package-framework-runtime$" /tmp/pacman-feature-pkginfo.txt
+                fixture_mode="$(sed -n "1s/ .*//p" /tmp/pacman-feature-long-contents.txt)"
+                test "$fixture_mode" = "-rw-r-----"
+                printf "%s\n" "$(basename "$feature_pkg_file")" > /tmp/pacman-feature-package-name.txt
               '"'"'
               cp /tmp/pacman-package-name.txt /work/.pacman-package-name.txt
+              cp /tmp/pacman-feature-package-name.txt /work/.pacman-feature-package-name.txt
             '
 
       - name: Write pacman validation summary
         run: |
           set -euo pipefail
           pkg_file="$(cat .pacman-package-name.txt)"
+          feature_pkg_file="$(cat .pacman-feature-package-name.txt)"
           {
             echo "## Pacman Package Validation"
             echo ""
             echo "- Built: \`$pkg_file\`"
             echo "- Verified updater binary, user service, update-builder bundle, and packaged runtime helper."
+            echo "- Feature-enabled build: \`$feature_pkg_file\`"
+            echo "- Verified generic feature resource, 0640 mode, and runtime dependency."
           } >> "$GITHUB_STEP_SUMMARY"
