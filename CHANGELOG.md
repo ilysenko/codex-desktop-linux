@@ -38,7 +38,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Concurrent updater entrypoints now serialize state reloads and cache cleanup
   before persisting startup state. A second process can no longer prune an
   active rebuild workspace, while forced checks wait for startup maintenance
-  instead of returning without checking upstream.
+  instead of returning without checking upstream, and manual ready-package
+  installs cannot race daemon reconciliation into launching the same install
+  twice.
 - Updater rebuild workspaces now retain the Git identity of the wrapper source
   after `.git` is stripped, so installed build metadata and packaged
   update-builder metadata report the wrapper commit instead of `unknown`.

@@ -66,7 +66,10 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
     let mut state =
         PersistedState::load_or_default(&paths.state_file, effective_auto_install(&config))?;
-    if !matches!(&cli.command, Commands::Daemon | Commands::CheckNow { .. }) {
+    if !matches!(
+        &cli.command,
+        Commands::Daemon | Commands::CheckNow { .. } | Commands::InstallReady
+    ) {
         let original_state = state.clone();
         state.installed_version = install::installed_package_version();
         persist_if_changed(&paths, &state, &original_state)?;
@@ -441,7 +444,7 @@ async fn acquire_check_lock(
         }
 
         if !logged_wait {
-            info!("waiting for the active updater flow before forcing an upstream check");
+            info!("waiting for the active updater flow");
             logged_wait = true;
         }
         time::sleep(Duration::from_millis(50)).await;
@@ -1330,7 +1333,14 @@ async fn reconcile_pending_install(
                 return Ok(());
             }
 
-            trigger_install(state, paths, &config.workspace_root, &package_path).await?;
+            trigger_install(
+                state,
+                paths,
+                &config.workspace_root,
+                &package_path,
+                config.notifications,
+            )
+            .await?;
         }
         _ => {}
     }
@@ -1339,6 +1349,18 @@ async fn reconcile_pending_install(
 }
 
 async fn run_install_ready(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<()> {
+    let Some(_check_lock) = acquire_check_lock(paths, CheckLockBehavior::Wait).await? else {
+        unreachable!("waiting for the updater flow lock always returns a lock");
+    };
+    reload_state_from_disk(config, state, paths)?;
+    run_install_ready_locked(config, state, paths).await
+}
+
+async fn run_install_ready_locked(
     config: &RuntimeConfig,
     state: &mut PersistedState,
     paths: &RuntimePaths,
@@ -1440,7 +1462,14 @@ async fn run_install_ready(
         print_manual_install_required(&package_path);
         return Ok(());
     }
-    trigger_install(state, paths, &config.workspace_root, &package_path).await
+    trigger_install(
+        state,
+        paths,
+        &config.workspace_root,
+        &package_path,
+        config.notifications,
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -1842,13 +1871,15 @@ async fn trigger_install(
     paths: &RuntimePaths,
     workspace_root: &Path,
     package_path: &Path,
+    notifications: bool,
 ) -> Result<()> {
     state.status = UpdateStatus::Installing;
     state.waiting_for_app_exit_auto_install = false;
     state.error_message = None;
     persist_state(paths, state)?;
 
-    let _ = notify::send(
+    maybe_send_notification(
+        notifications,
         "Installing ChatGPT Desktop update",
         "Applying the locally rebuilt Linux package.",
     );
@@ -1869,7 +1900,7 @@ async fn trigger_install(
         state.notified_events.clear();
         cache_cleanup::normalize_artifact_workspace_dir(workspace_root, state);
         persist_state(paths, state)?;
-        let _ = maybe_notify_installed(state, paths, true);
+        let _ = maybe_notify_installed(state, paths, notifications);
         maybe_prune_workspace_cache(workspace_root, state);
         return Ok(());
     }
@@ -2850,6 +2881,99 @@ mod tests {
     }
 
     #[test]
+    fn install_ready_and_daemon_reconcile_launch_only_one_install() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT",
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH",
+            "CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG",
+            "CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED",
+        ]);
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            let temp = tempfile::tempdir()?;
+            let paths = test_paths(temp.path());
+            paths.ensure_dirs()?;
+            let config = test_config(temp.path());
+
+            let package_path = temp.path().join("dist/codex.deb");
+            std::fs::create_dir_all(
+                package_path
+                    .parent()
+                    .expect("package path should have parent"),
+            )?;
+            std::fs::write(&package_path, b"deb")?;
+
+            let mut persisted_state = PersistedState::new(true);
+            persisted_state.status = UpdateStatus::WaitingForAppExit;
+            persisted_state.candidate_version = Some("2999.07.24.010203+deadbeef".to_string());
+            persisted_state.waiting_for_app_exit_auto_install = true;
+            persisted_state.artifact_paths.package_path = Some(package_path);
+            persisted_state.save(&paths.state_file)?;
+
+            let fake_pkexec = temp.path().join("pkexec");
+            std::fs::write(
+                &fake_pkexec,
+                "#!/bin/sh\n\
+                 printf 'install\\n' >> \"$CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG\"\n\
+                 /bin/touch \"$CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED\"\n\
+                 /bin/sleep 0.2\n",
+            )?;
+            let mut permissions = std::fs::metadata(&fake_pkexec)?.permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&fake_pkexec, permissions)?;
+
+            let install_log = temp.path().join("install.log");
+            let install_started = temp.path().join("install.started");
+            std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
+            std::env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec);
+            std::env::set_var("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log);
+            std::env::set_var(
+                "CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED",
+                &install_started,
+            );
+
+            let daemon_config = config.clone();
+            let daemon_paths = paths.clone();
+            let daemon = tokio::spawn(async move {
+                let mut state = PersistedState::new(true);
+                reconcile_pending_install_from_disk(&daemon_config, &mut state, &daemon_paths)
+                    .await?;
+                Ok::<_, anyhow::Error>(state)
+            });
+
+            for _ in 0..100 {
+                if install_started.exists() {
+                    break;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(
+                install_started.exists(),
+                "daemon reconciliation should start the install"
+            );
+
+            let install_config = config.clone();
+            let install_paths = paths.clone();
+            let install_ready = tokio::spawn(async move {
+                let mut state = PersistedState::new(true);
+                run_install_ready(&install_config, &mut state, &install_paths).await?;
+                Ok::<_, anyhow::Error>(state)
+            });
+
+            let daemon_state = daemon.await??;
+            let install_ready_state = install_ready.await??;
+            assert_eq!(daemon_state.status, UpdateStatus::Installed);
+            assert_eq!(install_ready_state.status, UpdateStatus::Installed);
+            assert_eq!(std::fs::read_to_string(&install_log)?.lines().count(), 1);
+            Ok::<_, anyhow::Error>(())
+        })
+    }
+
+    #[test]
     fn daemon_startup_reloads_active_workspace_state_after_locking() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
         let temp = tempfile::tempdir()?;
@@ -3449,7 +3573,7 @@ mod tests {
             .notified_events
             .insert("install_auth_required:2999.03.25.010203+deadbeef".to_string());
 
-        let result = runtime.block_on(run_install_ready(&config, &mut state, &paths));
+        let result = runtime.block_on(run_install_ready_locked(&config, &mut state, &paths));
 
         if let Some(value) = previous_assume_agent {
             std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", value);
@@ -3510,7 +3634,7 @@ mod tests {
         state.candidate_version = Some("2999.03.25.010203+deadbeef".to_string());
         state.artifact_paths.package_path = Some(package_path);
 
-        let result = runtime.block_on(run_install_ready(&config, &mut state, &paths));
+        let result = runtime.block_on(run_install_ready_locked(&config, &mut state, &paths));
 
         if let Some(value) = previous_no_agent {
             std::env::set_var("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT", value);
@@ -3561,7 +3685,7 @@ mod tests {
         state.candidate_version = Some("2999.03.25.010203+deadbeef".to_string());
         state.artifact_paths.package_path = Some(temp.path().join("missing/codex.deb"));
 
-        run_install_ready(&config, &mut state, &paths).await?;
+        run_install_ready_locked(&config, &mut state, &paths).await?;
 
         assert_eq!(state.status, UpdateStatus::Failed);
         assert!(state
