@@ -28,20 +28,20 @@ const {
 const currentAppInfoSource = [
   "function F_(e,t){return`icon-chatgpt`}",
   "function I_(e){return{dark:`icon-codex-dark-color.png`,light:`icon-codex-light.png`}}",
-  "function R_(e,t){if(process.platform!==`darwin`||t==null)return null;let n=I_(e),r=z_(`${F_(e,t)}.png`),i=z_(n.dark),a=z_(n.light);return r==null||i==null||a==null?null:{appDefault:r,codexDark:i,codexLight:a}}",
-  "function z_(e){if(e==null)return null;let t=l.app.isPackaged?(0,f.join)(process.resourcesPath,e):null,n=t!=null&&(0,g.existsSync)(t)?t:(0,f.join)(l.app.getAppPath(),`src`,`icons`,e),r=l.nativeImage.createFromPath(n);return r.isEmpty()?null:r.resize({width:128,height:128,quality:`best`}).toDataURL()}",
+  "function R_(e,t){if(process.platform!==`darwin`||t==null)return null;let n=I_(e),r=wb(`${F_(e,t)}.png`),i=wb(n.dark),a=wb(n.light);return r==null||i==null||a==null?null:{appDefault:r,codexDark:i,codexLight:a}}",
+  "function wb(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null,n=t!=null&&(0,_.existsSync)(t)?t:(0,p.join)(l.app.getAppPath(),`src`,`icons`,e),r=l.nativeImage.createFromPath(n);return r.isEmpty()?null:r.resize({width:128,height:128,quality:`best`}).toDataURL()}",
 ].join("");
 
 const currentRuntimeSource = [
   "function Xie({appBrand:e,buildFlavor:r,settingsStore:p,repoRoot:_,isMacOS:v,onWindowRegistered:C,disposables:w}){",
-  "let T=(0,f.join)(_,`electron`,`src`,`icons`),E=e=>{if(!l.app.isPackaged)return null;let t=(0,f.join)(process.resourcesPath,e);return(0,g.existsSync)(t)?t:null},",
-  "D=e=>null,O=e=>E(e)??D(e),k=()=>p.get(n.cc.DOCK_ICON_PREFERENCE)??`app-default`,",
-  "A=()=>O(`${F_(r,e)}.png`),j=I_(r),M=()=>l.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?j.dark:j.light,",
-  "N=t=>{if(t===`app-default`&&r!==i.a.Dev&&(l.app.isPackaged||e===n.rl.ChatGPT)){let e=l.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=t===`codex-system`?M():null,o=(a==null?null:O(a))??A(),s=o==null?l.nativeImage.createEmpty():l.nativeImage.createFromPath(o);s.isEmpty()||l.app.dock?.setIcon(s)},",
-  "P=()=>{if(!v)return;let e=k();N(e),NZ({preference:e,resourceName:e===`codex-system`?j.light:null}).then(e=>{e&&N(k())})};",
-  "if(v){P();let e=()=>{let e=k();e===`codex-system`&&N(e)};l.nativeTheme.on(`updated`,e),w.add(()=>{l.nativeTheme.off(`updated`,e)})}",
-  "let F=null,I=new Rie({onWindowRegistered:e=>{F?.registerWindow(e),C?.(e)}});",
-  "return{updateDockIcon:P,windowManager:I}}",
+  "let T=(0,p.join)(_,`electron`,`src`,`icons`),E=e=>{if(!l.app.isPackaged)return null;let t=(0,p.join)(process.resourcesPath,e);return(0,_.existsSync)(t)?t:null},",
+  "D=e=>null,O=e=>E(e)??D(e),k=()=>p.get(n.Fc.DOCK_ICON_PREFERENCE)??`app-default`,",
+  "A=()=>O(`${F_(r,e)}.png`),j=process.platform===`linux`?K5(r,e,T):null,M=I_(r),N=()=>l.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?M.dark:M.light,",
+  "P=t=>{if(t===`app-default`&&r!==i.a.Dev&&(l.app.isPackaged||e===n.Ml.ChatGPT)){let e=l.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=t===`codex-system`?N():null,o=(a==null?null:O(a))??A(),s=o==null?l.nativeImage.createEmpty():l.nativeImage.createFromPath(o);s.isEmpty()||l.app.dock?.setIcon(s)},",
+  "F=()=>{if(!v)return;let e=k();P(e),koe({preference:e,resourceName:e===`codex-system`?M.light:null}).then(e=>{e&&P(k())})};",
+  "if(v){F();let e=()=>{let e=k();e===`codex-system`&&P(e)};l.nativeTheme.on(`updated`,e),w.add(()=>{l.nativeTheme.off(`updated`,e)})}",
+  "let ee=null,I=new Rie({onWindowRegistered:e=>{ee?.registerWindow(e),C?.(e)}});",
+  "return{updateDockIcon:F,windowManager:I}}",
 ].join("");
 
 const currentTraySource =
@@ -50,7 +50,7 @@ const currentTraySource =
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
 
 const currentSettingsSource =
-  "function Xi(){let e=(0,Q.c)(27),t=n(m),r=R(),{platform:a}=Ze(),{data:o}=i(Bn),s=u(y.dockIconPreference),l;e[0]===t?l=e[1]:(l=function(e){c(t,y.dockIconPreference,e)},e[0]=t,e[1]=l);let d=l;if(a!==`macOS`||w.ChatGPT!==`chatgpt`||T.Agent===`prod`)return null;let f=o?.dockIconPreviews;if(f==null)return null;return H(f,d)}";
+  "function oa(){let e=(0,Q.c)(27),t=B(C),n=z(),{platform:r}=_t(),{data:i}=H(Kn),a=V(K.dockIconPreference),o;if(e[0]===t)o=e[1];else{o=function(e){c(t,K.dockIconPreference,e)},e[0]=t,e[1]=o}let s=o;if(r!==`macOS`||ke.ChatGPT!==`chatgpt`||oe.Agent===`prod`)return null;let c=i?.dockIconPreviews;if(c==null)return null;return W(c,s)}";
 
 const currentSearchSource = applyLinuxSettingsSearchVisibilityPatch([
   "function qn(e){let t=(0,Zn.c)(17),n=re(),r=Bn(e),{data:i}=_(e),a=i?.isSystemBackdropSupported!==!1,o=i?.platform===`darwin`,{data:s}=T(k,e.selectedHostId),c,l=c;if(a){let e;e=e=>e.sectionSlug===`appearance`&&!a?{...e,messages:e.messages.filter(Jn)}:e.sectionSlug===`agent`?{...e,terms:[]}:e,m=r.map(e)}else m=r;return m}",
@@ -187,22 +187,22 @@ test("main patch enables official previews and synchronizes Linux window and tra
   );
   assert.match(
     patched,
-    /onWindowRegistered:e=>\{F\?\.registerWindow\(e\),C\?\.\(e\),process\.platform===`linux`&&setImmediate\(P\)\}/,
+    /onWindowRegistered:e=>\{ee\?\.registerWindow\(e\),C\?\.\(e\),process\.platform===`linux`&&setImmediate\(F\)\}/,
   );
   assert.ok(
-    patched.indexOf("setImmediate(P)") > 0,
+    patched.indexOf("setImmediate(F)") > 0,
   );
 });
 
 test("main patch rejects drift at every current-DMG insertion point byte-identically", () => {
   const insertionPoints = [
     "if(process.platform!==`darwin`||t==null)return null",
-    "function z_(e){if(e==null)return null",
+    "function wb(e){if(e==null)return null",
     "E=e=>{if(!l.app.isPackaged)return null",
-    "N=t=>{if(t===`app-default`",
-    "P=()=>{if(!v)return",
-    "if(v){P();let e=()=>",
-    "onWindowRegistered:e=>{F?.registerWindow(e),C?.(e)}",
+    "P=t=>{if(t===`app-default`",
+    "F=()=>{if(!v)return",
+    "if(v){F();let e=()=>",
+    "onWindowRegistered:e=>{ee?.registerWindow(e),C?.(e)}",
     "codexLinuxRegisterTray(new l.Tray(t.defaultIcon))",
   ];
 
@@ -223,8 +223,8 @@ test("main patch rejects drift at every current-DMG insertion point byte-identic
 
 test("main patch rejects mixed patched and clean contracts byte-identically", () => {
   const mixed = applyDockIconMainPatch(currentMainSource).replace(
-    "P=()=>{if(!v&&process.platform!==`linux`)return",
-    "P=()=>{if(!v)return",
+    "F=()=>{if(!v&&process.platform!==`linux`)return",
+    "F=()=>{if(!v)return",
   );
   const { value, warnings } = captureWarns(() => applyDockIconMainPatch(mixed));
 
@@ -237,13 +237,13 @@ test("settings patch exposes the native row on Linux", () => {
   const patched = applyDockIconSettingsPatch(currentSettingsSource);
   const secondPass = captureWarns(() => applyDockIconSettingsPatch(patched));
 
-  assert.match(patched, /a!==`macOS`&&a!==`linux`/);
+  assert.match(patched, /r!==`macOS`&&r!==`linux`/);
   assert.equal(secondPass.value, patched);
   assert.deepEqual(secondPass.warnings, []);
 });
 
 test("settings drift remains byte-identical", () => {
-  const drifted = currentSettingsSource.replace("T.Agent===`prod`", "T.Agent!==`prod`");
+  const drifted = currentSettingsSource.replace("oe.Agent===`prod`", "oe.Agent!==`prod`");
   const { value, warnings } = captureWarns(() => applyDockIconSettingsPatch(drifted));
 
   assert.equal(value, drifted);

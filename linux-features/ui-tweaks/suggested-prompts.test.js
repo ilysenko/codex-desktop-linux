@@ -199,7 +199,7 @@ test("Suggested Prompts descriptors select current contracts across renderer has
   assert.equal(descriptors[2].assetMatch("export{settings}"), false);
 
   assert.match(
-    "app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-HashNext2.js",
+    "app-initial-HashNext2.js",
     APP_PAGE_ASSET_PATTERN,
   );
   assert.equal(descriptors[1].assetMatch(appPageFixture()), true);

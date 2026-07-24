@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_PAGE_ASSET_PATTERN =
-  /^app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-[A-Za-z0-9_-]+\.js$/;
+  /^app-initial-[A-Za-z0-9_-]+\.js$/;
 const GENERAL_SETTINGS_ASSET_PATTERN = /^general-settings-[A-Za-z0-9_-]+\.js$/;
 const HOME_CONTENT_ASSET_PATTERN = /^home-ambient-suggestions-content-[A-Za-z0-9_-]+\.js$/;
 const FEATURE_GATE_ID = "2425897452";
