@@ -445,6 +445,8 @@ async fn acquire_check_lock(
         if let Some(check_lock) = try_acquire_check_lock(paths)? {
             return Ok(Some(check_lock));
         }
+        #[cfg(test)]
+        signal_process_test_marker("CODEX_UPDATE_MANAGER_TEST_CHECK_LOCK_BUSY")?;
 
         if behavior == CheckLockBehavior::SkipIfBusy {
             return Ok(None);
@@ -3152,6 +3154,8 @@ mod tests {
         let entrypoint_continue = temp.path().join("entrypoint.continue");
         let first_reloaded = temp.path().join("first.reloaded");
         let second_reloaded = temp.path().join("second.reloaded");
+        let first_lock_busy = temp.path().join("first.lock-busy");
+        let second_lock_busy = temp.path().join("second.lock-busy");
         let reload_continue = temp.path().join("reload.continue");
 
         let common_env = [
@@ -3182,6 +3186,10 @@ mod tests {
                 "CODEX_UPDATE_MANAGER_TEST_INSTALL_READY_RELOADED",
                 first_reloaded.as_path(),
             ),
+            (
+                "CODEX_UPDATE_MANAGER_TEST_CHECK_LOCK_BUSY",
+                first_lock_busy.as_path(),
+            ),
         ]);
         let mut second_env = common_env.to_vec();
         second_env.extend([
@@ -3193,6 +3201,10 @@ mod tests {
                 "CODEX_UPDATE_MANAGER_TEST_INSTALL_READY_RELOADED",
                 second_reloaded.as_path(),
             ),
+            (
+                "CODEX_UPDATE_MANAGER_TEST_CHECK_LOCK_BUSY",
+                second_lock_busy.as_path(),
+            ),
         ]);
 
         let first = spawn_process_test_child(temp.path(), "install-ready", &first_env)?;
@@ -3202,14 +3214,15 @@ mod tests {
 
         std::fs::write(&entrypoint_continue, b"continue")?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !first_reloaded.exists() && !second_reloaded.exists() {
+        while !((first_reloaded.exists() && second_lock_busy.exists())
+            || (second_reloaded.exists() && first_lock_busy.exists()))
+        {
             anyhow::ensure!(
                 std::time::Instant::now() < deadline,
-                "Timed out waiting for an install-ready process to reload state"
+                "Timed out waiting for one install-ready process to hold the lock and the other to block"
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        std::thread::sleep(std::time::Duration::from_millis(250));
         let reloads_before_release =
             usize::from(first_reloaded.exists()) + usize::from(second_reloaded.exists());
 
