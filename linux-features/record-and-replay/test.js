@@ -28,6 +28,17 @@ const {
 
 const featureDir = __dirname;
 
+function captureWarns(fn) {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    return { value: fn(), warnings };
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
 function repoRoot() {
   return path.resolve(featureDir, "../..");
 }
@@ -200,6 +211,36 @@ test("record-and-replay bridge patch is idempotent and uses execFile", () => {
   assert.doesNotMatch(patched, /"--target"/);
   assert.doesNotMatch(patched, /"--target-dir"/);
   assert.doesNotMatch(patched, /"--mode"/);
+});
+
+test("record-and-replay rejects incomplete current bridge variants byte-identically", () => {
+  const source = [
+    'const cp=require("node:child_process"),fs=require("node:fs"),path=require("node:path");',
+    "var tray={getChronicleSidecarControlState:()=>tt().skysight?$9:Se.appServerConnectionRegistry.getMaybeConnection(`local`)?.getChronicleSidecarControlState()??$9,toggleChronicleSidecar:async()=>{if(tt().skysight)return $9;let e=Se.appServerConnectionRegistry.getMaybeConnection(V);return e==null?$9:e.getChronicleSidecarControlState().running?e.pauseChronicleSidecar():e.resumeChronicleSidecar()}};",
+    'var bridge={"get-global-state":async({key:e})=>null};',
+  ].join("");
+  const patched = applyRecordReplayMainBridgePatch(source);
+  const variants = {
+    "legacy tray shape": patched
+      .replace(":tt().skysight?$9:", ":")
+      .replace("if(tt().skysight)return $9;", ""),
+    "missing Linux toggle branch": patched.replace(
+      "if(process.platform===`linux`)return codexLinuxChronicleToggleSidecar();",
+      "",
+    ),
+    "missing current bridge handler": patched.replace(
+      '"linux-record-replay-status":async',
+      '"linux-record-replay-status-missing":async',
+    ),
+  };
+
+  for (const [name, drifted] of Object.entries(variants)) {
+    assert.notEqual(drifted, patched, name);
+    const { value, warnings } = captureWarns(() => applyRecordReplayMainBridgePatch(drifted));
+    assert.equal(value, drifted, name);
+    assert.equal(warnings.length, 1, name);
+    assert.match(warnings[0], /incomplete Record & Replay main bridge patch/, name);
+  }
 });
 
 test("record-and-replay Chronicle helpers map Skysight status into upstream sidecar state", () => {
@@ -718,6 +759,18 @@ test("record-and-replay plugin gate rejects obsolete isEnabled availability cont
   const source = [
     "var lt=`browser-use`,ft=`computer-use`,pt=`latex-tectonic`;",
     "var Kr=[{forceReload:!0,installWhenMissing:!0,name:lt,isAvailable:({features:e})=>e.inAppBrowserUseAllowed},{installWhenMissing:!0,name:`record-and-replay`,isEnabled:({platform:e})=>e===`linux`},{name:ft,isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:vr},{name:pt,isAvailable:()=>!0}];",
+  ].join("");
+
+  assert.throws(
+    () => applyRecordReplayPluginGatePatch(source),
+    /obsolete isEnabled availability contract/,
+  );
+});
+
+test("record-and-replay plugin gate rejects mixed current and obsolete availability contracts", () => {
+  const source = [
+    "var lt=`browser-use`,ft=`computer-use`,pt=`latex-tectonic`;",
+    "var Kr=[{forceReload:!0,installWhenMissing:!0,name:lt,isAvailable:({features:e})=>e.inAppBrowserUseAllowed},{installWhenMissing:!0,name:`record-and-replay`,isAvailable:({platform:e})=>e===`linux`},{installWhenMissing:!0,name:`record-and-replay`,isEnabled:({platform:e})=>e===`linux`},{name:ft,isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:vr},{name:pt,isAvailable:()=>!0}];",
   ].join("");
 
   assert.throws(
