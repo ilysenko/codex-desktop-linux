@@ -260,7 +260,7 @@
             "event-stream"
           ],
           "mcpCommandPatterns": [
-            "SkyComputerUseClient"
+            "\\./bin/computer-use-client-launcher"
           ],
           "mcpArgs": [
             "event-stream",

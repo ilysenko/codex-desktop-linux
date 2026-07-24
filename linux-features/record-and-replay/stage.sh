@@ -96,6 +96,8 @@ find_upstream_record_replay_plugin() {
     [ -f "$candidate/.codex-plugin/plugin.json" ] || return 1
     [ -f "$candidate/.mcp.json" ] || return 1
     [ -d "$candidate/skills/record-and-replay" ] || return 1
+    [ -x "$candidate/bin/computer-use-client-launcher" ] || return 1
+    [ ! -e "$candidate/Codex Computer Use.app" ] && [ ! -L "$candidate/Codex Computer Use.app" ] || return 1
 
     printf '%s\n' "$candidate"
 }

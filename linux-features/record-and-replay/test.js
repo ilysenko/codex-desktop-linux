@@ -254,6 +254,7 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
       `${bridgePayload},"get-global-state":async`,
       `${bridgePayload},${bridgePayload},"get-global-state":async`,
     ),
+    "helper-only partial": `${helperPayload}\n${source}`,
     "duplicate helper payload": `${helperPayload}\n${patched}`,
     "duplicate patched tray": `${patched}${trayStatement}`,
   };
@@ -1048,6 +1049,7 @@ test("record-and-replay stage hook uses the current upstream plugin shell when p
     );
     fs.writeFileSync(path.join(upstreamPlugin, "assets/app-icon.png"), "official-png");
     fs.writeFileSync(path.join(upstreamPlugin, "bin/computer-use-client-launcher"), "#!/bin/sh\nexec false\n");
+    fs.chmodSync(path.join(upstreamPlugin, "bin/computer-use-client-launcher"), 0o755);
     fs.writeFileSync(path.join(upstreamPlugin, "skills/record-and-replay/SKILL.md"), "official mac skill");
     fs.writeFileSync(marketplace, JSON.stringify({ plugins: [] }));
     fs.writeFileSync(fakeBinary, "#!/bin/sh\nprintf '{\"ok\":true}\\n'\n");
@@ -1087,6 +1089,76 @@ test("record-and-replay stage hook uses the current upstream plugin shell when p
     assert.match(stagedSkill, /event_stream_start/);
     assert.equal(fs.existsSync(path.join(pluginDir, "bin/codex-record-replay-linux")), true);
     assert.equal(fs.existsSync(path.join(pluginDir, "bin/SkyLinuxComputerUseClient")), true);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("record-and-replay stage hook rejects the obsolete nested-app plugin shell", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-record-replay-stage-obsolete-"));
+  try {
+    const installDir = path.join(workspace, "install");
+    const fakeBinary = path.join(workspace, "codex-record-replay-linux");
+    const upstreamPlugin = path.join(
+      workspace,
+      "upstream/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/record-and-replay",
+    );
+    const oldClient = path.join(
+      upstreamPlugin,
+      "Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
+    );
+    const marketplace = path.join(installDir, "resources/plugins/openai-bundled/.agents/plugins/marketplace.json");
+    fs.mkdirSync(path.join(upstreamPlugin, ".codex-plugin"), { recursive: true });
+    fs.mkdirSync(path.join(upstreamPlugin, "bin"), { recursive: true });
+    fs.mkdirSync(path.join(upstreamPlugin, "skills/record-and-replay"), { recursive: true });
+    fs.mkdirSync(path.dirname(oldClient), { recursive: true });
+    fs.mkdirSync(path.dirname(marketplace), { recursive: true });
+    fs.writeFileSync(
+      path.join(upstreamPlugin, ".codex-plugin/plugin.json"),
+      JSON.stringify({
+        name: "record-and-replay",
+        version: "1.0.857",
+        mcpServers: "./.mcp.json",
+        skills: "./skills/",
+      }),
+    );
+    fs.writeFileSync(
+      path.join(upstreamPlugin, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          "event-stream": {
+            command:
+              "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
+            args: ["event-stream", "mcp"],
+            cwd: ".",
+          },
+        },
+      }),
+    );
+    fs.writeFileSync(path.join(upstreamPlugin, "skills/record-and-replay/SKILL.md"), "obsolete mac skill");
+    fs.writeFileSync(path.join(upstreamPlugin, "bin/computer-use-client-launcher"), "#!/bin/sh\nexec false\n");
+    fs.chmodSync(path.join(upstreamPlugin, "bin/computer-use-client-launcher"), 0o755);
+    fs.writeFileSync(oldClient, "mach-o");
+    fs.writeFileSync(marketplace, JSON.stringify({ plugins: [] }));
+    fs.writeFileSync(fakeBinary, "#!/bin/sh\nprintf '{\"ok\":true}\\n'\n");
+    fs.chmodSync(fakeBinary, 0o755);
+
+    execFileSync("bash", [path.join(featureDir, "stage.sh")], {
+      cwd: workspace,
+      env: {
+        ...process.env,
+        SCRIPT_DIR: repoRoot(),
+        INSTALL_DIR: installDir,
+        CODEX_UPSTREAM_APP_DIR: path.join(workspace, "upstream/ChatGPT.app"),
+        CODEX_RECORD_REPLAY_LINUX_SOURCE: fakeBinary,
+      },
+      stdio: "pipe",
+    });
+
+    const pluginDir = path.join(installDir, "resources/plugins/openai-bundled/plugins/record-and-replay");
+    const stagedPlugin = JSON.parse(fs.readFileSync(path.join(pluginDir, ".codex-plugin/plugin.json"), "utf8"));
+    assert.equal(stagedPlugin.version, "0.1.0-linux-alpha1");
+    assert.equal(fs.existsSync(path.join(pluginDir, "Codex Computer Use.app")), false);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }

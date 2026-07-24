@@ -324,7 +324,7 @@ function createFixtureApp(root, variant = "baseline") {
     version: "1.0.0",
     mcpServers: {
       "event-stream": {
-        command: "SkyComputerUseClient",
+        command: "./bin/computer-use-client-launcher",
       },
     },
     skills: [{ name: "record-and-replay", path: "skills/record-and-replay/SKILL.md" }],
@@ -332,7 +332,7 @@ function createFixtureApp(root, variant = "baseline") {
   writeJson(path.join(recordPlugin, ".mcp.json"), {
     mcpServers: {
       "event-stream": {
-        command: "SkyComputerUseClient",
+        command: "./bin/computer-use-client-launcher",
         tools:
           variant === "candidate"
             ? ["event_stream_start", "browser_trace", "speech_context", "skysight_snapshot"]

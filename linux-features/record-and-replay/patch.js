@@ -214,6 +214,12 @@ function hasCompleteRecordReplayMainBridgePatch(source) {
     && regexMatchCount(source, recordReplayChronicleTrayPatchedPattern()) === 1;
 }
 
+function hasAnyRecordReplayMainBridgeArtifact(source) {
+  return source.includes("codexLinuxRecordReplay")
+    || source.includes("codexLinuxChronicle")
+    || source.includes('"linux-record-replay-');
+}
+
 function applyRecordReplayChronicleTrayPatch(currentSource) {
   const patchName = "Record & Replay Chronicle tray bridge patch";
   if (currentSource.includes("process.platform===`linux`?codexLinuxChronicleSidecarControlState()")) {
@@ -242,7 +248,7 @@ function applyRecordReplayChronicleTrayPatch(currentSource) {
 
 function applyRecordReplayMainBridgePatch(currentSource) {
   const patchName = "Record & Replay main bridge patch";
-  if (currentSource.includes('"linux-record-replay-doctor":async')) {
+  if (hasAnyRecordReplayMainBridgeArtifact(currentSource)) {
     if (!hasCompleteRecordReplayMainBridgePatch(currentSource)) {
       warn("Found incomplete Record & Replay main bridge patch", patchName);
     }
