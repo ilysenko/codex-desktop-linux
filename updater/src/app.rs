@@ -2950,6 +2950,8 @@ mod tests {
         root: &Path,
         role: &str,
     ) {
+        use std::os::unix::process::CommandExt;
+
         command
             .arg("--exact")
             .arg("app::tests::updater_flow_process_child")
@@ -2965,21 +2967,116 @@ mod tests {
             )
             .env_remove("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT")
             .env("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
+        command.process_group(0);
+    }
+
+    struct ProcessTestChild {
+        child: Option<std::process::Child>,
+        release_paths: Vec<PathBuf>,
+        role: String,
+    }
+
+    impl ProcessTestChild {
+        fn process_group(&self) -> i32 {
+            self.child
+                .as_ref()
+                .expect("process test child should be present")
+                .id() as i32
+        }
+
+        fn wait(mut self) -> Result<()> {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let status = self
+                    .child
+                    .as_mut()
+                    .expect("process test child should be present")
+                    .try_wait()
+                    .with_context(|| {
+                        format!(
+                            "Failed to wait for updater process test child {}",
+                            self.role
+                        )
+                    })?;
+                if let Some(status) = status {
+                    self.child.take();
+                    anyhow::ensure!(
+                        status.success(),
+                        "Updater process test child {} exited with {status}",
+                        self.role
+                    );
+                    return Ok(());
+                }
+                if std::time::Instant::now() >= deadline {
+                    self.terminate();
+                    anyhow::bail!("Updater process test child {} timed out", self.role);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+
+        fn terminate(&mut self) {
+            for path in &self.release_paths {
+                let _ = std::fs::write(path, b"cleanup");
+            }
+
+            let Some(child) = self.child.as_mut() else {
+                return;
+            };
+            let process_group = child.id() as i32;
+            // SAFETY: each test child is spawned as the leader of a dedicated
+            // process group, so signaling the negative child pid cannot target
+            // the cargo test runner or an unrelated process.
+            unsafe {
+                let _ = libc::kill(-process_group, libc::SIGTERM);
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            while std::time::Instant::now() < deadline {
+                if child.try_wait().ok().flatten().is_some() {
+                    self.child.take();
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+
+            // SAFETY: the same dedicated process-group invariant applies.
+            unsafe {
+                let _ = libc::kill(-process_group, libc::SIGKILL);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            self.child.take();
+        }
+    }
+
+    impl Drop for ProcessTestChild {
+        fn drop(&mut self) {
+            self.terminate();
+        }
     }
 
     fn spawn_process_test_child(
         root: &Path,
         role: &str,
         env: &[(&str, &Path)],
-    ) -> Result<std::process::Child> {
+        release_paths: &[&Path],
+    ) -> Result<ProcessTestChild> {
         let mut command = std::process::Command::new(std::env::current_exe()?);
         configure_process_test_command(&mut command, root, role);
         for (key, value) in env {
             command.env(key, value);
         }
-        command
+        let child = command
             .spawn()
-            .with_context(|| format!("Failed to spawn updater process test child {role}"))
+            .with_context(|| format!("Failed to spawn updater process test child {role}"))?;
+        Ok(ProcessTestChild {
+            child: Some(child),
+            release_paths: release_paths
+                .iter()
+                .map(|path| path.to_path_buf())
+                .collect(),
+            role: role.to_string(),
+        })
     }
 
     fn wait_for_process_test_path(path: &Path, description: &str) -> Result<()> {
@@ -2992,17 +3089,6 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        Ok(())
-    }
-
-    fn wait_for_process_test_child(mut child: std::process::Child, role: &str) -> Result<()> {
-        let status = child
-            .wait()
-            .with_context(|| format!("Failed to wait for updater process test child {role}"))?;
-        anyhow::ensure!(
-            status.success(),
-            "Updater process test child {role} exited with {status}"
-        );
         Ok(())
     }
 
@@ -3079,6 +3165,47 @@ mod tests {
     }
 
     #[test]
+    fn process_test_child_drop_releases_and_reaps_install_group() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let (_paths, fake_pkexec, install_log) = prepare_process_install_fixture(temp.path())?;
+        let install_started = temp.path().join("install.started");
+        let install_release = temp.path().join("install.release");
+        let daemon_reconcile = spawn_process_test_child(
+            temp.path(),
+            "daemon-reconcile",
+            &[
+                ("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec),
+                ("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED",
+                    &install_started,
+                ),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_INSTALL_RELEASE",
+                    &install_release,
+                ),
+            ],
+            &[&install_release],
+        )?;
+        wait_for_process_test_path(&install_started, "blocked daemon reconciliation install")?;
+        let process_group = daemon_reconcile.process_group();
+
+        drop(daemon_reconcile);
+
+        assert!(install_release.exists());
+        // SAFETY: signal 0 only probes the dedicated process group and does not
+        // deliver a signal. Drop must have reaped every process in that group.
+        let probe = unsafe { libc::kill(-process_group, 0) };
+        assert_eq!(probe, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn install_ready_entrypoint_does_not_overwrite_active_install_state() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
         let temp = tempfile::tempdir()?;
@@ -3108,6 +3235,7 @@ mod tests {
                 ("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec),
                 ("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log),
             ],
+            &[&entrypoint_continue],
         )?;
         wait_for_process_test_path(&entrypoint_loaded, "install-ready state load")?;
 
@@ -3126,6 +3254,7 @@ mod tests {
                     &install_release,
                 ),
             ],
+            &[&install_release],
         )?;
         wait_for_process_test_path(&install_started, "daemon reconciliation install")?;
 
@@ -3134,8 +3263,8 @@ mod tests {
         let state_while_installing = PersistedState::load_or_default(&paths.state_file, true)?;
 
         std::fs::write(&install_release, b"continue")?;
-        wait_for_process_test_child(daemon_reconcile, "daemon-reconcile")?;
-        wait_for_process_test_child(install_ready, "install-ready")?;
+        daemon_reconcile.wait()?;
+        install_ready.wait()?;
 
         assert_eq!(state_while_installing.status, UpdateStatus::Installing);
         let final_state = PersistedState::load_or_default(&paths.state_file, true)?;
@@ -3207,8 +3336,18 @@ mod tests {
             ),
         ]);
 
-        let first = spawn_process_test_child(temp.path(), "install-ready", &first_env)?;
-        let second = spawn_process_test_child(temp.path(), "install-ready", &second_env)?;
+        let first = spawn_process_test_child(
+            temp.path(),
+            "install-ready",
+            &first_env,
+            &[&entrypoint_continue, &reload_continue],
+        )?;
+        let second = spawn_process_test_child(
+            temp.path(),
+            "install-ready",
+            &second_env,
+            &[&entrypoint_continue, &reload_continue],
+        )?;
         wait_for_process_test_path(&first_loaded, "first install-ready state load")?;
         wait_for_process_test_path(&second_loaded, "second install-ready state load")?;
 
@@ -3227,8 +3366,8 @@ mod tests {
             usize::from(first_reloaded.exists()) + usize::from(second_reloaded.exists());
 
         std::fs::write(&reload_continue, b"continue")?;
-        wait_for_process_test_child(first, "first install-ready")?;
-        wait_for_process_test_child(second, "second install-ready")?;
+        first.wait()?;
+        second.wait()?;
 
         assert_eq!(
             reloads_before_release, 1,
