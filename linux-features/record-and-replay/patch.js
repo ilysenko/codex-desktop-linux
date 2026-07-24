@@ -22,12 +22,18 @@ function hasRecordReplayPluginGate(source) {
   const pluginGateArray = findBundledPluginGateArray(source);
   const target = pluginGateArray?.text ?? source;
   return new RegExp(
-    String.raw`\{(?:[^{}]*,)?installWhenMissing:!0,name:${pluginNameExpressionRegex(RECORD_REPLAY_PLUGIN_NAME)},(?:isEnabled|isAvailable):`,
+    String.raw`\{(?:[^{}]*,)?installWhenMissing:!0,name:${pluginNameExpressionRegex(RECORD_REPLAY_PLUGIN_NAME)},isAvailable:`,
   ).test(target);
 }
 
-function buildRecordReplayDescriptor(availabilityProp) {
-  return `{installWhenMissing:!0,name:\`${RECORD_REPLAY_PLUGIN_NAME}\`,${availabilityProp}:({platform:e})=>e===\`linux\`}`;
+function hasObsoleteRecordReplayPluginGate(source) {
+  return new RegExp(
+    String.raw`\{(?:[^{}]*,)?installWhenMissing:!0,name:${pluginNameExpressionRegex(RECORD_REPLAY_PLUGIN_NAME)},isEnabled:`,
+  ).test(source);
+}
+
+function buildRecordReplayDescriptor() {
+  return `{installWhenMissing:!0,name:\`${RECORD_REPLAY_PLUGIN_NAME}\`,isAvailable:({platform:e})=>e===\`linux\`}`;
 }
 
 function findMatchingBracket(source, openIndex) {
@@ -60,7 +66,7 @@ function findBundledPluginGateArray(source) {
     const closeIndex = findMatchingBracket(source, openIndex);
     if (closeIndex !== -1 && markerIndex < closeIndex) {
       const text = source.slice(openIndex + 1, closeIndex);
-      if (text.includes("installWhenMissing") && text.includes("name:") && /(?:isEnabled|isAvailable):/.test(text)) {
+      if (text.includes("installWhenMissing") && text.includes("name:") && text.includes("isAvailable:")) {
         return { start: openIndex + 1, end: closeIndex, text };
       }
     }
@@ -71,7 +77,7 @@ function findBundledPluginGateArray(source) {
 
 function findAlwaysOnBundledDescriptor(pluginGateArray) {
   const pluginNameExpression = "(?:[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)?|`[^`]+`|\"[^\"]+\"|'[^']+')";
-  const regex = new RegExp(String.raw`\{name:(${pluginNameExpression}),(isEnabled|isAvailable):\(\)=>!0\}`, "g");
+  const regex = new RegExp(String.raw`\{name:(${pluginNameExpression}),isAvailable:\(\)=>!0\}`, "g");
   let lastMatch = null;
   for (const match of pluginGateArray.text.matchAll(regex)) lastMatch = match;
   return lastMatch;
@@ -81,6 +87,9 @@ function applyRecordReplayPluginGatePatch(currentSource) {
   if (hasRecordReplayPluginGate(currentSource)) {
     return currentSource;
   }
+  if (hasObsoleteRecordReplayPluginGate(currentSource)) {
+    throw new Error("Optional Record & Replay plugin gate patch drift: obsolete isEnabled availability contract");
+  }
   const pluginGateArray = findBundledPluginGateArray(currentSource);
   if (pluginGateArray == null) {
     throw new Error("Optional Record & Replay plugin gate patch drift: could not find expected upstream .computerUse plugin descriptor array");
@@ -89,9 +98,8 @@ function applyRecordReplayPluginGatePatch(currentSource) {
   if (match == null) {
     throw new Error("Optional Record & Replay plugin gate patch drift: could not find bundled plugin descriptor insertion point");
   }
-  const [_descriptor, _pluginName, availabilityProp] = match;
   const insertionIndex = pluginGateArray.start + match.index;
-  return `${currentSource.slice(0, insertionIndex)}${buildRecordReplayDescriptor(availabilityProp)},${currentSource.slice(insertionIndex)}`;
+  return `${currentSource.slice(0, insertionIndex)}${buildRecordReplayDescriptor()},${currentSource.slice(insertionIndex)}`;
 }
 
 function recordReplayBridgeSource({ childProcessVar, fsVar, pathVar }) {
@@ -149,55 +157,16 @@ async function codexLinuxChronicleEnsureSidecarRunning(e){let t=await codexLinux
 async function codexLinuxChronicleToggleSidecar(){let e=await codexLinuxRecordReplayRun(["skysight","status"],5000),t=e?.json&&typeof e.json==="object"?e.json:null,n=String(t?.state||""),r=t?.is_running===!0||t?.isRunning===!0,a=t?.paused===!0||t?.is_paused===!0||t?.isPaused===!0||n==="paused";if(n==="running"&&r&&!a)return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","pause"],10000));if(r&&a)return codexLinuxChronicleEnsureSidecarRunning(!0);return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","start","--summary-agent","enabled"],15000))}`;
 }
 
-function upgradeRecordReplayBridgeSource(currentSource) {
-  const patchName = "Record & Replay main bridge patch";
-  let patchedSource = currentSource;
-  const childProcessVar = requireName(currentSource, "node:child_process");
-  if (!patchedSource.includes("function codexLinuxChronicleControlStateFromSkysight")) {
-    if (childProcessVar == null) {
-      warn("Could not find Node child_process alias for Chronicle bridge upgrade", patchName);
-    } else {
-      patchedSource = `${recordReplayChronicleHelperSource({ childProcessVar })}\n${patchedSource}`;
-    }
-  }
-
-  if (!patchedSource.includes('"linux-record-replay-speech-context-active":async')) {
-    const browserTraceNeedle = `"linux-record-replay-browser-trace":async`;
-    if (!patchedSource.includes(browserTraceNeedle)) {
-      warn("Could not find active speech-context bridge upgrade point", patchName);
-    } else {
-      patchedSource = patchedSource.replace(
-        browserTraceNeedle,
-        `${recordReplayActiveSpeechContextBridgeHandler()},${browserTraceNeedle}`,
-      );
-    }
-  }
-
-  const hasChronicleHelpers = patchedSource.includes("function codexLinuxChronicleControlStateFromSkysight");
-  if (!patchedSource.includes('"chronicle-permissions":async')) {
-    const doctorNeedle = `"linux-record-replay-doctor":async`;
-    if (!patchedSource.includes(doctorNeedle)) {
-      warn("Could not find Chronicle bridge upgrade point", patchName);
-    } else if (!hasChronicleHelpers) {
-      warn("Could not install Chronicle bridge handlers without helper functions", patchName);
-    } else {
-      patchedSource = patchedSource.replace(
-        doctorNeedle,
-        `${recordReplayBridgeSource({ childProcessVar, fsVar: "fs", pathVar: "path" }).split(`,"linux-record-replay-doctor":async`)[0]},${doctorNeedle}`,
-      );
-    }
-  }
-
-  return patchedSource;
-}
-
 function recordReplayChronicleTrayControlPattern() {
   return /getChronicleSidecarControlState:\(\)=>([A-Za-z_$][\w$]*)\(\)\.skysight\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\(`local`\)\?\.getChronicleSidecarControlState\(\)\?\?\2),toggleChronicleSidecar:async\(\)=>\{if\(\1\(\)\.skysight\)return \2;let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\([A-Za-z_$][\w$]*\));return \4==null\?\2:\4\.getChronicleSidecarControlState\(\)\.running\?\4\.pauseChronicleSidecar\(\):\4\.resumeChronicleSidecar\(\)\}/u;
 }
 
-function hasRecordReplayChronicleTrayCallbacks(source) {
-  return source.includes("getChronicleSidecarControlState:()=>")
-    && source.includes("toggleChronicleSidecar:async()=>");
+function hasCompleteRecordReplayMainBridgePatch(source) {
+  return source.includes("function codexLinuxChronicleControlStateFromSkysight")
+    && source.includes('"chronicle-permissions":async')
+    && source.includes('"linux-record-replay-doctor":async')
+    && source.includes('"linux-record-replay-speech-context-active":async')
+    && source.includes("process.platform===`linux`?codexLinuxChronicleSidecarControlState()");
 }
 
 function applyRecordReplayChronicleTrayPatch(currentSource) {
@@ -228,19 +197,18 @@ function applyRecordReplayChronicleTrayPatch(currentSource) {
 
 function applyRecordReplayMainBridgePatch(currentSource) {
   const patchName = "Record & Replay main bridge patch";
-  if (
-    hasRecordReplayChronicleTrayCallbacks(currentSource)
-    && !currentSource.includes("process.platform===`linux`?codexLinuxChronicleSidecarControlState()")
-    && !recordReplayChronicleTrayControlPattern().test(currentSource)
-  ) {
+  if (currentSource.includes('"linux-record-replay-doctor":async')) {
+    if (!hasCompleteRecordReplayMainBridgePatch(currentSource)) {
+      warn("Found incomplete Record & Replay main bridge patch", patchName);
+    }
+    return currentSource;
+  }
+  if (!recordReplayChronicleTrayControlPattern().test(currentSource)) {
     warn("Could not find Chronicle tray control callbacks", patchName);
     return currentSource;
   }
-  let patchedSource = currentSource;
-  if (currentSource.includes('"linux-record-replay-doctor":async')) {
-    return applyRecordReplayChronicleTrayPatch(upgradeRecordReplayBridgeSource(currentSource));
-  }
 
+  let patchedSource = currentSource;
   const childProcessVar = requireName(currentSource, "node:child_process");
   const fsVar = requireName(currentSource, "node:fs");
   const pathVar = requireName(currentSource, "node:path");

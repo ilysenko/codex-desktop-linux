@@ -145,6 +145,7 @@ test("record-and-replay bridge patch is idempotent and uses execFile", () => {
   assert.equal(descriptors.length, 5);
   const source = [
     "const cp=require(\"node:child_process\"),fs=require(\"node:fs\"),path=require(\"node:path\");",
+    "var tray={getChronicleSidecarControlState:()=>tt().skysight?$9:Se.appServerConnectionRegistry.getMaybeConnection(`local`)?.getChronicleSidecarControlState()??$9,toggleChronicleSidecar:async()=>{if(tt().skysight)return $9;let e=Se.appServerConnectionRegistry.getMaybeConnection(V);return e==null?$9:e.getChronicleSidecarControlState().running?e.pauseChronicleSidecar():e.resumeChronicleSidecar()}};",
     "var bridge={\"get-global-state\":async({key:e})=>null};",
   ].join("");
 
@@ -416,6 +417,7 @@ test("record-and-replay Chronicle setup probe does not churn start when summary 
 test("record-and-replay generic Skysight start can pass summary agent true or false", async () => {
   const source = [
     "const cp=require(\"node:child_process\"),fs=require(\"node:fs\"),path=require(\"node:path\");",
+    "var tray={getChronicleSidecarControlState:()=>tt().skysight?$9:Se.appServerConnectionRegistry.getMaybeConnection(`local`)?.getChronicleSidecarControlState()??$9,toggleChronicleSidecar:async()=>{if(tt().skysight)return $9;let e=Se.appServerConnectionRegistry.getMaybeConnection(V);return e==null?$9:e.getChronicleSidecarControlState().running?e.pauseChronicleSidecar():e.resumeChronicleSidecar()}};",
     "var bridge={\"get-global-state\":async({key:e})=>null};",
   ].join("");
   const patched = applyRecordReplayMainBridgePatch(source);
@@ -451,22 +453,6 @@ test("record-and-replay rejects partial current Chronicle tray drift byte-identi
   ].join("");
 
   assert.equal(applyRecordReplayMainBridgePatch(source), source);
-});
-
-test("record-and-replay bridge patch upgrades old patched bundles with active speech endpoint", () => {
-  const oldPatched =
-    'var bridge={"linux-record-replay-doctor":async()=>null,"linux-record-replay-speech-context":async()=>null,"linux-record-replay-browser-trace":async()=>null,"get-global-state":async({key:e})=>null};';
-  const patched = applyRecordReplayMainBridgePatch(oldPatched);
-
-  assert.notEqual(patched, oldPatched);
-  assert.equal(applyRecordReplayMainBridgePatch(patched), patched);
-  assert.match(patched, /"linux-record-replay-speech-context-active":async/);
-  assert.match(
-    patched,
-    /"linux-record-replay-speech-context":async\(\)=>null,"linux-record-replay-speech-context-active":async/,
-  );
-  assert.match(patched, /"linux-record-replay-browser-trace":async\(\)=>null/);
-  assert.doesNotMatch(patched, /"chronicle-permissions":async/);
 });
 
 test("record-and-replay docs mention pause resume and Chronicle-compatible resources", () => {
@@ -726,6 +712,18 @@ test("record-and-replay plugin gate is idempotent and linux-only", () => {
   assert.equal(applyRecordReplayPluginGatePatch(patched), patched);
   assert.match(patched, /installWhenMissing:!0,name:`record-and-replay`,isAvailable:\(\{platform:e\}\)=>e===`linux`/);
   assert.match(patched, /name:ft,isAvailable:\(\{features:e,platform:t\}\)=>t===`darwin`&&e\.computerUse/);
+});
+
+test("record-and-replay plugin gate rejects obsolete isEnabled availability contract", () => {
+  const source = [
+    "var lt=`browser-use`,ft=`computer-use`,pt=`latex-tectonic`;",
+    "var Kr=[{forceReload:!0,installWhenMissing:!0,name:lt,isAvailable:({features:e})=>e.inAppBrowserUseAllowed},{installWhenMissing:!0,name:`record-and-replay`,isEnabled:({platform:e})=>e===`linux`},{name:ft,isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:vr},{name:pt,isAvailable:()=>!0}];",
+  ].join("");
+
+  assert.throws(
+    () => applyRecordReplayPluginGatePatch(source),
+    /obsolete isEnabled availability contract/,
+  );
 });
 
 test("record-and-replay plugin template matches upstream-shaped plugin UX", () => {
