@@ -469,7 +469,7 @@ function applyLinuxRemoteControlVisibilityPatch(source) {
   const [, functionName, stateVar, slingshotVar] = settingsVisibilityMatch;
   return source.replace(
     REMOTE_CONTROL_SETTINGS_VISIBILITY_NEEDLE,
-    `function ${functionName}({remoteControlConnectionsState:${stateVar},slingshotEnabled:${slingshotVar}}){let n=typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`);/*${REMOTE_CONTROL_VISIBILITY_MARKER}*/return(n||${slingshotVar})&&(n||(${stateVar}?.available??!0))&&${stateVar}?.accessRequired!==!0}`,
+    `function ${functionName}({remoteControlConnectionsState:${stateVar},slingshotEnabled:${slingshotVar}}){let n=typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`);/*${REMOTE_CONTROL_VISIBILITY_MARKER}*/return n||${slingshotVar}&&(${stateVar}?.available??!0)&&${stateVar}?.accessRequired!==!0}`,
   );
 }
 

@@ -1508,7 +1508,13 @@ test("Linux remote-control visibility patch handles current settings bundle shap
 
   assert.notEqual(patched, source);
   assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
-  assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)&&e\?\.accessRequired!==!0/);
+  assert.match(patched, /return n\|\|t&&\(e\?\.available\?\?!0\)&&e\?\.accessRequired!==!0/);
+  const linuxContext = { navigator: { userAgent: "Codex Desktop (Linux)" }, visible: null };
+  vm.runInNewContext(
+    `${patched.replace(/export\{Et as t\};/u, "")};visible=Et({remoteControlConnectionsState:{available:false,accessRequired:true},slingshotEnabled:false})`,
+    linuxContext,
+  );
+  assert.equal(linuxContext.visible, true);
   assert.equal(applyLinuxRemoteControlVisibilityPatch(patched), patched);
 });
 
@@ -1518,7 +1524,13 @@ test("Linux remote-control visibility patch handles current use-plugin gate shap
 
   assert.notEqual(patched, source);
   assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
-  assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)&&e\?\.accessRequired!==!0/);
+  assert.match(patched, /return n\|\|t&&\(e\?\.available\?\?!0\)&&e\?\.accessRequired!==!0/);
+  const nonLinuxContext = { navigator: { userAgent: "Codex Desktop (Macintosh)" }, visible: null };
+  vm.runInNewContext(
+    `${patched.replace(/export\{ke as l\};/u, "")};visible=ke({remoteControlConnectionsState:{available:true,accessRequired:true},slingshotEnabled:true})`,
+    nonLinuxContext,
+  );
+  assert.equal(nonLinuxContext.visible, false);
   assert.equal(applyLinuxRemoteControlVisibilityPatch(patched), patched);
 });
 

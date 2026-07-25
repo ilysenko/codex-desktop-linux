@@ -35,6 +35,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Remote Control settings remain visible on Linux when client authorization
+  must be renewed, so a lost or revoked enrollment can be repaired in-app.
 - Remote Control startup no longer disables saved auto-connect choices for
   other enrolled hosts while enabling the environment owned by this Desktop.
 - Concurrent updater entrypoints now serialize state reloads and cache cleanup
