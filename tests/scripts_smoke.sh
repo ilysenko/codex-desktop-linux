@@ -1349,11 +1349,31 @@ test_pacman_builder_without_updater_transition_hook() {
     local capture_dir="$workspace/capture"
     local ampersand_tmpdir="$workspace/ampersand&tmp"
     local base_makepkg_conf="$workspace/base-makepkg.conf"
+    local features_root="$workspace/linux-features"
+    local feature_config="$workspace/features.json"
 
-    mkdir -p "$workspace" "$dist_dir" "$capture_dir" "$ampersand_tmpdir"
+    mkdir -p \
+        "$workspace" \
+        "$dist_dir" \
+        "$capture_dir" \
+        "$ampersand_tmpdir" \
+        "$features_root/polkit-runtime"
     make_stub_bin_dir "$bin_dir"
-    make_fake_app "$app_dir"
+    CODEX_FIXTURE_LINUX_FEATURES_JSON='["polkit-runtime"]' make_fake_app "$app_dir"
     printf 'MAKEFLAGS="-j12"\n' > "$base_makepkg_conf"
+    printf '%s\n' '{"enabled":["polkit-runtime"]}' > "$feature_config"
+    printf '%s\n' '# Polkit Runtime' > "$features_root/polkit-runtime/README.md"
+    cat > "$features_root/polkit-runtime/feature.json" <<'JSON'
+{
+  "id": "polkit-runtime",
+  "title": "Polkit Runtime",
+  "description": "Pacman dependency regression fixture.",
+  "defaultEnabled": false,
+  "packageDependencies": {
+    "pacman": ["polkit"]
+  }
+}
+JSON
 
     cat > "$bin_dir/makepkg" <<'SCRIPT'
 #!/usr/bin/env bash
@@ -1386,6 +1406,8 @@ SCRIPT
         CAPTURE_DIR="$capture_dir" \
         APP_DIR_OVERRIDE="$app_dir" \
         DIST_DIR_OVERRIDE="$dist_dir" \
+        CODEX_LINUX_FEATURES_ROOT="$features_root" \
+        CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
         MAKEPKG_CONF="$base_makepkg_conf" \
         PACKAGE_WITH_UPDATER=0 \
         MAX_BUILD_THREADS=5 \
@@ -1409,7 +1431,7 @@ SCRIPT
     assert_contains "$capture_dir/PKGBUILD" "ampersand&tmp"
     assert_not_contains "$capture_dir/PKGBUILD" "__STAGING_DIR__"
     assert_contains "$capture_dir/PKGBUILD" "install=codex-desktop.install"
-    assert_not_contains "$capture_dir/PKGBUILD" "'polkit'"
+    assert_occurrence_count "$capture_dir/PKGBUILD" "'polkit'" "1"
     assert_contains "$capture_dir/codex-desktop.install" "codex_no_updater_cleanup_update_manager_service"
     assert_contains "$capture_dir/codex-desktop.install" "post_upgrade"
     assert_contains "$capture_dir/codex-desktop.install" "pre_remove"

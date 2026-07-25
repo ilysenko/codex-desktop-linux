@@ -147,6 +147,11 @@ main() {
 		-e "s|__STAGING_DIR__|$staging_dir|g" \
 		-e "s/__ARCH__/$arch_replacement/g" \
 		"$PKGBUILD_TEMPLATE" >"$build_root/PKGBUILD"
+	if ! package_with_updater_enabled; then
+		sed -i \
+			-e "/'polkit'/d" \
+			"$build_root/PKGBUILD"
+	fi
 	local feature_dependency_lines=""
 	local feature_dependencies
 	local feature_dependency
@@ -169,9 +174,6 @@ main() {
 			"$INSTALL_HOOKS" >"$build_root/${PACKAGE_NAME}.install"
 	else
 		write_no_updater_pacman_install_hooks "$build_root/${PACKAGE_NAME}.install"
-		sed -i \
-			-e "/'polkit'/d" \
-			"$build_root/PKGBUILD"
 	fi
 
 	mkdir -p "$DIST_DIR"
