@@ -35,6 +35,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Remote Control startup no longer disables saved auto-connect choices for
+  other enrolled hosts while enabling the environment owned by this Desktop.
 - Concurrent updater entrypoints now serialize state reloads and cache cleanup
   before persisting startup state. A second process can no longer prune an
   active rebuild workspace, while forced checks wait for startup maintenance

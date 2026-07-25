@@ -2812,7 +2812,7 @@ test("Linux remote-control enablement bridge warns when host toggle params needl
   assert.ok(warnings.some((warning) => warning.includes("enable-for-host params needle")));
 });
 
-test("Linux remote-control enablement bridge auto-connects only this Desktop host", async () => {
+test("Linux remote-control enablement bridge auto-connects this Desktop host without changing other hosts", async () => {
   const source = syntheticAppMainEnablementBridgeBundle();
   const patched = applyLinuxRemoteControlEnablementBridgePatch(source);
 
@@ -2838,7 +2838,7 @@ test("Linux remote-control enablement bridge auto-connects only this Desktop hos
         return Promise.resolve({
           remoteControlConnections: [
             { hostId: "remote-control:env_local", installationId: "install_local" },
-            { hostId: "remote-control:env_stale", installationId: "install_stale" },
+            { hostId: "remote-control:env_other", installationId: "install_other" },
           ],
         });
       }
@@ -2851,7 +2851,7 @@ test("Linux remote-control enablement bridge auto-connects only this Desktop hos
   vm.runInNewContext(`${patched};OF();`, context);
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 3);
   assert.equal(calls[0].method, "set-remote-control-connections-enabled");
   assert.equal(calls[0].params.enabled, true);
   assert.equal(calls[1].method, "get-global-state");
@@ -2859,9 +2859,14 @@ test("Linux remote-control enablement bridge auto-connects only this Desktop hos
   assert.equal(calls[2].method, "set-remote-connection-auto-connect");
   assert.equal(calls[2].params.hostId, "remote-control:env_local");
   assert.equal(calls[2].params.autoConnect, true);
-  assert.equal(calls[3].method, "set-remote-connection-auto-connect");
-  assert.equal(calls[3].params.hostId, "remote-control:env_stale");
-  assert.equal(calls[3].params.autoConnect, false);
+  assert.equal(
+    calls.some(
+      ({ method, params }) =>
+        method === "set-remote-connection-auto-connect" &&
+        params.hostId === "remote-control:env_other",
+    ),
+    false,
+  );
 });
 
 test("patched Linux device-key provider can create, sign with, and delete a key", async () => {
