@@ -131,6 +131,7 @@ const {
 const {
   applyExtractedAppPatchDescriptors,
   applyMainBundlePatchDescriptors,
+  applyWebviewAssetPatchDescriptors,
   discoverCorePatchDescriptors,
   normalizePatchDescriptors,
 } = require("./patches/engine.js");
@@ -1100,22 +1101,28 @@ test("default core patch descriptors are grouped and unique", () => {
   );
   const computerUseInstallFlow = descriptors.find((descriptor) => descriptor.id === "linux-computer-use-install-flow");
   assert.equal(
-    computerUseInstallFlow.pattern.test(
-      "app-initial~avatarOverlayCompositionSurface~artifact-tab-content.electron~notebook-preview-~iaq4jiqv-current.js",
-    ),
+    computerUseInstallFlow.pattern.test("app-initial-BHB6SClA.js"),
     true,
   );
-  assert.equal(computerUseInstallFlow.pattern.test("app-initial~app-main-current.js"), false);
+  assert.equal(computerUseInstallFlow.pattern.test("computer-use-settings-BzkBOuLk.js"), false);
+  assert.equal(
+    computerUseInstallFlow.assetMatch(currentComputerUseInstallFlow26721Fixture()),
+    true,
+  );
+  assert.equal(computerUseInstallFlow.assetMatch("function unrelatedAppInitial(){}"), false);
   const computerUseHostPlatform = descriptors.find(
     (descriptor) => descriptor.id === "linux-computer-use-host-platform",
   );
   assert.equal(
-    computerUseHostPlatform.pattern.test(
-      "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~settings-command-~ekwfx4j1-current.js",
-    ),
+    computerUseHostPlatform.pattern.test("app-initial-BHB6SClA.js"),
     true,
   );
-  assert.equal(computerUseHostPlatform.pattern.test("app-initial~app-main-current.js"), false);
+  assert.equal(computerUseHostPlatform.pattern.test("computer-use-settings-BzkBOuLk.js"), false);
+  assert.equal(
+    computerUseHostPlatform.assetMatch(currentComputerUseHostPlatform26721Fixture()),
+    true,
+  );
+  assert.equal(computerUseHostPlatform.assetMatch("function unrelatedAppInitial(){}"), false);
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "linux-terminal-user-path")?.ciPolicy,
     "optional",
@@ -8966,6 +8973,7 @@ test("reuses current bundled-plugin metadata for the synthetic Computer Use card
     remoteMarketplaceName: null,
     plugin: { id: "chrome@openai-bundled", name: "chrome", installed: true, enabled: true },
   };
+  let lastSelectedPlugin = null;
 
   function availablePluginsFor({
     availablePlugins = [chromeDonor],
@@ -8990,7 +8998,9 @@ test("reuses current bundled-plugin metadata for the synthetic Computer Use card
       secondFlag: "second",
       selectPlugin: (plugins) => {
         selectedPlugins = plugins;
-        return null;
+        lastSelectedPlugin =
+          plugins.find((plugin) => plugin.plugin?.name === "computer-use") ?? null;
+        return lastSelectedPlugin;
       },
       useAvailability: () => ({ available: false }),
       useFlag: () => false,
@@ -9013,6 +9023,9 @@ test("reuses current bundled-plugin metadata for the synthetic Computer Use card
   assert.equal(plugins[1].plugin.name, "computer-use");
   assert.equal(plugins[1].marketplacePath, bundledMarketplaceManifest);
   assert.notEqual(plugins[1].marketplacePath, incorrectHomeRelativeManifest);
+  assert.equal(lastSelectedPlugin, plugins[1]);
+  assert.equal(lastSelectedPlugin.marketplaceName, "openai-bundled");
+  assert.equal(lastSelectedPlugin.marketplacePath, bundledMarketplaceManifest);
 
   const laterValidDonor = {
     marketplaceName: "openai-bundled",
@@ -9186,16 +9199,41 @@ test("does not report partial current Computer Use settings patches as applied",
   ]);
 });
 
-test("allows the current Computer Use host platform on Linux", () => {
-  const source =
-    "function Se(e){return e===`macOS`||e===`windows`}" +
-    "function Ce(e){let t=cache(16),{enabled:n,hostId:r}=e,i=n===void 0?!0:n,{isLoading:a,platform:o}=usePlatform(),s=flag(`1506311413`),c;t[0]===r?c=t[1]:(c={featureName:`computer_use`,hostId:r},t[0]=r,t[1]=c);let l=useFeature(c),u=o===`windows`&&!a,d=i&&u,f;t[2]===d?f=t[3]:(f={enabled:d},t[2]=d,t[3]=f);let p=useWindowsFeature(f),m=l.isLoading||u&&p.isLoading,h=l.enabled&&(!u||p.enabled),g;t[4]!==h||t[5]!==i||t[6]!==m||t[7]!==s||t[8]!==a||t[9]!==o?(g=resolveAvailability({areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:Se(o),isPlatformLoading:a,windowType:`electron`}),t[4]=h,t[5]=i,t[6]=m,t[7]=s,t[8]=a,t[9]=o,t[10]=g):g=t[10];return g}";
+function currentComputerUseHostPlatform26721Fixture() {
+  return (
+    "function K3r(e){return e===`macOS`||e===`windows`}" +
+    "function q3r(e){let t=cache(16),{enabled:n,hostId:r}=e,i=n===void 0?!0:n,{isLoading:a,platform:o}=usePlatform(),s=flag(`1506311413`),c;" +
+    "t[0]===r?c=t[1]:(c={featureName:`computer_use`,hostId:r},t[0]=r,t[1]=c);" +
+    "let l=useFeature(c),u=o===`windows`&&!a,d=i&&u,f;t[2]===d?f=t[3]:(f={enabled:d},t[2]=d,t[3]=f);" +
+    "let p=useWindowsFeature(f),m=l.isLoading||u&&p.isLoading,h=l.enabled&&(!u||p.enabled),g;" +
+    "t[4]!==h||t[5]!==i||t[6]!==m||t[7]!==s||t[8]!==a||t[9]!==o?" +
+    "(g=X3r({areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:K3r(o),isPlatformLoading:a,windowType:`electron`})," +
+    "t[4]=h,t[5]=i,t[6]=m,t[7]=s,t[8]=a,t[9]=o,t[10]=g):g=t[10];return g}"
+  );
+}
 
-  const patched = applyPatchTwice(applyLinuxComputerUseHostPlatformPatch, source);
+function currentComputerUseInstallFlow26721Fixture() {
+  return (
+    "function i4i(e){let t=cache(31),{hostId:n,marketplacePath:r,pluginName:i,remoteMarketplaceName:a,enabled:o}=e," +
+    "s=o===void 0?!0:o,c=n??`local`,l;t[0]===c?l=t[1]:(l={hostId:c},t[0]=c,t[1]=l);" +
+    "let u=hostReady(l),d=environment(),f;t[2]===i?f=t[3]:(f=i!=null&&isAvailabilityGated(i),t[2]=i,t[3]=f);" +
+    "let p=f,m;t[4]!==c||t[5]!==p?(m={enabled:p,hostId:c},t[4]=c,t[5]=p,t[6]=m):m=t[6];" +
+    "let h=useComputerUseAvailability(m),g=(r!=null||a!=null)&&i!=null,v=u&&s&&g&&(!p||h.available);" +
+    "let b=async()=>{if(i==null)throw Error(`plugin detail query requires pluginName`);" +
+    "return read(`read-plugin`,{hostId:c,...pluginLocation({marketplacePath:r,remoteMarketplaceName:a}),pluginName:i})};" +
+    "return useQuery({queryFn:b,enabled:v})}"
+  );
+}
+
+test("allows the exact 26.721 Computer Use host platform contract on Linux", () => {
+  const patched = applyPatchTwice(
+    applyLinuxComputerUseHostPlatformPatch,
+    currentComputerUseHostPlatform26721Fixture(),
+  );
 
   assert.match(
     patched,
-    /g=resolveAvailability\(\{areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:o===`linux`\|\|Se\(o\),isPlatformLoading:a,windowType:`electron`\}\)/,
+    /g=X3r\(\{areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:o===`linux`\|\|K3r\(o\),isPlatformLoading:a,windowType:`electron`\}\)/,
   );
   assert.doesNotMatch(patched, /areRequiredFeaturesEnabled:o===`linux`|isComputerUseGateEnabled:o===`linux`/);
 });
@@ -9213,22 +9251,59 @@ test("rejects current Computer Use host-platform drift byte-identically", () => 
   assert.deepEqual(warnings, [
     "WARN: Could not find current Computer Use host-platform gate — skipping Linux Computer Use host-platform patch",
   ]);
+  const hostDescriptor =
+    require("./patches/core/all-linux/webview/computer-use-ui/patch.js")[1];
+  assert.equal(hostDescriptor.assetMatch(source), false);
 });
 
-test("loads current Computer Use plugin details on Linux despite the upstream availability gate", () => {
-  const source =
-    "function Ke(e){let t=cache(31),{hostId:n,marketplacePath:r,pluginName:i,remoteMarketplaceName:a,enabled:o}=e," +
-    "c=o===void 0?!0:o,l=n??`local`,d;t[0]===l?d=t[1]:(d={hostId:l},t[0]=l,t[1]=d);" +
-    "let f=hostReady(d),p=environment(),m;t[2]===i?m=t[3]:(m=i!=null&&isAvailabilityGated(i),t[2]=i,t[3]=m);" +
-    "let g=m,_;t[4]!==l||t[5]!==g?(_={enabled:g,hostId:l},t[4]=l,t[5]=g,t[6]=_):_=t[6];" +
-    "let v=useComputerUseAvailability(_),y=(r!=null||a!=null)&&i!=null,b=f&&c&&y&&g&&v.isLoading,x=f&&c&&y&&(!g||v.available);" +
-    "let query=async()=>{if(i==null)throw Error(`plugin detail query requires pluginName`);return read(`read-plugin`,{hostId:l,pluginName:i})};" +
-    "return useQuery({queryFn:query,enabled:x})}";
+test("loads the exact 26.721 Computer Use plugin detail contract on Linux", async () => {
+  const patched = applyPatchTwice(
+    applyLinuxComputerUseInstallFlowPatch,
+    currentComputerUseInstallFlow26721Fixture(),
+  );
 
-  const patched = applyPatchTwice(applyLinuxComputerUseInstallFlowPatch, source);
+  assert.match(patched, /let p=f&&i!==`computer-use`,m;/);
+  assert.doesNotMatch(patched, /let p=f,m;/);
 
-  assert.match(patched, /let g=m&&i!==`computer-use`,_;/);
-  assert.doesNotMatch(patched, /let g=m,_;/);
+  const marketplacePath =
+    "/tmp/codex-test/openai-bundled/.agents/plugins/marketplace.json";
+  let pluginRead = null;
+  const query = vm.runInNewContext(
+    `${patched};i4i(${JSON.stringify({
+      hostId: "local",
+      marketplacePath,
+      pluginName: "computer-use",
+    })})`,
+    {
+      cache: (size) => new Array(size),
+      environment: () => "desktop",
+      hostReady: () => true,
+      isAvailabilityGated: () => true,
+      pluginLocation: ({ marketplacePath: selectedMarketplacePath }) => ({
+        marketplacePath: selectedMarketplacePath,
+      }),
+      read: async (method, params) => {
+        pluginRead = { method, params };
+        return { plugin: { name: "computer-use" } };
+      },
+      useComputerUseAvailability: () => ({ available: false }),
+      useQuery: (options) => options,
+    },
+  );
+
+  assert.equal(query.enabled, true);
+  await query.queryFn();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(pluginRead)),
+    {
+      method: "read-plugin",
+      params: {
+        hostId: "local",
+        marketplacePath,
+        pluginName: "computer-use",
+      },
+    },
+  );
 });
 
 test("rejects current Computer Use plugin detail drift byte-identically", () => {
@@ -9246,6 +9321,52 @@ test("rejects current Computer Use plugin detail drift byte-identically", () => 
   assert.deepEqual(warnings, [
     "WARN: Could not find current Computer Use plugin detail availability gate — skipping Linux Computer Use install flow patch",
   ]);
+  const installFlowDescriptor =
+    require("./patches/core/all-linux/webview/computer-use-ui/patch.js")[2];
+  assert.equal(installFlowDescriptor.assetMatch(source), false);
+});
+
+test("warns precisely and preserves drifted 26.721 app-initial near-misses", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-computer-use-near-miss-"));
+  try {
+    const assetsDir = path.join(tempRoot, "webview", "assets");
+    fs.mkdirSync(assetsDir, { recursive: true });
+    const assetPath = path.join(assetsDir, "app-initial-near-miss.js");
+    const source =
+      "const feature={featureName:`computer_use`};" +
+      "result=helper({areRequiredFeaturesEnabled:a,enabled:b,isAnyFeatureLoading:c,isComputerUseGateEnabled:d,isHostCompatiblePlatform:drifted(platform,other),isPlatformLoading:e,windowType:`electron`});" +
+      "function usePluginDetail(e){let{pluginName:i}=e,f=i!=null&&isAvailabilityGated(i);" +
+      "let p=drifted(f),m;m={enabled:p};let h=useComputerUseAvailability(m),v=!p||h.available;" +
+      "let query=()=>{if(i==null)throw Error(`plugin detail query requires pluginName`);" +
+      "return read(`read-plugin`,{pluginName:i})};return useQuery({queryFn:query,enabled:v})}";
+    fs.writeFileSync(assetPath, source);
+    const descriptors =
+      require("./patches/core/all-linux/webview/computer-use-ui/patch.js").slice(1);
+    const report = createPatchReport();
+    const { warnings } = captureWarns(() =>
+      applyWebviewAssetPatchDescriptors(
+        tempRoot,
+        descriptors,
+        { enableComputerUseUi: true },
+        report,
+      ),
+    );
+
+    assert.equal(fs.readFileSync(assetPath, "utf8"), source);
+    assert.deepEqual(warnings, [
+      `WARN: Could not find current Computer Use host-platform app-initial contract in ${assetsDir} — skipping Linux Computer Use host-platform patch`,
+      `WARN: Could not find current Computer Use install flow app-initial contract in ${assetsDir} — skipping Linux Computer Use install flow patch`,
+    ]);
+    assert.deepEqual(
+      report.patches.map(({ name, status }) => ({ name, status })),
+      [
+        { name: "linux-computer-use-host-platform", status: "skipped-optional" },
+        { name: "linux-computer-use-install-flow", status: "skipped-optional" },
+      ],
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 function externalOpenChildClosingWith(code) {
@@ -9948,7 +10069,7 @@ test("missing icon asset skips only icon patches", () => {
   }
 });
 
-test("patchExtractedApp scans current Computer Use settings bundles when UI is enabled", () => {
+test("patchExtractedApp selects the exact 26.721 Computer Use app-initial contract", () => {
   withIsolatedHome(() => {
     process.env[COMPUTER_USE_UI_ENV_VAR] = "1";
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-computer-use-apps-assets-test-"));
@@ -9969,7 +10090,7 @@ test("patchExtractedApp scans current Computer Use settings bundles when UI is e
         ].join(""),
       );
       fs.writeFileSync(
-        path.join(assetsDir, "computer-use-settings-DsM_pz8i.js"),
+        path.join(assetsDir, "computer-use-settings-BzkBOuLk.js"),
         "function Ht(){let e=cache(24),{selectedHostId:t}=host(),n=data(t),i={hostId:t};" +
           "let a=useAvailability(i),{platform:o}=usePlatform(),s=hostKind(t)===`local`,c=flag(`188145323`);" +
           "let f=jsx(Settings,{computerUseAvailability:a,platform:o});let h=a.available?jsx(AllowedApps,{}):null;return jsx(Page,{children:[f,h]})}" +
@@ -9977,58 +10098,45 @@ test("patchExtractedApp scans current Computer Use settings bundles when UI is e
           "let g=[];let _=usePlugins(s,g),v=useMarketplacePath(s),y=useFlag(firstFlag),b=useFlag(secondFlag),x;" +
           "x=selectPlugin(_.availablePlugins,computerUsePluginName,v);return x}",
       );
+      const appInitialSource =
+        currentComputerUseHostPlatform26721Fixture() +
+        currentComputerUseInstallFlow26721Fixture();
       fs.writeFileSync(
-        path.join(
-          assetsDir,
-          "app-initial~avatarOverlayCompositionSurface~artifact-tab-content.electron~notebook-preview-~iaq4jiqv-current.js",
-        ),
-        "function Ke(e){let t=cache(31),{hostId:n,marketplacePath:r,pluginName:i,remoteMarketplaceName:a,enabled:o}=e," +
-          "c=o===void 0?!0:o,l=n??`local`,d;t[0]===l?d=t[1]:(d={hostId:l},t[0]=l,t[1]=d);" +
-          "let f=hostReady(d),p=environment(),m;t[2]===i?m=t[3]:(m=i!=null&&isAvailabilityGated(i),t[2]=i,t[3]=m);" +
-          "let g=m,_;t[4]!==l||t[5]!==g?(_={enabled:g,hostId:l},t[4]=l,t[5]=g,t[6]=_):_=t[6];" +
-          "let v=useComputerUseAvailability(_),y=(r!=null||a!=null)&&i!=null,b=f&&c&&y&&g&&v.isLoading,x=f&&c&&y&&(!g||v.available);" +
-          "let query=async()=>{if(i==null)throw Error(`plugin detail query requires pluginName`);return read(`read-plugin`,{hostId:l,pluginName:i})};" +
-          "return useQuery({queryFn:query,enabled:x})}",
+        path.join(assetsDir, "app-initial-BHB6SClA.js"),
+        appInitialSource,
       );
+      const unrelatedAppInitialSource =
+        "function unrelatedAppInitial(){return `plugin detail query requires pluginName`}" +
+        "const unrelatedFeature={featureName:`computer_use`};";
       fs.writeFileSync(
-        path.join(
-          assetsDir,
-          "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~settings-command-~ekwfx4j1-current.js",
-        ),
-        "function Se(e){return e===`macOS`||e===`windows`}" +
-          "function Ce(e){let t=cache(16),{enabled:n,hostId:r}=e,i=n===void 0?!0:n,{isLoading:a,platform:o}=usePlatform(),s=flag(`1506311413`),c;t[0]===r?c=t[1]:(c={featureName:`computer_use`,hostId:r},t[0]=r,t[1]=c);let l=useFeature(c),u=o===`windows`&&!a,d=i&&u,f;t[2]===d?f=t[3]:(f={enabled:d},t[2]=d,t[3]=f);let p=useWindowsFeature(f),m=l.isLoading||u&&p.isLoading,h=l.enabled&&(!u||p.enabled),g;t[4]!==h||t[5]!==i||t[6]!==m||t[7]!==s||t[8]!==a||t[9]!==o?(g=resolveAvailability({areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:Se(o),isPlatformLoading:a,windowType:`electron`}),t[4]=h,t[5]=i,t[6]=m,t[7]=s,t[8]=a,t[9]=o,t[10]=g):g=t[10];return g}",
+        path.join(assetsDir, "app-initial-unrelated.js"),
+        unrelatedAppInitialSource,
       );
       fs.writeFileSync(path.join(tempRoot, "package.json"), JSON.stringify({ name: "codex" }));
 
       const firstReport = createPatchReport();
       patchExtractedApp(tempRoot, { report: firstReport });
 
-      const settingsPath = path.join(assetsDir, "computer-use-settings-DsM_pz8i.js");
-      const detailPath = path.join(
-        assetsDir,
-        "app-initial~avatarOverlayCompositionSurface~artifact-tab-content.electron~notebook-preview-~iaq4jiqv-current.js",
-      );
-      const hostPlatformPath = path.join(
-        assetsDir,
-        "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~settings-command-~ekwfx4j1-current.js",
-      );
+      const settingsPath = path.join(assetsDir, "computer-use-settings-BzkBOuLk.js");
+      const appInitialPath = path.join(assetsDir, "app-initial-BHB6SClA.js");
+      const unrelatedAppInitialPath = path.join(assetsDir, "app-initial-unrelated.js");
       const patchedSettings = fs.readFileSync(settingsPath, "utf8");
-      const patchedDetail = fs.readFileSync(detailPath, "utf8");
-      const patchedHostPlatform = fs.readFileSync(hostPlatformPath, "utf8");
+      const patchedAppInitial = fs.readFileSync(appInitialPath, "utf8");
 
       assert.match(
         patchedSettings,
         /o===`linux`&&\(a=\{\.\.\.a,available:!0,isFetching:!1,isLoading:!1\}\);/,
       );
       assert.match(patchedSettings, /marketplaceName:`openai-bundled`/);
-      assert.match(patchedDetail, /let g=m&&i!==`computer-use`,_;/);
+      assert.match(patchedAppInitial, /let p=f&&i!==`computer-use`,m;/);
+      assert.match(
+        patchedAppInitial,
+        /g=X3r\(\{areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:o===`linux`\|\|K3r\(o\),isPlatformLoading:a,windowType:`electron`\}\)/,
+      );
+      assert.equal(fs.readFileSync(unrelatedAppInitialPath, "utf8"), unrelatedAppInitialSource);
       assert.equal(
         firstReport.patches.find((patch) => patch.name === "linux-computer-use-ui-availability")?.status,
         "applied",
-      );
-      assert.match(
-        patchedHostPlatform,
-        /g=resolveAvailability\(\{areRequiredFeaturesEnabled:h,enabled:i,isAnyFeatureLoading:m,isComputerUseGateEnabled:s,isHostCompatiblePlatform:o===`linux`\|\|Se\(o\),isPlatformLoading:a,windowType:`electron`\}\)/,
       );
       assert.equal(
         firstReport.patches.find((patch) => patch.name === "linux-computer-use-host-platform")?.status,
@@ -10038,13 +10146,21 @@ test("patchExtractedApp scans current Computer Use settings bundles when UI is e
         firstReport.patches.find((patch) => patch.name === "linux-computer-use-install-flow")?.status,
         "applied",
       );
+      assert.equal(
+        firstReport.patches.find((patch) => patch.name === "linux-computer-use-host-platform")?.assetName,
+        "app-initial-BHB6SClA.js",
+      );
+      assert.equal(
+        firstReport.patches.find((patch) => patch.name === "linux-computer-use-install-flow")?.assetName,
+        "app-initial-BHB6SClA.js",
+      );
 
       const secondReport = createPatchReport();
       patchExtractedApp(tempRoot, { report: secondReport });
 
       assert.equal(fs.readFileSync(settingsPath, "utf8"), patchedSettings);
-      assert.equal(fs.readFileSync(detailPath, "utf8"), patchedDetail);
-      assert.equal(fs.readFileSync(hostPlatformPath, "utf8"), patchedHostPlatform);
+      assert.equal(fs.readFileSync(appInitialPath, "utf8"), patchedAppInitial);
+      assert.equal(fs.readFileSync(unrelatedAppInitialPath, "utf8"), unrelatedAppInitialSource);
       assert.equal(
         secondReport.patches.find((patch) => patch.name === "linux-computer-use-ui-availability")?.status,
         "already-applied",

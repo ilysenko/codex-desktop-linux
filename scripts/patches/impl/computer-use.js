@@ -508,13 +508,10 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
   return currentSource;
 }
 
-function applyLinuxComputerUseHostPlatformPatch(currentSource) {
-  const currentRequiredFeaturesObjectPattern =
-    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{areRequiredFeaturesEnabled:([A-Za-z_$][\w$]*),enabled:([A-Za-z_$][\w$]*),isAnyFeatureLoading:([A-Za-z_$][\w$]*),isComputerUseGateEnabled:([A-Za-z_$][\w$]*),isHostCompatiblePlatform:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),isPlatformLoading:([A-Za-z_$][\w$]*),windowType:`electron`\}\)/g;
-
+function applyCurrentComputerUseHostPlatformContract(currentSource) {
   let changed = false;
   const patchedSource = currentSource.replace(
-    currentRequiredFeaturesObjectPattern,
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{areRequiredFeaturesEnabled:([A-Za-z_$][\w$]*),enabled:([A-Za-z_$][\w$]*),isAnyFeatureLoading:([A-Za-z_$][\w$]*),isComputerUseGateEnabled:([A-Za-z_$][\w$]*),isHostCompatiblePlatform:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),isPlatformLoading:([A-Za-z_$][\w$]*),windowType:`electron`\}\)/g,
     (
       match,
       resultVar,
@@ -547,13 +544,26 @@ function applyLinuxComputerUseHostPlatformPatch(currentSource) {
     return currentSource;
   }
 
+  return null;
+}
+
+function matchesLinuxComputerUseHostPlatformContract(currentSource) {
+  return applyCurrentComputerUseHostPlatformContract(currentSource) != null;
+}
+
+function applyLinuxComputerUseHostPlatformPatch(currentSource) {
+  const patchedSource = applyCurrentComputerUseHostPlatformContract(currentSource);
+  if (patchedSource != null) {
+    return patchedSource;
+  }
+
   console.warn(
     "WARN: Could not find current Computer Use host-platform gate — skipping Linux Computer Use host-platform patch",
   );
   return currentSource;
 }
 
-function applyLinuxComputerUseInstallFlowPatch(currentSource) {
+function applyCurrentComputerUseInstallFlowContract(currentSource) {
   if (currentSource.includes("plugin detail query requires pluginName")) {
     const markerPattern =
       /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)!==`computer-use`,([A-Za-z_$][\w$]*);/;
@@ -587,6 +597,19 @@ function applyLinuxComputerUseInstallFlowPatch(currentSource) {
     if (changed && markerPattern.test(patchedSource)) {
       return patchedSource;
     }
+  }
+
+  return null;
+}
+
+function matchesLinuxComputerUseInstallFlowContract(currentSource) {
+  return applyCurrentComputerUseInstallFlowContract(currentSource) != null;
+}
+
+function applyLinuxComputerUseInstallFlowPatch(currentSource) {
+  const patchedSource = applyCurrentComputerUseInstallFlowContract(currentSource);
+  if (patchedSource != null) {
+    return patchedSource;
   }
 
   console.warn(
@@ -781,4 +804,6 @@ module.exports = {
   applyLinuxComputerUseRendererAvailabilityPatch,
   isComputerUseUiEnabled,
   linuxComputerUseCursorBridgeRuntimeSource,
+  matchesLinuxComputerUseHostPlatformContract,
+  matchesLinuxComputerUseInstallFlowContract,
 };

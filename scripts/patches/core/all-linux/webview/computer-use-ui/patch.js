@@ -7,6 +7,8 @@ const {
   applyLinuxComputerUseHostPlatformPatch,
   applyLinuxComputerUseRendererAvailabilityPatch,
   applyLinuxComputerUseInstallFlowPatch,
+  matchesLinuxComputerUseHostPlatformContract,
+  matchesLinuxComputerUseInstallFlowContract,
 } = require("../../../../impl/computer-use.js");
 
 module.exports = [
@@ -27,8 +29,9 @@ module.exports = [
     order: 1105,
     ciPolicy: "opt-in",
     enabled: (context) => context.enableComputerUseUi,
-    pattern: /^app-initial~artifact-tab-content\.electron~notebook-preview-panel~app-main~settings-command-~ekwfx4j1-[^.]+\.js$/,
-    missingDescription: "current Computer Use host-platform bundle",
+    pattern: /^app-initial-[^.]+\.js$/,
+    assetMatch: matchesLinuxComputerUseHostPlatformContract,
+    missingDescription: "current Computer Use host-platform app-initial contract",
     skipDescription: "Linux Computer Use host-platform patch",
     apply: applyLinuxComputerUseHostPlatformPatch,
   }),
@@ -38,8 +41,9 @@ module.exports = [
     order: 1110,
     ciPolicy: "opt-in",
     enabled: (context) => context.enableComputerUseUi,
-    pattern: /^app-initial~avatarOverlayCompositionSurface~artifact-tab-content\.electron~notebook-preview-~iaq4jiqv-[^.]+\.js$/,
-    missingDescription: "current Computer Use install flow bundle",
+    pattern: /^app-initial-[^.]+\.js$/,
+    assetMatch: matchesLinuxComputerUseInstallFlowContract,
+    missingDescription: "current Computer Use install flow app-initial contract",
     skipDescription: "Linux Computer Use install flow patch",
     apply: applyLinuxComputerUseInstallFlowPatch,
   }),
