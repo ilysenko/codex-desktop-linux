@@ -1,0 +1,9 @@
+{
+  "id": "ssh-command-wrapper",
+  "title": "SSH Command Wrapper",
+  "description": "Adds a per-connection argv wrapper for routing Codex SSH operations through another remote command.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

@@ -232,6 +232,7 @@ workarounds.
 | Read Aloud MCP | Opt-in | `read-aloud-mcp` | [Docs](linux-features/read-aloud-mcp/README.md) |
 | Remote Control UI gates | Opt-in | `remote-control-ui` | [Docs](linux-features/remote-control-ui/README.md) |
 | Experimental Remote Mobile Control | Opt-in | `remote-mobile-control` | [Docs](linux-features/remote-mobile-control/README.md) |
+| SSH command wrapper | Opt-in | `ssh-command-wrapper` | [Docs](linux-features/ssh-command-wrapper/README.md) |
 | Thorium Chrome Plugin Support | Opt-in | `thorium-chrome-plugin` | [Docs](linux-features/thorium-chrome-plugin/README.md) |
 | UI tweaks | Opt-in | `ui-tweaks` | [Docs](linux-features/ui-tweaks/README.md) |
 | X11/EWMH Computer Use adapter | Opt-in | `x11-ewmh-computer-use` | [Docs](linux-features/x11-ewmh-computer-use/README.md) |
