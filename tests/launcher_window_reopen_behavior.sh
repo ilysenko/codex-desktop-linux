@@ -307,7 +307,8 @@ PY
     cat "$REPO_DIR/launcher/start.sh.template"
 } > "$APP_DIR/start.sh"
 chmod +x "$APP_DIR/start.sh"
-if [ "${CODEX_TEST_FORCE_RESIDENT_REPLACEMENT:-0}" = "1" ]; then
+if [ "${CODEX_TEST_FORCE_RESIDENT_REPLACEMENT:-0}" = "1" ] \
+    && [ "${CODEX_TEST_MUTATION_CONTROL_ONLY:-0}" != "1" ]; then
     python3 - "$APP_DIR/start.sh" <<'PY'
 import sys
 
@@ -401,10 +402,29 @@ SOCKET_PID=$!
 wait_for "controlled handoff socket" test -S "$SOCKET_PATH"
 
 if [ "${CODEX_TEST_FORCE_RESIDENT_REPLACEMENT:-0}" = "1" ]; then
-    printf '%s\n' '{"codex-linux-warm-start-enabled":false}' \
-        > "$HOME_DIR/.config/codex-desktop/settings.json"
     "${COMMON_ENV[@]}" "$APP_DIR/start.sh" --new-chat > "$SECOND_LOG" 2>&1 &
     SECOND_LAUNCHER_PID=$!
+    if [ "${CODEX_TEST_MUTATION_CONTROL_ONLY:-0}" = "1" ]; then
+        set +e
+        wait "$SECOND_LAUNCHER_PID"
+        rc=$?
+        set -e
+        SECOND_LAUNCHER_PID=""
+        [ "$rc" -eq 0 ] \
+            || fail "mutation control launcher invocation failed (status $rc)"
+        wait_for "mutation control handoff acknowledgement" handoff_was_recorded
+        HANDOFF_STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$HANDOFF_RESULT")"
+        FINAL_ELECTRON_PID="$(read_live_app_pid)"
+        [ "$FINAL_ELECTRON_PID" = "$FIRST_ELECTRON_PID" ] \
+            || fail "mutation control changed the healthy resident PID"
+        [ "$(count_test_main_processes)" -eq 1 ] \
+            || fail "mutation control did not preserve exactly one controlled Electron process"
+        [ "$HANDOFF_STATUS" = "acknowledged" ] \
+            || fail "mutation control handoff was not acknowledged"
+        record_result "mutation-control-preserved"
+        printf '%s\n' 'launcher window-reopen behavior mutation control passed'
+        exit 0
+    fi
     wait_for "unconditional resident replacement regression" resident_policy_regressed
     mutation_detected
 fi

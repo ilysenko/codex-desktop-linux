@@ -10568,6 +10568,7 @@ test_launcher_warm_start_recovery() {
 test_launcher_window_reopen_behavior() {
     local nominal_log="$TMP_DIR/launcher-window-reopen-nominal.log"
     local mutation_log="$TMP_DIR/launcher-window-reopen-mutation.log"
+    local mutation_control_log="$TMP_DIR/launcher-window-reopen-mutation-control.log"
     local no_pidfd_log="$TMP_DIR/launcher-window-reopen-no-pidfd.log"
     local no_pidfd_tmp="$TMP_DIR/launcher-window-reopen-no-pidfd-missing"
     local probe_failure_bin="$TMP_DIR/launcher-window-reopen-probe-failure-bin"
@@ -10612,6 +10613,23 @@ test_launcher_window_reopen_behavior() {
         || ! grep -Fq '"outcome":"resident-replacement-detected"' "$mutation_log"; then
         cat "$mutation_log" >&2
         fail "Window-reopen behavior harness did not report the expected resident-replacement regression (status $status)"
+    fi
+
+    set +e
+    CODEX_TEST_FORCE_RESIDENT_REPLACEMENT=1 \
+        CODEX_TEST_MUTATION_CONTROL_ONLY=1 \
+        bash "$REPO_DIR/tests/launcher_window_reopen_behavior.sh" \
+        > "$mutation_control_log" 2>&1
+    status=$?
+    set -e
+    if [ "$status" -ne 0 ] \
+        || ! grep -Fxq \
+            'launcher window-reopen behavior mutation control passed' \
+            "$mutation_control_log" \
+        || ! grep -Fq '"outcome":"mutation-control-preserved"' "$mutation_control_log" \
+        || grep -Fq 'resident-replacement-detected' "$mutation_control_log"; then
+        cat "$mutation_control_log" >&2
+        fail "Window-reopen behavior harness mutation control failed (status $status)"
     fi
 
     rm -rf "$no_pidfd_tmp"
