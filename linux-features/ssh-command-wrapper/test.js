@@ -10,6 +10,13 @@ const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
+  applyMainBundlePatchDescriptors,
+  applyWebviewAssetPatchDescriptors,
+} = require("../../scripts/patches/engine.js");
+const {
+  createPatchReport,
+} = require("../../scripts/lib/patch-report.js");
+const {
   MAX_WRAPPER_ARGS,
   applyMainBundlePatch,
   applyWebviewPatch,
@@ -20,10 +27,13 @@ const {
   wrapRemoteCommand,
 } = require("./patch.js");
 
+const managementCall = "n.Xn({args:[`ssh`,...oS(c),...cS(this.options.sshConnection),Gx(e,s)],spawnInsideWsl:!1})";
+const proxyCall = "(0,x.spawn)(n.nr.resolve(`ssh`)??`ssh`,[`-T`,...oS(this.options.getConnectTimeoutSeconds?.()),...cS(this.options.sshConnection),Gx(t,i)],{env:r.t(process.env),stdio:[`pipe`,`pipe`,`pipe`]})";
+
 const mainFixture = [
   "function Gx(e,t){return e+t}",
-  "function management(){return[...x,Gx(e,s)]}",
-  "function proxy(){return[...x,Gx(t,i)]}",
+  `function management(){let u=${managementCall};return u}`,
+  `function proxy(){let a=${proxyCall};return a}`,
   "function uS(e){let t=Hre(e);return t?{sshConnection:{alias:t.sshAlias,host:t.sshHost,port:t.sshPort,identity:t.identity}}:null}",
   "function Wre(e){let t=e.alias?.trim();return t?`alias:${t}`:[`direct`,e.host,String(e.port??``),e.identity?.trim()??``].join(`:",
   "aliasLoad.then(t=>t==null?null:{...t,hostId:e.hostId,connectionAnalyticsId:e.connectionAnalyticsId,displayName:e.displayName,autoConnect:!1})",
@@ -39,10 +49,21 @@ const webviewFixture = [
   "function Pi(){return{displayName:``,targetKind:`hostname`,sshHost:``,sshPort:``,authMode:`none`,identity:``}}",
   "function Fi(e){return{authMode:e.identity==null?`none`:`identity`,identity:e.identity??``}}",
   "function Ii(e){return e.targetKind===`hostname`?{identity:e.authMode===`identity`?e.identity.trim():null}:{hostId:x,sshPort:null,identity:null}}",
-  "function Li(e){let r=[],i=e.displayName.trim();return r}",
+  "function Li(e){let r=[],i=e.displayName.trim();i.length===0&&r.push(`displayNameRequired`);return r}",
   "function Bi(e){let _,q,U,Wi,l,D,k,A,j;j=(0,q.jsx)(x,{children:(0,q.jsxs)(`div`,{children:[D,k,A]})});return j}",
-  "function Gi(e){switch(e){case`other`:return null}}",
+  "function Gi(e){switch(e){case`displayNameRequired`:return null}}",
 ].join("");
+
+function withCapturedWarnings(callback) {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(String(message));
+  try {
+    return { value: callback(), warnings };
+  } finally {
+    console.warn = originalWarn;
+  }
+}
 
 function withFeatureConfig(enabled, callback) {
   const originalConfig = process.env.CODEX_LINUX_FEATURES_CONFIG;
@@ -130,6 +151,32 @@ test("main-process patch fails soft and byte-identical on drift", () => {
   assert.ok(warnings.length > 0);
 });
 
+test("main-process patch rejects duplicate owned SSH targets", () => {
+  const duplicateTarget = `${mainFixture};function duplicate(){return ${managementCall}}`;
+  const { value, warnings } = withCapturedWarnings(() => applyMainBundlePatch(duplicateTarget));
+  assert.equal(value, duplicateTarget);
+  assert.match(warnings.join("\n"), /partial, ambiguous, or drifted/u);
+});
+
+test("main-process helper-only partial state is reported as feature drift", () => {
+  const partial = mainFixture.replace(
+    "function Gx(",
+    "function codexLinuxSshCommandWrapperArgs(e){}function Gx(",
+  );
+  withFeatureConfig(["ssh-command-wrapper"], (featuresRoot) => {
+    const descriptor = loadLinuxFeaturePatchDescriptors({ featuresRoot })
+      .find((item) => item.id === "feature:ssh-command-wrapper:main-bundle-ssh-command-wrapper");
+    const report = createPatchReport();
+    report.enabledFeatures = ["ssh-command-wrapper"];
+    const { value, warnings } = withCapturedWarnings(() =>
+      applyMainBundlePatchDescriptors(partial, [descriptor], {}, report),
+    );
+    assert.equal(value.patchedSource, partial);
+    assert.match(warnings.join("\n"), /partial, ambiguous, or drifted/u);
+    assert.equal(report.patches[0].status, "skipped-optional");
+  });
+});
+
 test("patches the SSH connection editor for manual hosts and aliases", () => {
   const patched = applyWebviewPatch(webviewFixture);
   assert.notEqual(patched, webviewFixture);
@@ -138,6 +185,41 @@ test("patches the SSH connection editor for manual hosts and aliases", () => {
   assert.match(patched, /ssh -T target-host --/u);
   assert.match(patched, /invalidSshCommandWrapper/u);
   assert.match(patched, /codexLinuxSshCommandWrapper:codexLinuxParseSshCommandWrapper/u);
+});
+
+test("webview patch rejects duplicate owned editor targets", () => {
+  const duplicateTarget = `${webviewFixture}function duplicate(){return{authMode:\`none\`,identity:\`\`}}`;
+  const { value, warnings } = withCapturedWarnings(() => applyWebviewPatch(duplicateTarget));
+  assert.equal(value, duplicateTarget);
+  assert.match(warnings.join("\n"), /partial, ambiguous, or drifted/u);
+});
+
+test("webview helper-only partial state is reported as feature drift", () => {
+  const partial = webviewFixture.replace(
+    "function Pi(){",
+    "function codexLinuxParseSshCommandWrapper(e){}function Pi(){",
+  );
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ssh-command-wrapper-webview-"));
+  const assetsDir = path.join(tempDir, "webview", "assets");
+  const assetPath = path.join(assetsDir, "remote-connections-settings-current.js");
+  fs.mkdirSync(assetsDir, { recursive: true });
+  fs.writeFileSync(assetPath, partial);
+  try {
+    withFeatureConfig(["ssh-command-wrapper"], (featuresRoot) => {
+      const descriptor = loadLinuxFeaturePatchDescriptors({ featuresRoot })
+        .find((item) => item.id === "feature:ssh-command-wrapper:webview-ssh-command-wrapper-settings");
+      const report = createPatchReport();
+      report.enabledFeatures = ["ssh-command-wrapper"];
+      const { warnings } = withCapturedWarnings(() =>
+        applyWebviewAssetPatchDescriptors(tempDir, [descriptor], {}, report),
+      );
+      assert.equal(fs.readFileSync(assetPath, "utf8"), partial);
+      assert.match(warnings.join("\n"), /partial, ambiguous, or drifted/u);
+      assert.equal(report.patches[0].status, "skipped-optional");
+    });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("exports opt-in main and settings descriptors", () => {

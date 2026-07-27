@@ -6,6 +6,15 @@ const WRAPPER_PROPERTY = "codexLinuxSshCommandWrapper";
 const WRAPPER_TEXT_PROPERTY = "codexLinuxSshCommandWrapperText";
 const MAIN_MARKER = "function codexLinuxSshCommandWrapperArgs(";
 const WEBVIEW_MARKER = "function codexLinuxParseSshCommandWrapper(";
+const MAIN_HELPER_MARKERS = [
+  MAIN_MARKER,
+  "function codexLinuxSshCommandWrapperQuote(",
+  "function codexLinuxSshWrapRemoteCommand(",
+];
+const WEBVIEW_HELPER_MARKERS = [
+  WEBVIEW_MARKER,
+  "function codexLinuxFormatSshCommandWrapper(",
+];
 
 function wrapperError(message) {
   const error = new Error(message);
@@ -129,12 +138,79 @@ function wrapRemoteCommand(command, args) {
   return `exec ${valid.map(quoteShellArg).join(" ")} ${quoteShellArg(command)}`;
 }
 
-function replaceRequired(source, needle, replacement, label) {
-  if (!source.includes(needle)) {
-    console.warn(`WARN: Could not find ${label} - skipping SSH command-wrapper patch`);
+function countOccurrences(source, needle) {
+  let count = 0;
+  let index = 0;
+  while (true) {
+    index = source.indexOf(needle, index);
+    if (index < 0) return count;
+    count += 1;
+    index += needle.length;
+  }
+}
+
+function replacementState(source, config) {
+  const before = config.replacements.map(([needle]) => countOccurrences(source, needle));
+  const after = config.replacements.map(([, replacement]) => countOccurrences(source, replacement));
+  const helpers = config.helperMarkers.map((marker) => countOccurrences(source, marker));
+  const anchors = config.requiredAnchors.map((anchor) => countOccurrences(source, anchor));
+  const fresh =
+    helpers.every((count) => count === 0) &&
+    anchors.every((count) => count === 1) &&
+    before.every((count) => count === 1) &&
+    after.every((count) => count === 0);
+  const complete =
+    helpers.every((count) => count === 1) &&
+    anchors.every((count) => count === 1) &&
+    before.every((count) => count === 0) &&
+    after.every((count) => count === 1);
+  return { fresh, complete, before, after, helpers, anchors };
+}
+
+function warnUnexpectedPatchState(label, state) {
+  console.warn(
+    `WARN: SSH command-wrapper ${label} patch is partial, ambiguous, or drifted ` +
+    `(before=[${state.before.join(",")}], after=[${state.after.join(",")}], ` +
+    `helpers=[${state.helpers.join(",")}], anchors=[${state.anchors.join(",")}])`,
+  );
+}
+
+function replaceExactlyOnce(source, needle, replacement, label) {
+  const count = countOccurrences(source, needle);
+  if (count !== 1) {
+    console.warn(`WARN: Expected exactly one ${label}; found ${count} - skipping SSH command-wrapper patch`);
     return null;
   }
   return source.replace(needle, replacement);
+}
+
+function applyCompletePatch(source, config) {
+  const initialState = replacementState(source, config);
+  if (initialState.complete) return source;
+  if (!initialState.fresh) {
+    warnUnexpectedPatchState(config.label, initialState);
+    return source;
+  }
+
+  let patched = replaceExactlyOnce(
+    source,
+    config.helperAnchor,
+    `${config.helperSource()}${config.helperAnchor}`,
+    `${config.label} helper insertion`,
+  );
+  if (patched == null) return source;
+
+  for (const [needle, replacement, label] of config.replacements) {
+    patched = replaceExactlyOnce(patched, needle, replacement, label);
+    if (patched == null) return source;
+  }
+
+  const finalState = replacementState(patched, config);
+  if (!finalState.complete) {
+    warnUnexpectedPatchState(config.label, finalState);
+    return source;
+  }
+  return patched;
 }
 
 function mainHelperSource() {
@@ -146,26 +222,15 @@ function mainHelperSource() {
 }
 
 function applyMainBundlePatch(source) {
-  if (source.includes(MAIN_MARKER)) return source;
-
-  let patched = source;
-  const helperNeedle = "function Gx(";
-  const helperIndex = patched.indexOf(helperNeedle);
-  if (helperIndex < 0) {
-    console.warn("WARN: Could not find SSH login-shell helper - skipping SSH command-wrapper patch");
-    return source;
-  }
-  patched = `${patched.slice(0, helperIndex)}${mainHelperSource()}${patched.slice(helperIndex)}`;
-
   const replacements = [
     [
-      "Gx(e,s)]",
-      `codexLinuxSshWrapRemoteCommand(Gx(e,s),this.options.sshConnection.${WRAPPER_PROPERTY})]`,
+      "n.Xn({args:[`ssh`,...oS(c),...cS(this.options.sshConnection),Gx(e,s)],spawnInsideWsl:!1})",
+      `n.Xn({args:[\`ssh\`,...oS(c),...cS(this.options.sshConnection),codexLinuxSshWrapRemoteCommand(Gx(e,s),this.options.sshConnection.${WRAPPER_PROPERTY})],spawnInsideWsl:!1})`,
       "SSH management command",
     ],
     [
-      "Gx(t,i)]",
-      `codexLinuxSshWrapRemoteCommand(Gx(t,i),this.options.sshConnection.${WRAPPER_PROPERTY})]`,
+      "(0,x.spawn)(n.nr.resolve(`ssh`)??`ssh`,[`-T`,...oS(this.options.getConnectTimeoutSeconds?.()),...cS(this.options.sshConnection),Gx(t,i)],{env:r.t(process.env),stdio:[`pipe`,`pipe`,`pipe`]})",
+      `(0,x.spawn)(n.nr.resolve(\`ssh\`)??\`ssh\`,[\`-T\`,...oS(this.options.getConnectTimeoutSeconds?.()),...cS(this.options.sshConnection),codexLinuxSshWrapRemoteCommand(Gx(t,i),this.options.sshConnection.${WRAPPER_PROPERTY})],{env:r.t(process.env),stdio:[\`pipe\`,\`pipe\`,\`pipe\`]})`,
       "SSH app-server proxy command",
     ],
     [
@@ -214,13 +279,14 @@ function applyMainBundlePatch(source) {
       "SSH host configuration",
     ],
   ];
-
-  for (const [needle, replacement, label] of replacements) {
-    const next = replaceRequired(patched, needle, replacement, label);
-    if (next == null) return source;
-    patched = next;
-  }
-  return patched;
+  return applyCompletePatch(source, {
+    label: "main bundle",
+    helperAnchor: "function Gx(",
+    helperMarkers: MAIN_HELPER_MARKERS,
+    requiredAnchors: ["function Gx("],
+    helperSource: mainHelperSource,
+    replacements,
+  });
 }
 
 function webviewHelperSource() {
@@ -231,13 +297,6 @@ function webviewHelperSource() {
 }
 
 function applyWebviewPatch(source) {
-  if (source.includes(WEBVIEW_MARKER)) return source;
-  if (!source.includes("function Pi(){return{displayName:") || !source.includes("function Bi(e){")) {
-    console.warn("WARN: Could not find remote-connections settings editor - skipping SSH command-wrapper patch");
-    return source;
-  }
-
-  let patched = source.replace("function Pi(){", `${webviewHelperSource()}function Pi(){`);
   const replacements = [
     [
       "authMode:`none`,identity:``}}",
@@ -260,27 +319,29 @@ function applyWebviewPatch(source) {
       "alias connection save",
     ],
     [
-      "let r=[],i=e.displayName.trim();",
-      `let r=[],i=e.displayName.trim();try{codexLinuxParseSshCommandWrapper(e.${WRAPPER_TEXT_PROPERTY})}catch{r.push(\`invalidSshCommandWrapper\`)}`,
+      "let r=[],i=e.displayName.trim();i.length===0&&",
+      `let r=[],i=e.displayName.trim();try{codexLinuxParseSshCommandWrapper(e.${WRAPPER_TEXT_PROPERTY})}catch{r.push(\`invalidSshCommandWrapper\`)}i.length===0&&`,
       "wrapper validation",
     ],
     [
-      "children:[D,k,A]",
-      `children:[D,k,A,(0,q.jsx)(_.Field,{name:\`${WRAPPER_TEXT_PROPERTY}\`,children:e=>(0,q.jsx)(Wi,{label:(0,q.jsxs)(q.Fragment,{children:[(0,q.jsx)(U,{id:\`settings.remoteConnections.dialog.field.commandWrapper\`,defaultMessage:\`Remote command wrapper\`,description:\`Label for the optional SSH remote command wrapper field\`}),\` \`,(0,q.jsx)(\`span\`,{className:\`font-normal text-token-text-secondary\`,children:(0,q.jsx)(U,{id:\`settings.remoteConnections.dialog.field.commandWrapper.optional\`,defaultMessage:\`(optional)\`,description:\`Marker for the optional SSH remote command wrapper field\`})})]}),description:(0,q.jsx)(U,{id:\`settings.remoteConnections.dialog.field.commandWrapper.description\`,defaultMessage:\`Runs every Codex SSH operation through this argv command and appends the generated remote command as its final argument.\`,description:\`Description for the SSH remote command wrapper field\`}),placeholder:\`ssh -T target-host --\`,value:e.state.value,onChange:e.handleChange,onBlur:e.handleBlur,disabled:l})})]`,
+      "children:[D,k,A]})",
+      `children:[D,k,A,(0,q.jsx)(_.Field,{name:\`${WRAPPER_TEXT_PROPERTY}\`,children:e=>(0,q.jsx)(Wi,{label:(0,q.jsxs)(q.Fragment,{children:[(0,q.jsx)(U,{id:\`settings.remoteConnections.dialog.field.commandWrapper\`,defaultMessage:\`Remote command wrapper\`,description:\`Label for the optional SSH remote command wrapper field\`}),\` \`,(0,q.jsx)(\`span\`,{className:\`font-normal text-token-text-secondary\`,children:(0,q.jsx)(U,{id:\`settings.remoteConnections.dialog.field.commandWrapper.optional\`,defaultMessage:\`(optional)\`,description:\`Marker for the optional SSH remote command wrapper field\`})})]}),description:(0,q.jsx)(U,{id:\`settings.remoteConnections.dialog.field.commandWrapper.description\`,defaultMessage:\`Runs every Codex SSH operation through this argv command and appends the generated remote command as its final argument.\`,description:\`Description for the SSH remote command wrapper field\`}),placeholder:\`ssh -T target-host --\`,value:e.state.value,onChange:e.handleChange,onBlur:e.handleBlur,disabled:l})})]})`,
       "wrapper settings field",
     ],
     [
-      "function Gi(e){switch(e){",
-      "function Gi(e){switch(e){case`invalidSshCommandWrapper`:return(0,q.jsx)(U,{id:`settings.remoteConnections.dialog.field.commandWrapper.error`,defaultMessage:`Enter a valid command (quotes and escapes are supported; shell operators are not)`,description:`Error for an invalid SSH remote command wrapper`});",
+      "function Gi(e){switch(e){case`displayNameRequired`:",
+      "function Gi(e){switch(e){case`invalidSshCommandWrapper`:return(0,q.jsx)(U,{id:`settings.remoteConnections.dialog.field.commandWrapper.error`,defaultMessage:`Enter a valid command (quotes and escapes are supported; shell operators are not)`,description:`Error for an invalid SSH remote command wrapper`});case`displayNameRequired`:",
       "wrapper validation message",
     ],
   ];
-  for (const [needle, replacement, label] of replacements) {
-    const next = replaceRequired(patched, needle, replacement, label);
-    if (next == null) return source;
-    patched = next;
-  }
-  return patched;
+  return applyCompletePatch(source, {
+    label: "webview bundle",
+    helperAnchor: "function Pi(){",
+    helperMarkers: WEBVIEW_HELPER_MARKERS,
+    requiredAnchors: ["function Pi(){", "function Bi(e){"],
+    helperSource: webviewHelperSource,
+    replacements,
+  });
 }
 
 module.exports = {
