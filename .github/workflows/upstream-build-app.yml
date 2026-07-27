@@ -189,7 +189,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          first_report="$GITHUB_WORKSPACE/upstream-acceptance/patch-report.json"
+          first_report="$(node -e '
+            const decision = require(process.argv[1]);
+            const reportPath = decision?.checks?.patchReport?.reportPath;
+            if (typeof reportPath !== "string" || reportPath.length === 0) {
+              throw new Error("acceptance decision does not record a patch report path");
+            }
+            process.stdout.write(reportPath);
+          ' "$GITHUB_WORKSPACE/upstream-dmg-decision.json")"
           second_report="$GITHUB_WORKSPACE/upstream-acceptance/ssh-command-wrapper-second-pass.json"
           node scripts/ci/validate-patch-report.js "$first_report" \
             --require-enabled-feature ssh-command-wrapper \
