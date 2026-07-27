@@ -120,6 +120,22 @@ test("round trips quoted argv and preserves an empty wrapper", () => {
   );
 });
 
+test("keeps apostrophe-heavy wrappers within the canonical editor limit", () => {
+  const atLimit = ["ssh", "'".repeat(1022), "x"];
+  const formatted = formatCommandWrapper(atLimit);
+  assert.equal(formatted.length, 4096);
+  assert.deepEqual(parseCommandWrapper(formatted), atLimit);
+
+  const overLimitInput = `ssh "${"'".repeat(1023)}"`;
+  assert.throws(() => parseCommandWrapper(overLimitInput), { code: "invalidSshCommandWrapper" });
+  assert.throws(() => validateCommandWrapperArgs(["ssh", "'".repeat(1023)]), {
+    code: "invalidSshCommandWrapper",
+  });
+  assert.throws(() => formatCommandWrapper(["ssh", "'".repeat(1023)]), {
+    code: "invalidSshCommandWrapper",
+  });
+});
+
 test("validates persisted argv independently of the editor", () => {
   assert.deepEqual(validateCommandWrapperArgs(null), []);
   assert.deepEqual(validateCommandWrapperArgs(["ssh", "-T"]), ["ssh", "-T"]);

@@ -90,13 +90,7 @@ function parseCommandWrapper(input) {
   }
   if (quote != null) throw wrapperError("Remote command wrapper has an unterminated quote");
   if (started) args.push(value);
-  if (args.length > MAX_WRAPPER_ARGS) {
-    throw wrapperError(`Remote command wrapper must have at most ${MAX_WRAPPER_ARGS} arguments`);
-  }
-  if (args.length > 0 && args[0].length === 0) {
-    throw wrapperError("Remote command wrapper executable cannot be empty");
-  }
-  return args;
+  return validateCommandWrapperArgs(args);
 }
 
 function quoteShellArg(value) {
@@ -128,6 +122,13 @@ function validateCommandWrapperArgs(value) {
   }
   if (result.length > 0 && result[0].length === 0) {
     throw wrapperError("Remote command wrapper executable cannot be empty");
+  }
+  const formattedLength = result.reduce(
+    (length, arg, index) => length + quoteShellArg(arg).length + (index === 0 ? 0 : 1),
+    0,
+  );
+  if (formattedLength > MAX_WRAPPER_TEXT_LENGTH) {
+    throw wrapperError(`Remote command wrapper must format to at most ${MAX_WRAPPER_TEXT_LENGTH} characters`);
   }
   return result;
 }
@@ -215,7 +216,7 @@ function applyCompletePatch(source, config) {
 
 function mainHelperSource() {
   return [
-    "function codexLinuxSshCommandWrapperArgs(e){if(e==null)return[];if(!Array.isArray(e)||e.length>64)throw Error(`Invalid SSH remote command wrapper`);let t=0,n=e.map(e=>{if(typeof e!=`string`||/[\\0\\r\\n]/u.test(e))throw Error(`Invalid SSH remote command wrapper`);if(t+=e.length,t>4096)throw Error(`Invalid SSH remote command wrapper`);return e});if(n.length>0&&n[0].length===0)throw Error(`Invalid SSH remote command wrapper`);return n}",
+    "function codexLinuxSshCommandWrapperArgs(e){if(e==null)return[];if(!Array.isArray(e)||e.length>64)throw Error(`Invalid SSH remote command wrapper`);let t=0,n=e.map(e=>{if(typeof e!=`string`||/[\\0\\r\\n]/u.test(e))throw Error(`Invalid SSH remote command wrapper`);if(t+=e.length,t>4096)throw Error(`Invalid SSH remote command wrapper`);return e});if(n.length>0&&n[0].length===0||n.map(codexLinuxSshCommandWrapperQuote).join(` `).length>4096)throw Error(`Invalid SSH remote command wrapper`);return n}",
     "function codexLinuxSshCommandWrapperQuote(e){return e.length>0&&/^[A-Za-z0-9_@%+=:,./-]+$/u.test(e)?e:`'${e.replaceAll(`'`,`'\\\\''`)}'`}",
     "function codexLinuxSshWrapRemoteCommand(e,t){let n=codexLinuxSshCommandWrapperArgs(t);return n.length===0?e:`exec ${n.map(codexLinuxSshCommandWrapperQuote).join(` `)} ${codexLinuxSshCommandWrapperQuote(e)}`}",
   ].join("");
@@ -291,8 +292,8 @@ function applyMainBundlePatch(source) {
 
 function webviewHelperSource() {
   return [
-    "function codexLinuxParseSshCommandWrapper(e){if(typeof e!=`string`||e.length>4096||/[\\0\\r\\n]/u.test(e))throw Error(`invalid`);let t=[],n=``,r=null,i=!1;for(let a=0;a<e.length;a++){let o=e[a];if(r===`'`){o===`'`?r=null:n+=o,i=!0;continue}if(r===`\\\"`){if(o===`\\\"`)r=null;else if(o===`\\\\`){if(++a>=e.length)throw Error(`invalid`);let t=e[a];n+=`$\\\\\\\"`.includes(t)?t:`\\\\${t}`}else n+=o;i=!0;continue}if(o===`'`||o===`\\\"`){r=o,i=!0;continue}if(o===`\\\\`){if(++a>=e.length)throw Error(`invalid`);n+=e[a],i=!0;continue}if(/\\s/u.test(o)){if(i&&(t.push(n),n=``,i=!1,t.length>64))throw Error(`invalid`);continue}if(/[;&|<>]/u.test(o))throw Error(`invalid`);n+=o,i=!0}if(r!=null)throw Error(`invalid`);if(i&&t.push(n),t.length>64||t.length>0&&t[0].length===0)throw Error(`invalid`);return t}",
-    "function codexLinuxFormatSshCommandWrapper(e){return Array.isArray(e)?e.map(e=>typeof e==`string`&&e.length>0&&/^[A-Za-z0-9_@%+=:,./-]+$/u.test(e)?e:`'${String(e??``).replaceAll(`'`,`'\\\\''`)}'`).join(` `):``}",
+    "function codexLinuxParseSshCommandWrapper(e){if(typeof e!=`string`||e.length>4096||/[\\0\\r\\n]/u.test(e))throw Error(`invalid`);let t=[],n=``,r=null,i=!1;for(let a=0;a<e.length;a++){let o=e[a];if(r===`'`){o===`'`?r=null:n+=o,i=!0;continue}if(r===`\\\"`){if(o===`\\\"`)r=null;else if(o===`\\\\`){if(++a>=e.length)throw Error(`invalid`);let t=e[a];n+=`$\\\\\\\"`.includes(t)?t:`\\\\${t}`}else n+=o;i=!0;continue}if(o===`'`||o===`\\\"`){r=o,i=!0;continue}if(o===`\\\\`){if(++a>=e.length)throw Error(`invalid`);n+=e[a],i=!0;continue}if(/\\s/u.test(o)){if(i&&(t.push(n),n=``,i=!1,t.length>64))throw Error(`invalid`);continue}if(/[;&|<>]/u.test(o))throw Error(`invalid`);n+=o,i=!0}if(r!=null)throw Error(`invalid`);if(i&&t.push(n),t.length>64||t.length>0&&t[0].length===0||codexLinuxFormatSshCommandWrapper(t).length>4096)throw Error(`invalid`);return t}",
+    "function codexLinuxFormatSshCommandWrapper(e){if(e==null)return``;if(!Array.isArray(e)||e.length>64)throw Error(`invalid`);let t=0,n=e.map(e=>{if(typeof e!=`string`||/[\\0\\r\\n]/u.test(e))throw Error(`invalid`);if(t+=e.length,t>4096)throw Error(`invalid`);return e.length>0&&/^[A-Za-z0-9_@%+=:,./-]+$/u.test(e)?e:`'${e.replaceAll(`'`,`'\\\\''`)}'`}).join(` `);if(n.length>4096||e.length>0&&e[0].length===0)throw Error(`invalid`);return n}",
   ].join("");
 }
 
