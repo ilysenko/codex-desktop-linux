@@ -12,6 +12,7 @@
     "persistent-status-panel",
     "remote-control-ui",
     "remote-mobile-control",
+    "ssh-command-wrapper",
     "ui-tweaks"
   ],
   "settings": {}

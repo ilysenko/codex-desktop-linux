@@ -20,6 +20,7 @@ let
     "global-dictation"
     "mcp-helper-reaper"
     "remote-mobile-control"
+    "ssh-command-wrapper"
     "pet-overlay"
     "open-target-discovery"
     "remote-control-ui"
@@ -39,6 +40,7 @@ let
     "pet-overlay"
     "remote-control-ui"
     "remote-mobile-control"
+    "ssh-command-wrapper"
     "ui-tweaks"
   ];
   watchdogFeatureIds = (builtins.fromJSON (builtins.readFile ../scripts/ci/watchdog-linux-features.json)).enabled;
@@ -55,6 +57,7 @@ let
     "persistent-status-panel"
     "remote-control-ui"
     "remote-mobile-control"
+    "ssh-command-wrapper"
     "ui-tweaks"
   ];
 
@@ -317,6 +320,9 @@ in
 assert lib.assertMsg
   (lib.elem "codex-micro" (linuxFeatures.normalize linuxFeatures.supportedFeatureIds))
   "codex-micro is missing from the normalized Nix-supported feature list";
+assert lib.assertMsg
+  (lib.elem "ssh-command-wrapper" (linuxFeatures.normalize linuxFeatures.supportedFeatureIds))
+  "ssh-command-wrapper is missing from the normalized Nix-supported feature list";
 assert lib.assertMsg
   (linuxFeatures.normalize [ "codex-micro" "appshots" "codex-micro" ] == [
     "appshots"

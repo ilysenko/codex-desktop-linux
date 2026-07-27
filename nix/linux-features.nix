@@ -15,6 +15,7 @@ let
     "remote-control-ui"
     "remote-mobile-control"
     "shallow-repository-watches"
+    "ssh-command-wrapper"
     "ui-tweaks"
   ];
 

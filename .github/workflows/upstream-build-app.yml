@@ -11,6 +11,7 @@ on:
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
       - scripts/ci/validate-patch-report.js
+      - scripts/ci/ssh-command-wrapper-features.json
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js
       - scripts/lib/candidate-install.sh
@@ -34,6 +35,7 @@ on:
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
       - scripts/ci/validate-patch-report.js
+      - scripts/ci/ssh-command-wrapper-features.json
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js
       - scripts/lib/candidate-install.sh
@@ -168,6 +170,7 @@ jobs:
           CODEX_ACCEPTANCE_DECISION_JSON: ${{ github.workspace }}/upstream-dmg-decision.json
           CODEX_ACCEPTANCE_OVERRIDE: '0'
           CODEX_ACCEPTANCE_SOURCE: github-actions
+          CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/scripts/ci/ssh-command-wrapper-features.json
           CODEX_UPSTREAM_DMG_METADATA_JSON: ${{ github.workspace }}/upstream-dmg-metadata.json
           REBUILD_REPORT_DIR: ${{ github.workspace }}/upstream-acceptance
         run: make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg
@@ -178,6 +181,31 @@ jobs:
           CODEX_NODE_REPL_PATH: ${{ github.workspace }}/codex-app/resources/node_repl
           CODEX_STAGED_BUNDLED_PLUGINS_ROOT: ${{ github.workspace }}/codex-app/resources/plugins/openai-bundled/plugins
         run: node --test scripts/lib/browser-client-node-repl-runtime.test.js
+
+      - name: Exercise enabled SSH command-wrapper descriptors
+        if: steps.acceptance-build.outcome == 'success'
+        env:
+          CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/scripts/ci/ssh-command-wrapper-features.json
+        run: |
+          set -euo pipefail
+
+          first_report="$GITHUB_WORKSPACE/upstream-acceptance/patch-report.json"
+          second_report="$GITHUB_WORKSPACE/upstream-acceptance/ssh-command-wrapper-second-pass.json"
+          node scripts/ci/validate-patch-report.js "$first_report" \
+            --require-enabled-feature ssh-command-wrapper \
+            --require-applied feature:ssh-command-wrapper:main-bundle-ssh-command-wrapper \
+            --require-applied feature:ssh-command-wrapper:webview-ssh-command-wrapper-settings
+
+          feature_app="$RUNNER_TEMP/ssh-command-wrapper-current-dmg"
+          npx --yes asar extract codex-app/resources/app.asar "$feature_app"
+          node scripts/patch-linux-window-ui.js \
+            --enforce-critical \
+            --report-json "$second_report" \
+            "$feature_app"
+          node scripts/ci/validate-patch-report.js "$second_report" \
+            --require-enabled-feature ssh-command-wrapper \
+            --require-success feature:ssh-command-wrapper:main-bundle-ssh-command-wrapper \
+            --require-success feature:ssh-command-wrapper:webview-ssh-command-wrapper-settings
 
       - name: Upload upstream DMG metadata artifact
         # The transactional installer records a decision before returning a

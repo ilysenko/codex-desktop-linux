@@ -1,0 +1,5 @@
+{
+  "enabled": [
+    "ssh-command-wrapper"
+  ]
+}
