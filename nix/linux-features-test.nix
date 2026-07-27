@@ -179,6 +179,7 @@ let
       "pet-overlay"
       "open-target-discovery"
       "remote-control-ui"
+      "ssh-command-wrapper"
       "ui-tweaks"
       "appshots"
       "appshots"
