@@ -155,6 +155,16 @@ test("patches all main-process transport and persistence paths idempotently", ()
   assert.ok(patched.split("codexLinuxSshCommandWrapper").length > 10);
 });
 
+test("main-process patch rejects a stale injected helper implementation", () => {
+  const patched = applyMainBundlePatch(mainFixture);
+  const stale = patched.replace("e.length>64", "e.length>63");
+  assert.notEqual(stale, patched);
+
+  const { value, warnings } = withCapturedWarnings(() => applyMainBundlePatch(stale));
+  assert.equal(value, stale);
+  assert.match(warnings.join("\n"), /helperSource=0/u);
+});
+
 test("main-process patch fails soft and byte-identical on drift", () => {
   const warnings = [];
   const originalWarn = console.warn;
@@ -201,6 +211,16 @@ test("patches the SSH connection editor for manual hosts and aliases", () => {
   assert.match(patched, /ssh -T target-host --/u);
   assert.match(patched, /invalidSshCommandWrapper/u);
   assert.match(patched, /codexLinuxSshCommandWrapper:codexLinuxParseSshCommandWrapper/u);
+});
+
+test("webview patch rejects a damaged injected helper implementation", () => {
+  const patched = applyWebviewPatch(webviewFixture);
+  const damaged = patched.replace("t.length>64", "t.length>63");
+  assert.notEqual(damaged, patched);
+
+  const { value, warnings } = withCapturedWarnings(() => applyWebviewPatch(damaged));
+  assert.equal(value, damaged);
+  assert.match(warnings.join("\n"), /helperSource=0/u);
 });
 
 test("webview patch rejects duplicate owned editor targets", () => {

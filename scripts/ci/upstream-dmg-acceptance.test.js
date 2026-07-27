@@ -253,7 +253,6 @@ test("Nix hash refresh accepts a validated focused output override", () => {
     "persistent-status-panel",
     "remote-control-ui",
     "remote-mobile-control",
-    "ssh-command-wrapper",
     "ui-tweaks",
   ]);
   assert.match(script, /NIX_VERIFY_OUTPUTS/);

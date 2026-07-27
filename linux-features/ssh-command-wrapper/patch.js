@@ -154,6 +154,7 @@ function replacementState(source, config) {
   const before = config.replacements.map(([needle]) => countOccurrences(source, needle));
   const after = config.replacements.map(([, replacement]) => countOccurrences(source, replacement));
   const helpers = config.helperMarkers.map((marker) => countOccurrences(source, marker));
+  const helperSource = countOccurrences(source, config.helperSource());
   const anchors = config.requiredAnchors.map((anchor) => countOccurrences(source, anchor));
   const fresh =
     helpers.every((count) => count === 0) &&
@@ -162,17 +163,19 @@ function replacementState(source, config) {
     after.every((count) => count === 0);
   const complete =
     helpers.every((count) => count === 1) &&
+    helperSource === 1 &&
     anchors.every((count) => count === 1) &&
     before.every((count) => count === 0) &&
     after.every((count) => count === 1);
-  return { fresh, complete, before, after, helpers, anchors };
+  return { fresh, complete, before, after, helpers, helperSource, anchors };
 }
 
 function warnUnexpectedPatchState(label, state) {
   console.warn(
     `WARN: SSH command-wrapper ${label} patch is partial, ambiguous, or drifted ` +
     `(before=[${state.before.join(",")}], after=[${state.after.join(",")}], ` +
-    `helpers=[${state.helpers.join(",")}], anchors=[${state.anchors.join(",")}])`,
+    `helpers=[${state.helpers.join(",")}], helperSource=${state.helperSource}, ` +
+    `anchors=[${state.anchors.join(",")}])`,
   );
 }
 
