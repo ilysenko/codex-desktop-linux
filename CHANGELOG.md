@@ -35,6 +35,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Updater-managed npm Codex CLI installs now serialize across daemon, launcher,
+  and status processes. If an interrupted npm upgrade leaves the exact
+  user-owned Arborist retirement directory that blocks every later install
+  with `ENOTEMPTY`, the updater removes only that validated directory and
+  retries once.
 - Concurrent updater entrypoints now serialize state reloads and cache cleanup
   before persisting startup state. A second process can no longer prune an
   active rebuild workspace, while forced checks wait for startup maintenance
