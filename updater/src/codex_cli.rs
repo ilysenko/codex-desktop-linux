@@ -64,13 +64,18 @@ enum CliUpdateOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliRepairOutcome {
     pub installed_version: String,
-    pub quarantine_path: Option<PathBuf>,
+    pub quarantine_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ManagedCliInstall {
     cli_path: PathBuf,
     installed_version: String,
+}
+
+enum OptionalDependencyRepairOutcome {
+    Functional(String),
+    RepairRequired,
 }
 
 pub fn preflight(
@@ -95,16 +100,19 @@ fn preflight_with_version_timeout(
     allow_install_missing: bool,
     version_timeout: StdDuration,
 ) -> Result<PreflightOutcome> {
+    let mut routine_baseline = state.clone();
     let requested_path = explicit_cli_path.as_deref();
     let (selected_cli_path, installed_missing_cli) = match resolve_cli_path(requested_path) {
         Some(path) => (path, false),
-        None if allow_install_missing => match install_missing_cli(state, paths) {
-            Ok(path) => (path, true),
-            Err(error) => {
-                persist_cli_failure(state, paths, &error)?;
-                return Err(error);
+        None if allow_install_missing => {
+            match install_missing_cli(state, paths, &mut routine_baseline, requested_path) {
+                Ok(result) => result,
+                Err(error) => {
+                    persist_cli_failure(state, paths, &error, &mut routine_baseline)?;
+                    return Err(error);
+                }
             }
-        },
+        }
         None => anyhow::bail!("Codex CLI not found in PATH or known install locations"),
     };
     let cli_path = match stable_cli_launch_path(&selected_cli_path) {
@@ -116,7 +124,7 @@ fn preflight_with_version_timeout(
             state.cli_installed_version = None;
             state.cli_package_manager_latest_version = None;
             state.cli_last_verified_at = None;
-            persist_cli_failure(state, paths, &error)?;
+            persist_cli_failure(state, paths, &error, &mut routine_baseline)?;
             return Err(error);
         }
     };
@@ -137,15 +145,33 @@ fn preflight_with_version_timeout(
         Err(probe_error) => {
             let Some(missing_dependency) = missing_platform_optional_dependency(&probe_error)
             else {
-                persist_new_cli_probe_failure(installed_missing_cli, state, paths, &probe_error)?;
+                persist_new_cli_probe_failure(
+                    installed_missing_cli,
+                    state,
+                    paths,
+                    &probe_error,
+                    &mut routine_baseline,
+                )?;
                 return Err(probe_error);
             };
             if managed_cli.is_some() {
-                persist_new_cli_probe_failure(installed_missing_cli, state, paths, &probe_error)?;
+                persist_new_cli_probe_failure(
+                    installed_missing_cli,
+                    state,
+                    paths,
+                    &probe_error,
+                    &mut routine_baseline,
+                )?;
                 return Err(probe_error);
             }
             let Some(npm_install) = npm_cli_install(&cli_path, &missing_dependency) else {
-                persist_new_cli_probe_failure(installed_missing_cli, state, paths, &probe_error)?;
+                persist_new_cli_probe_failure(
+                    installed_missing_cli,
+                    state,
+                    paths,
+                    &probe_error,
+                    &mut routine_baseline,
+                )?;
                 return Err(probe_error);
             };
 
@@ -160,25 +186,41 @@ fn preflight_with_version_timeout(
             state.cli_last_verified_at = None;
             state.cli_status = CliStatus::Updating;
             state.cli_error_message = None;
-            persist_state(paths, state)?;
+            if persist_routine_state(paths, state, &mut routine_baseline)? {
+                return Err(anyhow!(
+                    "Codex CLI repair is already pending. Run `codex-update-manager diagnose` for details and repair instructions."
+                ));
+            }
 
-            let repaired_version = repair_npm_optional_dependency(&npm_install, paths)
-                .and_then(|()| {
-                    read_installed_version_bounded(&cli_path, version_timeout)
-                })
-                .with_context(|| {
-                    format!(
-                        "Failed to repair npm-managed Codex CLI at {} after its version probe failed: {probe_error}",
-                        cli_path.display()
-                    )
-                });
+            let repaired_version = match repair_npm_optional_dependency(
+                &npm_install,
+                paths,
+                &cli_path,
+                version_timeout,
+            ) {
+                Ok(OptionalDependencyRepairOutcome::Functional(version)) => Ok(version),
+                Ok(OptionalDependencyRepairOutcome::RepairRequired) => {
+                    set_cli_repair_required(state);
+                    persist_routine_state(paths, state, &mut routine_baseline)?;
+                    return Err(anyhow!(
+                        "Codex CLI repair is already pending. Run `codex-update-manager diagnose` for details and repair instructions."
+                    ));
+                }
+                Err(error) => Err(error),
+            }
+            .with_context(|| {
+                format!(
+                    "Failed to repair npm-managed Codex CLI at {} after its version probe failed: {probe_error}",
+                    cli_path.display()
+                )
+            });
             match repaired_version {
                 Ok(version) => {
                     repaired_npm_install = Some(npm_install);
                     version
                 }
                 Err(error) => {
-                    persist_cli_failure(state, paths, &error)?;
+                    persist_cli_failure(state, paths, &error, &mut routine_baseline)?;
                     return Err(error);
                 }
             }
@@ -199,16 +241,11 @@ fn preflight_with_version_timeout(
         .as_ref()
         .map(|status| status.latest_version.clone());
     state.cli_last_verified_at = Some(Utc::now());
-    persist_state(paths, state)?;
-
-    if matches!(cli_install_kind, CliInstallKind::Npm) && npm_cli_repair::load(paths)?.is_some() {
-        set_cli_repair_required(state);
-        persist_state(paths, state)?;
-        return Ok(preflight_outcome_from_state(
+    if persist_routine_state(paths, state, &mut routine_baseline)? {
+        return Ok(preflight_outcome_from_current_state(
+            state,
             cli_path,
             installed_version,
-            state,
-            false,
         ));
     }
 
@@ -228,7 +265,13 @@ fn preflight_with_version_timeout(
             managed_cli.as_ref(),
             package_manager_version_status.as_ref(),
         );
-        persist_state(paths, state)?;
+        if persist_routine_state(paths, state, &mut routine_baseline)? {
+            return Ok(preflight_outcome_from_current_state(
+                state,
+                cli_path,
+                installed_version,
+            ));
+        }
         return Ok(preflight_outcome_from_state(
             cli_path,
             installed_version,
@@ -240,7 +283,13 @@ fn preflight_with_version_timeout(
     state.cli_last_check_at = Some(Utc::now());
     state.cli_error_message = None;
     state.cli_status = CliStatus::Checking;
-    persist_state(paths, state)?;
+    if persist_routine_state(paths, state, &mut routine_baseline)? {
+        return Ok(preflight_outcome_from_current_state(
+            state,
+            cli_path,
+            installed_version,
+        ));
+    }
 
     let latest_version_result =
         repaired_npm_install
@@ -261,7 +310,13 @@ fn preflight_with_version_timeout(
                 state.cli_error_message = Some(format!(
                     "Could not check the latest {CLI_PACKAGE_NAME} version: {error}"
                 ));
-                persist_state(paths, state)?;
+                if persist_routine_state(paths, state, &mut routine_baseline)? {
+                    return Ok(preflight_outcome_from_current_state(
+                        state,
+                        cli_path,
+                        installed_version,
+                    ));
+                }
                 warn!(?error, "unable to check latest Codex CLI version");
                 return Ok(preflight_outcome_from_state(
                     cli_path,
@@ -286,7 +341,13 @@ fn preflight_with_version_timeout(
     );
 
     if managed_cli.is_some() {
-        persist_state(paths, state)?;
+        if persist_routine_state(paths, state, &mut routine_baseline)? {
+            return Ok(preflight_outcome_from_current_state(
+                state,
+                cli_path,
+                installed_version,
+            ));
+        }
         return Ok(preflight_outcome_from_state(
             cli_path,
             installed_version,
@@ -303,7 +364,13 @@ fn preflight_with_version_timeout(
             "This Codex CLI appears to be installed through Homebrew at {}. Update it with Homebrew; ChatGPT Desktop will not replace it with an npm-managed install.",
             cli_path.display()
         ));
-        persist_state(paths, state)?;
+        if persist_routine_state(paths, state, &mut routine_baseline)? {
+            return Ok(preflight_outcome_from_current_state(
+                state,
+                cli_path,
+                installed_version,
+            ));
+        }
         return Ok(preflight_outcome_from_state(
             cli_path,
             installed_version,
@@ -320,7 +387,13 @@ fn preflight_with_version_timeout(
             state.cli_error_message = Some(format!(
                 "Could not check the latest {CLI_PACKAGE_NAME} version"
             ));
-            persist_state(paths, state)?;
+            if persist_routine_state(paths, state, &mut routine_baseline)? {
+                return Ok(preflight_outcome_from_current_state(
+                    state,
+                    cli_path,
+                    installed_version,
+                ));
+            }
             return Ok(preflight_outcome_from_state(
                 cli_path,
                 installed_version,
@@ -330,7 +403,13 @@ fn preflight_with_version_timeout(
         }
     };
     if state.cli_status == CliStatus::UpToDate {
-        persist_state(paths, state)?;
+        if persist_routine_state(paths, state, &mut routine_baseline)? {
+            return Ok(preflight_outcome_from_current_state(
+                state,
+                cli_path,
+                installed_version,
+            ));
+        }
         return Ok(preflight_outcome_from_state(
             cli_path,
             installed_version,
@@ -339,7 +418,13 @@ fn preflight_with_version_timeout(
         ));
     }
     if repaired {
-        persist_state(paths, state)?;
+        if persist_routine_state(paths, state, &mut routine_baseline)? {
+            return Ok(preflight_outcome_from_current_state(
+                state,
+                cli_path,
+                installed_version,
+            ));
+        }
         return Ok(preflight_outcome_from_state(
             cli_path,
             installed_version,
@@ -348,32 +433,44 @@ fn preflight_with_version_timeout(
         ));
     }
 
-    persist_state(paths, state)?;
+    if persist_routine_state(paths, state, &mut routine_baseline)? {
+        return Ok(preflight_outcome_from_current_state(
+            state,
+            cli_path,
+            installed_version,
+        ));
+    }
     info!(
         installed_version,
         latest_version, "Codex CLI is outdated; attempting prelaunch upgrade"
     );
 
     state.cli_status = CliStatus::Updating;
-    persist_state(paths, state)?;
+    if persist_routine_state(paths, state, &mut routine_baseline)? {
+        return Ok(preflight_outcome_from_current_state(
+            state,
+            cli_path,
+            installed_version,
+        ));
+    }
     let managed_install =
         match update_existing_cli(&cli_install_kind, &latest_version, state, paths) {
             Ok(CliUpdateOutcome::Updated(managed_install)) => managed_install,
             Ok(CliUpdateOutcome::RepairRequired) => {
                 set_cli_repair_required(state);
-                persist_state(paths, state)?;
-                return Ok(preflight_outcome_from_state(
+                persist_routine_state(paths, state, &mut routine_baseline)?;
+                return Ok(preflight_outcome_from_current_state(
+                    state,
                     cli_path,
                     installed_version,
-                    state,
-                    false,
                 ));
             }
             Err(error) => {
-                persist_cli_failure(state, paths, &error)?;
+                persist_cli_failure(state, paths, &error, &mut routine_baseline)?;
                 return Err(error);
             }
         };
+    routine_baseline = state.clone();
 
     let (refreshed_path, refreshed_version) = if let Some(managed_install) = managed_install {
         (managed_install.cli_path, managed_install.installed_version)
@@ -398,13 +495,25 @@ fn preflight_with_version_timeout(
         );
         state.cli_status = CliStatus::Failed;
         state.cli_error_message = Some(message.clone());
-        persist_state(paths, state)?;
+        if persist_routine_state(paths, state, &mut routine_baseline)? {
+            return Ok(preflight_outcome_from_current_state(
+                state,
+                refreshed_path,
+                refreshed_version,
+            ));
+        }
         anyhow::bail!(message);
     }
 
     state.cli_status = CliStatus::UpToDate;
     state.cli_error_message = None;
-    persist_state(paths, state)?;
+    if persist_routine_state(paths, state, &mut routine_baseline)? {
+        return Ok(preflight_outcome_from_current_state(
+            state,
+            refreshed_path,
+            refreshed_version,
+        ));
+    }
     Ok(preflight_outcome_from_state(
         refreshed_path,
         refreshed_version,
@@ -479,12 +588,13 @@ pub fn refresh_cached_status(state: &mut PersistedState, paths: &RuntimePaths) -
 }
 
 pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
+    let mut routine_baseline = state.clone();
     let requested_path = requested_cli_path(state);
     let selected_cli_path = match resolve_cli_path(requested_path.as_deref()) {
         Some(path) => path,
         None => {
             mark_cli_missing(state);
-            persist_state(paths, state)?;
+            persist_routine_state(paths, state, &mut routine_baseline)?;
             return Ok(());
         }
     };
@@ -501,7 +611,7 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
             state.cli_error_message = Some(format!(
                 "Could not read the installed {CLI_PACKAGE_NAME} version: {error:#}"
             ));
-            persist_state(paths, state)?;
+            persist_routine_state(paths, state, &mut routine_baseline)?;
             warn!(?error, "unable to trust selected Codex CLI");
             return Ok(());
         }
@@ -538,7 +648,7 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
             state.cli_error_message = Some(format!(
                 "Could not read the installed {CLI_PACKAGE_NAME} version: {error}"
             ));
-            persist_state(paths, state)?;
+            persist_routine_state(paths, state, &mut routine_baseline)?;
             warn!(?error, "unable to read installed Codex CLI version");
             return Ok(());
         }
@@ -580,14 +690,16 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
             managed_cli.as_ref(),
             package_manager_version_status.as_ref(),
         );
-        persist_state(paths, state)?;
+        persist_routine_state(paths, state, &mut routine_baseline)?;
         return Ok(());
     }
 
     state.cli_last_check_at = Some(Utc::now());
     state.cli_error_message = None;
     state.cli_status = CliStatus::Checking;
-    persist_state(paths, state)?;
+    if persist_routine_state(paths, state, &mut routine_baseline)? {
+        return Ok(());
+    }
 
     match read_latest_version() {
         Ok(latest_version) => {
@@ -636,7 +748,7 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
         }
     }
 
-    persist_state(paths, state)
+    persist_routine_state(paths, state, &mut routine_baseline).map(|_| ())
 }
 
 pub fn reconcile_if_present(state: &mut PersistedState, paths: &RuntimePaths) -> Result<bool> {
@@ -650,31 +762,38 @@ pub fn reconcile_if_present(state: &mut PersistedState, paths: &RuntimePaths) ->
 }
 
 fn persist_state(paths: &RuntimePaths, state: &mut PersistedState) -> Result<()> {
-    let mut latest =
-        PersistedState::load_or_default(&paths.state_file, state.auto_install_on_app_exit)?;
-    latest.cli_path = state.cli_path.clone();
-    latest.cli_install_channel = state.cli_install_channel.clone();
-    latest.cli_installed_version = state.cli_installed_version.clone();
-    latest.cli_official_latest_version = state.cli_official_latest_version.clone();
-    latest.cli_package_manager_latest_version = state.cli_package_manager_latest_version.clone();
-    latest.cli_status = state.cli_status.clone();
-    latest.cli_last_check_at = state.cli_last_check_at;
-    latest.cli_last_verified_at = state.cli_last_verified_at;
-    latest.cli_error_message = state.cli_error_message.clone();
-    latest.cli_prompt_dismissed_at = state.cli_prompt_dismissed_at;
-    latest.save(&paths.state_file)?;
-    *state = latest;
-    Ok(())
+    state.save_cli(&paths.state_file)
+}
+
+fn persist_routine_state(
+    paths: &RuntimePaths,
+    state: &mut PersistedState,
+    baseline: &mut PersistedState,
+) -> Result<bool> {
+    let _install_lock = npm_cli_repair::acquire_install_lock(paths)?;
+    let repair_pending = npm_cli_repair::load(paths)?.is_some();
+    if repair_pending {
+        set_cli_repair_required(state);
+        state.save_cli_status(&paths.state_file)?;
+        *baseline = state.clone();
+        return Ok(true);
+    }
+    let persisted = state.save_cli_if_unchanged(&paths.state_file, baseline)?;
+    if persisted {
+        *baseline = state.clone();
+    }
+    Ok(!persisted)
 }
 
 fn persist_cli_failure(
     state: &mut PersistedState,
     paths: &RuntimePaths,
     error: &anyhow::Error,
+    baseline: &mut PersistedState,
 ) -> Result<()> {
     state.cli_status = CliStatus::Failed;
     state.cli_error_message = Some(format!("{error:#}"));
-    persist_state(paths, state)
+    persist_routine_state(paths, state, baseline).map(|_| ())
 }
 
 fn set_cli_repair_required(state: &mut PersistedState) {
@@ -690,9 +809,10 @@ fn persist_new_cli_probe_failure(
     state: &mut PersistedState,
     paths: &RuntimePaths,
     error: &anyhow::Error,
+    baseline: &mut PersistedState,
 ) -> Result<()> {
     if installed_missing_cli {
-        persist_cli_failure(state, paths, error)?;
+        persist_cli_failure(state, paths, error, baseline)?;
     }
     Ok(())
 }
@@ -994,6 +1114,22 @@ fn preflight_outcome_from_state(
     }
 }
 
+fn preflight_outcome_from_current_state(
+    state: &PersistedState,
+    fallback_path: PathBuf,
+    fallback_version: String,
+) -> PreflightOutcome {
+    preflight_outcome_from_state(
+        state.cli_path.clone().unwrap_or(fallback_path),
+        state
+            .cli_installed_version
+            .clone()
+            .unwrap_or(fallback_version),
+        state,
+        false,
+    )
+}
+
 fn installed_cli_version_satisfies_latest(installed_version: &str, latest_version: &str) -> bool {
     if installed_version == latest_version {
         return true;
@@ -1090,7 +1226,7 @@ fn read_latest_version_with_npm_bounded(
         OsString::from(CLI_PACKAGE_NAME),
         OsString::from("version"),
     ];
-    let output = run_bounded_command_output(npm, path_env, None, &args, timeout, false)?;
+    let output = run_bounded_command_output(npm, path_env, None, &args, timeout, false, None)?;
 
     parse_latest_version_output(npm, &output)
 }
@@ -1222,14 +1358,32 @@ fn path_is_system_managed_location(path: &Path) -> bool {
             .any(|root| path.starts_with(root))
 }
 
-fn repair_npm_optional_dependency(install: &NpmCliInstall, paths: &RuntimePaths) -> Result<()> {
-    let _install_lock = npm_cli_repair::acquire_install_lock(paths)?;
-    repair_npm_optional_dependency_with_timeout(install, NPM_REPAIR_INSTALL_TIMEOUT)
+fn repair_npm_optional_dependency(
+    install: &NpmCliInstall,
+    paths: &RuntimePaths,
+    cli_path: &Path,
+    version_timeout: StdDuration,
+) -> Result<OptionalDependencyRepairOutcome> {
+    let install_lock = npm_cli_repair::acquire_install_lock(paths)?;
+    if npm_cli_repair::load(paths)?.is_some() {
+        return Ok(OptionalDependencyRepairOutcome::RepairRequired);
+    }
+    if let Ok(version) = read_installed_version_bounded(cli_path, version_timeout) {
+        return Ok(OptionalDependencyRepairOutcome::Functional(version));
+    }
+    repair_npm_optional_dependency_with_timeout(
+        install,
+        NPM_REPAIR_INSTALL_TIMEOUT,
+        Some(&install_lock),
+    )?;
+    read_installed_version_bounded(cli_path, version_timeout)
+        .map(OptionalDependencyRepairOutcome::Functional)
 }
 
 fn repair_npm_optional_dependency_with_timeout(
     install: &NpmCliInstall,
     timeout: StdDuration,
+    install_lock: Option<&npm_cli_repair::InstallLock>,
 ) -> Result<()> {
     let args = [
         OsString::from("install"),
@@ -1242,6 +1396,7 @@ fn repair_npm_optional_dependency_with_timeout(
         &args,
         timeout,
         true,
+        install_lock,
     )?;
 
     anyhow::ensure!(
@@ -1262,7 +1417,7 @@ fn run_bounded_command(
     args: &[OsString],
     timeout: StdDuration,
 ) -> Result<String> {
-    let output = run_bounded_command_output(program, path_env, None, args, timeout, false)?;
+    let output = run_bounded_command_output(program, path_env, None, args, timeout, false, None)?;
     if !output.status.success() {
         anyhow::bail!(
             "{} exited with {}{}",
@@ -1281,6 +1436,7 @@ fn run_bounded_command_output(
     args: &[OsString],
     timeout: StdDuration,
     safe_umask: bool,
+    install_lock: Option<&npm_cli_repair::InstallLock>,
 ) -> Result<Output> {
     let mut command = Command::new(program);
     command
@@ -1294,6 +1450,9 @@ fn run_bounded_command_output(
     }
     if safe_umask {
         apply_safe_child_umask(&mut command);
+    }
+    if let Some(install_lock) = install_lock {
+        install_lock.inherit_with(&mut command);
     }
     command.process_group(0);
 
@@ -2111,20 +2270,35 @@ fn install_latest_cli(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<CliUpdateOutcome> {
+    let install_lock = npm_cli_repair::acquire_install_lock(paths)?;
+    install_latest_cli_locked(latest_version, state, paths, &install_lock)
+}
+
+fn install_latest_cli_locked(
+    latest_version: &str,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    install_lock: &npm_cli_repair::InstallLock,
+) -> Result<CliUpdateOutcome> {
     let (npm, path_env) = npm_program()?;
     let package_spec = format!("{CLI_PACKAGE_NAME}@{latest_version}");
     let local_prefix = npm_cli_repair::managed_prefix();
     prepare_safe_npm_prefix(&local_prefix)?;
-    let _install_lock = npm_cli_repair::acquire_install_lock(paths)?;
     if npm_cli_repair::load(paths)?.is_some() {
         set_cli_repair_required(state);
-        persist_state(paths, state)?;
+        state.save_cli_status(&paths.state_file)?;
         return Ok(CliUpdateOutcome::RepairRequired);
     }
-    if let Some(install) = current_managed_install(latest_version).ok().flatten() {
-        record_managed_install(state, latest_version, &install);
-        persist_state(paths, state)?;
-        return Ok(CliUpdateOutcome::Updated(Some(install)));
+    match current_managed_install(latest_version) {
+        Ok(Some(install)) => {
+            record_managed_install(state, latest_version, &install);
+            persist_state(paths, state)?;
+            return Ok(CliUpdateOutcome::Updated(Some(install)));
+        }
+        Ok(None) => {}
+        Err(error) => {
+            return Err(error).context("Failed to validate the existing managed Codex CLI");
+        }
     }
     let local_args = vec![
         OsString::from("install"),
@@ -2141,6 +2315,7 @@ fn install_latest_cli(
         &local_args,
         NPM_REPAIR_INSTALL_TIMEOUT,
         true,
+        Some(install_lock),
     )?;
     if first_output.status.success() {
         let install = current_managed_install(latest_version)?.with_context(|| {
@@ -2153,7 +2328,7 @@ fn install_latest_cli(
 
     if npm_cli_repair::detect_and_persist(paths, &local_prefix, &first_output)?.is_some() {
         set_cli_repair_required(state);
-        persist_state(paths, state)?;
+        state.save_cli_status(&paths.state_file)?;
         return Ok(CliUpdateOutcome::RepairRequired);
     }
 
@@ -2195,21 +2370,82 @@ fn prepare_safe_npm_prefix(prefix: &Path) -> Result<()> {
 }
 
 pub fn repair_cli(state: &mut PersistedState, paths: &RuntimePaths) -> Result<CliRepairOutcome> {
-    let _install_lock = npm_cli_repair::acquire_install_lock(paths)?;
-    let journal = npm_cli_repair::load(paths)?
+    let install_lock = npm_cli_repair::acquire_install_lock(paths)?;
+    let mut journal = npm_cli_repair::load(paths)?
         .context("No Codex CLI repair is pending. Run `codex-update-manager diagnose` first.")?;
-    let (npm, path_env) = npm_program()?;
+    let initial_snapshot = npm_cli_repair::validate_journal(&journal)?;
+    let (npm, path_env) = match npm_program() {
+        Ok(command) => command,
+        Err(error) => {
+            return Err(cli_repair_failure_error(
+                state,
+                paths,
+                &mut journal,
+                &initial_snapshot,
+                &format!("Failed to resolve npm for Codex CLI repair: {error:#}"),
+            ));
+        }
+    };
     let latest_version =
-        read_latest_version_with_npm_bounded(&npm, &path_env, NPM_REPAIR_REGISTRY_TIMEOUT)?;
-    let (mut journal, snapshot) = npm_cli_repair::quarantine(paths, journal)?;
+        match read_latest_version_with_npm_bounded(&npm, &path_env, NPM_REPAIR_REGISTRY_TIMEOUT) {
+            Ok(version) => version,
+            Err(error) => {
+                return Err(cli_repair_failure_error(
+                    state,
+                    paths,
+                    &mut journal,
+                    &initial_snapshot,
+                    &format!("Failed to resolve the latest Codex CLI version: {error:#}"),
+                ));
+            }
+        };
+    let snapshot = match npm_cli_repair::quarantine(paths, &mut journal) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            let fallback_snapshot = npm_cli_repair::journal_snapshot(&journal)
+                .unwrap_or_else(|_| initial_snapshot.clone());
+            return Err(cli_repair_failure_error(
+                state,
+                paths,
+                &mut journal,
+                &fallback_snapshot,
+                &format!("Failed to quarantine the stale npm directory: {error:#}"),
+            ));
+        }
+    };
 
-    if let Some(install) = current_managed_install(&latest_version).ok().flatten() {
-        npm_cli_repair::clear(paths)?;
+    if let Some(install) = match current_managed_install(&latest_version) {
+        Ok(install) => install,
+        Err(error) => {
+            warn!(
+                ?error,
+                "managed Codex CLI probe failed during explicit repair"
+            );
+            None
+        }
+    } {
         record_managed_install(state, &latest_version, &install);
-        persist_state(paths, state)?;
+        if let Err(error) = persist_state(paths, state) {
+            return Err(cli_repair_failure_error(
+                state,
+                paths,
+                &mut journal,
+                &snapshot,
+                &format!("Failed to persist repaired Codex CLI state: {error:#}"),
+            ));
+        }
+        if let Err(error) = npm_cli_repair::clear(paths) {
+            return Err(cli_repair_failure_error(
+                state,
+                paths,
+                &mut journal,
+                &snapshot,
+                &format!("Failed to clear the completed Codex CLI repair journal: {error:#}"),
+            ));
+        }
         return Ok(CliRepairOutcome {
             installed_version: install.installed_version,
-            quarantine_path: snapshot.quarantine_path,
+            quarantine_paths: snapshot.quarantine_paths,
         });
     }
 
@@ -2229,12 +2465,17 @@ pub fn repair_cli(state: &mut PersistedState, paths: &RuntimePaths) -> Result<Cl
         &args,
         NPM_REPAIR_INSTALL_TIMEOUT,
         true,
+        Some(&install_lock),
     ) {
         Ok(output) => output,
         Err(error) => {
-            let message = format!("{error:#}");
-            let snapshot = persist_cli_repair_failure(state, paths, &mut journal, &message)?;
-            anyhow::bail!("{}", repair_failure_message(&message, &snapshot));
+            return Err(cli_repair_failure_error(
+                state,
+                paths,
+                &mut journal,
+                &snapshot,
+                &format!("{error:#}"),
+            ));
         }
     };
     if !output.status.success() {
@@ -2245,49 +2486,118 @@ pub fn repair_cli(state: &mut PersistedState, paths: &RuntimePaths) -> Result<Cl
             output.status,
             format_command_output(&output)
         );
-        let snapshot = persist_cli_repair_failure(state, paths, &mut journal, &error)?;
-        anyhow::bail!("{}", repair_failure_message(&error, &snapshot));
+        return Err(cli_repair_failure_error(
+            state,
+            paths,
+            &mut journal,
+            &snapshot,
+            &error,
+        ));
     }
 
-    let Some(install) = current_managed_install(&latest_version)? else {
-        let error = format!(
-            "npm completed but Codex CLI {latest_version} could not be resolved after repair"
-        );
-        let snapshot = persist_cli_repair_failure(state, paths, &mut journal, &error)?;
-        anyhow::bail!("{}", repair_failure_message(&error, &snapshot));
+    let install = match current_managed_install(&latest_version) {
+        Ok(Some(install)) => install,
+        Ok(None) => {
+            return Err(cli_repair_failure_error(
+                state,
+                paths,
+                &mut journal,
+                &snapshot,
+                &format!(
+                    "npm completed but Codex CLI {latest_version} could not be resolved after repair"
+                ),
+            ));
+        }
+        Err(error) => {
+            return Err(cli_repair_failure_error(
+                state,
+                paths,
+                &mut journal,
+                &snapshot,
+                &format!(
+                    "npm completed but the repaired Codex CLI could not be validated: {error:#}"
+                ),
+            ));
+        }
     };
 
-    npm_cli_repair::clear(paths)?;
     record_managed_install(state, &latest_version, &install);
-    persist_state(paths, state)?;
+    if let Err(error) = persist_state(paths, state) {
+        return Err(cli_repair_failure_error(
+            state,
+            paths,
+            &mut journal,
+            &snapshot,
+            &format!("Failed to persist repaired Codex CLI state: {error:#}"),
+        ));
+    }
+    if let Err(error) = npm_cli_repair::clear(paths) {
+        return Err(cli_repair_failure_error(
+            state,
+            paths,
+            &mut journal,
+            &snapshot,
+            &format!("Failed to clear the completed Codex CLI repair journal: {error:#}"),
+        ));
+    }
 
     Ok(CliRepairOutcome {
         installed_version: install.installed_version,
-        quarantine_path: snapshot.quarantine_path,
+        quarantine_paths: snapshot.quarantine_paths,
     })
 }
 
-fn persist_cli_repair_failure(
+fn cli_repair_failure_error(
     state: &mut PersistedState,
     paths: &RuntimePaths,
     journal: &mut npm_cli_repair::RepairJournal,
+    fallback_snapshot: &npm_cli_repair::RepairSnapshot,
     error: &str,
-) -> Result<npm_cli_repair::RepairSnapshot> {
-    let snapshot = npm_cli_repair::record_failure(paths, journal, error)?;
+) -> anyhow::Error {
+    let mut persistence_errors = Vec::new();
+    let snapshot = match npm_cli_repair::record_failure(paths, journal, error) {
+        Ok(snapshot) => snapshot,
+        Err(persist_error) => {
+            persistence_errors.push(format!(
+                "failed to persist the Codex CLI repair journal: {persist_error:#}"
+            ));
+            fallback_snapshot.clone()
+        }
+    };
+    let repair_message = repair_failure_message(error, &snapshot);
     state.cli_status = CliStatus::Failed;
     state.cli_error_message = Some(format!(
         "{} Run `codex-update-manager diagnose` before retrying `codex-update-manager repair-cli`.",
-        repair_failure_message(error, &snapshot)
+        repair_message
     ));
-    persist_state(paths, state)?;
-    Ok(snapshot)
+    if let Err(persist_error) = persist_state(paths, state) {
+        persistence_errors.push(format!(
+            "failed to persist updater CLI failure state: {persist_error:#}"
+        ));
+    }
+    if persistence_errors.is_empty() {
+        anyhow!(repair_message)
+    } else {
+        anyhow!("{repair_message}. {}", persistence_errors.join("; "))
+    }
 }
 
 fn repair_failure_message(error: &str, snapshot: &npm_cli_repair::RepairSnapshot) -> String {
-    match snapshot.quarantine_path.as_deref() {
-        Some(path) => format!("{error}. Quarantine preserved at {}", path.display()),
-        None => format!("{error}. The stale npm directory was already absent"),
+    let mut quarantine_paths = snapshot.quarantine_paths.clone();
+    if let Some(path) = snapshot.planned_quarantine_path.as_ref() {
+        if fs::symlink_metadata(path).is_ok() && !quarantine_paths.iter().any(|item| item == path) {
+            quarantine_paths.push(path.clone());
+        }
     }
+    if quarantine_paths.is_empty() {
+        return format!("{error}. No quarantine was created by this attempt");
+    }
+    let paths = quarantine_paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{error}. Quarantines preserved at {paths}")
 }
 
 fn current_managed_install(expected_version: &str) -> Result<Option<ManagedCliInstall>> {
@@ -2324,34 +2634,81 @@ fn record_managed_install(
     state.cli_error_message = None;
 }
 
-fn install_missing_cli(state: &mut PersistedState, paths: &RuntimePaths) -> Result<PathBuf> {
+fn install_missing_cli(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    baseline: &mut PersistedState,
+    requested_path: Option<&Path>,
+) -> Result<(PathBuf, bool)> {
+    install_missing_cli_with_registry_timeout(
+        state,
+        paths,
+        baseline,
+        requested_path,
+        NPM_REPAIR_REGISTRY_TIMEOUT,
+    )
+}
+
+fn install_missing_cli_with_registry_timeout(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    baseline: &mut PersistedState,
+    requested_path: Option<&Path>,
+    registry_timeout: StdDuration,
+) -> Result<(PathBuf, bool)> {
+    let install_lock = npm_cli_repair::acquire_install_lock(paths)?;
+    state.reload_cli(&paths.state_file)?;
+    *baseline = state.clone();
+    let persisted_path = state.cli_path.clone();
+    if let Some(path) =
+        resolve_cli_path(requested_path).or_else(|| resolve_cli_path(persisted_path.as_deref()))
+    {
+        return Ok((path, false));
+    }
+    if npm_cli_repair::load(paths)?.is_some() {
+        set_cli_repair_required(state);
+        state.save_cli_status(&paths.state_file)?;
+        *baseline = state.clone();
+        anyhow::bail!(
+            "Codex CLI installation is blocked by stale npm state. Run `codex-update-manager diagnose` for details and repair instructions."
+        );
+    }
     state.cli_status = CliStatus::Updating;
     persist_state(paths, state)?;
+    *baseline = state.clone();
 
-    let latest_version = read_latest_version()?;
+    let (npm, path_env) = npm_program()?;
+    let latest_version = read_latest_version_with_npm_bounded(&npm, &path_env, registry_timeout)?;
     state.cli_official_latest_version = Some(latest_version.clone());
     state.cli_package_manager_latest_version = None;
     persist_state(paths, state)?;
+    *baseline = state.clone();
 
     info!(
         latest_version,
         "Codex CLI is missing; attempting automatic installation"
     );
-    let managed_install = match install_latest_cli(&latest_version, state, paths)? {
+    let managed_install = match install_latest_cli_locked(
+        &latest_version,
+        state,
+        paths,
+        &install_lock,
+    )? {
         CliUpdateOutcome::Updated(Some(install)) => install,
         CliUpdateOutcome::Updated(None) => {
             anyhow::bail!("Managed npm install did not return a Codex CLI path")
         }
         CliUpdateOutcome::RepairRequired => {
             set_cli_repair_required(state);
-            persist_state(paths, state)?;
+            state.save_cli_status(&paths.state_file)?;
             anyhow::bail!(
                 "Codex CLI installation is blocked by stale npm state. Run `codex-update-manager diagnose` for details and repair instructions."
             );
         }
     };
+    *baseline = state.clone();
 
-    Ok(managed_install.cli_path)
+    Ok((managed_install.cli_path, true))
 }
 
 fn run_command<I, S>(program: &Path, args: I) -> Result<String>
@@ -4679,6 +5036,37 @@ exit 1
     }
 
     #[test]
+    fn pending_explicit_repair_blocks_optional_dependency_npm_mutation() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+        let prefix = temp.path().join("npm-prefix");
+        let fixture = write_npm_cli_install(
+            &prefix,
+            "#!/bin/sh\necho 'Missing optional dependency @openai/codex-linux-x64. Reinstall Codex: npm install -g @openai/codex' >&2\nexit 1\n",
+        )?;
+        let npm_log = temp.path().join("npm.log");
+        write_executable_script(
+            &fixture.npm_program,
+            "#!/bin/sh\necho called > \"$NPM_LOG\"\nexit 0\n",
+        )?;
+        let _restore_env = configure_cli_test_env(temp.path(), [prefix.join("bin")])?;
+        std::env::set_var("NPM_LOG", &npm_log);
+        npm_cli_repair::write_detected_for_test(&paths, ".codex-cqYkmGXr")?;
+
+        let mut state = PersistedState::new(true);
+        let error = preflight(&mut state, &paths, Some(fixture.visible_cli), false)
+            .expect_err("pending explicit repair must block automatic npm mutation");
+
+        assert!(error.to_string().contains("codex-update-manager diagnose"));
+        assert_eq!(state.cli_status, CliStatus::UpdateRequired);
+        assert!(!npm_log.exists());
+        assert!(npm_cli_repair::load(&paths)?.is_some());
+        Ok(())
+    }
+
+    #[test]
     fn optional_dependency_repair_match_is_specific_to_linux_platform_packages() {
         let linux_error = anyhow::anyhow!(
             "Error: Missing optional dependency @openai/codex-linux-x64. Reinstall Codex: npm install -g @openai/codex"
@@ -4805,9 +5193,12 @@ exit 1
         };
 
         let started = Instant::now();
-        let error =
-            repair_npm_optional_dependency_with_timeout(&install, StdDuration::from_millis(100))
-                .expect_err("a hanging npm repair must time out");
+        let error = repair_npm_optional_dependency_with_timeout(
+            &install,
+            StdDuration::from_millis(100),
+            None,
+        )
+        .expect_err("a hanging npm repair must time out");
 
         assert!(error.to_string().contains("timed out"));
         assert!(started.elapsed() < StdDuration::from_secs(3));
@@ -4881,6 +5272,139 @@ exit 1
         let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
         assert_eq!(persisted.cli_status, CliStatus::Failed);
         assert_eq!(persisted.cli_error_message, state.cli_error_message);
+        Ok(())
+    }
+
+    #[test]
+    fn pending_repair_blocks_missing_cli_registry_and_install_transitions() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let bin_dir = temp.path().join("bin");
+        let npm_log = temp.path().join("npm.log");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("npm"),
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexit 42\n",
+                npm_log.display()
+            ),
+        )?;
+        let _restore_env = configure_cli_test_env(temp.path(), [bin_dir])?;
+        npm_cli_repair::write_detected_for_test(&paths, ".codex-cqYkmGXr")?;
+
+        let winner_path = temp.path().join("winner/codex");
+        let mut winner = PersistedState::new(true);
+        winner.cli_path = Some(winner_path.clone());
+        winner.cli_installed_version = Some("0.42.1".to_string());
+        winner.remote_headers_fingerprint = Some("must-survive-pending-repair".to_string());
+        winner.save(&paths.state_file)?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(temp.path().join("stale/codex"));
+        state.cli_installed_version = Some("0.42.0".to_string());
+        preflight(&mut state, &paths, None, true)
+            .expect_err("pending repair must block a missing CLI installation");
+
+        assert!(!npm_log.exists());
+        assert_eq!(state.cli_status, CliStatus::UpdateRequired);
+        assert_eq!(state.cli_path.as_deref(), Some(winner_path.as_path()));
+        assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.1"));
+        assert!(state
+            .cli_error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("codex-update-manager diagnose")));
+        let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(persisted.cli_status, CliStatus::UpdateRequired);
+        assert_eq!(persisted.cli_path.as_deref(), Some(winner_path.as_path()));
+        assert_eq!(persisted.cli_installed_version.as_deref(), Some("0.42.1"));
+        assert_eq!(
+            persisted.remote_headers_fingerprint.as_deref(),
+            Some("must-survive-pending-repair")
+        );
+        assert_eq!(persisted.cli_error_message, state.cli_error_message);
+        Ok(())
+    }
+
+    #[test]
+    fn pending_repair_during_cli_update_preserves_newer_cli_identity() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let bin_dir = temp.path().join("bin");
+        let npm_log = temp.path().join("npm.log");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("npm"),
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexit 42\n",
+                npm_log.display()
+            ),
+        )?;
+        let _restore_env = configure_cli_test_env(temp.path(), [bin_dir])?;
+        npm_cli_repair::write_detected_for_test(&paths, ".codex-cqYkmGXr")?;
+
+        let winner_path = temp.path().join("winner/codex");
+        let mut winner = PersistedState::new(true);
+        winner.cli_path = Some(winner_path.clone());
+        winner.cli_installed_version = Some("0.42.1".to_string());
+        winner.remote_headers_fingerprint = Some("must-survive-update-repair".to_string());
+        winner.save(&paths.state_file)?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(temp.path().join("stale/codex"));
+        state.cli_installed_version = Some("0.42.0".to_string());
+        let outcome = install_latest_cli("0.42.1", &mut state, &paths)?;
+
+        assert!(matches!(outcome, CliUpdateOutcome::RepairRequired));
+        assert!(!npm_log.exists());
+        assert_eq!(state.cli_status, CliStatus::UpdateRequired);
+        assert_eq!(state.cli_path.as_deref(), Some(winner_path.as_path()));
+        assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.1"));
+        let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(persisted.cli_path.as_deref(), Some(winner_path.as_path()));
+        assert_eq!(persisted.cli_installed_version.as_deref(), Some("0.42.1"));
+        assert_eq!(
+            persisted.remote_headers_fingerprint.as_deref(),
+            Some("must-survive-update-repair")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn missing_cli_registry_timeout_releases_the_install_lock() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("npm"),
+            "#!/bin/sh\nif [ \"$1\" = \"view\" ]; then\n  while :; do sleep 1; done\nfi\nexit 42\n",
+        )?;
+        let _restore_env = configure_cli_test_env(temp.path(), [bin_dir])?;
+
+        let mut state = PersistedState::new(true);
+        let mut baseline = state.clone();
+        let started = Instant::now();
+        let error = install_missing_cli_with_registry_timeout(
+            &mut state,
+            &paths,
+            &mut baseline,
+            None,
+            StdDuration::from_millis(100),
+        )
+        .expect_err("a hanging missing-CLI registry lookup must time out");
+
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < StdDuration::from_secs(3));
+        let _lock = npm_cli_repair::acquire_install_lock(&paths)?;
         Ok(())
     }
 
@@ -5027,8 +5551,12 @@ exit 1
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
             "FAKE_CODEX_PATH",
             "NPM_ACTIVE_PACKAGE",
+            "NPM_INSTALL_RESULT",
             "NPM_INSTALL_LOG",
+            "NPM_MANAGED_CLI",
+            "NPM_MANAGED_CLI_DIR",
             "NPM_RETIREMENT_PATH",
+            "NPM_VIEW_RESULT",
         ]);
         let temp = tempdir()?;
         let paths = test_runtime_paths(temp.path());
@@ -5118,7 +5646,8 @@ exit 1
 
         let outcome = repair_cli(&mut state, &paths)?;
         assert_eq!(outcome.installed_version, "0.42.1");
-        assert!(outcome.quarantine_path.as_deref().is_some_and(Path::exists));
+        assert_eq!(outcome.quarantine_paths.len(), 1);
+        assert!(outcome.quarantine_paths[0].exists());
         assert!(!retirement_path.exists());
         assert_eq!(fs::read_to_string(&install_log)?, "attempt\nattempt\n");
         assert_eq!(state.cli_status, CliStatus::UpToDate);
@@ -5139,7 +5668,10 @@ exit 1
             "CODEX_CLI_PATH",
             "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
             "NPM_ACTIVE_PACKAGE",
+            "NPM_INSTALL_RESULT",
             "NPM_INSTALL_LOG",
+            "NPM_MANAGED_CLI",
+            "NPM_MANAGED_CLI_DIR",
             "NPM_RETIREMENT_PATH",
         ]);
         let temp = tempdir()?;
@@ -5152,6 +5684,7 @@ exit 1
         let destination = prefix
             .join("lib/node_modules/@openai")
             .join(".codex-cqYkmGXr");
+        let managed_cli = prefix.join("bin/codex");
         let install_log = temp.path().join("npm-install.log");
         fs::create_dir_all(&source)?;
         fs::create_dir_all(&destination)?;
@@ -5162,11 +5695,22 @@ exit 1
             &bin_dir.join("npm"),
             r#"#!/bin/sh
 if [ "$1" = "view" ]; then
+  if [ "${NPM_VIEW_RESULT:-success}" = "failure" ]; then
+    printf 'registry unavailable\n' >&2
+    exit 43
+  fi
   echo '0.42.1'
   exit 0
 fi
 if [ "$1" = "install" ]; then
   printf 'attempt\n' >> "$NPM_INSTALL_LOG"
+  if [ "${NPM_INSTALL_RESULT:-failure}" = "invalid" ]; then
+    /bin/mkdir -p "$NPM_MANAGED_CLI_DIR"
+    printf '%s\n' '#!/bin/sh' 'exit 1' > "$NPM_MANAGED_CLI"
+    /bin/chmod 755 "$NPM_MANAGED_CLI"
+    exit 0
+  fi
+  /bin/mkdir -p "$NPM_RETIREMENT_PATH"
   printf 'retry failed\n' >&2
   exit 42
 fi
@@ -5185,6 +5729,11 @@ exit 1
         std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
         std::env::set_var("NPM_ACTIVE_PACKAGE", &source);
         std::env::set_var("NPM_INSTALL_LOG", &install_log);
+        std::env::set_var("NPM_MANAGED_CLI", &managed_cli);
+        std::env::set_var(
+            "NPM_MANAGED_CLI_DIR",
+            managed_cli.parent().context("managed CLI has no parent")?,
+        );
         std::env::set_var("NPM_RETIREMENT_PATH", &destination);
 
         let mut state = PersistedState::new(true);
@@ -5199,18 +5748,54 @@ exit 1
         let error = repair_cli(&mut state, &paths).expect_err("the retry failure must be returned");
 
         assert!(format!("{error:#}").contains("retry failed"));
-        assert!(format!("{error:#}").contains("Quarantine preserved"));
-        assert_eq!(fs::read_to_string(install_log)?, "attempt\n");
-        assert!(!destination.exists());
+        assert!(format!("{error:#}").contains("Quarantines preserved"));
+        assert_eq!(fs::read_to_string(&install_log)?, "attempt\n");
+        assert!(destination.exists());
         let repair = npm_cli_repair::snapshot(&paths)?.context("repair should remain pending")?;
-        let quarantine = repair
-            .quarantine_path
-            .context("failed repair should record quarantine")?;
-        assert!(quarantine.exists());
+        assert_eq!(repair.quarantine_paths.len(), 1);
+        assert!(repair.quarantine_paths[0].exists());
         assert!(repair
             .last_error
             .as_deref()
             .is_some_and(|message| message.contains("retry failed")));
+
+        std::env::set_var("NPM_VIEW_RESULT", "failure");
+        let error =
+            repair_cli(&mut state, &paths).expect_err("the registry failure must be returned");
+
+        assert!(format!("{error:#}").contains("registry unavailable"));
+        assert!(format!("{error:#}").contains("Quarantines preserved"));
+        assert_eq!(fs::read_to_string(&install_log)?, "attempt\n");
+        assert!(destination.exists());
+        let repair = npm_cli_repair::snapshot(&paths)?.context("repair should remain pending")?;
+        assert_eq!(repair.quarantine_paths.len(), 1);
+        assert!(repair
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("registry unavailable")));
+        std::env::remove_var("NPM_VIEW_RESULT");
+
+        repair_cli(&mut state, &paths).expect_err("the second retry failure must be returned");
+
+        assert_eq!(fs::read_to_string(install_log)?, "attempt\nattempt\n");
+        assert!(destination.exists());
+        let repair = npm_cli_repair::snapshot(&paths)?.context("repair should remain pending")?;
+        assert_eq!(repair.quarantine_paths.len(), 2);
+        assert!(repair.quarantine_paths.iter().all(|path| path.exists()));
+
+        std::env::set_var("NPM_INSTALL_RESULT", "invalid");
+        let error =
+            repair_cli(&mut state, &paths).expect_err("an invalid repaired CLI must be reported");
+
+        assert!(format!("{error:#}").contains("could not be validated"));
+        assert!(format!("{error:#}").contains("Quarantines preserved"));
+        assert_eq!(state.cli_status, CliStatus::Failed);
+        let repair = npm_cli_repair::snapshot(&paths)?.context("repair should remain pending")?;
+        assert_eq!(repair.quarantine_paths.len(), 3);
+        assert!(repair
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("could not be validated")));
         Ok(())
     }
 

@@ -39,8 +39,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   and status processes. If npm reports the exact stale Arborist retirement
   directory failure, automatic paths preserve the working CLI and direct the
   user to read-only diagnostics. The explicit `repair-cli` command revalidates
-  the condition under the shared lock, quarantines the directory, and retries
-  npm once without discarding a failed recovery.
+  the condition under the shared lock, records crash-durable quarantines, and
+  retries npm once per explicit invocation without discarding failed recovery
+  state or concurrent updater state. In-flight mutating npm children retain the
+  lock if their updater parent exits abruptly, and late routine CLI checks
+  revalidate both the repair journal and their original CLI state before
+  persisting a result. Missing-CLI preflight also re-resolves a CLI installed
+  while it waited for the lock before consulting npm.
 - Concurrent updater entrypoints now serialize state reloads and cache cleanup
   before persisting startup state. A second process can no longer prune an
   active rebuild workspace, while forced checks wait for startup maintenance

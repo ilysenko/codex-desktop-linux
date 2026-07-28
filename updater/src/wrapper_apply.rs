@@ -109,7 +109,7 @@ pub async fn run_apply_wrapper_update(
             state.artifact_paths.package_path = None;
             refresh_installed_wrapper_state(config, state);
             state.clear_wrapper_update_candidate();
-            state.save(&paths.state_file)?;
+            state.save_updater(&paths.state_file)?;
             let _ = notify::send(
                 "ChatGPT Desktop for Linux updated",
                 "The newer Linux wrapper build has been installed.",
@@ -415,7 +415,7 @@ async fn apply_packaged(
     }
 
     state.installed_version = install::installed_package_version();
-    let _ = state.save(&paths.state_file);
+    let _ = state.save_updater(&paths.state_file);
     Ok(())
 }
 
@@ -527,7 +527,7 @@ async fn cached_or_downloaded_dmg(
             .await
             .context("Failed to download upstream DMG for wrapper rebuild")?;
     state.artifact_paths.dmg_path = Some(downloaded.path.clone());
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
     Ok(CachedDmg {
         path: downloaded.path,
         _lease: downloaded.lease,

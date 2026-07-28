@@ -48,8 +48,10 @@ struct UpdateDiagnostics {
 struct CliRepairDiagnostics {
     condition: &'static str,
     detected_at: String,
+    phase: &'static str,
     stale_directory: PathBuf,
-    quarantine_path: Option<PathBuf>,
+    quarantine_paths: Vec<PathBuf>,
+    planned_quarantine_path: Option<PathBuf>,
     last_error: Option<String>,
     repair_command: &'static str,
 }
@@ -165,8 +167,14 @@ fn collect_with_webview(
                 condition:
                     "A stale npm retirement directory is blocking managed Codex CLI updates.",
                 detected_at: repair.detected_at.to_rfc3339(),
+                phase: match repair.phase {
+                    npm_cli_repair::RepairPhase::Detected => "detected",
+                    npm_cli_repair::RepairPhase::QuarantinePlanned => "quarantine_planned",
+                    npm_cli_repair::RepairPhase::Quarantined => "quarantined",
+                },
                 stale_directory: repair.stale_directory,
-                quarantine_path: repair.quarantine_path,
+                quarantine_paths: repair.quarantine_paths,
+                planned_quarantine_path: repair.planned_quarantine_path,
                 last_error: repair.last_error,
                 repair_command: "codex-update-manager repair-cli",
             }),
@@ -227,12 +235,24 @@ fn print_text(report: &DiagnosticsReport) {
         report.update.cli_error.as_deref().unwrap_or("none")
     );
     if let Some(repair) = &report.update.cli_repair {
+        let quarantine_paths = repair
+            .quarantine_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         println!(
-            "cli_repair: condition={} stale_directory={} quarantine={} last_error={} command={}",
+            "cli_repair: condition={} phase={} stale_directory={} quarantines={} planned_quarantine={} last_error={} command={}",
             repair.condition,
+            repair.phase,
             repair.stale_directory.display(),
+            if quarantine_paths.is_empty() {
+                "none"
+            } else {
+                quarantine_paths.as_str()
+            },
             repair
-                .quarantine_path
+                .planned_quarantine_path
                 .as_deref()
                 .map(Path::display)
                 .map(|path| path.to_string())

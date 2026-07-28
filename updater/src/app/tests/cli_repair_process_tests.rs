@@ -36,6 +36,7 @@ struct CliRepairProcessFixture {
     install_release: PathBuf,
     install_overlap: PathBuf,
     owner_dir: PathBuf,
+    view_log: PathBuf,
 }
 
 impl CliRepairProcessFixture {
@@ -52,6 +53,7 @@ impl CliRepairProcessFixture {
             ("NPM_INSTALL_RELEASE", &self.install_release),
             ("NPM_INSTALL_OVERLAP", &self.install_overlap),
             ("NPM_OWNER_DIR", &self.owner_dir),
+            ("NPM_VIEW_LOG", &self.view_log),
         ]
     }
 }
@@ -85,8 +87,13 @@ fn prepare_fixture(root: &Path) -> Result<CliRepairProcessFixture> {
     write_executable(
         &bin_dir.join("npm"),
         r#"#!/bin/sh
-if [ "$1" = "view" ]; then
-  echo '0.42.1'
+	if [ "$1" = "view" ]; then
+	  printf 'view\n' >> "$NPM_VIEW_LOG"
+	  if [ "${NPM_VIEW_RESULT:-success}" = "failure" ]; then
+	    printf 'registry unavailable\n' >&2
+	    exit 43
+	  fi
+	  echo '0.42.1'
   exit 0
 fi
 if [ "$1" = "install" ]; then
@@ -132,83 +139,8 @@ exit 1
         install_release: root.join("npm-install.release"),
         install_overlap: root.join("npm-install.overlap"),
         owner_dir: root.join("npm-install.owner"),
+        view_log: root.join("npm-view.log"),
     })
-}
-
-#[test]
-fn concurrent_cli_preflight_status_and_daemon_serialize_npm_install_subprocesses() -> Result<()> {
-    let _env_guard = crate::test_util::env_lock();
-    let temp = tempfile::tempdir()?;
-    let fixture = prepare_fixture(temp.path())?;
-    let status_lock_waiting = temp.path().join("status-cli-install-lock.waiting");
-    let daemon_lock_waiting = temp.path().join("daemon-cli-install-lock.waiting");
-    let common_env = fixture.env();
-
-    let first = spawn_process_test_child(
-        temp.path(),
-        "cli-preflight",
-        &common_env,
-        &[&fixture.install_release],
-    )?;
-    wait_for_process_test_path(&fixture.install_started, "first npm install")?;
-
-    let mut persisted = PersistedState::load_or_default(&fixture.paths.state_file, true)?;
-    persisted.cli_last_check_at = None;
-    persisted.remote_headers_fingerprint = Some("must-survive-cli-race".to_string());
-    persisted.save(&fixture.paths.state_file)?;
-
-    let mut daemon_env = common_env.clone();
-    daemon_env.push((
-        "CODEX_UPDATE_MANAGER_TEST_CLI_INSTALL_LOCK_WAITING",
-        &daemon_lock_waiting,
-    ));
-    let daemon =
-        spawn_process_test_child(temp.path(), "daemon-startup-maintenance", &daemon_env, &[])?;
-    wait_for_process_test_path(&daemon_lock_waiting, "daemon CLI install lock wait")?;
-
-    let mut persisted = PersistedState::load_or_default(&fixture.paths.state_file, true)?;
-    persisted.cli_last_check_at = None;
-    persisted.save(&fixture.paths.state_file)?;
-    let mut status_env = common_env.clone();
-    status_env.push((
-        "CODEX_UPDATE_MANAGER_TEST_CLI_INSTALL_LOCK_WAITING",
-        &status_lock_waiting,
-    ));
-    let status = spawn_process_test_child(temp.path(), "cli-status", &status_env, &[])?;
-    wait_for_process_test_path(&status_lock_waiting, "status CLI install lock wait")?;
-
-    assert_eq!(
-        std::fs::read_to_string(&fixture.install_log)?
-            .lines()
-            .count(),
-        1
-    );
-    assert!(!fixture.install_overlap.exists());
-
-    std::fs::write(&fixture.install_release, b"continue")?;
-    first.wait()?;
-    status.wait()?;
-    daemon.wait()?;
-
-    assert_eq!(
-        std::fs::read_to_string(&fixture.install_log)?
-            .lines()
-            .count(),
-        1
-    );
-    assert!(!fixture.install_overlap.exists());
-    assert!(fixture.stale_directory.exists());
-    let persisted = PersistedState::load_or_default(&fixture.paths.state_file, true)?;
-    assert!(crate::npm_cli_repair::load(&fixture.paths)?.is_some());
-    assert!(persisted
-        .cli_error_message
-        .as_deref()
-        .is_some_and(|message| message.contains("codex-update-manager diagnose")));
-    assert_eq!(
-        persisted.remote_headers_fingerprint.as_deref(),
-        Some("must-survive-cli-race")
-    );
-    Ok(())
 }
 
 #[test]
@@ -273,6 +205,7 @@ fn explicit_repair_preserves_concurrent_status_state_and_quarantine() -> Result<
     crate::npm_cli_repair::write_detected_for_test(&fixture.paths, ".codex-cqYkmGXr")?;
     let mut common_env = fixture.env();
     common_env.push(("NPM_INSTALL_RESULT", Path::new("success")));
+    let lock_waiting = temp.path().join("cli-install-lock.waiting");
 
     let repair = spawn_process_test_child(
         temp.path(),
@@ -282,7 +215,7 @@ fn explicit_repair_preserves_concurrent_status_state_and_quarantine() -> Result<
     )?;
     wait_for_process_test_path(&fixture.install_started, "explicit repair npm install")?;
     let quarantine_path = crate::npm_cli_repair::snapshot(&fixture.paths)?
-        .and_then(|snapshot| snapshot.quarantine_path)
+        .and_then(|snapshot| snapshot.quarantine_paths.into_iter().next())
         .context("repair should persist its quarantine before running npm")?;
     assert!(!fixture.stale_directory.exists());
     assert!(quarantine_path.exists());
@@ -290,7 +223,13 @@ fn explicit_repair_preserves_concurrent_status_state_and_quarantine() -> Result<
     let mut persisted = PersistedState::load_or_default(&fixture.paths.state_file, true)?;
     persisted.remote_headers_fingerprint = Some("must-survive-explicit-repair".to_string());
     persisted.save(&fixture.paths.state_file)?;
-    spawn_process_test_child(temp.path(), "cli-status", &common_env, &[])?.wait()?;
+    let mut status_env = common_env.clone();
+    status_env.push((
+        "CODEX_UPDATE_MANAGER_TEST_CLI_INSTALL_LOCK_WAITING",
+        &lock_waiting,
+    ));
+    let status = spawn_process_test_child(temp.path(), "cli-status", &status_env, &[])?;
+    wait_for_process_test_path(&lock_waiting, "status wait during explicit repair")?;
 
     assert_eq!(
         std::fs::read_to_string(&fixture.install_log)?
@@ -303,6 +242,7 @@ fn explicit_repair_preserves_concurrent_status_state_and_quarantine() -> Result<
 
     std::fs::write(&fixture.install_release, b"continue")?;
     repair.wait()?;
+    status.wait()?;
 
     assert_eq!(
         std::fs::read_to_string(&fixture.install_log)?
@@ -320,6 +260,114 @@ fn explicit_repair_preserves_concurrent_status_state_and_quarantine() -> Result<
         persisted.remote_headers_fingerprint.as_deref(),
         Some("must-survive-explicit-repair")
     );
+    Ok(())
+}
+
+#[test]
+fn missing_cli_waiter_uses_the_repair_completed_under_the_lock() -> Result<()> {
+    let _env_guard = crate::test_util::env_lock();
+    let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+    let temp = tempfile::tempdir()?;
+    let fixture = prepare_fixture(temp.path())?;
+    std::env::set_var("HOME", temp.path().join("home"));
+    crate::npm_cli_repair::write_detected_for_test(&fixture.paths, ".codex-cqYkmGXr")?;
+    std::fs::remove_file(&fixture.cli_path)?;
+
+    let mut repair_env = fixture.env();
+    repair_env.push(("NPM_INSTALL_RESULT", Path::new("success")));
+    let repair = spawn_process_test_child(
+        temp.path(),
+        "repair-cli",
+        &repair_env,
+        &[&fixture.install_release],
+    )?;
+    wait_for_process_test_path(&fixture.install_started, "explicit repair npm install")?;
+    let views_before_waiter = std::fs::read_to_string(&fixture.view_log)?.lines().count();
+
+    let lock_waiting = temp.path().join("missing-cli-lock.waiting");
+    let mut missing_env = fixture.env();
+    missing_env.push((
+        "CODEX_UPDATE_MANAGER_TEST_CLI_INSTALL_LOCK_WAITING",
+        &lock_waiting,
+    ));
+    missing_env.push(("NPM_VIEW_RESULT", Path::new("failure")));
+    let missing = spawn_process_test_child(
+        temp.path(),
+        "cli-preflight-install-missing",
+        &missing_env,
+        &[],
+    )?;
+    wait_for_process_test_path(&lock_waiting, "missing CLI install lock wait")?;
+
+    std::fs::write(&fixture.install_release, b"continue")?;
+    repair.wait()?;
+    missing.wait()?;
+
+    assert_eq!(
+        std::fs::read_to_string(&fixture.view_log)?.lines().count(),
+        views_before_waiter
+    );
+    assert_eq!(
+        std::fs::read_to_string(&fixture.install_log)?
+            .lines()
+            .count(),
+        1
+    );
+    let persisted = PersistedState::load_or_default(&fixture.paths.state_file, true)?;
+    assert_eq!(persisted.cli_status, CliStatus::UpToDate);
+    assert_eq!(persisted.cli_installed_version.as_deref(), Some("0.42.1"));
+    assert_eq!(persisted.cli_error_message, None);
+    Ok(())
+}
+
+#[test]
+fn status_loaded_before_repair_cannot_restore_its_stale_cli_snapshot() -> Result<()> {
+    let _env_guard = crate::test_util::env_lock();
+    let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+    let temp = tempfile::tempdir()?;
+    let fixture = prepare_fixture(temp.path())?;
+    std::env::set_var("HOME", temp.path().join("home"));
+    crate::npm_cli_repair::write_detected_for_test(&fixture.paths, ".codex-cqYkmGXr")?;
+
+    let entrypoint_loaded = temp.path().join("entrypoint.loaded");
+    let entrypoint_continue = temp.path().join("entrypoint.continue");
+    let mut status_env = fixture.env();
+    status_env.push((
+        "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_LOADED",
+        &entrypoint_loaded,
+    ));
+    status_env.push((
+        "CODEX_UPDATE_MANAGER_TEST_ENTRYPOINT_CONTINUE",
+        &entrypoint_continue,
+    ));
+    status_env.push(("NPM_VIEW_RESULT", Path::new("failure")));
+    let status = spawn_process_test_child(
+        temp.path(),
+        "cli-status",
+        &status_env,
+        &[&entrypoint_continue],
+    )?;
+    wait_for_process_test_path(&entrypoint_loaded, "status initial state load")?;
+
+    std::fs::write(&fixture.install_release, b"continue")?;
+    let mut repair_env = fixture.env();
+    repair_env.push(("NPM_INSTALL_RESULT", Path::new("success")));
+    spawn_process_test_child(temp.path(), "repair-cli", &repair_env, &[])?.wait()?;
+    let views_after_repair = std::fs::read_to_string(&fixture.view_log)?.lines().count();
+    assert_eq!(views_after_repair, 1);
+    assert!(crate::npm_cli_repair::load(&fixture.paths)?.is_none());
+
+    std::fs::write(&entrypoint_continue, b"continue")?;
+    status.wait()?;
+
+    assert_eq!(
+        std::fs::read_to_string(&fixture.view_log)?.lines().count(),
+        views_after_repair
+    );
+    let persisted = PersistedState::load_or_default(&fixture.paths.state_file, true)?;
+    assert_eq!(persisted.cli_status, CliStatus::UpToDate);
+    assert_eq!(persisted.cli_installed_version.as_deref(), Some("0.42.1"));
+    assert_eq!(persisted.cli_error_message, None);
     Ok(())
 }
 

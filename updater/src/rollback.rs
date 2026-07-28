@@ -53,7 +53,7 @@ pub async fn run(
             "Rollback package is missing: {}",
             package_path.display()
         ));
-        state.save(&paths.state_file)?;
+        state.save_updater(&paths.state_file)?;
         println!("Rollback package is missing: {}", package_path.display());
         return Ok(());
     }
@@ -71,7 +71,7 @@ async fn trigger_rollback(
 
     state.status = UpdateStatus::Installing;
     state.error_message = None;
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
 
     let _ = notify::send(
         "Rolling back ChatGPT Desktop",
@@ -92,7 +92,7 @@ async fn trigger_rollback(
             blocked_candidate,
             blocked_dmg_sha256,
         );
-        state.save(&paths.state_file)?;
+        state.save_updater(&paths.state_file)?;
         let _ = cache_cleanup::prune_unreferenced_workspaces(&config.workspace_root, state);
         println!(
             "Rolled back ChatGPT Desktop to {}.",
@@ -117,7 +117,7 @@ async fn trigger_rollback(
     }
 
     state.mark_failed(message.clone());
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
     let _ = notify::send(
         "ChatGPT Desktop rollback failed",
         "The previous package could not be installed. Check the updater log for details.",

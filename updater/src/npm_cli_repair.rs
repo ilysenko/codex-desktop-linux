@@ -1,4 +1,7 @@
-use crate::{config::RuntimePaths, state::atomic_write};
+use crate::{
+    config::RuntimePaths,
+    state::{atomic_write, sync_directory},
+};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -6,13 +9,16 @@ use std::{
     ffi::{CString, OsStr},
     fs,
     io::{Seek, SeekFrom, Write},
+    os::fd::AsRawFd,
     os::unix::ffi::OsStrExt,
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::process::CommandExt,
     path::{Component, Path, PathBuf},
-    process::Output,
+    process::{Command, Output},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tracing::info;
 
 const JOURNAL_FILE_NAME: &str = "cli-repair.json";
 const LOCK_FILE_NAME: &str = "cli-install.lock";
@@ -24,28 +30,35 @@ const QUARANTINE_DIRECTORY_NAME: &str = ".codex-linux-quarantine";
 pub(crate) struct RepairJournal {
     detected_at: DateTime<Utc>,
     retirement_name: String,
+    #[serde(default)]
+    quarantine_names: Vec<String>,
     stage: RepairStage,
+    #[serde(default)]
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "stage", rename_all = "snake_case")]
 enum RepairStage {
     Detected,
-    QuarantinePlanned {
-        quarantine_name: String,
-    },
-    Quarantined {
-        quarantine_name: Option<String>,
-        #[serde(default)]
-        last_error: Option<String>,
-    },
+    QuarantinePlanned { quarantine_name: String },
+    Quarantined,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepairPhase {
+    Detected,
+    QuarantinePlanned,
+    Quarantined,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RepairSnapshot {
     pub(crate) detected_at: DateTime<Utc>,
+    pub(crate) phase: RepairPhase,
     pub(crate) stale_directory: PathBuf,
-    pub(crate) quarantine_path: Option<PathBuf>,
+    pub(crate) quarantine_paths: Vec<PathBuf>,
+    pub(crate) planned_quarantine_path: Option<PathBuf>,
     pub(crate) last_error: Option<String>,
 }
 
@@ -54,8 +67,27 @@ pub(crate) struct InstallLock {
     _file: fs::File,
 }
 
+impl InstallLock {
+    pub(crate) fn inherit_with(&self, command: &mut Command) {
+        let fd = self._file.as_raw_fd();
+        unsafe {
+            command.pre_exec(move || {
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                if flags == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ManagedNpmLayout {
+    retirement_name: String,
     prefix: PathBuf,
     scope: PathBuf,
     active_package: PathBuf,
@@ -107,10 +139,18 @@ fn acquire_install_lock_with_timeout(
     }
 
     let started = Instant::now();
+    let mut reported_wait = false;
     loop {
         match file.try_lock() {
             Ok(()) => break,
             Err(fs::TryLockError::WouldBlock) if started.elapsed() < timeout => {
+                if !reported_wait {
+                    info!(
+                        "Codex CLI install lock is busy; process {} is waiting",
+                        std::process::id()
+                    );
+                    reported_wait = true;
+                }
                 #[cfg(test)]
                 if let Some(path) =
                     std::env::var_os("CODEX_UPDATE_MANAGER_TEST_CLI_INSTALL_LOCK_WAITING")
@@ -209,82 +249,115 @@ fn detect(prefix: &Path, output: &Output) -> Option<RepairJournal> {
     Some(RepairJournal {
         detected_at: Utc::now(),
         retirement_name: retirement_name.to_string(),
+        quarantine_names: Vec::new(),
         stage: RepairStage::Detected,
+        last_error: None,
     })
 }
 
 pub(crate) fn quarantine(
     paths: &RuntimePaths,
-    mut journal: RepairJournal,
-) -> Result<(RepairJournal, RepairSnapshot)> {
+    journal: &mut RepairJournal,
+) -> Result<RepairSnapshot> {
+    validate_journal(journal)?;
+    let layout = ManagedNpmLayout::new(&journal.retirement_name)?;
+
+    if matches!(journal.stage, RepairStage::QuarantinePlanned { .. }) {
+        reconcile_planned_quarantine(paths, &layout, journal)?;
+    }
+
+    if path_exists_without_following(&layout.stale_directory)? {
+        layout.validate_stale_directory()?;
+        layout.ensure_quarantine_root()?;
+        let quarantine_name = layout.allocate_quarantine_name();
+        journal.stage = RepairStage::QuarantinePlanned { quarantine_name };
+        save(paths, journal)?;
+        reconcile_planned_quarantine(paths, &layout, journal)?;
+    } else if matches!(journal.stage, RepairStage::Detected) {
+        journal.stage = RepairStage::Quarantined;
+        save(paths, journal)?;
+    }
+
+    let snapshot = journal.snapshot()?;
+    for path in &snapshot.quarantine_paths {
+        layout.validate_quarantine_path(path)?;
+    }
+    Ok(snapshot)
+}
+
+pub(crate) fn validate_journal(journal: &RepairJournal) -> Result<RepairSnapshot> {
+    let snapshot = journal.snapshot()?;
     let layout = ManagedNpmLayout::new(&journal.retirement_name)?;
     layout.validate_prefix()?;
 
     if matches!(journal.stage, RepairStage::Detected) {
         layout.validate_active_package()?;
-        if !path_exists_without_following(&layout.stale_directory)? {
-            journal.stage = RepairStage::Quarantined {
-                quarantine_name: None,
-                last_error: None,
-            };
-            save(paths, &journal)?;
-            let snapshot = journal.snapshot()?;
-            return Ok((journal, snapshot));
-        }
+    } else {
+        layout.validate_existing_install_target()?;
+    }
+
+    if path_exists_without_following(&layout.stale_directory)? {
         layout.validate_stale_directory()?;
-        layout.ensure_quarantine_root()?;
-        let quarantine_name = layout.allocate_quarantine_name();
-        journal.stage = RepairStage::QuarantinePlanned { quarantine_name };
-        save(paths, &journal)?;
     }
-
-    if let RepairStage::QuarantinePlanned { quarantine_name } = &journal.stage {
-        layout.ensure_quarantine_root()?;
-        let quarantine_path = layout.quarantine_root.join(quarantine_name);
-        let stale_exists = path_exists_without_following(&layout.stale_directory)?;
-        let quarantine_exists = path_exists_without_following(&quarantine_path)?;
-        match (stale_exists, quarantine_exists) {
-            (true, false) => {
-                layout.validate_stale_directory()?;
-                rename_noreplace(&layout.stale_directory, &quarantine_path).with_context(|| {
-                    format!(
-                        "Failed to quarantine stale npm directory {} at {}",
-                        layout.stale_directory.display(),
-                        quarantine_path.display()
-                    )
-                })?;
-            }
-            (false, true) => {}
-            (false, false) => {
-                journal.stage = RepairStage::Quarantined {
-                    quarantine_name: None,
-                    last_error: None,
-                };
-                save(paths, &journal)?;
-                let snapshot = journal.snapshot()?;
-                return Ok((journal, snapshot));
-            }
-            (true, true) => {
-                anyhow::bail!(
-                    "Both stale npm directory {} and planned quarantine {} exist",
-                    layout.stale_directory.display(),
-                    quarantine_path.display()
-                );
-            }
-        }
-        layout.validate_quarantine_path(&quarantine_path)?;
-        journal.stage = RepairStage::Quarantined {
-            quarantine_name: Some(quarantine_name.clone()),
-            last_error: None,
-        };
-        save(paths, &journal)?;
-    }
-
-    let snapshot = journal.snapshot()?;
-    if let Some(path) = snapshot.quarantine_path.as_deref() {
+    for path in &snapshot.quarantine_paths {
         layout.validate_quarantine_path(path)?;
     }
-    Ok((journal, snapshot))
+    if let Some(path) = snapshot.planned_quarantine_path.as_deref() {
+        if path_exists_without_following(path)? {
+            layout.validate_quarantine_path(path)?;
+        }
+    }
+    Ok(snapshot)
+}
+
+pub(crate) fn journal_snapshot(journal: &RepairJournal) -> Result<RepairSnapshot> {
+    journal.snapshot()
+}
+
+fn reconcile_planned_quarantine(
+    paths: &RuntimePaths,
+    layout: &ManagedNpmLayout,
+    journal: &mut RepairJournal,
+) -> Result<()> {
+    let RepairStage::QuarantinePlanned { quarantine_name } = &journal.stage else {
+        return Ok(());
+    };
+    let quarantine_name = quarantine_name.clone();
+    layout.ensure_quarantine_root()?;
+    let quarantine_path = layout.quarantine_path(&quarantine_name)?;
+    let stale_exists = path_exists_without_following(&layout.stale_directory)?;
+    let quarantine_exists = path_exists_without_following(&quarantine_path)?;
+    match (stale_exists, quarantine_exists) {
+        (true, false) => {
+            layout.validate_stale_directory()?;
+            rename_noreplace(&layout.stale_directory, &quarantine_path).with_context(|| {
+                format!(
+                    "Failed to quarantine stale npm directory {} at {}",
+                    layout.stale_directory.display(),
+                    quarantine_path.display()
+                )
+            })?;
+        }
+        (false, true) => {}
+        (true, true) => {
+            layout.validate_stale_directory()?;
+        }
+        (false, false) => {
+            journal.stage = RepairStage::Quarantined;
+            save(paths, journal)?;
+            return Ok(());
+        }
+    }
+    layout.validate_quarantine_path(&quarantine_path)?;
+    if !journal
+        .quarantine_names
+        .iter()
+        .any(|name| name == &quarantine_name)
+    {
+        journal.quarantine_names.push(quarantine_name);
+    }
+    journal.stage = RepairStage::Quarantined;
+    save(paths, journal)
 }
 
 pub(crate) fn record_failure(
@@ -292,16 +365,7 @@ pub(crate) fn record_failure(
     journal: &mut RepairJournal,
     error: &str,
 ) -> Result<RepairSnapshot> {
-    let quarantine_name = match &journal.stage {
-        RepairStage::Quarantined {
-            quarantine_name, ..
-        } => quarantine_name.clone(),
-        _ => anyhow::bail!("Codex CLI repair failed before quarantine completed"),
-    };
-    journal.stage = RepairStage::Quarantined {
-        quarantine_name,
-        last_error: Some(error.to_string()),
-    };
+    journal.last_error = Some(error.to_string());
     save(paths, journal)?;
     journal.snapshot()
 }
@@ -309,7 +373,7 @@ pub(crate) fn record_failure(
 pub(crate) fn clear(paths: &RuntimePaths) -> Result<()> {
     let path = journal_path(paths);
     match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
+        Ok(()) => sync_directory(&paths.state_dir),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error).with_context(|| format!("Failed to remove {}", path.display())),
     }
@@ -335,7 +399,9 @@ pub(crate) fn write_detected_for_test(paths: &RuntimePaths, retirement_name: &st
         &RepairJournal {
             detected_at: Utc::now(),
             retirement_name: retirement_name.to_string(),
+            quarantine_names: Vec::new(),
             stage: RepairStage::Detected,
+            last_error: None,
         },
     )
 }
@@ -343,23 +409,26 @@ pub(crate) fn write_detected_for_test(paths: &RuntimePaths, retirement_name: &st
 impl RepairJournal {
     fn snapshot(&self) -> Result<RepairSnapshot> {
         let layout = ManagedNpmLayout::new(&self.retirement_name)?;
-        let (quarantine_path, last_error) = match &self.stage {
-            RepairStage::Detected | RepairStage::QuarantinePlanned { .. } => (None, None),
-            RepairStage::Quarantined {
-                quarantine_name,
-                last_error,
-            } => (
-                quarantine_name
-                    .as_ref()
-                    .map(|name| layout.quarantine_root.join(name)),
-                last_error.clone(),
+        let (phase, planned_quarantine_path) = match &self.stage {
+            RepairStage::Detected => (RepairPhase::Detected, None),
+            RepairStage::QuarantinePlanned { quarantine_name } => (
+                RepairPhase::QuarantinePlanned,
+                Some(layout.quarantine_path(quarantine_name)?),
             ),
+            RepairStage::Quarantined => (RepairPhase::Quarantined, None),
         };
+        let quarantine_paths = self
+            .quarantine_names
+            .iter()
+            .map(|name| layout.quarantine_path(name))
+            .collect::<Result<Vec<_>>>()?;
         Ok(RepairSnapshot {
             detected_at: self.detected_at,
+            phase,
             stale_directory: layout.stale_directory,
-            quarantine_path,
-            last_error,
+            quarantine_paths,
+            planned_quarantine_path,
+            last_error: self.last_error.clone(),
         })
     }
 }
@@ -373,6 +442,7 @@ impl ManagedNpmLayout {
         let prefix = managed_prefix();
         let scope = prefix.join("lib/node_modules/@openai");
         Ok(Self {
+            retirement_name: retirement_name.to_string(),
             active_package: scope.join("codex"),
             stale_directory: scope.join(retirement_name),
             quarantine_root: scope.join(QUARANTINE_DIRECTORY_NAME),
@@ -394,6 +464,10 @@ impl ManagedNpmLayout {
         validate_managed_directory(&self.prefix, &self.active_package)
     }
 
+    fn validate_existing_install_target(&self) -> Result<()> {
+        validate_existing_managed_path(&self.prefix, &self.active_package)
+    }
+
     fn validate_stale_directory(&self) -> Result<()> {
         validate_managed_directory(&self.prefix, &self.stale_directory)
     }
@@ -412,6 +486,7 @@ impl ManagedNpmLayout {
                             self.quarantine_root.display()
                         )
                     })?;
+                sync_directory(&self.scope)?;
             }
             Err(error) => {
                 return Err(error).with_context(|| {
@@ -432,6 +507,28 @@ impl ManagedNpmLayout {
             path.display()
         );
         validate_managed_directory(&self.prefix, path)
+    }
+
+    fn quarantine_path(&self, name: &str) -> Result<PathBuf> {
+        let mut components = Path::new(name).components();
+        anyhow::ensure!(
+            matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
+            "Persisted npm quarantine name {name} is invalid"
+        );
+        let suffix = name
+            .strip_prefix(&format!("{}.", self.retirement_name))
+            .context("Persisted npm quarantine name does not match the retirement directory")?;
+        let (timestamp, pid) = suffix
+            .split_once('.')
+            .context("Persisted npm quarantine name has an invalid suffix")?;
+        anyhow::ensure!(
+            !timestamp.is_empty()
+                && timestamp.bytes().all(|byte| byte.is_ascii_digit())
+                && !pid.is_empty()
+                && pid.bytes().all(|byte| byte.is_ascii_digit()),
+            "Persisted npm quarantine name {name} has an invalid suffix"
+        );
+        Ok(self.quarantine_root.join(name))
     }
 
     fn allocate_quarantine_name(&self) -> String {
@@ -508,6 +605,40 @@ fn validate_managed_directory(prefix: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn validate_existing_managed_path(prefix: &Path, path: &Path) -> Result<()> {
+    let relative = path.strip_prefix(prefix).with_context(|| {
+        format!(
+            "Managed npm path {} is outside {}",
+            path.display(),
+            prefix.display()
+        )
+    })?;
+    anyhow::ensure!(
+        !relative.as_os_str().is_empty(),
+        "Managed npm operation cannot target the prefix root"
+    );
+
+    let mut current = prefix.to_path_buf();
+    for component in relative.components() {
+        anyhow::ensure!(
+            matches!(component, Component::Normal(_)),
+            "Managed npm path {} contains an unsafe component",
+            path.display()
+        );
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(_) => validate_owned_directory(&current)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to inspect managed npm path {}", current.display())
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 fn path_exists_without_following(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
@@ -517,6 +648,8 @@ fn path_exists_without_following(path: &Path) -> Result<bool> {
 }
 
 fn rename_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let source_parent = source.parent().map(Path::to_path_buf);
+    let destination_parent = destination.parent().map(Path::to_path_buf);
     let source = CString::new(source.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
     let destination = CString::new(destination.as_os_str().as_bytes())
@@ -531,6 +664,14 @@ fn rename_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
         )
     };
     if result == 0 {
+        if let Some(parent) = source_parent.as_deref() {
+            sync_directory(parent).map_err(std::io::Error::other)?;
+        }
+        if destination_parent != source_parent {
+            if let Some(parent) = destination_parent.as_deref() {
+                sync_directory(parent).map_err(std::io::Error::other)?;
+            }
+        }
         Ok(())
     } else {
         Err(std::io::Error::last_os_error())
@@ -694,16 +835,55 @@ mod tests {
         let quarantine_path = layout.quarantine_root.join(&quarantine_name);
         journal.stage = RepairStage::QuarantinePlanned { quarantine_name };
         save(&paths, &journal)?;
-        rename_noreplace(&stale, &quarantine_path)?;
-
-        let (journal, snapshot) = quarantine(&paths, load(&paths)?.context("missing journal")?)?;
-
-        assert!(matches!(journal.stage, RepairStage::Quarantined { .. }));
+        let planned = snapshot(&paths)?.context("planned repair should be visible")?;
+        assert_eq!(planned.phase, RepairPhase::QuarantinePlanned);
         assert_eq!(
-            snapshot.quarantine_path.as_deref(),
+            planned.planned_quarantine_path.as_deref(),
             Some(quarantine_path.as_path())
         );
+        rename_noreplace(&stale, &quarantine_path)?;
+
+        let mut journal = load(&paths)?.context("missing journal")?;
+        let snapshot = quarantine(&paths, &mut journal)?;
+
+        assert!(matches!(journal.stage, RepairStage::Quarantined));
+        assert_eq!(snapshot.quarantine_paths, vec![quarantine_path.clone()]);
         assert!(quarantine_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn planned_quarantine_moves_a_recreated_stale_directory_again() -> Result<()> {
+        let _guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+        let temp = tempdir()?;
+        let home = temp.path().join("home");
+        let paths = test_paths(temp.path());
+        fs::create_dir_all(&paths.state_dir)?;
+        let prefix = home.join(".codex-cli-npm");
+        let active = prefix.join("lib/node_modules/@openai/codex");
+        let stale = prefix.join("lib/node_modules/@openai/.codex-cqYkmGXr");
+        fs::create_dir_all(&active)?;
+        fs::create_dir_all(&stale)?;
+        secure_tree(&home)?;
+        std::env::set_var("HOME", &home);
+        let mut journal = detect(&prefix, &output(&active, &stale)).context("missing repair")?;
+        let layout = ManagedNpmLayout::new(&journal.retirement_name)?;
+        layout.ensure_quarantine_root()?;
+        let quarantine_name = layout.allocate_quarantine_name();
+        let first_quarantine = layout.quarantine_root.join(&quarantine_name);
+        fs::create_dir_all(&first_quarantine)?;
+        secure_tree(&first_quarantine)?;
+        journal.stage = RepairStage::QuarantinePlanned { quarantine_name };
+        save(&paths, &journal)?;
+
+        let snapshot = quarantine(&paths, &mut journal)?;
+
+        assert!(matches!(journal.stage, RepairStage::Quarantined));
+        assert_eq!(snapshot.quarantine_paths.len(), 2);
+        assert_eq!(snapshot.quarantine_paths[0], first_quarantine);
+        assert!(snapshot.quarantine_paths.iter().all(|path| path.exists()));
+        assert!(!stale.exists());
         Ok(())
     }
 
@@ -721,17 +901,11 @@ mod tests {
         std::env::set_var("HOME", &home);
         write_detected_for_test(&paths, ".codex-cqYkmGXr")?;
 
-        let (journal, snapshot) =
-            quarantine(&paths, load(&paths)?.context("missing repair journal")?)?;
+        let mut journal = load(&paths)?.context("missing repair journal")?;
+        let snapshot = quarantine(&paths, &mut journal)?;
 
-        assert!(matches!(
-            journal.stage,
-            RepairStage::Quarantined {
-                quarantine_name: None,
-                ..
-            }
-        ));
-        assert_eq!(snapshot.quarantine_path, None);
+        assert!(matches!(journal.stage, RepairStage::Quarantined));
+        assert!(snapshot.quarantine_paths.is_empty());
         Ok(())
     }
 
@@ -754,10 +928,131 @@ mod tests {
         std::env::set_var("HOME", &home);
         write_detected_for_test(&paths, ".codex-cqYkmGXr")?;
 
-        quarantine(&paths, load(&paths)?.context("missing repair journal")?)
-            .expect_err("quarantine must reject a retirement symlink");
+        let mut journal = load(&paths)?.context("missing repair journal")?;
+        quarantine(&paths, &mut journal).expect_err("quarantine must reject a retirement symlink");
 
         assert!(stale.is_symlink());
+        assert!(target.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn planned_quarantine_rejects_an_untrusted_persisted_name_before_rename() -> Result<()> {
+        let _guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+        let temp = tempdir()?;
+        let home = temp.path().join("home");
+        let paths = test_paths(temp.path());
+        fs::create_dir_all(&paths.state_dir)?;
+        let prefix = home.join(".codex-cli-npm");
+        let scope = prefix.join("lib/node_modules/@openai");
+        let active = scope.join("codex");
+        let stale = scope.join(".codex-cqYkmGXr");
+        let escaped = scope.join("escaped");
+        fs::create_dir_all(&active)?;
+        fs::create_dir_all(&stale)?;
+        secure_tree(&home)?;
+        std::env::set_var("HOME", &home);
+        let mut journal = detect(&prefix, &output(&active, &stale)).context("missing repair")?;
+        journal.stage = RepairStage::QuarantinePlanned {
+            quarantine_name: "../escaped".to_string(),
+        };
+        save(&paths, &journal)?;
+
+        quarantine(&paths, &mut journal)
+            .expect_err("repair must reject an untrusted persisted quarantine name");
+
+        assert!(stale.exists());
+        assert!(!escaped.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn historical_quarantine_names_are_validated_before_a_new_rename() -> Result<()> {
+        let _guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+        let temp = tempdir()?;
+        let home = temp.path().join("home");
+        let paths = test_paths(temp.path());
+        fs::create_dir_all(&paths.state_dir)?;
+        let prefix = home.join(".codex-cli-npm");
+        let scope = prefix.join("lib/node_modules/@openai");
+        let active = scope.join("codex");
+        let stale = scope.join(".codex-cqYkmGXr");
+        let escaped = scope.join("escaped");
+        fs::create_dir_all(&active)?;
+        fs::create_dir_all(&stale)?;
+        secure_tree(&home)?;
+        std::env::set_var("HOME", &home);
+        let mut journal = detect(&prefix, &output(&active, &stale)).context("missing repair")?;
+        journal.quarantine_names.push("../escaped".to_string());
+        journal.stage = RepairStage::Quarantined;
+        save(&paths, &journal)?;
+
+        quarantine(&paths, &mut journal)
+            .expect_err("repair must reject an untrusted historical quarantine name");
+
+        assert!(stale.exists());
+        assert!(!escaped.exists());
+        assert!(!scope.join(QUARANTINE_DIRECTORY_NAME).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn retry_revalidates_a_recreated_active_package() -> Result<()> {
+        let _guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+        let temp = tempdir()?;
+        let home = temp.path().join("home");
+        let paths = test_paths(temp.path());
+        fs::create_dir_all(&paths.state_dir)?;
+        let scope = home.join(".codex-cli-npm/lib/node_modules/@openai");
+        let active = scope.join("codex");
+        let stale = scope.join(".codex-cqYkmGXr");
+        let target = temp.path().join("must-survive");
+        fs::create_dir_all(&scope)?;
+        fs::create_dir_all(&stale)?;
+        fs::create_dir_all(&target)?;
+        secure_tree(&home)?;
+        std::os::unix::fs::symlink(&target, &active)?;
+        std::env::set_var("HOME", &home);
+        write_detected_for_test(&paths, ".codex-cqYkmGXr")?;
+        let mut journal = load(&paths)?.context("missing repair journal")?;
+        journal.stage = RepairStage::Quarantined;
+        save(&paths, &journal)?;
+
+        quarantine(&paths, &mut journal).expect_err("repair retry must reject an active symlink");
+
+        assert!(active.is_symlink());
+        assert!(stale.exists());
+        assert!(target.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn retry_revalidates_existing_install_ancestors() -> Result<()> {
+        let _guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+        let temp = tempdir()?;
+        let home = temp.path().join("home");
+        let paths = test_paths(temp.path());
+        fs::create_dir_all(&paths.state_dir)?;
+        let modules = home.join(".codex-cli-npm/lib/node_modules");
+        let scope = modules.join("@openai");
+        let target = temp.path().join("must-survive");
+        fs::create_dir_all(&modules)?;
+        fs::create_dir_all(&target)?;
+        secure_tree(&home)?;
+        std::os::unix::fs::symlink(&target, &scope)?;
+        std::env::set_var("HOME", &home);
+        write_detected_for_test(&paths, ".codex-cqYkmGXr")?;
+        let mut journal = load(&paths)?.context("missing repair journal")?;
+        journal.stage = RepairStage::Quarantined;
+        save(&paths, &journal)?;
+
+        quarantine(&paths, &mut journal).expect_err("repair retry must reject an ancestor symlink");
+
+        assert!(scope.is_symlink());
         assert!(target.exists());
         Ok(())
     }

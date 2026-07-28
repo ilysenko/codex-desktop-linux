@@ -7,11 +7,13 @@ use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
     io::Write,
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+const STATE_LOCK_FILE_NAME: &str = "state.lock";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -188,9 +190,60 @@ impl PersistedState {
     }
 
     /// Persists the updater state to JSON on disk.
+    #[cfg(test)]
     pub fn save(&self, path: &Path) -> Result<()> {
-        let content = serde_json::to_string_pretty(self)?;
-        atomic_write(path, content.as_bytes())?;
+        let _lock = StateLock::acquire(path)?;
+        self.save_unlocked(path)
+    }
+
+    pub fn save_updater(&self, path: &Path) -> Result<()> {
+        let _lock = StateLock::acquire(path)?;
+        let mut merged = self.clone();
+        if let Some(latest) = Self::load_if_present(path)? {
+            merged.copy_cli_state_from(&latest);
+        }
+        merged.save_unlocked(path)
+    }
+
+    pub fn save_cli(&mut self, path: &Path) -> Result<()> {
+        let _lock = StateLock::acquire(path)?;
+        let mut merged = Self::load_if_present(path)?
+            .unwrap_or_else(|| Self::new(self.auto_install_on_app_exit));
+        merged.copy_cli_state_from(self);
+        merged.save_unlocked(path)?;
+        *self = merged;
+        Ok(())
+    }
+
+    pub fn reload_cli(&mut self, path: &Path) -> Result<()> {
+        let _lock = StateLock::acquire(path)?;
+        if let Some(latest) = Self::load_if_present(path)? {
+            self.copy_cli_state_from(&latest);
+        }
+        Ok(())
+    }
+
+    pub fn save_cli_if_unchanged(&mut self, path: &Path, expected: &Self) -> Result<bool> {
+        let _lock = StateLock::acquire(path)?;
+        let latest = Self::load_if_present(path)?.unwrap_or_else(|| expected.clone());
+        if !latest.same_cli_state(expected) {
+            *self = latest;
+            return Ok(false);
+        }
+        let mut merged = latest;
+        merged.copy_cli_state_from(self);
+        merged.save_unlocked(path)?;
+        *self = merged;
+        Ok(true)
+    }
+
+    pub fn save_cli_status(&mut self, path: &Path) -> Result<()> {
+        let _lock = StateLock::acquire(path)?;
+        let mut latest = Self::load_if_present(path)?.unwrap_or_else(|| self.clone());
+        latest.cli_status = self.cli_status.clone();
+        latest.cli_error_message = self.cli_error_message.clone();
+        latest.save_unlocked(path)?;
+        *self = latest;
         Ok(())
     }
 
@@ -207,6 +260,45 @@ impl PersistedState {
         self.candidate_wrapper_commit = None;
         self.wrapper_changelog = None;
         self.wrapper_dev_mode = None;
+    }
+
+    fn load_if_present(path: &Path) -> Result<Option<Self>> {
+        match fs::read_to_string(path) {
+            Ok(content) => serde_json::from_str::<Self>(&content)
+                .with_context(|| format!("Failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("Failed to read {}", path.display())),
+        }
+    }
+
+    fn save_unlocked(&self, path: &Path) -> Result<()> {
+        let content = serde_json::to_string_pretty(self)?;
+        atomic_write(path, content.as_bytes())
+    }
+
+    fn copy_cli_state_from(&mut self, source: &Self) {
+        self.cli_path = source.cli_path.clone();
+        self.cli_install_channel = source.cli_install_channel.clone();
+        self.cli_installed_version = source.cli_installed_version.clone();
+        self.cli_official_latest_version = source.cli_official_latest_version.clone();
+        self.cli_package_manager_latest_version = source.cli_package_manager_latest_version.clone();
+        self.cli_status = source.cli_status.clone();
+        self.cli_last_check_at = source.cli_last_check_at;
+        self.cli_last_verified_at = source.cli_last_verified_at;
+        self.cli_error_message = source.cli_error_message.clone();
+    }
+
+    fn same_cli_state(&self, other: &Self) -> bool {
+        self.cli_path == other.cli_path
+            && self.cli_install_channel == other.cli_install_channel
+            && self.cli_installed_version == other.cli_installed_version
+            && self.cli_official_latest_version == other.cli_official_latest_version
+            && self.cli_package_manager_latest_version == other.cli_package_manager_latest_version
+            && self.cli_status == other.cli_status
+            && self.cli_last_check_at == other.cli_last_check_at
+            && self.cli_last_verified_at == other.cli_last_verified_at
+            && self.cli_error_message == other.cli_error_message
     }
 }
 
@@ -246,7 +338,54 @@ pub(crate) fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
             temp_path.display()
         )
     })?;
+    sync_directory(parent)?;
     Ok(())
+}
+
+pub(crate) fn sync_directory(path: &Path) -> Result<()> {
+    fs::File::open(path)
+        .with_context(|| format!("Failed to open directory {}", path.display()))?
+        .sync_all()
+        .with_context(|| format!("Failed to sync directory {}", path.display()))
+}
+
+struct StateLock {
+    _file: fs::File,
+}
+
+impl StateLock {
+    fn acquire(state_path: &Path) -> Result<Self> {
+        let parent = state_path
+            .parent()
+            .with_context(|| format!("{} has no parent directory", state_path.display()))?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+        let lock_path = parent.join(STATE_LOCK_FILE_NAME);
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open {}", lock_path.display()))?;
+        let metadata = file
+            .metadata()
+            .with_context(|| format!("Failed to inspect {}", lock_path.display()))?;
+        anyhow::ensure!(
+            metadata.is_file() && metadata.uid() == unsafe { libc::geteuid() },
+            "Updater state lock {} is not a user-owned regular file",
+            lock_path.display()
+        );
+        if metadata.permissions().mode() & 0o077 != 0 {
+            file.set_permissions(fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("Failed to secure {}", lock_path.display()))?;
+        }
+        file.lock()
+            .with_context(|| format!("Failed to lock {}", lock_path.display()))?;
+        Ok(Self { _file: file })
+    }
 }
 
 fn atomic_temp_path(path: &Path) -> PathBuf {
@@ -303,6 +442,130 @@ mod tests {
         );
         assert!(!loaded.auto_install_on_app_exit);
         assert!(loaded.waiting_for_app_exit_auto_install);
+        Ok(())
+    }
+
+    #[test]
+    fn updater_and_cli_state_transactions_preserve_each_other() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("state.json");
+        PersistedState::new(true).save(&path)?;
+
+        let mut cli = PersistedState::load_or_default(&path, true)?;
+        cli.cli_status = CliStatus::UpToDate;
+        cli.cli_installed_version = Some("0.42.1".to_string());
+
+        let mut updater = PersistedState::load_or_default(&path, true)?;
+        updater.status = UpdateStatus::DownloadingDmg;
+        updater.remote_headers_fingerprint = Some("new-updater-state".to_string());
+        updater.cli_prompt_dismissed_at = Some(Utc::now());
+
+        cli.save_cli(&path)?;
+        updater.save_updater(&path)?;
+
+        let loaded = PersistedState::load_or_default(&path, true)?;
+        assert_eq!(loaded.cli_status, CliStatus::UpToDate);
+        assert_eq!(loaded.cli_installed_version.as_deref(), Some("0.42.1"));
+        assert_eq!(loaded.status, UpdateStatus::DownloadingDmg);
+        assert_eq!(
+            loaded.remote_headers_fingerprint.as_deref(),
+            Some("new-updater-state")
+        );
+        assert!(loaded.cli_prompt_dismissed_at.is_some());
+
+        let mut later_cli = PersistedState::new(true);
+        later_cli.cli_status = CliStatus::UpdateRequired;
+        later_cli.cli_error_message = Some("repair required".to_string());
+        later_cli.save_cli(&path)?;
+
+        let loaded = PersistedState::load_or_default(&path, true)?;
+        assert_eq!(loaded.cli_status, CliStatus::UpdateRequired);
+        assert_eq!(
+            loaded.remote_headers_fingerprint.as_deref(),
+            Some("new-updater-state")
+        );
+        assert!(loaded.cli_prompt_dismissed_at.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn guarded_cli_state_write_reloads_a_newer_cli_result() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("state.json");
+        PersistedState::new(true).save(&path)?;
+
+        let baseline = PersistedState::load_or_default(&path, true)?;
+        let mut stale = baseline.clone();
+        stale.cli_status = CliStatus::Unknown;
+        stale.cli_installed_version = Some("0.42.0".to_string());
+
+        let mut newer = baseline.clone();
+        newer.cli_status = CliStatus::UpToDate;
+        newer.cli_installed_version = Some("0.42.1".to_string());
+        newer.save_cli(&path)?;
+        newer.remote_headers_fingerprint = Some("must-survive".to_string());
+        newer.save_updater(&path)?;
+
+        assert!(!stale.save_cli_if_unchanged(&path, &baseline)?);
+        assert_eq!(stale.cli_status, CliStatus::UpToDate);
+        assert_eq!(stale.cli_installed_version.as_deref(), Some("0.42.1"));
+        assert_eq!(
+            stale.remote_headers_fingerprint.as_deref(),
+            Some("must-survive")
+        );
+        let loaded = PersistedState::load_or_default(&path, true)?;
+        assert_eq!(loaded.cli_status, CliStatus::UpToDate);
+        assert_eq!(loaded.cli_installed_version.as_deref(), Some("0.42.1"));
+        Ok(())
+    }
+
+    #[test]
+    fn cli_status_write_preserves_the_latest_cli_identity() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("state.json");
+        let mut latest = PersistedState::new(true);
+        latest.cli_path = Some(PathBuf::from("/new/codex"));
+        latest.cli_installed_version = Some("0.42.1".to_string());
+        latest.cli_official_latest_version = Some("0.42.1".to_string());
+        latest.cli_last_verified_at = Some(Utc::now());
+        latest.cli_status = CliStatus::UpToDate;
+        latest.remote_headers_fingerprint = Some("must-survive".to_string());
+        latest.save(&path)?;
+
+        let mut stale = PersistedState::new(true);
+        stale.cli_path = Some(PathBuf::from("/old/codex"));
+        stale.cli_installed_version = Some("0.42.0".to_string());
+        stale.cli_official_latest_version = None;
+        stale.cli_status = CliStatus::UpdateRequired;
+        stale.cli_error_message = Some("repair required".to_string());
+        stale.save_cli_status(&path)?;
+
+        assert_eq!(stale.cli_path, Some(PathBuf::from("/new/codex")));
+        assert_eq!(stale.cli_installed_version.as_deref(), Some("0.42.1"));
+        assert_eq!(stale.cli_official_latest_version.as_deref(), Some("0.42.1"));
+        assert!(stale.cli_last_verified_at.is_some());
+        assert_eq!(stale.cli_status, CliStatus::UpdateRequired);
+        assert_eq!(stale.cli_error_message.as_deref(), Some("repair required"));
+        assert_eq!(
+            stale.remote_headers_fingerprint.as_deref(),
+            Some("must-survive")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn state_lock_rejects_a_symlink() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("state.json");
+        let target = temp.path().join("must-survive");
+        fs::write(&target, "unchanged\n")?;
+        std::os::unix::fs::symlink(&target, temp.path().join(STATE_LOCK_FILE_NAME))?;
+
+        PersistedState::new(true)
+            .save(&path)
+            .expect_err("state lock must reject symlinks");
+
+        assert_eq!(fs::read_to_string(target)?, "unchanged\n");
         Ok(())
     }
 

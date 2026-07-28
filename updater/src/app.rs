@@ -138,7 +138,7 @@ async fn run_diagnose_command(paths: &RuntimePaths, json: bool) -> Result<()> {
 }
 
 fn persist_state(paths: &RuntimePaths, state: &PersistedState) -> Result<()> {
-    state.save(&paths.state_file)
+    state.save_updater(&paths.state_file)
 }
 
 fn persist_if_changed(
@@ -875,16 +875,22 @@ fn run_recover_standalone_cli(
 
 fn run_repair_cli(state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
     let outcome = codex_cli::repair_cli(state, paths)?;
-    match outcome.quarantine_path {
-        Some(path) => println!(
-            "Codex CLI repaired at version {}. Quarantine preserved at {}",
-            outcome.installed_version,
-            path.display()
-        ),
-        None => println!(
+    if outcome.quarantine_paths.is_empty() {
+        println!(
             "Codex CLI repaired at version {}. The stale npm directory was already absent.",
             outcome.installed_version
-        ),
+        );
+    } else {
+        println!(
+            "Codex CLI repaired at version {}. Quarantines preserved at {}",
+            outcome.installed_version,
+            outcome
+                .quarantine_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
     Ok(())
 }
@@ -1204,7 +1210,7 @@ async fn run_check_cycle_with_options(
         state.dmg_sha256 = Some(downloaded.sha256.clone());
         state.artifact_paths.dmg_path = Some(downloaded.path.clone());
         state.notified_events.clear();
-        state.save(&paths.state_file)?;
+        state.save_updater(&paths.state_file)?;
 
         maybe_notify(
             state,
@@ -3179,15 +3185,6 @@ mod tests {
                     &config, &mut state, &paths,
                 ))
             }
-            "daemon-startup-maintenance" => {
-                let paths = RuntimePaths::detect()?;
-                let config = RuntimeConfig::load_or_default(&paths)?;
-                let mut state = PersistedState::load_or_default(
-                    &paths.state_file,
-                    effective_auto_install(&config),
-                )?;
-                run_daemon_startup_maintenance(&config, &mut state, &paths)
-            }
             "cli-preflight" => {
                 let cli_path = std::env::var_os("CODEX_UPDATE_MANAGER_TEST_CLI_PATH")
                     .map(PathBuf::from)
@@ -3200,6 +3197,13 @@ mod tests {
                     },
                 }))
             }
+            "cli-preflight-install-missing" => runtime.block_on(run(Cli {
+                command: Commands::CliPreflight {
+                    cli_path: None,
+                    print_path: false,
+                    allow_install_missing: true,
+                },
+            })),
             "cli-status" => runtime.block_on(run(Cli {
                 command: Commands::Status { json: true },
             })),

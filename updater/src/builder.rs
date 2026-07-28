@@ -122,13 +122,13 @@ pub async fn build_update_from(
 
     state.status = UpdateStatus::PreparingWorkspace;
     state.artifact_paths.workspace_dir = Some(workspace.workspace_dir.clone());
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
 
     copy_builder_bundle(bundle_source, &workspace.bundle_dir)?;
     stage_git_source_info(bundle_source, &workspace.bundle_dir)?;
 
     state.status = UpdateStatus::PatchingApp;
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
     let feature_config = crate::config::effective_feature_config_path(config);
     let mut install = Command::new(workspace.bundle_dir.join("install.sh"));
     install
@@ -158,7 +158,7 @@ pub async fn build_update_from(
         .context("install.sh failed during local rebuild")?;
 
     state.status = UpdateStatus::BuildingPackage;
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
 
     let build_script = package_build_script(&workspace.bundle_dir);
     let mut package_build = Command::new(&build_script);
@@ -190,7 +190,7 @@ pub async fn build_update_from(
         package_path: Some(package_path.clone()),
         rollback_package_path: state.artifact_paths.rollback_package_path.clone(),
     };
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
     info!(candidate_version, package = %package_path.display(), "local update build ready");
 
     Ok(BuildArtifacts {
