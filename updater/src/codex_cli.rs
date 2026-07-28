@@ -13,7 +13,7 @@ use std::{
     collections::BTreeMap,
     ffi::{OsStr, OsString},
     fs,
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     os::unix::process::CommandExt,
     path::{Component, Path, PathBuf},
@@ -31,6 +31,7 @@ const CLI_NOT_INSTALLED_MESSAGE: &str =
 const CLI_VERSION_CHECK_TTL: Duration = Duration::hours(1);
 const NPM_REPAIR_INSTALL_TIMEOUT: StdDuration = StdDuration::from_secs(90);
 const NPM_REPAIR_REGISTRY_TIMEOUT: StdDuration = StdDuration::from_secs(20);
+const CLI_INSTALL_LOCK_TIMEOUT: StdDuration = StdDuration::from_secs(120);
 const CLI_PREFLIGHT_VERSION_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 const BOUNDED_COMMAND_POLL_INTERVAL: StdDuration = StdDuration::from_millis(50);
 const BOUNDED_COMMAND_TERMINATION_GRACE: StdDuration = StdDuration::from_millis(500);
@@ -143,7 +144,7 @@ fn preflight_with_version_timeout(
             state.cli_error_message = None;
             persist_state(paths, state)?;
 
-            let repaired_version = repair_npm_optional_dependency(&npm_install)
+            let repaired_version = repair_npm_optional_dependency(&npm_install, paths)
                 .and_then(|()| {
                     read_installed_version_bounded(&cli_path, version_timeout)
                 })
@@ -326,7 +327,7 @@ fn preflight_with_version_timeout(
 
     state.cli_status = CliStatus::Updating;
     persist_state(paths, state)?;
-    if let Err(error) = update_existing_cli(&cli_install_kind, &latest_version) {
+    if let Err(error) = update_existing_cli(&cli_install_kind, &latest_version, paths) {
         persist_cli_failure(state, paths, &error)?;
         return Err(error);
     }
@@ -1155,7 +1156,8 @@ fn path_is_system_managed_location(path: &Path) -> bool {
             .any(|root| path.starts_with(root))
 }
 
-fn repair_npm_optional_dependency(install: &NpmCliInstall) -> Result<()> {
+fn repair_npm_optional_dependency(install: &NpmCliInstall, paths: &RuntimePaths) -> Result<()> {
+    let _install_lock = acquire_cli_install_lock(paths)?;
     repair_npm_optional_dependency_with_timeout(install, NPM_REPAIR_INSTALL_TIMEOUT)
 }
 
@@ -1379,13 +1381,17 @@ impl StandaloneCliInstall {
     }
 }
 
-fn update_existing_cli(install_kind: &CliInstallKind, latest_version: &str) -> Result<()> {
+fn update_existing_cli(
+    install_kind: &CliInstallKind,
+    latest_version: &str,
+    paths: &RuntimePaths,
+) -> Result<()> {
     match install_kind {
         CliInstallKind::Standalone(install) => update_standalone_cli(install, latest_version),
         CliInstallKind::Homebrew => {
             anyhow::bail!("Homebrew-managed Codex CLI installs must be updated with Homebrew")
         }
-        CliInstallKind::Npm => install_latest_cli(latest_version),
+        CliInstallKind::Npm => install_latest_cli(latest_version, paths),
     }
 }
 
@@ -2030,11 +2036,12 @@ fn resolved_program_path(path: PathBuf) -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
 }
 
-fn install_latest_cli(latest_version: &str) -> Result<()> {
+fn install_latest_cli(latest_version: &str, paths: &RuntimePaths) -> Result<()> {
     let (npm, path_env) = npm_program()?;
     let package_spec = format!("{CLI_PACKAGE_NAME}@{latest_version}");
     let local_prefix = local_npm_prefix();
     prepare_safe_npm_prefix(&local_prefix)?;
+    let _install_lock = acquire_cli_install_lock(paths)?;
     let local_args = vec![
         OsString::from("install"),
         OsString::from("-g"),
@@ -2092,6 +2099,72 @@ fn prepare_safe_npm_prefix(prefix: &Path) -> Result<()> {
             .with_context(|| format!("Failed to secure npm prefix {}", prefix.display()))?;
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct CliInstallLock {
+    _file: fs::File,
+}
+
+fn acquire_cli_install_lock(paths: &RuntimePaths) -> Result<CliInstallLock> {
+    acquire_cli_install_lock_with_timeout(paths, CLI_INSTALL_LOCK_TIMEOUT)
+}
+
+fn acquire_cli_install_lock_with_timeout(
+    paths: &RuntimePaths,
+    timeout: StdDuration,
+) -> Result<CliInstallLock> {
+    let lock_path = paths.state_dir.join("cli-install.lock");
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&lock_path)
+        .with_context(|| format!("Failed to open {}", lock_path.display()))?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("Failed to inspect {}", lock_path.display()))?;
+    let euid = unsafe { libc::geteuid() };
+    anyhow::ensure!(
+        metadata.is_file() && metadata.uid() == euid,
+        "CLI install lock {} is not a user-owned regular file",
+        lock_path.display()
+    );
+    if metadata.permissions().mode() & 0o077 != 0 {
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("Failed to secure {}", lock_path.display()))?;
+    }
+
+    let started = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => break,
+            Err(fs::TryLockError::WouldBlock) if started.elapsed() < timeout => {
+                thread::sleep(BOUNDED_COMMAND_POLL_INTERVAL);
+            }
+            Err(fs::TryLockError::WouldBlock) => {
+                anyhow::bail!(
+                    "Timed out waiting for another Codex CLI install after {} ms",
+                    timeout.as_millis()
+                );
+            }
+            Err(fs::TryLockError::Error(error)) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to lock {}", lock_path.display()));
+            }
+        }
+    }
+
+    file.set_len(0)
+        .with_context(|| format!("Failed to truncate {}", lock_path.display()))?;
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("Failed to seek {}", lock_path.display()))?;
+    writeln!(file, "{}", std::process::id())
+        .with_context(|| format!("Failed to write {}", lock_path.display()))?;
+    Ok(CliInstallLock { _file: file })
 }
 
 fn recover_stale_npm_retirement_directory(prefix: &Path, output: &Output) -> Result<bool> {
@@ -2212,7 +2285,7 @@ fn install_missing_cli(
         latest_version,
         "Codex CLI is missing; attempting automatic installation"
     );
-    install_latest_cli(&latest_version)?;
+    install_latest_cli(&latest_version, paths)?;
 
     let cli_path = resolve_cli_path(requested_path)
         .or_else(|| resolve_cli_path(None))
@@ -2522,8 +2595,30 @@ mod tests {
         test_util::{env_lock, EnvRestoreGuard},
     };
     use chrono::Utc;
-    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+    use std::{
+        fs,
+        os::unix::{fs::PermissionsExt, process::ExitStatusExt},
+        path::Path,
+    };
     use tempfile::tempdir;
+
+    fn npm_enotempty_output(source: &Path, destination: &Path, legacy_prefix: bool) -> Output {
+        let prefix = if legacy_prefix {
+            "npm ERR!"
+        } else {
+            "npm error"
+        };
+        Output {
+            status: ExitStatus::from_raw(217 << 8),
+            stdout: Vec::new(),
+            stderr: format!(
+                "{prefix} code ENOTEMPTY\n{prefix} syscall rename\n{prefix} path {}\n{prefix} dest {}\n{prefix} errno -39\n",
+                source.display(),
+                destination.display()
+            )
+            .into_bytes(),
+        }
+    }
 
     fn write_executable_script(path: &Path, contents: &str) -> Result<()> {
         let temp_root = std::env::temp_dir();
@@ -4951,6 +5046,183 @@ exit 1
         assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.1"));
         assert_eq!(fs::read_to_string(install_log)?, "attempt\nattempt\n");
         assert!(!retirement_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn cli_install_lock_serializes_updater_processes() -> Result<()> {
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let first = acquire_cli_install_lock_with_timeout(&paths, StdDuration::from_millis(100))?;
+        let started = Instant::now();
+        let error = acquire_cli_install_lock_with_timeout(&paths, StdDuration::from_millis(75))
+            .expect_err("a second updater process must not enter the CLI install boundary");
+
+        assert!(error.to_string().contains("Timed out waiting"));
+        assert!(started.elapsed() >= StdDuration::from_millis(75));
+        assert!(started.elapsed() < StdDuration::from_secs(2));
+
+        drop(first);
+        acquire_cli_install_lock_with_timeout(&paths, StdDuration::from_millis(100))?;
+        Ok(())
+    }
+
+    #[test]
+    fn cli_install_lock_rejects_symlinks() -> Result<()> {
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+        let target = temp.path().join("must-survive");
+        fs::write(&target, "unchanged\n")?;
+        std::os::unix::fs::symlink(&target, paths.state_dir.join("cli-install.lock"))?;
+
+        let error = acquire_cli_install_lock_with_timeout(&paths, StdDuration::from_millis(100))
+            .expect_err("the CLI install lock must not follow symlinks");
+
+        assert!(format!("{error:#}").contains("Failed to open"));
+        assert_eq!(fs::read_to_string(target)?, "unchanged\n");
+        Ok(())
+    }
+
+    #[test]
+    fn stale_npm_recovery_rejects_untrusted_paths() -> Result<()> {
+        let temp = tempdir()?;
+        let prefix = temp.path().join("prefix");
+        prepare_safe_npm_prefix(&prefix)?;
+        let source = prefix.join("lib/node_modules/@openai/codex");
+        let scope = source.parent().context("test package has no scope")?;
+        fs::create_dir_all(&source)?;
+
+        let outside = temp.path().join(".codex-cqYkmGXr");
+        fs::create_dir_all(&outside)?;
+        assert!(!recover_stale_npm_retirement_directory(
+            &prefix,
+            &npm_enotempty_output(&source, &outside, false),
+        )?);
+        assert!(outside.exists());
+
+        let malformed = scope.join(".codex-not-a-retirement-hash");
+        fs::create_dir_all(&malformed)?;
+        assert!(!recover_stale_npm_retirement_directory(
+            &prefix,
+            &npm_enotempty_output(&source, &malformed, false),
+        )?);
+        assert!(malformed.exists());
+
+        let wrong_source = scope.join("another-package");
+        let valid_name = scope.join(".codex-cqYkmGXr");
+        fs::create_dir_all(&valid_name)?;
+        assert!(!recover_stale_npm_retirement_directory(
+            &prefix,
+            &npm_enotempty_output(&wrong_source, &valid_name, false),
+        )?);
+        assert!(valid_name.exists());
+        fs::remove_dir_all(&valid_name)?;
+
+        let symlink_target = temp.path().join("must-survive");
+        fs::create_dir_all(&symlink_target)?;
+        std::os::unix::fs::symlink(&symlink_target, &valid_name)?;
+        let error = recover_stale_npm_retirement_directory(
+            &prefix,
+            &npm_enotempty_output(&source, &valid_name, false),
+        )
+        .expect_err("a retirement symlink must fail closed");
+        assert!(error.to_string().contains("not a regular directory"));
+        assert!(valid_name.is_symlink());
+        assert!(symlink_target.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn stale_npm_recovery_accepts_legacy_error_prefix() -> Result<()> {
+        let temp = tempdir()?;
+        let prefix = temp.path().join("prefix");
+        prepare_safe_npm_prefix(&prefix)?;
+        let source = prefix.join("lib/node_modules/@openai/codex");
+        let destination = prefix
+            .join("lib/node_modules/@openai")
+            .join(".codex-cqYkmGXr");
+        fs::create_dir_all(&source)?;
+        fs::create_dir_all(&destination)?;
+
+        assert!(recover_stale_npm_retirement_directory(
+            &prefix,
+            &npm_enotempty_output(&source, &destination, true),
+        )?);
+        assert!(!destination.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn stale_npm_recovery_retries_only_once() -> Result<()> {
+        let _env_guard = env_lock();
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            "NPM_ACTIVE_PACKAGE",
+            "NPM_INSTALL_LOG",
+            "NPM_RETIREMENT_PATH",
+        ]);
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+        let home = temp.path().join("home");
+        let bin_dir = temp.path().join("bin");
+        let prefix = home.join(".codex-cli-npm");
+        let source = prefix.join("lib/node_modules/@openai/codex");
+        let destination = prefix
+            .join("lib/node_modules/@openai")
+            .join(".codex-cqYkmGXr");
+        let install_log = temp.path().join("npm-install.log");
+        fs::create_dir_all(&source)?;
+        fs::create_dir_all(&destination)?;
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("npm"),
+            r#"#!/bin/sh
+if [ "$1" = "install" ]; then
+  printf 'attempt\n' >> "$NPM_INSTALL_LOG"
+  if [ -d "$NPM_RETIREMENT_PATH" ]; then
+    printf '%s\n' \
+      'npm error code ENOTEMPTY' \
+      'npm error syscall rename' \
+      "npm error path $NPM_ACTIVE_PACKAGE" \
+      "npm error dest $NPM_RETIREMENT_PATH" >&2
+    exit 217
+  fi
+  printf 'retry failed\n' >&2
+  exit 42
+fi
+exit 1
+"#,
+        )?;
+
+        std::env::set_var("HOME", &home);
+        std::env::set_var("PATH", std::env::join_paths([bin_dir])?);
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+        std::env::set_var("NPM_ACTIVE_PACKAGE", &source);
+        std::env::set_var("NPM_INSTALL_LOG", &install_log);
+        std::env::set_var("NPM_RETIREMENT_PATH", &destination);
+
+        let error = install_latest_cli("0.42.1", &paths)
+            .expect_err("the retry failure must be returned to the caller");
+
+        assert!(format!("{error:#}").contains("retry failed"));
+        assert_eq!(fs::read_to_string(install_log)?, "attempt\nattempt\n");
+        assert!(!destination.exists());
         Ok(())
     }
 
