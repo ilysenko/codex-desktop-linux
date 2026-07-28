@@ -1308,6 +1308,7 @@ fi
 
     #[test]
     fn fake_package_builders_emit_source_info() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
         let temp = tempdir()?;
         for (index, output) in [
             FakePackageOutput::Deb,
