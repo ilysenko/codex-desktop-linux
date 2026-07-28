@@ -52,6 +52,7 @@ pub enum Commands {
         #[arg(long)]
         print_path: bool,
     },
+    RepairCli,
     PromptInstallCli {
         #[arg(long)]
         cli_path: Option<PathBuf>,

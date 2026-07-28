@@ -7,6 +7,7 @@ use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
     io::Write,
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     process,
     time::{SystemTime, UNIX_EPOCH},
@@ -209,7 +210,7 @@ impl PersistedState {
     }
 }
 
-fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
+pub(crate) fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .with_context(|| format!("{} has no parent directory", path.display()))?;
@@ -219,6 +220,7 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
     let mut temp_file = OpenOptions::new()
         .write(true)
         .create_new(true)
+        .mode(0o600)
         .open(&temp_path)
         .with_context(|| format!("Failed to create {}", temp_path.display()))?;
 

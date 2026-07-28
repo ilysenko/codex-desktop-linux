@@ -22,6 +22,29 @@ installer instead of being replaced through npm. Homebrew/Linuxbrew installs
 are reused and reported, but the updater does not replace them with an
 npm-managed install.
 
+If an interrupted npm upgrade leaves a stale Arborist retirement directory,
+automatic daemon, status, and launcher paths record the exact condition but do
+not remove it or retry npm. A functional existing Codex CLI remains selected,
+and updater status directs the user to the read-only diagnostic command:
+
+```bash
+codex-update-manager diagnose
+```
+
+The diagnostic output explains the stale npm condition and prints the explicit
+repair command:
+
+```bash
+codex-update-manager repair-cli
+```
+
+`repair-cli` acquires the shared CLI install lock, reloads the dedicated repair
+journal, derives and revalidates the managed npm paths, and records the planned
+quarantine before moving the stale directory. It then retries npm once with a
+bounded subprocess. The quarantine is preserved and reported after both
+successful and failed repairs. A failed or interrupted repair remains visible
+in later `diagnose` output and can be retried explicitly.
+
 The updater scopes permission hardening to the official standalone installer
 process. New managed releases use the caller's existing umask plus the
 group/world write restrictions from `0022`; stricter policies such as `0027`

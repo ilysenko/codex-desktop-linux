@@ -108,6 +108,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             install_dir,
             print_path,
         } => run_recover_standalone_cli(codex_home, install_dir, print_path),
+        Commands::RepairCli => run_repair_cli(&mut state, &paths),
         Commands::PromptInstallCli {
             cli_path,
             print_path,
@@ -868,6 +869,22 @@ fn run_recover_standalone_cli(
     let launch_path = codex_cli::recover_standalone_cli(codex_home, install_dir)?;
     if print_path {
         println!("{}", launch_path.display());
+    }
+    Ok(())
+}
+
+fn run_repair_cli(state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
+    let outcome = codex_cli::repair_cli(state, paths)?;
+    match outcome.quarantine_path {
+        Some(path) => println!(
+            "Codex CLI repaired at version {}. Quarantine preserved at {}",
+            outcome.installed_version,
+            path.display()
+        ),
+        None => println!(
+            "Codex CLI repaired at version {}. The stale npm directory was already absent.",
+            outcome.installed_version
+        ),
     }
     Ok(())
 }
@@ -2182,6 +2199,8 @@ mod tests {
         Mock, MockServer, ResponseTemplate,
     };
 
+    mod cli_repair_process_tests;
+
     fn test_paths(root: &std::path::Path) -> RuntimePaths {
         RuntimePaths {
             config_file: root.join("config/config.toml"),
@@ -3160,6 +3179,36 @@ mod tests {
                     &config, &mut state, &paths,
                 ))
             }
+            "daemon-startup-maintenance" => {
+                let paths = RuntimePaths::detect()?;
+                let config = RuntimeConfig::load_or_default(&paths)?;
+                let mut state = PersistedState::load_or_default(
+                    &paths.state_file,
+                    effective_auto_install(&config),
+                )?;
+                run_daemon_startup_maintenance(&config, &mut state, &paths)
+            }
+            "cli-preflight" => {
+                let cli_path = std::env::var_os("CODEX_UPDATE_MANAGER_TEST_CLI_PATH")
+                    .map(PathBuf::from)
+                    .context("missing process test CLI path")?;
+                runtime.block_on(run(Cli {
+                    command: Commands::CliPreflight {
+                        cli_path: Some(cli_path),
+                        print_path: false,
+                        allow_install_missing: false,
+                    },
+                }))
+            }
+            "cli-status" => runtime.block_on(run(Cli {
+                command: Commands::Status { json: true },
+            })),
+            "repair-cli" => runtime.block_on(run(Cli {
+                command: Commands::RepairCli,
+            })),
+            "diagnose" => runtime.block_on(run(Cli {
+                command: Commands::Diagnose { json: false },
+            })),
             other => anyhow::bail!("Unknown updater process test role {other}"),
         }
     }
@@ -4560,6 +4609,7 @@ mod tests {
             temp.path()
                 .join("cache/workspaces/2026.04.28.082247+abcdef12"),
         );
+        state.save(&paths.state_file)?;
 
         let original_home = std::env::var_os("HOME");
         let original_path = std::env::var_os("PATH");

@@ -2,7 +2,7 @@
 
 use crate::{
     config::{self, RuntimeConfig, RuntimePaths},
-    liveness,
+    liveness, npm_cli_repair,
     state::PersistedState,
 };
 use anyhow::Result;
@@ -40,6 +40,18 @@ struct UpdateDiagnostics {
     last_known_good_version: Option<String>,
     update_error: Option<String>,
     cli_status: String,
+    cli_error: Option<String>,
+    cli_repair: Option<CliRepairDiagnostics>,
+}
+
+#[derive(Debug, Serialize)]
+struct CliRepairDiagnostics {
+    condition: &'static str,
+    detected_at: String,
+    stale_directory: PathBuf,
+    quarantine_path: Option<PathBuf>,
+    last_error: Option<String>,
+    repair_command: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -136,6 +148,7 @@ fn collect_with_webview(
         running_error: running.err().map(|error| error.to_string()),
         pid_file: pid_file_diagnostics(&app_pid_file),
     };
+    let cli_repair = npm_cli_repair::snapshot(paths)?;
     let report_without_warnings = DiagnosticsReport {
         schema: "codex-update-manager/diagnostics/v1",
         ok: false,
@@ -147,6 +160,16 @@ fn collect_with_webview(
             last_known_good_version: state.last_known_good_version.clone(),
             update_error: state.error_message.clone(),
             cli_status: format!("{:?}", state.cli_status),
+            cli_error: state.cli_error_message.clone(),
+            cli_repair: cli_repair.map(|repair| CliRepairDiagnostics {
+                condition:
+                    "A stale npm retirement directory is blocking managed Codex CLI updates.",
+                detected_at: repair.detected_at.to_rfc3339(),
+                stale_directory: repair.stale_directory,
+                quarantine_path: repair.quarantine_path,
+                last_error: repair.last_error,
+                repair_command: "codex-update-manager repair-cli",
+            }),
         },
         app,
         webview: WebviewDiagnostics {
@@ -199,6 +222,26 @@ fn print_text(report: &DiagnosticsReport) {
         report.update.update_error.as_deref().unwrap_or("none")
     );
     println!(
+        "cli: status={} error={}",
+        report.update.cli_status,
+        report.update.cli_error.as_deref().unwrap_or("none")
+    );
+    if let Some(repair) = &report.update.cli_repair {
+        println!(
+            "cli_repair: condition={} stale_directory={} quarantine={} last_error={} command={}",
+            repair.condition,
+            repair.stale_directory.display(),
+            repair
+                .quarantine_path
+                .as_deref()
+                .map(Path::display)
+                .map(|path| path.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            repair.last_error.as_deref().unwrap_or("none"),
+            repair.repair_command
+        );
+    }
+    println!(
         "app: executable={} exists={} running={}",
         report.app.executable_path.display(),
         report.app.executable_exists,
@@ -248,6 +291,11 @@ fn diagnostics_warnings(report: &DiagnosticsReport) -> Vec<String> {
     }
     if report.update.update_error.is_some() {
         warnings.push("updater state has an update error".to_string());
+    }
+    if report.update.cli_repair.is_some() {
+        warnings.push(
+            "Codex CLI requires explicit repair; run codex-update-manager repair-cli".to_string(),
+        );
     }
     if report.app.running && !report.webview.ok {
         warnings.push("app is running but webview did not respond".to_string());
@@ -548,6 +596,8 @@ mod tests {
                 last_known_good_version: None,
                 update_error: None,
                 cli_status: "Unknown".to_string(),
+                cli_error: None,
+                cli_repair: None,
             },
             app: AppDiagnostics {
                 executable_path: config.app_executable_path,
