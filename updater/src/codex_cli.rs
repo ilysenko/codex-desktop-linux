@@ -16,7 +16,7 @@ use std::{
     io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     os::unix::process::CommandExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::{Command, ExitStatus, Output, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
     thread,
@@ -2043,7 +2043,22 @@ fn install_latest_cli(latest_version: &str) -> Result<()> {
         local_prefix.as_os_str().to_os_string(),
         OsString::from(&package_spec),
     ];
-    run_npm_command(&npm, &path_env, &local_args)
+    let first_output = run_npm_command_output(&npm, &path_env, &local_args)?;
+    if first_output.status.success() {
+        return Ok(());
+    }
+
+    if recover_stale_npm_retirement_directory(&local_prefix, &first_output)? {
+        warn!(
+            prefix = %local_prefix.display(),
+            "retrying Codex CLI install after removing stale npm retirement directory"
+        );
+        let retry_output = run_npm_command_output(&npm, &path_env, &local_args)?;
+        return ensure_npm_command_success(&npm, &local_args, retry_output)
+            .with_context(|| format!("npm install into {} failed", local_prefix.display()));
+    }
+
+    ensure_npm_command_success(&npm, &local_args, first_output)
         .with_context(|| format!("npm install into {} failed", local_prefix.display()))
 }
 
@@ -2075,6 +2090,107 @@ fn prepare_safe_npm_prefix(prefix: &Path) -> Result<()> {
     if mode & 0o022 != 0 {
         fs::set_permissions(prefix, fs::Permissions::from_mode(mode & !0o022))
             .with_context(|| format!("Failed to secure npm prefix {}", prefix.display()))?;
+    }
+    Ok(())
+}
+
+fn recover_stale_npm_retirement_directory(prefix: &Path, output: &Output) -> Result<bool> {
+    if output.status.success() {
+        return Ok(false);
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.lines().any(|line| line.contains("ENOTEMPTY"))
+        || !stderr.lines().any(|line| line.contains("syscall rename"))
+    {
+        return Ok(false);
+    }
+
+    let Some(source) = npm_error_path_field(&stderr, "path") else {
+        return Ok(false);
+    };
+    let Some(destination) = npm_error_path_field(&stderr, "dest") else {
+        return Ok(false);
+    };
+    let expected_source = prefix.join("lib/node_modules/@openai/codex");
+    let expected_parent = expected_source
+        .parent()
+        .context("Managed npm package path has no parent directory")?;
+    if source != expected_source
+        || destination.parent() != Some(expected_parent)
+        || !destination
+            .file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(is_npm_retirement_directory_name)
+    {
+        return Ok(false);
+    }
+
+    validate_managed_npm_directory(prefix, &expected_source)?;
+    validate_managed_npm_directory(prefix, &destination)?;
+    fs::remove_dir_all(&destination).with_context(|| {
+        format!(
+            "Failed to remove stale npm retirement directory {}",
+            destination.display()
+        )
+    })?;
+    Ok(true)
+}
+
+fn npm_error_path_field(stderr: &str, field: &str) -> Option<PathBuf> {
+    stderr.lines().find_map(|line| {
+        let payload = line
+            .trim()
+            .strip_prefix("npm error ")
+            .or_else(|| line.trim().strip_prefix("npm ERR! "))?;
+        payload
+            .strip_prefix(field)?
+            .strip_prefix(char::is_whitespace)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    })
+}
+
+fn is_npm_retirement_directory_name(name: &str) -> bool {
+    name.strip_prefix(".codex-").is_some_and(|suffix| {
+        suffix.len() == 8 && suffix.chars().all(|ch| ch.is_ascii_alphanumeric())
+    })
+}
+
+fn validate_managed_npm_directory(prefix: &Path, path: &Path) -> Result<()> {
+    let relative = path.strip_prefix(prefix).with_context(|| {
+        format!(
+            "Managed npm path {} is outside {}",
+            path.display(),
+            prefix.display()
+        )
+    })?;
+    anyhow::ensure!(
+        !relative.as_os_str().is_empty(),
+        "Managed npm cleanup cannot target the prefix root"
+    );
+
+    let euid = unsafe { libc::geteuid() };
+    let mut current = prefix.to_path_buf();
+    for component in relative.components() {
+        anyhow::ensure!(
+            matches!(component, Component::Normal(_)),
+            "Managed npm path {} contains an unsafe component",
+            path.display()
+        );
+        current.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&current)
+            .with_context(|| format!("Failed to inspect managed npm path {}", current.display()))?;
+        anyhow::ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "Managed npm path {} is not a regular directory",
+            current.display()
+        );
+        anyhow::ensure!(
+            metadata.uid() == euid,
+            "Managed npm path {} is not owned by the current user",
+            current.display()
+        );
     }
     Ok(())
 }
@@ -2184,14 +2300,16 @@ fn local_npm_prefix() -> PathBuf {
         .join(".codex-cli-npm")
 }
 
-fn run_npm_command(npm: &Path, path_env: &OsString, args: &[OsString]) -> Result<()> {
+fn run_npm_command_output(npm: &Path, path_env: &OsString, args: &[OsString]) -> Result<Output> {
     let mut command = Command::new(npm);
     command.env("PATH", path_env).args(args);
     apply_safe_child_umask(&mut command);
-    let output = command
+    command
         .output()
-        .with_context(|| format!("Failed to spawn {}", npm.display()))?;
+        .with_context(|| format!("Failed to spawn {}", npm.display()))
+}
 
+fn ensure_npm_command_success(npm: &Path, args: &[OsString], output: Output) -> Result<()> {
     anyhow::ensure!(
         output.status.success(),
         "{} {} failed with {}{}",
@@ -2200,7 +2318,6 @@ fn run_npm_command(npm: &Path, path_env: &OsString, args: &[OsString]) -> Result
         output.status,
         format_command_output(&output)
     );
-
     Ok(())
 }
 
@@ -4741,6 +4858,99 @@ exit 1
         assert_eq!(state.cli_package_manager_latest_version, None);
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert_eq!(read_installed_version(&codex_path)?, "0.42.1");
+        Ok(())
+    }
+
+    #[test]
+    fn reconcile_if_present_recovers_stale_npm_retirement_directory() -> Result<()> {
+        let _env_guard = env_lock();
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            "FAKE_CODEX_PATH",
+            "NPM_ACTIVE_PACKAGE",
+            "NPM_INSTALL_LOG",
+            "NPM_RETIREMENT_PATH",
+        ]);
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let home = temp.path().join("home");
+        let bin_dir = temp.path().join("bin");
+        let local_prefix = home.join(".codex-cli-npm");
+        let active_package = local_prefix.join("lib/node_modules/@openai/codex");
+        let retirement_path = local_prefix
+            .join("lib/node_modules/@openai")
+            .join(".codex-cqYkmGXr");
+        let install_log = temp.path().join("npm-install.log");
+        fs::create_dir_all(&active_package)?;
+        fs::write(active_package.join("package.json"), "{}\n")?;
+        fs::create_dir_all(&retirement_path)?;
+        fs::write(retirement_path.join("package.json"), "{}\n")?;
+        fs::create_dir_all(&bin_dir)?;
+
+        let codex_path = bin_dir.join("codex");
+        write_executable_script(
+            &codex_path,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"version\" ]; then\n  echo 'codex-cli v0.42.0'\n  exit 0\nfi\nexit 1\n",
+        )?;
+        let npm_path = bin_dir.join("npm");
+        write_executable_script(
+            &npm_path,
+            r#"#!/bin/sh
+if [ "$1" = "view" ] && [ "$2" = "@openai/codex" ] && [ "$3" = "version" ]; then
+  echo '0.42.1'
+  exit 0
+fi
+if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = "--include=optional" ]; then
+  printf 'attempt\n' >> "$NPM_INSTALL_LOG"
+  if [ -d "$NPM_RETIREMENT_PATH" ]; then
+    printf '%s\n' \
+      'npm error code ENOTEMPTY' \
+      'npm error syscall rename' \
+      "npm error path $NPM_ACTIVE_PACKAGE" \
+      "npm error dest $NPM_RETIREMENT_PATH" \
+      'npm error errno -39' \
+      "npm error ENOTEMPTY: directory not empty, rename '$NPM_ACTIVE_PACKAGE' -> '$NPM_RETIREMENT_PATH'" >&2
+    exit 217
+  fi
+  printf '%s\n' '#!/bin/sh' 'if [ "$1" = "--version" ] || [ "$1" = "version" ]; then' "  echo 'codex-cli v0.42.1'" '  exit 0' 'fi' 'exit 1' > "$FAKE_CODEX_PATH"
+  exit 0
+fi
+exit 1
+"#,
+        )?;
+
+        std::env::set_var("HOME", &home);
+        std::env::set_var("PATH", std::env::join_paths([bin_dir])?);
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+        std::env::set_var("FAKE_CODEX_PATH", &codex_path);
+        std::env::set_var("NPM_ACTIVE_PACKAGE", &active_package);
+        std::env::set_var("NPM_INSTALL_LOG", &install_log);
+        std::env::set_var("NPM_RETIREMENT_PATH", &retirement_path);
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(codex_path.clone());
+
+        let updated = reconcile_if_present(&mut state, &paths)?;
+
+        assert!(updated);
+        assert_eq!(state.cli_status, CliStatus::UpToDate);
+        assert_eq!(state.cli_installed_version.as_deref(), Some("0.42.1"));
+        assert_eq!(fs::read_to_string(install_log)?, "attempt\nattempt\n");
+        assert!(!retirement_path.exists());
         Ok(())
     }
 
