@@ -31,7 +31,11 @@ function reportEntryFailure(patch) {
 
 function criticalFailuresFromReport(report) {
   return (report?.patches ?? [])
-    .filter((patch) => isCriticalPolicy(patch.ciPolicy))
+    .filter(
+      (patch) =>
+        patch.status === PATCH_STATUS_FAILED_REQUIRED ||
+        isCriticalPolicy(patch.ciPolicy),
+    )
     .filter((patch) => !SUCCESS_STATUSES.has(patch.status) && !NOT_APPLICABLE_STATUSES.has(patch.status))
     .map(reportEntryFailure);
 }
@@ -39,6 +43,7 @@ function criticalFailuresFromReport(report) {
 function optionalDriftFromReport(report) {
   return (report?.patches ?? [])
     .filter((patch) => !isCriticalPolicy(patch.ciPolicy))
+    .filter((patch) => patch.status !== PATCH_STATUS_FAILED_REQUIRED)
     .filter((patch) => !SUCCESS_STATUSES.has(patch.status) && !NOT_APPLICABLE_STATUSES.has(patch.status))
     .map(reportEntryFailure);
 }

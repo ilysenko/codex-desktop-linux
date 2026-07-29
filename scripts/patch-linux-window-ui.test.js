@@ -8134,6 +8134,61 @@ test("restores current Chrome native host runtime assets after a write failure",
   }
 });
 
+test("blocks acceptance when Chrome runtime rollback cannot restore original bytes", () => {
+  const candidate = createCurrentChromeNativeHostRuntimeAssetsFixture();
+  try {
+    const before = new Map([
+      [candidate.mainPath, fs.readFileSync(candidate.mainPath, "utf8")],
+      [candidate.srcPath, fs.readFileSync(candidate.srcPath, "utf8")],
+    ]);
+    let writeCount = 0;
+    const { value, warnings } = captureWarns(() =>
+      patchLinuxChromeNativeHostRuntimeAssets(candidate.extractedDir, {
+        writeFileSync(filePath, source, encoding) {
+          writeCount += 1;
+          if (writeCount === 2) {
+            fs.writeFileSync(filePath, "corrupt-Chrome-runtime-asset", encoding);
+            throw new Error("simulated Chrome runtime asset write failure");
+          }
+          if (writeCount === 3) {
+            throw new Error("simulated Chrome runtime rollback failure");
+          }
+          fs.writeFileSync(filePath, source, encoding);
+        },
+      }),
+    );
+
+    assert.equal(value.changed, 0);
+    assert.equal(value.integrityFailure, true);
+    assert.equal(value.status, "failed-required");
+    assert.match(value.reason, /could not restore original bytes/i);
+    assert.equal(fs.readFileSync(candidate.mainPath, "utf8"), before.get(candidate.mainPath));
+    assert.equal(fs.readFileSync(candidate.srcPath, "utf8"), "corrupt-Chrome-runtime-asset");
+
+    const descriptor = corePatchDescriptors().find(
+      (candidateDescriptor) =>
+        candidateDescriptor.id === "linux-chrome-native-host-runtime",
+    );
+    const status = descriptor.status(value, warnings);
+    const report = {
+      patches: [{
+        name: descriptor.id,
+        ciPolicy: descriptor.ciPolicy,
+        status: status.status,
+        reason: status.reason,
+      }],
+    };
+    assert.deepEqual(criticalFailuresFromReport(report), [{
+      name: "linux-chrome-native-host-runtime",
+      status: "failed-required",
+      reason: value.reason,
+    }]);
+    assert.deepEqual(optionalDriftFromReport(report), []);
+  } finally {
+    fs.rmSync(candidate.extractedDir, { recursive: true, force: true });
+  }
+});
+
 test("rejects partial Electron 42 Browser Use runtime markers byte-identically", () => {
   const patched = applyLinuxChromeNativeHostRuntimePatch(
     electron42BrowserUseRuntimeResolverBundleFixture(),

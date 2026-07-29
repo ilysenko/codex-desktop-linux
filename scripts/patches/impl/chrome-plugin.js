@@ -429,7 +429,11 @@ function applyChromePluginCodexAppServerRuntimePatch(currentSource, helper) {
   return currentSource.replace(original, replacement);
 }
 
-function writeChromeNativeHostRuntimeAssetCandidates(candidates, writeFileSync) {
+function writeChromeNativeHostRuntimeAssetCandidates(
+  candidates,
+  writeFileSync,
+  readFileSync,
+) {
   const attempted = [];
   try {
     for (const candidate of candidates) {
@@ -437,18 +441,42 @@ function writeChromeNativeHostRuntimeAssetCandidates(candidates, writeFileSync) 
       writeFileSync(candidate.filePath, candidate.patched, "utf8");
     }
   } catch (error) {
+    const rollbackFailures = [];
     for (const candidate of attempted.reverse()) {
       try {
         writeFileSync(candidate.filePath, candidate.source, "utf8");
-      } catch {
+      } catch (rollbackError) {
+        rollbackFailures.push(rollbackError);
       }
     }
+
+    for (const candidate of attempted) {
+      try {
+        if (readFileSync(candidate.filePath, "utf8") !== candidate.source) {
+          rollbackFailures.push(
+            new Error(`rollback byte verification failed for ${candidate.filePath}`),
+          );
+        }
+      } catch (rollbackError) {
+        rollbackFailures.push(rollbackError);
+      }
+    }
+
+    if (rollbackFailures.length > 0) {
+      const integrityError = new Error(
+        `Chrome native host runtime rollback could not restore original bytes: ${rollbackFailures[0].message}`,
+      );
+      integrityError.code = "CHROME_NATIVE_HOST_RUNTIME_INTEGRITY_FAILURE";
+      throw integrityError;
+    }
+
     throw error;
   }
 }
 
 function patchLinuxChromeNativeHostRuntimeAssets(extractedDir, {
   writeFileSync = fs.writeFileSync,
+  readFileSync = fs.readFileSync,
 } = {}) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   if (!fs.existsSync(buildDir)) {
@@ -520,8 +548,23 @@ function patchLinuxChromeNativeHostRuntimeAssets(extractedDir, {
   }
 
   try {
-    writeChromeNativeHostRuntimeAssetCandidates(candidates, writeFileSync);
-  } catch {
+    writeChromeNativeHostRuntimeAssetCandidates(
+      candidates,
+      writeFileSync,
+      readFileSync,
+    );
+  } catch (error) {
+    if (error?.code === "CHROME_NATIVE_HOST_RUNTIME_INTEGRITY_FAILURE") {
+      console.warn(`WARN: ${error.message}`);
+      return {
+        matched: records.length,
+        changed: 0,
+        integrityFailure: true,
+        status: "failed-required",
+        reason: error.message,
+      };
+    }
+
     const reason = "Could not write current Chrome native host runtime asset set";
     console.warn(`WARN: ${reason} — skipping Linux runtime path patch`);
     return { matched: records.length, changed: 0, reason };
