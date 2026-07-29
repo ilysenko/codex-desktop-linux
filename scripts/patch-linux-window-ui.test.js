@@ -14,6 +14,9 @@ const vm = require("node:vm");
 const {
   applyPetOverlayPatch,
 } = require("../linux-features/pet-overlay/patch.js");
+const {
+  patchWrapperUpdateSettingsAssets,
+} = require("../linux-features/codex-wrapper-updater/patch.js");
 
 // Pin the feature config so a developer's local gitignored features.json
 // cannot change which patch descriptors these core tests exercise.
@@ -5753,6 +5756,84 @@ test("patches physical-key fallback through native Keyboard Shortcuts asset scan
     const secondResult = patchKeybindsSettingsAssets(extractedDir);
     assert.equal(secondResult.matched, true);
     assert.equal(secondResult.changed, 0);
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("preserves wrapper updater extensions across Linux settings patch passes", () => {
+  const { extractedDir, assetsDir } = createModernNativeKeyboardShortcutsSettingsFixture();
+  try {
+    const firstCoreResult = patchKeybindsSettingsAssets(extractedDir);
+    assert.equal(firstCoreResult.matched, true);
+
+    const settingsPath = path.join(assetsDir, linuxDesktopSettingsAsset);
+    const generatedSource = fs.readFileSync(settingsPath, "utf8");
+    assert.match(
+      generatedSource,
+      /var codexLinuxDesktopSettingsVersion=1,KEYS=\{/,
+    );
+
+    const firstFeatureResult = patchWrapperUpdateSettingsAssets(extractedDir);
+    assert.deepEqual(firstFeatureResult, { matched: true, changed: 1 });
+    const composedSource = fs.readFileSync(settingsPath, "utf8");
+    assert.match(composedSource, /wrapperUpdates:"codex-linux-wrapper-updates-enabled"/);
+    assert.match(composedSource, /featurePickerOnUpdate:"codex-linux-feature-picker-on-update"/);
+
+    const secondCoreResult = patchKeybindsSettingsAssets(extractedDir);
+    assert.equal(secondCoreResult.matched, true);
+    assert.equal(secondCoreResult.changed, 0);
+    assert.equal(fs.readFileSync(settingsPath, "utf8"), composedSource);
+
+    const secondFeatureResult = patchWrapperUpdateSettingsAssets(extractedDir);
+    assert.deepEqual(secondFeatureResult, { matched: true, changed: 0 });
+    assert.equal(fs.readFileSync(settingsPath, "utf8"), composedSource);
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("rejects incomplete generated Linux settings markers without writing assets", () => {
+  const { extractedDir, assetsDir } = createModernNativeKeyboardShortcutsSettingsFixture();
+  try {
+    assert.equal(patchKeybindsSettingsAssets(extractedDir).matched, true);
+    const settingsPath = path.join(assetsDir, linuxDesktopSettingsAsset);
+    fs.writeFileSync(
+      settingsPath,
+      fs.readFileSync(settingsPath, "utf8").replace(
+        "codexLinuxDesktopSettingsVersion=1",
+        "codexLinuxDesktopSettingsVersion=2",
+      ),
+      "utf8",
+    );
+    const assetsBefore = new Map(
+      fs.readdirSync(assetsDir).map((name) => [
+        name,
+        fs.readFileSync(path.join(assetsDir, name), "utf8"),
+      ]),
+    );
+
+    const { value: result, warnings } = captureWarns(() =>
+      patchKeybindsSettingsAssets(extractedDir),
+    );
+
+    assert.equal(result.matched, false);
+    assert.equal(result.changed, 0);
+    assert.match(result.reason, /generated Linux desktop settings marker is stale or incomplete/);
+    assert.ok(
+      warnings.some((warning) =>
+        warning.includes("generated Linux desktop settings marker is stale or incomplete"),
+      ),
+    );
+    assert.deepEqual(
+      new Map(
+        fs.readdirSync(assetsDir).map((name) => [
+          name,
+          fs.readFileSync(path.join(assetsDir, name), "utf8"),
+        ]),
+      ),
+      assetsBefore,
+    );
   } finally {
     fs.rmSync(extractedDir, { recursive: true, force: true });
   }

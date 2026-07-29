@@ -22,6 +22,9 @@ const linuxDesktopSettingsAsset = "linux-desktop-settings-linux.js";
 const linuxKeybindOverridesKey = "codex-linux-keybind-overrides";
 const linuxReactRuntimeExport = "codexLinuxReact";
 const linuxJsxRuntimeExport = "codexLinuxJsx";
+const linuxDesktopSettingsSourceVersion = 1;
+const linuxDesktopSettingsSourceMarker =
+  `var codexLinuxDesktopSettingsVersion=${linuxDesktopSettingsSourceVersion},KEYS={`;
 
 function versionedAssetSpecifier(assetName, source) {
   const digest = crypto.createHash("sha256").update(source).digest("hex").slice(0, 12);
@@ -501,7 +504,10 @@ function resolveLinuxDesktopSettingsAsset(extractedDir) {
     includeHotkeySettings: false,
   });
 
-  const source = buildLinuxDesktopSettingsSource(dependencies);
+  const source = buildLinuxDesktopSettingsSource(dependencies).replace(
+    "var KEYS={",
+    linuxDesktopSettingsSourceMarker,
+  );
   return {
     filePath: path.join(webviewAssetsDir, linuxDesktopSettingsAsset),
     source,
@@ -803,6 +809,27 @@ function applyCollectedAssetPatchWrites(patches) {
   return changed;
 }
 
+function selectLinuxDesktopSettingsSource(previousSource, generatedSource) {
+  if (
+    previousSource == null ||
+    !previousSource.includes("codexLinuxDesktopSettingsVersion")
+  ) {
+    return generatedSource;
+  }
+
+  const markerCount =
+    previousSource.split(linuxDesktopSettingsSourceMarker).length - 1;
+  const markerPrefixCount =
+    previousSource.split("codexLinuxDesktopSettingsVersion=").length - 1;
+  if (markerCount === 1 && markerPrefixCount === 1) {
+    return previousSource;
+  }
+
+  throw new Error(
+    "Required Keybinds settings patch failed: generated Linux desktop settings marker is stale or incomplete",
+  );
+}
+
 function patchKeybindsSettingsAssets(extractedDir) {
   try {
     if (!hasNativeKeyboardShortcutsSettings(extractedDir)) {
@@ -814,6 +841,10 @@ function patchKeybindsSettingsAssets(extractedDir) {
     const previousSettingsSource = settingsAssetExists
       ? fs.readFileSync(settingsAsset.filePath, "utf8")
       : null;
+    const nextSettingsSource = selectLinuxDesktopSettingsSource(
+      previousSettingsSource,
+      settingsAsset.source,
+    );
     // Treat generated updates as patches so a route bundle can receive both
     // the runtime exports and the Linux route insertion without one write
     // overwriting the other.
@@ -852,8 +883,8 @@ function patchKeybindsSettingsAssets(extractedDir) {
       ),
     ];
 
-    fs.writeFileSync(settingsAsset.filePath, settingsAsset.source, "utf8");
-    let changed = previousSettingsSource !== settingsAsset.source ? 1 : 0;
+    fs.writeFileSync(settingsAsset.filePath, nextSettingsSource, "utf8");
+    let changed = previousSettingsSource !== nextSettingsSource ? 1 : 0;
     changed += applyCollectedAssetPatchWrites(patches);
     return {
       matched: true,
