@@ -11,6 +11,9 @@ const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
+  applyLinuxNativeTitlebarPatch,
+} = require("../../scripts/patches/impl/main-process/window.js");
+const {
   applyFramelessTitlebarBranchPatch,
   applyFramelessTitlebarMainPatch,
   applyFramelessTitlebarOverlaySyncPatch,
@@ -41,6 +44,17 @@ function copyFeatureTo(featuresRoot) {
   for (const name of ["feature.json", "README.md", "patch.js"]) {
     fs.copyFileSync(path.join(__dirname, name), path.join(featureDir, name));
   }
+}
+
+function nativeTitlebarCompositionFixture() {
+  return [
+    "function A2(e){return e===`avatarOverlay`}",
+    "function I2({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!A2(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?a2:o2,backgroundMaterial:e===`win32`?`none`:null}:e===`linux`&&!A2(t)?{backgroundColor:r?a2:o2,backgroundMaterial:null}:{backgroundColor:i2,backgroundMaterial:null}}",
+    "function j9(e=1){return{color:i2,symbolColor:c.nativeTheme.shouldUseDarkColors?v2:_2,height:Math.round(g2*e)}}",
+    "case`quickChat`:case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`,trafficLightPosition:A9(r),...e===`quickChat`?{hasShadow:!0,resizable:!0,transparent:!0}:{},...t?{}:{vibrancy:`menu`}}:n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:j9(r),...e===`quickChat`?{resizable:!0}:{}}:{titleBarStyle:`default`,...e===`quickChat`?{resizable:!0}:{}};",
+    "setWindowZoom(e,t){let n=c.BrowserWindow.fromWebContents(e),r=n&&this.windowAppearances.get(n.id);n==null||r!==`primary`&&r!==`quickChat`||(process.platform===`darwin`?n.setWindowButtonPosition(A9(t)):(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t))))}",
+    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`quickChat`)return;let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(j9(this.windowZooms.get(e.id)))};return c.nativeTheme.on(`updated`,n),n(),()=>{c.nativeTheme.off(`updated`,n)}}",
+  ].join("");
 }
 
 test("frameless-titlebar stays disabled until listed in features.json", () => {
@@ -160,6 +174,52 @@ test("frameless-titlebar composes with the current native-titlebar patch shape",
     /n===`linux`\?\{titleBarStyle:`hidden`,\.\.\.e===`quickChat`\?\{resizable:!0\}:\{\}\}/,
   );
   assert.doesNotMatch(patched, /titleBarOverlay:n===`linux`/);
+});
+
+test("native-titlebar remains complete after frameless-titlebar composition", () => {
+  const corePatched = applyLinuxNativeTitlebarPatch(
+    nativeTitlebarCompositionFixture(),
+  );
+  const composed = applyFramelessTitlebarMainPatch(corePatched);
+  let rerun;
+  const warnings = captureWarnings(() => {
+    rerun = applyLinuxNativeTitlebarPatch(composed);
+  });
+
+  assert.equal(rerun, composed);
+  assert.deepEqual(warnings, []);
+});
+
+test("native-titlebar rejects partial frameless compositions byte-identically", () => {
+  const corePatched = applyLinuxNativeTitlebarPatch(
+    nativeTitlebarCompositionFixture(),
+  );
+  const composed = applyFramelessTitlebarMainPatch(corePatched);
+  const variants = [
+    composed.replace(
+      "function codexLinuxTitleBarOverlay",
+      "function codexLinuxTitleBarOverlayMissing",
+    ),
+    composed.replace(
+      "process.platform===`win32`&&(this.windowZooms.set",
+      "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set",
+    ),
+    composed.replace(
+      "if(process.platform!==`win32`||t!==`primary`",
+      "if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`",
+    ),
+  ];
+
+  for (const source of variants) {
+    let rerun;
+    const warnings = captureWarnings(() => {
+      rerun = applyLinuxNativeTitlebarPatch(source);
+    });
+    assert.equal(rerun, source);
+    assert.deepEqual(warnings, [
+      "WARN: Could not find primary BrowserWindow titlebar snippet — skipping Linux native titlebar patch",
+    ]);
+  }
 });
 
 test("frameless-titlebar reports current main-process drift", () => {
