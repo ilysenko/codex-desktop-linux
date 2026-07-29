@@ -10021,7 +10021,7 @@ test("warns when Linux external-open helper exists without wrapped Electron requ
 
   assert.equal(value, source);
   assert.deepEqual(warnings, [
-    "WARN: Could not find Electron require initializer — skipping Linux external open environment patch",
+    "WARN: Found incomplete Linux external open environment patch — skipping",
   ]);
 });
 

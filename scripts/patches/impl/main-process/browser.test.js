@@ -108,6 +108,50 @@ test("Linux external open env patch is idempotent", () => {
   assert.equal(second, first, "second application should not change the source");
 });
 
+test("Linux external open env patch ignores feature-owned Electron requires after its complete marker", () => {
+  const source = '"use strict";let e=require("electron");';
+  const patched = applyLinuxExternalOpenEnvPatch(source);
+  const composed =
+    `${patched}function featureRuntime(){let featureElectron=require(\`electron\`);return featureElectron.app}`;
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(message);
+  try {
+    assert.equal(applyLinuxExternalOpenEnvPatch(composed), composed);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.deepEqual(warnings, []);
+  assert.match(composed, /featureElectron=require\(`electron`\)/);
+});
+
+test("Linux external open env patch rejects partial marker states byte-identically", () => {
+  const complete = applyLinuxExternalOpenEnvPatch(
+    '"use strict";let e=require("electron");',
+  );
+  const variants = [
+    '"use strict";function codexLinuxPatchExternalOpen(e){return e}let featureElectron=require(`electron`);',
+    '"use strict";let e=codexLinuxPatchExternalOpen(require(`electron`));',
+    complete.replace("return __codexEnv}", "return process.env}"),
+    complete + complete,
+  ];
+
+  for (const source of variants) {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (message) => warnings.push(message);
+    try {
+      assert.equal(applyLinuxExternalOpenEnvPatch(source), source);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.deepEqual(warnings, [
+      "WARN: Found incomplete Linux external open environment patch — skipping",
+    ]);
+  }
+});
+
 test("Linux external open env patch warns when no electron require found", () => {
   const source = '"use strict";const fs=require("node:fs");';
   const warnings = [];
