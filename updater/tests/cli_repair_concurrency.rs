@@ -97,7 +97,7 @@ if [ "$1" = "install" ]; then
   printf '%s\n' "$$" >> "$NPM_INSTALL_LOG"
   printf '%s\n' "$PPID" > "$NPM_SUPERVISOR_PID"
   previous_group="$(/bin/cat "$NPM_BACKGROUND_PROCESS_GROUP" 2>/dev/null || true)"
-  if [ -n "$previous_group" ] && /bin/kill -0 "-$previous_group" 2>/dev/null; then
+  if [ -n "$previous_group" ] && /bin/kill -0 -- "-$previous_group" 2>/dev/null; then
     /bin/touch "$NPM_INSTALL_OVERLAP"
     exit 99
   fi
@@ -614,6 +614,13 @@ fn killed_npm_supervisor_cleans_descendants_before_lock_release() -> Result<()> 
         wait_for_nonempty_file(&fixture.npm_supervisor_pid, "npm supervisor pid value")?
             .trim()
             .parse::<i32>()?;
+    anyhow::ensure!(
+        Command::new("/bin/kill")
+            .args(["-0", "--", &format!("-{background_process_group}")])
+            .status()?
+            .success(),
+        "overlap oracle did not recognize live npm group {background_process_group}"
+    );
     anyhow::ensure!(
         unsafe { libc::kill(supervisor_pid, libc::SIGKILL) } == 0,
         "failed to kill npm supervisor {supervisor_pid}"
