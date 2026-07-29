@@ -39,6 +39,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   through the current private open-target command path. Command-path drift is
   reported before the feature changes the main bundle, so enabled-feature
   acceptance cannot mistake a partially patched bundle for success.
+- Repeated current-DMG patch passes now keep composed native and frameless
+  titlebars, external-open handling, Record & Replay, and Browser Use runtime
+  resolution byte-identical. Complete markers no longer depend on
+  function-local minified aliases, while partial markers remain fail-soft and
+  leave drifted assets untouched.
 - Remote mobile control now patches the current 26.721 dual-gate enablement
   bridge instead of reporting it as already applied. Startup auto-connects the
   environment owned by this Desktop without overwriting saved choices for
