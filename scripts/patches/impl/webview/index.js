@@ -184,9 +184,56 @@ function applyLinuxHeaderSlotSafeAreaPatch(currentSource) {
     .replace(slotSource, patchedSlotSource);
 }
 
+function matchesFramelessWindowControlsSafeAreaComposition(currentSource) {
+  const prop = LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP;
+  const overrideMatches = currentSource.match(
+    new RegExp(`${prop}:!1,side:\`end\``, "gu"),
+  ) ?? [];
+  if (overrideMatches.length === 0) {
+    return null;
+  }
+
+  const insetMatches = [
+    ...currentSource.matchAll(
+      /applicationMenu:Object\.freeze\(\{left:0,right:(\d+)\}\)/gu,
+    ),
+  ];
+  const slotSignatureMatches = currentSource.match(
+    new RegExp(
+      `function [A-Za-z_$][\\w$]*\\(\\{entries:[A-Za-z_$][\\w$]*,fitWidth:[A-Za-z_$][\\w$]*,side:[A-Za-z_$][\\w$]*,slotWidth:[A-Za-z_$][\\w$]*,${prop}\\}\\)`,
+      "gu",
+    ),
+  ) ?? [];
+  const paddingMatches = currentSource.match(
+    new RegExp(
+      `"pe-2":([A-Za-z_$][\\w$]*)===\`start\`&&[A-Za-z_$][\\w$]*\\|\\|\\1===\`end\`&&!${prop},"pe-\\(--spacing-token-safe-header-right\\)":\\1===\`end\`&&${prop}`,
+      "gu",
+    ),
+  ) ?? [];
+
+  return (
+    overrideMatches.length === 1 &&
+    insetMatches.length > 0 &&
+    insetMatches.every((match) => match[1] === "0") &&
+    slotSignatureMatches.length === 1 &&
+    paddingMatches.length === 1
+  );
+}
+
 function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
   const currentInset = `applicationMenu:Object.freeze({left:0,right:${LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT}})`;
   const defaultInset = "applicationMenu:Object.freeze({left:0,right:0})";
+  const framelessComposition =
+    matchesFramelessWindowControlsSafeAreaComposition(currentSource);
+  if (framelessComposition === true) {
+    return currentSource;
+  }
+  if (framelessComposition === false) {
+    console.warn(
+      "WARN: Could not validate frameless Linux window-controls safe-area composition — leaving asset unchanged",
+    );
+    return currentSource;
+  }
 
   let patchedSource = currentSource;
   if (patchedSource.includes(defaultInset)) {
