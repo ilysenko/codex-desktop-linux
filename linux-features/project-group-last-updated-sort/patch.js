@@ -1,14 +1,14 @@
 "use strict";
 
 const currentGroupSorter =
-  "function Fe({groups:e,items:t,projectOrder:n}){let r=new Map(t.map(e=>[e.task.key,e.recencyAt]));return ue(e.map((e,t)=>({group:e,index:t,recencyAt:Re(e,r)})).sort((e,t)=>t.recencyAt-e.recencyAt||e.index-t.index).map(({group:e})=>e),n)}";
+  "function h2o({groups:e,items:t,projectOrder:n}){let r=new Map(t.map(e=>[e.task.key,e.recencyAt]));return iZi(e.map((e,t)=>({group:e,index:t,recencyAt:y2o(e,r)})).sort((e,t)=>t.recencyAt-e.recencyAt||e.index-t.index).map(({group:e})=>e),n)}";
 const patchedGroupSorter =
-  "function Fe({groups:e,items:t,projectOrder:n,sortMode:codexLinuxProjectSortMode}){let r=new Map(t.map(e=>[e.task.key,e.recencyAt]));return((codexLinuxRecencySortedGroups)=>codexLinuxProjectSortMode===`updated_at`?codexLinuxRecencySortedGroups:ue(codexLinuxRecencySortedGroups,n))(e.map((e,t)=>({group:e,index:t,recencyAt:Re(e,r)})).sort((e,t)=>t.recencyAt-e.recencyAt||e.index-t.index).map(({group:e})=>e))}";
+  "function h2o({groups:e,items:t,projectOrder:n,sortMode:codexLinuxProjectSortMode}){let r=new Map(t.map(e=>[e.task.key,e.recencyAt]));return((codexLinuxRecencySortedGroups)=>codexLinuxProjectSortMode===`updated_at`?codexLinuxRecencySortedGroups:iZi(codexLinuxRecencySortedGroups,n))(e.map((e,t)=>({group:e,index:t,recencyAt:y2o(e,r)})).sort((e,t)=>t.recencyAt-e.recencyAt||e.index-t.index).map(({group:e})=>e))}";
 
 const currentGroupSorterCall =
-  "T=Fe({groups:Pe({groups:S,items:c}),items:c,projectOrder:f(t,o.PROJECT_ORDER)})";
+  "T=h2o({groups:m2o({groups:C,items:s}),items:s,projectOrder:ap(t,zl.PROJECT_ORDER)})";
 const patchedGroupSorterCall =
-  "T=Fe({groups:Pe({groups:S,items:c}),items:c,projectOrder:f(t,o.PROJECT_ORDER),sortMode:t(C).projectSortMode})";
+  "T=h2o({groups:m2o({groups:C,items:s}),items:s,projectOrder:ap(t,zl.PROJECT_ORDER),sortMode:t(Ez).projectSortMode})";
 
 function countOccurrences(source, needle) {
   return source.split(needle).length - 1;
@@ -52,8 +52,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_900,
     ciPolicy: "optional",
-    pattern:
-      /^app-initial~app-main~onboarding-page~projects-index-page~quick-chat-window-page~codex-micro~[A-Za-z0-9_-]+\.js$/,
+    pattern: /^app-initial-[A-Za-z0-9_-]+\.js$/,
     missingDescription: "project group sort webview bundle",
     skipDescription: "project group Last updated sorting feature patch",
     apply: applyProjectGroupLastUpdatedSortPatch,
