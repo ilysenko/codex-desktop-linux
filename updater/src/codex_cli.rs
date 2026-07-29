@@ -1792,7 +1792,7 @@ fn terminate_process_group_members(process_group: i32, excluded_pid: i32) {
         }
         thread::sleep(BOUNDED_COMMAND_POLL_INTERVAL.min(deadline - Instant::now()));
     }
-    signal_process_group_members(process_group, excluded_pid, SIGKILL);
+    signal_process_group(process_group, SIGKILL);
 }
 
 fn signal_process_group_members(process_group: i32, excluded_pid: i32, signal: i32) -> bool {
@@ -1832,7 +1832,8 @@ fn process_group_member_pidfds(
     excluded_pid: i32,
 ) -> std::io::Result<Vec<OwnedFd>> {
     let mut members = Vec::new();
-    for entry in fs::read_dir("/proc")?.flatten() {
+    for entry in fs::read_dir("/proc")? {
+        let entry = entry?;
         let Some(pid) = entry
             .file_name()
             .to_str()
@@ -1840,7 +1841,7 @@ fn process_group_member_pidfds(
         else {
             continue;
         };
-        if pid == excluded_pid || process_group_for_pid(pid) != Some(process_group) {
+        if pid == excluded_pid || process_group_for_pid(pid)? != Some(process_group) {
             continue;
         }
         let pidfd = {
@@ -1854,17 +1855,42 @@ fn process_group_member_pidfds(
             }
             unsafe { OwnedFd::from_raw_fd(raw_fd) }
         };
-        if process_group_for_pid(pid) == Some(process_group) {
+        if process_group_for_pid(pid)? == Some(process_group) {
             members.push(pidfd);
         }
     }
     Ok(members)
 }
 
-fn process_group_for_pid(pid: i32) -> Option<i32> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let after_name = stat.get(stat.rfind(')')? + 1..)?;
-    after_name.split_whitespace().nth(2)?.parse().ok()
+fn process_group_for_pid(pid: i32) -> std::io::Result<Option<i32>> {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let close = stat.rfind(')').ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("process {pid} stat has no command terminator"),
+        )
+    })?;
+    let process_group = stat
+        .get(close + 1..)
+        .and_then(|fields| fields.split_whitespace().nth(2))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("process {pid} stat has no process group"),
+            )
+        })?
+        .parse::<i32>()
+        .map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("process {pid} stat has an invalid process group: {error}"),
+            )
+        })?;
+    Ok(Some(process_group))
 }
 
 fn signal_process_group(process_group: i32, signal: i32) {
