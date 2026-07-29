@@ -2424,29 +2424,14 @@ pub fn repair_cli(state: &mut PersistedState, paths: &RuntimePaths) -> Result<Cl
             None
         }
     } {
-        record_managed_install(state, &latest_version, &install);
-        if let Err(error) = persist_state(paths, state) {
-            return Err(cli_repair_failure_error(
-                state,
-                paths,
-                &mut journal,
-                &snapshot,
-                &format!("Failed to persist repaired Codex CLI state: {error:#}"),
-            ));
-        }
-        if let Err(error) = npm_cli_repair::clear(paths) {
-            return Err(cli_repair_failure_error(
-                state,
-                paths,
-                &mut journal,
-                &snapshot,
-                &format!("Failed to clear the completed Codex CLI repair journal: {error:#}"),
-            ));
-        }
-        return Ok(CliRepairOutcome {
-            installed_version: install.installed_version,
-            quarantine_paths: snapshot.quarantine_paths,
-        });
+        return complete_cli_repair(
+            state,
+            paths,
+            &mut journal,
+            snapshot,
+            &latest_version,
+            install,
+        );
     }
 
     let package_spec = format!("{CLI_PACKAGE_NAME}@{latest_version}");
@@ -2521,12 +2506,30 @@ pub fn repair_cli(state: &mut PersistedState, paths: &RuntimePaths) -> Result<Cl
         }
     };
 
-    record_managed_install(state, &latest_version, &install);
+    complete_cli_repair(
+        state,
+        paths,
+        &mut journal,
+        snapshot,
+        &latest_version,
+        install,
+    )
+}
+
+fn complete_cli_repair(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    journal: &mut npm_cli_repair::RepairJournal,
+    snapshot: npm_cli_repair::RepairSnapshot,
+    latest_version: &str,
+    install: ManagedCliInstall,
+) -> Result<CliRepairOutcome> {
+    record_managed_install(state, latest_version, &install);
     if let Err(error) = persist_state(paths, state) {
         return Err(cli_repair_failure_error(
             state,
             paths,
-            &mut journal,
+            journal,
             &snapshot,
             &format!("Failed to persist repaired Codex CLI state: {error:#}"),
         ));
@@ -2535,7 +2538,7 @@ pub fn repair_cli(state: &mut PersistedState, paths: &RuntimePaths) -> Result<Cl
         return Err(cli_repair_failure_error(
             state,
             paths,
-            &mut journal,
+            journal,
             &snapshot,
             &format!("Failed to clear the completed Codex CLI repair journal: {error:#}"),
         ));
