@@ -595,7 +595,6 @@ function applyOpenInTargetRegistryCommandPatch(currentSource, { warnOnMissing = 
       warnOnMissing &&
       (
         currentSource.includes("get-target-command") ||
-        currentSource.includes("getOpenInTargetCommand") ||
         currentSource.includes("allAvailableTargets")
       )
     ) {
