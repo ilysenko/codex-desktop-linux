@@ -15,6 +15,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
+    os::fd::RawFd,
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     os::unix::process::{CommandExt, ExitStatusExt},
     path::{Path, PathBuf},
@@ -1450,6 +1451,13 @@ fn run_bounded_command_output(
             .arg(std::process::id().to_string())
             .arg("--timeout-millis")
             .arg(timeout_millis.to_string())
+            .arg("--install-lock-fd")
+            .arg(
+                install_lock
+                    .expect("supervised npm commands require the install lock")
+                    .raw_fd()
+                    .to_string(),
+            )
             .arg(program)
             .arg("--")
             .args(args);
@@ -1540,6 +1548,7 @@ fn run_bounded_command_output(
 pub(crate) fn run_npm_supervisor(
     owner_pid: u32,
     timeout_millis: u64,
+    install_lock_fd: RawFd,
     program: &Path,
     args: &[OsString],
 ) -> Result<()> {
@@ -1557,6 +1566,7 @@ pub(crate) fn run_npm_supervisor(
         current_parent_pid() == owner_pid,
         "npm supervisor owner exited before npm started"
     );
+    set_close_on_exec(install_lock_fd).context("Failed to isolate the CLI install lock")?;
 
     let mut command = Command::new(program);
     command
@@ -1565,6 +1575,21 @@ pub(crate) fn run_npm_supervisor(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .process_group(0);
+    let supervisor_pid = std::process::id();
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, SIGKILL) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() as u32 != supervisor_pid {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "npm supervisor exited before npm started",
+                ));
+            }
+            Ok(())
+        });
+    }
     let mut child = command
         .spawn()
         .with_context(|| format!("Failed to spawn supervised npm {}", program.display()))?;
@@ -1574,6 +1599,7 @@ pub(crate) fn run_npm_supervisor(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                terminate_remaining_process_group(process_group);
                 if status.success() {
                     return Ok(());
                 }
@@ -1610,6 +1636,20 @@ pub(crate) fn run_npm_supervisor(
 
         thread::sleep(BOUNDED_COMMAND_POLL_INTERVAL.min(timeout.saturating_sub(started.elapsed())));
     }
+}
+
+fn set_close_on_exec(fd: RawFd) -> Result<()> {
+    anyhow::ensure!(fd >= 0, "npm supervisor install lock descriptor is invalid");
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags == -1 {
+        return Err(std::io::Error::last_os_error())
+            .context("Failed to inspect the inherited install lock descriptor");
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == -1 {
+        return Err(std::io::Error::last_os_error())
+            .context("Failed to protect the inherited install lock descriptor");
+    }
+    Ok(())
 }
 
 fn current_parent_pid() -> u32 {
@@ -1678,6 +1718,17 @@ fn terminate_process_group(child: &mut std::process::Child, process_group: i32) 
     thread::sleep(BOUNDED_COMMAND_TERMINATION_GRACE);
     signal_process_group(process_group, SIGKILL);
     let _ = child.kill();
+}
+
+fn terminate_remaining_process_group(process_group: i32) {
+    if signal_process_group_checked(process_group, SIGTERM) {
+        thread::sleep(BOUNDED_COMMAND_TERMINATION_GRACE);
+        signal_process_group(process_group, SIGKILL);
+    }
+}
+
+fn signal_process_group_checked(process_group: i32, signal: i32) -> bool {
+    unsafe { kill(-process_group, signal) == 0 }
 }
 
 fn signal_process_group(process_group: i32, signal: i32) {
@@ -2886,6 +2937,13 @@ fn normalize_version_token(token: &str) -> Option<String> {
 
 fn npm_program() -> Result<(PathBuf, OsString)> {
     let npm = find_in_path("npm", &command_path_env()).context("npm was not found in PATH")?;
+    let npm = if npm.is_absolute() {
+        npm
+    } else {
+        std::env::current_dir()
+            .context("Failed to resolve the current directory for npm")?
+            .join(npm)
+    };
     canonical_cli_launch_path(&npm).context("npm executable is not usable")?;
     let toolchain_bin = npm
         .parent()
@@ -3114,10 +3172,27 @@ mod tests {
     use chrono::Utc;
     use std::{
         fs,
+        os::fd::AsRawFd,
         os::unix::{fs::PermissionsExt, process::ExitStatusExt},
         path::Path,
     };
     use tempfile::tempdir;
+
+    struct CurrentDirectoryGuard(PathBuf);
+
+    impl CurrentDirectoryGuard {
+        fn set(path: &Path) -> Result<Self> {
+            let original = std::env::current_dir().context("current test directory")?;
+            std::env::set_current_dir(path).context("set current test directory")?;
+            Ok(Self(original))
+        }
+    }
+
+    impl Drop for CurrentDirectoryGuard {
+        fn drop(&mut self) {
+            std::env::set_current_dir(&self.0).expect("restore current test directory");
+        }
+    }
 
     fn npm_enotempty_output(source: &Path, destination: &Path, legacy_prefix: bool) -> Output {
         let prefix = if legacy_prefix {
@@ -5338,11 +5413,13 @@ wait
         )?;
         let _restore_env = EnvRestoreGuard::capture(&["NPM_CHILD_MARKER"]);
         std::env::set_var("NPM_CHILD_MARKER", &child_marker);
+        let install_lock = fs::File::create(temp.path().join("install.lock"))?;
 
         let started = Instant::now();
         let error = run_npm_supervisor(
             current_parent_pid(),
             100,
+            install_lock.as_raw_fd(),
             &npm_program,
             &[OsString::from("install")],
         )
@@ -5366,12 +5443,79 @@ wait
         )?;
         let _restore_env = EnvRestoreGuard::capture(&["NPM_STARTED"]);
         std::env::set_var("NPM_STARTED", &started);
+        let install_lock = fs::File::create(temp.path().join("install.lock"))?;
 
-        let error = run_npm_supervisor(u32::MAX, 100, &npm_program, &[OsString::from("install")])
-            .expect_err("a supervisor with a stale owner must not start npm");
+        let error = run_npm_supervisor(
+            u32::MAX,
+            100,
+            install_lock.as_raw_fd(),
+            &npm_program,
+            &[OsString::from("install")],
+        )
+        .expect_err("a supervisor with a stale owner must not start npm");
 
         assert!(error.to_string().contains("owner exited"));
         assert!(!started.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn npm_supervisor_keeps_the_install_lock_out_of_npm() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let npm_program = temp.path().join("npm");
+        let inherited_marker = temp.path().join("lock-inherited");
+        write_executable_script(
+            &npm_program,
+            "#!/bin/sh\nif [ -e \"/proc/self/fd/$NPM_INSTALL_LOCK_FD\" ]; then\n  printf inherited > \"$NPM_LOCK_INHERITED_MARKER\"\n  exit 88\nfi\nexit 0\n",
+        )?;
+        let install_lock = fs::File::create(temp.path().join("install.lock"))?;
+        let _restore_env =
+            EnvRestoreGuard::capture(&["NPM_INSTALL_LOCK_FD", "NPM_LOCK_INHERITED_MARKER"]);
+        std::env::set_var("NPM_INSTALL_LOCK_FD", install_lock.as_raw_fd().to_string());
+        std::env::set_var("NPM_LOCK_INHERITED_MARKER", &inherited_marker);
+
+        run_npm_supervisor(
+            current_parent_pid(),
+            1_000,
+            install_lock.as_raw_fd(),
+            &npm_program,
+            &[OsString::from("install")],
+        )?;
+
+        assert!(!inherited_marker.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn npm_program_absolutizes_a_relative_path_entry_without_resolving_symlinks() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let path_bin = temp.path().join("path-bin");
+        fs::create_dir_all(&path_bin)?;
+        let real_bin = temp.path().join("real-bin");
+        fs::create_dir_all(&real_bin)?;
+        write_executable_script(&real_bin.join("npm"), "#!/bin/sh\nexit 0\n")?;
+        write_executable_script(&real_bin.join("node"), "#!/bin/sh\nexit 0\n")?;
+        std::os::unix::fs::symlink(real_bin.join("npm"), path_bin.join("npm"))?;
+        std::os::unix::fs::symlink(real_bin.join("node"), path_bin.join("node"))?;
+        let _current_directory = CurrentDirectoryGuard::set(temp.path())?;
+        let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_DATA_HOME",
+            "FNM_DIR",
+            "FNM_MULTISHELL_PATH",
+        ]);
+        std::env::set_var("HOME", temp.path());
+        std::env::set_var("PATH", std::env::join_paths([PathBuf::from("path-bin")])?);
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("FNM_DIR");
+        std::env::remove_var("FNM_MULTISHELL_PATH");
+
+        assert_eq!(npm_program()?.0, path_bin.join("npm"));
         Ok(())
     }
 

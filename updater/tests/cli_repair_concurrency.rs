@@ -29,6 +29,7 @@ struct Fixture {
     install_release: PathBuf,
     install_overlap: PathBuf,
     install_owner: PathBuf,
+    background_process_group: PathBuf,
     view_started: PathBuf,
     view_release: PathBuf,
 }
@@ -57,6 +58,7 @@ impl Fixture {
         let install_release = root.join("npm-install.release");
         let install_overlap = root.join("npm-install.overlap");
         let install_owner = root.join("npm-install.owner");
+        let background_process_group = root.join("npm-background-process-group");
         let view_started = root.join("npm-view.started");
         let view_release = root.join("npm-view.release");
         let app_executable = root.join("app/electron");
@@ -105,6 +107,12 @@ if [ "$1" = "install" ]; then
     printf '%s\n' "$$" > "$NPM_INSTALL_OWNER/pid"
     trap '/bin/rm -f "$NPM_INSTALL_OWNER/pid"; /bin/rmdir "$NPM_INSTALL_OWNER"' EXIT
     /bin/touch "$NPM_INSTALL_STARTED"
+    if [ "$(/bin/cat "$NPM_INSTALL_MODE")" = "background-descendant" ]; then
+      /bin/sh -c 'trap "exit 0" TERM; while :; do /bin/sleep 1; done' \
+        >/dev/null 2>&1 &
+      printf '%s\n' "$$" > "$NPM_BACKGROUND_PROCESS_GROUP"
+      exit 0
+    fi
     while [ ! -e "$NPM_INSTALL_RELEASE" ]; do
       /bin/sleep 0.01
     done
@@ -175,6 +183,7 @@ exit 1
             install_release,
             install_overlap,
             install_owner,
+            background_process_group,
             view_started,
             view_release,
         };
@@ -226,6 +235,10 @@ exit 1
             .env("NPM_INSTALL_RELEASE", &self.install_release)
             .env("NPM_INSTALL_OVERLAP", &self.install_overlap)
             .env("NPM_INSTALL_OWNER", &self.install_owner)
+            .env(
+                "NPM_BACKGROUND_PROCESS_GROUP",
+                &self.background_process_group,
+            )
             .env("NPM_VIEW_STARTED", &self.view_started)
             .env("NPM_VIEW_RELEASE", &self.view_release)
             .env_remove("FNM_DIR")
@@ -260,6 +273,13 @@ exit 1
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if let Ok(process_group) = fs::read_to_string(&self.background_process_group) {
+            if let Ok(process_group) = process_group.trim().parse::<i32>() {
+                unsafe {
+                    libc::kill(-process_group, libc::SIGKILL);
+                }
+            }
+        }
         let pid_path = self.install_owner.join("pid");
         let Ok(pid) = fs::read_to_string(pid_path) else {
             return;
@@ -503,6 +523,46 @@ fn orphaned_npm_process_group_is_bounded_and_releases_the_install_lock() -> Resu
 
     fs::write(&fixture.install_release, b"continue")?;
     ensure_success("status", &status.wait()?)?;
+
+    assert!(!fixture.install_overlap.exists());
+    Ok(())
+}
+
+#[test]
+fn completed_npm_leader_cleans_background_group_and_releases_the_install_lock() -> Result<()> {
+    let fixture = Fixture::new()?;
+    fs::write(&fixture.install_mode, b"background-descendant\n")?;
+
+    let mut first_status_command = fixture.command();
+    first_status_command.args(["status", "--json"]);
+    let first_status = ManagedChild::spawn(first_status_command, "first status")?;
+    wait_for_path(
+        &fixture.background_process_group,
+        "background npm process group",
+    )?;
+    let background_process_group = fs::read_to_string(&fixture.background_process_group)?
+        .trim()
+        .parse::<i32>()?;
+    let first_output = first_status.wait()?;
+    assert!(!first_output.status.success());
+    assert!(String::from_utf8_lossy(&first_output.stderr)
+        .contains("npm completed but managed Codex CLI 0.42.1 could not be resolved"));
+    wait_for_process_group_exit(background_process_group, "background npm descendant")?;
+
+    fs::remove_file(&fixture.install_started)?;
+    fixture.update_state(expire_cli_registry_check)?;
+    fs::write(&fixture.install_mode, b"success\n")?;
+    let mut replacement_status_command = fixture.command();
+    replacement_status_command.args(["status", "--json"]);
+    let mut replacement_status =
+        ManagedChild::spawn(replacement_status_command, "replacement status")?;
+    wait_for_path(&fixture.install_started, "replacement npm install")?;
+    replacement_status.assert_running()?;
+    assert_eq!(install_count(&fixture.install_log)?, 2);
+    assert!(!fixture.install_overlap.exists());
+
+    fs::write(&fixture.install_release, b"continue")?;
+    ensure_success("replacement status", &replacement_status.wait()?)?;
 
     assert!(!fixture.install_overlap.exists());
     Ok(())

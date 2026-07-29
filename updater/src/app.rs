@@ -55,11 +55,18 @@ pub async fn run(cli: Cli) -> Result<()> {
     if let Commands::RunNpmSupervisor {
         owner_pid,
         timeout_millis,
+        install_lock_fd,
         program,
         args,
     } = &cli.command
     {
-        return codex_cli::run_npm_supervisor(*owner_pid, *timeout_millis, program, args);
+        return codex_cli::run_npm_supervisor(
+            *owner_pid,
+            *timeout_millis,
+            *install_lock_fd,
+            program,
+            args,
+        );
     }
 
     let paths = RuntimePaths::detect()?;

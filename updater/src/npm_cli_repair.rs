@@ -68,6 +68,10 @@ pub(crate) struct InstallLock {
 }
 
 impl InstallLock {
+    pub(crate) fn raw_fd(&self) -> std::os::fd::RawFd {
+        self._file.as_raw_fd()
+    }
+
     pub(crate) fn inherit_with(&self, command: &mut Command) {
         let fd = self._file.as_raw_fd();
         unsafe {

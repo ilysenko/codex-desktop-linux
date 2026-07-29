@@ -59,6 +59,8 @@ pub enum Commands {
         owner_pid: u32,
         #[arg(long)]
         timeout_millis: u64,
+        #[arg(long)]
+        install_lock_fd: i32,
         program: PathBuf,
         #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<OsString>,
