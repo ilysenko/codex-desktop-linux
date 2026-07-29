@@ -14,6 +14,9 @@ const {
   applyLinuxNativeTitlebarPatch,
 } = require("../../scripts/patches/impl/main-process/window.js");
 const {
+  applyLinuxWindowControlsSafeAreaPatch,
+} = require("../../scripts/patches/impl/webview/index.js");
+const {
   applyFramelessTitlebarBranchPatch,
   applyFramelessTitlebarMainPatch,
   applyFramelessTitlebarOverlaySyncPatch,
@@ -273,6 +276,40 @@ test("frameless-titlebar retains standard end padding after the core safe-area p
     ),
     "jsx(slot,{codexLinuxUseWindowControlsSafeArea:!1,side:`end`})",
   );
+});
+
+test("frameless-titlebar composes idempotently with the core safe-area patch", () => {
+  const source = [
+    "var eV=Object.freeze({default:Object.freeze({left:0,right:0}),applicationMenu:Object.freeze({left:0,right:0})});",
+    "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})}",
+    "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"pe-2\":n===`start`&&i||n===`end`});return jsx(o)}",
+    "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.applicationMenu:eV.default;",
+  ].join("");
+  const corePatched = applyLinuxWindowControlsSafeAreaPatch(source);
+  const composed = applyFramelessTitlebarWebviewPatch(corePatched);
+
+  assert.equal(applyLinuxWindowControlsSafeAreaPatch(composed), composed);
+  assert.equal(applyFramelessTitlebarWebviewPatch(composed), composed);
+  assert.deepEqual(
+    captureWarnings(() => applyLinuxWindowControlsSafeAreaPatch(composed)),
+    [],
+  );
+});
+
+test("core safe-area patch preserves incomplete frameless composition", () => {
+  const source = [
+    "var eV=Object.freeze({default:Object.freeze({left:0,right:0}),applicationMenu:Object.freeze({left:0,right:0})});",
+    "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,codexLinuxUseWindowControlsSafeArea:!1,side:`end`})}",
+    "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"pe-2\":n===`start`&&i||n===`end`});return jsx(o)}",
+  ].join("");
+
+  const warnings = captureWarnings(() => {
+    assert.equal(applyLinuxWindowControlsSafeAreaPatch(source), source);
+  });
+
+  assert.deepEqual(warnings, [
+    "WARN: Could not validate frameless Linux window-controls safe-area composition — leaving asset unchanged",
+  ]);
 });
 
 test("frameless-titlebar reports each current webview sub-contract drift", () => {
