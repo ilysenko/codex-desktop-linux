@@ -161,6 +161,45 @@ function findMinifiedMethod(source, signatureRegex) {
   };
 }
 
+function hasLinuxTitlebarWithoutOverlayComposition(
+  source,
+  helperFunctionRegex,
+) {
+  if (!helperFunctionRegex.test(source)) {
+    return false;
+  }
+
+  const primaryTitlebarRegex =
+    /case`quickChat`:case`primary`:return [^;]{0,2000}?([A-Za-z_$][\w$]*)===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),\.\.\.([A-Za-z_$][\w$]*)===`quickChat`\?\{resizable:!0\}:\{\}\}:\1===`linux`\?\{titleBarStyle:`hidden`,\.\.\.\4===`quickChat`\?\{resizable:!0\}:\{\}\}:/;
+  if (!primaryTitlebarRegex.test(source)) {
+    return false;
+  }
+
+  const zoomMethod = findMinifiedMethod(
+    source,
+    /setWindowZoom\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{/,
+  );
+  const zoomRegex =
+    /process\.platform===`win32`&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\(([A-Za-z_$][\w$]*)\(\2\)\)\)/;
+  if (zoomMethod != null && !zoomRegex.test(zoomMethod.text)) {
+    return false;
+  }
+
+  const overlaySyncMethod = findMinifiedMethod(
+    source,
+    /installApplicationMenuTitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{/,
+  );
+  const overlaySyncRegex =
+    /installApplicationMenuTitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(process\.platform!==`win32`\|\|\2!==`primary`&&\2!==`quickChat`\)return;let ([A-Za-z_$][\w$]*)=\(\)=>\{\1\.isDestroyed\(\)\|\|\1\.setTitleBarOverlay\(([A-Za-z_$][\w$]*)\(this\.windowZooms\.get\(\1\.id\)\)\)\}/;
+  if (overlaySyncMethod != null && !overlaySyncRegex.test(overlaySyncMethod.text)) {
+    return false;
+  }
+
+  return !source.includes(
+    `setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(`,
+  );
+}
+
 function applyLinuxNativeTitlebarPatch(currentSource) {
   const helperFunctionRegex = new RegExp(
     'function ' +
@@ -177,6 +216,14 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
   const primaryTitlebarMatch = currentSource.match(primaryTitlebarRegex);
   const patchedPrimaryTitlebarMatch = currentSource.match(patchedPrimaryTitlebarRegex);
   if (primaryTitlebarMatch == null && patchedPrimaryTitlebarMatch == null) {
+    if (
+      hasLinuxTitlebarWithoutOverlayComposition(
+        currentSource,
+        helperFunctionRegex,
+      )
+    ) {
+      return currentSource;
+    }
     console.warn("WARN: Could not find primary BrowserWindow titlebar snippet — skipping Linux native titlebar patch");
     return currentSource;
   }
