@@ -152,6 +152,28 @@ test("Linux external open env patch rejects partial marker states byte-identical
   }
 });
 
+test("Linux external open env patch rejects a partially restored core target", () => {
+  const complete = applyLinuxExternalOpenEnvPatch(
+    '"use strict";let e=require("electron"),t=require("electron");',
+  );
+  const partial = complete.replace(
+    "t=codexLinuxPatchExternalOpen(require(\"electron\"))",
+    "t=require(\"electron\")",
+  );
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(message);
+  try {
+    assert.equal(applyLinuxExternalOpenEnvPatch(partial), partial);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.deepEqual(warnings, [
+    "WARN: Found incomplete Linux external open environment patch — skipping",
+  ]);
+});
+
 test("Linux external open env patch warns when no electron require found", () => {
   const source = '"use strict";const fs=require("node:fs");';
   const warnings = [];

@@ -70,6 +70,7 @@ const {
 const {
   applyLinuxChromeNativeHostRuntimePatch,
   applyLinuxChromePluginAutoInstallPatch,
+  patchLinuxChromeNativeHostRuntimeAssets,
 } = require("./patches/impl/chrome-plugin.js");
 const {
   applyLinuxAppReloadShortcutsPatch,
@@ -1541,6 +1542,28 @@ function electron42BrowserUseRuntimeResolverBundleFixture() {
     "function Hn({env:e=process.env,isPackaged:n=!0,platform:r=process.platform,repoRoot:i=process.cwd(),resolveCodexPath:a=t.Wn,resolveNodePath:o=t.Gn,resolveNodeReplPath:s=t.Kn,resolvePrimaryRuntimeNodePath:c=Kn,resourcesPath:l}){let u=l??tt({env:e,resourcesPath:process.resourcesPath}),d=c(r),f=Gn({platform:r,rawValue:e.CODEX_CLI_PATH,resolveWindowsAppsPath:a})??Wn({devRelativePathSegments:[`extension`,`bin`,`codex`],isPackaged:n,platform:r,repoRoot:i,resolveBundledPath:a,resourcesPath:u}),p=Wn({devRelativePathSegments:null,isPackaged:n,platform:r,repoRoot:i,resolveBundledPath:o,resourcesPath:u}),m=Gn({platform:r,rawValue:e.CODEX_BROWSER_USE_NODE_PATH,resolveWindowsAppsPath:o})??(p.path==null&&d!=null?{path:d,source:`primary-runtime`}:p),h=Gn({platform:r,rawValue:e.CODEX_NODE_REPL_PATH,resolveWindowsAppsPath:s})??Wn({devRelativePathSegments:null,isPackaged:n,platform:r,repoRoot:i,resolveBundledPath:s,resourcesPath:u});return{codexCliPath:f.path,codexCliPathSource:f.source,nodeModuleDirs:t.Vn(u),nodePath:m.path,nodePathSource:m.source,nodeReplPath:h.path,nodeReplPathSource:h.source,platform:r}}",
     "function Wn(e){return{path:null,source:`missing`}}function Gn({rawValue:e}){return e==null?null:{path:e,source:`env-override`}}",
   ].join("");
+}
+
+function currentChromePluginAppServerSourceBundleFixture() {
+  return [
+    "let i=require(`node:path`),c=require(`node:fs`);",
+    "var _G=`com.openai.codexextension`,gG=`.plugin-appserver`;",
+    "async function TG(e){let t=e.nativeHostName===_G;return t?`isolated:${e.codexCliPath}`:e.codexCliPath}",
+    "async function vq(e){let t=yq(e),n=GN(e.resourcesPath),r=WN(e.resourcesPath),i=[t==null?`codex`:null,n==null?`node`:null,r==null?`node_repl`:null].filter(e=>e!=null);if(i.length>0)throw Error(`Missing bundled Electron runtime required to sync Chrome native host resources for ${e.nativeHostName}: ${i.join(`, `)} (resourcesPath: ${e.resourcesPath}).`);if(t==null||n==null||r==null)throw Error(`Missing bundled Electron runtime required to sync Chrome native host resources for ${e.nativeHostName}.`);return{codexCliPath:await TG({codexCliPath:t,codexHome:e.codexHome,nativeHostName:e.nativeHostName}),nodePath:n,nodeModuleDirs:KN(e.resourcesPath),nodeReplPath:r}}",
+    "async function UK(e){let t=yq(e);if(t==null)throw Error(`Missing bundled Electron Codex runtime required to sync Chrome plugin app server for ${e.nativeHostName} (resourcesPath: ${e.resourcesPath??`<none>`}).`);return TG({codexCliPath:t,codexHome:e.codexHome,nativeHostName:e.nativeHostName})}",
+    "function yq(e){return null}function GN(e){return null}function WN(e){return null}function KN(e){return []}",
+  ].join("");
+}
+
+function createCurrentChromeNativeHostRuntimeAssetsFixture() {
+  const extractedDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-current-chrome-runtime-assets-"));
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  fs.mkdirSync(buildDir, { recursive: true });
+  const mainPath = path.join(buildDir, "main-current.js");
+  const srcPath = path.join(buildDir, "src-current.js");
+  fs.writeFileSync(mainPath, electron42BrowserUseRuntimeResolverBundleFixture(), "utf8");
+  fs.writeFileSync(srcPath, currentChromePluginAppServerSourceBundleFixture(), "utf8");
+  return { extractedDir, mainPath, srcPath };
 }
 
 function computerUseFeatureBundleFixture() {
@@ -5824,6 +5847,47 @@ test("rejects incomplete generated Linux settings markers without writing assets
   }
 });
 
+test("rejects truncated generated Linux settings source without writing assets", () => {
+  const { extractedDir, assetsDir } = createModernNativeKeyboardShortcutsSettingsFixture();
+  try {
+    assert.equal(patchKeybindsSettingsAssets(extractedDir).matched, true);
+    const settingsPath = path.join(assetsDir, linuxDesktopSettingsAsset);
+    const generatedSource = fs.readFileSync(settingsPath, "utf8");
+    const markerEnd = generatedSource.indexOf("KEYS={") + "KEYS={".length;
+    fs.writeFileSync(settingsPath, generatedSource.slice(0, markerEnd), "utf8");
+    const assetsBefore = new Map(
+      fs.readdirSync(assetsDir).map((name) => [
+        name,
+        fs.readFileSync(path.join(assetsDir, name), "utf8"),
+      ]),
+    );
+
+    const { value: result, warnings } = captureWarns(() =>
+      patchKeybindsSettingsAssets(extractedDir),
+    );
+
+    assert.equal(result.matched, false);
+    assert.equal(result.changed, 0);
+    assert.match(result.reason, /generated Linux desktop settings marker is stale or incomplete/);
+    assert.ok(
+      warnings.some((warning) =>
+        warning.includes("generated Linux desktop settings marker is stale or incomplete"),
+      ),
+    );
+    assert.deepEqual(
+      new Map(
+        fs.readdirSync(assetsDir).map((name) => [
+          name,
+          fs.readFileSync(path.join(assetsDir, name), "utf8"),
+        ]),
+      ),
+      assetsBefore,
+    );
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
 function runLinuxKeybindRuntimeEvent(eventInit) {
   const dispatched = [];
   const listeners = {};
@@ -7826,6 +7890,152 @@ test("uses Linux managed runtime paths for Electron 42 Browser Use runtime resol
   });
 });
 
+test("patches the complete current Chrome native host runtime asset set atomically", async () => {
+  const { extractedDir, mainPath, srcPath } = createCurrentChromeNativeHostRuntimeAssetsFixture();
+  try {
+    const { value: first, warnings: firstWarnings } = captureWarns(() =>
+      patchLinuxChromeNativeHostRuntimeAssets(extractedDir),
+    );
+
+    assert.deepEqual(first, { matched: 2, changed: 2 });
+    assert.deepEqual(firstWarnings, []);
+    const mainPatched = fs.readFileSync(mainPath, "utf8");
+    const srcPatched = fs.readFileSync(srcPath, "utf8");
+    assert.match(mainPatched, /codexLinuxChromeNativeHostRuntimeEntry\(codexLinuxChromeNativeHostRuntimePath\(`codex`\),`linux-path`\)/);
+    assert.match(srcPatched, /codexLinuxChromeNativeHostRuntimeEnv\(`CODEX_CLI_PATH`\)/);
+    assert.match(srcPatched, /codexLinuxChromeNativeHostRuntimeFile\(e\.resourcesPath,\[\[`node-runtime`,`bin`,process\.platform===`win32`\?`node\.exe`:`node`\]\]\)/);
+    assert.match(srcPatched, /codexLinuxChromePluginAppServerSourcePath/);
+
+    const files = new Set([
+      "/home/josh/.local/bin/codex",
+      "/opt/codex/resources/node-runtime/bin/node",
+      "/opt/codex/resources/node_repl",
+    ]);
+    const runtime = await vm.runInNewContext(
+      `${srcPatched};vq({resourcesPath:"/opt/codex/resources",codexHome:"/tmp/codex",devRuntimeRepoRoot:null,nativeHostName:"com.openai.codexextension"});`,
+      {
+        require(moduleName) {
+          if (moduleName === "node:path") {
+            return path;
+          }
+          if (moduleName === "node:fs") {
+            return {
+              statSync(filePath) {
+                if (!files.has(filePath)) {
+                  throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+                }
+                return { isFile: () => true };
+              },
+            };
+          }
+          return require(moduleName);
+        },
+        process: {
+          env: { CODEX_CLI_PATH: "/home/josh/.local/bin/codex", PATH: "" },
+          platform: "linux",
+        },
+      },
+    );
+    assert.deepEqual(JSON.parse(JSON.stringify(runtime)), {
+      codexCliPath: "/home/josh/.local/bin/codex",
+      nodeModuleDirs: [],
+      nodePath: "/opt/codex/resources/node-runtime/bin/node",
+      nodeReplPath: "/opt/codex/resources/node_repl",
+    });
+
+    const beforeSecondPass = new Map([
+      [mainPath, mainPatched],
+      [srcPath, srcPatched],
+    ]);
+    const { value: second, warnings: secondWarnings } = captureWarns(() =>
+      patchLinuxChromeNativeHostRuntimeAssets(extractedDir),
+    );
+
+    assert.deepEqual(second, { matched: 2, changed: 0 });
+    assert.deepEqual(secondWarnings, []);
+    assert.deepEqual(
+      new Map([
+        [mainPath, fs.readFileSync(mainPath, "utf8")],
+        [srcPath, fs.readFileSync(srcPath, "utf8")],
+      ]),
+      beforeSecondPass,
+    );
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("rejects mixed or partial current Chrome native host runtime asset sets without writes", () => {
+  const mixed = createCurrentChromeNativeHostRuntimeAssetsFixture();
+  try {
+    fs.writeFileSync(
+      mixed.mainPath,
+      applyLinuxChromeNativeHostRuntimePatch(fs.readFileSync(mixed.mainPath, "utf8")),
+      "utf8",
+    );
+    const mixedBefore = new Map([
+      [mixed.mainPath, fs.readFileSync(mixed.mainPath, "utf8")],
+      [mixed.srcPath, fs.readFileSync(mixed.srcPath, "utf8")],
+    ]);
+    const { value: mixedResult, warnings: mixedWarnings } = captureWarns(() =>
+      patchLinuxChromeNativeHostRuntimeAssets(mixed.extractedDir),
+    );
+
+    assert.equal(mixedResult.changed, 0);
+    assert.match(mixedResult.reason, /mixed current Chrome native host runtime patch state/);
+    assert.deepEqual(mixedWarnings, [
+      "WARN: Found mixed current Chrome native host runtime patch state — skipping Linux runtime path patch",
+    ]);
+    assert.deepEqual(
+      new Map([
+        [mixed.mainPath, fs.readFileSync(mixed.mainPath, "utf8")],
+        [mixed.srcPath, fs.readFileSync(mixed.srcPath, "utf8")],
+      ]),
+      mixedBefore,
+    );
+  } finally {
+    fs.rmSync(mixed.extractedDir, { recursive: true, force: true });
+  }
+
+  const partial = createCurrentChromeNativeHostRuntimeAssetsFixture();
+  try {
+    assert.deepEqual(
+      patchLinuxChromeNativeHostRuntimeAssets(partial.extractedDir),
+      { matched: 2, changed: 2 },
+    );
+    fs.writeFileSync(
+      partial.srcPath,
+      fs.readFileSync(partial.srcPath, "utf8").replace(
+        "/*codexLinuxChromeNativeHostAppServerRuntime*/",
+        "/*codexLinuxChromeNativeHostAppServerRuntimeCorrupt*/",
+      ),
+      "utf8",
+    );
+    const partialBefore = new Map([
+      [partial.mainPath, fs.readFileSync(partial.mainPath, "utf8")],
+      [partial.srcPath, fs.readFileSync(partial.srcPath, "utf8")],
+    ]);
+    const { value: partialResult, warnings: partialWarnings } = captureWarns(() =>
+      patchLinuxChromeNativeHostRuntimeAssets(partial.extractedDir),
+    );
+
+    assert.equal(partialResult.changed, 0);
+    assert.match(partialResult.reason, /incomplete Chrome native host runtime patch/);
+    assert.deepEqual(partialWarnings, [
+      "WARN: Found incomplete Chrome native host runtime patch — skipping Linux runtime path patch",
+    ]);
+    assert.deepEqual(
+      new Map([
+        [partial.mainPath, fs.readFileSync(partial.mainPath, "utf8")],
+        [partial.srcPath, fs.readFileSync(partial.srcPath, "utf8")],
+      ]),
+      partialBefore,
+    );
+  } finally {
+    fs.rmSync(partial.extractedDir, { recursive: true, force: true });
+  }
+});
+
 test("rejects partial Electron 42 Browser Use runtime markers byte-identically", () => {
   const patched = applyLinuxChromeNativeHostRuntimePatch(
     electron42BrowserUseRuntimeResolverBundleFixture(),
@@ -7848,7 +8058,7 @@ test("rejects partial Electron 42 Browser Use runtime markers byte-identically",
   }
 });
 
-test("reports drifted Chrome native host runtime resolver as optional drift", () => {
+test("reports a drifted Chrome native host runtime asset set as optional drift", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-chrome-runtime-drift-"));
   try {
     const buildDir = path.join(tempRoot, ".vite", "build");
@@ -7860,13 +8070,17 @@ test("reports drifted Chrome native host runtime resolver as optional drift", ()
         "resourcesPath:l}){const u=l??",
       ),
     );
+    fs.writeFileSync(
+      path.join(buildDir, "src.js"),
+      currentChromePluginAppServerSourceBundleFixture(),
+    );
 
     const report = createPatchReport();
     captureWarns(() => patchExtractedApp(tempRoot, { report }));
 
     const runtimePatch = report.patches.find((patch) => patch.name === "linux-chrome-native-host-runtime");
     assert.equal(runtimePatch.status, "skipped-optional");
-    assert.match(runtimePatch.reason, /Could not identify Chrome native host runtime resolver shape/);
+    assert.match(runtimePatch.reason, /Could not complete current Chrome native host runtime patch contract/);
     assert.ok(
       !validateReport(report, "upstream-build").some((failure) =>
         failure.startsWith("linux-chrome-native-host-runtime:"),

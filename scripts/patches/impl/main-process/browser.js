@@ -495,22 +495,64 @@ function buildLinuxExternalOpenHelpers() {
   );
 }
 
+const LINUX_EXTERNAL_OPEN_TARGETS_MARKER_PREFIX =
+  "/*codexLinuxExternalOpenTargets=";
+const LINUX_EXTERNAL_OPEN_TARGETS_MARKER_SUFFIX = "*/";
+
+function countLinuxExternalOpenPatchedElectronRequires(source, name) {
+  const pattern = new RegExp(
+    `${escapeRegExp(name)}=codexLinuxPatchExternalOpen\\(require\\((?:["']|\\x60)electron(?:["']|\\x60)\\)\\)`,
+    "g",
+  );
+  return [...source.matchAll(pattern)].length;
+}
+
+function parseLinuxExternalOpenTargets(source) {
+  const markerPattern = /\/\*codexLinuxExternalOpenTargets=([^*]*)\*\//g;
+  const matches = [...source.matchAll(markerPattern)];
+  if (matches.length !== 1) {
+    return null;
+  }
+  try {
+    const targets = JSON.parse(matches[0][1]);
+    if (targets == null || Array.isArray(targets) || typeof targets !== "object") {
+      return null;
+    }
+    const entries = Object.entries(targets);
+    if (
+      entries.length === 0 ||
+      entries.some(([name, count]) =>
+        !/^[A-Za-z_$][\w$]*$/.test(name) || !Number.isInteger(count) || count < 1
+      )
+    ) {
+      return null;
+    }
+    return entries;
+  } catch {
+    return null;
+  }
+}
+
+function hasCompleteLinuxExternalOpenEnvPatch(source, helperPayload) {
+  if (source.split(helperPayload).length - 1 !== 1) {
+    return false;
+  }
+  const targets = parseLinuxExternalOpenTargets(source);
+  return targets != null && targets.every(([name, count]) =>
+    countLinuxExternalOpenPatchedElectronRequires(source, name) === count
+  );
+}
+
 function applyLinuxExternalOpenEnvPatch(currentSource) {
   const helperPayload = buildLinuxExternalOpenHelpers();
-  const helperCount = currentSource.split(helperPayload).length - 1;
-  const patchedElectronRequireCount = [
-    ...currentSource.matchAll(
-      /codexLinuxPatchExternalOpen\(require\(([`'"])electron\1\)\)/g,
-    ),
-  ].length;
   const hasAnyPatchArtifact =
     currentSource.includes("codexLinuxExternalOpenEnv")
     || currentSource.includes("codexLinuxLaunchExternalUrl")
     || currentSource.includes("codexLinuxOpenExternalWithFallback")
     || currentSource.includes("codexLinuxPatchExternalOpen")
-    || patchedElectronRequireCount > 0;
+    || currentSource.includes(LINUX_EXTERNAL_OPEN_TARGETS_MARKER_PREFIX);
   if (hasAnyPatchArtifact) {
-    if (helperCount === 1 && patchedElectronRequireCount > 0) {
+    if (hasCompleteLinuxExternalOpenEnvPatch(currentSource, helperPayload)) {
       return currentSource;
     }
     console.warn(
@@ -520,10 +562,13 @@ function applyLinuxExternalOpenEnvPatch(currentSource) {
   }
 
   let patchedAnyElectronRequire = false;
+  const targetCounts = {};
   const patchedSource = currentSource.replace(
     /([A-Za-z_$][\w$]*=)require\(([`'"])electron\2\)/g,
     (_match, prefix, quote) => {
       patchedAnyElectronRequire = true;
+      const name = prefix.slice(0, -1);
+      targetCounts[name] = (targetCounts[name] ?? 0) + 1;
       return `${prefix}codexLinuxPatchExternalOpen(require(${quote}electron${quote}))`;
     },
   );
@@ -539,9 +584,13 @@ function applyLinuxExternalOpenEnvPatch(currentSource) {
   const helperInsertionIndex = currentSource.startsWith(strictDirective)
     ? strictDirective.length
     : 0;
+  const targetMarker =
+    `${LINUX_EXTERNAL_OPEN_TARGETS_MARKER_PREFIX}${JSON.stringify(targetCounts)}` +
+    LINUX_EXTERNAL_OPEN_TARGETS_MARKER_SUFFIX;
   return (
     patchedSource.slice(0, helperInsertionIndex) +
     helperPayload +
+    targetMarker +
     patchedSource.slice(helperInsertionIndex)
   );
 }

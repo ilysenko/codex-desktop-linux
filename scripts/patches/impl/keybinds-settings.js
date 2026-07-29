@@ -809,6 +809,48 @@ function applyCollectedAssetPatchWrites(patches) {
   return changed;
 }
 
+function hasCompleteLinuxDesktopSettingsSource(previousSource) {
+  const requiredMarkers = [
+    linuxDesktopSettingsSourceMarker,
+    `promptWindow:${JSON.stringify(linuxSettingsKeys.promptWindow)}`,
+    `systemTray:${JSON.stringify(linuxSettingsKeys.systemTray)}`,
+    `warmStart:${JSON.stringify(linuxSettingsKeys.warmStart)}`,
+    `autoUpdateOnExit:${JSON.stringify(linuxSettingsKeys.autoUpdateOnExit)}`,
+    "function codexLinuxChecked(",
+    "class LinuxToggle extends React.Component",
+    "function LinuxDesktopSettings(){",
+    "title:\"Linux desktop\"",
+    "export{LinuxDesktopSettings,LinuxDesktopSettings as default};",
+  ];
+  if (!requiredMarkers.every((marker) => previousSource.includes(marker))) {
+    return false;
+  }
+
+  let executableSource = previousSource;
+  while (executableSource.startsWith("import")) {
+    const importEnd = executableSource.indexOf(";");
+    if (importEnd === -1) {
+      return false;
+    }
+    executableSource = executableSource.slice(importEnd + 1);
+  }
+
+  const exportMarker = "export{LinuxDesktopSettings,LinuxDesktopSettings as default};";
+  const exportIndex = executableSource.lastIndexOf(exportMarker);
+  if (exportIndex === -1) {
+    return false;
+  }
+  executableSource =
+    executableSource.slice(0, exportIndex) +
+    executableSource.slice(exportIndex + exportMarker.length);
+  try {
+    new Function(executableSource);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function selectLinuxDesktopSettingsSource(previousSource, generatedSource) {
   if (
     previousSource == null ||
@@ -821,7 +863,11 @@ function selectLinuxDesktopSettingsSource(previousSource, generatedSource) {
     previousSource.split(linuxDesktopSettingsSourceMarker).length - 1;
   const markerPrefixCount =
     previousSource.split("codexLinuxDesktopSettingsVersion=").length - 1;
-  if (markerCount === 1 && markerPrefixCount === 1) {
+  if (
+    markerCount === 1 &&
+    markerPrefixCount === 1 &&
+    hasCompleteLinuxDesktopSettingsSource(previousSource)
+  ) {
     return previousSource;
   }
 
