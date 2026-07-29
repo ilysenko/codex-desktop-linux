@@ -16,7 +16,7 @@ use std::{
     fs,
     io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
-    os::unix::process::CommandExt,
+    os::unix::process::{CommandExt, ExitStatusExt},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Output, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
@@ -36,6 +36,7 @@ const CLI_PREFLIGHT_VERSION_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 const BOUNDED_COMMAND_POLL_INTERVAL: StdDuration = StdDuration::from_millis(50);
 const BOUNDED_COMMAND_TERMINATION_GRACE: StdDuration = StdDuration::from_millis(500);
 const BOUNDED_COMMAND_OUTPUT_DRAIN_TIMEOUT: StdDuration = StdDuration::from_secs(1);
+const NPM_SUPERVISOR_EXIT_GRACE: StdDuration = StdDuration::from_secs(2);
 const BOUNDED_COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 const SIGTERM: i32 = 15;
 const SIGKILL: i32 = 9;
@@ -1438,10 +1439,28 @@ fn run_bounded_command_output(
     safe_umask: bool,
     install_lock: Option<&npm_cli_repair::InstallLock>,
 ) -> Result<Output> {
-    let mut command = Command::new(program);
+    let supervised = install_lock.is_some() && !cfg!(test);
+    let mut command = if supervised {
+        let timeout_millis = u64::try_from(timeout.as_millis())
+            .context("bounded npm timeout does not fit in milliseconds")?;
+        let mut command = Command::new("/proc/self/exe");
+        command
+            .arg("run-npm-supervisor")
+            .arg("--owner-pid")
+            .arg(std::process::id().to_string())
+            .arg("--timeout-millis")
+            .arg(timeout_millis.to_string())
+            .arg(program)
+            .arg("--")
+            .args(args);
+        command
+    } else {
+        let mut command = Command::new(program);
+        command.args(args);
+        command
+    };
     command
         .env("PATH", path_env)
-        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1471,6 +1490,11 @@ fn run_bounded_command_output(
     let stdout_rx = spawn_bounded_output_reader(stdout);
     let stderr_rx = spawn_bounded_output_reader(stderr);
     let started = Instant::now();
+    let parent_timeout = if supervised {
+        timeout.saturating_add(NPM_SUPERVISOR_EXIT_GRACE)
+    } else {
+        timeout
+    };
 
     loop {
         match child.try_wait() {
@@ -1494,11 +1518,88 @@ fn run_bounded_command_output(
             }
         }
 
-        if started.elapsed() >= timeout {
+        if started.elapsed() >= parent_timeout {
             terminate_process_group(&mut child, process_group);
             let _ = child.wait();
             let _ = receive_bounded_output(&stdout_rx, process_group);
             let _ = receive_bounded_output(&stderr_rx, process_group);
+            anyhow::bail!(
+                "{} {} timed out after {} seconds",
+                program.display(),
+                format_command_args(args),
+                parent_timeout.as_secs_f64()
+            );
+        }
+
+        thread::sleep(
+            BOUNDED_COMMAND_POLL_INTERVAL.min(parent_timeout.saturating_sub(started.elapsed())),
+        );
+    }
+}
+
+pub(crate) fn run_npm_supervisor(
+    owner_pid: u32,
+    timeout_millis: u64,
+    program: &Path,
+    args: &[OsString],
+) -> Result<()> {
+    anyhow::ensure!(owner_pid != 0, "npm supervisor owner PID is invalid");
+    anyhow::ensure!(
+        program.is_absolute(),
+        "npm supervisor program must be an absolute path"
+    );
+    let timeout = StdDuration::from_millis(timeout_millis);
+    anyhow::ensure!(
+        !timeout.is_zero(),
+        "npm supervisor timeout must be positive"
+    );
+    anyhow::ensure!(
+        current_parent_pid() == owner_pid,
+        "npm supervisor owner exited before npm started"
+    );
+
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .process_group(0);
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("Failed to spawn supervised npm {}", program.display()))?;
+    let process_group = child.id() as i32;
+    let started = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    return Ok(());
+                }
+                exit_with_status(status);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                terminate_process_group(&mut child, process_group);
+                let _ = child.wait();
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed while waiting for supervised npm {}",
+                        program.display()
+                    )
+                });
+            }
+        }
+
+        if current_parent_pid() != owner_pid {
+            terminate_process_group(&mut child, process_group);
+            let _ = child.wait();
+            anyhow::bail!("updater parent exited while npm was running");
+        }
+        if started.elapsed() >= timeout {
+            terminate_process_group(&mut child, process_group);
+            let _ = child.wait();
             anyhow::bail!(
                 "{} {} timed out after {} seconds",
                 program.display(),
@@ -1509,6 +1610,18 @@ fn run_bounded_command_output(
 
         thread::sleep(BOUNDED_COMMAND_POLL_INTERVAL.min(timeout.saturating_sub(started.elapsed())));
     }
+}
+
+fn current_parent_pid() -> u32 {
+    unsafe { libc::getppid() as u32 }
+}
+
+fn exit_with_status(status: ExitStatus) -> ! {
+    let code = status
+        .code()
+        .or_else(|| status.signal().map(|signal| 128 + signal))
+        .unwrap_or(1);
+    std::process::exit(code);
 }
 
 fn spawn_bounded_output_reader<R>(mut reader: R) -> Receiver<Vec<u8>>
@@ -5207,6 +5320,58 @@ exit 1
         assert!(started.elapsed() < StdDuration::from_secs(3));
         assert!(child_pid.exists(), "the nested npm child must have started");
         assert_eq!(fs::read_to_string(child_marker)?, "terminated");
+        Ok(())
+    }
+
+    #[test]
+    fn npm_supervisor_owns_timeout_and_process_group_cleanup() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let npm_program = temp.path().join("npm");
+        let child_marker = temp.path().join("child-terminated");
+        write_executable_script(
+            &npm_program,
+            r#"#!/bin/sh
+sh -c 'trap '\''printf terminated > "$NPM_CHILD_MARKER"; exit 0'\'' TERM; while :; do sleep 1; done' &
+wait
+"#,
+        )?;
+        let _restore_env = EnvRestoreGuard::capture(&["NPM_CHILD_MARKER"]);
+        std::env::set_var("NPM_CHILD_MARKER", &child_marker);
+
+        let started = Instant::now();
+        let error = run_npm_supervisor(
+            current_parent_pid(),
+            100,
+            &npm_program,
+            &[OsString::from("install")],
+        )
+        .expect_err("the npm supervisor must enforce its own timeout");
+
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < StdDuration::from_secs(3));
+        assert_eq!(fs::read_to_string(child_marker)?, "terminated");
+        Ok(())
+    }
+
+    #[test]
+    fn npm_supervisor_rejects_a_stale_owner_before_spawning() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempdir()?;
+        let npm_program = temp.path().join("npm");
+        let started = temp.path().join("started");
+        write_executable_script(
+            &npm_program,
+            "#!/bin/sh\nprintf started > \"$NPM_STARTED\"\n",
+        )?;
+        let _restore_env = EnvRestoreGuard::capture(&["NPM_STARTED"]);
+        std::env::set_var("NPM_STARTED", &started);
+
+        let error = run_npm_supervisor(u32::MAX, 100, &npm_program, &[OsString::from("install")])
+            .expect_err("a supervisor with a stale owner must not start npm");
+
+        assert!(error.to_string().contains("owner exited"));
+        assert!(!started.exists());
         Ok(())
     }
 

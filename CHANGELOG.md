@@ -42,10 +42,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   the condition under the shared lock, records crash-durable quarantines, and
   retries npm once per explicit invocation without discarding failed recovery
   state or concurrent updater state. In-flight mutating npm children retain the
-  lock if their updater parent exits abruptly, and late routine CLI checks
-  revalidate both the repair journal and their original CLI state before
-  persisting a result. Missing-CLI preflight also re-resolves a CLI installed
-  while it waited for the lock before consulting npm.
+  lock under a parent-independent bounded supervisor, which terminates their
+  process group and releases the lock if the updater parent exits abruptly.
+  Late routine CLI checks revalidate both the repair journal and their original
+  CLI state before persisting a result. Missing-CLI preflight also re-resolves a
+  CLI installed while it waited for the lock before consulting npm.
 - Concurrent updater entrypoints now serialize state reloads and cache cleanup
   before persisting startup state. A second process can no longer prune an
   active rebuild workspace, while forced checks wait for startup maintenance

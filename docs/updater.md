@@ -46,10 +46,12 @@ successful and failed repairs, including when npm recreates the same retirement
 directory during a later explicit retry. A failed or interrupted repair remains
 visible in later `diagnose` output and can be retried explicitly.
 
-Only mutating npm children inherit the CLI install lock descriptor. If the
-updater parent exits abruptly while npm is still running, other updater
-entrypoints continue waiting until that npm process releases the lock. When an
-entrypoint first encounters contention, its PID is recorded in the updater log.
+Mutating npm commands run under an internal bounded supervisor that inherits
+the CLI install lock descriptor and owns the npm process group. If the updater
+parent exits abruptly, the supervisor terminates that process group and
+releases the lock. Its own timeout remains active independently of the updater
+parent. When an entrypoint first encounters contention, its PID is recorded in
+the updater log.
 
 CLI maintenance and the updater lifecycle merge their separately owned fields
 under a shared state lock. Concurrent daemon, status, and launcher processes

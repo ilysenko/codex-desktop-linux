@@ -476,7 +476,7 @@ fn late_registry_failure_cannot_overwrite_a_completed_repair() -> Result<()> {
 }
 
 #[test]
-fn npm_child_retains_the_install_lock_after_the_updater_parent_dies() -> Result<()> {
+fn orphaned_npm_process_group_is_bounded_and_releases_the_install_lock() -> Result<()> {
     let fixture = Fixture::new()?;
 
     let mut preflight_command = fixture.command();
@@ -485,25 +485,25 @@ fn npm_child_retains_the_install_lock_after_the_updater_parent_dies() -> Result<
         .arg(&fixture.cli_path);
     let mut preflight = ManagedChild::spawn(preflight_command, "cli-preflight")?;
     wait_for_path(&fixture.install_started, "first npm install")?;
+    let orphan_process_group = fs::read_to_string(fixture.install_owner.join("pid"))?
+        .trim()
+        .parse::<i32>()?;
     preflight.kill_parent_only()?;
+    wait_for_process_group_exit(orphan_process_group, "orphaned npm install")?;
+    fs::remove_file(&fixture.install_started)?;
 
     fixture.update_state(expire_cli_registry_check)?;
     let mut status_command = fixture.command();
     status_command.args(["status", "--json"]);
     let mut status = ManagedChild::spawn(status_command, "status")?;
-    wait_for_text(
-        &fixture.log_path(),
-        &format!("process {} is waiting", status.pid()?),
-        "status wait after updater parent death",
-    )?;
+    wait_for_path(&fixture.install_started, "replacement npm install")?;
     status.assert_running()?;
-    assert_eq!(install_count(&fixture.install_log)?, 1);
+    assert_eq!(install_count(&fixture.install_log)?, 2);
     assert!(!fixture.install_overlap.exists());
 
     fs::write(&fixture.install_release, b"continue")?;
     ensure_success("status", &status.wait()?)?;
 
-    assert_eq!(install_count(&fixture.install_log)?, 2);
     assert!(!fixture.install_overlap.exists());
     Ok(())
 }
@@ -555,6 +555,21 @@ fn wait_for_path(path: &Path, description: &str) -> Result<()> {
         thread::sleep(Duration::from_millis(20));
     }
     Ok(())
+}
+
+fn wait_for_process_group_exit(process_group: i32, description: &str) -> Result<()> {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    loop {
+        let exists = unsafe { libc::kill(-process_group, 0) } == 0;
+        if !exists {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "timed out waiting for {description} process group {process_group} to exit"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn wait_for_state(fixture: &Fixture, predicate: impl Fn(&Value) -> bool) -> Result<()> {

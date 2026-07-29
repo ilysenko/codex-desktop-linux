@@ -52,6 +52,16 @@ const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
 
 /// Runs the updater command-line entrypoint.
 pub async fn run(cli: Cli) -> Result<()> {
+    if let Commands::RunNpmSupervisor {
+        owner_pid,
+        timeout_millis,
+        program,
+        args,
+    } = &cli.command
+    {
+        return codex_cli::run_npm_supervisor(*owner_pid, *timeout_millis, program, args);
+    }
+
     let paths = RuntimePaths::detect()?;
     if let Commands::Diagnose { json } = &cli.command {
         return run_diagnose_command(&paths, *json).await;
@@ -109,6 +119,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_path,
         } => run_recover_standalone_cli(codex_home, install_dir, print_path),
         Commands::RepairCli => run_repair_cli(&mut state, &paths),
+        Commands::RunNpmSupervisor { .. } => {
+            unreachable!("npm supervisor is handled before runtime writes")
+        }
         Commands::PromptInstallCli {
             cli_path,
             print_path,
