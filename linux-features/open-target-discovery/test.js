@@ -1128,6 +1128,58 @@ test("open-target discovery patches current app command lookup through its regis
   assert.equal(workerCalls, 1);
 });
 
+test("open-target discovery rejects current command lookup drift before changing the main bundle", () => {
+  const source =
+    mainBundlePrefix +
+    fileManagerBundle +
+    terminalOpenTargetBundle +
+    ideOpenTargetsBundle +
+    currentAppOpenInCommandBundle.replace(
+      "params:UN(this.settingsStore,e)",
+      "params:UN(this.otherStore,e)",
+    );
+  const { value, warnings } = captureWarns(() => applyMainBundlePatch(source));
+
+  assert.equal(value, source);
+  assert.ok(warnings.some((warning) => warning.includes("open target command lookup")));
+});
+
+test("open-target discovery rejects a partial current command marker byte-identically", () => {
+  const source =
+    mainBundlePrefix +
+    fileManagerBundle +
+    terminalOpenTargetBundle +
+    ideOpenTargetsBundle +
+    currentAppOpenInCommandBundle.replace(
+      "async#t(e){",
+      "async#t(e){let _codexLinuxOpenTargetCommand=null;",
+    );
+  const { value, warnings } = captureWarns(() => applyMainBundlePatch(source));
+
+  assert.equal(value, source);
+  assert.ok(warnings.some((warning) => warning.includes("partially patched open target command lookup")));
+});
+
+test("open-target discovery rejects a corrupted patched command guard byte-identically", () => {
+  const original =
+    mainBundlePrefix +
+    fileManagerBundle +
+    terminalOpenTargetBundle +
+    ideOpenTargetsBundle +
+    currentAppOpenInCommandBundle;
+  const patched = applyMainBundlePatch(original);
+  const source = patched.replace(
+    "if(process.platform===`linux`){let _codexLinuxOpenTargetCommand=",
+    "if(process.platform===`darwin`){let _codexLinuxOpenTargetCommand=",
+  );
+  assert.notEqual(source, patched);
+
+  const { value, warnings } = captureWarns(() => applyMainBundlePatch(source));
+
+  assert.equal(value, source);
+  assert.ok(warnings.some((warning) => warning.includes("partially patched open target command lookup")));
+});
+
 test("open-target discovery patches current app availability through its registry", async () => {
   let workerCalls = 0;
   const settingsStore = currentAppSettingsStore([
@@ -1440,7 +1492,10 @@ test("open-target discovery participates in feature loading and patch reports", 
         const assetsDir = path.join(tempApp, "webview", "assets");
         fs.mkdirSync(buildDir, { recursive: true });
         fs.mkdirSync(assetsDir, { recursive: true });
-        fs.writeFileSync(path.join(buildDir, "main.js"), openTargetsBundle);
+        fs.writeFileSync(
+          path.join(buildDir, "main.js"),
+          openTargetsBundle + currentAppOpenInCommandBundle,
+        );
         fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
 
         const report = createPatchReport();
@@ -1449,6 +1504,7 @@ test("open-target discovery participates in feature loading and patch reports", 
 
         assert.match(patched, /linux:\{label:`Terminal`/);
         assert.match(patched, /\.\.\.codexLinuxDiscoveredIdeTargets\(\)/);
+        assert.match(patched, /_codexLinuxOpenTargetCommand/);
         assert.ok(
           report.patches.some((patch) =>
             patch.name === "feature:open-target-discovery:main-bundle-open-target-discovery" &&
@@ -1456,6 +1512,47 @@ test("open-target discovery participates in feature loading and patch reports", 
           ),
         );
 
+        const secondReport = createPatchReport();
+        captureWarns(() => patchExtractedApp(tempApp, { report: secondReport }));
+        assert.equal(fs.readFileSync(path.join(buildDir, "main.js"), "utf8"), patched);
+        assert.ok(
+          secondReport.patches.some((patch) =>
+            patch.name === "feature:open-target-discovery:main-bundle-open-target-discovery" &&
+            patch.status === "already-applied",
+          ),
+        );
+      } finally {
+        fs.rmSync(tempApp, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
+test("open-target discovery reports current command lookup drift as an enabled feature failure", () => {
+  withTempFeatureConfig(["open-target-discovery"], (root) => {
+    withLinuxFeatureRootEnv(root, () => {
+      const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-open-target-drift-"));
+      try {
+        const buildDir = path.join(tempApp, ".vite", "build");
+        fs.mkdirSync(buildDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(buildDir, "main.js"),
+          openTargetsBundle +
+            currentAppOpenInCommandBundle.replace(
+              "params:UN(this.settingsStore,e)",
+              "params:UN(this.otherStore,e)",
+            ),
+        );
+        fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
+
+        const report = createPatchReport();
+        captureWarns(() => patchExtractedApp(tempApp, { report }));
+        const featurePatch = report.patches.find(
+          (patch) => patch.name === "feature:open-target-discovery:main-bundle-open-target-discovery",
+        );
+
+        assert.equal(featurePatch?.status, "skipped-optional");
+        assert.match(featurePatch?.reason ?? "", /open target command lookup/);
       } finally {
         fs.rmSync(tempApp, { recursive: true, force: true });
       }

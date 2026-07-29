@@ -624,42 +624,15 @@ function findCurrentOpenTargetCommandMatch(source) {
   );
 }
 
-function findPatchedOpenTargetCommandBlock(source) {
-  const marker = "let _codexLinuxOpenTargetCommand=await codexLinuxOpenTargetRegistryCommand(";
-  const markerIndex = source.indexOf(marker);
-  if (markerIndex === -1) {
-    return null;
-  }
-
-  const methodStart = source.lastIndexOf("async#", markerIndex);
-  const blockStart = methodStart === -1 ? -1 : source.indexOf("{", methodStart);
-  const block = findBalancedBlock(source, blockStart);
-  const signature = source.slice(methodStart, blockStart).match(
-    /^async#[A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)$/u,
+function findPatchedOpenTargetCommandMatch(source) {
+  return source.match(
+    /async#([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{if\(process\.platform===`linux`\)\{let _codexLinuxOpenTargetCommand=await codexLinuxOpenTargetRegistryCommand\(this\.settingsStore,\2\);if\(_codexLinuxOpenTargetCommand==null\)throw Error\(`Open target "\$\{\2\}" is not available`\);return _codexLinuxOpenTargetCommand\}let\{command:([A-Za-z_$][\w$]*)\}=await this\.#([A-Za-z_$][\w$]*)\(\)\(\{method:`get-target-command`,params:([A-Za-z_$][\w$]*)\(this\.settingsStore,\2\)\}\);if\(\3==null\)throw Error\(`Open target "\$\{\2\}" is not available`\);return \3\}/u,
   );
-  if (block == null || signature == null || block.end <= markerIndex) {
-    return null;
-  }
-
-  const targetVar = signature[1];
-  const linuxCommand =
-    `let _codexLinuxOpenTargetCommand=await codexLinuxOpenTargetRegistryCommand(this.settingsStore,${targetVar})`;
-  const unavailable =
-    `if(_codexLinuxOpenTargetCommand==null)throw Error(\`Open target "\${${targetVar}}" is not available\`)`;
-  if (
-    !block.text.includes(linuxCommand) ||
-    !block.text.includes(unavailable) ||
-    !block.text.includes("return _codexLinuxOpenTargetCommand") ||
-    !block.text.includes("method:`get-target-command`")
-  ) {
-    return null;
-  }
-  return block;
 }
 
 function applyOpenInTargetCommandPatch(currentSource) {
-  const patchedBlock = findPatchedOpenTargetCommandBlock(currentSource);
-  if (patchedBlock != null) {
+  const patchedMatch = findPatchedOpenTargetCommandMatch(currentSource);
+  if (patchedMatch != null) {
     return currentSource;
   }
   if (currentSource.includes("_codexLinuxOpenTargetCommand")) {
@@ -831,6 +804,20 @@ function applyMainBundlePatch(currentSource) {
   const pathVar = requireName(currentSource, "node:path");
   if (fsVar == null || pathVar == null) {
     warn("Could not find node:fs/node:path dependencies");
+    return currentSource;
+  }
+
+  if (
+    currentSource.includes("get-target-command") &&
+    currentSource.includes("Open in worker unavailable") &&
+    findPatchedOpenTargetCommandMatch(currentSource) == null &&
+    findCurrentOpenTargetCommandMatch(currentSource) == null
+  ) {
+    warn(
+      currentSource.includes("_codexLinuxOpenTargetCommand")
+        ? "Found partially patched open target command lookup"
+        : "Could not find current open target command lookup",
+    );
     return currentSource;
   }
 
