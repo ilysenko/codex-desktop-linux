@@ -496,10 +496,29 @@ function buildLinuxExternalOpenHelpers() {
 }
 
 function applyLinuxExternalOpenEnvPatch(currentSource) {
-  const hasHelper = currentSource.includes("function codexLinuxPatchExternalOpen(");
-  const hasPatchedElectronRequire = /codexLinuxPatchExternalOpen\(require\(([`'"])electron\1\)\)/.test(
-    currentSource,
-  );
+  const helperPayload = buildLinuxExternalOpenHelpers();
+  const helperCount = currentSource.split(helperPayload).length - 1;
+  const patchedElectronRequireCount = [
+    ...currentSource.matchAll(
+      /codexLinuxPatchExternalOpen\(require\(([`'"])electron\1\)\)/g,
+    ),
+  ].length;
+  const hasAnyPatchArtifact =
+    currentSource.includes("codexLinuxExternalOpenEnv")
+    || currentSource.includes("codexLinuxLaunchExternalUrl")
+    || currentSource.includes("codexLinuxOpenExternalWithFallback")
+    || currentSource.includes("codexLinuxPatchExternalOpen")
+    || patchedElectronRequireCount > 0;
+  if (hasAnyPatchArtifact) {
+    if (helperCount === 1 && patchedElectronRequireCount > 0) {
+      return currentSource;
+    }
+    console.warn(
+      "WARN: Found incomplete Linux external open environment patch — skipping",
+    );
+    return currentSource;
+  }
+
   let patchedAnyElectronRequire = false;
   const patchedSource = currentSource.replace(
     /([A-Za-z_$][\w$]*=)require\(([`'"])electron\2\)/g,
@@ -510,16 +529,10 @@ function applyLinuxExternalOpenEnvPatch(currentSource) {
   );
 
   if (!patchedAnyElectronRequire) {
-    if (!(hasHelper && hasPatchedElectronRequire)) {
-      console.warn(
-        "WARN: Could not find Electron require initializer — skipping Linux external open environment patch",
-      );
-    }
+    console.warn(
+      "WARN: Could not find Electron require initializer — skipping Linux external open environment patch",
+    );
     return currentSource;
-  }
-
-  if (hasHelper) {
-    return patchedSource;
   }
 
   const strictDirective = '"use strict";';
@@ -528,7 +541,7 @@ function applyLinuxExternalOpenEnvPatch(currentSource) {
     : 0;
   return (
     patchedSource.slice(0, helperInsertionIndex) +
-    buildLinuxExternalOpenHelpers() +
+    helperPayload +
     patchedSource.slice(helperInsertionIndex)
   );
 }
