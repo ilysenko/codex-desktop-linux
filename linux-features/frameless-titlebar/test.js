@@ -193,16 +193,25 @@ test("native-titlebar remains complete after frameless-titlebar composition", ()
   assert.deepEqual(warnings, []);
 });
 
-test("native-titlebar rejects partial frameless compositions byte-identically", () => {
+test("native-titlebar marker rejects incomplete core state and defers feature shapes", () => {
   const corePatched = applyLinuxNativeTitlebarPatch(
     nativeTitlebarCompositionFixture(),
   );
   const composed = applyFramelessTitlebarMainPatch(corePatched);
-  const variants = [
-    composed.replace(
-      "function codexLinuxTitleBarOverlay",
-      "function codexLinuxTitleBarOverlayMissing",
-    ),
+  const incompleteCore = composed.replace(
+    "function codexLinuxTitleBarOverlay",
+    "function codexLinuxTitleBarOverlayMissing",
+  );
+  let rerun;
+  const coreWarnings = captureWarnings(() => {
+    rerun = applyLinuxNativeTitlebarPatch(incompleteCore);
+  });
+  assert.equal(rerun, incompleteCore);
+  assert.deepEqual(coreWarnings, [
+    "WARN: Found incomplete Linux native titlebar patch marker — skipping",
+  ]);
+
+  const featureVariants = [
     composed.replace(
       "process.platform===`win32`&&(this.windowZooms.set",
       "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set",
@@ -213,15 +222,12 @@ test("native-titlebar rejects partial frameless compositions byte-identically", 
     ),
   ];
 
-  for (const source of variants) {
-    let rerun;
+  for (const source of featureVariants) {
     const warnings = captureWarnings(() => {
       rerun = applyLinuxNativeTitlebarPatch(source);
     });
     assert.equal(rerun, source);
-    assert.deepEqual(warnings, [
-      "WARN: Could not find primary BrowserWindow titlebar snippet — skipping Linux native titlebar patch",
-    ]);
+    assert.deepEqual(warnings, []);
   }
 });
 
@@ -296,19 +302,31 @@ test("frameless-titlebar composes idempotently with the core safe-area patch", (
   );
 });
 
-test("core safe-area patch preserves incomplete frameless composition", () => {
-  const source = [
+test("core safe-area marker defers incomplete frameless composition to the feature", () => {
+  const stockSource = [
     "var eV=Object.freeze({default:Object.freeze({left:0,right:0}),applicationMenu:Object.freeze({left:0,right:0})});",
-    "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,codexLinuxUseWindowControlsSafeArea:!1,side:`end`})}",
+    "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})}",
     "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"pe-2\":n===`start`&&i||n===`end`});return jsx(o)}",
+    "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.applicationMenu:eV.default;",
   ].join("");
+  const composed = applyFramelessTitlebarWebviewPatch(
+    applyLinuxWindowControlsSafeAreaPatch(stockSource),
+  );
+  const source = composed.replace(
+    ",codexLinuxUseWindowControlsSafeArea}){",
+    "}){",
+  );
 
-  const warnings = captureWarnings(() => {
+  const coreWarnings = captureWarnings(() => {
     assert.equal(applyLinuxWindowControlsSafeAreaPatch(source), source);
   });
+  assert.deepEqual(coreWarnings, []);
 
-  assert.deepEqual(warnings, [
-    "WARN: Could not validate frameless Linux window-controls safe-area composition — leaving asset unchanged",
+  const featureWarnings = captureWarnings(() => {
+    assert.equal(applyFramelessTitlebarWebviewPatch(source), source);
+  });
+  assert.deepEqual(featureWarnings, [
+    "WARN: Could not validate frameless Linux window-controls safe-area composition - leaving asset unchanged",
   ]);
 });
 

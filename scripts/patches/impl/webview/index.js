@@ -15,6 +15,8 @@ const {
 const LINUX_TOOLTIP_COLLISION_PADDING_TOP = 44;
 const LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT = 138;
 const LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP = "codexLinuxUseWindowControlsSafeArea";
+const LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER =
+  "/*codexLinuxWindowControlsSafeAreaPatch*/";
 
 function applyLinuxSettingsSearchVisibilityPatch(currentSource) {
   if (currentSource.includes("function codexLinuxFilterSettingsSearchSection(")) {
@@ -184,56 +186,39 @@ function applyLinuxHeaderSlotSafeAreaPatch(currentSource) {
     .replace(slotSource, patchedSlotSource);
 }
 
-function matchesFramelessWindowControlsSafeAreaComposition(currentSource) {
-  const prop = LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP;
-  const overrideMatches = currentSource.match(
-    new RegExp(`${prop}:!1,side:\`end\``, "gu"),
-  ) ?? [];
-  if (overrideMatches.length === 0) {
-    return null;
-  }
-
-  const insetMatches = [
-    ...currentSource.matchAll(
-      /applicationMenu:Object\.freeze\(\{left:0,right:(\d+)\}\)/gu,
-    ),
-  ];
-  const slotSignatureMatches = currentSource.match(
-    new RegExp(
-      `function [A-Za-z_$][\\w$]*\\(\\{entries:[A-Za-z_$][\\w$]*,fitWidth:[A-Za-z_$][\\w$]*,side:[A-Za-z_$][\\w$]*,slotWidth:[A-Za-z_$][\\w$]*,${prop}\\}\\)`,
-      "gu",
-    ),
-  ) ?? [];
-  const paddingMatches = currentSource.match(
-    new RegExp(
-      `"pe-2":([A-Za-z_$][\\w$]*)===\`start\`&&[A-Za-z_$][\\w$]*\\|\\|\\1===\`end\`&&!${prop},"pe-\\(--spacing-token-safe-header-right\\)":\\1===\`end\`&&${prop}`,
-      "gu",
-    ),
-  ) ?? [];
-
+function markLinuxWindowControlsSafeAreaPatch(source) {
+  const strictDirective = '"use strict";';
+  const insertionIndex = source.startsWith(strictDirective)
+    ? strictDirective.length
+    : 0;
   return (
-    overrideMatches.length === 1 &&
-    insetMatches.length > 0 &&
-    insetMatches.every((match) => match[1] === "0") &&
-    slotSignatureMatches.length === 1 &&
-    paddingMatches.length === 1
+    source.slice(0, insertionIndex) +
+    LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER +
+    source.slice(insertionIndex)
   );
 }
 
 function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
-  const currentInset = `applicationMenu:Object.freeze({left:0,right:${LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT}})`;
-  const defaultInset = "applicationMenu:Object.freeze({left:0,right:0})";
-  const framelessComposition =
-    matchesFramelessWindowControlsSafeAreaComposition(currentSource);
-  if (framelessComposition === true) {
-    return currentSource;
-  }
-  if (framelessComposition === false) {
+  const markerCount =
+    currentSource.split(LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER).length - 1;
+  if (markerCount > 0) {
+    if (markerCount === 1) {
+      return currentSource;
+    }
     console.warn(
-      "WARN: Could not validate frameless Linux window-controls safe-area composition — leaving asset unchanged",
+      "WARN: Found incomplete Linux window-controls safe-area patch marker — skipping",
     );
     return currentSource;
   }
+  if (currentSource.includes(LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP)) {
+    console.warn(
+      "WARN: Found unmarked Linux window-controls safe-area patch state — skipping",
+    );
+    return currentSource;
+  }
+
+  const currentInset = `applicationMenu:Object.freeze({left:0,right:${LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT}})`;
+  const defaultInset = "applicationMenu:Object.freeze({left:0,right:0})";
 
   let patchedSource = currentSource;
   if (patchedSource.includes(defaultInset)) {
@@ -258,7 +243,7 @@ function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
       patchedSource.includes(LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP)
     )
   ) {
-    return patchedSource;
+    return markLinuxWindowControlsSafeAreaPatch(patchedSource);
   }
 
   if (

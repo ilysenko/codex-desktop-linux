@@ -177,8 +177,8 @@ test("Linux external open env patch rejects a partially restored core target", (
     '"use strict";let e=require("electron"),t=require("electron");',
   );
   const partial = complete.replace(
-    "t=codexLinuxPatchExternalOpen(require(\"electron\"))",
-    "t=require(\"electron\")",
+    "codexLinuxPatchExternalOpen(require(\"electron\"))",
+    "require(\"electron\")",
   );
   const warnings = [];
   const originalWarn = console.warn;

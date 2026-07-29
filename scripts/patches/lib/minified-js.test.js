@@ -23,6 +23,12 @@ test("requireName finds wrapped require with codexLinuxPatchExternalOpen", () =>
   assert.strictEqual(requireName(source, "electron"), "electronAlias");
 });
 
+test("requireName finds locally marked external-open targets", () => {
+  const source =
+    'let electronAlias=/*codexLinuxExternalOpenTarget*/codexLinuxPatchExternalOpen(require("electron"))';
+  assert.strictEqual(requireName(source, "electron"), "electronAlias");
+});
+
 test("requireName rejects an arbitrary require wrapper", () => {
   const source = `let a=1,electronAlias=myCustomWrapper(require(\`electron\`)),c=3`;
   assert.strictEqual(requireName(source, "electron"), null);

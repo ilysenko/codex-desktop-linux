@@ -1,5 +1,8 @@
 "use strict";
 
+const LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER =
+  "/*codexLinuxWindowControlsSafeAreaPatch*/";
+
 function applyFramelessTitlebarBranchPatch(currentSource) {
   let patchedTitlebar = false;
   const combinedLinuxTitlebarRegex =
@@ -138,7 +141,49 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
     console.warn("WARN: Could not identify frameless titlebar webview target - skipping frameless webview patch");
   }
 
+  if (
+    currentSource.includes(LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER) &&
+    !hasCompleteFramelessWindowControlsSafeAreaComposition(patchedSource)
+  ) {
+    console.warn(
+      "WARN: Could not validate frameless Linux window-controls safe-area composition - leaving asset unchanged",
+    );
+    return currentSource;
+  }
+
   return patchedSource;
+}
+
+function hasCompleteFramelessWindowControlsSafeAreaComposition(source) {
+  const prop = "codexLinuxUseWindowControlsSafeArea";
+  const overrideMatches = source.match(
+    new RegExp(`${prop}:!1,side:\`end\``, "gu"),
+  ) ?? [];
+  const insetMatches = [
+    ...source.matchAll(
+      /applicationMenu:Object\.freeze\(\{left:0,right:(\d+)\}\)/gu,
+    ),
+  ];
+  const slotSignatureMatches = source.match(
+    new RegExp(
+      `function [A-Za-z_$][\\w$]*\\(\\{entries:[A-Za-z_$][\\w$]*,fitWidth:[A-Za-z_$][\\w$]*,side:[A-Za-z_$][\\w$]*,slotWidth:[A-Za-z_$][\\w$]*,${prop}\\}\\)`,
+      "gu",
+    ),
+  ) ?? [];
+  const paddingMatches = source.match(
+    new RegExp(
+      `"pe-2":([A-Za-z_$][\\w$]*)===\`start\`&&[A-Za-z_$][\\w$]*\\|\\|\\1===\`end\`&&!${prop},"pe-\\(--spacing-token-safe-header-right\\)":\\1===\`end\`&&${prop}`,
+      "gu",
+    ),
+  ) ?? [];
+
+  return (
+    overrideMatches.length === 1 &&
+    insetMatches.length > 0 &&
+    insetMatches.every((match) => match[1] === "0") &&
+    slotSignatureMatches.length === 1 &&
+    paddingMatches.length === 1
+  );
 }
 
 const patches = [

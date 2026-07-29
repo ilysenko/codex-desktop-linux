@@ -7,6 +7,7 @@ const {
 
 const LINUX_TITLEBAR_OVERLAY_HEIGHT = 30;
 const LINUX_TITLEBAR_OVERLAY_HELPER = "codexLinuxTitleBarOverlay";
+const LINUX_TITLEBAR_PATCH_MARKER = "/*codexLinuxNativeTitlebarPatch*/";
 
 function linuxTitlebarOverlayHelperSource(
   electronAlias,
@@ -161,42 +162,16 @@ function findMinifiedMethod(source, signatureRegex) {
   };
 }
 
-function hasLinuxTitlebarWithoutOverlayComposition(
-  source,
-  helperFunctionRegex,
-) {
-  if (!helperFunctionRegex.test(source)) {
-    return false;
+function markLinuxNativeTitlebarPatch(source) {
+  const helperNeedle = `function ${LINUX_TITLEBAR_OVERLAY_HELPER}(`;
+  const helperIndex = source.indexOf(helperNeedle);
+  if (helperIndex === -1) {
+    return null;
   }
-
-  const primaryTitlebarRegex =
-    /case`quickChat`:case`primary`:return [^;]{0,2000}?([A-Za-z_$][\w$]*)===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),\.\.\.([A-Za-z_$][\w$]*)===`quickChat`\?\{resizable:!0\}:\{\}\}:\1===`linux`\?\{titleBarStyle:`hidden`,\.\.\.\4===`quickChat`\?\{resizable:!0\}:\{\}\}:/;
-  if (!primaryTitlebarRegex.test(source)) {
-    return false;
-  }
-
-  const zoomMethod = findMinifiedMethod(
-    source,
-    /setWindowZoom\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{/,
-  );
-  const zoomRegex =
-    /process\.platform===`win32`&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\(([A-Za-z_$][\w$]*)\(\2\)\)\)/;
-  if (zoomMethod != null && !zoomRegex.test(zoomMethod.text)) {
-    return false;
-  }
-
-  const overlaySyncMethod = findMinifiedMethod(
-    source,
-    /installApplicationMenuTitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{/,
-  );
-  const overlaySyncRegex =
-    /installApplicationMenuTitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(process\.platform!==`win32`\|\|\2!==`primary`&&\2!==`quickChat`\)return;let ([A-Za-z_$][\w$]*)=\(\)=>\{\1\.isDestroyed\(\)\|\|\1\.setTitleBarOverlay\(([A-Za-z_$][\w$]*)\(this\.windowZooms\.get\(\1\.id\)\)\)\}/;
-  if (overlaySyncMethod != null && !overlaySyncRegex.test(overlaySyncMethod.text)) {
-    return false;
-  }
-
-  return !source.includes(
-    `setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(`,
+  return (
+    source.slice(0, helperIndex) +
+    LINUX_TITLEBAR_PATCH_MARKER +
+    source.slice(helperIndex)
   );
 }
 
@@ -208,6 +183,24 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
       LINUX_TITLEBAR_OVERLAY_HEIGHT +
       '\\*[A-Za-z_$][\\w$]*\\)\\}\\}',
   );
+  const markerCount =
+    currentSource.split(LINUX_TITLEBAR_PATCH_MARKER).length - 1;
+  if (markerCount > 0) {
+    if (markerCount === 1 && helperFunctionRegex.test(currentSource)) {
+      return currentSource;
+    }
+    console.warn(
+      "WARN: Found incomplete Linux native titlebar patch marker — skipping",
+    );
+    return currentSource;
+  }
+  if (currentSource.includes(`function ${LINUX_TITLEBAR_OVERLAY_HELPER}(`)) {
+    console.warn(
+      "WARN: Found unmarked Linux native titlebar patch state — skipping",
+    );
+    return currentSource;
+  }
+
   const primaryTitlebarRegex =
     /(case`quickChat`:case`primary`:return [^;]{0,2000}?([A-Za-z_$][\w$]*)===`win32`\|\|\2===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:)([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)/;
   const patchedPrimaryTitlebarRegex = new RegExp(
@@ -216,14 +209,6 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
   const primaryTitlebarMatch = currentSource.match(primaryTitlebarRegex);
   const patchedPrimaryTitlebarMatch = currentSource.match(patchedPrimaryTitlebarRegex);
   if (primaryTitlebarMatch == null && patchedPrimaryTitlebarMatch == null) {
-    if (
-      hasLinuxTitlebarWithoutOverlayComposition(
-        currentSource,
-        helperFunctionRegex,
-      )
-    ) {
-      return currentSource;
-    }
     console.warn("WARN: Could not find primary BrowserWindow titlebar snippet — skipping Linux native titlebar patch");
     return currentSource;
   }
@@ -287,10 +272,10 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
     /install[A-Za-z_$][\w$]*TitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{/,
   );
   if (overlaySyncMethod == null) {
-    return patchedSource;
+    return markLinuxNativeTitlebarPatch(patchedSource) ?? currentSource;
   }
   if (overlaySyncMethod.text.includes(`setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(`)) {
-    return patchedSource;
+    return markLinuxNativeTitlebarPatch(patchedSource) ?? currentSource;
   }
 
   const windowAlias = overlaySyncMethod.match[1];
@@ -308,11 +293,12 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
     overlayCallRegex,
     `${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(this.windowZooms.get(${windowAlias}.id)):${windowsOverlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))`,
   );
-  return (
+  const completedSource = (
     patchedSource.slice(0, overlaySyncMethod.start) +
     patchedMethod +
     patchedSource.slice(overlaySyncMethod.end)
   );
+  return markLinuxNativeTitlebarPatch(completedSource) ?? currentSource;
 }
 
 function applyLinuxMenuPatch(currentSource) {
