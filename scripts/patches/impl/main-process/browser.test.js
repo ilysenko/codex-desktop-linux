@@ -108,6 +108,26 @@ test("Linux external open env patch is idempotent", () => {
   assert.equal(second, first, "second application should not change the source");
 });
 
+test("Linux external open env patch preserves exact aliases with prefix and prototype names", () => {
+  const sources = [
+    '"use strict";let e=require("electron"),be=require("electron");',
+    '"use strict";let constructor=require("electron"),__proto__=require("electron");',
+  ];
+
+  for (const source of sources) {
+    const first = applyLinuxExternalOpenEnvPatch(source);
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (message) => warnings.push(message);
+    try {
+      assert.equal(applyLinuxExternalOpenEnvPatch(first), first);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.deepEqual(warnings, []);
+  }
+});
+
 test("Linux external open env patch ignores feature-owned Electron requires after its complete marker", () => {
   const source = '"use strict";let e=require("electron");';
   const patched = applyLinuxExternalOpenEnvPatch(source);

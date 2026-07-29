@@ -501,7 +501,7 @@ const LINUX_EXTERNAL_OPEN_TARGETS_MARKER_SUFFIX = "*/";
 
 function countLinuxExternalOpenPatchedElectronRequires(source, name) {
   const pattern = new RegExp(
-    `${escapeRegExp(name)}=codexLinuxPatchExternalOpen\\(require\\((?:["']|\\x60)electron(?:["']|\\x60)\\)\\)`,
+    `(?:^|[^A-Za-z0-9_$])${escapeRegExp(name)}=codexLinuxPatchExternalOpen\\(require\\((?:["']|\\x60)electron(?:["']|\\x60)\\)\\)`,
     "g",
   );
   return [...source.matchAll(pattern)].length;
@@ -562,7 +562,7 @@ function applyLinuxExternalOpenEnvPatch(currentSource) {
   }
 
   let patchedAnyElectronRequire = false;
-  const targetCounts = {};
+  const targetCounts = Object.create(null);
   const patchedSource = currentSource.replace(
     /([A-Za-z_$][\w$]*=)require\(([`'"])electron\2\)/g,
     (_match, prefix, quote) => {

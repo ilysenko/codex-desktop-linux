@@ -7890,7 +7890,7 @@ test("uses Linux managed runtime paths for Electron 42 Browser Use runtime resol
   });
 });
 
-test("patches the complete current Chrome native host runtime asset set atomically", async () => {
+test("patches the complete current Chrome native host runtime asset set as one validated set", async () => {
   const { extractedDir, mainPath, srcPath } = createCurrentChromeNativeHostRuntimeAssetsFixture();
   try {
     const { value: first, warnings: firstWarnings } = captureWarns(() =>
@@ -8036,6 +8036,104 @@ test("rejects mixed or partial current Chrome native host runtime asset sets wit
   }
 });
 
+test("rejects current Chrome native host runtime markers with a damaged contract body", () => {
+  const partial = createCurrentChromeNativeHostRuntimeAssetsFixture();
+  try {
+    assert.deepEqual(
+      patchLinuxChromeNativeHostRuntimeAssets(partial.extractedDir),
+      { matched: 2, changed: 2 },
+    );
+    const patchedSource = fs.readFileSync(partial.srcPath, "utf8");
+    const variants = [
+      patchedSource.replace(
+        "if(process.platform===`linux`)return codexLinuxChromePluginAppServerSourcePath(e);",
+        "if(process.platform===`linux`)return e.codexCliPath;",
+      ),
+      patchedSource.replace(
+        "??codexLinuxChromeNativeHostRuntimeEnv(`CODEX_CLI_PATH`)??codexLinuxChromeNativeHostRuntimePath(`codex`)",
+        "",
+      ),
+      patchedSource.replace(
+        "??codexLinuxChromeNativeHostRuntimeFile(e.resourcesPath,[[`node-runtime`,`bin`,process.platform===`win32`?`node.exe`:`node`]])",
+        "",
+      ),
+      patchedSource.replace(
+        "??codexLinuxChromeNativeHostRuntimeFile(e.resourcesPath,[[process.platform===`win32`?`node_repl.exe`:`node_repl`]])",
+        "",
+      ),
+      patchedSource.replace(
+        "/*codexLinuxChromeNativeHostAppServerCodexRuntime*/async function UK(e){let t=yq(e)??codexLinuxChromeNativeHostRuntimeEnv(`CODEX_CLI_PATH`)??codexLinuxChromeNativeHostRuntimePath(`codex`)",
+        "/*codexLinuxChromeNativeHostAppServerCodexRuntime*/async function UK(e){let t=yq(e)",
+      ),
+    ];
+
+    for (const source of variants) {
+      assert.notEqual(source, patchedSource);
+      fs.writeFileSync(partial.srcPath, source, "utf8");
+      const partialBefore = new Map([
+        [partial.mainPath, fs.readFileSync(partial.mainPath, "utf8")],
+        [partial.srcPath, fs.readFileSync(partial.srcPath, "utf8")],
+      ]);
+      const { value, warnings } = captureWarns(() =>
+        patchLinuxChromeNativeHostRuntimeAssets(partial.extractedDir),
+      );
+
+      assert.equal(value.changed, 0);
+      assert.match(value.reason, /incomplete Chrome native host runtime patch/);
+      assert.deepEqual(warnings, [
+        "WARN: Found incomplete Chrome native host runtime patch — skipping Linux runtime path patch",
+      ]);
+      assert.deepEqual(
+        new Map([
+          [partial.mainPath, fs.readFileSync(partial.mainPath, "utf8")],
+          [partial.srcPath, fs.readFileSync(partial.srcPath, "utf8")],
+        ]),
+        partialBefore,
+      );
+    }
+  } finally {
+    fs.rmSync(partial.extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("restores current Chrome native host runtime assets after a write failure", () => {
+  const candidate = createCurrentChromeNativeHostRuntimeAssetsFixture();
+  try {
+    const before = new Map([
+      [candidate.mainPath, fs.readFileSync(candidate.mainPath, "utf8")],
+      [candidate.srcPath, fs.readFileSync(candidate.srcPath, "utf8")],
+    ]);
+    let writeCount = 0;
+    const { value, warnings } = captureWarns(() =>
+      patchLinuxChromeNativeHostRuntimeAssets(candidate.extractedDir, {
+        writeFileSync(filePath, source, encoding) {
+          writeCount += 1;
+          if (writeCount === 2) {
+            fs.writeFileSync(filePath, "partially-written-Chrome-runtime-asset", encoding);
+            throw new Error("simulated Chrome runtime asset write failure");
+          }
+          fs.writeFileSync(filePath, source, encoding);
+        },
+      }),
+    );
+
+    assert.equal(value.changed, 0);
+    assert.match(value.reason, /Could not write current Chrome native host runtime asset set/);
+    assert.deepEqual(warnings, [
+      "WARN: Could not write current Chrome native host runtime asset set — skipping Linux runtime path patch",
+    ]);
+    assert.deepEqual(
+      new Map([
+        [candidate.mainPath, fs.readFileSync(candidate.mainPath, "utf8")],
+        [candidate.srcPath, fs.readFileSync(candidate.srcPath, "utf8")],
+      ]),
+      before,
+    );
+  } finally {
+    fs.rmSync(candidate.extractedDir, { recursive: true, force: true });
+  }
+});
+
 test("rejects partial Electron 42 Browser Use runtime markers byte-identically", () => {
   const patched = applyLinuxChromeNativeHostRuntimePatch(
     electron42BrowserUseRuntimeResolverBundleFixture(),
@@ -8044,6 +8142,10 @@ test("rejects partial Electron 42 Browser Use runtime markers byte-identically",
     patched.replace("`linux-path`", "`linux-path-corrupt`"),
     patched.replace("`linux-node-runtime`", "`linux-node-runtime-corrupt`"),
     patched.replace("`linux-node-repl-runtime`", "`linux-node-repl-runtime-corrupt`"),
+    patched.replace(
+      "codexLinuxChromeNativeHostRuntimeFile(u,[[`node-runtime`",
+      "codexLinuxChromeNativeHostRuntimeFileCorrupt(u,[[`node-runtime`",
+    ),
   ];
 
   for (const source of variants) {

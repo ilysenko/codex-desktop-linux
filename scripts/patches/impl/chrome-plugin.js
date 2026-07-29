@@ -32,26 +32,71 @@ const LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_MARKERS = [
   LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_CODEX_MARKER,
   LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_SOURCE_PATH_MARKER,
 ];
+const LINUX_CHROME_PLUGIN_APP_SERVER_SOURCE_PATH_HELPER =
+  "function codexLinuxChromePluginAppServerSourcePath(e){return e.codexCliPath}";
 const CURRENT_CHROME_NATIVE_HOST_RUNTIME_MESSAGE =
   "Missing bundled Electron runtime required to sync Chrome native host resources";
 const CURRENT_CHROME_APP_SERVER_CODEX_RUNTIME_MESSAGE =
   "Missing bundled Electron Codex runtime required to sync Chrome plugin app server";
+const IDENTIFIER_PATTERN = "[A-Za-z_$][\\w$]*";
 
 function markerCount(source, marker) {
   return source.split(marker).length - 1;
+}
+
+function matchesExactlyOnce(source, pattern) {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  return [...source.matchAll(new RegExp(pattern.source, flags))].length === 1;
 }
 
 function hasCompleteModernChromeNativeHostRuntimePatch(source) {
   return markerCount(source, LINUX_CHROME_NATIVE_HOST_RUNTIME_HELPER) === 1 &&
     LINUX_CHROME_NATIVE_HOST_RUNTIME_MODERN_MARKERS.every((marker) =>
       markerCount(source, marker) === 1
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`codexLinuxChromeNativeHostRuntimeEntry\(codexLinuxChromeNativeHostRuntimePath\(\`codex\`\),\`linux-path\`\)\?\?`,
+      ),
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`codexLinuxChromeNativeHostRuntimeEntry\(codexLinuxChromeNativeHostRuntimeFile\(${IDENTIFIER_PATTERN},\[\[\`node-runtime\`,\`bin\`,${IDENTIFIER_PATTERN}===\`win32\`\?\`node\.exe\`:\`node\`\]\]\),\`linux-node-runtime\`\)\?\?`,
+      ),
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`codexLinuxChromeNativeHostRuntimeEntry\(codexLinuxChromeNativeHostRuntimeFile\(${IDENTIFIER_PATTERN},\[\[${IDENTIFIER_PATTERN}===\`win32\`\?\`node_repl\.exe\`:\`node_repl\`\]\]\),\`linux-node-repl-runtime\`\)\?\?`,
+      ),
     );
 }
 
 function hasCompleteCurrentChromeAppServerRuntimePatch(source) {
   return markerCount(source, LINUX_CHROME_NATIVE_HOST_RUNTIME_HELPER) === 1 &&
+    markerCount(source, LINUX_CHROME_PLUGIN_APP_SERVER_SOURCE_PATH_HELPER) === 1 &&
     LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_MARKERS.every((marker) =>
       markerCount(source, marker) === 1
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`\/\*codexLinuxChromePluginAppServerSourcePath\*\/async function ${IDENTIFIER_PATTERN}\((?<sourceConfig>${IDENTIFIER_PATTERN})\)\{if\(process\.platform===\`linux\`\)return codexLinuxChromePluginAppServerSourcePath\(\k<sourceConfig>\);let ${IDENTIFIER_PATTERN}=\k<sourceConfig>\.nativeHostName===`,
+      ),
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`\/\*codexLinuxChromeNativeHostAppServerRuntime\*\/async function ${IDENTIFIER_PATTERN}\((?<runtimeConfig>${IDENTIFIER_PATTERN})\)\{let ${IDENTIFIER_PATTERN}=${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_CLI_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimePath\(\`codex\`\),${IDENTIFIER_PATTERN}=${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\.resourcesPath\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_BROWSER_USE_NODE_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`NODE_REPL_NODE_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeFile\(\k<runtimeConfig>\.resourcesPath,\[\[\`node-runtime\`,\`bin\`,process\.platform===\`win32\`\?\`node\.exe\`:\`node\`\]\]\),${IDENTIFIER_PATTERN}=${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\.resourcesPath\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_NODE_REPL_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeFile\(\k<runtimeConfig>\.resourcesPath,\[\[process\.platform===\`win32\`\?\`node_repl\.exe\`:\`node_repl\`\]\]\),`,
+      ),
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`\/\*codexLinuxChromeNativeHostAppServerCodexRuntime\*\/async function ${IDENTIFIER_PATTERN}\((?<codexConfig>${IDENTIFIER_PATTERN})\)\{let (?<codexPath>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\(\k<codexConfig>\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_CLI_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimePath\(\`codex\`\);if\(\k<codexPath>==null\)throw Error\(.+?\);return ${IDENTIFIER_PATTERN}\(\{codexCliPath:\k<codexPath>,codexHome:\k<codexConfig>\.codexHome,nativeHostName:\k<codexConfig>\.nativeHostName\}\)\}`,
+      ),
     );
 }
 
@@ -335,10 +380,9 @@ function applyLinuxChromePluginAppServerSourcePathPatch(currentSource) {
   }
 
   const [functionStart, , configVar] = match;
-  const helper = "function codexLinuxChromePluginAppServerSourcePath(e){return e.codexCliPath}";
   const functionIndex = isolationRoot + match.index;
   return currentSource.slice(0, functionIndex) +
-    `${helper}${LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_SOURCE_PATH_MARKER}${functionStart}if(process.platform===\`linux\`)return codexLinuxChromePluginAppServerSourcePath(${configVar});` +
+    `${LINUX_CHROME_PLUGIN_APP_SERVER_SOURCE_PATH_HELPER}${LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_SOURCE_PATH_MARKER}${functionStart}if(process.platform===\`linux\`)return codexLinuxChromePluginAppServerSourcePath(${configVar});` +
     currentSource.slice(functionIndex + functionStart.length);
 }
 
@@ -385,7 +429,27 @@ function applyChromePluginCodexAppServerRuntimePatch(currentSource, helper) {
   return currentSource.replace(original, replacement);
 }
 
-function patchLinuxChromeNativeHostRuntimeAssets(extractedDir) {
+function writeChromeNativeHostRuntimeAssetCandidates(candidates, writeFileSync) {
+  const attempted = [];
+  try {
+    for (const candidate of candidates) {
+      attempted.push(candidate);
+      writeFileSync(candidate.filePath, candidate.patched, "utf8");
+    }
+  } catch (error) {
+    for (const candidate of attempted.reverse()) {
+      try {
+        writeFileSync(candidate.filePath, candidate.source, "utf8");
+      } catch {
+      }
+    }
+    throw error;
+  }
+}
+
+function patchLinuxChromeNativeHostRuntimeAssets(extractedDir, {
+  writeFileSync = fs.writeFileSync,
+} = {}) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   if (!fs.existsSync(buildDir)) {
     const reason = `Could not find build directory in ${buildDir}`;
@@ -455,8 +519,12 @@ function patchLinuxChromeNativeHostRuntimeAssets(extractedDir) {
     candidates.push({ ...record, patched });
   }
 
-  for (const { filePath, patched } of candidates) {
-    fs.writeFileSync(filePath, patched, "utf8");
+  try {
+    writeChromeNativeHostRuntimeAssetCandidates(candidates, writeFileSync);
+  } catch {
+    const reason = "Could not write current Chrome native host runtime asset set";
+    console.warn(`WARN: ${reason} — skipping Linux runtime path patch`);
+    return { matched: records.length, changed: 0, reason };
   }
 
   return { matched: records.length, changed: candidates.length };
