@@ -1,0 +1,20 @@
+{
+  "id": "dictation-capture-quality",
+  "title": "OpenAI Dictation Quality",
+  "description": "Opt-in clean microphone capture routed through the user's Secret Service OpenAI key to gpt-4o-transcribe with an English language hint.",
+  "defaultEnabled": false,
+  "conflicts": [
+    "conversation-mode"
+  ],
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "packageDependencies": {
+    "deb": [
+      "libsecret-tools"
+    ],
+    "pacman": [
+      "libsecret"
+    ]
+  }
+}
