@@ -1429,6 +1429,7 @@ SCRIPT
     assert_contains "$capture_dir/PKGBUILD" "pkgver=2026.03.24.120000+manual"
     assert_contains "$capture_dir/PKGBUILD" "pkgrel=1"
     assert_contains "$capture_dir/PKGBUILD" "ampersand&tmp"
+    assert_contains "$capture_dir/PKGBUILD" "cp -a --no-preserve=ownership"
     assert_not_contains "$capture_dir/PKGBUILD" "__STAGING_DIR__"
     assert_contains "$capture_dir/PKGBUILD" "install=codex-desktop.install"
     assert_occurrence_count "$capture_dir/PKGBUILD" "'polkit'" "1"
