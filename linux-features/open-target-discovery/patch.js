@@ -618,30 +618,76 @@ function applyOpenInTargetRegistryCommandPatch(currentSource, { warnOnMissing = 
   return currentSource.slice(0, insertionIndex) + helper + currentSource.slice(insertionIndex);
 }
 
-function applyOpenInTargetCommandPatch(currentSource) {
-  currentSource = applyOpenInTargetRegistryCommandPatch(currentSource, { warnOnMissing: false });
-  if (currentSource.includes("codexLinuxOpenTargetRegistryCommand(this.getSettingsStore(),e)")) {
-    return currentSource;
-  }
-  if (!currentSource.includes("async function codexLinuxOpenTargetRegistryCommand(")) {
-    return currentSource;
-  }
-
-  const currentShapeMatch = currentSource.match(
-    /async getOpenInTargetCommand\(e\)\{let\{command:t\}=await this\.getOpenInWorker\(\)\(\{method:`get-target-command`,params:([A-Za-z_$][\w$]*)\(this\.getSettingsStore\(\),e\)\}\);if\(t==null\)throw Error\(`Open target "\$\{e\}" is not available`\);return t\}/u,
+function findCurrentOpenTargetCommandMatch(source) {
+  return source.match(
+    /async#([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{let\{command:([A-Za-z_$][\w$]*)\}=await this\.#([A-Za-z_$][\w$]*)\(\)\(\{method:`get-target-command`,params:([A-Za-z_$][\w$]*)\(this\.settingsStore,\2\)\}\);if\(\3==null\)throw Error\(`Open target "\$\{\2\}" is not available`\);return \3\}/u,
   );
-  if (currentShapeMatch != null) {
-    const [needle, paramsFn] = currentShapeMatch;
-    return currentSource.replace(
-      needle,
-      `async getOpenInTargetCommand(e){if(process.platform===\`linux\`){let t=await codexLinuxOpenTargetRegistryCommand(this.getSettingsStore(),e);if(t==null)throw Error(\`Open target "\${e}" is not available\`);return t}let{command:n}=await this.getOpenInWorker()({method:\`get-target-command\`,params:${paramsFn}(this.getSettingsStore(),e)});if(n==null)throw Error(\`Open target "\${e}" is not available\`);return n}`,
-    );
+}
+
+function findPatchedOpenTargetCommandBlock(source) {
+  const marker = "let _codexLinuxOpenTargetCommand=await codexLinuxOpenTargetRegistryCommand(";
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex === -1) {
+    return null;
   }
 
-  if (currentSource.includes("getOpenInTargetCommand")) {
-    warn("Could not find getOpenInTargetCommand worker fallback");
+  const methodStart = source.lastIndexOf("async#", markerIndex);
+  const blockStart = methodStart === -1 ? -1 : source.indexOf("{", methodStart);
+  const block = findBalancedBlock(source, blockStart);
+  const signature = source.slice(methodStart, blockStart).match(
+    /^async#[A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)$/u,
+  );
+  if (block == null || signature == null || block.end <= markerIndex) {
+    return null;
   }
-  return currentSource;
+
+  const targetVar = signature[1];
+  const linuxCommand =
+    `let _codexLinuxOpenTargetCommand=await codexLinuxOpenTargetRegistryCommand(this.settingsStore,${targetVar})`;
+  const unavailable =
+    `if(_codexLinuxOpenTargetCommand==null)throw Error(\`Open target "\${${targetVar}}" is not available\`)`;
+  if (
+    !block.text.includes(linuxCommand) ||
+    !block.text.includes(unavailable) ||
+    !block.text.includes("return _codexLinuxOpenTargetCommand") ||
+    !block.text.includes("method:`get-target-command`")
+  ) {
+    return null;
+  }
+  return block;
+}
+
+function applyOpenInTargetCommandPatch(currentSource) {
+  const patchedBlock = findPatchedOpenTargetCommandBlock(currentSource);
+  if (patchedBlock != null) {
+    return currentSource;
+  }
+  if (currentSource.includes("_codexLinuxOpenTargetCommand")) {
+    warn("Found partially patched open target command lookup");
+    return currentSource;
+  }
+
+  const currentShapeMatch = findCurrentOpenTargetCommandMatch(currentSource);
+  if (currentShapeMatch == null) {
+    if (
+      currentSource.includes("get-target-command") &&
+      currentSource.includes("Open in worker unavailable")
+    ) {
+      warn("Could not find current open target command lookup");
+    }
+    return currentSource;
+  }
+
+  const sourceWithRegistry = applyOpenInTargetRegistryCommandPatch(currentSource, { warnOnMissing: false });
+  if (!sourceWithRegistry.includes("async function codexLinuxOpenTargetRegistryCommand(")) {
+    return currentSource;
+  }
+
+  const [needle, commandMethod, targetVar, commandVar, workerMethod, paramsFn] = currentShapeMatch;
+  return sourceWithRegistry.replace(
+    needle,
+    `async#${commandMethod}(${targetVar}){if(process.platform===\`linux\`){let _codexLinuxOpenTargetCommand=await codexLinuxOpenTargetRegistryCommand(this.settingsStore,${targetVar});if(_codexLinuxOpenTargetCommand==null)throw Error(\`Open target "\${${targetVar}}" is not available\`);return _codexLinuxOpenTargetCommand}let{command:${commandVar}}=await this.#${workerMethod}()({method:\`get-target-command\`,params:${paramsFn}(this.settingsStore,${targetVar})});if(${commandVar}==null)throw Error(\`Open target "\${${targetVar}}" is not available\`);return ${commandVar}}`,
+  );
 }
 
 function applyOpenInTargetsAvailabilityPatch(currentSource) {
