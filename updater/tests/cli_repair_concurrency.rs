@@ -96,6 +96,11 @@ fi
 if [ "$1" = "install" ]; then
   printf '%s\n' "$$" >> "$NPM_INSTALL_LOG"
   printf '%s\n' "$PPID" > "$NPM_SUPERVISOR_PID"
+  previous_group="$(/bin/cat "$NPM_BACKGROUND_PROCESS_GROUP" 2>/dev/null || true)"
+  if [ -n "$previous_group" ] && /bin/kill -0 "-$previous_group" 2>/dev/null; then
+    /bin/touch "$NPM_INSTALL_OVERLAP"
+    exit 99
+  fi
   if ! /bin/mkdir "$NPM_INSTALL_OWNER" 2>/dev/null; then
     owner_pid="$(/bin/cat "$NPM_INSTALL_OWNER/pid" 2>/dev/null || true)"
     if [ -n "$owner_pid" ] && /bin/kill -0 "$owner_pid" 2>/dev/null; then
@@ -114,7 +119,7 @@ if [ "$1" = "install" ]; then
        [ "$(/bin/cat "$NPM_INSTALL_MODE")" = "background-descendant-hang" ]; then
       /bin/sh -c 'trap "exit 0" TERM; while :; do /bin/sleep 1; done' \
         >/dev/null 2>&1 &
-      /bin/ps -o pgid= -p "$$" > "$NPM_BACKGROUND_PROCESS_GROUP"
+      printf '%s\n' "$PPID" > "$NPM_BACKGROUND_PROCESS_GROUP"
       if [ "$(/bin/cat "$NPM_INSTALL_MODE")" = "background-descendant" ]; then
         exit 0
       fi
@@ -253,6 +258,7 @@ exit 1
             .env_remove("FNM_MULTISHELL_PATH")
             .env_remove("HOMEBREW_PREFIX")
             .env_remove("NVM_DIR")
+            .env_remove("XDG_DATA_HOME")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         command

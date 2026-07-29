@@ -1863,34 +1863,15 @@ fn process_group_member_pidfds(
 }
 
 fn process_group_for_pid(pid: i32) -> std::io::Result<Option<i32>> {
-    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let close = stat.rfind(')').ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("process {pid} stat has no command terminator"),
-        )
-    })?;
-    let process_group = stat
-        .get(close + 1..)
-        .and_then(|fields| fields.split_whitespace().nth(2))
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("process {pid} stat has no process group"),
-            )
-        })?
-        .parse::<i32>()
-        .map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("process {pid} stat has an invalid process group: {error}"),
-            )
-        })?;
-    Ok(Some(process_group))
+    let process_group = unsafe { libc::getpgid(pid) };
+    if process_group >= 0 {
+        return Ok(Some(process_group));
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ESRCH | libc::EPERM) => Ok(None),
+        _ => Err(error),
+    }
 }
 
 fn signal_process_group(process_group: i32, signal: i32) {
