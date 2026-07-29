@@ -3011,7 +3011,13 @@ mod tests {
                 root.join("missing-settings.json"),
             )
             .env_remove("CODEX_UPDATE_MANAGER_ASSUME_NO_POLKIT_AGENT")
-            .env("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
+            .env("CODEX_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1")
+            .env_remove("CODEX_CLI_PATH")
+            .env_remove("FNM_DIR")
+            .env_remove("FNM_MULTISHELL_PATH")
+            .env_remove("HOMEBREW_PREFIX")
+            .env_remove("NVM_DIR")
+            .env_remove("XDG_DATA_HOME");
         command.process_group(0);
     }
 

@@ -15,7 +15,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
-    os::fd::RawFd,
+    os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     os::unix::process::{CommandExt, ExitStatusExt},
     path::{Path, PathBuf},
@@ -1505,24 +1505,55 @@ fn run_bounded_command_output(
     };
 
     loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return Ok(collect_bounded_output(
-                    status,
-                    process_group,
-                    &stdout_rx,
-                    &stderr_rx,
-                ));
+        if supervised {
+            match child_has_exited_without_reaping(&child) {
+                Ok(true) => {
+                    terminate_process_group_members(process_group, child.id() as i32);
+                    let status = child.wait().with_context(|| {
+                        format!(
+                            "Failed to reap npm supervisor for {} {}",
+                            program.display(),
+                            format_command_args(args)
+                        )
+                    })?;
+                    return Ok(collect_bounded_output(
+                        status,
+                        process_group,
+                        &stdout_rx,
+                        &stderr_rx,
+                    ));
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    terminate_process_group(&mut child, process_group);
+                    let _ = child.wait();
+                    anyhow::bail!(
+                        "Failed while waiting for {} {}: {error}",
+                        program.display(),
+                        format_command_args(args)
+                    );
+                }
             }
-            Ok(None) => {}
-            Err(error) => {
-                terminate_process_group(&mut child, process_group);
-                let _ = child.wait();
-                anyhow::bail!(
-                    "Failed while waiting for {} {}: {error}",
-                    program.display(),
-                    format_command_args(args)
-                );
+        } else {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    return Ok(collect_bounded_output(
+                        status,
+                        process_group,
+                        &stdout_rx,
+                        &stderr_rx,
+                    ));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    terminate_process_group(&mut child, process_group);
+                    let _ = child.wait();
+                    anyhow::bail!(
+                        "Failed while waiting for {} {}: {error}",
+                        program.display(),
+                        format_command_args(args)
+                    );
+                }
             }
         }
 
@@ -1573,8 +1604,12 @@ pub(crate) fn run_npm_supervisor(
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .process_group(0);
+        .stderr(Stdio::inherit());
+    if cfg!(test) {
+        // Unit tests invoke the supervisor inside the shared test runner rather
+        // than through the production process-group boundary.
+        command.process_group(0);
+    }
     let supervisor_pid = std::process::id();
     unsafe {
         command.pre_exec(move || {
@@ -1593,13 +1628,18 @@ pub(crate) fn run_npm_supervisor(
     let mut child = command
         .spawn()
         .with_context(|| format!("Failed to spawn supervised npm {}", program.display()))?;
-    let process_group = child.id() as i32;
+    let supervisor_pid = std::process::id() as i32;
+    let process_group = if cfg!(test) {
+        child.id() as i32
+    } else {
+        supervisor_pid
+    };
     let started = Instant::now();
 
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                terminate_remaining_process_group(process_group);
+                terminate_process_group_members(process_group, supervisor_pid);
                 if status.success() {
                     return Ok(());
                 }
@@ -1607,7 +1647,8 @@ pub(crate) fn run_npm_supervisor(
             }
             Ok(None) => {}
             Err(error) => {
-                terminate_process_group(&mut child, process_group);
+                terminate_process_group_members(process_group, supervisor_pid);
+                let _ = child.kill();
                 let _ = child.wait();
                 return Err(error).with_context(|| {
                     format!(
@@ -1619,12 +1660,14 @@ pub(crate) fn run_npm_supervisor(
         }
 
         if current_parent_pid() != owner_pid {
-            terminate_process_group(&mut child, process_group);
+            terminate_process_group_members(process_group, supervisor_pid);
+            let _ = child.kill();
             let _ = child.wait();
             anyhow::bail!("updater parent exited while npm was running");
         }
         if started.elapsed() >= timeout {
-            terminate_process_group(&mut child, process_group);
+            terminate_process_group_members(process_group, supervisor_pid);
+            let _ = child.kill();
             let _ = child.wait();
             anyhow::bail!(
                 "{} {} timed out after {} seconds",
@@ -1654,6 +1697,23 @@ fn set_close_on_exec(fd: RawFd) -> Result<()> {
 
 fn current_parent_pid() -> u32 {
     unsafe { libc::getppid() as u32 }
+}
+
+fn child_has_exited_without_reaping(child: &std::process::Child) -> std::io::Result<bool> {
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id(),
+            info.as_mut_ptr(),
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let info = unsafe { info.assume_init() };
+    Ok(unsafe { info.si_pid() } != 0)
 }
 
 fn exit_with_status(status: ExitStatus) -> ! {
@@ -1720,22 +1780,98 @@ fn terminate_process_group(child: &mut std::process::Child, process_group: i32) 
     let _ = child.kill();
 }
 
-fn terminate_remaining_process_group(process_group: i32) {
-    if signal_process_group_checked(process_group, SIGTERM) {
-        thread::sleep(BOUNDED_COMMAND_TERMINATION_GRACE);
-        signal_process_group(process_group, SIGKILL);
+fn terminate_process_group_members(process_group: i32, excluded_pid: i32) {
+    if !signal_process_group_members(process_group, excluded_pid, SIGTERM) {
+        return;
     }
+
+    let deadline = Instant::now() + BOUNDED_COMMAND_TERMINATION_GRACE;
+    while Instant::now() < deadline {
+        if !process_group_has_members(process_group, excluded_pid) {
+            return;
+        }
+        thread::sleep(BOUNDED_COMMAND_POLL_INTERVAL.min(deadline - Instant::now()));
+    }
+    signal_process_group_members(process_group, excluded_pid, SIGKILL);
 }
 
-fn signal_process_group_checked(process_group: i32, signal: i32) -> bool {
-    unsafe { kill(-process_group, signal) == 0 }
+fn signal_process_group_members(process_group: i32, excluded_pid: i32, signal: i32) -> bool {
+    let members = match process_group_member_pidfds(process_group, excluded_pid) {
+        Ok(members) => members,
+        Err(_) => {
+            signal_process_group(process_group, SIGKILL);
+            return true;
+        }
+    };
+    for member in &members {
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                member.as_raw_fd(),
+                signal,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        };
+        if result == -1 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            signal_process_group(process_group, SIGKILL);
+            return true;
+        }
+    }
+    !members.is_empty()
+}
+
+fn process_group_has_members(process_group: i32, excluded_pid: i32) -> bool {
+    process_group_member_pidfds(process_group, excluded_pid)
+        .map(|members| !members.is_empty())
+        .unwrap_or(true)
+}
+
+fn process_group_member_pidfds(
+    process_group: i32,
+    excluded_pid: i32,
+) -> std::io::Result<Vec<OwnedFd>> {
+    let mut members = Vec::new();
+    for entry in fs::read_dir("/proc")?.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if pid == excluded_pid || process_group_for_pid(pid) != Some(process_group) {
+            continue;
+        }
+        let pidfd = {
+            let raw_fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) as i32 };
+            if raw_fd == -1 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ESRCH) {
+                    continue;
+                }
+                return Err(error);
+            }
+            unsafe { OwnedFd::from_raw_fd(raw_fd) }
+        };
+        if process_group_for_pid(pid) == Some(process_group) {
+            members.push(pidfd);
+        }
+    }
+    Ok(members)
+}
+
+fn process_group_for_pid(pid: i32) -> Option<i32> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after_name = stat.get(stat.rfind(')')? + 1..)?;
+    after_name.split_whitespace().nth(2)?.parse().ok()
 }
 
 fn signal_process_group(process_group: i32, signal: i32) {
-    // SAFETY: the process was spawned into a dedicated group whose id is the
-    // child pid. Timeout cleanup signals it before reaping the child; after a
-    // successful parent exit this is called only if a descendant still holds a
-    // captured output pipe open.
+    // SAFETY: callers target a dedicated process group while its leader is
+    // alive or deliberately unreaped. The fail-closed member cleanup path may
+    // also terminate its own supervisor, ensuring the lock cannot be released
+    // while an untracked npm descendant remains.
     unsafe {
         let _ = kill(-process_group, signal);
     }
@@ -5470,6 +5606,21 @@ wait
             "#!/bin/sh\nif [ -e \"/proc/self/fd/$NPM_INSTALL_LOCK_FD\" ]; then\n  printf inherited > \"$NPM_LOCK_INHERITED_MARKER\"\n  exit 88\nfi\nexit 0\n",
         )?;
         let install_lock = fs::File::create(temp.path().join("install.lock"))?;
+        let initial_flags = unsafe { libc::fcntl(install_lock.as_raw_fd(), libc::F_GETFD) };
+        anyhow::ensure!(
+            initial_flags != -1,
+            "failed to inspect the test install lock descriptor"
+        );
+        anyhow::ensure!(
+            unsafe {
+                libc::fcntl(
+                    install_lock.as_raw_fd(),
+                    libc::F_SETFD,
+                    initial_flags & !libc::FD_CLOEXEC,
+                )
+            } != -1,
+            "failed to make the test install lock descriptor inheritable"
+        );
         let _restore_env =
             EnvRestoreGuard::capture(&["NPM_INSTALL_LOCK_FD", "NPM_LOCK_INHERITED_MARKER"]);
         std::env::set_var("NPM_INSTALL_LOCK_FD", install_lock.as_raw_fd().to_string());
@@ -5484,6 +5635,12 @@ wait
         )?;
 
         assert!(!inherited_marker.exists());
+        let final_flags = unsafe { libc::fcntl(install_lock.as_raw_fd(), libc::F_GETFD) };
+        anyhow::ensure!(
+            final_flags != -1,
+            "failed to re-inspect the test install lock descriptor"
+        );
+        assert_ne!(final_flags & libc::FD_CLOEXEC, 0);
         Ok(())
     }
 

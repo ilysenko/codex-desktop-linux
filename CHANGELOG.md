@@ -43,8 +43,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   retries npm once per explicit invocation without discarding failed recovery
   state or concurrent updater state. A parent-independent bounded supervisor
   retains the lock while mutating npm children run without inheriting it,
-  terminates their complete process group, and releases the lock if the updater
-  parent exits abruptly or the npm leader leaves a background descendant.
+  terminates their complete process group, and releases the lock only after
+  cleanup if the updater parent or supervisor exits abruptly or the npm leader
+  leaves a background descendant.
   Late routine CLI checks revalidate both the repair journal and their original
   CLI state before persisting a result. Missing-CLI preflight also re-resolves a
   CLI installed while it waited for the lock before consulting npm.

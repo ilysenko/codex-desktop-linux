@@ -48,11 +48,13 @@ visible in later `diagnose` output and can be retried explicitly.
 
 Mutating npm commands run under an internal bounded supervisor that retains the
 CLI install lock while preventing npm and its descendants from inheriting the
-lock descriptor. The supervisor owns the npm process group and terminates any
-remaining descendants before it exits. If the updater parent exits abruptly,
-the supervisor terminates that process group and releases the lock. Its own
-timeout remains active independently of the updater parent. When an entrypoint
-first encounters contention, its PID is recorded in the updater log.
+lock descriptor. The supervisor and npm share one dedicated process group; the
+supervisor terminates remaining npm members before it exits, and the updater
+keeps the supervisor unreaped while applying the same cleanup if the supervisor
+itself fails. If the updater parent exits abruptly, the supervisor cleans the
+group before releasing the lock. Its own timeout remains active independently
+of the updater parent. When an entrypoint first encounters contention, its PID
+is recorded in the updater log.
 
 CLI maintenance and the updater lifecycle merge their separately owned fields
 under a shared state lock. Concurrent daemon, status, and launcher processes
