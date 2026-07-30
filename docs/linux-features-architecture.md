@@ -110,6 +110,16 @@ Supported patch phases are `main-bundle`, `extracted-app:pre-webview`,
 `webview-asset`, and `extracted-app:post-webview`; `order` is sorted only
 inside each phase.
 
+When a feature extends a completed core transform in the same asset, its
+descriptor may declare `composesPatches: ["linux-core-patch-id"]`. The runner
+uses this metadata to authorize one active feature descriptor to replace the
+core completion marker with a delegated marker. The owner must be an existing
+core descriptor in the same phase. Descriptors excluded by `appliesTo` or
+`enabled` do not participate, and multiple active delegates for one owner are
+rejected. The feature descriptor must run after an active owner. Core still
+owns its generic completion seam; the feature owns and validates the complete
+composed result.
+
 Use `requires` and `conflicts` to declare feature relationships:
 
 ```json

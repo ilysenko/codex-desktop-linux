@@ -83,3 +83,9 @@ package-json, avatar-overlay, and projectless-documents). Generic helpers live
 under `scripts/patches/lib/`. Do not recreate the deleted compatibility
 barrels (`scripts/patches/main-process.js`, `webview-assets.js`, or
 `shared.js`).
+
+When an optional feature composes a core patch in the same asset, core may
+expose only a generic completion marker seam. The feature descriptor declares
+the owner through `composesPatches`, performs the composed transform, and
+validates the complete delegated state. Core descriptors must not depend on a
+specific feature id.

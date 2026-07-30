@@ -8,6 +8,7 @@ const {
   createPatchReport,
 } = require("../lib/patch-report.js");
 const {
+  corePatchDescriptors,
   createMainBundleContext,
   featurePatchDescriptors,
   patchExtractedApp,
@@ -43,7 +44,10 @@ test("runner derives authorized patch delegates from enabled feature descriptors
       featuresConfigPath,
       JSON.stringify({ enabled: ["frameless-titlebar"] }),
     );
-    const descriptors = featurePatchDescriptors({ featuresConfigPath });
+    const descriptors = [
+      ...corePatchDescriptors(),
+      ...featurePatchDescriptors({ featuresConfigPath }),
+    ];
 
     assert.deepEqual(patchCompositionDelegates(descriptors), {
       "linux-native-titlebar": ["frameless-titlebar"],
@@ -52,6 +56,73 @@ test("runner derives authorized patch delegates from enabled feature descriptors
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("runner authorizes only active same-phase feature composition descriptors", () => {
+  const core = {
+    id: "linux-owner",
+    phase: "main-bundle",
+    sourceKind: "core",
+    order: 10,
+  };
+  const feature = (overrides = {}) => ({
+    id: "feature:sample:compose",
+    phase: "main-bundle",
+    sourceKind: "feature",
+    featureId: "sample",
+    composesPatches: ["linux-owner"],
+    order: 20,
+    ...overrides,
+  });
+
+  assert.deepEqual(
+    patchCompositionDelegates([core, feature()], {}),
+    { "linux-owner": ["sample"] },
+  );
+  assert.deepEqual(
+    patchCompositionDelegates([core, feature({ enabled: () => false })], {}),
+    {},
+  );
+  assert.deepEqual(
+    patchCompositionDelegates([core, feature({ appliesTo: () => false })], {}),
+    {},
+  );
+  assert.throws(
+    () => patchCompositionDelegates([feature()], {}),
+    /composes unknown core patch 'linux-owner'/,
+  );
+  assert.throws(
+    () => patchCompositionDelegates([
+      { ...core, phase: "webview-asset" },
+      feature(),
+    ], {}),
+    /composes core patch 'linux-owner' across phases/,
+  );
+  assert.throws(
+    () => patchCompositionDelegates([
+      { ...core, enabled: () => false },
+      feature(),
+    ], {}),
+    /composes inactive core patch 'linux-owner'/,
+  );
+  assert.throws(
+    () => patchCompositionDelegates([
+      core,
+      feature({ order: 5 }),
+    ], {}),
+    /must run after composed core patch 'linux-owner'/,
+  );
+  assert.throws(
+    () => patchCompositionDelegates([
+      core,
+      feature(),
+      feature({
+        id: "feature:other:compose",
+        featureId: "other",
+      }),
+    ], {}),
+    /has multiple active composition delegates/,
+  );
 });
 
 test("runner executes descriptor phases explicitly and sorts order only within each phase", () => {

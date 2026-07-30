@@ -79,4 +79,20 @@ test("descriptor factories validate the fresh descriptor contract", () => {
     () => mainBundlePatch({ id: "bad-policy", ciPolicy: "legacy", apply: (source) => source }),
     /unsupported ciPolicy 'legacy'/,
   );
+  assert.throws(
+    () => mainBundlePatch({ id: "bad-composition", composesPatches: "linux-owner", apply: (source) => source }),
+    /composesPatches must be a non-empty array/,
+  );
+  assert.throws(
+    () => mainBundlePatch({ id: "bad-owner", composesPatches: ["feature:owner"], apply: (source) => source }),
+    /composesPatches entries must match/,
+  );
+  assert.throws(
+    () => mainBundlePatch({
+      id: "duplicate-owner",
+      composesPatches: ["linux-owner", "linux-owner"],
+      apply: (source) => source,
+    }),
+    /composesPatches must not contain duplicates/,
+  );
 });

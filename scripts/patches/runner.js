@@ -24,6 +24,8 @@ const {
   applyExtractedAppPatchDescriptors,
   applyMainBundlePatchDescriptors,
   applyWebviewAssetPatchDescriptors,
+  descriptorAppliesTo,
+  descriptorEnabled,
   discoverCorePatchDescriptors,
   normalizePatchDescriptors,
 } = require("./engine.js");
@@ -117,7 +119,12 @@ function mainBundlePatchDescriptors(context) {
   ]);
 }
 
-function patchCompositionDelegates(descriptors) {
+function patchCompositionDelegates(descriptors, context = {}) {
+  const coreOwners = new Map(
+    descriptors
+      .filter((descriptor) => descriptor.sourceKind === "core")
+      .map((descriptor) => [descriptor.id, descriptor]),
+  );
   const delegates = new Map();
   for (const descriptor of descriptors) {
     if (
@@ -127,19 +134,50 @@ function patchCompositionDelegates(descriptors) {
     ) {
       continue;
     }
+    if (
+      !descriptorAppliesTo(descriptor, context) ||
+      !descriptorEnabled(descriptor, context)
+    ) {
+      continue;
+    }
     for (const ownerPatchId of descriptor.composesPatches) {
-      if (typeof ownerPatchId !== "string" || ownerPatchId.length === 0) {
-        continue;
+      const owner = coreOwners.get(ownerPatchId);
+      if (owner == null) {
+        throw new Error(
+          `Feature descriptor '${descriptor.id}' composes unknown core patch '${ownerPatchId}'`,
+        );
       }
-      const featureIds = delegates.get(ownerPatchId) ?? new Set();
-      featureIds.add(descriptor.featureId);
-      delegates.set(ownerPatchId, featureIds);
+      if (owner.phase !== descriptor.phase) {
+        throw new Error(
+          `Feature descriptor '${descriptor.id}' composes core patch '${ownerPatchId}' across phases`,
+        );
+      }
+      if (
+        !descriptorAppliesTo(owner, context) ||
+        !descriptorEnabled(owner, context)
+      ) {
+        throw new Error(
+          `Feature descriptor '${descriptor.id}' composes inactive core patch '${ownerPatchId}'`,
+        );
+      }
+      if (descriptor.order <= owner.order) {
+        throw new Error(
+          `Feature descriptor '${descriptor.id}' must run after composed core patch '${ownerPatchId}'`,
+        );
+      }
+      const existing = delegates.get(ownerPatchId);
+      if (existing != null) {
+        throw new Error(
+          `Core patch '${ownerPatchId}' has multiple active composition delegates: '${existing}' and '${descriptor.id}'`,
+        );
+      }
+      delegates.set(ownerPatchId, descriptor.featureId);
     }
   }
   return Object.fromEntries(
-    [...delegates.entries()].map(([ownerPatchId, featureIds]) => [
+    [...delegates.entries()].map(([ownerPatchId, featureId]) => [
       ownerPatchId,
-      [...featureIds].sort(),
+      [featureId],
     ]),
   );
 }
@@ -148,7 +186,7 @@ function applyMainBundlePatches(source, context, report) {
   const descriptors = mainBundlePatchDescriptors(context);
   context.patchCompositionDelegates = {
     ...(context.patchCompositionDelegates ?? {}),
-    ...patchCompositionDelegates(descriptors),
+    ...patchCompositionDelegates(descriptors, context),
   };
   return applyMainBundlePatchDescriptors(source, descriptors, context, report);
 }
@@ -198,7 +236,7 @@ function patchExtractedApp(extractedDir, options = {}) {
     linuxTarget: baseContext.linux,
   });
   assetContext.patchCompositionDelegates =
-    patchCompositionDelegates(patchDescriptors);
+    patchCompositionDelegates(patchDescriptors, assetContext);
   assetContext.report = report;
 
   if (main != null) {
