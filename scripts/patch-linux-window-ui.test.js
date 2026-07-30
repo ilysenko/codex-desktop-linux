@@ -3224,9 +3224,10 @@ test("warns when the Linux window-controls safe area cannot follow the current h
     applyLinuxWindowControlsSafeAreaPatch(source),
   );
 
-  assert.match(value, /applicationMenu:Object\.freeze\(\{left:0,right:138\}\)/);
+  assert.equal(value, source);
   assert.deepEqual(warnings, [
     "WARN: Could not connect the Linux window controls safe area to the current app header layout",
+    "WARN: Could not complete Linux window-controls safe-area consumers — skipping",
   ]);
 });
 
@@ -9567,7 +9568,7 @@ function evaluatePatchedExternalOpen({
     },
   };
   const source =
-    "\"use strict\";let e=require(`electron`);async function openExternal(url,options){return e.shell.openExternal(url,options)}";
+    "\"use strict\";let e=require(`electron`),t=require(`electron`);async function openExternal(url,options){return e.shell.openExternal(url,options)}";
   const patched = applyPatchTwice(applyLinuxExternalOpenEnvPatch, source);
   const openExternal = vm.runInNewContext(`${patched};openExternal`, {
     require(moduleName) {
@@ -9653,7 +9654,7 @@ test("falls back to Electron when sanitized xdg-open spawning fails", async () =
 
 test("keeps already-applied Linux external-open patch quiet", () => {
   const source =
-    "\"use strict\";let e=require(`electron`);async function openExternal(url,options){return e.shell.openExternal(url,options)}";
+    "\"use strict\";let e=require(`electron`),t=require(`electron`);async function openExternal(url,options){return e.shell.openExternal(url,options)}";
   const patched = applyLinuxExternalOpenEnvPatch(source);
   const { value, warnings } = captureWarns(() => applyLinuxExternalOpenEnvPatch(patched));
 

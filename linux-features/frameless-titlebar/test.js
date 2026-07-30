@@ -193,7 +193,7 @@ test("native-titlebar remains complete after frameless-titlebar composition", ()
   assert.deepEqual(warnings, []);
 });
 
-test("native-titlebar marker rejects incomplete core state and defers feature shapes", () => {
+test("native-titlebar marker rejects incomplete core and frameless composition states", () => {
   const corePatched = applyLinuxNativeTitlebarPatch(
     nativeTitlebarCompositionFixture(),
   );
@@ -227,7 +227,9 @@ test("native-titlebar marker rejects incomplete core state and defers feature sh
       rerun = applyLinuxNativeTitlebarPatch(source);
     });
     assert.equal(rerun, source);
-    assert.deepEqual(warnings, []);
+    assert.deepEqual(warnings, [
+      "WARN: Found incomplete Linux native titlebar patch marker — skipping",
+    ]);
   }
 });
 
@@ -302,7 +304,7 @@ test("frameless-titlebar composes idempotently with the core safe-area patch", (
   );
 });
 
-test("core safe-area marker defers incomplete frameless composition to the feature", () => {
+test("core and feature safe-area validators reject incomplete frameless composition", () => {
   const stockSource = [
     "var eV=Object.freeze({default:Object.freeze({left:0,right:0}),applicationMenu:Object.freeze({left:0,right:0})});",
     "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})}",
@@ -320,7 +322,9 @@ test("core safe-area marker defers incomplete frameless composition to the featu
   const coreWarnings = captureWarnings(() => {
     assert.equal(applyLinuxWindowControlsSafeAreaPatch(source), source);
   });
-  assert.deepEqual(coreWarnings, []);
+  assert.deepEqual(coreWarnings, [
+    "WARN: Found incomplete Linux window-controls safe-area patch marker — skipping",
+  ]);
 
   const featureWarnings = captureWarnings(() => {
     assert.equal(applyFramelessTitlebarWebviewPatch(source), source);

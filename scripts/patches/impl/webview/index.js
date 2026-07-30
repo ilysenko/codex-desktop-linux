@@ -198,11 +198,71 @@ function markLinuxWindowControlsSafeAreaPatch(source) {
   );
 }
 
+function hasCompleteLinuxWindowControlsSafeAreaPatch(source) {
+  const markerCount =
+    source.split(LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER).length - 1;
+  if (markerCount !== 1) {
+    return false;
+  }
+
+  const insetMatches = [
+    ...source.matchAll(
+      /applicationMenu:Object\.freeze\(\{left:0,right:(\d+)\}\)/gu,
+    ),
+  ];
+  const slotSignatureMatches = source.match(
+    new RegExp(
+      `function [A-Za-z_$][\\w$]*\\(\\{entries:[A-Za-z_$][\\w$]*,fitWidth:[A-Za-z_$][\\w$]*,side:[A-Za-z_$][\\w$]*,slotWidth:[A-Za-z_$][\\w$]*,${LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP}\\}\\)`,
+      "gu",
+    ),
+  ) ?? [];
+  const paddingMatches = source.match(
+    new RegExp(
+      `"pe-2":([A-Za-z_$][\\w$]*)===\`start\`&&[A-Za-z_$][\\w$]*\\|\\|\\1===\`end\`&&!${LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP},"pe-\\(--spacing-token-safe-header-right\\)":\\1===\`end\`&&${LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP}`,
+      "gu",
+    ),
+  ) ?? [];
+  const nativeHeaderMatches = source.match(
+    new RegExp(
+      `${LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP}:![A-Za-z_$][\\w$]*,side:\`end\``,
+      "gu",
+    ),
+  ) ?? [];
+  const framelessHeaderMatches = source.match(
+    new RegExp(
+      `${LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP}:!1,side:\`end\``,
+      "gu",
+    ),
+  ) ?? [];
+  const hasSharedConsumers =
+    insetMatches.length > 0 &&
+    slotSignatureMatches.length === 1 &&
+    paddingMatches.length === 1;
+  if (!hasSharedConsumers) {
+    return false;
+  }
+
+  return (
+    (
+      insetMatches.every((match) =>
+        match[1] === String(LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT)
+      ) &&
+      nativeHeaderMatches.length === 1 &&
+      framelessHeaderMatches.length === 0
+    ) ||
+    (
+      insetMatches.every((match) => match[1] === "0") &&
+      framelessHeaderMatches.length === 1 &&
+      nativeHeaderMatches.length === 0
+    )
+  );
+}
+
 function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
   const markerCount =
     currentSource.split(LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER).length - 1;
   if (markerCount > 0) {
-    if (markerCount === 1) {
+    if (hasCompleteLinuxWindowControlsSafeAreaPatch(currentSource)) {
       return currentSource;
     }
     console.warn(
@@ -243,7 +303,14 @@ function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
       patchedSource.includes(LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP)
     )
   ) {
-    return markLinuxWindowControlsSafeAreaPatch(patchedSource);
+    const completedSource = markLinuxWindowControlsSafeAreaPatch(patchedSource);
+    if (hasCompleteLinuxWindowControlsSafeAreaPatch(completedSource)) {
+      return completedSource;
+    }
+    console.warn(
+      "WARN: Could not complete Linux window-controls safe-area consumers — skipping",
+    );
+    return currentSource;
   }
 
   if (

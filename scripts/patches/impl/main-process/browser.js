@@ -497,6 +497,7 @@ function buildLinuxExternalOpenHelpers() {
 
 const LINUX_EXTERNAL_OPEN_TARGET_MARKER =
   "/*codexLinuxExternalOpenTarget*/";
+const CURRENT_LINUX_EXTERNAL_OPEN_TARGET_COUNT = 2;
 
 function hasCompleteLinuxExternalOpenEnvPatch(source, helperPayload) {
   if (source.split(helperPayload).length - 1 !== 1) {
@@ -506,7 +507,11 @@ function hasCompleteLinuxExternalOpenEnvPatch(source, helperPayload) {
     source.split(LINUX_EXTERNAL_OPEN_TARGET_MARKER).length - 1;
   const targetPattern =
     /\/\*codexLinuxExternalOpenTarget\*\/codexLinuxPatchExternalOpen\(require\(([`'"])electron\1\)\)/g;
-  return markerCount > 0 && [...source.matchAll(targetPattern)].length === markerCount;
+  return (
+    markerCount === CURRENT_LINUX_EXTERNAL_OPEN_TARGET_COUNT &&
+    [...source.matchAll(targetPattern)].length ===
+      CURRENT_LINUX_EXTERNAL_OPEN_TARGET_COUNT
+  );
 }
 
 function applyLinuxExternalOpenEnvPatch(currentSource) {
@@ -527,24 +532,27 @@ function applyLinuxExternalOpenEnvPatch(currentSource) {
     return currentSource;
   }
 
-  let patchedAnyElectronRequire = false;
+  const electronRequireInitializerPattern =
+    /([A-Za-z_$][\w$]*=)require\(([`'"])electron\2\)/g;
+  const targetCount = [
+    ...currentSource.matchAll(electronRequireInitializerPattern),
+  ].length;
+  if (targetCount !== CURRENT_LINUX_EXTERNAL_OPEN_TARGET_COUNT) {
+    console.warn(
+      `WARN: Expected ${CURRENT_LINUX_EXTERNAL_OPEN_TARGET_COUNT} current Electron require initializers, found ${targetCount} — skipping Linux external open environment patch`,
+    );
+    return currentSource;
+  }
+
   const patchedSource = currentSource.replace(
-    /([A-Za-z_$][\w$]*=)require\(([`'"])electron\2\)/g,
+    electronRequireInitializerPattern,
     (_match, prefix, quote) => {
-      patchedAnyElectronRequire = true;
       return (
         `${prefix}${LINUX_EXTERNAL_OPEN_TARGET_MARKER}` +
         `codexLinuxPatchExternalOpen(require(${quote}electron${quote}))`
       );
     },
   );
-
-  if (!patchedAnyElectronRequire) {
-    console.warn(
-      "WARN: Could not find Electron require initializer — skipping Linux external open environment patch",
-    );
-    return currentSource;
-  }
 
   const strictDirective = '"use strict";';
   const helperInsertionIndex = currentSource.startsWith(strictDirective)

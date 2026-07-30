@@ -175,6 +175,61 @@ function markLinuxNativeTitlebarPatch(source) {
   );
 }
 
+function regexMatchCount(source, pattern) {
+  const flags = pattern.flags.includes("g")
+    ? pattern.flags
+    : `${pattern.flags}g`;
+  return source.match(new RegExp(pattern.source, flags))?.length ?? 0;
+}
+
+function hasCompleteLinuxNativeTitlebarPatch(source, helperFunctionRegex) {
+  const markerCount =
+    source.split(LINUX_TITLEBAR_PATCH_MARKER).length - 1;
+  if (
+    markerCount !== 1 ||
+    regexMatchCount(source, helperFunctionRegex) !== 1
+  ) {
+    return false;
+  }
+
+  const nativePrimary =
+    /case`quickChat`:case`primary`:return [^;]{0,2000}?titleBarOverlay:([A-Za-z_$][\w$]*)===`linux`\?codexLinuxTitleBarOverlay\(([A-Za-z_$][\w$]*)\):([A-Za-z_$][\w$]*)\(\2\)/u;
+  const nativeZoom =
+    /setWindowZoom\([^)]*\)\{[\s\S]{0,800}?\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(\2\):([A-Za-z_$][\w$]*)\(\2\)\)\)/u;
+  const nativeSync =
+    /install[A-Za-z_$][\w$]*TitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{[\s\S]{0,500}?\1\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(this\.windowZooms\.get\(\1\.id\)\):([A-Za-z_$][\w$]*)\(this\.windowZooms\.get\(\1\.id\)\)\)/u;
+  const framelessPrimary =
+    /case`quickChat`:case`primary`:return [^;]{0,2000}?:[A-Za-z_$][\w$]*===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),\.\.\.[A-Za-z_$][\w$]*===`quickChat`\?\{resizable:!0\}:\{\}\}:[A-Za-z_$][\w$]*===`linux`\?\{titleBarStyle:`hidden`,\.\.\.[A-Za-z_$][\w$]*===`quickChat`\?\{resizable:!0\}:\{\}\}:/u;
+  const framelessZoom =
+    /setWindowZoom\([^)]*\)\{[\s\S]{0,800}?process\.platform===`win32`&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\([A-Za-z_$][\w$]*\(\2\)\)\)/u;
+  const framelessSync =
+    /install[A-Za-z_$][\w$]*TitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(process\.platform!==`win32`\|\|\2!==`primary`&&\2!==`quickChat`\)return;let ([A-Za-z_$][\w$]*)=\(\)=>\{\1\.isDestroyed\(\)\|\|\1\.setTitleBarOverlay\([A-Za-z_$][\w$]*\(this\.windowZooms\.get\(\1\.id\)\)\)\}/u;
+  const zoomOwner =
+    /setWindowZoom\([^)]*\)\{[\s\S]{0,800}?this\.windowAppearances\.get\(/u;
+  const syncOwner =
+    /install[A-Za-z_$][\w$]*TitleBarOverlaySync\([^)]*\)\{/u;
+  const zoomOwnerCount = regexMatchCount(source, zoomOwner);
+  const syncOwnerCount = regexMatchCount(source, syncOwner);
+  if (zoomOwnerCount > 1 || syncOwnerCount > 1) {
+    return false;
+  }
+
+  return (
+    (
+      regexMatchCount(source, nativePrimary) === 1 &&
+      regexMatchCount(source, framelessPrimary) === 0 &&
+      (zoomOwnerCount === 0 || regexMatchCount(source, nativeZoom) === 1) &&
+      (syncOwnerCount === 0 || regexMatchCount(source, nativeSync) === 1)
+    ) ||
+    (
+      regexMatchCount(source, framelessPrimary) === 1 &&
+      regexMatchCount(source, nativePrimary) === 0 &&
+      (zoomOwnerCount === 0 || regexMatchCount(source, framelessZoom) === 1) &&
+      (syncOwnerCount === 0 || regexMatchCount(source, framelessSync) === 1)
+    )
+  );
+}
+
 function applyLinuxNativeTitlebarPatch(currentSource) {
   const helperFunctionRegex = new RegExp(
     'function ' +
@@ -186,7 +241,7 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
   const markerCount =
     currentSource.split(LINUX_TITLEBAR_PATCH_MARKER).length - 1;
   if (markerCount > 0) {
-    if (markerCount === 1 && helperFunctionRegex.test(currentSource)) {
+    if (hasCompleteLinuxNativeTitlebarPatch(currentSource, helperFunctionRegex)) {
       return currentSource;
     }
     console.warn(
@@ -272,10 +327,30 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
     /install[A-Za-z_$][\w$]*TitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{/,
   );
   if (overlaySyncMethod == null) {
-    return markLinuxNativeTitlebarPatch(patchedSource) ?? currentSource;
+    const completedSource = markLinuxNativeTitlebarPatch(patchedSource);
+    if (
+      completedSource != null &&
+      hasCompleteLinuxNativeTitlebarPatch(completedSource, helperFunctionRegex)
+    ) {
+      return completedSource;
+    }
+    console.warn(
+      "WARN: Could not complete Linux native titlebar consumers — skipping",
+    );
+    return currentSource;
   }
   if (overlaySyncMethod.text.includes(`setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(`)) {
-    return markLinuxNativeTitlebarPatch(patchedSource) ?? currentSource;
+    const completedSource = markLinuxNativeTitlebarPatch(patchedSource);
+    if (
+      completedSource != null &&
+      hasCompleteLinuxNativeTitlebarPatch(completedSource, helperFunctionRegex)
+    ) {
+      return completedSource;
+    }
+    console.warn(
+      "WARN: Could not complete Linux native titlebar consumers — skipping",
+    );
+    return currentSource;
   }
 
   const windowAlias = overlaySyncMethod.match[1];
@@ -298,7 +373,17 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
     patchedMethod +
     patchedSource.slice(overlaySyncMethod.end)
   );
-  return markLinuxNativeTitlebarPatch(completedSource) ?? currentSource;
+  const markedSource = markLinuxNativeTitlebarPatch(completedSource);
+  if (
+    markedSource != null &&
+    hasCompleteLinuxNativeTitlebarPatch(markedSource, helperFunctionRegex)
+  ) {
+    return markedSource;
+  }
+  console.warn(
+    "WARN: Could not complete Linux native titlebar consumers — skipping",
+  );
+  return currentSource;
 }
 
 function applyLinuxMenuPatch(currentSource) {
