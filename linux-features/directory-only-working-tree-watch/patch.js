@@ -2186,75 +2186,74 @@ function patchWorkerSource(source, settings) {
   return { source: helper + withBranch, matched: 1, changed: 1, reason: null };
 }
 
-function findLocalFileWatchBundle(extractedDir, settings) {
+function findLocalFileWatchBundles(extractedDir, settings) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   if (!fs.existsSync(buildDir)) {
-    return { target: null, result: null, reason: ".vite/build directory not found" };
+    return { targets: [], reason: ".vite/build directory not found" };
   }
 
   const bundlePaths = fs.readdirSync(buildDir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
     .map((entry) => path.join(buildDir, entry.name))
     .sort();
-  const alreadyPatched = [];
-  const rawMatches = [];
-  let rawMatchCount = 0;
+  const targets = [];
 
   for (const bundlePath of bundlePaths) {
     const source = fs.readFileSync(bundlePath, "utf8");
     const helperCount = source.split(`function ${HELPER_NAME}(`).length - 1;
     const branchCount = source.split(`return ${HELPER_NAME}(this,`).length - 1;
     if (helperCount > 0 || branchCount > 0) {
-      alreadyPatched.push({ bundlePath, source, result: patchWorkerSource(source, settings) });
+      targets.push({ bundlePath, result: patchWorkerSource(source, settings) });
       continue;
     }
     LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
     const matches = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)].length;
-    if (matches > 0) rawMatches.push({ bundlePath, source, matches });
-    rawMatchCount += matches;
-  }
-
-  if (alreadyPatched.length > 0) {
-    if (alreadyPatched.length !== 1 || rawMatchCount !== 0) {
-      return {
-        target: null,
-        result: null,
-        reason:
-          `Found directory-watch patch markers in ${alreadyPatched.length} bundles ` +
-          `and ${rawMatchCount} unpatched local startFileWatch implementations`,
-      };
+    if (matches > 0) {
+      targets.push({ bundlePath, result: patchWorkerSource(source, settings) });
     }
-    const target = alreadyPatched[0];
-    return { target: target.bundlePath, result: target.result, reason: target.result.reason };
   }
 
-  if (rawMatchCount !== 1 || rawMatches.length !== 1) {
+  const targetNames = targets.map(({ bundlePath }) => path.basename(bundlePath));
+  const hasWorker = targetNames.filter((name) => name === "worker.js").length === 1;
+  const srcCount = targetNames.filter((name) =>
+    /^src-[A-Za-z0-9_-]+\.js$/u.test(name),
+  ).length;
+  if (
+    targets.length !== 2 ||
+    !hasWorker ||
+    srcCount !== 1 ||
+    targets.some(({ result }) => result.matched !== 1)
+  ) {
     return {
-      target: null,
-      result: null,
-      reason: `Found ${rawMatchCount} local startFileWatch implementations across ${bundlePaths.length} build bundles`,
+      targets: [],
+      reason:
+        `Found ${targets.length} current local startFileWatch bundles ` +
+        `(${targetNames.join(", ") || "none"}) across ${bundlePaths.length} build bundles`,
     };
   }
 
-  const target = rawMatches[0];
-  const result = patchWorkerSource(target.source, settings);
-  return { target: target.bundlePath, result, reason: result.reason };
+  return { targets, reason: null };
 }
 
 function patchWorker(extractedDir, context = {}) {
-  const discovery = findLocalFileWatchBundle(extractedDir, normalizedSettings(context));
-  if (discovery.target == null || discovery.result?.matched !== 1) {
-    const reason = discovery.reason ?? "Local startFileWatch implementation not found";
+  const discovery = findLocalFileWatchBundles(extractedDir, normalizedSettings(context));
+  if (discovery.targets.length !== 2) {
+    const reason = discovery.reason ?? "Current local startFileWatch bundles not found";
     console.warn(`WARN: ${reason} - skipping directory-only working-tree watch feature`);
-    return { matched: discovery.result?.matched ?? 0, changed: 0, reason };
+    return { matched: 0, changed: 0, reason };
   }
-  const result = discovery.result;
-  if (result.changed === 1) fs.writeFileSync(discovery.target, result.source, "utf8");
+
+  for (const { bundlePath, result } of discovery.targets) {
+    if (result.changed === 1) {
+      fs.writeFileSync(bundlePath, result.source, "utf8");
+    }
+  }
+  const changed = discovery.targets.reduce((count, { result }) => count + result.changed, 0);
   return {
-    matched: result.matched,
-    changed: result.changed,
-    reason: result.reason,
-    target: path.relative(extractedDir, discovery.target),
+    matched: discovery.targets.length,
+    changed,
+    reason: null,
+    targets: discovery.targets.map(({ bundlePath }) => path.relative(extractedDir, bundlePath)),
   };
 }
 
@@ -2266,10 +2265,10 @@ const descriptors = [
     ciPolicy: "optional",
     apply: patchWorker,
     status: (result, warnings) => {
-      if (result?.matched !== 1) {
+      if (result?.matched !== 2) {
         return { status: "skipped-optional", reason: result?.reason ?? warnings[0] ?? null };
       }
-      return result.changed === 1 ? "applied" : "already-applied";
+      return result.changed > 0 ? "applied" : "already-applied";
     },
   },
 ];
@@ -2281,7 +2280,7 @@ module.exports = {
   LOCAL_FILE_WATCH_METHOD,
   codexLinuxStartDirectoryOnlyWorkingTreeWatch,
   descriptors,
-  findLocalFileWatchBundle,
+  findLocalFileWatchBundles,
   normalizedSettings,
   patchWorker,
   patchWorkerSource,

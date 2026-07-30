@@ -175,37 +175,42 @@ test("feature patch reports drift instead of patching an ambiguous worker", () =
   assert.equal(descriptors[0].status(result, []).status, "skipped-optional");
 });
 
-test("feature discovers the local host in the current hashed build bundle", async () => {
+test("feature patches the current local host copies in src and worker bundles", async () => {
   await withTempTree((root) => {
     const buildDir = path.join(root, ".vite", "build");
     const workerPath = path.join(buildDir, "worker.js");
     const localHostPath = path.join(buildDir, "src-current.js");
     fs.mkdirSync(buildDir, { recursive: true });
-    fs.writeFileSync(workerPath, "var gitWorker={startFileWatch(){}};");
+    fs.writeFileSync(workerPath, localWorkerSource());
     fs.writeFileSync(localHostPath, localWorkerSource());
 
     const first = patchWorker(root);
-    assert.equal(first.matched, 1);
-    assert.equal(first.changed, 1);
-    assert.equal(first.target, path.join(".vite", "build", "src-current.js"));
-    assert.equal(fs.readFileSync(workerPath, "utf8"), "var gitWorker={startFileWatch(){}};");
-    const patched = fs.readFileSync(localHostPath, "utf8");
-    assert.match(patched, /function codexLinuxStartDirectoryOnlyWorkingTreeWatch\(/);
-    assert.doesNotThrow(() => new Function(patched));
+    assert.equal(first.matched, 2);
+    assert.equal(first.changed, 2);
+    assert.deepEqual(first.targets, [
+      path.join(".vite", "build", "src-current.js"),
+      path.join(".vite", "build", "worker.js"),
+    ]);
+    for (const bundlePath of [localHostPath, workerPath]) {
+      const patched = fs.readFileSync(bundlePath, "utf8");
+      assert.match(patched, /function codexLinuxStartDirectoryOnlyWorkingTreeWatch\(/);
+      assert.doesNotThrow(() => new Function(patched));
+    }
 
     const second = patchWorker(root);
-    assert.equal(second.matched, 1);
+    assert.equal(second.matched, 2);
     assert.equal(second.changed, 0);
-    assert.equal(second.target, path.join(".vite", "build", "src-current.js"));
+    assert.deepEqual(second.targets, first.targets);
   });
 });
 
-test("feature rejects multiple local host implementations across build bundles", async () => {
+test("feature rejects local host copies outside the current src and worker pair", async () => {
   await withTempTree((root) => {
     const buildDir = path.join(root, ".vite", "build");
     fs.mkdirSync(buildDir, { recursive: true });
     fs.writeFileSync(path.join(buildDir, "src-first.js"), localWorkerSource());
     fs.writeFileSync(path.join(buildDir, "src-second.js"), localWorkerSource());
+    fs.writeFileSync(path.join(buildDir, "worker.js"), localWorkerSource());
 
     const originalWarn = console.warn;
     console.warn = () => {};
@@ -217,7 +222,7 @@ test("feature rejects multiple local host implementations across build bundles",
     }
     assert.equal(result.matched, 0);
     assert.equal(result.changed, 0);
-    assert.match(result.reason, /Found 2 local startFileWatch implementations across 2 build bundles/);
+    assert.match(result.reason, /Found 3 current local startFileWatch bundles/);
   });
 });
 

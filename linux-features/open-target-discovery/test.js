@@ -37,7 +37,7 @@ const fileManagerBundle =
 const terminalOpenTargetBundle =
   "var uh={id:`terminal`,platforms:{darwin:{label:`Terminal`,icon:`apps/terminal.png`,kind:`terminal`,detect:()=>`open`,args:e=>[`-a`,`Terminal`,e]},win32:{label:`Terminal`,icon:`apps/microsoft-terminal.png`,kind:`terminal`,detect:vh,iconPath:()=>null,args:yh,open:({command:e,path:t})=>bh(e,yh(t))}}};function vh(){return `wt.exe`}function yh(e){return[`-d`,e]}async function bh(){}";
 const ideOpenTargetsBundle =
-  "function ih({id:e,label:t,icon:n,darwinDetect:r,win32Detect:i,darwinEnv:a,darwinArgs:o,hidden:s}){return{id:e,platforms:{darwin:r?{label:t,icon:n,kind:`editor`,hidden:s,detect:r,env:a,args:o??ah,supportsSsh:!0}:void 0,win32:i?{label:t,icon:n,kind:`editor`,hidden:s,detect:i,args:ah,supportsSsh:!0}:void 0}}}var ah=(e,t)=>t?[`${e}:${t.line}:${t.column}`]:[e];var Og=ih({id:`vscode`,label:`VS Code`,icon:`apps/vscode.png`,darwinDetect:()=>`open`,win32Detect:()=>`Code.exe`});var jh=ih({id:`cursor`,label:`Cursor`,icon:`apps/cursor.png`,darwinDetect:()=>`open`,win32Detect:()=>`Cursor.exe`});function sg({id:e,label:t,icon:n,toolboxTarget:r,macExecutable:i,windowsPathCommands:a,windowsInstallDirPrefixes:o,windowsInstallExecutables:s}){return{id:e,platforms:{darwin:{label:t,icon:n,kind:`editor`,detect:()=>`open`,args:mg},win32:a&&o&&s?{label:t,icon:n,kind:`editor`,detect:()=>`idea.exe`,args:mg}:void 0}}}function mg(e,t){return t?[`--line`,t.line.toString(),`--column`,t.column.toString(),e]:[e]}var $h=sg({id:`intellij`,label:`IntelliJ IDEA`,icon:`apps/intellij.png`,toolboxTarget:`intellij`,macExecutable:`idea`,windowsPathCommands:[`idea`],windowsInstallDirPrefixes:[`idea`],windowsInstallExecutables:[`idea`]});var Wg={id:`zed`,platforms:{darwin:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:Gg,args:hg},win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:Kg,args:hg}}};function Gg(){}function Kg(){}function hg(e,t){return t?[`${e}:${t.line}:${t.column}`]:[e]}var Xg=[Og,jh,Wg,$h];";
+  "function ih({id:e,label:t,icon:n,darwinDetect:r,win32Detect:i,linuxDetect:a,darwinEnv:o,darwinArgs:s,hidden:l}){return{id:e,platforms:{darwin:r?{label:t,icon:n,kind:`editor`,hidden:l,detect:r,env:o,args:s??ah,supportsSsh:!0}:void 0,win32:i?{label:t,icon:n,kind:`editor`,hidden:l,detect:i,args:ah,supportsSsh:!0}:void 0,linux:a?{label:t,icon:n,kind:`editor`,hidden:l,detect:a,args:ah,supportsSsh:!0}:void 0}}}var ah=(e,t)=>t?[`${e}:${t.line}:${t.column}`]:[e];var Og=ih({id:`vscode`,label:`VS Code`,icon:`apps/vscode.png`,darwinDetect:()=>`open`,win32Detect:()=>`Code.exe`,linuxDetect:()=>codexLinuxFindExecutable(`code`)});var jh=ih({id:`cursor`,label:`Cursor`,icon:`apps/cursor.png`,darwinDetect:()=>`open`,win32Detect:()=>`Cursor.exe`,linuxDetect:()=>codexLinuxFindExecutable(`cursor`)});function sg({id:e,label:t,icon:n,toolboxTarget:r,macExecutable:i,windowsPathCommands:a,windowsInstallDirPrefixes:o,windowsInstallExecutables:s}){return{id:e,platforms:{darwin:{label:t,icon:n,kind:`editor`,detect:()=>`open`,args:mg},win32:a&&o&&s?{label:t,icon:n,kind:`editor`,detect:()=>`idea.exe`,args:mg}:void 0}}}function mg(e,t){return t?[`--line`,t.line.toString(),`--column`,t.column.toString(),e]:[e]}var $h=sg({id:`intellij`,label:`IntelliJ IDEA`,icon:`apps/intellij.png`,toolboxTarget:`intellij`,macExecutable:`idea`,windowsPathCommands:[`idea`],windowsInstallDirPrefixes:[`idea`],windowsInstallExecutables:[`idea`]});var Wg={id:`zed`,platforms:{darwin:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:Gg,args:hg},win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:Kg,args:hg},linux:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:()=>codexLinuxFindExecutable(`zed`),args:hg}}};function Gg(){}function Kg(){}function hg(e,t){return t?[`${e}:${t.line}:${t.column}`]:[e]}var Xg=[Og,jh,Wg,$h];";
 const openTargetsBundle = `${mainBundlePrefix}${fileManagerBundle}${terminalOpenTargetBundle}${ideOpenTargetsBundle}`;
 const collidingPathAliasBundle =
   "let n=require(`electron`),o=require(`node:path`),c=require(`node:fs`),u=require(`node:child_process`);" +
@@ -194,13 +194,11 @@ function withLinuxFeatureRootEnv(root, fn) {
   }
 }
 
-test("open-target discovery directly adds file manager, terminal, and IDE support", () => {
+test("open-target discovery upgrades file manager and terminal support and adds dynamic IDEs", () => {
   const patched = applyPatchTwice(applyMainBundlePatch, openTargetsBundle);
 
   assert.match(patched, /codexLinuxOpenFileManager\(e\)/);
   assert.match(patched, /linux:\{label:`Terminal`/);
-  assert.match(patched, /linux:codexLinuxIdePlatform\(/);
-  assert.match(patched, /linux:codexLinuxJetBrainsIdePlatform\(/);
   assert.match(patched, /\.\.\.codexLinuxDiscoveredIdeTargets\(\)/);
 });
 
@@ -1560,7 +1558,7 @@ test("open-target discovery reports current command lookup drift as an enabled f
   });
 });
 
-test("open-target discovery does not add a second built-in Zed target", () => {
+test("open-target discovery leaves the upstream built-in Zed target unchanged", () => {
   const zedAlreadyLinux = openTargetsBundle.replace(
     "win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:Kg,args:hg}}",
     "win32:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:Kg,args:hg},linux:{label:`Zed`,icon:`apps/zed.png`,kind:`editor`,detect:Gg,args:hg}}",
@@ -1568,4 +1566,5 @@ test("open-target discovery does not add a second built-in Zed target", () => {
   const patched = applyPatchTwice(applyMainBundlePatch, zedAlreadyLinux);
 
   assert.equal((patched.match(/linux:\{label:`Zed`/g) || []).length, 1);
+  assert.doesNotMatch(patched, /codexLinuxIdeCommand/);
 });

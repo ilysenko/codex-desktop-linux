@@ -2,14 +2,14 @@
 
 const DEFAULT_PROJECT_NAME_STYLE = "font-weight: 700 !important;";
 const PROJECTS_SIDEBAR_ASSET_PATTERN = /^app-initial-[^.]+\.js$/;
-const PROJECT_NAME_SELECTOR = ".group\\/folder-row .text-fade-truncate.pr-1";
+const PROJECT_NAME_SELECTOR = ".group\\/folder-row .text-fade-truncate.pe-1";
 const STYLE_ID = "codex-linux-ui-tweaks-sidebar-project-name-style";
 const RUNTIME_MARKER = "codexLinuxUiTweaksSidebarProjectNameStyleRuntime";
 const UNSAFE_PROJECT_NAME_STYLE_PATTERN = /[{}@<>]|\r|\n|\/\*|\*\/|\burl\s*\(/i;
 
 const SIDEBAR_PROJECT_NAME_MARKERS = [
   "group/folder-row",
-  "className:`text-fade-truncate pr-1`",
+  "className:`text-fade-truncate pe-1`",
 ];
 
 function warn(message) {

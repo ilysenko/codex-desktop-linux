@@ -331,7 +331,7 @@ function applyTerminalDiscoveryPatch(currentSource, deps) {
   const platformsIndex = patchedSource.indexOf("platforms:{", patchedTerminalIndex);
   const platformsBlock =
     platformsIndex === -1 ? null : findBalancedBlock(patchedSource, patchedSource.indexOf("{", platformsIndex));
-  if (platformsBlock == null || platformsBlock.text.includes("linux:{")) {
+  if (platformsBlock == null) {
     warn("Could not apply terminal open-target patch");
     return currentSource;
   }
@@ -349,10 +349,8 @@ function applyIdeDiscoveryPatch(currentSource, deps) {
   const { fsVar, pathVar } = deps;
   const editorFactoryIndex = currentSource.search(/function\s+[A-Za-z_$][\w$]*\(\{id:[A-Za-z_$][\w$]*,label:[A-Za-z_$][\w$]*,icon:[A-Za-z_$][\w$]*,darwinDetect:/u);
   const jetBrainsFactoryIndex = currentSource.search(/function\s+[A-Za-z_$][\w$]*\(\{id:[A-Za-z_$][\w$]*,label:[A-Za-z_$][\w$]*,icon:[A-Za-z_$][\w$]*,toolboxTarget:/u);
-  const hasEditorFactory = editorFactoryIndex !== -1;
-  const hasJetBrainsFactory = jetBrainsFactoryIndex !== -1;
   const hasZedTarget = currentSource.includes("id:`zed`");
-  if (!hasEditorFactory && !hasJetBrainsFactory && !hasZedTarget) {
+  if (editorFactoryIndex === -1 && jetBrainsFactoryIndex === -1 && !hasZedTarget) {
     warn("Could not find IDE open-target factories");
     return currentSource;
   }
@@ -375,11 +373,6 @@ function applyIdeDiscoveryPatch(currentSource, deps) {
     deps,
   );
 
-  const ideCoreHelpers = patchedSource.includes("function codexLinuxIdeCommand(")
-    ? ""
-    : `function codexLinuxIdeCommand(e){let t={cursor:[\`cursor\`],vscode:[\`code\`,\`codium\`],vscodeInsiders:[\`code-insiders\`],windsurf:[\`windsurf\`],antigravity:[\`antigravity\`],zed:[\`zed\`,\`zeditor\`,\`zedit\`,\`zed-cli\`],intellij:[\`idea\`],webstorm:[\`webstorm\`],pycharm:[\`pycharm\`],goland:[\`goland\`],clion:[\`clion\`],rustrover:[\`rustrover\`],rider:[\`rider\`],phpstorm:[\`phpstorm\`],androidStudio:[\`studio\`,\`studio.sh\`]}[e]??[];for(let e of t){let t=codexLinuxFindExecutable(e);if(t)return t}return null}` +
-      `function codexLinuxIdePlatform(e,t,n,r,i){let a=codexLinuxIdeCommand(e);return a?{label:t,icon:n,kind:\`editor\`,hidden:r,detect:()=>a,args:i,supportsSsh:!0}:void 0}` +
-      `function codexLinuxJetBrainsIdePlatform(e,t,n,r){let i=codexLinuxIdeCommand(e);return i?{label:t,icon:n,kind:\`editor\`,detect:()=>i,args:r}:void 0}`;
   const dynamicDiscoveryHelpers = patchedSource.includes("function codexLinuxDiscoveredIdeTargets(")
     ? ""
     : `function codexLinuxSplitDesktopExec(e){let t=[],n=\`\`,r=null,i=!1;for(let a=0;a<e.length;a++){let o=e[a];if(i){n+=o,i=!1;continue}if(o===\`\\\\\`){r&&(n+=o);i=!0;continue}if(r){o===r?r=null:n+=o;continue}if(o===\`"\`||o===\`'\`){r=o;continue}if(/\\s/u.test(o)){n&&(t.push(n),n=\`\`);continue}n+=o}return n&&t.push(n),t}` +
@@ -418,7 +411,7 @@ function applyIdeDiscoveryPatch(currentSource, deps) {
     `function codexLinuxUniqueDesktopIdeId(e,t){let n=codexLinuxDesktopIdeId(e),r=n,i=2;for(;t.has(r);)r=\`\${n}-\${i++}\`;return t.add(r),r}` +
     `function codexLinuxDiscoveredIdeTargets(){if(process.platform!==\`linux\`)return[];let e=[],t=new Set,n=new Set,r=new Set;for(let a of codexLinuxDesktopDirs())for(let o of codexLinuxDesktopEntryFiles(a)){let a=codexLinuxParseDesktopEntry(o),s=a?.Id?.toLowerCase();if(!a)continue;if((a.Hidden||\`\`).trim().toLowerCase()===\`true\`){s&&r.add(s);continue}if(s&&r.has(s)||!codexLinuxLooksLikeIde(a))continue;if(a.TryExec&&!codexLinuxDesktopTryExecAvailable(a.TryExec))continue;let i=codexLinuxResolveDesktopExec(a.Exec);if(!i||codexLinuxKnownIdeDesktopDuplicate(i))continue;let c=\`\${a.Name}|${"${i.command}"}|${"${i.args.join(` `)}"}\`.toLowerCase();if(t.has(c))continue;t.add(c);let l=a.Name.trim(),u=codexLinuxDesktopIdeIcon(a,i),d=codexLinuxUniqueDesktopIdeId(a,n),f=codexLinuxDesktopIconPath(a);e.push({id:d,platforms:{linux:{label:l,icon:u,iconPath:f?()=>f:void 0,kind:\`editor\`,detect:()=>i.command,args:e=>codexLinuxDesktopArgs(i.args,e),open:async({command:e,path:t})=>{await codexLinuxLaunchDesktopEntry(o,t,e,i.args)}}}})}return e}`;
 
-  const helpers = ideCoreHelpers + dynamicDiscoveryHelpers;
+  const helpers = dynamicDiscoveryHelpers;
   if (helpers.length > 0) {
     const helperInsertionIndex = patchedSource.includes("function codexLinuxFindExecutable(")
       ? patchedSource.indexOf("function codexLinuxFindExecutable(")
@@ -426,32 +419,6 @@ function applyIdeDiscoveryPatch(currentSource, deps) {
     const helperEnd = patchedSource.indexOf("async function codexLinuxOpenFileManager(", helperInsertionIndex);
     const ideHelperInsertionIndex = helperEnd === -1 ? helperInsertionIndex : helperEnd;
     patchedSource = patchedSource.slice(0, ideHelperInsertionIndex) + helpers + patchedSource.slice(ideHelperInsertionIndex);
-  }
-
-  patchedSource = patchedSource.replace(
-    /(function\s+[A-Za-z_$][\w$]*\(\{id:([A-Za-z_$][\w$]*),label:([A-Za-z_$][\w$]*),icon:([A-Za-z_$][\w$]*),darwinDetect:[^)]*?hidden:([A-Za-z_$][\w$]*)\}\)\{return\{id:\2,platforms:\{[^]*?win32:[^]*?args:([A-Za-z_$][\w$]*),supportsSsh:!0\}:void 0)(\}\}\})/u,
-    "$1,linux:codexLinuxIdePlatform($2,$3,$4,$5,$6)$7",
-  );
-
-  patchedSource = patchedSource.replace(
-    /(function\s+[A-Za-z_$][\w$]*\(\{id:([A-Za-z_$][\w$]*),label:([A-Za-z_$][\w$]*),icon:([A-Za-z_$][\w$]*),toolboxTarget:[^)]*?\}\)\{return\{id:\2,platforms:\{[^]*?args:([A-Za-z_$][\w$]*)\}:void 0)(\}\}\})/u,
-    "$1,linux:codexLinuxJetBrainsIdePlatform($2,$3,$4,$5)$6",
-  );
-
-  const patchedZedIndex = patchedSource.indexOf("id:`zed`");
-  if (patchedZedIndex !== -1) {
-    const zedPlatformsIndex = patchedSource.indexOf("platforms:{", patchedZedIndex);
-    const zedPlatformsBlock = findBalancedBlock(patchedSource, patchedSource.indexOf("{", zedPlatformsIndex));
-    if (zedPlatformsBlock != null && !zedPlatformsBlock.text.includes("linux:{")) {
-      const argsVar = zedPlatformsBlock.text.match(/win32:\{[^}]*args:([A-Za-z_$][\w$]*)/u)?.[1];
-      if (argsVar != null) {
-        const linuxZed = `,linux:{label:\`Zed\`,icon:\`apps/zed.png\`,kind:\`editor\`,detect:()=>codexLinuxIdeCommand(\`zed\`),args:${argsVar}}`;
-        patchedSource =
-          patchedSource.slice(0, zedPlatformsBlock.end - 1) +
-          linuxZed +
-          patchedSource.slice(zedPlatformsBlock.end - 1);
-      }
-    }
   }
 
   if (!patchedSource.includes("...codexLinuxDiscoveredIdeTargets()")) {
@@ -473,16 +440,6 @@ function applyIdeDiscoveryPatch(currentSource, deps) {
     } else {
       warn("Could not append dynamic IDE desktop discovery");
     }
-  }
-
-  if (hasEditorFactory && !patchedSource.includes("linux:codexLinuxIdePlatform(")) {
-    warn("Could not apply generic IDE factory patch");
-  }
-  if (hasJetBrainsFactory && !patchedSource.includes("linux:codexLinuxJetBrainsIdePlatform(")) {
-    warn("Could not apply JetBrains IDE factory patch");
-  }
-  if (hasZedTarget && !patchedSource.includes("linux:{label:`Zed`")) {
-    warn("Could not apply Zed IDE target patch");
   }
 
   return patchedSource;

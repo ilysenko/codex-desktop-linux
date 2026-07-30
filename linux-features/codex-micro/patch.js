@@ -16,7 +16,7 @@ const CODEX_MICRO_HOTPLUG_MARKER = "codexLinuxCodexMicroHotplug";
 const FEATURE_GATE_WARNING = "useFeatureGate hook failed to find a valid StatsigClient";
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const CODEX_MICRO_SERVICE_PATTERN =
-  /^codex-micro-service-[A-Za-z0-9_-]+\.js$/;
+  /^service-[A-Za-z0-9_-]+\.js$/;
 const WATCH_TOPOLOGY_FUNCTION = new RegExp(
   `function (${JS_IDENT})\\((${JS_IDENT})\\)\\{return ` +
     `(${JS_IDENT})\\(\\)\\.watch\\(\\2\\)\\}`,

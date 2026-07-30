@@ -216,18 +216,9 @@ function syntheticRemoteConnectionVisibilityBundle() {
 
 function syntheticAppMainFeatureSyncBundle() {
   return [
-    "var GF=[`apps`,`memories`,`plugins`,`tool_call_mcp_elicitation`,`tool_suggest`],vI=`remote_plugin`;",
-    "function KF(){let e=(0,Z.c)(6),t=K(G),[n]=ts(`statsig_default_enable_features`),r=Lc(),i=Io(),a,o;",
-    "return e[0]!==r?(a=()=>{let r=qF(n,!0);qn(`set-experimental-feature-enablement-for-host`,{hostId:t,enablement:r}).catch(n=>{q.error(`Failed to sync experimental feature enablement`,{sensitive:{error:n}})})},o=[r],e[0]=r,e[1]=a,e[2]=o):(a=e[1],o=e[2]),null}",
-    "function qF(e,t){let n={};for(let r of GF){let i=e[r];i!=null&&(n[r]=i)}return n[vI]=t,n}",
-  ].join("");
-}
-
-function syntheticCurrentAppMainFeatureSyncBundle() {
-  return [
-    "var gI=[`apps`,`memories`,`plugins`,`tool_call_mcp_elicitation`,`tool_suggest`],vI=`remote_plugin`,Ir=`local-host`,Vt=`hosts`,Ro=`features-query`,G={error(){}};",
-    "function yI(){let e=new Map,o=()=>{if(ln(`set-default-feature-overrides`,{overrides:features??null}),features==null)return;let i=bI(features,!0),o=store.get(Ir),s=new Set(store.get(Vt).filter(e=>e===o||xn(store,e).state===`connected`));for(let t of e.keys())s.has(t)||e.delete(t);let c=store.get(Vt).filter(e=>s.has(e)).flatMap(t=>(0,dv.default)(e.get(t),i)?[]:(e.set(t,i),[ln(`set-experimental-feature-enablement-for-host`,{hostId:t,enablement:i}).catch(n=>{e.delete(t),G.error(`Failed to sync experimental feature enablement`,{safe:{hostId:t},sensitive:{error:n}})})]));c.length!==0&&Promise.all(c).then(()=>{query.invalidateQueries({queryKey:Ro})})};return o()}",
-    "function bI(e,t){let n={};for(let t of gI){let r=e[t];r!=null&&(n[t]=r)}return n[vI]=t,n}",
+    "var gI=[`apps_mcp_path_override`,`auth_elicitation`,`tool_suggest`],vI=`remote_plugin`,Ir=`local-host`,Vt=`hosts`,Ro=`features-query`,remotePlugin=!0,mcp=!0,G={error(){}};",
+    "function yI(){let e=new Map,o=()=>{if(ln(`set-default-feature-overrides`,{overrides:features??null}),features==null)return;let i=bI(features,remotePlugin,mcp),a=store.get(Ir),s=new Set(store.get(Vt).filter(e=>e===a||xn(store,e).state===`connected`));for(let t of e.keys())s.has(t)||e.delete(t);let c=Array.from(s).flatMap(t=>(0,dv.default)(e.get(t),i)?[]:(e.set(t,i),[ln(`set-experimental-feature-enablement-for-host`,{hostId:t,enablement:i}).catch(n=>{e.delete(t),G.error(`Failed to sync experimental feature enablement`,{safe:{hostId:t},sensitive:{error:n}})})]));c.length!==0&&Promise.all(c).then(()=>{query.invalidateQueries({queryKey:Ro})})};return o()}",
+    "function bI(e,t,n){let r={memories:!1};for(let t of gI){let n=e[t];n!=null&&(r[t]=n)}return r.mcp_2026_07_28=n,r[vI]=t,r}",
   ].join("");
 }
 
@@ -271,7 +262,6 @@ function syntheticSettingsBundle() {
     "tabs:[{key:`control-this-mac`,name:o===`windows`?(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.controlThisMac.windows`,defaultMessage:`Control this PC`,description:`Tab label for settings that let other devices control this Windows device`}):(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.controlThisMac`,defaultMessage:`Control this Mac`,description:`Tab label for settings that let other devices control this computer`})},{key:`access-other-devices`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.accessOtherDevices`,defaultMessage:`Control other devices`,description:`Tab label for settings that let this computer control other devices`})},{key:`ssh`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.ssh`,defaultMessage:`SSH`,description:`Tab label for SSH remote connections`})}],selectedKey:je,variant:`underline`,onSelect:se}",
     "tabs:[{key:`access-other-devices`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.accessOtherDevices`,defaultMessage:`Control other devices`,description:`Tab label for settings that let this computer control other devices`})},{key:`ssh`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.ssh`,defaultMessage:`SSH`,description:`Tab label for SSH remote connections`})}],selectedKey:je,variant:`underline`,onSelect:se}",
     "const a=`Control this Mac from your phone or other device`,b=`Add device to control this Mac remotely`,c=`Devices that can control this Mac`,d=`Keep Mac awake`,e=`Allow this Mac to be discovered and controlled`,f=`Control other devices from this Mac`,g=`Authorize this Mac to control other devices signed in to your ChatGPT account`,h=`Devices you can control from this Mac`;",
-    "let xe=!Pe&&(Te?.code===`remote-codex-not-found`||Te?.code===`update-required`);Ce=Ae==null||xe?null:Re({action:Ae.action,connection:Ee});",
     "function nr(e,t){return e.displayName.localeCompare(t.displayName)}",
     "function rr({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}",
   ].join("");
@@ -279,9 +269,9 @@ function syntheticSettingsBundle() {
 
 function syntheticSshInstallSettingsBundle() {
   return [
-    "function pn({action:e,disabled:t,hostId:n,installCodexPending:r,onAuthenticate:i,onInstallCodex:a}){if(e==null)return null;switch(e.kind){case`install-codex`:return{disabled:t,label:e.label,loading:r,loadingLabel:e.loadingLabel,renderInElectronOnly:!0,tooltipText:e.tooltipText,onClick:()=>a(n)};case`login`:return{label:e.label,onClick:()=>i(n)};case`settings`:return null}}",
+    "function pn({action:e,disabled:t,hostId:n,installCodexPending:r,onAuthenticate:i,onInstallCodex:a,onReconnect:o,onRestart:s}){if(e==null)return null;switch(e.kind){case`install-codex`:return{disabled:t,label:e.label,loading:r,loadingLabel:e.loadingLabel,renderInElectronOnly:!0,tooltipText:e.tooltipText,onClick:()=>a(n)};case`login`:return{label:e.label,onClick:()=>i(n)};case`restart`:return{label:e.label,onClick:s};case`reconnect`:return{label:e.label,onClick:o};case`settings`:return null}}",
     "let et=R(`install-remote-codex`),vt=(e,t,n)=>{globalThis.__states.push({hostId:e,state:t,error:n})},bt=e=>{et.mutate({hostId:e},{onSuccess:({state:t,error:n})=>{vt(e,t,n)}})};",
-    "function un(e){let t=(0,$.c)(86),{connection:n,disabled:r,installCodexPending:i,onAuthenticate:a,onEdit:o,onInstallCodex:s,onLogoutConnection:c,onRemove:l,onShowDetails:u,onToggleConnection:d}=e,f=ee(),{appServerVersion:p,error:m,installedCodexVersion:h,state:g}=De(n.hostId),_=n.displayName,v;let T=w,E=oe(`2153867414`),D,O,k,A,j,M;if(t[8]!==p||t[9]!==n.hostId||t[10]!==r||t[11]!==m||t[12]!==i||t[13]!==h||t[14]!==f||t[15]!==a||t[16]!==s||t[17]!==E||t[18]!==g){k=fn({appServerVersion:p,installedCodexVersion:h,state:g}),D=g===`connected`||m?.code===`login-required`||m?.code===`update-required`||m?.code===`restart-required`;let{statusError:e,isRestartAvailableNotice:o,statusState:c}=dn({error:m,restartAvailableNotice:k,state:g});A=e,O=o,j=c==null?null:Ne(f,{canLogin:!0,error:A,state:c,surface:`connections-row`});let l=!E&&(A?.code===`remote-codex-not-found`||A?.code===`update-required`);M=j==null||l?null:pn({action:j.action,disabled:r,hostId:n.hostId,installCodexPending:i,onAuthenticate:a,onInstallCodex:s}),t[8]=p,t[9]=n.hostId,t[10]=r,t[11]=m,t[12]=i,t[13]=h,t[14]=f,t[15]=a,t[16]=s,t[17]=E,t[18]=g,t[19]=D,t[20]=O,t[21]=k,t[22]=A,t[23]=j,t[24]=M}else D=t[19],O=t[20],k=t[21],A=t[22],j=t[23],M=t[24];return M}",
+    "function un(e){let{connection:n,disabled:r,installCodexPending:i,onAuthenticate:a,onInstallCodex:s,onReconnect:c,onRestart:l}=e,{appServerVersion:p,error:m,installedCodexVersion:h,state:g}=De(n.hostId),_=n.displayName,j=Ne(),E=!1;let D=(n.kind||!E)&&(m?.code===`remote-codex-not-found`||m?.code===`update-required`),M;return M=j==null||D?null:pn({action:j.action,disabled:r,hostId:n.hostId,installCodexPending:i,onReconnect:c,onRestart:l,onAuthenticate:a,onInstallCodex:s}),M}",
     "function nr(e,t){return e.displayName.localeCompare(t.displayName)}",
   ].join("");
 }
@@ -1453,17 +1443,18 @@ test("Linux remote-control feature sync forces remote_control and preserves remo
   const patched = applyLinuxRemoteControlFeatureSyncPatch(source);
 
   assert.notEqual(patched, source);
-  assert.match(patched, /\.remote_control=!0/);
-  assert.match(patched, /n\[vI\]=t/);
+  assert.match(patched, /r\[vI\]=t/);
   assert.match(patched, /codexLinuxRemoteControlFeatureSyncEnabled/);
-  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)\?\(/);
-  assert.match(patched, /\?\(codexLinuxRemoteControlFeatureSyncEnabled\(arguments\[2\],arguments\[3\]\)&&\(n\.remote_control=!0\),n\[vI\]=t,n\)/);
-  assert.match(patched, /:\(n\[vI\]=t,n\)\}/);
+  assert.match(patched, /codexLinuxRemoteControlFeatureSyncEnabled\(i,a,t\)/);
+  assert.match(
+    patched,
+    /navigator\.userAgent\.includes\(`Linux`\)&&t===n\?\{\.\.\.e,remote_control:!0\}:e/,
+  );
   assert.equal(applyLinuxRemoteControlFeatureSyncPatch(patched), patched);
 });
 
 test("Linux remote-control feature sync does not advertise SSH hosts to mobile", async () => {
-  const source = syntheticCurrentAppMainFeatureSyncBundle();
+  const source = syntheticAppMainFeatureSyncBundle();
   const patched = applyLinuxRemoteControlFeatureSyncPatch(source);
 
   assert.notEqual(patched, source);
@@ -1564,7 +1555,7 @@ test("Linux mobile setup dialog copy does not refer to Mac-only setup", () => {
 });
 
 test("Linux remote-control settings UX patch keeps outbound tab visible and removes Mac copy", () => {
-  const source = syntheticSettingsBundle();
+  const source = syntheticSettingsBundle() + syntheticSshInstallSettingsBundle();
   const patched = applyLinuxRemoteControlSettingsUxPatch(source);
 
   assert.notEqual(patched, source);
@@ -1573,7 +1564,6 @@ test("Linux remote-control settings UX patch keeps outbound tab visible and remo
   assert.match(patched, /function codexLinuxRemoteControlSettingsTabs\(e\)\{return e\}/);
   assert.doesNotMatch(patched, /e\.filter\(e=>e\.key!==`access-other-devices`\)/);
   assert.match(patched, /key:`access-other-devices`/);
-  assert.match(patched, /Ce=Ae==null\?null:Re\(\{action:Ae\.action/);
   assert.match(patched, /Control this Linux desktop/);
   assert.match(patched, /Control this Linux desktop from your phone or other device/);
   assert.match(patched, /Add device to control this Linux desktop remotely/);
@@ -3652,7 +3642,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedAppServerLaunchFile, /codexLinuxRemoteMobileAppServerArgs/);
         assert.match(patchedAppServerLaunchFile, /`--remote-control`/);
         assert.match(patchedRemoteConnectionVisibilityFile, /codexLinuxRemoteControlLoadGateEnabled/);
-        assert.match(patchedAppMainFile, /\.remote_control=!0/);
+        assert.match(patchedAppMainFile, /\{\.\.\.e,remote_control:!0\}/);
         assert.match(patchedVisibilityFile, /navigator\.userAgent\.includes\(`Linux`\)/);
         assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlSettingsTabs/);
         assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlResetMobileSetupAfterRevoke/);

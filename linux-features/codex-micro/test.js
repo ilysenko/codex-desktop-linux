@@ -450,7 +450,7 @@ test("Codex Micro service patch rejects unrelated topology watchers", () => {
 test("Codex Micro service discovery patches exactly one current bundle", (t) => {
   const root = tempDirectory(t, "codex-micro-hotplug-");
   const buildDir = path.join(root, ".vite", "build");
-  const servicePath = path.join(buildDir, "codex-micro-service-fixture.js");
+  const servicePath = path.join(buildDir, "service-current.js");
   writeFile(servicePath, currentCodexMicroServiceFixture());
   writeFile(path.join(buildDir, "unrelated.js"), "const unrelated=true;");
 
@@ -461,7 +461,7 @@ test("Codex Micro service discovery patches exactly one current bundle", (t) => 
 
   const result = patchCodexMicroService(root);
   assert.equal(result.changed, 1);
-  assert.equal(result.target, ".vite/build/codex-micro-service-fixture.js");
+  assert.equal(result.target, ".vite/build/service-current.js");
   assert.match(fs.readFileSync(servicePath, "utf8"), new RegExp(CODEX_MICRO_HOTPLUG_MARKER));
 
   const repeated = patchCodexMicroService(root);
