@@ -1,14 +1,30 @@
 # Codex Micro
 
 This opt-in Linux feature enables the Work Louder Codex Micro integration that
-already ships in the upstream Codex desktop app. It does two narrowly scoped
+already ships in the upstream Codex desktop app. It does three narrowly scoped
 things:
 
 1. enables the upstream Codex Micro feature gate locally; and
 2. adds the verified `node-hid@3.3.0` Linux prebuild for the current app's
-   nested Work Louder dependency.
+   nested Work Louder dependency; and
+3. watches Linux `hidraw` topology so a Micro connected after ChatGPT starts is
+   discovered without restarting the app.
 
 The feature is disabled by default.
+
+## Hot-plug discovery
+
+The upstream service uses a native HID topology watcher that is not available
+in the Linux build. Without a replacement, discovery falls back to a 30-second
+scan and a newly connected device can appear to require an app restart.
+
+On Linux, this feature watches `/dev` for `hidraw` additions and removals,
+debounces duplicate events, and asks the existing service to reconcile device
+topology. If the filesystem watcher cannot start or reports an error, a
+two-second unreferenced polling fallback takes over. The service's existing
+settle retries still handle the short delay between device-node creation and
+udev ACL application. Disconnecting or disabling the feature disposes the
+watcher and any fallback timer.
 
 ## Enable
 

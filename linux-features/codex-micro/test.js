@@ -18,11 +18,15 @@ const {
 const {
   CODEX_MICRO_GATE_ID,
   CODEX_MICRO_GATE_MARKER,
+  CODEX_MICRO_HOTPLUG_MARKER,
   CODEX_MICRO_ROUTE,
   applyCodexMicroFeatureGatePatch,
+  applyCodexMicroHotplugPatch,
   descriptors,
   exportedFeatureGateHook,
+  findCodexMicroServiceBundle,
   matchesCodexMicroFeatureGateContract,
+  patchCodexMicroService,
 } = require("./patch.js");
 const {
   enabledLinuxFeaturePackageDependencies,
@@ -208,6 +212,121 @@ function currentFeatureGateFixture() {
   ].join("");
 }
 
+function currentCodexMicroServiceFixture() {
+  return [
+    "const fs=require(\"node:fs\");",
+    "var nativeName=`hid-topology-watcher.node`,bindingName=`hid_topology_watcher.node`;",
+    "function p(){return require(bindingName)}",
+    "function d(e){return p().watch(e)}",
+    "function f(){return p().findCodexMicroInterfaces()}",
+    "class CodexMicroService{",
+    "start(){try{this.watcher=d(()=>this.handleHidTopologyChanged())}",
+    "catch(error){this.scheduleTopologyFallbackScan()}}",
+    "handleHidTopologyChanged(){this.requestTopologyReconciliation()}",
+    "scheduleTopologyFallbackScan(){this.timer=setTimeout(()=>this.scan(),3e4)}",
+    "}",
+  ].join("");
+}
+
+function evaluatePatchedTopologyWatcher(options = {}) {
+  const source = applyCodexMicroHotplugPatch(currentCodexMicroServiceFixture());
+  const devWatchers = [];
+  const nativeWatchCalls = [];
+  const timeouts = new Map();
+  const intervals = new Map();
+  let nextTimerId = 1;
+
+  const makeTimer = (kind, callback, delay) => {
+    const timer = {
+      id: nextTimerId++,
+      kind,
+      unreferenced: false,
+      unref() {
+        this.unreferenced = true;
+      },
+    };
+    (kind === "timeout" ? timeouts : intervals).set(timer, {
+      callback,
+      delay,
+    });
+    return timer;
+  };
+  const fakeFs = {
+    watch(target, watchOptions, listener) {
+      if (options.watchError != null) {
+        throw options.watchError;
+      }
+      const events = new Map();
+      const watcher = {
+        closeCount: 0,
+        close() {
+          this.closeCount += 1;
+        },
+        on(name, callback) {
+          events.set(name, callback);
+          return this;
+        },
+      };
+      devWatchers.push({ target, watchOptions, listener, events, watcher });
+      return watcher;
+    },
+  };
+  const nativeHandle = { dispose() {} };
+  const nativeBinding = {
+    findCodexMicroInterfaces() {
+      return [];
+    },
+    watch(callback) {
+      nativeWatchCalls.push(callback);
+      return nativeHandle;
+    },
+  };
+  const fakeRequire = (request) => {
+    if (request === "node:fs") {
+      return fakeFs;
+    }
+    if (request === "hid_topology_watcher.node") {
+      return nativeBinding;
+    }
+    throw new Error(`Unexpected fixture require: ${request}`);
+  };
+  const topologyWatcher = new Function(
+    "require",
+    "process",
+    "setTimeout",
+    "clearTimeout",
+    "setInterval",
+    "clearInterval",
+    `${source};return d;`,
+  )(
+    fakeRequire,
+    { platform: options.platform ?? "linux" },
+    (callback, delay) => makeTimer("timeout", callback, delay),
+    (timer) => timeouts.delete(timer),
+    (callback, delay) => makeTimer("interval", callback, delay),
+    (timer) => intervals.delete(timer),
+  );
+
+  return {
+    devWatchers,
+    intervals,
+    nativeHandle,
+    nativeWatchCalls,
+    timeouts,
+    topologyWatcher,
+  };
+}
+
+function runOnlyTimer(timers) {
+  assert.equal(timers.size, 1);
+  const [timer, entry] = timers.entries().next().value;
+  if (timer.kind === "timeout") {
+    timers.delete(timer);
+  }
+  entry.callback();
+  return { timer, delay: entry.delay };
+}
+
 test("Codex Micro locally enables only its current upstream feature gate", () => {
   const source = currentFeatureGateFixture();
   const hook = exportedFeatureGateHook(source);
@@ -231,6 +350,123 @@ test("Codex Micro locally enables only its current upstream feature gate", () =>
   );
   assert.equal(applyCodexMicroFeatureGatePatch(patched), patched);
   assert.equal(matchesCodexMicroFeatureGateContract(patched), true);
+});
+
+test("Codex Micro service patch adds disposable Linux hidraw hot-plug discovery", () => {
+  const source = currentCodexMicroServiceFixture();
+  const patched = applyCodexMicroHotplugPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, new RegExp(CODEX_MICRO_HOTPLUG_MARKER));
+  assert.match(patched, /process\.platform===`linux`/);
+  assert.match(patched, /require\(`node:fs`\)\.watch\(`\/dev`/);
+  assert.match(patched, /\^hidraw/);
+  assert.match(patched, /dispose\(\)/);
+  assert.match(patched, /setInterval\(codexLinuxNotify,2e3\)/);
+  assert.match(patched, /clearInterval\(codexLinuxPollTimer\)/);
+  assert.match(patched, /if\(codexLinuxDisposed\)return/);
+  assert.match(patched, /return p\(\)\.watch\(e\)/);
+  assert.doesNotMatch(patched, /function d\(e\)\{[^}]*let e=/);
+  assert.doesNotThrow(() => new Function(patched));
+  assert.equal(applyCodexMicroHotplugPatch(patched), patched);
+});
+
+test("Codex Micro Linux hot-plug watcher filters, debounces, and disposes", () => {
+  const runtime = evaluatePatchedTopologyWatcher();
+  let notifications = 0;
+  const handle = runtime.topologyWatcher(() => {
+    notifications += 1;
+  });
+
+  assert.equal(runtime.nativeWatchCalls.length, 0);
+  assert.equal(runtime.devWatchers.length, 1);
+  const devWatcher = runtime.devWatchers[0];
+  assert.equal(devWatcher.target, "/dev");
+  assert.deepEqual(devWatcher.watchOptions, { persistent: false });
+
+  devWatcher.listener("rename", "event0");
+  assert.equal(runtime.timeouts.size, 0);
+  devWatcher.listener("rename", "hidraw7");
+  assert.equal(runOnlyTimer(runtime.timeouts).delay, 100);
+  assert.equal(notifications, 1);
+
+  devWatcher.listener("change", null);
+  assert.equal(runtime.timeouts.size, 1);
+  handle.dispose();
+  assert.equal(runtime.timeouts.size, 0);
+  assert.equal(runtime.intervals.size, 0);
+  assert.equal(devWatcher.watcher.closeCount, 1);
+
+  devWatcher.events.get("error")(new Error("late watcher error"));
+  assert.equal(runtime.intervals.size, 0);
+  assert.equal(notifications, 1);
+});
+
+test("Codex Micro Linux hot-plug watcher polls only after watch failure", () => {
+  const runtime = evaluatePatchedTopologyWatcher({
+    watchError: new Error("watch unavailable"),
+  });
+  let notifications = 0;
+  const handle = runtime.topologyWatcher(() => {
+    notifications += 1;
+  });
+
+  assert.equal(runtime.devWatchers.length, 0);
+  assert.equal(runtime.intervals.size, 1);
+  const [interval] = runtime.intervals.keys();
+  assert.equal(interval.unreferenced, true);
+  assert.equal(runOnlyTimer(runtime.timeouts).delay, 100);
+  assert.equal(notifications, 1);
+
+  assert.equal(runOnlyTimer(runtime.intervals).delay, 2_000);
+  assert.equal(runOnlyTimer(runtime.timeouts).delay, 100);
+  assert.equal(notifications, 2);
+
+  handle.dispose();
+  assert.equal(runtime.intervals.size, 0);
+  assert.equal(runtime.timeouts.size, 0);
+});
+
+test("Codex Micro keeps the native topology watcher outside Linux", () => {
+  const runtime = evaluatePatchedTopologyWatcher({ platform: "darwin" });
+  const callback = () => {};
+
+  assert.equal(runtime.topologyWatcher(callback), runtime.nativeHandle);
+  assert.deepEqual(runtime.nativeWatchCalls, [callback]);
+  assert.equal(runtime.devWatchers.length, 0);
+  assert.equal(runtime.intervals.size, 0);
+  assert.equal(runtime.timeouts.size, 0);
+});
+
+test("Codex Micro service patch rejects unrelated topology watchers", () => {
+  const unrelated =
+    "function watchTopology(callback){return loadWatcher().watch(callback)}";
+  assert.equal(applyCodexMicroHotplugPatch(unrelated), unrelated);
+  const ambiguous =
+    currentCodexMicroServiceFixture() + currentCodexMicroServiceFixture();
+  assert.equal(applyCodexMicroHotplugPatch(ambiguous), ambiguous);
+});
+
+test("Codex Micro service discovery patches exactly one current bundle", (t) => {
+  const root = tempDirectory(t, "codex-micro-hotplug-");
+  const buildDir = path.join(root, ".vite", "build");
+  const servicePath = path.join(buildDir, "codex-micro-service-fixture.js");
+  writeFile(servicePath, currentCodexMicroServiceFixture());
+  writeFile(path.join(buildDir, "unrelated.js"), "const unrelated=true;");
+
+  const discovery = findCodexMicroServiceBundle(root);
+  assert.equal(discovery.target, servicePath);
+  assert.equal(discovery.result.matched, 1);
+  assert.equal(discovery.result.changed, 1);
+
+  const result = patchCodexMicroService(root);
+  assert.equal(result.changed, 1);
+  assert.equal(result.target, ".vite/build/codex-micro-service-fixture.js");
+  assert.match(fs.readFileSync(servicePath, "utf8"), new RegExp(CODEX_MICRO_HOTPLUG_MARKER));
+
+  const repeated = patchCodexMicroService(root);
+  assert.equal(repeated.changed, 0);
+  assert.equal(repeated.matched, 1);
 });
 
 test("generic Statsig hook bundles are not accepted as Codex Micro assets", () => {
