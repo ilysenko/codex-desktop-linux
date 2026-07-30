@@ -8,8 +8,51 @@ const {
   createPatchReport,
 } = require("../lib/patch-report.js");
 const {
+  createMainBundleContext,
+  featurePatchDescriptors,
   patchExtractedApp,
+  patchCompositionDelegates,
 } = require("./runner.js");
+
+test("runner context exposes enabled feature ids to every patch phase", () => {
+  const tempRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "codex-runner-enabled-feature-context-"),
+  );
+  try {
+    const featuresConfigPath = path.join(tempRoot, "features.json");
+    fs.writeFileSync(
+      featuresConfigPath,
+      JSON.stringify({ enabled: ["frameless-titlebar"] }),
+    );
+
+    const context = createMainBundleContext(null, { featuresConfigPath });
+    assert.deepEqual(context.enabledFeatureIds, ["frameless-titlebar"]);
+    assert.deepEqual(context.featurePatchOptions, { featuresConfigPath });
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("runner derives authorized patch delegates from enabled feature descriptors", () => {
+  const tempRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "codex-runner-patch-delegates-"),
+  );
+  try {
+    const featuresConfigPath = path.join(tempRoot, "features.json");
+    fs.writeFileSync(
+      featuresConfigPath,
+      JSON.stringify({ enabled: ["frameless-titlebar"] }),
+    );
+    const descriptors = featurePatchDescriptors({ featuresConfigPath });
+
+    assert.deepEqual(patchCompositionDelegates(descriptors), {
+      "linux-native-titlebar": ["frameless-titlebar"],
+      "linux-window-controls-safe-area": ["frameless-titlebar"],
+    });
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
 
 test("runner executes descriptor phases explicitly and sorts order only within each phase", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-runner-phase-order-"));

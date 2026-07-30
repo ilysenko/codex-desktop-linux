@@ -72,6 +72,24 @@ test("rejects required patch and post-patch integrity failures", () => withFixtu
   assert.ok(decision.blockers.some((item) => item.code === "post-patch-integrity"));
 }));
 
+test("rejects a fatal descriptor integrity failure regardless of optional policy", () => withFixture(({ root, dmg }) => {
+  const core = requiredCoreReport();
+  core.patches.push(patch("optional-transaction", {
+    status: "failed-integrity",
+    ciPolicy: "optional",
+    reason: "rollback could not restore original bytes",
+  }));
+  const decision = evaluate(root, dmg, { core });
+  assert.equal(decision.verdict, "rejected");
+  assert.ok(
+    decision.blockers.some(
+      (item) =>
+        item.name === "optional-transaction" &&
+        item.reason.includes("failed-integrity"),
+    ),
+  );
+}));
+
 test("rejects drift from a user-enabled feature", () => withFixture(({ root, dmg }) => {
   const core = requiredCoreReport();
   core.enabledFeatures = ["ui-tweaks"];

@@ -9,6 +9,9 @@ const {
   escapeRegExp,
   findMatchingBrace,
 } = require("../../lib/minified-js.js");
+const {
+  patchDelegationState,
+} = require("../../lib/composition-delegation.js");
 
 // Webview asset patches target hashed browser chunks copied out of app.asar.
 // They stay fail-soft because upstream chunk names and minified symbols drift.
@@ -17,6 +20,8 @@ const LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT = 138;
 const LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP = "codexLinuxUseWindowControlsSafeArea";
 const LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER =
   "/*codexLinuxWindowControlsSafeAreaPatch*/";
+const LINUX_WINDOW_CONTROLS_SAFE_AREA_PATCH_ID =
+  "linux-window-controls-safe-area";
 
 function applyLinuxSettingsSearchVisibilityPatch(currentSource) {
   if (currentSource.includes("function codexLinuxFilterSettingsSearchSection(")) {
@@ -207,7 +212,7 @@ function hasCompleteLinuxWindowControlsSafeAreaPatch(source) {
 
   const insetMatches = [
     ...source.matchAll(
-      /applicationMenu:Object\.freeze\(\{left:0,right:(\d+)\}\)/gu,
+      /applicationMenu:Object\.freeze\(\{left:0,right:([^}]+)\}\)/gu,
     ),
   ];
   const slotSignatureMatches = source.match(
@@ -228,12 +233,6 @@ function hasCompleteLinuxWindowControlsSafeAreaPatch(source) {
       "gu",
     ),
   ) ?? [];
-  const framelessHeaderMatches = source.match(
-    new RegExp(
-      `${LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP}:!1,side:\`end\``,
-      "gu",
-    ),
-  ) ?? [];
   const hasSharedConsumers =
     insetMatches.length > 0 &&
     slotSignatureMatches.length === 1 &&
@@ -243,22 +242,34 @@ function hasCompleteLinuxWindowControlsSafeAreaPatch(source) {
   }
 
   return (
-    (
-      insetMatches.every((match) =>
-        match[1] === String(LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT)
-      ) &&
-      nativeHeaderMatches.length === 1 &&
-      framelessHeaderMatches.length === 0
-    ) ||
-    (
-      insetMatches.every((match) => match[1] === "0") &&
-      framelessHeaderMatches.length === 1 &&
-      nativeHeaderMatches.length === 0
-    )
+    insetMatches.every((match) =>
+      match[1] === String(LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT)
+    ) &&
+    nativeHeaderMatches.length === 1
   );
 }
 
-function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
+function applyLinuxWindowControlsSafeAreaPatch(currentSource, context = {}) {
+  const delegation = patchDelegationState(
+    currentSource,
+    LINUX_WINDOW_CONTROLS_SAFE_AREA_PATCH_ID,
+    {
+      allowedFeatureIds:
+        context.patchCompositionDelegates?.[
+          LINUX_WINDOW_CONTROLS_SAFE_AREA_PATCH_ID
+        ],
+      enabledFeatureIds: context.enabledFeatureIds,
+    },
+  );
+  if (delegation.state === "enabled") {
+    return currentSource;
+  }
+  if (delegation.state !== "none") {
+    console.warn(
+      "WARN: Found inactive or invalid Linux window-controls safe-area patch delegation — skipping",
+    );
+    return currentSource;
+  }
   const markerCount =
     currentSource.split(LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER).length - 1;
   if (markerCount > 0) {

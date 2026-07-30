@@ -13,13 +13,6 @@ module.exports = [
     ciPolicy: "optional",
     apply: patchLinuxChromeNativeHostRuntimeAssets,
     status: (result, warnings) => {
-      if (result?.status) {
-        return {
-          status: result.status,
-          reason: result.reason ?? warnings.at(-1),
-        };
-      }
-
       return {
         status: result?.changed
           ? "applied"

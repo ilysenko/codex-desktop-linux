@@ -3073,6 +3073,25 @@ test("updates the Linux native titlebar overlay when nativeTheme changes", () =>
   assert.doesNotMatch(patched, /data-codex-window-type/);
 });
 
+test("leaves the native titlebar bundle byte-identical when overlay sync drifts", () => {
+  const source = [
+    "function A2(e){return e===`avatarOverlay`}",
+    "function I2({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!A2(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?a2:o2,backgroundMaterial:e===`win32`?`none`:null}:e===`linux`&&!A2(t)?{backgroundColor:r?a2:o2,backgroundMaterial:null}:{backgroundColor:i2,backgroundMaterial:null}}",
+    "function b2(e=1){return{color:i2,symbolColor:a.nativeTheme.shouldUseDarkColors?v2:_2,height:Math.round(g2*e)}}",
+    "case`quickChat`:case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`,trafficLightPosition:y2(r),...e===`quickChat`?{hasShadow:!0,resizable:!0,transparent:!0}:{},...t?{}:{vibrancy:`menu`}}:n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:b2(r),...e===`quickChat`?{resizable:!0}:{}}:{titleBarStyle:`default`,...e===`quickChat`?{resizable:!0}:{}};",
+    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`quickChat`)return;let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(b2(this.windowZooms.get(e.id),unexpected))};return a.nativeTheme.on(`updated`,n),n(),()=>{a.nativeTheme.off(`updated`,n)}}",
+  ].join("");
+
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxNativeTitlebarPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not patch titleBarOverlay nativeTheme sync for Linux",
+  ]);
+});
+
 test("redirects the renamed Linux-aware titlebar overlay sync away from the transparent win32 helper", () => {
   const source = [
     "function A2(e){return e===`avatarOverlay`}",
@@ -3212,6 +3231,25 @@ test("patches remaining Linux header safe-area padding when the menu inset is al
     /"pe-2":n===`start`&&i\|\|n===`end`&&!codexLinuxUseWindowControlsSafeArea,"pe-\(--spacing-token-safe-header-right\)":n===`end`&&codexLinuxUseWindowControlsSafeArea/,
   );
   assert.doesNotMatch(patched, /"pe-2":n===`start`&&i\|\|n===`end`(?=[,}])/);
+});
+
+test("rejects a non-numeric application menu inset hidden beside a valid owner", () => {
+  const patched = applyLinuxWindowControlsSafeAreaPatch(
+    windowControlsSafeAreaFixture(),
+  );
+  const damaged = patched.replace(
+    "applicationMenu:Object.freeze({left:0,right:138})",
+    "applicationMenu:Object.freeze({left:0,right:dynamicInset})",
+  );
+
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxWindowControlsSafeAreaPatch(damaged),
+  );
+
+  assert.equal(value, damaged);
+  assert.deepEqual(warnings, [
+    "WARN: Found incomplete Linux window-controls safe-area patch marker — skipping",
+  ]);
 });
 
 test("warns when the Linux window-controls safe area cannot follow the current header layout", () => {
@@ -10505,6 +10543,7 @@ test("patch report summary separates required core, optional core, and optional 
     patches: [
       { name: "main-process-ui", status: "applied", sourceKind: "core", ciPolicy: "required-upstream" },
       { name: "linux-app-updater-bridge", status: "skipped-optional", sourceKind: "core", ciPolicy: "optional" },
+      { name: "linux-integrity-check", status: "failed-integrity", sourceKind: "core", ciPolicy: "optional" },
       {
         name: "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration",
         status: "applied-with-warnings",
@@ -10516,6 +10555,9 @@ test("patch report summary separates required core, optional core, and optional 
   });
 
   assert.deepEqual(summary.enabledFeatures, ["remote-mobile-control"]);
+  assert.deepEqual(summary.groups.integrityFailures.statusCounts, {
+    "failed-integrity": 1,
+  });
   assert.deepEqual(summary.groups.requiredCore.statusCounts, { applied: 1 });
   assert.deepEqual(summary.groups.optionalCore.statusCounts, { "skipped-optional": 1 });
   assert.deepEqual(summary.groups.optionalFeatures.statusCounts, { "applied-with-warnings": 1 });
@@ -11168,12 +11210,14 @@ test("criticalFailuresFromReport agrees with validateReport and skips non-applic
       { name: "req-bad", status: "failed-required", ciPolicy: "required-upstream", reason: "anchor drifted" },
       { name: "req-good", status: "applied", ciPolicy: "required-upstream" },
       { name: "req-not-applicable", status: "skipped-target", ciPolicy: "required-upstream" },
+      { name: "integrity-bad", status: "failed-integrity", ciPolicy: "optional", reason: "rollback failed" },
       { name: "opt-bad", status: "skipped-optional", ciPolicy: "optional", reason: "optional drift" },
     ],
   };
 
   assert.deepEqual(criticalFailuresFromReport(report), [
     { name: "req-bad", status: "failed-required", reason: "anchor drifted" },
+    { name: "integrity-bad", status: "failed-integrity", reason: "rollback failed" },
   ]);
   assert.deepEqual(optionalDriftFromReport(report), [
     { name: "opt-bad", status: "skipped-optional", reason: "optional drift" },
@@ -11181,6 +11225,7 @@ test("criticalFailuresFromReport agrees with validateReport and skips non-applic
 
   const failures = validateReport(report, "upstream-build");
   assert.ok(failures.some((failure) => failure.startsWith("req-bad:")));
+  assert.ok(failures.some((failure) => failure.startsWith("integrity-bad:")));
   assert.ok(!failures.some((failure) => failure.startsWith("req-not-applicable:")));
   assert.ok(!failures.some((failure) => failure.startsWith("opt-bad:")));
 });

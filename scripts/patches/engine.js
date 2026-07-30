@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   PATCH_STATUS_APPLIED,
+  PATCH_STATUS_FAILED_INTEGRITY,
   PATCH_STATUS_FAILED_REQUIRED,
   PATCH_STATUS_SKIPPED_DISABLED,
   PATCH_STATUS_SKIPPED_OPTIONAL,
@@ -13,6 +14,9 @@ const {
   patchStatusFromChange,
   recordPatch,
 } = require("../lib/patch-report.js");
+const {
+  isPatchIntegrityError,
+} = require("./integrity-error.js");
 const {
   linuxTargetSummary,
 } = require("../lib/linux-target-context.js");
@@ -164,6 +168,9 @@ function descriptorFailureStatus(descriptor) {
 
 function describePatchError(descriptor, error) {
   const message = error instanceof Error ? error.message : String(error);
+  if (isPatchIntegrityError(error)) {
+    return `Patch '${descriptor.id}' integrity failure: ${message}`;
+  }
   return `Patch '${descriptor.id}' threw: ${message}`;
 }
 
@@ -223,7 +230,9 @@ function recordDescriptorError(report, descriptor, error, context, strategies = 
   recordDescriptorPatch(
     report,
     descriptor,
-    descriptorFailureStatus(descriptor),
+    isPatchIntegrityError(error)
+      ? PATCH_STATUS_FAILED_INTEGRITY
+      : descriptorFailureStatus(descriptor),
     describePatchError(descriptor, error),
     context,
     { error: true, ...(strategyMetadata(strategies) ?? {}) },

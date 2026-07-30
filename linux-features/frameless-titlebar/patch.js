@@ -1,7 +1,30 @@
 "use strict";
 
+const {
+  delegatePatchMarker,
+  patchDelegationState,
+} = require("../../scripts/patches/lib/composition-delegation.js");
+
+const FEATURE_ID = "frameless-titlebar";
+const LINUX_NATIVE_TITLEBAR_PATCH_ID = "linux-native-titlebar";
+const LINUX_NATIVE_TITLEBAR_PATCH_MARKER =
+  "/*codexLinuxNativeTitlebarPatch*/";
+const LINUX_WINDOW_CONTROLS_SAFE_AREA_PATCH_ID =
+  "linux-window-controls-safe-area";
 const LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER =
   "/*codexLinuxWindowControlsSafeAreaPatch*/";
+
+function regexMatchCount(source, pattern) {
+  const flags = pattern.flags.includes("g")
+    ? pattern.flags
+    : `${pattern.flags}g`;
+  return source.match(new RegExp(pattern.source, flags))?.length ?? 0;
+}
+
+function featurePatchIsActive(context) {
+  return context?.feature?.id === FEATURE_ID ||
+    context?.enabledFeatureIds?.includes(FEATURE_ID);
+}
 
 function applyFramelessTitlebarBranchPatch(currentSource) {
   let patchedTitlebar = false;
@@ -65,13 +88,137 @@ function applyFramelessTitlebarOverlaySyncPatch(currentSource) {
   return patchedSource;
 }
 
-function applyFramelessTitlebarMainPatch(currentSource) {
-  return applyFramelessTitlebarOverlaySyncPatch(
-    applyFramelessTitlebarBranchPatch(currentSource),
+function hasCompleteFramelessTitlebarMainComposition(source) {
+  const delegation = patchDelegationState(
+    source,
+    LINUX_NATIVE_TITLEBAR_PATCH_ID,
+    {
+      allowedFeatureIds: [FEATURE_ID],
+      enabledFeatureIds: [FEATURE_ID],
+    },
+  );
+  if (delegation.state !== "enabled" || delegation.featureId !== FEATURE_ID) {
+    return false;
+  }
+
+  const helper =
+    /function codexLinuxTitleBarOverlay\(e=1\)\{return\{color:([A-Za-z_$][\w$]*)\.nativeTheme\.shouldUseDarkColors\?`#111111`:([A-Za-z_$][\w$]*),symbolColor:\1\.nativeTheme\.shouldUseDarkColors\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),height:Math\.round\(30\*e\)\}\}/u;
+  const primary =
+    /case`quickChat`:case`primary`:return [^;]{0,2000}?:[A-Za-z_$][\w$]*===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),\.\.\.[A-Za-z_$][\w$]*===`quickChat`\?\{resizable:!0\}:\{\}\}:[A-Za-z_$][\w$]*===`linux`\?\{titleBarStyle:`hidden`,\.\.\.[A-Za-z_$][\w$]*===`quickChat`\?\{resizable:!0\}:\{\}\}:/u;
+  const zoom =
+    /setWindowZoom\([^)]*\)\{[\s\S]{0,800}?process\.platform===`win32`&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\([A-Za-z_$][\w$]*\(\2\)\)\)/u;
+  const sync =
+    /install[A-Za-z_$][\w$]*TitleBarOverlaySync\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(process\.platform!==`win32`\|\|\2!==`primary`&&\2!==`quickChat`\)return;let [A-Za-z_$][\w$]*=\(\)=>\{[\s\S]{0,300}?\1\.setTitleBarOverlay\([A-Za-z_$][\w$]*\(this\.windowZooms\.get\(\1\.id\)\)\)/u;
+  const zoomOwner =
+    /setWindowZoom\([^)]*\)\{[\s\S]{0,800}?this\.windowAppearances\.get\(/u;
+  const syncOwner =
+    /install[A-Za-z_$][\w$]*TitleBarOverlaySync\([^)]*\)\{/u;
+  const zoomOwnerCount = regexMatchCount(source, zoomOwner);
+  const syncOwnerCount = regexMatchCount(source, syncOwner);
+
+  return (
+    regexMatchCount(source, helper) === 1 &&
+    regexMatchCount(source, primary) === 1 &&
+    zoomOwnerCount <= 1 &&
+    syncOwnerCount <= 1 &&
+    (zoomOwnerCount === 0 || regexMatchCount(source, zoom) === 1) &&
+    (syncOwnerCount === 0 || regexMatchCount(source, sync) === 1)
   );
 }
 
-function applyFramelessTitlebarWebviewPatch(currentSource) {
+function applyFramelessTitlebarMainPatch(currentSource, context = {}) {
+  const delegation = patchDelegationState(
+    currentSource,
+    LINUX_NATIVE_TITLEBAR_PATCH_ID,
+    {
+      allowedFeatureIds: [FEATURE_ID],
+      enabledFeatureIds: [FEATURE_ID],
+    },
+  );
+  if (delegation.state !== "none") {
+    if (
+      delegation.state === "enabled" &&
+      delegation.featureId === FEATURE_ID &&
+      hasCompleteFramelessTitlebarMainComposition(currentSource)
+    ) {
+      return currentSource;
+    }
+    console.warn(
+      "WARN: Could not validate delegated frameless titlebar main-process composition - leaving bundle unchanged",
+    );
+    return currentSource;
+  }
+
+  const hasOwnerMarker = currentSource.includes(
+    LINUX_NATIVE_TITLEBAR_PATCH_MARKER,
+  );
+  if (!hasOwnerMarker) {
+    if (featurePatchIsActive(context)) {
+      console.warn(
+        "WARN: Could not find completed Linux native titlebar patch for frameless composition - leaving bundle unchanged",
+      );
+      return currentSource;
+    }
+    return applyFramelessTitlebarOverlaySyncPatch(
+      applyFramelessTitlebarBranchPatch(currentSource),
+    );
+  }
+
+  const patchedSource = applyFramelessTitlebarOverlaySyncPatch(
+    applyFramelessTitlebarBranchPatch(currentSource),
+  );
+  const delegatedSource = delegatePatchMarker(
+    patchedSource,
+    LINUX_NATIVE_TITLEBAR_PATCH_MARKER,
+    LINUX_NATIVE_TITLEBAR_PATCH_ID,
+    FEATURE_ID,
+  );
+  if (
+    delegatedSource != null &&
+    hasCompleteFramelessTitlebarMainComposition(delegatedSource)
+  ) {
+    return delegatedSource;
+  }
+
+  console.warn(
+    "WARN: Could not complete delegated frameless titlebar main-process composition - leaving bundle unchanged",
+  );
+  return currentSource;
+}
+
+function applyFramelessTitlebarWebviewPatch(currentSource, context = {}) {
+  const delegation = patchDelegationState(
+    currentSource,
+    LINUX_WINDOW_CONTROLS_SAFE_AREA_PATCH_ID,
+    {
+      allowedFeatureIds: [FEATURE_ID],
+      enabledFeatureIds: [FEATURE_ID],
+    },
+  );
+  if (delegation.state !== "none") {
+    if (
+      delegation.state === "enabled" &&
+      delegation.featureId === FEATURE_ID &&
+      hasCompleteFramelessWindowControlsSafeAreaComposition(currentSource)
+    ) {
+      return currentSource;
+    }
+    console.warn(
+      "WARN: Could not validate delegated frameless Linux window-controls safe-area composition - leaving asset unchanged",
+    );
+    return currentSource;
+  }
+
+  const hasOwnerMarker = currentSource.includes(
+    LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER,
+  );
+  if (!hasOwnerMarker && featurePatchIsActive(context)) {
+    console.warn(
+      "WARN: Could not find completed Linux window-controls safe-area patch for frameless composition - leaving asset unchanged",
+    );
+    return currentSource;
+  }
+
   let foundApplicationMenuLayout = false;
   let patchedSource = currentSource.replace(
     /applicationMenu:Object\.freeze\(\{left:0,right:\d+\}\)/g,
@@ -141,12 +288,21 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
     console.warn("WARN: Could not identify frameless titlebar webview target - skipping frameless webview patch");
   }
 
-  if (
-    currentSource.includes(LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER) &&
-    !hasCompleteFramelessWindowControlsSafeAreaComposition(patchedSource)
-  ) {
+  if (hasOwnerMarker) {
+    const delegatedSource = delegatePatchMarker(
+      patchedSource,
+      LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER,
+      LINUX_WINDOW_CONTROLS_SAFE_AREA_PATCH_ID,
+      FEATURE_ID,
+    );
+    if (
+      delegatedSource != null &&
+      hasCompleteFramelessWindowControlsSafeAreaComposition(delegatedSource)
+    ) {
+      return delegatedSource;
+    }
     console.warn(
-      "WARN: Could not validate frameless Linux window-controls safe-area composition - leaving asset unchanged",
+      "WARN: Could not complete delegated frameless Linux window-controls safe-area composition - leaving asset unchanged",
     );
     return currentSource;
   }
@@ -155,13 +311,25 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
 }
 
 function hasCompleteFramelessWindowControlsSafeAreaComposition(source) {
+  const delegation = patchDelegationState(
+    source,
+    LINUX_WINDOW_CONTROLS_SAFE_AREA_PATCH_ID,
+    {
+      allowedFeatureIds: [FEATURE_ID],
+      enabledFeatureIds: [FEATURE_ID],
+    },
+  );
+  if (delegation.state !== "enabled" || delegation.featureId !== FEATURE_ID) {
+    return false;
+  }
+
   const prop = "codexLinuxUseWindowControlsSafeArea";
   const overrideMatches = source.match(
     new RegExp(`${prop}:!1,side:\`end\``, "gu"),
   ) ?? [];
   const insetMatches = [
     ...source.matchAll(
-      /applicationMenu:Object\.freeze\(\{left:0,right:(\d+)\}\)/gu,
+      /applicationMenu:Object\.freeze\(\{left:0,right:([^}]+)\}\)/gu,
     ),
   ];
   const slotSignatureMatches = source.match(
@@ -192,6 +360,7 @@ const patches = [
     phase: "main-bundle",
     order: 20_720,
     ciPolicy: "optional",
+    composesPatches: [LINUX_NATIVE_TITLEBAR_PATCH_ID],
     apply: applyFramelessTitlebarMainPatch,
   },
   {
@@ -199,6 +368,7 @@ const patches = [
     phase: "webview-asset",
     order: 20_730,
     ciPolicy: "optional",
+    composesPatches: [LINUX_WINDOW_CONTROLS_SAFE_AREA_PATCH_ID],
     pattern: /^app-initial-[^.]+\.js$/,
     missingDescription: "main app chrome bundle",
     skipDescription: "frameless titlebar webview layout patch",

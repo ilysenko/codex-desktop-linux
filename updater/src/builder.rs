@@ -700,8 +700,10 @@ mod tests {
     const FRESH_PATCH_BUNDLE_FILES: &[&str] = &[
         "scripts/patches/descriptor.js",
         "scripts/patches/engine.js",
+        "scripts/patches/integrity-error.js",
         "scripts/patches/runner.js",
         "scripts/patches/lib/assets.js",
+        "scripts/patches/lib/composition-delegation.js",
         "scripts/patches/lib/minified-js.js",
         "scripts/patches/lib/settings-keys.js",
         "scripts/patches/impl/webview/index.js",

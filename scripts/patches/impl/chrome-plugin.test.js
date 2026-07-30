@@ -27,6 +27,9 @@ const {
   patchExtractedApp,
 } = require("../../patches/runner.js");
 const {
+  applyExtractedAppPatchDescriptors,
+} = require("../../patches/engine.js");
+const {
   applyLinuxChromeNativeHostRuntimePatch,
   patchLinuxChromeNativeHostRuntimeAssets,
 } = require("./chrome-plugin.js");
@@ -245,8 +248,8 @@ test("blocks acceptance when Chrome runtime rollback cannot restore bytes", () =
   try {
     const before = assetSources(candidate);
     let writeCount = 0;
-    const { value, warnings } = captureWarns(() =>
-      patchLinuxChromeNativeHostRuntimeAssets(candidate.extractedDir, {
+    const applyWithRollbackFailure = (extractedDir) =>
+      patchLinuxChromeNativeHostRuntimeAssets(extractedDir, {
         writeFileSync(filePath, source, encoding) {
           writeCount += 1;
           if (writeCount === 2) {
@@ -258,12 +261,13 @@ test("blocks acceptance when Chrome runtime rollback cannot restore bytes", () =
           }
           fs.writeFileSync(filePath, source, encoding);
         },
-      }),
+      });
+    assert.throws(
+      () => applyWithRollbackFailure(candidate.extractedDir),
+      (error) =>
+        error?.code === "PATCH_INTEGRITY_FAILURE" &&
+        /could not restore original bytes/i.test(error.message),
     );
-    assert.equal(value.changed, 0);
-    assert.equal(value.integrityFailure, true);
-    assert.equal(value.status, "failed-required");
-    assert.match(value.reason, /could not restore original bytes/i);
     assert.equal(
       fs.readFileSync(candidate.mainPath, "utf8"),
       before.get(candidate.mainPath),
@@ -273,22 +277,31 @@ test("blocks acceptance when Chrome runtime rollback cannot restore bytes", () =
       "corrupt-Chrome-runtime-asset",
     );
 
-    const descriptor = corePatchDescriptors().find(
+    const baseDescriptor = corePatchDescriptors().find(
       ({ id }) => id === "linux-chrome-native-host-runtime",
     );
-    const status = descriptor.status(value, warnings);
-    const report = {
-      patches: [{
-        name: descriptor.id,
-        ciPolicy: descriptor.ciPolicy,
-        status: status.status,
-        reason: status.reason,
-      }],
+    writeCount = 0;
+    fs.writeFileSync(candidate.mainPath, before.get(candidate.mainPath));
+    fs.writeFileSync(candidate.srcPath, before.get(candidate.srcPath));
+    const descriptor = {
+      ...baseDescriptor,
+      apply: applyWithRollbackFailure,
     };
+    const report = createPatchReport();
+    captureWarns(() =>
+      applyExtractedAppPatchDescriptors(
+        candidate.extractedDir,
+        [descriptor],
+        {},
+        report,
+        descriptor.phase,
+      ),
+    );
     assert.deepEqual(criticalFailuresFromReport(report), [{
       name: descriptor.id,
-      status: "failed-required",
-      reason: value.reason,
+      status: "failed-integrity",
+      reason:
+        "Patch 'linux-chrome-native-host-runtime' integrity failure: Chrome native host runtime rollback could not restore original bytes: simulated rollback failure",
     }]);
     assert.deepEqual(optionalDriftFromReport(report), []);
   } finally {

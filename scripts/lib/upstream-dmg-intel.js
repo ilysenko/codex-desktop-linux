@@ -1060,7 +1060,11 @@ function patchFindingsBySurface(patchReport, surfacesById = {}) {
     if (SUCCESSFUL_PATCH_STATUSES.has(patch.status)) {
       continue;
     }
-    const classification = BLOCKING_PATCH_STATUSES.has(patch.status) ? "PATCH_BROKEN" : "PATCH_REVIEW";
+    const classification = patch.status === "failed-integrity"
+      ? "PATCH_INTEGRITY_BROKEN"
+      : BLOCKING_PATCH_STATUSES.has(patch.status)
+        ? "PATCH_BROKEN"
+        : "PATCH_REVIEW";
     const explicitSurfaceId = patch.surfaceId ?? patch.protectedSurfaceId ?? null;
     const matchedSurfaceIds = new Set();
     if (explicitSurfaceId != null) {

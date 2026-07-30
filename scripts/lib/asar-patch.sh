@@ -19,6 +19,7 @@ const summary = summarizePatchReport(report);
 const fmt = (counts) => Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(", ") || "none";
 
 console.error("[INFO] patch summary:");
+console.error(`  integrity failures: ${fmt(summary.groups.integrityFailures.statusCounts)}`);
 console.error(`  required core: ${fmt(summary.groups.requiredCore.statusCounts)}`);
 console.error(`  optional core: ${fmt(summary.groups.optionalCore.statusCounts)}`);
 

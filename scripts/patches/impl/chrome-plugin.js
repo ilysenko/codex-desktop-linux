@@ -2,6 +2,10 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  PatchIntegrityError,
+  isPatchIntegrityError,
+} = require("../integrity-error.js");
 
 const {
   findMatchingBrace,
@@ -463,10 +467,9 @@ function writeChromeNativeHostRuntimeAssetCandidates(
     }
 
     if (rollbackFailures.length > 0) {
-      const integrityError = new Error(
+      const integrityError = new PatchIntegrityError(
         `Chrome native host runtime rollback could not restore original bytes: ${rollbackFailures[0].message}`,
       );
-      integrityError.code = "CHROME_NATIVE_HOST_RUNTIME_INTEGRITY_FAILURE";
       throw integrityError;
     }
 
@@ -554,15 +557,8 @@ function patchLinuxChromeNativeHostRuntimeAssets(extractedDir, {
       readFileSync,
     );
   } catch (error) {
-    if (error?.code === "CHROME_NATIVE_HOST_RUNTIME_INTEGRITY_FAILURE") {
-      console.warn(`WARN: ${error.message}`);
-      return {
-        matched: records.length,
-        changed: 0,
-        integrityFailure: true,
-        status: "failed-required",
-        reason: error.message,
-      };
+    if (isPatchIntegrityError(error)) {
+      throw error;
     }
 
     const reason = "Could not write current Chrome native host runtime asset set";

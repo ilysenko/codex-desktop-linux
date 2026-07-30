@@ -23,6 +23,18 @@ const {
   applyFramelessTitlebarWebviewPatch,
 } = require("./patch.js");
 
+const CORE_CONTEXT = {
+  enabledFeatureIds: ["frameless-titlebar"],
+  patchCompositionDelegates: {
+    "linux-native-titlebar": ["frameless-titlebar"],
+    "linux-window-controls-safe-area": ["frameless-titlebar"],
+  },
+};
+const FEATURE_CONTEXT = {
+  enabledFeatureIds: ["frameless-titlebar"],
+  feature: { id: "frameless-titlebar" },
+};
+
 function applyPatchTwice(patchFn, source) {
   const patched = patchFn(source);
   assert.equal(patchFn(patched), patched);
@@ -43,10 +55,30 @@ function captureWarnings(callback) {
 
 function copyFeatureTo(featuresRoot) {
   const featureDir = path.join(featuresRoot, "frameless-titlebar");
+  const helperDir = path.join(
+    featuresRoot,
+    "..",
+    "scripts",
+    "patches",
+    "lib",
+  );
   fs.mkdirSync(featureDir, { recursive: true });
+  fs.mkdirSync(helperDir, { recursive: true });
   for (const name of ["feature.json", "README.md", "patch.js"]) {
     fs.copyFileSync(path.join(__dirname, name), path.join(featureDir, name));
   }
+  fs.copyFileSync(
+    path.join(
+      __dirname,
+      "..",
+      "..",
+      "scripts",
+      "patches",
+      "lib",
+      "composition-delegation.js",
+    ),
+    path.join(helperDir, "composition-delegation.js"),
+  );
 }
 
 function nativeTitlebarCompositionFixture() {
@@ -186,14 +218,14 @@ test("native-titlebar remains complete after frameless-titlebar composition", ()
   const composed = applyFramelessTitlebarMainPatch(corePatched);
   let rerun;
   const warnings = captureWarnings(() => {
-    rerun = applyLinuxNativeTitlebarPatch(composed);
+    rerun = applyLinuxNativeTitlebarPatch(composed, CORE_CONTEXT);
   });
 
   assert.equal(rerun, composed);
   assert.deepEqual(warnings, []);
 });
 
-test("native-titlebar marker rejects incomplete core and frameless composition states", () => {
+test("frameless-titlebar owns validation after native-titlebar delegation", () => {
   const corePatched = applyLinuxNativeTitlebarPatch(
     nativeTitlebarCompositionFixture(),
   );
@@ -204,11 +236,19 @@ test("native-titlebar marker rejects incomplete core and frameless composition s
   );
   let rerun;
   const coreWarnings = captureWarnings(() => {
-    rerun = applyLinuxNativeTitlebarPatch(incompleteCore);
+    rerun = applyLinuxNativeTitlebarPatch(incompleteCore, CORE_CONTEXT);
   });
   assert.equal(rerun, incompleteCore);
-  assert.deepEqual(coreWarnings, [
-    "WARN: Found incomplete Linux native titlebar patch marker — skipping",
+  assert.deepEqual(coreWarnings, []);
+  const featureWarnings = captureWarnings(() => {
+    rerun = applyFramelessTitlebarMainPatch(
+      incompleteCore,
+      FEATURE_CONTEXT,
+    );
+  });
+  assert.equal(rerun, incompleteCore);
+  assert.deepEqual(featureWarnings, [
+    "WARN: Could not validate delegated frameless titlebar main-process composition - leaving bundle unchanged",
   ]);
 
   const featureVariants = [
@@ -224,11 +264,11 @@ test("native-titlebar marker rejects incomplete core and frameless composition s
 
   for (const source of featureVariants) {
     const warnings = captureWarnings(() => {
-      rerun = applyLinuxNativeTitlebarPatch(source);
+      rerun = applyFramelessTitlebarMainPatch(source, FEATURE_CONTEXT);
     });
     assert.equal(rerun, source);
     assert.deepEqual(warnings, [
-      "WARN: Found incomplete Linux native titlebar patch marker — skipping",
+      "WARN: Could not validate delegated frameless titlebar main-process composition - leaving bundle unchanged",
     ]);
   }
 });
@@ -296,15 +336,22 @@ test("frameless-titlebar composes idempotently with the core safe-area patch", (
   const corePatched = applyLinuxWindowControlsSafeAreaPatch(source);
   const composed = applyFramelessTitlebarWebviewPatch(corePatched);
 
-  assert.equal(applyLinuxWindowControlsSafeAreaPatch(composed), composed);
-  assert.equal(applyFramelessTitlebarWebviewPatch(composed), composed);
+  assert.equal(
+    applyLinuxWindowControlsSafeAreaPatch(composed, CORE_CONTEXT),
+    composed,
+  );
+  assert.equal(
+    applyFramelessTitlebarWebviewPatch(composed, FEATURE_CONTEXT),
+    composed,
+  );
   assert.deepEqual(
-    captureWarnings(() => applyLinuxWindowControlsSafeAreaPatch(composed)),
+    captureWarnings(() =>
+      applyLinuxWindowControlsSafeAreaPatch(composed, CORE_CONTEXT)),
     [],
   );
 });
 
-test("core and feature safe-area validators reject incomplete frameless composition", () => {
+test("frameless-titlebar owns safe-area validation after core delegation", () => {
   const stockSource = [
     "var eV=Object.freeze({default:Object.freeze({left:0,right:0}),applicationMenu:Object.freeze({left:0,right:0})});",
     "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})}",
@@ -320,17 +367,48 @@ test("core and feature safe-area validators reject incomplete frameless composit
   );
 
   const coreWarnings = captureWarnings(() => {
-    assert.equal(applyLinuxWindowControlsSafeAreaPatch(source), source);
+    assert.equal(
+      applyLinuxWindowControlsSafeAreaPatch(source, CORE_CONTEXT),
+      source,
+    );
   });
-  assert.deepEqual(coreWarnings, [
-    "WARN: Found incomplete Linux window-controls safe-area patch marker — skipping",
-  ]);
+  assert.deepEqual(coreWarnings, []);
 
   const featureWarnings = captureWarnings(() => {
-    assert.equal(applyFramelessTitlebarWebviewPatch(source), source);
+    assert.equal(
+      applyFramelessTitlebarWebviewPatch(source, FEATURE_CONTEXT),
+      source,
+    );
   });
   assert.deepEqual(featureWarnings, [
-    "WARN: Could not validate frameless Linux window-controls safe-area composition - leaving asset unchanged",
+    "WARN: Could not validate delegated frameless Linux window-controls safe-area composition - leaving asset unchanged",
+  ]);
+});
+
+test("frameless-titlebar rejects a non-numeric inset hidden beside a valid delegated owner", () => {
+  const stockSource = [
+    "var eV=Object.freeze({default:Object.freeze({left:0,right:0}),applicationMenu:Object.freeze({left:0,right:0})});",
+    "var fV=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});",
+    "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})}",
+    "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"pe-2\":n===`start`&&i||n===`end`});return jsx(o)}",
+    "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.applicationMenu:eV.default;",
+  ].join("");
+  const composed = applyFramelessTitlebarWebviewPatch(
+    applyLinuxWindowControlsSafeAreaPatch(stockSource),
+  );
+  const damaged = composed.replace(
+    "applicationMenu:Object.freeze({left:0,right:0})",
+    "applicationMenu:Object.freeze({left:0,right:dynamicInset})",
+  );
+
+  const warnings = captureWarnings(() => {
+    assert.equal(
+      applyFramelessTitlebarWebviewPatch(damaged, FEATURE_CONTEXT),
+      damaged,
+    );
+  });
+  assert.deepEqual(warnings, [
+    "WARN: Could not validate delegated frameless Linux window-controls safe-area composition - leaving asset unchanged",
   ]);
 });
 

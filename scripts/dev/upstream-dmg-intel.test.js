@@ -591,6 +591,47 @@ test("classifies required patch-report failures as acceptance blockers", () =>
     });
 
     assert.ok(findClassification(driftReport, "record_and_replay_event_stream", "PATCH_BROKEN"));
+    assert.ok(
+      !findClassification(
+        driftReport,
+        "record_and_replay_event_stream",
+        "PATCH_INTEGRITY_BROKEN",
+      ),
+    );
+    assert.ok(!findClassification(driftReport, "record_and_replay_event_stream", "PATCH_REVIEW"));
+  }));
+
+test("classifies patch integrity failures as acceptance blockers", () =>
+  withTempDir((workspace) => {
+    const candidateApp = createFixtureApp(workspace, "candidate");
+    const candidate = extractProtectedSurfaces({
+      inventory: createInventory({ registry, sourcePath: candidateApp }),
+      registry,
+      repoRoot: process.cwd(),
+    });
+
+    const driftReport = compareProtectedSurfaces({
+      candidate,
+      patchReport: {
+        patches: [
+          {
+            name: "record-and-replay bridge patch",
+            status: "failed-integrity",
+            reason: "rollback could not restore original bytes",
+            surfaceId: "record_and_replay_event_stream",
+          },
+        ],
+      },
+    });
+
+    assert.ok(
+      findClassification(
+        driftReport,
+        "record_and_replay_event_stream",
+        "PATCH_INTEGRITY_BROKEN",
+      ),
+    );
+    assert.ok(!findClassification(driftReport, "record_and_replay_event_stream", "PATCH_BROKEN"));
     assert.ok(!findClassification(driftReport, "record_and_replay_event_stream", "PATCH_REVIEW"));
   }));
 
