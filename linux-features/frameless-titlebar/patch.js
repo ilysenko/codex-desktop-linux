@@ -119,10 +119,10 @@ function hasCompleteFramelessTitlebarMainComposition(source) {
   return (
     regexMatchCount(source, helper) === 1 &&
     regexMatchCount(source, primary) === 1 &&
-    zoomOwnerCount <= 1 &&
-    syncOwnerCount <= 1 &&
-    (zoomOwnerCount === 0 || regexMatchCount(source, zoom) === 1) &&
-    (syncOwnerCount === 0 || regexMatchCount(source, sync) === 1)
+    zoomOwnerCount === 1 &&
+    regexMatchCount(source, zoom) === 1 &&
+    syncOwnerCount === 1 &&
+    regexMatchCount(source, sync) === 1
   );
 }
 
@@ -344,13 +344,21 @@ function hasCompleteFramelessWindowControlsSafeAreaComposition(source) {
       "gu",
     ),
   ) ?? [];
+  const nativeBrowserGateMatches = source.match(
+    /([A-Za-z_$][\w$]*)\.includes\(`win`\)\|\|([A-Za-z_$][\w$]*)\.includes\(`windows`\)\?([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\.applicationMenu:\4\.default/gu,
+  ) ?? [];
+  const nativeChromeMappingMatches = source.match(
+    /case`win32`:return`application-menu`;case`linux`:return`native`/gu,
+  ) ?? [];
 
   return (
     overrideMatches.length === 1 &&
     insetMatches.length > 0 &&
     insetMatches.every((match) => match[1] === "0") &&
     slotSignatureMatches.length === 1 &&
-    paddingMatches.length === 1
+    paddingMatches.length === 1 &&
+    nativeBrowserGateMatches.length === 1 &&
+    nativeChromeMappingMatches.length === 1
   );
 }
 

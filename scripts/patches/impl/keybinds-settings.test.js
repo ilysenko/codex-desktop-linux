@@ -89,6 +89,27 @@ for (const [name, damage] of [
     "rejects truncated generated Linux settings source without writing assets",
     (source) => source.slice(0, source.indexOf("KEYS={") + "KEYS={".length),
   ],
+  ...[
+    "promptWindow",
+    "systemTray",
+    "warmStart",
+    "autoUpdateOnExit",
+  ].map((key) => [
+    `rejects generated Linux settings without the ${key} control`,
+    (source) =>
+      source.replace(
+        `settingKey:KEYS.${key}`,
+        `settingKey:MISSING.${key}`,
+      ),
+  ]),
+  [
+    "rejects generated Linux settings without the build info panel consumer",
+    (source) =>
+      source.replace(
+        "$.jsx(LinuxBuildInfoPanel,{})",
+        '$.jsx("div",{})',
+      ),
+  ],
 ]) {
   test(name, () => {
     const { extractedDir, assetsDir } =

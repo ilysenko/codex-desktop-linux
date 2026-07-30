@@ -260,6 +260,14 @@ test("frameless-titlebar owns validation after native-titlebar delegation", () =
       "if(process.platform!==`win32`||t!==`primary`",
       "if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`",
     ),
+    composed.replace(
+      /setWindowZoom[\s\S]*?(?=installApplicationMenuTitleBarOverlaySync)/u,
+      "",
+    ),
+    composed.replace(
+      /installApplicationMenuTitleBarOverlaySync[\s\S]*$/u,
+      "",
+    ),
   ];
 
   for (const source of featureVariants) {
@@ -332,6 +340,7 @@ test("frameless-titlebar composes idempotently with the core safe-area patch", (
     "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})}",
     "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"pe-2\":n===`start`&&i||n===`end`});return jsx(o)}",
     "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.applicationMenu:eV.default;",
+    "function chrome(e){switch(e){case`win32`:case`linux`:return`application-menu`;default:return`native`}}",
   ].join("");
   const corePatched = applyLinuxWindowControlsSafeAreaPatch(source);
   const composed = applyFramelessTitlebarWebviewPatch(corePatched);
@@ -357,32 +366,46 @@ test("frameless-titlebar owns safe-area validation after core delegation", () =>
     "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})}",
     "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"pe-2\":n===`start`&&i||n===`end`});return jsx(o)}",
     "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.applicationMenu:eV.default;",
+    "function chrome(e){switch(e){case`win32`:case`linux`:return`application-menu`;default:return`native`}}",
   ].join("");
   const composed = applyFramelessTitlebarWebviewPatch(
     applyLinuxWindowControlsSafeAreaPatch(stockSource),
   );
-  const source = composed.replace(
-    ",codexLinuxUseWindowControlsSafeArea}){",
-    "}){",
-  );
+  const damagedVariants = [
+    composed.replace(
+      ",codexLinuxUseWindowControlsSafeArea}){",
+      "}){",
+    ),
+    composed.replace(
+      "i.includes(`win`)||r.includes(`windows`)?t??eV.applicationMenu:eV.default",
+      "i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.applicationMenu:eV.default",
+    ),
+    composed.replace(
+      "case`win32`:return`application-menu`;case`linux`:return`native`",
+      "case`win32`:case`linux`:return`application-menu`",
+    ),
+  ];
 
-  const coreWarnings = captureWarnings(() => {
-    assert.equal(
-      applyLinuxWindowControlsSafeAreaPatch(source, CORE_CONTEXT),
-      source,
-    );
-  });
-  assert.deepEqual(coreWarnings, []);
+  for (const source of damagedVariants) {
+    assert.notEqual(source, composed);
+    const coreWarnings = captureWarnings(() => {
+      assert.equal(
+        applyLinuxWindowControlsSafeAreaPatch(source, CORE_CONTEXT),
+        source,
+      );
+    });
+    assert.deepEqual(coreWarnings, []);
 
-  const featureWarnings = captureWarnings(() => {
-    assert.equal(
-      applyFramelessTitlebarWebviewPatch(source, FEATURE_CONTEXT),
-      source,
-    );
-  });
-  assert.deepEqual(featureWarnings, [
-    "WARN: Could not validate delegated frameless Linux window-controls safe-area composition - leaving asset unchanged",
-  ]);
+    const featureWarnings = captureWarnings(() => {
+      assert.equal(
+        applyFramelessTitlebarWebviewPatch(source, FEATURE_CONTEXT),
+        source,
+      );
+    });
+    assert.deepEqual(featureWarnings, [
+      "WARN: Could not validate delegated frameless Linux window-controls safe-area composition - leaving asset unchanged",
+    ]);
+  }
 });
 
 test("frameless-titlebar rejects a non-numeric inset hidden beside a valid delegated owner", () => {
@@ -392,6 +415,7 @@ test("frameless-titlebar rejects a non-numeric inset hidden beside a valid deleg
     "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})}",
     "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"pe-2\":n===`start`&&i||n===`end`});return jsx(o)}",
     "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.applicationMenu:eV.default;",
+    "function chrome(e){switch(e){case`win32`:case`linux`:return`application-menu`;default:return`native`}}",
   ].join("");
   const composed = applyFramelessTitlebarWebviewPatch(
     applyLinuxWindowControlsSafeAreaPatch(stockSource),

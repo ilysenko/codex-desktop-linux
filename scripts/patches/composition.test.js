@@ -159,6 +159,14 @@ test("native titlebar report rejects preserved markers with damaged required con
       "if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`",
       "if(process.platform!==`win32`||t!==`primary`",
     ),
+    first.replace(
+      /setWindowZoom[\s\S]*?(?=installApplicationMenuTitleBarOverlaySync)/u,
+      "",
+    ),
+    first.replace(
+      /installApplicationMenuTitleBarOverlaySync[\s\S]*$/u,
+      "",
+    ),
   ];
 
   for (const damaged of damagedVariants) {
@@ -363,39 +371,51 @@ test("enabled frameless main composition drift is reported by the owning feature
       context,
       createPatchReport(),
     ).patchedSource;
-    const damaged = first.replace(
-      "process.platform===`win32`&&(this.windowZooms.set",
-      "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set",
-    );
-    assert.notEqual(damaged, first);
-
-    const report = createPatchReport();
-    report.enabledFeatures = ["frameless-titlebar"];
-    const { value, warnings } = captureWarns(() =>
-      applyMainBundlePatchDescriptors(
-        damaged,
-        descriptors,
-        context,
-        report,
+    const damagedVariants = [
+      first.replace(
+        "process.platform===`win32`&&(this.windowZooms.set",
+        "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set",
       ),
-    );
+      first.replace(
+        /setWindowZoom[\s\S]*?(?=installApplicationMenuTitleBarOverlaySync)/u,
+        "",
+      ),
+      first.replace(
+        /installApplicationMenuTitleBarOverlaySync[\s\S]*$/u,
+        "",
+      ),
+    ];
+    for (const damaged of damagedVariants) {
+      assert.notEqual(damaged, first);
 
-    assert.equal(value.patchedSource, damaged);
-    assert.deepEqual(
-      report.patches.map(({ name, status }) => ({ name, status })),
-      [
-        { name: "linux-native-titlebar", status: "already-applied" },
-        {
-          name: "feature:frameless-titlebar:main-process",
-          status: "skipped-optional",
-        },
-      ],
-    );
-    assert.equal(
-      enabledFeatureFailuresFromReport(report)[0]?.name,
-      "feature:frameless-titlebar:main-process",
-    );
-    assert.match(warnings[0] ?? "", /delegated frameless titlebar/);
+      const report = createPatchReport();
+      report.enabledFeatures = ["frameless-titlebar"];
+      const { value, warnings } = captureWarns(() =>
+        applyMainBundlePatchDescriptors(
+          damaged,
+          descriptors,
+          context,
+          report,
+        ),
+      );
+
+      assert.equal(value.patchedSource, damaged);
+      assert.deepEqual(
+        report.patches.map(({ name, status }) => ({ name, status })),
+        [
+          { name: "linux-native-titlebar", status: "already-applied" },
+          {
+            name: "feature:frameless-titlebar:main-process",
+            status: "skipped-optional",
+          },
+        ],
+      );
+      assert.equal(
+        enabledFeatureFailuresFromReport(report)[0]?.name,
+        "feature:frameless-titlebar:main-process",
+      );
+      assert.match(warnings[0] ?? "", /delegated frameless titlebar/);
+    }
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -433,6 +453,7 @@ test("enabled frameless webview composition drift is reported by the owning feat
         "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})}",
         "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"pe-2\":n===`start`&&i||n===`end`});return jsx(o)}",
         "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??l.applicationMenu:l.default;",
+        "function chrome(e){switch(e){case`win32`:case`linux`:return`application-menu`;default:return`native`}}",
       ].join(""),
     );
     applyWebviewAssetPatchDescriptors(
@@ -442,44 +463,56 @@ test("enabled frameless webview composition drift is reported by the owning feat
       createPatchReport(),
     );
     const first = fs.readFileSync(assetPath, "utf8");
-    const damaged = first.replace(
-      ",codexLinuxUseWindowControlsSafeArea}){",
-      "}){",
-    );
-    assert.notEqual(damaged, first);
-    fs.writeFileSync(assetPath, damaged);
-
-    const report = createPatchReport();
-    report.enabledFeatures = ["frameless-titlebar"];
-    const { warnings } = captureWarns(() =>
-      applyWebviewAssetPatchDescriptors(
-        tempRoot,
-        descriptors,
-        context,
-        report,
+    const damagedVariants = [
+      first.replace(
+        ",codexLinuxUseWindowControlsSafeArea}){",
+        "}){",
       ),
-    );
+      first.replace(
+        "i.includes(`win`)||r.includes(`windows`)?t??l.applicationMenu:l.default",
+        "i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??l.applicationMenu:l.default",
+      ),
+      first.replace(
+        "case`win32`:return`application-menu`;case`linux`:return`native`",
+        "case`win32`:case`linux`:return`application-menu`",
+      ),
+    ];
+    for (const damaged of damagedVariants) {
+      assert.notEqual(damaged, first);
+      fs.writeFileSync(assetPath, damaged);
 
-    assert.equal(fs.readFileSync(assetPath, "utf8"), damaged);
-    assert.deepEqual(
-      report.patches.map(({ name, status }) => ({ name, status })),
-      [
-        {
-          name: "linux-window-controls-safe-area",
-          status: "already-applied",
-        },
-        {
-          name:
-            "feature:frameless-titlebar:webview-window-controls-layout",
-          status: "skipped-optional",
-        },
-      ],
-    );
-    assert.equal(
-      enabledFeatureFailuresFromReport(report)[0]?.name,
-      "feature:frameless-titlebar:webview-window-controls-layout",
-    );
-    assert.match(warnings[0] ?? "", /delegated frameless Linux/);
+      const report = createPatchReport();
+      report.enabledFeatures = ["frameless-titlebar"];
+      const { warnings } = captureWarns(() =>
+        applyWebviewAssetPatchDescriptors(
+          tempRoot,
+          descriptors,
+          context,
+          report,
+        ),
+      );
+
+      assert.equal(fs.readFileSync(assetPath, "utf8"), damaged);
+      assert.deepEqual(
+        report.patches.map(({ name, status }) => ({ name, status })),
+        [
+          {
+            name: "linux-window-controls-safe-area",
+            status: "already-applied",
+          },
+          {
+            name:
+              "feature:frameless-titlebar:webview-window-controls-layout",
+            status: "skipped-optional",
+          },
+        ],
+      );
+      assert.equal(
+        enabledFeatureFailuresFromReport(report)[0]?.name,
+        "feature:frameless-titlebar:webview-window-controls-layout",
+      );
+      assert.match(warnings[0] ?? "", /delegated frameless Linux/);
+    }
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

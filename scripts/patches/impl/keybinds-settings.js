@@ -825,6 +825,20 @@ function hasCompleteLinuxDesktopSettingsSource(previousSource) {
   if (!requiredMarkers.every((marker) => previousSource.includes(marker))) {
     return false;
   }
+  const requiredConsumers = [
+    "settingKey:KEYS.promptWindow",
+    "settingKey:KEYS.systemTray",
+    "settingKey:KEYS.warmStart",
+    "settingKey:KEYS.autoUpdateOnExit",
+    "$.jsx(LinuxBuildInfoPanel,{})",
+  ];
+  if (
+    !requiredConsumers.every(
+      (consumer) => previousSource.split(consumer).length - 1 === 1,
+    )
+  ) {
+    return false;
+  }
 
   let executableSource = previousSource;
   while (executableSource.startsWith("import")) {

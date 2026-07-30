@@ -208,14 +208,12 @@ function hasCompleteLinuxNativeTitlebarPatch(source, helperFunctionRegex) {
     /install[A-Za-z_$][\w$]*TitleBarOverlaySync\([^)]*\)\{/u;
   const zoomOwnerCount = regexMatchCount(source, zoomOwner);
   const syncOwnerCount = regexMatchCount(source, syncOwner);
-  if (zoomOwnerCount > 1 || syncOwnerCount > 1) {
-    return false;
-  }
-
   return (
     regexMatchCount(source, nativePrimary) === 1 &&
-    (zoomOwnerCount === 0 || regexMatchCount(source, nativeZoom) === 1) &&
-    (syncOwnerCount === 0 || regexMatchCount(source, nativeSync) === 1)
+    zoomOwnerCount === 1 &&
+    regexMatchCount(source, nativeZoom) === 1 &&
+    syncOwnerCount === 1 &&
+    regexMatchCount(source, nativeSync) === 1
   );
 }
 
