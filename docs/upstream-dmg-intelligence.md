@@ -65,8 +65,9 @@ make inspect-upstream-intel-devcontainer DMG=/path/to/new/Codex.dmg
 
 When `dist-next/rebuild/patch-report.json` exists, `make inspect-upstream-intel`
 folds it into the drift report. Required patch failures are classified as
-blocking `PATCH_BROKEN`; optional skipped or warning statuses are classified as
-review-only `PATCH_REVIEW`.
+blocking `PATCH_BROKEN`. A `failed-integrity` status is classified separately
+as blocking `PATCH_INTEGRITY_BROKEN`, regardless of descriptor policy. Optional
+skipped or warning statuses are classified as review-only `PATCH_REVIEW`.
 
 ## Outputs
 
@@ -158,6 +159,9 @@ review item before accepting the upstream DMG.
   baseline.
 - `PATCH_BROKEN`: a required patch-report failure matched this protected
   surface.
+- `PATCH_INTEGRITY_BROKEN`: a transactional patch failure could not prove that
+  rollback restored the original bytes. Reject the candidate and rebuild from
+  the fresh current DMG after diagnosing the mutation or rollback failure.
 - `PATCH_REVIEW`: an optional patch-report warning or skip matched this
   protected surface.
 - `LINUX_SUBSTRATE_GAP`: upstream evidence exists, but the registry's required
@@ -189,7 +193,7 @@ navigation layer:
 - `PAYLOAD_CHANGED` means a stable protected file changed hash or size. Review
   the listed file samples and run the owning Linux feature or backend tests.
 - `REMOVED`, `PROTECTED_SURFACE_MISSING`, `PROTECTED_SURFACE_PARTIAL`,
-  `PATCH_BROKEN`, and `LINUX_SUBSTRATE_GAP` are acceptance blockers until the
-  registry, patch, or Linux substrate action is resolved. `PATCH_REVIEW` remains
-  review-only unless the protected surface is also missing, partial, removed, or
-  has a required patch failure.
+  `PATCH_BROKEN`, `PATCH_INTEGRITY_BROKEN`, and `LINUX_SUBSTRATE_GAP` are
+  acceptance blockers until the registry, patch, integrity, or Linux substrate
+  action is resolved. `PATCH_REVIEW` remains review-only unless the protected
+  surface is also missing, partial, removed, or has a required patch failure.

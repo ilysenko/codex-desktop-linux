@@ -31,6 +31,7 @@ const {
   PHASE_MAIN_BUNDLE,
   PHASE_WEBVIEW_ASSET,
   PATCH_PHASES,
+  normalizeComposesPatches,
 } = require("./descriptor.js");
 const {
   drainStrategies,
@@ -73,10 +74,18 @@ function normalizeDescriptor(descriptor, sourcePath = null, index = 0) {
     sourceKind: descriptor.sourceKind ?? (descriptor.featureId != null ? "feature" : "core"),
     order: descriptor.order ?? 10_000 + index,
     sourcePath,
+    ...(descriptor.composesPatches == null
+      ? {}
+      : { composesPatches: normalizeComposesPatches(descriptor.composesPatches, id) }),
   };
   if (!PATCH_PHASES.has(normalized.phase)) {
     throw new Error(
       `Patch descriptor '${id}' has unsupported phase '${normalized.phase}' in ${sourcePath ?? "inline descriptor"}`,
+    );
+  }
+  if (normalized.composesPatches != null && normalized.sourceKind !== "feature") {
+    throw new Error(
+      `Patch descriptor '${id}' composesPatches is supported only for Linux feature descriptors`,
     );
   }
   return normalized;
@@ -174,8 +183,9 @@ function describePatchError(descriptor, error) {
   return `Patch '${descriptor.id}' threw: ${message}`;
 }
 
-// Runs a descriptor's apply function so that a throw never escapes the engine:
-// the descriptor's ciPolicy — not the throw — decides whether the build fails.
+// Runs a descriptor's apply function so that a throw never escapes the engine.
+// Ordinary errors follow ciPolicy; PatchIntegrityError is always fatal because
+// the patch could not prove that a failed mutation restored the original bytes.
 // Strategy telemetry recorded during the apply is drained into the result so
 // it can be attributed to this descriptor's report entry.
 function runDescriptorApply(descriptor, fn, fallbackValue) {

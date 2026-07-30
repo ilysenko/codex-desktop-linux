@@ -48,8 +48,8 @@ implementation code lives under `scripts/patches/impl/` by domain; generic
 helpers live under `scripts/patches/lib/`. The deleted compatibility barrels
 are intentionally not part of the architecture.
 
-`ciPolicy` is the single criticality axis, enforced by the patch engine —
-patches themselves never abort the build:
+`ciPolicy` is the ordinary descriptor criticality axis, enforced by the patch
+engine — patches themselves never abort the build:
 
 - `required-upstream` (critical): the app does not launch or is core-unusable
   without it. If one fails (no match or a throw), the patcher exits non-zero
@@ -59,6 +59,12 @@ patches themselves never abort the build:
   logged as warnings, and listed in the end-of-build
   `optional patches not fully applied` summary so they can be fixed later.
 - `opt-in`: disabled unless explicitly enabled; recorded as `skipped-disabled`.
+
+Integrity failures are the deliberate global exception to `ciPolicy`. A
+descriptor that throws `PatchIntegrityError` is recorded as
+`failed-integrity` and always fails candidate acceptance, even when the
+descriptor is optional. This status means a transactional mutation failed and
+could not prove that rollback restored the original bytes.
 
 Every build writes a patch report (`<app>/.codex-linux/patch-report.json`,
 next to `build-info.json`). `scripts/lib/patch-report.js` owns report statuses

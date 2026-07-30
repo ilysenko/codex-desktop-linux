@@ -22,6 +22,11 @@ function isCriticalPolicy(ciPolicy) {
   return ciPolicy === CRITICAL_CI_POLICY;
 }
 
+function isCriticalPatchStatus(status) {
+  return status === PATCH_STATUS_FAILED_INTEGRITY ||
+    status === PATCH_STATUS_FAILED_REQUIRED;
+}
+
 function reportEntryFailure(patch) {
   return {
     name: patch.name,
@@ -34,8 +39,7 @@ function criticalFailuresFromReport(report) {
   return (report?.patches ?? [])
     .filter(
       (patch) =>
-        patch.status === PATCH_STATUS_FAILED_INTEGRITY ||
-        patch.status === PATCH_STATUS_FAILED_REQUIRED ||
+        isCriticalPatchStatus(patch.status) ||
         isCriticalPolicy(patch.ciPolicy),
     )
     .filter((patch) => !SUCCESS_STATUSES.has(patch.status) && !NOT_APPLICABLE_STATUSES.has(patch.status))
@@ -45,8 +49,7 @@ function criticalFailuresFromReport(report) {
 function optionalDriftFromReport(report) {
   return (report?.patches ?? [])
     .filter((patch) => !isCriticalPolicy(patch.ciPolicy))
-    .filter((patch) => patch.status !== PATCH_STATUS_FAILED_INTEGRITY)
-    .filter((patch) => patch.status !== PATCH_STATUS_FAILED_REQUIRED)
+    .filter((patch) => !isCriticalPatchStatus(patch.status))
     .filter((patch) => !SUCCESS_STATUSES.has(patch.status) && !NOT_APPLICABLE_STATUSES.has(patch.status))
     .map(reportEntryFailure);
 }
@@ -179,6 +182,7 @@ module.exports = {
   criticalFailuresFromReport,
   enabledFeatureFailuresFromReport,
   isCriticalPolicy,
+  isCriticalPatchStatus,
   optionalDriftFromReport,
   patchStatusFromChange,
   recordPatch,

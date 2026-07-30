@@ -110,11 +110,14 @@ Repository governance: [issue and pull request labels](docs/label-governance.md)
 - Core patch descriptors are the source of truth for shipped Linux
   compatibility patches. Read `scripts/patches/core/README.md` before adding
   or moving descriptors.
-- ASAR patches are fail-soft unless intentionally marked `required-upstream`.
-  Each patch should be idempotent and report warnings when current upstream
-  drift prevents a needle from matching.
-- Patch reports are written for installs/rebuilds. Upstream-build CI fails only
-  for required upstream patches that are missing or skipped.
+- ASAR patches are fail-soft unless intentionally marked `required-upstream`,
+  or unless a transactional mutation reports `failed-integrity` because it
+  cannot prove rollback restored the original bytes. Each patch should be
+  idempotent and report warnings when current upstream drift prevents a needle
+  from matching.
+- Patch reports are written for installs/rebuilds. Upstream-build CI fails for
+  required upstream patches that are missing or skipped and for every
+  `failed-integrity` status.
 - Do not recreate deleted compatibility barrels such as
   `scripts/patches/main-process.js`, `webview-assets.js`, or `shared.js`.
 - Feature patching uses only `entrypoints.patchDescriptors`. Removed feature
