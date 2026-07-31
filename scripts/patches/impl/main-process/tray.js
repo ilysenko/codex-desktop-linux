@@ -189,12 +189,11 @@ function applyLinuxBuildInfoTrayPatch(currentSource) {
   }
   const trayMenuRegex = /getNativeTrayMenuItems\(\)\{[^]*?return\[/g;
   const classRegex = /var [A-Za-z_$][\w$]*=class\{[^]*?getNativeTrayMenuItems\(\)\{[^]*?return\[/;
-  const helpMenuPattern = /\{role:`help`,id:[A-Za-z_$][\w$]*\.bn\.help,submenu:\[/;
-  const currentHelpMenuPattern = /\{role:`help`,id:[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.help,submenu:\[/;
+  const helpMenuPattern = /role:`help`,id:[A-Za-z_$][\w$]*\.help,submenu:\[/;
   const helperInsertionIndex = findLinuxBuildInfoHelperInsertionIndex(
     currentSource,
     currentSource.match(classRegex),
-    currentSource.match(helpMenuPattern) ?? currentSource.match(currentHelpMenuPattern),
+    currentSource.match(helpMenuPattern),
   );
   const canInstallHelper = hasHelper || helperInsertionIndex != null;
   const trayMenuMatch = patchedSource.match(trayMenuRegex);
@@ -210,9 +209,9 @@ function applyLinuxBuildInfoTrayPatch(currentSource) {
     changed = true;
   }
 
-  const helpMenuRegex = /\{role:`help`,id:[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.help,submenu:\[/g;
+  const helpMenuRegex = /role:`help`,id:[A-Za-z_$][\w$]*\.help,submenu:\[/g;
   if (
-    !/\{role:`help`,id:[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.help,submenu:\[\.\.\.process\.platform===`linux`\?\[\{label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],/.test(patchedSource)
+    !/role:`help`,id:[A-Za-z_$][\w$]*\.help,submenu:\[\.\.\.process\.platform===`linux`\?\[\{label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],/.test(patchedSource)
   ) {
     if (canInstallHelper) {
       let patchedHelpMenu = false;
@@ -238,7 +237,7 @@ function applyLinuxBuildInfoTrayPatch(currentSource) {
   }
 
   const classMatch = patchedSource.match(classRegex);
-  const helpMenuMatch = patchedSource.match(helpMenuPattern) ?? patchedSource.match(currentHelpMenuPattern);
+  const helpMenuMatch = patchedSource.match(helpMenuPattern);
   const helperIndex = findLinuxBuildInfoHelperInsertionIndex(patchedSource, classMatch, helpMenuMatch);
   if (helperIndex == null) {
     console.warn("WARN: Could not find build info helper insertion point — skipping Linux build info patch");

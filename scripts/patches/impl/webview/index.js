@@ -702,7 +702,7 @@ function hasCompleteLinuxBrowserUseWebviewRemountStorePatch(source) {
     source.includes("for(let e of this.linuxBrowserUseRecoveryStates.keys())") &&
     source.includes("this.linuxBrowserUseRecoveryStates.clear()") &&
     source.includes("this.linuxBrowserUseRecoveryStates.set(") &&
-    (source.match(/linuxBrowserUseRecoveryStates\.delete\(/gu) ?? []).length >= 7
+    (source.match(/linuxBrowserUseRecoveryStates\.delete\(/gu) ?? []).length >= 6
   );
 }
 
@@ -734,9 +734,12 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
       /this\.snapshots\.get\(([A-Za-z_$][\w$]*)\(/u,
     )?.[1];
   const activeMethodMatch =
-    /setBrowserUseActive\(([A-Za-z_$][\w$]*),\.\.\.([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=typeof \2\[0\]==`boolean`\?([A-Za-z_$][\w$]*)\(\1,void 0\):\2\[0\],([A-Za-z_$][\w$]*)=typeof \2\[0\]==`boolean`\?\2\[0\]:\2\[1\],/u.exec(
-      classSource,
-    );
+    keyHelper == null
+      ? null
+      : new RegExp(
+          `setBrowserUseActive\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{let ([A-Za-z_$][\\w$]*)=${escapeRegExp(keyHelper)}\\(\\1,\\2\\),`,
+          "u",
+        ).exec(classSource);
   const removeTabMatch =
     keyHelper == null
       ? null
@@ -755,10 +758,6 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
           `releaseBrowserUseTab\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{let ([A-Za-z_$][\\w$]*)=${escapeRegExp(keyHelper)}\\(\\1,\\2\\),`,
           "u",
         ).exec(classSource);
-  const siblingDeactivateMatch =
-    /for\(let ([A-Za-z_$][\w$]*) of Array\.from\(this\.browserUseActiveTabKeys\)\)\{if\(\1===([A-Za-z_$][\w$]*)\|\|!\1\.startsWith\(([A-Za-z_$][\w$]*)\)\)continue;this\.browserUseActiveTabKeys\.delete\(\1\);let /u.exec(
-      classSource,
-    );
   const reassociateMethodIndex = classSource.indexOf("reassociateTabState(");
   const reassociateMethodOpenIndex =
     reassociateMethodIndex === -1
@@ -798,7 +797,6 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     removeTabMatch == null ||
     removeConversationTabsMatch == null ||
     releaseBrowserUseTabMatch == null ||
-    siblingDeactivateMatch == null ||
     reassociateKeysMatch == null ||
     reassociateStateMatch == null ||
     disposeAllMatch == null ||
@@ -815,13 +813,12 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
   const [
     activeMethodNeedle,
     activeConversationVar,
-    activeArgsVar,
     activeBrowserTabVar,
-    activeDefaultTabHelper,
     activeValueVar,
+    activeKeyVar,
   ] = activeMethodMatch;
   const activeMethodPatch =
-    `setBrowserUseActive(${activeConversationVar},...${activeArgsVar}){let ${activeBrowserTabVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeDefaultTabHelper}(${activeConversationVar},void 0):${activeArgsVar}[0],${activeValueVar}=typeof ${activeArgsVar}[0]==\`boolean\`?${activeArgsVar}[0]:${activeArgsVar}[1];${activeValueVar}||this.linuxBrowserUseRecoveryStates.delete(${keyHelper}(${activeConversationVar},${activeBrowserTabVar}));let `;
+    `setBrowserUseActive(${activeConversationVar},${activeBrowserTabVar},${activeValueVar}){let ${activeKeyVar}=${keyHelper}(${activeConversationVar},${activeBrowserTabVar});${activeValueVar}||this.linuxBrowserUseRecoveryStates.delete(${activeKeyVar});let `;
   const method = `linuxStartWebviewRecovery(e,t,n){let r=${keyHelper}(e,t),i=this.linuxBrowserUseRecoveryStates.get(r);return i??(i={attempt:0,deadlineAt:n},this.linuxBrowserUseRecoveryStates.set(r,i)),i}linuxCompleteWebviewRecovery(e,t,n){let r=${keyHelper}(e,t);this.webviews.get(r)===n&&this.linuxBrowserUseRecoveryStates.delete(r)}linuxFailWebviewRecovery(e,t,n){let r=${keyHelper}(e,t);this.webviews.get(r)===n&&this.linuxBrowserUseRecoveryStates.set(r,{attempt:2,deadlineAt:null})}linuxRemountWebview(e,t,n,r){let i=${keyHelper}(e,t),a=this.linuxBrowserUseRecoveryStates.get(i);if(a?.attempt>=1)return{started:!1,state:a};if(this.webviews.get(i)!==n)return null;let o={attempt:1,deadlineAt:r};return this.linuxBrowserUseRecoveryStates.set(i,o),this.disposeWebviewHost(e,t,i,\`web\`),this.emitChange(),{started:!0,state:o}}`;
   const [
     removeTabNeedle,
@@ -844,11 +841,6 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
   const releaseBrowserUseTabPatch =
     `releaseBrowserUseTab(${releaseConversationVar},${releaseBrowserTabVar}){let ${releaseKeyVar}=${keyHelper}(${releaseConversationVar},${releaseBrowserTabVar});` +
     `this.linuxBrowserUseRecoveryStates.delete(${releaseKeyVar});let `;
-  const [siblingDeactivateNeedle, siblingKeyVar] = siblingDeactivateMatch;
-  const siblingDeactivatePatch = siblingDeactivateNeedle.replace(
-    ";let ",
-    `;this.linuxBrowserUseRecoveryStates.delete(${siblingKeyVar});let `,
-  );
   const reassociateStateNeedle = reassociateStateMatch[0];
   const reassociateStateVar = reassociateStateMatch[1];
   const reassociateSourceKeyVar = reassociateKeysMatch[1];
@@ -868,7 +860,6 @@ function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
     .replace(removeTabNeedle, removeTabPatch)
     .replace(removeConversationNeedle, removeConversationPatch)
     .replace(releaseBrowserUseTabNeedle, releaseBrowserUseTabPatch)
-    .replace(siblingDeactivateNeedle, siblingDeactivatePatch)
     .replace(reassociateStateNeedle, reassociateStatePatch)
     .replace(disposeAllMatch[0], disposeAllPatch);
   if (!hasCompleteLinuxBrowserUseWebviewRemountStorePatch(patchedClass)) {
@@ -997,68 +988,6 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
   return (
     `${currentSource.slice(0, match.index)}${helperSource}` +
     `${patchedComponent}${currentSource.slice(closeBraceIndex + 1)}`
-  );
-}
-
-function applyLinuxBrowserUseHiddenHostOwnershipPatch(currentSource) {
-  const keyMatch = /browserUseTabIdsKey:([A-Za-z_$][\w$]*)/u.exec(currentSource);
-  if (keyMatch == null) {
-    console.warn(
-      "WARN: Could not find hidden Browser Use host tab ownership key — skipping Linux inactive-route host patch",
-    );
-    return currentSource;
-  }
-
-  const browserUseTabIdsKeyVar = keyMatch[1];
-  const componentStartIndex = currentSource.lastIndexOf("function ", keyMatch.index);
-  const componentOpenIndex = currentSource.indexOf("{", componentStartIndex);
-  const componentCloseIndex =
-    componentOpenIndex === -1
-      ? -1
-      : findMatchingBrace(currentSource, componentOpenIndex);
-  const componentSource =
-    componentStartIndex === -1 || componentCloseIndex === -1
-      ? ""
-      : currentSource.slice(componentStartIndex, componentCloseIndex + 1);
-  const parsedTabIdsMatch = new RegExp(
-    `${escapeRegExp(browserUseTabIdsKeyVar)}\\.split\\(\`\\\\0\`\\)\\.map\\(([A-Za-z_$][\\w$]*)\\)\\.filter`,
-    "u",
-  ).exec(componentSource);
-  const guardMatch =
-    /if\(!([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\.size>0(?:&&([A-Za-z_$][\w$]*)\.split\(`\\0`\)\.map\(([A-Za-z_$][\w$]*)\)\.every\(([A-Za-z_$][\w$]*)=>\2\.has\(\5\)\))?\)return null;/u.exec(
-      componentSource,
-    );
-
-  if (
-    guardMatch != null &&
-    guardMatch[3] === browserUseTabIdsKeyVar &&
-    guardMatch[4] === parsedTabIdsMatch?.[1]
-  ) {
-    return currentSource;
-  }
-  if (
-    componentStartIndex === -1 ||
-    componentCloseIndex === -1 ||
-    parsedTabIdsMatch == null ||
-    guardMatch == null
-  ) {
-    console.warn(
-      "WARN: Could not find hidden Browser Use host ownership guard — skipping Linux inactive-route host patch",
-    );
-    return currentSource;
-  }
-
-  const [guardNeedle, routeOwnerVar, visibleTabIdsVar] = guardMatch;
-  const parseBrowserTabIdVar = parsedTabIdsMatch[1];
-  const visibleTabIdVar = "codexLinuxBrowserUseTabId";
-  const guardPatch =
-    `if(!${routeOwnerVar}&&${visibleTabIdsVar}.size>0&&` +
-    `${browserUseTabIdsKeyVar}.split(\`\\0\`).map(${parseBrowserTabIdVar}).every(` +
-    `${visibleTabIdVar}=>${visibleTabIdsVar}.has(${visibleTabIdVar})))return null;`;
-  const patchedComponent = componentSource.replace(guardNeedle, guardPatch);
-  return (
-    `${currentSource.slice(0, componentStartIndex)}${patchedComponent}` +
-    `${currentSource.slice(componentCloseIndex + 1)}`
   );
 }
 
@@ -1246,7 +1175,7 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
 const AUTOMATION_UPDATE_EAGER_MARKER_PATTERN =
   /[A-Za-z_$][\w$]*\.name===`automation_update`&&delete [A-Za-z_$][\w$]*\.deferLoading/u;
 const AUTOMATION_UPDATE_DYNAMIC_TOOLS_PATTERN =
-  /\.map\(([A-Za-z_$][\w$]*)=>\(\{type:`function`,\.\.\.\1,\.\.\.([A-Za-z_$][\w$]*)\.has\(\1\.name\)\?\{\}:\{deferLoading:!0\}\}\)\)/u;
+  /\.map\(([A-Za-z_$][\w$]*)=>\(\{type:`function`,\.\.\.\1,\.\.\.([A-Za-z_$][\w$]*)&&!([A-Za-z_$][\w$]*)\.has\(\1\.name\)\?\{deferLoading:!0\}:\{\}\}\)\)/u;
 
 function matchesAutomationUpdateEagerToolContract(currentSource) {
   return (
@@ -1271,9 +1200,9 @@ function applyAutomationUpdateEagerToolPatch(currentSource) {
 
   return currentSource.replace(
     AUTOMATION_UPDATE_DYNAMIC_TOOLS_PATTERN,
-    (_match, toolVar, eagerToolsVar) => {
+    (_match, toolVar, namespaceFlagVar, eagerToolsVar) => {
       const descriptorVar = toolVar === "t" ? "codexLinuxAutomationDescriptor" : "t";
-      return `.map(${toolVar}=>{let ${descriptorVar}={type:\`function\`,...${toolVar},...${eagerToolsVar}.has(${toolVar}.name)?{}:{deferLoading:!0}};return ${toolVar}.name===\`automation_update\`&&delete ${descriptorVar}.deferLoading,${descriptorVar}})`;
+      return `.map(${toolVar}=>{let ${descriptorVar}={type:\`function\`,...${toolVar},...${namespaceFlagVar}&&!${eagerToolsVar}.has(${toolVar}.name)?{deferLoading:!0}:{}};return ${toolVar}.name===\`automation_update\`&&delete ${descriptorVar}.deferLoading,${descriptorVar}})`;
     },
   );
 }
@@ -1701,13 +1630,13 @@ function applyLocalEnvironmentActionModalDraftPatch(currentSource) {
 
 function applyBrowserAnnotationScreenshotPatch(currentSource) {
   const storedAnchorRegex =
-    /if\([A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\?\.annotation\.anchor\.kind===`element`\)\{[^;{}]+;let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\1\.annotation\.anchor\);([A-Za-z_$][\w$]*)=void 0,/;
+    /if\([A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\?\.annotation\.anchor\.kind===`element`\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\1\.annotation\.anchor\);([A-Za-z_$][\w$]*)=void 0,/;
   if (storedAnchorRegex.test(currentSource)) {
     return currentSource;
   }
 
   const liveAnchorRegex =
-    /(if\([A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\?\.annotation\.anchor\.kind===`element`\)\{[^;{}]+;)let e=([A-Za-z_$][\w$]*)==null\?null:[A-Za-z_$][\w$]*\(\3\),([A-Za-z_$][\w$]*)=e\?\.rect\?\?([A-Za-z_$][\w$]*)\(\2\.annotation\.anchor\);([A-Za-z_$][\w$]*)=e\?\.borderRadius,/;
+    /(if\([A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\?\.annotation\.anchor\.kind===`element`\)\{)let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)==null\?null:[A-Za-z_$][\w$]*\(\4\),([A-Za-z_$][\w$]*)=\3\?\.rect\?\?([A-Za-z_$][\w$]*)\(\2\.annotation\.anchor\);([A-Za-z_$][\w$]*)=\3\?\.borderRadius,/;
   const match = currentSource.match(liveAnchorRegex);
   if (match == null) {
     console.warn(
@@ -1716,7 +1645,7 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
     return currentSource;
   }
 
-  const [, prefix, selectedAnnotationVar, , rectVar, anchorRectFn, radiusVar] = match;
+  const [, prefix, selectedAnnotationVar, , , rectVar, anchorRectFn, radiusVar] = match;
   return currentSource.replace(
     liveAnchorRegex,
     `${prefix}let ${rectVar}=${anchorRectFn}(${selectedAnnotationVar}.annotation.anchor);${radiusVar}=void 0,`,
@@ -2281,7 +2210,6 @@ module.exports = {
   applyLinuxChatSearchHydrationPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
-  applyLinuxBrowserUseHiddenHostOwnershipPatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,

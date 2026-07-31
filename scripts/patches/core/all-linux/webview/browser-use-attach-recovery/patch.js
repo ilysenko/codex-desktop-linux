@@ -4,7 +4,6 @@ const {
   webviewAssetPatch,
 } = require("../../../../descriptor.js");
 const {
-  applyLinuxBrowserUseHiddenHostOwnershipPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
 } = require("../../../../impl/webview/index.js");
@@ -29,15 +28,5 @@ module.exports = [
     missingDescription: "Browser sidebar retained-webview host bundle",
     skipDescription: "Linux Browser sidebar attachment recovery host patch",
     apply: applyLinuxBrowserUseWebviewHostRecoveryPatch,
-  }),
-  webviewAssetPatch({
-    id: "linux-browser-use-hidden-host-ownership",
-    phase: "webview-asset",
-    order: 1096,
-    ciPolicy: "optional",
-    pattern: /^browser-sidebar-hidden-browser-use-webview-host-[^.]+\.js$/,
-    missingDescription: "Browser Use hidden-webview host bundle",
-    skipDescription: "Linux inactive-route Browser Use host ownership patch",
-    apply: applyLinuxBrowserUseHiddenHostOwnershipPatch,
   }),
 ];
