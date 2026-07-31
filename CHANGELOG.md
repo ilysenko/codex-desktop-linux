@@ -35,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The opt-in shallow repository watcher now patches both current app bundles
+  and routes the Linux Parcel working-tree path through the same shallow host,
+  restoring bounded watches on the latest upstream DMG.
 - Open Target Discovery now resolves the selected Linux editor or terminal
   through the current private open-target command path. Command-path drift is
   reported before the feature changes the main bundle, so enabled-feature

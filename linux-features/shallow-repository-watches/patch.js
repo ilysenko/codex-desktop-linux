@@ -4,15 +4,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const PATCH_MARKER = "codexLinuxShallowRepositoryWatches";
+const PARCEL_WATCH_MARKER = "codexLinuxShallowParcelWorkingTreeWatch";
 const LOCAL_FILE_WATCH_METHOD =
   /async startFileWatch\((?<options>[A-Za-z_$][\w$]*)\)\{(?=let [^{}]{0,180}?await this\.platformPath\(\),[^{}]{0,180}?\(0,[A-Za-z_$][\w$]*\.watch\)\(this\.getFileSystemPath\(\k<options>\.path\),\{recursive:\k<options>\.recursive\})/gu;
+const PARCEL_WORKING_TREE_WATCH =
+  /process\.platform===`linux`\?[A-Za-z_$][\w$]*\((?<options>[A-Za-z_$][\w$]*),\{ignoredPaths:\[[A-Za-z_$][\w$]*\.posix\.join\(\k<options>\.path,`\.git`\)\]\}\):(?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
 
 function patchWorkerSource(source) {
   const markerCount = source.split(PATCH_MARKER).length - 1;
-  if (markerCount === 1) {
-    return { source, matched: 1, changed: 0, reason: null };
-  }
-  if (markerCount !== 0) {
+  if (markerCount > 1) {
     return {
       source,
       matched: 0,
@@ -21,102 +21,142 @@ function patchWorkerSource(source) {
     };
   }
 
-  LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
-  const matches = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)];
-  if (matches.length !== 1) {
+  let patchedSource = source;
+  let changed = 0;
+  if (markerCount === 0) {
+    LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
+    const matches = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)];
+    if (matches.length !== 1) {
+      return {
+        source,
+        matched: 0,
+        changed: 0,
+        reason: `Found ${matches.length} local startFileWatch implementations`,
+      };
+    }
+
+    const match = matches[0];
+    const optionsName = match.groups.options;
+    const branch =
+      `if(process.platform===\`linux\`&&${optionsName}.recursive){` +
+      `/*${PATCH_MARKER}*/` +
+      `${optionsName}={...${optionsName},recursive:!1}}`;
+    const methodStart = match.index + match[0].length;
+    patchedSource = source.slice(0, methodStart) + branch + source.slice(methodStart);
+    changed = 1;
+  }
+
+  const parcelMarkerCount = patchedSource.split(PARCEL_WATCH_MARKER).length - 1;
+  PARCEL_WORKING_TREE_WATCH.lastIndex = 0;
+  const parcelMatches = [...patchedSource.matchAll(PARCEL_WORKING_TREE_WATCH)];
+  if (
+    parcelMarkerCount > 1 ||
+    parcelMatches.length > 1 ||
+    (parcelMarkerCount > 0 && parcelMatches.length > 0)
+  ) {
     return {
       source,
       matched: 0,
       changed: 0,
-      reason: `Found ${matches.length} local startFileWatch implementations`,
+      reason:
+        `Found ${parcelMatches.length} Parcel working-tree watch branches and ` +
+        `${parcelMarkerCount} markers`,
     };
   }
-
-  const match = matches[0];
-  const optionsName = match.groups.options;
-  const branch =
-    `if(process.platform===\`linux\`&&${optionsName}.recursive){` +
-    `/*${PATCH_MARKER}*/` +
-    `${optionsName}={...${optionsName},recursive:!1}}`;
-  const methodStart = match.index + match[0].length;
+  const finalSource = parcelMatches.length === 0
+    ? patchedSource
+    : patchedSource.replace(
+      PARCEL_WORKING_TREE_WATCH,
+      `/*${PARCEL_WATCH_MARKER}*/$<host>.startFileWatch($<options>)`,
+    );
+  if (parcelMatches.length === 1) changed = 1;
   return {
-    source: source.slice(0, methodStart) + branch + source.slice(methodStart),
+    source: finalSource,
     matched: 1,
-    changed: 1,
+    changed,
     reason: null,
   };
 }
 
-function findLocalFileWatchBundle(extractedDir) {
+function findLocalFileWatchBundles(extractedDir) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   if (!fs.existsSync(buildDir)) {
-    return { target: null, result: null, reason: ".vite/build directory not found" };
+    return { candidates: [], reason: ".vite/build directory not found" };
   }
 
   const bundlePaths = fs.readdirSync(buildDir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
     .map((entry) => path.join(buildDir, entry.name))
     .sort();
-  const patched = [];
-  const raw = [];
+  const candidates = [];
 
   for (const bundlePath of bundlePaths) {
     const source = fs.readFileSync(bundlePath, "utf8");
     const markerCount = source.split(PATCH_MARKER).length - 1;
-    if (markerCount > 0) {
-      patched.push({ bundlePath, result: patchWorkerSource(source) });
-      continue;
-    }
+    const parcelMarkerCount = source.split(PARCEL_WATCH_MARKER).length - 1;
     LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
-    const matches = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)].length;
-    if (matches > 0) raw.push({ bundlePath, matches, source });
-  }
-
-  if (patched.length > 0) {
-    if (patched.length !== 1 || raw.length !== 0) {
-      return {
-        target: null,
-        result: null,
-        reason:
-          `Found shallow-watch markers in ${patched.length} bundles and ` +
-          `${raw.length} unpatched bundles`,
-      };
+    const matchCount = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)].length;
+    PARCEL_WORKING_TREE_WATCH.lastIndex = 0;
+    const parcelMatchCount = [...source.matchAll(PARCEL_WORKING_TREE_WATCH)].length;
+    if (markerCount > 0 || matchCount > 0 || parcelMarkerCount > 0 || parcelMatchCount > 0) {
+      candidates.push({
+        bundlePath,
+        markerCount,
+        matchCount,
+        parcelMarkerCount,
+        parcelMatchCount,
+        source,
+      });
     }
-    return {
-      target: patched[0].bundlePath,
-      result: patched[0].result,
-      reason: patched[0].result.reason,
-    };
   }
 
-  const rawMatchCount = raw.reduce((total, candidate) => total + candidate.matches, 0);
-  if (raw.length !== 1 || rawMatchCount !== 1) {
+  const rawMatchCount = candidates.reduce((total, candidate) => total + candidate.matchCount, 0);
+  const markerCount = candidates.reduce((total, candidate) => total + candidate.markerCount, 0);
+  const parcelContractCount = candidates.reduce(
+    (total, candidate) => total + candidate.parcelMatchCount + candidate.parcelMarkerCount,
+    0,
+  );
+  if (
+    candidates.length !== 2 ||
+    !((rawMatchCount === 2 && markerCount === 0) || (rawMatchCount === 0 && markerCount === 2)) ||
+    parcelContractCount !== 1
+  ) {
     return {
-      target: null,
-      result: null,
+      candidates: [],
       reason:
-        `Found ${rawMatchCount} local startFileWatch implementations across ` +
-        `${bundlePaths.length} build bundles`,
+        `Found ${rawMatchCount} local startFileWatch implementations, ${markerCount} markers, ` +
+        `and ${parcelContractCount} Parcel working-tree branches across ` +
+        `${candidates.length} candidate bundles`,
     };
   }
-  const result = patchWorkerSource(raw[0].source);
-  return { target: raw[0].bundlePath, result, reason: result.reason };
+  return { candidates, reason: null };
 }
 
 function patchWorker(extractedDir) {
-  const discovery = findLocalFileWatchBundle(extractedDir);
-  if (discovery.target == null || discovery.result?.matched !== 1) {
-    const reason = discovery.reason ?? "Local startFileWatch implementation not found";
+  const discovery = findLocalFileWatchBundles(extractedDir);
+  if (discovery.candidates.length !== 2) {
+    const reason = discovery.reason ?? "Local startFileWatch implementations not found";
     console.warn(`WARN: ${reason} - skipping shallow repository-watch feature`);
-    return { matched: discovery.result?.matched ?? 0, changed: 0, reason };
+    return { matched: 0, changed: 0, reason };
   }
-  const result = discovery.result;
-  if (result.changed === 1) fs.writeFileSync(discovery.target, result.source, "utf8");
+  const results = discovery.candidates.map((candidate) => ({
+    bundlePath: candidate.bundlePath,
+    result: patchWorkerSource(candidate.source),
+  }));
+  const failed = results.find(({ result }) => result.matched !== 1);
+  if (failed != null) {
+    const reason = failed.result.reason ?? "Local startFileWatch implementation not patched";
+    console.warn(`WARN: ${reason} - skipping shallow repository-watch feature`);
+    return { matched: 0, changed: 0, reason };
+  }
+  for (const { bundlePath, result } of results) {
+    if (result.changed === 1) fs.writeFileSync(bundlePath, result.source, "utf8");
+  }
   return {
-    matched: result.matched,
-    changed: result.changed,
-    reason: result.reason,
-    target: path.relative(extractedDir, discovery.target),
+    matched: results.length,
+    changed: results.reduce((total, { result }) => total + result.changed, 0),
+    reason: null,
+    targets: results.map(({ bundlePath }) => path.relative(extractedDir, bundlePath)),
   };
 }
 
@@ -128,19 +168,20 @@ const descriptors = [
     ciPolicy: "optional",
     apply: patchWorker,
     status: (result, warnings) => {
-      if (result?.matched !== 1) {
+      if (result?.matched !== 2) {
         return { status: "skipped-optional", reason: result?.reason ?? warnings[0] ?? null };
       }
-      return result.changed === 1 ? "applied" : "already-applied";
+      return result.changed > 0 ? "applied" : "already-applied";
     },
   },
 ];
 
 module.exports = {
   LOCAL_FILE_WATCH_METHOD,
+  PARCEL_WATCH_MARKER,
   PATCH_MARKER,
   descriptors,
-  findLocalFileWatchBundle,
+  findLocalFileWatchBundles,
   patchWorker,
   patchWorkerSource,
 };
