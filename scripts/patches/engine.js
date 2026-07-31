@@ -183,9 +183,9 @@ function describePatchError(descriptor, error) {
   return `Patch '${descriptor.id}' threw: ${message}`;
 }
 
-// Runs a descriptor's apply function so that a throw never escapes the engine.
-// Ordinary errors follow ciPolicy; PatchIntegrityError is always fatal because
-// the patch could not prove that a failed mutation restored the original bytes.
+// Runs a descriptor's apply function so ordinary errors can follow ciPolicy.
+// PatchIntegrityError is recorded by the caller and then rethrown because the
+// patch could not prove that a failed mutation restored the original bytes.
 // Strategy telemetry recorded during the apply is drained into the result so
 // it can be attributed to this descriptor's report entry.
 function runDescriptorApply(descriptor, fn, fallbackValue) {
@@ -249,6 +249,12 @@ function recordDescriptorError(report, descriptor, error, context, strategies = 
   );
 }
 
+function rethrowPatchIntegrityError(error) {
+  if (isPatchIntegrityError(error)) {
+    throw error;
+  }
+}
+
 function descriptorAppliesTo(descriptor, context) {
   if (descriptor.appliesTo == null) {
     return true;
@@ -294,6 +300,8 @@ function applyMainBundlePatchDescriptors(source, descriptors, context, report) {
     context.reportWarnings = result.warnings;
     if (result.error != null) {
       recordDescriptorError(report, descriptor, result.error, context, result.strategies);
+      delete context.reportWarnings;
+      rethrowPatchIntegrityError(result.error);
     } else {
       recordDescriptorPatch(
         report,
@@ -387,6 +395,8 @@ function applyWebviewAssetPatchDescriptors(extractedDir, descriptors, context, r
     if (error != null) {
       warnings.push(`WARN: ${describePatchError(descriptor, error)}`);
       recordDescriptorError(report, descriptor, error, context, strategies);
+      delete context.reportWarnings;
+      rethrowPatchIntegrityError(error);
     } else {
       recordAssetDescriptorPatch(report, descriptor, result, warnings, context, strategies);
     }
@@ -418,6 +428,7 @@ function applyExtractedAppPatchDescriptors(extractedDir, descriptors, context, r
       warnings.push(`WARN: ${describePatchError(descriptor, error)}`);
       recordDescriptorError(report, descriptor, error, context, strategies);
       delete context.reportWarnings;
+      rethrowPatchIntegrityError(error);
       continue;
     }
     const statusResult = typeof descriptor.status === "function"

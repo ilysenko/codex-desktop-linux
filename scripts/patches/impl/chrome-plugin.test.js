@@ -318,14 +318,17 @@ test("blocks acceptance when Chrome runtime rollback cannot restore bytes", () =
       apply: applyWithRollbackFailure,
     };
     const report = createPatchReport();
-    captureWarns(() =>
-      applyExtractedAppPatchDescriptors(
-        candidate.extractedDir,
-        [descriptor],
-        {},
-        report,
-        descriptor.phase,
+    assert.throws(
+      () => captureWarns(() =>
+        applyExtractedAppPatchDescriptors(
+          candidate.extractedDir,
+          [descriptor],
+          {},
+          report,
+          descriptor.phase,
+        ),
       ),
+      (error) => error?.code === "PATCH_INTEGRITY_FAILURE",
     );
     const [failure] = criticalFailuresFromReport(report);
     assert.equal(failure?.name, descriptor.id);

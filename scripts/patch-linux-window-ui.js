@@ -10,6 +10,9 @@ const {
   patchExtractedApp,
 } = require("./patches/runner.js");
 const {
+  isPatchIntegrityError,
+} = require("./patches/integrity-error.js");
+const {
   createInventory,
   findPostPatchIntegrityFindings,
 } = require("./lib/upstream-dmg-intel.js");
@@ -50,7 +53,15 @@ function main() {
 
   // Enforcement needs the report data even when no --report-json was requested.
   const report = reportJson == null && !enforceCritical ? null : createPatchReport();
-  patchExtractedApp(extractedDir, { report });
+  let integrityError = null;
+  try {
+    patchExtractedApp(extractedDir, { report });
+  } catch (error) {
+    if (!isPatchIntegrityError(error)) {
+      throw error;
+    }
+    integrityError = error;
+  }
   if (report != null) {
     const inventory = createInventory({ sourcePath: extractedDir });
     const findings = findPostPatchIntegrityFindings(inventory);
@@ -62,6 +73,11 @@ function main() {
   }
   // Write the report before gating so CI artifact upload sees it even on failure.
   writePatchReport(reportJson, report);
+
+  if (integrityError != null) {
+    console.error(`Patch integrity failure: ${integrityError.message}`);
+    process.exit(1);
+  }
 
   if (enforceCritical) {
     const failures = criticalFailuresFromReport(report);
