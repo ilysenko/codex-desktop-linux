@@ -21,6 +21,7 @@ const {
   applyFramelessTitlebarMainPatch,
   applyFramelessTitlebarOverlaySyncPatch,
   applyFramelessTitlebarWebviewPatch,
+  applyFramelessTitlebarWebviewTransforms,
 } = require("./patch.js");
 
 const CORE_CONTEXT = {
@@ -156,7 +157,13 @@ test("frameless-titlebar removes current Linux overlay controls from primary and
   ].join("");
   let patched;
   const warnings = captureWarnings(() => {
-    patched = applyPatchTwice(applyFramelessTitlebarMainPatch, source);
+    patched = applyPatchTwice(
+      (currentSource) =>
+        applyFramelessTitlebarOverlaySyncPatch(
+          applyFramelessTitlebarBranchPatch(currentSource),
+        ),
+      source,
+    );
   });
 
   assert.deepEqual(warnings, []);
@@ -189,6 +196,33 @@ test("frameless-titlebar removes current Linux overlay controls from primary and
     /n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:codexLinuxTitleBarOverlay/,
   );
   assert.doesNotMatch(patched, /process\.platform===`linux`[^;]{0,300}setTitleBarOverlay/);
+});
+
+test("frameless-titlebar descriptors require their completed core owners", () => {
+  const mainSource =
+    "case`primary`:return n===`linux`?{titleBarStyle:`hidden`}:{};";
+  const webviewSource =
+    "applicationMenu:Object.freeze({left:0,right:138})";
+
+  assert.deepEqual(
+    captureWarnings(() => {
+      assert.equal(applyFramelessTitlebarMainPatch(mainSource), mainSource);
+    }),
+    [
+      "WARN: Could not find completed Linux native titlebar patch for frameless composition - leaving bundle unchanged",
+    ],
+  );
+  assert.deepEqual(
+    captureWarnings(() => {
+      assert.equal(
+        applyFramelessTitlebarWebviewPatch(webviewSource),
+        webviewSource,
+      );
+    }),
+    [
+      "WARN: Could not find completed Linux window-controls safe-area patch for frameless composition - leaving asset unchanged",
+    ],
+  );
 });
 
 test("frameless-titlebar composes with the current native-titlebar patch shape", () => {
@@ -310,8 +344,8 @@ test("frameless-titlebar maps Linux window controls chrome to native webview lay
     "function usesChrome(){return document.documentElement.dataset.codexWindowChrome===`application-menu`}",
   ].join("");
 
-  const patchedLayout = applyPatchTwice(applyFramelessTitlebarWebviewPatch, layoutSource);
-  const patchedChrome = applyPatchTwice(applyFramelessTitlebarWebviewPatch, chromeSource);
+  const patchedLayout = applyPatchTwice(applyFramelessTitlebarWebviewTransforms, layoutSource);
+  const patchedChrome = applyPatchTwice(applyFramelessTitlebarWebviewTransforms, chromeSource);
 
   assert.equal(
     (patchedLayout.match(/applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/g) ?? []).length,
@@ -327,7 +361,7 @@ test("frameless-titlebar maps Linux window controls chrome to native webview lay
 test("frameless-titlebar retains standard end padding after the core safe-area patch", () => {
   assert.equal(
     applyPatchTwice(
-      applyFramelessTitlebarWebviewPatch,
+      applyFramelessTitlebarWebviewTransforms,
       "jsx(slot,{codexLinuxUseWindowControlsSafeArea:!t,side:`end`})",
     ),
     "jsx(slot,{codexLinuxUseWindowControlsSafeArea:!1,side:`end`})",
@@ -445,7 +479,7 @@ test("frameless-titlebar reports each current webview sub-contract drift", () =>
     "let newer=i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??eV.appMenu:eV.default;",
   ].join("");
 
-  const warnings = captureWarnings(() => applyFramelessTitlebarWebviewPatch(source));
+  const warnings = captureWarnings(() => applyFramelessTitlebarWebviewTransforms(source));
 
   assert.deepEqual(warnings, [
     "WARN: Could not find application menu browser gate - skipping frameless webview platform patch",
@@ -455,13 +489,13 @@ test("frameless-titlebar reports each current webview sub-contract drift", () =>
     "function chrome(e){switch(e){case`win32`:return`application-menu`;case`linux`:return`overlay-v2`;default:return`native`}}",
     "function usesChrome(){return document.documentElement.dataset.codexWindowChrome===`application-menu`}",
   ].join("");
-  assert.deepEqual(captureWarnings(() => applyFramelessTitlebarWebviewPatch(chromeDrift)), [
+  assert.deepEqual(captureWarnings(() => applyFramelessTitlebarWebviewTransforms(chromeDrift)), [
     "WARN: Could not find Linux window controls chrome mapping - skipping frameless webview chrome patch",
   ]);
 
   assert.deepEqual(
     captureWarnings(() =>
-      applyFramelessTitlebarWebviewPatch(
+      applyFramelessTitlebarWebviewTransforms(
         "jsx(slot,{codexLinuxUseWindowControlsSafeArea:shouldReserveControls,side:`end`})",
       )),
     ["WARN: Could not disable the Linux window controls safe area - skipping frameless header padding patch"],
