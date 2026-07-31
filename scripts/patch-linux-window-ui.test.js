@@ -1629,6 +1629,17 @@ function currentSettingsPersistenceBundleFixture() {
   ].join("");
 }
 
+function exactDmgSettingsPersistenceBundleFixture() {
+  // fb93a239c811: an earlier core patch introduces a function-local fs alias
+  // before upstream's top-level window-all-closed, path, and fs bindings.
+  return [
+    "function codexLinuxBrowserUseSocketDir(){let r=require(`node:fs`);return r}",
+    "const r=require(\"./window-all-closed-Coc41Tfs.js\");",
+    "let p=require(\"node:path\"),_=require(\"node:fs\");",
+    "const h={\"set-global-state\":async({key:e,value:t})=>(this.setGlobalStateValue(e,t),{success:!0})};",
+  ].join("");
+}
+
 function runSettingsPersistence(patchedSource, env, key, value) {
   vm.runInNewContext(
     `${patchedSource};codexLinuxPersistSettingsState(${JSON.stringify(key)},${JSON.stringify(value)});`,
@@ -1636,7 +1647,7 @@ function runSettingsPersistence(patchedSource, env, key, value) {
       console,
       JSON,
       Promise,
-      require,
+      require: (moduleName) => moduleName === "./window-all-closed-Coc41Tfs.js" ? {} : require(moduleName),
       process: { env, platform: "linux" },
     },
   );
@@ -5193,6 +5204,37 @@ test("persists Linux settings with current setGlobalStateValue handler shape", (
     const settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
     assert.equal(settings["codex-linux-read-aloud-enabled"], true);
     assert.equal(settings["codex-linux-read-aloud-kokoro-speed"], 1.15);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("persists Linux settings with exact current DMG module alias ordering across idempotent patch passes", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-settings-exact-dmg-"));
+  try {
+    const settingsFile = path.join(tempRoot, "config", "codex-desktop", "settings.json");
+    const source = exactDmgSettingsPersistenceBundleFixture();
+    const patchedOnce = applyLinuxSettingsPersistencePatch(source);
+    const patchedTwice = applyLinuxSettingsPersistencePatch(patchedOnce);
+
+    assert.equal(patchedTwice, patchedOnce);
+    runSettingsPersistence(
+      patchedTwice,
+      { CODEX_LINUX_SETTINGS_FILE: settingsFile },
+      "codex-linux-system-tray-enabled",
+      false,
+    );
+    runSettingsPersistence(
+      patchedTwice,
+      { CODEX_LINUX_SETTINGS_FILE: settingsFile },
+      "codex-linux-warm-start-enabled",
+      true,
+    );
+
+    assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile, "utf8")), {
+      "codex-linux-system-tray-enabled": false,
+      "codex-linux-warm-start-enabled": true,
+    });
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
