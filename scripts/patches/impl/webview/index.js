@@ -259,6 +259,7 @@ function applyLinuxWindowControlsSafeAreaPatch(currentSource, context = {}) {
           LINUX_WINDOW_CONTROLS_SAFE_AREA_PATCH_ID
         ],
       enabledFeatureIds: context.enabledFeatureIds,
+      ownerMarker: LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER,
     },
   );
   if (delegation.state === "enabled") {

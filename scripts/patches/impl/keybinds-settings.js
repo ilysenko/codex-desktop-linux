@@ -818,6 +818,7 @@ function hasCompleteLinuxDesktopSettingsSource(previousSource) {
     `autoUpdateOnExit:${JSON.stringify(linuxSettingsKeys.autoUpdateOnExit)}`,
     "function codexLinuxChecked(",
     "class LinuxToggle extends React.Component",
+    "class LinuxBuildInfoPanel extends React.Component",
     "function LinuxDesktopSettings(){",
     "title:\"Linux desktop\"",
     "export{LinuxDesktopSettings,LinuxDesktopSettings as default};",

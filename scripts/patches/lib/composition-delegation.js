@@ -31,11 +31,22 @@ function patchDelegationState(
   {
     allowedFeatureIds = [],
     enabledFeatureIds = [],
+    ownerMarker = null,
   } = {},
 ) {
   const delegations = patchDelegations(source, ownerPatchId);
   if (delegations.length === 0) {
     return { state: "none", featureId: null };
+  }
+  if (
+    typeof ownerMarker === "string" &&
+    ownerMarker.length > 0 &&
+    source.includes(ownerMarker)
+  ) {
+    return {
+      state: "invalid",
+      featureId: delegations.length === 1 ? delegations[0].featureId : null,
+    };
   }
   if (delegations.length !== 1) {
     return { state: "invalid", featureId: null };

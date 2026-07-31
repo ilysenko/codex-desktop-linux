@@ -90,6 +90,7 @@ function hasCompleteFramelessTitlebarMainComposition(source) {
     {
       allowedFeatureIds: [FEATURE_ID],
       enabledFeatureIds: [FEATURE_ID],
+      ownerMarker: LINUX_NATIVE_TITLEBAR_PATCH_MARKER,
     },
   );
   if (delegation.state !== "enabled" || delegation.featureId !== FEATURE_ID) {
@@ -128,6 +129,7 @@ function applyFramelessTitlebarMainPatch(currentSource) {
     {
       allowedFeatureIds: [FEATURE_ID],
       enabledFeatureIds: [FEATURE_ID],
+      ownerMarker: LINUX_NATIVE_TITLEBAR_PATCH_MARKER,
     },
   );
   if (delegation.state !== "none") {
@@ -256,6 +258,7 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
     {
       allowedFeatureIds: [FEATURE_ID],
       enabledFeatureIds: [FEATURE_ID],
+      ownerMarker: LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER,
     },
   );
   if (delegation.state !== "none") {
@@ -309,6 +312,7 @@ function hasCompleteFramelessWindowControlsSafeAreaComposition(source) {
     {
       allowedFeatureIds: [FEATURE_ID],
       enabledFeatureIds: [FEATURE_ID],
+      ownerMarker: LINUX_WINDOW_CONTROLS_SAFE_AREA_MARKER,
     },
   );
   if (delegation.state !== "enabled" || delegation.featureId !== FEATURE_ID) {

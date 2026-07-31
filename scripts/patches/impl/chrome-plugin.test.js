@@ -243,6 +243,36 @@ test("restores current Chrome runtime assets after a write failure", () => {
   }
 });
 
+test("keeps a verified rollback fail-soft when a rollback write throws after restoring bytes", () => {
+  const candidate = createCurrentChromeNativeHostRuntimeAssetsFixture();
+  try {
+    const before = assetSources(candidate);
+    let writeCount = 0;
+    const { value, warnings } = captureWarns(() =>
+      patchLinuxChromeNativeHostRuntimeAssets(candidate.extractedDir, {
+        writeFileSync(filePath, source, encoding) {
+          writeCount += 1;
+          if (writeCount === 2) {
+            fs.writeFileSync(filePath, "partially-written", encoding);
+            throw new Error("simulated write failure");
+          }
+          fs.writeFileSync(filePath, source, encoding);
+          if (writeCount === 3) {
+            throw new Error("rollback writer threw after restoring bytes");
+          }
+        },
+      }),
+    );
+
+    assert.equal(value.changed, 0);
+    assert.match(value.reason, /Could not write current Chrome/);
+    assert.equal(warnings.length, 1);
+    assert.deepEqual(assetSources(candidate), before);
+  } finally {
+    fs.rmSync(candidate.extractedDir, { recursive: true, force: true });
+  }
+});
+
 test("blocks acceptance when Chrome runtime rollback cannot restore bytes", () => {
   const candidate = createCurrentChromeNativeHostRuntimeAssetsFixture();
   try {
@@ -297,12 +327,13 @@ test("blocks acceptance when Chrome runtime rollback cannot restore bytes", () =
         descriptor.phase,
       ),
     );
-    assert.deepEqual(criticalFailuresFromReport(report), [{
-      name: descriptor.id,
-      status: "failed-integrity",
-      reason:
-        "Patch 'linux-chrome-native-host-runtime' integrity failure: Chrome native host runtime rollback could not restore original bytes: simulated rollback failure",
-    }]);
+    const [failure] = criticalFailuresFromReport(report);
+    assert.equal(failure?.name, descriptor.id);
+    assert.equal(failure?.status, "failed-integrity");
+    assert.match(
+      failure?.reason ?? "",
+      /rollback byte verification failed.*rollback write also failed: simulated rollback failure/,
+    );
     assert.deepEqual(optionalDriftFromReport(report), []);
   } finally {
     fs.rmSync(candidate.extractedDir, { recursive: true, force: true });

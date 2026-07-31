@@ -110,6 +110,14 @@ for (const [name, damage] of [
         '$.jsx("div",{})',
       ),
   ],
+  [
+    "rejects generated Linux settings without the build info panel owner",
+    (source) =>
+      source.replace(
+        "class LinuxBuildInfoPanel extends React.Component",
+        "class LinuxBuildInfoPanelMissing extends React.Component",
+      ),
+  ],
 ]) {
   test(name, () => {
     const { extractedDir, assetsDir } =

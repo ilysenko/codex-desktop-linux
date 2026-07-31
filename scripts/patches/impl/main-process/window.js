@@ -232,6 +232,7 @@ function applyLinuxNativeTitlebarPatch(currentSource, context = {}) {
       allowedFeatureIds:
         context.patchCompositionDelegates?.[LINUX_TITLEBAR_PATCH_ID],
       enabledFeatureIds: context.enabledFeatureIds,
+      ownerMarker: LINUX_TITLEBAR_PATCH_MARKER,
     },
   );
   if (delegation.state === "enabled") {
@@ -319,13 +320,33 @@ function applyLinuxNativeTitlebarPatch(currentSource, context = {}) {
     electronAlias = helperFunctionMatch[1];
   }
 
+  const zoomMethod = findMinifiedMethod(
+    patchedSource,
+    /setWindowZoom\([^)]*\)\{/,
+  );
+  if (zoomMethod == null) {
+    console.warn(
+      "WARN: Could not find setWindowZoom owner — skipping Linux native titlebar patch",
+    );
+    return currentSource;
+  }
   const zoomOverlayRegex =
     /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set\(([A-Za-z_$][\w$]*)\.id,([A-Za-z_$][\w$]*)\),\1\.setTitleBarOverlay\(([A-Za-z_$][\w$]*)\(\2\)\)\)/g;
-  patchedSource = patchedSource.replace(
+  if (regexMatchCount(zoomMethod.text, zoomOverlayRegex) !== 1) {
+    console.warn(
+      "WARN: Could not find the current setWindowZoom titlebar overlay consumer — skipping Linux native titlebar patch",
+    );
+    return currentSource;
+  }
+  const patchedZoomMethod = zoomMethod.text.replace(
     zoomOverlayRegex,
     (_match, windowAlias, zoomAlias, overlayHelperAlias) =>
       `(process.platform===\`win32\`||process.platform===\`linux\`)&&(this.windowZooms.set(${windowAlias}.id,${zoomAlias}),${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(${zoomAlias}):${overlayHelperAlias}(${zoomAlias})))`,
   );
+  patchedSource =
+    patchedSource.slice(0, zoomMethod.start) +
+    patchedZoomMethod +
+    patchedSource.slice(zoomMethod.end);
 
   const overlaySyncMethod = findMinifiedMethod(
     patchedSource,

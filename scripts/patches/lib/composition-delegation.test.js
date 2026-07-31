@@ -77,6 +77,14 @@ test("rejects missing, duplicate, and competing patch delegations", () => {
     ),
     { state: "invalid", featureId: null },
   );
+  assert.deepEqual(
+    patchDelegationState(`${ownerMarker}${marker}`, "owner-patch", {
+      allowedFeatureIds: ["sample-feature"],
+      enabledFeatureIds: ["sample-feature"],
+      ownerMarker,
+    }),
+    { state: "invalid", featureId: "sample-feature" },
+  );
 });
 
 test("rejects an enabled feature that is not authorized for the owner", () => {

@@ -445,30 +445,34 @@ function writeChromeNativeHostRuntimeAssetCandidates(
       writeFileSync(candidate.filePath, candidate.patched, "utf8");
     }
   } catch (error) {
-    const rollbackFailures = [];
+    const rollbackWriteFailures = [];
     for (const candidate of attempted.reverse()) {
       try {
         writeFileSync(candidate.filePath, candidate.source, "utf8");
       } catch (rollbackError) {
-        rollbackFailures.push(rollbackError);
+        rollbackWriteFailures.push(rollbackError);
       }
     }
 
+    const rollbackVerificationFailures = [];
     for (const candidate of attempted) {
       try {
         if (readFileSync(candidate.filePath, "utf8") !== candidate.source) {
-          rollbackFailures.push(
+          rollbackVerificationFailures.push(
             new Error(`rollback byte verification failed for ${candidate.filePath}`),
           );
         }
       } catch (rollbackError) {
-        rollbackFailures.push(rollbackError);
+        rollbackVerificationFailures.push(rollbackError);
       }
     }
 
-    if (rollbackFailures.length > 0) {
+    if (rollbackVerificationFailures.length > 0) {
+      const writeFailureContext = rollbackWriteFailures[0] == null
+        ? ""
+        : `; rollback write also failed: ${rollbackWriteFailures[0].message}`;
       const integrityError = new PatchIntegrityError(
-        `Chrome native host runtime rollback could not restore original bytes: ${rollbackFailures[0].message}`,
+        `Chrome native host runtime rollback could not restore original bytes: ${rollbackVerificationFailures[0].message}${writeFailureContext}`,
       );
       throw integrityError;
     }

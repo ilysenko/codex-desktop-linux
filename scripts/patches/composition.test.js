@@ -371,21 +371,41 @@ test("enabled frameless main composition drift is reported by the owning feature
       context,
       createPatchReport(),
     ).patchedSource;
+    const delegatedMarker = patchDelegationMarker(
+      "linux-native-titlebar",
+      "frameless-titlebar",
+    );
     const damagedVariants = [
-      first.replace(
-        "process.platform===`win32`&&(this.windowZooms.set",
-        "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set",
-      ),
-      first.replace(
-        /setWindowZoom[\s\S]*?(?=installApplicationMenuTitleBarOverlaySync)/u,
-        "",
-      ),
-      first.replace(
-        /installApplicationMenuTitleBarOverlaySync[\s\S]*$/u,
-        "",
-      ),
+      {
+        source: first.replace(
+          "process.platform===`win32`&&(this.windowZooms.set",
+          "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set",
+        ),
+        coreStatus: "already-applied",
+      },
+      {
+        source: first.replace(
+          /setWindowZoom[\s\S]*?(?=installApplicationMenuTitleBarOverlaySync)/u,
+          "",
+        ),
+        coreStatus: "already-applied",
+      },
+      {
+        source: first.replace(
+          /installApplicationMenuTitleBarOverlaySync[\s\S]*$/u,
+          "",
+        ),
+        coreStatus: "already-applied",
+      },
+      {
+        source: first.replace(
+          delegatedMarker,
+          `/*codexLinuxNativeTitlebarPatch*/${delegatedMarker}`,
+        ),
+        coreStatus: "failed-required",
+      },
     ];
-    for (const damaged of damagedVariants) {
+    for (const { source: damaged, coreStatus } of damagedVariants) {
       assert.notEqual(damaged, first);
 
       const report = createPatchReport();
@@ -403,7 +423,7 @@ test("enabled frameless main composition drift is reported by the owning feature
       assert.deepEqual(
         report.patches.map(({ name, status }) => ({ name, status })),
         [
-          { name: "linux-native-titlebar", status: "already-applied" },
+          { name: "linux-native-titlebar", status: coreStatus },
           {
             name: "feature:frameless-titlebar:main-process",
             status: "skipped-optional",
@@ -414,7 +434,20 @@ test("enabled frameless main composition drift is reported by the owning feature
         enabledFeatureFailuresFromReport(report)[0]?.name,
         "feature:frameless-titlebar:main-process",
       );
-      assert.match(warnings[0] ?? "", /delegated frameless titlebar/);
+      assert.ok(
+        warnings.some((warning) =>
+          /delegated frameless titlebar/.test(warning)
+        ),
+      );
+      if (coreStatus === "failed-required") {
+        assert.equal(
+          criticalFailuresFromReport(report)[0]?.name,
+          "linux-native-titlebar",
+        );
+        assert.ok(
+          warnings.some((warning) => /invalid.*delegation/.test(warning)),
+        );
+      }
     }
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -463,21 +496,41 @@ test("enabled frameless webview composition drift is reported by the owning feat
       createPatchReport(),
     );
     const first = fs.readFileSync(assetPath, "utf8");
+    const delegatedMarker = patchDelegationMarker(
+      "linux-window-controls-safe-area",
+      "frameless-titlebar",
+    );
     const damagedVariants = [
-      first.replace(
-        ",codexLinuxUseWindowControlsSafeArea}){",
-        "}){",
-      ),
-      first.replace(
-        "i.includes(`win`)||r.includes(`windows`)?t??l.applicationMenu:l.default",
-        "i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??l.applicationMenu:l.default",
-      ),
-      first.replace(
-        "case`win32`:return`application-menu`;case`linux`:return`native`",
-        "case`win32`:case`linux`:return`application-menu`",
-      ),
+      {
+        source: first.replace(
+          ",codexLinuxUseWindowControlsSafeArea}){",
+          "}){",
+        ),
+        coreStatus: "already-applied",
+      },
+      {
+        source: first.replace(
+          "i.includes(`win`)||r.includes(`windows`)?t??l.applicationMenu:l.default",
+          "i.includes(`win`)||r.includes(`windows`)||i.includes(`linux`)?t??l.applicationMenu:l.default",
+        ),
+        coreStatus: "already-applied",
+      },
+      {
+        source: first.replace(
+          "case`win32`:return`application-menu`;case`linux`:return`native`",
+          "case`win32`:case`linux`:return`application-menu`",
+        ),
+        coreStatus: "already-applied",
+      },
+      {
+        source: first.replace(
+          delegatedMarker,
+          `/*codexLinuxWindowControlsSafeAreaPatch*/${delegatedMarker}`,
+        ),
+        coreStatus: "skipped-optional",
+      },
     ];
-    for (const damaged of damagedVariants) {
+    for (const { source: damaged, coreStatus } of damagedVariants) {
       assert.notEqual(damaged, first);
       fs.writeFileSync(assetPath, damaged);
 
@@ -498,7 +551,7 @@ test("enabled frameless webview composition drift is reported by the owning feat
         [
           {
             name: "linux-window-controls-safe-area",
-            status: "already-applied",
+            status: coreStatus,
           },
           {
             name:
@@ -511,7 +564,19 @@ test("enabled frameless webview composition drift is reported by the owning feat
         enabledFeatureFailuresFromReport(report)[0]?.name,
         "feature:frameless-titlebar:webview-window-controls-layout",
       );
-      assert.match(warnings[0] ?? "", /delegated frameless Linux/);
+      assert.ok(
+        warnings.some((warning) => /delegated frameless Linux/.test(warning)),
+      );
+      if (coreStatus === "skipped-optional") {
+        assert.ok(
+          optionalDriftFromReport(report).some(
+            ({ name }) => name === "linux-window-controls-safe-area",
+          ),
+        );
+        assert.ok(
+          warnings.some((warning) => /invalid.*delegation/.test(warning)),
+        );
+      }
     }
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
