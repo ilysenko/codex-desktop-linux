@@ -34,6 +34,8 @@ const mainBundlePrefix =
   "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);";
 const fileManagerBundle =
   "function jl(e){return e}function il(e){return [e]}var lu=jl({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>il(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:uu,args:e=>il(e),open:async({path:e})=>du(e)}});function uu(){}";
+const currentDmgFileManagerBundle =
+  "function U1(e){return e}function xc(e){return[e]}var i0=(e,t)=>t==null?[e]:[e],Ofe={id:`emacs`,platforms:{darwin:{label:`Emacs`,icon:`apps/emacs.png`,kind:`editor`,detect:()=>`emacs`,args:e=>[e]},linux:{label:`Emacs`,icon:`apps/emacs.png`,kind:`editor`,detect:()=>`emacs`,args:e=>[e]}}},kfe=U1({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`/usr/bin/open`,args:e=>xc(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:Afe,args:e=>xc(e),open:async({path:e})=>a0(e)},linux:{label:`File Manager`,icon:`apps/file-explorer.png`,detect:()=>`file-manager`,args:e=>[e],open:async({path:e})=>a0(e)}});function Afe(){}async function a0(){}";
 const terminalOpenTargetBundle =
   "var uh={id:`terminal`,platforms:{darwin:{label:`Terminal`,icon:`apps/terminal.png`,kind:`terminal`,detect:()=>`open`,args:e=>[`-a`,`Terminal`,e]},win32:{label:`Terminal`,icon:`apps/microsoft-terminal.png`,kind:`terminal`,detect:vh,iconPath:()=>null,args:yh,open:({command:e,path:t})=>bh(e,yh(t))}}};function vh(){return `wt.exe`}function yh(e){return[`-d`,e]}async function bh(){}";
 const ideOpenTargetsBundle =
@@ -200,6 +202,21 @@ test("open-target discovery upgrades file manager and terminal support and adds 
   assert.match(patched, /codexLinuxOpenFileManager\(e\)/);
   assert.match(patched, /linux:\{label:`Terminal`/);
   assert.match(patched, /\.\.\.codexLinuxDiscoveredIdeTargets\(\)/);
+});
+
+test("open-target discovery keeps the current DMG file manager declarator idempotent", () => {
+  const source = `${mainBundlePrefix}${currentDmgFileManagerBundle}`;
+  const patched = applyMainBundlePatch(source);
+
+  assert.equal(applyMainBundlePatch(patched), patched);
+  assert.match(
+    patched,
+    /Ofe=\{id:`emacs`,platforms:\{darwin:\{[^}]+\},linux:\{label:`Emacs`/u,
+  );
+  assert.match(
+    patched,
+    /kfe=U1\(\{id:`fileManager`[\s\S]+linux:\{label:`File Manager`[\s\S]+codexLinuxOpenFileManager\(e\)/u,
+  );
 });
 
 test("open-target discovery prefers xdg-terminal-exec for Terminal", () => {

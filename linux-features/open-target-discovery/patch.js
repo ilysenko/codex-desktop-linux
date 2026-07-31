@@ -86,22 +86,32 @@ function findDeclarationBlock(source, marker) {
     return null;
   }
 
-  const blockStart = Math.max(
+  const statementStart = Math.max(
     source.lastIndexOf("var ", markerStart),
     source.lastIndexOf("let ", markerStart),
     source.lastIndexOf("const ", markerStart),
   );
   const objectStart = source.lastIndexOf("{", markerStart);
   const objectBlock = findBalancedBlock(source, objectStart);
-  if (blockStart === -1 || objectBlock == null) {
+  if (statementStart === -1 || objectBlock == null) {
     return null;
   }
+  const bindingPrefixStart = Math.max(statementStart, objectStart - 256);
+  const bindingPrefix = source.slice(bindingPrefixStart, objectStart);
+  const bindingMatch = bindingPrefix.match(
+    /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\($/u,
+  );
+  if (bindingMatch == null) {
+    return null;
+  }
+  const blockStart = bindingPrefixStart + bindingMatch.index;
   const callEndMatch = source.slice(objectBlock.end).match(/^\s*\);/u);
   const blockEnd = callEndMatch == null ? objectBlock.end : objectBlock.end + callEndMatch[0].length;
 
   return {
     start: blockStart,
     end: blockEnd,
+    statementStart,
     text: source.slice(blockStart, blockEnd),
   };
 }
@@ -232,7 +242,7 @@ function applyFileManagerDiscoveryPatch(currentSource, deps) {
     return currentSource;
   }
 
-  let patchedSource = insertOpenTargetHelpers(currentSource, block.start, deps);
+  let patchedSource = insertOpenTargetHelpers(currentSource, block.statementStart, deps);
   if (patchedSource !== currentSource) {
     block = findDeclarationBlock(patchedSource, "id:`fileManager`");
     if (block == null) {
