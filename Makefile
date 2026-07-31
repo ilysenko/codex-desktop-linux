@@ -66,7 +66,7 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream inspect-upstream-intel inspect-upstream-intel-devcontainer build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
+.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream inspect-upstream-intel inspect-upstream-intel-devcontainer build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage tarball package install service-enable service-status clean-dist clean-state
 
 help:
 	@printf '\nChatGPT Desktop for Linux Make Targets\n\n'
@@ -93,6 +93,7 @@ help:
 	@printf '  %-18s %s\n' "make rpm" "Build the RPM package into dist/ (Fedora/openSUSE)"
 	@printf '  %-18s %s\n' "make pacman" "Build the pacman package into dist/ (Arch)"
 	@printf '  %-18s %s\n' "make appimage" "Build the AppImage into dist/ (local self-build)"
+	@printf '  %-18s %s\n' "make tarball" "Build a portable .tar.gz archive into dist/"
 	@printf '  %-18s %s\n' "make package" "Build native package (auto-detects deb, rpm, or pacman)"
 	@printf '  %-18s %s\n' "make install" "Install the latest generated native package"
 	@printf '  %-18s %s\n' "make service-enable" "Enable and start codex-update-manager.service for the current user"
@@ -109,7 +110,7 @@ help:
 	@printf '  %-18s %s\n' "REBUILD_REPORT_DIR=..." "Override inspect/rebuild report output directory"
 	@printf '  %-18s %s\n' "DEV_APP_ID=..." "Override side-by-side test app id/bin (default: codex-cua-lab)"
 	@printf '  %-18s %s\n' "DEV_APP_NAME=..." "Override side-by-side test app display name"
-	@printf '  %-18s %s\n' "PACKAGE_VERSION=..." "Override the package version for make deb / make rpm / make pacman / make appimage"
+	@printf '  %-18s %s\n' "PACKAGE_VERSION=..." "Override the package version for make deb / make rpm / make pacman / make appimage / make tarball"
 	@printf '  %-18s %s\n' "PACKAGE_WITH_UPDATER=0" "Build packages without codex-update-manager or the updater service"
 	@printf '  %-18s %s\n' "CODEX_CLI_BUNDLE_SOURCE=..." "Embed an installed Codex CLI package in a local AppImage"
 	@printf '  %-18s %s\n' "MAX_BUILD_THREADS=8" "Set supported build jobs/compression threads (default: 0, tool/user defaults)"
@@ -145,6 +146,7 @@ help:
 	@printf '  %s\n' "MAX_BUILD_THREADS=8 make rpm"
 	@printf '  %s\n' "make pacman PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "make appimage PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
+	@printf '  %s\n' "make tarball PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "make install"
 	@printf '  %s\n\n' "make service-enable"
 
@@ -288,6 +290,10 @@ pacman: maybe-build-updater
 appimage:
 	@echo "[make] Building AppImage"
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" CODEX_CLI_BUNDLE_SOURCE="$(CODEX_CLI_BUNDLE_SOURCE)" ./scripts/build-appimage.sh
+
+tarball:
+	@echo "[make] Building portable tarball"
+	PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" ./scripts/build-tarball.sh
 
 package: maybe-build-updater
 	@echo "[make] Building native package (auto-detecting distro)"

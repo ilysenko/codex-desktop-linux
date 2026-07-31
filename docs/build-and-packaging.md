@@ -35,12 +35,15 @@ sudo dnf install python3 7zip curl unzip tar rpm-build make gcc-c++ @development
 sudo dnf install python3 p7zip p7zip-plugins curl unzip tar rpm-build make gcc-c++
 sudo dnf groupinstall 'Development Tools'
 
-# openSUSE
-sudo zypper install python3 p7zip-full curl unzip tar
+# openSUSE Tumbleweed
+sudo zypper install python3 7zip curl unzip tar
 sudo zypper install -t pattern devel_basis
 
+# Older openSUSE Leap releases may provide p7zip-full instead of 7zip:
+sudo zypper install python3 p7zip-full curl unzip tar
+
 # Arch / Manjaro
-sudo pacman -S --needed python p7zip curl unzip tar zstd base-devel
+sudo pacman -S --needed python 7zip curl unzip tar zstd base-devel
 
 # Rust toolchain
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -155,7 +158,12 @@ After `make build-app` or `make build-app-fresh`, build a package from
 | RPM | `make rpm` | `dist/codex-desktop-*.x86_64.rpm` | `sudo dnf install dist/codex-desktop-*.rpm` or `sudo zypper install dist/codex-desktop-*.rpm` |
 | Arch | `make pacman` | `dist/codex-desktop-*.pkg.tar.zst` | `sudo pacman -U dist/codex-desktop-*.pkg.tar.zst` |
 | AppImage | `make appimage` | `dist/codex-desktop-*.AppImage` | Run directly |
+| Portable archive | `make tarball` | `dist/codex-desktop-*-linux-*.tar.gz` | Extract and run `start.sh` |
 | Auto-detect | `make package && make install` | matches host distro | handled by `make install` |
+
+The portable archive is built on Ubuntu 22.04 as a glibc compatibility baseline.
+It avoids a package-manager dependency, but the target system still needs the
+runtime libraries required by Electron and the generated app.
 
 Override package version:
 
@@ -173,6 +181,13 @@ make build-app
 make appimage
 ./dist/codex-desktop-*.AppImage
 ```
+
+The `Build Linux Artifacts` workflow also creates a portable `.tar.gz` archive
+for every pull request, `main` push, version tag, and manual dispatch. It uses
+Ubuntu 22.04 as the glibc baseline, builds RPM inside Fedora 42, and runs
+package smoke checks on Ubuntu, Debian, Fedora, openSUSE, and Arch containers.
+Download the workflow artifact together with `SHA256SUMS` when a native
+package manager is unavailable.
 
 The AppImage flow does not include `codex-update-manager`, the systemd user
 service, polkit policy, or the native-package update builder.

@@ -2,6 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/ci.yml"><img src="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/build-artifacts.yml"><img src="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/build-artifacts.yml/badge.svg" alt="Build Linux Artifacts"></a>
   <a href="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/upstream-build-app.yml"><img src="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/upstream-build-app.yml/badge.svg" alt="Upstream Build App"></a>
   <a href="https://discord.gg/skCB3DXqgw"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white" alt="Join the Discord community"></a>
 </p>
@@ -11,9 +12,10 @@ The official ChatGPT app is available for macOS and Windows; this repository
 covers Linux by converting the upstream macOS `Codex.dmg` into a runnable Linux
 Electron app.
 
-The project builds native `.deb`, `.rpm`, and `.pkg.tar.zst` packages, supports
-local AppImage self-builds and Nix, and can install a local update manager that
-rebuilds future Linux packages from newer upstream DMGs.
+The project builds native `.deb`, `.rpm`, and `.pkg.tar.zst` packages, publishes
+a portable `.tar.gz` archive through GitHub Actions, supports local AppImage
+self-builds and Nix, and can install a local update manager that rebuilds future
+Linux packages from newer upstream DMGs.
 
 <p align="center">
   <a href="#how-to-install">Install</a> ·
@@ -51,7 +53,7 @@ cd codex-desktop-linux
 | openSUSE | `make bootstrap-native` | Builds and installs an `.rpm` |
 | Arch, Manjaro, EndeavourOS | `make bootstrap-native` | Builds and installs a pacman package |
 | NixOS / Nix | `nix run github:ilysenko/codex-desktop-linux` | See [Nix docs](docs/nix.md) |
-| Atomic desktops / other distros | `make build-app && make appimage` | Local self-build; no bundled updater |
+| Atomic desktops / other distros | Download the Actions `.tar.gz` artifact | Portable archive; no package-manager integration |
 
 Recommended native install:
 
@@ -335,6 +337,7 @@ make deb
 make rpm
 make pacman
 make appimage
+make tarball
 ```
 
 The package scripts only repackage the already-generated `codex-app/`. They do

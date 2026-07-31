@@ -281,15 +281,22 @@ install_pacman() {
 
     sudo pacman -S --needed --noconfirm \
         "${node_packages[@]}" python \
-        p7zip curl unzip zstd \
+        7zip curl unzip zstd \
         base-devel
 }
 
 install_zypper() {
     info "Detected openSUSE (zypper)"
+    local seven_zip_package
+    if zypper --non-interactive info 7zip >/dev/null 2>&1; then
+        seven_zip_package="7zip"
+    else
+        seven_zip_package="p7zip-full"
+        warn "7zip is unavailable; falling back to p7zip-full"
+    fi
     sudo zypper --non-interactive install \
         nodejs-default npm-default python3 \
-        p7zip-full curl unzip
+        "$seven_zip_package" curl unzip
     sudo zypper --non-interactive install -t pattern devel_basis
 }
 
@@ -456,8 +463,8 @@ case "$DISTRO" in
   sudo dnf install python3 7zip curl unzip rpm-build make gcc-c++ @development-tools             # Fedora 41+ (dnf5)
   sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++      # Fedora <41 (dnf)
     && sudo dnf groupinstall 'Development Tools'
-  sudo pacman -S nodejs npm python p7zip curl unzip zstd base-devel                 # Arch
-  sudo zypper install nodejs-default npm-default python3 p7zip-full curl unzip      # openSUSE
+  sudo pacman -S nodejs npm python 7zip curl unzip zstd base-devel                 # Arch
+  sudo zypper install nodejs-default npm-default python3 7zip curl unzip            # openSUSE Tumbleweed; use p7zip-full on older Leap
     && sudo zypper install -t pattern devel_basis"
         ;;
 esac

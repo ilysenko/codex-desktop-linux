@@ -14,6 +14,7 @@ bash -n scripts/build-deb.sh
 bash -n scripts/build-rpm.sh
 bash -n scripts/build-pacman.sh
 bash -n scripts/build-appimage.sh
+bash -n scripts/build-tarball.sh
 ```
 
 For launcher behavior changes, rebuild or inspect the generated launcher:
@@ -107,6 +108,7 @@ bundles, desktop files, permissions, or runtime helpers are touched:
 ./scripts/build-rpm.sh
 ./scripts/build-pacman.sh
 ./scripts/build-appimage.sh
+./scripts/build-tarball.sh
 ```
 
 Use a package version override when a deterministic package name helps review:

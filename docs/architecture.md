@@ -114,7 +114,7 @@ Run the subset that matches your change. For installer, packaging, patcher, or
 updater changes:
 
 ```bash
-bash -n install.sh scripts/lib/*.sh launcher/start.sh.template scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/build-appimage.sh scripts/install-deps.sh
+bash -n install.sh scripts/lib/*.sh launcher/start.sh.template scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/build-appimage.sh scripts/build-tarball.sh scripts/install-deps.sh
 node --check scripts/patch-linux-window-ui.js
 node --test scripts/patch-linux-window-ui.test.js
 node --test linux-features/*/test.js

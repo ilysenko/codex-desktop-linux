@@ -8,7 +8,7 @@ url="https://github.com/ilysenko/codex-desktop-linux"
 license=('MIT')
 depends=(
     'python'
-    'p7zip'
+    '7zip'
     'polkit'
     'curl'
     'unzip'

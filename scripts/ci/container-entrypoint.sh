@@ -236,6 +236,7 @@ run_core_job() {
     bash -n scripts/build-rpm.sh
     bash -n scripts/build-pacman.sh
     bash -n scripts/build-appimage.sh
+    bash -n scripts/build-tarball.sh
     bash -n scripts/ci-local.sh
     bash -n scripts/ci/*.sh
 

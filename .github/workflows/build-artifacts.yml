@@ -1,0 +1,281 @@
+name: Build Linux Artifacts
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-linux-artifacts-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CI_PACKAGE_VERSION: 2026.04.28.000000+ci${{ github.run_number }}
+  UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg
+  UPSTREAM_DMG_PATH: /tmp/codex-upstream-ci/Codex.dmg
+  DMG_CACHE_SCHEMA_VERSION: v1
+
+jobs:
+  build:
+    name: Build deb, rpm, and tar.gz
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            curl \
+            g++ \
+            make \
+            p7zip-full \
+            python3 \
+            rpm \
+            tar \
+            unzip
+          SEVENZIP_SYSTEM_INSTALL=1 \
+          NODEJS_MAJOR=24 \
+            bash scripts/install-deps.sh
+          command -v 7zz || command -v 7z
+
+      - name: Install Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Capture upstream DMG metadata
+        id: upstream-metadata
+        run: |
+          set -euo pipefail
+
+          headers_file="$(mktemp)"
+          trap 'rm -f "$headers_file"' EXIT
+          curl -fsSLI "$UPSTREAM_DMG_URL" > "$headers_file"
+
+          last_modified="$(awk 'tolower($0) ~ /^last-modified:/ {sub(/\r$/,""); sub(/^[^:]+: /,""); print; exit}' "$headers_file")"
+          etag="$(awk 'tolower($0) ~ /^etag:/ {sub(/\r$/,""); sub(/^[^:]+: /,""); gsub(/"/,""); print; exit}' "$headers_file")"
+          content_length="$(awk 'tolower($0) ~ /^content-length:/ {sub(/\r$/,""); sub(/^[^:]+: /,""); print; exit}' "$headers_file")"
+          last_modified="${last_modified:-unknown}"
+          etag="${etag:-no-etag}"
+          content_length="${content_length:-unknown}"
+          cache_segment="$(printf '%s|%s|%s\n' "$last_modified" "$etag" "$content_length" | sha256sum | cut -d' ' -f1)"
+
+          {
+            echo "last_modified=$last_modified"
+            echo "etag=$etag"
+            echo "content_length=$content_length"
+            echo "cache_segment=$cache_segment"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached upstream DMG
+        id: dmg-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/codex-upstream-ci/Codex.dmg
+          key: upstream-dmg-${{ env.DMG_CACHE_SCHEMA_VERSION }}-${{ steps.upstream-metadata.outputs.cache_segment }}
+
+      - name: Download upstream DMG
+        if: steps.dmg-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$UPSTREAM_DMG_PATH")"
+          curl -fL --retry 3 --retry-delay 2 -o "$UPSTREAM_DMG_PATH" "$UPSTREAM_DMG_URL"
+
+      - name: Write upstream DMG metadata
+        run: |
+          set -euo pipefail
+          test -s "$UPSTREAM_DMG_PATH"
+          dmg_sha256="$(sha256sum "$UPSTREAM_DMG_PATH" | cut -d' ' -f1)"
+          dmg_size_bytes="$(stat -c '%s' "$UPSTREAM_DMG_PATH")"
+          tested_at_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          cat > upstream-dmg-metadata.json <<JSON
+          {
+            "url": "$UPSTREAM_DMG_URL",
+            "path": "$UPSTREAM_DMG_PATH",
+            "last_modified": "${{ steps.upstream-metadata.outputs.last_modified }}",
+            "etag": "${{ steps.upstream-metadata.outputs.etag }}",
+            "content_length": "${{ steps.upstream-metadata.outputs.content_length }}",
+            "sha256": "$dmg_sha256",
+            "size_bytes": $dmg_size_bytes,
+            "tested_at_utc": "$tested_at_utc",
+            "cache_schema_version": "$DMG_CACHE_SCHEMA_VERSION"
+          }
+          JSON
+
+      - name: Build Linux app from upstream DMG
+        env:
+          CODEX_ACCEPTANCE_DECISION_JSON: ${{ github.workspace }}/upstream-dmg-decision.json
+          CODEX_ACCEPTANCE_OVERRIDE: '0'
+          CODEX_ACCEPTANCE_SOURCE: github-actions
+          CODEX_DMG_REFRESH_MODE: pinned
+          CODEX_UPSTREAM_DMG_METADATA_JSON: ${{ github.workspace }}/upstream-dmg-metadata.json
+          REBUILD_REPORT_DIR: ${{ github.workspace }}/upstream-acceptance
+        run: make build-app DMG="$UPSTREAM_DMG_PATH"
+
+      - name: Build updater binary
+        run: cargo build --release -p codex-update-manager
+
+      - name: Build Debian package
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
+          UPDATER_BINARY_SOURCE="$GITHUB_WORKSPACE/target/release/codex-update-manager" \
+            ./scripts/build-deb.sh
+
+      - name: Build RPM package in Fedora
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e CI_PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            docker.io/library/fedora:42@sha256:99e203b80b1c3d8f7e161ec10a68fd02b081ef83a3963553e513c82846b97814 \
+            bash -lc '
+              set -euo pipefail
+              dnf install -y --setopt=install_weak_deps=False \
+                gcc-c++ make python3 rpm-build 7zip curl unzip tar
+              command -v 7z
+              PACKAGE_VERSION="$CI_PACKAGE_VERSION" \
+              UPDATER_BINARY_SOURCE=/work/target/release/codex-update-manager \
+                ./scripts/build-rpm.sh
+            '
+
+      - name: Build portable tarball
+        run: PACKAGE_VERSION="$CI_PACKAGE_VERSION" ./scripts/build-tarball.sh
+
+      - name: Generate checksums and verify artifact layout
+        run: |
+          set -euo pipefail
+          mapfile -t artifacts < <(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.tar.gz' \) -print | sort)
+          test "${#artifacts[@]}" -eq 3
+          printf '%s\n' "${artifacts[@]}" | xargs -r sha256sum > SHA256SUMS
+          grep -q 'codex-desktop_.*\.deb$' SHA256SUMS
+          grep -q 'codex-desktop-.*\.rpm$' SHA256SUMS
+          grep -q 'codex-desktop-.*\.tar\.gz$' SHA256SUMS
+          {
+            echo "## Linux artifacts"
+            echo
+            printf -- '- `%s`\n' "${artifacts[@]}"
+            echo "- Portable baseline: Ubuntu 22.04 (glibc compatibility)."
+            echo "- RPM builder: Fedora 42 container."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codex-desktop-linux-${{ github.sha }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            SHA256SUMS
+            upstream-dmg-metadata.json
+            upstream-dmg-decision.json
+            upstream-acceptance/**/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  distro-smoke:
+    name: Smoke ${{ matrix.distro }}
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: Ubuntu 22.04
+            image: docker.io/library/ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7
+            format: deb
+          - distro: Ubuntu 24.04
+            image: docker.io/library/ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
+            format: deb
+          - distro: Debian 12
+            image: docker.io/library/debian:12@sha256:8a8cd02c5912770b4980228a54d4aff9e4f986f1eb2525d2d371dec5232cefcc
+            format: deb
+          - distro: Fedora 42
+            image: docker.io/library/fedora:42@sha256:99e203b80b1c3d8f7e161ec10a68fd02b081ef83a3963553e513c82846b97814
+            format: rpm
+          - distro: openSUSE Tumbleweed
+            image: registry.opensuse.org/opensuse/tumbleweed:latest@sha256:dfd8ff24e536ef4d4b6a24951aae454840d6c3d51fd771d1d08a584e48b18567
+            format: rpm
+          - distro: Arch Linux
+            image: docker.io/library/archlinux:base-devel@sha256:fdff15f24df062598faebf380430955a9bd2109736e179ebb354f1208f725774
+            format: tarball
+
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: codex-desktop-linux-${{ github.sha }}
+          path: .
+
+      - name: Install package or extract tarball
+        env:
+          DISTRO_FORMAT: ${{ matrix.format }}
+          DISTRO_IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e DISTRO_FORMAT="$DISTRO_FORMAT" \
+            -v "$GITHUB_WORKSPACE:/work:ro" \
+            -w /work \
+            "$DISTRO_IMAGE" \
+            bash -s <<'SCRIPT'
+          set -euo pipefail
+          case "$DISTRO_FORMAT" in
+            deb)
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y --no-install-recommends ca-certificates
+              apt-get install -y ./dist/*.deb
+              test -x /opt/codex-desktop/start.sh
+              command -v 7z
+              ;;
+            rpm)
+              if command -v dnf >/dev/null 2>&1; then
+                dnf install -y ca-certificates
+                dnf install -y ./dist/*.rpm
+              else
+                zypper --non-interactive --no-gpg-checks refresh
+                zypper --non-interactive --no-gpg-checks install -y ./dist/*.rpm
+              fi
+              test -x /opt/codex-desktop/start.sh
+              command -v 7z
+              ;;
+            tarball)
+              archive="$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+              test -n "$archive"
+              tar -tzf "$archive" | grep -q '/start.sh$'
+              extract_dir="$(mktemp -d)"
+              tar -xzf "$archive" -C "$extract_dir"
+              launcher="$(find "$extract_dir" -type f -name start.sh -print -quit)"
+              test -x "$launcher"
+              bash -n "$launcher"
+              ;;
+            *)
+              echo "Unknown package format: $DISTRO_FORMAT" >&2
+              exit 2
+              ;;
+          esac
+          SCRIPT

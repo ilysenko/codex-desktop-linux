@@ -175,6 +175,8 @@ extension point to core rather than moving the feature itself into core.
   Builds `.pkg.tar.zst` from `codex-app/`.
 - `scripts/build-appimage.sh`
   Builds an AppImage using `packaging/appimage/`.
+- `scripts/build-tarball.sh`
+  Builds a portable `.tar.gz` archive from `codex-app/`.
 - `packaging/linux/`
   Debian control files, RPM spec, pacman `PKGBUILD.template`/install hooks,
   desktop entry, icon policy, Polkit policy, packaged runtime helper, shared
