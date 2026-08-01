@@ -1244,19 +1244,20 @@ fn validate_runtime_entry_for_host(
             "Matching manifest entry is malformed",
         ));
     }
-    validate_owned_dir(&entry.paths.codex_home, true)?;
-    validate_owned_dir(&entry.paths.resources_path, false)?;
-    entry.paths.codex_cli_path = validate_owned_file(&entry.paths.codex_cli_path, true)?;
-    validate_owned_file(&entry.paths.extension_host_path, true)?;
-    validate_owned_file(&entry.paths.node_path, true)?;
+    validate_owned_dir(&entry.paths.codex_home, true, "codexHome")?;
+    validate_owned_dir(&entry.paths.resources_path, false, "resourcesPath")?;
+    entry.paths.codex_cli_path =
+        validate_owned_file(&entry.paths.codex_cli_path, true, "codexCliPath")?;
+    validate_owned_file(&entry.paths.extension_host_path, true, "extensionHostPath")?;
+    validate_owned_file(&entry.paths.node_path, true, "nodePath")?;
     if let Some(path) = &entry.paths.node_repl_path {
-        validate_owned_file(path, true)?;
+        validate_owned_file(path, true, "nodeReplPath")?;
     }
     if let Some(path) = &entry.paths.browser_client_path {
-        validate_owned_file(path, false)?;
+        validate_owned_file(path, false, "browserClientPath")?;
     }
     for path in &entry.paths.node_module_dirs {
-        validate_owned_dir(path, false)?;
+        validate_owned_dir(path, false, "nodeModuleDirs")?;
     }
 
     let configured_host = file_identity(&entry.paths.extension_host_path)
@@ -1270,66 +1271,70 @@ fn validate_runtime_entry_for_host(
     Ok(())
 }
 
-fn validate_owned_file(path: &Path, executable: bool) -> RuntimeResult<PathBuf> {
+fn validate_owned_file(path: &Path, executable: bool, field: &str) -> RuntimeResult<PathBuf> {
     if !path.is_absolute() {
-        return Err(required_path_error("file"));
+        return Err(required_path_error(field));
     }
-    let canonical = fs::canonicalize(path).map_err(|_| required_path_error("file"))?;
-    let metadata = fs::metadata(&canonical).map_err(|_| required_path_error("file"))?;
+    let canonical = fs::canonicalize(path).map_err(|_| required_path_error(field))?;
+    let metadata = fs::metadata(&canonical).map_err(|_| required_path_error(field))?;
     if !metadata.is_file() || has_unsafe_write_permissions(&metadata) {
-        return Err(required_path_error("file"));
+        return Err(required_path_error(field));
     }
     let euid = unsafe { libc::geteuid() };
     if metadata.uid() != euid && metadata.uid() != 0 {
-        return Err(required_path_error("file"));
+        return Err(required_path_error(field));
     }
     if executable && metadata.permissions().mode() & 0o111 == 0 {
-        return Err(required_path_error("executable"));
+        return Err(required_path_error(field));
     }
-    validate_trusted_parent_chain(&canonical)?;
+    validate_trusted_parent_chain(&canonical, field)?;
     Ok(canonical)
 }
 
-fn validate_owned_dir(path: &Path, require_user_owner: bool) -> RuntimeResult<()> {
+fn validate_owned_dir(path: &Path, require_user_owner: bool, field: &str) -> RuntimeResult<()> {
     if !path.is_absolute() {
-        return Err(required_path_error("directory"));
+        return Err(required_path_error(field));
     }
-    let canonical = fs::canonicalize(path).map_err(|_| required_path_error("directory"))?;
-    let metadata = fs::metadata(&canonical).map_err(|_| required_path_error("directory"))?;
+    let canonical = fs::canonicalize(path).map_err(|_| required_path_error(field))?;
+    let metadata = fs::metadata(&canonical).map_err(|_| required_path_error(field))?;
     if !metadata.is_dir() || has_unsafe_write_permissions(&metadata) {
-        return Err(required_path_error("directory"));
+        return Err(required_path_error(field));
     }
     let euid = unsafe { libc::geteuid() };
     if (require_user_owner && metadata.uid() != euid)
         || (!require_user_owner && metadata.uid() != euid && metadata.uid() != 0)
     {
-        return Err(required_path_error("directory"));
+        return Err(required_path_error(field));
     }
-    validate_trusted_parent_chain(&canonical)?;
+    validate_trusted_parent_chain(&canonical, field)?;
     Ok(())
 }
 
 fn required_path_error(field: &str) -> RuntimeError {
     RuntimeError::typed(
         "required_path_missing",
-        format!("Codex app-server manifest entry is missing required path {field}"),
+        format!(
+            "Codex app-server manifest entry has a missing or untrusted required path {field}; \
+             check that it exists, is owned by the user or root, is executable when required, \
+             and is not group/world-writable"
+        ),
     )
 }
 
-fn validate_trusted_parent_chain(path: &Path) -> RuntimeResult<()> {
+fn validate_trusted_parent_chain(path: &Path, field: &str) -> RuntimeResult<()> {
     let euid = unsafe { libc::geteuid() };
     for parent in path.ancestors().skip(1) {
-        let metadata = fs::symlink_metadata(parent).map_err(|_| required_path_error("parent"))?;
+        let metadata = fs::symlink_metadata(parent).map_err(|_| required_path_error(field))?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(required_path_error("parent"));
+            return Err(required_path_error(field));
         }
         if metadata.uid() != euid && metadata.uid() != 0 {
-            return Err(required_path_error("parent"));
+            return Err(required_path_error(field));
         }
         if has_unsafe_write_permissions(&metadata)
             && !is_root_owned_sticky_directory(metadata.uid(), metadata.permissions().mode())
         {
-            return Err(required_path_error("parent"));
+            return Err(required_path_error(field));
         }
     }
     Ok(())
@@ -2893,7 +2898,10 @@ mod tests {
         let executable = unsafe_parent.join("codex");
         fs::write(&executable, "binary").unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(validate_owned_file(&executable, true).is_err());
+        let error = validate_owned_file(&executable, true, "codexCliPath").unwrap_err();
+        assert_eq!(error.kind, Some("required_path_missing"));
+        assert!(error.message.contains("codexCliPath"));
+        assert!(error.message.contains("group/world-writable"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2921,7 +2929,10 @@ mod tests {
         let launcher = bin_dir.join("codex");
         std::os::unix::fs::symlink(&executable, &launcher).unwrap();
 
-        assert_eq!(validate_owned_file(&launcher, true).unwrap(), executable);
+        assert_eq!(
+            validate_owned_file(&launcher, true, "codexCliPath").unwrap(),
+            executable
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2936,8 +2947,8 @@ mod tests {
         fs::write(&executable, "binary").unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
 
-        assert!(validate_owned_file(&executable, true).is_err());
-        assert!(validate_owned_dir(&unsafe_parent, true).is_err());
+        assert!(validate_owned_file(&executable, true, "codexCliPath").is_err());
+        assert!(validate_owned_dir(&unsafe_parent, true, "codexHome").is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2954,8 +2965,8 @@ mod tests {
         fs::write(&executable, "binary").unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
 
-        assert!(validate_owned_file(&executable, true).is_err());
-        assert!(validate_owned_dir(&safe_parent, true).is_err());
+        assert!(validate_owned_file(&executable, true, "codexCliPath").is_err());
+        assert!(validate_owned_dir(&safe_parent, true, "codexHome").is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2968,8 +2979,8 @@ mod tests {
         fs::write(&executable, "binary").unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
 
-        assert!(validate_owned_file(&executable, true).is_ok());
-        assert!(validate_owned_dir(&root, true).is_ok());
+        assert!(validate_owned_file(&executable, true, "codexCliPath").is_ok());
+        assert!(validate_owned_dir(&root, true, "codexHome").is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 
