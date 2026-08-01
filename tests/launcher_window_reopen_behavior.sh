@@ -53,6 +53,9 @@ fi
 
 TMP_DIR="$(mktemp -d)"
 APP_DIR="$TMP_DIR/app"
+REMOUNT_APP_DIR="$TMP_DIR/remounted-app"
+FOREIGN_APP_DIR="$TMP_DIR/foreign-app"
+SECOND_APP_DIR="$APP_DIR"
 HOME_DIR="$TMP_DIR/home"
 RUNTIME_DIR="$TMP_DIR/runtime"
 STATE_DIR="$HOME_DIR/.local/state/codex-desktop"
@@ -60,16 +63,29 @@ SOCKET_PATH="$RUNTIME_DIR/codex-desktop/launch-action.sock"
 HANDOFF_RESULT="$TMP_DIR/handoff.json"
 FIRST_LOG="$TMP_DIR/first-launch.log"
 SECOND_LOG="$TMP_DIR/second-launch.log"
+FOREIGN_LOG="$TMP_DIR/foreign-launch.log"
 APP_LOG="$HOME_DIR/.cache/codex-desktop/launcher.log"
+FOREIGN_CACHE_DIR="$TMP_DIR/foreign-cache"
+FOREIGN_APP_LOG="$FOREIGN_CACHE_DIR/codex-desktop/launcher.log"
+APPIMAGE_PATH="$TMP_DIR/codex-desktop.AppImage"
+FOREIGN_APPIMAGE_PATH="$TMP_DIR/other-codex-desktop.AppImage"
+APPIMAGE_REOPEN="${CODEX_TEST_APPIMAGE_REMOUNT:-0}"
+SECOND_LAUNCH_ARG="--new-chat"
 LAUNCHER_PID=""
 SECOND_LAUNCHER_PID=""
 SOCKET_PID=""
 DECOY_PID=""
 FIRST_ELECTRON_PID=""
+FIRST_WEBVIEW_PID=""
 FINAL_ELECTRON_PID=""
 HANDOFF_STATUS="not-attempted"
 TIMEOUT_STATUS="false"
 ERROR_STATUS="false"
+
+if [ "$APPIMAGE_REOPEN" = "1" ]; then
+    SECOND_APP_DIR="$REMOUNT_APP_DIR"
+    SECOND_LAUNCH_ARG="--show"
+fi
 
 count_test_main_processes() {
     local count=0
@@ -81,9 +97,11 @@ count_test_main_processes() {
         pid="${cmdline#/proc/}"
         pid="${pid%/cmdline}"
         IFS= read -r -d '' arg0 < "$cmdline" 2>/dev/null || true
-        if [ "${arg0:-}" = "$APP_DIR/electron" ]; then
-            count=$((count + 1))
-        fi
+        case "${arg0:-}" in
+            "$APP_DIR/electron"|"$REMOUNT_APP_DIR/electron"|"$FOREIGN_APP_DIR/electron")
+                count=$((count + 1))
+                ;;
+        esac
         arg0=""
     done
     printf '%s\n' "$count"
@@ -180,21 +198,27 @@ cleanup() {
     set +e
     webview_pid="$(cat "$STATE_DIR/webview.pid" 2>/dev/null || true)"
     stop_owned_process_bounded "$LAUNCHER_PID" argv "$APP_DIR/start.sh" || cleanup_failed=1
-    stop_owned_process_bounded "$SECOND_LAUNCHER_PID" argv "$APP_DIR/start.sh" || cleanup_failed=1
+    stop_owned_process_bounded "$SECOND_LAUNCHER_PID" argv "$SECOND_APP_DIR/start.sh" || cleanup_failed=1
     stop_owned_process_bounded "$SOCKET_PID" argv "$SOCKET_PATH" || cleanup_failed=1
-    stop_owned_process_bounded "$webview_pid" argv "$APP_DIR/.codex-linux/webview-server.py" || cleanup_failed=1
+    for pid in "$FIRST_WEBVIEW_PID" "$webview_pid"; do
+        stop_owned_process_bounded "$pid" argv "$APP_DIR/.codex-linux/webview-server.py" || cleanup_failed=1
+        stop_owned_process_bounded "$pid" argv "$REMOUNT_APP_DIR/.codex-linux/webview-server.py" || cleanup_failed=1
+        stop_owned_process_bounded "$pid" argv "$FOREIGN_APP_DIR/.codex-linux/webview-server.py" || cleanup_failed=1
+    done
     stop_owned_process_bounded "$DECOY_PID" arg0 "$TMP_DIR/decoy-electron" || cleanup_failed=1
     for cmdline in /proc/[0-9]*/cmdline; do
         [ -r "$cmdline" ] || continue
         pid="${cmdline#/proc/}"
         pid="${pid%/cmdline}"
         IFS= read -r -d '' arg0 < "$cmdline" 2>/dev/null || true
-        if [ "${arg0:-}" = "$APP_DIR/electron" ]; then
-            IFS= read -r -d '' revalidated_arg0 < "$cmdline" 2>/dev/null || true
-            if [ "${revalidated_arg0:-}" = "$APP_DIR/electron" ]; then
-                stop_owned_process_bounded "$pid" arg0 "$APP_DIR/electron" || cleanup_failed=1
-            fi
-        fi
+        case "${arg0:-}" in
+            "$APP_DIR/electron"|"$REMOUNT_APP_DIR/electron"|"$FOREIGN_APP_DIR/electron")
+                IFS= read -r -d '' revalidated_arg0 < "$cmdline" 2>/dev/null || true
+                if [ "${revalidated_arg0:-}" = "$arg0" ]; then
+                    stop_owned_process_bounded "$pid" arg0 "$arg0" || cleanup_failed=1
+                fi
+                ;;
+        esac
         arg0=""
         revalidated_arg0=""
     done
@@ -357,6 +381,12 @@ cp "$APP_DIR/electron" "$TMP_DIR/decoy-electron"
 "$TMP_DIR/decoy-electron" --app-id=codex-desktop &
 DECOY_PID=$!
 
+if [ "$APPIMAGE_REOPEN" = "1" ]; then
+    cp -a "$APP_DIR" "$REMOUNT_APP_DIR"
+    cp -a "$APP_DIR" "$FOREIGN_APP_DIR"
+    touch "$APPIMAGE_PATH" "$FOREIGN_APPIMAGE_PATH"
+fi
+
 COMMON_ENV=(
     env -i
     "PATH=$PATH"
@@ -365,12 +395,21 @@ COMMON_ENV=(
     "CODEX_CLI_PATH=$(command -v true)"
     "CODEX_WEBVIEW_PORT=$PORT"
 )
+FIRST_APPIMAGE_ENV=()
+SECOND_APPIMAGE_ENV=()
+if [ "$APPIMAGE_REOPEN" = "1" ]; then
+    FIRST_APPIMAGE_ENV=("APPIMAGE=$APPIMAGE_PATH" "APPDIR=$APP_DIR")
+    SECOND_APPIMAGE_ENV=("APPIMAGE=$APPIMAGE_PATH" "APPDIR=$SECOND_APP_DIR")
+fi
 
-"${COMMON_ENV[@]}" "$APP_DIR/start.sh" > "$FIRST_LOG" 2>&1 &
+"${COMMON_ENV[@]}" "${FIRST_APPIMAGE_ENV[@]}" "$APP_DIR/start.sh" > "$FIRST_LOG" 2>&1 &
 LAUNCHER_PID=$!
 wait_for "first Electron marker" pid_file_is_live
 wait_for "first launcher lock release" launcher_lock_is_available
 FIRST_ELECTRON_PID="$(read_live_app_pid)"
+FIRST_WEBVIEW_PID="$(cat "$STATE_DIR/webview.pid" 2>/dev/null || true)"
+[[ "$FIRST_WEBVIEW_PID" =~ ^[0-9]+$ ]] && kill -0 "$FIRST_WEBVIEW_PID" 2>/dev/null \
+    || fail "first packaged webview server is not live"
 
 python3 - "$SOCKET_PATH" "$HANDOFF_RESULT" <<'PY' &
 import json
@@ -401,8 +440,36 @@ PY
 SOCKET_PID=$!
 wait_for "controlled handoff socket" test -S "$SOCKET_PATH"
 
+if [ "$APPIMAGE_REOPEN" = "1" ]; then
+    set +e
+    timeout 8s "${COMMON_ENV[@]}" \
+        "APPIMAGE=$FOREIGN_APPIMAGE_PATH" \
+        "APPDIR=$FOREIGN_APP_DIR" \
+        "XDG_CACHE_HOME=$FOREIGN_CACHE_DIR" \
+        "$FOREIGN_APP_DIR/start.sh" --show > "$FOREIGN_LOG" 2>&1
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] \
+        || fail "different AppImage launcher was not rejected safely (status $rc)"
+    [ ! -e "$HANDOFF_RESULT" ] \
+        || fail "different AppImage reached the resident launch-action socket"
+    kill -0 "$FIRST_ELECTRON_PID" 2>/dev/null \
+        || fail "different AppImage stopped the healthy resident Electron"
+    kill -0 "$FIRST_WEBVIEW_PID" 2>/dev/null \
+        || fail "different AppImage stopped the resident webview server"
+    [ "$(cat "$STATE_DIR/app.pid" 2>/dev/null || true)" = "$FIRST_ELECTRON_PID" ] \
+        || fail "different AppImage changed the resident app marker"
+    [ "$(cat "$STATE_DIR/webview.pid" 2>/dev/null || true)" = "$FIRST_WEBVIEW_PID" ] \
+        || fail "different AppImage changed the resident webview marker"
+    [ -S "$SOCKET_PATH" ] && kill -0 "$SOCKET_PID" 2>/dev/null \
+        || fail "different AppImage removed the resident launch-action socket"
+    grep -Fq "Foreign ChatGPT Desktop process:" "$FOREIGN_APP_LOG" \
+        || fail "different AppImage rejection did not report the cross-install conflict"
+fi
+
 if [ "${CODEX_TEST_FORCE_RESIDENT_REPLACEMENT:-0}" = "1" ]; then
-    "${COMMON_ENV[@]}" "$APP_DIR/start.sh" --new-chat > "$SECOND_LOG" 2>&1 &
+    "${COMMON_ENV[@]}" "${SECOND_APPIMAGE_ENV[@]}" \
+        "$SECOND_APP_DIR/start.sh" "$SECOND_LAUNCH_ARG" > "$SECOND_LOG" 2>&1 &
     SECOND_LAUNCHER_PID=$!
     if [ "${CODEX_TEST_MUTATION_CONTROL_ONLY:-0}" = "1" ]; then
         set +e
@@ -430,7 +497,8 @@ if [ "${CODEX_TEST_FORCE_RESIDENT_REPLACEMENT:-0}" = "1" ]; then
 fi
 
 set +e
-timeout 8s "${COMMON_ENV[@]}" "$APP_DIR/start.sh" --new-chat > "$SECOND_LOG" 2>&1
+timeout 8s "${COMMON_ENV[@]}" "${SECOND_APPIMAGE_ENV[@]}" \
+    "$SECOND_APP_DIR/start.sh" "$SECOND_LAUNCH_ARG" > "$SECOND_LOG" 2>&1
 rc=$?
 set -e
 if [ "$rc" -ne 0 ]; then
@@ -452,13 +520,13 @@ kill -0 "$FIRST_ELECTRON_PID" 2>/dev/null \
     || fail "runtime marker no longer identifies the healthy resident"
 [ "$HANDOFF_STATUS" = "acknowledged" ] \
     || fail "controlled resident did not acknowledge the reopen handoff"
-python3 - "$HANDOFF_RESULT" <<'PY' \
-    || fail "reopen handoff did not preserve the --new-chat argument"
+python3 - "$HANDOFF_RESULT" "$SECOND_LAUNCH_ARG" <<'PY' \
+    || fail "reopen handoff did not preserve the $SECOND_LAUNCH_ARG argument"
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as result:
-    assert json.load(result)["argv"] == ["--new-chat"]
+    assert json.load(result)["argv"] == [sys.argv[2]]
 PY
 [ "$(count_test_main_processes)" -eq 1 ] \
     || fail "reopen handoff left more than one controlled Electron process"
@@ -471,5 +539,10 @@ if grep -Eqi 'notify-send|zenity|could not safely|failed to' "$SECOND_LOG" "$APP
     fail "reopen handoff emitted a user-visible error"
 fi
 
-record_result "preserved"
-printf '%s\n' "launcher window-reopen behavior test passed"
+if [ "$APPIMAGE_REOPEN" = "1" ]; then
+    record_result "appimage-remount-preserved"
+    printf '%s\n' "launcher AppImage remount window-reopen behavior test passed"
+else
+    record_result "preserved"
+    printf '%s\n' "launcher window-reopen behavior test passed"
+fi

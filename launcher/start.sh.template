@@ -319,6 +319,7 @@ Launches the $CODEX_LINUX_APP_DISPLAY_NAME app.
 Options:
   -h, --help                  Show this help message and exit
   --new-instance              Start a separate app instance on the first free port in the multi-launch range
+  --show                      Show or focus the main window
   --new-chat                  Open the main window on a new chat
   --quick-chat                Open a projectless quick chat
   --prompt-chat               Show the compact prompt for a new chat
@@ -2275,7 +2276,7 @@ find_running_app_pid() {
 
     if [ -f "$APP_PID_FILE" ]; then
         pid="$(cat "$APP_PID_FILE" 2>/dev/null || true)"
-        if pid_matches_executable "$pid" "$SCRIPT_DIR/electron"; then
+        if pid_matches_running_app "$pid"; then
             echo "$pid"
             return 0
         fi
@@ -2320,15 +2321,52 @@ pid_matches_app_identity() {
     [[ "$cmdline" == *"--app-id=$CODEX_LINUX_APP_ID"* ]]
 }
 
+pid_matches_appimage_install() {
+    local pid="$1"
+    local actual
+    local resident_appimage
+
+    [ -n "${APPIMAGE:-}" ] || return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [ -d "/proc/$pid" ] || return 1
+    actual="$(pid_cmdline_arg0_path "$pid")"
+    case "${actual##*/}" in
+        electron|electron\ *) ;;
+        *) return 1 ;;
+    esac
+    pid_is_current_user "$pid" || return 1
+    ! pid_is_electron_helper "$pid" || return 1
+    resident_appimage="$(pid_environ_value "$pid" APPIMAGE 2>/dev/null || true)"
+    [ -n "$resident_appimage" ] && [ "$resident_appimage" = "$APPIMAGE" ]
+}
+
+pid_matches_app_install() {
+    local pid="$1"
+
+    pid_matches_executable "$pid" "$SCRIPT_DIR/electron" || pid_matches_appimage_install "$pid"
+}
+
+pid_matches_running_app() {
+    local pid="$1"
+
+    if pid_matches_executable "$pid" "$SCRIPT_DIR/electron"; then
+        return 0
+    fi
+
+    pid_matches_appimage_install "$pid" || return 1
+    pid_matches_app_identity "$pid" || return 1
+    pid_in_same_launch_instance "$pid"
+}
+
 pid_is_foreign_codex_electron() {
     local pid="$1"
     local actual
 
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     [ -d "/proc/$pid" ] || return 1
+    ! pid_matches_app_install "$pid" || return 1
     actual="$(pid_cmdline_arg0_path "$pid")"
     [ -n "$actual" ] || return 1
-    ! pid_arg0_matches_path "$actual" "$SCRIPT_DIR/electron" || return 1
     case "${actual##*/}" in
         electron|electron\ *) ;;
         *) return 1 ;;
@@ -2346,7 +2384,7 @@ discover_running_app_pid() {
         [ -r "$proc_cmdline" ] || continue
         pid="${proc_cmdline#/proc/}"
         pid="${pid%/cmdline}"
-        if pid_matches_executable "$pid" "$SCRIPT_DIR/electron" && pid_in_same_launch_instance "$pid"; then
+        if pid_matches_running_app "$pid" && pid_in_same_launch_instance "$pid"; then
             echo "$pid"
             return 0
         fi
@@ -2431,7 +2469,7 @@ set_detected_running_app() {
 }
 
 running_app_is_active() {
-    [ -n "${RUNNING_APP_PID:-}" ] && pid_matches_executable "$RUNNING_APP_PID" "$SCRIPT_DIR/electron"
+    [ -n "${RUNNING_APP_PID:-}" ] && pid_matches_running_app "$RUNNING_APP_PID"
 }
 
 using_second_instance_handoff() {
@@ -2450,9 +2488,12 @@ detect_warm_start() {
         return 0
     fi
 
-    if runtime_recovery_scan_needed && pid="$(discover_running_app_pid)"; then
-        set_detected_running_app "$pid"
-        return 0
+    if runtime_recovery_scan_needed; then
+        if pid="$(discover_running_app_pid)"; then
+            set_detected_running_app "$pid"
+            return 0
+        fi
+        detect_cross_install_conflict
     fi
 
     if ! linux_setting_enabled "codex-linux-warm-start-enabled" 1; then
@@ -2478,13 +2519,14 @@ terminate_stale_electron_with_pidfd() {
     local pid="$1"
     local expected_start_time
 
-    pid_matches_executable "$pid" "$SCRIPT_DIR/electron" || return 1
+    pid_matches_running_app "$pid" || return 1
     expected_start_time="$(pid_start_time "$pid")" || return 1
 
     python3 - \
         "$pid" \
         "$expected_start_time" \
         "$SCRIPT_DIR/electron" \
+        "${APPIMAGE:-}" \
         "$CODEX_LINUX_APP_ID" \
         "$CODEX_LINUX_INSTANCE_ID" \
         "$MULTI_LAUNCH_ACTIVE" <<'PY'
@@ -2496,9 +2538,10 @@ import sys
 pid = int(sys.argv[1])
 expected_start_time = sys.argv[2]
 expected_executable = sys.argv[3]
-expected_app_id = sys.argv[4]
-expected_instance_id = sys.argv[5]
-expected_multi_launch = sys.argv[6] == "1"
+expected_appimage = sys.argv[4]
+expected_app_id = sys.argv[5]
+expected_instance_id = sys.argv[6]
+expected_multi_launch = sys.argv[7] == "1"
 
 if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
     print("pidfd APIs are unavailable; refusing to terminate the stale Electron process", file=sys.stderr)
@@ -2532,11 +2575,19 @@ for entry in environ_entries:
     key, value = entry.split(b"=", 1)
     environ[os.fsdecode(key)] = os.fsdecode(value)
 
+actual_executable = os.fsdecode(cmdline[0]) if cmdline else ""
+install_matches = actual_executable == expected_executable
+if not install_matches and expected_appimage:
+    install_matches = (
+        os.path.basename(actual_executable) == "electron"
+        and environ.get("APPIMAGE") == expected_appimage
+    )
+
 identity_matches = (
     actual_start_time == expected_start_time
     and actual_uid == os.geteuid()
     and bool(cmdline)
-    and os.fsdecode(cmdline[0]) == expected_executable
+    and install_matches
     and not any(part.startswith(b"--type=") for part in cmdline[1:])
     and expected_app_id in {
         environ.get("CODEX_LINUX_APP_ID"),
@@ -2641,6 +2692,7 @@ recover_unhealthy_running_app() {
 
 send_warm_start_launch_action() {
     [ "$WARM_START" -eq 1 ] || return 1
+    running_app_is_active || return 1
     [ -S "$LAUNCH_ACTION_SOCKET" ] || return 1
 
     python3 - "$LAUNCH_ACTION_SOCKET" "$@" <<'PY'
@@ -3064,7 +3116,7 @@ clear_stale_pid_file() {
 
     local pid=""
     pid="$(cat "$APP_PID_FILE" 2>/dev/null || true)"
-    if [ -z "$pid" ] || ! pid_matches_executable "$pid" "$SCRIPT_DIR/electron"; then
+    if [ -z "$pid" ] || ! pid_matches_running_app "$pid"; then
         rm -f "$APP_PID_FILE"
     fi
 }
@@ -4337,7 +4389,7 @@ launch_electron() {
         exec "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"
     ) &
     ELECTRON_PID=$!
-    if [ -n "${RUNNING_APP_PID:-}" ] && pid_matches_executable "$RUNNING_APP_PID" "$SCRIPT_DIR/electron"; then
+    if [ -n "${RUNNING_APP_PID:-}" ] && pid_matches_running_app "$RUNNING_APP_PID"; then
         echo "Preserving ChatGPT Desktop pid=$RUNNING_APP_PID liveness marker for second-instance handoff"
     else
         echo "$ELECTRON_PID" > "$APP_PID_FILE"

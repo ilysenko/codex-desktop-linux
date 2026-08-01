@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 APP_DIR="$TMP_DIR/app"
+REMOUNT_APP_DIR="$TMP_DIR/remounted-app"
+SECOND_APP_DIR="$APP_DIR"
+APPIMAGE_PATH="$TMP_DIR/codex-desktop.AppImage"
+APPIMAGE_RECOVERY="${CODEX_TEST_APPIMAGE_REMOUNT:-0}"
 HOME_DIR="$TMP_DIR/home"
 RUNTIME_DIR="$TMP_DIR/runtime"
 STATE_DIR="$HOME_DIR/.local/state/codex-desktop"
@@ -15,6 +19,10 @@ APP_LOG="$HOME_DIR/.cache/codex-desktop/launcher.log"
 LAUNCHER_PID=""
 SOCKET_PID=""
 HOOK_PID=""
+
+if [ "$APPIMAGE_RECOVERY" = "1" ]; then
+    SECOND_APP_DIR="$REMOUNT_APP_DIR"
+fi
 
 cleanup() {
     local pid
@@ -30,9 +38,11 @@ cleanup() {
         pid="${cmdline#/proc/}"
         pid="${pid%/cmdline}"
         IFS= read -r -d '' arg0 < "$cmdline" 2>/dev/null || true
-        if [ "${arg0:-}" = "$APP_DIR/electron" ]; then
-            kill "$pid" 2>/dev/null || true
-        fi
+        case "${arg0:-}" in
+            "$APP_DIR/electron"|"$REMOUNT_APP_DIR/electron")
+                kill "$pid" 2>/dev/null || true
+                ;;
+        esac
         arg0=""
     done
     rm -rf "$TMP_DIR"
@@ -165,6 +175,11 @@ HOOK
     chmod +x "$APP_DIR/.codex-linux/prelaunch.d/blocking-test-hook"
 fi
 
+if [ "$APPIMAGE_RECOVERY" = "1" ]; then
+    cp -a "$APP_DIR" "$REMOUNT_APP_DIR"
+    touch "$APPIMAGE_PATH"
+fi
+
 python3 - "$SOCKET_PATH" <<'PY' &
 import os
 import socket
@@ -200,8 +215,14 @@ COMMON_ENV=(
 if [ "${CODEX_TEST_DISABLE_PIDFD:-0}" = "1" ]; then
     COMMON_ENV+=("PYTHONPATH=$TMP_DIR/python-site")
 fi
+FIRST_APPIMAGE_ENV=()
+SECOND_APPIMAGE_ENV=()
+if [ "$APPIMAGE_RECOVERY" = "1" ]; then
+    FIRST_APPIMAGE_ENV=("APPIMAGE=$APPIMAGE_PATH" "APPDIR=$APP_DIR")
+    SECOND_APPIMAGE_ENV=("APPIMAGE=$APPIMAGE_PATH" "APPDIR=$SECOND_APP_DIR")
+fi
 
-"${COMMON_ENV[@]}" "$APP_DIR/start.sh" > "$FIRST_LOG" 2>&1 &
+"${COMMON_ENV[@]}" "${FIRST_APPIMAGE_ENV[@]}" "$APP_DIR/start.sh" > "$FIRST_LOG" 2>&1 &
 LAUNCHER_PID=$!
 
 if [ "${CODEX_TEST_KILL_DURING_PRELAUNCH:-0}" = "1" ]; then
@@ -213,7 +234,7 @@ if [ "${CODEX_TEST_KILL_DURING_PRELAUNCH:-0}" = "1" ]; then
     rm -f "$APP_DIR/.codex-linux/prelaunch.d/blocking-test-hook"
 
     SECONDS=0
-    "${COMMON_ENV[@]}" "$APP_DIR/start.sh" > "$SECOND_LOG" 2>&1 &
+    "${COMMON_ENV[@]}" "${SECOND_APPIMAGE_ENV[@]}" "$SECOND_APP_DIR/start.sh" > "$SECOND_LOG" 2>&1 &
     LAUNCHER_PID=$!
     replacement_is_ready() {
         pid_file_is_live && webview_is_ready
@@ -256,7 +277,7 @@ wait_for "webview parent-death cleanup" webview_is_down
 kill -0 "$FIRST_ELECTRON_PID" 2>/dev/null \
     || fail "Electron should survive the launcher SIGKILL"
 
-"${COMMON_ENV[@]}" "$APP_DIR/start.sh" > "$SECOND_LOG" 2>&1 &
+"${COMMON_ENV[@]}" "${SECOND_APPIMAGE_ENV[@]}" "$SECOND_APP_DIR/start.sh" > "$SECOND_LOG" 2>&1 &
 LAUNCHER_PID=$!
 
 new_electron_is_ready() {
@@ -278,4 +299,8 @@ kill "$SECOND_ELECTRON_PID"
 wait "$LAUNCHER_PID"
 LAUNCHER_PID=""
 
-printf '%s\n' "launcher recovery test passed (warm-start disabled=${CODEX_TEST_DISABLE_WARM_START:-0})"
+if [ "$APPIMAGE_RECOVERY" = "1" ]; then
+    printf '%s\n' "launcher AppImage remount recovery test passed"
+else
+    printf '%s\n' "launcher recovery test passed (warm-start disabled=${CODEX_TEST_DISABLE_WARM_START:-0})"
+fi
