@@ -338,9 +338,9 @@ main() {
         return 0
     fi
 
+    download_electron
     patch_asar "$app_dir"
     select_linux_icon_source
-    download_electron
     extract_webview "$app_dir"
     install_app
     stage_linux_notification_actions_bridge

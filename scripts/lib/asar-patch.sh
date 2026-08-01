@@ -97,7 +97,9 @@ patch_asar() {
     else
         warn "Critical patch enforcement disabled (CODEX_ENFORCE_CRITICAL_PATCHES=0)"
     fi
-    node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" "${patch_args[@]}" "$WORK_DIR/app-extracted"
+    CODEX_TARGET_ELECTRON_VERSION="$ELECTRON_VERSION" \
+        CODEX_TARGET_NODE_VERSION="${ELECTRON_NODE_VERSION:-}" \
+        node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" "${patch_args[@]}" "$WORK_DIR/app-extracted"
     CODEX_PATCH_REPORT_RESOLVED="$patch_report_json"
     print_patch_report_summary "$patch_report_json"
 
@@ -133,7 +135,10 @@ inspect_rebuild_candidate() {
         cp -r "$resources_dir/app.asar.unpacked/"* "$inspect_dir/" 2>/dev/null || true
     fi
 
-    node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" --report-json "$patch_report" "$inspect_dir"
+    CODEX_TARGET_ELECTRON_VERSION="$ELECTRON_VERSION" \
+        CODEX_TARGET_NODE_VERSION="${ELECTRON_NODE_VERSION:-}" \
+        CODEX_RUNTIME_QUALIFICATION_MODE="inspect-unprobed" \
+        node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" --report-json "$patch_report" "$inspect_dir"
     write_rebuild_report_json "$rebuild_report" "$dmg_path" "$ELECTRON_VERSION" "$patch_report" ""
 
     info "Patch report: $patch_report"

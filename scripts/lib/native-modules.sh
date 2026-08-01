@@ -284,6 +284,65 @@ install_native_modules_from_source() {
 }
 
 # ---- Download Linux Electron ----
+validate_electron_archive_version() {
+    local archive_path="$1"
+    local archive_version
+
+    archive_version=$(unzip -p "$archive_path" version 2>/dev/null | tr -d '\r\n') || \
+        error "Electron runtime archive has no readable version marker: $archive_path"
+    [ "$archive_version" = "$ELECTRON_VERSION" ] || \
+        error "Electron runtime archive version mismatch: expected $ELECTRON_VERSION, got ${archive_version:-unknown}"
+}
+
+validate_downloaded_electron_runtime() {
+    local runtime_dir="$1"
+    local electron_binary="$runtime_dir/electron"
+    local probe_binary="$electron_binary"
+    local runtime_versions
+    local runtime_electron
+    local runtime_node
+    local runtime_extra
+
+    [ -x "$electron_binary" ] || error "Electron runtime executable is missing: $electron_binary"
+    if [ -n "${CODEX_ELECTRON_PROBE_INTERPRETER:-}" ] || \
+        [ -n "${CODEX_ELECTRON_PROBE_RPATH:-}" ]; then
+        [ -n "${CODEX_ELECTRON_PROBE_INTERPRETER:-}" ] && \
+            [ -n "${CODEX_ELECTRON_PROBE_RPATH:-}" ] || \
+            error "Electron probe interpreter and RPATH must be configured together"
+        [ -x "$CODEX_ELECTRON_PROBE_INTERPRETER" ] || \
+            error "Electron probe interpreter is not executable: $CODEX_ELECTRON_PROBE_INTERPRETER"
+        command -v patchelf >/dev/null 2>&1 || \
+            error "patchelf is required for the configured Electron runtime probe"
+        probe_binary="$runtime_dir/.electron-runtime-probe"
+        cp "$electron_binary" "$probe_binary"
+        chmod 0755 "$probe_binary"
+        patchelf --set-interpreter "$CODEX_ELECTRON_PROBE_INTERPRETER" \
+            --set-rpath "$runtime_dir:$CODEX_ELECTRON_PROBE_RPATH" \
+            "$probe_binary"
+    fi
+    if ! runtime_versions=$(env \
+        -u NODE_OPTIONS \
+        -u NODE_PATH \
+        -u ELECTRON_RUN_AS_NODE \
+        ELECTRON_RUN_AS_NODE=1 \
+        "$probe_binary" -e \
+        'process.stdout.write(`${process.versions.electron}\t${process.versions.node}`)'); then
+        error "Could not probe the staged Electron runtime: $probe_binary"
+    fi
+    IFS=$'\t' read -r runtime_electron runtime_node runtime_extra <<< "$runtime_versions"
+    [ -z "$runtime_extra" ] && \
+        [ "$runtime_versions" = "$runtime_electron"$'\t'"$runtime_node" ] || \
+        error "Electron runtime probe returned malformed output"
+    [ "$runtime_electron" = "$ELECTRON_VERSION" ] || \
+        error "Electron runtime probe mismatch: expected $ELECTRON_VERSION, got ${runtime_electron:-unknown}"
+    [[ "$runtime_node" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+        error "Electron runtime reported an invalid Node.js version: ${runtime_node:-unknown}"
+    ELECTRON_NODE_VERSION="$runtime_node"
+    if [ "$probe_binary" != "$electron_binary" ]; then
+        rm -f "$probe_binary"
+    fi
+}
+
 download_electron() {
     info "Downloading Electron v${ELECTRON_VERSION} for Linux..."
 
@@ -300,37 +359,40 @@ download_electron() {
         [ -f "$CODEX_ELECTRON_ZIP_SOURCE" ] || error "CODEX_ELECTRON_ZIP_SOURCE does not exist: $CODEX_ELECTRON_ZIP_SOURCE"
         info "Using Electron runtime archive: $CODEX_ELECTRON_ZIP_SOURCE"
         cp "$CODEX_ELECTRON_ZIP_SOURCE" "$WORK_DIR/electron.zip"
-        mkdir -p "$INSTALL_DIR"
-        cd "$INSTALL_DIR"
-        unzip -qo "$WORK_DIR/electron.zip"
-        info "Electron ready"
-        return 0
-    fi
-
-    local url
-    if [ -n "$ELECTRON_MIRROR" ]; then
-        url="${ELECTRON_MIRROR%/}/v${ELECTRON_VERSION}/${electron_zip}"
-        info "Using Electron runtime mirror: ${ELECTRON_MIRROR%/}"
     else
-        url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${electron_zip}"
-    fi
-    local electron_cache_dir="${CODEX_ELECTRON_CACHE_DIR:-$HOME/.cache/codex-desktop/electron}"
-    local cached_zip="$electron_cache_dir/$electron_zip"
-    local partial_zip="$cached_zip.part"
+        local url
+        if [ -n "$ELECTRON_MIRROR" ]; then
+            url="${ELECTRON_MIRROR%/}/v${ELECTRON_VERSION}/${electron_zip}"
+            info "Using Electron runtime mirror: ${ELECTRON_MIRROR%/}"
+        else
+            url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${electron_zip}"
+        fi
+        local electron_cache_dir="${CODEX_ELECTRON_CACHE_DIR:-$HOME/.cache/codex-desktop/electron}"
+        local cached_zip="$electron_cache_dir/$electron_zip"
+        local partial_zip="$cached_zip.part"
 
-    mkdir -p "$electron_cache_dir"
-    if [ ! -f "$cached_zip" ]; then
-        info "Downloading $electron_zip into cache..."
-        curl -L --fail --continue-at - --progress-bar -o "$partial_zip" "$url"
-        mv "$partial_zip" "$cached_zip"
-    else
-        info "Using cached Electron archive: $cached_zip"
+        mkdir -p "$electron_cache_dir"
+        if [ ! -f "$cached_zip" ]; then
+            info "Downloading $electron_zip into cache..."
+            curl -L --fail --continue-at - --progress-bar -o "$partial_zip" "$url"
+            mv "$partial_zip" "$cached_zip"
+        else
+            info "Using cached Electron archive: $cached_zip"
+        fi
+
+        cp "$cached_zip" "$WORK_DIR/electron.zip"
     fi
 
-    cp "$cached_zip" "$WORK_DIR/electron.zip"
+    validate_electron_archive_version "$WORK_DIR/electron.zip"
+    local runtime_staging_dir
+    runtime_staging_dir=$(mktemp -d "$WORK_DIR/electron-runtime.XXXXXXXX")
+    if ! (cd "$runtime_staging_dir" && unzip -qo "$WORK_DIR/electron.zip"); then
+        error "Could not extract the Electron runtime archive"
+    fi
+    validate_downloaded_electron_runtime "$runtime_staging_dir"
     mkdir -p "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
-    unzip -qo "$WORK_DIR/electron.zip"
+    cp -a "$runtime_staging_dir/." "$INSTALL_DIR/"
+    rm -rf "$runtime_staging_dir"
 
-    info "Electron ready"
+    info "Electron ready (Electron $ELECTRON_VERSION, Node.js $ELECTRON_NODE_VERSION)"
 }

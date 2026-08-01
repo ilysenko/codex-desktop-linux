@@ -127,6 +127,83 @@
           hash = "sha512-j+dFgJLRAE0nufQKXk3IfS6T6YuHhCgMvz4TrG0sgtb6DSCdYpfJ1etcdmeCmPQjUgO+yo32ktVrRliNs/+fmg==";
         };
 
+        watchboundArtifacts = builtins.fromJSON (
+          builtins.readFile ./linux-features/directory-only-working-tree-watch/watchbound-artifacts.json
+        );
+        watchboundVersion = watchboundArtifacts.version;
+        watchboundSourceArchive = pkgs.fetchurl {
+          name = "watchbound-${watchboundArtifacts.source.revision}.tar.gz";
+          inherit (watchboundArtifacts.source) url sha256;
+        };
+        watchboundSource = pkgs.runCommandLocal "watchbound-${watchboundVersion}-source" {
+          nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+        } ''
+          mkdir -p "$out"
+          tar -xzf ${watchboundSourceArchive} -C "$out" --strip-components=1
+          chmod -R u+w "$out"
+          for manifest in "$out/package.json" "$out/js/package.json" "$out/node/package.json"; do
+            substituteInPlace "$manifest" \
+              --replace-fail '"version": "0.0.0-development"' '"version": "${watchboundVersion}"'
+          done
+          substituteInPlace "$out/js/package.json" \
+            --replace-fail '"@gadicc/watchbound-node": "workspace:0.0.0-development"' \
+              '"@gadicc/watchbound-node": "workspace:${watchboundVersion}"'
+          substituteInPlace "$out/Cargo.toml" \
+            --replace-fail 'version = "0.0.0-development"' 'version = "${watchboundVersion}"'
+          substituteInPlace "$out/Cargo.lock" \
+            --replace-fail 'version = "0.0.0-development"' 'version = "${watchboundVersion}"'
+          substituteInPlace "$out/pnpm-lock.yaml" \
+            --replace-fail 'specifier: workspace:0.0.0-development' \
+              'specifier: workspace:${watchboundVersion}'
+        '';
+        watchboundTarget = {
+          x86_64-linux = {
+            id = "linux-x64-gnu";
+            rustTarget = "x86_64-unknown-linux-gnu";
+            binary = "watchbound.linux-x64-gnu.node";
+          };
+          aarch64-linux = {
+            id = "linux-arm64-gnu";
+            rustTarget = "aarch64-unknown-linux-gnu";
+            binary = "watchbound.linux-arm64-gnu.node";
+          };
+        }.${system};
+        watchboundNative = pkgs.rustPlatform.buildRustPackage {
+          pname = "watchbound-native-${watchboundTarget.id}";
+          version = watchboundVersion;
+          src = watchboundSource;
+          # Materialized from the source revision pinned in the artifact manifest.
+          cargoLock.lockFile = ./nix/watchbound-Cargo.lock;
+          cargoBuildFlags = [ "-p" "watchbound-node" ];
+          doCheck = false;
+          installPhase = ''
+            runHook preInstall
+            release_dir="target/''${CARGO_BUILD_TARGET:-${watchboundTarget.rustTarget}}/release"
+            if [ ! -f "$release_dir/libwatchbound_node.so" ]; then
+              release_dir="target/release"
+            fi
+            install -Dm0555 "$release_dir/libwatchbound_node.so" \
+              "$out/lib/${watchboundTarget.binary}"
+            runHook postInstall
+          '';
+        };
+        watchboundPackage = pkgs.stdenv.mkDerivation {
+          pname = "watchbound-node-package-${watchboundTarget.id}";
+          version = watchboundVersion;
+          src = watchboundSource;
+          nativeBuildInputs = [ pkgs.nodejs_24 ];
+          dontConfigure = true;
+          dontBuild = true;
+          installPhase = ''
+            runHook preInstall
+            node scripts/generate-nix-package.mjs \
+              --target ${watchboundTarget.id} \
+              --artifact ${watchboundNative}/lib/${watchboundTarget.binary} \
+              --output "$out"
+            runHook postInstall
+          '';
+        };
+
         browserUseNodeReplRuntime = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-primary-runtime/26.426.12240/codex-primary-runtime-linux-x64-26.426.12240.tar.xz";
           hash = "sha256-21Yk6276NrZuxvbdBIjO+5ZuSWNoYqq2IJpDNsHKkMQ=";
@@ -524,6 +601,9 @@ PY
               normalizeLinuxFeaturesConfig linuxFeaturesConfigOverride;
           effectiveLinuxFeatureIds = effectiveLinuxFeaturesConfig.enabled;
           codexMicroEnabled = builtins.elem "codex-micro" effectiveLinuxFeatureIds;
+          watchboundEnabled = builtins.elem
+            "directory-only-working-tree-watch"
+            effectiveLinuxFeatureIds;
         in
         pkgs.stdenv.mkDerivation {
           pname = "codex-desktop${packageSuffix { inherit enableComputerUseUi; linuxFeatureIds = effectiveLinuxFeatureIds; }}-payload";
@@ -575,9 +655,15 @@ PY
             export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
             export CODEX_LINUX_FEATURES_CONFIG="${linuxFeaturesConfigFile effectiveLinuxFeaturesConfig}"
             export CODEX_ELECTRON_ZIP_SOURCE="${electronZip}"
+            CODEX_ELECTRON_PROBE_INTERPRETER="$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)"
+            export CODEX_ELECTRON_PROBE_INTERPRETER
+            export CODEX_ELECTRON_PROBE_RPATH="${electronLibPath}:${runtimeLibPath}"
             export CODEX_NATIVE_MODULES_SOURCE="${codexNativeModules}"
             ${pkgs.lib.optionalString codexMicroEnabled ''
             export CODEX_MICRO_NODE_HID_ARCHIVE="${codexMicroNodeHidArchive}"
+            ''}
+            ${pkgs.lib.optionalString watchboundEnabled ''
+            export CODEX_WATCHBOUND_PACKAGE_ROOT="${watchboundPackage}/lib/node_modules"
             ''}
             ${pkgs.lib.optionalString (browserUseNodeRepl != null) ''
             export CODEX_LINUX_NODE_REPL_SOURCE="${browserUseNodeRepl}/bin/node_repl"
@@ -815,6 +901,9 @@ PY
             cd "$source_dir"
             export CODEX_INSTALL_DIR="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
             export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
+            CODEX_ELECTRON_PROBE_INTERPRETER="$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)"
+            export CODEX_ELECTRON_PROBE_INTERPRETER
+            export CODEX_ELECTRON_PROBE_RPATH="${electronLibPath}:${runtimeLibPath}"
             export CODEX_NOTIFICATION_ACTIONS_SOURCE="${codexNotificationActionsBinary}/bin/codex-notification-actions-linux"
             ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/Codex.dmg" "$@"
 

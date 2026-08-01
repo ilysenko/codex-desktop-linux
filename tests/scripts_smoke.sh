@@ -4244,6 +4244,134 @@ PLIST
     [ "$(tail -n 1 "$output_log")" = "41.3.0" ] || fail "Expected fallback Electron version 41.3.0, got: $(cat "$output_log")"
 }
 
+test_electron_archive_and_runtime_are_qualified_before_patching() {
+    info "Checking Electron archive and runtime qualification"
+    local workspace="$TMP_DIR/electron-runtime-qualification"
+    local fake_bin="$workspace/bin"
+    local archive="$workspace/electron.zip"
+    local output_log="$workspace/output.log"
+    local rc
+
+    mkdir -p "$fake_bin" "$workspace/work"
+    : > "$archive"
+    cat > "$fake_bin/unzip" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "-p" ]; then
+    printf '%s\n' "$FAKE_ELECTRON_ARCHIVE_VERSION"
+    exit 0
+fi
+cat > electron <<'ELECTRON'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${ELECTRON_RUN_AS_NODE:-}" = "1" ] || exit 91
+[ "${1:-}" = "-e" ] || exit 92
+[ -z "${NODE_OPTIONS:-}" ] || exit 94
+[ -z "${NODE_PATH:-}" ] || exit 95
+[ -f "$(dirname "$0")/version" ] || exit 96
+case "${2:-}" in
+    *process.versions.electron*process.versions.node*) ;;
+    *) exit 93 ;;
+esac
+printf '%s\t%s' "$FAKE_ELECTRON_RUNTIME_VERSION" "$FAKE_ELECTRON_NODE_VERSION"
+ELECTRON
+chmod 0755 electron
+printf '%s\n' "$FAKE_ELECTRON_ARCHIVE_VERSION" > version
+SCRIPT
+    chmod +x "$fake_bin/unzip"
+    cat > "$fake_bin/patchelf" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+    chmod +x "$fake_bin/patchelf"
+
+    set +e
+    (
+        PATH="$fake_bin:$PATH"
+        export PATH
+        FAKE_ELECTRON_ARCHIVE_VERSION="43.0.0"
+        FAKE_ELECTRON_RUNTIME_VERSION="43.0.0"
+        FAKE_ELECTRON_NODE_VERSION="25.0.0"
+        export FAKE_ELECTRON_ARCHIVE_VERSION FAKE_ELECTRON_RUNTIME_VERSION FAKE_ELECTRON_NODE_VERSION
+        WORK_DIR="$workspace/work-archive-mismatch"
+        INSTALL_DIR="$workspace/install-archive-mismatch"
+        CODEX_ELECTRON_ZIP_SOURCE="$archive"
+        ELECTRON_VERSION="42.3.0"
+        ELECTRON_MIRROR=""
+        ARCH="x86_64"
+        mkdir -p "$WORK_DIR"
+        info() { echo "[INFO] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/native-modules.sh"
+        download_electron
+    ) > "$output_log" 2>&1
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "Expected mismatched Electron archive to be rejected"
+    assert_contains "$output_log" "archive version mismatch: expected 42.3.0, got 43.0.0"
+    [ ! -e "$workspace/install-archive-mismatch/electron" ] || \
+        fail "Mismatched Electron archive was extracted"
+
+    set +e
+    (
+        PATH="$fake_bin:$PATH"
+        export PATH
+        FAKE_ELECTRON_ARCHIVE_VERSION="42.3.0"
+        FAKE_ELECTRON_RUNTIME_VERSION="43.0.0"
+        FAKE_ELECTRON_NODE_VERSION="24.15.0"
+        export FAKE_ELECTRON_ARCHIVE_VERSION FAKE_ELECTRON_RUNTIME_VERSION FAKE_ELECTRON_NODE_VERSION
+        NODE_OPTIONS="--require=/definitely/not/a/module.js"
+        NODE_PATH="/definitely/not/a/module/path"
+        export NODE_OPTIONS NODE_PATH
+        WORK_DIR="$workspace/work-runtime-mismatch"
+        INSTALL_DIR="$workspace/install-runtime-mismatch"
+        CODEX_ELECTRON_ZIP_SOURCE="$archive"
+        ELECTRON_VERSION="42.3.0"
+        ELECTRON_MIRROR=""
+        CODEX_ELECTRON_PROBE_INTERPRETER="$BASH_BIN"
+        CODEX_ELECTRON_PROBE_RPATH="/nix/store/fake-electron-libs:/nix/store/fake-runtime-libs"
+        ARCH="x86_64"
+        mkdir -p "$WORK_DIR"
+        info() { echo "[INFO] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/native-modules.sh"
+        download_electron
+    ) > "$output_log" 2>&1
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "Expected mismatched Electron executable to be rejected"
+    assert_contains "$output_log" "runtime probe mismatch: expected 42.3.0, got 43.0.0"
+    [ ! -e "$workspace/install-runtime-mismatch/electron" ] || \
+        fail "Mismatched Electron runtime changed the install target"
+
+    (
+        PATH="$fake_bin:$PATH"
+        export PATH
+        FAKE_ELECTRON_ARCHIVE_VERSION="42.3.0"
+        FAKE_ELECTRON_RUNTIME_VERSION="42.3.0"
+        FAKE_ELECTRON_NODE_VERSION="24.15.0"
+        export FAKE_ELECTRON_ARCHIVE_VERSION FAKE_ELECTRON_RUNTIME_VERSION FAKE_ELECTRON_NODE_VERSION
+        WORK_DIR="$workspace/work-qualified"
+        INSTALL_DIR="$workspace/install-qualified"
+        CODEX_ELECTRON_ZIP_SOURCE="$archive"
+        ELECTRON_VERSION="42.3.0"
+        ELECTRON_MIRROR=""
+        ARCH="x86_64"
+        mkdir -p "$WORK_DIR"
+        info() { echo "[INFO] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/native-modules.sh"
+        download_electron
+        printf '%s\n' "$ELECTRON_NODE_VERSION"
+    ) > "$output_log" 2>&1
+    assert_contains "$output_log" "Electron ready (Electron 42.3.0, Node.js 24.15.0)"
+    [ "$(tail -n 1 "$output_log")" = "24.15.0" ] || \
+        fail "Expected qualified Electron Node.js version to be propagated"
+}
+
 test_port_validation_rejects_oversized_numeric_values() {
     info "Checking oversized numeric webview port validation"
     local workspace="$TMP_DIR/port-validation"
@@ -11179,6 +11307,7 @@ main() {
     test_ci_local_mounts_shared_git_metadata_for_linked_worktrees
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
+    test_electron_archive_and_runtime_are_qualified_before_patching
     test_port_validation_rejects_oversized_numeric_values
     test_launcher_uses_private_default_tmpdir
     test_managed_node_runtime_source_install
