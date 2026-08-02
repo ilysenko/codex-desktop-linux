@@ -692,6 +692,19 @@ test("build info captures DMG hash, features, distro profile, and source revisio
       JSON.stringify({ enabled: ["read-aloud", "open-target-discovery"] }),
       "utf8",
     );
+    for (const [id, capabilities] of Object.entries({
+      "read-aloud": ["read-aloud-capability"],
+      "open-target-discovery": ["open-target-discovery-capability"],
+    })) {
+      const featureDir = path.join(featuresRoot, id);
+      fs.mkdirSync(featureDir, { recursive: true });
+      fs.writeFileSync(path.join(featureDir, "README.md"), `# ${id}\n`);
+      fs.writeFileSync(
+        path.join(featureDir, "feature.json"),
+        JSON.stringify({ id, title: id, capabilities }),
+        "utf8",
+      );
+    }
 
     const info = buildInfo({
       repoDir: tempRoot,
@@ -728,6 +741,10 @@ test("build info captures DMG hash, features, distro profile, and source revisio
     assert.equal(info.packageProfile.id, "debian-family");
     assert.equal(info.packageProfile.packageManager, "apt");
     assert.deepEqual(info.linuxFeatures.enabled, ["read-aloud", "open-target-discovery"]);
+    assert.deepEqual(info.linuxCapabilities, [
+      "open-target-discovery-capability",
+      "read-aloud-capability",
+    ]);
     assert.equal(info.linuxFeatures.configPath, undefined);
   } finally {
     if (pinnedFeaturesConfig != null) {

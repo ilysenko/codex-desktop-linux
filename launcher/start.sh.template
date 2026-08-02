@@ -39,9 +39,6 @@ codex_run_host_command() (
     codex_exec_host_command "$@"
 )
 
-# Capture before package-specific launcher patches add application runtime paths.
-codex_capture_original_ld_library_path
-
 resolve_script_dir() {
     local source="${BASH_SOURCE[0]}"
     local dir
@@ -85,6 +82,18 @@ capture_launched_desktop_entry() {
 }
 
 SCRIPT_DIR="$(resolve_script_dir)"
+if [ "${1:-}" = "--print-build-info" ]; then
+    build_info="$SCRIPT_DIR/resources/codex-linux-build-info.json"
+    [ -f "$build_info" ] || {
+        echo "Codex Linux build information is unavailable: $build_info" >&2
+        exit 1
+    }
+    exec cat "$build_info"
+fi
+
+# Capture before package-specific launcher patches add application runtime paths.
+codex_capture_original_ld_library_path
+
 capture_launched_desktop_entry
 if [ -z "${CODEX_HOME:-}" ]; then
     if [ -n "${HOME:-}" ]; then

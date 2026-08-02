@@ -72,6 +72,10 @@ The build pipeline loads enabled features in these phases:
 5. Runtime: the launcher consumes staged environment files, prelaunch hooks,
    Electron args, and cold-start hooks.
 
+Required patching and synchronous app staging finish before build-info
+generation. Build-info records the enabled feature snapshot and the aggregate
+capabilities from those completed manifests.
+
 Native packages copy the configured feature root into the packaged
 `update-builder` bundle, including `linux-features/local/`, and write a
 sanitized `features.json` containing the enabled ids plus settings for enabled
@@ -86,6 +90,22 @@ framework-owned runtime hooks. Legacy `stage.sh` hooks are not tracked by this
 manifest and must clean up any feature-owned files themselves.
 
 ## Manifest Keys
+
+### Capabilities
+
+`capabilities` is an optional manifest array for stable feature declarations:
+
+```json
+{
+  "capabilities": ["my-feature-capability-v1"]
+}
+```
+
+Each value must be a unique, nonempty string without whitespace. A capability
+can be declared by only one enabled feature; duplicate ownership fails the
+build. Build-info publishes the enabled aggregate as top-level
+`linuxCapabilities`, sorted deterministically. It is metadata only: generic
+framework and launcher code do not make capability-specific decisions.
 
 `entrypoints` declares optional feature code hooks. Feature patching uses only
 `patchDescriptors`; features that only stage resources, runtime hooks, package
@@ -200,6 +220,16 @@ such as Codex skills: stage the source file with `resources` under
 `$CODEX_LINUX_FEATURES_DIR/<feature-id>/...` to `$CODEX_HOME/skills/...` in a
 `runtimeHooks.prelaunch` script. Do not write user-home files from `stage.sh`;
 install, package, and updater rebuilds may run outside the real user's session.
+
+### Build-Info Inspection
+
+The generated launcher accepts `--print-build-info` as its first argument. It
+prints `resources/codex-linux-build-info.json` byte-for-byte and exits; fixed
+trailing Desktop-entry arguments are ignored. A missing file reports an error
+and exits before runtime side effects. This boundary runs immediately after the
+launcher resolves its own directory, before environment capture, hooks, runtime
+setup, or Electron. The launcher does not parse build-info or use it to select
+runtime behavior.
 
 ## Declarative Native Package Staging
 

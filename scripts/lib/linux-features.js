@@ -132,6 +132,32 @@ function normalizeFeatureIdList(value, label, featureId) {
   return result;
 }
 
+function normalizeLinuxFeatureCapabilities(value, featureId) {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Linux feature '${featureId}' capabilities must be an array`);
+  }
+
+  const seen = new Set();
+  const capabilities = [];
+  for (const capability of value) {
+    if (typeof capability !== "string" || capability.length === 0) {
+      throw new Error(`Linux feature '${featureId}' capability must be a non-empty string`);
+    }
+    if (/\s/.test(capability)) {
+      throw new Error(`Linux feature '${featureId}' capability must not contain whitespace`);
+    }
+    if (seen.has(capability)) {
+      throw new Error(`Duplicate Linux feature capability '${capability}' in '${featureId}'`);
+    }
+    seen.add(capability);
+    capabilities.push(capability);
+  }
+  return capabilities;
+}
+
 function normalizeEnabledFeatureIds(value, sourcePath, options = {}) {
   if (!Array.isArray(value)) {
     if (options.strict === true) {
@@ -319,6 +345,7 @@ function normalizeLinuxFeatureManifest(featuresRoot, candidate) {
     manifest: {
       ...manifest,
       defaultEnabled: false,
+      capabilities: normalizeLinuxFeatureCapabilities(manifest.capabilities, id),
       requires: normalizeFeatureIdList(manifest.requires, "requires", id),
       conflicts: normalizeFeatureIdList(manifest.conflicts, "conflicts", id),
     },
@@ -392,6 +419,26 @@ function loadEnabledLinuxFeatures(options = {}) {
   }
   validateEnabledFeatureDependencies(features);
   return features;
+}
+
+function enabledLinuxFeatureCapabilities(options = {}) {
+  const ownerByCapability = new Map();
+  const capabilities = [];
+  const features = loadEnabledLinuxFeatures(options)
+    .sort((left, right) => left.id.localeCompare(right.id));
+  for (const feature of features) {
+    for (const capability of feature.manifest.capabilities) {
+      const owner = ownerByCapability.get(capability);
+      if (owner != null) {
+        throw new Error(
+          `Duplicate Linux feature capability '${capability}' declared by '${owner}' and '${feature.id}'`,
+        );
+      }
+      ownerByCapability.set(capability, feature.id);
+      capabilities.push(capability);
+    }
+  }
+  return capabilities.sort((left, right) => left.localeCompare(right));
 }
 
 function packageFeatureOptions(appDir, options = {}) {
@@ -1453,6 +1500,7 @@ module.exports = {
   disabledLinuxFeatureCleanupHooks,
   discoverLinuxFeatureManifests,
   enabledLinuxFeaturesConfig,
+  enabledLinuxFeatureCapabilities,
   enabledLinuxFeatureIds,
   enabledFeatureIdsFromBuildInfo,
   enabledLinuxFeatureInstallPlan,

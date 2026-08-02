@@ -11096,6 +11096,66 @@ test_notification_actions_bridge_accepts_prebuilt_binary() {
     assert_mode "$target_binary" "755"
 }
 
+test_launcher_print_build_info_early_exit() {
+    info "Checking launcher build-info early exit"
+    local workspace="$TMP_DIR/launcher-build-info"
+    local app_dir="$workspace/app"
+    local build_info="$app_dir/resources/codex-linux-build-info.json"
+    local output="$workspace/output.json"
+    local output_with_args="$workspace/output-with-args.json"
+    local error="$workspace/error.log"
+    local marker="$workspace/runtime-marker"
+    local fake_bin="$workspace/bin"
+    local fake_cat="$fake_bin/cat"
+
+    mkdir -p "$app_dir/resources" "$app_dir/.codex-linux/prelaunch.d" "$workspace/home" "$fake_bin"
+    cp "$REPO_DIR/launcher/start.sh.template" "$app_dir/start.sh"
+    chmod 0755 "$app_dir/start.sh"
+    printf '%s\n' '{' '  "schemaVersion": 1,' '  "appIdentity": {"id": "codex-desktop"}' '}' > "$build_info"
+    printf '%s\n' "#!$BASH_BIN" "touch '$marker'" > "$app_dir/electron"
+    chmod 0755 "$app_dir/electron"
+    printf '%s\n' "#!$BASH_BIN" "touch '$marker'" > "$app_dir/.codex-linux/prelaunch.d/probe"
+    chmod 0755 "$app_dir/.codex-linux/prelaunch.d/probe"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        '[ "${CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE:-}" = "seed-host-state" ] || exit 91' \
+        '[ "${CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE:-}" = "seed-host-value" ] || exit 92' \
+        '[ "${CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE:-}" = "seed-original-state" ] || exit 93' \
+        '[ "${CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE:-}" = "seed-original-value" ] || exit 94' \
+        'exec /usr/bin/cat "$@"' > "$fake_cat"
+    chmod 0755 "$fake_cat"
+
+    HOME="$workspace/home" XDG_CACHE_HOME="$workspace/cache" XDG_STATE_HOME="$workspace/state" \
+        XDG_CONFIG_HOME="$workspace/config" PATH="$fake_bin:$PATH" \
+        CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE="seed-host-state" \
+        CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE="seed-host-value" \
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE="seed-original-state" \
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE="seed-original-value" \
+        LD_LIBRARY_PATH="/seed/library" bash "$app_dir/start.sh" --print-build-info >"$output" 2>"$error" \
+        || fail "launcher build-info inspection should exit successfully"
+    cmp -s "$build_info" "$output" || fail "launcher build-info inspection must preserve the packaged JSON byte-for-byte"
+    HOME="$workspace/home" XDG_CACHE_HOME="$workspace/cache" XDG_STATE_HOME="$workspace/state" \
+        XDG_CONFIG_HOME="$workspace/config" PATH="$fake_bin:$PATH" \
+        CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE="seed-host-state" \
+        CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE="seed-host-value" \
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE="seed-original-state" \
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE="seed-original-value" \
+        LD_LIBRARY_PATH="/seed/library" bash "$app_dir/start.sh" --print-build-info --ozone-platform=wayland --class=CodexDesktop >"$output_with_args" 2>"$error" \
+        || fail "launcher build-info inspection with fixed trailing arguments should exit successfully"
+    cmp -s "$build_info" "$output_with_args" || fail "launcher build-info inspection with fixed trailing arguments must preserve the packaged JSON byte-for-byte"
+    cmp -s "$output" "$output_with_args" || fail "launcher build-info inspection must ignore fixed trailing arguments"
+    [ ! -s "$error" ] || fail "launcher build-info inspection must not emit diagnostics"
+    [ ! -e "$marker" ] || fail "launcher build-info inspection must not start Electron or feature hooks"
+    [ ! -e "$workspace/state" ] || fail "launcher build-info inspection must exit before launcher runtime setup"
+
+    rm -f "$build_info"
+    if HOME="$workspace/home" bash "$app_dir/start.sh" --print-build-info >"$output" 2>"$error"; then
+        fail "launcher build-info inspection must fail when the packaged JSON is absent"
+    fi
+    assert_contains "$error" "Codex Linux build information is unavailable: $build_info"
+    [ ! -e "$marker" ] || fail "missing build-info inspection must not start Electron or feature hooks"
+}
+
 main() {
     test_common_helper_sourcing
     test_package_icon_source_resolution
@@ -11221,6 +11281,7 @@ main() {
     test_launcher_rejects_missing_webview_entrypoint
     test_launcher_marketplace_metadata_atomic_staging
     test_launcher_template_sanity
+    test_launcher_print_build_info_early_exit
     test_launcher_warm_start_recovery
     test_launcher_window_reopen_behavior
     test_launcher_cli_resolution_policy

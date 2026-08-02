@@ -9,6 +9,7 @@ const test = require("node:test");
 
 const {
   enabledFeatureIdsFromBuildInfo,
+  enabledLinuxFeatureCapabilities,
   enabledLinuxFeaturePackageDependencies,
   enabledLinuxFeaturePackageFiles,
   enabledLinuxFeaturePackagePlan,
@@ -44,6 +45,16 @@ function makePackageFeatureRoot(root, featureManifest) {
   return { featureDir, featuresRoot, id };
 }
 
+function writeFeatureManifest(featuresRoot, id, manifest = {}) {
+  const featureDir = path.join(featuresRoot, id);
+  fs.mkdirSync(featureDir, { recursive: true });
+  fs.writeFileSync(path.join(featureDir, "README.md"), `# ${id}\n`);
+  fs.writeFileSync(
+    path.join(featureDir, "feature.json"),
+    `${JSON.stringify({ id, title: id, ...manifest }, null, 2)}\n`,
+  );
+}
+
 function writeBuildInfoSnapshot(appDir, enabled) {
   const buildInfoPath = path.join(appDir, ".codex-linux", "build-info.json");
   fs.mkdirSync(path.dirname(buildInfoPath), { recursive: true });
@@ -66,6 +77,66 @@ function writeStagedManifest(appDir, manifest) {
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
+
+test("enabled Linux feature capabilities aggregate enabled manifests deterministically", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-capabilities-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const featuresRoot = path.join(root, "linux-features");
+  fs.mkdirSync(featuresRoot, { recursive: true });
+  fs.writeFileSync(path.join(featuresRoot, "features.json"), '{"enabled":["zeta","alpha"]}\n');
+  writeFeatureManifest(featuresRoot, "zeta", { capabilities: ["zeta-capability"] });
+  writeFeatureManifest(featuresRoot, "alpha", { capabilities: ["alpha-capability"] });
+
+  assert.deepEqual(enabledLinuxFeatureCapabilities({ featuresRoot }), [
+    "alpha-capability",
+    "zeta-capability",
+  ]);
+});
+
+test("Linux feature manifest capabilities are optional and strictly normalized", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-capability-validation-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const featuresRoot = path.join(root, "linux-features");
+  fs.mkdirSync(featuresRoot, { recursive: true });
+  fs.writeFileSync(path.join(featuresRoot, "features.json"), '{"enabled":["fixture"]}\n');
+
+  writeFeatureManifest(featuresRoot, "fixture");
+  assert.deepEqual(enabledLinuxFeatureCapabilities({ featuresRoot }), []);
+
+  writeFeatureManifest(featuresRoot, "fixture", { capabilities: null });
+  assert.throws(
+    () => enabledLinuxFeatureCapabilities({ featuresRoot }),
+    /capabilities must be an array/i,
+  );
+
+  for (const capabilities of [
+    [""],
+    ["has whitespace"],
+    [42],
+    ["duplicate-capability", "duplicate-capability"],
+  ]) {
+    writeFeatureManifest(featuresRoot, "fixture", { capabilities });
+    assert.throws(
+      () => enabledLinuxFeatureCapabilities({ featuresRoot }),
+      /capabilit.*(non-empty|string|whitespace|duplicate)/i,
+    );
+  }
+});
+
+test("Linux feature capabilities reject duplicate ownership across enabled manifests", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-capability-ownership-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const featuresRoot = path.join(root, "linux-features");
+  fs.mkdirSync(featuresRoot, { recursive: true });
+  fs.writeFileSync(path.join(featuresRoot, "features.json"), '{"enabled":["alpha","beta"]}\n');
+  writeFeatureManifest(featuresRoot, "alpha", { capabilities: ["owned-capability"] });
+  writeFeatureManifest(featuresRoot, "beta", { capabilities: ["owned-capability"] });
+
+  assert.throws(
+    () => enabledLinuxFeatureCapabilities({ featuresRoot }),
+    /duplicate Linux feature capability.*owned-capability.*alpha.*beta/i,
+  );
+});
 
 test("Linux feature asset matchers receive feature settings", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-asset-match-context-"));
