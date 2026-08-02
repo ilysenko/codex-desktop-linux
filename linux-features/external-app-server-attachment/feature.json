@@ -1,0 +1,11 @@
+{
+  "id": "external-app-server-attachment",
+  "title": "External App-Server Attachment",
+  "description": "Attach Desktop to an existing local app-server without owning its lifecycle.",
+  "defaultEnabled": false,
+  "capabilities": ["external-app-server-attachment-descriptor-v1"],
+  "conflicts": ["shared-app-server-socket"],
+  "entrypoints": {"patchDescriptors": "./patch.js"},
+  "resources": [{"source": "descriptor-reader.js", "target": ".codex-linux/features/external-app-server-attachment/descriptor-reader.js", "mode": "0644"}],
+  "runtimeHooks": {"launcher": {"source": "socket-env.sh", "name": "external-app-server-attachment.sh", "mode": "0755"}}
+}
