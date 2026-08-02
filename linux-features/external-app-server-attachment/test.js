@@ -13,6 +13,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const {
+  loadEnabledLinuxFeatures,
   loadLinuxFeaturePatchDescriptors,
   stageEnabledLinuxFeatureInstall,
 } = require("../../scripts/lib/linux-features.js");
@@ -410,6 +411,29 @@ test("external-app-server-attachment stays disabled until explicitly enabled", (
       ["feature:external-app-server-attachment:main-process-external-app-server-attachment"],
     );
   });
+});
+
+test("external-app-server-attachment manifest declares its capability and conflict", () => {
+  withFeatureConfig(["external-app-server-attachment"], (featuresRoot) => {
+    const [feature] = loadEnabledLinuxFeatures({ featuresRoot });
+    assert.deepEqual(feature.manifest.capabilities, [
+      "external-app-server-attachment-descriptor-v1",
+    ]);
+    assert.deepEqual(feature.manifest.conflicts, ["shared-app-server-socket"]);
+  });
+});
+
+test("external-app-server-attachment conflicts with shared-app-server-socket", () => {
+  withFeatureConfig(
+    ["external-app-server-attachment", "shared-app-server-socket"],
+    (featuresRoot) => {
+      assert.throws(() => loadEnabledLinuxFeatures({ featuresRoot }), {
+        name: "Error",
+        message:
+          "Linux feature 'external-app-server-attachment' conflicts with 'shared-app-server-socket'",
+      });
+    },
+  );
 });
 
 test("feature stages the descriptor reader resource and executable socket hook", () => {
