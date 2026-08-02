@@ -929,6 +929,51 @@ test("attachment-only transport inode-binds the validated parent across a path s
   }
 });
 
+test("attachment-only transport rejects BigInt-distinct parent identity collisions", async () => {
+  await withAttachmentSocket(async ({ socketPath }) => {
+    const parentPath = path.dirname(socketPath);
+    const originalIdentity = {
+      dev: 9_007_199_254_740_992n,
+      ino: 9_007_199_254_740_992n,
+    };
+    const replacementIdentity = {
+      dev: 9_007_199_254_740_993n,
+      ino: 9_007_199_254_740_993n,
+    };
+    assert.notDeepEqual(originalIdentity, replacementIdentity);
+    assert.equal(Number(originalIdentity.dev), Number(replacementIdentity.dev));
+    assert.equal(Number(originalIdentity.ino), Number(replacementIdentity.ino));
+
+    const withIdentity = (stat, identity) =>
+      new Proxy(stat, {
+        get(target, property, receiver) {
+          if (property === "dev" || property === "ino") {
+            return typeof target[property] === "bigint"
+              ? identity[property]
+              : Number(identity[property]);
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    const fsImpl = {
+      ...fs,
+      lstatSync(candidate, ...args) {
+        const stat = fs.lstatSync(candidate, ...args);
+        return candidate === parentPath ? withIdentity(stat, originalIdentity) : stat;
+      },
+      fstatSync(fd, ...args) {
+        return withIdentity(fs.fstatSync(fd, ...args), replacementIdentity);
+      },
+    };
+
+    await assertAttachmentValidationRejects({
+      expectedError: /parent changed during validation/,
+      fsImpl,
+      socketPath,
+    });
+  });
+});
+
 test("attachment-only transport closes each validation fd on every connect exit", async (t) => {
   await withAttachmentSocket(async ({ socketPath }) => {
     async function runCase(name, {
@@ -1177,7 +1222,7 @@ test("attachment-only transport rejects every untrusted endpoint without mutatio
             if (candidate !== wrongOwnerPath && !isInspectedSocket) return stat;
             return new Proxy(stat, {
               get(target, property, receiver) {
-                if (property === "uid") return target.uid + 1;
+                if (property === "uid") return target.uid + 1n;
                 return Reflect.get(target, property, receiver);
               },
             });
@@ -1189,18 +1234,28 @@ test("attachment-only transport rejects every untrusted endpoint without mutatio
   }
 
   for (const [name, property, value, expectedError] of [
-    ["opened parent inode changed", "ino", (stat) => stat.ino + 1, /parent changed during validation/],
-    ["opened parent owner changed", "uid", (stat) => stat.uid + 1, /parent has unexpected owner/],
+    [
+      "opened parent inode changed",
+      "ino",
+      (stat) => stat.ino + 1n,
+      /parent changed during validation/,
+    ],
+    [
+      "opened parent owner changed",
+      "uid",
+      (stat) => stat.uid + 1n,
+      /parent has unexpected owner/,
+    ],
     [
       "opened parent owner access changed",
       "mode",
-      (stat) => (stat.mode & ~0o777) | 0o300,
+      (stat) => (stat.mode & ~0o777n) | 0o300n,
       /parent owner read and execute permissions are required/,
     ],
     [
       "opened parent became group-writable",
       "mode",
-      (stat) => stat.mode | 0o020,
+      (stat) => stat.mode | 0o020n,
       /parent has unsafe permissions/,
     ],
   ]) {
@@ -1239,7 +1294,7 @@ test("attachment-only transport rejects every untrusted endpoint without mutatio
           if (candidate !== tempDir) return stat;
           return new Proxy(stat, {
             get(target, property, receiver) {
-              if (property === "mode") return (target.mode & ~0o777) | 0o400;
+              if (property === "mode") return (target.mode & ~0o777n) | 0o400n;
               return Reflect.get(target, property, receiver);
             },
           });
