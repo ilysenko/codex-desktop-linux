@@ -438,7 +438,7 @@ function enabledLinuxFeatureCapabilities(options = {}) {
       capabilities.push(capability);
     }
   }
-  return capabilities.sort((left, right) => left.localeCompare(right));
+  return capabilities.sort();
 }
 
 function packageFeatureOptions(appDir, options = {}) {

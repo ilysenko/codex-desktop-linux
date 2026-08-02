@@ -93,6 +93,22 @@ test("enabled Linux feature capabilities aggregate enabled manifests determinist
   ]);
 });
 
+test("enabled Linux feature capabilities use locale-independent code-unit ordering", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-capability-ordering-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const featuresRoot = path.join(root, "linux-features");
+  fs.mkdirSync(featuresRoot, { recursive: true });
+  fs.writeFileSync(path.join(featuresRoot, "features.json"), '{"enabled":["fixture"]}\n');
+  writeFeatureManifest(featuresRoot, "fixture", {
+    capabilities: ["z-capability", "ä-capability"],
+  });
+
+  assert.deepEqual(enabledLinuxFeatureCapabilities({ featuresRoot }), [
+    "z-capability",
+    "ä-capability",
+  ]);
+});
+
 test("Linux feature manifest capabilities are optional and strictly normalized", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-capability-validation-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
