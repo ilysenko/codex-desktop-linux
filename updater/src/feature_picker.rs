@@ -475,9 +475,14 @@ fn write_feature_config(enabled: &[String]) -> Result<()> {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("Failed to create {}", dir.display()))?;
     }
-    let value = serde_json::json!({ "enabled": enabled });
+    let mut object = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    object.insert("enabled".to_string(), serde_json::json!(enabled));
     let serialized =
-        serde_json::to_string_pretty(&value).context("Failed to serialize feature config")?;
+        serde_json::to_string_pretty(&object).context("Failed to serialize feature config")?;
     std::fs::write(&path, format!("{serialized}\n"))
         .with_context(|| format!("Failed to write {}", path.display()))?;
     Ok(())
@@ -939,6 +944,69 @@ if (arg === "--features-json") {
             enabled,
             vec!["beta".to_string(), "private-local-feature".to_string()]
         );
+
+        if let Some(prev) = prev_path {
+            std::env::set_var("PATH", prev);
+        }
+        std::env::remove_var("CODEX_LINUX_SETTINGS_FILE");
+        std::env::remove_var("DISPLAY");
+    }
+
+    #[test]
+    fn selection_preserves_existing_feature_settings_and_unknown_keys() {
+        let _g = env_lock();
+        let root = tempdir().unwrap();
+        let settings = tempdir().unwrap();
+        write_fake_catalog_script(root.path());
+        let config = base_config(root.path());
+        let paths = runtime_paths(root.path());
+
+        let settings_file = settings.path().join("settings.json");
+        let feature_config = settings.path().join("linux-features.json");
+        let preserved_settings = serde_json::json!({
+            "alpha": {
+                "nested": {
+                    "enabled": true
+                }
+            }
+        });
+        let preserved_metadata = serde_json::json!({
+            "owner": "local",
+            "version": 2
+        });
+        std::fs::write(
+            &feature_config,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "enabled": ["alpha"],
+                    "settings": preserved_settings,
+                    "metadata": preserved_metadata
+                }))
+                .unwrap()
+            ),
+        )
+        .unwrap();
+        std::env::set_var("CODEX_LINUX_SETTINGS_FILE", &settings_file);
+        std::env::set_var("DISPLAY", ":99");
+        std::env::remove_var("WAYLAND_DISPLAY");
+
+        let (_d, fake_path) = fake_dialog("zenity", "beta\nalpha", 0);
+        let prev_path = std::env::var_os("PATH");
+        let mut joined = fake_path.clone();
+        if let Some(prev) = &prev_path {
+            joined.push(":");
+            joined.push(prev);
+        }
+        std::env::set_var("PATH", &joined);
+
+        run_pick_features(&config, &paths, false).unwrap();
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&feature_config).unwrap()).unwrap();
+        assert_eq!(value["enabled"], serde_json::json!(["alpha", "beta"]));
+        assert_eq!(value["settings"], preserved_settings);
+        assert_eq!(value["metadata"], preserved_metadata);
 
         if let Some(prev) = prev_path {
             std::env::set_var("PATH", prev);
