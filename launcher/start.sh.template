@@ -1330,6 +1330,7 @@ sync_chrome_bundled_plugin_cache() {
             scripts/check-extension-installed.js \
             scripts/check-native-host-manifest.js \
             scripts/chrome-is-running.js \
+            scripts/extension-id.json \
             scripts/extension-ids.json \
             scripts/installed-browsers.js \
             scripts/open-chrome-window.js; do

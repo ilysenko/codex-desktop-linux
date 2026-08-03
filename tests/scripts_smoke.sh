@@ -6395,6 +6395,7 @@ EOF
     assert_contains "$REPO_DIR/launcher/start.sh.template" "clear_bundled_marketplace_tmp_cache"
     assert_not_contains "$REPO_DIR/launcher/start.sh.template" "monitor_bundled_marketplace_tmp_permissions"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-ids.json"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "scripts/extension-id.json"
     assert_not_contains "$REPO_DIR/launcher/start.sh.template" 'scripts_dir / "extension-id.json"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts"
     assert_contains "$REPO_DIR/launcher/start.sh.template" ".config/chromium/NativeMessagingHosts"
@@ -8704,6 +8705,17 @@ test_chrome_plugin_staging() {
     assert_mode "$chrome_dir/scripts/chrome-is-running.js" "755"
     assert_mode "$chrome_dir/scripts/check-extension-installed.js" "755"
     assert_mode "$chrome_dir/scripts/open-chrome-window.js" "755"
+    assert_file_exists "$chrome_dir/scripts/extension-id.json"
+    node - "$chrome_dir/scripts/extension-id.json" <<'NODE'
+const fs = require("fs");
+const metadata = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (
+  metadata.extensionId !== "hehggadaopoacecdllhhajmbjkdcmajg" ||
+  metadata.extensionHostName !== "com.openai.codexextension"
+) {
+  throw new Error("Chrome compatibility metadata did not match extension-ids.json");
+}
+NODE
     assert_contains "$chrome_dir/scripts/installManifest.mjs" "BraveSoftware/Brave-Browser/NativeMessagingHosts"
     assert_contains "$chrome_dir/scripts/installManifest.mjs" ".config/chromium/NativeMessagingHosts"
     assert_contains "$chrome_dir/scripts/installed-browsers.js" "Brave Browser"

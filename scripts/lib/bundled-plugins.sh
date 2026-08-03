@@ -1084,6 +1084,50 @@ normalize_plugin_script_executable_modes() {
     done < <(find "$scripts_dir" -maxdepth 1 -type f -name '*.js' -print0)
 }
 
+write_chrome_extension_id_compatibility_metadata() {
+    local target_plugin="$1"
+    local source_metadata="$target_plugin/scripts/extension-ids.json"
+    local compatibility_metadata="$target_plugin/scripts/extension-id.json"
+
+    python3 - "$source_metadata" "$compatibility_metadata" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+
+try:
+    metadata = json.loads(source.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"Invalid Chrome extension metadata: {exc}")
+
+extension_ids = metadata.get("extensionIds")
+host_name = metadata.get("extensionHostName")
+if (
+    not isinstance(extension_ids, list)
+    or not extension_ids
+    or not isinstance(extension_ids[0], str)
+    or re.fullmatch(r"[a-p]{32}", extension_ids[0]) is None
+):
+    raise SystemExit("Invalid Chrome extension id in bundled plugin metadata")
+if not isinstance(host_name, str) or re.fullmatch(r"[A-Za-z0-9_.]+", host_name) is None:
+    raise SystemExit("Invalid Chrome native host name in bundled plugin metadata")
+
+destination.write_text(
+    json.dumps(
+        {
+            "extensionId": extension_ids[0],
+            "extensionHostName": host_name,
+        },
+        separators=(",", ":"),
+    ) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
 stage_chrome_plugin_from_upstream() {
     local source_plugin="$1"
     local target_plugins="$2"
@@ -1111,6 +1155,15 @@ stage_chrome_plugin_from_upstream() {
     cp -R "$source_plugin" "$target_plugin"
     remove_macos_sidecar_files "$target_plugin"
     patch_chrome_plugin_for_linux "$target_plugin"
+    # The current Electron bundle still reads extension-id.json while the
+    # current Chrome plugin publishes canonical extension-ids.json metadata.
+    # Stage the singular file from that canonical metadata so both components
+    # agree without preserving an upstream-version fallback branch.
+    if ! write_chrome_extension_id_compatibility_metadata "$target_plugin"; then
+        rm -rf "$target_plugin"
+        warn "Chrome plugin extension metadata could not be normalized; skipping Chrome"
+        return 1
+    fi
     patch_browser_use_node_repl_process_env_import "$target_plugin/scripts/browser-client.mjs"
     patch_browser_use_node_repl_env_guard "$target_plugin/scripts/browser-client.mjs"
     patch_browser_use_node_repl_config_shim "$target_plugin/scripts/browser-client.mjs"
