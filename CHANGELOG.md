@@ -39,6 +39,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The updater feature picker now changes only the enabled feature list, preserving
+  nested feature settings and other local configuration keys across rebuilds.
 - The opt-in Dock icon tweak now targets the current upstream main-process
   bundle, restoring Linux window, tray, and desktop icon synchronization.
 - The opt-in shallow repository watcher now patches both current app bundles
