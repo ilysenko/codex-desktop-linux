@@ -1,5 +1,6 @@
 //! Installation helpers for privileged and non-privileged package application.
 
+use crate::liveness;
 use anyhow::{Context, Result};
 use std::{
     fs,
@@ -205,10 +206,12 @@ fn installed_pacman_version() -> String {
 }
 
 /// Installs a rebuilt Debian package on the local machine.
-pub fn install_deb(path: &Path) -> Result<()> {
+pub fn install_deb(path: &Path, app_executable_path: &Path) -> Result<()> {
+    liveness::ensure_executable_not_running(app_executable_path)?;
     let stable = stable_validated_package(path)
         .with_context(|| format!("Failed to stabilize Debian package {}", path.display()))?;
     ensure_upgrade_path(stable.path())?;
+    liveness::ensure_executable_not_running(app_executable_path)?;
 
     if program_exists(APT_CANDIDATES, "apt") {
         let mut command = apt_install_command(stable.path())?;
@@ -221,10 +224,12 @@ pub fn install_deb(path: &Path) -> Result<()> {
 }
 
 /// Installs a rebuilt RPM package on the local machine.
-pub fn install_rpm(path: &Path) -> Result<()> {
+pub fn install_rpm(path: &Path, app_executable_path: &Path) -> Result<()> {
+    liveness::ensure_executable_not_running(app_executable_path)?;
     let stable = stable_validated_package(path)
         .with_context(|| format!("Failed to stabilize RPM package {}", path.display()))?;
     ensure_upgrade_path_rpm(stable.path())?;
+    liveness::ensure_executable_not_running(app_executable_path)?;
 
     if program_exists(DNF_CANDIDATES, "dnf") || program_exists(DNF_CANDIDATES, "dnf5") {
         let mut command = dnf_install_command(stable.path())?;
@@ -243,17 +248,23 @@ pub fn install_rpm(path: &Path) -> Result<()> {
 }
 
 /// Installs a rebuilt pacman package on the local machine.
-pub fn install_pacman(path: &Path) -> Result<()> {
+pub fn install_pacman(path: &Path, app_executable_path: &Path) -> Result<()> {
+    liveness::ensure_executable_not_running(app_executable_path)?;
     let stable = stable_validated_package(path)
         .with_context(|| format!("Failed to stabilize pacman package {}", path.display()))?;
     ensure_upgrade_path_pacman(stable.path())?;
+    liveness::ensure_executable_not_running(app_executable_path)?;
 
     let mut command = pacman_install_command(stable.path());
     run_install(&mut command).context("pacman -U failed")
 }
 
 /// Builds the `pkexec` command used for privileged package installation.
-pub fn pkexec_command(current_exe: &Path, package_path: &Path) -> Command {
+pub fn pkexec_command(
+    current_exe: &Path,
+    package_path: &Path,
+    app_executable_path: &Path,
+) -> Command {
     let updater_binary = updater_binary_for_privileged_install(current_exe);
     let subcommand = match PackageKind::from_path(package_path) {
         PackageKind::Rpm => "install-rpm",
@@ -272,7 +283,9 @@ pub fn pkexec_command(current_exe: &Path, package_path: &Path) -> Command {
         .arg(updater_binary)
         .arg(subcommand)
         .arg("--path")
-        .arg(package_path);
+        .arg(package_path)
+        .arg("--app-executable-path")
+        .arg(app_executable_path);
     command
 }
 
@@ -829,6 +842,7 @@ mod tests {
         let command = pkexec_command(
             Path::new("/usr/bin/codex-update-manager"),
             Path::new("/tmp/update.deb"),
+            Path::new("/opt/codex-desktop/electron"),
         );
         let args: Vec<_> = command
             .get_args()
@@ -841,7 +855,9 @@ mod tests {
                 "/usr/bin/codex-update-manager",
                 "install-deb",
                 "--path",
-                "/tmp/update.deb"
+                "/tmp/update.deb",
+                "--app-executable-path",
+                "/opt/codex-desktop/electron"
             ]
         );
     }
@@ -851,6 +867,7 @@ mod tests {
         let command = pkexec_command(
             Path::new("/usr/bin/codex-update-manager"),
             Path::new("/tmp/update.rpm"),
+            Path::new("/opt/codex-desktop/electron"),
         );
         let args: Vec<_> = command
             .get_args()
@@ -863,7 +880,9 @@ mod tests {
                 "/usr/bin/codex-update-manager",
                 "install-rpm",
                 "--path",
-                "/tmp/update.rpm"
+                "/tmp/update.rpm",
+                "--app-executable-path",
+                "/opt/codex-desktop/electron"
             ]
         );
     }
@@ -1121,6 +1140,7 @@ mod tests {
         let command = pkexec_command(
             Path::new("/usr/bin/codex-update-manager"),
             Path::new("/tmp/update.pkg.tar.zst"),
+            Path::new("/opt/codex-desktop/electron"),
         );
         let args: Vec<_> = command
             .get_args()
@@ -1133,7 +1153,9 @@ mod tests {
                 "/usr/bin/codex-update-manager",
                 "install-pacman",
                 "--path",
-                "/tmp/update.pkg.tar.zst"
+                "/tmp/update.pkg.tar.zst",
+                "--app-executable-path",
+                "/opt/codex-desktop/electron"
             ]
         );
     }

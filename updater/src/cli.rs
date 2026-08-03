@@ -88,16 +88,22 @@ pub enum Commands {
     InstallDeb {
         #[arg(long)]
         path: PathBuf,
+        #[arg(long, default_value = "/opt/codex-desktop/electron")]
+        app_executable_path: PathBuf,
     },
     /// Install an RPM package (.rpm) with elevated privileges.
     InstallRpm {
         #[arg(long)]
         path: PathBuf,
+        #[arg(long, default_value = "/opt/codex-desktop/electron")]
+        app_executable_path: PathBuf,
     },
     /// Install a pacman package (.pkg.tar.zst) with elevated privileges.
     InstallPacman {
         #[arg(long)]
         path: PathBuf,
+        #[arg(long, default_value = "/opt/codex-desktop/electron")]
+        app_executable_path: PathBuf,
     },
     /// Install a Debian package as an explicit rollback with elevated privileges.
     InstallRollbackDeb {

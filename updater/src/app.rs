@@ -31,6 +31,7 @@ const PROMPT_INSTALL_CLI_CANCELLED_EXIT_CODE: i32 = 10;
 const PROMPT_INSTALL_CLI_NO_BACKEND_EXIT_CODE: i32 = 11;
 // Nonzero so `Restart=on-failure` relaunches the daemon on the new binary.
 const BINARY_REPLACED_RESTART_EXIT_CODE: i32 = 12;
+const LAUNCHER_INSTALL_GATE_WAIT_SECONDS: u64 = 10;
 const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
     "budgie-polkit",
     "cinnamon-polkit",
@@ -137,9 +138,18 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::Diagnose { .. } => unreachable!("diagnose is handled before runtime writes"),
         Commands::InstallReady => run_install_ready(&config, &mut state, &paths).await,
         Commands::Rollback => rollback::run(&config, &mut state, &paths).await,
-        Commands::InstallDeb { path } => install::install_deb(&path),
-        Commands::InstallRpm { path } => install::install_rpm(&path),
-        Commands::InstallPacman { path } => install::install_pacman(&path),
+        Commands::InstallDeb {
+            path,
+            app_executable_path,
+        } => install::install_deb(&path, &app_executable_path),
+        Commands::InstallRpm {
+            path,
+            app_executable_path,
+        } => install::install_rpm(&path, &app_executable_path),
+        Commands::InstallPacman {
+            path,
+            app_executable_path,
+        } => install::install_pacman(&path, &app_executable_path),
         Commands::InstallRollbackDeb { path } => install_rollback::install_deb(&path),
         Commands::InstallRollbackRpm { path } => install_rollback::install_rpm(&path),
         Commands::InstallRollbackPacman { path } => install_rollback::install_pacman(&path),
@@ -1489,14 +1499,7 @@ async fn reconcile_pending_install(
                 return Ok(());
             }
 
-            trigger_install(
-                state,
-                paths,
-                &config.workspace_root,
-                &package_path,
-                config.notifications,
-            )
-            .await?;
+            trigger_install(state, paths, config, &package_path, config.notifications).await?;
         }
         _ => {}
     }
@@ -1661,14 +1664,7 @@ async fn run_install_ready_locked(
         print_manual_install_required(&package_path);
         return Ok(());
     }
-    trigger_install(
-        state,
-        paths,
-        &config.workspace_root,
-        &package_path,
-        config.notifications,
-    )
-    .await
+    trigger_install(state, paths, config, &package_path, config.notifications).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -2069,10 +2065,50 @@ fn maybe_send_notification(enabled: bool, summary: &str, body: &str) {
 async fn trigger_install(
     state: &mut PersistedState,
     paths: &RuntimePaths,
-    workspace_root: &Path,
+    config: &RuntimeConfig,
     package_path: &Path,
     notifications: bool,
 ) -> Result<()> {
+    let waiting_auto_install = state.waiting_for_app_exit_auto_install;
+    let launcher_lock_deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(LAUNCHER_INSTALL_GATE_WAIT_SECONDS);
+    let launcher_lock = loop {
+        if let Some(lock) = liveness::try_acquire_launcher_lock()? {
+            break Some(lock);
+        }
+        #[cfg(test)]
+        signal_process_test_marker("CODEX_UPDATE_MANAGER_TEST_LAUNCHER_LOCK_BUSY")?;
+        if std::time::Instant::now() >= launcher_lock_deadline {
+            break None;
+        }
+        time::sleep(Duration::from_millis(50)).await;
+    };
+
+    let Some(_launcher_lock) = launcher_lock else {
+        state.error_message = None;
+        set_waiting_for_app_exit(state, paths, waiting_auto_install)?;
+        maybe_send_notification(
+            notifications,
+            "ChatGPT Desktop update waiting",
+            "Another ChatGPT Desktop launch is still starting. Close the app and retry the update.",
+        );
+        return Ok(());
+    };
+
+    // The app may have started after the caller's earlier liveness check but
+    // before this flow acquired launcher.lock. Recheck while holding the lock;
+    // the launcher cannot publish another Electron process until we release it.
+    if liveness::is_app_running(config)? {
+        state.error_message = None;
+        set_waiting_for_app_exit(state, paths, waiting_auto_install)?;
+        maybe_send_notification(
+            notifications,
+            "ChatGPT Desktop update waiting",
+            "ChatGPT Desktop reopened before installation. Close it to apply the ready update.",
+        );
+        return Ok(());
+    }
+
     state.status = UpdateStatus::Installing;
     state.waiting_for_app_exit_auto_install = false;
     state.error_message = None;
@@ -2085,7 +2121,7 @@ async fn trigger_install(
     );
 
     let current_exe = std::env::current_exe().context("Failed to resolve updater binary path")?;
-    let output = install::pkexec_command(&current_exe, package_path)
+    let output = install::pkexec_command(&current_exe, package_path, &config.app_executable_path)
         .output()
         .context("Failed to launch pkexec for update installation")?;
     let status = output.status;
@@ -2098,10 +2134,21 @@ async fn trigger_install(
         clear_rollback_blocked_candidate(state);
         state.error_message = None;
         state.notified_events.clear();
-        cache_cleanup::normalize_artifact_workspace_dir(workspace_root, state);
+        cache_cleanup::normalize_artifact_workspace_dir(&config.workspace_root, state);
         persist_state(paths, state)?;
         let _ = maybe_notify_installed(state, paths, notifications);
-        maybe_prune_workspace_cache(workspace_root, state);
+        maybe_prune_workspace_cache(&config.workspace_root, state);
+        return Ok(());
+    }
+
+    if liveness::error_reports_app_running(&output.stderr) {
+        state.error_message = None;
+        set_waiting_for_app_exit(state, paths, waiting_auto_install)?;
+        maybe_send_notification(
+            notifications,
+            "ChatGPT Desktop update waiting",
+            "ChatGPT Desktop reopened while authorization was pending. Close it to apply the ready update.",
+        );
         return Ok(());
     }
 
@@ -3785,6 +3832,10 @@ mod tests {
                while [ ! -e \"$CODEX_UPDATE_MANAGER_TEST_INSTALL_RELEASE\" ]; do\n\
                  /bin/sleep 0.01\n\
                done\n\
+             fi\n\
+             if [ -n \"${CODEX_UPDATE_MANAGER_TEST_INSTALL_APP_RUNNING:-}\" ]; then\n\
+               printf 'CODEX_UPDATE_APP_RUNNING: simulated app reopen after authorization\n' >&2\n\
+               exit 1\n\
              fi\n",
         )?;
         let mut permissions = std::fs::metadata(&fake_pkexec)?.permissions();
@@ -4058,6 +4109,104 @@ mod tests {
         );
         let final_state = PersistedState::load_or_default(&paths.state_file, true)?;
         assert_eq!(final_state.status, UpdateStatus::Installed);
+        assert_eq!(std::fs::read_to_string(&install_log)?.lines().count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn launch_that_wins_the_gate_prevents_the_ready_package_install() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let (paths, fake_pkexec, install_log) = prepare_process_install_fixture(temp.path())?;
+        let mut config = test_config(temp.path());
+        config.workspace_root = paths.cache_dir.clone();
+        config.app_executable_path = std::fs::canonicalize("/usr/bin/yes")?;
+        anyhow::ensure!(
+            config.app_executable_path.is_file(),
+            "test requires /usr/bin/yes"
+        );
+        std::fs::write(&paths.config_file, toml::to_string(&config)?)?;
+
+        let launcher_state = temp.path().join("xdg-state/codex-desktop");
+        std::fs::create_dir_all(&launcher_state)?;
+        let launcher_lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(launcher_state.join("launcher.lock"))?;
+        launcher_lock.lock()?;
+
+        let lock_busy = temp.path().join("launcher-lock.busy");
+        let install_ready = spawn_process_test_child(
+            temp.path(),
+            "daemon-reconcile",
+            &[
+                ("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec),
+                ("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log),
+                ("CODEX_UPDATE_MANAGER_TEST_LAUNCHER_LOCK_BUSY", &lock_busy),
+            ],
+            &[],
+        )?;
+        wait_for_process_test_path(&lock_busy, "updater waiting for launcher.lock")?;
+
+        let mut launched_app = std::process::Command::new(&config.app_executable_path)
+            .stdout(std::process::Stdio::null())
+            .spawn()?;
+        let launched_pid = launched_app.id();
+        let launched_exe = PathBuf::from(format!("/proc/{launched_pid}/exe"));
+        let launch_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::fs::read_link(&launched_exe).ok().as_deref()
+            != Some(config.app_executable_path.as_path())
+        {
+            anyhow::ensure!(
+                std::time::Instant::now() < launch_deadline,
+                "timed out waiting for the simulated app executable"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        drop(launcher_lock);
+        let install_result = install_ready.wait();
+        let _ = launched_app.kill();
+        let _ = launched_app.wait();
+        install_result?;
+
+        let final_state = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(final_state.status, UpdateStatus::WaitingForAppExit);
+        assert!(final_state.waiting_for_app_exit_auto_install);
+        assert!(
+            !install_log.exists(),
+            "package helper must not have started"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn privileged_reopen_guard_returns_install_to_waiting_state() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let (paths, fake_pkexec, install_log) = prepare_process_install_fixture(temp.path())?;
+        let app_running = temp.path().join("simulate-app-running");
+
+        let install_ready = spawn_process_test_child(
+            temp.path(),
+            "daemon-reconcile",
+            &[
+                ("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec),
+                ("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_INSTALL_APP_RUNNING",
+                    &app_running,
+                ),
+            ],
+            &[],
+        )?;
+        install_ready.wait()?;
+
+        let final_state = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(final_state.status, UpdateStatus::WaitingForAppExit);
+        assert!(final_state.waiting_for_app_exit_auto_install);
+        assert_eq!(final_state.error_message, None);
         assert_eq!(std::fs::read_to_string(&install_log)?.lines().count(), 1);
         Ok(())
     }

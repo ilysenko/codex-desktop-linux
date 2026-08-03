@@ -404,9 +404,13 @@ async fn apply_packaged(
     .context("wrapper package rebuild failed")?;
 
     let current_exe = std::env::current_exe().context("Failed to resolve updater binary path")?;
-    let output = install::pkexec_command(&current_exe, &artifacts.package_path)
-        .output()
-        .context("Failed to launch pkexec for wrapper update installation")?;
+    let output = install::pkexec_command(
+        &current_exe,
+        &artifacts.package_path,
+        &config.app_executable_path,
+    )
+    .output()
+    .context("Failed to launch pkexec for wrapper update installation")?;
     if !output.status.success() {
         anyhow::bail!(
             "privileged wrapper install exited with status {}",
