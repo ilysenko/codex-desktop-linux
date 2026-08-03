@@ -142,7 +142,7 @@ fn pick(config: &RuntimeConfig, paths: &RuntimePaths) -> Result<PickOutcome> {
                 return Ok(PickOutcome::Skipped("invalid-selection"));
             }
 
-            write_feature_config(&picked)?;
+            write_feature_config(config, &picked)?;
             if dont_ask {
                 if let Err(error) = config::write_feature_picker_on_update(false) {
                     warn!(?error, "could not persist don't-ask-again preference");
@@ -469,14 +469,14 @@ fn show_selection_error(tool: &DialogTool, message: &str) {
 }
 
 /// Writes the chosen enabled set to the stable feature-config path.
-fn write_feature_config(enabled: &[String]) -> Result<()> {
+fn write_feature_config(config: &RuntimeConfig, enabled: &[String]) -> Result<()> {
     let path = config::feature_config_path().context("could not resolve feature config path")?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("Failed to create {}", dir.display()))?;
     }
-    let mut object = std::fs::read_to_string(&path)
-        .ok()
+    let mut object = config::effective_feature_config_path(config)
+        .and_then(|source| std::fs::read_to_string(source).ok())
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
@@ -943,6 +943,76 @@ if (arg === "--features-json") {
         assert_eq!(
             enabled,
             vec!["beta".to_string(), "private-local-feature".to_string()]
+        );
+
+        if let Some(prev) = prev_path {
+            std::env::set_var("PATH", prev);
+        }
+        std::env::remove_var("CODEX_LINUX_SETTINGS_FILE");
+        std::env::remove_var("DISPLAY");
+    }
+
+    #[test]
+    fn first_selection_preserves_effective_bundled_feature_config() {
+        let _g = env_lock();
+        let root = tempdir().unwrap();
+        let settings = tempdir().unwrap();
+        write_fake_catalog_script(root.path());
+        let config = base_config(root.path());
+        let paths = runtime_paths(root.path());
+
+        let settings_file = settings.path().join("settings.json");
+        let feature_config = settings.path().join("linux-features.json");
+        let bundled_dir = root.path().join("linux-features");
+        let bundled_config = bundled_dir.join("features.json");
+        let preserved_settings = serde_json::json!({
+            "alpha": {
+                "nested": {
+                    "enabled": true
+                }
+            }
+        });
+        let preserved_metadata = serde_json::json!({
+            "owner": "bundled",
+            "version": 3
+        });
+        std::fs::create_dir_all(&bundled_dir).unwrap();
+        let original_bundled = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "enabled": ["alpha", "private-local-feature"],
+                "settings": preserved_settings,
+                "metadata": preserved_metadata
+            }))
+            .unwrap()
+        );
+        std::fs::write(&bundled_config, &original_bundled).unwrap();
+        std::env::set_var("CODEX_LINUX_SETTINGS_FILE", &settings_file);
+        std::env::set_var("DISPLAY", ":99");
+        std::env::remove_var("WAYLAND_DISPLAY");
+
+        let (_d, fake_path) = fake_dialog("zenity", "beta", 0);
+        let prev_path = std::env::var_os("PATH");
+        let mut joined = fake_path.clone();
+        if let Some(prev) = &prev_path {
+            joined.push(":");
+            joined.push(prev);
+        }
+        std::env::set_var("PATH", &joined);
+
+        run_pick_features(&config, &paths, false).unwrap();
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&feature_config).unwrap()).unwrap();
+        assert_eq!(
+            value["enabled"],
+            serde_json::json!(["beta", "private-local-feature"])
+        );
+        assert_eq!(value["settings"], preserved_settings);
+        assert_eq!(value["metadata"], preserved_metadata);
+        assert_eq!(
+            std::fs::read_to_string(&bundled_config).unwrap(),
+            original_bundled
         );
 
         if let Some(prev) = prev_path {
