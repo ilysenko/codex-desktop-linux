@@ -36,6 +36,14 @@ Legacy locks without owner metadata remain protected for 15 seconds, longer
 than the authority startup timeout, before they can be reclaimed when no socket
 exists.
 
+The launcher also cleans up a live authority orphaned by a terminated Desktop
+process. Cleanup is limited to a same-user, reparented `codex app-server
+--listen unix://PATH` process serving the exact locked socket. The lock owner,
+socket inode, listener identity, command line, and process start identities are
+rechecked before signaling it. Unknown listeners, live Desktop owners, and
+changed identities remain untouched. The same cleanup runs after Electron exits
+and before a later cold start.
+
 ## SSH setup
 
 Use a stable socket path when the Desktop instance will be reached over SSH:

@@ -6,10 +6,22 @@
   "entrypoints": {
     "patchDescriptors": "./patch.js"
   },
+  "resources": [
+    {
+      "source": "orphan-reaper.js",
+      "target": ".codex-linux/features/shared-app-server-socket/orphan-reaper.js",
+      "mode": "0644"
+    }
+  ],
   "runtimeHooks": {
     "launcher": {
       "source": "socket-env.sh",
       "name": "socket-env.sh",
+      "mode": "0755"
+    },
+    "afterExit": {
+      "source": "socket-env.sh",
+      "name": "socket-cleanup.sh",
       "mode": "0755"
     }
   }
