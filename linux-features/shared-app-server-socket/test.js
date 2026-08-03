@@ -90,6 +90,7 @@ async function stopChild(child) {
 
 function fakeChild() {
   const child = new EventEmitter();
+  child.pid = process.pid;
   child.exitCode = null;
   child.signalCode = null;
   child.stdin = new PassThrough();
@@ -184,6 +185,24 @@ function processStartTime(pid) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
+}
+
+function unixListenerInodes(socketPath) {
+  const inodes = new Set();
+  for (const line of fs.readFileSync("/proc/net/unix", "utf8").split("\n")) {
+    const match = line.match(
+      /^\S+:\s+\S+\s+\S+\s+\S+\s+(\S+)\s+(\S+)\s+(\d+)(?:\s+(.*))?$/,
+    );
+    if (
+      match != null &&
+      match[1] === "0001" &&
+      match[2] === "01" &&
+      match[4] === socketPath
+    ) {
+      inodes.add(match[3]);
+    }
+  }
+  return [...inodes];
 }
 
 async function waitForCondition(predicate, description) {
@@ -429,14 +448,18 @@ test("orphan reaper fails closed on an unknown live listener", async () => {
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   const server = await listenUnix(socketPath);
-  fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
+  const selfStartTime = processStartTime(process.pid);
+  fs.writeFileSync(lockPath, `99999999 1 ${process.pid} ${selfStartTime}\n`, { mode: 0o600 });
   try {
     const result = spawnSync(process.execPath, [orphanReaper, socketPath], {
       encoding: "utf8",
     });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /not the expected Codex authority/);
-    assert.equal(fs.readFileSync(lockPath, "utf8"), "99999999 1\n");
+    assert.match(result.stderr, /not the expected reparented Codex process/);
+    assert.equal(
+      fs.readFileSync(lockPath, "utf8"),
+      `99999999 1 ${process.pid} ${selfStartTime}\n`,
+    );
     assert.equal(fs.lstatSync(socketPath).isSocket(), true);
   } finally {
     await closeServer(server);
@@ -448,8 +471,8 @@ test("orphan reaper stops an exact reparented authority and removes stale owners
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-orphan-reaper-"));
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
-  fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
   const orphan = await spawnOrphanAuthority(socketPath);
+  fs.writeFileSync(lockPath, `99999999 1 ${orphan.pid} ${orphan.startTime}\n`, { mode: 0o600 });
   try {
     const result = spawnSync(process.execPath, [orphanReaper, socketPath], {
       encoding: "utf8",
@@ -463,6 +486,41 @@ test("orphan reaper stops an exact reparented authority and removes stale owners
     assert.equal(fs.existsSync(socketPath), false);
     assert.equal(fs.existsSync(lockPath), false);
   } finally {
+    if (processStartTime(orphan.pid) === orphan.startTime) {
+      try {
+        process.kill(orphan.pid, "SIGTERM");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("orphan reaper refuses two live listener inodes for the same pathname", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-rebind-reaper-"));
+  const socketPath = path.join(tempDir, "app-server.sock");
+  const lockPath = `${socketPath}.lock`;
+  const orphan = await spawnOrphanAuthority(socketPath);
+  const lockContents = `99999999 1 ${orphan.pid} ${orphan.startTime}\n`;
+  fs.writeFileSync(lockPath, lockContents, { mode: 0o600 });
+  fs.unlinkSync(socketPath);
+  const replacement = await listenUnix(socketPath);
+  try {
+    await waitForCondition(
+      () => unixListenerInodes(socketPath).length === 2,
+      "old and replacement listener inodes",
+    );
+    const result = spawnSync(process.execPath, [orphanReaper, socketPath], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /multiple live listener inodes/);
+    assert.equal(processStartTime(orphan.pid), orphan.startTime);
+    assert.equal(fs.readFileSync(lockPath, "utf8"), lockContents);
+    assert.equal(fs.lstatSync(socketPath).isSocket(), true);
+  } finally {
+    await closeServer(replacement);
     if (processStartTime(orphan.pid) === orphan.startTime) {
       try {
         process.kill(orphan.pid, "SIGTERM");
@@ -561,6 +619,10 @@ test("injected transport serializes startup and removes only its owned socket", 
   try {
     await first.ensureAuthority();
     assert.equal(fs.existsSync(`${socketPath}.lock`), true);
+    assert.match(
+      fs.readFileSync(`${socketPath}.lock`, "utf8"),
+      new RegExp(`^${process.pid} \\d+ ${process.pid} \\d+\\n$`),
+    );
     await assert.rejects(second.ensureAuthority(), /already owned/);
 
     installReplacementBeforeChildClose = true;
@@ -787,6 +849,11 @@ test("injected transport does not release ownership until authority exit is veri
   try {
     await assert.rejects(transport.ensureAuthority(), /creation timed out/);
     assert.equal(fs.existsSync(`${socketPath}.lock`), true, "unverified child retains ownership lock");
+    assert.match(
+      fs.readFileSync(`${socketPath}.lock`, "utf8"),
+      new RegExp(`^${process.pid} \\d+ ${process.pid} \\d+\\n$`),
+      "the lock binds cleanup to the spawned authority before socket readiness",
+    );
   } finally {
     if (originalCli == null) delete process.env.CODEX_CLI_PATH;
     else process.env.CODEX_CLI_PATH = originalCli;

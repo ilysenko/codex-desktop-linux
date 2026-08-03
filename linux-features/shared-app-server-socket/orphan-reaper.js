@@ -53,7 +53,8 @@ function ownerIsDead(ownerPid, ownerStartTime) {
   return owner == null || owner.state === "Z" || owner.startTime !== ownerStartTime;
 }
 
-function listenerInode() {
+function listenerInodes() {
+  const inodes = new Set();
   const lines = fs.readFileSync("/proc/net/unix", "utf8").split("\n");
   for (const line of lines) {
     const match = line.match(
@@ -65,10 +66,10 @@ function listenerInode() {
       match[2] === "01" &&
       match[4] === socketPath
     ) {
-      return match[3];
+      inodes.add(match[3]);
     }
   }
-  return null;
+  return [...inodes];
 }
 
 function listenerProcesses(inode) {
@@ -108,7 +109,18 @@ function isExpectedAuthority(processInfo) {
   );
 }
 
-function verifiedOrphanTargets(listeners) {
+function verifiedOrphanTargets(lock, listeners) {
+  const authority = readProcess(lock.authorityPid);
+  if (
+    authority == null ||
+    authority.startTime !== lock.authorityStartTime ||
+    (expectedUid != null && authority.uid !== expectedUid) ||
+    authority.ppid !== 1 ||
+    !isExpectedAuthority(authority)
+  ) {
+    throw new Error("locked authority is not the expected reparented Codex process");
+  }
+
   const targets = new Map();
   for (const listener of listeners) {
     if (expectedUid != null && listener.uid !== expectedUid) {
@@ -117,20 +129,12 @@ function verifiedOrphanTargets(listeners) {
     if (!isExpectedAuthority(listener)) {
       throw new Error(`listener ${listener.pid} is not the expected Codex authority`);
     }
-    targets.set(listener.pid, listener);
-    if (listener.ppid === 1) continue;
-
-    const parent = readProcess(listener.ppid);
-    if (
-      parent == null ||
-      parent.ppid !== 1 ||
-      parent.uid !== listener.uid ||
-      !isExpectedAuthority(parent)
-    ) {
-      throw new Error(`listener ${listener.pid} is not a reparented Desktop authority`);
+    if (listener.pid !== authority.pid && listener.ppid !== authority.pid) {
+      throw new Error(`listener ${listener.pid} does not belong to the locked authority`);
     }
-    targets.set(parent.pid, parent);
+    targets.set(listener.pid, listener);
   }
+  targets.set(authority.pid, authority);
   return [...targets.values()];
 }
 
@@ -140,13 +144,15 @@ function readLock() {
     descriptor = fs.openSync(lockPath, "r");
     const stat = fs.fstatSync(descriptor);
     const contents = fs.readFileSync(descriptor, "utf8");
-    const owner = contents.trim().match(/^(\d+) (\S+)$/);
+    const owner = contents.trim().match(/^(\d+) (\S+)(?: (\d+) (\S+))?$/);
     if (owner == null) return null;
     return {
       identity: { dev: stat.dev, ino: stat.ino },
       contents,
       ownerPid: Number(owner[1]),
       ownerStartTime: owner[2],
+      authorityPid: owner[3] == null ? null : Number(owner[3]),
+      authorityStartTime: owner[4] ?? null,
     };
   } catch (error) {
     if (error?.code === "ENOENT") return null;
@@ -169,11 +175,11 @@ function unchangedLock(snapshot) {
   }
 }
 
-function unchangedSocket(snapshot) {
+function socketPathState(snapshot) {
   try {
-    return sameIdentity(snapshot, fs.lstatSync(socketPath));
+    return sameIdentity(snapshot, fs.lstatSync(socketPath)) ? "same" : "changed";
   } catch (error) {
-    if (error?.code === "ENOENT") return false;
+    if (error?.code === "ENOENT") return "missing";
     throw error;
   }
 }
@@ -198,19 +204,28 @@ async function reapOrphan() {
     throw new Error("shared app-server socket has unexpected owner");
   }
 
-  const inode = listenerInode();
-  if (inode == null) return;
+  const inodes = listenerInodes();
+  if (inodes.length === 0) return;
+  if (lock.authorityPid == null || lock.authorityStartTime == null) {
+    throw new Error("live shared app-server lock lacks an authority identity");
+  }
+  if (inodes.length !== 1) {
+    throw new Error("shared app-server path has multiple live listener inodes");
+  }
+  const [inode] = inodes;
   const listeners = listenerProcesses(inode);
   if (listeners.length === 0) {
     throw new Error("live shared app-server listener could not be identified");
   }
-  const targets = verifiedOrphanTargets(listeners);
+  const targets = verifiedOrphanTargets(lock, listeners);
 
+  const verifiedInodes = listenerInodes();
   if (
     !unchangedLock(lock) ||
     !ownerIsDead(lock.ownerPid, lock.ownerStartTime) ||
-    !unchangedSocket(socket) ||
-    listenerInode() !== inode ||
+    socketPathState(socket) !== "same" ||
+    verifiedInodes.length !== 1 ||
+    verifiedInodes[0] !== inode ||
     targets.some((target) => !isRunning(target))
   ) {
     throw new Error("shared app-server ownership changed during orphan verification");
@@ -227,18 +242,25 @@ async function reapOrphan() {
   const deadline = Date.now() + 3000;
   while (
     Date.now() < deadline &&
-    (listenerInode() === inode || targets.some((target) => isRunning(target)))
+    (listenerInodes().includes(inode) || targets.some((target) => isRunning(target)))
   ) {
     await delay(50);
   }
-  if (listenerInode() === inode || targets.some((target) => isRunning(target))) {
+  if (listenerInodes().includes(inode) || targets.some((target) => isRunning(target))) {
     throw new Error("orphaned shared app-server authority did not stop");
   }
 
-  if (!unchangedLock(lock) || !ownerIsDead(lock.ownerPid, lock.ownerStartTime)) {
-    throw new Error("shared app-server lock changed before orphan cleanup");
+  const remainingInodes = listenerInodes();
+  const finalSocketState = socketPathState(socket);
+  if (
+    !unchangedLock(lock) ||
+    !ownerIsDead(lock.ownerPid, lock.ownerStartTime) ||
+    remainingInodes.length !== 0 ||
+    finalSocketState === "changed"
+  ) {
+    throw new Error("shared app-server ownership changed before orphan cleanup");
   }
-  if (unchangedSocket(socket)) fs.unlinkSync(socketPath);
+  if (finalSocketState === "same") fs.unlinkSync(socketPath);
   if (unchangedLock(lock)) fs.unlinkSync(lockPath);
 
   console.error(
