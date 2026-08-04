@@ -409,17 +409,48 @@ fn hydrate_desktop_env_from_systemd_user() {
 }
 
 fn hydrate_desktop_env_from_map(process_env: &HashMap<String, String>) {
-    for key in DESKTOP_ENV_KEYS {
-        if env_var(key).is_some() {
-            continue;
-        }
-        if let Some(value) = process_env
-            .get(*key)
-            .filter(|value| !value.trim().is_empty())
-        {
-            env::set_var(key, value);
-        }
+    let current_env = DESKTOP_ENV_KEYS
+        .iter()
+        .filter_map(|key| env_var(key).map(|value| ((*key).to_string(), value)))
+        .collect();
+    for (key, value) in desktop_env_hydration_updates(&current_env, process_env) {
+        env::set_var(key, value);
     }
+}
+
+fn desktop_env_hydration_updates(
+    current_env: &HashMap<String, String>,
+    source_env: &HashMap<String, String>,
+) -> Vec<(&'static str, String)> {
+    // A nested X11 desktop can share a user manager with a Wayland host.
+    // Preserve its complete process-local session instead of grafting the
+    // host's WAYLAND_DISPLAY onto it.
+    let preserve_native_x11 = current_env
+        .get("XDG_SESSION_TYPE")
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("x11"))
+        && current_env
+            .get("DISPLAY")
+            .is_some_and(|value| !value.trim().is_empty())
+        && !current_env
+            .get("WAYLAND_DISPLAY")
+            .is_some_and(|value| !value.trim().is_empty());
+
+    DESKTOP_ENV_KEYS
+        .iter()
+        .filter_map(|key| {
+            if current_env
+                .get(*key)
+                .is_some_and(|value| !value.trim().is_empty())
+                || preserve_native_x11 && *key == "WAYLAND_DISPLAY"
+            {
+                return None;
+            }
+            source_env
+                .get(*key)
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| (*key, value.clone()))
+        })
+        .collect()
 }
 
 fn desktop_process_environments() -> Vec<HashMap<String, String>> {
@@ -1270,6 +1301,40 @@ mod tests {
     #[test]
     fn desktop_env_hydration_includes_niri_socket() {
         assert!(DESKTOP_ENV_KEYS.contains(&"NIRI_SOCKET"));
+    }
+
+    #[test]
+    fn desktop_env_hydration_preserves_explicit_native_x11() {
+        let current_env = HashMap::from([
+            ("DISPLAY".to_string(), ":90".to_string()),
+            ("XDG_SESSION_TYPE".to_string(), "x11".to_string()),
+        ]);
+        let host_env = HashMap::from([
+            ("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string()),
+            (
+                "XDG_CURRENT_DESKTOP".to_string(),
+                "ubuntu:GNOME".to_string(),
+            ),
+        ]);
+
+        let updates = desktop_env_hydration_updates(&current_env, &host_env);
+
+        assert!(!updates.iter().any(|(key, _)| *key == "WAYLAND_DISPLAY"));
+        assert!(updates
+            .iter()
+            .any(|(key, value)| { *key == "XDG_CURRENT_DESKTOP" && value == "ubuntu:GNOME" }));
+    }
+
+    #[test]
+    fn desktop_env_hydration_still_imports_wayland_for_incomplete_sessions() {
+        let current_env = HashMap::new();
+        let host_env = HashMap::from([("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string())]);
+
+        let updates = desktop_env_hydration_updates(&current_env, &host_env);
+
+        assert!(updates
+            .iter()
+            .any(|(key, value)| *key == "WAYLAND_DISPLAY" && value == "wayland-0"));
     }
 
     #[test]

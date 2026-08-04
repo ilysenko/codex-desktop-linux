@@ -895,6 +895,44 @@ impl ComputerUseLinux {
                 }
             }
         }
+        if self.should_prefer_xdotool_pointer() {
+            if let Some(xdotool_args) = xdotool_pointer_click_args(
+                x,
+                y,
+                params.click_count.unwrap_or(1).clamp(1, 10),
+                params.button.as_deref(),
+            ) {
+                let ydotool_commands = vec![
+                    absolute_mousemove_args(x, y),
+                    vec![
+                        "click".to_string(),
+                        "--repeat".to_string(),
+                        click_count.clone(),
+                        button.clone(),
+                    ],
+                ];
+                let (input_guard, result) = run_cancellation_safe_input(input_guard, async move {
+                    run_xdotool_pointer_or_fallback(Path::new("xdotool"), &xdotool_args, || async {
+                        run_ydotool_sequence(&ydotool_commands).await
+                    })
+                    .await
+                })
+                .await;
+                let _input_guard = input_guard;
+                let used_xdotool = result
+                    .as_ref()
+                    .is_ok_and(|result| result.backend == KeyboardCommandBackend::Xdotool);
+                let mut output = pointer_action_result(action_result(
+                    "click",
+                    result.map(|result| result.outputs),
+                    received,
+                ));
+                if output.ok && used_xdotool {
+                    output.message = "Action sent through xdotool (X11 XTEST).".to_string();
+                }
+                return Json(with_notes(output, off_screen_note));
+            }
+        }
         let commands = vec![
             absolute_mousemove_args(x, y),
             vec![
@@ -1890,7 +1928,7 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.4.5-linux-alpha1",
+    version = "0.4.6-linux-alpha1",
     instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell, the Codex GNOME Shell extension, or XDG Desktop Portal, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send layout-safe literal type_text through KDE clipboard integration on Plasma Wayland or through portal keysyms on other Wayland sessions before falling back to ydotool. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable) and warn when no editable element holds focus — treat that warning as the input not landing. Screenshot, click, and input results warn when the target window or coordinate is partially or fully off-screen; use move_window/resize_window (GNOME Shell extension backend) to bring a window fully on-screen before retrying. scroll accepts the same window targeting and relative coordinates as click. get_app_state returns a compact readiness block by default; pass verbose=true for the full diagnostics dump. Electron apps expose no AT-SPI tree unless launched with --force-renderer-accessibility."
 )]
 impl ServerHandler for ComputerUseLinux {}
@@ -2574,6 +2612,20 @@ impl ComputerUseLinux {
             "CODEX_COMPUTER_USE_FORCE_YDOTOOL_KEYBOARD",
         ]) && !self.should_prefer_xdotool_keyboard()
             && self.is_kde_wayland_session()
+    }
+
+    fn should_prefer_xdotool_pointer(&self) -> bool {
+        crate::diagnostics::hydrate_session_bus_env();
+        prefer_xdotool_pointer(
+            env_flag_enabled_any(&[
+                "COMPUTER_USE_LINUX_FORCE_YDOTOOL_POINTER",
+                "CODEX_COMPUTER_USE_FORCE_YDOTOOL_POINTER",
+            ]),
+            env::var("XDG_SESSION_TYPE").ok().as_deref(),
+            env_var_non_empty("DISPLAY"),
+            env::var("WAYLAND_DISPLAY").ok().as_deref(),
+            xdotool_available(),
+        )
     }
 
     fn should_prefer_xdotool_keyboard(&self) -> bool {
@@ -3812,6 +3864,27 @@ fn session_is_wayland(session_type: Option<&str>, wayland_display: Option<&str>)
     }
 }
 
+fn native_x11_xdotool_pointer_session(
+    session_type: Option<&str>,
+    wayland_display: Option<&str>,
+) -> bool {
+    session_type.is_some_and(|value| value.trim().eq_ignore_ascii_case("x11"))
+        && !wayland_display.is_some_and(|value| !value.trim().is_empty())
+}
+
+fn prefer_xdotool_pointer(
+    force_ydotool: bool,
+    session_type: Option<&str>,
+    display_available: bool,
+    wayland_display: Option<&str>,
+    xdotool_available: bool,
+) -> bool {
+    !force_ydotool
+        && native_x11_xdotool_pointer_session(session_type, wayland_display)
+        && display_available
+        && xdotool_available
+}
+
 fn prefer_xdotool_keyboard(
     force_ydotool: bool,
     force_xdotool: bool,
@@ -4428,6 +4501,61 @@ fn absolute_mousemove_args(x: i32, y: i32) -> Vec<String> {
         x.to_string(),
         y.to_string(),
     ]
+}
+
+fn xdotool_pointer_click_args(
+    x: i32,
+    y: i32,
+    count: u32,
+    button: Option<&str>,
+) -> Option<Vec<String>> {
+    let button = xdotool_pointer_button_code(button)?;
+    Some(vec![
+        "mousemove".to_string(),
+        "--".to_string(),
+        x.to_string(),
+        y.to_string(),
+        "click".to_string(),
+        "--repeat".to_string(),
+        count.to_string(),
+        button.to_string(),
+    ])
+}
+
+fn xdotool_pointer_button_code(button: Option<&str>) -> Option<&'static str> {
+    match button.unwrap_or("left").to_ascii_lowercase().as_str() {
+        "left" => Some("1"),
+        "middle" => Some("2"),
+        "right" => Some("3"),
+        _ => None,
+    }
+}
+
+#[derive(Debug)]
+struct PointerCommandResult {
+    outputs: Vec<Output>,
+    backend: KeyboardCommandBackend,
+}
+
+async fn run_xdotool_pointer_or_fallback<F, Fut>(
+    program: &Path,
+    args: &[String],
+    fallback: F,
+) -> std::result::Result<PointerCommandResult, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = std::result::Result<Vec<Output>, String>>,
+{
+    match run_xdotool(program, args).await {
+        XdotoolAttempt::Unavailable => fallback().await.map(|outputs| PointerCommandResult {
+            outputs,
+            backend: KeyboardCommandBackend::Ydotool,
+        }),
+        XdotoolAttempt::Finished(result) => result.map(|output| PointerCommandResult {
+            outputs: vec![output],
+            backend: KeyboardCommandBackend::Xdotool,
+        }),
+    }
 }
 
 fn wheel_mousemove_args(dx: i32, dy: i32) -> Vec<String> {
@@ -5583,6 +5711,56 @@ mod tests {
     }
 
     #[test]
+    fn native_x11_pointer_policy_requires_explicit_x11_without_wayland_display() {
+        assert!(native_x11_xdotool_pointer_session(Some("x11"), None));
+        assert!(!native_x11_xdotool_pointer_session(
+            Some("wayland"),
+            Some("wayland-0")
+        ));
+        assert!(!native_x11_xdotool_pointer_session(
+            Some("x11"),
+            Some("wayland-0")
+        ));
+    }
+
+    #[test]
+    fn xdotool_pointer_policy_requires_all_pure_gating_conditions() {
+        let eligible = (false, Some("x11"), true, None, true);
+        assert!(prefer_xdotool_pointer(
+            eligible.0, eligible.1, eligible.2, eligible.3, eligible.4
+        ));
+        assert!(!prefer_xdotool_pointer(true, Some("x11"), true, None, true));
+        assert!(!prefer_xdotool_pointer(
+            false,
+            Some("wayland"),
+            true,
+            None,
+            true
+        ));
+        assert!(!prefer_xdotool_pointer(
+            false,
+            None,
+            true,
+            Some("wayland-0"),
+            true
+        ));
+        assert!(!prefer_xdotool_pointer(
+            false,
+            Some("x11"),
+            false,
+            None,
+            true
+        ));
+        assert!(!prefer_xdotool_pointer(
+            false,
+            Some("x11"),
+            true,
+            None,
+            false
+        ));
+    }
+
+    #[test]
     fn window_crop_happens_before_screenshot_payload_resize() {
         let (cropped, width, height) = crop_png(&solid_png(400, 200), 50, 20, 200, 100).unwrap();
         let capture = prepare_screenshot_payload(
@@ -6171,6 +6349,37 @@ mod tests {
     }
 
     #[test]
+    fn xdotool_pointer_command_is_single_no_sync_move_and_click() {
+        assert_eq!(
+            xdotool_pointer_click_args(1550, 930, 3, Some("right")),
+            Some(vec![
+                "mousemove".to_string(),
+                "--".to_string(),
+                "1550".to_string(),
+                "930".to_string(),
+                "click".to_string(),
+                "--repeat".to_string(),
+                "3".to_string(),
+                "3".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn xdotool_pointer_supports_only_standard_buttons() {
+        assert!(xdotool_pointer_click_args(10, 20, 1, None).is_some());
+        assert!(xdotool_pointer_click_args(10, 20, 1, Some("middle")).is_some());
+        assert!(xdotool_pointer_click_args(10, 20, 1, Some("right")).is_some());
+    }
+
+    #[test]
+    fn extended_pointer_buttons_do_not_construct_xdotool_commands() {
+        for button in ["side", "extra", "forward", "back"] {
+            assert_eq!(xdotool_pointer_click_args(10, 20, 1, Some(button)), None);
+        }
+    }
+
+    #[test]
     fn wheel_mousemove_uses_coordinate_separator_for_negative_values() {
         assert_eq!(
             wheel_mousemove_args(0, -3),
@@ -6359,6 +6568,32 @@ mod tests {
 
         assert_eq!(result.backend, KeyboardCommandBackend::Ydotool);
         assert!(result.output.status.success());
+    }
+
+    #[tokio::test]
+    async fn pointer_xdotool_spawn_failure_uses_ydotool_fallback() {
+        let result = run_xdotool_pointer_or_fallback(
+            Path::new("/definitely/missing/xdotool"),
+            &[],
+            || async { Ok::<_, String>(Vec::new()) },
+        )
+        .await
+        .expect("spawn failure should use fallback");
+
+        assert_eq!(result.backend, KeyboardCommandBackend::Ydotool);
+    }
+
+    #[tokio::test]
+    async fn pointer_xdotool_nonzero_exit_does_not_use_ydotool_fallback() {
+        let result = run_xdotool_pointer_or_fallback(
+            Path::new("/bin/sh"),
+            &["-c".to_string(), "exit 9".to_string()],
+            || async { Err::<Vec<Output>, _>("fallback called".to_string()) },
+        )
+        .await;
+
+        let error = result.expect_err("launched nonzero xdotool must be terminal");
+        assert!(!error.contains("fallback called"));
     }
 
     #[tokio::test]

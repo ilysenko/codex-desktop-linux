@@ -51,13 +51,15 @@ sudo usermod -a -G input "$USER"
 Then log out and back in.
 
 On X11, install `xdotool` for layout-correct XTEST keyboard/text input and
-`wmctrl` plus `xprop` for generic EWMH window listing, focus, move, and resize.
-`xdotool` is preferred only with a nonempty `DISPLAY`; ydotool is used when it
-cannot be launched. Once xdotool starts, a failure or timeout is returned and
-input is never replayed through ydotool. Override keyboard selection with
-`COMPUTER_USE_LINUX_FORCE_YDOTOOL_KEYBOARD=1` or
+coordinate clicks, and `wmctrl` plus `xprop` for generic EWMH window listing,
+focus, move, and resize. `xdotool` is preferred only with a nonempty `DISPLAY`;
+ydotool is used when it cannot be launched. Once xdotool starts, a failure or
+timeout is returned and input is never replayed through ydotool. Override
+keyboard selection with `COMPUTER_USE_LINUX_FORCE_YDOTOOL_KEYBOARD=1` or
 `CODEX_COMPUTER_USE_FORCE_YDOTOOL_KEYBOARD=1`; the corresponding
-`*_FORCE_XDOTOOL_KEYBOARD=1` names force XTEST when available.
+`*_FORCE_XDOTOOL_KEYBOARD=1` names force XTEST when available. Set
+`COMPUTER_USE_LINUX_FORCE_YDOTOOL_POINTER=1` or
+`CODEX_COMPUTER_USE_FORCE_YDOTOOL_POINTER=1` to skip native-X11 xdotool clicks.
 
 Some distros name the unit `ydotool.service` instead of `ydotoold.service`, and
 some install `/usr/bin/ydotoold` without a service unit. If the system unit path
