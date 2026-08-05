@@ -470,14 +470,14 @@ async fn collect_sandbox_diagnostics() -> SandboxDiagnostics {
             .kill_on_drop(true)
             .spawn();
         match spawn_result {
-            Ok(child) => {
+            Ok(mut child) => {
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(2),
-                    child.wait_with_output(),
+                    child.wait(),
                 )
                 .await
                 {
-                    Ok(Ok(output)) => output.status.success(),
+                    Ok(Ok(status)) => status.success(),
                     _ => false,
                 }
             }

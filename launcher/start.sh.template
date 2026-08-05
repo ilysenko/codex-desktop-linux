@@ -467,14 +467,34 @@ check_bwrap_apparmor_userns() {
         return 0
     fi
 
-    # Run a bounded, non-destructive bwrap probe. The 2-second timeout guards
-    # against the command hanging in degraded kernel or containerised environments.
-    local probe_output
-    if probe_output="$(timeout 2s bwrap \
-            --unshare-user \
-            --unshare-net \
-            --ro-bind / / \
-            -- /bin/true 2>&1)"; then
+    # Run a bounded, non-destructive bwrap probe using a background subshell
+    # and watchdog. Avoids calling /usr/bin/timeout, which has high cold-start
+    # overhead on uutils-coreutils distros (Ubuntu 26+).
+    local probe_output probe_pid watchdog_pid tmp_out rc=0
+    tmp_out="$(mktemp 2>/dev/null || echo "/tmp/codex-bwrap-probe-$$")"
+
+    ( bwrap \
+        --unshare-user \
+        --unshare-net \
+        --ro-bind / / \
+        -- /bin/true >"$tmp_out" 2>&1 ) &
+    probe_pid=$!
+
+    ( sleep 2 2>/dev/null && kill -9 "$probe_pid" 2>/dev/null ) &
+    watchdog_pid=$!
+
+    if wait "$probe_pid" 2>/dev/null; then
+        rc=0
+    else
+        rc=$?
+    fi
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+
+    probe_output="$(cat "$tmp_out" 2>/dev/null || true)"
+    rm -f "$tmp_out"
+
+    if [ "$rc" -eq 0 ]; then
         # bwrap works under current AppArmor policy — no warning needed.
         return 0
     fi
