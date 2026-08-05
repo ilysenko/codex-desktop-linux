@@ -60,7 +60,7 @@ function applyCurrentBootstrapUpdaterBridgePatch(currentSource) {
   }
 
   const destructureRegex =
-    /let\{startedAtMs:([A-Za-z_$][\w$]*),buildFlavor:([A-Za-z_$][\w$]*),desktopSentry:([A-Za-z_$][\w$]*),sparkleManager:([A-Za-z_$][\w$]*),productionAppcastStateStore:[A-Za-z_$][\w$]*,setSparkleBridgeHandlers:([A-Za-z_$][\w$]*),setSecondInstanceArgsHandler:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\(\),/;
+    /let\{startedAtMs:([A-Za-z_$][\w$]*),buildFlavor:([A-Za-z_$][\w$]*),desktopSentry:([A-Za-z_$][\w$]*),sparkleManager:([A-Za-z_$][\w$]*),startupPhases:[A-Za-z_$][\w$]*,productionAppcastStateStore:[A-Za-z_$][\w$]*,setSparkleBridgeHandlers:([A-Za-z_$][\w$]*),setSecondInstanceArgsHandler:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\(\),/;
   const destructureMatch = patchedSource.match(destructureRegex);
   const sparkleVar = destructureMatch?.[4] ?? null;
   const setSparkleBridgeHandlersVar = destructureMatch?.[5] ?? null;
@@ -87,7 +87,7 @@ function applyCurrentBootstrapUpdaterBridgePatch(currentSource) {
 
   if (!patchedSource.includes("codexLinuxPackageUpdateBridge=process.platform===`linux`")) {
     const currentBridgeRegex =
-      /let ([A-Za-z_$][\w$]*)=new [A-Za-z_$][\w$]*,(?:[A-Za-z_$][\w$]*=null,){2}([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*=>\{[^]*?\},(?=[A-Za-z_$][\w$]*=)/;
+      /let ([A-Za-z_$][\w$]*)=new [A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*=null,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)=>\{if\(\3\?\.quitImmediately===!1\)\{\1\.allowQuitTemporarilyForUpdateInstall\(\);return\}\1\.allowQuitTemporarilyForUpdateInstall\(\),[A-Za-z_$][\w$]*\.app\.quit\(\)\},(?=[A-Za-z_$][\w$]*=)/;
     const currentBridgeMatch = patchedSource.match(currentBridgeRegex);
     if (currentBridgeMatch == null) {
       console.warn("WARN: Could not find current updater callback bridge - skipping Linux updater bridge patch");

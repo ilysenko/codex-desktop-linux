@@ -1105,55 +1105,21 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
 function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
   const externalFeatureNeedle = "featureName:`browser_use_external`";
   const statsigNeedle = "410065390";
-  let changed = false;
-
-  const alreadyPatched = () =>
-    /featureName:`browser_use_external`[\s\S]{0,900}?navigator\.userAgent\.includes\(`Linux`\)/.test(currentSource);
-
-  const availabilityPattern =
-    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`chrome-extension`\|\|([A-Za-z_$][\w$]*)&&\1\.enabled&&!\1\.isLoading,([A-Za-z_$][\w$]*)=\5===`chrome-extension`\?!1:\1\.isLoading,/g;
-
-  let patchedSource = currentSource.replace(
-    availabilityPattern,
-    (
-      match,
-      featureQueryVar,
-      featureQueryFn,
-      featureQueryArg,
-      availableVar,
-      windowTypeVar,
-      statsigVar,
-      loadingVar,
-      offset,
-    ) => {
-      const contextStart = Math.max(0, offset - 700);
-      const context = currentSource.slice(contextStart, offset + match.length);
-      if (!context.includes(externalFeatureNeedle) || !context.includes(statsigNeedle)) {
-        return match;
-      }
-
-      changed = true;
-      return `let ${featureQueryVar}=${featureQueryFn}(${featureQueryArg}),${availableVar}=${windowTypeVar}===\`chrome-extension\`||navigator.userAgent.includes(\`Linux\`)||${statsigVar}&&${featureQueryVar}.enabled&&!${featureQueryVar}.isLoading,${loadingVar}=${windowTypeVar}===\`chrome-extension\`||navigator.userAgent.includes(\`Linux\`)?!1:${featureQueryVar}.isLoading,`;
-    },
-  );
-
-  if (!changed) {
-    // 26.623 refactored the inline availability gate into a status-string helper:
-    //   function X({isExternalBrowserUseFeatureEnabled:e,isExternalBrowserUseFeatureLoading:t,
-    //     isExternalBrowserUseGateEnabled:n,windowType:r}){return r===`chrome-extension`?`available`:...}
-    // Treat Linux like chrome-extension so the resolved status is `available`.
-    const statusFnPattern =
-      /(function [A-Za-z_$][\w$]*\(\{isExternalBrowserUseFeatureEnabled:[A-Za-z_$][\w$]*,isExternalBrowserUseFeatureLoading:[A-Za-z_$][\w$]*,isExternalBrowserUseGateEnabled:[A-Za-z_$][\w$]*,windowType:([A-Za-z_$][\w$]*)\}\)\{return )\2===`chrome-extension`\?`available`:/;
-    patchedSource = patchedSource.replace(
-      statusFnPattern,
-      (match, prefix, windowTypeVar) => {
-        changed = true;
-        return `${prefix}${windowTypeVar}===\`chrome-extension\`||navigator.userAgent.includes(\`Linux\`)?\`available\`:`;
-      },
-    );
+  const alreadyPatched =
+    /function [A-Za-z_$][\w$]*\(\{isExternalBrowserUseFeatureEnabled:[A-Za-z_$][\w$]*,isExternalBrowserUseFeatureLoading:[A-Za-z_$][\w$]*,isExternalBrowserUseGateEnabled:[A-Za-z_$][\w$]*,runCodexInWsl:[A-Za-z_$][\w$]*,windowType:([A-Za-z_$][\w$]*)\}\)\{return \1===`chrome-extension`\|\|navigator\.userAgent\.includes\(`Linux`\)\?`available`:/;
+  if (alreadyPatched.test(currentSource)) {
+    return currentSource;
   }
 
-  if (changed || alreadyPatched()) {
+  const statusFnPattern =
+    /(function [A-Za-z_$][\w$]*\(\{isExternalBrowserUseFeatureEnabled:[A-Za-z_$][\w$]*,isExternalBrowserUseFeatureLoading:[A-Za-z_$][\w$]*,isExternalBrowserUseGateEnabled:[A-Za-z_$][\w$]*,runCodexInWsl:[A-Za-z_$][\w$]*,windowType:([A-Za-z_$][\w$]*)\}\)\{return )\2===`chrome-extension`\?`available`:/;
+  const patchedSource = currentSource.replace(
+    statusFnPattern,
+    (match, prefix, windowTypeVar) =>
+      `${prefix}${windowTypeVar}===\`chrome-extension\`||navigator.userAgent.includes(\`Linux\`)?\`available\`:`,
+  );
+
+  if (patchedSource !== currentSource) {
     return patchedSource;
   }
 

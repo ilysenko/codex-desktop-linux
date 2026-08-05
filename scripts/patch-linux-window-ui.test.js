@@ -1888,9 +1888,9 @@ function currentBootstrapUpdaterBundleFixture() {
     "let r=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);",
     "var g6={enabled:!1,running:!1,state:`disabled`};",
     "async function v6(){",
-    "let{startedAtMs:e,buildFlavor:i,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:Q,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=n.k(),d=n.P.shouldIncludeSparkle(i,process.platform,process.env)||process.platform===`linux`;",
-    "let ee=new G5,P=null,W=null,te=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),r.app.quit()},F=F3({}),oe=iZ({}),se=oe.getWindowContext();",
-    "c({onDownloadProgressChanged:()=>{se.broadcastAppUpdateState()},onInstallProgressChanged:()=>{T&&se.broadcastAppUpdateState()},onUpdateReadyChanged:()=>{se.broadcastAppUpdateState()},onUpdateLifecycleStateChanged:()=>{se.broadcastAppUpdateState()},onRelaunchNoticeChanged:()=>{se.broadcastAppUpdateState()},onInstallUpdatesRequested:e=>{te(e)},isTrustedIpcEvent:M});",
+    "let{startedAtMs:e,buildFlavor:i,desktopSentry:o,sparkleManager:s,startupPhases:d,productionAppcastStateStore:Q,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=n.k(),v=n.P.shouldIncludeSparkle(i,process.platform,process.env)||process.platform===`linux`;",
+    "let ee=new G5,P=null,te=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),r.app.quit()},F=F3({}),oe=iZ({}),se=oe.getWindowContext();",
+    "c({onDownloadProgressChanged:()=>{se.broadcastAppUpdateState()},onDownloadedUpdateAppBrandChanged:()=>{se.broadcastAppUpdateState()},onInstallProgressChanged:()=>{T&&se.broadcastAppUpdateState()},onUpdateReadyChanged:()=>{se.broadcastAppUpdateState()},onUpdateLifecycleStateChanged:()=>{se.broadcastAppUpdateState()},onRelaunchNoticeChanged:()=>{se.broadcastAppUpdateState()},onInstallUpdatesRequested:e=>{te(e)},isTrustedIpcEvent:M});",
     "}exports.runMainAppStartup=v6;",
   ].join("");
 }
@@ -7890,12 +7890,12 @@ test("keeps the current Sparkle menu contract callable across Linux updater prob
 test("fails soft when the current updater callback bridge drifts", () => {
   for (const source of [
     currentBootstrapUpdaterBundleFixture().replace(
-      "let ee=new G5,P=null,W=null,te=e=>",
-      "let ee=G5(),P=null,W=null,te=e=>",
+      "let ee=new G5,P=null,te=e=>",
+      "let ee=G5(),P=null,te=e=>",
     ),
     currentBootstrapUpdaterBundleFixture().replace(
-      "let ee=new G5,P=null,W=null,te=e=>",
-      "let ee=new G5,P=null,te=e=>",
+      "ee.allowQuitTemporarilyForUpdateInstall(),r.app.quit()",
+      "ee.allowQuitTemporarilyForUpdateInstall(),r.app.exit()",
     ),
   ]) {
     const { value: patched, warnings } = captureWarns(() =>
@@ -7909,7 +7909,7 @@ test("fails soft when the current updater callback bridge drifts", () => {
 
 test("enables the existing app update menu on Linux", () => {
   const source =
-    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:P,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.y(),u=t.Z(a),d=t.C.shouldIncludeSparkle(a,process.platform,process.env),f=t.C.shouldIncludeUpdater(a,process.platform,process.env);Yb({enableSparkle:d});";
+    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,startupPhases:h,productionAppcastStateStore:P,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.y(),u=t.Z(a),d=t.C.shouldIncludeSparkle(a,process.platform,process.env),f=t.C.shouldIncludeUpdater(a,process.platform,process.env);Yb({enableSparkle:d});";
   const patched = applyPatchTwice(applyLinuxAppUpdaterMenuPatch, source);
 
   assert.match(
@@ -8612,25 +8612,27 @@ test("enables Browser Use availability on Linux when only the Statsig gate is di
 
 test("enables external Browser Use availability on Linux without the upstream rollout flag", () => {
   const source =
-    "function m(e){let t=(0,l.c)(5),{hostId:n,windowType:r}=e,a=r===void 0?`electron`:r,o=i(`410065390`),s;t[0]===n?s=t[1]:(s={featureName:`browser_use_external`,hostId:n},t[0]=n,t[1]=s);let c=u(s),d=a===`chrome-extension`||o&&c.enabled&&!c.isLoading,f=a===`chrome-extension`?!1:c.isLoading,p;return t[2]!==d||t[3]!==f?(p={allowed:d,available:d,isLoading:f},t[2]=d,t[3]=f,t[4]=p):p=t[4],p}";
+    "function wfi(e){let t=(0,Efi.c)(14),{enabled:n,hostId:r,windowType:i}=e,a=n===void 0||n,o=i===void 0?`electron`:i,s=sh(`410065390`),c;t[0]!==a||t[1]!==r?(c={enabled:a,featureName:`browser_use_external`,hostId:r},t[0]=a,t[1]=r,t[2]=c):c=t[2];let l=pfi(c),u=Np(Cu.runCodexInWsl),d=ey(r),f=u===!0||d.kind===`wsl`,p;t[3]!==l.enabled||t[4]!==l.isLoading||t[5]!==s||t[6]!==f||t[7]!==o?(p=Tfi({isExternalBrowserUseFeatureEnabled:l.enabled,isExternalBrowserUseFeatureLoading:l.isLoading,isExternalBrowserUseGateEnabled:s,runCodexInWsl:f,windowType:o}),t[3]=l.enabled,t[4]=l.isLoading,t[5]=s,t[6]=f,t[7]=o,t[8]=p):p=t[8];return p}function Tfi({isExternalBrowserUseFeatureEnabled:e,isExternalBrowserUseFeatureLoading:t,isExternalBrowserUseGateEnabled:n,runCodexInWsl:r,windowType:i}){return i===`chrome-extension`?`available`:t?`loading`:n?e?r?`wsl-disabled`:`available`:`config-requirement-disabled`:`statsig-disabled`}";
 
   const patched = applyPatchTwice(applyLinuxBrowserUseExternalAvailabilityPatch, source);
 
   assert.match(
     patched,
-    /d=a===`chrome-extension`\|\|navigator\.userAgent\.includes\(`Linux`\)\|\|o&&c\.enabled&&!c\.isLoading/,
+    /return i===`chrome-extension`\|\|navigator\.userAgent\.includes\(`Linux`\)\?`available`:/,
   );
-  assert.match(
-    patched,
-    /f=a===`chrome-extension`\|\|navigator\.userAgent\.includes\(`Linux`\)\?!1:c\.isLoading/,
+  const context = { navigator: { userAgent: "Linux x86_64" } };
+  vm.runInNewContext(
+    `${patched};globalThis.result=Tfi({isExternalBrowserUseFeatureEnabled:!1,isExternalBrowserUseFeatureLoading:!1,isExternalBrowserUseGateEnabled:!1,runCodexInWsl:!1,windowType:\`electron\`})`,
+    context,
   );
+  assert.equal(context.result, "available");
   assert.match(patched, /featureName:`browser_use_external`/);
-  assert.match(patched, /i\(`410065390`\)/);
+  assert.match(patched, /sh\(`410065390`\)/);
 });
 
 test("keeps already patched external Browser Use availability unchanged", () => {
   const source =
-    "function m(e){let t=(0,l.c)(5),{hostId:n,windowType:r}=e,a=r===void 0?`electron`:r,o=i(`410065390`),s;t[0]===n?s=t[1]:(s={featureName:`browser_use_external`,hostId:n},t[0]=n,t[1]=s);let c=u(s),d=a===`chrome-extension`||navigator.userAgent.includes(`Linux`)||o&&c.enabled&&!c.isLoading,f=a===`chrome-extension`||navigator.userAgent.includes(`Linux`)?!1:c.isLoading,p;return p}";
+    "function wfi(){return{featureName:`browser_use_external`,gate:`410065390`}}function Tfi({isExternalBrowserUseFeatureEnabled:e,isExternalBrowserUseFeatureLoading:t,isExternalBrowserUseGateEnabled:n,runCodexInWsl:r,windowType:i}){return i===`chrome-extension`||navigator.userAgent.includes(`Linux`)?`available`:t?`loading`:n?e?r?`wsl-disabled`:`available`:`config-requirement-disabled`:`statsig-disabled`}";
 
   assert.equal(applyPatchTwice(applyLinuxBrowserUseExternalAvailabilityPatch, source), source);
 });
