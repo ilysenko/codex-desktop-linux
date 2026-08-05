@@ -465,6 +465,9 @@ async fn collect_sandbox_diagnostics() -> SandboxDiagnostics {
             ])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            // Ensure the child is killed if the timeout fires; without this,
+            // dropping the handle leaves the process running indefinitely.
+            .kill_on_drop(true)
             .spawn();
         match spawn_result {
             Ok(child) => {

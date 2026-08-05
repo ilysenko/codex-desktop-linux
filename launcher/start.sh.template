@@ -4503,12 +4503,11 @@ elif [ "$WARM_START" -eq 1 ]; then
     echo "Warm-start IPC unavailable; falling back to Electron second-instance handoff"
 fi
 
-check_bwrap_apparmor_userns
-
 if using_second_instance_handoff; then
     echo "Detected running ChatGPT Desktop pid=$RUNNING_APP_PID; using Electron second-instance handoff"
     log_phase "second_instance_handoff_ready"
 elif needs_cold_start; then
+    check_bwrap_apparmor_userns
     log_phase "feature_prelaunch_start"
     run_feature_prelaunch_hooks
     log_phase "feature_prelaunch"
