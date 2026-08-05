@@ -39,11 +39,11 @@ function currentMainCallerFixture() {
 
 function currentRendererFixture() {
   return [
-    currentBrowserRegistry("Kl"),
-    "function Gl(e){return Object.hasOwn(Kl,e)}",
-    "function rendererLinuxRegistry(){return Object.keys(Kl).filter(Gl).map(e=>({browserFamily:e,installations:Kl[e].linux.installations,manifestDirectories:Kl[e].linux.nativeMessagingManifestDirectories,processNames:Kl[e].linux.processNames}))}",
+    currentBrowserRegistry("Xl"),
+    "function Yl(e){return Object.hasOwn(Xl,e)}",
+    "function rendererLinuxRegistry(){return Object.keys(Xl).filter(Yl).map(e=>({browserFamily:e,installations:Xl[e].linux.installations,manifestDirectories:Xl[e].linux.nativeMessagingManifestDirectories,processNames:Xl[e].linux.processNames}))}",
     "function wfi(){return{enabled:!1,featureName:`browser_use_external`,gate:`410065390`}}",
-    "function Tfi({isExternalBrowserUseFeatureEnabled:e,isExternalBrowserUseFeatureLoading:t,isExternalBrowserUseGateEnabled:n,runCodexInWsl:r,windowType:i}){return i===`chrome-extension`?`available`:t?`loading`:n?e?r?`wsl-disabled`:`available`:`config-requirement-disabled`:`statsig-disabled`}",
+    "function Sfi({isExternalBrowserUseFeatureEnabled:e,isExternalBrowserUseFeatureLoading:t,isExternalBrowserUseGateEnabled:n,runCodexInWsl:r,windowType:i}){return i===`chrome-extension`?`available`:t?`loading`:n?e?r?`wsl-disabled`:`available`:`config-requirement-disabled`:`statsig-disabled`}",
     "globalThis.rendererLinuxRegistry=rendererLinuxRegistry;",
   ].join("");
 }

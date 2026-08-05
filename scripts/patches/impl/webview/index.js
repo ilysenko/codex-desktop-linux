@@ -1190,8 +1190,8 @@ function currentBrowserUseRendererContract(source) {
   return currentBrowserUseRegistryState(source) !== "drifted" &&
     source.includes("featureName:`browser_use_external`") &&
     source.includes("410065390") &&
-    source.includes("function Gl(e){return Object.hasOwn(Kl,e)}") &&
-    source.includes("Object.keys(Kl).filter(Gl)") &&
+    source.includes("function Yl(e){return Object.hasOwn(Xl,e)}") &&
+    source.includes("Object.keys(Xl).filter(Yl)") &&
     (externalBrowserUseAvailabilityCurrentPattern.test(source) ||
       externalBrowserUseAvailabilityPatchedPattern.test(source));
 }
