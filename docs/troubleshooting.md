@@ -21,6 +21,7 @@
 | Right-clicking the title bar leaves GNOME/X11 input stuck | Press `Esc` first, or use `Alt+Space` for the window menu. If the lockup is repeatable, test the optional `frameless-titlebar` feature below and include your distro, GNOME version, X11/Wayland session, package method, and `.codex-linux/linux-features-staged.json` when reporting it |
 | Transparent or dark left sidebar | Check whether the Linux opaque-window patch was applied, then rebuild with a current checkout |
 | Sandbox errors | The launcher already sets `--no-sandbox` |
+| `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted` | AppArmor restricts Bubblewrap user namespaces on Ubuntu 24.04+. Quick fix: `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. See [Bubblewrap & AppArmor Sandbox Configuration](#bubblewrap--apparmor-sandbox-configuration) for a persistent fix. Run `codex-update-manager diagnose --json` and check the `sandbox` field for a structured diagnosis. |
 | Renderer crashes in containers with a tiny `/dev/shm` | The launcher keeps `--disable-dev-shm-usage` automatically when `/dev/shm` is missing or below 1 GiB; force it with `CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE=1` |
 | Screen reader does not read the app UI | Renderer accessibility is forced automatically when Orca, brltty, the GNOME screen-reader setting, AT-SPI accessibility state (`org.a11y.Status IsEnabled` or `toolkit-accessibility`, e.g. after `codex-computer-use-linux setup`), or accessibility env markers are detected; force it with `CODEX_FORCE_RENDERER_ACCESSIBILITY=1` |
 | Stale install / cached DMG | `make build-app-fresh` refreshes the cached DMG and builds a clean candidate; the working app remains until acceptance succeeds |
@@ -251,4 +252,79 @@ sed -n '1,160p' ~/.cache/codex-desktop/launcher.log
 sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
 codex-update-manager status --json
 systemctl --user status codex-update-manager.service
+```
+
+## Bubblewrap & AppArmor Sandbox Configuration
+
+On Ubuntu 24.04 LTS and other distributions that enable AppArmor unprivileged
+user namespace restrictions by default, the local task execution engine can fail
+with:
+
+```text
+bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted
+```
+
+This happens because `kernel.apparmor_restrict_unprivileged_userns=1` prevents
+Bubblewrap from creating user and network namespaces without a matching AppArmor
+profile.
+
+Confirm the restriction is active:
+
+```bash
+cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+# Prints 1 if restricted, 0 if not.
+```
+
+Or use the updater diagnostics:
+
+```bash
+codex-update-manager diagnose --json | python3 -m json.tool | grep -A5 '"sandbox"'
+```
+
+### Option A: Disable the restriction (immediate, temporary)
+
+```bash
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+```
+
+This lasts until the next reboot.
+
+### Option B: Disable the restriction persistently
+
+```bash
+echo "kernel.apparmor_restrict_unprivileged_userns=0" | \
+  sudo tee /etc/sysctl.d/99-apparmor-userns.conf
+sudo sysctl --system
+```
+
+This survives reboots. Revert by deleting the file and re-running `sudo sysctl --system`.
+
+### Option C: Create an AppArmor profile for Bubblewrap (recommended for security-conscious setups)
+
+This allows `bwrap` to create user namespaces while keeping the restriction for
+all other unprivileged processes.
+
+Create `/etc/apparmor.d/bwrap`:
+
+```text
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap {
+  include <abstractions/base>
+  capability net_admin,
+  userns,
+}
+```
+
+Reload AppArmor:
+
+```bash
+sudo apparmor_parser -r /etc/apparmor.d/bwrap
+```
+
+Confirm Bubblewrap works:
+
+```bash
+bwrap --unshare-user --unshare-net --ro-bind / / -- /bin/true && echo "bwrap ok"
 ```
