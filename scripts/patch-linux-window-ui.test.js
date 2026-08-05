@@ -182,6 +182,7 @@ const {
   applyLinuxAppSunsetPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
+  patchLinuxBrowserUseExternalAvailabilityAssets,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,
@@ -8637,11 +8638,17 @@ test("keeps already patched external Browser Use availability unchanged", () => 
   assert.equal(applyPatchTwice(applyLinuxBrowserUseExternalAvailabilityPatch, source), source);
 });
 
-test("external Browser Use availability descriptor matches the current monolithic bundle", () => {
+test("external Browser Use availability descriptor patches the complete current extracted-app contract", () => {
   const descriptor = require("./patches/core/all-linux/webview/browser-use-external-availability/patch.js");
 
-  assert.match("app-initial-BTphDPeq.js", descriptor.pattern);
-  assert.doesNotMatch("use-in-app-browser-use-availability-B4Bdb14G.js", descriptor.pattern);
+  assert.equal(descriptor.phase, "extracted-app:post-webview");
+  assert.equal(descriptor.order, 1990);
+  assert.equal(descriptor.ciPolicy, "optional");
+  assert.equal(descriptor.apply, patchLinuxBrowserUseExternalAvailabilityAssets);
+  assert.deepEqual(descriptor.status({ matched: 0, changed: 0 }, []), {
+    status: "skipped-optional",
+    reason: null,
+  });
 });
 
 test("allows Browser Use non-local navigation on Linux without the upstream rollout flag", () => {

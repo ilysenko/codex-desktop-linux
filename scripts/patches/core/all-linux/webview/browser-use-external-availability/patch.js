@@ -1,19 +1,23 @@
 "use strict";
 
 const {
-  webviewAssetPatch,
+  extractedAppPatch,
 } = require("../../../../descriptor.js");
+const { patchStatusFromChange } = require("../../../../../lib/patch-report.js");
 const {
-  applyLinuxBrowserUseExternalAvailabilityPatch,
+  patchLinuxBrowserUseExternalAvailabilityAssets,
 } = require("../../../../impl/webview/index.js");
 
-module.exports = webviewAssetPatch({
+module.exports = extractedAppPatch({
   id: "linux-browser-use-external-availability",
-  phase: "webview-asset",
-  order: 1092,
+  phase: "extracted-app:post-webview",
+  order: 1990,
   ciPolicy: "optional",
-  pattern: /^app-initial-[^.]+\.js$/,
-  missingDescription: "external Browser Use availability bundle",
-  skipDescription: "Linux external Browser Use availability patch",
-  apply: applyLinuxBrowserUseExternalAvailabilityPatch,
+  apply: patchLinuxBrowserUseExternalAvailabilityAssets,
+  status: (result, warnings) => ({
+    status: result?.matched === 0
+      ? "skipped-optional"
+      : patchStatusFromChange((result?.changed ?? 0) > 0, warnings),
+    reason: result?.reason ?? warnings[0] ?? null,
+  }),
 });

@@ -12,6 +12,9 @@ const {
 const {
   patchDelegationState,
 } = require("../../lib/composition-delegation.js");
+const {
+  PatchIntegrityError,
+} = require("../../integrity-error.js");
 
 // Webview asset patches target hashed browser chunks copied out of app.asar.
 // They stay fail-soft because upstream chunk names and minified symbols drift.
@@ -1102,24 +1105,35 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
   );
 }
 
-function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
-  const externalFeatureNeedle = "featureName:`browser_use_external`";
-  const statsigNeedle = "410065390";
-  const alreadyPatched =
-    /function [A-Za-z_$][\w$]*\(\{isExternalBrowserUseFeatureEnabled:[A-Za-z_$][\w$]*,isExternalBrowserUseFeatureLoading:[A-Za-z_$][\w$]*,isExternalBrowserUseGateEnabled:[A-Za-z_$][\w$]*,runCodexInWsl:[A-Za-z_$][\w$]*,windowType:([A-Za-z_$][\w$]*)\}\)\{return \1===`chrome-extension`\|\|navigator\.userAgent\.includes\(`Linux`\)\?`available`:/;
-  if (alreadyPatched.test(currentSource)) {
+const CURRENT_BROWSER_USE_CHROME_LINUX_REGISTRY =
+  "linux:{installations:[{commands:[`google-chrome`,`google-chrome-stable`],userDataDirName:`google-chrome`},{commands:[`chromium`,`chromium-browser`],userDataDirName:`chromium`},{commands:[`google-chrome-beta`],userDataDirName:`google-chrome-beta`},{commands:[`google-chrome-unstable`],userDataDirName:`google-chrome-unstable`},{commands:[`google-chrome-for-testing`],userDataDirName:`google-chrome-for-testing`}],nativeMessagingManifestDirectories:[`.config/google-chrome/NativeMessagingHosts`,`.config/chromium/NativeMessagingHosts`,`.config/google-chrome-beta/NativeMessagingHosts`,`.config/google-chrome-unstable/NativeMessagingHosts`,`.config/google-chrome-for-testing/NativeMessagingHosts`],processNames:[`chrome`],userDataDirectorySegments:[`.config`,`google-chrome`]}";
+const LINUX_BRAVE_BROWSER_USE_CHROME_REGISTRY =
+  "linux:{installations:[{commands:[`google-chrome`,`google-chrome-stable`],userDataDirName:`google-chrome`},{commands:[`brave-browser`,`brave`],userDataDirName:`BraveSoftware/Brave-Browser`},{commands:[`chromium`,`chromium-browser`],userDataDirName:`chromium`},{commands:[`google-chrome-beta`],userDataDirName:`google-chrome-beta`},{commands:[`google-chrome-unstable`],userDataDirName:`google-chrome-unstable`},{commands:[`google-chrome-for-testing`],userDataDirName:`google-chrome-for-testing`}],nativeMessagingManifestDirectories:[`.config/google-chrome/NativeMessagingHosts`,`.config/BraveSoftware/Brave-Browser/NativeMessagingHosts`,`.config/chromium/NativeMessagingHosts`,`.config/google-chrome-beta/NativeMessagingHosts`,`.config/google-chrome-unstable/NativeMessagingHosts`,`.config/google-chrome-for-testing/NativeMessagingHosts`],processNames:[`chrome`,`brave`,`brave-browser`],userDataDirectorySegments:[`.config`,`google-chrome`]}";
+const CURRENT_BROWSER_USE_CONTRACT_MISSING_REASON =
+  "Could not identify complete current Browser Use external availability and browser registry contract";
+
+const externalBrowserUseAvailabilityPatchedPattern =
+  /function [A-Za-z_$][\w$]*\(\{isExternalBrowserUseFeatureEnabled:[A-Za-z_$][\w$]*,isExternalBrowserUseFeatureLoading:[A-Za-z_$][\w$]*,isExternalBrowserUseGateEnabled:[A-Za-z_$][\w$]*,runCodexInWsl:[A-Za-z_$][\w$]*,windowType:([A-Za-z_$][\w$]*)\}\)\{return \1===`chrome-extension`\|\|navigator\.userAgent\.includes\(`Linux`\)\?`available`:/;
+const externalBrowserUseAvailabilityCurrentPattern =
+  /(function [A-Za-z_$][\w$]*\(\{isExternalBrowserUseFeatureEnabled:[A-Za-z_$][\w$]*,isExternalBrowserUseFeatureLoading:[A-Za-z_$][\w$]*,isExternalBrowserUseGateEnabled:[A-Za-z_$][\w$]*,runCodexInWsl:[A-Za-z_$][\w$]*,windowType:([A-Za-z_$][\w$]*)\}\)\{return )\2===`chrome-extension`\?`available`:/;
+
+function patchCurrentExternalBrowserUseAvailabilitySource(currentSource) {
+  if (externalBrowserUseAvailabilityPatchedPattern.test(currentSource)) {
     return currentSource;
   }
-
-  const statusFnPattern =
-    /(function [A-Za-z_$][\w$]*\(\{isExternalBrowserUseFeatureEnabled:[A-Za-z_$][\w$]*,isExternalBrowserUseFeatureLoading:[A-Za-z_$][\w$]*,isExternalBrowserUseGateEnabled:[A-Za-z_$][\w$]*,runCodexInWsl:[A-Za-z_$][\w$]*,windowType:([A-Za-z_$][\w$]*)\}\)\{return )\2===`chrome-extension`\?`available`:/;
   const patchedSource = currentSource.replace(
-    statusFnPattern,
+    externalBrowserUseAvailabilityCurrentPattern,
     (match, prefix, windowTypeVar) =>
       `${prefix}${windowTypeVar}===\`chrome-extension\`||navigator.userAgent.includes(\`Linux\`)?\`available\`:`,
   );
+  return patchedSource === currentSource ? null : patchedSource;
+}
 
-  if (patchedSource !== currentSource) {
+function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
+  const externalFeatureNeedle = "featureName:`browser_use_external`";
+  const statsigNeedle = "410065390";
+  const patchedSource = patchCurrentExternalBrowserUseAvailabilitySource(currentSource);
+  if (patchedSource != null) {
     return patchedSource;
   }
 
@@ -1130,6 +1144,179 @@ function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
   }
 
   return currentSource;
+}
+
+function currentBrowserUseRegistryState(source) {
+  const currentCount = source.split(CURRENT_BROWSER_USE_CHROME_LINUX_REGISTRY).length - 1;
+  const patchedCount = source.split(LINUX_BRAVE_BROWSER_USE_CHROME_REGISTRY).length - 1;
+  if (currentCount === 1 && patchedCount === 0) {
+    return "current";
+  }
+  if (currentCount === 0 && patchedCount === 1) {
+    return "patched";
+  }
+  return "drifted";
+}
+
+function patchCurrentBrowserUseRegistrySource(source) {
+  const state = currentBrowserUseRegistryState(source);
+  if (state === "patched") {
+    return source;
+  }
+  if (state !== "current") {
+    return null;
+  }
+  return source.replace(
+    CURRENT_BROWSER_USE_CHROME_LINUX_REGISTRY,
+    LINUX_BRAVE_BROWSER_USE_CHROME_REGISTRY,
+  );
+}
+
+function currentBrowserUseMainCallerContract(source) {
+  return source.includes("async function sne({browserFamily:") &&
+    source.includes("async function lne({browserFamily:") &&
+    source.includes("function Ol(") &&
+    source.includes("getInstalledBrowserFamilies(){") &&
+    source.includes("async openUrl({browserFamily:");
+}
+
+function currentBrowserUseMainRegistryContract(source) {
+  return currentBrowserUseRegistryState(source) !== "drifted" &&
+    source.includes("function fb(e){return Object.hasOwn(ob,e)}") &&
+    /Object\.defineProperty\(exports,["'`]So["'`],\{enumerable:!0,get:function\(\)\{return ob\}\}\)/u.test(source);
+}
+
+function currentBrowserUseRendererContract(source) {
+  return currentBrowserUseRegistryState(source) !== "drifted" &&
+    source.includes("featureName:`browser_use_external`") &&
+    source.includes("410065390") &&
+    source.includes("function Gl(e){return Object.hasOwn(Kl,e)}") &&
+    source.includes("Object.keys(Kl).filter(Gl)") &&
+    (externalBrowserUseAvailabilityCurrentPattern.test(source) ||
+      externalBrowserUseAvailabilityPatchedPattern.test(source));
+}
+
+function findUniqueCurrentBrowserUseAsset(directory, fileNamePattern, contract) {
+  if (!fs.existsSync(directory)) {
+    return null;
+  }
+  const matches = fs.readdirSync(directory)
+    .filter((fileName) => fileNamePattern.test(fileName))
+    .sort()
+    .map((fileName) => {
+      const filePath = path.join(directory, fileName);
+      return { filePath, source: fs.readFileSync(filePath, "utf8") };
+    })
+    .filter(({ source }) => contract(source));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function writeCurrentBrowserUseAssetCandidates(candidates, writeFileSync, readFileSync) {
+  const attempted = [];
+  try {
+    for (const candidate of candidates) {
+      attempted.push(candidate);
+      writeFileSync(candidate.filePath, candidate.patched, "utf8");
+    }
+  } catch (error) {
+    const rollbackWriteFailures = [];
+    for (const candidate of attempted.reverse()) {
+      try {
+        writeFileSync(candidate.filePath, candidate.source, "utf8");
+      } catch (rollbackError) {
+        rollbackWriteFailures.push(rollbackError);
+      }
+    }
+    const rollbackVerificationFailures = [];
+    for (const candidate of attempted) {
+      try {
+        if (readFileSync(candidate.filePath, "utf8") !== candidate.source) {
+          rollbackVerificationFailures.push(
+            new Error(`rollback byte verification failed for ${candidate.filePath}`),
+          );
+        }
+      } catch (rollbackError) {
+        rollbackVerificationFailures.push(rollbackError);
+      }
+    }
+    if (rollbackVerificationFailures.length > 0) {
+      const writeFailureContext = rollbackWriteFailures[0] == null
+        ? ""
+        : `; rollback write also failed: ${rollbackWriteFailures[0].message}`;
+      throw new PatchIntegrityError(
+        `Browser Use external availability rollback could not restore original bytes: ${rollbackVerificationFailures[0].message}${writeFailureContext}`,
+      );
+    }
+    throw error;
+  }
+}
+
+function patchLinuxBrowserUseExternalAvailabilityAssets(extractedDir, {
+  writeFileSync = fs.writeFileSync,
+  readFileSync = fs.readFileSync,
+} = {}) {
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  const mainCaller = findUniqueCurrentBrowserUseAsset(
+    buildDir,
+    /^main-[^.]+\.js$/u,
+    currentBrowserUseMainCallerContract,
+  );
+  const mainRegistry = findUniqueCurrentBrowserUseAsset(
+    buildDir,
+    /^src-[^.]+\.js$/u,
+    currentBrowserUseMainRegistryContract,
+  );
+  const renderer = findUniqueCurrentBrowserUseAsset(
+    assetsDir,
+    /^app-initial-[^.]+\.js$/u,
+    currentBrowserUseRendererContract,
+  );
+  if (mainCaller == null || mainRegistry == null || renderer == null) {
+    console.warn(
+      `WARN: ${CURRENT_BROWSER_USE_CONTRACT_MISSING_REASON} — skipping Linux external Browser Use availability patch`,
+    );
+    return {
+      matched: 0,
+      changed: 0,
+      reason: CURRENT_BROWSER_USE_CONTRACT_MISSING_REASON,
+    };
+  }
+
+  const patchedMainRegistry = patchCurrentBrowserUseRegistrySource(mainRegistry.source);
+  const rendererWithAvailability = patchCurrentExternalBrowserUseAvailabilitySource(renderer.source);
+  const patchedRenderer = rendererWithAvailability == null
+    ? null
+    : patchCurrentBrowserUseRegistrySource(rendererWithAvailability);
+  if (patchedMainRegistry == null || patchedRenderer == null) {
+    console.warn(
+      `WARN: ${CURRENT_BROWSER_USE_CONTRACT_MISSING_REASON} — skipping Linux external Browser Use availability patch`,
+    );
+    return {
+      matched: 0,
+      changed: 0,
+      reason: CURRENT_BROWSER_USE_CONTRACT_MISSING_REASON,
+    };
+  }
+
+  const candidates = [
+    { ...mainRegistry, patched: patchedMainRegistry },
+    { ...renderer, patched: patchedRenderer },
+  ].filter(({ source, patched }) => source !== patched);
+  if (candidates.length === 0) {
+    return { matched: 3, changed: 0 };
+  }
+  try {
+    writeCurrentBrowserUseAssetCandidates(candidates, writeFileSync, readFileSync);
+  } catch (error) {
+    if (error?.code === "PATCH_INTEGRITY_FAILURE") {
+      throw error;
+    }
+    const reason = `Could not write complete current Browser Use external availability assets: ${error.message}`;
+    console.warn(`WARN: ${reason} — leaving Browser Use assets unchanged`);
+    return { matched: 3, changed: 0, reason };
+  }
+  return { matched: 3, changed: candidates.length };
 }
 
 function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
@@ -2287,6 +2474,7 @@ module.exports = {
   applyLinuxChatSearchHydrationPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
+  patchLinuxBrowserUseExternalAvailabilityAssets,
   applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
