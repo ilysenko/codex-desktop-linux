@@ -1,4 +1,4 @@
-<h1 align="center">适用于 Linux 的 ChatGPT Desktop</h1>
+<h1 align="center"> ChatGPT Desktop for Linux</h1>
 
 <p align="center">
   <a href="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/ci.yml"><img src="https://github.com/ilysenko/codex-desktop-linux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
