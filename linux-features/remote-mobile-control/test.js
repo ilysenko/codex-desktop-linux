@@ -257,17 +257,6 @@ function syntheticMobileSetupDialogCopyBundle() {
   ].join("");
 }
 
-function syntheticSettingsBundle() {
-  return [
-    "const o=`linux`,Q={jsx(){},jsxs(){}};",
-    "tabs:[{key:`control-this-mac`,name:o===`windows`?(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.controlThisMac.windows`,defaultMessage:`Control this PC`,description:`Tab label for settings that let other devices control this Windows device`}):(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.controlThisMac`,defaultMessage:`Control this Mac`,description:`Tab label for settings that let other devices control this computer`})},{key:`access-other-devices`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.accessOtherDevices`,defaultMessage:`Control other devices`,description:`Tab label for settings that let this computer control other devices`})},{key:`ssh`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.ssh`,defaultMessage:`SSH`,description:`Tab label for SSH remote connections`})}],selectedKey:je,variant:`underline`,onSelect:se}",
-    "tabs:[{key:`access-other-devices`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.accessOtherDevices`,defaultMessage:`Control other devices`,description:`Tab label for settings that let this computer control other devices`})},{key:`ssh`,name:(0,Q.jsx)(z,{id:`settings.remoteConnections.tabs.ssh`,defaultMessage:`SSH`,description:`Tab label for SSH remote connections`})}],selectedKey:je,variant:`underline`,onSelect:se}",
-    "const a=`Control this Mac from your phone or other device`,b=`Add device to control this Mac remotely`,c=`Devices that can control this Mac`,d=`Keep Mac awake`,e=`Allow this Mac to be discovered and controlled`,f=`Control other devices from this Mac`,g=`Authorize this Mac to control other devices signed in to your ChatGPT account`,h=`Devices you can control from this Mac`;",
-    "function nr(e,t){return e.displayName.localeCompare(t.displayName)}",
-    "function rr({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}",
-  ].join("");
-}
-
 function syntheticSshInstallSettingsBundle() {
   return [
     "function pn({action:e,disabled:t,hostId:n,installCodexPending:r,onAuthenticate:i,onInstallCodex:a,onReconnect:o,onRestart:s}){if(e==null)return null;switch(e.kind){case`install-codex`:return{disabled:t,label:e.label,loading:r,loadingLabel:e.loadingLabel,renderInElectronOnly:!0,tooltipText:e.tooltipText,onClick:()=>a(n)};case`login`:return{label:e.label,onClick:()=>i(n)};case`restart`:return{label:e.label,onClick:s};case`reconnect`:return{label:e.label,onClick:o};case`settings`:return null}}",
@@ -294,17 +283,6 @@ function syntheticCurrentLocalAppServerLaunchBundle() {
   return [
     "var Fz=`Codex Desktop`,Iz=[`-c`,`features.code_mode_host=true`],Lz=[{configKey:`chatgpt_base_url`,envVar:`CODEX_APP_SERVER_CHATGPT_BASE_URL`},{configKey:`openai_base_url`,envVar:`CODEX_APP_SERVER_OPENAI_BASE_URL`}];",
     "function uB(){return[...Iz,...Lz.flatMap(({configKey:e,envVar:t})=>{let n=process.env[t]?.trim();return n==null||n===``?[]:[`-c`,`${e}=${JSON.stringify(n)}`]}),`app-server`,`--analytics-default-enabled`]}",
-  ].join("");
-}
-
-function syntheticCurrentSettingsBundle() {
-  return [
-    "const i=`linux`,Q={jsx(){},jsxs(){}};",
-    "tabs:[{key:`control-this-mac`,name:i===`windows`?(0,Q.jsx)(N,{id:`settings.remoteConnections.tabs.controlThisMac.windows`,defaultMessage:`Control this PC`,description:`Tab label for settings that let other devices control this Windows device`}):(0,Q.jsx)(N,{id:`settings.remoteConnections.tabs.controlThisMac`,defaultMessage:`Control this Mac`,description:`Tab label for settings that let other devices control this computer`})},{key:`access-other-devices`,name:(0,Q.jsx)(N,{id:`settings.remoteConnections.tabs.accessOtherDevices`,defaultMessage:`Control other devices`,description:`Tab label for settings that let this computer control other devices`})},{key:`ssh`,name:(0,Q.jsx)(N,{id:`settings.remoteConnections.tabs.ssh`,defaultMessage:`SSH`,description:`Tab label for SSH remote connections`})}],selectedKey:Pe,variant:`underline`,onSelect:le}",
-    "tabs:[{key:`access-other-devices`,name:(0,Q.jsx)(N,{id:`settings.remoteConnections.tabs.accessOtherDevices`,defaultMessage:`Control other devices`,description:`Tab label for settings that let this computer control other devices`})},{key:`ssh`,name:(0,Q.jsx)(N,{id:`settings.remoteConnections.tabs.ssh`,defaultMessage:`SSH`,description:`Tab label for SSH remote connections`})}],selectedKey:Pe,variant:`underline`,onSelect:le}",
-    "const a=`Control this Mac from your phone or other device`,b=`Add device to control this Mac remotely`,c=`Devices that can control this Mac`,d=`Keep Mac awake`,e=`Allow this Mac to be discovered and controlled`,f=`Control other devices from this Mac`,g=`Authorize this Mac to control other devices signed in to your ChatGPT account`,h=`Devices you can control from this Mac`;",
-    "function $n(e,t){return e.displayName.localeCompare(t.displayName)}",
-    "function er({selectedConnectionsTab:e,showControlThisMacTab:t,showRemoteControlConnectionsSection:n,showTabbedSshPage:r}){return n?e===`control-this-mac`&&!t||e===`ssh`&&!r?`access-other-devices`:e:`ssh`}",
   ].join("");
 }
 
@@ -1654,22 +1632,16 @@ test("Linux mobile setup dialog copy does not refer to Mac-only setup", () => {
   assert.equal(applyLinuxRemoteControlCopyPatch(patched), patched);
 });
 
-test("Linux remote-control settings UX patch keeps outbound tab visible and removes Mac copy", () => {
-  const source = syntheticSettingsBundle() + syntheticSshInstallSettingsBundle();
+test("Linux remote-control settings UX patch applies settings copy and SSH install actions", () => {
+  const source = syntheticRemoteConnectionsSettingsCopyBundle() + syntheticSshInstallSettingsBundle();
   const patched = applyLinuxRemoteControlSettingsUxPatch(source);
 
   assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteControlSettingsTabs/);
   assert.match(patched, /codexLinuxRemoteControlSshInstallActions/);
-  assert.match(patched, /function codexLinuxRemoteControlSettingsTabs\(e\)\{return e\}/);
-  assert.doesNotMatch(patched, /e\.filter\(e=>e\.key!==`access-other-devices`\)/);
-  assert.match(patched, /key:`access-other-devices`/);
   assert.match(patched, /Control this Linux desktop/);
-  assert.match(patched, /Control this Linux desktop from your phone or other device/);
-  assert.match(patched, /Add device to control this Linux desktop remotely/);
   assert.match(patched, /Devices that can control this Linux desktop/);
-  assert.match(patched, /Keep Linux desktop awake/);
-  assert.match(patched, /Allow this Linux desktop to be discovered and controlled/);
+  assert.match(patched, /Keep this Linux desktop awake/);
+  assert.match(patched, /SSH connections from this Linux desktop/);
   assert.doesNotMatch(patched, /Control this Mac/);
   assert.doesNotMatch(patched, /this Mac/);
   assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
@@ -1776,18 +1748,37 @@ test("Linux remote-control SSH install prefers update-required minRequiredVersio
   assert.deepEqual(JSON.parse(JSON.stringify(context.__mutations)), [{ hostId: "remote-ssh:dev", release: "0.137.0" }]);
 });
 
-test("Linux remote-control settings UX patch handles current minified helper names", () => {
-  const source = syntheticCurrentSettingsBundle();
+test("Linux remote-control settings UX patch bypasses outbound tab hide gate on Linux", () => {
+  const source = [
+    "function $n(e,t){return e.displayName.localeCompare(t.displayName)}",
+    "function Uo(){let l=Pe(`782640499`),u=Pe(on),z=Ge(),B=!l,Se=f==null,Ce=p==null,Ke=z&&!0,qe=B&&(z||!1),Je=z&&!0;return qe}",
+  ].join("");
   const patched = applyLinuxRemoteControlSettingsUxPatch(source);
 
   assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteControlSettingsTabs/);
-  assert.match(patched, /function codexLinuxRemoteControlSettingsTabs\(e\)\{return e\}/);
-  assert.match(patched, /tabs:codexLinuxRemoteControlSettingsTabs/);
-  assert.match(patched, /key:`access-other-devices`/);
-  assert.match(patched, /Control this Linux desktop/);
-  assert.doesNotMatch(patched, /Control this Mac/);
+  assert.match(patched, /codexLinuxRemoteControlOutboundTabGate/);
+  assert.match(patched, /B=\/\*codexLinuxRemoteControlOutboundTabGate\*\/\(typeof navigator!=`undefined`&&navigator\.userAgent\.includes\(`Linux`\)\|\|!l\)/);
+  assert.doesNotMatch(patched, /B=!l/);
   assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
+
+  const context = {
+    Ge: () => true,
+    Pe: () => true,
+    f: [],
+    navigator: { userAgent: "Linux" },
+    on: "gate",
+    p: [],
+  };
+  vm.runInNewContext(`${patched};globalThis.__visible=Uo();`, context);
+  assert.equal(context.__visible, true);
+});
+
+test("Linux remote-control settings UX patch warns when outbound tab gate consumer drifts", () => {
+  const source = "function Uo(){let l=Pe(`782640499`),u=Pe(on),z=Ge(),B=l,Se=f==null;return B&&z}";
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("outbound tab gate consumer")));
 });
 
 test("Linux remote-connections refresh patch shortens polling and refreshes on resume signals", () => {
@@ -2646,14 +2637,14 @@ test("Linux remote-control status wait ignores matching atom initializer decoys"
 });
 
 test("Linux remote-control settings UX patch warns when SSH release handling drifts after partial patching", () => {
-  const source = (syntheticSettingsBundle() + syntheticSshInstallSettingsBundle()).replace(
+  const source = (syntheticRemoteConnectionsSettingsCopyBundle() + syntheticSshInstallSettingsBundle()).replace(
     "installedCodexVersion:h",
     "installedVersion:h",
   );
   const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
 
   assert.notEqual(result, source);
-  assert.match(result, /codexLinuxRemoteControlSettingsTabs/);
+  assert.match(result, /Control this Linux desktop/);
   assert.ok(warnings.some((warning) => warning.includes("SSH install release needles")));
 });
 
@@ -2698,7 +2689,7 @@ test("remote mobile feature patch report records feature metadata and partial wa
       );
       fs.writeFileSync(
         path.join(assetsDir, "remote-connections-settings-test.js"),
-        (syntheticSettingsBundle() + syntheticSshInstallSettingsBundle()).replace(
+        (syntheticRemoteConnectionsSettingsCopyBundle() + syntheticSshInstallSettingsBundle()).replace(
           "installedCodexVersion:h",
           "installedVersion:h",
         ),
@@ -3663,8 +3654,8 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
         fs.writeFileSync(
           path.join(assetsDir, "remote-connections-settings-test.js"),
-          syntheticSettingsBundle() +
-            syntheticRemoteConnectionsSettingsCopyBundle() +
+          syntheticRemoteConnectionsSettingsCopyBundle() +
+            "function Uo(){let l=Pe(`782640499`),u=Pe(on),z=Ge(),B=!l,Se=f==null;return B&&z}" +
             syntheticSettingsRefreshBundle() +
             syntheticCurrentRevokeSetupResetBundle(),
         );
@@ -3747,7 +3738,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedRemoteConnectionVisibilityFile, /codexLinuxRemoteControlLoadGateEnabled/);
         assert.match(patchedAppMainFile, /\{\.\.\.e,remote_control:!0\}/);
         assert.match(patchedVisibilityFile, /navigator\.userAgent\.includes\(`Linux`\)/);
-        assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlSettingsTabs/);
+        assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlOutboundTabGate/);
         assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlResetMobileSetupAfterRevoke/);
         assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteConnectionsRefreshNow/);
         assert.match(patchedRemoteConnectionsSettingsFile, /Qn=5e3/);

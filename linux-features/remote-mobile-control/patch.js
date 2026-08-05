@@ -18,9 +18,7 @@ const DEVICE_KEY_REQUIRE_NEEDLE =
   /(?:var|let|const)\s+[A-Za-z_$][\w$]*=\(0,[A-Za-z_$][\w$]*\.createRequire\)\(__filename\),[A-Za-z_$][\w$]*=`remote-control-device-key\.node`/u;
 const REMOTE_CONTROL_SETTINGS_VISIBILITY_NEEDLE =
   /function ([A-Za-z_$][\w$]*)\(\{remoteControlConnectionsState:([A-Za-z_$][\w$]*),slingshotEnabled:([A-Za-z_$][\w$]*)\}\)\{return \3&&\(\2\?\.available\?\?!0\)(?:&&\2\?\.accessRequired!==!0)?\}/u;
-const REMOTE_CONTROL_SETTINGS_UX_MARKER = "codexLinuxRemoteControlSettingsTabs";
-const REMOTE_CONTROL_SETTINGS_TABS_HELPER =
-  "function codexLinuxRemoteControlSettingsTabs(e){return e}";
+const REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER = "codexLinuxRemoteControlOutboundTabGate";
 const REMOTE_CONTROL_SSH_INSTALL_ACTION_MARKER = "codexLinuxRemoteControlSshInstallActions";
 const REMOTE_CONTROL_SSH_INSTALL_RELEASE_MARKER = "codexLinuxRemoteControlSshInstallRelease";
 const REMOTE_CONNECTIONS_REFRESH_MARKER = "codexLinuxRemoteConnectionsRefreshNow";
@@ -478,18 +476,6 @@ function applyLinuxRemoteControlVisibilityPatch(source) {
   );
 }
 
-function wrapRemoteControlTabs(source, firstKey) {
-  const key = firstKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(
-    `tabs:(\\[\\{key:\`${key}\`[\\s\\S]*?\\}\\]),selectedKey:([A-Za-z_$][\\w$]*),variant:\`underline\`,onSelect:([A-Za-z_$][\\w$]*)\\}`,
-    "g",
-  );
-  return source.replace(
-    pattern,
-    "tabs:codexLinuxRemoteControlSettingsTabs($1),selectedKey:$2,variant:`underline`,onSelect:$3}",
-  );
-}
-
 function replaceLinuxRemoteControlCopy(source) {
   let patched = source;
   let changed = false;
@@ -691,19 +677,33 @@ function applyLinuxRemoteControlSettingsUxPatch(source) {
   let patched = applyLinuxRemoteControlSshInstallReleasePatch(replaceLinuxRemoteControlCopy(source).patched);
   patched = applyLinuxRemoteControlSshInstallActionPatch(patched);
 
-  if (!patched.includes(REMOTE_CONTROL_SETTINGS_UX_MARKER)) {
-    const helperNeedle = /function ([A-Za-z_$][\w$]*)\(e,t\)\{return e\.displayName\.localeCompare\(t\.displayName\)\}/u;
-    const helperMatch = patched.match(helperNeedle);
-    if (helperMatch == null) {
-      console.warn("WARN: Could not find remote-control settings helper needle - skipping Linux remote-control settings UX patch");
-      return patched;
-    }
-    patched = patched.replace(helperNeedle, `${REMOTE_CONTROL_SETTINGS_TABS_HELPER}${helperMatch[0]}`);
+  patched = applyLinuxRemoteControlOutboundTabGatePatch(patched);
+
+  return patched;
+}
+
+function applyLinuxRemoteControlOutboundTabGatePatch(source) {
+  if (source.includes(REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER)) {
+    return source;
   }
 
-  patched = wrapRemoteControlTabs(patched, "control-this-mac");
-  patched = wrapRemoteControlTabs(patched, "access-other-devices");
+  const gateMatch = source.match(/([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`782640499`\)/u);
+  if (gateMatch == null) {
+    return source;
+  }
 
+  const [, hiddenGateVar] = gateMatch;
+  const negatedGate = new RegExp(
+    `([A-Za-z_$][\\w$]*)=!${hiddenGateVar}(?=,[A-Za-z_$][\\w$]*=[A-Za-z_$][\\w$]*==null)`,
+    "u",
+  );
+  const patched = source.replace(
+    negatedGate,
+    `$1=/*${REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER}*/(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)||!${hiddenGateVar})`,
+  );
+  if (patched === source) {
+    console.warn("WARN: Could not find remote-control outbound tab gate consumer - skipping Linux outbound tab gate patch");
+  }
   return patched;
 }
 
