@@ -30,6 +30,7 @@ struct DiagnosticsReport {
     warm_start: WarmStartDiagnostics,
     metadata: MetadataDiagnostics,
     paths: PathDiagnostics,
+    sandbox: SandboxDiagnostics,
 }
 
 #[derive(Debug, Serialize)]
@@ -106,6 +107,14 @@ struct PathDiagnostics {
     builder_bundle_root: PathBuf,
 }
 
+#[derive(Debug, Serialize)]
+struct SandboxDiagnostics {
+    bwrap_installed: bool,
+    apparmor_userns_restricted: bool,
+    bwrap_functional: bool,
+    recommendation: Option<String>,
+}
+
 /// Runs the diagnostics command.
 pub async fn run(
     config: &RuntimeConfig,
@@ -127,15 +136,19 @@ async fn collect(
     state: &PersistedState,
     paths: &RuntimePaths,
 ) -> Result<DiagnosticsReport> {
-    let webview = check_webview(webview_url()).await;
-    collect_with_webview(config, state, paths, webview)
+    let (webview, sandbox) = tokio::join!(
+        check_webview(webview_url()),
+        collect_sandbox_diagnostics(),
+    );
+    collect_with_webview_and_sandbox(config, state, paths, webview, sandbox)
 }
 
-fn collect_with_webview(
+fn collect_with_webview_and_sandbox(
     config: &RuntimeConfig,
     state: &PersistedState,
     paths: &RuntimePaths,
     webview: WebviewProbe,
+    sandbox: SandboxDiagnostics,
 ) -> Result<DiagnosticsReport> {
     let running = liveness::is_app_running(config);
     let app_running = running.as_ref().copied().unwrap_or(false);
@@ -200,9 +213,16 @@ fn collect_with_webview(
             state_dir: paths.state_dir.clone(),
             builder_bundle_root: config.builder_bundle_root.clone(),
         },
+        sandbox: SandboxDiagnostics {
+            bwrap_installed: false,
+            apparmor_userns_restricted: false,
+            bwrap_functional: false,
+            recommendation: None,
+        },
     };
 
     let mut report = DiagnosticsReport {
+        sandbox,
         warm_start: WarmStartDiagnostics {
             socket_exists: report_without_warnings.warm_start.socket_path.exists(),
             ..report_without_warnings.warm_start
@@ -296,6 +316,13 @@ fn print_text(report: &DiagnosticsReport) {
         report.warm_start.socket_exists
     );
     println!(
+        "sandbox: bwrap_installed={} apparmor_userns_restricted={} bwrap_functional={} recommendation={}",
+        report.sandbox.bwrap_installed,
+        report.sandbox.apparmor_userns_restricted,
+        report.sandbox.bwrap_functional,
+        report.sandbox.recommendation.as_deref().unwrap_or("none")
+    );
+    println!(
         "metadata: build_info={} exists={} source_info={} exists={}",
         optional_path(report.metadata.build_info_path.as_ref()),
         report.metadata.build_info_exists,
@@ -331,6 +358,9 @@ fn diagnostics_warnings(report: &DiagnosticsReport) -> Vec<String> {
     }
     if !report.metadata.build_info_exists {
         warnings.push("Linux build-info metadata is missing".to_string());
+    }
+    if let Some(rec) = &report.sandbox.recommendation {
+        warnings.push(rec.clone());
     }
     warnings
 }
@@ -407,6 +437,72 @@ fn metadata_diagnostics(config: &RuntimeConfig) -> MetadataDiagnostics {
         source_info_exists: source_info_path.as_ref().is_some_and(|path| path.exists()),
         build_info_path,
         source_info_path,
+    }
+}
+
+async fn collect_sandbox_diagnostics() -> SandboxDiagnostics {
+    let apparmor_userns_restricted =
+        fs::read_to_string("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+            .map(|s| s.trim() == "1")
+            .unwrap_or(false);
+
+    let bwrap_installed = std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths).any(|dir| dir.join("bwrap").is_file())
+        })
+        .unwrap_or(false);
+
+    let bwrap_functional = if bwrap_installed {
+        let spawn_result = tokio::process::Command::new("bwrap")
+            .args([
+                "--unshare-user",
+                "--unshare-net",
+                "--ro-bind",
+                "/",
+                "/",
+                "--",
+                "/bin/true",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match spawn_result {
+            Ok(child) => {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    child.wait_with_output(),
+                )
+                .await
+                {
+                    Ok(Ok(output)) => output.status.success(),
+                    _ => false,
+                }
+            }
+            Err(_) => false,
+        }
+    } else {
+        false
+    };
+
+    let recommendation = if apparmor_userns_restricted && bwrap_installed && !bwrap_functional {
+        Some(
+            "AppArmor restricts unprivileged user namespaces \
+             (kernel.apparmor_restrict_unprivileged_userns=1). Task sandboxes using \
+             bubblewrap may fail with 'RTM_NEWADDR: Operation not permitted'. Fix: \
+             run 'sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0' or \
+             install an AppArmor profile for bwrap. See docs/troubleshooting.md for \
+             details and a persistent fix."
+                .to_string(),
+        )
+    } else {
+        None
+    };
+
+    SandboxDiagnostics {
+        bwrap_installed,
+        apparmor_userns_restricted,
+        bwrap_functional,
+        recommendation,
     }
 }
 
@@ -661,6 +757,12 @@ mod tests {
                 state_dir: paths.state_dir,
                 builder_bundle_root: config.builder_bundle_root,
             },
+            sandbox: SandboxDiagnostics {
+                bwrap_installed: false,
+                apparmor_userns_restricted: false,
+                bwrap_functional: false,
+                recommendation: None,
+            },
         };
 
         let warnings = diagnostics_warnings(&report);
@@ -699,7 +801,18 @@ mod tests {
             Some("connection refused".to_string()),
         );
 
-        let report = collect_with_webview(&config, &state, &paths, webview)?;
+        let report = collect_with_webview_and_sandbox(
+            &config, 
+            &state, 
+            &paths, 
+            webview,
+            SandboxDiagnostics {
+                bwrap_installed: false,
+                apparmor_userns_restricted: false,
+                bwrap_functional: false,
+                recommendation: None,
+            },
+        )?;
 
         assert!(!report.ok);
         assert!(report
@@ -711,5 +824,56 @@ mod tests {
             .iter()
             .any(|item| item == "Linux build-info metadata is missing"));
         Ok(())
+    }
+
+    fn read_apparmor_restriction(sysctl_path: &std::path::Path) -> bool {
+        fs::read_to_string(sysctl_path)
+            .map(|s| s.trim() == "1")
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn apparmor_restriction_false_when_file_missing() {
+        assert!(!read_apparmor_restriction(std::path::Path::new(
+            "/nonexistent/kernel/apparmor_restrict_unprivileged_userns"
+        )));
+    }
+
+    #[test]
+    fn apparmor_restriction_false_when_sysctl_is_zero() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("apparmor_restrict_unprivileged_userns");
+        fs::write(&path, "0\n").unwrap();
+        assert!(!read_apparmor_restriction(&path));
+    }
+
+    #[test]
+    fn apparmor_restriction_true_when_sysctl_is_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("apparmor_restrict_unprivileged_userns");
+        fs::write(&path, "1\n").unwrap();
+        assert!(read_apparmor_restriction(&path));
+    }
+
+    #[tokio::test]
+    async fn sandbox_diagnostics_no_recommendation_when_not_restricted() {
+        let diag = collect_sandbox_diagnostics().await;
+        if !diag.apparmor_userns_restricted {
+            assert!(
+                diag.recommendation.is_none(),
+                "recommendation must be None when AppArmor restriction is inactive"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sandbox_diagnostics_no_recommendation_when_bwrap_functional() {
+        let diag = collect_sandbox_diagnostics().await;
+        if diag.bwrap_functional {
+            assert!(
+                diag.recommendation.is_none(),
+                "recommendation must be None when bwrap is functional"
+            );
+        }
     }
 }
