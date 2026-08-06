@@ -11,7 +11,18 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  createPatchReport,
+  enabledFeatureFailuresFromReport,
+} = require("../../scripts/lib/patch-report.js");
+const {
+  applyExtractedAppPatchDescriptors,
+} = require("../../scripts/patches/engine.js");
+
+const {
   DEFAULT_IGNORED_DIRECTORY_NAMES,
+  HELPER_NAME,
+  PARCEL_WATCH_MARKER,
+  PARCEL_WORKING_TREE_WATCH,
   codexLinuxStartDirectoryOnlyWorkingTreeWatch,
   descriptors,
   normalizedSettings,
@@ -23,11 +34,95 @@ const BUDGET_KEY = Symbol.for("codex-linux.directory-only-working-tree-watch.bud
 
 function localWorkerSource() {
   return [
-    "var LocalHost=class{",
+    "var LocalHost=class{runsInsideWsl;hostConfig={id:`local`,display_name:`Local`," +
+      "kind:`local`};id=`local`;isLocal=!0;",
     "async platformPath(){return E.default.posix}",
     "async startFileWatch(e){let t=jH(),n=!1,r=await this.platformPath(),",
     "i=(0,w.watch)(this.getFileSystemPath(e.path),{recursive:e.recursive},()=>{});",
     "return{coverage:{recursive:e.recursive},path:e.path,closed:t.promise}}",
+    "};",
+  ].join("");
+}
+
+// Exact relevant fragments from OpenAI Desktop 26.730.61639. Keep these
+// independent of patch.js so production matcher drift cannot rewrite the
+// fixture into a passing shape.
+const CURRENT_WORKER_LOCAL_FILE_WATCH = [
+  "async startFileWatch(e){let t=sV(),n=!1,r=await this.platformPath(),",
+  "i=(0,w.watch)(this.getFileSystemPath(e.path),{recursive:e.recursive},(t,n)=>{",
+  "let i=n==null?null:r.join(e.path,...n.toString().split(this.runsInsideWsl?",
+  "E.default.win32.sep:E.default.sep)),a=i==null?[]:[i];i!=null&&t===`rename`&&",
+  "e.renameEventHandling===`changed-path-with-parent-directory`&&a.push(r.dirname(i)),",
+  "e.onChange({changedPaths:a})}),a=e=>{n||(n=!0,i.close(),t.resolve(e))};",
+  "return i.on(`error`,e=>{a({reason:`watch-error`,error:e})}),{coverage:{recursive:",
+  "e.recursive,typedPathChanges:!1},path:e.path,closed:t.promise,dispose:async()=>{",
+  "a({reason:`disposed`})}}}",
+].join("");
+
+const CURRENT_SRC_LOCAL_FILE_WATCH = [
+  "async startFileWatch(e){let t=Kb(),n=!1,r=await this.platformPath(),",
+  "a=(0,c.watch)(this.getFileSystemPath(e.path),{recursive:e.recursive},(t,n)=>{",
+  "let a=n==null?null:r.join(e.path,...n.toString().split(this.runsInsideWsl?",
+  "i.default.win32.sep:i.default.sep)),o=a==null?[]:[a];a!=null&&t===`rename`&&",
+  "e.renameEventHandling===`changed-path-with-parent-directory`&&o.push(r.dirname(a)),",
+  "e.onChange({changedPaths:o})}),o=e=>{n||(n=!0,a.close(),t.resolve(e))};",
+  "return a.on(`error`,e=>{o({reason:`watch-error`,error:e})}),{coverage:{recursive:",
+  "e.recursive,typedPathChanges:!1},path:e.path,closed:t.promise,dispose:async()=>{",
+  "o({reason:`disposed`})}}}",
+].join("");
+
+const CURRENT_WORKER_REMOTE_FILE_WATCH = [
+  "async startFileWatch(e){let{onChange:t,...n}=e,r=await this.callHost(e=>",
+  "e.startFileWatch(n,t)),i=!1,a=()=>{i||(i=!0,r[Symbol.dispose]())},o,s;try{",
+  "[o,s]=await Promise.all([r.coverage,r.path])}catch(e){throw a(),e}let c=r.closed()",
+  ".finally(a);return{coverage:o,path:s,closed:c,dispose:async()=>{try{await r.dispose()}",
+  "finally{a()}}}}",
+].join("");
+
+const CURRENT_SRC_REMOTE_FILE_WATCH = [
+  "async startFileWatch(e){let t=await this.startFileWatchSession({onChange:e.onChange,",
+  "path:e.path,watchId:e.watchId});return{coverage:t.coverage,path:t.path,closed:t.closed,",
+  "dispose:async()=>{await t.dispose()}}}",
+].join("");
+
+const CURRENT_PARCEL_HELPER =
+  "async function rye(e,t){return new iye(await import(`@parcel/watcher`),e,t).start()}";
+const CURRENT_GIT_ROUTE_PREFIX =
+  "case`git`:{let e=new Yue;return{git:{createExecutionHost:e=>{if(n==null)" +
+  "throw Error(`Git hosts require a main RPC connection`);return new $ue(n,e)},";
+const CURRENT_PARCEL_ROUTE =
+  "startWorkingTreeWatch:(t,n)=>t.isLocal?process.platform===`linux`?" +
+  "rye(n,{ignoredPaths:[E.posix.join(n.path,`.git`)]}):e.startFileWatch(n):" +
+  "t.startFileWatch(n)";
+const CURRENT_DIRECTORY_ROUTE =
+  `startWorkingTreeWatch:(t,n)=>t.isLocal?/*${PARCEL_WATCH_MARKER}*/` +
+  "e.startFileWatch(n):t.startFileWatch(n)";
+const CURRENT_GIT_ROUTE_SUFFIX = "}}}case`open-in`:";
+
+function currentWorkerSource(route = CURRENT_PARCEL_ROUTE) {
+  return [
+    "var Yue=class{runsInsideWsl;hostConfig={id:`local`,display_name:`Local`," +
+      "kind:`local`};id=`local`;isLocal=!0;",
+    CURRENT_WORKER_LOCAL_FILE_WATCH,
+    "};var CurrentWorkerRemote=class{",
+    CURRENT_WORKER_REMOTE_FILE_WATCH,
+    "};",
+    CURRENT_PARCEL_HELPER,
+    "function currentDependencies(r,n){switch(r){",
+    CURRENT_GIT_ROUTE_PREFIX,
+    route,
+    CURRENT_GIT_ROUTE_SUFFIX,
+    "return{openIn:null}}}",
+  ].join("");
+}
+
+function currentSrcSource() {
+  return [
+    "var CurrentSrcRemote=class{",
+    CURRENT_SRC_REMOTE_FILE_WATCH,
+    "};var $ne=class{runsInsideWsl;hostConfig={id:`local`,display_name:`Local`," +
+      "kind:`local`};id=`local`;isLocal=!0;",
+    CURRENT_SRC_LOCAL_FILE_WATCH,
     "};",
   ].join("");
 }
@@ -165,6 +260,58 @@ test("feature patch targets only the local recursive working-tree host", () => {
   assert.equal(second.source, first.source);
 });
 
+test("routes the current OpenAI Parcel working tree through the existing feature host", () => {
+  const settings = normalizedSettings();
+  const first = patchWorkerSource(currentWorkerSource(), settings);
+
+  assert.equal(first.matched, 1);
+  assert.equal(first.changed, 1);
+  assert.equal(first.source.split(PARCEL_WATCH_MARKER).length - 1, 1);
+  PARCEL_WORKING_TREE_WATCH.lastIndex = 0;
+  assert.equal(PARCEL_WORKING_TREE_WATCH.test(first.source), false);
+  assert.ok(first.source.includes(CURRENT_DIRECTORY_ROUTE));
+  assert.ok(first.source.includes(CURRENT_PARCEL_HELPER));
+  assert.ok(first.source.includes(CURRENT_WORKER_REMOTE_FILE_WATCH));
+  assert.match(
+    first.source,
+    /e\.recursive&&e\.renameEventHandling===`changed-path-with-parent-directory`\)return codexLinuxStartDirectoryOnlyWorkingTreeWatch/u,
+  );
+
+  assert.deepEqual(
+    patchWorkerSource(first.source, settings),
+    { source: first.source, matched: 1, changed: 0, reason: null },
+  );
+});
+
+test("correlates current route roles without pinning minified aliases", () => {
+  const parcelHelper =
+    "async function parcelStart(root,settings){return new ParcelWatcher(" +
+    "await import(`@parcel/watcher`),root,settings).start()}";
+  const gitRoutePrefix =
+    "case`git`:{let localHost=new LocalHost;return{git:{" +
+    "createExecutionHost:executionOptions=>{if(mainConnection==null)" +
+    "throw Error(`Git hosts require a main RPC connection`);" +
+    "return new RemoteHost(mainConnection,executionOptions)},";
+  const parcelRoute =
+    "startWorkingTreeWatch:(host,options)=>host.isLocal?process.platform===`linux`?" +
+    "parcelStart(options,{ignoredPaths:[pathApi.posix.join(options.path,`.git`)]}):" +
+    "localHost.startFileWatch(options):host.startFileWatch(options)";
+  const source = currentWorkerSource(parcelRoute)
+    .replace(CURRENT_PARCEL_HELPER, parcelHelper)
+    .replace(CURRENT_GIT_ROUTE_PREFIX, gitRoutePrefix)
+    .replace("var Yue=class{", "var LocalHost=class{");
+
+  const first = patchWorkerSource(source, normalizedSettings());
+  assert.equal(first.matched, 1);
+  assert.equal(first.changed, 1);
+  assert.ok(first.source.includes(parcelHelper));
+  assert.ok(first.source.includes(
+    `startWorkingTreeWatch:(host,options)=>host.isLocal?/*${PARCEL_WATCH_MARKER}*/` +
+      "localHost.startFileWatch(options):host.startFileWatch(options)",
+  ));
+  assert.doesNotMatch(first.source, /parcelStart\(options,/u);
+});
+
 test("feature patch reports drift instead of patching an ambiguous worker", () => {
   const source = `${localWorkerSource()}${localWorkerSource()}`;
   const result = patchWorkerSource(source, normalizedSettings());
@@ -179,16 +326,16 @@ test("feature patches the current local host copies in src and worker bundles", 
   await withTempTree((root) => {
     const buildDir = path.join(root, ".vite", "build");
     const workerPath = path.join(buildDir, "worker.js");
-    const localHostPath = path.join(buildDir, "src-current.js");
+    const localHostPath = path.join(buildDir, "src-Bn_6ASpg.js");
     fs.mkdirSync(buildDir, { recursive: true });
-    fs.writeFileSync(workerPath, localWorkerSource());
-    fs.writeFileSync(localHostPath, localWorkerSource());
+    fs.writeFileSync(workerPath, currentWorkerSource());
+    fs.writeFileSync(localHostPath, currentSrcSource());
 
     const first = patchWorker(root);
     assert.equal(first.matched, 2);
     assert.equal(first.changed, 2);
     assert.deepEqual(first.targets, [
-      path.join(".vite", "build", "src-current.js"),
+      path.join(".vite", "build", "src-Bn_6ASpg.js"),
       path.join(".vite", "build", "worker.js"),
     ]);
     for (const bundlePath of [localHostPath, workerPath]) {
@@ -196,11 +343,385 @@ test("feature patches the current local host copies in src and worker bundles", 
       assert.match(patched, /function codexLinuxStartDirectoryOnlyWorkingTreeWatch\(/);
       assert.doesNotThrow(() => new Function(patched));
     }
+    assert.ok(fs.readFileSync(workerPath, "utf8").includes(CURRENT_DIRECTORY_ROUTE));
 
     const second = patchWorker(root);
     assert.equal(second.matched, 2);
     assert.equal(second.changed, 0);
     assert.deepEqual(second.targets, first.targets);
+  });
+});
+
+test("second bundle write failure restores every attempted target and permits retry", async () => {
+  await withTempTree((root) => {
+    const buildDir = path.join(root, ".vite", "build");
+    const srcPath = path.join(buildDir, "src-Bn_6ASpg.js");
+    const workerPath = path.join(buildDir, "worker.js");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(srcPath, currentSrcSource());
+    fs.writeFileSync(workerPath, currentWorkerSource());
+    const originalBytes = new Map([
+      [srcPath, fs.readFileSync(srcPath)],
+      [workerPath, fs.readFileSync(workerPath)],
+    ]);
+    let writeCount = 0;
+    const baseDescriptor = descriptors.find(({ id }) => id === "worker-directory-watch");
+    const descriptor = {
+      ...baseDescriptor,
+      id: "feature:directory-only-working-tree-watch:worker-directory-watch",
+      name: "feature:directory-only-working-tree-watch:worker-directory-watch",
+      sourceKind: "feature",
+      featureId: "directory-only-working-tree-watch",
+      apply: (extractedDir, context) => patchWorker(extractedDir, {
+        ...context,
+        writeFileSync(filePath, source, encoding) {
+          writeCount += 1;
+          if (writeCount === 2) {
+            fs.writeFileSync(filePath, "partially-written", encoding);
+            throw new Error("simulated second bundle write failure");
+          }
+          fs.writeFileSync(filePath, source, encoding);
+        },
+      }),
+    };
+    const report = createPatchReport();
+    report.enabledFeatures = ["directory-only-working-tree-watch"];
+
+    captureWarnings(() => applyExtractedAppPatchDescriptors(
+      root,
+      [descriptor],
+      {},
+      report,
+      descriptor.phase,
+    ));
+    assert.equal(writeCount, 4);
+    for (const [filePath, expected] of originalBytes) {
+      assert.deepEqual(fs.readFileSync(filePath), expected);
+    }
+    const [failure] = enabledFeatureFailuresFromReport(report);
+    assert.equal(failure?.name, descriptor.id);
+    assert.equal(failure?.status, "skipped-optional");
+    assert.match(failure?.reason ?? "", /simulated second bundle write failure/u);
+
+    const retry = patchWorker(root);
+    assert.equal(retry.matched, 2);
+    assert.equal(retry.changed, 2);
+    const idempotent = patchWorker(root);
+    assert.equal(idempotent.matched, 2);
+    assert.equal(idempotent.changed, 0);
+  });
+});
+
+test("rollback byte-verification failure reports failed-integrity", async () => {
+  await withTempTree((root) => {
+    const buildDir = path.join(root, ".vite", "build");
+    const srcPath = path.join(buildDir, "src-Bn_6ASpg.js");
+    const workerPath = path.join(buildDir, "worker.js");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(srcPath, currentSrcSource());
+    fs.writeFileSync(workerPath, currentWorkerSource());
+    const originalWorker = fs.readFileSync(workerPath);
+    let writeCount = 0;
+    const baseDescriptor = descriptors.find(({ id }) => id === "worker-directory-watch");
+    const descriptor = {
+      ...baseDescriptor,
+      id: "feature:directory-only-working-tree-watch:worker-directory-watch",
+      name: "feature:directory-only-working-tree-watch:worker-directory-watch",
+      sourceKind: "feature",
+      featureId: "directory-only-working-tree-watch",
+      apply: (extractedDir, context) => patchWorker(extractedDir, {
+        ...context,
+        writeFileSync(filePath, source, encoding) {
+          writeCount += 1;
+          if (writeCount === 2) {
+            fs.writeFileSync(filePath, "partially-written", encoding);
+            throw new Error("simulated second bundle write failure");
+          }
+          if (writeCount === 4) {
+            fs.writeFileSync(filePath, "rollback-corrupt", encoding);
+            return;
+          }
+          fs.writeFileSync(filePath, source, encoding);
+        },
+      }),
+    };
+    const report = createPatchReport();
+    report.enabledFeatures = ["directory-only-working-tree-watch"];
+
+    assert.throws(
+      () => captureWarnings(() => applyExtractedAppPatchDescriptors(
+        root,
+        [descriptor],
+        {},
+        report,
+        descriptor.phase,
+      )),
+      (error) =>
+        error?.code === "PATCH_INTEGRITY_FAILURE" &&
+        /rollback could not restore original bytes.*rollback byte verification failed/iu.test(
+          error.message,
+        ),
+    );
+    assert.equal(writeCount, 4);
+    assert.equal(fs.readFileSync(srcPath, "utf8"), "rollback-corrupt");
+    assert.deepEqual(fs.readFileSync(workerPath), originalWorker);
+    const [failure] = enabledFeatureFailuresFromReport(report);
+    assert.equal(failure?.name, descriptor.id);
+    assert.equal(failure?.status, "failed-integrity");
+    assert.match(failure?.reason ?? "", /rollback byte verification failed/iu);
+  });
+});
+
+test("current-DMG route drift leaves every bundle byte-identical", async () => {
+  await withTempTree((root) => {
+    const directLocalRoute =
+      "startWorkingTreeWatch:(t,n)=>t.isLocal?e.startFileWatch(n):t.startFileWatch(n)";
+    const currentSettings = normalizedSettings();
+    const completedWorker = patchWorkerSource(
+      currentWorkerSource(),
+      currentSettings,
+    ).source;
+    const completedSrc = patchWorkerSource(currentSrcSource(), currentSettings).source;
+    const completedHelper = completedWorker.slice(0, completedWorker.indexOf("var Yue=class{"));
+    const completedBranch =
+      "if(process.platform===`linux`&&e.recursive&&" +
+      "e.renameEventHandling===`changed-path-with-parent-directory`)" +
+      `return ${HELPER_NAME}(this,e,${JSON.stringify(currentSettings)});`;
+    const staleSettings = { ...currentSettings, maxWatches: 4096 };
+    const staleWorker = patchWorkerSource(currentWorkerSource(), staleSettings).source;
+    const staleSrc = patchWorkerSource(currentSrcSource(), staleSettings).source;
+    const dualOwnerRoute =
+      `startWorkingTreeWatch:(t,n)=>t.isLocal?/*${PARCEL_WATCH_MARKER}*/` +
+      "(rye(n,{ignoredPaths:[E.posix.join(n.path,`.git`)]}),e.startFileWatch(n)):" +
+      "t.startFileWatch(n)";
+    const unrelatedLookalike =
+      "function unrelated(n,e){return process.platform===`linux`?" +
+      "rye(n,{ignoredPaths:[E.posix.join(n.path,`.git`)]}):e.startFileWatch(n)}";
+    const cases = [
+      {
+        name: "missing route",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          ["worker.js", currentWorkerSource(directLocalRoute)],
+        ]),
+        reason: /0 Parcel route contracts/u,
+      },
+      {
+        name: "duplicate route",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          [
+            "worker.js",
+            `${currentWorkerSource()}${CURRENT_GIT_ROUTE_PREFIX}` +
+              `${CURRENT_PARCEL_ROUTE}${CURRENT_GIT_ROUTE_SUFFIX}`,
+          ],
+        ]),
+        reason: /2 Parcel route contracts/u,
+      },
+      {
+        name: "uncorrelated helper alias",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          ["worker.js", currentWorkerSource(CURRENT_PARCEL_ROUTE.replace("rye(n,", "Qve(n,"))],
+        ]),
+        reason: /0 route\/helper correlations/u,
+      },
+      {
+        name: "uncorrelated local host class",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          ["worker.js", currentWorkerSource().replace("let e=new Yue", "let e=new OtherHost")],
+        ]),
+        reason: /0 route\/helper correlations/u,
+      },
+      {
+        name: "local method moved outside the routed class",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          [
+            "worker.js",
+            currentWorkerSource().replace(
+              CURRENT_WORKER_LOCAL_FILE_WATCH,
+              `};var OtherHost=class extends BaseHost{${CURRENT_WORKER_LOCAL_FILE_WATCH}`,
+            ),
+          ],
+        ]),
+        reason: /0 route\/helper correlations/u,
+      },
+      {
+        name: "uncorrelated main connection alias",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          ["worker.js", currentWorkerSource().replace("new $ue(n,e)", "new $ue(other,e)")],
+        ]),
+        reason: /0 route\/helper correlations/u,
+      },
+      {
+        name: "marker beside a live Parcel route",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          ["worker.js", `/*${PARCEL_WATCH_MARKER}*/${currentWorkerSource()}`],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+      {
+        name: "marker in the src bundle",
+        sources: new Map([
+          ["src-current.js", `/*${PARCEL_WATCH_MARKER}*/${currentSrcSource()}`],
+          ["worker.js", currentWorkerSource()],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+      {
+        name: "dual Parcel and directory ownership",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          ["worker.js", currentWorkerSource(dualOwnerRoute)],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+      {
+        name: "unrelated raw route lookalike",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          ["worker.js", `${currentWorkerSource(directLocalRoute)}${unrelatedLookalike}`],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+      {
+        name: "route outside worker.js",
+        sources: new Map([
+          [
+            "src-current.js",
+            `${currentSrcSource()}${CURRENT_PARCEL_HELPER}${CURRENT_GIT_ROUTE_PREFIX}` +
+              `${CURRENT_PARCEL_ROUTE}${CURRENT_GIT_ROUTE_SUFFIX}`,
+          ],
+          ["worker.js", currentWorkerSource(directLocalRoute)],
+        ]),
+        reason: /1 Parcel route contracts \(0 in worker\.js\)/u,
+      },
+      {
+        name: "partially completed pair",
+        sources: new Map([
+          ["src-current.js", currentSrcSource()],
+          ["worker.js", completedWorker],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+      {
+        name: "damaged completed helper",
+        sources: new Map([
+          ["src-current.js", completedSrc],
+          [
+            "worker.js",
+            completedWorker.replace(
+              "const GIT_QUERY_TIMEOUT_MS = 5000;",
+              "const GIT_QUERY_TIMEOUT_MS = 5001;",
+            ),
+          ],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+      {
+        name: "altered completed platform guard",
+        sources: new Map([
+          ["src-current.js", completedSrc],
+          [
+            "worker.js",
+            completedWorker.replace(
+              "if(process.platform===`linux`&&e.recursive&&",
+              "if(process.platform===`darwin`&&e.recursive&&",
+            ),
+          ],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+      {
+        name: "duplicate completed helper",
+        sources: new Map([
+          ["src-current.js", completedSrc],
+          ["worker.js", `${completedHelper}${completedWorker}`],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+      {
+        name: "duplicate completed branch",
+        sources: new Map([
+          ["src-current.js", completedSrc],
+          ["worker.js", completedWorker.replace(completedBranch, completedBranch.repeat(2))],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+      {
+        name: "stale completed settings",
+        sources: new Map([
+          ["src-current.js", staleSrc],
+          ["worker.js", staleWorker],
+        ]),
+        reason: /current 26\.730\.61639 working-tree contract rejected/iu,
+      },
+    ];
+
+    for (const [index, entry] of cases.entries()) {
+      const buildDir = path.join(root, `case-${index}`, ".vite", "build");
+      fs.mkdirSync(buildDir, { recursive: true });
+      for (const [name, source] of entry.sources) {
+        fs.writeFileSync(path.join(buildDir, name), source);
+      }
+
+      const { value: result } = captureWarnings(() => patchWorker(path.dirname(path.dirname(buildDir))));
+      assert.equal(result.matched, 0, entry.name);
+      assert.equal(result.changed, 0, entry.name);
+      assert.match(result.reason, entry.reason, entry.name);
+      for (const [name, source] of entry.sources) {
+        assert.equal(fs.readFileSync(path.join(buildDir, name), "utf8"), source, entry.name);
+      }
+    }
+  });
+});
+
+test("current-DMG route drift is an enabled-feature acceptance failure", async () => {
+  await withTempTree((root) => {
+    const buildDir = path.join(root, ".vite", "build");
+    const sources = new Map([
+      ["src-Bn_6ASpg.js", currentSrcSource()],
+      [
+        "worker.js",
+        currentWorkerSource(
+          "startWorkingTreeWatch:(t,n)=>t.isLocal?e.startFileWatch(n):t.startFileWatch(n)",
+        ),
+      ],
+    ]);
+    fs.mkdirSync(buildDir, { recursive: true });
+    for (const [name, source] of sources) {
+      fs.writeFileSync(path.join(buildDir, name), source);
+    }
+
+    const baseDescriptor = descriptors.find(({ id }) => id === "worker-directory-watch");
+    const descriptor = {
+      ...baseDescriptor,
+      id: "feature:directory-only-working-tree-watch:worker-directory-watch",
+      name: "feature:directory-only-working-tree-watch:worker-directory-watch",
+      sourceKind: "feature",
+      featureId: "directory-only-working-tree-watch",
+    };
+    const report = createPatchReport();
+    report.enabledFeatures = ["directory-only-working-tree-watch"];
+    captureWarnings(() => applyExtractedAppPatchDescriptors(
+      root,
+      [descriptor],
+      {},
+      report,
+      descriptor.phase,
+    ));
+
+    const [failure] = enabledFeatureFailuresFromReport(report);
+    assert.equal(failure?.name, descriptor.id);
+    assert.equal(failure?.status, "skipped-optional");
+    assert.match(failure?.reason ?? "", /current|Parcel|route|contract/iu);
+    for (const [name, source] of sources) {
+      assert.equal(fs.readFileSync(path.join(buildDir, name), "utf8"), source);
+    }
   });
 });
 
@@ -222,7 +743,7 @@ test("feature rejects local host copies outside the current src and worker pair"
     }
     assert.equal(result.matched, 0);
     assert.equal(result.changed, 0);
-    assert.match(result.reason, /Found 3 current local startFileWatch bundles/);
+    assert.match(result.reason, /Found 3 local startFileWatch implementations/);
   });
 });
 

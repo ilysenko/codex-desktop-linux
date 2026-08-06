@@ -2,12 +2,81 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  findMatchingBrace,
+} = require("../../scripts/patches/lib/minified-js.js");
+const {
+  PatchIntegrityError,
+} = require("../../scripts/patches/integrity-error.js");
 
 const HELPER_NAME = "codexLinuxStartDirectoryOnlyWorkingTreeWatch";
+const PARCEL_WATCH_MARKER = "codexLinuxDirectoryOnlyParcelWorkingTreeWatch";
 const DEFAULT_MAX_WATCHES = 8192;
 const DEFAULT_IGNORED_DIRECTORY_NAMES = [];
-const LOCAL_FILE_WATCH_METHOD =
-  /async startFileWatch\((?<options>[A-Za-z_$][\w$]*)\)\{(?=let [^{}]{0,180}?await this\.platformPath\(\),[^{}]{0,180}?\(0,[A-Za-z_$][\w$]*\.watch\)\(this\.getFileSystemPath\(\k<options>\.path\),\{recursive:\k<options>\.recursive\})/gu;
+const IDENTIFIER_PATTERN = "[A-Za-z_$][\\w$]*";
+const LOCAL_FILE_WATCH_METHOD_PREFIX =
+  `async startFileWatch\\((?<options>${IDENTIFIER_PATTERN})\\)\\{`;
+const LOCAL_FILE_WATCH_CURRENT_BODY =
+  "(?=let [^{}]{0,180}?await this\\.platformPath\\(\\)," +
+  "[^{}]{0,180}?\\(0,[A-Za-z_$][\\w$]*\\.watch\\)\\(" +
+  "this\\.getFileSystemPath\\(\\k<options>\\.path\\)," +
+  "\\{recursive:\\k<options>\\.recursive\\})";
+const LOCAL_FILE_WATCH_METHOD = new RegExp(
+  `${LOCAL_FILE_WATCH_METHOD_PREFIX}${LOCAL_FILE_WATCH_CURRENT_BODY}`,
+  "gu",
+);
+const CURRENT_LOCAL_HOST_CLASS = new RegExp(
+  `var (?<localHostClass>${IDENTIFIER_PATTERN})=class\\{` +
+    "runsInsideWsl;hostConfig=\\{id:`local`,display_name:`Local`,kind:`local`\\};" +
+    "id=`local`;isLocal=!0;",
+  "gu",
+);
+const PARCEL_WORKING_TREE_WATCH =
+  /process\.platform===`linux`\?[A-Za-z_$][\w$]*\((?<options>[A-Za-z_$][\w$]*),\{ignoredPaths:\[[A-Za-z_$][\w$]*\.posix\.join\(\k<options>\.path,`\.git`\)\]\}\):(?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
+const CURRENT_PARCEL_HELPER = new RegExp(
+  "async function " +
+    `(?<helperName>${IDENTIFIER_PATTERN})\\(` +
+    `(?<helperOptions>${IDENTIFIER_PATTERN}),` +
+    `(?<helperSettings>${IDENTIFIER_PATTERN})\\)\\{return new ` +
+    `(?<parcelWatcher>${IDENTIFIER_PATTERN})\\(await import\\(` +
+    "`@parcel/watcher`" +
+    `\\),\\k<helperOptions>,\\k<helperSettings>\\)\\.start\\(\\)\\}`,
+  "gu",
+);
+const CURRENT_GIT_ROUTE_PREFIX_PATTERN =
+  "case`git`:\\{let " +
+  `(?<localHost>${IDENTIFIER_PATTERN})=new ` +
+  `(?<localHostClass>${IDENTIFIER_PATTERN});return\\{git:\\{createExecutionHost:` +
+  `(?<executionOptions>${IDENTIFIER_PATTERN})=>\\{if\\(` +
+  `(?<mainConnection>${IDENTIFIER_PATTERN})==null\\)` +
+  "throw Error\\(`Git hosts require a main RPC connection`\\);return new " +
+  `(?<remoteHostClass>${IDENTIFIER_PATTERN})\\(` +
+  "\\k<mainConnection>,\\k<executionOptions>\\)\\},";
+const CURRENT_PARCEL_ROUTE_PATTERN =
+  "startWorkingTreeWatch:\\(" +
+  `(?<routeHost>${IDENTIFIER_PATTERN}),` +
+  `(?<routeOptions>${IDENTIFIER_PATTERN})\\)=>` +
+  "\\k<routeHost>\\.isLocal\\?process\\.platform===`linux`\\?" +
+  `(?<routeHelper>${IDENTIFIER_PATTERN})\\(\\k<routeOptions>,\\{ignoredPaths:\\[` +
+  `(?<pathApi>${IDENTIFIER_PATTERN})\\.posix\\.join\\(` +
+  "\\k<routeOptions>\\.path,`\\.git`\\)\\]\\}\\):" +
+  "\\k<localHost>\\.startFileWatch\\(\\k<routeOptions>\\):" +
+  "\\k<routeHost>\\.startFileWatch\\(\\k<routeOptions>\\)";
+const CURRENT_DIRECTORY_ROUTE_PATTERN =
+  "startWorkingTreeWatch:\\(" +
+  `(?<routeHost>${IDENTIFIER_PATTERN}),` +
+  `(?<routeOptions>${IDENTIFIER_PATTERN})\\)=>` +
+  `\\k<routeHost>\\.isLocal\\?/\\*${PARCEL_WATCH_MARKER}\\*/` +
+  "\\k<localHost>\\.startFileWatch\\(\\k<routeOptions>\\):" +
+  "\\k<routeHost>\\.startFileWatch\\(\\k<routeOptions>\\)";
+const CURRENT_PARCEL_ROUTE_CONTRACT = new RegExp(
+  `(?<routePrefix>${CURRENT_GIT_ROUTE_PREFIX_PATTERN})${CURRENT_PARCEL_ROUTE_PATTERN}`,
+  "gu",
+);
+const CURRENT_DIRECTORY_ROUTE_CONTRACT = new RegExp(
+  `(?<routePrefix>${CURRENT_GIT_ROUTE_PREFIX_PATTERN})${CURRENT_DIRECTORY_ROUTE_PATTERN}`,
+  "gu",
+);
 
 function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configuration) {
   return (async () => {
@@ -2084,6 +2153,9 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
   })();
 }
 
+const DIRECTORY_WATCH_HELPER_SOURCE =
+  `${codexLinuxStartDirectoryOnlyWorkingTreeWatch.toString()};`;
+
 function normalizedSettings(context = {}) {
   const settings = context.feature?.settings ?? {};
   const hasSetting = (name) => Object.prototype.hasOwnProperty.call(settings, name);
@@ -2147,43 +2219,278 @@ function normalizedSettings(context = {}) {
   };
 }
 
-function patchWorkerSource(source, settings) {
-  const helperCount = source.split(`function ${HELPER_NAME}(`).length - 1;
-  const branchMarker = `return ${HELPER_NAME}(this,`;
-  const branchCount = source.split(branchMarker).length - 1;
-  if (helperCount === 1 && branchCount === 1) {
-    return { source, matched: 1, changed: 0, reason: null };
-  }
-  if (helperCount !== 0 || branchCount !== 0) {
-    return {
-      source,
-      matched: 0,
-      changed: 0,
-      reason: `Found ${helperCount} helper definitions and ${branchCount} working-tree branches`,
-    };
-  }
+function countSubstring(source, needle) {
+  return source.split(needle).length - 1;
+}
 
-  LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
-  const matches = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)];
-  if (matches.length !== 1) {
-    return {
-      source,
-      matched: 0,
-      changed: 0,
-      reason: `Found ${matches.length} local startFileWatch implementations`,
-    };
-  }
+function patternMatches(source, pattern) {
+  pattern.lastIndex = 0;
+  return [...source.matchAll(pattern)];
+}
 
-  const match = matches[0];
-  const optionsName = match.groups.options;
-  const branch =
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function directoryOnlyLocalBranch(optionsName, settings) {
+  return (
     `if(process.platform===\`linux\`&&${optionsName}.recursive&&` +
     `${optionsName}.renameEventHandling===\`changed-path-with-parent-directory\`)` +
-    `return ${HELPER_NAME}(this,${optionsName},${JSON.stringify(settings)});`;
-  const methodStart = match.index + match[0].length;
-  const withBranch = source.slice(0, methodStart) + branch + source.slice(methodStart);
-  const helper = `${codexLinuxStartDirectoryOnlyWorkingTreeWatch.toString()};`;
-  return { source: helper + withBranch, matched: 1, changed: 1, reason: null };
+    `return ${HELPER_NAME}(this,${optionsName},${JSON.stringify(settings)});`
+  );
+}
+
+function completedLocalFileWatchMethod(settings) {
+  const branch =
+    "if\\(process\\.platform===`linux`&&\\k<options>\\.recursive&&" +
+    "\\k<options>\\.renameEventHandling===`changed-path-with-parent-directory`\\)" +
+    `return ${HELPER_NAME}\\(this,\\k<options>,` +
+    `${escapeRegExp(JSON.stringify(settings))}\\);`;
+  return new RegExp(
+    `${LOCAL_FILE_WATCH_METHOD_PREFIX}${branch}${LOCAL_FILE_WATCH_CURRENT_BODY}`,
+    "gu",
+  );
+}
+
+function currentLocalHostClassForMethod(source, classMatches, methodMatches) {
+  if (classMatches.length !== 1 || methodMatches.length !== 1) return null;
+  const [classMatch] = classMatches;
+  const [methodMatch] = methodMatches;
+  const classTokenStart = source.indexOf("=class{", classMatch.index);
+  if (classTokenStart < 0) return null;
+  const classOpen = classTokenStart + "=class".length;
+  const classClose = findMatchingBrace(source, classOpen);
+  return classClose >= 0 &&
+    methodMatch.index > classOpen &&
+    methodMatch.index < classClose
+    ? classMatch.groups?.localHostClass ?? null
+    : null;
+}
+
+function classifyCurrentBundle(bundlePath, source, settings = normalizedSettings()) {
+  const pristineLocalMatches = patternMatches(source, LOCAL_FILE_WATCH_METHOD);
+  const completedLocalMatches = patternMatches(source, completedLocalFileWatchMethod(settings));
+  const currentLocalHostMatches = patternMatches(source, CURRENT_LOCAL_HOST_CLASS);
+  const localHostClass = currentLocalHostClassForMethod(
+    source,
+    currentLocalHostMatches,
+    [...pristineLocalMatches, ...completedLocalMatches],
+  );
+  const helperDefinitionCount = countSubstring(source, `function ${HELPER_NAME}(`);
+  const helperExactCount = countSubstring(source, DIRECTORY_WATCH_HELPER_SOURCE);
+  const branchCallCount = countSubstring(source, `return ${HELPER_NAME}(this,`);
+  const markerCount = countSubstring(source, PARCEL_WATCH_MARKER);
+  const rawRouteLookalikeCount = patternMatches(source, PARCEL_WORKING_TREE_WATCH).length;
+  const pristineRouteMatches = patternMatches(source, CURRENT_PARCEL_ROUTE_CONTRACT);
+  const completedRouteMatches = patternMatches(source, CURRENT_DIRECTORY_ROUTE_CONTRACT);
+  const parcelHelperMatches = patternMatches(source, CURRENT_PARCEL_HELPER);
+  const correlatedPristineRouteCount = pristineRouteMatches.filter((route) =>
+    parcelHelperMatches.some((helper) =>
+      helper.groups?.helperName === route.groups?.routeHelper &&
+      route.groups?.localHostClass === localHostClass
+    )
+  ).length;
+  const correlatedCompletedRouteCount = completedRouteMatches.filter(
+    (route) => route.groups?.localHostClass === localHostClass,
+  ).length;
+  const parcelImportCount = countSubstring(source, "@parcel/watcher");
+  const relevant =
+    pristineLocalMatches.length > 0 ||
+    completedLocalMatches.length > 0 ||
+    currentLocalHostMatches.length > 0 ||
+    helperDefinitionCount > 0 ||
+    helperExactCount > 0 ||
+    branchCallCount > 0 ||
+    markerCount > 0 ||
+    rawRouteLookalikeCount > 0 ||
+    pristineRouteMatches.length > 0 ||
+    completedRouteMatches.length > 0 ||
+    parcelHelperMatches.length > 0 ||
+    parcelImportCount > 0;
+  return {
+    branchCallCount,
+    bundlePath,
+    completedLocalCount: completedLocalMatches.length,
+    completedRouteCount: completedRouteMatches.length,
+    correlatedCompletedRouteCount,
+    correlatedPristineRouteCount,
+    currentLocalHostCount: currentLocalHostMatches.length,
+    helperDefinitionCount,
+    helperExactCount,
+    localHostClass,
+    markerCount,
+    parcelHelperCount: parcelHelperMatches.length,
+    parcelImportCount,
+    pristineLocalCount: pristineLocalMatches.length,
+    pristineRouteCount: pristineRouteMatches.length,
+    rawRouteLookalikeCount,
+    relevant,
+    source,
+    startsWithExactHelper: source.startsWith(DIRECTORY_WATCH_HELPER_SOURCE),
+  };
+}
+
+function hasPristineLocalContract(record) {
+  return record.pristineLocalCount === 1 &&
+    record.completedLocalCount === 0 &&
+    record.currentLocalHostCount === 1 &&
+    record.localHostClass != null &&
+    record.helperDefinitionCount === 0 &&
+    record.helperExactCount === 0 &&
+    record.branchCallCount === 0;
+}
+
+function hasCompletedLocalContract(record) {
+  return record.pristineLocalCount === 0 &&
+    record.completedLocalCount === 1 &&
+    record.currentLocalHostCount === 1 &&
+    record.localHostClass != null &&
+    record.helperDefinitionCount === 1 &&
+    record.helperExactCount === 1 &&
+    record.branchCallCount === 1 &&
+    record.startsWithExactHelper;
+}
+
+function hasNoParcelRouteContract(record) {
+  return record.markerCount === 0 &&
+    record.rawRouteLookalikeCount === 0 &&
+    record.pristineRouteCount === 0 &&
+    record.completedRouteCount === 0 &&
+    record.parcelHelperCount === 0 &&
+    record.parcelImportCount === 0;
+}
+
+function hasPristineWorkerRouteContract(record) {
+  return record.pristineRouteCount === 1 &&
+    record.correlatedPristineRouteCount === 1 &&
+    record.completedRouteCount === 0 &&
+    record.markerCount === 0 &&
+    record.rawRouteLookalikeCount === 1 &&
+    record.parcelHelperCount === 1 &&
+    record.parcelImportCount === 1;
+}
+
+function hasCompletedWorkerRouteContract(record) {
+  return record.pristineRouteCount === 0 &&
+    record.completedRouteCount === 1 &&
+    record.correlatedCompletedRouteCount === 1 &&
+    record.markerCount === 1 &&
+    record.rawRouteLookalikeCount === 0 &&
+    record.parcelHelperCount === 1 &&
+    record.parcelImportCount === 1;
+}
+
+function currentContractReason(records, bundleCount) {
+  const relevant = records.filter(({ relevant }) => relevant);
+  const targetNames = relevant.map(({ bundlePath }) => path.basename(bundlePath));
+  const localCount = relevant.reduce(
+    (count, record) => count + record.pristineLocalCount,
+    0,
+  );
+  const helpers = relevant.reduce(
+    (count, record) => count + record.helperDefinitionCount,
+    0,
+  );
+  const branches = relevant.reduce(
+    (count, record) => count + record.branchCallCount,
+    0,
+  );
+  const parcelContractCount = relevant.reduce(
+    (count, record) => count + record.pristineRouteCount + record.completedRouteCount,
+    0,
+  );
+  const workerParcelContractCount = relevant
+    .filter(({ bundlePath }) => path.basename(bundlePath) === "worker.js")
+    .reduce(
+      (count, record) => count + record.pristineRouteCount + record.completedRouteCount,
+      0,
+    );
+  const correlatedRouteCount = relevant.reduce(
+    (count, record) => count + record.correlatedPristineRouteCount,
+    0,
+  );
+  const lookalikeCount = relevant.reduce(
+    (count, record) => count + record.rawRouteLookalikeCount,
+    0,
+  );
+  const markerCount = relevant.reduce((count, record) => count + record.markerCount, 0);
+  return (
+    "Current 26.730.61639 working-tree contract rejected: " +
+    `Found ${localCount} local startFileWatch implementations, ${helpers} helpers, ` +
+    `${branches} branches, and ${parcelContractCount} Parcel route contracts ` +
+    `(${workerParcelContractCount} in worker.js) across ${relevant.length} relevant bundles ` +
+    `(${targetNames.join(", ") || "none"}) of ${bundleCount}; ` +
+    `${correlatedRouteCount} route/helper correlations, ${lookalikeCount} raw route ` +
+    `lookalikes, and ${markerCount} completed route markers`
+  );
+}
+
+function directoryWorkingTreeRoute(groups) {
+  return (
+    `startWorkingTreeWatch:(${groups.routeHost},${groups.routeOptions})=>` +
+    `${groups.routeHost}.isLocal?/*${PARCEL_WATCH_MARKER}*/` +
+    `${groups.localHost}.startFileWatch(${groups.routeOptions}):` +
+    `${groups.routeHost}.startFileWatch(${groups.routeOptions})`
+  );
+}
+
+function replaceCurrentParcelRoute(source) {
+  CURRENT_PARCEL_ROUTE_CONTRACT.lastIndex = 0;
+  return source.replace(CURRENT_PARCEL_ROUTE_CONTRACT, (...args) => {
+    const groups = args[args.length - 1];
+    return `${groups.routePrefix}${directoryWorkingTreeRoute(groups)}`;
+  });
+}
+
+function preparePristineBundle(record, settings) {
+  const [localMatch] = patternMatches(record.source, LOCAL_FILE_WATCH_METHOD);
+  const optionsName = localMatch.groups.options;
+  const methodStart = localMatch.index + localMatch[0].length;
+  const withBranch =
+    record.source.slice(0, methodStart) +
+    directoryOnlyLocalBranch(optionsName, settings) +
+    record.source.slice(methodStart);
+  const withRoute = path.basename(record.bundlePath) === "worker.js"
+    ? replaceCurrentParcelRoute(withBranch)
+    : withBranch;
+  return DIRECTORY_WATCH_HELPER_SOURCE + withRoute;
+}
+
+function patchWorkerSource(source, settings) {
+  const currentSettings = settings ?? normalizedSettings();
+  const hasWorkerSignals =
+    patternMatches(source, CURRENT_PARCEL_HELPER).length > 0 ||
+    source.includes(PARCEL_WATCH_MARKER) ||
+    patternMatches(source, PARCEL_WORKING_TREE_WATCH).length > 0;
+  const bundlePath = hasWorkerSignals ? "worker.js" : "src-current.js";
+  const record = classifyCurrentBundle(bundlePath, source, currentSettings);
+  const routePristine = bundlePath === "worker.js"
+    ? hasPristineWorkerRouteContract(record)
+    : hasNoParcelRouteContract(record);
+  const routeCompleted = bundlePath === "worker.js"
+    ? hasCompletedWorkerRouteContract(record)
+    : hasNoParcelRouteContract(record);
+
+  if (hasCompletedLocalContract(record) && routeCompleted) {
+    return { source, matched: 1, changed: 0, reason: null };
+  }
+  if (hasPristineLocalContract(record) && routePristine) {
+    const patchedSource = preparePristineBundle(record, currentSettings);
+    const completed = classifyCurrentBundle(bundlePath, patchedSource, currentSettings);
+    const completedRoute = bundlePath === "worker.js"
+      ? hasCompletedWorkerRouteContract(completed)
+      : hasNoParcelRouteContract(completed);
+    if (hasCompletedLocalContract(completed) && completedRoute) {
+      return { source: patchedSource, matched: 1, changed: 1, reason: null };
+    }
+  }
+
+  return {
+    source,
+    matched: 0,
+    changed: 0,
+    reason: currentContractReason([record], 1),
+  };
 }
 
 function findLocalFileWatchBundles(extractedDir, settings) {
@@ -2196,43 +2503,125 @@ function findLocalFileWatchBundles(extractedDir, settings) {
     .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
     .map((entry) => path.join(buildDir, entry.name))
     .sort();
-  const targets = [];
-
-  for (const bundlePath of bundlePaths) {
-    const source = fs.readFileSync(bundlePath, "utf8");
-    const helperCount = source.split(`function ${HELPER_NAME}(`).length - 1;
-    const branchCount = source.split(`return ${HELPER_NAME}(this,`).length - 1;
-    if (helperCount > 0 || branchCount > 0) {
-      targets.push({ bundlePath, result: patchWorkerSource(source, settings) });
-      continue;
-    }
-    LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
-    const matches = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)].length;
-    if (matches > 0) {
-      targets.push({ bundlePath, result: patchWorkerSource(source, settings) });
-    }
+  const records = bundlePaths.map((bundlePath) => {
+    const originalBytes = fs.readFileSync(bundlePath);
+    const record = classifyCurrentBundle(bundlePath, originalBytes.toString("utf8"), settings);
+    return record.relevant ? { ...record, originalBytes } : record;
+  });
+  const relevant = records.filter(({ relevant }) => relevant);
+  const workerRecords = relevant.filter(
+    ({ bundlePath }) => path.basename(bundlePath) === "worker.js",
+  );
+  const srcRecords = relevant.filter(({ bundlePath }) =>
+    /^src-[A-Za-z0-9_-]+\.js$/u.test(path.basename(bundlePath)),
+  );
+  const exactPair = relevant.length === 2 &&
+    workerRecords.length === 1 &&
+    srcRecords.length === 1;
+  if (!exactPair) {
+    return { targets: [], reason: currentContractReason(records, bundlePaths.length) };
   }
 
-  const targetNames = targets.map(({ bundlePath }) => path.basename(bundlePath));
-  const hasWorker = targetNames.filter((name) => name === "worker.js").length === 1;
-  const srcCount = targetNames.filter((name) =>
-    /^src-[A-Za-z0-9_-]+\.js$/u.test(name),
-  ).length;
-  if (
-    targets.length !== 2 ||
-    !hasWorker ||
-    srcCount !== 1 ||
-    targets.some(({ result }) => result.matched !== 1)
-  ) {
-    return {
-      targets: [],
-      reason:
-        `Found ${targets.length} current local startFileWatch bundles ` +
-        `(${targetNames.join(", ") || "none"}) across ${bundlePaths.length} build bundles`,
-    };
+  const worker = workerRecords[0];
+  const src = srcRecords[0];
+  const pristine =
+    hasPristineLocalContract(worker) &&
+    hasPristineWorkerRouteContract(worker) &&
+    hasPristineLocalContract(src) &&
+    hasNoParcelRouteContract(src);
+  const completed =
+    hasCompletedLocalContract(worker) &&
+    hasCompletedWorkerRouteContract(worker) &&
+    hasCompletedLocalContract(src) &&
+    hasNoParcelRouteContract(src);
+  if (!pristine && !completed) {
+    return { targets: [], reason: currentContractReason(records, bundlePaths.length) };
   }
 
+  const targets = [src, worker].map((record) => ({
+    bundlePath: record.bundlePath,
+    originalBytes: record.originalBytes,
+    result: completed
+      ? { source: record.source, matched: 1, changed: 0, reason: null }
+      : {
+        source: preparePristineBundle(record, settings),
+        matched: 1,
+        changed: 1,
+        reason: null,
+      },
+  }));
+  const preparedAreComplete = targets.every(({ bundlePath, result }) => {
+    const prepared = classifyCurrentBundle(bundlePath, result.source, settings);
+    return hasCompletedLocalContract(prepared) && (
+      path.basename(bundlePath) === "worker.js"
+        ? hasCompletedWorkerRouteContract(prepared)
+        : hasNoParcelRouteContract(prepared)
+    );
+  });
+  if (!preparedAreComplete) {
+    return { targets: [], reason: currentContractReason(records, bundlePaths.length) };
+  }
   return { targets, reason: null };
+}
+
+function writePreparedBundleTargets(
+  targets,
+  {
+    writeFileSync = fs.writeFileSync,
+    readFileSync = fs.readFileSync,
+  } = {},
+) {
+  const attempted = [];
+  try {
+    for (const target of targets.filter(({ result }) => result.changed === 1)) {
+      attempted.push(target);
+      writeFileSync(target.bundlePath, target.result.source, "utf8");
+    }
+  } catch (error) {
+    const rollbackWriteFailures = [];
+    for (const target of [...attempted].reverse()) {
+      try {
+        writeFileSync(target.bundlePath, target.originalBytes);
+      } catch (rollbackError) {
+        rollbackWriteFailures.push({ bundlePath: target.bundlePath, error: rollbackError });
+      }
+    }
+
+    const rollbackVerificationFailures = [];
+    for (const target of attempted) {
+      try {
+        const restored = readFileSync(target.bundlePath);
+        const restoredBytes = Buffer.isBuffer(restored) ? restored : Buffer.from(restored);
+        if (!restoredBytes.equals(target.originalBytes)) {
+          rollbackVerificationFailures.push(
+            new Error(`rollback byte verification failed for ${target.bundlePath}`),
+          );
+        }
+      } catch (rollbackError) {
+        rollbackVerificationFailures.push(
+          new Error(
+            `rollback byte verification failed for ${target.bundlePath}: ${rollbackError.message}`,
+            { cause: rollbackError },
+          ),
+        );
+      }
+    }
+
+    if (rollbackVerificationFailures.length > 0) {
+      const rollbackWriteFailure = rollbackWriteFailures[0];
+      const writeFailureContext = rollbackWriteFailure == null
+        ? ""
+        : `; rollback write also failed for ${rollbackWriteFailure.bundlePath}: ` +
+          rollbackWriteFailure.error.message;
+      throw new PatchIntegrityError(
+        "Directory-only working-tree bundle rollback could not restore original bytes: " +
+          `${rollbackVerificationFailures[0].message}${writeFailureContext}`,
+        { cause: error },
+      );
+    }
+
+    throw error;
+  }
 }
 
 function patchWorker(extractedDir, context = {}) {
@@ -2243,11 +2632,7 @@ function patchWorker(extractedDir, context = {}) {
     return { matched: 0, changed: 0, reason };
   }
 
-  for (const { bundlePath, result } of discovery.targets) {
-    if (result.changed === 1) {
-      fs.writeFileSync(bundlePath, result.source, "utf8");
-    }
-  }
+  writePreparedBundleTargets(discovery.targets, context);
   const changed = discovery.targets.reduce((count, { result }) => count + result.changed, 0);
   return {
     matched: discovery.targets.length,
@@ -2278,6 +2663,8 @@ module.exports = {
   DEFAULT_MAX_WATCHES,
   HELPER_NAME,
   LOCAL_FILE_WATCH_METHOD,
+  PARCEL_WATCH_MARKER,
+  PARCEL_WORKING_TREE_WATCH,
   codexLinuxStartDirectoryOnlyWorkingTreeWatch,
   descriptors,
   findLocalFileWatchBundles,

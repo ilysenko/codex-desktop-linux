@@ -64,6 +64,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - The opt-in shallow repository watcher now patches both current app bundles
   and routes the Linux Parcel working-tree path through the same shallow host,
   restoring bounded watches on the latest upstream DMG.
+- The opt-in directory-only working-tree watcher now routes the current Linux
+  Parcel working-tree path through its existing bounded directory watcher,
+  restoring the feature on the latest upstream DMG, with byte-verified rollback
+  for its paired bundle writes.
 - Computer Use now supports Plasma 5 and 6 KWin scripting, validates every
   ydotool 1.0.3+ command shape it emits, and rejects semantically incompatible
   CLIs even when a daemon socket exists. Hyprland dispatch validation handles

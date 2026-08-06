@@ -22,6 +22,25 @@ produces an event.
 There are no default name-based exclusions. A tracked directory named `build`
 or `node_modules` remains watched even if its name resembles generated output.
 
+## Current upstream working-tree route
+
+OpenAI Desktop `26.730.61639` has a Linux-specific Parcel working-tree path
+that calls `@parcel/watcher` directly instead of the local `startFileWatch()`
+method this feature intercepts. When the feature is selected, the current-DMG
+patch reroutes that one local working-tree subscription through
+`startFileWatch()`, where the existing directory-only watcher takes ownership.
+Remote watches and non-working-tree file watches retain their upstream routes.
+
+The matcher correlates the Parcel helper, Git execution-host factory, local
+host, route host, route options, and path API by semantic role rather than by
+minified identifier spelling. Missing, duplicate, misplaced, partial, or
+uncorrelated contracts report enabled-feature drift and leave the current
+bundles unchanged.
+
+After both bundle changes are prepared and validated, the patch writes them as
+one transaction. A write error restores and byte-verifies every attempted
+bundle; an unverified rollback is reported as a patch integrity failure.
+
 By default, the watcher uses at most 8192 inotify watches per app process across
 all active working trees, or one eighth of the kernel's
 `fs.inotify.max_user_watches` value when that is lower. The configurable ceiling
