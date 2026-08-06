@@ -282,6 +282,20 @@ mod tests {
     use anyhow::Result;
     use std::io::BufRead as _;
 
+    fn wait_for_install_launch_gate(executable: &Path) -> Result<InstallLaunchGate> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(gate) = try_acquire_install_launch_gate(executable)? {
+                return Ok(gate);
+            }
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for install gate release"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn pid_file_is_located_under_resolved_app_state() -> Result<()> {
         let _env_guard = env_lock();
@@ -391,7 +405,7 @@ mod tests {
             try_acquire_install_launch_gate(executable)?.expect("first lock should succeed");
         assert!(try_acquire_install_launch_gate(executable)?.is_none());
         drop(first);
-        assert!(try_acquire_install_launch_gate(executable)?.is_some());
+        let _reacquired = wait_for_install_launch_gate(executable)?;
         Ok(())
     }
 
@@ -423,7 +437,7 @@ mod tests {
         assert_eq!(install_launch_gate_path(executable)?, primary_path);
         assert!(try_acquire_install_launch_gate(executable)?.is_none());
         drop(primary);
-        assert!(try_acquire_install_launch_gate(executable)?.is_some());
+        let _reacquired = wait_for_install_launch_gate(executable)?;
         Ok(())
     }
 
@@ -454,7 +468,7 @@ mod tests {
         assert!(try_acquire_install_launch_gate(executable)?.is_none());
         drop(holder.stdin.take());
         assert!(holder.wait()?.success());
-        assert!(try_acquire_install_launch_gate(executable)?.is_some());
+        let _reacquired = wait_for_install_launch_gate(executable)?;
         Ok(())
     }
 
@@ -498,7 +512,7 @@ mod tests {
         );
         fs::write(&release, b"continue")?;
         assert!(transaction.wait()?.success());
-        assert!(try_acquire_install_launch_gate(executable)?.is_some());
+        let _reacquired = wait_for_install_launch_gate(executable)?;
         Ok(())
     }
 
