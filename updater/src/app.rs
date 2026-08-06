@@ -31,7 +31,6 @@ const PROMPT_INSTALL_CLI_CANCELLED_EXIT_CODE: i32 = 10;
 const PROMPT_INSTALL_CLI_NO_BACKEND_EXIT_CODE: i32 = 11;
 // Nonzero so `Restart=on-failure` relaunches the daemon on the new binary.
 const BINARY_REPLACED_RESTART_EXIT_CODE: i32 = 12;
-const LAUNCHER_INSTALL_GATE_WAIT_SECONDS: u64 = 10;
 const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
     "budgie-polkit",
     "cinnamon-polkit",
@@ -1430,7 +1429,12 @@ async fn reconcile_pending_install(
 
             if state.auto_install_on_app_exit && liveness::is_app_running(config)? {
                 if !graphical_polkit_auth_agent_is_likely_available() {
-                    defer_install_for_manual_auth(state, paths, &package_path)?;
+                    defer_install_for_manual_auth(
+                        state,
+                        paths,
+                        &package_path,
+                        &config.app_executable_path,
+                    )?;
                     maybe_notify_manual_install_required(state, paths, config.notifications)?;
                     return Ok(());
                 }
@@ -1473,7 +1477,12 @@ async fn reconcile_pending_install(
 
             if liveness::is_app_running(config)? {
                 if !graphical_polkit_auth_agent_is_likely_available() {
-                    defer_install_for_manual_auth(state, paths, &package_path)?;
+                    defer_install_for_manual_auth(
+                        state,
+                        paths,
+                        &package_path,
+                        &config.app_executable_path,
+                    )?;
                     maybe_notify_manual_install_required(state, paths, config.notifications)?;
                     return Ok(());
                 }
@@ -1494,7 +1503,12 @@ async fn reconcile_pending_install(
             }
 
             if !graphical_polkit_auth_agent_is_likely_available() {
-                defer_install_for_manual_auth(state, paths, &package_path)?;
+                defer_install_for_manual_auth(
+                    state,
+                    paths,
+                    &package_path,
+                    &config.app_executable_path,
+                )?;
                 maybe_notify_manual_install_required(state, paths, config.notifications)?;
                 return Ok(());
             }
@@ -1640,9 +1654,14 @@ async fn run_install_ready_locked(
 
     if liveness::is_app_running(config)? {
         if !graphical_polkit_auth_agent_is_likely_available() {
-            defer_install_for_manual_auth(state, paths, &package_path)?;
+            defer_install_for_manual_auth(
+                state,
+                paths,
+                &package_path,
+                &config.app_executable_path,
+            )?;
             maybe_send_manual_install_required_notification(config.notifications);
-            print_manual_install_required(&package_path);
+            print_manual_install_required(&package_path, &config.app_executable_path)?;
             return Ok(());
         }
         clear_install_auth_required_event(state, paths)?;
@@ -1659,9 +1678,9 @@ async fn run_install_ready_locked(
     clear_install_auth_required_event(state, paths)?;
     state.waiting_for_app_exit_auto_install = false;
     if !graphical_polkit_auth_agent_is_likely_available() {
-        defer_install_for_manual_auth(state, paths, &package_path)?;
+        defer_install_for_manual_auth(state, paths, &package_path, &config.app_executable_path)?;
         maybe_send_manual_install_required_notification(config.notifications);
-        print_manual_install_required(&package_path);
+        print_manual_install_required(&package_path, &config.app_executable_path)?;
         return Ok(());
     }
     trigger_install(state, paths, config, &package_path, config.notifications).await
@@ -2070,21 +2089,9 @@ async fn trigger_install(
     notifications: bool,
 ) -> Result<()> {
     let waiting_auto_install = state.waiting_for_app_exit_auto_install;
-    let launcher_lock_deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs(LAUNCHER_INSTALL_GATE_WAIT_SECONDS);
-    let launcher_lock = loop {
-        if let Some(lock) = liveness::try_acquire_launcher_lock()? {
-            break Some(lock);
-        }
-        #[cfg(test)]
-        signal_process_test_marker("CODEX_UPDATE_MANAGER_TEST_LAUNCHER_LOCK_BUSY")?;
-        if std::time::Instant::now() >= launcher_lock_deadline {
-            break None;
-        }
-        time::sleep(Duration::from_millis(50)).await;
-    };
-
-    let Some(_launcher_lock) = launcher_lock else {
+    let Some(install_gate) =
+        liveness::acquire_install_launch_gate(&config.app_executable_path).await?
+    else {
         state.error_message = None;
         set_waiting_for_app_exit(state, paths, waiting_auto_install)?;
         maybe_send_notification(
@@ -2096,8 +2103,9 @@ async fn trigger_install(
     };
 
     // The app may have started after the caller's earlier liveness check but
-    // before this flow acquired launcher.lock. Recheck while holding the lock;
-    // the launcher cannot publish another Electron process until we release it.
+    // before this flow acquired the install-wide gate. Recheck while holding
+    // it; no launcher namespace can publish another Electron process until the
+    // package transaction releases its inherited lease.
     if liveness::is_app_running(config)? {
         state.error_message = None;
         set_waiting_for_app_exit(state, paths, waiting_auto_install)?;
@@ -2121,7 +2129,10 @@ async fn trigger_install(
     );
 
     let current_exe = std::env::current_exe().context("Failed to resolve updater binary path")?;
-    let output = install::pkexec_command(&current_exe, package_path, &config.app_executable_path)
+    let mut command =
+        install::pkexec_command(&current_exe, package_path, &config.app_executable_path);
+    install_gate.inherit_through_stdin(&mut command)?;
+    let output = command
         .output()
         .context("Failed to launch pkexec for update installation")?;
     let status = output.status;
@@ -2198,23 +2209,29 @@ fn install_auth_retry_is_blocked(state: &PersistedState) -> bool {
         .is_some_and(|event_key| state.notified_events.contains(event_key))
 }
 
-fn manual_install_required_message(package_path: &Path) -> String {
-    format!(
+fn manual_install_required_message(
+    package_path: &Path,
+    app_executable_path: &Path,
+) -> Result<String> {
+    Ok(format!(
         "No graphical polkit authentication agent is available for pkexec. Run this from a terminal after closing ChatGPT Desktop: {}",
-        manual_install_command(package_path)
-    )
+        manual_install_command(package_path, app_executable_path)?
+    ))
 }
 
-fn manual_install_command(package_path: &Path) -> String {
+fn manual_install_command(package_path: &Path, app_executable_path: &Path) -> Result<String> {
     let subcommand = match install::PackageKind::from_path(package_path) {
         install::PackageKind::Deb => "install-deb",
         install::PackageKind::Rpm => "install-rpm",
         install::PackageKind::Pacman => "install-pacman",
     };
-    format!(
-        "sudo /usr/bin/codex-update-manager {subcommand} --path {}",
-        shell_quote_path(package_path)
-    )
+    let install_gate = liveness::prepare_install_launch_gate(app_executable_path)?;
+    Ok(format!(
+        "flock --exclusive -- {} sudo /usr/bin/codex-update-manager {subcommand} --path {} --app-executable-path {}",
+        shell_quote_path(&install_gate),
+        shell_quote_path(package_path),
+        shell_quote_path(app_executable_path)
+    ))
 }
 
 fn shell_quote_path(path: &Path) -> String {
@@ -2222,20 +2239,28 @@ fn shell_quote_path(path: &Path) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn print_manual_install_required(package_path: &Path) {
+fn print_manual_install_required(package_path: &Path, app_executable_path: &Path) -> Result<()> {
     println!("Manual install required: no graphical polkit authentication agent is available.");
     println!("Run this from a terminal after closing ChatGPT Desktop:");
-    println!("{}", manual_install_command(package_path));
+    println!(
+        "{}",
+        manual_install_command(package_path, app_executable_path)?
+    );
+    Ok(())
 }
 
 fn defer_install_for_manual_auth(
     state: &mut PersistedState,
     paths: &RuntimePaths,
     package_path: &Path,
+    app_executable_path: &Path,
 ) -> Result<()> {
     state.status = UpdateStatus::ReadyToInstall;
     state.waiting_for_app_exit_auto_install = false;
-    state.error_message = Some(manual_install_required_message(package_path));
+    state.error_message = Some(manual_install_required_message(
+        package_path,
+        app_executable_path,
+    )?);
     persist_state(paths, state)
 }
 
@@ -3717,6 +3742,26 @@ mod tests {
             }
         }
 
+        fn kill_parent_only(&mut self) -> Result<()> {
+            let child = self
+                .child
+                .as_mut()
+                .context("process test child should be present")?;
+            child
+                .kill()
+                .with_context(|| format!("Failed to kill updater test child {}", self.role))?;
+            let status = child
+                .wait()
+                .with_context(|| format!("Failed to reap updater test child {}", self.role))?;
+            self.child.take();
+            anyhow::ensure!(
+                !status.success(),
+                "Updater test child {} unexpectedly succeeded after SIGKILL",
+                self.role
+            );
+            Ok(())
+        }
+
         fn terminate(&mut self) {
             for path in &self.release_paths {
                 let _ = std::fs::write(path, b"cleanup");
@@ -3836,6 +3881,9 @@ mod tests {
              if [ -n \"${CODEX_UPDATE_MANAGER_TEST_INSTALL_APP_RUNNING:-}\" ]; then\n\
                printf 'CODEX_UPDATE_APP_RUNNING: simulated app reopen after authorization\n' >&2\n\
                exit 1\n\
+             fi\n\
+             if [ -n \"${CODEX_UPDATE_MANAGER_TEST_INSTALL_FINISHED:-}\" ]; then\n\
+               /bin/touch \"$CODEX_UPDATE_MANAGER_TEST_INSTALL_FINISHED\"\n\
              fi\n",
         )?;
         let mut permissions = std::fs::metadata(&fake_pkexec)?.permissions();
@@ -3936,6 +3984,66 @@ mod tests {
             std::io::Error::last_os_error().raw_os_error(),
             Some(libc::ESRCH)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn package_transaction_keeps_gate_after_updater_service_process_dies() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+        std::env::set_var("HOME", temp.path().join("home"));
+        let (paths, fake_pkexec, install_log) = prepare_process_install_fixture(temp.path())?;
+        let config = RuntimeConfig::load_or_default(&paths)?;
+        let install_started = temp.path().join("install.started");
+        let install_release = temp.path().join("install.release");
+        let install_finished = temp.path().join("install.finished");
+
+        let mut daemon_reconcile = spawn_process_test_child(
+            temp.path(),
+            "daemon-reconcile",
+            &[
+                ("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec),
+                ("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_INSTALL_STARTED",
+                    &install_started,
+                ),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_INSTALL_RELEASE",
+                    &install_release,
+                ),
+                (
+                    "CODEX_UPDATE_MANAGER_TEST_INSTALL_FINISHED",
+                    &install_finished,
+                ),
+            ],
+            &[&install_release],
+        )?;
+        wait_for_process_test_path(&install_started, "privileged package transaction")?;
+
+        // Debian's old prerm stops codex-update-manager.service during an
+        // upgrade. Kill only that service process: the simulated privileged
+        // package transaction must keep the inherited gate lease alive.
+        daemon_reconcile.kill_parent_only()?;
+        assert!(
+            liveness::try_acquire_install_launch_gate(&config.app_executable_path)?.is_none(),
+            "a launcher must remain blocked after the updater service exits"
+        );
+
+        std::fs::write(&install_release, b"continue")?;
+        wait_for_process_test_path(&install_finished, "completed package replacement")?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if liveness::try_acquire_install_launch_gate(&config.app_executable_path)?.is_some() {
+                break;
+            }
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "install gate remained locked after package replacement completed"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         Ok(())
     }
 
@@ -4117,6 +4225,8 @@ mod tests {
     fn launch_that_wins_the_gate_prevents_the_ready_package_install() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
         let temp = tempfile::tempdir()?;
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+        std::env::set_var("HOME", temp.path().join("home"));
         let (paths, fake_pkexec, install_log) = prepare_process_install_fixture(temp.path())?;
         let mut config = test_config(temp.path());
         config.workspace_root = paths.cache_dir.clone();
@@ -4127,28 +4237,18 @@ mod tests {
         );
         std::fs::write(&paths.config_file, toml::to_string(&config)?)?;
 
-        let launcher_state = temp.path().join("xdg-state/codex-desktop");
-        std::fs::create_dir_all(&launcher_state)?;
-        let launcher_lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(launcher_state.join("launcher.lock"))?;
-        launcher_lock.lock()?;
+        let install_gate = liveness::try_acquire_install_launch_gate(&config.app_executable_path)?
+            .expect("simulated launcher should acquire the install-wide gate");
 
-        let lock_busy = temp.path().join("launcher-lock.busy");
         let install_ready = spawn_process_test_child(
             temp.path(),
             "daemon-reconcile",
             &[
                 ("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec),
                 ("CODEX_UPDATE_MANAGER_TEST_INSTALL_LOG", &install_log),
-                ("CODEX_UPDATE_MANAGER_TEST_LAUNCHER_LOCK_BUSY", &lock_busy),
             ],
             &[],
         )?;
-        wait_for_process_test_path(&lock_busy, "updater waiting for launcher.lock")?;
 
         let mut launched_app = std::process::Command::new(&config.app_executable_path)
             .stdout(std::process::Stdio::null())
@@ -4165,7 +4265,7 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        drop(launcher_lock);
+        drop(install_gate);
         let install_result = install_ready.wait();
         let _ = launched_app.kill();
         let _ = launched_app.wait();
@@ -4990,15 +5090,28 @@ mod tests {
     }
 
     #[test]
-    fn manual_install_command_selects_package_kind_and_quotes_path() {
+    fn manual_install_command_selects_package_kind_and_quotes_path() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&["HOME"]);
+        std::env::set_var("HOME", temp.path().join("home"));
+        let executable = Path::new("/opt/codex-desktop/electron");
+        let gate = liveness::install_launch_gate_path(executable)?;
         assert_eq!(
-            manual_install_command(Path::new("/tmp/codex update.pkg.tar.zst")),
-            "sudo /usr/bin/codex-update-manager install-pacman --path '/tmp/codex update.pkg.tar.zst'"
+            manual_install_command(Path::new("/tmp/codex update.pkg.tar.zst"), executable)?,
+            format!(
+                "flock --exclusive -- {} sudo /usr/bin/codex-update-manager install-pacman --path '/tmp/codex update.pkg.tar.zst' --app-executable-path '/opt/codex-desktop/electron'",
+                shell_quote_path(&gate)
+            )
         );
         assert_eq!(
-            manual_install_command(Path::new("/tmp/codex'update.deb")),
-            "sudo /usr/bin/codex-update-manager install-deb --path '/tmp/codex'\\''update.deb'"
+            manual_install_command(Path::new("/tmp/codex'update.deb"), executable)?,
+            format!(
+                "flock --exclusive -- {} sudo /usr/bin/codex-update-manager install-deb --path '/tmp/codex'\\''update.deb' --app-executable-path '/opt/codex-desktop/electron'",
+                shell_quote_path(&gate)
+            )
         );
+        Ok(())
     }
 
     #[test]

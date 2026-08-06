@@ -103,6 +103,15 @@ CODEX_LINUX_SETTINGS_FILE="$APP_SETTINGS_FILE"
 CODEX_LINUX_FEATURES_DIR="$SCRIPT_DIR/.codex-linux/features"
 export CODEX_HOME CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINUX_WEBVIEW_PORT CODEX_LINUX_SETTINGS_FILE CODEX_LINUX_FEATURES_DIR
 APP_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$CODEX_LINUX_APP_ID"
+# Keep package replacement serialization independent of app-state namespaces.
+# Multi-instance launches, alternate app ids, and custom XDG state roots can
+# all execute the same installed Electron tree, so key one stable user-level
+# gate by the canonical executable path instead.
+INSTALL_LAUNCH_GATE_DIR="$HOME/.local/state/codex-desktop/install-gates"
+INSTALL_LAUNCH_GATE_EXECUTABLE="$(readlink -f "$SCRIPT_DIR/electron" 2>/dev/null || printf '%s\n' "$SCRIPT_DIR/electron")"
+INSTALL_LAUNCH_GATE_KEY="$(python3 -c 'import hashlib, os, sys; print(hashlib.sha256(os.fsencode(sys.argv[1])).hexdigest())' "$INSTALL_LAUNCH_GATE_EXECUTABLE")"
+INSTALL_LAUNCH_GATE_PATH="$INSTALL_LAUNCH_GATE_DIR/$INSTALL_LAUNCH_GATE_KEY.lock"
+export CODEX_LINUX_INSTALL_LAUNCH_GATE="$INSTALL_LAUNCH_GATE_PATH"
 
 configure_runtime_tmpdir() {
     [ -z "${TMPDIR:-}" ] || return 0
@@ -323,8 +332,9 @@ select_webview_renderer_url() {
 WEBVIEW_RENDERER_URL=""
 WEBVIEW_RENDERER_URL_OVERRIDE_ACTIVE=0
 
-mkdir -p "$LOG_DIR" "$APP_CONFIG_DIR" "$APP_STATE_DIR" "$LAUNCH_ACTION_RUNTIME_DIR"
+mkdir -p "$LOG_DIR" "$APP_CONFIG_DIR" "$APP_STATE_DIR" "$LAUNCH_ACTION_RUNTIME_DIR" "$INSTALL_LAUNCH_GATE_DIR"
 chmod 700 "$LAUNCH_ACTION_RUNTIME_DIR" 2>/dev/null || true
+chmod 700 "$INSTALL_LAUNCH_GATE_DIR" 2>/dev/null || true
 export CODEX_DESKTOP_LAUNCH_ACTION_SOCKET="$LAUNCH_ACTION_SOCKET"
 STARTED_WEBVIEW_PID=""
 ADOPTED_WEBVIEW_PID=""
@@ -4240,7 +4250,7 @@ acquire_launcher_lock() {
     ( trap - EXIT
       exec python3 - \
           "$$" \
-          "$APP_STATE_DIR/launcher.lock" \
+          "$INSTALL_LAUNCH_GATE_PATH" \
           "$wait_seconds" \
           "$LAUNCHER_LOCK_STATUS_PATH" <<'PY'
 import ctypes
@@ -4248,6 +4258,7 @@ import ctypes.util
 import fcntl
 import os
 import signal
+import stat
 import sys
 import time
 
@@ -4271,8 +4282,18 @@ def release_lock(_signum, _frame):
 
 signal.signal(signal.SIGTERM, release_lock)
 signal.signal(signal.SIGUSR1, release_lock)
-lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
+lock_fd = os.open(
+    lock_path,
+    os.O_CREAT | os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+    0o600,
+)
 try:
+    lock_stat = os.fstat(lock_fd)
+    if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != os.geteuid():
+        sys.exit(1)
+    if lock_stat.st_mode & 0o077:
+        os.fchmod(lock_fd, 0o600)
+
     deadline = time.monotonic() + wait_seconds
     locked = False
     while True:
@@ -4324,7 +4345,7 @@ PY
         LAUNCHER_LOCK_HELPER_PID=""
         LAUNCHER_LOCK_HELPER_START_TIME=""
         rm -f "$LAUNCHER_LOCK_STATUS_PATH"
-        launcher_notice "WARN: timed out waiting for launcher.lock after ${wait_seconds}s; refusing to start another app process."
+        launcher_notice "WARN: timed out waiting for the install launch gate after ${wait_seconds}s; refusing to start another app process."
         return 0
     fi
 
@@ -4353,7 +4374,7 @@ launcher_lock_helper_is_active() {
     [ -n "$actual_start_time" ] && [ "$actual_start_time" = "$LAUNCHER_LOCK_HELPER_START_TIME" ] || return 1
     pid_parent_matches "$LAUNCHER_LOCK_HELPER_PID" "${BASHPID:-$$}" || return 1
     cmdline="$(pid_cmdline "$LAUNCHER_LOCK_HELPER_PID")"
-    [[ "$cmdline" == *" $APP_STATE_DIR/launcher.lock "*" $LAUNCHER_LOCK_STATUS_PATH"* ]]
+    [[ "$cmdline" == *" $INSTALL_LAUNCH_GATE_PATH "*" $LAUNCHER_LOCK_STATUS_PATH"* ]]
 }
 
 stop_launcher_lock_helper() {
@@ -4365,7 +4386,7 @@ stop_launcher_lock_helper() {
     [ -n "$actual_start_time" ] && [ "$actual_start_time" = "$LAUNCHER_LOCK_HELPER_START_TIME" ] || return 1
     pid_parent_matches "$LAUNCHER_LOCK_HELPER_PID" "${BASHPID:-$$}" || return 1
     cmdline="$(pid_cmdline "$LAUNCHER_LOCK_HELPER_PID")"
-    [[ "$cmdline" == *" $APP_STATE_DIR/launcher.lock "*" $LAUNCHER_LOCK_STATUS_PATH"* ]] || return 1
+    [[ "$cmdline" == *" $INSTALL_LAUNCH_GATE_PATH "*" $LAUNCHER_LOCK_STATUS_PATH"* ]] || return 1
     kill -TERM "$LAUNCHER_LOCK_HELPER_PID" 2>/dev/null || ! kill -0 "$LAUNCHER_LOCK_HELPER_PID" 2>/dev/null
 }
 

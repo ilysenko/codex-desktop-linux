@@ -5864,6 +5864,12 @@ if "No new app process was started" not in prepare_body:
     raise SystemExit("launcher lock timeout must fail closed instead of continuing a duplicate cold start")
 if 'CODEX_LAUNCHER_LOCK_WAIT_SECONDS:-5' not in source:
     raise SystemExit("launcher lock wait must default to 5 seconds so duplicate launches do not look hung")
+if 'INSTALL_LAUNCH_GATE_PATH="$INSTALL_LAUNCH_GATE_DIR/$INSTALL_LAUNCH_GATE_KEY.lock"' not in source:
+    raise SystemExit("launcher serialization must use one executable-keyed install gate")
+if 'CODEX_LINUX_INSTALL_LAUNCH_GATE="$INSTALL_LAUNCH_GATE_PATH"' not in source:
+    raise SystemExit("launcher must export the install-wide gate to after-exit update hooks")
+if '$APP_STATE_DIR/launcher.lock' in source:
+    raise SystemExit("launcher gate must not follow per-instance or alternate app-state roots")
 if "fcntl.flock" not in source or "PR_SET_PDEATHSIG" not in source:
     raise SystemExit("launcher lock must be held by a parent-death-bound helper instead of an inherited fd")
 if 'wait_seconds * 20 + 20' not in source:

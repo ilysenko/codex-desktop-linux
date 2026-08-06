@@ -68,6 +68,16 @@ async fn trigger_rollback(
     package_path: &Path,
 ) -> Result<()> {
     let (blocked_candidate, blocked_dmg_sha256) = rollback_block_identifiers(state);
+    let Some(install_gate) =
+        liveness::acquire_install_launch_gate(&config.app_executable_path).await?
+    else {
+        println!("Another ChatGPT Desktop launch or package transaction is still starting. Retry rollback after it finishes.");
+        return Ok(());
+    };
+    if liveness::is_app_running(config)? {
+        println!("ChatGPT Desktop reopened before rollback. Close it and retry.");
+        return Ok(());
+    }
 
     state.status = UpdateStatus::Installing;
     state.error_message = None;
@@ -79,7 +89,9 @@ async fn trigger_rollback(
     );
 
     let current_exe = std::env::current_exe().context("Failed to resolve updater binary path")?;
-    let output = install_rollback::pkexec_command(&current_exe, package_path)
+    let mut command = install_rollback::pkexec_command(&current_exe, package_path);
+    install_gate.inherit_through_stdin(&mut command)?;
+    let output = command
         .output()
         .context("Failed to launch pkexec for rollback")?;
     let status = output.status;

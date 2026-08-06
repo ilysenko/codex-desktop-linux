@@ -2,21 +2,50 @@
 
 use crate::config::{self, RuntimeConfig};
 use anyhow::{Context, Result};
+use directories::BaseDirs;
+use sha2::{Digest, Sha256};
 use std::{
+    fmt::Write as _,
     fs::{self, OpenOptions},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 pub const APP_RUNNING_INSTALL_ERROR_MARKER: &str = "CODEX_UPDATE_APP_RUNNING";
+const INSTALL_LAUNCH_GATE_DIR: &str = ".local/state/codex-desktop/install-gates";
+const INSTALL_LAUNCH_GATE_WAIT: Duration = Duration::from_secs(10);
 
 /// Exclusive access to the launcher's detection -> spawn critical section.
 ///
 /// Holding this while applying a native package prevents a desktop launch from
 /// publishing a new Electron process between the updater's final liveness
 /// check and the package manager replacing the webview asset tree.
-pub struct LauncherLock {
-    _file: fs::File,
+pub struct InstallLaunchGate {
+    file: fs::File,
+    path: PathBuf,
+}
+
+impl InstallLaunchGate {
+    /// Carries this exact flock lease into the privileged helper on fd 0.
+    ///
+    /// `pkexec` preserves the standard descriptors. Package-manager children
+    /// inherit stdin in turn, so the lease remains alive even when a Debian
+    /// upgrade stops the user-service process that originally acquired it.
+    pub fn inherit_through_stdin(&self, command: &mut Command) -> Result<()> {
+        let lease = self
+            .file
+            .try_clone()
+            .with_context(|| format!("Failed to clone install gate {}", self.path.display()))?;
+        command.stdin(Stdio::from(lease));
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 #[derive(Debug)]
@@ -41,13 +70,47 @@ pub fn app_pid_file() -> Result<PathBuf> {
     Ok(config::resolve_app_state_dir()?.join("app.pid"))
 }
 
-/// Tries to acquire the same lock the launcher holds until Electron is spawned
-/// and its PID is published. `None` means a launch is currently in progress.
-pub fn try_acquire_launcher_lock() -> Result<Option<LauncherLock>> {
-    let state_dir = config::resolve_app_state_dir()?;
-    fs::create_dir_all(&state_dir)
-        .with_context(|| format!("Failed to create {}", state_dir.display()))?;
-    let lock_path = state_dir.join("launcher.lock");
+/// Resolves the per-user, per-install gate shared by every launcher namespace.
+///
+/// This deliberately ignores the app id, launch instance, and XDG state root:
+/// those values isolate runtime state, but all namespaces still execute files
+/// from the same installation and must pause while those files are replaced.
+pub fn install_launch_gate_path(executable: &Path) -> Result<PathBuf> {
+    let base_dirs = BaseDirs::new().context("Could not resolve the home directory")?;
+    let executable = executable_identity_path(executable);
+    let digest = Sha256::digest(executable.as_os_str().as_encoded_bytes());
+    let mut install_key = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut install_key, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    Ok(base_dirs
+        .home_dir()
+        .join(INSTALL_LAUNCH_GATE_DIR)
+        .join(format!("{install_key}.lock")))
+}
+
+fn open_install_launch_gate(executable: &Path) -> Result<(fs::File, PathBuf)> {
+    let lock_path = install_launch_gate_path(executable)?;
+    let gate_dir = lock_path
+        .parent()
+        .context("Install launch gate path has no parent")?;
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(gate_dir)
+        .with_context(|| format!("Failed to create {}", gate_dir.display()))?;
+    let directory_metadata = fs::symlink_metadata(gate_dir)
+        .with_context(|| format!("Failed to inspect {}", gate_dir.display()))?;
+    anyhow::ensure!(
+        directory_metadata.is_dir() && directory_metadata.uid() == unsafe { libc::geteuid() },
+        "Install launch gate directory {} is not a user-owned directory",
+        gate_dir.display()
+    );
+    if directory_metadata.permissions().mode() & 0o077 != 0 {
+        fs::set_permissions(gate_dir, fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("Failed to secure {}", gate_dir.display()))?;
+    }
+
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -62,20 +125,54 @@ pub fn try_acquire_launcher_lock() -> Result<Option<LauncherLock>> {
         .with_context(|| format!("Failed to inspect {}", lock_path.display()))?;
     anyhow::ensure!(
         metadata.is_file() && metadata.uid() == unsafe { libc::geteuid() },
-        "Launcher lock {} is not a user-owned regular file",
+        "Install launch gate {} is not a user-owned regular file",
         lock_path.display()
     );
     if metadata.permissions().mode() & 0o077 != 0 {
         file.set_permissions(fs::Permissions::from_mode(0o600))
             .with_context(|| format!("Failed to secure {}", lock_path.display()))?;
     }
+    Ok((file, lock_path))
+}
+
+/// Creates and validates the gate so a terminal `flock` command can safely
+/// serialize a manual native-package install.
+pub fn prepare_install_launch_gate(executable: &Path) -> Result<PathBuf> {
+    let (_file, path) = open_install_launch_gate(executable)?;
+    Ok(path)
+}
+
+/// Tries to acquire the same install-wide gate held by every launcher until
+/// Electron is spawned and its PID is published. `None` means another launch
+/// or native package transaction currently owns the gate.
+pub fn try_acquire_install_launch_gate(executable: &Path) -> Result<Option<InstallLaunchGate>> {
+    let (file, lock_path) = open_install_launch_gate(executable)?;
 
     match file.try_lock() {
-        Ok(()) => Ok(Some(LauncherLock { _file: file })),
+        Ok(()) => Ok(Some(InstallLaunchGate {
+            file,
+            path: lock_path,
+        })),
         Err(fs::TryLockError::WouldBlock) => Ok(None),
         Err(fs::TryLockError::Error(error)) => {
             Err(error).with_context(|| format!("Failed to lock {}", lock_path.display()))
         }
+    }
+}
+
+/// Waits a bounded interval for the shared install gate. Launchers use their
+/// own shorter user-facing timeout; update flows wait a little longer so a
+/// launch already in its spawn critical section can finish cleanly.
+pub async fn acquire_install_launch_gate(executable: &Path) -> Result<Option<InstallLaunchGate>> {
+    let deadline = Instant::now() + INSTALL_LAUNCH_GATE_WAIT;
+    loop {
+        if let Some(gate) = try_acquire_install_launch_gate(executable)? {
+            return Ok(Some(gate));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -273,44 +370,73 @@ mod tests {
     }
 
     #[test]
-    fn launcher_lock_serializes_with_other_holders() -> Result<()> {
+    fn install_gate_serializes_with_other_holders() -> Result<()> {
         let _env_guard = env_lock();
         let temp = tempfile::tempdir()?;
         let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
             "XDG_STATE_HOME",
             "CODEX_LINUX_APP_ID",
             "CODEX_APP_ID",
             "CODEX_LINUX_INSTANCE_ID",
         ]);
+        std::env::set_var("HOME", temp.path().join("home"));
         std::env::set_var("XDG_STATE_HOME", temp.path());
         std::env::set_var("CODEX_LINUX_APP_ID", "codex-lock-test");
         std::env::remove_var("CODEX_APP_ID");
         std::env::remove_var("CODEX_LINUX_INSTANCE_ID");
 
-        let first = try_acquire_launcher_lock()?.expect("first lock should succeed");
-        assert!(try_acquire_launcher_lock()?.is_none());
+        let executable = Path::new("/opt/codex-desktop/electron");
+        let first =
+            try_acquire_install_launch_gate(executable)?.expect("first lock should succeed");
+        assert!(try_acquire_install_launch_gate(executable)?.is_none());
         drop(first);
-        assert!(try_acquire_launcher_lock()?.is_some());
+        assert!(try_acquire_install_launch_gate(executable)?.is_some());
         Ok(())
     }
 
     #[test]
-    fn launcher_lock_interoperates_with_the_shell_flock_helper() -> Result<()> {
+    fn install_gate_is_shared_across_launcher_namespaces() -> Result<()> {
         let _env_guard = env_lock();
         let temp = tempfile::tempdir()?;
         let _restore_env = EnvRestoreGuard::capture(&[
+            "HOME",
             "XDG_STATE_HOME",
             "CODEX_LINUX_APP_ID",
             "CODEX_APP_ID",
             "CODEX_LINUX_INSTANCE_ID",
         ]);
-        std::env::set_var("XDG_STATE_HOME", temp.path());
-        std::env::set_var("CODEX_LINUX_APP_ID", "codex-shell-lock-test");
+        std::env::set_var("HOME", temp.path().join("home"));
+        std::env::set_var("XDG_STATE_HOME", temp.path().join("state-a"));
+        std::env::set_var("CODEX_LINUX_APP_ID", "codex-primary");
         std::env::remove_var("CODEX_APP_ID");
         std::env::remove_var("CODEX_LINUX_INSTANCE_ID");
 
-        let lock_path = config::resolve_app_state_dir()?.join("launcher.lock");
-        fs::create_dir_all(lock_path.parent().expect("launcher lock has a parent"))?;
+        let executable = Path::new("/opt/codex-desktop/electron");
+        let primary = try_acquire_install_launch_gate(executable)?
+            .expect("primary namespace should acquire the gate");
+        let primary_path = primary.path().to_path_buf();
+
+        std::env::set_var("XDG_STATE_HOME", temp.path().join("state-b"));
+        std::env::set_var("CODEX_LINUX_APP_ID", "codex-alternate");
+        std::env::set_var("CODEX_LINUX_INSTANCE_ID", "port-6176");
+        assert_eq!(install_launch_gate_path(executable)?, primary_path);
+        assert!(try_acquire_install_launch_gate(executable)?.is_none());
+        drop(primary);
+        assert!(try_acquire_install_launch_gate(executable)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn install_gate_interoperates_with_the_shell_flock_helper() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempfile::tempdir()?;
+        let _restore_env = EnvRestoreGuard::capture(&["HOME"]);
+        std::env::set_var("HOME", temp.path().join("home"));
+
+        let executable = Path::new("/opt/codex-desktop/electron");
+        let lock_path = install_launch_gate_path(executable)?;
+        fs::create_dir_all(lock_path.parent().expect("install gate has a parent"))?;
         let mut holder = std::process::Command::new("flock")
             .arg("-x")
             .arg(&lock_path)
@@ -325,10 +451,54 @@ mod tests {
             .read_line(&mut ready)?;
         assert_eq!(ready, "locked\n");
 
-        assert!(try_acquire_launcher_lock()?.is_none());
+        assert!(try_acquire_install_launch_gate(executable)?.is_none());
         drop(holder.stdin.take());
         assert!(holder.wait()?.success());
-        assert!(try_acquire_launcher_lock()?.is_some());
+        assert!(try_acquire_install_launch_gate(executable)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn inherited_gate_lease_survives_the_original_holder_through_transaction() -> Result<()> {
+        let _env_guard = env_lock();
+        let temp = tempfile::tempdir()?;
+        let _restore_env = EnvRestoreGuard::capture(&["HOME"]);
+        std::env::set_var("HOME", temp.path().join("home"));
+        let executable = Path::new("/opt/codex-desktop/electron");
+        let gate = try_acquire_install_launch_gate(executable)?
+            .expect("transaction should acquire the gate");
+        let started = temp.path().join("package-replacement.started");
+        let release = temp.path().join("package-replacement.release");
+
+        let mut transaction_command = Command::new("sh");
+        transaction_command
+            .arg("-c")
+            .arg("touch \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.01; done")
+            .arg("sh")
+            .arg(&started)
+            .arg(&release);
+        gate.inherit_through_stdin(&mut transaction_command)?;
+        let mut transaction = transaction_command.spawn()?;
+        // `Command` is reusable and retains its configured stdin. Drop that
+        // original duplicate so only the package transaction owns the lease.
+        drop(transaction_command);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !started.exists() {
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for package replacement"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        drop(gate);
+        assert!(
+            try_acquire_install_launch_gate(executable)?.is_none(),
+            "the package transaction must retain the inherited lease after the updater exits"
+        );
+        fs::write(&release, b"continue")?;
+        assert!(transaction.wait()?.success());
+        assert!(try_acquire_install_launch_gate(executable)?.is_some());
         Ok(())
     }
 

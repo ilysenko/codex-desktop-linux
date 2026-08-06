@@ -60,10 +60,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - The updater feature picker now changes only the enabled feature list, preserving
   nested feature settings and other local configuration keys across rebuilds.
 - Ready native updates no longer replace hashed webview assets underneath an
-  app reopened while polkit authorization is pending. Package installation now
-  shares the launcher's process-creation lock, rechecks Electron after winning
-  the lock, and returns to `WaitingForAppExit` if either the unprivileged or
-  privileged liveness guard observes the app.
+  app reopened while polkit authorization is pending. Every launcher namespace
+  and packaged wrapper update now shares one executable-keyed install gate; the
+  gate lease survives updater-service shutdown through package replacement.
+  Installation rechecks Electron after winning the gate and returns to
+  `WaitingForAppExit` if either liveness guard observes the app.
 - The opt-in Dock icon tweak now targets the current upstream main-process
   bundle, restoring Linux window, tray, and desktop icon synchronization.
 - The opt-in shallow repository watcher now patches both current app bundles

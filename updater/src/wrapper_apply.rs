@@ -28,7 +28,7 @@ use tracing::{info, warn};
 use crate::{
     builder,
     config::{RuntimeConfig, RuntimePaths},
-    install, notify,
+    install, liveness, notify,
     state::{PersistedState, UpdateStatus},
     upstream, wrapper,
 };
@@ -403,14 +403,27 @@ async fn apply_packaged(
     .await
     .context("wrapper package rebuild failed")?;
 
+    let Some(install_gate) =
+        liveness::acquire_install_launch_gate(&config.app_executable_path).await?
+    else {
+        anyhow::bail!(
+            "another ChatGPT Desktop launch or package transaction still owns the install gate"
+        );
+    };
+    if liveness::is_app_running(config)? {
+        anyhow::bail!("ChatGPT Desktop reopened before wrapper package installation");
+    }
+
     let current_exe = std::env::current_exe().context("Failed to resolve updater binary path")?;
-    let output = install::pkexec_command(
+    let mut command = install::pkexec_command(
         &current_exe,
         &artifacts.package_path,
         &config.app_executable_path,
-    )
-    .output()
-    .context("Failed to launch pkexec for wrapper update installation")?;
+    );
+    install_gate.inherit_through_stdin(&mut command)?;
+    let output = command
+        .output()
+        .context("Failed to launch pkexec for wrapper update installation")?;
     if !output.status.success() {
         anyhow::bail!(
             "privileged wrapper install exited with status {}",

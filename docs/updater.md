@@ -10,9 +10,10 @@ It:
 - rebuilds a local native package with `/opt/codex-desktop/update-builder`
   after detection; users who enable the opt-in deferred-build feature can
   instead wait for an explicit update check
-- waits for Electron to exit before installing a ready update, holds the
-  launcher's process-creation lock through authorization and package
-  replacement, and defers the install if the app is reopened in that interval
+- waits for Electron to exit before installing a ready update, holds one
+  executable-keyed launch gate across normal, multi-instance, and alternate
+  app-state namespaces through authorization and package replacement, and
+  defers the install if the app is reopened in that interval
 - runs unprivileged; the final package install uses `pkexec` when a graphical
   polkit authentication agent is available, or keeps the package ready and
   reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...`
@@ -283,7 +284,9 @@ A launch that races the polkit prompt or package stabilization wins safely: the
 ready update returns to `WaitingForAppExit` instead of replacing the webview
 assets under the running renderer. The privileged helper performs a final
 process check as defense in depth before invoking apt, dpkg, rpm, zypper, or
-pacman.
+pacman. The install gate lease is inherited by the privileged transaction, so a
+Debian upgrade remains serialized even when its old `prerm` stops
+`codex-update-manager.service`; packaged wrapper updates use the same gate.
 A manual command or timer may build while the app is open, but final promotion
 is refused and the working app remains unchanged until Electron exits. Failed
 promotion candidates are disposable by default; opt in to diagnostic retention
