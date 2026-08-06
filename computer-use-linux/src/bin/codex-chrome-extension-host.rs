@@ -1275,10 +1275,10 @@ mod tests {
             stdout,
             sessions_root: Some(root.clone()),
         };
+        let aborted_line = r#"{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","reason":"interrupted"}}"#;
         writeln!(
             fs::OpenOptions::new().append(true).open(&path).unwrap(),
-            "{}",
-            r#"{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","reason":"interrupted"}}"#
+            "{aborted_line}"
         )
         .unwrap();
 
