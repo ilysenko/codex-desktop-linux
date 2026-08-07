@@ -1365,12 +1365,19 @@ function trayBundleFixture() {
   ].join("");
 }
 
+function exactDmgNestedTernaryTrayBundleFixture() {
+  return trayBundleFixture().replace(
+    "r=new c.Tray(t.defaultIcon)",
+    "r=new c.Tray(t.defaultIcon,process.platform===`win32`&&c.app.isPackaged?dEe(e.buildFlavor):void 0)",
+  ).replace("}}v&&k.on", "}};v&&k.on");
+}
+
 function currentTrayLifecycleBundleFixture() {
   return [
     "let codexLinuxQuitInProgress=!1,codexLinuxExplicitQuitApproved=!1,codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0},codexLinuxPrepareForExplicitQuit=()=>{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress()},codexLinuxShouldBypassQuitPrompt=()=>codexLinuxExplicitQuitApproved===!0,codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0;",
     "v&&k.on(`close`,e=>{let t=this.getPrimaryWindows().some(e=>e!==k);if((process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}});",
     "async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return!0;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():!0}",
-    "var H9=null,U9=null,G9=!1;async function fae(e){return G9=!0,U9??H9??(U9=(async()=>{let t={defaultIcon:e},r=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!G9)return r.destroy(),null;r.setToolTip(c.app.getName());let i=new pb(r);return H9=i,!await i.waitForReady()||H9!==i?(H9===i&&(H9=null,i.destroy()),null):i})().finally(()=>{U9=null}),U9)}",
+    "var H9=null,U9=null,G9=!1;async function fae(e){return G9=!0,U9??H9??(U9=(async()=>{let t={defaultIcon:e},r=new c.Tray(t.defaultIcon,process.platform===`win32`&&c.app.isPackaged?dEe(e.buildFlavor):void 0);if(!G9)return r.destroy(),null;r.setToolTip(c.app.getName());let i=new pb(r);return H9=i,!await i.waitForReady()||H9!==i?(H9===i&&(H9=null,i.destroy()),null):i})().finally(()=>{U9=null}),U9)}",
     "var pb=class{constructor(e){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}destroy(){this.tray.destroy()}isReady(){return _j(this.tray)}waitForReady(){return gj(this.tray)}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(c.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}}",
   ].join("");
 }
@@ -2676,8 +2683,23 @@ test("retains the current native Linux tray when quit-state helpers already exis
 
   assert.equal((patched.match(/codexLinuxRegisterTray=e=>/g) ?? []).length, 1);
   assert.match(patched, /let codexLinuxTray=null,codexLinuxRegisterTray=e=>/);
-  assert.match(patched, /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon\)\)/);
+  assert.match(
+    patched,
+    /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon,process\.platform===`win32`&&c\.app\.isPackaged\?dEe\(e\.buildFlavor\):void 0\)\)/,
+  );
   assert.doesNotMatch(patched, /typeof codexLinuxRegisterTray===`function`/);
+});
+
+test("wraps the complete exact-DMG nested-ternary Tray constructor in a parseable bundle", () => {
+  const source = `${currentMainBundlePrefix}${exactDmgNestedTernaryTrayBundleFixture()}`;
+  const patched = patchMainBundleSource(source, null);
+
+  assert.match(
+    patched,
+    /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon,process\.platform===`win32`&&c\.app\.isPackaged\?dEe\(e\.buildFlavor\):void 0\)\)/,
+  );
+  assert.doesNotThrow(() => new Function(patched));
+  assert.equal(patchMainBundleSource(patched, null), patched);
 });
 
 test("bypasses the upstream before-quit confirmation after a Linux explicit quit", () => {
@@ -7761,7 +7783,8 @@ test("adds Linux package updater to current bootstrap updater wiring", () => {
   assert.match(patched, /codexLinuxUpdateLifecycleState\(r,e\)/);
   assert.match(patched, /e===`update_detected`&&t\?\.deferred_build===!0/);
   assert.match(patched, /codexLinuxProbeUpdateManager\(\)\.then\(\(\)=>\{s=!0,i\(\),a\(\);return!0\}\)/);
-  assert.match(patched, /manager:\{setAutomaticBackgroundDownloadsEnabled:\(\)=>\{\}/);
+  assert.match(patched, /manager:\{latchInAppUpdatesEnabledForLaunch:async\(\)=>\{\}/);
+  assert.match(patched, /setAutomaticBackgroundDownloadsEnabled:\(\)=>\{\}/);
   assert.match(patched, /getIsUpdateReady:\(\)=>s&&t/);
   assert.match(patched, /checkForUpdates:async\(\)=>\{if\(!await c\)return;n=`checking`/);
   assert.match(patched, /installUpdatesIfAvailable:async\(\)=>\{if\(!await c\)\{a\(\);return\}i\(\);if\(!t\)\{a\(\);return\}/);
@@ -7802,6 +7825,105 @@ test("implements the current Sparkle AppView, menu, and RPC contract on Linux", 
     /getUnavailableReason:\(\)=>s\?null:`Linux package update manager unavailable`/,
   );
   assert.match(patched, /setSparkleQueryParams:\(\)=>\{\}/);
+  assert.match(patched, /latchInAppUpdatesEnabledForLaunch:async\(\)=>\{\}/);
+});
+
+test("keeps every exact-DMG Sparkle manager caller callable on the Linux replacement", async () => {
+  const patched = applyLinuxAppUpdaterBridgePatch(currentBootstrapUpdaterBundleFixture());
+  const bridgeEnd = patched.indexOf(";var g6=");
+  assert.notEqual(bridgeEnd, -1);
+
+  const externallyCalledMethods = [
+    "checkForUpdates",
+    "getDownloadProgressPercent",
+    "getDownloadedUpdateAppBrand",
+    "getInstallProgressPercent",
+    "getIsUpdateReady",
+    "getRelaunchNotice",
+    "getUnavailableReason",
+    "getUpdateLifecycleState",
+    "hasUpdater",
+    "installUpdatesIfAvailable",
+    "latchInAppUpdatesEnabledForLaunch",
+    "setAutomaticBackgroundDownloadsEnabled",
+    "setSparkleQueryParams",
+  ];
+  const calls = [];
+  const context = {
+    process: { env: {} },
+    require(moduleName) {
+      if (moduleName === "electron") {
+        return {};
+      }
+      if (moduleName === "node:path") {
+        return path;
+      }
+      if (moduleName === "node:fs") {
+        return { existsSync: () => false };
+      }
+      if (moduleName === "node:child_process") {
+        return {
+          execFile(command, args, _options, callback) {
+            calls.push([command, ...args]);
+            callback(null, "", "");
+          },
+        };
+      }
+      throw new Error(`Unexpected module request: ${moduleName}`);
+    },
+    setTimeout,
+  };
+  vm.runInNewContext(
+    `${patched.slice(0, bridgeEnd)};globalThis.createManager=codexLinuxCreatePackageUpdateManager`,
+    context,
+  );
+  const manager = context.createManager({ send() {} }).manager;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    Object.keys(manager).filter((methodName) => externallyCalledMethods.includes(methodName)).sort(),
+    externallyCalledMethods,
+  );
+  for (const methodName of externallyCalledMethods) {
+    assert.equal(typeof manager[methodName], "function", methodName);
+  }
+
+  const startupHandlers = {
+    latchInAppUpdatesEnabledForLaunch: (enabled) => {
+      manager.latchInAppUpdatesEnabledForLaunch(enabled);
+    },
+    setAutomaticBackgroundDownloadsEnabled: (enabled) => {
+      manager.setAutomaticBackgroundDownloadsEnabled(enabled);
+    },
+  };
+  const invokeExactSparkleGatesCaller = (message) => {
+    if (message.type === "electron-sparkle-gates-changed") {
+      startupHandlers.latchInAppUpdatesEnabledForLaunch(!message.disableInAppUpdates);
+      startupHandlers.setAutomaticBackgroundDownloadsEnabled(!message.disableSparkleAutodownload);
+    }
+  };
+  assert.doesNotThrow(() => invokeExactSparkleGatesCaller({
+    type: "electron-sparkle-gates-changed",
+    disableInAppUpdates: false,
+    disableSparkleAutodownload: true,
+  }));
+
+  manager.setSparkleQueryParams({ channel: "stable" });
+  assert.equal(manager.getDownloadProgressPercent(), null);
+  assert.equal(manager.getDownloadedUpdateAppBrand(), null);
+  assert.equal(manager.getInstallProgressPercent(), null);
+  assert.equal(manager.getIsUpdateReady(), false);
+  assert.equal(manager.getRelaunchNotice(), null);
+  assert.equal(manager.getUnavailableReason(), null);
+  assert.equal(manager.getUpdateLifecycleState(), "idle");
+  assert.equal(manager.hasUpdater(), true);
+  await manager.latchInAppUpdatesEnabledForLaunch(true);
+  await manager.checkForUpdates();
+  await manager.installUpdatesIfAvailable();
+  assert.deepEqual(calls, [
+    ["codex-update-manager", "--help"],
+    ["codex-update-manager", "check-now"],
+  ]);
 });
 
 test("keeps the current Sparkle menu contract callable across Linux updater probe outcomes", async () => {
