@@ -15,6 +15,7 @@ use std::{
     path::{Path, PathBuf},
     process,
     sync::{
+        atomic::{AtomicUsize, Ordering},
         mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
         Arc, Mutex, Weak,
     },
@@ -47,8 +48,10 @@ const MAX_PENDING_REQUESTS_PER_CLIENT_PER_DIRECTION: usize = 256;
 const MAX_PENDING_REQUEST_ID_STRING_BYTES: usize = 4 * 1024;
 /// Bounds simultaneously connected Codex browser clients and their I/O threads.
 const MAX_CONNECTED_CLIENTS: usize = 64;
-/// Prevents a slow client socket from accumulating unbounded outbound messages.
-const CLIENT_WRITE_QUEUE_CAPACITY: usize = 64;
+/// Retains a small secondary item bound for streams of tiny messages.
+const CLIENT_WRITE_QUEUE_MAX_MESSAGES: usize = 64;
+/// Bounds each client's queued and in-flight serialized frame bytes.
+const CLIENT_WRITE_QUEUE_MAX_BYTES: usize = MAX_ACCEPTED_FRAME_BYTES + std::mem::size_of::<u32>();
 /// Bounds retained browser-session routing state.
 const MAX_TRACKED_SESSIONS: usize = 1024;
 const MAX_SESSION_ID_BYTES: usize = 1024;
@@ -57,10 +60,55 @@ const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
 type SharedState = Arc<Mutex<HostState>>;
 type SharedChromeWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+type SharedClientFrame = Arc<[u8]>;
 
 struct Client {
-    sender: SyncSender<Value>,
+    sender: SyncSender<QueuedClientFrame>,
+    queued_bytes: Arc<AtomicUsize>,
+    max_queued_bytes: usize,
     shutdown: UnixStream,
+}
+
+impl Client {
+    fn new(
+        sender: SyncSender<QueuedClientFrame>,
+        queued_bytes: Arc<AtomicUsize>,
+        shutdown: UnixStream,
+    ) -> Self {
+        Self {
+            sender,
+            queued_bytes,
+            max_queued_bytes: CLIENT_WRITE_QUEUE_MAX_BYTES,
+            shutdown,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_max_queued_bytes(
+        sender: SyncSender<QueuedClientFrame>,
+        queued_bytes: Arc<AtomicUsize>,
+        max_queued_bytes: usize,
+        shutdown: UnixStream,
+    ) -> Self {
+        Self {
+            sender,
+            queued_bytes,
+            max_queued_bytes,
+            shutdown,
+        }
+    }
+}
+
+struct QueuedClientFrame {
+    bytes: SharedClientFrame,
+    queued_bytes: Arc<AtomicUsize>,
+}
+
+impl Drop for QueuedClientFrame {
+    fn drop(&mut self) {
+        self.queued_bytes
+            .fetch_sub(self.bytes.len(), Ordering::AcqRel);
+    }
 }
 
 struct PendingChromeRequest {
@@ -215,20 +263,54 @@ impl HostState {
     }
 
     fn send_client(&mut self, client_id: usize, message: &Value) -> bool {
+        if !self.clients.contains_key(&client_id) {
+            return false;
+        }
+
+        let frame = match serialize_frame(message) {
+            Ok(frame) => frame,
+            Err(error) => {
+                log(&format!("client frame serialization error: {error}"));
+                self.remove_client(client_id);
+                return false;
+            }
+        };
+        self.send_client_frame(client_id, frame)
+    }
+
+    fn send_client_frame(&mut self, client_id: usize, frame: SharedClientFrame) -> bool {
         let Some(client) = self.clients.get(&client_id) else {
             return false;
         };
+        let sender = client.sender.clone();
+        let queued_bytes = Arc::clone(&client.queued_bytes);
+        let max_queued_bytes = client.max_queued_bytes;
 
-        match client.sender.try_send(message.clone()) {
+        if !try_reserve_queue_bytes(&queued_bytes, frame.len(), max_queued_bytes) {
+            log(&format!(
+                "disconnecting browser client {client_id}: outbound byte limit exceeded"
+            ));
+            self.remove_client(client_id);
+            return false;
+        }
+
+        let queued = QueuedClientFrame {
+            bytes: frame,
+            queued_bytes,
+        };
+
+        match sender.try_send(queued) {
             Ok(()) => true,
-            Err(TrySendError::Full(_)) => {
+            Err(TrySendError::Full(queued)) => {
+                drop(queued);
                 log(&format!(
                     "disconnecting browser client {client_id}: outbound queue is full"
                 ));
                 self.remove_client(client_id);
                 false
             }
-            Err(TrySendError::Disconnected(_)) => {
+            Err(TrySendError::Disconnected(queued)) => {
+                drop(queued);
                 log(&format!(
                     "disconnecting browser client {client_id}: writer is unavailable"
                 ));
@@ -239,8 +321,15 @@ impl HostState {
     }
 
     fn broadcast_clients(&mut self, message: &Value) {
+        let frame = match serialize_frame(message) {
+            Ok(frame) => frame,
+            Err(error) => {
+                log(&format!("client frame serialization error: {error}"));
+                return;
+            }
+        };
         for client_id in self.clients.keys().copied().collect::<Vec<_>>() {
-            self.send_client(client_id, message);
+            self.send_client_frame(client_id, Arc::clone(&frame));
         }
     }
 
@@ -251,6 +340,16 @@ impl HostState {
             self.broadcast_clients(message);
         }
     }
+}
+
+fn try_reserve_queue_bytes(counter: &AtomicUsize, bytes: usize, max_bytes: usize) -> bool {
+    counter
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current
+                .checked_add(bytes)
+                .filter(|total| *total <= max_bytes)
+        })
+        .is_ok()
 }
 
 #[derive(Clone)]
@@ -575,11 +674,12 @@ fn accept_clients(listener: UnixListener, state: SharedState) {
                 continue;
             }
         };
-        let (sender, receiver) = sync_channel(CLIENT_WRITE_QUEUE_CAPACITY);
+        let (sender, receiver) = sync_channel::<QueuedClientFrame>(CLIENT_WRITE_QUEUE_MAX_MESSAGES);
+        let queued_bytes = Arc::new(AtomicUsize::new(0));
 
         let client_id = {
             let mut state = state.lock().expect("host state mutex poisoned");
-            state.add_client(Client { sender, shutdown })
+            state.add_client(Client::new(sender, queued_bytes, shutdown))
         };
         let Some(client_id) = client_id else {
             log(&format!(
@@ -667,10 +767,10 @@ fn write_client_messages(
     state: Weak<Mutex<HostState>>,
     client_id: usize,
     mut stream: UnixStream,
-    receiver: Receiver<Value>,
+    receiver: Receiver<QueuedClientFrame>,
 ) {
-    while let Ok(message) = receiver.recv() {
-        if let Err(error) = write_frame(&mut stream, &message) {
+    while let Ok(frame) = receiver.recv() {
+        if let Err(error) = write_serialized_frame(&mut stream, &frame.bytes) {
             log(&format!("client socket write error: {error}"));
             break;
         }
@@ -709,9 +809,26 @@ fn handle_client_message(state: &SharedState, client_id: usize, message: Value) 
         }
         state.pending_client_requests.remove(id);
         if let Some(group) = pending.fanout_group {
-            state
+            if is_successful_heartbeat_response(&message) {
+                state
+                    .pending_client_requests
+                    .retain(|_, sibling| sibling.fanout_group != Some(group));
+                state.send_chrome(&with_id(message, pending.chrome_request_id));
+            } else if !state
                 .pending_client_requests
-                .retain(|_, sibling| sibling.fanout_group != Some(group));
+                .values()
+                .any(|sibling| sibling.fanout_group == Some(group))
+            {
+                state.send_chrome(&json!({
+                    "jsonrpc": "2.0",
+                    "id": pending.chrome_request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": "No browser client returned a valid heartbeat response"
+                    }
+                }));
+            }
+            return;
         }
 
         state.send_chrome(&with_id(message, pending.chrome_request_id));
@@ -976,6 +1093,7 @@ fn forward_chrome_heartbeat(state: &mut HostState, message: Value, chrome_reques
 
     let fanout_group = state.next_client_request_id;
     let mut sent = false;
+    let mut message = message;
     for client_id in client_ids {
         let client_request_id =
             format!("chrome-{}-{}", process::id(), state.next_client_request_id);
@@ -989,10 +1107,8 @@ fn forward_chrome_heartbeat(state: &mut HostState, message: Value, chrome_reques
                 created_at: Instant::now(),
             },
         );
-        sent |= state.send_client(
-            client_id,
-            &with_id(message.clone(), Value::String(client_request_id)),
-        );
+        set_message_id(&mut message, Value::String(client_request_id));
+        sent |= state.send_client(client_id, &message);
     }
 
     if !sent {
@@ -1069,15 +1185,25 @@ fn is_response(message: &Value) -> bool {
     message.get("id").is_some() && message.get("method").and_then(Value::as_str).is_none()
 }
 
+fn is_successful_heartbeat_response(message: &Value) -> bool {
+    message.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+        && message.get("result").and_then(Value::as_str) == Some("pong")
+        && message.get("error").is_none()
+}
+
 fn message_id_as_str(message: &Value) -> Option<&str> {
     message.get("id").and_then(Value::as_str)
 }
 
 fn with_id(mut message: Value, id: Value) -> Value {
+    set_message_id(&mut message, id);
+    message
+}
+
+fn set_message_id(message: &mut Value, id: Value) {
     if let Value::Object(ref mut object) = message {
         object.insert("id".to_string(), id);
     }
-    message
 }
 
 fn is_missing_chrome_runtime_get_version_error(message: &Value) -> bool {
@@ -1259,16 +1385,27 @@ fn read_frame(reader: &mut impl Read) -> io::Result<Option<Value>> {
 }
 
 fn write_frame(writer: &mut impl Write, message: &Value) -> io::Result<()> {
-    let body = serde_json::to_vec(message).map_err(io::Error::other)?;
-    if body.len() > u32::MAX as usize {
+    let frame = serialize_frame(message)?;
+    write_serialized_frame(writer, &frame)
+}
+
+fn serialize_frame(message: &Value) -> io::Result<SharedClientFrame> {
+    let mut frame = vec![0_u8; std::mem::size_of::<u32>()];
+    serde_json::to_writer(&mut frame, message).map_err(io::Error::other)?;
+    let body_len = frame.len() - std::mem::size_of::<u32>();
+    if body_len > u32::MAX as usize {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
             "message too large for 4-byte length prefix",
         ));
     }
 
-    writer.write_all(&(body.len() as u32).to_ne_bytes())?;
-    writer.write_all(&body)?;
+    frame[..std::mem::size_of::<u32>()].copy_from_slice(&(body_len as u32).to_ne_bytes());
+    Ok(frame.into())
+}
+
+fn write_serialized_frame(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
+    writer.write_all(frame)?;
     writer.flush()
 }
 
@@ -1920,6 +2057,74 @@ while True:
     }
 
     #[test]
+    fn chrome_heartbeat_waits_for_a_healthy_response_after_invalid_responses() {
+        let (client_one_writer, mut client_one_reader) = UnixStream::pair().unwrap();
+        let (client_two_writer, mut client_two_reader) = UnixStream::pair().unwrap();
+        let (client_three_writer, mut client_three_reader) = UnixStream::pair().unwrap();
+        let (mut host_state, chrome_output) = test_host_state_with_output();
+        host_state
+            .clients
+            .insert(1, queued_test_client(client_one_writer));
+        host_state
+            .clients
+            .insert(2, queued_test_client(client_two_writer));
+        host_state
+            .clients
+            .insert(3, queued_test_client(client_three_writer));
+        let state = Arc::new(Mutex::new(host_state));
+
+        handle_chrome_message(
+            &state,
+            json!({ "jsonrpc": "2.0", "id": "heartbeat", "method": "ping" }),
+        );
+
+        let client_one_request = read_frame(&mut client_one_reader).unwrap().unwrap();
+        let client_two_request = read_frame(&mut client_two_reader).unwrap().unwrap();
+        let client_three_request = read_frame(&mut client_three_reader).unwrap().unwrap();
+
+        handle_client_message(
+            &state,
+            1,
+            json!({
+                "jsonrpc": "2.0",
+                "id": client_one_request["id"],
+                "error": { "code": -32000, "message": "not ready" }
+            }),
+        );
+        assert!(chrome_output.lock().unwrap().is_empty());
+        assert_eq!(state.lock().unwrap().pending_client_requests.len(), 2);
+
+        handle_client_message(
+            &state,
+            2,
+            json!({
+                "id": client_two_request["id"],
+                "result": "unexpected"
+            }),
+        );
+        assert!(chrome_output.lock().unwrap().is_empty());
+        assert_eq!(state.lock().unwrap().pending_client_requests.len(), 1);
+
+        handle_client_message(
+            &state,
+            3,
+            json!({
+                "jsonrpc": "2.0",
+                "id": client_three_request["id"],
+                "result": "pong"
+            }),
+        );
+
+        assert_eq!(
+            read_captured_message(&chrome_output),
+            json!({ "jsonrpc": "2.0", "id": "heartbeat", "result": "pong" })
+        );
+        let state = state.lock().unwrap();
+        assert_eq!(state.clients.len(), 3);
+        assert!(state.pending_client_requests.is_empty());
+    }
+
+    #[test]
     fn ambiguous_unscoped_chrome_request_fails_without_evicting_clients() {
         let (mut host_state, chrome_output) = test_host_state_with_output();
         host_state.clients.insert(1, test_client());
@@ -2207,47 +2412,174 @@ while True:
     }
 
     #[test]
-    fn full_client_writer_queue_does_not_block_another_client() {
-        let (stalled_sender, stalled_receiver) = sync_channel(CLIENT_WRITE_QUEUE_CAPACITY);
-        for index in 0..CLIENT_WRITE_QUEUE_CAPACITY {
-            stalled_sender.try_send(json!(index)).unwrap();
-        }
+    fn client_writer_byte_limit_does_not_block_another_client() {
+        let first_message = json!({ "jsonrpc": "2.0", "method": "fill-byte-budget" });
+        let first_frame = serialize_frame(&first_message).unwrap();
+        let (stalled_sender, stalled_receiver) = sync_channel(CLIENT_WRITE_QUEUE_MAX_MESSAGES);
+        let stalled_queued_bytes = Arc::new(AtomicUsize::new(0));
         let (stalled_shutdown, _stalled_peer) = UnixStream::pair().unwrap();
 
-        let (healthy_sender, healthy_receiver) = sync_channel(CLIENT_WRITE_QUEUE_CAPACITY);
+        let (healthy_sender, healthy_receiver) = sync_channel(CLIENT_WRITE_QUEUE_MAX_MESSAGES);
+        let healthy_queued_bytes = Arc::new(AtomicUsize::new(0));
         let (healthy_shutdown, _healthy_peer) = UnixStream::pair().unwrap();
         let mut state = test_host_state();
         state.clients.insert(
             1,
-            Client {
-                sender: stalled_sender,
-                shutdown: stalled_shutdown,
-            },
+            Client::with_max_queued_bytes(
+                stalled_sender,
+                Arc::clone(&stalled_queued_bytes),
+                first_frame.len(),
+                stalled_shutdown,
+            ),
         );
         state.clients.insert(
             2,
-            Client {
-                sender: healthy_sender,
-                shutdown: healthy_shutdown,
-            },
+            Client::new(
+                healthy_sender,
+                Arc::clone(&healthy_queued_bytes),
+                healthy_shutdown,
+            ),
         );
+        assert!(state.send_client(1, &first_message));
+        assert_eq!(
+            stalled_queued_bytes.load(Ordering::Acquire),
+            first_frame.len()
+        );
+
         let message = json!({ "jsonrpc": "2.0", "method": "healthy" });
 
+        state.broadcast_clients(&message);
+
+        let healthy_frame = healthy_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(
+            healthy_frame.bytes.as_ref(),
+            serialize_frame(&message).unwrap().as_ref()
+        );
+        let stalled_frame = stalled_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(stalled_frame.bytes.as_ref(), first_frame.as_ref());
+        assert!(!state.clients.contains_key(&1));
+        assert!(state.clients.contains_key(&2));
+
+        drop(stalled_frame);
+        drop(healthy_frame);
+        assert_eq!(stalled_queued_bytes.load(Ordering::Acquire), 0);
+        assert_eq!(healthy_queued_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn full_client_writer_message_queue_does_not_block_another_client() {
+        let (stalled_sender, stalled_receiver) = sync_channel(CLIENT_WRITE_QUEUE_MAX_MESSAGES);
+        let stalled_queued_bytes = Arc::new(AtomicUsize::new(0));
+        let (stalled_shutdown, _stalled_peer) = UnixStream::pair().unwrap();
+        let (healthy_sender, healthy_receiver) = sync_channel(CLIENT_WRITE_QUEUE_MAX_MESSAGES);
+        let healthy_queued_bytes = Arc::new(AtomicUsize::new(0));
+        let (healthy_shutdown, _healthy_peer) = UnixStream::pair().unwrap();
+        let mut state = test_host_state();
+        state.clients.insert(
+            1,
+            Client::new(
+                stalled_sender,
+                Arc::clone(&stalled_queued_bytes),
+                stalled_shutdown,
+            ),
+        );
+        state.clients.insert(
+            2,
+            Client::new(
+                healthy_sender,
+                Arc::clone(&healthy_queued_bytes),
+                healthy_shutdown,
+            ),
+        );
+        for index in 0..CLIENT_WRITE_QUEUE_MAX_MESSAGES {
+            assert!(state.send_client(1, &json!(index)));
+        }
+
+        let message = json!({ "jsonrpc": "2.0", "method": "healthy" });
         assert!(!state.send_client(1, &message));
         assert!(state.send_client(2, &message));
 
+        let healthy_frame = healthy_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
         assert_eq!(
-            healthy_receiver
-                .recv_timeout(Duration::from_secs(1))
-                .unwrap(),
-            message
+            healthy_frame.bytes.as_ref(),
+            serialize_frame(&message).unwrap().as_ref()
         );
         assert_eq!(
             stalled_receiver.try_iter().count(),
-            CLIENT_WRITE_QUEUE_CAPACITY
+            CLIENT_WRITE_QUEUE_MAX_MESSAGES
         );
         assert!(!state.clients.contains_key(&1));
         assert!(state.clients.contains_key(&2));
+
+        drop(healthy_frame);
+        assert_eq!(stalled_queued_bytes.load(Ordering::Acquire), 0);
+        assert_eq!(healthy_queued_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn broadcast_reuses_one_serialized_frame_for_all_clients() {
+        let (client_one_sender, client_one_receiver) =
+            sync_channel(CLIENT_WRITE_QUEUE_MAX_MESSAGES);
+        let client_one_queued_bytes = Arc::new(AtomicUsize::new(0));
+        let (client_one_shutdown, _client_one_peer) = UnixStream::pair().unwrap();
+        let (client_two_sender, client_two_receiver) =
+            sync_channel(CLIENT_WRITE_QUEUE_MAX_MESSAGES);
+        let client_two_queued_bytes = Arc::new(AtomicUsize::new(0));
+        let (client_two_shutdown, _client_two_peer) = UnixStream::pair().unwrap();
+        let mut state = test_host_state();
+        state.clients.insert(
+            1,
+            Client::new(
+                client_one_sender,
+                Arc::clone(&client_one_queued_bytes),
+                client_one_shutdown,
+            ),
+        );
+        state.clients.insert(
+            2,
+            Client::new(
+                client_two_sender,
+                Arc::clone(&client_two_queued_bytes),
+                client_two_shutdown,
+            ),
+        );
+        let message = json!({ "jsonrpc": "2.0", "method": "shared" });
+
+        state.broadcast_clients(&message);
+
+        let client_one_frame = client_one_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        let client_two_frame = client_two_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            &client_one_frame.bytes,
+            &client_two_frame.bytes
+        ));
+        assert_eq!(
+            client_one_frame.bytes.as_ref(),
+            serialize_frame(&message).unwrap().as_ref()
+        );
+        assert_eq!(
+            client_one_queued_bytes.load(Ordering::Acquire),
+            client_one_frame.bytes.len()
+        );
+        assert_eq!(
+            client_two_queued_bytes.load(Ordering::Acquire),
+            client_two_frame.bytes.len()
+        );
+
+        drop(client_one_frame);
+        drop(client_two_frame);
+        assert_eq!(client_one_queued_bytes.load(Ordering::Acquire), 0);
+        assert_eq!(client_two_queued_bytes.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -2564,15 +2896,16 @@ while True:
 
     fn queued_test_client(mut stream: UnixStream) -> Client {
         let shutdown = stream.try_clone().unwrap();
-        let (sender, receiver) = sync_channel(CLIENT_WRITE_QUEUE_CAPACITY);
+        let (sender, receiver) = sync_channel::<QueuedClientFrame>(CLIENT_WRITE_QUEUE_MAX_MESSAGES);
+        let queued_bytes = Arc::new(AtomicUsize::new(0));
         thread::spawn(move || {
-            while let Ok(message) = receiver.recv() {
-                if write_frame(&mut stream, &message).is_err() {
+            while let Ok(frame) = receiver.recv() {
+                if write_serialized_frame(&mut stream, &frame.bytes).is_err() {
                     break;
                 }
             }
         });
-        Client { sender, shutdown }
+        Client::new(sender, queued_bytes, shutdown)
     }
 
     fn test_host_state() -> HostState {
