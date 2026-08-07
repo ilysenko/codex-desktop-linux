@@ -18,13 +18,13 @@ const {
 } = require("./patch.js");
 
 const currentProjectSource = [
-  "function goa(e,t){let n=new Set(e.map(e=>e.projectId)),r=(t??[]).filter(e=>n.has(e)),i=new Set(r);return[...e.map(e=>e.projectId).filter(e=>!i.has(e)),...r]}",
-  "function voa(e,t){let n=goa(e,t),r=new Map(n.map((e,t)=>[e,t]));return[...e].sort((e,t)=>(r.get(e.projectId)??2**53-1)-(r.get(t.projectId)??2**53-1))}",
-  "function Drs({groups:e,items:t,projectOrder:n}){let r=new Map(t.map(e=>[e.task.key,e.recencyAt]));return voa(e.map((e,t)=>({group:e,index:t,recencyAt:e.threadKeys.reduce((e,t)=>Math.max(e,r.get(t)??0),e.projectUpdatedAt??0)})).sort((e,t)=>t.recencyAt-e.recencyAt||e.index-t.index).map(({group:e})=>e),n)}",
+  "function U6i(e,t){let n=new Set(e.map(e=>e.projectId)),r=(t??[]).filter(e=>n.has(e)),i=new Set(r);return[...e.map(e=>e.projectId).filter(e=>!i.has(e)),...r]}",
+  "function G6i(e,t){let n=U6i(e,t),r=new Map(n.map((e,t)=>[e,t]));return[...e].sort((e,t)=>(r.get(e.projectId)??2**53-1)-(r.get(t.projectId)??2**53-1))}",
+  "function p5o({groups:e,items:t,projectOrder:n}){let r=new Map(t.map(e=>[e.task.key,e.recencyAt]));return G6i(e.map((e,t)=>({group:e,index:t,recencyAt:e.threadKeys.reduce((e,t)=>Math.max(e,r.get(t)??0),e.projectUpdatedAt??0)})).sort((e,t)=>t.recencyAt-e.recencyAt||e.index-t.index).map(({group:e})=>e),n)}",
   "const prioritySortId=`sidebarElectron.sortMenu.priority`;",
   "const updatedSortId=`sidebarElectron.sortMenu.updated`;",
   "const manualSortId=`sidebarElectron.sortMenu.manual`;",
-  "A=Drs({groups:Ers({groups:O,items:f}),items:f,projectOrder:Cp(t,Nl.PROJECT_ORDER)});",
+  "let{chatSortMode:j,projectSortMode:M}=t(xH),N=p5o({groups:A,items:f,projectOrder:jm(t,_u.PROJECT_ORDER)});",
 ].join("");
 
 function captureWarns(fn) {
@@ -70,7 +70,7 @@ function withFeatureConfig(enabled, fn) {
 function evaluateGroupSorter(source) {
   const context = {};
   const sorterSource = source.slice(0, source.indexOf("const prioritySortId"));
-  vm.runInNewContext(`${sorterSource};globalThis.sortProjectGroups=Drs`, context);
+  vm.runInNewContext(`${sorterSource};globalThis.sortProjectGroups=p5o`, context);
   return context.sortProjectGroups;
 }
 
@@ -154,15 +154,15 @@ test("patch passes the selected project sort mode into the group sorter", () => 
   const patched = applyPatchTwice(currentProjectSource);
   assert.ok(
     patched.includes(
-      "projectOrder:Cp(t,Nl.PROJECT_ORDER),sortMode:t(UR).projectSortMode",
+      "projectOrder:jm(t,_u.PROJECT_ORDER),sortMode:M",
     ),
   );
 });
 
 test("drift leaves the asset byte-identical", () => {
   const source = currentProjectSource.replace(
-    "function Drs({groups:e,items:t,projectOrder:n})",
-    "function Drs({groups:e,items:t,projectOrder:n,unknown:o})",
+    "function p5o({groups:e,items:t,projectOrder:n})",
+    "function p5o({groups:e,items:t,projectOrder:n,unknown:o})",
   );
   const { value, warnings } = captureWarns(() =>
     applyProjectGroupLastUpdatedSortPatch(source),
@@ -175,7 +175,7 @@ test("drift leaves the asset byte-identical", () => {
 
 test("missing current call site leaves the asset byte-identical", () => {
   const source = currentProjectSource.replace(
-    "projectOrder:Cp(t,Nl.PROJECT_ORDER)",
+    "projectOrder:jm(t,_u.PROJECT_ORDER)",
     "projectOrder:unknownProjectOrder",
   );
   const { value, warnings } = captureWarns(() =>
@@ -208,7 +208,7 @@ test("descriptor targets and patches only the current project sidebar chunk", ()
     const assetsDir = path.join(tempDir, "webview", "assets");
     const assetPath = path.join(
       assetsDir,
-      "app-initial-CKNQDTeE.js",
+      "app-initial-Biw83Aiz.js",
     );
     fs.mkdirSync(assetsDir, { recursive: true });
     fs.writeFileSync(assetPath, currentProjectSource);
