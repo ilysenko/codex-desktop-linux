@@ -167,6 +167,64 @@ test("guards every Browser client nodeRepl env read", () => {
   }
 });
 
+test("keeps Browser notification hooks on the cloned nodeRepl runtime", async () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "browser-client-runtime-clone-"));
+  const clientPath = path.join(fixtureRoot, "browser-client.mjs");
+  const patcher = path.join(__dirname, "bundled-plugins.sh");
+  const client = [
+    "function bb(){let e=globalThis.nodeRepl;return e?.config==null?void 0:e}",
+    "async function cM(e){let t=e.createElicitation.bind(e),r={...e,platform:`linux`,setResponseMeta:e.setResponseMeta,get requestMeta(){return e.requestMeta},async createElicitation(o){return await t(o)}},n=await $K(e,r);return n!=null&&(r.gaas=n),r}",
+    "async function $K(){return null}",
+  ].join("");
+
+  try {
+    fs.writeFileSync(clientPath, client, "utf8");
+    const applyShim = () =>
+      spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$1"; patch_browser_use_node_repl_config_shim "$2"; patch_browser_use_node_repl_runtime_clone_shim "$2"',
+          "browser-client-runtime-clone",
+          patcher,
+          clientPath,
+        ],
+        { encoding: "utf8" },
+      );
+
+    const first = applyShim();
+    assert.equal(first.status, 0, first.stderr);
+    const patched = fs.readFileSync(clientPath, "utf8");
+    const previousNodeRepl = globalThis.nodeRepl;
+    const prototype = {};
+    const nodeRepl = Object.preventExtensions(
+      Object.assign(Object.create(prototype), {
+        createElicitation: async () => ({ action: "decline" }),
+        requestMeta: {},
+        setResponseMeta() {},
+      }),
+    );
+
+    try {
+      globalThis.nodeRepl = nodeRepl;
+      const initialize = new Function(`${patched};return {clone:cM,resolve:bb}`);
+      const runtime = initialize();
+      const resolved = runtime.resolve();
+      assert.equal(typeof resolved.addAfterSubmittedCodeHook, "function");
+      const cloned = await runtime.clone(resolved);
+      assert.equal(typeof cloned.addAfterSubmittedCodeHook, "function");
+    } finally {
+      globalThis.nodeRepl = previousNodeRepl;
+    }
+
+    const second = applyShim();
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal(fs.readFileSync(clientPath, "utf8"), patched);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test(
   "staged Browser and Chrome clients import through the real node_repl runtime",
   { skip: !runtimePath || !pluginsRoot },
