@@ -1116,7 +1116,6 @@ stage_chrome_plugin_from_upstream() {
     patch_browser_use_node_repl_config_shim "$target_plugin/scripts/browser-client.mjs"
     patch_browser_use_node_repl_runtime_clone_shim "$target_plugin/scripts/browser-client.mjs"
     patch_browser_use_native_pipe_import_meta_bridge "$target_plugin/scripts/browser-client.mjs"
-    patch_browser_use_site_status_allowlist_fallback "$target_plugin/scripts/browser-client.mjs"
     patch_browser_client_linux_socket_dir "$target_plugin/scripts/browser-client.mjs"
     normalize_plugin_script_executable_modes "$target_plugin"
     if ! install_chrome_extension_host_resource "$target_plugin"; then
@@ -1126,61 +1125,6 @@ stage_chrome_plugin_from_upstream() {
 
     info "Chrome plugin staged from upstream DMG"
     return 0
-}
-
-patch_browser_use_site_status_allowlist_fallback() {
-    local client="$1"
-
-    if grep -q "codexLinuxSiteStatusAllowlistFallback" "$client"; then
-        return 0
-    fi
-
-    python3 - "$client" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-path = Path(sys.argv[1])
-source = path.read_text(encoding="utf-8")
-pattern = re.compile(
-    r'async fetchBlocked\((?P<url>[A-Za-z_$][\w$]*),(?P<label>[A-Za-z_$][\w$]*)\)\{'
-    r'let (?P<response>[A-Za-z_$][\w$]*)=await (?P<fetch>[A-Za-z_$][\w$]*)'
-    r'\((?P=url)\.endpoint,\{method:"GET"\}\);'
-    r'if\(!(?P=response)\.ok\)throw new Error\((?P<format>[A-Za-z_$][\w$]*)'
-    r'\(`\$\{(?P=label)\} cannot determine if \$\{(?P=url)\.displayUrl\} is allowed\. '
-    r'Please try again later or use another source\.`\)\);'
-    r'let (?P<json>[A-Za-z_$][\w$]*)=await (?P=response)\.json\(\);'
-    r'return (?P<status>[A-Za-z_$][\w$]*)\((?P=json)\)\}'
-)
-match = pattern.search(source)
-if match is None:
-    if "/aura/site_status" not in source and "fetchBlocked(" not in source:
-        raise SystemExit(0)
-    print(
-        "WARN: Could not find Browser Use site_status allowlist fallback insertion point — leaving browser-client.mjs unchanged",
-        file=sys.stderr,
-    )
-    raise SystemExit(0)
-
-url = match.group("url")
-response = match.group("response")
-fetch = match.group("fetch")
-formatter = match.group("format")
-json_value = match.group("json")
-status = match.group("status")
-label = match.group("label")
-error = "__codexLinuxErr"
-error_message = f'${{{label}}} cannot determine if ${{{url}.displayUrl}} is allowed. Please try again later or use another source.'
-replacement = (
-    f'async fetchBlocked({url},{label}){{let {response};try{{{response}=await {fetch}({url}.endpoint,{{method:"GET"}})}}'
-    f'catch({error}){{if(String({url}?.endpoint??"").includes("/aura/site_status")&&'
-    f'String({error}?.message??{error}).toLowerCase().includes("allowlist"))'
-    f'return!1/*codexLinuxSiteStatusAllowlistFallback*/;throw {error}}}'
-    f'if(!{response}.ok)throw new Error({formatter}(`{error_message}`));'
-    f'let {json_value}=await {response}.json();return {status}({json_value})}}'
-)
-path.write_text(source[:match.start()] + replacement + source[match.end():], encoding="utf-8")
-PY
 }
 
 patch_browser_use_file_url_policy() {
@@ -1680,7 +1624,6 @@ stage_browser_plugin_from_upstream() {
     patch_browser_use_node_repl_config_shim "$target_client"
     patch_browser_use_node_repl_runtime_clone_shim "$target_client"
     patch_browser_use_native_pipe_import_meta_bridge "$target_client"
-    patch_browser_use_site_status_allowlist_fallback "$target_client"
     patch_browser_use_file_url_policy "$target_client"
     patch_browser_client_iab_socket_scope "$target_client"
 
