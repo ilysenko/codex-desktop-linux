@@ -8441,7 +8441,7 @@ make_fake_chrome_upstream_app() {
     mkdir -p \
         "$resources_dir/plugins/openai-bundled/.agents/plugins" \
         "$chrome_dir/.codex-plugin" \
-        "$chrome_dir/skills/control-in-app-browser" \
+        "$chrome_dir/skills/control-chrome" \
         "$chrome_dir/scripts"
 
     cat > "$resources_dir/plugins/openai-bundled/.agents/plugins/marketplace.json" <<'JSON'
@@ -8453,13 +8453,14 @@ JSON
     cat > "$chrome_dir/scripts/installManifest.mjs" <<'JS'
 var n={extensionId:"hehggadaopoacecdllhhajmbjkdcmajg",extensionHostName:"com.openai.codexextension"};var p=o=>{let t=`${o.extensionHostName}.json`,r={darwin:["Library/Application Support/Google/Chrome/NativeMessagingHosts"],linux:[".config/google-chrome/NativeMessagingHosts"],win32:["AppData/Local/OpenAI/extension"]}[m.platform()];return r.map(s=>l.resolve(m.homedir(),s,t))};
 JS
-    cat > "$chrome_dir/skills/control-in-app-browser/SKILL.md" <<'MD'
+    cat > "$chrome_dir/skills/control-chrome/SKILL.md" <<'MD'
 # Chrome
 
-Use the browser bound to `browser` for tasks in this skill.
+## Browser selection
+Do not inspect browser cookies, local storage, profiles, passwords, or session stores. Browser discovery must remain read-only.
 MD
     cat > "$chrome_dir/scripts/extension-ids.json" <<'JSON'
-{"extensionIds":["hehggadaopoacecdllhhajmbjkdcmajg"],"extensionHostName":"com.openai.codexextension"}
+{"extensionIds":["hehggadaopoacecdllhhajmbjkdcmajg"],"extensionHostName":"com.openai.codexextension","browserDiagnostics":[{"browserFamily":"chrome","displayName":"Google Chrome","linux":{"commands":["google-chrome","google-chrome-stable","chromium","chromium-browser"],"nativeMessagingManifestDirectories":[".config/google-chrome/NativeMessagingHosts",".config/chromium/NativeMessagingHosts"],"processNames":["chrome"],"userDataDirectorySegments":[".config","google-chrome"]}},{"browserFamily":"brave","displayName":"Brave","linux":{"commands":["brave-browser","brave"],"nativeMessagingManifestDirectories":[".config/BraveSoftware/Brave-Browser/NativeMessagingHosts"],"processNames":["brave","brave-browser"],"userDataDirectorySegments":[".config","BraveSoftware","Brave-Browser"]}}]}
 JSON
     cat > "$chrome_dir/scripts/browser-client.mjs" <<'JS'
 const browserPreference={};function preferredWindowIdFor(){}function getForUrl(){}const extensionInstanceId=null;
@@ -8631,6 +8632,13 @@ test_chrome_plugin_staging() {
     assert_contains "$chrome_dir/scripts/check-extension-installed.js" "defaultLinuxUserDataDirectoryForCommand"
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "resolveChromeProfileDirectoryFromRunningProcess"
     assert_contains "$chrome_dir/scripts/open-chrome-window.js" "defaultLinuxUserDataDirectoryForCommand"
+    # upstream registry behaviour must survive staging untouched
+    assert_contains "$chrome_dir/scripts/extension-ids.json" '"browserFamily":"chrome"'
+    assert_contains "$chrome_dir/scripts/extension-ids.json" '"browserFamily":"brave"'
+    assert_contains "$chrome_dir/scripts/extension-ids.json" ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts"
+    assert_contains "$chrome_dir/scripts/extension-ids.json" ".config/chromium/NativeMessagingHosts"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "start a different Chrome, Brave, or Chromium profile"
+    assert_contains "$chrome_dir/skills/control-chrome/SKILL.md" "browser.tabs.new()"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "browserPreference"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "preferredWindowIdFor"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "getForUrl"

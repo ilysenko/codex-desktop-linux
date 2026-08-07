@@ -200,6 +200,25 @@ function chromeArgumentValue(argv, name) {
 
 `;
 
+// 26.803.41515 rewrote this skill and now tells the model to bind the first
+// connected extension instance without enumerating, so the old enumerate-and-
+// match paragraph is dropped. The Linux tab-creation guard is kept: nothing
+// upstream covers it, and creating a tab before the browser is chosen still
+// launches the wrong profile.
+const controlChromeSkill = path.join(pluginDir, "skills", "control-chrome", "SKILL.md");
+// Only the chrome plugin ships this skill; the browser plugin never has it, so
+// its absence is a layout fact rather than drift.
+if (fs.existsSync(path.dirname(controlChromeSkill))) patchFile(controlChromeSkill, [
+  {
+    label: "Chrome profile launch guard",
+    oldText: `Do not inspect browser cookies, local storage, profiles, passwords, or session stores. Browser discovery must remain read-only.`,
+    newText: `Do not inspect browser cookies, local storage, profiles, passwords, or session stores. Browser discovery must remain read-only.
+
+On Linux, do not call \`browser.tabs.new()\` until the intended browser has been selected. Creating a tab on the wrong extension backend can start a different Chrome, Brave, or Chromium profile instead of using the already-open user profile.`,
+    alreadyText: "start a different Chrome, Brave, or Chromium profile",
+  },
+]);
+
 patchFileFirstMatch(path.join(scriptsDir, "check-extension-installed.js"), {
   label: "Linux running browser extension profile preference",
   oldTexts: [
@@ -257,4 +276,3 @@ patchFileFirstMatch(path.join(scriptsDir, "open-chrome-window.js"), {
   newText: `${linuxRunningProfileResolver}function resolveChromeProfileDirectoryFromLocalState(userDataDirectory) {`,
   alreadyText: "function linuxProcessDirectories()",
 });
-
