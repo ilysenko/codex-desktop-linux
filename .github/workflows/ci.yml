@@ -39,6 +39,7 @@ jobs:
           bash -n scripts/build-rpm.sh
           bash -n scripts/build-pacman.sh
           bash -n scripts/build-appimage.sh
+          bash -n scripts/ci/download-upstream-dmg.sh
           bash -n scripts/ci/update-nix-hashes.sh
           bash -n scripts/ci/validate-nix-pins.sh
 

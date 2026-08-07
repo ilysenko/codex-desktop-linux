@@ -691,7 +691,7 @@ run_upstream_job() {
 
     if [ ! -s "$dmg_path" ]; then
         info "Downloading upstream DMG"
-        curl -fL --retry 3 -o "$dmg_path" "$UPSTREAM_DMG_URL"
+        scripts/ci/download-upstream-dmg.sh "$UPSTREAM_DMG_URL" "$dmg_path"
     else
         info "Using cached upstream DMG: $dmg_path"
     fi

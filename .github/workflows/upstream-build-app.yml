@@ -10,6 +10,7 @@ on:
       - scripts/patch-linux-window-ui.js
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
+      - scripts/ci/download-upstream-dmg.sh
       - scripts/ci/validate-patch-report.js
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js
@@ -33,6 +34,7 @@ on:
       - scripts/patch-linux-window-ui.js
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
+      - scripts/ci/download-upstream-dmg.sh
       - scripts/ci/validate-patch-report.js
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js
@@ -124,11 +126,12 @@ jobs:
           key: upstream-dmg-${{ env.DMG_CACHE_SCHEMA_VERSION }}-${{ steps.upstream-metadata.outputs.cache_segment }}
 
       - name: Download upstream DMG
-        if: steps.dmg-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          mkdir -p "$(dirname "$UPSTREAM_DMG_PATH")"
-          curl -fL --retry 3 -o "$UPSTREAM_DMG_PATH" "$UPSTREAM_DMG_URL"
+          scripts/ci/download-upstream-dmg.sh \
+            "$UPSTREAM_DMG_URL" \
+            "$UPSTREAM_DMG_PATH" \
+            --reuse-existing
 
       - name: Record local DMG fingerprint
         id: local-dmg

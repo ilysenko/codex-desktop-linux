@@ -167,8 +167,7 @@ nix_pin_files_changed() {
 }
 
 main() {
-    mkdir -p "$(dirname "$UPSTREAM_DMG_PATH")"
-    curl -fL --retry 3 -o "$UPSTREAM_DMG_PATH" "$UPSTREAM_DMG_URL"
+    "$REPO_DIR/scripts/ci/download-upstream-dmg.sh" "$UPSTREAM_DMG_URL" "$UPSTREAM_DMG_PATH"
 
     new_dmg_hash="$(nix hash file --sri --type sha256 "$UPSTREAM_DMG_PATH")"
     if ! validate_sri_hash "$new_dmg_hash"; then

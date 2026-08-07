@@ -147,7 +147,7 @@ Config keys:
 
 ### `reasoning.keepEffortLabelsEnglish`
 
-Leaves the reasoning effort values as `None`, `Minimal`, `Low`, `Medium`,
+Leaves the current reasoning effort values as `None`, `Minimal`, `Medium`,
 `High`, `XHigh`, `Max`, and `Ultra` in the Simplified Chinese locale. The
 surrounding picker title and usage warning remain translated. This avoids
 collapsing distinct upstream values such as `XHigh` and `Ultra` into the same

@@ -3952,7 +3952,9 @@ make_update_nix_hash_fixture() {
     local hash_a="sha256-VVQNu/E7Wuyxfsy93Gorknr0t7H7wy9kxMOiBZYOo/o="
 
     mkdir -p "$fixture/scripts/ci" "$fixture/nix/native-modules" "$fixture/bin"
+    cp "$REPO_DIR/scripts/ci/download-upstream-dmg.sh" "$fixture/scripts/ci/download-upstream-dmg.sh"
     cp "$REPO_DIR/scripts/ci/update-nix-hashes.sh" "$fixture/scripts/ci/update-nix-hashes.sh"
+    chmod +x "$fixture/scripts/ci/download-upstream-dmg.sh"
     chmod +x "$fixture/scripts/ci/update-nix-hashes.sh"
 
     cat > "$fixture/flake.nix" <<EOF
