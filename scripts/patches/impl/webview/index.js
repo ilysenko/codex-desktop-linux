@@ -1172,26 +1172,73 @@ function patchCurrentBrowserUseRegistrySource(source) {
   );
 }
 
+const browserUseRegistryDeclarationNeedle =
+  "={chrome:{backendCompatibilityKey:`chrome`,";
+const browserUseInstalledCheckPattern =
+  /async function [A-Za-z_$][\w$]*\(\{browserFamily:[A-Za-z_$][\w$]*,platform:[A-Za-z_$][\w$]*=process\.platform\}\)\{/u;
+const browserUseOpenUrlPattern =
+  /async function [A-Za-z_$][\w$]*\(\{browserFamily:[A-Za-z_$][\w$]*,platform:[A-Za-z_$][\w$]*=process\.platform,runCommand:[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*,url:[A-Za-z_$][\w$]*\}\)\{/u;
+
+// The registry object and its `Object.hasOwn` guard are minified to fresh
+// two-letter names in every upstream build, so resolve both from the registry
+// literal instead of pinning the current names.
+function currentBrowserUseRegistryBinding(source) {
+  const state = currentBrowserUseRegistryState(source);
+  if (state === "drifted") {
+    return null;
+  }
+  const registryIndex = source.indexOf(
+    state === "patched"
+      ? LINUX_BRAVE_BROWSER_USE_CHROME_REGISTRY
+      : CURRENT_BROWSER_USE_CHROME_LINUX_REGISTRY,
+  );
+  const declarationIndex = source.lastIndexOf(
+    browserUseRegistryDeclarationNeedle,
+    registryIndex,
+  );
+  if (declarationIndex === -1) {
+    return null;
+  }
+  const registryVar = source
+    .slice(0, declarationIndex)
+    .match(/([A-Za-z_$][\w$]*)$/u)?.[1];
+  if (registryVar == null) {
+    return null;
+  }
+  const guardMatch = source.match(new RegExp(
+    `function ([A-Za-z_$][\\w$]*)\\(e\\)\\{return Object\\.hasOwn\\(${registryVar},e\\)\\}`,
+    "u",
+  ));
+  return guardMatch == null
+    ? null
+    : { registryVar, guardVar: guardMatch[1] };
+}
+
 function currentBrowserUseMainCallerContract(source) {
-  return source.includes("async function sne({browserFamily:") &&
-    source.includes("async function lne({browserFamily:") &&
-    source.includes("function Ol(") &&
+  return browserUseInstalledCheckPattern.test(source) &&
+    browserUseOpenUrlPattern.test(source) &&
     source.includes("getInstalledBrowserFamilies(){") &&
     source.includes("async openUrl({browserFamily:");
 }
 
 function currentBrowserUseMainRegistryContract(source) {
-  return currentBrowserUseRegistryState(source) !== "drifted" &&
-    source.includes("function fb(e){return Object.hasOwn(ob,e)}") &&
-    /Object\.defineProperty\(exports,["'`]So["'`],\{enumerable:!0,get:function\(\)\{return ob\}\}\)/u.test(source);
+  const binding = currentBrowserUseRegistryBinding(source);
+  if (binding == null) {
+    return false;
+  }
+  const exportsBinding = (local) => new RegExp(
+    `Object\\.defineProperty\\(exports,["'\`][A-Za-z_$][\\w$]*["'\`],\\{enumerable:!0,get:function\\(\\)\\{return ${local}\\}\\}\\)`,
+    "u",
+  ).test(source);
+  return exportsBinding(binding.registryVar) && exportsBinding(binding.guardVar);
 }
 
 function currentBrowserUseRendererContract(source) {
-  return currentBrowserUseRegistryState(source) !== "drifted" &&
+  const binding = currentBrowserUseRegistryBinding(source);
+  return binding != null &&
     source.includes("featureName:`browser_use_external`") &&
     source.includes("410065390") &&
-    source.includes("function Yl(e){return Object.hasOwn(Xl,e)}") &&
-    source.includes("Object.keys(Xl).filter(Yl)") &&
+    source.includes(`Object.keys(${binding.registryVar}).filter(${binding.guardVar})`) &&
     (externalBrowserUseAvailabilityCurrentPattern.test(source) ||
       externalBrowserUseAvailabilityPatchedPattern.test(source));
 }
@@ -2447,19 +2494,19 @@ function applyLinuxSkillsListDedupePatch(currentSource) {
     .replace("function IJ(e){return e.skills}", `${helper}function IJ(e){return e.skills}`);
 }
 
-function patchCommentPreloadBundle(extractedDir) {
-  const commentPreloadBundle = path.join(extractedDir, ".vite", "build", "comment-preload.js");
-  if (!fs.existsSync(commentPreloadBundle)) {
+function patchBrowserPagePreloadBundle(extractedDir) {
+  const browserPagePreloadBundle = path.join(extractedDir, ".vite", "build", "browser-page-preload.js");
+  if (!fs.existsSync(browserPagePreloadBundle)) {
     console.warn(
-      `WARN: Could not find comment preload bundle in ${path.dirname(commentPreloadBundle)} — skipping annotation screenshot patch`,
+      `WARN: Could not find browser page preload bundle in ${path.dirname(browserPagePreloadBundle)} — skipping annotation screenshot patch`,
     );
     return { matched: false, changed: false };
   }
 
-  const source = fs.readFileSync(commentPreloadBundle, "utf8");
+  const source = fs.readFileSync(browserPagePreloadBundle, "utf8");
   const patchedSource = applyBrowserAnnotationScreenshotPatch(source);
   if (patchedSource !== source) {
-    fs.writeFileSync(commentPreloadBundle, patchedSource, "utf8");
+    fs.writeFileSync(browserPagePreloadBundle, patchedSource, "utf8");
     return { matched: true, changed: true };
   }
   return { matched: true, changed: false };
@@ -2492,5 +2539,5 @@ module.exports = {
   applyLocalEnvironmentActionModalDraftPatch,
   applySubagentNicknameMetadataPatch,
   codexLinuxWatchBrowserWebviewAttachment,
-  patchCommentPreloadBundle,
+  patchBrowserPagePreloadBundle,
 };

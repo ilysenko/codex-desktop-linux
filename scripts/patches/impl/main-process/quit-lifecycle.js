@@ -44,7 +44,7 @@ function parseCurrentWillQuitDrainBody(body, eventVar, listenerElectronVar) {
     `^(?<contextDispose>${identifier})\\((?<contextArg>${identifier}),(?<contextTimeout>${identifier})\\)\\.then\\(\\(\\)=>\\{(?<disposables>${identifier})\\.dispose\\(\\),(?<electron>${identifier})\\.app\\.quit\\(\\)\\}\\)$`,
   ));
   const reducedMatch = outerMatch.groups.reduced.match(new RegExp(
-    `^(?<event>${identifier})\\.preventDefault\\(\\),(?<draining>${identifier})=!0,(?<hotkey>${identifier})\\.dispose\\(\\),(?<dictation>${identifier})\\.dispose\\(\\),Promise\\.allSettled\\(\\[(?<stop>${identifier})\\(\\),(?<trace>${identifier})\\(\\)\\]\\)\\.then\\((?<finalize>${identifier})\\)$`,
+    `^(?<event>${identifier})\\.preventDefault\\(\\),(?<draining>${identifier})=!0,(?<hotkey>${identifier})\\.dispose\\(\\),(?<dictation>${identifier})\\.dispose\\(\\),Promise\\.allSettled\\(\\[(?<globalState>${identifier})\\.flush\\(\\),(?<stop>${identifier})\\(\\),(?<trace>${identifier})\\(\\)\\]\\)\\.then\\((?<finalize>${identifier})\\)$`,
   ));
   const fullMatch = outerMatch.groups.full.match(new RegExp(
     `^(?<event>${identifier})\\.preventDefault\\(\\),(?<draining>${identifier})=!0,(?<hotkey>${identifier})\\.dispose\\(\\),(?<dictation>${identifier})\\.dispose\\(\\),Promise\\.allSettled\\(\\[(?<globalState>${identifier})\\.flush\\(\\),(?<settings>${identifier})\\.flush\\(\\),(?<stop>${identifier})\\(\\),(?<trace>${identifier})\\(\\)\\]\\)\\.then\\((?<finalize>${identifier})\\)$`,
@@ -65,6 +65,7 @@ function parseCurrentWillQuitDrainBody(body, eventVar, listenerElectronVar) {
     full.draining !== outer.draining ||
     reduced.hotkey !== full.hotkey ||
     reduced.dictation !== full.dictation ||
+    reduced.globalState !== full.globalState ||
     reduced.stop !== full.stop ||
     reduced.trace !== full.trace ||
     reduced.finalize !== outer.upstreamFinalize ||
@@ -167,7 +168,7 @@ function hasAppliedWillQuitCleanupPostcondition(currentSource, appliedFinalizerS
   }
 
   const reducedMatch = reducedBody.match(new RegExp(
-    `codexLinuxRunQuitCleanup\\(\\(\\)=>\\{(?<hotkey>${identifier})\\.dispose\\(\\),(?<dictation>${identifier})\\.dispose\\(\\);return Promise\\.allSettled\\(\\[(?<stop>${identifier})\\(\\),(?<trace>${identifier})\\(\\)\\]\\)\\}\\)`,
+    `codexLinuxRunQuitCleanup\\(\\(\\)=>\\{(?<hotkey>${identifier})\\.dispose\\(\\),(?<dictation>${identifier})\\.dispose\\(\\);return Promise\\.allSettled\\(\\[(?<globalState>${identifier})\\.flush\\(\\),(?<stop>${identifier})\\(\\),(?<trace>${identifier})\\(\\)\\]\\)\\}\\)`,
   ));
   const fullMatch = fullBody.match(new RegExp(
     `codexLinuxRunQuitCleanup\\(\\(\\)=>\\{(?<hotkey>${identifier})\\.dispose\\(\\),(?<dictation>${identifier})\\.dispose\\(\\);return Promise\\.allSettled\\(\\[(?<globalState>${identifier})\\.flush\\(\\),(?<settings>${identifier})\\.flush\\(\\),(?<stop>${identifier})\\(\\),(?<trace>${identifier})\\(\\)\\]\\)\\}\\)`,
@@ -179,6 +180,7 @@ function hasAppliedWillQuitCleanupPostcondition(currentSource, appliedFinalizerS
   return (
     reducedMatch.groups.hotkey === fullMatch.groups.hotkey &&
     reducedMatch.groups.dictation === fullMatch.groups.dictation &&
+    reducedMatch.groups.globalState === fullMatch.groups.globalState &&
     reducedMatch.groups.stop === fullMatch.groups.stop &&
     reducedMatch.groups.trace === fullMatch.groups.trace
   );
@@ -234,8 +236,8 @@ function applyLinuxWillQuitDrainTimeoutPatch(currentSource) {
     `let ${originalFinalizer},${linuxFinalizer};`,
   );
   patchedBody = patchedBody.replace(
-    `${reduced.hotkey}.dispose(),${reduced.dictation}.dispose(),Promise.allSettled([${reduced.stop}(),${reduced.trace}()]).then(${outer.upstreamFinalize})`,
-    `codexLinuxRunQuitCleanup(()=>{${reduced.hotkey}.dispose(),${reduced.dictation}.dispose();return Promise.allSettled([${reduced.stop}(),${reduced.trace}()])})`,
+    `${reduced.hotkey}.dispose(),${reduced.dictation}.dispose(),Promise.allSettled([${reduced.globalState}.flush(),${reduced.stop}(),${reduced.trace}()]).then(${outer.upstreamFinalize})`,
+    `codexLinuxRunQuitCleanup(()=>{${reduced.hotkey}.dispose(),${reduced.dictation}.dispose();return Promise.allSettled([${reduced.globalState}.flush(),${reduced.stop}(),${reduced.trace}()])})`,
   );
   patchedBody = patchedBody.replace(
     `${full.hotkey}.dispose(),${full.dictation}.dispose(),Promise.allSettled([${full.globalState}.flush(),${full.settings}.flush(),${full.stop}(),${full.trace}()]).then(${outer.upstreamFinalize})`,

@@ -183,6 +183,7 @@ const {
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   patchLinuxBrowserUseExternalAvailabilityAssets,
+  patchBrowserPagePreloadBundle,
   applyLinuxBrowserUseWebviewHostRecoveryPatch,
   applyLinuxBrowserUseWebviewRemountStorePatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,
@@ -1403,7 +1404,7 @@ function beforeQuitConfirmationBundleFixture() {
 
 function willQuitDrainBundleFixture() {
   return [
-    "l.app.on(`will-quit`,e=>{if(y=!0,v)return;let t=()=>{U5(h,N5).then(()=>{g.dispose(),l.app.quit()})};if(r.shouldSkipDrainBeforeQuit()){e.preventDefault(),v=!0,c.dispose(),u.dispose(),Promise.allSettled([p(),m()]).then(t);return}e.preventDefault(),v=!0,c.dispose(),u.dispose(),Promise.allSettled([d.flush(),f.flush(),p(),m()]).then(t)});",
+    "l.app.on(`will-quit`,e=>{if(y=!0,v)return;let t=()=>{U5(h,N5).then(()=>{g.dispose(),l.app.quit()})};if(r.shouldSkipDrainBeforeQuit()){e.preventDefault(),v=!0,c.dispose(),u.dispose(),Promise.allSettled([d.flush(),p(),m()]).then(t);return}e.preventDefault(),v=!0,c.dispose(),u.dispose(),Promise.allSettled([d.flush(),f.flush(),p(),m()]).then(t)});",
   ].join("");
 }
 
@@ -1905,7 +1906,7 @@ function latestAvatarOverlayBundleFixture() {
     "let c=require(`electron`),h=require(`node:child_process`);",
     "function eo(e,{addon:t,electronAppPath:n,platform:r=process.platform,resourcesPath:i=process.resourcesPath}={}){if(r!==`darwin`)return!1;try{return(t??Sa({electronAppPath:n??c.app.getAppPath(),resourcesPath:i})).setRemoteHostedPIPContentComputerUseCursorLocationHandler(e)}catch{return!1}}",
     "var d5=`/avatar-overlay`,of={width:356,height:320},m5={width:112,height:121},y5={width:0,height:0},v5={width:276,height:131};",
-    "var fV=class{window=null;layout=null;mascotSize=m5;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;layoutMode=`native`;compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},getCursorPosition(){return null},performWindowDrag(){return!1},updateMascotRect(){},publishRemoteHostedPIPContentHost(){}};nativePositionController={clear(){}};",
+    "var fV=class{window=null;layout=null;mascotSize=m5;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;supportsInputShape=!1;inputShape=null;layoutMode=`native`;compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},getCursorPosition(){return null},performWindowDrag(){return!1},updateMascotRect(){},publishRemoteHostedPIPContentHost(){}};nativePositionController={clear(){}};",
     "startDrag(e,t,n=!1){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e)return;this.cancelMomentum();let i=this.getLayout(r),a=this.compositionHost.getCursorPosition(),o=t.pointerScreenX!=null?{x:t.pointerScreenX,y:t.pointerScreenY}:c.screen.getCursorScreenPoint();this.dragState=new a5(a==null?`renderer`:`native`,t.pointerWindowX-i.mascot.left,t.pointerWindowY-i.mascot.top,c.screen.getDisplayNearestPoint(o).bounds,n),this.windowServerDragActive=this.layoutMode===`native`&&!n&&this.compositionHost.performWindowDrag(),this.windowServerDragActive||(this.windowServerDragWindowX=null)}",
     "endDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;let r=this.dragState,i=this.windowServerDragActive,a=null;this.dragState=null,this.windowServerDragActive=!1,this.windowServerDragWindowX=null,i?this.persistWindowBounds(n,a??this.getCurrentDisplay()):this.reclampWindowToVisibleDisplay({shouldPersist:!0});let o=this.dockTarget;o!=null&&this.dockPresentation(o.anchor,o.onDock)}",
     "setElementSize(e,{elementSizeRevision:t,isTrayVisible:n,mascot:r,nativeCompositionEnabled:i,tray:a}){let o=this.window;if(o==null||o.isDestroyed()||o.webContents.id!==e)return;this.mascotSize=r,this.traySize=a,this.applyLatestElementSizes(o),this.stageWindowForNativePresentation(o),this.showWindowIfReady(o)}",
@@ -1913,9 +1914,10 @@ function latestAvatarOverlayBundleFixture() {
     "getLayoutForDisplay(e){return pf({anchor:this.anchor,displayBounds:this.layoutMode===`native`?e.workArea:e.bounds,mode:this.layoutMode,mascotSize:this.mascotSize,nativeMaterialAttached:this.compositionHost.isNativeMaterialAttached(),previousPlacement:this.placement,traySize:this.traySize??(this.layoutMode===`native`?y5:v5)})}",
     "applyLayout(e,t=this.getCurrentDisplay(),n=!1,r=!0,i=null){if(e.isDestroyed())return;let a=this.getLayoutForDisplay(t);this.layout=a,this.setWindowBounds(e,a.windowBounds,n,r),this.compositionHost.updateMascotRect(a.mascot),this.sendLayoutToRenderer(e,i),this.computerUseCursorLocation!=null&&this.dragState==null&&this.sendComputerUseCursorLocationToRenderer(e)}",
     "showWindow(e){if(e.isDestroyed())return;let t=this.isOpen();e.moveTop(),e.showInactive(),this.compositionHost.publishRemoteHostedPIPContentHost(),!t&&this.isOpen()&&this.broadcastOpenState()}",
-    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1;return}let t=!this.pointerInteractive;if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}",
+    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1;return}if(this.applyInputShape(e))return;let t=!this.pointerInteractive;if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}",
     "setComputerUseCursorLocation(e){this.computerUseCursorLocation=e,this.computerUseCursorPoint=e.isActive?{x:e.x,y:e.y}:null}",
     "sendComputerUseCursorLocationToRenderer(e){this.windowManager.sendMessageToWebContents(e.webContents,{type:`avatar-overlay-computer-use-cursor-changed`})}",
+    "applyInputShape(e){if(!this.supportsInputShape||this.inputShape==null)return!1;this.mousePassthroughEnabled&&=(e.setIgnoreMouseEvents(!1),!1);let t=typeof e.setInputShape==`function`&&e.setInputShape(this.inputShape.map(({height:e,left:t,top:n,width:r})=>({height:e,width:r,x:t,y:n})))===!0;return t&&(this.mousePassthroughEnabled=!1),t}",
     "refreshCursorAtCurrentMousePosition(e){let t=c.screen.getCursorScreenPoint();return this.sendCursorPointToAvatarOverlay(e,t,!1)}",
     "};",
   ].join("");
@@ -2840,7 +2842,7 @@ test("Linux reduced will-quit branch shares the complete cleanup deadline", asyn
 
   assert.equal(contextDisposeCalls, 1);
   assert.equal(disposablesCalls, 1);
-  assert.equal(globalStateFlushCalls, 0);
+  assert.equal(globalStateFlushCalls, 1);
   assert.equal(settingsFlushCalls, 0);
   assert.equal(stopCodexMicroCalls, 1);
   assert.equal(flushTracingCalls, 1);
@@ -3053,7 +3055,7 @@ test("does not accept damaged Linux quit cleanup factory bodies", () => {
   );
   const sources = [
     patched.replace(
-      "codexLinuxRunQuitCleanup(()=>{c.dispose(),u.dispose();return Promise.allSettled([p(),m()])})",
+      "codexLinuxRunQuitCleanup(()=>{c.dispose(),u.dispose();return Promise.allSettled([d.flush(),p(),m()])})",
       "codexLinuxRunQuitCleanup(()=>{return Promise.resolve()})",
     ),
     patched.replace(
@@ -4362,7 +4364,7 @@ test("patches current webview opaque window default bundle shapes", () => {
   );
 });
 
-test("patches the current comment preload screenshot anchor shape", () => {
+test("patches the current browser page preload screenshot anchor shape", () => {
   const source = [
     "let Nt=Mt==null?[]:Pl(Mt),Pt=F==null?Nt:[],Ft=null,It=`hover-box`,Lt,Rt=[];",
     "if(pt&&N?.annotation.anchor.kind===`element`){let e=Dt==null?null:as(Dt),t=e?.rect??fs(N.annotation.anchor);Lt=e?.borderRadius,It=js(N.annotation.anchor,t,w.width,w.height),Ft=Es(N.annotation.anchor,t,Dt),Rt=uc(Ot,w,{clipToVisibleArea:!0,selectionIndexOffset:1,viewportSize:N.annotation.viewportSize})}",
@@ -4385,7 +4387,7 @@ test("keeps the current stored annotation anchor shape unchanged", () => {
   assert.equal(applyPatchTwice(applyBrowserAnnotationScreenshotPatch, source), source);
 });
 
-test("reports current comment preload screenshot anchor drift", () => {
+test("reports current browser page preload screenshot anchor drift", () => {
   const source = "if(pt&&N?.annotation.anchor.kind===`element`){renderDriftedAnchor()}";
   const { value, warnings } = captureWarns(() =>
     applyBrowserAnnotationScreenshotPatch(source),
@@ -8651,6 +8653,111 @@ test("external Browser Use availability descriptor patches the complete current 
     status: "skipped-optional",
     reason: null,
   });
+});
+
+test("resolves the current Browser Use registry bindings without pinning minified names", () => {
+  const registry = "linux:{installations:[{commands:[`google-chrome`,`google-chrome-stable`],userDataDirName:`google-chrome`},{commands:[`chromium`,`chromium-browser`],userDataDirName:`chromium`},{commands:[`google-chrome-beta`],userDataDirName:`google-chrome-beta`},{commands:[`google-chrome-unstable`],userDataDirName:`google-chrome-unstable`},{commands:[`google-chrome-for-testing`],userDataDirName:`google-chrome-for-testing`}],nativeMessagingManifestDirectories:[`.config/google-chrome/NativeMessagingHosts`,`.config/chromium/NativeMessagingHosts`,`.config/google-chrome-beta/NativeMessagingHosts`,`.config/google-chrome-unstable/NativeMessagingHosts`,`.config/google-chrome-for-testing/NativeMessagingHosts`],processNames:[`chrome`],userDataDirectorySegments:[`.config`,`google-chrome`]}";
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-browser-use-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    const assetsDir = path.join(tempRoot, "webview", "assets");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.mkdirSync(assetsDir, { recursive: true });
+
+    const mainCallerPath = path.join(buildDir, "main-Zq7aBcDe.js");
+    fs.writeFileSync(mainCallerPath, [
+      "async function q9({browserFamily:e,platform:t=process.platform}){return t===`linux`&&V9(e)!=null}",
+      "async function j9({browserFamily:e,platform:t=process.platform,runCommand:n=W9,url:r}){return n(r)}",
+      "var G9=class{getInstalledBrowserFamilies(){return[]}async openUrl({browserFamily:e,url:t}){return j9({browserFamily:e,url:t})}};",
+    ].join(""));
+
+    const mainRegistryPath = path.join(buildDir, "src-Zq7aBcDe.js");
+    fs.writeFileSync(mainRegistryPath, [
+      `var K9={chrome:{backendCompatibilityKey:\`chrome\`,${registry}}};`,
+      "function J9(e){return Object.hasOwn(K9,e)}",
+      'Object.defineProperty(exports,"Y9",{enumerable:!0,get:function(){return K9}}),',
+      'Object.defineProperty(exports,"X9",{enumerable:!0,get:function(){return J9}});',
+    ].join(""));
+
+    const rendererPath = path.join(assetsDir, "app-initial-Zq7aBcDe.js");
+    fs.writeFileSync(rendererPath, [
+      `var t6={chrome:{backendCompatibilityKey:\`chrome\`,${registry}}};`,
+      "function n6(e){return Object.hasOwn(t6,e)}",
+      "var r6=Object.keys(t6).filter(n6);",
+      "function i6(){return{featureName:`browser_use_external`,gate:`410065390`}}",
+      "function a6({isExternalBrowserUseFeatureEnabled:e,isExternalBrowserUseFeatureLoading:t,isExternalBrowserUseGateEnabled:n,runCodexInWsl:r,windowType:i}){return i===`chrome-extension`?`available`:t?`loading`:`statsig-disabled`}",
+    ].join(""));
+
+    const { value: result, warnings } = captureWarns(() =>
+      patchLinuxBrowserUseExternalAvailabilityAssets(tempRoot),
+    );
+
+    assert.deepEqual(result, { matched: 3, changed: 2 });
+    assert.deepEqual(warnings, []);
+    assert.match(fs.readFileSync(mainRegistryPath, "utf8"), /brave-browser/);
+    const patchedRenderer = fs.readFileSync(rendererPath, "utf8");
+    assert.match(patchedRenderer, /brave-browser/);
+    assert.match(
+      patchedRenderer,
+      /return i===`chrome-extension`\|\|navigator\.userAgent\.includes\(`Linux`\)\?`available`:/,
+    );
+    assert.deepEqual(
+      captureWarns(() => patchLinuxBrowserUseExternalAvailabilityAssets(tempRoot)).value,
+      { matched: 3, changed: 0 },
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("patches the browser page preload bundle in the current build directory", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-browser-preload-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    const bundlePath = path.join(buildDir, "browser-page-preload.js");
+    fs.writeFileSync(
+      bundlePath,
+      "if(pt&&N?.annotation.anchor.kind===`element`){let e=Dt==null?null:as(Dt),t=e?.rect??fs(N.annotation.anchor);Lt=e?.borderRadius,It=js(N.annotation.anchor,t,w.width,w.height)}",
+    );
+
+    const { value: result, warnings } = captureWarns(() =>
+      patchBrowserPagePreloadBundle(tempRoot),
+    );
+
+    assert.deepEqual(result, { matched: true, changed: true });
+    assert.deepEqual(warnings, []);
+    assert.match(
+      fs.readFileSync(bundlePath, "utf8"),
+      /\{let t=fs\(N\.annotation\.anchor\);Lt=void 0,It=js/,
+    );
+    assert.deepEqual(
+      captureWarns(() => patchBrowserPagePreloadBundle(tempRoot)).value,
+      { matched: true, changed: false },
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("reports a missing browser page preload bundle as optional drift", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-browser-preload-"));
+  try {
+    fs.mkdirSync(path.join(tempRoot, ".vite", "build"), { recursive: true });
+
+    const { value: result, warnings } = captureWarns(() =>
+      patchBrowserPagePreloadBundle(tempRoot),
+    );
+
+    assert.deepEqual(result, { matched: false, changed: false });
+    assert.equal(warnings.length, 1);
+    assert.match(
+      warnings[0],
+      /Could not find browser page preload bundle in .* — skipping annotation screenshot patch/,
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("allows Browser Use non-local navigation on Linux without the upstream rollout flag", () => {
