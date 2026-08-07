@@ -4,7 +4,6 @@ const ZH_CN_LOCALE_ASSET_PATTERN = /^zh-CN-[^.]+\.js$/;
 const ENGLISH_REASONING_LABELS = Object.freeze({
   "composer.mode.local.reasoning.none.label": "None",
   "composer.mode.local.reasoning.minimal.label": "Minimal",
-  "composer.mode.local.reasoning.low.label": "Low",
   "composer.mode.local.reasoning.medium.label": "Medium",
   "composer.mode.local.reasoning.high.label": "High",
   "composer.mode.local.reasoning.xhigh.label": "XHigh",

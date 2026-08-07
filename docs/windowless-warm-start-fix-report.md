@@ -26,8 +26,8 @@ would route work into a partially destroyed application context.
 The current upstream main bundle has one targeted lifecycle `will-quit` handler
 with two cleanup branches:
 
-- a reduced branch stops Codex Micro and flushes tracing;
-- a full branch also flushes global state and settings.
+- a reduced branch flushes global state, stops Codex Micro, and flushes tracing;
+- a full branch additionally flushes settings.
 
 Both branches call `preventDefault()`, run lifecycle disposers, wait with
 `Promise.allSettled()`, dispose the application context and shared disposable

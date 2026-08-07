@@ -104,7 +104,6 @@ function simplifiedChineseLocaleFixture() {
   const labels = {
     "composer.mode.local.reasoning.none.label": "无",
     "composer.mode.local.reasoning.minimal.label": "极低",
-    "composer.mode.local.reasoning.low.label": "轻度",
     "composer.mode.local.reasoning.medium.label": "中",
     "composer.mode.local.reasoning.high.label": "高",
     "composer.mode.local.reasoning.xhigh.label": "极高",
@@ -310,6 +309,10 @@ test("reasoning effort labels stay in English in the Simplified Chinese locale",
   const source = simplifiedChineseLocaleFixture();
   const patched = applyEnglishReasoningLabels(source);
 
+  assert.equal(
+    Object.hasOwn(ENGLISH_REASONING_LABELS, "composer.mode.local.reasoning.low.label"),
+    false,
+  );
   for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
     assert.match(patched, new RegExp(`"${key.replaceAll(".", "\\.")}":\\\`${label}\\\``));
   }

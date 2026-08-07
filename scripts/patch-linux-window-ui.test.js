@@ -1403,7 +1403,7 @@ function beforeQuitConfirmationBundleFixture() {
 
 function willQuitDrainBundleFixture() {
   return [
-    "l.app.on(`will-quit`,e=>{if(y=!0,v)return;let t=()=>{U5(h,N5).then(()=>{g.dispose(),l.app.quit()})};if(r.shouldSkipDrainBeforeQuit()){e.preventDefault(),v=!0,c.dispose(),u.dispose(),Promise.allSettled([p(),m()]).then(t);return}e.preventDefault(),v=!0,c.dispose(),u.dispose(),Promise.allSettled([d.flush(),f.flush(),p(),m()]).then(t)});",
+    "l.app.on(`will-quit`,e=>{if(y=!0,v)return;let t=()=>{U5(h,N5).then(()=>{g.dispose(),l.app.quit()})};if(r.shouldSkipDrainBeforeQuit()){e.preventDefault(),v=!0,c.dispose(),u.dispose(),Promise.allSettled([d.flush(),p(),m()]).then(t);return}e.preventDefault(),v=!0,c.dispose(),u.dispose(),Promise.allSettled([d.flush(),f.flush(),p(),m()]).then(t)});",
   ].join("");
 }
 
@@ -1903,17 +1903,19 @@ function currentSparkleUpdateMenuContractFixture() {
 function latestAvatarOverlayBundleFixture() {
   return [
     "let c=require(`electron`),h=require(`node:child_process`);",
+    "function Bs(e,t){return typeof e.setInputShape==`function`&&e.setInputShape(t)===!0}",
     "function eo(e,{addon:t,electronAppPath:n,platform:r=process.platform,resourcesPath:i=process.resourcesPath}={}){if(r!==`darwin`)return!1;try{return(t??Sa({electronAppPath:n??c.app.getAppPath(),resourcesPath:i})).setRemoteHostedPIPContentComputerUseCursorLocationHandler(e)}catch{return!1}}",
     "var d5=`/avatar-overlay`,of={width:356,height:320},m5={width:112,height:121},y5={width:0,height:0},v5={width:276,height:131};",
-    "var fV=class{window=null;layout=null;mascotSize=m5;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;layoutMode=`native`;compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},getCursorPosition(){return null},performWindowDrag(){return!1},updateMascotRect(){},publishRemoteHostedPIPContentHost(){}};nativePositionController={clear(){}};",
+    "var fV=class{supportsInputShape=!0;window=null;layout=null;mascotSize=m5;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;inputShape=null;layoutMode=`native`;compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},getCursorPosition(){return null},performWindowDrag(){return!1},updateMascotRect(){},publishRemoteHostedPIPContentHost(){}};nativePositionController={clear(){}};",
     "startDrag(e,t,n=!1){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e)return;this.cancelMomentum();let i=this.getLayout(r),a=this.compositionHost.getCursorPosition(),o=t.pointerScreenX!=null?{x:t.pointerScreenX,y:t.pointerScreenY}:c.screen.getCursorScreenPoint();this.dragState=new a5(a==null?`renderer`:`native`,t.pointerWindowX-i.mascot.left,t.pointerWindowY-i.mascot.top,c.screen.getDisplayNearestPoint(o).bounds,n),this.windowServerDragActive=this.layoutMode===`native`&&!n&&this.compositionHost.performWindowDrag(),this.windowServerDragActive||(this.windowServerDragWindowX=null)}",
     "endDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;let r=this.dragState,i=this.windowServerDragActive,a=null;this.dragState=null,this.windowServerDragActive=!1,this.windowServerDragWindowX=null,i?this.persistWindowBounds(n,a??this.getCurrentDisplay()):this.reclampWindowToVisibleDisplay({shouldPersist:!0});let o=this.dockTarget;o!=null&&this.dockPresentation(o.anchor,o.onDock)}",
     "setElementSize(e,{elementSizeRevision:t,isTrayVisible:n,mascot:r,nativeCompositionEnabled:i,tray:a}){let o=this.window;if(o==null||o.isDestroyed()||o.webContents.id!==e)return;this.mascotSize=r,this.traySize=a,this.applyLatestElementSizes(o),this.stageWindowForNativePresentation(o),this.showWindowIfReady(o)}",
-    "async createWindow(){let e=await this.windowManager.createWindow({title:c.app.getName(),width:of.width,height:of.height,appearance:`avatarOverlay`,focusable:!1,show:!1,initialRoute:d5});return this.window=e,this.compositionHost.setOverlayWindow(e),this.dragState=null,this.layout=null,this.mousePassthroughEnabled=!1,this.traySize=null,e.on(`closed`,()=>{if(this.window!==e)return;let t=this.presentationVisibility!=null;this.cancelMomentum(),this.clearMovedWindowPersist(),this.window=null,this.dragState=null,this.pointerInteractive=!1,this.mousePassthroughEnabled=!1,this.compositionHost.setOverlayWindow(null),this.broadcastOpenState()}),e}",
+    "async createWindow(){let e=await this.windowManager.createWindow({title:c.app.getName(),width:of.width,height:of.height,appearance:`avatarOverlay`,supportsWindowTiling:!1,focusable:!1,show:!1,initialRoute:d5});return this.window=e,this.compositionHost.setOverlayWindow(e),this.dragState=null,this.layout=null,this.mousePassthroughEnabled=!1,this.inputShape=null,this.traySize=null,e.on(`closed`,()=>{if(this.window!==e)return;let t=this.presentationVisibility!=null||this.startupPresentationVisibility!=null;this.cancelMomentum(),this.clearMovedWindowPersist(),this.window=null,this.dragState=null,this.pointerInteractive=!1,this.mousePassthroughEnabled=!1,this.compositionHost.setOverlayWindow(null),this.broadcastOpenState()}),e}",
     "getLayoutForDisplay(e){return pf({anchor:this.anchor,displayBounds:this.layoutMode===`native`?e.workArea:e.bounds,mode:this.layoutMode,mascotSize:this.mascotSize,nativeMaterialAttached:this.compositionHost.isNativeMaterialAttached(),previousPlacement:this.placement,traySize:this.traySize??(this.layoutMode===`native`?y5:v5)})}",
     "applyLayout(e,t=this.getCurrentDisplay(),n=!1,r=!0,i=null){if(e.isDestroyed())return;let a=this.getLayoutForDisplay(t);this.layout=a,this.setWindowBounds(e,a.windowBounds,n,r),this.compositionHost.updateMascotRect(a.mascot),this.sendLayoutToRenderer(e,i),this.computerUseCursorLocation!=null&&this.dragState==null&&this.sendComputerUseCursorLocationToRenderer(e)}",
     "showWindow(e){if(e.isDestroyed())return;let t=this.isOpen();e.moveTop(),e.showInactive(),this.compositionHost.publishRemoteHostedPIPContentHost(),!t&&this.isOpen()&&this.broadcastOpenState()}",
-    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1;return}let t=!this.pointerInteractive;if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}",
+    "applyPointerInteractivityPolicy(){let e=this.window;if(e==null||e.isDestroyed()){this.mousePassthroughEnabled=!1;return}if(this.applyInputShape(e))return;let t=!this.pointerInteractive;if(this.mousePassthroughEnabled!==t){if(this.mousePassthroughEnabled=t,t){e.setIgnoreMouseEvents(!0,{forward:!0});return}e.setIgnoreMouseEvents(!1),this.refreshCursorAtCurrentMousePosition(e)}}",
+    "applyInputShape(e){if(!this.supportsInputShape||this.inputShape==null)return!1;this.mousePassthroughEnabled&&=(e.setIgnoreMouseEvents(!1),!1);let t=Bs(e,this.inputShape.map(({height:e,left:t,top:n,width:r})=>({height:e,width:r,x:t,y:n})));return t&&(this.mousePassthroughEnabled=!1),t}",
     "setComputerUseCursorLocation(e){this.computerUseCursorLocation=e,this.computerUseCursorPoint=e.isActive?{x:e.x,y:e.y}:null}",
     "sendComputerUseCursorLocationToRenderer(e){this.windowManager.sendMessageToWebContents(e.webContents,{type:`avatar-overlay-computer-use-cursor-changed`})}",
     "refreshCursorAtCurrentMousePosition(e){let t=c.screen.getCursorScreenPoint();return this.sendCursorPointToAvatarOverlay(e,t,!1)}",
@@ -2840,7 +2842,7 @@ test("Linux reduced will-quit branch shares the complete cleanup deadline", asyn
 
   assert.equal(contextDisposeCalls, 1);
   assert.equal(disposablesCalls, 1);
-  assert.equal(globalStateFlushCalls, 0);
+  assert.equal(globalStateFlushCalls, 1);
   assert.equal(settingsFlushCalls, 0);
   assert.equal(stopCodexMicroCalls, 1);
   assert.equal(flushTracingCalls, 1);
@@ -2982,6 +2984,10 @@ test("current will-quit drift fails the required lifecycle patch", () => {
 test("missing, renamed, or ambiguous will-quit targets fail the required lifecycle patch", () => {
   const sources = [
     willQuitDrainBundleFixture().replace(
+      "Promise.allSettled([d.flush(),p(),m()])",
+      "Promise.allSettled([p(),m()])",
+    ),
+    willQuitDrainBundleFixture().replace(
       "shouldSkipDrainBeforeQuit()",
       "skipDrainBeforeQuit()",
     ),
@@ -3053,7 +3059,7 @@ test("does not accept damaged Linux quit cleanup factory bodies", () => {
   );
   const sources = [
     patched.replace(
-      "codexLinuxRunQuitCleanup(()=>{c.dispose(),u.dispose();return Promise.allSettled([p(),m()])})",
+      "codexLinuxRunQuitCleanup(()=>{c.dispose(),u.dispose();return Promise.allSettled([d.flush(),p(),m()])})",
       "codexLinuxRunQuitCleanup(()=>{return Promise.resolve()})",
     ),
     patched.replace(
@@ -4498,8 +4504,7 @@ test("adds Linux avatar overlay mouse passthrough recovery", () => {
   assert.match(patched, /codexLinuxStartAvatarPassthroughRecovery\(\)/);
   assert.match(patched, /codexLinuxStopAvatarPassthroughRecovery\(\)/);
   assert.match(patched, /codexLinuxSyncAvatarPointerInteractivity\(e\)/);
-  assert.match(patched, /codexLinuxBuildAvatarInputShape\(e\)/);
-  assert.match(patched, /codexLinuxApplyAvatarInputShape\(e\)/);
+  assert.match(patched, /codexLinuxInputShape\(e\)/);
   assert.match(patched, /codexLinuxShouldUseWholeWindowInput\(\)\{return this\.codexLinuxWholeWindowInput===!0\}/);
   assert.match(patched, /codexLinuxIsI3Session\(\)/);
   assert.match(patched, /process\.env\.I3SOCK/);
@@ -4516,23 +4521,15 @@ test("adds Linux avatar overlay mouse passthrough recovery", () => {
   assert.match(patched, /Number\(__codexAvatarWidth\)!==t\.width/);
   assert.match(patched, /Number\(__codexAvatarHeight\)!==t\.height/);
   assert.doesNotMatch(patched, /let\[,l,h,d,f\]=c/);
-  assert.doesNotMatch(patched, /this\.codexLinuxIsI3Session\(\)\)\{this\.codexLinuxStopAvatarPassthroughRecovery\(\),this\.codexLinuxAvatarInputShapeKey=null,this\.pointerInteractive=!0,this\.mousePassthroughEnabled&&\(this\.mousePassthroughEnabled=!1\),e\.setIgnoreMouseEvents\(!1\);return\}/);
-  assert.match(patched, /if\(this\.codexLinuxIsAvatarShapeBackend\(\)&&typeof e\.setShape==`function`\)\{/);
-  assert.match(patched, /if\(this\.codexLinuxIsAvatarShapeBackend\(\)&&typeof e\.setShape==`function`\)\{this\.codexLinuxStartAvatarPassthroughRecovery\(\),/);
-  assert.match(patched, /codexLinuxIsAvatarShapeBackend\(\)\{/);
-  assert.match(patched, /getSwitchValue\(`ozone-platform`\)/);
-  assert.match(patched, /return e===`x11`\|\|e===``&&!process\.env\.WAYLAND_DISPLAY/);
-  assert.doesNotMatch(patched, /XDG_SESSION_TYPE/);
-  assert.doesNotMatch(patched, /if\(process\.platform===`linux`&&typeof e\.setShape==`function`\)\{this\.codexLinuxStopAvatarPassthroughRecovery\(\),/);
-  assert.doesNotMatch(patched, /typeof e\.setShape==`function`&&!this\.codexLinuxIsI3Session\(\)/);
-  assert.match(patched, /if\(t==null\)return null/);
-  assert.match(patched, /try\{let t=this\.codexLinuxBuildAvatarInputShape\(e\);if\(t==null\)return!1;let n=JSON\.stringify\(t\)/);
-  assert.match(patched, /e\.setShape\(t\),this\.codexLinuxAvatarInputShapeKey=n;return!0/);
-  assert.match(patched, /return\[i\(t\.mascot\),i\(t\.tray\)\]\.filter\(Boolean\)/);
+  assert.match(patched, /if\(this\.applyInputShape\(e\)\)\{this\.codexLinuxStopAvatarPassthroughRecovery\(\);return\}/);
+  assert.match(patched, /Bs\(e,this\.codexLinuxInputShape\(e\)\.map\(/);
+  assert.match(patched, /return n==null\|\|!Number\.isFinite\(n\.width\)\|\|!Number\.isFinite\(n\.height\)\?t:\[\{height:n\.height,left:0,top:0,width:n\.width\}\]/);
+  assert.doesNotMatch(patched, /codexLinuxIsAvatarShapeBackend/);
+  assert.doesNotMatch(patched, /codexLinuxApplyAvatarInputShape/);
+  assert.doesNotMatch(patched, /\.setShape\(/);
   assert.match(patched, /process\.platform!==`linux`/);
   assert.match(patched, /setInterval\(\(\)=>\{let e=this\.window/);
   assert.match(patched, /\},32\)/);
-  assert.doesNotMatch(patched, /typeof e\.setShape==`function`\)return;this\.codexLinuxAvatarPassthroughRecoveryTimer=setInterval/);
   assert.match(patched, /this\.dragState!=null/);
   assert.match(patched, /this\.codexLinuxIsCursorInAvatarInteractiveRegion\(e\)/);
   assert.match(patched, /__codexWindowHit=__codexX>=0&&__codexY>=0&&__codexX<=__codexBounds\.width&&__codexY<=__codexBounds\.height/);
@@ -4549,7 +4546,28 @@ test("adds Linux avatar overlay mouse passthrough recovery", () => {
   assert.match(patched, /this\.sendComputerUseCursorLocationToRenderer\(e\),process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)\}showWindow/);
   assert.match(patched, /e\.moveTop\(\),e\.showInactive\(\),process\.platform===`linux`&&this\.codexLinuxApplyAvatarCompositorHints\(e\),process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)/);
   assert.doesNotMatch(patched, /codexLinuxRecoverAvatarPointerInteractivity/);
-  assert.match(patched, /if\(this\.window!==e\)return;let t=this\.presentationVisibility!=null;this\.codexLinuxStopAvatarPassthroughRecovery\(\),this\.codexLinuxAvatarInputShapeKey=null,this\.codexLinuxAvatarCompositorHintsApplied=!1,this\.codexLinuxAvatarCompositorHintsApplying=!1,this\.cancelMomentum\(\)/);
+  assert.match(patched, /if\(this\.window!==e\)return;let t=this\.presentationVisibility!=null\|\|this\.startupPresentationVisibility!=null;this\.codexLinuxStopAvatarPassthroughRecovery\(\),this\.codexLinuxAvatarCompositorHintsApplied=!1,this\.codexLinuxAvatarCompositorHintsApplying=!1,this\.cancelMomentum\(\)/);
+});
+
+test("obsolete avatar overlay interactivity policy fails the required patch", () => {
+  const source = latestAvatarOverlayBundleFixture().replace(
+    "if(this.applyInputShape(e))return;",
+    "",
+  );
+  const descriptor = corePatchDescriptors().find(
+    (candidate) => candidate.id === "linux-avatar-overlay-mouse-passthrough",
+  );
+  const report = createPatchReport();
+  const { value: result, warnings } = captureWarns(() =>
+    applyMainBundlePatchDescriptors(source, [descriptor], {}, report),
+  );
+
+  assert.equal(result.patchedSource, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find avatar overlay mouse passthrough policy — skipping Linux avatar overlay passthrough recovery patch",
+  ]);
+  assert.equal(report.patches[0]?.status, "failed-required");
+  assert.equal(report.patches[0]?.reason, warnings[0]);
 });
 
 test("keeps the avatar overlay core patch idempotent after pet overlay composition", () => {
@@ -4576,7 +4594,6 @@ test("pet overlay opts into full-window input on X11 and Wayland", () => {
     ),
   );
   const cursor = { x: 100, y: 100 };
-  let ozonePlatform = "x11";
   const context = {
     globalThis: {},
     clearInterval() {},
@@ -4585,7 +4602,7 @@ test("pet overlay opts into full-window input on X11 and Wayland", () => {
       if (moduleName === "node:child_process") return { execFile() {} };
       assert.equal(moduleName, "electron");
       return {
-        app: { commandLine: { getSwitchValue: () => ozonePlatform }, getName: () => "Codex" },
+        app: { getName: () => "Codex" },
         screen: { getCursorScreenPoint: () => cursor },
       };
     },
@@ -4602,26 +4619,28 @@ test("pet overlay opts into full-window input on X11 and Wayland", () => {
     mascot: { left: 220, top: 190, width: 113, height: 122 },
     tray: { left: 57, top: 55, width: 276, height: 131 },
   };
+  controller.inputShape = [
+    { left: 220, top: 190, width: 113, height: 122 },
+    { left: 57, top: 55, width: 276, height: 131 },
+  ];
   const window = {
     getContentBounds: () => ({ x: 0, y: 0, width: 356, height: 320 }),
     isDestroyed: () => false,
     isVisible: () => true,
     setIgnoreMouseEvents() {},
-    setShape() {},
+    setInputShape: () => true,
   };
 
   controller.codexPetOverlaySyncWindow(window);
   assert.equal(controller.codexLinuxWholeWindowInput, true);
 
-  assert.deepEqual(JSON.parse(JSON.stringify(controller.codexLinuxBuildAvatarInputShape(window))), [
-    { x: 0, y: 0, width: 356, height: 320 },
+  assert.deepEqual(JSON.parse(JSON.stringify(controller.codexLinuxInputShape(window))), [
+    { left: 0, top: 0, width: 356, height: 320 },
   ]);
   cursor.x = 10;
   cursor.y = 300;
   assert.equal(controller.codexLinuxIsCursorInAvatarInteractiveRegion(window), true);
-  ozonePlatform = "wayland";
   controller.pointerInteractive = false;
-  assert.equal(controller.codexLinuxIsAvatarShapeBackend(), false);
   assert.equal(controller.codexLinuxSyncAvatarPointerInteractivity(window), true);
   assert.equal(controller.pointerInteractive, true);
 });
@@ -4636,7 +4655,6 @@ test("locked pet overlay keeps only mascot and tray interactive on X11 and Wayla
     { feature: { manifest: { petOverlay: { lockPosition: true } }, settings: {} } },
   );
   const cursor = { x: 10, y: 300 };
-  let ozonePlatform = "x11";
   const context = {
     globalThis: {},
     clearInterval() {},
@@ -4645,7 +4663,7 @@ test("locked pet overlay keeps only mascot and tray interactive on X11 and Wayla
       if (moduleName === "node:child_process") return { execFile() {} };
       assert.equal(moduleName, "electron");
       return {
-        app: { commandLine: { getSwitchValue: () => ozonePlatform }, getName: () => "Codex" },
+        app: { getName: () => "Codex" },
         screen: { getCursorScreenPoint: () => cursor },
       };
     },
@@ -4662,29 +4680,31 @@ test("locked pet overlay keeps only mascot and tray interactive on X11 and Wayla
     mascot: { left: 220, top: 190, width: 113, height: 122 },
     tray: { left: 57, top: 55, width: 276, height: 131 },
   };
+  controller.inputShape = [
+    { left: 220, top: 190, width: 113, height: 122 },
+    { left: 57, top: 55, width: 276, height: 131 },
+  ];
   const ignored = [];
   const window = {
     getContentBounds: () => ({ x: 0, y: 0, width: 356, height: 320 }),
     isDestroyed: () => false,
     isVisible: () => true,
     setIgnoreMouseEvents: (...args) => ignored.push(args),
-    setShape() {},
+    setInputShape: () => true,
   };
 
   controller.codexPetOverlaySyncWindow(window);
   assert.equal(controller.codexLinuxWholeWindowInput, false);
-  assert.deepEqual(JSON.parse(JSON.stringify(controller.codexLinuxBuildAvatarInputShape(window))), [
-    { x: 220, y: 190, width: 113, height: 122 },
-    { x: 57, y: 55, width: 276, height: 131 },
+  assert.deepEqual(JSON.parse(JSON.stringify(controller.codexLinuxInputShape(window))), [
+    { left: 220, top: 190, width: 113, height: 122 },
+    { left: 57, top: 55, width: 276, height: 131 },
   ]);
 
-  ozonePlatform = "wayland";
   controller.window = window;
   controller.pointerInteractive = true;
-  assert.equal(controller.codexLinuxIsAvatarShapeBackend(), false);
   assert.equal(controller.codexLinuxIsCursorInAvatarInteractiveRegion(window), false);
   controller.applyPointerInteractivityPolicy();
-  assert.deepEqual(JSON.parse(JSON.stringify(ignored)), [[true, { forward: true }]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(ignored)), []);
 });
 
 test("keeps Linux avatar overlay above the app while reply inputs are focusable", () => {
@@ -4695,9 +4715,9 @@ test("keeps Linux avatar overlay above the app while reply inputs are focusable"
 
   assert.match(
     patched,
-    /appearance:`avatarOverlay`,alwaysOnTop:process\.platform===`linux`,skipTaskbar:process\.platform===`linux`,focusable:process\.platform===`linux`\?!0:!1,show:!1/,
+    /appearance:`avatarOverlay`,supportsWindowTiling:!1,alwaysOnTop:process\.platform===`linux`,skipTaskbar:process\.platform===`linux`,focusable:process\.platform===`linux`\?!0:!1,show:!1/,
   );
-  assert.doesNotMatch(patched, /appearance:`avatarOverlay`,focusable:!1,show:!1/);
+  assert.doesNotMatch(patched, /appearance:`avatarOverlay`,supportsWindowTiling:!1,focusable:!1,show:!1/);
 
   const nonAvatarSource = "async createWindow(){return this.windowManager.createWindow({appearance:`main`,focusable:!1,show:!1})}";
   assert.equal(
@@ -4712,7 +4732,6 @@ test("Linux avatar overlay interactivity is bounded to avatar regions", () => {
     latestAvatarOverlayBundleFixture(),
   );
   const cursor = { x: 5843, y: 1036 };
-  let ozonePlatform = "";
   const context = {
     globalThis: {},
     process: {
@@ -4728,7 +4747,6 @@ test("Linux avatar overlay interactivity is bounded to avatar regions", () => {
       return {
       app: {
         getName: () => "Codex",
-        commandLine: { getSwitchValue: () => ozonePlatform },
       },
       screen: {
         getCursorScreenPoint: () => cursor,
@@ -4769,30 +4787,38 @@ test("Linux avatar overlay interactivity is bounded to avatar regions", () => {
     false,
   );
 
+  const appliedShapes = [];
   const overlayWindow = {
     isDestroyed: () => false,
     getContentBounds: () => ({ x: 5743, y: 936, width: 356, height: 320 }),
-    setShape() {},
+    setInputShape(shape) {
+      appliedShapes.push(shape);
+      return true;
+    },
   };
   const serializeShape = (shape) => JSON.parse(JSON.stringify(shape));
-  assert.deepEqual(serializeShape(controller.codexLinuxBuildAvatarInputShape(overlayWindow)), [
-    { x: 220, y: 190, width: 113, height: 122 },
-    { x: 57, y: 55, width: 276, height: 131 },
+  controller.inputShape = [
+    { left: 220, top: 190, width: 113, height: 122 },
+    { left: 57, top: 55, width: 276, height: 131 },
+  ];
+  assert.deepEqual(serializeShape(controller.codexLinuxInputShape(overlayWindow)), [
+    { left: 220, top: 190, width: 113, height: 122 },
+    { left: 57, top: 55, width: 276, height: 131 },
   ]);
   controller.pointerInteractive = true;
-  assert.deepEqual(serializeShape(controller.codexLinuxBuildAvatarInputShape(overlayWindow)), [
-    { x: 220, y: 190, width: 113, height: 122 },
-    { x: 57, y: 55, width: 276, height: 131 },
+  assert.deepEqual(serializeShape(controller.codexLinuxInputShape(overlayWindow)), [
+    { left: 220, top: 190, width: 113, height: 122 },
+    { left: 57, top: 55, width: 276, height: 131 },
   ]);
   controller.dragState = {};
-  assert.deepEqual(serializeShape(controller.codexLinuxBuildAvatarInputShape(overlayWindow)), [
-    { x: 0, y: 0, width: 356, height: 320 },
+  assert.deepEqual(serializeShape(controller.codexLinuxInputShape(overlayWindow)), [
+    { left: 0, top: 0, width: 356, height: 320 },
   ]);
   controller.dragState = null;
   assert.equal(controller.codexLinuxShouldUseWholeWindowInput(), false);
   controller.codexLinuxWholeWindowInput = true;
-  assert.deepEqual(serializeShape(controller.codexLinuxBuildAvatarInputShape(overlayWindow)), [
-    { x: 0, y: 0, width: 356, height: 320 },
+  assert.deepEqual(serializeShape(controller.codexLinuxInputShape(overlayWindow)), [
+    { left: 0, top: 0, width: 356, height: 320 },
   ]);
   assert.equal(
     controller.codexLinuxIsCursorInAvatarInteractiveRegion({
@@ -4801,52 +4827,25 @@ test("Linux avatar overlay interactivity is bounded to avatar regions", () => {
     true,
   );
   controller.codexLinuxWholeWindowInput = false;
-  context.process.env.WAYLAND_DISPLAY = "wayland-0";
-  assert.equal(controller.codexLinuxIsAvatarShapeBackend(), false);
-  assert.equal(controller.codexLinuxApplyAvatarInputShape(overlayWindow), false);
-  let setShapeCalls = 0;
-  ozonePlatform = "x11";
-  assert.equal(controller.codexLinuxIsAvatarShapeBackend(), true);
-  assert.equal(
-    controller.codexLinuxApplyAvatarInputShape({
-      ...overlayWindow,
-      setShape() {
-        setShapeCalls += 1;
-      },
-    }),
-    true,
-  );
-  assert.equal(setShapeCalls, 1);
-  ozonePlatform = "wayland";
-  assert.equal(controller.codexLinuxIsAvatarShapeBackend(), false);
-  ozonePlatform = "x11";
+  assert.equal(controller.applyInputShape(overlayWindow), true);
+  assert.deepEqual(serializeShape(appliedShapes), [[
+    { x: 220, y: 190, width: 113, height: 122 },
+    { x: 57, y: 55, width: 276, height: 131 },
+  ]]);
+  controller.codexLinuxWholeWindowInput = true;
   let failingBoundsCalls = 0;
-  assert.equal(
-    controller.codexLinuxApplyAvatarInputShape({
-      isDestroyed: () => false,
-      getContentBounds: () => {
-        failingBoundsCalls += 1;
-        throw new Error("drift");
-      },
-      setShape() {},
-    }),
-    false,
-  );
+  assert.deepEqual(serializeShape(controller.codexLinuxInputShape({
+    getContentBounds: () => {
+      failingBoundsCalls += 1;
+      throw new Error("drift");
+    },
+  })), [
+    { left: 220, top: 190, width: 113, height: 122 },
+    { left: 57, top: 55, width: 276, height: 131 },
+  ]);
   assert.equal(failingBoundsCalls, 1);
-  controller.codexLinuxAvatarInputShapeKey = null;
-  let failingSetShapeCalls = 0;
-  assert.equal(
-    controller.codexLinuxApplyAvatarInputShape({
-      isDestroyed: () => false,
-      getContentBounds: () => ({ x: 5743, y: 936, width: 356, height: 320 }),
-      setShape() {
-        failingSetShapeCalls += 1;
-        throw new Error("unsupported");
-      },
-    }),
-    false,
-  );
-  assert.equal(failingSetShapeCalls, 1);
+  controller.supportsInputShape = false;
+  assert.equal(controller.applyInputShape(overlayWindow), false);
 });
 
 test("patches the latest avatar overlay class without depending on adjacent methods", () => {
@@ -4864,7 +4863,7 @@ test("patches the latest avatar overlay class without depending on adjacent meth
   assert.match(patched, /this\.windowServerDragActive=!1[\s\S]*?process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)\}setElementSize/);
   assert.match(patched, /this\.applyLatestElementSizes\(o\),process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)/);
   assert.match(patched, /this\.compositionHost\.updateMascotRect\(a\.mascot\)[\s\S]*?process\.platform===`linux`&&this\.applyPointerInteractivityPolicy\(\)\}showWindow/);
-  assert.match(patched, /if\(this\.window!==e\)return;let t=this\.presentationVisibility!=null;this\.codexLinuxStopAvatarPassthroughRecovery\(\)/);
+  assert.match(patched, /if\(this\.window!==e\)return;let t=this\.presentationVisibility!=null\|\|this\.startupPresentationVisibility!=null;this\.codexLinuxStopAvatarPassthroughRecovery\(\)/);
   assert.match(patched, /traySize:process\.platform===`linux`&&typeof this\.codexLinuxIsI3Session==`function`/);
 });
 
