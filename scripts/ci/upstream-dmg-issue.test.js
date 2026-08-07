@@ -261,6 +261,48 @@ test("rechecks after create and closes a colliding watchdog issue", async () => 
   )));
 });
 
+test("normalizes an older canonical issue after losing a create race", async () => {
+  const sha = "b".repeat(64);
+  const fixture = fakeGithub([], {
+    createCollisionIssue: {
+      number: 49,
+      state: "open",
+      body: fingerprintMarker(sha),
+      labels: [],
+      assignees: [],
+    },
+  });
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("rejected", sha, "race-run"),
+    currentHttpIdentityKey: "current",
+    assignee: "maintainer",
+    scanAll: true,
+  });
+
+  assert.equal(result.action, "reused-after-create-race");
+  assert.equal(result.issueNumber, 49);
+  assert.deepEqual(result.duplicateIssueNumbers, [50]);
+  assert.ok(fixture.calls.some(([name, args]) => (
+    name === "update" && args.issue_number === 50 && args.state === "closed"
+  )));
+  assert.ok(fixture.calls.some(([name, args]) => (
+    name === "addLabels" && args.issue_number === 49
+  )));
+  assert.ok(fixture.calls.some(([name, args]) => (
+    name === "addAssignees" && args.issue_number === 49
+  )));
+  const canonicalUpdate = fixture.calls.find(([name, args]) => (
+    name === "update" && args.issue_number === 49
+  ));
+  assert.equal(canonicalUpdate[1].state, "open");
+  assert.match(canonicalUpdate[1].body, /<!-- upstream-dmg-run:race-run -->/);
+  assert.ok(fixture.calls.some(([name, args]) => (
+    name === "comment" && args.issue_number === 49
+  )));
+});
+
 test("watchdog mode finds an unlabelled closed marker and reuses it", async () => {
   const sha = "d".repeat(64);
   const fixture = fakeGithub([{ number: 8, state: "closed", body: fingerprintMarker(sha) }]);

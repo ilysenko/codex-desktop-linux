@@ -201,6 +201,43 @@ async function consolidateMatchingIssues(github, repo, issues, fingerprint) {
   };
 }
 
+async function normalizeMatchingIssue({
+  github,
+  repo,
+  issue,
+  title,
+  body,
+  decision,
+  manageLabels,
+  assignee,
+}) {
+  const wasOpen = issue.state === "open";
+  const alreadyReported = issue.body?.includes(runMarker(decision.run.id));
+  if (manageLabels) {
+    await github.rest.issues.addLabels({
+      ...repo,
+      issue_number: issue.number,
+      labels: ISSUE_LABELS,
+    });
+  }
+  await github.rest.issues.update({
+    ...repo,
+    issue_number: issue.number,
+    title,
+    body,
+    state: "open",
+  });
+  await ensureAssignee(github, repo, issue, assignee);
+  if (!alreadyReported) {
+    await github.rest.issues.createComment({
+      ...repo,
+      issue_number: issue.number,
+      body: `Acceptance failed again. ${decision.run.url ?? "See the latest workflow artifacts."}`,
+    });
+  }
+  return wasOpen ? "updated" : "reopened";
+}
+
 async function reconcileUpstreamDmgIssue({
   github,
   repo,
@@ -283,32 +320,18 @@ async function reconcileUpstreamDmgIssue({
         duplicateIssueNumbers,
       };
     }
-    const wasOpen = matching.state === "open";
-    const alreadyReported = matching.body?.includes(runMarker(decision.run.id));
-    if (manageLabels) {
-      await github.rest.issues.addLabels({
-        ...repo,
-        issue_number: matching.number,
-        labels: ISSUE_LABELS,
-      });
-    }
-    await github.rest.issues.update({
-      ...repo,
-      issue_number: matching.number,
+    const action = await normalizeMatchingIssue({
+      github,
+      repo,
+      issue: matching,
       title,
       body,
-      state: "open",
+      decision,
+      manageLabels,
+      assignee,
     });
-    await ensureAssignee(github, repo, matching, assignee);
-    if (!alreadyReported) {
-      await github.rest.issues.createComment({
-        ...repo,
-        issue_number: matching.number,
-        body: `Acceptance failed again. ${decision.run.url ?? "See the latest workflow artifacts."}`,
-      });
-    }
     return {
-      action: wasOpen ? "updated" : "reopened",
+      action,
       issueNumber: matching.number,
       issueUrl: issueUrl(repo, matching),
       duplicateIssueNumbers,
@@ -320,9 +343,24 @@ async function reconcileUpstreamDmgIssue({
   if (assignee) createArgs.assignees = [assignee];
   const created = await github.rest.issues.create(createArgs);
   const refreshedIssues = await listTrackingIssues(github, repo, { scanAll, testId });
+  if (!refreshedIssues.some((issue) => issue.number === created.data.number)) {
+    refreshedIssues.push(created.data);
+  }
   const consolidated = await consolidateMatchingIssues(github, repo, refreshedIssues, fingerprint);
   const primary = consolidated.primary ?? created.data;
   if (primary.number !== created.data.number) {
+    if (!hasLabel(primary, MANUAL_ONLY_LABEL)) {
+      await normalizeMatchingIssue({
+        github,
+        repo,
+        issue: primary,
+        title,
+        body,
+        decision,
+        manageLabels,
+        assignee,
+      });
+    }
     return {
       action: hasLabel(primary, MANUAL_ONLY_LABEL) ? "manual-only" : "reused-after-create-race",
       issueNumber: primary.number,
