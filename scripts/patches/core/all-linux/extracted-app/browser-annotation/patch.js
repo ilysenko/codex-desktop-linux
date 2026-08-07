@@ -4,7 +4,7 @@ const {
   extractedAppPatch,
 } = require("../../../../descriptor.js");
 const { patchStatusFromChange } = require("../../../../../lib/patch-report.js");
-const { patchCommentPreloadBundle } = require("../../../../impl/webview/index.js");
+const { patchBrowserPagePreloadBundle } = require("../../../../impl/webview/index.js");
 
 module.exports = [
   extractedAppPatch({
@@ -12,7 +12,7 @@ module.exports = [
     phase: "extracted-app:post-webview",
     order: 2010,
     ciPolicy: "optional",
-    apply: (extractedDir) => patchCommentPreloadBundle(extractedDir),
+    apply: (extractedDir) => patchBrowserPagePreloadBundle(extractedDir),
     status: (result, warnings) => ({
       status: patchStatusFromChange(Boolean(result?.changed), warnings),
       reason: warnings[0] ?? null,

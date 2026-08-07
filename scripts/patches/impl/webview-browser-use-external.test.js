@@ -13,35 +13,46 @@ const {
 
 const currentChromeLinuxRegistry =
   "linux:{installations:[{commands:[`google-chrome`,`google-chrome-stable`],userDataDirName:`google-chrome`},{commands:[`chromium`,`chromium-browser`],userDataDirName:`chromium`},{commands:[`google-chrome-beta`],userDataDirName:`google-chrome-beta`},{commands:[`google-chrome-unstable`],userDataDirName:`google-chrome-unstable`},{commands:[`google-chrome-for-testing`],userDataDirName:`google-chrome-for-testing`}],nativeMessagingManifestDirectories:[`.config/google-chrome/NativeMessagingHosts`,`.config/chromium/NativeMessagingHosts`,`.config/google-chrome-beta/NativeMessagingHosts`,`.config/google-chrome-unstable/NativeMessagingHosts`,`.config/google-chrome-for-testing/NativeMessagingHosts`],processNames:[`chrome`],userDataDirectorySegments:[`.config`,`google-chrome`]}";
+const currentEdgeLinuxRegistry =
+  "linux:{installations:[{commands:[`microsoft-edge`,`microsoft-edge-stable`],userDataDirName:`microsoft-edge`}],nativeMessagingManifestDirectories:[`.config/microsoft-edge/NativeMessagingHosts`],processNames:[`msedge`],userDataDirectorySegments:[`.config`,`microsoft-edge`]}";
+const currentBraveLinuxRegistry =
+  "linux:{installations:[{commands:[`brave-browser`,`brave-browser-stable`,`brave`],userDataDirName:`BraveSoftware/Brave-Browser`}],nativeMessagingManifestDirectories:[`.config/BraveSoftware/Brave-Browser/NativeMessagingHosts`],processNames:[`brave`,`brave-browser`],userDataDirectorySegments:[`.config`,`BraveSoftware`,`Brave-Browser`]}";
+const currentOperaLinuxRegistry =
+  "linux:{installations:[{commands:[`opera`,`opera-stable`],userDataDirName:`opera`}],nativeMessagingManifestDirectories:[`.config/opera/NativeMessagingHosts`],processNames:[`opera`],userDataDirectorySegments:[`.config`,`opera`]}";
+const currentVivaldiLinuxRegistry =
+  "linux:{installations:[{commands:[`vivaldi`,`vivaldi-stable`],userDataDirName:`vivaldi`}],nativeMessagingManifestDirectories:[`.config/vivaldi/NativeMessagingHosts`],processNames:[`vivaldi`,`vivaldi-bin`],userDataDirectorySegments:[`.config`,`vivaldi`]}";
 
 function currentBrowserRegistry(variableName) {
-  return `var ${variableName}={chrome:{backendCompatibilityKey:\`chrome\`,displayName:\`Google Chrome\`,${currentChromeLinuxRegistry}},edge:{backendCompatibilityKey:\`chrome\`,displayName:\`Microsoft Edge\`,linux:{installations:[{commands:[\`microsoft-edge\`,\`microsoft-edge-stable\`],userDataDirName:\`microsoft-edge\`}],nativeMessagingManifestDirectories:[\`.config/microsoft-edge/NativeMessagingHosts\`],processNames:[\`msedge\`],userDataDirectorySegments:[\`.config\`,\`microsoft-edge\`]}}};`;
+  return `var ${variableName}={chrome:{backendCompatibilityKey:\`chrome\`,displayName:\`Google Chrome\`,${currentChromeLinuxRegistry}},edge:{backendCompatibilityKey:\`chrome\`,displayName:\`Microsoft Edge\`,${currentEdgeLinuxRegistry}},brave:{backendCompatibilityKey:\`chrome\`,displayName:\`Brave\`,${currentBraveLinuxRegistry}},opera:{backendCompatibilityKey:\`chrome\`,displayName:\`Opera\`,${currentOperaLinuxRegistry}},vivaldi:{backendCompatibilityKey:\`chrome\`,displayName:\`Vivaldi\`,${currentVivaldiLinuxRegistry}}};`;
 }
 
 function currentMainRegistryFixture() {
   return [
-    currentBrowserRegistry("ob"),
-    "function fb(e){return Object.hasOwn(ob,e)}",
-    "Object.defineProperty(exports,`So`,{enumerable:!0,get:function(){return ob}}),Object.defineProperty(exports,`wo`,{enumerable:!0,get:function(){return fb}});",
+    currentBrowserRegistry("Oy"),
+    "function Iy(e){return Object.hasOwn(Oy,e)}",
+    "function validateBrowserRegistry(){return Object.keys(Oy).filter(Iy)}",
+    "Object.defineProperty(exports,\"Eo\",{enumerable:!0,get:function(){return Oy}}),Object.defineProperty(exports,\"ko\",{enumerable:!0,get:function(){return Iy}});",
   ].join("");
 }
 
 function currentMainCallerFixture() {
   return [
     "let n=exports;function dl(e){return installedCommands.has(e)?`/usr/bin/${e}`:null}async function ml(e,t){launches.push([e,t])}",
-    "async function sne({browserFamily:e,platform:t=process.platform}){return t===`darwin`?!1:t===`win32`?!1:t===`linux`&&Ol(e)!=null}",
-    "async function lne({browserFamily:e,platform:t=process.platform,runCommand:n=ml,url:r}){await El({browserFamily:e,platform:t,runCommand:n,unsupportedPlatformError:`unsupported`,url:r})}",
-    "async function El({browserFamily:e,platform:t,runCommand:r,url:i}){let a=n.So[e];if(t===`linux`){let t=Ol(e);if(t==null)throw Error(`${a.displayName} is not installed`);await r(t,[i]);return}throw Error(`unsupported`)}",
-    "function Ol(e){let t=n.So[e],r=t.linux.installations;for(let e of r){let t=kl(e);if(t!=null)return t}return null}function kl(e){for(let t of e.commands){let e=dl(t);if(e!=null)return e}return null}",
-    "var oce={parse:e=>e},sce=class{async getInstalledBrowserFamilies(){let e=Object.keys(n.So).filter(n.wo);return(await Promise.all(e.map(async e=>({browserFamily:e,installed:await sne({browserFamily:e})})))).flatMap(({browserFamily:e,installed:t})=>t?[e]:[])}async openUrl({browserFamily:e,url:t}){await lne({browserFamily:oce.parse(e),url:t})}};globalThis.BrowserService=sce;",
+    "async function mne({browserFamily:e,platform:t=process.platform}){return t===`darwin`?!1:t===`win32`?!1:t===`linux`&&jl(e)!=null}",
+    "function Ol({browserFamily:e=`chrome`,extensionId:t,platform:o=process.platform}){return o===`linux`&&n.Eo[e].linux.installations.some(e=>e.commands.includes(t))}",
+    "async function hne({browserFamily:e=`chrome`,extensionId:t,platform:o=process.platform}){return o===`linux`&&jl(e,t)!=null}",
+    "async function gne({browserFamily:e,platform:t=process.platform,runCommand:n=ml,url:r}){await kl({browserFamily:e,platform:t,runCommand:n,unsupportedPlatformError:`unsupported`,url:r})}",
+    "async function kl({browserFamily:e,platform:t,runCommand:r,url:i}){let a=n.Eo[e];if(t===`linux`){let t=jl(e);if(t==null)throw Error(`${a.displayName} is not installed`);await r(t,[i]);return}throw Error(`unsupported`)}",
+    "function jl(e,t){let r=n.Eo[e].linux.installations;for(let e of r){let t=Ml(e);if(t!=null)return t}return null}function Ml(e){for(let t of e.commands){let e=dl(t);if(e!=null)return e}return null}",
+    "var Cce={parse:e=>e},wce=class{async getInstalledBrowserFamilies(){let e=Object.keys(n.Eo).filter(n.ko);return(await Promise.all(e.map(async e=>({browserFamily:e,installed:await mne({browserFamily:e})})))).flatMap(({browserFamily:e,installed:t})=>t?[e]:[])}async openUrl({browserFamily:e,url:t}){await gne({browserFamily:Cce.parse(e),url:t})}};globalThis.BrowserService=wce;",
   ].join("");
 }
 
 function currentRendererFixture() {
   return [
-    currentBrowserRegistry("Xl"),
-    "function Yl(e){return Object.hasOwn(Xl,e)}",
-    "function rendererLinuxRegistry(){return Object.keys(Xl).filter(Yl).map(e=>({browserFamily:e,installations:Xl[e].linux.installations,manifestDirectories:Xl[e].linux.nativeMessagingManifestDirectories,processNames:Xl[e].linux.processNames}))}",
+    currentBrowserRegistry("Fu"),
+    "function Pu(e){return Object.hasOwn(Fu,e)}",
+    "function rendererLinuxRegistry(){return Object.keys(Fu).filter(Pu).map(e=>({browserFamily:e,installations:Fu[e].linux.installations,manifestDirectories:Fu[e].linux.nativeMessagingManifestDirectories,processNames:Fu[e].linux.processNames}))}",
     "function wfi(){return{enabled:!1,featureName:`browser_use_external`,gate:`410065390`}}",
     "function Sfi({isExternalBrowserUseFeatureEnabled:e,isExternalBrowserUseFeatureLoading:t,isExternalBrowserUseGateEnabled:n,runCodexInWsl:r,windowType:i}){return i===`chrome-extension`?`available`:t?`loading`:n?e?r?`wsl-disabled`:`available`:`config-requirement-disabled`:`statsig-disabled`}",
     "globalThis.rendererLinuxRegistry=rendererLinuxRegistry;",
@@ -80,12 +91,12 @@ function jsonValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-test("patches exact-DMG Browser Use availability and both Brave registries atomically", async () => {
+test("patches exact-DMG Browser Use availability while preserving native browser registries", async () => {
   const fixture = createCurrentExternalBrowserUseAssets();
   try {
     assert.deepEqual(
       patchLinuxBrowserUseExternalAvailabilityAssets(fixture.extractedDir),
-      { matched: 3, changed: 2 },
+      { matched: 3, changed: 1 },
     );
 
     const mainSource = fs.readFileSync(fixture.mainPath, "utf8");
@@ -93,8 +104,8 @@ test("patches exact-DMG Browser Use availability and both Brave registries atomi
     const rendererSource = fs.readFileSync(fixture.rendererPath, "utf8");
 
     const braveOnly = evaluateMainBrowserService(srcSource, mainSource, ["brave-browser"]);
-    assert.deepEqual(jsonValue(await braveOnly.service.getInstalledBrowserFamilies()), ["chrome"]);
-    await braveOnly.service.openUrl({ browserFamily: "chrome", url: "https://example.com/brave" });
+    assert.deepEqual(jsonValue(await braveOnly.service.getInstalledBrowserFamilies()), ["brave"]);
+    await braveOnly.service.openUrl({ browserFamily: "brave", url: "https://example.com/brave" });
     assert.deepEqual(jsonValue(braveOnly.context.launches), [
       ["/usr/bin/brave-browser", ["https://example.com/brave"]],
     ]);
@@ -110,22 +121,22 @@ test("patches exact-DMG Browser Use availability and both Brave registries atomi
     vm.runInNewContext(rendererSource, rendererContext);
     const rendererRegistry = jsonValue(rendererContext.rendererLinuxRegistry());
     const rendererChrome = rendererRegistry.find(({ browserFamily }) => browserFamily === "chrome");
+    const rendererBrave = rendererRegistry.find(({ browserFamily }) => browserFamily === "brave");
     const rendererEdge = rendererRegistry.find(({ browserFamily }) => browserFamily === "edge");
-    assert.ok(rendererChrome.installations.some(({ commands }) => commands.includes("brave-browser")));
     assert.ok(rendererChrome.installations.some(({ commands }) => commands.includes("google-chrome")));
     assert.ok(rendererChrome.installations.some(({ commands }) => commands.includes("chromium")));
     assert.ok(
-      rendererChrome.installations.some(
+      rendererBrave.installations.some(
         ({ userDataDirName }) => userDataDirName === "BraveSoftware/Brave-Browser",
       ),
     );
     assert.ok(
-      rendererChrome.manifestDirectories.includes(
+      rendererBrave.manifestDirectories.includes(
         ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",
       ),
     );
-    assert.ok(rendererChrome.processNames.includes("brave"));
-    assert.ok(rendererChrome.processNames.includes("brave-browser"));
+    assert.ok(rendererBrave.processNames.includes("brave"));
+    assert.ok(rendererBrave.processNames.includes("brave-browser"));
     assert.deepEqual(rendererEdge.installations[0].commands, [
       "microsoft-edge",
       "microsoft-edge-stable",
@@ -188,11 +199,10 @@ test("leaves every exact-DMG Browser Use asset unchanged when a registry seam dr
   }
 });
 
-test("rolls back both exact-DMG Browser Use registry files when the second write fails", () => {
+test("rolls back the exact-DMG Browser Use availability file when its write fails", () => {
   const fixture = createCurrentExternalBrowserUseAssets();
   try {
     const before = new Map([
-      [fixture.srcPath, fs.readFileSync(fixture.srcPath, "utf8")],
       [fixture.rendererPath, fs.readFileSync(fixture.rendererPath, "utf8")],
     ]);
     let writeCount = 0;
@@ -204,7 +214,7 @@ test("rolls back both exact-DMG Browser Use registry files when the second write
       result = patchLinuxBrowserUseExternalAvailabilityAssets(fixture.extractedDir, {
         writeFileSync(filePath, source, encoding) {
           writeCount += 1;
-          if (writeCount === 2) {
+          if (writeCount === 1) {
             fs.writeFileSync(filePath, "partially-written", encoding);
             throw new Error("simulated renderer write failure");
           }

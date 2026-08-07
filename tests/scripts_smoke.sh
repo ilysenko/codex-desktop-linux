@@ -9466,19 +9466,19 @@ test_browser_annotation_screenshot_patch_smoke() {
 
     mkdir -p "$workspace"
     make_fake_extracted_asar "$extracted" 'let D={removeMenu(){},setMenuBarVisibility(){},setIcon(){},once(){}};let n=require(`electron`),t=require(`node:path`),a=require(`node:fs`);...process.platform===`win32`?{autoHideMenuBar:!0}:{},process.platform===`win32`&&D.removeMenu(),foo)}),D.once(`ready-to-show`,()=>{})'
-    cat > "$extracted/.vite/build/comment-preload.js" <<'JS'
+    cat > "$extracted/.vite/build/browser-page-preload.js" <<'JS'
 let Nt=Mt==null?[]:Pl(Mt),Pt=F==null?Nt:[],Ft=null,It=`hover-box`,Lt,Rt=[];
 if(pt&&N?.annotation.anchor.kind===`element`){let e=Dt==null?null:as(Dt),t=e?.rect??fs(N.annotation.anchor);Lt=e?.borderRadius,It=js(N.annotation.anchor,t,w.width,w.height),Ft=Es(N.annotation.anchor,t,Dt),Rt=uc(Ot,w,{clipToVisibleArea:!0,selectionIndexOffset:1,viewportSize:N.annotation.viewportSize})}
 JS
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_contains "$extracted/.vite/build/comment-preload.js" 'let t=fs(N.annotation.anchor);Lt=void 0,It=js'
-    assert_contains "$extracted/.vite/build/comment-preload.js" 'selectionIndexOffset:1'
-    assert_not_contains "$extracted/.vite/build/comment-preload.js" 'e?.rect??fs'
+    assert_contains "$extracted/.vite/build/browser-page-preload.js" 'let t=fs(N.annotation.anchor);Lt=void 0,It=js'
+    assert_contains "$extracted/.vite/build/browser-page-preload.js" 'selectionIndexOffset:1'
+    assert_not_contains "$extracted/.vite/build/browser-page-preload.js" 'e?.rect??fs'
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_occurrence_count "$extracted/.vite/build/comment-preload.js" 'let t=fs(N.annotation.anchor)' '1'
-    assert_occurrence_count "$extracted/.vite/build/comment-preload.js" 'selectionIndexOffset:1' '1'
+    assert_occurrence_count "$extracted/.vite/build/browser-page-preload.js" 'let t=fs(N.annotation.anchor)' '1'
+    assert_occurrence_count "$extracted/.vite/build/browser-page-preload.js" 'selectionIndexOffset:1' '1'
 }
 
 test_linux_single_instance_patch_smoke() {

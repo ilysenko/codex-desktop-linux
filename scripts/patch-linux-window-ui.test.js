@@ -4368,20 +4368,20 @@ test("patches current webview opaque window default bundle shapes", () => {
   );
 });
 
-test("patches the current comment preload screenshot anchor shape", () => {
+test("patches the current browser page preload screenshot anchor shape", () => {
   const source = [
-    "let Nt=Mt==null?[]:Pl(Mt),Pt=F==null?Nt:[],Ft=null,It=`hover-box`,Lt,Rt=[];",
-    "if(pt&&N?.annotation.anchor.kind===`element`){let e=Dt==null?null:as(Dt),t=e?.rect??fs(N.annotation.anchor);Lt=e?.borderRadius,It=js(N.annotation.anchor,t,w.width,w.height),Ft=Es(N.annotation.anchor,t,Dt),Rt=uc(Ot,w,{clipToVisibleArea:!0,selectionIndexOffset:1,viewportSize:N.annotation.viewportSize})}",
+    "let Ft=Nt==null?[]:Pl(Nt),It=Pt==null?Ft:[],Lt=null,Rt=`hover-box`,zt,Bt=[];",
+    "if(ht&&j?.annotation.anchor.kind===`element`){let e=kt==null?null:ns(kt),t=e?.rect??ls(j.annotation.anchor);zt=e?.borderRadius,Rt=Os(j.annotation.anchor,t,w.width,w.height),Lt=Cs(j.annotation.anchor,t,kt),Bt=sc(N,w,{clipToVisibleArea:!0,selectionIndexOffset:1,viewportSize:j.annotation.viewportSize})}",
   ].join("");
 
   const patched = applyPatchTwice(applyBrowserAnnotationScreenshotPatch, source);
 
   assert.match(
     patched,
-    /if\(pt&&N\?\.annotation\.anchor\.kind===`element`\)\{let t=fs\(N\.annotation\.anchor\);Lt=void 0,It=js/,
+    /if\(ht&&j\?\.annotation\.anchor\.kind===`element`\)\{let t=ls\(j\.annotation\.anchor\);zt=void 0,Rt=Os/,
   );
   assert.match(patched, /selectionIndexOffset:1/);
-  assert.doesNotMatch(patched, /e\?\.rect\?\?fs/);
+  assert.doesNotMatch(patched, /e\?\.rect\?\?ls/);
 });
 
 test("keeps the current stored annotation anchor shape unchanged", () => {
@@ -4391,7 +4391,7 @@ test("keeps the current stored annotation anchor shape unchanged", () => {
   assert.equal(applyPatchTwice(applyBrowserAnnotationScreenshotPatch, source), source);
 });
 
-test("reports current comment preload screenshot anchor drift", () => {
+test("reports current browser page preload screenshot anchor drift", () => {
   const source = "if(pt&&N?.annotation.anchor.kind===`element`){renderDriftedAnchor()}";
   const { value, warnings } = captureWarns(() =>
     applyBrowserAnnotationScreenshotPatch(source),

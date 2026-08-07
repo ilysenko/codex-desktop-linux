@@ -1107,8 +1107,14 @@ function applyLinuxBrowserUseWebviewHostRecoveryPatch(currentSource) {
 
 const CURRENT_BROWSER_USE_CHROME_LINUX_REGISTRY =
   "linux:{installations:[{commands:[`google-chrome`,`google-chrome-stable`],userDataDirName:`google-chrome`},{commands:[`chromium`,`chromium-browser`],userDataDirName:`chromium`},{commands:[`google-chrome-beta`],userDataDirName:`google-chrome-beta`},{commands:[`google-chrome-unstable`],userDataDirName:`google-chrome-unstable`},{commands:[`google-chrome-for-testing`],userDataDirName:`google-chrome-for-testing`}],nativeMessagingManifestDirectories:[`.config/google-chrome/NativeMessagingHosts`,`.config/chromium/NativeMessagingHosts`,`.config/google-chrome-beta/NativeMessagingHosts`,`.config/google-chrome-unstable/NativeMessagingHosts`,`.config/google-chrome-for-testing/NativeMessagingHosts`],processNames:[`chrome`],userDataDirectorySegments:[`.config`,`google-chrome`]}";
-const LINUX_BRAVE_BROWSER_USE_CHROME_REGISTRY =
-  "linux:{installations:[{commands:[`google-chrome`,`google-chrome-stable`],userDataDirName:`google-chrome`},{commands:[`brave-browser`,`brave`],userDataDirName:`BraveSoftware/Brave-Browser`},{commands:[`chromium`,`chromium-browser`],userDataDirName:`chromium`},{commands:[`google-chrome-beta`],userDataDirName:`google-chrome-beta`},{commands:[`google-chrome-unstable`],userDataDirName:`google-chrome-unstable`},{commands:[`google-chrome-for-testing`],userDataDirName:`google-chrome-for-testing`}],nativeMessagingManifestDirectories:[`.config/google-chrome/NativeMessagingHosts`,`.config/BraveSoftware/Brave-Browser/NativeMessagingHosts`,`.config/chromium/NativeMessagingHosts`,`.config/google-chrome-beta/NativeMessagingHosts`,`.config/google-chrome-unstable/NativeMessagingHosts`,`.config/google-chrome-for-testing/NativeMessagingHosts`],processNames:[`chrome`,`brave`,`brave-browser`],userDataDirectorySegments:[`.config`,`google-chrome`]}";
+const CURRENT_BROWSER_USE_EDGE_LINUX_REGISTRY =
+  "linux:{installations:[{commands:[`microsoft-edge`,`microsoft-edge-stable`],userDataDirName:`microsoft-edge`}],nativeMessagingManifestDirectories:[`.config/microsoft-edge/NativeMessagingHosts`],processNames:[`msedge`],userDataDirectorySegments:[`.config`,`microsoft-edge`]}";
+const CURRENT_BROWSER_USE_BRAVE_LINUX_REGISTRY =
+  "linux:{installations:[{commands:[`brave-browser`,`brave-browser-stable`,`brave`],userDataDirName:`BraveSoftware/Brave-Browser`}],nativeMessagingManifestDirectories:[`.config/BraveSoftware/Brave-Browser/NativeMessagingHosts`],processNames:[`brave`,`brave-browser`],userDataDirectorySegments:[`.config`,`BraveSoftware`,`Brave-Browser`]}";
+const CURRENT_BROWSER_USE_OPERA_LINUX_REGISTRY =
+  "linux:{installations:[{commands:[`opera`,`opera-stable`],userDataDirName:`opera`}],nativeMessagingManifestDirectories:[`.config/opera/NativeMessagingHosts`],processNames:[`opera`],userDataDirectorySegments:[`.config`,`opera`]}";
+const CURRENT_BROWSER_USE_VIVALDI_LINUX_REGISTRY =
+  "linux:{installations:[{commands:[`vivaldi`,`vivaldi-stable`],userDataDirName:`vivaldi`}],nativeMessagingManifestDirectories:[`.config/vivaldi/NativeMessagingHosts`],processNames:[`vivaldi`,`vivaldi-bin`],userDataDirectorySegments:[`.config`,`vivaldi`]}";
 const CURRENT_BROWSER_USE_CONTRACT_MISSING_REASON =
   "Could not identify complete current Browser Use external availability and browser registry contract";
 
@@ -1146,52 +1152,57 @@ function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
   return currentSource;
 }
 
-function currentBrowserUseRegistryState(source) {
-  const currentCount = source.split(CURRENT_BROWSER_USE_CHROME_LINUX_REGISTRY).length - 1;
-  const patchedCount = source.split(LINUX_BRAVE_BROWSER_USE_CHROME_REGISTRY).length - 1;
-  if (currentCount === 1 && patchedCount === 0) {
-    return "current";
-  }
-  if (currentCount === 0 && patchedCount === 1) {
-    return "patched";
-  }
-  return "drifted";
-}
-
-function patchCurrentBrowserUseRegistrySource(source) {
-  const state = currentBrowserUseRegistryState(source);
-  if (state === "patched") {
-    return source;
-  }
-  if (state !== "current") {
-    return null;
-  }
-  return source.replace(
+function currentNativeBrowserUseRegistryContract(source, registryVar, checkerVar) {
+  const exactLinuxRegistries = [
     CURRENT_BROWSER_USE_CHROME_LINUX_REGISTRY,
-    LINUX_BRAVE_BROWSER_USE_CHROME_REGISTRY,
-  );
+    CURRENT_BROWSER_USE_EDGE_LINUX_REGISTRY,
+    CURRENT_BROWSER_USE_BRAVE_LINUX_REGISTRY,
+    CURRENT_BROWSER_USE_OPERA_LINUX_REGISTRY,
+    CURRENT_BROWSER_USE_VIVALDI_LINUX_REGISTRY,
+  ];
+  return source.includes(
+    `${registryVar}={chrome:{backendCompatibilityKey:\`chrome\`,displayName:\`Google Chrome\``,
+  ) &&
+    source.includes("},edge:{backendCompatibilityKey:`chrome`,displayName:`Microsoft Edge`") &&
+    source.includes("},brave:{backendCompatibilityKey:`chrome`,displayName:`Brave`") &&
+    source.includes("},opera:{backendCompatibilityKey:`chrome`,displayName:`Opera`") &&
+    source.includes("},vivaldi:{backendCompatibilityKey:`chrome`,displayName:`Vivaldi`") &&
+    exactLinuxRegistries.every(
+      (registry) => source.split(registry).length - 1 === 1,
+    ) &&
+    source.includes(`function ${checkerVar}(e){return Object.hasOwn(${registryVar},e)}`);
 }
 
 function currentBrowserUseMainCallerContract(source) {
-  return source.includes("async function sne({browserFamily:") &&
-    source.includes("async function lne({browserFamily:") &&
-    source.includes("function Ol(") &&
-    source.includes("getInstalledBrowserFamilies(){") &&
-    source.includes("async openUrl({browserFamily:");
+  return source.includes("async function mne({browserFamily:") &&
+    source.includes("function Ol({browserFamily:") &&
+    source.includes("async function hne({browserFamily:") &&
+    source.includes("async function gne({browserFamily:") &&
+    source.includes("function jl(e,t){let r=n.Eo[e].linux.installations;") &&
+    source.includes(
+      "getInstalledBrowserFamilies(){let e=Object.keys(n.Eo).filter(n.ko);",
+    ) &&
+    source.includes(
+      "async openUrl({browserFamily:e,url:t}){await gne({browserFamily:",
+    );
 }
 
 function currentBrowserUseMainRegistryContract(source) {
-  return currentBrowserUseRegistryState(source) !== "drifted" &&
-    source.includes("function fb(e){return Object.hasOwn(ob,e)}") &&
-    /Object\.defineProperty\(exports,["'`]So["'`],\{enumerable:!0,get:function\(\)\{return ob\}\}\)/u.test(source);
+  return currentNativeBrowserUseRegistryContract(source, "Oy", "Iy") &&
+    source.includes(
+      "Object.defineProperty(exports,\"Eo\",{enumerable:!0,get:function(){return Oy}})",
+    ) &&
+    source.includes(
+      "Object.defineProperty(exports,\"ko\",{enumerable:!0,get:function(){return Iy}})",
+    ) &&
+    source.includes("Object.keys(Oy).filter(Iy)");
 }
 
 function currentBrowserUseRendererContract(source) {
-  return currentBrowserUseRegistryState(source) !== "drifted" &&
+  return currentNativeBrowserUseRegistryContract(source, "Fu", "Pu") &&
     source.includes("featureName:`browser_use_external`") &&
     source.includes("410065390") &&
-    source.includes("function Yl(e){return Object.hasOwn(Xl,e)}") &&
-    source.includes("Object.keys(Xl).filter(Yl)") &&
+    source.includes("Object.keys(Fu).filter(Pu)") &&
     (externalBrowserUseAvailabilityCurrentPattern.test(source) ||
       externalBrowserUseAvailabilityPatchedPattern.test(source));
 }
@@ -1283,12 +1294,8 @@ function patchLinuxBrowserUseExternalAvailabilityAssets(extractedDir, {
     };
   }
 
-  const patchedMainRegistry = patchCurrentBrowserUseRegistrySource(mainRegistry.source);
-  const rendererWithAvailability = patchCurrentExternalBrowserUseAvailabilitySource(renderer.source);
-  const patchedRenderer = rendererWithAvailability == null
-    ? null
-    : patchCurrentBrowserUseRegistrySource(rendererWithAvailability);
-  if (patchedMainRegistry == null || patchedRenderer == null) {
+  const patchedRenderer = patchCurrentExternalBrowserUseAvailabilitySource(renderer.source);
+  if (patchedRenderer == null) {
     console.warn(
       `WARN: ${CURRENT_BROWSER_USE_CONTRACT_MISSING_REASON} — skipping Linux external Browser Use availability patch`,
     );
@@ -1300,7 +1307,6 @@ function patchLinuxBrowserUseExternalAvailabilityAssets(extractedDir, {
   }
 
   const candidates = [
-    { ...mainRegistry, patched: patchedMainRegistry },
     { ...renderer, patched: patchedRenderer },
   ].filter(({ source, patched }) => source !== patched);
   if (candidates.length === 0) {
@@ -2447,19 +2453,24 @@ function applyLinuxSkillsListDedupePatch(currentSource) {
     .replace("function IJ(e){return e.skills}", `${helper}function IJ(e){return e.skills}`);
 }
 
-function patchCommentPreloadBundle(extractedDir) {
-  const commentPreloadBundle = path.join(extractedDir, ".vite", "build", "comment-preload.js");
-  if (!fs.existsSync(commentPreloadBundle)) {
+function patchBrowserPagePreloadBundle(extractedDir) {
+  const browserPagePreloadBundle = path.join(
+    extractedDir,
+    ".vite",
+    "build",
+    "browser-page-preload.js",
+  );
+  if (!fs.existsSync(browserPagePreloadBundle)) {
     console.warn(
-      `WARN: Could not find comment preload bundle in ${path.dirname(commentPreloadBundle)} — skipping annotation screenshot patch`,
+      `WARN: Could not find browser page preload bundle in ${path.dirname(browserPagePreloadBundle)} — skipping annotation screenshot patch`,
     );
     return { matched: false, changed: false };
   }
 
-  const source = fs.readFileSync(commentPreloadBundle, "utf8");
+  const source = fs.readFileSync(browserPagePreloadBundle, "utf8");
   const patchedSource = applyBrowserAnnotationScreenshotPatch(source);
   if (patchedSource !== source) {
-    fs.writeFileSync(commentPreloadBundle, patchedSource, "utf8");
+    fs.writeFileSync(browserPagePreloadBundle, patchedSource, "utf8");
     return { matched: true, changed: true };
   }
   return { matched: true, changed: false };
@@ -2492,5 +2503,5 @@ module.exports = {
   applyLocalEnvironmentActionModalDraftPatch,
   applySubagentNicknameMetadataPatch,
   codexLinuxWatchBrowserWebviewAttachment,
-  patchCommentPreloadBundle,
+  patchBrowserPagePreloadBundle,
 };
