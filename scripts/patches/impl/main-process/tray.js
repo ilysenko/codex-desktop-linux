@@ -1,6 +1,44 @@
 "use strict";
 
-const { requireName } = require("../../lib/minified-js.js");
+const { findMatchingParen, requireName } = require("../../lib/minified-js.js");
+
+// The tray constructor argument list contains nested calls, so its extent has
+// to be found by balancing parentheses rather than by a character class that
+// stops at the first `)`.
+const trayConstructionPattern =
+  /([A-Za-z_$][\w$]*)=(typeof codexLinuxRegisterTray===`function`\?codexLinuxRegisterTray\(|codexLinuxRegisterTray\(|)new ([A-Za-z_$][\w$]*)\.Tray\(/;
+
+function findTrayConstruction(source) {
+  const match = source.match(trayConstructionPattern);
+  if (match == null) {
+    return null;
+  }
+
+  const [matched, trayVar, wrapper, electronVar] = match;
+  const openParen = match.index + matched.length - 1;
+  const closeParen = findMatchingParen(source, openParen);
+  if (closeParen === -1) {
+    return null;
+  }
+
+  const constructorArgs = source.slice(openParen + 1, closeParen);
+  let end = closeParen + 1;
+  if (wrapper.endsWith("codexLinuxRegisterTray(")) {
+    if (source[end] !== ")") {
+      return null;
+    }
+    end += 1;
+  }
+  if (wrapper.startsWith("typeof ")) {
+    const upstreamFallback = `:new ${electronVar}.Tray(${constructorArgs})`;
+    if (!source.startsWith(upstreamFallback, end)) {
+      return null;
+    }
+    end += upstreamFallback.length;
+  }
+
+  return { start: match.index, end, trayVar, electronVar, constructorArgs };
+}
 
 function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   let patchedSource = currentSource;
@@ -70,18 +108,9 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     );
   }
 
-  const conditionalTrayConstructorPattern =
-    /([A-Za-z_$][\w$]*)=typeof codexLinuxRegisterTray===`function`\?codexLinuxRegisterTray\(new ([A-Za-z_$][\w$]*)\.Tray\(([^;]+?)\)\):new \2\.Tray\(\3\)/;
-  const retainedTrayConstructorPattern =
-    /([A-Za-z_$][\w$]*)=codexLinuxRegisterTray\(new ([A-Za-z_$][\w$]*)\.Tray\(([^;]+?)\)\)/;
-  const trayConstructorPattern =
-    /([A-Za-z_$][\w$]*)=new ([A-Za-z_$][\w$]*)\.Tray\(([^;)]+)\)/;
-  const constructorMatch =
-    patchedSource.match(conditionalTrayConstructorPattern) ??
-    patchedSource.match(retainedTrayConstructorPattern) ??
-    patchedSource.match(trayConstructorPattern);
+  const construction = findTrayConstruction(patchedSource);
   if (
-    constructorMatch == null ||
+    construction == null ||
     !patchedSource.includes("if(process.platform===`linux`){") ||
     !patchedSource.includes("updatePersistentTrayMenu(){process.platform===`linux`")
   ) {
@@ -89,14 +118,13 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     return currentSource;
   }
 
-  const [, trayVar, electronVar, constructorArgs] = constructorMatch;
+  const { trayVar, electronVar, constructorArgs } = construction;
   const retainedConstructor =
     `${trayVar}=codexLinuxRegisterTray(new ${electronVar}.Tray(${constructorArgs}))`;
-  if (conditionalTrayConstructorPattern.test(patchedSource)) {
-    patchedSource = patchedSource.replace(conditionalTrayConstructorPattern, retainedConstructor);
-  } else if (!retainedTrayConstructorPattern.test(patchedSource)) {
-    patchedSource = patchedSource.replace(trayConstructorPattern, retainedConstructor);
-  }
+  patchedSource =
+    patchedSource.slice(0, construction.start) +
+    retainedConstructor +
+    patchedSource.slice(construction.end);
 
   if (!patchedSource.includes("codexLinuxRegisterTray=e=>")) {
     const constructorIndex = patchedSource.indexOf(retainedConstructor);

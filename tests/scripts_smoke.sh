@@ -9083,7 +9083,7 @@ test_linux_tray_patch_smoke() {
     bundle_body="$(cat <<'JS'
 const x={o:e=>e};let s=require(`node:url`),n=require(`electron`);n=x.o(n);let l=require(`node:os`);l=x.o(l);let i=require(`node:path`);i=x.o(i);let d=require(`node:util`),q=require(`node:crypto`),a=require(`node:fs`);a=x.o(a);
 async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return process.platform!==`linux`;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():process.platform!==`linux`}
-async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new n.Tray(t.defaultIcon);r.setToolTip(n.app.getName());let i=new pb(r);return!await i.waitForReady()?(i.destroy(),null):i}
+async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new n.Tray(t.defaultIcon,process.platform===`win32`&&n.app.isPackaged?mae(e.buildFlavor):void 0);r.setToolTip(n.app.getName());let i=new pb(r);return!await i.waitForReady()?(i.destroy(),null):i}
 async function pae(e,t,r){if(process.platform===`darwin`)return null;if(process.platform===`linux`){let a=`${fv(e,t)}.png`,o=n.nativeImage.createFromPath(n.app.isPackaged?(0,i.join)(process.resourcesPath,a):(0,i.join)(r,`electron`,`src`,`icons`,a));if(o.isEmpty())throw Error(`Linux tray application icon is unavailable`);return{defaultIcon:o.resize({width:V9,height:V9,quality:`best`}),chronicleRunningIcon:null}}return null}
 var pb=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(e={on(){},setContextMenu(){}}){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}destroy(){this.tray.destroy()}isReady(){return _j(this.tray)}waitForReady(){return gj(this.tray)}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(n.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}};
 v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if((process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}if(process.platform===`darwin`&&!this.isAppQuitting&&!t){e.preventDefault(),k.hide()}});
@@ -9094,7 +9094,7 @@ JS
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$extracted/.vite/build/main-test.js" '(process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())'
-    assert_contains "$extracted/.vite/build/main-test.js" 'r=codexLinuxRegisterTray(new n.Tray(t.defaultIcon))'
+    assert_contains "$extracted/.vite/build/main-test.js" 'r=codexLinuxRegisterTray(new n.Tray(t.defaultIcon,process.platform===`win32`&&n.app.isPackaged?mae(e.buildFlavor):void 0))'
     assert_contains "$extracted/.vite/build/main-test.js" 'if(typeof t.whenReady!=`function`)return!0'
     assert_contains "$extracted/.vite/build/main-test.js" 'return typeof t.isReady==`function`?t.isReady():!0'
     assert_contains "$extracted/.vite/build/main-test.js" 'let __codexLinuxTrayFallbackIcon=n.nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)'
@@ -9192,7 +9192,7 @@ if (!result.event.prevented || result.state.hideCalls !== 1) {
 NODE
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxRegisterTray(new n.Tray(t.defaultIcon))' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxRegisterTray(new n.Tray(t.defaultIcon,process.platform===`win32`&&n.app.isPackaged?mae(e.buildFlavor):void 0))' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'let __codexLinuxTrayFallbackIcon=' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'if(typeof t.whenReady!=`function`)return!0' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'return typeof t.isReady==`function`?t.isReady():!0' '1'

@@ -1358,7 +1358,7 @@ test("subagent nickname metadata descriptor targets the current monolithic app b
 function trayBundleFixture() {
   return [
     "async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return process.platform!==`linux`;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():process.platform!==`linux`}",
-    "async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new c.Tray(t.defaultIcon);r.setToolTip(c.app.getName());let i=new pb(r);return!await i.waitForReady()?(i.destroy(),null):i}",
+    "async function fae(e){let t=await pae(e.buildFlavor,e.appBrand,e.repoRoot),r=new c.Tray(t.defaultIcon,process.platform===`win32`&&c.app.isPackaged?mae(e.buildFlavor):void 0);r.setToolTip(c.app.getName());let i=new pb(r);return!await i.waitForReady()?(i.destroy(),null):i}",
     "async function pae(e,t,n){if(process.platform===`darwin`)return null;if(process.platform===`linux`){let r=`${fv(e,t)}.png`,i=c.nativeImage.createFromPath(c.app.isPackaged?(0,u.join)(process.resourcesPath,r):(0,u.join)(n,`electron`,`src`,`icons`,r));if(i.isEmpty())throw Error(`Linux tray application icon is unavailable`);return{defaultIcon:i.resize({width:V9,height:V9,quality:`best`}),chronicleRunningIcon:null}}return null}",
     "var pb=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(e={on(){},setContextMenu(){}}){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}destroy(){this.tray.destroy()}isReady(){return _j(this.tray)}waitForReady(){return gj(this.tray)}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(c.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}}",
     "v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if((process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}if(process.platform===`darwin`&&!this.isAppQuitting&&!t){e.preventDefault(),k.hide()}});",
@@ -1371,7 +1371,7 @@ function currentTrayLifecycleBundleFixture() {
     "let codexLinuxQuitInProgress=!1,codexLinuxExplicitQuitApproved=!1,codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0},codexLinuxPrepareForExplicitQuit=()=>{codexLinuxExplicitQuitApproved=!0,codexLinuxMarkQuitInProgress()},codexLinuxShouldBypassQuitPrompt=()=>codexLinuxExplicitQuitApproved===!0,codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0;",
     "v&&k.on(`close`,e=>{let t=this.getPrimaryWindows().some(e=>e!==k);if((process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}});",
     "async function gj(e){let t=e;if(typeof t.whenReady!=`function`)return!0;try{return await t.whenReady(),!0}catch{return!1}}function _j(e){let t=e;return typeof t.isReady==`function`?t.isReady():!0}",
-    "var H9=null,U9=null,G9=!1;async function fae(e){return G9=!0,U9??H9??(U9=(async()=>{let t={defaultIcon:e},r=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon)):new c.Tray(t.defaultIcon);if(!G9)return r.destroy(),null;r.setToolTip(c.app.getName());let i=new pb(r);return H9=i,!await i.waitForReady()||H9!==i?(H9===i&&(H9=null,i.destroy()),null):i})().finally(()=>{U9=null}),U9)}",
+    "var H9=null,U9=null,G9=!1;async function fae(e){return G9=!0,U9??H9??(U9=(async()=>{let t={defaultIcon:e},r=typeof codexLinuxRegisterTray===`function`?codexLinuxRegisterTray(new c.Tray(t.defaultIcon,process.platform===`win32`&&c.app.isPackaged?mae(e.buildFlavor):void 0)):new c.Tray(t.defaultIcon,process.platform===`win32`&&c.app.isPackaged?mae(e.buildFlavor):void 0);if(!G9)return r.destroy(),null;r.setToolTip(c.app.getName());let i=new pb(r);return H9=i,!await i.waitForReady()||H9!==i?(H9===i&&(H9=null,i.destroy()),null):i})().finally(()=>{U9=null}),U9)}",
     "var pb=class{constructor(e){this.tray=e;if(process.platform===`linux`){this.tray.on(`click`,()=>{}),this.updatePersistentTrayMenu();return}}destroy(){this.tray.destroy()}isReady(){return _j(this.tray)}waitForReady(){return gj(this.tray)}getNativeTrayMenuItems(){return[]}updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu(c.Menu.buildFromTemplate(this.getNativeTrayMenuItems()))}}",
   ].join("");
 }
@@ -2556,7 +2556,11 @@ test("destroys the registered Linux tray before the app exits", () => {
   assert.match(patched, /codexLinuxTray=null;try\{e\?\.destroy\(\)\}catch\{\}/);
   assert.match(patched, /codexLinuxMarkQuitInProgress=\(\)=>\{codexLinuxQuitInProgress=!0,codexLinuxDestroyTray\(\)\}/);
   assert.match(patched, /c\.app\.on\(`before-quit`,\(\)=>codexLinuxDestroyTray\(\)\)/);
-  assert.match(patched, /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon\)\)/);
+  assert.match(
+    patched,
+    /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon,process\.platform===`win32`&&c\.app\.isPackaged\?mae\(e\.buildFlavor\):void 0\)\)/,
+  );
+  assert.doesNotMatch(patched, /mae\(e\.buildFlavor\)\):void 0\)/);
   assert.doesNotMatch(patched, /codexLinuxTrayQuitDelayMs/);
 
   const helperStart = patched.indexOf("let codexLinuxTray=null");
@@ -2676,7 +2680,11 @@ test("retains the current native Linux tray when quit-state helpers already exis
 
   assert.equal((patched.match(/codexLinuxRegisterTray=e=>/g) ?? []).length, 1);
   assert.match(patched, /let codexLinuxTray=null,codexLinuxRegisterTray=e=>/);
-  assert.match(patched, /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon\)\)/);
+  assert.match(
+    patched,
+    /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon,process\.platform===`win32`&&c\.app\.isPackaged\?mae\(e\.buildFlavor\):void 0\)\)/,
+  );
+  assert.doesNotMatch(patched, /mae\(e\.buildFlavor\)\):void 0\)/);
   assert.doesNotMatch(patched, /typeof codexLinuxRegisterTray===`function`/);
 });
 
@@ -10903,7 +10911,7 @@ test("patchMainBundleSource keeps non-icon patches active without an icon asset"
   assert.match(patched, /linux:\{label:`File Manager`/);
   assert.match(
     patched,
-    /r=codexLinuxRegisterTray\(new [A-Za-z_$][\w$]*\.Tray\(t\.defaultIcon\)\)/,
+    /r=codexLinuxRegisterTray\(new [A-Za-z_$][\w$]*\.Tray\(t\.defaultIcon,[^;]*\)\)/,
   );
   assert.match(
     patched,
@@ -10926,7 +10934,10 @@ test("patchMainBundleSource stays idempotent after wrapping the Electron require
   const patched = patchMainBundleSource(source, "app-test.png");
 
   assert.equal(patchMainBundleSource(patched, "app-test.png"), patched);
-  assert.match(patched, /codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon\)\)/);
+  assert.match(
+    patched,
+    /codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon,process\.platform===`win32`&&c\.app\.isPackaged\?mae\(e\.buildFlavor\):void 0\)\)/,
+  );
   assert.match(patched, /updatePersistentTrayMenu\(\)\{process\.platform===`linux`/);
 });
 

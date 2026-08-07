@@ -73,7 +73,7 @@ function findCallBlock(source, marker) {
   };
 }
 
-function findMatchingBrace(source, openIndex) {
+function findMatchingDelimiter(source, openIndex, openChar, closeChar) {
   let depth = 0;
   let quote = null;
   let escaped = false;
@@ -93,9 +93,9 @@ function findMatchingBrace(source, openIndex) {
 
     if (char === "'" || char === '"' || char === "`") {
       quote = char;
-    } else if (char === "{") {
+    } else if (char === openChar) {
       depth += 1;
-    } else if (char === "}") {
+    } else if (char === closeChar) {
       depth -= 1;
       if (depth === 0) {
         return i;
@@ -104,6 +104,14 @@ function findMatchingBrace(source, openIndex) {
   }
 
   return -1;
+}
+
+function findMatchingBrace(source, openIndex) {
+  return findMatchingDelimiter(source, openIndex, "{", "}");
+}
+
+function findMatchingParen(source, openIndex) {
+  return findMatchingDelimiter(source, openIndex, "(", ")");
 }
 
 function findLastRegexMatch(source, regex) {
@@ -188,6 +196,7 @@ module.exports = {
   findLastRegexMatch,
   findLinuxGlobalStateExpression,
   findMatchingBrace,
+  findMatchingParen,
   inferModuleAlias,
   requireName,
 };
