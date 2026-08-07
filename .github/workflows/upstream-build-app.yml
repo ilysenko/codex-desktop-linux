@@ -17,6 +17,9 @@ on:
       - scripts/lib/candidate-install.sh
       - scripts/lib/bundled-plugins.sh
       - scripts/lib/browser-client-node-repl-runtime.test.js
+      - scripts/lib/build-info.js
+      - scripts/lib/build-info.sh
+      - scripts/lib/build-info.test.js
       - scripts/lib/patch-browser-client-iab-socket-scope.js
       - scripts/lib/patch-validation.js
       - scripts/lib/upstream-dmg-acceptance.js
@@ -41,6 +44,9 @@ on:
       - scripts/lib/candidate-install.sh
       - scripts/lib/bundled-plugins.sh
       - scripts/lib/browser-client-node-repl-runtime.test.js
+      - scripts/lib/build-info.js
+      - scripts/lib/build-info.sh
+      - scripts/lib/build-info.test.js
       - scripts/lib/patch-browser-client-iab-socket-scope.js
       - scripts/lib/patch-validation.js
       - scripts/lib/upstream-dmg-acceptance.js

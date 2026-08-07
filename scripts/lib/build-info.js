@@ -278,8 +278,16 @@ function recordAppVersionMetadata(metadataPath, appDir) {
     ? JSON.parse(fs.readFileSync(metadataPath, "utf8"))
     : {};
   metadata.appVersion = appVersion;
-  fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
-  fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+  const metadataDir = path.dirname(metadataPath);
+  fs.mkdirSync(metadataDir, { recursive: true });
+  const stagingDir = fs.mkdtempSync(path.join(metadataDir, ".upstream-dmg-metadata-"));
+  const stagingPath = path.join(stagingDir, path.basename(metadataPath));
+  try {
+    fs.writeFileSync(stagingPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+    fs.renameSync(stagingPath, metadataPath);
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
   return appVersion;
 }
 

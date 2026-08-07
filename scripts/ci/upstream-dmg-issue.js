@@ -9,6 +9,7 @@ const LEGACY_LABELS = labelPolicy.migrations
   .filter(({ to }) => to === LABEL)
   .map(({ from }) => from);
 const FINGERPRINT_PATTERN = /<!-- upstream-dmg-fingerprint:([a-f0-9]{64}) -->/i;
+const TEST_REHEARSAL_PATTERN = /<!-- upstream-dmg-test-rehearsal:([a-z0-9][a-z0-9._-]{0,63}) -->/i;
 
 function labelDefinition(name) {
   const definition = labelPolicy.labels.find((candidate) => candidate.name === name);
@@ -30,6 +31,18 @@ function fingerprintMarker(fingerprint) {
   return `<!-- upstream-dmg-fingerprint:${fingerprint} -->`;
 }
 
+function testRehearsalMarker(testId) {
+  return `<!-- upstream-dmg-test-rehearsal:${testId} -->`;
+}
+
+function decisionTestId(decision) {
+  return decision.testRehearsal?.id ?? null;
+}
+
+function issueTestId(issue) {
+  return issue.body?.match(TEST_REHEARSAL_PATTERN)?.[1] ?? null;
+}
+
 function runMarker(runId) {
   return `<!-- upstream-dmg-run:${runId ?? "local"} -->`;
 }
@@ -40,14 +53,31 @@ function issueFingerprint(issue) {
 
 function issueTitle(decision) {
   const version = decision.dmg.appVersion ?? "unknown version";
-  return `Upstream DMG drift: ${version} (${decision.dmg.sha256.slice(0, 12)})`;
+  const prefix = decisionTestId(decision) ? `[TEST ${decisionTestId(decision)}] ` : "";
+  return `${prefix}Upstream DMG drift: ${version} (${decision.dmg.sha256.slice(0, 12)})`;
+}
+
+function blockerLine(item) {
+  const check = item.check ?? "unknown check";
+  const name = item.name ? ` / \`${item.name}\`` : "";
+  const status = item.status ? ` (\`${item.status}\`)` : "";
+  return `- **${check}**${name}${status}: ${item.reason}`;
 }
 
 function issueBody(decision) {
   const runUrl = decision.run.url;
   const lines = [
     fingerprintMarker(decision.dmg.sha256),
+    ...(decisionTestId(decision) ? [testRehearsalMarker(decisionTestId(decision))] : []),
     runMarker(decision.run.id),
+    ...(decisionTestId(decision) ? [
+      "> [!CAUTION]",
+      "> TEST REHEARSAL ONLY. This issue does not report a real upstream regression and must not be used for a production repair.",
+      "",
+    ] : []),
+    "> [!IMPORTANT]",
+    "> Automated repair is already in progress. Please do not open a pull request for this DMG unless the maintainer asks.",
+    "",
     "The latest upstream DMG was rejected by the shared local/CI acceptance profile.",
     "",
     "## Candidate",
@@ -58,7 +88,7 @@ function issueBody(decision) {
     "",
     "## Blocking checks",
     "",
-    ...decision.blockers.map((item) => `- **${item.check}**: ${item.reason}`),
+    ...decision.blockers.map(blockerLine),
     "",
     "## Maintainer checklist",
     "",
@@ -69,10 +99,12 @@ function issueBody(decision) {
   return `${lines.join("\n")}\n`;
 }
 
-async function listTrackingIssues(github, repo) {
+async function listTrackingIssues(github, repo, { scanAll = false, testId = null } = {}) {
   const issuesByNumber = new Map();
-  for (const label of [LABEL, ...LEGACY_LABELS]) {
-    const params = { ...repo, state: "all", labels: label, per_page: 100 };
+  const queries = scanAll
+    ? [{ ...repo, state: "all", per_page: 100 }]
+    : [LABEL, ...LEGACY_LABELS].map((label) => ({ ...repo, state: "all", labels: label, per_page: 100 }));
+  for (const params of queries) {
     let issues;
     try {
       issues = github.paginate
@@ -87,9 +119,26 @@ async function listTrackingIssues(github, repo) {
   // The label is public repository metadata and may also be useful on a
   // maintainer-created issue. Only the hidden fingerprint marker proves that
   // this automation owns an issue and may mutate its lifecycle.
-  return [...issuesByNumber.values()].filter(
-    (issue) => issue.pull_request == null && issueFingerprint(issue) !== null,
-  );
+  return [...issuesByNumber.values()].filter((issue) => (
+    issue.pull_request == null &&
+    issueFingerprint(issue) !== null &&
+    (testId ? issueTestId(issue) === testId : issueTestId(issue) === null)
+  ));
+}
+
+function issueUrl(repo, issue) {
+  return issue.html_url ?? `https://github.com/${repo.owner}/${repo.repo}/issues/${issue.number}`;
+}
+
+async function ensureAssignee(github, repo, issue, assignee) {
+  if (!assignee) return;
+  const alreadyAssigned = (issue.assignees || []).some((candidate) => candidate?.login === assignee);
+  if (alreadyAssigned) return;
+  await github.rest.issues.addAssignees({
+    ...repo,
+    issue_number: issue.number,
+    assignees: [assignee],
+  });
 }
 
 async function ensureLabels(github, repo) {
@@ -118,7 +167,42 @@ async function closeIssue(github, repo, issue, message, stateReason) {
   });
 }
 
-async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpIdentityKey }) {
+async function consolidateMatchingIssues(github, repo, issues, fingerprint) {
+  const matching = issues
+    .filter((issue) => issueFingerprint(issue) === fingerprint)
+    .sort((left, right) => left.number - right.number);
+  if (matching.length === 0) return { primary: null, duplicateIssueNumbers: [] };
+
+  const primary = matching.find((issue) => hasLabel(issue, MANUAL_ONLY_LABEL)) ?? matching[0];
+  const duplicates = matching.filter((issue) => (
+    issue.number !== primary.number &&
+    issue.state === "open" &&
+    !hasLabel(issue, MANUAL_ONLY_LABEL)
+  ));
+  for (const issue of duplicates) {
+    await closeIssue(
+      github,
+      repo,
+      issue,
+      `Duplicate upstream DMG report; tracking continues in #${primary.number}.`,
+      "not_planned",
+    );
+  }
+  return {
+    primary,
+    duplicateIssueNumbers: duplicates.map((issue) => issue.number),
+  };
+}
+
+async function reconcileUpstreamDmgIssue({
+  github,
+  repo,
+  decision,
+  currentHttpIdentityKey,
+  assignee = null,
+  manageLabels = true,
+  scanAll = false,
+}) {
   if (decision.verdict === "inconclusive") {
     return { action: "ignored-inconclusive" };
   }
@@ -133,12 +217,16 @@ async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpId
     return { action: "ignored-stale-candidate" };
   }
 
-  const issues = await listTrackingIssues(github, repo);
+  const testId = decisionTestId(decision);
+  const issues = await listTrackingIssues(github, repo, { scanAll, testId });
 
   if (decision.verdict === "accepted" || decision.verdict === "accepted_with_warnings") {
     const openIssues = issues.filter(
       (issue) => issue.state === "open" && !hasLabel(issue, MANUAL_ONLY_LABEL),
     );
+    const manualOnlyIssueNumbers = issues
+      .filter((issue) => issue.state === "open" && hasLabel(issue, MANUAL_ONLY_LABEL))
+      .map((issue) => issue.number);
     for (const issue of openIssues) {
       await closeIssue(
         github,
@@ -148,12 +236,20 @@ async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpId
         "completed",
       );
     }
-    return { action: "closed-resolved", count: openIssues.length };
+    return {
+      action: "closed-resolved",
+      count: openIssues.length,
+      closedIssueNumbers: openIssues.map((issue) => issue.number),
+      manualOnlyIssueNumbers,
+    };
   }
 
-  await ensureLabels(github, repo);
+  if (manageLabels) await ensureLabels(github, repo);
   const fingerprint = decision.dmg.sha256.toLowerCase();
-  const matching = issues.find((issue) => issueFingerprint(issue) === fingerprint);
+  const {
+    primary: matching,
+    duplicateIssueNumbers,
+  } = await consolidateMatchingIssues(github, repo, issues, fingerprint);
   const obsolete = issues.filter((issue) => (
     issue.state === "open" &&
     issueFingerprint(issue) !== fingerprint &&
@@ -173,15 +269,22 @@ async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpId
   const body = issueBody(decision);
   if (matching) {
     if (hasLabel(matching, MANUAL_ONLY_LABEL)) {
-      return { action: "manual-only", issueNumber: matching.number };
+      return {
+        action: "manual-only",
+        issueNumber: matching.number,
+        issueUrl: issueUrl(repo, matching),
+        duplicateIssueNumbers,
+      };
     }
     const wasOpen = matching.state === "open";
     const alreadyReported = matching.body?.includes(runMarker(decision.run.id));
-    await github.rest.issues.addLabels({
-      ...repo,
-      issue_number: matching.number,
-      labels: ISSUE_LABELS,
-    });
+    if (manageLabels) {
+      await github.rest.issues.addLabels({
+        ...repo,
+        issue_number: matching.number,
+        labels: ISSUE_LABELS,
+      });
+    }
     await github.rest.issues.update({
       ...repo,
       issue_number: matching.number,
@@ -189,6 +292,7 @@ async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpId
       body,
       state: "open",
     });
+    await ensureAssignee(github, repo, matching, assignee);
     if (!alreadyReported) {
       await github.rest.issues.createComment({
         ...repo,
@@ -196,18 +300,45 @@ async function reconcileUpstreamDmgIssue({ github, repo, decision, currentHttpId
         body: `Acceptance failed again. ${decision.run.url ?? "See the latest workflow artifacts."}`,
       });
     }
-    return { action: wasOpen ? "updated" : "reopened", issueNumber: matching.number };
+    return {
+      action: wasOpen ? "updated" : "reopened",
+      issueNumber: matching.number,
+      issueUrl: issueUrl(repo, matching),
+      duplicateIssueNumbers,
+    };
   }
 
-  const created = await github.rest.issues.create({ ...repo, title, body, labels: ISSUE_LABELS });
-  return { action: "created", issueNumber: created.data.number };
+  const createArgs = { ...repo, title, body };
+  if (manageLabels) createArgs.labels = ISSUE_LABELS;
+  if (assignee) createArgs.assignees = [assignee];
+  const created = await github.rest.issues.create(createArgs);
+  const refreshedIssues = await listTrackingIssues(github, repo, { scanAll, testId });
+  const consolidated = await consolidateMatchingIssues(github, repo, refreshedIssues, fingerprint);
+  const primary = consolidated.primary ?? created.data;
+  if (primary.number !== created.data.number) {
+    return {
+      action: hasLabel(primary, MANUAL_ONLY_LABEL) ? "manual-only" : "reused-after-create-race",
+      issueNumber: primary.number,
+      issueUrl: issueUrl(repo, primary),
+      duplicateIssueNumbers: consolidated.duplicateIssueNumbers,
+    };
+  }
+  return {
+    action: "created",
+    issueNumber: created.data.number,
+    issueUrl: issueUrl(repo, created.data),
+    duplicateIssueNumbers: consolidated.duplicateIssueNumbers,
+  };
 }
 
 module.exports = {
   LABEL,
+  blockerLine,
   fingerprintMarker,
   issueBody,
   issueFingerprint,
+  issueTestId,
   reconcileUpstreamDmgIssue,
   runMarker,
+  testRehearsalMarker,
 };

@@ -64,3 +64,23 @@ test("leaves metadata untouched when the extracted app has no readable version",
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("leaves malformed metadata untouched instead of publishing a partial replacement", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-build-info-malformed-"));
+  try {
+    const appDir = path.join(tempDir, "Codex.app");
+    const metadataPath = path.join(tempDir, "upstream-dmg-metadata.json");
+    const original = '{"etag":';
+    writeInfoPlist(appDir, "26.803.41515");
+    fs.writeFileSync(metadataPath, original);
+
+    assert.throws(() => recordAppVersionMetadata(metadataPath, appDir), SyntaxError);
+    assert.equal(fs.readFileSync(metadataPath, "utf8"), original);
+    assert.deepEqual(
+      fs.readdirSync(tempDir).filter((entry) => entry.startsWith(".upstream-dmg-metadata-")),
+      [],
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

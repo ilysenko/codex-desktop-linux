@@ -1,9 +1,16 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
-const { fingerprintMarker, reconcileUpstreamDmgIssue } = require("./upstream-dmg-issue.js");
+const {
+  fingerprintMarker,
+  issueBody,
+  reconcileUpstreamDmgIssue,
+  testRehearsalMarker,
+} = require("./upstream-dmg-issue.js");
 
 function decision(verdict, sha, runId = "100") {
   return {
@@ -15,7 +22,7 @@ function decision(verdict, sha, runId = "100") {
   };
 }
 
-function fakeGithub(initialIssues = []) {
+function fakeGithub(initialIssues = [], { createCollisionIssue = null } = {}) {
   const calls = [];
   let nextNumber = 50;
   const issues = initialIssues.map((issue) => ({ ...issue }));
@@ -24,6 +31,7 @@ function fakeGithub(initialIssues = []) {
   rest.issues.getLabel = async () => ({ data: {} });
   rest.issues.createLabel = async (args) => { calls.push(["createLabel", args]); return { data: {} }; };
   rest.issues.addLabels = async (args) => { calls.push(["addLabels", args]); return { data: {} }; };
+  rest.issues.addAssignees = async (args) => { calls.push(["addAssignees", args]); return { data: {} }; };
   rest.issues.createComment = async (args) => { calls.push(["comment", args]); return { data: {} }; };
   rest.issues.update = async (args) => {
     calls.push(["update", args]);
@@ -35,10 +43,22 @@ function fakeGithub(initialIssues = []) {
     calls.push(["create", args]);
     const issue = { ...args, number: nextNumber++, state: "open" };
     issues.push(issue);
+    if (createCollisionIssue != null) {
+      issues.push({ ...createCollisionIssue });
+      createCollisionIssue = null;
+    }
     return { data: issue };
   };
   return { github: { rest }, calls, issues };
 }
+
+test("scheduled reconciliation scans unlabeled watchdog issues", () => {
+  const workflow = fs.readFileSync(
+    path.resolve(__dirname, "../../.github/workflows/upstream-build-app.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /currentHttpIdentityKey:[\s\S]*?scanAll: true,/);
+});
 
 test("creates one issue for a rejected current fingerprint", async () => {
   const fixture = fakeGithub();
@@ -53,6 +73,90 @@ test("creates one issue for a rejected current fingerprint", async () => {
     "area: upstream dmg",
     "status: ready for work",
   ]);
+});
+
+test("watchdog issue mode assigns the current user without mutating labels", async () => {
+  const fixture = fakeGithub();
+  const sha = "0".repeat(64);
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("rejected", sha),
+    currentHttpIdentityKey: "current",
+    assignee: "maintainer",
+    manageLabels: false,
+    scanAll: true,
+  });
+
+  assert.equal(result.action, "created");
+  const create = fixture.calls.find(([name]) => name === "create")[1];
+  assert.deepEqual(create.assignees, ["maintainer"]);
+  assert.equal("labels" in create, false);
+  assert.match(create.body, /Automated repair is already in progress/);
+  assert.match(create.body, /Please do not open a pull request/);
+});
+
+test("issue body includes the precise blocker name and status", () => {
+  const current = decision("rejected", "a".repeat(64));
+  current.blockers = [{
+    check: "feature:ui-tweaks",
+    name: "model-picker-model-list",
+    status: "skipped-optional",
+    reason: "current bundle was not found",
+  }];
+
+  const body = issueBody(current);
+
+  assert.match(body, /feature:ui-tweaks/);
+  assert.match(body, /model-picker-model-list/);
+  assert.match(body, /skipped-optional/);
+  assert.match(body, /current bundle was not found/);
+});
+
+test("test rehearsal issue is unmistakably marked and isolated from production issues", async () => {
+  const sha = "a".repeat(64);
+  const production = { number: 31, state: "open", body: fingerprintMarker("b".repeat(64)) };
+  const fixture = fakeGithub([production]);
+  const current = decision("rejected", sha);
+  current.testRehearsal = { id: "issue-drill-1", merge_policy: "skip" };
+
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: current,
+    currentHttpIdentityKey: "current",
+    manageLabels: false,
+    scanAll: true,
+  });
+
+  assert.equal(result.action, "created");
+  const create = fixture.calls.find(([name]) => name === "create")[1];
+  assert.match(create.title, /^\[TEST issue-drill-1\]/);
+  assert.match(create.body, /TEST REHEARSAL ONLY/);
+  assert.match(create.body, /upstream-dmg-test-rehearsal:issue-drill-1/);
+  assert.equal(fixture.calls.some(([, args]) => args.issue_number === 31), false);
+});
+
+test("production reconciliation ignores test rehearsal issues", async () => {
+  const testIssue = {
+    number: 32,
+    state: "open",
+    body: `${fingerprintMarker("c".repeat(64))}\n${testRehearsalMarker("issue-drill-2")}`,
+  };
+  const fixture = fakeGithub([testIssue]);
+
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("accepted", "d".repeat(64)),
+    currentHttpIdentityKey: "current",
+    manageLabels: false,
+    scanAll: true,
+  });
+
+  assert.equal(result.action, "closed-resolved");
+  assert.equal(result.count, 0);
+  assert.equal(fixture.calls.length, 0);
 });
 
 test("closes old fingerprints before creating the new issue", async () => {
@@ -75,6 +179,69 @@ test("reopens the matching closed issue instead of duplicating it", async () => 
   assert.equal(fixture.calls.filter(([name]) => name === "create").length, 0);
 });
 
+test("closes duplicate matching fingerprint issues and keeps the oldest canonical issue", async () => {
+  const sha = "d".repeat(64);
+  const fixture = fakeGithub([
+    { number: 7, state: "open", body: fingerprintMarker(sha) },
+    { number: 8, state: "open", body: fingerprintMarker(sha) },
+  ]);
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("rejected", sha),
+    currentHttpIdentityKey: "current",
+    scanAll: true,
+  });
+
+  assert.equal(result.action, "updated");
+  assert.equal(result.issueNumber, 7);
+  assert.deepEqual(result.duplicateIssueNumbers, [8]);
+  assert.ok(fixture.calls.some(([name, args]) => (
+    name === "update" && args.issue_number === 8 && args.state === "closed"
+  )));
+  assert.equal(fixture.calls.filter(([name]) => name === "create").length, 0);
+});
+
+test("rechecks after create and closes a colliding watchdog issue", async () => {
+  const sha = "c".repeat(64);
+  const fixture = fakeGithub([], {
+    createCollisionIssue: { number: 51, state: "open", body: fingerprintMarker(sha) },
+  });
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("rejected", sha),
+    currentHttpIdentityKey: "current",
+    scanAll: true,
+  });
+
+  assert.equal(result.action, "created");
+  assert.equal(result.issueNumber, 50);
+  assert.deepEqual(result.duplicateIssueNumbers, [51]);
+  assert.ok(fixture.calls.some(([name, args]) => (
+    name === "update" && args.issue_number === 51 && args.state === "closed"
+  )));
+});
+
+test("watchdog mode finds an unlabelled closed marker and reuses it", async () => {
+  const sha = "d".repeat(64);
+  const fixture = fakeGithub([{ number: 8, state: "closed", body: fingerprintMarker(sha) }]);
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("rejected", sha),
+    currentHttpIdentityKey: "current",
+    assignee: "maintainer",
+    manageLabels: false,
+    scanAll: true,
+  });
+
+  assert.equal(result.action, "reopened");
+  assert.equal(fixture.calls.filter(([name]) => name === "create").length, 0);
+  assert.ok(fixture.calls.some(([name]) => name === "addAssignees"));
+  assert.equal(fixture.calls.some(([name]) => name === "addLabels"), false);
+});
+
 test("accepted candidates close old drift issues without creating a new one", async () => {
   const fixture = fakeGithub([{ number: 9, state: "open", body: fingerprintMarker("e".repeat(64)) }]);
   const result = await reconcileUpstreamDmgIssue({
@@ -82,6 +249,27 @@ test("accepted candidates close old drift issues without creating a new one", as
   });
   assert.equal(result.action, "closed-resolved");
   assert.equal(fixture.calls.filter(([name]) => name === "create").length, 0);
+});
+
+test("accepted candidates report manual-only issues without mutating them", async () => {
+  const sha = "7".repeat(64);
+  const fixture = fakeGithub([{
+    number: 15,
+    state: "open",
+    body: fingerprintMarker(sha),
+    labels: [{ name: "workflow: manual only" }],
+  }]);
+
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("accepted", sha),
+    currentHttpIdentityKey: "current",
+    scanAll: true,
+  });
+
+  assert.deepEqual(result.manualOnlyIssueNumbers, [15]);
+  assert.equal(fixture.calls.some(([, args]) => args.issue_number === 15), false);
 });
 
 test("does not add a duplicate comment for the same workflow run", async () => {
