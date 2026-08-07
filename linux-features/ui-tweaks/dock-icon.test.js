@@ -45,7 +45,7 @@ const currentRuntimeSource = [
 ].join("");
 
 const currentTraySource =
-  "let codexLinuxTray=null,codexLinuxRegisterTray=e=>(codexLinuxTray=e,e);async function Ywe(e){let t=await Xwe(e.buildFlavor,e.appBrand,e.repoRoot),n=codexLinuxRegisterTray(new l.Tray(t.defaultIcon));if(!W9)return n.destroy(),null;return n}";
+  "let codexLinuxTray=null,codexLinuxRegisterTray=e=>(codexLinuxTray=e,e);async function Ywe(e){let t=await Xwe(e.buildFlavor,e.appBrand,e.repoRoot),n=codexLinuxRegisterTray(new l.Tray(...(process.platform===`linux`?[t.defaultIcon]:[t.defaultIcon,process.platform===`win32`&&l.app.isPackaged?dEe(e.buildFlavor):void 0])));if(!W9)return n.destroy(),null;return n}";
 
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
 
@@ -186,7 +186,7 @@ test("main patch enables official previews and synchronizes Linux window and tra
   assert.match(patched, /codexLinuxDockIconImage\.isEmpty\(\)/);
   assert.match(
     patched,
-    /codexLinuxRegisterTray\(new l\.Tray\(process\.platform===`linux`&&globalThis\.codexLinuxDockIconImage/,
+    /codexLinuxRegisterTray\(new l\.Tray\(\.\.\.\(process\.platform===`linux`\?\[globalThis\.codexLinuxDockIconImage/,
   );
   assert.match(
     patched,
@@ -206,7 +206,7 @@ test("main patch rejects drift at every current-DMG insertion point byte-identic
     "F=()=>{if(!v)return",
     "if(v){F();let e=()=>",
     "onWindowRegistered:e=>{I?.registerWindow(e),C?.(e)}",
-    "codexLinuxRegisterTray(new l.Tray(t.defaultIcon))",
+    "codexLinuxRegisterTray(new l.Tray(...(process.platform===`linux`?[t.defaultIcon]:[t.defaultIcon,process.platform===`win32`&&l.app.isPackaged?dEe(e.buildFlavor):void 0])))",
   ];
 
   for (const insertionPoint of insertionPoints) {
@@ -234,7 +234,7 @@ test("main patch rejects drift at every patched insertion point byte-identically
     "F=()=>{if(!v&&process.platform!==`linux`)return",
     "if(v||process.platform===`linux`){F();let e=()=>",
     "onWindowRegistered:e=>{I?.registerWindow(e),C?.(e),process.platform===`linux`&&setImmediate(F)}",
-    "n=codexLinuxRegisterTray(new l.Tray(process.platform===`linux`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:t.defaultIcon));if(!W9)return",
+    "n=codexLinuxRegisterTray(new l.Tray(...(process.platform===`linux`?[globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:t.defaultIcon]:[t.defaultIcon,process.platform===`win32`&&l.app.isPackaged?dEe(e.buildFlavor):void 0])));if(!W9)return",
   ];
 
   for (const insertionPoint of insertionPoints) {

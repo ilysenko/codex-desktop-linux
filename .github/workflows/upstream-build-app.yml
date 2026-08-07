@@ -280,5 +280,6 @@ jobs:
               repo: context.repo,
               decision,
               currentHttpIdentityKey: httpIdentity(currentMetadata)?.key ?? null,
+              scanAll: true,
             });
             core.info(`Upstream DMG issue reconciliation: ${JSON.stringify(result)}`);

@@ -269,6 +269,20 @@ function appBundleVersion(appDir) {
   return version.length > 0 ? version : null;
 }
 
+function recordAppVersionMetadata(metadataPath, appDir) {
+  const appVersion = appBundleVersion(appDir);
+  if (appVersion == null) {
+    return null;
+  }
+  const metadata = fs.existsSync(metadataPath)
+    ? JSON.parse(fs.readFileSync(metadataPath, "utf8"))
+    : {};
+  metadata.appVersion = appVersion;
+  fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
+  fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+  return appVersion;
+}
+
 function linuxTargetInfo(target) {
   return {
     summary: linuxTargetSummary(target),
@@ -356,6 +370,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  appBundleVersion,
   buildInfo,
   githubCommitUrl,
   isoTimestamp,
@@ -363,5 +378,6 @@ module.exports = {
   sanitizeGitRemoteUrl,
   sourceInfo,
   sourceInfoFromGit,
+  recordAppVersionMetadata,
   writeBuildInfo,
 };

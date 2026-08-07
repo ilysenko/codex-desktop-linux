@@ -2685,7 +2685,7 @@ test("retains the current native Linux tray when quit-state helpers already exis
   assert.match(patched, /let codexLinuxTray=null,codexLinuxRegisterTray=e=>/);
   assert.match(
     patched,
-    /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon,process\.platform===`win32`&&c\.app\.isPackaged\?dEe\(e\.buildFlavor\):void 0\)\)/,
+    /r=codexLinuxRegisterTray\(new c\.Tray\(\.\.\.\(process\.platform===`linux`\?\[t\.defaultIcon\]:\[t\.defaultIcon,process\.platform===`win32`&&c\.app\.isPackaged\?dEe\(e\.buildFlavor\):void 0\]\)\)\)/,
   );
   assert.doesNotMatch(patched, /typeof codexLinuxRegisterTray===`function`/);
 });
@@ -2693,13 +2693,36 @@ test("retains the current native Linux tray when quit-state helpers already exis
 test("wraps the complete exact-DMG nested-ternary Tray constructor in a parseable bundle", () => {
   const source = `${currentMainBundlePrefix}${exactDmgNestedTernaryTrayBundleFixture()}`;
   const patched = patchMainBundleSource(source, null);
+  const retainedConstructor =
+    "r=codexLinuxRegisterTray(new c.Tray(...(process.platform===`linux`?[t.defaultIcon]:[t.defaultIcon,process.platform===`win32`&&c.app.isPackaged?dEe(e.buildFlavor):void 0])))";
 
-  assert.match(
-    patched,
-    /r=codexLinuxRegisterTray\(new c\.Tray\(t\.defaultIcon,process\.platform===`win32`&&c\.app\.isPackaged\?dEe\(e\.buildFlavor\):void 0\)\)/,
-  );
+  assert.ok(patched.includes(retainedConstructor));
   assert.doesNotThrow(() => new Function(patched));
   assert.equal(patchMainBundleSource(patched, null), patched);
+
+  const trayArguments = (platform) => {
+    const context = {
+      c: {
+        app: { isPackaged: true },
+        Tray: class {
+          constructor(...args) {
+            this.args = args;
+          }
+        },
+      },
+      codexLinuxRegisterTray: (tray) => tray,
+      dEe: () => "windows-guid",
+      e: { buildFlavor: "prod" },
+      process: { platform },
+      result: null,
+      t: { defaultIcon: "icon" },
+    };
+    vm.runInNewContext(`${retainedConstructor};result=r.args`, context);
+    return [...context.result];
+  };
+
+  assert.deepEqual(trayArguments("linux"), ["icon"]);
+  assert.deepEqual(trayArguments("win32"), ["icon", "windows-guid"]);
 });
 
 test("bypasses the upstream before-quit confirmation after a Linux explicit quit", () => {

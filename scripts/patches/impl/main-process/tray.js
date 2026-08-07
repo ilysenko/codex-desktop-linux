@@ -35,6 +35,48 @@ function findMatchingParenthesis(source, openIndex) {
   return -1;
 }
 
+function findTopLevelArgumentSeparator(source) {
+  let parentheses = 0;
+  let brackets = 0;
+  let braces = 0;
+  let quote = null;
+  let escaped = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote != null) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+    } else if (char === "(") {
+      parentheses += 1;
+    } else if (char === ")") {
+      parentheses -= 1;
+    } else if (char === "[") {
+      brackets += 1;
+    } else if (char === "]") {
+      brackets -= 1;
+    } else if (char === "{") {
+      braces += 1;
+    } else if (char === "}") {
+      braces -= 1;
+    } else if (char === "," && parentheses === 0 && brackets === 0 && braces === 0) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function findTrayConstructor(source) {
   const retainedPattern =
     /([A-Za-z_$][\w$]*)=codexLinuxRegisterTray\(new ([A-Za-z_$][\w$]*)\.Tray\(/g;
@@ -150,8 +192,12 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     startIndex: constructorStartIndex,
     trayVar,
   } = constructorMatch;
+  const argumentSeparator = findTopLevelArgumentSeparator(constructorArgs);
+  const trayConstructor = argumentSeparator === -1
+    ? `new ${electronVar}.Tray(${constructorArgs})`
+    : `new ${electronVar}.Tray(...(process.platform===\`linux\`?[${constructorArgs.slice(0, argumentSeparator)}]:[${constructorArgs}]))`;
   const retainedConstructor =
-    `${trayVar}=codexLinuxRegisterTray(new ${electronVar}.Tray(${constructorArgs}))`;
+    `${trayVar}=codexLinuxRegisterTray(${trayConstructor})`;
   if (!retained) {
     patchedSource =
       patchedSource.slice(0, constructorStartIndex) +

@@ -70,7 +70,11 @@ write_transaction_dmg_metadata() {
     "${CODEX_ACCEPTANCE_NODE:-node}" - "$output_path" "$dmg_path" "$cached_metadata" "$DMG_URL" <<'NODE'
 const fs = require("node:fs");
 const [outputPath, dmgPath, metadataPath, url] = process.argv.slice(2);
-const metadata = { url, path: dmgPath };
+let metadata = {};
+if (fs.existsSync(outputPath)) {
+  metadata = JSON.parse(fs.readFileSync(outputPath, "utf8"));
+}
+Object.assign(metadata, { url, path: dmgPath });
 if (metadataPath && fs.existsSync(metadataPath)) {
   for (const line of fs.readFileSync(metadataPath, "utf8").split(/\r?\n/)) {
     const separator = line.indexOf("=");
@@ -134,6 +138,7 @@ transactional_install() {
         CODEX_INSTALL_DIR="$candidate_dir" \
         CODEX_PATCH_REPORT_JSON="$core_report" \
         CODEX_REBUILD_REPORT_JSON="$rebuild_report" \
+        CODEX_UPSTREAM_DMG_METADATA_JSON="$metadata_path" \
         "$BASH" "$SCRIPT_DIR/install.sh" "${original_args[@]}"; then
         build_status="success"
     fi
@@ -331,6 +336,7 @@ main() {
 
     local app_dir
     app_dir=$(extract_dmg "$dmg_path")
+    record_upstream_app_version "$app_dir"
 
     detect_electron_version "$app_dir"
     if [ "$INSPECT_ONLY" -eq 1 ]; then
