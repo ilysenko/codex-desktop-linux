@@ -327,6 +327,7 @@
           mesa
           libgbm
           alsa-lib
+          pipewire
           libX11
           libXcomposite
           libXdamage
@@ -739,6 +740,7 @@ PY
 
             makeWrapper "$out/opt/codex-desktop/start.sh" "$out/bin/codex-desktop" \
               --prefix PATH : "${payloadLauncherPath}" \
+              --set-default ALSA_PLUGIN_DIR "${pkgs.pipewire}/lib/alsa-lib" \
               --run 'export XDG_DATA_DIRS="''${XDG_DATA_DIRS:-${xdgDefaultDataDirs}}"' \
               --prefix XDG_DATA_DIRS : "${gsettingsSchemaDataDirs}" \
               --prefix PATH : "/run/current-system/sw/bin" \
@@ -838,6 +840,36 @@ PY
           notification-actions-linux = codexNotificationActionsBinary;
           notification-actions-installer = pkgs.runCommand "codex-notification-actions-installer-check" { } ''
             grep -F 'CODEX_NOTIFICATION_ACTIONS_SOURCE=' ${installer}/bin/codex-desktop-installer >/dev/null
+            touch "$out"
+          '';
+          nix-pipewire-alsa-wrapper = pkgs.runCommand "codex-desktop-nix-pipewire-alsa-wrapper-check" { } ''
+            plugin="${pkgs.pipewire}/lib/alsa-lib/libasound_module_pcm_pipewire.so"
+            expected_plugin_dir="${pkgs.pipewire}/lib/alsa-lib"
+            test -f "$plugin"
+
+            run_wrapper() {
+              case "$1" in
+                unset) unset ALSA_PLUGIN_DIR ;;
+                custom) export ALSA_PLUGIN_DIR=/custom/lib/alsa-lib ;;
+                *) echo "unknown test case: $1" >&2; return 1 ;;
+              esac
+
+              actual_plugin_dir="$({
+                exec() {
+                  printf '%s\n' "$ALSA_PLUGIN_DIR"
+                }
+
+                source ${codexDesktop}/bin/codex-desktop
+              })"
+              if [ "$actual_plugin_dir" != "$2" ]; then
+                printf 'expected ALSA_PLUGIN_DIR <%s>, got <%s>\n' \\
+                  "$2" "$actual_plugin_dir" >&2
+                return 1
+              fi
+            }
+
+            run_wrapper unset "$expected_plugin_dir"
+            run_wrapper custom /custom/lib/alsa-lib
             touch "$out"
           '';
           nix-gsettings-schema-wrapper = pkgs.runCommand "codex-desktop-nix-gsettings-schema-wrapper-check" { } ''
