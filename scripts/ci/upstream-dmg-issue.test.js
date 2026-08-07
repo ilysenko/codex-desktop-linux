@@ -25,7 +25,11 @@ function decision(verdict, sha, runId = "100") {
 function fakeGithub(initialIssues = [], { createCollisionIssue = null } = {}) {
   const calls = [];
   let nextNumber = 50;
-  const issues = initialIssues.map((issue) => ({ ...issue }));
+  const issues = initialIssues.map((issue) => ({
+    author_association: "OWNER",
+    user: { login: "maintainer" },
+    ...issue,
+  }));
   const rest = { issues: {} };
   rest.issues.listForRepo = async () => ({ data: issues });
   rest.issues.getLabel = async () => ({ data: {} });
@@ -41,10 +45,20 @@ function fakeGithub(initialIssues = [], { createCollisionIssue = null } = {}) {
   };
   rest.issues.create = async (args) => {
     calls.push(["create", args]);
-    const issue = { ...args, number: nextNumber++, state: "open" };
+    const issue = {
+      ...args,
+      number: nextNumber++,
+      state: "open",
+      author_association: "NONE",
+      user: { login: "github-actions[bot]" },
+    };
     issues.push(issue);
     if (createCollisionIssue != null) {
-      issues.push({ ...createCollisionIssue });
+      issues.push({
+        author_association: "OWNER",
+        user: { login: "maintainer" },
+        ...createCollisionIssue,
+      });
       createCollisionIssue = null;
     }
     return { data: issue };
@@ -58,6 +72,30 @@ test("scheduled reconciliation scans unlabeled watchdog issues", () => {
     "utf8",
   );
   assert.match(workflow, /currentHttpIdentityKey:[\s\S]*?scanAll: true,/);
+});
+
+test("scan-all ignores a copied fingerprint marker from an untrusted issue author", async () => {
+  const sha = "a".repeat(64);
+  const outsider = {
+    number: 33,
+    state: "open",
+    body: fingerprintMarker(sha),
+    author_association: "CONTRIBUTOR",
+    user: { login: "external-contributor" },
+  };
+  const fixture = fakeGithub([outsider]);
+
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("rejected", sha),
+    currentHttpIdentityKey: "current",
+    scanAll: true,
+  });
+
+  assert.equal(result.action, "created");
+  assert.equal(fixture.calls.filter(([name]) => name === "create").length, 1);
+  assert.equal(fixture.calls.some(([, args]) => args.issue_number === 33), false);
 });
 
 test("creates one issue for a rejected current fingerprint", async () => {

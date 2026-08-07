@@ -10,6 +10,7 @@ const LEGACY_LABELS = labelPolicy.migrations
   .map(({ from }) => from);
 const FINGERPRINT_PATTERN = /<!-- upstream-dmg-fingerprint:([a-f0-9]{64}) -->/i;
 const TEST_REHEARSAL_PATTERN = /<!-- upstream-dmg-test-rehearsal:([a-z0-9][a-z0-9._-]{0,63}) -->/i;
+const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 function labelDefinition(name) {
   const definition = labelPolicy.labels.find((candidate) => candidate.name === name);
@@ -49,6 +50,11 @@ function runMarker(runId) {
 
 function issueFingerprint(issue) {
   return issue.body?.match(FINGERPRINT_PATTERN)?.[1]?.toLowerCase() ?? null;
+}
+
+function hasTrustedAutomationAuthor(issue) {
+  return issue.user?.login === "github-actions[bot]" ||
+    TRUSTED_AUTHOR_ASSOCIATIONS.has(issue.author_association);
 }
 
 function issueTitle(decision) {
@@ -116,11 +122,12 @@ async function listTrackingIssues(github, repo, { scanAll = false, testId = null
     }
     for (const issue of issues) issuesByNumber.set(issue.number, issue);
   }
-  // The label is public repository metadata and may also be useful on a
-  // maintainer-created issue. Only the hidden fingerprint marker proves that
-  // this automation owns an issue and may mutate its lifecycle.
+  // Fingerprint markers are public and can be copied into an arbitrary issue.
+  // Only maintainers and this workflow's bot may create lifecycle-managed
+  // trackers; labels and markers alone are not sufficient ownership proof.
   return [...issuesByNumber.values()].filter((issue) => (
     issue.pull_request == null &&
+    hasTrustedAutomationAuthor(issue) &&
     issueFingerprint(issue) !== null &&
     (testId ? issueTestId(issue) === testId : issueTestId(issue) === null)
   ));
