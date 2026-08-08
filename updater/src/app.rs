@@ -45,6 +45,7 @@ const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
     "polkit-dde-agent",
     "polkit-gnome-authentication-agent",
     "polkit-kde-authentication-agent",
+    "quickshell/dms",
     "soteria",
     "ukui-polkit",
     "xfce-polkit",
@@ -4813,6 +4814,12 @@ mod tests {
         assert!(process_text_matches_polkit_auth_agent("cosmic-osd"));
         assert!(process_text_matches_polkit_auth_agent(
             "gnome-shell --wayland"
+        ));
+        assert!(process_text_matches_polkit_auth_agent(
+            "qs -p /usr/share/quickshell/dms"
+        ));
+        assert!(!process_text_matches_polkit_auth_agent(
+            "qs -p /usr/share/quickshell/other-shell"
         ));
         assert!(!process_text_matches_polkit_auth_agent(
             "/usr/lib/polkit-1/polkitd --no-debug"
