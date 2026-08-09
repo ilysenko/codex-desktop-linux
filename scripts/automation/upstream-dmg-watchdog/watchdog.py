@@ -297,7 +297,7 @@ def http_identity(headers: dict[str, str]) -> dict | None:
         "etag": etag,
         "last_modified": last_modified,
         "content_length": content_length,
-        "key": hashlib.sha256(key_input.encode()).hexdigest(),
+        "key": hashlib.sha256(b"watchdog-identity-v1:" + key_input.encode()).hexdigest(),
     }
 
 
