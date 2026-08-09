@@ -6019,7 +6019,7 @@ ELECTRON_ARG_DENY_PATTERNS=()
 FEATURE_LOCKED_ENV_NAMES=()
 
 print_state() {
-    printf 'mode=%s wslg=%s ozone_platform=%s ozone_hint=%s gpu=%s gpu_arg=%s comp=%s gl_added=%s renderer_accessibility=%s hook_value=%s hook_saw_arg=%s launch=' \
+    printf 'mode=%s wslg=%s ozone_platform=%s ozone_hint=%s gpu=%s gpu_arg=%s comp=%s gl_added=%s renderer_accessibility=%s hook_value=%s hook_saw_arg=%s sandbox_helper=%s launch=' \
         "$ELECTRON_RENDERING_MODE" \
         "$ELECTRON_WSLG_DETECTED" \
         "${ELECTRON_OZONE_PLATFORM:-}" \
@@ -6030,7 +6030,8 @@ print_state() {
         "$ELECTRON_GL_SWITCH_ADDED" \
         "$ELECTRON_RENDERER_ACCESSIBILITY_FORCED" \
         "${CODEX_TEST_LAUNCHER_HOOK_VALUE:-}" \
-        "${CODEX_TEST_LAUNCHER_HOOK_SAW_ARG:-}"
+        "${CODEX_TEST_LAUNCHER_HOOK_SAW_ARG:-}" \
+        "${CHROME_DEVEL_SANDBOX:-}"
     for arg in "${ELECTRON_LAUNCH_ARGS[@]}"; do
         printf '<%s>' "$arg"
     done
@@ -6147,6 +6148,34 @@ EOF
     [[ "$output" == *"hook_value=from-hook hook_saw_arg=1"* ]] || fail "launcher hook must contribute environment variables and receive current Electron args: $output"
     [[ "$output" == *"electron=<--existing-electron-arg><--test-feature-launcher-hook=1>"* ]] || fail "launcher hook must append Electron args after existing args: $output"
     [[ "$output" == *"<--enable-features=TestHookFeature>"* ]] || fail "launcher hook enable-features output must merge into launch args: $output"
+    rm -f "$feature_launcher_hook_dir/generic-hook"
+
+    local chromium_app_dir="$TMP_DIR/chromium sandbox=app"
+    local chromium_features_dir="$chromium_app_dir/.codex-linux/features"
+    local chromium_generated_helper="$chromium_features_dir/chromium-sandbox/generated-chrome-sandbox"
+    local chromium_external_helper="$TMP_DIR/chromium helper=value"
+    local chromium_stat_stub_dir="$TMP_DIR/chromium-stat-stub"
+    mkdir -p "$(dirname "$chromium_generated_helper")" "$chromium_stat_stub_dir"
+    printf '%s\n' 'matching helper' > "$chromium_generated_helper"
+    cp "$chromium_generated_helper" "$chromium_external_helper"
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$chromium_app_dir/electron"
+    printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' '0:0:4755'" \
+        > "$chromium_stat_stub_dir/stat"
+    cp "$REPO_DIR/linux-features/chromium-sandbox/launcher-hook.sh" \
+        "$feature_launcher_hook_dir/chromium-sandbox-hook"
+    chmod +x "$chromium_generated_helper" "$chromium_external_helper" \
+        "$chromium_app_dir/electron" "$chromium_stat_stub_dir/stat" \
+        "$feature_launcher_hook_dir/chromium-sandbox-hook"
+    output="$(env -i PATH="$chromium_stat_stub_dir:$PATH" HOME="$HOME" \
+        SCRIPT_DIR="$chromium_app_dir" CODEX_LINUX_FEATURES_DIR="$chromium_features_dir" \
+        FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        CHROME_DEVEL_SANDBOX="$chromium_external_helper" \
+        CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe)"
+    [[ "$output" == *"sandbox_helper=$chromium_external_helper launch="* ]] \
+        || fail "launcher must preserve the exact helper pathname validated by the feature: $output"
+    [[ "$output" != *"<--no-sandbox>"* && "$output" != *"<--disable-gpu-sandbox>"* ]] \
+        || fail "qualified Chromium feature must remove sandbox-disabling defaults: $output"
+    rm -f "$feature_launcher_hook_dir/chromium-sandbox-hook"
 
     printf '%s\n' '#!/usr/bin/env bash' 'exit 23' > "$feature_launcher_hook_dir/failing-hook"
     chmod +x "$feature_launcher_hook_dir/failing-hook"

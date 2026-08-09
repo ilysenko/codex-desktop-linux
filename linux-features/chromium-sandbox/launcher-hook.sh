@@ -21,6 +21,11 @@ case "$helper" in
     /*) ;;
     *) fail_launch "CHROME_DEVEL_SANDBOX must name an absolute helper path" ;;
 esac
+case "$helper" in
+    *$'\n'*|*$'\r'*)
+        fail_launch "CHROME_DEVEL_SANDBOX must not contain CR or LF"
+        ;;
+esac
 
 if [ -L "$helper" ] || [ ! -f "$helper" ] || [ ! -x "$helper" ]; then
     fail_launch "helper must be a non-symlink executable regular file: $helper"

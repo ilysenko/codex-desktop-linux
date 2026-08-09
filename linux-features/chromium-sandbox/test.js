@@ -130,6 +130,29 @@ test("qualified cold launch removes only sandbox-disabling core defaults", () =>
   } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
 });
 
+test("validated helper path remains exact and line delimiters fail closed", () => {
+  const f = fixture();
+  try {
+    const safeHelper = path.join(f.temp, "installed helper=value");
+    fs.copyFileSync(f.generatedHelper, safeHelper);
+    fs.chmodSync(safeHelper, 0o755);
+    const safeResult = runHook(f, { helper: safeHelper });
+    assert.equal(safeResult.status, 0, safeResult.stderr);
+    assert.equal(safeResult.stdout.split("\n")[0],
+      `env CHROME_DEVEL_SANDBOX=${safeHelper}`);
+    assert.match(safeResult.stdout, /^env-lock CHROME_DEVEL_SANDBOX$/m);
+
+    for (const delimiter of ["\n", "\r"]) {
+      const unsafeHelper = path.join(f.temp, `installed${delimiter}helper`);
+      fs.copyFileSync(f.generatedHelper, unsafeHelper);
+      fs.chmodSync(unsafeHelper, 0o755);
+      const unsafeResult = runHook(f, { helper: unsafeHelper });
+      assert.match(unsafeResult.stdout, /must not contain CR or LF/);
+      assert.doesNotMatch(unsafeResult.stdout, /env-lock|electron-default-arg-remove/);
+    }
+  } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
+});
+
 test("resident process rejects both IPC warm start and second-instance fallback", () => {
   const f = fixture();
   try {

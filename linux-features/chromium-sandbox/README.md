@@ -31,9 +31,10 @@ absent and the generated Electron executable is owned by the launching user.
 This makes the caller-selected environment path authoritative without placing
 a machine-specific path in the build. The selected helper must be an absolute,
 non-symlink executable regular file, owned by root:root with mode 4755, and
-byte-identical to the preserved generated helper. Reinstall it after every
-Electron rebuild. Any explicit `--no-sandbox` or `--disable-*-sandbox` argument
-is rejected.
+byte-identical to the preserved generated helper. Its path must not contain CR
+or LF because launcher hooks use a line-oriented protocol. Reinstall it after
+every Electron rebuild. Any explicit `--no-sandbox` or
+`--disable-*-sandbox` argument is rejected.
 
 The native package builders reject this feature because installed Electron
 payloads are root-owned, so Chromium will not use the development-helper
