@@ -375,6 +375,10 @@ test("Nix hash refresh accepts a validated focused output override", () => {
     "remote-mobile-control",
     "ui-tweaks",
   ]);
+  assert.equal(
+    watchdogProfile.settings["ui-tweaks"].tweaks.modelPicker.showModelsByDefault.enabled,
+    true,
+  );
   assert.match(script, /NIX_VERIFY_OUTPUTS/);
   assert.match(script, /NIX_COMPARE_REF/);
   assert.match(workflow, /\.#checks\.x86_64-linux\.watchdog-linux-features/);

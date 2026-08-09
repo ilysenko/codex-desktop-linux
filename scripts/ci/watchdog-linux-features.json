@@ -14,5 +14,15 @@
     "remote-mobile-control",
     "ui-tweaks"
   ],
-  "settings": {}
+  "settings": {
+    "ui-tweaks": {
+      "tweaks": {
+        "modelPicker": {
+          "showModelsByDefault": {
+            "enabled": true
+          }
+        }
+      }
+    }
+  }
 }

@@ -54,18 +54,30 @@ function modelPickerStateBundleFixture() {
     "function picker(){",
     "vz=wu(`composer-model-picker-menu-view-v1`,`simple`);",
     "}",
+    "function j_s(e){",
+    "let d=`chatgpt-model-picker`,[h,g]=(0,F_s.useState)(``),[_,v]=(0,F_s.useState)(`simple`);",
+    "return _}",
+    "function next(){}",
   ].join("");
 }
 
 function modelPickerMenuBundleFixture() {
   return [
-    "function menu(){",
-    "id:`composer.intelligenceDropdown.model.title`;",
-    "let ue=fragment,ie=ue;let fe;",
-    "id:`composer.intelligenceDropdown.model.rowLabel`;",
+    "function j_s(){",
     "id:`composer.intelligenceDropdown.effort.title`;",
-    "we=(0,c6.jsxs)(c6.Fragment,{children:[ye,effort]});",
-    "}",
+    "let re=[{id:`metadata`}],ie=re.find(e=>e.id),Ce=`label`,se=`text`;",
+    "we=(0,K1.jsxs)(K1.Fragment,{children:[Ce,se]});return we}",
+    "function Cgs(e){",
+    "let t=[],{advancedConfig:r,hideAdvancedSubmenus:i}=e,v=i!==void 0&&i,ce;",
+    "t[43]!==r.model||t[44]!==v?(ce=v||r.model==null?null:(0,H1.jsx)(wgs,{submenu:r.model}),t[43]=r.model,t[44]=v,t[45]=ce):ce=t[45];",
+    "return ce}",
+    "function wgs(e){",
+    "let n=e.submenu,o=n.title==null?null:(0,H1.jsx)(hH.Title,{children:n.title}),l=n.options.map(Tgs);return [o,l]}",
+    "function Tgs(e){return(0,H1.jsx)(hH.Item,{RightIcon:e.selected?fv:void 0,onSelect:t=>{t.preventDefault(),e.onSelect()},children:e.label},e.id)}",
+    "function XVs(){",
+    "id:`composer.intelligenceDropdown.model.title`;",
+    "let g=fragment,ie=g;let fe;",
+    "id:`composer.intelligenceDropdown.model.rowLabel`;}",
   ].join("");
 }
 
@@ -178,6 +190,14 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
       ],
     );
+    const modelPickerDescriptors = descriptors.filter((descriptor) =>
+      descriptor.id.includes(":model-picker-"),
+    );
+    assert.equal(modelPickerDescriptors.length, 3);
+    assert.ok(
+      modelPickerDescriptors.every((descriptor) => typeof descriptor.enabled === "function"),
+    );
+    assert.ok(modelPickerDescriptors.every((descriptor) => descriptor.enabled({}) === false));
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -203,11 +223,83 @@ test("model picker opens advanced view and renders model choices inline", () => 
   const menuSource = modelPickerMenuBundleFixture();
   const patchedState = applyDefaultAdvancedViewPatch(stateSource);
   const patchedMenu = applyInlineModelListPatch(menuSource);
+  const H1 = {
+    Fragment: Symbol("Fragment"),
+    jsx: (type, props, key) => ({ key, props, type }),
+    jsxs: (type, props, key) => ({ key, props, type }),
+  };
+  const hH = { Item: Symbol("Item"), Title: Symbol("Title") };
+  const renderAdvancedModelList = Function(
+    "H1",
+    "hH",
+    "fv",
+    `${patchedMenu};return Cgs;`,
+  )(H1, hH, Symbol("Selected"));
+  const selected = [];
+  const modelOptions = [
+    {
+      id: "gpt-5.6-terra",
+      label: "5.6 Terra",
+      onSelect: () => selected.push("gpt-5.6-terra"),
+      selected: false,
+    },
+    {
+      id: "gpt-5.6-sol",
+      label: "5.6 Sol",
+      onSelect: () => selected.push("gpt-5.6-sol"),
+      selected: true,
+    },
+  ];
+  const rendered = renderAdvancedModelList({
+    advancedConfig: { model: { label: "Model", options: modelOptions } },
+    hideAdvancedSubmenus: false,
+  });
 
   assert.match(patchedState, ADVANCED_MENU_VIEW_PATTERN);
   assert.doesNotMatch(patchedState, SIMPLE_MENU_VIEW_PATTERN);
+  assert.match(patchedState, /useState\)\(`advanced`\)/);
+  assert.doesNotMatch(patchedState, /useState\)\(`simple`\)/);
   assert.match(patchedMenu, new RegExp(INLINE_MODEL_LIST_RUNTIME_MARKER));
-  assert.match(patchedMenu, /children:\[ie,\/\*codex-linux-inline-model-list\*\//);
+  assert.equal(
+    (patchedMenu.match(new RegExp(INLINE_MODEL_LIST_RUNTIME_MARKER, "g")) ?? []).length,
+    1,
+  );
+  assert.match(patchedMenu, /children:\[Ce,se\]/);
+  assert.doesNotMatch(patchedMenu, /children:\[ie,\/\*codex-linux-inline-model-list\*\//);
+  assert.equal(rendered.type, H1.Fragment);
+  assert.equal(rendered.props.children[0].type, hH.Title);
+  assert.equal(rendered.props.children[0].props.children, "Model");
+  assert.equal(rendered.props.children[1].type, "div");
+  assert.deepEqual(
+    rendered.props.children[1].props.children.map((item) => item.props.children),
+    ["5.6 Terra", "5.6 Sol"],
+  );
+  assert.ok(rendered.props.children[1].props.children.every((item) => item.type === hH.Item));
+  assert.ok(
+    rendered.props.children[1].props.children.every((item) => !modelOptions.includes(item)),
+  );
+  let prevented = false;
+  rendered.props.children[1].props.children[1].props.onSelect({
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, true);
+  assert.deepEqual(selected, ["gpt-5.6-sol"]);
+  assert.equal(
+    renderAdvancedModelList({
+      advancedConfig: { model: { label: "Model", options: modelOptions } },
+      hideAdvancedSubmenus: true,
+    }),
+    null,
+  );
+  assert.equal(
+    renderAdvancedModelList({
+      advancedConfig: { model: null },
+      hideAdvancedSubmenus: false,
+    }),
+    null,
+  );
   assert.equal(applyDefaultAdvancedViewPatch(patchedState), patchedState);
   assert.equal(applyInlineModelListPatch(patchedMenu), patchedMenu);
 });
@@ -323,6 +415,30 @@ test("model picker drift warns and leaves the asset unchanged", () => {
   assert.equal(value, source);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /^WARN: Could not find the persisted model picker view marker/);
+});
+
+test("model picker mixed, duplicate, and incomplete contracts fail closed", () => {
+  const mixedState = modelPickerStateBundleFixture().replace(
+    "`composer-model-picker-menu-view-v1`,`simple`",
+    "`composer-model-picker-menu-view-v2`,`advanced`",
+  );
+  const duplicateMenu = modelPickerMenuBundleFixture() + modelPickerMenuBundleFixture();
+  const incompleteMenu = modelPickerMenuBundleFixture().replace(
+    "n.options.map(Tgs)",
+    "n.options",
+  );
+
+  for (const [source, apply] of [
+    [mixedState, applyDefaultAdvancedViewPatch],
+    [duplicateMenu, applyInlineModelListPatch],
+    [incompleteMenu, applyInlineModelListPatch],
+  ]) {
+    const { value, warnings } = withCapturedWarns(() =>
+      apply(source, { warnOnMissingMarkers: true }),
+    );
+    assert.equal(value, source);
+    assert.equal(warnings.length, 1);
+  }
 });
 
 test("reasoning effort labels stay in English in the Simplified Chinese locale", () => {
@@ -486,6 +602,11 @@ test("feature settings override the tracked defaults through features.json", () 
                     style: "font-weight: 800 !important; color: red;",
                   },
                 },
+                modelPicker: {
+                  showModelsByDefault: {
+                    enabled: true,
+                  },
+                },
               },
             },
           },
@@ -495,10 +616,16 @@ test("feature settings override the tracked defaults through features.json", () 
       )}\n`,
     );
 
-    const [descriptor] = loadLinuxFeaturePatchDescriptors({ featuresRoot });
+    const descriptors = loadLinuxFeaturePatchDescriptors({ featuresRoot });
+    const [descriptor] = descriptors;
     const patched = descriptor.apply(projectBundleFixture(), {});
 
     assert.match(patched, /font-weight: 800 !important; color: red;/);
+    assert.ok(
+      descriptors
+        .filter((candidate) => candidate.id.includes(":model-picker-"))
+        .every((candidate) => candidate.enabled({}) === true),
+    );
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
