@@ -33,16 +33,21 @@ const LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_SOURCE_PATH_MARKER =
   "/*codexLinuxChromePluginAppServerSourcePath*/";
 const LINUX_CHROME_PLUGIN_RUNTIME_CONFIG_MARKER =
   "/*codexLinuxChromePluginRuntimeConfig*/";
+const LINUX_CHROME_PLUGIN_REGISTRY_REMOVAL_MARKER =
+  "/*codexLinuxChromePluginRegistryRemoval*/";
 const LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_MARKERS = [
   LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_RUNTIME_MARKER,
   LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_CODEX_MARKER,
   LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_SOURCE_PATH_MARKER,
   LINUX_CHROME_PLUGIN_RUNTIME_CONFIG_MARKER,
+  LINUX_CHROME_PLUGIN_REGISTRY_REMOVAL_MARKER,
 ];
 const LINUX_CHROME_PLUGIN_APP_SERVER_SOURCE_PATH_HELPER =
   "function codexLinuxChromePluginAppServerSourcePath(e){return e.codexCliPath}";
 const LINUX_CHROME_PLUGIN_RUNTIME_CONFIG_HELPER =
   "async function codexLinuxChromePluginRuntimeConfig(e){if(process.platform!==`linux`)return e;let n=require(`node:path`),r=require(`node:fs/promises`),i=process.geteuid?.();if(!Number.isInteger(i))throw Error(`Linux Chrome plugin runtime owner is unavailable`);let a=n.resolve(e.codexHome),o=await r.realpath(a),s=await r.realpath(e.pluginRoot),c=n.join(o,`plugins`,`cache`),l=n.relative(c,s);if(l===``||l===`..`||l.startsWith(`..${n.sep}`)||n.isAbsolute(l))throw Error(`Linux Chrome plugin cache path is outside CODEX_HOME`);let u=l.split(n.sep);if(u.length!==3||u[0]!==`openai-bundled`||u[1]!==`chrome`)return e;let d=n.dirname(s),f=n.join(o,`plugins`,`linux-runtime-cache`,u[0],u[1]),p=n.join(f,`latest`),m=await r.realpath(p),h=n.relative(f,m);if(h!==u[2]||n.isAbsolute(h))throw Error(`Linux Chrome plugin runtime version does not match installed plugin`);let g=await r.lstat(p);if(!g.isSymbolicLink()||g.uid!==i)throw Error(`Linux Chrome plugin runtime link is not trusted`);let _=[o,n.join(o,`plugins`),n.join(o,`plugins`,`linux-runtime-cache`),n.join(o,`plugins`,`linux-runtime-cache`,u[0]),f,m];for(let e of _){let t=await r.lstat(e);if(t.isSymbolicLink()||!t.isDirectory()||t.uid!==i||(t.mode&18)!==0)throw Error(`Linux Chrome plugin runtime parent is not trusted`)}let v=async e=>{let t=await r.lstat(e);if(t.isSymbolicLink()||!t.isDirectory()&&!t.isFile()||t.uid!==i||(t.mode&18)!==0)throw Error(`Linux Chrome plugin runtime is not trusted`);if(t.isDirectory())for(let t of await r.readdir(e))await v(n.join(e,t))};await v(m);let y=await r.lstat(n.join(m,`extension-host`,`linux`,process.arch,`extension-host`));if(!y.isFile()||(y.mode&73)===0)throw Error(`Linux Chrome plugin runtime host is not executable`);let b=JSON.parse(await r.readFile(n.join(m,`scripts`,`extension-ids.json`),`utf8`)).extensionIds;if(!Array.isArray(b)||b.length===0||b.some(e=>typeof e!==`string`||!/^[a-p]{32}$/.test(e)))throw Error(`Linux Chrome plugin runtime extension IDs are invalid`);let x=[o,n.join(o,`plugins`),c,n.join(c,u[0]),d];for(let e of x){let t=await r.lstat(e);if(t.isSymbolicLink()||!t.isDirectory()||t.uid!==i)throw Error(`Linux Chrome plugin cache parent is not trusted`);await r.chmod(e,t.mode&~18)}return{...e,pluginRoot:p,extensionIds:[...new Set(b)]}}";
+const LINUX_CHROME_PLUGIN_REGISTRY_REMOVAL_HELPER =
+  "function codexLinuxChromePluginRegistryEntryMatchesDurableRuntime(e,t,o){if(process.platform!==`linux`)return!1;let n=require(`node:path`),r=require(`node:fs`),i=n.resolve(t.codexHome),a=n.relative(n.join(i,`plugins`,`cache`),n.resolve(t.pluginCacheRoot));if(a===``||a===`..`||a.startsWith(`..${n.sep}`)||n.isAbsolute(a))return!1;let s=a.split(n.sep);if(s.length!==2||s[0]!==`openai-bundled`||s[1]!==`chrome`)return!1;let c;try{c=r.realpathSync(i)}catch{return!1}return o(e.paths.extensionHostPath,n.join(c,`plugins`,`linux-runtime-cache`,...s))}";
 const CURRENT_CHROME_NATIVE_HOST_RUNTIME_MESSAGE =
   "Missing bundled Electron runtime required to sync Chrome native host resources";
 const CURRENT_CHROME_APP_SERVER_CODEX_RUNTIME_MESSAGE =
@@ -87,6 +92,7 @@ function hasCompleteCurrentChromeAppServerRuntimePatch(source) {
   return markerCount(source, LINUX_CHROME_NATIVE_HOST_RUNTIME_HELPER) === 1 &&
     markerCount(source, LINUX_CHROME_PLUGIN_APP_SERVER_SOURCE_PATH_HELPER) === 1 &&
     markerCount(source, LINUX_CHROME_PLUGIN_RUNTIME_CONFIG_HELPER) === 1 &&
+    markerCount(source, LINUX_CHROME_PLUGIN_REGISTRY_REMOVAL_HELPER) === 1 &&
     LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_MARKERS.every((marker) =>
       markerCount(source, marker) === 1
     ) &&
@@ -112,6 +118,12 @@ function hasCompleteCurrentChromeAppServerRuntimePatch(source) {
       source,
       new RegExp(
         String.raw`\/\*codexLinuxChromePluginRuntimeConfig\*\/async function ${IDENTIFIER_PATTERN}\((?<runtimeConfig>${IDENTIFIER_PATTERN})\)\{\k<runtimeConfig>=await codexLinuxChromePluginRuntimeConfig\(\k<runtimeConfig>\);let ${IDENTIFIER_PATTERN}=\[\.\.\.new Set\(\[\.\.\.\k<runtimeConfig>\.extensionIds,\.\.\.${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\.nativeHostName\)\]\)\],`,
+      ),
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`\/\*codexLinuxChromePluginRegistryRemoval\*\/function ${IDENTIFIER_PATTERN}\((?<entry>${IDENTIFIER_PATTERN}),(?<removalConfig>${IDENTIFIER_PATTERN})\)\{let (?<parsedEntry>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\(\k<entry>\);return \k<parsedEntry>!=null&&\k<parsedEntry>\.nativeHostNames\.includes\(\k<removalConfig>\.nativeHostName\)&&\(0,${IDENTIFIER_PATTERN}\.isAbsolute\)\(\k<parsedEntry>\.paths\.extensionHostPath\)&&\((?<isWithin>${IDENTIFIER_PATTERN})\(\k<parsedEntry>\.paths\.extensionHostPath,\k<removalConfig>\.pluginCacheRoot\)\|\|codexLinuxChromePluginRegistryEntryMatchesDurableRuntime\(\k<parsedEntry>,\k<removalConfig>,\k<isWithin>\)\)\}`,
       ),
     );
 }
@@ -381,9 +393,37 @@ function applyCurrentChromeAppServerRuntimePatches(currentSource, helper) {
     return null;
   }
 
+  patchedSource = applyLinuxChromePluginRegistryRemovalPatch(patchedSource);
+  if (patchedSource == null) {
+    return null;
+  }
+
   return hasCompleteCurrentChromeAppServerRuntimePatch(patchedSource)
     ? patchedSource
     : null;
+}
+
+function applyLinuxChromePluginRegistryRemovalPatch(currentSource) {
+  const removalRegex = new RegExp(
+    String.raw`function (${IDENTIFIER_PATTERN})\((${IDENTIFIER_PATTERN}),(${IDENTIFIER_PATTERN})\)\{let (${IDENTIFIER_PATTERN})=(${IDENTIFIER_PATTERN})\(\2\);return \4!=null&&\4\.nativeHostNames\.includes\(\3\.nativeHostName\)&&\(0,(${IDENTIFIER_PATTERN})\.isAbsolute\)\(\4\.paths\.extensionHostPath\)&&(${IDENTIFIER_PATTERN})\(\4\.paths\.extensionHostPath,\3\.pluginCacheRoot\)\}`,
+  );
+  if (!matchesExactlyOnce(currentSource, removalRegex)) {
+    return null;
+  }
+  const match = currentSource.match(removalRegex);
+  const [
+    original,
+    functionName,
+    entryVar,
+    configVar,
+    parsedEntryVar,
+    parseEntryFn,
+    pathModuleVar,
+    isWithinFn,
+  ] = match;
+  const replacement =
+    `${LINUX_CHROME_PLUGIN_REGISTRY_REMOVAL_HELPER}${LINUX_CHROME_PLUGIN_REGISTRY_REMOVAL_MARKER}function ${functionName}(${entryVar},${configVar}){let ${parsedEntryVar}=${parseEntryFn}(${entryVar});return ${parsedEntryVar}!=null&&${parsedEntryVar}.nativeHostNames.includes(${configVar}.nativeHostName)&&(0,${pathModuleVar}.isAbsolute)(${parsedEntryVar}.paths.extensionHostPath)&&(${isWithinFn}(${parsedEntryVar}.paths.extensionHostPath,${configVar}.pluginCacheRoot)||codexLinuxChromePluginRegistryEntryMatchesDurableRuntime(${parsedEntryVar},${configVar},${isWithinFn}))}`;
+  return currentSource.replace(original, replacement);
 }
 
 function applyLinuxChromePluginRuntimeConfigPatch(currentSource) {

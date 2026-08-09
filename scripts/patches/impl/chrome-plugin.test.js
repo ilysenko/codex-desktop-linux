@@ -157,6 +157,31 @@ function registerChromeRuntime(
   );
 }
 
+function removeChromeRegistryEntries(
+  patched,
+  entries,
+  {
+    codexHome,
+    nativeHostName = "com.openai.codexextension",
+    platform = "linux",
+    pluginCacheRoot = path.join(
+      codexHome,
+      "plugins",
+      "cache",
+      "openai-bundled",
+      "chrome",
+    ),
+  },
+) {
+  return vm.runInNewContext(
+    `${patched};Eq({codexHome:${JSON.stringify(codexHome)},entries:${JSON.stringify(entries)},nativeHostName:${JSON.stringify(nativeHostName)},pluginCacheRoot:${JSON.stringify(pluginCacheRoot)}});`,
+    {
+      process: { platform },
+      require,
+    },
+  );
+}
+
 test("patches the complete current Chrome runtime asset set transactionally", async () => {
   const candidate = createCurrentChromeNativeHostRuntimeAssetsFixture();
   try {
@@ -178,6 +203,10 @@ test("patches the complete current Chrome runtime asset set transactionally", as
     );
     assert.match(srcPatched, /codexLinuxChromePluginAppServerSourcePath/);
     assert.match(srcPatched, /codexLinuxChromePluginRuntimeConfig/);
+    assert.match(
+      srcPatched,
+      /codexLinuxChromePluginRegistryEntryMatchesDurableRuntime/,
+    );
 
     const files = new Set([
       "/home/josh/.local/bin/codex",
@@ -282,6 +311,82 @@ test("registers the durable trusted Linux runtime cache instead of the installed
   }
 });
 
+test("explicit removal deletes matching durable and managed-cache registry entries only", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chrome-runtime-remove-"));
+  try {
+    const fixture = createChromeRuntimeCaches(root);
+    const patched = applyLinuxChromeNativeHostRuntimePatch(
+      currentChromePluginAppServerSourceBundleFixture(),
+    );
+    const registered = await registerChromeRuntime(patched, fixture);
+    const entries = [
+      {
+        id: "durable",
+        nativeHostNames: ["com.openai.codexextension"],
+        paths: { extensionHostPath: registered.extensionHostPath },
+      },
+      {
+        id: "managed-cache",
+        nativeHostNames: ["com.openai.codexextension"],
+        paths: { extensionHostPath: fixture.installedHost },
+      },
+      {
+        id: "unrelated-path",
+        nativeHostNames: ["com.openai.codexextension"],
+        paths: { extensionHostPath: path.join(root, "unrelated", "extension-host") },
+      },
+      {
+        id: "unrelated-host",
+        nativeHostNames: ["com.openai.codexextension.dev"],
+        paths: { extensionHostPath: registered.extensionHostPath },
+      },
+    ];
+
+    const remaining = removeChromeRegistryEntries(patched, entries, fixture);
+    assert.deepEqual(
+      Array.from(remaining, ({ id }) => id),
+      ["unrelated-path", "unrelated-host"],
+    );
+
+    const otherPluginRoot = path.join(
+      fixture.codexHome,
+      "plugins",
+      "cache",
+      "openai-bundled",
+      "other",
+    );
+    const crossPluginRemaining = removeChromeRegistryEntries(
+      patched,
+      entries,
+      { codexHome: fixture.codexHome, pluginCacheRoot: otherPluginRoot },
+    );
+    assert.deepEqual(
+      Array.from(crossPluginRemaining, ({ id }) => id),
+      entries.map(({ id }) => id),
+    );
+
+    const nonLinuxRemaining = removeChromeRegistryEntries(
+      patched,
+      entries,
+      { codexHome: fixture.codexHome, platform: "darwin" },
+    );
+    assert.deepEqual(
+      Array.from(nonLinuxRemaining, ({ id }) => id),
+      ["durable", "unrelated-path", "unrelated-host"],
+    );
+
+    const missingHome = path.join(root, "missing-home");
+    const missingHomeRemaining = removeChromeRegistryEntries(
+      patched,
+      [entries[0]],
+      { codexHome: missingHome },
+    );
+    assert.deepEqual(Array.from(missingHomeRemaining, ({ id }) => id), ["durable"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("keeps durable registration with a symlinked CODEX_HOME", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chrome-runtime-home-link-"));
   try {
@@ -326,6 +431,24 @@ test("keeps durable registration with a symlinked CODEX_HOME", async () => {
     fs.rmSync(pluginCacheRoot, { recursive: true, force: true });
     assert.equal(fs.existsSync(result.extensionHostPath), true);
     assert.equal(fs.existsSync(result.browserClientPath), true);
+
+    const remaining = removeChromeRegistryEntries(
+      patched,
+      [
+        {
+          id: "durable",
+          nativeHostNames: ["com.openai.codexextension"],
+          paths: { extensionHostPath: result.extensionHostPath },
+        },
+        {
+          id: "unrelated",
+          nativeHostNames: ["com.openai.codexextension"],
+          paths: { extensionHostPath: path.join(root, "unrelated", "extension-host") },
+        },
+      ],
+      { codexHome: lexicalCodexHome, pluginCacheRoot },
+    );
+    assert.deepEqual(Array.from(remaining, ({ id }) => id), ["unrelated"]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -474,6 +597,10 @@ test("rejects current Chrome runtime markers with a damaged contract body", () =
       ),
       patchedSource.replace(
         "??codexLinuxChromeNativeHostRuntimeFile(e.resourcesPath,[[process.platform===`win32`?`node_repl.exe`:`node_repl`]])",
+        "",
+      ),
+      patchedSource.replace(
+        "||codexLinuxChromePluginRegistryEntryMatchesDurableRuntime(n,t,bJ)",
         "",
       ),
     ];
