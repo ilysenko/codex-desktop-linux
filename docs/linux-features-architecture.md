@@ -203,7 +203,11 @@ Runtime hooks receive `CODEX_HOME`, `CODEX_LINUX_APP_DIR`,
 `CODEX_LINUX_APP_STATE_DIR`, `CODEX_LINUX_FEATURES_DIR`, and
 `CODEX_LINUX_LAUNCHER_LOG`. Executable hooks also receive
 `CODEX_LINUX_FEATURE_HOOK_PHASE`; `afterExit` additionally receives
-`CODEX_LINUX_ELECTRON_EXIT_STATUS`. Use this pattern for user-home artifacts
+`CODEX_LINUX_ELECTRON_EXIT_STATUS`. Launcher hooks additionally receive
+`CODEX_LINUX_RESIDENT_PROCESS_ACTIVE=1` when the launcher's normal identity
+checks found an active app primary, or `0` otherwise. This is presence only;
+it does not attest to that primary's launch arguments or feature modes. Use
+this pattern for user-home artifacts
 such as Codex skills: stage the source file with `resources` under
 `.codex-linux/features/<feature-id>/...`, then copy it from
 `$CODEX_LINUX_FEATURES_DIR/<feature-id>/...` to `$CODEX_HOME/skills/...` in a
