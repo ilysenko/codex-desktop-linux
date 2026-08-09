@@ -5671,6 +5671,12 @@ if 'CODEX_ELECTRON_USER_DATA_DIR="$APP_STATE_DIR/electron-user-data"' not in mul
     raise SystemExit("multi-launch must force a per-instance Electron user-data dir")
 if 'send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"' not in source:
     raise SystemExit("warm-start handoff must not receive launcher-only multi-launch flags")
+if 'prepare_electron_launch "${LAUNCHER_ARGS[@]}"' not in runtime_body:
+    raise SystemExit("launcher hooks must prepare the complete sanitized argv before resident handoff")
+if 'prepare_electron_launch "${LAUNCHER_ARGS[@]:1}"' in source:
+    raise SystemExit("pre-handoff launch preparation must not drop the first launcher argument")
+if runtime_body.index('prepare_electron_launch "${LAUNCHER_ARGS[@]}"') > runtime_body.index('send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"'):
+    raise SystemExit("launcher hooks must reject before warm-start IPC")
 if "client.shutdown(socket.SHUT_WR)" not in send_body or "response = client.recv(32)" not in send_body:
     raise SystemExit("warm-start IPC client must read the Electron socket acknowledgement")
 if "running_app_is_active || return 1" not in send_body:
@@ -6008,6 +6014,9 @@ LOG_FILE="${LOG_FILE:-/tmp/codex-launcher-probe.log}"
 CODEX_LINUX_FEATURES_DIR="${CODEX_LINUX_FEATURES_DIR:-$SCRIPT_DIR/.codex-linux/features}"
 FEATURE_ELECTRON_ARGS_DIR="${FEATURE_ELECTRON_ARGS_DIR:-}"
 FEATURE_LAUNCHER_HOOK_DIR="${FEATURE_LAUNCHER_HOOK_DIR:-}"
+ELECTRON_DEFAULT_ARG_REMOVALS=()
+ELECTRON_ARG_DENY_PATTERNS=()
+FEATURE_LOCKED_ENV_NAMES=()
 
 print_state() {
     printf 'mode=%s wslg=%s ozone_platform=%s ozone_hint=%s gpu=%s gpu_arg=%s comp=%s gl_added=%s renderer_accessibility=%s hook_value=%s hook_saw_arg=%s launch=' \
@@ -6040,6 +6049,7 @@ case "${1:-}" in
         set_electron_defaults "${FEATURE_ELECTRON_ARGS[@]}" "${USER_ELECTRON_FLAGS[@]}" "$@"
         run_feature_launcher_hooks
         build_electron_launch_args
+        validate_feature_electron_arg_denials
         print_state
         ;;
     ensure-template)
@@ -6137,6 +6147,57 @@ EOF
     [[ "$output" == *"hook_value=from-hook hook_saw_arg=1"* ]] || fail "launcher hook must contribute environment variables and receive current Electron args: $output"
     [[ "$output" == *"electron=<--existing-electron-arg><--test-feature-launcher-hook=1>"* ]] || fail "launcher hook must append Electron args after existing args: $output"
     [[ "$output" == *"<--enable-features=TestHookFeature>"* ]] || fail "launcher hook enable-features output must merge into launch args: $output"
+
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 23' > "$feature_launcher_hook_dir/failing-hook"
+    chmod +x "$feature_launcher_hook_dir/failing-hook"
+    if env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe >/dev/null 2>&1; then
+        fail "an enabled launcher hook process failure must fail closed"
+    fi
+    rm -f "$feature_launcher_hook_dir/failing-hook"
+
+    printf '%s\n' '#!/usr/bin/env bash' \
+        "printf '%s\\n' 'electron-default-arg-remove --no-sandbox' 'electron-default-arg-remove --disable-gpu-sandbox'" \
+        > "$feature_launcher_hook_dir/default-removal-hook"
+    chmod +x "$feature_launcher_hook_dir/default-removal-hook"
+    output="$(env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe)"
+    [[ "$output" != *"<--no-sandbox>"* && "$output" != *"<--disable-gpu-sandbox>"* ]] \
+        || fail "a launcher hook must be able to remove exact generic Electron defaults: $output"
+    rm -f "$feature_launcher_hook_dir/default-removal-hook"
+
+    printf '%s\n' '#!/usr/bin/env bash' \
+        "printf '%s\\n' 'env CODEX_TEST_LOCKED_VALUE=qualified' 'env-lock CODEX_TEST_LOCKED_VALUE'" \
+        > "$feature_launcher_hook_dir/a-lock-hook"
+    printf '%s\n' '#!/usr/bin/env bash' \
+        "printf '%s\\n' 'env CODEX_TEST_LOCKED_VALUE=overridden'" \
+        > "$feature_launcher_hook_dir/z-override-hook"
+    chmod +x "$feature_launcher_hook_dir/a-lock-hook" "$feature_launcher_hook_dir/z-override-hook"
+    if env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe >/dev/null 2>&1; then
+        fail "a later launcher hook must not override a locked environment value"
+    fi
+    rm -f "$feature_launcher_hook_dir/a-lock-hook" "$feature_launcher_hook_dir/z-override-hook"
+
+    printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 'electron-arg-deny --no-sandbox'" \
+        > "$feature_launcher_hook_dir/default-deny-hook"
+    chmod +x "$feature_launcher_hook_dir/default-deny-hook"
+    if env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe >/dev/null 2>&1; then
+        fail "a final Electron arg deny pattern must inspect generic core defaults"
+    fi
+    rm -f "$feature_launcher_hook_dir/default-deny-hook"
+
+    printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 'electron-arg-deny --disable-*-sandbox'" \
+        > "$feature_launcher_hook_dir/a-deny-hook"
+    printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 'electron-arg --disable-late-sandbox'" \
+        > "$feature_launcher_hook_dir/z-late-hook"
+    chmod +x "$feature_launcher_hook_dir/a-deny-hook" "$feature_launcher_hook_dir/z-late-hook"
+    if env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe >/dev/null 2>&1; then
+        fail "a final Electron arg deny pattern must reject switches from later launcher hooks"
+    fi
+    rm -f "$feature_launcher_hook_dir/a-deny-hook" "$feature_launcher_hook_dir/z-late-hook"
 
     local user_flags_dir="$TMP_DIR/user-electron-flags"
     local user_flags_file="$user_flags_dir/electron-flags.conf"
@@ -11173,6 +11234,8 @@ test_launcher_warm_start_recovery() {
     CODEX_TEST_APPIMAGE_REMOUNT=1 bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     CODEX_TEST_DISABLE_WARM_START=1 bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     CODEX_TEST_KILL_DURING_PRELAUNCH=1 bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
+    CODEX_TEST_CHROMIUM_SANDBOX_RESIDENT_REJECTION=1 \
+        bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     CODEX_TEST_DISABLE_PIDFD=1 CODEX_TEST_NORMAL_LOCK_ONLY=1 \
         bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     CODEX_TEST_DISABLE_PIDFD=1 CODEX_TEST_KILL_DURING_PRELAUNCH=1 \

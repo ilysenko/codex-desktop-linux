@@ -183,7 +183,16 @@ The runtime hook types map to:
   feature, user, and command-line Electron args are merged, but before final
   Electron launch args are built. Hooks receive the current Electron args as
   argv and may print `env KEY=VALUE` or `electron-arg VALUE` lines on stdout.
-  Unknown output lines are ignored; stderr is logged normally.
+  A hook may print `env-lock KEY` after setting a security-sensitive value to
+  reject later launcher-hook overrides. It may also print
+  `electron-default-arg-remove SWITCH` to suppress one exact generic launcher
+  default, `electron-arg-deny PATTERN` to reject a matching final Electron
+  switch after all launcher hooks and core defaults, or `launch-error MESSAGE`
+  to reject the launch. Hooks run before resident-process IPC and Electron
+  second-instance handoff, so a feature rejection cannot be bypassed by warm
+  start. A launcher hook process failure is fatal; an enabled feature cannot
+  silently fall back to core behavior. Unknown output lines are ignored; stderr
+  is logged normally.
 - `coldStart`: copied to `.codex-linux/cold-start.d/`; executable hooks run in
   the background during cold start, after bundled plugin cache sync.
 - `afterExit`: copied to `.codex-linux/after-exit.d/`; executable hooks run

@@ -17,6 +17,7 @@ SOCKET_PATH="$RUNTIME_DIR/$TEST_APP_ID/launch-action.sock"
 FIRST_LOG="$TMP_DIR/first-launch.log"
 SECOND_LOG="$TMP_DIR/second-launch.log"
 APP_LOG="$HOME_DIR/.cache/$TEST_APP_ID/launcher.log"
+CHROMIUM_SANDBOX_RESIDENT_REJECTION="${CODEX_TEST_CHROMIUM_SANDBOX_RESIDENT_REJECTION:-0}"
 LAUNCHER_PID=""
 SOCKET_PID=""
 HOOK_PID=""
@@ -65,7 +66,7 @@ wait_for() {
     local description="$1"
     shift
     local attempt
-    for attempt in $(seq 1 200); do
+    for attempt in $(seq 1 300); do
         "$@" && return 0
         sleep 0.05
     done
@@ -274,6 +275,46 @@ if [ "${CODEX_TEST_TERM_STATUS:-0}" = "1" ]; then
     wait_for "Electron signal forwarding" electron_is_down
     wait_for "webview cleanup after planned TERM" webview_is_down
     printf '%s\n' "launcher planned TERM status test passed"
+    exit 0
+fi
+
+if [ "$CHROMIUM_SANDBOX_RESIDENT_REJECTION" = "1" ]; then
+    # The resident was launched without the feature and therefore uses the
+    # compatibility sandbox-disable defaults. Stage the feature only for the
+    # requesting launch. Its resident rejection runs before helper validation,
+    # so this full-path CI regression needs no privileged SUID fixture.
+    cp "$REPO_DIR/linux-features/chromium-sandbox/launcher-hook.sh" \
+        "$APP_DIR/.codex-linux/launcher.d/chromium-sandbox-chromium-sandbox.sh"
+    chmod +x "$APP_DIR/.codex-linux/launcher.d/chromium-sandbox-chromium-sandbox.sh"
+
+    : > "$SECOND_LOG"
+    if "${COMMON_ENV[@]}" "$APP_DIR/start.sh" >> "$SECOND_LOG" 2>&1; then
+        fail "sandbox-requested IPC warm start silently succeeded"
+    fi
+    grep -q "sandbox mode cannot be authoritatively verified" "$APP_LOG" \
+        || fail "sandbox-requested IPC warm start did not return the feature diagnostic"
+    grep -q "Sent launch args over warm-start IPC" "$APP_LOG" \
+        && fail "sandbox-requested IPC warm start reached IPC before rejection"
+    kill -0 "$FIRST_ELECTRON_PID" 2>/dev/null \
+        || fail "sandbox-requested IPC rejection disturbed the healthy compatibility resident"
+
+    printf '%s\n' '{"codex-linux-warm-start-enabled":false}' \
+        > "$HOME_DIR/.config/$TEST_APP_ID/settings.json"
+    : > "$SECOND_LOG"
+    if "${COMMON_ENV[@]}" "$APP_DIR/start.sh" >> "$SECOND_LOG" 2>&1; then
+        fail "sandbox-requested Electron second-instance fallback silently succeeded"
+    fi
+    [ "$(grep -c "sandbox mode cannot be authoritatively verified" "$APP_LOG")" -ge 2 ] \
+        || fail "sandbox-requested second-instance fallback did not return the feature diagnostic"
+    grep -q "using Electron second-instance handoff" "$APP_LOG" \
+        && fail "sandbox request reached Electron second-instance handoff before rejection"
+    kill -0 "$FIRST_ELECTRON_PID" 2>/dev/null \
+        || fail "sandbox-requested second-instance rejection disturbed the healthy compatibility resident"
+
+    kill "$FIRST_ELECTRON_PID"
+    wait "$LAUNCHER_PID"
+    LAUNCHER_PID=""
+    printf '%s\n' "launcher Chromium sandbox compatibility-resident handoff rejection test passed"
     exit 0
 fi
 

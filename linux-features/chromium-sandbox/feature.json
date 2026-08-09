@@ -1,0 +1,23 @@
+{
+  "id": "chromium-sandbox",
+  "title": "Chromium SUID Sandbox",
+  "description": "Opt-in, host-qualified Chromium renderer sandbox for user-managed app builds.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "stageHook": "./stage.sh",
+    "cleanupHook": "./cleanup.sh"
+  },
+  "packageHooks": [
+    {
+      "path": "package-hook.sh",
+      "formats": ["deb", "rpm", "pacman"]
+    }
+  ],
+  "runtimeHooks": {
+    "launcher": {
+      "source": "launcher-hook.sh",
+      "name": "chromium-sandbox.sh",
+      "mode": "0755"
+    }
+  }
+}

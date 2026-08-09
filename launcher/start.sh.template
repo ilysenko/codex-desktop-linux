@@ -126,6 +126,9 @@ FEATURE_PRELAUNCH_HOOK_DIR="$SCRIPT_DIR/.codex-linux/prelaunch.d"
 FEATURE_ELECTRON_ARGS_DIR="$SCRIPT_DIR/.codex-linux/electron-args.d"
 FEATURE_LAUNCHER_HOOK_DIR="$SCRIPT_DIR/.codex-linux/launcher.d"
 FEATURE_AFTER_EXIT_HOOK_DIR="$SCRIPT_DIR/.codex-linux/after-exit.d"
+ELECTRON_DEFAULT_ARG_REMOVALS=()
+ELECTRON_ARG_DENY_PATTERNS=()
+FEATURE_LOCKED_ENV_NAMES=()
 MANAGED_NODE_BIN_DIR="$SCRIPT_DIR/resources/node-runtime/bin"
 APP_NOTIFICATION_ICON_NAME="$CODEX_LINUX_APP_ID"
 APP_NOTIFICATION_ICON_BUNDLE="$SCRIPT_DIR/.codex-linux/$APP_NOTIFICATION_ICON_NAME.png"
@@ -3964,9 +3967,21 @@ apply_feature_launcher_hook_env() {
         echo "Ignoring invalid Linux feature launcher hook env assignment: $assignment"
         return 0
     fi
-
+    if feature_launcher_hook_env_locked "$name"; then
+        notify_error "A Linux feature refused an override of locked launcher environment variable: $name"
+        return 1
+    fi
     printf -v "$name" '%s' "$value"
     export "$name"
+}
+
+feature_launcher_hook_env_locked() {
+    local wanted="$1"
+    local locked
+    for locked in "${FEATURE_LOCKED_ENV_NAMES[@]}"; do
+        [ "$locked" = "$wanted" ] && return 0
+    done
+    return 1
 }
 
 # Remove entries from ELECTRON_ARGS whose switch name (the part before '=')
@@ -4050,14 +4065,15 @@ run_feature_launcher_hooks() {
             CODEX_LINUX_APP_STATE_DIR="$APP_STATE_DIR" \
             CODEX_LINUX_FEATURES_DIR="$CODEX_LINUX_FEATURES_DIR" \
             CODEX_LINUX_LAUNCHER_LOG="$LOG_FILE" \
+            CODEX_LINUX_RESIDENT_PROCESS_ACTIVE="$([ -n "${RUNNING_APP_PID:-}" ] && printf 1 || printf 0)" \
             CODEX_LINUX_FEATURE_HOOK_PHASE=launcher \
             codex_run_host_command "$hook" "${ELECTRON_ARGS[@]}"
         )"; then
             :
         else
             status=$?
-            echo "WARN: Linux feature launcher hook failed with status $status: $hook"
-            continue
+            notify_error "Linux feature launcher hook failed with status $status: $hook"
+            return 1
         fi
 
         while IFS= read -r line || [ -n "$line" ]; do
@@ -4068,11 +4084,40 @@ run_feature_launcher_hooks() {
                     ;;
                 env\ *)
                     payload="${line#env }"
-                    apply_feature_launcher_hook_env "$payload"
+                    apply_feature_launcher_hook_env "$payload" || return 1
+                    ;;
+                env-lock\ *)
+                    payload="${line#env-lock }"
+                    if [[ "$payload" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                        FEATURE_LOCKED_ENV_NAMES+=("$payload")
+                    else
+                        echo "Ignoring invalid launcher environment lock from $hook: $payload"
+                    fi
                     ;;
                 electron-arg\ *)
                     payload="${line#electron-arg }"
                     apply_feature_launcher_hook_electron_arg "$payload"
+                    ;;
+                electron-default-arg-remove\ *)
+                    payload="${line#electron-default-arg-remove }"
+                    if [[ "$payload" == --* ]] && [[ "$payload" != *[[:space:]]* ]]; then
+                        ELECTRON_DEFAULT_ARG_REMOVALS+=("${payload%%=*}")
+                    else
+                        echo "Ignoring invalid default Electron arg removal from $hook: $payload"
+                    fi
+                    ;;
+                electron-arg-deny\ *)
+                    payload="${line#electron-arg-deny }"
+                    if [[ "$payload" == --* ]] && [[ "$payload" != *[[:space:]]* ]]; then
+                        ELECTRON_ARG_DENY_PATTERNS+=("$payload")
+                    else
+                        echo "Ignoring invalid Electron arg deny pattern from $hook: $payload"
+                    fi
+                    ;;
+                launch-error\ *)
+                    payload="${line#launch-error }"
+                    notify_error "${payload:-A Linux feature refused this launch.}"
+                    return 1
                     ;;
                 *)
                     echo "Ignoring unsupported Linux feature launcher hook output from $hook: $line"
@@ -4080,6 +4125,30 @@ run_feature_launcher_hooks() {
             esac
         done <<< "$output"
     done
+}
+
+validate_feature_electron_arg_denials() {
+    local arg
+    local name
+    local pattern
+    for arg in "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"; do
+        name="${arg%%=*}"
+        for pattern in "${ELECTRON_ARG_DENY_PATTERNS[@]}"; do
+            if [[ "$name" == $pattern ]]; then
+                notify_error "A Linux feature refused conflicting Electron argument: $arg"
+                return 1
+            fi
+        done
+    done
+}
+
+electron_default_arg_removed() {
+    local wanted="$1"
+    local removed
+    for removed in "${ELECTRON_DEFAULT_ARG_REMOVALS[@]}"; do
+        [ "$removed" = "$wanted" ] && return 0
+    done
+    return 1
 }
 
 build_electron_launch_args() {
@@ -4107,12 +4176,10 @@ build_electron_launch_args() {
         ELECTRON_FORCED_SCALE_FACTOR=""
     fi
 
-    ELECTRON_LAUNCH_ARGS=(
-        --no-sandbox
-        --class="$CODEX_LINUX_APP_ID"
-        --app-id="$CODEX_LINUX_APP_ID"
-        --disable-gpu-sandbox
-    )
+    ELECTRON_LAUNCH_ARGS=()
+    electron_default_arg_removed --no-sandbox || ELECTRON_LAUNCH_ARGS+=(--no-sandbox)
+    ELECTRON_LAUNCH_ARGS+=(--class="$CODEX_LINUX_APP_ID" --app-id="$CODEX_LINUX_APP_ID")
+    electron_default_arg_removed --disable-gpu-sandbox || ELECTRON_LAUNCH_ARGS+=(--disable-gpu-sandbox)
 
     if should_disable_dev_shm_usage; then
         ELECTRON_LAUNCH_ARGS+=(--disable-dev-shm-usage)
@@ -4504,12 +4571,9 @@ launch_electron() {
     cd "$SCRIPT_DIR"
     log_phase "electron_launch"
 
-    ensure_user_electron_flags_file
-    load_feature_electron_args
-    load_user_electron_flags
-    set_electron_defaults "${FEATURE_ELECTRON_ARGS[@]}" "${USER_ELECTRON_FLAGS[@]}" "$@"
-    run_feature_launcher_hooks
-    build_electron_launch_args
+    if [ "${ELECTRON_LAUNCH_PREPARED:-0}" -ne 1 ]; then
+        prepare_electron_launch "$@"
+    fi
 
     if [ "$WARM_START" -eq 1 ]; then
         release_launcher_lock
@@ -4548,6 +4612,20 @@ launch_electron() {
     return "$status"
 }
 
+prepare_electron_launch() {
+    ensure_user_electron_flags_file
+    load_feature_electron_args
+    load_user_electron_flags
+    set_electron_defaults "${FEATURE_ELECTRON_ARGS[@]}" "${USER_ELECTRON_FLAGS[@]}" "$@"
+    ELECTRON_DEFAULT_ARG_REMOVALS=()
+    ELECTRON_ARG_DENY_PATTERNS=()
+    FEATURE_LOCKED_ENV_NAMES=()
+    run_feature_launcher_hooks || exit 1
+    build_electron_launch_args
+    validate_feature_electron_arg_denials || exit 1
+    ELECTRON_LAUNCH_PREPARED=1
+}
+
 hydrate_graphical_session_env
 configure_side_by_side_app_env
 export_feature_runtime_env
@@ -4575,6 +4653,11 @@ trap 'handle_launcher_signal HUP 129' HUP
 
 recover_unhealthy_running_app
 prepare_launch_state_under_lock
+
+# Launcher hooks are prepared before either resident-process handoff. Optional
+# features can therefore fail a launch without an IPC or Electron
+# second-instance path reporting success first.
+prepare_electron_launch "${LAUNCHER_ARGS[@]}"
 
 if send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"; then
     echo "Sent launch args over warm-start IPC"

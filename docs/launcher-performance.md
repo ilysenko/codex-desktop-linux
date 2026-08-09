@@ -44,7 +44,9 @@ These are security-posture flags, not measurable rendering-performance
 factors. Removing them is a separate compatibility project: the Electron
 SUID/user-namespace sandbox behaves differently across distributions and
 container/AppImage environments, and the troubleshooting docs currently
-promise `--no-sandbox` behavior. Out of scope for performance work.
+promise `--no-sandbox` behavior. Out of scope for performance work. The
+disabled-by-default `linux-features/chromium-sandbox` integration owns the
+host-qualified opt-in path.
 
 ### Wayland `--disable-gpu-compositing` workaround
 
