@@ -35,19 +35,23 @@ const LINUX_CHROME_PLUGIN_RUNTIME_CONFIG_MARKER =
   "/*codexLinuxChromePluginRuntimeConfig*/";
 const LINUX_CHROME_PLUGIN_REGISTRY_REMOVAL_MARKER =
   "/*codexLinuxChromePluginRegistryRemoval*/";
+const LINUX_CHROME_PLUGIN_MANIFEST_REMOVAL_MARKER =
+  "/*codexLinuxChromePluginManifestRemoval*/";
 const LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_MARKERS = [
   LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_RUNTIME_MARKER,
   LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_CODEX_MARKER,
   LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_SOURCE_PATH_MARKER,
   LINUX_CHROME_PLUGIN_RUNTIME_CONFIG_MARKER,
   LINUX_CHROME_PLUGIN_REGISTRY_REMOVAL_MARKER,
+  LINUX_CHROME_PLUGIN_MANIFEST_REMOVAL_MARKER,
 ];
 const LINUX_CHROME_PLUGIN_APP_SERVER_SOURCE_PATH_HELPER =
   "function codexLinuxChromePluginAppServerSourcePath(e){return e.codexCliPath}";
 const LINUX_CHROME_PLUGIN_RUNTIME_CONFIG_HELPER =
   "async function codexLinuxChromePluginRuntimeConfig(e){if(process.platform!==`linux`)return e;let n=require(`node:path`),r=require(`node:fs/promises`),i=process.geteuid?.();if(!Number.isInteger(i))throw Error(`Linux Chrome plugin runtime owner is unavailable`);let a=n.resolve(e.codexHome),o=await r.realpath(a),s=await r.realpath(e.pluginRoot),c=n.join(o,`plugins`,`cache`),l=n.relative(c,s);if(l===``||l===`..`||l.startsWith(`..${n.sep}`)||n.isAbsolute(l))throw Error(`Linux Chrome plugin cache path is outside CODEX_HOME`);let u=l.split(n.sep);if(u.length!==3||u[0]!==`openai-bundled`||u[1]!==`chrome`)return e;let d=n.dirname(s),f=n.join(o,`plugins`,`linux-runtime-cache`,u[0],u[1]),p=n.join(f,`latest`),m=await r.realpath(p),h=n.relative(f,m);if(h!==u[2]||n.isAbsolute(h))throw Error(`Linux Chrome plugin runtime version does not match installed plugin`);let g=await r.lstat(p);if(!g.isSymbolicLink()||g.uid!==i)throw Error(`Linux Chrome plugin runtime link is not trusted`);let _=[o,n.join(o,`plugins`),n.join(o,`plugins`,`linux-runtime-cache`),n.join(o,`plugins`,`linux-runtime-cache`,u[0]),f,m];for(let e of _){let t=await r.lstat(e);if(t.isSymbolicLink()||!t.isDirectory()||t.uid!==i||(t.mode&18)!==0)throw Error(`Linux Chrome plugin runtime parent is not trusted`)}let v=async e=>{let t=await r.lstat(e);if(t.isSymbolicLink()||!t.isDirectory()&&!t.isFile()||t.uid!==i||(t.mode&18)!==0)throw Error(`Linux Chrome plugin runtime is not trusted`);if(t.isDirectory())for(let t of await r.readdir(e))await v(n.join(e,t))};await v(m);let y=await r.lstat(n.join(m,`extension-host`,`linux`,process.arch,`extension-host`));if(!y.isFile()||(y.mode&73)===0)throw Error(`Linux Chrome plugin runtime host is not executable`);let b=JSON.parse(await r.readFile(n.join(m,`scripts`,`extension-ids.json`),`utf8`)).extensionIds;if(!Array.isArray(b)||b.length===0||b.some(e=>typeof e!==`string`||!/^[a-p]{32}$/.test(e)))throw Error(`Linux Chrome plugin runtime extension IDs are invalid`);let x=[o,n.join(o,`plugins`),c,n.join(c,u[0]),d];for(let e of x){let t=await r.lstat(e);if(t.isSymbolicLink()||!t.isDirectory()||t.uid!==i)throw Error(`Linux Chrome plugin cache parent is not trusted`);await r.chmod(e,t.mode&~18)}return{...e,pluginRoot:p,extensionIds:[...new Set(b)]}}";
 const LINUX_CHROME_PLUGIN_REGISTRY_REMOVAL_HELPER =
-  "function codexLinuxChromePluginRegistryEntryMatchesDurableRuntime(e,t,o){if(process.platform!==`linux`)return!1;let n=require(`node:path`),r=require(`node:fs`),i=n.resolve(t.codexHome),a=n.relative(n.join(i,`plugins`,`cache`),n.resolve(t.pluginCacheRoot));if(a===``||a===`..`||a.startsWith(`..${n.sep}`)||n.isAbsolute(a))return!1;let s=a.split(n.sep);if(s.length!==2||s[0]!==`openai-bundled`||s[1]!==`chrome`)return!1;let c;try{c=r.realpathSync(i)}catch{return!1}return o(e.paths.extensionHostPath,n.join(c,`plugins`,`linux-runtime-cache`,...s))}";
+  "function codexLinuxChromePluginPathMatchesDurableRuntime(e,t,o){if(process.platform!==`linux`)return!1;let n=require(`node:path`),r=require(`node:fs`),i=n.resolve(t.codexHome),a=n.relative(n.join(i,`plugins`,`cache`),n.resolve(t.pluginCacheRoot));if(a===``||a===`..`||a.startsWith(`..${n.sep}`)||n.isAbsolute(a))return!1;let s=a.split(n.sep);if(s.length!==2||s[0]!==`openai-bundled`||s[1]!==`chrome`)return!1;let c;try{c=r.realpathSync(i)}catch{return!1}return o(e,n.join(c,`plugins`,`linux-runtime-cache`,...s))}" +
+  "function codexLinuxChromePluginRegistryEntryMatchesDurableRuntime(e,t,o){return codexLinuxChromePluginPathMatchesDurableRuntime(e.paths.extensionHostPath,t,o)}";
 const CURRENT_CHROME_NATIVE_HOST_RUNTIME_MESSAGE =
   "Missing bundled Electron runtime required to sync Chrome native host resources";
 const CURRENT_CHROME_APP_SERVER_CODEX_RUNTIME_MESSAGE =
@@ -61,6 +65,24 @@ function markerCount(source, marker) {
 function matchesExactlyOnce(source, pattern) {
   const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
   return [...source.matchAll(new RegExp(pattern.source, flags))].length === 1;
+}
+
+function minifiedFunctionAt(source, functionStart) {
+  if (functionStart === -1) {
+    return null;
+  }
+  const functionBodyMarker = source.indexOf("){", functionStart);
+  if (functionBodyMarker === -1) {
+    return null;
+  }
+  const functionEnd = findMatchingBrace(source, functionBodyMarker + 1);
+  if (functionEnd === -1) {
+    return null;
+  }
+  return {
+    end: functionEnd,
+    source: source.slice(functionStart, functionEnd + 1),
+  };
 }
 
 function hasCompleteModernChromeNativeHostRuntimePatch(source) {
@@ -124,6 +146,24 @@ function hasCompleteCurrentChromeAppServerRuntimePatch(source) {
       source,
       new RegExp(
         String.raw`\/\*codexLinuxChromePluginRegistryRemoval\*\/function ${IDENTIFIER_PATTERN}\((?<entry>${IDENTIFIER_PATTERN}),(?<removalConfig>${IDENTIFIER_PATTERN})\)\{let (?<parsedEntry>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\(\k<entry>\);return \k<parsedEntry>!=null&&\k<parsedEntry>\.nativeHostNames\.includes\(\k<removalConfig>\.nativeHostName\)&&\(0,${IDENTIFIER_PATTERN}\.isAbsolute\)\(\k<parsedEntry>\.paths\.extensionHostPath\)&&\((?<isWithin>${IDENTIFIER_PATTERN})\(\k<parsedEntry>\.paths\.extensionHostPath,\k<removalConfig>\.pluginCacheRoot\)\|\|codexLinuxChromePluginRegistryEntryMatchesDurableRuntime\(\k<parsedEntry>,\k<removalConfig>,\k<isWithin>\)\)\}`,
+      ),
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`\/\*codexLinuxChromePluginManifestRemoval\*\/async function ${IDENTIFIER_PATTERN}\((?<removalConfig>${IDENTIFIER_PATTERN})\)\{let (?<nativeHostName>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\(\k<removalConfig>\.pluginName\);if\(\k<nativeHostName>==null\)return;let (?<marketplaceName>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\.parse\(\k<removalConfig>\.marketplaceName\),(?<pluginCacheRoot>${IDENTIFIER_PATTERN})=\(0,${IDENTIFIER_PATTERN}\.join\)\(\k<removalConfig>\.codexHome,\`plugins\`,\`cache\`,\k<marketplaceName>,\k<removalConfig>\.pluginName\),${IDENTIFIER_PATTERN}=await ${IDENTIFIER_PATTERN}\(\{codexHome:\k<removalConfig>\.codexHome,nativeHostName:\k<nativeHostName>,pluginCacheRoot:\k<pluginCacheRoot>\}\),`,
+      ),
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`async function ${IDENTIFIER_PATTERN}\((?<discoveryConfig>${IDENTIFIER_PATTERN})\)\{return\(await Promise\.all\(${IDENTIFIER_PATTERN}\(\k<discoveryConfig>\.nativeHostName\)\.map\(async (?<manifestPath>${IDENTIFIER_PATTERN})=>await ${IDENTIFIER_PATTERN}\(\{codexHome:\k<discoveryConfig>\.codexHome,manifestPath:\k<manifestPath>,pluginCacheRoot:\k<discoveryConfig>\.pluginCacheRoot\}\)\?\k<manifestPath>:null\)\)\)\.filter\(${IDENTIFIER_PATTERN}=>${IDENTIFIER_PATTERN}!=null\)\}`,
+      ),
+    ) &&
+    matchesExactlyOnce(
+      source,
+      new RegExp(
+        String.raw`return (?<parsedManifest>${IDENTIFIER_PATTERN})\.success&&\(0,${IDENTIFIER_PATTERN}\.isAbsolute\)\(\k<parsedManifest>\.data\.path\)&&\((?<isWithin>${IDENTIFIER_PATTERN})\(\k<parsedManifest>\.data\.path,(?<manifestConfig>${IDENTIFIER_PATTERN})\.pluginCacheRoot\)\|\|codexLinuxChromePluginPathMatchesDurableRuntime\(\k<parsedManifest>\.data\.path,\k<manifestConfig>,\k<isWithin>\)\)`,
       ),
     );
 }
@@ -398,9 +438,156 @@ function applyCurrentChromeAppServerRuntimePatches(currentSource, helper) {
     return null;
   }
 
+  patchedSource = applyLinuxChromePluginManifestRemovalPatch(patchedSource);
+  if (patchedSource == null) {
+    return null;
+  }
+
   return hasCompleteCurrentChromeAppServerRuntimePatch(patchedSource)
     ? patchedSource
     : null;
+}
+
+function applyLinuxChromePluginManifestRemovalPatch(currentSource) {
+  const eventIndex = currentSource.indexOf(
+    "`chrome_native_host_manifest_remove_requested`",
+  );
+  const removalFunctionStart = currentSource.lastIndexOf(
+    "async function ",
+    eventIndex,
+  );
+  const removalFunction = minifiedFunctionAt(currentSource, removalFunctionStart);
+  if (
+    eventIndex === -1 ||
+    removalFunction == null ||
+    removalFunction.end < eventIndex
+  ) {
+    return null;
+  }
+  const removalSource = removalFunction.source;
+  const removalSignature = removalSource.match(
+    new RegExp(
+      String.raw`^async function (${IDENTIFIER_PATTERN})\((${IDENTIFIER_PATTERN})\)\{`,
+    ),
+  );
+  const discoveryCallRegex = new RegExp(
+    String.raw`await (${IDENTIFIER_PATTERN})\(\{nativeHostName:(${IDENTIFIER_PATTERN}),pluginCacheRoot:(${IDENTIFIER_PATTERN})\}\)`,
+  );
+  if (
+    removalSignature == null ||
+    !matchesExactlyOnce(removalSource, discoveryCallRegex)
+  ) {
+    return null;
+  }
+  const [, , removalConfigVar] = removalSignature;
+  const discoveryCall = removalSource.match(discoveryCallRegex);
+  const [
+    discoveryCallSource,
+    discoveryFunctionName,
+    nativeHostNameVar,
+    pluginCacheRootVar,
+  ] = discoveryCall;
+  const patchedRemovalSource =
+    LINUX_CHROME_PLUGIN_MANIFEST_REMOVAL_MARKER +
+    removalSource.replace(
+      discoveryCallSource,
+      `await ${discoveryFunctionName}({codexHome:${removalConfigVar}.codexHome,nativeHostName:${nativeHostNameVar},pluginCacheRoot:${pluginCacheRootVar}})`,
+    );
+
+  const discoveryFunctionNeedle = `async function ${discoveryFunctionName}(`;
+  const discoveryFunctionStart = currentSource.indexOf(discoveryFunctionNeedle);
+  if (
+    discoveryFunctionStart === -1 ||
+    discoveryFunctionStart !== currentSource.lastIndexOf(discoveryFunctionNeedle)
+  ) {
+    return null;
+  }
+  const discoveryFunction = minifiedFunctionAt(
+    currentSource,
+    discoveryFunctionStart,
+  );
+  if (discoveryFunction == null) {
+    return null;
+  }
+  const discoverySource = discoveryFunction.source;
+  const discoverySignature = discoverySource.match(
+    new RegExp(
+      String.raw`^async function ${IDENTIFIER_PATTERN}\((${IDENTIFIER_PATTERN})\)\{`,
+    ),
+  );
+  const matcherCallRegex = new RegExp(
+    String.raw`await (${IDENTIFIER_PATTERN})\(\{manifestPath:(${IDENTIFIER_PATTERN}),pluginCacheRoot:(${IDENTIFIER_PATTERN})\.pluginCacheRoot\}\)`,
+  );
+  if (
+    discoverySignature == null ||
+    !matchesExactlyOnce(discoverySource, matcherCallRegex)
+  ) {
+    return null;
+  }
+  const [, discoveryConfigVar] = discoverySignature;
+  const matcherCall = discoverySource.match(matcherCallRegex);
+  const [
+    matcherCallSource,
+    matcherFunctionName,
+    manifestPathVar,
+    matcherCallConfigVar,
+  ] = matcherCall;
+  if (matcherCallConfigVar !== discoveryConfigVar) {
+    return null;
+  }
+  const patchedDiscoverySource = discoverySource.replace(
+    matcherCallSource,
+    `await ${matcherFunctionName}({codexHome:${discoveryConfigVar}.codexHome,manifestPath:${manifestPathVar},pluginCacheRoot:${discoveryConfigVar}.pluginCacheRoot})`,
+  );
+
+  const matcherFunctionNeedle = `async function ${matcherFunctionName}(`;
+  const matcherFunctionStart = currentSource.indexOf(matcherFunctionNeedle);
+  if (
+    matcherFunctionStart === -1 ||
+    matcherFunctionStart !== currentSource.lastIndexOf(matcherFunctionNeedle)
+  ) {
+    return null;
+  }
+  const matcherFunction = minifiedFunctionAt(currentSource, matcherFunctionStart);
+  if (matcherFunction == null) {
+    return null;
+  }
+  const matcherSource = matcherFunction.source;
+  const matcherSignature = matcherSource.match(
+    new RegExp(
+      String.raw`^async function ${IDENTIFIER_PATTERN}\((${IDENTIFIER_PATTERN})\)\{`,
+    ),
+  );
+  const pathMatchRegex = new RegExp(
+    String.raw`return (${IDENTIFIER_PATTERN})\.success&&\(0,(${IDENTIFIER_PATTERN})\.isAbsolute\)\(\1\.data\.path\)&&(${IDENTIFIER_PATTERN})\(\1\.data\.path,(${IDENTIFIER_PATTERN})\.pluginCacheRoot\)`,
+  );
+  if (
+    matcherSignature == null ||
+    !matchesExactlyOnce(matcherSource, pathMatchRegex)
+  ) {
+    return null;
+  }
+  const [, matcherConfigVar] = matcherSignature;
+  const pathMatch = matcherSource.match(pathMatchRegex);
+  const [
+    pathMatchSource,
+    parsedManifestVar,
+    pathModuleVar,
+    isWithinFn,
+    pathMatchConfigVar,
+  ] = pathMatch;
+  if (pathMatchConfigVar !== matcherConfigVar) {
+    return null;
+  }
+  const patchedMatcherSource = matcherSource.replace(
+    pathMatchSource,
+    `return ${parsedManifestVar}.success&&(0,${pathModuleVar}.isAbsolute)(${parsedManifestVar}.data.path)&&(${isWithinFn}(${parsedManifestVar}.data.path,${matcherConfigVar}.pluginCacheRoot)||codexLinuxChromePluginPathMatchesDurableRuntime(${parsedManifestVar}.data.path,${matcherConfigVar},${isWithinFn}))`,
+  );
+
+  return currentSource
+    .replace(removalSource, patchedRemovalSource)
+    .replace(discoverySource, patchedDiscoverySource)
+    .replace(matcherSource, patchedMatcherSource);
 }
 
 function applyLinuxChromePluginRegistryRemovalPatch(currentSource) {
