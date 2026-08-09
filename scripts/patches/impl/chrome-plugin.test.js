@@ -157,15 +157,6 @@ function registerChromeRuntime(
   );
 }
 
-function isLexicallyWithin(root, candidate) {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === "" || (
-    relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  );
-}
-
 test("patches the complete current Chrome runtime asset set transactionally", async () => {
   const candidate = createCurrentChromeNativeHostRuntimeAssetsFixture();
   try {
@@ -235,35 +226,41 @@ test("patches the complete current Chrome runtime asset set transactionally", as
   }
 });
 
-test("registers the trusted Linux runtime cache instead of the installed cache", async () => {
+test("registers the durable trusted Linux runtime cache instead of the installed cache", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chrome-runtime-trust-"));
   try {
     const fixture = createChromeRuntimeCaches(root);
     const patched = applyLinuxChromeNativeHostRuntimePatch(
       currentChromePluginAppServerSourceBundleFixture(),
     );
-    const bridgeRoot = path.join(fixture.installedRoot, ".codex-linux-runtime");
-    fs.symlinkSync(fixture.installedHost, bridgeRoot);
     const result = await registerChromeRuntime(patched, fixture);
 
-    const bridgeHost = path.join(
-      bridgeRoot,
+    const runtimeHost = path.join(
+      fixture.runtimeLatest,
       "extension-host",
       "linux",
       fixture.arch,
       "extension-host",
     );
-    assert.equal(result.extensionHostPath, bridgeHost);
+    const runtimeBrowserClient = path.join(
+      fixture.runtimeLatest,
+      "scripts",
+      "browser-client.mjs",
+    );
+    assert.equal(result.extensionHostPath, runtimeHost);
     assert.equal(
       result.browserClientPath,
-      path.join(bridgeRoot, "scripts", "browser-client.mjs"),
+      runtimeBrowserClient,
     );
-    assert.equal(fs.realpathSync(bridgeRoot), fixture.runtimeVersion);
     assert.equal(fs.statSync(fixture.installedRoot).mode & 0o022, 0);
+    assert.equal(
+      fs.existsSync(path.join(fixture.installedRoot, ".codex-linux-runtime")),
+      false,
+    );
     assert.deepEqual(
       {
-        dev: fs.statSync(bridgeHost).dev,
-        ino: fs.statSync(bridgeHost).ino,
+        dev: fs.statSync(runtimeHost).dev,
+        ino: fs.statSync(runtimeHost).ino,
       },
       {
         dev: fs.statSync(fixture.runtimeHost).dev,
@@ -276,12 +273,16 @@ test("registers the trusted Linux runtime cache instead of the installed cache",
     );
     assert.equal(fs.readFileSync(fixture.installedHost, "utf8"), "TAMPERED_INSTALLED_HOST\n");
     assert.equal(fs.readFileSync(fixture.runtimeHost, "utf8"), "TRUSTED_RUNTIME_HOST\n");
+
+    fs.rmSync(fixture.installedRoot, { recursive: true, force: true });
+    assert.equal(fs.readFileSync(result.extensionHostPath, "utf8"), "TRUSTED_RUNTIME_HOST\n");
+    assert.equal(fs.readFileSync(result.browserClientPath, "utf8"), "TRUSTED_BROWSER_CLIENT\n");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("keeps bridge registration removable with a symlinked CODEX_HOME", async () => {
+test("keeps durable registration with a symlinked CODEX_HOME", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chrome-runtime-home-link-"));
   try {
     const fixture = createChromeRuntimeCaches(root);
@@ -308,65 +309,23 @@ test("keeps bridge registration removable with a symlinked CODEX_HOME", async ()
       "chrome",
     );
 
-    assert.equal(isLexicallyWithin(pluginCacheRoot, result.extensionHostPath), true);
-    assert.equal(isLexicallyWithin(pluginCacheRoot, result.browserClientPath), true);
     assert.equal(
-      fs.realpathSync(path.join(pluginCacheRoot, ".codex-linux-runtime")),
-      fixture.runtimeVersion,
-    );
-
-    const unrelatedEntry = {
-      extensionHostPath: path.join(root, "unrelated", "extension-host"),
-    };
-    const remainingEntries = [result, unrelatedEntry].filter(
-      (entry) => !isLexicallyWithin(pluginCacheRoot, entry.extensionHostPath),
-    );
-    assert.deepEqual(remainingEntries, [unrelatedEntry]);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("preserves the existing bridge when atomic replacement fails", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chrome-runtime-rename-"));
-  try {
-    const fixture = createChromeRuntimeCaches(root);
-    const bridgeRoot = path.join(fixture.installedRoot, ".codex-linux-runtime");
-    fs.symlinkSync(fixture.runtimeVersion, bridgeRoot, "dir");
-    const patched = applyLinuxChromeNativeHostRuntimePatch(
-      currentChromePluginAppServerSourceBundleFixture(),
-    );
-    const fsPromises = require("node:fs/promises");
-    const requireWithFailedRename = (specifier) => {
-      if (specifier !== "node:fs/promises") {
-        return require(specifier);
-      }
-      return {
-        ...fsPromises,
-        rename: async () => {
-          const error = new Error("injected bridge rename failure");
-          error.code = "EIO";
-          throw error;
-        },
-      };
-    };
-
-    await assert.rejects(
-      registerChromeRuntime(
-        patched,
-        fixture,
-        () => process.geteuid(),
+      result.extensionHostPath,
+      path.join(
+        fixture.runtimeLatest,
+        "extension-host",
+        "linux",
         fixture.arch,
-        requireWithFailedRename,
+        "extension-host",
       ),
-      /injected bridge rename failure/,
     );
-    assert.equal(fs.lstatSync(bridgeRoot).isSymbolicLink(), true);
-    assert.equal(fs.realpathSync(bridgeRoot), fixture.runtimeVersion);
-    assert.deepEqual(
-      fs.readdirSync(fixture.installedRoot).filter((name) => name.includes(".tmp-")),
-      [],
+    assert.equal(
+      result.browserClientPath,
+      path.join(fixture.runtimeLatest, "scripts", "browser-client.mjs"),
     );
+    fs.rmSync(pluginCacheRoot, { recursive: true, force: true });
+    assert.equal(fs.existsSync(result.extensionHostPath), true);
+    assert.equal(fs.existsSync(result.browserClientPath), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
