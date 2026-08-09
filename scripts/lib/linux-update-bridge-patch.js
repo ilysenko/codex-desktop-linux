@@ -121,6 +121,24 @@ function applyLinuxAppUpdaterMenuPatch(currentSource) {
   return currentSource.replace(menuRegex, "$1=$2.$3.shouldIncludeSparkle($4,process.platform,process.env)||process.platform===`linux`");
 }
 
+function applyLinuxAppUpdateViewStatePatch(currentSource) {
+  // 上游 bug: Zoe 类构造时把 sparkleManager 存入 this.sparkleManager，
+  // 但 getAppUpdateViewState() 读取 this.options.sparkleManager。
+  // macOS 上基类 options 恰好也有 sparkleManager，Linux 上没有，导致
+  // "this.options.sparkleManager.getDownloadProgressPercent is not a function"。
+  // 修复：改为读取 this.sparkleManager（构造时真正存储的字段）。
+  const viewStateRegex =
+    /getAppUpdateViewState\(\)\{return\{downloadProgressPercent:this\.options\.sparkleManager\.getDownloadProgressPercent\(\),downloadedUpdateAppBrand:this\.options\.sparkleManager\.getDownloadedUpdateAppBrand\(\),installProgressPercent:this\.options\.sparkleManager\.getInstallProgressPercent\(\),isUpdateReady:this\.options\.sparkleManager\.getIsUpdateReady\(\),lifecycleState:this\.options\.sparkleManager\.getUpdateLifecycleState\(\),relaunchNotice:this\.options\.sparkleManager\.getRelaunchNotice\(\)\}\}/;
+  const match = currentSource.match(viewStateRegex);
+  if (match == null) {
+    return currentSource;
+  }
+  const original = match[0];
+  const replacement =
+    "getAppUpdateViewState(){let e=this.sparkleManager??this.options?.sparkleManager;return{downloadProgressPercent:e?.getDownloadProgressPercent?.()??null,downloadedUpdateAppBrand:e?.getDownloadedUpdateAppBrand?.()??null,installProgressPercent:e?.getInstallProgressPercent?.()??null,isUpdateReady:e?.getIsUpdateReady?.()??!1,lifecycleState:e?.getUpdateLifecycleState?.()??`idle`,relaunchNotice:e?.getRelaunchNotice?.()??null}}";
+  return currentSource.replace(original, replacement);
+}
+
 function patchLinuxAppUpdaterBridge(extractedDir) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   if (!fs.existsSync(buildDir)) {
@@ -135,7 +153,8 @@ function patchLinuxAppUpdaterBridge(extractedDir) {
     const source = fs.readFileSync(filePath, "utf8");
     const shouldPatchMenu = source.includes("shouldIncludeSparkle");
     const shouldPatchBridge = source.includes("exports.runMainAppStartup");
-    if (!shouldPatchMenu && !shouldPatchBridge) {
+    const shouldPatchViewState = source.includes("getAppUpdateViewState");
+    if (!shouldPatchMenu && !shouldPatchBridge && !shouldPatchViewState) {
       continue;
     }
     matched += 1;
@@ -145,6 +164,9 @@ function patchLinuxAppUpdaterBridge(extractedDir) {
     }
     if (shouldPatchBridge) {
       patched = applyLinuxAppUpdaterBridgePatch(patched);
+    }
+    if (shouldPatchViewState) {
+      patched = applyLinuxAppUpdateViewStatePatch(patched);
     }
     if (patched !== source) {
       fs.writeFileSync(filePath, patched, "utf8");
@@ -158,5 +180,6 @@ function patchLinuxAppUpdaterBridge(extractedDir) {
 module.exports = {
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
+  applyLinuxAppUpdateViewStatePatch,
   patchLinuxAppUpdaterBridge,
 };
