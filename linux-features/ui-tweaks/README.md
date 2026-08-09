@@ -138,7 +138,8 @@ Power slider or opening a nested Model submenu. The compact GPT-5.6 Power
 slider also derives Sol's positions from the model's `supportedReasoningEfforts`
 after the app filters that list through the reasoning efforts enabled in
 settings. Enabled efforts such as Max therefore appear without maintaining a
-separate hard-coded effort list.
+separate hard-coded effort list. This tweak is disabled by default and must be
+enabled explicitly.
 
 Config keys:
 

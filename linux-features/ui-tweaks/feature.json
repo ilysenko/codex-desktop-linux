@@ -28,7 +28,7 @@
     },
     "modelPicker": {
       "showModelsByDefault": {
-        "enabled": true
+        "enabled": false
       }
     },
     "reasoning": {

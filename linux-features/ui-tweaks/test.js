@@ -269,16 +269,23 @@ test("GPT-5.6 Power slider effort patch fails soft when upstream markers drift",
   assert.match(warnings[0], /Could not find the supported reasoning effort mapper/);
 });
 
-test("model picker tweak can be disabled through feature settings", () => {
+test("model picker tweak is disabled by default and can be explicitly enabled", () => {
   const stateSource = modelPickerStateBundleFixture();
   const menuSource = modelPickerMenuBundleFixture();
-  const context = {
+  const featureJson = JSON.parse(fs.readFileSync(path.join(__dirname, "feature.json"), "utf8"));
+  const defaultContext = {
     feature: {
+      manifest: featureJson,
+    },
+  };
+  const enabledContext = {
+    feature: {
+      manifest: featureJson,
       settings: {
         tweaks: {
           modelPicker: {
             showModelsByDefault: {
-              enabled: false,
+              enabled: true,
             },
           },
         },
@@ -286,11 +293,24 @@ test("model picker tweak can be disabled through feature settings", () => {
     },
   };
 
-  assert.equal(applyDefaultAdvancedViewPatch(stateSource, context), stateSource);
-  assert.equal(applyInlineModelListPatch(menuSource, context), menuSource);
+  assert.equal(featureJson.tweaks.modelPicker.showModelsByDefault.enabled, false);
+  assert.equal(applyDefaultAdvancedViewPatch(stateSource, defaultContext), stateSource);
+  assert.equal(applyInlineModelListPatch(menuSource, defaultContext), menuSource);
   assert.equal(
-    applyDynamicSupportedReasoningEffortsPatch(modelPickerPowerBundleFixture(), context),
+    applyDynamicSupportedReasoningEffortsPatch(modelPickerPowerBundleFixture(), defaultContext),
     modelPickerPowerBundleFixture(),
+  );
+  assert.match(
+    applyDefaultAdvancedViewPatch(stateSource, enabledContext),
+    ADVANCED_MENU_VIEW_PATTERN,
+  );
+  assert.match(
+    applyInlineModelListPatch(menuSource, enabledContext),
+    new RegExp(INLINE_MODEL_LIST_RUNTIME_MARKER),
+  );
+  assert.match(
+    applyDynamicSupportedReasoningEffortsPatch(modelPickerPowerBundleFixture(), enabledContext),
+    new RegExp(DYNAMIC_POWER_EFFORTS_RUNTIME_MARKER),
   );
 });
 
