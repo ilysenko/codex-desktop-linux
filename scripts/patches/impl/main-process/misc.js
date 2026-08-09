@@ -580,6 +580,50 @@ function applyLinuxLocalAppServerFeatureEnablementHandlerPatch(currentSource) {
   return patchedSource;
 }
 
+// The ChatGPT -> Work handoff creates a Work thread targeting a local project.
+// Upstream only resolves that project by syncing a ChatGPT Project, so a
+// conversation outside one always lands projectless. This exposes the existing
+// native picker so the handoff can resolve a project from a folder instead.
+// It mirrors addWorkspaceRootFromRenderer's side effects but returns the id and
+// never marks the project active.
+function applyLinuxPickLocalProjectHandlerPatch(currentSource) {
+  const method = "linux-pick-local-project";
+  if (currentSource.includes(`"${method}":async`)) {
+    return currentSource;
+  }
+
+  const workspaceRootHandlerRegex =
+    /("add-workspace-root-option":async\(\{root:([A-Za-z_$][\w$]*),label:([A-Za-z_$][\w$]*),setActive:([A-Za-z_$][\w$]*),origin:([A-Za-z_$][\w$]*)\}\)=>\(await this\.localProjectsManager\.addWorkspaceRootFromRenderer\(\5,\2,\3,\4\),\{success:!0\}\),)/u;
+  const match = currentSource.match(workspaceRootHandlerRegex);
+  if (match == null) {
+    if (
+      currentSource.includes('"add-workspace-root-option":async') &&
+      currentSource.includes("localProjectsManager.addWorkspaceRootFromRenderer")
+    ) {
+      console.warn(
+        "WARN: Could not find local project picker insertion point — skipping Linux pick local project handler patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [, existingHandler] = match;
+  const handler =
+    `"${method}":async({origin:__codexOrigin})=>{` +
+    "let __codexRoots=await this.localProjectsManager.pickLocalWorkspaceRoots(__codexOrigin,!1),__codexRoot=n.Oa(__codexRoots);" +
+    "if(__codexRoot==null)return{canceled:!0};" +
+    // A trailing separator makes a distinct root, so `/x` and `/x/` mint two
+    // projects for the same directory. Normalize before creating. `/` is length
+    // one and must survive.
+    "while(__codexRoot.length>1&&__codexRoot.endsWith(`/`))__codexRoot=__codexRoot.slice(0,-1);" +
+    "let __codexProject=await this.localProjectsManager.createProjectForRoot(__codexRoot);" +
+    "this.localProjectsManager.notifyGlobalStateChanged([n.ks.LOCAL_PROJECTS,n.ks.PROJECT_ORDER]);" +
+    "this.localProjectsManager.sendWorkspaceRootOptionsUpdated(__codexOrigin);" +
+    "return{canceled:!1,projectId:__codexProject.id,root:V(__codexRoot,this.shouldUseWslPaths())}},";
+
+  return currentSource.replace(workspaceRootHandlerRegex, `${existingHandler}${handler}`);
+}
+
 module.exports = {
   applyLinuxHostProcessEnvironmentPatch,
   applyLinuxFileManagerPatch,
@@ -588,6 +632,7 @@ module.exports = {
   applyLinuxTerminalHostEnvironmentPatch,
   applyLinuxTerminalUserPathPatch,
   applyLinuxLocalAppServerFeatureEnablementHandlerPatch,
+  applyLinuxPickLocalProjectHandlerPatch,
   applyLinuxOwlFeatureBindingFallbackPatch,
   applyLinuxWorkerFileManagerPatch,
   patchLinuxOwlFeatureBindingFallbackAssets,

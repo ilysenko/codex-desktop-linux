@@ -100,6 +100,7 @@ const {
   applyLinuxHostProcessEnvironmentPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
+  applyLinuxPickLocalProjectHandlerPatch,
   applyLinuxLocalAppServerFeatureEnablementHandlerPatch,
   applyLinuxOwlFeatureBindingFallbackPatch,
   applyLinuxRemoteControlConfigPreservationPatch,
@@ -197,6 +198,8 @@ const {
   applyLinuxSidebarScrollPerformancePatch,
   applyLinuxSkillsListDedupePatch,
   applyLinuxThreadSidePanelNativeTooltipPatch,
+  applyLinuxChatGptHandoffLocalProjectPatch,
+  applyLinuxDesktopRequestGlobalPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
   applySubagentNicknameMetadataPatch,
@@ -1054,11 +1057,14 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-application-menu",
     "linux-app-reload-shortcuts",
     "linux-x11-project-picker",
+    "linux-pick-local-project-handler",
     "opaque-window-default-general-settings",
     "opaque-window-default-webview-index",
     "linux-window-controls-safe-area",
     "linux-tooltip-window-controls-collision",
     "linux-thread-side-panel-native-tooltip",
+    "linux-desktop-request-global",
+    "linux-chatgpt-handoff-local-project",
     "linux-fast-mode-model-guard",
     "subagent-nickname-metadata-shape",
     "local-environment-action-modal-draft",
@@ -1108,6 +1114,16 @@ test("default core patch descriptors are grouped and unique", () => {
   );
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "linux-x11-project-picker")?.ciPolicy,
+    "optional",
+  );
+  assert.equal(
+    descriptors.find((descriptor) => descriptor.id === "linux-pick-local-project-handler")
+      ?.ciPolicy,
+    "optional",
+  );
+  assert.equal(
+    descriptors.find((descriptor) => descriptor.id === "linux-chatgpt-handoff-local-project")
+      ?.ciPolicy,
     "optional",
   );
   assert.equal(
@@ -2039,6 +2055,104 @@ test("opens the project picker without a parent window on Linux X11", async () =
     argumentCount: 2,
     roots: ["/tmp/project"],
   });
+});
+
+function pickLocalProjectHandlerFixture({ pickedRoots = "[`/tmp/work`]" } = {}) {
+  return [
+    "var n={Oa:e=>e[0]??null,ks:{LOCAL_PROJECTS:`LOCAL_PROJECTS`,PROJECT_ORDER:`PROJECT_ORDER`}};",
+    "function V(e){return `display:${e}`}",
+    "class T{constructor(){this.globalState={projects:{}};this.localProjectsManager={",
+    "addWorkspaceRootFromRenderer:async()=>{},",
+    `pickLocalWorkspaceRoots:async(e,t)=>(this.pickArgs={origin:e,allowMultiple:t},${pickedRoots}),`,
+    "createProjectForRoot:async(e,t)=>(this.created={root:e,label:t},{id:`project1`}),",
+    "notifyGlobalStateChanged:e=>this.globalStateChanged=e,",
+    "sendWorkspaceRootOptionsUpdated:e=>this.workspaceRootOptionsTarget=e",
+    "};this.threadProjectAssignments={setAssignment:async()=>{this.assigned=!0}}}",
+    "shouldUseWslPaths(){return!1}",
+    'handlers={"workspace-root-options":async()=>({}),',
+    '"add-workspace-root-option":async({root:e,label:t,setActive:n,origin:r})=>(await this.localProjectsManager.addWorkspaceRootFromRenderer(r,e,t,n),{success:!0}),',
+    '"electron-clone-workspace-repo":async()=>({success:!1,canceled:!1,error:`Not implemented in Electron.`})}}',
+  ].join("");
+}
+
+test("adds a Linux handler that resolves a local project from the native picker", async () => {
+  const patched = applyPatchTwice(
+    applyLinuxPickLocalProjectHandlerPatch,
+    pickLocalProjectHandlerFixture(),
+  );
+  assert.match(patched, /"linux-pick-local-project":async/);
+
+  const context = {};
+  vm.runInNewContext(`${patched};manager=new T`, context);
+  const origin = { id: "webContents" };
+  const result = await context.manager.handlers["linux-pick-local-project"]({ origin });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    canceled: false,
+    projectId: "project1",
+    root: "display:/tmp/work",
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(context.manager.pickArgs)), {
+    origin,
+    allowMultiple: false,
+  });
+  assert.equal(context.manager.created.root, "/tmp/work");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.manager.globalStateChanged)),
+    ["LOCAL_PROJECTS", "PROJECT_ORDER"],
+  );
+  assert.equal(context.manager.workspaceRootOptionsTarget, origin);
+  // The handler must never write a thread assignment; the thread does not exist yet.
+  assert.equal(context.manager.assigned, undefined);
+});
+
+test("normalizes a trailing separator so one directory is one project", async () => {
+  // `/tmp/work` and `/tmp/work/` previously minted two projects for the same
+  // directory, which accumulated in the project list.
+  const patched = applyPatchTwice(
+    applyLinuxPickLocalProjectHandlerPatch,
+    pickLocalProjectHandlerFixture({ pickedRoots: "[`/tmp/work///`]" }),
+  );
+
+  const context = {};
+  vm.runInNewContext(`${patched};manager=new T`, context);
+  const result = await context.manager.handlers["linux-pick-local-project"]({
+    origin: { id: "webContents" },
+  });
+
+  assert.equal(context.manager.created.root, "/tmp/work");
+  assert.equal(result.root, "display:/tmp/work");
+});
+
+test("normalization never reduces the filesystem root", async () => {
+  const patched = applyLinuxPickLocalProjectHandlerPatch(
+    pickLocalProjectHandlerFixture({ pickedRoots: "[`/`]" }),
+  );
+
+  const context = {};
+  vm.runInNewContext(`${patched};manager=new T`, context);
+  await context.manager.handlers["linux-pick-local-project"]({
+    origin: { id: "webContents" },
+  });
+
+  assert.equal(context.manager.created.root, "/");
+});
+
+test("creates no project when the local project picker is canceled", async () => {
+  const patched = applyLinuxPickLocalProjectHandlerPatch(
+    pickLocalProjectHandlerFixture({ pickedRoots: "[]" }),
+  );
+
+  const context = {};
+  vm.runInNewContext(`${patched};manager=new T`, context);
+  const result = await context.manager.handlers["linux-pick-local-project"]({
+    origin: { id: "webContents" },
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { canceled: true });
+  assert.equal(context.manager.created, undefined);
+  assert.equal(context.manager.globalStateChanged, undefined);
+  assert.equal(context.manager.workspaceRootOptionsTarget, undefined);
 });
 
 test("adds Linux file manager support to the worker open target registry", () => {
@@ -3847,6 +3961,127 @@ test("removes native title tooltip from the thread side panel toolbar action", (
   assert.match(patched, /"aria-label":i/);
   assert.match(patched, /tooltipContent:i/);
   assert.doesNotMatch(patched, /title:i/);
+});
+
+test("publishes the desktop request helper on globalThis", () => {
+  const source =
+    "function U6e(e,t,n,r,i){return{method:e,params:t}}" +
+    "function Om(...e){let[t,n]=e,{params:r,select:i,signal:a,source:o}=n??{};return U6e(t,r,i,a,o)}" +
+    "function Pm(){return 1}";
+
+  const patched = applyPatchTwice(applyLinuxDesktopRequestGlobalPatch, source);
+  assert.match(patched, /\}globalThis\.codexLinuxDesktopRequest=Om;/);
+
+  const context = {};
+  vm.runInNewContext(patched, context);
+  assert.equal(typeof context.codexLinuxDesktopRequest, "function");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.codexLinuxDesktopRequest("m", { params: { a: 1 } }))),
+    { method: "m", params: { a: 1 } },
+  );
+});
+
+test("leaves the desktop request helper alone when the upstream shape changes", () => {
+  const source = "function Om(e,t){return U6e(e,t)}";
+  assert.equal(applyLinuxDesktopRequestGlobalPatch(source), source);
+});
+
+function chatGptHandoffFixture() {
+  return (
+    "function Ii(e){return e?.startsWith(`g-p-`)===!0}" +
+    "async function de(e,t){return e.resolved}" +
+    "async function Lo(e){return e}" +
+    "async function il(e,{chatGptThreadId:t}){" +
+    "let o=e.gizmoId,s=o!=null&&Ii(o),l=s?await de(e,o):null;" +
+    "if(s&&l==null)return null;" +
+    "let u=l==null?{type:`projectless`}:{type:`project`,projectId:l.projectId,environment:{type:`local`}}," +
+    "d=await Lo({target:u});return d}"
+  );
+}
+
+test("prompts for a local project when the ChatGPT handoff would go projectless", async () => {
+  const patched = applyPatchTwice(
+    applyLinuxChatGptHandoffLocalProjectPatch,
+    chatGptHandoffFixture(),
+  );
+  assert.match(patched, /async function codexLinuxPickLocalProjectId\(\)/);
+  assert.match(patched, /`linux-pick-local-project`/);
+
+  const requests = [];
+  const context = {
+    codexLinuxDesktopRequest: async (method, options) => {
+      requests.push([method, options]);
+      return { canceled: false, projectId: "project1", root: "/tmp/work" };
+    },
+  };
+  vm.runInNewContext(`${patched};handoff=il`, context);
+
+  const result = await context.handoff({ gizmoId: null }, { chatGptThreadId: "c1" });
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    target: { type: "project", projectId: "project1", environment: { type: "local" } },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(requests)), [
+    ["linux-pick-local-project", { params: {} }],
+  ]);
+});
+
+test("keeps the upstream ChatGPT project target without prompting", async () => {
+  const patched = applyLinuxChatGptHandoffLocalProjectPatch(chatGptHandoffFixture());
+
+  let requested = false;
+  const context = {
+    codexLinuxDesktopRequest: async () => {
+      requested = true;
+      return { canceled: false, projectId: "picked" };
+    },
+  };
+  vm.runInNewContext(`${patched};handoff=il`, context);
+
+  const result = await context.handoff(
+    { gizmoId: "g-p-abc", resolved: { projectId: "synced" } },
+    { chatGptThreadId: "c1" },
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    target: { type: "project", projectId: "synced", environment: { type: "local" } },
+  });
+  assert.equal(requested, false);
+});
+
+test("falls back to a projectless ChatGPT handoff when no project is picked", async () => {
+  const patched = applyLinuxChatGptHandoffLocalProjectPatch(chatGptHandoffFixture());
+
+  const canceled = { codexLinuxDesktopRequest: async () => ({ canceled: true }) };
+  vm.runInNewContext(`${patched};handoff=il`, canceled);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await canceled.handoff({ gizmoId: null }, { chatGptThreadId: "c1" }))),
+    { target: { type: "projectless" } },
+  );
+
+  // The request-global patch may be skipped independently; the handoff must degrade.
+  const missing = {};
+  vm.runInNewContext(`${patched};handoff=il`, missing);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await missing.handoff({ gizmoId: null }, { chatGptThreadId: "c1" }))),
+    { target: { type: "projectless" } },
+  );
+
+  const throwing = {
+    codexLinuxDesktopRequest: async () => {
+      throw new Error("bridge unavailable");
+    },
+  };
+  vm.runInNewContext(`${patched};handoff=il`, throwing);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await throwing.handoff({ gizmoId: null }, { chatGptThreadId: "c1" }))),
+    { target: { type: "projectless" } },
+  );
+});
+
+test("leaves the ChatGPT handoff alone when the upstream target shape changes", () => {
+  const source =
+    "async function il(e,t){let u=l==null?{type:`projectless`}:{type:`project`,projectId:l.id};return u}" +
+    "//Failed to create Codex thread from ChatGPT conversation";
+  assert.equal(applyLinuxChatGptHandoffLocalProjectPatch(source), source);
 });
 
 function managedWindowMenuFixture(

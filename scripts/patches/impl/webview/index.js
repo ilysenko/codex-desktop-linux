@@ -758,6 +758,76 @@ function applyLinuxThreadSidePanelNativeTooltipPatch(currentSource) {
   return currentSource;
 }
 
+// The desktop request helper lives in the app-initial chunk and is not imported
+// by the module holding the handoff. Publishing it on globalThis keeps the
+// handoff patch free of cross-chunk import surgery; if this patch is skipped the
+// handoff patch degrades to upstream behavior instead of failing to load.
+function applyLinuxDesktopRequestGlobalPatch(currentSource) {
+  const marker = "codexLinuxDesktopRequest";
+  if (currentSource.includes(marker)) {
+    return currentSource;
+  }
+
+  const requestHelperRegex =
+    /function ([A-Za-z_$][\w$]*)\(\.\.\.([A-Za-z_$][\w$]*)\)\{let\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\]=\2,\{params:([A-Za-z_$][\w$]*),select:([A-Za-z_$][\w$]*),signal:([A-Za-z_$][\w$]*),source:([A-Za-z_$][\w$]*)\}=\4\?\?\{\};return ([A-Za-z_$][\w$]*)\(\3,\5,\6,\7,\8\)\}/u;
+  const match = currentSource.match(requestHelperRegex);
+  if (match == null) {
+    console.warn(
+      "WARN: Could not find the desktop request helper — skipping Linux desktop request global patch",
+    );
+    return currentSource;
+  }
+
+  const [helperSource, helperName] = match;
+  return currentSource.replace(
+    requestHelperRegex,
+    `${helperSource}globalThis.codexLinuxDesktopRequest=${helperName};`,
+  );
+}
+
+// Traps the ChatGPT -> Work handoff at the point it decides the new Work
+// thread's target. Upstream resolves a local project only by syncing a ChatGPT
+// Project, so conversations outside one always fall to `projectless` and the
+// resulting thread has no cwd. When that branch is taken, prompt for a folder
+// instead. Cancellation, a skipped request-global patch, or any failure falls
+// through to `projectless`, which is upstream's current behavior.
+function applyLinuxChatGptHandoffLocalProjectPatch(currentSource) {
+  const marker = "codexLinuxPickLocalProjectId";
+  if (currentSource.includes(marker)) {
+    return currentSource;
+  }
+
+  const handoffTargetRegex =
+    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)==null\?\{type:`projectless`\}:\{type:`project`,projectId:\2\.projectId,environment:\{type:`local`\}\}/u;
+  const match = currentSource.match(handoffTargetRegex);
+  if (match == null) {
+    if (currentSource.includes("Failed to create Codex thread from ChatGPT conversation")) {
+      console.warn(
+        "WARN: Could not find the ChatGPT handoff target insertion point — skipping Linux ChatGPT handoff local project patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [, targetVar, resolvedProjectVar] = match;
+  const helper = [
+    "async function codexLinuxPickLocalProjectId(){",
+    "try{",
+    "let e=globalThis.codexLinuxDesktopRequest;",
+    "if(typeof e!==`function`)return null;",
+    "let t=await e(`linux-pick-local-project`,{params:{}});",
+    "return t==null||t.canceled===!0?null:t.projectId??null",
+    "}catch{return null}",
+    "}",
+  ].join("");
+
+  const replacement =
+    `let codexLinuxProjectId=${resolvedProjectVar}!=null?${resolvedProjectVar}.projectId:await codexLinuxPickLocalProjectId(),` +
+    `${targetVar}=codexLinuxProjectId==null?{type:\`projectless\`}:{type:\`project\`,projectId:codexLinuxProjectId,environment:{type:\`local\`}}`;
+
+  return `${helper}${currentSource.replace(handoffTargetRegex, replacement)}`;
+}
+
 function applyLinuxAppSunsetPatch(currentSource) {
   const statsigKey = "2929582856";
   const disabledGatePattern = /if\(!1&&([A-Za-z_$][\w$]*)\(`2929582856`\)\)\{/u;
@@ -2824,6 +2894,8 @@ module.exports = {
   applyLinuxAppShellTabLayoutPerformancePatch,
   applyLinuxMarkdownAnimationPerformancePatch,
   applyLinuxThreadSidePanelNativeTooltipPatch,
+  applyLinuxDesktopRequestGlobalPatch,
+  applyLinuxChatGptHandoffLocalProjectPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
   applyLinuxSettingsSearchVisibilityPatch,
