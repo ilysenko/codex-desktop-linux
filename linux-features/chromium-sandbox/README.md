@@ -38,7 +38,8 @@ is rejected.
 The native package builders reject this feature because installed Electron
 payloads are root-owned, so Chromium will not use the development-helper
 environment fallback. Build the ordinary user-managed app for this
-host-qualified mode.
+host-qualified mode. The Nix feature selector does not expose this feature for
+the same root-owned-store constraint.
 
 Because the launcher has no authoritative, race-safe evidence of a resident
 primary's Chromium mode, this feature rejects every launch while a resident app
