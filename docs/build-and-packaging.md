@@ -166,6 +166,11 @@ PACKAGE_VERSION=2026.03.24.220723+88f07cd3 make deb
 The packaging scripts only repackage what is already in `codex-app/`; they do
 not download or extract the DMG.
 
+An enabled Linux Feature may declare a format incompatible with its runtime
+requirements. AppImage construction checks that declaration against the
+generated app snapshot before creating an AppDir or output artifact; disabled
+features leave the default AppImage path unchanged.
+
 ## AppImage Local Self-Build
 
 ```bash

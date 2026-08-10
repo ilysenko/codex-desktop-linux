@@ -8,10 +8,12 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  assertEnabledLinuxFeatureBuildCompatibility,
   enabledFeatureIdsFromBuildInfo,
   enabledLinuxFeaturePackageDependencies,
   enabledLinuxFeaturePackageFiles,
   enabledLinuxFeaturePackagePlan,
+  enabledLinuxFeaturePromotionHooks,
   loadLinuxFeaturePatchDescriptors,
   restoreEnabledLinuxFeaturePackageResourcePermissions,
   stageEnabledLinuxFeaturePackageResources,
@@ -100,6 +102,50 @@ test("Linux feature asset matchers receive feature settings", (t) => {
 
   const [descriptor] = loadLinuxFeaturePatchDescriptors({ featuresRoot });
   assert.equal(descriptor.assetMatch("current-contract", "app-current.js", {}), true);
+});
+
+test("strict launcher, build compatibility, and promotion hooks are explicit opt-ins", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-strict-lifecycle-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const { featureDir, featuresRoot, id } = makePackageFeatureRoot(root, {
+    runtimeHooks: {
+      preHandoffLauncher: {
+        source: "strict-launcher.sh",
+        mode: "0755",
+      },
+    },
+    entrypoints: { promotionHook: "./promotion.sh" },
+    buildCompatibility: {
+      unsupportedFormats: ["appimage"],
+      reason: "fixture incompatibility",
+    },
+  });
+  fs.writeFileSync(path.join(featureDir, "strict-launcher.sh"), "#!/bin/sh\nexit 0\n");
+  fs.writeFileSync(path.join(featureDir, "promotion.sh"), "#!/bin/sh\nexit 0\n");
+
+  const appDir = path.join(root, "app");
+  const plan = stageEnabledLinuxFeatureInstall(appDir, { featuresRoot });
+  assert.deepEqual(plan.runtimeHooks.map((hook) => hook.target), [
+    `.codex-linux/pre-handoff-launcher.d/${id}-strict-launcher.sh`,
+  ]);
+  writeBuildInfoSnapshot(appDir, [id]);
+  assert.throws(
+    () => assertEnabledLinuxFeatureBuildCompatibility("appimage", appDir, { featuresRoot }),
+    /package-framework-fixture.*incompatible with appimage.*fixture incompatibility/i,
+  );
+  assert.doesNotThrow(
+    () => assertEnabledLinuxFeatureBuildCompatibility("deb", appDir, { featuresRoot }),
+  );
+  assert.deepEqual(enabledLinuxFeaturePromotionHooks(appDir, { featuresRoot }), [
+    { id, path: path.join(featureDir, "promotion.sh") },
+  ]);
+
+  fs.rmSync(path.join(featureDir, "promotion.sh"));
+  assert.throws(
+    () => enabledLinuxFeaturePromotionHooks(appDir, { featuresRoot }),
+    /promotionHook entrypoint not found/i,
+  );
 });
 
 test("Linux feature staging rejects duplicate resource targets", (t) => {

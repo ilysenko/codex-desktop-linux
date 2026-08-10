@@ -124,6 +124,19 @@ promote_candidate_install() {
     recover_pending_candidate_promotion_locked "$final_dir"
     [ -d "$candidate_dir" ] || error "Candidate app was not created: $candidate_dir"
 
+    # Enabled features may depend on host state outside the generated app.
+    # Revalidate that state against the exact candidate while holding the
+    # promotion lock, before this transaction creates a journal or exchanges
+    # either app directory. A refusal leaves both directories untouched.
+    if declare -F run_linux_feature_promotion_hooks >/dev/null 2>&1; then
+        if ! run_linux_feature_promotion_hooks "$candidate_dir" "$final_dir"; then
+            warn "Accepted candidate failed Linux feature promotion compatibility; the current app was not changed"
+            flock -u "$promotion_lock_fd"
+            exec {promotion_lock_fd}>&-
+            return 1
+        fi
+    fi
+
     # The long build is allowed while the app runs. Only the short atomic
     # promotion window requires the installed executable to be stopped.
     INSTALL_DIR="$final_dir"

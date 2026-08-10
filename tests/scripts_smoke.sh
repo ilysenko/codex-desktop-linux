@@ -1457,6 +1457,8 @@ test_appimage_builder_smoke() {
     local target_triple
     local platform_version_suffix
     local arch
+    local feature_config="$workspace/features.json"
+    local incompatible_log="$workspace/incompatible-feature.log"
 
     case "$(uname -m)" in
         x86_64)
@@ -1549,6 +1551,32 @@ SCRIPT
     assert_not_contains "$capture_dir/AppDir/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "/usr/share/applications"
     [ "$(cat "$capture_dir/arch")" = "$arch" ] || fail "Expected appimagetool ARCH=$arch"
     [ "$(cat "$capture_dir/version")" = "2026.03.24.120000+appimage" ] || fail "Expected appimagetool VERSION override"
+
+    printf '%s\n' '{"enabled":["chromium-sandbox"]}' > "$feature_config"
+    printf '%s\n' '{"schemaVersion":1,"linuxFeatures":{"enabled":["chromium-sandbox"]}}' \
+        > "$app_dir/.codex-linux/build-info.json"
+    rm -rf "$capture_dir" "$appdir"
+    rm -f "$dist_dir/codex-desktop-2026.03.24.120000+appimage-incompatible-$arch.AppImage"
+    if PATH="$bin_dir:$PATH" \
+        CAPTURE_DIR="$capture_dir" \
+        APP_DIR_OVERRIDE="$app_dir" \
+        DIST_DIR_OVERRIDE="$dist_dir" \
+        APPIMAGE_APPDIR_OVERRIDE="$appdir" \
+        CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
+        PACKAGE_VERSION="2026.03.24.120000+appimage-incompatible" \
+        bash "$REPO_DIR/scripts/build-appimage.sh" >"$incompatible_log" 2>&1; then
+        fail "AppImage build must reject an enabled feature declared incompatible before artifact emission"
+    fi
+    assert_contains "$incompatible_log" "chromium-sandbox"
+    assert_contains "$incompatible_log" "incompatible with appimage"
+    assert_file_not_exists "$dist_dir/codex-desktop-2026.03.24.120000+appimage-incompatible-$arch.AppImage"
+    assert_file_not_exists "$capture_dir/AppDir"
+
+    printf '%s\n' '{"enabled":[]}' > "$feature_config"
+    printf '%s\n' '{"schemaVersion":1,"linuxFeatures":{"enabled":[]}}' \
+        > "$app_dir/.codex-linux/build-info.json"
+    rm -rf "$capture_dir"
+    mkdir -p "$capture_dir"
 
     if [ "$arch" = "armhf" ]; then
         return 0
@@ -2748,6 +2776,87 @@ test_candidate_promotion_refuses_a_running_final_app() {
         promote_candidate_install "$workspace/candidate" "$workspace/final"
     )
     [ "$(cat "$workspace/final/version")" = "new" ] || fail "Promotion did not succeed after the app exited"
+}
+
+test_candidate_promotion_feature_compatibility_gate() {
+    info "Checking enabled-feature promotion compatibility before journal or exchange"
+    local workspace="$TMP_DIR/candidate-feature-compatibility"
+    local candidate="$workspace/candidate"
+    local final="$workspace/final"
+    local external_helper="$workspace/external-helper"
+    local feature_config="$workspace/features.json"
+    local stat_bin="$workspace/bin"
+    local refusal_log="$workspace/refusal.log"
+
+    mkdir -p \
+        "$candidate/.codex-linux/features/chromium-sandbox" \
+        "$final" \
+        "$stat_bin"
+    printf '%s\n' old > "$final/version"
+    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" working-old' > "$final/start.sh"
+    chmod +x "$final/start.sh"
+    printf '%s\n' new > "$candidate/version"
+    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" working-new' > "$candidate/start.sh"
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$candidate/electron"
+    chmod +x "$candidate/start.sh" "$candidate/electron"
+    printf '%s\n' new-helper \
+        > "$candidate/.codex-linux/features/chromium-sandbox/generated-chrome-sandbox"
+    chmod +x "$candidate/.codex-linux/features/chromium-sandbox/generated-chrome-sandbox"
+    printf '%s\n' old-helper > "$external_helper"
+    chmod +x "$external_helper"
+    printf '%s\n' '{"schemaVersion":1,"linuxFeatures":{"enabled":["chromium-sandbox"]}}' \
+        > "$candidate/.codex-linux/build-info.json"
+    printf '%s\n' '{"enabled":["chromium-sandbox"]}' > "$feature_config"
+    printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' '0:0:4755'" > "$stat_bin/stat"
+    chmod +x "$stat_bin/stat"
+
+    if (
+        info() { :; }
+        warn() { echo "$*" >&2; }
+        error() { echo "$*" >&2; return 1; }
+        assert_install_target_not_running() { :; }
+        export SCRIPT_DIR="$REPO_DIR"
+        export INSTALL_DIR="$final"
+        export WORK_DIR="$workspace/work"
+        export ARCH="$(uname -m)"
+        export CODEX_LINUX_FEATURES_CONFIG="$feature_config"
+        export CHROME_DEVEL_SANDBOX="$external_helper"
+        export PATH="$stat_bin:$PATH"
+        # shellcheck source=scripts/lib/linux-features.sh
+        . "$REPO_DIR/scripts/lib/linux-features.sh"
+        # shellcheck source=scripts/lib/candidate-install.sh
+        . "$REPO_DIR/scripts/lib/candidate-install.sh"
+        promote_candidate_install "$candidate" "$final"
+    ) >"$refusal_log" 2>&1; then
+        fail "Promotion accepted a candidate whose external dependency matched only the working app"
+    fi
+    assert_contains "$refusal_log" "chromium-sandbox"
+    [ "$(cat "$final/version")" = "old" ] || fail "Compatibility refusal replaced the working app"
+    [ "$("$final/start.sh")" = "working-old" ] || fail "Compatibility refusal left the working app unlaunchable"
+    [ "$(cat "$candidate/version")" = "new" ] || fail "Compatibility refusal changed the candidate"
+    [ ! -e "$workspace/.final.promotion.json" ] || fail "Compatibility refusal created a promotion journal"
+    if find "$workspace" -maxdepth 1 -type d -name 'final.backup-*' -print -quit | grep -q .; then
+        fail "Compatibility refusal created a previous-app backup"
+    fi
+
+    cp "$candidate/.codex-linux/features/chromium-sandbox/generated-chrome-sandbox" "$external_helper"
+    (
+        info() { :; }
+        warn() { :; }
+        error() { echo "$*" >&2; exit 1; }
+        assert_install_target_not_running() { :; }
+        export SCRIPT_DIR="$REPO_DIR"
+        export INSTALL_DIR="$final"
+        export WORK_DIR="$workspace/work"
+        export ARCH="$(uname -m)"
+        export CODEX_LINUX_FEATURES_CONFIG="$feature_config"
+        export CHROME_DEVEL_SANDBOX="$external_helper"
+        export PATH="$stat_bin:$PATH"
+        . "$REPO_DIR/scripts/lib/linux-features.sh"
+        . "$REPO_DIR/scripts/lib/candidate-install.sh"
+        promote_candidate_install "$candidate" "$final"
+    )
+    [ "$(cat "$final/version")" = "new" ] || fail "Qualified feature candidate was not promoted"
 }
 
 test_candidate_backup_retention_is_bounded() {
@@ -5603,7 +5712,7 @@ webview_probe_body = source.split("webview_port_is_open() {", 1)[1].split("wait_
 wait_body = source.split("wait_for_webview_server() {", 1)[1].split("verify_webview_origin() {", 1)[0]
 send_body = source.split("send_warm_start_launch_action() {", 1)[1].split("webview_origin_is_reachable() {", 1)[0]
 prelaunch_hooks_body = source.split("run_feature_prelaunch_hooks() {", 1)[1].split("bundled_plugin_version() {", 1)[0]
-launcher_hooks_body = source.split("run_feature_launcher_hooks() {", 1)[1].split("build_electron_launch_args() {", 1)[0]
+launcher_hooks_body = source.split("run_feature_launcher_hooks_from_dir() {", 1)[1].split("build_electron_launch_args() {", 1)[0]
 cold_start_hooks_body = source.split("run_cold_start_hooks() {", 1)[1].split("run_cli_preflight() {", 1)[0]
 after_exit_hooks_body = source.split("run_feature_after_exit_hooks() {", 1)[1].split("run_cli_preflight() {", 1)[0]
 cli_probe_body = source.split("codex_cli_version_probe() {", 1)[1].split("codex_cli_version() {", 1)[0]
@@ -5856,7 +5965,7 @@ if 'codex_run_host_command notify-send' not in notify_body:
     raise SystemExit("desktop notifications must not inherit packaged LD_LIBRARY_PATH")
 if 'codex_run_host_command "$CODEX_UPDATE_MANAGER_PATH" "$@"' not in update_manager_body:
     raise SystemExit("update manager and its host children must not inherit packaged LD_LIBRARY_PATH")
-if 'CODEX_LINUX_FEATURE_HOOK_PHASE=launcher' not in launcher_hooks_body:
+if 'CODEX_LINUX_FEATURE_HOOK_PHASE="$hook_phase"' not in launcher_hooks_body:
     raise SystemExit("launcher hooks must receive their hook phase")
 if '"$hook" "${ELECTRON_ARGS[@]}"' not in launcher_hooks_body:
     raise SystemExit("launcher hooks must receive current Electron args as argv")
@@ -6014,6 +6123,7 @@ LOG_FILE="${LOG_FILE:-/tmp/codex-launcher-probe.log}"
 CODEX_LINUX_FEATURES_DIR="${CODEX_LINUX_FEATURES_DIR:-$SCRIPT_DIR/.codex-linux/features}"
 FEATURE_ELECTRON_ARGS_DIR="${FEATURE_ELECTRON_ARGS_DIR:-}"
 FEATURE_LAUNCHER_HOOK_DIR="${FEATURE_LAUNCHER_HOOK_DIR:-}"
+FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR="${FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR:-}"
 ELECTRON_DEFAULT_ARG_REMOVALS=()
 ELECTRON_ARG_DENY_PATTERNS=()
 FEATURE_LOCKED_ENV_NAMES=()
@@ -6048,6 +6158,7 @@ case "${1:-}" in
         load_feature_electron_args
         load_user_electron_flags
         set_electron_defaults "${FEATURE_ELECTRON_ARGS[@]}" "${USER_ELECTRON_FLAGS[@]}" "$@"
+        run_feature_pre_handoff_launcher_hooks
         run_feature_launcher_hooks
         build_electron_launch_args
         validate_feature_electron_arg_denials
@@ -6131,7 +6242,8 @@ EOF
     [[ "$output" != *"<--ozone-platform-hint=auto>"* ]] || fail "launcher must not add ozone hint when pass-through supplies an ozone platform: $output"
 
     local feature_launcher_hook_dir="$TMP_DIR/feature-launcher-hooks"
-    mkdir -p "$feature_launcher_hook_dir"
+    local pre_handoff_launcher_hook_dir="$TMP_DIR/pre-handoff-launcher-hooks"
+    mkdir -p "$feature_launcher_hook_dir" "$pre_handoff_launcher_hook_dir"
     cat > "$feature_launcher_hook_dir/generic-hook" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' 'env CODEX_TEST_LAUNCHER_HOOK_VALUE=from-hook'
@@ -6162,71 +6274,73 @@ EOF
     printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' '0:0:4755'" \
         > "$chromium_stat_stub_dir/stat"
     cp "$REPO_DIR/linux-features/chromium-sandbox/launcher-hook.sh" \
-        "$feature_launcher_hook_dir/chromium-sandbox-hook"
+        "$pre_handoff_launcher_hook_dir/chromium-sandbox-hook"
     chmod +x "$chromium_generated_helper" "$chromium_external_helper" \
         "$chromium_app_dir/electron" "$chromium_stat_stub_dir/stat" \
-        "$feature_launcher_hook_dir/chromium-sandbox-hook"
+        "$pre_handoff_launcher_hook_dir/chromium-sandbox-hook"
     output="$(env -i PATH="$chromium_stat_stub_dir:$PATH" HOME="$HOME" \
         SCRIPT_DIR="$chromium_app_dir" CODEX_LINUX_FEATURES_DIR="$chromium_features_dir" \
-        FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR="$pre_handoff_launcher_hook_dir" \
         CHROME_DEVEL_SANDBOX="$chromium_external_helper" \
         CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe)"
     [[ "$output" == *"sandbox_helper=$chromium_external_helper launch="* ]] \
         || fail "launcher must preserve the exact helper pathname validated by the feature: $output"
     [[ "$output" != *"<--no-sandbox>"* && "$output" != *"<--disable-gpu-sandbox>"* ]] \
         || fail "qualified Chromium feature must remove sandbox-disabling defaults: $output"
-    rm -f "$feature_launcher_hook_dir/chromium-sandbox-hook"
+    rm -f "$pre_handoff_launcher_hook_dir/chromium-sandbox-hook"
 
     printf '%s\n' '#!/usr/bin/env bash' 'exit 23' > "$feature_launcher_hook_dir/failing-hook"
     chmod +x "$feature_launcher_hook_dir/failing-hook"
-    if env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+    if ! env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
         CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe >/dev/null 2>&1; then
-        fail "an enabled launcher hook process failure must fail closed"
+        fail "an ordinary launcher hook process failure must remain fail-soft"
     fi
     rm -f "$feature_launcher_hook_dir/failing-hook"
 
     printf '%s\n' '#!/usr/bin/env bash' \
         "printf '%s\\n' 'electron-default-arg-remove --no-sandbox' 'electron-default-arg-remove --disable-gpu-sandbox'" \
-        > "$feature_launcher_hook_dir/default-removal-hook"
-    chmod +x "$feature_launcher_hook_dir/default-removal-hook"
-    output="$(env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        > "$pre_handoff_launcher_hook_dir/default-removal-hook"
+    chmod +x "$pre_handoff_launcher_hook_dir/default-removal-hook"
+    output="$(env -i PATH="$PATH" HOME="$HOME" FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR="$pre_handoff_launcher_hook_dir" \
         CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe)"
     [[ "$output" != *"<--no-sandbox>"* && "$output" != *"<--disable-gpu-sandbox>"* ]] \
         || fail "a launcher hook must be able to remove exact generic Electron defaults: $output"
-    rm -f "$feature_launcher_hook_dir/default-removal-hook"
+    rm -f "$pre_handoff_launcher_hook_dir/default-removal-hook"
 
     printf '%s\n' '#!/usr/bin/env bash' \
         "printf '%s\\n' 'env CODEX_TEST_LOCKED_VALUE=qualified' 'env-lock CODEX_TEST_LOCKED_VALUE'" \
-        > "$feature_launcher_hook_dir/a-lock-hook"
+        > "$pre_handoff_launcher_hook_dir/a-lock-hook"
     printf '%s\n' '#!/usr/bin/env bash' \
         "printf '%s\\n' 'env CODEX_TEST_LOCKED_VALUE=overridden'" \
-        > "$feature_launcher_hook_dir/z-override-hook"
-    chmod +x "$feature_launcher_hook_dir/a-lock-hook" "$feature_launcher_hook_dir/z-override-hook"
-    if env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        > "$pre_handoff_launcher_hook_dir/z-override-hook"
+    chmod +x "$pre_handoff_launcher_hook_dir/a-lock-hook" "$pre_handoff_launcher_hook_dir/z-override-hook"
+    if env -i PATH="$PATH" HOME="$HOME" FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR="$pre_handoff_launcher_hook_dir" \
         CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe >/dev/null 2>&1; then
         fail "a later launcher hook must not override a locked environment value"
     fi
-    rm -f "$feature_launcher_hook_dir/a-lock-hook" "$feature_launcher_hook_dir/z-override-hook"
+    rm -f "$pre_handoff_launcher_hook_dir/a-lock-hook" "$pre_handoff_launcher_hook_dir/z-override-hook"
 
     printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 'electron-arg-deny --no-sandbox'" \
-        > "$feature_launcher_hook_dir/default-deny-hook"
-    chmod +x "$feature_launcher_hook_dir/default-deny-hook"
-    if env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+        > "$pre_handoff_launcher_hook_dir/default-deny-hook"
+    chmod +x "$pre_handoff_launcher_hook_dir/default-deny-hook"
+    if env -i PATH="$PATH" HOME="$HOME" FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR="$pre_handoff_launcher_hook_dir" \
         CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe >/dev/null 2>&1; then
         fail "a final Electron arg deny pattern must inspect generic core defaults"
     fi
-    rm -f "$feature_launcher_hook_dir/default-deny-hook"
+    rm -f "$pre_handoff_launcher_hook_dir/default-deny-hook"
 
     printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 'electron-arg-deny --disable-*-sandbox'" \
-        > "$feature_launcher_hook_dir/a-deny-hook"
+        > "$pre_handoff_launcher_hook_dir/a-deny-hook"
     printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 'electron-arg --disable-late-sandbox'" \
         > "$feature_launcher_hook_dir/z-late-hook"
-    chmod +x "$feature_launcher_hook_dir/a-deny-hook" "$feature_launcher_hook_dir/z-late-hook"
-    if env -i PATH="$PATH" HOME="$HOME" FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
+    chmod +x "$pre_handoff_launcher_hook_dir/a-deny-hook" "$feature_launcher_hook_dir/z-late-hook"
+    if env -i PATH="$PATH" HOME="$HOME" \
+        FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR="$pre_handoff_launcher_hook_dir" \
+        FEATURE_LAUNCHER_HOOK_DIR="$feature_launcher_hook_dir" \
         CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe >/dev/null 2>&1; then
         fail "a final Electron arg deny pattern must reject switches from later launcher hooks"
     fi
-    rm -f "$feature_launcher_hook_dir/a-deny-hook" "$feature_launcher_hook_dir/z-late-hook"
+    rm -f "$pre_handoff_launcher_hook_dir/a-deny-hook" "$feature_launcher_hook_dir/z-late-hook"
 
     local user_flags_dir="$TMP_DIR/user-electron-flags"
     local user_flags_file="$user_flags_dir/electron-flags.conf"
@@ -11265,6 +11379,8 @@ test_launcher_warm_start_recovery() {
     CODEX_TEST_KILL_DURING_PRELAUNCH=1 bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     CODEX_TEST_CHROMIUM_SANDBOX_RESIDENT_REJECTION=1 \
         bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
+    CODEX_TEST_ORDINARY_HOOK_WARM_COMPAT=1 \
+        bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     CODEX_TEST_DISABLE_PIDFD=1 CODEX_TEST_NORMAL_LOCK_ONLY=1 \
         bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     CODEX_TEST_DISABLE_PIDFD=1 CODEX_TEST_KILL_DURING_PRELAUNCH=1 \
@@ -11438,6 +11554,7 @@ main() {
     test_update_manager_service_helper_respects_disabled_service
     test_rpm_builder_smoke
     test_pacman_builder_without_updater_transition_hook
+    test_candidate_promotion_feature_compatibility_gate
     test_appimage_builder_smoke
     test_missing_input_failure
     test_make_install_reports_missing_native_packages

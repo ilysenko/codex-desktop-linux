@@ -68,6 +68,19 @@ linux_feature_enabled() {
     grep -Fxq "$feature_id" <<<"$enabled_output"
 }
 
+assert_linux_feature_build_compatibility() {
+    local build_format="$1"
+    local app_dir="${2:-$APP_DIR}"
+    local helper="$REPO_DIR/scripts/lib/linux-features.js"
+    local node_bin
+
+    [ -f "$helper" ] || error "Missing Linux features helper: $helper"
+    node_bin="$(package_node_binary)"
+    if ! "$node_bin" "$helper" --assert-build-compatible "$build_format" "$app_dir"; then
+        error "Enabled Linux features are not compatible with $build_format"
+    fi
+}
+
 stage_update_builder_linux_features_config() {
     local update_builder_root="$1"
     local helper="$REPO_DIR/scripts/lib/linux-features.js"

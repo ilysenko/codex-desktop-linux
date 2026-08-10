@@ -18,6 +18,7 @@ FIRST_LOG="$TMP_DIR/first-launch.log"
 SECOND_LOG="$TMP_DIR/second-launch.log"
 APP_LOG="$HOME_DIR/.cache/$TEST_APP_ID/launcher.log"
 CHROMIUM_SANDBOX_RESIDENT_REJECTION="${CODEX_TEST_CHROMIUM_SANDBOX_RESIDENT_REJECTION:-0}"
+ORDINARY_HOOK_WARM_COMPAT="${CODEX_TEST_ORDINARY_HOOK_WARM_COMPAT:-0}"
 LAUNCHER_PID=""
 SOCKET_PID=""
 HOOK_PID=""
@@ -95,6 +96,31 @@ webview_is_down() {
         "http://127.0.0.1:$PORT/index.html" >/dev/null 2>&1
 }
 
+start_launch_action_socket() {
+    python3 - "$SOCKET_PATH" <<'PY' &
+import os
+import socket
+import sys
+
+path = sys.argv[1]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+try:
+    os.unlink(path)
+except FileNotFoundError:
+    pass
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+    server.bind(path)
+    server.listen()
+    while True:
+        client, _ = server.accept()
+        with client:
+            client.recv(65536)
+            client.sendall(b"ok\n")
+PY
+    SOCKET_PID=$!
+    wait_for "launch-action socket" test -S "$SOCKET_PATH"
+}
+
 mkdir -p \
     "$APP_DIR/.codex-linux/cold-start.d" \
     "$APP_DIR/.codex-linux/env.d" \
@@ -102,6 +128,7 @@ mkdir -p \
     "$APP_DIR/.codex-linux/prelaunch.d" \
     "$APP_DIR/.codex-linux/electron-args.d" \
     "$APP_DIR/.codex-linux/launcher.d" \
+    "$APP_DIR/.codex-linux/pre-handoff-launcher.d" \
     "$APP_DIR/.codex-linux/after-exit.d" \
     "$APP_DIR/content/webview" \
     "$APP_DIR/resources/node-runtime/bin" \
@@ -183,28 +210,7 @@ if [ "$APPIMAGE_RECOVERY" = "1" ]; then
     touch "$APPIMAGE_PATH"
 fi
 
-python3 - "$SOCKET_PATH" <<'PY' &
-import os
-import socket
-import sys
-
-path = sys.argv[1]
-os.makedirs(os.path.dirname(path), exist_ok=True)
-try:
-    os.unlink(path)
-except FileNotFoundError:
-    pass
-with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-    server.bind(path)
-    server.listen()
-    while True:
-        client, _ = server.accept()
-        with client:
-            client.recv(65536)
-            client.sendall(b"ok\n")
-PY
-SOCKET_PID=$!
-wait_for "launch-action socket" test -S "$SOCKET_PATH"
+start_launch_action_socket
 
 COMMON_ENV=(
     env -i
@@ -278,14 +284,47 @@ if [ "${CODEX_TEST_TERM_STATUS:-0}" = "1" ]; then
     exit 0
 fi
 
+if [ "$ORDINARY_HOOK_WARM_COMPAT" = "1" ]; then
+    kill "$SOCKET_PID"
+    wait "$SOCKET_PID" 2>/dev/null || true
+    SOCKET_PID=""
+    start_launch_action_socket
+    cat > "$APP_DIR/.codex-linux/launcher.d/failing-ordinary-hook" <<'HOOK'
+#!/usr/bin/env bash
+exit 23
+HOOK
+    chmod +x "$APP_DIR/.codex-linux/launcher.d/failing-ordinary-hook"
+
+    : > "$SECOND_LOG"
+    if ! "${COMMON_ENV[@]}" "$APP_DIR/start.sh" >> "$SECOND_LOG" 2>&1; then
+        fail "ordinary launcher-hook failure changed the successful warm-start contract"
+    fi
+    grep -q "Sent launch args over warm-start IPC" "$APP_LOG" \
+        || fail "ordinary warm start performed cold-launch preparation before IPC"
+    grep -q "Running Linux feature launcher hook: .*failing-ordinary-hook" "$APP_LOG" \
+        && fail "ordinary launcher hook ran before successful warm-start IPC"
+    kill -0 "$FIRST_ELECTRON_PID" 2>/dev/null \
+        || fail "ordinary warm start disturbed the healthy resident"
+
+    kill "$FIRST_ELECTRON_PID"
+    wait "$LAUNCHER_PID"
+    LAUNCHER_PID=""
+    printf '%s\n' "launcher ordinary-hook warm-start compatibility test passed"
+    exit 0
+fi
+
 if [ "$CHROMIUM_SANDBOX_RESIDENT_REJECTION" = "1" ]; then
+    kill "$SOCKET_PID"
+    wait "$SOCKET_PID" 2>/dev/null || true
+    SOCKET_PID=""
+    start_launch_action_socket
     # The resident was launched without the feature and therefore uses the
     # compatibility sandbox-disable defaults. Stage the feature only for the
     # requesting launch. Its resident rejection runs before helper validation,
     # so this full-path CI regression needs no privileged SUID fixture.
     cp "$REPO_DIR/linux-features/chromium-sandbox/launcher-hook.sh" \
-        "$APP_DIR/.codex-linux/launcher.d/chromium-sandbox-chromium-sandbox.sh"
-    chmod +x "$APP_DIR/.codex-linux/launcher.d/chromium-sandbox-chromium-sandbox.sh"
+        "$APP_DIR/.codex-linux/pre-handoff-launcher.d/chromium-sandbox-chromium-sandbox.sh"
+    chmod +x "$APP_DIR/.codex-linux/pre-handoff-launcher.d/chromium-sandbox-chromium-sandbox.sh"
 
     : > "$SECOND_LOG"
     if "${COMMON_ENV[@]}" "$APP_DIR/start.sh" >> "$SECOND_LOG" 2>&1; then
@@ -310,6 +349,29 @@ if [ "$CHROMIUM_SANDBOX_RESIDENT_REJECTION" = "1" ]; then
         && fail "sandbox request reached Electron second-instance handoff before rejection"
     kill -0 "$FIRST_ELECTRON_PID" 2>/dev/null \
         || fail "sandbox-requested second-instance rejection disturbed the healthy compatibility resident"
+
+    # Re-enable warm start, then remove every runtime marker while the
+    # compatibility-mode primary remains alive. The strict hook must still
+    # discover the resident under the launcher lock and reject before either
+    # launcher IPC or Electron's second-instance handoff.
+    printf '%s\n' '{"codex-linux-warm-start-enabled":true}' \
+        > "$HOME_DIR/.config/$TEST_APP_ID/settings.json"
+    rm -f "$STATE_DIR/app.pid" "$STATE_DIR/webview.pid" "$SOCKET_PATH"
+    [ ! -e "$STATE_DIR/app.pid" ] && [ ! -e "$STATE_DIR/webview.pid" ] \
+        && [ ! -e "$SOCKET_PATH" ] \
+        || fail "could not remove every runtime marker for the markerless-resident regression"
+    : > "$SECOND_LOG"
+    if "${COMMON_ENV[@]}" "$APP_DIR/start.sh" >> "$SECOND_LOG" 2>&1; then
+        fail "sandbox-requested markerless-resident launch silently succeeded"
+    fi
+    [ "$(grep -c "sandbox mode cannot be authoritatively verified" "$APP_LOG")" -ge 3 ] \
+        || fail "markerless resident was not rediscovered for strict pre-handoff rejection"
+    grep -q "Sent launch args over warm-start IPC" "$SECOND_LOG" \
+        && fail "markerless sandbox request reached launcher IPC before rejection"
+    grep -q "using Electron second-instance handoff" "$SECOND_LOG" \
+        && fail "markerless sandbox request reached Electron second-instance handoff before rejection"
+    kill -0 "$FIRST_ELECTRON_PID" 2>/dev/null \
+        || fail "markerless-resident rejection disturbed the healthy compatibility resident"
 
     kill "$FIRST_ELECTRON_PID"
     wait "$LAUNCHER_PID"

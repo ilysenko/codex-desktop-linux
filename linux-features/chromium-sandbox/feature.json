@@ -5,7 +5,12 @@
   "defaultEnabled": false,
   "entrypoints": {
     "stageHook": "./stage.sh",
-    "cleanupHook": "./cleanup.sh"
+    "cleanupHook": "./cleanup.sh",
+    "promotionHook": "./promotion-hook.sh"
+  },
+  "buildCompatibility": {
+    "unsupportedFormats": ["appimage"],
+    "reason": "the AppImage-mounted Electron executable is root-owned and cannot honor CHROME_DEVEL_SANDBOX"
   },
   "packageHooks": [
     {
@@ -14,7 +19,7 @@
     }
   ],
   "runtimeHooks": {
-    "launcher": {
+    "preHandoffLauncher": {
       "source": "launcher-hook.sh",
       "name": "chromium-sandbox.sh",
       "mode": "0755"

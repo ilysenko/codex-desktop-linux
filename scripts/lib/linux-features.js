@@ -21,12 +21,14 @@ const RUNTIME_HOOK_DIRS = {
   prelaunch: { dir: "prelaunch.d", executable: true },
   electronArgs: { dir: "electron-args.d", executable: false },
   launcher: { dir: "launcher.d", executable: true },
+  preHandoffLauncher: { dir: "pre-handoff-launcher.d", executable: true },
   coldStart: { dir: "cold-start.d", executable: true },
   afterExit: { dir: "after-exit.d", executable: true },
 };
 const STAGED_FEATURE_MANIFEST_RELATIVE_PATH = ".codex-linux/linux-features-staged.json";
 const BUILD_INFO_RELATIVE_PATH = ".codex-linux/build-info.json";
 const SUPPORTED_PACKAGE_FORMATS = new Set(["deb", "rpm", "pacman"]);
+const SUPPORTED_BUILD_FORMATS = new Set([...SUPPORTED_PACKAGE_FORMATS, "appimage"]);
 const PACKAGE_DEPENDENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9+._:@()=<>~\/-]*$/;
 const RPM_ELF_DEPENDENCY_SUFFIX = "%{codex_elf_suffix}";
 const PACKAGE_PATH_COMPONENT_PATTERN = /^(?!-)(?!\.\.?$)[A-Za-z0-9._+@:-]+$/;
@@ -607,6 +609,85 @@ function disabledLinuxFeatureCleanupHooks(options = {}) {
       path: resolveFeatureEntrypoint(feature, "cleanupHook"),
     }))
     .filter((hook) => hook.path != null);
+}
+
+function enabledLinuxFeaturePromotionHooks(appDir, options = {}) {
+  const selectedOptions = {
+    ...options,
+    enabledFeatureIds: enabledFeatureIdsFromBuildInfo(appDir),
+  };
+  return loadEnabledLinuxFeatures(selectedOptions)
+    .filter((feature) => feature.manifest.entrypoints?.promotionHook != null)
+    .map((feature) => ({
+      id: feature.id,
+      path: resolveFeatureRelativePath(
+        feature,
+        feature.manifest.entrypoints.promotionHook,
+        "promotionHook entrypoint",
+      ),
+    }));
+}
+
+function normalizeBuildFormat(value) {
+  if (typeof value !== "string" || !SUPPORTED_BUILD_FORMATS.has(value)) {
+    throw new Error(`Unsupported build format '${String(value)}'`);
+  }
+  return value;
+}
+
+function featureBuildCompatibility(feature) {
+  const compatibility = feature.manifest.buildCompatibility;
+  if (compatibility == null) {
+    return { unsupportedFormats: [], reason: "" };
+  }
+  if (typeof compatibility !== "object" || Array.isArray(compatibility)) {
+    throw new Error(`Linux feature '${feature.id}' buildCompatibility must be an object`);
+  }
+  const rawFormats = compatibility.unsupportedFormats ?? [];
+  if (!Array.isArray(rawFormats)) {
+    throw new Error(`Linux feature '${feature.id}' buildCompatibility.unsupportedFormats must be an array`);
+  }
+  const unsupportedFormats = [];
+  for (const rawFormat of rawFormats) {
+    const format = normalizeBuildFormat(rawFormat);
+    if (!unsupportedFormats.includes(format)) {
+      unsupportedFormats.push(format);
+    }
+  }
+  const reason = compatibility.reason == null ? "" : String(compatibility.reason).trim();
+  return { unsupportedFormats, reason };
+}
+
+function assertEnabledLinuxFeatureBuildCompatibility(buildFormat, appDir, options = {}) {
+  const format = normalizeBuildFormat(buildFormat);
+  const snapshotEnabled = enabledFeatureIdsFromBuildInfo(appDir);
+  const strictOptions = { ...options, strictConfig: true };
+  const configuredEnabled = enabledLinuxFeatureIds(strictOptions);
+  if (
+    snapshotEnabled.length !== configuredEnabled.length
+    || snapshotEnabled.some((id, index) => id !== configuredEnabled[index])
+  ) {
+    throw new Error(
+      [
+        `App Linux feature snapshot does not match the current feature config: ${path.resolve(appDir)}`,
+        `app snapshot: ${JSON.stringify(snapshotEnabled)}`,
+        `current config: ${JSON.stringify(configuredEnabled)}`,
+        "Rebuild the app with the current feature config before creating an artifact.",
+      ].join("\n"),
+    );
+  }
+  for (
+    const feature of loadEnabledLinuxFeatures(
+      { ...strictOptions, enabledFeatureIds: snapshotEnabled },
+    )
+  ) {
+    const compatibility = featureBuildCompatibility(feature);
+    if (!compatibility.unsupportedFormats.includes(format)) {
+      continue;
+    }
+    const suffix = compatibility.reason ? `: ${compatibility.reason}` : "";
+    throw new Error(`Linux feature '${feature.id}' is incompatible with ${format}${suffix}`);
+  }
 }
 
 function normalizeEntryList(value, label, feature) {
@@ -1347,6 +1428,27 @@ function main() {
     }
     return;
   }
+  if (command === "--assert-build-compatible") {
+    const buildFormat = process.argv[3] ?? "";
+    const appDir = process.argv[4] ?? process.env.APP_DIR;
+    if (!appDir) {
+      console.error("Usage: linux-features.js --assert-build-compatible <format> <app-dir>");
+      process.exit(1);
+    }
+    assertEnabledLinuxFeatureBuildCompatibility(buildFormat, appDir);
+    return;
+  }
+  if (command === "--promotion-hooks") {
+    const appDir = process.argv[3] ?? process.env.CODEX_CANDIDATE_APP_DIR;
+    if (!appDir) {
+      console.error("Usage: linux-features.js --promotion-hooks <candidate-app-dir>");
+      process.exit(1);
+    }
+    for (const hook of enabledLinuxFeaturePromotionHooks(appDir)) {
+      process.stdout.write(`${hook.id}\t${hook.path}\n`);
+    }
+    return;
+  }
   if (command === "--stage-package-resources") {
     const packageFormat = process.argv[3] ?? "";
     const packageRoot = process.argv[4] ?? process.env.PACKAGE_ROOT;
@@ -1436,7 +1538,7 @@ function main() {
     process.stdout.write(`${linuxFeaturesRoot()}\n`);
     return;
   }
-  console.error("Usage: linux-features.js --enabled | --features-json | --features-root | --stage-install <install-dir> | --staged-files-json <install-dir> | --stage-hooks | --cleanup-hooks | --package-hooks <format> <app-dir> | --stage-package-resources <format> <package-root> <app-dir> | --restore-package-resource-permissions <format> <package-root> <app-dir> | --package-dependencies <format> <app-dir> | --package-files <format> <app-dir>");
+  console.error("Usage: linux-features.js --enabled | --features-json | --features-root | --stage-install <install-dir> | --staged-files-json <install-dir> | --stage-hooks | --cleanup-hooks | --promotion-hooks <candidate-app-dir> | --assert-build-compatible <format> <app-dir> | --package-hooks <format> <app-dir> | --stage-package-resources <format> <package-root> <app-dir> | --restore-package-resource-permissions <format> <package-root> <app-dir> | --package-dependencies <format> <app-dir> | --package-files <format> <app-dir>");
   process.exit(1);
 }
 
@@ -1450,6 +1552,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  assertEnabledLinuxFeatureBuildCompatibility,
   disabledLinuxFeatureCleanupHooks,
   discoverLinuxFeatureManifests,
   enabledLinuxFeaturesConfig,
@@ -1460,6 +1563,7 @@ module.exports = {
   enabledLinuxFeaturePackageFiles,
   enabledLinuxFeaturePackageHooks,
   enabledLinuxFeaturePackagePlan,
+  enabledLinuxFeaturePromotionHooks,
   enabledLinuxFeatureStageHooks,
   featuresJsonSummary,
   loadEnabledLinuxFeatures,

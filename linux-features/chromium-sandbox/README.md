@@ -3,9 +3,10 @@
 This disabled-by-default Linux Feature removes the launcher's compatibility
 `--no-sandbox` and `--disable-gpu-sandbox` defaults after validating a
 host-installed Chromium SUID helper. It supports user-managed generated apps;
-native `.deb`, RPM, and pacman packaging fails closed while this feature is
-enabled. It contains renderer-process containment policy only; it does not
-change Codex permissions, approvals, filesystem, or network authority.
+native `.deb`, RPM, and pacman packaging and AppImage construction fail closed
+while this feature is enabled. It contains renderer-process containment policy
+only; it does not change Codex permissions, approvals, filesystem, or network
+authority.
 
 Enable `chromium-sandbox` in the gitignored `linux-features/features.json` and
 build the app. The feature staging hook relocates the generated helper to a
@@ -38,9 +39,18 @@ every Electron rebuild. Any explicit `--no-sandbox` or
 
 The native package builders reject this feature because installed Electron
 payloads are root-owned, so Chromium will not use the development-helper
-environment fallback. Build the ordinary user-managed app for this
-host-qualified mode. The Nix feature selector does not expose this feature for
-the same root-owned-store constraint.
+environment fallback. AppImage builds reject it before creating the AppDir or
+artifact because the mounted Electron payload is also root-owned. Build the
+ordinary user-managed app for this host-qualified mode. The Nix feature selector
+does not expose this feature for the same root-owned-store constraint.
+
+Before replacing an existing user-managed app, the promotion gate rechecks the
+root-owned external helper against the exact candidate's preserved helper bytes.
+A missing, stale, or mismatched `CHROME_DEVEL_SANDBOX` refuses before a new
+promotion journal or directory exchange, leaving the working app untouched.
+This intentionally makes unattended rebuild promotion fail safely until the
+external helper has been updated for the candidate. A first install is allowed
+so the generated helper can be installed before the app's first launch.
 
 Because the launcher has no authoritative, race-safe evidence of a resident
 primary's Chromium mode, this feature rejects every launch while a resident app

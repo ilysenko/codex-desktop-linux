@@ -8,12 +8,17 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { stageEnabledLinuxFeatureInstall } = require("../../scripts/lib/linux-features.js");
+const {
+  assertEnabledLinuxFeatureBuildCompatibility,
+  enabledLinuxFeaturePromotionHooks,
+  stageEnabledLinuxFeatureInstall,
+} = require("../../scripts/lib/linux-features.js");
 const root = path.resolve(__dirname, "../..");
 const hook = path.join(__dirname, "launcher-hook.sh");
 const stageHook = path.join(__dirname, "stage.sh");
 const cleanupHook = path.join(__dirname, "cleanup.sh");
 const packageHook = path.join(__dirname, "package-hook.sh");
+const promotionHook = path.join(__dirname, "promotion-hook.sh");
 
 function withConfig(enabled, callback) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "chromium-sandbox-config-"));
@@ -76,7 +81,7 @@ test("feature is disabled by default and stages only when enabled", () => {
     try {
       const plan = stageEnabledLinuxFeatureInstall(app, options);
       assert.deepEqual(plan.runtimeHooks.map((entry) => entry.target), [
-        ".codex-linux/launcher.d/chromium-sandbox-chromium-sandbox.sh",
+        ".codex-linux/pre-handoff-launcher.d/chromium-sandbox-chromium-sandbox.sh",
       ]);
     } finally { fs.rmSync(app, { recursive: true, force: true }); }
   });
@@ -112,6 +117,59 @@ test("native package creation fails closed for the user-managed-only feature", (
   const result = spawnSync("bash", [packageHook], { encoding: "utf8" });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /supports user-managed app builds only/);
+});
+
+test("AppImage compatibility and promotion hooks are explicit enabled-feature contracts", () => {
+  withConfig([], (options) => {
+    const app = fs.mkdtempSync(path.join(os.tmpdir(), "chromium-sandbox-default-build-"));
+    try {
+      fs.mkdirSync(path.join(app, ".codex-linux"), { recursive: true });
+      fs.writeFileSync(path.join(app, ".codex-linux", "build-info.json"),
+        '{"linuxFeatures":{"enabled":[]}}\n');
+      assert.doesNotThrow(() => assertEnabledLinuxFeatureBuildCompatibility("appimage", app, options));
+      assert.deepEqual(enabledLinuxFeaturePromotionHooks(app, options), []);
+    } finally { fs.rmSync(app, { recursive: true, force: true }); }
+  });
+
+  withConfig(["chromium-sandbox"], (options) => {
+    const app = fs.mkdtempSync(path.join(os.tmpdir(), "chromium-sandbox-incompatible-build-"));
+    try {
+      fs.mkdirSync(path.join(app, ".codex-linux"), { recursive: true });
+      fs.writeFileSync(path.join(app, ".codex-linux", "build-info.json"),
+        '{"linuxFeatures":{"enabled":["chromium-sandbox"]}}\n');
+      assert.throws(
+        () => assertEnabledLinuxFeatureBuildCompatibility("appimage", app, options),
+        /chromium-sandbox.*incompatible with appimage/i,
+      );
+      assert.deepEqual(enabledLinuxFeaturePromotionHooks(app, options), [
+        { id: "chromium-sandbox", path: promotionHook },
+      ]);
+    } finally { fs.rmSync(app, { recursive: true, force: true }); }
+  });
+});
+
+test("promotion compatibility qualifies the external helper against candidate bytes", () => {
+  const f = fixture();
+  const current = path.join(f.temp, "current");
+  fs.mkdirSync(current);
+  const run = () => spawnSync("bash", [promotionHook], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${f.bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+      CODEX_CANDIDATE_APP_DIR: f.app,
+      CODEX_CURRENT_APP_DIR: current,
+      CHROME_DEVEL_SANDBOX: f.helper,
+      CODEX_TEST_STAT_METADATA: "0:0:4755",
+    },
+  });
+  try {
+    fs.writeFileSync(f.helper, "old helper\n");
+    assert.notEqual(run().status, 0);
+    assert.match(run().stderr, /does not match the candidate Electron helper/);
+    fs.copyFileSync(f.generatedHelper, f.helper);
+    assert.equal(run().status, 0, run().stderr);
+  } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
 });
 
 test("qualified cold launch removes only sandbox-disabling core defaults", () => {
@@ -195,14 +253,20 @@ test("helper and final conflicting-argument failures are actionable", () => {
   } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
 });
 
-test("actual launcher control flow executes launch preparation before either handoff", () => {
+test("actual launcher keeps ordinary warm starts fast and scopes strict preparation before handoff", () => {
   const source = fs.readFileSync(path.join(root, "launcher/start.sh.template"), "utf8");
   const runtime = source.slice(source.indexOf("recover_unhealthy_running_app\nprepare_launch_state_under_lock"));
-  const prepare = runtime.indexOf("prepare_electron_launch");
-  assert.ok(prepare >= 0);
-  assert.match(runtime, /prepare_electron_launch "\${LAUNCHER_ARGS\[@\]}"/);
-  assert.doesNotMatch(runtime, /prepare_electron_launch "\${LAUNCHER_ARGS\[@\]:1}"/);
-  assert.ok(prepare < runtime.indexOf("send_warm_start_launch_action"));
-  assert.ok(prepare < runtime.indexOf("using_second_instance_handoff"));
+  assert.match(runtime,
+    /if pre_handoff_launcher_hooks_active; then\s+prepare_electron_launch "\${LAUNCHER_ARGS\[@\]}"\s+fi/);
+  assert.ok(runtime.indexOf("prepare_electron_launch") < runtime.indexOf("send_warm_start_launch_action"));
+  assert.ok(runtime.indexOf("send_warm_start_launch_action") < runtime.lastIndexOf("launch_electron"));
+  const launchBody = source.slice(source.indexOf("launch_electron() {"), source.indexOf("prepare_electron_launch() {"));
+  assert.match(launchBody, /run_feature_launcher_hooks\s+build_electron_launch_args/);
+  const quickRefresh = source.slice(
+    source.indexOf("refresh_launch_state_quick() {"),
+    source.indexOf("prepare_launch_state_under_lock() {"),
+  );
+  assert.match(quickRefresh,
+    /if pre_handoff_launcher_hooks_active && pid="\$\(discover_running_app_pid\)"/);
   assert.match(source, /launch-error\\ \*\)[\s\S]*notify_error[\s\S]*return 1/);
 });

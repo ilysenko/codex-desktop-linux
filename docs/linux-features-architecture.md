@@ -165,6 +165,7 @@ Use `runtimeHooks` for launcher-visible hooks:
     "prelaunch": "prelaunch.sh",
     "electronArgs": "electron-args",
     "launcher": "launcher.sh",
+    "preHandoffLauncher": "strict-launcher.sh",
     "coldStart": "cold-start.sh",
     "afterExit": "after-exit.sh"
   }
@@ -181,18 +182,25 @@ The runtime hook types map to:
   line is appended as one Electron argument.
 - `launcher`: copied to `.codex-linux/launcher.d/`; executable hooks run after
   feature, user, and command-line Electron args are merged, but before final
-  Electron launch args are built. Hooks receive the current Electron args as
-  argv and may print `env KEY=VALUE` or `electron-arg VALUE` lines on stdout.
-  A hook may print `env-lock KEY` after setting a security-sensitive value to
-  reject later launcher-hook overrides. It may also print
+  Electron launch args are built on a cold start or Electron second-instance
+  fallback. Successful warm-start IPC remains ahead of this work. Hooks receive
+  the current Electron args as argv and may print `env KEY=VALUE` or
+  `electron-arg VALUE` lines on stdout. Process failures are warned and ignored,
+  preserving the established launcher-hook contract; unknown output is also
+  ignored.
+- `preHandoffLauncher`: copied to `.codex-linux/pre-handoff-launcher.d/`;
+  executable hooks explicitly opt into full Electron preparation before either
+  warm-start IPC or Electron second-instance handoff. Process failures and
+  `launch-error MESSAGE` output are fatal. A strict hook may print `env-lock KEY`
+  after setting a security-sensitive value to reject later strict-hook
+  overrides. It may also print
   `electron-default-arg-remove SWITCH` to suppress one exact generic launcher
   default, `electron-arg-deny PATTERN` to reject a matching final Electron
-  switch after all launcher hooks and core defaults, or `launch-error MESSAGE`
-  to reject the launch. Hooks run before resident-process IPC and Electron
-  second-instance handoff, so a feature rejection cannot be bypassed by warm
-  start. A launcher hook process failure is fatal; an enabled feature cannot
-  silently fall back to core behavior. Unknown output lines are ignored; stderr
-  is logged normally.
+  switch after ordinary launcher hooks and core defaults, or the ordinary
+  `env` and `electron-arg` outputs. The launcher performs its deeper resident
+  process scan under the launcher lock only when at least one executable strict
+  hook is staged, so markerless residents cannot bypass the opt-in check and
+  ordinary launches do not inherit the scan or preparation cost.
 - `coldStart`: copied to `.codex-linux/cold-start.d/`; executable hooks run in
   the background during cold start, after bundled plugin cache sync.
 - `afterExit`: copied to `.codex-linux/after-exit.d/`; executable hooks run
@@ -213,6 +221,34 @@ such as Codex skills: stage the source file with `resources` under
 `$CODEX_LINUX_FEATURES_DIR/<feature-id>/...` to `$CODEX_HOME/skills/...` in a
 `runtimeHooks.prelaunch` script. Do not write user-home files from `stage.sh`;
 install, package, and updater rebuilds may run outside the real user's session.
+
+## Build And Promotion Compatibility
+
+An enabled feature that cannot produce a usable artifact may declare the
+generic build compatibility contract:
+
+```json
+{
+  "buildCompatibility": {
+    "unsupportedFormats": ["appimage"],
+    "reason": "the packaged runtime cannot satisfy this feature"
+  }
+}
+```
+
+Supported format names are `deb`, `rpm`, `pacman`, and `appimage`. Builders that
+use this contract validate the generated app's `linuxFeatures.enabled` snapshot
+against the current config and refuse before staging or emitting the artifact.
+Disabled features do not affect the default build path.
+
+Features whose safety depends on host state outside the generated app may add
+`entrypoints.promotionHook`. The transactional installer discovers hooks from
+the exact candidate build snapshot and runs them under the promotion lock before
+creating a new journal or exchanging app directories. Hooks receive
+`CODEX_CANDIDATE_APP_DIR`, `CODEX_CURRENT_APP_DIR`, and
+`CODEX_LINUX_FEATURE_HOOK_PHASE=promotion`. Any failure refuses promotion and
+leaves the current app in place. Promotion hooks are compatibility checks only;
+they must not mutate the current app, candidate, or external host state.
 
 ## Declarative Native Package Staging
 

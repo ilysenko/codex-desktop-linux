@@ -41,3 +41,38 @@ run_linux_feature_stage_hooks() {
         fi
     done < <(node "$feature_helper" --stage-hooks)
 }
+
+run_linux_feature_promotion_hooks() {
+    local candidate_dir="$1"
+    local current_dir="$2"
+    local feature_helper="$SCRIPT_DIR/scripts/lib/linux-features.js"
+    local feature_id
+    local hook_path
+    local hooks_output
+
+    [ -f "$feature_helper" ] || {
+        warn "Linux feature helper not found at $feature_helper"
+        return 1
+    }
+    if ! hooks_output="$(node "$feature_helper" --promotion-hooks "$candidate_dir")"; then
+        warn "Could not discover enabled Linux feature promotion hooks"
+        return 1
+    fi
+
+    while IFS=$'\t' read -r feature_id hook_path; do
+        [ -n "$feature_id" ] || continue
+        [ -f "$hook_path" ] || {
+            warn "Missing Linux feature promotion hook for $feature_id: $hook_path"
+            return 1
+        }
+        info "Running Linux feature promotion compatibility hook: $feature_id"
+        if ! CODEX_CANDIDATE_APP_DIR="$candidate_dir" \
+            CODEX_CURRENT_APP_DIR="$current_dir" \
+            CODEX_LINUX_FEATURE_HOOK_PHASE=promotion \
+            SCRIPT_DIR="$SCRIPT_DIR" \
+            bash "$hook_path"; then
+            warn "Linux feature promotion compatibility refused the candidate: $feature_id"
+            return 1
+        fi
+    done <<<"$hooks_output"
+}

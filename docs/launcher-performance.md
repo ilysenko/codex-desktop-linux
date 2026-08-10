@@ -90,6 +90,11 @@ Launching Electron itself in parallel with any of this remains rejected:
 the renderer needs a verified local origin, and the warm-start handoff
 markers depend on the current ordering.
 
+Ordinary warm-start IPC also remains ahead of full Electron argument and
+launcher-hook preparation. Only a feature that explicitly stages a strict
+`preHandoffLauncher` hook opts into that preparation and the deeper resident
+scan before handoff; disabled features and ordinary hooks add no hot-path cost.
+
 ### In-app startup latency
 
 Most of the visible loading-screen time is spent inside the upstream app:

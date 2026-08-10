@@ -103,7 +103,12 @@ Declarative runtime hooks are staged under `codex-app/.codex-linux/`:
 - `runtimeHooks.electronArgs` appends one Electron argument per line
 - `runtimeHooks.launcher` runs before final Electron args are built; executable
   hooks receive current Electron args as argv and can print `env KEY=VALUE` or
-  `electron-arg VALUE` lines
+  `electron-arg VALUE` lines. Successful warm-start IPC stays ahead of these
+  hooks, and hook process failures remain fail-soft.
+- `runtimeHooks.preHandoffLauncher` is the explicit strict variant: it runs
+  before resident handoff, makes hook failures fatal, enables the strict
+  environment/default-argument/final-denial protocol, and opts into deeper
+  markerless-resident detection.
 - `runtimeHooks.coldStart` runs background hooks after bundled plugin cache sync
 - `runtimeHooks.afterExit` runs after Electron exits while preserving the
   original Electron exit status
@@ -139,6 +144,12 @@ the app after changing the feature config.
 `packageHooks` run after declarative native package resources are staged and
 receive `PACKAGE_FORMAT`,
 `PACKAGE_ROOT`, `PACKAGE_NAME`, `PACKAGE_VERSION`, and `APP_DIR`.
+
+`buildCompatibility.unsupportedFormats` can make an enabled feature refuse an
+incompatible `deb`, `rpm`, `pacman`, or `appimage` build before artifact
+staging or emission. `entrypoints.promotionHook` can revalidate external host
+dependencies against the exact generated candidate under the promotion lock;
+failure leaves the current working app untouched.
 
 Feature patching uses only `entrypoints.patchDescriptors`. Descriptor modules
 may export an array directly or `{ descriptors: [...] }`; `.patches`,

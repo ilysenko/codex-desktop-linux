@@ -125,6 +125,7 @@ FEATURE_ENV_DIR="$SCRIPT_DIR/.codex-linux/env.d"
 FEATURE_PRELAUNCH_HOOK_DIR="$SCRIPT_DIR/.codex-linux/prelaunch.d"
 FEATURE_ELECTRON_ARGS_DIR="$SCRIPT_DIR/.codex-linux/electron-args.d"
 FEATURE_LAUNCHER_HOOK_DIR="$SCRIPT_DIR/.codex-linux/launcher.d"
+FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR="$SCRIPT_DIR/.codex-linux/pre-handoff-launcher.d"
 FEATURE_AFTER_EXIT_HOOK_DIR="$SCRIPT_DIR/.codex-linux/after-exit.d"
 ELECTRON_DEFAULT_ARG_REMOVALS=()
 ELECTRON_ARG_DENY_PATTERNS=()
@@ -3968,7 +3969,7 @@ apply_feature_launcher_hook_env() {
         return 0
     fi
     if feature_launcher_hook_env_locked "$name"; then
-        notify_error "A Linux feature refused an override of locked launcher environment variable: $name"
+        echo "WARN: Ignoring Linux feature override of locked launcher environment variable: $name"
         return 1
     fi
     printf -v "$name" '%s' "$value"
@@ -4041,9 +4042,29 @@ apply_feature_launcher_hook_electron_arg() {
     scan_electron_rendering_arg "$arg"
 }
 
-run_feature_launcher_hooks() {
-    [ -n "${FEATURE_LAUNCHER_HOOK_DIR:-}" ] || return 0
-    [ -d "$FEATURE_LAUNCHER_HOOK_DIR" ] || return 0
+feature_hook_dir_has_executable() {
+    local hook_dir="$1"
+    local hook
+
+    [ -n "$hook_dir" ] || return 1
+    [ -d "$hook_dir" ] || return 1
+    for hook in "$hook_dir"/*; do
+        [ -f "$hook" ] && [ -x "$hook" ] && return 0
+    done
+    return 1
+}
+
+pre_handoff_launcher_hooks_active() {
+    feature_hook_dir_has_executable "${FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR:-}"
+}
+
+run_feature_launcher_hooks_from_dir() {
+    local hook_dir="$1"
+    local hook_phase="$2"
+    local fatal="$3"
+
+    [ -n "$hook_dir" ] || return 0
+    [ -d "$hook_dir" ] || return 0
 
     local hook
     local output
@@ -4051,14 +4072,14 @@ run_feature_launcher_hooks() {
     local line
     local payload
 
-    for hook in "$FEATURE_LAUNCHER_HOOK_DIR"/*; do
+    for hook in "$hook_dir"/*; do
         [ -f "$hook" ] || continue
         [ -x "$hook" ] || {
             echo "Skipping non-executable Linux feature launcher hook: $hook"
             continue
         }
 
-        echo "Running Linux feature launcher hook: $hook"
+        echo "Running Linux feature $hook_phase hook: $hook"
         if output="$(
             CODEX_HOME="$CODEX_HOME" \
             CODEX_LINUX_APP_DIR="$SCRIPT_DIR" \
@@ -4066,14 +4087,18 @@ run_feature_launcher_hooks() {
             CODEX_LINUX_FEATURES_DIR="$CODEX_LINUX_FEATURES_DIR" \
             CODEX_LINUX_LAUNCHER_LOG="$LOG_FILE" \
             CODEX_LINUX_RESIDENT_PROCESS_ACTIVE="$([ -n "${RUNNING_APP_PID:-}" ] && printf 1 || printf 0)" \
-            CODEX_LINUX_FEATURE_HOOK_PHASE=launcher \
+            CODEX_LINUX_FEATURE_HOOK_PHASE="$hook_phase" \
             codex_run_host_command "$hook" "${ELECTRON_ARGS[@]}"
         )"; then
             :
         else
             status=$?
-            notify_error "Linux feature launcher hook failed with status $status: $hook"
-            return 1
+            if [ "$fatal" = "1" ]; then
+                notify_error "Linux feature $hook_phase hook failed with status $status: $hook"
+                return 1
+            fi
+            echo "WARN: Linux feature launcher hook failed with status $status: $hook"
+            continue
         fi
 
         while IFS= read -r line || [ -n "$line" ]; do
@@ -4084,9 +4109,15 @@ run_feature_launcher_hooks() {
                     ;;
                 env\ *)
                     payload="${line#env }"
-                    apply_feature_launcher_hook_env "$payload" || return 1
+                    if ! apply_feature_launcher_hook_env "$payload" && [ "$fatal" = "1" ]; then
+                        return 1
+                    fi
                     ;;
                 env-lock\ *)
+                    if [ "$fatal" != "1" ]; then
+                        echo "Ignoring unsupported Linux feature launcher hook output from $hook: $line"
+                        continue
+                    fi
                     payload="${line#env-lock }"
                     if [[ "$payload" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
                         FEATURE_LOCKED_ENV_NAMES+=("$payload")
@@ -4099,6 +4130,10 @@ run_feature_launcher_hooks() {
                     apply_feature_launcher_hook_electron_arg "$payload"
                     ;;
                 electron-default-arg-remove\ *)
+                    if [ "$fatal" != "1" ]; then
+                        echo "Ignoring unsupported Linux feature launcher hook output from $hook: $line"
+                        continue
+                    fi
                     payload="${line#electron-default-arg-remove }"
                     if [[ "$payload" == --* ]] && [[ "$payload" != *[[:space:]]* ]]; then
                         ELECTRON_DEFAULT_ARG_REMOVALS+=("${payload%%=*}")
@@ -4107,6 +4142,10 @@ run_feature_launcher_hooks() {
                     fi
                     ;;
                 electron-arg-deny\ *)
+                    if [ "$fatal" != "1" ]; then
+                        echo "Ignoring unsupported Linux feature launcher hook output from $hook: $line"
+                        continue
+                    fi
                     payload="${line#electron-arg-deny }"
                     if [[ "$payload" == --* ]] && [[ "$payload" != *[[:space:]]* ]]; then
                         ELECTRON_ARG_DENY_PATTERNS+=("$payload")
@@ -4115,6 +4154,10 @@ run_feature_launcher_hooks() {
                     fi
                     ;;
                 launch-error\ *)
+                    if [ "$fatal" != "1" ]; then
+                        echo "Ignoring unsupported Linux feature launcher hook output from $hook: $line"
+                        continue
+                    fi
                     payload="${line#launch-error }"
                     notify_error "${payload:-A Linux feature refused this launch.}"
                     return 1
@@ -4125,6 +4168,15 @@ run_feature_launcher_hooks() {
             esac
         done <<< "$output"
     done
+}
+
+run_feature_launcher_hooks() {
+    run_feature_launcher_hooks_from_dir "${FEATURE_LAUNCHER_HOOK_DIR:-}" launcher 0
+}
+
+run_feature_pre_handoff_launcher_hooks() {
+    run_feature_launcher_hooks_from_dir \
+        "${FEATURE_PRE_HANDOFF_LAUNCHER_HOOK_DIR:-}" pre-handoff-launcher 1
 }
 
 validate_feature_electron_arg_denials() {
@@ -4534,6 +4586,15 @@ refresh_launch_state_quick() {
     RUNNING_APP_PID=""
     if pid="$(find_running_app_pid)"; then
         set_detected_running_app "$pid"
+        return 0
+    fi
+
+    # Strict pre-handoff hooks opt into the deeper process scan. The launcher
+    # lock prevents another cooperating cold start from crossing this check;
+    # a resident that exits afterward can only cause a safe false rejection.
+    # Ordinary launches keep their marker-based hot path and avoid /proc cost.
+    if pre_handoff_launcher_hooks_active && pid="$(discover_running_app_pid)"; then
+        set_detected_running_app "$pid"
     fi
 }
 
@@ -4574,6 +4635,9 @@ launch_electron() {
     if [ "${ELECTRON_LAUNCH_PREPARED:-0}" -ne 1 ]; then
         prepare_electron_launch "$@"
     fi
+    run_feature_launcher_hooks
+    build_electron_launch_args
+    validate_feature_electron_arg_denials || exit 1
 
     if [ "$WARM_START" -eq 1 ]; then
         release_launcher_lock
@@ -4620,7 +4684,7 @@ prepare_electron_launch() {
     ELECTRON_DEFAULT_ARG_REMOVALS=()
     ELECTRON_ARG_DENY_PATTERNS=()
     FEATURE_LOCKED_ENV_NAMES=()
-    run_feature_launcher_hooks || exit 1
+    run_feature_pre_handoff_launcher_hooks || exit 1
     build_electron_launch_args
     validate_feature_electron_arg_denials || exit 1
     ELECTRON_LAUNCH_PREPARED=1
@@ -4654,10 +4718,12 @@ trap 'handle_launcher_signal HUP 129' HUP
 recover_unhealthy_running_app
 prepare_launch_state_under_lock
 
-# Launcher hooks are prepared before either resident-process handoff. Optional
-# features can therefore fail a launch without an IPC or Electron
-# second-instance path reporting success first.
-prepare_electron_launch "${LAUNCHER_ARGS[@]}"
+# Only features that explicitly stage a strict pre-handoff launcher hook pay
+# full Electron-preparation cost before resident IPC and receive fatal hook
+# semantics. Ordinary warm starts preserve the established fast handoff.
+if pre_handoff_launcher_hooks_active; then
+    prepare_electron_launch "${LAUNCHER_ARGS[@]}"
+fi
 
 if send_warm_start_launch_action "${LAUNCHER_ARGS[@]}"; then
     echo "Sent launch args over warm-start IPC"

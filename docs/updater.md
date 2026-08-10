@@ -282,6 +282,11 @@ is refused and the working app remains unchanged until Electron exits. Failed
 promotion candidates are disposable by default; opt in to diagnostic retention
 with `CODEX_KEEP_REJECTED_CANDIDATE=1`.
 
+If an enabled Linux Feature declares a pre-promotion compatibility hook, that
+hook also checks the exact generated candidate under the promotion lock before a
+new journal or directory exchange. External dependency drift therefore refuses
+the update without replacing the working app.
+
 Transactional user-local installs retain one previous-app directory for manual
 recovery. Each successful promotion replaces that retained backup with the
 version that was working immediately beforehand; older exact managed backup

@@ -188,6 +188,10 @@ prepare_appdir() {
 
 main() {
     ensure_app_layout
+    # Check the staged app snapshot before creating or replacing an AppDir or
+    # output artifact. Disabled features leave the ordinary AppImage path
+    # unchanged; enabled features may explicitly declare an incompatibility.
+    assert_linux_feature_build_compatibility appimage "$APP_DIR"
     ensure_file_exists "$APPRUN_TEMPLATE" "AppImage AppRun template"
     ensure_file_exists "$DESKTOP_TEMPLATE" "AppImage desktop template"
     ensure_file_exists "$APPIMAGE_RUNTIME_TEMPLATE" "AppImage runtime helper template"
