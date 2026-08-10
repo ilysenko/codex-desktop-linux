@@ -3,13 +3,13 @@
 ## Context
 
 This decision record captures a performance comparison between ChatGPT Desktop
-and another Electron 42 app (Claude Desktop) running side by side on the same
-X11 GNOME 4K host, what the launcher changed as a result, and — just as
-importantly — what was reviewed and deliberately left alone so future work
-does not re-litigate it without new evidence.
+and another Electron app (Claude Desktop) running side by side on the same
+GNOME Wayland multi-monitor host, what the launcher changed as a result, and —
+just as importantly — what was reviewed and deliberately left alone so future
+work does not re-litigate it without new evidence.
 
-Evidence came from live process command lines, `/proc/<pid>/maps`, the
-launcher log, and repository history rather than synthetic benchmarks.
+Evidence came from live process command lines, `pidstat`, `/proc/<pid>/maps`,
+the launcher log, and repository history rather than synthetic benchmarks.
 
 ## What Changed
 
@@ -31,10 +31,18 @@ launcher log, and repository history rather than synthetic benchmarks.
   ppid-guarded watchdog pattern capped at 0.5 s, so a broken session bus
   counts as "not detected" instead of delaying launch.
   Override: `CODEX_FORCE_RENDERER_ACCESSIBILITY=1|0`.
+- GPU compositing now stays enabled by default, including when Electron runs
+  through XWayland. In an eight-second same-app A/B sample with active sessions
+  and browser tabs, removing the automatic `--disable-gpu-compositing` flag
+  reduced GPU-process CPU from 48–100% to 14–19%, Viz compositor CPU from
+  about 99% to 6%, and GPU-process minor faults from roughly 154,000/s to
+  350–1,100/s. Claude Desktop also keeps GPU compositing enabled on this host.
+  The side-panel flicker workaround remains available with
+  `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1` or the matching command-line flag.
 
-Both decisions are visible at runtime in the `Electron launch mode:` line of
+These decisions are visible at runtime in the `Electron launch mode:` line of
 `~/.cache/codex-desktop/launcher.log` (`dev_shm_usage_disabled=`,
-`renderer_accessibility_forced=`).
+`renderer_accessibility_forced=`, `gpu_compositing_disabled=`).
 
 ## Reviewed And Deliberately Not Changed
 
@@ -45,14 +53,6 @@ factors. Removing them is a separate compatibility project: the Electron
 SUID/user-namespace sandbox behaves differently across distributions and
 container/AppImage environments, and the troubleshooting docs currently
 promise `--no-sandbox` behavior. Out of scope for performance work.
-
-### Wayland `--disable-gpu-compositing` workaround
-
-On Wayland sessions the launcher intentionally trades compositing performance
-for side-panel rendering stability. That is a documented workaround with an
-explicit opt-out (`CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0`); do not remove
-it for performance reasons without re-testing the side-panel flicker it
-papers over.
 
 ### Webview server model
 
