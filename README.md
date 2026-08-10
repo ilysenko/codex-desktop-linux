@@ -213,6 +213,7 @@ workarounds.
 |---|---|---|---|
 | Record and Replay (alpha) | Opt-in alpha | `record-and-replay` | [Docs](linux-features/record-and-replay/README.md) |
 | Agent Workspaces | Opt-in | `agent-workspace` | [Docs](linux-features/agent-workspace/README.md) |
+| Automation tool schema flatten | Opt-in | `automation-schema-flatten` | [Docs](linux-features/automation-schema-flatten/README.md) |
 | API key model visibility | Opt-in | `api-key-model-visibility` | [Docs](linux-features/api-key-model-visibility/README.md) |
 | API key service tier | Opt-in | `api-key-service-tier` | [Docs](linux-features/api-key-service-tier/README.md) |
 | Linux AppShots | Opt-in | `appshots` | [Docs](linux-features/appshots/README.md) |

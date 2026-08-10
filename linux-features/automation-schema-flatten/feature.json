@@ -1,0 +1,9 @@
+{
+  "id": "automation-schema-flatten",
+  "title": "Flatten automation_update schema for strict providers",
+  "description": "Rewrites the codex_app automation_update tool schema into a top-level object schema so strict OpenAI-compatible providers (e.g. DeepSeek, Azure) accept it.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
