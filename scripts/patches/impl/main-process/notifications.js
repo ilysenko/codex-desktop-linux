@@ -189,6 +189,10 @@ function codexLinuxCreateActionNotification(options, fallbackFactory, runtime) {
 function bridgeSource() {
   return [
     `var codexLinuxNotificationActionsPatch=${JSON.stringify(PATCH_MARKER)};`,
+    // Give Electron a Linux desktop identity so native notifications (and
+    // window app_id) resolve to the installed desktop file instead of falling
+    // back to the process name "electron" in Plasma/GNOME notification popups.
+    `try{require("electron").app.setDesktopName("codex-desktop")}catch(e){}`,
     codexLinuxNotificationActionsNativePath,
     codexLinuxNotificationActionLines,
     codexLinuxCreateActionNotification,

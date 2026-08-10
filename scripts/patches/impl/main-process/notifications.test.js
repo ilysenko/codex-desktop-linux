@@ -19,6 +19,7 @@ test("Linux notification actions patch routes action payloads through the bridge
   const patched = applyLinuxNotificationActionsPatch(`before;${currentFactory};after`);
 
   assert.match(patched, new RegExp(PATCH_MARKER));
+  assert.match(patched, /require\("electron"\)\.app\.setDesktopName\("codex-desktop"\)/);
   assert.match(
     patched,
     /process\.platform===`linux`&&Array\.isArray\(e\.actions\)&&e\.actions\.length>0/,
