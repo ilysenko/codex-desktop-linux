@@ -1442,6 +1442,53 @@ SCRIPT
     assert_not_contains "$capture_dir/codex-desktop.install" "update-builder"
 }
 
+test_native_builder_feature_compatibility_gate() {
+    info "Checking native builders enforce enabled-feature compatibility before staging"
+    local workspace="$TMP_DIR/native-feature-compatibility"
+    local app_dir="$workspace/app"
+    local features_root="$workspace/linux-features"
+    local feature_config="$features_root/features.json"
+    local feature_dir="$features_root/native-incompatible"
+    local format
+    local output_log
+
+    make_fake_app "$app_dir"
+    mkdir -p "$feature_dir"
+    printf '%s\n' '# Native Incompatible' > "$feature_dir/README.md"
+    cat > "$feature_dir/feature.json" <<'JSON'
+{
+  "id": "native-incompatible",
+  "title": "Native Incompatible",
+  "description": "Native build compatibility regression fixture.",
+  "defaultEnabled": false,
+  "buildCompatibility": {
+    "unsupportedFormats": ["deb", "rpm", "pacman"],
+    "reason": "native fixture refusal"
+  }
+}
+JSON
+    printf '%s\n' '{"enabled":["native-incompatible"]}' > "$feature_config"
+    printf '%s\n' '{"schemaVersion":1,"linuxFeatures":{"enabled":["native-incompatible"]}}' \
+        > "$app_dir/.codex-linux/build-info.json"
+
+    for format in deb rpm pacman; do
+        output_log="$workspace/$format.log"
+        if APP_DIR_OVERRIDE="$app_dir" \
+            PKG_ROOT_OVERRIDE="$workspace/$format-root" \
+            DIST_DIR_OVERRIDE="$workspace/$format-dist" \
+            CODEX_LINUX_FEATURES_ROOT="$features_root" \
+            CODEX_LINUX_FEATURES_CONFIG="$feature_config" \
+            PACKAGE_WITH_UPDATER=0 \
+            bash "$REPO_DIR/scripts/build-$format.sh" > "$output_log" 2>&1; then
+            fail "$format builder accepted an enabled feature declared incompatible"
+        fi
+        assert_contains "$output_log" "native-incompatible"
+        assert_contains "$output_log" "incompatible with $format"
+        assert_file_not_exists "$workspace/$format-root"
+        assert_file_not_exists "$workspace/$format-dist"
+    done
+}
+
 test_appimage_builder_smoke() {
     info "Running AppImage packaging smoke test"
     local workspace="$TMP_DIR/appimage"
@@ -11554,6 +11601,7 @@ main() {
     test_update_manager_service_helper_respects_disabled_service
     test_rpm_builder_smoke
     test_pacman_builder_without_updater_transition_hook
+    test_native_builder_feature_compatibility_gate
     test_candidate_promotion_feature_compatibility_gate
     test_appimage_builder_smoke
     test_missing_input_failure

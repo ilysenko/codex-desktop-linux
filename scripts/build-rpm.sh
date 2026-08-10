@@ -66,6 +66,7 @@ main() {
     fi
 
     ensure_app_layout
+    assert_linux_feature_build_compatibility rpm "$APP_DIR"
     [ -f "$SPEC_TEMPLATE" ] || error "Missing spec template: $SPEC_TEMPLATE"
     [ -f "$DESKTOP_TEMPLATE" ] || error "Missing desktop template: $DESKTOP_TEMPLATE"
     [ -f "$ICON_SOURCE" ] || error "Missing icon: $ICON_SOURCE"

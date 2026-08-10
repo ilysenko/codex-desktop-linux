@@ -7,6 +7,7 @@ TMP_DIR="$(mktemp -d)"
 TEST_APP_ID="codex-test-$$"
 APP_DIR="$TMP_DIR/app"
 REMOUNT_APP_DIR="$TMP_DIR/remounted-app"
+FOREIGN_APP_DIR="$TMP_DIR/foreign-app"
 SECOND_APP_DIR="$APP_DIR"
 APPIMAGE_PATH="$TMP_DIR/codex-desktop.AppImage"
 APPIMAGE_RECOVERY="${CODEX_TEST_APPIMAGE_REMOUNT:-0}"
@@ -22,6 +23,7 @@ ORDINARY_HOOK_WARM_COMPAT="${CODEX_TEST_ORDINARY_HOOK_WARM_COMPAT:-0}"
 LAUNCHER_PID=""
 SOCKET_PID=""
 HOOK_PID=""
+FOREIGN_ELECTRON_PID=""
 
 if [ "$APPIMAGE_RECOVERY" = "1" ]; then
     SECOND_APP_DIR="$REMOUNT_APP_DIR"
@@ -36,13 +38,14 @@ cleanup() {
     [ -z "$LAUNCHER_PID" ] || kill "$LAUNCHER_PID" 2>/dev/null || true
     [ -z "$SOCKET_PID" ] || kill "$SOCKET_PID" 2>/dev/null || true
     [ -z "$HOOK_PID" ] || kill "$HOOK_PID" 2>/dev/null || true
+    [ -z "$FOREIGN_ELECTRON_PID" ] || kill "$FOREIGN_ELECTRON_PID" 2>/dev/null || true
     for cmdline in /proc/[0-9]*/cmdline; do
         [ -r "$cmdline" ] || continue
         pid="${cmdline#/proc/}"
         pid="${pid%/cmdline}"
         IFS= read -r -d '' arg0 < "$cmdline" 2>/dev/null || true
         case "${arg0:-}" in
-            "$APP_DIR/electron"|"$REMOUNT_APP_DIR/electron")
+            "$APP_DIR/electron"|"$REMOUNT_APP_DIR/electron"|"$FOREIGN_APP_DIR/electron")
                 kill "$pid" 2>/dev/null || true
                 ;;
         esac
@@ -309,6 +312,31 @@ HOOK
     kill "$FIRST_ELECTRON_PID"
     wait "$LAUNCHER_PID"
     LAUNCHER_PID=""
+    rm -f "$APP_DIR/.codex-linux/launcher.d/failing-ordinary-hook"
+
+    # Exercise the real cold-launch path. A launcher hook that replaces the
+    # wayland-gpu platform must be applied before the sole final argv build, so
+    # a stale WaylandWindowDecorations feature cannot survive the X11 override.
+    cat > "$APP_DIR/.codex-linux/launcher.d/platform-override-hook" <<'HOOK'
+#!/usr/bin/env bash
+printf '%s\n' 'electron-arg --ozone-platform=x11'
+HOOK
+    chmod +x "$APP_DIR/.codex-linux/launcher.d/platform-override-hook"
+    rm -f "$STATE_DIR/app.pid" "$STATE_DIR/webview.pid"
+    : > "$SECOND_LOG"
+    "${COMMON_ENV[@]}" CODEX_LINUX_RENDERING_MODE=wayland-gpu \
+        "$APP_DIR/start.sh" >> "$SECOND_LOG" 2>&1 &
+    LAUNCHER_PID=$!
+    wait_for "ordinary-hook cold Electron" pid_file_is_live
+    SECOND_ELECTRON_PID="$(read_live_app_pid)"
+    grep -zq -- '--ozone-platform=x11' "/proc/$SECOND_ELECTRON_PID/cmdline" \
+        || fail "ordinary launcher hook did not replace the cold-launch platform"
+    if grep -zq -- 'WaylandWindowDecorations' "/proc/$SECOND_ELECTRON_PID/cmdline"; then
+        fail "cold launch retained Wayland decorations from an earlier Electron argv build"
+    fi
+    kill "$SECOND_ELECTRON_PID"
+    wait "$LAUNCHER_PID"
+    LAUNCHER_PID=""
     printf '%s\n' "launcher ordinary-hook warm-start compatibility test passed"
     exit 0
 fi
@@ -376,6 +404,30 @@ if [ "$CHROMIUM_SANDBOX_RESIDENT_REJECTION" = "1" ]; then
     kill "$FIRST_ELECTRON_PID"
     wait "$LAUNCHER_PID"
     LAUNCHER_PID=""
+
+    # A different checkout with the same isolated test identity participates
+    # in the same Electron single-instance namespace. With every shared runtime
+    # marker absent, the strict scan must reject that foreign resident too.
+    mkdir -p "$FOREIGN_APP_DIR"
+    cp "$APP_DIR/electron" "$FOREIGN_APP_DIR/electron"
+    CODEX_LINUX_APP_ID="$TEST_APP_ID" \
+        "$FOREIGN_APP_DIR/electron" --app-id="$TEST_APP_ID" &
+    FOREIGN_ELECTRON_PID=$!
+    wait_for "foreign compatibility resident" kill -0 "$FOREIGN_ELECTRON_PID"
+    rm -f "$STATE_DIR/app.pid" "$STATE_DIR/webview.pid" "$SOCKET_PATH"
+    : > "$SECOND_LOG"
+    if timeout 5s "${COMMON_ENV[@]}" "$APP_DIR/start.sh" >> "$SECOND_LOG" 2>&1; then
+        fail "sandbox-requested foreign markerless-resident launch silently succeeded"
+    fi
+    grep -q "Another ChatGPT Desktop is already running" "$APP_LOG" \
+        || fail "foreign markerless resident was not rejected by the strict scan"
+    grep -q "using Electron second-instance handoff" "$SECOND_LOG" \
+        && fail "foreign markerless sandbox request reached Electron handoff before rejection"
+    kill -0 "$FOREIGN_ELECTRON_PID" 2>/dev/null \
+        || fail "foreign markerless-resident rejection disturbed the compatibility resident"
+    kill "$FOREIGN_ELECTRON_PID"
+    wait "$FOREIGN_ELECTRON_PID"
+    FOREIGN_ELECTRON_PID=""
     printf '%s\n' "launcher Chromium sandbox compatibility-resident handoff rejection test passed"
     exit 0
 fi

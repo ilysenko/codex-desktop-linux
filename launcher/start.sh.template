@@ -3442,8 +3442,16 @@ add_electron_enable_features() {
 electron_enable_features_arg() {
     local joined=""
     local feature
+    local existing
+    local -a features=("${ELECTRON_ENABLE_FEATURES[@]}" "$@")
+    local -a emitted=()
 
-    for feature in "${ELECTRON_ENABLE_FEATURES[@]}"; do
+    for feature in "${features[@]}"; do
+        [ -n "$feature" ] || continue
+        for existing in "${emitted[@]}"; do
+            [ "$existing" != "$feature" ] || continue 2
+        done
+        emitted+=("$feature")
         if [ -z "$joined" ]; then
             joined="$feature"
         else
@@ -4205,6 +4213,7 @@ electron_default_arg_removed() {
 
 build_electron_launch_args() {
     local enable_features_arg
+    local -a implicit_enable_features=()
 
     # Feature launcher hooks (runtimeHooks.launcher) run after
     # set_electron_defaults() has already chosen the Ozone platform and device
@@ -4275,10 +4284,13 @@ build_electron_launch_args() {
     fi
 
     if [ "$ELECTRON_OZONE_PLATFORM" = "wayland" ]; then
-        add_electron_enable_features "WaylandWindowDecorations"
+        # This is derived final-argv state, not a persistent input. Keeping it
+        # out of ELECTRON_ENABLE_FEATURES makes the builder idempotent when a
+        # strict pre-handoff check is followed by an ordinary launcher hook.
+        implicit_enable_features+=("WaylandWindowDecorations")
     fi
 
-    if enable_features_arg="$(electron_enable_features_arg)"; then
+    if enable_features_arg="$(electron_enable_features_arg "${implicit_enable_features[@]}")"; then
         ELECTRON_LAUNCH_ARGS+=("$enable_features_arg")
     fi
 
@@ -4589,12 +4601,17 @@ refresh_launch_state_quick() {
         return 0
     fi
 
-    # Strict pre-handoff hooks opt into the deeper process scan. The launcher
-    # lock prevents another cooperating cold start from crossing this check;
-    # a resident that exits afterward can only cause a safe false rejection.
-    # Ordinary launches keep their marker-based hot path and avoid /proc cost.
-    if pre_handoff_launcher_hooks_active && pid="$(discover_running_app_pid)"; then
-        set_detected_running_app "$pid"
+    # Strict pre-handoff hooks opt into the deeper same- and cross-install
+    # process scans. The launcher lock prevents another cooperating cold start
+    # from crossing this check; a resident that exits afterward can only cause
+    # a safe false rejection. Ordinary launches keep their marker-based hot
+    # path and avoid /proc cost.
+    if pre_handoff_launcher_hooks_active; then
+        if pid="$(discover_running_app_pid)"; then
+            set_detected_running_app "$pid"
+            return 0
+        fi
+        detect_cross_install_conflict
     fi
 }
 
@@ -4685,8 +4702,10 @@ prepare_electron_launch() {
     ELECTRON_ARG_DENY_PATTERNS=()
     FEATURE_LOCKED_ENV_NAMES=()
     run_feature_pre_handoff_launcher_hooks || exit 1
-    build_electron_launch_args
-    validate_feature_electron_arg_denials || exit 1
+    if pre_handoff_launcher_hooks_active; then
+        build_electron_launch_args
+        validate_feature_electron_arg_denials || exit 1
+    fi
     ELECTRON_LAUNCH_PREPARED=1
 }
 

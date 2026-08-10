@@ -117,7 +117,7 @@ test("strict launcher, build compatibility, and promotion hooks are explicit opt
     },
     entrypoints: { promotionHook: "./promotion.sh" },
     buildCompatibility: {
-      unsupportedFormats: ["appimage"],
+      unsupportedFormats: ["appimage", "deb", "rpm", "pacman"],
       reason: "fixture incompatibility",
     },
   });
@@ -134,9 +134,12 @@ test("strict launcher, build compatibility, and promotion hooks are explicit opt
     () => assertEnabledLinuxFeatureBuildCompatibility("appimage", appDir, { featuresRoot }),
     /package-framework-fixture.*incompatible with appimage.*fixture incompatibility/i,
   );
-  assert.doesNotThrow(
-    () => assertEnabledLinuxFeatureBuildCompatibility("deb", appDir, { featuresRoot }),
-  );
+  for (const format of ["deb", "rpm", "pacman"]) {
+    assert.throws(
+      () => assertEnabledLinuxFeatureBuildCompatibility(format, appDir, { featuresRoot }),
+      new RegExp(`package-framework-fixture.*incompatible with ${format}.*fixture incompatibility`, "i"),
+    );
+  }
   assert.deepEqual(enabledLinuxFeaturePromotionHooks(appDir, { featuresRoot }), [
     { id, path: path.join(featureDir, "promotion.sh") },
   ]);

@@ -81,6 +81,7 @@ main() {
 	validate_max_build_threads
 
 	ensure_app_layout
+	assert_linux_feature_build_compatibility pacman "$APP_DIR"
 	ensure_file_exists "$PKGBUILD_TEMPLATE" "PKGBUILD template"
 	ensure_file_exists "$DESKTOP_TEMPLATE" "desktop template"
 	ensure_file_exists "$ICON_SOURCE" "icon"

@@ -266,7 +266,10 @@ test("actual launcher keeps ordinary warm starts fast and scopes strict preparat
     source.indexOf("refresh_launch_state_quick() {"),
     source.indexOf("prepare_launch_state_under_lock() {"),
   );
-  assert.match(quickRefresh,
-    /if pre_handoff_launcher_hooks_active && pid="\$\(discover_running_app_pid\)"/);
+  assert.match(quickRefresh, /if pre_handoff_launcher_hooks_active; then/);
+  assert.match(quickRefresh, /if pid="\$\(discover_running_app_pid\)"/);
+  assert.match(quickRefresh, /detect_cross_install_conflict/);
+  assert.ok(quickRefresh.indexOf("discover_running_app_pid")
+    < quickRefresh.indexOf("detect_cross_install_conflict"));
   assert.match(source, /launch-error\\ \*\)[\s\S]*notify_error[\s\S]*return 1/);
 });
