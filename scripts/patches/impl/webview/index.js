@@ -35,8 +35,85 @@ const LINUX_SIDEBAR_SCROLL_DRIFT_WARNING =
   "WARN: Could not uniquely identify the main sidebar scroll container — skipping Linux sidebar scroll performance patch";
 const LINUX_APP_SHELL_TAB_LAYOUT_DRIFT_WARNING =
   "WARN: Could not uniquely identify the app-shell tab layout contract — skipping Linux tab layout performance patch";
+const LINUX_CHUNKED_MESSAGE_DECODER_DRIFT_WARNING =
+  "WARN: Could not uniquely identify the chunked message object-write contract — skipping Linux chunked message decoder performance patch";
 const LINUX_APP_SHELL_TAB_OVERFLOW_HELPER =
   "const codexLinuxAppShellTabOverflowFrames=new WeakMap;function codexLinuxScheduleAppShellTabOverflow(e,t){if(e?.isConnected&&!codexLinuxAppShellTabOverflowFrames.has(e)){let n=requestAnimationFrame(()=>{codexLinuxAppShellTabOverflowFrames.delete(e),e.isConnected&&t(e.scrollWidth>e.clientWidth)});codexLinuxAppShellTabOverflowFrames.set(e,n)}}";
+
+function linuxChunkedMessageObjectWrites(currentSource) {
+  const unpatchedPattern =
+    /Object\.defineProperty\(([A-Za-z_$][\w$]*)\.value,\1\.key,\{configurable:!0,enumerable:!0,value:([A-Za-z_$][\w$]*),writable:!0\}\),\1\.key=null/gu;
+  const patchedPattern =
+    /([A-Za-z_$][\w$]*)\.key===`__proto__`\?Object\.defineProperty\(\1\.value,\1\.key,\{configurable:!0,enumerable:!0,value:([A-Za-z_$][\w$]*),writable:!0\}\):\1\.value\[\1\.key\]=\2,\1\.key=null/gu;
+  const candidates = [];
+
+  for (const [pattern, patched] of [
+    [unpatchedPattern, false],
+    [patchedPattern, true],
+  ]) {
+    for (const match of currentSource.matchAll(pattern)) {
+      const stackName = match[1];
+      const valueName = match[2];
+      const vicinity = currentSource.slice(
+        Math.max(0, match.index - 4_000),
+        match.index + match[0].length + 1_500,
+      );
+      if (
+        !vicinity.includes("codex-host-chunked-message-v1") ||
+        !vicinity.includes("Chunked message contained an unmatched container end") ||
+        !vicinity.includes("Chunked message ended before its value was complete") ||
+        !vicinity.includes("Chunked message contained multiple root values") ||
+        !vicinity.includes("Chunked message object value had no key") ||
+        !vicinity.includes(
+          `if(${stackName}.type===\`array\`){${stackName}.value.push(${valueName});return}`,
+        )
+      ) {
+        continue;
+      }
+      candidates.push({
+        end: match.index + match[0].length,
+        patched,
+        stackName,
+        start: match.index,
+        valueName,
+      });
+    }
+  }
+
+  return candidates;
+}
+
+function matchesLinuxChunkedMessageDecoderPerformanceContract(currentSource) {
+  return linuxChunkedMessageObjectWrites(currentSource).length === 1;
+}
+
+function applyLinuxChunkedMessageDecoderPerformancePatch(currentSource) {
+  const candidates = linuxChunkedMessageObjectWrites(currentSource);
+  if (candidates.length === 1) {
+    const [candidate] = candidates;
+    if (candidate.patched) {
+      return currentSource;
+    }
+    const { stackName, valueName } = candidate;
+    const replacement =
+      `${stackName}.key===\`__proto__\`?` +
+      `Object.defineProperty(${stackName}.value,${stackName}.key,{configurable:!0,enumerable:!0,value:${valueName},writable:!0}):` +
+      `${stackName}.value[${stackName}.key]=${valueName},${stackName}.key=null`;
+    return (
+      currentSource.slice(0, candidate.start) +
+      replacement +
+      currentSource.slice(candidate.end)
+    );
+  }
+
+  if (
+    currentSource.includes("codex-host-chunked-message-v1") &&
+    currentSource.includes("Chunked message object value had no key")
+  ) {
+    console.warn(LINUX_CHUNKED_MESSAGE_DECODER_DRIFT_WARNING);
+  }
+  return currentSource;
+}
 
 function enclosingFunction(currentSource, targetIndex) {
   const functionPattern =
@@ -2747,6 +2824,7 @@ module.exports = {
   applyAutomationUpdateEagerToolPatch,
   matchesAutomationUpdateEagerToolContract,
   applyLinuxChatSearchHydrationPatch,
+  applyLinuxChunkedMessageDecoderPerformancePatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   patchLinuxBrowserUseExternalAvailabilityAssets,
@@ -2770,6 +2848,7 @@ module.exports = {
   applySubagentNicknameMetadataPatch,
   codexLinuxWatchBrowserWebviewAttachment,
   matchesLinuxAppShellTabLayoutPerformanceContract,
+  matchesLinuxChunkedMessageDecoderPerformanceContract,
   matchesLinuxSidebarScrollPerformanceContract,
   patchBrowserPagePreloadBundle,
 };

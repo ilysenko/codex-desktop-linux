@@ -187,6 +187,7 @@ const {
   applyLinuxBrowserUseWebviewRemountStorePatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,
   applyLinuxChatSearchHydrationPatch,
+  applyLinuxChunkedMessageDecoderPerformancePatch,
   applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxFastModeModelGuardPatch,
   applyLinuxI18nGatePatch,
@@ -201,6 +202,7 @@ const {
   applySubagentNicknameMetadataPatch,
   codexLinuxWatchBrowserWebviewAttachment,
   matchesLinuxAppShellTabLayoutPerformanceContract,
+  matchesLinuxChunkedMessageDecoderPerformanceContract,
   matchesLinuxSidebarScrollPerformanceContract,
 } = require("./patches/impl/webview/index.js");
 const {
@@ -1040,6 +1042,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-settings-search-visibility",
     "linux-sidebar-scroll-performance",
     "linux-app-shell-tab-layout-performance",
+    "linux-chunked-message-decoder-performance",
     "linux-i18n-gate",
     "automation-schedule-multi-time-rrule",
     "automation-update-eager-tool",
@@ -1155,6 +1158,26 @@ test("default core patch descriptors are grouped and unique", () => {
   assert.equal(sidebarScrollPerformance?.pattern.test("app-DuLjgNkx.css"), false);
   assert.equal(sidebarScrollPerformance?.assetMatch(sidebarScrollFixture()), true);
   assert.equal(sidebarScrollPerformance?.assetMatch("function unrelated(){}"), false);
+  const chunkedMessageDecoderPerformance = descriptors.find(
+    (descriptor) => descriptor.id === "linux-chunked-message-decoder-performance",
+  );
+  assert.equal(chunkedMessageDecoderPerformance?.ciPolicy, "optional");
+  assert.equal(
+    chunkedMessageDecoderPerformance?.pattern.test("app-initial-Biw83Aiz.js"),
+    true,
+  );
+  assert.equal(
+    chunkedMessageDecoderPerformance?.pattern.test("app-DuLjgNkx.css"),
+    false,
+  );
+  assert.equal(
+    chunkedMessageDecoderPerformance?.assetMatch(chunkedMessageDecoderFixture()),
+    true,
+  );
+  assert.equal(
+    chunkedMessageDecoderPerformance?.assetMatch("function unrelated(){}"),
+    false,
+  );
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "linux-computer-use-avatar-cursor")?.ciPolicy,
     "optional",
@@ -3739,6 +3762,150 @@ test("leaves ambiguous app-shell tab animation assets byte-identical", () => {
   assert.equal(value, source);
   assert.deepEqual(warnings, [
     "WARN: Could not uniquely identify the app-shell tab layout contract — skipping Linux tab layout performance patch",
+  ]);
+});
+
+function chunkedMessageDecoderFixture({ duplicate = false, write = null } = {}) {
+  const objectWrite = write ??
+    "Object.defineProperty(t.value,t.key,{configurable:!0,enumerable:!0,value:e,writable:!0}),t.key=null";
+  const source = [
+    "function validateChunk(e){return e?.marker===`codex-host-chunked-message-v1`}",
+    "var unset=Symbol(`unset`),Assembler=class{stack=[];root=unset;stringChunks=null;consume(e){for(let t of e)switch(t.type){case`container-end`:if(this.stack.pop()==null)throw Error(`Chunked message contained an unmatched container end`);break;case`value`:this.saveValue(t.value);break}}finish(){if(this.root===unset||this.stack.length>0||this.stringChunks!=null)throw Error(`Chunked message ended before its value was complete`);return this.root}setKey(e){let t=this.stack.at(-1);if(t?.type!==`object`||t.key!=null)throw Error(`Chunked message key was outside an object`);t.key=e}saveValue(e){let t=this.stack.at(-1);if(t==null){if(this.root!==unset)throw Error(`Chunked message contained multiple root values`);this.root=e;return}if(t.type===`array`){t.value.push(e);return}if(t.key==null)throw Error(`Chunked message object value had no key`);" + objectWrite + "}};",
+  ].join("");
+  return duplicate ? `${source}${source.replaceAll("Assembler", "SecondAssembler")}` : source;
+}
+
+test("uses fast ordinary writes in the chunked message decoder", () => {
+  const source = chunkedMessageDecoderFixture();
+
+  const patched = applyPatchTwice(
+    applyLinuxChunkedMessageDecoderPerformancePatch,
+    source,
+  );
+
+  assert.match(
+    patched,
+    /t\.key===`__proto__`\?Object\.defineProperty\(t\.value,t\.key,\{configurable:!0,enumerable:!0,value:e,writable:!0\}\):t\.value\[t\.key\]=e,t\.key=null/,
+  );
+  assert.equal(
+    matchesLinuxChunkedMessageDecoderPerformanceContract(patched),
+    true,
+  );
+});
+
+test("preserves chunked message object descriptors and prototype safety", () => {
+  const patched = applyLinuxChunkedMessageDecoderPerformancePatch(
+    chunkedMessageDecoderFixture(),
+  );
+  const context = {};
+  vm.runInNewContext(
+    `${patched};globalThis.ChunkAssembler=Assembler;`,
+    context,
+  );
+
+  const assembler = new context.ChunkAssembler();
+  const decoded = {};
+  for (const [key, value] of [
+    ["ordinary", 42],
+    ["constructor", "own-constructor"],
+    ["toString", "own-to-string"],
+  ]) {
+    assembler.stack = [{ type: "object", value: decoded, key }];
+    assembler.saveValue(value);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(decoded, key), {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+
+  const originalPrototype = Object.getPrototypeOf(decoded);
+  const protoValue = { polluted: true };
+  assembler.stack = [{ type: "object", value: decoded, key: "__proto__" }];
+  assembler.saveValue(protoValue);
+  assert.equal(Object.getPrototypeOf(decoded), originalPrototype);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(decoded, "__proto__"), {
+    configurable: true,
+    enumerable: true,
+    value: protoValue,
+    writable: true,
+  });
+  assert.equal({}.polluted, undefined);
+
+  const arrayAssembler = new context.ChunkAssembler();
+  const decodedArray = [];
+  arrayAssembler.stack = [{ type: "array", value: decodedArray }];
+  arrayAssembler.saveValue("kept");
+  assert.deepEqual(decodedArray, ["kept"]);
+
+  const rootAssembler = new context.ChunkAssembler();
+  rootAssembler.saveValue("root");
+  assert.equal(rootAssembler.finish(), "root");
+});
+
+test("matches only one complete chunked message decoder contract", () => {
+  assert.equal(
+    matchesLinuxChunkedMessageDecoderPerformanceContract(
+      chunkedMessageDecoderFixture(),
+    ),
+    true,
+  );
+  assert.equal(
+    matchesLinuxChunkedMessageDecoderPerformanceContract(
+      "function generic(t,e){Object.defineProperty(t.value,t.key,{configurable:!0,enumerable:!0,value:e,writable:!0})}",
+    ),
+    false,
+  );
+  assert.equal(
+    matchesLinuxChunkedMessageDecoderPerformanceContract(
+      chunkedMessageDecoderFixture({ duplicate: true }),
+    ),
+    false,
+  );
+});
+
+test("leaves drifted chunked message decoders byte-identical", () => {
+  const source = chunkedMessageDecoderFixture({
+    write:
+      "Reflect.defineProperty(t.value,t.key,{configurable:!0,enumerable:!0,value:e,writable:!0}),t.key=null",
+  });
+
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxChunkedMessageDecoderPerformancePatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not uniquely identify the chunked message object-write contract — skipping Linux chunked message decoder performance patch",
+  ]);
+});
+
+test("leaves ambiguous chunked message decoder assets byte-identical", () => {
+  const source = chunkedMessageDecoderFixture({ duplicate: true });
+
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxChunkedMessageDecoderPerformancePatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not uniquely identify the chunked message object-write contract — skipping Linux chunked message decoder performance patch",
+  ]);
+});
+
+test("rejects an incomplete chunked message decoder fast-write patch", () => {
+  const source = chunkedMessageDecoderFixture({
+    write: "t.value[t.key]=e,t.key=null",
+  });
+
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxChunkedMessageDecoderPerformancePatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not uniquely identify the chunked message object-write contract — skipping Linux chunked message decoder performance patch",
   ]);
 });
 
