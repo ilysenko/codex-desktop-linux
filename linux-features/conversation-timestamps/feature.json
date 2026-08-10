@@ -1,0 +1,9 @@
+{
+  "id": "conversation-timestamps",
+  "title": "Conversation Timestamps",
+  "description": "Shows localized message timestamps between ChatGPT conversation messages.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
