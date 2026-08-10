@@ -64,6 +64,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   installed commit is limited to repository documentation or metadata.
 - The updater feature picker now changes only the enabled feature list, preserving
   nested feature settings and other local configuration keys across rebuilds.
+- The opt-in directory-only working-tree watcher now uses Watchbound for
+  bounded recursive Linux watch coverage while retaining its existing Git-ignore,
+  logical-path, root-recovery, and focus-recovery policies.
 - The opt-in Dock icon tweak now targets the current upstream main-process
   bundle, restoring Linux window, tray, and desktop icon synchronization.
 - The opt-in shallow repository watcher now patches both current app bundles

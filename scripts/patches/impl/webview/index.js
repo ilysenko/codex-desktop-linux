@@ -33,6 +33,240 @@ const LINUX_SIDEBAR_SCROLL_STYLE =
   "{animationName:`none`,animationTimeline:`auto`,\"--bottom-fade\":`calc(var(--spacing) * 10)`}";
 const LINUX_SIDEBAR_SCROLL_DRIFT_WARNING =
   "WARN: Could not uniquely identify the main sidebar scroll container — skipping Linux sidebar scroll performance patch";
+const LINUX_APP_SHELL_TAB_LAYOUT_DRIFT_WARNING =
+  "WARN: Could not uniquely identify the app-shell tab layout contract — skipping Linux tab layout performance patch";
+const LINUX_MARKDOWN_ANIMATION_DRIFT_WARNING =
+  "WARN: Could not uniquely identify the streaming Markdown animation contract — skipping Linux Markdown animation performance patch";
+const LINUX_APP_SHELL_TAB_OVERFLOW_HELPER =
+  "const codexLinuxAppShellTabOverflowFrames=new WeakMap;function codexLinuxScheduleAppShellTabOverflow(e,t){if(e?.isConnected&&!codexLinuxAppShellTabOverflowFrames.has(e)){let n=requestAnimationFrame(()=>{codexLinuxAppShellTabOverflowFrames.delete(e),e.isConnected&&t(e.scrollWidth>e.clientWidth)});codexLinuxAppShellTabOverflowFrames.set(e,n)}}";
+
+// Restoring a running thread replays the per-word fade for every incomplete
+// Markdown item in its active turn. Large agent timelines can create more than
+// a thousand animations at once, forcing expensive layerization even for text
+// above the viewport. Text still streams normally when rendered immediately;
+// retain the separate image-enter transition because it is bounded per image.
+function linuxMarkdownAnimationRules(currentSource) {
+  const unpatchedPattern =
+    /(\._MarkdownRoot_([A-Za-z0-9]+)_\d+\[data-markdown-animated\] :is\(\._FadeIn_\2_\d+,hr,li,tr,blockquote\))\{opacity:0;animation:_fade-in_\2_1 ([^{}]+);animation-delay:var\(--fade-delay,0s\)\}(\._MarkdownRoot_\2_\d+\[data-markdown-animated\] \._FadeListDecoration_\2_\d+::marker)\{animation:_fade-in-marker_\2_1 \3;animation-delay:var\(--fade-delay,0s\)\}(\._MarkdownRoot_\2_\d+\[data-markdown-animated\] \._ImageEnter_\2_\d+\{transform-origin:50%;animation:\.18s ease-out both _image-enter_\2_1\})/gu;
+  const patchedPattern =
+    /(\._MarkdownRoot_([A-Za-z0-9]+)_\d+\[data-markdown-animated\] :is\(\._FadeIn_\2_\d+,hr,li,tr,blockquote\))\{opacity:1;animation:none\}(\._MarkdownRoot_\2_\d+\[data-markdown-animated\] \._FadeListDecoration_\2_\d+::marker)\{animation:none\}(\._MarkdownRoot_\2_\d+\[data-markdown-animated\] \._ImageEnter_\2_\d+\{transform-origin:50%;animation:\.18s ease-out both _image-enter_\2_1\})/gu;
+  const candidates = [];
+
+  for (const match of currentSource.matchAll(unpatchedPattern)) {
+    candidates.push({
+      end: match.index + match[0].length,
+      patched: false,
+      replacement:
+        `${match[1]}{opacity:1;animation:none}` +
+        `${match[4]}{animation:none}` +
+        match[5],
+      start: match.index,
+    });
+  }
+  for (const match of currentSource.matchAll(patchedPattern)) {
+    candidates.push({
+      end: match.index + match[0].length,
+      patched: true,
+      replacement: match[0],
+      start: match.index,
+    });
+  }
+  return candidates;
+}
+
+function matchesLinuxMarkdownAnimationPerformanceContract(currentSource) {
+  return linuxMarkdownAnimationRules(currentSource).length === 1;
+}
+
+function applyLinuxMarkdownAnimationPerformancePatch(currentSource) {
+  const candidates = linuxMarkdownAnimationRules(currentSource);
+  if (candidates.length === 1) {
+    const [candidate] = candidates;
+    if (candidate.patched) {
+      return currentSource;
+    }
+    return (
+      currentSource.slice(0, candidate.start) +
+      candidate.replacement +
+      currentSource.slice(candidate.end)
+    );
+  }
+
+  if (
+    currentSource.includes("data-markdown-animated") &&
+    currentSource.includes("_FadeListDecoration_")
+  ) {
+    console.warn(LINUX_MARKDOWN_ANIMATION_DRIFT_WARNING);
+  }
+  return currentSource;
+}
+
+function enclosingFunction(currentSource, targetIndex) {
+  const functionPattern =
+    /function ([A-Za-z_$][\w$]*)\([^)]*\)\{/gu;
+  let enclosing = null;
+  for (const candidate of currentSource.matchAll(functionPattern)) {
+    if (candidate.index > targetIndex) {
+      break;
+    }
+    const openBrace = candidate.index + candidate[0].length - 1;
+    const closeBrace = findMatchingBrace(currentSource, openBrace);
+    if (closeBrace >= targetIndex) {
+      enclosing = {
+        end: closeBrace + 1,
+        name: candidate[1],
+        start: candidate.index,
+      };
+    }
+  }
+  return enclosing;
+}
+
+function linuxAppShellTabOverflowMeasurements(currentSource) {
+  const callbackPattern =
+    /([A-Za-z_$][\w$]*)=\(e,t\)=>\{(?:([A-Za-z_$][\w$]*)\(t\.scrollWidth>t\.clientWidth\)|codexLinuxScheduleAppShellTabOverflow\(t,([A-Za-z_$][\w$]*)\))\}/gu;
+  const candidates = [];
+  for (const callback of currentSource.matchAll(callbackPattern)) {
+    const owner = enclosingFunction(currentSource, callback.index);
+    if (owner == null) {
+      continue;
+    }
+    const ownerSource = currentSource.slice(owner.start, owner.end);
+    if (
+      !ownerSource.includes("data-app-shell-tab-close-button") ||
+      !ownerSource.includes("@max-[4rem]/app-shell-tab")
+    ) {
+      continue;
+    }
+    candidates.push({
+      callbackEnd: callback.index + callback[0].length,
+      callbackName: callback[1],
+      callbackStart: callback.index,
+      functionStart: owner.start,
+      patched: callback[3] != null,
+      setterName: callback[2] ?? callback[3],
+    });
+  }
+  return candidates;
+}
+
+function linuxAppShellTabMountAnimations(currentSource) {
+  const controllerPattern =
+    /"data-app-shell-tab-controller":[A-Za-z_$][\w$]*,[\s\S]{0,1000}?initial:([A-Za-z_$][\w$]*),animate:([A-Za-z_$][\w$]*),exit:([A-Za-z_$][\w$]*),transition:[A-Za-z_$][\w$]*,onAnimationComplete:/gu;
+  const candidates = [];
+
+  for (const controller of currentSource.matchAll(controllerPattern)) {
+    const initialName = controller[1];
+    const animateName = controller[2];
+    const exitName = controller[3];
+    const prefixStart = Math.max(0, controller.index - 6_000);
+    const prefix = currentSource.slice(prefixStart, controller.index);
+    const suffix = currentSource.slice(controller.index, controller.index + 6_000);
+    const vicinity = `${prefix}${suffix}`;
+    const initialPrefix = `let ${initialName}=`;
+    const exitPrefix = `,${exitName}=`;
+    const unpatchedPattern = new RegExp(
+      `${escapeRegExp(initialPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):!1${escapeRegExp(exitPrefix)}\\1\\?\\2:void 0,`,
+      "gu",
+    );
+    const patchedPattern = new RegExp(
+      `${escapeRegExp(initialPrefix)}!1${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,`,
+      "gu",
+    );
+    const unpatchedMatches = [...prefix.matchAll(unpatchedPattern)];
+    const patchedMatches = [...prefix.matchAll(patchedPattern)];
+    const pair = unpatchedMatches.at(-1) ?? patchedMatches.at(-1);
+    if (pair == null) {
+      continue;
+    }
+
+    const patched = patchedMatches.at(-1) === pair;
+    const collapsedName = pair[2];
+    const collapsedPreset = `${collapsedName}={maxWidth:\`0px\`,minWidth:\`0px\`}`;
+    const expandedPreset = `${animateName}={maxWidth:\`160px\`,minWidth:\`90px\`}`;
+    if (
+      !vicinity.includes("@container/app-shell-tab") ||
+      !vicinity.includes(collapsedPreset) ||
+      !vicinity.includes(expandedPreset)
+    ) {
+      continue;
+    }
+
+    const declarationStart = prefixStart + pair.index;
+    const expressionStart = declarationStart + initialPrefix.length;
+    const expression = patched ? "!1" : `${pair[1]}?${pair[2]}:!1`;
+    candidates.push({
+      expressionEnd: expressionStart + expression.length,
+      expressionStart,
+      patched,
+    });
+  }
+
+  return candidates;
+}
+
+function matchesLinuxAppShellTabLayoutPerformanceContract(currentSource) {
+  const mountAnimations = linuxAppShellTabMountAnimations(currentSource);
+  const overflowMeasurements = linuxAppShellTabOverflowMeasurements(currentSource);
+  if (mountAnimations.length !== 1 || overflowMeasurements.length !== 1) {
+    return false;
+  }
+  const patched = mountAnimations[0].patched && overflowMeasurements[0].patched;
+  const unpatched = !mountAnimations[0].patched && !overflowMeasurements[0].patched;
+  const hasHelper = currentSource.includes(LINUX_APP_SHELL_TAB_OVERFLOW_HELPER);
+  return (patched && hasHelper) || (unpatched && !hasHelper);
+}
+
+function applyLinuxAppShellTabLayoutPerformancePatch(currentSource) {
+  const mountAnimations = linuxAppShellTabMountAnimations(currentSource);
+  const overflowMeasurements = linuxAppShellTabOverflowMeasurements(currentSource);
+  const hasHelper = currentSource.includes(LINUX_APP_SHELL_TAB_OVERFLOW_HELPER);
+  if (mountAnimations.length === 1 && overflowMeasurements.length === 1) {
+    const [mountAnimation] = mountAnimations;
+    const [overflowMeasurement] = overflowMeasurements;
+    if (mountAnimation.patched && overflowMeasurement.patched && hasHelper) {
+      return currentSource;
+    }
+    if (!mountAnimation.patched && !overflowMeasurement.patched && !hasHelper) {
+      const callbackPatch =
+        `${overflowMeasurement.callbackName}=(e,t)=>{` +
+        `codexLinuxScheduleAppShellTabOverflow(t,${overflowMeasurement.setterName})}`;
+      const edits = [
+        {
+          end: mountAnimation.expressionEnd,
+          start: mountAnimation.expressionStart,
+          text: "!1",
+        },
+        {
+          end: overflowMeasurement.callbackEnd,
+          start: overflowMeasurement.callbackStart,
+          text: callbackPatch,
+        },
+        {
+          end: overflowMeasurement.functionStart,
+          start: overflowMeasurement.functionStart,
+          text: LINUX_APP_SHELL_TAB_OVERFLOW_HELPER,
+        },
+      ].sort((left, right) => right.start - left.start);
+      let patchedSource = currentSource;
+      for (const edit of edits) {
+        patchedSource =
+          patchedSource.slice(0, edit.start) +
+          edit.text +
+          patchedSource.slice(edit.end);
+      }
+      return patchedSource;
+    }
+  }
+
+  if (
+    currentSource.includes("data-app-shell-tab-controller") &&
+    currentSource.includes("@container/app-shell-tab")
+  ) {
+    console.warn(LINUX_APP_SHELL_TAB_LAYOUT_DRIFT_WARNING);
+  }
+  return currentSource;
+}
 
 function linuxSidebarScrollContainers(currentSource) {
   const anchorPattern =
@@ -2587,6 +2821,8 @@ module.exports = {
   applyPersistentRateLimitFooterPatch,
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
+  applyLinuxAppShellTabLayoutPerformancePatch,
+  applyLinuxMarkdownAnimationPerformancePatch,
   applyLinuxThreadSidePanelNativeTooltipPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
@@ -2597,6 +2833,8 @@ module.exports = {
   applyLocalEnvironmentActionModalDraftPatch,
   applySubagentNicknameMetadataPatch,
   codexLinuxWatchBrowserWebviewAttachment,
+  matchesLinuxAppShellTabLayoutPerformanceContract,
+  matchesLinuxMarkdownAnimationPerformanceContract,
   matchesLinuxSidebarScrollPerformanceContract,
   patchBrowserPagePreloadBundle,
 };

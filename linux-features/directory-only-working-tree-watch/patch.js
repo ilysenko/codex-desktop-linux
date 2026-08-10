@@ -1,16 +1,110 @@
 "use strict";
 
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
   findMatchingBrace,
 } = require("../../scripts/patches/lib/minified-js.js");
+
 const {
   PatchIntegrityError,
+  isPatchIntegrityError,
 } = require("../../scripts/patches/integrity-error.js");
 
+const bufferEquals = Function.call.bind(Buffer.prototype.equals);
+
+function readTrustedBytes(readFileSync, filePath) {
+  const bytes = readFileSync(filePath);
+  return Buffer.isBuffer(bytes) ? Buffer.from(bytes) : null;
+}
+
+function writeUtf8FileCandidatesTransactionally(candidates, options = {}) {
+  const writeFileSync = options.writeFileSync ?? fs.writeFileSync;
+  const readFileSync = options.readFileSync ?? fs.readFileSync;
+  const description = options.description ?? "Patch file transaction";
+  const prepared = candidates.map((candidate) => {
+    const sourceBytes = Buffer.from(candidate.source, "utf8");
+    const patchedBytes = Buffer.from(candidate.patchedSource, "utf8");
+    const currentBytes = readTrustedBytes(readFileSync, candidate.filePath);
+    if (currentBytes == null || !bufferEquals(sourceBytes, currentBytes)) {
+      throw new Error(`source byte verification failed for ${candidate.filePath}`);
+    }
+    return { ...candidate, sourceBytes, patchedBytes };
+  });
+  const pending = prepared.filter(({ sourceBytes, patchedBytes }) =>
+    !bufferEquals(sourceBytes, patchedBytes)
+  );
+  const attempted = [];
+
+  try {
+    for (const candidate of pending) {
+      const currentBytes = readTrustedBytes(readFileSync, candidate.filePath);
+      if (currentBytes == null || !bufferEquals(candidate.sourceBytes, currentBytes)) {
+        throw new Error(`source byte verification failed for ${candidate.filePath}`);
+      }
+      attempted.push(candidate);
+      writeFileSync(candidate.filePath, Buffer.from(candidate.patchedBytes));
+      const writtenBytes = readTrustedBytes(readFileSync, candidate.filePath);
+      if (writtenBytes == null || !bufferEquals(candidate.patchedBytes, writtenBytes)) {
+        throw new Error(`write byte verification failed for ${candidate.filePath}`);
+      }
+    }
+  } catch (error) {
+    const rollbackWriteFailures = [];
+    for (const candidate of [...attempted].reverse()) {
+      try {
+        writeFileSync(candidate.filePath, Buffer.from(candidate.sourceBytes));
+      } catch (rollbackError) {
+        rollbackWriteFailures.push(rollbackError);
+      }
+    }
+
+    const rollbackVerificationFailures = [];
+    for (const candidate of attempted) {
+      try {
+        const restoredBytes = readTrustedBytes(readFileSync, candidate.filePath);
+        if (restoredBytes == null || !bufferEquals(candidate.sourceBytes, restoredBytes)) {
+          rollbackVerificationFailures.push(
+            new Error(`rollback byte verification failed for ${candidate.filePath}`),
+          );
+        }
+      } catch (verificationError) {
+        rollbackVerificationFailures.push(
+          new Error(
+            `rollback byte verification failed for ${candidate.filePath}: ` +
+              `${verificationError instanceof Error ? verificationError.message : String(verificationError)}`,
+            { cause: verificationError },
+          ),
+        );
+      }
+    }
+
+    if (rollbackVerificationFailures.length > 0) {
+      const writeFailureContext = rollbackWriteFailures[0] == null
+        ? ""
+        : `; rollback write also failed: ${rollbackWriteFailures[0].message}`;
+      throw new PatchIntegrityError(
+        `${description} rollback could not restore original bytes: ` +
+          `${rollbackVerificationFailures[0].message}${writeFailureContext}`,
+        { cause: error },
+      );
+    }
+
+    throw error;
+  }
+
+  return pending.length;
+}
+
 const HELPER_NAME = "codexLinuxStartDirectoryOnlyWorkingTreeWatch";
-const PARCEL_WATCH_MARKER = "codexLinuxDirectoryOnlyParcelWorkingTreeWatch";
+const PARCEL_WATCH_MARKER = "codexLinuxWatchboundParcelWorkingTreeWatch";
+const PARCEL_FALLBACK_SYMBOL_KEY =
+  "codex-linux.directory-only-working-tree-watch.parcel-fallback";
+const QUALIFICATION_WARNINGS_SYMBOL_KEY =
+  "codex-linux.directory-only-working-tree-watch.qualification-warnings";
+const WATCHBOUND_RESULT_NAME = "codexLinuxWatchboundWatcher";
+const WATCHBOUND_VERSION = "2.1.1";
 const DEFAULT_MAX_WATCHES = 8192;
 const DEFAULT_IGNORED_DIRECTORY_NAMES = [];
 const IDENTIFIER_PATTERN = "[A-Za-z_$][\\w$]*";
@@ -21,10 +115,8 @@ const LOCAL_FILE_WATCH_CURRENT_BODY =
   "[^{}]{0,180}?\\(0,[A-Za-z_$][\\w$]*\\.watch\\)\\(" +
   "this\\.getFileSystemPath\\(\\k<options>\\.path\\)," +
   "\\{recursive:\\k<options>\\.recursive\\})";
-const LOCAL_FILE_WATCH_METHOD = new RegExp(
-  `${LOCAL_FILE_WATCH_METHOD_PREFIX}${LOCAL_FILE_WATCH_CURRENT_BODY}`,
-  "gu",
-);
+const LOCAL_FILE_WATCH_METHOD =
+  new RegExp(`${LOCAL_FILE_WATCH_METHOD_PREFIX}${LOCAL_FILE_WATCH_CURRENT_BODY}`, "gu");
 const CURRENT_LOCAL_HOST_CLASS = new RegExp(
   `var (?<localHostClass>${IDENTIFIER_PATTERN})=class\\{` +
     "runsInsideWsl;hostConfig=\\{id:`local`,display_name:`Local`,kind:`local`\\};" +
@@ -62,91 +154,188 @@ const CURRENT_PARCEL_ROUTE_PATTERN =
   "\\k<routeOptions>\\.path,`\\.git`\\)\\]\\}\\):" +
   "\\k<localHost>\\.startFileWatch\\(\\k<routeOptions>\\):" +
   "\\k<routeHost>\\.startFileWatch\\(\\k<routeOptions>\\)";
-const CURRENT_DIRECTORY_ROUTE_PATTERN =
+const CURRENT_WATCHBOUND_ROUTE_PATTERN =
   "startWorkingTreeWatch:\\(" +
   `(?<routeHost>${IDENTIFIER_PATTERN}),` +
   `(?<routeOptions>${IDENTIFIER_PATTERN})\\)=>` +
-  `\\k<routeHost>\\.isLocal\\?/\\*${PARCEL_WATCH_MARKER}\\*/` +
+  "\\k<routeHost>\\.isLocal\\?process\\.platform===`linux`\\?" +
+  `/\\*${PARCEL_WATCH_MARKER}\\*/` +
+  "\\k<localHost>\\.startFileWatch\\(\\{\\.\\.\\.\\k<routeOptions>," +
+  "\\[Symbol\\.for\\(`codex-linux\\.directory-only-working-tree-watch\\.parcel-fallback`\\)\\]:" +
+  `\\(\\)=>(?<routeHelper>${IDENTIFIER_PATTERN})\\(\\k<routeOptions>,\\{ignoredPaths:\\[` +
+  `(?<pathApi>${IDENTIFIER_PATTERN})\\.posix\\.join\\(` +
+  "\\k<routeOptions>\\.path,`\\.git`\\)\\]\\}\\)\\}\\):" +
   "\\k<localHost>\\.startFileWatch\\(\\k<routeOptions>\\):" +
   "\\k<routeHost>\\.startFileWatch\\(\\k<routeOptions>\\)";
 const CURRENT_PARCEL_ROUTE_CONTRACT = new RegExp(
   `(?<routePrefix>${CURRENT_GIT_ROUTE_PREFIX_PATTERN})${CURRENT_PARCEL_ROUTE_PATTERN}`,
   "gu",
 );
-const CURRENT_DIRECTORY_ROUTE_CONTRACT = new RegExp(
-  `(?<routePrefix>${CURRENT_GIT_ROUTE_PREFIX_PATTERN})${CURRENT_DIRECTORY_ROUTE_PATTERN}`,
+const CURRENT_WATCHBOUND_ROUTE_CONTRACT = new RegExp(
+  `(?<routePrefix>${CURRENT_GIT_ROUTE_PREFIX_PATTERN})${CURRENT_WATCHBOUND_ROUTE_PATTERN}`,
   "gu",
 );
 
-function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configuration) {
+function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+  host,
+  options,
+  configuration,
+  fallback = null,
+) {
   return (async () => {
     const fs = require("node:fs");
     const path = require("node:path");
     const childProcess = require("node:child_process");
     const GIT_QUERY_TIMEOUT_MS = 5000;
-    const FAIR_RESERVATION_CHUNK = 256;
-    const MAX_TRACKED_ASYNC_WATCH_FAILURES = 1024;
-    const MAX_PENDING_DIRECTORY_SYNCS = 256;
+    const POLICY_PASS_TIMEOUT_MS = 1000;
     const RETRY_INITIAL_MS = 1000;
     const RETRY_MAX_MS = 30_000;
-    const WATCH_ADDED = "added";
-    const WATCH_BUDGET_EXHAUSTED = "budget-exhausted";
-    const WATCH_ERROR = "watch-error";
-    const WATCH_EXISTING = "existing";
-    const WATCH_RETRY_PENDING = "retry-pending";
-    const WATCH_RETRY_REQUIRED = "retry-required";
-    const WATCH_RETRY_AFTER_RELEASE = "retry-after-release";
-    const WATCH_SKIPPED = "skipped";
-    const root = path.resolve(host.getFileSystemPath(options.path));
+    const QUALIFICATION_WARNINGS_SYMBOL_KEY =
+      "codex-linux.directory-only-working-tree-watch.qualification-warnings";
+    const WATCHBOUND_VERSION = "2.1.1";
+    const moduleOverrideKey = Symbol.for(
+      "codex-linux.directory-only-working-tree-watch.test-module",
+    );
+    const moduleOverride = globalThis[moduleOverrideKey];
+    const watchbound = moduleOverride ?? await import("watchbound");
+    if (
+      watchbound.capabilities?.schemaVersion !== 9 ||
+      watchbound.capabilities?.versions?.wrapper !== WATCHBOUND_VERSION ||
+      watchbound.capabilities?.versions?.native !== WATCHBOUND_VERSION ||
+      watchbound.capabilities?.versions?.engine !== WATCHBOUND_VERSION ||
+      watchbound.capabilities?.versions?.bindingApi !== 5 ||
+      watchbound.capabilities?.support?.currentRuntime?.targetCompatible !== true ||
+      watchbound.capabilities?.features?.initialExclusions !== true ||
+      watchbound.capabilities?.features?.dynamicExclusions !== true ||
+      watchbound.capabilities?.features?.directoryNameExclusions !== true ||
+      watchbound.capabilities?.features?.observedExcludedPaths !== true ||
+      watchbound.capabilities?.features?.automaticReconciliation !== true ||
+      watchbound.capabilities?.features?.rootReplacementRecovery !== true ||
+      watchbound.capabilities?.features?.physicalRootResolution !== true ||
+      watchbound.capabilities?.features?.rootQualification !== true ||
+      watchbound.capabilities?.features?.bytesOnlyInvalidations !== true ||
+      watchbound.capabilities?.features?.exactPathBytes !== true ||
+      !watchbound.capabilities?.options?.subscription?.rootPathPolicy?.values?.includes(
+        "resolve-physical",
+      ) ||
+      typeof watchbound.qualifyRoot !== "function"
+    ) {
+      throw new Error(
+        `directory-only working-tree watch requires watchbound ${WATCHBOUND_VERSION} ` +
+          "with root qualification, physical root resolution, exact path delivery, " +
+          "native exclusions, reconciliation, and root recovery",
+      );
+    }
+
+    const lexicalRoot = host.getFileSystemPath(options.path);
+    if (typeof lexicalRoot !== "string" || !path.isAbsolute(lexicalRoot)) {
+      throw new Error("directory-only working-tree watch requires an absolute root path");
+    }
+    const defaultQualificationRetryDelays = [250, 500, 1000, 2000];
+    const qualificationRetryDelays = (
+      moduleOverride != null && Array.isArray(moduleOverride.qualificationRetryDelays)
+    )
+      ? moduleOverride.qualificationRetryDelays
+        .filter((delay) => Number.isInteger(delay) && delay >= 0 && delay <= 30_000)
+        .slice(0, 8)
+      : defaultQualificationRetryDelays;
+    let qualification = null;
+    let qualificationError = null;
+    const readQualification = () => {
+      try {
+        qualification = watchbound.qualifyRoot(lexicalRoot);
+        qualificationError = null;
+      } catch (error) {
+        qualification = null;
+        qualificationError = error;
+      }
+    };
+    readQualification();
+    if (qualification?.state !== "qualified" && qualification?.state !== "unqualified") {
+      for (const delay of qualificationRetryDelays) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        readQualification();
+        if (qualification?.state === "qualified" || qualification?.state === "unqualified") {
+          break;
+        }
+      }
+    }
+    if (qualification?.state !== "qualified") {
+      const state = qualification?.state === "unqualified" ? "unqualified" : "unknown";
+      const reasons = Array.isArray(qualification?.reasons) && qualification.reasons.length > 0
+        ? qualification.reasons.join(", ")
+        : qualificationError == null
+          ? "unknown qualification result"
+          : `qualification error: ${qualificationError.message ?? String(qualificationError)}`;
+      const warningStateKey = Symbol.for(QUALIFICATION_WARNINGS_SYMBOL_KEY);
+      const warningState = globalThis[warningStateKey] ??= new Set();
+      const fallbackName = typeof fallback === "function"
+        ? "upstream Parcel watcher"
+        : "upstream file watcher";
+      const signature = `${state}\0${lexicalRoot}\0${reasons}\0${fallbackName}`;
+      if (!warningState.has(signature)) {
+        if (warningState.size >= 256) warningState.clear();
+        warningState.add(signature);
+        const retryDescription = state === "unknown"
+          ? ` after ${qualificationRetryDelays.length} bounded retries`
+          : "";
+        console.warn(
+          `WARN: directory-only working-tree watch root is ${state}${retryDescription} ` +
+            `for ${lexicalRoot} (${reasons}); using the ${fallbackName}.`,
+        );
+      }
+      return typeof fallback === "function" ? fallback() : null;
+    }
+    // Watchbound resolves the caller's exact lexical spelling. The physical
+    // namespace becomes authoritative only after establishment returns its
+    // immutable resolution snapshot.
+    let root = null;
     const logicalPath = await host.platformPath();
-    const ignoredNames = new Set(configuration.ignoredDirectoryNames);
-    const budgetOwner = Symbol("directory-watch-budget-owner");
-    const watchers = new Map();
-    const refreshWatchers = new Map();
-    const asynchronousWatchFailures = new Map();
-    const asynchronousRefreshWatchFailures = new Map();
-    const asynchronousWatchResourceFailures = new Map();
-    const refreshTargetPaths = new Map();
-    const refreshTargets = new Map();
+    const excludedDirectoryNames = [...new Set([
+      ".git",
+      ...configuration.ignoredDirectoryNames,
+    ])].sort();
+    const observedExcludedPaths = [".git"];
     const lifecycleAbortController = new AbortController();
+    const subscriptions = new Set();
+    const metadataSubscriptions = new Map();
+    let mainSubscription = null;
+    let mainSubscriptionReady = false;
+    let startupFatalError = null;
+    let fatalDisposalError = null;
+    let workingTreeCoverageEstablished = false;
+    let startupPolicyReplacementError = null;
+    let currentExclusions = new Set();
+    let lastCompleteGitExclusions = new Set();
+    let fullGitScanState = null;
+    let gitPolicyEpoch = 0;
+    const gitQueryWork = new Set();
+    let exclusionGeneration = 0n;
     let disposed = false;
-    let directorySyncHandle = null;
+    let disposePromise = null;
+    let policyWorkTail = Promise.resolve();
+    let policyWorkScheduled = false;
+    let policyFullRefreshRequested = false;
+    let policyMetadataRefreshRequested = false;
+    let policyMetadataForceRefreshRequested = false;
+    let policyInvalidationRequested = false;
+    const policyRetryStates = {
+      full: { timer: null, delayMs: RETRY_INITIAL_MS },
+      metadata: { timer: null, delayMs: RETRY_INITIAL_MS },
+    };
+    let metadataRetryEpoch = 0;
+    let rootRecoveryTimer = null;
+    let rootRecoveryDelayMs = RETRY_INITIAL_MS;
+    let rootRecoveryPending = false;
+    let rootRecoveryRequested = false;
+    let rootRecoveryWork = Promise.resolve();
+    let partialCoverageReported = false;
     let directorySyncFlushCount = 0;
-    let directorySyncNeedsFullInvalidation = false;
-    let directorySyncNeedsRefreshInvalidation = false;
-    let directorySyncNeedsFullReconcile = false;
-    let directorySyncWorkPending = false;
-    let refreshRetryTimer = null;
-    let refreshRetryDelayMs = RETRY_INITIAL_MS;
-    let refreshTargetsNeedRetry = false;
-    let refreshTargetMappingInvalidated = false;
-    let refreshWatchesNeedRetry = false;
-    let rootWatchInvalidated = false;
-    let rootMetadataRetryAttempts = 0;
-    let rootMetadataRetryDelayMs = RETRY_INITIAL_MS;
-    let rootMetadataRetryNeedsGit = false;
-    let rootMetadataRetryRequiresRestart = false;
-    let rootMetadataRetryTimer = null;
-    let topologyRefreshTimer = null;
-    let topologyRefreshNeedsGit = false;
-    let topologyRefreshWorkPending = false;
-    let topologyRefreshRerunRequested = false;
-    let topologyWorkActive = false;
-    let topologyWorkTail = Promise.resolve();
-    let budgetCoveragePartial = false;
-    let budgetRecoveryWorkPending = false;
-    let watchResourceFailureGeneration = 0;
-    let watchResourceRetryDelayMs = RETRY_INITIAL_MS;
-    let watchResourceRetryProbeAllowance = 0;
-    let watchResourceRetryProbeFailed = false;
-    let watchResourceRetryTimer = null;
-    let watchResourceRetryWorkPending = false;
-    let gitIgnoresNeedRetry = false;
-    const pendingDirectorySyncs = new Set();
     let resolveClosed;
     const closed = new Promise((resolve) => {
       resolveClosed = resolve;
     });
+    const policyReadTimedOut = Symbol("policy-read-timed-out");
 
     function isWithin(candidate, parent) {
       const relative = path.relative(parent, candidate);
@@ -157,16 +346,43 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       );
     }
 
-    function hasAncestorInSet(candidate, directories) {
-      if (!isWithin(candidate, root)) return false;
-      let current = candidate;
-      while (true) {
-        if (directories.has(current)) return true;
-        if (current === root) return false;
-        const parent = path.dirname(current);
-        if (parent === current) return false;
-        current = parent;
+    function exactBytesEqual(left, right) {
+      if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) return false;
+      if (left.byteLength !== right.byteLength) return false;
+      for (let index = 0; index < left.byteLength; index += 1) {
+        if (left[index] !== right[index]) return false;
       }
+      return true;
+    }
+
+    function qualificationMatchesPhysicalRoot(candidate, physicalPathBytes) {
+      return candidate?.state === "qualified" && exactBytesEqual(
+        candidate?.root?.physicalPathBytes,
+        physicalPathBytes,
+      );
+    }
+
+    function relativePrefix(candidate) {
+      const relative = path.relative(root, candidate);
+      if (
+        relative === ".." ||
+        relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative)
+      ) {
+        return null;
+      }
+      return relative === "" ? "" : relative.split(path.sep).join("/");
+    }
+
+    function prefixContains(prefix, candidate) {
+      return prefix === "" || candidate === prefix || candidate.startsWith(`${prefix}/`);
+    }
+
+    function isExcludedPrefix(candidate, exclusions = currentExclusions) {
+      for (const prefix of exclusions) {
+        if (prefixContains(prefix, candidate)) return true;
+      }
+      return false;
     }
 
     function kernelBudget() {
@@ -177,499 +393,26 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
           10,
         );
       } catch {}
-      const requested = configuration.maxWatches;
       return Number.isFinite(kernelLimit) && kernelLimit > 0
-        ? Math.max(1, Math.min(requested, Math.floor(kernelLimit / 8)))
-        : requested;
+        ? Math.max(1, Math.min(configuration.maxWatches, Math.floor(kernelLimit / 8)))
+        : configuration.maxWatches;
     }
 
-    const budgetKey = Symbol.for("codex-linux.directory-only-working-tree-watch.budget");
     const requestedLimit = kernelBudget();
-    const budget = globalThis[budgetKey] ??= {
-      active: 0,
+    const engineKey = Symbol.for(
+      "codex-linux.directory-only-working-tree-watch.watchbound-engine",
+    );
+    const engineState = globalThis[engineKey] ??= {
       limit: requestedLimit,
-      listeners: new Set(),
-      listenerOwners: new Map(),
-      partialListeners: new Set(),
-      fillCursor: 0,
-      reservations: new Map(),
-      reserved: 0,
-      recoveringOwners: new Set(),
-      suspendedOwners: new Set(),
-      notificationQueued: false,
-      notificationOwners: new Set(),
-      genericNotificationQueued: false,
-      wakeNotificationOwners: new Set(),
-      genericWakeNotificationQueued: false,
+      engine: watchbound.createEngine({ nativeWatchBudget: requestedLimit }),
     };
-    budget.listeners ??= new Set();
-    budget.listenerOwners ??= new Map();
-    budget.partialListeners ??= new Set();
-    budget.fillCursor ??= 0;
-    budget.reservations ??= new Map();
-    budget.reserved ??= 0;
-    budget.recoveringOwners ??= new Set();
-    budget.suspendedOwners ??= new Set();
-    budget.notificationQueued ??= false;
-    budget.notificationOwners ??= new Set();
-    budget.genericNotificationQueued ??= false;
-    budget.wakeNotificationOwners ??= new Set();
-    budget.genericWakeNotificationQueued ??= false;
-    budget.watchLimitErrorLogged ??= false;
-    budget.limit = Math.min(budget.limit, requestedLimit);
-
-    function markBudgetCoveragePartial() {
-      budget.partialListeners.add(recoverWatchCoverageIfPossible);
-      if (budgetCoveragePartial) return;
-      budgetCoveragePartial = true;
-      console.warn(
-        `WARN: directory-only working-tree watch budget reached ` +
-        `(active=${budget.active}, limit=${budget.limit}); coverage is partial for ${root}. ` +
-        `Codex focus recovery remains active, and watch coverage will expand when capacity is released.`,
-      );
-      if (budget.active + budget.reserved < budget.limit) {
-        // Another partial owner may have retained and then released an
-        // unproductive reservation. A workspace that becomes newly partial
-        // must wake the coordinator so idle headroom is redistributed instead
-        // of remaining stranded behind the suspended owner.
-        notifyBudgetListeners(budgetOwner);
-      }
-      // TODO(default/core rollout): if a root remains completely unwatched, surface one
-      // actionable in-app notice with an Open Logs/troubleshooting action. Ordinary partial
-      // coverage should remain log-only because focus recovery is intentionally retained.
-    }
-
-    function markBudgetCoverageRecovered() {
-      if (!budgetCoveragePartial) return;
-      budgetCoveragePartial = false;
-      budget.partialListeners.delete(recoverWatchCoverageIfPossible);
-      budget.suspendedOwners.delete(budgetOwner);
-      console.info(
-        `INFO: directory-only working-tree watch coverage recovered for ${root} ` +
-        `(active=${budget.active}, limit=${budget.limit}).`,
+    if (engineState.limit !== requestedLimit) {
+      throw new Error(
+        "directory-only working-tree watch cannot change its process watch budget " +
+          `from ${engineState.limit} to ${requestedLimit} while the app is running`,
       );
     }
-
-    function isWatchResourceError(error) {
-      return ["ENOSPC", "EMFILE", "ENFILE", "ENOMEM"].includes(error?.code);
-    }
-
-    function isTransientDirectoryReadError(error) {
-      return ["EINTR", "EIO", "ENOENT", "ESTALE"].includes(error?.code);
-    }
-
-    function reportWatchLimitError(error) {
-      if (!isWatchResourceError(error)) return false;
-      if (budget.watchLimitErrorLogged) return true;
-      budget.watchLimitErrorLogged = true;
-      console.error(
-        `ERROR: directory-only working-tree watch hit the operating-system watch resource ` +
-        `limit (${error.code}); file-change coverage may be incomplete.`,
-      );
-      // TODO(default/core rollout): promote this unexpected OS-limit failure to a
-      // deduplicated in-app notification. Unlike the configured budget, it means the
-      // reserved headroom was unavailable and merits an actionable user warning.
-      return true;
-    }
-
-    function asynchronousWatchFailureIsExhausted(kind, directory, identity) {
-      const key = `${kind}\0${directory}`;
-      const previous = asynchronousWatchFailures.get(key);
-      const attempts = previous?.identity === identity ? previous.attempts + 1 : 1;
-      rememberAsynchronousWatchFailure(
-        asynchronousWatchFailures,
-        key,
-        { attempts, identity },
-      );
-      return attempts >= 3;
-    }
-
-    function rememberAsynchronousWatchFailure(failures, key, value) {
-      if (failures.has(key)) {
-        failures.delete(key);
-      } else if (failures.size >= MAX_TRACKED_ASYNC_WATCH_FAILURES) {
-        failures.delete(failures.keys().next().value);
-      }
-      failures.set(key, value);
-    }
-
-    function noteAsynchronousWatchResourceFailure(kind, directory, identity) {
-      const key = `${kind}\0${directory}`;
-      const previous = asynchronousWatchResourceFailures.get(key);
-      const attempts = previous?.identity === identity ? previous.attempts + 1 : 1;
-      rememberAsynchronousWatchFailure(
-        asynchronousWatchResourceFailures,
-        key,
-        { attempts, identity },
-      );
-      const minimumDelay = Math.min(
-        RETRY_INITIAL_MS * (2 ** (attempts - 1)),
-        RETRY_MAX_MS,
-      );
-      const previousDelay = watchResourceRetryDelayMs;
-      watchResourceRetryDelayMs = Math.max(watchResourceRetryDelayMs, minimumDelay);
-      if (watchResourceRetryDelayMs > previousDelay && watchResourceRetryTimer != null) {
-        clearTimeout(watchResourceRetryTimer);
-        watchResourceRetryTimer = null;
-      }
-    }
-
-    function noteAsynchronousRefreshWatchFailure(directory, identity) {
-      const previous = asynchronousRefreshWatchFailures.get(directory);
-      const attempts = previous?.identity === identity ? previous.attempts + 1 : 1;
-      rememberAsynchronousWatchFailure(
-        asynchronousRefreshWatchFailures,
-        directory,
-        { attempts, identity },
-      );
-      const minimumDelay = Math.min(
-        RETRY_INITIAL_MS * (2 ** (attempts - 1)),
-        RETRY_MAX_MS,
-      );
-      const previousDelay = refreshRetryDelayMs;
-      refreshRetryDelayMs = Math.max(refreshRetryDelayMs, minimumDelay);
-      if (refreshRetryDelayMs > previousDelay && refreshRetryTimer != null) {
-        clearTimeout(refreshRetryTimer);
-        refreshRetryTimer = null;
-      }
-    }
-
-    function resetAsynchronousRefreshWatchFailure(directory) {
-      asynchronousRefreshWatchFailures.delete(directory);
-    }
-
-    function resetAsynchronousWatchResourceFailure(kind, directory) {
-      asynchronousWatchResourceFailures.delete(`${kind}\0${directory}`);
-    }
-
-    function resetWatchResourceRetry(expectedGeneration) {
-      if (watchResourceFailureGeneration !== expectedGeneration) return;
-      if (watchResourceRetryTimer != null) clearTimeout(watchResourceRetryTimer);
-      watchResourceRetryTimer = null;
-      watchResourceRetryDelayMs = RETRY_INITIAL_MS;
-    }
-
-    function scheduleWatchResourceRetry() {
-      if (
-        disposed ||
-        watchResourceRetryTimer != null ||
-        watchResourceRetryWorkPending
-      ) {
-        return;
-      }
-      const retryDelay = watchResourceRetryDelayMs;
-      watchResourceRetryTimer = setTimeout(() => {
-        watchResourceRetryTimer = null;
-        if (disposed) return;
-        if (rootMetadataRetryTimer != null) {
-          // Root identity backoff owns topology recovery while it is armed.
-          // Keep the resource retry pending without probing the root early.
-          scheduleWatchResourceRetry();
-          return;
-        }
-        watchResourceRetryWorkPending = true;
-        watchResourceRetryProbeAllowance = 1;
-        watchResourceRetryProbeFailed = false;
-        enqueueTopologyWork(async () => {
-          const attemptGeneration = watchResourceFailureGeneration;
-          let scanResult;
-          try {
-            if (rootMetadataRetryTimer == null) {
-              const retryGitMetadata = refreshRetryTimer == null;
-              scanResult = await reconcileTopology(retryGitMetadata, retryGitMetadata);
-            }
-          } finally {
-            watchResourceRetryProbeAllowance = 0;
-            watchResourceRetryWorkPending = false;
-            if (disposed) return;
-            if (watchResourceFailureGeneration !== attemptGeneration) {
-              watchResourceRetryDelayMs = Math.max(
-                watchResourceRetryDelayMs,
-                Math.min(retryDelay * 2, RETRY_MAX_MS),
-              );
-              scheduleWatchResourceRetry();
-              return;
-            }
-            if (watchResourceRetryProbeFailed) {
-              watchResourceRetryDelayMs = Math.max(
-                watchResourceRetryDelayMs,
-                Math.min(retryDelay * 2, RETRY_MAX_MS),
-              );
-              scheduleWatchResourceRetry();
-              return;
-            }
-            if (scanResult?.metadataUnavailable || scanResult?.topologyRetryNeeded) {
-              resetWatchResourceRetry(attemptGeneration);
-              rootMetadataRetryDelayMs = Math.max(
-                rootMetadataRetryDelayMs,
-                Math.min(retryDelay * 2, RETRY_MAX_MS),
-              );
-              scheduleRootMetadataRetry(configuration.honorGitIgnore, true);
-              return;
-            }
-            const refreshCoverageComplete = refreshRetryTimer != null || (
-              !refreshTargetsNeedRetry &&
-              !gitIgnoresNeedRetry &&
-              [...refreshTargets.keys()].every((directory) =>
-                refreshWatchers.has(directory),
-              )
-            );
-            if (scanResult?.coverageComplete === true && refreshCoverageComplete) {
-              resetWatchResourceRetry(attemptGeneration);
-              return;
-            }
-            if (budgetCoveragePartial) {
-              // A configured-budget deferral is now owned by the fair
-              // coordinator. Do not poll or wake unrelated retry domains.
-              resetWatchResourceRetry(attemptGeneration);
-              budget.suspendedOwners.delete(budgetOwner);
-              notifyBudgetListeners(budgetOwner, false);
-              return;
-            }
-            // No resource probe was possible (for example, root metadata
-            // backoff became armed while this work was queued). Retain the
-            // same delay because no operating-system resource attempt failed.
-            scheduleWatchResourceRetry();
-          }
-        });
-      }, retryDelay);
-      watchResourceRetryTimer.unref?.();
-    }
-
-    function noteWatchResourceFailure(error) {
-      const isResourceError = isWatchResourceError(error);
-      reportWatchLimitError(error);
-      if (!isResourceError || disposed) return false;
-      if (watchResourceRetryWorkPending) watchResourceRetryProbeFailed = true;
-      watchResourceFailureGeneration += 1;
-      scheduleWatchResourceRetry();
-      return true;
-    }
-
-    function resetRootMetadataRetry() {
-      if (rootMetadataRetryTimer != null) clearTimeout(rootMetadataRetryTimer);
-      rootMetadataRetryTimer = null;
-      rootMetadataRetryAttempts = 0;
-      rootMetadataRetryDelayMs = RETRY_INITIAL_MS;
-      rootMetadataRetryNeedsGit = false;
-      rootMetadataRetryRequiresRestart = false;
-    }
-
-    function scheduleRootMetadataRetry(reloadGitIgnores, requiresRestart = false) {
-      rootMetadataRetryNeedsGit ||= reloadGitIgnores;
-      rootMetadataRetryRequiresRestart ||= requiresRestart;
-      if (disposed || rootMetadataRetryTimer != null) {
-        return;
-      }
-      if (rootMetadataRetryAttempts >= 2) {
-        // Persistent incomplete coverage may leave stale or missing watches.
-        // Hand it back to Codex's existing watcher retry path after the two
-        // bounded in-feature recovery attempts.
-        if (rootMetadataRetryRequiresRestart || !watchers.has(root)) {
-          finish({
-            reason: "watch-error",
-            error: new Error(
-              `Could not restore complete working-tree watch coverage: ${options.path}`,
-            ),
-          });
-        }
-        return;
-      }
-      const retryDelay = rootMetadataRetryDelayMs;
-      rootMetadataRetryTimer = setTimeout(() => {
-        rootMetadataRetryTimer = null;
-        if (disposed) return;
-        rootMetadataRetryAttempts += 1;
-        rootMetadataRetryDelayMs = Math.min(retryDelay * 2, RETRY_MAX_MS);
-        const shouldReloadGitIgnores = rootMetadataRetryNeedsGit;
-        rootMetadataRetryNeedsGit = false;
-        enqueueTopologyWork(async () => {
-          const retryOtherDomains =
-            watchResourceRetryTimer == null && !watchResourceRetryWorkPending;
-          const retryGitMetadata = retryOtherDomains && refreshRetryTimer == null;
-          await reconcileTopology(
-            shouldReloadGitIgnores && retryGitMetadata,
-            retryGitMetadata,
-          );
-          if (
-            !disposed &&
-            rootMetadataRetryTimer == null &&
-            !refreshTargetsNeedRetry &&
-            !gitIgnoresNeedRetry &&
-            !refreshWatchesNeedRetry &&
-            watchResourceRetryTimer == null &&
-            !watchResourceRetryWorkPending &&
-            budgetCoveragePartial &&
-            budget.active + budget.reserved < budget.limit
-          ) {
-            budget.suspendedOwners.delete(budgetOwner);
-            notifyBudgetListeners(budgetOwner, false);
-          }
-        });
-      }, retryDelay);
-      rootMetadataRetryTimer.unref?.();
-    }
-
-    function updateRootMetadataRetry(result, reloadGitIgnores) {
-      if (disposed || result == null) return;
-      if (result.metadataUnavailable || result.topologyRetryNeeded) {
-        if (watchResourceRetryWorkPending) return;
-        scheduleRootMetadataRetry(reloadGitIgnores, true);
-      } else {
-        resetRootMetadataRetry();
-      }
-    }
-
-    function reservationCount(owner = budgetOwner) {
-      return budget.reservations.get(owner) ?? 0;
-    }
-
-    function releaseReservations(owner = budgetOwner, notify = true) {
-      const count = reservationCount(owner);
-      if (count === 0) return;
-      budget.reservations.delete(owner);
-      budget.reserved = Math.max(0, budget.reserved - count);
-      if (notify) notifyBudgetListeners(owner, false);
-    }
-
-    function reserveCapacity(owner, count) {
-      if (count <= 0) return;
-      budget.reservations.set(owner, reservationCount(owner) + count);
-      budget.reserved += count;
-    }
-
-    function notifyBudgetListeners(owner = null, wakeSuspended = true) {
-      if (owner == null) {
-        budget.genericNotificationQueued = true;
-        if (wakeSuspended) budget.genericWakeNotificationQueued = true;
-      } else {
-        budget.notificationOwners.add(owner);
-        if (wakeSuspended) budget.wakeNotificationOwners.add(owner);
-      }
-      if (budget.notificationQueued) return;
-      budget.notificationQueued = true;
-      queueMicrotask(() => {
-        budget.notificationQueued = false;
-        const owners = new Set(budget.notificationOwners);
-        const genericNotification = budget.genericNotificationQueued;
-        const wakeOwners = new Set(budget.wakeNotificationOwners);
-        const genericWakeNotification = budget.genericWakeNotificationQueued;
-        budget.notificationOwners.clear();
-        budget.genericNotificationQueued = false;
-        budget.wakeNotificationOwners.clear();
-        budget.genericWakeNotificationQueued = false;
-        for (const suspendedOwner of [...budget.suspendedOwners]) {
-          if (
-            genericWakeNotification ||
-            [...wakeOwners].some((wakeOwner) => wakeOwner !== suspendedOwner)
-          ) {
-            budget.suspendedOwners.delete(suspendedOwner);
-          }
-        }
-        const listeners = [...budget.listeners];
-        for (const listener of listeners) {
-          const listenerOwner = budget.listenerOwners.get(listener);
-          if (
-            listenerOwner != null &&
-            budget.suspendedOwners.has(listenerOwner)
-          ) {
-            continue;
-          }
-          listener(true, owners, genericNotification);
-        }
-
-        const partialListeners = listeners.filter((listener) => {
-          const listenerOwner = budget.listenerOwners.get(listener);
-          return (
-            budget.partialListeners.has(listener) &&
-            listenerOwner != null &&
-            !budget.recoveringOwners.has(listenerOwner) &&
-            !budget.suspendedOwners.has(listenerOwner)
-          );
-        });
-        // Reservations held by an in-flight recovery are its current
-        // generation. Preserve them until that recovery settles, but exclude
-        // the owner above from receiving any newly released capacity. This
-        // keeps self-released inode-retry slots distinguishable from capacity
-        // that becomes available for the next generation.
-        for (const [reservationOwner, count] of [...budget.reservations]) {
-          if (budget.recoveringOwners.has(reservationOwner)) continue;
-          budget.reservations.delete(reservationOwner);
-          budget.reserved = Math.max(0, budget.reserved - count);
-        }
-        let reservableCapacity = Math.max(
-          0,
-          budget.limit - budget.active - budget.reserved,
-        );
-        if (partialListeners.length === 0 || reservableCapacity === 0) return;
-        const fillStart = budget.fillCursor % partialListeners.length;
-        const rotatedFillListeners = [
-          ...partialListeners.slice(fillStart),
-          ...partialListeners.slice(0, fillStart),
-        ];
-        budget.fillCursor = (fillStart + 1) % partialListeners.length;
-        const fillListeners = [
-          ...rotatedFillListeners.filter(
-            (listener) => !owners.has(budget.listenerOwners.get(listener)),
-          ),
-          ...rotatedFillListeners.filter(
-            (listener) => owners.has(budget.listenerOwners.get(listener)),
-          ),
-        ];
-        const reservationLimit = Math.min(
-          FAIR_RESERVATION_CHUNK,
-          Math.ceil(reservableCapacity / fillListeners.length),
-        );
-        const selectedListeners = new Set();
-        let allocationProgress = true;
-        while (reservableCapacity > 0 && allocationProgress) {
-          allocationProgress = false;
-          for (const listener of fillListeners) {
-            if (reservableCapacity <= 0) break;
-            const listenerOwner = budget.listenerOwners.get(listener);
-            if (reservationCount(listenerOwner) >= reservationLimit) continue;
-            reserveCapacity(listenerOwner, 1);
-            selectedListeners.add(listener);
-            reservableCapacity -= 1;
-            allocationProgress = true;
-          }
-        }
-        for (const listener of selectedListeners) {
-          const listenerOwner = budget.listenerOwners.get(listener);
-          let recovery;
-          try {
-            recovery = listener(false, owners, genericNotification);
-          } catch {
-            releaseReservations(listenerOwner);
-            continue;
-          }
-          if (recovery == null) {
-            // This owner is temporarily ineligible (for example, a root
-            // metadata or watch-resource retry is already armed). Keep it out
-            // of virtual reallocation passes and immediately offer its unused
-            // reservation to other partial owners. The real retry/topology
-            // notification will wake it later.
-            if (
-              budget.listenerOwners.get(listener) === listenerOwner &&
-              budget.partialListeners.has(listener)
-            ) {
-              budget.suspendedOwners.add(listenerOwner);
-            }
-            releaseReservations(listenerOwner);
-            continue;
-          }
-          if (recovery === false) {
-            releaseReservations(listenerOwner);
-            continue;
-          }
-          // The listener owns its recovery lifetime and releases exactly the
-          // reservation generation it consumed. Only observe rejection here;
-          // a second coordinator-side release could race with the next
-          // allocation pass and revoke that newer reservation.
-          Promise.resolve(recovery).catch(() => {});
-        }
-      });
-    }
+    const engine = engineState.engine;
 
     function isRetryableGitError(error) {
       return (
@@ -678,1483 +421,953 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(host, options, configurati
       );
     }
 
-    async function waitForFsOperation(operation) {
-      if (lifecycleAbortController.signal.aborted) return { disposed: true };
-      let onAbort;
-      const aborted = new Promise((resolve) => {
-        onAbort = () => resolve({ disposed: true });
-        lifecycleAbortController.signal.addEventListener("abort", onAbort, { once: true });
-      });
-      try {
-        return await Promise.race([
-          Promise.resolve(operation).then(
-            (value) => ({ value }),
-            (error) => ({ error }),
-          ),
-          aborted,
-        ]);
-      } finally {
-        lifecycleAbortController.signal.removeEventListener("abort", onAbort);
-      }
+    function shouldRetryGitResult(result) {
+      if (result?.retryable === true) return true;
+      if (result?.status === 0 || disposed) return false;
+      // A normal nonzero Git exit is definitive even while `.git` exists.
+      // Retain stale policy only when the independent metadata probe cannot
+      // establish whether the repository itself is still present.
+      return repositoryMetadataState() === "unknown";
     }
 
-    async function gitResult(args) {
-      if (!configuration.honorGitIgnore) return null;
-      if (disposed || lifecycleAbortController.signal.aborted) return null;
-      return new Promise((resolve) => {
-        try {
-          childProcess.execFile("git", [
-            "-c",
-            "core.fsmonitor=false",
-            "-C",
-            root,
-            ...args,
-          ], {
-            encoding: "utf8",
-            killSignal: "SIGKILL",
-            maxBuffer: 64 * 1024 * 1024,
-            signal: lifecycleAbortController.signal,
-            timeout: GIT_QUERY_TIMEOUT_MS,
-            windowsHide: true,
-          }, (error, stdout) => {
-            resolve({
-              error,
-              retryable: isRetryableGitError(error),
-              status: error == null ? 0 : (Number.isInteger(error.code) ? error.code : null),
-              stdout: typeof stdout === "string" ? stdout : "",
-            });
-          });
-        } catch (error) {
-          resolve({ error, retryable: isRetryableGitError(error), status: null, stdout: "" });
-        }
-      });
-    }
-
-    async function loadGitIgnoredRoots() {
-      const ignored = new Set([path.join(root, ".git")]);
-      gitIgnoresNeedRetry = false;
-      const result = await gitResult([
-        "ls-files",
-        "--others",
-        "--ignored",
-        "--exclude-standard",
-        "--directory",
-        "-z",
-      ]);
-      if (result?.status !== 0 || typeof result.stdout !== "string") {
-        gitIgnoresNeedRetry = result?.retryable === true || (
-          Number.isInteger(result?.status) && gitEntryExists()
-        );
-        return ignored;
-      }
-      const relativeCandidates = result.stdout
-        .split("\0")
-        .filter((relative) => relative.endsWith("/"));
-      if (relativeCandidates.length === 0) return ignored;
-      const checkedCandidates = new Set();
-      let chunk = [];
-      let chunkBytes = 0;
-      async function checkChunk() {
-        if (chunk.length === 0) return true;
-        const checkResult = await gitResult([
-          "-c",
-          "core.quotePath=false",
-          "check-ignore",
-          "--",
-          ...chunk,
-        ]);
-        if (
-          (checkResult?.status !== 0 && checkResult?.status !== 1) ||
-          typeof checkResult.stdout !== "string"
-        ) {
-          gitIgnoresNeedRetry = checkResult?.retryable === true || (
-            Number.isInteger(checkResult?.status) && gitEntryExists()
-          );
-          return false;
-        }
-        for (const relative of checkResult.stdout.split(/\r?\n/u)) {
-          if (relative.length > 0) checkedCandidates.add(relative);
-        }
-        chunk = [];
-        chunkBytes = 0;
-        return true;
-      }
-      for (const relative of relativeCandidates) {
-        if (/[\u0000-\u001f\u007f"\\]/u.test(relative)) continue;
-        const relativeBytes = Buffer.byteLength(relative) + 1;
-        if (
-          chunk.length > 0 &&
-          chunkBytes + relativeBytes > 64 * 1024 &&
-          !await checkChunk()
-        ) {
-          return ignored;
-        }
-        chunk.push(relative);
-        chunkBytes += relativeBytes;
-      }
-      if (!await checkChunk()) return ignored;
-      const candidates = relativeCandidates
-        .filter((relative) => checkedCandidates.has(relative))
-        .map((relative) => path.resolve(root, ...relative.slice(0, -1).split("/")))
-        .filter((candidate) => candidate !== root && isWithin(candidate, root))
-        .sort((left, right) => left.length - right.length);
-      for (const candidate of candidates) {
-        if (!hasAncestorInSet(candidate, ignored)) ignored.add(candidate);
-      }
-      return ignored;
-    }
-
-    let gitIgnoredRoots = new Set([path.join(root, ".git")]);
-
-    function isIgnoredDirectory(directory) {
-      if (directory === root) return false;
-      if (path.basename(directory) === ".git") return true;
-      if (ignoredNames.has(path.basename(directory))) return true;
-      return hasAncestorInSet(directory, gitIgnoredRoots);
-    }
-
-    function gitEntryExists() {
+    function repositoryMetadataState() {
       try {
         fs.lstatSync(path.join(root, ".git"));
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
-    function directoryMetadataState(directory) {
-      // TODO(default/core rollout): benchmark these small identity probes on remote
-      // filesystems and move them off the event loop if their tail latency is material.
-      try {
-        const metadata = directory === root ? fs.statSync(directory) : fs.lstatSync(directory);
-        if (!metadata.isDirectory() || (directory !== root && metadata.isSymbolicLink())) {
-          return { absent: true, metadata: null };
-        }
-        return { absent: false, metadata };
+        return "present";
       } catch (error) {
-        return {
-          absent: error?.code === "ENOENT" || error?.code === "ENOTDIR",
-          metadata: null,
-        };
+        return ["ENOENT", "ENOTDIR"].includes(error?.code) ? "absent" : "unknown";
       }
     }
 
-    function directoryMetadata(directory) {
-      return directoryMetadataState(directory).metadata;
-    }
-
-    function metadataIdentity(metadata) {
-      return `${metadata.dev}:${metadata.ino}`;
-    }
-
-    function validateWatchedAncestors(directory) {
-      if (directory === root) return { valid: true, metadataUnavailable: false };
-      let ancestor = path.dirname(directory);
-      while (isWithin(ancestor, root)) {
-        const entry = watchers.get(ancestor);
-        if (entry == null) {
-          return { valid: false, metadataUnavailable: false, ancestor };
-        }
-        const state = directoryMetadataState(ancestor);
-        if (state.metadata == null) {
-          return {
-            valid: false,
-            metadataUnavailable: !state.absent,
-            rootMetadataUnavailable: ancestor === root && !state.absent,
-            ancestor,
-          };
-        }
-        if (
-          metadataIdentity(state.metadata) !== entry.identity ||
-          (ancestor !== root && isIgnoredDirectory(ancestor))
-        ) {
-          return { valid: false, metadataUnavailable: false, ancestor };
-        }
-        if (ancestor === root) return { valid: true, metadataUnavailable: false };
-        const parent = path.dirname(ancestor);
-        if (parent === ancestor) break;
-        ancestor = parent;
-      }
-      return { valid: false, metadataUnavailable: false, ancestor: root };
-    }
-
-    function refreshDirectoryIdentity(directory) {
-      try {
-        const metadata = fs.statSync(directory);
-        return metadata.isDirectory() ? metadataIdentity(metadata) : null;
-      } catch {
-        return null;
-      }
-    }
-
-    function releaseWatchCapacity(retainForCurrentWork) {
-      budget.active = Math.max(0, budget.active - 1);
-      if (retainForCurrentWork && topologyWorkActive && !disposed) {
-        reserveCapacity(budgetOwner, 1);
-        notifyBudgetListeners(budgetOwner);
-      } else {
-        notifyBudgetListeners(budgetOwner);
-      }
-    }
-
-    function revokeReservationForRoot() {
-      if (budget.active + budget.reserved < budget.limit) return;
-      const reservations = [...budget.reservations.entries()];
-      const entry = reservations.find(([owner]) => owner !== budgetOwner) ?? reservations[0];
-      if (entry == null) return;
-      const [owner, count] = entry;
-      if (count <= 1) {
-        budget.reservations.delete(owner);
-      } else {
-        budget.reservations.set(owner, count - 1);
-      }
-      budget.reserved = Math.max(0, budget.reserved - 1);
-      notifyBudgetListeners(owner, false);
-    }
-
-    function hasWatchCapacity(directory) {
-      if (budget.active >= budget.limit) return false;
-      if (directory === root) {
-        revokeReservationForRoot();
-        return budget.active < budget.limit;
-      }
-      if (reservationCount() > 0) return true;
-      if (
-        watchResourceRetryWorkPending &&
-        watchResourceRetryProbeAllowance > 0 &&
-        budget.active + budget.reserved < budget.limit
-      ) {
-        return true;
-      }
-      if (budget.partialListeners.size > 0) return false;
-      return budget.active + budget.reserved < budget.limit;
-    }
-
-    function consumeWatchResourceRetryProbe() {
-      if (!watchResourceRetryWorkPending || watchResourceRetryProbeAllowance === 0) return;
-      watchResourceRetryProbeAllowance -= 1;
-    }
-
-    function noteWatchResourceRetryProbeFailure() {
-      if (watchResourceRetryWorkPending) watchResourceRetryProbeFailed = true;
-    }
-
-    function watchResourceRetryDefersWatchAttempt() {
-      return (
-        (watchResourceRetryTimer != null && !watchResourceRetryWorkPending) ||
-        (watchResourceRetryWorkPending && watchResourceRetryProbeFailed)
-      );
-    }
-
-    function consumeReservation() {
-      const count = reservationCount();
-      if (count === 0) return;
-      if (count === 1) {
-        budget.reservations.delete(budgetOwner);
-      } else {
-        budget.reservations.set(budgetOwner, count - 1);
-      }
-      budget.reserved = Math.max(0, budget.reserved - 1);
-    }
-
-    async function yieldBudgetNotifications() {
-      while (budget.notificationQueued) await Promise.resolve();
-    }
-
-    function enqueueTopologyWork(work) {
-      const result = topologyWorkTail.then(async () => {
-        if (disposed) return;
-        topologyWorkActive = true;
+    function gitResult(args, signal = lifecycleAbortController.signal) {
+      if (!configuration.honorGitIgnore || disposed) return Promise.resolve(null);
+      const query = new Promise((resolve) => {
         try {
-          await work();
-        } finally {
-          topologyWorkActive = false;
-          if (!budgetRecoveryWorkPending) releaseReservations(budgetOwner);
-        }
-      });
-      topologyWorkTail = result.catch((error) => {
-        if (!disposed) {
-          finish({
-            reason: "watch-error",
-            error: error instanceof Error ? error : new Error(String(error)),
+          childProcess.execFile(
+            "git",
+            ["-c", "core.fsmonitor=false", "-C", root, ...args],
+            {
+              encoding: "utf8",
+              killSignal: "SIGKILL",
+              maxBuffer: 64 * 1024 * 1024,
+              signal,
+              timeout: GIT_QUERY_TIMEOUT_MS,
+              windowsHide: true,
+            },
+            (error, stdout) => {
+              resolve({
+                error,
+                retryable: isRetryableGitError(error),
+                status: error == null
+                  ? 0
+                  : Number.isInteger(error.code)
+                    ? error.code
+                    : null,
+                stdout: typeof stdout === "string" ? stdout : "",
+              });
+            },
+          );
+        } catch (error) {
+          resolve({
+            error,
+            retryable: isRetryableGitError(error),
+            status: null,
+            stdout: "",
           });
         }
       });
-      return result;
+      gitQueryWork.add(query);
+      void query.finally(() => gitQueryWork.delete(query));
+      return query;
+    }
+
+    function cancelGitScan(state = fullGitScanState) {
+      if (state == null) return;
+      if (fullGitScanState === state) fullGitScanState = null;
+      state.abortController.abort();
+    }
+
+    async function awaitPolicyQuery(query, deadline) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return policyReadTimedOut;
+      let timeoutId;
+      try {
+        return await Promise.race([
+          query,
+          new Promise((resolve) => {
+            timeoutId = setTimeout(() => resolve(policyReadTimedOut), remainingMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    async function loadGitIgnoredPrefixes(deadline = Number.POSITIVE_INFINITY) {
+      const fallbackExclusions = new Set(lastCompleteGitExclusions);
+      if (!configuration.honorGitIgnore) {
+        return { exclusions: new Set(), retry: false };
+      }
+      if (fullGitScanState?.epoch !== gitPolicyEpoch) {
+        cancelGitScan();
+      }
+      if (fullGitScanState == null && Date.now() >= deadline) {
+        return { exclusions: fallbackExclusions, retry: true };
+      }
+      if (fullGitScanState == null) {
+        const abortController = new AbortController();
+        fullGitScanState = {
+          abortController,
+          epoch: gitPolicyEpoch,
+          phase: "ls-files",
+          query: gitResult([
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+          ], abortController.signal),
+        };
+      }
+      let state = fullGitScanState;
+      if (state.phase === "ls-files") {
+        const result = await awaitPolicyQuery(state.query, deadline);
+        if (state.epoch !== gitPolicyEpoch) {
+          cancelGitScan(state);
+          return loadGitIgnoredPrefixes(deadline);
+        }
+        if (result === policyReadTimedOut) {
+          return { exclusions: fallbackExclusions, retry: true };
+        }
+        if (result?.status !== 0) {
+          fullGitScanState = null;
+          const retry = shouldRetryGitResult(result);
+          if (!retry) {
+            lastCompleteGitExclusions = new Set();
+            return {
+              exclusions: new Set(lastCompleteGitExclusions),
+              retry: false,
+            };
+          }
+          return {
+            exclusions: fallbackExclusions,
+            retry,
+          };
+        }
+        state = {
+          abortController: state.abortController,
+          candidates: result.stdout
+            .split("\0")
+            .filter((relative) => (
+              relative.endsWith("/") &&
+              relative.length > 1 &&
+              !/[\u0000-\u001f\u007f"\\\uFFFD]/u.test(relative)
+            )),
+          chunk: [],
+          chunkBytes: 0,
+          confirmed: new Set(),
+          epoch: state.epoch,
+          index: 0,
+          phase: "check-ignore",
+          query: null,
+        };
+        fullGitScanState = state;
+      }
+
+      while (
+        state.query != null ||
+        state.index < state.candidates.length ||
+        state.chunk.length > 0
+      ) {
+        if (state.query != null) {
+          const result = await awaitPolicyQuery(state.query, deadline);
+          if (state.epoch !== gitPolicyEpoch) {
+            cancelGitScan(state);
+            return loadGitIgnoredPrefixes(deadline);
+          }
+          if (result === policyReadTimedOut) {
+            return { exclusions: fallbackExclusions, retry: true };
+          }
+          state.query = null;
+          if (
+            (result?.status !== 0 && result?.status !== 1) ||
+            typeof result.stdout !== "string"
+          ) {
+            fullGitScanState = null;
+            const retry = shouldRetryGitResult(result);
+            if (!retry) {
+              lastCompleteGitExclusions = new Set();
+              return {
+                exclusions: new Set(lastCompleteGitExclusions),
+                retry: false,
+              };
+            }
+            return {
+              exclusions: fallbackExclusions,
+              retry,
+            };
+          }
+          for (const relative of result.stdout.split(/\r?\n/u)) {
+            if (relative.length > 0) state.confirmed.add(relative);
+          }
+          continue;
+        }
+        if (Date.now() >= deadline) {
+          return { exclusions: fallbackExclusions, retry: true };
+        }
+        while (state.index < state.candidates.length) {
+          const relative = state.candidates[state.index];
+          const relativeBytes = Buffer.byteLength(relative) + 1;
+          if (
+            state.chunk.length > 0 &&
+            state.chunkBytes + relativeBytes > 64 * 1024
+          ) {
+            break;
+          }
+          state.chunk.push(relative);
+          state.chunkBytes += relativeBytes;
+          state.index += 1;
+          if ((state.index & 255) === 0 && Date.now() >= deadline) {
+            return { exclusions: fallbackExclusions, retry: true };
+          }
+        }
+        if (state.chunk.length > 0) {
+          const chunk = state.chunk;
+          state.chunk = [];
+          state.chunkBytes = 0;
+          state.query = gitResult([
+            "-c",
+            "core.quotePath=false",
+            "check-ignore",
+            "--",
+            ...chunk,
+          ], state.abortController.signal);
+        }
+      }
+
+      if (state.epoch !== gitPolicyEpoch) {
+        cancelGitScan(state);
+        return loadGitIgnoredPrefixes(deadline);
+      }
+      const exclusions = new Set();
+      const ordered = state.candidates
+        .filter((relative) => state.confirmed.has(relative))
+        .map((relative) => relative.slice(0, -1))
+        .sort((left, right) => left.length - right.length);
+      for (const relative of ordered) {
+        const candidate = path.resolve(root, ...relative.split("/"));
+        const prefix = relativePrefix(candidate);
+        if (
+          prefix != null &&
+          prefix !== "" &&
+          !isExcludedPrefix(prefix, exclusions)
+        ) {
+          exclusions.add(prefix);
+        }
+      }
+      fullGitScanState = null;
+      lastCompleteGitExclusions = new Set(exclusions);
+      return { exclusions, retry: false };
+    }
+
+    async function loadPolicy() {
+      const deadline = Date.now() + POLICY_PASS_TIMEOUT_MS;
+      const gitPolicy = await loadGitIgnoredPrefixes(deadline);
+      return {
+        exclusions: gitPolicy.exclusions,
+        retry: gitPolicy.retry,
+      };
+    }
+
+    function exclusionsEqual(left, right) {
+      if (left.size !== right.size) return false;
+      for (const prefix of left) {
+        if (!right.has(prefix)) return false;
+      }
+      return true;
+    }
+
+    async function commitExclusions(nextExclusions) {
+      if (disposed) return;
+      if (!mainSubscriptionReady || mainSubscription == null) {
+        throw new Error("directory-only working-tree policy ran before Watchbound was ready");
+      }
+      if (exclusionsEqual(currentExclusions, nextExclusions)) return;
+      const nextGeneration = exclusionGeneration + 1n;
+      const coverage = await mainSubscription.replaceExclusions(
+        nextGeneration,
+        {
+          prefixes: [...nextExclusions].sort(),
+          excludedDirectoryNames: [...excludedDirectoryNames],
+          observedExcludedPaths: [...observedExcludedPaths],
+        },
+      );
+      currentExclusions = nextExclusions;
+      exclusionGeneration = nextGeneration;
+      const initialWorkingTreeCoverage = !workingTreeCoverageEstablished;
+      workingTreeCoverageEstablished = true;
+      reportCoverage(coverage);
+      // Re-including the initially excluded root already queues Watchbound's
+      // generation-boundary invalidation. Later incomplete replacements need
+      // an immediate conservative notification of their own.
+      if (!initialWorkingTreeCoverage && coverage?.state !== "complete" && !disposed) {
+        options.onChange({ changedPaths: [] });
+      }
     }
 
     async function resolveGitPath(gitPath) {
       const result = await gitResult(["rev-parse", "--git-path", gitPath]);
-      if (result?.status == null) {
-        return { resolved: !result?.retryable, target: null };
-      }
-      if (result.status !== 0 || typeof result.stdout !== "string") {
-        return { resolved: !gitEntryExists(), target: null };
+      if (result?.status !== 0 || typeof result.stdout !== "string") {
+        return {
+          target: null,
+          retry: shouldRetryGitResult(result),
+        };
       }
       const value = result.stdout.replace(/\r?\n$/u, "");
-      if (value.length === 0 || value.includes("\0")) return { resolved: true, target: null };
+      if (value.length === 0 || value.includes("\0")) {
+        return { target: null, retry: false };
+      }
       return {
-        resolved: true,
         target: path.isAbsolute(value) ? path.resolve(value) : path.resolve(root, value),
+        retry: false,
       };
     }
 
-    function refreshTargetsSignature(targets) {
-      return JSON.stringify(
+    async function disposeMetadataSubscriptions() {
+      const previous = [...metadataSubscriptions.values()];
+      metadataSubscriptions.clear();
+      for (const entry of previous) entry.active = false;
+      for (const entry of previous) {
+        try {
+          entry.watcher.close();
+        } catch {}
+      }
+    }
+
+    async function refreshMetadataSubscriptions({ force = false } = {}) {
+      if (!configuration.honorGitIgnore || disposed) {
+        await disposeMetadataSubscriptions();
+        return false;
+      }
+
+      let retry = false;
+      const targetPaths = [];
+      let resolutionFailed = false;
+      for (const gitPath of ["index", "info/exclude"]) {
+        const result = await resolveGitPath(gitPath);
+        retry ||= result.retry;
+        if (result.target != null) targetPaths.push(result.target);
+        else resolutionFailed = true;
+      }
+      const targets = new Map();
+      const preserveExisting = (
+        resolutionFailed &&
+        repositoryMetadataState() !== "absent" &&
+        metadataSubscriptions.size > 0
+      );
+      if (preserveExisting && !force) return retry;
+      if (preserveExisting) {
+        for (const entry of metadataSubscriptions.values()) {
+          targets.set(entry.directory, new Set(entry.names));
+        }
+      } else {
+        for (const target of targetPaths) {
+          const directory = path.dirname(target);
+          const names = targets.get(directory) ?? new Set();
+          names.add(path.basename(target));
+          targets.set(directory, names);
+        }
+      }
+      const nextSignature = JSON.stringify(
         [...targets]
           .map(([directory, names]) => [directory, [...names].sort()])
           .sort(([left], [right]) => left.localeCompare(right)),
       );
-    }
-
-    async function loadRefreshTargets() {
-      if (!configuration.honorGitIgnore || disposed) {
-        return { changed: false, coverageChanged: false };
-      }
-      let needsRetry = false;
-      for (const gitPath of ["index", "info/exclude"]) {
-        const result = await resolveGitPath(gitPath);
-        if (disposed) return { changed: false, coverageChanged: false };
-        if (!result.resolved) {
-          needsRetry = true;
-          continue;
-        }
-        if (result.target == null) {
-          refreshTargetPaths.delete(gitPath);
-        } else {
-          refreshTargetPaths.set(gitPath, result.target);
-        }
-      }
-      refreshTargetsNeedRetry = needsRetry;
-      const previousSignature = refreshTargetsSignature(refreshTargets);
-      const nextTargets = new Map();
-      for (const target of refreshTargetPaths.values()) {
-        const directory = path.dirname(target);
-        const names = nextTargets.get(directory) ?? new Set();
-        names.add(path.basename(target));
-        nextTargets.set(directory, names);
-      }
-      refreshTargets.clear();
-      for (const [directory, names] of nextTargets) refreshTargets.set(directory, names);
-      for (const directory of [...refreshWatchers.keys()]) {
-        if (!refreshTargets.has(directory)) closeRefreshWatch(directory);
-      }
-      await yieldBudgetNotifications();
-      const coverageChanged = ensureRefreshWatches();
-      return {
-        changed: previousSignature !== refreshTargetsSignature(refreshTargets),
-        coverageChanged,
-      };
-    }
-
-    function closeRefreshWatch(directory, expectedWatcher = null) {
-      const entry = refreshWatchers.get(directory);
-      if (entry == null || (expectedWatcher != null && entry.watcher !== expectedWatcher)) return;
-      refreshWatchers.delete(directory);
-      releaseWatchCapacity(true);
-      try {
-        entry.watcher.close();
-      } catch {}
-    }
-
-    function closeRefreshSubtrees(directories) {
-      const subtreeRoots = new Set(
-        [...directories].filter((directory) => isWithin(directory, root)),
+      const currentSignature = JSON.stringify(
+        [...metadataSubscriptions.values()]
+          .map((entry) => [entry.directory, [...entry.names].sort()])
+          .sort(([left], [right]) => left.localeCompare(right)),
       );
-      if (subtreeRoots.size === 0) return;
-      for (const directory of [...refreshWatchers.keys()]) {
-        if (hasAncestorInSet(directory, subtreeRoots)) closeRefreshWatch(directory);
-      }
-    }
+      if (!force && nextSignature === currentSignature) return retry;
 
-    function hasRefreshWatchInSubtree(directory) {
-      for (const refreshDirectory of refreshWatchers.keys()) {
-        if (isWithin(refreshDirectory, directory)) return true;
-      }
-      return false;
-    }
-
-    function consumeRefreshTargetMappingInvalidation() {
-      if (!refreshTargetMappingInvalidated) return false;
-      refreshTargetMappingInvalidated = false;
-      for (const directory of [...refreshWatchers.keys()]) closeRefreshWatch(directory);
-      refreshTargetPaths.clear();
-      refreshTargets.clear();
-      asynchronousRefreshWatchFailures.clear();
-      resetRefreshRetry();
-      gitIgnoredRoots = new Set([path.join(root, ".git")]);
-      refreshTargetsNeedRetry = configuration.honorGitIgnore;
-      refreshWatchesNeedRetry = false;
-      return true;
-    }
-
-    function scheduleRefreshRetry() {
-      if (disposed || refreshRetryTimer != null) return;
-      const retryDelay = refreshRetryDelayMs;
-      refreshRetryTimer = setTimeout(() => {
-        refreshRetryTimer = null;
-        if (disposed) return;
-        if (
-          rootMetadataRetryTimer != null ||
-          watchResourceRetryTimer != null ||
-          watchResourceRetryWorkPending
-        ) {
-          // Metadata and operating-system resource backoffs own their domains.
-          // Retain this Git retry without probing either domain early.
-          scheduleRefreshRetry();
-          return;
-        }
-        enqueueTopologyWork(async () => {
-          if (
-            rootMetadataRetryTimer != null ||
-            watchResourceRetryTimer != null ||
-            watchResourceRetryWorkPending
-          ) {
-            // Another retry domain may have become active while this work was
-            // queued behind a reconciliation. It still owns recovery.
-            refreshRetryDelayMs = retryDelay;
-            scheduleRefreshRetry();
-            return;
-          }
-          refreshRetryDelayMs = Math.min(retryDelay * 2, RETRY_MAX_MS);
-          try {
-            const retryingRefreshTargets = refreshTargetsNeedRetry;
-            const retryingGitIgnores = gitIgnoresNeedRetry;
-            const refreshResult = await loadRefreshTargets();
-            if (
-              disposed ||
-              (
-                !refreshResult.changed &&
-                !refreshResult.coverageChanged &&
-                !retryingRefreshTargets &&
-                !retryingGitIgnores &&
-                !refreshTargetsNeedRetry &&
-                !gitIgnoresNeedRetry
-              )
-            ) {
-              return;
-            }
-            await reloadGitIgnoresAndPrune();
-            const scanResult = await scanDirectoryTree(root);
-            updateRootMetadataRetry(scanResult, true);
-            if (!disposed) options.onChange({ changedPaths: [] });
-          } finally {
-            if (
-              !disposed &&
-              !refreshTargetsNeedRetry &&
-              !gitIgnoresNeedRetry &&
-              !refreshWatchesNeedRetry &&
-              rootMetadataRetryTimer == null &&
-              watchResourceRetryTimer == null &&
-              !watchResourceRetryWorkPending &&
-              budgetCoveragePartial &&
-              budget.active + budget.reserved < budget.limit
-            ) {
-              // A successful metadata retry may reveal a refresh target while
-              // this owner is suspended after an earlier incomplete recovery.
-              // Wake only this owner; the retry is not physical capacity
-              // progress and must not churn unrelated stalled workspaces.
-              budget.suspendedOwners.delete(budgetOwner);
-              notifyBudgetListeners(budgetOwner, false);
-            }
-          }
-        });
-      }, retryDelay);
-      refreshRetryTimer.unref?.();
-    }
-
-    function resetRefreshRetry() {
-      if (refreshRetryTimer != null) clearTimeout(refreshRetryTimer);
-      refreshRetryTimer = null;
-      refreshRetryDelayMs = RETRY_INITIAL_MS;
-    }
-
-    async function reloadGitIgnoresAndPrune() {
-      const nextIgnoredRoots = await loadGitIgnoredRoots();
-      if (disposed) return;
-      gitIgnoredRoots = nextIgnoredRoots;
-      for (const directory of [...watchers.keys()]) {
-        if (directory !== root && isIgnoredDirectory(directory)) closeDirectoryWatch(directory);
-      }
-      if (gitIgnoresNeedRetry) {
-        scheduleRefreshRetry();
-      } else if (!refreshTargetsNeedRetry && !refreshWatchesNeedRetry) {
-        resetRefreshRetry();
-      }
-    }
-
-    async function reloadGitStateAndPrune() {
-      const refreshResult = await loadRefreshTargets();
-      if (disposed) return refreshResult;
-      await reloadGitIgnoresAndPrune();
-      return refreshResult;
-    }
-
-    function ensureRefreshWatches() {
-      if (!watchers.has(root)) {
-        refreshWatchesNeedRetry = false;
-        return false;
-      }
-      let coverageChanged = false;
-      let needsRetry = false;
-      for (const [directory, names] of refreshTargets) {
+      await disposeMetadataSubscriptions();
+      for (const [directory, names] of targets) {
         if (disposed) break;
-        const identity = refreshDirectoryIdentity(directory);
-        const namesKey = [...names].sort().join("\0");
-        const existing = refreshWatchers.get(directory);
-        if (
-          existing != null &&
-          identity != null &&
-          existing.identity === identity &&
-          existing.namesKey === namesKey
-        ) {
-          continue;
-        }
-        if (existing != null) {
-          closeRefreshWatch(directory, existing.watcher);
-          coverageChanged = true;
-        }
-        if (identity == null) {
-          needsRetry = true;
-          continue;
-        }
-        if (refreshRetryTimer != null) {
-          needsRetry = true;
-          continue;
-        }
-        if (budget.notificationQueued) {
-          needsRetry = true;
-          continue;
-        }
-        if (watchResourceRetryDefersWatchAttempt()) {
-          continue;
-        }
-        if (!hasWatchCapacity(directory)) {
-          markBudgetCoveragePartial();
-          continue;
-        }
-        let watcher;
-        consumeWatchResourceRetryProbe();
+        const entry = { active: true, directory, names, watcher: null };
         try {
-          watcher = fs.watch(directory, { recursive: false }, (eventType, filename) => {
-            if (refreshWatchers.get(directory)?.watcher !== watcher) return;
-            if (
-              filename == null ||
-              (
+          const watcher = fs.watch(directory, { recursive: false }, (eventType, filename) => {
+            if (!entry.active || disposed) return;
+            try {
+              const decodedName = filename == null ? null : filename.toString();
+              const directoryBoundary = (
                 eventType === "rename" &&
-                (
-                  // Node reports a watched directory's self-rename with its
-                  // basename, which is ambiguous with a same-named child.
-                  // Conservatively rewatch the refresh directory in either case.
-                  filename.toString() === path.basename(directory) ||
-                  refreshDirectoryIdentity(directory) !== identity
-                )
-              )
-            ) {
-              refreshWatchesNeedRetry = true;
-              closeRefreshWatch(directory, watcher);
-              scheduleTopologyRefresh(true);
-              scheduleRefreshRetry();
-              return;
-            }
-            resetAsynchronousRefreshWatchFailure(directory);
-            resetAsynchronousWatchResourceFailure("refresh", directory);
-            if (filename == null || names.has(filename.toString())) scheduleTopologyRefresh(true);
-          });
-        } catch (error) {
-          if (isWatchResourceError(error)) noteWatchResourceRetryProbeFailure();
-          if (!noteWatchResourceFailure(error)) needsRetry = true;
-          continue;
-        }
-        refreshWatchers.set(directory, { identity, namesKey, watcher });
-        budget.active += 1;
-        consumeReservation();
-        coverageChanged = true;
-        watcher.on("error", (error) => {
-          if (refreshWatchers.get(directory)?.watcher !== watcher) return;
-          if (isWatchResourceError(error)) {
-            noteAsynchronousWatchResourceFailure("refresh", directory, identity);
-          } else {
-            noteAsynchronousRefreshWatchFailure(directory, identity);
-          }
-          const resourceError = noteWatchResourceFailure(error);
-          refreshWatchesNeedRetry = true;
-          closeRefreshWatch(directory, watcher);
-          options.onChange({ changedPaths: [] });
-          if (!resourceError) scheduleRefreshRetry();
-        });
-      }
-      refreshWatchesNeedRetry = needsRetry;
-      if (refreshWatchesNeedRetry || refreshTargetsNeedRetry) {
-        scheduleRefreshRetry();
-      } else if (!gitIgnoresNeedRetry) {
-        resetRefreshRetry();
-      }
-      return coverageChanged;
-    }
-
-    function closeDirectoryWatch(directory, expectedWatcher = null) {
-      const entry = watchers.get(directory);
-      if (entry == null || (expectedWatcher != null && entry.watcher !== expectedWatcher)) return;
-      watchers.delete(directory);
-      releaseWatchCapacity(directory !== root);
-      if (directory === root) releaseReservations(budgetOwner);
-      try {
-        entry.watcher.close();
-      } catch {}
-    }
-
-    function closeSubtrees(directories) {
-      const subtreeRoots = new Set(
-        [...directories].filter((directory) => isWithin(directory, root)),
-      );
-      if (subtreeRoots.size === 0) return;
-      for (const watchedDirectory of [...watchers.keys()]) {
-        if (
-          watchedDirectory !== root &&
-          hasAncestorInSet(watchedDirectory, subtreeRoots)
-        ) {
-          closeDirectoryWatch(watchedDirectory);
-        }
-      }
-    }
-
-    function closeSubtree(directory) {
-      closeSubtrees([directory]);
-    }
-
-    function finish(reason) {
-      if (disposed) return;
-      disposed = true;
-      lifecycleAbortController.abort();
-      budget.listeners.delete(recoverWatchCoverageIfPossible);
-      budget.listenerOwners.delete(recoverWatchCoverageIfPossible);
-      budget.partialListeners.delete(recoverWatchCoverageIfPossible);
-      budget.recoveringOwners.delete(budgetOwner);
-      budget.suspendedOwners.delete(budgetOwner);
-      releaseReservations(budgetOwner);
-      if (directorySyncHandle != null) clearImmediate(directorySyncHandle);
-      directorySyncHandle = null;
-      directorySyncNeedsFullInvalidation = false;
-      directorySyncNeedsRefreshInvalidation = false;
-      directorySyncNeedsFullReconcile = false;
-      directorySyncWorkPending = false;
-      pendingDirectorySyncs.clear();
-      asynchronousWatchFailures.clear();
-      asynchronousRefreshWatchFailures.clear();
-      asynchronousWatchResourceFailures.clear();
-      budgetRecoveryWorkPending = false;
-      if (refreshRetryTimer != null) clearTimeout(refreshRetryTimer);
-      refreshRetryTimer = null;
-      refreshTargetMappingInvalidated = false;
-      rootWatchInvalidated = false;
-      if (rootMetadataRetryTimer != null) clearTimeout(rootMetadataRetryTimer);
-      rootMetadataRetryTimer = null;
-      if (watchResourceRetryTimer != null) clearTimeout(watchResourceRetryTimer);
-      watchResourceRetryTimer = null;
-      watchResourceRetryProbeAllowance = 0;
-      watchResourceRetryProbeFailed = false;
-      watchResourceRetryWorkPending = false;
-      if (topologyRefreshTimer != null) clearTimeout(topologyRefreshTimer);
-      topologyRefreshTimer = null;
-      for (const directory of [...watchers.keys()]) closeDirectoryWatch(directory);
-      for (const directory of [...refreshWatchers.keys()]) closeRefreshWatch(directory);
-      resolveClosed(reason);
-    }
-
-    function logicalChangedPath(physicalPath) {
-      const relative = path.relative(root, physicalPath);
-      if (
-        relative === ".." ||
-        relative.startsWith(`..${path.sep}`) ||
-        path.isAbsolute(relative)
-      ) {
-        return null;
-      }
-      const parts = relative === "" ? [] : relative.split(path.sep);
-      return logicalPath.join(options.path, ...parts);
-    }
-
-    function emitChange(directory, eventType, filename) {
-      if (disposed) return;
-      if (directory === root && eventType === "rename") {
-        const entry = watchers.get(root);
-        const metadata = directoryMetadata(root);
-        if (
-          entry == null ||
-          metadata == null ||
-          metadataIdentity(metadata) !== entry.identity ||
-          filename == null ||
-          filename.toString() === path.basename(root)
-        ) {
-          options.onChange({ changedPaths: [] });
-          // The basename self-event shape is ambiguous with a same-named
-          // child. Serialize the conservative root rewatch with topology work.
-          rootWatchInvalidated = true;
-          refreshTargetMappingInvalidated = true;
-          scheduleTopologyRefresh(true);
-          return;
-        }
-      }
-      if (filename == null) {
-        options.onChange({ changedPaths: [] });
-        if (directory === root) {
-          rootWatchInvalidated = true;
-          refreshTargetMappingInvalidated = true;
-        } else {
-          scheduleDirectorySync(directory);
-        }
-        scheduleTopologyRefresh(true);
-        return;
-      }
-      resetAsynchronousWatchResourceFailure("working-tree", directory);
-      const name = filename.toString();
-      const physicalPath = path.join(directory, name);
-      const changedPath = logicalChangedPath(physicalPath);
-      if (changedPath == null) {
-        options.onChange({ changedPaths: [] });
-      } else {
-        const changedPaths = [changedPath];
-        if (
-          eventType === "rename" &&
-          options.renameEventHandling === "changed-path-with-parent-directory"
-        ) {
-          changedPaths.push(logicalPath.dirname(changedPath));
-        }
-        options.onChange({ changedPaths: [...new Set(changedPaths)] });
-      }
-      if (eventType === "rename") {
-        scheduleDirectorySync(physicalPath);
-      }
-      if (
-        path.basename(physicalPath) === ".gitignore" ||
-        physicalPath === path.join(root, ".git")
-      ) {
-        if (physicalPath === path.join(root, ".git")) {
-          refreshTargetMappingInvalidated = true;
-        }
-        scheduleTopologyRefresh(true);
-      }
-    }
-
-    function addDirectoryWatch(directory, metadata = directoryMetadata(directory)) {
-      if (disposed || isIgnoredDirectory(directory)) return WATCH_SKIPPED;
-      if (metadata == null) return WATCH_ERROR;
-      const identity = metadataIdentity(metadata);
-      const existing = watchers.get(directory);
-      if (existing != null) {
-        if (existing.identity === identity) return WATCH_EXISTING;
-        if (directory === root) refreshTargetMappingInvalidated = true;
-        closeSubtree(directory);
-        if (directory === root) closeDirectoryWatch(root);
-        return WATCH_RETRY_AFTER_RELEASE;
-      }
-      if (
-        directory !== root &&
-        watchResourceRetryDefersWatchAttempt()
-      ) {
-        return WATCH_RETRY_PENDING;
-      }
-      if (directory !== root && budget.notificationQueued) {
-        return WATCH_RETRY_AFTER_RELEASE;
-      }
-      if (!hasWatchCapacity(directory)) {
-        markBudgetCoveragePartial();
-        return WATCH_BUDGET_EXHAUSTED;
-      }
-      let watcher;
-      if (directory !== root) consumeWatchResourceRetryProbe();
-      try {
-        watcher = fs.watch(directory, { recursive: false }, (eventType, filename) => {
-          if (watchers.get(directory)?.watcher !== watcher) return;
-          emitChange(directory, eventType, filename);
-        });
-      } catch (error) {
-        if (directory !== root && isWatchResourceError(error)) {
-          noteWatchResourceRetryProbeFailure();
-        }
-        if (directory === root) {
-          reportWatchLimitError(error);
-        } else if (!noteWatchResourceFailure(error)) {
-          return WATCH_RETRY_REQUIRED;
-        }
-        return WATCH_ERROR;
-      }
-      watchers.set(directory, { identity, watcher });
-      budget.active += 1;
-      if (directory !== root) consumeReservation();
-      watcher.on("error", (error) => {
-        if (watchers.get(directory)?.watcher !== watcher) return;
-        if (directory === root) {
-          reportWatchLimitError(error);
-          finish({ reason: "watch-error", error });
-          return;
-        }
-        if (isWatchResourceError(error)) {
-          noteAsynchronousWatchResourceFailure("working-tree", directory, identity);
-        }
-        const resourceError = noteWatchResourceFailure(error);
-        const recoveryExhausted = !resourceError &&
-          asynchronousWatchFailureIsExhausted("working-tree", directory, identity);
-        closeSubtree(directory);
-        options.onChange({ changedPaths: [] });
-        if (recoveryExhausted) {
-          finish({
-            reason: "watch-error",
-            error: new Error(
-              `Could not restore complete working-tree watch coverage: ${options.path}`,
-            ),
-          });
-        } else if (!resourceError) {
-          scheduleTopologyRefresh(
-            configuration.honorGitIgnore && refreshRetryTimer == null,
-          );
-        }
-      });
-      return WATCH_ADDED;
-    }
-
-    async function scanDirectoryTree(start) {
-      const queue = [start];
-      const budgetDeferredDirectories = new Set();
-      const budgetRetriedDirectories = new Set();
-      let budgetReplayQueued = false;
-      const identityRetryCounts = new Map();
-      const incompleteDirectories = new Set();
-      let metadataUnavailable = false;
-      let rootMetadataUnavailable = false;
-      let topologyRetryNeeded = false;
-      const readRetryCounts = new Map();
-      const resourceFailureGenerationAtStart = watchResourceFailureGeneration;
-      let index = 0;
-      const startAncestorValidation = validateWatchedAncestors(start);
-      if (!startAncestorValidation.valid) {
-        if (startAncestorValidation.metadataUnavailable) {
-          return {
-            coverageComplete: false,
-            metadataUnavailable: true,
-            rootMetadataUnavailable:
-              startAncestorValidation.rootMetadataUnavailable === true,
-          };
-        }
-        closeSubtree(startAncestorValidation.ancestor ?? start);
-        if (startAncestorValidation.ancestor === root) {
-          refreshTargetMappingInvalidated = true;
-          closeDirectoryWatch(root);
-        }
-        if (rootMetadataRetryTimer == null) {
-          scheduleTopologyRefresh(configuration.honorGitIgnore);
-        }
-        return {
-          coverageComplete: false,
-          metadataUnavailable: false,
-          rootMetadataUnavailable: false,
-          topologyRetryNeeded: true,
-        };
-      }
-      while (!disposed) {
-        await yieldBudgetNotifications();
-        if (disposed) break;
-        if (index >= queue.length) {
-          if (
-            !budgetReplayQueued &&
-            budget.active < budget.limit &&
-            budgetDeferredDirectories.size > 0
-          ) {
-            budgetReplayQueued = true;
-            for (const directory of budgetDeferredDirectories) {
-              budgetRetriedDirectories.add(directory);
-              queue.push(directory);
-            }
-          } else {
-            break;
-          }
-        }
-        const directory = queue[index];
-        index += 1;
-        if (isIgnoredDirectory(directory)) {
-          incompleteDirectories.delete(directory);
-          closeSubtree(directory);
-          continue;
-        }
-        const initialState = directoryMetadataState(directory);
-        const metadata = initialState.metadata;
-        const watchStatus = addDirectoryWatch(directory, metadata);
-        if (watchStatus === WATCH_RETRY_AFTER_RELEASE) {
-          incompleteDirectories.add(directory);
-          queue.push(directory);
-          continue;
-        }
-        if (
-          watchStatus === WATCH_BUDGET_EXHAUSTED ||
-          watchStatus === WATCH_ERROR ||
-          watchStatus === WATCH_RETRY_PENDING ||
-          watchStatus === WATCH_RETRY_REQUIRED
-        ) {
-          if (
-            watchStatus === WATCH_BUDGET_EXHAUSTED &&
-            !budgetRetriedDirectories.has(directory)
-          ) {
-            budgetDeferredDirectories.add(directory);
-          }
-          if (
-            watchStatus === WATCH_BUDGET_EXHAUSTED ||
-            watchStatus === WATCH_RETRY_PENDING ||
-            watchStatus === WATCH_RETRY_REQUIRED ||
-            !initialState.absent
-          ) {
-            incompleteDirectories.add(directory);
-          } else {
-            incompleteDirectories.delete(directory);
-          }
-          if (watchStatus === WATCH_RETRY_REQUIRED) {
-            topologyRetryNeeded = true;
-          }
-          if (watchStatus === WATCH_ERROR) {
-            if (!initialState.absent && metadata == null) {
-              metadataUnavailable = true;
-              if (directory === root) rootMetadataUnavailable = true;
-            }
-            if (directory === root) {
-              if (!initialState.absent && metadata == null) {
-                scheduleRootMetadataRetry(configuration.honorGitIgnore, true);
-                return {
-                  coverageComplete: false,
-                  metadataUnavailable,
-                  rootMetadataUnavailable,
-                };
+                (decodedName == null || decodedName === path.basename(directory))
+              );
+              if (
+                !directoryBoundary &&
+                decodedName != null &&
+                !names.has(decodedName)
+              ) {
+                return;
               }
-              closeSubtree(root);
-              closeDirectoryWatch(root);
-              finish({
-                reason: "watch-error",
-                error: new Error(`Could not watch working-tree root: ${options.path}`),
+              if (directoryBoundary) {
+                entry.active = false;
+                metadataSubscriptions.delete(directory);
+                try {
+                  watcher.close();
+                } catch {}
+              }
+              options.onChange({ changedPaths: [] });
+              schedulePolicyRefresh({
+                full: true,
+                metadata: true,
               });
-              return { coverageComplete: false, metadataUnavailable };
+            } catch (error) {
+              entry.active = false;
+              metadataSubscriptions.delete(directory);
+              try {
+                watcher.close();
+              } catch {}
+              requestFatalDisposal(error);
             }
-            if (initialState.absent || metadata != null) closeSubtree(directory);
-          }
-          continue;
+          });
+          entry.watcher = watcher;
+          metadataSubscriptions.set(directory, entry);
+          watcher.on("error", () => {
+            if (!entry.active || disposed) return;
+            entry.active = false;
+            metadataSubscriptions.delete(directory);
+            try {
+              watcher.close();
+            } catch {}
+            try {
+              options.onChange({ changedPaths: [] });
+              schedulePolicyRefresh({ full: true });
+              schedulePolicyRetry("metadata");
+            } catch (error) {
+              requestFatalDisposal(error);
+            }
+          });
+        } catch {
+          entry.active = false;
+          retry = true;
         }
-        const children = [];
-        let directoryReadComplete = true;
-        let retryDirectoryRead = false;
+      }
+      return retry;
+    }
+
+    function schedulePolicyRetry(kind) {
+      const state = policyRetryStates[kind];
+      if (kind === "metadata") metadataRetryEpoch += 1;
+      if (disposed || state == null || state.timer != null) return;
+      const delay = state.delayMs;
+      state.timer = setTimeout(() => {
+        state.timer = null;
+        state.delayMs = Math.min(delay * 2, RETRY_MAX_MS);
+        schedulePolicyRefresh({
+          // A metadata-only retry could arm a watcher after an unobserved
+          // interval without ever snapshotting changes from that interval.
+          // Arm first, then close the gap with a fresh full Git policy pass.
+          full: true,
+          metadata: kind === "metadata",
+          invalidate: true,
+          preserveGitScan: kind === "full",
+        });
+      }, delay);
+      state.timer.unref?.();
+    }
+
+    function resetPolicyRetry(kind) {
+      const state = policyRetryStates[kind];
+      if (state?.timer != null) clearTimeout(state.timer);
+      if (state != null) {
+        state.timer = null;
+        state.delayMs = RETRY_INITIAL_MS;
+      }
+    }
+
+    async function runRequestedPolicyWork() {
+      while (
+        !disposed &&
+        (
+          policyFullRefreshRequested ||
+          policyMetadataRefreshRequested ||
+          policyMetadataForceRefreshRequested ||
+          policyInvalidationRequested
+        )
+      ) {
+        const full = policyFullRefreshRequested;
+        const metadata = policyMetadataRefreshRequested;
+        const forceMetadata = policyMetadataForceRefreshRequested;
+        const invalidate = policyInvalidationRequested;
+        const metadataRetryEpochAtStart = metadataRetryEpoch;
+        policyFullRefreshRequested = false;
+        policyMetadataRefreshRequested = false;
+        policyMetadataForceRefreshRequested = false;
+        policyInvalidationRequested = false;
+        let fullRetry = false;
+        let metadataRetry = false;
+
         try {
-          // Promise readdir resolves DT_UNKNOWN through asynchronous lstat calls.
-          // Node's streaming opendir path uses lstatSync for those entries.
-          // TODO(default/core rollout): measure worst-case single-directory memory and
-          // DT_UNKNOWN request fan-out before enabling this broadly; use a bounded native
-          // traversal if either is material in real workspaces.
-          // Node cannot cancel an in-flight readdir, but disposal must not wait
-          // indefinitely for a stalled remote filesystem request.
-          const readResult = await waitForFsOperation(
-            fs.promises.readdir(directory, { withFileTypes: true }),
-          );
-          if (readResult.disposed) return;
-          if (readResult.error != null) throw readResult.error;
-          const entries = readResult.value;
-          for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
-            if (entryIndex > 0 && entryIndex % 256 === 0) {
-              await new Promise((resolve) => setImmediate(resolve));
-            }
-            if (disposed) return;
-            const entry = entries[entryIndex];
-            const child = path.join(directory, entry.name);
-            if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-            if (!isIgnoredDirectory(child)) children.push(child);
+          // Arm or refresh the small Git-metadata watches before the policy
+          // snapshot. A subsequent index/info change is then observable, while
+          // the snapshot closes the interval before those watches were ready.
+          if (metadata) {
+            metadataRetry ||= await refreshMetadataSubscriptions({ force: forceMetadata });
+          }
+          if (full) {
+            const policy = await loadPolicy();
+            fullRetry ||= policy.retry;
+            await commitExclusions(policy.exclusions);
+          }
+          if (invalidate && !disposed) {
+            options.onChange({ changedPaths: [] });
           }
         } catch (error) {
-          const resourceError = noteWatchResourceFailure(error);
-          directoryReadComplete = false;
-          incompleteDirectories.add(directory);
-          const retries = readRetryCounts.get(directory) ?? 0;
-          if (!resourceError && isTransientDirectoryReadError(error) && retries < 2) {
-            readRetryCounts.set(directory, retries + 1);
-            retryDirectoryRead = true;
-          } else if (!resourceError) {
-            topologyRetryNeeded = true;
-          }
-        }
-        if (disposed) return;
-        const currentState = directoryMetadataState(directory);
-        const currentMetadata = currentState.metadata;
-        if (currentMetadata == null) {
-          if (!currentState.absent) {
-            metadataUnavailable = true;
-            if (directory === root) rootMetadataUnavailable = true;
-            incompleteDirectories.add(directory);
-            continue;
-          }
-          if (directory === root) {
-            closeDirectoryWatch(root);
-            finish({
-              reason: "watch-error",
-              error: new Error(`Could not watch working-tree root: ${options.path}`),
-            });
-            return;
-          } else {
-            closeSubtree(directory);
-          }
-          incompleteDirectories.delete(directory);
-          continue;
-        }
-        if (metadataIdentity(currentMetadata) !== metadataIdentity(metadata)) {
-          if (directory === root) {
-            refreshTargetMappingInvalidated = true;
-            closeDirectoryWatch(root);
-            if (rootMetadataRetryTimer == null) scheduleTopologyRefresh(true);
-          } else {
-            closeSubtree(directory);
-          }
-          const retries = identityRetryCounts.get(directory) ?? 0;
-          if (retries < 2) {
-            identityRetryCounts.set(directory, retries + 1);
-            queue.push(directory);
-            incompleteDirectories.add(directory);
-          } else {
-            incompleteDirectories.add(directory);
-            topologyRetryNeeded = true;
-          }
-          continue;
-        }
-        if (retryDirectoryRead) {
-          queue.push(directory);
-        } else if (directoryReadComplete) {
-          incompleteDirectories.delete(directory);
-        }
-        for (const child of children) queue.push(child);
-      }
-      if (disposed) {
-        return {
-          coverageComplete: false,
-          metadataUnavailable,
-          rootMetadataUnavailable,
-          topologyRetryNeeded,
-        };
-      }
-      const coverageComplete = incompleteDirectories.size === 0;
-      if (
-        start === root &&
-        coverageComplete &&
-        !refreshTargetsNeedRetry &&
-        !gitIgnoresNeedRetry &&
-        [...refreshTargets.keys()].every((directory) => refreshWatchers.has(directory))
-      ) {
-        markBudgetCoverageRecovered();
-      }
-      if (
-        start === root &&
-        coverageComplete &&
-        [...refreshTargets.keys()].every((directory) => refreshWatchers.has(directory))
-      ) {
-        resetWatchResourceRetry(resourceFailureGenerationAtStart);
-      }
-      return {
-        coverageComplete,
-        metadataUnavailable,
-        rootMetadataUnavailable,
-        topologyRetryNeeded,
-      };
-    }
-
-    async function flushDirectorySyncs() {
-      if (disposed) return;
-      directorySyncFlushCount += 1;
-      const needsFullInvalidation = directorySyncNeedsFullInvalidation;
-      directorySyncNeedsFullInvalidation = false;
-      const needsRefreshInvalidation = directorySyncNeedsRefreshInvalidation;
-      directorySyncNeedsRefreshInvalidation = false;
-      const needsFullReconcile = directorySyncNeedsFullReconcile;
-      directorySyncNeedsFullReconcile = false;
-      const pendingDirectories = [...pendingDirectorySyncs];
-      pendingDirectorySyncs.clear();
-      if (needsFullReconcile) {
-        if (needsFullInvalidation) {
-          // At least one discarded rename path owned a directory watch. Rebuild
-          // descendants so inode-number reuse cannot hide its replacement.
-          closeSubtree(root);
-        }
-        if (needsRefreshInvalidation) closeRefreshSubtrees([root]);
-        await reconcileTopology(configuration.honorGitIgnore);
-        return;
-      }
-      const directories = [];
-      const subtreesToClose = new Set();
-      let metadataRetryNeeded = false;
-      // A parent rename invalidates any watch at the affected pathname. The
-      // replacement may reuse the same dev/ino pair after the old inode is
-      // released, so identity comparison alone cannot prove the watch is live.
-      closeSubtrees(pendingDirectories);
-      closeRefreshSubtrees(pendingDirectories);
-      for (const directory of pendingDirectories) {
-        const state = directoryMetadataState(directory);
-        if (state.metadata != null) {
-          directories.push(directory);
-        } else if (!state.absent) {
-          metadataRetryNeeded = true;
-        }
-      }
-      const refreshCoverageChanged = ensureRefreshWatches();
-      if (
-        refreshCoverageChanged ||
-        (directories.length > 0 && configuration.honorGitIgnore)
-      ) {
-        await reloadGitStateAndPrune();
-      }
-      const directoriesToScan = [];
-      for (const directory of directories) {
-        const state = directoryMetadataState(directory);
-        if (state.absent || isIgnoredDirectory(directory)) {
-          subtreesToClose.add(directory);
-        } else if (state.metadata == null) {
-          metadataRetryNeeded = true;
-        } else {
-          directoriesToScan.push(directory);
-        }
-      }
-      closeSubtrees(subtreesToClose);
-      for (const directory of directoriesToScan) {
-        const result = await scanDirectoryTree(directory);
-        metadataRetryNeeded ||=
-          result?.metadataUnavailable === true ||
-          result?.topologyRetryNeeded === true;
-      }
-      if (metadataRetryNeeded) scheduleTopologyRefresh(configuration.honorGitIgnore);
-    }
-
-    function armDirectorySyncWork() {
-      if (
-        disposed ||
-        directorySyncHandle != null ||
-        directorySyncWorkPending ||
-        (!directorySyncNeedsFullReconcile && pendingDirectorySyncs.size === 0)
-      ) {
-        return;
-      }
-      directorySyncHandle = setImmediate(() => {
-        directorySyncHandle = null;
-        if (disposed) return;
-        directorySyncWorkPending = true;
-        enqueueTopologyWork(async () => {
-          try {
-            await flushDirectorySyncs();
-          } finally {
-            directorySyncWorkPending = false;
-            if (
-              !disposed &&
-              (directorySyncNeedsFullReconcile || pendingDirectorySyncs.size > 0)
-            ) {
-              armDirectorySyncWork();
+          if (error?.retryable === true || error?.code === "WATCHBOUND_ROOT_STATE_CONFLICT") {
+            if (!workingTreeCoverageEstablished) startupPolicyReplacementError ??= error;
+            fullRetry ||= full;
+            metadataRetry ||= metadata;
+            if (error?.code === "WATCHBOUND_ROOT_STATE_CONFLICT" && !disposed) {
+              options.onChange({ changedPaths: [] });
+              if (mainSubscription?.rootState?.attachment !== "attached") {
+                scheduleRootRecovery();
+              }
             }
+          } else {
+            throw error;
+          }
+        }
+
+        if (full) {
+          if (fullRetry) schedulePolicyRetry("full");
+          else resetPolicyRetry("full");
+        }
+        if (metadata) {
+          if (metadataRetry) schedulePolicyRetry("metadata");
+          else if (metadataRetryEpoch === metadataRetryEpochAtStart) {
+            // Do not cancel a retry requested by an asynchronous watcher
+            // failure that arrived while this pass was still snapshotting.
+            resetPolicyRetry("metadata");
+          }
+        }
+      }
+    }
+
+    function schedulePolicyRefresh(request = {}) {
+      if (disposed) return;
+      if (request.full === true && request.preserveGitScan !== true) {
+        gitPolicyEpoch += 1;
+        cancelGitScan();
+      }
+      policyFullRefreshRequested ||= request.full === true;
+      policyMetadataRefreshRequested ||= request.metadata === true;
+      policyMetadataForceRefreshRequested ||= request.forceMetadata === true;
+      policyInvalidationRequested ||= request.invalidate === true;
+      if (!mainSubscriptionReady) return;
+      if (policyWorkScheduled) return;
+      policyWorkScheduled = true;
+      policyWorkTail = policyWorkTail
+        .then(runRequestedPolicyWork)
+        .catch((error) => {
+          if (!disposed) requestFatalDisposal(error);
+        })
+        .finally(() => {
+          policyWorkScheduled = false;
+          if (
+            !disposed &&
+            (
+              policyFullRefreshRequested ||
+              policyMetadataRefreshRequested ||
+              policyMetadataForceRefreshRequested ||
+              policyInvalidationRequested
+            )
+          ) {
+            schedulePolicyRefresh();
           }
         });
-      });
-      directorySyncHandle.unref?.();
     }
 
-    function scheduleDirectorySync(directory) {
-      if (disposed || !isWithin(directory, root)) return;
-      directorySyncNeedsFullInvalidation ||= watchers.has(directory);
-      directorySyncNeedsRefreshInvalidation ||= hasRefreshWatchInSubtree(directory);
-      if (budget.suspendedOwners.delete(budgetOwner) && budgetCoveragePartial) {
-        notifyBudgetListeners();
+    function reportCoverage(coverage) {
+      const complete = coverage?.state === "complete";
+      if (!complete && !partialCoverageReported) {
+        partialCoverageReported = true;
+        const runtime = engine.runtimeStats();
+        console.warn(
+          "WARN: directory-only working-tree watch coverage is " +
+            `${coverage?.state ?? "unknown"} for ${root ?? lexicalRoot} ` +
+            `(native=${runtime.nativeWatches}, limit=${requestedLimit}); ` +
+            "Codex focus recovery remains active.",
+        );
+      } else if (complete && partialCoverageReported) {
+        partialCoverageReported = false;
+        console.info(
+          `INFO: directory-only working-tree watch coverage recovered for ${root ?? lexicalRoot}.`,
+        );
       }
-      if (!directorySyncNeedsFullReconcile) {
-        if (
-          !pendingDirectorySyncs.has(directory) &&
-          pendingDirectorySyncs.size >= MAX_PENDING_DIRECTORY_SYNCS
-        ) {
-          pendingDirectorySyncs.clear();
-          directorySyncNeedsFullReconcile = true;
-        } else {
-          pendingDirectorySyncs.add(directory);
-        }
-      }
-      armDirectorySyncWork();
     }
 
-    async function reconcileTopology(reloadGitIgnores, retryRefreshWatches = true) {
-      if (disposed) return;
-      await yieldBudgetNotifications();
-      if (disposed) return;
-      if (rootWatchInvalidated) {
-        rootWatchInvalidated = false;
-        refreshTargetMappingInvalidated = true;
-        const entry = watchers.get(root);
-        closeSubtree(root);
-        closeDirectoryWatch(root, entry?.watcher);
-      }
-      if (!watchers.has(root)) {
-        const initialRootState = directoryMetadataState(root);
-        if (initialRootState.metadata == null && !initialRootState.absent) {
-          scheduleRootMetadataRetry(reloadGitIgnores, true);
-          return;
-        }
-        rootMetadataRetryRequiresRestart = false;
-        const initialRootStatus = addDirectoryWatch(root, initialRootState.metadata);
-        if (initialRootStatus === WATCH_ERROR) {
-          finish({
-            reason: "watch-error",
-            error: new Error(`Could not watch working-tree root: ${options.path}`),
-          });
-          return;
-        }
-        if (initialRootStatus === WATCH_BUDGET_EXHAUSTED) {
-          resetRootMetadataRetry();
-          return;
-        }
-      }
-      const refreshTargetsWereInvalidated = consumeRefreshTargetMappingInvalidation();
-      if (reloadGitIgnores || refreshTargetsWereInvalidated) {
-        await reloadGitStateAndPrune();
-      }
-      if (disposed) return;
-      for (const [directory, entry] of [...watchers.entries()]) {
-        const state = directoryMetadataState(directory);
-        const metadata = state.metadata;
-        if (
-          state.absent ||
-          (metadata != null && metadataIdentity(metadata) !== entry.identity) ||
-          (directory !== root && isIgnoredDirectory(directory))
-        ) {
-          closeSubtree(directory);
-          if (directory === root) {
-            refreshTargetMappingInvalidated = true;
-            closeDirectoryWatch(root, entry.watcher);
-          }
-        }
-      }
-      await yieldBudgetNotifications();
-      if (disposed) return;
-      const rootState = directoryMetadataState(root);
-      if (rootState.metadata == null && !rootState.absent) {
-        scheduleRootMetadataRetry(reloadGitIgnores, true);
-        return;
-      }
-      rootMetadataRetryRequiresRestart = false;
-      const rootStatus = addDirectoryWatch(root, rootState.metadata);
-      if (rootStatus === WATCH_ERROR) {
-        finish({
-          reason: "watch-error",
-          error: new Error(`Could not watch working-tree root: ${options.path}`),
-        });
-        return;
-      }
-      if (rootStatus === WATCH_BUDGET_EXHAUSTED) {
-        resetRootMetadataRetry();
-        return;
-      }
-      if (rootStatus === WATCH_RETRY_AFTER_RELEASE) {
-        await yieldBudgetNotifications();
-        if (disposed) return;
-      }
-      if (consumeRefreshTargetMappingInvalidation()) {
-        await reloadGitStateAndPrune();
-        if (disposed) return;
-      }
-      if (retryRefreshWatches && ensureRefreshWatches()) {
-        await reloadGitIgnoresAndPrune();
-      }
-      const scanResult = await scanDirectoryTree(root);
-      updateRootMetadataRetry(scanResult, configuration.honorGitIgnore);
-      if (!disposed) options.onChange({ changedPaths: [] });
-      return scanResult;
-    }
-
-    function scheduleTopologyRefresh(reloadGitIgnores) {
-      if (disposed) return;
-      if (budget.suspendedOwners.delete(budgetOwner) && budgetCoveragePartial) {
-        notifyBudgetListeners();
-      }
-      topologyRefreshNeedsGit ||= reloadGitIgnores;
-      if (topologyRefreshWorkPending) {
-        topologyRefreshRerunRequested = true;
-        return;
-      }
-      if (topologyRefreshTimer != null) return;
-      topologyRefreshTimer = setTimeout(() => {
-        topologyRefreshTimer = null;
-        const shouldReloadGitIgnores = topologyRefreshNeedsGit;
-        topologyRefreshNeedsGit = false;
-        topologyRefreshWorkPending = true;
-        enqueueTopologyWork(async () => {
-          try {
-            await reconcileTopology(shouldReloadGitIgnores);
-          } finally {
-            topologyRefreshWorkPending = false;
-            if (
-              !disposed &&
-              rootMetadataRetryTimer == null &&
-              !refreshTargetsNeedRetry &&
-              !gitIgnoresNeedRetry &&
-              !refreshWatchesNeedRetry &&
-              watchResourceRetryTimer == null &&
-              !watchResourceRetryWorkPending &&
-              budgetCoveragePartial &&
-              budget.active + budget.reserved < budget.limit
-            ) {
-              // A real event may resolve this owner's retry condition while a
-              // generic coordinator pass correctly leaves timer-backed owners
-              // suspended. Resume only this workspace once its backoff clears.
-              budget.suspendedOwners.delete(budgetOwner);
-              notifyBudgetListeners(budgetOwner, false);
-            }
-            if (!disposed && topologyRefreshRerunRequested) {
-              topologyRefreshRerunRequested = false;
-              scheduleTopologyRefresh(false);
-            }
-          }
-        });
-      }, 100);
-      topologyRefreshTimer.unref?.();
-    }
-
-    function recoverWatchCoverageIfPossible(
-      rootsOnly,
-      _notificationOwners = new Set(),
-      _genericNotification = false,
-    ) {
-      if (disposed || (!budgetCoveragePartial && watchers.has(root))) return false;
+    function logicalChangedPaths(batch) {
       if (
-        rootMetadataRetryTimer != null ||
-        watchResourceRetryTimer != null ||
-        watchResourceRetryWorkPending
+        batch.coverage.state !== "complete" ||
+        batch.pathEncoding === "bytes-only" ||
+        batch.pathEncodingCollapsed ||
+        batch.rootState?.attachment !== "attached" ||
+        root == null
       ) {
         return null;
       }
-      if (!watchers.has(root)) {
-        const rootState = directoryMetadataState(root);
-        if (rootState.metadata == null) {
-          if (rootState.absent) {
-            finish({
-              reason: "watch-error",
-              error: new Error(`Could not watch working-tree root: ${options.path}`),
-            });
-            return false;
-          }
-          scheduleRootMetadataRetry(true, true);
+      const changedPaths = new Set();
+      for (const invalidatedPath of batch.invalidatedPaths) {
+        const physicalPath = path.resolve(invalidatedPath);
+        const relative = path.relative(root, physicalPath);
+        if (
+          relative === "" ||
+          relative === ".." ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative)
+        ) {
           return null;
         }
-        resetRootMetadataRetry();
-        const status = addDirectoryWatch(root, rootState.metadata);
-        if (status === WATCH_ERROR) {
-          finish({
-            reason: "watch-error",
-            error: new Error(`Could not watch working-tree root: ${options.path}`),
-          });
-          return false;
+        const logical = logicalPath.join(options.path, ...relative.split(path.sep));
+        changedPaths.add(logical);
+        if (options.renameEventHandling === "changed-path-with-parent-directory") {
+          changedPaths.add(logicalPath.dirname(logical));
         }
-        if (status !== WATCH_ADDED && status !== WATCH_EXISTING) return false;
-        options.onChange({ changedPaths: [] });
       }
-      if (rootsOnly || budgetRecoveryWorkPending || reservationCount() === 0) return false;
-      if (
-        rootMetadataRetryTimer != null ||
-        watchResourceRetryTimer != null ||
-        watchResourceRetryWorkPending
-      ) {
-        return null;
-      }
-      budgetRecoveryWorkPending = true;
-      budget.recoveringOwners.add(budgetOwner);
-      const recovery = enqueueTopologyWork(async () => {
-        try {
-          if (
-            disposed ||
-            (!budgetCoveragePartial && watchers.has(root)) ||
-            reservationCount() === 0 ||
-            rootMetadataRetryTimer != null ||
-            watchResourceRetryTimer != null ||
-            watchResourceRetryWorkPending
-          ) {
-            return;
-          }
-          const retryGitMetadata = refreshRetryTimer == null;
-          await reconcileTopology(retryGitMetadata, retryGitMetadata);
-        } finally {
-          if (!disposed && budgetCoveragePartial && reservationCount() > 0) {
-            budget.suspendedOwners.add(budgetOwner);
-          }
-        }
-      });
-      const settleRecovery = () => {
-        const unusedReservation = reservationCount();
-        budgetRecoveryWorkPending = false;
-        budget.recoveringOwners.delete(budgetOwner);
-        releaseReservations(budgetOwner, false);
-        if (disposed) return;
-        if (
-          unusedReservation > 0 ||
-          (
-            budgetCoveragePartial &&
-            budget.active + budget.reserved < budget.limit
-          )
-        ) {
-          // A fully consumed reservation made useful progress and needs the
-          // next bounded allocation pass. An allocation that made no progress
-          // is suspended above; returning its unused slots only redistributes
-          // them among other eligible owners and cannot wake stalled owners.
-          notifyBudgetListeners(budgetOwner, false);
-        }
-      };
-      return recovery.then(
-        (value) => {
-          settleRecovery();
-          return value;
-        },
-        (error) => {
-          settleRecovery();
-          throw error;
-        },
-      );
+      return [...changedPaths];
     }
 
-    await yieldBudgetNotifications();
-    const initialRootState = directoryMetadataState(root);
-    let initialRootStatus;
-    if (initialRootState.metadata == null && !initialRootState.absent) {
-      scheduleRootMetadataRetry(configuration.honorGitIgnore, true);
-      initialRootStatus = WATCH_RETRY_AFTER_RELEASE;
-    } else {
-      initialRootStatus = addDirectoryWatch(root, initialRootState.metadata);
+    function scheduleRootRecovery() {
+      if (disposed) return;
+      rootRecoveryRequested = true;
+      if (!mainSubscriptionReady || mainSubscription == null) {
+        return;
+      }
+      if (rootRecoveryPending || rootRecoveryTimer != null) return;
+      rootRecoveryRequested = false;
+      const delay = rootRecoveryDelayMs;
+      rootRecoveryTimer = setTimeout(() => {
+        rootRecoveryTimer = null;
+        if (disposed || mainSubscription == null) return;
+        rootRecoveryPending = true;
+        let retry = false;
+        rootRecoveryWork = (async () => {
+          let result;
+          try {
+            result = await mainSubscription.recoverRoot({
+              identityPolicy: "accept-replacement",
+            });
+          } catch (error) {
+            if (disposed) return;
+            if (error?.code === "WATCHBOUND_ROOT_STATE_CONFLICT") {
+              rootRecoveryDelayMs = RETRY_INITIAL_MS;
+              retry = mainSubscription.rootState?.attachment !== "attached";
+              return;
+            }
+            if (error?.retryable === true) {
+              rootRecoveryDelayMs = Math.min(delay * 2, RETRY_MAX_MS);
+              retry = true;
+              return;
+            }
+            requestFatalDisposal(error);
+            return;
+          }
+          if (disposed) return;
+          if (
+            result.attachment === "original-restored" ||
+            result.attachment === "replacement-adopted"
+          ) {
+            rootRecoveryDelayMs = RETRY_INITIAL_MS;
+            let recoveredQualification;
+            try {
+              recoveredQualification = watchbound.qualifyRoot(root);
+            } catch (error) {
+              requestFatalDisposal(error);
+              return;
+            }
+            if (!qualificationMatchesPhysicalRoot(
+              recoveredQualification,
+              mainSubscription.resolvedRoot.physicalPathBytes,
+            )) {
+              requestFatalDisposal(new Error(
+                "directory-only working-tree watch recovered root is not qualified",
+              ));
+              return;
+            }
+            try {
+              options.onChange({ changedPaths: [] });
+            } catch (error) {
+              requestFatalDisposal(error);
+              return;
+            }
+            schedulePolicyRefresh({
+              full: true,
+              metadata: true,
+              forceMetadata: true,
+            });
+          } else {
+            rootRecoveryDelayMs = Math.min(delay * 2, RETRY_MAX_MS);
+            retry = true;
+          }
+        })()
+          .finally(() => {
+            rootRecoveryPending = false;
+            const stillLost = mainSubscription?.rootState?.attachment !== "attached";
+            if (fatalDisposalError == null && (retry || stillLost)) {
+              scheduleRootRecovery();
+            } else {
+              rootRecoveryRequested = false;
+            }
+          });
+      }, delay);
+      rootRecoveryTimer.unref?.();
     }
-    if (initialRootStatus === WATCH_ERROR) {
-      throw new Error(`Could not watch working-tree root: ${options.path}`);
+
+    function handleMainBatch(batch, context) {
+      if (disposed) return;
+      try {
+        directorySyncFlushCount += 1;
+        if (!Array.isArray(batch?.invalidatedPaths)) {
+          throw new TypeError("Watchbound batch invalidatedPaths must be an array");
+        }
+        reportCoverage(batch.coverage);
+        if (root == null) {
+          schedulePolicyRefresh({
+            full: true,
+            metadata: true,
+            forceMetadata: true,
+          });
+          if (batch.rootState?.attachment !== "attached") scheduleRootRecovery();
+          options.onChange({ changedPaths: [] });
+          return;
+        }
+        const rootBoundary = (
+          batch.coverage.state !== "complete" ||
+          batch.pathEncoding === "bytes-only" ||
+          batch.pathEncodingCollapsed ||
+          batch.rootState?.attachment !== "attached" ||
+          batch.invalidatedPaths.some(
+            (invalidatedPath) => path.resolve(invalidatedPath) === root,
+          )
+        );
+        const physicalPaths = batch.invalidatedPaths
+          .map((invalidatedPath) => path.resolve(invalidatedPath))
+          .filter((invalidatedPath) => isWithin(invalidatedPath, root));
+        const gitBoundaryChanged = physicalPaths.some(
+          (invalidatedPath) => invalidatedPath === path.join(root, ".git"),
+        );
+        const gitIgnoreChanged = physicalPaths.some(
+          (invalidatedPath) => path.basename(invalidatedPath) === ".gitignore",
+        );
+        if (rootBoundary || gitBoundaryChanged) {
+          schedulePolicyRefresh({
+            full: true,
+            metadata: true,
+            forceMetadata: true,
+          });
+        } else if (gitIgnoreChanged) {
+          schedulePolicyRefresh({
+            full: true,
+            metadata: true,
+          });
+        }
+        if (batch.rootState?.attachment !== "attached") scheduleRootRecovery();
+        const changedPaths = rootBoundary || gitBoundaryChanged
+          ? null
+          : logicalChangedPaths(batch);
+        options.onChange(changedPaths == null ? { changedPaths: [] } : { changedPaths });
+      } catch (error) {
+        context.stop();
+        requestFatalDisposal(error);
+      }
     }
-    if (initialRootStatus === WATCH_ADDED || initialRootStatus === WATCH_EXISTING) {
-      await enqueueTopologyWork(async () => {
-        await reloadGitStateAndPrune();
-        const scanResult = await scanDirectoryTree(root);
-        updateRootMetadataRetry(scanResult, configuration.honorGitIgnore);
+
+    function requestFatalDisposal(error) {
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      fatalDisposalError ??= normalizedError;
+      if (!mainSubscriptionReady && startupFatalError == null) {
+        startupFatalError = normalizedError;
+      }
+      queueMicrotask(() => {
+        void disposeAll({
+          reason: "watch-error",
+          error: normalizedError,
+        }).catch(() => {});
       });
     }
-    if (!disposed) {
-      budget.listeners.add(recoverWatchCoverageIfPossible);
-      budget.listenerOwners.set(recoverWatchCoverageIfPossible, budgetOwner);
-      if (budgetCoveragePartial && budget.active < budget.limit) {
-        notifyBudgetListeners();
+
+    async function disposeAll(reason = { reason: "disposed" }) {
+      if (disposePromise != null) return disposePromise;
+      disposed = true;
+      cancelGitScan();
+      lifecycleAbortController.abort();
+      for (const state of Object.values(policyRetryStates)) {
+        if (state.timer != null) clearTimeout(state.timer);
+        state.timer = null;
       }
+      if (rootRecoveryTimer != null) clearTimeout(rootRecoveryTimer);
+      rootRecoveryTimer = null;
+      for (const entry of metadataSubscriptions.values()) entry.active = false;
+      const activeSubscriptions = [...subscriptions];
+      subscriptions.clear();
+      const metadataDisposal = disposeMetadataSubscriptions();
+      const nativeDisposal = Promise.all(activeSubscriptions.map(
+        (subscription) => Promise.resolve().then(() => subscription.dispose()),
+      ));
+      const gitQueryDisposal = Promise.all([...gitQueryWork]);
+      disposePromise = Promise.resolve().then(async () => {
+        let joinedFailure = null;
+        try {
+          await Promise.all([
+            policyWorkTail.catch(() => {}),
+            rootRecoveryWork.catch(() => {}),
+            gitQueryDisposal,
+            metadataDisposal,
+            nativeDisposal,
+          ]);
+        } catch (error) {
+          if (reason.reason === "watch-error") {
+            const primary = reason.error instanceof Error
+              ? reason.error
+              : new Error(String(reason.error));
+            joinedFailure = new Error(
+              `${primary.message}; additionally, watch disposal failed: ${error.message}`,
+              { cause: primary },
+            );
+            reason = { ...reason, error: joinedFailure };
+            fatalDisposalError = joinedFailure;
+          } else {
+            joinedFailure = error;
+          }
+        } finally {
+          resolveClosed(reason);
+        }
+        if (joinedFailure != null && reason.reason !== "watch-error") {
+          throw joinedFailure;
+        }
+      });
+      return disposePromise;
+    }
+
+    // Establish the native subscription before Git policy discovery. Excluding
+    // the root keeps establishment bounded while the first snapshot is
+    // computed. Watchbound forbids observing a path below an excluded proper
+    // prefix, so the first complete replacement removes this root prefix and
+    // atomically installs the observed `.git` boundary. A second snapshot then
+    // closes the pre-observation window.
+    currentExclusions = new Set([""]);
+    mainSubscription = await engine.subscribe(lexicalRoot, handleMainBatch, {
+      rootPathPolicy: "resolve-physical",
+      initialExclusions: [""],
+      excludedDirectoryNames: [...excludedDirectoryNames],
+      watchLimit: requestedLimit,
+      batchWindowMs: 10,
+      maxBatchPaths: 1024,
+      outputQueueCapacity: 64,
+      automaticReconciliation: true,
+    });
+    subscriptions.add(mainSubscription);
+    const resolvedRoot = mainSubscription.resolvedRoot;
+    if (
+      resolvedRoot?.policy !== "resolve-physical" ||
+      resolvedRoot?.pathForm !== "physical" ||
+      resolvedRoot?.aliasTracking !== "establishment-snapshot" ||
+      typeof resolvedRoot?.physicalPath !== "string" ||
+      !path.isAbsolute(resolvedRoot.physicalPath) ||
+      !qualificationMatchesPhysicalRoot(
+        qualification,
+        resolvedRoot.physicalPathBytes,
+      )
+    ) {
+      let resolutionError = new Error(
+        "directory-only working-tree watch could not verify its qualified physical root",
+      );
+      // Remove the provisional subscription before yielding so an early fatal
+      // callback cannot race disposeAll() into a second native disposal.
+      subscriptions.delete(mainSubscription);
+      try {
+        await mainSubscription.dispose();
+      } catch (error) {
+        resolutionError = new Error(
+          `${resolutionError.message}; additionally, watch disposal failed: ${error.message}`,
+          { cause: resolutionError },
+        );
+      }
+      throw resolutionError;
+    }
+    root = resolvedRoot.physicalPath;
+    mainSubscriptionReady = true;
+    if (disposed || startupFatalError != null) {
+      let establishmentError = startupFatalError ?? new Error(
+        "directory-only working-tree watch stopped during establishment",
+      );
+      subscriptions.delete(mainSubscription);
+      try {
+        await mainSubscription.dispose();
+      } catch (error) {
+        establishmentError = new Error(
+          `${establishmentError.message}; additionally, watch disposal failed: ` +
+            `${error.message}`,
+          { cause: establishmentError },
+        );
+      }
+      throw establishmentError;
+    }
+    exclusionGeneration = mainSubscription.exclusionGeneration;
+    schedulePolicyRefresh({ full: true });
+    await policyWorkTail;
+    if (fatalDisposalError != null) {
+      await disposeAll({ reason: "watch-error", error: fatalDisposalError });
+      throw fatalDisposalError;
+    }
+    schedulePolicyRefresh({ full: true, metadata: true });
+    await policyWorkTail;
+    if (fatalDisposalError != null) {
+      await disposeAll({ reason: "watch-error", error: fatalDisposalError });
+      throw fatalDisposalError;
+    }
+    if (!workingTreeCoverageEstablished) {
+      const establishmentError = new Error(
+        "directory-only working-tree watch could not replace generation-zero " +
+          "exclusions during establishment",
+        startupPolicyReplacementError == null
+          ? undefined
+          : { cause: startupPolicyReplacementError },
+      );
+      await disposeAll({ reason: "watch-error", error: establishmentError });
+      throw establishmentError;
+    }
+    if (
+      rootRecoveryRequested ||
+      mainSubscription.rootState?.attachment === "lost"
+    ) {
+      scheduleRootRecovery();
     }
 
     return {
-      // The directory watcher is recursive for watched paths, but reports
-      // partial coverage so Codex's existing focus recovery remains active.
+      // Watchbound is recursive for included paths. Reporting partial recursive
+      // coverage deliberately preserves Codex's existing focus recovery.
       coverage: { recursive: false, typedPathChanges: false },
       path: options.path,
       closed,
-      dispose: async () => {
-        finish({ reason: "disposed" });
-        await topologyWorkTail;
+      dispose: () => disposeAll(),
+      codexLinuxDirectoryWatchCount: () => {
+        let count = 0;
+        for (const subscription of subscriptions) {
+          count += subscription.stats().watchedDirectories;
+        }
+        return count + metadataSubscriptions.size;
       },
-      codexLinuxDirectoryWatchCount: () => watchers.size,
-      codexLinuxDirectoryWatchBudget: () => ({ active: budget.active, limit: budget.limit }),
+      codexLinuxDirectoryWatchBudget: () => {
+        const runtime = engine.runtimeStats();
+        return { active: runtime.nativeWatches, limit: requestedLimit };
+      },
       codexLinuxDirectorySyncFlushCount: () => directorySyncFlushCount,
     };
   })();
 }
-
-const DIRECTORY_WATCH_HELPER_SOURCE =
-  `${codexLinuxStartDirectoryOnlyWorkingTreeWatch.toString()};`;
 
 function normalizedSettings(context = {}) {
   const settings = context.feature?.settings ?? {};
@@ -2165,7 +1378,7 @@ function normalizedSettings(context = {}) {
     if (!Number.isInteger(configuredMax) || configuredMax <= 0) {
       console.warn(
         `WARN: directory-only-working-tree-watch maxWatches must be a positive integer; ` +
-        `using ${DEFAULT_MAX_WATCHES}`,
+          `using ${DEFAULT_MAX_WATCHES}`,
       );
     } else {
       maxWatches = Math.min(configuredMax, 65_536);
@@ -2201,13 +1414,14 @@ function normalizedSettings(context = {}) {
         name.length > 0 &&
         name !== "." &&
         name !== ".." &&
+        !name.includes("\0") &&
         !name.includes("/") &&
         !name.includes("\\")
       ));
       if (ignoredDirectoryNames.length !== configuredNames.length) {
         console.warn(
           "WARN: directory-only-working-tree-watch ignoredDirectoryNames contains invalid names; " +
-          "ignoring them",
+            "ignoring them",
         );
       }
     }
@@ -2219,8 +1433,16 @@ function normalizedSettings(context = {}) {
   };
 }
 
-function countSubstring(source, needle) {
-  return source.split(needle).length - 1;
+const WATCHBOUND_HELPER_SOURCE =
+  `${codexLinuxStartDirectoryOnlyWorkingTreeWatch.toString()};`;
+
+function countSubstring(source, value) {
+  return source.split(value).length - 1;
+}
+
+function countPattern(source, pattern) {
+  pattern.lastIndex = 0;
+  return [...source.matchAll(pattern)].length;
 }
 
 function patternMatches(source, pattern) {
@@ -2232,20 +1454,25 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
-function directoryOnlyLocalBranch(optionsName, settings) {
+function watchboundLocalBranch(optionsName, settings) {
   return (
     `if(process.platform===\`linux\`&&${optionsName}.recursive&&` +
     `${optionsName}.renameEventHandling===\`changed-path-with-parent-directory\`)` +
-    `return ${HELPER_NAME}(this,${optionsName},${JSON.stringify(settings)});`
+    `{let ${WATCHBOUND_RESULT_NAME}=await ${HELPER_NAME}(` +
+    `this,${optionsName},${JSON.stringify(settings)},` +
+    `${optionsName}[Symbol.for(\`${PARCEL_FALLBACK_SYMBOL_KEY}\`)]);` +
+    `if(${WATCHBOUND_RESULT_NAME}!=null)return ${WATCHBOUND_RESULT_NAME};}`
   );
 }
 
 function completedLocalFileWatchMethod(settings) {
   const branch =
     "if\\(process\\.platform===`linux`&&\\k<options>\\.recursive&&" +
-    "\\k<options>\\.renameEventHandling===`changed-path-with-parent-directory`\\)" +
-    `return ${HELPER_NAME}\\(this,\\k<options>,` +
-    `${escapeRegExp(JSON.stringify(settings))}\\);`;
+    "\\k<options>\\.renameEventHandling===`changed-path-with-parent-directory`\\)\\{" +
+    `let ${WATCHBOUND_RESULT_NAME}=await ${HELPER_NAME}\\(this,\\k<options>,` +
+    `${escapeRegExp(JSON.stringify(settings))},` +
+    `\\k<options>\\[Symbol\\.for\\(\`${escapeRegExp(PARCEL_FALLBACK_SYMBOL_KEY)}\`\\)\\]\\);` +
+    `if\\(${WATCHBOUND_RESULT_NAME}!=null\\)return ${WATCHBOUND_RESULT_NAME};\\}`;
   return new RegExp(
     `${LOCAL_FILE_WATCH_METHOD_PREFIX}${branch}${LOCAL_FILE_WATCH_CURRENT_BODY}`,
     "gu",
@@ -2269,7 +1496,10 @@ function currentLocalHostClassForMethod(source, classMatches, methodMatches) {
 
 function classifyCurrentBundle(bundlePath, source, settings = normalizedSettings()) {
   const pristineLocalMatches = patternMatches(source, LOCAL_FILE_WATCH_METHOD);
-  const completedLocalMatches = patternMatches(source, completedLocalFileWatchMethod(settings));
+  const completedLocalMatches = patternMatches(
+    source,
+    completedLocalFileWatchMethod(settings),
+  );
   const currentLocalHostMatches = patternMatches(source, CURRENT_LOCAL_HOST_CLASS);
   const localHostClass = currentLocalHostClassForMethod(
     source,
@@ -2277,12 +1507,12 @@ function classifyCurrentBundle(bundlePath, source, settings = normalizedSettings
     [...pristineLocalMatches, ...completedLocalMatches],
   );
   const helperDefinitionCount = countSubstring(source, `function ${HELPER_NAME}(`);
-  const helperExactCount = countSubstring(source, DIRECTORY_WATCH_HELPER_SOURCE);
-  const branchCallCount = countSubstring(source, `return ${HELPER_NAME}(this,`);
+  const helperExactCount = countSubstring(source, WATCHBOUND_HELPER_SOURCE);
+  const branchCallCount = countSubstring(source, `${HELPER_NAME}(this,`);
   const markerCount = countSubstring(source, PARCEL_WATCH_MARKER);
   const rawRouteLookalikeCount = patternMatches(source, PARCEL_WORKING_TREE_WATCH).length;
   const pristineRouteMatches = patternMatches(source, CURRENT_PARCEL_ROUTE_CONTRACT);
-  const completedRouteMatches = patternMatches(source, CURRENT_DIRECTORY_ROUTE_CONTRACT);
+  const completedRouteMatches = patternMatches(source, CURRENT_WATCHBOUND_ROUTE_CONTRACT);
   const parcelHelperMatches = patternMatches(source, CURRENT_PARCEL_HELPER);
   const correlatedPristineRouteCount = pristineRouteMatches.filter((route) =>
     parcelHelperMatches.some((helper) =>
@@ -2291,7 +1521,11 @@ function classifyCurrentBundle(bundlePath, source, settings = normalizedSettings
     )
   ).length;
   const correlatedCompletedRouteCount = completedRouteMatches.filter(
-    (route) => route.groups?.localHostClass === localHostClass,
+    (route) =>
+      route.groups?.localHostClass === localHostClass &&
+      parcelHelperMatches.some(
+        (helper) => helper.groups?.helperName === route.groups?.routeHelper,
+      ),
   ).length;
   const parcelImportCount = countSubstring(source, "@parcel/watcher");
   const relevant =
@@ -2326,7 +1560,7 @@ function classifyCurrentBundle(bundlePath, source, settings = normalizedSettings
     rawRouteLookalikeCount,
     relevant,
     source,
-    startsWithExactHelper: source.startsWith(DIRECTORY_WATCH_HELPER_SOURCE),
+    startsWithExactHelper: source.startsWith(WATCHBOUND_HELPER_SOURCE),
   };
 }
 
@@ -2383,18 +1617,6 @@ function hasCompletedWorkerRouteContract(record) {
 function currentContractReason(records, bundleCount) {
   const relevant = records.filter(({ relevant }) => relevant);
   const targetNames = relevant.map(({ bundlePath }) => path.basename(bundlePath));
-  const localCount = relevant.reduce(
-    (count, record) => count + record.pristineLocalCount,
-    0,
-  );
-  const helpers = relevant.reduce(
-    (count, record) => count + record.helperDefinitionCount,
-    0,
-  );
-  const branches = relevant.reduce(
-    (count, record) => count + record.branchCallCount,
-    0,
-  );
   const parcelContractCount = relevant.reduce(
     (count, record) => count + record.pristineRouteCount + record.completedRouteCount,
     0,
@@ -2405,6 +1627,7 @@ function currentContractReason(records, bundleCount) {
       (count, record) => count + record.pristineRouteCount + record.completedRouteCount,
       0,
     );
+  const markerCount = relevant.reduce((count, record) => count + record.markerCount, 0);
   const correlatedRouteCount = relevant.reduce(
     (count, record) => count + record.correlatedPristineRouteCount,
     0,
@@ -2413,22 +1636,30 @@ function currentContractReason(records, bundleCount) {
     (count, record) => count + record.rawRouteLookalikeCount,
     0,
   );
-  const markerCount = relevant.reduce((count, record) => count + record.markerCount, 0);
+  const helpers = relevant.reduce(
+    (count, record) => count + record.helperDefinitionCount,
+    0,
+  );
+  const branches = relevant.reduce((count, record) => count + record.branchCallCount, 0);
   return (
-    "Current 26.730.61639 working-tree contract rejected: " +
-    `Found ${localCount} local startFileWatch implementations, ${helpers} helpers, ` +
-    `${branches} branches, and ${parcelContractCount} Parcel route contracts ` +
-    `(${workerParcelContractCount} in worker.js) across ${relevant.length} relevant bundles ` +
-    `(${targetNames.join(", ") || "none"}) of ${bundleCount}; ` +
-    `${correlatedRouteCount} route/helper correlations, ${lookalikeCount} raw route ` +
-    `lookalikes, and ${markerCount} completed route markers`
+    "Current 26.803.41515 working-tree contract rejected: " +
+    `Found ${relevant.length} current local startFileWatch bundles ` +
+    `(${targetNames.join(", ") || "none"}), ${parcelContractCount} Parcel route contracts, ` +
+    `and ${workerParcelContractCount} in worker.js across ${bundleCount} build bundles; ` +
+    `${correlatedRouteCount} route/helper correlations, ${lookalikeCount} raw route lookalikes, ` +
+    `${markerCount} Watchbound route markers, ` +
+    `${helpers} helpers, and ${branches} branches`
   );
 }
 
-function directoryWorkingTreeRoute(groups) {
+function watchboundWorkingTreeRoute(groups) {
   return (
     `startWorkingTreeWatch:(${groups.routeHost},${groups.routeOptions})=>` +
-    `${groups.routeHost}.isLocal?/*${PARCEL_WATCH_MARKER}*/` +
+    `${groups.routeHost}.isLocal?process.platform===\`linux\`?` +
+    `/*${PARCEL_WATCH_MARKER}*/${groups.localHost}.startFileWatch({` +
+    `...${groups.routeOptions},[Symbol.for(\`${PARCEL_FALLBACK_SYMBOL_KEY}\`)]:()=>` +
+    `${groups.routeHelper}(${groups.routeOptions},{ignoredPaths:[` +
+    `${groups.pathApi}.posix.join(${groups.routeOptions}.path,\`.git\`)]})}):` +
     `${groups.localHost}.startFileWatch(${groups.routeOptions}):` +
     `${groups.routeHost}.startFileWatch(${groups.routeOptions})`
   );
@@ -2438,30 +1669,31 @@ function replaceCurrentParcelRoute(source) {
   CURRENT_PARCEL_ROUTE_CONTRACT.lastIndex = 0;
   return source.replace(CURRENT_PARCEL_ROUTE_CONTRACT, (...args) => {
     const groups = args[args.length - 1];
-    return `${groups.routePrefix}${directoryWorkingTreeRoute(groups)}`;
+    return `${groups.routePrefix}${watchboundWorkingTreeRoute(groups)}`;
   });
 }
 
 function preparePristineBundle(record, settings) {
-  const [localMatch] = patternMatches(record.source, LOCAL_FILE_WATCH_METHOD);
+  LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
+  const [localMatch] = [...record.source.matchAll(LOCAL_FILE_WATCH_METHOD)];
   const optionsName = localMatch.groups.options;
-  const methodStart = localMatch.index + localMatch[0].length;
+  const insertionIndex = localMatch.index + localMatch[0].length;
   const withBranch =
-    record.source.slice(0, methodStart) +
-    directoryOnlyLocalBranch(optionsName, settings) +
-    record.source.slice(methodStart);
+    record.source.slice(0, insertionIndex) +
+    watchboundLocalBranch(optionsName, settings) +
+    record.source.slice(insertionIndex);
   const withRoute = path.basename(record.bundlePath) === "worker.js"
     ? replaceCurrentParcelRoute(withBranch)
     : withBranch;
-  return DIRECTORY_WATCH_HELPER_SOURCE + withRoute;
+  return WATCHBOUND_HELPER_SOURCE + withRoute;
 }
 
 function patchWorkerSource(source, settings) {
   const currentSettings = settings ?? normalizedSettings();
   const hasWorkerSignals =
-    patternMatches(source, CURRENT_PARCEL_HELPER).length > 0 ||
+    countPattern(source, CURRENT_PARCEL_HELPER) > 0 ||
     source.includes(PARCEL_WATCH_MARKER) ||
-    patternMatches(source, PARCEL_WORKING_TREE_WATCH).length > 0;
+    countPattern(source, PARCEL_WORKING_TREE_WATCH) > 0;
   const bundlePath = hasWorkerSignals ? "worker.js" : "src-current.js";
   const record = classifyCurrentBundle(bundlePath, source, currentSettings);
   const routePristine = bundlePath === "worker.js"
@@ -2503,11 +1735,11 @@ function findLocalFileWatchBundles(extractedDir, settings) {
     .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
     .map((entry) => path.join(buildDir, entry.name))
     .sort();
-  const records = bundlePaths.map((bundlePath) => {
-    const originalBytes = fs.readFileSync(bundlePath);
-    const record = classifyCurrentBundle(bundlePath, originalBytes.toString("utf8"), settings);
-    return record.relevant ? { ...record, originalBytes } : record;
-  });
+  const records = bundlePaths.map((bundlePath) => classifyCurrentBundle(
+    bundlePath,
+    fs.readFileSync(bundlePath, "utf8"),
+    settings,
+  ));
   const relevant = records.filter(({ relevant }) => relevant);
   const workerRecords = relevant.filter(
     ({ bundlePath }) => path.basename(bundlePath) === "worker.js",
@@ -2540,7 +1772,7 @@ function findLocalFileWatchBundles(extractedDir, settings) {
 
   const targets = [src, worker].map((record) => ({
     bundlePath: record.bundlePath,
-    originalBytes: record.originalBytes,
+    source: record.source,
     result: completed
       ? { source: record.source, matched: 1, changed: 0, reason: null }
       : {
@@ -2564,67 +1796,7 @@ function findLocalFileWatchBundles(extractedDir, settings) {
   return { targets, reason: null };
 }
 
-function writePreparedBundleTargets(
-  targets,
-  {
-    writeFileSync = fs.writeFileSync,
-    readFileSync = fs.readFileSync,
-  } = {},
-) {
-  const attempted = [];
-  try {
-    for (const target of targets.filter(({ result }) => result.changed === 1)) {
-      attempted.push(target);
-      writeFileSync(target.bundlePath, target.result.source, "utf8");
-    }
-  } catch (error) {
-    const rollbackWriteFailures = [];
-    for (const target of [...attempted].reverse()) {
-      try {
-        writeFileSync(target.bundlePath, target.originalBytes);
-      } catch (rollbackError) {
-        rollbackWriteFailures.push({ bundlePath: target.bundlePath, error: rollbackError });
-      }
-    }
-
-    const rollbackVerificationFailures = [];
-    for (const target of attempted) {
-      try {
-        const restored = readFileSync(target.bundlePath);
-        const restoredBytes = Buffer.isBuffer(restored) ? restored : Buffer.from(restored);
-        if (!restoredBytes.equals(target.originalBytes)) {
-          rollbackVerificationFailures.push(
-            new Error(`rollback byte verification failed for ${target.bundlePath}`),
-          );
-        }
-      } catch (rollbackError) {
-        rollbackVerificationFailures.push(
-          new Error(
-            `rollback byte verification failed for ${target.bundlePath}: ${rollbackError.message}`,
-            { cause: rollbackError },
-          ),
-        );
-      }
-    }
-
-    if (rollbackVerificationFailures.length > 0) {
-      const rollbackWriteFailure = rollbackWriteFailures[0];
-      const writeFailureContext = rollbackWriteFailure == null
-        ? ""
-        : `; rollback write also failed for ${rollbackWriteFailure.bundlePath}: ` +
-          rollbackWriteFailure.error.message;
-      throw new PatchIntegrityError(
-        "Directory-only working-tree bundle rollback could not restore original bytes: " +
-          `${rollbackVerificationFailures[0].message}${writeFailureContext}`,
-        { cause: error },
-      );
-    }
-
-    throw error;
-  }
-}
-
-function patchWorker(extractedDir, context = {}) {
+function patchWorker(extractedDir, context = {}, io = {}) {
   const discovery = findLocalFileWatchBundles(extractedDir, normalizedSettings(context));
   if (discovery.targets.length !== 2) {
     const reason = discovery.reason ?? "Current local startFileWatch bundles not found";
@@ -2632,7 +1804,30 @@ function patchWorker(extractedDir, context = {}) {
     return { matched: 0, changed: 0, reason };
   }
 
-  writePreparedBundleTargets(discovery.targets, context);
+  try {
+    writeUtf8FileCandidatesTransactionally(
+      discovery.targets.map(({ bundlePath, source, result }) => ({
+        filePath: bundlePath,
+        source,
+        patchedSource: result.source,
+      })),
+      {
+        description: "Current Watchbound bundle mutation",
+        readFileSync: io.readFileSync ?? fs.readFileSync,
+        writeFileSync: io.writeFileSync ?? fs.writeFileSync,
+      },
+    );
+  } catch (error) {
+    if (isPatchIntegrityError(error)) {
+      throw error;
+    }
+    const reason =
+      `Could not write current Watchbound bundle transaction: ` +
+      `${error instanceof Error ? error.message : String(error)}`;
+    console.warn(`WARN: ${reason} - skipping directory-only working-tree watch feature`);
+    return { matched: 0, changed: 0, reason };
+  }
+
   const changed = discovery.targets.reduce((count, { result }) => count + result.changed, 0);
   return {
     matched: discovery.targets.length,
@@ -2642,12 +1837,54 @@ function patchWorker(extractedDir, context = {}) {
   };
 }
 
+function stageWatchbound(extractedDir) {
+  const helper = path.join(__dirname, "watchbound-package.js");
+  try {
+    const output = childProcess.execFileSync(
+      process.execPath,
+      [helper, "--stage", extractedDir],
+      {
+        encoding: "utf8",
+        env: process.env,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    );
+    return JSON.parse(output);
+  } catch (error) {
+    const stderr = typeof error?.stderr === "string" ? error.stderr.trim() : "";
+    if (error?.status === 86 && stderr.includes("[PATCH_INTEGRITY_FAILURE]")) {
+      throw new PatchIntegrityError(
+        `Watchbound package helper integrity failure: ${stderr}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
 const descriptors = [
+  {
+    id: "watchbound-package",
+    phase: "extracted-app:pre-webview",
+    order: 20_930,
+    ciPolicy: "opt-in",
+    apply: stageWatchbound,
+    status: (result) => ({
+      status: result?.changed
+        ? "applied"
+        : result?.alreadyApplied
+          ? "already-applied"
+          : "skipped-optional",
+      reason: result == null
+        ? "Watchbound package staging returned no result"
+        : `watchbound ${result.version} (${result.source})`,
+    }),
+  },
   {
     id: "worker-directory-watch",
     phase: "extracted-app:pre-webview",
     order: 20_940,
-    ciPolicy: "optional",
+    ciPolicy: "opt-in",
     apply: patchWorker,
     status: (result, warnings) => {
       if (result?.matched !== 2) {
@@ -2663,12 +1900,16 @@ module.exports = {
   DEFAULT_MAX_WATCHES,
   HELPER_NAME,
   LOCAL_FILE_WATCH_METHOD,
+  PARCEL_FALLBACK_SYMBOL_KEY,
   PARCEL_WATCH_MARKER,
   PARCEL_WORKING_TREE_WATCH,
+  QUALIFICATION_WARNINGS_SYMBOL_KEY,
+  WATCHBOUND_VERSION,
   codexLinuxStartDirectoryOnlyWorkingTreeWatch,
   descriptors,
   findLocalFileWatchBundles,
   normalizedSettings,
   patchWorker,
   patchWorkerSource,
+  stageWatchbound,
 };

@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
+TEST_APP_ID="codex-test-$$"
 APP_DIR="$TMP_DIR/app"
 REMOUNT_APP_DIR="$TMP_DIR/remounted-app"
 SECOND_APP_DIR="$APP_DIR"
@@ -11,11 +12,11 @@ APPIMAGE_PATH="$TMP_DIR/codex-desktop.AppImage"
 APPIMAGE_RECOVERY="${CODEX_TEST_APPIMAGE_REMOUNT:-0}"
 HOME_DIR="$TMP_DIR/home"
 RUNTIME_DIR="$TMP_DIR/runtime"
-STATE_DIR="$HOME_DIR/.local/state/codex-desktop"
-SOCKET_PATH="$RUNTIME_DIR/codex-desktop/launch-action.sock"
+STATE_DIR="$HOME_DIR/.local/state/$TEST_APP_ID"
+SOCKET_PATH="$RUNTIME_DIR/$TEST_APP_ID/launch-action.sock"
 FIRST_LOG="$TMP_DIR/first-launch.log"
 SECOND_LOG="$TMP_DIR/second-launch.log"
-APP_LOG="$HOME_DIR/.cache/codex-desktop/launcher.log"
+APP_LOG="$HOME_DIR/.cache/$TEST_APP_ID/launcher.log"
 LAUNCHER_PID=""
 SOCKET_PID=""
 HOOK_PID=""
@@ -64,7 +65,7 @@ wait_for() {
     local description="$1"
     shift
     local attempt
-    for attempt in $(seq 1 100); do
+    for attempt in $(seq 1 200); do
         "$@" && return 0
         sleep 0.05
     done
@@ -103,9 +104,9 @@ mkdir -p \
     "$APP_DIR/.codex-linux/after-exit.d" \
     "$APP_DIR/content/webview" \
     "$APP_DIR/resources/node-runtime/bin" \
-    "$HOME_DIR/.config/codex-desktop" \
+    "$HOME_DIR/.config/$TEST_APP_ID" \
     "$HOME_DIR" \
-    "$RUNTIME_DIR/codex-desktop"
+    "$RUNTIME_DIR/$TEST_APP_ID"
 
 if [ "${CODEX_TEST_DISABLE_PIDFD:-0}" = "1" ]; then
     mkdir -p "$TMP_DIR/python-site"
@@ -124,7 +125,7 @@ fi
 
 if [ "${CODEX_TEST_DISABLE_WARM_START:-0}" = "1" ]; then
     printf '%s\n' '{"codex-linux-warm-start-enabled":false}' \
-        > "$HOME_DIR/.config/codex-desktop/settings.json"
+        > "$HOME_DIR/.config/$TEST_APP_ID/settings.json"
 fi
 
 PORT="$(python3 - <<'PY'
@@ -138,8 +139,9 @@ PY
 {
     printf '%s\n' \
         '#!/usr/bin/env bash' \
-        'set -Eeuo pipefail' \
-        'CODEX_LINUX_APP_ID=codex-desktop' \
+        'set -Eeuo pipefail'
+    printf 'CODEX_LINUX_APP_ID=%q\n' "$TEST_APP_ID"
+    printf '%s\n' \
         'CODEX_LINUX_APP_DISPLAY_NAME="ChatGPT Desktop"' \
         'CODEX_LINUX_WEBVIEW_PORT="${CODEX_WEBVIEW_PORT:-5175}"'
     cat "$REPO_DIR/launcher/start.sh.template"
@@ -256,6 +258,24 @@ wait_for "first Electron" pid_file_is_live
 wait_for "first launcher lock release" grep -q "electron_spawned" "$APP_LOG"
 wait_for "first packaged webview" webview_is_ready
 FIRST_ELECTRON_PID="$(read_live_app_pid)"
+
+if [ "${CODEX_TEST_TERM_STATUS:-0}" = "1" ]; then
+    kill -TERM "$LAUNCHER_PID"
+    set +e
+    wait "$LAUNCHER_PID"
+    LAUNCHER_STATUS=$?
+    set -e
+    LAUNCHER_PID=""
+    [ "$LAUNCHER_STATUS" -eq 0 ] \
+        || fail "planned launcher SIGTERM exited with status $LAUNCHER_STATUS"
+    electron_is_down() {
+        ! kill -0 "$FIRST_ELECTRON_PID" 2>/dev/null
+    }
+    wait_for "Electron signal forwarding" electron_is_down
+    wait_for "webview cleanup after planned TERM" webview_is_down
+    printf '%s\n' "launcher planned TERM status test passed"
+    exit 0
+fi
 
 if [ "${CODEX_TEST_NORMAL_LOCK_ONLY:-0}" = "1" ]; then
     flock -n "$STATE_DIR/launcher.lock" true \

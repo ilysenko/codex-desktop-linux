@@ -15,6 +15,7 @@ PACKAGE_OUTPUTS=(
     ".#codex-desktop-computer-use-ui"
     ".#codex-desktop-remote-mobile-control"
     ".#codex-desktop-computer-use-ui-remote-mobile-control"
+    ".#checks.x86_64-linux.watchdog-linux-features"
     ".#installer"
 )
 
@@ -36,8 +37,10 @@ fi
 
 NIX_PIN_DIFF_PATHS=(
     "flake.nix"
+    "linux-features/directory-only-working-tree-watch/watchbound-artifacts.json"
     "nix/native-modules/package.json"
     "nix/native-modules/package-lock.json"
+    "nix/watchbound-Cargo.lock"
 )
 
 validate_sri_hash() {

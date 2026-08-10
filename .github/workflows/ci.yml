@@ -223,7 +223,7 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
               --paginate \
               --jq '.[].filename' | tee "$changed_files"
-            guarded_paths='^(flake\.lock|nix/native-modules/package\.json|nix/native-modules/package-lock\.json|scripts/ci/update-nix-hashes\.sh|scripts/ci/validate-nix-pins\.sh)$'
+            guarded_paths='^(flake\.lock|linux-features/directory-only-working-tree-watch/watchbound-artifacts\.json|nix/native-modules/package\.json|nix/native-modules/package-lock\.json|nix/watchbound-Cargo\.lock|scripts/ci/update-nix-hashes\.sh|scripts/ci/validate-nix-pins\.sh)$'
             if grep -Eq "$guarded_paths" "$changed_files"; then
               changed=true
             elif grep -qx 'flake.nix' "$changed_files"; then

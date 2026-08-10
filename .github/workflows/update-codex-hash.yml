@@ -123,7 +123,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          pin_paths=(flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json)
+          pin_paths=(
+            flake.nix
+            linux-features/directory-only-working-tree-watch/watchbound-artifacts.json
+            nix/native-modules/package.json
+            nix/native-modules/package-lock.json
+            nix/watchbound-Cargo.lock
+          )
 
           if [ "$SKIP_REFRESH" = "true" ]; then
             git checkout -B "$REFRESH_BRANCH" "origin/$REFRESH_BRANCH"

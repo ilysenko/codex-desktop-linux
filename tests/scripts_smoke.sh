@@ -4194,6 +4194,22 @@ PY
     assert_not_contains "$fixture/calls.log" "nix build"
 }
 
+test_watchbound_nix_pin_and_output_guards() {
+    info "Checking Watchbound Nix pins and feature output stay CI-guarded"
+    local manifest_path="linux-features/directory-only-working-tree-watch/watchbound-artifacts.json"
+    local cargo_lock_path="nix/watchbound-Cargo.lock"
+
+    assert_contains "$REPO_DIR/.github/workflows/ci.yml" "linux-features/directory-only-working-tree-watch/watchbound-artifacts"
+    assert_contains "$REPO_DIR/.github/workflows/ci.yml" "nix/watchbound-Cargo"
+    assert_contains "$REPO_DIR/scripts/ci/update-nix-hashes.sh" "$manifest_path"
+    assert_contains "$REPO_DIR/scripts/ci/update-nix-hashes.sh" "$cargo_lock_path"
+    assert_contains "$REPO_DIR/scripts/ci/update-nix-hashes.sh" ".#checks.x86_64-linux.watchdog-linux-features"
+    assert_contains "$REPO_DIR/.github/workflows/update-codex-hash.yml" "$manifest_path"
+    assert_contains "$REPO_DIR/.github/workflows/update-codex-hash.yml" "$cargo_lock_path"
+    assert_contains "$REPO_DIR/flake.nix" "--verify-controlled-package-root"
+    assert_not_contains "$REPO_DIR/flake.nix" "CODEX_ELECTRON_PROBE"
+}
+
 test_ci_local_mounts_shared_git_metadata_for_linked_worktrees() {
     info "Checking ci-local supports linked Git worktrees"
     assert_contains "$REPO_DIR/scripts/ci-local.sh" 'rev-parse --path-format=absolute --git-common-dir'
@@ -5909,8 +5925,13 @@ if 'CODEX_LINUX_INSTANCE_ID=$CODEX_LINUX_INSTANCE_ID' not in instance_match_body
     raise SystemExit("pid_in_same_launch_instance must match instance identity from the process environment")
 if not re.search(r'log_phase "initial_launch_state_refresh_start"\s+refresh_launch_state\s+log_phase "initial_launch_state_refreshed"\s+trap cleanup_launcher EXIT', source):
     raise SystemExit("launcher must do an initial runtime-state refresh before warm-start IPC")
-if "trap 'exit 130' INT" not in source or "trap 'exit 143' TERM" not in source or "trap 'exit 129' HUP" not in source:
-    raise SystemExit("launcher must cleanup through EXIT after INT/TERM/HUP")
+if "trap 'handle_launcher_signal INT 130' INT" not in source or "trap 'handle_launcher_signal TERM 0' TERM" not in source or "trap 'handle_launcher_signal HUP 129' HUP" not in source:
+    raise SystemExit("launcher must cleanup through EXIT and treat planned TERM as success")
+signal_body = source.split("handle_launcher_signal() {", 1)[1].split("launcher_lock_wait_seconds() {", 1)[0]
+if 'kill -s "$signal_name" "$ELECTRON_PID"' not in signal_body:
+    raise SystemExit("launcher signal handling must forward the signal to Electron")
+if 'exit "$exit_status"' not in signal_body:
+    raise SystemExit("launcher signal handling must use the signal-specific service status")
 prepare_body = source.split("prepare_launch_state_under_lock() {", 1)[1].split("launch_electron() {", 1)[0]
 if "acquire_launcher_lock" not in prepare_body or "refresh_launch_state_quick" not in prepare_body:
     raise SystemExit("launcher must refresh launch state under the launcher lock before cold-start work")
@@ -11147,6 +11168,7 @@ EOF
 
 test_launcher_warm_start_recovery() {
     info "Checking warm-start recovery after launcher SIGKILL"
+    CODEX_TEST_TERM_STATUS=1 bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     CODEX_TEST_APPIMAGE_REMOUNT=1 bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
     CODEX_TEST_DISABLE_WARM_START=1 bash "$REPO_DIR/tests/launcher_warm_start_recovery.sh"
@@ -11383,6 +11405,7 @@ main() {
     test_update_nix_hashes_verifies_changed_dmg_hash
     test_update_nix_hashes_supports_focused_verification_output
     test_update_nix_hashes_skips_output_build_when_refresh_ref_already_matches
+    test_watchbound_nix_pin_and_output_guards
     test_ci_local_mounts_shared_git_metadata_for_linked_worktrees
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
