@@ -1,0 +1,9 @@
+{
+  "id": "conversation-delete",
+  "title": "Conversation Delete",
+  "description": "Adds a confirmed permanent-delete action to ChatGPT conversations in the sidebar.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

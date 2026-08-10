@@ -6,12 +6,14 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     fs::{File, OpenOptions},
     io::{self, BufRead, BufReader, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     os::unix::{
-        ffi::OsStrExt,
+        ffi::{OsStrExt, OsStringExt},
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         process::CommandExt,
     },
@@ -1248,7 +1250,7 @@ fn validate_runtime_entry_for_host(
     validate_owned_dir(&entry.paths.resources_path, false)?;
     entry.paths.codex_cli_path = validate_owned_file(&entry.paths.codex_cli_path, true)?;
     validate_owned_file(&entry.paths.extension_host_path, true)?;
-    validate_owned_file(&entry.paths.node_path, true)?;
+    entry.paths.node_path = validate_owned_file(&entry.paths.node_path, true)?;
     if let Some(path) = &entry.paths.node_repl_path {
         validate_owned_file(path, true)?;
     }
@@ -1480,6 +1482,7 @@ fn start_app_server(
         }
     }
 
+    let child_path = app_server_child_path(&entry.paths.node_path)?;
     let mut command = Command::new(&entry.paths.codex_cli_path);
     command
         .arg("-c")
@@ -1495,6 +1498,7 @@ fn start_app_server(
         .env("CODEX_BROWSER_USE_NODE_PATH", &entry.paths.node_path)
         .env("CODEX_APP_SERVER_PROXY_HOST", &entry.proxy_host)
         .env("CODEX_APP_SERVER_PROXY_PORT", proxy_port.to_string())
+        .env("PATH", child_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -1607,6 +1611,40 @@ fn start_app_server(
     Err(RuntimeError::internal(
         "Timed out waiting for Codex app-server to start",
     ))
+}
+
+fn app_server_child_path(node_path: &Path) -> RuntimeResult<OsString> {
+    let node_dir = node_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| RuntimeError::internal("Validated Node path has no parent directory"))?;
+    let search_path = env::var_os("PATH").unwrap_or_else(default_executable_search_path);
+    let paths = std::iter::once(node_dir.to_path_buf()).chain(env::split_paths(&search_path));
+    env::join_paths(paths).map_err(|error| {
+        RuntimeError::internal(format!("Failed to construct app-server PATH: {error}"))
+    })
+}
+
+fn default_executable_search_path() -> OsString {
+    let length = unsafe { libc::confstr(libc::_CS_PATH, std::ptr::null_mut(), 0) };
+    if length == 0 {
+        return OsString::from("/bin:/usr/bin");
+    }
+    let mut buffer = vec![0_u8; length];
+    let written = unsafe {
+        libc::confstr(
+            libc::_CS_PATH,
+            buffer.as_mut_ptr().cast::<libc::c_char>(),
+            buffer.len(),
+        )
+    };
+    if written == 0 {
+        return OsString::from("/bin:/usr/bin");
+    }
+    if buffer.last() == Some(&0) {
+        buffer.pop();
+    }
+    OsString::from_vec(buffer)
 }
 
 fn stop_managed_process(process: &mut ManagedProcess) {
@@ -2926,6 +2964,51 @@ mod tests {
     }
 
     #[test]
+    fn node_path_validation_canonicalizes_and_rejects_unsafe_executables() {
+        let root = test_root("canonical-node-path");
+        let runtime_dir = root.join("runtime/bin");
+        let manifest_dir = root.join("manifest/bin");
+        fs::create_dir_all(&runtime_dir).unwrap();
+        fs::create_dir_all(&manifest_dir).unwrap();
+        for directory in [
+            root.clone(),
+            root.join("runtime"),
+            runtime_dir.clone(),
+            root.join("manifest"),
+            manifest_dir.clone(),
+        ] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let canonical_node = runtime_dir.join("node");
+        fs::write(&canonical_node, "synthetic node").unwrap();
+        fs::set_permissions(&canonical_node, fs::Permissions::from_mode(0o700)).unwrap();
+        let manifest_node = manifest_dir.join("node");
+        std::os::unix::fs::symlink(&canonical_node, &manifest_node).unwrap();
+
+        assert_eq!(
+            validate_owned_file(&manifest_node, true).unwrap(),
+            canonical_node
+        );
+        fs::set_permissions(&canonical_node, fs::Permissions::from_mode(0o720)).unwrap();
+        assert!(validate_owned_file(&manifest_node, true).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn app_server_child_path_rejects_a_node_path_without_a_parent() {
+        let error = app_server_child_path(Path::new("/")).unwrap_err();
+        assert_eq!(error.message, "Validated Node path has no parent directory");
+    }
+
+    #[test]
+    fn app_server_child_path_rejects_an_unjoinable_node_parent() {
+        let error = app_server_child_path(Path::new("/tmp/managed:node/node")).unwrap_err();
+        assert!(error
+            .message
+            .starts_with("Failed to construct app-server PATH:"));
+    }
+
+    #[test]
     fn executable_validation_rejects_a_group_writable_parent() {
         let root = test_root("group-writable-parent");
         let unsafe_parent = root.join("shared");
@@ -3214,6 +3297,53 @@ mod tests {
             .unwrap_or_else(|| panic!("could not resolve test executable from PATH: {name}"))
     }
 
+    fn fake_basename_sensitive_python_launcher(root: &Path, python: &Path) -> PathBuf {
+        fs::create_dir_all(root).unwrap();
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
+        std::os::unix::fs::symlink(python, root.join("native-python")).unwrap();
+        let launcher = root.join("python3");
+        fs::write(
+            &launcher,
+            "#!/usr/bin/env bash\nname=\"${0##*/}\"\nif [[ \"$name\" != \"python3\" ]]; then\n  echo \"pyenv: $name: command not found\" >&2\n  exit 127\nfi\nexec \"${0%/*}/native-python\" \"$@\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        launcher
+    }
+
+    fn resolve_test_python_interpreter(launcher: &Path) -> PathBuf {
+        let output = Command::new(launcher)
+            .arg("-c")
+            .arg(
+                "import os, sys; sys.stdout.buffer.write(os.fsencode(os.path.realpath(sys.executable)))",
+            )
+            .output()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to query Python interpreter through {}: {error}",
+                    launcher.display()
+                )
+            });
+        assert!(
+            output.status.success(),
+            "Python interpreter query through {} failed\nstdout:\n{}\nstderr:\n{}",
+            launcher.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let interpreter = PathBuf::from(OsString::from_vec(output.stdout));
+        let interpreter = fs::canonicalize(&interpreter).unwrap_or_else(|error| {
+            panic!(
+                "failed to canonicalize resolved Python interpreter {}: {error}",
+                interpreter.display()
+            )
+        });
+        let metadata = fs::metadata(&interpreter).unwrap();
+        assert!(metadata.is_file());
+        assert_ne!(metadata.permissions().mode() & 0o111, 0);
+        interpreter
+    }
+
     fn fake_socket_app_server(root: &Path) -> PathBuf {
         let path = root.join("fake-app-server.py");
         let python = test_executable("python3");
@@ -3242,6 +3372,202 @@ while True:
         .unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         path
+    }
+
+    fn fake_npm_socket_app_server(root: &Path, python: &Path) -> (PathBuf, PathBuf) {
+        let node_dir = root.join("managed-node/bin");
+        let cli_dir = root.join("npm/lib/node_modules/@openai/codex/bin");
+        fs::create_dir_all(&node_dir).unwrap();
+        fs::create_dir_all(&cli_dir).unwrap();
+        for directory in [
+            root.to_path_buf(),
+            root.join("managed-node"),
+            node_dir.clone(),
+            root.join("npm"),
+            root.join("npm/lib"),
+            root.join("npm/lib/node_modules"),
+            root.join("npm/lib/node_modules/@openai"),
+            root.join("npm/lib/node_modules/@openai/codex"),
+            cli_dir.clone(),
+        ] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+
+        let python_literal = serde_json::to_string(&python.to_string_lossy()).unwrap();
+        let node = node_dir.join("node");
+        fs::write(
+            &node,
+            format!(
+                "#!{}\nimport os, sys\nos.execv({python_literal}, [{python_literal}, *sys.argv[1:]])\n",
+                python.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&node, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let cli = cli_dir.join("codex.js");
+        fs::write(
+            &cli,
+            r#"#!/usr/bin/env node
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+with open(os.environ["CODEX_TEST_PATH_RECORD"], "w", encoding="utf-8") as record:
+    record.write(os.environ.get("PATH", "<missing>"))
+if os.environ.get("CODEX_TEST_REQUIRE_DEFAULT_COMMAND") == "1":
+    subprocess.run(["sh", "-c", "true"], check=True)
+listen = sys.argv[sys.argv.index("--listen") + 1]
+socket_path = listen.removeprefix("unix://")
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(socket_path)
+server.listen()
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+while True:
+    time.sleep(0.1)
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o700)).unwrap();
+        (cli, node)
+    }
+
+    #[test]
+    fn npm_shebang_launcher_uses_trusted_node_when_ambient_path_lacks_node() {
+        const CHILD: &str = "CODEX_TEST_NPM_SHEBANG_CHILD";
+        const CASE: &str = "CODEX_TEST_NPM_SHEBANG_CASE";
+        const ROOT: &str = "CODEX_TEST_NPM_SHEBANG_ROOT";
+        const PYTHON: &str = "CODEX_TEST_NPM_SHEBANG_PYTHON";
+        const RUNTIME_ROOT: &str = "CODEX_TEST_NPM_SHEBANG_RUNTIME_ROOT";
+        const REQUIRE_DEFAULT_COMMAND: &str = "CODEX_TEST_REQUIRE_DEFAULT_COMMAND";
+
+        if env::var_os(CHILD).is_none() {
+            let native_python = resolve_test_python_interpreter(&test_executable("python3"));
+            let basename_sensitive_root = test_root("npm-shebang-basename-sensitive-python");
+            let basename_sensitive_python =
+                fake_basename_sensitive_python_launcher(&basename_sensitive_root, &native_python);
+            let python = resolve_test_python_interpreter(&basename_sensitive_python);
+            fs::remove_dir_all(&basename_sensitive_root).unwrap();
+            assert_eq!(python, native_python);
+            assert!(!python.starts_with(&basename_sensitive_root));
+            for case in ["present", "absent", "empty"] {
+                let root = test_root(&format!("npm-shebang-trusted-node-{case}"));
+                let ambient_dir = root.join("ambient-bin");
+                let runtime_root = PathBuf::from("/tmp").join(format!(
+                    "cdx-npm-{}-{}",
+                    std::process::id(),
+                    random_hex(4).unwrap()
+                ));
+                fs::create_dir_all(&ambient_dir).unwrap();
+                fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+                fs::set_permissions(&ambient_dir, fs::Permissions::from_mode(0o700)).unwrap();
+                let mut command = Command::new(env::current_exe().unwrap());
+                command
+                    .arg("--exact")
+                    .arg("chrome_runtime::tests::npm_shebang_launcher_uses_trusted_node_when_ambient_path_lacks_node")
+                    .arg("--nocapture")
+                    .env(CHILD, "1")
+                    .env(CASE, case)
+                    .env(ROOT, &root)
+                    .env(PYTHON, &python)
+                    .env(RUNTIME_ROOT, &runtime_root)
+                    .env("CODEX_TEST_PATH_RECORD", root.join("child-path.txt"))
+                    .env_remove(REQUIRE_DEFAULT_COMMAND);
+                match case {
+                    "present" => {
+                        command.env("PATH", &ambient_dir);
+                    }
+                    "absent" => {
+                        command.env_remove("PATH");
+                        command.env(REQUIRE_DEFAULT_COMMAND, "1");
+                    }
+                    "empty" => {
+                        command.env("PATH", "");
+                    }
+                    _ => unreachable!(),
+                }
+                let output = command.output().unwrap();
+                let _ = fs::remove_dir_all(&root);
+                let _ = fs::remove_dir_all(&runtime_root);
+                assert!(
+                    output.status.success(),
+                    "npm shebang subprocess ({case}) failed\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            return;
+        }
+
+        let root = PathBuf::from(env::var_os(ROOT).unwrap());
+        let python = PathBuf::from(env::var_os(PYTHON).unwrap());
+        let runtime_root = PathBuf::from(env::var_os(RUNTIME_ROOT).unwrap());
+        let (fake_cli, node) = fake_npm_socket_app_server(&root, &python);
+        let path_record = root.join("child-path.txt");
+        let ambient_path = env::var_os("PATH");
+        let mut entry = test_entry();
+        for executable in [&fake_cli, &node] {
+            let metadata = fs::metadata(executable).unwrap();
+            assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+            assert_eq!(metadata.permissions().mode() & 0o077, 0);
+            assert_ne!(metadata.permissions().mode() & 0o111, 0);
+        }
+        entry.paths.codex_cli_path = fs::canonicalize(fake_cli).unwrap();
+        entry.paths.codex_home = root.clone();
+        entry.paths.node_path = fs::canonicalize(node).unwrap();
+        let expected_socket_path =
+            runtime_root.join(format!("a-{}.sock", short_hash(b"sidepanel-npm-shebang")));
+        assert!(
+            unix_socket_path_fits(&expected_socket_path),
+            "npm shebang fixture socket path is too long: {}",
+            expected_socket_path.display()
+        );
+
+        let process = start_app_server(
+            &entry,
+            "abcdefghijklmnopabcdefghijklmnop",
+            "sidepanel-npm-shebang",
+            41000,
+            &runtime_root,
+            1,
+            Duration::from_secs(1),
+        );
+        let mut process = match process {
+            Ok(process) => process,
+            Err(error) => {
+                let _ = fs::remove_dir_all(&runtime_root);
+                panic!("npm shebang app-server failed: {error:?}");
+            }
+        };
+        let recorded_path = fs::read(path_record).unwrap();
+        let recorded_paths =
+            env::split_paths(std::ffi::OsStr::from_bytes(&recorded_path)).collect::<Vec<_>>();
+        let expected_node_dir = entry.paths.node_path.parent().unwrap().to_path_buf();
+
+        assert_eq!(
+            recorded_paths.first(),
+            Some(&expected_node_dir),
+            "{} ambient PATH case",
+            env::var(CASE).unwrap()
+        );
+        match env::var(CASE).unwrap().as_str() {
+            "present" => {
+                assert_eq!(recorded_paths[1..], [PathBuf::from(ambient_path.unwrap())])
+            }
+            "absent" => assert!(recorded_paths.len() > 1),
+            "empty" => assert_eq!(recorded_paths[1..], [PathBuf::new()]),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            fs::metadata(&runtime_root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+
+        stop_managed_process(&mut process);
+        fs::remove_dir_all(runtime_root).unwrap();
     }
 
     #[test]

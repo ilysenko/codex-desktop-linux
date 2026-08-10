@@ -85,6 +85,11 @@ then starts Electron.
 Warm-start launches hand off actions such as `--new-chat` over a Unix-domain
 socket instead of spawning a second app process.
 
+Launcher signals are forwarded to Electron. A planned `SIGTERM`, including a
+desktop-session or `systemd --user` stop, exits successfully so it does not
+leave a false failed-unit state; interactive interrupt and hangup statuses stay
+distinct.
+
 Native-package-only launcher behavior, such as desktop-entry hints and default
 update-manager startup, lives in:
 

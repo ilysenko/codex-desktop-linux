@@ -4247,6 +4247,17 @@ cleanup_launcher() {
     fi
 }
 
+handle_launcher_signal() {
+    local signal_name="$1"
+    local exit_status="$2"
+
+    trap - "$signal_name"
+    if [ -n "${ELECTRON_PID:-}" ] && kill -0 "$ELECTRON_PID" 2>/dev/null; then
+        kill -s "$signal_name" "$ELECTRON_PID" 2>/dev/null || true
+    fi
+    exit "$exit_status"
+}
+
 launcher_lock_wait_seconds() {
     local value="${CODEX_LAUNCHER_LOCK_WAIT_SECONDS:-5}"
 
@@ -4549,9 +4560,9 @@ log_phase "initial_launch_state_refresh_start"
 refresh_launch_state
 log_phase "initial_launch_state_refreshed"
 trap cleanup_launcher EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
+trap 'handle_launcher_signal INT 130' INT
+trap 'handle_launcher_signal TERM 0' TERM
+trap 'handle_launcher_signal HUP 129' HUP
 
 recover_unhealthy_running_app
 prepare_launch_state_under_lock
