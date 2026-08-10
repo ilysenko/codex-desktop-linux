@@ -35,6 +35,6 @@ add deletion for local Codex threads or archived-chat bulk actions.
 node --test linux-features/conversation-delete/test.js
 ```
 
-Known risk: endpoint and minified sidebar markers are private upstream
-contracts. Current-DMG drift leaves asset unchanged and emits warning; rebuild
-with feature enabled after upstream refresh.
+Known risk: endpoint and sidebar contracts are private upstream interfaces.
+Current-DMG drift or ambiguous matches leave asset unchanged and emit warning;
+rebuild with feature enabled after upstream refresh.
