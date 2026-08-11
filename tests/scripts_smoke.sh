@@ -7451,6 +7451,17 @@ SCRIPT
     stable_path="$(HOME="$trust_workspace/home" python3 "$REPO_DIR/launcher/cli-launch-path.py" "$visible_cli")"
     [ "$stable_path" = "$(realpath "$external_root/bin/codex")" ] || \
         fail "launcher CLI resolution must follow external package-manager symlink targets"
+
+    local mise_bin="$trust_workspace/mise/bin/mise"
+    local mise_shim="$trust_workspace/mise/shims/codex"
+    local mise_installed_cli="$trust_workspace/mise/installs/node/latest/bin/codex"
+    mkdir -p "$(dirname "$mise_bin")" "$(dirname "$mise_shim")" "$(dirname "$mise_installed_cli")"
+    cp "$release/bin/codex" "$mise_bin"
+    cp "$release/bin/codex" "$mise_installed_cli"
+    ln -s "$mise_bin" "$mise_shim"
+    stable_path="$(HOME="$trust_workspace/home" python3 "$REPO_DIR/launcher/cli-launch-path.py" "$mise_shim")"
+    [ "$stable_path" = "$(realpath "$mise_installed_cli")" ] || \
+        fail "launcher CLI resolution must bypass mise multicall shims for GUI children"
 }
 
 test_webview_server_cache_policy() {
