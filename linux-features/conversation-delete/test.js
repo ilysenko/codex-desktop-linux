@@ -20,11 +20,48 @@ const {
 } = require("./patch.js");
 
 const SIDEBAR_FIXTURE = [
-	"var OW={newChat:{id:`chatgptConversations.newChat`,defaultMessage:`New chat`,description:`Fallback title`},archive:{id:`chatgptConversations.sidebar.archive`,defaultMessage:`Archive chat`,description:`Action label to archive a ChatGPT conversation in the sidebar`},archiveError:{id:`chatgptConversations.sidebar.archiveError`,defaultMessage:`Failed to archive conversation`,description:`Archive error`}};",
-	"var uBr=e=>true,lBr=e=>true;var yBr=class{async list({}){let l=await this.request.listConversations();return{...l,items:l.items?.filter(uBr)??[]}}async getBatch(e,t){return(await this.request.getConversationsBatch(e,t)).filter(uBr)}async listPinnedConversationItems(){return(await this.request.listPinnedItems({itemType:`conversation`})).filter(lBr)}async listProjectConversations({cursor:e=null,limit:t=5,ownedOnly:n=!0,projectId:r}){let i=await this.request.listProjectConversations({cursor:e,limit:t,ownedOnly:n,projectId:r});return{cursor:i.cursor,items:i.items?.filter(uBr)??[]}}};",
-	"/* function y0(e,t){ */;/* function KDa( */;/* safeDelete(`/conversation/id/{conversation_id}`, */",
-	"var archiveAction=()=>{},renameAction=()=>{};function VBc(e){let t=(0,w5.c)(83),{conversation:n,isActive:o,isArchivePending:w,route:p,title:v}=e,E=Fo(Q),D=Vd(),O=AC(),ae=archiveAction,re=renameAction,k=false,L=OW.archive;let oe;t[27]!==n||t[28]!==ae||t[29]!==re||t[30]!==w||t[31]!==k||t[32]!==L||t[33]!==E?(oe=async()=>{return[{id:`archive-chatgpt-conversation`,message:OW.archive,onSelect:ae}]},t[27]=n,t[28]=ae,t[29]=re,t[30]=w,t[31]=k,t[32]=L,t[33]=E,t[34]=oe):oe=t[34];return oe}",
+	"var SG={newChat:{id:`chatgptConversations.newChat`,defaultMessage:`New chat`,description:`Fallback title`},archive:{id:`chatgptConversations.sidebar.archive`,defaultMessage:`Archive chat`,description:`Action label to archive a ChatGPT conversation in the sidebar`},archiveError:{id:`chatgptConversations.sidebar.archiveError`,defaultMessage:`Failed to archive conversation`,description:`Archive error`}};",
+	"var aBr=e=>true,iBr=e=>e?.item_type===`conversation`&&aBr(e.item);var requestClient=class{async deleteConversation(e){return this.safeDelete(`/conversation/id/{conversation_id}`,{parameters:{path:{conversation_id:e}}})}},mBr=class{async list({}){let l=await this.request.listConversations();return{...l,items:l.items?.filter(aBr)??[]}}async getBatch(e,t){return(await this.request.getConversationsBatch(e,t)).filter(aBr)}async listPinnedConversationItems(){return(await this.request.listPinnedItems({itemType:`conversation`})).filter(iBr)}async listProjectConversations({cursor:e=null,limit:t=5,ownedOnly:n=!0,projectId:r}){let i=await this.request.listProjectConversations({cursor:e,limit:t,ownedOnly:n,projectId:r});return{cursor:i.cursor,items:i.items?.filter(aBr)??[]}}async setArchived(e,t){return this.request.setConversationArchived(e,t)}async delete(e){return this.request.deleteConversation(e)}};",
+	"function IEa(e,t){return e.get(GN).setArchived(t,!0).then(()=>{GEa(e.queryClient,t)})}",
+	"function cVc(e){let t=(0,w5.c)(83),{conversation:n,conversationId:r,conversationOrigin:i,isActive:o,isArchivePending:s,route:p,title:v}=e,E=Fo(Q),D=Vd(),O=LC();E.get(kv).info(D.formatMessage({id:`chatgptConversations.sidebar.archiveAriaLabel`,defaultMessage:`Archive chat`}));let ae=archiveAction,oe;t[27]!==n||t[28]!==ae||t[29]!==s||t[30]!==E?(oe=async()=>{return[{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae}]},t[27]=n,t[28]=ae,t[29]=s,t[30]=E,t[34]=oe):oe=t[34];let ue=()=>{r!=null&&O(p)};let I=n!=null;let ye=oe;if(!I)return ye;let be;return be=ye}",
 ].join("");
+
+function renameIdentifiers(source, replacements) {
+	let renamed = source;
+	for (const [from, to] of replacements) {
+		renamed = renamed.replace(new RegExp(`\\b${from}\\b`, "g"), to);
+	}
+	return renamed;
+}
+
+const RENAMED_SIDEBAR_FIXTURE = renameIdentifiers(SIDEBAR_FIXTURE, [
+	["SG", "localizationBundle"],
+	["aBr", "conversationFilter"],
+	["iBr", "pinnedFilter"],
+	["mBr", "conversationClient"],
+	["GN", "conversationApiToken"],
+	["GEa", "evictCaches"],
+	["IEa", "archiveConversation"],
+	["w5", "cacheFactory"],
+	["Fo", "scopeFactory"],
+	["Vd", "intlFactory"],
+	["LC", "navigationFactory"],
+	["kv", "toastToken"],
+	["Q", "scopeContext"],
+	["cVc", "ConversationRow"],
+	["archiveAction", "archiveHandler"],
+	["oe", "menuCallback"],
+	["t", "cacheSlots"],
+	["E", "scopeValue"],
+	["D", "intlValue"],
+	["O", "navigate"],
+	["o", "activeState"],
+	["s", "archivePending"],
+	["r", "conversationKey"],
+	["p", "routeValue"],
+	["v", "titleValue"],
+	["n", "conversationValue"],
+]);
 
 function captureWarnings(fn) {
 	const originalWarn = console.warn;
@@ -83,14 +120,17 @@ test("feature is disabled until selected", () => {
 	});
 });
 
-test("descriptor targets current ChatGPT sidebar asset family", () => {
-	assert.match("app-initial-Biw83Aiz.js", CHATGPT_SIDEBAR_ASSET_PATTERN);
+test("descriptor targets ChatGPT sidebar asset family without hash pinning", () => {
+	assert.match("app-initial-BYOVlUBL.js", CHATGPT_SIDEBAR_ASSET_PATTERN);
+	assert.match("app-initial-renamed-hash.js", CHATGPT_SIDEBAR_ASSET_PATTERN);
 	assert.doesNotMatch("app-main-Biw83Aiz.js", CHATGPT_SIDEBAR_ASSET_PATTERN);
 	assert.doesNotMatch(
 		"chatgpt-conversation-page-BG0Dyleu.js",
 		CHATGPT_SIDEBAR_ASSET_PATTERN,
 	);
 	assert.equal(descriptors.length, 1);
+	assert.equal(descriptors[0].assetMatch(SIDEBAR_FIXTURE), true);
+	assert.equal(descriptors[0].assetMatch("var unrelatedAsset=true;"), false);
 });
 
 test("patch adds confirmed delete action and is idempotent", () => {
@@ -100,9 +140,9 @@ test("patch adds confirmed delete action and is idempotent", () => {
 	assert.match(patched, new RegExp(RUNTIME_MARKER));
 	assert.match(patched, /codexLinuxConversationDelete\.delete/);
 	assert.match(patched, /id:`delete-chatgpt-conversation`/);
-	assert.match(patched, /e\.get\(zN\)\.delete\(t\.id\)/);
+	assert.match(patched, /e\.get\(GN\)\.delete\(t\.id\)/);
 	assert.match(patched, /window\.confirm/);
-	assert.match(patched, /KDa\(e\.queryClient,t\.id\)/);
+	assert.match(patched, /GEa\(e\.queryClient,t\.id\)/);
 	assert.match(patched, new RegExp(`s\\("${NEW_THREAD_ROUTE}"\\)`));
 	assert.match(
 		patched,
@@ -112,14 +152,31 @@ test("patch adds confirmed delete action and is idempotent", () => {
 		patched,
 		/codexLinuxDeletedChatGptConversationIds\.has\(e\?\.id\)/,
 	);
-	assert.match(patched, /O=AC\(\)/);
+	assert.match(
+		patched,
+		/codexLinuxDeletedChatGptConversationIds\.delete\(t\.id\)/,
+	);
+	assert.match(
+		patched,
+		/n!=null&&codexLinuxDeletedChatGptConversationIds\.has\(n\.id\)/,
+	);
+	assert.match(patched, /O=LC\(\)/);
 	assert.equal(applyConversationDeletePatch(patched), patched);
 });
 
-test("drift leaves source unchanged and warns", () => {
+test("discovers renamed minified aliases without hash coupling", () => {
+	const patched = applyConversationDeletePatch(RENAMED_SIDEBAR_FIXTURE);
+
+	assert.notEqual(patched, RENAMED_SIDEBAR_FIXTURE);
+	assert.match(patched, /get\(conversationApiToken\)\.delete\(t\.id\)/);
+	assert.match(patched, /evictCaches\(e\.queryClient,/);
+	assert.match(patched, /id:`delete-chatgpt-conversation`/);
+});
+
+test("ambiguous semantic match leaves source unchanged and warns", () => {
 	const source = SIDEBAR_FIXTURE.replace(
-		"function VBc",
-		"function ChangedSidebarRow",
+		"{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae}",
+		"{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae},{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae}",
 	);
 	const { value, warnings } = captureWarnings(() =>
 		applyConversationDeletePatch(source),
@@ -130,6 +187,31 @@ test("drift leaves source unchanged and warns", () => {
 	assert.match(warnings[0], /ChatGPT sidebar conversation row/);
 });
 
+test("localization drift leaves source unchanged and warns", () => {
+	const source = SIDEBAR_FIXTURE.replace("archiveError:", "archiveFailure:");
+	const { value, warnings } = captureWarnings(() =>
+		applyConversationDeletePatch(source),
+	);
+
+	assert.equal(value, source);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /ChatGPT sidebar localization markers/);
+});
+
+test("endpoint drift leaves source unchanged and warns", () => {
+	const source = SIDEBAR_FIXTURE.replace(
+		"/conversation/id/{conversation_id}",
+		"/conversation/id/{conversation}",
+	);
+	const { value, warnings } = captureWarnings(() =>
+		applyConversationDeletePatch(source),
+	);
+
+	assert.equal(value, source);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /ChatGPT conversation delete API client/);
+});
+
 test("runtime calls upstream delete without body and updates active navigation", async () => {
 	const patched = applyConversationDeletePatch(SIDEBAR_FIXTURE);
 	const deleteToken = {};
@@ -138,8 +220,8 @@ test("runtime calls upstream delete without body and updates active navigation",
 	const removed = [];
 	const navigated = [];
 	const context = {
-		KDa: (...args) => removed.push(args),
-		OW: {
+		GEa: (...args) => removed.push(args),
+		SG: {
 			deleteConfirm: {
 				id: "confirm",
 				defaultMessage: "Delete {title}?",
@@ -149,8 +231,8 @@ test("runtime calls upstream delete without body and updates active navigation",
 				defaultMessage: "Delete failed",
 			},
 		},
-		yv: toastToken,
-		zN: deleteToken,
+		kv: toastToken,
+		GN: deleteToken,
 		window: {
 			confirm: (message) => {
 				assert.equal(message, "Delete “Example chat”? This can't be undone.");
@@ -200,31 +282,118 @@ test("runtime calls upstream delete without body and updates active navigation",
 	assert.deepEqual(removed, [[scope.queryClient, "conversation-123"]]);
 	assert.deepEqual(navigated, [NEW_THREAD_ROUTE]);
 
-	const client = new context.yBr();
+	const client = new context.mBr();
+	client.request = {
+		listConversations: async () => ({
+			items: [{ id: "conversation-123" }, { id: "conversation-456" }],
+		}),
+		getConversationsBatch: async () => [
+			{ id: "conversation-123" },
+			{ id: "conversation-456" },
+		],
+		listPinnedItems: async () => [
+			{ item_type: "conversation", item: { id: "conversation-123" } },
+			{ item_type: "conversation", item: { id: "conversation-456" } },
+		],
+	};
+	const listed = await client.list({});
+	assert.deepEqual(listed.items, [{ id: "conversation-456" }]);
+	assert.deepEqual(await client.getBatch([], {}), [{ id: "conversation-456" }]);
+	assert.deepEqual(await client.listPinnedConversationItems(), [
+		{ item_type: "conversation", item: { id: "conversation-456" } },
+	]);
+});
+
+test("tombstone hides pending delete and rolls back on failure", async () => {
+	const patched = applyConversationDeletePatch(SIDEBAR_FIXTURE);
+	const deleteToken = {};
+	const toastToken = {};
+	const errors = [];
+	const evicted = [];
+	let rejectDelete;
+	const context = {
+		GEa: (...args) => evicted.push(args),
+		SG: {
+			deleteConfirm: { defaultMessage: "Delete {title}?" },
+			deleteError: { defaultMessage: "Delete failed" },
+		},
+		kv: toastToken,
+		GN: deleteToken,
+		window: { confirm: () => true },
+	};
+	const scope = {
+		queryClient: {},
+		get(token) {
+			if (token === deleteToken) {
+				return {
+					delete() {
+						return new Promise((_, reject) => {
+							rejectDelete = reject;
+						});
+					},
+				};
+			}
+			assert.equal(token, toastToken);
+			return {
+				danger(message) {
+					errors.push(message);
+				},
+			};
+		},
+	};
+
+	vm.runInNewContext(
+		`${patched};globalThis.deleteChat= ${RUNTIME_MARKER};`,
+		context,
+	);
+	context.deleteChat(
+		scope,
+		{ id: "conversation-123" },
+		"Example chat",
+		false,
+		false,
+		{
+			formatMessage(message, values) {
+				return message.defaultMessage.replace("{title}", values?.title ?? "");
+			},
+		},
+	);
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(typeof rejectDelete, "function");
+
+	const client = new context.mBr();
 	client.request = {
 		listConversations: async () => ({
 			items: [{ id: "conversation-123" }, { id: "conversation-456" }],
 		}),
 	};
-	const listed = await client.list({});
-	assert.deepEqual(listed.items, [{ id: "conversation-456" }]);
+	const pending = await client.list({});
+	assert.deepEqual(pending.items, [{ id: "conversation-456" }]);
+	assert.deepEqual(evicted, []);
+
+	rejectDelete(new Error("expected test failure"));
+	await new Promise((resolve) => setImmediate(resolve));
+	const restored = await client.list({});
+	assert.deepEqual(restored.items, [
+		{ id: "conversation-123" },
+		{ id: "conversation-456" },
+	]);
+	assert.deepEqual(errors, ["Failed to delete conversation"]);
+	assert.deepEqual(evicted, []);
 });
 
-test("active deletion uses upstream new-chat state handler", async () => {
+test("active deletion navigates to new chat route", async () => {
 	const patched = applyConversationDeletePatch(SIDEBAR_FIXTURE);
 	const deleteToken = {};
-	const started = [];
+	const navigated = [];
 	const context = {
-		KDa() {},
-		y0(scope) {
-			started.push(scope);
-		},
-		OW: {
+		GEa() {},
+		SG: {
 			deleteConfirm: { defaultMessage: "Delete {title}?" },
 			deleteError: { defaultMessage: "Delete failed" },
 		},
-		yv: {},
-		zN: deleteToken,
+		kv: {},
+		GN: deleteToken,
 		window: { confirm: () => true },
 	};
 	const scope = {
@@ -248,12 +417,10 @@ test("active deletion uses upstream new-chat state handler", async () => {
 		{
 			formatMessage: (message) => message.defaultMessage,
 		},
-		() => {
-			throw new Error("fallback navigator should not run");
-		},
+		(route) => navigated.push(route),
 	);
 
-	assert.deepEqual(started, [scope]);
+	assert.deepEqual(navigated, [NEW_THREAD_ROUTE]);
 });
 
 test("compiled menu cache refreshes delete callback when active state changes", async () => {
@@ -263,6 +430,8 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 	const toastToken = {};
 	const deleted = [];
 	const navigated = [];
+	let deleteCalls = 0;
+	let rejectFirstDelete;
 	const scope = {
 		queryClient: {},
 		get(token) {
@@ -270,12 +439,18 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 				return {
 					delete(id) {
 						deleted.push(id);
+						deleteCalls += 1;
+						if (deleteCalls === 1) {
+							return new Promise((_, reject) => {
+								rejectFirstDelete = reject;
+							});
+						}
 						return Promise.resolve();
 					},
 				};
 			}
 			assert.equal(token, toastToken);
-			return { danger: () => assert.fail("unexpected error toast") };
+			return { danger() {}, info() {} };
 		},
 	};
 	const intl = {
@@ -286,13 +461,14 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 	const context = {
 		w5: {
 			c(size) {
-				assert.equal(size, 84);
+				assert.equal(size, 85);
 				return cache;
 			},
 		},
 		Q: {},
-		OW: {
+		SG: {
 			archive: "Archive chat",
+			delete: "Delete chat",
 			deleteConfirm: {
 				defaultMessage: "Delete {title}?",
 			},
@@ -300,32 +476,49 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 		},
 		Fo: () => scope,
 		Vd: () => intl,
-		AC: () => (route) => navigated.push(route),
+		LC: () => (route) => navigated.push(route),
 		archiveAction: () => {},
 		renameAction: () => {},
-		KDa() {},
-		yv: toastToken,
-		zN: deleteToken,
+		GEa() {},
+		kv: toastToken,
+		GN: deleteToken,
 		window: { confirm: () => true },
 	};
 
-	vm.runInNewContext(`${patched};globalThis.renderSidebar=VBc;`, context);
+	vm.runInNewContext(`${patched};globalThis.renderSidebar=cVc;`, context);
 
 	const conversation = { id: "conversation-123" };
 	const firstMenu = await context.renderSidebar({
 		conversation,
+		conversationOrigin: false,
 		isActive: false,
 		isArchivePending: false,
 		route: "/chat/conversation-123",
 		title: "Example chat",
 	})();
-	await firstMenu.find((item) => item.id === DELETE_MENU_ID).onSelect();
+	const taskMenu = await context.renderSidebar({
+		conversation,
+		conversationOrigin: true,
+		isActive: false,
+		isArchivePending: false,
+		route: "/chat/conversation-123",
+		title: "Example chat",
+	})();
+	assert.equal(
+		taskMenu.some((item) => item.id === DELETE_MENU_ID),
+		false,
+	);
+	firstMenu.find((item) => item.id === DELETE_MENU_ID).onSelect();
 	await new Promise((resolve) => setImmediate(resolve));
-	assert.deepEqual(deleted, ["conversation-123"]);
+	assert.equal(deleteCalls, 1);
 	assert.deepEqual(navigated, []);
+	assert.equal(typeof rejectFirstDelete, "function");
+	rejectFirstDelete(new Error("expected test failure"));
+	await new Promise((resolve) => setImmediate(resolve));
 
 	const secondMenu = await context.renderSidebar({
 		conversation,
+		conversationOrigin: false,
 		isActive: true,
 		isArchivePending: false,
 		route: "/chat/conversation-123",
@@ -335,19 +528,29 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.deepEqual(deleted, ["conversation-123", "conversation-123"]);
 	assert.deepEqual(navigated, [NEW_THREAD_ROUTE]);
+	assert.equal(
+		context.renderSidebar({
+			conversation,
+			isActive: true,
+			isArchivePending: false,
+			route: "/chat/conversation-123",
+			title: "Example chat",
+		}),
+		null,
+	);
 });
 
 test("project conversation refetch filters deleted tombstone", async () => {
 	const patched = applyConversationDeletePatch(SIDEBAR_FIXTURE);
 	const deleteToken = {};
 	const context = {
-		KDa() {},
-		OW: {
+		GEa() {},
+		SG: {
 			deleteConfirm: { defaultMessage: "Delete {title}?" },
 			deleteError: { defaultMessage: "Delete failed" },
 		},
-		yv: {},
-		zN: deleteToken,
+		kv: {},
+		GN: deleteToken,
 		window: { confirm: () => true },
 	};
 	const scope = {
@@ -373,7 +576,7 @@ test("project conversation refetch filters deleted tombstone", async () => {
 		},
 	);
 
-	const client = new context.yBr();
+	const client = new context.mBr();
 	client.request = {
 		listProjectConversations: async () => ({
 			cursor: null,
@@ -392,15 +595,15 @@ test("cancelled confirmation does not call delete", async () => {
 	const deleteToken = {};
 	let calls = 0;
 	const context = {
-		KDa() {
+		GEa() {
 			throw new Error("cache should not change");
 		},
-		OW: {
+		SG: {
 			deleteConfirm: { defaultMessage: "Delete {title}?" },
 			deleteError: { defaultMessage: "Delete failed" },
 		},
-		yv: {},
-		zN: deleteToken,
+		kv: {},
+		GN: deleteToken,
 		window: { confirm: () => false },
 	};
 	const scope = {
