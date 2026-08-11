@@ -31,6 +31,8 @@ const PROMPT_INSTALL_CLI_CANCELLED_EXIT_CODE: i32 = 10;
 const PROMPT_INSTALL_CLI_NO_BACKEND_EXIT_CODE: i32 = 11;
 // Nonzero so `Restart=on-failure` relaunches the daemon on the new binary.
 const BINARY_REPLACED_RESTART_EXIT_CODE: i32 = 12;
+const DMS_POLKIT_AGENT_PROCESS_TOKEN: &str = "quickshell/dms";
+const DMS_DISABLE_POLKIT_ENV_ENTRY: &[u8] = b"DMS_DISABLE_POLKIT=1";
 const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
     "budgie-polkit",
     "cinnamon-polkit",
@@ -45,7 +47,7 @@ const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
     "polkit-dde-agent",
     "polkit-gnome-authentication-agent",
     "polkit-kde-authentication-agent",
-    "quickshell/dms",
+    DMS_POLKIT_AGENT_PROCESS_TOKEN,
     "soteria",
     "ukui-polkit",
     "xfce-polkit",
@@ -2252,12 +2254,37 @@ fn polkit_auth_agent_process_is_running() -> bool {
         if let Ok(cmdline) = fs::read(process_dir.join("cmdline")) {
             process_text.push_str(&String::from_utf8_lossy(&cmdline).replace('\0', " "));
         }
-        if process_text_matches_polkit_auth_agent(&process_text) {
+        let process_environment = process_text
+            .to_ascii_lowercase()
+            .contains(DMS_POLKIT_AGENT_PROCESS_TOKEN)
+            .then(|| fs::read(process_dir.join("environ")).ok())
+            .flatten();
+        if process_matches_polkit_auth_agent(&process_text, process_environment.as_deref()) {
             return true;
         }
     }
 
     false
+}
+
+fn process_matches_polkit_auth_agent(
+    process_text: &str,
+    process_environment: Option<&[u8]>,
+) -> bool {
+    if !process_text_matches_polkit_auth_agent(process_text) {
+        return false;
+    }
+    let normalized = process_text.to_ascii_lowercase();
+    if normalized.contains(DMS_POLKIT_AGENT_PROCESS_TOKEN)
+        && process_environment.is_some_and(|environment| {
+            environment
+                .split(|byte| *byte == b'\0')
+                .any(|entry| entry == DMS_DISABLE_POLKIT_ENV_ENTRY)
+        })
+    {
+        return false;
+    }
+    true
 }
 
 fn process_text_matches_polkit_auth_agent(process_text: &str) -> bool {
@@ -4826,6 +4853,23 @@ mod tests {
         ));
         assert!(!process_text_matches_polkit_auth_agent(
             "/usr/bin/ssh-agent -D"
+        ));
+        let process_text = "qs -p /usr/share/quickshell/dms";
+        assert!(process_matches_polkit_auth_agent(
+            process_text,
+            Some(b"PATH=/usr/bin\0")
+        ));
+        assert!(!process_matches_polkit_auth_agent(
+            process_text,
+            Some(b"PATH=/usr/bin\0DMS_DISABLE_POLKIT=1\0")
+        ));
+        assert!(process_matches_polkit_auth_agent(
+            process_text,
+            Some(b"DMS_DISABLE_POLKIT=0\0")
+        ));
+        assert!(process_matches_polkit_auth_agent(
+            "gnome-shell --wayland",
+            Some(b"DMS_DISABLE_POLKIT=1\0")
         ));
     }
 
