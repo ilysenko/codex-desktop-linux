@@ -135,6 +135,12 @@ MULTI_LAUNCH_REQUESTED=0
 MULTI_LAUNCH_ACTIVE=0
 CODEX_LINUX_INSTANCE_ID=""
 LAUNCHER_ARGS=()
+CODEX_CLI_PATH_EXPLICIT=0
+if [ -n "${CODEX_CLI_PATH:-}" ]; then
+    CODEX_CLI_PATH_EXPLICIT=1
+fi
+# Internal Chrome selection is recomputed from the current launcher policy.
+unset CODEX_CHROME_CLI_PATH
 
 # Multi-launch requests are one launcher invocation wide. Keep the public
 # compatibility flag long enough to parse this invocation, but do not leak it
@@ -2024,6 +2030,44 @@ find_codex_cli() {
     done
 
     return 1
+}
+
+select_chrome_cli_path() {
+    local selected_path="${CODEX_CLI_PATH:-}"
+    local fallback_path="$HOME/.codex-cli-npm/bin/codex"
+    local extension_arch=""
+    local selection_host=""
+    local trusted_path=""
+
+    [ -n "$selected_path" ] || return 1
+    if [ "$CODEX_CLI_PATH_EXPLICIT" -eq 1 ]; then
+        CODEX_CHROME_CLI_PATH="$selected_path"
+        export CODEX_CHROME_CLI_PATH
+        echo "Chrome side-panel CLI follows explicit CODEX_CLI_PATH=$CODEX_CHROME_CLI_PATH"
+        return 0
+    fi
+
+    if extension_arch="$(chrome_extension_host_arch)"; then
+        selection_host="$SCRIPT_DIR/resources/plugins/openai-bundled/plugins/chrome/extension-host/linux/$extension_arch/extension-host"
+    fi
+    if [ -x "$selection_host" ] && \
+       trusted_path="$(codex_run_host_command "$selection_host" --select-chrome-cli "$selected_path" "$fallback_path" 2>/dev/null)" && \
+       [ -n "$trusted_path" ]; then
+        CODEX_CHROME_CLI_PATH="$trusted_path"
+        export CODEX_CHROME_CLI_PATH
+        if [ "$CODEX_CHROME_CLI_PATH" != "$selected_path" ]; then
+            echo "Chrome side-panel CLI uses trusted compatible npm fallback: $CODEX_CHROME_CLI_PATH"
+        else
+            echo "Chrome side-panel CLI uses the normal Desktop CLI: $CODEX_CHROME_CLI_PATH"
+        fi
+        return 0
+    fi
+
+    # Keep Desktop usable under the deliberately permissive launcher policy.
+    # The native host will apply its unchanged strict checks and fail closed.
+    CODEX_CHROME_CLI_PATH="$selected_path"
+    export CODEX_CHROME_CLI_PATH
+    echo "No trusted compatible Chrome side-panel CLI fallback was found; the native host will validate the normal Desktop CLI."
 }
 
 find_mise_codex_cli() {
@@ -4668,6 +4712,9 @@ if needs_cold_start; then
         log_phase "cli_preflight_backgrounded"
     fi
 fi
+
+select_chrome_cli_path
+log_phase "chrome_cli_selected"
 
 export_packaged_runtime_env
 if needs_cold_start; then

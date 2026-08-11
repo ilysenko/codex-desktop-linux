@@ -117,7 +117,13 @@ Tectonic runtime has a verified Linux staging path.
 
 The build stages the upstream Chrome plugin, patches its Linux compatibility
 paths, builds the native messaging host from Rust, and installs browser
-manifests for Chrome, Brave, and Chromium.
+manifests for Chrome, Brave, and Chromium. The native host strictly validates
+the registered app-server CLI and its canonical parent chain. The launcher
+uses that exact validator to prepare a Chrome-only CLI path: the normal safe
+selection wins, while an unsafe implicit npm selection may fall back only to a
+trusted `@openai/codex` launcher with the same package version in the dedicated
+managed npm prefix. Explicit `CODEX_CLI_PATH` values remain authoritative, and
+Desktop's normal CLI selection is unchanged.
 
 ## Validation
 

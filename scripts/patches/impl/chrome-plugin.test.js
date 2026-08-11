@@ -326,6 +326,50 @@ test("patches the complete current Chrome runtime asset set transactionally", as
   }
 });
 
+test("registers the launcher-selected trusted Chrome CLI separately from Desktop", async () => {
+  const unsafeDesktopCli = "/home/test/.nvm/versions/node/current/bin/codex";
+  const trustedChromeCli = "/home/test/.codex-cli-npm/bin/codex";
+  const patched = applyLinuxChromeNativeHostRuntimePatch(
+    currentChromePluginAppServerSourceBundleFixture(),
+  );
+  const files = new Set([
+    unsafeDesktopCli,
+    trustedChromeCli,
+    "/opt/codex/resources/node-runtime/bin/node",
+    "/opt/codex/resources/node_repl",
+  ]);
+
+  const runtime = await vm.runInNewContext(
+    `${patched};vq({resourcesPath:"/opt/codex/resources",codexHome:"/tmp/codex",devRuntimeRepoRoot:null,nativeHostName:"com.openai.codexextension"});`,
+    {
+      require(moduleName) {
+        if (moduleName === "node:path") return path;
+        if (moduleName === "node:fs") {
+          return {
+            statSync(filePath) {
+              if (!files.has(filePath)) {
+                throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+              }
+              return { isFile: () => true };
+            },
+          };
+        }
+        return require(moduleName);
+      },
+      process: {
+        env: {
+          CODEX_CHROME_CLI_PATH: trustedChromeCli,
+          CODEX_CLI_PATH: unsafeDesktopCli,
+          PATH: "",
+        },
+        platform: "linux",
+      },
+    },
+  );
+
+  assert.equal(runtime.codexCliPath, trustedChromeCli);
+});
+
 test("registers the durable trusted Linux runtime cache instead of the installed cache", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chrome-runtime-trust-"));
   try {

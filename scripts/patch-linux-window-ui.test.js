@@ -8868,10 +8868,11 @@ test("uses Linux managed runtime paths for Electron 42 Browser Use runtime resol
   const files = new Set([
     "/opt/codex/resources/node-runtime/bin/node",
     "/opt/codex/resources/node_repl",
+    "/home/josh/.codex-cli-npm/bin/codex",
     "/home/josh/.local/bin/codex",
   ]);
   const result = vm.runInNewContext(
-    `${patched};Hn({env:{CODEX_CLI_PATH:"/home/josh/.local/bin/codex",PATH:""},isPackaged:true,platform:"linux",repoRoot:null,resolveCodexPath:()=>null,resolveNodePath:()=>null,resolveNodeReplPath:()=>null,resolvePrimaryRuntimeNodePath:()=>null,resourcesPath:"/opt/codex/resources"});`,
+    `${patched};Hn({env:{CODEX_CHROME_CLI_PATH:"/home/josh/.codex-cli-npm/bin/codex",CODEX_CLI_PATH:"/home/josh/.local/bin/codex",PATH:""},isPackaged:true,platform:"linux",repoRoot:null,resolveCodexPath:()=>null,resolveNodePath:()=>null,resolveNodeReplPath:()=>null,resolvePrimaryRuntimeNodePath:()=>null,resourcesPath:"/opt/codex/resources"});`,
     {
       require(moduleName) {
         if (moduleName === "node:path") {
@@ -8900,7 +8901,7 @@ test("uses Linux managed runtime paths for Electron 42 Browser Use runtime resol
   );
 
   assert.deepEqual(JSON.parse(JSON.stringify(result)), {
-    codexCliPath: "/home/josh/.local/bin/codex",
+    codexCliPath: "/home/josh/.codex-cli-npm/bin/codex",
     codexCliPathSource: "env-override",
     nodeModuleDirs: [],
     nodePath: "/opt/codex/resources/node-runtime/bin/node",

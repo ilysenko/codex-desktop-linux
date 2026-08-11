@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -510,6 +510,10 @@ impl RolloutTracker {
 }
 
 fn main() -> Result<()> {
+    if let Some(result) = run_cli_selection_mode() {
+        return result;
+    }
+
     let effective_uid = unsafe { libc::geteuid() };
     let socket_dir = socket_dir(effective_uid);
     let socket_path = socket_path(&socket_dir)?;
@@ -543,6 +547,24 @@ fn main() -> Result<()> {
     runtime_manager.shutdown();
     remove_socket_if_present(&socket_path)?;
     result
+}
+
+fn run_cli_selection_mode() -> Option<Result<()>> {
+    let args = env::args_os().skip(1).collect::<Vec<_>>();
+    if args.first().is_none_or(|arg| arg != "--select-chrome-cli") {
+        return None;
+    }
+    Some((|| {
+        if args.len() != 3 {
+            bail!("usage: codex-chrome-extension-host --select-chrome-cli SELECTED FALLBACK");
+        }
+        let selected = Path::new(&args[1]);
+        let fallback = Path::new(&args[2]);
+        let trusted = chrome_runtime::select_trusted_chrome_cli_path(selected, Some(fallback))
+            .map_err(|error| anyhow!(error.message().to_string()))?;
+        println!("{}", trusted.display());
+        Ok(())
+    })())
 }
 
 fn socket_dir(effective_uid: u32) -> PathBuf {

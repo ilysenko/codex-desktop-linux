@@ -170,7 +170,11 @@ platform binary is present. The launcher does not rank installed CLIs by
 version; it uses an explicit `CODEX_CLI_PATH` first, then the normal lookup
 order, and logs the resolved CLI path plus best-effort version so GUI PATH
 issues are visible. Set `CODEX_CLI_PATH=/path/to/codex` when you want to pin a
-specific binary.
+specific binary. Chrome's side-panel runtime keeps its stricter path trust
+checks. For an implicit unsafe npm selection, the launcher may register the
+same-version CLI from the trusted dedicated `~/.codex-cli-npm` prefix for
+Chrome only; Desktop continues using its normal selection. An explicit
+`CODEX_CLI_PATH` is never replaced.
 
 Local AppImage builds can optionally embed that CLI and its matching Linux
 platform package. Set `CODEX_CLI_BUNDLE_SOURCE` to an installed

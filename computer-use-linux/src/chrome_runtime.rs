@@ -56,17 +56,22 @@ const UNCONNECTED_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 const DISCONNECTED_PROCESS_GRACE: Duration = Duration::from_secs(2);
 const MANIFEST_FILE_NAME: &str = "chrome-native-hosts-v2.json";
 const OPEN_LOCAL_FILE_METHOD: &str = "codexRuntime/openLocalFile";
+const MAX_NPM_PACKAGE_METADATA_BYTES: u64 = 64 * 1024;
 
 type RuntimeResult<T> = std::result::Result<T, RuntimeError>;
 
 #[derive(Debug)]
-struct RuntimeError {
+pub(crate) struct RuntimeError {
     code: i64,
     message: String,
     kind: Option<&'static str>,
 }
 
 impl RuntimeError {
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
     fn invalid_params(message: impl Into<String>) -> Self {
         Self {
             code: -32602,
@@ -1290,6 +1295,76 @@ fn validate_owned_file(path: &Path, executable: bool) -> RuntimeResult<PathBuf> 
     }
     validate_trusted_parent_chain(&canonical)?;
     Ok(canonical)
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+struct NpmCliPackageIdentity {
+    name: String,
+    version: String,
+}
+
+pub(crate) fn select_trusted_chrome_cli_path(
+    selected_path: &Path,
+    fallback_path: Option<&Path>,
+) -> RuntimeResult<PathBuf> {
+    if let Ok(canonical) = validate_owned_file(selected_path, true) {
+        return Ok(canonical);
+    }
+
+    let fallback_path = fallback_path.ok_or_else(chrome_cli_selection_error)?;
+    let trusted_fallback =
+        validate_owned_file(fallback_path, true).map_err(|_| chrome_cli_selection_error())?;
+    let selected_identity =
+        npm_cli_package_identity(selected_path, false).ok_or_else(chrome_cli_selection_error)?;
+    let fallback_identity =
+        npm_cli_package_identity(&trusted_fallback, true).ok_or_else(chrome_cli_selection_error)?;
+    if selected_identity != fallback_identity {
+        return Err(chrome_cli_selection_error());
+    }
+
+    Ok(trusted_fallback)
+}
+
+fn npm_cli_package_identity(path: &Path, require_trust: bool) -> Option<NpmCliPackageIdentity> {
+    let canonical = fs::canonicalize(path).ok()?;
+    if canonical.file_name()? != "codex.js" || canonical.parent()?.file_name()? != "bin" {
+        return None;
+    }
+    let package_root = canonical.parent()?.parent()?;
+    let package_json = package_root.join("package.json");
+    let package_json = if require_trust {
+        validate_owned_file(&package_json, false).ok()?
+    } else {
+        fs::canonicalize(package_json).ok()?
+    };
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&package_json)
+        .ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_NPM_PACKAGE_METADATA_BYTES {
+        return None;
+    }
+    let mut contents = Vec::new();
+    file.take(MAX_NPM_PACKAGE_METADATA_BYTES + 1)
+        .read_to_end(&mut contents)
+        .ok()?;
+    if contents.len() as u64 > MAX_NPM_PACKAGE_METADATA_BYTES {
+        return None;
+    }
+    let identity: NpmCliPackageIdentity = serde_json::from_slice(&contents).ok()?;
+    if identity.name != "@openai/codex" || identity.version.trim().is_empty() {
+        return None;
+    }
+    Some(identity)
+}
+
+fn chrome_cli_selection_error() -> RuntimeError {
+    RuntimeError::typed(
+        "trusted_cli_unavailable",
+        "No trusted compatible Codex CLI is available for the Chrome side panel",
+    )
 }
 
 fn validate_owned_dir(path: &Path, require_user_owner: bool) -> RuntimeResult<()> {
@@ -2964,6 +3039,80 @@ mod tests {
     }
 
     #[test]
+    fn chrome_cli_selection_keeps_a_safe_normal_first_choice() {
+        let root = test_root("safe-chrome-cli-first-choice");
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let selected = write_npm_cli_fixture(&root.join("selected"), "0.147.0", 0o700);
+        let fallback = write_npm_cli_fixture(&root.join("fallback"), "0.147.0", 0o700);
+
+        assert_eq!(
+            select_trusted_chrome_cli_path(&selected, Some(&fallback)).unwrap(),
+            fs::canonicalize(&selected).unwrap()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn chrome_cli_selection_uses_a_trusted_same_version_npm_fallback() {
+        let root = test_root("trusted-chrome-cli-fallback");
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let selected = write_npm_cli_fixture(&root.join("nvm"), "0.147.0", 0o770);
+        let fallback = write_npm_cli_fixture(&root.join("dedicated"), "0.147.0", 0o700);
+
+        assert_eq!(
+            select_trusted_chrome_cli_path(&selected, Some(&fallback)).unwrap(),
+            fs::canonicalize(&fallback).unwrap()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn chrome_cli_selection_rejects_an_unsafe_path_without_a_trusted_fallback() {
+        let root = test_root("missing-trusted-chrome-cli-fallback");
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let selected = write_npm_cli_fixture(&root.join("nvm"), "0.147.0", 0o770);
+
+        let error = select_trusted_chrome_cli_path(&selected, None).unwrap_err();
+        assert_eq!(error.kind, Some("trusted_cli_unavailable"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn chrome_cli_selection_does_not_switch_npm_versions() {
+        let root = test_root("mismatched-chrome-cli-fallback");
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let selected = write_npm_cli_fixture(&root.join("nvm"), "0.148.0", 0o770);
+        let fallback = write_npm_cli_fixture(&root.join("dedicated"), "0.147.0", 0o700);
+
+        let error = select_trusted_chrome_cli_path(&selected, Some(&fallback)).unwrap_err();
+        assert_eq!(error.kind, Some("trusted_cli_unavailable"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn chrome_cli_selection_does_not_switch_install_types() {
+        let root = test_root("mismatched-chrome-cli-install-type");
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let selected_parent = root.join("standalone/bin");
+        fs::create_dir_all(&selected_parent).unwrap();
+        fs::set_permissions(root.join("standalone"), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&selected_parent, fs::Permissions::from_mode(0o700)).unwrap();
+        let selected = selected_parent.join("codex");
+        fs::write(&selected, "synthetic standalone launcher").unwrap();
+        fs::set_permissions(&selected, fs::Permissions::from_mode(0o770)).unwrap();
+        let fallback = write_npm_cli_fixture(&root.join("dedicated"), "0.147.0", 0o700);
+
+        let error = select_trusted_chrome_cli_path(&selected, Some(&fallback)).unwrap_err();
+        assert_eq!(error.kind, Some("trusted_cli_unavailable"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn node_path_validation_canonicalizes_and_rejects_unsafe_executables() {
         let root = test_root("canonical-node-path");
         let runtime_dir = root.join("runtime/bin");
@@ -3282,6 +3431,45 @@ mod tests {
             std::process::id(),
             random_hex(4).unwrap()
         ))
+    }
+
+    fn write_npm_cli_fixture(root: &Path, version: &str, executable_mode: u32) -> PathBuf {
+        let package_root = root.join("lib/node_modules/@openai/codex");
+        let package_bin = package_root.join("bin");
+        let visible_bin = root.join("bin");
+        fs::create_dir_all(&package_bin).unwrap();
+        fs::create_dir_all(&visible_bin).unwrap();
+        for directory in [
+            root.to_path_buf(),
+            root.join("lib"),
+            root.join("lib/node_modules"),
+            root.join("lib/node_modules/@openai"),
+            package_root.clone(),
+            package_bin.clone(),
+            visible_bin.clone(),
+        ] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(
+            package_root.join("package.json"),
+            serde_json::to_vec(&json!({
+                "name": "@openai/codex",
+                "version": version
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::set_permissions(
+            package_root.join("package.json"),
+            fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        let executable = package_bin.join("codex.js");
+        fs::write(&executable, "synthetic npm launcher").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(executable_mode)).unwrap();
+        let visible = visible_bin.join("codex");
+        std::os::unix::fs::symlink(&executable, &visible).unwrap();
+        visible
     }
 
     fn test_executable(name: &str) -> PathBuf {

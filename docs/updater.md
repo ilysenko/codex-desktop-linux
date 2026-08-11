@@ -147,6 +147,17 @@ need to pin a particular binary from a GUI-launched session. `CODEX_CLI_PATH`
 does not bypass install-type detection; if it points at a pacman-managed CLI,
 the same non-npm guidance applies.
 
+Chrome app-server registration has a narrower trust requirement than normal
+Desktop launch. After normal launcher/updater selection finishes, the launcher
+asks the bundled Chrome native host to validate that path without executing it.
+For a non-explicit unsafe npm selection, only the known
+`~/.codex-cli-npm/bin/codex` candidate is considered, and only when its trusted
+package metadata identifies the same `@openai/codex` version. This selection is
+exported to Chrome registration separately and does not change Desktop or
+updater CLI identity. An explicit `CODEX_CLI_PATH` never falls through. If no
+trusted compatible fallback exists, Desktop remains usable and the Chrome
+native host rejects the registered path under its existing fail-closed policy.
+
 ## Inspect State
 
 ```bash

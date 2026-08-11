@@ -7072,7 +7072,7 @@ functions = [source[
     source.index("codex_restore_original_ld_library_path() {"):
     source.index("# Capture before package-specific launcher patches")
 ]]
-for name in ("cached_codex_cli_path", "find_fnm_codex_cli", "find_mise_codex_cli", "is_codex_cli_path", "find_codex_cli", "verify_cli_launch_path", "pid_parent_matches", "codex_cli_version_probe", "codex_cli_version", "codex_cli_missing_optional_dependency", "log_codex_cli_path"):
+for name in ("cached_codex_cli_path", "find_fnm_codex_cli", "find_mise_codex_cli", "is_codex_cli_path", "find_codex_cli", "chrome_extension_host_arch", "select_chrome_cli_path", "verify_cli_launch_path", "pid_parent_matches", "codex_cli_version_probe", "codex_cli_version", "codex_cli_missing_optional_dependency", "log_codex_cli_path"):
     match = re.search(r"^" + re.escape(name) + r"\(\) \{[\s\S]*?^\}\n", source, re.M)
     if match is None:
         raise SystemExit(f"missing {name}")
@@ -7113,6 +7113,14 @@ case "${1:?}" in
         verify_cli_launch_path
         printf 'path=%s\n' "$CODEX_CLI_PATH"
         printf 'source=%s\n' "$CODEX_CLI_SOURCE_PATH"
+        ;;
+    chrome-select)
+        SCRIPT_DIR="${CHROME_APP_DIR:?}"
+        CODEX_CLI_PATH="${2:-}"
+        CODEX_CLI_PATH_EXPLICIT="${CHROME_CLI_EXPLICIT:-0}"
+        export CODEX_CLI_PATH
+        select_chrome_cli_path >/dev/null
+        printf '%s\n' "$CODEX_CHROME_CLI_PATH"
         ;;
     *)
         exit 64
@@ -7164,6 +7172,7 @@ codex_cli_missing_optional_dependency() {
     [ "${BROKEN_CLI:-0}" = "1" ]
 }
 run_cli_preflight_background() { printf 'background=1\n' >> "$ROUTING_LOG"; }
+select_chrome_cli_path() { :; }
 log_codex_cli_path() { printf 'version=final\n' >> "$ROUTING_LOG"; }
 launch_electron() { printf 'electron=launch\n' >> "$ROUTING_LOG"; }
 '''
@@ -7276,6 +7285,55 @@ PY
     chmod +x "$override_cli"
     log_output="$(env -i PATH="$path_cli_bin:$HOST_TOOL_PATH" HOME="$fake_home" "$launcher_probe" log "$override_cli")"
     [[ "$log_output" == "Using CODEX_CLI_PATH=$override_cli (version 0.42.0)" ]] || fail "CODEX_CLI_PATH must remain an explicit override with version logging: $log_output"
+
+    local chrome_app_dir="$workspace/chrome-app"
+    local chrome_selection_host="$chrome_app_dir/resources/plugins/openai-bundled/plugins/chrome/extension-host/linux/x64/extension-host"
+    local chrome_host_called="$workspace/chrome-host-called"
+    local unsafe_normal_cli="$workspace/nvm-like/codex"
+    local trusted_fallback_cli="$fake_home/.codex-cli-npm/bin/codex"
+    local chrome_selection
+    mkdir -p "$(dirname "$chrome_selection_host")" "$(dirname "$unsafe_normal_cli")" "$(dirname "$trusted_fallback_cli")"
+    printf '#!/usr/bin/env bash\nprintf "called\\n" > "${CHROME_HOST_CALLED:?}"\n[ "$1" = --select-chrome-cli ]\n[ "$2" = "${EXPECTED_SELECTED:?}" ]\nprintf "%%s\\n" "${TRUSTED_CHROME_RESULT:?}"\n' > "$chrome_selection_host"
+    chmod 0755 "$chrome_selection_host"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$unsafe_normal_cli"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$trusted_fallback_cli"
+    chmod 0775 "$unsafe_normal_cli"
+    chmod 0755 "$trusted_fallback_cli"
+
+    chrome_selection="$(env -i PATH="$HOST_TOOL_PATH" HOME="$fake_home" \
+        CHROME_APP_DIR="$chrome_app_dir" CHROME_CLI_EXPLICIT=1 \
+        CHROME_HOST_CALLED="$chrome_host_called" EXPECTED_SELECTED="$unsafe_normal_cli" \
+        TRUSTED_CHROME_RESULT="$trusted_fallback_cli" \
+        "$launcher_probe" chrome-select "$unsafe_normal_cli")"
+    [ "$chrome_selection" = "$unsafe_normal_cli" ] || \
+        fail "explicit CODEX_CLI_PATH must remain authoritative for Chrome: $chrome_selection"
+    [ ! -e "$chrome_host_called" ] || \
+        fail "explicit CODEX_CLI_PATH must not silently consult a fallback"
+
+    chrome_selection="$(env -i PATH="$HOST_TOOL_PATH" HOME="$fake_home" \
+        CHROME_APP_DIR="$chrome_app_dir" CHROME_CLI_EXPLICIT=0 \
+        CHROME_HOST_CALLED="$chrome_host_called" EXPECTED_SELECTED="$unsafe_normal_cli" \
+        TRUSTED_CHROME_RESULT="$trusted_fallback_cli" \
+        "$launcher_probe" chrome-select "$unsafe_normal_cli")"
+    [ "$chrome_selection" = "$trusted_fallback_cli" ] || \
+        fail "implicit unsafe Desktop CLI must allow a trusted compatible Chrome fallback: $chrome_selection"
+    assert_file_exists "$chrome_host_called"
+
+    rm -f "$chrome_host_called"
+    chrome_selection="$(env -i PATH="$HOST_TOOL_PATH" HOME="$fake_home" \
+        CHROME_APP_DIR="$chrome_app_dir" CHROME_CLI_EXPLICIT=0 \
+        CHROME_HOST_CALLED="$chrome_host_called" EXPECTED_SELECTED="$trusted_fallback_cli" \
+        TRUSTED_CHROME_RESULT="$trusted_fallback_cli" \
+        "$launcher_probe" chrome-select "$trusted_fallback_cli")"
+    [ "$chrome_selection" = "$trusted_fallback_cli" ] || \
+        fail "safe normal first-choice CLI must remain selected for Chrome: $chrome_selection"
+
+    rm -f "$chrome_host_called"
+    chrome_selection="$(env -i PATH="$HOST_TOOL_PATH" HOME="$fake_home" \
+        CHROME_APP_DIR="$workspace/missing-chrome-host" CHROME_CLI_EXPLICIT=0 \
+        "$launcher_probe" chrome-select "$unsafe_normal_cli")"
+    [ "$chrome_selection" = "$unsafe_normal_cli" ] || \
+        fail "no trusted fallback must preserve Desktop CLI while Chrome fails closed: $chrome_selection"
 
     local dash_version_cli="$workspace/dash-version-codex"
     local fallback_version_cli="$workspace/fallback-version-codex"

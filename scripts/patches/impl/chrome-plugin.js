@@ -127,13 +127,13 @@ function hasCompleteCurrentChromeAppServerRuntimePatch(source) {
     matchesExactlyOnce(
       source,
       new RegExp(
-        String.raw`\/\*codexLinuxChromeNativeHostAppServerRuntime\*\/async function ${IDENTIFIER_PATTERN}\((?<runtimeConfig>${IDENTIFIER_PATTERN})\)\{let ${IDENTIFIER_PATTERN}=${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_CLI_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimePath\(\`codex\`\),${IDENTIFIER_PATTERN}=${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\.resourcesPath\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_BROWSER_USE_NODE_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`NODE_REPL_NODE_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeFile\(\k<runtimeConfig>\.resourcesPath,\[\[\`node-runtime\`,\`bin\`,process\.platform===\`win32\`\?\`node\.exe\`:\`node\`\]\]\),${IDENTIFIER_PATTERN}=${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\.resourcesPath\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_NODE_REPL_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeFile\(\k<runtimeConfig>\.resourcesPath,\[\[process\.platform===\`win32\`\?\`node_repl\.exe\`:\`node_repl\`\]\]\),`,
+        String.raw`\/\*codexLinuxChromeNativeHostAppServerRuntime\*\/async function ${IDENTIFIER_PATTERN}\((?<runtimeConfig>${IDENTIFIER_PATTERN})\)\{let ${IDENTIFIER_PATTERN}=${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_CHROME_CLI_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_CLI_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimePath\(\`codex\`\),${IDENTIFIER_PATTERN}=${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\.resourcesPath\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_BROWSER_USE_NODE_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`NODE_REPL_NODE_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeFile\(\k<runtimeConfig>\.resourcesPath,\[\[\`node-runtime\`,\`bin\`,process\.platform===\`win32\`\?\`node\.exe\`:\`node\`\]\]\),${IDENTIFIER_PATTERN}=${IDENTIFIER_PATTERN}\(\k<runtimeConfig>\.resourcesPath\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_NODE_REPL_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeFile\(\k<runtimeConfig>\.resourcesPath,\[\[process\.platform===\`win32\`\?\`node_repl\.exe\`:\`node_repl\`\]\]\),`,
       ),
     ) &&
     matchesExactlyOnce(
       source,
       new RegExp(
-        String.raw`\/\*codexLinuxChromeNativeHostAppServerCodexRuntime\*\/async function ${IDENTIFIER_PATTERN}\((?<codexConfig>${IDENTIFIER_PATTERN})\)\{let (?<codexPath>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\(\k<codexConfig>\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_CLI_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimePath\(\`codex\`\);if\(\k<codexPath>==null\)throw Error\(.+?\);return ${IDENTIFIER_PATTERN}\(\{codexCliPath:\k<codexPath>,codexHome:\k<codexConfig>\.codexHome,nativeHostName:\k<codexConfig>\.nativeHostName\}\)\}`,
+        String.raw`\/\*codexLinuxChromeNativeHostAppServerCodexRuntime\*\/async function ${IDENTIFIER_PATTERN}\((?<codexConfig>${IDENTIFIER_PATTERN})\)\{let (?<codexPath>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\(\k<codexConfig>\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_CHROME_CLI_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimeEnv\(\`CODEX_CLI_PATH\`\)\?\?codexLinuxChromeNativeHostRuntimePath\(\`codex\`\);if\(\k<codexPath>==null\)throw Error\(.+?\);return ${IDENTIFIER_PATTERN}\(\{codexCliPath:\k<codexPath>,codexHome:\k<codexConfig>\.codexHome,nativeHostName:\k<codexConfig>\.nativeHostName\}\)\}`,
       ),
     ) &&
     matchesExactlyOnce(
@@ -367,7 +367,7 @@ function applyModernChromeNativeHostRuntimePatch(currentSource, helper) {
   const [, envVar, platformVar, , resourcesVar] = varsMatch;
   let patchedResolver = resolverSource;
   const codexPathRegex = new RegExp(
-    String.raw`(rawValue:${envVar}\.CODEX_CLI_PATH,resolveWindowsAppsPath:[A-Za-z_$][\w$]*\}\)\?\?)([A-Za-z_$][\w$]*)\(\{devRelativePathSegments:\[\`extension\`,\`bin\`,\`codex\`\]`,
+    String.raw`(rawValue:)${envVar}\.CODEX_CLI_PATH(,resolveWindowsAppsPath:[A-Za-z_$][\w$]*\}\)\?\?)([A-Za-z_$][\w$]*)\(\{devRelativePathSegments:\[\`extension\`,\`bin\`,\`codex\`\]`,
   );
   const nodePathRegex = new RegExp(
     String.raw`(rawValue:${envVar}\.CODEX_BROWSER_USE_NODE_PATH,resolveWindowsAppsPath:[A-Za-z_$][\w$]*\}\)\?\?)(\([A-Za-z_$][\w$]*\.path==null&&[A-Za-z_$][\w$]*!=null\?)`,
@@ -378,8 +378,8 @@ function applyModernChromeNativeHostRuntimePatch(currentSource, helper) {
 
   patchedResolver = patchedResolver.replace(
     codexPathRegex,
-    (_match, prefix, resolverFn) =>
-      `${prefix}codexLinuxChromeNativeHostRuntimeEntry(codexLinuxChromeNativeHostRuntimePath(\`codex\`),\`linux-path\`)??${resolverFn}({devRelativePathSegments:[\`extension\`,\`bin\`,\`codex\`]`,
+    (_match, prefix, suffix, resolverFn) =>
+      `${prefix}${envVar}.CODEX_CHROME_CLI_PATH??${envVar}.CODEX_CLI_PATH${suffix}codexLinuxChromeNativeHostRuntimeEntry(codexLinuxChromeNativeHostRuntimePath(\`codex\`),\`linux-path\`)??${resolverFn}({devRelativePathSegments:[\`extension\`,\`bin\`,\`codex\`]`,
   );
   if (patchedResolver === resolverSource) {
     return null;
@@ -666,7 +666,7 @@ function applyChromePluginAppServerRuntimePatch(currentSource, helper) {
     nodeReplResolverFn,
   ] = match;
   const replacement =
-    `${helper}${LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_RUNTIME_MARKER}async function ${resolverFn}(${configVar}){let ${codexVar}=${codexResolverFn}(${configVar})??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_CLI_PATH\`)??codexLinuxChromeNativeHostRuntimePath(\`codex\`),${nodeVar}=${nodeResolverFn}(${configVar}.resourcesPath)??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_BROWSER_USE_NODE_PATH\`)??codexLinuxChromeNativeHostRuntimeEnv(\`NODE_REPL_NODE_PATH\`)??codexLinuxChromeNativeHostRuntimeFile(${configVar}.resourcesPath,[[\`node-runtime\`,\`bin\`,process.platform===\`win32\`?\`node.exe\`:\`node\`]]),${nodeReplVar}=${nodeReplResolverFn}(${configVar}.resourcesPath)??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_NODE_REPL_PATH\`)??codexLinuxChromeNativeHostRuntimeFile(${configVar}.resourcesPath,[[process.platform===\`win32\`?\`node_repl.exe\`:\`node_repl\`]]),`;
+    `${helper}${LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_RUNTIME_MARKER}async function ${resolverFn}(${configVar}){let ${codexVar}=${codexResolverFn}(${configVar})??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_CHROME_CLI_PATH\`)??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_CLI_PATH\`)??codexLinuxChromeNativeHostRuntimePath(\`codex\`),${nodeVar}=${nodeResolverFn}(${configVar}.resourcesPath)??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_BROWSER_USE_NODE_PATH\`)??codexLinuxChromeNativeHostRuntimeEnv(\`NODE_REPL_NODE_PATH\`)??codexLinuxChromeNativeHostRuntimeFile(${configVar}.resourcesPath,[[\`node-runtime\`,\`bin\`,process.platform===\`win32\`?\`node.exe\`:\`node\`]]),${nodeReplVar}=${nodeReplResolverFn}(${configVar}.resourcesPath)??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_NODE_REPL_PATH\`)??codexLinuxChromeNativeHostRuntimeFile(${configVar}.resourcesPath,[[process.platform===\`win32\`?\`node_repl.exe\`:\`node_repl\`]]),`;
   return currentSource.replace(originalPrefix, replacement);
 }
 
@@ -686,7 +686,7 @@ function applyChromePluginCodexAppServerRuntimePatch(currentSource, helper) {
     syncFn,
   ] = match;
   const replacement =
-    `${helper}${LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_CODEX_MARKER}async function ${resolverFn}(${configVar}){let ${codexVar}=${bundledCodexResolverFn}(${configVar})??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_CLI_PATH\`)??codexLinuxChromeNativeHostRuntimePath(\`codex\`);if(${codexVar}==null)throw Error(\`Missing bundled Electron Codex runtime required to sync Chrome plugin app server for \${${configVar}.nativeHostName} (resourcesPath: \${${configVar}.resourcesPath??\`<none>\`}).\`);return ${syncFn}({codexCliPath:${codexVar},codexHome:${configVar}.codexHome,nativeHostName:${configVar}.nativeHostName})}`;
+    `${helper}${LINUX_CHROME_NATIVE_HOST_RUNTIME_APP_SERVER_CODEX_MARKER}async function ${resolverFn}(${configVar}){let ${codexVar}=${bundledCodexResolverFn}(${configVar})??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_CHROME_CLI_PATH\`)??codexLinuxChromeNativeHostRuntimeEnv(\`CODEX_CLI_PATH\`)??codexLinuxChromeNativeHostRuntimePath(\`codex\`);if(${codexVar}==null)throw Error(\`Missing bundled Electron Codex runtime required to sync Chrome plugin app server for \${${configVar}.nativeHostName} (resourcesPath: \${${configVar}.resourcesPath??\`<none>\`}).\`);return ${syncFn}({codexCliPath:${codexVar},codexHome:${configVar}.codexHome,nativeHostName:${configVar}.nativeHostName})}`;
   return currentSource.replace(original, replacement);
 }
 
