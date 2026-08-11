@@ -50,9 +50,9 @@ function currentMainCallerFixture() {
 
 function currentRendererFixture() {
   return [
-    currentBrowserRegistry("Fu"),
-    "function Pu(e){return Object.hasOwn(Fu,e)}",
-    "function rendererLinuxRegistry(){return Object.keys(Fu).filter(Pu).map(e=>({browserFamily:e,installations:Fu[e].linux.installations,manifestDirectories:Fu[e].linux.nativeMessagingManifestDirectories,processNames:Fu[e].linux.processNames}))}",
+    currentBrowserRegistry("Lu"),
+    "function Iu(e){return Object.hasOwn(Lu,e)}",
+    "function rendererLinuxRegistry(){return Object.keys(Lu).filter(Iu).map(e=>({browserFamily:e,installations:Lu[e].linux.installations,manifestDirectories:Lu[e].linux.nativeMessagingManifestDirectories,processNames:Lu[e].linux.processNames}))}",
     "function wfi(){return{enabled:!1,featureName:`browser_use_external`,gate:`410065390`}}",
     "function Sfi({isExternalBrowserUseFeatureEnabled:e,isExternalBrowserUseFeatureLoading:t,isExternalBrowserUseGateEnabled:n,runCodexInWsl:r,windowType:i}){return i===`chrome-extension`?`available`:t?`loading`:n?e?r?`wsl-disabled`:`available`:`config-requirement-disabled`:`statsig-disabled`}",
     "globalThis.rendererLinuxRegistry=rendererLinuxRegistry;",

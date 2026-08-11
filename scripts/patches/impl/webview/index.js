@@ -1526,10 +1526,10 @@ function currentBrowserUseMainRegistryContract(source) {
 }
 
 function currentBrowserUseRendererContract(source) {
-  return currentNativeBrowserUseRegistryContract(source, "Fu", "Pu") &&
+  return currentNativeBrowserUseRegistryContract(source, "Lu", "Iu") &&
     source.includes("featureName:`browser_use_external`") &&
     source.includes("410065390") &&
-    source.includes("Object.keys(Fu).filter(Pu)") &&
+    source.includes("Object.keys(Lu).filter(Iu)") &&
     (externalBrowserUseAvailabilityCurrentPattern.test(source) ||
       externalBrowserUseAvailabilityPatchedPattern.test(source));
 }
