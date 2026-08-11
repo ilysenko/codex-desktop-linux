@@ -166,10 +166,12 @@ function applyAssistantRenderPatch(source) {
   }
   const jsxCallPattern =
     /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{(?=[^{}]*\bitem:)(?=[^{}]*\bassistantCopyText:)(?=[^{}]*\bconversationId:)(?=[^{}]*\brenderCodeBlocksAsWritingBlocks:)([^{}]*)\}\)/g;
+  const currentAssistantRenderPattern =
+    /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{(?=[^{}]*\bitem:)(?=[^{}]*\bassistantCopyText:)(?=[^{}]*\bconversationId:)([^{}]*)\}\)/g;
   const readProp = (props, name) =>
     new RegExp(`(?:^|,)${name}:([A-Za-z_$][\\w$]*)`).exec(props)?.[1] ?? null;
-  const patched = source.replace(
-    jsxCallPattern,
+  const patchMatchingRenderCalls = (pattern) => source.replace(
+    pattern,
     (match, jsxVar, _component, props) => {
       const itemVar = readProp(props, "item");
       const copyVar = readProp(props, "assistantCopyText");
@@ -180,8 +182,12 @@ function applyAssistantRenderPatch(source) {
       return `(0,${jsxVar}.jsxs)(${jsxVar}.Fragment,{children:[${match},${readAloudButtonRowSource(jsxVar, itemVar, copyVar, conversationVar, "e")}]})`;
     },
   );
-  if (patched !== source) {
-    return patched;
+  const patched = patchMatchingRenderCalls(jsxCallPattern);
+  const patchedCurrent = patched === source
+    ? patchMatchingRenderCalls(currentAssistantRenderPattern)
+    : patched;
+  if (patchedCurrent !== source) {
+    return patchedCurrent;
   }
 
   if (ASSISTANT_RENDER_CANDIDATE_PATTERN.test(source)) {
@@ -793,7 +799,8 @@ module.exports = {
       phase: "webview-asset",
       order: 20620,
       ciPolicy: "optional",
-      pattern: /^app-initial-[A-Za-z0-9_-]+\.js$/,
+      pattern: /^(?:app-initial|local-conversation-turn)-(?!current\.js$)[A-Za-z0-9_-]+\.js$/,
+      assetMatch: (source) => ASSISTANT_RENDER_CANDIDATE_PATTERN.test(source),
       missingDescription: "current primary thread assistant bundle",
       skipDescription: "read aloud assistant runtime patch",
       apply: applyWebviewPatch,

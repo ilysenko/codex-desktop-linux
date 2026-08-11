@@ -1008,12 +1008,27 @@ test("assistant render patch covers the current shared assistant message call", 
   assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(n,b,d,e\.currentTarget\)/);
 });
 
+test("assistant render patch covers the current local conversation turn call", () => {
+  const source = "return (0,$.jsx)(Rr,{item:B,historyEntityKey:o,isHeartbeatAutomationRequest:qe.some(e=>e.heartbeatTrigger!=null),isHeartbeatAutomationTurn:p?.automationKind===`heartbeat`,conversationId:r,getVisualizeTurnTriggerType:Ae,hostId:a,conversationDetailLevel:I,isTurnInProgress:P,cwd:b,resolvedApps:k,renderMcpApps:L,reportEntityType:A,toolActivityTurnKey:F,turnId:Ut??void 0,projectlessOutputDirectory:P?null:E,assistantCopyText:Pt??void 0,assistantAfter:ir,autoReviewStats:Kt,hookStats:qt,completedThreadGoal:j,hasArtifacts:tr,alwaysShowAssistantMessageActions:C,showAssistantMessageActionRow:n==null&&!An&&!Bt.hasPendingItems,allowAddSelectedTextToChat:!w,onAssistantFileLinkOpen:zt,onForkTurn:ue})";
+  const patched = twice(applyAssistantRenderPatch, source);
+
+  assert.match(patched, /\$\.Fragment/);
+  assert.match(patched, /\(0,\$\.jsx\)\("button"/);
+  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(B,Pt,r,e\.currentTarget\)/);
+});
+
 test("assistant runtime descriptor targets current shared assistant bundles", () => {
   const descriptor = featurePatches.find((patch) => patch.id === "assistant-runtime");
   assert.ok(descriptor);
   assert.equal(
     descriptor.pattern.test(
       "app-initial-BHB6SClA.js",
+    ),
+    true,
+  );
+  assert.equal(
+    descriptor.pattern.test(
+      "local-conversation-turn-DF8fx5gl.js",
     ),
     true,
   );
@@ -1050,7 +1065,7 @@ test("assistant runtime descriptor fails soft and atomically when the current re
     assert.equal(fs.readFileSync(assetPath, "utf8"), source);
     assert.equal(report.patches.length, 1);
     assert.equal(report.patches[0].status, "skipped-optional");
-    assert.match(report.patches[0].reason, /Could not find assistant message render call/);
+    assert.match(report.patches[0].reason, /Could not find current primary thread assistant bundle/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
