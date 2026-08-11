@@ -112,6 +112,9 @@ const {
   patchLinuxHostProcessEnvironmentTargets,
 } = require("./patches/impl/main-process/misc.js");
 const {
+  applyLinuxAppServerInitializeTimeoutPatch,
+} = require("./patches/impl/main-process/app-server.js");
+const {
   applyLinuxHotkeyWindowPrewarmPatch,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxSettingsPersistencePatch,
@@ -1031,6 +1034,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-notification-actions",
     "linux-local-app-server-feature-enablement-handler",
     "linux-remote-control-config-preservation",
+    "linux-app-server-initialize-timeout",
     "linux-app-updater-menu",
     "linux-settings-persistence",
     "linux-launch-actions",
@@ -7996,6 +8000,50 @@ test("extends app-server startup waits while state db backfill is running", () =
   assert.match(context.result.message, /state database backfill is still running/);
   assert.equal(context.startupTimeout, 3e5);
   assert.equal(context.turnTimeout, 3e4);
+});
+
+test("extends the Linux app-server initialize handshake for slow profiles", () => {
+  const source = [
+    '"use strict";',
+    "var Z=3e4;",
+    "class AppServerConnection{scheduleInitializeTimeout(){if(this.clearInitializeTimeoutTimer(),this.initializeStartedAtMs==null)return;let e=this.initializeStartedAtMs;this.initializeTimeoutTimer=setTimeout(()=>{if(this.initializeStartedAtMs===e){this.logger.warning(`Initialize handshake still pending`)}},Z)}clearInitializeTimeoutTimer(){}}",
+  ].join("");
+
+  const { value: patched, warnings } = captureWarns(() =>
+    applyPatchTwice(applyLinuxAppServerInitializeTimeoutPatch, source),
+  );
+
+  assert.deepEqual(warnings, []);
+  assert.match(
+    patched,
+    /^"use strict";function codexLinuxAppServerInitializeTimeoutMs\(e\)/,
+  );
+  assert.match(
+    patched,
+    /\},codexLinuxAppServerInitializeTimeoutMs\(Z\)\)\}clearInitializeTimeoutTimer/,
+  );
+
+  const helperEnd = patched.indexOf("var Z=");
+  const context = { process: { platform: "linux" } };
+  vm.runInNewContext(
+    `${patched.slice('"use strict";'.length, helperEnd)};linuxTimeout=codexLinuxAppServerInitializeTimeoutMs(3e4);otherTimeout=codexLinuxAppServerInitializeTimeoutMs(9e4);`,
+    context,
+  );
+  assert.equal(context.linuxTimeout, 3e5);
+  assert.equal(context.otherTimeout, 9e4);
+});
+
+test("warns when the current app-server initialize timeout shape drifts", () => {
+  const source = "class X{log(){return `Initialize handshake still pending`}}";
+
+  const { value: patched, warnings } = captureWarns(() =>
+    applyLinuxAppServerInitializeTimeoutPatch(source),
+  );
+
+  assert.equal(patched, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find app-server initialize timeout — slow Linux profiles may fail during startup",
+  ]);
 });
 
 test("extends app-server startup waits in current manager signals bundle", () => {
