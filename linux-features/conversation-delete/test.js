@@ -21,9 +21,9 @@ const {
 
 const SIDEBAR_FIXTURE = [
 	"var SG={newChat:{id:`chatgptConversations.newChat`,defaultMessage:`New chat`,description:`Fallback title`},archive:{id:`chatgptConversations.sidebar.archive`,defaultMessage:`Archive chat`,description:`Action label to archive a ChatGPT conversation in the sidebar`},archiveError:{id:`chatgptConversations.sidebar.archiveError`,defaultMessage:`Failed to archive conversation`,description:`Archive error`}};",
-	"var aBr=e=>true,iBr=e=>e?.item_type===`conversation`&&aBr(e.item);var mBr=class{async list({}){let l=await this.request.listConversations();return{...l,items:l.items?.filter(aBr)??[]}}async getBatch(e,t){return(await this.request.getConversationsBatch(e,t)).filter(aBr)}async listPinnedConversationItems(){return(await this.request.listPinnedItems({itemType:`conversation`})).filter(iBr)}async listProjectConversations({cursor:e=null,limit:t=5,ownedOnly:n=!0,projectId:r}){let i=await this.request.listProjectConversations({cursor:e,limit:t,ownedOnly:n,projectId:r});return{cursor:i.cursor,items:i.items?.filter(aBr)??[]}}async deleteConversation(e){return this.safeDelete(`/conversation/id/{conversation_id}`,{parameters:{path:{conversation_id:e}}})}};",
+	"var aBr=e=>true,iBr=e=>e?.item_type===`conversation`&&aBr(e.item);var requestClient=class{async deleteConversation(e){return this.safeDelete(`/conversation/id/{conversation_id}`,{parameters:{path:{conversation_id:e}}})}},mBr=class{async list({}){let l=await this.request.listConversations();return{...l,items:l.items?.filter(aBr)??[]}}async getBatch(e,t){return(await this.request.getConversationsBatch(e,t)).filter(aBr)}async listPinnedConversationItems(){return(await this.request.listPinnedItems({itemType:`conversation`})).filter(iBr)}async listProjectConversations({cursor:e=null,limit:t=5,ownedOnly:n=!0,projectId:r}){let i=await this.request.listProjectConversations({cursor:e,limit:t,ownedOnly:n,projectId:r});return{cursor:i.cursor,items:i.items?.filter(aBr)??[]}}async setArchived(e,t){return this.request.setConversationArchived(e,t)}async delete(e){return this.request.deleteConversation(e)}};",
 	"function IEa(e,t){return e.get(GN).setArchived(t,!0).then(()=>{GEa(e.queryClient,t)})}",
-	"function cVc(e){let t=(0,w5.c)(83),{conversation:n,conversationId:r,isActive:o,isArchivePending:s,route:p,title:v}=e,E=Fo(Q),D=Vd(),O=LC();E.get(kv).info(D.formatMessage({id:`chatgptConversations.sidebar.archiveAriaLabel`,defaultMessage:`Archive chat`}));let ae=archiveAction,oe;t[27]!==n||t[28]!==ae||t[29]!==s||t[30]!==E?(oe=async()=>{return[{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae}]},t[27]=n,t[28]=ae,t[29]=s,t[30]=E,t[34]=oe):oe=t[34];let ue=()=>{r!=null&&O(p)};let I=n!=null;let ye=oe;if(!I)return ye;let be;return be=ye}",
+	"function cVc(e){let t=(0,w5.c)(83),{conversation:n,conversationId:r,conversationOrigin:i,isActive:o,isArchivePending:s,route:p,title:v}=e,E=Fo(Q),D=Vd(),O=LC();E.get(kv).info(D.formatMessage({id:`chatgptConversations.sidebar.archiveAriaLabel`,defaultMessage:`Archive chat`}));let ae=archiveAction,oe;t[27]!==n||t[28]!==ae||t[29]!==s||t[30]!==E?(oe=async()=>{return[{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae}]},t[27]=n,t[28]=ae,t[29]=s,t[30]=E,t[34]=oe):oe=t[34];let ue=()=>{r!=null&&O(p)};let I=n!=null;let ye=oe;if(!I)return ye;let be;return be=ye}",
 ].join("");
 
 function renameIdentifiers(source, replacements) {
@@ -140,7 +140,7 @@ test("patch adds confirmed delete action and is idempotent", () => {
 	assert.match(patched, new RegExp(RUNTIME_MARKER));
 	assert.match(patched, /codexLinuxConversationDelete\.delete/);
 	assert.match(patched, /id:`delete-chatgpt-conversation`/);
-	assert.match(patched, /e\.get\(GN\)\.deleteConversation\(t\.id\)/);
+	assert.match(patched, /e\.get\(GN\)\.delete\(t\.id\)/);
 	assert.match(patched, /window\.confirm/);
 	assert.match(patched, /GEa\(e\.queryClient,t\.id\)/);
 	assert.match(patched, new RegExp(`s\\("${NEW_THREAD_ROUTE}"\\)`));
@@ -168,10 +168,7 @@ test("discovers renamed minified aliases without hash coupling", () => {
 	const patched = applyConversationDeletePatch(RENAMED_SIDEBAR_FIXTURE);
 
 	assert.notEqual(patched, RENAMED_SIDEBAR_FIXTURE);
-	assert.match(
-		patched,
-		/get\(conversationApiToken\)\.deleteConversation\(t\.id\)/,
-	);
+	assert.match(patched, /get\(conversationApiToken\)\.delete\(t\.id\)/);
 	assert.match(patched, /evictCaches\(e\.queryClient,/);
 	assert.match(patched, /id:`delete-chatgpt-conversation`/);
 });
@@ -249,7 +246,7 @@ test("runtime calls upstream delete without body and updates active navigation",
 			assert.equal(token === deleteToken || token === toastToken, true);
 			if (token === deleteToken) {
 				return {
-					deleteConversation(...args) {
+					delete(...args) {
 						calls.push(args);
 						return Promise.resolve();
 					},
@@ -329,7 +326,7 @@ test("tombstone hides pending delete and rolls back on failure", async () => {
 		get(token) {
 			if (token === deleteToken) {
 				return {
-					deleteConversation() {
+					delete() {
 						return new Promise((_, reject) => {
 							rejectDelete = reject;
 						});
@@ -403,7 +400,7 @@ test("active deletion navigates to new chat route", async () => {
 		queryClient: {},
 		get(token) {
 			assert.equal(token, deleteToken);
-			return { deleteConversation: () => Promise.resolve() };
+			return { delete: () => Promise.resolve() };
 		},
 	};
 
@@ -440,7 +437,7 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 		get(token) {
 			if (token === deleteToken) {
 				return {
-					deleteConversation(id) {
+					delete(id) {
 						deleted.push(id);
 						deleteCalls += 1;
 						if (deleteCalls === 1) {
@@ -464,7 +461,7 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 	const context = {
 		w5: {
 			c(size) {
-				assert.equal(size, 84);
+				assert.equal(size, 85);
 				return cache;
 			},
 		},
@@ -493,11 +490,24 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 	const conversation = { id: "conversation-123" };
 	const firstMenu = await context.renderSidebar({
 		conversation,
+		conversationOrigin: false,
 		isActive: false,
 		isArchivePending: false,
 		route: "/chat/conversation-123",
 		title: "Example chat",
 	})();
+	const taskMenu = await context.renderSidebar({
+		conversation,
+		conversationOrigin: true,
+		isActive: false,
+		isArchivePending: false,
+		route: "/chat/conversation-123",
+		title: "Example chat",
+	})();
+	assert.equal(
+		taskMenu.some((item) => item.id === DELETE_MENU_ID),
+		false,
+	);
 	firstMenu.find((item) => item.id === DELETE_MENU_ID).onSelect();
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(deleteCalls, 1);
@@ -508,6 +518,7 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 
 	const secondMenu = await context.renderSidebar({
 		conversation,
+		conversationOrigin: false,
 		isActive: true,
 		isArchivePending: false,
 		route: "/chat/conversation-123",
@@ -546,7 +557,7 @@ test("project conversation refetch filters deleted tombstone", async () => {
 		queryClient: {},
 		get(token) {
 			assert.equal(token, deleteToken);
-			return { deleteConversation: () => Promise.resolve() };
+			return { delete: () => Promise.resolve() };
 		},
 	};
 
@@ -600,7 +611,7 @@ test("cancelled confirmation does not call delete", async () => {
 		get(token) {
 			assert.equal(token, deleteToken);
 			return {
-				deleteConversation() {
+				delete() {
 					calls += 1;
 					return Promise.resolve();
 				},

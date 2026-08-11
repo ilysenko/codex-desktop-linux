@@ -107,12 +107,14 @@ function findSidebarContract(source) {
 	const propAlias = (name) =>
 		propsText.match(new RegExp(`${name}:(${JS_IDENT})`))?.[1] ?? null;
 	const conversationIdAlias = propAlias("conversationId");
+	const conversationOriginAlias = propAlias("conversationOrigin");
 	const activeAlias = propAlias("isActive");
 	const archivePendingAlias = propAlias("isArchivePending");
 	const routeAlias = propAlias("route");
 	const titleAlias = propAlias("title");
 	if (
 		conversationIdAlias == null ||
+		conversationOriginAlias == null ||
 		activeAlias == null ||
 		archivePendingAlias == null ||
 		routeAlias == null ||
@@ -200,6 +202,7 @@ function findSidebarContract(source) {
 		hookCacheSize: Number(openingMatch[4]),
 		conversationAlias: openingMatch[5],
 		conversationIdAlias,
+		conversationOriginAlias,
 		activeAlias,
 		archivePendingAlias,
 		routeAlias,
@@ -242,8 +245,38 @@ function findServiceContract(source) {
 	) {
 		return null;
 	}
+
+	const escapeRegex = (value) =>
+		value.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+	const serviceDeleteMatch = uniqueMatch(
+		source,
+		new RegExp(
+			`(?:async\\s+)?(${JS_IDENT})\\((${JS_IDENT})\\)\\{return this\\.request\\.${escapeRegex(deleteApiMatch[1])}\\(\\2\\)\\}`,
+		),
+	);
+	if (serviceDeleteMatch == null) {
+		return null;
+	}
+
+	const classStart = source.lastIndexOf("class{", serviceDeleteMatch.index);
+	if (classStart === -1) {
+		return null;
+	}
+	const classEnd = findMatchingBrace(source, classStart + "class".length);
+	if (classEnd === -1 || classEnd < serviceDeleteMatch.index) {
+		return null;
+	}
+	const serviceClass = source.slice(classStart, classEnd + 1);
+	const setArchivedMethod = findMethodBlock(serviceClass, "setArchived");
+	if (
+		setArchivedMethod == null ||
+		!setArchivedMethod.text.includes("return this.request.")
+	) {
+		return null;
+	}
+
 	return {
-		deleteMethodName: deleteApiMatch[1],
+		deleteMethodName: serviceDeleteMatch[1],
 		serviceTokenAlias: serviceTokenMatches[0][1],
 	};
 }
@@ -359,7 +392,7 @@ function buildRuntimeSource({
 	toastTokenAlias,
 	archiveMessageAlias,
 }) {
-	return `const ${DELETED_IDS}=new Set;function ${RUNTIME_MARKER}(e,t,n,r,i,o,s){if(t==null||r)return;if(typeof window==="undefined"||typeof window.confirm!=="function"||!window.confirm(o.formatMessage(${archiveMessageAlias}.deleteConfirm,{title:n})))return;return ${DELETED_IDS}.add(t.id),Promise.resolve().then(()=>e.get(${serviceTokenAlias}).${deleteMethodName}(t.id)).then(()=>{i&&s(${JSON.stringify(NEW_THREAD_ROUTE)}),${cacheEvictionAlias}(e.queryClient,t.id)}).catch(()=>{${DELETED_IDS}.delete(t.id),e.get(${toastTokenAlias}).danger(o.formatMessage(${archiveMessageAlias}.deleteError))})}`;
+	return `const ${DELETED_IDS}=new Set;function ${RUNTIME_MARKER}(e,t,n,r,i,o,s,a){if(t==null||r||a===!0)return;if(typeof window==="undefined"||typeof window.confirm!=="function"||!window.confirm(o.formatMessage(${archiveMessageAlias}.deleteConfirm,{title:n})))return;return ${DELETED_IDS}.add(t.id),Promise.resolve().then(()=>e.get(${serviceTokenAlias}).${deleteMethodName}(t.id)).then(()=>{try{i&&typeof s==="function"&&s(${JSON.stringify(NEW_THREAD_ROUTE)})}catch{}try{${cacheEvictionAlias}(e.queryClient,t.id)}catch{}},()=>{${DELETED_IDS}.delete(t.id),e.get(${toastTokenAlias}).danger(o.formatMessage(${archiveMessageAlias}.deleteError))})}`;
 }
 
 function patchConversationClient(source, contract) {
@@ -390,6 +423,7 @@ function patchSidebar(source, contract, runtimeSource) {
 		hookCacheSize,
 		activeAlias,
 		archiveMessageAlias,
+		conversationOriginAlias,
 		archivePendingAlias,
 		archiveItemText,
 		renderGuardText,
@@ -412,11 +446,11 @@ function patchSidebar(source, contract, runtimeSource) {
 	}
 	const openingPatched = opening.replace(
 		`(${hookCacheSize}),`,
-		`(${hookCacheSize + 1}),`,
+		`(${hookCacheSize + 2}),`,
 	);
 	let patchedBlock = block.text.replace(opening, openingPatched);
 
-	const deleteItem = `{id:${BACKTICK}${DELETE_MENU_ID}${BACKTICK},message:${archiveMessageAlias}.delete,onSelect:()=>${RUNTIME_MARKER}(${scopeAlias},${conversationAlias},${titleAlias},${archivePendingAlias},${activeAlias},${intlAlias},${navigateAlias})}`;
+	const deleteItem = `...(${conversationOriginAlias}===!0?[]:[{id:${BACKTICK}${DELETE_MENU_ID}${BACKTICK},message:${archiveMessageAlias}.delete,onSelect:()=>${RUNTIME_MARKER}(${scopeAlias},${conversationAlias},${titleAlias},${archivePendingAlias},${activeAlias},${intlAlias},${navigateAlias},${conversationOriginAlias})}])`;
 	if (countOccurrences(patchedBlock, archiveItemText) !== 1) {
 		return null;
 	}
@@ -431,7 +465,7 @@ function patchSidebar(source, contract, runtimeSource) {
 	}
 	patchedBlock = patchedBlock.replace(
 		guardCondition,
-		`${guardCondition}||${hookSlotsAlias}[${hookCacheSize}]!==${activeAlias}`,
+		`${guardCondition}||${hookSlotsAlias}[${hookCacheSize}]!==${activeAlias}||${hookSlotsAlias}[${hookCacheSize + 1}]!==${conversationOriginAlias}`,
 	);
 
 	if (countOccurrences(patchedBlock, assignmentText) !== 1) {
@@ -439,7 +473,7 @@ function patchSidebar(source, contract, runtimeSource) {
 	}
 	patchedBlock = patchedBlock.replace(
 		assignmentText,
-		`${assignmentText.slice(0, 2)}${hookSlotsAlias}[${hookCacheSize}]=${activeAlias},${assignmentText.slice(2)}`,
+		`${assignmentText.slice(0, 2)}${hookSlotsAlias}[${hookCacheSize}]=${activeAlias},${hookSlotsAlias}[${hookCacheSize + 1}]=${conversationOriginAlias},${assignmentText.slice(2)}`,
 	);
 
 	const tombstoneGuard = `if(${conversationAlias}!=null&&${DELETED_IDS}.has(${conversationAlias}.id))return null;`;
