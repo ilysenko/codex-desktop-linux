@@ -3547,6 +3547,11 @@ apply_electron_rendering_profile() {
                 [ "$ELECTRON_OZONE_SWITCH_IN_ARGS" -eq 0 ] &&
                 gnome_wayland_multi_monitor_detected; then
                 ELECTRON_RENDERING_MODE="gnome-wayland-multi-monitor"
+            elif [ "$ELECTRON_PLATFORM_EXPLICIT" -eq 0 ] &&
+                [ "$ELECTRON_OZONE_SWITCH_IN_ARGS" -eq 0 ] &&
+                [ -z "$ELECTRON_OZONE_PLATFORM" ] &&
+                [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
+                ELECTRON_RENDERING_MODE="wayland"
             else
                 ELECTRON_RENDERING_MODE="default"
             fi
@@ -3567,6 +3572,13 @@ apply_electron_rendering_profile() {
         ELECTRON_OZONE_PLATFORM="x11"
         ELECTRON_OZONE_HINT=""
         echo "Detected GNOME Wayland multi-monitor session; forcing --ozone-platform=x11 for stable window scale/maximize behavior. Set CODEX_OZONE_PLATFORM=wayland or CODEX_LINUX_RENDERING_MODE=default to opt out."
+        return 0
+    fi
+
+    if [ "$ELECTRON_RENDERING_MODE" = "wayland" ]; then
+        ELECTRON_OZONE_PLATFORM="wayland"
+        ELECTRON_OZONE_HINT=""
+        echo "Detected Wayland session; forcing --ozone-platform=wayland. Set CODEX_OZONE_PLATFORM=x11 or CODEX_LINUX_RENDERING_MODE=default to opt out."
         return 0
     fi
 

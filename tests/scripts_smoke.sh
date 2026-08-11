@@ -5122,6 +5122,11 @@ EOF
     output="$(env -i PATH="$PATH" HOME="$HOME" XDG_SESSION_TYPE=wayland CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe)"
     [[ "$output" == *"comp=1"* && "$output" == *"<--disable-gpu-compositing>"* ]] || fail "Wayland default profile must disable GPU compositing for side-panel stability: $output"
 
+    output="$(env -i PATH="$PATH" HOME="$HOME" XDG_SESSION_TYPE=wayland "$launcher_probe" probe)"
+    [[ "$output" == *"mode=wayland"* && "$output" == *"ozone_platform=wayland"* ]] || fail "Wayland auto profile must select the native Wayland backend: $output"
+    [[ "$output" == *"<--ozone-platform=wayland>"* && "$output" == *"<--enable-features=WaylandWindowDecorations>"* ]] || fail "Wayland auto profile must add native Wayland launch args: $output"
+    [[ "$output" != *"<--ozone-platform-hint=auto>"* ]] || fail "Wayland auto profile must not leave backend selection to Electron: $output"
+
     local drm_stub_dir="$TMP_DIR/drm-stubs/two"
     mkdir -p "$drm_stub_dir/card0-DP-2" "$drm_stub_dir/card0-HDMI-3"
     printf '%s\n' connected > "$drm_stub_dir/card0-DP-2/status"
