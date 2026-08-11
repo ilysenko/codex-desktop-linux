@@ -10,14 +10,14 @@
   English | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-Unofficial Linux build wrapper for [OpenAI ChatGPT Desktop](https://chatgpt.com/features/desktop/).
-The official ChatGPT app is available for macOS and Windows; this repository
-covers Linux by converting the upstream macOS `Codex.dmg` into a runnable Linux
-Electron app.
+Linux packaging and extension layer for [OpenAI ChatGPT Desktop](https://openai.com/codex/).
+The repository now builds directly on OpenAI's official Linux app, preserving
+its Electron runtime and ABI-matched native modules while applying the project's
+Linux compatibility patches and optional features.
 
 The project builds native `.deb`, `.rpm`, and `.pkg.tar.zst` packages, supports
 local AppImage self-builds and Nix, and can install a local update manager that
-rebuilds future Linux packages from newer upstream DMGs.
+rebuilds future Linux packages from newer official Linux releases.
 
 <p align="center">
   <a href="#how-to-install">Install</a> ·
@@ -35,11 +35,11 @@ implementation details, see [AGENTS.md](AGENTS.md).
 
 ## How To Install
 
-ChatGPT Desktop for Linux is built locally from the upstream `Codex.dmg`: the
-installer downloads or reuses the DMG, extracts the Electron app, applies Linux
-compatibility patches, rebuilds native modules, stages the Linux runtime, and
-packages the result. Optional Linux-only integrations live in `linux-features/`
-and stay disabled unless you enable them before building.
+ChatGPT Desktop for Linux is built locally from OpenAI's official architecture-
+specific `.deb`: the installer downloads or reuses it, preserves its Electron
+runtime and native modules, applies this repository's patches, and packages the
+result. Optional Linux-only integrations live in `linux-features/` and stay
+disabled unless you enable them before building.
 
 For native packages and AppImage self-builds, start from a checkout:
 
@@ -71,7 +71,7 @@ make install-native
 ```
 
 `make bootstrap-native` installs build dependencies, validates the cached
-upstream `Codex.dmg`, downloads it only when missing or stale, builds
+upstream `ChatGPT.deb`, downloads it only when missing or stale, builds
 `codex-app/`, packages it for your distro, and installs the newest artifact
 from `dist/`.
 
@@ -79,10 +79,10 @@ If you are installing dependencies manually on Fedora:
 
 ```bash
 # Fedora 41+
-sudo dnf install python3 7zip curl unzip rpm-build make gcc-c++ @development-tools
+sudo dnf install python3 curl unzip tar binutils rpm-build make gcc-c++ @development-tools
 
 # Fedora < 41
-sudo dnf install python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++
+sudo dnf install python3 curl unzip tar binutils rpm-build make gcc-c++
 sudo dnf groupinstall 'Development Tools'
 ```
 
@@ -282,7 +282,7 @@ Full contract: [linux-features/README.md](linux-features/README.md) and
 ## Updates
 
 Default native packages install `codex-update-manager`, a `systemd --user`
-service that checks for newer upstream DMGs, rebuilds a local native package,
+service that checks for newer official Linux packages, rebuilds a local native package,
 and installs it after ChatGPT Desktop exits. The final install uses `pkexec`.
 Minimal window-manager sessions need a graphical polkit authentication agent
 for the in-app install button; otherwise the updater keeps the package ready
@@ -314,14 +314,14 @@ make build-app-fresh
 make run-app
 ```
 
-Use a local DMG:
+Use a local official package:
 
 ```bash
-make build-app DMG=/path/to/Codex.dmg
+make build-app ARTIFACT=/path/to/chatgpt_amd64.deb
 ```
 
 Local builds are transactional: the candidate must pass the same
-[upstream DMG acceptance profile](docs/upstream-dmg-acceptance.md) used by the
+[upstream acceptance profile](docs/upstream-dmg-acceptance.md) used by the
 scheduled GitHub workflow before it replaces the working `codex-app/`.
 Only configured Linux Features are checked; drift in an enabled feature keeps
 the current app installed until that feature is disabled or repaired.
@@ -343,7 +343,7 @@ make appimage
 ```
 
 The package scripts only repackage the already-generated `codex-app/`. They do
-not download or extract the DMG themselves. See
+not download or extract the upstream package themselves. See
 [Build and packaging](docs/build-and-packaging.md).
 
 ## Troubleshooting

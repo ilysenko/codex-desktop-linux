@@ -1,4 +1,4 @@
-//! Rebuilds native Linux packages from a downloaded upstream DMG.
+//! Rebuilds native Linux packages from a downloaded upstream package.
 
 use crate::{
     config::{RuntimeConfig, RuntimePaths},
@@ -84,7 +84,7 @@ pub struct BuildArtifacts {
     pub package_path: PathBuf,
 }
 
-/// Rebuilds a Linux package from the downloaded upstream DMG.
+/// Rebuilds a Linux package from the downloaded upstream package.
 pub async fn build_update(
     config: &RuntimeConfig,
     state: &mut PersistedState,

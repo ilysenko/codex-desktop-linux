@@ -10,9 +10,9 @@
   <a href="README.md">English</a> | 简体中文
 </p>
 
-这是 [OpenAI ChatGPT Desktop](https://chatgpt.com/features/desktop/) 的非官方 Linux 构建封装。官方 ChatGPT 应用提供 macOS 和 Windows 版本；本仓库通过将上游 macOS `Codex.dmg` 转换为可运行的 Linux Electron 应用，为 Linux 提供支持。
+这是 [OpenAI ChatGPT Desktop](https://chatgpt.com/features/desktop/) 官方 Linux 软件包的社区构建封装。本仓库在官方 Linux 运行时上应用兼容性补丁和可选功能，并为多个发行版重新打包。
 
-本项目可构建原生 `.deb`、`.rpm` 和 `.pkg.tar.zst` 软件包，支持本地自行构建 AppImage 和 Nix，并可安装本地更新管理器，以便在新版上游 DMG 发布后重新构建 Linux 软件包。
+本项目可构建原生 `.deb`、`.rpm` 和 `.pkg.tar.zst` 软件包，支持本地自行构建 AppImage 和 Nix，并可安装本地更新管理器，以便在新版官方 Linux 软件包发布后重新构建。
 
 <p align="center">
   <a href="#如何安装">安装</a> ·
@@ -29,7 +29,7 @@
 
 ## 如何安装
 
-ChatGPT Desktop for Linux 基于上游 `Codex.dmg` 在本地构建：安装程序会下载或复用 DMG，提取 Electron 应用，应用 Linux 兼容性补丁，重新构建原生模块，准备 Linux 运行环境，并将其打包。可选的 Linux 专属集成功能位于 `linux-features/`，除非你在构建前启用，否则默认保持禁用。
+ChatGPT Desktop for Linux 基于 OpenAI 官方 Linux `.deb` 在本地构建：安装程序会下载或复用对应架构的软件包，保留官方 Electron 运行时和原生模块，应用 Linux 兼容性补丁，然后重新打包。可选的 Linux 专属集成功能位于 `linux-features/`，除非你在构建前启用，否则默认保持禁用。
 
 要构建原生软件包或 AppImage，请先克隆仓库：
 
@@ -60,16 +60,16 @@ make bootstrap-native
 make install-native
 ```
 
-`make bootstrap-native` 会安装构建依赖，验证缓存的上游 `Codex.dmg`，仅在文件缺失或过期时下载，构建 `codex-app/`，为你的发行版打包，并从 `dist/` 安装最新产物。
+`make bootstrap-native` 会安装构建依赖，验证缓存的官方 Linux 软件包，仅在文件缺失或过期时下载，构建 `codex-app/`，为你的发行版打包，并从 `dist/` 安装最新产物。
 
 如果你要在 Fedora 上手动安装依赖：
 
 ```bash
 # Fedora 41+
-sudo dnf install python3 7zip curl unzip rpm-build make gcc-c++ @development-tools
+sudo dnf install python3 binutils curl unzip tar rpm-build make gcc-c++ @development-tools
 
 # Fedora < 41
-sudo dnf install python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++
+sudo dnf install python3 binutils curl unzip tar rpm-build make gcc-c++
 sudo dnf groupinstall 'Development Tools'
 ```
 
@@ -228,7 +228,7 @@ make install-native
 
 ## 更新
 
-默认的原生软件包会安装 `codex-update-manager`，这是一个 `systemd --user` 服务，用于检查更新的上游 DMG，重新构建本地原生软件包，并在 ChatGPT Desktop 退出后安装。最终安装使用 `pkexec`。精简的窗口管理器会话需要图形化 polkit 认证代理才能使用应用内安装按钮；否则更新器会保留已准备好的软件包，并报告终端命令 `sudo /usr/bin/codex-update-manager ... --path ...`。
+默认的原生软件包会安装 `codex-update-manager`，这是一个 `systemd --user` 服务，用于检查更新的官方 Linux 软件包，重新构建本地原生软件包，并在 ChatGPT Desktop 退出后安装。最终安装使用 `pkexec`。精简的窗口管理器会话需要图形化 polkit 认证代理才能使用应用内安装按钮；否则更新器会保留已准备好的软件包，并报告终端命令 `sudo /usr/bin/codex-update-manager ... --path ...`。
 
 手动更新软件包：
 
@@ -254,13 +254,13 @@ make build-app-fresh
 make run-app
 ```
 
-使用本地 DMG：
+使用本地官方 `.deb`：
 
 ```bash
-make build-app DMG=/path/to/Codex.dmg
+make build-app ARTIFACT=/path/to/chatgpt_amd64.deb
 ```
 
-本地构建采用事务方式：候选应用必须通过与定时 GitHub 工作流相同的[上游 DMG 验收配置](docs/upstream-dmg-acceptance.md)，才会替换工作中的 `codex-app/`。只检查已配置的 Linux 功能；已启用功能发生漂移时，当前应用会保持安装状态，直到该功能被禁用或修复。
+本地构建采用事务方式：候选应用必须通过与定时 GitHub 工作流相同的[上游软件包验收配置](docs/upstream-dmg-acceptance.md)，才会替换工作中的 `codex-app/`。只检查已配置的 Linux 功能；已启用功能发生漂移时，当前应用会保持安装状态，直到该功能被禁用或修复。
 
 构建并安装软件包：
 
@@ -278,7 +278,7 @@ make pacman
 make appimage
 ```
 
-打包脚本只会重新打包已生成的 `codex-app/`，它们不会自行下载或提取 DMG。请参阅[构建与打包](docs/build-and-packaging.md)。
+打包脚本只会重新打包已生成的 `codex-app/`，它们不会自行下载或提取上游软件包。请参阅[构建与打包](docs/build-and-packaging.md)。
 
 ## 故障排除
 

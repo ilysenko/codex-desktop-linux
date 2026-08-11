@@ -20,12 +20,12 @@ const BLOCKING_CLASSIFICATIONS = new Set([
 function usage() {
   return `Usage: scripts/dev/upstream-dmg-intel.js --candidate PATH [options]
 
-Build an upstream DMG intelligence report without mutating codex-app/.
+Build an upstream package intelligence report without mutating codex-app/.
 
 Options:
-  --candidate PATH       Candidate Codex.dmg, extracted .app, or extracted app resources directory
-  --baseline PATH        Optional known-good baseline DMG or extracted .app; defaults to ./Codex.dmg when different
-  --no-baseline          Do a candidate-only scan even when ./Codex.dmg exists
+  --candidate PATH       Candidate ChatGPT.deb, synthetic .app, or extracted app resources directory
+  --baseline PATH        Optional known-good package or app; defaults to ./ChatGPT.deb when different
+  --no-baseline          Do a candidate-only scan even when ./ChatGPT.deb exists
   --patch-report PATH    Optional patch-report.json to fold patch blockers/review items into drift-report.json
   --registry PATH        Protected surface registry (default: scripts/dev/upstream-dmg-protected-surfaces.json)
   --output-dir DIR       Exact output directory (default: reports/upstream-dmg/<timestamp>)
@@ -161,7 +161,7 @@ function main(argv = process.argv.slice(2)) {
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
   if (args.failOnBlockers && decision.blockersCount > 0) {
     console.error(
-      `Upstream DMG intelligence found ${decision.blockersCount} protected-surface acceptance blocker(s).`,
+      `Upstream package intelligence found ${decision.blockersCount} protected-surface acceptance blocker(s).`,
     );
     return 2;
   }

@@ -87,39 +87,28 @@
           cp -R ${./notification-actions-linux} "$out/notification-actions-linux"
           chmod -R u+w "$out"
         '';
-        nativeModulesBuildSupport = pkgs.runCommandLocal "codex-native-modules-build-support" { } ''
-          mkdir -p "$out/scripts/lib"
-          cp ${./scripts/lib/native-modules.sh} "$out/scripts/lib/native-modules.sh"
-        '';
-
-        codexDmg = pkgs.fetchurl {
-          url = "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg";
-          hash = "sha256-kfxLgJwnMLOeV9mtvGswxmnvB0yQDKKMY6HgtvpBJow=";
-        };
+        officialLinuxPackage = pkgs.fetchurl ({
+          x86_64-linux = {
+            url = "https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_amd64.deb";
+            hash = "sha256-qb+Ro2j598Tuo4CCqfuPtGuNAFtxmm13FdLloZgsOOs=";
+          };
+          aarch64-linux = {
+            url = "https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_arm64.deb";
+            hash = "sha256-84/MGU7KmrAyfcEMkjQGgernfF11Fk33ADhM4q2sy8E=";
+          };
+        }.${system});
 
         codexVersion = "26.803.81509";
         electronVersion = "42.3.0";
-        electronPlatform =
+        targetPlatform =
           {
             x86_64-linux = {
               arch = "x64";
-              hash = "sha256-SHpmfKanNLlYwWz/HfdNnUTSwYpszNtN1R9jAaNWxCA=";
             };
             aarch64-linux = {
               arch = "arm64";
-              hash = "sha256-Kjdf+XP7e93FOKT2eyFBlH6dclE6G6or6r7Cp/Zc0PA=";
             };
           }.${system} or (throw "codex-desktop-linux Nix package is not supported on ${system}");
-
-        electronZip = pkgs.fetchurl {
-          url = "https://github.com/electron/electron/releases/download/v${electronVersion}/electron-v${electronVersion}-linux-${electronPlatform.arch}.zip";
-          hash = electronPlatform.hash;
-        };
-
-        electronHeaders = pkgs.fetchurl {
-          url = "https://artifacts.electronjs.org/headers/dist/v${electronVersion}/node-v${electronVersion}-headers.tar.gz";
-          hash = "sha256-ghAJ+cGDAFDYlK755hkGywpTeyAAstm77ZmF//HV4NA=";
-        };
 
         codexMicroNodeHidArchive = pkgs.fetchurl {
           name = "node-hid-3.3.0.tgz";
@@ -221,7 +210,7 @@
             node ${sourceRoot}/linux-features/directory-only-working-tree-watch/watchbound-package.js \
               --verify-controlled-package-root \
               "$out/lib/node_modules" \
-              ${electronPlatform.arch}
+              ${targetPlatform.arch}
             runHook postInstall
           '';
         };
@@ -333,121 +322,6 @@
               release_dir="target/release"
             fi
             install -Dm0755 "$release_dir/codex-global-dictation-linux" "$out/bin/codex-global-dictation-linux"
-            runHook postInstall
-          '';
-        };
-
-        nativeModulesManifest = builtins.fromJSON (builtins.readFile ./nix/native-modules/package.json);
-        parcelWatcherVersion = nativeModulesManifest.dependencies."@parcel/watcher";
-
-        nativeModulesNodeModules = pkgs.importNpmLock.buildNodeModules {
-          npmRoot = ./nix/native-modules;
-          inherit (pkgs) nodejs;
-          derivationArgs = {
-            npmRebuildFlags = [ "--ignore-scripts" ];
-          };
-        };
-
-        codexNativeModules = pkgs.stdenv.mkDerivation {
-          pname = "codex-desktop-electron-native-modules";
-          version = electronVersion;
-          dontUnpack = true;
-
-          nativeBuildInputs = [
-            pkgs.bash
-            pkgs.gcc
-            pkgs.gnumake
-            pkgs.nodejs
-            pkgs.python3
-          ];
-
-          buildPhase = ''
-            runHook preBuild
-
-            cp -R ${nativeModulesNodeModules}/node_modules .
-            cp ${nativeModulesNodeModules}/package.json .
-            cp ${nativeModulesNodeModules}/package-lock.json .
-            chmod -R u+w node_modules
-
-            mkdir -p "$TMPDIR/electron-headers"
-            tar -xzf ${electronHeaders} -C "$TMPDIR/electron-headers" --strip-components=1
-
-            export SCRIPT_DIR=${nativeModulesBuildSupport}
-            export WORK_DIR="$TMPDIR"
-            export ARCH="${pkgs.stdenv.hostPlatform.uname.processor}"
-            export ELECTRON_VERSION=${electronVersion}
-            export MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41="12.9.0"
-            export npm_config_nodedir="$TMPDIR/electron-headers"
-            export NPM_CONFIG_NODEDIR="$TMPDIR/electron-headers"
-
-            # Reuse the installer's Electron 42 source compatibility patch without
-            # sourcing install-helpers.sh, which owns the top-level installer traps.
-            info() { echo "[INFO] $*" >&2; }
-            warn() { echo "[WARN] $*" >&2; }
-            error() { echo "[ERROR] $*" >&2; exit 1; }
-            source ${nativeModulesBuildSupport}/scripts/lib/native-modules.sh
-            patch_better_sqlite3_for_v8_external_pointer_api "$PWD/node_modules/better-sqlite3"
-            apply_v8_nullptr_t_workaround_if_needed "$TMPDIR/native-nullptr-workaround"
-
-            node "$PWD/node_modules/@electron/rebuild/lib/cli.js" \
-              -v ${electronVersion} \
-              --force \
-              --module-dir "$PWD" \
-              --dist-url "file://$TMPDIR/electron-headers"
-
-            runHook postBuild
-          '';
-
-          installPhase = ''
-            runHook preInstall
-            mkdir -p "$out"
-            cp -R node_modules/better-sqlite3 "$out/better-sqlite3"
-            cp -R node_modules/node-pty "$out/node-pty"
-            node - "$PWD/node_modules" "$out" "@parcel/watcher" <<'NODE'
-            const fs = require("fs");
-            const path = require("path");
-
-            const [sourceRoot, targetRoot, entryPackage] = process.argv.slice(2);
-            const staged = new Set();
-
-            function packagePath(root, name) {
-              return path.join(root, ...name.split("/"));
-            }
-
-            function stagePackage(name, required) {
-              if (staged.has(name)) return;
-
-              const source = packagePath(sourceRoot, name);
-              if (!fs.existsSync(source)) {
-                if (required) throw new Error("Missing required runtime dependency " + name);
-                return;
-              }
-
-              const manifestPath = path.join(source, "package.json");
-              if (!fs.existsSync(manifestPath)) {
-                throw new Error("Missing package.json for runtime dependency " + name);
-              }
-
-              const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-              const target = packagePath(targetRoot, name);
-              fs.mkdirSync(path.dirname(target), { recursive: true });
-              fs.cpSync(source, target, { recursive: true });
-              staged.add(name);
-
-              for (const dependency of Object.keys(manifest.dependencies || {})) {
-                stagePackage(dependency, true);
-              }
-              for (const dependency of Object.keys(manifest.optionalDependencies || {})) {
-                stagePackage(dependency, false);
-              }
-            }
-
-            stagePackage(entryPackage, true);
-            NODE
-            find "$out/better-sqlite3/build" -type f ! -name "*.node" -delete 2>/dev/null || true
-            find "$out/node-pty/build" -type f ! -name "*.node" -delete 2>/dev/null || true
-            find "$out" -type d -empty -delete 2>/dev/null || true
-            find "$out" -type f -name "*.target.mk" -delete 2>/dev/null || true
             runHook postInstall
           '';
         };
@@ -688,7 +562,7 @@ PY
             pkgs.makeWrapper
             pkgs.nodejs
             pkgs.asar
-            pkgs._7zz
+            pkgs.binutils
             pkgs.patchelf
             pkgs.python3
             pkgs.unzip
@@ -721,8 +595,6 @@ PY
             export RUSTFLAGS="''${RUSTFLAGS:-} --remap-path-prefix=$TMPDIR=/build -C link-arg=-Wl,--build-id=none"
             export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
             export CODEX_LINUX_FEATURES_CONFIG="${linuxFeaturesConfigFile effectiveLinuxFeaturesConfig}"
-            export CODEX_ELECTRON_ZIP_SOURCE="${electronZip}"
-            export CODEX_NATIVE_MODULES_SOURCE="${codexNativeModules}"
             ${pkgs.lib.optionalString codexMicroEnabled ''
             export CODEX_MICRO_NODE_HID_ARCHIVE="${codexMicroNodeHidArchive}"
             ''}
@@ -748,16 +620,15 @@ PY
             mkdir -p "$source_dir"
             cp -R ./. "$source_dir/"
             chmod -R u+w "$source_dir"
-            cp ${codexDmg} "$source_dir/Codex.dmg"
+            cp ${officialLinuxPackage} "$source_dir/ChatGPT.deb"
 
             substituteInPlace "$source_dir/scripts/lib/asar-patch.sh" \
               --replace-fail "npx --yes asar" "asar" \
               --replace-fail "npx asar" "asar"
-            substituteInPlace "$source_dir/scripts/lib/dmg.sh" \
+            substituteInPlace "$source_dir/scripts/lib/official-linux-package.sh" \
               --replace-fail "npx --yes asar" "asar"
-
             export CODEX_INSTALL_DIR="$out/opt/codex-desktop"
-            ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/Codex.dmg"
+            ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/ChatGPT.deb"
 
             asar extract "$CODEX_INSTALL_DIR/resources/app.asar" "$CODEX_INSTALL_DIR/resources/app-extracted"
             rm -f "$CODEX_INSTALL_DIR/resources/app.asar"
@@ -939,7 +810,7 @@ PY
             pkgs.bash
             pkgs.nodejs
             pkgs.python3
-            pkgs._7zz
+            pkgs.binutils
             pkgs.curl
             pkgs.unzip
             pkgs.gnumake
@@ -960,14 +831,14 @@ PY
             mkdir -p "$source_dir"
             cp -R ${sourceRoot}/. "$source_dir"
             chmod -R u+w "$source_dir"
-            cp ${codexDmg} "$source_dir/Codex.dmg"
+            cp ${officialLinuxPackage} "$source_dir/ChatGPT.deb"
             chmod +x "$source_dir/install.sh"
 
             cd "$source_dir"
             export CODEX_INSTALL_DIR="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
             export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
             export CODEX_NOTIFICATION_ACTIONS_SOURCE="${codexNotificationActionsBinary}/bin/codex-notification-actions-linux"
-            ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/Codex.dmg" "$@"
+            ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/ChatGPT.deb" "$@"
 
             install_dir="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
 
@@ -987,27 +858,15 @@ PY
 
         checks = {
           notification-actions-linux = codexNotificationActionsBinary;
-          parcel-watcher-staged-runtime = pkgs.runCommand "codex-parcel-watcher-staged-runtime-check" {
-            nativeBuildInputs = [ pkgs.nodejs ];
+          official-linux-runtime = pkgs.runCommand "codex-official-linux-runtime-check" {
+            nativeBuildInputs = [ pkgs.binutils pkgs.gnutar ];
           } ''
-            mkdir -p app/node_modules
-            cat > app/package.json <<'EOF'
-            {"dependencies":{"@parcel/watcher":"${parcelWatcherVersion}"}}
-            EOF
-
-            export WORK_DIR="$TMPDIR"
-            info() { echo "[INFO] $*" >&2; }
-            warn() { echo "[WARN] $*" >&2; }
-            error() { echo "[ERROR] $*" >&2; exit 1; }
-            source ${nativeModulesBuildSupport}/scripts/lib/native-modules.sh
-            stage_parcel_watcher_for_linux "$PWD/app" "${codexNativeModules}"
-
-            NODE_PATH="$PWD/app/node_modules" node -e '
-              const watcher = require("@parcel/watcher");
-              if (typeof watcher.subscribe !== "function") {
-                throw new Error("staged @parcel/watcher did not expose subscribe()");
-              }
-            '
+            data_member="$(ar t ${officialLinuxPackage} | awk '/^data[.]tar([.].+)?$/ { print; exit }')"
+            test -n "$data_member"
+            mkdir extracted
+            ar p ${officialLinuxPackage} "$data_member" | tar -xJ -C extracted
+            test -x extracted/usr/lib/chatgpt/ChatGPT
+            test -f extracted/usr/lib/chatgpt/resources/app.asar
             touch "$out"
           '';
           notification-actions-installer = pkgs.runCommand "codex-notification-actions-installer-check" { } ''
@@ -1117,7 +976,7 @@ PY
           packages = [
             pkgs.nodejs
             pkgs.python3
-            pkgs._7zz
+            pkgs.binutils
             pkgs.curl
             pkgs.unzip
             pkgs.gnumake

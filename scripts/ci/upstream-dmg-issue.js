@@ -60,7 +60,7 @@ function hasTrustedAutomationAuthor(issue) {
 function issueTitle(decision) {
   const version = decision.dmg.appVersion ?? "unknown version";
   const prefix = decisionTestId(decision) ? `[TEST ${decisionTestId(decision)}] ` : "";
-  return `${prefix}Upstream DMG drift: ${version} (${decision.dmg.sha256.slice(0, 12)})`;
+  return `${prefix}Upstream package drift: ${version} (${decision.dmg.sha256.slice(0, 12)})`;
 }
 
 function blockerLine(item) {
@@ -82,9 +82,9 @@ function issueBody(decision) {
       "",
     ] : []),
     "> [!IMPORTANT]",
-    "> Automated repair is already in progress. Please do not open a pull request for this DMG unless the maintainer asks.",
+    "> Automated repair is already in progress. Please do not open a pull request for this package unless the maintainer asks.",
     "",
-    "The latest upstream DMG was rejected by the shared local/CI acceptance profile.",
+    "The latest upstream package was rejected by the shared local/CI acceptance profile.",
     "",
     "## Candidate",
     "",
@@ -98,8 +98,8 @@ function issueBody(decision) {
     "",
     "## Maintainer checklist",
     "",
-    "1. Download the exact DMG fingerprint shown above and reproduce the acceptance report locally.",
-    "2. Update only current-DMG patch shapes; remove obsolete drift workarounds in the same change.",
+    "1. Download the exact package fingerprint shown above and reproduce the acceptance report locally.",
+    "2. Update only current-package patch shapes; remove obsolete drift workarounds in the same change.",
     "3. Keep optional patches fail-soft and run the local release profile before opening a fix PR.",
   ];
   return `${lines.join("\n")}\n`;
@@ -191,7 +191,7 @@ async function consolidateMatchingIssues(github, repo, issues, fingerprint) {
       github,
       repo,
       issue,
-      `Duplicate upstream DMG report; tracking continues in #${primary.number}.`,
+      `Duplicate upstream package report; tracking continues in #${primary.number}.`,
       "not_planned",
     );
   }
@@ -276,7 +276,7 @@ async function reconcileUpstreamDmgIssue({
         github,
         repo,
         issue,
-        `Superseded by accepted upstream DMG \`${decision.dmg.sha256.slice(0, 12)}\`.`,
+        `Superseded by accepted upstream package \`${decision.dmg.sha256.slice(0, 12)}\`.`,
         "completed",
       );
     }
@@ -304,7 +304,7 @@ async function reconcileUpstreamDmgIssue({
       github,
       repo,
       issue,
-      `Superseded by newer rejected upstream DMG \`${fingerprint.slice(0, 12)}\`.`,
+      `Superseded by newer rejected upstream package \`${fingerprint.slice(0, 12)}\`.`,
       "not_planned",
     );
   }

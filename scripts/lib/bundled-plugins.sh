@@ -221,7 +221,7 @@ stage_portable_bundled_plugin_from_upstream() {
     if [ -n "$backup_plugin" ] && ! rm -rf -- "$backup_plugin"; then
         warn "Failed to clean previous portable bundled plugin backup: $backup_plugin"
     fi
-    info "Portable bundled plugin $plugin_name staged from upstream DMG"
+    info "Portable bundled plugin $plugin_name staged from upstream package"
     return 0
 }
 
@@ -929,7 +929,7 @@ stage_upstream_bundled_skills() {
         return 1
     fi
 
-    info "Bundled skills staged from upstream DMG"
+    info "Bundled skills staged from upstream package"
 }
 
 chrome_extension_host_arch() {
@@ -1123,7 +1123,7 @@ stage_chrome_plugin_from_upstream() {
         return 1
     fi
 
-    info "Chrome plugin staged from upstream DMG"
+    info "Chrome plugin staged from upstream package"
     return 0
 }
 
@@ -1627,7 +1627,7 @@ stage_browser_plugin_from_upstream() {
     patch_browser_use_file_url_policy "$target_client"
     patch_browser_client_iab_socket_scope "$target_client"
 
-    info "Browser plugin staged from upstream DMG"
+    info "Browser plugin staged from upstream package"
     return 0
 }
 

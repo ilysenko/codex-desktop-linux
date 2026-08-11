@@ -1,6 +1,6 @@
-# Upstream DMG watchdog
+# Upstream Package watchdog
 
-The local watchdog turns each upstream DMG SHA-256 into one persistent campaign:
+The local watchdog turns each upstream package SHA-256 into one persistent campaign:
 
 ```text
 drift validation -> accepted source head -> Nix preflight -> repair merge
@@ -17,16 +17,16 @@ State defaults to
 `~/.local/state/codex-automations/upstream-dmg-watchdog/state.json`. Never edit
 it manually. Schema 1 is migrated to schema 2 on first write without dropping
 an active campaign, lease, completed campaign, or Nix PR state. If schema 1
-marked the DMG repair complete while its Nix refresh was still unfinished, the
+marked the package repair complete while its Nix refresh was still unfinished, the
 migration resumes that campaign at `awaiting-nix` instead of losing the Nix PR.
 
 `probe` emits durable events with an `EVENT_ID`. The watcher sends a worker
 event first and then acknowledges it with `event-ack`. An unacknowledged event
 is returned again on the next heartbeat; `worker-acquire` also acknowledges the
 matching event. This prevents a heartbeat model from silently losing a
-detected DMG or Nix repair request.
+detected package or Nix repair request.
 
-Nix refresh is gated by campaign phase. A newly detected DMG never dispatches
+Nix refresh is gated by campaign phase. A newly detected package never dispatches
 `update-codex-hash.yml`; the campaign must first reach `awaiting-nix` after an
 accepted build and, for a changed source head, successful Nix preflight.
 
@@ -40,22 +40,22 @@ accepted build and, for a changed source head, successful Nix preflight.
    stores an immutable per-round snapshot. Later builds materialize that same
    snapshot. Use `refresh-feature-snapshot` only before acceptance when an
    explicit new local configuration is intended.
-4. Build the candidate from the campaign DMG. Repair only the latest DMG shape,
+4. Build the candidate from the campaign package. Repair only the latest package shape,
    commit the source change, record the new head, build again, and call
    `record-acceptance --decision FILE --head SHA`.
-5. `record-acceptance` requires an accepted verdict for the campaign DMG, a
+5. `record-acceptance` requires an accepted verdict for the campaign package, a
    clean matching source commit, the exact enabled feature snapshot, and a full
    patch report. It copies immutable decision and patch-report evidence into
    the state directory. Updating the campaign head invalidates this evidence.
 6. For a changed source head, run `nix-preflight`. An unchanged accepted
    current `main` skips this step and advances directly to Nix refresh.
    Preflight uses a disposable detached worktree, permits changes only to the
-   three Nix pin files, verifies the generated DMG SRI, retries transient
+   three Nix pin files, verifies the generated package SRI, retries transient
    failures at most three times, and records its log against the accepted head.
 7. Create one repair PR for the round after checking the contributor PR limit.
    The body must contain `<!-- upstream-dmg-sha256:SHA -->`.
 8. Wait for these exact gates: Rust and Smoke Tests, Debian, RPM, Pacman, Nix
-   Package Builds, and Build App Against Upstream DMG. Run
+   Package Builds, and Build App Against Upstream Package. Run
    `validate-repair-pr` immediately before an expected-head admin merge.
 9. After GitHub confirms the merge, call `advance-to-nix --pr-number NUMBER`.
    For an unchanged accepted `main`, omit `--pr-number`. This releases the
@@ -68,7 +68,7 @@ A round is feature-only only when every changed tracked path is inside the
 affected `linux-features/<id>/` directories. For that scope:
 
 1. Run the affected feature tests, not every repository feature test.
-2. Rebuild and record acceptance against the exact campaign DMG and immutable
+2. Rebuild and record acceptance against the exact campaign package and immutable
    feature snapshot.
 3. Run the focused preflight:
 
@@ -79,12 +79,12 @@ affected `linux-features/<id>/` directories. For that scope:
    ```
 
 4. Publish the repair PR as soon as those focused checks pass. The normal CI
-   workflow and upstream-DMG build provide the six merge gates in parallel.
+   workflow and upstream-package build provide the six merge gates in parallel.
 
 Do not run the full local `ci-local.sh pr`, Debian, RPM, or pacman matrix for a
 feature-only repair. Those broad local checks are required when a round changes
 core patches, the shared feature loader, installer, updater, packaging, or a
-mixture of feature and shared paths. Reuse the immutable DMG download, feature
+mixture of feature and shared paths. Reuse the immutable package download, feature
 snapshot, extracted app, native-module cache, and Nix store within a round.
 
 ## Nix refresh and recovery
@@ -92,12 +92,12 @@ snapshot, extracted app, native-module cache, and Nix store within a round.
 The probe adopts the exact workflow run and stores its run ID, head SHA,
 conclusion, classification, URL, and a bounded failed-log excerpt.
 
-Each refresh dispatch is keyed by the exact `main SHA:DMG SHA`. Repeated
+Each refresh dispatch is keyed by the exact `main SHA:package SHA`. Repeated
 heartbeats do not dispatch the same key twice. The GitHub workflow also runs in
 one non-cancelling concurrency group, recognizes an already materialized key
 from bot commit trailers, compares only the three allowed pin files, and adopts
 an existing exact-head CI run. It has no independent cron: only the watchdog
-may dispatch it, with the accepted exact `main SHA` and `DMG SHA` as required
+may dispatch it, with the accepted exact `main SHA` and `package SHA` as required
 inputs. This prevents Nix refresh from racing drift validation or repair.
 
 - Cancelled, timed-out, runner, setup, and network failures are transient. The
@@ -120,7 +120,7 @@ jobs. Campaign completion happens only after the Nix PR merge is confirmed or
 
 ## Recovery commands
 
-Revalidate only the latest observed DMG:
+Revalidate only the latest observed package:
 
 ```bash
 python3 scripts/automation/upstream-dmg-watchdog/watchdog.py campaign-requeue \

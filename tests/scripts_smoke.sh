@@ -609,6 +609,9 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/node-runtime.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-intel.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-acceptance.js"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/official-linux-package.sh"
+    assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/dmg.sh"
+    assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/native-modules.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/validate-upstream-dmg.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-update-bridge-patch.js"
@@ -1763,7 +1766,7 @@ test_make_run_app_reports_missing_launcher() {
 }
 
 test_make_build_app_uses_installer_download_flow_by_default() {
-    info "Checking make build-app default DMG behavior"
+    info "Checking make build-app default package behavior"
     local workspace="$TMP_DIR/make-build-app"
     local install_log="$workspace/install-args.log"
     local first_line
@@ -1786,11 +1789,11 @@ SCRIPT
     first_line="$(sed -n '1p' "$install_log")"
     second_line="$(sed -n '2p' "$install_log")"
     [ "$first_line" = "1" ] || fail "Expected make build-app to call install.sh with a single default argument slot, got: $(cat "$install_log")"
-    [ -z "$second_line" ] || fail "Expected make build-app default DMG argument to be empty so install.sh falls back to reuse/download, got: $(cat "$install_log")"
+    [ -z "$second_line" ] || fail "Expected make build-app default package argument to be empty so install.sh falls back to reuse/download, got: $(cat "$install_log")"
 }
 
 test_make_build_app_fresh_uses_installer_fresh_flow() {
-    info "Checking make build-app-fresh DMG behavior"
+    info "Checking make build-app-fresh package behavior"
     local workspace="$TMP_DIR/make-build-app-fresh"
     local install_log="$workspace/install-args.log"
     local first_line
@@ -1817,7 +1820,7 @@ SCRIPT
     third_line="$(sed -n '3p' "$install_log")"
     [ "$first_line" = "2" ] || fail "Expected make build-app-fresh to pass --fresh plus the default argument slot, got: $(cat "$install_log")"
     [ "$second_line" = "--fresh" ] || fail "Expected make build-app-fresh to pass --fresh first, got: $(cat "$install_log")"
-    [ -z "$third_line" ] || fail "Expected make build-app-fresh default DMG argument to be empty, got: $(cat "$install_log")"
+    [ -z "$third_line" ] || fail "Expected make build-app-fresh default package argument to be empty, got: $(cat "$install_log")"
 }
 
 test_make_build_dev_app_writes_host_portable_launcher_symlink() {
@@ -1853,616 +1856,19 @@ SCRIPT
     assert_contains "$install_log" "$workspace/codex-cua-lab-app"
 }
 
-test_installer_refreshes_stale_cached_dmg_metadata() {
-    info "Checking installer DMG cache freshness metadata branches"
-    local workspace="$TMP_DIR/dmg-cache-refresh"
-    local bin_dir="$workspace/bin"
-    local url="https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg"
-    local url_sha256
-
-    url_sha256="$(printf '%s' "$url" | sha256sum | awk '{print $1}')"
-
-    mkdir -p "$bin_dir"
-
-    cat >"$bin_dir/curl" <<'SCRIPT'
-#!/usr/bin/env bash
-set -eu
-
-is_head=0
-for arg in "$@"; do
-    if [ "$arg" = "-fsSLI" ]; then
-        is_head=1
-    fi
-done
-
-if [ "$is_head" -eq 1 ]; then
-    printf '%s\n' "HEAD" >> "$TEST_CURL_LOG"
-    if [ "${TEST_HEAD_FAIL:-0}" = "1" ]; then
-        exit 22
-    fi
-    printf 'HTTP/2 200\r\n'
-    [ -z "${TEST_ETAG:-}" ] || printf 'ETag: %s\r\n' "$TEST_ETAG"
-    [ -z "${TEST_LAST_MODIFIED:-}" ] || printf 'Last-Modified: %s\r\n' "$TEST_LAST_MODIFIED"
-    [ -z "${TEST_CONTENT_LENGTH:-}" ] || printf 'Content-Length: %s\r\n' "$TEST_CONTENT_LENGTH"
-    printf '\r\n'
-    exit 0
-fi
-
-printf '%s\n' "GET" >> "$TEST_CURL_LOG"
-if [ "${TEST_GET_FAIL:-0}" = "1" ]; then
-    exit 23
-fi
-
-out=""
-while [ "$#" -gt 0 ]; do
-    if [ "$1" = "-o" ]; then
-        shift
-        out="$1"
-    fi
-    shift || true
-done
-
-[ -n "$out" ] || exit 2
-printf '%s' "${TEST_DOWNLOAD_CONTENT:-new}" >"$out"
-SCRIPT
-    chmod +x "$bin_dir/curl"
-
-    cat >"$bin_dir/aria2c" <<'SCRIPT'
-#!/usr/bin/env bash
-exit 127
-SCRIPT
-    chmod +x "$bin_dir/aria2c"
-
-    run_dmg_cache_case() {
-        local source_dir="$1"
-        local output_log="$2"
-        shift 2
-
-        mkdir -p "$source_dir"
-        : >"$source_dir/curl.log"
-        env "$@" \
-            PATH="$bin_dir:$PATH" \
-            TEST_SOURCE_DIR="$source_dir" \
-            TEST_CURL_LOG="$source_dir/curl.log" \
-            REPO_DIR="$REPO_DIR" \
-            bash <<'SCRIPT' >"$output_log" 2>&1
-set -Eeuo pipefail
-
-SCRIPT_DIR="$TEST_SOURCE_DIR"
-WORK_DIR="$(mktemp -d)"
-# shellcheck disable=SC1091
-source "$REPO_DIR/scripts/lib/install-helpers.sh"
-# shellcheck disable=SC1091
-source "$REPO_DIR/scripts/lib/dmg.sh"
-
-dmg_path="$(get_dmg)"
-[ "$dmg_path" = "$TEST_SOURCE_DIR/Codex.dmg" ]
-SCRIPT
-    }
-
-    local no_metadata="$workspace/no-metadata"
-    mkdir -p "$no_metadata"
-    printf '%s' "old" >"$no_metadata/Codex.dmg"
-    run_dmg_cache_case "$no_metadata" "$no_metadata/output.log" \
-        TEST_ETAG=fresh-etag \
-        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
-        TEST_CONTENT_LENGTH=3 \
-        TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$no_metadata/Codex.dmg")" = "new" ] || fail "Expected missing-metadata cache to refresh"
-    assert_contains "$no_metadata/Codex.dmg.metadata" "etag=fresh-etag"
-    assert_contains "$no_metadata/Codex.dmg.metadata" "url_sha256=$url_sha256"
-    assert_contains "$no_metadata/output.log" "Cached DMG has no upstream metadata"
-    assert_contains "$no_metadata/output.log" "Refreshing stale cached DMG"
-
-    local matching="$workspace/matching"
-    mkdir -p "$matching"
-    printf '%s' "old" >"$matching/Codex.dmg"
-    cat >"$matching/Codex.dmg.metadata" <<EOF
-url_sha256=$url_sha256
-etag=same-etag
-last_modified=Thu, 04 Jun 2026 00:00:00 GMT
-content_length=3
-EOF
-    run_dmg_cache_case "$matching" "$matching/output.log" \
-        TEST_ETAG=same-etag \
-        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
-        TEST_CONTENT_LENGTH=3 \
-        TEST_DOWNLOAD_CONTENT=downloaded
-    [ "$(cat "$matching/Codex.dmg")" = "old" ] || fail "Expected matching metadata to reuse cache"
-    assert_not_contains "$matching/curl.log" "GET"
-    assert_contains "$matching/output.log" "Using cached DMG"
-
-    local differing="$workspace/differing"
-    mkdir -p "$differing"
-    printf '%s' "old" >"$differing/Codex.dmg"
-    cat >"$differing/Codex.dmg.metadata" <<EOF
-url_sha256=$url_sha256
-etag=old-etag
-last_modified=Thu, 04 Jun 2026 00:00:00 GMT
-content_length=3
-EOF
-    run_dmg_cache_case "$differing" "$differing/output.log" \
-        TEST_ETAG=fresh-etag \
-        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
-        TEST_CONTENT_LENGTH=3 \
-        TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$differing/Codex.dmg")" = "new" ] || fail "Expected differing metadata to refresh cache"
-    assert_contains "$differing/curl.log" "GET"
-
-    local differing_pinned="$workspace/differing-pinned"
-    mkdir -p "$differing_pinned"
-    printf '%s' "old" >"$differing_pinned/Codex.dmg"
-    cat >"$differing_pinned/Codex.dmg.metadata" <<EOF
-url_sha256=$url_sha256
-etag=old-etag
-last_modified=Thu, 04 Jun 2026 00:00:00 GMT
-content_length=3
-EOF
-    run_dmg_cache_case "$differing_pinned" "$differing_pinned/output.log" \
-        CODEX_DMG_REFRESH_MODE=pinned \
-        TEST_ETAG=fresh-etag \
-        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
-        TEST_CONTENT_LENGTH=3 \
-        TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$differing_pinned/Codex.dmg")" = "old" ] || fail "Expected pinned stale cache to keep old DMG"
-    assert_not_contains "$differing_pinned/curl.log" "HEAD"
-    assert_not_contains "$differing_pinned/curl.log" "GET"
-    assert_contains "$differing_pinned/output.log" "CODEX_DMG_REFRESH_MODE=pinned"
-
-    local no_metadata_pinned="$workspace/no-metadata-pinned"
-    mkdir -p "$no_metadata_pinned"
-    printf '%s' "old" >"$no_metadata_pinned/Codex.dmg"
-    run_dmg_cache_case "$no_metadata_pinned" "$no_metadata_pinned/output.log" \
-        CODEX_DMG_REFRESH_MODE=pinned \
-        TEST_ETAG=fresh-etag \
-        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
-        TEST_CONTENT_LENGTH=3 \
-        TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$no_metadata_pinned/Codex.dmg")" = "old" ] || fail "Expected pinned missing metadata cache to keep old DMG"
-    assert_not_contains "$no_metadata_pinned/curl.log" "HEAD"
-    assert_not_contains "$no_metadata_pinned/curl.log" "GET"
-
-    local missing_pinned="$workspace/missing-pinned"
-    mkdir -p "$missing_pinned"
-    if run_dmg_cache_case "$missing_pinned" "$missing_pinned/output.log" \
-        CODEX_DMG_REFRESH_MODE=pinned
-    then
-        fail "Expected pinned mode without cached DMG to fail"
-    fi
-    assert_not_contains "$missing_pinned/curl.log" "HEAD"
-    assert_not_contains "$missing_pinned/curl.log" "GET"
-    assert_contains "$missing_pinned/output.log" "requires an existing cached DMG"
-
-    local failed_get="$workspace/failed-get"
-    mkdir -p "$failed_get"
-    printf '%s' "old" >"$failed_get/Codex.dmg"
-    cat >"$failed_get/Codex.dmg.metadata" <<EOF
-url_sha256=$url_sha256
-etag=old-etag
-last_modified=Thu, 04 Jun 2026 00:00:00 GMT
-content_length=3
-EOF
-    if run_dmg_cache_case "$failed_get" "$failed_get/output.log" \
-        TEST_ETAG=fresh-etag \
-        TEST_LAST_MODIFIED="Thu, 04 Jun 2026 00:00:00 GMT" \
-        TEST_CONTENT_LENGTH=3 \
-        TEST_GET_FAIL=1
-    then
-        fail "Expected failed replacement download to fail the refresh"
-    fi
-    [ "$(cat "$failed_get/Codex.dmg")" = "old" ] || fail "Expected failed refresh to preserve old DMG"
-    assert_contains "$failed_get/Codex.dmg.metadata" "etag=old-etag"
-    assert_file_not_exists "$failed_get/Codex.dmg.part"
-
-    local head_failure="$workspace/head-failure"
-    mkdir -p "$head_failure"
-    printf '%s' "old" >"$head_failure/Codex.dmg"
-    cat >"$head_failure/Codex.dmg.metadata" <<EOF
-url_sha256=$url_sha256
-etag=old-etag
-last_modified=Thu, 04 Jun 2026 00:00:00 GMT
-content_length=3
-EOF
-    run_dmg_cache_case "$head_failure" "$head_failure/output.log" TEST_HEAD_FAIL=1
-    [ "$(cat "$head_failure/Codex.dmg")" = "old" ] || fail "Expected HEAD failure to preserve cache"
-    assert_not_contains "$head_failure/curl.log" "GET"
-    assert_contains "$head_failure/output.log" "Could not check upstream DMG metadata"
-
-    local head_failure_mismatched_url="$workspace/head-failure-mismatched-url"
-    mkdir -p "$head_failure_mismatched_url"
-    printf '%s' "old" >"$head_failure_mismatched_url/Codex.dmg"
-    cat >"$head_failure_mismatched_url/Codex.dmg.metadata" <<EOF
-url_sha256=$url_sha256
-etag=old-etag
-last_modified=Thu, 04 Jun 2026 00:00:00 GMT
-content_length=3
-EOF
-    if run_dmg_cache_case "$head_failure_mismatched_url" "$head_failure_mismatched_url/output.log" \
-        CODEX_UPSTREAM_DMG_URL="https://example.com/Codex.dmg" \
-        TEST_HEAD_FAIL=1 \
-        TEST_GET_FAIL=1
-    then
-        fail "Expected HEAD failure with mismatched cached URL metadata to attempt refresh and fail"
-    fi
-    [ "$(cat "$head_failure_mismatched_url/Codex.dmg")" = "old" ] || fail "Expected failed mismatched-URL refresh to preserve old DMG"
-    assert_contains "$head_failure_mismatched_url/Codex.dmg.metadata" "etag=old-etag"
-    assert_contains "$head_failure_mismatched_url/curl.log" "GET"
-    assert_contains "$head_failure_mismatched_url/output.log" "cached DMG URL metadata does not match current URL"
-
-    local secret_url="$workspace/secret-url"
-    mkdir -p "$secret_url"
-    run_dmg_cache_case "$secret_url" "$secret_url/output.log" \
-        CODEX_UPSTREAM_DMG_URL="https://user:secret@example.com/Codex.dmg?token=topsecret#fragsecret" \
-        TEST_ETAG=opaque-etag \
-        TEST_CONTENT_LENGTH=3 \
-        TEST_DOWNLOAD_CONTENT=new
-    [ "$(cat "$secret_url/Codex.dmg")" = "new" ] || fail "Expected HTTPS override URL to download"
-    assert_contains "$secret_url/output.log" "URL: https://redacted@example.com/Codex.dmg?REDACTED"
-    assert_not_contains "$secret_url/output.log" "topsecret"
-    assert_not_contains "$secret_url/output.log" "fragsecret"
-    assert_not_contains "$secret_url/Codex.dmg.metadata" "topsecret"
-    assert_not_contains "$secret_url/Codex.dmg.metadata" "fragsecret"
-
-    cat >"$bin_dir/aria2c" <<'SCRIPT'
-#!/usr/bin/env bash
-set -eu
-
-download_dir=""
-download_name=""
-for arg in "$@"; do
-    printf '%s\n' "$arg" >>"$TEST_ARIA2_LOG"
-    case "$arg" in
-        --dir=*)
-            download_dir="${arg#--dir=}"
-            ;;
-        --out=*)
-            download_name="${arg#--out=}"
-            ;;
-    esac
-done
-
-[ -n "$download_dir" ] || exit 2
-[ -n "$download_name" ] || exit 2
-
-if [ "${TEST_ARIA2_MODE:-success}" = "fail" ]; then
-    printf '%s' "partial" >"$download_dir/$download_name"
-    printf '%s' "control" >"$download_dir/$download_name.aria2"
-    exit 1
-fi
-
-printf '%s' "aria2-download" >"$download_dir/$download_name"
-SCRIPT
-    chmod +x "$bin_dir/aria2c"
-
-    local aria2_success="$workspace/aria2-success"
-    mkdir -p "$aria2_success"
-    : >"$aria2_success/aria2.log"
-    run_dmg_cache_case "$aria2_success" "$aria2_success/output.log" \
-        TEST_ARIA2_LOG="$aria2_success/aria2.log" \
-        TEST_ETAG=aria2-etag \
-        TEST_CONTENT_LENGTH=14
-    [ "$(cat "$aria2_success/Codex.dmg")" = "aria2-download" ] || fail "Expected aria2c to download the DMG"
-    assert_not_contains "$aria2_success/curl.log" "GET"
-    assert_contains "$aria2_success/aria2.log" "--max-connection-per-server=16"
-    assert_contains "$aria2_success/aria2.log" "--split=16"
-    assert_contains "$aria2_success/aria2.log" "--dir=$aria2_success"
-    assert_contains "$aria2_success/aria2.log" "--out=Codex.dmg.part"
-    assert_contains "$aria2_success/output.log" "Using aria2c for parallel DMG download"
-
-    local aria2_fallback="$workspace/aria2-fallback"
-    mkdir -p "$aria2_fallback"
-    : >"$aria2_fallback/aria2.log"
-    run_dmg_cache_case "$aria2_fallback" "$aria2_fallback/output.log" \
-        TEST_ARIA2_LOG="$aria2_fallback/aria2.log" \
-        TEST_ARIA2_MODE=fail \
-        TEST_ETAG=fallback-etag \
-        TEST_CONTENT_LENGTH=13 \
-        TEST_DOWNLOAD_CONTENT=curl-fallback
-    [ "$(cat "$aria2_fallback/Codex.dmg")" = "curl-fallback" ] || fail "Expected curl fallback after aria2c failure"
-    assert_contains "$aria2_fallback/curl.log" "GET"
-    assert_contains "$aria2_fallback/output.log" "aria2c download failed; falling back to curl"
-    assert_file_not_exists "$aria2_fallback/Codex.dmg.part"
-    assert_file_not_exists "$aria2_fallback/Codex.dmg.part.aria2"
-
-    local invalid_url="$workspace/invalid-url"
-    mkdir -p "$invalid_url"
-    if run_dmg_cache_case "$invalid_url" "$invalid_url/output.log" \
-        CODEX_UPSTREAM_DMG_URL="file:///tmp/Codex.dmg"
-    then
-        fail "Expected non-HTTPS upstream DMG URL to fail"
-    fi
-    assert_contains "$invalid_url/output.log" "Upstream DMG URL must be an HTTPS URL"
-}
-
-test_extract_dmg_repairs_safe_7z_link_warnings() {
-    info "Checking DMG extraction repairs safe 7z package symlink warnings"
-    local workspace="$TMP_DIR/dmg-dangerous-link-paths"
-    local bin_dir="$workspace/bin"
-    local work_dir="$workspace/work"
-    local output_log="$workspace/output.log"
-    local app_dir="$work_dir/dmg-extract/ChatGPT Installer/ChatGPT.app"
-    local node_modules="$app_dir/Contents/Resources/cua_node/lib/node_modules"
-    local actual
-
-    mkdir -p "$bin_dir" "$work_dir"
-    printf '%s' "fake dmg payload" >"$workspace/Codex.dmg"
-
-    cat >"$bin_dir/7z" <<'SCRIPT'
-#!/usr/bin/env bash
-set -eu
-
-out=""
-for arg in "$@"; do
-    case "$arg" in
-        -o*)
-            out="${arg#-o}"
-            ;;
-    esac
-done
-[ -n "$out" ] || exit 2
-
-app="$out/ChatGPT Installer/ChatGPT.app"
-node_modules="$app/Contents/Resources/cua_node/lib/node_modules"
-mkdir -p \
-    "$node_modules/.bin" \
-    "$node_modules/@oai/sky/bin/linux" \
-    "$node_modules/opencollective-postinstall" \
-    "$node_modules/pixelmatch/bin" \
-    "$node_modules/playwright" \
-    "$node_modules/playwright-core" \
-    "$node_modules/semver/bin" \
-    "$node_modules/sharp/node_modules/.bin" \
-    "$node_modules/tesseract.js/node_modules/.bin"
-
-printf '%s\n' "target" >"$node_modules/opencollective-postinstall/index.js"
-printf '%s\n' "target" >"$node_modules/pixelmatch/bin/pixelmatch"
-printf '%s\n' "target" >"$node_modules/playwright/cli.js"
-printf '%s\n' "target" >"$node_modules/playwright-core/cli.js"
-printf '%s\n' "target" >"$node_modules/semver/bin/semver.js"
-printf '%s\n' "target" >"$node_modules/@oai/sky/bin/linux/sky_linux_arm64"
-printf '%s\n' "target" >"$node_modules/@oai/sky/bin/linux/sky_linux_x64"
-
-: >"$node_modules/.bin/opencollective-postinstall"
-: >"$node_modules/.bin/pixelmatch"
-: >"$node_modules/.bin/playwright"
-: >"$node_modules/.bin/playwright-core"
-: >"$node_modules/.bin/semver"
-: >"$node_modules/.bin/sky_linux_arm64"
-: >"$node_modules/.bin/sky_linux_x64"
-: >"$node_modules/tesseract.js/node_modules/.bin/opencollective-postinstall"
-: >"$node_modules/sharp/node_modules/.bin/semver"
-
-cat <<'LOG'
-ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/opencollective-postinstall : ../opencollective-postinstall/index.js
-ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/pixelmatch : ../pixelmatch/bin/pixelmatch
-ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/playwright : ../playwright/cli.js
-ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/playwright-core : ../playwright-core/cli.js
-ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/semver : ../semver/bin/semver.js
-ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/sky_linux_arm64 : ../@oai/sky/bin/linux/sky_linux_arm64
-ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/.bin/sky_linux_x64 : ../@oai/sky/bin/linux/sky_linux_x64
-ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/tesseract.js/node_modules/.bin/opencollective-postinstall : ../../../opencollective-postinstall/index.js
-ERROR: Dangerous link path was ignored : ChatGPT Installer/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/sharp/node_modules/.bin/semver : ../../../semver/bin/semver.js
-
-Sub items Errors: 9
-
-Archives with Errors: 1
-
-Sub items Errors: 9
-LOG
-exit 2
-SCRIPT
-    chmod +x "$bin_dir/7z"
-
-    REPO_DIR="$REPO_DIR" \
-    WORK_DIR="$work_dir" \
-    SEVEN_ZIP_CMD="$bin_dir/7z" \
-    TEST_DMG_PATH="$workspace/Codex.dmg" \
-        bash <<'SCRIPT' >"$output_log" 2>&1
-set -Eeuo pipefail
-
-info() { echo "[INFO] $*" >&2; }
-warn() { echo "[WARN] $*" >&2; }
-error() { echo "[ERROR] $*" >&2; exit 1; }
-
-# shellcheck disable=SC1091
-source "$REPO_DIR/scripts/lib/dmg.sh"
-
-app_dir="$(extract_dmg "$TEST_DMG_PATH")"
-[ "$(basename "$app_dir")" = "ChatGPT.app" ]
-SCRIPT
-
-    assert_contains "$output_log" "7z reported 9 safe package symlink warnings; repaired and continuing"
-    assert_not_contains "$output_log" "7z exited with code"
-    assert_not_contains "$output_log" "Sub items Errors"
-
-    [ -L "$node_modules/.bin/opencollective-postinstall" ] || fail "Expected repaired opencollective-postinstall symlink"
-    [ "$(readlink "$node_modules/.bin/opencollective-postinstall")" = "../opencollective-postinstall/index.js" ] \
-        || fail "Unexpected opencollective-postinstall symlink target"
-    [ -L "$node_modules/.bin/pixelmatch" ] || fail "Expected repaired pixelmatch symlink"
-    [ "$(readlink "$node_modules/.bin/pixelmatch")" = "../pixelmatch/bin/pixelmatch" ] \
-        || fail "Unexpected pixelmatch symlink target"
-    [ -L "$node_modules/.bin/playwright" ] || fail "Expected repaired playwright symlink"
-    [ "$(readlink "$node_modules/.bin/playwright")" = "../playwright/cli.js" ] \
-        || fail "Unexpected playwright symlink target"
-    [ -L "$node_modules/.bin/playwright-core" ] || fail "Expected repaired playwright-core symlink"
-    [ "$(readlink "$node_modules/.bin/playwright-core")" = "../playwright-core/cli.js" ] \
-        || fail "Unexpected playwright-core symlink target"
-    [ -L "$node_modules/.bin/semver" ] || fail "Expected repaired semver symlink"
-    [ "$(readlink "$node_modules/.bin/semver")" = "../semver/bin/semver.js" ] \
-        || fail "Unexpected semver symlink target"
-    [ -L "$node_modules/.bin/sky_linux_arm64" ] || fail "Expected repaired sky_linux_arm64 symlink"
-    [ "$(readlink "$node_modules/.bin/sky_linux_arm64")" = "../@oai/sky/bin/linux/sky_linux_arm64" ] \
-        || fail "Unexpected sky_linux_arm64 symlink target"
-    [ -L "$node_modules/.bin/sky_linux_x64" ] || fail "Expected repaired sky_linux_x64 symlink"
-    [ "$(readlink "$node_modules/.bin/sky_linux_x64")" = "../@oai/sky/bin/linux/sky_linux_x64" ] \
-        || fail "Unexpected sky_linux_x64 symlink target"
-    [ -L "$node_modules/tesseract.js/node_modules/.bin/opencollective-postinstall" ] \
-        || fail "Expected repaired nested opencollective-postinstall symlink"
-    [ "$(readlink "$node_modules/tesseract.js/node_modules/.bin/opencollective-postinstall")" = "../../../opencollective-postinstall/index.js" ] \
-        || fail "Unexpected nested opencollective-postinstall symlink target"
-    [ -L "$node_modules/sharp/node_modules/.bin/semver" ] || fail "Expected repaired nested semver symlink"
-    [ "$(readlink "$node_modules/sharp/node_modules/.bin/semver")" = "../../../semver/bin/semver.js" ] \
-        || fail "Unexpected nested semver symlink target"
-
-    actual="$(find "$node_modules" -path '*/.bin/*' -type l | wc -l | tr -d ' ')"
-    [ "$actual" = "9" ] || fail "Expected 9 repaired symlinks, found $actual"
-}
-
-test_fresh_install_removes_cached_dmg_metadata() {
-    info "Checking --fresh removes cached DMG metadata"
-    local workspace="$TMP_DIR/fresh-dmg-metadata"
-    local source_dir="$workspace/source"
-
-    mkdir -p "$source_dir"
-    printf '%s' "cached" >"$source_dir/Codex.dmg"
-    printf '%s' "metadata" >"$source_dir/Codex.dmg.metadata"
-
-    TEST_SOURCE_DIR="$source_dir" REPO_DIR="$REPO_DIR" bash <<'SCRIPT'
-set -Eeuo pipefail
-
-SCRIPT_DIR="$TEST_SOURCE_DIR"
-WORK_DIR="$(mktemp -d)"
-INSTALL_DIR="$TEST_SOURCE_DIR/codex-app"
-# shellcheck disable=SC1091
-source "$REPO_DIR/scripts/lib/install-helpers.sh"
-
-FRESH_INSTALL=1
-REUSE_CACHED_DMG=0
-prepare_install
-SCRIPT
-
-    assert_file_not_exists "$source_dir/Codex.dmg"
-    assert_file_not_exists "$source_dir/Codex.dmg.metadata"
-}
-
-test_fresh_pinned_dmg_preserves_cached_dmg_metadata() {
-    info "Checking --fresh preserves cached DMG metadata in pinned refresh mode"
-    local workspace="$TMP_DIR/fresh-pinned-dmg-metadata"
-    local source_dir="$workspace/source"
-
-    mkdir -p "$source_dir"
-    printf '%s' "cached" >"$source_dir/Codex.dmg"
-    printf '%s' "metadata" >"$source_dir/Codex.dmg.metadata"
-
-    TEST_SOURCE_DIR="$source_dir" REPO_DIR="$REPO_DIR" bash <<'SCRIPT'
-set -Eeuo pipefail
-
-SCRIPT_DIR="$TEST_SOURCE_DIR"
-WORK_DIR="$(mktemp -d)"
-INSTALL_DIR="$TEST_SOURCE_DIR/codex-app"
-CODEX_DMG_REFRESH_MODE=pinned
-# shellcheck disable=SC1091
-source "$REPO_DIR/scripts/lib/install-helpers.sh"
-
-FRESH_INSTALL=1
-REUSE_CACHED_DMG=0
-prepare_install
-SCRIPT
-
-    assert_file_exists "$source_dir/Codex.dmg"
-    assert_file_exists "$source_dir/Codex.dmg.metadata"
-}
-
-test_fresh_reuse_dmg_uses_cache_when_metadata_matches() {
-    info "Checking --fresh --reuse-dmg reuses cached DMG when metadata matches"
-    local workspace="$TMP_DIR/fresh-reuse-dmg-metadata"
-    local bin_dir="$workspace/bin"
-    local source_dir="$workspace/source"
-    local output_log="$workspace/output.log"
-    local url="https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg"
-    local url_sha256
-
-    url_sha256="$(printf '%s' "$url" | sha256sum | awk '{print $1}')"
-
-    mkdir -p "$bin_dir" "$source_dir"
-    printf '%s' "cached" >"$source_dir/Codex.dmg"
-    cat >"$source_dir/Codex.dmg.metadata" <<EOF
-url_sha256=$url_sha256
-etag=same-etag
-last_modified=Thu, 04 Jun 2026 00:00:00 GMT
-content_length=6
-EOF
-
-    cat >"$bin_dir/curl" <<'SCRIPT'
-#!/usr/bin/env bash
-set -eu
-
-is_head=0
-for arg in "$@"; do
-    if [ "$arg" = "-fsSLI" ]; then
-        is_head=1
-    fi
-done
-
-if [ "$is_head" -eq 1 ]; then
-    printf '%s\n' "HEAD" >> "$TEST_CURL_LOG"
-    printf 'HTTP/2 200\r\n'
-    printf 'ETag: same-etag\r\n'
-    printf 'Last-Modified: Thu, 04 Jun 2026 00:00:00 GMT\r\n'
-    printf 'Content-Length: 6\r\n'
-    printf '\r\n'
-    exit 0
-fi
-
-printf '%s\n' "GET" >> "$TEST_CURL_LOG"
-out=""
-while [ "$#" -gt 0 ]; do
-    if [ "$1" = "-o" ]; then
-        shift
-        out="$1"
-    fi
-    shift || true
-done
-
-[ -n "$out" ] || exit 2
-printf '%s' "downloaded" >"$out"
-SCRIPT
-    chmod +x "$bin_dir/curl"
-    : >"$source_dir/curl.log"
-
-    PATH="$bin_dir:$PATH" \
-    TEST_CURL_LOG="$source_dir/curl.log" \
-    TEST_SOURCE_DIR="$source_dir" \
-    REPO_DIR="$REPO_DIR" \
-        bash <<'SCRIPT' >"$output_log" 2>&1
-set -Eeuo pipefail
-
-SCRIPT_DIR="$TEST_SOURCE_DIR"
-WORK_DIR="$(mktemp -d)"
-INSTALL_DIR="$TEST_SOURCE_DIR/codex-app"
-# shellcheck disable=SC1091
-source "$REPO_DIR/scripts/lib/install-helpers.sh"
-# shellcheck disable=SC1091
-source "$REPO_DIR/scripts/lib/dmg.sh"
-
-FRESH_INSTALL=1
-REUSE_CACHED_DMG=1
-prepare_install
-
-dmg_path="$(get_dmg)"
-[ "$dmg_path" = "$TEST_SOURCE_DIR/Codex.dmg" ]
-SCRIPT
-
-    assert_file_exists "$source_dir/Codex.dmg"
-    assert_file_exists "$source_dir/Codex.dmg.metadata"
-    [ "$(cat "$source_dir/Codex.dmg")" = "cached" ] || fail "Expected matching metadata to keep cached DMG"
-    assert_contains "$source_dir/curl.log" "HEAD"
-    assert_not_contains "$source_dir/curl.log" "GET"
-    assert_contains "$output_log" "Using cached DMG"
-}
 
 test_rebuild_candidate_uses_validated_default_dmg() {
-    info "Checking rebuild-candidate default DMG validation flow"
-    local workspace="$TMP_DIR/rebuild-candidate-dmg"
+    info "Checking rebuild-candidate default package validation flow"
+    local workspace="$TMP_DIR/rebuild-candidate-package"
     local repo="$workspace/repo"
-    local explicit_dmg="$workspace/explicit.dmg"
+    local explicit_dmg="$workspace/explicit.deb"
     local explicit_realpath
     local first_line
     local second_line
 
     mkdir -p "$repo/scripts"
     cp "$REPO_DIR/scripts/rebuild-candidate.sh" "$repo/scripts/rebuild-candidate.sh"
-    printf '%s' "cached" >"$repo/Codex.dmg"
+    printf '%s' "cached" >"$repo/ChatGPT.deb"
     printf '%s' "explicit" >"$explicit_dmg"
     explicit_realpath="$(realpath "$explicit_dmg")"
 
@@ -2491,14 +1897,14 @@ SCRIPT
     REBUILD_REPORT_DIR="$workspace/report-explicit" \
         bash "$repo/scripts/rebuild-candidate.sh" "$explicit_dmg" >"$workspace/explicit.out" 2>&1
     first_line="$(sed -n '1p' "$workspace/explicit.log")"
-    [[ "$first_line" == *"<$explicit_realpath>"* ]] || fail "Explicit transactional build should receive explicit DMG: $first_line"
+    [[ "$first_line" == *"<$explicit_realpath>"* ]] || fail "Explicit transactional build should receive the explicit package: $first_line"
 }
 
 test_make_rebuild_targets_omit_empty_dmg_argument() {
-    info "Checking make rebuild targets omit an unset DMG argument"
-    local workspace="$TMP_DIR/make-rebuild-dmg"
+    info "Checking make rebuild targets omit an unset package argument"
+    local workspace="$TMP_DIR/make-rebuild-package"
     local repo="$workspace/repo"
-    local explicit_dmg="$workspace/explicit.dmg"
+    local explicit_dmg="$workspace/explicit.deb"
 
     mkdir -p "$repo/scripts"
     cp "$REPO_DIR/Makefile" "$repo/Makefile"
@@ -2524,10 +1930,10 @@ SCRIPT
     assert_contains "$workspace/install-default.out" "CALL:<--install>"
     assert_not_contains "$workspace/install-default.out" "CALL:<--install><"
 
-    make -C "$repo" rebuild DMG="$explicit_dmg" >"$workspace/rebuild-explicit.out"
+    make -C "$repo" rebuild ARTIFACT="$explicit_dmg" >"$workspace/rebuild-explicit.out"
     assert_contains "$workspace/rebuild-explicit.out" "CALL:<$explicit_dmg>"
 
-    make -C "$repo" rebuild-install DMG="$explicit_dmg" >"$workspace/install-explicit.out"
+    make -C "$repo" rebuild-install ARTIFACT="$explicit_dmg" >"$workspace/install-explicit.out"
     assert_contains "$workspace/install-explicit.out" "CALL:<--install><$explicit_dmg>"
 }
 
@@ -2968,7 +2374,7 @@ test_native_shortcut_targets_compose_existing_flows() {
     local setup_log="$TMP_DIR/make-setup-native.log"
 
     make -n -C "$REPO_DIR" install-native >"$install_log"
-    assert_contains "$install_log" './install.sh --fresh --reuse-dmg'
+    assert_contains "$install_log" './install.sh --fresh --reuse-artifact'
     assert_contains "$install_log" 'Building native package'
     assert_contains "$install_log" 'Installing latest native package'
 
@@ -3101,12 +2507,9 @@ test_fedora_dependency_bootstrap_installs_rpmbuild() {
     awk '/^install_dnf\(\) \{/,/^}/' "$install_deps" | grep -q -- "gcc-c++" \
         || fail "install_dnf must install gcc-c++ for g++"
 
-    assert_contains "$install_deps" "sudo dnf install python3 7zip curl unzip rpm-build make gcc-c++ @development-tools"
-    assert_contains "$install_deps" "sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++"
-    assert_contains "$helper" "sudo dnf install python3 7zip curl unzip rpm-build make gcc-c++ @development-tools"
-    assert_contains "$helper" "sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++"
-    assert_contains "$readme" "sudo dnf install python3 7zip curl unzip rpm-build make gcc-c++ @development-tools"
-    assert_contains "$readme" "sudo dnf install python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++"
+    assert_contains "$install_deps" "python3 binutils curl unzip tar rpm-build make gcc-c++"
+    assert_contains "$helper" "sudo dnf install python3 curl unzip tar binutils rpm-build make gcc-c++"
+    assert_contains "$readme" "sudo dnf install python3 curl unzip tar binutils rpm-build make gcc-c++"
 }
 
 test_fedora_atomic_rpm_ostree_target_detection() {
@@ -3157,7 +2560,7 @@ EOF
     HOME="$workspace/home-missing" \
         "$BASH_BIN" "$REPO_DIR/scripts/install-deps.sh" >"$missing_log" 2>&1 || status=$?
     [ "$status" -ne 0 ] || fail "Expected rpm-ostree install-deps to stop before packages are layered"
-    assert_contains "$missing_log" "sudo rpm-ostree install python3 7zip curl unzip rpm-build make gcc-c++"
+    assert_contains "$missing_log" "sudo rpm-ostree install python3 binutils curl unzip tar rpm-build make gcc-c++"
     assert_contains "$missing_log" "Still missing:"
     assert_not_contains "$missing_log" "nodejs npm"
 
@@ -3167,12 +2570,11 @@ EOF
     for command in dirname pwd uname grep; do
         ln -s "$(command -v "$command")" "$layered_bin/$command"
     done
-    for command in rpm-ostree python3 7zz curl unzip rpmbuild make g++ cargo; do
+    for command in rpm-ostree python3 ar tar curl unzip rpmbuild make g++ cargo; do
         printf '%s\n' "#!$BASH_BIN" > "$layered_bin/$command"
         cat >> "$layered_bin/$command" <<'SCRIPT'
 command_name="${0##*/}"
 case "$command_name" in
-    7zz) echo "7-Zip 26.00" ;;
     cargo) echo "cargo 1.96.0" ;;
     *) exit 0 ;;
 esac
@@ -3951,7 +3353,7 @@ make_update_nix_hash_fixture() {
     local fixture="$1"
     local hash_a="sha256-VVQNu/E7Wuyxfsy93Gorknr0t7H7wy9kxMOiBZYOo/o="
 
-    mkdir -p "$fixture/scripts/ci" "$fixture/nix/native-modules" "$fixture/bin"
+    mkdir -p "$fixture/scripts/ci" "$fixture/bin"
     cp "$REPO_DIR/scripts/ci/download-upstream-dmg.sh" "$fixture/scripts/ci/download-upstream-dmg.sh"
     cp "$REPO_DIR/scripts/ci/update-nix-hashes.sh" "$fixture/scripts/ci/update-nix-hashes.sh"
     chmod +x "$fixture/scripts/ci/download-upstream-dmg.sh"
@@ -3962,11 +3364,6 @@ make_update_nix_hash_fixture() {
   codexVersion = "26.623.81905";
   electronVersion = "42.1.0";
 
-  codexDmg = pkgs.fetchurl {
-    url = "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg";
-    hash = "$hash_a";
-  };
-
   x86_64-linux = {
     hash = "$hash_a";
   };
@@ -3974,24 +3371,15 @@ make_update_nix_hash_fixture() {
   aarch64-linux = {
     hash = "$hash_a";
   };
-
-  electronHeaders = pkgs.fetchurl {
-    hash = "$hash_a";
-  };
 }
 EOF
-    printf '%s\n' '{"dependencies":{"@parcel/watcher":"2.5.6","electron":"42.1.0","better-sqlite3":"12.9.0","node-pty":"1.1.0"}}' \
-        > "$fixture/nix/native-modules/package.json"
-    printf '%s\n' '{"name":"native-modules","lockfileVersion":3,"packages":{}}' \
-        > "$fixture/nix/native-modules/package-lock.json"
 
     cat > "$fixture/scripts/ci/validate-nix-pins.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "validate stub invoked"
 if [ "${VALIDATE_PIN_CHANGE:-0}" = "1" ]; then
-    python3 - "$REPO_DIR/flake.nix" "$REPO_DIR/nix/native-modules/package.json" <<'PY'
-import json
+    python3 - "$REPO_DIR/flake.nix" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -4000,11 +3388,6 @@ path = Path(sys.argv[1])
 text = path.read_text()
 text = re.sub(r'(codexVersion\s*=\s*")[^"]+(";)', r'\g<1>99.0.0\2', text, count=1)
 path.write_text(text)
-
-package_path = Path(sys.argv[2])
-package = json.loads(package_path.read_text())
-package["dependencies"]["@parcel/watcher"] = "2.5.7"
-package_path.write_text(json.dumps(package, indent=2) + "\n")
 PY
 fi
 EOF
@@ -4024,7 +3407,7 @@ while [ "$#" -gt 0 ]; do
     shift || true
 done
 if [ -n "$out" ]; then
-    printf 'fake dmg\n' > "$out"
+    printf 'fake package\n' > "$out"
     exit 0
 fi
 version="26.623.81905"
@@ -4064,17 +3447,10 @@ printf 'nix-store %s\n' "$*" >> "$CALL_LOG"
 EOF
     chmod +x "$fixture/bin/nix-store"
 
-    cat > "$fixture/bin/npm" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'npm %s\n' "$*" >> "$CALL_LOG"
-EOF
-    chmod +x "$fixture/bin/npm"
-
     git -C "$fixture" init -q
     git -C "$fixture" config user.name "Test"
     git -C "$fixture" config user.email "test@example.invalid"
-    git -C "$fixture" add flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json
+    git -C "$fixture" add flake.nix
     git -C "$fixture" commit -q -m "fixture"
 }
 
@@ -4089,7 +3465,7 @@ run_update_nix_hash_fixture() {
     PATH="$fixture/bin:$PATH" \
         REPO_DIR="$fixture" \
         FLAKE_FILE="$fixture/flake.nix" \
-        UPSTREAM_DMG_PATH="$fixture/Codex.dmg" \
+        UPSTREAM_DMG_PATH="$fixture/ChatGPT.deb" \
         VERIFY_LOG="$fixture/verify.log" \
         CALL_LOG="$fixture/calls.log" \
         VALIDATE_PIN_CHANGE="$validate_pin_change" \
@@ -4117,22 +3493,20 @@ test_update_nix_hashes_verifies_changed_pins() {
 
     run_update_nix_hash_fixture "$(basename "$fixture")" 1 "$hash_a"
 
-    assert_contains "$fixture/output.log" "Nix builds succeeded after refreshing the upstream pins and Codex.dmg hash."
+    assert_contains "$fixture/output.log" "Nix builds succeeded after refreshing the official Linux package pins."
     assert_contains "$fixture/calls.log" "nix-store --add-fixed"
     assert_contains "$fixture/calls.log" "nix build"
-    assert_contains "$fixture/calls.log" "npm install --package-lock-only --ignore-scripts"
-    [ "$(node -p "require('$fixture/nix/native-modules/package.json').dependencies['@parcel/watcher']")" = "2.5.7" ] || \
-        fail "Expected @parcel/watcher pin refresh to update package.json"
+    assert_contains "$fixture/flake.nix" 'codexVersion = "99.0.0"'
 }
 
 test_update_nix_hashes_verifies_changed_dmg_hash() {
-    info "Checking Nix hash refresh still verifies changed DMG hashes"
+    info "Checking Nix hash refresh still verifies changed package hashes"
     local fixture="$TMP_DIR/nix-hash-refresh-dmg-hash-change"
     local hash_b="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
     run_update_nix_hash_fixture "$(basename "$fixture")" 0 "$hash_b"
 
-    assert_contains "$fixture/output.log" "Nix builds succeeded after refreshing the upstream pins and Codex.dmg hash."
+    assert_contains "$fixture/output.log" "Nix builds succeeded after refreshing the official Linux package pins."
     assert_contains "$fixture/calls.log" "nix-store --add-fixed"
     assert_contains "$fixture/calls.log" "nix build"
 }
@@ -4166,7 +3540,14 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 text = re.sub(
-    r'(codexDmg = pkgs\.fetchurl \{.*?hash = ")[^"]+(";)',
+    r'(x86_64-linux = \{.*?hash = ")[^"]+(";)',
+    rf'\g<1>{sys.argv[2]}\2',
+    text,
+    count=1,
+    flags=re.DOTALL,
+)
+text = re.sub(
+    r'(aarch64-linux = \{.*?hash = ")[^"]+(";)',
     rf'\g<1>{sys.argv[2]}\2',
     text,
     count=1,
@@ -4182,7 +3563,7 @@ PY
     PATH="$fixture/bin:$PATH" \
         REPO_DIR="$fixture" \
         FLAKE_FILE="$fixture/flake.nix" \
-        UPSTREAM_DMG_PATH="$fixture/Codex.dmg" \
+        UPSTREAM_DMG_PATH="$fixture/ChatGPT.deb" \
         VERIFY_LOG="$fixture/verify.log" \
         CALL_LOG="$fixture/calls.log" \
         NIX_HASH="$hash_b" \
@@ -4217,58 +3598,49 @@ test_ci_local_mounts_shared_git_metadata_for_linked_worktrees() {
 }
 
 test_installer_detects_electron_version_from_plist() {
-    info "Checking Electron version detection from app metadata"
+    info "Checking Electron version detection from the official package metadata"
     local workspace="$TMP_DIR/electron-version"
     local app_dir="$workspace/Codex.app"
-    local plist_dir="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources"
     local output_log="$workspace/output.log"
 
-    mkdir -p "$plist_dir"
-    cat > "$plist_dir/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleVersion</key>
-    <string>42.5.7</string>
-</dict>
-</plist>
-PLIST
+    mkdir -p "$app_dir/Contents/Resources" "$workspace/bin"
+    cat > "$workspace/bin/npx" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '{"devDependencies":{"electron":"42.5.7"}}'
+EOF
+    chmod +x "$workspace/bin/npx"
 
-    CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+    PATH="$workspace/bin:$PATH" CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
         'source "$1"; detect_electron_version "$2"; printf "%s\n" "$ELECTRON_VERSION"' \
         _ "$REPO_DIR/install.sh" "$app_dir" >"$output_log" 2>&1
 
-    assert_contains "$output_log" "Detected Electron version from DMG: 42.5.7"
+    assert_contains "$output_log" "Detected Electron version from official Linux package: 42.5.7"
     [ "$(tail -n 1 "$output_log")" = "42.5.7" ] || fail "Expected detected Electron version 42.5.7, got: $(cat "$output_log")"
 }
 
 test_installer_keeps_electron_fallback_for_bad_metadata() {
-    info "Checking Electron version fallback for malformed metadata"
+    info "Checking malformed official package Electron metadata is rejected"
     local workspace="$TMP_DIR/electron-version-fallback"
     local app_dir="$workspace/Codex.app"
-    local plist_dir="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources"
     local output_log="$workspace/output.log"
+    local rc
 
-    mkdir -p "$plist_dir"
-    cat > "$plist_dir/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleVersion</key>
-    <string>not-a-version</string>
-</dict>
-</plist>
-PLIST
+    mkdir -p "$app_dir/Contents/Resources" "$workspace/bin"
+    cat > "$workspace/bin/npx" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '{"devDependencies":{"electron":"not-a-version"}}'
+EOF
+    chmod +x "$workspace/bin/npx"
 
-    CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+    set +e
+    PATH="$workspace/bin:$PATH" CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
         'source "$1"; detect_electron_version "$2"; printf "%s\n" "$ELECTRON_VERSION"' \
         _ "$REPO_DIR/install.sh" "$app_dir" >"$output_log" 2>&1
+    rc=$?
+    set -e
 
-    assert_contains "$output_log" "Ignoring invalid Electron version from DMG: not-a-version"
-    assert_contains "$output_log" "Could not auto-detect Electron version; using fallback 41.3.0"
-    [ "$(tail -n 1 "$output_log")" = "41.3.0" ] || fail "Expected fallback Electron version 41.3.0, got: $(cat "$output_log")"
+    [ "$rc" -ne 0 ] || fail "Expected malformed official package Electron metadata to fail"
+    assert_contains "$output_log" "Could not detect Electron version from the official Linux package"
 }
 
 test_port_validation_rejects_oversized_numeric_values() {
@@ -4489,348 +3861,6 @@ SCRIPT
     assert_contains "$workspace/output.log" "v22.22.2"
 }
 
-test_better_sqlite3_electron_42_source_patch() {
-    info "Checking better-sqlite3 Electron 42 source patch"
-    local workspace="$TMP_DIR/better-sqlite3-electron-42"
-    local module_dir="$workspace/node_modules/better-sqlite3"
-    local output_log="$workspace/output.log"
-
-    mkdir -p "$module_dir/src/util"
-    cat > "$module_dir/src/better_sqlite3.cpp" <<'CPP'
-void init(v8::Isolate* isolate, Addon* addon) {
-	v8::Local<v8::External> data = v8::External::New(isolate, addon);
-}
-CPP
-    cat > "$module_dir/src/util/macros.cpp" <<'CPP'
-#define EasyIsolate v8::Isolate* isolate = v8::Isolate::GetCurrent()
-#define OnlyIsolate info.GetIsolate()
-#define OnlyContext isolate->GetCurrentContext()
-#define OnlyAddon static_cast<Addon*>(info.Data().As<v8::External>()->Value())
-CPP
-    cat > "$module_dir/src/util/helpers.cpp" <<'CPP'
-void SetPrototypeGetter() {
-	recv->InstanceTemplate()->SetNativeDataProperty(
-		InternalizedFromLatin1(isolate, name),
-		func,
-		0,
-		data
-	);
-}
-CPP
-
-    (
-        ELECTRON_VERSION="42.0.1"
-        info() { echo "[INFO] $*" >&2; }
-        warn() { echo "[WARN] $*" >&2; }
-        error() { echo "[ERROR] $*" >&2; exit 1; }
-        # shellcheck disable=SC1091
-        source "$REPO_DIR/scripts/lib/native-modules.sh"
-        patch_better_sqlite3_for_v8_external_pointer_api "$module_dir"
-        patch_better_sqlite3_for_v8_external_pointer_api "$module_dir"
-    ) > "$output_log" 2>&1
-
-    assert_contains "$module_dir/src/better_sqlite3.cpp" "BETTER_SQLITE3_EXTERNAL_NEW(isolate, addon)"
-    assert_contains "$module_dir/src/util/macros.cpp" "BETTER_SQLITE3_EXTERNAL_POINTER_TAG"
-    assert_contains "$module_dir/src/util/macros.cpp" "BETTER_SQLITE3_EXTERNAL_VALUE(info.Data().As<v8::External>())"
-    assert_contains "$module_dir/src/util/helpers.cpp" "nullptr"
-    assert_contains "$output_log" "Patched better-sqlite3 source for V8 external pointer API"
-    assert_contains "$output_log" "already applied"
-}
-
-test_v8_nullptr_workaround_skips_when_included_probe_succeeds() {
-    info "Checking V8 nullptr_t workaround probe stays inactive when not needed"
-    local workspace="$TMP_DIR/v8-nullptr-workaround-skip"
-    local fake_bin="$workspace/bin"
-    local cxx_log="$workspace/cxx.log"
-    local cxx_state="$workspace/cxx-state.log"
-    local output_log="$workspace/output.log"
-
-    mkdir -p "$fake_bin" "$workspace/work"
-    cat > "$fake_bin/c++" <<'SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'argv:%s\n' "$*" >> "$NATIVE_CXX_LOG"
-for arg in "$@"; do
-    if [ -f "$arg" ]; then
-        cat "$arg" >> "$NATIVE_CXX_LOG"
-    fi
-done
-exit 0
-SCRIPT
-    chmod +x "$fake_bin/c++"
-
-    (
-        CXX="$fake_bin/c++"
-        NATIVE_CXX_LOG="$cxx_log"
-        export CXX NATIVE_CXX_LOG
-        info() { echo "[INFO] $*" >&2; }
-        warn() { echo "[WARN] $*" >&2; }
-        error() { echo "[ERROR] $*" >&2; exit 1; }
-        # shellcheck disable=SC1091
-        source "$REPO_DIR/scripts/lib/native-modules.sh"
-        apply_v8_nullptr_t_workaround_if_needed "$workspace/work"
-        printf 'CXX=%s\n' "$CXX" > "$cxx_state"
-    ) > "$output_log" 2>&1
-
-    assert_contains "$cxx_log" "#include <cstddef>"
-    assert_contains "$cxx_log" "nullptr_t x = nullptr;"
-    assert_contains "$cxx_state" "CXX=$fake_bin/c++"
-    assert_not_contains "$output_log" "Applied GCC 16+ nullptr_t compatibility workaround"
-}
-
-test_v8_nullptr_workaround_wraps_when_included_probe_fails() {
-    info "Checking V8 nullptr_t workaround wraps CXX only when needed"
-    local workspace="$TMP_DIR/v8-nullptr-workaround-wrap"
-    local fake_bin="$workspace/bin"
-    local cxx_log="$workspace/cxx.log"
-    local cxx_state="$workspace/cxx-state.log"
-    local output_log="$workspace/output.log"
-
-    mkdir -p "$fake_bin" "$workspace/work"
-    cat > "$fake_bin/c++" <<'SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'argv:%s\n' "$*" >> "$NATIVE_CXX_LOG"
-for arg in "$@"; do
-    if [ -f "$arg" ]; then
-        cat "$arg" >> "$NATIVE_CXX_LOG"
-    fi
-    case "$arg" in
-        *.v8-nullptr-probe.cc) exit 1 ;;
-    esac
-done
-exit 0
-SCRIPT
-    chmod +x "$fake_bin/c++"
-    printf '%s\n' 'int main() { return 0; }' > "$workspace/dummy.cc"
-
-    (
-        CXX="$fake_bin/c++"
-        NATIVE_CXX_LOG="$cxx_log"
-        export CXX NATIVE_CXX_LOG
-        info() { echo "[INFO] $*" >&2; }
-        warn() { echo "[WARN] $*" >&2; }
-        error() { echo "[ERROR] $*" >&2; exit 1; }
-        # shellcheck disable=SC1091
-        source "$REPO_DIR/scripts/lib/native-modules.sh"
-        apply_v8_nullptr_t_workaround_if_needed "$workspace/work"
-        "$CXX" -x c++ -fsyntax-only "$workspace/dummy.cc"
-        printf 'CXX=%s\n' "$CXX" > "$cxx_state"
-    ) > "$output_log" 2>&1
-
-    assert_file_exists "$workspace/work/.v8-nullptr-fix.h"
-    assert_file_exists "$workspace/work/.cxx-v8-nullptr"
-    assert_contains "$workspace/work/.cxx-v8-nullptr" "#!/usr/bin/env bash"
-    assert_contains "$workspace/work/.v8-nullptr-fix.h" "using std::nullptr_t;"
-    assert_contains "$cxx_state" "CXX=$workspace/work/.cxx-v8-nullptr"
-    assert_contains "$cxx_log" "-include"
-    assert_contains "$cxx_log" ".v8-nullptr-fix.h"
-    assert_contains "$output_log" "Applied GCC 16+ nullptr_t compatibility workaround"
-}
-
-test_native_module_rebuild_uses_local_electron_rebuild_toolchain() {
-    info "Checking native module rebuild uses local Electron rebuild toolchain"
-    local workspace="$TMP_DIR/native-module-rebuild-toolchain"
-    local app_dir="$workspace/app-extracted"
-    local fake_bin="$workspace/bin"
-    local toolchain_log="$workspace/toolchain.log"
-    local output_log="$workspace/output.log"
-
-    mkdir -p "$app_dir/node_modules/better-sqlite3" "$app_dir/node_modules/node-pty" "$fake_bin"
-    printf '%s\n' '{"version":"12.9.0"}' > "$app_dir/node_modules/better-sqlite3/package.json"
-    printf '%s\n' '{"version":"1.1.0"}' > "$app_dir/node_modules/node-pty/package.json"
-    printf '%s\n' '{"dependencies":{"@parcel/watcher":"2.5.6"}}' > "$app_dir/package.json"
-
-    cat > "$fake_bin/npm" <<'SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-
-printf 'npm %s\n' "$*" >> "$NATIVE_TOOLCHAIN_LOG"
-args=" $* "
-
-case "$args" in
-    *" @electron/rebuild@4.0.4 "*)
-        mkdir -p node_modules/@electron/rebuild/lib
-        cat > node_modules/@electron/rebuild/lib/cli.js <<'REBUILD'
-#!/usr/bin/env node
-const fs = require("fs");
-fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `electron-rebuild ${process.argv.slice(2).join(" ")}\n`);
-fs.appendFileSync(process.env.NATIVE_TOOLCHAIN_LOG, `electron-rebuild-env jobs=${process.env.npm_config_jobs || ""} makeflags=${process.env.MAKEFLAGS || ""}\n`);
-fs.mkdirSync("node_modules/better-sqlite3/build/Release", { recursive: true });
-fs.mkdirSync("node_modules/node-pty/build/Release", { recursive: true });
-fs.closeSync(fs.openSync("node_modules/better-sqlite3/build/Release/better_sqlite3.node", "w"));
-fs.closeSync(fs.openSync("node_modules/node-pty/build/Release/pty.node", "w"));
-REBUILD
-        ;;
-esac
-
-case "$args" in
-    *" better-sqlite3@12.9.0 "*)
-        mkdir -p node_modules/better-sqlite3/src/util
-        printf '%s\n' '{"version":"12.9.0"}' > node_modules/better-sqlite3/package.json
-        cat > node_modules/better-sqlite3/src/better_sqlite3.cpp <<'CPP'
-void init(v8::Isolate* isolate, Addon* addon) {
-	v8::Local<v8::External> data = v8::External::New(isolate, addon);
-}
-CPP
-        cat > node_modules/better-sqlite3/src/util/macros.cpp <<'CPP'
-#define EasyIsolate v8::Isolate* isolate = v8::Isolate::GetCurrent()
-#define OnlyIsolate info.GetIsolate()
-#define OnlyContext isolate->GetCurrentContext()
-#define OnlyAddon static_cast<Addon*>(info.Data().As<v8::External>()->Value())
-CPP
-        cat > node_modules/better-sqlite3/src/util/helpers.cpp <<'CPP'
-void SetPrototypeGetter() {
-	recv->InstanceTemplate()->SetNativeDataProperty(
-		InternalizedFromLatin1(isolate, name),
-		func,
-		0,
-		data
-	);
-}
-CPP
-        ;;
-esac
-
-case "$args" in
-    *" node-pty@1.1.0 "*)
-        mkdir -p node_modules/node-pty
-        printf '%s\n' '{"version":"1.1.0"}' > node_modules/node-pty/package.json
-        ;;
-esac
-case "$args" in
-    *" @parcel/watcher@2.5.6 "*)
-        prefix="${args#* --prefix }"
-        prefix="${prefix%% *}"
-        mkdir -p "$prefix/node_modules/@parcel/watcher" "$prefix/node_modules/@parcel/watcher-linux-x64-glibc"
-        printf '%s\n' '{"version":"2.5.6"}' > "$prefix/node_modules/@parcel/watcher/package.json"
-        ;;
-esac
-SCRIPT
-    chmod +x "$fake_bin/npm"
-
-    cat > "$fake_bin/c++" <<'SCRIPT'
-#!/usr/bin/env bash
-exit 0
-SCRIPT
-    chmod +x "$fake_bin/c++"
-
-    cat > "$fake_bin/npx" <<'SCRIPT'
-#!/usr/bin/env bash
-echo "npx should not be used for electron-rebuild" >&2
-exit 99
-SCRIPT
-    chmod +x "$fake_bin/npx"
-
-    (
-        PATH="$fake_bin:$PATH"
-        export PATH
-        NATIVE_TOOLCHAIN_LOG="$toolchain_log"
-        export NATIVE_TOOLCHAIN_LOG
-        MAX_BUILD_THREADS=4
-        MAKEFLAGS="-j12 -l8"
-        export MAX_BUILD_THREADS
-        export MAKEFLAGS
-        WORK_DIR="$workspace/work"
-        ELECTRON_VERSION="42.0.1"
-        ELECTRON_HEADERS_URL="https://example.invalid/electron"
-        mkdir -p "$WORK_DIR"
-        info() { echo "[INFO] $*" >&2; }
-        warn() { echo "[WARN] $*" >&2; }
-        error() { echo "[ERROR] $*" >&2; exit 1; }
-        # shellcheck disable=SC1091
-        source "$REPO_DIR/scripts/lib/native-modules.sh"
-        build_native_modules "$app_dir"
-    ) > "$output_log" 2>&1
-
-    assert_contains "$toolchain_log" "@electron/rebuild@4.0.4"
-    assert_contains "$toolchain_log" "node-abi@^4.31.0"
-    assert_contains "$toolchain_log" "electron-rebuild -v 42.0.1 --force --dist-url https://example.invalid/electron --sequential"
-    assert_contains "$toolchain_log" "electron-rebuild-env jobs=4 makeflags=-j4"
-    assert_contains "$output_log" "Native modules built successfully"
-    assert_file_exists "$app_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-    assert_file_exists "$app_dir/node_modules/node-pty/build/Release/pty.node"
-}
-
-test_native_module_rebuild_accepts_prebuilt_source() {
-    info "Checking native module rebuild accepts prebuilt source"
-    local workspace="$TMP_DIR/native-module-prebuilt-source"
-    local app_dir="$workspace/app-extracted"
-    local source_dir="$workspace/prebuilt"
-    local output_log="$workspace/output.log"
-
-    mkdir -p \
-        "$app_dir/node_modules/better-sqlite3" \
-        "$app_dir/node_modules/node-pty" \
-        "$source_dir/@parcel/watcher" \
-        "$source_dir/@parcel/watcher-linux-x64-glibc" \
-        "$source_dir/detect-libc" \
-        "$source_dir/is-extglob" \
-        "$source_dir/is-glob" \
-        "$source_dir/node-addon-api" \
-        "$source_dir/picomatch" \
-        "$source_dir/better-sqlite3/build/Release" \
-        "$source_dir/node-pty/build/Release"
-    printf '%s\n' '{"version":"12.9.0"}' > "$app_dir/node_modules/better-sqlite3/package.json"
-    printf '%s\n' '{"version":"1.1.0"}' > "$app_dir/node_modules/node-pty/package.json"
-    printf '%s\n' '{"dependencies":{"@parcel/watcher":"2.5.6"}}' > "$app_dir/package.json"
-    printf '%s\n' stale > "$app_dir/node_modules/better-sqlite3/old.txt"
-
-    printf '%s\n' '{"version":"12.9.0"}' > "$source_dir/better-sqlite3/package.json"
-    printf '%s\n' '{"version":"1.1.0"}' > "$source_dir/node-pty/package.json"
-    printf '%s\n' '{"version":"2.5.6","main":"index.js","dependencies":{"detect-libc":"2.0.4","is-glob":"4.0.3","node-addon-api":"7.1.1","picomatch":"4.0.3"},"optionalDependencies":{"@parcel/watcher-linux-x64-glibc":"2.5.6"}}' \
-        > "$source_dir/@parcel/watcher/package.json"
-    cat > "$source_dir/@parcel/watcher/index.js" <<'JS'
-require("detect-libc");
-require("is-glob");
-require("node-addon-api");
-require("picomatch");
-require("@parcel/watcher-linux-x64-glibc");
-module.exports = { subscribe() {} };
-JS
-    printf '%s\n' '{"version":"2.5.6","main":"index.js"}' \
-        > "$source_dir/@parcel/watcher-linux-x64-glibc/package.json"
-    printf '%s\n' 'module.exports = {};' > "$source_dir/@parcel/watcher-linux-x64-glibc/index.js"
-    for dependency in detect-libc is-extglob node-addon-api picomatch; do
-        printf '%s\n' "{\"name\":\"$dependency\",\"version\":\"1.0.0\",\"main\":\"index.js\"}" \
-            > "$source_dir/$dependency/package.json"
-        printf '%s\n' 'module.exports = {};' > "$source_dir/$dependency/index.js"
-    done
-    printf '%s\n' '{"name":"is-glob","version":"4.0.3","main":"index.js","dependencies":{"is-extglob":"2.1.1"}}' \
-        > "$source_dir/is-glob/package.json"
-    printf '%s\n' 'require("is-extglob"); module.exports = () => false;' > "$source_dir/is-glob/index.js"
-    : > "$source_dir/better-sqlite3/build/Release/better_sqlite3.node"
-    : > "$source_dir/better-sqlite3/build/Release/junk.o"
-    : > "$source_dir/node-pty/build/Release/pty.node"
-    : > "$source_dir/node-pty/build/Release/junk.o"
-
-    (
-        WORK_DIR="$workspace/work"
-        ELECTRON_VERSION="42.0.1"
-        CODEX_NATIVE_MODULES_SOURCE="$source_dir"
-        mkdir -p "$WORK_DIR"
-        info() { echo "[INFO] $*" >&2; }
-        warn() { echo "[WARN] $*" >&2; }
-        error() { echo "[ERROR] $*" >&2; exit 1; }
-        # shellcheck disable=SC1091
-        source "$REPO_DIR/scripts/lib/native-modules.sh"
-        build_native_modules "$app_dir"
-    ) > "$output_log" 2>&1
-
-    assert_contains "$output_log" "Using prebuilt native modules from $source_dir"
-    assert_file_exists "$app_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-    assert_file_exists "$app_dir/node_modules/node-pty/build/Release/pty.node"
-    assert_file_exists "$app_dir/node_modules/@parcel/watcher/package.json"
-    assert_file_exists "$app_dir/node_modules/@parcel/watcher-linux-x64-glibc/package.json"
-    assert_file_exists "$app_dir/node_modules/is-extglob/package.json"
-    NODE_PATH="$app_dir/node_modules" node -e '
-const watcher = require("@parcel/watcher");
-if (typeof watcher.subscribe !== "function") process.exit(1);
-' || fail "Expected @parcel/watcher to load from the staged app tree"
-    [ ! -f "$app_dir/node_modules/better-sqlite3/old.txt" ] || fail "Expected stale better-sqlite3 module to be replaced"
-    [ ! -f "$app_dir/node_modules/better-sqlite3/build/Release/junk.o" ] || fail "Expected better-sqlite3 build junk to be pruned"
-    [ ! -f "$app_dir/node_modules/node-pty/build/Release/junk.o" ] || fail "Expected node-pty build junk to be pruned"
-}
 
 test_bundled_plugin_builders_accept_prebuilt_binaries() {
     info "Checking bundled plugin builders accept prebuilt binaries"
@@ -5529,18 +4559,6 @@ test_launcher_template_sanity() {
     assert_contains "$REPO_DIR/scripts/lib/install-helpers.sh" "--report-dir"
     assert_contains "$REPO_DIR/scripts/lib/asar-patch.sh" "CODEX_PATCH_REPORT_JSON"
     assert_contains "$REPO_DIR/scripts/lib/rebuild-report.sh" "write_rebuild_report_json"
-    assert_contains "$REPO_DIR/install.sh" "MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41=\"12.9.0\""
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "better_sqlite3_build_version"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "patch_better_sqlite3_for_v8_external_pointer_api"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "@electron/rebuild@4.0.4"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "node-abi@^4.31.0"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" 'node_modules/@electron/rebuild/lib/cli.js'
-    assert_not_contains "$REPO_DIR/scripts/lib/native-modules.sh" "npx --yes @electron/rebuild"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "prune_native_module_build_artifacts"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" 'find "$build_dir" -type f ! -name'
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" 'find "$module_dir" -type f -name'
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "CODEX_ELECTRON_CACHE_DIR"
-    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "--continue-at -"
     assert_file_exists "$REPO_DIR/launcher/webview-server.py"
     assert_file_exists "$REPO_DIR/launcher/cli-launch-path.py"
     assert_contains "$REPO_DIR/launcher/webview-server.py" "Cache-Control"
@@ -6552,7 +5570,7 @@ EOF
     assert_contains "$REPO_DIR/contrib/user-local-install/install-user-local.sh" "--force-x11"
     assert_contains "$REPO_DIR/contrib/user-local-install/install-user-local.sh" "user-local.env"
     assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" "assets/codex-linux.png"
-    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" "CODEX_USER_LOCAL_RECORD_DMG_FINGERPRINT"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/lib/codex-desktop-linux/common.sh" "CODEX_USER_LOCAL_RECORD_ARTIFACT_FINGERPRINT"
     assert_contains "$REPO_DIR/contrib/user-local-install/README.md" "--force-x11"
 
     node - "$REPO_DIR/launcher/start.sh.template" <<'NODE' || fail "Bundled backend plugin cache syncs must expose marketplace plugin links"
@@ -7180,9 +6198,15 @@ PY
     local workspace="$TMP_DIR/launcher-cli-policy"
     local fake_home="$workspace/home"
     local path_cli_bin="$workspace/path-cli-bin"
-    local clean_tool_path="/usr/bin:/bin"
+    local clean_tool_path="$workspace/clean-tools"
     local selected_cli
-    mkdir -p "$path_cli_bin" "$fake_home/.npm-global/bin"
+    local tool tool_path
+    mkdir -p "$path_cli_bin" "$fake_home/.npm-global/bin" "$clean_tool_path"
+    for tool in bash basename grep head mktemp python3 readlink rm sed sleep stat; do
+        tool_path="$(PATH="$HOST_TOOL_PATH" type -P "$tool")"
+        [ -x "$tool_path" ] || fail "Could not resolve $tool for the clean launcher CLI fixture"
+        ln -s "$tool_path" "$clean_tool_path/$tool"
+    done
     chmod 0755 "$workspace" "$path_cli_bin" "$fake_home" "$fake_home/.npm-global" "$fake_home/.npm-global/bin"
 
     printf '#!/usr/bin/env bash\nprintf "codex-cli 0.120.0\\n"\n' > "$path_cli_bin/codex"
@@ -7757,7 +6781,7 @@ test_browser_use_node_repl_fallback_runtime() {
     mkdir -p "$workspace" "$install_dir/resources" "$archive_root/codex-primary-runtime/dependencies/bin"
     make_fake_browser_upstream_app "$app_dir"
 
-    # Simulate the current upstream DMG shape: node_repl is under cua_node/bin,
+    # Simulate the current upstream package shape: node_repl is under cua_node/bin,
     # but the macOS binary is not a Linux ELF.
     mkdir -p "$app_dir/Contents/Resources/cua_node/bin"
     printf '\xfe\xed\xfa\xcf' > "$app_dir/Contents/Resources/cua_node/bin/node_repl"
@@ -7931,7 +6955,7 @@ test_browser_plugin_renamed_upstream_staging() {
     assert_not_contains "$browser_dir/scripts/browser-client.mjs" 'protocol==="data:"'
     assert_contains "$marketplace" '"name": "browser"'
     assert_contains "$marketplace" '"path": "./plugins/browser"'
-    assert_contains "$output_log" "Browser plugin staged from upstream DMG"
+    assert_contains "$output_log" "Browser plugin staged from upstream package"
     assert_not_contains "$output_log" "Browser bundled plugin resources not present"
 
     node - "$browser_dir/scripts/browser-client.mjs" <<'NODE'
@@ -8050,7 +7074,7 @@ test_upstream_bundled_skills_staging() {
         || fail "Expected internal bundled-skill symlink to remain inside the staged root"
     [ ! -e "$target_skill/scripts/render_animation_previews.py:com.apple.FinderInfo" ] \
         || fail "Expected macOS sidecar metadata to be removed from staged bundled skills"
-    assert_contains "$output_log" "Bundled skills staged from upstream DMG"
+    assert_contains "$output_log" "Bundled skills staged from upstream package"
 }
 
 test_upstream_bundled_skills_validator_guards() {
@@ -8330,9 +7354,9 @@ test_portable_bundled_plugins_staging() {
     assert_mode "$plugins_dir/sites/scripts/init-site.sh" "755"
     [ ! -e "$plugins_dir/latex" ] || fail "Expected native LaTeX plugin to remain unstaged"
     [ ! -e "$plugins_dir/record-and-replay" ] || fail "Expected native Record and Replay plugin to remain unstaged"
-    assert_contains "$output_log" "Portable bundled plugin sites staged from upstream DMG"
-    assert_contains "$output_log" "Portable bundled plugin deep-research staged from upstream DMG"
-    assert_contains "$output_log" "Portable bundled plugin visualize staged from upstream DMG"
+    assert_contains "$output_log" "Portable bundled plugin sites staged from upstream package"
+    assert_contains "$output_log" "Portable bundled plugin deep-research staged from upstream package"
+    assert_contains "$output_log" "Portable bundled plugin visualize staged from upstream package"
 
     node - "$marketplace" <<'NODE'
 const fs = require("fs");
@@ -8516,7 +7540,7 @@ test_portable_bundled_plugin_stage_failures() {
             fail "Expected $failure to propagate as a staging failure"
         fi
 
-        assert_not_contains "$output_log" "Portable bundled plugin sites staged from upstream DMG"
+        assert_not_contains "$output_log" "Portable bundled plugin sites staged from upstream package"
         [ -z "$(find "$target_plugins" -mindepth 1 -maxdepth 1 -type d \( -name '.sites.tmp.*' -o -name '.sites.backup.*' \) -print -quit)" ] \
             || fail "Expected $failure staging and backup cleanup"
 
@@ -8985,7 +8009,7 @@ NODE
     assert_mode "$install_dir/resources/plugins" "755"
     [ -z "$(find "$install_dir/resources/plugins/openai-bundled" -perm /022 -print -quit)" ] \
         || fail "Expected staged bundled plugin resources to reject group/other writes"
-    assert_contains "$output_log" "Chrome plugin staged from upstream DMG"
+    assert_contains "$output_log" "Chrome plugin staged from upstream package"
 }
 
 test_chrome_marketplace_fallback_synthesis() {
@@ -10757,17 +9781,9 @@ test_user_local_install_from_update_defers_record_only_metadata() {
     local app_dir="$home/.local/opt/codex-desktop-linux/codex-app"
 
     mkdir -p "$fake_bin"
-    cat > "$fake_bin/7z" <<'SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-: "${RECORD_ONLY_MARKER:?}"
-mkdir -p "$(dirname "$RECORD_ONLY_MARKER")"
-printf '%s\n' "attempted" > "$RECORD_ONLY_MARKER"
-exit 1
-SCRIPT
     printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/systemctl"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/update-desktop-database"
-    chmod +x "$fake_bin/7z" "$fake_bin/systemctl" "$fake_bin/update-desktop-database"
+    chmod +x "$fake_bin/systemctl" "$fake_bin/update-desktop-database"
     mkdir -p "$app_dir"
     printf '%s\n' "26.609.41114" > "$app_dir/version"
 
@@ -10790,7 +9806,7 @@ SCRIPT
         bash "$REPO_DIR/contrib/user-local-install/install-user-local.sh" >/dev/null
     assert_file_not_exists "$marker"
     assert_file_exists "$metadata_file"
-    assert_contains "$metadata_file" "DMG_SHA256=unavailable"
+    assert_contains "$metadata_file" "ARTIFACT_SHA256=unavailable"
 }
 
 test_user_local_install_preserves_persisted_x11_preference_on_refresh() {
@@ -10802,10 +9818,9 @@ test_user_local_install_preserves_persisted_x11_preference_on_refresh() {
     local preference_file="$config_home/codex-desktop-linux/user-local.env"
 
     mkdir -p "$stub_bin"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$stub_bin/7z"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$stub_bin/systemctl"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$stub_bin/update-desktop-database"
-    chmod +x "$stub_bin/7z" "$stub_bin/systemctl" "$stub_bin/update-desktop-database"
+    chmod +x "$stub_bin/systemctl" "$stub_bin/update-desktop-database"
 
     PATH="$stub_bin:$PATH" \
         HOME="$home" \
@@ -11353,11 +10368,6 @@ main() {
     test_make_build_app_uses_installer_download_flow_by_default
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_make_build_dev_app_writes_host_portable_launcher_symlink
-    test_installer_refreshes_stale_cached_dmg_metadata
-    test_extract_dmg_repairs_safe_7z_link_warnings
-    test_fresh_install_removes_cached_dmg_metadata
-    test_fresh_pinned_dmg_preserves_cached_dmg_metadata
-    test_fresh_reuse_dmg_uses_cache_when_metadata_matches
     test_rebuild_candidate_uses_validated_default_dmg
     test_make_rebuild_targets_omit_empty_dmg_argument
     test_candidate_install_is_transactional
@@ -11413,11 +10423,6 @@ main() {
     test_launcher_uses_private_default_tmpdir
     test_managed_node_runtime_source_install
     test_managed_node_runtime_rejects_version_only_stub
-    test_better_sqlite3_electron_42_source_patch
-    test_v8_nullptr_workaround_skips_when_included_probe_succeeds
-    test_v8_nullptr_workaround_wraps_when_included_probe_fails
-    test_native_module_rebuild_uses_local_electron_rebuild_toolchain
-    test_native_module_rebuild_accepts_prebuilt_source
     test_bundled_plugin_builders_accept_prebuilt_binaries
     test_notification_actions_bridge_accepts_prebuilt_binary
     test_bundled_plugin_system_computer_use_preserves_cosmic_helper_name

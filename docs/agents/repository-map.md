@@ -58,19 +58,16 @@ preserving the source-of-truth routing agents need before editing.
   Argument parsing, dependency checks, identity validation, install-dir
   preparation, logging/color helpers, and shell quoting.
 - `build-info.sh` / `build-info.js`
-  Build provenance capture: git commit, DMG source, upstream/Electron versions,
+  Build provenance capture: git commit, package source, upstream/Electron versions,
   enabled feature ids, and target context.
 - `node-runtime.sh`
   Managed Linux Node.js runtime download and SHA256 validation. The launcher,
-  Browser Use, native module rebuilds, Codex CLI flow, and updater rebuilds use
-  this runtime.
+  Browser Use, Codex CLI flow, and updater rebuilds use this runtime.
 - `process-detection.sh`
   Running-app detection used to avoid overwriting a live install.
-- `dmg.sh`
-  DMG download/extraction and upstream Electron-version detection.
-- `native-modules.sh`
-  Linux rebuild of native modules such as `better-sqlite3` and `node-pty`, plus
-  Electron runtime download/cache.
+- `official-linux-package.sh`
+  Architecture-specific official package download/cache, DEB extraction,
+  runtime staging, and upstream Electron-version detection.
 - `asar-patch.sh`
   Drives `scripts/patch-linux-window-ui.js` over the extracted upstream app.
 - `webview-install.sh`

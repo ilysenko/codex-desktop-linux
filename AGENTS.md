@@ -2,23 +2,24 @@
 
 ## Purpose
 
-This repository adapts the official macOS ChatGPT Desktop DMG into a runnable
-Linux app, packages it as `.deb`, `.rpm`, pacman, and AppImage artifacts, and
+This repository layers patches and optional features onto OpenAI's official
+Linux ChatGPT Desktop app, packages it as `.deb`, `.rpm`, pacman, and AppImage artifacts, and
 ships a local Rust update manager that can rebuild future Linux packages from
-newer upstream DMGs.
+newer upstream Linux packages.
 
-The build flow: `install.sh` downloads/extracts `Codex.dmg`, patches the
-extracted app through core and enabled Linux feature descriptors, rebuilds
-native modules, downloads Linux Electron, stages bundled resources, writes
+The build flow: `install.sh` downloads/extracts the official architecture-
+specific Linux `.deb`, patches the extracted app through core and enabled Linux
+feature descriptors, preserves the shipped Electron runtime and native modules,
+stages bundled resources, writes
 `codex-app/start.sh`, and lets package builders produce native artifacts or
 AppImage. Native packages also include `codex-update-manager` and an
 update-builder bundle.
 
 ## Maintainer Rules
 
-- This project supports only the latest upstream `CODEX.DMG`. When fixing
+- This project supports only the latest upstream official Linux package. When fixing
   upstream drift, remove old drift workarounds in the same change. Do not keep
-  legacy DMG shapes, fallback patch paths, or version-specific compatibility
+  legacy artifact shapes, fallback patch paths, or version-specific compatibility
   branches around.
 - Keep core behavior focused on the app launching and working for most Linux
   users. Experimental, workflow-specific, editor-specific, browser-specific,
@@ -83,7 +84,7 @@ Use source files, not generated artifacts. Main routing:
 - Linux features: `linux-features/<id>/`.
 - Package builders: `scripts/build-*.sh` and `scripts/lib/package-common.sh`.
 - Updater: `updater/src/`.
-- Upstream DMG automation: `scripts/automation/upstream-dmg-watchdog/` and
+- Upstream Package automation: `scripts/automation/upstream-dmg-watchdog/` and
   `docs/upstream-dmg-watchdog.md`.
 - Computer Use: `computer-use-linux/`; compositor backends under
   `computer-use-linux/src/windowing/backends/`.
@@ -131,8 +132,8 @@ Repository governance: [issue and pull request labels](docs/label-governance.md)
 
 ## Important Runtime Behavior
 
-- DMG extraction can warn when `7z` cannot materialize the `/Applications`
-  symlink. This is acceptable if a `.app` bundle was extracted successfully.
+- Official package extraction must preserve OpenAI's shipped Linux runtime and
+  ABI-matched native modules.
 - The managed Node.js runtime is installed under
   `codex-app/resources/node-runtime/`. If `CODEX_MANAGED_NODE_VERSION` or
   `CODEX_MANAGED_NODE_URL` is overridden, `CODEX_MANAGED_NODE_SHA256` must be
@@ -165,7 +166,7 @@ Repository governance: [issue and pull request labels](docs/label-governance.md)
   app backup; older exact managed backups are pruned under the promotion lock.
 - Manual rollback uses the last-known-good package recorded in updater state
   and the same format-specific command layer as normal installs.
-- Local installs, updater rebuilds, and scheduled CI use the same upstream DMG
+- Local installs, updater rebuilds, and scheduled CI use the same upstream package
   acceptance profile. Build into a sibling candidate and promote it only after
   an `accepted` or `accepted_with_warnings` verdict. Only user-enabled Linux
   features participate in local/updater acceptance, and drift in any enabled
@@ -180,7 +181,7 @@ Repository governance: [issue and pull request labels](docs/label-governance.md)
 
 Treat these as generated or local runtime state, not primary source:
 `codex-app/`, `codex-app-next/`, `.codex-app.candidate-*`, `codex-*-app/`, `dist/`,
-`dist/appimage.AppDir/`, `dist-next/rebuild/`, `target/`, `Codex.dmg`,
+`dist/appimage.AppDir/`, `dist-next/rebuild/`, `target/`, `ChatGPT.deb`,
 `linux-features/features.json`, `linux-features/local/`,
 `codex-app/.codex-linux/linux-features-staged.json`, updater config/state/log
 files under `~/.config`, `~/.local/state`, and `~/.cache`, launcher state under
@@ -192,7 +193,7 @@ for details.
 
 ## Common Commands
 
-Regenerate the Linux app: `./install.sh ./Codex.dmg` or `./install.sh`.
+Regenerate the Linux app: `./install.sh ./ChatGPT.deb` or `./install.sh`.
 Guided native setup/install/update: `make setup-native`,
 `make bootstrap-native`, `make install-native`, `make update-native`.
 
@@ -210,7 +211,7 @@ Side-by-side rebuild candidate: `./scripts/rebuild-candidate.sh` or
 
 ## Runtime Expectations
 
-- `python3`, `7z`, `curl`, `unzip`, `tar`, `flock`, `make`, and `g++` are required for
+- `python3`, `ar`, `curl`, `unzip`, `tar`, `flock`, `make`, and `g++` are required for
   `install.sh`.
 - Native package builders require their format-specific tools: `dpkg-deb`,
   `rpmbuild`, `makepkg`/pacman tooling, or `appimagetool`.
@@ -250,7 +251,7 @@ for broad cross-format confidence.
   deliberate `required-upstream` CI policy.
 - Keep optional features disabled by default. When a user enables one, its
   patch drift must block candidate promotion until the user disables it or the
-  feature is repaired for the current DMG.
+  feature is repaired for the current upstream package.
 - Add tests near the behavior being changed: patcher tests for ASAR needles,
   feature tests for Linux features, Rust tests for updater/MCP backends, and
   package smoke checks for payload/layout changes.

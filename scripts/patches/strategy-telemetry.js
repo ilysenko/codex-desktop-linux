@@ -4,7 +4,7 @@
 // note which needle/regex generation matched (or that none did); the engine
 // drains the buffer after each descriptor.apply into the patch report entry
 // as `strategies: [{group, strategy}]`. This is how drift-prone needles are
-// inspected against the current fresh DMG before obsolete fallback code is
+// inspected against the current fresh package before obsolete fallback code is
 // pruned.
 //
 // Deliberately NOT console.warn-based: captureWarnings counts every warning

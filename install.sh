@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 # ============================================================================
 # ChatGPT Desktop for Linux — Installer
-# Converts the official macOS ChatGPT Desktop app to run on Linux
+# Layers this repository's Linux patches and features onto OpenAI's official
+# Linux ChatGPT Desktop package.
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,10 +19,7 @@ if [ "$CODEX_APP_ID" != "codex-desktop" ]; then
 fi
 INSTALL_DIR="${CODEX_INSTALL_DIR:-$INSTALL_ROOT/$DEFAULT_INSTALL_DIR_NAME}"
 CODEX_WEBVIEW_PORT="${CODEX_WEBVIEW_PORT:-$DEFAULT_CODEX_WEBVIEW_PORT}"
-ELECTRON_VERSION="41.3.0"
-ELECTRON_HEADERS_URL="${ELECTRON_HEADERS_URL:-${npm_config_disturl:-${NPM_CONFIG_DISTURL:-https://artifacts.electronjs.org/headers/dist}}}"
-ELECTRON_MIRROR="${ELECTRON_MIRROR:-}"
-MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41="12.9.0"
+ELECTRON_VERSION=""
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
 ICON_SOURCE="$SCRIPT_DIR/assets/codex.png"
@@ -31,8 +29,7 @@ LINUX_ICON_SOURCE="${CODEX_LINUX_ICON_SOURCE:-}"
 . "$SCRIPT_DIR/scripts/lib/install-helpers.sh"
 . "$SCRIPT_DIR/scripts/lib/node-runtime.sh"
 . "$SCRIPT_DIR/scripts/lib/process-detection.sh"
-. "$SCRIPT_DIR/scripts/lib/dmg.sh"
-. "$SCRIPT_DIR/scripts/lib/native-modules.sh"
+. "$SCRIPT_DIR/scripts/lib/official-linux-package.sh"
 . "$SCRIPT_DIR/scripts/lib/asar-patch.sh"
 . "$SCRIPT_DIR/scripts/lib/webview-install.sh"
 . "$SCRIPT_DIR/scripts/lib/bundled-plugins.sh"
@@ -63,18 +60,18 @@ publish_transaction_report() {
     mv -f "$temporary_path" "$destination_path"
 }
 
-write_transaction_dmg_metadata() {
+write_transaction_artifact_metadata() {
     local output_path="$1"
-    local dmg_path="$2"
+    local artifact_path="$2"
     local cached_metadata="$3"
-    "${CODEX_ACCEPTANCE_NODE:-node}" - "$output_path" "$dmg_path" "$cached_metadata" "$DMG_URL" <<'NODE'
+    "${CODEX_ACCEPTANCE_NODE:-node}" - "$output_path" "$artifact_path" "$cached_metadata" "$UPSTREAM_ARTIFACT_URL" <<'NODE'
 const fs = require("node:fs");
-const [outputPath, dmgPath, metadataPath, url] = process.argv.slice(2);
+const [outputPath, artifactPath, metadataPath, url] = process.argv.slice(2);
 let metadata = {};
 if (fs.existsSync(outputPath)) {
   metadata = JSON.parse(fs.readFileSync(outputPath, "utf8"));
 }
-Object.assign(metadata, { url, path: dmgPath });
+Object.assign(metadata, { url, path: artifactPath, kind: "official-linux-deb" });
 if (metadataPath && fs.existsSync(metadataPath)) {
   for (const line of fs.readFileSync(metadataPath, "utf8").split(/\r?\n/)) {
     const separator = line.indexOf("=");
@@ -103,7 +100,7 @@ transactional_install() {
     local published_decision_path
     local metadata_path
     local build_info_path
-    local dmg_path
+    local artifact_path
     local build_status="failure"
     local verdict
     local -a acceptance_args=()
@@ -143,20 +140,20 @@ transactional_install() {
         build_status="success"
     fi
 
-    if [ -n "$PROVIDED_DMG_PATH" ]; then
-        dmg_path="$(realpath "$PROVIDED_DMG_PATH")"
+    if [ -n "$PROVIDED_UPSTREAM_ARTIFACT_PATH" ]; then
+        artifact_path="$(realpath "$PROVIDED_UPSTREAM_ARTIFACT_PATH")"
     else
-        dmg_path="$CACHED_DMG_PATH"
+        artifact_path="$CACHED_UPSTREAM_ARTIFACT_PATH"
     fi
     build_info_path="$candidate_dir/.codex-linux/build-info.json"
 
     if [ -z "${CODEX_UPSTREAM_DMG_METADATA_JSON:-}" ] || [ ! -f "$metadata_path" ]; then
-        write_transaction_dmg_metadata "$metadata_path" "$dmg_path" "$CACHED_DMG_METADATA_PATH"
+        write_transaction_artifact_metadata "$metadata_path" "$artifact_path" "$CACHED_UPSTREAM_ARTIFACT_METADATA_PATH"
     fi
 
     acceptance_args=(
         --repo-root "$SCRIPT_DIR"
-        --dmg "$dmg_path"
+        --dmg "$artifact_path"
         --core-report "$core_report"
         --build-info "$build_info_path"
         --metadata "$metadata_path"
@@ -177,7 +174,7 @@ transactional_install() {
     publish_transaction_report "$decision_path" "$published_decision_path"
 
     verdict="$("$CODEX_ACCEPTANCE_NODE" -e 'console.log(require(process.argv[1]).verdict)' "$decision_path")"
-    info "Upstream DMG acceptance verdict: $verdict"
+    info "Upstream package acceptance verdict: $verdict"
     if [ "$verdict" != "accepted" ] && [ "$verdict" != "accepted_with_warnings" ]; then
         if [ "${CODEX_ACCEPTANCE_OVERRIDE:-0}" = "1" ] && [ "$build_status" = "success" ]; then
             warn "CODEX_ACCEPTANCE_OVERRIDE=1 set; promoting a candidate with verdict $verdict"
@@ -325,28 +322,32 @@ main() {
         ensure_managed_node_runtime "$WORK_DIR/node-runtime"
     fi
 
-    local dmg_path=""
-    if [ -n "$PROVIDED_DMG_PATH" ]; then
-        [ -f "$PROVIDED_DMG_PATH" ] || error "Provided DMG not found: $PROVIDED_DMG_PATH"
-        dmg_path="$(realpath "$PROVIDED_DMG_PATH")"
-        info "Using provided DMG: $dmg_path"
+    local artifact_path=""
+    if [ -n "$PROVIDED_UPSTREAM_ARTIFACT_PATH" ]; then
+        [ -f "$PROVIDED_UPSTREAM_ARTIFACT_PATH" ] || error "Provided package not found: $PROVIDED_UPSTREAM_ARTIFACT_PATH"
+        artifact_path="$(realpath "$PROVIDED_UPSTREAM_ARTIFACT_PATH")"
+        info "Using provided official Linux package: $artifact_path"
     else
-        dmg_path=$(get_dmg)
+        artifact_path=$(get_upstream_artifact)
     fi
 
+    local runtime_dir
     local app_dir
-    app_dir=$(extract_dmg "$dmg_path")
+    extract_official_linux_package "$artifact_path"
+    runtime_dir="$OFFICIAL_LINUX_RUNTIME_DIR"
+    prepare_official_linux_app_layout "$runtime_dir"
+    app_dir="$OFFICIAL_LINUX_APP_DIR"
     record_upstream_app_version "$app_dir"
 
     detect_electron_version "$app_dir"
     if [ "$INSPECT_ONLY" -eq 1 ]; then
-        inspect_rebuild_candidate "$app_dir" "$dmg_path"
+        inspect_rebuild_candidate "$app_dir" "$artifact_path"
         return 0
     fi
 
     patch_asar "$app_dir"
+    stage_official_linux_runtime "$runtime_dir"
     select_linux_icon_source
-    download_electron
     extract_webview "$app_dir"
     install_app
     stage_linux_notification_actions_bridge
@@ -358,12 +359,12 @@ main() {
         cp "$CODEX_PATCH_REPORT_RESOLVED" "$INSTALL_DIR/.codex-linux/patch-report.json"
         info "Patch report: $INSTALL_DIR/.codex-linux/patch-report.json"
     fi
-    write_build_info "$dmg_path" "$app_dir"
+    write_build_info "$artifact_path" "$app_dir"
 
     if [ -n "${CODEX_REBUILD_REPORT_JSON:-}" ] && [ -n "${CODEX_PATCH_REPORT_JSON:-}" ]; then
         write_rebuild_report_json \
             "$CODEX_REBUILD_REPORT_JSON" \
-            "$dmg_path" \
+            "$artifact_path" \
             "$ELECTRON_VERSION" \
             "$CODEX_PATCH_REPORT_JSON" \
             "$INSTALL_DIR"

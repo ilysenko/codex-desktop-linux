@@ -1,12 +1,12 @@
 //! Wrapper-repo update detection.
 //!
-//! Beyond tracking the upstream Codex DMG, the updater can detect when the
+//! Beyond tracking the upstream package, the updater can detect when the
 //! *wrapper* itself (this repository — new Linux features, patches, fixes) has
 //! advanced. Detection is git-based and leaves the user's working tree and
 //! current branch untouched: it inspects the builder bundle checkout, queries
 //! the remote head with `git ls-remote`, and may fetch candidate objects into
 //! the local object store / `FETCH_HEAD` so ancestry and changelog data can be
-//! read. The actual rebuild reuses the existing DMG rebuild path against the
+//! read. The actual rebuild reuses the existing package rebuild path against the
 //! refreshed checkout.
 //!
 //! When the builder bundle is a frozen packaged copy (no `.git`), the wrapper

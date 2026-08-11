@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Atomic local state and cheap upstream DMG probe for the Codex watchdog."""
+"""Atomic local state and cheap official Linux package probe for the Codex watchdog."""
 
 from __future__ import annotations
 
@@ -21,15 +21,13 @@ import time
 import uuid
 
 
-DEFAULT_URL = "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg"
+DEFAULT_URL = "https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_amd64.deb"
 DEFAULT_TTL_SECONDS = 7200
 DEFAULT_REPOSITORY = "ilysenko/codex-desktop-linux"
 NIX_REFRESH_BRANCH = "codex/nix-upstream-refresh"
 NIX_REFRESH_WORKFLOW = "update-codex-hash.yml"
 NIX_ALLOWED_PATHS = {
     "flake.nix",
-    "nix/native-modules/package.json",
-    "nix/native-modules/package-lock.json",
 }
 NIX_REQUIRED_CHECKS = {
     "Rust and Smoke Tests",
@@ -41,7 +39,7 @@ NIX_REQUIRED_CHECKS = {
 NIX_MERGE_TTL_SECONDS = 300
 NIX_MAX_TRANSIENT_ATTEMPTS = 3
 NIX_TRANSIENT_BACKOFF_SECONDS = (900, 1800)
-REPAIR_REQUIRED_CHECKS = NIX_REQUIRED_CHECKS | {"Build App Against Upstream DMG"}
+REPAIR_REQUIRED_CHECKS = NIX_REQUIRED_CHECKS | {"Build App Against Official Linux Package"}
 PROTECTED_CAMPAIGN_PHASES = {
     "accepted-head",
     "nix-preflight-green",
@@ -430,18 +428,20 @@ def current_round(campaign: dict, *, create: bool = False) -> dict | None:
 
 def sha256_sri(sha256_hex: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{64}", sha256_hex):
-        raise RuntimeError("invalid DMG SHA-256")
+        raise RuntimeError("invalid upstream package SHA-256")
     return "sha256-" + base64.b64encode(bytes.fromhex(sha256_hex)).decode("ascii")
 
 
-def extract_codex_dmg_sri(flake: str) -> str:
+def extract_official_linux_package_sri(flake: str) -> str:
     match = re.search(
-        r"codexDmg\s*=\s*pkgs\.fetchurl\s*\{.*?\bhash\s*=\s*\"(sha256-[A-Za-z0-9+/=]{44})\"",
+        r"officialLinuxPackage\s*=\s*pkgs\.fetchurl\s*\(\{\s*"
+        r"x86_64-linux\s*=\s*\{.*?\bhash\s*=\s*\""
+        r"(sha256-[A-Za-z0-9+/=]{44})\"",
         flake,
         flags=re.DOTALL,
     )
     if not match:
-        raise RuntimeError("could not find codexDmg SRI in flake.nix")
+        raise RuntimeError("could not find the x86_64 official Linux package SRI in flake.nix")
     return match.group(1)
 
 
@@ -720,7 +720,7 @@ def validate_nix_pr(pr: dict, expected_sri: str, repository: str) -> tuple[str, 
     head_sha = pr.get("headRefOid")
     if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", head_sha):
         return "waiting", "head-unavailable"
-    head_sri = extract_codex_dmg_sri(github_file(repository, "flake.nix", head_sha))
+    head_sri = extract_official_linux_package_sri(github_file(repository, "flake.nix", head_sha))
     if head_sri != expected_sri:
         return "blocked", "dmg-hash-mismatch"
     mergeable = str(pr.get("mergeable") or "UNKNOWN").upper()
@@ -822,7 +822,7 @@ def process_nix_refresh(
         refresh["expected_dmg_sha256"] = dmg_sha
         refresh["expected_dmg_sri"] = expected_sri
 
-    main_sri = extract_codex_dmg_sri(github_file(repository, "flake.nix", "main"))
+    main_sri = extract_official_linux_package_sri(github_file(repository, "flake.nix", "main"))
     if main_sri == expected_sri:
         refresh["workflow_status"] = "current"
         refresh["pr_number"] = None
@@ -1224,7 +1224,7 @@ def command_probe(args: argparse.Namespace, store: Store) -> int:
                 return 0
 
             source = Path(args.source_file).resolve() if args.source_file else None
-            fd, temporary_name = tempfile.mkstemp(prefix=".download.", suffix=".dmg", dir=store.downloads)
+            fd, temporary_name = tempfile.mkstemp(prefix=".download.", suffix=".deb", dir=store.downloads)
             os.close(fd)
             temporary = Path(temporary_name)
             try:
@@ -1234,12 +1234,12 @@ def command_probe(args: argparse.Namespace, store: Store) -> int:
                     download(args.url, temporary)
                 size = temporary.stat().st_size
                 if size <= 0:
-                    raise RuntimeError("downloaded DMG is empty")
+                    raise RuntimeError("downloaded upstream package is empty")
                 expected = identity.get("content_length")
                 if expected and expected.isdigit() and size != int(expected):
-                    raise RuntimeError(f"downloaded DMG size {size} does not match Content-Length {expected}")
+                    raise RuntimeError(f"downloaded upstream package size {size} does not match Content-Length {expected}")
                 sha = sha256_file(temporary)
-                target = store.downloads / f"{sha}.dmg"
+                target = store.downloads / f"{sha}.deb"
                 if target.exists():
                     temporary.unlink()
                 else:
@@ -1373,20 +1373,20 @@ def command_campaign_requeue(args: argparse.Namespace, store: Store) -> int:
             raise RuntimeError("cannot requeue while a campaign is already queued")
         sha = args.sha or state.get("last_observed_sha256")
         if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
-            raise RuntimeError("no valid DMG SHA-256 is available to requeue")
+            raise RuntimeError("no valid upstream package SHA-256 is available to requeue")
         if sha != state.get("last_observed_sha256"):
-            raise RuntimeError("only the latest observed DMG can be requeued")
+            raise RuntimeError("only the latest observed upstream package can be requeued")
         completed = state.get("last_completed_campaign")
         if isinstance(completed, dict) and completed.get("sha256") == sha:
             dmg_path = Path(str(completed.get("dmg_path") or ""))
             identity = completed.get("http_identity") or state.get("http_identity")
         else:
-            dmg_path = store.downloads / f"{sha}.dmg"
+            dmg_path = store.downloads / f"{sha}.deb"
             identity = state.get("http_identity") if state.get("last_observed_sha256") == sha else None
         if not dmg_path.is_file():
-            raise RuntimeError(f"downloaded DMG is missing for {sha}")
+            raise RuntimeError(f"downloaded upstream package is missing for {sha}")
         if sha256_file(dmg_path) != sha:
-            raise RuntimeError(f"downloaded DMG hash does not match {sha}")
+            raise RuntimeError(f"downloaded upstream package hash does not match {sha}")
         if not isinstance(identity, dict):
             raise RuntimeError(f"HTTP identity is missing for {sha}")
         campaign = campaign_for(sha, dmg_path, identity, now)
@@ -1615,7 +1615,7 @@ def command_record_acceptance(args: argparse.Namespace, store: Store) -> int:
         if not campaign:
             raise RuntimeError("no active campaign")
         if campaign.get("sha256") != state.get("last_observed_sha256") or state.get("pending_campaign"):
-            raise RuntimeError("campaign is not the latest observed DMG")
+            raise RuntimeError("campaign is not the latest observed upstream package")
         if not re.fullmatch(r"[0-9a-f]{40}", args.head):
             raise RuntimeError("acceptance head must be a full git SHA")
         worktree = Path(str(campaign.get("worktree") or "")).expanduser().resolve()
@@ -1632,7 +1632,7 @@ def command_record_acceptance(args: argparse.Namespace, store: Store) -> int:
         if decision.get("verdict") not in {"accepted", "accepted_with_warnings"}:
             raise RuntimeError("acceptance decision is not accepted")
         if (decision.get("dmg") or {}).get("sha256") != campaign.get("sha256"):
-            raise RuntimeError("acceptance decision DMG SHA does not match the campaign")
+            raise RuntimeError("acceptance decision package SHA does not match the campaign")
         source = decision.get("source") or {}
         if source.get("commit") != args.head or source.get("dirty") is True:
             raise RuntimeError("acceptance decision source does not match a clean campaign head")
@@ -1777,8 +1777,8 @@ def command_nix_preflight(args: argparse.Namespace, store: Store) -> int:
                     log_payload += f"\nunexpected tracked paths: {sorted(unexpected)}\n"
                     classification = "source"
                     break
-                if extract_codex_dmg_sri((scratch / "flake.nix").read_text(encoding="utf-8")) != sha256_sri(campaign["sha256"]):
-                    log_payload += "\nrefreshed flake hash does not match campaign DMG\n"
+                if extract_official_linux_package_sri((scratch / "flake.nix").read_text(encoding="utf-8")) != sha256_sri(campaign["sha256"]):
+                    log_payload += "\nrefreshed flake hash does not match campaign package\n"
                     classification = "source"
                     break
                 success = True
@@ -1886,7 +1886,7 @@ def command_validate_repair_pr(args: argparse.Namespace, store: Store) -> int:
         headers_payload = Path(args.headers_file).read_text(encoding="utf-8") if args.headers_file else curl_headers(args.url)
         identity = http_identity(parse_headers(headers_payload))
         if identity is None or identity.get("key") != (campaign.get("http_identity") or {}).get("key"):
-            raise RuntimeError("upstream DMG changed before repair PR merge")
+            raise RuntimeError("upstream package changed before repair PR merge")
         pr = repair_pr_view(args.repository, args.pr_number)
         status, reason = repair_pr_status(campaign, pr)
         repair_round["pr_number"] = args.pr_number

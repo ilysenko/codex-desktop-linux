@@ -134,7 +134,7 @@ class WatchdogTests(unittest.TestCase):
         return "sha256-" + base64.b64encode(digest).decode()
 
     def flake(self, sri: str) -> str:
-        return f'''{{ pkgs }}: let\n  codexDmg = pkgs.fetchurl {{\n    url = "https://example.test/Codex.dmg";\n    hash = "{sri}";\n  }};\nin codexDmg\n'''
+        return f'''{{ pkgs }}: let\n  officialLinuxPackage = pkgs.fetchurl ({{\n    x86_64-linux = {{\n      url = "https://example.test/chatgpt_amd64.deb";\n      hash = "{sri}";\n    }};\n  }}.x86_64-linux);\nin officialLinuxPackage\n'''
 
     def checks(self, outcome: str = "SUCCESS") -> list[dict]:
         names = [
@@ -148,7 +148,7 @@ class WatchdogTests(unittest.TestCase):
 
     def repair_checks(self, outcome: str = "SUCCESS") -> list[dict]:
         return self.checks(outcome) + [{
-            "name": "Build App Against Upstream DMG", "status": "COMPLETED", "conclusion": outcome,
+            "name": "Build App Against Official Linux Package", "status": "COMPLETED", "conclusion": outcome,
         }]
 
     def nix_pr(self, sri: str, *, head: str = "a" * 40, **overrides) -> dict:
@@ -463,7 +463,7 @@ class WatchdogTests(unittest.TestCase):
         (self.state / "state.json").write_text(json.dumps(state), encoding="utf-8")
         result = self.run_cli("campaign-requeue", "--sha", sha_a, "--now", "1100", check=False)
         self.assertEqual(result.returncode, 5)
-        self.assertIn("only the latest observed DMG", result.stderr)
+        self.assertIn("only the latest observed upstream package", result.stderr)
 
     def test_nix_repair_acquire_creates_a_new_round(self):
         headers = self.headers("a.headers", "etag-a", self.dmg_a)
@@ -725,7 +725,7 @@ class WatchdogTests(unittest.TestCase):
             "--now", "1007", check=False,
         )
         self.assertEqual(wrong_dmg.returncode, 5)
-        self.assertIn("DMG SHA does not match", wrong_dmg.stderr)
+        self.assertIn("package SHA does not match", wrong_dmg.stderr)
 
     def test_repair_pr_requires_all_six_gates_and_advances_only_after_confirmed_merge(self):
         headers = self.headers("a.headers", "etag-a", self.dmg_a)
@@ -766,7 +766,7 @@ class WatchdogTests(unittest.TestCase):
             "--headers-file", str(headers), "--now", "1005", env=env, check=False,
         )
         self.assertEqual(waiting.returncode, 8)
-        self.assertIn("Build App Against Upstream DMG", waiting.stdout)
+        self.assertIn("Build App Against Official Linux Package", waiting.stdout)
 
         merged = {
             **pr,

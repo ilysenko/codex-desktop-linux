@@ -3,11 +3,11 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 FLAKE_FILE="${FLAKE_FILE:-$REPO_DIR/flake.nix}"
-UPSTREAM_DMG_URL="${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg}"
-UPSTREAM_DMG_PATH="${UPSTREAM_DMG_PATH:-/tmp/Codex.dmg}"
+UPSTREAM_DMG_URL="${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_amd64.deb}"
+UPSTREAM_DMG_PATH="${UPSTREAM_DMG_PATH:-/tmp/ChatGPT.deb}"
 VERIFY_LOG="${VERIFY_LOG:-/tmp/codex-nix-build-verify.log}"
 # Upstream Codex Sparkle appcast (x64 runners). Used only for reporting when it
-# lags behind the moving Codex.dmg; the verified DMG payload is the pin source.
+# lags behind the moving official package; the verified package payload is the pin source.
 APPCAST_URL="${APPCAST_URL:-https://persistent.oaistatic.com/codex-app-prod/appcast-x64.xml}"
 
 PACKAGE_OUTPUTS=(
@@ -15,6 +15,7 @@ PACKAGE_OUTPUTS=(
     ".#codex-desktop-computer-use-ui"
     ".#codex-desktop-remote-mobile-control"
     ".#codex-desktop-computer-use-ui-remote-mobile-control"
+    ".#checks.x86_64-linux.official-linux-runtime"
     ".#checks.x86_64-linux.watchdog-linux-features"
     ".#installer"
 )
@@ -38,8 +39,6 @@ fi
 NIX_PIN_DIFF_PATHS=(
     "flake.nix"
     "linux-features/directory-only-working-tree-watch/watchbound-artifacts.json"
-    "nix/native-modules/package.json"
-    "nix/native-modules/package-lock.json"
     "nix/watchbound-Cargo.lock"
 )
 
@@ -71,20 +70,6 @@ prefetch_sri() {
     local url="$1"
     nix store prefetch-file --json --hash-type sha256 "$url" \
         | python3 -c 'import sys, json; print(json.load(sys.stdin)["hash"])'
-}
-
-# When electronVersion changes, the electron zip + headers URLs move to the new
-# version while flake.nix keeps the old fixed-output hashes, so the verify build
-# would fail. Refresh both per-arch electron zip hashes and the headers hash.
-refresh_electron_hashes() {
-    local version="$1"
-    local base="https://github.com/electron/electron/releases/download/v${version}"
-    replace_flake_hash "x86_64-linux = {" "hash = " \
-        "$(prefetch_sri "${base}/electron-v${version}-linux-x64.zip")"
-    replace_flake_hash "aarch64-linux = {" "hash = " \
-        "$(prefetch_sri "${base}/electron-v${version}-linux-arm64.zip")"
-    replace_flake_hash "electronHeaders = pkgs.fetchurl {" "hash = " \
-        "$(prefetch_sri "https://artifacts.electronjs.org/headers/dist/v${version}/node-v${version}-headers.tar.gz")"
 }
 
 replace_flake_hash() {
@@ -174,12 +159,11 @@ main() {
 
     new_dmg_hash="$(nix hash file --sri --type sha256 "$UPSTREAM_DMG_PATH")"
     if ! validate_sri_hash "$new_dmg_hash"; then
-        echo "Refusing to proceed: computed DMG hash '$new_dmg_hash' is not a valid SRI sha256." >&2
+        echo "Refusing to proceed: computed package hash '$new_dmg_hash' is not a valid SRI sha256." >&2
         exit 1
     fi
 
-    # Refresh the version pins (codexVersion/electronVersion + native-modules)
-    # from the current upstream DMG. The appcast can lag the moving DMG for many
+    # Refresh codexVersion/electronVersion from the official package. The appcast can lag the moving package for many
     # hours, so it is reported as metadata instead of blocking the refresh PR.
     local old_electron_version
     old_electron_version="$(read_flake_string electronVersion)"
@@ -188,36 +172,28 @@ main() {
     if appcast_latest_version="$(fetch_appcast_latest_version "$APPCAST_URL" 2>/dev/null)"; then
         echo "Appcast latest version: $appcast_latest_version"
     else
-        echo "WARN: Could not read upstream appcast version from $APPCAST_URL; continuing with Codex.dmg pins." >&2
+        echo "WARN: Could not read upstream appcast version from $APPCAST_URL; continuing with official package pins." >&2
     fi
 
     WRITE_PINS=1 APPCAST_URL= "$REPO_DIR/scripts/ci/validate-nix-pins.sh" "$UPSTREAM_DMG_PATH"
 
-    # If the Electron pin moved, refresh its fixed-output hashes so the verify
-    # build does not fail on the new download URLs.
     local new_electron_version
     new_electron_version="$(read_flake_string electronVersion)"
     local new_codex_version
     new_codex_version="$(read_flake_string codexVersion)"
     if [ -n "$appcast_latest_version" ] && [ "$new_codex_version" != "$appcast_latest_version" ]; then
-        echo "WARN: Appcast latest version ($appcast_latest_version) differs from Codex.dmg version ($new_codex_version); proceeding with verified DMG pins." >&2
+        echo "WARN: Appcast latest version ($appcast_latest_version) differs from official package version ($new_codex_version); proceeding with verified package pins." >&2
     fi
     if [ "$old_electron_version" != "$new_electron_version" ]; then
-        echo "Electron pin: $old_electron_version -> $new_electron_version; refreshing electron hashes."
-        refresh_electron_hashes "$new_electron_version"
+        echo "Electron pin: $old_electron_version -> $new_electron_version; the official package supplies the matching runtime."
     fi
 
-    # Regenerate the native-module lockfile whenever its package.json changed, so
-    # the committed refresh stays reproducible for importNpmLock / npm ci.
-    if ! git -C "$REPO_DIR" diff --quiet -- nix/native-modules/package.json; then
-        echo "native-modules package.json changed; regenerating package-lock.json."
-        ( cd "$REPO_DIR/nix/native-modules" && npm install --package-lock-only --ignore-scripts >/dev/null )
-    fi
-
-    current_dmg_hash="$(read_flake_hash "codexDmg = pkgs.fetchurl {" "hash = ")"
-    echo "Current Codex.dmg hash:  $current_dmg_hash"
-    echo "Upstream Codex.dmg hash: $new_dmg_hash"
-    replace_flake_hash "codexDmg = pkgs.fetchurl {" "hash = " "$new_dmg_hash"
+    current_dmg_hash="$(read_flake_hash "x86_64-linux = {" "hash = ")"
+    echo "Current x86_64 official package hash:  $current_dmg_hash"
+    echo "Upstream x86_64 official package hash: $new_dmg_hash"
+    replace_flake_hash "x86_64-linux = {" "hash = " "$new_dmg_hash"
+    new_arm_hash="$(prefetch_sri "https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_arm64.deb")"
+    replace_flake_hash "aarch64-linux = {" "hash = " "$new_arm_hash"
 
     if ! nix_pin_files_changed; then
         echo "Nix pins unchanged; skipping package-output verification."
@@ -233,12 +209,12 @@ main() {
         fi
     fi
 
-    # Seed the Nix store so the verification build can reuse the DMG that was
+    # Seed the Nix store so the verification build can reuse the package that was
     # already downloaded for hashing instead of fetching the same artifact again.
     nix-store --add-fixed sha256 "$UPSTREAM_DMG_PATH" >/dev/null
 
     run_nix_build "$VERIFY_LOG" "${PACKAGE_OUTPUTS[@]}"
-    echo "Nix builds succeeded after refreshing the upstream pins and Codex.dmg hash."
+    echo "Nix builds succeeded after refreshing the official Linux package pins."
 }
 
 case "${1:-}" in

@@ -147,7 +147,7 @@ focus, so no renderer- or app-level change can make hardware keys arrive.
 
 ## Verification checklist after applying #578
 
-1. Rebuild: `./install.sh ./Codex.dmg`.
+1. Rebuild: `./install.sh ./ChatGPT.deb`.
 2. Launch and inspect the window with `xprop` (under XWayland) — expect
    `Override Redirect State: no` and a present `WM_STATE` / `WM_HINTS`.
 3. Click the window: `document.hasFocus()` should become true on its own (no

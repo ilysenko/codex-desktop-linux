@@ -4,7 +4,7 @@
 
 You need:
 
-- `python3`, `7z` or `7zz`, `curl`, `unzip`, `tar`, `make`, `g++`
+- `python3`, `curl`, `unzip`, `tar`, `ar` (binutils), `make`, `g++`
 - Rust toolchain with `cargo` for `codex-update-manager`,
   `codex-computer-use-linux`, the Chrome extension host binary, and optional
   Rust-backed features such as Read Aloud MCP and Record & Replay
@@ -29,18 +29,18 @@ packages, and bootstraps Rust through `rustup` when needed.
 
 ```bash
 # Fedora 41+
-sudo dnf install python3 7zip curl unzip tar rpm-build make gcc-c++ @development-tools
+sudo dnf install python3 curl unzip tar binutils rpm-build make gcc-c++ @development-tools
 
 # Fedora < 41
-sudo dnf install python3 p7zip p7zip-plugins curl unzip tar rpm-build make gcc-c++
+sudo dnf install python3 curl unzip tar binutils rpm-build make gcc-c++
 sudo dnf groupinstall 'Development Tools'
 
 # openSUSE
-sudo zypper install python3 p7zip-full curl unzip tar
+sudo zypper install python3 curl unzip tar binutils
 sudo zypper install -t pattern devel_basis
 
 # Arch / Manjaro
-sudo pacman -S --needed python p7zip curl unzip tar zstd base-devel
+sudo pacman -S --needed python curl unzip tar binutils zstd base-devel
 
 # Rust toolchain
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -54,29 +54,26 @@ bash scripts/install-deps.sh
 NODEJS_MAJOR=24 bash scripts/install-deps.sh
 ```
 
-Ubuntu-family `p7zip-full` can be too old for newer APFS DMGs, so
-`install-deps.sh` bootstraps `7zz` into `~/.local/bin` by default.
-
 ## Generate The Local App
 
 ```bash
 make build-app
 make build-app-fresh
-make build-app DMG=/path/to/Codex.dmg
+make build-app ARTIFACT=/path/to/chatgpt_amd64.deb
 ```
 
 Equivalent direct commands:
 
 ```bash
 ./install.sh
-./install.sh /path/to/Codex.dmg
+./install.sh /path/to/chatgpt_amd64.deb
 ./install.sh --fresh
 ```
 
-The default path stores upstream DMG headers, plus a hash of the upstream URL,
-next to `Codex.dmg` and refreshes the cached file when that upstream fingerprint
+The default path stores upstream package headers, plus a hash of the upstream URL,
+next to `ChatGPT.deb` and refreshes the cached file when that upstream fingerprint
 changes. Every command builds a sibling candidate and runs the shared
-[upstream DMG acceptance profile](upstream-dmg-acceptance.md) before replacing
+[upstream acceptance profile](upstream-dmg-acceptance.md) before replacing
 `codex-app/`. A rejected or inconclusive candidate leaves the working app
 unchanged. Acceptance checks only configured Linux Features and rejects drift
 in any enabled feature; disable that feature before retrying if necessary.
@@ -85,31 +82,31 @@ journal, so interruption cannot leave the canonical install path missing. If
 the filesystem does not support atomic exchange, promotion stops without
 changing the working app.
 `--fresh` still forces a cache removal before rebuilding, and an
-explicit `DMG=/path/to/Codex.dmg` uses that file exactly.
-Native install shortcuts use `--fresh --reuse-dmg`, so they build a clean
-candidate while still reusing the cached DMG when upstream metadata matches.
+explicit `ARTIFACT=/path/to/chatgpt.deb` uses that file exactly.
+Native install shortcuts use `--fresh --reuse-artifact`, so they build a clean
+candidate while still reusing the cached package when upstream metadata matches.
 
-For deterministic test rounds, set `CODEX_DMG_REFRESH_MODE=pinned`. Pinned mode
-reuses the existing cached `Codex.dmg` verbatim, skips upstream metadata checks,
-and fails instead of downloading when no cached DMG or explicit `DMG=...` path is
-available. This also keeps `--fresh` from deleting the cached DMG.
+For deterministic test rounds, set `CODEX_UPSTREAM_ARTIFACT_REFRESH_MODE=pinned`.
+Pinned mode reuses the existing cached `ChatGPT.deb` verbatim, skips upstream
+metadata checks, and fails instead of downloading when no cached package or
+explicit artifact path is available.
 
-Before accepting a fast-moving upstream DMG, run the report-only intelligence
+Before accepting a fast-moving upstream package, run the report-only intelligence
 lane to inventory protected Sky/Chronicle/Skysight/Computer Use/Record & Replay
 surfaces:
 
 ```bash
-make inspect-upstream DMG=/path/to/Codex.dmg
+make inspect-upstream ARTIFACT=/path/to/ChatGPT.deb
 make inspect-upstream-intel-devcontainer
 ```
 
-The devcontainer intelligence target downloads the current upstream DMG into
-`reports/upstream-dmg/downloads/` when `DMG=...` is omitted and automatically
-compares it against repo `./Codex.dmg` when that cached baseline exists.
+The devcontainer intelligence target downloads the current upstream package into
+`reports/upstream-dmg/downloads/` when `ARTIFACT=...` is omitted and automatically
+compares it against repo `./ChatGPT.deb` when that cached baseline exists.
 For an already downloaded candidate, pass only that one path:
 
 ```bash
-make inspect-upstream-intel-devcontainer DMG=/path/to/new/Codex.dmg
+make inspect-upstream-intel-devcontainer ARTIFACT=/path/to/new/ChatGPT.deb
 ```
 
 See `docs/upstream-dmg-intelligence.md` for the protected-surface registry,
@@ -164,7 +161,7 @@ PACKAGE_VERSION=2026.03.24.220723+88f07cd3 make deb
 ```
 
 The packaging scripts only repackage what is already in `codex-app/`; they do
-not download or extract the DMG.
+not download or extract the upstream package.
 
 ## AppImage Local Self-Build
 
@@ -227,7 +224,7 @@ MAX_BUILD_THREADS=8 make install-native
 ```
 
 `MAX_BUILD_THREADS=0` is the default and preserves each tool's automatic
-behavior. A nonzero value controls Cargo jobs, native module rebuild jobs,
+behavior. A nonzero value controls Cargo jobs,
 Debian package compression, pacman package compression, and RPM zstd payload
 compression.
 

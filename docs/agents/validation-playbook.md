@@ -39,7 +39,7 @@ bash tests/scripts_smoke.sh
 For upstream drift or protected surface analysis:
 
 ```bash
-make inspect-upstream DMG=/path/to/Codex.dmg
+make inspect-upstream ARTIFACT=/path/to/ChatGPT.deb
 make inspect-upstream-intel-devcontainer
 ```
 

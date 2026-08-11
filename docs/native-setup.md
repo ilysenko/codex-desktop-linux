@@ -14,7 +14,7 @@ make bootstrap-native
 ```
 
 `make bootstrap-native` installs build dependencies, regenerates `codex-app/`,
-validates the cached upstream `Codex.dmg` and downloads it only when missing or
+validates the cached upstream `ChatGPT.deb` and downloads it only when missing or
 stale, builds the matching native package, and installs the newest artifact
 from `dist/`.
 

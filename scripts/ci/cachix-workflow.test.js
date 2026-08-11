@@ -12,17 +12,17 @@ const updateHashWorkflow = fs.readFileSync(
   "utf8",
 );
 
-test("Cachix automatic population runs only for an actual Codex DMG hash change", () => {
+test("Cachix automatic population runs only for an actual official package hash change", () => {
   assert.match(workflow, /paths:\n\s+- flake\.nix/);
   assert.doesNotMatch(workflow, /schedule:/);
   assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /id: codex-dmg-hash/);
+  assert.match(workflow, /id: official-package-hash/);
   assert.match(workflow, /if: github\.event_name != 'workflow_dispatch' \|\| github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /EVENT_NAME: \$\{\{ github\.event_name \}\}/);
   assert.match(workflow, /BEFORE_SHA: \$\{\{ github\.event\.before \}\}/);
   assert.match(workflow, /if \[ "\$EVENT_NAME" = "workflow_dispatch" \]; then\n\s+changed=true/);
-  assert.match(workflow, /read-flake-hash "codexDmg = pkgs\.fetchurl \{" "hash = "/);
-  assert.match(workflow, /if: needs\.detect-codex-dmg-hash\.outputs\.changed == 'true'/);
+  assert.match(workflow, /read-flake-hash "x86_64-linux = \{" "hash = "/);
+  assert.match(workflow, /if: needs\.detect-official-package-hash\.outputs\.changed == 'true'/);
 });
 
 test("Nix refresh commits allow post-merge workflows to run", () => {

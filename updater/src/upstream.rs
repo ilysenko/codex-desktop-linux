@@ -1,4 +1,4 @@
-//! Upstream DMG metadata and download helpers.
+//! Official upstream Linux package metadata and download helpers.
 
 use crate::cache_cleanup::{acquire_dmg_cache_lease, DmgCacheLease};
 use anyhow::{anyhow, Context, Result};
@@ -15,7 +15,7 @@ use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(60);
-const DOWNLOAD_TEMP_PREFIX: &str = ".Codex.dmg.download-";
+const DOWNLOAD_TEMP_PREFIX: &str = ".ChatGPT.deb.download-";
 static DOWNLOAD_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 struct DownloadTempFile {
@@ -37,7 +37,7 @@ impl Drop for DownloadTempFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Selected HTTP metadata used to detect upstream DMG changes.
+/// Selected HTTP metadata used to detect upstream package changes.
 pub struct RemoteMetadata {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
@@ -46,7 +46,7 @@ pub struct RemoteMetadata {
 }
 
 #[derive(Debug)]
-/// Result of downloading the current upstream DMG snapshot.
+/// Result of downloading the current upstream package snapshot.
 pub struct DownloadedDmg {
     pub path: PathBuf,
     pub sha256: String,
@@ -54,7 +54,7 @@ pub struct DownloadedDmg {
     pub(crate) lease: DmgCacheLease,
 }
 
-/// Builds the HTTP client shared by upstream metadata and DMG requests.
+/// Builds the HTTP client shared by upstream metadata and package requests.
 pub fn http_client() -> Result<Client> {
     Client::builder()
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
@@ -63,7 +63,7 @@ pub fn http_client() -> Result<Client> {
         .context("Failed to build upstream HTTP client")
 }
 
-/// Fetches the upstream DMG headers used to detect candidate updates.
+/// Fetches the upstream package headers used to detect candidate updates.
 pub async fn fetch_remote_metadata(client: &Client, dmg_url: &str) -> Result<RemoteMetadata> {
     let response = client
         .head(dmg_url)
@@ -107,7 +107,7 @@ pub async fn fetch_remote_metadata(client: &Client, dmg_url: &str) -> Result<Rem
     })
 }
 
-/// Downloads the upstream DMG and derives a package version from its hash.
+/// Downloads the upstream package and derives a package version from its hash.
 pub async fn download_dmg(
     client: &Client,
     dmg_url: &str,
@@ -118,7 +118,7 @@ pub async fn download_dmg(
         .await
         .with_context(|| format!("Failed to create {}", destination_dir.display()))?;
     // Hold one updater-wide lease from the first temporary write until the
-    // caller finishes consuming the published DMG and persists its state path.
+    // caller finishes consuming the published package and persists its state path.
     let lease = acquire_dmg_cache_lease(destination_dir).await?;
 
     let response = client
@@ -165,7 +165,7 @@ pub async fn download_dmg(
         .await
         .with_context(|| {
             format!(
-                "Failed to atomically publish completed DMG as {}",
+                "Failed to atomically publish completed package as {}",
                 destination.display()
             )
         })?;
@@ -211,7 +211,7 @@ fn sync_parent_directory(directory: &Path) -> Result<()> {
         .with_context(|| format!("Failed to sync {}", directory.display()))
 }
 
-/// Derives a local package version from the DMG hash and download timestamp.
+/// Derives a local package version from the upstream package hash and download timestamp.
 pub fn derive_candidate_version(sha256: &str, timestamp: DateTime<Utc>) -> Result<String> {
     let short_hash = sha256
         .get(0..8)

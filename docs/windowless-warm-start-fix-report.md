@@ -87,7 +87,7 @@ continuation invokes the Linux finalizer, and a promise settles only once.
 
 ## Drift And Idempotence
 
-This repository supports only the latest upstream DMG. The patch does not retain
+This repository supports only the latest upstream package. The patch does not retain
 the obsolete lifecycle matcher.
 
 An unchanged source is considered already patched only when the generated

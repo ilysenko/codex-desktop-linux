@@ -55,6 +55,8 @@ fn default_generated_artifact_cleanup_entries() -> Vec<PathBuf> {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Runtime configuration values that control how the updater behaves on Linux.
 pub struct RuntimeConfig {
+    /// URL of the official Linux package. The field name is retained so
+    /// existing updater configuration files remain compatible.
     pub dmg_url: String,
     pub initial_check_delay_seconds: u64,
     pub check_interval_hours: u64,
@@ -64,8 +66,8 @@ pub struct RuntimeConfig {
     pub builder_bundle_root: PathBuf,
     pub app_executable_path: PathBuf,
     /// Opt-in tracking of newer *wrapper* releases (this repo's own Linux
-    /// features/fixes), in addition to the upstream Codex DMG. Off by default
-    /// so existing installs keep their current DMG-only behavior.
+    /// features/fixes), in addition to the official upstream package. Off by
+    /// default so existing installs keep their current update behavior.
     #[serde(default)]
     pub enable_wrapper_updates: bool,
     /// Git remote (name or URL) used to detect wrapper updates. Empty means
@@ -148,8 +150,17 @@ impl RuntimeConfig {
                 .to_path_buf()
         };
 
+        let package_arch = match std::env::consts::ARCH {
+            "x86_64" => "amd64",
+            "aarch64" => "arm64",
+            unsupported => panic!("unsupported official Linux package architecture: {unsupported}"),
+        };
         let config = Self {
-            dmg_url: "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg".to_string(),
+            // Keep the serialized field name for configuration compatibility;
+            // it now points at OpenAI's official Linux package.
+            dmg_url: format!(
+                "https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_{package_arch}.deb"
+            ),
             initial_check_delay_seconds: 30,
             check_interval_hours: DEFAULT_CHECK_INTERVAL_HOURS,
             auto_install_on_app_exit: true,
@@ -696,6 +707,17 @@ app_executable_path = "/opt/codex-desktop/electron"
         };
 
         let config = RuntimeConfig::load_or_default(&paths)?;
+        let expected_arch = match std::env::consts::ARCH {
+            "x86_64" => "amd64",
+            "aarch64" => "arm64",
+            other => panic!("unsupported test architecture: {other}"),
+        };
+        assert_eq!(
+            config.dmg_url,
+            format!(
+                "https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_{expected_arch}.deb"
+            )
+        );
         assert_eq!(config.initial_check_delay_seconds, 30);
         assert!(config.auto_install_on_app_exit);
         assert_eq!(config.workspace_root, paths.cache_dir);

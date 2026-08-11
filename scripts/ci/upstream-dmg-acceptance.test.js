@@ -319,38 +319,6 @@ test("all CI upstream DMG consumers use the non-empty atomic downloader", () => 
   }
 });
 
-test("Nix pin validation reads the unbundled Parcel watcher version from the app manifest", () => {
-  const source = fs.readFileSync(
-    path.resolve(__dirname, "validate-nix-pins.sh"),
-    "utf8",
-  );
-
-  assert.match(
-    source,
-    /ASAR_EXTRACT_DIR\/package\.json[\s\S]*dependencies\?\.\['@parcel\/watcher'\]/,
-  );
-  assert.doesNotMatch(
-    source,
-    /ASAR_EXTRACT_DIR\/node_modules\/@parcel\/watcher\/package\.json/,
-  );
-});
-
-test("installer reads the unbundled Parcel watcher version from the current app manifest", () => {
-  const source = fs.readFileSync(
-    path.resolve(__dirname, "../lib/native-modules.sh"),
-    "utf8",
-  );
-
-  assert.match(
-    source,
-    /app\.dependencies\?\.\["@parcel\/watcher"\][\s\S]*app\.optionalDependencies\?\.\["@parcel\/watcher"\]/,
-  );
-  assert.doesNotMatch(
-    source,
-    /require\(path\.join\(appRoot, "node_modules\/@parcel\/watcher\/package\.json"\)\)/,
-  );
-});
-
 test("Nix refresh serializes campaigns and deduplicates refresh and exact-head CI", () => {
   const workflow = fs.readFileSync(
     path.resolve(__dirname, "../../.github/workflows/update-codex-hash.yml"),
@@ -420,8 +388,8 @@ test("Nix hash refresh accepts a validated focused output override", () => {
   assert.match(script, /run_nix_build "\$VERIFY_LOG" "\$\{PACKAGE_OUTPUTS\[@\]\}"/);
 });
 
-test("Parcel watcher runtime check is built by PR and scheduled current-DMG Nix verification", () => {
-  const selector = ".#checks.x86_64-linux.parcel-watcher-staged-runtime";
+test("official Linux runtime check is built by PR and scheduled Nix verification", () => {
+  const selector = ".#checks.x86_64-linux.official-linux-runtime";
   const sources = [
     path.resolve(__dirname, "../../.github/workflows/ci.yml"),
     path.resolve(__dirname, "../../.github/workflows/update-codex-hash.yml"),

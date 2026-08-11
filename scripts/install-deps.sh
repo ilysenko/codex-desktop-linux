@@ -220,26 +220,24 @@ install_apt() {
     sudo apt-get update -qq
     sudo apt-get install -y \
         ca-certificates python3 \
-        p7zip-full curl unzip \
+        binutils curl unzip tar \
         build-essential
 }
 
 install_dnf5() {
     info "Detected RPM-based distro (dnf5)"
-    # dnf5: 7zip provides /usr/bin/7z; @development-tools is the group syntax.
     # Install make and gcc-c++ explicitly because the group may already be marked
     # installed without providing the g++ executable required by install.sh.
     sudo dnf install -y \
-        python3 7zip curl unzip rpm-build make gcc-c++ \
+        python3 binutils curl unzip tar rpm-build make gcc-c++ \
         @development-tools
 }
 
 install_dnf() {
     info "Detected RPM-based distro (dnf)"
-    # Older dnf: 7z comes from p7zip + p7zip-plugins
     sudo dnf install -y \
         nodejs npm python3 \
-        p7zip p7zip-plugins curl unzip rpm-build make gcc-c++
+        binutils curl unzip tar rpm-build make gcc-c++
     sudo dnf groupinstall -y 'Development Tools'
 }
 
@@ -248,9 +246,7 @@ install_rpm_ostree() {
 
     local -a missing=()
     command -v python3 >/dev/null 2>&1 || missing+=("python3")
-    if ! command -v 7zz >/dev/null 2>&1 && ! command -v 7z >/dev/null 2>&1; then
-        missing+=("7zip")
-    fi
+    command -v ar >/dev/null 2>&1 || missing+=("binutils")
     command -v curl >/dev/null 2>&1 || missing+=("curl")
     command -v unzip >/dev/null 2>&1 || missing+=("unzip")
     command -v rpmbuild >/dev/null 2>&1 || missing+=("rpm-build")
@@ -264,7 +260,7 @@ install_rpm_ostree() {
 
     error "Fedora Atomic hosts layer packages with rpm-ostree and usually need a reboot before new tools are available.
 Review and run manually if this is the host you want to layer:
-  sudo rpm-ostree install python3 7zip curl unzip rpm-build make gcc-c++
+  sudo rpm-ostree install python3 binutils curl unzip tar rpm-build make gcc-c++
   systemctl reboot
 Then rerun this script after the reboot.
 Still missing: ${missing[*]}"
@@ -281,7 +277,7 @@ install_pacman() {
 
     sudo pacman -S --needed --noconfirm \
         "${node_packages[@]}" python \
-        p7zip curl unzip zstd \
+        binutils curl unzip tar zstd \
         base-devel
 }
 
@@ -289,7 +285,7 @@ install_zypper() {
     info "Detected openSUSE (zypper)"
     sudo zypper --non-interactive install \
         nodejs-default npm-default python3 \
-        p7zip-full curl unzip
+        binutils curl unzip tar
     sudo zypper --non-interactive install -t pattern devel_basis
 }
 
@@ -314,90 +310,6 @@ install_gui_prompt_helper() {
             sudo zypper --non-interactive install "$package"
             ;;
     esac
-}
-
-# ---------------------------------------------------------------------------
-# 7zz bootstrap (modern 7-Zip for APFS DMG support)
-# Pinned versions — prepend new entries as upstream releases them.
-# ---------------------------------------------------------------------------
-bootstrap_7zz() {
-    # Already present and functional
-    if command -v 7zz &>/dev/null && 7zz 2>&1 | grep -qm 1 "7-Zip"; then
-        info "7zz already available ($(command -v 7zz))"
-        return 0
-    fi
-
-    # System 7z is already new enough — skip. p7zip 17.05 still cannot
-    # extract current APFS-based Codex DMGs, so only accept non-p7zip 7z.
-    if command -v 7z &>/dev/null; then
-        local seven_zip_banner
-        seven_zip_banner="$(7z 2>&1 | head -n 3 || true)"
-        if [[ "$seven_zip_banner" == *"7-Zip"* && "$seven_zip_banner" != *"16.02"* && "$seven_zip_banner" != *"p7zip Version"* ]]; then
-            info "System 7z is already new enough; skipping 7zz bootstrap"
-            return 0
-        fi
-    fi
-
-    local sevenzip_arch
-    case "$ARCH" in
-        x86_64)  sevenzip_arch="x64"   ;;
-        aarch64) sevenzip_arch="arm64"  ;;
-        armv7l)  sevenzip_arch="arm"    ;;
-        *)
-            warn "Skipping 7zz bootstrap: unsupported architecture '$ARCH'"
-            return 0
-            ;;
-    esac
-
-    local install_dir="$HOME/.local/bin"
-    if [ "${SEVENZIP_SYSTEM_INSTALL:-0}" = "1" ]; then
-        install_dir="/usr/local/bin"
-    fi
-
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$tmpdir'" EXIT
-
-    # Try pinned versions newest-first by downloading the tarball directly.
-    # Some CI/container networks handle 7-zip.org HEAD requests inconsistently,
-    # so validate the archive contents instead of relying on a separate probe.
-    local -a versions=(2600 2500 2409)
-    local version="" url="" candidate_url
-    for candidate in "${versions[@]}"; do
-        candidate_url="https://www.7-zip.org/a/7z${candidate}-linux-${sevenzip_arch}.tar.xz"
-        if curl -fsL --retry 2 --retry-delay 2 -o "$tmpdir/7z.tar.xz" "$candidate_url" \
-            && tar -tf "$tmpdir/7z.tar.xz" 7zz >/dev/null 2>&1; then
-            version="$candidate"
-            url="$candidate_url"
-            break
-        fi
-        rm -f "$tmpdir/7z.tar.xz"
-    done
-
-    if [ -z "$url" ]; then
-        error "Could not find a known-good 7zz tarball for architecture '$ARCH'.
-Tried versions: ${versions[*]}
-Install 7zz manually from https://www.7-zip.org/download.html and ensure it is on your PATH."
-    fi
-
-    info "Installing 7zz ${version} from $url"
-    tar -C "$tmpdir" -xf "$tmpdir/7z.tar.xz" 7zz
-
-    if [ "$install_dir" = "/usr/local/bin" ]; then
-        sudo install -d -m 755 "$install_dir"
-        sudo install -m 755 "$tmpdir/7zz" "$install_dir/7zz"
-    else
-        mkdir -p "$install_dir"
-        install -m 755 "$tmpdir/7zz" "$install_dir/7zz"
-    fi
-
-    info "Installed 7zz to $install_dir/7zz"
-
-    if ! printf '%s\n' "$PATH" | tr ':' '\n' | grep -Fxq "$install_dir"; then
-        warn "$install_dir is not on your PATH. Add it with:"
-        warn "  export PATH=\"$install_dir:\$PATH\""
-    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -452,19 +364,18 @@ case "$DISTRO" in
     *)
         error "Unsupported package manager. Install manually:
   # Debian/Ubuntu: install Node.js 20+ with npm/npx from NodeSource, nvm, or another compatible source, then:
-  sudo apt install python3 p7zip-full curl unzip build-essential                   # Debian/Ubuntu
-  sudo dnf install python3 7zip curl unzip rpm-build make gcc-c++ @development-tools             # Fedora 41+ (dnf5)
-  sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++      # Fedora <41 (dnf)
+  sudo apt install python3 binutils curl unzip tar build-essential                   # Debian/Ubuntu
+  sudo dnf install python3 binutils curl unzip tar rpm-build make gcc-c++ @development-tools             # Fedora 41+ (dnf5)
+  sudo dnf install nodejs npm python3 binutils curl unzip tar rpm-build make gcc-c++      # Fedora <41 (dnf)
     && sudo dnf groupinstall 'Development Tools'
-  sudo pacman -S nodejs npm python p7zip curl unzip zstd base-devel                 # Arch
-  sudo zypper install nodejs-default npm-default python3 p7zip-full curl unzip      # openSUSE
+  sudo pacman -S nodejs npm python binutils curl unzip tar zstd base-devel                 # Arch
+  sudo zypper install nodejs-default npm-default python3 binutils curl unzip tar      # openSUSE
     && sudo zypper install -t pattern devel_basis"
         ;;
 esac
 
 ensure_nodejs_compatible "$DISTRO"
 install_rust
-bootstrap_7zz
 install_gui_prompt_helper
 
 info "All dependencies installed. You can now run: ./install.sh"

@@ -6,9 +6,9 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'HELP'
-Usage: scripts/rebuild-candidate.sh [--install] [path/to/Codex.dmg]
+Usage: scripts/rebuild-candidate.sh [--install] [path/to/chatgpt.deb]
 
-Runs the shared transactional install flow. The DMG is built and validated in
+Runs the shared transactional install flow. The official Linux package is built and validated in
 a sibling candidate directory before either codex-app-next/ or codex-app/ is
 changed.
 
@@ -24,7 +24,7 @@ info() {
 }
 
 INSTALL_AFTER_BUILD=0
-DMG_PATH=""
+ARTIFACT_PATH=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -32,8 +32,8 @@ while [ "$#" -gt 0 ]; do
         -h|--help) usage; exit 0 ;;
         -*) usage >&2; exit 2 ;;
         *)
-            [ -z "$DMG_PATH" ] || { usage >&2; exit 2; }
-            DMG_PATH="$(realpath "$1")"
+            [ -z "$ARTIFACT_PATH" ] || { usage >&2; exit 2; }
+            ARTIFACT_PATH="$(realpath "$1")"
             ;;
     esac
     shift
@@ -48,12 +48,12 @@ if [ "$INSTALL_AFTER_BUILD" -eq 1 ]; then
 fi
 
 args=()
-if [ -n "$DMG_PATH" ]; then
-    [ -f "$DMG_PATH" ] || { echo "[rebuild][ERROR] DMG not found: $DMG_PATH" >&2; exit 1; }
-    args=("$DMG_PATH")
-    info "Using DMG: $DMG_PATH"
+if [ -n "$ARTIFACT_PATH" ]; then
+    [ -f "$ARTIFACT_PATH" ] || { echo "[rebuild][ERROR] package not found: $ARTIFACT_PATH" >&2; exit 1; }
+    args=("$ARTIFACT_PATH")
+    info "Using official Linux package: $ARTIFACT_PATH"
 else
-    info "No explicit DMG given; installer will validate, reuse, or download Codex.dmg"
+    info "No explicit package given; installer will validate, reuse, or download ChatGPT.deb"
 fi
 
 info "Building and validating transactional candidate"

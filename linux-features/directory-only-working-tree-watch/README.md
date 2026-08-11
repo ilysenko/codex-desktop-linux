@@ -18,7 +18,7 @@ coverage.
 ## Current OpenAI working-tree route
 
 OpenAI Desktop `26.803.41515` has a Linux-specific Parcel working-tree path in
-the official macOS DMG. That path calls `@parcel/watcher` directly instead of
+the official Linux package. That path calls `@parcel/watcher` directly instead of
 the local `startFileWatch()` method this feature intercepts. When this feature
 is selected, its current-DMG patch reroutes that one local recursive
 working-tree request through `startFileWatch()`, where the exact recursive

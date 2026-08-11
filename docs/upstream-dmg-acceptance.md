@@ -1,4 +1,4 @@
-# Upstream DMG Acceptance
+# Upstream Package Acceptance
 
 Local installs, updater rebuilds, and the scheduled upstream workflow use the
 same release profile from `scripts/lib/upstream-dmg-release-profile.js`. Shell
@@ -48,7 +48,7 @@ under the promotion lock, including read-only local copies derived from Nix.
 Symlinks, regular files, and non-exact/manual backup names are never removed.
 Cleanup failures only warn and are retried by the next install or recovery.
 
-`--fresh` refreshes the DMG and candidate without deleting the working app
+`--fresh` refreshes the package and candidate without deleting the working app
 early. Set `CODEX_KEEP_REJECTED_CANDIDATE=1` to retain a rejected or safely
 unpromoted candidate for debugging; otherwise disposable candidates are
 removed. `CODEX_ACCEPTANCE_OVERRIDE=1` is a developer-only emergency escape
@@ -57,17 +57,17 @@ hatch for a completely built candidate; CI and the updater do not set it.
 The updater also publishes downloads to immutable, content-addressed paths
 after a streamed hash, file sync, atomic rename, and parent-directory sync. A
 cache lease remains held through state persistence and package consumption.
-Cleanup keeps the state-referenced DMG and removes older managed hashes plus
+Cleanup keeps the state-referenced package and removes older managed hashes plus
 temporary files abandoned by an interrupted download; unrelated files and
 symlinks are ignored.
 
 ## Drift Issue Lifecycle
 
-Scheduled runs use the DMG SHA-256 as the identity and the app version only as
+Scheduled runs use the package SHA-256 as the identity and the app version only as
 a display value. One `area: upstream dmg` issue is kept per rejected fingerprint.
-When a new fingerprint arrives, open issues for older DMGs are closed as
-superseded. An accepted new DMG closes all remaining drift issues. Before any
-mutation, the issue job compares the tested HTTP identity with the current DMG
+When a new fingerprint arrives, open issues for older packages are closed as
+superseded. An accepted new package closes all remaining drift issues. Before any
+mutation, the issue job compares the tested HTTP identity with the current package
 headers so rerunning an obsolete workflow cannot reopen an old issue. The
 identity must contain an ETag or both Last-Modified and Content-Length. If
 either the tested or current identity is unavailable, reconciliation makes no
@@ -83,8 +83,8 @@ never updated, reopened, superseded, or closed by the workflow.
 Normal local builds run acceptance automatically:
 
 ```bash
-./install.sh /path/to/Codex.dmg
-./scripts/rebuild-candidate.sh /path/to/Codex.dmg
+./install.sh /path/to/ChatGPT.deb
+./scripts/rebuild-candidate.sh /path/to/ChatGPT.deb
 ```
 
 The generated decision and its referenced patch reports are sufficient to

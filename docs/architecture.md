@@ -1,18 +1,18 @@
 # Architecture
 
-This repository adapts the upstream macOS ChatGPT Desktop DMG into Linux app and
-package artifacts.
+This repository layers Linux packaging, compatibility patches, and optional
+features onto OpenAI's official Linux ChatGPT Desktop package.
 
 ## Build Pipeline
 
-1. `install.sh` extracts `Codex.dmg` with `7z` / `7zz`.
-2. It detects the Electron version from upstream metadata, with a pinned
-   fallback.
+1. `install.sh` downloads and extracts OpenAI's architecture-specific official
+   Linux `.deb`.
+2. It detects the Electron version from the package's `app.asar` metadata.
 3. It extracts and patches `app.asar` with fail-soft Linux compatibility
    patches.
-4. It rebuilds native Node modules such as `better-sqlite3` and `node-pty` for
-   Linux through `@electron/rebuild`.
-5. It downloads a matching Linux Electron runtime.
+4. It preserves the official ABI-matched Linux native modules and Electron
+   runtime.
+5. It stages that runtime into the repository's generated app layout.
 6. It stages bundled plugins and any enabled optional `linux-features/`.
 7. It writes the Linux launcher to `codex-app/start.sh` from
    `launcher/start.sh.template`.
@@ -21,8 +21,8 @@ package artifacts.
 9. Default native packages install `codex-update-manager` and a
    `systemd --user` service.
 
-The installer replaces the macOS Electron binary with a Linux build, recompiles
-native modules, and removes macOS-only pieces such as Sparkle.
+The installer does not substitute Electron or rebuild upstream native modules.
+This keeps the generated app aligned with the runtime OpenAI actually shipped.
 
 ## Patch System
 
@@ -35,7 +35,7 @@ arguments, creates/writes the optional report, calls
 written. Internal code imports runner APIs, not the CLI file.
 
 `scripts/patches/runner.js` collects core descriptors plus enabled
-`linux-features/` descriptors and executes the fresh-DMG pipeline:
+`linux-features/` descriptors and executes the fresh-package pipeline:
 
 1. `main-bundle`
 2. `extracted-app:pre-webview`
@@ -103,7 +103,7 @@ server lives in [webview-server-evaluation.md](webview-server-evaluation.md).
 ## Bundled Plugins
 
 The build preserves portable upstream Sites, Deep Research, and Visualize
-plugins when they are listed in the official DMG marketplace. Their payloads
+plugins when they are listed in the official package marketplace. Their payloads
 must match the expected local path and contain no symlinks, privileged entries,
 native executables, or platform-specific bundles. Availability in the app can
 still depend on upstream account entitlements or rollout gates.

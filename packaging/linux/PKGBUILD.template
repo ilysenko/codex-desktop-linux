@@ -2,13 +2,14 @@
 pkgname=__PACKAGE_NAME__
 pkgver=__PKGVER__
 pkgrel=__PKGREL__
-pkgdesc="ChatGPT Desktop for Linux — community-built from the macOS DMG"
+pkgdesc="ChatGPT Desktop for Linux — packaging and extensions for OpenAI's official Linux app"
 arch=('__ARCH__')
 url="https://github.com/ilysenko/codex-desktop-linux"
 license=('MIT')
 depends=(
     'python'
-    'p7zip'
+    'binutils'
+    'tar'
     'polkit'
     'curl'
     'unzip'

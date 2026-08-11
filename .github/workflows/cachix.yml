@@ -21,21 +21,21 @@ env:
   NIX_CONFIG: experimental-features = nix-command flakes
 
 jobs:
-  detect-codex-dmg-hash:
-    name: Detect Codex DMG hash change
+  detect-official-package-hash:
+    name: Detect official Linux package hash change
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
-      changed: ${{ steps.codex-dmg-hash.outputs.changed }}
-      current: ${{ steps.codex-dmg-hash.outputs.current }}
+      changed: ${{ steps.official-package-hash.outputs.changed }}
+      current: ${{ steps.official-package-hash.outputs.current }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 2
           persist-credentials: false
 
-      - name: Compare Codex DMG hashes
-        id: codex-dmg-hash
+      - name: Compare official package hashes
+        id: official-package-hash
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
@@ -44,7 +44,7 @@ jobs:
 
           current_hash="$(
             scripts/ci/update-nix-hashes.sh \
-              read-flake-hash "codexDmg = pkgs.fetchurl {" "hash = "
+              read-flake-hash "x86_64-linux = {" "hash = "
           )"
           previous_flake="$(mktemp)"
           trap 'rm -f "$previous_flake"' EXIT
@@ -62,7 +62,7 @@ jobs:
             git show "$BEFORE_SHA:flake.nix" > "$previous_flake"
             previous_hash="$(
               FLAKE_FILE="$previous_flake" scripts/ci/update-nix-hashes.sh \
-                read-flake-hash "codexDmg = pkgs.fetchurl {" "hash = "
+                read-flake-hash "x86_64-linux = {" "hash = "
             )"
             if [ "$current_hash" = "$previous_hash" ]; then
               changed=false
@@ -76,7 +76,7 @@ jobs:
             echo "current=$current_hash"
           } >> "$GITHUB_OUTPUT"
           {
-            echo "## Codex DMG hash"
+            echo "## Official Linux package hash"
             echo
             echo "- Previous: \`$previous_hash\`"
             echo "- Current: \`$current_hash\`"
@@ -85,8 +85,8 @@ jobs:
 
   populate:
     name: Build Nix flake outputs
-    needs: detect-codex-dmg-hash
-    if: needs.detect-codex-dmg-hash.outputs.changed == 'true'
+    needs: detect-official-package-hash
+    if: needs.detect-official-package-hash.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -149,7 +149,7 @@ jobs:
           {
             echo "## Cachix population"
             echo
-            echo "- Triggering Codex DMG hash: \`${{ needs.detect-codex-dmg-hash.outputs.current }}\`"
+            echo "- Triggering official package hash: \`${{ needs.detect-official-package-hash.outputs.current }}\`"
             echo "- Cache: \`$CACHIX_CACHE_NAME\`"
             printf -- '- Built and collected: `%s`\n' "${outputs[@]}"
           } >> "$GITHUB_STEP_SUMMARY"

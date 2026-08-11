@@ -76,7 +76,7 @@ npm install -g --include=optional --prefix ~/.local @openai/codex
 
 The following checks passed on the test Pi:
 
-- clean ARM64 app build and native module rebuild
+- clean ARM64 app build using the official ABI-matched native modules
 - native `arm64` Debian package creation and installation
 - graphical reboot into the Labwc Wayland desktop
 - application launch from the live desktop session

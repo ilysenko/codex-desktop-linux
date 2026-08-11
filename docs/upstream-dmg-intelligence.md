@@ -1,9 +1,9 @@
-# Upstream DMG Intelligence
+# Upstream Package Intelligence
 
-Use this lane when OpenAI ships a new macOS `Codex.dmg` and Linux parity work
+Use this lane when OpenAI ships a new official Linux `ChatGPT.deb` and Linux parity work
 needs to know what moved before accepting the build.
 
-The intelligence command is report-only. It extracts a candidate DMG or scans an
+The intelligence command is report-only. It extracts a candidate package or scans an
 already extracted `.app`, inventories protected surfaces, and writes a JSON plus
 Markdown battle report under `reports/upstream-dmg/<timestamp>/`. That directory
 is gitignored; check in only deliberate fixtures or registry changes.
@@ -16,27 +16,27 @@ Current upstream-vs-cached baseline check, using the repo devcontainer image:
 make inspect-upstream-intel-devcontainer
 ```
 
-The devcontainer wrapper is the preferred path for real DMG checks because it
-keeps `7zz`, Node, `jq`, and report-generation dependencies inside the project
-container. With no `DMG=...`, it downloads the current upstream DMG into the
+The devcontainer wrapper is the preferred path for real package checks because it
+keeps `ar`, `tar`, Node, `jq`, and report-generation dependencies inside the project
+container. With no `ARTIFACT=...`, it downloads the current official Linux package into the
 gitignored `reports/upstream-dmg/downloads/` directory and automatically uses
-repo `./Codex.dmg` as the baseline when that cached file exists and differs
+repo `./ChatGPT.deb` as the baseline when that cached file exists and differs
 from the candidate. It builds `codex-desktop-linux-devcontainer:local` from
 `.devcontainer/Dockerfile` if that image is missing, mounts outside candidate
 or baseline paths into the container, and writes only the ignored report bundle
 under `reports/upstream-dmg/` by default.
 
-Inspect a specific candidate DMG without spelling out the baseline:
+Inspect a specific candidate package without spelling out the baseline:
 
 ```bash
-make inspect-upstream-intel-devcontainer DMG=/tmp/Codex-new.dmg
+make inspect-upstream-intel-devcontainer ARTIFACT=/tmp/chatgpt_amd64.deb
 ```
 
 Host-side candidate-only inventory is still available when the host already has
 the same toolchain:
 
 ```bash
-make inspect-upstream-intel DMG=./Codex.dmg
+make inspect-upstream-intel ARTIFACT=./ChatGPT.deb
 ```
 
 For CI or release acceptance, keep report generation unchanged but fail the
@@ -44,7 +44,7 @@ command when protected-surface blockers are present:
 
 ```bash
 scripts/dev/upstream-dmg-intel.js \
-  --candidate /path/to/new/Codex.dmg \
+  --candidate /path/to/chatgpt_amd64.deb \
   --fail-on-blockers
 ```
 
@@ -53,14 +53,14 @@ Explicit baseline comparison remains available for older known-good builds:
 ```bash
 scripts/dev/upstream-dmg-intel.js \
   --baseline /path/to/known-good/Codex.app \
-  --candidate /path/to/new/Codex.dmg
+  --candidate /path/to/chatgpt_amd64.deb
 ```
 
 Pair it with the existing patch report path:
 
 ```bash
-make inspect-upstream DMG=/path/to/new/Codex.dmg
-make inspect-upstream-intel-devcontainer DMG=/path/to/new/Codex.dmg
+make inspect-upstream ARTIFACT=/path/to/chatgpt_amd64.deb
+make inspect-upstream-intel-devcontainer ARTIFACT=/path/to/chatgpt_amd64.deb
 ```
 
 When `dist-next/rebuild/patch-report.json` exists, `make inspect-upstream-intel`
@@ -144,7 +144,7 @@ routes that can change Chronicle state:
   changing memory feature/config state.
 
 If either route moves or disappears, treat it as a Chronicle/Skysight parity
-review item before accepting the upstream DMG.
+review item before accepting the upstream package.
 
 ## Drift Classifications
 
@@ -161,7 +161,7 @@ review item before accepting the upstream DMG.
   surface.
 - `PATCH_INTEGRITY_BROKEN`: a transactional patch failure could not prove that
   rollback restored the original bytes. Reject the candidate and rebuild from
-  the fresh current DMG after diagnosing the mutation or rollback failure.
+  the fresh current package after diagnosing the mutation or rollback failure.
 - `PATCH_REVIEW`: an optional patch-report warning or skip matched this
   protected surface.
 - `LINUX_SUBSTRATE_GAP`: upstream evidence exists, but the registry's required
@@ -171,7 +171,7 @@ review item before accepting the upstream DMG.
 
 The automated tests use synthetic `.app` fixtures and `app.asar.extracted`
 directories so normal verification does not rebuild Electron or require the real
-DMG. Manual real-DMG verification is still required before accepting a new
+package. Manual real-package verification is still required before accepting a new
 upstream build. The normal path downloads current upstream and compares it to
 the cached repo baseline:
 

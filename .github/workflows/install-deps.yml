@@ -54,8 +54,8 @@ jobs:
       - name: Verify installer passes Node preflight
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          output=$(./install.sh /tmp/nope.dmg 2>&1) && status=0 || status=$?
+          output=$(./install.sh /tmp/nope.deb 2>&1) && status=0 || status=$?
           printf '%s\n' "$output"
           test "$status" -ne 0
-          printf '%s\n' "$output" | grep -q "Provided DMG not found: /tmp/nope.dmg"
+          printf '%s\n' "$output" | grep -q "Provided package not found: /tmp/nope.deb"
           ! printf '%s\n' "$output" | grep -q "Node.js 20+ required"

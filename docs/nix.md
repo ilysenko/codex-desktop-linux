@@ -6,8 +6,8 @@ Run ChatGPT Desktop for Linux directly with:
 nix run github:ilysenko/codex-desktop-linux
 ```
 
-The flake handles dependencies and patches Electron for NixOS. A GitHub Actions
-bot refreshes the upstream `Codex.dmg` hash and verifies the Nix package outputs
+The flake handles dependencies and patches the official Linux runtime for NixOS. A GitHub Actions
+bot refreshes the official Linux package hashes and verifies the Nix package outputs
 in `main`. If you hit a hash mismatch right after an upstream release, wait for
 the next bot run and retry.
 
@@ -309,7 +309,7 @@ Users can opt in locally with:
 cachix use codex-desktop-linux
 ```
 
-When a merge to `main` changes the pinned `Codex.dmg` hash, the `Populate
+When a merge to `main` changes a pinned official Linux package hash, the `Populate
 Cachix` workflow builds the default package, feature-specific package variants,
 the watchdog feature check, and `.#installer`. It uploads and garbage-collects
 each output before starting the next one so the hosted runner does not retain

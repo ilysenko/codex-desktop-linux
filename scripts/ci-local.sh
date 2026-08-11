@@ -31,12 +31,12 @@ Targets:
   install-deps:ubuntu-24.04  Test install-deps on one apt image
   install-deps:debian-12     Test install-deps on one apt image
   nix                        Run the heavy Nix flake build checks
-  upstream                   Build the app against the upstream DMG
+  upstream                   Build the app against the official Linux package
 
 Environment:
   CI_CONTAINER_ENGINE=docker|podman
   CI_PACKAGE_VERSION=2026.04.28.000000+local
-  CI_DMG_PATH=/path/to/Codex.dmg
+  CI_DMG_PATH=/path/to/ChatGPT.deb
   CI_SKIP_PULL=1
   CI_CACHE_DIR=/path/to/cache
 
@@ -143,8 +143,8 @@ run_container_job() {
         -e "CI_PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         -e "PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         -e "CARGO_TERM_COLOR=${CARGO_TERM_COLOR:-always}"
-        -e "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg}"
-        -e "UPSTREAM_DMG_PATH=${UPSTREAM_DMG_PATH:-/tmp/codex-upstream-ci/Codex.dmg}"
+        -e "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_amd64.deb}"
+        -e "UPSTREAM_DMG_PATH=${UPSTREAM_DMG_PATH:-/tmp/codex-upstream-ci/ChatGPT.deb}"
         -v "$REPO_DIR:/work"
         -v "$CI_CACHE_DIR:/ci-cache"
         -w /work

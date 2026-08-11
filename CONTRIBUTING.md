@@ -1,10 +1,10 @@
 **IMPORTANT: PLEASE KEEP ONLY ONE PULL REQUEST OPEN AT A TIME. THE DEFAULT MAXIMUM IS TWO ACTIVE PULL REQUESTS FROM THE SAME CONTRIBUTOR, AND EVEN THAT SHOULD BE RESERVED FOR EXCEPTIONAL CIRCUMSTANCES. MAINTAINERS MAY CONFIGURE A DIFFERENT PER-CONTRIBUTOR LIMIT FOR EXPLICIT EXCEPTIONS. DO NOT OPEN SEVERAL PULL REQUESTS AT ONCE; FINISH OR CLOSE EXISTING WORK BEFORE SUBMITTING MORE. AN AUTOMATED BOT WILL CLOSE PULL REQUESTS THAT EXCEED THE EFFECTIVE LIMIT.**
 
-**IMPORTANT: THIS PROJECT SUPPORTS ONLY THE LATEST UPSTREAM `CODEX.DMG`. WHEN FIXING UPSTREAM DRIFT, REMOVE OLD DRIFT WORKAROUNDS IN THE SAME PULL REQUEST. DO NOT KEEP LEGACY DMG SHAPES, FALLBACK PATCH PATHS, OR VERSION-SPECIFIC COMPATIBILITY ZOOS AROUND. THE CODE SHOULD TARGET THE CURRENT DMG SO REVIEW, VALIDATION, AND DIAGNOSTICS DO NOT HAVE TO GUESS WHICH UPSTREAM VERSION FAILED.**
+**IMPORTANT: THIS PROJECT SUPPORTS ONLY THE LATEST OFFICIAL OPENAI LINUX PACKAGE. WHEN FIXING UPSTREAM DRIFT, REMOVE OLD WORKAROUNDS IN THE SAME PULL REQUEST. DO NOT KEEP LEGACY PACKAGE SHAPES, FALLBACK PATCH PATHS, OR VERSION-SPECIFIC COMPATIBILITY ZOOS AROUND.**
 
 # Contributing to ChatGPT Desktop for Linux
 
-Thanks for your interest in contributing to ChatGPT Desktop for Linux. This project adapts the official macOS ChatGPT Desktop DMG into a runnable Linux app, packages it for multiple Linux distributions, and maintains a local Rust update manager for future rebuilds.
+Thanks for your interest in contributing to ChatGPT Desktop for Linux. This project layers Linux patches and optional features onto OpenAI's official Linux package, repackages it for multiple distributions, and maintains a local Rust update manager for future rebuilds.
 
 Contributions of all sizes are welcome: bug reports, documentation improvements, packaging fixes, installer updates, tests, and new features.
 
@@ -22,7 +22,7 @@ Contributions of all sizes are welcome: bug reports, documentation improvements,
 
 Please take a moment to understand how this repository is structured before making changes.
 
-- `install.sh` is the top-level installer entrypoint. Build-pipeline logic lives in `scripts/lib/*.sh` (DMG handling, ASAR patching, native modules, Electron download, bundled plugins) and the runtime launcher body lives in `launcher/start.sh.template`. Edit the template for launcher behavior and a lib file for build-pipeline behavior — `install.sh` itself is just orchestration plus the prelude that bakes install-time identity into the generated launcher.
+- `install.sh` is the top-level installer entrypoint. Build-pipeline logic lives in `scripts/lib/*.sh` (official package handling, ASAR patching, bundled plugins) and the runtime launcher body lives in `launcher/start.sh.template`.
 - `scripts/build-deb.sh`, `scripts/build-rpm.sh`, and `scripts/build-pacman.sh` package an already-generated `codex-app/`.
 - `scripts/install-deps.sh` bootstraps local development dependencies.
 - `updater/` contains the Rust update manager.
@@ -90,7 +90,7 @@ bash scripts/install-deps.sh
 This project requires:
 
 - `python3`
-- `7z` or `7zz`
+- `ar` (from binutils) and `tar`
 - `curl`
 - `unzip`
 - `make`

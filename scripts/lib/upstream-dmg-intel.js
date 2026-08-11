@@ -177,50 +177,39 @@ function sourceKind(sourcePath) {
   if (stat.isDirectory()) {
     return "directory";
   }
-  if (/\.dmg$/i.test(sourcePath)) {
-    return "dmg";
+  if (/\.deb$/i.test(sourcePath)) {
+    return "deb";
   }
   throw new Error(`Unsupported upstream source: ${sourcePath}`);
 }
 
-function findAppDir(extractDir) {
-  const stack = [extractDir];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    const entries = fs.readdirSync(current, { withFileTypes: true });
-    entries.sort((a, b) => a.name.localeCompare(b.name));
-    for (const dirent of entries) {
-      if (!dirent.isDirectory()) {
-        continue;
-      }
-      const fullPath = path.join(current, dirent.name);
-      if (/\.app$/i.test(dirent.name)) {
-        return fullPath;
-      }
-      stack.push(fullPath);
-    }
-  }
-  return null;
-}
+function extractDebToApp({ debPath, workDir }) {
+  const archiveDir = path.join(workDir, "deb-archive");
+  const payloadDir = path.join(workDir, "deb-payload");
+  const appDir = path.join(workDir, "official-linux-app");
+  fs.mkdirSync(archiveDir, { recursive: true });
+  fs.mkdirSync(payloadDir, { recursive: true });
 
-function extractDmgToApp({ dmgPath, workDir }) {
-  const extractDir = path.join(workDir, "dmg-extract");
-  fs.mkdirSync(extractDir, { recursive: true });
-  const sevenZipCommand = commandOnPath("7zz") ?? commandOnPath("7z");
-  if (sevenZipCommand == null) {
-    throw new Error("7zz or 7z is required to inspect DMG files");
+  const ar = spawnSync("ar", ["x", debPath], { cwd: archiveDir, encoding: "utf8" });
+  if (ar.status !== 0) {
+    throw new Error(`ar failed to extract Debian package: ${(ar.stderr || ar.stdout || "").trim()}`);
   }
-  const seven = spawnSync(sevenZipCommand, ["x", "-y", "-snl", dmgPath, `-o${extractDir}`], {
+  const dataArchive = fs.readdirSync(archiveDir).find((entry) => /^data[.]tar(?:[.].+)?$/.test(entry));
+  if (dataArchive == null) {
+    throw new Error(`Official Linux package has no data archive: ${debPath}`);
+  }
+  const tar = spawnSync("tar", ["-xf", path.join(archiveDir, dataArchive), "-C", payloadDir], {
     encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
   });
-  const appDir = findAppDir(extractDir);
-  if (seven.status !== 0 && appDir == null) {
-    throw new Error(`7z failed to extract DMG: ${(seven.stderr || seven.stdout || "").trim()}`);
+  if (tar.status !== 0) {
+    throw new Error(`tar failed to extract Debian package payload: ${(tar.stderr || tar.stdout || "").trim()}`);
   }
-  if (appDir == null) {
-    throw new Error(`Could not find .app bundle in extracted DMG: ${dmgPath}`);
+  const resourcesDir = path.join(payloadDir, "usr/lib/chatgpt/resources");
+  if (!fs.existsSync(path.join(resourcesDir, "app.asar"))) {
+    throw new Error(`Could not find the official Linux app resources in ${debPath}`);
   }
+  fs.mkdirSync(path.join(appDir, "Contents"), { recursive: true });
+  fs.symlinkSync(resourcesDir, path.join(appDir, "Contents/Resources"), "dir");
   return appDir;
 }
 
@@ -371,13 +360,13 @@ function createInventory({ registry = null, sourcePath, workDir = null } = {}) {
   const kind = sourceKind(resolvedSourcePath);
   let scratchDir = workDir;
   let cleanupScratch = false;
-  if (kind === "dmg" && scratchDir == null) {
+  if (kind === "deb" && scratchDir == null) {
     scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-upstream-intel-"));
     cleanupScratch = true;
   }
 
   try {
-    const appDir = kind === "dmg" ? extractDmgToApp({ dmgPath: resolvedSourcePath, workDir: scratchDir }) : resolvedSourcePath;
+    const appDir = kind === "deb" ? extractDebToApp({ debPath: resolvedSourcePath, workDir: scratchDir }) : resolvedSourcePath;
     const files = collectInventoryFiles(appDir).sort((a, b) => a.relativePath.localeCompare(b.relativePath));
     return {
       generatedAt: new Date().toISOString(),
@@ -1488,7 +1477,7 @@ function markdownList(items) {
 }
 
 function renderDriftMarkdown(report) {
-  const lines = ["# Upstream DMG Drift Report", ""];
+  const lines = ["# Upstream Package Drift Report", ""];
   lines.push(`Generated: ${report.generatedAt}`);
   lines.push(`Candidate: ${report.candidateSource?.path ?? "unknown"}`);
   if (report.baselineSource != null) {
@@ -1630,11 +1619,11 @@ function renderActionPlanMarkdown(driftReport, candidateProtected, mapDrift = nu
     } else if (item.classification === "NEW_UPSTREAM_CAPABILITY") {
       lines.push("Action: decide whether Linux needs a port, shim, explicit unsupported gate, or new optional feature.");
     } else if (item.classification === "PATCH_BROKEN") {
-      lines.push("Action: repair the patch descriptor or feature patch before accepting the DMG.");
+      lines.push("Action: repair the patch descriptor or feature patch before accepting the package.");
     } else if (item.classification === "PATCH_INTEGRITY_BROKEN") {
-      lines.push("Action: stop candidate acceptance, diagnose the transactional patch or rollback failure, and rebuild from the fresh current DMG; do not promote bytes whose original state cannot be proven.");
+      lines.push("Action: stop candidate acceptance, diagnose the transactional patch or rollback failure, and rebuild from the fresh current package; do not promote bytes whose original state cannot be proven.");
     } else if (item.classification === "PATCH_REVIEW") {
-      lines.push("Action: review optional patch warning/skip details; do not block DMG acceptance unless a protected surface is also missing or broken.");
+      lines.push("Action: review optional patch warning/skip details; do not block package acceptance unless a protected surface is also missing or broken.");
     } else if (item.classification === "LINUX_SUBSTRATE_GAP") {
       lines.push("Action: add or map the missing Linux substrate path before claiming parity.");
       lines.push(`Missing paths: ${(item.missingPaths ?? []).join(", ")}`);
@@ -1642,7 +1631,7 @@ function renderActionPlanMarkdown(driftReport, candidateProtected, mapDrift = nu
       lines.push("Action: inspect the missing required anchors and decide whether the registry, upstream map, or Linux substrate needs updating.");
       lines.push(`Missing anchors: ${(item.missingAnchors ?? []).map((anchor) => anchor.id).join(", ")}`);
     } else if (item.classification === "PROTECTED_SURFACE_MISSING") {
-      lines.push("Action: locate the upstream replacement surface or explicitly retire the Linux mirror before accepting the DMG.");
+      lines.push("Action: locate the upstream replacement surface or explicitly retire the Linux mirror before accepting the package.");
     }
     lines.push("");
   }
@@ -1675,7 +1664,7 @@ function resolveBaselinePath({ autoBaseline = false, baselinePath = null, candid
   if (baselinePath != null || !autoBaseline) {
     return baselinePath;
   }
-  const defaultBaselinePath = path.join(repoRoot, "Codex.dmg");
+  const defaultBaselinePath = path.join(repoRoot, "ChatGPT.deb");
   if (!fs.existsSync(defaultBaselinePath)) {
     return null;
   }

@@ -292,14 +292,14 @@ fn maybe_prune_caches(config: &RuntimeConfig, state: &PersistedState) {
             info!(
                 pruned_dmgs = summary.pruned_dmgs,
                 pruned_temps = summary.pruned_temps,
-                "pruned updater DMG cache"
+                "pruned updater package cache"
             );
         }
         Ok(summary) if summary.skipped_locked => {
-            info!("skipping DMG cache cleanup while another updater flow holds its lease");
+            info!("skipping package cache cleanup while another updater flow holds its lease");
         }
         Ok(_) => {}
-        Err(error) => warn!(?error, "failed to prune updater DMG cache"),
+        Err(error) => warn!(?error, "failed to prune updater package cache"),
     }
     maybe_prune_generated_artifacts(config);
 }
@@ -1159,9 +1159,9 @@ async fn build_pending_detected_update(
         .artifact_paths
         .dmg_path
         .clone()
-        .context("detected update is missing its downloaded DMG")?;
+        .context("detected update is missing its downloaded package")?;
     if !dmg_path.is_file() {
-        anyhow::bail!("detected update DMG is missing: {}", dmg_path.display());
+        anyhow::bail!("detected update package is missing: {}", dmg_path.display());
     }
 
     builder::build_update(config, state, paths, &candidate_version, &dmg_path).await?;
@@ -1190,7 +1190,7 @@ async fn run_check_cycle_with_options(
         maybe_notify_cli_missing(state, paths, config.notifications)?;
     }
 
-    // Keep wrapper state fresh even while a DMG package is pending; otherwise
+    // Keep wrapper state fresh even while an upstream package is pending; otherwise
     // `status --json` could keep advertising stale wrapper candidates.
     if let Err(error) = detect_and_record_wrapper_update(config, state, paths) {
         warn!(?error, "wrapper update detection failed during check cycle");
@@ -1256,11 +1256,11 @@ async fn run_check_cycle_with_options(
                     if build_detected_update {
                         state.deferred_build = false;
                         persist_state(paths, state)?;
-                        info!("upstream fingerprint unchanged; building cached deferred DMG");
+                        info!("upstream fingerprint unchanged; building cached deferred package");
                         build_pending_detected_update(config, state, paths).await?;
                     } else {
                         persist_state(paths, state)?;
-                        info!("upstream fingerprint unchanged; reusing cached deferred DMG");
+                        info!("upstream fingerprint unchanged; reusing cached deferred package");
                     }
                     return Ok(());
                 }
@@ -1284,7 +1284,7 @@ async fn run_check_cycle_with_options(
                 Some(downloaded.path),
                 Some(downloaded.sha256),
             )?;
-            info!("downloaded DMG hash matches installed app; no update detected");
+            info!("downloaded package hash matches installed app; no update detected");
             return Ok(());
         }
 
@@ -1309,7 +1309,7 @@ async fn run_check_cycle_with_options(
             state.status = UpdateStatus::Idle;
             state.artifact_paths.dmg_path = Some(downloaded.path);
             persist_state(paths, state)?;
-            info!("downloaded DMG hash matches current cached DMG; no update detected");
+            info!("downloaded package hash matches the current cached package; no update detected");
             return Ok(());
         }
 
@@ -1330,14 +1330,14 @@ async fn run_check_cycle_with_options(
             "update_detected",
             "New ChatGPT Desktop update detected",
             if build_detected_update {
-                "Preparing a local Linux package from the new upstream DMG."
+                "Preparing a local Linux package from the new upstream package."
             } else {
                 "Automatic update builds are off. Open ChatGPT Desktop and choose Check for updates to build it."
             },
         )?;
 
         if !build_detected_update {
-            info!("automatic update builds are disabled; keeping the current DMG pending");
+            info!("automatic update builds are disabled; keeping the current package pending");
             return Ok(());
         }
 
@@ -1348,7 +1348,7 @@ async fn run_check_cycle_with_options(
     .await;
 
     // Every check outcome, including an early no-update return, releases its
-    // DMG lease before bounded cache cleanup runs here.
+    // package lease before bounded cache cleanup runs here.
     maybe_prune_caches(config, state);
     if let Err(error) = result {
         if let Some(mut snapshot) = deferred_refresh_snapshot {
@@ -1707,7 +1707,7 @@ fn complete_current_dmg_update_if_already_installed(
     }
 
     clear_dmg_update_candidate(state, paths, None, Some(candidate_sha256))?;
-    info!("recovered DMG update state because the candidate DMG is already installed");
+    info!("recovered package update state because the candidate package is already installed");
     Ok(true)
 }
 

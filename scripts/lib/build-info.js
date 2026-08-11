@@ -280,7 +280,7 @@ function recordAppVersionMetadata(metadataPath, appDir) {
   metadata.appVersion = appVersion;
   const metadataDir = path.dirname(metadataPath);
   fs.mkdirSync(metadataDir, { recursive: true });
-  const stagingDir = fs.mkdtempSync(path.join(metadataDir, ".upstream-dmg-metadata-"));
+  const stagingDir = fs.mkdtempSync(path.join(metadataDir, ".upstream-artifact-metadata-"));
   const stagingPath = path.join(stagingDir, path.basename(metadataPath));
   try {
     fs.writeFileSync(stagingPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
@@ -308,11 +308,18 @@ function linuxTargetInfo(target) {
 
 function buildInfo(options) {
   const repoDir = path.resolve(options.repoDir);
-  const dmgPath = path.resolve(options.dmgPath);
+  const artifactPath = path.resolve(options.artifactPath ?? options.dmgPath);
   const appDir = path.resolve(options.appDir);
   const featuresRoot = linuxFeaturesRoot({ featuresRoot: options.featuresRoot });
   const env = options.env ?? process.env;
   const target = options.linuxTarget ?? detectLinuxTargetContext();
+  const upstreamArtifact = {
+    kind: "official-linux-deb",
+    fileName: path.basename(artifactPath),
+    sizeBytes: fs.statSync(artifactPath).size,
+    sha256: sha256File(artifactPath),
+    appVersion: appBundleVersion(appDir),
+  };
   return {
     schemaVersion: 1,
     generatedAt: isoTimestamp(env),
@@ -320,12 +327,8 @@ function buildInfo(options) {
       id: options.appId,
       displayName: options.appDisplayName,
     },
-    upstreamDmg: {
-      fileName: path.basename(dmgPath),
-      sizeBytes: fs.statSync(dmgPath).size,
-      sha256: sha256File(dmgPath),
-      appVersion: appBundleVersion(appDir),
-    },
+    upstreamArtifact,
+    upstreamDmg: upstreamArtifact,
     electronVersion: options.electronVersion,
     source: sourceInfo(repoDir, env),
     linuxTarget: linuxTargetInfo(target),
@@ -349,19 +352,19 @@ function main() {
   const [
     repoDir,
     installDir,
-    dmgPath,
+    artifactPath,
     appDir,
     electronVersion,
     appId,
     appDisplayName,
   ] = process.argv.slice(2);
-  if ([repoDir, installDir, dmgPath, appDir, electronVersion, appId, appDisplayName].some((value) => !value)) {
-    console.error("Usage: build-info.js <repo-dir> <install-dir> <dmg-path> <app-dir> <electron-version> <app-id> <app-display-name>");
+  if ([repoDir, installDir, artifactPath, appDir, electronVersion, appId, appDisplayName].some((value) => !value)) {
+    console.error("Usage: build-info.js <repo-dir> <install-dir> <artifact-path> <app-dir> <electron-version> <app-id> <app-display-name>");
     process.exit(1);
   }
   writeBuildInfo({
     repoDir,
-    dmgPath,
+    artifactPath,
     appDir,
     electronVersion,
     appId,

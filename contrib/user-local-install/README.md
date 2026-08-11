@@ -8,8 +8,8 @@ It adds:
 - self-contained maintenance scripts under `~/.local/opt/codex-desktop-linux/bin`
 - thin launch/check/update/version wrappers under `~/.local/bin`
 - a desktop entry under `~/.local/share/applications`
-- an icon extracted from the local `Codex.dmg`
-- metadata tracking for the wrapper repo and cached `Codex.dmg`
+- the icon staged by the official Linux package build
+- metadata tracking for the wrapper repo and cached official package
 - an optional weekly `systemd --user` timer for unattended update checks and rebuilds (opt-in)
 
 ## Files
@@ -74,7 +74,7 @@ The installer:
 5. reloads the user `systemd` daemon if available
 6. enables the weekly timer only if `--enable-timer` was passed
 7. refreshes desktop metadata if available
-8. records local metadata and extracts the icon if `Codex.dmg` already exists
+8. records local metadata and refreshes the staged icon when available
 
 ## Commands
 
@@ -89,10 +89,10 @@ codex-desktop-version
 
 ## Notes
 
-- The icon is not committed as a binary asset here. It is generated locally from `Codex.dmg`.
-- The helper scripts track both upstream wrapper changes and upstream `Codex.dmg` headers.
+- The icon is taken from the generated app, with the repository Linux icon as a fallback.
+- The helper scripts track both wrapper changes and official Linux package headers.
 - The helper scripts are copied into `~/.local/opt` and do not run from the git checkout directly.
 - The X11/XWayland preference is stored in `~/.config/codex-desktop-linux/user-local.env` and is preserved across updater refreshes.
 - The weekly timer runs `codex-desktop-update --quiet`. It is opt-in: pass `--enable-timer` to `install-user-local.sh` to activate it, or run `systemctl --user enable --now codex-desktop-update.timer` manually after install.
-- Automated rebuilds never bypass the running-app or DMG acceptance gates. They may build a candidate while ChatGPT Desktop is open, but promotion waits for the in-app after-exit flow or fails safely for a manual/timer run. Retry after closing the app.
+- Automated rebuilds never bypass the running-app or upstream-package acceptance gates. They may build a candidate while ChatGPT Desktop is open, but promotion waits for the in-app after-exit flow or fails safely for a manual/timer run. Retry after closing the app.
 - A successful transactional update retains only the immediately previous app backup. Older exact managed backups are pruned; manually named paths, files, and symlinks are left alone.

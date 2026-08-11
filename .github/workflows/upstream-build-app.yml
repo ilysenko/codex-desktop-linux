@@ -25,6 +25,7 @@ on:
       - scripts/lib/upstream-dmg-acceptance.js
       - scripts/lib/upstream-dmg-release-profile.js
       - scripts/lib/linux-features.js
+      - scripts/lib/official-linux-package.sh
       - computer-use-linux/src/bin/codex-chrome-extension-host.rs
       - linux-features/**
       - .github/workflows/upstream-build-app.yml
@@ -52,6 +53,7 @@ on:
       - scripts/lib/upstream-dmg-acceptance.js
       - scripts/lib/upstream-dmg-release-profile.js
       - scripts/lib/linux-features.js
+      - scripts/lib/official-linux-package.sh
       - computer-use-linux/src/bin/codex-chrome-extension-host.rs
       - linux-features/**
       - .github/workflows/upstream-build-app.yml
@@ -65,13 +67,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg
-  UPSTREAM_DMG_PATH: /tmp/codex-upstream-ci/Codex.dmg
+  UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_amd64.deb
+  UPSTREAM_DMG_PATH: /tmp/codex-upstream-ci/ChatGPT.deb
   DMG_CACHE_SCHEMA_VERSION: v1
 
 jobs:
   build-app-upstream-dmg:
-    name: Build App Against Upstream DMG
+    name: Build App Against Official Linux Package
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -87,9 +89,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y p7zip-full make g++ python3 curl unzip
+          sudo apt-get install -y binutils make g++ python3 curl unzip tar
 
-      - name: Capture upstream DMG metadata
+      - name: Capture upstream package metadata
         id: upstream-metadata
         run: |
           set -euo pipefail
@@ -124,14 +126,14 @@ jobs:
             echo "cache_segment=$cache_segment"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Restore cached upstream DMG
+      - name: Restore cached upstream package
         id: dmg-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: /tmp/codex-upstream-ci/Codex.dmg
+          path: /tmp/codex-upstream-ci/ChatGPT.deb
           key: upstream-dmg-${{ env.DMG_CACHE_SCHEMA_VERSION }}-${{ steps.upstream-metadata.outputs.cache_segment }}
 
-      - name: Download upstream DMG
+      - name: Download upstream package
         run: |
           set -euo pipefail
           scripts/ci/download-upstream-dmg.sh \
@@ -139,7 +141,7 @@ jobs:
             "$UPSTREAM_DMG_PATH" \
             --reuse-existing
 
-      - name: Record local DMG fingerprint
+      - name: Record local package fingerprint
         id: local-dmg
         run: |
           set -euo pipefail
@@ -170,7 +172,7 @@ jobs:
           }
           JSON
 
-      - name: Build app from upstream DMG
+      - name: Build app from official Linux package
         id: acceptance-build
         continue-on-error: true
         env:
@@ -179,7 +181,7 @@ jobs:
           CODEX_ACCEPTANCE_SOURCE: github-actions
           CODEX_UPSTREAM_DMG_METADATA_JSON: ${{ github.workspace }}/upstream-dmg-metadata.json
           REBUILD_REPORT_DIR: ${{ github.workspace }}/upstream-acceptance
-        run: make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg
+        run: make build-app ARTIFACT=/tmp/codex-upstream-ci/ChatGPT.deb
 
       - name: Import staged Browser clients through node_repl
         if: steps.acceptance-build.outcome == 'success'
@@ -188,7 +190,7 @@ jobs:
           CODEX_STAGED_BUNDLED_PLUGINS_ROOT: ${{ github.workspace }}/codex-app/resources/plugins/openai-bundled/plugins
         run: node --test scripts/lib/browser-client-node-repl-runtime.test.js
 
-      - name: Upload upstream DMG metadata artifact
+      - name: Upload upstream package metadata artifact
         # The transactional installer records a decision before returning a
         # rejected status, so diagnostics remain available on failed runs.
         if: always()
@@ -206,7 +208,7 @@ jobs:
         run: |
           if [ ! -f upstream-dmg-decision.json ]; then
             {
-              echo "## Upstream DMG acceptance"
+              echo "## Upstream package acceptance"
               echo
               echo "No decision artifact was produced; the run is inconclusive."
             } >> "$GITHUB_STEP_SUMMARY"
@@ -219,11 +221,11 @@ jobs:
           verdict="$(node -e 'console.log(require("./upstream-dmg-decision.json").verdict)')"
           case "$verdict" in
             accepted|accepted_with_warnings) exit 0 ;;
-            *) echo "Upstream DMG verdict: $verdict" >&2; exit 1 ;;
+            *) echo "Upstream package verdict: $verdict" >&2; exit 1 ;;
           esac
 
   reconcile-upstream-dmg-issue:
-    name: Reconcile Upstream DMG Drift Issue
+    name: Reconcile Upstream Package Drift Issue
     needs: build-app-upstream-dmg
     if: always() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -288,4 +290,4 @@ jobs:
               currentHttpIdentityKey: httpIdentity(currentMetadata)?.key ?? null,
               scanAll: true,
             });
-            core.info(`Upstream DMG issue reconciliation: ${JSON.stringify(result)}`);
+            core.info(`Upstream package issue reconciliation: ${JSON.stringify(result)}`);

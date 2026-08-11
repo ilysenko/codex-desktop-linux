@@ -5,7 +5,7 @@ ChatGPT Desktop for Linux wrapper: this repository's Linux patches, bundled feat
 packaging glue, launcher, and `codex-update-manager`.
 
 This is intentionally distinct from the upstream ChatGPT app update path. The
-upstream path tracks the official macOS DMG. This feature tracks newer builds of
+upstream path tracks the official Linux package. This feature tracks newer builds of
 `codex-desktop-linux` itself.
 
 ## User-facing behavior

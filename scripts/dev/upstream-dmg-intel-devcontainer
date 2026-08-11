@@ -5,19 +5,18 @@ usage() {
   cat <<'EOF'
 Usage: scripts/dev/upstream-dmg-intel-devcontainer [--candidate PATH|latest] [options]
 
-Run upstream DMG intelligence inside the repo devcontainer image. This keeps
-7zz/Node/tooling requirements out of the host while writing reports under the
+Run upstream package intelligence inside the repo devcontainer image. This keeps
+Node/tooling requirements out of the host while writing reports under the
 gitignored reports/upstream-dmg/ tree by default.
 
 Options:
-  --candidate PATH       Candidate Codex.dmg, extracted .app, or resources dir
-  --candidate latest     Download current upstream DMG into reports/upstream-dmg/downloads/
+  --candidate PATH       Candidate ChatGPT.deb, synthetic .app, or resources dir
+  --candidate latest     Download the current official package into reports/upstream-dmg/downloads/
                          Default when no candidate is passed
-  --candidate-url URL    Upstream DMG URL for --candidate latest
-                         Default: https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg
-  --baseline PATH        Optional known-good baseline DMG or extracted .app;
-                         defaults to repo ./Codex.dmg when different
-  --no-baseline          Do a candidate-only scan even when ./Codex.dmg exists
+  --candidate-url URL    Official Linux package URL for --candidate latest
+  --baseline PATH        Optional known-good package or app;
+                         defaults to repo ./ChatGPT.deb when different
+  --no-baseline          Do a candidate-only scan even when ./ChatGPT.deb exists
   --patch-report PATH    Optional patch-report.json
   --registry PATH        Optional protected-surface registry path
   --output-dir DIR       Output dir inside this repo; default is tool default
@@ -29,13 +28,13 @@ Options:
 
 Examples:
   scripts/dev/upstream-dmg-intel-devcontainer
-  scripts/dev/upstream-dmg-intel-devcontainer --candidate /tmp/Codex-new.dmg
+  scripts/dev/upstream-dmg-intel-devcontainer --candidate /tmp/chatgpt_amd64.deb
 EOF
 }
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-image="${CODEX_DMG_INTEL_IMAGE:-codex-desktop-linux-devcontainer:local}"
-candidate_url="${CODEX_DMG_INTEL_CANDIDATE_URL:-${CODEX_UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg}}"
+image="${CODEX_UPSTREAM_INTEL_IMAGE:-codex-desktop-linux-devcontainer:local}"
+candidate_url="${CODEX_UPSTREAM_INTEL_CANDIDATE_URL:-${CODEX_UPSTREAM_ARTIFACT_URL:-https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_amd64.deb}}"
 build_image=auto
 candidate_path=""
 baseline_path=""
@@ -221,7 +220,7 @@ if [[ -z "$candidate_path" || "$candidate_path" == "latest" ]]; then
       exit 2
       ;;
   esac
-  mapped_path="/workspaces/codex-desktop-linux/reports/upstream-dmg/downloads/Codex.dmg"
+  mapped_path="/workspaces/codex-desktop-linux/reports/upstream-dmg/downloads/ChatGPT.deb"
   container_args+=(--candidate "$mapped_path")
 else
   map_input_path "Candidate" "$candidate_path"
@@ -262,15 +261,15 @@ docker_args=(--rm "${mounts[@]}" -w /workspaces/codex-desktop-linux)
 if [[ -z "$candidate_path" || "$candidate_path" == "latest" ]]; then
   exec docker run \
     "${docker_args[@]}" \
-    -e CODEX_DMG_INTEL_CANDIDATE_URL="$candidate_url" \
+    -e CODEX_UPSTREAM_INTEL_CANDIDATE_URL="$candidate_url" \
     "$image" \
     bash -lc '
       set -euo pipefail
-      candidate_path="/workspaces/codex-desktop-linux/reports/upstream-dmg/downloads/Codex.dmg"
+      candidate_path="/workspaces/codex-desktop-linux/reports/upstream-dmg/downloads/ChatGPT.deb"
       mkdir -p "$(dirname "$candidate_path")"
       tmp_path="${candidate_path}.part"
       curl -fL --retry 3 --connect-timeout 30 --max-time 600 \
-        -o "$tmp_path" "$CODEX_DMG_INTEL_CANDIDATE_URL"
+        -o "$tmp_path" "$CODEX_UPSTREAM_INTEL_CANDIDATE_URL"
       mv "$tmp_path" "$candidate_path"
       node scripts/dev/upstream-dmg-intel.js "$@"
     ' bash "${container_args[@]}"

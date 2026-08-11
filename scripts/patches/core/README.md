@@ -6,9 +6,9 @@ collected by `scripts/patches/runner.js`.
 Use this tree only for shipped Linux compatibility patches. Optional user-facing
 extras still belong in `linux-features/`.
 
-The patch contract is fresh-DMG-only. Descriptors should target the current
+The patch contract is fresh-package-only. Descriptors should target the current
 upstream app layout, stay idempotent, and report drift when a current upstream
-needle is missing. Do not add old-DMG fallback branches, compatibility barrels,
+needle is missing. Do not add old-package fallback branches, compatibility barrels,
 or legacy import surfaces for removed internal patch APIs.
 
 Current namespaces:

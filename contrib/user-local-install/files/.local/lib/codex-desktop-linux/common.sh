@@ -3,7 +3,12 @@ set -euo pipefail
 
 OPT_ROOT="${HOME}/.local/opt/codex-desktop-linux"
 APP_DIR="${OPT_ROOT}/codex-app"
-DMG_URL="https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg"
+case "$(uname -m)" in
+    x86_64) UPSTREAM_ARTIFACT_ARCH="amd64" ;;
+    aarch64) UPSTREAM_ARTIFACT_ARCH="arm64" ;;
+    *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+UPSTREAM_ARTIFACT_URL="https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_${UPSTREAM_ARTIFACT_ARCH}.deb"
 
 XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
@@ -41,6 +46,12 @@ load_metadata() {
         # shellcheck disable=SC1090
         source "$METADATA_FILE"
     fi
+    # Import metadata written by releases predating the official Linux package.
+    ARTIFACT_SHA256="${ARTIFACT_SHA256:-${DMG_SHA256-}}"
+    ARTIFACT_SIZE="${ARTIFACT_SIZE:-${DMG_SIZE-}}"
+    ARTIFACT_ETAG="${ARTIFACT_ETAG:-${DMG_ETAG-}}"
+    ARTIFACT_LAST_MODIFIED="${ARTIFACT_LAST_MODIFIED:-${DMG_LAST_MODIFIED-}}"
+    ARTIFACT_CONTENT_LENGTH="${ARTIFACT_CONTENT_LENGTH:-${DMG_CONTENT_LENGTH-}}"
 }
 
 write_kv() {
@@ -59,10 +70,9 @@ effective_repo_dir() {
     printf '%s\n' "$SOURCE_REPO_DIR"
 }
 
-# install.sh caches the upstream DMG next to itself in the build repo
-# checkout, never under $OPT_ROOT.
-cached_dmg_file() {
-    printf '%s/Codex.dmg\n' "$(effective_repo_dir)"
+# install.sh caches the official package next to itself in the build checkout.
+cached_upstream_artifact_file() {
+    printf '%s/ChatGPT.deb\n' "$(effective_repo_dir)"
 }
 
 current_repo_head() {
@@ -457,8 +467,8 @@ prepare_build_repo() {
     BUILD_REPO_DIR="$MANAGED_REPO_DIR"
 }
 
-remote_dmg_headers() {
-    curl -fsSIL "$DMG_URL" | tr -d '\r'
+remote_upstream_artifact_headers() {
+    curl -fsSIL "$UPSTREAM_ARTIFACT_URL" | tr -d '\r'
 }
 
 header_value() {
@@ -469,7 +479,7 @@ header_value() {
 
 extract_icon() {
     ensure_layout
-    local dmg_file source_icon tmp_dir
+    local source_icon
     source_icon="$APP_DIR/.codex-linux/codex-desktop.png"
     if [ -f "$source_icon" ]; then
         cp "$source_icon" "$ICON_PATH"
@@ -482,28 +492,14 @@ extract_icon() {
         return 0
     fi
 
-    dmg_file="$(cached_dmg_file)"
-    tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' RETURN
-
-    7z e -y "$dmg_file" "ChatGPT Installer/ChatGPT.app/Contents/Resources/electron.icns" "-o${tmp_dir}" >/dev/null
-    python3 - "$tmp_dir/electron.icns" "$ICON_PATH" <<'PY'
-from PIL import Image
-import sys
-
-source_path, target_path = sys.argv[1], sys.argv[2]
-with Image.open(source_path) as img:
-    img.load()
-    img.thumbnail((512, 512))
-    img.save(target_path, format="PNG")
-PY
+    return 1
 }
 
 record_metadata() {
     ensure_layout
     load_install_config
 
-    local build_repo_dir repo_head source_repo_head_value source_overlay_sha dmg_file dmg_sha256 dmg_size electron_version dmg_headers dmg_etag dmg_last_modified dmg_content_length build_time repo_origin
+    local build_repo_dir repo_head source_repo_head_value source_overlay_sha artifact_file artifact_sha256 artifact_size electron_version artifact_headers artifact_etag artifact_last_modified artifact_content_length build_time repo_origin
     build_repo_dir="$(effective_repo_dir)"
 
     if [ -d "$build_repo_dir/.git" ]; then
@@ -513,23 +509,23 @@ record_metadata() {
         repo_head="unavailable"
         repo_origin="unavailable"
     fi
-    dmg_file="$(cached_dmg_file)"
-    if [ "${CODEX_USER_LOCAL_RECORD_DMG_FINGERPRINT:-0}" = "1" ] && [ -f "$dmg_file" ]; then
-        dmg_sha256="$(sha256sum "$dmg_file" | awk '{ print $1 }')"
-        dmg_size="$(stat -c '%s' "$dmg_file")"
+    artifact_file="$(cached_upstream_artifact_file)"
+    if [ "${CODEX_USER_LOCAL_RECORD_ARTIFACT_FINGERPRINT:-0}" = "1" ] && [ -f "$artifact_file" ]; then
+        artifact_sha256="$(sha256sum "$artifact_file" | awk '{ print $1 }')"
+        artifact_size="$(stat -c '%s' "$artifact_file")"
     else
-        dmg_sha256="unavailable"
-        dmg_size="unavailable"
+        artifact_sha256="unavailable"
+        artifact_size="unavailable"
     fi
     electron_version="$(cat "$APP_DIR/version")"
     build_time="$(date -Iseconds)"
     source_repo_head_value="$(source_repo_head 2>/dev/null || true)"
     source_overlay_sha="$(source_repo_overlay_signature 2>/dev/null || true)"
 
-    dmg_headers="$(remote_dmg_headers 2>/dev/null || true)"
-    dmg_etag="$(header_value "$dmg_headers" "etag")"
-    dmg_last_modified="$(header_value "$dmg_headers" "last-modified")"
-    dmg_content_length="$(header_value "$dmg_headers" "content-length")"
+    artifact_headers="$(remote_upstream_artifact_headers 2>/dev/null || true)"
+    artifact_etag="$(header_value "$artifact_headers" "etag")"
+    artifact_last_modified="$(header_value "$artifact_headers" "last-modified")"
+    artifact_content_length="$(header_value "$artifact_headers" "content-length")"
 
     {
         write_kv BUILD_TIME "$build_time"
@@ -537,11 +533,11 @@ record_metadata() {
         write_kv REPO_HEAD "$repo_head"
         write_kv SOURCE_REPO_HEAD "$source_repo_head_value"
         write_kv SOURCE_OVERLAY_SHA256 "$source_overlay_sha"
-        write_kv DMG_SHA256 "$dmg_sha256"
-        write_kv DMG_SIZE "$dmg_size"
-        write_kv DMG_ETAG "$dmg_etag"
-        write_kv DMG_LAST_MODIFIED "$dmg_last_modified"
-        write_kv DMG_CONTENT_LENGTH "$dmg_content_length"
+        write_kv ARTIFACT_SHA256 "$artifact_sha256"
+        write_kv ARTIFACT_SIZE "$artifact_size"
+        write_kv ARTIFACT_ETAG "$artifact_etag"
+        write_kv ARTIFACT_LAST_MODIFIED "$artifact_last_modified"
+        write_kv ARTIFACT_CONTENT_LENGTH "$artifact_content_length"
         write_kv ELECTRON_VERSION "$electron_version"
         write_kv APP_DIR "$APP_DIR"
         write_kv ICON_PATH "$ICON_PATH"

@@ -1,9 +1,9 @@
 ---
 name: upstream-dmg-watchdog
-description: Run the versioned upstream DMG probe, repair worker, guarded PR, and sequential Nix refresh flow.
+description: Run the versioned upstream Linux package probe, repair worker, guarded PR, and sequential Nix refresh flow.
 ---
 
-# Upstream DMG watchdog
+# Upstream Linux package watchdog
 
 Read and follow `docs/upstream-dmg-watchdog.md` and repository `AGENTS.md`.
 Use `scripts/automation/upstream-dmg-watchdog/watchdog.py` for every state
@@ -29,7 +29,7 @@ instead of `campaign-complete` after an accepted main or confirmed repair merge.
 
 Classify the changed paths before validation. When every changed path belongs
 to the affected `linux-features/<id>/` directories, use the documented
-feature-only fast path: run only their Node tests, current-DMG acceptance, and
+feature-only fast path: run only their Node tests, current-package acceptance, and
 `nix-preflight --target .#checks.x86_64-linux.nix-linux-features-multi-feature`.
 Open the repair PR after these focused checks and let the six GitHub gates run
 in parallel. Do not run `ci-local.sh pr` or local Debian/RPM/pacman builds for a

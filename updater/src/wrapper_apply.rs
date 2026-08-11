@@ -8,8 +8,8 @@
 //!   pulls the managed checkout and re-runs `install.sh` in place as the user
 //!   (no privilege escalation).
 //! - **Packaged** installs fetch the wrapper source into a managed clone, build
-//!   a fresh native package from the cached DMG, and install it with `pkexec`.
-//!   When the build toolchain (cargo / node / a DMG extractor) is missing, this
+//!   a fresh native package from the cached official package, and install it with `pkexec`.
+//!   When the build toolchain (cargo, binutils, or tar) is missing, this
 //!   sends a desktop notification and returns an error so the feature marker can
 //!   remain in place for a later retry.
 
@@ -124,7 +124,7 @@ pub async fn run_apply_wrapper_update(
     if let Err(error) = crate::cache_cleanup::prune_dmg_cache(&config.workspace_root, state) {
         warn!(
             ?error,
-            "failed to prune updater DMG cache after wrapper apply"
+            "failed to prune updater package cache after wrapper apply"
         );
     }
     outcome
@@ -366,7 +366,7 @@ fn user_local_app_dir() -> Option<PathBuf> {
 }
 
 /// Packaged apply: fetch fresh wrapper source, rebuild a native package from the
-/// cached DMG, and install it with pkexec.
+/// cached upstream artifact, and install it with pkexec.
 async fn apply_packaged(
     config: &RuntimeConfig,
     state: &mut PersistedState,
@@ -388,8 +388,8 @@ async fn apply_packaged(
     let cached_dmg = cached_or_downloaded_dmg(config, state, paths).await?;
     let dmg_path = &cached_dmg.path;
 
-    // The package version must remain monotonic (timestamp+dmghash), so derive
-    // it from the cached DMG the same way the DMG path does.
+    // The package version must remain monotonic (timestamp+artifact hash), so
+    // derive it from the cached artifact through the existing state path.
     let candidate_version = derive_package_version(dmg_path)?;
 
     let artifacts = builder::build_update_from(
@@ -495,7 +495,7 @@ fn run_git(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Returns the cached DMG path, downloading it if no usable cache exists.
+/// Returns the cached upstream-package path, downloading it if no usable cache exists.
 struct CachedDmg {
     path: PathBuf,
     _lease: crate::cache_cleanup::DmgCacheLease,
@@ -525,7 +525,7 @@ async fn cached_or_downloaded_dmg(
     let downloaded =
         upstream::download_dmg(&client, &config.dmg_url, &downloads_dir, chrono::Utc::now())
             .await
-            .context("Failed to download upstream DMG for wrapper rebuild")?;
+            .context("Failed to download the official Linux package for wrapper rebuild")?;
     state.artifact_paths.dmg_path = Some(downloaded.path.clone());
     state.save_updater(&paths.state_file)?;
     Ok(CachedDmg {
@@ -534,8 +534,8 @@ async fn cached_or_downloaded_dmg(
     })
 }
 
-/// Derives a monotonic package version (`YYYY.MM.DD.HHMMSS+<sha8>`) from the DMG
-/// contents, matching the DMG update path's scheme.
+/// Derives a monotonic package version (`YYYY.MM.DD.HHMMSS+<sha8>`) from the
+/// upstream package contents.
 fn derive_package_version(dmg_path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
     let file = fs::File::open(dmg_path)
@@ -563,14 +563,10 @@ fn derive_package_version(dmg_path: &Path) -> Result<String> {
 /// Returns the first missing build dependency needed for a packaged rebuild, or
 /// `None` when the toolchain is present.
 fn missing_build_dependency() -> Option<&'static str> {
-    // install.sh needs a DMG extractor (7z/7zz) and the package build runs cargo
-    // for the updater; node is provided by the bundled managed runtime.
-    for (tool, label) in [("cargo", "cargo"), ("7zz", "7zz")] {
+    // install.sh extracts the official Debian package with ar and tar, while the
+    // package build runs cargo for the updater. Node is bundled by the project.
+    for (tool, label) in [("cargo", "cargo"), ("ar", "binutils"), ("tar", "tar")] {
         if which(tool).is_none() {
-            // 7z is an acceptable alternative to 7zz.
-            if tool == "7zz" && which("7z").is_some() {
-                continue;
-            }
             return Some(label);
         }
     }

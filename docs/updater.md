@@ -5,7 +5,7 @@ Default native packages install `codex-update-manager`, a companion
 
 It:
 
-- checks upstream `Codex.dmg` on daemon startup, every 6 hours, and in the
+- checks OpenAI's official Linux package on daemon startup, every 6 hours, and in the
   background on app launch when stale
 - rebuilds a local native package with `/opt/codex-desktop/update-builder`
   after detection; users who enable the opt-in deferred-build feature can
@@ -186,16 +186,16 @@ When off, a ready package waits for the user to choose **Update**.
 
 The disabled-by-default `deferred-update-build` Linux feature adds a separate
 **Build updates automatically** toggle. When off, background checks detect,
-download, and notify about the newest upstream DMG without starting the local
+download, and notify about the newest upstream package without starting the local
 package build. Choosing **Check for updates** revalidates upstream and builds
-the current DMG. If upstream replaced the candidate or the cached file was
-removed, that same check downloads the current DMG before building it.
-Fresh app-launch checks keep a deferred candidate without an upstream DMG
+the current package. If upstream replaced the candidate or the cached file was
+removed, that same check downloads the current package before building it.
+Fresh app-launch checks keep a deferred candidate without an upstream package
 request. Once the normal check interval expires, the updater uses HEAD to confirm
-its identity and reuses the cached DMG without downloading it again; an offline
+its identity and reuses the cached package without downloading it again; an offline
 background check leaves the deferred candidate pending.
 
-Detection still downloads the DMG because its content hash is the updater's
+Detection still downloads the package because its content hash is the updater's
 authoritative release identity. Disabling automatic builds avoids Electron,
 native-module, and package rebuild work; it does not turn update checks into a
 metadata-only request. Disabling the feature itself immediately restores core
@@ -264,8 +264,8 @@ PACKAGE_WITH_UPDATER=0 make update-native
 ```
 
 `make update-native` runs `git pull --ff-only`, regenerates `codex-app/` from a
-fresh upstream `Codex.dmg`, builds the native package, and installs it. The
-rebuild uses the shared [upstream DMG acceptance profile](upstream-dmg-acceptance.md);
+fresh official Linux package, builds the native package, and installs it. The
+rebuild uses the shared [upstream acceptance profile](upstream-dmg-acceptance.md);
 rejected and inconclusive candidates never replace the working generated app
 or advance to package installation.
 The rebuild evaluates only the Linux Features selected in the user's saved
@@ -291,8 +291,8 @@ Updater downloads are streamed to unique temporary files and published as
 `Codex-<sha256>.dmg` only after the file and parent directory are synced. The
 content-addressed path stays immutable while daemon and wrapper rebuild flows
 consume it under a shared lease, so cleanup and concurrent rebuilds cannot
-truncate or remove another build's DMG input. Startup and post-build cleanup
-retain the DMG referenced by updater state, remove older managed hash files,
+truncate or remove another build's package input. Startup and post-build cleanup
+retain the package referenced by updater state, remove older managed hash files,
 and delete strictly named download temporaries left by a killed process.
 Unrelated files and symlinks in `downloads/` are never removed.
 

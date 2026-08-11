@@ -21,8 +21,8 @@ that agents need without keeping them in the main quick-start.
   Rebuild candidate reports.
 - `target/`
   Rust build output for all workspace crates.
-- `Codex.dmg`
-  Cached upstream DMG.
+- `ChatGPT.deb`
+  Cached official upstream Linux package.
 - `linux-features/features.json`
   Gitignored local opt-in feature config.
 - `linux-features/local/`
@@ -36,7 +36,7 @@ that agents need without keeping them in the main quick-start.
 - `~/.local/state/codex-update-manager/service.log`
   Updater service log.
 - `~/.cache/codex-update-manager/`
-  Downloaded DMGs, rebuild workspaces, staged package artifacts, and build logs.
+  Downloaded upstream packages, rebuild workspaces, staged package artifacts, and build logs.
 - `~/.cache/codex-desktop/launcher.log`
   Launcher log for the default app identity.
 - `~/.local/state/codex-desktop/app.pid` and `webview.pid`
@@ -46,8 +46,8 @@ that agents need without keeping them in the main quick-start.
 
 ## Runtime Notes
 
-- DMG extraction can warn when `7z` cannot materialize the `/Applications`
-  symlink. This is acceptable if a `.app` bundle was extracted successfully.
+- The official Debian package is extracted with `ar` and `tar`; package members
+  using xz, gzip, zstd, or no compression are supported.
 - The managed Node.js runtime is installed under
   `codex-app/resources/node-runtime/`. Override only with
   `CODEX_MANAGED_NODE_VERSION`, `CODEX_MANAGED_NODE_URL`, and
@@ -85,7 +85,7 @@ that agents need without keeping them in the main quick-start.
 
 ## Runtime Expectations
 
-- `python3`, `7z`, `curl`, `unzip`, `tar`, `flock`, `make`, and `g++` are
+- `python3`, `ar`, `curl`, `unzip`, `tar`, `flock`, `make`, and `g++` are
   required for `install.sh`.
 - Native package builders require their format-specific tools (`dpkg-deb`,
   `rpmbuild`, `makepkg`/pacman tooling, or `appimagetool`).

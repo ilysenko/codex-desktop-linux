@@ -12,9 +12,9 @@ ExclusiveArch:  __ARCH__
 %endif
 
 %if __PACKAGE_WITH_UPDATER__
-Requires:       python3, /usr/bin/7z, polkit, curl, unzip, xdg-utils, gcc-c++, make
+Requires:       python3, /usr/bin/ar, /usr/bin/tar, polkit, curl, unzip, xdg-utils, gcc-c++, make
 %else
-Requires:       python3, /usr/bin/7z, curl, unzip, xdg-utils, gcc-c++, make
+Requires:       python3, /usr/bin/ar, /usr/bin/tar, curl, unzip, xdg-utils, gcc-c++, make
 %endif
 Requires:       libasound.so.2%{codex_elf_suffix}, libatk-bridge-2.0.so.0%{codex_elf_suffix}
 Requires:       libatk-1.0.so.0%{codex_elf_suffix}, libglib-2.0.so.0%{codex_elf_suffix}, libgtk-3.so.0%{codex_elf_suffix}
@@ -26,10 +26,10 @@ Requires:       libXrandr.so.2%{codex_elf_suffix}, libgbm.so.1%{codex_elf_suffix
 Recommends:     zenity, kdialog
 
 %description
-Community-built Linux package for ChatGPT Desktop generated from the macOS DMG.
+Linux packaging and extension layer for OpenAI's official ChatGPT Desktop package.
 Requires the Codex CLI to be available in PATH or CODEX_CLI_PATH.
 %if __PACKAGE_WITH_UPDATER__
-Local auto-updates rebuild a Linux package from the upstream Codex.dmg and therefore
+Local auto-updates rebuild a Linux package from OpenAI's official Linux package and therefore
 use the bundled managed Node.js runtime plus the local packaging toolchain listed in Requires.
 %else
 This package was built without codex-update-manager. Update manually from a trusted checkout.

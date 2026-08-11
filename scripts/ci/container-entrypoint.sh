@@ -53,7 +53,7 @@ prepare_apt_ci() {
         make \
         nodejs \
         npm \
-        p7zip-full \
+        binutils \
         pkg-config \
         python3 \
         tar \
@@ -151,8 +151,8 @@ run_as_ci_user() {
         "CI_PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         "PACKAGE_VERSION=$CI_PACKAGE_VERSION"
         "CI_DMG_PATH=${CI_DMG_PATH:-}"
-        "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg}"
-        "UPSTREAM_DMG_PATH=${UPSTREAM_DMG_PATH:-/tmp/codex-upstream-ci/Codex.dmg}"
+        "UPSTREAM_DMG_URL=${UPSTREAM_DMG_URL:-https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_amd64.deb}"
+        "UPSTREAM_DMG_PATH=${UPSTREAM_DMG_PATH:-/tmp/codex-upstream-ci/ChatGPT.deb}"
         "UPSTREAM_DMG_CACHE_HIT=${UPSTREAM_DMG_CACHE_HIT:-}"
         "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}"
         "CARGO_HOME=$CI_CARGO_HOME"
@@ -276,6 +276,7 @@ run_deb_job() {
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/launcher/webview-server.py'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-intel.js'
+    assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/official-linux-package.sh'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/patch-browser-client-iab-socket-scope.js'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-acceptance.js'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py'
@@ -393,6 +394,7 @@ run_rpm_job() {
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/launcher/webview-server.py'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-intel.js'
+    assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/official-linux-package.sh'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/patch-browser-client-iab-socket-scope.js'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-acceptance.js'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py'
@@ -506,6 +508,7 @@ run_pacman_job() {
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/install.sh'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/launcher/webview-server.py'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-intel.js'
+    assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/official-linux-package.sh'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/patch-browser-client-iab-socket-scope.js'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/upstream-dmg-acceptance.js'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/scripts/lib/candidate-promotion.py'
@@ -612,10 +615,10 @@ run_install_deps_job_as_root() {
 
     local output
     local status
-    output="$(./install.sh /tmp/nope.dmg 2>&1)" && status=0 || status=$?
+    output="$(./install.sh /tmp/nope.deb 2>&1)" && status=0 || status=$?
     printf '%s\n' "$output"
-    [ "$status" -ne 0 ] || error "Installer should fail for a missing DMG"
-    printf '%s\n' "$output" | grep -q "Provided DMG not found: /tmp/nope.dmg"
+    [ "$status" -ne 0 ] || error "Installer should fail for a missing upstream package"
+    printf '%s\n' "$output" | grep -q "Provided package not found: /tmp/nope.deb"
     if printf '%s\n' "$output" | grep -q "Node.js 20+ required"; then
         error "Installer still failed Node preflight after install-deps"
     fi
@@ -671,33 +674,33 @@ fs.writeFileSync("upstream-dmg-metadata.json", JSON.stringify(metadata, null, 2)
 NODE
 
     append_summary "Upstream Build App" \
-        "DMG URL: \`$UPSTREAM_DMG_URL\`" \
-        "DMG Last-Modified: \`$last_modified\`" \
-        "DMG ETag: \`$etag\`" \
-        "DMG Content-Length: \`$content_length\`" \
-        "DMG SHA-256: \`$dmg_sha256\`" \
-        "DMG Size (bytes): \`$dmg_size_bytes\`" \
+        "Package URL: \`$UPSTREAM_DMG_URL\`" \
+        "Package Last-Modified: \`$last_modified\`" \
+        "Package ETag: \`$etag\`" \
+        "Package Content-Length: \`$content_length\`" \
+        "Package SHA-256: \`$dmg_sha256\`" \
+        "Package Size (bytes): \`$dmg_size_bytes\`" \
         "Tested At (UTC): \`$tested_at_utc\`" \
         "Cache Hit: \`${UPSTREAM_DMG_CACHE_HIT:-unknown}\`" \
-        "Build command: \`make build-app DMG=$dmg_path\`"
+        "Build command: \`make build-app ARTIFACT=$dmg_path\`"
 }
 
 run_upstream_job() {
     enter_workspace
     ensure_rust_toolchain
 
-    local dmg_path="${CI_DMG_PATH:-${UPSTREAM_DMG_PATH:-/tmp/codex-upstream-ci/Codex.dmg}}"
+    local dmg_path="${CI_DMG_PATH:-${UPSTREAM_DMG_PATH:-/tmp/codex-upstream-ci/ChatGPT.deb}}"
     mkdir -p "$(dirname "$dmg_path")"
 
     if [ ! -s "$dmg_path" ]; then
-        info "Downloading upstream DMG"
+        info "Downloading upstream Linux package"
         scripts/ci/download-upstream-dmg.sh "$UPSTREAM_DMG_URL" "$dmg_path"
     else
-        info "Using cached upstream DMG: $dmg_path"
+        info "Using cached upstream Linux package: $dmg_path"
     fi
 
     capture_upstream_metadata "$dmg_path"
-    make build-app DMG="$dmg_path"
+    make build-app ARTIFACT="$dmg_path"
 }
 
 run_nix_job_as_root() {

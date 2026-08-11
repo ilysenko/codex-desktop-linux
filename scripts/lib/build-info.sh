@@ -17,14 +17,14 @@ record_upstream_app_version() {
 }
 
 write_build_info() {
-    local dmg_path="$1"
+    local artifact_path="$1"
     local app_dir="$2"
 
     mkdir -p "$INSTALL_DIR/resources" "$INSTALL_DIR/.codex-linux"
     node "$SCRIPT_DIR/scripts/lib/build-info.js" \
         "$SCRIPT_DIR" \
         "$INSTALL_DIR" \
-        "$dmg_path" \
+        "$artifact_path" \
         "$app_dir" \
         "$ELECTRON_VERSION" \
         "$CODEX_APP_ID" \

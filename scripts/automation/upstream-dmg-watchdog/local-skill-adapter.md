@@ -1,9 +1,9 @@
 ---
 name: upstream-dmg-watchdog
-description: Monitor and repair the current upstream DMG through the repository-owned watchdog state machine.
+description: Monitor and repair the current upstream Linux package through the repository-owned watchdog state machine.
 ---
 
-# Upstream DMG watchdog adapter
+# Upstream Linux package watchdog adapter
 
 Resolve the target of `scripts/watchdog.py`, then read the `SKILL.md` beside
 that repository-owned implementation completely and follow it. The executable

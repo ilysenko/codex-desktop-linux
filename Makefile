@@ -4,8 +4,9 @@ SHELL := bash
 APP_DIR := $(CURDIR)/codex-app
 NEXT_APP_DIR := $(CURDIR)/codex-app-next
 REBUILD_REPORT_DIR := $(CURDIR)/dist-next/rebuild
-UPSTREAM_INTEL_CANDIDATE ?= $(strip $(DMG))
-UPSTREAM_INTEL_HOST_CANDIDATE := $(if $(strip $(UPSTREAM_INTEL_CANDIDATE)),$(UPSTREAM_INTEL_CANDIDATE),$(CURDIR)/Codex.dmg)
+ARTIFACT ?=
+UPSTREAM_INTEL_CANDIDATE ?= $(strip $(ARTIFACT))
+UPSTREAM_INTEL_HOST_CANDIDATE := $(if $(strip $(UPSTREAM_INTEL_CANDIDATE)),$(UPSTREAM_INTEL_CANDIDATE),$(CURDIR)/ChatGPT.deb)
 UPSTREAM_INTEL_BASELINE ?=
 UPSTREAM_INTEL_PATCH_REPORT ?= $(REBUILD_REPORT_DIR)/patch-report.json
 UPSTREAM_INTEL_IMAGE ?= codex-desktop-linux-devcontainer:local
@@ -73,18 +74,18 @@ help:
 	@printf '  %-18s %s\n' "make check" "Run cargo check for codex-update-manager"
 	@printf '  %-18s %s\n' "make test" "Run updater test suite"
 	@printf '  %-18s %s\n' "make build-updater" "Build codex-update-manager in release mode"
-	@printf '  %-18s %s\n' "make update" "Find a DMG, rebuild, and replace codex-app/ with backup"
-	@printf '  %-18s %s\n' "make rebuild" "Inspect a DMG and build a side-by-side candidate"
-	@printf '  %-18s %s\n' "make rebuild-install" "Find a DMG, rebuild, and install into codex-app/"
-	@printf '  %-18s %s\n' "make inspect-upstream" "Inspect a DMG and write rebuild reports without changing codex-app/"
-	@printf '  %-18s %s\n' "make inspect-upstream-intel" "Inventory protected upstream DMG surfaces and write drift reports"
-	@printf '  %-18s %s\n' "make inspect-upstream-intel-devcontainer" "Run upstream DMG intelligence inside the devcontainer image"
-	@printf '  %-18s %s\n' "make build-app" "Run install.sh and regenerate codex-app/ (reuses cached Codex.dmg)"
-	@printf '  %-18s %s\n' "make build-app-fresh" "Remove generated app and refresh cached Codex.dmg by default"
+	@printf '  %-18s %s\n' "make update" "Find the official Linux package, rebuild, and replace codex-app/"
+	@printf '  %-18s %s\n' "make rebuild" "Inspect an official Linux package and build a candidate"
+	@printf '  %-18s %s\n' "make rebuild-install" "Rebuild the official Linux package into codex-app/"
+	@printf '  %-18s %s\n' "make inspect-upstream" "Inspect an official Linux package without changing codex-app/"
+	@printf '  %-18s %s\n' "make inspect-upstream-intel" "Inventory protected upstream package surfaces and write drift reports"
+	@printf '  %-18s %s\n' "make inspect-upstream-intel-devcontainer" "Run upstream package intelligence inside the devcontainer image"
+	@printf '  %-18s %s\n' "make build-app" "Regenerate codex-app/ from the official Linux package"
+	@printf '  %-18s %s\n' "make build-app-fresh" "Refresh the official package and regenerate codex-app/"
 	@printf '  %-18s %s\n' "make setup-native" "Guided setup summary and Linux feature config helper"
-	@printf '  %-18s %s\n' "make bootstrap-native" "Install deps, validate/reuse DMG, package, and install"
-	@printf '  %-18s %s\n' "make install-native" "Clean-build, validate/reuse DMG, package, and install"
-	@printf '  %-18s %s\n' "make update-native" "Pull trusted checkout, validate/reuse DMG, package, and install"
+	@printf '  %-18s %s\n' "make bootstrap-native" "Install deps, validate/reuse the official package, package, and install"
+	@printf '  %-18s %s\n' "make install-native" "Clean-build, validate/reuse the official package, package, and install"
+	@printf '  %-18s %s\n' "make update-native" "Pull trusted checkout, validate/reuse the official package, package, and install"
 	@printf '  %-18s %s\n' "make rebuild-next" "Build a side-by-side candidate in codex-app-next/"
 	@printf '  %-18s %s\n' "make run-app" "Launch the local generated Electron app from codex-app/"
 	@printf '  %-18s %s\n' "make build-dev-app" "Build a side-by-side test app with a distinct app id/bin"
@@ -100,8 +101,8 @@ help:
 	@printf '  %-18s %s\n' "make clean-dist" "Remove generated dist/ artifacts"
 	@printf '  %-18s %s\n' "make clean-state" "Remove updater runtime state from XDG directories"
 	@printf '\nVariables:\n\n'
-	@printf '  %-18s %s\n' "DMG=/path/file.dmg" "Override the DMG; devcontainer intel downloads latest when omitted"
-	@printf '  %-18s %s\n' "UPSTREAM_INTEL_BASELINE=..." "Optional known-good DMG/.app; defaults to ./Codex.dmg when different"
+	@printf '  %-18s %s\n' "ARTIFACT=/path/file.deb" "Override the official Linux package"
+	@printf '  %-18s %s\n' "UPSTREAM_INTEL_BASELINE=..." "Optional known-good package/app; defaults to ./ChatGPT.deb when different"
 	@printf '  %-18s %s\n' "UPSTREAM_INTEL_PATCH_REPORT=..." "Optional patch-report.json folded into upstream intelligence drift"
 	@printf '  %-18s %s\n' "UPSTREAM_INTEL_IMAGE=..." "Docker image for make inspect-upstream-intel-devcontainer"
 	@printf '  %-18s %s\n' "NEXT_APP_DIR=..." "Override side-by-side rebuild candidate directory"
@@ -122,8 +123,8 @@ help:
 	@printf '\nExamples:\n\n'
 	@printf '  %s\n' "make update"
 	@printf '  %s\n' "make rebuild-install"
-	@printf '  %s\n' "make rebuild DMG=/tmp/Codex.dmg"
-	@printf '  %s\n' "make build-app DMG=/tmp/Codex.dmg"
+	@printf '  %s\n' "make rebuild ARTIFACT=/tmp/chatgpt_amd64.deb"
+	@printf '  %s\n' "make build-app ARTIFACT=/tmp/chatgpt_amd64.deb"
 	@printf '  %s\n' "make build-app-fresh"
 	@printf '  %s\n' "make setup-native"
 	@printf '  %s\n' "make bootstrap-native"
@@ -131,11 +132,11 @@ help:
 	@printf '  %s\n' "CODEX_SUDO_ALERT=1 make install-native"
 	@printf '  %s\n' "PACKAGE_WITH_UPDATER=0 make update-native"
 	@printf '  %s\n' "CODEX_CLI_BUNDLE_SOURCE=/path/to/node_modules/@openai/codex make appimage"
-	@printf '  %s\n' "make inspect-upstream DMG=/tmp/Codex.dmg"
-	@printf '  %s\n' "make inspect-upstream-intel DMG=/tmp/Codex-new.dmg"
+	@printf '  %s\n' "make inspect-upstream ARTIFACT=/tmp/chatgpt_amd64.deb"
+	@printf '  %s\n' "make inspect-upstream-intel ARTIFACT=/tmp/chatgpt_amd64.deb"
 	@printf '  %s\n' "make inspect-upstream-intel-devcontainer"
-	@printf '  %s\n' "make inspect-upstream-intel-devcontainer DMG=/tmp/Codex-new.dmg"
-	@printf '  %s\n' "make rebuild-next DMG=/tmp/Codex.dmg"
+	@printf '  %s\n' "make inspect-upstream-intel-devcontainer ARTIFACT=/tmp/chatgpt_amd64.deb"
+	@printf '  %s\n' "make rebuild-next ARTIFACT=/tmp/chatgpt_amd64.deb"
 	@printf '  %s\n' "make run-app"
 	@printf '  %s\n' "make build-dev-app"
 	@printf '  %s\n' "./bin/codex-cua-lab"
@@ -175,7 +176,7 @@ rebuild:
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" \
 	REBUILD_REPORT_DIR="$(REBUILD_REPORT_DIR)" \
 	CODEX_NEXT_APP_DIR="$(NEXT_APP_DIR)" \
-		./scripts/rebuild-candidate.sh $(if $(strip $(DMG)),"$(DMG)")
+		./scripts/rebuild-candidate.sh $(if $(strip $(ARTIFACT)),"$(ARTIFACT)")
 
 rebuild-install:
 	@echo "[make] Running rebuild and local install flow"
@@ -183,14 +184,14 @@ rebuild-install:
 	REBUILD_REPORT_DIR="$(REBUILD_REPORT_DIR)" \
 	CODEX_NEXT_APP_DIR="$(NEXT_APP_DIR)" \
 	CODEX_FINAL_APP_DIR="$(APP_DIR)" \
-		./scripts/rebuild-candidate.sh --install $(if $(strip $(DMG)),"$(DMG)")
+		./scripts/rebuild-candidate.sh --install $(if $(strip $(ARTIFACT)),"$(ARTIFACT)")
 
 inspect-upstream:
-	@echo "[make] Inspecting upstream DMG"
-	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --inspect --report-dir "$(REBUILD_REPORT_DIR)" "$(DMG)"
+	@echo "[make] Inspecting upstream package"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --inspect --report-dir "$(REBUILD_REPORT_DIR)" "$(ARTIFACT)"
 
 inspect-upstream-intel:
-	@echo "[make] Building upstream DMG intelligence report"
+	@echo "[make] Building upstream package intelligence report"
 	@args=(--candidate "$(UPSTREAM_INTEL_HOST_CANDIDATE)"); \
 	if [ -n "$(UPSTREAM_INTEL_BASELINE)" ]; then \
 		args+=("--baseline" "$(UPSTREAM_INTEL_BASELINE)"); \
@@ -201,7 +202,7 @@ inspect-upstream-intel:
 	node scripts/dev/upstream-dmg-intel.js "$${args[@]}"
 
 inspect-upstream-intel-devcontainer:
-	@echo "[make] Building upstream DMG intelligence report in devcontainer"
+	@echo "[make] Building upstream package intelligence report in devcontainer"
 	@args=(--image "$(UPSTREAM_INTEL_IMAGE)"); \
 	if [ -n "$(UPSTREAM_INTEL_CANDIDATE)" ]; then \
 		args+=("--candidate" "$(UPSTREAM_INTEL_CANDIDATE)"); \
@@ -215,12 +216,12 @@ inspect-upstream-intel-devcontainer:
 	scripts/dev/upstream-dmg-intel-devcontainer "$${args[@]}"
 
 build-app:
-	@echo "[make] Regenerating codex-app from DMG"
-	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh "$(DMG)"
+	@echo "[make] Regenerating codex-app from the official Linux package"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh "$(ARTIFACT)"
 
 build-app-fresh:
-	@echo "[make] Regenerating codex-app from fresh DMG"
-	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --fresh "$(DMG)"
+	@echo "[make] Regenerating codex-app from a fresh official Linux package"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --fresh "$(ARTIFACT)"
 
 setup-native:
 	@echo "[make] Running guided native setup"
@@ -232,7 +233,7 @@ bootstrap-native:
 	PATH="$$HOME/.cargo/bin:$$PATH" $(MAKE) install-native
 
 install-native:
-	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --fresh --reuse-dmg "$(DMG)"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --fresh --reuse-artifact "$(ARTIFACT)"
 	$(MAKE) package
 	$(MAKE) install
 	@echo "[make] Native package install complete"
@@ -249,7 +250,7 @@ rebuild-next:
 	CODEX_PATCH_REPORT_JSON="$(REBUILD_REPORT_DIR)/patch-report.json" \
 	CODEX_REBUILD_REPORT_JSON="$(REBUILD_REPORT_DIR)/rebuild-report.json" \
 	REBUILD_REPORT_DIR="$(REBUILD_REPORT_DIR)" \
-		./install.sh "$(DMG)"
+		./install.sh "$(ARTIFACT)"
 	@echo "[make] Candidate app: $(NEXT_APP_DIR)"
 	@echo "[make] Rebuild report: $(REBUILD_REPORT_DIR)/rebuild-report.json"
 
@@ -264,7 +265,7 @@ build-dev-app:
 	CODEX_APP_ID="$(DEV_APP_ID)" \
 	CODEX_APP_DISPLAY_NAME="$(DEV_APP_NAME)" \
 	CODEX_INSTALL_DIR="$(DEV_APP_DIR)" \
-		./install.sh "$(DMG)"
+		./install.sh "$(ARTIFACT)"
 	@mkdir -p "$(CURDIR)/bin"
 	@ln -sfn "$$(realpath --relative-to="$$(dirname "$(DEV_APP_BIN)")" "$(DEV_APP_DIR)/start.sh")" "$(DEV_APP_BIN)"
 	@echo "[make] Side-by-side launcher: $(DEV_APP_BIN)"

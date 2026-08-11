@@ -668,15 +668,15 @@ test("Linux target context parses distro, package, and desktop details", () => {
   }
 });
 
-test("build info captures DMG hash, features, distro profile, and source revision", () => {
+test("build info captures upstream package hash, features, distro profile, and source revision", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-build-info-"));
   // This test reads features.json from its own featuresRoot, which the
   // file-level CODEX_LINUX_FEATURES_CONFIG pin would otherwise override.
   const pinnedFeaturesConfig = process.env.CODEX_LINUX_FEATURES_CONFIG;
   delete process.env.CODEX_LINUX_FEATURES_CONFIG;
   try {
-    const dmgPath = path.join(tempRoot, "Codex.dmg");
-    fs.writeFileSync(dmgPath, "fake dmg payload", "utf8");
+    const artifactPath = path.join(tempRoot, "ChatGPT.deb");
+    fs.writeFileSync(artifactPath, "fake package payload", "utf8");
 
     const appDir = path.join(tempRoot, "Codex.app");
     fs.mkdirSync(path.join(appDir, "Contents"), { recursive: true });
@@ -702,7 +702,7 @@ test("build info captures DMG hash, features, distro profile, and source revisio
 
     const info = buildInfo({
       repoDir: tempRoot,
-      dmgPath,
+      artifactPath,
       appDir,
       electronVersion: "41.3.0",
       appId: "codex-desktop",
@@ -726,9 +726,10 @@ test("build info captures DMG hash, features, distro profile, and source revisio
     });
 
     assert.equal(info.generatedAt, new Date(1710000000 * 1000).toISOString());
-    assert.equal(info.upstreamDmg.path, undefined);
-    assert.equal(info.upstreamDmg.sha256, "e33df8d941faed4fdc3bb688fea70572931e81a6e0c2603b810338177148dfa2");
-    assert.equal(info.upstreamDmg.appVersion, "1.2.3");
+    assert.equal(info.upstreamArtifact.kind, "official-linux-deb");
+    assert.equal(info.upstreamArtifact.path, undefined);
+    assert.equal(info.upstreamArtifact.sha256, "c0e2c832766fab439c7340209b13ed404474c1bd13b2307818afaa3ccc50b4ed");
+    assert.equal(info.upstreamArtifact.appVersion, "1.2.3");
     assert.equal(info.source.shortCommit, "abcdef123456");
     assert.equal(info.source.remote, "https://github.com/example/codex-desktop-linux.git");
     assert.equal(info.source.commitUrl, "https://github.com/example/codex-desktop-linux/commit/abcdef1234567890");
@@ -5735,7 +5736,7 @@ test("adds Linux build information to the tray menu", () => {
   assert.match(patched, /codex-linux-build-info\.json/);
   assert.match(patched, /label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}/);
   assert.match(patched, /Enabled features:/);
-  assert.match(patched, /Upstream DMG SHA256:/);
+  assert.match(patched, /Upstream package SHA256:/);
   assert.match(patched, /Linux source commit:/);
   assert.match(patched, /Source commit URL:/);
   assert.match(patched, /Open Source Commit/);

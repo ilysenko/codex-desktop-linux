@@ -107,7 +107,7 @@ function httpIdentity(metadata) {
 }
 
 function buildDmgInfo({ dmgPath, metadata, buildInfo }) {
-  const upstreamDmg = buildInfo?.upstreamDmg ?? {};
+  const upstreamDmg = buildInfo?.upstreamArtifact ?? buildInfo?.upstreamDmg ?? {};
   return {
     path: dmgPath ? path.resolve(dmgPath) : metadata?.path ?? null,
     url: metadata?.url ?? null,
@@ -126,7 +126,7 @@ function evaluateUpstreamDmg(options) {
   try {
     metadata = readJsonIfPresent(options.metadataPath);
   } catch (error) {
-    inputErrors.push(`invalid DMG metadata: ${error instanceof Error ? error.message : String(error)}`);
+    inputErrors.push(`invalid upstream package metadata: ${error instanceof Error ? error.message : String(error)}`);
   }
   try {
     buildInfo = readJsonIfPresent(options.buildInfoPath);
@@ -163,7 +163,7 @@ function evaluateUpstreamDmg(options) {
 
   const dmg = buildDmgInfo({ dmgPath: options.dmgPath, metadata, buildInfo });
   if (!dmg.sha256) {
-    inconclusiveReasons.push("DMG fingerprint is unavailable");
+    inconclusiveReasons.push("upstream package fingerprint is unavailable");
   }
   const verdict = blockers.length > 0
     ? "rejected"
@@ -204,11 +204,11 @@ function evaluateUpstreamDmg(options) {
 
 function decisionMarkdown(decision) {
   const lines = [
-    "## Upstream DMG acceptance",
+    "## Upstream package acceptance",
     "",
     `- Verdict: \`${decision.verdict}\``,
     `- Profile: \`${decision.profile}\``,
-    `- DMG SHA-256: \`${decision.dmg.sha256 ?? "unknown"}\``,
+    `- Package SHA-256: \`${decision.dmg.sha256 ?? "unknown"}\``,
     `- App version: \`${decision.dmg.appVersion ?? "unknown"}\``,
     `- Required blockers: \`${decision.blockers.length}\``,
     `- Optional warnings: \`${decision.warnings.length}\``,

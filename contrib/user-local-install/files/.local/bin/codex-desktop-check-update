@@ -17,24 +17,24 @@ if [ -z "$source_head" ]; then
 fi
 source_overlay_sha="$(source_repo_overlay_signature 2>/dev/null || true)"
 remote_head=""
-dmg_headers=""
+artifact_headers=""
 
 if ! remote_head="$(remote_repo_head 2>/dev/null)"; then
     echo "Could not query wrapper repo upstream."
     exit 1
 fi
 
-if ! dmg_headers="$(remote_dmg_headers 2>/dev/null)"; then
-    echo "Could not query Codex.dmg headers."
+if ! artifact_headers="$(remote_upstream_artifact_headers 2>/dev/null)"; then
+    echo "Could not query official Linux package headers."
     exit 1
 fi
 
-remote_etag="$(header_value "$dmg_headers" "etag")"
-remote_last_modified="$(header_value "$dmg_headers" "last-modified")"
-remote_content_length="$(header_value "$dmg_headers" "content-length")"
+remote_etag="$(header_value "$artifact_headers" "etag")"
+remote_last_modified="$(header_value "$artifact_headers" "last-modified")"
+remote_content_length="$(header_value "$artifact_headers" "content-length")"
 
 repo_changed=0
-dmg_changed=0
+artifact_changed=0
 repo_upstream_changed=0
 repo_overlay_changed=0
 
@@ -48,8 +48,8 @@ if [ "$source_overlay_sha" != "${SOURCE_OVERLAY_SHA256-}" ]; then
     repo_overlay_changed=1
 fi
 
-if [ "${DMG_ETAG-}" != "$remote_etag" ] || [ "${DMG_LAST_MODIFIED-}" != "$remote_last_modified" ] || [ "${DMG_CONTENT_LENGTH-}" != "$remote_content_length" ]; then
-    dmg_changed=1
+if [ "${ARTIFACT_ETAG-}" != "$remote_etag" ] || [ "${ARTIFACT_LAST_MODIFIED-}" != "$remote_last_modified" ] || [ "${ARTIFACT_CONTENT_LENGTH-}" != "$remote_content_length" ]; then
+    artifact_changed=1
 fi
 
 echo "Install root: $OPT_ROOT"
@@ -59,12 +59,12 @@ echo "Build repo head:     $build_head"
 echo "Source repo head:    ${source_head:-unavailable}"
 echo "Wrapper repo remote: $remote_head"
 echo "Source overlay sha:  ${source_overlay_sha:-none}"
-echo "Cached DMG etag:     ${DMG_ETAG-untracked}"
-echo "Remote DMG etag:     ${remote_etag:-unknown}"
-echo "Cached DMG modified: ${DMG_LAST_MODIFIED-untracked}"
-echo "Remote DMG modified: ${remote_last_modified:-unknown}"
+echo "Cached package etag:     ${ARTIFACT_ETAG-untracked}"
+echo "Remote package etag:     ${remote_etag:-unknown}"
+echo "Cached package modified: ${ARTIFACT_LAST_MODIFIED-untracked}"
+echo "Remote package modified: ${remote_last_modified:-unknown}"
 
-if [ "$repo_changed" -eq 0 ] && [ "$dmg_changed" -eq 0 ]; then
+if [ "$repo_changed" -eq 0 ] && [ "$artifact_changed" -eq 0 ]; then
     echo "Status: up to date"
     exit 0
 fi
@@ -76,7 +76,7 @@ fi
 if [ "$repo_overlay_changed" -eq 1 ]; then
     echo "Reason: source overlay changed"
 fi
-if [ "$dmg_changed" -eq 1 ]; then
-    echo "Reason: Codex.dmg changed"
+if [ "$artifact_changed" -eq 1 ]; then
+    echo "Reason: official Linux package changed"
 fi
 exit 10

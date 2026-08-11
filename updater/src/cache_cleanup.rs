@@ -16,7 +16,7 @@ use std::{
 
 const HEAVY_WORKSPACE_DIRS: &[&str] = &["builder", "codex-app", "dist"];
 pub const DMG_CACHE_LOCK_NAME: &str = ".downloads.lock";
-const DMG_DOWNLOAD_TEMP_PREFIX: &str = ".Codex.dmg.download-";
+const DMG_DOWNLOAD_TEMP_PREFIX: &str = ".ChatGPT.deb.download-";
 
 #[derive(Debug)]
 pub struct DmgCacheLease {
@@ -41,7 +41,7 @@ pub async fn acquire_dmg_cache_lease(downloads_dir: &Path) -> Result<DmgCacheLea
         Ok(DmgCacheLease { _file: file })
     })
     .await
-    .context("DMG cache lock task failed")?
+    .context("package cache lock task failed")?
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -420,7 +420,7 @@ mod tests {
         fs::create_dir_all(&downloads)?;
         let protected = managed_dmg(&downloads, 'a');
         let old = managed_dmg(&downloads, 'b');
-        let crash_temp = downloads.join(".Codex.dmg.download-123-4.tmp");
+        let crash_temp = downloads.join(".ChatGPT.deb.download-123-4.tmp");
         let unrelated = downloads.join("notes.txt");
         let malformed = downloads.join("Codex-not-a-hash.dmg");
         let symlink = downloads.join(format!("Codex-{}.dmg", "c".repeat(64)));

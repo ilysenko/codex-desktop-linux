@@ -27,20 +27,20 @@ function writeInfoPlist(appDir, version) {
   );
 }
 
-test("records the extracted app version without discarding downloaded DMG metadata", () => {
+test("records the extracted app version without discarding downloaded package metadata", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-build-info-"));
   try {
     const appDir = path.join(tempDir, "Codex.app");
     const metadataPath = path.join(tempDir, "reports", "upstream-dmg-metadata.json");
     writeInfoPlist(appDir, "26.803.41515");
     fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
-    fs.writeFileSync(metadataPath, `${JSON.stringify({ etag: "current", path: "/tmp/Codex.dmg" })}\n`);
+    fs.writeFileSync(metadataPath, `${JSON.stringify({ etag: "current", path: "/tmp/ChatGPT.deb" })}\n`);
 
     assert.equal(appBundleVersion(appDir), "26.803.41515");
     assert.equal(recordAppVersionMetadata(metadataPath, appDir), "26.803.41515");
     assert.deepEqual(JSON.parse(fs.readFileSync(metadataPath, "utf8")), {
       etag: "current",
-      path: "/tmp/Codex.dmg",
+      path: "/tmp/ChatGPT.deb",
       appVersion: "26.803.41515",
     });
   } finally {

@@ -79,12 +79,10 @@ patch_asar() {
         cp -r "$resources_dir/app.asar.unpacked/"* app-extracted/ 2>/dev/null || true
     fi
 
-    # Remove macOS-only modules
-    rm -rf "$WORK_DIR/app-extracted/node_modules/sparkle-darwin" 2>/dev/null || true
-    find "$WORK_DIR/app-extracted" -name "sparkle.node" -delete 2>/dev/null || true
-
-    # Build native modules in clean environment and copy back
-    build_native_modules "$WORK_DIR/app-extracted"
+    # The official package already contains ABI-matched Linux native modules.
+    # Keep them intact instead of rebuilding macOS modules against a separately
+    # downloaded Electron runtime.
+    info "Using native modules from OpenAI's official Linux package"
 
     info "Patching Linux window and shell behavior..."
     # Always produce a report: enforcement and the end-of-build summary need it,

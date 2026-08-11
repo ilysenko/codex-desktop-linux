@@ -19,12 +19,12 @@ Run the helper to install them automatically:
   bash scripts/install-deps.sh
 
 Or install manually:
-  sudo apt install python3 p7zip-full curl unzip build-essential                   # Debian/Ubuntu
-  sudo dnf install python3 7zip curl unzip rpm-build make gcc-c++ @development-tools             # Fedora 41+ (dnf5)
-  sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++      # Fedora <41 (dnf)
+  sudo apt install python3 curl unzip tar binutils build-essential                  # Debian/Ubuntu
+  sudo dnf install python3 curl unzip tar binutils rpm-build make gcc-c++ @development-tools       # Fedora 41+
+  sudo dnf install python3 curl unzip tar binutils rpm-build make gcc-c++            # Fedora <41
     && sudo dnf groupinstall 'Development Tools'
-  sudo pacman -S python p7zip curl unzip zstd base-devel                            # Arch
-  sudo zypper install python3 p7zip-full curl unzip                                 # openSUSE
+  sudo pacman -S python curl unzip tar binutils zstd base-devel                      # Arch
+  sudo zypper install python3 curl unzip tar binutils                                # openSUSE
     && sudo zypper install -t pattern devel_basis
 EOF
 }
@@ -44,25 +44,26 @@ cleanup() {
 trap cleanup EXIT
 trap 'error "Failed at line $LINENO (exit code $?)"' ERR
 
-CACHED_DMG_PATH="$SCRIPT_DIR/Codex.dmg"
-CACHED_DMG_METADATA_PATH="$CACHED_DMG_PATH.metadata"
+CACHED_UPSTREAM_ARTIFACT_PATH="$SCRIPT_DIR/ChatGPT.deb"
+CACHED_UPSTREAM_ARTIFACT_METADATA_PATH="$CACHED_UPSTREAM_ARTIFACT_PATH.metadata"
 FRESH_INSTALL=0
-REUSE_CACHED_DMG=1
-PROVIDED_DMG_PATH=""
+REUSE_CACHED_UPSTREAM_ARTIFACT=1
+PROVIDED_UPSTREAM_ARTIFACT_PATH=""
 INSPECT_ONLY=0
 REPORT_DIR=""
 
 usage() {
     cat <<'HELP'
-Usage: ./install.sh [OPTIONS] [path/to/Codex.dmg]
+Usage: ./install.sh [OPTIONS] [path/to/chatgpt.deb]
 
-Converts the official macOS ChatGPT Desktop app to run on Linux.
+Builds the repository's packages and optional features on OpenAI's official Linux app.
 
 Options:
   -h, --help     Show this help message and exit
-  --fresh        Remove existing install directory and cached DMG before building
-  --reuse-dmg    Reuse cached Codex.dmg when upstream metadata still matches (default)
-  --inspect      Inspect the DMG and write patch/rebuild reports without installing
+  --fresh        Remove the existing install directory and cached upstream package
+  --reuse-artifact
+                 Reuse cached ChatGPT.deb when upstream metadata still matches (default)
+  --inspect      Inspect the official Linux package without installing
   --report-dir DIR
                  Directory for --inspect reports (default: ./dist-next/rebuild)
 
@@ -74,14 +75,11 @@ Environment variables:
   CODEX_APP_DISPLAY_NAME
                       Override display name (default: ChatGPT)
   CODEX_WEBVIEW_PORT  Override webview HTTP port (default: 5175, or 5176 for non-default app ids)
-  CODEX_DMG_REFRESH_MODE=pinned
-                      Reuse an existing cached Codex.dmg verbatim and refuse
-                      network refresh/download when no explicit DMG path is passed
-  ELECTRON_HEADERS_URL
-                      Override the Electron headers URL used by @electron/rebuild
-                      (default: https://artifacts.electronjs.org/headers/dist)
-  ELECTRON_MIRROR     Override the Electron runtime download mirror root
-                      (example: https://npmmirror.com/mirrors/electron/)
+  CODEX_UPSTREAM_ARTIFACT_URL
+                      Override the official Linux .deb URL
+  CODEX_UPSTREAM_ARTIFACT_REFRESH_MODE=pinned
+                      Reuse an existing cached ChatGPT.deb verbatim and refuse
+                      network refresh/download when no explicit package is passed
   REBUILD_REPORT_DIR  Default report directory for --inspect and rebuild reports
   CODEX_ACCEPTANCE_OVERRIDE=1
                       Developer-only promotion override for a completely built
@@ -100,10 +98,10 @@ parse_args() {
         case "$1" in
             --fresh)
                 FRESH_INSTALL=1
-                REUSE_CACHED_DMG=0
+                REUSE_CACHED_UPSTREAM_ARTIFACT=0
                 ;;
-            --reuse-dmg)
-                REUSE_CACHED_DMG=1
+            --reuse-artifact)
+                REUSE_CACHED_UPSTREAM_ARTIFACT=1
                 ;;
             --inspect)
                 INSPECT_ONLY=1
@@ -121,8 +119,8 @@ parse_args() {
                 error "Unknown option: $1 (see --help)"
                 ;;
             *)
-                [ -z "$PROVIDED_DMG_PATH" ] || error "Only one DMG path may be provided"
-                PROVIDED_DMG_PATH="$1"
+                [ -z "$PROVIDED_UPSTREAM_ARTIFACT_PATH" ] || error "Only one upstream package path may be provided"
+                PROVIDED_UPSTREAM_ARTIFACT_PATH="$1"
                 ;;
         esac
         shift
@@ -159,8 +157,8 @@ shell_quote() {
     printf '%q' "$1"
 }
 
-dmg_refresh_mode_is_pinned() {
-    case "${CODEX_DMG_REFRESH_MODE:-auto}" in
+upstream_artifact_refresh_mode_is_pinned() {
+    case "${CODEX_UPSTREAM_ARTIFACT_REFRESH_MODE:-auto}" in
         ""|auto)
             return 1
             ;;
@@ -168,7 +166,7 @@ dmg_refresh_mode_is_pinned() {
             return 0
             ;;
         *)
-            error "CODEX_DMG_REFRESH_MODE must be 'auto' or 'pinned'"
+            error "CODEX_UPSTREAM_ARTIFACT_REFRESH_MODE must be 'auto' or 'pinned'"
             ;;
     esac
 }
@@ -179,24 +177,21 @@ prepare_install() {
         rm -rf "$INSTALL_DIR"
     fi
 
-    if [ "$FRESH_INSTALL" -eq 1 ] && [ "$REUSE_CACHED_DMG" -ne 1 ] \
-            && ! dmg_refresh_mode_is_pinned \
-            && { [ -e "$CACHED_DMG_PATH" ] || [ -e "$CACHED_DMG_METADATA_PATH" ]; }; then
-        info "Removing cached DMG and metadata: $CACHED_DMG_PATH"
-        rm -f "$CACHED_DMG_PATH"
-        rm -f "$CACHED_DMG_METADATA_PATH"
+    if [ "$FRESH_INSTALL" -eq 1 ] && [ "$REUSE_CACHED_UPSTREAM_ARTIFACT" -ne 1 ] \
+            && ! upstream_artifact_refresh_mode_is_pinned \
+            && { [ -e "$CACHED_UPSTREAM_ARTIFACT_PATH" ] || [ -e "$CACHED_UPSTREAM_ARTIFACT_METADATA_PATH" ]; }; then
+        info "Removing cached upstream package and metadata: $CACHED_UPSTREAM_ARTIFACT_PATH"
+        rm -f "$CACHED_UPSTREAM_ARTIFACT_PATH"
+        rm -f "$CACHED_UPSTREAM_ARTIFACT_METADATA_PATH"
     fi
 }
 
 # ---- Check dependencies ----
 check_deps() {
     local missing=()
-    for cmd in python3 curl unzip tar flock; do
+    for cmd in python3 curl unzip tar ar flock; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
-    if ! command -v 7zz &>/dev/null && ! command -v 7z &>/dev/null; then
-        missing+=("7z or 7zz")
-    fi
     if [ ${#missing[@]} -ne 0 ]; then
         error "Missing dependencies: ${missing[*]}
 $(dependency_help)"
@@ -207,25 +202,5 @@ $(dependency_help)"
 $(dependency_help)"
     fi
 
-    # Prefer modern 7-zip if available (required for APFS DMG)
-    if command -v 7zz &>/dev/null; then
-        SEVEN_ZIP_CMD="7zz"
-    else
-        SEVEN_ZIP_CMD="7z"
-    fi
-
-    local seven_zip_banner
-    seven_zip_banner="$("$SEVEN_ZIP_CMD" 2>&1 | head -n 3 || true)"
-    if [[ "$seven_zip_banner" == *"16.02"* || "$seven_zip_banner" == *"p7zip Version"* ]]; then
-        error "System 7-zip is too old for modern APFS DMGs or lacks APFS support.
-Install a newer 7zz first by running:
-  bash scripts/install-deps.sh
-
-That helper bootstraps a current 7zz into ~/.local/bin by default.
-If ~/.local/bin is not on your PATH, add it before re-running this script:
-  export PATH=\"$HOME/.local/bin:$PATH\"
-Set SEVENZIP_SYSTEM_INSTALL=1 to install into /usr/local/bin instead."
-    fi
-
-    info "All system dependencies found (using $SEVEN_ZIP_CMD)"
+    info "All system dependencies found"
 }
