@@ -3,6 +3,7 @@ const {
 } = require("../../scripts/patches/lib/minified-js.js");
 
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
+const BACKTICK = "`";
 const CHATGPT_SIDEBAR_ASSET_PATTERN = /^app-initial-[A-Za-z0-9_-]+\.js$/;
 const RUNTIME_MARKER = "codexLinuxDeleteChatGptConversation";
 const DELETED_IDS = "codexLinuxDeletedChatGptConversationIds";
@@ -15,397 +16,442 @@ const DELETE_MESSAGES =
 	"delete:{id:`codexLinuxConversationDelete.delete`,defaultMessage:`Delete chat`,description:`Action label to permanently delete a ChatGPT conversation in the sidebar`},deleteConfirm:{id:`codexLinuxConversationDelete.confirm`,defaultMessage:`Delete “{title}”? This can't be undone.`,description:`Confirmation message shown before permanently deleting a ChatGPT conversation`},deleteError:{id:`codexLinuxConversationDelete.error`,defaultMessage:`Failed to delete conversation`,description:`Error shown when permanently deleting a ChatGPT conversation fails`},";
 const LOCALIZATION_NEEDLE = `${ARCHIVE_MESSAGE},archiveError:`;
 const LOCALIZATION_REPLACEMENT = `${ARCHIVE_MESSAGE},${DELETE_MESSAGES}archiveError:`;
-function buildMenuCachePattern(cacheAlias) {
-	return new RegExp(
-		`((?:${cacheAlias}\\[\\d+\\]!==${JS_IDENT}\\|\\|)*${cacheAlias}\\[\\d+\\]!==${JS_IDENT})` +
-			`\\?\\((${JS_IDENT})=async\\(\\)=>\\{([\\s\\S]*?)\\},` +
-			`((?:${cacheAlias}\\[\\d+\\]=${JS_IDENT},)*${cacheAlias}\\[(\\d+)\\]=\\2)\\):\\2=${cacheAlias}\\[(\\d+)\\]`,
-	);
-}
 
 function warn(message) {
 	console.warn(`WARN: ${message} - skipping conversation delete feature patch`);
 }
 
+function countOccurrences(source, needle) {
+	return source.split(needle).length - 1;
+}
+
 function uniqueMatch(source, regex) {
-	const globalRegex = regex.global
-		? regex
-		: new RegExp(regex.source, `${regex.flags}g`);
-	globalRegex.lastIndex = 0;
-	const matches = [...source.matchAll(globalRegex)];
+	const flags = regex.flags.includes("g") ? regex.flags : `${regex.flags}g`;
+	const matches = [...source.matchAll(new RegExp(regex.source, flags))];
 	return matches.length === 1 ? matches[0] : null;
 }
 
-function escapeRegExp(value) {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function propAlias(properties, property) {
-	return (
-		properties.match(
-			new RegExp(`(?:^|,)${property}:(${JS_IDENT})(?:,|$)`),
-		)?.[1] ?? null
-	);
-}
-
-function findUniqueFunction(source, parameterCount, predicate) {
-	const regex = new RegExp(`function (${JS_IDENT})\\(([^)]*)\\)\\{`, "g");
-	const matches = [];
-	for (const match of source.matchAll(regex)) {
-		const parameters = match[2].split(",").filter(Boolean);
-		if (parameters.length !== parameterCount) {
+function findFunctionBlockContaining(source, index) {
+	const declarations = [
+		...source.matchAll(new RegExp(`function ${JS_IDENT}\\([^)]*\\)\\{`, "g")),
+	];
+	for (let i = declarations.length - 1; i >= 0; i -= 1) {
+		const declaration = declarations[i];
+		if (declaration.index >= index) {
 			continue;
 		}
-		const openBrace = match.index + match[0].length - 1;
-		const closeBrace = findMatchingBrace(source, openBrace);
-		if (closeBrace < 0) {
-			continue;
-		}
-		const body = source.slice(openBrace + 1, closeBrace);
-		if (predicate(body, parameters)) {
-			matches.push(match[1]);
+		const closeBrace = findMatchingBrace(
+			source,
+			declaration.index + declaration[0].length - 1,
+		);
+		if (closeBrace >= index) {
+			return {
+				start: declaration.index,
+				end: closeBrace + 1,
+				text: source.slice(declaration.index, closeBrace + 1),
+			};
 		}
 	}
-	return matches.length === 1 ? matches[0] : null;
+	return null;
 }
 
-function findMethod(source, pattern) {
-	return uniqueMatch(source, pattern)?.[0] ?? null;
+function findMethodBlock(classSource, methodName) {
+	const methodMatch = uniqueMatch(
+		classSource,
+		new RegExp(`(?:async\\s+)?${methodName}\\([^)]*\\)\\{`),
+	);
+	if (methodMatch == null) {
+		return null;
+	}
+	const closeBrace = findMatchingBrace(
+		classSource,
+		methodMatch.index + methodMatch[0].length - 1,
+	);
+	if (closeBrace === -1) {
+		return null;
+	}
+	return {
+		start: methodMatch.index,
+		end: closeBrace + 1,
+		text: classSource.slice(methodMatch.index, closeBrace + 1),
+	};
 }
 
 function findSidebarContract(source) {
-	const menuMatch = uniqueMatch(
+	const archiveItemMatch = uniqueMatch(
 		source,
 		new RegExp(
-			"\\{id:`archive-chatgpt-conversation`,message:(" +
-				JS_IDENT +
-				")\\.archive,onSelect:(" +
-				JS_IDENT +
-				")\\}\\]\\}",
+			`\\{id:${BACKTICK}archive-chatgpt-conversation${BACKTICK},message:(${JS_IDENT})\\.archive,onSelect:(${JS_IDENT})\\}`,
 		),
 	);
-	if (menuMatch == null) {
+	if (archiveItemMatch == null) {
 		return null;
 	}
-
-	const functionPattern = new RegExp(
-		`function (${JS_IDENT})\\((${JS_IDENT})\\)\\{let (${JS_IDENT})=\\(0,(${JS_IDENT})\\.c\\)\\((\\d+)\\),\\{([^}]*)\\}=\\2,`,
-		"g",
-	);
-	functionPattern.lastIndex = 0;
-	const componentMatches = [
-		...source.slice(0, menuMatch.index).matchAll(functionPattern),
-	];
-	const enclosingComponents = componentMatches
-		.map((match) => {
-			const componentOpenBrace = source.indexOf("{", match.index);
-			return {
-				match,
-				componentOpenBrace,
-				componentEnd: findMatchingBrace(source, componentOpenBrace),
-			};
-		})
-		.filter(
-			({ componentOpenBrace, componentEnd }) =>
-				componentOpenBrace >= 0 && componentEnd >= menuMatch.index,
-		);
-	if (enclosingComponents.length !== 1) {
+	const block = findFunctionBlockContaining(source, archiveItemMatch.index);
+	if (block == null) {
 		return null;
 	}
-
-	const { match: componentMatch, componentEnd } = enclosingComponents[0];
-	const componentStart = componentMatch.index;
-	const componentSource = source.slice(componentStart, componentEnd + 1);
-	const properties = componentMatch[6];
-	const conversationAlias = propAlias(properties, "conversation");
-	const activeAlias = propAlias(properties, "isActive");
-	const pendingAlias = propAlias(properties, "isArchivePending");
-	const titleAlias = propAlias(properties, "title");
-	const titlePrefixAlias = propAlias(properties, "titlePrefix");
-	if (
-		[
-			conversationAlias,
-			activeAlias,
-			pendingAlias,
-			titleAlias,
-			titlePrefixAlias,
-		].some((value) => value == null)
-	) {
-		return null;
-	}
-
-	const scopeAlias = uniqueMatch(
-		componentSource,
-		new RegExp(`\\bscope:(${JS_IDENT})`),
-	)?.[1];
-	const intlAlias = uniqueMatch(
-		componentSource,
-		new RegExp(`(${JS_IDENT})\\.formatMessage\\(`, "g"),
-	)?.[1];
-	const routeAlias = propAlias(properties, "route");
-	const navigationCandidates = [
-		...componentSource.matchAll(
-			new RegExp(`\\b(${JS_IDENT})\\(${routeAlias}\\)`, "g"),
-		),
-	]
-		.map((match) => match[1])
-		.filter(
-			(alias, index, aliases) =>
-				aliases.indexOf(alias) === index &&
-				new RegExp(`(?:^|,)${alias}=${JS_IDENT}\\(\\)`).test(componentSource),
-		);
-
-	const hookSequence = uniqueMatch(
-		componentSource,
+	const openingMatch = block.text.match(
 		new RegExp(
-			`\\b(${JS_IDENT})=${JS_IDENT}\\((${JS_IDENT})\\),(${JS_IDENT})=${JS_IDENT}\\(\\),(${JS_IDENT})=${JS_IDENT}\\(\\),`,
+			`^function (${JS_IDENT})\\(e\\)\\{let (${JS_IDENT})=\\(0,(${JS_IDENT})\\.c\\)\\((\\d+)\\),\\{conversation:(${JS_IDENT}),`,
 		),
 	);
-	const resolvedScopeAlias = scopeAlias ?? hookSequence?.[1];
-	const resolvedIntlAlias = intlAlias ?? hookSequence?.[3];
-	const navigationAlias =
-		navigationCandidates.length === 1
-			? navigationCandidates[0]
-			: hookSequence?.[4];
+	if (openingMatch == null) {
+		return null;
+	}
+	const propsEnd = block.text.indexOf("}=e");
+	if (propsEnd === -1) {
+		return null;
+	}
+	const propsText = block.text.slice(0, propsEnd + 2);
+	const propAlias = (name) =>
+		propsText.match(new RegExp(`${name}:(${JS_IDENT})`))?.[1] ?? null;
+	const conversationIdAlias = propAlias("conversationId");
+	const activeAlias = propAlias("isActive");
+	const archivePendingAlias = propAlias("isArchivePending");
+	const routeAlias = propAlias("route");
+	const titleAlias = propAlias("title");
 	if (
-		[resolvedScopeAlias, resolvedIntlAlias, navigationAlias].some(
-			(value) => value == null,
-		)
+		conversationIdAlias == null ||
+		activeAlias == null ||
+		archivePendingAlias == null ||
+		routeAlias == null ||
+		titleAlias == null
 	) {
 		return null;
 	}
 
 	const renderGuardMatch = uniqueMatch(
-		componentSource,
+		block.text,
 		new RegExp(
-			`titlePrefix:${titlePrefixAlias}\\}=${componentMatch[2]},(${JS_IDENT})=`,
+			`let (${JS_IDENT})=${JS_IDENT};if\\(!(${JS_IDENT})\\)return \\1;let ${JS_IDENT};return`,
 		),
 	);
-	if (renderGuardMatch == null) {
-		return null;
-	}
-
-	const cacheMatch = uniqueMatch(
-		componentSource,
-		buildMenuCachePattern(componentMatch[3]),
+	const toastMatch = uniqueMatch(
+		block.text,
+		new RegExp(`(${JS_IDENT})\\.get\\((${JS_IDENT})\\)\\.info\\(`),
 	);
-	if (cacheMatch == null || cacheMatch[5] !== cacheMatch[6]) {
-		return null;
-	}
-
-	const listMethod = findMethod(
-		source,
+	const intlMatch = uniqueMatch(
+		block.text,
 		new RegExp(
-			`async list\\([^)]*\\)\\{let (${JS_IDENT})=await this\\.request\\.listConversations\\([^;]*\\);return\\{\\.\\.\\.\\1,items:\\1\\.items\\?\\.filter\\((${JS_IDENT})\\)\\?\\?\\[\\]\\}\\}`,
+			`(${JS_IDENT})\\.formatMessage\\(\\{id:${BACKTICK}chatgptConversations\\.sidebar\\.archiveAriaLabel`,
 		),
 	);
-	if (listMethod == null) {
-		return null;
-	}
-	const listMatch = listMethod.match(
+	const navigateMatch = uniqueMatch(
+		block.text,
 		new RegExp(
-			`async list\\([^)]*\\)\\{let (${JS_IDENT})=await this\\.request\\.listConversations\\([^;]*\\);return\\{\\.\\.\\.\\1,items:\\1\\.items\\?\\.filter\\((${JS_IDENT})\\)\\?\\?\\[\\]\\}\\}`,
+			`${conversationIdAlias}!=null&&(${JS_IDENT})\\(${routeAlias}\\)`,
 		),
 	);
-	const listPredicateAlias = listMatch?.[2];
-	if (listPredicateAlias == null) {
-		return null;
-	}
-
-	const batchMethod = findMethod(
-		source,
-		new RegExp(
-			`async getBatch\\([^)]*\\)\\{return\\(await this\\.request\\.getConversationsBatch\\([^)]*\\)\\)\\.filter\\(${listPredicateAlias}\\)\\}`,
-		),
-	);
-	const pinnedMethod = findMethod(
-		source,
-		new RegExp(
-			"async listPinnedConversationItems\\(\\)\\{return\\(await this\\.request\\.listPinnedItems\\(\\{itemType:`conversation`\\}\\)\\)\\.filter\\((" +
-				JS_IDENT +
-				")\\)\\}",
-		),
-	);
-	const projectMethod = findMethod(
-		source,
-		new RegExp(
-			`async listProjectConversations\\([^)]*\\)\\{let (${JS_IDENT})=await this\\.request\\.listProjectConversations\\([^)]*\\);return\\{cursor:\\1\\.cursor,items:\\1\\.items\\?\\.filter\\(${listPredicateAlias}\\)\\?\\?\\[\\]\\}\\}`,
-		),
-	);
-	const deleteMethod = uniqueMatch(
-		source,
-		new RegExp(
-			"async deleteConversation\\((" +
-				JS_IDENT +
-				")\\)\\{return this\\.safeDelete\\(`/conversation/id/\\{conversation_id\\}`,\\{parameters:\\{path:\\{conversation_id:\\1\\}\\}\\}\\)\\}",
-		),
-	)?.[0];
-	const clientDeleteMethod = uniqueMatch(
-		source,
-		new RegExp(
-			`async (${JS_IDENT})\\((${JS_IDENT})\\)\\{return this\\.request\\.deleteConversation\\(\\2\\)\\}`,
-		),
-	)?.[1];
 	if (
-		batchMethod == null ||
-		pinnedMethod == null ||
-		projectMethod == null ||
-		deleteMethod == null ||
-		clientDeleteMethod == null
+		renderGuardMatch == null ||
+		toastMatch == null ||
+		intlMatch == null ||
+		navigateMatch == null
 	) {
 		return null;
 	}
 
-	const projectSearchKeyAlias = uniqueMatch(
-		source,
-		new RegExp(`(${JS_IDENT})=${"`"}chatgpt-project-conversation-search${"`"}`),
-	)?.[1];
-	const listCacheHelper = findUniqueFunction(
-		source,
-		2,
-		(body, [scopeParameter, conversationParameter]) =>
-			new RegExp(
-				`${escapeRegExp(scopeParameter)}\\.filter\\((${JS_IDENT})=>\\1\\.id!==${escapeRegExp(conversationParameter)}\\)`,
-			).test(body) && !body.includes("setQueryData"),
+	const asyncMatches = [
+		...block.text.matchAll(
+			new RegExp(`\\((${JS_IDENT})=async\\(\\)=>\\{`, "g"),
+		),
+	].filter(
+		(match) =>
+			match.index < archiveItemMatch.index - block.start &&
+			block.text
+				.slice(match.index, archiveItemMatch.index - block.start)
+				.includes("return["),
 	);
-	const projectCacheHelper = findUniqueFunction(
-		source,
-		2,
-		(body, [scopeParameter, conversationParameter]) =>
-			body.includes("setQueryData") &&
-			new RegExp(
-				`${escapeRegExp(scopeParameter)}\\.filter\\((${JS_IDENT})=>\\1\\.id!==${escapeRegExp(conversationParameter)}\\)`,
-			).test(body),
-	);
-	const pinnedCacheHelper = findUniqueFunction(
-		source,
-		2,
-		(body, [scopeParameter, conversationParameter]) =>
-			new RegExp(
-				`${escapeRegExp(scopeParameter)}\\.set(?:\\?\\.)?\\(${JS_IDENT},(${JS_IDENT})=>\\1\\.filter\\(\\1=>${escapeRegExp(scopeParameter)}\\.get\\(${JS_IDENT},\\1\\)!==${escapeRegExp(conversationParameter)}\\)`,
-			).test(body),
-	);
-	const invalidateCacheHelper =
-		projectSearchKeyAlias == null
-			? null
-			: findUniqueFunction(
-					source,
-					1,
-					(body) =>
-						body.includes("invalidateQueries") &&
-						body.includes(`queryKey:[${projectSearchKeyAlias}]`),
-				);
+	if (asyncMatches.length !== 1) {
+		return null;
+	}
+	const menuAlias = asyncMatches[0][1];
+	const guardQuestion = block.text.lastIndexOf("?", asyncMatches[0].index);
 	if (
-		[
-			listCacheHelper,
-			projectCacheHelper,
-			pinnedCacheHelper,
-			invalidateCacheHelper,
-		].some((value) => value == null)
+		guardQuestion === -1 ||
+		!block.text.startsWith(`(${menuAlias}=async()=>{`, guardQuestion + 1)
 	) {
 		return null;
 	}
+	const assignmentMatch = uniqueMatch(
+		block.text.slice(archiveItemMatch.index - block.start),
+		new RegExp(`\\):${menuAlias}=${openingMatch[2]}\\[\\d+\\]`),
+	);
+	if (assignmentMatch == null) {
+		return null;
+	}
+	const assignmentClose =
+		archiveItemMatch.index - block.start + assignmentMatch.index;
+	const assignmentPrefixStart = block.text.lastIndexOf("},", assignmentClose);
+	if (
+		assignmentPrefixStart === -1 ||
+		assignmentPrefixStart < asyncMatches[0].index
+	) {
+		return null;
+	}
+	const assignmentEnd = assignmentClose + assignmentMatch[0].length;
 
 	return {
-		component: {
-			name: componentMatch[1],
-			argumentAlias: componentMatch[2],
-			cacheAlias: componentMatch[3],
-			cacheFactory: componentMatch[4],
-			cacheSize: Number(componentMatch[5]),
-			cacheCallbackAlias: cacheMatch[2],
-			conversationAlias,
-			activeAlias,
-			pendingAlias,
-			titleAlias,
-			titlePrefixAlias,
-			scopeAlias: resolvedScopeAlias,
-			intlAlias: resolvedIntlAlias,
-			navigationAlias,
-			renderGuard: renderGuardMatch[0],
-			renderGuardAlias: renderGuardMatch[1],
-			cache: cacheMatch,
-		},
-		localizationAlias: menuMatch[1],
-		archiveHandlerAlias: menuMatch[2],
-		listPredicateAlias,
-		pinnedPredicateAlias: pinnedMethod.match(
-			new RegExp(
-				"async listPinnedConversationItems\\(\\)\\{return\\(await this\\.request\\.listPinnedItems\\(\\{itemType:`conversation`\\}\\)\\)\\.filter\\((" +
-					JS_IDENT +
-					")\\)\\}",
-			),
-		)?.[1],
-		methods: {
-			listMethod,
-			batchMethod,
-			pinnedMethod,
-			projectMethod,
-			deleteMethod,
-		},
-		cacheHelpers: {
-			list: listCacheHelper,
-			project: projectCacheHelper,
-			pinned: pinnedCacheHelper,
-			invalidate: invalidateCacheHelper,
-		},
-		clientDeleteMethod,
+		block,
+		functionName: openingMatch[1],
+		hookSlotsAlias: openingMatch[2],
+		hookCacheAlias: openingMatch[3],
+		hookCacheSize: Number(openingMatch[4]),
+		conversationAlias: openingMatch[5],
+		conversationIdAlias,
+		activeAlias,
+		archivePendingAlias,
+		routeAlias,
+		titleAlias,
+		scopeAlias: toastMatch[1],
+		toastTokenAlias: toastMatch[2],
+		intlAlias: intlMatch[1],
+		navigateAlias: navigateMatch[1],
+		archiveMessageAlias: archiveItemMatch[1],
+		archiveActionAlias: archiveItemMatch[2],
+		archiveItemText: archiveItemMatch[0],
+		renderGuardText: renderGuardMatch[0],
+		menuAlias,
+		guardQuestion,
+		guardStart: block.text.lastIndexOf(";", guardQuestion) + 1,
+		assignmentPrefixStart,
+		assignmentText: block.text.slice(assignmentPrefixStart, assignmentEnd),
 	};
 }
 
-function buildRuntimeSource(contract) {
-	const { component, localizationAlias, cacheHelpers, clientDeleteMethod } =
-		contract;
-	return `const ${DELETED_IDS}=new Set;function ${RUNTIME_MARKER}(e,t,n,r,i,o,s){if(t==null||r)return;if(typeof window==="undefined"||typeof window.confirm!=="function"||!window.confirm(o.formatMessage(${localizationAlias}.deleteConfirm,{title:n})))return;if(${DELETED_IDS}.has(t.id))return;${DELETED_IDS}.add(t.id);e.get(${component.deleteTokenAlias}).${clientDeleteMethod}(t.id).then(()=>{i&&typeof s==="function"&&s(${JSON.stringify(NEW_THREAD_ROUTE)}),${cacheHelpers.list}(e.queryClient,t.id),${cacheHelpers.project}(e.queryClient,t.id),${cacheHelpers.pinned}(e,t.id),${cacheHelpers.invalidate}(e.queryClient)}).catch(()=>{${DELETED_IDS}.delete(t.id),e.get(${component.toastTokenAlias}).danger(o.formatMessage(${localizationAlias}.deleteError))})}`;
-}
-
-function applyMethodFilter(source, method, replacement) {
-	return source.replace(method, replacement);
-}
-
-function findContract(source) {
-	const contract = findSidebarContract(source);
-	if (contract == null) {
+function findServiceContract(source) {
+	const deleteApiMatch = uniqueMatch(
+		source,
+		new RegExp(
+			`async (${JS_IDENT})\\(${JS_IDENT}\\)\\{return this\\.safeDelete\\(${BACKTICK}/conversation/id/\\{conversation_id\\}${BACKTICK},\\{parameters:\\{path:\\{conversation_id:${JS_IDENT}\\}\\}\\}\\)\\}`,
+		),
+	);
+	const serviceTokenMatches = [
+		...source.matchAll(
+			new RegExp(`e\\.get\\((${JS_IDENT})\\)\\.setArchived\\(`, "g"),
+		),
+	];
+	const serviceTokenAliases = new Set(
+		serviceTokenMatches.map((match) => match[1]),
+	);
+	if (
+		deleteApiMatch == null ||
+		serviceTokenMatches.length === 0 ||
+		serviceTokenAliases.size !== 1
+	) {
 		return null;
 	}
-
-	const { component } = contract;
-	const intlAlias = component.intlAlias;
-	const toastTokenAliases = [
-		...source.matchAll(
-			new RegExp(
-				`\\.get\\((${JS_IDENT})\\)\\.danger\\(${intlAlias}\\.formatMessage\\(${JS_IDENT}\\.archiveError\\)`,
-				"g",
-			),
-		),
-	]
-		.map((match) => match[1])
-		.filter((alias, index, aliases) => aliases.indexOf(alias) === index);
-	const toastTokenAlias =
-		toastTokenAliases.length === 1 ? toastTokenAliases[0] : null;
-	const apiTokenAliases = [
-		...source.matchAll(
-			new RegExp(
-				`\\.get\\((${JS_IDENT})\\)\\.(?:getSharedConversation|listPinnedConversationItems|listProjectConversations|getConversation(?:WebSocketUrl)?)\\(`,
-				"g",
-			),
-		),
-	]
-		.map((match) => match[1])
-		.filter((alias, index, aliases) => aliases.indexOf(alias) === index);
-	if (toastTokenAlias == null || apiTokenAliases.length !== 1) {
-		return null;
-	}
-	component.toastTokenAlias = toastTokenAlias;
-	component.deleteTokenAlias = apiTokenAliases[0];
-	return contract;
+	return {
+		deleteMethodName: deleteApiMatch[1],
+		serviceTokenAlias: serviceTokenMatches[0][1],
+	};
 }
 
-function matchesConversationDeleteAsset(source) {
+function findCacheEvictionContract(source) {
+	const setArchivedMatch = uniqueMatch(source, /\.setArchived\([^)]*,!0\)/);
+	if (setArchivedMatch == null) {
+		return null;
+	}
+	const archiveBlock = findFunctionBlockContaining(
+		source,
+		setArchivedMatch.index,
+	);
+	if (archiveBlock == null) {
+		return null;
+	}
+	const afterSetArchived = archiveBlock.text.slice(
+		setArchivedMatch.index - archiveBlock.start,
+	);
+	const cacheCalls = [
+		...afterSetArchived.matchAll(
+			new RegExp(`(${JS_IDENT})\\(e\\.queryClient,${JS_IDENT}\\)`, "g"),
+		),
+	];
+	if (cacheCalls.length !== 1) {
+		return null;
+	}
+	return { cacheEvictionAlias: cacheCalls[0][1] };
+}
+
+function findConversationClientContract(source) {
+	const listRequestMatch = uniqueMatch(
+		source,
+		/this\.request\.listConversations\(/,
+	);
+	if (listRequestMatch == null) {
+		return null;
+	}
+	const classStart = source.lastIndexOf("class{", listRequestMatch.index);
+	if (classStart === -1) {
+		return null;
+	}
+	const classEnd = findMatchingBrace(source, classStart + "class".length);
+	if (classEnd === -1 || classEnd < listRequestMatch.index) {
+		return null;
+	}
+	const classText = source.slice(classStart, classEnd + 1);
+	const methods = {};
+	for (const methodName of [
+		"list",
+		"getBatch",
+		"listPinnedConversationItems",
+		"listProjectConversations",
+	]) {
+		const method = findMethodBlock(classText, methodName);
+		if (method == null) {
+			return null;
+		}
+		const filterMatch = uniqueMatch(
+			method.text,
+			new RegExp(`\\.filter\\((${JS_IDENT})\\)`),
+		);
+		if (filterMatch == null) {
+			return null;
+		}
+		methods[methodName] = {
+			...method,
+			filterAlias: filterMatch[1],
+		};
+	}
+	return {
+		start: classStart,
+		end: classEnd + 1,
+		text: source.slice(classStart, classEnd + 1),
+		methods,
+	};
+}
+
+function matchesChatGptSidebarContract(source) {
 	return (
 		typeof source === "string" &&
-		(source.includes(RUNTIME_MARKER) || findContract(source) != null)
+		countOccurrences(source, ARCHIVE_MESSAGE) === 1 &&
+		source.includes("archive-chatgpt-conversation")
 	);
+}
+
+function discoverContracts(source) {
+	const sidebar = findSidebarContract(source);
+	const service = findServiceContract(source);
+	const cache = findCacheEvictionContract(source);
+	const client = findConversationClientContract(source);
+	const missing = [];
+	if (countOccurrences(source, LOCALIZATION_NEEDLE) !== 1) {
+		missing.push("ChatGPT sidebar localization markers");
+	}
+	if (sidebar == null) missing.push("ChatGPT sidebar conversation row");
+	if (service == null) {
+		missing.push("ChatGPT conversation delete API client");
+	}
+	if (cache == null) missing.push("ChatGPT conversation cache helper");
+	if (client == null) {
+		missing.push(
+			"ChatGPT conversation list, batch, pinned, or project response filter",
+		);
+	}
+	return { sidebar, service, cache, client, missing };
+}
+
+function buildRuntimeSource({
+	serviceTokenAlias,
+	deleteMethodName,
+	cacheEvictionAlias,
+	toastTokenAlias,
+	archiveMessageAlias,
+}) {
+	return `const ${DELETED_IDS}=new Set;function ${RUNTIME_MARKER}(e,t,n,r,i,o,s){if(t==null||r)return;if(typeof window==="undefined"||typeof window.confirm!=="function"||!window.confirm(o.formatMessage(${archiveMessageAlias}.deleteConfirm,{title:n})))return;return ${DELETED_IDS}.add(t.id),Promise.resolve().then(()=>e.get(${serviceTokenAlias}).${deleteMethodName}(t.id)).then(()=>{i&&s(${JSON.stringify(NEW_THREAD_ROUTE)}),${cacheEvictionAlias}(e.queryClient,t.id)}).catch(()=>{${DELETED_IDS}.delete(t.id),e.get(${toastTokenAlias}).danger(o.formatMessage(${archiveMessageAlias}.deleteError))})}`;
+}
+
+function patchConversationClient(source, contract) {
+	let patched = source;
+	for (const [methodName, itemExpression] of [
+		["list", "e?.id"],
+		["getBatch", "e?.id"],
+		["listPinnedConversationItems", "e.item?.id"],
+		["listProjectConversations", "e?.id"],
+	]) {
+		const method = contract.methods[methodName];
+		const needle = `.filter(${method.filterAlias})`;
+		const replacement = `${needle}.filter(e=>!${DELETED_IDS}.has(${itemExpression}))`;
+		const methodPatched = method.text.replace(needle, replacement);
+		if (methodPatched === method.text) {
+			return null;
+		}
+		patched = patched.replace(method.text, methodPatched);
+	}
+	return patched;
+}
+
+function patchSidebar(source, contract, runtimeSource) {
+	const {
+		block,
+		hookSlotsAlias,
+		hookCacheAlias,
+		hookCacheSize,
+		activeAlias,
+		archiveMessageAlias,
+		archivePendingAlias,
+		archiveItemText,
+		renderGuardText,
+		conversationAlias,
+		titleAlias,
+		scopeAlias,
+		intlAlias,
+		navigateAlias,
+		guardStart,
+		guardQuestion,
+		assignmentText,
+	} = contract;
+	const opening = block.text.match(
+		new RegExp(
+			`^function ${contract.functionName}\\(e\\)\\{let ${hookSlotsAlias}=\\(0,${hookCacheAlias}\\.c\\)\\(${hookCacheSize}\\),`,
+		),
+	)?.[0];
+	if (opening == null) {
+		return null;
+	}
+	const openingPatched = opening.replace(
+		`(${hookCacheSize}),`,
+		`(${hookCacheSize + 1}),`,
+	);
+	let patchedBlock = block.text.replace(opening, openingPatched);
+
+	const deleteItem = `{id:${BACKTICK}${DELETE_MENU_ID}${BACKTICK},message:${archiveMessageAlias}.delete,onSelect:()=>${RUNTIME_MARKER}(${scopeAlias},${conversationAlias},${titleAlias},${archivePendingAlias},${activeAlias},${intlAlias},${navigateAlias})}`;
+	if (countOccurrences(patchedBlock, archiveItemText) !== 1) {
+		return null;
+	}
+	patchedBlock = patchedBlock.replace(
+		archiveItemText,
+		`${archiveItemText},${deleteItem}`,
+	);
+
+	const guardCondition = block.text.slice(guardStart, guardQuestion);
+	if (countOccurrences(patchedBlock, guardCondition) !== 1) {
+		return null;
+	}
+	patchedBlock = patchedBlock.replace(
+		guardCondition,
+		`${guardCondition}||${hookSlotsAlias}[${hookCacheSize}]!==${activeAlias}`,
+	);
+
+	if (countOccurrences(patchedBlock, assignmentText) !== 1) {
+		return null;
+	}
+	patchedBlock = patchedBlock.replace(
+		assignmentText,
+		`${assignmentText.slice(0, 2)}${hookSlotsAlias}[${hookCacheSize}]=${activeAlias},${assignmentText.slice(2)}`,
+	);
+
+	const tombstoneGuard = `if(${conversationAlias}!=null&&${DELETED_IDS}.has(${conversationAlias}.id))return null;`;
+	if (countOccurrences(patchedBlock, renderGuardText) !== 1) {
+		return null;
+	}
+	patchedBlock = patchedBlock.replace(
+		renderGuardText,
+		renderGuardText.replace(";if", `;${tombstoneGuard}if`),
+	);
+
+	return source.replace(block.text, `${runtimeSource}${patchedBlock}`);
 }
 
 function applyConversationDeletePatch(source) {
@@ -418,88 +464,62 @@ function applyConversationDeletePatch(source) {
 			return source;
 		}
 
-		const contract = findContract(source);
-		if (contract == null) {
-			warn(
-				"Could not find unique current ChatGPT sidebar conversation row contract",
-			);
+		const contracts = discoverContracts(source);
+		if (contracts.missing.length > 0) {
+			warn(`Could not find unique current ${contracts.missing.join(", ")}`);
 			return source;
 		}
-		const { component } = contract;
-		const { listMethod, batchMethod, pinnedMethod, projectMethod } =
-			contract.methods;
-		const listReplacement = listMethod.replace(
-			`filter(${contract.listPredicateAlias})`,
-			`filter(e=>!${DELETED_IDS}.has(e?.id)&&${contract.listPredicateAlias}(e))`,
-		);
-		const batchReplacement = batchMethod.replace(
-			`filter(${contract.listPredicateAlias})`,
-			`filter(${contract.listPredicateAlias}).filter(e=>!${DELETED_IDS}.has(e?.id))`,
-		);
-		const pinnedReplacement = pinnedMethod.replace(
-			`filter(${contract.pinnedPredicateAlias})`,
-			`filter(${contract.pinnedPredicateAlias}).filter(e=>!${DELETED_IDS}.has(e.item?.id))`,
-		);
-		const projectReplacement = projectMethod.replace(
-			`filter(${contract.listPredicateAlias})`,
-			`filter(e=>!${DELETED_IDS}.has(e?.id)&&${contract.listPredicateAlias}(e))`,
-		);
-
-		const cache = component.cache;
-		const cacheBase = component.cacheSize;
-		const cacheAlias = component.cacheAlias;
-		const cacheCallbackAlias = component.cacheCallbackAlias;
-		const cacheDependencies = [
-			[cacheBase, component.activeAlias],
-			[cacheBase + 1, component.intlAlias],
-			[cacheBase + 2, component.navigationAlias],
-			[cacheBase + 3, component.titleAlias],
-		];
-		const cacheGuard = `${cache[1]}${cacheDependencies.map(([slot, alias]) => `||${cacheAlias}[${slot}]!==${alias}`).join("")}`;
-		const assignmentPrefix = cache[4].replace(
-			`${cacheAlias}[${cache[5]}]=${cacheCallbackAlias}`,
-			"",
-		);
-		const cacheAssignments = `${assignmentPrefix}${cacheDependencies.map(([slot, alias]) => `${cacheAlias}[${slot}]=${alias},`).join("")}${cacheAlias}[${cache[5]}]=${cacheCallbackAlias}`;
-		const cacheReplacement = cache[0]
-			.replace(cache[1], cacheGuard)
-			.replace(cache[4], cacheAssignments);
-
-		const renderGuardReplacement = `titlePrefix:${component.titlePrefixAlias}}=${component.argumentAlias};if(${component.conversationAlias}!=null&&${DELETED_IDS}.has(${component.conversationAlias}.id))return null;let ${component.renderGuardAlias}=`;
-		const componentNeedle = `function ${component.name}(${component.argumentAlias}){let ${cacheAlias}=(0,${component.cacheFactory}.c)(${component.cacheSize}),`;
-		const componentReplacement = `${buildRuntimeSource(contract)}function ${component.name}(${component.argumentAlias}){let ${cacheAlias}=(0,${component.cacheFactory}.c)(${component.cacheSize + 4}),`;
-		const menuReplacement = `{id:${"`"}archive-chatgpt-conversation${"`"},message:${contract.localizationAlias}.archive,onSelect:${contract.archiveHandlerAlias}},{id:${"`"}${DELETE_MENU_ID}${"`"},message:${contract.localizationAlias}.delete,onSelect:()=>${RUNTIME_MARKER}(${component.scopeAlias},${component.conversationAlias},${component.titleAlias},${component.pendingAlias},${component.activeAlias},${component.intlAlias},${component.navigationAlias})}]}`;
 
 		let patched = source.replace(LOCALIZATION_NEEDLE, LOCALIZATION_REPLACEMENT);
-		patched = applyMethodFilter(patched, listMethod, listReplacement);
-		patched = applyMethodFilter(patched, batchMethod, batchReplacement);
-		patched = applyMethodFilter(patched, pinnedMethod, pinnedReplacement);
-		patched = applyMethodFilter(patched, projectMethod, projectReplacement);
-		patched = patched.replace(component.renderGuard, renderGuardReplacement);
-		patched = patched.replace(cache[0], cacheReplacement);
-		patched = patched.replace(componentNeedle, componentReplacement);
-		patched = patched.replace(
-			new RegExp(
-				"\\{id:`archive-chatgpt-conversation`,message:" +
-					contract.localizationAlias +
-					"\\.archive,onSelect:" +
-					contract.archiveHandlerAlias +
-					"\\}\\]\\}",
-			),
-			menuReplacement,
+		const clientPatched = patchConversationClient(
+			contracts.client.text,
+			contracts.client,
 		);
+		if (clientPatched == null) {
+			warn("Could not verify ChatGPT conversation response filters");
+			return source;
+		}
+		patched = patched.replace(contracts.client.text, clientPatched);
+
+		const runtimeSource = buildRuntimeSource({
+			...contracts.service,
+			...contracts.cache,
+			toastTokenAlias: contracts.sidebar.toastTokenAlias,
+			archiveMessageAlias: contracts.sidebar.archiveMessageAlias,
+		});
+		const sidebarPatched = patchSidebar(
+			patched,
+			contracts.sidebar,
+			runtimeSource,
+		);
+		if (sidebarPatched == null) {
+			warn("Could not verify ChatGPT sidebar delete menu injection");
+			return source;
+		}
+		patched = sidebarPatched;
 
 		if (
 			!patched.includes(RUNTIME_MARKER) ||
+			!patched.includes(`${DELETED_IDS}.add(t.id)`) ||
+			!patched.includes(`${DELETED_IDS}.delete(t.id)`) ||
+			!patched.includes(`${contracts.service.deleteMethodName}(t.id)`) ||
 			!patched.includes(
-				`function ${component.name}(${component.argumentAlias}){let ${cacheAlias}=(0,${component.cacheFactory}.c)(${component.cacheSize + 4}),`,
+				`${contracts.cache.cacheEvictionAlias}(e.queryClient,t.id)`,
 			) ||
-			!patched.includes(renderGuardReplacement) ||
-			!patched.includes(listReplacement) ||
-			!patched.includes(batchReplacement) ||
-			!patched.includes(pinnedReplacement) ||
-			!patched.includes(projectReplacement) ||
-			!patched.includes(`id:\`${DELETE_MENU_ID}\``)
+			!patched.includes(`${contracts.sidebar.archiveMessageAlias}.delete`) ||
+			!patched.includes(
+				`${contracts.sidebar.archiveMessageAlias}.deleteConfirm`,
+			) ||
+			!patched.includes(
+				`${contracts.sidebar.archiveMessageAlias}.deleteError`,
+			) ||
+			!patched.includes("codexLinuxConversationDelete.delete") ||
+			!patched.includes("codexLinuxConversationDelete.confirm") ||
+			!patched.includes("codexLinuxConversationDelete.error") ||
+			!patched.includes(`id:${BACKTICK}${DELETE_MENU_ID}${BACKTICK}`) ||
+			!patched.includes(`${DELETED_IDS}.has(e?.id)`) ||
+			!patched.includes(`${DELETED_IDS}.has(e.item?.id)`) ||
+			!patched.includes(`s(${JSON.stringify(NEW_THREAD_ROUTE)})`)
 		) {
 			warn("Could not verify delete menu injection");
 			return source;
@@ -520,7 +540,7 @@ const descriptors = [
 		order: 20_910,
 		ciPolicy: "optional",
 		pattern: CHATGPT_SIDEBAR_ASSET_PATTERN,
-		assetMatch: matchesConversationDeleteAsset,
+		assetMatch: matchesChatGptSidebarContract,
 		missingDescription: "ChatGPT sidebar webview bundle",
 		skipDescription: "ChatGPT sidebar conversation delete feature patch",
 		apply: applyConversationDeletePatch,
@@ -534,6 +554,4 @@ module.exports = {
 	RUNTIME_MARKER,
 	applyConversationDeletePatch,
 	descriptors,
-	matchesConversationDeleteAsset,
-	findConversationDeleteContract: findContract,
 };

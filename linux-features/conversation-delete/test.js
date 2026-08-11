@@ -20,10 +20,10 @@ const {
 } = require("./patch.js");
 
 const SIDEBAR_FIXTURE = [
-	"var gG=typeof OW===`undefined`?{newChat:{id:`chatgptConversations.newChat`,defaultMessage:`New chat`,description:`Fallback title`},archive:{id:`chatgptConversations.sidebar.archive`,defaultMessage:`Archive chat`,description:`Action label to archive a ChatGPT conversation in the sidebar`},archiveError:{id:`chatgptConversations.sidebar.archiveError`,defaultMessage:`Failed to archive conversation`,description:`Archive error`}}:OW;",
-	"var PDa=`chatgpt-project-conversation-search`;var uBr=e=>true,lBr=e=>true;var yBr=class{async list({}){let l=await this.request.listConversations();return{...l,items:l.items?.filter(uBr)??[]}}async getBatch(e,t){return(await this.request.getConversationsBatch(e,t)).filter(uBr)}async listPinnedConversationItems(){return(await this.request.listPinnedItems({itemType:`conversation`})).filter(lBr)}async listProjectConversations({cursor:e=null,limit:t=5,ownedOnly:n=!0,projectId:r}){let i=await this.request.listProjectConversations({cursor:e,limit:t,ownedOnly:n,projectId:r});return{cursor:i.cursor,items:i.items?.filter(uBr)??[]}}async delete(e){return this.request.deleteConversation(e)}async deleteConversation(e){return this.safeDelete(`/conversation/id/{conversation_id}`,{parameters:{path:{conversation_id:e}}})}};",
-	"function XEa(e,t){KDa(e,t),e.setQueriesData?.({predicate:e=>e.filter(e=>e.id!==t)},e=>e)}function ZEa(e,t){KDa(e,t),e.setQueryData?.(DG(),e=>e.filter(e=>e.id!==t))}function aDa(e,t){KDa(e,t),e.set?.(aP,n=>n.filter(n=>e.get(vP,n)!==t))}function xDa(e){KDa(e),e.invalidateQueries?.({queryKey:[PDa]})}",
-	"var C5={c:e=>typeof w5===`undefined`?[]:w5.c(e)},Lo=e=>typeof Fo===`function`?Fo(e):{},Gd=()=>typeof Vd===`function`?Vd():{formatMessage:e=>e.defaultMessage},qC=()=>typeof AC===`function`?AC():()=>{},OG=e=>null;function archiveConversation(e,D){e.get(yv).danger(D.formatMessage(gG.archiveError))}function loadConversation(e){return e.get(zN).getConversation(e)}var archiveAction=()=>{},renameAction=()=>{};function UBc(e){let t=(0,C5.c)(83),{conversation:n,isActive:o,isArchivePending:w,route:p,title:v,titlePrefix:S}=e,C=false,T=false,E=Lo(Q),D=Gd(),O=qC(),ae=archiveAction,re=renameAction,k=false,L=gG.archive;let oe;t[27]!==n||t[28]!==ae||t[29]!==re||t[30]!==w||t[31]!==k||t[32]!==L||t[33]!==E?(oe=async()=>{return[{id:`archive-chatgpt-conversation`,message:gG.archive,onSelect:ae}]},t[27]=n,t[28]=ae,t[29]=re,t[30]=w,t[31]=k,t[32]=L,t[33]=E,t[34]=oe):oe=t[34];return oe}",
+	"var SG={newChat:{id:`chatgptConversations.newChat`,defaultMessage:`New chat`,description:`Fallback title`},archive:{id:`chatgptConversations.sidebar.archive`,defaultMessage:`Archive chat`,description:`Action label to archive a ChatGPT conversation in the sidebar`},archiveError:{id:`chatgptConversations.sidebar.archiveError`,defaultMessage:`Failed to archive conversation`,description:`Archive error`}};",
+	"var aBr=e=>true,iBr=e=>e?.item_type===`conversation`&&aBr(e.item);var mBr=class{async list({}){let l=await this.request.listConversations();return{...l,items:l.items?.filter(aBr)??[]}}async getBatch(e,t){return(await this.request.getConversationsBatch(e,t)).filter(aBr)}async listPinnedConversationItems(){return(await this.request.listPinnedItems({itemType:`conversation`})).filter(iBr)}async listProjectConversations({cursor:e=null,limit:t=5,ownedOnly:n=!0,projectId:r}){let i=await this.request.listProjectConversations({cursor:e,limit:t,ownedOnly:n,projectId:r});return{cursor:i.cursor,items:i.items?.filter(aBr)??[]}}async deleteConversation(e){return this.safeDelete(`/conversation/id/{conversation_id}`,{parameters:{path:{conversation_id:e}}})}};",
+	"function IEa(e,t){return e.get(GN).setArchived(t,!0).then(()=>{GEa(e.queryClient,t)})}",
+	"function cVc(e){let t=(0,w5.c)(83),{conversation:n,conversationId:r,isActive:o,isArchivePending:s,route:p,title:v}=e,E=Fo(Q),D=Vd(),O=LC();E.get(kv).info(D.formatMessage({id:`chatgptConversations.sidebar.archiveAriaLabel`,defaultMessage:`Archive chat`}));let ae=archiveAction,oe;t[27]!==n||t[28]!==ae||t[29]!==s||t[30]!==E?(oe=async()=>{return[{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae}]},t[27]=n,t[28]=ae,t[29]=s,t[30]=E,t[34]=oe):oe=t[34];let ue=()=>{r!=null&&O(p)};let I=n!=null;let ye=oe;if(!I)return ye;let be;return be=ye}",
 ].join("");
 
 function renameIdentifiers(source, replacements) {
@@ -35,36 +35,32 @@ function renameIdentifiers(source, replacements) {
 }
 
 const RENAMED_SIDEBAR_FIXTURE = renameIdentifiers(SIDEBAR_FIXTURE, [
-	["gG", "localizationBundle"],
-	["uBr", "conversationFilter"],
-	["lBr", "pinnedFilter"],
-	["yBr", "conversationClient"],
-	["PDa", "projectSearchKey"],
-	["KDa", "evictCaches"],
-	["DG", "projectQueryKey"],
-	["aP", "pinnedItemsKey"],
-	["vP", "pinnedIdKey"],
-	["C5", "cacheHook"],
+	["SG", "localizationBundle"],
+	["aBr", "conversationFilter"],
+	["iBr", "pinnedFilter"],
+	["mBr", "conversationClient"],
+	["GN", "conversationApiToken"],
+	["GEa", "evictCaches"],
+	["IEa", "archiveConversation"],
 	["w5", "cacheFactory"],
-	["Lo", "scopeHook"],
 	["Fo", "scopeFactory"],
-	["Gd", "intlHook"],
 	["Vd", "intlFactory"],
-	["qC", "navigationHook"],
-	["AC", "navigationFactory"],
-	["OG", "scopeRoute"],
-	["yv", "toastToken"],
-	["zN", "conversationApi"],
+	["LC", "navigationFactory"],
+	["kv", "toastToken"],
 	["Q", "scopeContext"],
-	["UBc", "ConversationRow"],
+	["cVc", "ConversationRow"],
 	["archiveAction", "archiveHandler"],
-	["renameAction", "renameHandler"],
 	["oe", "menuCallback"],
 	["t", "cacheSlots"],
-	["C", "renderGuard"],
+	["E", "scopeValue"],
 	["D", "intlValue"],
 	["O", "navigate"],
-	["E", "scopeValue"],
+	["o", "activeState"],
+	["s", "archivePending"],
+	["r", "conversationKey"],
+	["p", "routeValue"],
+	["v", "titleValue"],
+	["n", "conversationValue"],
 ]);
 
 function captureWarnings(fn) {
@@ -133,6 +129,8 @@ test("descriptor targets ChatGPT sidebar asset family without hash pinning", () 
 		CHATGPT_SIDEBAR_ASSET_PATTERN,
 	);
 	assert.equal(descriptors.length, 1);
+	assert.equal(descriptors[0].assetMatch(SIDEBAR_FIXTURE), true);
+	assert.equal(descriptors[0].assetMatch("var unrelatedAsset=true;"), false);
 });
 
 test("patch adds confirmed delete action and is idempotent", () => {
@@ -142,12 +140,9 @@ test("patch adds confirmed delete action and is idempotent", () => {
 	assert.match(patched, new RegExp(RUNTIME_MARKER));
 	assert.match(patched, /codexLinuxConversationDelete\.delete/);
 	assert.match(patched, /id:`delete-chatgpt-conversation`/);
-	assert.match(patched, /e\.get\(zN\)\.delete\(t\.id\)/);
+	assert.match(patched, /e\.get\(GN\)\.deleteConversation\(t\.id\)/);
 	assert.match(patched, /window\.confirm/);
-	assert.match(patched, /XEa\(e\.queryClient,t\.id\)/);
-	assert.match(patched, /ZEa\(e\.queryClient,t\.id\)/);
-	assert.match(patched, /aDa\(e,t\.id\)/);
-	assert.match(patched, /xDa\(e\.queryClient\)/);
+	assert.match(patched, /GEa\(e\.queryClient,t\.id\)/);
 	assert.match(patched, new RegExp(`s\\("${NEW_THREAD_ROUTE}"\\)`));
 	assert.match(
 		patched,
@@ -165,7 +160,7 @@ test("patch adds confirmed delete action and is idempotent", () => {
 		patched,
 		/n!=null&&codexLinuxDeletedChatGptConversationIds\.has\(n\.id\)/,
 	);
-	assert.match(patched, /O=qC\(\)/);
+	assert.match(patched, /O=LC\(\)/);
 	assert.equal(applyConversationDeletePatch(patched), patched);
 });
 
@@ -173,15 +168,18 @@ test("discovers renamed minified aliases without hash coupling", () => {
 	const patched = applyConversationDeletePatch(RENAMED_SIDEBAR_FIXTURE);
 
 	assert.notEqual(patched, RENAMED_SIDEBAR_FIXTURE);
-	assert.match(patched, /get\(conversationApi\)\.delete\(t\.id\)/);
-	assert.match(patched, /evictCaches\(e,/);
+	assert.match(
+		patched,
+		/get\(conversationApiToken\)\.deleteConversation\(t\.id\)/,
+	);
+	assert.match(patched, /evictCaches\(e\.queryClient,/);
 	assert.match(patched, /id:`delete-chatgpt-conversation`/);
 });
 
 test("ambiguous semantic match leaves source unchanged and warns", () => {
 	const source = SIDEBAR_FIXTURE.replace(
-		"var PDa=`chatgpt-project-conversation-search`;",
-		"var PDa=`chatgpt-project-conversation-search`;var QDa=`chatgpt-project-conversation-search`;",
+		"{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae}",
+		"{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae},{id:`archive-chatgpt-conversation`,message:SG.archive,onSelect:ae}",
 	);
 	const { value, warnings } = captureWarnings(() =>
 		applyConversationDeletePatch(source),
@@ -192,10 +190,21 @@ test("ambiguous semantic match leaves source unchanged and warns", () => {
 	assert.match(warnings[0], /ChatGPT sidebar conversation row/);
 });
 
-test("drift leaves source unchanged and warns", () => {
+test("localization drift leaves source unchanged and warns", () => {
+	const source = SIDEBAR_FIXTURE.replace("archiveError:", "archiveFailure:");
+	const { value, warnings } = captureWarnings(() =>
+		applyConversationDeletePatch(source),
+	);
+
+	assert.equal(value, source);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /ChatGPT sidebar localization markers/);
+});
+
+test("endpoint drift leaves source unchanged and warns", () => {
 	const source = SIDEBAR_FIXTURE.replace(
-		"async deleteConversation",
-		"async removeConversation",
+		"/conversation/id/{conversation_id}",
+		"/conversation/id/{conversation}",
 	);
 	const { value, warnings } = captureWarnings(() =>
 		applyConversationDeletePatch(source),
@@ -203,7 +212,7 @@ test("drift leaves source unchanged and warns", () => {
 
 	assert.equal(value, source);
 	assert.equal(warnings.length, 1);
-	assert.match(warnings[0], /ChatGPT sidebar conversation row/);
+	assert.match(warnings[0], /ChatGPT conversation delete API client/);
 });
 
 test("runtime calls upstream delete without body and updates active navigation", async () => {
@@ -214,8 +223,8 @@ test("runtime calls upstream delete without body and updates active navigation",
 	const removed = [];
 	const navigated = [];
 	const context = {
-		KDa: (...args) => removed.push(args),
-		OW: {
+		GEa: (...args) => removed.push(args),
+		SG: {
 			deleteConfirm: {
 				id: "confirm",
 				defaultMessage: "Delete {title}?",
@@ -225,11 +234,11 @@ test("runtime calls upstream delete without body and updates active navigation",
 				defaultMessage: "Delete failed",
 			},
 		},
-		yv: toastToken,
-		zN: deleteToken,
+		kv: toastToken,
+		GN: deleteToken,
 		window: {
 			confirm: (message) => {
-				assert.equal(message, "Delete Example chat?");
+				assert.equal(message, "Delete “Example chat”? This can't be undone.");
 				return true;
 			},
 		},
@@ -240,7 +249,7 @@ test("runtime calls upstream delete without body and updates active navigation",
 			assert.equal(token === deleteToken || token === toastToken, true);
 			if (token === deleteToken) {
 				return {
-					delete(...args) {
+					deleteConversation(...args) {
 						calls.push(args);
 						return Promise.resolve();
 					},
@@ -273,22 +282,29 @@ test("runtime calls upstream delete without body and updates active navigation",
 	);
 
 	assert.deepEqual(calls, [["conversation-123"]]);
-	assert.deepEqual(removed, [
-		[scope.queryClient, "conversation-123"],
-		[scope.queryClient, "conversation-123"],
-		[scope, "conversation-123"],
-		[scope.queryClient],
-	]);
+	assert.deepEqual(removed, [[scope.queryClient, "conversation-123"]]);
 	assert.deepEqual(navigated, [NEW_THREAD_ROUTE]);
 
-	const client = new context.yBr();
+	const client = new context.mBr();
 	client.request = {
 		listConversations: async () => ({
 			items: [{ id: "conversation-123" }, { id: "conversation-456" }],
 		}),
+		getConversationsBatch: async () => [
+			{ id: "conversation-123" },
+			{ id: "conversation-456" },
+		],
+		listPinnedItems: async () => [
+			{ item_type: "conversation", item: { id: "conversation-123" } },
+			{ item_type: "conversation", item: { id: "conversation-456" } },
+		],
 	};
 	const listed = await client.list({});
 	assert.deepEqual(listed.items, [{ id: "conversation-456" }]);
+	assert.deepEqual(await client.getBatch([], {}), [{ id: "conversation-456" }]);
+	assert.deepEqual(await client.listPinnedConversationItems(), [
+		{ item_type: "conversation", item: { id: "conversation-456" } },
+	]);
 });
 
 test("tombstone hides pending delete and rolls back on failure", async () => {
@@ -299,13 +315,13 @@ test("tombstone hides pending delete and rolls back on failure", async () => {
 	const evicted = [];
 	let rejectDelete;
 	const context = {
-		KDa: (...args) => evicted.push(args),
-		OW: {
+		GEa: (...args) => evicted.push(args),
+		SG: {
 			deleteConfirm: { defaultMessage: "Delete {title}?" },
 			deleteError: { defaultMessage: "Delete failed" },
 		},
-		yv: toastToken,
-		zN: deleteToken,
+		kv: toastToken,
+		GN: deleteToken,
 		window: { confirm: () => true },
 	};
 	const scope = {
@@ -313,7 +329,7 @@ test("tombstone hides pending delete and rolls back on failure", async () => {
 		get(token) {
 			if (token === deleteToken) {
 				return {
-					delete() {
+					deleteConversation() {
 						return new Promise((_, reject) => {
 							rejectDelete = reject;
 						});
@@ -345,9 +361,10 @@ test("tombstone hides pending delete and rolls back on failure", async () => {
 			},
 		},
 	);
+	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(typeof rejectDelete, "function");
 
-	const client = new context.yBr();
+	const client = new context.mBr();
 	client.request = {
 		listConversations: async () => ({
 			items: [{ id: "conversation-123" }, { id: "conversation-456" }],
@@ -364,7 +381,7 @@ test("tombstone hides pending delete and rolls back on failure", async () => {
 		{ id: "conversation-123" },
 		{ id: "conversation-456" },
 	]);
-	assert.deepEqual(errors, ["Delete failed"]);
+	assert.deepEqual(errors, ["Failed to delete conversation"]);
 	assert.deepEqual(evicted, []);
 });
 
@@ -373,20 +390,20 @@ test("active deletion navigates to new chat route", async () => {
 	const deleteToken = {};
 	const navigated = [];
 	const context = {
-		KDa() {},
-		OW: {
+		GEa() {},
+		SG: {
 			deleteConfirm: { defaultMessage: "Delete {title}?" },
 			deleteError: { defaultMessage: "Delete failed" },
 		},
-		yv: {},
-		zN: deleteToken,
+		kv: {},
+		GN: deleteToken,
 		window: { confirm: () => true },
 	};
 	const scope = {
 		queryClient: {},
 		get(token) {
 			assert.equal(token, deleteToken);
-			return { delete: () => Promise.resolve() };
+			return { deleteConversation: () => Promise.resolve() };
 		},
 	};
 
@@ -423,7 +440,7 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 		get(token) {
 			if (token === deleteToken) {
 				return {
-					delete(id) {
+					deleteConversation(id) {
 						deleted.push(id);
 						deleteCalls += 1;
 						if (deleteCalls === 1) {
@@ -436,7 +453,7 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 				};
 			}
 			assert.equal(token, toastToken);
-			return { danger() {} };
+			return { danger() {}, info() {} };
 		},
 	};
 	const intl = {
@@ -447,12 +464,12 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 	const context = {
 		w5: {
 			c(size) {
-				assert.equal(size, 87);
+				assert.equal(size, 84);
 				return cache;
 			},
 		},
 		Q: {},
-		OW: {
+		SG: {
 			archive: "Archive chat",
 			delete: "Delete chat",
 			deleteConfirm: {
@@ -462,16 +479,16 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 		},
 		Fo: () => scope,
 		Vd: () => intl,
-		AC: () => (route) => navigated.push(route),
+		LC: () => (route) => navigated.push(route),
 		archiveAction: () => {},
 		renameAction: () => {},
-		KDa() {},
-		yv: toastToken,
-		zN: deleteToken,
+		GEa() {},
+		kv: toastToken,
+		GN: deleteToken,
 		window: { confirm: () => true },
 	};
 
-	vm.runInNewContext(`${patched};globalThis.renderSidebar=UBc;`, context);
+	vm.runInNewContext(`${patched};globalThis.renderSidebar=cVc;`, context);
 
 	const conversation = { id: "conversation-123" };
 	const firstMenu = await context.renderSidebar({
@@ -481,7 +498,8 @@ test("compiled menu cache refreshes delete callback when active state changes", 
 		route: "/chat/conversation-123",
 		title: "Example chat",
 	})();
-	await firstMenu.find((item) => item.id === DELETE_MENU_ID).onSelect();
+	firstMenu.find((item) => item.id === DELETE_MENU_ID).onSelect();
+	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(deleteCalls, 1);
 	assert.deepEqual(navigated, []);
 	assert.equal(typeof rejectFirstDelete, "function");
@@ -515,20 +533,20 @@ test("project conversation refetch filters deleted tombstone", async () => {
 	const patched = applyConversationDeletePatch(SIDEBAR_FIXTURE);
 	const deleteToken = {};
 	const context = {
-		KDa() {},
-		OW: {
+		GEa() {},
+		SG: {
 			deleteConfirm: { defaultMessage: "Delete {title}?" },
 			deleteError: { defaultMessage: "Delete failed" },
 		},
-		yv: {},
-		zN: deleteToken,
+		kv: {},
+		GN: deleteToken,
 		window: { confirm: () => true },
 	};
 	const scope = {
 		queryClient: {},
 		get(token) {
 			assert.equal(token, deleteToken);
-			return { delete: () => Promise.resolve() };
+			return { deleteConversation: () => Promise.resolve() };
 		},
 	};
 
@@ -547,7 +565,7 @@ test("project conversation refetch filters deleted tombstone", async () => {
 		},
 	);
 
-	const client = new context.yBr();
+	const client = new context.mBr();
 	client.request = {
 		listProjectConversations: async () => ({
 			cursor: null,
@@ -566,15 +584,15 @@ test("cancelled confirmation does not call delete", async () => {
 	const deleteToken = {};
 	let calls = 0;
 	const context = {
-		KDa() {
+		GEa() {
 			throw new Error("cache should not change");
 		},
-		OW: {
+		SG: {
 			deleteConfirm: { defaultMessage: "Delete {title}?" },
 			deleteError: { defaultMessage: "Delete failed" },
 		},
-		yv: {},
-		zN: deleteToken,
+		kv: {},
+		GN: deleteToken,
 		window: { confirm: () => false },
 	};
 	const scope = {
@@ -582,7 +600,7 @@ test("cancelled confirmation does not call delete", async () => {
 		get(token) {
 			assert.equal(token, deleteToken);
 			return {
-				delete() {
+				deleteConversation() {
 					calls += 1;
 					return Promise.resolve();
 				},
