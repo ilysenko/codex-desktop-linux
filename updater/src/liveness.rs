@@ -59,8 +59,19 @@ fn scan_proc_for_executable(expected: &Path) -> Result<bool> {
 fn process_matches(pid: u32, expected: &Path) -> bool {
     is_process_alive(pid)
         && read_exe_link(pid)
-            .map(|path| path == expected)
+            .map(|path| executable_paths_match(&path, expected))
             .unwrap_or(false)
+}
+
+fn executable_paths_match(actual: &Path, expected: &Path) -> bool {
+    if actual == expected {
+        return true;
+    }
+
+    actual
+        .to_str()
+        .and_then(|path| path.strip_suffix(" (deleted)"))
+        .is_some_and(|path| path == expected.to_string_lossy())
 }
 
 fn is_process_alive(pid: u32) -> bool {
@@ -106,5 +117,17 @@ mod tests {
             &config.app_executable_path
         ));
         Ok(())
+    }
+
+    #[test]
+    fn replaced_electron_executable_still_matches_managed_path() {
+        let actual = Path::new("/opt/codex-desktop/electron (deleted)");
+        let expected = Path::new("/opt/codex-desktop/electron");
+
+        assert!(executable_paths_match(actual, expected));
+        assert!(!executable_paths_match(
+            Path::new("/opt/other/electron (deleted)"),
+            expected,
+        ));
     }
 }
