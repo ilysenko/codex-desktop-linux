@@ -113,6 +113,7 @@ const {
 } = require("./patches/impl/main-process/misc.js");
 const {
   applyLinuxAppServerInitializeTimeoutPatch,
+  patchLinuxAppServerInitializeTimeout,
 } = require("./patches/impl/main-process/app-server.js");
 const {
   applyLinuxHotkeyWindowPrewarmPatch,
@@ -1086,6 +1087,10 @@ test("default core patch descriptors are grouped and unique", () => {
   );
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "linux-owl-feature-binding-fallback")?.phase,
+    "extracted-app:pre-webview",
+  );
+  assert.equal(
+    descriptors.find((descriptor) => descriptor.id === "linux-app-server-initialize-timeout")?.phase,
     "extracted-app:pre-webview",
   );
   assert.match(
@@ -8031,6 +8036,38 @@ test("extends the Linux app-server initialize handshake for slow profiles", () =
   );
   assert.equal(context.linuxTimeout, 3e5);
   assert.equal(context.otherTimeout, 9e4);
+});
+
+test("patches the extracted app-server chunk instead of only the entry bundle", () => {
+  const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-app-server-timeout-"));
+  try {
+    const buildDir = path.join(tempApp, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "main.js"), "require(`./src-current.js`)");
+    fs.writeFileSync(
+      path.join(buildDir, "src-current.js"),
+      [
+        '"use strict";',
+        "var Z=3e4;",
+        "class AppServerConnection{scheduleInitializeTimeout(){if(this.clearInitializeTimeoutTimer(),this.initializeStartedAtMs==null)return;let e=this.initializeStartedAtMs;this.initializeTimeoutTimer=setTimeout(()=>{if(this.initializeStartedAtMs===e){this.logger.warning(`Initialize handshake still pending`)}},Z)}clearInitializeTimeoutTimer(){}}",
+      ].join(""),
+    );
+
+    assert.deepEqual(patchLinuxAppServerInitializeTimeout(tempApp), {
+      matched: 1,
+      changed: 1,
+    });
+    assert.match(
+      fs.readFileSync(path.join(buildDir, "src-current.js"), "utf8"),
+      /codexLinuxAppServerInitializeTimeoutMs\(Z\)/,
+    );
+    assert.deepEqual(patchLinuxAppServerInitializeTimeout(tempApp), {
+      matched: 1,
+      changed: 0,
+    });
+  } finally {
+    fs.rmSync(tempApp, { recursive: true, force: true });
+  }
 });
 
 test("warns when the current app-server initialize timeout shape drifts", () => {
