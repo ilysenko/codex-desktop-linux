@@ -152,7 +152,8 @@
                 --replace-fail "/usr/share/applications/codex-desktop.desktop" "$out/share/applications/codex-desktop.desktop"
               makeWrapper "$app/start.sh" "$out/bin/codex-desktop" \
                 --prefix PATH : "${runtimePath}" \
-                --prefix LD_LIBRARY_PATH : "${runtimeLibraryPath}"
+                --prefix LD_LIBRARY_PATH : "${runtimeLibraryPath}" \
+                --add-flags "\''${NIXOS_OZONE_WL:+\''${WAYLAND_DISPLAY:+--ozone-platform=wayland --enable-wayland-ime=true --wayland-text-input-version=3}}"
               runHook postInstall
             '';
             passthru = {

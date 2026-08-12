@@ -100,6 +100,10 @@ The NixOS module uses the same option namespace:
 }
 ```
 
+The Nix package follows the standard `NIXOS_OZONE_WL` convention. When both
+`NIXOS_OZONE_WL` and `WAYLAND_DISPLAY` are set, its wrapper starts Electron with
+native Wayland rendering and text-input-v3 IME support.
+
 When `codex-micro` is selected, the module also exposes its packaged udev
 rules. Optional declarative remote-control service options live under
 `programs.codexDesktopLinux.remoteControl` and are independent of the desktop
