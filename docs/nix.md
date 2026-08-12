@@ -135,6 +135,13 @@ scripts/ci/update-official-linux-pins.sh
 ```
 
 The automation checks both architectures. Do not hand-invent or bypass hashes.
+The production pin workflow is dispatched by the standalone signed-package
+watchdog only after the matching source revision has passed acceptance and any
+required source repair has merged. It is not an independent timer: the
+workflow binds its checkout, both package records, branch, pull request, and
+explicit exact-head CI runs to one release campaign. The watchdog reviews and
+merges that pull request only after the repository's required checks pass.
+
 Validate changes with:
 
 ```bash

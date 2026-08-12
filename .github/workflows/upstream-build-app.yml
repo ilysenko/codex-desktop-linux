@@ -1,7 +1,33 @@
 name: Official Linux package build
+run-name: ${{ inputs.release_id && format('Official Linux campaign {0}', inputs.release_id) || format('Official Linux {0}', github.event_name) }}
 
 on:
   workflow_dispatch:
+    inputs:
+      release_id:
+        description: Exact signed release identity selected by watchdog
+        required: true
+        type: string
+      version:
+        description: Expected signed package version
+        required: true
+        type: string
+      amd64_repository_path:
+        description: Expected signed amd64 repository path
+        required: true
+        type: string
+      amd64_sha256:
+        description: Expected signed amd64 SHA-256
+        required: true
+        type: string
+      arm64_repository_path:
+        description: Expected signed arm64 repository path
+        required: true
+        type: string
+      arm64_sha256:
+        description: Expected signed arm64 SHA-256
+        required: true
+        type: string
   pull_request:
   push:
     branches: [main]
@@ -57,6 +83,26 @@ jobs:
             --key-base64 assets/openai-codex-linux-repository-key.gpg.base64 \
             --arch ${{ matrix.architecture }})"
           echo "package=$package" >> "$GITHUB_OUTPUT"
+      - name: Require the dispatched signed campaign
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_RELEASE_ID: ${{ inputs.release_id }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_REPOSITORY_PATH: ${{ matrix.architecture == 'amd64' && inputs.amd64_repository_path || inputs.arm64_repository_path }}
+          EXPECTED_SHA256: ${{ matrix.architecture == 'amd64' && inputs.amd64_sha256 || inputs.arm64_sha256 }}
+        run: |
+          node - "upstream/${{ matrix.architecture }}.json" <<'NODE'
+          const fs = require("node:fs");
+          const metadata = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (metadata.version !== process.env.EXPECTED_VERSION
+              || metadata.repositoryPath !== process.env.EXPECTED_REPOSITORY_PATH
+              || metadata.sha256 !== process.env.EXPECTED_SHA256) {
+            throw new Error("resolved signed package does not match the dispatched campaign");
+          }
+          if (!/^[0-9a-f]{64}$/.test(process.env.EXPECTED_RELEASE_ID)) {
+            throw new Error("invalid dispatched release identity");
+          }
+          NODE
       - name: Build byte-identical clean baseline
         env:
           CODEX_TARGET_ARCH: ${{ matrix.architecture }}
@@ -103,15 +149,43 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev gnupg rpm
+      - name: Resolve exact package matrix input
+        id: upstream
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_REPOSITORY_PATH: ${{ matrix.architecture == 'amd64' && inputs.amd64_repository_path || inputs.arm64_repository_path }}
+          EXPECTED_SHA256: ${{ matrix.architecture == 'amd64' && inputs.amd64_sha256 || inputs.arm64_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p upstream
+          package="$(node scripts/lib/upstream-linux-package.js \
+            --output-dir upstream/${{ matrix.architecture }} \
+            --metadata upstream/${{ matrix.architecture }}.json \
+            --key-base64 assets/openai-codex-linux-repository-key.gpg.base64 \
+            --arch ${{ matrix.architecture }})"
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            node - "upstream/${{ matrix.architecture }}.json" <<'NODE'
+            const fs = require("node:fs");
+            const metadata = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+            if (metadata.version !== process.env.EXPECTED_VERSION
+                || metadata.repositoryPath !== process.env.EXPECTED_REPOSITORY_PATH
+                || metadata.sha256 !== process.env.EXPECTED_SHA256) {
+              throw new Error("package matrix input does not match the dispatched campaign");
+            }
+            NODE
+          fi
       - name: Build baseline and package formats
         env:
           CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/linux-features/features.example.json
           CODEX_TARGET_ARCH: ${{ matrix.architecture }}
           PACKAGE_WITH_UPDATER: '0'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y dpkg-dev gnupg rpm
-          ./install.sh
+          ./install.sh "${{ steps.upstream.outputs.package }}"
           ./scripts/build-deb.sh
           ./scripts/build-rpm.sh
           PACMAN_STAGE_ONLY=1 ./scripts/build-pacman.sh
@@ -124,7 +198,34 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
-      - run: node scripts/automation/upstream-linux-package-watchdog/watchdog.js --json
+      - name: Resolve and bind the two-architecture campaign
+        env:
+          EXPECTED_RELEASE_ID: ${{ inputs.release_id }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_AMD64_PATH: ${{ inputs.amd64_repository_path }}
+          EXPECTED_AMD64_SHA256: ${{ inputs.amd64_sha256 }}
+          EXPECTED_ARM64_PATH: ${{ inputs.arm64_repository_path }}
+          EXPECTED_ARM64_SHA256: ${{ inputs.arm64_sha256 }}
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/official-linux-release.json"
+          node scripts/automation/upstream-linux-package-watchdog/watchdog.js --json > "$result"
+          cat "$result"
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            node - "$result" <<'NODE'
+            const fs = require("node:fs");
+            const actual = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).release;
+            const expected = process.env;
+            if (!actual || actual.releaseId !== expected.EXPECTED_RELEASE_ID
+                || actual.version !== expected.EXPECTED_VERSION
+                || actual.packages?.amd64?.repositoryPath !== expected.EXPECTED_AMD64_PATH
+                || actual.packages?.amd64?.sha256 !== expected.EXPECTED_AMD64_SHA256
+                || actual.packages?.arm64?.repositoryPath !== expected.EXPECTED_ARM64_PATH
+                || actual.packages?.arm64?.sha256 !== expected.EXPECTED_ARM64_SHA256) {
+              throw new Error("two-architecture signed release does not match dispatched campaign");
+            }
+            NODE
+          fi
 
   official-linux-gate:
     if: ${{ always() }}

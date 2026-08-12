@@ -75,3 +75,48 @@ test("official Linux gate fails closed unless every dependency succeeds", () => 
     );
   }
 });
+
+test("Nix pin refresh is watchdog-dispatched and campaign-bound", () => {
+  const workflow = read(".github/workflows/update-official-linux-pins.yml");
+  assert.doesNotMatch(workflow, /^  schedule:/m);
+  for (const input of [
+    "release_id",
+    "expected_main_sha",
+    "version",
+    "amd64_repository_path",
+    "amd64_sha256",
+    "arm64_repository_path",
+    "arm64_sha256",
+  ]) {
+    assert.match(workflow, new RegExp(`^      ${input}:$`, "m"));
+  }
+  assert.match(workflow, /^  actions: write$/m);
+  assert.match(workflow, /Require the accepted commit to be current main/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /gh api "repos\/\$GITHUB_REPOSITORY\/commits\/main" --jq \.sha/);
+  assert.match(workflow, /ref: \$\{\{ inputs\.expected_main_sha \}\}/);
+  assert.match(workflow, /codex\/official-linux-pins-\$\{RELEASE_ID:0:12\}/);
+  assert.match(workflow, /dispatch_if_missing ci\.yml/);
+  assert.match(workflow, /dispatch_if_missing upstream-build-app\.yml/);
+  assert.match(workflow, /Official-Linux-Release-ID:/);
+  assert.match(workflow, /--force-with-lease=refs\/heads\/\$branch:\$remote_head/);
+  assert.match(workflow, /git rev-parse 'FETCH_HEAD\^\{tree\}'/);
+  assert.match(workflow, /--head "\$GITHUB_REPOSITORY_OWNER:\$branch"/);
+});
+
+test("manual official Linux validation accepts an exact campaign", () => {
+  const workflow = read(".github/workflows/upstream-build-app.yml");
+  assert.match(workflow, /run-name:.*Official Linux campaign.*inputs\.release_id/);
+  for (const input of ["release_id", "version", "amd64_sha256", "arm64_sha256"]) {
+    assert.match(workflow, new RegExp(`^      ${input}:$`, "m"));
+  }
+  assert.equal((workflow.match(/^        required: true$/gm) || []).length, 6);
+  assert.match(workflow, /Require the dispatched signed campaign/);
+  assert.match(workflow, /resolved signed package does not match the dispatched campaign/);
+  assert.match(workflow, /Resolve and bind the two-architecture campaign/);
+  assert.match(workflow, /actual\.releaseId !== expected\.EXPECTED_RELEASE_ID/);
+  const packageMatrix = job(workflow, "package-matrix");
+  assert.match(packageMatrix, /Resolve exact package matrix input/);
+  assert.match(packageMatrix, /package matrix input does not match the dispatched campaign/);
+  assert.match(packageMatrix, /\.\/install\.sh "\$\{\{ steps\.upstream\.outputs\.package \}\}"/);
+});

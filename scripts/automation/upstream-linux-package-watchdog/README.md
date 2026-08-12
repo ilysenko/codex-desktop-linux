@@ -10,6 +10,12 @@ node scripts/automation/upstream-linux-package-watchdog/watchdog.js --json
 node scripts/automation/upstream-linux-package-watchdog/watchdog.js --write
 ```
 
+This JavaScript command is the small signed-metadata and pin-file helper used
+by CI. The standalone `upstream-linux-package-watchdog-v2` owns release
+campaigns, source repair, internal review, pull requests, guarded merges, and
+the ordered Nix refresh. The Nix workflow is dispatched only after accepted
+source reaches `main`; it no longer polls independently.
+
 CI follows a changed pin with clean baseline builds for both architectures and
-the package matrix. Enabled-feature drift remains a build failure; disabled
-features are not probed.
+the package matrix. Repository features are audited against the exact official
+bundle before an automated repair can be published.

@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
-const { pinsFromMetadata, sha256Sri } = require("./watchdog.js");
+const { pinsFromMetadata, releaseFromMetadata, sha256Sri } = require("./watchdog.js");
 
 test("watchdog creates architecture pins from a single signed stable version", () => {
   const amdSha = "a".repeat(64);
@@ -25,12 +25,32 @@ test("watchdog rejects a split stable version", () => {
   ]), /versions differ/);
 });
 
+test("release identity binds both signed package records", () => {
+  const entries = [
+    { version: "26.1", architecture: "amd64", repositoryPath: "pool/amd.deb", sha256: "a".repeat(64), size: 10 },
+    { version: "26.1", architecture: "arm64", repositoryPath: "pool/arm.deb", sha256: "b".repeat(64), size: 20 },
+  ];
+  const first = releaseFromMetadata(entries, "https://example.invalid/deb/");
+  const second = releaseFromMetadata([...entries].reverse(), "https://example.invalid/deb");
+  assert.match(first.release.releaseId, /^[0-9a-f]{64}$/);
+  assert.equal(first.release.releaseId, second.release.releaseId);
+  assert.equal(first.release.releaseId, "44962ae3f86bfa3a6db2df452e9f51faa9797f44036d8845397cb92bd93d7b7b");
+  assert.equal(first.release.packages.arm64.size, 20);
+});
+
+test("release identity rejects duplicate or extra architecture records", () => {
+  const amd64 = { version: "26.1", architecture: "amd64", repositoryPath: "pool/amd.deb", sha256: "a".repeat(64), size: 10 };
+  const arm64 = { version: "26.1", architecture: "arm64", repositoryPath: "pool/arm.deb", sha256: "b".repeat(64), size: 20 };
+  assert.throws(() => releaseFromMetadata([amd64, amd64], "https://example.invalid/deb"), /exactly amd64 and arm64/);
+  assert.throws(() => releaseFromMetadata([amd64, arm64, { ...arm64, architecture: "riscv64" }], "https://example.invalid/deb"), /exactly amd64 and arm64/);
+});
+
 test("pin refresh automation polls signed metadata and gates builds on changes", () => {
   const workflow = fs.readFileSync(
     path.resolve(__dirname, "../../../.github/workflows/update-official-linux-pins.yml"),
     "utf8",
   );
-  assert.match(workflow, /schedule:\s*\n\s*- cron:/);
   assert.match(workflow, /watchdog\.js --write --json/);
-  assert.match(workflow, /if: steps\.pins\.outputs\.changed == 'true'/);
+  assert.match(workflow, /expected_main_sha:/);
+  assert.doesNotMatch(workflow, /schedule:/);
 });

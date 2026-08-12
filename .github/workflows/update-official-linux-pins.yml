@@ -1,61 +1,209 @@
 name: Update official Linux package pins
+run-name: Linux pin refresh ${{ inputs.release_id }} at ${{ inputs.expected_main_sha }}
 
 on:
-  schedule:
-    - cron: '15 * * * *'
   workflow_dispatch:
+    inputs:
+      release_id:
+        description: Exact signed Linux package campaign identity
+        required: true
+        type: string
+      expected_main_sha:
+        description: Accepted main commit selected by the watchdog
+        required: true
+        type: string
+      version:
+        description: Signed stable package version
+        required: true
+        type: string
+      amd64_repository_path:
+        description: Signed amd64 repository path
+        required: true
+        type: string
+      amd64_sha256:
+        description: Signed amd64 package SHA-256
+        required: true
+        type: string
+      arm64_repository_path:
+        description: Signed arm64 repository path
+        required: true
+        type: string
+      arm64_sha256:
+        description: Signed arm64 package SHA-256
+        required: true
+        type: string
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
 concurrency:
-  group: update-official-linux-package-pins
+  group: update-official-linux-package-pins-${{ inputs.release_id }}
   cancel-in-progress: false
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      RELEASE_ID: ${{ inputs.release_id }}
+      EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+      EXPECTED_VERSION: ${{ inputs.version }}
+      EXPECTED_AMD64_PATH: ${{ inputs.amd64_repository_path }}
+      EXPECTED_AMD64_SHA256: ${{ inputs.amd64_sha256 }}
+      EXPECTED_ARM64_PATH: ${{ inputs.arm64_repository_path }}
+      EXPECTED_ARM64_SHA256: ${{ inputs.arm64_sha256 }}
     steps:
+      - name: Require the accepted commit to be current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          test "$current_main" = "$EXPECTED_MAIN_SHA"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_main_sha }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
       - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
-      - name: Refresh pins through signed metadata
+
+      - name: Refresh and bind pins to the signed campaign
         id: pins
         run: |
           set -euo pipefail
-          result="$(node scripts/automation/upstream-linux-package-watchdog/watchdog.js --write --json)"
-          printf '%s\n' "$result"
-          changed="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(String(value.changed))' "$result")"
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_MAIN_SHA"
+          result_file="$RUNNER_TEMP/signed-linux-release.json"
+          node scripts/automation/upstream-linux-package-watchdog/watchdog.js --write --json > "$result_file"
+          cat "$result_file"
+          node - "$result_file" <<'NODE'
+          const fs = require("node:fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const expected = {
+            releaseId: process.env.RELEASE_ID,
+            version: process.env.EXPECTED_VERSION,
+            amd64Path: process.env.EXPECTED_AMD64_PATH,
+            amd64Sha: process.env.EXPECTED_AMD64_SHA256,
+            arm64Path: process.env.EXPECTED_ARM64_PATH,
+            arm64Sha: process.env.EXPECTED_ARM64_SHA256,
+          };
+          const actual = value.release;
+          if (!actual || actual.releaseId !== expected.releaseId || actual.version !== expected.version
+              || actual.packages?.amd64?.repositoryPath !== expected.amd64Path
+              || actual.packages?.amd64?.sha256 !== expected.amd64Sha
+              || actual.packages?.arm64?.repositoryPath !== expected.arm64Path
+              || actual.packages?.arm64?.sha256 !== expected.arm64Sha) {
+            throw new Error("signed metadata no longer matches the dispatched watchdog campaign");
+          }
+          NODE
+          if git diff --quiet -- nix/upstream-linux-packages.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Evaluate and build Nix baseline
         if: steps.pins.outputs.changed == 'true'
         run: |
+          set -euo pipefail
+          test "$(git diff --name-only | sort)" = "nix/upstream-linux-packages.json"
           nix flake check --no-build
           nix build .#codex-desktop
-      - name: Open or update refresh pull request
+
+      - name: Open or update campaign pin pull request
         if: steps.pins.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH: codex/official-linux-package-pins
         run: |
           set -euo pipefail
-          git diff --quiet -- nix/upstream-linux-packages.json && exit 0
-          version="$(node -p 'require("./nix/upstream-linux-packages.json").version')"
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          test "$current_main" = "$EXPECTED_MAIN_SHA"
+          branch="codex/official-linux-pins-${RELEASE_ID:0:12}"
           git config user.name codex-linux-package-bot
           git config user.email actions@github.com
-          git checkout -B "$BRANCH"
+          git checkout -B "$branch"
           git add nix/upstream-linux-packages.json
-          git commit -m "fix(nix): refresh official Linux package pins for $version"
-          git push --force-with-lease origin "$BRANCH"
-          pr="$(gh pr list --head "$BRANCH" --base main --state open --json url --jq '.[0].url // ""')"
-          if [ -z "$pr" ]; then
-            gh pr create --head "$BRANCH" --base main \
-              --title "fix(nix): refresh official Linux package pins for $version" \
-              --body $'## Summary\n- refresh amd64 and arm64 pins from OpenAI signed APT metadata\n\n## Checks\n- nix flake check --no-build\n- nix build .#codex-desktop'
+          desired_tree="$(git write-tree)"
+          remote_record="$(git ls-remote --heads origin "refs/heads/$branch")"
+          remote_head="${remote_record%%[[:space:]]*}"
+          reuse_remote=false
+          if [ -n "$remote_head" ]; then
+            git fetch origin "$branch"
+            remote_message="$(git log -1 --format=%B FETCH_HEAD)"
+            grep -Fqx "Official-Linux-Release-ID: $RELEASE_ID" <<< "$remote_message"
+            if [ "$(git rev-parse FETCH_HEAD^)" = "$EXPECTED_MAIN_SHA" ] \
+                && [ "$(git rev-parse 'FETCH_HEAD^{tree}')" = "$desired_tree" ] \
+                && grep -Fqx "Source-Main-SHA: $EXPECTED_MAIN_SHA" <<< "$remote_message"; then
+              git reset --hard FETCH_HEAD
+              reuse_remote=true
+            fi
           fi
+          if [ "$reuse_remote" = false ]; then
+            git commit \
+              -m "fix(nix): refresh official Linux package pins for $EXPECTED_VERSION" \
+              -m "Source-Main-SHA: $EXPECTED_MAIN_SHA" \
+              -m "Official-Linux-Release-ID: $RELEASE_ID"
+            gh auth setup-git
+            git push \
+              "--force-with-lease=refs/heads/$branch:$remote_head" \
+              origin "HEAD:$branch"
+          fi
+
+          body_file="$RUNNER_TEMP/nix-refresh-pr.md"
+          {
+            echo "<!-- official-linux-release:$RELEASE_ID -->"
+            echo
+            echo "## Summary"
+            echo "- refresh amd64 and arm64 pins from OpenAI signed APT metadata"
+            echo "- bind the refresh to accepted main \`$EXPECTED_MAIN_SHA\`"
+            echo
+            echo "## Checks"
+            echo "- nix flake check --no-build"
+            echo "- nix build .#codex-desktop"
+          } > "$body_file"
+          pr="$(gh pr list --head "$GITHUB_REPOSITORY_OWNER:$branch" --base main --state open \
+            --json url,author,headRepositoryOwner,headRefOid,baseRefName \
+            --jq 'if length == 0 then "" elif length == 1 then .[0] else error("multiple campaign PRs") end')"
+          if [ -z "$pr" ]; then
+            pr="$(gh pr create --head "$branch" --base main \
+              --title "fix(nix): refresh official Linux package pins for $EXPECTED_VERSION" \
+              --body-file "$body_file")"
+          else
+            test "$(jq -r .headRepositoryOwner.login <<< "$pr")" = "$GITHUB_REPOSITORY_OWNER"
+            case "$(jq -r .author.login <<< "$pr")" in
+              github-actions|github-actions\[bot\]|"$GITHUB_ACTOR") ;;
+              *) echo "unexpected campaign PR author" >&2; exit 1 ;;
+            esac
+            test "$(jq -r .headRefOid <<< "$pr")" = "$(git rev-parse HEAD)"
+            test "$(jq -r .baseRefName <<< "$pr")" = main
+            pr_url="$(jq -r .url <<< "$pr")"
+            gh pr edit "$pr_url" \
+              --title "fix(nix): refresh official Linux package pins for $EXPECTED_VERSION" \
+              --body-file "$body_file"
+            pr="$pr_url"
+          fi
+          echo "Nix refresh PR: $pr"
+
+          head_sha="$(git rev-parse HEAD)"
+          dispatch_if_missing() {
+            local workflow="$1"
+            shift
+            count="$(gh run list --workflow "$workflow" --branch "$branch" --event workflow_dispatch \
+              --limit 20 --json headSha --jq "[.[] | select(.headSha == \"$head_sha\")] | length")"
+            if [ "$count" -eq 0 ]; then
+              gh workflow run "$workflow" --ref "$branch" "$@"
+            fi
+          }
+          dispatch_if_missing ci.yml
+          dispatch_if_missing upstream-build-app.yml \
+            -f "release_id=$RELEASE_ID" \
+            -f "version=$EXPECTED_VERSION" \
+            -f "amd64_repository_path=$EXPECTED_AMD64_PATH" \
+            -f "amd64_sha256=$EXPECTED_AMD64_SHA256" \
+            -f "arm64_repository_path=$EXPECTED_ARM64_PATH" \
+            -f "arm64_sha256=$EXPECTED_ARM64_SHA256"
