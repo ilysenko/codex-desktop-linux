@@ -168,17 +168,16 @@ jobs:
             --key-base64 assets/openai-codex-linux-repository-key.gpg.base64 \
             --arch ${{ matrix.architecture }})"
           echo "package=$package" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            node - "upstream/${{ matrix.architecture }}.json" <<'NODE'
-            const fs = require("node:fs");
-            const metadata = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-            if (metadata.version !== process.env.EXPECTED_VERSION
+          node - "upstream/${{ matrix.architecture }}.json" <<'NODE'
+          const fs = require("node:fs");
+          const metadata = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (process.env.GITHUB_EVENT_NAME === "workflow_dispatch"
+              && (metadata.version !== process.env.EXPECTED_VERSION
                 || metadata.repositoryPath !== process.env.EXPECTED_REPOSITORY_PATH
-                || metadata.sha256 !== process.env.EXPECTED_SHA256) {
-              throw new Error("package matrix input does not match the dispatched campaign");
-            }
-            NODE
-          fi
+                || metadata.sha256 !== process.env.EXPECTED_SHA256)) {
+            throw new Error("package matrix input does not match the dispatched campaign");
+          }
+          NODE
       - name: Build baseline and package formats
         env:
           CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/linux-features/features.example.json
@@ -211,21 +210,20 @@ jobs:
           result="$RUNNER_TEMP/official-linux-release.json"
           node scripts/automation/upstream-linux-package-watchdog/watchdog.js --json > "$result"
           cat "$result"
-          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            node - "$result" <<'NODE'
-            const fs = require("node:fs");
-            const actual = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).release;
-            const expected = process.env;
-            if (!actual || actual.releaseId !== expected.EXPECTED_RELEASE_ID
+          node - "$result" <<'NODE'
+          const fs = require("node:fs");
+          const actual = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).release;
+          const expected = process.env;
+          if (process.env.GITHUB_EVENT_NAME === "workflow_dispatch"
+              && (!actual || actual.releaseId !== expected.EXPECTED_RELEASE_ID
                 || actual.version !== expected.EXPECTED_VERSION
                 || actual.packages?.amd64?.repositoryPath !== expected.EXPECTED_AMD64_PATH
                 || actual.packages?.amd64?.sha256 !== expected.EXPECTED_AMD64_SHA256
                 || actual.packages?.arm64?.repositoryPath !== expected.EXPECTED_ARM64_PATH
-                || actual.packages?.arm64?.sha256 !== expected.EXPECTED_ARM64_SHA256) {
-              throw new Error("two-architecture signed release does not match dispatched campaign");
-            }
-            NODE
-          fi
+                || actual.packages?.arm64?.sha256 !== expected.EXPECTED_ARM64_SHA256)) {
+            throw new Error("two-architecture signed release does not match dispatched campaign");
+          }
+          NODE
 
   official-linux-gate:
     if: ${{ always() }}
