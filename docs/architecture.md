@@ -119,6 +119,13 @@ The build stages the upstream Chrome plugin, patches its Linux compatibility
 paths, builds the native messaging host from Rust, and installs browser
 manifests for Chrome, Brave, and Chromium.
 
+Before launching `app-server`, the native host canonicalizes every executable
+and runtime directory from the v2 manifest and validates its complete parent
+chain. Parents must be owned by root or the current user and must not be
+group/world writable, except for root-owned sticky directories such as `/tmp`.
+Treat a `required path parent` error as a filesystem trust failure; do not
+weaken this check or patch the generated manifest around it.
+
 ## Validation
 
 Run the subset that matches your change. For installer, packaging, patcher, or
