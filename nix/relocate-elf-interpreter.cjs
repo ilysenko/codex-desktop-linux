@@ -263,10 +263,7 @@ function relocateBuffer(buffer, expectedInterpreter) {
     targetOffset,
     targetOffset + expectedBytes.length,
   );
-  if (
-    !PATCHELF_FILL_BYTES.has(relocationSlot[0]) ||
-    !relocationSlot.every((byte) => byte === relocationSlot[0])
-  ) {
+  if (!relocationSlot.every((byte) => PATCHELF_FILL_BYTES.has(byte))) {
     fail("relocation slot is not patchelf padding");
   }
 

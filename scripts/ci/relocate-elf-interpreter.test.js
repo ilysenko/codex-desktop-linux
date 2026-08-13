@@ -112,6 +112,17 @@ test("accepts zero-filled patchelf padding", () => {
   assert.equal(inspectInterpreter(patched, interpreter).offset, SLOT_OFFSET);
 });
 
+test("accepts mixed zero and 0x5a patchelf padding", () => {
+  const interpreter =
+    "/nix/store/ffffffffffffffffffffffffffffffff-glibc/lib/ld-linux-x86-64.so.2";
+  const fixture = elfFixture(62, interpreter);
+  for (let index = SLOT_OFFSET; index < DETECT_LIBC_SCAN_SIZE; index += 2) {
+    fixture[index] = 0;
+  }
+  const patched = relocateBuffer(fixture, interpreter);
+  assert.equal(inspectInterpreter(patched, interpreter).offset, SLOT_OFFSET);
+});
+
 function interpreterFromFirstTwoKiB(buffer) {
   const scan = buffer.subarray(0, DETECT_LIBC_SCAN_SIZE);
   const programOffset = Number(scan.readBigUInt64LE(32));
@@ -213,7 +224,7 @@ for (const [name, mutate, pattern] of [
   [
     "non-padding bytes",
     (buffer) => {
-      buffer[SLOT_OFFSET] = 0;
+      buffer[SLOT_OFFSET] = 1;
     },
     /not patchelf padding/,
   ],
