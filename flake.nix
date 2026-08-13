@@ -466,6 +466,39 @@
             ++ featureRuntimePackages nixLinuxFeatures.supportedFeatureIds
           )
         );
+        installerPreviousRuntimeClosure = pkgs.writeText
+          "codex-desktop-installer-previous-runtime-closure"
+          "previous installer runtime closure used by the transaction test\n";
+        mockNixStore = pkgs.writeShellScript "codex-desktop-mock-nix-store" ''
+          set -euo pipefail
+          root=""
+          closure=""
+          while [ "$#" -gt 0 ]; do
+            case "$1" in
+              --add-root)
+                root="$2"
+                shift 2
+                ;;
+              --indirect)
+                shift
+                ;;
+              -r)
+                closure="$2"
+                shift 2
+                ;;
+              *)
+                printf 'Unexpected mock nix-store argument: %s\n' "$1" >&2
+                exit 2
+                ;;
+            esac
+          done
+          [ -n "$root" ] && [ -n "$closure" ]
+          mkdir -p "$(dirname "$root")"
+          temporary="$root.tmp.$$"
+          ln -s "$closure" "$temporary"
+          mv -Tf "$temporary" "$root"
+          printf '%s\n' "$closure"
+        '';
         installer = pkgs.writeShellApplication {
           name = "codex-desktop-installer";
           runtimeInputs = baseRuntimePackages ++ [
@@ -486,10 +519,53 @@
             name="$(basename "$final_dir")"
             candidate="$parent/.$name.nix-candidate-$$"
             runtime_root="$parent/.$name.nix-runtime"
+            candidate_runtime_root="$parent/.$name.nix-runtime-candidate-$$"
+            previous_runtime_root="$parent/.$name.nix-runtime-previous-$$"
+            runtime_marker_relative=".codex-linux/nix-runtime-closure"
+            previous_runtime_closure=""
+            runtime_roots_finalized=0
+            candidate_chatgpt_identity=""
+            nix_store_bin="''${CODEX_NIX_STORE_BIN:-nix-store}"
+            add_runtime_root() {
+              local root="$1"
+              local closure="$2"
+              if [ -e "$root" ] && [ ! -L "$root" ]; then
+                error "Refusing to replace a non-symlink Nix runtime root: $root"
+              fi
+              "$nix_store_bin" --add-root "$root" --indirect -r "$closure" >/dev/null
+              [ -L "$root" ] || error "Nix runtime root was not created: $root"
+              test "$(readlink -f "$root")" = "$closure" || \
+                error "Nix runtime root points at an unexpected closure: $root"
+            }
+            remove_runtime_root() {
+              local root="$1"
+              if [ -e "$root" ] && [ ! -L "$root" ]; then
+                warn "Refusing to remove a non-symlink Nix runtime root: $root"
+                return 1
+              fi
+              rm -f -- "$root"
+            }
+            candidate_was_promoted() {
+              local final_identity=""
+              [ -n "$candidate_chatgpt_identity" ] || return 1
+              [ -f "$final_dir/ChatGPT" ] || return 1
+              final_identity="$(stat -c '%d:%i' "$final_dir/ChatGPT" 2>/dev/null || true)"
+              [ "$final_identity" = "$candidate_chatgpt_identity" ]
+            }
             cleanup() {
               if [ -d "$candidate" ] && [ ! -L "$candidate" ]; then
                 chmod -R u+w "$candidate" 2>/dev/null || true
                 rm -rf -- "$candidate"
+              fi
+              if [ "$runtime_roots_finalized" = 1 ] || ! candidate_was_promoted; then
+                remove_runtime_root "$candidate_runtime_root" || true
+                remove_runtime_root "$previous_runtime_root" || true
+              else
+                warn "Promotion completed before Nix runtime roots were finalized; preserving transaction roots"
+                warn "New runtime root: $candidate_runtime_root"
+                if [ -n "$previous_runtime_closure" ]; then
+                  warn "Previous runtime root: $previous_runtime_root"
+                fi
               fi
             }
             trap cleanup EXIT
@@ -548,13 +624,45 @@
               --patchelf "${pkgs.patchelf}/bin/patchelf"
             node ${sourceRoot}/nix/relocate-elf-interpreter.cjs check \
               "$candidate/ChatGPT" "$dynamic_linker"
+            printf '%s\n' "${installerRuntimeClosure}" > \
+              "$candidate/$runtime_marker_relative"
+            chmod 0444 "$candidate/$runtime_marker_relative"
 
             if [ "''${CODEX_NIX_SKIP_GC_ROOT:-0}" != 1 ]; then
-              nix-store --add-root "$runtime_root" --indirect \
-                -r ${installerRuntimeClosure} >/dev/null
-              test "$(readlink -f "$runtime_root")" = "${installerRuntimeClosure}"
+              if [ -f "$final_dir/$runtime_marker_relative" ]; then
+                IFS= read -r previous_runtime_closure < \
+                  "$final_dir/$runtime_marker_relative"
+                [ -n "$previous_runtime_closure" ] || \
+                  error "Installed Nix runtime marker is empty: $final_dir/$runtime_marker_relative"
+                [ "$(wc -l < "$final_dir/$runtime_marker_relative")" -eq 1 ] || \
+                  error "Installed Nix runtime marker is malformed: $final_dir/$runtime_marker_relative"
+                [ -e "$previous_runtime_closure" ] || \
+                  error "Installed Nix runtime closure is no longer available: $previous_runtime_closure"
+              elif [ -L "$runtime_root" ]; then
+                previous_runtime_closure="$(readlink -f "$runtime_root")"
+                [ -e "$previous_runtime_closure" ] || \
+                  error "Current Nix runtime closure is no longer available: $previous_runtime_closure"
+              elif [ -e "$runtime_root" ]; then
+                error "Current Nix runtime root is not a symlink: $runtime_root"
+              fi
+              add_runtime_root "$candidate_runtime_root" "${installerRuntimeClosure}"
+              if [ -n "$previous_runtime_closure" ]; then
+                add_runtime_root "$previous_runtime_root" "$previous_runtime_closure"
+              fi
             fi
+            candidate_chatgpt_identity="$(stat -c '%d:%i' "$candidate/ChatGPT")"
             promote_candidate_install "$candidate" "$final_dir"
+            if [ "''${CODEX_NIX_SKIP_GC_ROOT:-0}" != 1 ]; then
+              if [ -n "''${PROMOTED_BACKUP_APP_DIR:-}" ] && [ -n "$previous_runtime_closure" ]; then
+                add_runtime_root \
+                  "$PROMOTED_BACKUP_APP_DIR/.codex-nix-runtime" \
+                  "$previous_runtime_closure"
+              fi
+              add_runtime_root "$runtime_root" "${installerRuntimeClosure}"
+              runtime_roots_finalized=1
+              remove_runtime_root "$candidate_runtime_root"
+              remove_runtime_root "$previous_runtime_root"
+            fi
             trap - EXIT
             printf 'Installed Nix-compatible app: %s\n' "$final_dir"
             if [ -n "''${PROMOTED_BACKUP_APP_DIR:-}" ]; then
@@ -778,8 +886,12 @@
         } ''
           set -euo pipefail
           export CODEX_INSTALL_DIR="$TMPDIR/installed"
-          export CODEX_NIX_SKIP_GC_ROOT=1
+          export CODEX_NIX_STORE_BIN=${mockNixStore}
           ${installer}/bin/codex-desktop-installer
+          runtime_root="$TMPDIR/.installed.nix-runtime"
+          runtime_marker="$CODEX_INSTALL_DIR/.codex-linux/nix-runtime-closure"
+          test "$(readlink -f "$runtime_root")" = ${installerRuntimeClosure}
+          test "$(cat "$runtime_marker")" = ${installerRuntimeClosure}
           dynamic_linker="$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)"
           node ${sourceRoot}/nix/elf-runtime.cjs audit \
             --root "$CODEX_INSTALL_DIR" \
@@ -797,10 +909,45 @@
             test "$tectonic_status" = 124
           fi
           first_chatgpt="$(stat -c %i "$CODEX_INSTALL_DIR/ChatGPT")"
+          chmod u+w "$runtime_marker"
+          printf '%s\n' ${installerPreviousRuntimeClosure} > "$runtime_marker"
+          chmod 0444 "$runtime_marker"
+          ${mockNixStore} --add-root "$runtime_root" --indirect \
+            -r ${installerPreviousRuntimeClosure} >/dev/null
+          set +e
+          CODEX_PROMOTION_TEST_FAIL_EXCHANGE=1 \
+            ${installer}/bin/codex-desktop-installer >/dev/null 2>&1
+          rejected_status=$?
+          set -e
+          test "$rejected_status" -ne 0
+          test "$(stat -c %i "$CODEX_INSTALL_DIR/ChatGPT")" = "$first_chatgpt"
+          test "$(readlink -f "$runtime_root")" = ${installerPreviousRuntimeClosure}
+          if compgen -G "$TMPDIR/.installed.nix-runtime-candidate-*" >/dev/null; then
+            echo "Rejected promotion leaked a candidate runtime root" >&2
+            exit 1
+          fi
+          if compgen -G "$TMPDIR/.installed.nix-runtime-previous-*" >/dev/null; then
+            echo "Rejected promotion leaked a previous runtime root" >&2
+            exit 1
+          fi
           ${installer}/bin/codex-desktop-installer
           test "$(stat -c %i "$CODEX_INSTALL_DIR/ChatGPT")" != "$first_chatgpt"
-          test -n "$(find "$TMPDIR" -maxdepth 1 -type d -name 'installed.backup-*' -print -quit)"
-          grep -q 'nix-store --add-root' ${installer}/bin/codex-desktop-installer
+          backup="$(find "$TMPDIR" -maxdepth 1 -type d -name 'installed.backup-*' -print -quit)"
+          test -n "$backup"
+          test "$(readlink -f "$runtime_root")" = ${installerRuntimeClosure}
+          test "$(cat "$runtime_marker")" = ${installerRuntimeClosure}
+          test "$(cat "$backup/.codex-linux/nix-runtime-closure")" = ${installerPreviousRuntimeClosure}
+          test "$(readlink -f "$backup/.codex-nix-runtime")" = ${installerPreviousRuntimeClosure}
+          if compgen -G "$TMPDIR/.installed.nix-runtime-candidate-*" >/dev/null; then
+            echo "Successful promotion leaked a candidate runtime root" >&2
+            exit 1
+          fi
+          if compgen -G "$TMPDIR/.installed.nix-runtime-previous-*" >/dev/null; then
+            echo "Successful promotion leaked a previous runtime root" >&2
+            exit 1
+          fi
+          grep -q 'candidate_runtime_root=' ${installer}/bin/codex-desktop-installer
+          grep -q 'PROMOTED_BACKUP_APP_DIR/.codex-nix-runtime' ${installer}/bin/codex-desktop-installer
           mkdir -p "$out"
         '';
         checks.nixos-vm = if system == "x86_64-linux" then
