@@ -960,13 +960,15 @@
                 package = codexDesktop;
                 remoteControl = {
                   enable = true;
-                  target = "never.target";
                   environment = { CODEX_NIX_VM = true; NULL_VALUE = null; };
                 };
               };
+              users.manageLingering = true;
               users.users.tester = {
                 isNormalUser = true;
                 uid = 1000;
+                createHome = true;
+                linger = true;
               };
               services.dbus.enable = true;
               environment.systemPackages = [ pkgs.xvfb pkgs.dbus ];
@@ -978,6 +980,16 @@
               machine.succeed("grep -q 'CODEX_NIX_VM=true' /etc/systemd/user/codex-remote-control.service")
               machine.succeed("grep -q 'After=network.target' /etc/systemd/user/codex-remote-control.service")
               machine.succeed("grep -q 'CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED' /etc/set-environment")
+              machine.succeed("grep -Fq 'CODEX_REMOTE_CONTROL_APP_SERVER_PROXY_SOCKET=\"$HOME/.codex/app-server-control/app-server-control.sock\"' /etc/set-environment")
+              machine.wait_for_unit("user@1000.service")
+              machine.wait_until_succeeds(
+                "su - tester -c 'XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active codex-remote-control.service'",
+                timeout=60,
+              )
+              machine.wait_until_succeeds(
+                "test -S /home/tester/.codex/app-server-control/app-server-control.sock",
+                timeout=60,
+              )
               machine.succeed("su - tester -c ${lib.escapeShellArg (toString vmSmokeScript)}")
               machine.succeed("! grep -R 'Could not start dynamically linked executable' /var/log")
             '';

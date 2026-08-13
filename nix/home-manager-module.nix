@@ -17,9 +17,15 @@ let
     flakePackages = self.packages.${system};
   };
   basePackage = selection.package;
+  bundledCodexCliPackage = import ./bundled-codex-cli.nix {
+    inherit pkgs;
+    desktopPackage = basePackage;
+  };
+  remoteCodexCliPackage =
+    if remote.package == null then bundledCodexCliPackage else remote.package;
   codexCliPackage =
     if cfg.cliPackage != null then cfg.cliPackage
-    else if remote.enable then remote.package
+    else if remote.enable then remoteCodexCliPackage
     else null;
   codexCliPath = if codexCliPackage == null then null else lib.getExe' codexCliPackage "codex";
   withCodexCliPath = base:
@@ -45,6 +51,7 @@ let
     };
   desktopPackage = if codexCliPath == null then basePackage else withCodexCliPath basePackage;
   codexHome = if remote.codexHome == null then "${config.home.homeDirectory}/.codex" else remote.codexHome;
+  prepareCodexHome = lib.escapeShellArgs [ "${pkgs.coreutils}/bin/mkdir" "-p" codexHome ];
   listenIsUnixSocket =
     remote.listen == "unix://"
     || builtins.match "unix:///[^/].*" remote.listen != null;
@@ -88,7 +95,17 @@ in {
     };
     remoteControl = {
       enable = lib.mkEnableOption "a declarative Codex remote-control app-server";
-      package = lib.mkOption { type = lib.types.package; default = pkgs.codex; };
+      package = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        default = null;
+        example = lib.literalExpression "pkgs.codex";
+        description = ''
+          Optional Codex CLI package for the remote-control app-server.
+          When unset, the compatible CLI bundled in the selected official
+          Desktop package is used. An override must support the app-server
+          --remote-control and --listen arguments.
+        '';
+      };
       codexHome = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
       listen = lib.mkOption { type = lib.types.str; default = "unix://"; };
       target = lib.mkOption { type = lib.types.str; default = "default.target"; };
@@ -146,8 +163,9 @@ in {
         After = [ "network.target" ];
       };
       Service = {
+        ExecStartPre = prepareCodexHome;
         ExecStart = lib.escapeShellArgs ([
-          (lib.getExe' remote.package "codex")
+          (lib.getExe' remoteCodexCliPackage "codex")
           "app-server"
           "--remote-control"
           "--listen"

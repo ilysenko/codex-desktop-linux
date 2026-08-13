@@ -17,12 +17,18 @@ let
     flakePackages = self.packages.${system};
   };
   basePackage = selection.package;
+  bundledCodexCliPackage = import ./bundled-codex-cli.nix {
+    inherit pkgs;
+    desktopPackage = basePackage;
+  };
+  remoteCodexCliPackage =
+    if remote.package == null then bundledCodexCliPackage else remote.package;
   codexMicroEnabled =
     cfg.package == null
     && lib.elem "codex-micro" selection.normalizedFeatureIds;
   codexCliPackage =
     if cfg.cliPackage != null then cfg.cliPackage
-    else if remote.enable then remote.package
+    else if remote.enable then remoteCodexCliPackage
     else null;
   codexCliPath = if codexCliPackage == null then null else lib.getExe' codexCliPackage "codex";
   withCodexCliPath = base:
@@ -47,15 +53,19 @@ let
       meta = base.meta or { };
     };
   desktopPackage = if codexCliPath == null then basePackage else withCodexCliPath basePackage;
-  codexHome = if remote.codexHome == null then "%h/.codex" else remote.codexHome;
+  serviceCodexHome = if remote.codexHome == null then "%h/.codex" else remote.codexHome;
+  sessionCodexHome = if remote.codexHome == null then "$HOME/.codex" else remote.codexHome;
+  prepareCodexHome = lib.escapeShellArgs [ "${pkgs.coreutils}/bin/mkdir" "-p" serviceCodexHome ];
   listenIsUnixSocket =
     remote.listen == "unix://"
     || builtins.match "unix:///[^/].*" remote.listen != null;
-  socket = if remote.listen == "unix://" then "${codexHome}/app-server-control/app-server-control.sock"
+  serviceSocket = if remote.listen == "unix://" then "${serviceCodexHome}/app-server-control/app-server-control.sock"
+    else lib.removePrefix "unix://" remote.listen;
+  sessionSocket = if remote.listen == "unix://" then "${sessionCodexHome}/app-server-control/app-server-control.sock"
     else lib.removePrefix "unix://" remote.listen;
   remotePath = lib.makeSearchPath "bin" ([ "/run/current-system/sw" ] ++ remote.extraPackages);
   remoteEnvironment = {
-    CODEX_HOME = codexHome;
+    CODEX_HOME = serviceCodexHome;
     PATH = remotePath;
   } // remote.environment;
   remoteEnvironmentList = lib.mapAttrsToList
@@ -84,7 +94,17 @@ in {
     };
     remoteControl = {
       enable = lib.mkEnableOption "a system-wide user remote-control app-server unit";
-      package = lib.mkOption { type = lib.types.package; default = pkgs.codex; };
+      package = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        default = null;
+        example = lib.literalExpression "pkgs.codex";
+        description = ''
+          Optional Codex CLI package for the remote-control app-server.
+          When unset, the compatible CLI bundled in the selected official
+          Desktop package is used. An override must support the app-server
+          --remote-control and --listen arguments.
+        '';
+      };
       codexHome = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
       listen = lib.mkOption { type = lib.types.str; default = "unix://"; };
       target = lib.mkOption { type = lib.types.str; default = "default.target"; };
@@ -137,7 +157,7 @@ in {
     services.udev.packages = lib.optionals codexMicroEnabled [ basePackage ];
     environment.sessionVariables = lib.mkIf remote.enable ({
       CODEX_REMOTE_CONTROL_APP_SERVER_MODE = "proxy";
-      CODEX_REMOTE_CONTROL_APP_SERVER_PROXY_SOCKET = socket;
+      CODEX_REMOTE_CONTROL_APP_SERVER_PROXY_SOCKET = sessionSocket;
     } // lib.optionalAttrs remote.disableLauncherAutostart {
       CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED = "1";
     });
@@ -146,8 +166,9 @@ in {
       after = [ "network.target" ];
       wantedBy = [ remote.target ];
       serviceConfig = {
+        ExecStartPre = prepareCodexHome;
         ExecStart = lib.escapeShellArgs ([
-          (lib.getExe' remote.package "codex")
+          (lib.getExe' remoteCodexCliPackage "codex")
           "app-server"
           "--remote-control"
           "--listen"
