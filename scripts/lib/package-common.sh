@@ -158,6 +158,7 @@ stage_update_builder_linux_features_tree() {
 
     mkdir -p "$target"
     cp "$source_root/features.example.json" "$target/features.example.json"
+    cp "$source_root/compatibility.json" "$target/compatibility.json"
 
     local feature_id
     while IFS= read -r feature_id; do

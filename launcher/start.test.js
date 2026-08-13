@@ -45,13 +45,16 @@ test("launcher composes declarative hooks and forwards arguments", (t) => {
   writeExecutable(path.join(hooks, "launcher.d", "fixture.sh"), "#!/bin/bash\nprintf '%s\\n' 'env LAUNCHER_ENV=from-launcher' 'electron-arg --launcher-arg=value'\n");
   writeExecutable(path.join(hooks, "after-exit.d", "fixture.sh"), "#!/bin/bash\nprintf after-exit > \"$TEST_ROOT/after-exit\"\n");
 
+  const env = {
+    ...process.env,
+    CODEX_HOME: path.join(root, "codex-home"),
+    XDG_CONFIG_HOME: path.join(root, "config"),
+    TEST_ROOT: root,
+  };
+  delete env.CHROME_DESKTOP;
+  delete env.BAMF_DESKTOP_FILE_HINT;
   const result = childProcess.spawnSync(path.join(root, "start.sh"), ["codex://thread/123", "--new-window"], {
-    env: {
-      ...process.env,
-      CODEX_HOME: path.join(root, "codex-home"),
-      XDG_CONFIG_HOME: path.join(root, "config"),
-      TEST_ROOT: root,
-    },
+    env,
     encoding: "utf8",
   });
   assert.equal(result.status, 7);

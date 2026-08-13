@@ -112,6 +112,41 @@ test("update-builder copies staged native feature artifacts without Cargo worksp
   }
 });
 
+test("update-builder carries the shared feature compatibility registry", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-builder-features-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const builder = path.join(root, "builder");
+
+  runPackageCommon(
+    `CODEX_LINUX_FEATURES_CONFIG=${JSON.stringify(path.join(repoRoot, "linux-features/features.example.json"))} stage_update_builder_linux_features_tree ${JSON.stringify(builder)}`,
+    root,
+  );
+
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(builder, "linux-features/compatibility.json"), "utf8")),
+    JSON.parse(fs.readFileSync(path.join(repoRoot, "linux-features/compatibility.json"), "utf8")),
+  );
+  fs.mkdirSync(path.join(builder, "scripts/lib"), { recursive: true });
+  fs.copyFileSync(
+    path.join(repoRoot, "scripts/lib/linux-features.js"),
+    path.join(builder, "scripts/lib/linux-features.js"),
+  );
+  assert.equal(
+    childProcess.execFileSync(
+      process.execPath,
+      [path.join(builder, "scripts/lib/linux-features.js"), "--enabled"],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CODEX_LINUX_FEATURES_CONFIG: path.join(builder, "linux-features/features.example.json"),
+        },
+      },
+    ),
+    "",
+  );
+});
+
 test("update-builder stages only plugin templates consumed by enabled feature hooks", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-builder-plugins-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

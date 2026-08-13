@@ -9,14 +9,14 @@
 # Usage: node-repl-reaper.sh <app-dir> [once|watch]
 #   once   (default) one reap pass
 #   watch  reap every CODEX_NODE_REPL_REAPER_INTERVAL seconds (default 300)
-#          after the first electron from <app-dir> appears, then exit with a
-#          final pass once no matching electron remains
+#          after the first ChatGPT process from <app-dir> appears, then exit
+#          with a final pass once no matching ChatGPT process remains
 set -u
 
 APP_DIR="${1:?usage: node-repl-reaper.sh <app-dir> [once|watch]}"
 MODE="${2:-once}"
-NODE_REPL_BIN="$APP_DIR/resources/node_repl"
-NODE_REPL_ORIGINAL_BIN="$APP_DIR/resources/node_repl.codex-linux-original"
+NODE_REPL_BIN="$APP_DIR/resources/cua_node/bin/node_repl"
+NODE_REPL_ORIGINAL_BIN="$APP_DIR/resources/cua_node/bin/node_repl.codex-linux-original"
 WATCH_INTERVAL_SECONDS="${CODEX_NODE_REPL_REAPER_INTERVAL:-300}"
 STARTUP_GRACE_SECONDS="${CODEX_NODE_REPL_REAPER_STARTUP_GRACE:-120}"
 KILL_GRACE_SECONDS="${CODEX_NODE_REPL_REAPER_KILL_GRACE:-5}"
@@ -118,18 +118,18 @@ install_app_is_running() {
         [ -e "$proc" ] || continue
         pid="${proc#/proc/}"
         pid="${pid%/cmdline}"
-        if proc_cmdline_starts_with "$pid" "$APP_DIR/electron"; then
+        if proc_cmdline_starts_with "$pid" "$APP_DIR/ChatGPT"; then
             return 0
         fi
     done
     return 1
 }
 
-wait_for_initial_electron() {
+wait_for_initial_chatgpt() {
     local waited=0
     while ! install_app_is_running; do
         if [ "$waited" -ge "$STARTUP_GRACE_SECONDS" ]; then
-            echo "node-repl-reaper: no $APP_DIR/electron appeared within ${STARTUP_GRACE_SECONDS}s; final pass and exit"
+            echo "node-repl-reaper: no $APP_DIR/ChatGPT appeared within ${STARTUP_GRACE_SECONDS}s; final pass and exit"
             return 1
         fi
         sleep 1
@@ -139,7 +139,7 @@ wait_for_initial_electron() {
 }
 
 if [ "$MODE" = "watch" ]; then
-    if ! wait_for_initial_electron; then
+    if ! wait_for_initial_chatgpt; then
         reap_leaked_node_repls
         exit 0
     fi
@@ -147,7 +147,7 @@ if [ "$MODE" = "watch" ]; then
     while :; do
         reap_leaked_node_repls
         if ! install_app_is_running; then
-            echo "node-repl-reaper: no $APP_DIR/electron running; final pass and exit"
+            echo "node-repl-reaper: no $APP_DIR/ChatGPT running; final pass and exit"
             reap_leaked_node_repls
             exit 0
         fi

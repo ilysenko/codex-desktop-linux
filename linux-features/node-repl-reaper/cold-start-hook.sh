@@ -1,6 +1,6 @@
 #!/bin/bash
 # Launcher cold-start hook: start one reaper watchdog per install. The
-# watchdog self-terminates after the last electron from this install exits,
+# watchdog self-terminates after the last ChatGPT process from this install exits,
 # so a stale pid file is the only restart blocker — clear it when the
 # recorded pid is dead or no longer the reaper.
 set -euo pipefail

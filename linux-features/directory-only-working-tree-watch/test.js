@@ -36,6 +36,7 @@ const {
 } = require("./patch.js");
 const {
   commitPackageDirectoryNoReplace,
+  currentArtifactManifest,
   packageHelperExitCode,
   packageTarget,
   stageWatchboundPackages,
@@ -43,6 +44,18 @@ const {
   validateTargetRuntime,
   verifyControlledPackageRoot,
 } = require("./watchbound-package.js");
+
+test("Nix Node 24.14 compatibility keeps a separate exact loader hash", () => {
+  const original = process.env.CODEX_WATCHBOUND_NIX_NODE_24_14;
+  delete process.env.CODEX_WATCHBOUND_NIX_NODE_24_14;
+  const upstreamHash = currentArtifactManifest().packages.loader.files["native-matrix.json"];
+  process.env.CODEX_WATCHBOUND_NIX_NODE_24_14 = "1";
+  const nixHash = currentArtifactManifest().packages.loader.files["native-matrix.json"];
+  if (original === undefined) delete process.env.CODEX_WATCHBOUND_NIX_NODE_24_14;
+  else process.env.CODEX_WATCHBOUND_NIX_NODE_24_14 = original;
+  assert.equal(upstreamHash, "4f63e441d5fc05a80ede19d32aefc9c6b4b3309a28e3c225078224099ad07769");
+  assert.equal(nixHash, "8ea0c8101cc7d0f97a5d988ce30240914a1ae5fecce7f6c4d02a7b80359e6cf4");
+});
 
 const MODULE_OVERRIDE_KEY = Symbol.for(
   "codex-linux.directory-only-working-tree-watch.test-module",

@@ -1,0 +1,15 @@
+{
+  "aliases": {
+    "zed-opener": "open-target-discovery"
+  },
+  "retired": [
+    "codex-wrapper-updater",
+    "conversation-delete",
+    "conversation-mode",
+    "deferred-update-build",
+    "example-feature",
+    "open-target-discovery",
+    "ssh-command-wrapper",
+    "x11-ewmh-computer-use"
+  ]
+}

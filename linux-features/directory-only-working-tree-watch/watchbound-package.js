@@ -1625,9 +1625,14 @@ function packageHelperExitCode(error) {
 }
 
 function currentArtifactManifest() {
-  return JSON.parse(
+  const manifest = JSON.parse(
     fs.readFileSync(path.join(__dirname, "watchbound-artifacts.json"), "utf8"),
   );
+  if (process.env.CODEX_WATCHBOUND_NIX_NODE_24_14 === "1") {
+    manifest.packages.loader.files["native-matrix.json"] =
+      "8ea0c8101cc7d0f97a5d988ce30240914a1ae5fecce7f6c4d02a7b80359e6cf4";
+  }
+  return manifest;
 }
 
 async function main() {
@@ -1675,6 +1680,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  currentArtifactManifest,
   defaultMaterializePackage,
   currentLibc,
   commitPackageDirectoryNoReplace,

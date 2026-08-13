@@ -26,17 +26,25 @@ function commandPath(name) {
 
 const BASH = commandPath("bash");
 
+test("tracks only the latest official ChatGPT and CUA helper layout", () => {
+  const source = fs.readFileSync(REAPER, "utf8");
+  assert.match(source, /\$APP_DIR\/ChatGPT/);
+  assert.match(source, /\$APP_DIR\/resources\/cua_node\/bin\/node_repl/);
+  assert.doesNotMatch(source, /\$APP_DIR\/electron/);
+  assert.doesNotMatch(source, /\$APP_DIR\/resources\/node_repl(?:\.|\")/);
+});
+
 function makeFakeApp() {
   const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-node-repl-reaper-test-"));
-  fs.mkdirSync(path.join(appDir, "resources"));
+  fs.mkdirSync(path.join(appDir, "resources", "cua_node", "bin"), { recursive: true });
   // The fake binaries run Node through app-local symlinks; what matters is
   // that /proc/<pid>/cmdline starts with the install-scoped executable path,
-  // like the real Electron and node_repl helpers.
-  const nodeReplBin = path.join(appDir, "resources", "node_repl");
+  // like the official ChatGPT and CUA node_repl helpers.
+  const nodeReplBin = path.join(appDir, "resources", "cua_node", "bin", "node_repl");
   fs.symlinkSync(process.execPath, nodeReplBin);
-  const electronBin = path.join(appDir, "electron");
-  fs.symlinkSync(process.execPath, electronBin);
-  return { appDir, nodeReplBin, electronBin };
+  const chatGptBin = path.join(appDir, "ChatGPT");
+  fs.symlinkSync(process.execPath, chatGptBin);
+  return { appDir, nodeReplBin, chatGptBin };
 }
 
 function pidAlive(pid) {
@@ -89,7 +97,7 @@ test("reaps a node_repl whose parent is not a live codex app-server", async () =
 
 test("reaps a wrapped node_repl running from the original backup path", async () => {
   const { appDir } = makeFakeApp();
-  const originalNodeReplBin = path.join(appDir, "resources", "node_repl.codex-linux-original");
+  const originalNodeReplBin = path.join(appDir, "resources", "cua_node", "bin", "node_repl.codex-linux-original");
   fs.symlinkSync(process.execPath, originalNodeReplBin);
   const leaked = spawn(originalNodeReplBin, LONG_RUNNING_NODE_ARGS, { stdio: "ignore" });
   try {
@@ -174,8 +182,8 @@ test("leaves a node_repl with a live codex resume parent alone", async () => {
   }
 });
 
-test("watch mode waits for the cold-start electron process before self-terminating", async () => {
-  const { appDir, electronBin } = makeFakeApp();
+test("watch mode waits for the cold-start ChatGPT process before self-terminating", async () => {
+  const { appDir, chatGptBin } = makeFakeApp();
   const watcher = spawn("bash", [REAPER, appDir, "watch"], {
     encoding: "utf8",
     env: {
@@ -186,19 +194,19 @@ test("watch mode waits for the cold-start electron process before self-terminati
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  let electron;
+  let chatGpt;
   try {
     await new Promise((resolve) => watcher.once("spawn", resolve));
     await delay(1200);
-    assert.ok(pidAlive(watcher.pid), "watchdog exited before Electron appeared");
+    assert.ok(pidAlive(watcher.pid), "watchdog exited before ChatGPT appeared");
 
-    electron = spawn(electronBin, ["-e", "setTimeout(() => {}, 3000)"], { stdio: "ignore" });
-    await new Promise((resolve) => electron.once("spawn", resolve));
-    await waitForExit(electron.pid, 6000);
+    chatGpt = spawn(chatGptBin, ["-e", "setTimeout(() => {}, 3000)"], { stdio: "ignore" });
+    await new Promise((resolve) => chatGpt.once("spawn", resolve));
+    await waitForExit(chatGpt.pid, 6000);
     await waitForExit(watcher.pid, 6000);
   } finally {
     try { watcher.kill("SIGKILL"); } catch {}
-    try { electron?.kill("SIGKILL"); } catch {}
+    try { chatGpt?.kill("SIGKILL"); } catch {}
     fs.rmSync(appDir, { recursive: true, force: true });
   }
 });

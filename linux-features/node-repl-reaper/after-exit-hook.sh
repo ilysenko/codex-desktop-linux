@@ -1,7 +1,7 @@
 #!/bin/bash
 # Launcher after-exit hook: reap immediately on app exit instead of waiting
 # for the watchdog's next interval. The watchdog itself is left running — it
-# serves all instances of this install and self-terminates once no electron
+# serves all instances of this install and self-terminates once no ChatGPT process
 # from the install remains.
 set -euo pipefail
 
