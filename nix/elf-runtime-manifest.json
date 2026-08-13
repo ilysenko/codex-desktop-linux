@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "architectures": {
+    "amd64": {
+      "machine": 62,
+      "targetInventoryCount": 34,
+      "targetInventorySha256": "cd8b211deae6419c00c69ff1fb0baa5426ceea11f0db523228440a8d0d79ca6c",
+      "requiredDynamicExecutables": [
+        "ChatGPT",
+        "browser_crashpad_handler",
+        "resources/cua_node/bin/node",
+        "resources/cua_node/lib/node_modules/.bin/sky_linux_x64",
+        "resources/cua_node/lib/node_modules/@oai/sky/bin/linux/sky_linux_x64",
+        "resources/plugins/openai-bundled/plugins/chrome/extension-host/linux/x64/extension-host",
+        "resources/plugins/openai-bundled/plugins/latex/bin/tectonic"
+      ],
+      "interpreterStrategies": {
+        "ChatGPT": "relocate-within-detect-libc-range",
+        "resources/plugins/openai-bundled/plugins/latex/bin/tectonic": "dynamic-linker-wrapper"
+      }
+    },
+    "arm64": {
+      "machine": 183,
+      "targetInventoryCount": 32,
+      "targetInventorySha256": "e84736429456d77cfdb961802c6bae1b92ea2d48c8a5524fdf6a863057853c04",
+      "requiredDynamicExecutables": [
+        "ChatGPT",
+        "browser_crashpad_handler",
+        "resources/cua_node/bin/node",
+        "resources/cua_node/lib/node_modules/.bin/sky_linux_arm64",
+        "resources/cua_node/lib/node_modules/@oai/sky/bin/linux/sky_linux_arm64",
+        "resources/plugins/openai-bundled/plugins/chrome/extension-host/linux/arm64/extension-host",
+        "resources/rg"
+      ],
+      "interpreterStrategies": {
+        "ChatGPT": "relocate-within-detect-libc-range"
+      }
+    }
+  },
+  "forbiddenPaths": [
+    "chrome_crashpad_handler"
+  ],
+  "wrapper": {
+    "originalSuffix": ".codex-linux-original",
+    "marker": "# codex-desktop nix dynamic-linker wrapper"
+  }
+}
