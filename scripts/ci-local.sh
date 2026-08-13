@@ -142,6 +142,14 @@ run_container_job() {
         args+=(-v "$git_common_dir:$git_common_dir:ro")
     fi
 
+    # The Nix suite contains a real NixOS VM launch check. Make the host KVM
+    # device available to the disposable Nix container when it exists; without
+    # this, Nix rejects the derivation before the test can start even though the
+    # same host can run it directly.
+    if [ "$job" = nix ] && [ -c /dev/kvm ]; then
+        args+=(--device /dev/kvm)
+    fi
+
     mount_github_summary_args args
 
     info "Running $job in $image_key"
