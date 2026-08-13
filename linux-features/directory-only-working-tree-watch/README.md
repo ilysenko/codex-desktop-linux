@@ -89,6 +89,17 @@ resolution, and `support.currentRuntime.targetCompatible`. It requires
 established physical root still matches that qualification snapshot. It does
 not recreate Watchbound's target or root decision from host strings.
 
+Watchbound's wrapper and loader detect libc through `process.report.getReport()`.
+Inside the packaged Electron binary that call is fatal — an internal CHECK
+aborts the process with SIGILL (the openai/codex#38123 git-watcher crash
+class) — so the adapter replaces `process.report` in the worker with a shim
+before any Watchbound code loads. The shim serves the same libc facts from
+probes that stay in JavaScript: the ELF interpreter of `/proc/self/exe`,
+`/usr/bin/ldd` content, and a `getconf GNU_LIBC_VERSION` subprocess. It stays
+installed for the worker's lifetime so later capability reads remain safe.
+When every probe fails, the shim reports an empty header, which Watchbound
+treats as an unsupported runtime and refuses instead of crashing.
+
 Build-time runtime qualification does not execute the upstream Electron
 binary. The extracted app's pinned Electron dependency must match the exact
 Electron/Node pair in the checked-in Watchbound artifact manifest; a mismatch

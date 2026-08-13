@@ -103,6 +103,8 @@ const PARCEL_FALLBACK_SYMBOL_KEY =
   "codex-linux.directory-only-working-tree-watch.parcel-fallback";
 const QUALIFICATION_WARNINGS_SYMBOL_KEY =
   "codex-linux.directory-only-working-tree-watch.qualification-warnings";
+const REPORT_SHIM_SYMBOL_KEY =
+  "codex-linux.directory-only-working-tree-watch.process-report-shim";
 const WATCHBOUND_RESULT_NAME = "codexLinuxWatchboundWatcher";
 const WATCHBOUND_VERSION = "2.1.1";
 const DEFAULT_MAX_WATCHES = 8192;
@@ -197,6 +199,92 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
       "codex-linux.directory-only-working-tree-watch.test-module",
     );
     const moduleOverride = globalThis[moduleOverrideKey];
+    // process.report.getReport() dies in a fatal CHECK trap inside the official
+    // Electron binary (SIGILL; the openai/codex#38123 crash class), and both
+    // watchbound/capabilities.js and @gadicc/watchbound-node/load-native.cjs
+    // call it for libc detection. Replace it with the same facts from probes
+    // that stay in JavaScript before any Watchbound code can run.
+    const reportShimMarker = Symbol.for(
+      "codex-linux.directory-only-working-tree-watch.process-report-shim",
+    );
+    if (process.report?.[reportShimMarker] !== true) {
+      const elfInterpreterPath = (image) => {
+        if (image.length < 64 || image.readUInt32LE(0) !== 0x464c457f) return null;
+        if (image[4] !== 2 || image[5] !== 1) return null;
+        const tableOffset = Number(image.readBigUInt64LE(32));
+        const entrySize = image.readUInt16LE(54);
+        const entryCount = image.readUInt16LE(56);
+        for (let index = 0; index < entryCount; index += 1) {
+          const entry = tableOffset + index * entrySize;
+          if (entry + 40 > image.length) break;
+          if (image.readUInt32LE(entry) !== 3) continue;
+          const interpOffset = Number(image.readBigUInt64LE(entry + 8));
+          const interpSize = Number(image.readBigUInt64LE(entry + 32));
+          if (interpSize < 2 || interpOffset + interpSize > image.length) return null;
+          return image.toString("utf8", interpOffset, interpOffset + interpSize - 1);
+        }
+        return null;
+      };
+      const readLeadingBytes = (filePath, length) => {
+        const descriptor = fs.openSync(filePath, "r");
+        try {
+          const buffer = Buffer.alloc(length);
+          return buffer.subarray(0, fs.readSync(descriptor, buffer, 0, length, 0));
+        } finally {
+          fs.closeSync(descriptor);
+        }
+      };
+      let family = null;
+      let glibcVersion = null;
+      let muslInterpreter = null;
+      try {
+        const interpreter = elfInterpreterPath(readLeadingBytes("/proc/self/exe", 4096));
+        if (interpreter?.includes("/ld-musl-")) {
+          family = "musl";
+          muslInterpreter = interpreter;
+        } else if (interpreter?.includes("/ld-linux-")) {
+          family = "glibc";
+        }
+      } catch {}
+      try {
+        const ldd = fs.readFileSync("/usr/bin/ldd", "latin1");
+        if (family == null) {
+          if (ldd.includes("musl")) family = "musl";
+          else if (ldd.includes("GNU C Library")) family = "glibc";
+        }
+        if (family === "glibc") {
+          glibcVersion = ldd.match(/LIBC[a-z0-9 \-).]*?(\d+\.\d+)/iu)?.[1] ?? null;
+        }
+      } catch {}
+      if (family === "glibc" && glibcVersion == null) {
+        try {
+          glibcVersion = childProcess
+            .execSync("getconf GNU_LIBC_VERSION", {
+              encoding: "utf8",
+              timeout: 1000,
+              stdio: ["ignore", "pipe", "ignore"],
+            })
+            .match(/(\d+\.\d+(?:\.\d+)?)/u)?.[1] ?? null;
+        } catch {}
+      }
+      const reportHeader = family === "glibc" && glibcVersion != null
+        ? { glibcVersionRuntime: glibcVersion }
+        : {};
+      const reportSharedObjects = family === "musl" && muslInterpreter != null
+        ? [muslInterpreter]
+        : [];
+      Object.defineProperty(process, "report", {
+        configurable: true,
+        enumerable: true,
+        value: {
+          [reportShimMarker]: true,
+          getReport: () => ({
+            header: { ...reportHeader },
+            sharedObjects: [...reportSharedObjects],
+          }),
+        },
+      });
+    }
     const watchbound = moduleOverride ?? await import("watchbound");
     if (
       watchbound.capabilities?.schemaVersion !== 9 ||
@@ -1904,6 +1992,7 @@ module.exports = {
   PARCEL_WATCH_MARKER,
   PARCEL_WORKING_TREE_WATCH,
   QUALIFICATION_WARNINGS_SYMBOL_KEY,
+  REPORT_SHIM_SYMBOL_KEY,
   WATCHBOUND_VERSION,
   codexLinuxStartDirectoryOnlyWorkingTreeWatch,
   descriptors,

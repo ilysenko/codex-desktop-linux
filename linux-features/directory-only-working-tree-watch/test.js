@@ -25,6 +25,7 @@ const {
   PARCEL_WATCH_MARKER,
   PARCEL_WORKING_TREE_WATCH,
   QUALIFICATION_WARNINGS_SYMBOL_KEY,
+  REPORT_SHIM_SYMBOL_KEY,
   WATCHBOUND_VERSION,
   codexLinuxStartDirectoryOnlyWorkingTreeWatch,
   descriptors,
@@ -3339,6 +3340,66 @@ test("the adapter fails closed on every Watchbound 2.1.1 contract mismatch", asy
     );
     assert.equal(fake.subscriptions.length, 0);
   }
+});
+
+test("the adapter replaces process.report before any Watchbound code runs", async (t) => {
+  const originalReport = Object.getOwnPropertyDescriptor(process, "report");
+  let poisonedCalls = 0;
+  Object.defineProperty(process, "report", {
+    configurable: true,
+    enumerable: true,
+    value: {
+      getReport() {
+        poisonedCalls += 1;
+        throw new Error("getReport is fatal inside the packaged Electron binary");
+      },
+    },
+  });
+  const fake = fakeWatchbound();
+  fake.capabilities.schemaVersion = 0;
+  globalThis[MODULE_OVERRIDE_KEY] = fake;
+  delete globalThis[ENGINE_KEY];
+  t.after(() => {
+    delete globalThis[MODULE_OVERRIDE_KEY];
+    delete globalThis[ENGINE_KEY];
+    Object.defineProperty(process, "report", originalReport);
+  });
+
+  const start = () => codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+    {
+      getFileSystemPath: () => "/qualified/root",
+      platformPath: async () => path.posix,
+    },
+    {
+      path: "/logical/root",
+      recursive: true,
+      renameEventHandling: "changed-path-with-parent-directory",
+      onChange() {},
+    },
+    {
+      maxWatches: 64,
+      honorGitIgnore: false,
+      ignoredDirectoryNames: [],
+    },
+  );
+  await assert.rejects(start(), /requires watchbound 2\.1\.1/u);
+
+  assert.equal(poisonedCalls, 0);
+  const shim = process.report;
+  assert.equal(shim[Symbol.for(REPORT_SHIM_SYMBOL_KEY)], true);
+  const report = shim.getReport();
+  assert.equal(typeof report.header, "object");
+  assert.ok(Array.isArray(report.sharedObjects));
+  let expectGlibc = false;
+  try {
+    expectGlibc = fs.readFileSync("/usr/bin/ldd", "latin1").includes("GNU C Library");
+  } catch {}
+  if (expectGlibc) {
+    assert.match(report.header.glibcVersionRuntime, /^\d+\.\d+/u);
+  }
+
+  await assert.rejects(start(), /requires watchbound 2\.1\.1/u);
+  assert.equal(process.report, shim);
 });
 
 test("the adapter preserves Codex policy around the Watchbound engine", async (t) => {
