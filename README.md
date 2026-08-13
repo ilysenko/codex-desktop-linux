@@ -207,6 +207,7 @@ requirements, known limitations, configuration, and tests.
 | `directory-only-working-tree-watch` | Bounded Watchbound working-tree watching | [Docs](linux-features/directory-only-working-tree-watch/README.md) |
 | `frameless-titlebar` | Hide official Linux overlay buttons for compositor-managed decorations | [Docs](linux-features/frameless-titlebar/README.md) |
 | `global-dictation` | X11 and XDG portal global dictation hotkeys | [Docs](linux-features/global-dictation/README.md) |
+| `hover-scrollbars` | Restore pre-migration overlay-style hover scrollbars on official Linux | [Docs](linux-features/hover-scrollbars/README.md) |
 | `linux-performance-workarounds` | Measured renderer workarounds for affected systems | [Docs](linux-features/linux-performance-workarounds/README.md) |
 | `mcp-helper-reaper` | Reap orphaned MCP helpers without touching live sessions | [Docs](linux-features/mcp-helper-reaper/README.md) |
 | `node-repl-reaper` | Reap Browser Use `node_repl` helpers leaked after owner exit | [Docs](linux-features/node-repl-reaper/README.md) |

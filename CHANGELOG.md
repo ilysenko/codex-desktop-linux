@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- An opt-in `hover-scrollbars` feature restores the pre-migration overlay-style
+  hover hide on official Linux overflow scrollers. Classic Chromium thumbs stay
+  transparent until hover on the project sidebar, chat thread, and other
+  `overflow-*-auto` surfaces, and reserved `scrollbar-gutter: stable` space is
+  dropped. The default clean build still preserves `resources/app.asar`.
 - A disabled-by-default `deferred-update-build` Linux feature adds a **Build
   updates automatically** setting. Turning it off keeps notification and DMG
   verification active while deferring local package builds until an explicit

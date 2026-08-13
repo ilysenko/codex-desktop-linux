@@ -1,0 +1,9 @@
+{
+  "id": "hover-scrollbars",
+  "title": "Hover Scrollbars",
+  "description": "Restore pre-migration overlay-style hover scrollbars on official Linux overflow scrollers.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
