@@ -283,18 +283,24 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
       const reportSharedObjects = family === "musl" && interpreter != null
         ? [interpreter]
         : [];
+      // The native report object stays as the prototype so every other
+      // member keeps its accessor-backed behavior; only getReport is shadowed.
       Object.defineProperty(process, "report", {
         configurable: true,
         enumerable: true,
         writable: true,
-        value: {
-          ...(process.report ?? {}),
-          [reportShimMarker]: true,
-          getReport: () => ({
-            header: { ...reportHeader },
-            sharedObjects: [...reportSharedObjects],
-          }),
-        },
+        value: Object.create(process.report ?? null, {
+          [reportShimMarker]: { value: true },
+          getReport: {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: () => ({
+              header: { ...reportHeader },
+              sharedObjects: [...reportSharedObjects],
+            }),
+          },
+        }),
       });
     }
     let watchbound = moduleOverride;
