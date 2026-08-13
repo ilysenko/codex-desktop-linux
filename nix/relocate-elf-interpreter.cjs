@@ -7,7 +7,7 @@ const ELF_HEADER_SIZE = 64;
 const PROGRAM_HEADER_SIZE = 56;
 const SECTION_HEADER_SIZE = 64;
 const DETECT_LIBC_SCAN_SIZE = 2048;
-const PATCHELF_FILL_BYTES = new Set([0x00, 0x5a]);
+const PATCHELF_FILL_BYTES = new Set([0x00, 0x58, 0x5a]);
 const PT_LOAD = 1;
 const PT_INTERP = 3;
 const SHT_PROGBITS = 1;
@@ -249,61 +249,65 @@ function relocateBuffer(buffer, expectedInterpreter) {
     fail("PT_INTERP is already inside detect-libc scan range");
   }
 
-  const targetOffset = alignUp(parsed.programEnd, parsed.alignment);
-  checkedRange(
-    targetOffset,
-    expectedBytes.length,
-    buffer.length,
-    "relocated PT_INTERP",
-  );
-  if (targetOffset + expectedBytes.length > DETECT_LIBC_SCAN_SIZE) {
-    fail("no room for PT_INTERP inside detect-libc scan range");
-  }
-  const relocationSlot = buffer.subarray(
-    targetOffset,
-    targetOffset + expectedBytes.length,
-  );
-  if (!relocationSlot.every((byte) => PATCHELF_FILL_BYTES.has(byte))) {
-    fail("relocation slot is not patchelf padding");
-  }
+  const firstCandidate = alignUp(parsed.programEnd, parsed.alignment);
+  const lastCandidate =
+    Math.min(buffer.length, DETECT_LIBC_SCAN_SIZE) - expectedBytes.length;
+  let targetOffset;
+  let load;
+  for (
+    let candidate = firstCandidate;
+    candidate <= lastCandidate;
+    candidate += parsed.alignment
+  ) {
+    const relocationSlot = buffer.subarray(
+      candidate,
+      candidate + expectedBytes.length,
+    );
+    if (!relocationSlot.every((byte) => PATCHELF_FILL_BYTES.has(byte)))
+      continue;
 
-  const loads = programs.filter(
-    ({ type, offset, fileSize }) =>
-      type === PT_LOAD &&
-      targetOffset >= offset &&
-      targetOffset + expectedBytes.length <= offset + fileSize,
-  );
-  if (loads.length !== 1)
-    fail(`expected one PT_LOAD for relocation slot, found ${loads.length}`);
-  const load = loads[0];
+    const loads = programs.filter(
+      ({ type, offset, fileSize }) =>
+        type === PT_LOAD &&
+        candidate >= offset &&
+        candidate + expectedBytes.length <= offset + fileSize,
+    );
+    if (loads.length !== 1) continue;
 
-  for (const program of programs) {
-    if (
-      program.type !== PT_LOAD &&
-      program !== interpreter &&
-      rangesOverlap(
-        targetOffset,
-        expectedBytes.length,
-        program.offset,
-        program.fileSize,
-      )
-    ) {
-      fail("relocation slot overlaps a non-LOAD segment");
-    }
+    const overlapsProgram = programs.some(
+      (program) =>
+        program.type !== PT_LOAD &&
+        program !== interpreter &&
+        rangesOverlap(
+          candidate,
+          expectedBytes.length,
+          program.offset,
+          program.fileSize,
+        ),
+    );
+    if (overlapsProgram) continue;
+
+    const overlapsSection = sections.some(
+      (section) =>
+        section.type !== SHT_NOBITS &&
+        section !== interpreterSection &&
+        rangesOverlap(
+          candidate,
+          expectedBytes.length,
+          section.offset,
+          section.size,
+        ),
+    );
+    if (overlapsSection) continue;
+
+    targetOffset = candidate;
+    load = loads[0];
+    break;
   }
-  for (const section of sections) {
-    if (
-      section.type !== SHT_NOBITS &&
-      section !== interpreterSection &&
-      rangesOverlap(
-        targetOffset,
-        expectedBytes.length,
-        section.offset,
-        section.size,
-      )
-    ) {
-      fail(`relocation slot overlaps section ${section.name || "<unnamed>"}`);
-    }
+  if (targetOffset === undefined || load === undefined) {
+    fail(
+      "no safe patchelf padding for PT_INTERP inside detect-libc scan range",
+    );
   }
 
   const delta = BigInt(targetOffset - load.offset);

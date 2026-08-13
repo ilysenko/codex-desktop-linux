@@ -112,6 +112,16 @@ test("accepts zero-filled patchelf padding", () => {
   assert.equal(inspectInterpreter(patched, interpreter).offset, SLOT_OFFSET);
 });
 
+test("accepts 0x58 padding from the pinned Nix patchelf", () => {
+  const interpreter =
+    "/nix/store/12121212121212121212121212121212-glibc/lib/ld-linux-x86-64.so.2";
+  const patched = relocateBuffer(
+    elfFixture(62, interpreter, 0x900, 0x58),
+    interpreter,
+  );
+  assert.equal(inspectInterpreter(patched, interpreter).offset, SLOT_OFFSET);
+});
+
 test("accepts mixed zero and 0x5a patchelf padding", () => {
   const interpreter =
     "/nix/store/ffffffffffffffffffffffffffffffff-glibc/lib/ld-linux-x86-64.so.2";
@@ -121,6 +131,18 @@ test("accepts mixed zero and 0x5a patchelf padding", () => {
   }
   const patched = relocateBuffer(fixture, interpreter);
   assert.equal(inspectInterpreter(patched, interpreter).offset, SLOT_OFFSET);
+});
+
+test("skips occupied bytes before safe patchelf padding", () => {
+  const interpreter =
+    "/nix/store/11111111111111111111111111111111-glibc/lib/ld-linux-x86-64.so.2";
+  const fixture = elfFixture(62, interpreter);
+  fixture.fill(1, SLOT_OFFSET, SLOT_OFFSET + 16);
+  const patched = relocateBuffer(fixture, interpreter);
+  assert.equal(
+    inspectInterpreter(patched, interpreter).offset,
+    SLOT_OFFSET + 16,
+  );
 });
 
 function interpreterFromFirstTwoKiB(buffer) {
@@ -224,9 +246,9 @@ for (const [name, mutate, pattern] of [
   [
     "non-padding bytes",
     (buffer) => {
-      buffer[SLOT_OFFSET] = 1;
+      buffer.fill(1, SLOT_OFFSET, DETECT_LIBC_SCAN_SIZE);
     },
-    /not patchelf padding/,
+    /no safe patchelf padding/,
   ],
   [
     "an already visible interpreter",
