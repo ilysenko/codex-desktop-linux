@@ -3277,7 +3277,9 @@ async function waitFor(predicate, label, timeout = 3000) {
 }
 
 test("the adapter fails closed on every Watchbound 2.1.1 contract mismatch", async (t) => {
+  const originalReport = Object.getOwnPropertyDescriptor(process, "report");
   t.after(() => {
+    Object.defineProperty(process, "report", originalReport);
     delete globalThis[MODULE_OVERRIDE_KEY];
     delete globalThis[ENGINE_KEY];
   });
@@ -3465,6 +3467,55 @@ test("the report shim reads the glibc version from a Nix store interpreter", asy
   const report = process.report.getReport();
   assert.equal(report.header.glibcVersionRuntime, "2.40");
   assert.deepEqual(report.sharedObjects, []);
+});
+
+test("a failed Watchbound import degrades to the preserved fallback", async (t) => {
+  const originalReport = Object.getOwnPropertyDescriptor(process, "report");
+  let poisonedCalls = 0;
+  Object.defineProperty(process, "report", {
+    configurable: true,
+    enumerable: true,
+    value: {
+      getReport() {
+        poisonedCalls += 1;
+        throw new Error("getReport is fatal inside the packaged Electron binary");
+      },
+    },
+  });
+  delete globalThis[MODULE_OVERRIDE_KEY];
+  delete globalThis[ENGINE_KEY];
+  t.after(() => {
+    Object.defineProperty(process, "report", originalReport);
+  });
+
+  let fallbackCalls = 0;
+  const preserved = { dispose() {} };
+  const result = await codexLinuxStartDirectoryOnlyWorkingTreeWatch(
+    {
+      getFileSystemPath: () => "/qualified/root",
+      platformPath: async () => path.posix,
+    },
+    {
+      path: "/logical/root",
+      recursive: true,
+      renameEventHandling: "changed-path-with-parent-directory",
+      onChange() {},
+    },
+    {
+      maxWatches: 64,
+      honorGitIgnore: false,
+      ignoredDirectoryNames: [],
+    },
+    () => {
+      fallbackCalls += 1;
+      return preserved;
+    },
+  );
+
+  assert.equal(fallbackCalls, 1);
+  assert.equal(result, preserved);
+  assert.equal(poisonedCalls, 0);
+  assert.equal(process.report[Symbol.for(REPORT_SHIM_SYMBOL_KEY)], true);
 });
 
 test("the adapter preserves Codex policy around the Watchbound engine", async (t) => {

@@ -92,16 +92,21 @@ not recreate Watchbound's target or root decision from host strings.
 Watchbound's wrapper and loader detect libc through `process.report.getReport()`.
 Inside the packaged Electron binary that call is fatal — an internal CHECK
 aborts the process with SIGILL (the openai/codex#38123 git-watcher crash
-class) — so the adapter replaces `process.report` in the worker with a shim
-before any Watchbound code loads. The shim serves the same libc facts from
+class) — so the adapter replaces `process.report` in both patched bundles
+(the worker and the main-process src bundle) with a shim that keeps the
+original report members and overrides only `getReport`, before any Watchbound
+code loads. The shim serves the same libc facts from
 probes that stay in JavaScript: the ELF interpreter of `/proc/self/exe`,
 `/usr/bin/ldd` content, and a `getconf GNU_LIBC_VERSION` subprocess. A Nix
 store interpreter names its exact glibc, so closure-only Nix launches (no
 `/usr/bin/ldd`, no `getconf` on the runtime `PATH`) take the version straight
-from the `PT_INTERP` path. The shim stays
-installed for the worker's lifetime so later capability reads remain safe.
-When every probe fails, the shim reports an empty header, which Watchbound
-treats as an unsupported runtime and refuses instead of crashing.
+from the `PT_INTERP` path — readable because the Nix build relocates
+`PT_INTERP` into the scanned range (#1332). The shim stays
+installed for the process's lifetime so later capability reads remain safe.
+When every probe fails, the shim reports an empty header; Watchbound then
+refuses at load, the adapter catches the refused import, and the request
+degrades to the preserved Parcel route (worker) or the original local watch
+(src bundle) instead of crashing.
 
 Build-time runtime qualification does not execute the upstream Electron
 binary. The extracted app's pinned Electron dependency must match the exact

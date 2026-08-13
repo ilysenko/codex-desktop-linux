@@ -203,7 +203,8 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
     // Electron binary (SIGILL; the openai/codex#38123 crash class), and both
     // watchbound/capabilities.js and @gadicc/watchbound-node/load-native.cjs
     // call it for libc detection. Replace it with the same facts from probes
-    // that stay in JavaScript before any Watchbound code can run.
+    // that stay in JavaScript before any Watchbound code can run. Probe order
+    // and matchers follow detect-libc (Apache-2.0, Lovell Fuller and others).
     const reportShimMarker = Symbol.for(
       "codex-linux.directory-only-working-tree-watch.process-report-shim",
     );
@@ -214,6 +215,7 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
         const tableOffset = Number(image.readBigUInt64LE(32));
         const entrySize = image.readUInt16LE(54);
         const entryCount = image.readUInt16LE(56);
+        if (entrySize < 56) return null;
         for (let index = 0; index < entryCount; index += 1) {
           const entry = tableOffset + index * entrySize;
           if (entry + 40 > image.length) break;
@@ -221,7 +223,9 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
           const interpOffset = Number(image.readBigUInt64LE(entry + 8));
           const interpSize = Number(image.readBigUInt64LE(entry + 32));
           if (interpSize < 2 || interpOffset + interpSize > image.length) return null;
-          return image.toString("utf8", interpOffset, interpOffset + interpSize - 1);
+          const segment = image.subarray(interpOffset, interpOffset + interpSize);
+          const terminator = segment.indexOf(0);
+          return segment.toString("utf8", 0, terminator === -1 ? segment.length : terminator);
         }
         return null;
       };
@@ -265,7 +269,7 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
       if (family === "glibc" && glibcVersion == null) {
         try {
           glibcVersion = childProcess
-            .execSync("getconf GNU_LIBC_VERSION", {
+            .execFileSync("getconf", ["GNU_LIBC_VERSION"], {
               encoding: "utf8",
               timeout: 1000,
               stdio: ["ignore", "pipe", "ignore"],
@@ -282,7 +286,9 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
       Object.defineProperty(process, "report", {
         configurable: true,
         enumerable: true,
+        writable: true,
         value: {
+          ...(process.report ?? {}),
           [reportShimMarker]: true,
           getReport: () => ({
             header: { ...reportHeader },
@@ -291,7 +297,16 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
         },
       });
     }
-    const watchbound = moduleOverride ?? await import("watchbound");
+    let watchbound = moduleOverride;
+    if (watchbound == null) {
+      try {
+        watchbound = await import("watchbound");
+      } catch {
+        // A refused loader (unsupported libc, missing package) must degrade to
+        // the preserved route, not reject the caller's file watch.
+        return typeof fallback === "function" ? fallback() : null;
+      }
+    }
     if (
       watchbound.capabilities?.schemaVersion !== 9 ||
       watchbound.capabilities?.versions?.wrapper !== WATCHBOUND_VERSION ||
