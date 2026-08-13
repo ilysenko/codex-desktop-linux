@@ -40,51 +40,37 @@ function captureWarnings(callback) {
 }
 
 function appshotAvailabilityAtomBundleFixture() {
-  return [
-    "import{c as e,l as t,t as n}from\"./app-scope.js\";",
-    "import{v as r}from\"./app-server-manager-signals.js\";",
-    "import{f as i}from\"./statsig.js\";",
-    "import{n as a}from\"./platform.js\";",
-    "import{c as o}from\"./config-queries.js\";",
-    "var s=t(n,(e,{get:t})=>{if(t(a)!==`macOS`||!t(i,`1304276663`))return!1;let{data:n}=t(o,{hostId:e});return n!=null&&n.requirements?.allowAppshots!==!1}),c=e(n,({get:e})=>e(s,e(r)));export{s as n,c as t};",
-  ].join("");
+  return "function Zmr(e,t){return e===`macOS`||e===`windows`&&t!=null&&mu.isInternal(t)};let appshot=Zmr(platform,flavor)";
 }
 
 function appshotMainProcessBundleFixture() {
   return [
     "var FO=new Map;",
     "function HO(e,t){let n=FO.get(e);n!=null&&(n.windowManager.sendInlineMessageForView(n.origin,{requestId:e,type:`computer-use-capture-updated`,update:t}),done(e,n))}",
-    "\"computer-use-frontmost-window\":async()=>process.platform===`darwin`?Xo():null,",
-    "\"computer-use-start-capture\":async({animationDestination:e,bundleIdentifier:t,origin:n,requestId:r})=>{if(process.platform!==`darwin`||this.requestComputerUseCaptureWorker==null||this.subscribeComputerUseCaptureWorkerEvent==null)return null;let i=GO({backgroundColor:e.backgroundColor,cornerRadius:e.cornerRadius,primaryTextColor:e.primaryTextColor,viewportFrame:e.viewportFrame,webContents:n});return i==null?null:VO({animationTarget:i,bundleIdentifier:t,origin:n,requestComputerUseCaptureWorker:this.requestComputerUseCaptureWorker,requestId:r,subscribeComputerUseCaptureWorkerEvent:this.subscribeComputerUseCaptureWorkerEvent,windowManager:this.windowManager})}",
+    "\"computer-use-frontmost-window\":async({origin:e,signal:t})=>process.platform===`win32`?bridge(e,t):process.platform===`darwin`?Xo():null,",
+    "\"computer-use-start-capture\":async({animationDestination:e,bundleIdentifier:t,origin:n,requestId:r,signal:i})=>{if(process.platform!==`darwin`&&process.platform!==`win32`)return null;let a=GO({backgroundColor:e.backgroundColor,webContents:n});return a}",
   ].join("");
 }
 
 function currentAppshotHotkeyMainBundleFixture() {
   return [
-    "var R8=`DoubleCommand`;",
+    "var R8=`DoubleCommand`,T8=`DoubleAlt`;",
     "var Yk=new Set([`cmdorctrl`,`command`,`cmd`,`control`,`ctrl`,`alt`,`option`]),Jk=new Set([...Yk,`shift`]);",
     "function Lk(e,t=process.platform){return t===`darwin`&&zk(e)!=null}",
     "function Mk(e,t,n=`press`){if(process.platform!==`darwin`)return null;let r=zk(e);return r==null?null:Nk(r,t,n)}",
-    "function nA(e,t=process.platform){let n=Gk(e);if(Lk(e,t))return null;if(n.some(wE))return n.length===1?t===`darwin`?Lk(e,t)?null:`This shortcut key is not supported.`:`Choose a shortcut with Ctrl or Alt plus another key.`:`Use Ctrl, Alt, or Command when combining with another key.`;return null}",
-    "var B8=class{configuredHotkey;registration=null;constructor(e){this.enabled=!0;let a=e.getStored(`appshotHotkey`);this.configuredHotkey=a===void 0?R8:a}getState(){return{supported:this.enabled&&process.platform===`darwin`,configuredHotkey:this.configuredHotkey,isActive:this.registration!=null}}setHotkey(e){if(!this.enabled||process.platform!==`darwin`)return{success:!1,error:`Not supported.`,state:this.getState()};return{success:!0,state:this.getState()}}reconcile(){if(this.registration?.unregister(),this.registration=null,!this.enabled||process.platform!==`darwin`||this.configuredHotkey==null)return null;return Mk(this.configuredHotkey,()=>{})}};",
+    "var B8=class{configuredHotkey;registration=null;windowsCaptureNativeBridgeFailed=!1;constructor(e){this.enabled=!0,this.windowsCaptureNativeBridge=null;let a=e.getStored(`appshotHotkey`);a===void 0?this.configuredHotkey=process.platform===`win32`?T8:R8:this.configuredHotkey=a}getState(){return{supported:this.enabled&&(process.platform===`darwin`||process.platform===`win32`&&this.windowsCaptureNativeBridge!=null&&!this.windowsCaptureNativeBridgeFailed),configuredHotkey:this.configuredHotkey,isActive:this.registration!=null}}};",
     "globalThis.AppshotHotkeys=B8;",
   ].join("");
 }
 
 function currentAppshotSettingsBundleFixture() {
-  return [
-    "var J,Y,X,Se=e((()=>{J=[`appshot-hotkey-state`],Y=o(M,()=>({queryKey:J,queryFn:async()=>{let e=C.appshotHotkeys;return e==null?{supported:!1,configuredHotkey:null,isActive:!1}:e.getState()},staleTime:k.ONE_MINUTE})),X=[{hotkey:`DoubleCommand`,label:`⌘ + ⌘`},{hotkey:`DoubleOption`,label:`⌥ + ⌥`},{hotkey:`DoubleShift`,label:`⇧ + ⇧`}]}));",
-    "function Te(){let e=(0,Q.c)(41),o=A(Y),i=null,a=()=>{},d=async()=>{},f=o?.configuredHotkey??null,p;e[6]===f?p=e[7]:(p=X.find(e=>e.hotkey===f)??null,e[6]=f,e[7]=p);let m=p,O;e[20]!==d||e[21]!==f||e[22]!==m?.hotkey?(O=X.map(e=>item({selected:e.hotkey===m?.hotkey,onSelect:()=>d(e.hotkey),children:e.label})),e[20]=d,e[21]=f,e[22]=m?.hotkey,e[23]=O):O=e[23];return O}",
-  ].join("");
+  return "let d=state,v=d?.configuredHotkey??null,i=platform,n=intl,X=messages,Y=macOptions;let t=i===`windows`?[{hotkey:`DoubleAlt`,label:n.formatMessage(X.doubleAlt)},{hotkey:`DoubleShift`,label:n.formatMessage(X.doubleShift)}]:Y,r=t.find(e=>e.hotkey===v)??null,T=t.map(e=>e.label);";
 }
 
 function currentAppshotSettingsRuntimeFixture() {
   return [
-    "var J,Y,X,Se=(()=>{J=[],Y={},X=[{hotkey:`DoubleCommand`,label:`Command`},{hotkey:`DoubleOption`,label:`Option`},{hotkey:`DoubleShift`,label:`Shift`}]})();",
-    "let o={configuredHotkey:`DoubleOption`,linuxWayland:!1};",
-    "function render(){let f=o?.configuredHotkey??null;return{selected:X.find(e=>e.hotkey===f)??null,labels:X.map(e=>e.label)}}",
-    "function unrelated(){return AX.find(e=>e)+AX.map(e=>e)}",
-    "function propertyAccess(){return obj.X.find(e=>e)+obj.X.map(e=>e)}",
+    "let o={configuredHotkey:`DoubleOption`,linuxWayland:!1},i=`linux`,n={formatMessage:e=>e},X={doubleAlt:`Alt`,doubleShift:`Shift`},Y=[{hotkey:`DoubleCommand`,label:`Command`}];",
+    "function render(){let f=o?.configuredHotkey??null;let t=i===`windows`?[{hotkey:`DoubleAlt`,label:n.formatMessage(X.doubleAlt)},{hotkey:`DoubleShift`,label:n.formatMessage(X.doubleShift)}]:Y,r=t.find(e=>e.hotkey===f)??null;return{selected:r,labels:t.map(e=>e.label)}}",
     "globalThis.result=render();",
     "\n//# sourceMappingURL=fixture.js.map",
   ].join("");
@@ -272,9 +258,9 @@ test("enables AppShots availability atom on Linux", () => {
 
   assert.match(
     patched,
-    /if\(t\(a\)!==`linux`&&\(t\(a\)!==`macOS`\|\|!t\(i,`1304276663`\)\)\)return!1;/,
+    /e===`linux`\/\*codexLinuxAppshotsPlatformAvailable\*\/\|\|e===`macOS`/,
   );
-  assert.match(patched, /requirements\?\.allowAppshots!==!1/);
+  assert.match(patched, /e===`windows`&&t!=null&&mu\.isInternal\(t\)/);
 });
 
 test("rejects the obsolete raw renderer message sender shape", () => {
@@ -290,7 +276,7 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
 
   assert.match(
     patched,
-    /process\.platform===`linux`\?codexLinuxAppshotFrontmostWindow\(\):process\.platform===`darwin`\?Xo\(\):null/,
+    /process\.platform===`linux`\?codexLinuxAppshotFrontmostWindow\(\):process\.platform===`win32`/,
   );
   assert.match(
     patched,
@@ -449,23 +435,11 @@ test("enables the current AppShots hotkey class and bare modifiers on Linux", ()
   assert.match(patched, /new Set\(\[\.\.\.Yk,`shift`,`super`,`meta`,`win`\]\)/);
   assert.match(
     patched,
-    /this\.configuredHotkey=a===void 0\?\(process\.platform===`linux`\?null:R8\):a/,
+    /a===void 0\?this\.configuredHotkey=process\.platform===`win32`\?T8:process\.platform===`linux`\?null:R8:this\.configuredHotkey=a/,
   );
   assert.match(
     patched,
-    /supported:this\.enabled&&\(process\.platform===`darwin`\|\|process\.platform===`linux`\),configuredHotkey:this\.configuredHotkey,isActive:this\.registration!=null,linuxWayland:codexLinuxAppshotIsWayland\(\)/,
-  );
-  assert.match(
-    patched,
-    /if\(!this\.enabled\|\|process\.platform!==`darwin`&&process\.platform!==`linux`\)return\{success:!1,error:`Not supported\.`,state:this\.getState\(\)\}/,
-  );
-  assert.match(
-    patched,
-    /!this\.enabled\|\|process\.platform!==`darwin`&&process\.platform!==`linux`\|\|this\.configuredHotkey==null/,
-  );
-  assert.match(
-    patched,
-    /return n\.length===1\?\(t===`darwin`\|\|t===`linux`\)\?Lk\(e,t\)\?null:`This shortcut key is not supported\.`/,
+    /supported:this\.enabled&&\(process\.platform===`linux`\|\|process\.platform===`darwin`\|\|process\.platform===`win32`&&this\.windowsCaptureNativeBridge!=null&&!this\.windowsCaptureNativeBridgeFailed\),configuredHotkey:this\.configuredHotkey,isActive:this\.registration!=null,linuxWayland:codexLinuxAppshotIsWayland\(\)/,
   );
 
   const context = {
@@ -493,10 +467,9 @@ test("AppShots hotkey patch fails closed when one current class shape drifts", (
 });
 
 test("AppShots hotkey patch rejects a partially patched setter", () => {
-  const fullyPatched = applyLinuxAppshotHotkeyPatch(currentAppshotHotkeyMainBundleFixture());
-  const partial = fullyPatched.replace(
-    "if(!this.enabled||process.platform!==`darwin`&&process.platform!==`linux`)return{success:!1,error:`Not supported.`,state:this.getState()}",
-    "if(!this.enabled||process.platform!==`darwin`)return{success:!1,error:`Not supported.`,state:this.getState()}",
+  const partial = currentAppshotHotkeyMainBundleFixture().replace(
+    "this.windowsCaptureNativeBridge!=null&&!this.windowsCaptureNativeBridgeFailed",
+    "this.windowsCaptureNativeBridge!=null",
   );
 
   assert.deepEqual(captureWarnings(() => {
@@ -523,14 +496,13 @@ test("shows Linux AppShots accelerator choices in current settings chunk", () =>
     currentAppshotSettingsBundleFixture(),
   );
 
-  assert.match(patched, /function codexLinuxAppshotHotkeyOptions\(e\)/);
+  assert.match(patched, /function codexLinuxAppshotHotkeyOptions\(e,t,n,r,i\)/);
   assert.match(
     patched,
-    /codexLinuxAppshotHotkeyOptions\(o\)\.find\(e=>e\.hotkey===f\)/,
+    /codexLinuxAppshotHotkeyOptions\(d,i,n,X,Y\)/,
   );
-  assert.match(patched, /codexLinuxAppshotHotkeyOptions\(o\)\.map/);
-  assert.doesNotMatch(patched, /\bX\.find\(/);
-  assert.doesNotMatch(patched, /\bX\.map\(/);
+  assert.match(patched, /r=t\.find/);
+  assert.match(patched, /T=t\.map/);
   assert.match(patched, /hotkey:`DoubleOption`,label:`Alt \+ Alt`/);
   assert.match(patched, /hotkey:`Ctrl\+Super\+A`,label:`Ctrl \+ Super \+ A`/);
 });
@@ -553,8 +525,6 @@ test("current AppShots settings helper is declared in strict module scope", () =
     ["Alt + Alt", "Shift + Shift", "Ctrl + Super + A"],
   );
   assert.doesNotMatch(patched, /,codexLinuxAppshotHotkeyOptions=/);
-  assert.match(patched, /AX\.find\(e=>e\)\+AX\.map\(e=>e\)/);
-  assert.match(patched, /obj\.X\.find\(e=>e\)\+obj\.X\.map\(e=>e\)/);
   assert.ok(
     patched.indexOf("function codexLinuxAppshotHotkeyOptions") <
       patched.indexOf("//# sourceMappingURL=fixture.js.map"),
@@ -563,11 +533,11 @@ test("current AppShots settings helper is declared in strict module scope", () =
 });
 
 test("AppShots settings patch fails closed when one option call site drifts", () => {
-  const source = currentAppshotSettingsRuntimeFixture().replace("X.map(", "Array.from(X).map(");
+  const source = currentAppshotSettingsRuntimeFixture().replace("i===`windows`", "i===`win32`");
 
   assert.deepEqual(captureWarnings(() => {
     assert.equal(applyLinuxAppshotSettingsHotkeyPatch(source), source);
   }), [
-    "WARN: Could not find both AppShots settings hotkey option call sites - skipping Linux AppShots settings patch",
+    "WARN: Could not find current AppShots settings hotkey option call site - skipping Linux AppShots settings patch",
   ]);
 });

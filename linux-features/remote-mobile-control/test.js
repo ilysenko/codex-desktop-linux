@@ -260,18 +260,9 @@ function syntheticMobileSetupDialogCopyBundle() {
 function syntheticSshInstallSettingsBundle() {
   return [
     "function pn({action:e,disabled:t,hostId:n,installCodexPending:r,onAuthenticate:i,onInstallCodex:a,onReconnect:o,onRestart:s}){if(e==null)return null;switch(e.kind){case`install-codex`:return{disabled:t,label:e.label,loading:r,loadingLabel:e.loadingLabel,renderInElectronOnly:!0,tooltipText:e.tooltipText,onClick:()=>a(n)};case`login`:return{label:e.label,onClick:()=>i(n)};case`restart`:return{label:e.label,onClick:s};case`reconnect`:return{label:e.label,onClick:o};case`settings`:return null}}",
-    "let et=R(`install-remote-codex`),vt=(e,t,n)=>{globalThis.__states.push({hostId:e,state:t,error:n})},bt=e=>{et.mutate({hostId:e},{onSuccess:({state:t,error:n})=>{vt(e,t,n)}})};",
+    "let et=R(`install-remote-codex`),vt=(e,t,n)=>{globalThis.__states.push({hostId:e,state:t,error:n})},bt=e=>{et.mutate({hostId:e},{onSuccess:t=>{let{state:n,error:r}=t;vt(e,n,r)}})};",
     "function un(e){let{connection:n,disabled:r,installCodexPending:i,onAuthenticate:a,onInstallCodex:s,onReconnect:c,onRestart:l}=e,{appServerVersion:p,error:m,installedCodexVersion:h,state:g}=De(n.hostId),_=n.displayName,j=Ne(),E=!1;let D=(n.kind||!E)&&(m?.code===`remote-codex-not-found`||m?.code===`update-required`),M;return M=j==null||D?null:pn({action:j.action,disabled:r,hostId:n.hostId,installCodexPending:i,onReconnect:c,onRestart:l,onAuthenticate:a,onInstallCodex:s}),M}",
     "function nr(e,t){return e.displayName.localeCompare(t.displayName)}",
-  ].join("");
-}
-
-function syntheticSettingsRefreshBundle() {
-  return [
-    "var Qn=15e3,Z=React;",
-    "function tr(){let $=useEffectEvent(async e=>{await P(`refresh-remote-connections`,{signal:e})});",
-    "(0,Z.useEffect)(()=>{let e=null,t=!1,n=async()=>{if(!t){t=!0,e=new AbortController;try{await $(e.signal)}finally{e=null,t=!1}}},r=window.setInterval(()=>{n()},Qn);return()=>{e?.abort(),window.clearInterval(r)}},[]);",
-    "return null}",
   ].join("");
 }
 
@@ -290,7 +281,7 @@ function syntheticCurrentSettingsRefreshBundle() {
   return [
     "var Jn=`[remote-connections/settings]`,Yn=15e3,Xn=[],Zn=[];",
     "function Qn(){let ge=me(),et=!1,ne=B,ft=(0,Z.useEffectEvent)(async e=>{if(!et)try{let t=[];t.push(ne(`refresh-remote-connections`,{signal:e})),ge&&t.push(ne(`refresh-remote-control-connections`,{signal:e})),await Promise.all(t)}catch(e){if(e instanceof DOMException&&e.name===`AbortError`)return;M.debug(`${Jn} auto_refresh_failed`,{safe:{},sensitive:{error:e}})}});",
-    "(0,Z.useEffect)(()=>{let e=null,t=!1,n=async()=>{if(!t){t=!0,e=new AbortController;try{await ft(e.signal)}finally{e=null,t=!1}}},r=window.setInterval(()=>{n()},Yn);return()=>{e?.abort(),window.clearInterval(r)}},[]);return null}",
+    "let xn=()=>{let e=null,t=!1,n=async()=>{t||(t=!0,e=new AbortController,await(async()=>{await ft(e.signal)})().finally(()=>{e=null,t=!1}))},r=window.setInterval(()=>{n()},Yn);return()=>{e?.abort(),window.clearInterval(r)}};return xn}",
   ].join("");
 }
 
@@ -350,7 +341,7 @@ function syntheticCompletedItemRecoveryBundle() {
     "let s=FF(a.type===`contextCompaction`?{...a,completed:!0,source:o?.type===`contextCompaction`&&`source`in o?o.source:`automatic`}:a);",
     "if(e.type===`userMessage`){let t=Put(n.items,e.content,n.turnId,n.turnStartedAtMs,!1);if(t!=null){t.status=`accepted`,HI(n,FF({type:`steered`,id:e.id}));return}HI(n,s);return}",
     "if(e.type===`hookPrompt`){bP(n,s);return}",
-    "yV(e)&&(n.firstTurnWorkItemStartedAtMs=n.firstTurnWorkItemStartedAtMs??Date.now()),!(e.type!==`subAgentActivity`&&!LB(n,e.id,e.type))&&(e.type,bP(n,s))});break}}}}",
+    "yV(e)&&(n.firstTurnWorkItemStartedAtMs=n.firstTurnWorkItemStartedAtMs??Date.now()),!(e.type!==`subAgentActivity`&&(e.type!==`sleep`||t.mode!==`durable`)&&!LB(n,e.id,e.type))&&(e.type,bP(n,s))});break}}}}",
   ].join("");
 }
 
@@ -1754,12 +1745,12 @@ test("Linux remote-control settings UX patch warns when outbound tab gate consum
 });
 
 test("Linux remote-connections refresh patch shortens polling and refreshes on resume signals", () => {
-  const source = syntheticSettingsRefreshBundle();
+  const source = syntheticCurrentSettingsRefreshBundle();
   const patched = applyLinuxRemoteConnectionsRefreshPatch(source);
 
   assert.notEqual(patched, source);
-  assert.match(patched, /Qn=5e3/);
-  assert.doesNotMatch(patched, /Qn=15e3/);
+  assert.match(patched, /Yn=5e3/);
+  assert.doesNotMatch(patched, /Yn=15e3/);
   assert.match(patched, /codexLinuxRemoteConnectionsRefreshNow/);
   assert.match(patched, /codexLinuxRemoteConnectionsRefreshTimer=null/);
   assert.match(patched, /codexLinuxRemoteConnectionsRefreshLast=0/);
@@ -1771,19 +1762,6 @@ test("Linux remote-connections refresh patch shortens polling and refreshes on r
   assert.match(patched, /window\.clearTimeout\(codexLinuxRemoteConnectionsRefreshTimer\)/);
   assert.match(patched, /document\.removeEventListener\(`visibilitychange`,codexLinuxRemoteConnectionsRefreshNow\)/);
   assert.match(patched, /window\.removeEventListener\(`resume`,codexLinuxRemoteConnectionsRefreshNow\)/);
-  assert.equal(applyLinuxRemoteConnectionsRefreshPatch(patched), patched);
-});
-
-test("Linux remote-connections refresh patch handles current interval alias", () => {
-  const source = syntheticCurrentSettingsRefreshBundle();
-  const patched = applyLinuxRemoteConnectionsRefreshPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.match(patched, /Yn=5e3/);
-  assert.doesNotMatch(patched, /Yn=15e3/);
-  assert.match(patched, /codexLinuxRemoteConnectionsRefreshNow/);
-  assert.match(patched, /document\.addEventListener\(`visibilitychange`,codexLinuxRemoteConnectionsRefreshNow\)/);
-  assert.match(patched, /window\.addEventListener\(`resume`,codexLinuxRemoteConnectionsRefreshNow\)/);
   assert.equal(applyLinuxRemoteConnectionsRefreshPatch(patched), patched);
 });
 
@@ -2359,7 +2337,7 @@ test("remote mobile completed-item recovery restores a missing started item", ()
   assert.match(patched, /codexLinuxCompletedItemExists=n\.items\.some\(e=>e\.id===s\.id\)/);
   assert.match(
     patched,
-    /if\(e\.type!==`subAgentActivity`&&codexLinuxCompletedItemExists&&!LB\(n,e\.id,e\.type\)\)return;bP\(n,s\)/,
+    /if\(e\.type!==`subAgentActivity`&&\(e\.type!==`sleep`\|\|t\.mode!==`durable`\)&&codexLinuxCompletedItemExists&&!LB\(n,e\.id,e\.type\)\)return;bP\(n,s\)/,
   );
 
   const context = {};
@@ -2586,7 +2564,7 @@ test("Linux remote terminal status recovery escapes current minified function al
   );
 });
 
-test("Linux remote-control status wait supports the current 26.707 app bundle", () => {
+test("Linux remote-control status wait supports the current 26.810.41047 app bundle", () => {
   const source = syntheticCurrentStatusWaitBundle();
   const patched = applyLinuxRemoteControlStatusWaitPatch(source);
 
@@ -3627,7 +3605,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           path.join(assetsDir, "remote-connections-settings-test.js"),
           syntheticRemoteConnectionsSettingsCopyBundle() +
             "function Uo(){let l=Pe(`782640499`),u=Pe(on),z=Ge(),B=!l,Se=f==null;return B&&z}" +
-            syntheticSettingsRefreshBundle() +
+            syntheticCurrentSettingsRefreshBundle() +
             syntheticCurrentRevokeSetupResetBundle(),
         );
         fs.writeFileSync(
@@ -3711,7 +3689,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlOutboundTabGate/);
         assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteControlResetMobileSetupAfterRevoke/);
         assert.match(patchedRemoteConnectionsSettingsFile, /codexLinuxRemoteConnectionsRefreshNow/);
-        assert.match(patchedRemoteConnectionsSettingsFile, /Qn=5e3/);
+        assert.match(patchedRemoteConnectionsSettingsFile, /Yn=5e3/);
         assert.match(patchedRemoteConnectionsSettingsFile, /Control this Linux desktop/);
         assert.match(patchedRemoteConnectionsSettingsFile, /SSH connections from this Linux desktop/);
         assert.match(patchedMobileSetupDialogFile, /Connect your phone to this Linux desktop/);

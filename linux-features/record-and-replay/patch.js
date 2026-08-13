@@ -329,14 +329,10 @@ function recordReplayConversationTranscriptPattern() {
   return /([A-Za-z_$][\w$]*)\.length>0&&([A-Za-z_$][\w$]*)!==`discard`&&globalThis\.codexLinuxConversationShouldSendTranscript\?\.\(\1,\2\)!==!1&&\((([A-Za-z_$][\w$]*)\.getInstance\(\)\.dispatchMessage\(`global-dictation-record-history-item`,\{text:\1\}\),\2===`send`\?([A-Za-z_$][\w$]*)\.onTranscriptSend\(\1\):\5\.onTranscriptInsert\(\1\))\)/u;
 }
 
-function recordReplayUpstreamTranscriptPattern() {
-  return /([A-Za-z_$][\w$]*)\.length>0&&\((([A-Za-z_$][\w$]*)\.getInstance\(\)\.dispatchMessage\(`global-dictation-record-history-item`,\{text:\1\}\),([A-Za-z_$][\w$]*)===`send`\?([A-Za-z_$][\w$]*)\.onTranscriptSend\(\1\):\5\.onTranscriptInsert\(\1\))\)/u;
-}
-
 function recordReplayPersistentTranscriptPattern() {
   const id = String.raw`[A-Za-z_$][\w$]*`;
   return new RegExp(
-    String.raw`(?<transcript>${id})\.length>0&&\((?<dispatch>(?<persistence>${id})==null\?(?<history>${id})\.getInstance\(\)\.dispatchMessage\(\`global-dictation-record-history-item\`,\{text:\k<transcript>\}\):\k<persistence>\.setTranscript\(\k<transcript>\),(?<analytics>${id})\.performance\.mark\(\`transcript_dispatched\`\),(?<action>${id})===\`send\`\?(?<handlers>${id})\.onTranscriptSend\(\k<transcript>\):\k<handlers>\.onTranscriptInsert\(\k<transcript>\))\)`,
+    String.raw`(?<transcript>${id})\.length>0&&\((?<dispatch>(?<persistence>${id})==null\?(?<history>${id})\.getInstance\(\)\.dispatchMessage\(\`global-dictation-record-history-item\`,\{text:\k<transcript>\}\):\k<persistence>\.setTranscript\(\k<transcript>\),(?<analytics>${id})\.performance\.mark\(\`transcript_dispatched\`\),(?<action>${id}\.action)===\`send\`\?(?<handlers>${id})\.onTranscriptSend\(\k<transcript>\):\k<handlers>\.onTranscriptInsert\(\k<transcript>\))\)`,
     "",
   );
 }
@@ -378,15 +374,6 @@ function applyRecordReplayDictationTranscriptPatch(currentSource) {
     );
   }
 
-  const upstreamPattern = recordReplayUpstreamTranscriptPattern();
-  if (upstreamPattern.test(currentSource)) {
-    return currentSource.replace(
-      upstreamPattern,
-      (_, transcriptVar, dispatchExpression, _historyVar, actionVar) =>
-        `${transcriptVar}.length>0&&(${recordReplayTranscriptCaptureExpression(transcriptVar, actionVar)},${dispatchExpression})`,
-    );
-  }
-
   warn("Could not find dictation transcript send point", patchName);
   return currentSource;
 }
@@ -399,8 +386,7 @@ function hasRecordReplayDictationTranscriptContract(source) {
     return true;
   }
   return recordReplayConversationTranscriptPattern().test(source)
-    || recordReplayPersistentTranscriptPattern().test(source)
-    || recordReplayUpstreamTranscriptPattern().test(source);
+    || recordReplayPersistentTranscriptPattern().test(source);
 }
 
 function recordReplayCurrentGlobalDictationPattern() {
@@ -428,16 +414,6 @@ function applyRecordReplayGlobalDictationTranscriptPatch(currentSource) {
         const { prefix, dispatch, session, transcript } = args.at(-1);
         return `${prefix}${recordReplayActiveSpeechContextExpression(dispatch, transcript)},${dispatch}.dispatchMessage(\`global-dictation-completed\`,{sessionId:${session}.sessionId,text:${transcript}})`;
       },
-    );
-  }
-
-  const completedPattern =
-    /(([A-Za-z_$][\w$]*)===([A-Za-z_$][\w$]*)&&\(\2=null\),)([A-Za-z_$][\w$]*)\.dispatchMessage\(`global-dictation-completed`,\{sessionId:\3\.sessionId,text:([A-Za-z_$][\w$]*)\}\)/u;
-  if (completedPattern.test(currentSource)) {
-    return currentSource.replace(
-      completedPattern,
-      (_, prefix, _stateVar, sessionVar, dispatchVar, transcriptVar) =>
-        `${prefix}${recordReplayActiveSpeechContextExpression(dispatchVar, transcriptVar)},${dispatchVar}.dispatchMessage(\`global-dictation-completed\`,{sessionId:${sessionVar}.sessionId,text:${transcriptVar}})`,
     );
   }
 

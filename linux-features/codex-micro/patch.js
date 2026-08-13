@@ -12,7 +12,6 @@ const CODEX_MICRO_GATE_ID = "3207467860";
 const CODEX_MICRO_ROUTE = "/settings/codex-micro";
 const CODEX_MICRO_GATE_MARKER = "codexLinuxCodexMicroGateOverride";
 const CODEX_MICRO_HOTPLUG_MARKER = "codexLinuxCodexMicroHotplug";
-const FEATURE_GATE_WARNING = "useFeatureGate hook failed to find a valid StatsigClient";
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const CODEX_MICRO_SERVICE_PATTERN =
   /^service-[A-Za-z0-9_-]+\.js$/;
@@ -27,36 +26,24 @@ function escapeRegExp(value) {
 }
 
 function exportedFeatureGateHook(source) {
-  const exportStart = source.lastIndexOf("export{");
-  const exportEnd = exportStart < 0 ? -1 : source.indexOf("}", exportStart);
-  if (exportStart < 0 || exportEnd < 0) {
-    return null;
-  }
-
-  const exportBlock = source.slice(exportStart, exportEnd + 1);
-  const candidates = new RegExp(
-    `function (${JS_IDENT})\\((${JS_IDENT})\\)\\{return ` +
-      `(${JS_IDENT})\\(\\),(${JS_IDENT})\\((${JS_IDENT}),\\2\\)\\}`,
-    "g",
+  const currentGate = new RegExp(
+    `(function (${JS_IDENT})\\((${JS_IDENT})\\)\\{let (${JS_IDENT})=\\(0,(${JS_IDENT})\\.c\\)\\(2\\);` +
+      `(${JS_IDENT})\\(typeof \\3==\\\`string\\\`\\);let (${JS_IDENT});return ` +
+      `\\4\\[0\\]===\\3\\?\\7=\\4\\[1\\]:\\(\\7=typeof \\3==\\\`boolean\\\`\\?\\3:` +
+      `\\{cache:\\\`signal\\\`,resolve\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return ` +
+      `(${JS_IDENT})\\.resolve\\(\\8,\\9,\\3\\)\\.atom\\},scope:\\10\\.scope\\},` +
+      `\\4\\[0\\]=\\3,\\4\\[1\\]=\\7\\),)(${JS_IDENT})\\(\\7\\)(\\})`,
   );
-  const exportedCandidates = [];
-  for (const match of source.matchAll(candidates)) {
-    const hookName = match[1];
-    const exportedAsGateHook = new RegExp(
-      `(?:\\{|,)${escapeRegExp(hookName)} as ${JS_IDENT}(?:,|\\})`,
-    );
-    if (exportedAsGateHook.test(exportBlock)) {
-      exportedCandidates.push({
-        source: match[0],
-        hookName,
-        argumentName: match[2],
-        contextHookName: match[3],
-        atomReadName: match[4],
-        gateAtomName: match[5],
-      });
-    }
-  }
-  return exportedCandidates.length === 1 ? exportedCandidates[0] : null;
+  const match = source.match(currentGate);
+  if (match == null) return null;
+  return {
+    source: match[0],
+    prefix: match[1],
+    hookName: match[2],
+    argumentName: match[3],
+    atomReadName: match[11],
+    suffix: match[12],
+  };
 }
 
 function hasCodexMicroCallsite(source, hookName) {
@@ -78,8 +65,7 @@ function matchesCodexMicroFeatureGateContract(source) {
     return true;
   }
   const hook = exportedFeatureGateHook(source);
-  return source.includes(FEATURE_GATE_WARNING)
-    && hook != null
+  return hook != null
     && hasCodexMicroCallsite(source, hook.hookName);
 }
 
@@ -90,9 +76,9 @@ function applyCodexMicroFeatureGatePatch(source) {
 
   const hook = exportedFeatureGateHook(source);
   if (hook == null) {
-    if (source.includes(FEATURE_GATE_WARNING)) {
+    if (source.includes(`\`${CODEX_MICRO_ROUTE}\``)) {
       console.warn(
-        "WARN: Could not find the current exported feature-gate hook - " +
+        "WARN: Could not find the current signal-backed feature-gate hook - " +
           "skipping Codex Micro gate override",
       );
     }
@@ -102,10 +88,8 @@ function applyCodexMicroFeatureGatePatch(source) {
     return source;
   }
 
-  const replacement =
-    `function ${hook.hookName}(${hook.argumentName}){return ` +
-    `${hook.contextHookName}(),${hook.atomReadName}(${hook.gateAtomName},${hook.argumentName})||` +
-    `${hook.argumentName}===\`${CODEX_MICRO_GATE_ID}\`/*${CODEX_MICRO_GATE_MARKER}*/}`;
+  const replacement = `${hook.prefix}${hook.atomReadName}(${hook.source.match(/;let ([A-Za-z_$][\w$]*);return/u)[1]})||` +
+    `${hook.argumentName}===\`${CODEX_MICRO_GATE_ID}\`/*${CODEX_MICRO_GATE_MARKER}*/${hook.suffix}`;
   return source.replace(hook.source, replacement);
 }
 

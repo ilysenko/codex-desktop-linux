@@ -20,10 +20,8 @@ test("official Linux node-hid is reused without a native binding descriptor", ()
 
 test("Codex Micro feature gate remains an opt-in product extension", () => {
   const source = [
-    "const warning=`useFeatureGate hook failed to find a valid StatsigClient`;",
-    "function a(e){return b(),c(d,e)}",
-    "function route(){return a(`3207467860`)?`/settings/codex-micro`:null}",
-    "export{a as useGate}",
+    "function gg(e){let t=(0,Kit.c)(2);Git(typeof e==`string`);let n;return t[0]===e?n=t[1]:(n=typeof e==`boolean`?e:{cache:`signal`,resolve(t,n){return pg.resolve(t,n,e).atom},scope:pg.scope},t[0]=e,t[1]=n),Y(n)}",
+    "function route(){return gg(`3207467860`)?`/settings/codex-micro`:null}",
   ].join(";");
   const patched = applyCodexMicroFeatureGatePatch(source);
   assert.match(patched, new RegExp(CODEX_MICRO_GATE_MARKER));

@@ -12,18 +12,17 @@ function applyApiKeyModelVisibilityPatch(source) {
     return source;
   }
 
-  // Current upstream shape (refactored): the allowlist gate lives in a
-  // per-model visibility helper, e.g.
-  //   function q$r({additionalAvailableModels:e,authMethod:t,availableModels:n,model:r,useHiddenModels:i}){return e?.has(r.model)===!0||(i&&t!==`amazonBedrock`?n.has(r.model):!r.hidden)}
+  // Current upstream shape: the allowlist gate lives in a per-model helper
+  // that also excludes Codex Auto Review and custom providers.
   // Bypass the allowlist for API-key authenticated hosts the same way it is
   // already bypassed for non-ChatGPT hosts: add `&&authMethod!==`apikey``.
   const helperPattern = new RegExp(
     `(function ${JS_IDENT}\\(\\{additionalAvailableModels:(${JS_IDENT}),` +
-      `authMethod:(${JS_IDENT}),availableModels:(${JS_IDENT}),model:(${JS_IDENT}),` +
-      `useHiddenModels:(${JS_IDENT})\\}\\)\\{return ` +
-      `\\2\\?\\.has\\(\\5\\.model\\)===!0\\|\\|\\()` +
-      `\\6&&\\3!==\\\`amazonBedrock\\\`` +
-      `(\\?\\4\\.has\\(\\5\\.model\\):!\\5\\.hidden\\)\\})`,
+      `authMethod:(${JS_IDENT}),availableModels:(${JS_IDENT}),isCustomModelProvider:(${JS_IDENT}),` +
+      `model:(${JS_IDENT}),useHiddenModels:(${JS_IDENT})\\}\\)\\{return ` +
+      `\\2\\?\\.has\\(\\6\\.model\\)===!0\\|\\|\\6\\.model!==\\\`codex-auto-review\\\`&&\\()` +
+      `\\7&&!\\5&&\\3!==\\\`amazonBedrock\\\`` +
+      `(\\?\\4\\.has\\(\\6\\.model\\):!\\6\\.hidden\\)\\})`,
     "g",
   );
   const patched = source.replace(
@@ -34,6 +33,7 @@ function applyApiKeyModelVisibilityPatch(source) {
       _additionalAvailableModelsVar,
       authMethodVar,
       _availableModelsVar,
+      _isCustomModelProviderVar,
       _modelVar,
       useHiddenModelsVar,
       suffix,
