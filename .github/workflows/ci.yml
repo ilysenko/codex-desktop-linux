@@ -49,9 +49,17 @@ jobs:
       - run: cargo test -p codex-update-manager
       - run: cargo clippy -p codex-update-manager -- -D warnings
 
-  nix:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+  nix-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-latest
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -59,4 +67,40 @@ jobs:
           node-version: 24
       - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
       - run: scripts/ci/validate-nix-pins.sh
-      - run: nix build .#checks.x86_64-linux.nix-runtime --no-link
+      - name: Evaluate NixOS and Home Manager module contracts
+        run: nix build ".#checks.${{ matrix.system }}.modules" --no-link
+      - name: Build audited default runtime
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime" --no-link
+      - name: Build audited directory-watch feature profile
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime-maximal-directory-watch" --no-link
+      - name: Build audited shallow-watch feature profile
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime-maximal-shallow-watch" --no-link
+      - name: Build and audit the public installer
+        run: nix build ".#checks.${{ matrix.system }}.nix-installer" --no-link
+
+  nix-vm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
+      - name: Run the NixOS runtime VM
+        run: nix build .#checks.x86_64-linux.nixos-vm --no-link
+
+  # Keep this stable context: the main branch ruleset requires a job named
+  # "nix", while the architecture matrix above is free to grow.
+  nix:
+    if: ${{ always() }}
+    needs:
+      - nix-build
+      - nix-vm
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Nix validation job
+        env:
+          NIX_BUILD_RESULT: ${{ needs.nix-build.result }}
+          NIX_VM_RESULT: ${{ needs.nix-vm.result }}
+        run: |
+          test "$NIX_BUILD_RESULT" = success
+          test "$NIX_VM_RESULT" = success

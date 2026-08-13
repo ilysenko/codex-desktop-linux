@@ -3,9 +3,6 @@ name: Populate Cachix
 on:
   push:
     branches: [main]
-    paths:
-      - flake.nix
-      - nix/upstream-linux-packages.json
   workflow_dispatch:
 
 permissions:
@@ -17,7 +14,15 @@ concurrency:
 
 jobs:
   populate:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-latest
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     env:
       CACHIX_CACHE_NAME: codex-desktop-linux
@@ -25,6 +30,8 @@ jobs:
       NIX_CONFIG: experimental-features = nix-command flakes
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Require Cachix publishing credentials
+        run: test -n "$CACHIX_AUTH_TOKEN"
       - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
       - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
         with:
@@ -34,9 +41,16 @@ jobs:
       - name: Build pinned official Linux package outputs
         run: |
           set -euo pipefail
-          for output in .#codex-desktop .#installer; do
+          for output in \
+            .#codex-desktop \
+            .#codex-desktop-maximal-directory-watch \
+            .#codex-desktop-maximal-shallow-watch \
+            .#checks.${{ matrix.system }}.modules \
+            .#checks.${{ matrix.system }}.nix-runtime \
+            .#checks.${{ matrix.system }}.nix-runtime-maximal-directory-watch \
+            .#checks.${{ matrix.system }}.nix-runtime-maximal-shallow-watch \
+            .#checks.${{ matrix.system }}.nix-installer; do
             paths="$(nix build "$output" --no-link --print-out-paths)"
-            if [ -n "$CACHIX_AUTH_TOKEN" ]; then
-              printf '%s\n' "$paths" | cachix push "$CACHIX_CACHE_NAME"
-            fi
+            test -n "$paths"
+            printf '%s\n' "$paths" | cachix push "$CACHIX_CACHE_NAME"
           done

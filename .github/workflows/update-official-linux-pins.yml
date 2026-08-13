@@ -113,7 +113,7 @@ jobs:
           set -euo pipefail
           test "$(git diff --name-only | sort)" = "nix/upstream-linux-packages.json"
           nix flake check --no-build
-          nix build .#codex-desktop
+          nix build .#checks.x86_64-linux.nix-runtime --no-link
 
       - name: Open or update campaign pin pull request
         if: steps.pins.outputs.changed == 'true'
@@ -164,7 +164,7 @@ jobs:
             echo
             echo "## Checks"
             echo "- nix flake check --no-build"
-            echo "- nix build .#codex-desktop"
+            echo "- nix build .#checks.x86_64-linux.nix-runtime --no-link"
           } > "$body_file"
           pr="$(gh pr list --head "$GITHUB_REPOSITORY_OWNER:$branch" --base main --state open \
             --json url,author,headRepositoryOwner,headRefOid,baseRefName \

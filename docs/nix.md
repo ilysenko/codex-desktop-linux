@@ -6,12 +6,15 @@ ELF payload, and wraps it with the required Nix libraries.
 
 These inputs are official Linux `.deb` files. Nix wraps the official runtime
 directly instead of replacing Electron or rebuilding upstream native modules.
-`patchelf` normally moves Electron's interpreter metadata beyond the first
-2 KiB of the executable, where the bundled libc detector can no longer see it.
-The derivation relocates that metadata into verified `patchelf` padding so the
-detector selects glibc without using Electron's unsafe report fallback. This
-ELF-only compatibility fix is checked against both official architectures and
-keeps `resources/app.asar` byte-for-byte identical to upstream.
+The derivation audits every ELF in that payload. Target-architecture glibc
+executables and native modules receive the Nix dynamic linker and runtime
+RUNPATH; foreign, musl, Android, and static payloads are classified and left
+alone. Electron needs one additional fix: `patchelf` normally moves its
+interpreter metadata beyond the first 2 KiB, where the bundled libc detector
+can no longer see it. The derivation relocates that metadata into verified
+`patchelf` padding so the detector selects glibc without using Electron's
+unsafe report fallback. These checks run against both official architectures
+and keep `resources/app.asar` byte-for-byte identical to upstream.
 
 ```bash
 nix run github:ilysenko/codex-desktop-linux
@@ -33,8 +36,9 @@ codex-desktop-remote-mobile-control
 codex-desktop-computer-use-ui-remote-mobile-control
 ```
 
-The default app runs `codex-desktop`. `.#installer` exposes the source staging
-helper, while normal users should prefer the immutable package output.
+The default app runs `codex-desktop`. Normal users should prefer the immutable
+package output. `.#installer` is an audited source-staging tool for development
+and packaging workflows; it is not a mutable updater for a Nix store package.
 
 ```bash
 nix run github:ilysenko/codex-desktop-linux#codex-desktop
@@ -110,10 +114,31 @@ The Nix package follows the standard `NIXOS_OZONE_WL` convention. When both
 `NIXOS_OZONE_WL` and `WAYLAND_DISPLAY` are set, its wrapper starts Electron with
 native Wayland rendering and text-input-v3 IME support.
 
+The wrapper uses the NixOS OpenGL driver path when it is present and retains
+Mesa as a fallback. Proprietary drivers on non-NixOS distributions may still
+need that distribution's usual Nix/OpenGL integration; the flake deliberately
+does not add a separate `nixGL` input or replace the host driver with Mesa.
+
 When `codex-micro` is selected, the module also exposes its packaged udev
 rules. Optional declarative remote-control service options live under
 `programs.codexDesktopLinux.remoteControl` and are independent of the desktop
 feature flag.
+
+The official package's bundled `resources/codex` CLI is used by default. Set
+`programs.codexDesktopLinux.cliPackage` only to select a different Nix CLI;
+the module wraps both the command and desktop entry with a default
+`CODEX_CLI_PATH`, while preserving an explicit value from the launch
+environment.
+
+When `remoteControl.enable` is set, both modules install a user service and
+route Desktop requests to its Unix socket. The service gets a normal user or
+system profile `PATH`; `remoteControl.environment` accepts strings, integers,
+booleans, and null values (null entries are omitted). Secrets belong in
+`remoteControl.environmentFile`, which must be an absolute canonical runtime
+path outside `/nix/store` and may start with `-` for systemd's optional-file
+semantics. The launcher daemon is suppressed by default to avoid creating a
+second owner; set `remoteControl.disableLauncherAutostart = false` only when
+that behavior is intentional.
 
 ## Development shell
 
@@ -125,11 +150,11 @@ nix develop
 
 It provides the baseline source-verification tools. Rust helper development
 still uses the repository Cargo workspaces. Before sending a Nix change, test
-both evaluation and the host-architecture package:
+evaluation and the audited host-architecture runtime:
 
 ```bash
 nix flake check
-nix build .#codex-desktop
+nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).nix-runtime
 ```
 
 ## Updating pins
@@ -152,7 +177,7 @@ Validate changes with:
 
 ```bash
 nix flake check
-nix build .#codex-desktop
+nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).nix-runtime
 ```
 
 Nix outputs keep the **ChatGPT Community** desktop identity and shared upstream
@@ -161,4 +186,14 @@ concurrently.
 
 Nix store packages do not use the mutable native-package updater. Update the
 flake input or lock file and rebuild through your normal Nix/Home Manager/NixOS
-workflow.
+workflow, for example:
+
+```bash
+nix flake update codex-desktop-linux
+sudo nixos-rebuild switch --flake .#your-host
+# or: home-manager switch --flake .#your-user
+```
+
+An unlocked `nix run github:ilysenko/codex-desktop-linux` follows the current
+repository revision. A configuration with a lock file continues to use its
+pinned revision until that input is updated.

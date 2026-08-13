@@ -115,23 +115,38 @@ jobs:
           cmp "$upstream_root/usr/lib/chatgpt/resources/app.asar" "$CODEX_INSTALL_DIR/resources/app.asar"
           test -x "$CODEX_INSTALL_DIR/ChatGPT"
           test -x "$CODEX_INSTALL_DIR/resources/codex"
-      - name: Validate Nix ELF workaround against the official executable
+      - name: Validate the Nix ELF contract against the official payload
         env:
           CODEX_INSTALL_DIR: ${{ github.workspace }}/codex-app-${{ matrix.architecture }}
         run: |
           set -euo pipefail
-          executable_copy="$(mktemp)"
-          cp "$CODEX_INSTALL_DIR/ChatGPT" "$executable_copy"
+          node nix/elf-runtime.cjs validate-upstream \
+            --root "$CODEX_INSTALL_DIR" \
+            --arch "${{ matrix.architecture }}"
+          fix_root="$(mktemp -d)"
+          cp -a "$CODEX_INSTALL_DIR/." "$fix_root/"
+          chmod -R u+w "$fix_root"
           if [ "${{ matrix.architecture }}" = amd64 ]; then
             dynamic_linker=/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-glibc/lib/ld-linux-x86-64.so.2
           else
             dynamic_linker=/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-glibc/lib/ld-linux-aarch64.so.1
           fi
-          patchelf --set-interpreter "$dynamic_linker" \
-            --add-rpath /nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-runtime/lib \
-            "$executable_copy"
-          node nix/relocate-elf-interpreter.cjs relocate "$executable_copy" "$dynamic_linker"
-          node nix/relocate-elf-interpreter.cjs check "$executable_copy" "$dynamic_linker"
+          runtime_path=/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-runtime/lib
+          node nix/elf-runtime.cjs fix \
+            --root "$fix_root" \
+            --arch "${{ matrix.architecture }}" \
+            --dynamic-linker "$dynamic_linker" \
+            --runtime-library-path "$runtime_path" \
+            --patchelf "$(command -v patchelf)" \
+            --chatgpt-relocator nix/relocate-elf-interpreter.cjs \
+            --shell /bin/bash
+          node nix/elf-runtime.cjs audit \
+            --root "$fix_root" \
+            --arch "${{ matrix.architecture }}" \
+            --dynamic-linker "$dynamic_linker" \
+            --runtime-library-path "$runtime_path" \
+            --check-dependencies false \
+            --check-shebangs false
       - name: Audit every ASAR feature against the official bundle
         if: matrix.architecture == 'amd64'
         run: |
