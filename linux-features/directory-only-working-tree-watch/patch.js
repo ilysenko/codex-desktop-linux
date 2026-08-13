@@ -234,16 +234,22 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
           fs.closeSync(descriptor);
         }
       };
+      const probeExecutable =
+        moduleOverride != null && typeof moduleOverride.reportProbeExecutable === "string"
+          ? moduleOverride.reportProbeExecutable
+          : "/proc/self/exe";
       let family = null;
       let glibcVersion = null;
-      let muslInterpreter = null;
+      let interpreter = null;
       try {
-        const interpreter = elfInterpreterPath(readLeadingBytes("/proc/self/exe", 4096));
+        interpreter = elfInterpreterPath(readLeadingBytes(probeExecutable, 4096));
         if (interpreter?.includes("/ld-musl-")) {
           family = "musl";
-          muslInterpreter = interpreter;
         } else if (interpreter?.includes("/ld-linux-")) {
           family = "glibc";
+          // Closure-only Nix launches have no /usr/bin/ldd and no getconf on
+          // PATH, but the store path in PT_INTERP names the exact glibc.
+          glibcVersion = interpreter.match(/-glibc-(\d+\.\d+(?:\.\d+)?)/u)?.[1] ?? null;
         }
       } catch {}
       try {
@@ -252,7 +258,7 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
           if (ldd.includes("musl")) family = "musl";
           else if (ldd.includes("GNU C Library")) family = "glibc";
         }
-        if (family === "glibc") {
+        if (family === "glibc" && glibcVersion == null) {
           glibcVersion = ldd.match(/LIBC[a-z0-9 \-).]*?(\d+\.\d+)/iu)?.[1] ?? null;
         }
       } catch {}
@@ -270,8 +276,8 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
       const reportHeader = family === "glibc" && glibcVersion != null
         ? { glibcVersionRuntime: glibcVersion }
         : {};
-      const reportSharedObjects = family === "musl" && muslInterpreter != null
-        ? [muslInterpreter]
+      const reportSharedObjects = family === "musl" && interpreter != null
+        ? [interpreter]
         : [];
       Object.defineProperty(process, "report", {
         configurable: true,

@@ -95,7 +95,10 @@ aborts the process with SIGILL (the openai/codex#38123 git-watcher crash
 class) — so the adapter replaces `process.report` in the worker with a shim
 before any Watchbound code loads. The shim serves the same libc facts from
 probes that stay in JavaScript: the ELF interpreter of `/proc/self/exe`,
-`/usr/bin/ldd` content, and a `getconf GNU_LIBC_VERSION` subprocess. It stays
+`/usr/bin/ldd` content, and a `getconf GNU_LIBC_VERSION` subprocess. A Nix
+store interpreter names its exact glibc, so closure-only Nix launches (no
+`/usr/bin/ldd`, no `getconf` on the runtime `PATH`) take the version straight
+from the `PT_INTERP` path. The shim stays
 installed for the worker's lifetime so later capability reads remain safe.
 When every probe fails, the shim reports an empty header, which Watchbound
 treats as an unsupported runtime and refuses instead of crashing.
