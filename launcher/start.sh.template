@@ -219,6 +219,79 @@ run_launcher_hooks() {
     done < <(find "$HOOK_ROOT/launcher.d" -maxdepth 1 -type f -perm -u+x -print0 | sort -z)
 }
 
+has_explicit_electron_backend() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --ozone-platform|--ozone-platform=*)
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+has_live_unix_socket() {
+    local expected_path
+    local record
+    local socket_path
+
+    command -v readlink >/dev/null 2>&1 || return 1
+    expected_path="$(readlink -f -- "$1")" || return 1
+    [ -S "$expected_path" ] || return 1
+    [ -r /proc/net/unix ] || return 1
+    while IFS= read -r record; do
+        [[ "$record" =~ ^[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+00010000[[:space:]]+0001[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+(.*)$ ]] || continue
+        socket_path="$(readlink -f -- "${BASH_REMATCH[1]}")" || continue
+        [ "$socket_path" = "$expected_path" ] && return 0
+    done < /proc/net/unix
+    return 1
+}
+
+should_use_native_wayland() {
+    local socket_path
+
+    # Preserve the established NixOS opt-in even when session metadata is not
+    # available (for example, from a desktop launcher).
+    if [ -n "${NIXOS_OZONE_WL:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        return 0
+    fi
+
+    [ "${XDG_SESSION_TYPE:-}" = "wayland" ] || return 1
+    [ -n "${WAYLAND_DISPLAY:-}" ] || return 1
+    case "$WAYLAND_DISPLAY" in
+        /*) socket_path="$WAYLAND_DISPLAY" ;;
+        *)
+            [ -n "${XDG_RUNTIME_DIR:-}" ] || return 1
+            socket_path="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+            ;;
+    esac
+    has_live_unix_socket "$socket_path"
+}
+
+has_explicit_wayland_ime_configuration() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --enable-wayland-ime|--enable-wayland-ime=*|--disable-wayland-ime|--disable-wayland-ime=*|--wayland-text-input-version|--wayland-text-input-version=*)
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+prepend_native_wayland_defaults() {
+    local -a defaults=(--ozone-platform=wayland)
+    if ! has_explicit_wayland_ime_configuration "$@"; then
+        defaults+=(
+            --enable-wayland-ime=true
+            --wayland-text-input-version=3
+        )
+    fi
+    ELECTRON_ARGS=("${defaults[@]}" "${ELECTRON_ARGS[@]}")
+}
+
 ORIGINAL_ARGS=("$@")
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;
@@ -233,6 +306,11 @@ load_user_electron_args
 load_electron_args
 run_hook_directory "$HOOK_ROOT/prelaunch.d" prelaunch
 run_launcher_hooks "${ELECTRON_ARGS[@]}" "${ORIGINAL_ARGS[@]}"
+
+if ! has_explicit_electron_backend "${ELECTRON_ARGS[@]}" "${ORIGINAL_ARGS[@]}" &&
+   should_use_native_wayland; then
+    prepend_native_wayland_defaults "${ELECTRON_ARGS[@]}" "${ORIGINAL_ARGS[@]}"
+fi
 
 if [ -f "$HOOK_ROOT/codex-packaged-runtime.sh" ]; then
     # shellcheck disable=SC1091

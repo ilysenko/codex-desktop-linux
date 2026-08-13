@@ -392,8 +392,7 @@
                 --run 'export XDG_DATA_DIRS="''${XDG_DATA_DIRS:-${xdgDefaultDataDirs}}"' \
                 --prefix XDG_DATA_DIRS : "${gsettingsSchemaDataDirs}" \
                 --set-default BAMF_DESKTOP_FILE_HINT "$out/share/applications/codex-desktop.desktop" \
-                --set-default CODEX_CLI_PATH "$app/resources/codex" \
-                --add-flags "\''${NIXOS_OZONE_WL:+\''${WAYLAND_DISPLAY:+--ozone-platform=wayland --enable-wayland-ime=true --wayland-text-input-version=3}}"
+                --set-default CODEX_CLI_PATH "$app/resources/codex"
               node "$source_dir/nix/elf-runtime.cjs" audit \
                 --root "$app" \
                 --arch ${officialPackage.architecture} \
@@ -443,15 +442,7 @@
           export XDG_DATA_DIRS="${gsettingsSchemaDataDirs}:''${XDG_DATA_DIRS:-${xdgDefaultDataDirs}}"
           export CODEX_CLI_PATH="''${CODEX_CLI_PATH:-$app_dir/resources/codex}"
           export BAMF_DESKTOP_FILE_HINT="''${BAMF_DESKTOP_FILE_HINT:-$app_dir/.codex-linux/codex-desktop.desktop}"
-          extra_flags=()
-          if [[ -n "''${NIXOS_OZONE_WL-}" && -n "''${WAYLAND_DISPLAY-}" ]]; then
-            extra_flags+=(
-              --ozone-platform=wayland
-              --enable-wayland-ime=true
-              --wayland-text-input-version=3
-            )
-          fi
-          exec "$app_dir/.start.sh-nix" "$@" "''${extra_flags[@]}"
+          exec "$app_dir/.start.sh-nix" "$@"
         '';
         installerWorkspaceHelpers = mkWorkspaceHelpers maximalDirectoryFeatureIds;
         installerRuntimeClosure = pkgs.writeText "codex-desktop-installer-runtime-closure" (
@@ -716,9 +707,7 @@
           ${pkgs.gnugrep}/bin/grep -Fx 'xdg=x:${gsettingsSchemaDataDirs}:${xdgDefaultDataDirs}' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'path=${runtimePathFor package.passthru.linuxFeatureIds}:/caller/bin' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'ld=x:/caller/lib' "$capture"
-          ${pkgs.gnugrep}/bin/grep -Fx \
-            'args=<--ozone-platform=wayland><--enable-wayland-ime=true><--wayland-text-input-version=3><--diagnose>' \
-            "$capture"
+          ${pkgs.gnugrep}/bin/grep -Fx 'args=<--diagnose>' "$capture"
           ${pkgs.coreutils}/bin/env ALSA_PLUGIN_DIR=/caller/alsa XDG_DATA_DIRS=/caller/share \
             BAMF_DESKTOP_FILE_HINT=/caller/desktop LD_LIBRARY_PATH= \
             BASH_ENV=${wrapperEnvironmentProbe} CODEX_NIX_ENV_CAPTURE="$capture" \

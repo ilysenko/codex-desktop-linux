@@ -349,7 +349,7 @@ output layout, parallelism, and payload inspection.
 | Browser/Chrome extension cannot connect after migration | Exit ChatGPT and Chrome completely, then follow the narrow cache repair in [Troubleshooting](docs/troubleshooting.md#browser-or-chrome-plugin-is-visible-but-cannot-connect) |
 | Signature or package verification fails | Do not bypass it; check time, network, `gpgv`, architecture, and disk space |
 | App does not launch | Run `/opt/codex-desktop/start.sh --diagnose` |
-| App uses XWayland or needs persistent Electron flags | Put one flag per line in `~/.config/codex-desktop/electron-flags.conf`; for example, `--ozone-platform=wayland` |
+| App uses XWayland or needs a backend override | Native Wayland is automatic for a Wayland session with a live display socket, or the explicit `NIXOS_OZONE_WL` compatibility opt-in. Use `codex-desktop --ozone-platform=x11`, or put one Electron flag per line in `~/.config/codex-desktop/electron-flags.conf` |
 | AppImage reports a sandbox error | Enable user namespaces or install a native package; `--no-sandbox` is not added automatically |
 | Enabled feature drifts after an upstream release | Disable that feature to confirm the clean baseline and attach its patch report to an issue |
 | Updater waits for application exit | Close official and Community processes, then inspect `codex-update-manager status --json` |

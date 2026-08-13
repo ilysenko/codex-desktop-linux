@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -159,6 +160,103 @@ exit 22
   assert.equal(failing.stderr, "");
 });
 
+function launcherEnvironment(root, overrides = {}) {
+  const env = {
+    ...process.env,
+    CODEX_HOME: path.join(root, "codex-home"),
+    XDG_CONFIG_HOME: path.join(root, "config"),
+    TEST_ROOT: root,
+  };
+  for (const key of ["DISPLAY", "NIXOS_OZONE_WL", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XDG_SESSION_TYPE"]) {
+    delete env[key];
+  }
+  return { ...env, ...overrides };
+}
+
+function launch(root, args = [], env = {}) {
+  return childProcess.spawnSync(path.join(root, "start.sh"), args, {
+    env: launcherEnvironment(root, env),
+    encoding: "utf8",
+  });
+}
+
+function capturedArguments(root) {
+  const output = fs.readFileSync(path.join(root, "arguments"), "utf8").trimEnd();
+  return output === "" ? [] : output.split("\n");
+}
+
+function listenUnixSocket(socketPath) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(socketPath, () => resolve(server));
+  });
+}
+
+function closeUnixSocket(server) {
+  return new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+}
+
+function createStaleUnixSocket(socketPath) {
+  const child = childProcess.spawn(
+    process.execPath,
+    ["-e", "require('node:net').createServer().listen(process.argv[1], () => process.stdout.write('ready'))", socketPath],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => reject(new Error(`socket helper exited before ready: ${code}/${signal}`)));
+    child.stdout.once("data", (output) => {
+      if (output.toString() !== "ready") {
+        reject(new Error(`socket helper failed to start: ${output}`));
+        return;
+      }
+      child.removeAllListeners("exit");
+      child.once("exit", () => resolve());
+      child.kill("SIGKILL");
+    });
+  });
+}
+
+function createBoundUnixSocket(socketPath, socketType) {
+  const source = [
+    "import signal, socket, sys",
+    "sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM if sys.argv[1] == 'stream' else socket.SOCK_DGRAM)",
+    "sock.bind(sys.argv[2])",
+    "print('ready', flush=True)",
+    "signal.pause()",
+  ].join("\n");
+  const child = childProcess.spawn("python3", ["-c", source, socketType, socketPath], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => reject(new Error(`socket helper exited before ready: ${code}/${signal}`)));
+    child.stdout.once("data", (output) => {
+      if (output.toString() !== "ready\n") {
+        reject(new Error(`socket helper failed to start: ${output}`));
+        return;
+      }
+      child.removeAllListeners("exit");
+      resolve(child);
+    });
+  });
+}
+
+function stopSocketHelper(child) {
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", () => resolve());
+    child.kill("SIGTERM");
+  });
+}
+
+const nativeWaylandDefaults = [
+  "--ozone-platform=wayland",
+  "--enable-wayland-ime=true",
+  "--wayland-text-input-version=3",
+];
+
 test("launcher composes declarative hooks and forwards arguments", (t) => {
   const root = createApp(t);
   const hooks = path.join(root, ".codex-linux");
@@ -170,18 +268,10 @@ test("launcher composes declarative hooks and forwards arguments", (t) => {
   writeExecutable(path.join(hooks, "launcher.d", "fixture.sh"), "#!/bin/bash\nprintf '%s\\n' 'env LAUNCHER_ENV=from-launcher' 'electron-arg --launcher-arg=value'\n");
   writeExecutable(path.join(hooks, "after-exit.d", "fixture.sh"), "#!/bin/bash\nprintf after-exit > \"$TEST_ROOT/after-exit\"\n");
 
-  const env = {
-    ...process.env,
-    CODEX_HOME: path.join(root, "codex-home"),
-    XDG_CONFIG_HOME: path.join(root, "config"),
-    TEST_ROOT: root,
-  };
+  const env = launcherEnvironment(root);
   delete env.CHROME_DESKTOP;
   delete env.BAMF_DESKTOP_FILE_HINT;
-  const result = childProcess.spawnSync(path.join(root, "start.sh"), ["codex://thread/123", "--new-window"], {
-    env,
-    encoding: "utf8",
-  });
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), ["codex://thread/123", "--new-window"], { env, encoding: "utf8" });
   assert.equal(result.status, 7);
   assert.deepEqual(fs.readFileSync(path.join(root, "environment"), "utf8").trim().split("\n"), [
     "codex-desktop.desktop",
@@ -221,12 +311,7 @@ test("launcher loads global and app-specific Electron flags", (t) => {
     path.join(root, "start.sh"),
     ["--ozone-platform=x11", "codex://thread/123"],
     {
-      env: {
-        ...process.env,
-        CODEX_HOME: path.join(root, "codex-home"),
-        XDG_CONFIG_HOME: configHome,
-        TEST_ROOT: root,
-      },
+      env: launcherEnvironment(root, { XDG_CONFIG_HOME: configHome }),
       encoding: "utf8",
     },
   );
@@ -261,12 +346,7 @@ test("launcher uses the HOME config fallback and ignores non-file flag paths", (
     path.join(configHome, "codex-desktop", "electron-flags.conf"),
     "--ozone-platform=wayland\n",
   );
-  const env = {
-    ...process.env,
-    CODEX_HOME: path.join(root, "codex-home"),
-    HOME: home,
-    TEST_ROOT: root,
-  };
+  const env = launcherEnvironment(root, { HOME: home });
   delete env.XDG_CONFIG_HOME;
 
   const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
@@ -282,10 +362,210 @@ test("launcher uses the HOME config fallback and ignores non-file flag paths", (
   );
 });
 
+test("launcher selects native Wayland from a live relative display socket", async (t) => {
+  const root = createApp(t);
+  const runtimeDir = path.join(root, "runtime");
+  const socketName = "wayland-test";
+  fs.mkdirSync(runtimeDir);
+  const server = await listenUnixSocket(path.join(runtimeDir, socketName));
+  try {
+    fs.mkdirSync(path.join(root, "config"), { recursive: true });
+    fs.writeFileSync(path.join(root, "config", "electron-flags.conf"), "--unrelated-config\n");
+    fs.mkdirSync(path.join(root, ".codex-linux", "electron-args.d"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".codex-linux", "electron-args.d", "fixture.args"), "--unrelated-feature\n");
+    writeExecutable(
+      path.join(root, ".codex-linux", "launcher.d", "fixture.sh"),
+      "#!/bin/bash\nprintf '%s\\n' 'electron-arg --unrelated-launcher'\n",
+    );
+
+    const result = launch(root, ["codex://thread/123", "--new-window"], {
+      DISPLAY: ":0",
+      XDG_RUNTIME_DIR: runtimeDir,
+      XDG_SESSION_TYPE: "wayland",
+      WAYLAND_DISPLAY: socketName,
+    });
+
+    assert.equal(result.status, 7);
+    assert.deepEqual(capturedArguments(root), [
+      ...nativeWaylandDefaults,
+      "--class=codex-desktop",
+      "--unrelated-config",
+      "--unrelated-feature",
+      "--unrelated-launcher",
+      "codex://thread/123",
+      "--new-window",
+    ]);
+  } finally {
+    await closeUnixSocket(server);
+  }
+});
+
+test("launcher accepts a live absolute Wayland display socket", async (t) => {
+  const root = createApp(t);
+  const socketDir = path.join(root, "sockets");
+  const socketPath = path.join(socketDir, "absolute-wayland.sock");
+  fs.mkdirSync(socketDir);
+  const server = await listenUnixSocket(socketPath);
+  try {
+    const aliases = [
+      ["absolute", socketPath],
+      ["symlink", path.join(root, "socket-link", "absolute-wayland.sock")],
+      ["dot-dot", `${socketDir}/../sockets/absolute-wayland.sock`],
+    ];
+    fs.symlinkSync(socketDir, path.join(root, "socket-link"));
+
+    for (const [name, displayPath] of aliases) {
+      const result = launch(root, ["--absolute-socket"], {
+        XDG_SESSION_TYPE: "wayland",
+        WAYLAND_DISPLAY: displayPath,
+      });
+      assert.equal(result.status, 7, name);
+      assert.deepEqual(capturedArguments(root), [...nativeWaylandDefaults, "--class=codex-desktop", "--absolute-socket"], name);
+    }
+
+    const trailingSpaceSocket = path.join(socketDir, "trailing-space ");
+    const trailingSpaceServer = await listenUnixSocket(trailingSpaceSocket);
+    try {
+      const result = launch(root, ["--trailing-space-socket"], {
+        XDG_SESSION_TYPE: "wayland",
+        WAYLAND_DISPLAY: trailingSpaceSocket,
+      });
+      assert.equal(result.status, 7);
+      assert.deepEqual(capturedArguments(root), [...nativeWaylandDefaults, "--class=codex-desktop", "--trailing-space-socket"]);
+    } finally {
+      await closeUnixSocket(trailingSpaceServer);
+    }
+  } finally {
+    await closeUnixSocket(server);
+  }
+});
+
+test("launcher requires a live Wayland session socket for automatic defaults", async (t) => {
+  const root = createApp(t);
+  const runtimeDir = path.join(root, "runtime");
+  const socketName = "wayland-test";
+  const socketPath = path.join(runtimeDir, socketName);
+  fs.mkdirSync(runtimeDir);
+  const server = await listenUnixSocket(socketPath);
+  const staleSocket = path.join(runtimeDir, "stale-wayland");
+  await createStaleUnixSocket(staleSocket);
+  assert.equal(fs.lstatSync(staleSocket).isSocket(), true);
+  let boundStream;
+  let datagramSocket;
+  try {
+    boundStream = await createBoundUnixSocket(path.join(runtimeDir, "bound-stream"), "stream");
+    datagramSocket = await createBoundUnixSocket(path.join(runtimeDir, "datagram"), "datagram");
+    const cases = [
+      ["non-Wayland session", { XDG_RUNTIME_DIR: runtimeDir, XDG_SESSION_TYPE: "x11", WAYLAND_DISPLAY: socketName }],
+      ["missing runtime directory", { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: socketName }],
+      ["stale display socket", { XDG_RUNTIME_DIR: runtimeDir, XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "stale-wayland" }],
+      ["missing display socket", { XDG_RUNTIME_DIR: runtimeDir, XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "missing-wayland" }],
+      ["bound non-listening stream socket", { XDG_RUNTIME_DIR: runtimeDir, XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "bound-stream" }],
+      ["datagram socket", { XDG_RUNTIME_DIR: runtimeDir, XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "datagram" }],
+    ];
+    const nonSocket = path.join(runtimeDir, "not-a-socket");
+    fs.writeFileSync(nonSocket, "fixture");
+    cases.push([
+      "non-socket display path",
+      { XDG_RUNTIME_DIR: runtimeDir, XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "not-a-socket" },
+    ]);
+
+    for (const [name, environment] of cases) {
+      const result = launch(root, ["--probe"], environment);
+      assert.equal(result.status, 7, name);
+      assert.deepEqual(capturedArguments(root), ["--class=codex-desktop", "--probe"], name);
+    }
+  } finally {
+    if (datagramSocket) await stopSocketHelper(datagramSocket);
+    if (boundStream) await stopSocketHelper(boundStream);
+    await closeUnixSocket(server);
+  }
+});
+
+test("explicit --ozone-platform selections from every source suppress automatic Wayland defaults", async (t) => {
+  const scenarios = [
+    {
+      name: "global Electron flags exact ozone platform",
+      setup: (root) => {
+        fs.mkdirSync(path.join(root, "config"), { recursive: true });
+        fs.writeFileSync(path.join(root, "config", "electron-flags.conf"), "--ozone-platform\n");
+      },
+      expected: ["--class=codex-desktop", "--ozone-platform", "--probe"],
+    },
+    {
+      name: "direct assigned ozone platform",
+      setup: () => {},
+      args: ["--ozone-platform=x11", "--probe"],
+      expected: ["--class=codex-desktop", "--ozone-platform=x11", "--probe"],
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const root = createApp(t);
+    const runtimeDir = path.join(root, "runtime");
+    const socketName = "wayland-test";
+    fs.mkdirSync(runtimeDir);
+    const server = await listenUnixSocket(path.join(runtimeDir, socketName));
+    try {
+      scenario.setup(root);
+      const result = launch(root, scenario.args ?? ["--probe"], {
+        XDG_RUNTIME_DIR: runtimeDir,
+        XDG_SESSION_TYPE: "wayland",
+        WAYLAND_DISPLAY: socketName,
+      });
+      assert.equal(result.status, 7, scenario.name);
+      assert.deepEqual(capturedArguments(root), scenario.expected, scenario.name);
+    } finally {
+      await closeUnixSocket(server);
+    }
+  }
+});
+
+test("explicit Wayland IME configuration keeps precedence over automatic defaults", async (t) => {
+  const root = createApp(t);
+  const runtimeDir = path.join(root, "runtime");
+  const socketName = "wayland-test";
+  fs.mkdirSync(runtimeDir);
+  const server = await listenUnixSocket(path.join(runtimeDir, socketName));
+  try {
+    const result = launch(root, ["--disable-wayland-ime", "--probe"], {
+      XDG_RUNTIME_DIR: runtimeDir,
+      XDG_SESSION_TYPE: "wayland",
+      WAYLAND_DISPLAY: socketName,
+    });
+    assert.equal(result.status, 7);
+    assert.deepEqual(capturedArguments(root), [
+      "--ozone-platform=wayland",
+      "--class=codex-desktop",
+      "--disable-wayland-ime",
+      "--probe",
+    ]);
+  } finally {
+    await closeUnixSocket(server);
+  }
+});
+
+test("NIXOS_OZONE_WL preserves its explicit compatibility opt-in", (t) => {
+  const root = createApp(t);
+  const result = launch(root, ["--probe"], {
+    NIXOS_OZONE_WL: "1",
+    WAYLAND_DISPLAY: "wayland-without-session-metadata",
+  });
+  assert.equal(result.status, 7);
+  assert.deepEqual(capturedArguments(root), [...nativeWaylandDefaults, "--class=codex-desktop", "--probe"]);
+
+  const optOut = launch(root, ["--ozone-platform=x11", "--probe"], {
+    NIXOS_OZONE_WL: "1",
+    WAYLAND_DISPLAY: "wayland-without-session-metadata",
+  });
+  assert.equal(optOut.status, 7);
+  assert.deepEqual(capturedArguments(root), ["--class=codex-desktop", "--ozone-platform=x11", "--probe"]);
+});
+
 test("diagnose validates the official runtime without starting it", (t) => {
   const root = createApp(t);
   const result = childProcess.spawnSync(path.join(root, "start.sh"), ["--diagnose"], {
-    env: { ...process.env, XDG_CONFIG_HOME: path.join(root, "config"), TEST_ROOT: root }, encoding: "utf8",
+    env: launcherEnvironment(root), encoding: "utf8",
   });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /ok: .*\/ChatGPT/);
@@ -373,12 +653,7 @@ test("launcher replaces only matching retired Browser and Chrome plugin caches",
   fs.chmodSync(pluginAppserver, 0o775);
 
   const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
-    env: {
-      ...process.env,
-      CODEX_HOME: codexHome,
-      XDG_CONFIG_HOME: path.join(root, "config"),
-      TEST_ROOT: root,
-    },
+    env: launcherEnvironment(root, { CODEX_HOME: codexHome }),
     encoding: "utf8",
   });
   assert.equal(result.status, 7);

@@ -39,16 +39,33 @@ feature hooks.
 
 ## Persistent Electron flags and native Wayland
 
+The generic launcher automatically selects native Wayland when
+`XDG_SESSION_TYPE=wayland`, `WAYLAND_DISPLAY` is set, and the resolved display
+path is a live Unix socket. An absolute `WAYLAND_DISPLAY` is used directly; a
+relative value is resolved below `XDG_RUNTIME_DIR`. `DISPLAY` does not disable
+this behavior. The established NixOS `NIXOS_OZONE_WL` plus `WAYLAND_DISPLAY`
+opt-in remains supported even when that session/socket predicate is unavailable.
+
+An explicit `--ozone-platform` selection (with or without `=value`) suppresses
+the automatic defaults. The setting may come from a flag file, an enabled
+feature, or the command line. Do not rely on conflicting flags being resolved
+by argument order.
+
 The launcher reads shared Electron flags from
 `${XDG_CONFIG_HOME:-$HOME/.config}/electron-flags.conf` and Community-specific
 flags from
 `${XDG_CONFIG_HOME:-$HOME/.config}/codex-desktop/electron-flags.conf`, in that
 order. Put one complete argument on each line; blank lines and lines beginning
 with `#` are ignored. App-specific flags are followed by enabled feature flags
-and explicit command-line arguments, so a later explicit argument can override
-an earlier setting.
+and explicit command-line arguments.
 
-To force native Wayland rendering without editing a generated desktop entry:
+To choose a backend for one launch, for example to opt out to X11:
+
+```bash
+codex-desktop --ozone-platform=x11
+```
+
+To persistently choose native Wayland without editing a generated desktop entry:
 
 ```bash
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/codex-desktop"
