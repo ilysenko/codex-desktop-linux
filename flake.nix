@@ -96,7 +96,9 @@
           ) [ pkgs.alsa-utils ]
           ++ lib.optionals (lib.elem "computer-use-linux" featureIds) [ pkgs.glib ];
         runtimePathFor = featureIds:
-          lib.makeBinPath (baseRuntimePackages ++ featureRuntimePackages featureIds);
+          lib.makeBinPath (lib.unique (
+            baseRuntimePackages ++ featureRuntimePackages featureIds
+          ));
         gsettingsSchemaPackages = with pkgs; [ gsettings-desktop-schemas gtk3 ];
         gsettingsSchemaRoot = package:
           lib.removeSuffix "/glib-2.0/schemas" (pkgs.glib.getSchemaPath package);
