@@ -54,7 +54,12 @@ function writeSection(
   buffer.writeBigUInt64LE(BigInt(alignment), header + 48);
 }
 
-function elfFixture(machine, interpreter, interpreterOffset = 0x900) {
+function elfFixture(
+  machine,
+  interpreter,
+  interpreterOffset = 0x900,
+  paddingByte = 0x5a,
+) {
   const buffer = Buffer.alloc(4096);
   buffer.writeUInt32BE(0x7f454c46, 0);
   buffer[4] = 2;
@@ -77,7 +82,7 @@ function elfFixture(machine, interpreter, interpreterOffset = 0x900) {
   writeProgram(buffer, 1, 1, 0, buffer.length);
   writeProgram(buffer, 2, 3, interpreterOffset, interpreterBytes.length);
   writeProgram(buffer, 3, 4, 0xb00, 16);
-  buffer.fill(0x5a, SLOT_OFFSET, DETECT_LIBC_SCAN_SIZE);
+  buffer.fill(paddingByte, SLOT_OFFSET, DETECT_LIBC_SCAN_SIZE);
   interpreterBytes.copy(buffer, interpreterOffset);
 
   const sectionNames = Buffer.from("\0.interp\0.shstrtab\0");
@@ -96,6 +101,16 @@ function elfFixture(machine, interpreter, interpreterOffset = 0x900) {
   writeSection(buffer, 2, 9, 3, 0, 0, 0xa00, sectionNames.length, 1);
   return buffer;
 }
+
+test("accepts zero-filled patchelf padding", () => {
+  const interpreter =
+    "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-glibc/lib/ld-linux-x86-64.so.2";
+  const patched = relocateBuffer(
+    elfFixture(62, interpreter, 0x900, 0),
+    interpreter,
+  );
+  assert.equal(inspectInterpreter(patched, interpreter).offset, SLOT_OFFSET);
+});
 
 function interpreterFromFirstTwoKiB(buffer) {
   const scan = buffer.subarray(0, DETECT_LIBC_SCAN_SIZE);

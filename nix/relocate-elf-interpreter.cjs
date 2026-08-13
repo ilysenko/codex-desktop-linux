@@ -7,7 +7,7 @@ const ELF_HEADER_SIZE = 64;
 const PROGRAM_HEADER_SIZE = 56;
 const SECTION_HEADER_SIZE = 64;
 const DETECT_LIBC_SCAN_SIZE = 2048;
-const PATCHELF_FILL_BYTE = 0x5a;
+const PATCHELF_FILL_BYTES = new Set([0x00, 0x5a]);
 const PT_LOAD = 1;
 const PT_INTERP = 3;
 const SHT_PROGBITS = 1;
@@ -259,10 +259,13 @@ function relocateBuffer(buffer, expectedInterpreter) {
   if (targetOffset + expectedBytes.length > DETECT_LIBC_SCAN_SIZE) {
     fail("no room for PT_INTERP inside detect-libc scan range");
   }
+  const relocationSlot = buffer.subarray(
+    targetOffset,
+    targetOffset + expectedBytes.length,
+  );
   if (
-    !buffer
-      .subarray(targetOffset, targetOffset + expectedBytes.length)
-      .every((byte) => byte === PATCHELF_FILL_BYTE)
+    !PATCHELF_FILL_BYTES.has(relocationSlot[0]) ||
+    !relocationSlot.every((byte) => byte === relocationSlot[0])
   ) {
     fail("relocation slot is not patchelf padding");
   }
