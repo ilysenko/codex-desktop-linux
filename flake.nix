@@ -133,11 +133,16 @@
               bash "$source_dir/install.sh" "${upstreamDeb}"
 
               app="$out/opt/codex-desktop"
+              dynamic_linker="$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)"
               for executable in "$app/ChatGPT" "$app/chrome_crashpad_handler"; do
                 test ! -f "$executable" || patchelf \
-                  --set-interpreter "$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)" \
+                  --set-interpreter "$dynamic_linker" \
                   --add-rpath "${runtimeLibraryPath}" "$executable"
               done
+              # patchelf moves Electron's PT_INTERP beyond detect-libc's 2 KiB
+              # scan, whose process.report fallback trips Electron's CFI.
+              node "$source_dir/nix/relocate-elf-interpreter.cjs" relocate \
+                "$app/ChatGPT" "$dynamic_linker"
               find "$app" -type f \( -name '*.so' -o -name '*.so.*' -o -name '*.node' \) -print0 | \
                 while IFS= read -r -d "" library; do
                   patchelf --add-rpath "${runtimeLibraryPath}" "$library" 2>/dev/null || true
@@ -197,6 +202,16 @@
         checks.official-linux-package = pkgs.runCommand "official-linux-package-check" { nativeBuildInputs = [ pkgs.dpkg ]; } ''
           test "$(dpkg-deb -f ${upstreamDeb} Package)" = chatgpt
           test "$(dpkg-deb -f ${upstreamDeb} Architecture)" = ${officialPackage.architecture}
+          touch "$out"
+        '';
+        checks.nix-runtime = pkgs.runCommand "nix-runtime-check" { nativeBuildInputs = [ pkgs.dpkg pkgs.nodejs ]; } ''
+          dynamic_linker="$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)"
+          node ${sourceRoot}/nix/relocate-elf-interpreter.cjs check \
+            ${codexDesktop}/opt/codex-desktop/ChatGPT "$dynamic_linker"
+          upstream_root="$(mktemp -d)"
+          dpkg-deb -x ${upstreamDeb} "$upstream_root"
+          cmp "$upstream_root/usr/lib/chatgpt/resources/app.asar" \
+            ${codexDesktop}/opt/codex-desktop/resources/app.asar
           touch "$out"
         '';
         devShells.default = pkgs.mkShell { packages = [ pkgs.nodejs pkgs.python3 pkgs.dpkg pkgs.gnupg ]; };

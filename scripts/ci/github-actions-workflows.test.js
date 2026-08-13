@@ -24,6 +24,7 @@ function job(workflow, jobName) {
 test("CI runs the complete workflow regression suite", () => {
   const workflow = read(".github/workflows/ci.yml");
   assert.match(workflow, /node --test scripts\/ci\/\*\.test\.js/);
+  assert.match(workflow, /nix build \.#checks\.x86_64-linux\.nix-runtime --no-link/);
 });
 
 test("official Linux validation runs fully on every pull request but not hourly", () => {
@@ -31,7 +32,12 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.doesNotMatch(workflow, /^  schedule:/m);
   assert.match(workflow, /^  pull_request:\s*\n  push:/m);
   assert.match(workflow, /^      - \.github\/workflows\/upstream-build-app\.yml$/m);
-  assert.match(job(workflow, "signed-baseline"), /architecture: \[amd64, arm64\]/);
+  const signedBaseline = job(workflow, "signed-baseline");
+  assert.match(signedBaseline, /architecture: \[amd64, arm64\]/);
+  assert.match(
+    signedBaseline,
+    /name: Validate Nix ELF workaround[\s\S]*?env:\n          CODEX_INSTALL_DIR:.*matrix\.architecture[\s\S]*?relocate-elf-interpreter\.cjs relocate/,
+  );
 
   const packageMatrix = job(workflow, "package-matrix");
   assert.match(packageMatrix, /architecture: amd64/);

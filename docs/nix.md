@@ -6,6 +6,12 @@ ELF payload, and wraps it with the required Nix libraries.
 
 These inputs are official Linux `.deb` files. Nix wraps the official runtime
 directly instead of replacing Electron or rebuilding upstream native modules.
+`patchelf` normally moves Electron's interpreter metadata beyond the first
+2 KiB of the executable, where the bundled libc detector can no longer see it.
+The derivation relocates that metadata into verified `patchelf` padding so the
+detector selects glibc without using Electron's unsafe report fallback. This
+ELF-only compatibility fix is checked against both official architectures and
+keeps `resources/app.asar` byte-for-byte identical to upstream.
 
 ```bash
 nix run github:ilysenko/codex-desktop-linux

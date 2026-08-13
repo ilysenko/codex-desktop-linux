@@ -59,3 +59,4 @@ jobs:
           node-version: 24
       - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
       - run: scripts/ci/validate-nix-pins.sh
+      - run: nix build .#checks.x86_64-linux.nix-runtime --no-link
