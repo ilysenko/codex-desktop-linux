@@ -44,6 +44,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The opt-in `frameless-titlebar` feature again hides official Linux overlay
+  buttons. It retargets the current `titleBarOverlay` window options, zoom
+  update, and theme-sync contracts, remaps Linux webview chrome to `native`,
+  and rejects mixed, duplicate, or drifted official-package surfaces
+  byte-identically. Retired DMG inset and user-agent layout-gate rewrites are
+  omitted because official Linux already uses a 0px inset for both layouts.
 - The opt-in Dock icon tweak is restored for the signed official Linux package,
   using its ChatGPT icon and desktop metadata while preserving ChatGPT
   Community window, tray, and managed launcher synchronization.

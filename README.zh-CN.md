@@ -191,7 +191,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `computer-use-linux` | Linux desktop-control UI 与原生 MCP backend | [文档](linux-features/computer-use-linux/README.md) |
 | `copilot-reasoning-effort` | Copilot auth 的 reasoning-effort 默认值 | [文档](linux-features/copilot-reasoning-effort/README.md) |
 | `directory-only-working-tree-watch` | 有界 Watchbound 工作树监听 | [文档](linux-features/directory-only-working-tree-watch/README.md) |
-| `frameless-titlebar` | 由 compositor 管理窗口装饰 | [文档](linux-features/frameless-titlebar/README.md) |
+| `frameless-titlebar` | 隐藏官方 Linux overlay 按钮，改由 compositor 管理窗口装饰 | [文档](linux-features/frameless-titlebar/README.md) |
 | `global-dictation` | X11 / XDG portal 全局听写快捷键 | [文档](linux-features/global-dictation/README.md) |
 | `linux-performance-workarounds` | 针对受影响系统的 renderer workaround | [文档](linux-features/linux-performance-workarounds/README.md) |
 | `mcp-helper-reaper` | 安全清理孤立 MCP helper | [文档](linux-features/mcp-helper-reaper/README.md) |
