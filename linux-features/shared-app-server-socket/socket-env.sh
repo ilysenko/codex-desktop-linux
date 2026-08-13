@@ -23,5 +23,7 @@ if [ -n "$node_bin" ] && [ -f "$reaper_path" ]; then
 fi
 
 if [ "${CODEX_LINUX_FEATURE_HOOK_PHASE:-launcher}" = "launcher" ]; then
+    cli_path="${CODEX_CLI_PATH:-${CODEX_LINUX_APP_DIR:?}/resources/codex}"
     printf 'env CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET=%s\n' "$socket_path"
+    printf 'env CODEX_CLI_PATH=%s\n' "$cli_path"
 fi

@@ -17,6 +17,10 @@ PATH` byte tunnel and its existing WebSocket transport. Other local clients use
 the same stock proxy command to attach to the Unix socket and receive the normal
 WebSocket `/rpc` byte stream. Closing Desktop stops the authority.
 
+The launcher uses the official CLI bundled in `resources/codex` by default.
+An explicit `CODEX_CLI_PATH` remains supported and is preserved by the feature
+hook.
+
 The default socket is scoped by Linux app id under `XDG_RUNTIME_DIR`, preventing
 side-by-side Desktop instances from sharing an authority accidentally. Override
 it with `CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET` when a stable path is required.

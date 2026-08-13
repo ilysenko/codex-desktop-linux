@@ -584,8 +584,38 @@ test("descriptor is optional and targets the main bundle", () => {
 
 test("socket hook exports an instance-scoped path without starting a process", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-socket-runtime-"));
+  const appDir = path.join(tempDir, "app");
   const env = {
     ...process.env,
+    CODEX_LINUX_APP_DIR: appDir,
+    CODEX_LINUX_APP_ID: "codex-bridge-test",
+    CODEX_LINUX_APP_STATE_DIR: path.join(tempDir, "state"),
+    XDG_RUNTIME_DIR: tempDir,
+  };
+  delete env.CODEX_CLI_PATH;
+  delete env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET;
+  try {
+    const result = spawnSync(socketEnvHook, [], { encoding: "utf8", env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      result.stdout.trim(),
+      [
+        `env CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET=${tempDir}/codex-bridge-test/app-server-bridge/app-server.sock`,
+        `env CODEX_CLI_PATH=${appDir}/resources/codex`,
+      ].join("\n"),
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("socket hook preserves an explicit real Codex CLI path", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-explicit-cli-"));
+  const explicitCli = path.join(tempDir, "real codex");
+  const env = {
+    ...process.env,
+    CODEX_CLI_PATH: explicitCli,
+    CODEX_LINUX_APP_DIR: path.join(tempDir, "app"),
     CODEX_LINUX_APP_ID: "codex-bridge-test",
     CODEX_LINUX_APP_STATE_DIR: path.join(tempDir, "state"),
     XDG_RUNTIME_DIR: tempDir,
@@ -595,8 +625,8 @@ test("socket hook exports an instance-scoped path without starting a process", (
     const result = spawnSync(socketEnvHook, [], { encoding: "utf8", env });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(
-      result.stdout.trim(),
-      `env CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET=${tempDir}/codex-bridge-test/app-server-bridge/app-server.sock`,
+      result.stdout.trim().split("\n").at(-1),
+      `env CODEX_CLI_PATH=${explicitCli}`,
     );
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
