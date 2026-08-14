@@ -290,16 +290,18 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
     let patched = replaceUnique(
       source,
       registerPattern,
-      (original, _functionName, _bareTest, _bareSupport, _bareRegister, callbacksVar) =>
-        original
-          .replace(
-            "onReleased:i==null?void 0:()=>{r.isOwner()&&i()}}",
-            "onReleased:i==null?void 0:()=>{r.isOwner()&&i()},onUnavailable:t.onUnavailable}",
-          )
-          .replace(
-            ";if(",
-            `;if(process.platform===\`linux\`&&codexLinuxGlobalDictationUsesWayland())return codexLinuxGlobalDictationPortalRegistration(e,${callbacksVar});if(`,
-          ),
+      (original, _functionName, _bareTest, _bareSupport, _bareRegister, callbacksVar) => {
+        const withUnavailable = replaceUnique(
+          original,
+          /onReleased:i==null\?void 0:\(\)=>\{r\.isOwner\(\)&&i\(\)\}\}/u,
+          "onReleased:i==null?void 0:()=>{r.isOwner()&&i()},onUnavailable:t.onUnavailable}",
+          "ownership callback propagation",
+        );
+        return withUnavailable.replace(
+          ";if(",
+          `;if(process.platform===\`linux\`&&codexLinuxGlobalDictationUsesWayland())return codexLinuxGlobalDictationPortalRegistration(e,${callbacksVar});if(`,
+        );
+      },
       "global shortcut registration function",
     );
     patched = `${helperSource()}${patched}`;

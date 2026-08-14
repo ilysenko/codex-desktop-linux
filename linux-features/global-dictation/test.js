@@ -220,6 +220,18 @@ test("main patch handles dollar signs in minified identifiers", () => {
   assert.match(patched, /L\$k\(e\)\?`Modifier-only shortcuts/);
 });
 
+test("main patch fails closed when the ownership release alias drifts", () => {
+  const source = mainBundleFixture()
+    .replace(",i=t.onReleased,a=", ",q=t.onReleased,a=")
+    .replace(
+      "onReleased:i==null?void 0:()=>{r.isOwner()&&i()}}",
+      "onReleased:q==null?void 0:()=>{r.isOwner()&&q()}}",
+    );
+  assert.notEqual(source, mainBundleFixture());
+  assert.equal(applyLinuxGlobalDictationMainProcessPatch(source), source);
+  assert.doesNotMatch(source, /codex-linux-global-dictation-v2/);
+});
+
 test("Wayland registration uses a release-aware portal helper", () => {
   const patched = applyPatchTwice(mainBundleFixture());
   assert.match(patched, /function codexLinuxGlobalDictationUsesWayland\(/);

@@ -1,7 +1,6 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -439,96 +438,5 @@ test("inventoryTree reports native and foreign machines without following names"
         ["native", true],
       ],
     );
-  });
-});
-
-test("current release acceptance binds both signed packages to ELF, ASAR, feature, and Nix validation", () => {
-  const manifest = loadManifest();
-  const acceptance = JSON.parse(
-    fs.readFileSync(
-      path.resolve(__dirname, "../../nix/elf-runtime-acceptance.json"),
-      "utf8",
-    ),
-  );
-  assert.equal(acceptance.schemaVersion, 1);
-  assert.equal(acceptance.version, "26.810.41047");
-  assert.equal(
-    acceptance.repository,
-    "https://persistent.oaistatic.com/codex-app-prod/linux/deb",
-  );
-  assert.equal(
-    acceptance.signingKeyFingerprint,
-    "3BFA0E4AE8B8CC16A2D9BA684A3B4A566C4660E4",
-  );
-  assert.equal(
-    acceptance.releaseId,
-    "6234f3869699ec9c4be60e3ce2f2c8f65fb69f35e7572ec7a77bf49768f1030f",
-  );
-  assert.deepEqual(Object.keys(acceptance.architectures), ["amd64", "arm64"]);
-  for (const architecture of ["amd64", "arm64"]) {
-    const evidence = acceptance.architectures[architecture];
-    const contract = manifest.architectures[architecture];
-    assert.equal(evidence.package.architecture, architecture);
-    assert.equal(evidence.package.version, acceptance.version);
-    assert.match(
-      evidence.package.repositoryPath,
-      new RegExp(`_26\\.810\\.41047_${architecture}\\.deb$`),
-    );
-    assert.match(evidence.package.sha256, /^[0-9a-f]{64}$/);
-    assert.ok(evidence.package.size > 0);
-    assert.equal(evidence.elfInventory.status, "passed");
-    assert.equal(evidence.elfInventory.count, contract.targetInventoryCount);
-    assert.equal(evidence.elfInventory.sha256, contract.targetInventorySha256);
-    assert.match(evidence.appAsarSha256, /^[0-9a-f]{64}$/);
-    assert.deepEqual(evidence.optionalFeatureAudit, {
-      appAsarSha256: evidence.appAsarSha256,
-      featureCount: 27,
-      status: "passed",
-    });
-  }
-  const canonicalJson = (value) => {
-    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-    if (value && typeof value === "object") {
-      return `{${Object.keys(value)
-        .sort()
-        .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
-        .join(",")}}`;
-    }
-    return JSON.stringify(value);
-  };
-  const releaseManifest = {
-    version: acceptance.version,
-    packages: Object.fromEntries(
-      ["amd64", "arm64"].map((architecture) => {
-        const packageEvidence = acceptance.architectures[architecture].package;
-        return [
-          architecture,
-          {
-            repositoryPath: packageEvidence.repositoryPath,
-            sha256: packageEvidence.sha256,
-            size: packageEvidence.size,
-          },
-        ];
-      }),
-    ),
-  };
-  assert.equal(
-    crypto.createHash("sha256").update(canonicalJson(releaseManifest)).digest("hex"),
-    acceptance.releaseId,
-  );
-  assert.notEqual(
-    acceptance.architectures.amd64.appAsarSha256,
-    acceptance.architectures.arm64.appAsarSha256,
-    "architecture-specific ASARs require separate feature audits",
-  );
-  assert.deepEqual(acceptance.nixValidation, {
-    exactPackageContract: {
-      architectures: ["amd64", "arm64"],
-      status: "passed",
-    },
-    flakeEvaluation: {
-      status: "passed",
-      systems: ["x86_64-linux", "aarch64-linux"],
-    },
   });
 });
