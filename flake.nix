@@ -745,9 +745,10 @@
             "$app/start.sh" --diagnose
             timeout 10 "$app/browser_crashpad_handler" --version
             "$app/resources/cua_node/bin/node" --version
-            NODE_PATH="$app/resources/cua_node/lib/node_modules" \
+            CODEX_CUA_NODE_PATH="$app/resources/cua_node/bin/node" \
+              NODE_PATH="$app/resources/cua_node/lib/node_modules" \
               timeout 20 "$app/resources/cua_node/bin/node" -e \
-                "require('sharp'); require('@napi-rs/canvas')"
+                "require('sharp'); require('@napi-rs/canvas'); if (process.execPath !== process.env.CODEX_CUA_NODE_PATH) throw new Error('unexpected process.execPath')"
             timeout 10 "$app/${officialRuntimePaths.sky}" --help >/dev/null
             timeout 10 "$app/${officialRuntimePaths.extensionHost}" --help >/dev/null
             "$app/resources/rg" --version

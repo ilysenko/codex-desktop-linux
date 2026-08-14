@@ -9,6 +9,7 @@ const test = require("node:test");
 const {
   auditExecutableShebangs,
   auditFixedTree,
+  buildPatchelfInvocations,
   installDynamicLinkerWrapper,
   inventoryTree,
   loadManifest,
@@ -295,6 +296,13 @@ for (const architecture of ["amd64", "arm64"]) {
       );
       if (architecture === "amd64") {
         assert.equal(
+          actions.find(
+            ({ path: itemPath }) =>
+              itemPath === "resources/cua_node/bin/node",
+          ).strategy,
+          "patchelf-rpath-first",
+        );
+        assert.equal(
           actions.find(({ path: itemPath }) => itemPath.endsWith("/tectonic"))
             .strategy,
           "dynamic-linker-wrapper",
@@ -327,7 +335,7 @@ test("rejects missing, unexpected, and obsolete upstream executables", () => {
   });
 });
 
-test("the amd64 Tectonic wrapper preserves and protects the official ELF", () => {
+test("a dynamic-linker wrapper preserves and protects the official ELF", () => {
   withTemporaryDirectory((root) => {
     const manifest = loadManifest();
     const filePath = path.join(root, "tectonic");
@@ -350,6 +358,27 @@ test("the amd64 Tectonic wrapper preserves and protects the official ELF", () =>
     assert.match(wrapper, /--library-path/);
     assert.match(wrapper, /\.codex-linux-original/);
   });
+});
+
+test("the amd64 CUA Node fixup adds RUNPATH before changing PT_INTERP", () => {
+  assert.deepEqual(
+    buildPatchelfInvocations(
+      {
+        strategy: "patchelf-rpath-first",
+        setInterpreter: true,
+        addRpath: true,
+      },
+      "/nix/store/glibc/lib/ld-linux-x86-64.so.2",
+      "/nix/store/runtime/lib",
+    ),
+    [
+      ["--add-rpath", "/nix/store/runtime/lib"],
+      [
+        "--set-interpreter",
+        "/nix/store/glibc/lib/ld-linux-x86-64.so.2",
+      ],
+    ],
+  );
 });
 
 test("post-fix audit enforces the Nix interpreter and runtime search path", () => {
@@ -381,6 +410,11 @@ test("post-fix audit enforces the Nix interpreter and runtime search path", () =
       shell: "/nix/store/bash/bin/bash",
       manifest,
     });
+    writeFixture(
+      root,
+      "resources/cua_node/lib/node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.3",
+      dynamicElf({ interpreter: null, runpath: "$ORIGIN/" }),
+    );
     assert.doesNotThrow(() =>
       auditFixedTree({
         root,
