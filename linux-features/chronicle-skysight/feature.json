@@ -1,0 +1,11 @@
+{
+  "id": "chronicle-skysight",
+  "title": "Chronicle / Skysight Activity Memory",
+  "description": "Opt-in Linux activity memory with Chronicle controls and a standalone Skysight MCP server.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js",
+    "stageHook": "./stage.sh",
+    "cleanupHook": "./cleanup.sh"
+  }
+}

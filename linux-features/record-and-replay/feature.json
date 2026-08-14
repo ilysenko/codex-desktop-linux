@@ -3,6 +3,9 @@
   "title": "Record & Replay",
   "description": "Opt-in Linux demo-to-skill recording workflow powered by codex-record-replay-linux.",
   "defaultEnabled": false,
+  "requires": [
+    "chronicle-skysight"
+  ],
   "entrypoints": {
     "patchDescriptors": "./patch.js",
     "stageHook": "./stage.sh",

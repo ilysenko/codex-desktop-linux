@@ -20,11 +20,6 @@ function countOccurrences(source, needle) {
   return source.split(needle).length - 1;
 }
 
-function regexMatchCount(source, pattern) {
-  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
-  return [...source.matchAll(new RegExp(pattern.source, flags))].length;
-}
-
 function pluginNameExpressionRegex(pluginName) {
   const escaped = escapeRegExp(pluginName);
   return String.raw`(?:\`${escaped}\`|"${escaped}"|'${escaped}')`;
@@ -137,22 +132,11 @@ function applyRecordReplayPluginGatePatch(currentSource) {
   return `${currentSource.slice(0, insertionIndex)}${buildRecordReplayDescriptor()},${currentSource.slice(insertionIndex)}`;
 }
 
-function recordReplayBridgeSource({ childProcessVar, fsVar, pathVar }) {
+function recordReplayBridgeSource({ fsVar }) {
   return [
-    `"chronicle-permissions":async()=>{let e=await codexLinuxChronicleSidecarControlStateAsync(),t=e.enabled===!0?"granted":"unknown";return{accessibility:t,screenRecording:t,chronicleSidecarPresent:e.enabled===!0,chronicleSidecarProcessState:e.state??"disabled",chronicleOcrAvailable:e.chronicleOcrAvailable===!0,chronicleOcrStatus:e.chronicleOcrStatus??"unknown",chronicleOcrBackend:e.chronicleOcrBackend??null,chronicleOcrLanguage:e.chronicleOcrLanguage??null}}`,
-    `"getChronicleSidecarControlState":async()=>codexLinuxChronicleSidecarControlStateAsync()`,
-    `"toggleChronicleSidecar":async()=>codexLinuxChronicleToggleSidecar()`,
     `"linux-record-replay-doctor":async()=>codexLinuxRecordReplayRun([${JSON.stringify("doctor")}],15000)`,
     `"linux-record-replay-status":async()=>codexLinuxRecordReplayRun([${JSON.stringify("status")}],5000)`,
     `"linux-record-replay-start":async({sessionDir:e,appId:t,windowId:n,goal:r,includeScreenshot:a,includeAccessibility:o,includeAudio:s}={})=>{let i=codexLinuxRecordReplayString(e);if(!i)return{ok:!1,action:"record.start",message:"sessionDir is required"};let c=["record","start","--session-dir",i];t&&c.push("--app-id",String(t));n&&c.push("--window-id",String(n));r&&c.push("--goal",String(r));a===!1&&c.push("--no-screenshot");o===!1&&c.push("--no-accessibility");s===!0&&c.push("--audio");s===!1&&c.push("--no-audio");return codexLinuxRecordReplayRun(c,60000)}`,
-    `"linux-record-replay-skysight-start":async({intervalSeconds:e,summaryAgent:t}={})=>{let n=["skysight","start"];e&&n.push("--interval-seconds",String(e));t===!0&&n.push("--summary-agent","enabled");t===!1&&n.push("--summary-agent","disabled");return codexLinuxRecordReplayRun(n,15000)}`,
-    `"linux-record-replay-skysight-status":async()=>codexLinuxRecordReplayRun(["skysight","status"],5000)`,
-    `"linux-record-replay-skysight-pause":async()=>codexLinuxRecordReplayRun(["skysight","pause"],10000)`,
-    `"linux-record-replay-skysight-resume":async()=>codexLinuxRecordReplayRun(["skysight","resume"],10000)`,
-    `"linux-record-replay-skysight-stop":async()=>codexLinuxRecordReplayRun(["skysight","stop"],10000)`,
-    `"linux-record-replay-skysight-snapshot":async({source:e}={})=>{let t=["skysight","snapshot"];e&&t.push("--source",String(e));return codexLinuxRecordReplayRun(t,15000)}`,
-    `"linux-record-replay-skysight-list-exclusions":async()=>codexLinuxRecordReplayRun(["skysight","list-exclusions"],5000)`,
-    `"linux-record-replay-skysight-update-exclusion":async({kind:e,value:t,reason:n,remove:r}={})=>{let a=codexLinuxRecordReplayString(e),o=codexLinuxRecordReplayString(t);if(!a||!o)return{ok:!1,action:"skysight.update-exclusion",message:"kind and value are required"};let s=["skysight","update-exclusion","--kind",a,"--value",o];n&&s.push("--reason",String(n));r&&s.push("--remove");return codexLinuxRecordReplayRun(s,10000)}`,
     `"linux-record-replay-mark":async({sessionDir:e,note:t}={})=>{let n=codexLinuxRecordReplayString(e),r=codexLinuxRecordReplayString(t);if(!n||!r)return{ok:!1,action:"record.mark",message:"sessionDir and note are required"};return codexLinuxRecordReplayRun(["record","mark","--session-dir",n,"--note",r],15000)}`,
     `"linux-record-replay-speech-context":async({sessionDir:e,transcript:t,source:n}={})=>{let r=codexLinuxRecordReplayString(e),a=codexLinuxRecordReplayString(t);if(!r||!a)return{ok:!1,action:"record.speech",message:"sessionDir and transcript are required"};let o=["record","speech","--session-dir",r,"--text",a];n&&o.push("--source",String(n));return codexLinuxRecordReplayRun(o,15000)}`,
     recordReplayActiveSpeechContextBridgeHandler(),
@@ -173,31 +157,8 @@ function recordReplayActiveSpeechContextBridgeHandler() {
   return `"linux-record-replay-speech-context-active":async({transcript:e,source:t}={})=>{let n=codexLinuxRecordReplayString(e);if(!n)return{ok:!1,action:"record.speech-active",message:"transcript is required"};let r=await codexLinuxRecordReplayRun(["status"],5000),a=r?.json?.session_dir;if(!r?.ok||r?.json?.state!==\`active\`||!a)return{ok:!1,action:"record.speech-active",message:"No active Record & Replay session",status:r};let o=["record","speech","--session-dir",String(a),"--text",n];t&&o.push("--source",String(t));return codexLinuxRecordReplayRun(o,15000)}`;
 }
 
-function recordReplayHelperSource({ childProcessVar, fsVar, pathVar }) {
-  return `function codexLinuxRecordReplayString(e){return typeof e==="string"&&e.trim().length>0?e.trim():null}
-function codexLinuxRecordReplayBin(){let e=codexLinuxRecordReplayString(process.env.CODEX_RECORD_REPLAY_LINUX_BIN);if(e)return e;let t=[];try{process.resourcesPath&&t.push(${pathVar}.join(process.resourcesPath,"native","codex-record-replay-linux"))}catch{}try{t.push(${pathVar}.join(process.cwd(),"resources","native","codex-record-replay-linux"))}catch{}try{let e=process.env.PATH||"";for(let n of e.split(${pathVar}.delimiter))n&&t.push(${pathVar}.join(n,"codex-record-replay-linux"))}catch{}t.push("codex-record-replay-linux");for(let e of t){try{if(e==="codex-record-replay-linux"||${fsVar}.existsSync(e))return e}catch{}}return "codex-record-replay-linux"}
-function codexLinuxRecordReplayParse(e){let t=String(e||"").trim();if(!t)return null;try{return JSON.parse(t)}catch{return{raw:t}}}
-function codexLinuxRecordReplayWriteTempJson(e){let t=process.env.XDG_RUNTIME_DIR||process.env.TMPDIR||"/tmp",n=${pathVar}.join(t,"codex-record-replay-traces-"+(process.getuid?process.getuid():process.pid));${fsVar}.mkdirSync(n,{recursive:true,mode:448});try{if(${fsVar}.lstatSync(n).isSymbolicLink())throw Error("trace directory is a symlink");${fsVar}.chmodSync(n,448)}catch(r){throw r}let r=${pathVar}.join(n,"trace-"+Date.now()+"-"+process.pid+"-"+Math.random().toString(36).slice(2)+".json");${fsVar}.writeFileSync(r,String(e),{mode:384});return r}
-function codexLinuxRecordReplayRun(e,t){let n=codexLinuxRecordReplayBin();return new Promise(r=>{${childProcessVar}.execFile(n,e,{encoding:"utf8",timeout:t,maxBuffer:16777216},(t,a,o)=>{let s=codexLinuxRecordReplayParse(a);if(t)return r({ok:!1,command:n,args:e,message:t instanceof Error?t.message:String(t),code:t?.code??null,stdout:a||"",stderr:o||"",json:s});r({ok:!0,command:n,args:e,stdout:a||"",stderr:o||"",json:s})})})}
-${recordReplayChronicleHelperSource({ childProcessVar })}`;
-}
-
-function recordReplayChronicleHelperSource({ childProcessVar }) {
-  return `function codexLinuxRecordReplayRunSync(e,t){let n=codexLinuxRecordReplayBin();try{let r=${childProcessVar}.execFileSync(n,e,{encoding:"utf8",timeout:t,maxBuffer:16777216});return{ok:!0,command:n,args:e,stdout:r||"",stderr:"",json:codexLinuxRecordReplayParse(r)}}catch(r){let a=typeof r?.stdout==="string"?r.stdout:r?.stdout?String(r.stdout):"",o=typeof r?.stderr==="string"?r.stderr:r?.stderr?String(r.stderr):"";return{ok:!1,command:n,args:e,message:r instanceof Error?r.message:String(r),code:r?.status??r?.code??null,stdout:a,stderr:o,json:codexLinuxRecordReplayParse(a)}}}
-function codexLinuxChronicleControlStateFromSkysight(e){let t=e?.json&&typeof e.json==="object"?e.json:null;if(!e?.ok&&t==null)return{enabled:!1,running:!1,state:"disabled"};let n=String(t?.state||""),r=t?.is_running===!0||t?.isRunning===!0,a=t?.paused===!0||t?.is_paused===!0||t?.isPaused===!0||n==="paused",o=n==="running"&&r&&!a;return{enabled:!0,running:o,state:o?"running":"stopped",skysight:t,chronicleOcrAvailable:t?.ocr_available===!0||t?.ocrAvailable===!0,chronicleOcrStatus:t?.ocr_status??t?.ocrStatus??"unknown",chronicleOcrBackend:t?.ocr_backend??t?.ocrBackend??null,chronicleOcrLanguage:t?.ocr_language??t?.ocrLanguage??null}}
-function codexLinuxChronicleSidecarControlState(){return codexLinuxChronicleControlStateFromSkysight(codexLinuxRecordReplayRunSync(["skysight","status"],3000))}
-async function codexLinuxChronicleSidecarControlStateAsync(){return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","status"],5000))}
-function codexLinuxChronicleSummaryAgentArgs(e){return e===!0?["--summary-agent","enabled"]:e===!1?["--summary-agent","disabled"]:[]}
-async function codexLinuxChronicleEnsureSidecarRunning(e){let t=await codexLinuxRecordReplayRun(["skysight","status"],5000),n=t?.json&&typeof t.json==="object"?t.json:null,r=String(n?.state||""),a=n?.is_running===!0||n?.isRunning===!0,o=n?.paused===!0||n?.is_paused===!0||n?.isPaused===!0||r==="paused",s=codexLinuxChronicleSummaryAgentArgs(e),i=e===!0&&(n?.summary_agent_enabled!==!0&&n?.summaryAgentEnabled!==!0);if(r==="running"&&a&&!o)return i?codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","start",...s],15000)):codexLinuxChronicleControlStateFromSkysight(t);if(a&&o){i&&await codexLinuxRecordReplayRun(["skysight","start",...s],15000);return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","resume"],10000))}return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","start",...s],15000))}
-async function codexLinuxChronicleToggleSidecar(){let e=await codexLinuxRecordReplayRun(["skysight","status"],5000),t=e?.json&&typeof e.json==="object"?e.json:null,n=String(t?.state||""),r=t?.is_running===!0||t?.isRunning===!0,a=t?.paused===!0||t?.is_paused===!0||t?.isPaused===!0||n==="paused";if(n==="running"&&r&&!a)return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","pause"],10000));if(r&&a)return codexLinuxChronicleEnsureSidecarRunning(!0);return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","start","--summary-agent","enabled"],15000))}`;
-}
-
-function recordReplayChronicleTrayControlPattern() {
-  return /getChronicleSidecarControlState:\(\)=>([A-Za-z_$][\w$]*)\(\)\.skysight\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\(`local`\)\?\.getChronicleSidecarControlState\(\)\?\?\2),toggleChronicleSidecar:async\(\)=>\{if\(\1\(\)\.skysight\)return \2;let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\([A-Za-z_$][\w$]*\));return \4==null\?\2:\4\.getChronicleSidecarControlState\(\)\.running\?\4\.pauseChronicleSidecar\(\):\4\.resumeChronicleSidecar\(\)\}/u;
-}
-
-function recordReplayChronicleTrayPatchedPattern() {
-  return /getChronicleSidecarControlState:\(\)=>process\.platform===`linux`\?codexLinuxChronicleSidecarControlState\(\):([A-Za-z_$][\w$]*)\(\)\.skysight\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\(`local`\)\?\.getChronicleSidecarControlState\(\)\?\?\2),toggleChronicleSidecar:async\(\)=>\{if\(process\.platform===`linux`\)return codexLinuxChronicleToggleSidecar\(\);if\(\1\(\)\.skysight\)return \2;let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\.appServerConnectionRegistry\.getMaybeConnection\([A-Za-z_$][\w$]*\));return \4==null\?\2:\4\.getChronicleSidecarControlState\(\)\.running\?\4\.pauseChronicleSidecar\(\):\4\.resumeChronicleSidecar\(\)\}/u;
+function recordReplayHelperSource({ fsVar, pathVar }) {
+  return `function codexLinuxRecordReplayWriteTempJson(e){let t=process.env.XDG_RUNTIME_DIR||process.env.TMPDIR||"/tmp",n=${pathVar}.join(t,"codex-record-replay-traces-"+(process.getuid?process.getuid():process.pid));${fsVar}.mkdirSync(n,{recursive:true,mode:448});try{if(${fsVar}.lstatSync(n).isSymbolicLink())throw Error("trace directory is a symlink");${fsVar}.chmodSync(n,448)}catch(r){throw r}let r=${pathVar}.join(n,"trace-"+Date.now()+"-"+process.pid+"-"+Math.random().toString(36).slice(2)+".json");${fsVar}.writeFileSync(r,String(e),{mode:384});return r}`;
 }
 
 function hasCompleteRecordReplayMainBridgePatch(source) {
@@ -206,40 +167,12 @@ function hasCompleteRecordReplayMainBridgePatch(source) {
   const bridgeInsertion = `${bridgePayload},"get-global-state":async({key:`;
   return countOccurrences(source, helperPayload) === 1
     && countOccurrences(source, bridgePayload) === 1
-    && countOccurrences(source, bridgeInsertion) === 1
-    && regexMatchCount(source, recordReplayChronicleTrayPatchedPattern()) === 1;
+    && countOccurrences(source, bridgeInsertion) === 1;
 }
 
 function hasAnyRecordReplayMainBridgeArtifact(source) {
-  return source.includes("codexLinuxRecordReplay")
-    || source.includes("codexLinuxChronicle")
-    || source.includes('"linux-record-replay-');
-}
-
-function applyRecordReplayChronicleTrayPatch(currentSource) {
-  const patchName = "Record & Replay Chronicle tray bridge patch";
-  if (currentSource.includes("process.platform===`linux`?codexLinuxChronicleSidecarControlState()")) {
-    return currentSource;
-  }
-
-  const trayControlPattern = recordReplayChronicleTrayControlPattern();
-  if (!trayControlPattern.test(currentSource)) {
-    warn("Could not find Chronicle tray control callbacks", patchName);
-    return currentSource;
-  }
-
-  return currentSource.replace(
-    trayControlPattern,
-    (
-      _match,
-      availabilityFunction,
-      disabledStateVar,
-      upstreamStateExpression,
-      connectionVar,
-      connectionExpression,
-    ) =>
-      `getChronicleSidecarControlState:()=>process.platform===\`linux\`?codexLinuxChronicleSidecarControlState():${availabilityFunction}().skysight?${disabledStateVar}:${upstreamStateExpression},toggleChronicleSidecar:async()=>{if(process.platform===\`linux\`)return codexLinuxChronicleToggleSidecar();if(${availabilityFunction}().skysight)return ${disabledStateVar};let ${connectionVar}=${connectionExpression};return ${connectionVar}==null?${disabledStateVar}:${connectionVar}.getChronicleSidecarControlState().running?${connectionVar}.pauseChronicleSidecar():${connectionVar}.resumeChronicleSidecar()}`,
-  );
+  return source.includes("codexLinuxRecordReplayWriteTempJson")
+    || source.includes('"linux-record-replay-start"');
 }
 
 function applyRecordReplayMainBridgePatch(currentSource) {
@@ -250,8 +183,8 @@ function applyRecordReplayMainBridgePatch(currentSource) {
     }
     return currentSource;
   }
-  if (!recordReplayChronicleTrayControlPattern().test(currentSource)) {
-    warn("Could not find Chronicle tray control callbacks", patchName);
+  if (!currentSource.includes("codexLinuxRecordReplayRun")) {
+    warn("Chronicle / Skysight dependency bridge is missing", patchName);
     return currentSource;
   }
 
@@ -266,7 +199,7 @@ function applyRecordReplayMainBridgePatch(currentSource) {
     handlerNeedle,
     `${recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS)},${handlerNeedle}`,
   )}`;
-  return applyRecordReplayChronicleTrayPatch(patchedSource);
+  return patchedSource;
 }
 
 function recordReplayHudRuntimeSource() {
@@ -432,13 +365,13 @@ const descriptors = [
   {
     id: "linux-record-replay-main-bridge",
     phase: "main-bundle",
-    order: 151,
+    order: 152,
     apply: applyRecordReplayMainBridgePatch,
   },
   {
     id: "record-replay-hud",
     phase: "webview-asset",
-    order: 152,
+    order: 153,
     ciPolicy: "optional",
     pattern: /^index-.*\.js$/,
     missingDescription: "webview index bundle",
@@ -477,7 +410,6 @@ module.exports = {
   applyRecordReplayHudPatch,
   applyRecordReplayMainBridgePatch,
   descriptors,
-  recordReplayChronicleHelperSource,
   recordReplayBridgeSource,
   recordReplayHudRuntimeSource,
   recordReplayHelperSource,

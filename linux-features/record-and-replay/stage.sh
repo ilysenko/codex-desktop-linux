@@ -183,6 +183,7 @@ NODE
 
 build_record_replay_backend() {
     local source_binary="$SCRIPT_DIR/target/release/codex-record-replay-linux"
+    local packaged_binary="$INSTALL_DIR/resources/native/codex-record-replay-linux"
 
     if [ -n "${CODEX_RECORD_REPLAY_LINUX_SOURCE:-}" ]; then
         [ -x "$CODEX_RECORD_REPLAY_LINUX_SOURCE" ] || {
@@ -191,6 +192,11 @@ build_record_replay_backend() {
         }
         echo "Using prebuilt Record & Replay backend" >&2
         printf '%s\n' "$CODEX_RECORD_REPLAY_LINUX_SOURCE"
+        return 0
+    fi
+
+    if [ -x "$packaged_binary" ]; then
+        printf '%s\n' "$packaged_binary"
         return 0
     fi
 
@@ -214,7 +220,9 @@ target_marketplace="$INSTALL_DIR/resources/plugins/openai-bundled/.agents/plugin
 }
 
 mkdir -p "$native_target_dir"
-cp "$backend_binary" "$native_target_dir/codex-record-replay-linux"
+if [ "$backend_binary" != "$native_target_dir/codex-record-replay-linux" ]; then
+    cp "$backend_binary" "$native_target_dir/codex-record-replay-linux"
+fi
 chmod 0755 "$native_target_dir/codex-record-replay-linux"
 
 stage_record_replay_plugin_base "$target_plugin" "$plugin_template"

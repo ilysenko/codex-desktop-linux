@@ -1,0 +1,32 @@
+{
+  "name": "chronicle-skysight",
+  "version": "0.1.0-linux-alpha1",
+  "description": "Keep privacy-aware local activity memory with Chronicle and Skysight on Linux.",
+  "author": {
+    "name": "joshyorko"
+  },
+  "license": "MIT",
+  "keywords": [
+    "chronicle",
+    "skysight",
+    "activity-memory",
+    "linux"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills",
+  "interface": {
+    "displayName": "Chronicle / Skysight",
+    "shortDescription": "Local activity memory for Linux",
+    "longDescription": "Chronicle / Skysight provides explicit, privacy-aware Linux activity snapshots and continuous memory controls. Installing or checking status never starts capture; continuous capture begins only after an explicit request.",
+    "developerName": "joshyorko",
+    "category": "Productivity",
+    "logo": "./assets/app-icon.svg",
+    "defaultPrompt": [
+      "Show the current Chronicle / Skysight status",
+      "Capture one Skysight activity snapshot",
+      "List my Chronicle / Skysight exclusions"
+    ],
+    "brandColor": "#1D4ED8",
+    "screenshots": []
+  }
+}

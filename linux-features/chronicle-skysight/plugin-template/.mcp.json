@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "chronicle-skysight": {
+      "command": "./bin/codex-record-replay-linux",
+      "args": [
+        "skysight",
+        "mcp"
+      ],
+      "cwd": "."
+    }
+  }
+}
