@@ -208,6 +208,45 @@ test("Home content renders generated suggestions instead of selecting curated ca
   assert.equal(applySuggestedPromptsHomeContentPatch(patched), patched);
 });
 
+test("Home content rejects incomplete, duplicate, and mixed contracts byte-identically", () => {
+  const current = homeContentFixture();
+  const patched = applySuggestedPromptsHomeContentPatch(current);
+  const sources = [
+    current.replace(
+      "shouldUseCuratedNewChatPageSuggestions:z",
+      "shouldUseCuratedNewChatPageSuggestions:other",
+    ),
+    patched.replace(
+      `function ${HOME_CONTENT_SOURCE_MARKER}(){return!1}`,
+      `function ${HOME_CONTENT_SOURCE_MARKER}(){return!0}`,
+    ),
+    patched.replace(
+      "shouldUseCuratedNewChatPageSuggestions:z",
+      "shouldUseCuratedNewChatPageSuggestions:other",
+    ),
+    current + current,
+    patched + patched,
+    current + patched,
+    `${current}function ${HOME_CONTENT_SOURCE_MARKER}(){return!1}`,
+    `${patched}function ${HOME_CONTENT_SOURCE_MARKER}(){return!1}`,
+  ];
+
+  for (const source of sources) {
+    const result = captureWarnings(() => applySuggestedPromptsHomeContentPatch(source));
+    assert.equal(result.value, source);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /current Suggested Prompts Home generated-source contract/);
+  }
+});
+
+test("Home content ignores unrelated curated-source lookalikes", () => {
+  const source = `unrelated=source===\`curated\`;${homeContentFixture()}`;
+  const patched = applySuggestedPromptsHomeContentPatch(source);
+
+  assert.match(patched, /^unrelated=source===`curated`;/);
+  assert.equal((patched.match(new RegExp(HOME_CONTENT_SOURCE_MARKER, "g")) || []).length, 1);
+});
+
 test("multi-point patches reject mixed and drifted contracts byte-identically", () => {
   const cleanAppPage = appPageFixture();
   const patchedAppPage = applySuggestedPromptsAppPagePatch(cleanAppPage);
