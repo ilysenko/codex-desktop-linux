@@ -112,6 +112,56 @@ test("update-builder copies staged native feature artifacts without Cargo worksp
   }
 });
 
+test("Chronicle-only packaging retains the shared backend for updater rebuilds", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-builder-chronicle-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(root, "features.json");
+  const backend = path.join(root, "app/resources/native/codex-record-replay-linux");
+  const builder = path.join(root, "builder");
+  fs.writeFileSync(config, `${JSON.stringify({ enabled: ["chronicle-skysight"] })}\n`);
+  fs.mkdirSync(path.dirname(backend), { recursive: true });
+  fs.writeFileSync(backend, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+  runPackageCommon(
+    `CODEX_LINUX_FEATURES_CONFIG=${JSON.stringify(config)} stage_enabled_native_feature_artifacts ${JSON.stringify(builder)}`,
+    path.join(root, "app"),
+  );
+
+  const retainedBackend = path.join(builder, "target/release/codex-record-replay-linux");
+  assert.equal(fs.readFileSync(retainedBackend, "utf8"), "#!/bin/sh\nexit 0\n");
+  assert.equal(fs.statSync(retainedBackend).mode & 0o777, 0o755);
+});
+
+test("Chronicle-only native helper setup builds the shared backend", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-native-helper-chronicle-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(root, "features.json");
+  const binDir = path.join(root, "bin");
+  const cargoLog = path.join(root, "cargo.log");
+  fs.writeFileSync(config, `${JSON.stringify({ enabled: ["chronicle-skysight"] })}\n`);
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(binDir, "cargo"),
+    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CARGO_LOG\"\n",
+    { mode: 0o755 },
+  );
+
+  const result = childProcess.spawnSync("make", ["build-native-feature-helpers"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CARGO_LOG: cargoLog,
+      CODEX_LINUX_FEATURES_CONFIG: config,
+      PATH: `${binDir}:${process.env.PATH}`,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(cargoLog), true);
+  assert.match(fs.readFileSync(cargoLog, "utf8"), /build .*--release -p codex-record-replay-linux/);
+});
+
 test("update-builder carries the shared feature compatibility registry", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-builder-features-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

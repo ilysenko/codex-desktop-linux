@@ -76,7 +76,7 @@ build-native-feature-helpers:
 	if has computer-use-linux; then cargo build $(CARGO_JOBS_ARG) --release -p codex-computer-use-linux --bin codex-computer-use-linux --bin codex-computer-use-cosmic; fi; \
 	if has global-dictation; then cargo build $(CARGO_JOBS_ARG) --release --manifest-path global-dictation-linux/Cargo.toml --target-dir global-dictation-linux/target; fi; \
 	if has read-aloud-mcp; then cargo build $(CARGO_JOBS_ARG) --release -p codex-read-aloud-linux; fi; \
-	if has record-and-replay; then cargo build $(CARGO_JOBS_ARG) --release -p codex-record-replay-linux; fi; \
+	if has chronicle-skysight || has record-and-replay; then cargo build $(CARGO_JOBS_ARG) --release -p codex-record-replay-linux; fi; \
 	if has mcp-helper-reaper; then cargo build $(CARGO_JOBS_ARG) --release --manifest-path linux-features/mcp-helper-reaper/reaper/Cargo.toml; fi
 
 update: rebuild-install

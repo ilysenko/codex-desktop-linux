@@ -127,15 +127,16 @@
           let
             computerUseEnabled = lib.elem "computer-use-linux" featureIds;
             readAloudEnabled = lib.elem "read-aloud-mcp" featureIds;
-            recordReplayEnabled = lib.elem "record-and-replay" featureIds;
+            recordReplayBackendEnabled =
+              lib.elem "chronicle-skysight" featureIds || lib.elem "record-and-replay" featureIds;
             cargoPackages =
               lib.optionals computerUseEnabled [ "codex-computer-use-linux" ]
               ++ lib.optionals readAloudEnabled [ "codex-read-aloud-linux" ]
-              ++ lib.optionals recordReplayEnabled [ "codex-record-replay-linux" ];
+              ++ lib.optionals recordReplayBackendEnabled [ "codex-record-replay-linux" ];
             expectedBinaries =
               lib.optionals computerUseEnabled [ "codex-computer-use-linux" "codex-computer-use-cosmic" ]
               ++ lib.optionals readAloudEnabled [ "codex-read-aloud-linux" ]
-              ++ lib.optionals recordReplayEnabled [ "codex-record-replay-linux" ];
+              ++ lib.optionals recordReplayBackendEnabled [ "codex-record-replay-linux" ];
           in
           if cargoPackages == [ ] then null else pkgs.rustPlatform.buildRustPackage {
             pname = "codex-desktop-feature-helpers";
@@ -285,6 +286,9 @@
             normalizedFeatureIds = nixLinuxFeatures.normalize (
               linuxFeatureIds ++ lib.optional enableComputerUseUi "computer-use-linux"
             );
+            recordReplayBackendEnabled =
+              lib.elem "chronicle-skysight" normalizedFeatureIds
+              || lib.elem "record-and-replay" normalizedFeatureIds;
             workspaceHelpers = mkWorkspaceHelpers normalizedFeatureIds;
             watchboundEnabled = lib.elem "directory-only-working-tree-watch" normalizedFeatureIds;
             codexMicroEnabled = lib.elem "codex-micro" normalizedFeatureIds;
@@ -339,7 +343,7 @@
               ${lib.optionalString (lib.elem "read-aloud-mcp" normalizedFeatureIds) ''
               export CODEX_LINUX_READ_ALOUD_MCP_SOURCE="${workspaceHelpers}/bin/codex-read-aloud-linux"
               ''}
-              ${lib.optionalString (lib.elem "record-and-replay" normalizedFeatureIds) ''
+              ${lib.optionalString recordReplayBackendEnabled ''
               export CODEX_RECORD_REPLAY_LINUX_SOURCE="${workspaceHelpers}/bin/codex-record-replay-linux"
               ''}
               ${lib.optionalString (lib.elem "global-dictation" normalizedFeatureIds) ''
@@ -421,6 +425,7 @@
         codexDesktop = lib.makeOverridable mkCodexDesktop { };
         remoteMobile = codexDesktop.override { linuxFeatureIds = [ "remote-mobile-control" ]; };
         computerUse = codexDesktop.override { linuxFeatureIds = [ "computer-use-linux" ]; };
+        chronicleSkysight = codexDesktop.override { linuxFeatureIds = [ "chronicle-skysight" ]; };
         maximalDirectoryFeatureIds = lib.filter (
           featureId: featureId != "shallow-repository-watches"
         ) nixLinuxFeatures.supportedFeatureIds;
@@ -878,6 +883,8 @@
         '';
         checks.modules = import ./nix/modules-test.nix { inherit pkgs self system; };
         checks.nix-runtime = mkRuntimeCheck "nix-runtime-check" codexDesktop true false;
+        checks.nix-runtime-chronicle-skysight =
+          mkRuntimeCheck "nix-runtime-chronicle-skysight" chronicleSkysight false false;
         checks.nix-runtime-maximal-directory-watch =
           mkRuntimeCheck "nix-runtime-maximal-directory-watch" maximalDirectory false true;
         checks.nix-runtime-maximal-shallow-watch =
