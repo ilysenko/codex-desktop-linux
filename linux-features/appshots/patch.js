@@ -190,33 +190,6 @@ function codexLinuxAppshotClampCrop(e,t){if(!Number.isFinite(t?.width)||!Number.
 `;
 }
 
-function replaceIdentifierCall(source, identifier, method, replacement) {
-  const needle = `${identifier}.${method}(`;
-  let count = 0;
-  let cursor = 0;
-  let output = "";
-
-  while (cursor < source.length) {
-    const matchIndex = source.indexOf(needle, cursor);
-    if (matchIndex < 0) {
-      output += source.slice(cursor);
-      break;
-    }
-    const previous = matchIndex > 0 ? source[matchIndex - 1] : "";
-    if (previous === "." || /[A-Za-z0-9_$]/.test(previous)) {
-      const nextCursor = matchIndex + needle.length;
-      output += source.slice(cursor, nextCursor);
-      cursor = nextCursor;
-      continue;
-    }
-    output += source.slice(cursor, matchIndex) + replacement;
-    cursor = matchIndex + needle.length;
-    count += 1;
-  }
-
-  return { source: output, count };
-}
-
 const descriptors = [
   {
     id: "linux-appshots-main-process",
