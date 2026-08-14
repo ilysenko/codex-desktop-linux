@@ -125,7 +125,8 @@ the launcher sends at most one anonymous usage event per UTC day to the
 contains only the fixed path `/app-launch`. GoatCounter derives an aggregate
 country from the network request; no application activity, account or machine
 identifier, version, architecture, package format, language, screen size, or
-referrer is sent. The request omits the User-Agent header.
+referrer is sent. Every installation sends the same fixed, non-identifying
+User-Agent so GoatCounter does not discard the request as a bot.
 
 The request runs silently in the background. A missing `curl`, a blocked
 request, or any other error never delays the application and produces no

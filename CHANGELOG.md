@@ -9,9 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - The launcher sends at most one anonymous `/app-launch` count per UTC day to
   the public GoatCounter dashboard so maintainers can gauge whether the
-  distribution is useful. The background request contains no User-Agent or
-  application, account, machine, version, architecture, language, screen, or
-  referrer data; `CODEX_LINUX_DISABLE_USAGE_REPORTING=1` disables it.
+  distribution is useful. The background request uses one fixed,
+  non-identifying User-Agent and contains no application, account, machine,
+  version, architecture, language, screen, or referrer data;
+  `CODEX_LINUX_DISABLE_USAGE_REPORTING=1` disables it.
 - A disabled-by-default `deferred-update-build` Linux feature adds a **Build
   updates automatically** setting. Turning it off keeps notification and DMG
   verification active while deferring local package builds until an explicit

@@ -82,7 +82,7 @@ printf '<%s>\\n' "$@" >> "$TEST_ROOT/curl-arguments"
   assert.match(args, /<--disable>/);
   assert.match(args, /<--connect-timeout>\n<2>/);
   assert.match(args, /<--max-time>\n<3>/);
-  assert.match(args, /<--user-agent>\n<>/);
+  assert.match(args, /<--user-agent>\n<ChatGPTCommunity\/1 Usage>/);
   assert.match(args, /<--data-urlencode>\n<p=\/app-launch>/);
   assert.match(args, /<--data-urlencode>\n<ns=1>/);
   assert.match(args, /<https:\/\/gary\.goatcounter\.com\/count>/);

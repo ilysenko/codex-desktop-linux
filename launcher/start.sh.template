@@ -64,6 +64,9 @@ report_daily_usage() {
         # at most once and concurrent launches cannot report twice.
         mkdir "$usage_state_dir/$report_day" || exit 0
 
+        # GoatCounter classifies missing, short, and HTTP-client User-Agents as
+        # bots. This fixed value carries no installation or system data; its
+        # stable space-and-slash shape only keeps the count out of that filter.
         curl --disable \
             --silent \
             --fail \
@@ -71,7 +74,7 @@ report_daily_usage() {
             --connect-timeout 2 \
             --max-time 3 \
             --output /dev/null \
-            --user-agent "" \
+            --user-agent "ChatGPTCommunity/1 Usage" \
             --data-urlencode "p=/app-launch" \
             --data-urlencode "ns=1" \
             "https://gary.goatcounter.com/count"

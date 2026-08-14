@@ -113,7 +113,8 @@ UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 [公开的 GoatCounter dashboard](https://gary.goatcounter.com/) 发送一次匿名
 使用事件。事件只包含固定路径 `/app-launch`。GoatCounter 根据网络请求生成汇总
 国家信息；不会发送应用内操作、账户或设备标识、版本、架构、软件包格式、语言、
-屏幕尺寸或 referrer。请求不会发送 User-Agent header。
+屏幕尺寸或 referrer。所有安装都会发送相同且不含识别信息的固定 User-Agent，
+以避免 GoatCounter 将请求当作 bot 丢弃。
 
 请求会在后台静默执行。缺少 `curl`、请求被拦截或发生任何其他错误时，应用启动
 都不会被延迟，也不会产生输出。可用唯一的环境变量关闭此计数：
