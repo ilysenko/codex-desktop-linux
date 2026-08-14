@@ -36,7 +36,12 @@ function modelCatalogFixture() {
   return "function iti({additionalAvailableModels:e,authMethod:t,availableModels:n,defaultModel:r,enabledReasoningEfforts:i,includeUltraReasoningEffort:a,isCustomModelProvider:o=!1,models:s,useHiddenModels:c}){let l=[],u=null;return s.forEach(r=>{if(ati({additionalAvailableModels:e,authMethod:t,availableModels:n,isCustomModelProvider:o,model:r,useHiddenModels:c})){l.push(r),r.isDefault&&(u=r)}}),u??=l.find(e=>e.model===r)??null,{models:l,defaultModel:u}}" + modelVisibilityHelperFixture();
 }
 
-function evaluateCatalog(source, authMethod, useHiddenModels = true) {
+function evaluateCatalog(
+  source,
+  authMethod,
+  useHiddenModels = true,
+  isCustomModelProvider = false,
+) {
   const catalog = Function(`${source};return iti;`)();
   return catalog({
     authMethod,
@@ -44,6 +49,7 @@ function evaluateCatalog(source, authMethod, useHiddenModels = true) {
     defaultModel: "gpt-5.5",
     enabledReasoningEfforts: new Set(),
     includeUltraReasoningEffort: true,
+    isCustomModelProvider,
     models: [
       { model: "gpt-5.6-sol", hidden: false, isDefault: true },
       { model: "gpt-5.6-terra", hidden: false, isDefault: false },
@@ -128,6 +134,20 @@ test("API-key hosts still exclude models marked hidden by the CLI", () => {
   const patched = applyApiKeyModelVisibilityPatch(modelCatalogFixture());
 
   assert.equal(modelNames(evaluateCatalog(patched, "apikey")).includes("codex-auto-review"), false);
+});
+
+test("visible custom-provider models preserve upstream visibility", () => {
+  const source = modelCatalogFixture();
+  const patched = applyApiKeyModelVisibilityPatch(source);
+  const expected = modelNames(evaluateCatalog(source, "chatgpt", true, true));
+
+  assert.deepEqual(modelNames(evaluateCatalog(patched, "chatgpt", true, true)), expected);
+  assert.deepEqual(expected, [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+  ]);
 });
 
 test("ChatGPT and existing no-allowlist paths keep their upstream behavior", () => {

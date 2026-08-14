@@ -33,12 +33,13 @@ function applyApiKeyModelVisibilityPatch(source) {
       _additionalAvailableModelsVar,
       authMethodVar,
       _availableModelsVar,
-      _isCustomModelProviderVar,
+      isCustomModelProviderVar,
       _modelVar,
       useHiddenModelsVar,
       suffix,
     ) =>
-      `${prefix}${useHiddenModelsVar}&&${authMethodVar}!==\`amazonBedrock\`&&` +
+      `${prefix}${useHiddenModelsVar}&&!${isCustomModelProviderVar}&&` +
+      `${authMethodVar}!==\`amazonBedrock\`&&` +
       `${authMethodVar}!==\`apikey\`/*${PATCH_MARKER}*/${suffix}`,
   );
   if (patched !== source) {
