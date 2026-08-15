@@ -49,6 +49,8 @@ jobs:
           components: clippy
       - run: cargo test -p codex-update-manager
       - run: cargo clippy -p codex-update-manager -- -D warnings
+      - run: cargo test -p codex-record-replay-linux
+      - run: cargo clippy -p codex-record-replay-linux --all-targets -- -D warnings
 
   nix-build:
     strategy:
@@ -72,6 +74,8 @@ jobs:
         run: nix build ".#checks.${{ matrix.system }}.modules" --no-link
       - name: Build audited default runtime
         run: nix build ".#checks.${{ matrix.system }}.nix-runtime" --no-link
+      - name: Build audited Chronicle-only runtime
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime-chronicle-skysight" --no-link
       - name: Build audited Computer Use runtime
         run: nix build ".#checks.${{ matrix.system }}.nix-runtime-computer-use" --no-link
       - name: Build audited directory-watch feature profile

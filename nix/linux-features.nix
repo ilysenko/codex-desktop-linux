@@ -31,6 +31,16 @@ let
   sortAndDeduplicate = featureIds:
     lib.sort builtins.lessThan (lib.unique featureIds);
 
+  expandFeature = stack: featureId:
+    if lib.elem featureId stack then
+      throw "Linux feature dependency cycle: ${lib.concatStringsSep " -> " (stack ++ [ featureId ])}"
+    else if !(lib.elem featureId supportedFeatureIds) then
+      [ featureId ]
+    else
+      let manifest = manifestById.${featureId};
+      in lib.concatMap (expandFeature (stack ++ [ featureId ])) (manifest.requires or [ ])
+        ++ [ featureId ];
+
   normalize = featureIds:
     if !builtins.isList featureIds then
       throw "Nix Linux feature IDs must be provided as a list"
@@ -39,17 +49,16 @@ let
     else
       let
         canonical = map (featureId: aliases.${featureId} or featureId) featureIds;
-        normalized = sortAndDeduplicate (lib.filter
+        selected = sortAndDeduplicate (lib.filter
           (featureId: !(lib.elem featureId retiredFeatureIds))
           canonical);
+        normalized = sortAndDeduplicate (lib.concatMap (expandFeature [ ]) selected);
         unsupported = lib.filter (featureId: !(lib.elem featureId supportedFeatureIds)) normalized;
         dependencyErrors = lib.concatMap
           (featureId:
             let manifest = manifestById.${featureId};
             in
-              map (required: "'${featureId}' requires '${required}'")
-                (lib.filter (required: !(lib.elem required normalized)) (manifest.requires or [ ]))
-              ++ map (conflict: "'${featureId}' conflicts with '${conflict}'")
+              map (conflict: "'${featureId}' conflicts with '${conflict}'")
                 (lib.filter (conflict: lib.elem conflict normalized) (manifest.conflicts or [ ])))
           (lib.filter (featureId: lib.elem featureId supportedFeatureIds) normalized);
       in

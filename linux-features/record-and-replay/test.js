@@ -141,11 +141,11 @@ test("record-and-replay enables with chronicle-skysight dependency", () => {
   });
 });
 
-test("record-and-replay rejects direct config without chronicle-skysight", () => {
+test("record-and-replay migrates direct config by enabling chronicle-skysight", () => {
   withTempFeatureRoot(["record-and-replay"], (root) => {
-    assert.throws(
-      () => loadEnabledLinuxFeatures({ featuresRoot: root }),
-      /requires 'chronicle-skysight' to be enabled/,
+    assert.deepEqual(
+      loadEnabledLinuxFeatures({ featuresRoot: root }).map((feature) => feature.id),
+      ["chronicle-skysight", "record-and-replay"],
     );
   });
 });
@@ -510,7 +510,7 @@ test("record-and-replay Chronicle setup probe does not churn start when summary 
   assert.equal(state.state, "running");
 });
 
-test("record-and-replay generic Skysight start passes only supported start flags", async () => {
+test("record-and-replay generic Skysight start can pass summary agent true or false", async () => {
   const source = [
     "const cp=require(\"node:child_process\"),fs=require(\"node:fs\"),path=require(\"node:path\");",
     "var tray={getChronicleSidecarControlState:()=>tt().skysight?$9:Se.appServerConnectionRegistry.getMaybeConnection(`local`)?.getChronicleSidecarControlState()??$9,toggleChronicleSidecar:async()=>{if(tt().skysight)return $9;let e=Se.appServerConnectionRegistry.getMaybeConnection(V);return e==null?$9:e.getChronicleSidecarControlState().running?e.pauseChronicleSidecar():e.resumeChronicleSidecar()}};",
@@ -519,10 +519,10 @@ test("record-and-replay generic Skysight start passes only supported start flags
   const patched = applyChronicleSkysightMainBridgePatch(source);
   assert.match(
     patched,
-    /"linux-record-replay-skysight-start":async\(\{intervalSeconds:e,summaryAgent:t\}=\{\}\)=>\{let n=\["skysight","start"\]/,
+    /"linux-record-replay-skysight-start":async\(\{intervalSeconds:e,summaryAgent:t,source:r,owner:a\}=\{\}\)=>\{let n=\["skysight","start"\]/,
   );
-  assert.doesNotMatch(patched, /--owner/);
-  assert.doesNotMatch(patched, /skysight","start"[^;]*--source/);
+  assert.match(patched, /r&&n\.push\("--source",String\(r\)\)/);
+  assert.match(patched, /a&&n\.push\("--owner",String\(a\)\)/);
   assert.match(patched, /t===!0&&n\.push\("--summary-agent","enabled"\)/);
   assert.match(patched, /t===!1&&n\.push\("--summary-agent","disabled"\)/);
 });

@@ -20,6 +20,16 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::Value;
 use std::path::PathBuf;
 
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    pub(crate) fn env_guard() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+}
+
 pub use audio::{available_audio_recorders, AudioCaptureReport};
 pub use backends::{
     available_recorders, recording_backend_catalog, recording_backend_catalog_from_signals,
@@ -49,9 +59,9 @@ pub use skill::{
 };
 pub use skysight::{
     capture_skysight_snapshot, list_skysight_exclusions, pause_skysight, resume_skysight,
-    run_skysight_daemon, skysight_status, start_skysight, stop_skysight, update_skysight_exclusion,
-    SkysightExclusion, SkysightExclusionUpdate, SkysightPaths, SkysightStartOptions,
-    SkysightStatus,
+    run_skysight_daemon, skysight_status, start_skysight, stop_skysight, stop_skysight_if_owned,
+    update_skysight_exclusion, SkysightExclusion, SkysightExclusionUpdate, SkysightPaths,
+    SkysightStartOptions, SkysightStatus,
 };
 pub use timeline::{
     append_timeline_record, parse_timeline_line, read_timeline, TimelineEvent, TimelineParseError,
@@ -179,6 +189,12 @@ pub struct SkysightStartArgs {
     pub interval_seconds: u64,
     #[arg(long, value_enum)]
     pub summary_agent: Option<SkysightSummaryAgentArg>,
+    /// Initiating surface for this explicit continuous capture start.
+    #[arg(long)]
+    pub source: Option<String>,
+    /// Capture owner, such as manual-continuous or recording-session:<id>.
+    #[arg(long)]
+    pub owner: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -376,6 +392,8 @@ pub async fn command_json(command: Commands) -> Result<Value> {
                     SkysightStartOptions {
                         interval_seconds: args.interval_seconds,
                         summary_agent: args.summary_agent.map(SkysightSummaryAgentArg::as_bool),
+                        source: args.source,
+                        owner: args.owner,
                     },
                 )?)?),
                 SkysightCommand::Status => Ok(serde_json::to_value(skysight_status(&paths)?)?),
@@ -392,6 +410,8 @@ pub async fn command_json(command: Commands) -> Result<Value> {
                         &paths,
                         args.interval_seconds,
                         args.summary_agent.map(SkysightSummaryAgentArg::as_bool),
+                        args.source,
+                        args.owner,
                     )?;
                     Ok(serde_json::to_value(skysight_status(&paths)?)?)
                 }

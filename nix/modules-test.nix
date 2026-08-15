@@ -107,6 +107,9 @@ assert lib.assertMsg
   (features.normalize [ "ui-tweaks" "ui-tweaks" "agent-workspace" ] == [ "agent-workspace" "ui-tweaks" ])
   "Nix feature IDs are not sorted and deduplicated";
 assert lib.assertMsg
+  (features.normalize [ "record-and-replay" ] == [ "chronicle-skysight" "record-and-replay" ])
+  "Nix feature dependencies were not added to an existing direct selection";
+assert lib.assertMsg
   (features.normalize [ "codex-wrapper-updater" "zed-opener" ] == [ ])
   "known retired and aliased-retired feature IDs were not ignored";
 assert lib.assertMsg
@@ -115,12 +118,6 @@ assert lib.assertMsg
 assert lib.assertMsg
   (!(builtins.tryEval (features.normalize [ "directory-only-working-tree-watch" "shallow-repository-watches" ])).success)
   "conflicting watcher features were accepted";
-assert lib.assertMsg
-  (features.normalize [ "record-and-replay" "chronicle-skysight" ] == [ "chronicle-skysight" "record-and-replay" ])
-  "the Record & Replay dependency pair was not accepted";
-assert lib.assertMsg
-  (!(builtins.tryEval (features.normalize [ "record-and-replay" ])).success)
-  "Record & Replay was accepted without its Chronicle dependency";
 assert lib.assertMsg
   (!features.optionType.check [ "not-a-feature" ]
     && features.optionType.check [ "codex-wrapper-updater" ])

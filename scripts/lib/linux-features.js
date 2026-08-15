@@ -231,12 +231,14 @@ function linuxFeaturesConfig(options = {}) {
   if (config == null) {
     return { enabled: [], settings: {}, configPath };
   }
+  const normalizedEnabled = normalizeEnabledFeatureIds(
+    config.enabled,
+    configPath,
+    { strict: options.strictConfig === true },
+  );
+  const available = linuxFeatureManifestMap(options);
   return {
-    enabled: normalizeEnabledFeatureIds(
-      config.enabled,
-      configPath,
-      { strict: options.strictConfig === true },
-    ),
+    enabled: expandEnabledFeatureDependencies(normalizedEnabled, available),
     settings: normalizeLinuxFeatureSettings(config.settings, configPath),
     configPath,
   };
@@ -371,6 +373,37 @@ function linuxFeatureManifestMap(options = {}) {
   return new Map(discoverLinuxFeatureManifests(options).map((feature) => [feature.id, feature]));
 }
 
+function expandEnabledFeatureDependencies(enabled, available) {
+  const expanded = [];
+  const completed = new Set();
+  const visiting = [];
+
+  const visit = (id) => {
+    if (completed.has(id)) {
+      return;
+    }
+    const cycleIndex = visiting.indexOf(id);
+    if (cycleIndex !== -1) {
+      throw new Error(
+        `Linux feature dependency cycle: ${[...visiting.slice(cycleIndex), id].join(" -> ")}`,
+      );
+    }
+    visiting.push(id);
+    const feature = available.get(id);
+    for (const required of feature?.manifest.requires ?? []) {
+      visit(required);
+    }
+    visiting.pop();
+    completed.add(id);
+    expanded.push(id);
+  };
+
+  for (const id of enabled) {
+    visit(id);
+  }
+  return expanded;
+}
+
 function loadLinuxFeatureManifest(featuresRoot, id, options = {}) {
   const feature = linuxFeatureManifestMap({ ...options, featuresRoot }).get(id);
   if (feature == null) {
@@ -400,7 +433,9 @@ function loadEnabledLinuxFeatures(options = {}) {
   const featuresRoot = linuxFeaturesRoot(options);
   const available = linuxFeatureManifestMap({ ...options, featuresRoot });
   const config = linuxFeaturesConfig({ ...options, featuresRoot });
-  const enabled = options.enabledFeatureIds ?? config.enabled;
+  const enabled = options.enabledFeatureIds == null
+    ? config.enabled
+    : expandEnabledFeatureDependencies(options.enabledFeatureIds, available);
   const features = [];
   const missing = [];
   const allowedInternal = allowedInternalFeatureIds(options);
@@ -1505,6 +1540,7 @@ module.exports = {
   enabledLinuxFeaturePackagePlan,
   enabledLinuxFeatureStageHooks,
   featuresJsonSummary,
+  expandEnabledFeatureDependencies,
   loadEnabledLinuxFeatures,
   loadLinuxFeaturePatchDescriptors,
   linuxFeatureManifestMap,

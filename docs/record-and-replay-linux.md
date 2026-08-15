@@ -11,8 +11,8 @@ skills.
 ## Phase 1 Support Definition
 
 Phase 1 supports the first Linux-native Record & Replay path behind the
-disabled-by-default `record-and-replay` Linux feature. Its configuration must
-also explicitly enable the required `chronicle-skysight` feature.
+disabled-by-default `record-and-replay` Linux feature. That feature requires
+`chronicle-skysight`; feature selectors enable the dependency automatically.
 
 Supported in Phase 1 means Linux can surface the opt-in `Record & Replay`
 plugin shell, start a local recording session through its `event-stream` MCP
@@ -58,12 +58,21 @@ current macOS bundle supplies that server through
 
 ## Chronicle / Skysight Parity
 
-Chronicle/Skysight is also available independently through a restricted
-Skysight-only MCP server; Record & Replay uses the same screen and event-memory
-backend on Linux. It is not microphone transcription. The Linux bridge exposes
+Chronicle/Skysight is the independently selectable screen and event-memory
+feature used by Record & Replay on Linux. It is not microphone transcription.
+Its standalone `skysight` MCP server exposes only activity-memory tools, while
+Record & Replay's full `event-stream` server adds recording and skill-composer
+tools. The Linux bridge now exposes
 pause and resume alongside the existing start, status, stop, snapshot, and
 exclusion methods so the app can keep the active capture session alive while
 the backend moves between recording states.
+
+Feature availability and Chronicle permission/status polling are passive: they
+do not start the continuous Skysight daemon. Record & Replay uses bounded
+session evidence by default. Explicit Skysight starts persist a source and
+owner, and stop/cancel/expiry plus clean event-stream MCP shutdown stop only a
+daemon whose owner matches `recording-session:<id>`; manual-continuous capture
+remains independently controllable.
 
 Chronicle-compatible resources are written under
 `${CODEX_HOME:-$HOME/.codex}/memories/extensions/chronicle/resources`, while the

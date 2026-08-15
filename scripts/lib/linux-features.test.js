@@ -53,6 +53,37 @@ test("known retired feature ids are ignored while arbitrary unknown ids fail", (
   );
 });
 
+test("enabled feature dependencies are added for persisted and explicit selections", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-dependency-closure-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const featuresRoot = path.join(root, "linux-features");
+  const configPath = path.join(featuresRoot, "features.json");
+  fs.mkdirSync(featuresRoot);
+  fs.writeFileSync(configPath, `${JSON.stringify({ enabled: ["recording"] })}\n`);
+  for (const [id, requires] of [
+    ["chronicle", []],
+    ["recording", ["chronicle"]],
+  ]) {
+    const featureDir = path.join(featuresRoot, id);
+    fs.mkdirSync(featureDir);
+    fs.writeFileSync(path.join(featureDir, "README.md"), `# ${id}\n`);
+    fs.writeFileSync(
+      path.join(featureDir, "feature.json"),
+      `${JSON.stringify({ id, title: id, requires }, null, 2)}\n`,
+    );
+  }
+
+  assert.deepEqual(
+    linuxFeaturesConfig({ featuresRoot, featuresConfigPath: configPath }).enabled,
+    ["chronicle", "recording"],
+  );
+  assert.deepEqual(
+    loadEnabledLinuxFeatures({ featuresRoot, enabledFeatureIds: ["recording"] })
+      .map((feature) => feature.id),
+    ["chronicle", "recording"],
+  );
+});
+
 function makeFeatureRoot(root, featureManifest) {
   const featuresRoot = path.join(root, "linux-features");
   const featureDir = path.join(featuresRoot, "unsafe-link");

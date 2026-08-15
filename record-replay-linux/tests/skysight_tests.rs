@@ -1,7 +1,7 @@
 use codex_record_replay_linux::{
     capture_skysight_snapshot, list_skysight_exclusions, pause_skysight, resume_skysight,
-    skysight_status, stop_skysight, update_skysight_exclusion, SkysightExclusionUpdate,
-    SkysightPaths,
+    skysight_status, stop_skysight, stop_skysight_if_owned, update_skysight_exclusion,
+    SkysightExclusionUpdate, SkysightPaths,
 };
 use serde_json::Value;
 use std::{
@@ -22,6 +22,48 @@ fn restore_env(key: &str, value: Option<std::ffi::OsString>) {
         Some(value) => env::set_var(key, value),
         None => env::remove_var(key),
     }
+}
+
+fn write_running_status(paths: &SkysightPaths, owner: &str, source: &str) {
+    let mut status = skysight_status(paths).unwrap();
+    status.state = "running".to_string();
+    status.is_running = true;
+    status.owner = Some(owner.to_string());
+    status.source = Some(source.to_string());
+    fs::write(
+        &paths.status_path,
+        format!("{}\n", serde_json::to_string_pretty(&status).unwrap()),
+    )
+    .unwrap();
+}
+
+#[test]
+fn skysight_owned_stop_records_owner_and_initiating_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = SkysightPaths::new(temp.path().join("runtime"), temp.path().join("resources"));
+    write_running_status(&paths, "recording-session:fixture", "event-stream-start");
+
+    let stopped = stop_skysight_if_owned(&paths, "recording-session:fixture", "event-stream-stop")
+        .unwrap()
+        .expect("matching session owner should be stopped");
+
+    assert!(!stopped.is_running);
+    assert_eq!(stopped.owner.as_deref(), Some("recording-session:fixture"));
+    assert_eq!(stopped.source.as_deref(), Some("event-stream-stop"));
+    assert!(paths.stop_request_path.is_file());
+}
+
+#[test]
+fn skysight_owned_stop_does_not_stop_manual_continuous_capture() {
+    let temp = tempfile::tempdir().unwrap();
+    let paths = SkysightPaths::new(temp.path().join("runtime"), temp.path().join("resources"));
+    write_running_status(&paths, "manual-continuous", "chronicle-tray");
+
+    let stopped =
+        stop_skysight_if_owned(&paths, "recording-session:fixture", "event-stream-stop").unwrap();
+
+    assert!(stopped.is_none());
+    assert!(!paths.stop_request_path.exists());
 }
 
 #[test]

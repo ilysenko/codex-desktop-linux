@@ -54,6 +54,7 @@ run_core() {
     tail -n 12 "$node_test_log"
     if command -v cargo >/dev/null 2>&1; then
         cargo test -p codex-update-manager
+        cargo test -p codex-record-replay-linux
     fi
 }
 

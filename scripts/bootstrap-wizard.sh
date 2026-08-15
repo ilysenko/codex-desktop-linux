@@ -746,11 +746,48 @@ def read_enabled_ids(data, path):
 def csv(ids):
     return ", ".join(ids) if ids else "none"
 
+def expand_enabled(ids):
+    expanded = []
+    completed = set()
+    visiting = []
+
+    def visit(feature_id):
+        if feature_id in completed:
+            return
+        if feature_id in visiting:
+            cycle = visiting[visiting.index(feature_id):] + [feature_id]
+            die(f"Linux feature dependency cycle: {' -> '.join(cycle)}")
+        visiting.append(feature_id)
+        feature = features.get(feature_id)
+        if feature is not None:
+            for required in feature["requires"]:
+                visit(required)
+        visiting.pop()
+        completed.add(feature_id)
+        expanded.append(feature_id)
+
+    for feature_id in ids:
+        visit(feature_id)
+    return expanded
+
+def disabled_with_dependents(ids):
+    disabled = set(ids)
+    changed = True
+    while changed:
+        changed = False
+        for feature_id, feature in features.items():
+            if feature_id not in disabled and any(
+                required in disabled for required in feature["requires"]
+            ):
+                disabled.add(feature_id)
+                changed = True
+    return disabled
+
 features = discover_features(features_root)
 config_data = read_feature_config(config_path)
 if not isinstance(config_data, dict):
     die(f"Linux features config {config_path} must be a JSON object")
-current = read_enabled_ids(config_data, config_path)
+current = expand_enabled(read_enabled_ids(config_data, config_path))
 
 if output_mode == "tsv":
     # Machine-readable discovery for the GUI feature picker: one
@@ -775,10 +812,10 @@ for feature_id in disable:
     if feature_id not in features and feature_id not in current:
         die(f"Unknown Linux feature id: {feature_id}")
 
-final = [feature_id for feature_id in current if feature_id not in set(disable)]
-for feature_id in enable:
-    if feature_id not in final:
-        final.append(feature_id)
+disabled = disabled_with_dependents(disable)
+final = [feature_id for feature_id in current if feature_id not in disabled]
+final = expand_enabled(final + enable)
+final = [feature_id for feature_id in final if feature_id not in disabled]
 
 final_set = set(final)
 for feature_id in final:

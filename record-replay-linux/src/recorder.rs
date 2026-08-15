@@ -409,6 +409,29 @@ pub fn expire_session(bundle_dir: &Path) -> Result<crate::timeline::TimelineReco
     )
 }
 
+pub(crate) fn stop_owned_skysight_for_session(bundle_dir: &Path, source: &str) -> Result<()> {
+    let manifest = crate::manifest::read_manifest(bundle_dir)?;
+    stop_owned_skysight_for_session_id(&manifest.session_id, source)
+}
+
+fn stop_owned_skysight_for_session_id(session_id: &str, source: &str) -> Result<()> {
+    let owner = format!("recording-session:{session_id}");
+    let paths = crate::skysight::SkysightPaths::from_env();
+    let _ = crate::skysight::stop_skysight_if_owned(&paths, &owner, source)?;
+    Ok(())
+}
+
+fn skysight_cleanup_source(end_reason: &str) -> &'static str {
+    match end_reason {
+        "recording_controls_stopped" => "event-stream-stop",
+        "recording_controls_cancelled" | "recording_controls_cancelled_discarded" => {
+            "event-stream-cancel"
+        }
+        "max_duration" => "event-stream-expiry",
+        _ => "recording-session-end",
+    }
+}
+
 pub fn ranked_recorders(diagnostics: &DoctorReport) -> Vec<String> {
     let catalog = recording_backend_catalog(diagnostics);
     available_recorders(&catalog)
@@ -684,6 +707,18 @@ fn finalize_session(
         }
     }
     let record = append_timeline_record(bundle_dir, event)?;
+    if let Err(error) = stop_owned_skysight_for_session_id(
+        &manifest.session_id,
+        skysight_cleanup_source(end_reason),
+    ) {
+        let _ = append_timeline_record(
+            bundle_dir,
+            TimelineEvent::Diagnostic {
+                level: "warn".to_string(),
+                message: format!("failed to stop session-owned Skysight capture: {error}"),
+            },
+        );
+    }
     let _ = update_status(bundle_dir);
     Ok(record)
 }
@@ -708,11 +743,9 @@ fn ensure_bundle_open(bundle_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
 
-    fn status_env_guard() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    fn status_env_guard() -> std::sync::MutexGuard<'static, ()> {
+        crate::test_support::env_guard()
     }
 
     fn window(title: &str, app_id: &str, wm_class: &str) -> windowing::WindowInfo {

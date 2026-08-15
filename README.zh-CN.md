@@ -203,7 +203,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `appshots` | 从 composer 捕获并裁剪当前 Linux 窗口 | [文档](linux-features/appshots/README.md) |
 | `authenticated-proxy` | 带用户名和密码的 HTTP proxy | [文档](linux-features/authenticated-proxy/README.md) |
 | `automation-extensions` | 多时间调度和 eager `automation_update` | [文档](linux-features/automation-extensions/README.md) |
-| `chronicle-skysight` | 带受限 Skysight plugin 的本地 Linux 近期活动记忆 | [文档](linux-features/chronicle-skysight/README.md) |
+| `chronicle-skysight` | 可选的 Linux 桌面活动记忆与受限 Skysight MCP 工具 | [文档](linux-features/chronicle-skysight/README.md) |
 | `codex-micro` | 使用上游 `node-hid` 的 Codex Micro hotplug/hidraw policy | [文档](linux-features/codex-micro/README.md) |
 | `computer-use-linux` | Linux desktop-control UI 与原生 MCP backend | [文档](linux-features/computer-use-linux/README.md) |
 | `copilot-reasoning-effort` | Copilot auth 的 reasoning-effort 默认值 | [文档](linux-features/copilot-reasoning-effort/README.md) |

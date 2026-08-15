@@ -29,10 +29,15 @@ test("CI runs the complete workflow regression suite", () => {
   assert.match(nixBuild, /system: aarch64-linux/);
   assert.match(nixBuild, /runner: ubuntu-24\.04-arm/);
   assert.match(nixBuild, /checks\.\$\{\{ matrix\.system \}\}\.modules/);
+  assert.match(nixBuild, /nix-runtime-chronicle-skysight/);
   assert.match(nixBuild, /nix-runtime-computer-use/);
   assert.match(nixBuild, /nix-runtime-maximal-directory-watch/);
   assert.match(nixBuild, /nix-runtime-maximal-shallow-watch/);
   assert.match(nixBuild, /nix-installer/);
+
+  const rust = job(workflow, "rust");
+  assert.match(rust, /cargo test -p codex-record-replay-linux/);
+  assert.match(rust, /cargo clippy -p codex-record-replay-linux --all-targets -- -D warnings/);
 
   const nixVm = job(workflow, "nix-vm");
   assert.match(nixVm, /checks\.x86_64-linux\.nixos-vm/);
