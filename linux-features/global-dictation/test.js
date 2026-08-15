@@ -607,6 +607,7 @@ test("main patch reports a missing release watcher sentinel as an optional skip"
       phase: "main-bundle",
       targetSummary: "all-linux",
       ciPolicy: "optional",
+      enforceWhenEnabled: true,
       sourceKind: "feature",
       featureId: "global-dictation",
       warnings: ["WARN: release watcher sentinel was not found - skipping Linux global dictation patch"],

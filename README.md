@@ -117,6 +117,25 @@ Old `.dmg`, `DMG=`, and `CODEX_DMG_*` inputs are intentionally unsupported.
   disables unprivileged user namespaces, use the native package or follow the
   sandbox guidance in [Troubleshooting](docs/troubleshooting.md).
 
+### Anonymous daily usage count
+
+To help the community decide whether maintaining this distribution is useful,
+the launcher sends at most one anonymous usage event per UTC day to the
+[public GoatCounter dashboard](https://gary.goatcounter.com/). The event
+contains only the fixed path `/app-launch`. GoatCounter derives an aggregate
+country from the network request; no application activity, account or machine
+identifier, version, architecture, package format, language, screen size, or
+referrer is sent. Every installation sends the same fixed, non-identifying
+User-Agent so GoatCounter does not discard the request as a bot.
+
+The request runs silently in the background. A missing `curl`, a blocked
+request, or any other error never delays the application and produces no
+output. Disable the usage count with the single environment variable:
+
+```bash
+CODEX_LINUX_DISABLE_USAGE_REPORTING=1 codex-desktop
+```
+
 ## Uninstall
 
 First close both **ChatGPT Community** and the official **ChatGPT** application.

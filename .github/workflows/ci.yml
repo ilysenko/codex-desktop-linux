@@ -33,7 +33,8 @@ jobs:
           node --test scripts/lib/package-common.test.js
           node --check scripts/ci/verify-official-linux-features.js
           node --test scripts/automation/upstream-linux-package-watchdog/test.js
-          node --test scripts/patch-linux-window-ui.test.js scripts/lib/linux-features.test.js linux-features/*/test.js
+          node --test scripts/patch-linux-window-ui.test.js scripts/patches/descriptor.test.js \
+            scripts/lib/linux-features.test.js linux-features/*/test.js
       - name: Smoke tests
         run: bash tests/scripts_smoke.sh
 
@@ -71,6 +72,8 @@ jobs:
         run: nix build ".#checks.${{ matrix.system }}.modules" --no-link
       - name: Build audited default runtime
         run: nix build ".#checks.${{ matrix.system }}.nix-runtime" --no-link
+      - name: Build audited Computer Use runtime
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime-computer-use" --no-link
       - name: Build audited directory-watch feature profile
         run: nix build ".#checks.${{ matrix.system }}.nix-runtime-maximal-directory-watch" --no-link
       - name: Build audited shallow-watch feature profile

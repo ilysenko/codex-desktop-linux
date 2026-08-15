@@ -33,11 +33,11 @@ function appPageEligibilityPattern() {
 }
 
 function mainEligibilityPattern() {
-  return /let\{ambientSuggestionsStaleTimeMs:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\);if\(!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\|\|\1==null\)return\{enabled:!1\};let\{account:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\.getAccount\(\);return ([A-Za-z_$][\w$]*)\(\5\)\?\{enabled:!0,staleTimeMs:\1\}:\{enabled:!1\}/gu;
+  return /let\{ambientSuggestionsFeatureDiscovery:([A-Za-z_$][\w$]*),ambientSuggestionsStaleTimeMs:([A-Za-z_$][\w$]*),computerUse:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\);if\(!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\|\|\2==null\)return\{enabled:!1\};let\{account:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\.getAccount\(\);return ([A-Za-z_$][\w$]*)\(\7\)\?\{enabled:!0,computerUseAvailable:\3,featureDiscoveryEnabled:\1,staleTimeMs:\2\}:\{enabled:!1\}/gu;
 }
 
 function patchedMainEligibilityPattern() {
-  return /let\{ambientSuggestionsStaleTimeMs:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\);if\(!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\|\|\1==null\)return\{enabled:!1\};let\{account:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\.getAccount\(\);return\(([A-Za-z_$][\w$]*)\(\5\),function codexLinuxUiTweaksSuggestedPromptsMainEnabled\(\)\{return!0\}\(\)\)\?\{enabled:!0,staleTimeMs:\1\}:\{enabled:!1\}/gu;
+  return /let\{ambientSuggestionsFeatureDiscovery:([A-Za-z_$][\w$]*),ambientSuggestionsStaleTimeMs:([A-Za-z_$][\w$]*),computerUse:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\);if\(!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\|\|\2==null\)return\{enabled:!1\};let\{account:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\.getAccount\(\);return\(([A-Za-z_$][\w$]*)\(\7\),function codexLinuxUiTweaksSuggestedPromptsMainEnabled\(\)\{return!0\}\(\)\)\?\{enabled:!0,computerUseAvailable:\3,featureDiscoveryEnabled:\1,staleTimeMs:\2\}:\{enabled:!1\}/gu;
 }
 
 function settingsEligibilityPattern() {
@@ -45,7 +45,11 @@ function settingsEligibilityPattern() {
 }
 
 function homeContentSourcePattern() {
-  return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`curated`(?=,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\.email\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\(\{canUsePersonalizedSuggestions:[A-Za-z_$][\w$]*,generatedSuggestionsEnabled:[A-Za-z_$][\w$]*,hasGeneratedSuggestionsReadSettled:[A-Za-z_$][\w$]*,shouldUseCuratedNewChatPageSuggestions:\1\}\))/gu;
+  return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`curated`(?=,[\s\S]{0,400}?canUsePersonalizedSuggestions:[A-Za-z_$][\w$]*,generatedSuggestionsEnabled:[A-Za-z_$][\w$]*,hasGeneratedSuggestionsReadSettled:[A-Za-z_$][\w$]*,shouldUseCuratedNewChatPageSuggestions:\1\})/gu;
+}
+
+function patchedHomeContentSourcePattern() {
+  return /([A-Za-z_$][\w$]*)=\(([A-Za-z_$][\w$]*)===`curated`,function codexLinuxSuggestedPromptsGeneratedSource\(\)\{return!1\}\(\)\)(?=,[\s\S]{0,400}?canUsePersonalizedSuggestions:[A-Za-z_$][\w$]*,generatedSuggestionsEnabled:[A-Za-z_$][\w$]*,hasGeneratedSuggestionsReadSettled:[A-Za-z_$][\w$]*,shouldUseCuratedNewChatPageSuggestions:\1\})/gu;
 }
 
 function matchCount(source, pattern) {
@@ -100,10 +104,11 @@ function suggestedPromptsHomeContentContract(source) {
   }
   const markerMatches = source.split(HOME_CONTENT_SOURCE_MARKER).length - 1;
   const cleanMatches = matchCount(source, homeContentSourcePattern());
-  if (markerMatches === 0 && cleanMatches === 1) {
+  const patchedMatches = matchCount(source, patchedHomeContentSourcePattern());
+  if (markerMatches === 0 && cleanMatches === 1 && patchedMatches === 0) {
     return "current";
   }
-  if (markerMatches === 1 && cleanMatches === 0) {
+  if (markerMatches === 1 && cleanMatches === 0 && patchedMatches === 1) {
     return "patched";
   }
   return "drifted";
@@ -172,7 +177,9 @@ function applySuggestedPromptsMainPatch(source) {
       mainEligibilityPattern(),
       (
         _match,
+        featureDiscoveryName,
         staleTimeName,
+        computerUseName,
         featureStateName,
         settingsEligibilityName,
         settingsStoreName,
@@ -180,7 +187,7 @@ function applySuggestedPromptsMainPatch(source) {
         appServerConnectionName,
         accountEligibilityName,
       ) =>
-        `let{ambientSuggestionsStaleTimeMs:${staleTimeName}}=${featureStateName}();if(!${settingsEligibilityName}(${settingsStoreName})||${staleTimeName}==null)return{enabled:!1};let{account:${accountName}}=await ${appServerConnectionName}.getAccount();return(${accountEligibilityName}(${accountName}),function ${MAIN_ELIGIBILITY_MARKER}(){return!0}())?{enabled:!0,staleTimeMs:${staleTimeName}}:{enabled:!1}`,
+        `let{ambientSuggestionsFeatureDiscovery:${featureDiscoveryName},ambientSuggestionsStaleTimeMs:${staleTimeName},computerUse:${computerUseName}}=${featureStateName}();if(!${settingsEligibilityName}(${settingsStoreName})||${staleTimeName}==null)return{enabled:!1};let{account:${accountName}}=await ${appServerConnectionName}.getAccount();return(${accountEligibilityName}(${accountName}),function ${MAIN_ELIGIBILITY_MARKER}(){return!0}())?{enabled:!0,computerUseAvailable:${computerUseName},featureDiscoveryEnabled:${featureDiscoveryName},staleTimeMs:${staleTimeName}}:{enabled:!1}`,
     );
   } catch (error) {
     console.warn(

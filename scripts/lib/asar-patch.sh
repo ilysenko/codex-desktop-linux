@@ -17,6 +17,32 @@ console.error(`[INFO] feature patch summary: ${summary}`);
 NODE
 }
 
+patch_report_has_changes() {
+    local patch_report="$1"
+    node - "$patch_report" "$SCRIPT_DIR/scripts/lib/patch-report.js" <<'NODE'
+const fs = require("node:fs");
+const [reportPath, helperPath] = process.argv.slice(2);
+const { reportHasPatchChanges } = require(helperPath);
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+process.exit(reportHasPatchChanges(report) ? 0 : 1);
+NODE
+}
+
+record_patch_report_asar_hashes() {
+    local patch_report="$1"
+    local upstream_sha="$2"
+    local output_sha="$3"
+    local preserved_byte_for_byte="$4"
+    node - "$patch_report" "$upstream_sha" "$output_sha" "$preserved_byte_for_byte" <<'NODE'
+const fs = require("node:fs");
+const [reportPath, upstreamSha, outputSha, preserved] = process.argv.slice(2);
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+report.upstreamAppAsar = { sha256: upstreamSha, preservedByteForByte: preserved === "true" };
+report.outputAppAsar = { sha256: outputSha };
+fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+NODE
+}
+
 write_empty_feature_patch_report() {
     local report_path="$1"
     local app_asar="$2"
@@ -67,6 +93,13 @@ patch_asar() {
         "$WORK_DIR/app-extracted"
     print_patch_report_summary "$patch_report_json"
 
+    if ! patch_report_has_changes "$patch_report_json"; then
+        info "No ASAR descriptor changed the current bundle; preserving official app.asar byte-for-byte"
+        record_patch_report_asar_hashes "$patch_report_json" "$upstream_sha" "$upstream_sha" true
+        CODEX_PATCH_REPORT_RESOLVED="$patch_report_json"
+        return 0
+    fi
+
     (cd "$WORK_DIR/app-extracted" && find . -type f -printf '%P\n' | LC_ALL=C sort) > "$WORK_DIR/app.asar.ordering"
     npx --yes @electron/asar pack \
         "$WORK_DIR/app-extracted" \
@@ -79,14 +112,7 @@ patch_asar() {
         mv "$WORK_DIR/app.asar.unpacked" "$resources_dir/app.asar.unpacked"
     fi
     patched_sha="$(sha256sum "$app_asar" | awk '{print $1}')"
-    node - "$patch_report_json" "$upstream_sha" "$patched_sha" <<'NODE'
-const fs = require("node:fs");
-const [reportPath, upstreamSha, patchedSha] = process.argv.slice(2);
-const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-report.upstreamAppAsar = { sha256: upstreamSha, preservedByteForByte: false };
-report.outputAppAsar = { sha256: patchedSha };
-fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-NODE
+    record_patch_report_asar_hashes "$patch_report_json" "$upstream_sha" "$patched_sha" false
     CODEX_PATCH_REPORT_RESOLVED="$patch_report_json"
 }
 

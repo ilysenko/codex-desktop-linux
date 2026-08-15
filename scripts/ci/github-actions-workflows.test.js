@@ -29,6 +29,7 @@ test("CI runs the complete workflow regression suite", () => {
   assert.match(nixBuild, /system: aarch64-linux/);
   assert.match(nixBuild, /runner: ubuntu-24\.04-arm/);
   assert.match(nixBuild, /checks\.\$\{\{ matrix\.system \}\}\.modules/);
+  assert.match(nixBuild, /nix-runtime-computer-use/);
   assert.match(nixBuild, /nix-runtime-maximal-directory-watch/);
   assert.match(nixBuild, /nix-runtime-maximal-shallow-watch/);
   assert.match(nixBuild, /nix-installer/);

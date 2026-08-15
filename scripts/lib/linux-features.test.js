@@ -137,6 +137,35 @@ test("Linux feature asset matchers receive feature settings", (t) => {
   assert.equal(descriptor.assetMatch("current-contract", "app-current.js", {}), true);
 });
 
+test("enabled patch descriptor load errors are fatal", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-invalid-descriptor-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+    id: "unsafe-link",
+    title: "Unsafe Link",
+    entrypoints: { patchDescriptors: "./patch.js" },
+  });
+  const descriptorModule = path.join(__dirname, "..", "patches", "descriptor.js");
+  fs.writeFileSync(
+    path.join(featureDir, "patch.js"),
+    [
+      `const { mainBundlePatch } = require(${JSON.stringify(descriptorModule)});`,
+      "module.exports = mainBundlePatch({",
+      "  id: 'invalid-required-bypass',",
+      "  ciPolicy: 'required-upstream',",
+      "  enforceWhenEnabled: false,",
+      "  apply: (source) => source,",
+      "});",
+      "",
+    ].join("\n"),
+  );
+
+  assert.throws(
+    () => loadLinuxFeaturePatchDescriptors({ featuresRoot }),
+    /Could not load Linux feature 'unsafe-link' patchDescriptors:.*only with ciPolicy 'optional'/,
+  );
+});
+
 test("Linux feature staging rejects duplicate resource targets", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-duplicate-resource-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

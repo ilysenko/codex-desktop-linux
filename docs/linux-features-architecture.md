@@ -59,6 +59,7 @@ Manifest fields:
 | `id` | Stable configuration ID matching the directory name |
 | `title`, `description` | User-facing wizard and documentation text |
 | `defaultEnabled` | Must be `false` for every repository and local feature |
+| `internal` | Optional boolean for build-owned plumbing hidden from public feature selection |
 | `entrypoints.patchDescriptors` | Optional ASAR descriptor module |
 | `entrypoints.stageHook` | Last-resort app staging script |
 | `resources` | Declarative files copied into the app tree |

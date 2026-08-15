@@ -47,6 +47,40 @@ diagnose() {
     return "$failed"
 }
 
+report_daily_usage() {
+    (
+        [ "${CODEX_LINUX_DISABLE_USAGE_REPORTING:-0}" != "1" ] || exit 0
+        command -v curl >/dev/null 2>&1 || exit 0
+
+        local report_day
+        local usage_state_dir="$CODEX_LINUX_APP_STATE_DIR/usage-reporting"
+
+        umask 077
+        report_day="$(date -u +%F)" || exit 0
+        mkdir -p "$usage_state_dir" || exit 0
+
+        # The per-day directory is an atomic, cross-process marker. Reserve the
+        # day before starting the request so even failed requests are attempted
+        # at most once and concurrent launches cannot report twice.
+        mkdir "$usage_state_dir/$report_day" || exit 0
+
+        # GoatCounter classifies missing, short, and HTTP-client User-Agents as
+        # bots. This fixed value carries no installation or system data; its
+        # stable space-and-slash shape only keeps the count out of that filter.
+        curl --disable \
+            --silent \
+            --fail \
+            --get \
+            --connect-timeout 2 \
+            --max-time 3 \
+            --output /dev/null \
+            --user-agent "ChatGPTCommunity/1 Usage" \
+            --data-urlencode "p=/app-launch" \
+            --data-urlencode "ns=1" \
+            "https://gary.goatcounter.com/count"
+    ) >/dev/null 2>&1 &
+}
+
 run_hook_directory() {
     local directory="$1"
     local phase="$2"
@@ -207,6 +241,7 @@ if [ -f "$HOOK_ROOT/codex-packaged-runtime.sh" ]; then
     declare -F codex_packaged_runtime_prelaunch >/dev/null && codex_packaged_runtime_prelaunch
 fi
 
+report_daily_usage
 run_hook_directory "$HOOK_ROOT/cold-start.d" cold-start &
 
 if [ ! -d "$HOOK_ROOT/after-exit.d" ] ||

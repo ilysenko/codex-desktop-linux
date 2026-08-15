@@ -14,6 +14,7 @@ const PATCH_STATUS_SKIPPED_OPTIONAL = "skipped-optional";
 const PATCH_STATUS_SKIPPED_TARGET = "skipped-target";
 
 const SUCCESS_STATUSES = new Set([PATCH_STATUS_APPLIED, PATCH_STATUS_ALREADY_APPLIED]);
+const CHANGED_STATUSES = new Set([PATCH_STATUS_APPLIED, PATCH_STATUS_APPLIED_WITH_WARNINGS]);
 // Statuses meaning "not applicable here" rather than "failed": the patch was
 // skipped because of platform targeting or an explicit enable gate.
 const NOT_APPLICABLE_STATUSES = new Set([PATCH_STATUS_SKIPPED_TARGET, PATCH_STATUS_SKIPPED_DISABLED]);
@@ -58,8 +59,13 @@ function enabledFeatureFailuresFromReport(report) {
   const enabledFeatures = new Set(Array.isArray(report?.enabledFeatures) ? report.enabledFeatures : []);
   return (report?.patches ?? [])
     .filter((patch) => patch.sourceKind === "feature" && enabledFeatures.has(patch.featureId))
+    .filter((patch) => patch.enforceWhenEnabled !== false)
     .filter((patch) => !SUCCESS_STATUSES.has(patch.status) && !NOT_APPLICABLE_STATUSES.has(patch.status))
     .map((patch) => ({ ...reportEntryFailure(patch), featureId: patch.featureId }));
+}
+
+function reportHasPatchChanges(report) {
+  return (report?.patches ?? []).some((patch) => CHANGED_STATUSES.has(patch.status));
 }
 
 function createPatchReport() {
@@ -167,6 +173,7 @@ function summarizePatchReport(report) {
 
 module.exports = {
   CRITICAL_CI_POLICY,
+  CHANGED_STATUSES,
   NOT_APPLICABLE_STATUSES,
   PATCH_STATUS_ALREADY_APPLIED,
   PATCH_STATUS_APPLIED,
@@ -186,6 +193,7 @@ module.exports = {
   optionalDriftFromReport,
   patchStatusFromChange,
   recordPatch,
+  reportHasPatchChanges,
   summarizePatchReport,
   writePatchReport,
 };

@@ -1,8 +1,10 @@
 # Linux Computer Use
 
 Disabled-by-default Linux Computer Use integration. It owns the seven ASAR
-descriptors that used to be unconditional core port glue and stages the native
-MCP plugin only when explicitly enabled.
+descriptors that used to be unconditional core port glue and the native MCP
+plugin staged only when explicitly enabled. Immutable Nix packages receive
+their bundled-marketplace staging permission repair from the separate internal
+`nix-store-bundled-marketplace-permissions` feature.
 
 Enable it in `linux-features/features.json`:
 

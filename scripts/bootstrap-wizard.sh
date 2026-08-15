@@ -699,6 +699,10 @@ def discover_features(root):
             die(f"Linux feature '{feature_id}' must include README.md next to feature.json")
         if data.get("defaultEnabled") is True:
             die(f"Linux feature '{feature_id}' must be disabled by default; defaultEnabled true is not allowed")
+        if "internal" in data and not isinstance(data["internal"], bool):
+            die(f"Linux feature '{feature_id}' internal must be a boolean")
+        if data.get("internal") is True:
+            continue
         if feature_id in features:
             die(f"Duplicate Linux feature id '{feature_id}' in {manifest_path} and {features[feature_id]['manifest_path']}")
         title = data.get("title") or data.get("name") or feature_id

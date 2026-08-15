@@ -56,8 +56,9 @@ function mainFixture() {
   return [
     "function Or(e){return br().ambientSuggestions&&e.getEffective(n.Wi.enabled.key)===!0}",
     "async function kr({appServerConnection:e,settingsStore:t}){",
-    "let{ambientSuggestionsStaleTimeMs:n}=br();if(!Or(t)||n==null)return{enabled:!1};",
-    "let{account:r}=await e.getAccount();return ie(r)?{enabled:!0,staleTimeMs:n}:{enabled:!1}}",
+    "let{ambientSuggestionsFeatureDiscovery:n,ambientSuggestionsStaleTimeMs:r,computerUse:i}=br();",
+    "if(!Or(t)||r==null)return{enabled:!1};let{account:a}=await e.getAccount();",
+    "return ie(a)?{enabled:!0,computerUseAvailable:i,featureDiscoveryEnabled:n,staleTimeMs:r}:{enabled:!1}}",
   ].join("");
 }
 
@@ -67,7 +68,8 @@ function homeContentFixture() {
     "let Ee=d(b.enabled)===!0,De=a(jn),Oe=a(fn),Me=i&&l!=null,",
     "Ne=De==null&&Me&&Ee,{data:Pe,isLoading:Fe}=rr({enabled:Ne}),",
     "ze=Ne&&(Fe||Le&&P)?null:ir({debugOverride:De,experimentEligible:Le,personalized:Re}),",
-    "z=ze===`curated`,Be=ln(ye.email),Ve=ar({canUsePersonalizedSuggestions:Ee,",
+    "z=ze===`curated`,Be;e[48]===ye.email?Be=e[49]:(Be=ln(ye.email),e[48]=ye.email,e[49]=Be);",
+    "let Xe=Be,Ve=ar({canUsePersonalizedSuggestions:Ee,",
     "generatedSuggestionsEnabled:Me,hasGeneratedSuggestionsReadSettled:x,",
     "shouldUseCuratedNewChatPageSuggestions:z});return Ve}",
   ].join("");
@@ -134,8 +136,10 @@ test("main patch enables refresh while preserving the upstream account call", ()
 
   assert.notEqual(patched, source);
   assert.equal((patched.match(new RegExp(MAIN_ELIGIBILITY_MARKER, "g")) || []).length, 1);
-  assert.match(patched, /ie\(r\)/);
-  assert.match(patched, /staleTimeMs:n/);
+  assert.match(patched, /ie\(a\)/);
+  assert.match(patched, /computerUseAvailable:i/);
+  assert.match(patched, /featureDiscoveryEnabled:n/);
+  assert.match(patched, /staleTimeMs:r/);
   assert.match(patched, /await e\.getAccount\(\)/);
   assert.equal(applySuggestedPromptsMainPatch(patched), patched);
 });
@@ -143,10 +147,12 @@ test("main patch enables refresh while preserving the upstream account call", ()
 test("main patch preserves current minified aliases", () => {
   const source = [
     "async function refresh({appServerConnection:connection,settingsStore:store}){",
-    "let{ambientSuggestionsStaleTimeMs:stale}=featureState();",
+    "let{ambientSuggestionsFeatureDiscovery:discovery,ambientSuggestionsStaleTimeMs:stale,",
+    "computerUse:computerUse}=featureState();",
     "if(!settingsEligible(store)||stale==null)return{enabled:!1};",
     "let{account:account}=await connection.getAccount();",
-    "return accountEligible(account)?{enabled:!0,staleTimeMs:stale}:{enabled:!1}}",
+    "return accountEligible(account)?{enabled:!0,computerUseAvailable:computerUse,",
+    "featureDiscoveryEnabled:discovery,staleTimeMs:stale}:{enabled:!1}}",
   ].join("");
   const patched = applySuggestedPromptsMainPatch(source);
 
@@ -155,6 +161,8 @@ test("main patch preserves current minified aliases", () => {
   assert.match(patched, /settingsEligible\(store\)/);
   assert.match(patched, /await connection\.getAccount\(\)/);
   assert.match(patched, /accountEligible\(account\)/);
+  assert.match(patched, /computerUseAvailable:computerUse/);
+  assert.match(patched, /featureDiscoveryEnabled:discovery/);
   assert.match(patched, /staleTimeMs:stale/);
   assert.equal(applySuggestedPromptsMainPatch(patched), patched);
 });
@@ -164,9 +172,12 @@ test("main patch rejects incomplete, duplicate, and mixed contracts byte-identic
   const patched = applySuggestedPromptsMainPatch(current);
   const sources = [
     current.replace("ambientSuggestionsStaleTimeMs", "ambientSuggestionStaleTimeMs"),
+    current.replace("ambientSuggestionsFeatureDiscovery", "ambientSuggestionFeatureDiscovery"),
+    current.replace("computerUseAvailable:i", "computerUseAvailable:n"),
+    current.replace("featureDiscoveryEnabled:n", "featureDiscoveryEnabled:i"),
     current.replace("await e.getAccount()", "await e.account()"),
-    patched.replace("(ie(r),function", "(ie(r)&&function"),
-    patched.replace("staleTimeMs:n", "staleTimeMs:refreshMs"),
+    patched.replace("(ie(a),function", "(ie(a)&&function"),
+    patched.replace("staleTimeMs:r", "staleTimeMs:refreshMs"),
     patched.replace(
       `function ${MAIN_ELIGIBILITY_MARKER}(){return!0}`,
       `function ${MAIN_ELIGIBILITY_MARKER}(){return!1}`,
@@ -195,6 +206,45 @@ test("Home content renders generated suggestions instead of selecting curated ca
   assert.match(patched, /ze===`curated`/);
   assert.match(patched, /function codexLinuxSuggestedPromptsGeneratedSource\(\)\{return!1\}/);
   assert.equal(applySuggestedPromptsHomeContentPatch(patched), patched);
+});
+
+test("Home content rejects incomplete, duplicate, and mixed contracts byte-identically", () => {
+  const current = homeContentFixture();
+  const patched = applySuggestedPromptsHomeContentPatch(current);
+  const sources = [
+    current.replace(
+      "shouldUseCuratedNewChatPageSuggestions:z",
+      "shouldUseCuratedNewChatPageSuggestions:other",
+    ),
+    patched.replace(
+      `function ${HOME_CONTENT_SOURCE_MARKER}(){return!1}`,
+      `function ${HOME_CONTENT_SOURCE_MARKER}(){return!0}`,
+    ),
+    patched.replace(
+      "shouldUseCuratedNewChatPageSuggestions:z",
+      "shouldUseCuratedNewChatPageSuggestions:other",
+    ),
+    current + current,
+    patched + patched,
+    current + patched,
+    `${current}function ${HOME_CONTENT_SOURCE_MARKER}(){return!1}`,
+    `${patched}function ${HOME_CONTENT_SOURCE_MARKER}(){return!1}`,
+  ];
+
+  for (const source of sources) {
+    const result = captureWarnings(() => applySuggestedPromptsHomeContentPatch(source));
+    assert.equal(result.value, source);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /current Suggested Prompts Home generated-source contract/);
+  }
+});
+
+test("Home content ignores unrelated curated-source lookalikes", () => {
+  const source = `unrelated=source===\`curated\`;${homeContentFixture()}`;
+  const patched = applySuggestedPromptsHomeContentPatch(source);
+
+  assert.match(patched, /^unrelated=source===`curated`;/);
+  assert.equal((patched.match(new RegExp(HOME_CONTENT_SOURCE_MARKER, "g")) || []).length, 1);
 });
 
 test("multi-point patches reject mixed and drifted contracts byte-identically", () => {

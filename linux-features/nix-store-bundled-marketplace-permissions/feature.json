@@ -1,0 +1,10 @@
+{
+  "id": "nix-store-bundled-marketplace-permissions",
+  "title": "Nix bundled marketplace staging permissions",
+  "description": "Nix-only repair for read-only bundled marketplace staging copies.",
+  "defaultEnabled": false,
+  "internal": true,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

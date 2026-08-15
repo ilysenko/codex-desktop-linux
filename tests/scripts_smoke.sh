@@ -32,6 +32,8 @@ assert_contains install.sh 'upstream-linux-package.sh'
 assert_contains install.sh 'CODEX_TARGET_ARCH'
 assert_contains launcher/start.sh.template '/ChatGPT'
 assert_contains launcher/start.sh.template 'refresh_legacy_bundled_plugin_caches'
+assert_contains launcher/start.sh.template 'https://gary.goatcounter.com/count'
+assert_contains launcher/start.sh.template 'CODEX_LINUX_DISABLE_USAGE_REPORTING'
 assert_contains launcher/start.sh.template 'codexLinuxPerUserBrowserSocketDir|codexLinuxIabSocketScope'
 assert_contains launcher/start.sh.template '.plugin-appserver'
 assert_contains Makefile 'scripts/select-latest-package.sh'
@@ -52,6 +54,36 @@ touch -t 202608121000 "$selector_fixture/codex-desktop_2026.08.12.100000_amd64.d
 selected_package="$(scripts/select-latest-package.sh "$selector_fixture/codex-desktop_*.deb")"
 [ "$selected_package" = "$selector_fixture/codex-desktop_2026.08.12.100000_amd64.deb" ] ||
     fail "package selector did not choose the newest artifact: $selected_package"
+
+SCRIPT_DIR="$REPO_DIR"
+. scripts/lib/asar-patch.sh
+asar_report="$selector_fixture/patch-report.json"
+node - "$asar_report" <<'NODE'
+const fs = require("node:fs");
+const reportPath = process.argv[2];
+fs.writeFileSync(reportPath, `${JSON.stringify({
+  patches: [{ status: "skipped-optional" }],
+}, null, 2)}\n`);
+NODE
+if patch_report_has_changes "$asar_report"; then
+    fail "skipped optional ASAR descriptors must preserve the official archive"
+fi
+node - "$asar_report" <<'NODE'
+const fs = require("node:fs");
+const reportPath = process.argv[2];
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+report.patches[0].status = "applied";
+fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+NODE
+patch_report_has_changes "$asar_report" || fail "applied ASAR descriptors must be packed"
+record_patch_report_asar_hashes "$asar_report" upstream-sha output-sha true
+node - "$asar_report" <<'NODE'
+const fs = require("node:fs");
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (!report.upstreamAppAsar.preservedByteForByte) throw new Error("missing byte-preserved report state");
+if (report.upstreamAppAsar.sha256 !== "upstream-sha") throw new Error("bad upstream hash");
+if (report.outputAppAsar.sha256 !== "output-sha") throw new Error("bad output hash");
+NODE
 
 if find scripts/patches/core -name patch.js -print -quit | grep -q .; then
     fail "official baseline core registry must remain empty"

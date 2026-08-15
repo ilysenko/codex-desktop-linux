@@ -47,6 +47,14 @@ function assertDescriptorBase(descriptor, phase) {
   if (!CI_POLICIES.has(ciPolicy)) {
     throw new Error(`Patch descriptor '${id}' has unsupported ciPolicy '${ciPolicy}'`);
   }
+  if (descriptor.enforceWhenEnabled != null && typeof descriptor.enforceWhenEnabled !== "boolean") {
+    throw new Error(`Patch descriptor '${id}' enforceWhenEnabled must be a boolean`);
+  }
+  if (descriptor.enforceWhenEnabled === false && ciPolicy !== CI_POLICY_OPTIONAL) {
+    throw new Error(
+      `Patch descriptor '${id}' can disable enabled-feature enforcement only with ciPolicy 'optional'`,
+    );
+  }
   if (descriptor.composesPatches != null) {
     throw new Error(`Patch descriptor '${id}' uses removed composesPatches support`);
   }
@@ -64,6 +72,7 @@ function patchDescriptor(phase, descriptor) {
     name: descriptor.name ?? id,
     phase,
     ciPolicy: descriptor.ciPolicy ?? CI_POLICY_OPTIONAL,
+    enforceWhenEnabled: descriptor.enforceWhenEnabled ?? true,
   };
 }
 

@@ -94,6 +94,11 @@ Each feature directory must include:
 - optional `stage.sh` — legacy install/build staging hook
 - optional `test.js` — self-contained tests for the feature
 
+Repository-owned build plumbing may set `"internal": true` in `feature.json`.
+Internal features are hidden from the setup wizard and public feature summary,
+cannot be selected through native `features.json`, and must be explicitly
+allowlisted by the owning build integration.
+
 `stage.sh` hooks run with `SCRIPT_DIR`, `INSTALL_DIR`, `WORK_DIR`, `ARCH`, and
 `CODEX_UPSTREAM_APP_DIR` in the environment.
 

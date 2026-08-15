@@ -35,15 +35,25 @@ try {
       enabled.push(id);
     };
     addWithRequirements(feature.id);
+    const internalFeatureIds = enabled.filter((id) => featureMap.get(id)?.manifest.internal === true);
     const config = path.join(work, `${feature.id}.json`);
     fs.writeFileSync(config, `${JSON.stringify({ enabled })}\n`);
-    const descriptors = loadLinuxFeaturePatchDescriptors({ featuresRoot, featuresConfigPath: config });
+    const descriptors = loadLinuxFeaturePatchDescriptors({
+      featuresRoot,
+      featuresConfigPath: config,
+      internalFeatureIds,
+    });
     if (!descriptors.some((descriptor) => descriptor.featureId === feature.id)) continue;
 
     const app = path.join(work, feature.id);
     fs.cpSync(source, app, { recursive: true, verbatimSymlinks: true });
     const report = createPatchReport();
-    patchExtractedApp(app, { report, featuresRoot, featuresConfigPath: config });
+    patchExtractedApp(app, {
+      report,
+      featuresRoot,
+      featuresConfigPath: config,
+      internalFeatureIds,
+    });
     const featureFailures = enabledFeatureFailuresFromReport(report);
     audited += 1;
     if (featureFailures.length > 0) {

@@ -13,9 +13,13 @@ let
       else throw "Linux feature directory '${name}' contains mismatched id '${manifest.id}'")
     featureDirectories;
   manifestIds = map (manifest: manifest.id) manifests;
+  internalFeatureIds = lib.sort builtins.lessThan (
+    map (manifest: manifest.id) (lib.filter (manifest: manifest.internal or false) manifests)
+  );
   supportedFeatureIds =
     if builtins.length manifestIds == builtins.length (lib.unique manifestIds)
-    then lib.sort builtins.lessThan manifestIds
+    then lib.filter (featureId: !(lib.elem featureId internalFeatureIds))
+      (lib.sort builtins.lessThan manifestIds)
     else throw "Duplicate Linux feature IDs were discovered";
   manifestById = lib.listToAttrs (map (manifest: {
     name = manifest.id;
@@ -55,9 +59,26 @@ let
         throw "Invalid Nix Linux feature selection: ${lib.concatStringsSep "; " dependencyErrors}"
       else
         normalized;
+  normalizeAll = featureIds:
+    if !builtins.isList featureIds then
+      throw "Nix Linux feature IDs must be provided as a list"
+    else if !(lib.all builtins.isString featureIds) then
+      throw "Nix Linux feature IDs must all be strings"
+    else
+      let
+        canonical = map (featureId: aliases.${featureId} or featureId) featureIds;
+        normalized = sortAndDeduplicate (lib.filter
+          (featureId: !(lib.elem featureId retiredFeatureIds))
+          canonical);
+        unsupported = lib.filter (featureId: !(lib.elem featureId manifestIds)) normalized;
+      in
+      if unsupported != [ ] then
+        throw "Unsupported internal Nix Linux feature IDs: ${lib.concatStringsSep ", " unsupported}"
+      else
+        normalized;
 in
 {
-  inherit normalize retiredFeatureIds supportedFeatureIds;
+  inherit internalFeatureIds normalize normalizeAll retiredFeatureIds supportedFeatureIds;
 
   # Keep explicitly retired IDs valid while rejecting arbitrary unknown IDs
   # and dependency conflicts during option checking, even for custom packages.

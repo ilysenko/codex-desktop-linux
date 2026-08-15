@@ -5,7 +5,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { createPatchReport } = require("../lib/patch-report.js");
+const {
+  createPatchReport,
+  enabledFeatureFailuresFromReport,
+} = require("../lib/patch-report.js");
 const {
   allPatchPolicies,
   corePatchDescriptors,
@@ -53,4 +56,24 @@ test("empty feature set leaves official extracted files byte-identical", () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("missing main bundle records enabled feature drift", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-missing-main-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(root, "features.json");
+  fs.writeFileSync(config, '{"enabled":["frameless-titlebar"]}\n');
+  const report = createPatchReport();
+
+  patchExtractedApp(root, { report, featuresConfigPath: config });
+
+  const [entry] = report.patches;
+  assert.equal(entry.name, "feature:frameless-titlebar:main-process");
+  assert.equal(entry.status, "skipped-optional");
+  assert.equal(entry.enforceWhenEnabled, true);
+  assert.equal(entry.unavailable, true);
+  assert.equal(
+    enabledFeatureFailuresFromReport(report).some((failure) => failure.name === entry.name),
+    true,
+  );
 });

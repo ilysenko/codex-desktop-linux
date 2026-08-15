@@ -13,7 +13,40 @@ const {
   featurePatchDescriptors,
   patchExtractedApp,
 } = require("./patches/runner.js");
-const { createPatchReport } = require("./lib/patch-report.js");
+const {
+  createPatchReport,
+  enabledFeatureFailuresFromReport,
+  reportHasPatchChanges,
+} = require("./lib/patch-report.js");
+
+test("best-effort feature drift stays non-fatal without hiding changed outputs", () => {
+  const report = createPatchReport();
+  report.enabledFeatures = ["best-effort", "strict"];
+  report.patches = [
+    {
+      name: "feature:best-effort:repair",
+      status: "skipped-optional",
+      ciPolicy: "optional",
+      sourceKind: "feature",
+      featureId: "best-effort",
+      enforceWhenEnabled: false,
+    },
+  ];
+  assert.deepEqual(enabledFeatureFailuresFromReport(report), []);
+  assert.equal(reportHasPatchChanges(report), false);
+
+  report.patches[0].status = "applied-with-warnings";
+  assert.equal(reportHasPatchChanges(report), true);
+
+  report.patches[0] = {
+    ...report.patches[0],
+    name: "feature:strict:repair",
+    status: "skipped-optional",
+    featureId: "strict",
+    enforceWhenEnabled: true,
+  };
+  assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
+});
 
 test("official Linux baseline has an empty core patch registry", () => {
   assert.deepEqual(corePatchDescriptors(), []);

@@ -21,6 +21,7 @@ const {
   applyMainBundlePatchDescriptors,
   applyWebviewAssetPatchDescriptors,
   normalizePatchDescriptors,
+  recordUnavailablePhasePatchDescriptors,
 } = require("./engine.js");
 const {
   PHASE_EXTRACTED_APP_POST_WEBVIEW,
@@ -52,6 +53,7 @@ function featurePatchOptions(options = {}) {
   return {
     ...(options.featuresRoot != null ? { featuresRoot: options.featuresRoot } : {}),
     ...(options.featuresConfigPath != null ? { featuresConfigPath: options.featuresConfigPath } : {}),
+    ...(options.internalFeatureIds != null ? { internalFeatureIds: options.internalFeatureIds } : {}),
   };
 }
 
@@ -128,6 +130,13 @@ function patchExtractedApp(extractedDir, options = {}) {
   if (main == null && patchDescriptors.some((descriptor) => descriptor.phase === PHASE_MAIN_BUNDLE)) {
     const reason = `Could not find main bundle in ${path.join(extractedDir, ".vite", "build")}`;
     console.warn(`WARN: ${reason} — skipping enabled main-bundle feature patches`);
+    recordUnavailablePhasePatchDescriptors(
+      patchDescriptors,
+      PHASE_MAIN_BUNDLE,
+      baseContext,
+      report,
+      reason,
+    );
   }
 
   const iconAsset = null;

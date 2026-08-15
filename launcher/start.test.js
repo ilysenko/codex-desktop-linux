@@ -9,6 +9,10 @@ const test = require("node:test");
 
 const templatePath = path.join(__dirname, "start.sh.template");
 
+// Launcher tests must never contact the production usage counter. Individual
+// reporting tests opt back in with an isolated fake curl executable.
+process.env.CODEX_LINUX_DISABLE_USAGE_REPORTING = "1";
+
 function writeExecutable(filePath, source) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, source, { mode: 0o755 });
@@ -33,6 +37,127 @@ exit 7
 `);
   return root;
 }
+
+function waitForFile(filePath, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!fs.existsSync(filePath) && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  assert.equal(fs.existsSync(filePath), true, `timed out waiting for ${filePath}`);
+}
+
+test("launcher reports only one anonymous usage event per UTC day", (t) => {
+  const root = createApp(t);
+  const binDir = path.join(root, "bin");
+  const callsPath = path.join(root, "curl-calls");
+  writeExecutable(
+    path.join(binDir, "curl"),
+    `#!/bin/bash
+printf 'call\\n' >> "$TEST_ROOT/curl-calls"
+printf '<%s>\\n' "$@" >> "$TEST_ROOT/curl-arguments"
+`,
+  );
+
+  const env = {
+    ...process.env,
+    CODEX_HOME: path.join(root, "codex-home"),
+    CODEX_LINUX_DISABLE_USAGE_REPORTING: "0",
+    PATH: `${binDir}:${process.env.PATH}`,
+    TEST_ROOT: root,
+    XDG_STATE_HOME: path.join(root, "state"),
+  };
+
+  for (let launch = 0; launch < 2; launch += 1) {
+    const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 7);
+    assert.equal(result.stderr, "");
+    if (launch === 0) waitForFile(callsPath);
+  }
+
+  assert.equal(fs.readFileSync(callsPath, "utf8"), "call\n");
+  const args = fs.readFileSync(path.join(root, "curl-arguments"), "utf8");
+  assert.match(args, /<--disable>/);
+  assert.match(args, /<--connect-timeout>\n<2>/);
+  assert.match(args, /<--max-time>\n<3>/);
+  assert.match(args, /<--user-agent>\n<ChatGPTCommunity\/1 Usage>/);
+  assert.match(args, /<--data-urlencode>\n<p=\/app-launch>/);
+  assert.match(args, /<--data-urlencode>\n<ns=1>/);
+  assert.match(args, /<https:\/\/gary\.goatcounter\.com\/count>/);
+  assert.doesNotMatch(args, /version|architecture|language|referrer|screen|title|rnd/i);
+});
+
+test("launcher usage reporting has one opt-out and suppresses curl failures", (t) => {
+  const disabledRoot = createApp(t);
+  const disabledBin = path.join(disabledRoot, "bin");
+  writeExecutable(
+    path.join(disabledBin, "curl"),
+    `#!/bin/bash
+printf 'unexpected\\n' >> "$TEST_ROOT/curl-calls"
+`,
+  );
+  const disabled = childProcess.spawnSync(path.join(disabledRoot, "start.sh"), [], {
+    env: {
+      ...process.env,
+      CODEX_HOME: path.join(disabledRoot, "codex-home"),
+      CODEX_LINUX_DISABLE_USAGE_REPORTING: "1",
+      PATH: `${disabledBin}:${process.env.PATH}`,
+      TEST_ROOT: disabledRoot,
+      XDG_STATE_HOME: path.join(disabledRoot, "state"),
+    },
+    encoding: "utf8",
+  });
+  assert.equal(disabled.status, 7);
+  assert.equal(disabled.stderr, "");
+  assert.equal(fs.existsSync(path.join(disabledRoot, "curl-calls")), false);
+  assert.equal(fs.existsSync(path.join(disabledRoot, "state")), false);
+
+  const missingRoot = createApp(t);
+  const missingBin = path.join(missingRoot, "bin");
+  fs.mkdirSync(missingBin, { recursive: true });
+  fs.symlinkSync("/usr/bin/dirname", path.join(missingBin, "dirname"));
+  const missing = childProcess.spawnSync(path.join(missingRoot, "start.sh"), [], {
+    env: {
+      ...process.env,
+      CODEX_HOME: path.join(missingRoot, "codex-home"),
+      CODEX_LINUX_DISABLE_USAGE_REPORTING: "0",
+      PATH: missingBin,
+      TEST_ROOT: missingRoot,
+      XDG_STATE_HOME: path.join(missingRoot, "state"),
+    },
+    encoding: "utf8",
+  });
+  assert.equal(missing.status, 7);
+  assert.equal(missing.stdout, "");
+  assert.equal(missing.stderr, "");
+  assert.equal(fs.existsSync(path.join(missingRoot, "state")), false);
+
+  const failingRoot = createApp(t);
+  const failingBin = path.join(failingRoot, "bin");
+  writeExecutable(
+    path.join(failingBin, "curl"),
+    `#!/bin/bash
+printf 'simulated curl failure\\n' >&2
+exit 22
+`,
+  );
+  const failing = childProcess.spawnSync(path.join(failingRoot, "start.sh"), [], {
+    env: {
+      ...process.env,
+      CODEX_HOME: path.join(failingRoot, "codex-home"),
+      CODEX_LINUX_DISABLE_USAGE_REPORTING: "0",
+      PATH: `${failingBin}:${process.env.PATH}`,
+      TEST_ROOT: failingRoot,
+      XDG_STATE_HOME: path.join(failingRoot, "state"),
+    },
+    encoding: "utf8",
+  });
+  assert.equal(failing.status, 7);
+  assert.equal(failing.stdout, "");
+  assert.equal(failing.stderr, "");
+});
 
 test("launcher composes declarative hooks and forwards arguments", (t) => {
   const root = createApp(t);
