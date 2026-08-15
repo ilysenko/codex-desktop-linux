@@ -95,6 +95,53 @@ test("chronicle-skysight stages restricted MCP plugin and shared backend", () =>
   }
 });
 
+test("chronicle-skysight updater staging reuses the retained backend without Cargo", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chronicle-skysight-updater-"));
+  try {
+    const scriptRoot = path.join(workspace, "update-builder");
+    const copiedFeatureDir = path.join(scriptRoot, "linux-features/chronicle-skysight");
+    const retainedBackend = path.join(scriptRoot, "target/release/codex-record-replay-linux");
+    const installDir = path.join(workspace, "install");
+    const marketplace = path.join(
+      installDir,
+      "resources/plugins/openai-bundled/.agents/plugins/marketplace.json",
+    );
+    const fakeBin = path.join(workspace, "bin");
+    const cargoMarker = path.join(workspace, "cargo-was-run");
+
+    fs.cpSync(featureDir, copiedFeatureDir, { recursive: true });
+    fs.mkdirSync(path.dirname(retainedBackend), { recursive: true });
+    fs.writeFileSync(retainedBackend, "#!/bin/sh\nprintf '{\"ok\":true}\\n'\n", { mode: 0o755 });
+    fs.mkdirSync(path.dirname(marketplace), { recursive: true });
+    fs.writeFileSync(marketplace, JSON.stringify({ plugins: [] }));
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "cargo"),
+      `#!/bin/sh\ntouch ${JSON.stringify(cargoMarker)}\nexit 99\n`,
+      { mode: 0o755 },
+    );
+
+    execFileSync("bash", [path.join(copiedFeatureDir, "stage.sh")], {
+      cwd: scriptRoot,
+      env: {
+        ...process.env,
+        SCRIPT_DIR: scriptRoot,
+        INSTALL_DIR: installDir,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+      },
+      stdio: "pipe",
+    });
+
+    assert.equal(fs.existsSync(cargoMarker), false);
+    assert.equal(
+      fs.readFileSync(path.join(installDir, "resources/native/codex-record-replay-linux"), "utf8"),
+      "#!/bin/sh\nprintf '{\"ok\":true}\\n'\n",
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("chronicle-skysight owns activity-memory bridge and tray integration", () => {
   const source = [
     'const cp=require("node:child_process"),fs=require("node:fs"),path=require("node:path");',
@@ -110,6 +157,8 @@ test("chronicle-skysight owns activity-memory bridge and tray integration", () =
   assert.equal(applyChronicleSkysightMainBridgePatch(patched), patched);
   assert.match(patched, /"chronicle-permissions":async/);
   assert.match(patched, /"linux-record-replay-skysight-start":async/);
+  assert.doesNotMatch(patched, /--owner/);
+  assert.doesNotMatch(patched, /skysight","start"[^;]*--source/);
   assert.match(patched, /codexLinuxChronicleToggleSidecar/);
   assert.doesNotMatch(patched, /"linux-record-replay-start":async/);
   assert.doesNotMatch(patched, /"linux-record-replay-draft-skill":async/);

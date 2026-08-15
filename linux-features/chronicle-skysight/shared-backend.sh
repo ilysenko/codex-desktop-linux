@@ -25,6 +25,11 @@ build_chronicle_skysight_backend() {
         return 0
     fi
 
+    if [ -x "$source_binary" ]; then
+        printf '%s\n' "$source_binary"
+        return 0
+    fi
+
     if ! cargo_cmd="$(find_cargo_for_chronicle_skysight)"; then
         echo "cargo not found; Chronicle / Skysight backend cannot be built" >&2
         echo "Install/use a Rust toolchain, or set CODEX_RECORD_REPLAY_LINUX_SOURCE to an executable codex-record-replay-linux binary." >&2

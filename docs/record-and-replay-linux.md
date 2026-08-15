@@ -11,7 +11,8 @@ skills.
 ## Phase 1 Support Definition
 
 Phase 1 supports the first Linux-native Record & Replay path behind the
-disabled-by-default `record-and-replay` Linux feature.
+disabled-by-default `record-and-replay` Linux feature. Its configuration must
+also explicitly enable the required `chronicle-skysight` feature.
 
 Supported in Phase 1 means Linux can surface the opt-in `Record & Replay`
 plugin shell, start a local recording session through its `event-stream` MCP
@@ -57,8 +58,9 @@ current macOS bundle supplies that server through
 
 ## Chronicle / Skysight Parity
 
-Chronicle/Skysight is the screen and event-memory sidecar for Record & Replay
-on Linux. It is not microphone transcription. The Linux bridge now exposes
+Chronicle/Skysight is also available independently through a restricted
+Skysight-only MCP server; Record & Replay uses the same screen and event-memory
+backend on Linux. It is not microphone transcription. The Linux bridge exposes
 pause and resume alongside the existing start, status, stop, snapshot, and
 exclusion methods so the app can keep the active capture session alive while
 the backend moves between recording states.
@@ -99,7 +101,7 @@ provider; Tesseract remains the safe local fallback.
 
 After rebuilding the feature, Josh can verify the branch with:
 
-1. `node --test linux-features/record-and-replay/test.js`
+1. `node --test linux-features/chronicle-skysight/test.js linux-features/record-and-replay/test.js`
 2. A rebuild/install of the app or feature bundle.
 3. A live `skysight status` check that reports the resource root.
 4. `skysight pause`, `skysight resume`, and `skysight stop` through the

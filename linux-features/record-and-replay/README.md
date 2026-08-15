@@ -16,10 +16,15 @@ It is disabled by default. Enable it in `linux-features/features.json`:
 ```json
 {
   "enabled": [
+    "chronicle-skysight",
     "record-and-replay"
   ]
 }
 ```
+
+`chronicle-skysight` is a required dependency. Existing configurations that
+listed only `record-and-replay` must add it before the next build or update.
+The loader validates this list and does not add dependencies automatically.
 
 ## Build Prerequisite
 

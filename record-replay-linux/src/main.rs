@@ -9,12 +9,17 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     if matches!(
         &cli.command,
+        Commands::Skysight {
+            command: SkysightCommand::Mcp,
+        }
+    ) {
+        return mcp::serve_skysight_mcp().await;
+    }
+    if matches!(
+        &cli.command,
         Commands::Mcp
             | Commands::EventStream {
                 command: EventStreamCommand::Mcp,
-            }
-            | Commands::Skysight {
-                command: SkysightCommand::Mcp,
             }
     ) {
         return mcp::serve_mcp().await;

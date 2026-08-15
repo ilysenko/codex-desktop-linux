@@ -1,12 +1,16 @@
 # Linux Chronicle / Skysight
 
-Chronicle/Skysight is the screen and event-memory companion to Record & Replay
-on Linux. It is part of the demo-to-skill capture path, not a microphone
-transcription system.
+Chronicle/Skysight is opt-in screen and event memory on Linux. It can run as a
+standalone feature with a restricted Skysight-only MCP server. Record & Replay
+requires and uses the same backend for demo-to-skill capture. It is not a
+microphone transcription system.
 
 ## Relationship To Record & Replay
 
 - Record & Replay owns the user-facing demo-to-skill flow.
+- Chronicle/Skysight can be enabled alone for recent activity memory.
+- Record & Replay configuration must explicitly enable both
+  `chronicle-skysight` and `record-and-replay`.
 - Chronicle/Skysight keeps the recent activity memory that helps draft the
   resulting skill.
 - `speech_context` remains the transcript channel when spoken text is
@@ -113,7 +117,7 @@ may also require the system package that provides `libGL.so.1`.
 
 ## Verification After Rebuild
 
-1. Run `node --test linux-features/record-and-replay/test.js`.
+1. Run `node --test linux-features/chronicle-skysight/test.js linux-features/record-and-replay/test.js`.
 2. Rebuild and reinstall the feature bundle.
 3. Confirm the bridge exposes `linux-record-replay-skysight-pause` and
    `linux-record-replay-skysight-resume`.

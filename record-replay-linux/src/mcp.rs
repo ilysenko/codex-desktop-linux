@@ -31,6 +31,9 @@ pub struct RecordReplayLinux {
     last_session: Arc<Mutex<Option<PathBuf>>>,
 }
 
+#[derive(Clone, Default)]
+struct ChronicleSkysightLinux;
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 struct ToolResponse {
     #[serde(flatten)]
@@ -602,6 +605,76 @@ impl RecordReplayLinux {
     }
 }
 
+#[tool_router]
+impl ChronicleSkysightLinux {
+    #[tool(
+        name = "skysight_start",
+        description = "Start Linux Skysight so Codex can answer questions about recent activity."
+    )]
+    fn skysight_start(&self, params: Parameters<SkysightStartParams>) -> Json<ToolResponse> {
+        RecordReplayLinux::default().skysight_start(params)
+    }
+
+    #[tool(
+        name = "skysight_status",
+        description = "Get Linux Skysight status and paths to recent activity files."
+    )]
+    fn skysight_status(&self) -> Json<ToolResponse> {
+        RecordReplayLinux::default().skysight_status()
+    }
+
+    #[tool(
+        name = "skysight_stop",
+        description = "Stop Linux Skysight and return the current status."
+    )]
+    fn skysight_stop(&self) -> Json<ToolResponse> {
+        RecordReplayLinux::default().skysight_stop()
+    }
+
+    #[tool(
+        name = "skysight_pause",
+        description = "Pause Linux Skysight without deleting local Chronicle-compatible memory resources."
+    )]
+    fn skysight_pause(&self, params: Parameters<SkysightPauseParams>) -> Json<ToolResponse> {
+        RecordReplayLinux::default().skysight_pause(params)
+    }
+
+    #[tool(
+        name = "skysight_resume",
+        description = "Resume Linux Skysight after it has been paused."
+    )]
+    fn skysight_resume(&self) -> Json<ToolResponse> {
+        RecordReplayLinux::default().skysight_resume()
+    }
+
+    #[tool(
+        name = "skysight_snapshot",
+        description = "Capture one Linux Skysight activity snapshot into local segment and memory resources."
+    )]
+    fn skysight_snapshot(&self, params: Parameters<SkysightSnapshotParams>) -> Json<ToolResponse> {
+        RecordReplayLinux::default().skysight_snapshot(params)
+    }
+
+    #[tool(
+        name = "skysight_update_exclusion",
+        description = "Add, update, or remove a Linux Skysight app/domain exclusion."
+    )]
+    fn skysight_update_exclusion(
+        &self,
+        params: Parameters<SkysightExclusionParams>,
+    ) -> Json<ToolResponse> {
+        RecordReplayLinux::default().skysight_update_exclusion(params)
+    }
+
+    #[tool(
+        name = "skysight_list_exclusions",
+        description = "List Linux Skysight app/domain exclusions."
+    )]
+    fn skysight_list_exclusions(&self) -> Json<ToolResponse> {
+        RecordReplayLinux::default().skysight_list_exclusions()
+    }
+}
+
 #[tool_handler(
     name = "event-stream",
     version = "0.1.0-linux-alpha1",
@@ -611,6 +684,22 @@ impl ServerHandler for RecordReplayLinux {}
 
 pub async fn serve_mcp() -> Result<()> {
     RecordReplayLinux::default()
+        .serve(rmcp::transport::stdio())
+        .await?
+        .waiting()
+        .await?;
+    Ok(())
+}
+
+#[tool_handler(
+    name = "chronicle-skysight",
+    version = "0.1.0-linux-alpha1",
+    instructions = "Use Chronicle / Skysight for local Linux recent-activity memory. Check status first. Start continuous capture only when the user explicitly requests it, and honor pause, stop, snapshot, and exclusion requests."
+)]
+impl ServerHandler for ChronicleSkysightLinux {}
+
+pub async fn serve_skysight_mcp() -> Result<()> {
+    ChronicleSkysightLinux
         .serve(rmcp::transport::stdio())
         .await?
         .waiting()
@@ -993,6 +1082,34 @@ fn event_stream_end_reason(state: &RecordingRuntimeState) -> Option<&'static str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_tool_catalogs_keep_chronicle_restricted() {
+        let chronicle_names: Vec<String> = ChronicleSkysightLinux::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.into_owned())
+            .collect();
+        assert_eq!(
+            chronicle_names,
+            [
+                "skysight_list_exclusions",
+                "skysight_pause",
+                "skysight_resume",
+                "skysight_snapshot",
+                "skysight_start",
+                "skysight_status",
+                "skysight_stop",
+                "skysight_update_exclusion",
+            ]
+        );
+
+        let event_stream_router = RecordReplayLinux::tool_router();
+        assert!(event_stream_router.has_route("start"));
+        assert!(event_stream_router.has_route("import_skill"));
+        assert!(!ChronicleSkysightLinux::tool_router().has_route("start"));
+        assert!(!ChronicleSkysightLinux::tool_router().has_route("import_skill"));
+    }
 
     #[test]
     fn add_event_stream_fields_includes_suppressed_events_path() {
