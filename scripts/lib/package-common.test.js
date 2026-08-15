@@ -82,6 +82,14 @@ test("non-Debian package formats map the official runtime libraries", () => {
   }
 });
 
+test("RPM updater selects the distro-specific GnuPG package", () => {
+  const rpm = fs.readFileSync(path.join(repoRoot, "packaging/linux/codex-desktop.spec"), "utf8");
+  assert.match(
+    rpm,
+    /%if __PACKAGE_WITH_UPDATER__\nRequires:\s+polkit, curl, dpkg, nodejs, xdg-utils\n%if 0%\{\?suse_version\}\nRequires:\s+gpg2\n%else\nRequires:\s+gnupg2\n%endif\n%else\nRequires:\s+xdg-utils\n%endif/,
+  );
+});
+
 test("update-builder copies staged native feature artifacts without Cargo workspaces", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-builder-artifact-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

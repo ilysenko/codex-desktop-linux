@@ -12,7 +12,12 @@ ExclusiveArch:  __ARCH__
 %endif
 
 %if __PACKAGE_WITH_UPDATER__
-Requires:       polkit, curl, dpkg, gnupg2, nodejs, xdg-utils
+Requires:       polkit, curl, dpkg, nodejs, xdg-utils
+%if 0%{?suse_version}
+Requires:       gpg2
+%else
+Requires:       gnupg2
+%endif
 %else
 Requires:       xdg-utils
 %endif
