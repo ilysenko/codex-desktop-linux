@@ -192,6 +192,7 @@ cleanup() {
     local cleanup_failed=0
     local cmdline
     local pid
+    local router_cmdline
     local webview_pid
 
     trap - EXIT
@@ -221,6 +222,29 @@ cleanup() {
         esac
         arg0=""
         revalidated_arg0=""
+    done
+    for cmdline in /proc/[0-9]*/cmdline; do
+        [ -r "$cmdline" ] || continue
+        pid="${cmdline#/proc/}"
+        pid="${pid%/cmdline}"
+        router_cmdline="$(tr '\0' ' ' < "$cmdline" 2>/dev/null || true)"
+        case "$router_cmdline" in
+            *"$APP_DIR/.codex-linux/launcher-log-router.py"*)
+                stop_owned_process_bounded \
+                    "$pid" argv "$APP_DIR/.codex-linux/launcher-log-router.py" \
+                    || cleanup_failed=1
+                ;;
+            *"$REMOUNT_APP_DIR/.codex-linux/launcher-log-router.py"*)
+                stop_owned_process_bounded \
+                    "$pid" argv "$REMOUNT_APP_DIR/.codex-linux/launcher-log-router.py" \
+                    || cleanup_failed=1
+                ;;
+            *"$FOREIGN_APP_DIR/.codex-linux/launcher-log-router.py"*)
+                stop_owned_process_bounded \
+                    "$pid" argv "$FOREIGN_APP_DIR/.codex-linux/launcher-log-router.py" \
+                    || cleanup_failed=1
+                ;;
+        esac
     done
     rm -rf "$TMP_DIR" || cleanup_failed=1
     if [ "$cleanup_failed" -ne 0 ]; then
@@ -359,6 +383,7 @@ PY
 fi
 cp "$REPO_DIR/launcher/webview-server.py" "$APP_DIR/.codex-linux/webview-server.py"
 cp "$REPO_DIR/launcher/cli-launch-path.py" "$APP_DIR/.codex-linux/cli-launch-path.py"
+cp "$REPO_DIR/launcher/launcher-log-router.py" "$APP_DIR/.codex-linux/launcher-log-router.py"
 ln -s "$(command -v node)" "$APP_DIR/resources/node-runtime/bin/node"
 printf '%s\n' '<!doctype html><title>Codex</title><div id="startup-loader"></div>' \
     > "$APP_DIR/content/webview/index.html"

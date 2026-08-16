@@ -64,6 +64,7 @@ jobs:
       - name: Run script smoke tests
         run: |
           set -euo pipefail
+          python3 tests/launcher_log_router_test.py
           bash tests/scripts_smoke.sh
           {
             echo "## Rust and Smoke Tests"

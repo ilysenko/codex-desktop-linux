@@ -5140,6 +5140,7 @@ test_launcher_rejects_missing_webview_entrypoint() {
     chmod +x "$app_dir/start.sh"
     cp "$REPO_DIR/launcher/webview-server.py" "$app_dir/.codex-linux/webview-server.py"
     cp "$REPO_DIR/launcher/cli-launch-path.py" "$app_dir/.codex-linux/cli-launch-path.py"
+    cp "$REPO_DIR/launcher/launcher-log-router.py" "$app_dir/.codex-linux/launcher-log-router.py"
     ln -s "$(command -v node)" "$app_dir/resources/node-runtime/bin/node"
 
     cat > "$app_dir/electron" <<'SCRIPT'
@@ -5294,6 +5295,8 @@ test_launcher_extra_bundled_plugin_cache_rollback() {
     mkdir -p "$source_plugin/.codex-plugin" "$fake_home"
     printf '%s\n' '{"name":"sites","version":"1.2.3"}' > "$source_plugin/.codex-plugin/plugin.json"
     printf '%s\n' "initial" > "$source_plugin/content.txt"
+    mkdir -p "$workspace/.codex-linux"
+    cp "$REPO_DIR/launcher/launcher-log-router.py" "$workspace/.codex-linux/launcher-log-router.py"
     sed '/^hydrate_graphical_session_env$/,$d' "$REPO_DIR/launcher/start.sh.template" > "$launcher_defs"
 
     (
@@ -5364,6 +5367,8 @@ test_launcher_extra_bundled_plugin_cache_concurrent_destination() {
     mkdir -p "$source_plugin/.codex-plugin" "$fake_home"
     printf '%s\n' '{"name":"sites","version":"1.2.3"}' > "$source_plugin/.codex-plugin/plugin.json"
     printf '%s\n' "initial" > "$source_plugin/content.txt"
+    mkdir -p "$workspace/.codex-linux"
+    cp "$REPO_DIR/launcher/launcher-log-router.py" "$workspace/.codex-linux/launcher-log-router.py"
     sed '/^hydrate_graphical_session_env$/,$d' "$REPO_DIR/launcher/start.sh.template" > "$launcher_defs"
 
     (
@@ -5543,10 +5548,12 @@ test_launcher_template_sanity() {
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "--continue-at -"
     assert_file_exists "$REPO_DIR/launcher/webview-server.py"
     assert_file_exists "$REPO_DIR/launcher/cli-launch-path.py"
+    assert_file_exists "$REPO_DIR/launcher/launcher-log-router.py"
     assert_contains "$REPO_DIR/launcher/webview-server.py" "Cache-Control"
     assert_contains "$REPO_DIR/launcher/webview-server.py" "If-Modified-Since"
     assert_contains "$REPO_DIR/install.sh" "webview-server.py"
     assert_contains "$REPO_DIR/install.sh" "cli-launch-path.py"
+    assert_contains "$REPO_DIR/install.sh" "launcher-log-router.py"
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "WEBVIEW_PID_FILE"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "owned_webview_server_pid"
@@ -5858,8 +5865,10 @@ if 'env\\ *)' not in launcher_hooks_body or 'electron-arg\\ *)' not in launcher_
     raise SystemExit("launcher hooks must use the generic env/electron-arg stdout protocol")
 if 'COLD_START_HOOK_DIR' not in cold_start_hooks_body or '"$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR"' not in cold_start_hooks_body:
     raise SystemExit("launcher cold-start hook runner must be generic and pass standard paths")
-if '>>"$LOG_FILE" 2>&1 &' not in cold_start_hooks_body:
-    raise SystemExit("launcher cold-start hooks must be non-blocking")
+if '>>"$LOG_FILE"' in cold_start_hooks_body:
+    raise SystemExit("launcher cold-start hooks must use the owner-safe log stream")
+if '\n        ) &\n' not in cold_start_hooks_body:
+    raise SystemExit("launcher cold-start hooks must remain non-blocking")
 if 'remote_mobile_control_main' in source:
     raise SystemExit("remote mobile daemon startup must live in the remote-mobile-control feature hook, not the main launcher")
 if "running_app_is_active" not in stop_body or "Preserving webview server" not in stop_body:
@@ -5962,8 +5971,10 @@ if 'read().strip() == "release"' in source or '"release\\n"' in source:
     raise SystemExit("launcher lock release must not add a status-file control protocol")
 if "launcher_lock_helper_is_active" not in source or "require_active_launcher_lock" not in launch_body:
     raise SystemExit("launcher must fail closed if the identity-bound lock helper exits before Electron")
-if "LAUNCHER_LOCK_CONTROL_PATH" in source or "mkfifo" in source:
-    raise SystemExit("launcher lock release must not expose an inherited FIFO capability")
+if "LAUNCHER_LOCK_CONTROL_PATH" in source:
+    raise SystemExit("launcher lock release must not expose an inherited control path")
+if "LAUNCHER_LOG_FIFO" not in source or "mkfifo \"$LAUNCHER_LOG_FIFO\"" not in source:
+    raise SystemExit("launcher must expose the owner-safe FIFO log stream separately from lock release")
 if "CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1" not in launch_body:
     raise SystemExit("launcher must log the GPU compositing workaround hint for side-panel flicker")
 if launch_body.count("release_launcher_lock") != 2:
@@ -7710,6 +7721,7 @@ test_side_by_side_launcher_identity() {
     assert_file_exists "$app_dir/start.sh"
     assert_file_exists "$app_dir/.codex-linux/webview-server.py"
     assert_file_exists "$app_dir/.codex-linux/cli-launch-path.py"
+    assert_file_exists "$app_dir/.codex-linux/launcher-log-router.py"
     assert_file_exists "$app_dir/.codex-linux/codex-cua-lab.png"
     cmp -s "$linux_icon_source" "$app_dir/.codex-linux/codex-cua-lab.png" \
         || fail "Expected side-by-side launcher icon to use CODEX_LINUX_ICON_SOURCE"

@@ -15,6 +15,7 @@ printf '%s\n' '#!/usr/bin/env bash' 'echo "codex desktop fixture"' > "$app_dir/s
 chmod +x "$app_dir/start.sh"
 printf '%s\n' '<!doctype html><title>Codex fixture</title>' > "$app_dir/content/webview/index.html"
 cp "$repo_dir/launcher/cli-launch-path.py" "$app_dir/.codex-linux/cli-launch-path.py"
+cp "$repo_dir/launcher/launcher-log-router.py" "$app_dir/.codex-linux/launcher-log-router.py"
 
 for binary in node npm npx; do
     cat > "$app_dir/resources/node-runtime/bin/$binary" <<'SCRIPT'

@@ -230,6 +230,7 @@ SCRIPT
 
     chmod +x "$INSTALL_DIR/start.sh"
     mkdir -p "$INSTALL_DIR/.codex-linux"
+    cp "$SCRIPT_DIR/launcher/launcher-log-router.py" "$INSTALL_DIR/.codex-linux/launcher-log-router.py"
     cp "$SCRIPT_DIR/launcher/webview-server.py" "$INSTALL_DIR/.codex-linux/webview-server.py"
     cp "$SCRIPT_DIR/launcher/cli-launch-path.py" "$INSTALL_DIR/.codex-linux/cli-launch-path.py"
     local linux_icon_source="$LINUX_ICON_SOURCE"

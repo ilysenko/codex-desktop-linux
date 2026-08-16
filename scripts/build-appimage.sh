@@ -176,6 +176,7 @@ prepare_appdir() {
     cp "$ICON_SOURCE" "$APPDIR/.DirIcon"
     cp "$ICON_SOURCE" "$APPDIR/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
     cp "$ICON_SOURCE" "$APPDIR/opt/$PACKAGE_NAME/.codex-linux/$PACKAGE_NAME.png"
+    cp "$REPO_DIR/launcher/launcher-log-router.py" "$APPDIR/opt/$PACKAGE_NAME/.codex-linux/launcher-log-router.py"
     cp "$REPO_DIR/launcher/cli-launch-path.py" "$APPDIR/opt/$PACKAGE_NAME/.codex-linux/cli-launch-path.py"
 
     render_template \
