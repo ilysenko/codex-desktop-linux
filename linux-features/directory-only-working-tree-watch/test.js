@@ -4817,6 +4817,11 @@ test("new Git policy events discard stale in-flight query snapshots", async (t) 
     "fresh Git policy after the newer event",
     3500,
   );
+  await waitFor(
+    () => ignoredQueryCalls >= 3,
+    "queued Git policy follow-up",
+    3500,
+  );
   const latest = main.replacements.at(-1).prefixes;
   // The second event cancels the first query, forces an immediate fresh query,
   // and retains its own queued conservative follow-up snapshot.
