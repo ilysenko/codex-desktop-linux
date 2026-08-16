@@ -20,7 +20,14 @@ function writeExecutable(filePath, source) {
 
 function createApp(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-launcher-test-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() =>
+    fs.rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 20,
+    }),
+  );
   const launcher = fs.readFileSync(templatePath, "utf8")
     .replaceAll("__CODEX_LINUX_APP_ID__", "codex-desktop")
     .replaceAll("__CODEX_LINUX_APP_DISPLAY_NAME__", "ChatGPT Community");
@@ -50,11 +57,13 @@ test("launcher reports only one anonymous usage event per UTC day", (t) => {
   const root = createApp(t);
   const binDir = path.join(root, "bin");
   const callsPath = path.join(root, "curl-calls");
+  const donePath = path.join(root, "curl-done");
   writeExecutable(
     path.join(binDir, "curl"),
     `#!/bin/bash
 printf 'call\\n' >> "$TEST_ROOT/curl-calls"
 printf '<%s>\\n' "$@" >> "$TEST_ROOT/curl-arguments"
+printf 'done\\n' > "$TEST_ROOT/curl-done"
 `,
   );
 
@@ -74,7 +83,7 @@ printf '<%s>\\n' "$@" >> "$TEST_ROOT/curl-arguments"
     });
     assert.equal(result.status, 7);
     assert.equal(result.stderr, "");
-    if (launch === 0) waitForFile(callsPath);
+    if (launch === 0) waitForFile(donePath);
   }
 
   assert.equal(fs.readFileSync(callsPath, "utf8"), "call\n");
