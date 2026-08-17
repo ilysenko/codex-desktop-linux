@@ -170,7 +170,11 @@ async fn read_stream<R: tokio::io::AsyncRead + Unpin>(stream: R) -> Result<Strin
 fn find_package(dist: &Path) -> Result<PathBuf> {
     let mut matches = Vec::new();
     for entry in fs::read_dir(dist).with_context(|| format!("Failed to read {}", dist.display()))? {
-        let path = entry?.path();
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name.ends_with(".deb") || name.ends_with(".rpm") || name.contains(".pkg.tar.") {
             matches.push(path);
@@ -187,6 +191,22 @@ mod tests {
     #[test]
     fn workspace_component_never_contains_separators() {
         assert_eq!(safe_component("26.1/../../x"), "26.1_.._.._x");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_discovery_ignores_pacman_latest_symlink() -> Result<()> {
+        let dist = tempfile::tempdir()?;
+        let package_name = "codex-desktop-2026.08.17.131838-1-x86_64.pkg.tar.zst";
+        let package_path = dist.path().join(package_name);
+        fs::write(&package_path, b"package")?;
+        std::os::unix::fs::symlink(
+            package_name,
+            dist.path().join("codex-desktop-latest.pkg.tar.zst"),
+        )?;
+
+        assert_eq!(find_package(dist.path())?, package_path);
+        Ok(())
     }
 
     #[test]
