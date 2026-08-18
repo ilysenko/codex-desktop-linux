@@ -212,15 +212,6 @@ const descriptors = [
     order: 143,
     apply: applyLinuxAppshotHotkeyPatch,
   },
-  {
-    id: "linux-appshots-settings-hotkey",
-    phase: "webview-asset",
-    order: 1091,
-    pattern: /^appshots-settings-.*\.js$/,
-    missingDescription: "AppShots settings bundle",
-    skipDescription: "Linux AppShots settings hotkey patch",
-    apply: applyLinuxAppshotSettingsHotkeyPatch,
-  },
 ];
 
 module.exports = {

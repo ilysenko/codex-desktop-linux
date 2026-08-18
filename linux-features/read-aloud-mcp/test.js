@@ -56,37 +56,21 @@ test("read-aloud-mcp stays disabled until listed in features.json", () => {
 
 test("read-aloud-mcp plugin gate adds an opt-in Linux bundled plugin", () => {
   const source = [
-    "var lt=`browser-use`,ut=`chrome`,dt=`chrome-internal`,ft=`computer-use`,pt=`latex-tectonic`;",
-    "var Kr=[{forceReload:!0,installWhenMissing:!0,name:lt,isAvailable:({features:e})=>e.inAppBrowserUseAllowed,migrate:rr},{forceReload:!0,name:dt,isAvailable:({buildFlavor:e,features:t})=>Qn(e)&&t.externalBrowserUseAllowed},{forceReload:!0,name:ut,isAvailable:({buildFlavor:e,features:t})=>t.externalBrowserUseAllowed&&$n(e)},{name:ft,isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:vr},{installWhenMissing:!0,name:ft,isAvailable:({buildFlavor:e,features:n,platform:r})=>t.T.isInternal(e)&&r===`win32`&&n.computerUse},{name:pt,isAvailable:()=>!0}];",
+    "var Kr=[{...n.Ds.codexAppTools,isAvailable:()=>!0},{...n.Ds.browser,autoInstallOptOutKey:n.As(n.Ds.browser.name),isAvailable:({features:e})=>e.inAppBrowserUseAllowed},{...n.Ds.computerUse,autoInstallOptOutKey:n.As(n.Ds.computerUse.name),isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse},{...n.Ds.computerUse,autoInstallOptOutKey:n.As(n.Ds.computerUse.name),isAvailable:({features:e,platform:t})=>t===`win32`&&e.computerUse},{...n.Ds.latex,isAvailable:()=>!0},{...n.Ds.visualize,syncToRemoteSshHosts:!0,isAvailable:()=>!0}];",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxReadAloudPluginGatePatch, source);
 
   assert.match(
     patched,
-    /\{installWhenMissing:!0,name:`read-aloud`,isAvailable:\(\{platform:e\}\)=>e===`linux`\},\{name:pt,isAvailable:\(\)=>!0\}/,
-  );
-});
-
-test("read-aloud-mcp plugin gate supports older isEnabled bundle shapes", () => {
-  const source = [
-    "var Qt=`openai-bundled`,$t=`browser-use`,en=`chrome-internal`,tn=`computer-use`,nn=`latex-tectonic`;",
-    "var $n=[{forceReload:!0,installWhenMissing:!0,name:$t,isEnabled:({features:e})=>e.browserAgentAvailable,migrate:cn},{name:en,isEnabled:({buildFlavor:e})=>rn(e)},{name:tn,isEnabled:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:wn},{name:nn,isEnabled:()=>!0}];",
-  ].join("");
-
-  const patched = applyPatchTwice(applyLinuxReadAloudPluginGatePatch, source);
-
-  assert.match(
-    patched,
-    /\{installWhenMissing:!0,name:`read-aloud`,isEnabled:\(\{platform:e\}\)=>e===`linux`\},\{name:nn,isEnabled:\(\)=>!0\}/,
+    /\{installWhenMissing:!0,name:`read-aloud`,isAvailable:\(\{platform:e\}\)=>e===`linux`\},\{\.\.\.n\.Ds\.latex,isAvailable:\(\)=>!0\}/,
   );
 });
 
 test("read-aloud-mcp plugin gate ignores unrelated read-aloud strings", () => {
   const source = [
     "function codexLinuxReadAloudSettings(){return `read-aloud-settings`}",
-    "var lt=`browser-use`,ut=`chrome`,dt=`chrome-internal`,ft=`computer-use`,pt=`latex-tectonic`;",
-    "var Kr=[{forceReload:!0,installWhenMissing:!0,name:lt,isAvailable:({features:e})=>e.inAppBrowserUseAllowed,migrate:rr},{name:ft,isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:vr},{name:pt,isAvailable:()=>!0}];",
+    "var Kr=[{...r.plugins.browser,autoInstallOptOutKey:r.opt(r.plugins.browser.name),isAvailable:()=>!0},{...r.plugins.computerUse,autoInstallOptOutKey:r.opt(r.plugins.computerUse.name),isAvailable:()=>!0},{...r.plugins.latex,isAvailable:()=>!0},{...r.plugins.visualize,isAvailable:()=>!0}];",
   ].join("");
 
   const patched = applyLinuxReadAloudPluginGatePatch(source);
@@ -97,16 +81,14 @@ test("read-aloud-mcp plugin gate ignores unrelated read-aloud strings", () => {
   );
 });
 
-test("read-aloud-mcp plugin gate handles current imported namespace constants", () => {
+test("read-aloud-mcp plugin gate rejects a descriptor array missing current semantic anchors", () => {
   const source = [
-    "var ti=[{autoInstallOptOutKey:e.yn(e._n),installWhenMissing:!0,name:e._n,isAvailable:({buildFlavor:e})=>ei(e)},{autoInstallOptOutKey:e.yn(e.pn),forceReload:!0,installWhenMissing:!0,name:e.pn,isAvailable:({features:e})=>e.inAppBrowserUseAllowed,migrate:dr},{forceReload:!0,name:ft,isAvailable:({buildFlavor:e,env:t,features:n})=>ar(e,t)&&n.externalBrowserUseAllowed},{forceReload:!0,name:e.mn,isAvailable:({buildFlavor:e,env:t,features:n})=>or(e,t)&&n.externalBrowserUseAllowed},{forceReload:!0,installWhenMissing:!0,name:dt,isAvailable:({buildFlavor:e,features:t})=>t.externalBrowserUseAllowed&&sr(e)},{installWhenMissing:!0,name:e.hn,isAvailable:({features:e,platform:t})=>(t===`darwin`||t===`linux`)&&e.computerUse,migrate:Er},{forceReload:!0,installWhenMissing:!0,name:e.hn,isAvailable:({buildFlavor:e,features:n,platform:r})=>t.D.isInternal(e)&&r===`win32`&&n.computerUse},{name:e.gn,isAvailable:()=>!0}];",
+    "var ti=[{...n.Ds.computerUse,autoInstallOptOutKey:n.As(n.Ds.computerUse.name),isAvailable:()=>!0},{...n.Ds.latex,isAvailable:()=>!0}];",
   ].join("");
 
-  const patched = applyPatchTwice(applyLinuxReadAloudPluginGatePatch, source);
-
-  assert.match(
-    patched,
-    /\{installWhenMissing:!0,name:`read-aloud`,isAvailable:\(\{platform:e\}\)=>e===`linux`\},\{name:e\.gn,isAvailable:\(\)=>!0\}/,
+  assert.throws(
+    () => applyLinuxReadAloudPluginGatePatch(source),
+    /could not find bundled plugin descriptor array/,
   );
 });
 

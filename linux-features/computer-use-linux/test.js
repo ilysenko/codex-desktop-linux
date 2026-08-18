@@ -10,7 +10,7 @@ const test = require("node:test");
 const manifest = require("./feature.json");
 const descriptors = require("./patch.js");
 
-test("computer-use-linux is opt-in and owns the seven Linux descriptors", () => {
+test("computer-use-linux is opt-in and owns the current Linux descriptors", () => {
   assert.equal(manifest.defaultEnabled, false);
   assert.deepEqual(
     descriptors.map(({ id }) => id),
@@ -21,7 +21,6 @@ test("computer-use-linux is opt-in and owns the seven Linux descriptors", () => 
       "native-desktop-apps",
       "ui-availability",
       "host-platform",
-      "install-flow",
     ],
   );
 });

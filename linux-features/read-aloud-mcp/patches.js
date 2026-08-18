@@ -29,8 +29,8 @@ function sourceBoundName(source, pluginName) {
   )?.[1] ?? null;
 }
 
-function buildReadAloudDescriptor(availabilityProp) {
-  return `{installWhenMissing:!0,name:\`${READ_ALOUD_PLUGIN_NAME}\`,${availabilityProp}:({platform:e})=>e===\`linux\`}`;
+function buildReadAloudDescriptor() {
+  return `{installWhenMissing:!0,name:\`${READ_ALOUD_PLUGIN_NAME}\`,isAvailable:({platform:e})=>e===\`linux\`}`;
 }
 
 function findMatchingBracket(source, openIndex) {
@@ -67,45 +67,40 @@ function findMatchingBracket(source, openIndex) {
 }
 
 function findBundledPluginGateArray(source) {
-  let markerIndex = source.indexOf(".computerUse");
-  while (markerIndex !== -1) {
+  const markerPattern = /\.\.\.([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.computerUse\b/g;
+  for (const marker of source.matchAll(markerPattern)) {
+    const markerIndex = marker.index;
     const openIndex = source.lastIndexOf("[", markerIndex);
     if (openIndex === -1) {
-      return null;
+      continue;
     }
     const closeIndex = findMatchingBracket(source, openIndex);
     if (closeIndex !== -1 && markerIndex < closeIndex) {
       const text = source.slice(openIndex + 1, closeIndex);
+      const descriptorNamespace = marker[1];
       if (
-        text.includes("installWhenMissing") &&
-        text.includes("name:") &&
-        /(?:isEnabled|isAvailable):/.test(text)
+        text.includes(`...${descriptorNamespace}.latex,isAvailable:()=>!0`) &&
+        text.includes(`...${descriptorNamespace}.visualize`) &&
+        text.includes(`autoInstallOptOutKey:`) &&
+        text.includes(`${descriptorNamespace}.computerUse.name`)
       ) {
         return {
           start: openIndex + 1,
           end: closeIndex,
           text,
+          descriptorNamespace,
         };
       }
     }
-    markerIndex = source.indexOf(".computerUse", markerIndex + ".computerUse".length);
   }
 
   return null;
 }
 
 function findAlwaysOnBundledDescriptor(pluginGateArray) {
-  const pluginNameExpression =
-    "(?:[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)?|`[^`]+`|\"[^\"]+\"|'[^']+')";
-  const alwaysOnDescriptorRegex = new RegExp(
-    String.raw`\{name:(${pluginNameExpression}),(isEnabled|isAvailable):\(\)=>!0\}`,
-    "g",
-  );
-  let lastMatch = null;
-  for (const match of pluginGateArray.text.matchAll(alwaysOnDescriptorRegex)) {
-    lastMatch = match;
-  }
-  return lastMatch;
+  return new RegExp(
+    String.raw`\{\.\.\.${escapeRegExp(pluginGateArray.descriptorNamespace)}\.latex,isAvailable:\(\)=>!0\}`,
+  ).exec(pluginGateArray.text);
 }
 
 function applyLinuxReadAloudPluginGatePatch(currentSource) {
@@ -126,9 +121,8 @@ function applyLinuxReadAloudPluginGatePatch(currentSource) {
     throw new Error("Required Linux Read Aloud plugin gate patch failed: could not find bundled plugin descriptor insertion point");
   }
 
-  const [_descriptor, _pluginName, availabilityProp] = match;
   const insertionIndex = pluginGateArray.start + match.index;
-  return `${currentSource.slice(0, insertionIndex)}${buildReadAloudDescriptor(availabilityProp)},${currentSource.slice(insertionIndex)}`;
+  return `${currentSource.slice(0, insertionIndex)}${buildReadAloudDescriptor()},${currentSource.slice(insertionIndex)}`;
 }
 
 const descriptors = [

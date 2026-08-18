@@ -11,9 +11,9 @@ function requireName(source, moduleName) {
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_GUARD =
-  "if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);";
+  "if(process.platform!==`darwin`&&process.platform!==`win32`)throw Error(`Remote control device keys are only available on macOS and Windows`);";
 const DEVICE_KEY_GUARD_REPLACEMENT =
-  "if(process.platform===`linux`)return codexLinuxRemoteControlDeviceKeyClient();if(process.platform!==`darwin`)throw Error(`Remote control device keys are only available on macOS`);";
+  "if(process.platform===`linux`)return codexLinuxRemoteControlDeviceKeyClient();if(process.platform!==`darwin`&&process.platform!==`win32`)throw Error(`Remote control device keys are only available on macOS and Windows`);";
 const DEVICE_KEY_REQUIRE_NEEDLE =
   /(?:var|let|const)\s+[A-Za-z_$][\w$]*=\(0,[A-Za-z_$][\w$]*\.createRequire\)\(__filename\),[A-Za-z_$][\w$]*=`remote-control-device-key\.node`/u;
 const REMOTE_CONTROL_SETTINGS_VISIBILITY_NEEDLE =
@@ -870,6 +870,13 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
     }
   }
 
+  if (
+    patched.includes("resumeNotificationBuffer.buffer(") &&
+    patched.includes("threadStartedNotificationDeferral.bufferNotification(")
+  ) {
+    return patched;
+  }
+
   // Hydrate on turn/started and queue later events while that read is in flight.
   if (!patched.includes(REMOTE_MOBILE_NOTIFICATION_QUEUE_MARKER)) {
     const unknownTurnNeedle =
@@ -1428,19 +1435,9 @@ module.exports = [
     pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     order: 20_150,
     ciPolicy: "optional",
-    missingDescription: "app-server manager signals bundle",
-    skipDescription: "Linux remote-mobile conversation hydration patch",
-    apply: applyLinuxRemoteMobileConversationHydrationPatch,
-  },
-  {
-    id: "linux-remote-mobile-completed-item-recovery",
-    phase: "webview-asset",
-    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
-    order: 20_151,
-    ciPolicy: "optional",
     missingDescription: "app-server conversation manager bundle",
-    skipDescription: "Linux remote-mobile completed item recovery patch",
-    apply: applyLinuxRemoteMobileCompletedItemRecoveryPatch,
+    skipDescription: "Linux remote mobile conversation hydration patch",
+    apply: applyLinuxRemoteMobileConversationHydrationPatch,
   },
   {
     id: "linux-remote-terminal-status-recovery",

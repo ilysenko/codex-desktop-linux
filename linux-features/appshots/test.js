@@ -90,14 +90,13 @@ test("appshots stays disabled until listed in features.json", () => {
     fs.writeFileSync(configPath, '{"enabled":["appshots"]}\n');
     const loaded = loadLinuxFeaturePatchDescriptors({ featuresRoot });
 
-    assert.equal(loaded.length, 4);
+    assert.equal(loaded.length, 3);
     assert.deepEqual(
       loaded.map((descriptor) => descriptor.id).sort(),
       [
         "feature:appshots:linux-appshots-availability",
         "feature:appshots:linux-appshots-hotkey",
         "feature:appshots:linux-appshots-main-process",
-        "feature:appshots:linux-appshots-settings-hotkey",
       ].sort(),
     );
     assert.ok(loaded.every((descriptor) => descriptor.ciPolicy === "optional"));
@@ -112,7 +111,7 @@ test("appshots stays disabled until listed in features.json", () => {
 });
 
 test("appshots feature descriptors are optional", () => {
-  assert.equal(descriptors.length, 4);
+  assert.equal(descriptors.length, 3);
   assert.ok(descriptors.every((descriptor) => descriptor.ciPolicy == null));
 });
 

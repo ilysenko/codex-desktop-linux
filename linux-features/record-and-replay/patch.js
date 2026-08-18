@@ -86,28 +86,32 @@ function findMatchingBracket(source, openIndex) {
 }
 
 function findBundledPluginGateArray(source) {
-  let markerIndex = source.indexOf(".computerUse");
-  while (markerIndex !== -1) {
+  const markerPattern = /\.\.\.([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.computerUse\b/g;
+  for (const marker of source.matchAll(markerPattern)) {
+    const markerIndex = marker.index;
     const openIndex = source.lastIndexOf("[", markerIndex);
-    if (openIndex === -1) return null;
+    if (openIndex === -1) continue;
     const closeIndex = findMatchingBracket(source, openIndex);
     if (closeIndex !== -1 && markerIndex < closeIndex) {
       const text = source.slice(openIndex + 1, closeIndex);
-      if (text.includes("installWhenMissing") && text.includes("name:") && text.includes("isAvailable:")) {
-        return { start: openIndex + 1, end: closeIndex, text };
+      const descriptorNamespace = marker[1];
+      if (
+        text.includes(`...${descriptorNamespace}.latex,isAvailable:()=>!0`) &&
+        text.includes(`...${descriptorNamespace}.visualize`) &&
+        text.includes("autoInstallOptOutKey:") &&
+        text.includes(`${descriptorNamespace}.computerUse.name`)
+      ) {
+        return { start: openIndex + 1, end: closeIndex, text, descriptorNamespace };
       }
     }
-    markerIndex = source.indexOf(".computerUse", markerIndex + ".computerUse".length);
   }
   return null;
 }
 
 function findAlwaysOnBundledDescriptor(pluginGateArray) {
-  const pluginNameExpression = "(?:[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)?|`[^`]+`|\"[^\"]+\"|'[^']+')";
-  const regex = new RegExp(String.raw`\{name:(${pluginNameExpression}),isAvailable:\(\)=>!0\}`, "g");
-  let lastMatch = null;
-  for (const match of pluginGateArray.text.matchAll(regex)) lastMatch = match;
-  return lastMatch;
+  return new RegExp(
+    String.raw`\{\.\.\.${escapeRegExp(pluginGateArray.descriptorNamespace)}\.latex,isAvailable:\(\)=>!0\}`,
+  ).exec(pluginGateArray.text);
 }
 
 function applyRecordReplayPluginGatePatch(currentSource) {

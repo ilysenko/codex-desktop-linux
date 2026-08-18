@@ -44,8 +44,8 @@ What it changes:
   desktop can authorize outbound control of another enrolled device.
 - Refreshes the remote Connections settings state every 5 seconds and
   immediately after focus, visibility, online, or resume signals.
-- Recovers a completed remote stream item when its matching started item is
-  missing from the local turn state.
+- Relies on the current upstream resume-notification and thread-start deferral
+  buffers to preserve remote stream ordering during conversation hydration.
 - Recovers stale remote terminal status when `waitingOnUserInput` remains active
   after the matching input request has already cleared.
 - Keeps local Linux Remote turns on `summary = "none"` unless a turn explicitly
@@ -125,8 +125,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state only after the last external controller is removed. |
 | `linux-remote-connections-refresh` | `shared-boundary` | Refreshes the shared Connections list without starting or enabling any host runtime. |
 | `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Prevents inherited or rollout-forced reasoning summaries from polluting this host's mobile transcript. |
-| `linux-remote-mobile-conversation-hydration` | `mobile-host` | Hydrates and replays mobile notifications for conversations missing locally. |
-| `linux-remote-mobile-completed-item-recovery` | `mobile-host` | Reconciles a completed mobile item with missing local started state. |
+| `linux-remote-mobile-conversation-hydration` | `mobile-host` | Normalizes active thread runtime state while relying on upstream notification deferral for conversation hydration. |
 | `linux-remote-terminal-status-recovery` | `mobile-host` | Reconciles stale mobile terminal state with actual pending requests. |
 | `linux-remote-control-status-read-guard` | `shared-boundary` | Sends `remoteControl/status/read` only to the local host, never Remote SSH or remote-control environment hosts. |
 | `linux-remote-control-status-wait` | `shared-boundary` | Gives the selected host a Linux-specific connection convergence window without changing host ownership. |

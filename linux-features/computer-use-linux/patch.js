@@ -5,12 +5,10 @@ const {
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseHostPlatformPatch,
-  applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxComputerUseRendererAvailabilityPatch,
   applyLinuxNativeDesktopAppsHandlerPatch,
   matchesLinuxComputerUseHostPlatformContract,
-  matchesLinuxComputerUseInstallFlowContract,
 } = require("../../scripts/patches/impl/computer-use.js");
 
 module.exports = [
@@ -62,16 +60,5 @@ module.exports = [
     missingDescription: "current Computer Use host-platform app-initial contract",
     skipDescription: "Linux Computer Use host-platform patch",
     apply: applyLinuxComputerUseHostPlatformPatch,
-  }),
-  webviewAssetPatch({
-    id: "install-flow",
-    phase: "webview-asset",
-    order: 20_160,
-    ciPolicy: "optional",
-    pattern: /^app-initial-[^.]+\.js$/,
-    assetMatch: matchesLinuxComputerUseInstallFlowContract,
-    missingDescription: "current Computer Use install flow app-initial contract",
-    skipDescription: "Linux Computer Use install flow patch",
-    apply: applyLinuxComputerUseInstallFlowPatch,
   }),
 ];
