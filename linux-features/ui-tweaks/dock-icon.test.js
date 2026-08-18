@@ -23,9 +23,9 @@ const {
 } = require("./patches/dock-icon.js");
 
 const currentAppInfoSource = [
-  "function NS(e){return{dark:`icon-codex-dark-color.png`,light:`icon-codex-light.png`}}",
-  "function zoe(e,t){if(process.platform!==`darwin`||t==null)return null;let n=NS(e),r=sS(`${MS(e,t)}.png`),i=sS(n.dark),a=sS(n.light);return r==null||i==null||a==null?null:{appDefault:r,codexDark:i,codexLight:a}}",
-  "function sS(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null,n=t!=null&&(0,_.existsSync)(t)?t:(0,p.join)(l.app.getAppPath(),`src`,`icons`,e),r=l.nativeImage.createFromPath(n);return r.isEmpty()?null:r.resize({width:128,height:128,quality:`best`}).toDataURL()}",
+  "function Wb(e){return{dark:`icon-codex-dark-color.png`,light:`icon-codex-light.png`}}",
+  "function Yb(e,t){if(process.platform!==`darwin`||t==null)return null;let n=Wb(e),r=Xb(`${Ub(e,t)}.png`),i=Xb(n.dark),a=Xb(n.light);return r==null||i==null||a==null?null:{appDefault:r,codexDark:i,codexLight:a}}",
+  "function Xb(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null,n=t!=null&&(0,_.existsSync)(t)?t:(0,p.join)(l.app.getAppPath(),`src`,`icons`,e),r=l.nativeImage.createFromPath(n);return r.isEmpty()?null:r.resize({width:128,height:128,quality:`best`}).toDataURL()}",
 ].join("");
 
 const currentRuntimeSource = [
@@ -33,13 +33,13 @@ const currentRuntimeSource = [
   "let E=(0,p.join)(g,`electron`,`src`,`icons`),D=e=>{if(!l.app.isPackaged)return null;let t=(0,p.join)(process.resourcesPath,e);return(0,_.existsSync)(t)?t:null},",
   "O=e=>null,k=e=>D(e)??O(e),A=()=>f.get(n.qs.DOCK_ICON_PREFERENCE)??`app-default`,j=()=>k(`${MS(i,e)}.png`),M=process.platform===`linux`?G5(i,e,E):null,N=NS(i),P=()=>l.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?N.dark:N.light,",
   "F=t=>{if(t===`app-default`&&i!==a.a.Dev&&(l.app.isPackaged||e===n.Zc.ChatGPT)){let e=l.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let r=t===`codex-system`?P():null,o=(r==null?null:k(r))??j(),s=o==null?l.nativeImage.createEmpty():l.nativeImage.createFromPath(o);if(!s.isEmpty()){if(t===`codex-system`){let{width:e,height:t}=s.getSize(),n=Math.round(e/128);s=s.crop({x:n,y:n,width:e-n*2,height:t-n*2})}l.app.dock?.setIcon(s)}},",
-  "I=()=>{if(!v)return;let e=A();F(e),sde({preference:e,resourceName:e===`codex-system`?N.light:null}).then(e=>{e&&F(A())})};",
+  "I=()=>{if(!v)return;let e=A();F(e),nde({preference:e,resourceName:e===`codex-system`?N.light:null}).then(e=>{e&&F(A())})};",
   "if(v){I();let e=()=>{let e=A();e===`codex-system`&&F(e)};l.nativeTheme.on(`updated`,e),T.add(()=>{l.nativeTheme.off(`updated`,e)})}",
   "let L=null,R=new VTe({onWindowRegistered:e=>{L?.registerWindow(e),w?.(e)}});return{updateDockIcon:I,windowManager:R}}",
 ].join("");
 
 const currentTraySource =
-  "let V9=null,H9=null,W9=!1;async function zje(e){let t=e.buildFlavor,n=await Bje(t,e.appBrand,e.repoRoot),i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?Mje(t):void 0);if(!W9)return i.destroy(),null;return V9=new FEe(i)}";
+  "let V9=null,H9=null,W9=!1;async function zje(e){let t=e.buildFlavor,n=await Bje(t,e.appBrand,e.repoRoot),i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?Uje(t):void 0);if(!W9)return i.destroy(),null;return V9=new FEe(i)}";
 
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
 const currentSettingsSource =
@@ -194,13 +194,13 @@ test("main patch rejects drift at every official-package insertion point byte-id
   const patched = applyDockIconMainPatch(currentMainSource);
   const currentPoints = [
     "if(process.platform!==`darwin`||t==null)return null",
-    "function sS(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null",
+    "function Xb(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null",
     "D=e=>{if(!l.app.isPackaged)return null;let t=(0,p.join)(process.resourcesPath,e);return(0,_.existsSync)(t)?t:null}",
     "F=t=>{if(t===`app-default`",
     "I=()=>{if(!v)return;",
     "if(v){I();let e=()=>",
     "onWindowRegistered:e=>{L?.registerWindow(e),w?.(e)}",
-    "i=new l.Tray(n.defaultIcon,process.platform===`win32`",
+    "i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?Uje(t)",
   ];
   const patchedPoints = [
     "if(process.platform!==`darwin`&&process.platform!==`linux`||t==null)return null",
