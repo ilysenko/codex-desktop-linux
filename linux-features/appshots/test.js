@@ -16,7 +16,6 @@ const {
   applyLinuxAppshotAvailabilityPatch,
   applyLinuxAppshotHotkeyPatch,
   applyLinuxAppshotMainProcessPatch,
-  applyLinuxAppshotSettingsHotkeyPatch,
   descriptors,
 } = require("./patch.js");
 
@@ -60,19 +59,6 @@ function currentAppshotHotkeyMainBundleFixture() {
     "function Mk(e,t,n=`press`){if(process.platform!==`darwin`)return null;let r=zk(e);return r==null?null:Nk(r,t,n)}",
     "var B8=class{configuredHotkey;registration=null;windowsCaptureNativeBridgeFailed=!1;constructor(e){this.enabled=!0,this.windowsCaptureNativeBridge=null;let a=e.getStored(`appshotHotkey`);a===void 0?this.configuredHotkey=process.platform===`win32`?T8:R8:this.configuredHotkey=a}getState(){return{supported:this.enabled&&(process.platform===`darwin`||process.platform===`win32`&&this.windowsCaptureNativeBridge!=null&&!this.windowsCaptureNativeBridgeFailed),configuredHotkey:this.configuredHotkey,isActive:this.registration!=null}}};",
     "globalThis.AppshotHotkeys=B8;",
-  ].join("");
-}
-
-function currentAppshotSettingsBundleFixture() {
-  return "let d=state,v=d?.configuredHotkey??null,i=platform,n=intl,X=messages,Y=macOptions;let t=i===`windows`?[{hotkey:`DoubleAlt`,label:n.formatMessage(X.doubleAlt)},{hotkey:`DoubleShift`,label:n.formatMessage(X.doubleShift)}]:Y,r=t.find(e=>e.hotkey===v)??null,T=t.map(e=>e.label);";
-}
-
-function currentAppshotSettingsRuntimeFixture() {
-  return [
-    "let o={configuredHotkey:`DoubleOption`,linuxWayland:!1},i=`linux`,n={formatMessage:e=>e},X={doubleAlt:`Alt`,doubleShift:`Shift`},Y=[{hotkey:`DoubleCommand`,label:`Command`}];",
-    "function render(){let f=o?.configuredHotkey??null;let t=i===`windows`?[{hotkey:`DoubleAlt`,label:n.formatMessage(X.doubleAlt)},{hotkey:`DoubleShift`,label:n.formatMessage(X.doubleShift)}]:Y,r=t.find(e=>e.hotkey===f)??null;return{selected:r,labels:t.map(e=>e.label)}}",
-    "globalThis.result=render();",
-    "\n//# sourceMappingURL=fixture.js.map",
   ].join("");
 }
 
@@ -486,57 +472,5 @@ test("AppShots hotkey patch rejects duplicate current class contracts", () => {
     assert.equal(applyLinuxAppshotHotkeyPatch(duplicate), duplicate);
   }), [
     "WARN: Could not find current AppShots hotkey class - skipping Linux AppShots hotkey patch",
-  ]);
-});
-
-test("shows Linux AppShots accelerator choices in current settings chunk", () => {
-  const patched = applyPatchTwice(
-    applyLinuxAppshotSettingsHotkeyPatch,
-    currentAppshotSettingsBundleFixture(),
-  );
-
-  assert.match(patched, /function codexLinuxAppshotHotkeyOptions\(e,t,n,r,i\)/);
-  assert.match(
-    patched,
-    /codexLinuxAppshotHotkeyOptions\(d,i,n,X,Y\)/,
-  );
-  assert.match(patched, /r=t\.find/);
-  assert.match(patched, /T=t\.map/);
-  assert.match(patched, /hotkey:`DoubleOption`,label:`Alt \+ Alt`/);
-  assert.match(patched, /hotkey:`Ctrl\+Super\+A`,label:`Ctrl \+ Super \+ A`/);
-});
-
-test("current AppShots settings helper is declared in strict module scope", () => {
-  const patched = applyPatchTwice(
-    applyLinuxAppshotSettingsHotkeyPatch,
-    currentAppshotSettingsRuntimeFixture(),
-  );
-  const context = {
-    globalThis: {},
-    navigator: { userAgent: "Linux" },
-  };
-
-  vm.runInNewContext(`"use strict";${patched}`, context);
-
-  assert.equal(context.globalThis.result.selected.hotkey, "DoubleOption");
-  assert.deepEqual(
-    Array.from(context.globalThis.result.labels),
-    ["Alt + Alt", "Shift + Shift", "Ctrl + Super + A"],
-  );
-  assert.doesNotMatch(patched, /,codexLinuxAppshotHotkeyOptions=/);
-  assert.ok(
-    patched.indexOf("function codexLinuxAppshotHotkeyOptions") <
-      patched.indexOf("//# sourceMappingURL=fixture.js.map"),
-  );
-  assert.ok(patched.endsWith("//# sourceMappingURL=fixture.js.map"));
-});
-
-test("AppShots settings patch fails closed when one option call site drifts", () => {
-  const source = currentAppshotSettingsRuntimeFixture().replace("i===`windows`", "i===`win32`");
-
-  assert.deepEqual(captureWarnings(() => {
-    assert.equal(applyLinuxAppshotSettingsHotkeyPatch(source), source);
-  }), [
-    "WARN: Could not find current AppShots settings hotkey option call site - skipping Linux AppShots settings patch",
   ]);
 });

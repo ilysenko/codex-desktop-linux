@@ -34,7 +34,6 @@ const {
   applyLinuxRemoteMobileAppServerRemoteControlPatch,
   hasLinuxRemoteMobileLocalAppServerRemoteControlPatch,
   applyLinuxRemoteMobileChromeBridgePatch,
-  applyLinuxRemoteMobileCompletedItemRecoveryPatch,
   applyLinuxRemoteMobileConversationHydrationPatch,
   applyLinuxRemoteMobileReasoningSummaryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
@@ -323,24 +322,10 @@ function syntheticModernChromeBrowserClientBundle() {
   ].join("");
 }
 
-function syntheticAppServerManagerSignalsBundle() {
+function syntheticCurrentAppServerManagerSignalsBundle() {
   return [
     "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
-    "function cleanup(){}class T{unread={discardTurn(){}};itemStreamState={clearItemTerminalInputBuffer(){}};onNotification(e,t){let n={method:e,params:t};switch(n.method){case`turn/started`:{let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){z.error(`Received turn/started for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}this.markConversationStreaming(r),this.updateConversationState(r,e=>{});break}case`turn/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`turn/completed`,n.params)}))break;let{threadId:e,turn:t}=n.params,r=I(e);if(!this.conversations.get(r)){cleanup(this.hostId,e,t.id),this.unread.discardTurn(r,t.id),z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}break}case`item/started`:{let{item:e,threadId:t,turnId:r,startedAtMs:i}=n.params,a=I(t);if(!this.conversations.get(a)){z.error(`Received item/started for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.markConversationStreaming(a),this.updateConversationState(a,t=>{});break}case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;let{item:e,threadId:t,turnId:r,completedAtMs:i}=n.params,a=I(t);if(e.type===`commandExecution`&&this.itemStreamState.clearItemTerminalInputBuffer(a,e.id),!this.conversations.get(a)){z.error(`Received item/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}this.updateConversationState(a,t=>{});break}}}}",
-  ].join("");
-}
-
-function syntheticCompletedItemRecoveryBundle() {
-  return [
-    "class U{onNotification(e,t){let n={method:e,params:t};switch(n.method){case`item/completed`:{if(this.frameTextDeltaQueue.drainBefore(()=>{this.onNotification(`item/completed`,n.params)}))break;",
-    "let{item:e,threadId:t,turnId:r,completedAtMs:i}=n.params,a=qf(t);if(!this.conversations.get(a)){$.error(`Received item/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}",
-    "this.updateConversationState(a,t=>{let n=e.type===`userMessage`?gI(t,r):r==null?uI(t):fI(t,e=>e.turnId===r);if(!n)return;aR(n);",
-    "let a=Jtt({item:e,threadsById:this.threadStore.threadsById,onCollabAgentToolCall:e=>{this.hydrateCollabThreads(e.receiverThreadIds)}}),o=a.type===`contextCompaction`?n.items.find(e=>e.type===`contextCompaction`&&e.id===a.id):null;",
-    "if(a.type===`commandExecution`){let e=a.durationMs==null?null:i-a.durationMs;e!=null&&(n.commandExecutionStartedAtMsById??={},n.commandExecutionStartedAtMsById[a.id]??=e)}",
-    "let s=FF(a.type===`contextCompaction`?{...a,completed:!0,source:o?.type===`contextCompaction`&&`source`in o?o.source:`automatic`}:a);",
-    "if(e.type===`userMessage`){let t=Put(n.items,e.content,n.turnId,n.turnStartedAtMs,!1);if(t!=null){t.status=`accepted`,HI(n,FF({type:`steered`,id:e.id}));return}HI(n,s);return}",
-    "if(e.type===`hookPrompt`){bP(n,s);return}",
-    "yV(e)&&(n.firstTurnWorkItemStartedAtMs=n.firstTurnWorkItemStartedAtMs??Date.now()),!(e.type!==`subAgentActivity`&&(e.type!==`sleep`||t.mode!==`durable`)&&!LB(n,e.id,e.type))&&(e.type,bP(n,s))});break}}}}",
+    "class T{onNotification(e){this.resumeNotificationBuffer.buffer(e);this.threadStartedNotificationDeferral.bufferNotification(e)}}",
   ].join("");
 }
 
@@ -1803,555 +1788,49 @@ test("Linux remote mobile Chrome bridge patch warns when browser-client needles 
   assert.ok(warnings.some((warning) => warning.includes("backend allowlist needles")));
 });
 
-test("Linux remote mobile conversation hydration patch handles current app-server signal shape", () => {
-  const source = syntheticAppServerManagerSignalsBundle();
+test("Linux remote mobile runtime normalization uses current upstream notification buffers", () => {
+  const source = syntheticCurrentAppServerManagerSignalsBundle();
   const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteMobileThreadRuntimeStatus/);
   assert.match(patched, /h\?\.type===`active`\|\|h\?\.type===`idle`/);
-  assert.match(patched, /codexLinuxRemoteMobileHydrateUnknownTurn/);
-  assert.match(patched, /codexLinuxRemoteMobileNotificationQueue/);
-  assert.match(patched, /codexLinuxRemoteMobileHydrationInFlight/);
-  assert.match(patched, /n\.params\?\.turn\?\.threadId\?\?n\.params\?\.thread\?\.id/);
-  assert.doesNotMatch(patched, /n\.params\?\.threadId/);
-  assert.match(patched, /Skipping hydration for ambiguous turn\/started/);
-  assert.match(patched, /codexLinuxRemoteMobilePendingNotifications\?\?=new Map/);
-  assert.match(patched, /codexLinuxRemoteMobileInFlightHydrations\?\?=new Set/);
-  assert.match(patched, /dedupedNotification:p>=0/);
-  assert.match(patched, /this\.readThread\(d,\{includeTurns:!0\}\)/);
-  assert.match(patched, /Hydrating conversation for turn\/started/);
-  assert.match(patched, /Queueing turn\/started for hydrating conversation/);
-  assert.match(patched, /this\.upsertConversationFromThread\(t\)/);
-  assert.match(patched, /this\.codexLinuxRemoteMobileInFlightHydrations\?\.delete\(d\)/);
-  assert.match(patched, /for\(let e of c\)this\.onNotification\(e\.method,e\.params\)/);
-  assert.match(patched, /Queueing item\/started for hydrating conversation/);
-  assert.match(patched, /Queueing item\/completed for hydrating conversation/);
-  assert.match(patched, /Queueing turn\/completed for hydrating conversation/);
-  assert.doesNotMatch(patched, /safe:\{[^}]*\b(?:conversationId|resolvedConversationId|turnId):/);
-  assert.match(patched, /sensitive:\{conversationId:[^}]+resolvedConversationId:[^}]+turnId:/);
-  assert.match(patched, /sensitive:\{conversationId:[^}]+error:/);
-  assert.doesNotMatch(patched, /captureBrowserUseTurnRoute/);
-  assert.doesNotMatch(patched, /releaseBrowserUseTurnRoute/);
+  assert.match(patched, /resumeNotificationBuffer\.buffer\(e\)/);
+  assert.match(patched, /threadStartedNotificationDeferral\.bufferNotification\(e\)/);
+  assert.doesNotMatch(patched, /codexLinuxRemoteMobilePendingNotifications/);
+  assert.doesNotMatch(patched, /codexLinuxRemoteMobileHydrat(?:e|ion)/);
+  assert.doesNotMatch(patched, /codexLinuxCompletedItemExists/);
   assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(patched), patched);
-});
 
-test("Linux remote mobile hydration skips turn ids before reading threads", () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  manager.conversations = new Map();
-  manager.readThread = () => {
-    throw new Error("readThread should not be called for ambiguous turn ids");
-  };
-
-  manager.onNotification("turn/started", {
-    threadId: "turn-a",
-    turn: { id: "turn-a" },
-  });
-});
-
-test("Linux remote mobile hydration uses captured turn id normalizer helper", () => {
-  const source = syntheticAppServerManagerSignalsBundle().replaceAll("I(", "J(");
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-
-  assert.match(patched, /J\(l\)/);
-  assert.match(patched, /J\(u\)/);
-  assert.doesNotMatch(patched, /I\(l\)/);
-  assert.doesNotMatch(patched, /I\(u\)/);
-
-  const context = {
-    module: { exports: {} },
-    J: (value) => value,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  manager.conversations = new Map();
-  manager.readThread = () => {
-    throw new Error("readThread should not be called for ambiguous turn ids");
-  };
-
-  manager.onNotification("turn/started", {
-    threadId: "turn-a",
-    turn: { id: "turn-a" },
-  });
-});
-
-test("Linux remote mobile hydration ignores top-level thread ids without nested thread identity", () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  manager.conversations = new Map();
-  manager.readThread = () => {
-    throw new Error("readThread should not be called without nested thread identity");
-  };
-
-  manager.onNotification("turn/started", {
-    threadId: "thread-a",
-    turn: { id: "turn-a" },
-  });
-});
-
-test("Linux remote mobile hydration uses nested real thread ids", async () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    setTimeout,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  const readThreadIds = [];
-  const streamed = [];
-  manager.conversations = new Map();
-  manager.readThread = async (threadId) => {
-    readThreadIds.push(threadId);
-    return { thread: { id: threadId }, turns: [{ id: "turn-a" }] };
-  };
-  manager.upsertConversationFromThread = (thread) => {
-    manager.conversations.set(thread.id, thread);
-  };
-  manager.markConversationStreaming = (threadId) => {
-    streamed.push(threadId);
-  };
-  manager.updateConversationState = () => {};
-
-  manager.onNotification("turn/started", {
-    threadId: "turn-a",
-    turn: { id: "turn-a", threadId: "thread-a" },
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(readThreadIds, ["thread-a"]);
-  assert.deepEqual(streamed, ["thread-a"]);
-});
-
-test("Linux remote mobile hydration recovers when a completed turn is the first observed event", async () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    setTimeout,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  const readThreadIds = [];
-
-  manager.conversations = new Map();
-  manager.frameTextDeltaQueue = { drainBefore: () => false };
-  manager.readThread = async (threadId) => {
-    readThreadIds.push(threadId);
-    return { thread: { id: threadId }, turns: [{ id: "turn-a" }] };
-  };
-  manager.upsertConversationFromThread = (thread) => {
-    manager.conversations.set(thread.id, thread);
-  };
-
-  manager.onNotification("turn/completed", {
-    threadId: "thread-a",
-    turn: { id: "turn-a", threadId: "thread-a", status: "completed" },
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(readThreadIds, ["thread-a"]);
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications?.has("thread-a"), false);
-  assert.equal(manager.codexLinuxRemoteMobileInFlightHydrations?.has("thread-a"), false);
-});
-
-test("Linux remote mobile hydration recovers when a completed item is the first observed event", async () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    setTimeout,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  const readThreadIds = [];
-  const updatedConversations = [];
-
-  manager.conversations = new Map();
-  manager.frameTextDeltaQueue = { drainBefore: () => false };
-  manager.readThread = async (threadId) => {
-    readThreadIds.push(threadId);
-    return { thread: { id: threadId }, turns: [{ id: "turn-a" }] };
-  };
-  manager.upsertConversationFromThread = (thread) => {
-    manager.conversations.set(thread.id, thread);
-  };
-  manager.updateConversationState = (threadId) => {
-    updatedConversations.push(threadId);
-  };
-
-  manager.onNotification("item/completed", {
-    item: { id: "item-a", type: "agentMessage" },
-    threadId: "thread-a",
-    turnId: "turn-a",
-    completedAtMs: 1,
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(readThreadIds, ["thread-a"]);
-  assert.deepEqual(updatedConversations, ["thread-a"]);
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications?.has("thread-a"), false);
-  assert.equal(manager.codexLinuxRemoteMobileInFlightHydrations?.has("thread-a"), false);
-});
-
-test("Linux remote mobile hydration does not upsert summary-only conversations", async () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  let scheduledRetry = null;
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    setTimeout(callback) {
-      scheduledRetry = callback;
-      return 1;
+  const context = { module: { exports: {} } };
+  vm.runInNewContext(`${patched};module.exports=Of;`, context);
+  const normalize = context.module.exports;
+  const conversation = { resumeState: null, threadRuntimeStatus: null };
+  const input = {
+    conversationId: "thread-a",
+    conversations: new Map([["thread-a", conversation]]),
+    thread: { status: { type: "active" } },
+    updateConversationState(_id, update) {
+      update(conversation);
     },
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  const readThreadIds = [];
-  const upsertedThreads = [];
-
-  manager.conversations = new Map();
-  manager.frameTextDeltaQueue = { drainBefore: () => false };
-  manager.readThread = async (threadId) => {
-    readThreadIds.push(threadId);
-    return { thread: { id: threadId }, turns: [] };
-  };
-  manager.upsertConversationFromThread = (thread) => {
-    upsertedThreads.push(thread.id);
-    manager.conversations.set(thread.id, thread);
   };
 
-  manager.onNotification("turn/completed", {
-    threadId: "thread-a",
-    turn: { id: "turn-a", threadId: "thread-a", status: "completed" },
-  });
-  await new Promise((resolve) => setImmediate(resolve));
+  normalize(input);
+  assert.equal(conversation.threadRuntimeStatus.type, "active");
 
-  assert.deepEqual(readThreadIds, ["thread-a"]);
-  assert.deepEqual(upsertedThreads, []);
-  assert.equal(manager.conversations.has("thread-a"), false);
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications?.has("thread-a"), true);
-  assert.equal(manager.codexLinuxRemoteMobileInFlightHydrations?.has("thread-a"), true);
-  assert.equal(typeof scheduledRetry, "function");
-});
+  conversation.threadRuntimeStatus = null;
+  input.thread.status = { type: "idle" };
+  normalize(input);
+  assert.equal(conversation.threadRuntimeStatus.type, "idle");
 
-test("Linux remote mobile hydration restarts when a pending queue exists without an in-flight read", async () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    setTimeout,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  const readThreadIds = [];
-  const updatedConversations = [];
-  let resolveRead;
+  conversation.threadRuntimeStatus = null;
+  input.thread.status = { type: "notLoaded" };
+  normalize(input);
+  assert.equal(conversation.threadRuntimeStatus, null);
 
-  manager.conversations = new Map();
-  manager.frameTextDeltaQueue = { drainBefore: () => false };
-  manager.codexLinuxRemoteMobilePendingNotifications = new Map([
-    [
-      "thread-a",
-      [
-        {
-          method: "turn/completed",
-          params: { threadId: "thread-a", turn: { id: "turn-a", threadId: "thread-a" } },
-        },
-      ],
-    ],
-  ]);
-  manager.readThread = (threadId) => {
-    readThreadIds.push(threadId);
-    return new Promise((resolve) => {
-      resolveRead = () => resolve({ thread: { id: threadId }, turns: [{ id: "turn-a" }] });
-    });
-  };
-  manager.upsertConversationFromThread = (thread) => {
-    manager.conversations.set(thread.id, thread);
-  };
-  manager.updateConversationState = (threadId) => {
-    updatedConversations.push(threadId);
-  };
-
-  manager.onNotification("item/completed", {
-    item: { id: "item-a", type: "agentMessage" },
-    threadId: "thread-a",
-    turnId: "turn-a",
-    completedAtMs: 1,
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(readThreadIds, ["thread-a"]);
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications.get("thread-a").length, 2);
-  assert.equal(manager.codexLinuxRemoteMobileInFlightHydrations.has("thread-a"), true);
-
-  resolveRead();
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications?.has("thread-a"), false);
-  assert.equal(manager.codexLinuxRemoteMobileInFlightHydrations?.has("thread-a"), false);
-  assert.deepEqual(updatedConversations, ["thread-a"]);
-});
-
-test("Linux remote mobile hydration dedupes concurrent unknown turn reads", async () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    setTimeout,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  const readThreadIds = [];
-  const streamed = [];
-  let resolveRead;
-
-  manager.conversations = new Map();
-  manager.readThread = (threadId) => {
-    readThreadIds.push(threadId);
-    return new Promise((resolve) => {
-      resolveRead = () => resolve({ thread: { id: threadId }, turns: [{ id: "turn-a" }] });
-    });
-  };
-  manager.upsertConversationFromThread = (thread) => {
-    manager.conversations.set(thread.id, thread);
-  };
-  manager.markConversationStreaming = (threadId) => {
-    streamed.push(threadId);
-  };
-  manager.updateConversationState = () => {};
-
-  manager.onNotification("turn/started", {
-    threadId: "turn-a",
-    turn: { id: "turn-a", threadId: "thread-a" },
-  });
-  manager.onNotification("turn/started", {
-    threadId: "turn-b",
-    turn: { id: "turn-b", threadId: "thread-a" },
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(readThreadIds, ["thread-a"]);
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications.get("thread-a").length, 2);
-  assert.equal(manager.codexLinuxRemoteMobileInFlightHydrations.has("thread-a"), true);
-
-  resolveRead();
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications.has("thread-a"), false);
-  assert.equal(manager.codexLinuxRemoteMobileInFlightHydrations.has("thread-a"), false);
-  assert.deepEqual(streamed, ["thread-a", "thread-a"]);
-});
-
-test("Linux remote mobile hydration coalesces duplicate pending turn starts", async () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    setTimeout,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  const readThreadIds = [];
-  const streamed = [];
-  let resolveRead;
-
-  manager.conversations = new Map();
-  manager.readThread = (threadId) => {
-    readThreadIds.push(threadId);
-    return new Promise((resolve) => {
-      resolveRead = () => resolve({ thread: { id: threadId }, turns: [{ id: "turn-a" }] });
-    });
-  };
-  manager.upsertConversationFromThread = (thread) => {
-    manager.conversations.set(thread.id, thread);
-  };
-  manager.markConversationStreaming = (threadId) => {
-    streamed.push(threadId);
-  };
-  manager.updateConversationState = () => {};
-
-  manager.onNotification("turn/started", {
-    threadId: "turn-a",
-    turn: { id: "turn-a", threadId: "thread-a", marker: "first" },
-  });
-  manager.onNotification("turn/started", {
-    threadId: "turn-a",
-    turn: { id: "turn-a", threadId: "thread-a", marker: "latest" },
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(readThreadIds, ["thread-a"]);
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications.get("thread-a").length, 1);
-  assert.equal(
-    manager.codexLinuxRemoteMobilePendingNotifications.get("thread-a")[0].params.turn.marker,
-    "latest",
-  );
-
-  resolveRead();
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications.has("thread-a"), false);
-  assert.equal(manager.codexLinuxRemoteMobileInFlightHydrations.has("thread-a"), false);
-  assert.deepEqual(streamed, ["thread-a"]);
-});
-
-test("Linux remote mobile hydration does not coalesce non-turn pending events", async () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  const context = {
-    module: { exports: {} },
-    I: (value) => value,
-    setTimeout,
-    z: { error() {}, warning() {} },
-  };
-  vm.runInNewContext(`${patched};module.exports=T;`, context);
-  const manager = new context.module.exports();
-  let resolveRead;
-
-  manager.conversations = new Map();
-  manager.readThread = (threadId) => {
-    return new Promise((resolve) => {
-      resolveRead = () => resolve({ thread: { id: threadId }, turns: [{ id: "turn-a" }] });
-    });
-  };
-  manager.upsertConversationFromThread = (thread) => {
-    manager.conversations.set(thread.id, thread);
-  };
-  manager.markConversationStreaming = () => {};
-  manager.updateConversationState = () => {};
-
-  manager.onNotification("turn/started", {
-    threadId: "thread-a",
-    turn: { threadId: "thread-a", marker: "missing-turn-id" },
-  });
-  manager.onNotification("item/started", {
-    item: { id: "item-a" },
-    threadId: "thread-a",
-    turnId: "turn-a",
-    startedAtMs: 1,
-  });
-  manager.onNotification("turn/started", {
-    threadId: "turn-a",
-    turn: { id: "turn-a", threadId: "thread-a", marker: "identified-turn" },
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  const pending = manager.codexLinuxRemoteMobilePendingNotifications.get("thread-a");
-  assert.equal(pending.length, 3);
-  assert.deepEqual(
-    Array.from(pending, (notification) => notification.method),
-    ["turn/started", "item/started", "turn/started"],
-  );
-
-  resolveRead();
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(manager.codexLinuxRemoteMobilePendingNotifications.has("thread-a"), false);
-});
-
-test("Linux remote mobile conversation hydration patch retries transient and missing thread reads", () => {
-  const source = syntheticAppServerManagerSignalsBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-
-  assert.match(patched, /Retrying hydration for turn\/started/);
-  assert.match(patched, /Retrying hydration for missing conversation/);
-  assert.match(patched, /Skipping hydration for missing conversation/);
-  assert.match(patched, /if\(s<12\)/);
-  assert.match(patched, /setTimeout\(\(\)=>o\(s\+1\),250\)/);
-  assert.match(patched, /Failed to hydrate conversation for turn\/started/);
-});
-
-test("Linux remote mobile conversation hydration patch warns when only part of the queue drifted", () => {
-  const source = syntheticAppServerManagerSignalsBundle().replace(
-    "if(!this.conversations.get(r)){cleanup(this.hostId,e,t.id),this.unread.discardTurn(r,t.id),z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}",
-    "if(!this.conversations.get(r)){cleanup(this.hostId,e,t.id),this.unread.discardTurn(r,t.id),z.error(`Received turn/completed for unknown conversation`,{safe:{id:r},sensitive:{}});break}",
-  );
-  const { result, warnings } = captureWarnings(() => applyLinuxRemoteMobileConversationHydrationPatch(source));
-
-  assert.notEqual(result, source);
-  assert.match(result, /codexLinuxRemoteMobileHydrateUnknownTurn/);
-  assert.ok(warnings.some((warning) => warning.includes("unknown turn/completed needle")));
-});
-
-test("remote mobile completed-item recovery restores a missing started item", () => {
-  const source = syntheticCompletedItemRecoveryBundle();
-  const patched = applyLinuxRemoteMobileCompletedItemRecoveryPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.equal(applyLinuxRemoteMobileCompletedItemRecoveryPatch(patched), patched);
-  assert.match(patched, /codexLinuxCompletedItemExists=n\.items\.some\(e=>e\.id===s\.id\)/);
-  assert.match(
-    patched,
-    /if\(e\.type!==`subAgentActivity`&&\(e\.type!==`sleep`\|\|t\.mode!==`durable`\)&&codexLinuxCompletedItemExists&&!LB\(n,e\.id,e\.type\)\)return;bP\(n,s\)/,
-  );
-
-  const context = {};
-  vm.runInNewContext(
-    [
-      "let errors=[];",
-      "var $={error:(message,details)=>errors.push({message,details})};",
-      "function qf(e){return e}",
-      "function fI(e,t){return e.turns.find(t)}",
-      "function gI(){throw Error(`unexpected userMessage path`)}",
-      "function uI(){throw Error(`unexpected null turn path`)}",
-      "function aR(){}",
-      "function yV(){return true}",
-      "function Jtt({item:e}){return {type:e.type,id:e.id,text:e.text??null}}",
-      "function FF(e){return e}",
-      "function bP(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
-      "function LB(e,t,n){let r=e.items.find(e=>e.id===t&&e.type===n);if(r)return r;$.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}});return null}",
-      "function Put(){return null}",
-      patched,
-      "function run(items){errors=[];let turn={turnId:`turn-1`,items:items.map(e=>({...e}))},conversation={turns:[turn]},manager=new U;manager.frameTextDeltaQueue={drainBefore:()=>false};manager.conversations=new Map([[`thread-1`,{}]]);manager.threadStore={threadsById:new Map};manager.hydrateCollabThreads=()=>{};manager.updateConversationState=(id,fn)=>fn(conversation);manager.onNotification(`item/completed`,{item:{type:`agentMessage`,id:`assistant-1`,text:`done`},threadId:`thread-1`,turnId:`turn-1`,completedAtMs:100});return {items:turn.items,errors}}",
-      "result={missing:run([]),existing:run([{type:`agentMessage`,id:`assistant-1`,text:`old`}]),wrongType:run([{type:`plan`,id:`assistant-1`,text:`old`}])};",
-    ].join(";"),
-    context,
-  );
-  const behavior = JSON.parse(JSON.stringify(context.result));
-  assert.deepEqual(behavior.missing.items, [
-    { type: "agentMessage", id: "assistant-1", text: "done" },
-  ]);
-  assert.deepEqual(behavior.existing.items, [
-    { type: "agentMessage", id: "assistant-1", text: "done" },
-  ]);
-  assert.deepEqual(behavior.wrongType.items, [
-    { type: "plan", id: "assistant-1", text: "old" },
-  ]);
-  assert.equal(behavior.missing.errors.length, 0);
-  assert.equal(behavior.existing.errors.length, 0);
-  assert.equal(behavior.wrongType.errors.length, 1);
+  conversation.resumeState = "needs_resume";
+  normalize(input);
+  assert.equal(conversation.threadRuntimeStatus.type, "notLoaded");
 });
 
 test("Linux remote-control status guard skips slow remote SSH status reads", async () => {
@@ -2589,9 +2068,8 @@ test("remote mobile feature patch report records feature metadata and partial wa
       fs.writeFileSync(path.join(assetsDir, "app-test.png"), "");
       fs.writeFileSync(
         path.join(assetsDir, CURRENT_REMOTE_RUNTIME_ASSET),
-        syntheticAppServerManagerSignalsBundle() +
-          syntheticAppServerManagerStatusBundle() +
-          syntheticCompletedItemRecoveryBundle(),
+        syntheticCurrentAppServerManagerSignalsBundle() +
+          syntheticAppServerManagerStatusBundle(),
       );
       fs.appendFileSync(
         path.join(assetsDir, CURRENT_REMOTE_TERMINAL_STATUS_ASSET),
@@ -2623,14 +2101,11 @@ test("remote mobile feature patch report records feature metadata and partial wa
       );
       fs.writeFileSync(
         path.join(assetsDir, OLD_APP_SERVER_MANAGER_ASSET),
-        syntheticAppServerManagerSignalsBundle(),
+        syntheticCurrentAppServerManagerSignalsBundle(),
       );
       fs.writeFileSync(
         path.join(assetsDir, "app-server-manager-signals-test.js"),
-        syntheticAppServerManagerSignalsBundle().replace(
-          "if(!this.conversations.get(r)){z.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:r},sensitive:{}});break}",
-          "if(!this.conversations.get(r)){z.error(`Received turn/completed for unknown conversation`,{safe:{id:r},sensitive:{}});break}",
-        ),
+        syntheticCurrentAppServerManagerSignalsBundle(),
       );
       fs.writeFileSync(
         path.join(assetsDir, "codex-mobile-setup-dialog-test.js"),
@@ -2662,15 +2137,6 @@ test("remote mobile feature patch report records feature metadata and partial wa
         ),
       );
 
-      assert.equal(
-        report.patches.some((patch) => patch.name === "linux-app-server-conversation-hydration"),
-        false,
-      );
-
-      assert.equal(
-        report.patches.some((patch) => patch.name === "linux-completed-item-recovery"),
-        false,
-      );
     } finally {
       fs.rmSync(tempApp, { recursive: true, force: true });
     }
@@ -3557,10 +3023,9 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         fs.writeFileSync(
           path.join(assetsDir, CURRENT_REMOTE_RUNTIME_ASSET),
           syntheticRemoteConnectionVisibilityBundle() +
-            syntheticAppServerManagerSignalsBundle() +
+            syntheticCurrentAppServerManagerSignalsBundle() +
             syntheticAppServerManagerStatusBundle() +
-            syntheticCurrentStatusWaitBundle() +
-            syntheticCompletedItemRecoveryBundle(),
+            syntheticCurrentStatusWaitBundle(),
         );
         fs.appendFileSync(
           path.join(assetsDir, CURRENT_REMOTE_TERMINAL_STATUS_ASSET),
@@ -3579,11 +3044,11 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
         fs.writeFileSync(
           path.join(assetsDir, OLD_APP_SERVER_MANAGER_ASSET),
-          syntheticAppServerManagerSignalsBundle(),
+          syntheticCurrentAppServerManagerSignalsBundle(),
         );
         fs.writeFileSync(
           path.join(assetsDir, "app-server-manager-signals-test.js"),
-          syntheticAppServerManagerSignalsBundle(),
+          syntheticCurrentAppServerManagerSignalsBundle(),
         );
         fs.appendFileSync(
           path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
@@ -3725,14 +3190,6 @@ test("remote mobile control feature participates in ASAR patching and reports", 
             patch.name === "feature:remote-mobile-control:linux-remote-connections-refresh" &&
             patch.status === "applied",
           ),
-        );
-        assert.ok(
-          !report.patches.some(
-            (patch) => patch.name === "linux-app-server-conversation-hydration",
-          ),
-        );
-        assert.ok(
-          !report.patches.some((patch) => patch.name === "linux-completed-item-recovery"),
         );
         assert.ok(
           !report.patches.some((patch) => patch.name === "linux-remote-terminal-status-recovery"),

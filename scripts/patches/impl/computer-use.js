@@ -628,61 +628,6 @@ function applyLinuxComputerUseHostPlatformPatch(currentSource) {
   return currentSource;
 }
 
-function applyCurrentComputerUseInstallFlowContract(currentSource) {
-  if (currentSource.includes("plugin detail query requires pluginName")) {
-    const markerPattern =
-      /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)!==`computer-use`,([A-Za-z_$][\w$]*);/;
-    if (markerPattern.test(currentSource)) {
-      return currentSource;
-    }
-
-    const needlePattern =
-      /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*);/g;
-    let changed = false;
-    const patchedSource = currentSource.replace(
-      needlePattern,
-      (match, gateVar, gateValueVar, nextVar, offset) => {
-        const lookback = currentSource.slice(Math.max(0, offset - 900), offset);
-        const nextSource = currentSource.slice(offset + match.length, offset + match.length + 1800);
-        const pluginNameVar = lookback.match(/pluginName:([A-Za-z_$][\w$]*)/)?.[1];
-        if (
-          pluginNameVar == null ||
-          !new RegExp(
-            String.raw`&&\(!${gateVar}\|\|[A-Za-z_$][\w$]*\.available\)`,
-          ).test(nextSource) ||
-          !nextSource.includes("`read-plugin`")
-        ) {
-          return match;
-        }
-        changed = true;
-        return `let ${gateVar}=${gateValueVar}&&${pluginNameVar}!==\`computer-use\`,${nextVar};`;
-      },
-    );
-
-    if (changed && markerPattern.test(patchedSource)) {
-      return patchedSource;
-    }
-  }
-
-  return null;
-}
-
-function matchesLinuxComputerUseInstallFlowContract(currentSource) {
-  return applyCurrentComputerUseInstallFlowContract(currentSource) != null;
-}
-
-function applyLinuxComputerUseInstallFlowPatch(currentSource) {
-  const patchedSource = applyCurrentComputerUseInstallFlowContract(currentSource);
-  if (patchedSource != null) {
-    return patchedSource;
-  }
-
-  console.warn(
-    "WARN: Could not find current Computer Use plugin detail availability gate — skipping Linux Computer Use install flow patch",
-  );
-  return currentSource;
-}
-
 function findHandlerValue(source, methodName) {
   const key = `${JSON.stringify(methodName)}:`;
   const keyIndex = source.indexOf(key);
@@ -863,12 +808,10 @@ module.exports = {
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseHostPlatformPatch,
-  applyLinuxComputerUseInstallFlowPatch,
   applyLinuxNativeDesktopAppsHandlerPatch,
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxComputerUseRendererAvailabilityPatch,
   isComputerUseUiEnabled,
   linuxComputerUseCursorBridgeRuntimeSource,
   matchesLinuxComputerUseHostPlatformContract,
-  matchesLinuxComputerUseInstallFlowContract,
 };
