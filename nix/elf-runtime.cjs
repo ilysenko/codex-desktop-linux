@@ -425,17 +425,13 @@ function planFixups(root, architecture, manifest = loadManifest()) {
         "patchelf",
         "patchelf-rpath-first",
         "preserve-upstream",
-        "dynamic-linker-wrapper",
         "relocate-within-detect-libc-range",
       ].includes(strategy)
     )
       fail(`${item.path}: unsupported interpreter strategy: ${strategy}`);
     if (strategy === "preserve-upstream" && item.linkage !== "dynamic-object")
       fail(`${item.path}: preserve-upstream is only valid for dynamic objects`);
-    if (
-      ["patchelf-rpath-first", "dynamic-linker-wrapper"].includes(strategy) &&
-      item.linkage !== "dynamic-executable"
-    )
+    if (strategy === "patchelf-rpath-first" && item.linkage !== "dynamic-executable")
       fail(`${item.path}: ${strategy} is only valid for dynamic executables`);
     return [
       {
@@ -470,38 +466,6 @@ function runChecked(command, args) {
   }
 }
 
-function shellSingleQuote(value) {
-  return `'${String(value).replaceAll("'", `'"'"'`)}'`;
-}
-
-function installDynamicLinkerWrapper({
-  filePath,
-  dynamicLinker,
-  runtimeLibraryPath,
-  shell,
-  manifest,
-}) {
-  if (!path.isAbsolute(shell))
-    fail("the wrapper shell must be an absolute path");
-  const suffix = manifest.wrapper.originalSuffix;
-  const originalPath = `${filePath}${suffix}`;
-  if (fs.existsSync(originalPath))
-    fail(`dynamic-linker wrapper original already exists: ${originalPath}`);
-  const publicMode = fs.statSync(filePath).mode & 0o777;
-  fs.renameSync(filePath, originalPath);
-  fs.chmodSync(originalPath, 0o444);
-  const wrapper = [
-    `#!${shell}`,
-    manifest.wrapper.marker,
-    'wrapper_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-    `public_path="$wrapper_dir/${path.basename(filePath)}"`,
-    `original_path="$wrapper_dir/${path.basename(originalPath)}"`,
-    `exec ${shellSingleQuote(dynamicLinker)} --argv0 "$public_path" --library-path ${shellSingleQuote(runtimeLibraryPath)} "$original_path" "$@"`,
-    "",
-  ].join("\n");
-  fs.writeFileSync(filePath, wrapper, { mode: publicMode });
-}
-
 function applyFixups({
   root,
   architecture,
@@ -509,7 +473,6 @@ function applyFixups({
   runtimeLibraryPath,
   patchelf = "patchelf",
   chatgptRelocator,
-  shell,
   manifest = loadManifest(),
 }) {
   if (!path.isAbsolute(dynamicLinker)) fail("dynamic linker must be an absolute path");
@@ -519,17 +482,6 @@ function applyFixups({
   for (const action of plan) {
     const filePath = path.join(root, action.path);
     if (action.strategy === "preserve-upstream") continue;
-    if (action.strategy === "dynamic-linker-wrapper") {
-      if (!shell) fail("a Nix shell path is required for dynamic-linker wrappers");
-      installDynamicLinkerWrapper({
-        filePath,
-        dynamicLinker,
-        runtimeLibraryPath,
-        shell,
-        manifest,
-      });
-      continue;
-    }
     const invocations = buildPatchelfInvocations(
       action,
       dynamicLinker,
@@ -605,19 +557,11 @@ function auditExecutableShebangs(root) {
 function auditDependencyClosure({
   root,
   inventory,
-  architecture,
   dynamicLinker,
   runtimeLibraryPath,
-  manifest,
 }) {
   if (!fs.existsSync(dynamicLinker))
     fail(`dynamic linker does not exist for dependency audit: ${dynamicLinker}`);
-  const contract = manifestArchitecture(manifest, architecture);
-  const wrapperOriginals = new Set(
-    Object.entries(contract.interpreterStrategies)
-      .filter(([, strategy]) => strategy === "dynamic-linker-wrapper")
-      .map(([relativePath]) => `${relativePath}${manifest.wrapper.originalSuffix}`),
-  );
   for (const item of inventory) {
     if (!item.target || item.platform !== "glibc") continue;
     if (!["dynamic-executable", "dynamic-object"].includes(item.linkage))
@@ -649,8 +593,6 @@ function auditDependencyClosure({
         `${item.path}: dependency loader audit failed (${result.status}): ${output.trim() || "no output"}`,
       );
     }
-    if (wrapperOriginals.has(item.path) && missing.length > 0)
-      fail(`${item.path}: protected wrapper sibling has unresolved dependencies`);
   }
 }
 
@@ -669,35 +611,11 @@ function auditFixedTree({
       fail(`obsolete runtime path is present after fixup: ${forbidden}`);
   }
   const inventory = inventoryTree(root, architecture);
-  const wrapperEntries = Object.entries(contract.interpreterStrategies).filter(
-    ([, strategy]) => strategy === "dynamic-linker-wrapper",
-  );
   const preservedEntries = new Set(
     Object.entries(contract.interpreterStrategies)
       .filter(([, strategy]) => strategy === "preserve-upstream")
       .map(([relativePath]) => relativePath),
   );
-  const wrapperOriginals = new Set();
-  for (const [relativePath] of wrapperEntries) {
-    const publicPath = path.join(root, relativePath);
-    const originalPath = `${publicPath}${manifest.wrapper.originalSuffix}`;
-    const wrapper = fs.readFileSync(publicPath, "utf8");
-    if (!wrapper.includes(manifest.wrapper.marker))
-      fail(`${relativePath}: expected the Nix dynamic-linker wrapper`);
-    if (!wrapper.includes(dynamicLinker) || !wrapper.includes(runtimeLibraryPath))
-      fail(`${relativePath}: wrapper has stale runtime paths`);
-    if (wrapper.includes(root))
-      fail(`${relativePath}: wrapper embeds the temporary installation root`);
-    if (!wrapper.includes(path.basename(originalPath)))
-      fail(`${relativePath}: wrapper does not resolve its protected sibling`);
-    if ((fs.statSync(publicPath).mode & 0o111) === 0)
-      fail(`${relativePath}: wrapper is not executable`);
-    if ((fs.statSync(originalPath).mode & 0o111) !== 0)
-      fail(`${relativePath}: protected original remains directly executable`);
-    wrapperOriginals.add(
-      `${relativePath}${manifest.wrapper.originalSuffix}`,
-    );
-  }
   for (const required of contract.requiredDynamicExecutables) {
     if (!fs.existsSync(path.join(root, required)))
       fail(`required runtime path is missing after fixup: ${required}`);
@@ -708,7 +626,6 @@ function auditFixedTree({
   }
   for (const item of inventory) {
     if (!item.target || item.platform !== "glibc") continue;
-    if (wrapperOriginals.has(item.path)) continue;
     if (!["dynamic-executable", "dynamic-object"].includes(item.linkage))
       continue;
     if (preservedEntries.has(item.path)) continue;
@@ -721,10 +638,8 @@ function auditFixedTree({
     auditDependencyClosure({
       root,
       inventory,
-      architecture,
       dynamicLinker,
       runtimeLibraryPath,
-      manifest,
     });
   }
   if (checkShebangs) auditExecutableShebangs(root);
@@ -763,7 +678,6 @@ function main(argv) {
       runtimeLibraryPath: options["runtime-library-path"],
       patchelf: options.patchelf,
       chatgptRelocator: options["chatgpt-relocator"],
-      shell: options.shell,
       manifest,
     });
   } else if (command === "audit") {
@@ -801,7 +715,6 @@ module.exports = {
   auditDependencyClosure,
   buildPatchelfInvocations,
   inspectFile,
-  installDynamicLinkerWrapper,
   inventoryTree,
   loadManifest,
   parseElf,

@@ -375,8 +375,7 @@
                 --dynamic-linker "$dynamic_linker" \
                 --runtime-library-path "${runtimeLibraryPath}" \
                 --patchelf "${pkgs.patchelf}/bin/patchelf" \
-                --chatgpt-relocator "$source_dir/nix/relocate-elf-interpreter.cjs" \
-                --shell "${pkgs.bash}/bin/bash"
+                --chatgpt-relocator "$source_dir/nix/relocate-elf-interpreter.cjs"
               patchShebangs --build "$app"
 
               install -Dm0644 "$app/.codex-linux/codex-desktop.png" \
@@ -620,8 +619,7 @@
               --dynamic-linker "$dynamic_linker" \
               --runtime-library-path "${runtimeLibraryPath}" \
               --patchelf "${pkgs.patchelf}/bin/patchelf" \
-              --chatgpt-relocator ${sourceRoot}/nix/relocate-elf-interpreter.cjs \
-              --shell "${pkgs.bash}/bin/bash"
+              --chatgpt-relocator ${sourceRoot}/nix/relocate-elf-interpreter.cjs
             (
               # patchShebangs is a stdenv setup function, not a standalone
               # executable. Source it in an isolated subshell so the public
@@ -769,12 +767,8 @@
             timeout 10 "$app/${officialRuntimePaths.extensionHost}" --help >/dev/null
             "$app/resources/rg" --version
             ${lib.optionalString (system == "x86_64-linux") ''
-            set +e
-            timeout 2 "$app/resources/plugins/openai-bundled/plugins/latex/bin/tectonic" \
-              --version >/dev/null 2>&1
-            tectonic_status=$?
-            set -e
-            test "$tectonic_status" = 124
+            test "$("$app/resources/plugins/openai-bundled/plugins/latex/bin/tectonic" --version)" = \
+              'Tectonic 0.17.0'
             ''}
             ${lib.optionalString verifyWatchbound ''
             WATCHBOUND_ROOT=${watchboundPackage}/lib/node_modules \
@@ -923,12 +917,8 @@
             --patchelf ${pkgs.patchelf}/bin/patchelf
           "$CODEX_INSTALL_DIR/start.sh" --diagnose
           if [ ${officialPackage.architecture} = amd64 ]; then
-            set +e
-            timeout 2 "$CODEX_INSTALL_DIR/resources/plugins/openai-bundled/plugins/latex/bin/tectonic" \
-              --version >/dev/null 2>&1
-            tectonic_status=$?
-            set -e
-            test "$tectonic_status" = 124
+            test "$("$CODEX_INSTALL_DIR/resources/plugins/openai-bundled/plugins/latex/bin/tectonic" --version)" = \
+              'Tectonic 0.17.0'
           fi
           first_chatgpt="$(stat -c %i "$CODEX_INSTALL_DIR/ChatGPT")"
           chmod u+w "$runtime_marker"

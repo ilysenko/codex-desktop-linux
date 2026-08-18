@@ -10,7 +10,6 @@ const {
   auditExecutableShebangs,
   auditFixedTree,
   buildPatchelfInvocations,
-  installDynamicLinkerWrapper,
   inventoryTree,
   loadManifest,
   parseElf,
@@ -271,6 +270,13 @@ for (const architecture of ["amd64", "arm64"]) {
         );
       }
       writeFixture(root, "resources/static-helper", staticElf(contract.machine));
+      if (architecture === "amd64") {
+        writeFixture(
+          root,
+          "resources/plugins/openai-bundled/plugins/latex/bin/tectonic",
+          staticElf(contract.machine),
+        );
+      }
       writeFixture(
         root,
         "resources/prebuilds/linux-x64-musl/addon.node",
@@ -303,9 +309,8 @@ for (const architecture of ["amd64", "arm64"]) {
           "patchelf-rpath-first",
         );
         assert.equal(
-          actions.find(({ path: itemPath }) => itemPath.endsWith("/tectonic"))
-            .strategy,
-          "dynamic-linker-wrapper",
+          actions.some(({ path: itemPath }) => itemPath.endsWith("/tectonic")),
+          false,
         );
       }
     });
@@ -332,31 +337,6 @@ test("rejects missing, unexpected, and obsolete upstream executables", () => {
       () => validateUpstreamInventory(root, "amd64", manifest),
       /obsolete upstream path/,
     );
-  });
-});
-
-test("a dynamic-linker wrapper preserves and protects the official ELF", () => {
-  withTemporaryDirectory((root) => {
-    const manifest = loadManifest();
-    const filePath = path.join(root, "tectonic");
-    const original = dynamicElf();
-    fs.writeFileSync(filePath, original, { mode: 0o755 });
-    installDynamicLinkerWrapper({
-      filePath,
-      dynamicLinker: "/nix/store/glibc/lib/ld-linux-x86-64.so.2",
-      runtimeLibraryPath: "/nix/store/runtime/lib",
-      shell: "/nix/store/bash/bin/bash",
-      manifest,
-    });
-    const protectedPath = `${filePath}${manifest.wrapper.originalSuffix}`;
-    assert.deepEqual(fs.readFileSync(protectedPath), original);
-    assert.equal(fs.statSync(protectedPath).mode & 0o111, 0);
-    assert.ok(fs.statSync(filePath).mode & 0o111);
-    const wrapper = fs.readFileSync(filePath, "utf8");
-    assert.match(wrapper, /^#!\/nix\/store\/bash\/bin\/bash/m);
-    assert.match(wrapper, /--argv0/);
-    assert.match(wrapper, /--library-path/);
-    assert.match(wrapper, /\.codex-linux-original/);
   });
 });
 
@@ -400,16 +380,6 @@ test("post-fix audit enforces the Nix interpreter and runtime search path", () =
       "resources/native/addon.node",
       dynamicElf({ interpreter: null, runpath: runtimeLibraryPath }),
     );
-    installDynamicLinkerWrapper({
-      filePath: path.join(
-        root,
-        "resources/plugins/openai-bundled/plugins/latex/bin/tectonic",
-      ),
-      dynamicLinker,
-      runtimeLibraryPath,
-      shell: "/nix/store/bash/bin/bash",
-      manifest,
-    });
     writeFixture(
       root,
       "resources/cua_node/lib/node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.3",

@@ -3,28 +3,26 @@
   "architectures": {
     "amd64": {
       "machine": 62,
-      "targetInventoryCount": 35,
-      "targetInventorySha256": "1d5ac8bdfe3ae251d7d0627b623baef71a553a2ff983055ee4a1b29c551cb303",
+      "targetInventoryCount": 33,
+      "targetInventorySha256": "655eaca6bf4f6e90f6aadc1a80653da48d93b3e79edc952917802cf725b2cc8e",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
         "resources/cua_node/bin/node",
         "resources/cua_node/lib/node_modules/.bin/sky_linux_x64",
         "resources/cua_node/lib/node_modules/@oai/sky/bin/linux/sky_linux_x64",
-        "resources/plugins/openai-bundled/plugins/chrome/extension-host/linux/x64/extension-host",
-        "resources/plugins/openai-bundled/plugins/latex/bin/tectonic"
+        "resources/plugins/openai-bundled/plugins/chrome/extension-host/linux/x64/extension-host"
       ],
       "interpreterStrategies": {
         "ChatGPT": "relocate-within-detect-libc-range",
         "resources/cua_node/bin/node": "patchelf-rpath-first",
-        "resources/cua_node/lib/node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.3": "preserve-upstream",
-        "resources/plugins/openai-bundled/plugins/latex/bin/tectonic": "dynamic-linker-wrapper"
+        "resources/cua_node/lib/node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.3": "preserve-upstream"
       }
     },
     "arm64": {
       "machine": 183,
-      "targetInventoryCount": 33,
-      "targetInventorySha256": "a83686128df57ac8f44b2417bad9c9667b9b35b5e470d3ffd13e85cb22f0f001",
+      "targetInventoryCount": 31,
+      "targetInventorySha256": "984b4d90418f86f39f5d5a831bf94ae7a65b7c5e4e29f85166fddf530232e661",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
@@ -41,9 +39,5 @@
   },
   "forbiddenPaths": [
     "chrome_crashpad_handler"
-  ],
-  "wrapper": {
-    "originalSuffix": ".codex-linux-original",
-    "marker": "# codex-desktop nix dynamic-linker wrapper"
-  }
+  ]
 }
