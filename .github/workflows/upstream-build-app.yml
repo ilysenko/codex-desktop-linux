@@ -138,8 +138,7 @@ jobs:
             --dynamic-linker "$dynamic_linker" \
             --runtime-library-path "$runtime_path" \
             --patchelf "$(command -v patchelf)" \
-            --chatgpt-relocator nix/relocate-elf-interpreter.cjs \
-            --shell /bin/bash
+            --chatgpt-relocator nix/relocate-elf-interpreter.cjs
           node nix/elf-runtime.cjs audit \
             --root "$fix_root" \
             --arch "${{ matrix.architecture }}" \
