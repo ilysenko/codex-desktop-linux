@@ -216,6 +216,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `omarchy-theme` | 加载当前 Omarchy 主题生成的 CSS | [文档](linux-features/omarchy-theme/README.md) |
 | `persistent-status-panel` | 在线程切换和重启后保留 `/status` panel | [文档](linux-features/persistent-status-panel/README.md) |
 | `pet-overlay` | Linux avatar overlay 定位和 compositor hints | [文档](linux-features/pet-overlay/README.md) |
+| `pet-overlay-stability` | 稳定 Xwayland 上官方 Linux avatar overlay 的窗口生命周期 | [文档](linux-features/pet-overlay-stability/README.md) |
 | `project-group-last-updated-sort` | 对 project group 和 task 应用 Last updated 排序 | [文档](linux-features/project-group-last-updated-sort/README.md) |
 | `project-task-sort` | 恢复 alternate Projects 的 Created 排序 | [文档](linux-features/project-task-sort/README.md) |
 | `read-aloud` | 为 assistant response 添加 Linux 朗读控件 | [文档](linux-features/read-aloud/README.md) |

@@ -233,6 +233,7 @@ requirements, known limitations, configuration, and tests.
 | `omarchy-theme` | Load CSS generated from the current Omarchy theme | [Docs](linux-features/omarchy-theme/README.md) |
 | `persistent-status-panel` | Keep the `/status` panel across thread switches and restarts | [Docs](linux-features/persistent-status-panel/README.md) |
 | `pet-overlay` | Linux avatar-overlay placement and compositor hints | [Docs](linux-features/pet-overlay/README.md) |
+| `pet-overlay-stability` | Stabilize the official Linux avatar overlay lifecycle on Xwayland | [Docs](linux-features/pet-overlay-stability/README.md) |
 | `project-group-last-updated-sort` | Apply Last updated ordering to project groups and tasks | [Docs](linux-features/project-group-last-updated-sort/README.md) |
 | `project-task-sort` | Restore Created ordering for alternate Projects tasks | [Docs](linux-features/project-task-sort/README.md) |
 | `read-aloud` | Add Linux read-aloud controls to assistant responses | [Docs](linux-features/read-aloud/README.md) |

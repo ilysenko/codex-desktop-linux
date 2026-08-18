@@ -1,0 +1,12 @@
+{
+  "id": "pet-overlay-stability",
+  "title": "Stable Linux Pet Overlay",
+  "description": "Coalesce Linux/Xwayland pet geometry updates and protect the transparent overlay input region.",
+  "defaultEnabled": false,
+  "conflicts": [
+    "pet-overlay"
+  ],
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
