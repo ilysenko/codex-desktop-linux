@@ -674,9 +674,9 @@ test("teardown clears timers, generations, pending revisions, and move acknowled
   assert.deepEqual(overlay.dragCommits, []);
 });
 
-const signedBundlePath = process.env.PET_OVERLAY_SIGNED_BUNDLE ?? "/home/frontstreet/.cache/pet-overlay-audit.BtRfcz/main-DkjTIhil.js";
+const signedBundlePath = process.env.PET_OVERLAY_SIGNED_BUNDLE ?? "/home/frontstreet/.cache/pet-overlay-audit.current/.vite/build/main-Cw5W_AF8.js";
 test(
-  "the current signed 26.814.41407 bundle applies cleanly when available",
+  "the current signed 26.814.41957 bundle applies cleanly when available",
   { skip: !fs.existsSync(signedBundlePath) },
   () => {
     const source = fs.readFileSync(signedBundlePath, "utf8");
