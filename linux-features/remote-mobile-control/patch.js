@@ -28,6 +28,9 @@ const REMOTE_CONTROL_FEATURE_SYNC_MARKER = "codexLinuxRemoteControlFeatureSyncEn
 const REMOTE_CONTROL_LOAD_GATE_NEEDLE =
   /function ([A-Za-z_$][\w$]*)\(\)\{return ([A-Za-z_$][\w$]*)\(`1042620455`\)\}/u;
 const REMOTE_MOBILE_THREAD_RUNTIME_MARKER = "codexLinuxRemoteMobileThreadRuntimeStatus";
+const REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER = "codexLinuxRemoteMobilePendingNotifications";
+const REMOTE_MOBILE_HYDRATION_MARKER = "codexLinuxRemoteMobileHydrateUnknownConversation";
+const REMOTE_MOBILE_COMPLETED_ITEM_MARKER = "codexLinuxCompletedItemExists";
 const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
 const REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER = "codexLinuxRemoteControlEnablementBridge";
 const REMOTE_CONTROL_ENABLE_FOR_HOST_PARAMS_MARKER = "codexLinuxRemoteControlEnableForHostParams";
@@ -818,6 +821,79 @@ function browserClientHasNativeChromeBackendPreferenceRouting(source) {
 
 function applyLinuxRemoteMobileConversationHydrationPatch(source) {
   let patched = source;
+
+  if (!patched.includes(REMOTE_MOBILE_HYDRATION_MARKER)) {
+    const singleMatch = (value, pattern) => {
+      const matches = [...value.matchAll(new RegExp(pattern.source, `${pattern.flags}g`))];
+      return matches.length === 1 ? matches[0] : null;
+    };
+    const handlerNeedle =
+      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=\{method:\4,params:\5\};(?=if\(!\3\.streamState\.shouldIgnoreThreadMutationAsFollower\(\4,\5\))/u;
+    const handlerMatch = singleMatch(patched, handlerNeedle);
+    const normalizerNeedle =
+      /case`turn\/started`:\{let\{threadId:([A-Za-z_$][\w$]*),turn:[A-Za-z_$][\w$]*\}=([A-Za-z_$][\w$]*)\.params,[A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\);if\(![A-Za-z_$][\w$]*\.threadStore\.conversations\.get\([A-Za-z_$][\w$]*\)\)/u;
+    const normalizerMatch = singleMatch(patched, normalizerNeedle);
+    const completedItemNeedle =
+      /!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\.id,\3\.type,([A-Za-z_$][\w$]*)\.logger\)/u;
+    const completedItemMatch = singleMatch(patched, completedItemNeedle);
+    const standardUnknownNeedle = (method) =>
+      new RegExp(
+        "if\\(!([A-Za-z_$][\\w$]*)\\.threadStore\\.conversations\\.get\\(([A-Za-z_$][\\w$]*)\\)\\)\\{([A-Za-z_$][\\w$]*)\\.logger\\.error\\(`Received " +
+          `${escapeRegExp(method)} for unknown conversation` +
+          "`,\\{safe:\\{conversationId:\\2\\},sensitive:\\{\\}\\}\\);break\\}",
+        "u",
+      );
+    const unknownNeedles = [
+      standardUnknownNeedle("turn/started"),
+      /if\(!([A-Za-z_$][\w$]*)\.threadStore\.conversations\.get\(([A-Za-z_$][\w$]*)\)\)\{[^{}]*?([A-Za-z_$][\w$]*)\.logger\.error\(`Received turn\/completed for unknown conversation`,\{safe:\{conversationId:\2\},sensitive:\{\}\}\);break\}/u,
+      standardUnknownNeedle("item/started"),
+      /if\([^{};]*,!([A-Za-z_$][\w$]*)\.threadStore\.conversations\.get\(([A-Za-z_$][\w$]*)\)\)\{([A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/completed for unknown conversation`,\{safe:\{conversationId:\2\},sensitive:\{\}\}\);break\}/u,
+    ];
+
+    if (
+      handlerMatch != null &&
+      normalizerMatch != null &&
+      completedItemMatch != null &&
+      unknownNeedles.every((needle) => singleMatch(patched, needle) != null)
+    ) {
+      const [, , clientVar, managerVar, , , notificationVar] = handlerMatch;
+      const normalizerFn = normalizerMatch[3];
+      const itemFinderFn = completedItemMatch[1];
+      const helpers =
+        `function codexLinuxRemoteMobileBufferPendingNotification(e,t){let n=t.params.threadId??t.params.thread?.id;if(typeof n!==\`string\`)return!1;let r=e.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER}?.get(${normalizerFn}(n));return r==null?!1:(r.push(t),!0)}` +
+        `function ${REMOTE_MOBILE_HYDRATION_MARKER}(e,t,n,r){let i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER};if(i==null)i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER}=new Map;let a=i.get(n);if(a!=null){a.push(r);return}i.set(n,[r]);let o=r.params.threadId??r.params.thread?.id;Promise.resolve(t.threadStore.hydrateActiveThread(o)).then(()=>{let r=i.get(n)??[];i.delete(n);if(!t.threadStore.conversations.get(n)){e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{}});return}for(let t of r)e.onNotification(t.method,t.params)},r=>{i.delete(n),e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{error:r}})})}` +
+        `function ${REMOTE_MOBILE_COMPLETED_ITEM_MARKER}(e,t,n){let r=e.items.find(e=>e.id===t.id);return r==null?!0:${itemFinderFn}(e,t.id,t.type,n)!=null}`;
+
+      patched = `${helpers}${patched}`.replace(
+        handlerNeedle,
+        (needle) => `${needle}if(codexLinuxRemoteMobileBufferPendingNotification(${managerVar},${notificationVar}))return;`,
+      );
+      for (const needle of unknownNeedles) {
+        patched = patched.replace(
+          needle,
+          (_match, matchedManagerVar, conversationVar, matchedClientVar) =>
+            `if(!${matchedManagerVar}.threadStore.conversations.get(${conversationVar})){${REMOTE_MOBILE_HYDRATION_MARKER}(${matchedClientVar},${matchedManagerVar},${conversationVar},${notificationVar});return}`,
+        );
+      }
+      patched = patched.replace(
+        completedItemNeedle,
+        `!${REMOTE_MOBILE_COMPLETED_ITEM_MARKER}($2,$3,$4.logger)`,
+      );
+    } else if (
+      patched.includes("Received turn/started for unknown conversation") ||
+      patched.includes("Received item/completed for unknown conversation") ||
+      patched.includes("Item not found in turn state")
+    ) {
+      console.warn(
+        "WARN: Could not find the complete current remote notification recovery lifecycle - skipping remote mobile hydration recovery patch",
+      );
+    }
+  } else if (
+    !patched.includes(REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER) ||
+    !patched.includes(REMOTE_MOBILE_COMPLETED_ITEM_MARKER)
+  ) {
+    console.warn("WARN: Found an incomplete remote mobile hydration recovery patch - refusing to accept partial state");
+  }
 
   if (!patched.includes(REMOTE_MOBILE_THREAD_RUNTIME_MARKER)) {
     const runtimeReplacement =

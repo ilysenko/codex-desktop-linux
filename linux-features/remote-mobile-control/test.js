@@ -329,6 +329,20 @@ function syntheticCurrentAppServerManagerSignalsBundle() {
   ].join("");
 }
 
+function syntheticCurrentRemoteNotificationLifecycleBundle() {
+  return [
+    "function Ul(e){return e}",
+    "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
+    "function xm(e,t,n,r){let i=e.items.find(e=>e.id===t);return i?i.type===n?i:(r.error(`Item has unexpected type`,{safe:{itemId:t,type:i.type,expectedType:n},sensitive:{}}),null):(r.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}}),null)}",
+    "function Sm(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
+    "function tLn(e,t,n,r){let i={method:n,params:r};if(!t.streamState.shouldIgnoreThreadMutationAsFollower(n,r)&&!t.resumeNotificationBuffer.buffer(i)&&!t.threadStartedNotificationDeferral.bufferNotification(i)){switch(i.method){",
+    "case`turn/started`:{let{threadId:n,turn:r}=i.params,a=Ul(n);if(!t.threadStore.conversations.get(a)){e.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}e.updateConversationState(a,e=>{let t=e.turns.find(e=>e.turnId===r.id);t==null&&(t={turnId:r.id,status:r.status,items:[]},e.turns.push(t)),t.status=r.status});break}",
+    "case`turn/completed`:{let{threadId:n,turn:r}=i.params,a=Ul(n);if(!t.threadStore.conversations.get(a)){CIn(e.getHostId(),n,r.id),t.unread.discardTurn(a,r.id),e.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}e.updateConversationState(a,e=>{let t=e.turns.find(e=>e.turnId===r.id);t&&(t.status=r.status)});break}",
+    "case`item/started`:{let{item:n,threadId:r,turnId:a,startedAtMs:o}=i.params,s=Ul(r);if(!t.threadStore.conversations.get(s)){e.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}e.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===a);t&&Sm(t,{...n,completed:!1,startedAtMs:o})});break}",
+    "case`item/completed`:{let{item:n,threadId:r,turnId:a,completedAtMs:o}=i.params;let s=Ul(r);if(n.type===`commandExecution`&&t.itemStreamState.clearItemTerminalInputBuffer(s,n.id),!t.threadStore.conversations.get(s)){e.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}e.updateConversationState(s,r=>{let i=r.turns.find(e=>e.turnId===a);if(!i)return;let l={...n,completed:!0,completedAtMs:o};!(n.type!==`subAgentActivity`&&(n.type!==`sleep`||r.mode!==`durable`)&&!xm(i,n.id,n.type,e.logger))&&(n.type,Sm(i,l))});break}}t.events.emitNotification(i)}}",
+  ].join("");
+}
+
 function syntheticRemoteTerminalStatusBundle() {
   return [
     "function LQt({hasInProgressSideChat:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){return e?`loading`:i?.type===`systemError`?`error`:i?.type===`active`?`loading`:r===`needs_resume`?`idle`:n?`error`:t===!0?`loading`:`idle`}",
@@ -1788,23 +1802,25 @@ test("Linux remote mobile Chrome bridge patch warns when browser-client needles 
   assert.ok(warnings.some((warning) => warning.includes("backend allowlist needles")));
 });
 
-test("Linux remote mobile runtime normalization uses current upstream notification buffers", () => {
-  const source = syntheticCurrentAppServerManagerSignalsBundle();
+test("Linux remote mobile hydration buffers and replays late notifications", async () => {
+  const source = syntheticCurrentRemoteNotificationLifecycleBundle();
   const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteMobileThreadRuntimeStatus/);
   assert.match(patched, /h\?\.type===`active`\|\|h\?\.type===`idle`/);
-  assert.match(patched, /resumeNotificationBuffer\.buffer\(e\)/);
-  assert.match(patched, /threadStartedNotificationDeferral\.bufferNotification\(e\)/);
-  assert.doesNotMatch(patched, /codexLinuxRemoteMobilePendingNotifications/);
-  assert.doesNotMatch(patched, /codexLinuxRemoteMobileHydrat(?:e|ion)/);
-  assert.doesNotMatch(patched, /codexLinuxCompletedItemExists/);
+  assert.match(patched, /codexLinuxRemoteMobilePendingNotifications/);
+  assert.match(patched, /codexLinuxRemoteMobileHydrateUnknownConversation/);
+  assert.match(patched, /codexLinuxCompletedItemExists/);
+  assert.doesNotMatch(patched, /Received (?:turn|item)\/(?:started|completed) for unknown conversation/);
   assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(patched), patched);
 
-  const context = { module: { exports: {} } };
-  vm.runInNewContext(`${patched};module.exports=Of;`, context);
-  const normalize = context.module.exports;
+  const context = {
+    CIn() {},
+    module: { exports: {} },
+  };
+  vm.runInNewContext(`${patched};module.exports={normalize:Of,onNotification:tLn};`, context);
+  const { normalize, onNotification } = context.module.exports;
   const conversation = { resumeState: null, threadRuntimeStatus: null };
   const input = {
     conversationId: "thread-a",
@@ -1831,6 +1847,120 @@ test("Linux remote mobile runtime normalization uses current upstream notificati
   conversation.resumeState = "needs_resume";
   normalize(input);
   assert.equal(conversation.threadRuntimeStatus.type, "notLoaded");
+
+  let releaseHydration;
+  const hydrationReady = new Promise((resolve) => {
+    releaseHydration = resolve;
+  });
+  const errors = [];
+  const emitted = [];
+  let hydrationCalls = 0;
+  const conversations = new Map();
+  const manager = {
+    events: {
+      emitNotification(notification) {
+        emitted.push(notification.method);
+      },
+    },
+    itemStreamState: {
+      clearItemTerminalInputBuffer() {},
+    },
+    resumeNotificationBuffer: {
+      buffer() {
+        return false;
+      },
+    },
+    streamState: {
+      shouldIgnoreThreadMutationAsFollower() {
+        return false;
+      },
+    },
+    threadStartedNotificationDeferral: {
+      bufferNotification() {
+        return false;
+      },
+    },
+    threadStore: {
+      conversations,
+      async hydrateActiveThread(threadId) {
+        hydrationCalls += 1;
+        await hydrationReady;
+        conversations.set(threadId, { mode: "default", turns: [] });
+      },
+    },
+    unread: {
+      discardTurn() {},
+    },
+    updateConversationState(conversationId, update) {
+      update(conversations.get(conversationId));
+    },
+  };
+  const client = {
+    getHostId() {
+      return "local";
+    },
+    logger: {
+      error(message) {
+        errors.push(message);
+      },
+    },
+    onNotification(method, params) {
+      onNotification(client, manager, method, params);
+    },
+    updateConversationState(conversationId, update) {
+      manager.updateConversationState(conversationId, update);
+    },
+  };
+  const notifications = [
+    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }],
+    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }],
+    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }],
+  ];
+
+  for (const [method, params] of notifications) {
+    client.onNotification(method, params);
+  }
+
+  assert.equal(hydrationCalls, 1);
+  assert.equal(conversations.has("thread-late"), false);
+  assert.deepEqual(emitted, []);
+
+  releaseHydration();
+  await hydrationReady;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(emitted, notifications.map(([method]) => method));
+  assert.deepEqual(errors, []);
+  const hydratedConversation = conversations.get("thread-late");
+  assert.equal(hydratedConversation.turns.length, 1);
+  assert.equal(hydratedConversation.turns[0].status, "completed");
+  assert.deepEqual(
+    Array.from(hydratedConversation.turns[0].items, (item) => ({
+      completed: item.completed,
+      id: item.id,
+      text: item.text,
+    })),
+    [
+      { completed: true, id: "item-1", text: "started then completed" },
+      { completed: true, id: "item-2", text: "completed without started" },
+    ],
+  );
+});
+
+test("Linux remote mobile hydration recovery rejects partial lifecycle drift", () => {
+  const source = syntheticCurrentRemoteNotificationLifecycleBundle().replace(
+    "Received item/started for unknown conversation",
+    "Received late item/started for unknown conversation",
+  );
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileConversationHydrationPatch(source));
+
+  assert.doesNotMatch(result, /codexLinuxRemoteMobilePendingNotifications/);
+  assert.doesNotMatch(result, /codexLinuxRemoteMobileHydrateUnknownConversation/);
+  assert.doesNotMatch(result, /codexLinuxCompletedItemExists/);
+  assert.ok(warnings.some((warning) => warning.includes("complete current remote notification recovery lifecycle")));
 });
 
 test("Linux remote-control status guard skips slow remote SSH status reads", async () => {
