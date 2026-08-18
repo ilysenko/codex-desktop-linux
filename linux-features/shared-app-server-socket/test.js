@@ -24,6 +24,18 @@ const {
 
 const socketEnvHook = path.join(__dirname, "socket-env.sh");
 const orphanReaper = path.join(__dirname, "orphan-reaper.js");
+const unixSocketPathMaxBytes = 107;
+
+function makeSocketTempDir(prefix, socketRelativePath = "app-server.sock") {
+  for (const root of [...new Set([os.tmpdir(), "/tmp"])]) {
+    const template = path.join(root, prefix);
+    const longestGeneratedPath = path.join(`${template}XXXXXX`, socketRelativePath);
+    if (Buffer.byteLength(longestGeneratedPath) <= unixSocketPathMaxBytes) {
+      return fs.mkdtempSync(template);
+    }
+  }
+  throw new Error("could not create a temporary directory with room for a Unix socket path");
+}
 
 function createProcessSnapshotFs(processesByPid) {
   const snapshotsByPid = new Map();
@@ -653,7 +665,7 @@ test("socket hook emits no launcher environment during after-exit cleanup", () =
 });
 
 test("orphan reaper preserves a live owner and its listener", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-live-reaper-"));
+  const tempDir = makeSocketTempDir("shared-app-server-live-reaper-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   const selfStat = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8");
@@ -674,7 +686,7 @@ test("orphan reaper preserves a live owner and its listener", async () => {
 });
 
 test("orphan reaper fails closed on an unknown live listener", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-foreign-reaper-"));
+  const tempDir = makeSocketTempDir("shared-app-server-foreign-reaper-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   const server = await listenUnix(socketPath);
@@ -834,7 +846,7 @@ test("orphan reaper rejects an authority adopted by an unrelated live parent", (
 });
 
 test("orphan reaper stops an exact reparented authority and removes stale ownership", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-orphan-reaper-"));
+  const tempDir = makeSocketTempDir("shared-app-server-orphan-reaper-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   const orphan = await spawnOrphanAuthority(socketPath);
@@ -864,7 +876,7 @@ test("orphan reaper stops an exact reparented authority and removes stale owners
 });
 
 test("orphan reaper refuses two live listener inodes for the same pathname", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-rebind-reaper-"));
+  const tempDir = makeSocketTempDir("shared-app-server-rebind-reaper-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   const orphan = await spawnOrphanAuthority(socketPath);
@@ -899,7 +911,7 @@ test("orphan reaper refuses two live listener inodes for the same pathname", asy
 });
 
 test("injected transport rejects an existing socket without unlinking it", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-existing-"));
+  const tempDir = makeSocketTempDir("shared-app-server-existing-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const server = await listenUnix(socketPath);
   let spawnCalls = 0;
@@ -926,7 +938,7 @@ test("injected transport rejects an existing socket without unlinking it", async
 });
 
 test("injected transport serializes startup and removes only its owned socket", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-owner-"));
+  const tempDir = makeSocketTempDir("shared-app-server-owner-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const servers = new Map();
   const children = [];
@@ -1006,7 +1018,7 @@ test("injected transport serializes startup and removes only its owned socket", 
 });
 
 test("injected transport shares one readiness promise across concurrent connections", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-concurrent-"));
+  const tempDir = makeSocketTempDir("shared-app-server-concurrent-");
   const socketPath = path.join(tempDir, "app-server.sock");
   let spawnCalls = 0;
   let server;
@@ -1052,7 +1064,7 @@ test("injected transport shares one readiness promise across concurrent connecti
 });
 
 test("injected transport fails closed on a live owner's lock", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-live-lock-"));
+  const tempDir = makeSocketTempDir("shared-app-server-live-lock-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   const selfStat = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8");
@@ -1080,7 +1092,7 @@ test("injected transport fails closed on a live owner's lock", async () => {
 });
 
 test("injected transport reclaims a dead owner's lock when no socket exists", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-dead-lock-"));
+  const tempDir = makeSocketTempDir("shared-app-server-dead-lock-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
@@ -1097,7 +1109,7 @@ test("injected transport reclaims a dead owner's lock when no socket exists", as
 });
 
 test("injected transport preserves a dead owner's lock while its socket is live", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-orphan-socket-"));
+  const tempDir = makeSocketTempDir("shared-app-server-orphan-socket-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
@@ -1114,7 +1126,7 @@ test("injected transport preserves a dead owner's lock while its socket is live"
 });
 
 test("injected transport reclaims a dead owner's unbound socket inode", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-stale-socket-"));
+  const tempDir = makeSocketTempDir("shared-app-server-stale-socket-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const stalePath = `${socketPath}.stale`;
   const lockPath = `${socketPath}.lock`;
@@ -1136,7 +1148,7 @@ test("injected transport reclaims a dead owner's unbound socket inode", async ()
 });
 
 test("injected transport reclaims an old legacy lock but preserves a recent one", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-legacy-lock-"));
+  const tempDir = makeSocketTempDir("shared-app-server-legacy-lock-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
@@ -1155,7 +1167,7 @@ test("injected transport reclaims an old legacy lock but preserves a recent one"
 });
 
 test("injected transport preserves a replacement lock inode", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-lock-replace-"));
+  const tempDir = makeSocketTempDir("shared-app-server-lock-replace-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
   const oldLockPath = `${lockPath}.old`;
@@ -1183,7 +1195,7 @@ for (const [failureKind, spawnImpl] of [
   }],
 ]) {
   test(`injected transport releases ownership after ${failureKind} spawn failure`, async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-spawn-failure-"));
+    const tempDir = makeSocketTempDir("shared-app-server-spawn-failure-");
     const socketPath = path.join(tempDir, "app-server.sock");
     const { Transport } = loadInjectedTransport({ spawnImpl });
     const transport = new Transport(socketPath);
@@ -1201,7 +1213,7 @@ for (const [failureKind, spawnImpl] of [
 }
 
 test("injected transport does not release ownership until authority exit is verified", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-stop-error-"));
+  const tempDir = makeSocketTempDir("shared-app-server-stop-error-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const child = fakeChild();
   child.kill = () => {
@@ -1228,7 +1240,7 @@ test("injected transport does not release ownership until authority exit is veri
 });
 
 test("normal authority exit releases its owned socket and lock", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-normal-exit-"));
+  const tempDir = makeSocketTempDir("shared-app-server-normal-exit-");
   const socketPath = path.join(tempDir, "app-server.sock");
   let server;
   let child;
@@ -1263,7 +1275,7 @@ test("normal authority exit releases its owned socket and lock", async () => {
 });
 
 test("disposing before async startup resumes releases ownership without spawning", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-dispose-startup-"));
+  const tempDir = makeSocketTempDir("shared-app-server-dispose-startup-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const child = fakeChild();
   child.kill = () => {
@@ -1290,7 +1302,7 @@ test("disposing before async startup resumes releases ownership without spawning
 });
 
 test("post-start authority errors close active proxy streams without crashing", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-runtime-error-"));
+  const tempDir = makeSocketTempDir("shared-app-server-runtime-error-");
   const socketPath = path.join(tempDir, "app-server.sock");
   let server;
   let child;
@@ -1440,7 +1452,10 @@ test("documented wrapper attaches to a real Codex authority through the stock pr
     return;
   }
 
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-socket-integration-"));
+  const tempDir = makeSocketTempDir(
+    "shared-app-server-socket-integration-",
+    path.join("authority", "app-server.sock"),
+  );
   const codexHome = path.join(tempDir, "codex-home");
   const socketPath = path.join(tempDir, "authority", "app-server.sock");
   const binDir = path.join(tempDir, "bin");
