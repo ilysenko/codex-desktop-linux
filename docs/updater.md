@@ -40,6 +40,25 @@ waits for process exit, then performs the same atomic candidate exchange used by
 manual rebuilds. A durable journal recovers interrupted promotion, and the
 immediately previous managed package remains the rollback target.
 
+Recording a new candidate drops the previous candidate's package artifact, so a
+recorded artifact always belongs to the pending candidate. A failed download or
+build therefore leaves nothing for `install-ready` to retry until a rebuild
+produces a package; an explicit `install-ready` in that state reports the
+recorded failure instead of succeeding silently.
+
+A self-upgrade replaces the updater itself, so the package lifecycle can stop
+the service before the daemon records the install. On startup an `Installing`
+state is recovered only when the native package version of the candidate
+artifact equals the package version the system reports as installed, and only
+when the package manager reports that version for a payload it has committed.
+dpkg answers with the new version from the moment it starts unpacking, so an
+`unpacked` or `half-installed` package is not treated as installed;
+`half-configured` is, because the service is started from `postinst` inside the
+same transaction. A missing or uninspectable artifact, any other native
+version, or any other status keeps the candidate pending: the upstream version
+and SHA-256 identify the signed OpenAI input, not the per-user package rebuilt
+from it.
+
 Automated user-local operations cannot override the running-app guard or
 silently accept unverified input. A failed privileged installation remains
 failed until an explicit retry or a newer candidate.
@@ -138,8 +157,8 @@ rollback path; it is not a normal troubleshooting step.
 ## Validation scenarios
 
 Tests cover new and unchanged releases, interrupted downloads, all trust
-failures, build-while-running, promotion-after-exit, rollback, cleanup, and old
-state migration. Run:
+failures, build-while-running, promotion-after-exit, interrupted self-install
+recovery, rollback, cleanup, and old state migration. Run:
 
 ```bash
 cargo test -p codex-update-manager

@@ -175,6 +175,71 @@ pub fn installed_package_version() -> String {
     }
 }
 
+/// Returns the native package version recorded inside a built package artifact.
+///
+/// The format is derived from the artifact path so a caller holding only a
+/// persisted `package_path` can compare it against `installed_package_version`
+/// without knowing which package manager produced it.
+pub fn package_file_version(path: &Path) -> Result<String> {
+    anyhow::ensure!(
+        path.is_file(),
+        "package artifact is missing: {}",
+        path.display()
+    );
+
+    // The pacman version lives in the file name, so resolve a symlink such as
+    // `codex-desktop-latest.pkg.tar.zst` to the versioned identity first, the
+    // same way `stable_validated_package` does.
+    let path = &package_identity_path(path)?;
+    match PackageKind::from_path(path) {
+        PackageKind::Deb => deb_package_version(path),
+        PackageKind::Rpm => rpm_package_version(path),
+        PackageKind::Pacman => pacman_package_version(path),
+    }
+}
+
+/// Reports whether the version `installed_package_version` returned belongs to
+/// a package whose payload is actually in place.
+///
+/// `dpkg-query -W -f=${Version}` answers for any package dpkg knows about, so
+/// it reports the new version from the moment unpacking starts and keeps
+/// reporting a version after a removal that retained configuration files.
+/// `codex-update-manager.prerm` stops the updater before dpkg unpacks, so a
+/// self-upgrade that then fails to unpack or to configure leaves the new
+/// version visible with no daemon left to record the failure.
+///
+/// RPM and pacman commit the payload before their databases answer for the new
+/// version, so only dpkg needs the distinction.
+pub fn installed_package_is_usable() -> bool {
+    match PackageKind::detect() {
+        PackageKind::Deb => deb_status_is_usable(&installed_deb_status()),
+        PackageKind::Rpm | PackageKind::Pacman => true,
+    }
+}
+
+fn installed_deb_status() -> String {
+    installed_version_from_command(
+        &program_path(DPKG_QUERY_CANDIDATES, "dpkg-query"),
+        &["-W", "-f=${db:Status-Status}", PACKAGE_NAME],
+    )
+}
+
+/// Accepts only the dpkg states in which the package payload is installed.
+///
+/// `half-configured` is deliberately accepted: `codex-update-manager.postinst`
+/// starts the service from inside the dpkg transaction, so the recovering
+/// daemon usually runs while the package it is recovering is still being
+/// configured. `unpacked` and `half-installed` are rejected because the files
+/// are not committed, and every unrecognised state is rejected as well: the
+/// cost of rejecting is a preserved candidate and another rebuild, while the
+/// cost of accepting is recording a broken package as successfully installed.
+fn deb_status_is_usable(status: &str) -> bool {
+    matches!(
+        status,
+        "installed" | "half-configured" | "triggers-awaited" | "triggers-pending"
+    )
+}
+
 fn installed_deb_version() -> String {
     installed_version_from_command(
         &program_path(DPKG_QUERY_CANDIDATES, "dpkg-query"),
@@ -1203,6 +1268,115 @@ mod tests {
             parse_pacman_installed_version(b"codex-desktop 2026.04.02.120000-1\n".to_vec()),
             "2026.04.02.120000-1"
         );
+    }
+
+    fn build_minimal_deb(dir: &Path, version: &str) -> Result<PathBuf> {
+        let root = dir.join("root");
+        fs::create_dir_all(root.join("DEBIAN"))?;
+        fs::write(
+            root.join("DEBIAN/control"),
+            format!(
+                "Package: {PACKAGE_NAME}\nVersion: {version}\nArchitecture: amd64\n\
+                 Section: web\nPriority: optional\n\
+                 Maintainer: test <test@example.com>\nDescription: test fixture\n"
+            ),
+        )?;
+        let package = dir.join(format!("{PACKAGE_NAME}_{version}_amd64.deb"));
+        let output = Command::new(program_path(DPKG_DEB_CANDIDATES, "dpkg-deb"))
+            .arg("--root-owner-group")
+            .arg("--build")
+            .arg("--")
+            .arg(&root)
+            .arg(&package)
+            .output()
+            .context("Failed to run dpkg-deb --build")?;
+        anyhow::ensure!(
+            output.status.success(),
+            "dpkg-deb could not build the test package: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        Ok(package)
+    }
+
+    #[test]
+    fn reads_the_native_package_version_from_a_pacman_artifact() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let package = temp
+            .path()
+            .join("codex-desktop-2026.04.02.120000-1-x86_64.pkg.tar.zst");
+        fs::write(&package, b"pkg")?;
+
+        assert_eq!(package_file_version(&package)?, "2026.04.02.120000-1");
+        Ok(())
+    }
+
+    #[test]
+    fn reads_the_native_package_version_from_a_deb_artifact() -> Result<()> {
+        if !program_exists(DPKG_DEB_CANDIDATES, "dpkg-deb") {
+            eprintln!("skipping: dpkg-deb is unavailable, the deb branch was not exercised");
+            return Ok(());
+        }
+        let temp = tempfile::tempdir()?;
+        let package = build_minimal_deb(temp.path(), "2026.04.02.120000+abcdef12")?;
+
+        assert_eq!(
+            package_file_version(&package)?,
+            "2026.04.02.120000+abcdef12"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_the_native_package_version_through_a_pacman_latest_symlink() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let package_name = "codex-desktop-2026.04.02.120000-1-x86_64.pkg.tar.zst";
+        fs::write(temp.path().join(package_name), b"pkg")?;
+        let latest = temp.path().join("codex-desktop-latest.pkg.tar.zst");
+        std::os::unix::fs::symlink(package_name, &latest)?;
+
+        assert_eq!(package_file_version(&latest)?, "2026.04.02.120000-1");
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_only_the_dpkg_states_that_have_the_package_payload_installed() {
+        // `half-configured` is the state the recovery normally runs in: the
+        // service is started from `postinst`, inside the dpkg transaction.
+        for status in [
+            "installed",
+            "half-configured",
+            "triggers-awaited",
+            "triggers-pending",
+        ] {
+            assert!(deb_status_is_usable(status), "{status} must be accepted");
+        }
+        // dpkg still reports a version in each of these, so accepting one would
+        // record a package that is not installed as successfully installed.
+        for status in [
+            "unpacked",
+            "half-installed",
+            "config-files",
+            "not-installed",
+            "unknown",
+            "",
+        ] {
+            assert!(!deb_status_is_usable(status), "{status} must be rejected");
+        }
+    }
+
+    #[test]
+    fn rejects_a_missing_package_artifact() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let missing = temp
+            .path()
+            .join("codex-desktop-2026.04.02.120000-1-x86_64.pkg.tar.zst");
+
+        let error = package_file_version(&missing)
+            .expect_err("a missing artifact cannot identify an installed package");
+
+        assert!(error.to_string().contains("package artifact is missing"));
+        Ok(())
     }
 
     #[test]
