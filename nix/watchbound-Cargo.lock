@@ -269,14 +269,14 @@ checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "watchbound-engine"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "watchbound-node"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "napi",
  "napi-build",

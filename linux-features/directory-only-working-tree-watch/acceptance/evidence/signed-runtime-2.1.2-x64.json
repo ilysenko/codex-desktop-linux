@@ -1,0 +1,626 @@
+{
+  "schemaVersion": 1,
+  "kind": "codex-watchbound-signed-runtime-acceptance",
+  "verdict": "passed",
+  "recordedAt": "2026-08-19T09:19:20.587Z",
+  "scope": "signed OpenAI Linux x64 executable; ARM64 unavailable",
+  "inputs": {
+    "files": {
+      "linux-features/directory-only-working-tree-watch/acceptance/run-signed-runtime.mjs": "bf8a2ebea1dcf02e6417123b8afcbc826271ac3a3a01816834157edd5bf34544",
+      "linux-features/directory-only-working-tree-watch/acceptance/runtime-harness.mjs": "c8a38b877840254cd6617b52ddaf347f78dc5f4e04b637d42a75d9e5f0428f79",
+      "linux-features/directory-only-working-tree-watch/acceptance/installed-package-smoke-helpers.mjs": "da6d2a3721a7066a76fb0781d5f6a8ea611f528342303f3547edce8da9bb9152",
+      "linux-features/directory-only-working-tree-watch/acceptance/fixtures/exclusion-smoke-helpers.cjs": "234a277c0ba0c513d131e07e00252bcddce342a46383d2fbda1503f5a423ad11",
+      "linux-features/directory-only-working-tree-watch/patch.js": "66222e9b24c438e224e7779468407b8e334fa20aa0d9fcf3ed4103679c74ff76",
+      "linux-features/directory-only-working-tree-watch/watchbound-artifacts.json": "c87d026d282d1be85d47d3aa602527ed9ccb6ace9001df940195d6dae76aa291",
+      "nix/upstream-linux-packages.json": "4f17ce3bdbe0f190c655c5d378c34dd0389c97e096fc3d144dbc367698854852"
+    },
+    "generatedProductionAdapterSha256": "2b18143c4ce1ee280a6cb4c44bc87ace989d66486fa313303ccda304f1b6e2ce",
+    "watchboundArchives": {
+      "watchbound": {
+        "sha256": "f297d6753d847170433216c73b9787e322d0849d2c0582e3e557a0f332a20ba1",
+        "shasum": "6f762ffbf8376b66e4b054479c107d651a579a31",
+        "integrity": "sha512-1tk1bBZ+djRXVu6K31anpNCN0CUMe5Oft/ey955IHrPSFwtV3L66gi6mjwzyVz43+9p51RpUJSu7eP+F6kwE2A=="
+      },
+      "@gadicc/watchbound-node": {
+        "sha256": "e12c138118990425892e606184f9cd9f96cd32c841254078747240c5942ba770",
+        "shasum": "fecc1eeb7d5e2c27cde414bc1c3533d091973c00",
+        "integrity": "sha512-h66Xgk2tNowLj1HfRn87whqsuzg4FJulusSrv3NsdIKE/89tONc2wGqHc2DDkn8j90C7XWYmRtZm0cIA0fok6Q=="
+      },
+      "@gadicc/watchbound-node-linux-x64-gnu": {
+        "sha256": "2b4aff140baf6a512dab3fa0f14c12dfb1f785d60b3d2ba28e4144e7d275eded",
+        "shasum": "80c76f8269df698fc146b6721428925da1c386cc",
+        "integrity": "sha512-UuEIg6OrHcksCl/yR3JsX6SneEYvxDpT8n68AKPEWajLclj9+aSgCWHi6t2ihh+yC1a5qQbGYNkuUpjSkZh7Dg=="
+      },
+      "@gadicc/watchbound-node-linux-arm64-gnu": {
+        "sha256": "8a016583cd3ad16bf627e314f72e515ab80c1e1415af7a1b65fdea0b1856d9e3",
+        "shasum": "a86224b5709f74ddb7aa8d57f5765aa865b3edf4",
+        "integrity": "sha512-Eo/jJL+I1UKnxIeSZP1Vk6QIve4Oy9Ik2wcpfq+ifRQfxlyjClSm7KCt94tyYmDzpZUUGq92CjM+/DxiEhJZiA=="
+      }
+    },
+    "signedStablePackage": {
+      "repositoryPath": "pool/main/c/chatgpt/chatgpt_26.814.41957_amd64.deb",
+      "sha256": "4778b26a7abd08647214d5b05c17bd3ebe2d9688d146dabf017c1a2faf93ac7d",
+      "pinSource": "nix/upstream-linux-packages.json"
+    }
+  },
+  "watchbound": {
+    "version": "2.1.2",
+    "sourceCommit": "fa188992ef2cc800f9e65b9395139f85ef945c45",
+    "runtimeImplementationParent": "4996ff1d027a95d6ffb677e41236399eae400a16",
+    "sourceTreeClean": true
+  },
+  "signedRuntime": {
+    "executableSha256": "85e03c4bb5814e943eb23ae7eb370ea8f7eeab67c646e46d17596a07eedfb5b6",
+    "sourceAsarSha256": "1a43bb2a6547cd2a4945a669fb14f0b15b6eddc1fc1177f51dffc554e3c5ad98",
+    "generatedAcceptanceAsarSha256": "5160ac1c90f95e2bee8adab2d034cd96af03653e1737c633f5248dd8ec6fc260",
+    "officialPackage": {
+      "name": "openai-codex-electron",
+      "version": "26.814.41957",
+      "main": ".vite/build/early-bootstrap.js",
+      "repositoryPath": "pool/main/c/chatgpt/chatgpt_26.814.41957_amd64.deb",
+      "debSha256": "4778b26a7abd08647214d5b05c17bd3ebe2d9688d146dabf017c1a2faf93ac7d",
+      "dataPayloadInventorySha256": "057ca1a94dcb2794dba42ec5c800cc7bdf3570d88813c7afeab6f60aa1363a61",
+      "dataPayloadInventoryEntries": 5148,
+      "verifiedAgainstDebDataPayload": true
+    },
+    "officialMainPreserved": true,
+    "platform": "linux",
+    "architecture": "x64",
+    "kernel": "7.1.8-arch1-3",
+    "glibc": "2.44",
+    "processVersions": {
+      "electron": "151.0.7922.137",
+      "chrome": "151.0.7922.137",
+      "node": "24.14.0",
+      "napi": 10
+    }
+  },
+  "packages": {
+    "wrapper": {
+      "name": "watchbound",
+      "version": "2.1.2"
+    },
+    "loader": {
+      "name": "@gadicc/watchbound-node",
+      "version": "2.1.2"
+    },
+    "target": {
+      "name": "@gadicc/watchbound-node-linux-x64-gnu",
+      "version": "2.1.2"
+    }
+  },
+  "native": {
+    "id": "linux-x64-gnu",
+    "platform": "linux",
+    "architecture": "x64",
+    "armAbi": null,
+    "targetTriple": "x86_64-unknown-linux-gnu",
+    "package": "@gadicc/watchbound-node-linux-x64-gnu",
+    "binary": "watchbound.linux-x64-gnu.node",
+    "nativeSha256": "1f4713bb126bc8652d83e66d25219e0c0f3c354b3e0efeafcc2ec5e8b0bbec45",
+    "size": 1513224,
+    "sha256": "1f4713bb126bc8652d83e66d25219e0c0f3c354b3e0efeafcc2ec5e8b0bbec45",
+    "resolvedPath": "resources/app.asar/node_modules/@gadicc/watchbound-node-linux-x64-gnu/watchbound.linux-x64-gnu.node",
+    "loadedPath": "resources/app.asar/node_modules/@gadicc/watchbound-node-linux-x64-gnu/watchbound.linux-x64-gnu.node",
+    "unpackedPath": "resources/app.asar.unpacked/node_modules/@gadicc/watchbound-node-linux-x64-gnu/watchbound.linux-x64-gnu.node",
+    "exactSelectionWithoutFallback": true,
+    "elf": {
+      "class": 2,
+      "endianness": 1,
+      "machine": 62,
+      "flags": 0,
+      "machineName": "Advanced Micro Devices X86-64",
+      "fileMachineName": "x86-64",
+      "neededLibraries": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libgcc_s.so.1"
+      ]
+    }
+  },
+  "loaderAssertions": {
+    "javascriptAdmission": ">=18.15.0",
+    "javascriptMinimum": "18.15.0",
+    "runtimeAdmissionSchema": 1,
+    "runtimeLibcEvidence": "elf-interpreter-version",
+    "kernelMinimum": "5.15",
+    "glibcMinimum": "2.35",
+    "rawCapabilitySchema": 5,
+    "publicCapabilitySchema": 9,
+    "metadataSchema": 1,
+    "bindingApi": 5,
+    "buildProfile": "release",
+    "targetTriple": "x86_64-unknown-linux-gnu",
+    "javascriptAdmissionHasNoUpperBound": true,
+    "processNodeApiMinimum": 6,
+    "observedProcessNodeApi": 10,
+    "processNodeApiSatisfied": true,
+    "packageVersionLockstep": true,
+    "digestIntegrity": true,
+    "elfIdentity": true
+  },
+  "runtimeAdmission": {
+    "schemaVersion": 1,
+    "platform": "linux",
+    "architecture": "x64",
+    "armAbi": null,
+    "kernel": "7.1.8-arch1-3",
+    "libc": {
+      "family": "glibc",
+      "version": "2.44",
+      "evidence": "elf-interpreter-version"
+    },
+    "node": {
+      "version": "24.14.0",
+      "api": 10
+    }
+  },
+  "productionAdapter": {
+    "status": "passed",
+    "exactInjectedSourceSha256": "2b18143c4ce1ee280a6cb4c44bc87ace989d66486fa313303ccda304f1b6e2ce",
+    "bareSpecifierResolved": true,
+    "moduleOverrideUsed": false,
+    "fallbackCalls": 0,
+    "watcherReturned": true,
+    "nativeSubscriptionEstablished": true,
+    "establishmentDiagnostic": {
+      "emitted": true,
+      "version": "2.1.2",
+      "target": "linux-x64-gnu",
+      "includedNativeBudget": true
+    },
+    "joinedDisposal": true
+  },
+  "iterations": [
+    {
+      "iteration": 1,
+      "status": "passed",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false,
+        "outputOverflow": false,
+        "terminationRequested": false,
+        "killEscalated": false,
+        "elapsedMs": 2604
+      },
+      "lifecycleAssertions": {
+        "expectedRuntimeIdentity": {
+          "expectedElectron": "151.0.7922.137",
+          "observedElectron": "151.0.7922.137",
+          "electronMatches": true,
+          "expectedChrome": "151.0.7922.137",
+          "observedChrome": "151.0.7922.137",
+          "chromeMatches": true,
+          "expectedNode": "24.14.0",
+          "observedNode": "24.14.0",
+          "nodeMatches": true,
+          "nodeApiMinimum": 6,
+          "observedNodeApi": 10,
+          "nodeApiSatisfied": true
+        },
+        "inactiveBaseline": true,
+        "completeInitialObservation": true,
+        "realDelivery": {
+          "createDelivered": true,
+          "modificationDelivered": true,
+          "deletionDelivered": true,
+          "maximumConcurrentCallbacks": 1,
+          "callbackCount": 4
+        },
+        "exclusions": {
+          "initialPrefixHidden": true,
+          "directoryNameGitHidden": true,
+          "observedGitBoundaryDelivered": true,
+          "dynamicPrefixHidden": true,
+          "reconciliationComplete": true,
+          "stableRootReplacementRecovered": true
+        },
+        "establishmentCancellation": {
+          "provisionalNativeCancellation": true,
+          "errorCode": "WATCHBOUND_OPERATION_CANCELLED",
+          "operation": "subscribe"
+        },
+        "joinedDisposal": {
+          "concurrentCallsSharedPromise": true,
+          "repeatedCallSharedPromise": true,
+          "callbackSignalAborted": true,
+          "disposalJoinedPendingCallback": true,
+          "callbackCompletedBeforeResolution": true,
+          "callbacksAfterResolution": 0
+        },
+        "contextStop": {
+          "stopIdempotent": true,
+          "signalAborted": true,
+          "callbackCount": 1,
+          "callbacksAfterStop": 0
+        },
+        "resourcesReturnedToBaseline": true
+      },
+      "runtime": {
+        "baseline": {
+          "active": false,
+          "inotifyInstances": 0,
+          "workerThreads": 0,
+          "nativeWatches": 0,
+          "nativeWatchBudget": null,
+          "deferredInterests": 0,
+          "subscriptions": 0
+        },
+        "final": {
+          "active": false,
+          "inotifyInstances": 0,
+          "workerThreads": 0,
+          "nativeWatches": 0,
+          "nativeWatchBudget": null,
+          "deferredInterests": 0,
+          "subscriptions": 0
+        }
+      },
+      "processResources": {
+        "baseline": {
+          "fileDescriptors": 223,
+          "tasks": 46,
+          "watchboundThreads": 0,
+          "inotifyDescriptors": 1
+        },
+        "final": {
+          "fileDescriptors": 223,
+          "tasks": 46,
+          "watchboundThreads": 0,
+          "inotifyDescriptors": 1
+        },
+        "tolerance": {
+          "fileDescriptors": 2,
+          "coldTasks": 4
+        }
+      }
+    },
+    {
+      "iteration": 2,
+      "status": "passed",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false,
+        "outputOverflow": false,
+        "terminationRequested": false,
+        "killEscalated": false,
+        "elapsedMs": 2615
+      },
+      "lifecycleAssertions": {
+        "expectedRuntimeIdentity": {
+          "expectedElectron": "151.0.7922.137",
+          "observedElectron": "151.0.7922.137",
+          "electronMatches": true,
+          "expectedChrome": "151.0.7922.137",
+          "observedChrome": "151.0.7922.137",
+          "chromeMatches": true,
+          "expectedNode": "24.14.0",
+          "observedNode": "24.14.0",
+          "nodeMatches": true,
+          "nodeApiMinimum": 6,
+          "observedNodeApi": 10,
+          "nodeApiSatisfied": true
+        },
+        "inactiveBaseline": true,
+        "completeInitialObservation": true,
+        "realDelivery": {
+          "createDelivered": true,
+          "modificationDelivered": true,
+          "deletionDelivered": true,
+          "maximumConcurrentCallbacks": 1,
+          "callbackCount": 4
+        },
+        "exclusions": {
+          "initialPrefixHidden": true,
+          "directoryNameGitHidden": true,
+          "observedGitBoundaryDelivered": true,
+          "dynamicPrefixHidden": true,
+          "reconciliationComplete": true,
+          "stableRootReplacementRecovered": true
+        },
+        "establishmentCancellation": {
+          "provisionalNativeCancellation": true,
+          "errorCode": "WATCHBOUND_OPERATION_CANCELLED",
+          "operation": "subscribe"
+        },
+        "joinedDisposal": {
+          "concurrentCallsSharedPromise": true,
+          "repeatedCallSharedPromise": true,
+          "callbackSignalAborted": true,
+          "disposalJoinedPendingCallback": true,
+          "callbackCompletedBeforeResolution": true,
+          "callbacksAfterResolution": 0
+        },
+        "contextStop": {
+          "stopIdempotent": true,
+          "signalAborted": true,
+          "callbackCount": 1,
+          "callbacksAfterStop": 0
+        },
+        "resourcesReturnedToBaseline": true
+      },
+      "runtime": {
+        "baseline": {
+          "active": false,
+          "inotifyInstances": 0,
+          "workerThreads": 0,
+          "nativeWatches": 0,
+          "nativeWatchBudget": null,
+          "deferredInterests": 0,
+          "subscriptions": 0
+        },
+        "final": {
+          "active": false,
+          "inotifyInstances": 0,
+          "workerThreads": 0,
+          "nativeWatches": 0,
+          "nativeWatchBudget": null,
+          "deferredInterests": 0,
+          "subscriptions": 0
+        }
+      },
+      "processResources": {
+        "baseline": {
+          "fileDescriptors": 223,
+          "tasks": 45,
+          "watchboundThreads": 0,
+          "inotifyDescriptors": 1
+        },
+        "final": {
+          "fileDescriptors": 224,
+          "tasks": 45,
+          "watchboundThreads": 0,
+          "inotifyDescriptors": 1
+        },
+        "tolerance": {
+          "fileDescriptors": 2,
+          "coldTasks": 4
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "status": "passed",
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false,
+        "outputOverflow": false,
+        "terminationRequested": false,
+        "killEscalated": false,
+        "elapsedMs": 2574
+      },
+      "lifecycleAssertions": {
+        "expectedRuntimeIdentity": {
+          "expectedElectron": "151.0.7922.137",
+          "observedElectron": "151.0.7922.137",
+          "electronMatches": true,
+          "expectedChrome": "151.0.7922.137",
+          "observedChrome": "151.0.7922.137",
+          "chromeMatches": true,
+          "expectedNode": "24.14.0",
+          "observedNode": "24.14.0",
+          "nodeMatches": true,
+          "nodeApiMinimum": 6,
+          "observedNodeApi": 10,
+          "nodeApiSatisfied": true
+        },
+        "inactiveBaseline": true,
+        "completeInitialObservation": true,
+        "realDelivery": {
+          "createDelivered": true,
+          "modificationDelivered": true,
+          "deletionDelivered": true,
+          "maximumConcurrentCallbacks": 1,
+          "callbackCount": 4
+        },
+        "exclusions": {
+          "initialPrefixHidden": true,
+          "directoryNameGitHidden": true,
+          "observedGitBoundaryDelivered": true,
+          "dynamicPrefixHidden": true,
+          "reconciliationComplete": true,
+          "stableRootReplacementRecovered": true
+        },
+        "establishmentCancellation": {
+          "provisionalNativeCancellation": true,
+          "errorCode": "WATCHBOUND_OPERATION_CANCELLED",
+          "operation": "subscribe"
+        },
+        "joinedDisposal": {
+          "concurrentCallsSharedPromise": true,
+          "repeatedCallSharedPromise": true,
+          "callbackSignalAborted": true,
+          "disposalJoinedPendingCallback": true,
+          "callbackCompletedBeforeResolution": true,
+          "callbacksAfterResolution": 0
+        },
+        "contextStop": {
+          "stopIdempotent": true,
+          "signalAborted": true,
+          "callbackCount": 1,
+          "callbacksAfterStop": 0
+        },
+        "resourcesReturnedToBaseline": true
+      },
+      "runtime": {
+        "baseline": {
+          "active": false,
+          "inotifyInstances": 0,
+          "workerThreads": 0,
+          "nativeWatches": 0,
+          "nativeWatchBudget": null,
+          "deferredInterests": 0,
+          "subscriptions": 0
+        },
+        "final": {
+          "active": false,
+          "inotifyInstances": 0,
+          "workerThreads": 0,
+          "nativeWatches": 0,
+          "nativeWatchBudget": null,
+          "deferredInterests": 0,
+          "subscriptions": 0
+        }
+      },
+      "processResources": {
+        "baseline": {
+          "fileDescriptors": 223,
+          "tasks": 46,
+          "watchboundThreads": 0,
+          "inotifyDescriptors": 1
+        },
+        "final": {
+          "fileDescriptors": 223,
+          "tasks": 46,
+          "watchboundThreads": 0,
+          "inotifyDescriptors": 1
+        },
+        "tolerance": {
+          "fileDescriptors": 2,
+          "coldTasks": 4
+        }
+      }
+    }
+  ],
+  "qualifyRoot": {
+    "schemaVersion": 1,
+    "state": "qualified",
+    "reasons": [],
+    "target": {
+      "state": "qualified",
+      "packagedTargetId": "linux-x64-gnu",
+      "runtimeMatchesPackagedTarget": true,
+      "qualification": "supported"
+    },
+    "host": {
+      "state": "qualified",
+      "kernelFloor": {
+        "state": "satisfied",
+        "observed": "7.1.8-arch1-3",
+        "minimum": "5.15"
+      },
+      "glibcFloor": {
+        "state": "satisfied",
+        "observed": "2.44",
+        "minimum": "2.35"
+      },
+      "wsl": {
+        "state": "not-detected"
+      },
+      "container": {
+        "state": "not-detected"
+      }
+    },
+    "root": {
+      "state": "qualified",
+      "lexicalPath": "$CODEX_WORKSPACE",
+      "physicalPath": "$CODEX_WORKSPACE",
+      "lexicalAndPhysicalPathsEqual": true,
+      "filesystem": {
+        "kind": "ordinary-local",
+        "magic": "0x9123683e"
+      }
+    }
+  },
+  "negativeIntegrity": {
+    "status": "passed",
+    "productionAdapter": {
+      "status": "failed",
+      "exactInjectedSourceSha256": "2b18143c4ce1ee280a6cb4c44bc87ace989d66486fa313303ccda304f1b6e2ce",
+      "bareSpecifierAttempted": true,
+      "moduleOverrideUsed": false,
+      "fallbackCalls": 0,
+      "errorCode": "WATCHBOUND_NATIVE_INTEGRITY_MISMATCH"
+    },
+    "exit": {
+      "code": 1,
+      "signal": null,
+      "timedOut": false,
+      "outputOverflow": false,
+      "terminationRequested": false,
+      "killEscalated": false
+    },
+    "error": {
+      "name": "WatchboundLoaderError",
+      "code": "WATCHBOUND_NATIVE_INTEGRITY_MISMATCH",
+      "message": "Watchbound native addon watchbound.linux-x64-gnu.node does not match its package digest",
+      "details": {},
+      "cause": null
+    },
+    "fallbackAddonLoaded": false
+  },
+  "reportFreeAdmission": {
+    "downstreamShimInstalled": false,
+    "processReportUsed": false,
+    "evidence": "elf-interpreter-version",
+    "admissionSnapshotSharedWithCapabilities": true
+  },
+  "arm64": {
+    "status": "unavailable",
+    "reason": "no signed ARM64 executable or ARM64 execution environment"
+  },
+  "rawArtifacts": [
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/build.json",
+      "sha256": "68969bbe5ee65ab21589463d580850854cfc4db2e4d88f177b60759aec7c06d9"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/cold-1.json",
+      "sha256": "dec00e8a7714a2875cccd1ca894a4b2fe00a83a75275cfea3a1c010f8fb11611"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/cold-1.stderr.log",
+      "sha256": "c9dc3195d8c6dcbdbb3a1fd85bc4bcd1c963f355e281090378fed324aa2739f7"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/cold-1.stdout.log",
+      "sha256": "ae83cfbac9879120dc104df01fb53a81695777708ffe7251ea3a5d7532a7ab20"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/cold-2.json",
+      "sha256": "76c8e1684d93a1bb96afba67e9ae1eb7146a0c85fff1b319992b4b3892fa0edb"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/cold-2.stderr.log",
+      "sha256": "f5eb742a7895c5400966a3264bfee8bb950de1dafdb4e4877b7fb5360f34580b"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/cold-2.stdout.log",
+      "sha256": "a14a0447b2c6ff39b37e6b4a0e46ea7efcee7bc5ec59e5eef1d3da17831ac894"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/cold-3.json",
+      "sha256": "b9ffc93f321b31e772bcedee6c319e92760c9d6d3a238a84c60397c7980590a5"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/cold-3.stderr.log",
+      "sha256": "6f2ee6c5ed84edcffb9e293a228df81595da2541114efa52c1469c1cca0e7333"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/cold-3.stdout.log",
+      "sha256": "6317154a11498be0030cea5d6d90110415a8e92e18f35e4c0c03a625fd6a87ec"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/negative-integrity.json",
+      "sha256": "8799517663bec458c140d958802f56b015f62726c52e3837b1f918c5ed4630a0"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/negative-integrity.stderr.log",
+      "sha256": "85c9334405db1e42fab1caf5426ac33bd4b015e46c627aa6207b7968ba673a65"
+    },
+    {
+      "filename": "reports/watchbound-signed-runtime/2.1.2-x64/per-root-acceptance/negative-integrity.stdout.log",
+      "sha256": "110c31864dbde21d4f6f13acaccd64d2f54f74de738d4d71c9c68d012e733eef"
+    }
+  ],
+  "reproduction": {
+    "command": "node linux-features/directory-only-working-tree-watch/acceptance/run-signed-runtime.mjs --watchbound-source <WATCHBOUND_SOURCE> --signed-deb <SIGNED_AMD64_DEB> --raw-dir reports/watchbound-signed-runtime/2.1.2-x64 --evidence linux-features/directory-only-working-tree-watch/acceptance/evidence/signed-runtime-2.1.2-x64.json",
+    "harness": [
+      "linux-features/directory-only-working-tree-watch/acceptance/run-signed-runtime.mjs",
+      "linux-features/directory-only-working-tree-watch/acceptance/runtime-harness.mjs"
+    ]
+  }
+}

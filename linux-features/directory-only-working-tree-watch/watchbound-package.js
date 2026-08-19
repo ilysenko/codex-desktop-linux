@@ -11,7 +11,7 @@ const {
   isPatchIntegrityError,
 } = require("../../scripts/patches/integrity-error.js");
 
-const WATCHBOUND_NODE_RANGE = ">=24.15.0 <25";
+const WATCHBOUND_NODE_RANGE = ">=18.15.0";
 const WATCHBOUND_TARGET_CONTRACTS = Object.freeze({
   x64: Object.freeze({
     packageName: "@gadicc/watchbound-node-linux-x64-gnu",
@@ -79,9 +79,7 @@ function nodeVersionSupportsWatchbound(version) {
     version,
     "Watchbound target Node.js version",
   ).split(".").map(Number);
-  return major === 24 && (
-    minor > 15 || (minor === 15 && patch >= 0)
-  );
+  return major > 18 || (major === 18 && (minor > 15 || (minor === 15 && patch >= 0)));
 }
 
 function extractedAppElectronVersion(extractedDir) {
@@ -134,15 +132,18 @@ function validateTargetRuntime(
         `${manifest.runtime.node}`,
     );
   }
-  if (
-    targetNodeVersion != null &&
-    targetNodeVersion !== "" &&
-    exactVersion(targetNodeVersion, "Target Node.js version") !== manifest.runtime.node
-  ) {
+  if (targetNodeVersion != null && targetNodeVersion !== "") {
+    const targetNode = exactVersion(targetNodeVersion, "Target Node.js version");
+    if (nodeVersionSupportsWatchbound(targetNode)) {
+      return {
+        electron: buildElectronVersion,
+        node: targetNode,
+        qualification: "pinned-artifact-manifest",
+      };
+    }
     throw new Error(
-      `Watchbound ${manifest.version} is qualified for Electron ` +
-        `${manifest.runtime.electron} / Node.js ${manifest.runtime.node}, got Node.js ` +
-        `${targetNodeVersion}`,
+      `Watchbound ${manifest.version} requires Node.js ${WATCHBOUND_NODE_RANGE}, ` +
+        `got Node.js ${targetNode}`,
     );
   }
   return {
@@ -1625,14 +1626,9 @@ function packageHelperExitCode(error) {
 }
 
 function currentArtifactManifest() {
-  const manifest = JSON.parse(
+  return JSON.parse(
     fs.readFileSync(path.join(__dirname, "watchbound-artifacts.json"), "utf8"),
   );
-  if (process.env.CODEX_WATCHBOUND_NIX_NODE_24_14 === "1") {
-    manifest.packages.loader.files["native-matrix.json"] =
-      "8ea0c8101cc7d0f97a5d988ce30240914a1ae5fecce7f6c4d02a7b80359e6cf4";
-  }
-  return manifest;
 }
 
 async function main() {
@@ -1680,7 +1676,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  currentArtifactManifest,
   defaultMaterializePackage,
   currentLibc,
   commitPackageDirectoryNoReplace,

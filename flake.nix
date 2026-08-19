@@ -262,18 +262,7 @@
               -C "$out/lib/node_modules/watchbound" --strip-components=1
             tar -xzf ${watchboundLoaderArchive} \
               -C "$out/lib/node_modules/@gadicc/watchbound-node" --strip-components=1
-            # Apply the one explicit downstream compatibility delta for the
-            # signed app's Node 24.14. The package verifier pins the adjusted
-            # loader hash separately from the upstream artifact manifest, and
-            # the maximal check exercises its lifecycle with that CUA runtime.
-            substituteInPlace \
-              "$out/lib/node_modules/@gadicc/watchbound-node/native-matrix.json" \
-              --replace-fail '"nodeRange": ">=24.15.0 <25"' '"nodeRange": ">=24.14.0 <25"' \
-              --replace-fail '"nodeMinimum": "24.15.0"' '"nodeMinimum": "24.14.0"'
-            grep -q '"nodeMinimum": "24.14.0"' \
-              "$out/lib/node_modules/@gadicc/watchbound-node/native-matrix.json"
-            CODEX_WATCHBOUND_NIX_NODE_24_14=1 \
-              node ${sourceRoot}/linux-features/directory-only-working-tree-watch/watchbound-package.js \
+            node ${sourceRoot}/linux-features/directory-only-working-tree-watch/watchbound-package.js \
               --verify-controlled-package-root "$out/lib/node_modules" ${watchboundTarget.electronArch}
             runHook postInstall
           '';
@@ -359,7 +348,6 @@
               ''}
               ${lib.optionalString watchboundEnabled ''
               export CODEX_WATCHBOUND_PACKAGE_ROOT="${watchboundPackage}/lib/node_modules"
-              export CODEX_WATCHBOUND_NIX_NODE_24_14=1
               ''}
               bash "$source_dir/install.sh" "${upstreamDeb}"
 
@@ -603,7 +591,6 @@
             export CODEX_GLOBAL_DICTATION_LINUX_SOURCE="${globalDictationHelper}/bin/codex-global-dictation-linux"
             export CODEX_MCP_HELPER_REAPER_SOURCE="${mcpReaperHelper}/bin/codex-mcp-helper-reaper"
             export CODEX_WATCHBOUND_PACKAGE_ROOT="${watchboundPackage}/lib/node_modules"
-            export CODEX_WATCHBOUND_NIX_NODE_24_14=1
             upstream_contract_root="$(mktemp -d)"
             dpkg-deb -x ${upstreamDeb} "$upstream_contract_root"
             node ${sourceRoot}/nix/elf-runtime.cjs validate-upstream \

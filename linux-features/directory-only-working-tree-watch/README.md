@@ -17,7 +17,7 @@ coverage.
 
 ## Current OpenAI working-tree route
 
-OpenAI Desktop `26.803.81509` has a Linux-specific Parcel working-tree path in
+OpenAI Desktop `26.814.41957` has a Linux-specific Parcel working-tree path in
 the official Linux package. That path calls `@parcel/watcher` directly instead of
 the local `startFileWatch()` method this feature intercepts. When this feature
 is selected, its current-package patch reroutes that one local recursive
@@ -57,7 +57,7 @@ alternative policies; do not enable both at once.
 
 ## Current package boundary
 
-The integration pins the official Watchbound `2.1.1` wrapper, neutral loader,
+The integration pins the official Watchbound `2.1.2` wrapper, neutral loader,
 x64 GNU target, and ARM64 GNU target archives. The
 artifact manifest records each registry URL, npm integrity, npm shasum, archive
 SHA-256, complete file contract, and native SHA-256. It must contain both
@@ -70,56 +70,55 @@ Normal builds fetch the pinned npm packages. The manifest pins four archives in
 total; a fully offline build provides the three selected for its architecture:
 
 ```bash
-export CODEX_WATCHBOUND_ARCHIVE=/path/to/watchbound-2.1.1.tgz
-export CODEX_WATCHBOUND_NODE_ARCHIVE=/path/to/gadicc-watchbound-node-2.1.1.tgz
-export CODEX_WATCHBOUND_NODE_X64_ARCHIVE=/path/to/gadicc-watchbound-node-linux-x64-gnu-2.1.1.tgz
+export CODEX_WATCHBOUND_ARCHIVE=/path/to/watchbound-2.1.2.tgz
+export CODEX_WATCHBOUND_NODE_ARCHIVE=/path/to/gadicc-watchbound-node-2.1.2.tgz
+export CODEX_WATCHBOUND_NODE_X64_ARCHIVE=/path/to/gadicc-watchbound-node-linux-x64-gnu-2.1.2.tgz
 # Use CODEX_WATCHBOUND_NODE_ARM64_ARCHIVE on ARM64.
 ./install.sh /path/to/chatgpt_<version>_<arch>.deb
 ```
 
-Watchbound `2.1.1` qualifies x64 and ARM64 GNU/Linux with a Linux 5.15 floor,
-Node 24.15–24.x, and a GLIBC 2.35
+Watchbound `2.1.2` qualifies x64 and ARM64 GNU/Linux with a Linux 5.15 floor,
+Node 18.15 or newer with Node-API 6 or newer, and a GLIBC 2.35
 baseline. Its native matrix covers Ubuntu 22.04/24.04, Debian 12, Fedora 42,
 openSUSE Tumbleweed, Nix, and Arch on x64; ARM64 has the same lanes except Arch.
+The checked-in consumer manifest records the signed Owl runtime's Node 24.14.
 The adapter consumes capability schema 9 and requires binding API 5,
-lockstep wrapper/native/engine `2.1.1` identities, native directory-name exclusions,
+lockstep wrapper/native/engine `2.1.2` identities, native directory-name exclusions,
 observed excluded paths, exact path bytes, root qualification, physical root
 resolution, and `support.currentRuntime.targetCompatible`. It requires
 `qualifyRoot()` to approve the actual workspace and verifies that the
 established physical root still matches that qualification snapshot. It does
 not recreate Watchbound's target or root decision from host strings.
 
-Watchbound's wrapper and loader detect libc through `process.report.getReport()`.
-Inside the packaged Electron binary that call is fatal — an internal CHECK
-aborts the process with SIGILL (the openai/codex#38123 git-watcher crash
-class) — so the adapter replaces `process.report` in both patched bundles
-(the worker and the main-process src bundle) with a shim that keeps the
-original report members and overrides only `getReport`, before any Watchbound
-code loads. The shim serves the same libc facts from
-probes that stay in JavaScript: the ELF interpreter of `/proc/self/exe`,
-`/usr/bin/ldd` content, and a `getconf GNU_LIBC_VERSION` subprocess. A Nix
-store interpreter names its exact glibc, so closure-only Nix launches (no
-`/usr/bin/ldd`, no `getconf` on the runtime `PATH`) take the version straight
-from the `PT_INTERP` path — readable because the Nix build relocates
-`PT_INTERP` into the scanned range (#1332). The shim stays
-installed for the process's lifetime so later capability reads remain safe.
-When every probe fails, the shim reports an empty header; Watchbound then
-refuses at load, the adapter catches the refused import, and the request
-degrades to the preserved Parcel route (worker) or the original local watch
+Watchbound `2.1.2` no longer reads `process.report`, whose native
+`getReport()` aborts inside the packaged Owl executable. Its loader reads the
+exact bounded `PT_INTERP` segment from `/proc/self/exe`, opens that exact
+interpreter, and runs the already-open descriptor as `/proc/self/fd/3
+--version` under bounded output and timeout limits. The loader records this
+admission snapshot and the public capability layer consumes the same evidence.
+The downstream report shim from #1336 is therefore removed; import refusal
+still degrades to the preserved Parcel route (worker) or original local watch
 (src bundle) instead of crashing.
+
+The Nix `PT_INTERP` relocation from #1332 remains necessary for upstream
+`@parcel/watcher`, which still owns the disabled-feature and unqualified-root
+fallback routes. Watchbound itself accepts the relocated interpreter without
+a consumer-side compatibility path.
 
 Build-time runtime qualification does not execute the upstream Electron
 binary. The extracted app's pinned Electron dependency must match the exact
-Electron/Node pair in the checked-in Watchbound artifact manifest; a mismatch
-rejects this enabled feature before package materialization.
+Electron version in the checked-in Watchbound artifact manifest, and an
+explicit target Node version must satisfy Watchbound's published `>=18.15.0`
+range. A mismatch rejects this enabled feature before package materialization.
 
 Nix builds do not run npm or perform unpinned registry resolution. The flake
-pins Watchbound's `v2.1.1` source commit and archive digest, builds the selected
+pins Watchbound's `v2.1.2` source commit and archive digest, builds the selected
 native target from its Cargo lock, and fetches the wrapper and neutral loader
 as fixed-output archives using the same checked-in artifact manifest as normal
 builds. It byte-verifies both JavaScript packages against that manifest before
-staging the three-package runtime tree. This follows Watchbound's qualified Nix
-route on both `x86_64-linux` and `aarch64-linux`.
+staging the three-package runtime tree without rewriting their runtime
+metadata. This follows Watchbound's qualified Nix route on both `x86_64-linux`
+and `aarch64-linux`.
 
 ## Maintenance and failure model
 
@@ -141,6 +140,51 @@ Watchbound-enabled watchdog output then exercise that state. Missing targets,
 package drift, runtime mismatch, current-package drift, or an unprovable rollback
 reject an enabled-feature candidate; users who leave the feature disabled do
 not enter this package or patch path.
+
+## Runtime diagnostics
+
+After opening a local working tree, this line confirms that Watchbound owns the
+route rather than Parcel:
+
+```text
+INFO: directory-only working-tree watch established with Watchbound 2.1.2 for <root> (target=<target>, native=<count>, limit=<budget>).
+```
+
+It is emitted once per resolved physical root per app process, after that
+root's native subscription, identity, Git policy, and initial complete
+working-tree coverage are established. Reopening the same project, including
+through an alias of the same physical root, does not repeat the line. The
+remaining diagnostics distinguish the fallback and degraded states:
+
+- `runtime rejected Watchbound` means the packaged runtime failed a supported
+  platform, libc, kernel, Node, or Node-API check. The named upstream watcher
+  is used instead. Missing, corrupt, or API-incompatible Watchbound packages
+  remain hard errors and do not silently fall back.
+- `root is unqualified` means Watchbound definitively rejected that particular
+  working-tree root, so the upstream Parcel watcher is selected immediately.
+- `root is unknown after 4 bounded retries` means root qualification stayed
+  indeterminate or threw. The adapter retries after 250, 500, 1000, and 2000
+  milliseconds, then preserves correctness by selecting Parcel.
+- `coverage is partial` or `coverage is unknown` means Watchbound still owns
+  the route but cannot currently claim complete recursive coverage. The
+  adapter sends a conservative root invalidation and keeps Codex focus recovery
+  active; `coverage recovered` confirms the episode ended.
+- Configuration warnings identify an invalid or capped feature setting and
+  state the effective default or limit that will be used.
+
+Fallback diagnostics are deduplicated process-wide, while coverage warnings
+appear once per incomplete episode. The success line is therefore the clearest
+positive confirmation for the named root; its absence can also mean that the
+working tree has not attempted the route yet or that the same physical root was
+already logged through another path.
+
+Completely exit an existing app instance before launching from a terminal,
+because the existing single-instance process owns its logs:
+
+```bash
+/opt/codex-desktop/start.sh 2>&1 | rg --line-buffered \
+  'directory-only[ -]working-tree[ -]watch|Watchbound|Parcel'
+```
 
 ## Policy retained by Codex
 
@@ -255,6 +299,11 @@ programs.codexDesktopLinux.linuxFeatures = [
 ```
 
 ## Tests
+
+The exact-candidate signed Owl acceptance harness and its durable sanitized
+evidence are documented in [`acceptance/README.md`](acceptance/README.md). It is
+consumer-owned, requires the recorded signed executable, and is intentionally
+not a substitute for ordinary feature unit tests or ARM64 qualification.
 
 Watchbound now owns the low-level topology, overflow, allocation, fairness,
 reconciliation, recovery, exact-byte, cancellation, and disposal suites. This

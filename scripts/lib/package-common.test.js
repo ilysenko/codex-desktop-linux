@@ -205,6 +205,36 @@ test("update-builder carries the shared feature compatibility registry", (t) => 
   );
 });
 
+test("update-builder omits directory-watch acceptance-only evidence", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-builder-watchbound-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(root, "features.json");
+  const builder = path.join(root, "builder");
+  fs.writeFileSync(
+    config,
+    `${JSON.stringify({ enabled: ["directory-only-working-tree-watch"] })}\n`,
+  );
+
+  runPackageCommon(
+    `CODEX_LINUX_FEATURES_CONFIG=${JSON.stringify(config)} stage_update_builder_linux_features_tree ${JSON.stringify(builder)}`,
+    root,
+  );
+
+  const stagedFeature = path.join(
+    builder,
+    "linux-features/directory-only-working-tree-watch",
+  );
+  for (const runtimeInput of [
+    "feature.json",
+    "patch.js",
+    "watchbound-artifacts.json",
+    "watchbound-package.js",
+  ]) {
+    assert.equal(fs.existsSync(path.join(stagedFeature, runtimeInput)), true);
+  }
+  assert.equal(fs.existsSync(path.join(stagedFeature, "acceptance")), false);
+});
+
 test("update-builder stages only plugin templates consumed by enabled feature hooks", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-builder-plugins-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
