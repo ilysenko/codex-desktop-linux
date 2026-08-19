@@ -552,6 +552,31 @@ test("synthetic overlay harness coalesces 1,000 drag events and drops stale call
   assert.ok(overlay.codexPetOverlayStabilityData().coalescedDragMoves >= 998);
 });
 
+test("drag release flush does not shadow the captured screen binding", () => {
+  const { overlay, window } = createRuntimeHarness(
+    applyPetOverlayStabilityPatch(officialOverlayFixture()),
+  );
+  const state = overlay.codexPetOverlayStabilityData();
+  state.dragActive = true;
+  state.rendererId = window.webContents.id;
+  overlay.windowServerDragActive = false;
+  overlay.dragState = {
+    cursorSource: "renderer",
+    getCursorPointForSource({ renderer }) {
+      return renderer;
+    },
+  };
+
+  assert.doesNotThrow(() =>
+    overlay.codexPetOverlayStabilityFlushDrag(window.webContents.id, {
+      pointerScreenX: 300,
+      pointerScreenY: 320,
+    }),
+  );
+  assert.equal(state.finalDragFlushed, true);
+  assert.deepEqual(overlay.dragCommits, [{ x: 300, y: 320 }]);
+});
+
 test("programmatic move acknowledgement consumes only matching asynchronous notifications", () => {
   const { overlay, window } = createRuntimeHarness(applyPetOverlayStabilityPatch(officialOverlayFixture()));
   const target = { x: 240, y: 260, width: 384, height: 400 };
