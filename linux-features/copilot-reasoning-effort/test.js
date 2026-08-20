@@ -17,6 +17,7 @@ const {
   applyCopilotReasoningEffortModelListPatch,
   applyCopilotReasoningEffortSettingsPatch,
   applyCopilotReasoningEffortUiPatch,
+  matchesCopilotReasoningEffortUiContract,
 } = require("./patch.js");
 
 function applyPatchTwice(patchFn, source) {
@@ -160,6 +161,7 @@ test("keeps filtered current app reasoning efforts for Copilot auth", () => {
 });
 
 test("allows Copilot auth to use the current app effort controls", () => {
+  assert.equal(matchesCopilotReasoningEffortUiContract(currentCopilotReasoningEffortUiFixture()), true);
   const patched = applyPatchTwice(
     applyCopilotReasoningEffortUiPatch,
     currentCopilotReasoningEffortUiFixture(),
@@ -176,6 +178,61 @@ test("allows Copilot auth to use the current app effort controls", () => {
   assert.doesNotMatch(patched, /M=l&&m&&!h&&!0/);
   assert.match(patched, /let q=a&&b&&!0,c/);
   assert.match(patched, /A=O\.length>0,j=!w&&!A/);
+  assert.equal(matchesCopilotReasoningEffortUiContract(patched), true);
+
+  const { value, warnings } = withCapturedWarns(() =>
+    applyCopilotReasoningEffortUiPatch(patched),
+  );
+  assert.equal(value, patched);
+  assert.deepEqual(warnings, []);
+});
+
+test("duplicate current app UI contracts warn and remain byte-identical", () => {
+  const source = currentCopilotReasoningEffortUiFixture().repeat(2);
+  const { value, warnings } = withCapturedWarns(() =>
+    applyCopilotReasoningEffortUiPatch(source),
+  );
+
+  assert.equal(matchesCopilotReasoningEffortUiContract(source), false);
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /duplicate current Copilot reasoning effort composer contracts/);
+});
+
+test("mixed current app UI contract states warn and remain byte-identical", () => {
+  const cleanSource = currentCopilotReasoningEffortUiFixture();
+  const sources = [
+    cleanSource.replace("reasoningEffortDisabled:ee", "reasoningEffortDisabled:!1"),
+    cleanSource.replace("M=l&&m&&!h&&!0,N;", "M=l&&m&&!0,N;"),
+  ];
+
+  for (const source of sources) {
+    const { value, warnings } = withCapturedWarns(() =>
+      applyCopilotReasoningEffortUiPatch(source),
+    );
+    assert.equal(matchesCopilotReasoningEffortUiContract(source), false);
+    assert.equal(value, source);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /mixed current Copilot reasoning effort UI contract state/);
+  }
+});
+
+test("incomplete current app UI contracts warn and remain byte-identical", () => {
+  const cleanSource = currentCopilotReasoningEffortUiFixture();
+  const sources = [
+    cleanSource.replace("&&!ee&&!0", "&&!0"),
+    cleanSource.replace("reasoningEffortDisabled:ee", "effortDisabled:ee"),
+    cleanSource.replace("composer.reasoningSlashCommand.title", "composer.effortCommand.title"),
+  ];
+
+  for (const source of sources) {
+    const { value, warnings } = withCapturedWarns(() =>
+      applyCopilotReasoningEffortUiPatch(source),
+    );
+    assert.equal(matchesCopilotReasoningEffortUiContract(source), false);
+    assert.equal(value, source);
+    assert.equal(warnings.length, 1);
+  }
 });
 
 test("current app UI drift warns without touching adjacent gates", () => {

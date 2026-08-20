@@ -28,25 +28,7 @@ function matchesCopilotReasoningEffortModelListContract(source) {
 }
 
 function matchesCopilotReasoningEffortUiContract(source) {
-  const cleanComposerMatch = currentComposerGateRegex(false).exec(source);
-  const patchedComposerMatch = currentComposerGateRegex(true).exec(source);
-  const composerMatch = cleanComposerMatch ?? patchedComposerMatch;
-  if (composerMatch == null) {
-    return false;
-  }
-
-  const dropdownPatched = hasNearbyNeedle(
-    source,
-    composerMatch.index,
-    "reasoningEffortDisabled:!1",
-  );
-  const dropdownClean = hasNearbyNeedle(
-    source,
-    composerMatch.index,
-    `reasoningEffortDisabled:${composerMatch.groups.copilot}`,
-  );
-  return (dropdownClean || dropdownPatched) &&
-    (currentSlashCommandRegex(false).test(source) || currentSlashCommandRegex(true).test(source));
+  return analyzeCopilotReasoningEffortUiContract(source).state !== "invalid";
 }
 
 function currentComposerGateRegex(patched) {
@@ -71,9 +53,96 @@ function currentSlashCommandRegex(patched) {
   );
 }
 
-function hasNearbyNeedle(source, startIndex, needle, distance = 20_000) {
-  const index = source.indexOf(needle, startIndex);
-  return index >= startIndex && index < startIndex + distance;
+function findAllMatches(source, regex) {
+  const flags = regex.flags.includes("g") ? regex.flags : `${regex.flags}g`;
+  return [...source.matchAll(new RegExp(regex.source, flags))];
+}
+
+function findNeedleIndexes(source, needle, startIndex, distance = 20_000) {
+  const indexes = [];
+  const endIndex = Math.min(source.length, startIndex + distance);
+  let index = source.indexOf(needle, startIndex);
+  while (index >= startIndex && index < endIndex) {
+    indexes.push(index);
+    index = source.indexOf(needle, index + needle.length);
+  }
+  return indexes;
+}
+
+function analyzeCopilotReasoningEffortUiContract(source) {
+  const cleanComposerMatches = findAllMatches(source, currentComposerGateRegex(false));
+  const patchedComposerMatches = findAllMatches(source, currentComposerGateRegex(true));
+  const composerMatches = [...cleanComposerMatches, ...patchedComposerMatches];
+  if (composerMatches.length === 0) {
+    return {
+      state: "invalid",
+      warning: "Could not find current Copilot reasoning effort shortcut gate",
+    };
+  }
+  if (composerMatches.length !== 1) {
+    return {
+      state: "invalid",
+      warning: "Found duplicate current Copilot reasoning effort composer contracts",
+    };
+  }
+
+  const composerMatch = composerMatches[0];
+  const cleanDropdownIndexes = findNeedleIndexes(
+    source,
+    `reasoningEffortDisabled:${composerMatch.groups.copilot}`,
+    composerMatch.index,
+  );
+  const patchedDropdownIndexes = findNeedleIndexes(
+    source,
+    "reasoningEffortDisabled:!1",
+    composerMatch.index,
+  );
+  const dropdownIndexes = [...cleanDropdownIndexes, ...patchedDropdownIndexes];
+  if (dropdownIndexes.length === 0) {
+    return {
+      state: "invalid",
+      warning: "Could not find current Copilot reasoning effort dropdown gate",
+    };
+  }
+  if (dropdownIndexes.length !== 1) {
+    return {
+      state: "invalid",
+      warning: "Found duplicate current Copilot reasoning effort dropdown gates",
+    };
+  }
+
+  const cleanSlashMatches = findAllMatches(source, currentSlashCommandRegex(false));
+  const patchedSlashMatches = findAllMatches(source, currentSlashCommandRegex(true));
+  const slashMatches = [...cleanSlashMatches, ...patchedSlashMatches];
+  if (slashMatches.length === 0) {
+    return {
+      state: "invalid",
+      warning: "Could not find reasoning slash command enabled state",
+    };
+  }
+  if (slashMatches.length !== 1) {
+    return {
+      state: "invalid",
+      warning: "Found duplicate Copilot reasoning slash command gates",
+    };
+  }
+
+  const pristine = cleanComposerMatches.length === 1 &&
+    cleanDropdownIndexes.length === 1 && cleanSlashMatches.length === 1;
+  const patched = patchedComposerMatches.length === 1 &&
+    patchedDropdownIndexes.length === 1 && patchedSlashMatches.length === 1;
+  if (!pristine && !patched) {
+    return {
+      state: "invalid",
+      warning: "Found mixed current Copilot reasoning effort UI contract state",
+    };
+  }
+
+  return {
+    state: pristine ? "pristine" : "patched",
+    composerMatch,
+    dropdownIndex: dropdownIndexes[0],
+  };
 }
 
 function applyCopilotReasoningEffortSettingsPatch(currentSource) {
@@ -161,59 +230,42 @@ function applyCopilotReasoningEffortModelListPatch(currentSource) {
 }
 
 function applyCopilotReasoningEffortUiPatch(currentSource) {
-  const cleanComposerMatch = currentComposerGateRegex(false).exec(currentSource);
-  const patchedComposerMatch = currentComposerGateRegex(true).exec(currentSource);
-  const composerMatch = cleanComposerMatch ?? patchedComposerMatch;
-  if (composerMatch == null) {
-    console.warn(
-      "WARN: Could not find current Copilot reasoning effort shortcut gate - skipping current UI patch",
-    );
+  const contract = analyzeCopilotReasoningEffortUiContract(currentSource);
+  if (contract.state === "invalid") {
+    console.warn(`WARN: ${contract.warning} - skipping current UI patch`);
+    return currentSource;
+  }
+  if (contract.state === "patched") {
     return currentSource;
   }
 
-  const copilotVar = composerMatch.groups.copilot;
-  const dropdownNeedle = `reasoningEffortDisabled:${copilotVar}`;
-  const dropdownClean = hasNearbyNeedle(currentSource, composerMatch.index, dropdownNeedle);
-  const dropdownPatched = hasNearbyNeedle(
-    currentSource,
-    composerMatch.index,
-    "reasoningEffortDisabled:!1",
-  );
-  if (!dropdownClean && !dropdownPatched) {
-    console.warn(
-      "WARN: Could not find current Copilot reasoning effort dropdown gate - skipping current UI patch",
-    );
-    return currentSource;
-  }
+  const cleanComposerMatch = contract.composerMatch;
+  let patchedSource = currentSource;
+  const groups = cleanComposerMatch.groups;
+  const replacement =
+    `${groups.copilot}=${groups.host}?.authMethod===${BT}copilot${BT}${groups.middle},` +
+    `${groups.shortcut}=${groups.modelLock}?.isModelLocked!==!0&&!${groups.loading}&&!0,` +
+    `${groups.picker}=${groups.modelLock}?.isModelLocked!==!0&&${groups.modelList}!=null` +
+    `&&!${groups.loading}&&${groups.mode}&&${groups.status}!==${BT}error${BT}`;
+  patchedSource = patchedSource.replace(cleanComposerMatch[0], replacement);
+
+  const dropdownNeedle = `reasoningEffortDisabled:${groups.copilot}`;
+  const dropdownIndex = patchedSource.indexOf(dropdownNeedle, cleanComposerMatch.index);
+  patchedSource =
+    patchedSource.slice(0, dropdownIndex) +
+    "reasoningEffortDisabled:!1" +
+    patchedSource.slice(dropdownIndex + dropdownNeedle.length);
 
   const cleanSlashRegex = currentSlashCommandRegex(false);
-  const patchedSlashRegex = currentSlashCommandRegex(true);
-  if (!cleanSlashRegex.test(currentSource) && !patchedSlashRegex.test(currentSource)) {
-    console.warn(
-      "WARN: Could not find reasoning slash command enabled state - skipping Copilot reasoning slash command patch",
-    );
-    return currentSource;
-  }
-
-  let patchedSource = currentSource;
-  if (cleanComposerMatch != null) {
-    const groups = cleanComposerMatch.groups;
-    const replacement =
-      `${groups.copilot}=${groups.host}?.authMethod===${BT}copilot${BT}${groups.middle},` +
-      `${groups.shortcut}=${groups.modelLock}?.isModelLocked!==!0&&!${groups.loading}&&!0,` +
-      `${groups.picker}=${groups.modelLock}?.isModelLocked!==!0&&${groups.modelList}!=null` +
-      `&&!${groups.loading}&&${groups.mode}&&${groups.status}!==${BT}error${BT}`;
-    patchedSource = patchedSource.replace(cleanComposerMatch[0], replacement);
-  }
-  if (dropdownClean) {
-    const dropdownIndex = patchedSource.indexOf(dropdownNeedle, composerMatch.index);
-    patchedSource =
-      patchedSource.slice(0, dropdownIndex) +
-      "reasoningEffortDisabled:!1" +
-      patchedSource.slice(dropdownIndex + dropdownNeedle.length);
-  }
   if (cleanSlashRegex.test(patchedSource)) {
     patchedSource = patchedSource.replace(cleanSlashRegex, "$1$2=$3&&$4&&!0,$5;");
+  }
+
+  if (analyzeCopilotReasoningEffortUiContract(patchedSource).state !== "patched") {
+    console.warn(
+      "WARN: Copilot reasoning effort UI patch did not produce one coherent patched contract - skipping current UI patch",
+    );
+    return currentSource;
   }
   return patchedSource;
 }
