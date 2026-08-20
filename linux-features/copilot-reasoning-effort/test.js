@@ -56,9 +56,9 @@ function currentFilteredCopilotReasoningEffortModelListFixture() {
 
 function currentCopilotReasoningEffortUiFixture() {
   return [
-    "function dz(){let k=!Bm(u),A=a?.authMethod===`copilot`,j=!k&&!A,M=yh(d,m);return aO(`composer.increaseReasoningEffort`,()=>we(`increase`),{enabled:j}),(0,gz.jsx)(_m,{reasoningEffortDisabled:A})}",
+    "function tHc(){let q=!0,ee=p?.authMethod===`copilot`,te=QRc(j,T),ne=Xic(j),re=$Rc(y.reasoningEffort,te),ie=C?.isModelLocked!==!0&&!q&&!ee&&!0,ae=C?.isModelLocked!==!0&&l!=null&&!q&&g&&!ee&&A!==`error`;let He={enabled:ie};m1(`composer.increaseReasoningEffort`,Ve,He);return jsx(CVc,{reasoningEffortDisabled:ee,showReasoningEffortControls:!0})}",
     "function unrelatedGate(){let q=a&&b&&!0,c;return q}",
-    "function uU(){let p=o?.authMethod===`copilot`;let E=i.formatMessage({id:`composer.reasoningSlashCommand.title`});let O=s&&f&&!p&&!0,k;return{enabled:O,dependencies:k}}",
+    "function G$c(){let l=c?.requiresAuth??!0,m=Fza(f),h=c?.authMethod===`copilot`;let A=o.formatMessage({id:`composer.reasoningSlashCommand.title`});let M=l&&m&&!h&&!0,N;return{enabled:M,dependencies:N}}",
     "function permissionGate(){let A=O.length>0,j=!w&&!A;return{shouldAutoDenyPermissionRequest:j}}",
   ].join("");
 }
@@ -133,12 +133,13 @@ test("persists Copilot reasoning effort through the current default writer", () 
 });
 
 test("current package descriptors use the semantic app-initial owner", () => {
-  const currentChunk = "app-initial-Bd3Z1bES.js";
+  const currentChunk = "app-initial-DAkTNeXg.js";
   const adjacentChunk = "projects-index-page-DjNy92Xe.js";
   const loaded = require("./patch.js").descriptors;
 
   assert.ok(loaded.every((descriptor) => descriptor.pattern.test(currentChunk)));
   assert.ok(loaded.every((descriptor) => descriptor.pattern.test(adjacentChunk) === false));
+  assert.equal(loaded[2].assetMatch(currentCopilotReasoningEffortUiFixture()), true);
 });
 
 test("keeps filtered current app reasoning efforts for Copilot auth", () => {
@@ -164,21 +165,24 @@ test("allows Copilot auth to use the current app effort controls", () => {
     currentCopilotReasoningEffortUiFixture(),
   );
 
-  assert.match(patched, /A=a\?\.authMethod===`copilot`,j=!k,M=/);
+  assert.match(patched, /ee=p\?\.authMethod===`copilot`/);
+  assert.match(patched, /ie=C\?\.isModelLocked!==!0&&!q&&!0/);
+  assert.match(patched, /ae=C\?\.isModelLocked!==!0&&l!=null&&!q&&g&&A!==`error`/);
   assert.match(patched, /reasoningEffortDisabled:!1/);
-  assert.match(patched, /let E=i\.formatMessage\(\{id:`composer\.reasoningSlashCommand\.title`\}\);let O=s&&f&&!0,k;/);
-  assert.doesNotMatch(patched, /j=!k&&!A/);
-  assert.doesNotMatch(patched, /reasoningEffortDisabled:A/);
-  assert.doesNotMatch(patched, /O=s&&f&&!p&&!0/);
+  assert.match(patched, /let A=o\.formatMessage\(\{id:`composer\.reasoningSlashCommand\.title`\}\);let M=l&&m&&!0,N;/);
+  assert.doesNotMatch(patched, /ie=C\?\.isModelLocked!==!0&&!q&&!ee&&!0/);
+  assert.doesNotMatch(patched, /&&g&&!ee&&A!==`error`/);
+  assert.doesNotMatch(patched, /reasoningEffortDisabled:ee/);
+  assert.doesNotMatch(patched, /M=l&&m&&!h&&!0/);
   assert.match(patched, /let q=a&&b&&!0,c/);
   assert.match(patched, /A=O\.length>0,j=!w&&!A/);
 });
 
 test("current app UI drift warns without touching adjacent gates", () => {
   const source = [
-    "function dz(){let k=!Bm(u),A=isCopilot(a),j=!k&&!A,M=yh(d,m);",
-    "return aO(`composer.increaseReasoningEffort`,()=>we(`increase`),{enabled:j}),",
-    "(0,gz.jsx)(_m,{reasoningEffortDisabled:A})}",
+    "function tHc(){let q=!0,ee=isCopilot(p),ie=C?.isModelLocked!==!0&&!q&&!ee&&!0;",
+    "return m1(`composer.increaseReasoningEffort`,Ve,{enabled:ie}),",
+    "jsx(CVc,{reasoningEffortDisabled:ee})}",
     "function permissionGate(){let A=O.length>0,j=!w&&!A;return j}",
   ].join("");
   const { value, warnings } = withCapturedWarns(() =>
@@ -226,7 +230,7 @@ test("feature descriptor loader exposes the Copilot webview asset patches only w
 test("enabled feature descriptors patch the current app settings chunk", () => {
   const featuresRoot = path.resolve(__dirname, "..");
   const currentSettingsChunk = "app-initial-settings-Bd3Z1bES.js";
-  const currentUiChunk = "app-initial-ui-Bd3Z1bES.js";
+  const currentUiChunk = "app-initial-ui-DAkTNeXg.js";
 
   withTempFeatureConfig(["copilot-reasoning-effort"], () => {
     withTempDir((extractedDir) => {
@@ -247,7 +251,7 @@ test("enabled feature descriptors patch the current app settings chunk", () => {
       assert.match(patched, /a=\[\.\.\.t\]\.filter/);
       assert.doesNotMatch(patched, /e===`copilot`\?\[/);
       assert.match(readAsset(extractedDir, currentUiChunk), /reasoningEffortDisabled:!1/);
-      assert.match(readAsset(extractedDir, currentUiChunk), /O=s&&f&&!0,k/);
+      assert.match(readAsset(extractedDir, currentUiChunk), /M=l&&m&&!0,N/);
     });
   });
 });
