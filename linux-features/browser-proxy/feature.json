@@ -1,0 +1,10 @@
+{
+  "id": "browser-proxy",
+  "title": "Browser Runtime Proxy",
+  "description": "Passes explicit standard proxy environment variables from the Codex app-server to Browser Use node_repl helpers.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "stageHook": "./stage.sh",
+    "cleanupHook": "./cleanup.sh"
+  }
+}
