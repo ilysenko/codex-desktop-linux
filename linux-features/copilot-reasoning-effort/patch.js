@@ -46,10 +46,13 @@ function currentComposerGateRegex(patched) {
 }
 
 function currentSlashCommandRegex(patched) {
-  const copilotGate = patched ? "" : `&&!${JS_IDENT}`;
+  const copilotGate = patched ? "" : `&&!\\k<copilot>`;
   return new RegExp(
-    `(composer\\.reasoningSlashCommand\\.title[\\s\\S]{0,1000}?let )` +
-      `(${JS_IDENT})=(${JS_IDENT})&&(${JS_IDENT})${copilotGate}&&!0,(${JS_IDENT});`,
+    `(?<prefix>(?<requiresAuth>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.requiresAuth\\?\\?!0` +
+      `[\\s\\S]{0,2000}?(?<copilot>${JS_IDENT})=\\k<host>\\?\\.authMethod===${BT}copilot${BT}` +
+      `[\\s\\S]{0,2000}?composer\\.reasoningSlashCommand\\.title[\\s\\S]{0,1000}?let )` +
+      `(?<enabled>${JS_IDENT})=\\k<requiresAuth>&&(?<authReady>${JS_IDENT})` +
+      `${copilotGate}&&!0,(?<dependencies>${JS_IDENT});`,
   );
 }
 
@@ -258,7 +261,10 @@ function applyCopilotReasoningEffortUiPatch(currentSource) {
 
   const cleanSlashRegex = currentSlashCommandRegex(false);
   if (cleanSlashRegex.test(patchedSource)) {
-    patchedSource = patchedSource.replace(cleanSlashRegex, "$1$2=$3&&$4&&!0,$5;");
+    patchedSource = patchedSource.replace(
+      cleanSlashRegex,
+      "$<prefix>$<enabled>=$<requiresAuth>&&$<authReady>&&!0,$<dependencies>;",
+    );
   }
 
   if (analyzeCopilotReasoningEffortUiContract(patchedSource).state !== "patched") {

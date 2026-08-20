@@ -235,6 +235,22 @@ test("incomplete current app UI contracts warn and remain byte-identical", () =>
   }
 });
 
+test("mismatched Copilot slash command gates warn and remain byte-identical", () => {
+  const source = currentCopilotReasoningEffortUiFixture().replace(
+    "M=l&&m&&!h&&!0,N;",
+    "M=l&&m&&!z&&!0,N;",
+  );
+  const { value, warnings } = withCapturedWarns(() =>
+    applyCopilotReasoningEffortUiPatch(source),
+  );
+
+  assert.equal(matchesCopilotReasoningEffortUiContract(source), false);
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /reasoning slash command enabled state/);
+  assert.match(value, /M=l&&m&&!z&&!0,N;/);
+});
+
 test("current app UI drift warns without touching adjacent gates", () => {
   const source = [
     "function tHc(){let q=!0,ee=isCopilot(p),ie=C?.isModelLocked!==!0&&!q&&!ee&&!0;",
