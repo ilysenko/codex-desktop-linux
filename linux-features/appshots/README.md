@@ -39,7 +39,10 @@ Privacy and correctness constraints:
   `xdg-desktop-portal-hyprland`. The preview picker is a Wayland layer-shell
   overlay rather than a tiled Hyprland client. AppShots opens its window page
   using a temporary derived config, preserving and never modifying the user's
-  picker config. Because ordinary screenshot CLIs can only read the visible
+  picker config. It also forces the picker to use native GTK and Qt Wayland
+  backends so a launcher-level X11 compatibility setting cannot turn that
+  layer-shell overlay into a tiled XWayland client. Because ordinary screenshot
+  CLIs can only read the visible
   workspace, the selected window is activated briefly, its current bounds are
   verified twice, and ChatGPT is restored after capture. On EWMH-compatible
   X11 window managers, the feature selects the

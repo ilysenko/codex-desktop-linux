@@ -283,6 +283,7 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
   assert.match(patched, /`hyprland-preview-share-picker`,`hyprland-share-picker`/);
   assert.match(patched, /function codexLinuxAppshotHyprlandPickerConfig/);
   assert.match(patched, /default_page: windows/);
+  assert.match(patched, /GDK_BACKEND:`wayland`/);
   assert.match(patched, /XDPH_WINDOW_SHARING_LIST:n\.list/);
   assert.doesNotMatch(patched, /focusHistoryID/);
   assert.match(patched, /function codexLinuxAppshotHyprlandFocusWindow/);
@@ -443,6 +444,69 @@ test("AppShots maps an explicit Hyprland picker selection and keeps X11 stacking
   assert.equal(context.codexLinuxAppshotX11Session(), true);
   context.process.env = { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1" };
   assert.equal(context.codexLinuxAppshotX11Session(), false);
+});
+
+test("AppShots forces native Wayland picker backends inherited from an X11 launcher", async () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
+  const pickerPath = "/test/hyprland-preview-share-picker";
+  let invocation = null;
+  const fakeFs = {
+    ...fs,
+    accessSync(target, mode) {
+      assert.equal(target, pickerPath);
+      assert.equal(mode, fs.constants.X_OK);
+    },
+  };
+  const context = vm.createContext({
+    Buffer,
+    console: { warn() {} },
+    process: {
+      env: {
+        CODEX_LINUX_APPSHOT_PICKER: pickerPath,
+        GDK_BACKEND: "x11",
+        HOME: "/nonexistent",
+        KEEP_ME: "yes",
+        QT_QPA_PLATFORM: "xcb",
+      },
+      pid: 101,
+      platform: "linux",
+      resourcesPath: "",
+    },
+    require(moduleName) {
+      if (moduleName === "node:fs") return fakeFs;
+      if (moduleName === "node:os") return os;
+      if (moduleName === "node:path") return path;
+      if (moduleName === "node:child_process") {
+        return {
+          execFile(program, args, options, callback) {
+            invocation = { args, options, program };
+            callback(null, "[SELECTION]/window:1\n", "");
+          },
+        };
+      }
+      throw new Error(`Unexpected module: ${moduleName}`);
+    },
+    setTimeout,
+  });
+  const window = {
+    app_id: "org.gnome.Nautilus",
+    focused: false,
+    title: "Documents",
+    window_id: 0x200,
+    wm_class: "org.gnome.Nautilus",
+  };
+
+  vm.runInContext(patched.slice(helperStart), context, { timeout: 1_000 });
+  const selected = await context.codexLinuxAppshotHyprlandPickWindow([window]);
+
+  assert.equal(selected?.app_id, window.app_id);
+  assert.equal(invocation?.program, pickerPath);
+  assert.deepEqual(Array.from(invocation?.args ?? []), []);
+  assert.equal(invocation?.options.env.GDK_BACKEND, "wayland");
+  assert.equal(invocation?.options.env.QT_QPA_PLATFORM, "wayland");
+  assert.equal(invocation?.options.env.KEEP_ME, "yes");
+  assert.match(invocation?.options.env.XDPH_WINDOW_SHARING_LIST ?? "", /Documents/);
 });
 
 test("AppShots overrides only the picker default page and removes the temporary config", () => {
