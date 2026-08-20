@@ -48,7 +48,12 @@ Privacy and correctness constraints:
   target.
 - Capture fails closed when no selected window or usable bounds are available.
 - Capture fails closed when no screenshot tool is available or the crop does not
-  intersect the captured image.
+  intersect the captured image. The portal picker also exposes Output and
+  Region pages, but this window-attachment integration accepts only an explicit
+  Window selection and fails closed for the other result types.
+- Window pixels and best-effort accessibility text are collected concurrently.
+  ChatGPT is restored as soon as both inputs have been acquired, before the PNG
+  and metadata are sent back to the composer.
 - Global hotkeys remain disabled on Linux because the current upstream package
   no longer includes the AppShots hotkey settings surface.
 - Previously saved `Alt + Alt` and `Shift + Shift` choices are backed by a feature-local

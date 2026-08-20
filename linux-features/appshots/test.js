@@ -325,10 +325,10 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
     /codex_desktop:message-for-view/,
   );
   assert.match(patched, /transitionSnapshotHeight:140/);
-  assert.match(patched, /type:`metadata`,app:\{bundleIdentifier:n\.bundleIdentifier/);
-  assert.match(patched, /type:`axText`,text:o/);
-  assert.match(patched, /type:`screenshot`,screenshotDataURL:s\.dataURL/);
-  assert.match(patched, /type:`completed`,transitionSnapshotDataURL:s\.dataURL/);
+  assert.match(patched, /type:`metadata`,app:\{bundleIdentifier:c\.bundleIdentifier/);
+  assert.match(patched, /type:`axText`,text:l/);
+  assert.match(patched, /type:`screenshot`,screenshotDataURL:u\.dataURL/);
+  assert.match(patched, /type:`completed`,transitionSnapshotDataURL:u\.dataURL/);
 });
 
 test("AppShots maps an explicit Hyprland picker selection and keeps X11 stacking fallback", () => {
@@ -589,6 +589,7 @@ test("AppShots restores ChatGPT after successful and failed Hyprland capture", a
   };
   const restoreCalls = [];
   const updates = [];
+  const trace = [];
 
   vm.runInContext(patched.slice(helperStart), context, { timeout: 1_000 });
   context.codexLinuxAppshotFocusedWindow = async () => report;
@@ -603,9 +604,11 @@ test("AppShots restores ChatGPT after successful and failed Hyprland capture", a
   });
   context.codexLinuxAppshotSend = (_manager, _origin, _requestId, update) => {
     updates.push(update.type);
+    trace.push(`send:${update.type}`);
   };
   context.codexLinuxAppshotHyprlandFocusWindow = async (window) => {
     restoreCalls.push(window.window_id);
+    trace.push(`restore:${window.window_id}`);
     return true;
   };
 
@@ -617,8 +620,16 @@ test("AppShots restores ChatGPT after successful and failed Hyprland capture", a
   });
   assert.deepEqual(updates, ["metadata", "axText", "screenshot", "completed"]);
   assert.deepEqual(restoreCalls, [0x100]);
+  assert.deepEqual(trace, [
+    "restore:256",
+    "send:metadata",
+    "send:axText",
+    "send:screenshot",
+    "send:completed",
+  ]);
 
   restoreCalls.length = 0;
+  trace.length = 0;
   context.codexLinuxAppshotScreenshot = async () => {
     throw new Error("Expected capture failure");
   };
@@ -632,6 +643,67 @@ test("AppShots restores ChatGPT after successful and failed Hyprland capture", a
     /Expected capture failure/,
   );
   assert.deepEqual(restoreCalls, [0x100]);
+  assert.deepEqual(trace, ["restore:256"]);
+});
+
+test("AppShots captures accessibility and pixels concurrently", async () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
+  const context = vm.createContext({
+    Buffer,
+    console: { warn() {} },
+    process: { env: {}, pid: 101, platform: "linux", resourcesPath: "" },
+    require() {
+      throw new Error("No module access expected");
+    },
+    setTimeout,
+  });
+  const ownWindow = {
+    app_id: "codex-desktop",
+    focused: false,
+    pid: 101,
+    window_id: 0x100,
+  };
+  const selected = {
+    app_id: "chromium",
+    bounds: { height: 800, width: 1200, x: 0, y: 0 },
+    focused: true,
+    window_id: 0x200,
+  };
+  const report = {
+    backend: "hyprland",
+    focusedWindow: selected,
+    returnWindow: ownWindow,
+    windows: [ownWindow, selected],
+  };
+  let releaseAccessibility;
+  let screenshotStarted = false;
+
+  vm.runInContext(patched.slice(helperStart), context, { timeout: 1_000 });
+  context.codexLinuxAppshotFocusedWindow = async () => report;
+  context.codexLinuxAppshotPrepareWindowForCapture = async () => report;
+  context.codexLinuxAppshotAccessibilityNodes = () =>
+    new Promise((resolve) => {
+      releaseAccessibility = () => resolve({ error: null, nodes: [] });
+    });
+  context.codexLinuxAppshotAccessibilityText = () => "";
+  context.codexLinuxAppshotScreenshot = async () => {
+    screenshotStarted = true;
+    return { dataURL: "data:image/png;base64,AA==" };
+  };
+  context.codexLinuxAppshotHyprlandFocusWindow = async () => true;
+  context.codexLinuxAppshotSend = () => {};
+
+  const capture = context.codexLinuxAppshotCapture({
+    bundleIdentifier: "chromium",
+    origin: "view",
+    requestId: "parallel",
+    windowManager: {},
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(screenshotStarted, true);
+  releaseAccessibility();
+  await capture;
 });
 
 test("AppShots capture uses and removes its private temporary directory", async () => {
