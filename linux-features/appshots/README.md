@@ -1,8 +1,8 @@
 # Linux AppShots
 
 `linux-features/appshots` exposes the upstream AppShots composer entry on
-Linux. It attaches the focused window screenshot plus best-effort AT-SPI text
-to the composer.
+Linux. It attaches a selected window screenshot plus best-effort AT-SPI text to
+the composer.
 
 This feature is disabled by default. Enable it before building:
 
@@ -31,7 +31,22 @@ Privacy and correctness constraints:
 
 - The feature may briefly create a full-screen temporary screenshot before
   cropping it to the focused window.
-- Capture fails closed when no focused window or usable bounds are available.
+- Opening the composer menu focuses ChatGPT. On Hyprland, the feature offers a
+  generic window attachment and opens an installed Hyprland share picker after
+  the user activates it. It prefers `hyprland-preview-share-picker`, falls back
+  to `hyprland-share-picker`, and accepts an explicit executable through
+  `CODEX_LINUX_APPSHOT_PICKER`; these use the picker protocol shipped by
+  `xdg-desktop-portal-hyprland`. The preview picker is a Wayland layer-shell
+  overlay rather than a tiled Hyprland client. AppShots opens its window page
+  using a temporary derived config, preserving and never modifying the user's
+  picker config. Because ordinary screenshot CLIs can only read the visible
+  workspace, the selected window is activated briefly, its current bounds are
+  verified twice, and ChatGPT is restored after capture. On EWMH-compatible
+  X11 window managers, the feature selects the
+  topmost external window in stacking order. Both paths skip ChatGPT and desktop
+  portal windows. Other backends fail closed when they cannot provide a safe
+  target.
+- Capture fails closed when no selected window or usable bounds are available.
 - Capture fails closed when no screenshot tool is available or the crop does not
   intersect the captured image.
 - Global hotkeys remain disabled on Linux because the current upstream package

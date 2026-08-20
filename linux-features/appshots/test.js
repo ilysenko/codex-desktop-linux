@@ -278,6 +278,26 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
   assert.match(patched, /function codexLinuxAppshotBackendPath/);
   assert.match(patched, /codexLinuxAppshotBackendJson\(\[`windows`\],5000\)/);
   assert.match(patched, /codexLinuxAppshotBackendJson\(\[`state`,e\],10000\)/);
+  assert.match(patched, /function codexLinuxAppshotPreviousExternalWindow/);
+  assert.match(patched, /function codexLinuxAppshotHyprlandPickerData/);
+  assert.match(patched, /`hyprland-preview-share-picker`,`hyprland-share-picker`/);
+  assert.match(patched, /function codexLinuxAppshotHyprlandPickerConfig/);
+  assert.match(patched, /default_page: windows/);
+  assert.match(patched, /XDPH_WINDOW_SHARING_LIST:n\.list/);
+  assert.doesNotMatch(patched, /focusHistoryID/);
+  assert.match(patched, /function codexLinuxAppshotHyprlandFocusWindow/);
+  assert.match(patched, /\[`dispatch`,`hl\.dsp\.focus/);
+  assert.match(patched, /\[`dispatch`,`focuswindow`,t\]/);
+  assert.match(patched, /function codexLinuxAppshotPrepareWindowForCapture/);
+  assert.match(
+    patched,
+    /finally\{s&&!await codexLinuxAppshotHyprlandFocusWindow\(o\)/,
+  );
+  assert.match(
+    patched,
+    /e\.execFile\(`xprop`,\[`-root`,`_NET_CLIENT_LIST_STACKING`\]/,
+  );
+  assert.match(patched, /function codexLinuxAppshotX11Session/);
   assert.match(patched, /spectacle.*-b.*-n/);
   assert.match(patched, /programs:\[`spectacle`,`\/usr\/bin\/spectacle`\]/);
   assert.match(patched, /codexLinuxAppshotCropWithImageMagick/);
@@ -305,10 +325,313 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
     /codex_desktop:message-for-view/,
   );
   assert.match(patched, /transitionSnapshotHeight:140/);
-  assert.match(patched, /type:`metadata`,app:\{bundleIdentifier:a\.bundleIdentifier/);
-  assert.match(patched, /type:`axText`,text:s/);
-  assert.match(patched, /type:`screenshot`,screenshotDataURL:c\.dataURL/);
-  assert.match(patched, /type:`completed`,transitionSnapshotDataURL:c\.dataURL/);
+  assert.match(patched, /type:`metadata`,app:\{bundleIdentifier:n\.bundleIdentifier/);
+  assert.match(patched, /type:`axText`,text:o/);
+  assert.match(patched, /type:`screenshot`,screenshotDataURL:s\.dataURL/);
+  assert.match(patched, /type:`completed`,transitionSnapshotDataURL:s\.dataURL/);
+});
+
+test("AppShots maps an explicit Hyprland picker selection and keeps X11 stacking fallback", () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
+  const context = vm.createContext({
+    Buffer,
+    console: { warn() {} },
+    process: { env: {}, pid: 101, platform: "linux", resourcesPath: "" },
+    require() {
+      throw new Error("No module access expected");
+    },
+    setTimeout,
+  });
+  const windows = [
+    {
+      app_id: "codex-desktop",
+      focused: true,
+      pid: 101,
+      title: "ChatGPT",
+      window_id: Number.parseInt("0x100", 16),
+      wm_class: "codex-desktop",
+    },
+    {
+      app_id: "chromium",
+      focused: false,
+      pid: 202,
+      title: "Example - Chromium",
+      window_id: Number.parseInt("0x200", 16),
+      wm_class: "chromium",
+    },
+  ];
+  vm.runInContext(patched.slice(helperStart), context, { timeout: 1_000 });
+
+  const portalWindow = {
+    app_id: "Xdg-desktop-portal-gtk",
+    focused: true,
+    pid: 303,
+    title: "Select Project Root",
+    window_id: Number.parseInt("0x300", 16),
+    wm_class: "Xdg-desktop-portal-gtk",
+  };
+  const pickerData = context.codexLinuxAppshotHyprlandPickerData([
+    portalWindow,
+    windows[0],
+    { ...windows[1], title: "Example [HC>] - Chromium" },
+    { ...windows[1], app_id: "hidden", hidden: true, window_id: 0x400 },
+  ]);
+
+  assert.equal(pickerData.windowsById.size, 1);
+  assert.equal(pickerData.windowsById.get("1")?.app_id, "chromium");
+  assert.equal(
+    pickerData.list,
+    "1[HC>]chromium[HT>]Example   - Chromium[HE>]512[HA>]",
+  );
+  assert.equal(
+    context.codexLinuxAppshotHyprlandPickerSelection(
+      "debug output\n[SELECTION]/window:1\n",
+    ),
+    "1",
+  );
+  assert.equal(context.codexLinuxAppshotHyprlandPickerSelection("cancelled"), null);
+  assert.equal(
+    context.codexLinuxAppshotHyprlandPickerSelection(
+      "[SELECTION]r/window:not-a-number\n",
+    ),
+    null,
+  );
+  assert.equal(
+    context.codexLinuxAppshotHyprlandPickerData([portalWindow, windows[0]])
+      .windowsById.size,
+    0,
+  );
+  assert.equal(
+    context.codexLinuxAppshotHyprlandWindowAddress(windows[1]),
+    "address:0x200",
+  );
+  assert.equal(
+    context.codexLinuxAppshotHyprlandWindowAddress({ window_id: "invalid" }),
+    null,
+  );
+  assert.equal(
+    context.codexLinuxAppshotUsableBounds({
+      bounds: { height: 100, width: 100, x: null, y: 0 },
+    }),
+    false,
+  );
+  assert.equal(
+    context.codexLinuxAppshotPreviousExternalWindow(
+      windows,
+      context.codexLinuxAppshotX11StackingCandidates(
+        "_NET_CLIENT_LIST_STACKING(WINDOW): window id # 0x200, 0x100",
+      ),
+    )?.app_id,
+    "chromium",
+  );
+  assert.equal(
+    context.codexLinuxAppshotPreviousExternalWindow(
+      [windows[0]],
+      [{ window_id: "0x100" }],
+    ),
+    null,
+  );
+  assert.equal(
+    context.codexLinuxAppshotPreviousExternalWindow(
+      [{ ...windows[1], hidden: true }],
+      [{ window_id: "0x200" }],
+    ),
+    null,
+  );
+  context.process.env = { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" };
+  assert.equal(context.codexLinuxAppshotX11Session(), true);
+  context.process.env = { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1" };
+  assert.equal(context.codexLinuxAppshotX11Session(), false);
+});
+
+test("AppShots overrides only the picker default page and removes the temporary config", () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-picker-config-"));
+  const configDir = path.join(home, ".config", "hyprland-preview-share-picker");
+  const configPath = path.join(configDir, "config.yaml");
+  const source = [
+    'stylesheets: ["../../theme/picker.css"]',
+    "default_page: outputs",
+    "window:",
+    "  width: 1000",
+    "",
+  ].join("\n");
+  const context = vm.createContext({
+    Buffer,
+    console: { warn() {} },
+    process: { env: { HOME: home }, pid: 101, platform: "linux", resourcesPath: "" },
+    require,
+    setTimeout,
+  });
+
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(configPath, source);
+
+  try {
+    vm.runInContext(patched.slice(helperStart), context, { timeout: 1_000 });
+    const override = context.codexLinuxAppshotHyprlandPickerConfig();
+    const args = Array.from(override.args);
+
+    assert.equal(args[0], "--config");
+    assert.equal(path.dirname(args[1]), configDir);
+    assert.notEqual(args[1], configPath);
+    assert.equal(fs.readFileSync(configPath, "utf8"), source);
+    assert.equal(
+      fs.readFileSync(args[1], "utf8"),
+      source.replace("default_page: outputs", "default_page: windows"),
+    );
+
+    override.cleanup();
+    assert.equal(fs.existsSync(args[1]), false);
+
+    fs.writeFileSync(configPath, source.replace("default_page: outputs", "default_page: windows"));
+    const unchanged = context.codexLinuxAppshotHyprlandPickerConfig();
+    assert.deepEqual(Array.from(unchanged.args), []);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("AppShots activates a selected Hyprland window and waits for stable bounds", async () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
+  const context = vm.createContext({
+    Buffer,
+    console: { warn() {} },
+    process: { env: {}, pid: 101, platform: "linux", resourcesPath: "" },
+    require() {
+      throw new Error("No module access expected");
+    },
+    setTimeout,
+  });
+  const selected = {
+    app_id: "chromium",
+    bounds: { height: 400, width: 600, x: 900, y: 100 },
+    focused: false,
+    window_id: 0x200,
+    wm_class: "chromium",
+  };
+  const refreshed = {
+    ...selected,
+    bounds: { height: 800, width: 1200, x: 0, y: 0 },
+    focused: true,
+  };
+  const ownWindow = {
+    app_id: "codex-desktop",
+    focused: false,
+    pid: 101,
+    window_id: 0x100,
+    wm_class: "codex-desktop",
+  };
+  const focusCalls = [];
+  let windowReports = 0;
+
+  vm.runInContext(patched.slice(helperStart), context, { timeout: 1_000 });
+  context.codexLinuxAppshotHyprlandFocusWindow = async (window) => {
+    focusCalls.push(window.window_id);
+    return true;
+  };
+  context.codexLinuxAppshotBackendJson = async () => {
+    windowReports += 1;
+    return { backend: "hyprland", windows: [ownWindow, refreshed] };
+  };
+  context.codexLinuxAppshotDelay = async () => {};
+
+  const prepared = await context.codexLinuxAppshotPrepareWindowForCapture({
+    backend: "hyprland",
+    focusedWindow: selected,
+    returnWindow: ownWindow,
+    windows: [ownWindow, selected],
+  });
+
+  assert.deepEqual(focusCalls, [0x200]);
+  assert.equal(windowReports, 2);
+  assert.equal(prepared.focusedWindow.window_id, 0x200);
+  assert.equal(prepared.focusedWindow.focused, true);
+  assert.equal(prepared.focusedWindow.bounds.width, 1200);
+});
+
+test("AppShots restores ChatGPT after successful and failed Hyprland capture", async () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
+  const context = vm.createContext({
+    Buffer,
+    console: { warn() {} },
+    process: { env: {}, pid: 101, platform: "linux", resourcesPath: "" },
+    require() {
+      throw new Error("No module access expected");
+    },
+    setTimeout,
+  });
+  const ownWindow = {
+    app_id: "codex-desktop",
+    bounds: { height: 800, width: 1200, x: 0, y: 0 },
+    focused: true,
+    pid: 101,
+    window_id: 0x100,
+    wm_class: "codex-desktop",
+  };
+  const selected = {
+    app_id: "chromium",
+    bounds: { height: 800, width: 1200, x: 0, y: 0 },
+    focused: true,
+    title: "Example - Chromium",
+    window_id: 0x200,
+    wm_class: "chromium",
+  };
+  const report = {
+    backend: "hyprland",
+    focusedWindow: selected,
+    returnWindow: ownWindow,
+    windows: [{ ...ownWindow, focused: false }, selected],
+  };
+  const restoreCalls = [];
+  const updates = [];
+
+  vm.runInContext(patched.slice(helperStart), context, { timeout: 1_000 });
+  context.codexLinuxAppshotFocusedWindow = async () => report;
+  context.codexLinuxAppshotPrepareWindowForCapture = async () => report;
+  context.codexLinuxAppshotAccessibilityNodes = async () => ({
+    error: null,
+    nodes: [],
+  });
+  context.codexLinuxAppshotAccessibilityText = () => "accessibility text";
+  context.codexLinuxAppshotScreenshot = async () => ({
+    dataURL: "data:image/png;base64,AA==",
+  });
+  context.codexLinuxAppshotSend = (_manager, _origin, _requestId, update) => {
+    updates.push(update.type);
+  };
+  context.codexLinuxAppshotHyprlandFocusWindow = async (window) => {
+    restoreCalls.push(window.window_id);
+    return true;
+  };
+
+  await context.codexLinuxAppshotCapture({
+    bundleIdentifier: "chromium",
+    origin: "view",
+    requestId: "success",
+    windowManager: {},
+  });
+  assert.deepEqual(updates, ["metadata", "axText", "screenshot", "completed"]);
+  assert.deepEqual(restoreCalls, [0x100]);
+
+  restoreCalls.length = 0;
+  context.codexLinuxAppshotScreenshot = async () => {
+    throw new Error("Expected capture failure");
+  };
+  await assert.rejects(
+    context.codexLinuxAppshotCapture({
+      bundleIdentifier: "chromium",
+      origin: "view",
+      requestId: "failure",
+      windowManager: {},
+    }),
+    /Expected capture failure/,
+  );
+  assert.deepEqual(restoreCalls, [0x100]);
 });
 
 test("AppShots capture uses and removes its private temporary directory", async () => {
