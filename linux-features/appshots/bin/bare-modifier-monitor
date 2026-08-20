@@ -133,7 +133,10 @@ is_target_keycode() {
 }
 
 now_ms() {
-    date +%s%3N
+    local epoch_nanoseconds
+
+    epoch_nanoseconds="$(date +%s%N)"
+    printf '%s\n' "$((10#$epoch_nanoseconds / 1000000))"
 }
 
 last_tap_ms=0

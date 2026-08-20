@@ -156,6 +156,9 @@ test("stages the Linux bare modifier monitor helper and Wayland portal hook", ()
   assert.match(helperSource, /Shift_L Shift_R/);
   assert.match(helperSource, /last_tap_code=""/);
   assert.match(helperSource, /\[ "\$code" != "\$last_tap_code" \]/);
+  assert.match(helperSource, /date \+%s%N/);
+  assert.match(helperSource, /10#\$epoch_nanoseconds \/ 1000000/);
+  assert.doesNotMatch(helperSource, /date \+%s%3N/);
   assert.doesNotMatch(helperSource, /while IFS= read -r pending code/);
   execFileSync("bash", ["-n", path.join(__dirname, "bin", "bare-modifier-monitor")]);
 });
@@ -182,6 +185,11 @@ test("bare modifier monitor emits one transition from one XInput2 stream", () =>
       "  'EVENT type 14 (RawKeyRelease)' '    detail: 62'",
       "sleep 0.25",
     ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(binDir, "date"),
+    "#!/bin/sh\n[ \"$1\" = \"+%s%N\" ] || exit 2\nprintf '%s\\n' 1787195182868568236\n",
     { mode: 0o755 },
   );
 
