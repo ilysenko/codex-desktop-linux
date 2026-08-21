@@ -18,6 +18,10 @@
     "appearance": {
       "dockIcon": {
         "enabled": false
+      },
+      "uiFontSize": {
+        "enabled": false,
+        "max": 24
       }
     },
     "home": {
