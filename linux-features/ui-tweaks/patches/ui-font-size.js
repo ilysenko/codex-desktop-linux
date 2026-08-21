@@ -11,7 +11,7 @@ const EXPECTED_FONT_SIZE_BUNDLE_COUNT = 3;
 const UPSTREAM_FONT_SIZE_LIMITS_PATTERN =
   /([A-Za-z_$][\w$]*)=\{sans:\{min:(11),max:(16)\},code:\{min:(8),max:(24)\}\}/g;
 const APPLIED_FONT_SIZE_LIMITS_PATTERN =
-  /[A-Za-z_$][\w$]*=\{sans:\{min:11,max:(?:1[7-9]|[2-5]\d|6[0-4])\/\*codex-linux-ui-font-size-max\*\/\},code:\{min:8,max:24\}\}/g;
+  /[A-Za-z_$][\w$]*=\{sans:\{min:11,max:(1[7-9]|[2-5]\d|6[0-4])\/\*codex-linux-ui-font-size-max\*\/\},code:\{min:8,max:24\}\}/g;
 
 function warn(message) {
   console.warn(`WARN: ${message} - skipping ui-tweaks UI font size patch`);
@@ -69,6 +69,12 @@ function fontSizeLimitContract(source) {
     return "applied";
   }
   return "drifted";
+}
+
+function appliedUiFontSizeMax(source) {
+  APPLIED_FONT_SIZE_LIMITS_PATTERN.lastIndex = 0;
+  const matches = [...source.matchAll(APPLIED_FONT_SIZE_LIMITS_PATTERN)];
+  return matches.length === 1 ? Number(matches[0][1]) : null;
 }
 
 function applyUiFontSizePatch(source, context = {}) {
@@ -129,7 +135,12 @@ function findUiFontSizeBundles(extractedDir) {
     const source = fs.readFileSync(filePath, "utf8");
     const state = fontSizeLimitContract(source);
     if (state !== "absent") {
-      candidates.push({ filePath, source, state });
+      candidates.push({
+        filePath,
+        source,
+        state,
+        appliedMax: state === "applied" ? appliedUiFontSizeMax(source) : null,
+      });
     }
   }
 
@@ -138,18 +149,23 @@ function findUiFontSizeBundles(extractedDir) {
   ).length;
   const webviewCount = candidates.length - buildCount;
   const states = new Set(candidates.map(({ state }) => state));
+  const appliedMaxes = new Set(
+    candidates.filter(({ state }) => state === "applied").map(({ appliedMax }) => appliedMax),
+  );
   if (
     candidates.length !== EXPECTED_FONT_SIZE_BUNDLE_COUNT ||
     buildCount !== 2 ||
     webviewCount !== 1 ||
     states.has("drifted") ||
-    states.size !== 1
+    states.size !== 1 ||
+    appliedMaxes.size > 1
   ) {
     return {
       candidates: [],
       reason:
         `Found ${buildCount} build and ${webviewCount} webview UI font-size contracts ` +
-        `with states ${JSON.stringify([...states].sort())}`,
+        `with states ${JSON.stringify([...states].sort())} and applied maxima ` +
+        `${JSON.stringify([...appliedMaxes].sort((left, right) => left - right))}`,
     };
   }
   return { candidates, reason: null };
@@ -163,6 +179,14 @@ function applyUiFontSizeAppPatch(extractedDir, context = {}) {
     return { matched: 0, changed: 0, reason };
   }
   if (discovery.candidates[0].state === "applied") {
+    const configuredMax = normalizedMaxUiFontSize(context);
+    if (discovery.candidates[0].appliedMax !== configuredMax) {
+      const reason =
+        `Applied UI font-size maximum ${discovery.candidates[0].appliedMax} ` +
+        `does not match configured maximum ${configuredMax}`;
+      warn(reason);
+      return { matched: 0, changed: 0, reason };
+    }
     return {
       matched: EXPECTED_FONT_SIZE_BUNDLE_COUNT,
       changed: 0,
@@ -215,6 +239,7 @@ module.exports = {
   MIN_EXTENDED_UI_FONT_SIZE,
   RUNTIME_MARKER,
   UPSTREAM_FONT_SIZE_LIMITS_PATTERN,
+  appliedUiFontSizeMax,
   applyUiFontSizeAppPatch,
   applyUiFontSizePatch,
   descriptors,

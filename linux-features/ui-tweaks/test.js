@@ -356,6 +356,18 @@ test("UI font size app patch rejects missing, duplicate, and mixed registries by
         targets[0],
         fs.readFileSync(targets[0], "utf8") + `/*${UI_FONT_SIZE_RUNTIME_MARKER}*/`,
       ),
+    ({ targets }) => {
+      for (const target of targets) {
+        fs.writeFileSync(
+          target,
+          applyUiFontSizePatch(fs.readFileSync(target, "utf8"), uiFontSizeContext()),
+        );
+      }
+      fs.writeFileSync(
+        targets[0],
+        applyUiFontSizePatch(uiFontSizeBundleFixture(), uiFontSizeContext({ max: 32 })),
+      );
+    },
   ]) {
     const fixture = createUiFontSizeExtractedApp();
     try {
