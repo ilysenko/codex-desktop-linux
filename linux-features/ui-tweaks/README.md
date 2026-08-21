@@ -107,9 +107,10 @@ cleanup, by design.
 ### `appearance.uiFontSize`
 
 Raises the official app's hard-coded UI font-size maximum from 16 px. The same
-upstream limit feeds both the numeric input and the persisted-setting schema, so
-the patch changes their shared limit instead of bypassing only the visible
-control. Code font sizing is unchanged.
+upstream limit feeds both the numeric input and the persisted-setting schema.
+That registry is compiled into the renderer, main-process support bundle, and
+worker, so the patch requires and updates all three copies atomically instead of
+bypassing only the visible control. Code font sizing is unchanged.
 
 This tweak is independently disabled by default. Its default extended maximum
 is 24 px and can be configured from 17 through 64 px:
@@ -245,8 +246,9 @@ remove only the incomplete Dock icon payload, and reject candidate promotion.
 Suggested Prompts validates every current insertion point
 before changing an asset and leaves mixed or drifted input byte-identical.
 Invalid style values warn and fall back to the default bold style.
-The UI font-size tweak requires one unique current settings-registry contract
-and leaves a drifted or ambiguous asset unchanged.
+The UI font-size tweak requires the three current settings-registry contracts
+and leaves every target unchanged when any copy is missing, mixed, drifted, or
+ambiguous.
 
 ## Adding Tweaks
 

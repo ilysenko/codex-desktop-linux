@@ -43,11 +43,13 @@ const {
 } = require("./patches/reasoning-effort-labels.js");
 const {
   DEFAULT_MAX_UI_FONT_SIZE,
+  EXPECTED_FONT_SIZE_BUNDLE_COUNT,
   MAX_CONFIGURABLE_UI_FONT_SIZE,
   MIN_EXTENDED_UI_FONT_SIZE,
   RUNTIME_MARKER: UI_FONT_SIZE_RUNTIME_MARKER,
-  UI_FONT_SIZE_ASSET_PATTERN,
+  applyUiFontSizeAppPatch,
   applyUiFontSizePatch,
+  findUiFontSizeBundles,
   normalizedMaxUiFontSize,
 } = require("./patches/ui-font-size.js");
 
@@ -174,6 +176,24 @@ function uiFontSizeContext(overrides = {}) {
   };
 }
 
+function createUiFontSizeExtractedApp() {
+  const extractedDir = fs.mkdtempSync(path.join(os.tmpdir(), "ui-font-size-app-"));
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  const webviewDir = path.join(extractedDir, "webview", "assets");
+  fs.mkdirSync(buildDir, { recursive: true });
+  fs.mkdirSync(webviewDir, { recursive: true });
+  const targets = [
+    path.join(buildDir, "src-fixture.js"),
+    path.join(buildDir, "worker.js"),
+    path.join(webviewDir, "app-initial-fixture.js"),
+  ];
+  for (const target of targets) {
+    fs.writeFileSync(target, uiFontSizeBundleFixture());
+  }
+  fs.writeFileSync(path.join(buildDir, "unrelated.js"), "console.log('unrelated');");
+  return { extractedDir, targets };
+}
+
 function applyPatchTwice(source, context) {
   const patched = applySidebarProjectNameStylePatch(source, context);
   assert.equal(applySidebarProjectNameStylePatch(patched, context), patched);
@@ -220,7 +240,11 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
       descriptors.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
       [
         ["feature:ui-tweaks:sidebar-project-name-style", "webview-asset", "optional"],
-        ["feature:ui-tweaks:extended-ui-font-size", "webview-asset", "optional"],
+        [
+          "feature:ui-tweaks:extended-ui-font-size",
+          "extracted-app:post-webview",
+          "optional",
+        ],
         ["feature:ui-tweaks:model-picker-default-advanced-view", "webview-asset", "optional"],
         ["feature:ui-tweaks:model-picker-inline-model-list", "webview-asset", "optional"],
         [
@@ -289,8 +313,70 @@ test("UI font size tweak raises the shared input and schema maximum", () => {
   assert.match(patched, new RegExp(UI_FONT_SIZE_RUNTIME_MARKER));
   assert.equal((patched.match(new RegExp(UI_FONT_SIZE_RUNTIME_MARKER, "g")) ?? []).length, 1);
   assert.equal(applyUiFontSizePatch(patched, uiFontSizeContext()), patched);
-  assert.match("app-initial-BOhZp99F.js", UI_FONT_SIZE_ASSET_PATTERN);
-  assert.doesNotMatch("general-settings-C9tRVDyl.js", UI_FONT_SIZE_ASSET_PATTERN);
+});
+
+test("UI font size tweak atomically patches all three runtime registries", () => {
+  const { extractedDir, targets } = createUiFontSizeExtractedApp();
+  try {
+    const discovery = findUiFontSizeBundles(extractedDir);
+    assert.equal(discovery.candidates.length, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+
+    const result = applyUiFontSizeAppPatch(extractedDir, uiFontSizeContext({ max: 32 }));
+    assert.equal(result.matched, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+    assert.equal(result.changed, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+    for (const target of targets) {
+      const source = fs.readFileSync(target, "utf8");
+      assert.match(source, /sans:\{min:11,max:32\/\*/);
+      assert.match(source, new RegExp(UI_FONT_SIZE_RUNTIME_MARKER));
+    }
+
+    const repeated = applyUiFontSizeAppPatch(extractedDir, uiFontSizeContext({ max: 32 }));
+    assert.equal(repeated.matched, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+    assert.equal(repeated.changed, 0);
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("UI font size app patch rejects missing, duplicate, and mixed registries byte-identically", () => {
+  for (const mutate of [
+    ({ targets }) => fs.rmSync(targets[1]),
+    ({ extractedDir }) =>
+      fs.writeFileSync(
+        path.join(extractedDir, ".vite", "build", "duplicate.js"),
+        uiFontSizeBundleFixture(),
+      ),
+    ({ targets }) =>
+      fs.writeFileSync(
+        targets[0],
+        applyUiFontSizePatch(fs.readFileSync(targets[0], "utf8"), uiFontSizeContext()),
+      ),
+    ({ targets }) =>
+      fs.writeFileSync(
+        targets[0],
+        fs.readFileSync(targets[0], "utf8") + `/*${UI_FONT_SIZE_RUNTIME_MARKER}*/`,
+      ),
+  ]) {
+    const fixture = createUiFontSizeExtractedApp();
+    try {
+      mutate(fixture);
+      const before = fixture.targets
+        .filter((target) => fs.existsSync(target))
+        .map((target) => [target, fs.readFileSync(target, "utf8")]);
+      const { value: result, warnings } = withCapturedWarns(() =>
+        applyUiFontSizeAppPatch(fixture.extractedDir, uiFontSizeContext()),
+      );
+
+      assert.equal(result.matched, 0);
+      assert.equal(result.changed, 0);
+      assert.equal(warnings.length, 1);
+      for (const [target, source] of before) {
+        assert.equal(fs.readFileSync(target, "utf8"), source);
+      }
+    } finally {
+      fs.rmSync(fixture.extractedDir, { recursive: true, force: true });
+    }
+  }
 });
 
 test("UI font size tweak is disabled by default and accepts a custom maximum", () => {
@@ -776,7 +862,16 @@ test("feature settings override the tracked defaults through features.json", () 
       candidate.id.endsWith(":extended-ui-font-size"),
     );
     assert.equal(uiFontSizeDescriptor.enabled({}), true);
-    assert.match(uiFontSizeDescriptor.apply(uiFontSizeBundleFixture(), {}), /max:32\/\*/);
+    const fontSizeFixture = createUiFontSizeExtractedApp();
+    try {
+      const result = uiFontSizeDescriptor.apply(fontSizeFixture.extractedDir, {});
+      assert.equal(result.changed, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+      for (const target of fontSizeFixture.targets) {
+        assert.match(fs.readFileSync(target, "utf8"), /max:32\/\*/);
+      }
+    } finally {
+      fs.rmSync(fontSizeFixture.extractedDir, { recursive: true, force: true });
+    }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
