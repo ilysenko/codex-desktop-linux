@@ -1088,15 +1088,23 @@ test("Linux remote-control device-key provider does not capture a function-local
   const source = `function injectedFeature(){let __codexChild=require(\`node:child_process\`);return __codexChild}${syntheticMainBundle()}`;
   const patched = applyLinuxRemoteControlDeviceKeyPatch(source);
 
-  assert.match(patched, /require\(`node:child_process`\)\.spawn\(/);
+  assert.match(patched, /codexLinuxRemoteControlChildProcess\.spawn\(/);
   assert.doesNotMatch(patched, /__codexChild\.spawn\(/);
+});
+
+test("Linux remote-control device-key provider does not capture a function-local path alias", () => {
+  const source = `function injectedFeature(){let n=require("node:path");return n}${syntheticMainBundle()}`;
+  const patched = applyLinuxRemoteControlDeviceKeyPatch(source);
+
+  assert.match(patched, /codexLinuxRemoteControlPath\.isAbsolute\(/);
+  assert.doesNotMatch(patched, /n\.isAbsolute\(codexLinuxRemoteControlConfigRoot\)/);
 });
 
 test("Linux remote-control device-key provider avoids upstream minified alias collisions", async () => {
   const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-collision-"));
   try {
     const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticCryptoAliasCollisionMainBundle());
-    assert.match(patched, /\(0,c\.generateKeyPairSync\)\(`/);
+    assert.match(patched, /\(0,codexLinuxRemoteControlCrypto\.generateKeyPairSync\)\(`/);
     assert.match(patched, /codexLinuxRemoteControlKeyRecord/);
     assert.doesNotMatch(patched, /let c=\{algorithm:`ecdsa_p256_sha256`/);
 
