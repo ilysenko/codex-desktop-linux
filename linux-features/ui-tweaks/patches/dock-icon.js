@@ -27,10 +27,10 @@ const currentWindowRegistration =
   "onWindowRegistered:e=>{L?.registerWindow(e),w?.(e)}";
 const patchedWindowRegistration =
   "onWindowRegistered:e=>{L?.registerWindow(e),w?.(e),process.platform===`linux`&&setImmediate(I)}";
-const currentTrayRegistration =
-  "i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?oMe(t):void 0);if(!W9)return";
-const patchedTrayRegistration =
-  "i=new l.Tray(process.platform===`linux`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?oMe(t):void 0);if(!W9)return";
+const currentTrayRegistrationPattern =
+  /([A-Za-z_$][\w$]*)=new ([A-Za-z_$][\w$]*)\.Tray\(([A-Za-z_$][\w$]*)\.defaultIcon,process\.platform===`win32`&&\2\.app\.isPackaged\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\):void 0\);if\(!([A-Za-z_$][\w$]*)\)return/g;
+const patchedTrayRegistrationPattern =
+  /([A-Za-z_$][\w$]*)=new ([A-Za-z_$][\w$]*)\.Tray\(process\.platform===`linux`&&globalThis\.codexLinuxDockIconImage&&!globalThis\.codexLinuxDockIconImage\.isEmpty\(\)\?globalThis\.codexLinuxDockIconImage:([A-Za-z_$][\w$]*)\.defaultIcon,process\.platform===`win32`&&\2\.app\.isPackaged\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\):void 0\);if\(!([A-Za-z_$][\w$]*)\)return/g;
 
 const currentMainContracts = [
   currentPreviewGate,
@@ -40,7 +40,6 @@ const currentMainContracts = [
   currentUpdateGate,
   currentThemeGate,
   currentWindowRegistration,
-  currentTrayRegistration,
 ];
 const patchedMainContracts = [
   patchedPreviewGate,
@@ -50,7 +49,6 @@ const patchedMainContracts = [
   patchedUpdateGate,
   patchedThemeGate,
   patchedWindowRegistration,
-  patchedTrayRegistration,
 ];
 
 function countOccurrences(source, needle) {
@@ -73,18 +71,35 @@ function dockIconEnabled(context) {
 function applyDockIconMainPatch(source) {
   const currentCounts = currentMainContracts.map((needle) => countOccurrences(source, needle));
   const patchedCounts = patchedMainContracts.map((needle) => countOccurrences(source, needle));
-  if (currentCounts.every((count) => count === 0) && patchedCounts.every((count) => count === 1)) {
+  const currentTrayMatches = matches(source, currentTrayRegistrationPattern);
+  const patchedTrayMatches = matches(source, patchedTrayRegistrationPattern);
+  if (
+    currentCounts.every((count) => count === 0) &&
+    patchedCounts.every((count) => count === 1) &&
+    currentTrayMatches.length === 0 &&
+    patchedTrayMatches.length === 1
+  ) {
     return source;
   }
-  if (!currentCounts.every((count) => count === 1) || !patchedCounts.every((count) => count === 0)) {
+  if (
+    !currentCounts.every((count) => count === 1) ||
+    !patchedCounts.every((count) => count === 0) ||
+    currentTrayMatches.length !== 1 ||
+    patchedTrayMatches.length !== 0
+  ) {
     console.warn(
       "WARN: Could not find the complete current Dock icon main-process contract - skipping Dock icon main patch",
     );
     return source;
   }
-  return currentMainContracts.reduce(
+  const patchedSource = currentMainContracts.reduce(
     (patchedSource, needle, index) => patchedSource.replace(needle, patchedMainContracts[index]),
     source,
+  );
+  return patchedSource.replace(
+    currentTrayRegistrationPattern,
+    (_match, trayAlias, electronAlias, iconAlias, windowsHelperAlias, flavorAlias, readyAlias) =>
+      `${trayAlias}=new ${electronAlias}.Tray(process.platform===\`linux\`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:${iconAlias}.defaultIcon,process.platform===\`win32\`&&${electronAlias}.app.isPackaged?${windowsHelperAlias}(${flavorAlias}):void 0);if(!${readyAlias})return`,
   );
 }
 

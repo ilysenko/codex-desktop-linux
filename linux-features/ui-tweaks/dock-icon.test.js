@@ -39,7 +39,7 @@ const currentRuntimeSource = [
 ].join("");
 
 const currentTraySource =
-  "let V9=null,H9=null,W9=!1;async function zje(e){let t=e.buildFlavor,n=await Bje(t,e.appBrand,e.repoRoot),i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?oMe(t):void 0);if(!W9)return i.destroy(),null;return V9=new FEe(i)}";
+  "let V9=null,H9=null,W9=!1;async function zje(e){let t=e.buildFlavor,n=await Bje(t,e.appBrand,e.repoRoot),i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?cMe(t):void 0);if(!W9)return i.destroy(),null;return V9=new FEe(i)}";
 
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
 const currentSettingsSource =
@@ -190,6 +190,15 @@ test("main patch restores official previews and synchronizes Linux windows and t
   assert.equal(applyDockIconMainPatch(patched), patched);
 });
 
+test("main patch matches the current tray contract semantically across minified aliases", () => {
+  const aliased = currentMainSource.replace("cMe(t)", "windowsIconHelper(t)");
+  const patched = applyDockIconMainPatch(aliased);
+  assert.notEqual(patched, aliased);
+  assert.match(patched, /windowsIconHelper\(t\)/);
+  assert.match(patched, /globalThis\.codexLinuxDockIconImage:n\.defaultIcon/);
+  assert.equal(applyDockIconMainPatch(patched), patched);
+});
+
 test("main patch rejects drift at every official-package insertion point byte-identically", () => {
   const patched = applyDockIconMainPatch(currentMainSource);
   const currentPoints = [
@@ -200,7 +209,7 @@ test("main patch rejects drift at every official-package insertion point byte-id
     "I=()=>{if(!v)return;",
     "if(v){I();let e=()=>",
     "onWindowRegistered:e=>{L?.registerWindow(e),w?.(e)}",
-    "i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?oMe(t)",
+    "i=new l.Tray(n.defaultIcon",
   ];
   const patchedPoints = [
     "if(process.platform!==`darwin`&&process.platform!==`linux`||t==null)return null",
