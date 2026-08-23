@@ -110,7 +110,10 @@
           src = sourceRoot;
           filter = path: type:
             let
-              relative = lib.removePrefix "${toString sourceRoot}/" (toString path);
+              # Relative to ./. and not sourceRoot: cleanSourceWith composes
+              # filters onto the original source root, so this filter is called
+              # with paths under ./., never under sourceRoot's own store path.
+              relative = lib.removePrefix "${toString ./.}/" (toString path);
               workspacePaths = [
                 "computer-use-linux"
                 "read-aloud-linux"
@@ -875,6 +878,16 @@
           touch "$out"
         '';
         checks.modules = import ./nix/modules-test.nix { inherit pkgs self system; };
+        checks.helper-workspace-source =
+          pkgs.runCommand "helper-workspace-source-check" { } ''
+            test -f ${helperWorkspaceSource}/Cargo.lock
+            test -f ${helperWorkspaceSource}/Cargo.toml
+            test -d ${helperWorkspaceSource}/computer-use-linux
+            test -d ${helperWorkspaceSource}/read-aloud-linux
+            test -d ${helperWorkspaceSource}/record-replay-linux
+            test -d ${helperWorkspaceSource}/updater
+            touch "$out"
+          '';
         checks.nix-runtime = mkRuntimeCheck "nix-runtime-check" codexDesktop true false;
         checks.nix-runtime-chronicle-skysight =
           mkRuntimeCheck "nix-runtime-chronicle-skysight" chronicleSkysight false false;
