@@ -2351,6 +2351,7 @@ test("Linux remote-control enablement bridge loads remote-control clients on Lin
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, "set-remote-control-connections-enabled");
   assert.equal(calls[0].params.enabled, true);
+  assert.equal(calls[0].params.oneToOnePairingInAppEnabled, false);
 });
 
 test("Linux remote-control enablement bridge rejects distant anchors", () => {
@@ -2411,6 +2412,7 @@ test("Linux remote-control enablement bridge preserves the current second gate o
   assert.deepEqual(checkedGates, ["2055603567", "1042620455"]);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].params.enabled, true);
+  assert.equal(calls[0].params.oneToOnePairingInAppEnabled, true);
 });
 
 test("Linux remote-control enablement bridge waits for current gates to load", () => {
@@ -2540,6 +2542,7 @@ test("Linux remote-control enablement bridge auto-connects this Desktop host wit
   assert.equal(calls.length, 3);
   assert.equal(calls[0].method, "set-remote-control-connections-enabled");
   assert.equal(calls[0].params.enabled, true);
+  assert.equal(calls[0].params.oneToOnePairingInAppEnabled, false);
   assert.equal(calls[1].method, "get-global-state");
   assert.equal(calls[1].params.key, "electron-local-remote-control-installation-id");
   assert.equal(calls[2].method, "set-remote-connection-auto-connect");
