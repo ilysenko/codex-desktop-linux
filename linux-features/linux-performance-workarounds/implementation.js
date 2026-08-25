@@ -87,27 +87,28 @@ function overflowMeasurements(source) {
 }
 
 function mountAnimations(source) {
-  const pattern = /"data-app-shell-tab-controller":[A-Za-z_$][\w$]*,[\s\S]{0,1000}?initial:([A-Za-z_$][\w$]*),animate:([A-Za-z_$][\w$]*),exit:([A-Za-z_$][\w$]*),transition:[A-Za-z_$][\w$]*,onAnimationComplete:/gu;
+  const pattern = /animate:([A-Za-z_$][\w$]*),"data-app-shell-tab-controller":[A-Za-z_$][\w$]*,[\s\S]{0,300}?exit:([A-Za-z_$][\w$]*),[\s\S]{0,100}?initial:([A-Za-z_$][\w$]*),[\s\S]{0,200}?transition:[A-Za-z_$][\w$]*,onAnimationComplete:/gu;
   const candidates = [];
   for (const controller of source.matchAll(pattern)) {
-    const initial = controller[1];
-    const animate = controller[2];
-    const exit = controller[3];
-    const prefixStart = Math.max(0, controller.index - 6000);
+    const animate = controller[1];
+    const exit = controller[2];
+    const initial = controller[3];
+    const prefixStart = Math.max(0, controller.index - 4000);
     const prefix = source.slice(prefixStart, controller.index);
     const vicinity = prefix + source.slice(controller.index, controller.index + 6000);
-    const initialPrefix = `let ${initial}=`;
+    const initialPrefix = `,${initial}=`;
     const exitPrefix = `,${exit}=`;
-    const unpatched = new RegExp(`${escapeRegExp(initialPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):!1${escapeRegExp(exitPrefix)}\\1\\?\\2:void 0,`, "gu");
-    const patched = new RegExp(`${escapeRegExp(initialPrefix)}!1${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,`, "gu");
+    const unpatched = new RegExp(`${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}\\1\\?\\2:!1,`, "gu");
+    const patched = new RegExp(`${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}!1,`, "gu");
     const unpatchedMatches = [...prefix.matchAll(unpatched)];
     const patchedMatches = [...prefix.matchAll(patched)];
     const pair = unpatchedMatches.at(-1) ?? patchedMatches.at(-1);
     if (pair == null) continue;
     const isPatched = patchedMatches.at(-1) === pair;
-    if (!vicinity.includes("@container/app-shell-tab") || !vicinity.includes(`${pair[2]}={maxWidth:\`0px\`,minWidth:\`0px\`}`) || !vicinity.includes(`${animate}={maxWidth:\`160px\`,minWidth:\`90px\`}`)) continue;
+    if (!vicinity.includes("@container/app-shell-tab") || !vicinity.includes(`${pair[2]}={maxWidth:\`0px\`,minWidth:\`0px\`}`) || !vicinity.includes(`${animate}=`)) continue;
     const declarationStart = prefixStart + pair.index;
-    const expressionStart = declarationStart + initialPrefix.length;
+    const relativeInitialStart = pair[0].indexOf(initialPrefix) + initialPrefix.length;
+    const expressionStart = declarationStart + relativeInitialStart;
     const expression = isPatched ? "!1" : `${pair[1]}?${pair[2]}:!1`;
     candidates.push({ expressionStart, expressionEnd: expressionStart + expression.length, patched: isPatched });
   }

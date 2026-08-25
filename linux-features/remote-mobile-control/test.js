@@ -335,11 +335,9 @@ function syntheticCurrentRemoteNotificationLifecycleBundle() {
     "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
     "function xm(e,t,n,r){let i=e.items.find(e=>e.id===t);return i?i.type===n?i:(r.error(`Item has unexpected type`,{safe:{itemId:t,type:i.type,expectedType:n},sensitive:{}}),null):(r.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}}),null)}",
     "function Sm(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
-    "function tLn(e,t,n,r){let i={method:n,params:r};if(!t.streamState.shouldIgnoreThreadMutationAsFollower(n,r)&&!t.resumeNotificationBuffer.buffer(i)&&!t.threadStartedNotificationDeferral.bufferNotification(i)){switch(i.method){",
-    "case`turn/started`:{let{threadId:n,turn:r}=i.params,a=Ul(n);if(!t.threadStore.conversations.get(a)){e.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}e.updateConversationState(a,e=>{let t=e.turns.find(e=>e.turnId===r.id);t==null&&(t={turnId:r.id,status:r.status,items:[]},e.turns.push(t)),t.status=r.status});break}",
-    "case`turn/completed`:{let{threadId:n,turn:r}=i.params,a=Ul(n);if(!t.threadStore.conversations.get(a)){CIn(e.getHostId(),n,r.id),t.unread.discardTurn(a,r.id),e.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}e.updateConversationState(a,e=>{let t=e.turns.find(e=>e.turnId===r.id);t&&(t.status=r.status)});break}",
-    "case`item/started`:{let{item:n,threadId:r,turnId:a,startedAtMs:o}=i.params,s=Ul(r);if(!t.threadStore.conversations.get(s)){e.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}e.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===a);t&&Sm(t,{...n,completed:!1,startedAtMs:o})});break}",
-    "case`item/completed`:{let{item:n,threadId:r,turnId:a,completedAtMs:o}=i.params;let s=Ul(r);if(n.type===`commandExecution`&&t.itemStreamState.clearItemTerminalInputBuffer(s,n.id),!t.threadStore.conversations.get(s)){e.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}e.updateConversationState(s,r=>{let i=r.turns.find(e=>e.turnId===a);if(!i)return;let l={...n,completed:!0,completedAtMs:o};!(n.type!==`subAgentActivity`&&(n.type!==`sleep`||r.mode!==`durable`)&&!xm(i,n.id,n.type,e.logger))&&(n.type,Sm(i,l))});break}}t.events.emitNotification(i)}}",
+    "function $dt(e,t){let{manager:n,notificationContext:r,productPolicy:i,createId:a}=e;switch(t.method){case`turn/started`:{let{threadId:o,turn:s}=t.params,c=Ul(o),l=r.threadStore.conversations.get(c);if(l==null){n.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:c},sensitive:{}});break}n.updateConversationState(c,e=>{let t=e.turns.find(e=>e.turnId===s.id);t==null&&(t={turnId:s.id,status:s.status,items:[]},e.turns.push(t)),t.status=s.status});break}case`turn/completed`:{let{threadId:a,turn:o}=t.params,s=Ul(a);if(!r.threadStore.conversations.has(s)){i.dropTurnAutomationPolicy(n.getHostId(),a,o.id),r.unread.discardTurn(s,o.id),n.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}n.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===o.id);t&&(t.status=o.status)});break}}}",
+    "function Sdt(e,t){let{manager:n,notificationContext:r,productPolicy:i}=e;switch(t.method){case`item/started`:{let{item:a,threadId:o,turnId:s,startedAtMs:c}=t.params,l=Ul(o);if(!r.threadStore.conversations.has(l)){n.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,e=>{let t=e.turns.find(e=>e.turnId===s);t&&Sm(t,{...a,completed:!1,startedAtMs:c})});break}case`item/completed`:{let{item:a,threadId:o,turnId:s,completedAtMs:c}=t.params;a.type===`commandExecution`&&r.itemStreamState.clearItemTerminalInputBuffer(Ul(o),a.id);let l=Ul(o),u=r.threadStore.conversations.get(l);if(u==null){n.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,t=>{let o=t.turns.find(e=>e.turnId===s);if(!o)return;let d={...a,completed:!0,completedAtMs:c};!(a.type!==`subAgentActivity`&&(a.type!==`sleep`||t.mode!==`durable`)&&!xm(o,a.id,a.type,n.logger))&&Sm(o,d)});break}}}",
+    "function tLn(e,t){let{manager:n,notificationContext:r,productPolicy:i}=e;if(!(r.streamState.shouldIgnoreThreadMutationAsFollower(t.method,t.params)||r.resumeNotificationBuffer.buffer(t)||r.threadStartedNotificationDeferral.bufferNotification(t)||i.shouldIgnoreNotification(n,t))){switch(t.method){case`turn/started`:case`turn/completed`:if($dt(e,t)===`deferred`)return;break;case`item/started`:case`item/completed`:if(Sdt(e,t)===`deferred`)return;break}r.events.emitNotification(t)}}",
   ].join("");
 }
 
@@ -378,7 +376,7 @@ function syntheticAppMainActiveStatusBundle() {
 
 function syntheticAppMainEnablementBridgeBundle() {
   return [
-    "function OF(){let e=(0,Z.c)(6),{checkGate:t,isLoading:n}=sc(),r;e[0]===t?r=e[1]:(r=t(`1042620455`)||t(`2055603567`),e[0]=t,e[1]=r);let i=r,a,o;return e[2]!==n||e[3]!==i?(a=()=>{n||$o(`set-remote-control-connections-enabled`,{params:{enabled:i}}).catch(e=>{q.warning(`${DF} sync_failed`,{safe:{remoteControlConnectionsEnabled:i},sensitive:{error:e}})})},o=[n,i],e[2]=n,e[3]=i,e[4]=a,e[5]=o):(a=e[4],o=e[5]),(0,Q.useEffect)(a,o),null}",
+    "var tCn=`2055603567`;function OF(){let e=(0,Z.c)(10),{checkGate:t,isLoading:n}=sc(),r;e[0]===t?r=e[1]:(r=t(tCn),e[0]=t,e[1]=r);let i=r,a;e[2]!==t||e[3]!==i?(a=t(`1042620455`)||i,e[2]=t,e[3]=i,e[4]=a):a=e[4];let o=a,s,c;return e[5]!==n||e[6]!==i||e[7]!==o?(s=()=>{n||$o(`set-remote-control-connections-enabled`,{params:{enabled:o,oneToOnePairingInAppEnabled:i}}).catch(e=>{q.warning(`${DF} sync_failed`,{safe:{remoteControlConnectionsEnabled:o},sensitive:{error:e}})})},c=[n,i,o],e[5]=n,e[6]=i,e[7]=o,e[8]=s,e[9]=c):(s=e[8],c=e[9]),(0,Q.useEffect)(s,c),null}",
     "var DF=`[remote-connections/gate-bridge]`;",
   ].join("");
 }
@@ -1865,6 +1863,19 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
   let hydrationCalls = 0;
   const conversations = new Map();
   const manager = {
+    getHostId() {
+      return "local";
+    },
+    logger: {
+      error(message) {
+        errors.push(message);
+      },
+    },
+    updateConversationState(conversationId, update) {
+      update(conversations.get(conversationId));
+    },
+  };
+  const notificationContext = {
     events: {
       emitNotification(notification) {
         emitted.push(notification.method);
@@ -1899,26 +1910,18 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
     unread: {
       discardTurn() {},
     },
-    updateConversationState(conversationId, update) {
-      update(conversations.get(conversationId));
-    },
   };
-  const client = {
-    getHostId() {
-      return "local";
-    },
-    logger: {
-      error(message) {
-        errors.push(message);
+  const reductionContext = {
+    manager,
+    notificationContext,
+    productPolicy: {
+      dropTurnAutomationPolicy() {},
+      shouldIgnoreNotification() {
+        return false;
       },
     },
-    onNotification(method, params) {
-      onNotification(client, manager, method, params);
-    },
-    updateConversationState(conversationId, update) {
-      manager.updateConversationState(conversationId, update);
-    },
   };
+  manager.onNotification = (method, params) => onNotification(reductionContext, { method, params });
   const notifications = [
     ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }],
     ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }],
@@ -1928,7 +1931,7 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
   ];
 
   for (const [method, params] of notifications) {
-    client.onNotification(method, params);
+    manager.onNotification(method, params);
   }
 
   assert.equal(hydrationCalls, 1);
@@ -2405,7 +2408,7 @@ test("Linux remote-control enablement bridge preserves the current second gate o
   };
   vm.runInNewContext(`${patched};OF();`, context);
 
-  assert.deepEqual(checkedGates, ["1042620455", "2055603567"]);
+  assert.deepEqual(checkedGates, ["2055603567", "1042620455"]);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].params.enabled, true);
 });

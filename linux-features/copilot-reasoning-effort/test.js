@@ -57,9 +57,9 @@ function currentFilteredCopilotReasoningEffortModelListFixture() {
 
 function currentCopilotReasoningEffortUiFixture() {
   return [
-    "function tHc(){let q=!0,ee=p?.authMethod===`copilot`,te=QRc(j,T),ne=Xic(j),re=$Rc(y.reasoningEffort,te),ie=C?.isModelLocked!==!0&&!q&&!ee&&!0,ae=C?.isModelLocked!==!0&&l!=null&&!q&&g&&!ee&&A!==`error`;let He={enabled:ie};m1(`composer.increaseReasoningEffort`,Ve,He);return jsx(CVc,{reasoningEffortDisabled:ee,showReasoningEffortControls:!0})}",
+    "function pNc(){let re=!0,ie=p?.authMethod===`copilot`,ae=oAc(F,E),oe=Ric(F),se=sAc(b.reasoningEffort,ae),ce=!re&&!ie&&!0,le=w?.isModelLocked!==!0&&l!=null&&!re&&g&&!ie&&M!==`error`;let Ke={enabled:ce};m1(`composer.increaseReasoningEffort`,Ve,Ke);return jsx(CVc,{reasoningEffortDisabled:ie,showReasoningEffortControls:!0})}",
     "function unrelatedGate(){let q=a&&b&&!0,c;return q}",
-    "function G$c(){let l=c?.requiresAuth??!0,m=Fza(f),h=c?.authMethod===`copilot`;let A=o.formatMessage({id:`composer.reasoningSlashCommand.title`});let M=l&&m&&!h&&!0,N;return{enabled:M,dependencies:N}}",
+    "function KYc(){let l=c?.requiresAuth??!0,m=Fza(f),h=c?.authMethod===`copilot`;let A=o.formatMessage({id:`composer.reasoningSlashCommand.title`});let M=l&&m&&!h&&!0,N;return{enabled:M,dependencies:N}}",
     "function permissionGate(){let A=O.length>0,j=!w&&!A;return{shouldAutoDenyPermissionRequest:j}}",
   ].join("");
 }
@@ -167,14 +167,14 @@ test("allows Copilot auth to use the current app effort controls", () => {
     currentCopilotReasoningEffortUiFixture(),
   );
 
-  assert.match(patched, /ee=p\?\.authMethod===`copilot`/);
-  assert.match(patched, /ie=C\?\.isModelLocked!==!0&&!q&&!0/);
-  assert.match(patched, /ae=C\?\.isModelLocked!==!0&&l!=null&&!q&&g&&A!==`error`/);
+  assert.match(patched, /ie=p\?\.authMethod===`copilot`/);
+  assert.match(patched, /ce=!re&&!0/);
+  assert.match(patched, /le=w\?\.isModelLocked!==!0&&l!=null&&!re&&g&&M!==`error`/);
   assert.match(patched, /reasoningEffortDisabled:!1/);
   assert.match(patched, /let A=o\.formatMessage\(\{id:`composer\.reasoningSlashCommand\.title`\}\);let M=l&&m&&!0,N;/);
-  assert.doesNotMatch(patched, /ie=C\?\.isModelLocked!==!0&&!q&&!ee&&!0/);
-  assert.doesNotMatch(patched, /&&g&&!ee&&A!==`error`/);
-  assert.doesNotMatch(patched, /reasoningEffortDisabled:ee/);
+  assert.doesNotMatch(patched, /ce=!re&&!ie&&!0/);
+  assert.doesNotMatch(patched, /&&g&&!ie&&M!==`error`/);
+  assert.doesNotMatch(patched, /reasoningEffortDisabled:ie/);
   assert.doesNotMatch(patched, /M=l&&m&&!h&&!0/);
   assert.match(patched, /let q=a&&b&&!0,c/);
   assert.match(patched, /A=O\.length>0,j=!w&&!A/);
@@ -202,7 +202,7 @@ test("duplicate current app UI contracts warn and remain byte-identical", () => 
 test("mixed current app UI contract states warn and remain byte-identical", () => {
   const cleanSource = currentCopilotReasoningEffortUiFixture();
   const sources = [
-    cleanSource.replace("reasoningEffortDisabled:ee", "reasoningEffortDisabled:!1"),
+    cleanSource.replace("reasoningEffortDisabled:ie", "reasoningEffortDisabled:!1"),
     cleanSource.replace("M=l&&m&&!h&&!0,N;", "M=l&&m&&!0,N;"),
   ];
 
@@ -220,8 +220,8 @@ test("mixed current app UI contract states warn and remain byte-identical", () =
 test("incomplete current app UI contracts warn and remain byte-identical", () => {
   const cleanSource = currentCopilotReasoningEffortUiFixture();
   const sources = [
-    cleanSource.replace("&&!ee&&!0", "&&!0"),
-    cleanSource.replace("reasoningEffortDisabled:ee", "effortDisabled:ee"),
+    cleanSource.replace("&&!ie&&!0", "&&!0"),
+    cleanSource.replace("reasoningEffortDisabled:ie", "effortDisabled:ie"),
     cleanSource.replace("composer.reasoningSlashCommand.title", "composer.effortCommand.title"),
   ];
 
@@ -253,9 +253,9 @@ test("mismatched Copilot slash command gates warn and remain byte-identical", ()
 
 test("current app UI drift warns without touching adjacent gates", () => {
   const source = [
-    "function tHc(){let q=!0,ee=isCopilot(p),ie=C?.isModelLocked!==!0&&!q&&!ee&&!0;",
-    "return m1(`composer.increaseReasoningEffort`,Ve,{enabled:ie}),",
-    "jsx(CVc,{reasoningEffortDisabled:ee})}",
+    "function pNc(){let re=!0,ie=isCopilot(p),ce=!re&&!ie&&!0;",
+    "return m1(`composer.increaseReasoningEffort`,Ve,{enabled:ce}),",
+    "jsx(CVc,{reasoningEffortDisabled:ie})}",
     "function permissionGate(){let A=O.length>0,j=!w&&!A;return j}",
   ].join("");
   const { value, warnings } = withCapturedWarns(() =>

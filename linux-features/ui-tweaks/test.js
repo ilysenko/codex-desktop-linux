@@ -709,7 +709,7 @@ test("reasoning effort label drift warns and leaves the asset unchanged", () => 
   assert.match(warnings[0], /composer\.mode\.local\.reasoning\.ultra\.label/);
 });
 
-test("mixed reasoning effort label markers warn and remain byte-identical", () => {
+test("mixed upstream reasoning effort labels translate the remaining labels atomically", () => {
   const source = simplifiedChineseLocaleFixture().replace(
     '"composer.mode.local.reasoning.medium.label":`中`',
     '"composer.mode.local.reasoning.medium.label":`Medium`',
@@ -718,9 +718,11 @@ test("mixed reasoning effort label markers warn and remain byte-identical", () =
     applyEnglishReasoningLabels(source, { warnOnMissingMarkers: true }),
   );
 
-  assert.equal(value, source);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /mixed applied and untranslated reasoning label markers/i);
+  for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
+    assert.match(value, new RegExp(`"${key.replaceAll(".", "\\.")}":\\\`${label}\\\``));
+  }
+  assert.deepEqual(warnings, []);
+  assert.equal(applyEnglishReasoningLabels(value), value);
 });
 
 test("English reasoning effort labels can be disabled", () => {

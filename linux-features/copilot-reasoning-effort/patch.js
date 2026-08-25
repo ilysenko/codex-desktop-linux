@@ -37,9 +37,8 @@ function currentComposerGateRegex(patched) {
   return new RegExp(
     `(?<copilot>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.authMethod===${BT}copilot${BT}` +
       `(?<middle>[\\s\\S]{0,1000}?),` +
-      `(?<shortcut>${JS_IDENT})=(?<modelLock>${JS_IDENT})\\?\\.isModelLocked!==!0` +
-      `&&!(?<loading>${JS_IDENT})${copilotShortcutGate}&&!0,` +
-      `(?<picker>${JS_IDENT})=\\k<modelLock>\\?\\.isModelLocked!==!0` +
+      `(?<shortcut>${JS_IDENT})=!(?<loading>${JS_IDENT})${copilotShortcutGate}&&!0,` +
+      `(?<picker>${JS_IDENT})=(?<modelLock>${JS_IDENT})\\?\\.isModelLocked!==!0` +
       `&&(?<modelList>${JS_IDENT})!=null&&!\\k<loading>&&(?<mode>${JS_IDENT})` +
       `${copilotPickerGate}&&(?<status>${JS_IDENT})!==${BT}error${BT}`,
   );
@@ -49,8 +48,8 @@ function currentSlashCommandRegex(patched) {
   const copilotGate = patched ? "" : `&&!\\k<copilot>`;
   return new RegExp(
     `(?<prefix>(?<requiresAuth>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.requiresAuth\\?\\?!0` +
-      `[\\s\\S]{0,2000}?(?<copilot>${JS_IDENT})=\\k<host>\\?\\.authMethod===${BT}copilot${BT}` +
-      `[\\s\\S]{0,2000}?composer\\.reasoningSlashCommand\\.title[\\s\\S]{0,1000}?let )` +
+      `[\\s\\S]{0,3000}?(?<copilot>${JS_IDENT})=\\k<host>\\?\\.authMethod===${BT}copilot${BT}` +
+      `[\\s\\S]{0,3000}?composer\\.reasoningSlashCommand\\.title[\\s\\S]{0,1500}?let )` +
       `(?<enabled>${JS_IDENT})=\\k<requiresAuth>&&(?<authReady>${JS_IDENT})` +
       `${copilotGate}&&!0,(?<dependencies>${JS_IDENT});`,
   );
@@ -247,7 +246,7 @@ function applyCopilotReasoningEffortUiPatch(currentSource) {
   const groups = cleanComposerMatch.groups;
   const replacement =
     `${groups.copilot}=${groups.host}?.authMethod===${BT}copilot${BT}${groups.middle},` +
-    `${groups.shortcut}=${groups.modelLock}?.isModelLocked!==!0&&!${groups.loading}&&!0,` +
+    `${groups.shortcut}=!${groups.loading}&&!0,` +
     `${groups.picker}=${groups.modelLock}?.isModelLocked!==!0&&${groups.modelList}!=null` +
     `&&!${groups.loading}&&${groups.mode}&&${groups.status}!==${BT}error${BT}`;
   patchedSource = patchedSource.replace(cleanComposerMatch[0], replacement);
