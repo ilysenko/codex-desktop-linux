@@ -84,6 +84,7 @@
         ];
         curlWithGnuTlsCompat = (pkgs.curl.override {
           gnutlsSupport = true;
+          http3Support = false;
           opensslSupport = false;
         }).overrideAttrs (previousAttrs: {
           postPatch = (previousAttrs.postPatch or "") + ''
