@@ -98,6 +98,10 @@
           pkgs.fontconfig
           curlWithGnuTlsCompat.out
         ];
+        workspaceRuntimeLibraryPath = lib.concatStringsSep ":" [
+          "${pkgs.addDriverRunpath.driverLink}/lib"
+          (lib.makeLibraryPath workspaceRuntimeLibraries)
+        ];
         baseRuntimePackages = with pkgs; [
           bash coreutils curl findutils gawk gnugrep gnused libnotify nodejs procps
           python3 systemd util-linux xdg-utils
@@ -115,77 +119,102 @@
           lib.makeBinPath (lib.unique (
             baseRuntimePackages ++ featureRuntimePackages featureIds
           ));
-        fhsProfileVariables = [
-          "PATH"
-          "PS1"
-          "LOCALE_ARCHIVE"
-          "TZDIR"
-          "XDG_DATA_DIRS"
-          "NIX_ENFORCE_PURITY"
-          "NIX_BINTOOLS_WRAPPER_TARGET_HOST_${pkgs.stdenv.cc.suffixSalt}"
-          "NIX_CC_WRAPPER_TARGET_HOST_${pkgs.stdenv.cc.suffixSalt}"
-          "NIX_CFLAGS_COMPILE"
-          "NIX_CFLAGS_LINK"
-          "NIX_LDFLAGS"
-          "PKG_CONFIG_PATH"
-          "ACLOCAL_PATH"
-          "GST_PLUGIN_SYSTEM_PATH_1_0"
-        ];
-        fhsProfileCallerVariables =
-          lib.remove "PATH" (lib.remove "XDG_DATA_DIRS" fhsProfileVariables);
-        nixRuntimeEnv = pkgs.buildFHSEnv {
-          name = "codex-desktop-runtime";
-          targetPkgs = _pkgs: workspaceRuntimeLibraries;
-          runScript = "${pkgs.coreutils}/bin/env";
-          profile = ''
-            restore_codex_nix_runtime_variable() {
-              local variable_name="$1"
-              local value_name="CODEX_NIX_RUNTIME_VALUE_$variable_name"
-              local set_name="CODEX_NIX_RUNTIME_SET_$variable_name"
-              if [[ -v $set_name ]]; then
-                printf -v "$variable_name" '%s' "''${!value_name}"
-                export "$variable_name"
-              else
-                unset "$variable_name"
-              fi
-              unset "$value_name" "$set_name"
-            }
-            ${lib.concatMapStringsSep "\n" (name:
-              "restore_codex_nix_runtime_variable ${lib.escapeShellArg name}"
-            ) fhsProfileVariables}
-            unset -f restore_codex_nix_runtime_variable
+        genericRuntimeInterpreter = {
+          x86_64-linux = "/lib64/ld-linux-x86-64.so.2";
+          aarch64-linux = "/lib/ld-linux-aarch64.so.1";
+        }.${system};
+        dynamicLinker = pkgs.stdenv.cc.bintools.dynamicLinker;
+        mkNixosBwrap = { realBwrap, runtimeInterpreter ? genericRuntimeInterpreter }:
+          let
+            source = pkgs.writeText "codex-desktop-nixos-bwrap.c" ''
+              #define _XOPEN_SOURCE 700
+              #include <errno.h>
+              #include <stdio.h>
+              #include <stdlib.h>
+              #include <string.h>
+              #include <unistd.h>
+
+              static const char *real_bwrap = "${realBwrap}";
+              static const char *generic_interpreter = "${runtimeInterpreter}";
+              static const char *nix_ld = "${pkgs.nix-ld}/libexec/nix-ld";
+              static const char *dynamic_linker = "${dynamicLinker}";
+              static const char *runtime_library_path = "${workspaceRuntimeLibraryPath}";
+
+              int main(int argc, char **argv) {
+                int separator = -1;
+                for (int index = 1; index < argc; index++) {
+                  if (strcmp(argv[index], "--") == 0) {
+                    separator = index;
+                    break;
+                  }
+                }
+                if (separator < 0) {
+                  execv(real_bwrap, argv);
+                  perror("execv real bubblewrap");
+                  return 127;
+                }
+
+                char *mount_destination = realpath(generic_interpreter, NULL);
+                if (mount_destination == NULL) {
+                  if (errno == ENOENT) {
+                    fprintf(stderr,
+                            "codex-desktop: generic interpreter %s is unavailable; "
+                            "cached generic runtimes remain disabled\n",
+                            generic_interpreter);
+                    execv(real_bwrap, argv);
+                    perror("execv real bubblewrap");
+                    return 127;
+                  }
+                  perror("resolve generic interpreter");
+                  return 127;
+                }
+
+                const int extra_count = 9;
+                char **rewritten = calloc((size_t)argc + (size_t)extra_count + 1,
+                                          sizeof(*rewritten));
+                if (rewritten == NULL) {
+                  perror("allocate bubblewrap arguments");
+                  return 127;
+                }
+
+                int output = 0;
+                for (int index = 0; index < separator; index++) {
+                  rewritten[output++] = argv[index];
+                }
+                rewritten[output++] = "--ro-bind";
+                rewritten[output++] = (char *)nix_ld;
+                rewritten[output++] = mount_destination;
+                rewritten[output++] = "--setenv";
+                rewritten[output++] = "NIX_LD";
+                rewritten[output++] = (char *)dynamic_linker;
+                rewritten[output++] = "--setenv";
+                rewritten[output++] = "NIX_LD_LIBRARY_PATH";
+                rewritten[output++] = (char *)runtime_library_path;
+                for (int index = separator; index < argc; index++) {
+                  rewritten[output++] = argv[index];
+                }
+                rewritten[output] = NULL;
+                execv(real_bwrap, rewritten);
+                perror("execv real bubblewrap");
+                return 127;
+              }
+            '';
+          in pkgs.runCommandCC "codex-desktop-nixos-bwrap" { } ''
+            mkdir -p "$out/bin"
+            "$CC" -std=c11 -O2 -Wall -Wextra -Werror \
+              -o "$out/bin/bwrap" ${source}
           '';
+        nixosBwrap = mkNixosBwrap {
+          realBwrap = "${pkgs.bubblewrap}/bin/bwrap";
         };
         nixRuntimeLauncher = pkgs.writeShellScript "codex-desktop-nix-runtime-launcher" ''
           set -euo pipefail
           [ "$#" -gt 0 ]
           if [[ -e /etc/NIXOS ]]; then
-            capture_codex_nix_runtime_variable() {
-              local variable_name="$1"
-              local value_name="CODEX_NIX_RUNTIME_VALUE_$variable_name"
-              local set_name="CODEX_NIX_RUNTIME_SET_$variable_name"
-              if [[ -v $variable_name ]]; then
-                printf -v "$value_name" '%s' "''${!variable_name}"
-                export "$value_name"
-                printf -v "$set_name" 1
-                export "$set_name"
-              else
-                unset "$value_name" "$set_name"
-              fi
-            }
-            ${lib.concatMapStringsSep "\n" (name:
-              "capture_codex_nix_runtime_variable ${lib.escapeShellArg name}"
-            ) fhsProfileVariables}
-            export CODEX_NIX_RUNTIME_VALUE_PATH="${pkgs.bubblewrap}/bin:$CODEX_NIX_RUNTIME_VALUE_PATH"
-            unset -f capture_codex_nix_runtime_variable
-            exec ${nixRuntimeEnv}/bin/codex-desktop-runtime "$@"
+            export PATH="${nixosBwrap}/bin:''${PATH-}"
           fi
           exec "$@"
         '';
-        genericRuntimeInterpreter = {
-          x86_64-linux = "/lib64/ld-linux-x86-64.so.2";
-          aarch64-linux = "/lib/ld-linux-aarch64.so.1";
-        }.${system};
         genericRuntimeProbe = pkgs.runCommandCC "codex-generic-runtime-probe" {
           nativeBuildInputs = [ pkgs.binutils pkgs.gnugrep pkgs.patchelf pkgs.pkg-config ];
           buildInputs = [ curlWithGnuTlsCompat ];
@@ -203,6 +232,7 @@
           "$CC" -o "$out/bin/generic-runtime-probe" probe.c \
             $(pkg-config --cflags --libs libcurl)
           patchelf --remove-rpath "$out/bin/generic-runtime-probe"
+          test -e ${curlWithGnuTlsCompat.out}/lib/libcurl-gnutls.so.4
           patchelf --replace-needed libcurl.so.4 libcurl-gnutls.so.4 \
             "$out/bin/generic-runtime-probe"
           patchelf --set-interpreter "${genericRuntimeInterpreter}" \
@@ -794,15 +824,6 @@
         wrapperEnvironmentProbe = pkgs.writeText "codex-nix-wrapper-environment-probe" ''
           case "$0" in
             */opt/codex-desktop/start.sh)
-              if [[ -n "''${CODEX_NIX_PROFILE_ENV_EXPECTED-}" ]]; then
-                for variable_name in ${lib.escapeShellArgs fhsProfileCallerVariables}; do
-                  expected="caller-$variable_name"
-                  if [[ ! -v $variable_name || "''${!variable_name}" != "$expected" ]]; then
-                    printf 'FHS profile changed %s\n' "$variable_name" >&2
-                    exit 90
-                  fi
-                done
-              fi
               {
                 printf 'alsa=%s:%s\n' "''${ALSA_PLUGIN_DIR+x}" "''${ALSA_PLUGIN_DIR-}"
                 printf 'xdg=%s:%s\n' "''${XDG_DATA_DIRS+x}" "''${XDG_DATA_DIRS-}"
@@ -830,7 +851,7 @@
           ${pkgs.gnugrep}/bin/grep -Fx 'alsa=x:${pkgs.pipewire}/lib/alsa-lib' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'xdg=x:${gsettingsSchemaDataDirs}:${xdgDefaultDataDirs}' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx \
-            'bwrap=${lib.optionalString expectNixBwrap "${pkgs.bubblewrap}/bin/bwrap"}' \
+            'bwrap=${lib.optionalString expectNixBwrap "${nixosBwrap}/bin/bwrap"}' \
             "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'ld=:' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'bamf=${package}/share/applications/codex-desktop.desktop' "$capture"
@@ -850,7 +871,7 @@
           ${pkgs.gnugrep}/bin/grep -Fx 'alsa=x:' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'xdg=x:${gsettingsSchemaDataDirs}:${xdgDefaultDataDirs}' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx \
-            'path=${lib.optionalString expectNixBwrap "${pkgs.bubblewrap}/bin:"}${runtimePathFor package.passthru.effectiveLinuxFeatureIds}:/caller/bin' \
+            'path=${lib.optionalString expectNixBwrap "${nixosBwrap}/bin:"}${runtimePathFor package.passthru.effectiveLinuxFeatureIds}:/caller/bin' \
             "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'ld=x:/caller/lib' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx \
@@ -864,17 +885,63 @@
           ${pkgs.gnugrep}/bin/grep -Fx 'xdg=x:${gsettingsSchemaDataDirs}:/caller/share' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'ld=x:' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'bamf=/caller/desktop' "$capture"
-          ${lib.optionalString expectNixBwrap ''
-          profile_environment=()
-          for variable_name in ${lib.escapeShellArgs fhsProfileCallerVariables}; do
-            profile_environment+=("$variable_name=caller-$variable_name")
-          done
-          ${pkgs.coreutils}/bin/env "''${profile_environment[@]}" \
-            BASH_ENV=${wrapperEnvironmentProbe} \
-            CODEX_NIX_ENV_CAPTURE="$capture" \
-            CODEX_NIX_PROFILE_ENV_EXPECTED=1 \
-            ${package}/bin/codex-desktop --diagnose
-          ''}
+        '';
+        bwrapArgumentProbeSource = pkgs.writeText "codex-nix-bwrap-argument-probe.c" ''
+          #include <stdio.h>
+          #include <stdlib.h>
+
+          int main(int argc, char **argv) {
+            const char *capture = getenv("CODEX_NIX_BWRAP_CAPTURE");
+            if (capture == NULL) return 2;
+            FILE *output = fopen(capture, "w");
+            if (output == NULL) return 3;
+            for (int index = 1; index < argc; index++) {
+              if (fprintf(output, "<%s>", argv[index]) < 0) return 4;
+            }
+            return fclose(output) == 0 ? 0 : 5;
+          }
+        '';
+        bwrapArgumentProbe = pkgs.runCommandCC "codex-nix-bwrap-argument-probe" { } ''
+          "$CC" -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "$out" ${bwrapArgumentProbeSource}
+        '';
+        bwrapInterpreterTarget = pkgs.writeText "codex-bwrap-interpreter-target" "";
+        bwrapInterpreterLink = pkgs.runCommand "codex-bwrap-interpreter-link" { } ''
+          ln -s ${bwrapInterpreterTarget} "$out"
+        '';
+        nixosBwrapProbe = mkNixosBwrap {
+          realBwrap = bwrapArgumentProbe;
+          runtimeInterpreter = bwrapInterpreterLink;
+        };
+        missingBwrapInterpreter = "/codex-desktop-missing-runtime/ld-linux.so";
+        nixosBwrapMissingProbe = mkNixosBwrap {
+          realBwrap = bwrapArgumentProbe;
+          runtimeInterpreter = missingBwrapInterpreter;
+        };
+        nixosBwrapContractCheck = pkgs.writeShellScript "codex-nix-bwrap-contract" ''
+          set -euo pipefail
+          capture="$(${pkgs.coreutils}/bin/mktemp)"
+          hostile_bash_env="$(${pkgs.coreutils}/bin/mktemp)"
+          trap '${pkgs.coreutils}/bin/rm -f "$capture" "$hostile_bash_env"' EXIT
+          printf 'exit 91\n' > "$hostile_bash_env"
+          BASH_ENV="$hostile_bash_env" CODEX_NIX_BWRAP_CAPTURE="$capture" \
+            ${nixosBwrapProbe}/bin/bwrap --help
+          ${pkgs.gnugrep}/bin/grep -Fx '<--help>' "$capture"
+          BASH_ENV="$hostile_bash_env" CODEX_NIX_BWRAP_CAPTURE="$capture" \
+            ${nixosBwrapProbe}/bin/bwrap --version
+          ${pkgs.gnugrep}/bin/grep -Fx '<--version>' "$capture"
+          BASH_ENV="$hostile_bash_env" CODEX_NIX_BWRAP_CAPTURE="$capture" \
+            ${nixosBwrapProbe}/bin/bwrap \
+              --ro-bind /source /target --unshare-user -- /bin/tool --flag
+          ${pkgs.gnugrep}/bin/grep -Fx \
+            '<--ro-bind></source></target><--unshare-user><--ro-bind><${pkgs.nix-ld}/libexec/nix-ld><${bwrapInterpreterTarget}><--setenv><NIX_LD><${dynamicLinker}><--setenv><NIX_LD_LIBRARY_PATH><${workspaceRuntimeLibraryPath}><--></bin/tool><--flag>' \
+            "$capture"
+          BASH_ENV="$hostile_bash_env" CODEX_NIX_BWRAP_CAPTURE="$capture" \
+            ${nixosBwrapMissingProbe}/bin/bwrap \
+              --ro-bind /source /target --unshare-user -- /bin/tool --flag
+          ${pkgs.gnugrep}/bin/grep -Fx \
+            '<--ro-bind></source></target><--unshare-user><--></bin/tool><--flag>' \
+            "$capture"
         '';
         mkRuntimeCheck = name: package: verifyBundledMarketplacePermissions: verifyWatchbound:
           pkgs.runCommand name {
@@ -890,9 +957,12 @@
               --runtime-library-path "${runtimeLibraryPath}" \
               --patchelf ${pkgs.patchelf}/bin/patchelf
             ${mkWrapperContractCheck package false}
+            ${nixosBwrapContractCheck}
             test "$(
-              ${nixRuntimeEnv}/bin/codex-desktop-runtime \
-                ${genericRuntimeProbe}/bin/generic-runtime-probe
+              NIX_LD=${lib.escapeShellArg dynamicLinker} \
+              NIX_LD_LIBRARY_PATH=${lib.escapeShellArg workspaceRuntimeLibraryPath} \
+                ${pkgs.nix-ld}/libexec/nix-ld \
+                  ${genericRuntimeProbe}/bin/generic-runtime-probe
             )" = workspace-runtime-ok
             "$app/start.sh" --diagnose
             timeout 10 "$app/browser_crashpad_handler" --version
@@ -956,14 +1026,9 @@
           export DISPLAY=:99
           mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
           ${mkWrapperContractCheck codexDesktop true}
-          test "$(
-            ${nixRuntimeEnv}/bin/codex-desktop-runtime \
-              ${genericRuntimeProbe}/bin/generic-runtime-probe
-          )" = workspace-runtime-ok
-          ${nixRuntimeEnv}/bin/codex-desktop-runtime \
-            ${pkgs.bubblewrap}/bin/bwrap \
+          test "$(${nixosBwrap}/bin/bwrap \
             --unshare-user --unshare-net --ro-bind / / --dev /dev --proc /proc \
-            -- ${pkgs.coreutils}/bin/true
+            -- ${genericRuntimeProbe}/bin/generic-runtime-probe)" = workspace-runtime-ok
           ${pkgs.xvfb}/bin/Xvfb "$DISPLAY" -screen 0 1280x800x24 >"$HOME/xvfb.log" 2>&1 &
           xvfb_pid=$!
           trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
