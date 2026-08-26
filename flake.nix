@@ -82,9 +82,17 @@
           "${pkgs.addDriverRunpath.driverLink}/lib"
           (lib.makeLibraryPath runtimeLibraries)
         ];
+        curlWithGnuTls = pkgs.curl.override {
+          gnutlsSupport = true;
+          opensslSupport = false;
+        };
+        workspaceRuntimeLibraries = runtimeLibraries ++ [
+          pkgs.fontconfig
+          curlWithGnuTls.out
+        ];
         baseRuntimePackages = with pkgs; [
-          bash coreutils curl findutils gawk gnugrep gnused libnotify nodejs procps
-          python3 systemd util-linux xdg-utils
+          bash bubblewrap coreutils curl findutils gawk gnugrep gnused libnotify
+          nodejs procps python3 systemd util-linux xdg-utils
         ];
         featureRuntimePackages = featureIds:
           lib.optionals (lib.elem "appshots" featureIds) [ pkgs.xinput pkgs.xmodmap ]
@@ -99,6 +107,68 @@
           lib.makeBinPath (lib.unique (
             baseRuntimePackages ++ featureRuntimePackages featureIds
           ));
+        nixRuntimeEnv = pkgs.buildFHSEnv {
+          name = "codex-desktop-runtime";
+          targetPkgs = _pkgs: workspaceRuntimeLibraries;
+          runScript = "${pkgs.coreutils}/bin/env";
+          profile = ''
+            if [[ -n "''${CODEX_NIX_RUNTIME_PATH-}" ]]; then
+              export PATH="$CODEX_NIX_RUNTIME_PATH"
+              unset CODEX_NIX_RUNTIME_PATH
+            fi
+            if [[ -n "''${CODEX_NIX_RUNTIME_XDG_DATA_DIRS_SET-}" ]]; then
+              export XDG_DATA_DIRS="$CODEX_NIX_RUNTIME_XDG_DATA_DIRS"
+            else
+              unset XDG_DATA_DIRS
+            fi
+            unset CODEX_NIX_RUNTIME_XDG_DATA_DIRS
+            unset CODEX_NIX_RUNTIME_XDG_DATA_DIRS_SET
+          '';
+        };
+        nixRuntimeLauncher = pkgs.writeShellScript "codex-desktop-nix-runtime-launcher" ''
+          set -euo pipefail
+          [ "$#" -gt 0 ]
+          if [[ -e /etc/NIXOS ]]; then
+            export CODEX_NIX_RUNTIME_PATH="$PATH"
+            if [[ -v XDG_DATA_DIRS ]]; then
+              export CODEX_NIX_RUNTIME_XDG_DATA_DIRS="$XDG_DATA_DIRS"
+              export CODEX_NIX_RUNTIME_XDG_DATA_DIRS_SET=1
+            else
+              unset CODEX_NIX_RUNTIME_XDG_DATA_DIRS
+              unset CODEX_NIX_RUNTIME_XDG_DATA_DIRS_SET
+            fi
+            exec ${nixRuntimeEnv}/bin/codex-desktop-runtime "$@"
+          fi
+          exec "$@"
+        '';
+        genericRuntimeInterpreter = {
+          x86_64-linux = "/lib64/ld-linux-x86-64.so.2";
+          aarch64-linux = "/lib/ld-linux-aarch64.so.1";
+        }.${system};
+        genericRuntimeProbe = pkgs.runCommandCC "codex-generic-runtime-probe" {
+          nativeBuildInputs = [ pkgs.patchelf pkgs.pkg-config ];
+          buildInputs = [ curlWithGnuTls ];
+        } ''
+          mkdir -p "$out/bin"
+          printf '%s\n' \
+            '#include <stdio.h>' \
+            '#include <curl/curl.h>' \
+            'int main(void) {' \
+            '  if (curl_version() == NULL) return 1;' \
+            '  puts("workspace-runtime-ok");' \
+            '  return 0;' \
+            '}' \
+            > probe.c
+          "$CC" -o "$out/bin/generic-runtime-probe" probe.c \
+            $(pkg-config --cflags --libs libcurl)
+          patchelf --remove-rpath "$out/bin/generic-runtime-probe"
+          patchelf --replace-needed libcurl.so.4 libcurl-gnutls.so.4 \
+            "$out/bin/generic-runtime-probe"
+          patchelf --set-interpreter "${genericRuntimeInterpreter}" \
+            "$out/bin/generic-runtime-probe"
+          patchelf --print-needed "$out/bin/generic-runtime-probe" \
+            | grep -Fx libcurl-gnutls.so.4
+        '';
         gsettingsSchemaPackages = with pkgs; [ gsettings-desktop-schemas gtk3 ];
         gsettingsSchemaRoot = package:
           lib.removeSuffix "/glib-2.0/schemas" (pkgs.glib.getSchemaPath package);
@@ -389,13 +459,14 @@
               substituteInPlace "$out/share/applications/codex-desktop.desktop" \
                 --replace-fail "/usr/bin/codex-desktop" "$out/bin/codex-desktop" \
                 --replace-fail "/usr/share/applications/codex-desktop.desktop" "$out/share/applications/codex-desktop.desktop"
-              makeWrapper "$app/start.sh" "$out/bin/codex-desktop" \
+              makeWrapper "${nixRuntimeLauncher}" "$out/bin/codex-desktop" \
                 --prefix PATH : "${runtimePathFor effectiveFeatureIds}" \
                 --set-default ALSA_PLUGIN_DIR "${pkgs.pipewire}/lib/alsa-lib" \
                 --run 'export XDG_DATA_DIRS="''${XDG_DATA_DIRS:-${xdgDefaultDataDirs}}"' \
                 --prefix XDG_DATA_DIRS : "${gsettingsSchemaDataDirs}" \
                 --set-default BAMF_DESKTOP_FILE_HINT "$out/share/applications/codex-desktop.desktop" \
                 --set-default CODEX_CLI_PATH "$app/resources/codex" \
+                --add-flags "$app/start.sh" \
                 --add-flags "\''${NIXOS_OZONE_WL:+\''${WAYLAND_DISPLAY:+--ozone-platform=wayland --enable-wayland-ime=true --wayland-text-input-version=3}}"
               node "$source_dir/nix/elf-runtime.cjs" audit \
                 --root "$app" \
@@ -457,7 +528,8 @@
               --wayland-text-input-version=3
             )
           fi
-          exec "$app_dir/.start.sh-nix" "$@" "''${extra_flags[@]}"
+          exec ${nixRuntimeLauncher} \
+            "$app_dir/.start.sh-nix" "$@" "''${extra_flags[@]}"
         '';
         installerWorkspaceHelpers = mkWorkspaceHelpers maximalDirectoryFeatureIds;
         installerRuntimeClosure = pkgs.writeText "codex-desktop-installer-runtime-closure" (
@@ -681,6 +753,7 @@
                 printf 'alsa=%s:%s\n' "''${ALSA_PLUGIN_DIR+x}" "''${ALSA_PLUGIN_DIR-}"
                 printf 'xdg=%s:%s\n' "''${XDG_DATA_DIRS+x}" "''${XDG_DATA_DIRS-}"
                 printf 'path=%s\n' "$PATH"
+                printf 'bwrap=%s\n' "$(command -v bwrap || true)"
                 printf 'ld=%s:%s\n' "''${LD_LIBRARY_PATH+x}" "''${LD_LIBRARY_PATH-}"
                 printf 'bamf=%s\n' "''${BAMF_DESKTOP_FILE_HINT-}"
                 printf 'args='
@@ -701,6 +774,7 @@
             ${package}/bin/codex-desktop --diagnose
           ${pkgs.gnugrep}/bin/grep -Fx 'alsa=x:${pkgs.pipewire}/lib/alsa-lib' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'xdg=x:${gsettingsSchemaDataDirs}:${xdgDefaultDataDirs}' "$capture"
+          ${pkgs.gnugrep}/bin/grep -Fx 'bwrap=${pkgs.bubblewrap}/bin/bwrap' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'ld=:' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'bamf=${package}/share/applications/codex-desktop.desktop' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'args=<--diagnose>' "$capture"
@@ -746,6 +820,10 @@
               --runtime-library-path "${runtimeLibraryPath}" \
               --patchelf ${pkgs.patchelf}/bin/patchelf
             ${mkWrapperContractCheck package}
+            test "$(
+              ${nixRuntimeEnv}/bin/codex-desktop-runtime \
+                ${genericRuntimeProbe}/bin/generic-runtime-probe
+            )" = workspace-runtime-ok
             "$app/start.sh" --diagnose
             timeout 10 "$app/browser_crashpad_handler" --version
             "$app/resources/cua_node/bin/node" --version
@@ -808,6 +886,14 @@
           export DISPLAY=:99
           mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
           ${mkWrapperContractCheck codexDesktop}
+          test "$(
+            ${nixRuntimeEnv}/bin/codex-desktop-runtime \
+              ${genericRuntimeProbe}/bin/generic-runtime-probe
+          )" = workspace-runtime-ok
+          ${nixRuntimeEnv}/bin/codex-desktop-runtime \
+            ${pkgs.bubblewrap}/bin/bwrap \
+            --unshare-user --unshare-net --ro-bind / / --dev /dev --proc /proc \
+            -- ${pkgs.coreutils}/bin/true
           ${pkgs.xvfb}/bin/Xvfb "$DISPLAY" -screen 0 1280x800x24 >"$HOME/xvfb.log" 2>&1 &
           xvfb_pid=$!
           trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
