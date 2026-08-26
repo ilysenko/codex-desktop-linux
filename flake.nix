@@ -82,17 +82,24 @@
           "${pkgs.addDriverRunpath.driverLink}/lib"
           (lib.makeLibraryPath runtimeLibraries)
         ];
-        curlWithGnuTls = pkgs.curl.override {
+        curlWithGnuTlsCompat = (pkgs.curl.override {
           gnutlsSupport = true;
           opensslSupport = false;
-        };
+        }).overrideAttrs (previousAttrs: {
+          postPatch = (previousAttrs.postPatch or "") + ''
+            substituteInPlace lib/libcurl.vers.in \
+              --replace-fail \
+                'CURL_@CURL_LIBCURL_VERSIONED_SYMBOLS_PREFIX@@CURL_LIBCURL_VERSIONED_SYMBOLS_SONAME@' \
+                'CURL_GNUTLS_3'
+          '';
+        });
         workspaceRuntimeLibraries = runtimeLibraries ++ [
           pkgs.fontconfig
-          curlWithGnuTls.out
+          curlWithGnuTlsCompat.out
         ];
         baseRuntimePackages = with pkgs; [
-          bash bubblewrap coreutils curl findutils gawk gnugrep gnused libnotify
-          nodejs procps python3 systemd util-linux xdg-utils
+          bash coreutils curl findutils gawk gnugrep gnused libnotify nodejs procps
+          python3 systemd util-linux xdg-utils
         ];
         featureRuntimePackages = featureIds:
           lib.optionals (lib.elem "appshots" featureIds) [ pkgs.xinput pkgs.xmodmap ]
@@ -107,36 +114,69 @@
           lib.makeBinPath (lib.unique (
             baseRuntimePackages ++ featureRuntimePackages featureIds
           ));
+        fhsProfileVariables = [
+          "PATH"
+          "PS1"
+          "LOCALE_ARCHIVE"
+          "TZDIR"
+          "XDG_DATA_DIRS"
+          "NIX_ENFORCE_PURITY"
+          "NIX_BINTOOLS_WRAPPER_TARGET_HOST_${pkgs.stdenv.cc.suffixSalt}"
+          "NIX_CC_WRAPPER_TARGET_HOST_${pkgs.stdenv.cc.suffixSalt}"
+          "NIX_CFLAGS_COMPILE"
+          "NIX_CFLAGS_LINK"
+          "NIX_LDFLAGS"
+          "PKG_CONFIG_PATH"
+          "ACLOCAL_PATH"
+          "GST_PLUGIN_SYSTEM_PATH_1_0"
+        ];
+        fhsProfileCallerVariables =
+          lib.remove "PATH" (lib.remove "XDG_DATA_DIRS" fhsProfileVariables);
         nixRuntimeEnv = pkgs.buildFHSEnv {
           name = "codex-desktop-runtime";
           targetPkgs = _pkgs: workspaceRuntimeLibraries;
           runScript = "${pkgs.coreutils}/bin/env";
           profile = ''
-            if [[ -n "''${CODEX_NIX_RUNTIME_PATH-}" ]]; then
-              export PATH="$CODEX_NIX_RUNTIME_PATH"
-              unset CODEX_NIX_RUNTIME_PATH
-            fi
-            if [[ -n "''${CODEX_NIX_RUNTIME_XDG_DATA_DIRS_SET-}" ]]; then
-              export XDG_DATA_DIRS="$CODEX_NIX_RUNTIME_XDG_DATA_DIRS"
-            else
-              unset XDG_DATA_DIRS
-            fi
-            unset CODEX_NIX_RUNTIME_XDG_DATA_DIRS
-            unset CODEX_NIX_RUNTIME_XDG_DATA_DIRS_SET
+            restore_codex_nix_runtime_variable() {
+              local variable_name="$1"
+              local value_name="CODEX_NIX_RUNTIME_VALUE_$variable_name"
+              local set_name="CODEX_NIX_RUNTIME_SET_$variable_name"
+              if [[ -v $set_name ]]; then
+                printf -v "$variable_name" '%s' "''${!value_name}"
+                export "$variable_name"
+              else
+                unset "$variable_name"
+              fi
+              unset "$value_name" "$set_name"
+            }
+            ${lib.concatMapStringsSep "\n" (name:
+              "restore_codex_nix_runtime_variable ${lib.escapeShellArg name}"
+            ) fhsProfileVariables}
+            unset -f restore_codex_nix_runtime_variable
           '';
         };
         nixRuntimeLauncher = pkgs.writeShellScript "codex-desktop-nix-runtime-launcher" ''
           set -euo pipefail
           [ "$#" -gt 0 ]
           if [[ -e /etc/NIXOS ]]; then
-            export CODEX_NIX_RUNTIME_PATH="$PATH"
-            if [[ -v XDG_DATA_DIRS ]]; then
-              export CODEX_NIX_RUNTIME_XDG_DATA_DIRS="$XDG_DATA_DIRS"
-              export CODEX_NIX_RUNTIME_XDG_DATA_DIRS_SET=1
-            else
-              unset CODEX_NIX_RUNTIME_XDG_DATA_DIRS
-              unset CODEX_NIX_RUNTIME_XDG_DATA_DIRS_SET
-            fi
+            capture_codex_nix_runtime_variable() {
+              local variable_name="$1"
+              local value_name="CODEX_NIX_RUNTIME_VALUE_$variable_name"
+              local set_name="CODEX_NIX_RUNTIME_SET_$variable_name"
+              if [[ -v $variable_name ]]; then
+                printf -v "$value_name" '%s' "''${!variable_name}"
+                export "$value_name"
+                printf -v "$set_name" 1
+                export "$set_name"
+              else
+                unset "$value_name" "$set_name"
+              fi
+            }
+            ${lib.concatMapStringsSep "\n" (name:
+              "capture_codex_nix_runtime_variable ${lib.escapeShellArg name}"
+            ) fhsProfileVariables}
+            export CODEX_NIX_RUNTIME_VALUE_PATH="${pkgs.bubblewrap}/bin:$CODEX_NIX_RUNTIME_VALUE_PATH"
+            unset -f capture_codex_nix_runtime_variable
             exec ${nixRuntimeEnv}/bin/codex-desktop-runtime "$@"
           fi
           exec "$@"
@@ -146,8 +186,8 @@
           aarch64-linux = "/lib/ld-linux-aarch64.so.1";
         }.${system};
         genericRuntimeProbe = pkgs.runCommandCC "codex-generic-runtime-probe" {
-          nativeBuildInputs = [ pkgs.patchelf pkgs.pkg-config ];
-          buildInputs = [ curlWithGnuTls ];
+          nativeBuildInputs = [ pkgs.binutils pkgs.gnugrep pkgs.patchelf pkgs.pkg-config ];
+          buildInputs = [ curlWithGnuTlsCompat ];
         } ''
           mkdir -p "$out/bin"
           printf '%s\n' \
@@ -168,6 +208,10 @@
             "$out/bin/generic-runtime-probe"
           patchelf --print-needed "$out/bin/generic-runtime-probe" \
             | grep -Fx libcurl-gnutls.so.4
+          readelf --version-info "$out/bin/generic-runtime-probe" \
+            | grep -F CURL_GNUTLS_3
+          readelf --version-info ${curlWithGnuTlsCompat.out}/lib/libcurl.so.4 \
+            | grep -F 'Name: CURL_GNUTLS_3'
         '';
         gsettingsSchemaPackages = with pkgs; [ gsettings-desktop-schemas gtk3 ];
         gsettingsSchemaRoot = package:
@@ -749,6 +793,15 @@
         wrapperEnvironmentProbe = pkgs.writeText "codex-nix-wrapper-environment-probe" ''
           case "$0" in
             */opt/codex-desktop/start.sh)
+              if [[ -n "''${CODEX_NIX_PROFILE_ENV_EXPECTED-}" ]]; then
+                for variable_name in ${lib.escapeShellArgs fhsProfileCallerVariables}; do
+                  expected="caller-$variable_name"
+                  if [[ ! -v $variable_name || "''${!variable_name}" != "$expected" ]]; then
+                    printf 'FHS profile changed %s\n' "$variable_name" >&2
+                    exit 90
+                  fi
+                done
+              fi
               {
                 printf 'alsa=%s:%s\n' "''${ALSA_PLUGIN_DIR+x}" "''${ALSA_PLUGIN_DIR-}"
                 printf 'xdg=%s:%s\n' "''${XDG_DATA_DIRS+x}" "''${XDG_DATA_DIRS-}"
@@ -764,7 +817,8 @@
               ;;
           esac
         '';
-        mkWrapperContractCheck = package: pkgs.writeShellScript "codex-nix-wrapper-contract" ''
+        mkWrapperContractCheck = package: expectNixBwrap:
+          pkgs.writeShellScript "codex-nix-wrapper-contract" ''
           set -euo pipefail
           capture="$(${pkgs.coreutils}/bin/mktemp)"
           trap '${pkgs.coreutils}/bin/rm -f "$capture"' EXIT
@@ -774,7 +828,9 @@
             ${package}/bin/codex-desktop --diagnose
           ${pkgs.gnugrep}/bin/grep -Fx 'alsa=x:${pkgs.pipewire}/lib/alsa-lib' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'xdg=x:${gsettingsSchemaDataDirs}:${xdgDefaultDataDirs}' "$capture"
-          ${pkgs.gnugrep}/bin/grep -Fx 'bwrap=${pkgs.bubblewrap}/bin/bwrap' "$capture"
+          ${pkgs.gnugrep}/bin/grep -Fx \
+            'bwrap=${lib.optionalString expectNixBwrap "${pkgs.bubblewrap}/bin/bwrap"}' \
+            "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'ld=:' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'bamf=${package}/share/applications/codex-desktop.desktop' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'args=<--diagnose>' "$capture"
@@ -792,7 +848,9 @@
             ${package}/bin/codex-desktop --diagnose
           ${pkgs.gnugrep}/bin/grep -Fx 'alsa=x:' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'xdg=x:${gsettingsSchemaDataDirs}:${xdgDefaultDataDirs}' "$capture"
-          ${pkgs.gnugrep}/bin/grep -Fx 'path=${runtimePathFor package.passthru.effectiveLinuxFeatureIds}:/caller/bin' "$capture"
+          ${pkgs.gnugrep}/bin/grep -Fx \
+            'path=${lib.optionalString expectNixBwrap "${pkgs.bubblewrap}/bin:"}${runtimePathFor package.passthru.effectiveLinuxFeatureIds}:/caller/bin' \
+            "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'ld=x:/caller/lib' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx \
             'args=<--ozone-platform=wayland><--enable-wayland-ime=true><--wayland-text-input-version=3><--diagnose>' \
@@ -805,6 +863,17 @@
           ${pkgs.gnugrep}/bin/grep -Fx 'xdg=x:${gsettingsSchemaDataDirs}:/caller/share' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'ld=x:' "$capture"
           ${pkgs.gnugrep}/bin/grep -Fx 'bamf=/caller/desktop' "$capture"
+          ${lib.optionalString expectNixBwrap ''
+          profile_environment=()
+          for variable_name in ${lib.escapeShellArgs fhsProfileCallerVariables}; do
+            profile_environment+=("$variable_name=caller-$variable_name")
+          done
+          ${pkgs.coreutils}/bin/env "''${profile_environment[@]}" \
+            BASH_ENV=${wrapperEnvironmentProbe} \
+            CODEX_NIX_ENV_CAPTURE="$capture" \
+            CODEX_NIX_PROFILE_ENV_EXPECTED=1 \
+            ${package}/bin/codex-desktop --diagnose
+          ''}
         '';
         mkRuntimeCheck = name: package: verifyBundledMarketplacePermissions: verifyWatchbound:
           pkgs.runCommand name {
@@ -819,7 +888,7 @@
               --dynamic-linker "$dynamic_linker" \
               --runtime-library-path "${runtimeLibraryPath}" \
               --patchelf ${pkgs.patchelf}/bin/patchelf
-            ${mkWrapperContractCheck package}
+            ${mkWrapperContractCheck package false}
             test "$(
               ${nixRuntimeEnv}/bin/codex-desktop-runtime \
                 ${genericRuntimeProbe}/bin/generic-runtime-probe
@@ -885,7 +954,7 @@
           export XDG_CACHE_HOME="$HOME/.cache"
           export DISPLAY=:99
           mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
-          ${mkWrapperContractCheck codexDesktop}
+          ${mkWrapperContractCheck codexDesktop true}
           test "$(
             ${nixRuntimeEnv}/bin/codex-desktop-runtime \
               ${genericRuntimeProbe}/bin/generic-runtime-probe
