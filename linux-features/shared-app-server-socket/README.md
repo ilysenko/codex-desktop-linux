@@ -17,6 +17,14 @@ PATH` byte tunnel and its existing WebSocket transport. Other local clients use
 the same stock proxy command to attach to the Unix socket and receive the normal
 WebSocket `/rpc` byte stream. Closing Desktop stops the authority.
 
+The feature preserves the configuration overrides supplied by the official
+local transport. It forwards each opaque override as an ordered `-c` argument
+before the `app-server` subcommand when it starts the shared authority. It does
+not inspect or reconstruct bundled MCP server configuration. Desktop is the
+only authority owner. Other clients attach through the stock proxy and use the
+configuration of that Desktop-owned authority; they do not supply a second
+override list.
+
 The launcher uses the official CLI bundled in `resources/codex` by default.
 An explicit `CODEX_CLI_PATH` remains supported and is preserved by the feature
 hook.
@@ -129,5 +137,7 @@ CODEX_CLI_PATH="/absolute/path/to/real/codex" node --test linux-features/shared-
 ```
 
 The feature depends on upstream's current local transport factory, WebSocket
-adapter, and `app-server proxy` command. Bundle drift causes the optional patch
-to warn and skip instead of modifying an unknown surface.
+adapter, configuration-override callback, and `app-server proxy` command. The
+descriptor leaves an unknown bundle byte-identical and reports a warning. When
+the feature is enabled, candidate acceptance treats that warning as a failure
+and rejects the build instead of installing a partial patch.
