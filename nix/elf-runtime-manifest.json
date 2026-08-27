@@ -3,13 +3,14 @@
   "architectures": {
     "amd64": {
       "machine": 62,
-      "targetInventoryCount": 35,
-      "targetInventorySha256": "813955c07cad9daec16bebed5cd0d0335a198fc8079b3b5eba60c17cb305feb2",
+      "targetInventoryCount": 38,
+      "targetInventorySha256": "2c9f71ec707e0126a169c327cd91a8c8aeb0d43ee9c8b71ce327c2d9f5aa09bf",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
         "resources/cua_node/bin/node",
         "resources/cua_node/lib/node_modules/.bin/sky_linux_x64",
+        "resources/cua_node/lib/node_modules/@oai/cua/bin/linux/sky_linux_x64",
         "resources/cua_node/lib/node_modules/@oai/sky/bin/linux/sky_linux_x64",
         "resources/plugins/openai-bundled/plugins/chrome/extension-host/linux/x64/extension-host"
       ],
@@ -21,13 +22,14 @@
     },
     "arm64": {
       "machine": 183,
-      "targetInventoryCount": 33,
-      "targetInventorySha256": "3ba945e3d38524771f687769e5d19ade81a71d6e2ac8c5332202d3ef35e7a737",
+      "targetInventoryCount": 36,
+      "targetInventorySha256": "0ef2b2c667fb5ee1a08b5238c10434f94fe00a3090925f99651a06b2c6d2e7ed",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
         "resources/cua_node/bin/node",
         "resources/cua_node/lib/node_modules/.bin/sky_linux_arm64",
+        "resources/cua_node/lib/node_modules/@oai/cua/bin/linux/sky_linux_arm64",
         "resources/cua_node/lib/node_modules/@oai/sky/bin/linux/sky_linux_arm64",
         "resources/plugins/openai-bundled/plugins/chrome/extension-host/linux/arm64/extension-host",
         "resources/rg"
