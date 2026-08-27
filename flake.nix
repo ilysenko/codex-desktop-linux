@@ -270,6 +270,22 @@
             || relative == "Cargo.lock"
             || lib.any (workspace: relative == workspace || lib.hasPrefix "${workspace}/" relative) workspacePaths;
         };
+        staticCratesFetchurl = args: pkgs.fetchurl (args // {
+          # The pinned nixpkgs importCargoLock fetcher still uses the crates.io
+          # API endpoint, which rejects its fetches with HTTP 403. Rewrite only
+          # that fetcher's URLs to the equivalent immutable CDN endpoint; the
+          # fixed-output derivation still verifies every Cargo.lock checksum.
+          url = lib.replaceStrings
+            [ "https://crates.io/api/v1/crates" ]
+            [ "https://static.crates.io/crates" ]
+            args.url;
+        });
+        staticCratesImportCargoLock = pkgs.rustPlatform.importCargoLock.override {
+          fetchurl = staticCratesFetchurl;
+        };
+        staticCratesBuildRustPackage = pkgs.rustPlatform.buildRustPackage.override {
+          importCargoLock = staticCratesImportCargoLock;
+        };
 
         mkWorkspaceHelpers = featureIds:
           let
@@ -286,7 +302,7 @@
               ++ lib.optionals readAloudEnabled [ "codex-read-aloud-linux" ]
               ++ lib.optionals recordReplayBackendEnabled [ "codex-record-replay-linux" ];
           in
-          if cargoPackages == [ ] then null else pkgs.rustPlatform.buildRustPackage {
+          if cargoPackages == [ ] then null else staticCratesBuildRustPackage {
             pname = "codex-desktop-feature-helpers";
             version = "0.1.0";
             src = helperWorkspaceSource;
@@ -305,14 +321,14 @@
               runHook postInstall
             '';
           };
-        globalDictationHelper = pkgs.rustPlatform.buildRustPackage {
+        globalDictationHelper = staticCratesBuildRustPackage {
           pname = "codex-global-dictation-linux";
           version = "0.1.0";
           src = ./global-dictation-linux;
           cargoLock.lockFile = ./global-dictation-linux/Cargo.lock;
           doCheck = false;
         };
-        mcpReaperHelper = pkgs.rustPlatform.buildRustPackage {
+        mcpReaperHelper = staticCratesBuildRustPackage {
           pname = "codex-mcp-helper-reaper";
           version = "0.1.0";
           src = ./linux-features/mcp-helper-reaper/reaper;
@@ -370,7 +386,7 @@
             electronArch = "arm64";
           };
         }.${system};
-        watchboundNative = pkgs.rustPlatform.buildRustPackage {
+        watchboundNative = staticCratesBuildRustPackage {
           pname = "watchbound-native-${watchboundTarget.id}";
           version = watchboundVersion;
           src = watchboundSource;
