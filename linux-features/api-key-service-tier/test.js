@@ -271,14 +271,14 @@ test("model list marker warning ignores unrelated app-main chunks", () => {
   }), []);
 });
 
-test("model list marker warning still reports a recognizable unpatchable mapping", () => {
+test("model list marker rejects the superseded pre-catalog signature byte-identically", () => {
   const source =
     "function broken({additionalAvailableModels:e,authMethod:t,availableModels:n,defaultModel:r,enabledReasoningEfforts:i,includeUltraReasoningEffort:a,isCustomModelProvider:o=!1,models:s,useHiddenModels:c}){return s.map(e=>({supportedReasoningEfforts:e.supportedReasoningEfforts,hasModelSupportingUltraReasoningEffort:e.isDefault}))}";
 
-  assert.equal(hasApiKeyModelListMappingShape(source), true);
+  assert.equal(hasApiKeyModelListMappingShape(source), false);
   assert.deepEqual(captureWarnings(() => {
     assert.equal(applyApiKeyModelMarkerPatch(source), source);
-  }), ["WARN: Could not find model list mapping - skipping API key model service tier marker patch"]);
+  }), []);
 });
 
 test("fallback fast tier is synthesized only for API-key model catalog entries", () => {

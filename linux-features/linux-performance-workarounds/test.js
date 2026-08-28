@@ -48,3 +48,12 @@ test("app-shell tab workaround fails closed when the current mount contract drif
   assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(source), false);
   assert.equal(applyLinuxAppShellTabLayoutPerformancePatch(source), source);
 });
+
+test("app-shell tab workaround rejects the retired direct collapsed animation contract", () => {
+  const source = currentAppShellTabLayoutFixture()
+    .replace("L=A?z9a:_9a", "L=_9a")
+    .replace("Me=M&&!A?L:!1", "Me=M?L:!1");
+
+  assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(source), false);
+  assert.equal(applyLinuxAppShellTabLayoutPerformancePatch(source), source);
+});

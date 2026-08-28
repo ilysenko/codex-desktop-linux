@@ -50,30 +50,30 @@ function currentAvatarOverlayBundleFixture() {
     "let a=require(`electron`),f=require(`node:child_process`);",
     "var settingsHandlers={\"set-setting\":async({key:e,value:t})=>(this.setSettingValue(e,t),{success:!0})};",
     "var rV=`/avatar-overlay`,zB={width:356,height:320},oV={width:112,height:121},k2={width:0,height:0},O2={width:276,height:131};",
-    "var h2=class{constructor(e,t,n,r){this.cursorSource=e;this.pointerAnchorX=t;this.pointerAnchorY=n;this.displayBounds=r}};",
+    "var h2=class{constructor(e,t,n,r,i=!1){this.cursorSource=e;this.pointerAnchorX=t;this.pointerAnchorY=n;this.displayBounds=r;this.hasMovementIntent=i}shouldSuppressRendererThrow(){return!1}};",
     "var fV=class{window=null;rendererReady=!1;layout=null;mascotSize=oV;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;windowStagedForNativePresentation=!1;layoutMode=`native`;compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},getCursorPosition(){return null},performWindowDrag(){return!1},updateMascotRect(){}};nativePositionController={clear(){}};",
     "constructor(e,t){this.windowManager=e,this.globalState=t}",
     "isOpen(){let e=this.window;return e!=null&&!e.isDestroyed()&&e.isVisible()&&!this.windowStagedForNativePresentation}",
     "startDrag(e,t,n=!1){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e)return;this.cancelMomentum();let i=this.getLayout(r),o=this.compositionHost.getCursorPosition(),s=t.pointerScreenX!=null?{x:t.pointerScreenX,y:t.pointerScreenY}:a.screen.getCursorScreenPoint();this.dragState=new h2(o==null?`renderer`:`native`,t.pointerWindowX-i.mascot.left,t.pointerWindowY-i.mascot.top,a.screen.getDisplayNearestPoint(s).bounds,n),this.windowServerDragActive=this.layoutMode===`native`&&!n&&this.compositionHost.performWindowDrag(),this.windowServerDragActive||(this.windowServerDragWindowX=null)}",
-    "moveDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;this.lastMove=t}endDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;let r=this.dragState,i=this.windowServerDragActive,a=null;this.dragState=null,this.windowServerDragActive=!1,this.windowServerDragWindowX=null,i?this.persistWindowBounds(n,a??this.getCurrentDisplay()):this.reclampWindowToVisibleDisplay({shouldPersist:!0});let o=this.dockTarget;o!=null&&this.dockPresentation(o.anchor,o.onDock)}",
+    "moveDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;this.lastMove=t}endDrag(e,t,n=`released`){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e||this.dragState==null)return;let i=this.dragState,a=this.nativeWindowDragActive,o=null;if(this.suppressNextRendererThrow=a||i.shouldSuppressRendererThrow(),this.dragState=null,this.clearNativeWindowDragCompletionTimer(),this.nativeWindowDragActive=!1,this.nativeWindowDragStart=null,a?this.persistWindowBounds(r):this.reclampWindowToVisibleDisplay({shouldPersist:!0}),this.isQuickChatPresentation&&i.hasMovementIntent){this.persistWindowBounds(r);return}let s=this.dockTarget;s!=null&&this.dockPresentation(s.anchor,s.onDock)}",
     "setElementSize(e,{elementSizeRevision:t,isTrayVisible:n,mascot:r,nativeCompositionEnabled:a,tray:o}){let i=this.window;i==null||i.isDestroyed()||i.webContents.id!==e||(this.cancelMomentum(),this.layoutMode=n==null?`native`:`legacy`,this.mascotSize=r,this.traySize=o,this.applyLatestElementSizes(i),this.stageWindowForNativePresentation(i),this.showWindowIfReady(i))}",
     "applyLatestElementSizes(e){this.anchor={...this.anchor,width:this.mascotSize.width,height:this.mascotSize.height},this.applyLayout(e)}",
     "async createWindow(e){let t=await this.windowManager.createWindow({title:a.app.getName(),width:zB.width,height:zB.height,appearance:`avatarOverlay`,alwaysOnTop:process.platform===`linux`,skipTaskbar:process.platform===`linux`,focusable:process.platform===`linux`?!0:!1,show:!1,initialRoute:rV});return this.window=t,this.compositionHost.setOverlayWindow(t),this.rendererReady=this.windowManager.isWebContentsReady(t.webContents.id),this.displayBounds=null,this.displayId=null,this.dragState=null,this.layout=null,this.mascotSize=oV,this.mousePassthroughEnabled=!1,this.traySize=null,t.on(`closed`,()=>{this.window===t&&(this.cancelMomentum(),this.window=null,this.dragState=null,this.layout=null,this.rendererReady=!1,this.pointerInteractive=!1,this.mousePassthroughEnabled=!1,this.compositionHost.setOverlayWindow(null),this.broadcastOpenState())}),t}",
     "applyLayout(e,t=this.getCurrentDisplay(),n=!1,r=!0,i=null){if(e.isDestroyed())return;let o=this.getLayoutForDisplay(t);this.displayId=t.id,this.layout=o,this.setWindowBounds(e,o.windowBounds,n,r),this.compositionHost.updateMascotRect(o.mascot),this.sendLayoutToRenderer(e,i)}getLayoutForDisplay(e){return UB({anchor:this.anchor,displayBounds:this.layoutMode===`native`?e.workArea:e.bounds,mode:this.layoutMode,mascotSize:this.mascotSize,nativeMaterialAttached:this.compositionHost.isNativeMaterialAttached(),previousPlacement:this.placement,traySize:this.traySize??(this.layoutMode===`native`?k2:O2)})}getLayout(e){if(this.layout??this.applyLayout(e),this.layout==null)throw Error(`Expected avatar overlay layout`);return this.layout}",
     "showWindow(e){if(e.isDestroyed())return;let t=this.isOpen();this.windowStagedForNativePresentation&&=(e.setOpacity(1),!1),e.moveTop(),e.showInactive(),!t&&this.isOpen()&&(this.finishPendingPresentation(),this.broadcastOpenState())}showWindowIfReady(e){!this.rendererReady||this.initialPresentationState!==`ready`||(this.showWindow(e),this.applyPointerInteractivityPolicy())}stageWindowForNativePresentation(e){e.isDestroyed()||this.applyPointerInteractivityPolicy()}broadcastOpenState(){this.windowManager.sendMessageToAllRegisteredWindows({type:`avatar-overlay-open-state-changed`,isOpen:this.isOpen()})}",
-    "applyPointerInteractivityPolicy(){return null}cancelMomentum(){}finishPendingPresentation(){}sendLayoutToRenderer(){}setWindowBounds(){}getCurrentDisplay(){return{id:1,bounds:{x:0,y:0,width:1920,height:1080},workArea:{x:0,y:0,width:1920,height:1080}}}};",
+    "applyPointerInteractivityPolicy(){return null}cancelMomentum(){}clearNativeWindowDragCompletionTimer(){}finishPendingPresentation(){}reclampWindowToVisibleDisplay(){}sendLayoutToRenderer(){}setWindowBounds(){}getCurrentDisplay(){return{id:1,bounds:{x:0,y:0,width:1920,height:1080},workArea:{x:0,y:0,width:1920,height:1080}}}};",
     "function L9({platform:e,appearance:t,opaqueWindowSurfaceEnabled:n,prefersDarkColors:r}){return n?{backgroundColor:r?_ne:vne,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`?{backgroundColor:k9,backgroundMaterial:`mica`}:{backgroundColor:k9,backgroundMaterial:null}}",
   ].join("");
 }
 
-function currentExpandedDragCompletionBundleFixture() {
+function retiredCompactDragCompletionBundleFixture() {
   const source = currentAvatarOverlayBundleFixture();
   const start = source.indexOf("moveDrag(e,t){");
   const end = source.indexOf("setElementSize(e,", start);
   assert.ok(start >= 0 && end > start);
   const dragMethods =
     "moveDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;this.lastMove=t}" +
-    "endDrag(e,t,n=`released`){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e||this.dragState==null)return;let i=this.dragState,a=this.nativeWindowDragActive,o=null;if(this.suppressNextRendererThrow=a||i.shouldSuppressRendererThrow(),this.dragState=null,this.clearNativeWindowDragCompletionTimer(),this.nativeWindowDragActive=!1,this.nativeWindowDragStart=null,a?this.persistWindowBounds(r):this.reclampWindowToVisibleDisplay({shouldPersist:!0}),this.isQuickChatPresentation&&i.hasMovementIntent){this.persistWindowBounds(r);return}let s=this.dockTarget;s!=null&&this.dockPresentation(s.anchor,s.onDock)}";
+    "endDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;let r=this.dragState,i=this.windowServerDragActive,a=null;this.dragState=null,this.windowServerDragActive=!1,this.windowServerDragWindowX=null,i?this.persistWindowBounds(n,a??this.getCurrentDisplay()):this.reclampWindowToVisibleDisplay({shouldPersist:!0});let o=this.dockTarget;o!=null&&this.dockPresentation(o.anchor,o.onDock)}";
   return source.slice(0, start) + dragMethods + source.slice(end);
 }
 
@@ -228,13 +228,66 @@ test("patches current avatar overlay layout, transparency, and window sync", () 
 });
 
 test("patches the current expanded drag completion as a syntactically complete callback", () => {
-  const patched = applyPatchTwice(currentExpandedDragCompletionBundleFixture());
+  const patched = applyPatchTwice(currentAvatarOverlayBundleFixture());
 
   assert.match(
     patched,
     /codexPetOverlayEndKWinDrag\([^,]+,\(\)=>\{if\(this\.suppressNextRendererThrow=/,
   );
   assert.doesNotThrow(() => new Function("require", patched));
+});
+
+test("rejects the retired compact drag completion byte-identically", () => {
+  const source = retiredCompactDragCompletionBundleFixture();
+  const { result, warnings } = captureWarnings(() => applyPetOverlayPatch(source));
+
+  assert.equal(result, source);
+  assert.match(warnings.join("\n"), /current avatar overlay drag completion shape/);
+  assert.match(warnings.join("\n"), /Pet overlay patch is incomplete/);
+});
+
+test("expanded endDrag completes KWin, Niri, and fallback once while preserving control flow", () => {
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const run = (route, { quickChat = false, rendererId = 1 } = {}) => {
+    const { controller } = controllerFromPatchedSource(patched);
+    const calls = [];
+    const window = { isDestroyed: () => false, webContents: { id: 1 } };
+    controller.window = window;
+    controller.dragState = {
+      hasMovementIntent: quickChat,
+      shouldSuppressRendererThrow: () => false,
+    };
+    controller.nativeWindowDragActive = false;
+    controller.clearNativeWindowDragCompletionTimer = () => calls.push("clear");
+    controller.persistWindowBounds = () => calls.push("persist");
+    controller.reclampWindowToVisibleDisplay = () => calls.push("reclamp");
+    controller.dockTarget = { anchor: "anchor", onDock: "handler" };
+    controller.dockPresentation = () => calls.push("dock");
+    controller.isQuickChatPresentation = quickChat;
+    controller.codexPetOverlayEndKWinDrag = (_target, complete) => {
+      calls.push("kwin");
+      if (route !== "kwin") return false;
+      complete();
+      return true;
+    };
+    controller.codexPetOverlayEndNiriDrag = (_target, complete) => {
+      calls.push("niri");
+      if (route !== "niri") return false;
+      complete();
+      return true;
+    };
+
+    controller.endDrag(rendererId, {});
+    return calls;
+  };
+
+  assert.deepEqual(run("kwin"), ["kwin", "clear", "reclamp", "dock"]);
+  assert.deepEqual(run("niri"), ["kwin", "niri", "clear", "reclamp", "dock"]);
+  assert.deepEqual(run("fallback"), ["kwin", "niri", "clear", "reclamp", "dock"]);
+  assert.deepEqual(run("fallback", { quickChat: true }), [
+    "kwin", "niri", "clear", "reclamp", "persist",
+  ]);
+  assert.deepEqual(run("fallback", { rendererId: 2 }), []);
 });
 
 test("refreshes only the avatar overlay after the selected pet changes", async () => {
@@ -654,6 +707,7 @@ test("background drags retain native window movement and local mascot offsets su
 
   controller.startDrag(1, { pointerWindowX: 300, pointerWindowY: 20 });
   assert.deepEqual(nativeDragCalls, ["window"]);
+  controller.nativeWindowDragActive = true;
   controller.endDrag(1, {});
 
   const result = controller.codexPetOverlayLayoutForDisplay(
@@ -1936,6 +1990,7 @@ test("Niri endDrag drains the final move before persisting and docking", () => {
   });
   controller.codexPetOverlayDesiredWindowBounds = { x: 120, y: 100, width: 356, height: 320 };
   controller.codexPetOverlayQueueNiriDrag(window);
+  controller.nativeWindowDragActive = true;
   controller.endDrag(1, {});
 
   assert.deepEqual(completed, []);
@@ -1948,7 +2003,7 @@ test("Niri endDrag drains the final move before persisting and docking", () => {
   assert.equal(completed.length, 2);
   assert.equal(completed[0][0], "persist");
   assert.equal(completed[0][1], window);
-  assert.equal(completed[0][2]?.id, 1);
+  assert.equal(completed[0][2], undefined);
   assert.deepEqual(completed[1], ["dock", "dock-anchor", "dock-handler"]);
   assert.equal(controller.codexPetOverlayNiriDragState, null);
 });

@@ -819,7 +819,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       return matches.length === 1 ? matches[0] : null;
     };
     const handlerNeedle =
-      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)(?:,[A-Za-z_$][\w$]*)?\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*)(?:,productPolicy:[A-Za-z_$][\w$]*)?\}=\2;(?=if\(!\(\5\.streamState\.shouldIgnoreThreadMutationAsFollower\(\3\.method,\3\.params)/u;
+      /function (?<handler>[A-Za-z_$][\w$]*)\((?<owner>[A-Za-z_$][\w$]*),(?<notification>[A-Za-z_$][\w$]*),(?<callback>[A-Za-z_$][\w$]*)\)\{let\{manager:(?<manager>[A-Za-z_$][\w$]*),notificationContext:(?<context>[A-Za-z_$][\w$]*)\}=\k<owner>;(?=if\(!\(\k<context>\.streamState\.shouldIgnoreThreadMutationAsFollower\(\k<notification>\.method,\k<notification>\.params,`notification`\)\|\|\k<context>\.resumeNotificationBuffer\.buffer\(\k<notification>,\k<callback>\)\|\|\k<context>\.threadStartedNotificationDeferral\.bufferNotification\(\k<notification>,\k<callback>\)\|\|\k<callback>\?\.\(\)\)\))/u;
     const handlerMatch = singleMatch(patched, handlerNeedle);
     const normalizerNeedle =
       /case`turn\/started`:\{let\{threadId:([A-Za-z_$][\w$]*),turn:[A-Za-z_$][\w$]*\}=([A-Za-z_$][\w$]*)\.params,[A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\.threadStore\.conversations\.get\([A-Za-z_$][\w$]*\);/u;
@@ -833,14 +833,16 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       /(?<condition>if\(!(?<context>[A-Za-z_$][\w$]*)\.threadStore\.conversations\.has\((?<conversation>[A-Za-z_$][\w$]*)\)\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/started for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
       /(?<condition>if\((?<checked>[A-Za-z_$][\w$]*)==null\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/completed for unknown conversation`,\{safe:\{conversationId:(?<conversation>[A-Za-z_$][\w$]*)\},sensitive:\{\}\}\);break\}/u,
     ];
-    const unknownContracts = unknownNeedles.map((needle) => {
+    const ownerPatterns = [
+      /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*),[^)]+\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*),automationTurns:[A-Za-z_$][\w$]*,createId:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*;/u,
+      /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*)\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*),createId:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*;/u,
+    ];
+    const unknownContracts = unknownNeedles.map((needle, index) => {
       const match = singleMatch(patched, needle);
       if (match == null) return null;
       const functionStart = patched.lastIndexOf("function ", match.index);
       const prefix = functionStart === -1 ? "" : patched.slice(functionStart, match.index);
-      const owner = prefix.match(
-        /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*)(?:,[^)]*)?\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*)(?:,[^}]*)?\}=[A-Za-z_$][\w$]*;/u,
-      );
+      const owner = prefix.match(ownerPatterns[index < 2 ? 0 : 1]);
       if (
         owner == null ||
         (match.groups.manager != null && match.groups.manager !== owner[2]) ||
@@ -855,7 +857,11 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       completedItemMatch != null &&
       unknownContracts.every((contract) => contract != null)
     ) {
-      const [, , , notificationVar, managerVar, notificationContextVar] = handlerMatch;
+      const {
+        context: notificationContextVar,
+        manager: managerVar,
+        notification: notificationVar,
+      } = handlerMatch.groups;
       const normalizerFn = normalizerMatch[3];
       const itemFinderFn = completedItemMatch[1];
       const helpers =
@@ -1234,12 +1240,9 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
 
   const functionStart = source.lastIndexOf("async function ", logIndex);
   const turnStartPrefix = functionStart === -1 ? "" : source.slice(functionStart, logIndex);
-  const summaryPattern =
-    /(?<prefix>let |,)(?<featureOverride>[A-Za-z_$][\w$]*)=(?<manager>[A-Za-z_$][\w$]*)\.getDefaultFeatureOverride\([A-Za-z_$][\w$]*\)===!0,(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),\k<featureOverride>&&\(\k<summary>=`detailed`\),(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
   const currentSummaryPattern =
     /(?<prefix>let |,)(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),(?<runtime>[A-Za-z_$][\w$]*)\.reasoningSummaryOverride!=null&&\(\k<summary>=\k<runtime>\.reasoningSummaryOverride\),(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
-  const summaryMatch = turnStartPrefix.match(summaryPattern) ??
-    turnStartPrefix.match(currentSummaryPattern);
+  const summaryMatch = turnStartPrefix.match(currentSummaryPattern);
   if (summaryMatch == null) {
     console.warn(
       "WARN: Could not find reasoning-summary turn-start resolver - skipping Linux remote mobile summary patch",
@@ -1247,60 +1250,41 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
     return source;
   }
 
-  const {
-    featureOverride: featureOverrideVar,
-    manager: legacyManagerVar,
-    request: requestVar,
-    summary: summaryVar,
-  } = summaryMatch.groups;
+  const { request: requestVar, summary: summaryVar } = summaryMatch.groups;
   const functionHeader = turnStartPrefix.match(/async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)[,)]/u);
-  const managerVar = legacyManagerVar ?? functionHeader?.[2];
-  if (managerVar == null) {
+  const helperName = functionHeader?.[1];
+  if (helperName == null) {
     console.warn(
-      "WARN: Could not find reasoning-summary turn-start manager - skipping Linux remote mobile summary patch",
+      "WARN: Could not find reasoning-summary turn-start helper - skipping Linux remote mobile summary patch",
     );
     return source;
   }
-  const localHostPattern = legacyManagerVar == null ? null : new RegExp(
-    `!([A-Za-z_$][\\w$]*)\\(${escapeRegExp(managerVar)}\\.getHostId\\(\\)\\)`,
+  const currentCallerPattern = new RegExp(
+    `(?<prefix>${escapeRegExp(helperName)}\\((?<manager>[A-Za-z_$][\\w$]*),[\\s\\S]{0,100}?\\{)` +
+      `(?=canUseProjectlessWorkspace:!(?<classifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\)\\|\\|` +
+      `(?<conversation>[A-Za-z_$][\\w$]*)\\.mode===\`durable\`\\|\\|!1,[\\s\\S]{0,1000}?` +
+      `reasoningSummaryOverride:\\k<manager>\\.getDefaultFeatureOverride\\(\`concurrent_reasoning_summaries\`\\)===!0\\?\`detailed\`:null)`,
     "u",
   );
-  const localHostMatch = localHostPattern == null ? null : turnStartPrefix.match(localHostPattern);
-  let currentCallerMatch = null;
-  if (legacyManagerVar == null) {
-    const helperName = functionHeader?.[1];
-    if (helperName != null) {
-      const currentCallerPattern = new RegExp(
-        `(?<prefix>${escapeRegExp(helperName)}\\((?<manager>[A-Za-z_$][\\w$]*),[\\s\\S]{0,100}?\\{)` +
-          `(?<option>canUseProjectlessWorkspace:!(?<classifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\))`,
-        "u",
-      );
-      currentCallerMatch = source.match(currentCallerPattern);
-    }
-  }
-  if (localHostMatch == null && currentCallerMatch == null) {
+  const currentCallerMatch = source.match(currentCallerPattern);
+  if (currentCallerMatch == null) {
     console.warn(
       "WARN: Could not find local-host turn-start guard - skipping Linux remote mobile summary patch",
     );
     return source;
   }
 
-  const forcedValues = featureOverrideVar == null
-    ? `${summaryVar}=\`none\``
-    : `${featureOverrideVar}=!1,${summaryVar}=\`none\``;
-  const remoteHostCondition = localHostMatch == null
-    ? `${summaryMatch.groups.runtime}.codexLinuxRemoteMobileHost`
-    : `!${localHostMatch[1]}(${managerVar}.getHostId())`;
   const replacement =
     `${summaryMatch[0]}/*${REMOTE_MOBILE_REASONING_SUMMARY_MARKER}*/` +
-    `navigator.userAgent.includes(\`Linux\`)&&${remoteHostCondition}&&${requestVar}.summary===void 0&&(${forcedValues});`;
+    `navigator.userAgent.includes(\`Linux\`)&&${summaryMatch.groups.runtime}.codexLinuxRemoteMobileHost&&${requestVar}.summary===void 0&&(${summaryVar}=\`none\`);`;
   const absoluteMatchStart = functionStart + summaryMatch.index;
   let patched = `${source.slice(0, absoluteMatchStart)}${replacement}${source.slice(absoluteMatchStart + summaryMatch[0].length)}`;
-  if (currentCallerMatch != null) {
-    const callerNeedle = currentCallerMatch[0];
-    const callerReplacement = `${currentCallerMatch.groups.prefix}codexLinuxRemoteMobileHost:${currentCallerMatch.groups.classifier}(${currentCallerMatch.groups.manager}.getHostId()),${currentCallerMatch.groups.option}`;
-    patched = patched.replace(callerNeedle, callerReplacement);
-  }
+  const callerNeedle = currentCallerMatch[0];
+  const callerReplacement =
+    `${currentCallerMatch.groups.prefix}codexLinuxRemoteMobileHost:` +
+    `${currentCallerMatch.groups.classifier}(${currentCallerMatch.groups.manager}.getHostId())&&` +
+    `${currentCallerMatch.groups.conversation}.mode===\`durable\`,`;
+  patched = patched.replace(callerNeedle, callerReplacement);
   return patched;
 }
 

@@ -71,14 +71,15 @@ test("feature is disabled until selected", () => {
   });
 });
 
-test("status panel preference survives component remounts", () => {
-  const patched = applyPersistentStatusPanelPatch(currentComposerSource);
+test("retired component-local status state is rejected byte-identically", () => {
+  const { value: patched, warnings } = captureWarns(() =>
+    applyPersistentStatusPanelPatch(currentComposerSource),
+  );
 
-  assert.notEqual(patched, currentComposerSource);
-  assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
-  assert.match(patched, new RegExp(`localStorage\\.setItem\\(\\\`${STORAGE_KEY}\\\`,\\\`1\\\`\\)`));
-  assert.match(patched, new RegExp(`localStorage\\.removeItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
-  assert.equal(applyPersistentStatusPanelPatch(patched), patched);
+  assert.equal(patched, currentComposerSource);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find Codex status panel state - skipping persistent status panel patch",
+  ]);
 });
 
 test("status panel preference follows the current lifted menu state", () => {
@@ -100,7 +101,7 @@ test("descriptor patches the current app-initial composer status bundle", () => 
       "app-initial-BTphDPeq.js",
     );
     fs.mkdirSync(assetsDir, { recursive: true });
-    fs.writeFileSync(assetPath, currentComposerSource);
+    fs.writeFileSync(assetPath, liftedStatusStateComposerSource);
 
     const result = patchAssetFiles(tempDir, descriptors[0].pattern, descriptors[0].apply, "missing");
     const patched = fs.readFileSync(assetPath, "utf8");
@@ -114,11 +115,9 @@ test("descriptor patches the current app-initial composer status bundle", () => 
   }
 });
 
-test("ambiguous status panel handler needles are unchanged", () => {
-  const ambiguousSource = currentComposerSource.replace(
-    "let v=o.formatMessage",
-    "let extraOpen=async()=>{c(!0),a?.(!0)},extraClose=()=>{c(!1),a?.(!1)},v=o.formatMessage",
-  );
+test("ambiguous lifted status state owners are unchanged", () => {
+  const ambiguousSource = liftedStatusStateComposerSource +
+    liftedStatusStateComposerSource.replaceAll("yt", "xt").replaceAll("bt", "ct");
 
   const { value: patched, warnings } = captureWarns(() =>
     applyPersistentStatusPanelPatch(ambiguousSource),
@@ -126,7 +125,7 @@ test("ambiguous status panel handler needles are unchanged", () => {
 
   assert.equal(patched, ambiguousSource);
   assert.deepEqual(warnings, [
-    "WARN: Found 2 Codex status panel open handler occurrences - skipping persistent status panel patch",
+    "WARN: Could not find Codex status panel state - skipping persistent status panel patch",
   ]);
 });
 

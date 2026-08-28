@@ -98,16 +98,13 @@ function mountAnimations(source) {
     const vicinity = prefix + source.slice(controller.index, controller.index + 6000);
     const initialPrefix = `,${initial}=`;
     const exitPrefix = `,${exit}=`;
-    const unpatched = new RegExp(`${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}(\\1(?:&&![A-Za-z_$][\\w$]*)?\\?\\2:!1),`, "gu");
+    const unpatched = new RegExp(`${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}(\\1&&![A-Za-z_$][\\w$]*\\?\\2:!1),`, "gu");
     const patched = new RegExp(`${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}!1,`, "gu");
     const unpatchedMatches = [...prefix.matchAll(unpatched)];
     const patchedMatches = [...prefix.matchAll(patched)];
     const pair = unpatchedMatches.at(-1) ?? patchedMatches.at(-1);
     if (pair == null) continue;
     const isPatched = patchedMatches.at(-1) === pair;
-    const directCollapsedAnimation = vicinity.includes(
-      `${pair[2]}={maxWidth:\`0px\`,minWidth:\`0px\`}`,
-    );
     const selectedAnimation = vicinity.match(
       new RegExp(`${escapeRegExp(pair[2])}=[A-Za-z_$][\\w$]*\\?([A-Za-z_$][\\w$]*):([A-Za-z_$][\\w$]*)`, "u"),
     );
@@ -116,7 +113,7 @@ function mountAnimations(source) {
         source.includes(`${name}={maxWidth:\`0px\``));
     if (
       !vicinity.includes("@container/app-shell-tab") ||
-      (!directCollapsedAnimation && !selectedCollapsedAnimation) ||
+      !selectedCollapsedAnimation ||
       !vicinity.includes(`${animate}=`)
     ) continue;
     const declarationStart = prefixStart + pair.index;

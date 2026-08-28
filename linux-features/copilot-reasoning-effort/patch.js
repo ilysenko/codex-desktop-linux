@@ -3,25 +3,24 @@
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const BT = "`";
 
+function currentCopilotWriterRegex() {
+  return new RegExp(
+    `(${JS_IDENT}=async\\((${JS_IDENT}),(${JS_IDENT}),${JS_IDENT}\\)=>\\{[\\s\\S]{0,1000}?` +
+      `if\\((${JS_IDENT})\\)return await (${JS_IDENT})\\((${JS_IDENT}),${BT}copilot-default-model${BT},\\2,` +
+      `\\{throwOnFailure:!0\\}\\)),!0`,
+  );
+}
+
 function matchesCopilotReasoningEffortSettingsContract(source) {
   const cleanReader = new RegExp(
     `function ${JS_IDENT}\\(\\)\\{let ${JS_IDENT}=\\(0,${JS_IDENT}\\.c\\)\\(3\\),${JS_IDENT}=${JS_IDENT}\\(\\),` +
       `\\{data:${JS_IDENT},isLoading:${JS_IDENT}\\}=${JS_IDENT}\\(${BT}copilot-default-model${BT}\\)` +
       `[\\s\\S]{0,400}?reasoningEffort:${BT}medium${BT}`,
   );
-  const cleanWriter = new RegExp(
-    `if\\(await ${JS_IDENT}\\(${JS_IDENT},${JS_IDENT}\\)\\)return;if\\(${JS_IDENT}\\)\\{await ${JS_IDENT}\\(` +
-      `${JS_IDENT},${BT}copilot-default-model${BT},${JS_IDENT},\\{throwOnFailure:!0\\}\\);return\\}`,
-  );
-  const currentWriter = new RegExp(
-    `${JS_IDENT}=async\\((${JS_IDENT}),(${JS_IDENT}),${JS_IDENT}\\)=>\\{[\\s\\S]{0,1000}?` +
-      `if\\(${JS_IDENT}\\)return await ${JS_IDENT}\\(${JS_IDENT},${BT}copilot-default-model${BT},\\1,` +
-      `\\{throwOnFailure:!0\\}\\),!0`,
-  );
   const patchedReader = source.includes("copilot-default-reasoning-effort`),codexCopilotModelValue=");
   const patchedWriter = source.includes("`copilot-default-reasoning-effort`,");
   return (cleanReader.test(source) || patchedReader) &&
-    (cleanWriter.test(source) || currentWriter.test(source) || patchedWriter);
+    (currentCopilotWriterRegex().test(source) || patchedWriter);
 }
 
 function matchesCopilotReasoningEffortModelListContract(source) {
@@ -161,6 +160,20 @@ function analyzeCopilotReasoningEffortUiContract(source) {
 }
 
 function applyCopilotReasoningEffortSettingsPatch(currentSource) {
+  const copilotSavePatchMarker = "copilot-default-reasoning-effort`,";
+  const currentCopilotSaveRegex = currentCopilotWriterRegex();
+  if (
+    !currentSource.includes(copilotSavePatchMarker) &&
+    !currentCopilotSaveRegex.test(currentSource)
+  ) {
+    if (currentSource.includes("copilot-default-model")) {
+      console.warn(
+        "WARN: Could not find Copilot default model writer - skipping Copilot reasoning effort settings patch",
+      );
+    }
+    return currentSource;
+  }
+
   let patchedSource = currentSource;
 
   const copilotDefaultsPatchMarker = "copilot-default-reasoning-effort`),codexCopilotModelValue=";
@@ -192,31 +205,9 @@ function applyCopilotReasoningEffortSettingsPatch(currentSource) {
     );
   }
 
-  const copilotSavePatchMarker = "copilot-default-reasoning-effort`,";
-  const copilotAsyncSaveRegex =
-    /if\(await ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\)return;if\(([A-Za-z_$][\w$]*)\)\{await ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),`copilot-default-model`,\2,\{throwOnFailure:!0\}\);return\}/;
   if (patchedSource.includes(copilotSavePatchMarker)) {
     // Already patched.
-  } else if (copilotAsyncSaveRegex.test(patchedSource)) {
-    patchedSource = patchedSource.replace(
-      copilotAsyncSaveRegex,
-      (
-        _match,
-        updateConversationVar,
-        modelArgVar,
-        effortArgVar,
-        isCopilotVar,
-        persistStateVar,
-        stateScopeVar,
-      ) =>
-        `if(await ${updateConversationVar}(${modelArgVar},${effortArgVar}))return;if(${isCopilotVar}){await ${persistStateVar}(${stateScopeVar},\`copilot-default-model\`,${modelArgVar},{throwOnFailure:!0});await ${persistStateVar}(${stateScopeVar},\`copilot-default-reasoning-effort\`,${effortArgVar},{throwOnFailure:!0});return}`,
-    );
   } else {
-    const currentCopilotSaveRegex = new RegExp(
-      `(${JS_IDENT}=async\\((${JS_IDENT}),(${JS_IDENT}),${JS_IDENT}\\)=>\\{[\\s\\S]{0,1000}?` +
-        `if\\((${JS_IDENT})\\)return await (${JS_IDENT})\\((${JS_IDENT}),${BT}copilot-default-model${BT},\\2,` +
-        `\\{throwOnFailure:!0\\}\\)),!0`,
-    );
     const currentMatch = patchedSource.match(currentCopilotSaveRegex);
     if (currentMatch != null) {
       const [, prefix, _modelArg, effortArg, _isCopilot, persistState, stateScope] = currentMatch;

@@ -37,7 +37,7 @@ function withCapturedWarns(fn) {
   }
 }
 
-function copilotReasoningEffortSettingsFixture() {
+function retiredCopilotReasoningEffortSettingsFixture() {
   return [
     "function bwe(){let e=(0,Y.c)(3),t=wr(),{data:n,isLoading:r}=or(`copilot-default-model`),i=n??t.defaultModel,a;return e[0]!==r||e[1]!==i?(a={model:i,reasoningEffort:`medium`,profile:null,isLoading:r},e[0]=r,e[1]=i,e[2]=a):a=e[2],a}",
     "function $9(e=null){let t=j(fe),m=a?.authMethod===`copilot`,g=(0,q.useCallback)(async(t,n)=>!1,[]),c={profile:null},i=!0,r=`local`,s=`/tmp`,v=()=>{},y=()=>{};return{setModelAndReasoningEffort:(0,q.useCallback)(async(e,n)=>{try{if(await g(e,n))return;if(m){await Jn(t,`copilot-default-model`,e,{throwOnFailure:!0});return}if(h.info(`Setting default model and reasoning effort`,{safe:{newModel:e,newEffort:n,profile:c.profile}}),!i)throw Error(`Model settings host is unavailable`);await Gt(`set-default-model-config-for-host`,{hostId:r,model:e,reasoningEffort:n,profile:c.profile}),await v(),await t.query.fetch(Ss,{hostId:r,cwd:s})}catch(e){y(e)}},[m,g,c.profile,v,i,r,t,y,s])}}",
@@ -100,21 +100,15 @@ function readAsset(extractedDir, name) {
   return fs.readFileSync(path.join(extractedDir, "webview", "assets", name), "utf8");
 }
 
-test("persists Copilot reasoning effort with the default Copilot model", () => {
-  const patched = applyPatchTwice(
-    applyCopilotReasoningEffortSettingsPatch,
-    copilotReasoningEffortSettingsFixture(),
+test("retired Copilot default writer is rejected byte-identically", () => {
+  const source = retiredCopilotReasoningEffortSettingsFixture();
+  const { value, warnings } = withCapturedWarns(() =>
+    applyCopilotReasoningEffortSettingsPatch(source),
   );
 
-  assert.match(patched, /or\(`copilot-default-reasoning-effort`\)/);
-  assert.match(patched, /reasoningEffort:codexCopilotReasoningEffortValue/);
-  assert.match(patched, /isLoading:r\|\|codexCopilotReasoningEffortLoading/);
-  assert.match(
-    patched,
-    /await Jn\(t,`copilot-default-model`,e,\{throwOnFailure:!0\}\);await Jn\(t,`copilot-default-reasoning-effort`,n,\{throwOnFailure:!0\}\);return/,
-  );
-  assert.doesNotMatch(patched, /reasoningEffort:`medium`,profile:null,isLoading:r/);
-  assert.doesNotMatch(patched, /await Jn\(t,`copilot-default-model`,e,\{throwOnFailure:!0\}\);return/);
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /default model writer/);
 });
 
 test("persists Copilot reasoning effort through the current default writer", () => {
@@ -123,6 +117,9 @@ test("persists Copilot reasoning effort through the current default writer", () 
     currentCopilotReasoningEffortSettingsFixture(),
   );
 
+  assert.match(patched, /hn\(`copilot-default-reasoning-effort`\)/);
+  assert.match(patched, /reasoningEffort:codexCopilotReasoningEffortValue/);
+  assert.match(patched, /isLoading:r\|\|codexCopilotReasoningEffortLoading/);
   assert.match(
     patched,
     /await Ix\(a,`copilot-default-model`,e,\{throwOnFailure:!0\}\),await Ix\(a,`copilot-default-reasoning-effort`,t,\{throwOnFailure:!0\}\),!0/,

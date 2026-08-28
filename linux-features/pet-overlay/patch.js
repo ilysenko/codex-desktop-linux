@@ -314,20 +314,6 @@ function patchCompositorDragLifecycle(source) {
   ) {
     return patched;
   }
-  const completionPattern = /[A-Za-z_$][\w$]*\?this\.persistWindowBounds\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*\?\?this\.getCurrentDisplay\(\)\):this\.reclampWindowToVisibleDisplay\(\{shouldPersist:!0\}\)/;
-  const completionMatch = endMethod.text.match(completionPattern);
-  if (completionMatch != null) {
-    const windowVar = completionMatch[1];
-    const completionNeedle = endMethod.text.slice(completionMatch.index, -1);
-    return replaceMethodText(
-      patched,
-      endMethod,
-      endMethod.text.slice(0, completionMatch.index) +
-        `this.codexPetOverlayEndKWinDrag(${windowVar},()=>{${completionNeedle}})||this.codexPetOverlayEndNiriDrag(${windowVar},()=>{${completionNeedle}})||(()=>{${completionNeedle}})()` +
-        "}",
-    );
-  }
-
   const windowMatch = endMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/u);
   const completionBoundary = "this.nativeWindowDragStart=null,";
   const boundaryIndex = endMethod.text.indexOf(completionBoundary);
