@@ -1920,28 +1920,49 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
     manager,
     notificationContext,
   };
-  manager.onNotification = (method, params) => onNotification(reductionContext, { method, params });
+  manager.onNotification = (method, params, callback) =>
+    onNotification(reductionContext, { method, params }, callback);
+  const callbackCalls = new Map();
+  const callback = (name, result = false) => () => {
+    callbackCalls.set(name, (callbackCalls.get(name) ?? 0) + 1);
+    return result;
+  };
   const notifications = [
-    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }],
-    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }],
-    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }],
+    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }, callback("initiating")],
+    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }, callback("buffered-started")],
+    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-suppressed", type: "agentMessage" }, startedAtMs: 11 }, callback("buffered-suppressed", true)],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }, callback("buffered-completed")],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }, callback("buffered-completed-without-start")],
+    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }, callback("buffered-turn-completed")],
   ];
 
-  for (const [method, params] of notifications) {
-    manager.onNotification(method, params);
+  for (const [method, params, notificationCallback] of notifications) {
+    manager.onNotification(method, params, notificationCallback);
   }
 
   assert.equal(hydrationCalls, 1);
   assert.equal(conversations.has("thread-late"), false);
   assert.deepEqual(emitted, []);
+  assert.deepEqual([...callbackCalls], [["initiating", 1]]);
 
   releaseHydration();
   await hydrationReady;
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(emitted, notifications.map(([method]) => method));
+  assert.deepEqual(
+    emitted,
+    notifications
+      .filter(([, params]) => params.item?.id !== "item-suppressed")
+      .map(([method]) => method),
+  );
+  assert.deepEqual([...callbackCalls], [
+    ["initiating", 1],
+    ["buffered-started", 1],
+    ["buffered-suppressed", 1],
+    ["buffered-completed", 1],
+    ["buffered-completed-without-start", 1],
+    ["buffered-turn-completed", 1],
+  ]);
   assert.deepEqual(errors, []);
   const hydratedConversation = conversations.get("thread-late");
   assert.equal(hydratedConversation.turns.length, 1);
