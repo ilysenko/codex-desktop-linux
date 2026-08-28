@@ -13,9 +13,15 @@ function matchesCopilotReasoningEffortSettingsContract(source) {
     `if\\(await ${JS_IDENT}\\(${JS_IDENT},${JS_IDENT}\\)\\)return;if\\(${JS_IDENT}\\)\\{await ${JS_IDENT}\\(` +
       `${JS_IDENT},${BT}copilot-default-model${BT},${JS_IDENT},\\{throwOnFailure:!0\\}\\);return\\}`,
   );
+  const currentWriter = new RegExp(
+    `${JS_IDENT}=async\\((${JS_IDENT}),(${JS_IDENT}),${JS_IDENT}\\)=>\\{[\\s\\S]{0,1000}?` +
+      `if\\(${JS_IDENT}\\)return await ${JS_IDENT}\\(${JS_IDENT},${BT}copilot-default-model${BT},\\1,` +
+      `\\{throwOnFailure:!0\\}\\),!0`,
+  );
   const patchedReader = source.includes("copilot-default-reasoning-effort`),codexCopilotModelValue=");
   const patchedWriter = source.includes("`copilot-default-reasoning-effort`,");
-  return (cleanReader.test(source) || patchedReader) && (cleanWriter.test(source) || patchedWriter);
+  return (cleanReader.test(source) || patchedReader) &&
+    (cleanWriter.test(source) || currentWriter.test(source) || patchedWriter);
 }
 
 function matchesCopilotReasoningEffortModelListContract(source) {
@@ -31,16 +37,13 @@ function matchesCopilotReasoningEffortUiContract(source) {
   return analyzeCopilotReasoningEffortUiContract(source).state !== "invalid";
 }
 
-function currentComposerGateRegex(patched) {
-  const copilotShortcutGate = patched ? "" : `&&!\\k<copilot>`;
-  const copilotPickerGate = patched ? "" : `&&!\\k<copilot>`;
+function currentComposerGateRegex() {
   return new RegExp(
-    `(?<copilot>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.authMethod===${BT}copilot${BT}` +
-      `(?<middle>[\\s\\S]{0,1000}?),` +
-      `(?<shortcut>${JS_IDENT})=!(?<loading>${JS_IDENT})${copilotShortcutGate}&&!0,` +
+      `(?<copilot>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.authMethod===${BT}copilot${BT}` +
+      `(?<middle>[\\s\\S]{0,3000}?),` +
+      `(?<shortcut>${JS_IDENT})=(?<shortcutPrefix>[\\s\\S]{1,120}?)!0,` +
       `(?<picker>${JS_IDENT})=(?<modelLock>${JS_IDENT})\\?\\.isModelLocked!==!0` +
-      `&&(?<modelList>${JS_IDENT})!=null&&!\\k<loading>&&(?<mode>${JS_IDENT})` +
-      `${copilotPickerGate}&&(?<status>${JS_IDENT})!==${BT}error${BT}`,
+      `&&(?<pickerMiddle>[\\s\\S]{1,300}?)&&(?<status>${JS_IDENT})!==${BT}error${BT}`,
   );
 }
 
@@ -72,9 +75,7 @@ function findNeedleIndexes(source, needle, startIndex, distance = 20_000) {
 }
 
 function analyzeCopilotReasoningEffortUiContract(source) {
-  const cleanComposerMatches = findAllMatches(source, currentComposerGateRegex(false));
-  const patchedComposerMatches = findAllMatches(source, currentComposerGateRegex(true));
-  const composerMatches = [...cleanComposerMatches, ...patchedComposerMatches];
+  const composerMatches = findAllMatches(source, currentComposerGateRegex());
   if (composerMatches.length === 0) {
     return {
       state: "invalid",
@@ -89,6 +90,18 @@ function analyzeCopilotReasoningEffortUiContract(source) {
   }
 
   const composerMatch = composerMatches[0];
+  const cleanShortcutGate = `!${composerMatch.groups.copilot}&&`;
+  const cleanPickerGate = `!${composerMatch.groups.copilot}`;
+  const hasShortcutGate = composerMatch.groups.shortcutPrefix.endsWith(cleanShortcutGate);
+  const hasPickerGate = composerMatch.groups.pickerMiddle.endsWith(cleanPickerGate);
+  const pristineComposer = hasShortcutGate && hasPickerGate;
+  const patchedComposer = !hasShortcutGate && !hasPickerGate;
+  if (!pristineComposer && !patchedComposer) {
+    return {
+      state: "invalid",
+      warning: "Found mismatched current Copilot reasoning effort composer gates",
+    };
+  }
   const cleanDropdownIndexes = findNeedleIndexes(
     source,
     `reasoningEffortDisabled:${composerMatch.groups.copilot}`,
@@ -129,9 +142,9 @@ function analyzeCopilotReasoningEffortUiContract(source) {
     };
   }
 
-  const pristine = cleanComposerMatches.length === 1 &&
+  const pristine = pristineComposer &&
     cleanDropdownIndexes.length === 1 && cleanSlashMatches.length === 1;
-  const patched = patchedComposerMatches.length === 1 &&
+  const patched = patchedComposer &&
     patchedDropdownIndexes.length === 1 && patchedSlashMatches.length === 1;
   if (!pristine && !patched) {
     return {
@@ -198,10 +211,24 @@ function applyCopilotReasoningEffortSettingsPatch(currentSource) {
       ) =>
         `if(await ${updateConversationVar}(${modelArgVar},${effortArgVar}))return;if(${isCopilotVar}){await ${persistStateVar}(${stateScopeVar},\`copilot-default-model\`,${modelArgVar},{throwOnFailure:!0});await ${persistStateVar}(${stateScopeVar},\`copilot-default-reasoning-effort\`,${effortArgVar},{throwOnFailure:!0});return}`,
     );
-  } else if (patchedSource.includes("copilot-default-model")) {
-    console.warn(
-      "WARN: Could not find Copilot default model writer - skipping Copilot reasoning effort persistence patch",
+  } else {
+    const currentCopilotSaveRegex = new RegExp(
+      `(${JS_IDENT}=async\\((${JS_IDENT}),(${JS_IDENT}),${JS_IDENT}\\)=>\\{[\\s\\S]{0,1000}?` +
+        `if\\((${JS_IDENT})\\)return await (${JS_IDENT})\\((${JS_IDENT}),${BT}copilot-default-model${BT},\\2,` +
+        `\\{throwOnFailure:!0\\}\\)),!0`,
     );
+    const currentMatch = patchedSource.match(currentCopilotSaveRegex);
+    if (currentMatch != null) {
+      const [, prefix, _modelArg, effortArg, _isCopilot, persistState, stateScope] = currentMatch;
+      patchedSource = patchedSource.replace(
+        currentCopilotSaveRegex,
+        `${prefix},await ${persistState}(${stateScope},${BT}copilot-default-reasoning-effort${BT},${effortArg},{throwOnFailure:!0}),!0`,
+      );
+    } else if (patchedSource.includes("copilot-default-model")) {
+      console.warn(
+        "WARN: Could not find Copilot default model writer - skipping Copilot reasoning effort persistence patch",
+      );
+    }
   }
 
   return patchedSource;
@@ -244,11 +271,15 @@ function applyCopilotReasoningEffortUiPatch(currentSource) {
   const cleanComposerMatch = contract.composerMatch;
   let patchedSource = currentSource;
   const groups = cleanComposerMatch.groups;
-  const replacement =
-    `${groups.copilot}=${groups.host}?.authMethod===${BT}copilot${BT}${groups.middle},` +
-    `${groups.shortcut}=!${groups.loading}&&!0,` +
-    `${groups.picker}=${groups.modelLock}?.isModelLocked!==!0&&${groups.modelList}!=null` +
-    `&&!${groups.loading}&&${groups.mode}&&${groups.status}!==${BT}error${BT}`;
+  const copilotGate = `!${groups.copilot}&&`;
+  const gateCount = cleanComposerMatch[0].split(copilotGate).length - 1;
+  if (gateCount !== 2) {
+    console.warn(
+      "WARN: Could not isolate both current Copilot reasoning effort composer gates - skipping current UI patch",
+    );
+    return currentSource;
+  }
+  const replacement = cleanComposerMatch[0].split(copilotGate).join("");
   patchedSource = patchedSource.replace(cleanComposerMatch[0], replacement);
 
   const dropdownNeedle = `reasoningEffortDisabled:${groups.copilot}`;

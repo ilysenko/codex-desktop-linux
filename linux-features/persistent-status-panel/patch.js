@@ -43,8 +43,26 @@ function applyPersistentStatusPanelPatch(source) {
 
   const match = source.match(statusStatePattern);
   if (!match) {
-    console.warn("WARN: Could not find Codex status panel state - skipping persistent status panel patch");
-    return source;
+    const statePattern = /\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\]=\(0,([A-Za-z_$][\w$]*)\.useState\)\(!1\)/gu;
+    const candidates = [...source.matchAll(statePattern)].filter((candidate) => {
+      const setter = candidate[2];
+      const tail = source.slice(candidate.index, candidate.index + 50_000);
+      return tail.includes(`setIsStatusMenuOpen:${setter}`) &&
+        tail.includes(`onClose:()=>${setter}(!1)`);
+    });
+    if (candidates.length !== 1) {
+      console.warn("WARN: Could not find Codex status panel state - skipping persistent status panel patch");
+      return source;
+    }
+
+    const candidate = candidates[0];
+    const [stateNeedle, isOpen, setIsOpen, reactModule] = candidate;
+    const rawSetter = "codexLinuxSetPersistentStatusPanelOpenState";
+    const replacement =
+      `[${isOpen},${rawSetter}]=(0,${reactModule}.useState)(()=>{try{return localStorage.getItem(\`${STORAGE_KEY}\`)===\`1\`}catch{return!1}}),` +
+      `${setIsOpen}=e=>{try{e?localStorage.setItem(\`${STORAGE_KEY}\`,\`1\`):localStorage.removeItem(\`${STORAGE_KEY}\`)}catch{}${rawSetter}(e)}`;
+    return source.slice(0, candidate.index) + replacement +
+      source.slice(candidate.index + stateNeedle.length);
   }
 
   const [stateNeedle, onOpenChange, _intl, _isOpen, setIsOpen] = match;

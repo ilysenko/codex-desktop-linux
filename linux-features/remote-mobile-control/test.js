@@ -72,6 +72,10 @@ function syntheticReasoningSummaryTurnStartBundle() {
   return "async function yY(e,t,n){let s=n,D=n.latestThreadSettings,ee=n.initialParams,me=!fm(e.getHostId());let Ee=e.getDefaultFeatureOverride(vJ)===!0,De=ee?.summary??`none`;D?.summary!==void 0&&(De=D.summary),Ee&&(De=`detailed`),s.summary!==void 0&&(De=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{concurrentReasoningSummariesFeatureOverrideEnabled:Ee,summary:De}});return{featureOverride:Ee,summary:De}}";
 }
 
+function syntheticCurrentReasoningSummaryTurnStartBundle() {
+  return "async function HWt(e,t,n,r,i,a,o){let s=n.request,N=a.latestThreadSettings,S=a.initialParams,ye=N?.summary??`none`;S?.summary!==void 0&&(ye=S.summary),o.reasoningSummaryOverride!=null&&(ye=o.reasoningSummaryOverride),s.summary!==void 0&&(ye=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{summary:ye}});return{summary:ye}}async function QWt(e,t,n,r,i,a){return await HWt(e,t,n,r,i,a,{canUseProjectlessWorkspace:!gh(e.getHostId()),reasoningSummaryOverride:`detailed`})}";
+}
+
 test("remote mobile README assigns every descriptor to one control topology", () => {
   const readme = fs.readFileSync(path.join(__dirname, "README.md"), "utf8");
   const rows = [...readme.matchAll(
@@ -335,9 +339,9 @@ function syntheticCurrentRemoteNotificationLifecycleBundle() {
     "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
     "function xm(e,t,n,r){let i=e.items.find(e=>e.id===t);return i?i.type===n?i:(r.error(`Item has unexpected type`,{safe:{itemId:t,type:i.type,expectedType:n},sensitive:{}}),null):(r.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}}),null)}",
     "function Sm(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
-    "function $dt(e,t){let{manager:n,notificationContext:r,productPolicy:i,createId:a}=e;switch(t.method){case`turn/started`:{let{threadId:o,turn:s}=t.params,c=Ul(o),l=r.threadStore.conversations.get(c);if(l==null){n.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:c},sensitive:{}});break}n.updateConversationState(c,e=>{let t=e.turns.find(e=>e.turnId===s.id);t==null&&(t={turnId:s.id,status:s.status,items:[]},e.turns.push(t)),t.status=s.status});break}case`turn/completed`:{let{threadId:a,turn:o}=t.params,s=Ul(a);if(!r.threadStore.conversations.has(s)){i.dropTurnAutomationPolicy(n.getHostId(),a,o.id),r.unread.discardTurn(s,o.id),n.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}n.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===o.id);t&&(t.status=o.status)});break}}}",
-    "function Sdt(e,t){let{manager:n,notificationContext:r,productPolicy:i}=e;switch(t.method){case`item/started`:{let{item:a,threadId:o,turnId:s,startedAtMs:c}=t.params,l=Ul(o);if(!r.threadStore.conversations.has(l)){n.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,e=>{let t=e.turns.find(e=>e.turnId===s);t&&Sm(t,{...a,completed:!1,startedAtMs:c})});break}case`item/completed`:{let{item:a,threadId:o,turnId:s,completedAtMs:c}=t.params;a.type===`commandExecution`&&r.itemStreamState.clearItemTerminalInputBuffer(Ul(o),a.id);let l=Ul(o),u=r.threadStore.conversations.get(l);if(u==null){n.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,t=>{let o=t.turns.find(e=>e.turnId===s);if(!o)return;let d={...a,completed:!0,completedAtMs:c};!(a.type!==`subAgentActivity`&&(a.type!==`sleep`||t.mode!==`durable`)&&!xm(o,a.id,a.type,n.logger))&&Sm(o,d)});break}}}",
-    "function tLn(e,t){let{manager:n,notificationContext:r,productPolicy:i}=e;if(!(r.streamState.shouldIgnoreThreadMutationAsFollower(t.method,t.params)||r.resumeNotificationBuffer.buffer(t)||r.threadStartedNotificationDeferral.bufferNotification(t)||i.shouldIgnoreNotification(n,t))){switch(t.method){case`turn/started`:case`turn/completed`:if($dt(e,t)===`deferred`)return;break;case`item/started`:case`item/completed`:if(Sdt(e,t)===`deferred`)return;break}r.events.emitNotification(t)}}",
+    "function $dt(e,t){let{manager:n,notificationContext:r,productPolicy:i,createId:a}=e;switch(t.method){case`turn/started`:{let{threadId:o,turn:s}=t.params,c=Ul(o),l=r.threadStore.conversations.get(c);if(l==null){n.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:c},sensitive:{}});break}n.updateConversationState(c,e=>{let t=e.turns.find(e=>e.turnId===s.id);t==null&&(t={turnId:s.id,status:s.status,items:[]},e.turns.push(t)),t.status=s.status});break}case`turn/completed`:{let{threadId:a,turn:o}=t.params,s=Ul(a);if(!r.threadStore.conversations.has(s)){i.dropTurnAutomationPolicy(n.getHostId(),a,o.id),r.unread.discardTurn(s,o.id),n.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}n.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===o.id);t&&(t.status=o.status)});break}}}".replace("function $dt(e,t)", "function $dt(e,u)").replaceAll("t.method", "u.method").replaceAll("t.params", "u.params"),
+    "function Sdt(e,t){let{manager:n,notificationContext:r,productPolicy:i}=e;switch(t.method){case`item/started`:{let{item:a,threadId:o,turnId:s,startedAtMs:c}=t.params,l=Ul(o);if(!r.threadStore.conversations.has(l)){n.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,e=>{let t=e.turns.find(e=>e.turnId===s);t&&Sm(t,{...a,completed:!1,startedAtMs:c})});break}case`item/completed`:{let{item:a,threadId:o,turnId:s,completedAtMs:c}=t.params;a.type===`commandExecution`&&r.itemStreamState.clearItemTerminalInputBuffer(Ul(o),a.id);let l=Ul(o),u=r.threadStore.conversations.get(l);if(u==null){n.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,t=>{let o=t.turns.find(e=>e.turnId===s);if(!o)return;let d={...a,completed:!0,completedAtMs:c};!(a.type!==`subAgentActivity`&&(a.type!==`sleep`||t.mode!==`durable`)&&!xm(o,a.id,a.type,n.logger))&&Sm(o,d)});break}}}".replace("function Sdt(e,t)", "function Sdt(e,v)").replaceAll("t.method", "v.method").replaceAll("t.params", "v.params"),
+    "function tLn(e,t,o){let{manager:n,notificationContext:r}=e;if(!(r.streamState.shouldIgnoreThreadMutationAsFollower(t.method,t.params)||r.resumeNotificationBuffer.buffer(t)||r.threadStartedNotificationDeferral.bufferNotification(t)||o?.())){switch(t.method){case`turn/started`:case`turn/completed`:if($dt(e,t)===`deferred`)return;break;case`item/started`:case`item/completed`:if(Sdt(e,t)===`deferred`)return;break}r.events.emitNotification(t)}}",
   ].join("");
 }
 
@@ -1332,6 +1336,17 @@ test("Linux remote mobile reasoning-summary patch preserves explicit and non-loc
   );
   assert.equal(remoteResult.featureOverride, true);
   assert.equal(remoteResult.summary, "detailed");
+});
+
+test("Linux remote mobile reasoning-summary patch follows the current runtime override caller", () => {
+  const source = syntheticCurrentReasoningSummaryTurnStartBundle();
+  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteMobileReasoningSummaryNone/);
+  assert.match(patched, /codexLinuxRemoteMobileHost:gh\(e\.getHostId\(\)\)/);
+  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)&&o\.codexLinuxRemoteMobileHost/);
+  assert.equal(applyLinuxRemoteMobileReasoningSummaryPatch(patched), patched);
 });
 
 test("Linux remote mobile reasoning-summary patch reports upstream drift", () => {

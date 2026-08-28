@@ -20,6 +20,9 @@ const {
 const currentComposerSource =
   "function nW(e){let t=(0,iW.c)(26),{conversationId:n,threadId:r,rateLimit:i,onOpenChange:a}=e,o=Wr(),[s,c]=(0,aW.useState)(!1),{activeMode:l}=vm(n),u=l?.settings.model??null,d=Pn(Bc,n),f;t[0]===d?f=t[1]:(f=nR(d),t[0]=d,t[1]=f);let y,b;t[10]===a?(y=t[11],b=t[12]):(y=async()=>{c(!0),a?.(!0)},b=[a],t[10]=a,t[11]=y,t[12]=b);let v=o.formatMessage({id:`composer.statusSlashCommand.description`,defaultMessage:`Show task id, context usage, and rate limits`,description:`Description for the status slash command`}),x={id:`status`,title:`Status`,description:v,requiresEmptyComposer:!1,Icon:rE,onSelect:y,dependencies:b};if(CS(x),!s)return null;let S;t[18]===a?S=t[19]:(S=()=>{c(!1),a?.(!1)},t[18]=a,t[19]=S);return FU({threadId:r,onClose:S})}";
 
+const liftedStatusStateComposerSource =
+  "function nW(){let[yt,bt]=(0,R3.useState)(!1),v=o.formatMessage({id:`composer.statusSlashCommand.description`});return jsx(Menu,{setIsStatusMenuOpen:bt,content:jsx(StatusPanel,{onClose:()=>bt(!1)}),open:yt,description:v})}";
+
 function captureWarns(fn) {
   const originalWarn = console.warn;
   const warnings = [];
@@ -72,6 +75,16 @@ test("status panel preference survives component remounts", () => {
   const patched = applyPersistentStatusPanelPatch(currentComposerSource);
 
   assert.notEqual(patched, currentComposerSource);
+  assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
+  assert.match(patched, new RegExp(`localStorage\\.setItem\\(\\\`${STORAGE_KEY}\\\`,\\\`1\\\`\\)`));
+  assert.match(patched, new RegExp(`localStorage\\.removeItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
+  assert.equal(applyPersistentStatusPanelPatch(patched), patched);
+});
+
+test("status panel preference follows the current lifted menu state", () => {
+  const patched = applyPersistentStatusPanelPatch(liftedStatusStateComposerSource);
+
+  assert.notEqual(patched, liftedStatusStateComposerSource);
   assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
   assert.match(patched, new RegExp(`localStorage\\.setItem\\(\\\`${STORAGE_KEY}\\\`,\\\`1\\\`\\)`));
   assert.match(patched, new RegExp(`localStorage\\.removeItem\\(\\\`${STORAGE_KEY}\\\`\\)`));

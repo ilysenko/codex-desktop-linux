@@ -819,7 +819,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       return matches.length === 1 ? matches[0] : null;
     };
     const handlerNeedle =
-      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*),productPolicy:[A-Za-z_$][\w$]*\}=\2;(?=if\(!\(\5\.streamState\.shouldIgnoreThreadMutationAsFollower\(\3\.method,\3\.params\))/u;
+      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)(?:,[A-Za-z_$][\w$]*)?\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*)(?:,productPolicy:[A-Za-z_$][\w$]*)?\}=\2;(?=if\(!\(\5\.streamState\.shouldIgnoreThreadMutationAsFollower\(\3\.method,\3\.params)/u;
     const handlerMatch = singleMatch(patched, handlerNeedle);
     const normalizerNeedle =
       /case`turn\/started`:\{let\{threadId:([A-Za-z_$][\w$]*),turn:[A-Za-z_$][\w$]*\}=([A-Za-z_$][\w$]*)\.params,[A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\.threadStore\.conversations\.get\([A-Za-z_$][\w$]*\);/u;
@@ -827,34 +827,33 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
     const completedItemNeedle =
       /!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\.id,\3\.type,([A-Za-z_$][\w$]*)\.logger\)/u;
     const completedItemMatch = singleMatch(patched, completedItemNeedle);
-    const unknownNeedles = handlerMatch == null ? [] : (() => {
-      const manager = escapeRegExp(handlerMatch[4]);
-      const context = escapeRegExp(handlerMatch[5]);
-      return [
-        new RegExp(
-          `(?<condition>if\\((?<checked>[A-Za-z_$][\\w$]*)==null\\))\\{${manager}\\.logger\\.error\\(\\x60Received turn/started for unknown conversation\\x60,\\{safe:\\{conversationId:(?<conversation>[A-Za-z_$][\\w$]*)\\},sensitive:\\{\\}\\}\\);break\\}`,
-          "u",
-        ),
-        new RegExp(
-          `(?<condition>if\\(!${context}\\.threadStore\\.conversations\\.has\\((?<conversation>[A-Za-z_$][\\w$]*)\\)\\))\\{[^{}]*?${manager}\\.logger\\.error\\(\\x60Received turn/completed for unknown conversation\\x60,\\{safe:\\{conversationId:\\k<conversation>\\},sensitive:\\{\\}\\}\\);break\\}`,
-          "u",
-        ),
-        new RegExp(
-          `(?<condition>if\\(!${context}\\.threadStore\\.conversations\\.has\\((?<conversation>[A-Za-z_$][\\w$]*)\\)\\))\\{${manager}\\.logger\\.error\\(\\x60Received item/started for unknown conversation\\x60,\\{safe:\\{conversationId:\\k<conversation>\\},sensitive:\\{\\}\\}\\);break\\}`,
-          "u",
-        ),
-        new RegExp(
-          `(?<condition>if\\((?<checked>[A-Za-z_$][\\w$]*)==null\\))\\{${manager}\\.logger\\.error\\(\\x60Received item/completed for unknown conversation\\x60,\\{safe:\\{conversationId:(?<conversation>[A-Za-z_$][\\w$]*)\\},sensitive:\\{\\}\\}\\);break\\}`,
-          "u",
-        ),
-      ];
-    })();
+    const unknownNeedles = [
+      /(?<condition>if\((?<checked>[A-Za-z_$][\w$]*)==null\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received turn\/started for unknown conversation`,\{safe:\{conversationId:(?<conversation>[A-Za-z_$][\w$]*)\},sensitive:\{\}\}\);break\}/u,
+      /(?<condition>if\(!(?<context>[A-Za-z_$][\w$]*)\.threadStore\.conversations\.has\((?<conversation>[A-Za-z_$][\w$]*)\)\))\{[^{}]*?(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received turn\/completed for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
+      /(?<condition>if\(!(?<context>[A-Za-z_$][\w$]*)\.threadStore\.conversations\.has\((?<conversation>[A-Za-z_$][\w$]*)\)\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/started for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
+      /(?<condition>if\((?<checked>[A-Za-z_$][\w$]*)==null\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/completed for unknown conversation`,\{safe:\{conversationId:(?<conversation>[A-Za-z_$][\w$]*)\},sensitive:\{\}\}\);break\}/u,
+    ];
+    const unknownContracts = unknownNeedles.map((needle) => {
+      const match = singleMatch(patched, needle);
+      if (match == null) return null;
+      const functionStart = patched.lastIndexOf("function ", match.index);
+      const prefix = functionStart === -1 ? "" : patched.slice(functionStart, match.index);
+      const owner = prefix.match(
+        /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*)(?:,[^)]*)?\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*)(?:,[^}]*)?\}=[A-Za-z_$][\w$]*;/u,
+      );
+      if (
+        owner == null ||
+        (match.groups.manager != null && match.groups.manager !== owner[2]) ||
+        (match.groups.context != null && match.groups.context !== owner[3])
+      ) return null;
+      return { match, notification: owner[1], manager: owner[2], context: owner[3] };
+    });
 
     if (
       handlerMatch != null &&
       normalizerMatch != null &&
       completedItemMatch != null &&
-      unknownNeedles.every((needle) => singleMatch(patched, needle) != null)
+      unknownContracts.every((contract) => contract != null)
     ) {
       const [, , , notificationVar, managerVar, notificationContextVar] = handlerMatch;
       const normalizerFn = normalizerMatch[3];
@@ -868,13 +867,10 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
         handlerNeedle,
         (needle) => `${needle}if(codexLinuxRemoteMobileBufferPendingNotification(${notificationContextVar},${notificationVar}))return;`,
       );
-      for (const needle of unknownNeedles) {
+      for (const contract of unknownContracts) {
         patched = patched.replace(
-          needle,
-          (...args) => {
-            const groups = args.at(-1);
-            return `${groups.condition}{${REMOTE_MOBILE_HYDRATION_MARKER}(${managerVar},${notificationContextVar},${groups.conversation},${notificationVar});return\`deferred\`}`;
-          },
+          contract.match[0],
+          `${contract.match.groups.condition}{${REMOTE_MOBILE_HYDRATION_MARKER}(${contract.manager},${contract.context},${contract.match.groups.conversation},${contract.notification});return\`deferred\`}`,
         );
       }
       patched = patched.replace(
@@ -1240,7 +1236,10 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
   const turnStartPrefix = functionStart === -1 ? "" : source.slice(functionStart, logIndex);
   const summaryPattern =
     /(?<prefix>let |,)(?<featureOverride>[A-Za-z_$][\w$]*)=(?<manager>[A-Za-z_$][\w$]*)\.getDefaultFeatureOverride\([A-Za-z_$][\w$]*\)===!0,(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),\k<featureOverride>&&\(\k<summary>=`detailed`\),(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
-  const summaryMatch = turnStartPrefix.match(summaryPattern);
+  const currentSummaryPattern =
+    /(?<prefix>let |,)(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),(?<runtime>[A-Za-z_$][\w$]*)\.reasoningSummaryOverride!=null&&\(\k<summary>=\k<runtime>\.reasoningSummaryOverride\),(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
+  const summaryMatch = turnStartPrefix.match(summaryPattern) ??
+    turnStartPrefix.match(currentSummaryPattern);
   if (summaryMatch == null) {
     console.warn(
       "WARN: Could not find reasoning-summary turn-start resolver - skipping Linux remote mobile summary patch",
@@ -1250,28 +1249,59 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
 
   const {
     featureOverride: featureOverrideVar,
-    manager: managerVar,
+    manager: legacyManagerVar,
     request: requestVar,
     summary: summaryVar,
   } = summaryMatch.groups;
-  const localHostPattern = new RegExp(
+  const functionHeader = turnStartPrefix.match(/async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)[,)]/u);
+  const managerVar = legacyManagerVar ?? functionHeader?.[2];
+  if (managerVar == null) {
+    console.warn(
+      "WARN: Could not find reasoning-summary turn-start manager - skipping Linux remote mobile summary patch",
+    );
+    return source;
+  }
+  const localHostPattern = legacyManagerVar == null ? null : new RegExp(
     `!([A-Za-z_$][\\w$]*)\\(${escapeRegExp(managerVar)}\\.getHostId\\(\\)\\)`,
     "u",
   );
-  const localHostMatch = turnStartPrefix.match(localHostPattern);
-  if (localHostMatch == null) {
+  const localHostMatch = localHostPattern == null ? null : turnStartPrefix.match(localHostPattern);
+  let currentCallerMatch = null;
+  if (legacyManagerVar == null) {
+    const helperName = functionHeader?.[1];
+    if (helperName != null) {
+      const currentCallerPattern = new RegExp(
+        `(?<prefix>${escapeRegExp(helperName)}\\((?<manager>[A-Za-z_$][\\w$]*),[\\s\\S]{0,100}?\\{)` +
+          `(?<option>canUseProjectlessWorkspace:!(?<classifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\))`,
+        "u",
+      );
+      currentCallerMatch = source.match(currentCallerPattern);
+    }
+  }
+  if (localHostMatch == null && currentCallerMatch == null) {
     console.warn(
       "WARN: Could not find local-host turn-start guard - skipping Linux remote mobile summary patch",
     );
     return source;
   }
 
-  const localHostClassifier = localHostMatch[1];
+  const forcedValues = featureOverrideVar == null
+    ? `${summaryVar}=\`none\``
+    : `${featureOverrideVar}=!1,${summaryVar}=\`none\``;
+  const remoteHostCondition = localHostMatch == null
+    ? `${summaryMatch.groups.runtime}.codexLinuxRemoteMobileHost`
+    : `!${localHostMatch[1]}(${managerVar}.getHostId())`;
   const replacement =
     `${summaryMatch[0]}/*${REMOTE_MOBILE_REASONING_SUMMARY_MARKER}*/` +
-    `navigator.userAgent.includes(\`Linux\`)&&!${localHostClassifier}(${managerVar}.getHostId())&&${requestVar}.summary===void 0&&(${featureOverrideVar}=!1,${summaryVar}=\`none\`);`;
+    `navigator.userAgent.includes(\`Linux\`)&&${remoteHostCondition}&&${requestVar}.summary===void 0&&(${forcedValues});`;
   const absoluteMatchStart = functionStart + summaryMatch.index;
-  return `${source.slice(0, absoluteMatchStart)}${replacement}${source.slice(absoluteMatchStart + summaryMatch[0].length)}`;
+  let patched = `${source.slice(0, absoluteMatchStart)}${replacement}${source.slice(absoluteMatchStart + summaryMatch[0].length)}`;
+  if (currentCallerMatch != null) {
+    const callerNeedle = currentCallerMatch[0];
+    const callerReplacement = `${currentCallerMatch.groups.prefix}codexLinuxRemoteMobileHost:${currentCallerMatch.groups.classifier}(${currentCallerMatch.groups.manager}.getHostId()),${currentCallerMatch.groups.option}`;
+    patched = patched.replace(callerNeedle, callerReplacement);
+  }
+  return patched;
 }
 
 module.exports = [

@@ -66,6 +66,17 @@ function currentAvatarOverlayBundleFixture() {
   ].join("");
 }
 
+function currentExpandedDragCompletionBundleFixture() {
+  const source = currentAvatarOverlayBundleFixture();
+  const start = source.indexOf("moveDrag(e,t){");
+  const end = source.indexOf("setElementSize(e,", start);
+  assert.ok(start >= 0 && end > start);
+  const dragMethods =
+    "moveDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e)return;this.lastMove=t}" +
+    "endDrag(e,t,n=`released`){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e||this.dragState==null)return;let i=this.dragState,a=this.nativeWindowDragActive,o=null;if(this.suppressNextRendererThrow=a||i.shouldSuppressRendererThrow(),this.dragState=null,this.clearNativeWindowDragCompletionTimer(),this.nativeWindowDragActive=!1,this.nativeWindowDragStart=null,a?this.persistWindowBounds(r):this.reclampWindowToVisibleDisplay({shouldPersist:!0}),this.isQuickChatPresentation&&i.hasMovementIntent){this.persistWindowBounds(r);return}let s=this.dockTarget;s!=null&&this.dockPresentation(s.anchor,s.onDock)}";
+  return source.slice(0, start) + dragMethods + source.slice(end);
+}
+
 function legacyAvatarOverlayBundleFixture() {
   return [
     "let n=require(`electron`);",
@@ -214,6 +225,16 @@ test("patches current avatar overlay layout, transparency, and window sync", () 
   assert.match(patched, /setSkipTaskbar/);
   assert.match(patched, /t===`avatarOverlay`\?\{backgroundColor:`#00000000`,backgroundMaterial:null\}/);
   assert.equal((patched.match(/codexPetOverlayLayoutForDisplay/g) ?? []).length, 2);
+});
+
+test("patches the current expanded drag completion as a syntactically complete callback", () => {
+  const patched = applyPatchTwice(currentExpandedDragCompletionBundleFixture());
+
+  assert.match(
+    patched,
+    /codexPetOverlayEndKWinDrag\([^,]+,\(\)=>\{if\(this\.suppressNextRendererThrow=/,
+  );
+  assert.doesNotThrow(() => new Function("require", patched));
 });
 
 test("refreshes only the avatar overlay after the selected pet changes", async () => {

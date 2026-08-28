@@ -316,16 +316,43 @@ function patchCompositorDragLifecycle(source) {
   }
   const completionPattern = /[A-Za-z_$][\w$]*\?this\.persistWindowBounds\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*\?\?this\.getCurrentDisplay\(\)\):this\.reclampWindowToVisibleDisplay\(\{shouldPersist:!0\}\)/;
   const completionMatch = endMethod.text.match(completionPattern);
-  if (completionMatch == null) {
+  if (completionMatch != null) {
+    const windowVar = completionMatch[1];
+    const completionNeedle = endMethod.text.slice(completionMatch.index, -1);
+    return replaceMethodText(
+      patched,
+      endMethod,
+      endMethod.text.slice(0, completionMatch.index) +
+        `this.codexPetOverlayEndKWinDrag(${windowVar},()=>{${completionNeedle}})||this.codexPetOverlayEndNiriDrag(${windowVar},()=>{${completionNeedle}})||(()=>{${completionNeedle}})()` +
+        "}",
+    );
+  }
+
+  const windowMatch = endMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/u);
+  const completionBoundary = "this.nativeWindowDragStart=null,";
+  const boundaryIndex = endMethod.text.indexOf(completionBoundary);
+  const completionStart = endMethod.text.lastIndexOf(
+    "if(this.suppressNextRendererThrow=",
+    boundaryIndex,
+  );
+  if (windowMatch == null || boundaryIndex === -1 || completionStart === -1) {
     console.warn("WARN: Could not identify current avatar overlay drag completion shape - skipping compositor transport hook");
     return patched;
   }
-  const windowVar = completionMatch[1];
-  const completionNeedle = endMethod.text.slice(completionMatch.index, -1);
+  const completionNeedle = endMethod.text.slice(completionStart, -1);
+  if (
+    !completionNeedle.includes(completionBoundary) ||
+    !completionNeedle.includes("this.persistWindowBounds(") ||
+    !completionNeedle.includes("this.reclampWindowToVisibleDisplay({shouldPersist:!0})")
+  ) {
+    console.warn("WARN: Could not identify current avatar overlay drag completion shape - skipping compositor transport hook");
+    return patched;
+  }
+  const windowVar = windowMatch[1];
   return replaceMethodText(
     patched,
     endMethod,
-    endMethod.text.slice(0, completionMatch.index) +
+    endMethod.text.slice(0, completionStart) +
       `this.codexPetOverlayEndKWinDrag(${windowVar},()=>{${completionNeedle}})||this.codexPetOverlayEndNiriDrag(${windowVar},()=>{${completionNeedle}})||(()=>{${completionNeedle}})()` +
       "}",
   );
