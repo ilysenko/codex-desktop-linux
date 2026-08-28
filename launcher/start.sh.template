@@ -107,7 +107,10 @@ canonicalize_codex_home() {
     local physical_codex_home
 
     [ -d "$requested_codex_home" ] || return 0
-    physical_codex_home="$(cd -P -- "$requested_codex_home" && pwd -P)"
+    if [ "$requested_codex_home" = "-" ]; then
+        requested_codex_home="./-"
+    fi
+    physical_codex_home="$(CDPATH='' cd -P -- "$requested_codex_home" && pwd -P)"
     export CODEX_HOME="$physical_codex_home"
 }
 

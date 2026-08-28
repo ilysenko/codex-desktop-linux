@@ -253,6 +253,69 @@ test("launcher exports a physical explicit CODEX_HOME when it is a symlink", (t)
   assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), physicalCodexHome);
 });
 
+test("launcher ignores CDPATH when canonicalizing a relative CODEX_HOME", (t) => {
+  const root = createApp(t);
+  const codexHome = path.join(root, "profile");
+  const cdpathRoot = path.join(root, "cdpath");
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.mkdirSync(path.join(cdpathRoot, "profile"), { recursive: true });
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    cwd: root,
+    env: {
+      ...process.env,
+      CDPATH: cdpathRoot,
+      CODEX_HOME: "profile",
+      TEST_ROOT: root,
+      XDG_CONFIG_HOME: path.join(root, "config"),
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), codexHome);
+});
+
+test("launcher treats a dash CODEX_HOME as a relative directory", (t) => {
+  const root = createApp(t);
+  const codexHome = path.join(root, "-");
+  const oldWorkingDirectory = path.join(root, "old-working-directory");
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.mkdirSync(oldWorkingDirectory, { recursive: true });
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    cwd: root,
+    env: {
+      ...process.env,
+      CODEX_HOME: "-",
+      OLDPWD: oldWorkingDirectory,
+      TEST_ROOT: root,
+      XDG_CONFIG_HOME: path.join(root, "config"),
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), codexHome);
+});
+
+test("launcher preserves the physical root CODEX_HOME spelling", (t) => {
+  const root = createApp(t);
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    env: {
+      ...process.env,
+      CODEX_HOME: "/",
+      TEST_ROOT: root,
+      XDG_CONFIG_HOME: path.join(root, "config"),
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), "/");
+});
+
 test("launcher canonicalizes CODEX_HOME loaded from an environment hook", (t) => {
   const root = createApp(t);
   const physicalCodexHome = path.join(root, "physical-codex-home");
