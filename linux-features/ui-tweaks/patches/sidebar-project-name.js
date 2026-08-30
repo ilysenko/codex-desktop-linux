@@ -2,14 +2,17 @@
 
 const DEFAULT_PROJECT_NAME_STYLE = "font-weight: 700 !important;";
 const PROJECTS_SIDEBAR_ASSET_PATTERN = /^app-initial-[^.]+\.js$/;
-const PROJECT_NAME_SELECTOR = ".group\\/folder-row .text-fade-truncate.pe-1";
+const PROJECT_ROW_ATTRIBUTE = "data-app-action-sidebar-project-row";
+const PROJECT_NAME_SELECTOR = `[${PROJECT_ROW_ATTRIBUTE}] [data-marquee-text]`;
 const STYLE_ID = "codex-linux-ui-tweaks-sidebar-project-name-style";
 const RUNTIME_MARKER = "codexLinuxUiTweaksSidebarProjectNameStyleRuntime";
 const UNSAFE_PROJECT_NAME_STYLE_PATTERN = /[{}@<>]|\r|\n|\/\*|\*\/|\burl\s*\(/i;
 
 const SIDEBAR_PROJECT_NAME_MARKERS = [
-  "group/folder-row",
-  "className:`text-fade-truncate pe-1`",
+  `sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\``,
+  "sidebarProjectRow({collapsed:",
+  "className:`select-none`,animateOnGroupHover:!0",
+  '"data-marquee-text":!0',
 ];
 
 function warn(message) {
@@ -125,6 +128,7 @@ const descriptors = [
 
 module.exports = {
   DEFAULT_PROJECT_NAME_STYLE,
+  PROJECT_ROW_ATTRIBUTE,
   PROJECTS_SIDEBAR_ASSET_PATTERN,
   PROJECT_NAME_SELECTOR,
   RUNTIME_MARKER,
