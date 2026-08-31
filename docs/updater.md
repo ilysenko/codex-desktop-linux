@@ -25,7 +25,10 @@ working app.
 The packaged update-builder extracts the official payload, applies only the
 locally enabled features, generates the selected package format, and places the
 result beside the active install. It contains its own minimal Node/ASAR build
-tools but does not install them in the application runtime.
+tools but does not install Node.js in the application runtime. Native packages
+require the host's packaged Node.js 24 or newer, and the updater validates that
+version at `/usr/bin/node` before running the signed-package verifier. User
+version-manager shims do not override the packaged updater runtime.
 
 Enabled feature drift rejects the candidate. Disabled features are neither
 loaded nor probed. Native helper binaries belong to the project release package

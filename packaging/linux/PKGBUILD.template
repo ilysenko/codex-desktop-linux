@@ -11,7 +11,7 @@ depends=(
     'curl'
     'dpkg'
     'gnupg'
-    'nodejs'
+    'nodejs>=24'
     'xdg-utils'
     # Electron runtime libraries
     'alsa-lib'

@@ -19,13 +19,12 @@ for runtime_dir in /run/user/*; do
     user_name="$(getent passwd "$uid" | cut -d: -f1 || true)"
     [ -n "$user_name" ] || continue
 
-    runuser -u "$user_name" -- env \
-        XDG_RUNTIME_DIR="$runtime_dir" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
-        systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-
     case "${1:-}" in
         remove|purge|deconfigure)
+            runuser -u "$user_name" -- env \
+                XDG_RUNTIME_DIR="$runtime_dir" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+                systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
             runuser -u "$user_name" -- env \
                 XDG_RUNTIME_DIR="$runtime_dir" \
                 DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
