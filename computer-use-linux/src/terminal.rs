@@ -216,33 +216,76 @@ fn process_depth(pid: u32, ancestor_pid: u32, by_pid: &HashMap<u32, &ProcessInfo
 }
 
 fn looks_like_terminal_window(window: &WindowInfo) -> bool {
-    let haystack = [
-        window.app_id.as_deref(),
-        window.wm_class.as_deref(),
-        window.title.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" ")
-    .to_ascii_lowercase();
-
-    [
-        "ghostty",
-        "gnome-terminal",
-        "org.gnome.terminal",
-        "ptyxis",
-        "org.gnome.ptyxis",
-        "kgx",
-        "konsole",
-        "kitty",
-        "alacritty",
-        "wezterm",
-        "xterm",
-    ]
-    .iter()
-    .any(|needle| haystack.contains(needle))
+    uses_terminal_paste_shortcut(window)
+        || window.title.as_deref().is_some_and(|title| {
+            let title = title.to_ascii_lowercase();
+            TERMINAL_TITLE_HINTS
+                .iter()
+                .any(|needle| title.contains(needle))
+        })
 }
+
+pub(crate) fn uses_terminal_paste_shortcut(window: &WindowInfo) -> bool {
+    window.terminal.is_some()
+        || [window.app_id.as_deref(), window.wm_class.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(terminal_identity_matches)
+}
+
+fn terminal_identity_matches(value: &str) -> bool {
+    let identity = value.trim().to_ascii_lowercase();
+    let identity = identity.strip_suffix(".desktop").unwrap_or(&identity);
+    TERMINAL_IDENTITIES.contains(&identity)
+}
+
+const TERMINAL_IDENTITIES: &[&str] = &[
+    "alacritty",
+    "com.gexperts.tilix",
+    "com.mitchellh.ghostty",
+    "com.system76.cosmicterm",
+    "foot",
+    "gnome-terminal",
+    "gnome-terminal-server",
+    "io.elementary.terminal",
+    "kitty",
+    "kgx",
+    "konsole",
+    "lxterminal",
+    "mate-terminal",
+    "org.codeberg.dnkl.foot",
+    "org.gnome.console",
+    "org.gnome.ptyxis",
+    "org.gnome.terminal",
+    "org.kde.konsole",
+    "org.kde.yakuake",
+    "org.lxqt.qterminal",
+    "org.wezfurlong.wezterm",
+    "ptyxis",
+    "qterminal",
+    "rxvt",
+    "rxvt-unicode",
+    "sakura",
+    "terminator",
+    "tilix",
+    "urxvt",
+    "wezterm",
+    "wezterm-gui",
+    "xfce4-terminal",
+    "xterm",
+    "yakuake",
+];
+
+const TERMINAL_TITLE_HINTS: &[&str] = &[
+    "alacritty",
+    "ghostty",
+    "gnome terminal",
+    "konsole",
+    "kitty",
+    "ptyxis",
+    "wezterm",
+    "xterm",
+];
 
 fn read_process_table() -> Vec<ProcessInfo> {
     let Ok(entries) = fs::read_dir("/proc") else {
@@ -417,6 +460,59 @@ mod tests {
         enrich_terminal_windows_with_processes(&mut windows, &processes);
 
         assert!(windows.iter().all(|window| window.terminal.is_none()));
+    }
+
+    #[test]
+    fn terminal_paste_identity_matching_is_exact() {
+        let mut window = terminal_window(11, 100);
+        window.app_id = Some("com.example.footnotes".to_string());
+        window.wm_class = Some("kitty-helper".to_string());
+
+        assert!(!uses_terminal_paste_shortcut(&window));
+    }
+
+    #[test]
+    fn terminal_paste_recognizes_common_terminal_identities() {
+        for identity in [
+            "org.kde.konsole",
+            "org.gnome.Terminal",
+            "org.gnome.Ptyxis",
+            "kgx",
+            "xfce4-terminal",
+            "org.codeberg.dnkl.foot.desktop",
+        ] {
+            let mut window = terminal_window(11, 100);
+            window.app_id = Some(identity.to_string());
+            window.wm_class = None;
+            assert!(
+                uses_terminal_paste_shortcut(&window),
+                "did not recognize {identity}"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_paste_accepts_wm_class_or_enriched_pty_metadata() {
+        let mut window = terminal_window(11, 100);
+        window.app_id = None;
+        window.wm_class = Some("qterminal".to_string());
+        assert!(uses_terminal_paste_shortcut(&window));
+
+        window.wm_class = None;
+        window.terminal = Some(TerminalWindowContext {
+            tty: "/dev/pts/11".to_string(),
+            root_process: TerminalProcess {
+                pid: 200,
+                command_name: "bash".to_string(),
+                command_line: "bash".to_string(),
+                cwd: Some("/home/user".to_string()),
+            },
+            active_process: None,
+            process_count: 1,
+            confidence: "high".to_string(),
+            match_reason: "test".to_string(),
+        });
+        assert!(uses_terminal_paste_shortcut(&window));
     }
 
     #[test]
