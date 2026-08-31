@@ -269,6 +269,7 @@ const TERMINAL_IDENTITIES: &[&str] = &[
     "terminator",
     "tilix",
     "urxvt",
+    "uxterm",
     "wezterm",
     "wezterm-gui",
     "xfce4-terminal",
@@ -478,6 +479,7 @@ mod tests {
             "org.gnome.Terminal",
             "org.gnome.Ptyxis",
             "kgx",
+            "uxterm",
             "xfce4-terminal",
             "org.codeberg.dnkl.foot.desktop",
         ] {
