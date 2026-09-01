@@ -114,3 +114,34 @@ test("retired host-platform contract is rejected byte-identically", () => {
   assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
   assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
 });
+
+test("incomplete patched host-platform contract is rejected byte-identically", () => {
+  const source = "function owner(){let feature={featureName:`computer_use`},p=`linux`,r=h({areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:p===`linux`||g(p),isPlatformLoading:i,windowType:`electron`});return r}";
+
+  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
+  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+});
+
+test("duplicate patched host-platform contracts are rejected byte-identically", () => {
+  const contract = "p=`linux`,r=h({areRequirementsPending:a,areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:p===`linux`||g(p),isPlatformLoading:i,windowType:`electron`})";
+  const source = `function first(){let feature={featureName:\`computer_use\`},${contract};return r}function second(){let feature={featureName:\`computer_use\`},${contract};return r}`;
+
+  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
+  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+});
+
+test("mixed pristine and patched host-platform contracts are rejected byte-identically", () => {
+  const pristine = "p=`linux`,r=h({areRequirementsPending:a,areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:g(p),isPlatformLoading:i,windowType:`electron`})";
+  const patched = "q=`linux`,s=j({areRequirementsPending:k,areRequiredFeaturesEnabled:l,enabled:m,isBrowserAndComputerUseAllowed:n,isAnyFeatureLoading:o,isComputerUseGateEnabled:t,isHostCompatiblePlatform:q===`linux`||u(q),isPlatformLoading:v,windowType:`electron`})";
+  const source = `function owner(){let feature={featureName:\`computer_use\`},${pristine},${patched};return[r,s]}`;
+
+  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
+  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+});
+
+test("malformed patched host-platform variable relationship is rejected byte-identically", () => {
+  const source = "function owner(){let feature={featureName:`computer_use`},p=`linux`,q=`darwin`,r=h({areRequirementsPending:a,areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:p===`linux`||g(q),isPlatformLoading:i,windowType:`electron`});return r}";
+
+  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
+  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+});
