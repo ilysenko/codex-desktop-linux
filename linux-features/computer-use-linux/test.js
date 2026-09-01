@@ -9,6 +9,10 @@ const test = require("node:test");
 
 const manifest = require("./feature.json");
 const descriptors = require("./patch.js");
+const {
+  applyLinuxComputerUseHostPlatformPatch,
+  matchesLinuxComputerUseHostPlatformContract,
+} = require("../../scripts/patches/impl/computer-use.js");
 
 test("computer-use-linux is opt-in and owns the current Linux descriptors", () => {
   assert.equal(manifest.defaultEnabled, false);
@@ -90,4 +94,23 @@ test("computer-use-linux staging registers the bundled plugin idempotently", (t)
     ),
     true,
   );
+});
+
+test("current host-platform contract enables Linux without dropping requirement gates", () => {
+  const source = "function owner(){let feature={featureName:`computer_use`},p=`linux`,r=h({areRequirementsPending:a,areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:g(p),isPlatformLoading:i,windowType:`electron`});return r}";
+  const patched = applyLinuxComputerUseHostPlatformPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /areRequirementsPending:a/);
+  assert.match(patched, /isBrowserAndComputerUseAllowed:d/);
+  assert.match(patched, /isHostCompatiblePlatform:p===`linux`\|\|g\(p\)/);
+  assert.equal(matchesLinuxComputerUseHostPlatformContract(patched), true);
+  assert.equal(applyLinuxComputerUseHostPlatformPatch(patched), patched);
+});
+
+test("retired host-platform contract is rejected byte-identically", () => {
+  const source = "function owner(){let feature={featureName:`computer_use`},p=`linux`,r=h({areRequiredFeaturesEnabled:b,enabled:c,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:g(p),isPlatformLoading:i,windowType:`electron`});return r}";
+
+  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
+  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
 });

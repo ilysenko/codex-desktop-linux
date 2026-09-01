@@ -21,42 +21,6 @@ const WATCH_TOPOLOGY_FUNCTION = new RegExp(
   "g",
 );
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function exportedFeatureGateHook(source) {
-  const currentGate = new RegExp(
-    `(function (${JS_IDENT})\\((${JS_IDENT})\\)\\{let (${JS_IDENT})=\\(0,(${JS_IDENT})\\.c\\)\\(2\\);` +
-      `(${JS_IDENT})\\(typeof \\3==\\\`string\\\`\\);let (${JS_IDENT});return ` +
-      `\\4\\[0\\]===\\3\\?\\7=\\4\\[1\\]:\\(\\7=typeof \\3==\\\`boolean\\\`\\?\\3:` +
-      `\\{cache:\\\`signal\\\`,resolve\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return ` +
-      `(${JS_IDENT})\\.resolve\\(\\8,\\9,\\3\\)\\.atom\\},scope:\\10\\.scope\\},` +
-      `\\4\\[0\\]=\\3,\\4\\[1\\]=\\7\\),)(${JS_IDENT})\\(\\7\\)(\\})`,
-  );
-  const match = source.match(currentGate);
-  if (match == null) return null;
-  return {
-    source: match[0],
-    prefix: match[1],
-    hookName: match[2],
-    argumentName: match[3],
-    atomReadName: match[11],
-    suffix: match[12],
-  };
-}
-
-function hasCodexMicroCallsite(source, hookName) {
-  if (typeof source !== "string" || typeof hookName !== "string") {
-    return false;
-  }
-  const gateCall = new RegExp(
-    `(?:^|[^A-Za-z0-9_$.])${escapeRegExp(hookName)}\\(\`${CODEX_MICRO_GATE_ID}\`\\)`,
-  );
-  return gateCall.test(source)
-    && source.includes(`\`${CODEX_MICRO_ROUTE}\``);
-}
-
 function matchesCodexMicroFeatureGateContract(source) {
   if (typeof source !== "string") {
     return false;
@@ -64,9 +28,10 @@ function matchesCodexMicroFeatureGateContract(source) {
   if (source.includes(CODEX_MICRO_GATE_MARKER)) {
     return true;
   }
-  const hook = exportedFeatureGateHook(source);
-  return hook != null
-    && hasCodexMicroCallsite(source, hook.hookName);
+  const directGate = new RegExp(
+    `(?:^|[^A-Za-z0-9_$.])${JS_IDENT}\\(\`${CODEX_MICRO_GATE_ID}\`\\)`,
+  );
+  return source.includes(`\`${CODEX_MICRO_ROUTE}\``) && directGate.test(source);
 }
 
 function applyCodexMicroFeatureGatePatch(source) {
@@ -74,23 +39,21 @@ function applyCodexMicroFeatureGatePatch(source) {
     return source;
   }
 
-  const hook = exportedFeatureGateHook(source);
-  if (hook == null) {
-    if (source.includes(`\`${CODEX_MICRO_ROUTE}\``)) {
-      console.warn(
-        "WARN: Could not find the current signal-backed feature-gate hook - " +
-          "skipping Codex Micro gate override",
-      );
-    }
-    return source;
+  const directGate = new RegExp(
+    `(${JS_IDENT})\\(\`${CODEX_MICRO_GATE_ID}\`\\)`,
+    "g",
+  );
+  const matches = [...source.matchAll(directGate)];
+  if (source.includes(`\`${CODEX_MICRO_ROUTE}\``) && matches.length > 0) {
+    return source.replace(directGate, `!0/*${CODEX_MICRO_GATE_MARKER}*/`);
   }
-  if (!hasCodexMicroCallsite(source, hook.hookName)) {
-    return source;
+  if (source.includes(`\`${CODEX_MICRO_ROUTE}\``)) {
+    console.warn(
+      "WARN: Could not find the current Codex Micro feature-gate callsites - " +
+        "skipping Codex Micro gate override",
+    );
   }
-
-  const replacement = `${hook.prefix}${hook.atomReadName}(${hook.source.match(/;let ([A-Za-z_$][\w$]*);return/u)[1]})||` +
-    `${hook.argumentName}===\`${CODEX_MICRO_GATE_ID}\`/*${CODEX_MICRO_GATE_MARKER}*/${hook.suffix}`;
-  return source.replace(hook.source, replacement);
+  return source;
 }
 
 function hasCodexMicroServiceContract(source) {
@@ -256,9 +219,7 @@ module.exports = {
   applyCodexMicroFeatureGatePatch,
   applyCodexMicroHotplugPatch,
   codexMicroTopologyWatcher,
-  exportedFeatureGateHook,
   findCodexMicroServiceBundle,
-  hasCodexMicroCallsite,
   hasCodexMicroServiceContract,
   matchesCodexMicroFeatureGateContract,
   patchCodexMicroHotplugSource,
@@ -285,7 +246,7 @@ module.exports = {
       id: "webview-feature-gate",
       order: 28_990,
       ciPolicy: "opt-in",
-      pattern: /^app-initial-[A-Za-z0-9_-]+\.js$/,
+      pattern: /^app-(?:initial|primary)-[A-Za-z0-9_-]+\.js$/,
       assetMatch: matchesCodexMicroFeatureGateContract,
       missingDescription: "current Codex Micro feature-gate webview bundle",
       skipDescription: "Codex Micro feature-gate override",

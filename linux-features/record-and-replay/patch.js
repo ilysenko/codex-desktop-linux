@@ -262,14 +262,10 @@ function recordReplayActiveSpeechContextExpression(dispatchVar, transcriptVar) {
   return `(()=>{let t=String(${transcriptVar}??"").trim();if(t.length>0){let n="codex-linux-record-replay-global-dictation-"+Date.now()+"-"+Math.random().toString(36).slice(2);${dispatchVar}.dispatchMessage("fetch",{hostId:"local",requestId:n,method:"POST",url:"vscode://codex/linux-record-replay-speech-context-active",body:JSON.stringify({transcript:t,source:"codex-global-dictation"})})}})()`;
 }
 
-function recordReplayConversationTranscriptPattern() {
-  return /([A-Za-z_$][\w$]*)\.length>0&&([A-Za-z_$][\w$]*)!==`discard`&&globalThis\.codexLinuxConversationShouldSendTranscript\?\.\(\1,\2\)!==!1&&\((([A-Za-z_$][\w$]*)\.getInstance\(\)\.dispatchMessage\(`global-dictation-record-history-item`,\{text:\1\}\),\2===`send`\?([A-Za-z_$][\w$]*)\.onTranscriptSend\(\1\):\5\.onTranscriptInsert\(\1\))\)/u;
-}
-
-function recordReplayPersistentTranscriptPattern() {
+function recordReplayCompiledTranscriptPattern() {
   const id = String.raw`[A-Za-z_$][\w$]*`;
   return new RegExp(
-    String.raw`(?<transcript>${id})\.length>0&&\((?<dispatch>(?<persistence>${id})==null\?(?<history>${id})\.getInstance\(\)\.dispatchMessage\(\`global-dictation-record-history-item\`,\{text:\k<transcript>\}\):\k<persistence>\.setTranscript\(\k<transcript>\),(?<analytics>${id})\.performance\.mark\(\`transcript_dispatched\`\),(?<action>${id}\.action)===\`send\`\?(?<handlers>${id})\.onTranscriptSend\(\k<transcript>\):\k<handlers>\.onTranscriptInsert\(\k<transcript>\))\)`,
+    String.raw`(?<transcript>${id})\.length>0\?\((?<dispatch>(?<persistence>${id})==null\?(?<history>${id})\.getInstance\(\)\.dispatchMessage\(\`global-dictation-record-history-item\`,\{text:\k<transcript>\}\):\k<persistence>\.setTranscript\(\k<transcript>\),(?<analytics>${id})\.performance\.mark\(\`transcript_dispatched\`\),(?<action>${id}\.action)===\`send\`\?await (?<handlers>${id})\.onTranscriptSend\(\k<transcript>\):await \k<handlers>\.onTranscriptInsert\(\k<transcript>\))\):(?<cancel>${id}\.onTranscriptCancel\?\.\(\))`,
     "",
   );
 }
@@ -291,22 +287,13 @@ function applyRecordReplayDictationTranscriptPatch(currentSource) {
     return currentSource;
   }
 
-  const conversationPattern = recordReplayConversationTranscriptPattern();
-  if (conversationPattern.test(currentSource)) {
+  const compiledPattern = recordReplayCompiledTranscriptPattern();
+  if (compiledPattern.test(currentSource)) {
     return currentSource.replace(
-      conversationPattern,
-      (_, transcriptVar, actionVar, dispatchExpression) =>
-        `${transcriptVar}.length>0&&${actionVar}!==\`discard\`&&globalThis.codexLinuxConversationShouldSendTranscript?.(${transcriptVar},${actionVar})!==!1&&(${recordReplayTranscriptCaptureExpression(transcriptVar, actionVar)},${dispatchExpression})`,
-    );
-  }
-
-  const persistentPattern = recordReplayPersistentTranscriptPattern();
-  if (persistentPattern.test(currentSource)) {
-    return currentSource.replace(
-      persistentPattern,
+      compiledPattern,
       (...args) => {
-        const { transcript, action, dispatch } = args.at(-1);
-        return `${transcript}.length>0&&(${recordReplayTranscriptCaptureExpression(transcript, action)},${dispatch})`;
+        const { transcript, action, dispatch, cancel } = args.at(-1);
+        return `${transcript}.length>0?(${recordReplayTranscriptCaptureExpression(transcript, action)},${dispatch}):${cancel}`;
       },
     );
   }
@@ -322,14 +309,13 @@ function hasRecordReplayDictationTranscriptContract(source) {
   if (source.includes("codexLinuxRecordReplayCaptureTranscript")) {
     return true;
   }
-  return recordReplayConversationTranscriptPattern().test(source)
-    || recordReplayPersistentTranscriptPattern().test(source);
+  return recordReplayCompiledTranscriptPattern().test(source);
 }
 
-function recordReplayCurrentGlobalDictationPattern() {
+function recordReplayCompiledGlobalDictationPattern() {
   const id = String.raw`[A-Za-z_$][\w$]*`;
   return new RegExp(
-    String.raw`(?<prefix>(?<session>${id})\.analytics\.performance\.mark\(\`transcript_dispatched\`\),)(?<dispatch>${id})\.dispatchMessage\(\`global-dictation-completed\`,\{sessionId:\k<session>\.sessionId,text:(?<transcript>${id})\}\)`,
+    String.raw`(?<dispatch>${id})\.dispatchMessage\(\`global-dictation-completed\`,\{sessionId:(?<session>${id})\.sessionId,text:(?<transcript>${id})\}\),(?<suffix>\k<session>\.analytics\.performance\.mark\(\`transcript_dispatched\`\))`,
     "",
   );
 }
@@ -343,13 +329,13 @@ function applyRecordReplayGlobalDictationTranscriptPatch(currentSource) {
     return currentSource;
   }
 
-  const currentCompletedPattern = recordReplayCurrentGlobalDictationPattern();
-  if (currentCompletedPattern.test(currentSource)) {
+  const compiledCompletedPattern = recordReplayCompiledGlobalDictationPattern();
+  if (compiledCompletedPattern.test(currentSource)) {
     return currentSource.replace(
-      currentCompletedPattern,
+      compiledCompletedPattern,
       (...args) => {
-        const { prefix, dispatch, session, transcript } = args.at(-1);
-        return `${prefix}${recordReplayActiveSpeechContextExpression(dispatch, transcript)},${dispatch}.dispatchMessage(\`global-dictation-completed\`,{sessionId:${session}.sessionId,text:${transcript}})`;
+        const { dispatch, session, transcript, suffix } = args.at(-1);
+        return `${recordReplayActiveSpeechContextExpression(dispatch, transcript)},${dispatch}.dispatchMessage(\`global-dictation-completed\`,{sessionId:${session}.sessionId,text:${transcript}}),${suffix}`;
       },
     );
   }

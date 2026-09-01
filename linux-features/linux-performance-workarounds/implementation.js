@@ -98,8 +98,9 @@ function mountAnimations(source) {
     const vicinity = prefix + source.slice(controller.index, controller.index + 6000);
     const initialPrefix = `,${initial}=`;
     const exitPrefix = `,${exit}=`;
-    const unpatched = new RegExp(`${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}(\\1&&![A-Za-z_$][\\w$]*\\?\\2:!1),`, "gu");
-    const patched = new RegExp(`${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}!1,`, "gu");
+    const exitDeclaration = `let ${escapeRegExp(exitPrefix.slice(1))}`;
+    const unpatched = new RegExp(`${exitDeclaration}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}(\\1&&![A-Za-z_$][\\w$]*\\?\\2:!1),`, "gu");
+    const patched = new RegExp(`${exitDeclaration}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}!1,`, "gu");
     const unpatchedMatches = [...prefix.matchAll(unpatched)];
     const patchedMatches = [...prefix.matchAll(patched)];
     const pair = unpatchedMatches.at(-1) ?? patchedMatches.at(-1);

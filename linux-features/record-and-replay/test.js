@@ -173,7 +173,7 @@ test("record-and-replay dictation descriptor tracks moved upstream composer bund
   assert.ok(descriptor);
   assert.equal(descriptor.pattern.test("app-initial-C-fROkKo.js"), true);
   assert.equal(descriptor.assetMatch(
-    "let l=c.trim();l.length>0&&(a==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):a.setTranscript(l),t.performance.mark(`transcript_dispatched`),e.action===`send`?i.onTranscriptSend(l):i.onTranscriptInsert(l))",
+    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):await a.onTranscriptInsert(l)):a.onTranscriptCancel?.()",
   ), true);
   assert.equal(descriptor.pattern.test("app-initial~app-main~onboarding-page-BUwCKIcU.js"), false);
   assert.equal(descriptor.pattern.test("use-dictation-BUwCKIcU.js"), false);
@@ -636,17 +636,18 @@ test("record-and-replay rejects the retired non-persistent composer contract", (
   assert.equal(patched, source);
 });
 
-test("record-and-replay matches the official 26.810.41047 persistent composer transcript", () => {
+test("record-and-replay matches the official 26.831.20005 compiled composer transcript", () => {
   const source =
-    "let l=c.trim();l.length>0&&(a==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):a.setTranscript(l),t.performance.mark(`transcript_dispatched`),e.action===`send`?i.onTranscriptSend(l):i.onTranscriptInsert(l))";
+    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):await a.onTranscriptInsert(l)):a.onTranscriptCancel?.()";
   const patched = applyRecordReplayDictationTranscriptPatch(source);
 
   assert.notEqual(patched, source);
   assert.equal(applyRecordReplayDictationTranscriptPatch(patched), patched);
-  assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(l,e\.action\)/);
-  assert.match(patched, /a==null\?_m\.getInstance\(\)\.dispatchMessage/);
-  assert.match(patched, /a\.setTranscript\(l\)/);
-  assert.match(patched, /e\.action===`send`\?i\.onTranscriptSend\(l\):i\.onTranscriptInsert\(l\)/);
+  assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(l,t\.action\)/);
+  assert.match(patched, /o==null\?_m\.getInstance\(\)\.dispatchMessage/);
+  assert.match(patched, /o\.setTranscript\(l\)/);
+  assert.match(patched, /t\.action===`send`\?await a\.onTranscriptSend\(l\):await a\.onTranscriptInsert\(l\)/);
+  assert.match(patched, /:a\.onTranscriptCancel\?\.\(\)/);
 });
 
 test("record-and-replay rejects the retired pre-analytics global dictation contract", () => {
@@ -657,9 +658,9 @@ test("record-and-replay rejects the retired pre-analytics global dictation contr
   assert.equal(patched, source);
 });
 
-test("record-and-replay matches the official 26.810.41047 global dictation success chain", () => {
+test("record-and-replay matches the official 26.831.20005 global dictation success chain", () => {
   const source =
-    "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),e.analytics.performance.mark(`transcript_dispatched`),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a})}";
+    "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(`transcript_dispatched`)}";
   const patched = applyRecordReplayGlobalDictationTranscriptPatch(source);
 
   assert.notEqual(patched, source);
@@ -680,9 +681,9 @@ test("record-and-replay current transcript drift remains byte-identical", () => 
 
 test("record-and-replay generated transcript runtimes are syntactically valid", () => {
   const source =
-    "let l=c.trim();l.length>0&&(a==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):a.setTranscript(l),t.performance.mark(`transcript_dispatched`),e.action===`send`?i.onTranscriptSend(l):i.onTranscriptInsert(l))";
+    "async function current(){let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):await a.onTranscriptInsert(l)):a.onTranscriptCancel?.()}";
   const globalDictationSource =
-    "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),e.analytics.performance.mark(`transcript_dispatched`),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a})}";
+    "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(`transcript_dispatched`)}";
 
   assert.doesNotThrow(() => new vm.Script(recordReplayHudRuntimeSource()));
   assert.doesNotThrow(() => new vm.Script(applyRecordReplayDictationTranscriptPatch(source)));
@@ -808,19 +809,12 @@ test("record-and-replay HUD drains queued dictation transcripts into active bund
   );
 });
 
-test("record-and-replay transcript hook composes after conversation mode transcript gate", () => {
+test("record-and-replay rejects the retired conversation-mode transcript gate", () => {
   const source =
     "function send(e,n){let i=`Create an image of a neon cabin`;i.length>0&&e!==`discard`&&globalThis.codexLinuxConversationShouldSendTranscript?.(i,e)!==!1&&(j.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))}";
   const patched = applyRecordReplayDictationTranscriptPatch(source);
 
-  assert.notEqual(patched, source);
-  assert.equal(applyRecordReplayDictationTranscriptPatch(patched), patched);
-  assert.match(
-    patched,
-    /codexLinuxConversationShouldSendTranscript\?\.\(i,e\)!==!1&&\(\(globalThis\.codexLinuxRecordReplayCaptureTranscript\?\.\(i,e\)\?\?/,
-  );
-  assert.match(patched, /codexLinuxRecordReplayPendingTranscripts\?\?=\[\]/);
-  assert.match(patched, /global-dictation-record-history-item/);
+  assert.equal(patched, source);
 });
 
 test("record-and-replay plugin gate is idempotent and linux-only", () => {

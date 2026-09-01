@@ -92,13 +92,13 @@ test("status panel preference follows the current lifted menu state", () => {
   assert.equal(applyPersistentStatusPanelPatch(patched), patched);
 });
 
-test("descriptor patches the current app-initial composer status bundle", () => {
+test("descriptor patches the current app-primary composer status bundle", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "persistent-status-panel-assets-"));
   try {
     const assetsDir = path.join(tempDir, "webview", "assets");
     const assetPath = path.join(
       assetsDir,
-      "app-initial-BTphDPeq.js",
+      "app-primary-a0bff570446b.js",
     );
     fs.mkdirSync(assetsDir, { recursive: true });
     fs.writeFileSync(assetPath, liftedStatusStateComposerSource);
