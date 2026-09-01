@@ -37,8 +37,8 @@ function applyLinuxAppshotMainProcessPatch(currentSource) {
     return currentSource;
   }
 
-  const frontmostPattern = /("computer-use-frontmost-window":async\(\{origin:[A-Za-z_$][\w$]*,signal:[A-Za-z_$][\w$]*\}\)=>)process\.platform===`win32`/g;
-  const capturePattern = /("computer-use-start-capture":async\(\{animationDestination:([A-Za-z_$][\w$]*),bundleIdentifier:([A-Za-z_$][\w$]*),origin:([A-Za-z_$][\w$]*),requestId:([A-Za-z_$][\w$]*),signal:[A-Za-z_$][\w$]*\}\)=>\{)if\(process\.platform!==`darwin`&&process\.platform!==`win32`\)return null;/g;
+  const frontmostPattern = /("computer-use-frontmost-window":async\(\{origin:[A-Za-z_$][\w$]*,signal:[A-Za-z_$][\w$]*\}\)=>)(?=process\.platform===`win32`)/g;
+  const capturePattern = /("computer-use-start-capture":async\(\{animationDestination:([A-Za-z_$][\w$]*),animationPresentationStyle:[A-Za-z_$][\w$]*,bundleIdentifier:([A-Za-z_$][\w$]*),origin:([A-Za-z_$][\w$]*),requestId:([A-Za-z_$][\w$]*),signal:[A-Za-z_$][\w$]*\}\)=>\{)if\(process\.platform!==`darwin`&&process\.platform!==`win32`\)return null;/g;
   const frontmostMatches = [...currentSource.matchAll(frontmostPattern)];
   const captureMatches = [...currentSource.matchAll(capturePattern)];
   if (frontmostMatches.length !== 1 || captureMatches.length !== 1) {
@@ -49,7 +49,7 @@ function applyLinuxAppshotMainProcessPatch(currentSource) {
   }
   let patchedSource = currentSource.replace(
     frontmostPattern,
-    "$1process.platform===`linux`?codexLinuxAppshotFrontmostWindow():process.platform===`win32`",
+    "$1process.platform===`linux`?codexLinuxAppshotFrontmostWindow():",
   );
   patchedSource = patchedSource.replace(
     capturePattern,

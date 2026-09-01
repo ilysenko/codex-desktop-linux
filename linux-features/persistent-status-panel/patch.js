@@ -40,7 +40,7 @@ const patches = [
     phase: "webview-asset",
     order: 20_800,
     ciPolicy: "optional",
-    pattern: /^app-initial-[^.]+\.js$/,
+    pattern: /^app-primary-[^.]+\.js$/,
     missingDescription: "composer status panel bundle",
     skipDescription: "persistent status panel patch",
     apply: applyPersistentStatusPanelPatch,

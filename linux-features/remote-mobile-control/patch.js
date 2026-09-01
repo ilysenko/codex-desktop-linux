@@ -1453,7 +1453,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-active-status",
     phase: "webview-asset",
-    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
+    pattern: /^app-primary-[A-Za-z0-9_-]+\.js$/,
     order: 20_160,
     ciPolicy: "optional",
     missingDescription: "app main bundle",

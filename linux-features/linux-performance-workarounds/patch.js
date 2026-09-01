@@ -16,7 +16,7 @@ module.exports = [
     phase: "webview-asset",
     order: 20_100,
     ciPolicy: "optional",
-    pattern: /^app-initial-[^.]+\.js$/,
+    pattern: /^app-primary-[^.]+\.js$/,
     assetMatch: matchesLinuxSidebarScrollPerformanceContract,
     missingDescription: "main sidebar scroll bundle",
     skipDescription: "sidebar scroll performance workaround",
