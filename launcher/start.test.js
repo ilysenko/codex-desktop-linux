@@ -8,6 +8,8 @@ const path = require("node:path");
 const test = require("node:test");
 
 const templatePath = path.join(__dirname, "start.sh.template");
+const bashPath = childProcess.execFileSync("bash", ["-c", "command -v bash"], { encoding: "utf8" }).trim();
+const dirnamePath = childProcess.execFileSync("bash", ["-c", "command -v dirname"], { encoding: "utf8" }).trim();
 
 // Launcher tests must never contact the production usage counter. Individual
 // reporting tests opt back in with an isolated fake curl executable.
@@ -15,12 +17,12 @@ process.env.CODEX_LINUX_DISABLE_USAGE_REPORTING = "1";
 
 function writeExecutable(filePath, source) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, source, { mode: 0o755 });
+  fs.writeFileSync(filePath, source.replace(/^#!\/bin\/bash\n/, `#!${bashPath}\n`), { mode: 0o755 });
 }
 
 function createApp(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-launcher-test-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
   const launcher = fs.readFileSync(templatePath, "utf8")
     .replaceAll("__CODEX_LINUX_APP_ID__", "codex-desktop")
     .replaceAll("__CODEX_LINUX_APP_DISPLAY_NAME__", "ChatGPT Community");
@@ -32,6 +34,7 @@ function createApp(t) {
   }
   writeExecutable(path.join(root, "ChatGPT"), `#!/bin/bash
 printf '%s\n' "$CHROME_DESKTOP" "$BAMF_DESKTOP_FILE_HINT" "$HOOK_ENV" "$LAUNCHER_ENV" > "$TEST_ROOT/environment"
+printf '%s\n' "\${CODEX_HOME:-}" > "$TEST_ROOT/codex-home"
 printf '%s\n' "$@" > "$TEST_ROOT/arguments"
 exit 7
 `);
@@ -113,11 +116,15 @@ printf 'unexpected\\n' >> "$TEST_ROOT/curl-calls"
   assert.equal(disabled.stderr, "");
   assert.equal(fs.existsSync(path.join(disabledRoot, "curl-calls")), false);
   assert.equal(fs.existsSync(path.join(disabledRoot, "state")), false);
+  assert.equal(
+    fs.readFileSync(path.join(disabledRoot, "codex-home"), "utf8").trim(),
+    path.join(disabledRoot, "codex-home"),
+  );
 
   const missingRoot = createApp(t);
   const missingBin = path.join(missingRoot, "bin");
   fs.mkdirSync(missingBin, { recursive: true });
-  fs.symlinkSync("/usr/bin/dirname", path.join(missingBin, "dirname"));
+  fs.symlinkSync(dirnamePath, path.join(missingBin, "dirname"));
   const missing = childProcess.spawnSync(path.join(missingRoot, "start.sh"), [], {
     env: {
       ...process.env,
@@ -198,6 +205,140 @@ test("launcher composes declarative hooks and forwards arguments", (t) => {
   ]);
   assert.equal(fs.readFileSync(path.join(root, "prelaunch"), "utf8"), "prelaunch");
   assert.equal(fs.readFileSync(path.join(root, "after-exit"), "utf8"), "after-exit");
+});
+
+test("launcher exports the physical default CODEX_HOME when it is a symlink", (t) => {
+  const root = createApp(t);
+  const home = path.join(root, "home");
+  const physicalCodexHome = path.join(root, "physical-codex-home");
+  fs.mkdirSync(home, { recursive: true });
+  fs.mkdirSync(physicalCodexHome, { recursive: true });
+  fs.symlinkSync(physicalCodexHome, path.join(home, ".codex"), "dir");
+
+  const env = {
+    ...process.env,
+    HOME: home,
+    TEST_ROOT: root,
+    XDG_CONFIG_HOME: path.join(root, "config"),
+  };
+  delete env.CODEX_HOME;
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    env,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), physicalCodexHome);
+});
+
+test("launcher exports a physical explicit CODEX_HOME when it is a symlink", (t) => {
+  const root = createApp(t);
+  const physicalCodexHome = path.join(root, "physical-codex-home");
+  const linkedCodexHome = path.join(root, "linked-codex-home");
+  fs.mkdirSync(physicalCodexHome, { recursive: true });
+  fs.symlinkSync(physicalCodexHome, linkedCodexHome, "dir");
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    env: {
+      ...process.env,
+      CODEX_HOME: linkedCodexHome,
+      TEST_ROOT: root,
+      XDG_CONFIG_HOME: path.join(root, "config"),
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), physicalCodexHome);
+});
+
+test("launcher ignores CDPATH when canonicalizing a relative CODEX_HOME", (t) => {
+  const root = createApp(t);
+  const codexHome = path.join(root, "profile");
+  const cdpathRoot = path.join(root, "cdpath");
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.mkdirSync(path.join(cdpathRoot, "profile"), { recursive: true });
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    cwd: root,
+    env: {
+      ...process.env,
+      CDPATH: cdpathRoot,
+      CODEX_HOME: "profile",
+      TEST_ROOT: root,
+      XDG_CONFIG_HOME: path.join(root, "config"),
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), codexHome);
+});
+
+test("launcher treats a dash CODEX_HOME as a relative directory", (t) => {
+  const root = createApp(t);
+  const codexHome = path.join(root, "-");
+  const oldWorkingDirectory = path.join(root, "old-working-directory");
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.mkdirSync(oldWorkingDirectory, { recursive: true });
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    cwd: root,
+    env: {
+      ...process.env,
+      CODEX_HOME: "-",
+      OLDPWD: oldWorkingDirectory,
+      TEST_ROOT: root,
+      XDG_CONFIG_HOME: path.join(root, "config"),
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), codexHome);
+});
+
+test("launcher preserves the physical root CODEX_HOME spelling", (t) => {
+  const root = createApp(t);
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    env: {
+      ...process.env,
+      CODEX_HOME: "/",
+      TEST_ROOT: root,
+      XDG_CONFIG_HOME: path.join(root, "config"),
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), "/");
+});
+
+test("launcher canonicalizes CODEX_HOME loaded from an environment hook", (t) => {
+  const root = createApp(t);
+  const physicalCodexHome = path.join(root, "physical-codex-home");
+  const linkedCodexHome = path.join(root, "linked-codex-home");
+  fs.mkdirSync(physicalCodexHome, { recursive: true });
+  fs.symlinkSync(physicalCodexHome, linkedCodexHome, "dir");
+  fs.mkdirSync(path.join(root, ".codex-linux", "env.d"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".codex-linux", "env.d", "codex-home.env"), `CODEX_HOME=${linkedCodexHome}\n`);
+
+  const env = {
+    ...process.env,
+    TEST_ROOT: root,
+    XDG_CONFIG_HOME: path.join(root, "config"),
+  };
+  delete env.CODEX_HOME;
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    env,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "codex-home"), "utf8").trim(), physicalCodexHome);
 });
 
 test("launcher loads global and app-specific Electron flags", (t) => {

@@ -3,12 +3,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-function requireName(source, moduleName) {
-  const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(new RegExp(`([A-Za-z_$][\\w$]*)=require\\("${escaped}"\\)`));
-  return match?.[1] ?? null;
-}
-
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_GUARD =
   "if(process.platform!==`darwin`&&process.platform!==`win32`)throw Error(`Remote control device keys are only available on macOS and Windows`);";
@@ -89,6 +83,7 @@ function replaceOnce(source, needle, replacement) {
 
 function linuxDeviceKeyProviderSource({ childProcessVar, cryptoVar, fsVar, pathVar }) {
   return [
+    `const ${pathVar}=require(\`node:path\`),${fsVar}=require(\`node:fs\`),${cryptoVar}=require(\`node:crypto\`),${childProcessVar}=require(\`node:child_process\`);`,
     "const codexLinuxRemoteControlKeyStoreVersion=2,codexLinuxRemoteControlKeyStoreMaxBytes=1048576,codexLinuxRemoteControlKeyStoreMaxKeys=64;",
     "function codexLinuxRemoteControlAssertOwnedRegularStat(e){if(!e.isFile())throw Error(`Linux remote control key state must be a regular file`);if(typeof process.getuid==`function`&&e.uid!==process.getuid())throw Error(`Linux remote control key state is owned by another user`);if((e.mode&511)!==384)throw Error(`Linux remote control key state permissions must be 0600`);return e}",
     "function codexLinuxRemoteControlAssertOwnedRegularFile(e,t){let n=t.lstatSync(e);if(n.isSymbolicLink())throw Error(`Linux remote control key state must be a regular file`);return codexLinuxRemoteControlAssertOwnedRegularStat(n)}",
@@ -164,14 +159,10 @@ function applyLinuxRemoteControlDeviceKeyPatch(source) {
     return source;
   }
 
-  const cryptoVar = requireName(source, "node:crypto");
-  const fsVar = requireName(source, "node:fs");
-  const pathVar = requireName(source, "node:path");
-  const childProcessVar = "require(`node:child_process`)";
-  if (cryptoVar == null || fsVar == null || pathVar == null) {
-    console.warn("WARN: Could not find Node module aliases - skipping Linux remote-control device-key patch");
-    return source;
-  }
+  const cryptoVar = "codexLinuxRemoteControlCrypto";
+  const fsVar = "codexLinuxRemoteControlFs";
+  const pathVar = "codexLinuxRemoteControlPath";
+  const childProcessVar = "codexLinuxRemoteControlChildProcess";
 
   const insertionNeedle = source.match(DEVICE_KEY_REQUIRE_NEEDLE)?.[0] ?? null;
   if (insertionNeedle == null || !source.includes(DEVICE_KEY_GUARD)) {
@@ -828,51 +819,64 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       return matches.length === 1 ? matches[0] : null;
     };
     const handlerNeedle =
-      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=\{method:\4,params:\5\};(?=if\(!\3\.streamState\.shouldIgnoreThreadMutationAsFollower\(\4,\5\))/u;
+      /function (?<handler>[A-Za-z_$][\w$]*)\((?<owner>[A-Za-z_$][\w$]*),(?<notification>[A-Za-z_$][\w$]*),(?<callback>[A-Za-z_$][\w$]*)\)\{let\{manager:(?<manager>[A-Za-z_$][\w$]*),notificationContext:(?<context>[A-Za-z_$][\w$]*)\}=\k<owner>;(?=if\(!\(\k<context>\.streamState\.shouldIgnoreThreadMutationAsFollower\(\k<notification>\.method,\k<notification>\.params,`notification`\)\|\|\k<context>\.resumeNotificationBuffer\.buffer\(\k<notification>,\k<callback>\)\|\|\k<context>\.threadStartedNotificationDeferral\.bufferNotification\(\k<notification>,\k<callback>\)\|\|\k<callback>\?\.\(\)\)\))/u;
     const handlerMatch = singleMatch(patched, handlerNeedle);
     const normalizerNeedle =
-      /case`turn\/started`:\{let\{threadId:([A-Za-z_$][\w$]*),turn:[A-Za-z_$][\w$]*\}=([A-Za-z_$][\w$]*)\.params,[A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\);if\(![A-Za-z_$][\w$]*\.threadStore\.conversations\.get\([A-Za-z_$][\w$]*\)\)/u;
+      /case`turn\/started`:\{let\{threadId:([A-Za-z_$][\w$]*),turn:[A-Za-z_$][\w$]*\}=([A-Za-z_$][\w$]*)\.params,[A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\.threadStore\.conversations\.get\([A-Za-z_$][\w$]*\);/u;
     const normalizerMatch = singleMatch(patched, normalizerNeedle);
     const completedItemNeedle =
       /!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\.id,\3\.type,([A-Za-z_$][\w$]*)\.logger\)/u;
     const completedItemMatch = singleMatch(patched, completedItemNeedle);
-    const standardUnknownNeedle = (method) =>
-      new RegExp(
-        "if\\(!([A-Za-z_$][\\w$]*)\\.threadStore\\.conversations\\.get\\(([A-Za-z_$][\\w$]*)\\)\\)\\{([A-Za-z_$][\\w$]*)\\.logger\\.error\\(`Received " +
-          `${escapeRegExp(method)} for unknown conversation` +
-          "`,\\{safe:\\{conversationId:\\2\\},sensitive:\\{\\}\\}\\);break\\}",
-        "u",
-      );
     const unknownNeedles = [
-      standardUnknownNeedle("turn/started"),
-      /if\(!([A-Za-z_$][\w$]*)\.threadStore\.conversations\.get\(([A-Za-z_$][\w$]*)\)\)\{[^{}]*?([A-Za-z_$][\w$]*)\.logger\.error\(`Received turn\/completed for unknown conversation`,\{safe:\{conversationId:\2\},sensitive:\{\}\}\);break\}/u,
-      standardUnknownNeedle("item/started"),
-      /if\([^{};]*,!([A-Za-z_$][\w$]*)\.threadStore\.conversations\.get\(([A-Za-z_$][\w$]*)\)\)\{([A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/completed for unknown conversation`,\{safe:\{conversationId:\2\},sensitive:\{\}\}\);break\}/u,
+      /(?<condition>if\((?<checked>[A-Za-z_$][\w$]*)==null\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received turn\/started for unknown conversation`,\{safe:\{conversationId:(?<conversation>[A-Za-z_$][\w$]*)\},sensitive:\{\}\}\);break\}/u,
+      /(?<condition>if\(!(?<context>[A-Za-z_$][\w$]*)\.threadStore\.conversations\.has\((?<conversation>[A-Za-z_$][\w$]*)\)\))\{[^{}]*?(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received turn\/completed for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
+      /(?<condition>if\(!(?<context>[A-Za-z_$][\w$]*)\.threadStore\.conversations\.has\((?<conversation>[A-Za-z_$][\w$]*)\)\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/started for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
+      /(?<condition>if\((?<checked>[A-Za-z_$][\w$]*)==null\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/completed for unknown conversation`,\{safe:\{conversationId:(?<conversation>[A-Za-z_$][\w$]*)\},sensitive:\{\}\}\);break\}/u,
     ];
+    const ownerPatterns = [
+      /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*),[^)]+\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*),automationTurns:[A-Za-z_$][\w$]*,createId:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*;/u,
+      /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*)\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*),createId:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*;/u,
+    ];
+    const unknownContracts = unknownNeedles.map((needle, index) => {
+      const match = singleMatch(patched, needle);
+      if (match == null) return null;
+      const functionStart = patched.lastIndexOf("function ", match.index);
+      const prefix = functionStart === -1 ? "" : patched.slice(functionStart, match.index);
+      const owner = prefix.match(ownerPatterns[index < 2 ? 0 : 1]);
+      if (
+        owner == null ||
+        (match.groups.manager != null && match.groups.manager !== owner[2]) ||
+        (match.groups.context != null && match.groups.context !== owner[3])
+      ) return null;
+      return { match, notification: owner[1], manager: owner[2], context: owner[3] };
+    });
 
     if (
       handlerMatch != null &&
       normalizerMatch != null &&
       completedItemMatch != null &&
-      unknownNeedles.every((needle) => singleMatch(patched, needle) != null)
+      unknownContracts.every((contract) => contract != null)
     ) {
-      const [, , clientVar, managerVar, , , notificationVar] = handlerMatch;
+      const {
+        context: notificationContextVar,
+        manager: managerVar,
+        notification: notificationVar,
+      } = handlerMatch.groups;
       const normalizerFn = normalizerMatch[3];
       const itemFinderFn = completedItemMatch[1];
       const helpers =
-        `function codexLinuxRemoteMobileBufferPendingNotification(e,t){let n=t.params.threadId??t.params.thread?.id;if(typeof n!==\`string\`)return!1;let r=e.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER}?.get(${normalizerFn}(n));return r==null?!1:(r.push(t),!0)}` +
-        `function ${REMOTE_MOBILE_HYDRATION_MARKER}(e,t,n,r){let i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER};if(i==null)i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER}=new Map;let a=i.get(n);if(a!=null){a.push(r);return}i.set(n,[r]);let o=r.params.threadId??r.params.thread?.id;Promise.resolve(t.threadStore.hydrateActiveThread(o)).then(()=>{let r=i.get(n)??[];i.delete(n);if(!t.threadStore.conversations.get(n)){e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{}});return}for(let t of r)e.onNotification(t.method,t.params)},r=>{i.delete(n),e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{error:r}})})}` +
+        `function codexLinuxRemoteMobileBufferPendingNotification(e,t,n){let r=t.params.threadId??t.params.thread?.id;if(typeof r!==\`string\`)return!1;let i=e.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER}?.get(${normalizerFn}(r));return i==null?!1:(i.push([t,n]),!0)}` +
+        `function ${REMOTE_MOBILE_HYDRATION_MARKER}(e,t,n,r){let i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER};if(i==null)i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER}=new Map;let a=i.get(n);if(a!=null){a.push([r]);return}i.set(n,[[r]]);let o=r.params.threadId??r.params.thread?.id;Promise.resolve(t.threadStore.hydrateActiveThread(o)).then(()=>{let r=i.get(n)??[];i.delete(n);if(!t.threadStore.conversations.get(n)){e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{}});return}for(let[t,n]of r)e.onNotification(t.method,t.params,n)},r=>{i.delete(n),e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{error:r}})})}` +
         `function ${REMOTE_MOBILE_COMPLETED_ITEM_MARKER}(e,t,n){let r=e.items.find(e=>e.id===t.id);return r==null?!0:${itemFinderFn}(e,t.id,t.type,n)!=null}`;
 
       patched = `${helpers}${patched}`.replace(
         handlerNeedle,
-        (needle) => `${needle}if(codexLinuxRemoteMobileBufferPendingNotification(${managerVar},${notificationVar}))return;`,
+        (needle) => `${needle}if(codexLinuxRemoteMobileBufferPendingNotification(${notificationContextVar},${notificationVar},${handlerMatch.groups.callback}))return;`,
       );
-      for (const needle of unknownNeedles) {
+      for (const contract of unknownContracts) {
         patched = patched.replace(
-          needle,
-          (_match, matchedManagerVar, conversationVar, matchedClientVar) =>
-            `if(!${matchedManagerVar}.threadStore.conversations.get(${conversationVar})){${REMOTE_MOBILE_HYDRATION_MARKER}(${matchedClientVar},${matchedManagerVar},${conversationVar},${notificationVar});return}`,
+          contract.match[0],
+          `${contract.match.groups.condition}{${REMOTE_MOBILE_HYDRATION_MARKER}(${contract.manager},${contract.context},${contract.match.groups.conversation},${contract.notification});return\`deferred\`}`,
         );
       }
       patched = patched.replace(
@@ -1132,10 +1136,10 @@ function applyLinuxRemoteControlEnablementBridgePatch(source) {
 
   if (!patched.includes(REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER)) {
     const currentBridgePattern =
-      /function ([A-Za-z_$][\w$]*)\(\)\{let ([A-Za-z_$][\w$]*)=\(0,([A-Za-z_$][\w$]*)\.c\)\(6\),\{checkGate:([A-Za-z_$][\w$]*),isLoading:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*);\2\[0\]===\4\?\7=\2\[1\]:\(\7=\4\(`1042620455`\)\|\|\4\(`2055603567`\),\2\[0\]=\4,\2\[1\]=\7\);let ([A-Za-z_$][\w$]*)=\7,([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*);return /u;
+      /function ([A-Za-z_$][\w$]*)\(\)\{let ([A-Za-z_$][\w$]*)=\(0,([A-Za-z_$][\w$]*)\.c\)\(10\),\{checkGate:([A-Za-z_$][\w$]*),isLoading:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*);\2\[0\]===\4\?\7=\2\[1\]:\(\7=\4\(([A-Za-z_$][\w$]*)\),\2\[0\]=\4,\2\[1\]=\7\);let ([A-Za-z_$][\w$]*)=\7,([A-Za-z_$][\w$]*);\2\[2\]!==\4\|\|\2\[3\]!==\9\?\(\10=\4\(`1042620455`\)\|\|\9,\2\[2\]=\4,\2\[3\]=\9,\2\[4\]=\10\):\10=\2\[4\];let ([A-Za-z_$][\w$]*)=\10,([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*);return /u;
     let patchedRegion = region.replace(
       currentBridgePattern,
-      (needle, _functionName, _cacheVar, _compilerVar, _checkGateVar, _isLoadingVar, _gateHookVar, gateValueVar, enabledVar) =>
+      (needle, _functionName, _cacheVar, _compilerVar, _checkGateVar, _isLoadingVar, _gateHookVar, _primaryGateValueVar, _primaryGateIdVar, _primaryGateVar, gateValueVar, enabledVar) =>
         needle.replace(
           `let ${enabledVar}=${gateValueVar},`,
           `let ${enabledVar}=${gateValueVar}||/*${REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER}*/typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`),`,
@@ -1153,15 +1157,15 @@ function applyLinuxRemoteControlEnablementBridgePatch(source) {
     return prefix + region + suffix;
   }
 
-  const selfAutoConnectReplacement = (desktopHostRequestFn, enabledVar, errorVar, loggerVar, logPrefixVar) =>
-    `${desktopHostRequestFn}(\`set-remote-control-connections-enabled\`,{params:{enabled:${enabledVar}}}).then(async e=>{if(${enabledVar}&&typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)){let t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null;if(t.length===0)try{let e=await ${desktopHostRequestFn}(\`refresh-remote-control-connections\`,{params:{}});t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=n??e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null}catch(e){${loggerVar}.warning(\`\${${logPrefixVar}} self_auto_connect_refresh_failed\`,{safe:{},sensitive:{error:e}})}if(n==null)try{let e=await ${desktopHostRequestFn}(\`get-global-state\`,{params:{key:\`electron-local-remote-control-installation-id\`}});n=e?.value??e?.state?.value??e?.globalState?.[\`electron-local-remote-control-installation-id\`]??null}catch(e){${loggerVar}.warning(\`\${${logPrefixVar}} self_auto_connect_identity_failed\`,{safe:{},sensitive:{error:e}})}let r=t.filter(e=>typeof e?.hostId==\`string\`&&e.hostId.startsWith(\`remote-control:\`)),i=new Set(r.filter(e=>n!=null&&(e.installationId??e.installation_id)===n).map(e=>e.hostId));await Promise.all(r.filter(e=>i.has(e.hostId)).map(e=>${desktopHostRequestFn}(\`set-remote-connection-auto-connect\`,{params:{hostId:e.hostId,autoConnect:!0}}).catch(t=>{${loggerVar}.warning(\`\${${logPrefixVar}} self_auto_connect_failed\`,{safe:{autoConnect:!0},sensitive:{hostId:e.hostId,error:t}})})))}}/*${REMOTE_CONTROL_SELF_AUTO_CONNECT_MARKER}*/).catch(${errorVar}=>{${loggerVar}.warning(\`\${${logPrefixVar}} sync_failed\`,{safe:{enabled:${enabledVar}},sensitive:{error:${errorVar}}})})`;
+  const selfAutoConnectReplacement = (desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar) =>
+    `${desktopHostRequestFn}(\`set-remote-control-connections-enabled\`,{params:{enabled:${enabledVar}${extraParams}}}).then(async e=>{if(${enabledVar}&&typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)){let t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null;if(t.length===0)try{let e=await ${desktopHostRequestFn}(\`refresh-remote-control-connections\`,{params:{}});t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=n??e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null}catch(e){${loggerVar}.warning(\`\${${logPrefixVar}} self_auto_connect_refresh_failed\`,{safe:{},sensitive:{error:e}})}if(n==null)try{let e=await ${desktopHostRequestFn}(\`get-global-state\`,{params:{key:\`electron-local-remote-control-installation-id\`}});n=e?.value??e?.state?.value??e?.globalState?.[\`electron-local-remote-control-installation-id\`]??null}catch(e){${loggerVar}.warning(\`\${${logPrefixVar}} self_auto_connect_identity_failed\`,{safe:{},sensitive:{error:e}})}let r=t.filter(e=>typeof e?.hostId==\`string\`&&e.hostId.startsWith(\`remote-control:\`)),i=new Set(r.filter(e=>n!=null&&(e.installationId??e.installation_id)===n).map(e=>e.hostId));await Promise.all(r.filter(e=>i.has(e.hostId)).map(e=>${desktopHostRequestFn}(\`set-remote-connection-auto-connect\`,{params:{hostId:e.hostId,autoConnect:!0}}).catch(t=>{${loggerVar}.warning(\`\${${logPrefixVar}} self_auto_connect_failed\`,{safe:{autoConnect:!0},sensitive:{hostId:e.hostId,error:t}})})))}}/*${REMOTE_CONTROL_SELF_AUTO_CONNECT_MARKER}*/).catch(${errorVar}=>{${loggerVar}.warning(\`\${${logPrefixVar}} sync_failed\`,{safe:{enabled:${enabledVar}},sensitive:{error:${errorVar}}})})`;
 
   const selfAutoConnectPattern =
-    /([A-Za-z_$][\w$]*)\(`set-remote-control-connections-enabled`,\{params:\{enabled:([A-Za-z_$][\w$]*)\}\}\)\.catch\(([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.warning\(`\$\{([A-Za-z_$][\w$]*)\} sync_failed`,\{safe:\{remoteControlConnectionsEnabled:\2\},sensitive:\{error:\3\}\}\)\}\)/u;
+    /([A-Za-z_$][\w$]*)\(`set-remote-control-connections-enabled`,\{params:\{enabled:([A-Za-z_$][\w$]*)(,oneToOnePairingInAppEnabled:[A-Za-z_$][\w$]*)\}\}\)\.catch\(([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.warning\(`\$\{([A-Za-z_$][\w$]*)\} sync_failed`,\{safe:\{remoteControlConnectionsEnabled:\2\},sensitive:\{error:\4\}\}\)\}\)/u;
   const selfAutoConnectRegion = region.replace(
     selfAutoConnectPattern,
-    (_needle, desktopHostRequestFn, enabledVar, errorVar, loggerVar, logPrefixVar) =>
-      selfAutoConnectReplacement(desktopHostRequestFn, enabledVar, errorVar, loggerVar, logPrefixVar),
+    (_needle, desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar) =>
+      selfAutoConnectReplacement(desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar),
   );
 
   if (selfAutoConnectRegion === region) {
@@ -1236,9 +1240,9 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
 
   const functionStart = source.lastIndexOf("async function ", logIndex);
   const turnStartPrefix = functionStart === -1 ? "" : source.slice(functionStart, logIndex);
-  const summaryPattern =
-    /(?<prefix>let |,)(?<featureOverride>[A-Za-z_$][\w$]*)=(?<manager>[A-Za-z_$][\w$]*)\.getDefaultFeatureOverride\([A-Za-z_$][\w$]*\)===!0,(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),\k<featureOverride>&&\(\k<summary>=`detailed`\),(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
-  const summaryMatch = turnStartPrefix.match(summaryPattern);
+  const currentSummaryPattern =
+    /(?<prefix>let |,)(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),(?<runtime>[A-Za-z_$][\w$]*)\.reasoningSummaryOverride!=null&&\(\k<summary>=\k<runtime>\.reasoningSummaryOverride\),(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
+  const summaryMatch = turnStartPrefix.match(currentSummaryPattern);
   if (summaryMatch == null) {
     console.warn(
       "WARN: Could not find reasoning-summary turn-start resolver - skipping Linux remote mobile summary patch",
@@ -1246,30 +1250,42 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
     return source;
   }
 
-  const {
-    featureOverride: featureOverrideVar,
-    manager: managerVar,
-    request: requestVar,
-    summary: summaryVar,
-  } = summaryMatch.groups;
-  const localHostPattern = new RegExp(
-    `!([A-Za-z_$][\\w$]*)\\(${escapeRegExp(managerVar)}\\.getHostId\\(\\)\\)`,
+  const { request: requestVar, summary: summaryVar } = summaryMatch.groups;
+  const functionHeader = turnStartPrefix.match(/async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)[,)]/u);
+  const helperName = functionHeader?.[1];
+  if (helperName == null) {
+    console.warn(
+      "WARN: Could not find reasoning-summary turn-start helper - skipping Linux remote mobile summary patch",
+    );
+    return source;
+  }
+  const currentCallerPattern = new RegExp(
+    `(?<prefix>${escapeRegExp(helperName)}\\((?<manager>[A-Za-z_$][\\w$]*),[\\s\\S]{0,100}?\\{)` +
+      `(?=canUseProjectlessWorkspace:!(?<classifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\)\\|\\|` +
+      `(?<conversation>[A-Za-z_$][\\w$]*)\\.mode===\`durable\`\\|\\|!1,[\\s\\S]{0,1000}?` +
+      `reasoningSummaryOverride:\\k<manager>\\.getDefaultFeatureOverride\\(\`concurrent_reasoning_summaries\`\\)===!0\\?\`detailed\`:null)`,
     "u",
   );
-  const localHostMatch = turnStartPrefix.match(localHostPattern);
-  if (localHostMatch == null) {
+  const currentCallerMatch = source.match(currentCallerPattern);
+  if (currentCallerMatch == null) {
     console.warn(
       "WARN: Could not find local-host turn-start guard - skipping Linux remote mobile summary patch",
     );
     return source;
   }
 
-  const localHostClassifier = localHostMatch[1];
   const replacement =
     `${summaryMatch[0]}/*${REMOTE_MOBILE_REASONING_SUMMARY_MARKER}*/` +
-    `navigator.userAgent.includes(\`Linux\`)&&!${localHostClassifier}(${managerVar}.getHostId())&&${requestVar}.summary===void 0&&(${featureOverrideVar}=!1,${summaryVar}=\`none\`);`;
+    `navigator.userAgent.includes(\`Linux\`)&&${summaryMatch.groups.runtime}.codexLinuxRemoteMobileHost&&${requestVar}.summary===void 0&&(${summaryVar}=\`none\`);`;
   const absoluteMatchStart = functionStart + summaryMatch.index;
-  return `${source.slice(0, absoluteMatchStart)}${replacement}${source.slice(absoluteMatchStart + summaryMatch[0].length)}`;
+  let patched = `${source.slice(0, absoluteMatchStart)}${replacement}${source.slice(absoluteMatchStart + summaryMatch[0].length)}`;
+  const callerNeedle = currentCallerMatch[0];
+  const callerReplacement =
+    `${currentCallerMatch.groups.prefix}codexLinuxRemoteMobileHost:` +
+    `${currentCallerMatch.groups.classifier}(${currentCallerMatch.groups.manager}.getHostId())&&` +
+    `${currentCallerMatch.groups.conversation}.mode===\`durable\`,`;
+  patched = patched.replace(callerNeedle, callerReplacement);
+  return patched;
 }
 
 module.exports = [

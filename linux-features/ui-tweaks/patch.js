@@ -1,6 +1,7 @@
 "use strict";
 
 const sidebarProjectName = require("./patches/sidebar-project-name.js");
+const uiFontSize = require("./patches/ui-font-size.js");
 const modelPickerModelList = require("./patches/model-picker-model-list.js");
 const reasoningEffortLabels = require("./patches/reasoning-effort-labels.js");
 const dockIcon = require("./patches/dock-icon.js");
@@ -15,6 +16,7 @@ function patchesFrom(...modules) {
 module.exports = {
   descriptors: patchesFrom(
     sidebarProjectName,
+    uiFontSize,
     modelPickerModelList,
     reasoningEffortLabels,
     dockIcon,

@@ -258,6 +258,14 @@ for (const architecture of ["amd64", "arm64"]) {
       delete manifest.architectures[architecture].targetInventoryCount;
       delete manifest.architectures[architecture].targetInventorySha256;
       const contract = manifest.architectures[architecture];
+      assert.equal(
+        contract.requiredDynamicExecutables.includes(
+          `resources/cua_node/lib/node_modules/@oai/cua/bin/linux/sky_linux_${
+            architecture === "amd64" ? "x64" : "arm64"
+          }`,
+        ),
+        true,
+      );
       const interpreter =
         architecture === "amd64"
           ? "/lib64/ld-linux-x86-64.so.2"

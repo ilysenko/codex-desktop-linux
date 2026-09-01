@@ -103,10 +103,10 @@ const PARCEL_FALLBACK_SYMBOL_KEY =
   "codex-linux.directory-only-working-tree-watch.parcel-fallback";
 const QUALIFICATION_WARNINGS_SYMBOL_KEY =
   "codex-linux.directory-only-working-tree-watch.qualification-warnings";
-const REPORT_SHIM_SYMBOL_KEY =
-  "codex-linux.directory-only-working-tree-watch.process-report-shim";
+const ESTABLISHMENT_LOGGED_SYMBOL_KEY =
+  "codex-linux.directory-only-working-tree-watch.establishment-logged";
 const WATCHBOUND_RESULT_NAME = "codexLinuxWatchboundWatcher";
-const WATCHBOUND_VERSION = "2.1.1";
+const WATCHBOUND_VERSION = "2.1.2";
 const DEFAULT_MAX_WATCHES = 8192;
 const DEFAULT_IGNORED_DIRECTORY_NAMES = [];
 const IDENTIFIER_PATTERN = "[A-Za-z_$][\\w$]*";
@@ -194,122 +194,44 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
     const RETRY_MAX_MS = 30_000;
     const QUALIFICATION_WARNINGS_SYMBOL_KEY =
       "codex-linux.directory-only-working-tree-watch.qualification-warnings";
-    const WATCHBOUND_VERSION = "2.1.1";
+    const ESTABLISHMENT_LOGGED_SYMBOL_KEY =
+      "codex-linux.directory-only-working-tree-watch.establishment-logged";
+    const WATCHBOUND_VERSION = "2.1.2";
     const moduleOverrideKey = Symbol.for(
       "codex-linux.directory-only-working-tree-watch.test-module",
     );
     const moduleOverride = globalThis[moduleOverrideKey];
-    // process.report.getReport() dies in a fatal CHECK trap inside the official
-    // Electron binary (SIGILL; the openai/codex#38123 crash class), and both
-    // watchbound/capabilities.js and @gadicc/watchbound-node/load-native.cjs
-    // call it for libc detection. Replace it with the same facts from probes
-    // that stay in JavaScript before any Watchbound code can run. Probe order
-    // and matchers follow detect-libc (Apache-2.0, Lovell Fuller and others).
-    const reportShimMarker = Symbol.for(
-      "codex-linux.directory-only-working-tree-watch.process-report-shim",
-    );
-    if (process.report?.[reportShimMarker] !== true) {
-      const elfInterpreterPath = (image) => {
-        if (image.length < 64 || image.readUInt32LE(0) !== 0x464c457f) return null;
-        if (image[4] !== 2 || image[5] !== 1) return null;
-        const tableOffset = Number(image.readBigUInt64LE(32));
-        const entrySize = image.readUInt16LE(54);
-        const entryCount = image.readUInt16LE(56);
-        if (entrySize < 56) return null;
-        for (let index = 0; index < entryCount; index += 1) {
-          const entry = tableOffset + index * entrySize;
-          if (entry + 40 > image.length) break;
-          if (image.readUInt32LE(entry) !== 3) continue;
-          const interpOffset = Number(image.readBigUInt64LE(entry + 8));
-          const interpSize = Number(image.readBigUInt64LE(entry + 32));
-          if (interpSize < 2 || interpOffset + interpSize > image.length) return null;
-          const segment = image.subarray(interpOffset, interpOffset + interpSize);
-          const terminator = segment.indexOf(0);
-          return segment.toString("utf8", 0, terminator === -1 ? segment.length : terminator);
-        }
-        return null;
-      };
-      const readLeadingBytes = (filePath, length) => {
-        const descriptor = fs.openSync(filePath, "r");
-        try {
-          const buffer = Buffer.alloc(length);
-          return buffer.subarray(0, fs.readSync(descriptor, buffer, 0, length, 0));
-        } finally {
-          fs.closeSync(descriptor);
-        }
-      };
-      const probeExecutable =
-        moduleOverride != null && typeof moduleOverride.reportProbeExecutable === "string"
-          ? moduleOverride.reportProbeExecutable
-          : "/proc/self/exe";
-      let family = null;
-      let glibcVersion = null;
-      let interpreter = null;
-      try {
-        interpreter = elfInterpreterPath(readLeadingBytes(probeExecutable, 4096));
-        if (interpreter?.includes("/ld-musl-")) {
-          family = "musl";
-        } else if (interpreter?.includes("/ld-linux-")) {
-          family = "glibc";
-          // Closure-only Nix launches have no /usr/bin/ldd and no getconf on
-          // PATH, but the store path in PT_INTERP names the exact glibc.
-          glibcVersion = interpreter.match(/-glibc-(\d+\.\d+(?:\.\d+)?)/u)?.[1] ?? null;
-        }
-      } catch {}
-      try {
-        const ldd = fs.readFileSync("/usr/bin/ldd", "latin1");
-        if (family == null) {
-          if (ldd.includes("musl")) family = "musl";
-          else if (ldd.includes("GNU C Library")) family = "glibc";
-        }
-        if (family === "glibc" && glibcVersion == null) {
-          glibcVersion = ldd.match(/LIBC[a-z0-9 \-).]*?(\d+\.\d+)/iu)?.[1] ?? null;
-        }
-      } catch {}
-      if (family === "glibc" && glibcVersion == null) {
-        try {
-          glibcVersion = childProcess
-            .execFileSync("getconf", ["GNU_LIBC_VERSION"], {
-              encoding: "utf8",
-              timeout: 1000,
-              stdio: ["ignore", "pipe", "ignore"],
-            })
-            .match(/(\d+\.\d+(?:\.\d+)?)/u)?.[1] ?? null;
-        } catch {}
-      }
-      const reportHeader = family === "glibc" && glibcVersion != null
-        ? { glibcVersionRuntime: glibcVersion }
-        : {};
-      const reportSharedObjects = family === "musl" && interpreter != null
-        ? [interpreter]
-        : [];
-      // The native report object stays as the prototype so every other
-      // member keeps its accessor-backed behavior; only getReport is shadowed.
-      Object.defineProperty(process, "report", {
-        configurable: true,
-        enumerable: true,
-        writable: true,
-        value: Object.create(process.report ?? null, {
-          [reportShimMarker]: { value: true },
-          getReport: {
-            configurable: true,
-            enumerable: true,
-            writable: true,
-            value: () => ({
-              header: { ...reportHeader },
-              sharedObjects: [...reportSharedObjects],
-            }),
-          },
-        }),
-      });
-    }
     let watchbound = moduleOverride;
     if (watchbound == null) {
       try {
         watchbound = await import("watchbound");
-      } catch {
-        // A refused loader (unsupported libc, missing package) must degrade to
-        // the preserved route, not reject the caller's file watch.
+      } catch (error) {
+        const runtimeRefusalCodes = new Set([
+          "WATCHBOUND_UNSUPPORTED_PLATFORM",
+          "WATCHBOUND_UNSUPPORTED_LIBC",
+          "WATCHBOUND_UNSUPPORTED_KERNEL",
+          "WATCHBOUND_UNSUPPORTED_NODE",
+          "WATCHBOUND_UNSUPPORTED_NODE_API",
+        ]);
+        if (!runtimeRefusalCodes.has(error?.code)) throw error;
+        // A supported loader refusal preserves the upstream route. Missing,
+        // corrupt, or API-incompatible enabled packages are packaging defects
+        // and must remain visible instead of silently selecting Parcel.
+        const warningStateKey = Symbol.for(QUALIFICATION_WARNINGS_SYMBOL_KEY);
+        const warningState = globalThis[warningStateKey] ??= new Set();
+        const fallbackName = typeof fallback === "function"
+          ? "upstream Parcel watcher"
+          : "upstream file watcher";
+        const message = error?.message ?? String(error);
+        const signature = `runtime\0${error.code}\0${message}\0${fallbackName}`;
+        if (!warningState.has(signature)) {
+          if (warningState.size >= 256) warningState.clear();
+          warningState.add(signature);
+          console.warn(
+            `WARN: directory-only working-tree watch runtime rejected Watchbound ` +
+              `${WATCHBOUND_VERSION} (${error.code}: ${message}); using the ${fallbackName}.`,
+          );
+        }
         return typeof fallback === "function" ? fallback() : null;
       }
     }
@@ -1461,6 +1383,25 @@ function codexLinuxStartDirectoryOnlyWorkingTreeWatch(
       scheduleRootRecovery();
     }
 
+    const establishmentLoggedKey = Symbol.for(ESTABLISHMENT_LOGGED_SYMBOL_KEY);
+    let establishmentLoggedRoots = globalThis[establishmentLoggedKey];
+    if (!(establishmentLoggedRoots instanceof Set)) {
+      establishmentLoggedRoots = new Set();
+      globalThis[establishmentLoggedKey] = establishmentLoggedRoots;
+    }
+    if (!establishmentLoggedRoots.has(root)) {
+      establishmentLoggedRoots.add(root);
+      const runtime = engine.runtimeStats();
+      const target = typeof qualification?.target?.packagedTargetId === "string"
+        ? qualification.target.packagedTargetId
+        : "unknown";
+      console.info(
+        `INFO: directory-only working-tree watch established with Watchbound ` +
+          `${WATCHBOUND_VERSION} for ${root} ` +
+          `(target=${target}, native=${runtime.nativeWatches}, limit=${requestedLimit}).`,
+      );
+    }
+
     return {
       // Watchbound is recursive for included paths. Reporting partial recursive
       // coverage deliberately preserves Codex's existing focus recovery.
@@ -1757,7 +1698,7 @@ function currentContractReason(records, bundleCount) {
   );
   const branches = relevant.reduce((count, record) => count + record.branchCallCount, 0);
   return (
-    "Current 26.803.41515 working-tree contract rejected: " +
+    "Current 26.814.41957 working-tree contract rejected: " +
     `Found ${relevant.length} current local startFileWatch bundles ` +
     `(${targetNames.join(", ") || "none"}), ${parcelContractCount} Parcel route contracts, ` +
     `and ${workerParcelContractCount} in worker.js across ${bundleCount} build bundles; ` +
@@ -2013,13 +1954,13 @@ const descriptors = [
 module.exports = {
   DEFAULT_IGNORED_DIRECTORY_NAMES,
   DEFAULT_MAX_WATCHES,
+  ESTABLISHMENT_LOGGED_SYMBOL_KEY,
   HELPER_NAME,
   LOCAL_FILE_WATCH_METHOD,
   PARCEL_FALLBACK_SYMBOL_KEY,
   PARCEL_WATCH_MARKER,
   PARCEL_WORKING_TREE_WATCH,
   QUALIFICATION_WARNINGS_SYMBOL_KEY,
-  REPORT_SHIM_SYMBOL_KEY,
   WATCHBOUND_VERSION,
   codexLinuxStartDirectoryOnlyWorkingTreeWatch,
   descriptors,

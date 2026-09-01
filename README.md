@@ -220,6 +220,7 @@ requirements, known limitations, configuration, and tests.
 | `appshots` | Capture and crop the focused Linux window from the composer | [Docs](linux-features/appshots/README.md) |
 | `authenticated-proxy` | Username/password support for HTTP proxies | [Docs](linux-features/authenticated-proxy/README.md) |
 | `automation-extensions` | Multi-time schedules and eager `automation_update` exposure | [Docs](linux-features/automation-extensions/README.md) |
+| `browser-proxy` | Pass explicit proxy settings to Browser Use network helpers | [Docs](linux-features/browser-proxy/README.md) |
 | `chronicle-skysight` | Opt-in Linux desktop activity memory and restricted Skysight MCP tools | [Docs](linux-features/chronicle-skysight/README.md) |
 | `codex-micro` | Work Louder Codex Micro hotplug and hidraw policy using upstream `node-hid` | [Docs](linux-features/codex-micro/README.md) |
 | `computer-use-linux` | Linux desktop-control UI and native MCP backend | [Docs](linux-features/computer-use-linux/README.md) |

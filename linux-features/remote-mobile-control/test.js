@@ -72,6 +72,10 @@ function syntheticReasoningSummaryTurnStartBundle() {
   return "async function yY(e,t,n){let s=n,D=n.latestThreadSettings,ee=n.initialParams,me=!fm(e.getHostId());let Ee=e.getDefaultFeatureOverride(vJ)===!0,De=ee?.summary??`none`;D?.summary!==void 0&&(De=D.summary),Ee&&(De=`detailed`),s.summary!==void 0&&(De=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{concurrentReasoningSummariesFeatureOverrideEnabled:Ee,summary:De}});return{featureOverride:Ee,summary:De}}";
 }
 
+function syntheticCurrentReasoningSummaryTurnStartBundle() {
+  return "async function HWt(e,t,n,r,i,a,o){let s=n.request,N=a.latestThreadSettings,S=a.initialParams,ye=N?.summary??`none`;S?.summary!==void 0&&(ye=S.summary),o.reasoningSummaryOverride!=null&&(ye=o.reasoningSummaryOverride),s.summary!==void 0&&(ye=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{summary:ye}});return{summary:ye}}async function QWt(e,t,n,r,i,a){return await HWt(e,t,n,r,i,a,{canUseProjectlessWorkspace:!gh(e.getHostId())||a.mode===`durable`||!1,canMaterializeCodexHomeRoots:!gh(e.getHostId())&&!0,reasoningSummaryOverride:e.getDefaultFeatureOverride(`concurrent_reasoning_summaries`)===!0?`detailed`:null})}";
+}
+
 test("remote mobile README assigns every descriptor to one control topology", () => {
   const readme = fs.readFileSync(path.join(__dirname, "README.md"), "utf8");
   const rows = [...readme.matchAll(
@@ -335,12 +339,16 @@ function syntheticCurrentRemoteNotificationLifecycleBundle() {
     "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
     "function xm(e,t,n,r){let i=e.items.find(e=>e.id===t);return i?i.type===n?i:(r.error(`Item has unexpected type`,{safe:{itemId:t,type:i.type,expectedType:n},sensitive:{}}),null):(r.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}}),null)}",
     "function Sm(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
-    "function tLn(e,t,n,r){let i={method:n,params:r};if(!t.streamState.shouldIgnoreThreadMutationAsFollower(n,r)&&!t.resumeNotificationBuffer.buffer(i)&&!t.threadStartedNotificationDeferral.bufferNotification(i)){switch(i.method){",
-    "case`turn/started`:{let{threadId:n,turn:r}=i.params,a=Ul(n);if(!t.threadStore.conversations.get(a)){e.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}e.updateConversationState(a,e=>{let t=e.turns.find(e=>e.turnId===r.id);t==null&&(t={turnId:r.id,status:r.status,items:[]},e.turns.push(t)),t.status=r.status});break}",
-    "case`turn/completed`:{let{threadId:n,turn:r}=i.params,a=Ul(n);if(!t.threadStore.conversations.get(a)){CIn(e.getHostId(),n,r.id),t.unread.discardTurn(a,r.id),e.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:a},sensitive:{}});break}e.updateConversationState(a,e=>{let t=e.turns.find(e=>e.turnId===r.id);t&&(t.status=r.status)});break}",
-    "case`item/started`:{let{item:n,threadId:r,turnId:a,startedAtMs:o}=i.params,s=Ul(r);if(!t.threadStore.conversations.get(s)){e.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}e.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===a);t&&Sm(t,{...n,completed:!1,startedAtMs:o})});break}",
-    "case`item/completed`:{let{item:n,threadId:r,turnId:a,completedAtMs:o}=i.params;let s=Ul(r);if(n.type===`commandExecution`&&t.itemStreamState.clearItemTerminalInputBuffer(s,n.id),!t.threadStore.conversations.get(s)){e.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}e.updateConversationState(s,r=>{let i=r.turns.find(e=>e.turnId===a);if(!i)return;let l={...n,completed:!0,completedAtMs:o};!(n.type!==`subAgentActivity`&&(n.type!==`sleep`||r.mode!==`durable`)&&!xm(i,n.id,n.type,e.logger))&&(n.type,Sm(i,l))});break}}t.events.emitNotification(i)}}",
+    "function $dt(e,t,n){let{manager:r,notificationContext:i,automationTurns:a,createId:o}=e;switch(t.method){case`turn/started`:{let{threadId:n,turn:a}=t.params,s=Ul(n),c=i.threadStore.conversations.get(s);if(c==null){r.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}r.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===a.id);t==null&&(t={turnId:a.id,status:a.status,items:[]},e.turns.push(t)),t.status=a.status});break}case`turn/completed`:{let{threadId:o,turn:s}=t.params,c=Ul(o);if(!i.threadStore.conversations.has(c)){a.delete(r.getHostId(),o,s.id),i.unread.discardTurn(c,s.id),r.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:c},sensitive:{}});break}r.updateConversationState(c,e=>{let t=e.turns.find(e=>e.turnId===s.id);t&&(t.status=s.status)});break}}}",
+    "function Sdt(e,t){let{manager:n,notificationContext:r,createId:i}=e;switch(t.method){case`item/started`:{let{item:a,threadId:o,turnId:s,startedAtMs:c}=t.params,l=Ul(o);if(!r.threadStore.conversations.has(l)){n.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,e=>{let t=e.turns.find(e=>e.turnId===s);t&&Sm(t,{...a,completed:!1,startedAtMs:c})});break}case`item/completed`:{let{item:a,threadId:o,turnId:s,completedAtMs:c}=t.params;a.type===`commandExecution`&&r.itemStreamState.clearItemTerminalInputBuffer(Ul(o),a.id);let l=Ul(o),u=r.threadStore.conversations.get(l);if(u==null){n.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,t=>{let o=t.turns.find(e=>e.turnId===s);if(!o)return;let d={...a,completed:!0,completedAtMs:c};!(a.type!==`subAgentActivity`&&(a.type!==`sleep`||t.mode!==`durable`)&&!xm(o,a.id,a.type,n.logger))&&Sm(o,d)});break}}}",
+    "function tLn(e,t,o){let{manager:n,notificationContext:r}=e;if(!(r.streamState.shouldIgnoreThreadMutationAsFollower(t.method,t.params,`notification`)||r.resumeNotificationBuffer.buffer(t,o)||r.threadStartedNotificationDeferral.bufferNotification(t,o)||o?.())){switch(t.method){case`turn/started`:case`turn/completed`:if($dt(e,t,o)===`deferred`)return;break;case`item/started`:case`item/completed`:if(Sdt(e,t)===`deferred`)return;break}r.events.emitNotification(t)}}",
   ].join("");
+}
+
+function syntheticCurrentRemoteNotificationReductionBundle() {
+  const source = syntheticCurrentRemoteNotificationLifecycleBundle();
+  return source.slice(0, source.indexOf("function Of(")) +
+    source.slice(source.indexOf("function xm("));
 }
 
 function syntheticRemoteTerminalStatusBundle() {
@@ -378,7 +386,7 @@ function syntheticAppMainActiveStatusBundle() {
 
 function syntheticAppMainEnablementBridgeBundle() {
   return [
-    "function OF(){let e=(0,Z.c)(6),{checkGate:t,isLoading:n}=sc(),r;e[0]===t?r=e[1]:(r=t(`1042620455`)||t(`2055603567`),e[0]=t,e[1]=r);let i=r,a,o;return e[2]!==n||e[3]!==i?(a=()=>{n||$o(`set-remote-control-connections-enabled`,{params:{enabled:i}}).catch(e=>{q.warning(`${DF} sync_failed`,{safe:{remoteControlConnectionsEnabled:i},sensitive:{error:e}})})},o=[n,i],e[2]=n,e[3]=i,e[4]=a,e[5]=o):(a=e[4],o=e[5]),(0,Q.useEffect)(a,o),null}",
+    "var tCn=`2055603567`;function OF(){let e=(0,Z.c)(10),{checkGate:t,isLoading:n}=sc(),r;e[0]===t?r=e[1]:(r=t(tCn),e[0]=t,e[1]=r);let i=r,a;e[2]!==t||e[3]!==i?(a=t(`1042620455`)||i,e[2]=t,e[3]=i,e[4]=a):a=e[4];let o=a,s,c;return e[5]!==n||e[6]!==i||e[7]!==o?(s=()=>{n||$o(`set-remote-control-connections-enabled`,{params:{enabled:o,oneToOnePairingInAppEnabled:i}}).catch(e=>{q.warning(`${DF} sync_failed`,{safe:{remoteControlConnectionsEnabled:o},sensitive:{error:e}})})},c=[n,i,o],e[5]=n,e[6]=i,e[7]=o,e[8]=s,e[9]=c):(s=e[8],c=e[9]),(0,Q.useEffect)(s,c),null}",
     "var DF=`[remote-connections/gate-bridge]`;",
   ].join("");
 }
@@ -1088,15 +1096,23 @@ test("Linux remote-control device-key provider does not capture a function-local
   const source = `function injectedFeature(){let __codexChild=require(\`node:child_process\`);return __codexChild}${syntheticMainBundle()}`;
   const patched = applyLinuxRemoteControlDeviceKeyPatch(source);
 
-  assert.match(patched, /require\(`node:child_process`\)\.spawn\(/);
+  assert.match(patched, /codexLinuxRemoteControlChildProcess\.spawn\(/);
   assert.doesNotMatch(patched, /__codexChild\.spawn\(/);
+});
+
+test("Linux remote-control device-key provider does not capture a function-local path alias", () => {
+  const source = `function injectedFeature(){let n=require("node:path");return n}${syntheticMainBundle()}`;
+  const patched = applyLinuxRemoteControlDeviceKeyPatch(source);
+
+  assert.match(patched, /codexLinuxRemoteControlPath\.isAbsolute\(/);
+  assert.doesNotMatch(patched, /n\.isAbsolute\(codexLinuxRemoteControlConfigRoot\)/);
 });
 
 test("Linux remote-control device-key provider avoids upstream minified alias collisions", async () => {
   const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-key-collision-"));
   try {
     const patched = applyLinuxRemoteControlDeviceKeyPatch(syntheticCryptoAliasCollisionMainBundle());
-    assert.match(patched, /\(0,c\.generateKeyPairSync\)\(`/);
+    assert.match(patched, /\(0,codexLinuxRemoteControlCrypto\.generateKeyPairSync\)\(`/);
     assert.match(patched, /codexLinuxRemoteControlKeyRecord/);
     assert.doesNotMatch(patched, /let c=\{algorithm:`ecdsa_p256_sha256`/);
 
@@ -1267,65 +1283,56 @@ test("Linux remote mobile app-server launch keeps a leading use strict directive
   assert.equal(applyLinuxRemoteMobileAppServerRemoteControlPatch(patched), patched);
 });
 
-test("Linux remote mobile turns suppress inherited reasoning summaries on the local host", async () => {
+test("retired reasoning-summary resolver is rejected byte-identically", () => {
   const source = syntheticReasoningSummaryTurnStartBundle();
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("turn-start resolver")));
+});
+
+test("current reasoning-summary owner distinguishes durable mobile hosts and preserves explicit summaries", async () => {
+  const source = syntheticCurrentReasoningSummaryTurnStartBundle();
   const patched = applyLinuxRemoteMobileReasoningSummaryPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteMobileReasoningSummaryNone/);
+  assert.match(patched, /codexLinuxRemoteMobileHost:gh\(e\.getHostId\(\)\)&&a\.mode===`durable`/);
+  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)&&o\.codexLinuxRemoteMobileHost/);
   assert.equal(applyLinuxRemoteMobileReasoningSummaryPatch(patched), patched);
 
   const context = {
+    gh: (hostId) => hostId === "local",
     logger: { info() {} },
     module: { exports: {} },
     navigator: { userAgent: "X11; Linux x86_64" },
-    fm: (hostId) => hostId !== "local",
-    vJ: "concurrent_reasoning_summaries",
   };
-  vm.runInNewContext(`${patched};module.exports=yY;`, context);
+  vm.runInNewContext(`${patched};module.exports=QWt;`, context);
   const startTurn = context.module.exports;
-  const manager = {
-    getDefaultFeatureOverride: () => true,
-    getHostId: () => "local",
-  };
-
-  const localResult = await startTurn(manager, "thread", {
+  const args = (request, mode) => [null, { request }, null, null, {
     initialParams: { summary: "auto" },
-    latestThreadSettings: { summary: "detailed" },
+    latestThreadSettings: { summary: "auto" },
+    mode,
+  }];
+  const manager = (hostId) => ({
+    getDefaultFeatureOverride: () => true,
+    getHostId: () => hostId,
   });
-  assert.equal(localResult.featureOverride, false);
-  assert.equal(localResult.summary, "none");
-});
 
-test("Linux remote mobile reasoning-summary patch preserves explicit and non-local settings", async () => {
-  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(
-    syntheticReasoningSummaryTurnStartBundle(),
+  const durable = await startTurn(manager("local"), ...args({}, "durable"));
+  const nonDurable = await startTurn(manager("local"), ...args({}, "default"));
+  const remoteDurable = await startTurn(manager("remote-ssh:dev"), ...args({}, "durable"));
+  const explicit = await startTurn(
+    manager("local"),
+    ...args({ summary: "concise" }, "durable"),
   );
-  const context = {
-    logger: { info() {} },
-    module: { exports: {} },
-    navigator: { userAgent: "X11; Linux x86_64" },
-    fm: (hostId) => hostId !== "local",
-    vJ: "concurrent_reasoning_summaries",
-  };
-  vm.runInNewContext(`${patched};module.exports=yY;`, context);
-  const startTurn = context.module.exports;
 
-  const explicitResult = await startTurn(
-    { getDefaultFeatureOverride: () => true, getHostId: () => "local" },
-    "thread",
-    { summary: "auto", latestThreadSettings: { summary: "detailed" } },
-  );
-  assert.equal(explicitResult.featureOverride, true);
-  assert.equal(explicitResult.summary, "auto");
-
-  const remoteResult = await startTurn(
-    { getDefaultFeatureOverride: () => true, getHostId: () => "remote-ssh:dev" },
-    "thread",
-    { latestThreadSettings: { summary: "auto" } },
-  );
-  assert.equal(remoteResult.featureOverride, true);
-  assert.equal(remoteResult.summary, "detailed");
+  assert.equal(durable.summary, "none");
+  assert.equal(nonDurable.summary, "detailed");
+  assert.equal(remoteDurable.summary, "detailed");
+  assert.equal(explicit.summary, "concise");
 });
 
 test("Linux remote mobile reasoning-summary patch reports upstream drift", () => {
@@ -1857,6 +1864,19 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
   let hydrationCalls = 0;
   const conversations = new Map();
   const manager = {
+    getHostId() {
+      return "local";
+    },
+    logger: {
+      error(message) {
+        errors.push(message);
+      },
+    },
+    updateConversationState(conversationId, update) {
+      update(conversations.get(conversationId));
+    },
+  };
+  const notificationContext = {
     events: {
       emitNotification(notification) {
         emitted.push(notification.method);
@@ -1891,47 +1911,58 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
     unread: {
       discardTurn() {},
     },
-    updateConversationState(conversationId, update) {
-      update(conversations.get(conversationId));
-    },
   };
-  const client = {
-    getHostId() {
-      return "local";
+  const reductionContext = {
+    automationTurns: {
+      delete() {},
     },
-    logger: {
-      error(message) {
-        errors.push(message);
-      },
-    },
-    onNotification(method, params) {
-      onNotification(client, manager, method, params);
-    },
-    updateConversationState(conversationId, update) {
-      manager.updateConversationState(conversationId, update);
-    },
+    createId() {},
+    manager,
+    notificationContext,
+  };
+  manager.onNotification = (method, params, callback) =>
+    onNotification(reductionContext, { method, params }, callback);
+  const callbackCalls = new Map();
+  const callback = (name, result = false) => () => {
+    callbackCalls.set(name, (callbackCalls.get(name) ?? 0) + 1);
+    return result;
   };
   const notifications = [
-    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }],
-    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }],
-    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }],
+    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }, callback("initiating")],
+    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }, callback("buffered-started")],
+    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-suppressed", type: "agentMessage" }, startedAtMs: 11 }, callback("buffered-suppressed", true)],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }, callback("buffered-completed")],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }, callback("buffered-completed-without-start")],
+    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }, callback("buffered-turn-completed")],
   ];
 
-  for (const [method, params] of notifications) {
-    client.onNotification(method, params);
+  for (const [method, params, notificationCallback] of notifications) {
+    manager.onNotification(method, params, notificationCallback);
   }
 
   assert.equal(hydrationCalls, 1);
   assert.equal(conversations.has("thread-late"), false);
   assert.deepEqual(emitted, []);
+  assert.deepEqual([...callbackCalls], [["initiating", 1]]);
 
   releaseHydration();
   await hydrationReady;
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(emitted, notifications.map(([method]) => method));
+  assert.deepEqual(
+    emitted,
+    notifications
+      .filter(([, params]) => params.item?.id !== "item-suppressed")
+      .map(([method]) => method),
+  );
+  assert.deepEqual([...callbackCalls], [
+    ["initiating", 1],
+    ["buffered-started", 1],
+    ["buffered-suppressed", 1],
+    ["buffered-completed", 1],
+    ["buffered-completed-without-start", 1],
+    ["buffered-turn-completed", 1],
+  ]);
   assert.deepEqual(errors, []);
   const hydratedConversation = conversations.get("thread-late");
   assert.equal(hydratedConversation.turns.length, 1);
@@ -1960,6 +1991,17 @@ test("Linux remote mobile hydration recovery rejects partial lifecycle drift", (
   assert.doesNotMatch(result, /codexLinuxRemoteMobilePendingNotifications/);
   assert.doesNotMatch(result, /codexLinuxRemoteMobileHydrateUnknownConversation/);
   assert.doesNotMatch(result, /codexLinuxCompletedItemExists/);
+  assert.ok(warnings.some((warning) => warning.includes("complete current remote notification recovery lifecycle")));
+});
+
+test("Linux remote mobile hydration rejects the retired two-argument dispatcher byte-identically", () => {
+  const source = syntheticCurrentRemoteNotificationReductionBundle()
+    .replace("function tLn(e,t,o)", "function tLn(e,t)")
+    .replace("||o?.()", "");
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileConversationHydrationPatch(source));
+
+  assert.equal(result, source);
   assert.ok(warnings.some((warning) => warning.includes("complete current remote notification recovery lifecycle")));
 });
 
@@ -2340,6 +2382,7 @@ test("Linux remote-control enablement bridge loads remote-control clients on Lin
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, "set-remote-control-connections-enabled");
   assert.equal(calls[0].params.enabled, true);
+  assert.equal(calls[0].params.oneToOnePairingInAppEnabled, false);
 });
 
 test("Linux remote-control enablement bridge rejects distant anchors", () => {
@@ -2397,9 +2440,10 @@ test("Linux remote-control enablement bridge preserves the current second gate o
   };
   vm.runInNewContext(`${patched};OF();`, context);
 
-  assert.deepEqual(checkedGates, ["1042620455", "2055603567"]);
+  assert.deepEqual(checkedGates, ["2055603567", "1042620455"]);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].params.enabled, true);
+  assert.equal(calls[0].params.oneToOnePairingInAppEnabled, true);
 });
 
 test("Linux remote-control enablement bridge waits for current gates to load", () => {
@@ -2529,6 +2573,7 @@ test("Linux remote-control enablement bridge auto-connects this Desktop host wit
   assert.equal(calls.length, 3);
   assert.equal(calls[0].method, "set-remote-control-connections-enabled");
   assert.equal(calls[0].params.enabled, true);
+  assert.equal(calls[0].params.oneToOnePairingInAppEnabled, false);
   assert.equal(calls[1].method, "get-global-state");
   assert.equal(calls[1].params.key, "electron-local-remote-control-installation-id");
   assert.equal(calls[2].method, "set-remote-connection-auto-connect");

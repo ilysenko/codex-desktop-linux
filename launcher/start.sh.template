@@ -102,6 +102,18 @@ load_environment_hooks() {
     done < <(find "$HOOK_ROOT/env.d" -maxdepth 1 -type f -print0 | sort -z)
 }
 
+canonicalize_codex_home() {
+    local requested_codex_home="${CODEX_HOME:-$HOME/.codex}"
+    local physical_codex_home
+
+    [ -d "$requested_codex_home" ] || return 0
+    if [ "$requested_codex_home" = "-" ]; then
+        requested_codex_home="./-"
+    fi
+    physical_codex_home="$(CDPATH='' cd -P -- "$requested_codex_home" && pwd -P)"
+    export CODEX_HOME="$physical_codex_home"
+}
+
 refresh_legacy_bundled_plugin_cache() {
     local plugin_id="$1"
     local bundled_plugin="$CODEX_LINUX_APP_DIR/resources/plugins/openai-bundled/plugins/$plugin_id"
@@ -228,6 +240,7 @@ esac
 
 ELECTRON_ARGS=("--class=$CODEX_LINUX_APP_ID")
 load_environment_hooks
+canonicalize_codex_home
 refresh_legacy_bundled_plugin_caches
 load_user_electron_args
 load_electron_args

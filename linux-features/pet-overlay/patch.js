@@ -191,9 +191,9 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlayKWinDragScript(){let e={pid:Number(process.pid),title:`Codex Pet Overlay`};return `(function(){var d=${JSON.stringify(e)};function windows(){try{if(typeof workspace.windowList==='function')return workspace.windowList()}catch(e){}try{if(typeof workspace.clientList==='function')return workspace.clientList()}catch(e){}return[]}var a=windows().filter(function(w){try{return String(w.caption||'')===d.title&&Number(w.pid)===d.pid}catch(e){return false}});if(a.length!==1)return;var w=a[0],p=workspace.cursorPos,g=w.frameGeometry,dx=Number(p.x)-Number(g.x),dy=Number(p.y)-Number(g.y),active=true;function move(){if(!active)return;try{var p=workspace.cursorPos,g=w.frameGeometry;w.frameGeometry={x:Math.round(Number(p.x)-dx),y:Math.round(Number(p.y)-dy),width:g.width,height:g.height}}catch(e){stop()}}function stop(){if(!active)return;active=false;try{workspace.cursorPosChanged.disconnect(move)}catch(e){}}try{workspace.cursorPosChanged.connect(move)}catch(e){return}try{workspace.windowRemoved.connect(function(v){if(v===w)stop()})}catch(e){}try{if(typeof workspace.raiseWindow==='function')workspace.raiseWindow(w)}catch(e){}})()`}",
     "codexPetOverlayReleaseKWinDrag(e){if(e==null)return;try{this.codexPetOverlayKWinExecSync([`org.kde.KWin`,`/Scripting`,`org.kde.kwin.Scripting.unloadScript`,e.pluginName])}catch{}try{require(`node:fs`).unlinkSync(e.scriptPath)}catch{}}",
     "codexPetOverlayStartKWinDrag(e){let t;try{let n=require(`node:fs`),r=require(`node:os`),i=require(`node:path`),a=(this.codexPetOverlayKWinDragGeneration??0)+1,o=`codex_pet_overlay_drag_${process.pid}_${Date.now()}_${a}`,s=i.join(r.tmpdir(),`${o}.js`);n.writeFileSync(s,this.codexPetOverlayKWinDragScript(),{encoding:`utf8`,flag:`wx`,mode:384}),t={generation:a,window:e,pluginName:o,scriptPath:s};let c=[`org.kde.KWin`,`/Scripting`,`org.kde.kwin.Scripting.loadScript`,s,o];if(!this.codexPetOverlayKWinExecSync(c)||!this.codexPetOverlayKWinExecSync([`org.kde.KWin`,`/Scripting`,`org.kde.kwin.Scripting.start`])){this.codexPetOverlayReleaseKWinDrag(t);return null}return t}catch(e){this.codexPetOverlayReleaseKWinDrag(t);return null}}",
-    "codexPetOverlayBeginKWinDrag(e){if(e==null||e.isDestroyed?.()||this.window!==e||!this.codexPetOverlayShouldUseKWin())return;try{this.codexPetOverlayKWinTimers?.forEach(clearTimeout)}catch{}let t=this.codexPetOverlayKWinDragState;t!=null&&(this.codexPetOverlayKWinDragState=null,this.codexPetOverlayReleaseKWinDrag(t));let n=this.codexPetOverlayStartKWinDrag(e);if(n==null)return;let r=null;try{r=Number(e.getContentBounds?.().x)}catch{}this.codexPetOverlayKWinDragGeneration=n.generation,this.codexPetOverlayKWinDragState=n,this.windowServerDragActive=!0,Number.isFinite(r)&&(this.windowServerDragWindowX=r)}",
+    "codexPetOverlayBeginKWinDrag(e){if(e==null||e.isDestroyed?.()||this.window!==e||!this.codexPetOverlayShouldUseKWin())return!1;try{this.codexPetOverlayKWinTimers?.forEach(clearTimeout)}catch{}let t=this.codexPetOverlayKWinDragState;t!=null&&(this.codexPetOverlayKWinDragState=null,this.codexPetOverlayReleaseKWinDrag(t));let n=this.codexPetOverlayStartKWinDrag(e);return n==null?!1:(this.codexPetOverlayKWinDragGeneration=n.generation,this.codexPetOverlayKWinDragState=n,!0)}",
     "codexPetOverlayKWinDragCurrent(e){if(e==null||this.codexPetOverlayKWinDragState!==e||this.codexPetOverlayKWinDragGeneration!==e.generation)return!1;if(this.window===e.window&&!e.window?.isDestroyed?.())return!0;this.codexPetOverlayKWinDragState=null,this.codexPetOverlayReleaseKWinDrag(e);return!1}",
-    "codexPetOverlayQueueKWinDrag(e){let t=this.codexPetOverlayKWinDragState;this.codexPetOverlayKWinDragCurrent(t)&&t.window===e&&(this.windowServerDragActive=!0)}",
+    "codexPetOverlayQueueKWinDrag(e){let t=this.codexPetOverlayKWinDragState;return this.codexPetOverlayKWinDragCurrent(t)&&t.window===e}",
     "codexPetOverlayEndKWinDrag(e,t){let n=this.codexPetOverlayKWinDragState;if(!this.codexPetOverlayKWinDragCurrent(n)||n.window!==e)return!1;this.codexPetOverlayKWinDragState=null,this.codexPetOverlayReleaseKWinDrag(n);try{typeof t===`function`&&t()}catch{}try{this.window!=null&&!this.window.isDestroyed?.()&&this.codexPetOverlayScheduleKWinHints(this.window)}catch{}return!0}",
     "codexPetOverlayNiriSession(){if(process.platform!==`linux`)return!1;let e=[process.env.NIRI_SOCKET,process.env.XDG_CURRENT_DESKTOP,process.env.DESKTOP_SESSION].filter(Boolean).join(`:`).toLowerCase();return e.includes(`niri`)}",
     "codexPetOverlayShouldUseNiri(){return process.platform===`linux`&&this.codexPetOverlaySettings().niri===!0&&this.codexPetOverlayNiriSession()}",
@@ -206,7 +206,7 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlayFindNiriWindow(e,t){if(!this.codexPetOverlayShouldUseNiri()){try{typeof t==`function`&&t({code:`DISABLED`})}catch{}return}let n=this.codexPetOverlayWindowBounds(e);this.codexPetOverlayNiri([`--json`,`windows`],(e,r)=>{if(e){try{typeof t==`function`&&t(e)}catch{}return}let i;try{i=JSON.parse(String(r??``))}catch{try{typeof t==`function`&&t({code:`INVALID_JSON`})}catch{}return}let a=this.codexPetOverlaySelectNiriWindow(i,n);try{typeof t==`function`&&t(null,a)}catch{}})}",
     "codexPetOverlayApplyNiriHints(e,t=this.codexPetOverlayNiriEpoch){if(process.platform!==`linux`||e==null||e.isDestroyed?.()||!this.codexPetOverlayShouldUseNiri()||this.codexPetOverlayNiriDragState!=null||this.codexPetOverlayNiriDragCallOwner!=null)return;this.codexPetOverlayFindNiriWindow(e,(n,r)=>{if(n||e.isDestroyed?.()||this.window!==e||t!==this.codexPetOverlayNiriEpoch||this.codexPetOverlayNiriDragState!=null||this.codexPetOverlayNiriDragCallOwner!=null)return;let i=this.codexPetOverlayNiriPositiveInteger(r?.id);if(i==null)return;let a=()=>{if(e.isDestroyed?.()||this.window!==e||t!==this.codexPetOverlayNiriEpoch||this.codexPetOverlayNiriDragState!=null||this.codexPetOverlayNiriDragCallOwner!=null)return;let n=this.codexPetOverlayNiriLocalMove();n!=null&&this.codexPetOverlayNiri([`action`,`move-floating-window`,`--id`,String(i),`-x`,String(n.x),`-y`,String(n.y)])};r.is_floating===!0?a():this.codexPetOverlayNiri([`action`,`move-window-to-floating`,`--id`,String(i)],n=>{n||a()})})}",
     "codexPetOverlayScheduleNiriHints(e){let t=this.codexPetOverlayNiriDragState;if(t!=null&&(this.window!==t.window||t.window?.isDestroyed?.())){try{t.retryTimer!=null&&clearTimeout(t.retryTimer)}catch{}this.codexPetOverlayNiriDragState=null,this.codexPetOverlayNiriEpoch=(this.codexPetOverlayNiriEpoch??0)+1}if(this.codexPetOverlayNiriUnavailable||!this.codexPetOverlayShouldUseNiri()||this.dragState!=null||this.codexPetOverlayNiriDragState!=null)return;if(this.codexPetOverlayNiriDragCallOwner!=null||(this.codexPetOverlayNiriProcessCount??0)>0){this.codexPetOverlayNiriPendingHintsWindow=e;return}this.codexPetOverlayNiriPendingHintsWindow=null;try{this.codexPetOverlayNiriTimers?.forEach(clearTimeout)}catch{}let n=(this.codexPetOverlayNiriEpoch??0)+1;this.codexPetOverlayNiriEpoch=n,this.codexPetOverlayNiriTimers=[0,80,300,1000].map(t=>{let r=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.codexPetOverlayApplyNiriHints(e,n)}catch{}},t);try{r.unref?.()}catch{}return r})}",
-    "codexPetOverlayBeginNiriDrag(e){if(e==null||e.isDestroyed?.()||this.window!==e||!this.codexPetOverlayShouldUseNiri())return;try{this.codexPetOverlayNiriTimers?.forEach(clearTimeout),this.codexPetOverlayNiriDragState?.retryTimer!=null&&clearTimeout(this.codexPetOverlayNiriDragState.retryTimer)}catch{}this.codexPetOverlayNiriEpoch=(this.codexPetOverlayNiriEpoch??0)+1;let t=(this.codexPetOverlayNiriDragGeneration??0)+1;this.codexPetOverlayNiriDragGeneration=t;let n=this.codexPetOverlayNiriLocalMove();this.codexPetOverlayNiriDragState={generation:t,window:e,id:null,floating:!1,latestTarget:n==null?null:{x:n.x,y:n.y},inFlight:!1,released:!1,persisted:!1,complete:null,retryIndex:0,retryTimer:null},this.codexPetOverlayPumpNiriDrag(this.codexPetOverlayNiriDragState)}",
+    "codexPetOverlayBeginNiriDrag(e){if(e==null||e.isDestroyed?.()||this.window!==e||!this.codexPetOverlayShouldUseNiri())return!1;try{this.codexPetOverlayNiriTimers?.forEach(clearTimeout),this.codexPetOverlayNiriDragState?.retryTimer!=null&&clearTimeout(this.codexPetOverlayNiriDragState.retryTimer)}catch{}this.codexPetOverlayNiriEpoch=(this.codexPetOverlayNiriEpoch??0)+1;let t=(this.codexPetOverlayNiriDragGeneration??0)+1;this.codexPetOverlayNiriDragGeneration=t;let n=this.codexPetOverlayNiriLocalMove();return this.codexPetOverlayNiriDragState={generation:t,window:e,id:null,floating:!1,latestTarget:n==null?null:{x:n.x,y:n.y},inFlight:!1,released:!1,persisted:!1,complete:null,retryIndex:0,retryTimer:null},this.codexPetOverlayPumpNiriDrag(this.codexPetOverlayNiriDragState),!0}",
     "codexPetOverlayNiriDragCurrent(e){if(e==null||this.codexPetOverlayNiriDragState!==e||this.codexPetOverlayNiriDragGeneration!==e.generation)return!1;if(this.window===e.window&&!e.window?.isDestroyed?.())return!0;try{e.retryTimer!=null&&clearTimeout(e.retryTimer)}catch{}this.codexPetOverlayNiriDragState=null,this.codexPetOverlayNiriEpoch=(this.codexPetOverlayNiriEpoch??0)+1;let t=this.window;try{t!=null&&!t.isDestroyed?.()&&this.codexPetOverlayScheduleNiriHints(t)}catch{}return!1}",
     "codexPetOverlayStartNiriDragCall(e){if(this.codexPetOverlayNiriDragCallOwner!=null)return!1;e.inFlight=!0,this.codexPetOverlayNiriDragCallOwner=e;return!0}",
     "codexPetOverlayFinishNiriDragCall(e){e.inFlight=!1,this.codexPetOverlayNiriDragCallOwner===e&&(this.codexPetOverlayNiriDragCallOwner=null);let t=this.codexPetOverlayNiriDragState;if(t!=null&&t!==e)this.codexPetOverlayPumpNiriDrag(t);else if(t==null){let e=this.window;try{e!=null&&!e.isDestroyed?.()&&this.codexPetOverlayScheduleNiriHints(e)}catch{}}}",
@@ -215,7 +215,9 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlayAbortNiriDrag(e){if(!this.codexPetOverlayNiriDragCurrent(e))return;try{e.retryTimer!=null&&clearTimeout(e.retryTimer)}catch{}e.inFlight=!1,e.retryTimer=null,e.released?this.codexPetOverlayFinalizeNiriDrag(e):this.codexPetOverlayNiriDragState=null}",
     "codexPetOverlayFinalizeNiriDrag(e){if(!this.codexPetOverlayNiriDragCurrent(e)||!e.released||e.persisted)return;e.persisted=!0;let t=e.complete;this.codexPetOverlayNiriDragState=null;try{typeof t==`function`&&t()}catch{}}",
     "codexPetOverlayPumpNiriDrag(e){if(!this.codexPetOverlayNiriDragCurrent(e)||e.inFlight||e.retryTimer!=null||this.codexPetOverlayNiriDragCallOwner!=null||(this.codexPetOverlayNiriProcessCount??0)>0)return;if(e.id==null){if(e.retryIndex>=3){this.codexPetOverlayAbortNiriDrag(e);return}e.retryIndex+=1;if(!this.codexPetOverlayStartNiriDragCall(e))return;this.codexPetOverlayFindNiriWindow(e.window,(t,n)=>{this.codexPetOverlayFinishNiriDragCall(e);if(!this.codexPetOverlayNiriDragCurrent(e))return;let r=this.codexPetOverlayNiriPositiveInteger(n?.id);if(t||r==null){this.codexPetOverlayRetryNiriDrag(e,t);return}e.id=r,e.floating=n.is_floating===!0,this.codexPetOverlayPumpNiriDrag(e)});return}if(!e.floating){if(!this.codexPetOverlayStartNiriDragCall(e))return;let t=e.id;this.codexPetOverlayNiri([`action`,`move-window-to-floating`,`--id`,String(t)],n=>{this.codexPetOverlayFinishNiriDragCall(e);if(!this.codexPetOverlayNiriDragCurrent(e))return;if(n){e.id=null,e.floating=!1,this.codexPetOverlayRetryNiriDrag(e,n);return}e.floating=!0,this.codexPetOverlayPumpNiriDrag(e)});return}let t=e.latestTarget;if(t!=null){e.latestTarget=null;if(!this.codexPetOverlayStartNiriDragCall(e)){e.latestTarget=t;return}let n=e.id;this.codexPetOverlayNiri([`action`,`move-floating-window`,`--id`,String(n),`-x`,String(t.x),`-y`,String(t.y)],n=>{this.codexPetOverlayFinishNiriDragCall(e);if(!this.codexPetOverlayNiriDragCurrent(e))return;if(n){e.latestTarget??=t,e.id=null,e.floating=!1,this.codexPetOverlayRetryNiriDrag(e,n);return}this.codexPetOverlayPumpNiriDrag(e)});return}e.released&&this.codexPetOverlayFinalizeNiriDrag(e)}",
-    "codexPetOverlayEndNiriDrag(e,t){let n=this.codexPetOverlayNiriDragState;if(!this.codexPetOverlayNiriDragCurrent(n)||n.window!==e)return!1;n.released=!0,n.complete=t;let r=this.codexPetOverlayNiriLocalMove();r!=null&&(n.latestTarget={x:r.x,y:r.y}),this.codexPetOverlayPumpNiriDrag(n);return!0}",
+    "codexPetOverlayEndNiriDrag(e,t,n){let r=this.codexPetOverlayNiriDragState;if(!this.codexPetOverlayNiriDragCurrent(r)||r.window!==e)return!1;this.codexPetOverlayMoveCompositorDrag(e,t),r.released=!0,r.complete=n;let i=this.codexPetOverlayNiriLocalMove();i!=null&&(r.latestTarget={x:i.x,y:i.y}),this.codexPetOverlayPumpNiriDrag(r);return!0}",
+    "codexPetOverlayBeginCompositorDrag(e){let t=this.codexPetOverlayBeginKWinDrag(e)||this.codexPetOverlayBeginNiriDrag(e);return t&&(this.nativeWindowDragStart=null,this.nativeWindowDragActive=!0),!!t}",
+    "codexPetOverlayMoveCompositorDrag(e,t){let n=this.codexPetOverlayKWinDragState;if(this.codexPetOverlayKWinDragCurrent(n)&&n.window===e)return!0;let r=this.codexPetOverlayNiriDragState;if(!this.codexPetOverlayNiriDragCurrent(r)||r.window!==e)return!1;let i=this.dragState,a=this.layout,o=this.codexPetOverlayMascotRect(a),s=this.codexPetOverlayRect(a?.windowBounds)??this.codexPetOverlayWindowBounds(e),c=Number(t?.pointerScreenX),l=Number(t?.pointerScreenY),u;try{u=require(`electron`).screen}catch{}if(![c,l].every(Number.isFinite)){let e=u?.getCursorScreenPoint?.();c=Number(e?.x),l=Number(e?.y)}let d=Number(i?.pointerAnchorX),p=Number(i?.pointerAnchorY);if(o==null||s==null||![c,l,d,p].every(Number.isFinite))return!0;let h;try{h=u?.getDisplayNearestPoint?.({x:c,y:l})}catch{}let m=this.codexPetOverlayDisplayRect(h);m!=null&&(this.codexPetOverlayDesiredDisplayBounds={x:Math.round(m.x),y:Math.round(m.y),width:Math.round(m.width),height:Math.round(m.height)}),this.codexPetOverlayDesiredWindowBounds={x:Math.round(c-o.left-d),y:Math.round(l-o.top-p),width:Math.round(s.width),height:Math.round(s.height)},this.codexPetOverlayQueueNiriDrag(e);return!0}",
     "codexPetOverlayShouldLockPosition(){return process.platform===`linux`&&this.codexPetOverlaySettings().lockPosition===!0}",
   ].join("");
 }
@@ -284,22 +286,39 @@ function patchCompositorDragLifecycle(source) {
     console.warn("WARN: Could not find avatar overlay startDrag for compositor transport - skipping pet overlay patch");
     return patched;
   }
-  const needsKWinStart = !startMethod.text.includes("codexPetOverlayBeginKWinDrag(");
-  const needsNiriStart = !startMethod.text.includes("codexPetOverlayBeginNiriDrag(");
-  if (needsKWinStart || needsNiriStart) {
+  if (!startMethod.text.includes("codexPetOverlayBeginCompositorDrag(")) {
     const windowMatch = startMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/);
     if (windowMatch == null || !startMethod.text.includes("this.dragState=")) {
       console.warn("WARN: Could not identify current avatar overlay drag start shape - skipping compositor transport hook");
       return patched;
     }
-    const hooks = [
-      needsKWinStart ? `this.codexPetOverlayBeginKWinDrag(${windowMatch[1]})` : null,
-      needsNiriStart ? `this.codexPetOverlayBeginNiriDrag(${windowMatch[1]})` : null,
-    ].filter(Boolean).join(",");
     patched = replaceMethodText(
       patched,
       startMethod,
-      `${startMethod.text.slice(0, -1)},${hooks}}`,
+      `${startMethod.text.slice(0, -1)},this.codexPetOverlayBeginCompositorDrag(${windowMatch[1]})}`,
+    );
+  }
+
+  const moveMethod = findAvatarOverlayMethod(patched, /moveDrag\([^)]*\)\{/);
+  if (moveMethod == null) {
+    console.warn("WARN: Could not find avatar overlay moveDrag for compositor transport - skipping pet overlay patch");
+    return patched;
+  }
+  if (!moveMethod.text.includes("codexPetOverlayMoveCompositorDrag(")) {
+    const windowMatch = moveMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/);
+    const eventArg = firstMethodArgument(moveMethod.match[0], "moveDrag", 1);
+    const movementMatch = moveMethod.text.match(
+      /if\(([A-Za-z_$][\w$]*)\.recordMovementIntent\(\),this\.nativeWindowDragActive\)return;/,
+    );
+    if (windowMatch == null || eventArg == null || movementMatch == null) {
+      console.warn("WARN: Could not identify current avatar overlay drag move shape - skipping compositor transport hook");
+      return patched;
+    }
+    const replacement = `if(${movementMatch[1]}.recordMovementIntent(),this.codexPetOverlayMoveCompositorDrag(${windowMatch[1]},${eventArg})||this.nativeWindowDragActive)return;`;
+    patched = replaceMethodText(
+      patched,
+      moveMethod,
+      moveMethod.text.replace(movementMatch[0], replacement),
     );
   }
 
@@ -314,19 +333,44 @@ function patchCompositorDragLifecycle(source) {
   ) {
     return patched;
   }
-  const completionPattern = /[A-Za-z_$][\w$]*\?this\.persistWindowBounds\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*\?\?this\.getCurrentDisplay\(\)\):this\.reclampWindowToVisibleDisplay\(\{shouldPersist:!0\}\)/;
-  const completionMatch = endMethod.text.match(completionPattern);
-  if (completionMatch == null) {
+  const windowMatch = endMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/u);
+  const eventArg = firstMethodArgument(endMethod.match[0], "endDrag", 1);
+  const nativeBoundsMatch = endMethod.text.match(
+    /let [A-Za-z_$][\w$]*=this\.dragState,([A-Za-z_$][\w$]*)=this\.nativeWindowDragActive,([A-Za-z_$][\w$]*)=\1\?/,
+  );
+  const completionBoundary = "this.nativeWindowDragStart=null,";
+  const boundaryIndex = endMethod.text.indexOf(completionBoundary);
+  const completionStart = endMethod.text.lastIndexOf(
+    "if(this.suppressNextRendererThrow=",
+    boundaryIndex,
+  );
+  if (
+    windowMatch == null || eventArg == null || nativeBoundsMatch == null ||
+    boundaryIndex === -1 || completionStart === -1
+  ) {
     console.warn("WARN: Could not identify current avatar overlay drag completion shape - skipping compositor transport hook");
     return patched;
   }
-  const windowVar = completionMatch[1];
-  const completionNeedle = endMethod.text.slice(completionMatch.index, -1);
+  const completionNeedle = endMethod.text.slice(completionStart, -1);
+  if (
+    !completionNeedle.includes(completionBoundary) ||
+    !completionNeedle.includes("this.persistWindowBounds(") ||
+    !completionNeedle.includes("this.reclampWindowToVisibleDisplay({shouldPersist:!0})")
+  ) {
+    console.warn("WARN: Could not identify current avatar overlay drag completion shape - skipping compositor transport hook");
+    return patched;
+  }
+  const windowVar = windowMatch[1];
+  const nativeBoundsVar = nativeBoundsMatch[2];
+  const niriCompletion = completionNeedle.replace(
+    "if(this.suppressNextRendererThrow=",
+    `${nativeBoundsVar}=this.codexPetOverlayDesiredWindowBounds??this.codexPetOverlayWindowBounds(${windowVar})??${nativeBoundsVar};if(this.suppressNextRendererThrow=`,
+  );
   return replaceMethodText(
     patched,
     endMethod,
-    endMethod.text.slice(0, completionMatch.index) +
-      `this.codexPetOverlayEndKWinDrag(${windowVar},()=>{${completionNeedle}})||this.codexPetOverlayEndNiriDrag(${windowVar},()=>{${completionNeedle}})||(()=>{${completionNeedle}})()` +
+    endMethod.text.slice(0, completionStart) +
+      `this.codexPetOverlayEndKWinDrag(${windowVar},()=>{${completionNeedle}})||this.codexPetOverlayEndNiriDrag(${windowVar},${eventArg},()=>{${niriCompletion}})||(()=>{${completionNeedle}})()` +
       "}",
   );
 }
@@ -486,9 +530,9 @@ function hasCompletePetOverlayPatch(source, settings, avatarSelectionRefreshExpe
     /process\.platform===`linux`\?this\.codexPetOverlaySyncWindow\([A-Za-z_$][\w$]*,!0\):[A-Za-z_$][\w$]*\.moveTop\(\),[A-Za-z_$][\w$]*\.showInactive\(\),/.test(source),
     source.includes("if(this.codexPetOverlayShouldLockPosition())return;"),
     source.includes("codexPetOverlayKWinQdbus("),
-    source.includes("this.codexPetOverlayBeginKWinDrag("),
+    source.includes("this.codexPetOverlayBeginCompositorDrag("),
+    source.includes("this.codexPetOverlayMoveCompositorDrag("),
     source.includes("this.codexPetOverlayEndKWinDrag("),
-    source.includes("this.codexPetOverlayBeginNiriDrag("),
     source.includes("this.codexPetOverlayEndNiriDrag("),
     source.includes("===`avatarOverlay`?{backgroundColor:`#00000000`,backgroundMaterial:null}:"),
     source.includes("title:`Codex Pet Overlay`,width:"),

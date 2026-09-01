@@ -374,7 +374,13 @@ function loadInjectedTransport({ spawnImpl, WebSocketImpl = null, fsImpl = fs, t
     clearTimeout,
   };
   vm.runInNewContext(`${source};globalThis.Transport=CodexLinuxSharedAppServerSocketTransport`, context);
-  return { Transport: context.Transport, namespace };
+  const InjectedTransport = context.Transport;
+  class Transport extends InjectedTransport {
+    constructor(socketPath, getConfigOverrides = async () => []) {
+      super(socketPath, getConfigOverrides);
+    }
+  }
+  return { InjectedTransport, Transport, namespace };
 }
 
 async function listenUnix(socketPath) {
@@ -494,7 +500,7 @@ function syntheticBundle() {
     "if(e.transportKind===`remote-control`)return new Remote(e);",
     "if(n.no(e.hostConfig))return new hoe({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator});",
     "let r=x5(e.hostConfig);if(r){e.desktopAuthAppServerClient;let t=vbe(e.hostConfig,r);return new n.Tn({hostConfig:e.hostConfig,websocketUrl:r,getWebsocketProtocols:void 0,...t==null?{}:{socksProxyUrl:t}})}",
-    "return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator})}function afterFactory(){}",
+    "return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:()=>Ope(e)})}function afterFactory(){}",
   ].join("");
 }
 
@@ -545,8 +551,13 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   assert.equal(applySharedAppServerSocketPatch(patched), patched);
   assert.match(patched, /CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET/);
   assert.match(patched, /hostConfig\.kind===`local`/);
+  assert.match(
+    patched,
+    /CodexLinuxSharedAppServerSocketTransport\(process\.env\.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,\(\)=>Ope\(e\)\)/,
+  );
   assert.match(patched, /app-server`,\s*`proxy`,\s*`--sock`/);
-  assert.match(patched, /app-server`,\s*`--listen`,\s*`unix:\/\//);
+  assert.match(patched, /flatMap\(e=>\[`-c`,e\]\).*app-server`,\s*`--listen`,\s*`unix:\/\//);
+  assert.doesNotMatch(patched, /mcp_servers\.codex_app/);
   assert.match(patched, /await this\.ensureAuthority\(\)/);
   assert.match(patched, /e\.once\(`close`,t\);try\{e\.kill\(\)/);
   assert.match(patched, /openSync\(this\.lockPath,`wx`,384\)/);
@@ -571,7 +582,7 @@ test("patch leaves unsupported bundle shapes unchanged with a warning", () => {
   assert.match(warnings.join("\n"), /shared app-server socket/i);
 });
 
-test("patch rejects the previous SSH transport class shape", () => {
+test("patch rejects a current transport whose semantic SSH anchor is missing", () => {
   const source = syntheticBundle().replace(
     "class{options;kind=`websocket`;logger=i.i(`AppServerTransportSshWebsocket`);",
     "class{kind=`websocket`;",
@@ -585,6 +596,45 @@ test("patch rejects the previous SSH transport class shape", () => {
     console.warn = originalWarn;
   }
   assert.match(warnings.join("\n"), /SSH WebSocket transport/);
+});
+
+test("patch leaves a current transport with no config override callback byte-identical", () => {
+  const source = syntheticBundle().replace(
+    ",getConfigOverrides:()=>Ope(e)",
+    "",
+  );
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    assert.equal(applySharedAppServerSocketPatch(source), source);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.match(warnings.join("\n"), /config override callback.*found 0/i);
+});
+
+test("patch leaves an ambiguous config override callback byte-identical", () => {
+  const callbackTransport =
+    "return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:()=>Ope(e)})";
+  const source = syntheticBundle().replace(callbackTransport, `${callbackTransport};${callbackTransport}`);
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    assert.equal(applySharedAppServerSocketPatch(source), source);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.match(warnings.join("\n"), /config override callback.*found 2/i);
+});
+
+test("injected transport requires the captured config override callback", () => {
+  const { InjectedTransport } = loadInjectedTransport();
+  assert.throws(
+    () => new InjectedTransport("/unused/socket"),
+    /requires a config override callback/,
+  );
 });
 
 test("descriptor is optional and targets the main bundle", () => {
@@ -1059,6 +1109,157 @@ test("injected transport shares one readiness promise across concurrent connecti
     if (originalCli == null) delete process.env.CODEX_CLI_PATH;
     else process.env.CODEX_CLI_PATH = originalCli;
     await closeServer(server);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+for (const [name, overrides, expectedArgs] of [
+  [
+    "ordered config overrides",
+    ["mcp_servers.example={command=\"/bin/true\"}", "features.example=true"],
+    [
+      "-c",
+      "mcp_servers.example={command=\"/bin/true\"}",
+      "-c",
+      "features.example=true",
+      "app-server",
+      "--listen",
+    ],
+  ],
+  ["an empty config override list", [], ["app-server", "--listen"]],
+]) {
+  test(`injected transport forwards ${name} before the authority subcommand`, async () => {
+    const tempDir = makeSocketTempDir("shared-app-server-overrides-");
+    const socketPath = path.join(tempDir, "app-server.sock");
+    let observedArgs;
+    const { Transport } = loadInjectedTransport({
+      spawnImpl(_command, args) {
+        observedArgs = args;
+        throw new Error("stop after argument capture");
+      },
+    });
+    const transport = new Transport(socketPath, async () => overrides);
+    const originalCli = process.env.CODEX_CLI_PATH;
+    process.env.CODEX_CLI_PATH = "/fake/codex";
+    try {
+      await assert.rejects(transport.ensureAuthority(), /stop after argument capture/);
+      assert.deepEqual(
+        Array.from(observedArgs),
+        [...expectedArgs, `unix://${socketPath}`],
+      );
+      assert.equal(fs.existsSync(`${socketPath}.lock`), false);
+    } finally {
+      if (originalCli == null) delete process.env.CODEX_CLI_PATH;
+      else process.env.CODEX_CLI_PATH = originalCli;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [name, getConfigOverrides, expectedError] of [
+  ["a synchronous callback failure", () => { throw new Error("override failure"); }, /override failure/],
+  ["an asynchronous callback failure", async () => { throw new Error("override rejection"); }, /override rejection/],
+  ["a non-array callback result", async () => ({}), /invalid config overrides/],
+  ["a non-string callback member", async () => ["valid=true", 42], /invalid config overrides/],
+]) {
+  test(`injected transport rejects ${name} before ownership or spawn`, async () => {
+    const tempDir = makeSocketTempDir("shared-app-server-invalid-overrides-");
+    const socketPath = path.join(tempDir, "app-server.sock");
+    let spawnCalls = 0;
+    const { Transport } = loadInjectedTransport({
+      spawnImpl() {
+        spawnCalls += 1;
+        return fakeChild();
+      },
+    });
+    const transport = new Transport(socketPath, getConfigOverrides);
+    const originalCli = process.env.CODEX_CLI_PATH;
+    process.env.CODEX_CLI_PATH = "/fake/codex";
+    try {
+      await assert.rejects(transport.ensureAuthority(), expectedError);
+      assert.equal(spawnCalls, 0);
+      assert.equal(fs.existsSync(socketPath), false);
+      assert.equal(fs.existsSync(`${socketPath}.lock`), false);
+    } finally {
+      if (originalCli == null) delete process.env.CODEX_CLI_PATH;
+      else process.env.CODEX_CLI_PATH = originalCli;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("disposing while config overrides resolve prevents ownership and spawn", async () => {
+  const tempDir = makeSocketTempDir("shared-app-server-dispose-overrides-");
+  const socketPath = path.join(tempDir, "app-server.sock");
+  let resolveOverrides;
+  let spawnCalls = 0;
+  const overridesReady = new Promise((resolve) => {
+    resolveOverrides = resolve;
+  });
+  const { Transport } = loadInjectedTransport({
+    spawnImpl() {
+      spawnCalls += 1;
+      return fakeChild();
+    },
+  });
+  const transport = new Transport(socketPath, () => overridesReady);
+  const originalCli = process.env.CODEX_CLI_PATH;
+  process.env.CODEX_CLI_PATH = "/fake/codex";
+  try {
+    const startup = transport.ensureAuthority();
+    transport.dispose();
+    resolveOverrides([]);
+    await assert.rejects(startup, /disposed during startup/);
+    assert.equal(spawnCalls, 0);
+    assert.equal(fs.existsSync(socketPath), false);
+    assert.equal(fs.existsSync(`${socketPath}.lock`), false);
+  } finally {
+    if (originalCli == null) delete process.env.CODEX_CLI_PATH;
+    else process.env.CODEX_CLI_PATH = originalCli;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("a restarted authority resolves fresh config overrides", async () => {
+  const tempDir = makeSocketTempDir("shared-app-server-restart-overrides-");
+  const socketPath = path.join(tempDir, "app-server.sock");
+  const children = [];
+  const servers = [];
+  const observedArgs = [];
+  let overrideCalls = 0;
+  const { Transport } = loadInjectedTransport({
+    spawnImpl(_command, args) {
+      observedArgs.push(args);
+      const child = fakeChild();
+      children.push(child);
+      queueMicrotask(async () => {
+        servers.push(await listenUnix(socketPath));
+      });
+      return child;
+    },
+  });
+  const transport = new Transport(socketPath, async () => [`restart.count=${++overrideCalls}`]);
+  const originalCli = process.env.CODEX_CLI_PATH;
+  process.env.CODEX_CLI_PATH = "/fake/codex";
+  try {
+    await transport.ensureAuthority();
+    await closeServer(servers.shift());
+    children[0].exitCode = 0;
+    children[0].emit("exit", 0, null);
+    await transport.ensureAuthority();
+    assert.equal(overrideCalls, 2);
+    assert.deepEqual(observedArgs.map((args) => Array.from(args.slice(0, 2))), [
+      ["-c", "restart.count=1"],
+      ["-c", "restart.count=2"],
+    ]);
+  } finally {
+    if (originalCli == null) delete process.env.CODEX_CLI_PATH;
+    else process.env.CODEX_CLI_PATH = originalCli;
+    for (const server of servers) await closeServer(server);
+    for (const child of children) {
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+    }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

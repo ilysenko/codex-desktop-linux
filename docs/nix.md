@@ -114,6 +114,19 @@ The Nix package follows the standard `NIXOS_OZONE_WL` convention. When both
 `NIXOS_OZONE_WL` and `WAYLAND_DISPLAY` are set, its wrapper starts Electron with
 native Wayland rendering and text-input-v3 IME support.
 
+On NixOS the launcher includes a package-local Bubblewrap adapter on `PATH` for
+the Codex Linux command sandbox. The adapter preserves the sandbox policy and
+adds the packaged `nix-ld` interpreter and runtime libraries inside that mount
+namespace. Generic Linux Git, Node.js, Python, and pnpm runtimes downloaded into
+the user cache therefore work in sandboxed workspace commands without enabling
+the system-wide `programs.nix-ld` module. Other Nix systems keep the normal
+launcher path and use their system Bubblewrap integration.
+
+The adapter uses the generic loader symlink that NixOS provides through
+`environment.stub-ld` by default. A system that explicitly disables both that
+stub and `programs.nix-ld` keeps the packaged Bubblewrap integration, but its
+generic cached runtimes remain unavailable.
+
 The wrapper uses the NixOS OpenGL driver path when it is present and retains
 Mesa as a fallback. Proprietary drivers on non-NixOS distributions may still
 need that distribution's usual Nix/OpenGL integration; the flake deliberately

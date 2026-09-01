@@ -20,6 +20,9 @@ const {
 const currentComposerSource =
   "function nW(e){let t=(0,iW.c)(26),{conversationId:n,threadId:r,rateLimit:i,onOpenChange:a}=e,o=Wr(),[s,c]=(0,aW.useState)(!1),{activeMode:l}=vm(n),u=l?.settings.model??null,d=Pn(Bc,n),f;t[0]===d?f=t[1]:(f=nR(d),t[0]=d,t[1]=f);let y,b;t[10]===a?(y=t[11],b=t[12]):(y=async()=>{c(!0),a?.(!0)},b=[a],t[10]=a,t[11]=y,t[12]=b);let v=o.formatMessage({id:`composer.statusSlashCommand.description`,defaultMessage:`Show task id, context usage, and rate limits`,description:`Description for the status slash command`}),x={id:`status`,title:`Status`,description:v,requiresEmptyComposer:!1,Icon:rE,onSelect:y,dependencies:b};if(CS(x),!s)return null;let S;t[18]===a?S=t[19]:(S=()=>{c(!1),a?.(!1)},t[18]=a,t[19]=S);return FU({threadId:r,onClose:S})}";
 
+const liftedStatusStateComposerSource =
+  "function nW(){let[yt,bt]=(0,R3.useState)(!1),v=o.formatMessage({id:`composer.statusSlashCommand.description`});return jsx(Menu,{setIsStatusMenuOpen:bt,content:jsx(StatusPanel,{onClose:()=>bt(!1)}),open:yt,description:v})}";
+
 function captureWarns(fn) {
   const originalWarn = console.warn;
   const warnings = [];
@@ -68,10 +71,21 @@ test("feature is disabled until selected", () => {
   });
 });
 
-test("status panel preference survives component remounts", () => {
-  const patched = applyPersistentStatusPanelPatch(currentComposerSource);
+test("retired component-local status state is rejected byte-identically", () => {
+  const { value: patched, warnings } = captureWarns(() =>
+    applyPersistentStatusPanelPatch(currentComposerSource),
+  );
 
-  assert.notEqual(patched, currentComposerSource);
+  assert.equal(patched, currentComposerSource);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find Codex status panel state - skipping persistent status panel patch",
+  ]);
+});
+
+test("status panel preference follows the current lifted menu state", () => {
+  const patched = applyPersistentStatusPanelPatch(liftedStatusStateComposerSource);
+
+  assert.notEqual(patched, liftedStatusStateComposerSource);
   assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
   assert.match(patched, new RegExp(`localStorage\\.setItem\\(\\\`${STORAGE_KEY}\\\`,\\\`1\\\`\\)`));
   assert.match(patched, new RegExp(`localStorage\\.removeItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
@@ -87,7 +101,7 @@ test("descriptor patches the current app-initial composer status bundle", () => 
       "app-initial-BTphDPeq.js",
     );
     fs.mkdirSync(assetsDir, { recursive: true });
-    fs.writeFileSync(assetPath, currentComposerSource);
+    fs.writeFileSync(assetPath, liftedStatusStateComposerSource);
 
     const result = patchAssetFiles(tempDir, descriptors[0].pattern, descriptors[0].apply, "missing");
     const patched = fs.readFileSync(assetPath, "utf8");
@@ -101,11 +115,9 @@ test("descriptor patches the current app-initial composer status bundle", () => 
   }
 });
 
-test("ambiguous status panel handler needles are unchanged", () => {
-  const ambiguousSource = currentComposerSource.replace(
-    "let v=o.formatMessage",
-    "let extraOpen=async()=>{c(!0),a?.(!0)},extraClose=()=>{c(!1),a?.(!1)},v=o.formatMessage",
-  );
+test("ambiguous lifted status state owners are unchanged", () => {
+  const ambiguousSource = liftedStatusStateComposerSource +
+    liftedStatusStateComposerSource.replaceAll("yt", "xt").replaceAll("bt", "ct");
 
   const { value: patched, warnings } = captureWarns(() =>
     applyPersistentStatusPanelPatch(ambiguousSource),
@@ -113,7 +125,7 @@ test("ambiguous status panel handler needles are unchanged", () => {
 
   assert.equal(patched, ambiguousSource);
   assert.deepEqual(warnings, [
-    "WARN: Found 2 Codex status panel open handler occurrences - skipping persistent status panel patch",
+    "WARN: Could not find Codex status panel state - skipping persistent status panel patch",
   ]);
 });
 

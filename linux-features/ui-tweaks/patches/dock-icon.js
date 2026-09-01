@@ -1,36 +1,36 @@
 "use strict";
 
-const currentPreviewGate = "if(process.platform!==`darwin`||t==null)return null";
+const currentPreviewGate = "function wse(e){if(process.platform!==`darwin`)return null";
 const patchedPreviewGate =
-  "if(process.platform!==`darwin`&&process.platform!==`linux`||t==null)return null";
+  "function wse(e){if(process.platform!==`darwin`&&process.platform!==`linux`)return null";
 const currentAppInfoResource =
-  "function Xb(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null";
+  "function DS(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null";
 const patchedAppInfoResource =
-  "function codexLinuxDockIconResourcePath(e){return process.platform===`linux`?(0,p.join)(process.resourcesPath,`dock-icon`,e):(0,p.join)(process.resourcesPath,e)}function Xb(e){if(e==null)return null;let t=l.app.isPackaged||process.platform===`linux`?codexLinuxDockIconResourcePath(e):null";
+  "function codexLinuxDockIconResourcePath(e){return process.platform===`linux`?(0,p.join)(process.resourcesPath,`dock-icon`,e):(0,p.join)(process.resourcesPath,e)}function DS(e){if(e==null)return null;let t=l.app.isPackaged||process.platform===`linux`?codexLinuxDockIconResourcePath(e):null";
 const currentWindowResource =
-  "D=e=>{if(!l.app.isPackaged)return null;let t=(0,p.join)(process.resourcesPath,e);return(0,_.existsSync)(t)?t:null}";
+  "E=e=>{if(!l.app.isPackaged)return null;let t=(0,p.join)(process.resourcesPath,e);return(0,_.existsSync)(t)?t:null}";
 const patchedWindowResource =
-  "D=e=>{if(!l.app.isPackaged&&process.platform!==`linux`)return null;let t=codexLinuxDockIconResourcePath(e);return(0,_.existsSync)(t)?t:null}";
+  "E=e=>{if(!l.app.isPackaged&&process.platform!==`linux`)return null;let t=codexLinuxDockIconResourcePath(e);return(0,_.existsSync)(t)?t:null}";
 const currentApplyIcon =
-  "F=t=>{if(t===`app-default`&&i!==a.a.Dev&&(l.app.isPackaged||e===n.Zc.ChatGPT)){let e=l.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let r=t===`codex-system`?P():null,o=(r==null?null:k(r))??j(),s=o==null?l.nativeImage.createEmpty():l.nativeImage.createFromPath(o);if(!s.isEmpty()){if(t===`codex-system`){let{width:e,height:t}=s.getSize(),n=Math.round(e/128);s=s.crop({x:n,y:n,width:e-n*2,height:t-n*2})}l.app.dock?.setIcon(s)}}";
+  "F=e=>{if(e===`app-default`&&t!==a.a.Dev){let e=l.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let n=e===`codex-system`?P():null,r=(n==null?null:O(n))??A(),i=r==null?l.nativeImage.createEmpty():l.nativeImage.createFromPath(r);if(!i.isEmpty()){if(e===`codex-system`){let{width:e,height:t}=i.getSize(),n=Math.round(e/128);i=i.crop({x:n,y:n,width:e-n*2,height:t-n*2})}l.app.dock?.setIcon(i)}}";
 const patchedApplyIcon =
-  "F=function codexLinuxApplyDockIcon(t){if(t===`app-default`&&process.platform!==`linux`&&i!==a.a.Dev&&(l.app.isPackaged||e===n.Zc.ChatGPT)){let e=l.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let r=t===`codex-system`?P():null,o=(r==null?null:k(r))??j(),s=o==null?l.nativeImage.createEmpty():l.nativeImage.createFromPath(o);if(s.isEmpty())return;if(process.platform!==`linux`&&t===`codex-system`){let{width:e,height:t}=s.getSize(),n=Math.round(e/128);s=s.crop({x:n,y:n,width:e-n*2,height:t-n*2})}if(process.platform===`linux`){let codexLinuxIconSelection=t===`codex-system`?(l.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?`codex-dark`:`codex-light`):`chatgpt`;globalThis.codexLinuxDockIconImage=s;for(let e of l.BrowserWindow.getAllWindows())e.isDestroyed()||e.setIcon(s);V9!=null&&!V9.tray.isDestroyed()&&V9.tray.setImage(s);let codexLinuxSyncScript=codexLinuxDockIconResourcePath(`sync-desktop-icon.sh`);if(_.existsSync(codexLinuxSyncScript))try{let e=require(`node:child_process`).spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:[`pipe`,`ignore`,`ignore`]});e.on(`error`,()=>{}),e.stdin.on(`error`,()=>{}),e.stdin.end(s.toPNG()),e.unref()}catch(e){}return}l.app.dock?.setIcon(s)}";
+  "F=function codexLinuxApplyDockIcon(e){if(e===`app-default`&&process.platform!==`linux`&&t!==a.a.Dev){let e=l.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let n=e===`codex-system`?P():null,r=(n==null?null:O(n))??A(),i=r==null?l.nativeImage.createEmpty():l.nativeImage.createFromPath(r);if(i.isEmpty())return;if(process.platform!==`linux`&&e===`codex-system`){let{width:e,height:t}=i.getSize(),n=Math.round(e/128);i=i.crop({x:n,y:n,width:e-n*2,height:t-n*2})}if(process.platform===`linux`){let codexLinuxIconSelection=e===`codex-system`?(l.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?`codex-dark`:`codex-light`):`chatgpt`;globalThis.codexLinuxDockIconImage=i;for(let e of l.BrowserWindow.getAllWindows())e.isDestroyed()||e.setIcon(i);H9!=null&&!H9.tray.isDestroyed()&&H9.tray.setImage(i);let codexLinuxSyncScript=codexLinuxDockIconResourcePath(`sync-desktop-icon.sh`);if(_.existsSync(codexLinuxSyncScript))try{let e=require(`node:child_process`).spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:[`pipe`,`ignore`,`ignore`]});e.on(`error`,()=>{}),e.stdin.on(`error`,()=>{}),e.stdin.end(i.toPNG()),e.unref()}catch(e){}return}l.app.dock?.setIcon(i)}";
 const currentUpdateGate =
-  "I=()=>{if(!v)return;let e=A();F(e),nde({preference:e,resourceName:e===`codex-system`?N.light:null}).then(e=>{e&&F(A())})}";
+  "I=()=>{if(!g)return;let e=k();F(e),Vde({preference:e,resourceName:e===`codex-system`?N.light:null}).then(e=>{e&&F(k())})}";
 const patchedUpdateGate =
-  "I=()=>{if(!v&&process.platform!==`linux`)return;let e=A();F(e),nde({preference:e,resourceName:e===`codex-system`?N.light:null}).then(e=>{e&&F(A())})}";
+  "I=()=>{if(!g&&process.platform!==`linux`)return;let e=k();F(e),Vde({preference:e,resourceName:e===`codex-system`?N.light:null}).then(e=>{e&&F(k())})}";
 const currentThemeGate =
-  "if(v){I();let e=()=>{let e=A();e===`codex-system`&&F(e)};l.nativeTheme.on(`updated`,e),T.add(()=>{l.nativeTheme.off(`updated`,e)})}";
+  "if(g){I();let e=()=>{let e=k();e===`codex-system`&&F(e)};l.nativeTheme.on(`updated`,e),w.add(()=>{l.nativeTheme.off(`updated`,e)})}";
 const patchedThemeGate =
-  "if(v||process.platform===`linux`){I();let e=()=>{let e=A();e===`codex-system`&&F(e)};l.nativeTheme.on(`updated`,e),T.add(()=>{l.nativeTheme.off(`updated`,e)})}";
+  "if(g||process.platform===`linux`){I();let e=()=>{let e=k();e===`codex-system`&&F(e)};l.nativeTheme.on(`updated`,e),w.add(()=>{l.nativeTheme.off(`updated`,e)})}";
 const currentWindowRegistration =
-  "onWindowRegistered:e=>{L?.registerWindow(e),w?.(e)}";
+  "onWindowRegistered:e=>{ee?.registerWindow(e),C?.(e)}";
 const patchedWindowRegistration =
-  "onWindowRegistered:e=>{L?.registerWindow(e),w?.(e),process.platform===`linux`&&setImmediate(I)}";
-const currentTrayRegistration =
-  "i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?Uje(t):void 0);if(!W9)return";
-const patchedTrayRegistration =
-  "i=new l.Tray(process.platform===`linux`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?Uje(t):void 0);if(!W9)return";
+  "onWindowRegistered:e=>{ee?.registerWindow(e),C?.(e),process.platform===`linux`&&setImmediate(I)}";
+const currentTrayRegistrationPattern =
+  /([A-Za-z_$][\w$]*)=new ([A-Za-z_$][\w$]*)\.Tray\(([A-Za-z_$][\w$]*)\.defaultIcon,process\.platform===`win32`&&\2\.app\.isPackaged\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\):void 0\);if\(!([A-Za-z_$][\w$]*)\)return/g;
+const patchedTrayRegistrationPattern =
+  /([A-Za-z_$][\w$]*)=new ([A-Za-z_$][\w$]*)\.Tray\(process\.platform===`linux`&&globalThis\.codexLinuxDockIconImage&&!globalThis\.codexLinuxDockIconImage\.isEmpty\(\)\?globalThis\.codexLinuxDockIconImage:([A-Za-z_$][\w$]*)\.defaultIcon,process\.platform===`win32`&&\2\.app\.isPackaged\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\):void 0\);if\(!([A-Za-z_$][\w$]*)\)return/g;
 
 const currentMainContracts = [
   currentPreviewGate,
@@ -40,7 +40,6 @@ const currentMainContracts = [
   currentUpdateGate,
   currentThemeGate,
   currentWindowRegistration,
-  currentTrayRegistration,
 ];
 const patchedMainContracts = [
   patchedPreviewGate,
@@ -50,7 +49,6 @@ const patchedMainContracts = [
   patchedUpdateGate,
   patchedThemeGate,
   patchedWindowRegistration,
-  patchedTrayRegistration,
 ];
 
 function countOccurrences(source, needle) {
@@ -73,25 +71,42 @@ function dockIconEnabled(context) {
 function applyDockIconMainPatch(source) {
   const currentCounts = currentMainContracts.map((needle) => countOccurrences(source, needle));
   const patchedCounts = patchedMainContracts.map((needle) => countOccurrences(source, needle));
-  if (currentCounts.every((count) => count === 0) && patchedCounts.every((count) => count === 1)) {
+  const currentTrayMatches = matches(source, currentTrayRegistrationPattern);
+  const patchedTrayMatches = matches(source, patchedTrayRegistrationPattern);
+  if (
+    currentCounts.every((count) => count === 0) &&
+    patchedCounts.every((count) => count === 1) &&
+    currentTrayMatches.length === 0 &&
+    patchedTrayMatches.length === 1
+  ) {
     return source;
   }
-  if (!currentCounts.every((count) => count === 1) || !patchedCounts.every((count) => count === 0)) {
+  if (
+    !currentCounts.every((count) => count === 1) ||
+    !patchedCounts.every((count) => count === 0) ||
+    currentTrayMatches.length !== 1 ||
+    patchedTrayMatches.length !== 0
+  ) {
     console.warn(
       "WARN: Could not find the complete current Dock icon main-process contract - skipping Dock icon main patch",
     );
     return source;
   }
-  return currentMainContracts.reduce(
+  const patchedSource = currentMainContracts.reduce(
     (patchedSource, needle, index) => patchedSource.replace(needle, patchedMainContracts[index]),
     source,
+  );
+  return patchedSource.replace(
+    currentTrayRegistrationPattern,
+    (_match, trayAlias, electronAlias, iconAlias, windowsHelperAlias, flavorAlias, readyAlias) =>
+      `${trayAlias}=new ${electronAlias}.Tray(process.platform===\`linux\`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:${iconAlias}.defaultIcon,process.platform===\`win32\`&&${electronAlias}.app.isPackaged?${windowsHelperAlias}(${flavorAlias}):void 0);if(!${readyAlias})return`,
   );
 }
 
 const currentSettingsGatePattern =
-  /return ([A-Za-z_$][\w$]*)!==`macOS`\|\|([A-Za-z_$][\w$]*)!==([A-Za-z_$][\w$]*)\.ChatGPT\|\|([A-Za-z_$][\w$]*)===([A-Za-z_$][\w$]*)\.Agent\?null:([A-Za-z_$][\w$]*)/g;
+  /return ([A-Za-z_$][\w$]*)!==`macOS`\|\|([A-Za-z_$][\w$]*)===([A-Za-z_$][\w$]*)\.Agent\?null:([A-Za-z_$][\w$]*)/g;
 const patchedSettingsGatePattern =
-  /return ([A-Za-z_$][\w$]*)!==`macOS`&&\1!==`linux`\|\|([A-Za-z_$][\w$]*)!==([A-Za-z_$][\w$]*)\.ChatGPT\|\|([A-Za-z_$][\w$]*)===([A-Za-z_$][\w$]*)\.Agent\?null:([A-Za-z_$][\w$]*)/g;
+  /return ([A-Za-z_$][\w$]*)!==`macOS`&&\1!==`linux`\|\|([A-Za-z_$][\w$]*)===([A-Za-z_$][\w$]*)\.Agent\?null:([A-Za-z_$][\w$]*)/g;
 const settingsRowAnchorPattern = /\bdockIconPreviews\b/g;
 
 function matches(source, pattern) {
@@ -127,13 +142,11 @@ function applyDockIconSettingsPatch(source) {
     (
       _match,
       platformAlias,
-      appBrandAlias,
-      appBrandEnumAlias,
       buildFlavorAlias,
       buildFlavorEnumAlias,
       previewsAlias,
     ) =>
-      `return ${platformAlias}!==\`macOS\`&&${platformAlias}!==\`linux\`||${appBrandAlias}!==${appBrandEnumAlias}.ChatGPT||${buildFlavorAlias}===${buildFlavorEnumAlias}.Agent?null:${previewsAlias}`,
+      `return ${platformAlias}!==\`macOS\`&&${platformAlias}!==\`linux\`||${buildFlavorAlias}===${buildFlavorEnumAlias}.Agent?null:${previewsAlias}`,
   );
 }
 

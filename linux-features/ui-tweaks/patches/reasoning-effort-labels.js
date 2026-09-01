@@ -44,11 +44,9 @@ function applyEnglishReasoningLabels(source, context = {}) {
 
     const missingKeys = [];
     const replacements = [];
-    let appliedKeyCount = 0;
     for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
       const replacement = `"${key}":\`${label}\``;
       if (source.includes(replacement)) {
-        appliedKeyCount += 1;
         continue;
       }
 
@@ -66,13 +64,6 @@ function applyEnglishReasoningLabels(source, context = {}) {
     if (missingKeys.length > 0) {
       return source;
     }
-    if (appliedKeyCount > 0 && replacements.length > 0) {
-      if (context.warnOnMissingMarkers === true) {
-        warn("Found mixed applied and untranslated reasoning label markers");
-      }
-      return source;
-    }
-
     let patched = source;
     for (const [pattern, replacement] of replacements) {
       patched = patched.replace(pattern, replacement);

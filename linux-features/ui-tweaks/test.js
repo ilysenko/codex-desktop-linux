@@ -28,6 +28,7 @@ const {
 } = require("./patches/model-picker-model-list.js");
 const {
   DEFAULT_PROJECT_NAME_STYLE,
+  PROJECT_ROW_ATTRIBUTE,
   PROJECTS_SIDEBAR_ASSET_PATTERN,
   PROJECT_NAME_SELECTOR,
   RUNTIME_MARKER,
@@ -41,11 +42,25 @@ const {
   ZH_CN_LOCALE_ASSET_PATTERN,
   applyEnglishReasoningLabels,
 } = require("./patches/reasoning-effort-labels.js");
+const {
+  DEFAULT_MAX_UI_FONT_SIZE,
+  EXPECTED_FONT_SIZE_BUNDLE_COUNT,
+  MAX_CONFIGURABLE_UI_FONT_SIZE,
+  MIN_EXTENDED_UI_FONT_SIZE,
+  RUNTIME_MARKER: UI_FONT_SIZE_RUNTIME_MARKER,
+  applyUiFontSizeAppPatch,
+  applyUiFontSizePatch,
+  findUiFontSizeBundles,
+  normalizedMaxUiFontSize,
+} = require("./patches/ui-font-size.js");
 
 function projectBundleFixture() {
   return [
-    "function row(){let j=Pn(`group/folder-row group relative flex h-[var(--height-token-row)] text-sm text-token-foreground`);",
-    "let V=(0,Iy.jsx)(`span`,{className:`text-fade-truncate pe-1`,children:p});return [j,V]}",
+    `var actions={sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\`};`,
+    "function marquee(e){return(0,Iy.jsx)(`span`,{...e,\"data-marquee-text\":!0})}",
+    "function projectRow(){let p=actions.sidebarProjectRow({collapsed:r,label:c,projectId:l});",
+    "let E=(0,Iy.jsx)(Marquee,{className:`select-none`,animateOnGroupHover:!0,children:c});",
+    "return(0,Iy.jsx)(FolderRow,{...p,label:E})}",
   ].join("");
 }
 
@@ -127,6 +142,62 @@ function simplifiedChineseLocaleFixture() {
     .join(",");
 }
 
+function uiFontSizeBundleFixture() {
+  return [
+    "var Wu,Gu,Input,Aje=setup(()=>{",
+    "Wu={sans:{min:11,max:16},code:{min:8,max:24}},",
+    "Gu={sansFontSize:setting({default:14,schema:number().min(Wu.sans.min).max(Wu.sans.max)})},",
+    "Input=input({min:Wu.sans.min,max:Wu.sans.max})",
+    "});",
+    "function fontSizeState(){return {input:Input,limits:Wu,setting:Gu.sansFontSize}}",
+  ].join("");
+}
+
+function uiFontSizeContext(overrides = {}) {
+  return {
+    feature: {
+      manifest: {
+        tweaks: {
+          appearance: {
+            uiFontSize: {
+              enabled: false,
+              max: DEFAULT_MAX_UI_FONT_SIZE,
+            },
+          },
+        },
+      },
+      settings: {
+        tweaks: {
+          appearance: {
+            uiFontSize: {
+              enabled: true,
+              ...overrides,
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function createUiFontSizeExtractedApp() {
+  const extractedDir = fs.mkdtempSync(path.join(os.tmpdir(), "ui-font-size-app-"));
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  const webviewDir = path.join(extractedDir, "webview", "assets");
+  fs.mkdirSync(buildDir, { recursive: true });
+  fs.mkdirSync(webviewDir, { recursive: true });
+  const targets = [
+    path.join(buildDir, "src-fixture.js"),
+    path.join(buildDir, "worker.js"),
+    path.join(webviewDir, "app-initial-fixture.js"),
+  ];
+  for (const target of targets) {
+    fs.writeFileSync(target, uiFontSizeBundleFixture());
+  }
+  fs.writeFileSync(path.join(buildDir, "unrelated.js"), "console.log('unrelated');");
+  return { extractedDir, targets };
+}
+
 function applyPatchTwice(source, context) {
   const patched = applySidebarProjectNameStylePatch(source, context);
   assert.equal(applySidebarProjectNameStylePatch(patched, context), patched);
@@ -173,6 +244,11 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
       descriptors.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
       [
         ["feature:ui-tweaks:sidebar-project-name-style", "webview-asset", "optional"],
+        [
+          "feature:ui-tweaks:extended-ui-font-size",
+          "extracted-app:post-webview",
+          "optional",
+        ],
         ["feature:ui-tweaks:model-picker-default-advanced-view", "webview-asset", "optional"],
         ["feature:ui-tweaks:model-picker-inline-model-list", "webview-asset", "optional"],
         [
@@ -197,8 +273,175 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
       modelPickerDescriptors.every((descriptor) => typeof descriptor.enabled === "function"),
     );
     assert.ok(modelPickerDescriptors.every((descriptor) => descriptor.enabled({}) === false));
+    const uiFontSizeDescriptor = descriptors.find((descriptor) =>
+      descriptor.id.endsWith(":extended-ui-font-size"),
+    );
+    assert.equal(typeof uiFontSizeDescriptor?.enabled, "function");
+    assert.equal(uiFontSizeDescriptor.enabled({}), false);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("UI font size tweak raises the shared input and schema maximum", () => {
+  const source = uiFontSizeBundleFixture();
+  const patched = applyUiFontSizePatch(source, uiFontSizeContext());
+  const state = Function(
+    "setup",
+    "setting",
+    "number",
+    "input",
+    `${patched};return fontSizeState();`,
+  )(
+    (callback) => callback(),
+    (value) => value,
+    () => ({
+      min(value) {
+        this.minValue = value;
+        return this;
+      },
+      max(value) {
+        this.maxValue = value;
+        return this;
+      },
+    }),
+    (value) => value,
+  );
+
+  assert.deepEqual(state.limits, {
+    sans: { min: 11, max: DEFAULT_MAX_UI_FONT_SIZE },
+    code: { min: 8, max: 24 },
+  });
+  assert.equal(state.input.max, DEFAULT_MAX_UI_FONT_SIZE);
+  assert.equal(state.setting.schema.maxValue, DEFAULT_MAX_UI_FONT_SIZE);
+  assert.match(patched, new RegExp(UI_FONT_SIZE_RUNTIME_MARKER));
+  assert.equal((patched.match(new RegExp(UI_FONT_SIZE_RUNTIME_MARKER, "g")) ?? []).length, 1);
+  assert.equal(applyUiFontSizePatch(patched, uiFontSizeContext()), patched);
+});
+
+test("UI font size tweak atomically patches all three runtime registries", () => {
+  const { extractedDir, targets } = createUiFontSizeExtractedApp();
+  try {
+    const discovery = findUiFontSizeBundles(extractedDir);
+    assert.equal(discovery.candidates.length, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+
+    const result = applyUiFontSizeAppPatch(extractedDir, uiFontSizeContext({ max: 32 }));
+    assert.equal(result.matched, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+    assert.equal(result.changed, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+    for (const target of targets) {
+      const source = fs.readFileSync(target, "utf8");
+      assert.match(source, /sans:\{min:11,max:32\/\*/);
+      assert.match(source, new RegExp(UI_FONT_SIZE_RUNTIME_MARKER));
+    }
+
+    const repeated = applyUiFontSizeAppPatch(extractedDir, uiFontSizeContext({ max: 32 }));
+    assert.equal(repeated.matched, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+    assert.equal(repeated.changed, 0);
+  } finally {
+    fs.rmSync(extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("UI font size app patch rejects missing, duplicate, and mixed registries byte-identically", () => {
+  for (const mutate of [
+    ({ targets }) => fs.rmSync(targets[1]),
+    ({ extractedDir }) =>
+      fs.writeFileSync(
+        path.join(extractedDir, ".vite", "build", "duplicate.js"),
+        uiFontSizeBundleFixture(),
+      ),
+    ({ targets }) =>
+      fs.writeFileSync(
+        targets[0],
+        applyUiFontSizePatch(fs.readFileSync(targets[0], "utf8"), uiFontSizeContext()),
+      ),
+    ({ targets }) =>
+      fs.writeFileSync(
+        targets[0],
+        fs.readFileSync(targets[0], "utf8") + `/*${UI_FONT_SIZE_RUNTIME_MARKER}*/`,
+      ),
+    ({ targets }) => {
+      for (const target of targets) {
+        fs.writeFileSync(
+          target,
+          applyUiFontSizePatch(fs.readFileSync(target, "utf8"), uiFontSizeContext()),
+        );
+      }
+      fs.writeFileSync(
+        targets[0],
+        applyUiFontSizePatch(uiFontSizeBundleFixture(), uiFontSizeContext({ max: 32 })),
+      );
+    },
+  ]) {
+    const fixture = createUiFontSizeExtractedApp();
+    try {
+      mutate(fixture);
+      const before = fixture.targets
+        .filter((target) => fs.existsSync(target))
+        .map((target) => [target, fs.readFileSync(target, "utf8")]);
+      const { value: result, warnings } = withCapturedWarns(() =>
+        applyUiFontSizeAppPatch(fixture.extractedDir, uiFontSizeContext()),
+      );
+
+      assert.equal(result.matched, 0);
+      assert.equal(result.changed, 0);
+      assert.equal(warnings.length, 1);
+      for (const [target, source] of before) {
+        assert.equal(fs.readFileSync(target, "utf8"), source);
+      }
+    } finally {
+      fs.rmSync(fixture.extractedDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("UI font size tweak is disabled by default and accepts a custom maximum", () => {
+  const source = uiFontSizeBundleFixture();
+  const featureJson = JSON.parse(fs.readFileSync(path.join(__dirname, "feature.json"), "utf8"));
+  const defaultContext = { feature: { manifest: featureJson } };
+  const customContext = uiFontSizeContext({ max: 32 });
+
+  assert.equal(featureJson.tweaks.appearance.uiFontSize.enabled, false);
+  assert.equal(featureJson.tweaks.appearance.uiFontSize.max, DEFAULT_MAX_UI_FONT_SIZE);
+  assert.equal(applyUiFontSizePatch(source, defaultContext), source);
+  assert.match(applyUiFontSizePatch(source, customContext), /sans:\{min:11,max:32\/\*/);
+  assert.equal(normalizedMaxUiFontSize(customContext), 32);
+});
+
+test("invalid UI font size maxima warn and fall back to the safe default", () => {
+  for (const max of [16, 24.5, MAX_CONFIGURABLE_UI_FONT_SIZE + 1, "32"]) {
+    const context = uiFontSizeContext({ max });
+    const { value, warnings } = withCapturedWarns(() =>
+      applyUiFontSizePatch(uiFontSizeBundleFixture(), context),
+    );
+
+    assert.match(value, new RegExp(`sans:\\{min:11,max:${DEFAULT_MAX_UI_FONT_SIZE}\\/\\*`));
+    assert.equal(warnings.length, 1);
+    assert.match(
+      warnings[0],
+      new RegExp(
+        `must be an integer from ${MIN_EXTENDED_UI_FONT_SIZE} ` +
+          `to ${MAX_CONFIGURABLE_UI_FONT_SIZE}`,
+      ),
+    );
+  }
+});
+
+test("UI font size drift and duplicate contracts fail closed", () => {
+  for (const source of [
+    "var limits={sans:{min:11,max:17},code:{min:8,max:24}};",
+    uiFontSizeBundleFixture() + uiFontSizeBundleFixture(),
+  ]) {
+    const { value, warnings } = withCapturedWarns(() =>
+      applyUiFontSizePatch(source, {
+        ...uiFontSizeContext(),
+        warnOnMissingMarkers: true,
+      }),
+    );
+
+    assert.equal(value, source);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /unique current UI and code font size limits/);
   }
 });
 
@@ -470,7 +713,7 @@ test("reasoning effort label drift warns and leaves the asset unchanged", () => 
   assert.match(warnings[0], /composer\.mode\.local\.reasoning\.ultra\.label/);
 });
 
-test("mixed reasoning effort label markers warn and remain byte-identical", () => {
+test("mixed upstream reasoning effort labels translate the remaining labels atomically", () => {
   const source = simplifiedChineseLocaleFixture().replace(
     '"composer.mode.local.reasoning.medium.label":`中`',
     '"composer.mode.local.reasoning.medium.label":`Medium`',
@@ -479,9 +722,11 @@ test("mixed reasoning effort label markers warn and remain byte-identical", () =
     applyEnglishReasoningLabels(source, { warnOnMissingMarkers: true }),
   );
 
-  assert.equal(value, source);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /mixed applied and untranslated reasoning label markers/i);
+  for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
+    assert.match(value, new RegExp(`"${key.replaceAll(".", "\\.")}":\\\`${label}\\\``));
+  }
+  assert.deepEqual(warnings, []);
+  assert.equal(applyEnglishReasoningLabels(value), value);
 });
 
 test("English reasoning effort labels can be disabled", () => {
@@ -555,6 +800,14 @@ test("patch injects sidebar project-name stylesheet runtime once", () => {
   assert.equal((patched.match(new RegExp(STYLE_ID, "g")) ?? []).length, 1);
 });
 
+test("sidebar project name selector follows the semantic project-row marquee contract", () => {
+  assert.equal(
+    PROJECT_NAME_SELECTOR,
+    `[${PROJECT_ROW_ATTRIBUTE}] [data-marquee-text]`,
+  );
+  assert.doesNotMatch(PROJECT_NAME_SELECTOR, /folder-row|text-fade-truncate/);
+});
+
 test("feature manifest defaults reach descriptor context through the feature loader", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ui-tweaks-manifest-defaults-"));
   try {
@@ -596,6 +849,12 @@ test("feature settings override the tracked defaults through features.json", () 
           settings: {
             "ui-tweaks": {
               tweaks: {
+                appearance: {
+                  uiFontSize: {
+                    enabled: true,
+                    max: 32,
+                  },
+                },
                 sidebar: {
                   projectName: {
                     style: "font-weight: 800 !important; color: red;",
@@ -625,6 +884,20 @@ test("feature settings override the tracked defaults through features.json", () 
         .filter((candidate) => candidate.id.includes(":model-picker-"))
         .every((candidate) => candidate.enabled({}) === true),
     );
+    const uiFontSizeDescriptor = descriptors.find((candidate) =>
+      candidate.id.endsWith(":extended-ui-font-size"),
+    );
+    assert.equal(uiFontSizeDescriptor.enabled({}), true);
+    const fontSizeFixture = createUiFontSizeExtractedApp();
+    try {
+      const result = uiFontSizeDescriptor.apply(fontSizeFixture.extractedDir, {});
+      assert.equal(result.changed, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+      for (const target of fontSizeFixture.targets) {
+        assert.match(fs.readFileSync(target, "utf8"), /max:32\/\*/);
+      }
+    } finally {
+      fs.rmSync(fontSizeFixture.extractedDir, { recursive: true, force: true });
+    }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -665,10 +938,24 @@ test("patch skips unrelated assets", () => {
 test("drift warning returns source unchanged", () => {
   const source = [
     "function Hd(){return {id:`sidebarElectron.projectsNavLink`,defaultMessage:`Projects`}}",
-    "function row(){let j=Pn(`group/folder-row group relative flex`);return j}",
+    "function row(){return actions.sidebarProjectRow({collapsed:r,label:c,projectId:l})}",
   ].join("");
 
   const { value, warnings } = withCapturedWarns(() => applySidebarProjectNameStylePatch(source));
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^WARN: Could not find current sidebar project name markers/);
+});
+
+test("obsolete project-name markers do not produce a false applied result", () => {
+  const source = [
+    "function row(){let j=Pn(`group/folder-row group relative flex`);",
+    "let V=(0,Iy.jsx)(`span`,{className:`text-fade-truncate pe-1`,children:p});return [j,V]}",
+    'function marquee(){return {"data-marquee-text":!0}}',
+  ].join("");
+
+  const { value, warnings } = withCapturedWarns(() => patches[0].apply(source, {}));
 
   assert.equal(value, source);
   assert.equal(warnings.length, 1);

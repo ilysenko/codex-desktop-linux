@@ -18,6 +18,7 @@ Enable it in the local, gitignored feature config:
 | Tweak | Patch module | What it does | Settings |
 | --- | --- | --- | --- |
 | `appearance.dockIcon` | `patches/dock-icon.js` | Exposes the upstream Dock icon selector and synchronizes the selected icon across Linux windows, tray, and supported desktop launchers. | `tweaks.appearance.dockIcon.enabled` |
+| `appearance.uiFontSize` | `patches/ui-font-size.js` | Raises the upstream 16 px UI font-size maximum to a configurable value. | `tweaks.appearance.uiFontSize.enabled`, `tweaks.appearance.uiFontSize.max` |
 | `home.suggestedPrompts` | `patches/suggested-prompts.js` | Exposes the upstream Suggested Prompts setting and enables generated project-aware cards on Home. | `tweaks.home.suggestedPrompts.enabled` |
 | `modelPicker.showModelsByDefault` | `patches/model-picker-model-list.js` | Opens the advanced picker by default and shows model choices inline instead of hiding them behind the compact Power slider and a nested Model submenu. | `tweaks.modelPicker.showModelsByDefault.enabled` |
 | `reasoning.keepEffortLabelsEnglish` | `patches/reasoning-effort-labels.js` | Keeps reasoning effort values in English in the Simplified Chinese UI while leaving the surrounding interface translated. | `tweaks.reasoning.keepEffortLabelsEnglish.enabled` |
@@ -102,6 +103,42 @@ launch the app once. That launch lets the marker-safe prelaunch hook remove its
 managed desktop override and icons. The feature can then be removed from the
 next rebuild. Removing `ui-tweaks` directly does not run feature-owned local
 cleanup, by design.
+
+### `appearance.uiFontSize`
+
+Raises the official app's hard-coded UI font-size maximum from 16 px. The same
+upstream limit feeds both the numeric input and the persisted-setting schema.
+That registry is compiled into the renderer, main-process support bundle, and
+worker, so the patch requires and updates all three copies atomically instead of
+bypassing only the visible control. Code font sizing is unchanged.
+
+This tweak is independently disabled by default. Its default extended maximum
+is 24 px and can be configured from 17 through 64 px:
+
+```json
+{
+  "enabled": ["ui-tweaks"],
+  "settings": {
+    "ui-tweaks": {
+      "tweaks": {
+        "appearance": {
+          "uiFontSize": {
+            "enabled": true,
+            "max": 24
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Config keys:
+
+- `enabled`: `true` raises the UI font-size maximum; `false` preserves the
+  official 11–16 px range.
+- `max`: integer from `17` through `64`; invalid values warn and fall back to
+  `24`.
 
 ### `home.suggestedPrompts`
 
@@ -209,6 +246,9 @@ remove only the incomplete Dock icon payload, and reject candidate promotion.
 Suggested Prompts validates every current insertion point
 before changing an asset and leaves mixed or drifted input byte-identical.
 Invalid style values warn and fall back to the default bold style.
+The UI font-size tweak requires the three current settings-registry contracts
+and leaves every target unchanged when any copy is missing, mixed, drifted, or
+ambiguous.
 
 ## Adding Tweaks
 

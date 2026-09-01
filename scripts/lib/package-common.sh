@@ -166,6 +166,9 @@ stage_update_builder_linux_features_tree() {
         [ -d "$source_root/$feature_id" ] || error "Missing enabled Linux feature: $feature_id"
         cp -a "$source_root/$feature_id" "$target/$feature_id"
         find "$target/$feature_id" -type d -name target -prune -exec rm -rf {} +
+        if [ "$feature_id" = "directory-only-working-tree-watch" ]; then
+            rm -rf "$target/$feature_id/acceptance"
+        fi
         if [ "$feature_id" = "mcp-helper-reaper" ]; then
             rm -rf \
                 "$target/$feature_id/reaper/src" \

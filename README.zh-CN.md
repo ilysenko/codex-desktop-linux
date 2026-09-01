@@ -203,6 +203,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `appshots` | 从 composer 捕获并裁剪当前 Linux 窗口 | [文档](linux-features/appshots/README.md) |
 | `authenticated-proxy` | 带用户名和密码的 HTTP proxy | [文档](linux-features/authenticated-proxy/README.md) |
 | `automation-extensions` | 多时间调度和 eager `automation_update` | [文档](linux-features/automation-extensions/README.md) |
+| `browser-proxy` | 让 Browser Use 的网络辅助进程继承显式代理设置 | [文档](linux-features/browser-proxy/README.zh-CN.md) |
 | `chronicle-skysight` | 可选的 Linux 桌面活动记忆与受限 Skysight MCP 工具 | [文档](linux-features/chronicle-skysight/README.md) |
 | `codex-micro` | 使用上游 `node-hid` 的 Codex Micro hotplug/hidraw policy | [文档](linux-features/codex-micro/README.md) |
 | `computer-use-linux` | Linux desktop-control UI 与原生 MCP backend | [文档](linux-features/computer-use-linux/README.md) |
