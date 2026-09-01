@@ -11,6 +11,7 @@ const {
 const CODEX_MICRO_GATE_ID = "3207467860";
 const CODEX_MICRO_ROUTE = "/settings/codex-micro";
 const CODEX_MICRO_GATE_MARKER = "codexLinuxCodexMicroGateOverride";
+const CODEX_MICRO_GATE_COUNT = 2;
 const CODEX_MICRO_HOTPLUG_MARKER = "codexLinuxCodexMicroHotplug";
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const CODEX_MICRO_SERVICE_PATTERN =
@@ -21,35 +22,74 @@ const WATCH_TOPOLOGY_FUNCTION = new RegExp(
   "g",
 );
 
-function matchesCodexMicroFeatureGateContract(source) {
+function occurrenceCount(source, value) {
+  return source.split(value).length - 1;
+}
+
+function codexMicroFeatureGateContract(source) {
   if (typeof source !== "string") {
-    return false;
+    return null;
   }
-  if (source.includes(CODEX_MICRO_GATE_MARKER)) {
-    return true;
+
+  const routeLiteral = `\`${CODEX_MICRO_ROUTE}\``;
+  if (occurrenceCount(source, routeLiteral) !== 1) {
+    return null;
   }
+
   const directGate = new RegExp(
-    `(?:^|[^A-Za-z0-9_$.])${JS_IDENT}\\(\`${CODEX_MICRO_GATE_ID}\`\\)`,
+    `(^|[^A-Za-z0-9_$.])(${JS_IDENT})\\(\`${CODEX_MICRO_GATE_ID}\`\\)`,
+    "g",
   );
-  return source.includes(`\`${CODEX_MICRO_ROUTE}\``) && directGate.test(source);
+  const patchedGate = new RegExp(
+    `!0/\\*${CODEX_MICRO_GATE_MARKER}\\*/`,
+    "g",
+  );
+  const directMatches = [...source.matchAll(directGate)];
+  const patchedMatches = [...source.matchAll(patchedGate)];
+  const gateIdCount = occurrenceCount(source, CODEX_MICRO_GATE_ID);
+  const markerCount = occurrenceCount(source, CODEX_MICRO_GATE_MARKER);
+
+  if (
+    gateIdCount === CODEX_MICRO_GATE_COUNT
+    && directMatches.length === CODEX_MICRO_GATE_COUNT
+    && markerCount === 0
+    && patchedMatches.length === 0
+  ) {
+    return { state: "unpatched", directGate };
+  }
+  if (
+    gateIdCount === 0
+    && directMatches.length === 0
+    && markerCount === CODEX_MICRO_GATE_COUNT
+    && patchedMatches.length === CODEX_MICRO_GATE_COUNT
+  ) {
+    return { state: "patched", directGate };
+  }
+  return null;
+}
+
+function matchesCodexMicroFeatureGateContract(source) {
+  return codexMicroFeatureGateContract(source) != null;
 }
 
 function applyCodexMicroFeatureGatePatch(source) {
-  if (typeof source !== "string" || source.includes(CODEX_MICRO_GATE_MARKER)) {
+  const contract = codexMicroFeatureGateContract(source);
+  if (contract?.state === "patched") {
     return source;
   }
-
-  const directGate = new RegExp(
-    `(${JS_IDENT})\\(\`${CODEX_MICRO_GATE_ID}\`\\)`,
-    "g",
-  );
-  const matches = [...source.matchAll(directGate)];
-  if (source.includes(`\`${CODEX_MICRO_ROUTE}\``) && matches.length > 0) {
-    return source.replace(directGate, `!0/*${CODEX_MICRO_GATE_MARKER}*/`);
+  if (contract?.state === "unpatched") {
+    return source.replace(
+      contract.directGate,
+      (_match, boundary) =>
+        `${boundary}!0/*${CODEX_MICRO_GATE_MARKER}*/`,
+    );
   }
-  if (source.includes(`\`${CODEX_MICRO_ROUTE}\``)) {
+  if (
+    typeof source === "string"
+    && source.includes(`\`${CODEX_MICRO_ROUTE}\``)
+  ) {
     console.warn(
-      "WARN: Could not find the current Codex Micro feature-gate callsites - " +
+      "WARN: Current Codex Micro feature-gate contract is incomplete or drifted - " +
         "skipping Codex Micro gate override",
     );
   }
