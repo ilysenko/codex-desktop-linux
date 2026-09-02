@@ -10,9 +10,9 @@ many worktrees, generated directories, or namespaced refs can therefore stall
 Electron's main thread simply when its task row is hovered.
 
 The patch changes only Linux recursive requests. Existing non-recursive watches
-and other platforms are untouched. The current Linux Parcel working-tree path
-is routed through the same shallow host, which reports `recursive: false` so
-Codex's focus-recovery path remains available.
+and other platforms are untouched. The current Linux Parcel working-tree and
+metadata paths are routed through the same shallow host, which reports
+`recursive: false` so Codex's focus-recovery path remains available.
 
 Enable it in `linux-features/features.json` and rebuild:
 

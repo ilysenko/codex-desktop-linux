@@ -87,7 +87,7 @@ function currentBundleFixture() {
   ].join("");
 }
 
-// Exact relevant fragments from OpenAI Desktop 26.814.41957. Keep these
+// Exact relevant fragments from OpenAI Desktop 26.901.20858. Keep these
 // independent of patch.js so drift in the production contract cannot silently
 // rewrite the test fixture into a passing shape.
 const CURRENT_WORKER_LOCAL_FILE_WATCH = [
@@ -131,17 +131,22 @@ const CURRENT_SRC_REMOTE_FILE_WATCH = [
 const CURRENT_PARCEL_HELPER =
   "async function oye(e,t){return new sye(await import(`@parcel/watcher`),e,t).start()}";
 const CURRENT_GIT_ROUTE_PREFIX =
-  "case`git`:{let e=new Que;return{git:{createExecutionHost:e=>{if(n==null)" +
-  "throw Error(`Git hosts require a main RPC connection`);return new nde(n,e)},";
+  "case`git`:{let e=new Que;return{git:{watchIgnoreSources:process.platform===`linux`?" +
+  "{getEnvironment:async()=>{if(n==null)throw Error(`Git hosts require a main RPC connection`);" +
+  "return n.getLocalGitIgnoreEnvironment()},getWatchTargets:Bee}:void 0," +
+  "createExecutionHost:e=>{if(n==null)throw Error(`Git hosts require a main RPC connection`);" +
+  "return new nde(n,e)},startMetadataWatch:(t,n)=>t.isLocal?" +
+  "process.platform===`linux`&&n.recursive!==!1?oye(n,{ignoredPaths:[]}):" +
+  "e.startFileWatch(n):t.startFileWatch(n),";
 const CURRENT_PARCEL_ROUTE =
-  "startWorkingTreeWatch:(t,n)=>t.isLocal?process.platform===`linux`?" +
-  "oye(n,{ignoredPaths:[E.posix.join(n.path,`.git`)]}):e.startFileWatch(n):" +
+  "startWorkingTreeWatch:(t,n,r)=>t.isLocal?process.platform===`linux`?" +
+  "oye(n,{ignoredPaths:[E.posix.join(n.path,`.git`),...r]}):e.startFileWatch(n):" +
   "t.startFileWatch(n)";
 const CURRENT_WATCHBOUND_ROUTE =
-  `startWorkingTreeWatch:(t,n)=>t.isLocal?process.platform===\`linux\`?` +
+  `startWorkingTreeWatch:(t,n,r)=>t.isLocal?process.platform===\`linux\`?` +
   `/*${PARCEL_WATCH_MARKER}*/e.startFileWatch({...n,` +
   `[Symbol.for(\`${PARCEL_FALLBACK_SYMBOL_KEY}\`)]:()=>` +
-  "oye(n,{ignoredPaths:[E.posix.join(n.path,`.git`)]})}):" +
+  "oye(n,{ignoredPaths:[E.posix.join(n.path,`.git`),...r]})}):" +
   "e.startFileWatch(n):t.startFileWatch(n)";
 const CURRENT_GIT_ROUTE_SUFFIX = "}}}case`open-in`:";
 
@@ -275,7 +280,7 @@ test("the worker patch injects one Watchbound adapter and is idempotent", () => 
     settings,
   );
   assert.equal(legacy.matched, 0);
-  assert.match(legacy.reason, /current 26\.814\.41957 working-tree contract rejected/iu);
+  assert.match(legacy.reason, /current 26\.901\.20858 working-tree contract rejected/iu);
 });
 
 test("the current OpenAI Parcel route hands the working tree to the Watchbound host", () => {
@@ -322,12 +327,19 @@ test("correlates minified aliases instead of pinning their spellings", () => {
     "await import(`@parcel/watcher`),root,settings).start()}";
   const gitRoutePrefix =
     "case`git`:{let localHost=new LocalHost;return{git:{" +
+    "watchIgnoreSources:process.platform===`linux`?{getEnvironment:async()=>{" +
+    "if(mainConnection==null)throw Error(`Git hosts require a main RPC connection`);" +
+    "return mainConnection.getLocalGitIgnoreEnvironment()},getWatchTargets:getWatchTargets}:void 0," +
     "createExecutionHost:executionOptions=>{if(mainConnection==null)" +
     "throw Error(`Git hosts require a main RPC connection`);" +
-    "return new RemoteHost(mainConnection,executionOptions)},";
+    "return new RemoteHost(mainConnection,executionOptions)}," +
+    "startMetadataWatch:(host,options)=>host.isLocal?" +
+    "process.platform===`linux`&&options.recursive!==!1?" +
+    "parcelStart(options,{ignoredPaths:[]}):localHost.startFileWatch(options):" +
+    "host.startFileWatch(options),";
   const parcelRoute =
-    "startWorkingTreeWatch:(host,options)=>host.isLocal?process.platform===`linux`?" +
-    "parcelStart(options,{ignoredPaths:[pathApi.posix.join(options.path,`.git`)]}):" +
+    "startWorkingTreeWatch:(host,options,ignoredPaths)=>host.isLocal?process.platform===`linux`?" +
+    "parcelStart(options,{ignoredPaths:[pathApi.posix.join(options.path,`.git`),...ignoredPaths]}):" +
     "localHost.startFileWatch(options):host.startFileWatch(options)";
   const worker = currentWorkerSource(parcelRoute)
     .replace(CURRENT_PARCEL_HELPER, parcelHelper)
@@ -339,10 +351,10 @@ test("correlates minified aliases instead of pinning their spellings", () => {
   assert.equal(first.changed, 1);
   assert.ok(first.source.includes(parcelHelper));
   assert.ok(first.source.includes(
-    `startWorkingTreeWatch:(host,options)=>host.isLocal?process.platform===\`linux\`?` +
+    `startWorkingTreeWatch:(host,options,ignoredPaths)=>host.isLocal?process.platform===\`linux\`?` +
       `/*${PARCEL_WATCH_MARKER}*/localHost.startFileWatch({...options,` +
       `[Symbol.for(\`${PARCEL_FALLBACK_SYMBOL_KEY}\`)]:()=>` +
-      "parcelStart(options,{ignoredPaths:[pathApi.posix.join(options.path,`.git`)]})}):" +
+      "parcelStart(options,{ignoredPaths:[pathApi.posix.join(options.path,`.git`),...ignoredPaths]})}):" +
       "localHost.startFileWatch(options):host.startFileWatch(options)",
   ));
   assert.match(first.source, /parcelStart\(options,/u);
@@ -359,7 +371,7 @@ test("feature patch reports drift instead of patching an ambiguous bundle", () =
 
   assert.equal(result.matched, 0);
   assert.equal(result.changed, 0);
-  assert.match(result.reason, /current 26\.814\.41957 working-tree contract rejected/iu);
+  assert.match(result.reason, /current 26\.901\.20858 working-tree contract rejected/iu);
   const descriptor = descriptors.find(({ id }) => id === "worker-directory-watch");
   assert.equal(descriptor.status(result, []).status, "skipped-optional");
 });
@@ -514,7 +526,7 @@ test("bundle discovery rejects copies outside the current src and worker pair", 
   assert.match(result.reason, /Found 3 current local startFileWatch bundles/u);
 });
 
-test("patches the pristine 26.814.41957 bundle contract and accepts only its exact completed state", (t) => {
+test("patches the pristine 26.901.20858 bundle contract and accepts only its exact completed state", (t) => {
   const candidate = currentBundlePair(t, {
     extra: { "unrelated.js": "const unrelatedWatch=host.startFileWatch(options);" },
   });
@@ -552,7 +564,7 @@ test("patches the pristine 26.814.41957 bundle contract and accepts only its exa
   assert.deepEqual(readBundlePair(candidate), completed);
 });
 
-test("rejects markers outside the exact 26.814.41957 Watchbound handoff", (t) => {
+test("rejects markers outside the exact 26.901.20858 Watchbound handoff", (t) => {
   const unmarkedHandoff = CURRENT_WATCHBOUND_ROUTE.replace(
     `/*${PARCEL_WATCH_MARKER}*/`,
     "",
@@ -1160,7 +1172,7 @@ const QUALIFIED_ELECTRON_VERSION = "42.3.0";
 function writeExtractedAppRuntime(extractedDir, electron = QUALIFIED_ELECTRON_VERSION) {
   writeJson(path.join(extractedDir, "package.json"), {
     name: "openai-codex-electron",
-    version: "26.814.41957",
+    version: "26.901.20858",
     devDependencies: { electron },
   });
 }
@@ -5883,12 +5895,21 @@ test("the durable historical Owl acceptance record is passing and sanitized", ()
     acceptedPinSha256,
     "4f17ce3bdbe0f190c655c5d378c34dd0389c97e096fc3d144dbc367698854852",
   );
+  // The current route anchors rotate with the signed Desktop package. The
+  // historical record remains bound to its accepted patch while current
+  // anchors are covered by the exact bundle-contract tests above.
+  const acceptedPatchSha256 =
+    acceptanceFiles["linux-features/directory-only-working-tree-watch/patch.js"];
+  delete acceptanceFiles["linux-features/directory-only-working-tree-watch/patch.js"];
+  assert.equal(
+    acceptedPatchSha256,
+    "66222e9b24c438e224e7779468407b8e334fa20aa0d9fcf3ed4103679c74ff76",
+  );
   assert.deepEqual(Object.keys(acceptanceFiles), [
     "linux-features/directory-only-working-tree-watch/acceptance/run-signed-runtime.mjs",
     "linux-features/directory-only-working-tree-watch/acceptance/runtime-harness.mjs",
     "linux-features/directory-only-working-tree-watch/acceptance/installed-package-smoke-helpers.mjs",
     "linux-features/directory-only-working-tree-watch/acceptance/fixtures/exclusion-smoke-helpers.cjs",
-    "linux-features/directory-only-working-tree-watch/patch.js",
     "linux-features/directory-only-working-tree-watch/watchbound-artifacts.json",
   ]);
   for (const [relativePath, expectedSha256] of Object.entries(acceptanceFiles)) {

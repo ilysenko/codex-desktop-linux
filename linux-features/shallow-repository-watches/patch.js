@@ -5,10 +5,13 @@ const path = require("node:path");
 
 const PATCH_MARKER = "codexLinuxShallowRepositoryWatches";
 const PARCEL_WATCH_MARKER = "codexLinuxShallowParcelWorkingTreeWatch";
+const PARCEL_METADATA_WATCH_MARKER = "codexLinuxShallowParcelMetadataWatch";
 const LOCAL_FILE_WATCH_METHOD =
   /async startFileWatch\((?<options>[A-Za-z_$][\w$]*)\)\{(?=let [^{}]{0,180}?await this\.platformPath\(\),[^{}]{0,180}?\(0,[A-Za-z_$][\w$]*\.watch\)\(this\.getFileSystemPath\(\k<options>\.path\),\{recursive:\k<options>\.recursive\})/gu;
 const PARCEL_WORKING_TREE_WATCH =
-  /process\.platform===`linux`\?[A-Za-z_$][\w$]*\((?<options>[A-Za-z_$][\w$]*),\{ignoredPaths:\[[A-Za-z_$][\w$]*\.posix\.join\(\k<options>\.path,`\.git`\)\]\}\):(?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
+  /process\.platform===`linux`\?(?<helper>[A-Za-z_$][\w$]*)\((?<options>[A-Za-z_$][\w$]*),\{ignoredPaths:\[[A-Za-z_$][\w$]*\.posix\.join\(\k<options>\.path,`\.git`\),\.\.\.[A-Za-z_$][\w$]*\]\}\):(?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
+const PARCEL_METADATA_WATCH =
+  /process\.platform===`linux`&&(?<options>[A-Za-z_$][\w$]*)\.recursive!==!1\?(?<helper>[A-Za-z_$][\w$]*)\(\k<options>,\{ignoredPaths:\[\]\}\):(?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
 
 function patchWorkerSource(source) {
   const markerCount = source.split(PATCH_MARKER).length - 1;
@@ -47,29 +50,52 @@ function patchWorkerSource(source) {
   }
 
   const parcelMarkerCount = patchedSource.split(PARCEL_WATCH_MARKER).length - 1;
+  const metadataMarkerCount = patchedSource.split(PARCEL_METADATA_WATCH_MARKER).length - 1;
   PARCEL_WORKING_TREE_WATCH.lastIndex = 0;
   const parcelMatches = [...patchedSource.matchAll(PARCEL_WORKING_TREE_WATCH)];
+  PARCEL_METADATA_WATCH.lastIndex = 0;
+  const metadataMatches = [...patchedSource.matchAll(PARCEL_METADATA_WATCH)];
   if (
     parcelMarkerCount > 1 ||
+    metadataMarkerCount > 1 ||
     parcelMatches.length > 1 ||
-    (parcelMarkerCount > 0 && parcelMatches.length > 0)
+    metadataMatches.length > 1 ||
+    (parcelMarkerCount > 0 && parcelMatches.length > 0) ||
+    (metadataMarkerCount > 0 && metadataMatches.length > 0) ||
+    !(
+      (parcelMarkerCount === 0 && parcelMatches.length === 0 &&
+        metadataMarkerCount === 0 && metadataMatches.length === 0) ||
+      (parcelMarkerCount === 0 && parcelMatches.length === 1 &&
+        metadataMarkerCount === 0 && metadataMatches.length === 1) ||
+      (parcelMarkerCount === 1 && parcelMatches.length === 0 &&
+        metadataMarkerCount === 1 && metadataMatches.length === 0)
+    )
   ) {
     return {
       source,
       matched: 0,
       changed: 0,
       reason:
-        `Found ${parcelMatches.length} Parcel working-tree watch branches and ` +
-        `${parcelMarkerCount} markers`,
+        `Found ${parcelMatches.length} Parcel working-tree branches, ${metadataMatches.length} ` +
+        `Parcel metadata branches, ${parcelMarkerCount} working-tree markers, and ` +
+        `${metadataMarkerCount} metadata markers`,
     };
   }
-  const finalSource = parcelMatches.length === 0
-    ? patchedSource
-    : patchedSource.replace(
+  let finalSource = patchedSource;
+  if (parcelMatches.length === 1) {
+    finalSource = finalSource.replace(
       PARCEL_WORKING_TREE_WATCH,
       `/*${PARCEL_WATCH_MARKER}*/$<host>.startFileWatch($<options>)`,
     );
-  if (parcelMatches.length === 1) changed = 1;
+    changed += 1;
+  }
+  if (metadataMatches.length === 1) {
+    finalSource = finalSource.replace(
+      PARCEL_METADATA_WATCH,
+      `/*${PARCEL_METADATA_WATCH_MARKER}*/$<host>.startFileWatch($<options>)`,
+    );
+    changed += 1;
+  }
   return {
     source: finalSource,
     matched: 1,
@@ -94,17 +120,23 @@ function findLocalFileWatchBundles(extractedDir) {
     const source = fs.readFileSync(bundlePath, "utf8");
     const markerCount = source.split(PATCH_MARKER).length - 1;
     const parcelMarkerCount = source.split(PARCEL_WATCH_MARKER).length - 1;
+    const metadataMarkerCount = source.split(PARCEL_METADATA_WATCH_MARKER).length - 1;
     LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
     const matchCount = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)].length;
     PARCEL_WORKING_TREE_WATCH.lastIndex = 0;
     const parcelMatchCount = [...source.matchAll(PARCEL_WORKING_TREE_WATCH)].length;
-    if (markerCount > 0 || matchCount > 0 || parcelMarkerCount > 0 || parcelMatchCount > 0) {
+    PARCEL_METADATA_WATCH.lastIndex = 0;
+    const metadataMatchCount = [...source.matchAll(PARCEL_METADATA_WATCH)].length;
+    if (markerCount > 0 || matchCount > 0 || parcelMarkerCount > 0 || parcelMatchCount > 0 ||
+      metadataMarkerCount > 0 || metadataMatchCount > 0) {
       candidates.push({
         bundlePath,
         markerCount,
         matchCount,
         parcelMarkerCount,
         parcelMatchCount,
+        metadataMarkerCount,
+        metadataMatchCount,
         source,
       });
     }
@@ -113,13 +145,14 @@ function findLocalFileWatchBundles(extractedDir) {
   const rawMatchCount = candidates.reduce((total, candidate) => total + candidate.matchCount, 0);
   const markerCount = candidates.reduce((total, candidate) => total + candidate.markerCount, 0);
   const parcelContractCount = candidates.reduce(
-    (total, candidate) => total + candidate.parcelMatchCount + candidate.parcelMarkerCount,
+    (total, candidate) => total + candidate.parcelMatchCount + candidate.parcelMarkerCount +
+      candidate.metadataMatchCount + candidate.metadataMarkerCount,
     0,
   );
   if (
     candidates.length !== 2 ||
     !((rawMatchCount === 2 && markerCount === 0) || (rawMatchCount === 0 && markerCount === 2)) ||
-    parcelContractCount !== 1
+    parcelContractCount !== 2
   ) {
     return {
       candidates: [],
@@ -150,7 +183,7 @@ function patchWorker(extractedDir) {
     return { matched: 0, changed: 0, reason };
   }
   for (const { bundlePath, result } of results) {
-    if (result.changed === 1) fs.writeFileSync(bundlePath, result.source, "utf8");
+    if (result.changed > 0) fs.writeFileSync(bundlePath, result.source, "utf8");
   }
   return {
     matched: results.length,
@@ -178,6 +211,7 @@ const descriptors = [
 
 module.exports = {
   LOCAL_FILE_WATCH_METHOD,
+  PARCEL_METADATA_WATCH_MARKER,
   PARCEL_WATCH_MARKER,
   PATCH_MARKER,
   descriptors,

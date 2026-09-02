@@ -24,7 +24,6 @@ const REMOTE_CONTROL_LOAD_GATE_NEEDLE =
 const REMOTE_MOBILE_THREAD_RUNTIME_MARKER = "codexLinuxRemoteMobileThreadRuntimeStatus";
 const REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER = "codexLinuxRemoteMobilePendingNotifications";
 const REMOTE_MOBILE_HYDRATION_MARKER = "codexLinuxRemoteMobileHydrateUnknownConversation";
-const REMOTE_MOBILE_COMPLETED_ITEM_MARKER = "codexLinuxCompletedItemExists";
 const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
 const REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER = "codexLinuxRemoteControlEnablementBridge";
 const REMOTE_CONTROL_ENABLE_FOR_HOST_PARAMS_MARKER = "codexLinuxRemoteControlEnableForHostParams";
@@ -38,11 +37,8 @@ const REMOTE_CONTROL_VISIBILITY_MARKER = "codexLinuxRemoteControlVisibilityEnabl
 const REMOTE_CONTROL_COPY_MARKER = "codexLinuxRemoteControlCopy";
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER = "codexLinuxRemoteMobileLocalAppServerArgs";
 const REMOTE_MOBILE_APP_SERVER_BASE_ARGS_NEEDLE = "[`-c`,`features.code_mode_host=true`]";
-const REMOTE_MOBILE_APP_SERVER_LAUNCH_TAIL = "`app-server`,`--analytics-default-enabled`]}";
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_HELPER =
-  "function codexLinuxRemoteMobileLocalAppServerArgs(){if(process.platform===`linux`&&process.env.CODEX_REMOTE_CONTROL_APP_SERVER_MODE===`proxy`){let e=process.env.CODEX_REMOTE_CONTROL_APP_SERVER_PROXY_SOCKET;if(e?.startsWith(`%h/`)&&process.env.HOME)e=`${process.env.HOME}${e.slice(2)}`;return[`app-server`,`proxy`,...(e?[`--sock`,e]:[])]}return[`app-server`,...(process.platform===`linux`?[`--remote-control`]:[]),`--analytics-default-enabled`]}";
-const REMOTE_MOBILE_APP_SERVER_PATCHED_LAUNCH_TAIL =
-  "...codexLinuxRemoteMobileLocalAppServerArgs()]}";
+  "function codexLinuxRemoteMobileLocalAppServerArgs(e,t){if(process.env.CODEX_REMOTE_CONTROL_APP_SERVER_MODE===`proxy`){let n=process.env.CODEX_REMOTE_CONTROL_APP_SERVER_PROXY_SOCKET;if(n?.startsWith(`%h/`)&&process.env.HOME)n=`${process.env.HOME}${n.slice(2)}`;return[...e,...t,`app-server`,`proxy`,...(n?[`--sock`,n]:[])]}return t.length===0?[...e,`app-server`,`--remote-control`,`--analytics-default-enabled`]:[`app-server`,...e,...t,`--remote-control`,`--analytics-default-enabled`]}";
 const REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN = /^app-initial-[^.]+\.js$/u;
 const REMOTE_CONTROL_LINUX_COPY_REPLACEMENTS = [
   ["defaultMessage:`Mac`", "defaultMessage:`Linux`"],
@@ -219,28 +215,36 @@ function applyLinuxRemoteMobileAppServerRemoteControlPatch(source) {
   }
 
   const baseArgsVariable = baseArgsMatches[0][1];
-  const launchFunctionMatches = [
-    ...source.matchAll(
-      new RegExp(
-        `function ([A-Za-z_$][\\w$]*)\\(\\)\\{return\\[\\.\\.\\.${escapeRegExp(baseArgsVariable)},`,
-        "gu",
-      ),
-    ),
-  ];
-  if (launchFunctionMatches.length !== 1) {
+  const launchReturnPattern = new RegExp(
+    "return (?<overrides>[A-Za-z_$][\\w$]*)\\.length===0\\?" +
+      "\\[\\.\\.\\." + escapeRegExp(baseArgsVariable) +
+      ",`app-server`,`--analytics-default-enabled`\\]:" +
+      "\\[`app-server`,\\.\\.\\." + escapeRegExp(baseArgsVariable) +
+      ",\\.\\.\\.\\k<overrides>,`--analytics-default-enabled`\\]",
+    "gu",
+  );
+  const launchReturnMatches = [...source.matchAll(launchReturnPattern)];
+  if (launchReturnMatches.length !== 1) {
     return source;
   }
 
-  const launchFunctionIndex = launchFunctionMatches[0].index;
-  const nextFunctionIndex = source.indexOf("}function", launchFunctionIndex);
-  const launchTailIndex = source.indexOf(REMOTE_MOBILE_APP_SERVER_LAUNCH_TAIL, launchFunctionIndex);
-  if (launchTailIndex < 0 || (nextFunctionIndex >= 0 && launchTailIndex >= nextFunctionIndex)) {
+  const launchReturn = launchReturnMatches[0];
+  const functionIndex = source.lastIndexOf("function ", launchReturn.index);
+  const nextFunctionIndex = source.indexOf("}function", functionIndex);
+  if (functionIndex < 0 || (nextFunctionIndex >= 0 && launchReturn.index >= nextFunctionIndex)) {
     return source;
   }
 
-  const replaced = `${source.slice(0, launchTailIndex)}${REMOTE_MOBILE_APP_SERVER_PATCHED_LAUNCH_TAIL}${source.slice(
-    launchTailIndex + REMOTE_MOBILE_APP_SERVER_LAUNCH_TAIL.length,
-  )}`;
+  const overridesVariable = launchReturn.groups.overrides;
+  const currentReturnExpression = launchReturn[0].slice("return ".length);
+  const patchedReturn =
+    `return process.platform===\`linux\`?` +
+    `${REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER}(${baseArgsVariable},${overridesVariable}):` +
+    currentReturnExpression;
+  const replaced =
+    source.slice(0, launchReturn.index) +
+    patchedReturn +
+    source.slice(launchReturn.index + launchReturn[0].length);
   // Insert after a leading "use strict" so prepending the helper does not
   // demote the directive to a plain expression and de-strict the bundle.
   const insertAt = replaced.startsWith('"use strict";')
@@ -254,7 +258,12 @@ function applyLinuxRemoteMobileAppServerRemoteControlPatch(source) {
 function hasLinuxRemoteMobileLocalAppServerRemoteControlPatch(source) {
   return (
     source.includes(REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_HELPER) &&
-    source.includes(REMOTE_MOBILE_APP_SERVER_PATCHED_LAUNCH_TAIL)
+    new RegExp(
+      "return process\\.platform===`linux`\\?" +
+        REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER +
+        "\\([A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*\\):",
+      "u",
+    ).test(source)
   );
 }
 
@@ -824,14 +833,11 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
     const normalizerNeedle =
       /case`turn\/started`:\{let\{threadId:([A-Za-z_$][\w$]*),turn:[A-Za-z_$][\w$]*\}=([A-Za-z_$][\w$]*)\.params,[A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\.threadStore\.conversations\.get\([A-Za-z_$][\w$]*\);/u;
     const normalizerMatch = singleMatch(patched, normalizerNeedle);
-    const completedItemNeedle =
-      /!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\.id,\3\.type,([A-Za-z_$][\w$]*)\.logger\)/u;
-    const completedItemMatch = singleMatch(patched, completedItemNeedle);
     const unknownNeedles = [
       /(?<condition>if\((?<checked>[A-Za-z_$][\w$]*)==null\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received turn\/started for unknown conversation`,\{safe:\{conversationId:(?<conversation>[A-Za-z_$][\w$]*)\},sensitive:\{\}\}\);break\}/u,
       /(?<condition>if\(!(?<context>[A-Za-z_$][\w$]*)\.threadStore\.conversations\.has\((?<conversation>[A-Za-z_$][\w$]*)\)\))\{[^{}]*?(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received turn\/completed for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
       /(?<condition>if\(!(?<context>[A-Za-z_$][\w$]*)\.threadStore\.conversations\.has\((?<conversation>[A-Za-z_$][\w$]*)\)\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/started for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
-      /(?<condition>if\((?<checked>[A-Za-z_$][\w$]*)==null\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/completed for unknown conversation`,\{safe:\{conversationId:(?<conversation>[A-Za-z_$][\w$]*)\},sensitive:\{\}\}\);break\}/u,
+      /(?<condition>if\((?<item>[A-Za-z_$][\w$]*)\.type===`commandExecution`&&(?<context>[A-Za-z_$][\w$]*)\.itemStreamState\.clearItemTerminalInputBuffer\((?<conversation>[A-Za-z_$][\w$]*),\k<item>\.id\),\k<context>\.threadStore\.conversations\.get\(\k<conversation>\)==null\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/completed for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
     ];
     const ownerPatterns = [
       /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*),[^)]+\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*),automationTurns:[A-Za-z_$][\w$]*,createId:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*;/u,
@@ -854,7 +860,6 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
     if (
       handlerMatch != null &&
       normalizerMatch != null &&
-      completedItemMatch != null &&
       unknownContracts.every((contract) => contract != null)
     ) {
       const {
@@ -863,11 +868,9 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
         notification: notificationVar,
       } = handlerMatch.groups;
       const normalizerFn = normalizerMatch[3];
-      const itemFinderFn = completedItemMatch[1];
       const helpers =
         `function codexLinuxRemoteMobileBufferPendingNotification(e,t,n){let r=t.params.threadId??t.params.thread?.id;if(typeof r!==\`string\`)return!1;let i=e.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER}?.get(${normalizerFn}(r));return i==null?!1:(i.push([t,n]),!0)}` +
-        `function ${REMOTE_MOBILE_HYDRATION_MARKER}(e,t,n,r){let i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER};if(i==null)i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER}=new Map;let a=i.get(n);if(a!=null){a.push([r]);return}i.set(n,[[r]]);let o=r.params.threadId??r.params.thread?.id;Promise.resolve(t.threadStore.hydrateActiveThread(o)).then(()=>{let r=i.get(n)??[];i.delete(n);if(!t.threadStore.conversations.get(n)){e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{}});return}for(let[t,n]of r)e.onNotification(t.method,t.params,n)},r=>{i.delete(n),e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{error:r}})})}` +
-        `function ${REMOTE_MOBILE_COMPLETED_ITEM_MARKER}(e,t,n){let r=e.items.find(e=>e.id===t.id);return r==null?!0:${itemFinderFn}(e,t.id,t.type,n)!=null}`;
+        `function ${REMOTE_MOBILE_HYDRATION_MARKER}(e,t,n,r){let i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER};if(i==null)i=t.${REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER}=new Map;let a=i.get(n);if(a!=null){a.push([r]);return}i.set(n,[[r]]);let o=r.params.threadId??r.params.thread?.id;Promise.resolve(t.threadStore.hydrateActiveThread(o)).then(()=>{let r=i.get(n)??[];i.delete(n);if(!t.threadStore.conversations.get(n)){e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{}});return}for(let[t,n]of r)e.onNotification(t.method,t.params,n)},r=>{i.delete(n),e.logger.error(\`Failed to hydrate conversation for deferred remote notification\`,{safe:{conversationId:n},sensitive:{error:r}})})}`;
 
       patched = `${helpers}${patched}`.replace(
         handlerNeedle,
@@ -879,10 +882,6 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
           `${contract.match.groups.condition}{${REMOTE_MOBILE_HYDRATION_MARKER}(${contract.manager},${contract.context},${contract.match.groups.conversation},${contract.notification});return\`deferred\`}`,
         );
       }
-      patched = patched.replace(
-        completedItemNeedle,
-        `!${REMOTE_MOBILE_COMPLETED_ITEM_MARKER}($2,$3,$4.logger)`,
-      );
     } else if (
       patched.includes("Received turn/started for unknown conversation") ||
       patched.includes("Received item/completed for unknown conversation") ||
@@ -893,8 +892,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       );
     }
   } else if (
-    !patched.includes(REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER) ||
-    !patched.includes(REMOTE_MOBILE_COMPLETED_ITEM_MARKER)
+    !patched.includes(REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER)
   ) {
     console.warn("WARN: Found an incomplete remote mobile hydration recovery patch - refusing to accept partial state");
   }
