@@ -170,7 +170,13 @@ async fn read_stream<R: tokio::io::AsyncRead + Unpin>(stream: R) -> Result<Strin
 fn find_package(dist: &Path) -> Result<PathBuf> {
     let mut matches = Vec::new();
     for entry in fs::read_dir(dist).with_context(|| format!("Failed to read {}", dist.display()))? {
-        let path = entry?.path();
+        let entry = entry?;
+        // Skip alias symlinks such as codex-desktop-latest.pkg.tar.zst, which
+        // build-pacman.sh creates alongside the real artifact.
+        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
+            continue;
+        }
+        let path = entry.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name.ends_with(".deb") || name.ends_with(".rpm") || name.contains(".pkg.tar.") {
             matches.push(path);
@@ -187,6 +193,53 @@ mod tests {
     #[test]
     fn workspace_component_never_contains_separators() {
         assert_eq!(safe_component("26.1/../../x"), "26.1_.._.._x");
+    }
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "codex-find-package-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos(),
+        ));
+        fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn find_package_ignores_latest_alias_symlink() {
+        // build-pacman.sh writes codex-desktop-latest.pkg.tar.zst as a symlink
+        // next to the real artifact; it must not count as a second package.
+        let dist = scratch_dir("latest-alias");
+        let real = dist.join("codex-desktop-2026.09.03.120000-1-x86_64.pkg.tar.zst");
+        fs::write(&real, b"package").expect("real package");
+        std::os::unix::fs::symlink(
+            real.file_name().expect("file name"),
+            dist.join("codex-desktop-latest.pkg.tar.zst"),
+        )
+        .expect("latest symlink");
+
+        let found = find_package(&dist).expect("exactly one real package");
+        assert_eq!(found, real);
+
+        fs::remove_dir_all(&dist).expect("cleanup");
+    }
+
+    #[test]
+    fn find_package_still_rejects_two_real_packages() {
+        let dist = scratch_dir("two-real");
+        fs::write(dist.join("codex-desktop-2026.09.03.120000-1-x86_64.pkg.tar.zst"), b"a")
+            .expect("first package");
+        fs::write(dist.join("codex-desktop-2026.09.03.130000-1-x86_64.pkg.tar.zst"), b"b")
+            .expect("second package");
+
+        let error = find_package(&dist).expect_err("ambiguous dist must fail");
+        assert!(error.to_string().contains("found 2"), "unexpected error: {error}");
+
+        fs::remove_dir_all(&dist).expect("cleanup");
     }
 
     #[test]
