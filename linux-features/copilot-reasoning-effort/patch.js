@@ -42,6 +42,26 @@ function findAllMatches(source, regex) {
   return [...source.matchAll(new RegExp(regex.source, flags))];
 }
 
+function findCompiledNamedFunctionOwner(source, index) {
+  const declaration = new RegExp(`function ${JS_IDENT}\\([^)]*\\)\\{`, "g");
+  let ownerStart = null;
+  for (const match of source.matchAll(declaration)) {
+    if (match.index > index) break;
+    ownerStart = match.index;
+  }
+  if (ownerStart == null) return null;
+
+  const nextDeclaration = new RegExp(`\\}function ${JS_IDENT}\\(`, "g");
+  nextDeclaration.lastIndex = index;
+  const ownerEnd = nextDeclaration.exec(source);
+  if (ownerEnd == null) return null;
+
+  return {
+    start: ownerStart,
+    end: ownerEnd.index + 1,
+  };
+}
+
 function analyzeCompiledCopilotReasoningEffortUiContract(source) {
   if (
     !source.includes("composer.reasoningSlashCommand.title") ||
@@ -74,11 +94,19 @@ function analyzeCompiledCopilotReasoningEffortUiContract(source) {
   }
 
   const combinedMatch = combinedMatches[0];
+  const owner = findCompiledNamedFunctionOwner(source, combinedMatch.index);
+  if (owner == null) {
+    return {
+      state: "invalid",
+      warning: "Could not find current compiled Copilot reasoning effort composer owner",
+    };
+  }
+  const ownerAfterCombined = source.slice(combinedMatch.index, owner.end);
   const dropdownGate = new RegExp(
     `(?<dropdown>${JS_IDENT})=${JS_IDENT}\\|\\|${combinedMatch.groups.disabled}` +
       `[\\s\\S]{0,7000}?reasoningEffortDisabled:\\k<dropdown>`,
   );
-  const dropdownGateMatches = findAllMatches(source, dropdownGate);
+  const dropdownGateMatches = findAllMatches(ownerAfterCombined, dropdownGate);
   if (dropdownGateMatches.length !== 1) {
     return {
       state: "invalid",

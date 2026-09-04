@@ -203,6 +203,38 @@ test("retired direct Copilot dropdown gate is rejected byte-identically", () => 
   assert.match(warnings[0], /current compiled Copilot reasoning effort dropdown gate/);
 });
 
+test("unrelated function dropdown propagation cannot authorize the UI patch", () => {
+  const source = currentCopilotReasoningEffortUiFixture()
+    .replace("Bt=Ae||je", "Bt=Ae||z")
+    .replace(
+      "function unrelatedGate()",
+      "function unrelatedGate(){let Bt=Ae||je,x={reasoningEffortDisabled:Bt};return x}function ignoredGate()",
+    );
+  const { value, warnings } = withCapturedWarns(() =>
+    applyCopilotReasoningEffortUiPatch(source),
+  );
+
+  assert.equal(matchesCopilotReasoningEffortUiContract(source), false);
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /current compiled Copilot reasoning effort dropdown gate/);
+});
+
+test("duplicate dropdown propagation in the composer owner is rejected byte-identically", () => {
+  const source = currentCopilotReasoningEffortUiFixture().replace(
+    "Bt=Ae||je;return",
+    "Bt=Ae||je,Xt={reasoningEffortDisabled:Bt},Ct=Ae||je,Yt={reasoningEffortDisabled:Ct};return",
+  );
+  const { value, warnings } = withCapturedWarns(() =>
+    applyCopilotReasoningEffortUiPatch(source),
+  );
+
+  assert.equal(matchesCopilotReasoningEffortUiContract(source), false);
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /duplicate current compiled Copilot reasoning effort dropdown gates/);
+});
+
 test("duplicate current app UI contracts warn and remain byte-identical", () => {
   const source = currentCopilotReasoningEffortUiFixture().repeat(2);
   const { value, warnings } = withCapturedWarns(() =>
