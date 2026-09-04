@@ -74,10 +74,17 @@ function analyzeCompiledCopilotReasoningEffortUiContract(source) {
   }
 
   const combinedMatch = combinedMatches[0];
-  if (!source.includes(`reasoningEffortDisabled:${combinedMatch.groups.disabled}`)) {
+  const dropdownGate = new RegExp(
+    `(?<dropdown>${JS_IDENT})=${JS_IDENT}\\|\\|${combinedMatch.groups.disabled}` +
+      `[\\s\\S]{0,7000}?reasoningEffortDisabled:\\k<dropdown>`,
+  );
+  const dropdownGateMatches = findAllMatches(source, dropdownGate);
+  if (dropdownGateMatches.length !== 1) {
     return {
       state: "invalid",
-      warning: "Could not find current compiled Copilot reasoning effort dropdown gate",
+      warning: dropdownGateMatches.length === 0
+        ? "Could not find current compiled Copilot reasoning effort dropdown gate"
+        : "Found duplicate current compiled Copilot reasoning effort dropdown gates",
     };
   }
 

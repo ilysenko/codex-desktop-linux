@@ -57,10 +57,17 @@ function currentFilteredCopilotReasoningEffortModelListFixture() {
 
 function currentCopilotReasoningEffortUiFixture() {
   return [
-    "function pNc(){let S=p,ue=[{model:H,disabledReason:null}],ke=S?.authMethod===`copilot`||ue?.find(e=>{let{model:t}=e;return t.model===H})?.disabledReason!=null,Pe=!l&&!Oe&&!D&&!ke&&!0,Fe=!l&&B?.isModelLocked!==!0&&_!=null&&!Oe&&M&&!ke&&ee!==`error`;return jsx(CVc,{reasoningEffortDisabled:ke,showReasoningEffortControls:!0})}",
+    "function hLr(){let w=p,fe=[{model:W,disabledReason:null}],Ae=!1,je=w?.authMethod===`copilot`||fe?.find(e=>{let{model:t}=e;return t.model===W})?.disabledReason!=null,Le=!l&&!Ae&&!k&&!je&&!0,Re=!l&&H?.isModelLocked!==!0&&v!=null&&P&&!je&&ne!==`error`,Bt=Ae||je;return jsx(MIr,{reasoningEffortDisabled:Bt,showReasoningEffortControls:!0})}",
     "function unrelatedGate(){let q=a&&b&&!0,c;return q}",
     "function KYc(){let l=c?.requiresAuth??!0,m=Fza(f),h=c?.authMethod===`copilot`;let A=o.formatMessage({id:`composer.reasoningSlashCommand.title`});let M=l&&m&&!h&&!0,N;return{enabled:M,dependencies:N}}",
     "function permissionGate(){let A=O.length>0,j=!w&&!A;return{shouldAutoDenyPermissionRequest:j}}",
+  ].join("");
+}
+
+function retiredCopilotReasoningEffortUiFixture() {
+  return [
+    "function pNc(){let S=p,ue=[{model:H,disabledReason:null}],ke=S?.authMethod===`copilot`||ue?.find(e=>{let{model:t}=e;return t.model===H})?.disabledReason!=null;return jsx(CVc,{reasoningEffortDisabled:ke,showReasoningEffortControls:!0})}",
+    "function KYc(){let l=c?.requiresAuth??!0,m=Fza(f),h=c?.authMethod===`copilot`;let A=o.formatMessage({id:`composer.reasoningSlashCommand.title`});let M=l&&m&&!h&&!0,N;return{enabled:M,dependencies:N}}",
   ].join("");
 }
 
@@ -131,8 +138,8 @@ test("persists Copilot reasoning effort through the current default writer", () 
 });
 
 test("current package descriptors use their semantic asset owners", () => {
-  const currentSettingsChunk = "app-initial-DAkTNeXg.js";
-  const currentUiChunk = "app-primary-a0bff570446b.js";
+  const currentSettingsChunk = "app-initial-c89bb5bd3099.js";
+  const currentUiChunk = "app-primary-ea0fa37e0a01.js";
   const adjacentChunk = "projects-index-page-DjNy92Xe.js";
   const loaded = require("./patch.js").descriptors;
 
@@ -167,10 +174,11 @@ test("allows Copilot auth to use the current app effort controls", () => {
     currentCopilotReasoningEffortUiFixture(),
   );
 
-  assert.match(patched, /ke=\/\*codexLinuxCopilotReasoningEffortUi\*\/ue\?\.find/);
-  assert.match(patched, /reasoningEffortDisabled:ke/);
+  assert.match(patched, /je=\/\*codexLinuxCopilotReasoningEffortUi\*\/fe\?\.find/);
+  assert.match(patched, /Bt=Ae\|\|je/);
+  assert.match(patched, /reasoningEffortDisabled:Bt/);
   assert.match(patched, /let M=l&&m&&!0\/\*codexLinuxCopilotReasoningEffortUi\*\/,N;/);
-  assert.doesNotMatch(patched, /ke=S\?\.authMethod===`copilot`\|\|/);
+  assert.doesNotMatch(patched, /je=w\?\.authMethod===`copilot`\|\|/);
   assert.doesNotMatch(patched, /M=l&&m&&!h&&!0/);
   assert.match(patched, /let q=a&&b&&!0,c/);
   assert.match(patched, /A=O\.length>0,j=!w&&!A/);
@@ -181,6 +189,18 @@ test("allows Copilot auth to use the current app effort controls", () => {
   );
   assert.equal(value, patched);
   assert.deepEqual(warnings, []);
+});
+
+test("retired direct Copilot dropdown gate is rejected byte-identically", () => {
+  const source = retiredCopilotReasoningEffortUiFixture();
+  const { value, warnings } = withCapturedWarns(() =>
+    applyCopilotReasoningEffortUiPatch(source),
+  );
+
+  assert.equal(matchesCopilotReasoningEffortUiContract(source), false);
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /current compiled Copilot reasoning effort dropdown gate/);
 });
 
 test("duplicate current app UI contracts warn and remain byte-identical", () => {
@@ -199,8 +219,8 @@ test("mixed current app UI contract states warn and remain byte-identical", () =
   const cleanSource = currentCopilotReasoningEffortUiFixture();
   const sources = [
     cleanSource.replace(
-      "ke=S?.authMethod===`copilot`||",
-      "ke=/*codexLinuxCopilotReasoningEffortUi*/",
+      "je=w?.authMethod===`copilot`||",
+      "je=/*codexLinuxCopilotReasoningEffortUi*/",
     ),
     cleanSource.replace(
       "M=l&&m&&!h&&!0,N;",
@@ -222,8 +242,9 @@ test("mixed current app UI contract states warn and remain byte-identical", () =
 test("incomplete current app UI contracts warn and remain byte-identical", () => {
   const cleanSource = currentCopilotReasoningEffortUiFixture();
   const sources = [
-    cleanSource.replace("S?.authMethod===`copilot`||", ""),
-    cleanSource.replace("reasoningEffortDisabled:ke", "effortDisabled:ke"),
+    cleanSource.replace("w?.authMethod===`copilot`||", ""),
+    cleanSource.replace("Bt=Ae||je", "Bt=Ae||z"),
+    cleanSource.replace("reasoningEffortDisabled:Bt", "effortDisabled:Bt"),
     cleanSource.replace("composer.reasoningSlashCommand.title", "composer.effortCommand.title"),
   ];
 
@@ -305,7 +326,7 @@ test("feature descriptor loader exposes the Copilot webview asset patches only w
 test("enabled feature descriptors patch the current app settings chunk", () => {
   const featuresRoot = path.resolve(__dirname, "..");
   const currentSettingsChunk = "app-initial-settings-Bd3Z1bES.js";
-  const currentUiChunk = "app-primary-ui-a0bff570446b.js";
+  const currentUiChunk = "app-primary-ui-ea0fa37e0a01.js";
 
   withTempFeatureConfig(["copilot-reasoning-effort"], () => {
     withTempDir((extractedDir) => {
@@ -325,7 +346,7 @@ test("enabled feature descriptors patch the current app settings chunk", () => {
       assert.match(patched, /copilot-default-reasoning-effort/);
       assert.match(patched, /a=\[\.\.\.t\]\.filter/);
       assert.doesNotMatch(patched, /e===`copilot`\?\[/);
-      assert.match(readAsset(extractedDir, currentUiChunk), /reasoningEffortDisabled:ke/);
+      assert.match(readAsset(extractedDir, currentUiChunk), /reasoningEffortDisabled:Bt/);
       assert.match(
         readAsset(extractedDir, currentUiChunk),
         /M=l&&m&&!0\/\*codexLinuxCopilotReasoningEffortUi\*\/,N/,
