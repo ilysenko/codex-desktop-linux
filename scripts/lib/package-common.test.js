@@ -84,10 +84,20 @@ test("non-Debian package formats map the official runtime libraries", () => {
 
 test("RPM updater selects the distro-specific GnuPG package", () => {
   const rpm = fs.readFileSync(path.join(repoRoot, "packaging/linux/codex-desktop.spec"), "utf8");
+  const pacman = fs.readFileSync(path.join(repoRoot, "packaging/linux/PKGBUILD.template"), "utf8");
   assert.match(
     rpm,
-    /%if __PACKAGE_WITH_UPDATER__\nRequires:\s+polkit, curl, dpkg, nodejs, xdg-utils\n%if 0%\{\?suse_version\}\nRequires:\s+gpg2\n%else\nRequires:\s+gnupg2\n%endif\n%else\nRequires:\s+xdg-utils\n%endif/,
+    /%if __PACKAGE_WITH_UPDATER__\nRequires:\s+polkit, curl, dpkg, nodejs >= 24, xdg-utils\n%if 0%\{\?suse_version\}\nRequires:\s+gpg2\n%else\nRequires:\s+gnupg2\n%endif\n%else\nRequires:\s+xdg-utils\n%endif/,
   );
+  assert.match(pacman, /'nodejs>=24'/);
+});
+
+test("Debian upgrades do not stop the update manager that owns the transaction", () => {
+  const prerm = fs.readFileSync(path.join(repoRoot, "packaging/linux/codex-update-manager.prerm"), "utf8");
+  const removalBranch = prerm.match(/remove\|purge\|deconfigure\)([\s\S]*?)esac/);
+  assert.ok(removalBranch);
+  assert.match(removalBranch[1], /systemctl --user stop/);
+  assert.doesNotMatch(prerm.slice(0, removalBranch.index), /systemctl --user stop/);
 });
 
 test("update-builder copies staged native feature artifacts without Cargo workspaces", (t) => {

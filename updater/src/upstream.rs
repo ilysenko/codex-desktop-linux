@@ -9,6 +9,8 @@ use std::{
 };
 use tokio::process::Command;
 
+const SYSTEM_NODE: &str = "/usr/bin/node";
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageMetadata {
@@ -107,7 +109,8 @@ async fn run_verifier(
     }
     fs::create_dir_all(&run_dir)?;
     let metadata_path = run_dir.join("package.json");
-    let mut command = Command::new("node");
+    ensure_supported_node().await?;
+    let mut command = Command::new(SYSTEM_NODE);
     command
         .arg(builder_root.join("scripts/lib/upstream-linux-package.js"))
         .args([
@@ -152,6 +155,23 @@ async fn run_verifier(
     Ok(metadata)
 }
 
+async fn ensure_supported_node() -> Result<()> {
+    let output = Command::new(SYSTEM_NODE)
+        .arg("--version")
+        .output()
+        .await
+        .context("Node.js 24 or newer is required by the update manager")?;
+    anyhow::ensure!(output.status.success(), "Node.js version check failed");
+    let version = String::from_utf8_lossy(&output.stdout);
+    let major = parse_node_major(&version).context("Node.js returned an invalid version")?;
+    anyhow::ensure!(major >= 24, "Node.js 24 or newer is required by the update manager; found {}", version.trim());
+    Ok(())
+}
+
+fn parse_node_major(version: &str) -> Option<u32> {
+    version.trim().strip_prefix('v')?.split('.').next()?.parse().ok()
+}
+
 fn verify_cached_file(path: &Path, expected: &PackageMetadata) -> Result<bool> {
     if fs::metadata(path)?.len() != expected.size {
         return Ok(false);
@@ -167,6 +187,15 @@ fn verify_cached_file(path: &Path, expected: &PackageMetadata) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn node_version_gate_requires_current_lts_or_newer() {
+        assert_eq!(SYSTEM_NODE, "/usr/bin/node");
+        assert_eq!(parse_node_major("v24.20.0\n"), Some(24));
+        assert_eq!(parse_node_major("v26.8.1"), Some(26));
+        assert_eq!(parse_node_major("v22.19.0"), Some(22));
+        assert_eq!(parse_node_major("12.22.9"), None);
+    }
 
     #[test]
     fn cache_identity_contains_version_architecture_and_sha() {

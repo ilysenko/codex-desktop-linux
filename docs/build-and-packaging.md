@@ -16,6 +16,11 @@ AppImage or native package out. Debian-derived systems use the pinned
 NodeSource keyring when a newer Node.js is required; the script never pipes a
 remote installer directly to a shell.
 
+Native packages built with the update manager declare Node.js 24 or newer as a
+runtime dependency. On Debian-derived systems, the dependency bootstrap uses
+the signed NodeSource repository to install the latest available 24.x LTS
+release when the distro package is too old.
+
 If you install dependencies manually, use `scripts/install-deps.sh` as the
 authoritative package list. At minimum, the source verifier needs Bash, curl,
 GnuPG, `dpkg-deb`, Node.js 20+, Python 3, SHA-256 tools, tar, and `xz`; native
@@ -190,6 +195,7 @@ feature selection/descriptors/resources, the ASAR toolchain, package templates,
 required build helpers, and already staged release executables for enabled
 native features. It excludes the full repository, Cargo workspaces, and
 disabled features, and never contains an app-runtime Node installation.
+The update manager executes the host's packaged Node.js 24+ runtime.
 
 ## Cross-format validation
 

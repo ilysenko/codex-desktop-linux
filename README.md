@@ -109,6 +109,10 @@ Old `.dmg`, `DMG=`, and `CODEX_DMG_*` inputs are intentionally unsupported.
   `dpkg-deb`, tar, make, and a C/C++ toolchain. Rust is used for the updater and
   enabled native feature helpers. `make bootstrap-native` installs or guides
   you through these requirements.
+- Native packages that include the update manager require Node.js 24 or newer.
+  On Debian-derived systems, `make bootstrap-native` installs the latest
+  available Node.js 24 LTS release from NodeSource when the distro candidate is
+  too old.
 - The official `chatgpt` and custom `codex-desktop` packages may coexist, but
   both intentionally use the upstream `Codex` user profile. Do not run them at
   the same time; the upstream single-instance lock may route the second launch

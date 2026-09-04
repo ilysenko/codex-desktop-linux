@@ -50,6 +50,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Native updater packages now require Node.js 24 or newer, and the update
+  manager rejects obsolete runtimes before invoking the signed-package
+  verifier at `/usr/bin/node`, so user version-manager shims cannot select an
+  older runtime. Debian bootstrap installs the latest available Node.js 24 LTS
+  from the signed NodeSource repository when the distro candidate is too old.
+- Debian upgrades no longer stop the update-manager service from inside its own
+  privileged package transaction, allowing it to record successful promotion
+  instead of rebuilding the same upstream package on the next start.
 - The opt-in `frameless-titlebar` feature again hides official Linux overlay
   buttons. It retargets the current `titleBarOverlay` window options, zoom
   update, and theme-sync contracts, remaps Linux webview chrome to `native`,

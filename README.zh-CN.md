@@ -101,6 +101,9 @@ UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 - 构建需要 Node.js 20+、npm、Python 3、curl、`gpgv`、`dpkg-deb`、tar、
   make 和 C/C++ 工具链。更新器及启用的原生扩展 helper 还需要 Rust。
   `make bootstrap-native` 会安装或提示这些依赖。
+- 包含更新管理器的原生软件包需要 Node.js 24+。在 Debian 衍生发行版上，
+  如果系统仓库版本过旧，`make bootstrap-native` 会从 NodeSource 安装最新的
+  Node.js 24 LTS 版本。
 - 官方 `chatgpt` 与自定义 `codex-desktop` 可以同时安装，但两者会共享上游
   `Codex` 用户 profile。请勿同时运行；上游 single-instance lock 可能把第二次
   启动交给已经运行的进程。

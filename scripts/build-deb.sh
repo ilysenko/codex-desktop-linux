@@ -113,7 +113,7 @@ main() {
         replace_literal_file_token \
             "$PKG_ROOT/DEBIAN/control" \
             "__UPDATER_DEPENDENCIES__" \
-            "curl, dpkg, gnupg, nodejs, pkexec | policykit-1, polkitd | policykit-1, "
+            "curl, dpkg, gnupg, nodejs (>= 24), pkexec | policykit-1, polkitd | policykit-1, "
     else
         replace_literal_file_token "$PKG_ROOT/DEBIAN/control" "__UPDATER_DEPENDENCIES__" ""
     fi
