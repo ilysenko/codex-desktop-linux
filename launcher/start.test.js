@@ -207,6 +207,101 @@ test("launcher composes declarative hooks and forwards arguments", (t) => {
   assert.equal(fs.readFileSync(path.join(root, "after-exit"), "utf8"), "after-exit");
 });
 
+test("launcher preserves desktop arguments and exposes the after-exit status", (t) => {
+  for (const originalArgs of [[], ["codex://thread/123", "--new-window"]]) {
+    const root = createApp(t);
+    const hooks = path.join(root, ".codex-linux");
+    const stateDir = path.join(root, "state", "codex-desktop");
+    const cacheDir = path.join(root, "cache", "codex-desktop");
+    const expectedDesktopArgs = ["--class=codex-desktop", ...originalArgs];
+    const expectedHookContext = [
+      `app=${root}`,
+      `state=${stateDir}`,
+      `cache=${cacheDir}`,
+      `features=${path.join(hooks, "features")}`,
+      `log=${path.join(cacheDir, "launcher.log")}`,
+    ];
+
+    for (const phase of ["prelaunch", "cold-start", "after-exit"]) {
+      writeExecutable(
+        path.join(hooks, `${phase}.d`, "capture.sh"),
+        `#!/bin/bash
+output="$TEST_ROOT/${phase}-context"
+{
+  printf 'phase=%s\\nexit=%s\\n' "$CODEX_LINUX_FEATURE_HOOK_PHASE" "\${CODEX_LINUX_ELECTRON_EXIT_STATUS:-}"
+  printf 'app=%s\\nstate=%s\\ncache=%s\\nfeatures=%s\\nlog=%s\\n' \
+    "$CODEX_LINUX_APP_DIR" "$CODEX_LINUX_APP_STATE_DIR" "$CODEX_LINUX_APP_CACHE_DIR" \
+    "$CODEX_LINUX_FEATURES_DIR" "$CODEX_LINUX_LAUNCHER_LOG"
+  printf '%s\\n' "$@"
+} > "$output.tmp"
+mv "$output.tmp" "$output"
+`,
+      );
+    }
+
+    const result = childProcess.spawnSync(path.join(root, "start.sh"), originalArgs, {
+      env: {
+        ...process.env,
+        CODEX_HOME: path.join(root, "codex-home"),
+        CODEX_LINUX_ELECTRON_EXIT_STATUS: "99",
+        TEST_ROOT: root,
+        XDG_CACHE_HOME: path.join(root, "cache"),
+        XDG_CONFIG_HOME: path.join(root, "config"),
+        XDG_STATE_HOME: path.join(root, "state"),
+      },
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 7);
+    waitForFile(path.join(root, "cold-start-context"));
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, "prelaunch-context"), "utf8").trim().split("\n"),
+      ["phase=prelaunch", "exit=", ...expectedHookContext, ...originalArgs],
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, "cold-start-context"), "utf8").trim().split("\n"),
+      ["phase=cold-start", "exit=", ...expectedHookContext, ...originalArgs],
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, "after-exit-context"), "utf8").trim().split("\n"),
+      ["phase=after-exit", "exit=7", ...expectedHookContext, ...originalArgs],
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, "arguments"), "utf8").trim().split("\n"),
+      expectedDesktopArgs,
+    );
+  }
+});
+
+test("launcher preserves app status when an after-exit hook fails", (t) => {
+  const root = createApp(t);
+  const hooks = path.join(root, ".codex-linux", "after-exit.d");
+  writeExecutable(
+    path.join(hooks, "01-fail.sh"),
+    "#!/bin/bash\nprintf failed > \"$TEST_ROOT/failed-hook\"\nexit 42\n",
+  );
+  writeExecutable(
+    path.join(hooks, "02-continue.sh"),
+    "#!/bin/bash\nprintf continued > \"$TEST_ROOT/continued-hook\"\n",
+  );
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    env: {
+      ...process.env,
+      CODEX_HOME: path.join(root, "codex-home"),
+      TEST_ROOT: root,
+      XDG_CACHE_HOME: path.join(root, "cache"),
+      XDG_CONFIG_HOME: path.join(root, "config"),
+      XDG_STATE_HOME: path.join(root, "state"),
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(path.join(root, "failed-hook"), "utf8"), "failed");
+  assert.equal(fs.readFileSync(path.join(root, "continued-hook"), "utf8"), "continued");
+});
+
 test("launcher exports the physical default CODEX_HOME when it is a symlink", (t) => {
   const root = createApp(t);
   const home = path.join(root, "home");

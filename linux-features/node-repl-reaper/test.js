@@ -9,6 +9,8 @@ const path = require("node:path");
 const test = require("node:test");
 
 const REAPER = path.join(__dirname, "reaper.sh");
+const COLD_START_HOOK = path.join(__dirname, "cold-start-hook.sh");
+const AFTER_EXIT_HOOK = path.join(__dirname, "after-exit-hook.sh");
 const LONG_RUNNING_NODE_ARGS = ["-e", "setInterval(() => {}, 1000)"];
 
 function commandPath(name) {
@@ -80,6 +82,60 @@ function waitForExit(pid, timeoutMs = 4000) {
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+async function waitForFileContent(file, predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) {
+      const content = fs.readFileSync(file, "utf8");
+      if (predicate(content)) return content;
+    }
+    await delay(20);
+  }
+  assert.fail(`timed out waiting for complete content in ${file}`);
+}
+
+test("lifecycle hooks use exported app context instead of desktop arguments", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-node-repl-hook-test-"));
+  const appDir = path.join(root, "app");
+  const stateDir = path.join(root, "state");
+  const callLog = path.join(root, "calls.log");
+  const stagedReaper = path.join(appDir, ".codex-linux", "node-repl-reaper.sh");
+  fs.mkdirSync(path.dirname(stagedReaper), { recursive: true });
+  fs.writeFileSync(
+    stagedReaper,
+    `#!${BASH}
+printf '%s %s\\n' "$1" "$2" >> "${callLog}"
+`,
+    { mode: 0o755 },
+  );
+  const env = {
+    ...process.env,
+    CODEX_LINUX_APP_DIR: appDir,
+    CODEX_LINUX_APP_STATE_DIR: stateDir,
+  };
+
+  const coldStart = spawnSync(BASH, [COLD_START_HOOK, "codex://thread/123"], {
+    encoding: "utf8",
+    env,
+  });
+  assert.equal(coldStart.status, 0, coldStart.stderr);
+  const afterExit = spawnSync(BASH, [AFTER_EXIT_HOOK, "codex://thread/123"], {
+    encoding: "utf8",
+    env,
+  });
+  assert.equal(afterExit.status, 0, afterExit.stderr);
+  assert.equal(fs.existsSync(path.join(stateDir, "node-repl-reaper.pid")), true);
+
+  const calls = await waitForFileContent(
+    callLog,
+    (content) => content.includes(`${appDir} watch`) && content.includes(`${appDir} once`),
+  );
+  assert.ok(calls.split("\n").includes(`${appDir} watch`));
+  assert.ok(calls.split("\n").includes(`${appDir} once`));
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
 
 test("reaps a node_repl whose parent is not a live codex app-server", async () => {
   const { appDir, nodeReplBin } = makeFakeApp();

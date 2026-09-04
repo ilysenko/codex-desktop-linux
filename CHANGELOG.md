@@ -50,6 +50,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Lifecycle hooks now use exported application paths without interpreting
+  desktop arguments or deep-link URIs as launcher context. After-exit hooks
+  receive the Electron status and cannot replace it when cleanup fails; the
+  MCP and Node REPL reapers now run on normal and deep-link launches.
 - The opt-in `frameless-titlebar` feature again hides official Linux overlay
   buttons. It retargets the current `titleBarOverlay` window options, zoom
   update, and theme-sync contracts, remaps Linux webview chrome to `native`,

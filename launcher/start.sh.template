@@ -13,6 +13,9 @@ export BAMF_DESKTOP_FILE_HINT="${BAMF_DESKTOP_FILE_HINT:-/usr/share/applications
 
 HOOK_ROOT="$CODEX_LINUX_APP_DIR/.codex-linux"
 CHATGPT_BINARY="$CODEX_LINUX_APP_DIR/ChatGPT"
+CODEX_LINUX_FEATURES_DIR="$HOOK_ROOT/features"
+CODEX_LINUX_LAUNCHER_LOG="$CODEX_LINUX_APP_CACHE_DIR/launcher.log"
+export CODEX_LINUX_FEATURES_DIR CODEX_LINUX_LAUNCHER_LOG
 
 usage() {
     cat <<EOF
@@ -232,6 +235,7 @@ run_launcher_hooks() {
 }
 
 ORIGINAL_ARGS=("$@")
+unset CODEX_LINUX_ELECTRON_EXIT_STATUS
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;
     --diagnose) diagnose; exit $? ;;
@@ -265,6 +269,7 @@ fi
 set +e
 "$CHATGPT_BINARY" "${ELECTRON_ARGS[@]}" "${ORIGINAL_ARGS[@]}"
 status=$?
+CODEX_LINUX_ELECTRON_EXIT_STATUS="$status" run_hook_directory \
+    "$HOOK_ROOT/after-exit.d" after-exit
 set -e
-run_hook_directory "$HOOK_ROOT/after-exit.d" after-exit
 exit "$status"
