@@ -324,6 +324,7 @@ make appimage
 | 问题 | 首先检查 |
 |---|---|
 | 官方与 Community 启动互相影响 | 完全退出所有 `ChatGPT` 进程；两者共享上游 profile |
+| Flatpak Chrome 能打开 AppImage，但扩展显示 `Native transport disconnected` | 目前不支持此组合；参阅 [Flatpak Chrome 诊断](docs/troubleshooting.md#appimage-opens-from-flatpak-chrome-but-the-extension-cannot-connect) |
 | 迁移后 Browser/Chrome extension 无法连接 | 完全退出 ChatGPT 与 Chrome，再按[故障排除](docs/troubleshooting.md#browser-or-chrome-plugin-is-visible-but-cannot-connect)执行窄范围 cache repair |
 | 签名或软件包验证失败 | 不要绕过；检查系统时间、网络、`gpgv`、architecture 和磁盘空间 |
 | 应用无法启动 | 运行 `/opt/codex-desktop/start.sh --diagnose` |

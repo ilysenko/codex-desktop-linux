@@ -349,6 +349,7 @@ output layout, parallelism, and payload inspection.
 | Problem | First check |
 |---|---|
 | Official and Community launches interfere | Fully exit every `ChatGPT` process; both apps share the upstream profile |
+| AppImage opens from Flatpak Chrome, but the extension says `Native transport disconnected` | This combination is currently unsupported; see [Flatpak Chrome diagnostics](docs/troubleshooting.md#appimage-opens-from-flatpak-chrome-but-the-extension-cannot-connect) |
 | Browser/Chrome extension cannot connect after migration | Exit ChatGPT and Chrome completely, then follow the narrow cache repair in [Troubleshooting](docs/troubleshooting.md#browser-or-chrome-plugin-is-visible-but-cannot-connect) |
 | Signature or package verification fails | Do not bypass it; check time, network, `gpgv`, architecture, and disk space |
 | App does not launch | Run `/opt/codex-desktop/start.sh --diagnose` |
