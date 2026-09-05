@@ -60,6 +60,8 @@ test("staging extends the hidden unified plugin and invalidates the browser-only
   const version = JSON.parse(fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"))).version;
   assert.notEqual(version, "26.901.41600");
   assert.deepEqual(JSON.parse(fs.readFileSync(marketplacePath)).plugins.map(p => p.name), ["unified-computer-use", "browser", "computer-use"]);
+  const settingsManifest = JSON.parse(fs.readFileSync(path.join(target, "../computer-use/.codex-plugin/plugin.json")));
+  assert.equal(settingsManifest.mcpServers, undefined);
   assert.equal(fs.existsSync(path.join(target, "../computer-use/.mcp.json")), false);
   assert.equal(fs.existsSync(path.join(target, "../computer-use/bin/codex-computer-use-linux")), false);
   assert.equal(fs.existsSync(path.join(target, "scripts/native-service.mjs")), true);
@@ -132,7 +134,7 @@ const registrationFixture = `var kd=[${nativeRegistration},${windowsRegistration
 
 function evaluateNativeRegistration(source) {
   const n = {
-    nc: { computerUse: { name: "computer-use", installWhenMissingRequiresOptIn: true } },
+    nc: { computerUse: { name: "computer-use", installWhenMissing: true, installWhenMissingRequiresOptIn: true } },
     sc: name => `auto-install-opt-out:${name}`,
   };
   const one = () => "migration";
@@ -156,7 +158,7 @@ test("current spread registration enables Linux while preserving native consent 
     }
   }
   assert.equal(native.installWhenMissingRequiresOptIn, true);
-  assert.equal(native.installWhenMissing, undefined);
+  assert.equal(native.installWhenMissing, true);
   assert.equal(native.autoInstallOptOutKey, upstream[0].autoInstallOptOutKey);
   assert.equal(native.migrate, undefined);
   assert.equal(mac.migrate(), "migration");

@@ -16,7 +16,6 @@
     "cosmic",
     "accessibility"
   ],
-  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Computer Use",
     "shortDescription": "Control Linux desktop apps from Codex",
