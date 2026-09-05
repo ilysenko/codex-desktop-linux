@@ -45,7 +45,7 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
 // Keep the native toggle's existing plugin state, but expose no legacy MCP tools.
 fs.mkdirSync(path.join(settingsTarget, ".codex-plugin"), { recursive: true });
 fs.copyFileSync(path.join(settingsSource, ".codex-plugin/plugin.json"), path.join(settingsTarget, ".codex-plugin/plugin.json"));
-fs.copyFileSync(path.join(settingsSource, ".mcp.json"), path.join(settingsTarget, ".mcp.json"));
+fs.rmSync(path.join(settingsTarget, ".mcp.json"), { force: true });
 marketplace.plugins = marketplace.plugins.filter(p => p.name !== "computer-use");
 marketplace.plugins.push({ name: "computer-use", source: { source: "local", path: "./plugins/computer-use" },
   policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" }, category: "Productivity" });

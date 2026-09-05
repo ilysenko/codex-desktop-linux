@@ -60,11 +60,14 @@ test("staging extends the hidden unified plugin and invalidates the browser-only
   const version = JSON.parse(fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"))).version;
   assert.notEqual(version, "26.901.41600");
   assert.deepEqual(JSON.parse(fs.readFileSync(marketplacePath)).plugins.map(p => p.name), ["unified-computer-use", "browser", "computer-use"]);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(target, "../computer-use/.mcp.json"))), { mcpServers: {} });
+  assert.equal(fs.existsSync(path.join(target, "../computer-use/.mcp.json")), false);
   assert.equal(fs.existsSync(path.join(target, "../computer-use/bin/codex-computer-use-linux")), false);
   assert.equal(fs.existsSync(path.join(target, "scripts/native-service.mjs")), true);
   assert.equal(fs.readFileSync(path.join(target, "bin/codex-computer-use-linux"), "utf8"), fs.readFileSync(backend, "utf8"));
+  const legacyMcp = path.join(target, "../computer-use/.mcp.json");
+  fs.writeFileSync(legacyMcp, JSON.stringify({ mcpServers: { "computer-use": { command: "./bin/codex-computer-use-linux", args: ["mcp"] } } }));
   stage();
+  assert.equal(fs.existsSync(legacyMcp), false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"))).version, version);
   fs.writeFileSync(path.join(target, "scripts/launch.mjs"), "upstream drift");
   assert.throws(stage, /unified.*contract/i);
