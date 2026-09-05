@@ -1,7 +1,7 @@
 {
   "name": "computer-use",
   "version": "0.1.3-linux-unified",
-  "description": "Native access setting for the unified Linux Computer Use runtime.",
+  "description": "Control desktop apps on Linux from Codex through Computer Use.",
   "author": {
     "name": "avifenesh"
   },
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Computer Use",
     "shortDescription": "Control Linux desktop apps from Codex",
-    "longDescription": "Controls native Linux desktop access through the unified Computer Use runtime. Browser access is configured independently.",
+    "longDescription": "Linux Computer Use lets Codex inspect and control desktop apps through a native Linux backend using screenshots, accessibility metadata, and input events. Enable or disable native access in Settings → Computer use → Any App. Browser access is configured independently.",
     "developerName": "avifenesh",
     "category": "Productivity",
     "websiteURL": "https://github.com/avifenesh",
