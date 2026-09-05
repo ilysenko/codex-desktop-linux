@@ -116,6 +116,7 @@ test("official Linux validation runs fully on every pull request but not hourly"
 
 test("install-deps workflow covers apt and pacman Rust bootstrap", () => {
   const workflow = read(".github/workflows/install-deps.yml");
+  assert.match(workflow, /^      - scripts\/lib\/install-deps-rust\.sh$/m);
   assert.match(workflow, /^      - tests\/install_deps_pacman_rust_matrix\.sh$/m);
 
   const apt = job(workflow, "apt-node-bootstrap");

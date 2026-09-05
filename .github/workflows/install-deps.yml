@@ -5,6 +5,7 @@ on:
     paths:
       - install.sh
       - scripts/install-deps.sh
+      - scripts/lib/install-deps-rust.sh
       - tests/install_deps_pacman_rust_matrix.sh
       - packaging/linux/control
       - .github/workflows/install-deps.yml
@@ -14,6 +15,7 @@ on:
     paths:
       - install.sh
       - scripts/install-deps.sh
+      - scripts/lib/install-deps-rust.sh
       - tests/install_deps_pacman_rust_matrix.sh
       - packaging/linux/control
       - .github/workflows/install-deps.yml

@@ -58,6 +58,33 @@ run_install_deps() {
     (cd "$REPO_DIR" && bash scripts/install-deps.sh)
 }
 
+assert_ready_host_skips_pacman_transaction() {
+    local wrapper_dir
+    local pacman_log
+
+    wrapper_dir="$(mktemp -d)"
+    pacman_log="$wrapper_dir/pacman.log"
+    cat >"$wrapper_dir/pacman" <<'EOF'
+#!/bin/bash
+printf '%q ' "$@" >>"$CODEX_TEST_PACMAN_LOG"
+printf '\n' >>"$CODEX_TEST_PACMAN_LOG"
+exec /usr/bin/pacman "$@"
+EOF
+    chmod +x "$wrapper_dir/pacman"
+
+    CODEX_TEST_PACMAN_LOG="$pacman_log" \
+        PATH="$wrapper_dir:$PATH" \
+        run_install_deps
+
+    grep -q '^-T ' "$pacman_log" ||
+        fail 'expected the ready-host dependency probe'
+    if grep -q '^-S' "$pacman_log"; then
+        fail 'ready host must not start a pacman install or upgrade transaction'
+    fi
+
+    rm -rf "$wrapper_dir"
+}
+
 verify_build_rust() {
     assert_succeeds with_build_path cargo --version
     assert_succeeds with_build_path rustc --version
@@ -71,6 +98,7 @@ case_working_distro_cargo() {
     assert_succeeds with_build_path cargo --version
     run_install_deps
     verify_build_rust
+    assert_ready_host_skips_pacman_transaction
     pacman_package_installed rust || fail 'expected pacman rust to remain installed'
     ! pacman_package_installed rustup || fail 'did not expect pacman rustup with distro rust'
 }

@@ -4,6 +4,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/linux-target-detect.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/install-deps-rust.sh"
 
 run_privileged() {
     if [ "$(id -u)" -eq 0 ]; then
@@ -86,18 +88,26 @@ install_zypper() {
 }
 
 install_pacman() {
-    local rust_packages=()
+    local -a packages=(
+        base-devel ca-certificates curl dpkg git gnupg nodejs npm python
+        tar unzip util-linux xz zstd
+    )
+    local rust_package
 
     # Match bootstrap-native's Rust resolution order. A user-local rustup
     # proxy can shadow a working distro Cargo once $HOME/.cargo/bin is
     # prepended for the native build.
-    if ! cargo_works_for_build && ! rustup_available_for_build; then
-        rust_packages=(rustup)
+    rust_package="$(PATH="$(build_path)" pacman_rust_bootstrap_package)"
+    if [ -n "$rust_package" ]; then
+        packages+=("$rust_package")
     fi
 
-    run_privileged pacman -Syu --noconfirm --needed base-devel ca-certificates \
-        curl dpkg git gnupg nodejs npm python "${rust_packages[@]}" \
-        tar unzip util-linux xz zstd
+    if pacman_dependencies_installed "${packages[@]}"; then
+        info 'pacman dependencies already installed; skipping system upgrade.'
+        return 0
+    fi
+
+    run_privileged pacman -Syu --noconfirm --needed "${packages[@]}"
 }
 
 install_rust() {
