@@ -539,10 +539,11 @@ test("launcher uses the HOME config fallback and ignores non-file flag paths", (
 // A confirmed Wayland session: a live compositor socket in an isolated
 // XDG_RUNTIME_DIR, and a systemd user manager that exports no Sommelier
 // markers. Tests that need Crostini or GNOME layer their own markers on top.
-function createWaylandSession(t, root, { systemdEnvironment = "" } = {}) {
+function createWaylandSession(t, root, { systemdEnvironment = "", listening = true } = {}) {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-launcher-wayland-"));
+  const socketPath = path.join(runtimeDir, "wayland-0");
   const server = net.createServer();
-  server.listen(path.join(runtimeDir, "wayland-0"));
+  server.listen(socketPath);
   t.after(() => {
     server.close();
     fs.rmSync(runtimeDir, { recursive: true, force: true });
@@ -551,6 +552,17 @@ function createWaylandSession(t, root, { systemdEnvironment = "" } = {}) {
   writeExecutable(
     path.join(binDir, "systemctl"),
     `#!/bin/bash\nprintf '%b' ${JSON.stringify(systemdEnvironment)}\n`,
+  );
+  // iproute2 listing of listening unix sockets; a crashed compositor leaves
+  // the inode without a listener, which "listening: false" reproduces.
+  const listenerLines = listening === true
+    ? `u_str LISTEN 0 4096 ${socketPath} 146902 * 0\nu_str LISTEN 0 4096 /run/user/1000/bus 146901 * 0\n`
+    : "u_str LISTEN 0 4096 /run/user/1000/bus 146901 * 0\n";
+  writeExecutable(
+    path.join(binDir, "ss"),
+    listening === "unavailable"
+      ? "#!/bin/bash\nexit 255\n"
+      : `#!/bin/bash\nprintf '%b' ${JSON.stringify(listenerLines)}\n`,
   );
   return {
     ...process.env,
@@ -635,6 +647,22 @@ test("launcher keeps the X11 default when no Wayland session is confirmed", (t) 
   // ChromeOS Crostini, where an Electron Wayland window never surfaces.
   expectDefault({ ...session, SOMMELIER_VERSION: "0.20" });
   expectDefault({ ...session, SOMMELIER_VM_IDENTIFIER: "termina" });
+});
+
+test("launcher treats a socket inode without a listener as no session", (t) => {
+  const root = createApp(t);
+  const stale = createWaylandSession(t, root, { listening: false });
+  const { result, args } = launchArguments(root, stale);
+
+  assert.equal(result.stderr, "");
+  assert.deepEqual(args, ["--class=codex-desktop"]);
+
+  // Without a usable iproute2 the inode check stands on its own.
+  const unlisted = createWaylandSession(t, root, { listening: "unavailable" });
+  assert.deepEqual(launchArguments(root, unlisted).args, [
+    "--class=codex-desktop",
+    "--ozone-platform=wayland",
+  ]);
 });
 
 test("launcher finds Sommelier markers that only the systemd user manager exports", (t) => {

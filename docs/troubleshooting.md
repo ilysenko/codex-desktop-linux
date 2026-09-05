@@ -52,7 +52,8 @@ The official Electron runtime defaults to the X11 Ozone backend, so without a
 flag a Wayland session runs the app through XWayland, and a compositor whose
 XWayland does not scale clients draws the window at 1x on a HiDPI output. The
 launcher therefore appends `--ozone-platform=wayland` when `WAYLAND_DISPLAY`
-names a live compositor socket and the session is not X11. That switch has no
+names a compositor socket with a listener (checked through `ss` where iproute2
+is available) and the session is not X11. That switch has no
 fallback, which is why the socket is confirmed first, and sessions known to
 misbehave on the Wayland backend keep the X11 default: ChromeOS Crostini
 (Sommelier, read from the environment or the systemd user manager), GNOME

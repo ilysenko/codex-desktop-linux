@@ -222,9 +222,13 @@ ozone_switch_present() {
     return 1
 }
 
+# A live compositor socket: the path is a unix socket and, where iproute2 can
+# tell, something is listening on it. A compositor that crashed leaves the
+# socket inode behind, and the Wayland backend has no fallback from that.
 wayland_socket_present() {
     local socket="${WAYLAND_DISPLAY:-}"
     local runtime_dir="${XDG_RUNTIME_DIR:-}"
+    local listeners
 
     [ -n "$socket" ] || return 1
     case "$socket" in
@@ -235,6 +239,12 @@ wayland_socket_present() {
             ;;
     esac
     [ -S "$socket" ] || return 1
+    command -v ss >/dev/null 2>&1 || return 0
+    listeners="$(ss -xlH 2>/dev/null)" || return 0
+    awk -v path="$socket" '
+        { for (field = 1; field <= NF; field++) if ($field == path) found = 1 }
+        END { exit !found }
+    ' <<< "$listeners"
 }
 
 # ChromeOS Crostini: Sommelier exports WAYLAND_DISPLAY, but an Electron Wayland
