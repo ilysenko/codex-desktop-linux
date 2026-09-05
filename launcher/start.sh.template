@@ -207,11 +207,14 @@ load_user_electron_args() {
     load_user_electron_args_file "$config_home/$CODEX_LINUX_APP_ID/electron-flags.conf"
 }
 
+# Only --ozone-platform counts as a selection. This runtime ignores
+# --ozone-platform-hint, so a leftover hint in a flags file must not keep a
+# session on XWayland.
 ozone_switch_present() {
     local arg
     for arg in "$@"; do
         case "$arg" in
-            --ozone-platform|--ozone-platform=*|--ozone-platform-hint|--ozone-platform-hint=*)
+            --ozone-platform|--ozone-platform=*)
                 return 0
                 ;;
         esac

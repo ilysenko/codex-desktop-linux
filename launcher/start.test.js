@@ -729,6 +729,19 @@ test("an explicit Ozone selection suppresses the Wayland backend", (t) => {
     "#!/bin/bash\nprintf 'electron-arg %s\\n' '--ozone-platform=x11'\n",
   );
   expectExplicit([]);
+  fs.rmSync(path.join(hooks, "launcher.d"), { recursive: true });
+
+  // A leftover hint is not a selection: this runtime ignores it, so the
+  // session would otherwise stay on XWayland.
+  fs.writeFileSync(
+    path.join(configHome, "codex-desktop", "electron-flags.conf"),
+    "--ozone-platform-hint=auto\n",
+  );
+  assert.deepEqual(launchArguments(root, session).args, [
+    "--class=codex-desktop",
+    "--ozone-platform-hint=auto",
+    "--ozone-platform=wayland",
+  ]);
 });
 
 test("diagnose validates the official runtime without starting it", (t) => {
