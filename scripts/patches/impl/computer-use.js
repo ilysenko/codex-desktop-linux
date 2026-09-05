@@ -152,22 +152,6 @@ const linuxSettingsKeys = {
   warmStart: "codex-linux-warm-start-enabled",
 };
 
-function parseDestructuredParamAliases(paramsText) {
-  const aliases = Object.create(null);
-  for (const rawPart of paramsText.split(",")) {
-    const part = rawPart.trim();
-    const match = part.match(/^([A-Za-z_$][\w$]*)(?::([A-Za-z_$][\w$]*))?$/);
-    if (match != null) {
-      aliases[match[1]] = match[2] ?? match[1];
-    }
-  }
-  return aliases;
-}
-
-function buildComputerUseGate({ nameExpr, availabilityProp, featuresVar, platformVar, migrateVar }) {
-  return `{installWhenMissing:!0,name:${nameExpr},${availabilityProp}:({features:${featuresVar},platform:${platformVar}})=>${platformVar}===\`linux\`||${platformVar}===\`darwin\`&&${featuresVar}.computerUse,migrate:${migrateVar}}`;
-}
-
 function rewriteComputerUseMarketplaceSelector(currentSource) {
   const marketplaceGateRegex =
     /if\(!\(\s*([A-Za-z_$][\w$]*)\.platform!==`darwin`\|\|!\s*\1\.marketplacePluginNames\.includes\(`computer-use`\)\s*\)\)return\s*\1\.desktopFeatureAvailability\.computerUseNodeRepl\?`node-repl`:`legacy-mcp`/g;
@@ -179,169 +163,40 @@ function rewriteComputerUseMarketplaceSelector(currentSource) {
 }
 
 function hasPatchedComputerUseMarketplaceSelector(currentSource) {
-  return /if\(!\(\(\s*([A-Za-z_$][\w$]*)\.platform!==`darwin`&&\1\.platform!==`linux`\)\|\|!\1\.marketplacePluginNames\.includes\(`computer-use`\)\)\)return\s+\1\.platform===`darwin`&&\1\.desktopFeatureAvailability\.computerUseNodeRepl\?`node-repl`:`legacy-mcp`/.test(currentSource);
-}
-
-function stripInstallWhenMissingRequiresOptIn(value) {
-  return value.replace(/installWhenMissingRequiresOptIn:!0,/g, "");
-}
-
-function hasInstallWhenMissingRequiresOptIn(value) {
-  return value.includes("installWhenMissingRequiresOptIn:!0,");
-}
-
-function buildFlexibleComputerUseGate({
-  availabilityProp,
-  expressionSuffix,
-  featuresVar,
-  middleFields,
-  nameExpr,
-  platformVar,
-  prefix,
-}) {
-  const sanitizedPrefix = stripInstallWhenMissingRequiresOptIn(prefix);
-  const sanitizedMiddleFields = stripInstallWhenMissingRequiresOptIn(middleFields);
-  const sanitizedExpressionSuffix = stripInstallWhenMissingRequiresOptIn(expressionSuffix);
-  const installField = sanitizedPrefix.includes("installWhenMissing:!0,") ||
-      sanitizedMiddleFields.includes("installWhenMissing:!0,") ||
-      sanitizedExpressionSuffix.includes("installWhenMissing:!0,")
-    ? ""
-    : "installWhenMissing:!0,";
-  return `{${sanitizedPrefix}${installField}name:${nameExpr},${sanitizedMiddleFields}${availabilityProp}:({features:${featuresVar},platform:${platformVar}})=>${platformVar}===\`linux\`||${platformVar}===\`darwin\`&&${featuresVar}.computerUse${sanitizedExpressionSuffix}}`;
-}
-
-function hasComputerUseLiteral(source) {
-  return /(?:`computer-use`|"computer-use"|'computer-use')/.test(source);
-}
-
-function isComputerUseNameExpr(nameExpr, computerUseNameVar) {
-  return /^(?:`computer-use`|"computer-use"|'computer-use')$/.test(nameExpr) ||
-    nameExpr === computerUseNameVar ||
-    /^[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*$/.test(nameExpr);
+  return [...currentSource.matchAll(/if\(!\(\(\s*([A-Za-z_$][\w$]*)\.platform!==`darwin`&&\1\.platform!==`linux`\)\|\|!\1\.marketplacePluginNames\.includes\(`computer-use`\)\)\)return\s+\1\.platform===`darwin`&&\1\.desktopFeatureAvailability\.computerUseNodeRepl\?`node-repl`:`legacy-mcp`/g)].length === 1;
 }
 
 function applyLinuxComputerUsePluginGatePatch(currentSource) {
-  if (!hasComputerUseLiteral(currentSource)) {
-    console.warn(
-      "WARN: Could not find Computer Use plugin gate literal — skipping Linux Computer Use plugin gate patch",
-    );
-    return currentSource;
-  }
-
-  const sourceWithMarketplaceSelector = rewriteComputerUseMarketplaceSelector(currentSource);
-  const hasMarketplaceSelectorPatch =
-    sourceWithMarketplaceSelector !== currentSource ||
-    hasPatchedComputerUseMarketplaceSelector(sourceWithMarketplaceSelector);
-
-  const computerUseNameVar = sourceWithMarketplaceSelector.match(/([A-Za-z_$][\w$]*)=(?:`computer-use`|"computer-use"|'computer-use')/)?.[1] ?? null;
-  const nameExpressionPattern = String.raw`(?:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?|` +
-    String.raw`\`computer-use\`|"computer-use"|'computer-use')`;
-  const gateRegex =
-    new RegExp(String.raw`\{(installWhenMissing:!0,)?name:(${nameExpressionPattern}),(isEnabled|isAvailable):\(\{([^}]*)\}\)=>([^{}]*?\.computerUse),migrate:([A-Za-z_$][\w$]*)\}`, "g");
-  let sawEnabledGate = false;
-  let sawUnpatchableGate = false;
-  let patchedGateCount = 0;
-  const patchedSource = sourceWithMarketplaceSelector.replace(
-    gateRegex,
-    (gateSource, installWhenMissing, nameExpr, availabilityProp, paramsText, expression, migrateVar) => {
-      if (!isComputerUseNameExpr(nameExpr, computerUseNameVar)) {
-        return gateSource;
-      }
-
-      const aliases = parseDestructuredParamAliases(paramsText);
-      const featuresVar = aliases.features;
-      const platformVar = aliases.platform;
-      if (featuresVar == null || platformVar == null) {
-        sawUnpatchableGate = true;
-        return gateSource;
-      }
-
-      const darwinOnlyExpression = `${platformVar}===\`darwin\`&&${featuresVar}.computerUse`;
-      const linuxExpression = `(${platformVar}===\`darwin\`||${platformVar}===\`linux\`)&&${featuresVar}.computerUse`;
-      const linuxRegisteredExpression = `${platformVar}===\`linux\`||${platformVar}===\`darwin\`&&${featuresVar}.computerUse`;
-      if (installWhenMissing != null && expression === linuxRegisteredExpression && !hasInstallWhenMissingRequiresOptIn(gateSource)) {
-        sawEnabledGate = true;
-        return gateSource;
-      }
-      if (expression === darwinOnlyExpression || expression === linuxExpression || expression === linuxRegisteredExpression) {
-        patchedGateCount += 1;
-        return buildComputerUseGate({ nameExpr, availabilityProp, featuresVar, platformVar, migrateVar });
-      }
-      sawUnpatchableGate = true;
-      return gateSource;
-    },
+  const fail = () => {
+    throw new Error("Required Linux Computer Use plugin gate patch failed: expected unique native registrations and marketplace selector");
+  };
+  const identifier = String.raw`[A-Za-z_$][\w$]*`;
+  const reference = String.raw`${identifier}(?:\.${identifier})+`;
+  // Match the current descriptor's shared metadata, opt-out identity and bound
+  // feature/platform aliases together. Never infer registration from Nd alone.
+  const descriptorPattern = new RegExp(
+    String.raw`\{\.\.\.(${reference}\.computerUse),autoInstallOptOutKey:(${reference})\(\1\.name\),isAvailable:\(\{features:(${identifier}),platform:(${identifier})\}\)=>\4===` +
+      "`(darwin|win32|linux)`" + String.raw`&&\3\.computerUse(?:,migrate:(${identifier}))?\}`,
+    "g",
   );
+  const descriptors = [...currentSource.matchAll(descriptorPattern)];
+  const spreadCount = [...currentSource.matchAll(new RegExp(String.raw`\{\.\.\.${reference}\.computerUse,`, "g"))].length;
+  if (descriptors.length !== spreadCount || ![2, 3].includes(descriptors.length)) fail();
+  const mac = descriptors.filter(match => match[5] === "darwin");
+  const windows = descriptors.filter(match => match[5] === "win32");
+  const linux = descriptors.filter(match => match[5] === "linux");
+  if (mac.length !== 1 || windows.length !== 1 || linux.length > 1 || !mac[0][6]) fail();
+  if (windows[0][6] || linux.some(match => match[6])) fail();
+  if (descriptors.some(match => match[1] !== mac[0][1] || match[2] !== mac[0][2])) fail();
 
-  if (patchedGateCount > 0) {
-    return patchedSource;
-  }
-
-  const flexibleGateRegex =
-    new RegExp(String.raw`\{([^{}]*?)name:(${nameExpressionPattern}),([^{}]*?)(isEnabled|isAvailable):\(\{([^}]*)\}\)=>([^{}]*?\.computerUse)([^{}]*?)\}`, "g");
-  let flexiblePatchedCount = 0;
-  const flexiblyPatchedSource = sourceWithMarketplaceSelector.replace(
-    flexibleGateRegex,
-    (gateSource, prefix, nameExpr, middleFields, availabilityProp, paramsText, expression, expressionSuffix) => {
-      if (!isComputerUseNameExpr(nameExpr, computerUseNameVar)) {
-        return gateSource;
-      }
-
-      const aliases = parseDestructuredParamAliases(paramsText);
-      const featuresVar = aliases.features;
-      const platformVar = aliases.platform;
-      if (featuresVar == null || platformVar == null) {
-        sawUnpatchableGate = true;
-        return gateSource;
-      }
-
-      const darwinOnlyExpression = `${platformVar}===\`darwin\`&&${featuresVar}.computerUse`;
-      const linuxExpression = `(${platformVar}===\`darwin\`||${platformVar}===\`linux\`)&&${featuresVar}.computerUse`;
-      const linuxRegisteredExpression = `${platformVar}===\`linux\`||${platformVar}===\`darwin\`&&${featuresVar}.computerUse`;
-      if (
-        prefix.includes("installWhenMissing:!0,") &&
-        expression === linuxRegisteredExpression &&
-        !hasInstallWhenMissingRequiresOptIn(gateSource)
-      ) {
-        sawEnabledGate = true;
-        return gateSource;
-      }
-      if (expression.includes("win32") || expression.includes("isInternal")) {
-        return gateSource;
-      }
-      if (expression === darwinOnlyExpression || expression === linuxExpression || expression === linuxRegisteredExpression) {
-        flexiblePatchedCount += 1;
-        return buildFlexibleComputerUseGate({
-          availabilityProp,
-          expressionSuffix,
-          featuresVar,
-          middleFields,
-          nameExpr,
-          platformVar,
-          prefix,
-        });
-      }
-      sawUnpatchableGate = true;
-      return gateSource;
-    },
-  );
-
-  if (flexiblePatchedCount > 0) {
-    return flexiblyPatchedSource;
-  }
-
-  if (sawEnabledGate && !sawUnpatchableGate) {
-    return sourceWithMarketplaceSelector;
-  }
-
-  if (hasMarketplaceSelectorPatch && !sawUnpatchableGate) {
-    return sourceWithMarketplaceSelector;
-  }
-
-  if (hasComputerUseLiteral(sourceWithMarketplaceSelector) && sourceWithMarketplaceSelector.includes("computerUse")) {
-    throw new Error("Required Linux Computer Use plugin gate patch failed: could not enable bundled Computer Use on Linux");
-  }
-
-  return sourceWithMarketplaceSelector;
+  const patchedSelectorSource = rewriteComputerUseMarketplaceSelector(currentSource);
+  if (!hasPatchedComputerUseMarketplaceSelector(patchedSelectorSource)) fail();
+  // Mac's migration deletes legacy macOS helpers. Linux inherits consent and
+  // installation policy from the same metadata, but must never run that migration.
+  if (linux.length === 1) return patchedSelectorSource;
+  const [, metadata, optOut, features, platform] = mac[0];
+  const linuxDescriptor = `{...${metadata},autoInstallOptOutKey:${optOut}(${metadata}.name),isAvailable:({features:${features},platform:${platform}})=>${platform}===\`linux\`&&${features}.computerUse}`;
+  return patchedSelectorSource.replace(mac[0][0], `${mac[0][0]},${linuxDescriptor}`);
 }
 
 function applyLinuxComputerUseFeaturePatch(currentSource) {

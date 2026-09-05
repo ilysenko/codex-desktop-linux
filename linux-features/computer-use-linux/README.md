@@ -3,8 +3,9 @@
 Disabled-by-default native desktop access through the upstream unified Computer
 Use runtime. Browser access remains independent. In Settings → Computer use,
 **Any App** controls native access; no separate Computer Use plugin activation is
-needed. The retained `computer-use` component stores that setting and exposes no
-MCP tools. It is omitted from the Plugins page.
+needed. On a fresh profile, use the **Any App** row to install or enable native
+access. Existing opt-outs remain respected. The retained `computer-use` component
+stores that setting and exposes no MCP tools. It is omitted from the Plugins page.
 
 The feature stages a small JavaScript adapter and the existing Rust backend
 inside `unified-computer-use`. It preserves the backend's OS permissions, input
