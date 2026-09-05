@@ -18,9 +18,20 @@ process.env.CODEX_LINUX_DISABLE_USAGE_REPORTING = "1";
 
 // Ozone backend selection reads the session environment. Tests must not inherit
 // the developer's compositor; the Wayland cases below set these explicitly.
-delete process.env.WAYLAND_DISPLAY;
-delete process.env.XDG_RUNTIME_DIR;
-delete process.env.XDG_SESSION_TYPE;
+for (const name of [
+  "CODEX_DRM_CLASS_ROOT",
+  "CODEX_OZONE_PLATFORM",
+  "DESKTOP_SESSION",
+  "SOMMELIER_VERSION",
+  "SOMMELIER_VM_IDENTIFIER",
+  "WAYLAND_DISPLAY",
+  "XDG_CURRENT_DESKTOP",
+  "XDG_RUNTIME_DIR",
+  "XDG_SESSION_DESKTOP",
+  "XDG_SESSION_TYPE",
+]) {
+  delete process.env[name];
+}
 
 function writeExecutable(filePath, source) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -525,7 +536,10 @@ test("launcher uses the HOME config fallback and ignores non-file flag paths", (
   );
 });
 
-function createWaylandSession(t, root) {
+// A confirmed Wayland session: a live compositor socket in an isolated
+// XDG_RUNTIME_DIR, and a systemd user manager that exports no Sommelier
+// markers. Tests that need Crostini or GNOME layer their own markers on top.
+function createWaylandSession(t, root, { systemdEnvironment = "" } = {}) {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-launcher-wayland-"));
   const server = net.createServer();
   server.listen(path.join(runtimeDir, "wayland-0"));
@@ -533,9 +547,15 @@ function createWaylandSession(t, root) {
     server.close();
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   });
+  const binDir = path.join(runtimeDir, "bin");
+  writeExecutable(
+    path.join(binDir, "systemctl"),
+    `#!/bin/bash\nprintf '%b' ${JSON.stringify(systemdEnvironment)}\n`,
+  );
   return {
     ...process.env,
     CODEX_HOME: path.join(root, "codex-home"),
+    PATH: `${binDir}:${process.env.PATH}`,
     TEST_ROOT: root,
     WAYLAND_DISPLAY: "wayland-0",
     XDG_CONFIG_HOME: path.join(root, "config"),
@@ -544,28 +564,57 @@ function createWaylandSession(t, root) {
   };
 }
 
-test("launcher selects the Wayland backend for a live compositor socket", (t) => {
-  const root = createApp(t);
-  const result = childProcess.spawnSync(path.join(root, "start.sh"), ["codex://thread/123"], {
-    env: createWaylandSession(t, root),
-    encoding: "utf8",
-  });
+function createDrmRoot(t, connectedCount) {
+  const drmRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-launcher-drm-"));
+  t.after(() => fs.rmSync(drmRoot, { recursive: true, force: true }));
+  for (let index = 0; index < connectedCount + 1; index += 1) {
+    const connector = path.join(drmRoot, `card0-DP-${index + 1}`);
+    fs.mkdirSync(connector);
+    fs.writeFileSync(path.join(connector, "status"), index < connectedCount ? "connected\n" : "disconnected\n");
+  }
+  return drmRoot;
+}
 
+function launchArguments(root, env, args = []) {
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), args, { env, encoding: "utf8" });
   assert.equal(result.status, 7);
-  assert.deepEqual(fs.readFileSync(path.join(root, "arguments"), "utf8").trim().split("\n"), [
+  return { result, args: fs.readFileSync(path.join(root, "arguments"), "utf8").trim().split("\n") };
+}
+
+test("launcher selects the Wayland backend for a confirmed Wayland session", (t) => {
+  const root = createApp(t);
+  const session = createWaylandSession(t, root);
+
+  assert.deepEqual(launchArguments(root, session, ["codex://thread/123"]).args, [
     "--class=codex-desktop",
     "--ozone-platform=wayland",
     "codex://thread/123",
   ]);
+
+  // An absolute socket path.
+  assert.deepEqual(
+    launchArguments(root, { ...session, WAYLAND_DISPLAY: path.join(session.XDG_RUNTIME_DIR, "wayland-0") }).args,
+    ["--class=codex-desktop", "--ozone-platform=wayland"],
+  );
+
+  // GNOME with a single connected output is not the multi-monitor case.
+  assert.deepEqual(
+    launchArguments(root, {
+      ...session,
+      CODEX_DRM_CLASS_ROOT: createDrmRoot(t, 1),
+      XDG_CURRENT_DESKTOP: "GNOME",
+    }).args,
+    ["--class=codex-desktop", "--ozone-platform=wayland"],
+  );
 });
 
 test("launcher keeps the X11 default when no Wayland session is confirmed", (t) => {
   const root = createApp(t);
   const session = createWaylandSession(t, root);
   const expectDefault = (env) => {
-    const result = childProcess.spawnSync(path.join(root, "start.sh"), [], { env, encoding: "utf8" });
-    assert.equal(result.status, 7);
-    assert.equal(fs.readFileSync(path.join(root, "arguments"), "utf8"), "--class=codex-desktop\n");
+    const { result, args } = launchArguments(root, env);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(args, ["--class=codex-desktop"]);
   };
 
   // No compositor at all.
@@ -588,19 +637,60 @@ test("launcher keeps the X11 default when no Wayland session is confirmed", (t) 
   expectDefault({ ...session, SOMMELIER_VM_IDENTIFIER: "termina" });
 });
 
-test("launcher accepts an absolute Wayland socket path", (t) => {
+test("launcher finds Sommelier markers that only the systemd user manager exports", (t) => {
   const root = createApp(t);
-  const session = createWaylandSession(t, root);
-  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
-    env: { ...session, WAYLAND_DISPLAY: path.join(session.XDG_RUNTIME_DIR, "wayland-0") },
-    encoding: "utf8",
+  const session = createWaylandSession(t, root, {
+    systemdEnvironment: "DISPLAY=:0\nSOMMELIER_VERSION=0.20\nWAYLAND_DISPLAY=wayland-0\n",
   });
 
-  assert.equal(result.status, 7);
-  assert.deepEqual(fs.readFileSync(path.join(root, "arguments"), "utf8").trim().split("\n"), [
-    "--class=codex-desktop",
-    "--ozone-platform=wayland",
-  ]);
+  assert.deepEqual(launchArguments(root, session).args, ["--class=codex-desktop"]);
+});
+
+test("launcher keeps GNOME Wayland multi-monitor sessions on X11", (t) => {
+  const root = createApp(t);
+  const session = createWaylandSession(t, root);
+  const drmRoot = createDrmRoot(t, 2);
+
+  for (const desktop of [
+    { XDG_CURRENT_DESKTOP: "ubuntu:GNOME" },
+    { XDG_SESSION_DESKTOP: "gnome" },
+    { DESKTOP_SESSION: "gnome-wayland" },
+  ]) {
+    assert.deepEqual(
+      launchArguments(root, { ...session, CODEX_DRM_CLASS_ROOT: drmRoot, ...desktop }).args,
+      ["--class=codex-desktop"],
+    );
+  }
+
+  // Another desktop with the same monitors keeps native Wayland.
+  assert.deepEqual(
+    launchArguments(root, { ...session, CODEX_DRM_CLASS_ROOT: drmRoot, XDG_CURRENT_DESKTOP: "KDE" }).args,
+    ["--class=codex-desktop", "--ozone-platform=wayland"],
+  );
+});
+
+test("CODEX_OZONE_PLATFORM pins a backend ahead of session detection", (t) => {
+  const root = createApp(t);
+  const session = createWaylandSession(t, root);
+
+  // Pinning X11 inside a confirmed Wayland session, as the Nix wrapper does.
+  let launch = launchArguments(root, { ...session, CODEX_OZONE_PLATFORM: "x11" });
+  assert.equal(launch.result.stderr, "");
+  assert.deepEqual(launch.args, ["--class=codex-desktop", "--ozone-platform=x11"]);
+
+  // Pinning Wayland where detection would have declined.
+  launch = launchArguments(root, { ...session, CODEX_OZONE_PLATFORM: "wayland", SOMMELIER_VERSION: "0.20" });
+  assert.equal(launch.result.stderr, "");
+  assert.deepEqual(launch.args, ["--class=codex-desktop", "--ozone-platform=wayland"]);
+
+  // An invalid value warns and falls back to detection.
+  launch = launchArguments(root, { ...session, CODEX_OZONE_PLATFORM: "gtk" });
+  assert.match(launch.result.stderr, /Ignoring CODEX_OZONE_PLATFORM=gtk; expected auto, x11, or wayland/);
+  assert.deepEqual(launch.args, ["--class=codex-desktop", "--ozone-platform=wayland"]);
+
+  // An explicit switch still wins over the pin.
+  launch = launchArguments(root, { ...session, CODEX_OZONE_PLATFORM: "wayland" }, ["--ozone-platform=x11"]);
+  assert.deepEqual(launch.args, ["--class=codex-desktop", "--ozone-platform=x11"]);
 });
 
 test("an explicit Ozone selection suppresses the Wayland backend", (t) => {
@@ -609,12 +699,7 @@ test("an explicit Ozone selection suppresses the Wayland backend", (t) => {
   const configHome = session.XDG_CONFIG_HOME;
   const hooks = path.join(root, ".codex-linux");
   const expectExplicit = (args) => {
-    const result = childProcess.spawnSync(path.join(root, "start.sh"), args, {
-      env: session,
-      encoding: "utf8",
-    });
-    assert.equal(result.status, 7);
-    assert.deepEqual(fs.readFileSync(path.join(root, "arguments"), "utf8").trim().split("\n"), [
+    assert.deepEqual(launchArguments(root, session, args).args, [
       "--class=codex-desktop",
       "--ozone-platform=x11",
     ]);
