@@ -11,6 +11,15 @@ const parameters = {
   type_text: ['text'],
 };
 
+// This service runs in the official Node 24 code-mode host, which provides
+// JSON source access and rawJSON. Keep u64 window IDs beyond JS's safe range as
+// strings on the RPC side; only the Rust transport receives raw numeric tokens.
+function parseBackendJson(text) {
+  return JSON.parse(text, (key, value, context) =>
+    key === 'window_id' && typeof value === 'number' && !Number.isSafeInteger(value)
+      ? context.source : value);
+}
+
 // The process owns the Rust backend's state. Failed or interrupted requests are
 // never retried: input may already have reached the desktop.
 export function createNativeService({
@@ -52,7 +61,7 @@ export function createNativeService({
       child.stderr.resume();
       createInterface({ input: child.stdout }).on('line', line => {
         let message;
-        try { message = JSON.parse(line); }
+        try { message = parseBackendJson(line); }
         catch { stop(new Error('Linux Computer Use backend returned invalid JSON')); return; }
         const call = pending.get(message.id);
         if (!call) {
@@ -78,8 +87,8 @@ export function createNativeService({
       if (typeof app !== 'string' || !app.trim()) throw new Error('A non-empty native app id is required');
       if (app.startsWith('linux-window:')) {
         const id = app.slice('linux-window:'.length);
-        if (!/^\d+$/.test(id) || !Number.isSafeInteger(Number(id))) throw new Error('Invalid native window id');
-        target = { window_id: Number(id) };
+        if (!/^\d+$/.test(id) || BigInt(id) > 18446744073709551615n) throw new Error('Invalid native window id');
+        target = { window_id: JSON.rawJSON(BigInt(id).toString()) };
       } else target = { app_id: app };
     }
     await start();
@@ -88,7 +97,7 @@ export function createNativeService({
     if (result?.isError) throw new Error(message || 'Linux Computer Use tool failed');
     let data = result?.structuredContent;
     if (data === undefined) {
-      try { data = JSON.parse(message); }
+      try { data = parseBackendJson(message); }
       catch { throw new Error('Linux Computer Use backend returned no structured result'); }
     }
     if (method === 'get_app_state' && data.window_error) throw new Error(data.window_error);

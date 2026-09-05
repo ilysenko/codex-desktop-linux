@@ -34,7 +34,7 @@ test('trusted service validates requests before backend launch', async () => {
 const { mkdtemp, writeFile, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-async function fixture(t) {
+async function fixture(t, { windowId, structured = false } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'native-mcp-'));
   const script = join(dir, 'backend.cjs');
   await writeFile(script, `
@@ -53,6 +53,15 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if(a.text === 'malformed') return process.stdout.write('garbage\\n');
   if(a.text === 'hang') return;
   if(a.text === 'action-error') return reply({structuredContent:{ok:false,message:'focus changed'},content:[]});
+  const windowId = ${JSON.stringify(windowId ?? null)};
+  if(windowId !== null) {
+    // Construct numeric tokens from strings so the fixture cannot round them.
+    const raw = name === 'list_windows'
+      ? '{"windows":[{"window_id":'+windowId+',"title":"Document","app_id":"editor","focused":true}]}'
+      : '{"ok":true,"window_id":'+windowId+',"received":'+JSON.stringify(line)+'}';
+    if(${structured}) return process.stdout.write('{"jsonrpc":"2.0","id":'+r.id+',"result":{"structuredContent":'+raw+'}}'+'\\n');
+    return reply({content:[{type:'text',text:raw}]});
+  }
   let data = name === 'list_windows' ? {windows:[{window_id:22,title:'Document',app_id:'editor',focused:true}]} : {ok:true,name,arguments:a};
   reply({content:[{type:'text',text:JSON.stringify(data)}]});
 });
@@ -68,8 +77,35 @@ test('MCP initialization, exact window IDs, targeted inputs and desktop inputs',
   assert.deepEqual(await service.handleRpc({method:'list_apps'}), [{id:'linux-window:22',displayName:'editor',title:'Document',isRunning:true,focused:true}]);
   const result = await service.handleRpc({method:'click',app:'linux-window:22',params:{x:2,y:3,relative:true}});
   assert.deepEqual(result.arguments, {x:2,y:3,relative:true,window_id:22});
+  const zero = await service.handleRpc({method:'click',app:'linux-window:0',params:{x:2,y:3}});
+  assert.equal(zero.arguments.window_id, 0);
   const desktop = await service.handleRpc({method:'press_key',params:{key:'ESC'}});
   assert.deepEqual(desktop.arguments, {key:'ESC'});
+});
+
+for (const structured of [false, true]) {
+  for (const windowId of ['1017417960236020624', '18446744073709551615']) {
+    test(`u64 window IDs round trip exactly through ${structured ? 'structuredContent' : 'text JSON'}: ${windowId}`, async t => {
+      const service = await fixture(t, { windowId, structured });
+      const apps = await service.handleRpc({ method: 'list_apps' });
+      assert.equal(apps[0].id, `linux-window:${windowId}`);
+      const result = await service.handleRpc({ method: 'click', app: apps[0].id, params: { x: 2, y: 3 } });
+      // Match the wire token, not JSON.parse's rounded interpretation of it.
+      assert.match(result.received, new RegExp(`"window_id":${windowId}(?=[,}])`));
+      assert.equal(result.window_id, windowId);
+      assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
+      assert.deepEqual(structuredClone(result), result);
+    });
+  }
+}
+
+test('invalid and out-of-range window IDs are rejected before backend dispatch', async t => {
+  const { createNativeService } = await import('./native-service.mjs');
+  const service = createNativeService({ command: '/nonexistent/native-backend' });
+  t.after(() => service.shutdown());
+  for (const id of ['', '-1', '1.5', '1e3', ' 22', '+22', '18446744073709551616']) {
+    await assert.rejects(service.handleRpc({ method: 'click', app: `linux-window:${id}`, params: { x: 2, y: 3 } }), /Invalid native window id/);
+  }
 });
 
 test('backend errors surface and an exited backend is never silently replayed or restarted', async t => {
