@@ -48,11 +48,21 @@ with `#` are ignored. App-specific flags are followed by enabled feature flags
 and explicit command-line arguments, so a later explicit argument can override
 an earlier setting.
 
-To force native Wayland rendering without editing a generated desktop entry:
+The official Electron runtime defaults to the X11 Ozone backend, so without a
+flag a Wayland session runs the app through XWayland, and a compositor whose
+XWayland does not scale clients draws the window at 1x on a HiDPI output. The
+launcher therefore appends `--ozone-platform=wayland` when `WAYLAND_DISPLAY`
+names a live compositor socket, the session is not X11, and Sommelier is not
+present. That switch has no fallback, which is why the socket is confirmed
+first. Any explicit selection wins: a command-line argument, either flag file, a
+feature argument, or a launcher hook. This runtime does not accept
+`--ozone-platform-hint` or `ELECTRON_OZONE_PLATFORM_HINT`.
+
+To pin a backend without editing a generated desktop entry:
 
 ```bash
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/codex-desktop"
-printf '%s\n' '--ozone-platform=wayland' > \
+printf '%s\n' '--ozone-platform=x11' > \
   "${XDG_CONFIG_HOME:-$HOME/.config}/codex-desktop/electron-flags.conf"
 ```
 

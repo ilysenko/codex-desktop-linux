@@ -50,6 +50,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Wayland sessions again start the app on a native Wayland surface. The
+  launcher appends `--ozone-platform=wayland` when `WAYLAND_DISPLAY` names a
+  live compositor socket, the session is not X11, Sommelier is absent, and no
+  command-line argument, flag file, feature argument, or launcher hook already
+  selects a backend. The runtime otherwise defaults to X11, so compositors that
+  do not scale XWayland clients drew the window at 1x on a HiDPI output.
 - Lifecycle hooks now use exported application paths without interpreting
   desktop arguments or deep-link URIs as launcher context. After-exit hooks
   receive the Electron status and cannot replace it when cleanup fails; the
