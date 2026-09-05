@@ -1,7 +1,12 @@
 # Linux Computer Use
 
-Disabled-by-default Linux desktop control backed by a native Rust backend.
-Enable the feature in `linux-features/features.json`:
+Disabled-by-default Linux Computer Use integration. It owns the Linux
+ASAR descriptors and the native MCP backend staged only when explicitly enabled.
+Immutable Nix packages receive their bundled-marketplace staging permission
+repair from the separate internal `nix-store-bundled-marketplace-permissions`
+feature.
+
+Enable it in `linux-features/features.json`:
 
 ```json
 { "enabled": ["computer-use-linux"] }
@@ -37,10 +42,6 @@ The adapter and native helpers are packaged together inside the upstream
 `unified-computer-use` plugin. The separate `computer-use` component stores the
 Any App setting and exposes no MCP tools. Upstream owns browser control.
 Missing or ambiguous bundle contracts abort an enabled build.
-
-Immutable Nix packages receive their bundled-marketplace staging permission
-repair from the separate internal `nix-store-bundled-marketplace-permissions`
-feature.
 
 `make install-native` builds `codex-computer-use-linux` and
 `codex-computer-use-cosmic` once before staging the package. Direct

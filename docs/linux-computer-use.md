@@ -3,8 +3,10 @@
 Linux Computer Use is an opt-in UI surface backed by a native Rust MCP backend,
 `codex-computer-use-linux`. The official Linux package is the baseline, and the
 community integration is disabled until the `computer-use-linux` feature is
-explicitly enabled. Enabling it stages the native backend and feature-owned UI
-patches; none are default core patches. In Settings → Computer use, **Any App**
+explicitly enabled. Enabling it stages the Linux backend/plugin and the
+feature-owned UI descriptors; none of them are default core patches.
+
+In Settings → Computer use, **Any App**
 controls native access independently of browser access. Use that row to install
 or enable native access on a fresh profile.
 

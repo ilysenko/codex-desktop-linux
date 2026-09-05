@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Computer Use",
     "shortDescription": "Control Linux desktop apps from Codex",
-    "longDescription": "Linux Computer Use lets Codex inspect and control desktop apps through a native Linux backend using screenshots, accessibility metadata, and input events. Enable or disable native access in Settings → Computer use → Any App. Browser access is configured independently.",
+    "longDescription": "Linux Computer Use lets Codex inspect and control desktop apps through a native Linux backend. It may use screenshots, accessibility metadata, and input events after you allow it. Enable or disable native access in Settings → Computer use → Any App. Browser access is configured independently.",
     "developerName": "avifenesh",
     "category": "Productivity",
     "websiteURL": "https://github.com/avifenesh",
