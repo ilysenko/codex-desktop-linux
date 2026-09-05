@@ -977,11 +977,11 @@ stage_enabled_native_feature_artifacts() {
         case "$feature_id" in
             computer-use-linux)
                 stage_update_builder_native_artifact \
-                    "$APP_DIR/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux" \
+                    "$APP_DIR/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux" \
                     "$update_builder_root/target/release/codex-computer-use-linux" \
                     "$feature_id backend"
                 stage_update_builder_native_artifact \
-                    "$APP_DIR/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-cosmic" \
+                    "$APP_DIR/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-cosmic" \
                     "$update_builder_root/target/release/codex-computer-use-cosmic" \
                     "$feature_id COSMIC helper"
                 ;;

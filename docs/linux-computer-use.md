@@ -3,8 +3,12 @@
 Linux Computer Use is an opt-in UI surface backed by a native Rust MCP backend,
 `codex-computer-use-linux`. The official Linux package is the baseline, and the
 community integration is disabled until the `computer-use-linux` feature is
-explicitly enabled. Enabling it stages the Linux backend/plugin and the seven
-feature-owned UI descriptors; none of them are default core patches.
+explicitly enabled. Enabling it connects the backend to the unified Computer Use
+runtime through feature-owned patches; none are default core patches. Settings →
+Computer use → **Any App** controls native access independently of browser access.
+No separate Computer Use plugin activation is required. See the
+[feature documentation](../linux-features/computer-use-linux/README.md) for the
+native API and its supported operations.
 
 It supports:
 
@@ -105,11 +109,11 @@ Community, ask Codex:
 You can also run the backend directly:
 
 ```bash
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux doctor
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux setup
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux apps
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux windows
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux screenshot
+./codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux doctor
+./codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux setup
+./codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux apps
+./codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux windows
+./codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux screenshot
 ```
 
 ## Enable The In-App UI

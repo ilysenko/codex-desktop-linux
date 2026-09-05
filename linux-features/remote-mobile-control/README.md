@@ -245,8 +245,8 @@ enrolled. On Plasma/Wayland, verify that the KWin backend is ready after
 building or installing the package:
 
 ```bash
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux doctor
-./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux windows
+./codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux doctor
+./codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux windows
 ```
 
 The doctor report should show the KWin window backend, XDG Desktop Portal, and

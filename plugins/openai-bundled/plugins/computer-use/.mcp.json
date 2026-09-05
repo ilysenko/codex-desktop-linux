@@ -1,9 +1,3 @@
 {
-  "mcpServers": {
-    "computer-use": {
-      "command": "./bin/codex-computer-use-linux",
-      "args": ["mcp"],
-      "cwd": "."
-    }
-  }
+  "mcpServers": {}
 }

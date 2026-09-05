@@ -19,12 +19,14 @@ test("computer-use-linux is opt-in and owns the current Linux descriptors", () =
   assert.deepEqual(
     descriptors.map(({ id }) => id),
     [
+      "unified-runtime",
       "avatar-cursor",
       "ui-feature",
       "plugin-gate",
       "native-desktop-apps",
       "ui-availability",
       "host-platform",
+      "native-settings-visibility",
     ],
   );
 });
@@ -35,65 +37,36 @@ test("computer-use-linux staging consumes release artifacts without invoking Car
   assert.match(stage, /target\/release\/codex-computer-use-linux/);
 });
 
-test("computer-use-linux staging registers the bundled plugin idempotently", (t) => {
+test("staging extends the hidden unified plugin and invalidates the browser-only cache", (t) => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "computer-use-linux-stage-"));
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
-
   const installDir = path.join(workspace, "app");
-  const releaseDir = path.join(workspace, "target", "release");
-  const marketplacePath = path.join(
-    installDir,
-    "resources/plugins/openai-bundled/.agents/plugins/marketplace.json",
-  );
+  const target = path.join(installDir, "resources/plugins/openai-bundled/plugins/unified-computer-use");
+  const marketplacePath = path.join(target, "../../.agents/plugins/marketplace.json");
   fs.mkdirSync(path.dirname(marketplacePath), { recursive: true });
-  fs.writeFileSync(
-    marketplacePath,
-    `${JSON.stringify({ plugins: [{ name: "browser", source: { source: "local", path: "./plugins/browser" } }] })}\n`,
-  );
-  fs.mkdirSync(releaseDir, { recursive: true });
-  for (const binary of ["codex-computer-use-linux", "codex-computer-use-cosmic"]) {
-    const binaryPath = path.join(releaseDir, binary);
-    fs.writeFileSync(binaryPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  }
-
-  const env = {
-    ...process.env,
-    SCRIPT_DIR: workspace,
-    INSTALL_DIR: installDir,
-    CODEX_COMPUTER_USE_BINARY_SOURCE: path.join(releaseDir, "codex-computer-use-linux"),
-    CODEX_COMPUTER_USE_COSMIC_BINARY_SOURCE: path.join(releaseDir, "codex-computer-use-cosmic"),
-  };
-  fs.mkdirSync(path.join(workspace, "plugins/openai-bundled/plugins"), { recursive: true });
-  fs.cpSync(
-    path.resolve(__dirname, "../../plugins/openai-bundled/plugins/computer-use"),
-    path.join(workspace, "plugins/openai-bundled/plugins/computer-use"),
-    { recursive: true },
-  );
-
-  execFileSync("bash", [path.join(__dirname, "stage.sh")], { env });
-  execFileSync("bash", [path.join(__dirname, "stage.sh")], { env });
-
-  const marketplace = JSON.parse(fs.readFileSync(marketplacePath, "utf8"));
-  assert.equal(marketplace.plugins.filter(({ name }) => name === "computer-use").length, 1);
-  assert.ok(marketplace.plugins.some(({ name }) => name === "browser"));
-  assert.deepEqual(
-    marketplace.plugins.find(({ name }) => name === "computer-use"),
-    {
-      name: "computer-use",
-      source: { source: "local", path: "./plugins/computer-use" },
-      policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
-      category: "Productivity",
-    },
-  );
-  assert.equal(
-    fs.existsSync(
-      path.join(
-        installDir,
-        "resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux",
-      ),
-    ),
-    true,
-  );
+  const marketplace = JSON.stringify({ plugins: [{ name: "unified-computer-use" }, { name: "browser" }] });
+  fs.writeFileSync(marketplacePath, marketplace);
+  fs.mkdirSync(path.join(target, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(target, ".codex-plugin"));
+  fs.writeFileSync(path.join(target, ".codex-plugin/plugin.json"), JSON.stringify({ name: "unified-computer-use", version: "26.901.41600" }));
+  fs.writeFileSync(path.join(target, "scripts/launch.mjs"), 'const env = {NODE_REPL_TRUSTED_SERVICES: JSON.stringify({sky:"@oai/sky/service"}),NODE_REPL_JS_BANNER: banner,};');
+  const backend = path.join(workspace, "backend");
+  fs.writeFileSync(backend, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const env = { ...process.env, SCRIPT_DIR: path.resolve(__dirname, "../.."), INSTALL_DIR: installDir,
+    CODEX_COMPUTER_USE_BINARY_SOURCE: backend, CODEX_COMPUTER_USE_COSMIC_BINARY_SOURCE: backend };
+  const stage = () => execFileSync("bash", [path.join(__dirname, "stage.sh")], { env, stdio: "pipe" });
+  stage();
+  const version = JSON.parse(fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"))).version;
+  assert.notEqual(version, "26.901.41600");
+  assert.deepEqual(JSON.parse(fs.readFileSync(marketplacePath)).plugins.map(p => p.name), ["unified-computer-use", "browser", "computer-use"]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(target, "../computer-use/.mcp.json"))), { mcpServers: {} });
+  assert.equal(fs.existsSync(path.join(target, "../computer-use/bin/codex-computer-use-linux")), false);
+  assert.equal(fs.existsSync(path.join(target, "scripts/native-service.mjs")), true);
+  assert.equal(fs.readFileSync(path.join(target, "bin/codex-computer-use-linux"), "utf8"), fs.readFileSync(backend, "utf8"));
+  stage();
+  assert.equal(JSON.parse(fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"))).version, version);
+  fs.writeFileSync(path.join(target, "scripts/launch.mjs"), "upstream drift");
+  assert.throws(stage, /unified.*contract/i);
 });
 
 test("current host-platform contract enables Linux without dropping requirement gates", () => {

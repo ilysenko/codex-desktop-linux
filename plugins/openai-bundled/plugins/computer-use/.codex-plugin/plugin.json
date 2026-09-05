@@ -1,7 +1,7 @@
 {
   "name": "computer-use",
-  "version": "0.1.2-linux-alpha2",
-  "description": "Control desktop apps on Linux from Codex through Computer Use.",
+  "version": "0.1.3-linux-unified",
+  "description": "Native access setting for the unified Linux Computer Use runtime.",
   "author": {
     "name": "avifenesh"
   },
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Computer Use",
     "shortDescription": "Control Linux desktop apps from Codex",
-    "longDescription": "Linux Computer Use lets Codex inspect and control desktop apps through a native Linux backend. It may use screenshots, accessibility metadata, and input events after you allow it. You stay in control: you choose which apps to allow Codex to access and can stop actions at any time.",
+    "longDescription": "Controls native Linux desktop access through the unified Computer Use runtime. Browser access is configured independently.",
     "developerName": "avifenesh",
     "category": "Productivity",
     "websiteURL": "https://github.com/avifenesh",

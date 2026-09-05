@@ -402,177 +402,6 @@ function applyLinuxComputerUseFeaturePatch(currentSource) {
   return currentSource;
 }
 
-// Scan to the `;` that closes the declaration the plugins query lives in,
-// ignoring separators nested in calls, literals, or template substitutions.
-function findStatementEnd(source, fromIndex) {
-  const stack = [];
-  let quote = null;
-  let escaped = false;
-
-  for (let i = fromIndex; i < source.length; i += 1) {
-    const char = source[i];
-    if (quote != null) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (quote === "`" && char === "$" && source[i + 1] === "{") {
-        stack.push("`");
-        quote = null;
-        i += 1;
-      } else if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-
-    if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-    } else if (char === "(" || char === "[" || char === "{") {
-      stack.push(char);
-    } else if (char === ")" || char === "]" || char === "}") {
-      const opener = stack.pop();
-      if (opener === "`") {
-        quote = "`";
-      } else if (opener == null) {
-        return -1;
-      }
-    } else if (char === ";" && stack.length === 0) {
-      return i;
-    }
-  }
-
-  return -1;
-}
-
-// The settings component is compiled with the React Compiler, so the plugin
-// card is derived inside memo-cache branches rather than a plain declaration
-// chain. Anchor on that derivation and inject before the query is first read.
-function currentComputerUseCardTarget(source) {
-  const computerUsePluginNameVars = new Set(
-    [...source.matchAll(/([A-Za-z_$][\w$]*)=`computer-use`/g)].map((match) => match[1]),
-  );
-  if (computerUsePluginNameVars.size === 0) {
-    return null;
-  }
-
-  const derivations = [...source.matchAll(
-    /(?<derived>[A-Za-z_$][\w$]*)=(?<selector>[A-Za-z_$][\w$]*)\((?<plugins>[A-Za-z_$][\w$]*)\.availablePlugins,(?<pluginName>[A-Za-z_$][\w$]*),(?<marketplacePath>[A-Za-z_$][\w$]*)\)/g,
-  )].filter((match) => computerUsePluginNameVars.has(match.groups.pluginName));
-  if (derivations.length !== 1) {
-    return null;
-  }
-
-  const derivation = derivations[0];
-  const pluginsQueryVar = derivation.groups.plugins;
-  const declarationIndex = source.lastIndexOf(`${pluginsQueryVar}=`, derivation.index);
-  if (declarationIndex === -1) {
-    return null;
-  }
-
-  const statementEnd = findStatementEnd(source, declarationIndex);
-  if (statementEnd === -1 || statementEnd >= derivation.index) {
-    return null;
-  }
-
-  const platformVar = findLastRegexMatch(
-    source.slice(0, declarationIndex),
-    /\{computerUseAvailability:[A-Za-z_$][\w$]*,platform:([A-Za-z_$][\w$]*)\}=/g,
-  )?.[1];
-  if (platformVar == null) {
-    return null;
-  }
-
-  return {
-    insertAt: statementEnd + 1,
-    pluginsQueryVar,
-    pluginNameVar: derivation.groups.pluginName,
-    platformVar,
-  };
-}
-
-function applyCurrentComputerUseSettingsContract(currentSource) {
-  if (
-    !currentSource.includes("computerUseAvailability:") ||
-    !currentSource.includes("availablePlugins")
-  ) {
-    return null;
-  }
-
-  const availabilityMarkerPattern =
-    /([A-Za-z_$][\w$]*)===`linux`&&\(([A-Za-z_$][\w$]*)=\{\.\.\.\2,available:!0,isFetching:!1,isLoading:!1\}\);/;
-  const cardMarkerPattern =
-    /let ([A-Za-z_$][\w$]*BundledMarketplaceDonor)=([A-Za-z_$][\w$]*)\.availablePlugins\.find\(e=>e\.marketplaceName===`openai-bundled`&&typeof e\.marketplacePath===`string`&&e\.marketplacePath\.startsWith\(`\/`\)&&e\.marketplacePath\.endsWith\(`\/\.agents\/plugins\/marketplace\.json`\)\);[^;]{0,1800}marketplacePath:\1\.marketplacePath/;
-  const hasAvailabilityMarker = availabilityMarkerPattern.test(currentSource);
-  const hasCardMarker = cardMarkerPattern.test(currentSource);
-
-  if (hasAvailabilityMarker && hasCardMarker) {
-    return currentSource;
-  }
-  if (hasAvailabilityMarker !== hasCardMarker) {
-    console.warn(
-      "WARN: Could not find the complete current Computer Use settings contract — skipping Linux Computer Use UI availability patch",
-    );
-    return currentSource;
-  }
-
-  let availabilityChanged = false;
-  const availabilityPattern =
-    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([^)]*)\),\{platform:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)=/g;
-  let patchedSource = currentSource.replace(
-    availabilityPattern,
-    (match, availabilityVar, hookVar, hookArg, platformVar, platformHookVar, nextVar, offset) => {
-      const nextSource = currentSource.slice(offset + match.length, offset + match.length + 3000);
-      if (
-        !nextSource.includes(`computerUseAvailability:${availabilityVar}`) ||
-        !nextSource.includes(`${availabilityVar}.available`)
-      ) {
-        return match;
-      }
-      availabilityChanged = true;
-      return `let ${availabilityVar}=${hookVar}(${hookArg}),{platform:${platformVar}}=${platformHookVar}();${platformVar}===\`linux\`&&(${availabilityVar}={...${availabilityVar},available:!0,isFetching:!1,isLoading:!1});let ${nextVar}=`;
-    },
-  );
-
-  let cardChanged = false;
-  const cardTarget = currentComputerUseCardTarget(patchedSource);
-  if (cardTarget != null) {
-    const { insertAt, pluginsQueryVar, pluginNameVar, platformVar } = cardTarget;
-    const bundledMarketplaceDonorVar = `${pluginsQueryVar}BundledMarketplaceDonor`;
-    const linuxCard =
-      `let ${bundledMarketplaceDonorVar}=${pluginsQueryVar}.availablePlugins.find(e=>e.marketplaceName===\`openai-bundled\`&&typeof e.marketplacePath===\`string\`&&e.marketplacePath.startsWith(\`/\`)&&e.marketplacePath.endsWith(\`/.agents/plugins/marketplace.json\`));${platformVar}===\`linux\`&&${bundledMarketplaceDonorVar}!=null&&!${pluginsQueryVar}.availablePlugins.some(e=>e.plugin?.name===${pluginNameVar}||e.plugin?.id?.split(\`@\`)[0]===${pluginNameVar})&&(${pluginsQueryVar}={...${pluginsQueryVar},availablePlugins:[...${pluginsQueryVar}.availablePlugins,{marketplaceName:\`openai-bundled\`,marketplacePath:${bundledMarketplaceDonorVar}.marketplacePath,logoPath:new URL(\`computer-use-plugin-icon-linux.png\`,import.meta.url).href,logoDarkPath:new URL(\`computer-use-plugin-icon-linux.png\`,import.meta.url).href,plugin:{id:${pluginNameVar},name:${pluginNameVar},installed:!0,enabled:!0}}]});`;
-    patchedSource =
-      `${patchedSource.slice(0, insertAt)}${linuxCard}${patchedSource.slice(insertAt)}`;
-    cardChanged = true;
-  }
-
-  if (
-    availabilityChanged &&
-    cardChanged &&
-    availabilityMarkerPattern.test(patchedSource) &&
-    cardMarkerPattern.test(patchedSource)
-  ) {
-    return patchedSource;
-  }
-
-  console.warn(
-    "WARN: Could not find the complete current Computer Use settings contract — skipping Linux Computer Use UI availability patch",
-  );
-  return currentSource;
-}
-
-function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
-  const currentSettingsSource = applyCurrentComputerUseSettingsContract(currentSource);
-  if (currentSettingsSource != null) {
-    return currentSettingsSource;
-  }
-
-  console.warn(
-    "WARN: Could not find the current Computer Use settings contract — skipping Linux Computer Use UI availability patch",
-  );
-  return currentSource;
-}
-
 function applyCurrentComputerUseHostPlatformContract(currentSource) {
   const contractPattern =
     /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{areRequirementsPending:([A-Za-z_$][\w$]*),areRequiredFeaturesEnabled:([A-Za-z_$][\w$]*),enabled:([A-Za-z_$][\w$]*),isBrowserAndComputerUseAllowed:([A-Za-z_$][\w$]*),isAnyFeatureLoading:([A-Za-z_$][\w$]*),isComputerUseGateEnabled:([A-Za-z_$][\w$]*),isHostCompatiblePlatform:([^,{}]+),isPlatformLoading:([A-Za-z_$][\w$]*),windowType:`electron`\}\)/g;
@@ -717,7 +546,7 @@ function linuxNativeDesktopAppsHelper({ childProcessVar, fsVar, osVar, pathVar }
     `function codexLinuxNativeDesktopAppsPayload(e){return e?.params??e??{}}`,
     `function codexLinuxNativeDesktopAppsHome(){return process.env.HOME||${osVar}.homedir?.()||\`\`}`,
     `function codexLinuxNativeDesktopAppsExecutable(e){if(!e)return null;if(e.includes(\`/\`)){try{return ${fsVar}.existsSync(e)&&(${fsVar}.accessSync(e,${fsVar}.constants.X_OK),!0)?e:null}catch{return null}}for(let t of(process.env.PATH||\`\`).split(\`:\`)){if(!t||!${pathVar}.isAbsolute(t))continue;let n=${pathVar}.join(t,e);try{if(${fsVar}.existsSync(n)&&(${fsVar}.accessSync(n,${fsVar}.constants.X_OK),!0))return n}catch{}}return null}`,
-    `function codexLinuxNativeDesktopAppsBackendPath(){let e=process.env.CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE?.trim(),t=process.env.CODEX_ELECTRON_RESOURCES_PATH||process.resourcesPath,n=process.env.CODEX_HOME||(codexLinuxNativeDesktopAppsHome()?${pathVar}.join(codexLinuxNativeDesktopAppsHome(),\`.codex\`):\`\`),r=[e,t&&${pathVar}.join(t,\`plugins\`,\`openai-bundled\`,\`plugins\`,\`computer-use\`,\`bin\`,\`codex-computer-use-linux\`),n&&${pathVar}.join(n,\`plugins\`,\`cache\`,\`openai-bundled\`,\`computer-use\`,\`latest\`,\`bin\`,\`codex-computer-use-linux\`),\`codex-computer-use-linux\`];for(let e of r){if(typeof e!==\`string\`||e.length===0)continue;let t=codexLinuxNativeDesktopAppsExecutable(e);if(t)return t}return null}`,
+    `function codexLinuxNativeDesktopAppsBackendPath(){let e=process.env.CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE?.trim(),t=process.env.CODEX_ELECTRON_RESOURCES_PATH||process.resourcesPath,n=process.env.CODEX_HOME||(codexLinuxNativeDesktopAppsHome()?${pathVar}.join(codexLinuxNativeDesktopAppsHome(),\`.codex\`):\`\`),r=[e,t&&${pathVar}.join(t,\`plugins\`,\`openai-bundled\`,\`plugins\`,\`unified-computer-use\`,\`bin\`,\`codex-computer-use-linux\`),n&&${pathVar}.join(n,\`plugins\`,\`cache\`,\`openai-bundled\`,\`unified-computer-use\`,\`latest\`,\`bin\`,\`codex-computer-use-linux\`),\`codex-computer-use-linux\`];for(let e of r){if(typeof e!==\`string\`||e.length===0)continue;let t=codexLinuxNativeDesktopAppsExecutable(e);if(t)return t}return null}`,
     `function codexLinuxNativeDesktopAppsRun(e){let t=codexLinuxNativeDesktopAppsBackendPath();if(t==null)return null;try{let n=${childProcessVar}.spawnSync(t,e,{encoding:\`utf8\`,env:process.env,maxBuffer:1048576,timeout:2500});if(n.error||n.status!==0)return null;return JSON.parse(n.stdout||\`null\`)}catch{return null}}`,
     `function codexLinuxNativeDesktopAppsDataDirs(){let e=codexLinuxNativeDesktopAppsHome(),t=process.env.XDG_DATA_HOME||(e&&${pathVar}.join(e,\`.local\`,\`share\`)),n=(process.env.XDG_DATA_DIRS||\`/usr/local/share:/usr/share\`).split(\`:\`).filter(Boolean);return[...t?[t]:[],...n]}`,
     `function codexLinuxNativeDesktopAppsUnescape(e){return String(e??\`\`).replace(/\\\\s/g,\` \`).replace(/\\\\n/g,\`\\n\`).replace(/\\\\t/g,\`\\t\`).replace(/\\\\r/g,\`\\r\`).replace(/\\\\\\\\/g,\`\\\\\`)}`,
@@ -818,7 +647,6 @@ module.exports = {
   applyLinuxComputerUseHostPlatformPatch,
   applyLinuxNativeDesktopAppsHandlerPatch,
   applyLinuxComputerUsePluginGatePatch,
-  applyLinuxComputerUseRendererAvailabilityPatch,
   isComputerUseUiEnabled,
   linuxComputerUseCursorBridgeRuntimeSource,
   matchesLinuxComputerUseHostPlatformContract,
