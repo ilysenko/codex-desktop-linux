@@ -1,18 +1,25 @@
 "use strict";
 
+const { applyLinuxComputerUsePluginGatePatch } = require("./plugin-gate.js");
+
 const { mainBundlePatch, webviewAssetPatch } = require("../../scripts/patches/descriptor.js");
 const {
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseHostPlatformPatch,
-  applyLinuxComputerUseRendererAvailabilityPatch,
   applyLinuxNativeDesktopAppsHandlerPatch,
   matchesLinuxComputerUseHostPlatformContract,
 } = require("../../scripts/patches/impl/computer-use.js");
 
-const { applyLinuxComputerUsePluginGatePatch } = require("./plugin-gate.js");
+const { applyNativeSettingsAvailabilityPatch, applyNativeSettingsVisibilityPatch } = require("./settings.js");
+const { applyUnifiedComputerUsePatch } = require("./unified.js");
 
 module.exports = [
+  mainBundlePatch({
+    id: "unified-runtime",
+    order: 20_115,
+    apply: applyUnifiedComputerUsePatch,
+  }),
   mainBundlePatch({
     id: "avatar-cursor",
     phase: "main-bundle",
@@ -49,7 +56,7 @@ module.exports = [
     pattern: /^computer-use-settings-[^.]+\.js$/,
     missingDescription: "Computer Use availability bundle",
     skipDescription: "Linux Computer Use UI availability patch",
-    apply: applyLinuxComputerUseRendererAvailabilityPatch,
+    apply: applyNativeSettingsAvailabilityPatch,
   }),
   webviewAssetPatch({
     id: "host-platform",
@@ -61,5 +68,12 @@ module.exports = [
     missingDescription: "current Computer Use host-platform app-initial contract",
     skipDescription: "Linux Computer Use host-platform patch",
     apply: applyLinuxComputerUseHostPlatformPatch,
+  }),
+  webviewAssetPatch({
+    id: "native-settings-visibility",
+    order: 20_160,
+    pattern: /^app-primary-[^.]+\.js$/,
+    missingDescription: "Plugins presentation filter",
+    apply: applyNativeSettingsVisibilityPatch,
   }),
 ];

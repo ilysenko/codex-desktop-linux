@@ -362,8 +362,8 @@ window_backend_hint() {
 computer_use_doctor_path() {
     local candidate
     for candidate in \
-        "$REPO_DIR/codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux" \
-        "/opt/$PACKAGE_NAME/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux" \
+        "$REPO_DIR/codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux" \
+        "/opt/$PACKAGE_NAME/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux" \
         "$(command -v codex-computer-use-linux 2>/dev/null || true)"; do
         [ -n "$candidate" ] || continue
         if [ -x "$candidate" ]; then
