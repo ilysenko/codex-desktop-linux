@@ -4,15 +4,22 @@ use crate::{
     builder, cache_cleanup,
     cli::{Cli, Commands},
     config::{RuntimeConfig, RuntimePaths},
-    install, install_rollback, liveness, logging, notify, rollback,
+    install, install_rollback, liveness, logging, notify, restart, rollback,
     state::{PersistedState, UpdateStatus},
     upstream,
 };
 use anyhow::{Context, Result};
 use chrono::Utc;
-use std::{fs::{self, OpenOptions}, path::Path, time::Duration};
+use std::{fs::{self, OpenOptions}, path::{Path, PathBuf}, time::Duration};
 use tokio::time;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReplacementDisposition {
+    Current,
+    Restart(PathBuf),
+    Blocked(PathBuf),
+}
 
 pub async fn run(cli: Cli) -> Result<()> {
     if let Some(result) = run_privileged_command(&cli.command) {
@@ -28,10 +35,10 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         Commands::Daemon => daemon(&config, &mut state, &paths).await,
-        Commands::CheckNow => check(&config, &mut state, &paths).await,
+        Commands::CheckNow => check(&config, &mut state, &paths, false).await,
         Commands::Status { json } => status(&state, json),
         Commands::Diagnose { json } => diagnose(&config, &state, &paths, json),
-        Commands::InstallReady => install_ready(&config, &mut state, &paths, true).await,
+        Commands::InstallReady => install_ready(&config, &mut state, &paths, true, false).await,
         Commands::Rollback => rollback::run(&config, &mut state, &paths).await,
         Commands::InstallDeb { .. }
         | Commands::InstallRpm { .. }
@@ -56,8 +63,10 @@ fn run_privileged_command(command: &Commands) -> Option<Result<()>> {
 
 async fn daemon(config: &RuntimeConfig, state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
     time::sleep(config.initial_check_delay_duration()).await;
-    if let Err(error) = check(config, state, paths).await {
-        error!(?error, "initial update check failed");
+    if daemon_replacement_gate(config, paths)? {
+        if let Err(error) = check(config, state, paths, true).await {
+            error!(?error, "initial update check failed");
+        }
     }
     let mut checks = time::interval(config.check_interval_duration());
     let mut reconcile = time::interval(Duration::from_secs(15));
@@ -65,9 +74,22 @@ async fn daemon(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runt
     reconcile.tick().await;
     loop {
         tokio::select! {
-            _ = checks.tick() => if let Err(error) = check(config, state, paths).await { error!(?error, "periodic update check failed"); },
-            _ = reconcile.tick() => if state.status == UpdateStatus::WaitingForAppExit && !liveness::is_app_running(config)? {
-                if let Err(error) = install_ready(config, state, paths, false).await { error!(?error, "deferred install failed"); }
+            _ = checks.tick() => {
+                if daemon_replacement_gate(config, paths)? {
+                    if let Err(error) = check(config, state, paths, true).await {
+                        error!(?error, "periodic update check failed");
+                    }
+                }
+            },
+            _ = reconcile.tick() => {
+                if daemon_replacement_gate(config, paths)?
+                    && state.status == UpdateStatus::WaitingForAppExit
+                    && !liveness::is_app_running(config)?
+                {
+                    if let Err(error) = install_ready(config, state, paths, false, true).await {
+                        error!(?error, "deferred install failed");
+                    }
+                }
             },
             signal = tokio::signal::ctrl_c() => { signal?; break; }
         }
@@ -75,7 +97,68 @@ async fn daemon(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runt
     Ok(())
 }
 
-async fn check(config: &RuntimeConfig, state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
+fn daemon_replacement_gate(config: &RuntimeConfig, paths: &RuntimePaths) -> Result<bool> {
+    match passive_replacement_disposition(
+        &paths.state_file,
+        config.auto_install_on_app_exit,
+        restart::replacement_binary(),
+    )? {
+        ReplacementDisposition::Current => Ok(true),
+        ReplacementDisposition::Restart(installed_binary) => restart_daemon(&installed_binary),
+        ReplacementDisposition::Blocked(installed_binary) => {
+            warn!(
+                installed_binary = %installed_binary.display(),
+                "updater binary was replaced while persisted state is Installing; blocking further updater work until the install result is durable"
+            );
+            Ok(false)
+        }
+    }
+}
+
+fn passive_replacement_disposition(
+    state_file: &Path,
+    auto_install: bool,
+    replacement: Option<PathBuf>,
+) -> Result<ReplacementDisposition> {
+    let Some(installed_binary) = replacement else {
+        return Ok(ReplacementDisposition::Current);
+    };
+    let persisted = PersistedState::load_or_default(state_file, auto_install)?;
+    if persisted.status == UpdateStatus::Installing {
+        return Ok(ReplacementDisposition::Blocked(installed_binary));
+    }
+    Ok(ReplacementDisposition::Restart(installed_binary))
+}
+
+fn restart_after_persisted_install(config: &RuntimeConfig, paths: &RuntimePaths) -> Result<()> {
+    let replacement = restart::replacement_binary();
+    let Some(installed_binary) = replacement else { return Ok(()); };
+    let persisted = PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+    if persisted.status != UpdateStatus::Installed {
+        warn!(
+            status = ?persisted.status,
+            installed_binary = %installed_binary.display(),
+            "replacement updater exists but Installed state was not read back successfully; refusing to restart"
+        );
+        return Ok(());
+    }
+    restart_daemon(&installed_binary)
+}
+
+fn restart_daemon(installed_binary: &Path) -> ! {
+    info!(
+        installed_binary = %installed_binary.display(),
+        "updater binary was replaced after Installed state was persisted; exiting so systemd restarts on the new binary"
+    );
+    restart::exit_for_replacement();
+}
+
+async fn check(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    restart_on_replacement: bool,
+) -> Result<()> {
     let _lock = match CheckLock::try_acquire(&paths.state_dir.join("check.lock"))? {
         Some(lock) => lock,
         None => { info!("another update check is active"); return Ok(()); }
@@ -115,7 +198,7 @@ async fn check(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runti
         && matches!(previous_status, UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit)
     {
         state.status = previous_status;
-        return install_ready(config, state, paths, false).await;
+        return install_ready(config, state, paths, false, restart_on_replacement).await;
     }
 
     rollback::record_current_package_as_known_good(state);
@@ -143,7 +226,7 @@ async fn check(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runti
     if config.notifications {
         let _ = notify::send("codex-desktop update ready", &format!("Version {} has been rebuilt from OpenAI's signed Linux package.", metadata.version));
     }
-    install_ready(config, state, paths, false).await
+    install_ready(config, state, paths, false, restart_on_replacement).await
 }
 
 async fn install_ready(
@@ -151,6 +234,7 @@ async fn install_ready(
     state: &mut PersistedState,
     paths: &RuntimePaths,
     explicit_retry: bool,
+    restart_on_replacement: bool,
 ) -> Result<()> {
     if !matches!(state.status, UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit | UpdateStatus::Failed) {
         println!("No rebuilt package is ready to install.");
@@ -204,6 +288,9 @@ async fn install_ready(
     let _ = cache_cleanup::prune(&paths.cache_dir, state);
     if config.notifications {
         let _ = notify::send("codex-desktop updated", &format!("Installed {}.", state.installed_version));
+    }
+    if restart_on_replacement {
+        restart_after_persisted_install(config, paths)?;
     }
     Ok(())
 }
@@ -259,3 +346,40 @@ impl CheckLock {
     }
 }
 impl Drop for CheckLock { fn drop(&mut self) { let _ = self.0.unlock(); } }
+
+#[cfg(test)]
+mod replacement_tests {
+    use super::*;
+
+    #[test]
+    fn passive_replacement_is_blocked_while_install_result_is_not_durable() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let state_file = dir.path().join("state.json");
+        let replacement = dir.path().join("codex-update-manager");
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::Installing;
+        state.save_updater(&state_file)?;
+
+        assert_eq!(
+            passive_replacement_disposition(&state_file, true, Some(replacement.clone()))?,
+            ReplacementDisposition::Blocked(replacement)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_installed_state_allows_replacement_restart() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let state_file = dir.path().join("state.json");
+        let replacement = dir.path().join("codex-update-manager");
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::Installed;
+        state.save_updater(&state_file)?;
+
+        assert_eq!(
+            passive_replacement_disposition(&state_file, true, Some(replacement.clone()))?,
+            ReplacementDisposition::Restart(replacement)
+        );
+        Ok(())
+    }
+}
