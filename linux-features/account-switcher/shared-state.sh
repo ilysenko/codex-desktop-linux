@@ -35,11 +35,7 @@ account_switcher_process_identity_matches() {
 account_switcher_recorded_process_live() {
     local pid="$1" expected_start="$2" expected_boot="$3"
     [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-    if [[ -n "$expected_start" || -n "$expected_boot" ]]; then
-        account_switcher_process_identity_matches "$pid" "$expected_start" "$expected_boot"
-    else
-        kill -0 "$pid" 2>/dev/null
-    fi
+    account_switcher_process_identity_matches "$pid" "$expected_start" "$expected_boot"
 }
 
 account_switcher_write_process_identity() {
@@ -188,7 +184,7 @@ account_switcher_context_lock_release() {
 }
 
 account_switcher_profile_owns_process() {
-    local user_data_dir="$1" cmdline argument process exe app_binary
+    local user_data_dir="$1" cmdline argument process exe exe_name app_binary environment app_id_match app_dir_match appimage_match
     # The upstream default profile deliberately has no --user-data-dir flag.
     # In that case only the installed application's live executable is a
     # valid owner; never infer ownership from an arbitrary Electron process.
@@ -196,8 +192,20 @@ account_switcher_profile_owns_process() {
         app_binary="${CODEX_LINUX_APP_DIR:-}/ChatGPT"
         [[ -n "${CODEX_LINUX_APP_DIR:-}" && -x "$app_binary" ]] &&
         for process in /proc/[0-9]*; do
-            exe="$(readlink -f -- "$process/exe" 2>/dev/null || true)"
+            exe="$(readlink -- "$process/exe" 2>/dev/null || true)"
             [[ "$exe" == "$(readlink -f -- "$app_binary")" ]] && return 0
+            exe_name="${exe##*/}"
+            if [[ ( "$exe_name" == ChatGPT || "$exe_name" == "ChatGPT (deleted)" ) && -r "$process/environ" ]]; then
+                app_id_match=0
+                app_dir_match=0
+                appimage_match=0
+                while IFS= read -r -d '' environment; do
+                    [[ "$environment" == "CODEX_LINUX_APP_ID=${CODEX_LINUX_APP_ID:-codex-desktop}" ]] && app_id_match=1
+                    [[ "$environment" == CODEX_LINUX_APP_DIR=*/opt/codex-desktop ]] && app_dir_match=1
+                    [[ "$environment" == APPIMAGE=* ]] && appimage_match=1
+                done < "$process/environ"
+                (( app_id_match == 1 && app_dir_match == 1 && appimage_match == 1 )) && return 0
+            fi
         done
     fi
     for cmdline in /proc/[0-9]*/cmdline; do
@@ -509,10 +517,13 @@ account_switcher_backup_file() {
 }
 
 account_switcher_preserve_target_file() {
-    local target="$1" journal="$2" index="$3" backup temporary
+    local target="$1" journal="$2" index="$3" backup historical temporary
     [[ -e "$target" || -L "$target" ]] || return 0
     backup="$target.isolated-backup"
-    [[ -e "$backup" || -L "$backup" ]] && backup="$backup.$$.${index}"
+    if [[ -e "$backup" || -L "$backup" ]]; then
+        historical="$backup.preserved.$$.${index}"
+        cp -a -- "$backup" "$historical" || return 1
+    fi
     temporary="$backup.pending"
     account_switcher_write_record "$journal" "$index" "$target" "" "$backup" restore-pending
     if ! cp -a -- "$target" "$temporary"; then
@@ -521,6 +532,25 @@ account_switcher_preserve_target_file() {
     mv -- "$temporary" "$backup"
     account_switcher_write_record "$journal" "$index" "$target" "" "$backup" restore
     rm -f -- "$target"
+}
+
+account_switcher_merge_catalog_family() {
+    local incoming="$1" shared="$2" journal="$3" index="$4" suffix backup helper node
+    ACCOUNT_SWITCHER_MERGE_INDEX="$index"
+    [[ -f "$incoming" && ! -L "$incoming" && -f "$shared" && ! -L "$shared" ]] || return 0
+    # Snapshot and restore the whole destination family before opening it.
+    # Rollback can therefore restore a coherent pre-merge generation.
+    for suffix in "" -wal -shm; do
+        [[ -e "$shared$suffix" || -L "$shared$suffix" ]] || continue
+        index=$((index + 1))
+        account_switcher_backup_file "$shared$suffix" "$journal" "$index" || return 1
+        backup="$journal/state-$index.backup"
+        cp -p -- "$backup" "$shared$suffix" || return 1
+    done
+    helper="$(dirname -- "${BASH_SOURCE[0]}")/shared-state-sqlite.js"
+    node="$(account_switcher_node_binary)"
+    "$node" "$helper" merge-catalog "$incoming" "$shared" || return 1
+    ACCOUNT_SWITCHER_MERGE_INDEX="$index"
 }
 
 account_switcher_prepare_local_state() {
@@ -586,8 +616,9 @@ account_switcher_link_catalog() {
         esac
     elif [[ -e "$target" ]]; then
         if (( preserve_target == 1 )); then
-            account_switcher_preserve_target_file "$target" "$journal" "$index"
-            return $?
+            account_switcher_preserve_target_file "$target" "$journal" "$index" || return 1
+            [[ -e "$shared" || -L "$shared" ]] && ln -s -- "$shared" "$target"
+            return 0
         fi
         backup="$target.isolated-backup"
         [[ -e "$backup" || -L "$backup" ]] && backup="$backup.$$.${index}"
@@ -982,6 +1013,14 @@ account_switcher_prepare_shared() {
         [[ -f "$shared_root/$name" || -L "$shared_root/$name" ]] && shared_family=1
         if [[ "$promote_family" == 1 && ( -f "$shared_root/$name" || -L "$shared_root/$name" ) ]]; then
             account_switcher_preserve_catalog_family "$shared_root" "$name"
+        fi
+        if [[ "$promote_family" == 0 && "$shared_family" == 1 ]]; then
+            if ! account_switcher_merge_catalog_family "$target_home/sqlite/$name" "$shared_root/$name" "$journal" "$index"; then
+                account_switcher_restore_journal "$journal" || true
+                account_switcher_context_lock_release "$lock" || true
+                return 1
+            fi
+            index="$ACCOUNT_SWITCHER_MERGE_INDEX"
         fi
         for suffix in "" -wal -shm; do
             index=$((index + 1))

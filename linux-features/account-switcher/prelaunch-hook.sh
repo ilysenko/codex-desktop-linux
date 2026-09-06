@@ -45,18 +45,51 @@ handoff_file="$config_home/codex-desktop/account-switcher.handoff"
 profile_id=""
 profile_mode=""
 context_id=""
+declare -A live_handoff=()
+handoff_is_live=0
+
+# The launcher and prelaunch hook run in separate shells, so route from the
+# same authenticated durable record instead of trusting exported variables.
+if [[ -r "$handoff_file" ]]; then
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^[a-z_][a-z0-9_]*$ ]] || continue
+        live_handoff["$key"]="$value"
+    done < "$handoff_file"
+    if [[ "${live_handoff[version]:-}" == 1 ]] &&
+       account_switcher_validate_id "${live_handoff[from_id]:-}" &&
+       account_switcher_validate_id "${live_handoff[from_context]:-}" &&
+       account_switcher_validate_id "${live_handoff[target_id]:-}" &&
+       account_switcher_validate_id "${live_handoff[target_context]:-}" &&
+       [[ "${live_handoff[from_mode]:-}" == isolated || "${live_handoff[from_mode]:-}" == shared-local ]] &&
+       [[ "${live_handoff[target_mode]:-}" == isolated || "${live_handoff[target_mode]:-}" == shared-local ]] &&
+       account_switcher_recorded_process_live "${live_handoff[owner_pid]:-}" "${live_handoff[owner_start]:-}" "${live_handoff[owner_boot]:-}"; then
+        handoff_is_live=1
+        case "${live_handoff[phase]:-}" in
+            requested)
+                profile_id="${live_handoff[from_id]}"
+                profile_mode="${live_handoff[from_mode]}"
+                context_id="${live_handoff[from_context]}"
+                ;;
+            commit-pending)
+                profile_id="${live_handoff[target_id]}"
+                profile_mode="${live_handoff[target_mode]}"
+                context_id="${live_handoff[target_context]}"
+                ;;
+            launching)
+                if [[ "${live_handoff[owner_pid]:-}" == "$PPID" ]]; then
+                    profile_id="${live_handoff[target_id]}"
+                    profile_mode="${live_handoff[target_mode]}"
+                    context_id="${live_handoff[target_context]}"
+                fi
+                ;;
+        esac
+    fi
+fi
 
 # A prepared migration may only bypass prelaunch work for the replacement
 # launcher named by the live handoff record. An inherited flag is ignored.
-if [[ "${CODEX_LINUX_ACCOUNT_SWITCHER_MIGRATION_PREPARED:-0}" == 1 && -r "$handoff_file" ]]; then
-    declare -A prepared_handoff=()
-    while IFS='=' read -r key value; do
-        [[ "$key" =~ ^[a-z_][a-z0-9_]*$ ]] || continue
-        prepared_handoff["$key"]="$value"
-    done < "$handoff_file"
-    if [[ "${prepared_handoff[version]:-}" == 1 && "${prepared_handoff[phase]:-}" == launching &&
-          "${prepared_handoff[owner_pid]:-}" == "$PPID" ]] &&
-       account_switcher_process_identity_matches "$PPID" "${prepared_handoff[owner_start]:-}" "${prepared_handoff[owner_boot]:-}"; then
+if [[ "${CODEX_LINUX_ACCOUNT_SWITCHER_MIGRATION_PREPARED:-0}" == 1 && "$handoff_is_live" == 1 ]]; then
+    if [[ "${live_handoff[phase]:-}" == launching && "${live_handoff[owner_pid]:-}" == "$PPID" ]]; then
         exit 0
     fi
 fi

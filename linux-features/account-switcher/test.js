@@ -960,6 +960,38 @@ test("prelaunch ignores inherited routing that is not owned by a live handoff", 
   }
 });
 
+test("prelaunch routes a concurrent requested handoff to its authenticated source", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "account-switcher-prelaunch-live-source-"));
+  try {
+    const home = path.join(tempDir, "home");
+    const dataHome = path.join(home, ".local", "share");
+    const appDir = path.join(tempDir, "app");
+    const configDir = path.join(home, ".config", "codex-desktop");
+    const targetHome = path.join(dataHome, "codex-desktop", "account-profiles", "work", "codex");
+    const targetJournal = path.join(targetHome, "sqlite", "codex.db-journal");
+    const owner = processIdentity();
+    stageSharedStateHelper(appDir);
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(path.dirname(targetJournal), { recursive: true });
+    fs.writeFileSync(path.join(configDir, "account-switcher.active"), "work\nshared-local\nteam\n", { mode: 0o600 });
+    fs.writeFileSync(path.join(configDir, "account-switcher.handoff"), [
+      "version=1", "phase=requested", `owner_pid=${owner.pid}`, `owner_start=${owner.start}`, `owner_boot=${owner.boot}`,
+      "from_id=default", "from_mode=isolated", "from_context=default",
+      "target_id=work", "target_mode=shared-local", "target_context=team",
+    ].join("\n") + "\n", { mode: 0o600 });
+    fs.writeFileSync(path.join(targetHome, "sqlite", "codex.db"), "target catalog");
+    fs.writeFileSync(targetJournal, "target hot journal");
+    const result = spawnSync("bash", [path.join(__dirname, "prelaunch-hook.sh")], {
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: dataHome, CODEX_HOME: path.join(home, ".codex"), CODEX_LINUX_APP_DIR: appDir },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(targetJournal, "utf8"), "target hot journal");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("prelaunch ignores an inherited prepared flag without live handoff ownership", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "account-switcher-stale-prepared-"));
   try {
@@ -1235,6 +1267,7 @@ test("shared migration keeps SQLite sidecars with a real database family", () =>
     fs.writeFileSync(targetDb, "target database");
     fs.writeFileSync(`${targetDb}-wal`, "target wal");
     fs.writeFileSync(`${targetDb}-shm`, "target shm");
+    fs.writeFileSync(`${targetDb}-wal.isolated-backup`, "older target wal backup");
     fs.writeFileSync(sharedDb, "existing shared database");
     fs.writeFileSync(`${sharedDb}-wal`, "existing shared wal");
     const result = spawnSync("bash", ["-c", `source ${JSON.stringify(helper)}; account_switcher_migrate_shared ${JSON.stringify(sourceHome)} ${JSON.stringify(targetHome)} team`], {
@@ -1249,6 +1282,38 @@ test("shared migration keeps SQLite sidecars with a real database family", () =>
     assert.equal(fs.readFileSync(`${targetDb}-wal.isolated-backup`, "utf8"), "target wal");
     assert.equal(fs.readFileSync(`${targetDb}-shm.isolated-backup`, "utf8"), "target shm");
     assert.equal(fs.existsSync(`${sharedDb}-shm`), false);
+    const preservedWal = fs.readdirSync(path.dirname(targetDb)).find((name) => name.startsWith("codex.db-wal.isolated-backup.preserved."));
+    assert.equal(fs.readFileSync(path.join(path.dirname(targetDb), preservedWal), "utf8"), "older target wal backup");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("target-only SQLite rows merge into an existing shared catalog", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "account-switcher-sqlite-merge-"));
+  try {
+    const home = path.join(tempDir, "home");
+    const dataHome = path.join(home, ".local", "share");
+    const sourceHome = path.join(home, ".codex");
+    const targetHome = path.join(dataHome, "codex-desktop", "account-profiles", "work", "codex");
+    const targetDb = path.join(targetHome, "sqlite", "codex.db");
+    const sharedDb = path.join(dataHome, "codex-desktop", "account-contexts", "team", "codex.db");
+    fs.mkdirSync(path.dirname(targetDb), { recursive: true });
+    fs.mkdirSync(path.dirname(sharedDb), { recursive: true });
+    for (const [file, id] of [[targetDb, "target-only"], [sharedDb, "shared-only"]]) {
+      const db = new DatabaseSync(file);
+      db.exec("create table projects(id text primary key, title text)");
+      db.prepare("insert into projects values (?, ?)").run(id, id);
+      db.close();
+    }
+    const result = spawnSync("bash", ["-c", `source ${JSON.stringify(path.join(__dirname, "shared-state.sh"))}; account_switcher_migrate_shared ${JSON.stringify(sourceHome)} ${JSON.stringify(targetHome)} team`], {
+      env: { ...process.env, HOME: home, XDG_DATA_HOME: dataHome }, encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const merged = new DatabaseSync(sharedDb, { readOnly: true });
+    assert.deepEqual(merged.prepare("select id from projects order by id").all().map((row) => row.id), ["shared-only", "target-only"]);
+    merged.close();
+    assert.equal(fs.lstatSync(targetDb).isSymbolicLink(), true);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -2400,6 +2465,66 @@ test("launcher rejects a requested handoff whose PID identity was reused", () =>
     assert.match(fs.readFileSync(path.join(configDir, "account-switcher.handoff"), "utf8"), /phase=failed/);
     assert.equal(fs.readFileSync(path.join(configDir, "account-switcher.active"), "utf8"), "work\nisolated\ndefault\n");
   } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("launcher rejects a live handoff PID without start and boot identity", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "account-switcher-missing-handoff-identity-"));
+  try {
+    const home = path.join(tempDir, "home");
+    const dataHome = path.join(home, ".local", "share");
+    const configDir = path.join(home, ".config", "codex-desktop");
+    const appDir = path.join(tempDir, "app");
+    stageSharedStateHelper(appDir);
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, "account-switcher.active"), "work\nisolated\ndefault\n", { mode: 0o600 });
+    fs.writeFileSync(path.join(configDir, "account-switcher.handoff"), [
+      "version=1", "phase=requested", `owner_pid=${process.pid}`,
+      "from_id=default", "from_mode=isolated", "from_context=default",
+      "target_id=work", "target_mode=isolated", "target_context=default",
+    ].join("\n") + "\n", { mode: 0o600 });
+    const result = spawnSync("bash", [path.join(__dirname, "launcher-hook.sh")], {
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: dataHome, CODEX_LINUX_APP_DIR: appDir }, encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /env CODEX_LINUX_ACCOUNT_SWITCHER_PROFILE=default/);
+    assert.match(fs.readFileSync(path.join(configDir, "account-switcher.handoff"), "utf8"), /^phase=failed$/m);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("default profile ownership survives an AppImage remount", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "account-switcher-remount-owner-"));
+  let appProcess;
+  try {
+    const home = path.join(tempDir, "home");
+    const oldAppDir = path.join(tempDir, ".mount-old", "opt", "codex-desktop");
+    const newAppDir = path.join(tempDir, ".mount-new", "opt", "codex-desktop");
+    const oldBinary = path.join(oldAppDir, "ChatGPT");
+    fs.mkdirSync(oldAppDir, { recursive: true });
+    fs.mkdirSync(newAppDir, { recursive: true });
+    fs.copyFileSync(process.execPath, oldBinary);
+    fs.copyFileSync("/bin/true", path.join(newAppDir, "ChatGPT"));
+    fs.chmodSync(oldBinary, 0o755);
+    fs.chmodSync(path.join(newAppDir, "ChatGPT"), 0o755);
+    appProcess = spawn(oldBinary, ["-e", "setTimeout(() => {}, 30000)"], { env: { ...process.env, CODEX_LINUX_APP_ID: "codex-desktop", CODEX_LINUX_APP_DIR: oldAppDir, APPIMAGE: path.join(tempDir, "old.AppImage") } });
+    await new Promise((resolve, reject) => { appProcess.once("spawn", resolve); appProcess.once("error", reject); });
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        if (fs.readlinkSync(`/proc/${appProcess.pid}/exe`).includes("ChatGPT")) break;
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    fs.unlinkSync(oldBinary);
+    const result = spawnSync("bash", ["-c", `source ${JSON.stringify(path.join(__dirname, "shared-state.sh"))}; account_switcher_assert_offline ${JSON.stringify(path.join(home, ".codex"))} ${JSON.stringify(path.join(home, ".config", "Codex"))}`], {
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), CODEX_LINUX_APP_DIR: newAppDir, CODEX_LINUX_APP_ID: "codex-desktop" }, encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /profile is still owned by a live Electron process/);
+  } finally {
+    appProcess?.kill();
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
