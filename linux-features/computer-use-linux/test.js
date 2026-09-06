@@ -150,8 +150,10 @@ test("malformed patched host-platform variable relationship is rejected byte-ide
 
 const currentPluginRegistry = "var defs={computerUse:{name:`computer-use`,installWhenMissing:!0,installWhenMissingRequiresOptIn:!0}},optOut=e=>e,migrate=()=>{};var plugins=[{...defs.computerUse,autoInstallOptOutKey:optOut(defs.computerUse.name),isAvailable:({features:f,platform:p})=>p===`darwin`&&f.computerUse,migrate:migrate},{...defs.computerUse,autoInstallOptOutKey:optOut(defs.computerUse.name),isAvailable:({features:f,platform:p})=>p===`win32`&&f.computerUse}];";
 
+const currentMarketplaceSelector = "function choose(e){if(!(e.platform!==`darwin`||!e.marketplacePluginNames.includes(`computer-use`)))return e.desktopFeatureAvailability.computerUseNodeRepl?`node-repl`:`legacy-mcp`}";
+
 test("current spread registry exposes exactly one Linux plugin without inherited install opt-in", () => {
-  const patched = applyLinuxComputerUsePluginGatePatch(currentPluginRegistry);
+  const patched = applyLinuxComputerUsePluginGatePatch(currentPluginRegistry + currentMarketplaceSelector);
   const registry = vm.runInNewContext(`${patched};plugins`);
   for (const enabled of [false, true]) {
     const linux = registry.filter((plugin) =>
@@ -196,4 +198,45 @@ test("Linux keeps the legacy MCP skill selector with the current registry", () =
     }),
     "legacy-mcp",
   );
+});
+
+
+test("marketplace selector requires exactly one pristine or patched contract", () => {
+  const patchedSource = applyLinuxComputerUsePluginGatePatch(currentPluginRegistry + currentMarketplaceSelector);
+  const patchedSelector = patchedSource.slice(patchedSource.indexOf("function choose"));
+  for (const selector of [currentMarketplaceSelector, patchedSelector]) {
+    const source = currentPluginRegistry + selector;
+    const patched = applyLinuxComputerUsePluginGatePatch(source);
+    assert.equal(applyLinuxComputerUsePluginGatePatch(patched), patched);
+    assert.throws(
+      () => applyLinuxComputerUsePluginGatePatch(source + selector),
+      /marketplace selector, found 2/,
+    );
+  }
+  assert.throws(
+    () => applyLinuxComputerUsePluginGatePatch(currentPluginRegistry),
+    /marketplace selector, found 0/,
+  );
+  assert.throws(
+    () => applyLinuxComputerUsePluginGatePatch(patchedSource + currentMarketplaceSelector),
+    /marketplace selector, found 2/,
+  );
+  for (const selector of [currentMarketplaceSelector, patchedSelector]) {
+    for (const changed of [
+      selector.replace("computerUseNodeRepl", "newGate"),
+      selector.replace("`legacy-mcp`", "`other-backend`"),
+      selector.replace("e.desktopFeatureAvailability", "other.desktopFeatureAvailability"),
+      selector.replace("e.platform", "other.platform"),
+      selector.replace("return ", "return extra&&"),
+    ]) {
+      assert.throws(
+        () => applyLinuxComputerUsePluginGatePatch(currentPluginRegistry + changed),
+        /marketplace selector changed/,
+      );
+      assert.throws(
+        () => applyLinuxComputerUsePluginGatePatch(currentPluginRegistry + selector + changed),
+        /marketplace selector changed/,
+      );
+    }
+  }
 });

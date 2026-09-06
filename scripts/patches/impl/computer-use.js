@@ -152,18 +152,6 @@ const linuxSettingsKeys = {
   warmStart: "codex-linux-warm-start-enabled",
 };
 
-function parseDestructuredParamAliases(paramsText) {
-  const aliases = Object.create(null);
-  for (const rawPart of paramsText.split(",")) {
-    const part = rawPart.trim();
-    const match = part.match(/^([A-Za-z_$][\w$]*)(?::([A-Za-z_$][\w$]*))?$/);
-    if (match != null) {
-      aliases[match[1]] = match[2] ?? match[1];
-    }
-  }
-  return aliases;
-}
-
 function applyLinuxComputerUseFeaturePatch(currentSource) {
   const patchedFeaturePattern =
     /function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{env:[A-Za-z_$][\w$]*=process\.env,platform:[A-Za-z_$][\w$]*=process\.platform\}=\{\}\)\{return [A-Za-z_$][\w$]*===`linux`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:/;

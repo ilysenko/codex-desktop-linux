@@ -1,13 +1,28 @@
 "use strict";
 
 function rewriteComputerUseMarketplaceSelector(currentSource) {
-  const marketplaceGateRegex =
-    /if\(!\(\s*([A-Za-z_$][\w$]*)\.platform!==`darwin`\|\|!\s*\1\.marketplacePluginNames\.includes\(`computer-use`\)\s*\)\)return\s*\1\.desktopFeatureAvailability\.computerUseNodeRepl\?`node-repl`:`legacy-mcp`/g;
-  return currentSource.replace(
-    marketplaceGateRegex,
-    (_match, ref) =>
-      `if(!((${ref}.platform!==\`darwin\`&&${ref}.platform!==\`linux\`)||!${ref}.marketplacePluginNames.includes(\`computer-use\`)))return ${ref}.platform===\`darwin\`&&${ref}.desktopFeatureAvailability.computerUseNodeRepl?\`node-repl\`:\`legacy-mcp\``,
-  );
+  const selectorRegex =
+    /if\(([^{};]*?\.marketplacePluginNames\.includes\(`computer-use`\)[^{};]*?)\)return\s*([^{};]+)(?=[;}])/g;
+  let matchedSelectorCount = 0;
+  const patched = currentSource.replace(selectorRegex, (_match, condition, expression) => {
+    const ref = condition.match(/([A-Za-z_$][\w$]*)\.marketplacePluginNames/)?.[1];
+    const pristineCondition = `!(${ref}.platform!==\`darwin\`||!${ref}.marketplacePluginNames.includes(\`computer-use\`))`;
+    const patchedCondition = `!((${ref}.platform!==\`darwin\`&&${ref}.platform!==\`linux\`)||!${ref}.marketplacePluginNames.includes(\`computer-use\`))`;
+    const pristineExpression = `${ref}.desktopFeatureAvailability.computerUseNodeRepl?\`node-repl\`:\`legacy-mcp\``;
+    const patchedExpression = `${ref}.platform===\`darwin\`&&${pristineExpression}`;
+    if (
+      !(condition === pristineCondition && expression === pristineExpression) &&
+      !(condition === patchedCondition && expression === patchedExpression)
+    ) {
+      throw new Error("Linux Computer Use marketplace selector changed");
+    }
+    matchedSelectorCount += 1;
+    return `if(${patchedCondition})return ${patchedExpression}`;
+  });
+  if (matchedSelectorCount !== 1) {
+    throw new Error(`Expected one Linux Computer Use marketplace selector, found ${matchedSelectorCount}`);
+  }
+  return patched;
 }
 
 // The descriptor registry now spreads the shared plugin definition. Override the
