@@ -153,10 +153,13 @@ fi
 rm -f -- "$ready_file"
 
 launcher="$app_dir/start.sh"
-if [[ -n "${APPIMAGE:-}" && -x "$APPIMAGE" ]]; then
-    launcher="$APPIMAGE"
-elif [[ -n "${APPDIR:-}" && -x "$APPDIR/AppRun" ]]; then
-    launcher="$APPDIR/AppRun"
+if [[ -n "${APPDIR:-}" && -x "$APPDIR/AppRun" ]]; then
+    resolved_appdir="$(readlink -f -- "$APPDIR" 2>/dev/null || true)"
+    resolved_install="$(readlink -f -- "$APPDIR/opt/codex-desktop" 2>/dev/null || true)"
+    resolved_app="$(readlink -f -- "$app_dir" 2>/dev/null || true)"
+    if [[ -n "$resolved_appdir" && -n "$resolved_install" && "$resolved_install" == "$resolved_app" ]]; then
+        launcher="$APPDIR/AppRun"
+    fi
 fi
 
 set +e

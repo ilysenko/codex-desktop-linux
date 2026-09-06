@@ -188,7 +188,18 @@ account_switcher_context_lock_release() {
 }
 
 account_switcher_profile_owns_process() {
-    local user_data_dir="$1" cmdline argument
+    local user_data_dir="$1" cmdline argument process exe app_binary
+    # The upstream default profile deliberately has no --user-data-dir flag.
+    # In that case only the installed application's live executable is a
+    # valid owner; never infer ownership from an arbitrary Electron process.
+    if [[ "$user_data_dir" == "${XDG_CONFIG_HOME:-${HOME:-}/.config}/Codex" ]]; then
+        app_binary="${CODEX_LINUX_APP_DIR:-}/ChatGPT"
+        [[ -n "${CODEX_LINUX_APP_DIR:-}" && -x "$app_binary" ]] &&
+        for process in /proc/[0-9]*; do
+            exe="$(readlink -f -- "$process/exe" 2>/dev/null || true)"
+            [[ "$exe" == "$(readlink -f -- "$app_binary")" ]] && return 0
+        done
+    fi
     for cmdline in /proc/[0-9]*/cmdline; do
         [[ -r "$cmdline" ]] || continue
         while IFS= read -r -d '' argument; do
@@ -497,13 +508,28 @@ account_switcher_backup_file() {
     fi
 }
 
+account_switcher_preserve_target_file() {
+    local target="$1" journal="$2" index="$3" backup temporary
+    [[ -e "$target" || -L "$target" ]] || return 0
+    backup="$target.isolated-backup"
+    [[ -e "$backup" || -L "$backup" ]] && backup="$backup.$$.${index}"
+    temporary="$backup.pending"
+    account_switcher_write_record "$journal" "$index" "$target" "" "$backup" restore-pending
+    if ! cp -a -- "$target" "$temporary"; then
+        return 1
+    fi
+    mv -- "$temporary" "$backup"
+    account_switcher_write_record "$journal" "$index" "$target" "" "$backup" restore
+    rm -f -- "$target"
+}
+
 account_switcher_prepare_local_state() {
     local source_home="$1" target_home="$2" shared_root="$3" journal="$4" index="$5"
     local source_state="$source_home/.codex-global-state.json"
     local target_state="$target_home/.codex-global-state.json"
     local shared_state="$shared_root/local-project-state.json"
     local source_snapshot="$journal/source-global-state.json"
-    local helper node target_backup
+    local helper node target_backup shared_backup
 
     # The default profile is both source and target during its first shared
     # launch. Snapshot before backing up the target so the source remains
@@ -518,6 +544,14 @@ account_switcher_prepare_local_state() {
         cp -p -- "$target_backup" "$target_state"
     fi
     account_switcher_backup_file "$shared_state" "$journal" "$((index + 1))"
+    shared_backup="$journal/state-$((index + 1)).backup"
+    # account_switcher_backup_file removes the live path as part of its
+    # durable transaction. Restore a readable copy before the JSON helper
+    # runs; otherwise a missing shared path is indistinguishable from an
+    # empty shared catalog and sparse source state can erase it.
+    if [[ -e "$shared_backup" || -L "$shared_backup" ]]; then
+        cp -p -- "$shared_backup" "$shared_state"
+    fi
     helper="$(dirname -- "${BASH_SOURCE[0]}")/shared-state-json.js"
     node="$(account_switcher_node_binary)"
     "$node" "$helper" prepare "$source_state" "$target_state" "$shared_state"
@@ -541,7 +575,7 @@ account_switcher_recover_context() {
 }
 
 account_switcher_link_catalog() {
-    local target="$1" shared="$2" journal="$3" index="$4" promote="${5:-0}" clear_missing="${6:-0}" backup action link_root
+    local target="$1" shared="$2" journal="$3" index="$4" promote="${5:-0}" clear_missing="${6:-0}" preserve_target="${7:-0}" backup action link_root
     mkdir -p -- "$(dirname "$target")" "$(dirname "$shared")"
     if [[ -L "$target" ]]; then
         link_root="$(readlink -m -- "$target")"
@@ -551,6 +585,10 @@ account_switcher_link_catalog() {
             *) printf 'account-switcher: refusing unmanaged catalog symlink: %s\n' "$target" >&2; return 1 ;;
         esac
     elif [[ -e "$target" ]]; then
+        if (( preserve_target == 1 )); then
+            account_switcher_preserve_target_file "$target" "$journal" "$index"
+            return $?
+        fi
         backup="$target.isolated-backup"
         [[ -e "$backup" || -L "$backup" ]] && backup="$backup.$$.${index}"
         if [[ -e "$shared" || -L "$shared" ]] && (( promote == 1 )); then
@@ -580,6 +618,22 @@ account_switcher_link_catalog() {
     fi
     [[ -e "$shared" || -L "$shared" ]] || return 0
     ln -s -- "$shared" "$target"
+}
+
+account_switcher_preserve_catalog_family() {
+    local shared_root="$1" name="$2" preservation suffix found=0
+    for suffix in "" -wal -shm; do
+        [[ -e "$shared_root/$name$suffix" || -L "$shared_root/$name$suffix" ]] || continue
+        found=1
+    done
+    (( found == 1 )) || return 0
+    preservation="$shared_root/.account-switcher-preserved-$$-$RANDOM/$name"
+    mkdir -p -- "$(dirname -- "$preservation")"
+    for suffix in "" -wal -shm; do
+        [[ -e "$shared_root/$name$suffix" || -L "$shared_root/$name$suffix" ]] || continue
+        cp -a -- "$shared_root/$name$suffix" "$preservation$suffix"
+    done
+    sync -d "$(dirname -- "$preservation")" 2>/dev/null || true
 }
 
 account_switcher_merge_session_tree() {
@@ -662,7 +716,7 @@ account_switcher_merge_session_index() {
 }
 
 account_switcher_materialize_session_tree() {
-    local target="$1" shared="$2" journal="$3" index="$4" file relative destination target_inode shared_inode
+    local target="$1" shared="$2" journal="$3" index="$4" replace_existing="${5:-1}" file relative destination target_inode shared_inode
     ACCOUNT_SWITCHER_MERGE_INDEX="$index"
     [[ -d "$shared" && ! -L "$shared" ]] || return 0
     if [[ -L "$target" ]]; then
@@ -695,6 +749,11 @@ account_switcher_materialize_session_tree() {
             target_inode="$(stat -c '%d:%i' -- "$destination" 2>/dev/null || true)"
             shared_inode="$(stat -c '%d:%i' -- "$file" 2>/dev/null || true)"
             [[ -n "$target_inode" && "$target_inode" == "$shared_inode" ]] && continue
+            # A target-only or divergent continuation must survive a
+            # committed migration. Leave it in the target profile; the
+            # shared copy remains available to other profiles and the next
+            # merge can reconcile both trees without a journal backup.
+            (( replace_existing == 1 )) || continue
             index=$((index + 1))
             account_switcher_backup_file "$destination" "$journal" "$index"
         else
@@ -877,7 +936,7 @@ account_switcher_rollback_prepared() {
 }
 
 account_switcher_prepare_shared() {
-    local source_home="$1" target_home="$2" context_id="$3" shared_root lock journal index name suffix relative target_promote=0 promote_family clear_missing
+    local source_home="$1" target_home="$2" context_id="$3" shared_root lock journal index name suffix relative target_promote=0 promote_family clear_missing preserve_target shared_family
     shared_root="$(account_switcher_shared_root "$context_id")" || return 1
     lock="$(account_switcher_context_lock_acquire "$shared_root")" || return 1
     if ! account_switcher_assert_offline "$source_home" ||
@@ -898,8 +957,10 @@ account_switcher_prepare_shared() {
     index=0
     if [[ "$source_home" != "$target_home" ]]; then
         for name in "${ACCOUNT_SWITCHER_CATALOGS[@]}"; do
+            [[ -f "$source_home/sqlite/$name" && ! -L "$source_home/sqlite/$name" ]] || continue
             promote_family=0
-            [[ -f "$source_home/sqlite/$name" && ! -L "$source_home/sqlite/$name" ]] && promote_family=1
+            promote_family=1
+            [[ -f "$shared_root/$name" || -L "$shared_root/$name" ]] && account_switcher_preserve_catalog_family "$shared_root" "$name"
             for suffix in "" -wal -shm; do
                 index=$((index + 1))
                 clear_missing=0
@@ -914,13 +975,21 @@ account_switcher_prepare_shared() {
     fi
     [[ "$source_home" != "$target_home" ]] || target_promote=1
     for name in "${ACCOUNT_SWITCHER_CATALOGS[@]}"; do
+        [[ -f "$target_home/sqlite/$name" && ! -L "$target_home/sqlite/$name" ]] || continue
         promote_family=0
-        [[ "$target_promote" == 0 || ! -f "$target_home/sqlite/$name" || -L "$target_home/sqlite/$name" ]] || promote_family=1
+        [[ "$target_promote" == 0 ]] || promote_family=1
+        shared_family=0
+        [[ -f "$shared_root/$name" || -L "$shared_root/$name" ]] && shared_family=1
+        if [[ "$promote_family" == 1 && ( -f "$shared_root/$name" || -L "$shared_root/$name" ) ]]; then
+            account_switcher_preserve_catalog_family "$shared_root" "$name"
+        fi
         for suffix in "" -wal -shm; do
             index=$((index + 1))
             clear_missing=0
+            preserve_target=0
             [[ -z "$suffix" || "$promote_family" == 0 ]] || clear_missing=1
-            if ! account_switcher_link_catalog "$target_home/sqlite/$name$suffix" "$shared_root/$name$suffix" "$journal" "$index" "$promote_family" "$clear_missing"; then
+            [[ -z "$suffix" || "$promote_family" == 1 || "$shared_family" == 0 ]] || preserve_target=1
+            if ! account_switcher_link_catalog "$target_home/sqlite/$name$suffix" "$shared_root/$name$suffix" "$journal" "$index" "$promote_family" "$clear_missing" "$preserve_target"; then
                 account_switcher_restore_journal "$journal" || true
                 account_switcher_context_lock_release "$lock" || true
                 return 1
@@ -933,7 +1002,7 @@ account_switcher_prepare_shared() {
     # writes; newly-created files are merged on the next handoff.
     for relative in "${ACCOUNT_SWITCHER_SESSION_PATHS[@]}"; do
         if [[ "$relative" == sessions ]]; then
-            account_switcher_merge_session_tree "$source_home/$relative" "$shared_root/$relative" "$journal" "$index" 1 || {
+            account_switcher_merge_session_tree "$source_home/$relative" "$shared_root/$relative" "$journal" "$index" 0 || {
                 account_switcher_restore_journal "$journal" || true
                 account_switcher_context_lock_release "$lock" || true
                 return 1
@@ -974,7 +1043,7 @@ account_switcher_prepare_shared() {
     index="$ACCOUNT_SWITCHER_MERGE_INDEX"
     for relative in "${ACCOUNT_SWITCHER_SESSION_PATHS[@]}"; do
         if [[ "$relative" == sessions ]]; then
-            account_switcher_materialize_session_tree "$target_home/$relative" "$shared_root/$relative" "$journal" "$index" || {
+            account_switcher_materialize_session_tree "$target_home/$relative" "$shared_root/$relative" "$journal" "$index" 0 || {
                 account_switcher_restore_journal "$journal" || true
                 account_switcher_context_lock_release "$lock" || true
                 return 1

@@ -252,14 +252,22 @@ function applyPreloadPatch(extractedDir) {
   }
   const source = fs.readFileSync(target, "utf8");
   if (source.includes(PRELOAD_MARKER)) return { matched: 1, changed: 0 };
-  const needle = "usesOwlAppShell:()=>E};";
-  const matched = source.split(needle).length - 1;
+  const exposes = [...source.matchAll(/([A-Za-z_$][\w$]*)\.contextBridge\.exposeInMainWorld\(`electronBridge`,([A-Za-z_$][\w$]*)\)/g)];
+  if (exposes.length !== 1) {
+    console.warn(`WARN: Expected one Electron preload bridge exposure, found ${exposes.length} - skipping account-switcher patch`);
+    return { matched: exposes.length, changed: 0 };
+  }
+  const [, electron, bridge] = exposes[0];
+  const declaration = `${bridge}={`;
+  const declarationIndex = source.lastIndexOf(declaration, exposes[0].index);
+  const bridgeEnd = source.lastIndexOf(`};${electron}.ipcRenderer.on`, exposes[0].index);
+  const matched = declarationIndex >= 0 && bridgeEnd > declarationIndex ? 1 : 0;
   if (matched !== 1) {
-    console.warn(`WARN: Expected one Electron preload bridge anchor, found ${matched} - skipping account-switcher patch`);
+    console.warn(`WARN: Expected one path-contained Electron preload bridge object, found ${matched} - skipping account-switcher patch`);
     return { matched, changed: 0 };
   }
-  const replacement = `usesOwlAppShell:()=>E,getLinuxAccountProfiles:()=>e.ipcRenderer.invoke("codex_linux_account_switcher",{action:"list"}),refreshLinuxAccountProfiles:()=>e.ipcRenderer.invoke("codex_linux_account_switcher",{action:"refresh"}),createLinuxAccountProfile:t=>e.ipcRenderer.invoke("codex_linux_account_switcher",{action:"create",...t}),removeLinuxAccountProfile:t=>e.ipcRenderer.invoke("codex_linux_account_switcher",{action:"remove",...t}),setLinuxAccountSwitcherSettings:t=>e.ipcRenderer.invoke("codex_linux_account_switcher",{action:"set-settings",...t}),switchLinuxAccountProfile:t=>e.ipcRenderer.invoke("codex_linux_account_switcher",{action:"switch",...t})};/*${PRELOAD_MARKER}*/`;
-  const patched = replaceOnce(source, needle, replacement, "Electron preload bridge anchor");
+  const methods = `,getLinuxAccountProfiles:()=>${electron}.ipcRenderer.invoke("codex_linux_account_switcher",{action:"list"}),refreshLinuxAccountProfiles:()=>${electron}.ipcRenderer.invoke("codex_linux_account_switcher",{action:"refresh"}),createLinuxAccountProfile:t=>${electron}.ipcRenderer.invoke("codex_linux_account_switcher",{action:"create",...t}),removeLinuxAccountProfile:t=>${electron}.ipcRenderer.invoke("codex_linux_account_switcher",{action:"remove",...t}),setLinuxAccountSwitcherSettings:t=>${electron}.ipcRenderer.invoke("codex_linux_account_switcher",{action:"set-settings",...t}),switchLinuxAccountProfile:t=>${electron}.ipcRenderer.invoke("codex_linux_account_switcher",{action:"switch",...t})/*${PRELOAD_MARKER}*/`;
+  const patched = source.slice(0, bridgeEnd) + methods + source.slice(bridgeEnd);
   if (patched !== source) fs.writeFileSync(target, patched, "utf8");
   return { matched, changed: patched === source ? 0 : 1 };
 }
@@ -268,10 +276,7 @@ function applyProfileMenuPatch(source) {
   if (source.includes(MENU_MARKER)) return source;
   const containerAnchor = "className:`flex w-full min-w-0 flex-col`,children:[";
   const containerCount = source.split(containerAnchor).length - 1;
-  if (containerCount !== 1) {
-    console.warn(`WARN: Expected one profile menu container anchor, found ${containerCount} - skipping account-switcher patch`);
-    return source;
-  }
+  if (containerCount !== 1) return applyCompiledProfileMenuPatch(source);
 
   const containerStart = source.indexOf(containerAnchor);
   const nearbyStart = Math.max(0, containerStart - 1_500);
@@ -300,6 +305,42 @@ function applyProfileMenuPatch(source) {
   // leading newline is required so the runtime is not swallowed by that
   // comment and its `return` statements remain inside the IIFE.
   return patched === source ? source : patched + "\n" + WEBVIEW_RUNTIME;
+}
+
+function applyCompiledProfileMenuPatch(source) {
+  const logoutId = "id:`codex.profileDropdown.logOut`,defaultMessage:`Log out`,description:`Menu item to log out of ChatGPT`";
+  const logoutIndex = source.indexOf(logoutId);
+  if (logoutIndex < 0 || source.indexOf(logoutId, logoutIndex + 1) >= 0) {
+    console.warn("WARN: Expected one compiled profile menu logout anchor - skipping account-switcher patch");
+    return source;
+  }
+  const nearbyStart = Math.max(0, logoutIndex - 700);
+  const nearby = source.slice(nearbyStart, logoutIndex + logoutId.length);
+  const logoutPattern = /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{[^{}]{0,500}children:\(0,\1\.jsx\)\(([A-Za-z_$][\w$]*),\{id:`codex\.profileDropdown\.logOut`,defaultMessage:`Log out`,description:`Menu item to log out of ChatGPT`\}\)\}\)/g;
+  const matches = [...nearby.matchAll(logoutPattern)];
+  if (matches.length !== 1) {
+    console.warn(`WARN: Expected one compiled semantic profile menu logout anchor, found ${matches.length} - skipping account-switcher patch`);
+    return source;
+  }
+  const [, jsxRuntime, menuItem, message] = matches[0];
+  const assignments = [...nearby.slice(0, matches[0].index).matchAll(/let ([A-Za-z_$][\w$]*);/g)];
+  if (assignments.length === 0) {
+    console.warn("WARN: Expected one compiled logout assignment - skipping account-switcher patch");
+    return source;
+  }
+  const logoutVariable = assignments.at(-1)[1];
+  const tail = source.slice(logoutIndex + logoutId.length, logoutIndex + logoutId.length + 2_000);
+  const childrenMatches = [...tail.matchAll(/children:\[([A-Za-z_$][\w$]*(?:,(?:[A-Za-z_$][\w$]*|null))*)\]/g)]
+    .filter((match) => match[1].split(",").includes(logoutVariable));
+  if (childrenMatches.length !== 1) {
+    console.warn(`WARN: Expected one compiled path-contained profile menu children anchor, found ${childrenMatches.length} - skipping account-switcher patch`);
+    return source;
+  }
+  const switchItem = `(0,${jsxRuntime}.jsx)(${menuItem},{onClick:()=>window.codexLinuxOpenAccountSwitcher?.(),children:(0,${jsxRuntime}.jsx)(${message},{id:\`codex.profileDropdown.switchAccount\`,defaultMessage:\`Switch account\`,description:\`Menu item to switch between local Codex account profiles\`})})`;
+  const match = childrenMatches[0];
+  const offset = logoutIndex + logoutId.length + match.index;
+  const replacement = `children:[${match[1]},${switchItem}]/*${MENU_MARKER}*/`;
+  return source.slice(0, offset) + replacement + source.slice(offset + match[0].length) + "\n" + WEBVIEW_RUNTIME;
 }
 
 function patchPreload(extractedDir) {
@@ -331,8 +372,8 @@ module.exports = {
       id: "account-switcher-ui",
       order: 29_120,
       ciPolicy: "opt-in",
-      pattern: /^app-initial-[^.]+\.js$/,
-      assetMatch: (source) => source.includes("codex.profileDropdown.logOut") && source.includes("className:`flex w-full min-w-0 flex-col`,children:["),
+      pattern: /^app-(?:initial|primary)-[^.]+\.js$/,
+      assetMatch: (source) => source.includes("codex.profileDropdown.logOut") && source.includes("className:`flex w-full min-w-0 flex-col"),
       missingDescription: "current profile-menu webview bundle",
       skipDescription: "account-switcher menu item",
       apply: applyProfileMenuPatch,

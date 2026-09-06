@@ -9,9 +9,11 @@ source "$feature_root/shared-state.sh"
 config_home="${XDG_CONFIG_HOME:-${HOME:-}/.config}"
 state_file="$config_home/codex-desktop/account-switcher.active"
 base_codex_home="${CODEX_LINUX_ACCOUNT_SWITCHER_BASE_CODEX_HOME:-${CODEX_HOME:-${HOME:-}/.codex}}"
-profile_id="${CODEX_LINUX_ACCOUNT_SWITCHER_PROFILE:-}"
-profile_mode="${CODEX_LINUX_ACCOUNT_SWITCHER_CONTEXT:-isolated}"
-context_id="${CODEX_LINUX_ACCOUNT_SWITCHER_CONTEXT_ID:-default}"
+# These values are emitted for Electron, but a desktop launcher can inherit
+# them. Durable state and a live handoff record are the only routing authority.
+profile_id=""
+profile_mode="isolated"
+context_id="default"
 
 profile_has_live_process() {
     local user_data_dir="$1" cmdline argument
@@ -34,17 +36,11 @@ singleton_socket_is_live() {
 }
 
 clear_stale_singletons() {
-    local user_data_dir="$1" lock_target="" socket_target="" lock_host="" lock_pid=""
+    local user_data_dir="$1" lock_target="" socket_target=""
     [[ -L "$user_data_dir/SingletonLock" ]] || return 0
     profile_has_live_process "$user_data_dir" && return 0
     lock_target="$(readlink "$user_data_dir/SingletonLock")"
-    if [[ "$lock_target" =~ ^(.+)-([0-9]+)$ ]]; then
-        lock_host="${BASH_REMATCH[1]}"
-        lock_pid="${BASH_REMATCH[2]}"
-        if [[ "$lock_host" == "$(hostname)" ]] && kill -0 "$lock_pid" 2>/dev/null; then
-            return 0
-        fi
-    else
+    if [[ ! "$lock_target" =~ ^(.+)-([0-9]+)$ ]]; then
         return 0
     fi
     if [[ -L "$user_data_dir/SingletonSocket" ]]; then
@@ -56,6 +52,7 @@ clear_stale_singletons() {
     for name in SingletonLock SingletonSocket SingletonCookie; do
         [[ -L "$user_data_dir/$name" ]] && unlink "$user_data_dir/$name"
     done
+    return 0
 }
 
 recover_interrupted_handoff() {
@@ -66,7 +63,6 @@ recover_interrupted_handoff() {
     local -A recovered_contexts=()
     local -a recovery_modes=()
     local -a recovery_contexts=()
-    [[ "${CODEX_LINUX_ACCOUNT_SWITCHER_MIGRATION_PREPARED:-0}" != 1 ]] || return 0
     [[ -r "$handoff_file" ]] || return 0
     while IFS='=' read -r key value; do
         [[ "$key" =~ ^[a-z_][a-z0-9_]*$ ]] || continue
@@ -82,6 +78,12 @@ recover_interrupted_handoff() {
     [[ "${record[target_mode]:-}" == isolated || "${record[target_mode]:-}" == shared-local ]] || return 1
     owner="${record[owner_pid]:-}"
     if account_switcher_recorded_process_live "$owner" "${record[owner_start]:-}" "${record[owner_boot]:-}"; then
+        if [[ "$owner" == "$PPID" && "$phase" == launching ]]; then
+            profile_id="${record[target_id]}"
+            profile_mode="${record[target_mode]}"
+            context_id="${record[target_context]}"
+            return 0
+        fi
         if [[ "$phase" == requested || "$phase" == commit-pending ]]; then
             # Route concurrent desktop/deep-link launches to whichever side
             # owns this lifecycle phase so upstream single-instance handling

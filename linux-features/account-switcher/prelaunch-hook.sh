@@ -40,17 +40,26 @@ account_switcher_app_is_running() {
     return 1
 }
 
-# The final-exit handoff owns an uncommitted migration journal until the
-# replacement signals readiness. Re-running migration here would treat that
-# live journal as crash residue and undo the prepared filesystem state.
-if [[ "${CODEX_LINUX_ACCOUNT_SWITCHER_MIGRATION_PREPARED:-0}" == 1 ]]; then
-    exit 0
-fi
-
 state_file="$config_home/codex-desktop/account-switcher.active"
-profile_id="${CODEX_LINUX_ACCOUNT_SWITCHER_PROFILE:-}"
-profile_mode="${CODEX_LINUX_ACCOUNT_SWITCHER_CONTEXT:-}"
-context_id="${CODEX_LINUX_ACCOUNT_SWITCHER_CONTEXT_ID:-}"
+handoff_file="$config_home/codex-desktop/account-switcher.handoff"
+profile_id=""
+profile_mode=""
+context_id=""
+
+# A prepared migration may only bypass prelaunch work for the replacement
+# launcher named by the live handoff record. An inherited flag is ignored.
+if [[ "${CODEX_LINUX_ACCOUNT_SWITCHER_MIGRATION_PREPARED:-0}" == 1 && -r "$handoff_file" ]]; then
+    declare -A prepared_handoff=()
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^[a-z_][a-z0-9_]*$ ]] || continue
+        prepared_handoff["$key"]="$value"
+    done < "$handoff_file"
+    if [[ "${prepared_handoff[version]:-}" == 1 && "${prepared_handoff[phase]:-}" == launching &&
+          "${prepared_handoff[owner_pid]:-}" == "$PPID" ]] &&
+       account_switcher_process_identity_matches "$PPID" "${prepared_handoff[owner_start]:-}" "${prepared_handoff[owner_boot]:-}"; then
+        exit 0
+    fi
+fi
 if [[ -z "$profile_id" && -r "$state_file" ]]; then
     IFS= read -r profile_id < "$state_file" || true
     IFS= read -r profile_mode < <(sed -n '2p' "$state_file") || true

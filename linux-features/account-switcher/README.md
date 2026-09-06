@@ -62,8 +62,8 @@ It refreshes usage for all profiles concurrently in the background and changes
 an on-screen value only when the live result differs from the cached value.
 
 Switching records a handoff, exits through the normal launcher lifecycle,
-re-enters a packaged AppImage through its `APPIMAGE` executable (or `AppRun`
-for an extracted AppDir), waits for the replacement to signal readiness, and
+re-enters a packaged AppImage or extracted AppDir through the `AppRun` that is
+verified to contain this installation, waits for replacement readiness, and
 restores the previous selection if startup fails. It does not force-kill
 arbitrary renderer, utility, or app-server descendants. The exiting launcher
 first closes the launchable handoff phase, then the final-exit transition hook

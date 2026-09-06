@@ -50,9 +50,29 @@ function isAtomKey(key) {
   return ATOM_EXACT_KEYS.includes(key) || ATOM_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
+function isRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeSharedValue(previous, incoming) {
+  if (Array.isArray(previous) && Array.isArray(incoming)) {
+    return [...new Set([...previous, ...incoming])];
+  }
+  if (isRecord(previous) && isRecord(incoming)) {
+    const merged = { ...previous };
+    for (const [key, value] of Object.entries(incoming)) {
+      merged[key] = Object.hasOwn(previous, key) ? mergeSharedValue(previous[key], value) : value;
+    }
+    return merged;
+  }
+  return incoming;
+}
+
 function extract(globalState) {
   const state = {};
-  for (const key of TOP_LEVEL_KEYS) state[key] = Object.hasOwn(globalState, key) ? globalState[key] : null;
+  for (const key of TOP_LEVEL_KEYS) {
+    if (Object.hasOwn(globalState, key)) state[key] = globalState[key];
+  }
   const atom = globalState["electron-persisted-atom-state"];
   state.atom = {};
   if (atom && typeof atom === "object" && !Array.isArray(atom)) {
@@ -65,17 +85,19 @@ function extract(globalState) {
 
 function applyShared(globalState, sharedState) {
   for (const key of TOP_LEVEL_KEYS) {
-    if (sharedState[key] == null) delete globalState[key];
-    else globalState[key] = sharedState[key];
+    if (Object.hasOwn(sharedState, key)) {
+      globalState[key] = Object.hasOwn(globalState, key)
+        ? mergeSharedValue(globalState[key], sharedState[key])
+        : sharedState[key];
+    }
   }
 
   const atom = globalState["electron-persisted-atom-state"];
   const nextAtom = atom && typeof atom === "object" && !Array.isArray(atom) ? { ...atom } : {};
-  for (const key of Object.keys(nextAtom)) {
-    if (isAtomKey(key)) delete nextAtom[key];
-  }
   if (sharedState.atom && typeof sharedState.atom === "object" && !Array.isArray(sharedState.atom)) {
-    Object.assign(nextAtom, sharedState.atom);
+    for (const [key, value] of Object.entries(sharedState.atom)) {
+      nextAtom[key] = Object.hasOwn(nextAtom, key) ? mergeSharedValue(nextAtom[key], value) : value;
+    }
   }
   globalState["electron-persisted-atom-state"] = nextAtom;
   return globalState;
@@ -93,7 +115,8 @@ function prepare(sourceFile, targetFile, sharedFile) {
       if (isAtomKey(key)) previous.atom[key] = value;
     }
   }
-  const shared = source == null ? previous : { ...previous, ...extract(source) };
+  const extracted = source == null ? {} : extract(source);
+  const shared = mergeSharedValue(previous, extracted);
   const target = readJson(targetFile);
   applyShared(target, shared);
   writeJson(sharedFile, shared);

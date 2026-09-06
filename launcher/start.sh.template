@@ -399,9 +399,9 @@ fi
 set +e
 "$CHATGPT_BINARY" "${ELECTRON_ARGS[@]}" "${ORIGINAL_ARGS[@]}"
 status=$?
-set -e
 run_hook_directory "$HOOK_ROOT/exit-claim.d" exit-claim
 CODEX_LINUX_ELECTRON_EXIT_STATUS="$status" run_hook_directory \
     "$HOOK_ROOT/after-exit.d" after-exit
 run_hook_directory "$HOOK_ROOT/final-exit.d" final-exit
+set -e
 exit "$status"
