@@ -8,6 +8,8 @@ use crate::{
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::{fs, path::{Path, PathBuf}};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use tokio::{fs as async_fs, io::{AsyncBufReadExt, BufReader}, process::Command};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +86,7 @@ pub async fn build_update(
         .env("PACKAGE_VERSION", package_version())
         .env("APP_DIR_OVERRIDE", &app)
         .env("DIST_DIR_OVERRIDE", &dist)
-        .env("UPDATER_BINARY_SOURCE", std::env::current_exe()?)
+        .env("UPDATER_BINARY_SOURCE", updater_binary_source(&std::env::current_exe()?))
         .env("UPDATER_SERVICE_SOURCE", bundle.join("packaging/linux/codex-update-manager.service"))
         .current_dir(&bundle);
     if let Some(config_path) = effective_feature_config_path(config) {
@@ -110,6 +112,27 @@ fn package_version() -> String {
 
 fn safe_component(value: &str) -> String {
     value.chars().map(|c| if c.is_ascii_alphanumeric() || ".+-_".contains(c) { c } else { '_' }).collect()
+}
+
+fn updater_binary_source(current_exe: &Path) -> PathBuf {
+    updater_binary_source_at(current_exe, Path::new("/usr/bin/codex-update-manager"))
+}
+
+pub(crate) fn updater_binary_source_at(current_exe: &Path, installed: &Path) -> PathBuf {
+    if current_exe.is_file() {
+        return current_exe.to_path_buf();
+    }
+    #[cfg(unix)]
+    if let Some(stripped) = current_exe.as_os_str().as_bytes().strip_suffix(b" (deleted)") {
+        let stripped = PathBuf::from(std::ffi::OsStr::from_bytes(stripped));
+        if stripped.is_file() {
+            return stripped;
+        }
+    }
+    if installed.is_file() {
+        return installed.to_path_buf();
+    }
+    current_exe.to_path_buf()
 }
 
 fn copy_builder_bundle(source: &Path, destination: &Path) -> Result<()> {
@@ -318,6 +341,29 @@ mod tests {
         assert!(error.to_string().contains("found 2"), "unexpected error: {error}");
 
         fs::remove_dir_all(&dist).expect("cleanup");
+    }
+
+    #[test]
+    fn healthy_builder_process_keeps_its_current_binary() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let current = temp.path().join("current-updater");
+        let installed = temp.path().join("installed-updater");
+        fs::write(&current, b"current")?;
+        fs::write(&installed, b"installed")?;
+
+        assert_eq!(updater_binary_source_at(&current, &installed), current);
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_builder_process_uses_live_replacement_binary() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installed = temp.path().join("codex-update-manager");
+        fs::write(&installed, b"replacement")?;
+        let deleted = PathBuf::from(format!("{} (deleted)", installed.display()));
+
+        assert_eq!(updater_binary_source_at(&deleted, &installed), installed);
+        Ok(())
     }
 
     #[test]

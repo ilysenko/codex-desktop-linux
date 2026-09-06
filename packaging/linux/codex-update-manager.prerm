@@ -7,8 +7,9 @@ SERVICE_NAME="codex-update-manager.service"
 # itself. Stopping that service from this prerm would terminate the privileged
 # apt/dpkg transaction that is replacing the package, leaving root-owned
 # installer processes behind in the user-service cgroup. Keep the running
-# daemon alive for upgrades; it detects its replaced on-disk binary and exits
-# after the transaction so systemd can restart the new updater.
+# daemon alive for upgrades. After the package command returns, the updater
+# persists Installed state and only then exits on replacement so systemd can
+# restart the new binary.
 case "${1:-}" in
     upgrade)
         exit 0

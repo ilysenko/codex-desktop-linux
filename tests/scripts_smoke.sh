@@ -45,9 +45,6 @@ assert_absent Makefile "compgen -G \"\$\$1\" | sort -V"
 assert_absent launcher/start.sh.template 'local content server'
 assert_contains packaging/linux/control 'official Linux runtime'
 assert_contains packaging/linux/codex-desktop.spec 'official runtime'
-assert_contains packaging/linux/codex-update-manager.prerm 'case "\$\{1:-\}" in'
-assert_contains packaging/linux/codex-update-manager.prerm '^[[:space:]]*upgrade\)'
-assert_contains packaging/linux/codex-update-manager.prerm 'Keep the running'
 assert_contains flake.nix 'systemd util-linux xdg-utils'
 assert_contains packaging/linux/codex-packaged-runtime.sh 'codex-update-manager check-now'
 assert_absent packaging/linux/codex-packaged-runtime.sh '--if-stale'
@@ -115,7 +112,7 @@ for (const architecture of ["amd64", "arm64"]) {
 }
 NODE
 
-node --test launcher/start.test.js scripts/lib/upstream-linux-package.test.js \
+node --test launcher/start.test.js tests/deb-prerm.test.js scripts/lib/upstream-linux-package.test.js \
   scripts/automation/upstream-linux-package-watchdog/test.js \
   scripts/patch-linux-window-ui.test.js scripts/lib/linux-features.test.js
 
