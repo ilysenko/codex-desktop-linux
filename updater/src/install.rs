@@ -1,6 +1,7 @@
 //! Installation helpers for privileged and non-privileged package application.
 
 use anyhow::{Context, Result};
+use std::ffi::OsStr;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -9,10 +10,13 @@ use std::{
 };
 
 #[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
 const PACKAGE_NAME: &str = "codex-desktop";
 const INSTALLED_UPDATER_BINARY: &str = "/usr/bin/codex-update-manager";
+const DELETED_PATH_SUFFIX: &[u8] = b" (deleted)";
 const APT_CANDIDATES: &[&str] = &["/usr/bin/apt", "/bin/apt"];
 const DNF_CANDIDATES: &[&str] = &["/usr/bin/dnf", "/bin/dnf", "/usr/bin/dnf5", "/bin/dnf5"];
 const DPKG_CANDIDATES: &[&str] = &["/usr/bin/dpkg", "/bin/dpkg"];
@@ -249,7 +253,7 @@ pub fn install_pacman(path: &Path) -> Result<()> {
 
 /// Builds the `pkexec` command used for privileged package installation.
 pub fn pkexec_command(current_exe: &Path, package_path: &Path) -> Command {
-    let updater_binary = updater_binary_for_privileged_install(current_exe);
+    let updater_binary = resolve_updater_binary(current_exe);
     let subcommand = match PackageKind::from_path(package_path) {
         PackageKind::Rpm => "install-rpm",
         PackageKind::Deb => "install-deb",
@@ -568,13 +572,47 @@ fn pacman_install_command(path: &Path) -> Command {
     command
 }
 
-fn updater_binary_for_privileged_install(current_exe: &Path) -> PathBuf {
-    let installed = PathBuf::from(INSTALLED_UPDATER_BINARY);
+pub(crate) fn resolve_updater_binary(current_exe: &Path) -> PathBuf {
+    resolve_updater_binary_at(current_exe, Path::new(INSTALLED_UPDATER_BINARY))
+}
+
+pub(crate) fn resolve_updater_binary_for_build(current_exe: &Path) -> PathBuf {
+    resolve_updater_binary_for_build_at(current_exe, Path::new(INSTALLED_UPDATER_BINARY))
+}
+
+fn resolve_updater_binary_at(current_exe: &Path, installed: &Path) -> PathBuf {
     if installed.is_file() {
-        installed
-    } else {
-        current_exe.to_path_buf()
+        return installed.to_path_buf();
     }
+
+    if current_exe.is_file() {
+        return current_exe.to_path_buf();
+    }
+
+    strip_deleted_path_suffix(current_exe)
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| current_exe.to_path_buf())
+}
+
+fn resolve_updater_binary_for_build_at(current_exe: &Path, installed: &Path) -> PathBuf {
+    if current_exe.is_file() {
+        return current_exe.to_path_buf();
+    }
+
+    if let Some(recovered) = strip_deleted_path_suffix(current_exe).filter(|path| path.is_file()) {
+        return recovered;
+    }
+
+    if installed.is_file() {
+        return installed.to_path_buf();
+    }
+
+    current_exe.to_path_buf()
+}
+
+pub(crate) fn strip_deleted_path_suffix(path: &Path) -> Option<PathBuf> {
+    let stripped = path.as_os_str().as_bytes().strip_suffix(DELETED_PATH_SUFFIX)?;
+    Some(PathBuf::from(OsStr::from_bytes(stripped)))
 }
 
 fn deb_package_name(path: &Path) -> Result<String> {
@@ -864,15 +902,86 @@ mod tests {
     }
 
     #[test]
-    fn prefers_installed_updater_path_for_pkexec() {
-        let selected =
-            updater_binary_for_privileged_install(Path::new("/tmp/codex-update-manager-old"));
-        let expected = if Path::new("/usr/bin/codex-update-manager").is_file() {
-            PathBuf::from("/usr/bin/codex-update-manager")
-        } else {
-            PathBuf::from("/tmp/codex-update-manager-old")
-        };
-        assert_eq!(selected, expected);
+    fn updater_binary_prefers_installed_copy() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installed = temp.path().join("installed");
+        let current = temp.path().join("current");
+        fs::write(&installed, b"installed")?;
+        fs::write(&current, b"current")?;
+
+        assert_eq!(resolve_updater_binary_at(&current, &installed), installed);
+        Ok(())
+    }
+
+    #[test]
+    fn updater_binary_recovers_deleted_current_exe_via_installed_copy() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installed = temp.path().join("codex-update-manager");
+        fs::write(&installed, b"installed")?;
+        let deleted = temp.path().join("codex-update-manager (deleted)");
+
+        assert_eq!(resolve_updater_binary_at(&deleted, &installed), installed);
+        Ok(())
+    }
+
+    #[test]
+    fn updater_binary_uses_live_current_exe_without_installed_copy() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installed = temp.path().join("missing-installed");
+        let current = temp.path().join("current");
+        fs::write(&current, b"current")?;
+
+        assert_eq!(resolve_updater_binary_at(&current, &installed), current);
+        Ok(())
+    }
+
+    #[test]
+    fn updater_binary_strips_deleted_suffix_without_installed_copy() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installed = temp.path().join("missing-installed");
+        let current = temp.path().join("current");
+        fs::write(&current, b"current")?;
+        let deleted = PathBuf::from(format!("{} (deleted)", current.display()));
+
+        assert_eq!(resolve_updater_binary_at(&deleted, &installed), current);
+        Ok(())
+    }
+
+    #[test]
+    fn updater_binary_keeps_unresolved_deleted_path() {
+        let current = Path::new("/missing/codex-update-manager (deleted)");
+        let installed = Path::new("/missing/installed-codex-update-manager");
+
+        assert_eq!(resolve_updater_binary_at(current, installed), current);
+    }
+
+    #[test]
+    fn updater_build_prefers_live_current_exe_over_installed_copy() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installed = temp.path().join("installed");
+        let current = temp.path().join("current");
+        fs::write(&installed, b"installed")?;
+        fs::write(&current, b"current")?;
+
+        assert_eq!(
+            resolve_updater_binary_for_build_at(&current, &installed),
+            current
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn updater_build_recovers_replaced_current_exe() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installed = temp.path().join("codex-update-manager");
+        fs::write(&installed, b"replacement")?;
+        let deleted = temp.path().join("codex-update-manager (deleted)");
+
+        assert_eq!(
+            resolve_updater_binary_for_build_at(&deleted, &installed),
+            installed
+        );
+        Ok(())
     }
 
     #[test]

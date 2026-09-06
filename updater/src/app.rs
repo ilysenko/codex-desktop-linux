@@ -4,7 +4,7 @@ use crate::{
     builder, cache_cleanup,
     cli::{Cli, Commands},
     config::{RuntimeConfig, RuntimePaths},
-    install, install_rollback, liveness, logging, notify, rollback,
+    install, install_rollback, liveness, logging, notify, restart, rollback,
     state::{PersistedState, UpdateStatus},
     upstream,
 };
@@ -13,6 +13,9 @@ use chrono::Utc;
 use std::{fs::{self, OpenOptions}, path::Path, time::Duration};
 use tokio::time;
 use tracing::{error, info};
+
+// Nonzero so `Restart=on-failure` relaunches the daemon on the new binary.
+const BINARY_REPLACED_RESTART_EXIT_CODE: i32 = 12;
 
 pub async fn run(cli: Cli) -> Result<()> {
     if let Some(result) = run_privileged_command(&cli.command) {
@@ -64,6 +67,14 @@ async fn daemon(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runt
     checks.tick().await;
     reconcile.tick().await;
     loop {
+        if let Some(installed_binary) = restart::replacement_binary() {
+            info!(
+                installed_binary = %installed_binary.display(),
+                "updater binary was replaced on disk; exiting so systemd restarts the daemon"
+            );
+            std::process::exit(BINARY_REPLACED_RESTART_EXIT_CODE);
+        }
+
         tokio::select! {
             _ = checks.tick() => if let Err(error) = check(config, state, paths).await { error!(?error, "periodic update check failed"); },
             _ = reconcile.tick() => if state.status == UpdateStatus::WaitingForAppExit && !liveness::is_app_running(config)? {

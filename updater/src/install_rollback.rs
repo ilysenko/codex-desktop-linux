@@ -1,13 +1,12 @@
 //! Explicit rollback package installation helpers.
 
-use crate::install::{stable_validated_package, PackageKind};
+use crate::install::{resolve_updater_binary, stable_validated_package, PackageKind};
 use anyhow::{Context, Result};
 use std::{
     path::{Path, PathBuf},
     process::Command,
 };
 
-const INSTALLED_UPDATER_BINARY: &str = "/usr/bin/codex-update-manager";
 const APT_CANDIDATES: &[&str] = &["/usr/bin/apt", "/bin/apt"];
 const DNF_CANDIDATES: &[&str] = &["/usr/bin/dnf", "/bin/dnf", "/usr/bin/dnf5", "/bin/dnf5"];
 const DPKG_CANDIDATES: &[&str] = &["/usr/bin/dpkg", "/bin/dpkg"];
@@ -70,7 +69,7 @@ pub fn install_pacman(path: &Path) -> Result<()> {
 }
 
 pub fn pkexec_command(current_exe: &Path, package_path: &Path) -> Command {
-    let updater_binary = updater_binary_for_privileged_install(current_exe);
+    let updater_binary = resolve_updater_binary(current_exe);
     let subcommand = match PackageKind::from_path(package_path) {
         PackageKind::Rpm => "install-rollback-rpm",
         PackageKind::Deb => "install-rollback-deb",
@@ -179,15 +178,6 @@ fn package_file_name(path: &Path, label: &str) -> Result<String> {
         .with_context(|| format!("{label} package path has no file name"))?
         .to_string_lossy()
         .into_owned())
-}
-
-fn updater_binary_for_privileged_install(current_exe: &Path) -> PathBuf {
-    let installed = PathBuf::from(INSTALLED_UPDATER_BINARY);
-    if installed.is_file() {
-        installed
-    } else {
-        current_exe.to_path_buf()
-    }
 }
 
 fn program_path(candidates: &[&str], fallback: &str) -> PathBuf {
