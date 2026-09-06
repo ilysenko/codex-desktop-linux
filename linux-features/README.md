@@ -105,15 +105,18 @@ allowlisted by the owning build integration.
 Declarative runtime hooks are staged under `codex-app/.codex-linux/`:
 
 - `runtimeHooks.env` writes literal `KEY=VALUE` files consumed by the launcher
-- `runtimeHooks.prelaunch` runs synchronously before the official `ChatGPT`
-  executable starts
+- `runtimeHooks.prelaunch` runs synchronously after launcher hooks have applied
+  their environment and before the official `ChatGPT` executable starts
 - `runtimeHooks.electronArgs` appends one Electron argument per line
 - `runtimeHooks.launcher` runs before final Electron args are built; executable
-  hooks receive current Electron args as argv and can print `env KEY=VALUE` or
-  `electron-arg VALUE` lines
+  hooks receive current Electron args as argv and can print `env KEY=VALUE`,
+  `unset-env KEY`, or `electron-arg VALUE` lines
 - `runtimeHooks.coldStart` runs background hooks after bundled plugin cache sync
-- `runtimeHooks.afterExit` runs after Electron exits while preserving the
-  original Electron exit status
+- `runtimeHooks.exitClaim` runs immediately after Electron exits, before
+  ordered cleanup hooks; use it to close a launchable transition phase
+- `runtimeHooks.afterExit` runs ordered cleanup hooks after Electron exits
+- `runtimeHooks.finalExit` runs lifecycle transitions only after all ordered
+  `afterExit` cleanup hooks complete, while preserving Electron's exit status
 
 Declarative resource targets must point to a file or subdirectory inside the app
 directory, not to the app root itself. Declarative `mode` fields must be quoted
@@ -128,7 +131,7 @@ Runtime hooks receive `CODEX_HOME`, `CODEX_LINUX_APP_DIR`,
 `CODEX_LINUX_APP_STATE_DIR`, `CODEX_LINUX_APP_CACHE_DIR`,
 `CODEX_LINUX_FEATURES_DIR`, and
 `CODEX_LINUX_LAUNCHER_LOG`. Executable hooks also receive
-`CODEX_LINUX_FEATURE_HOOK_PHASE`; after-exit hooks receive
+`CODEX_LINUX_FEATURE_HOOK_PHASE`; exit-claim and after-exit hooks receive
 `CODEX_LINUX_ELECTRON_EXIT_STATUS`. If a feature needs to install a Codex skill
 or other user-home artifact, stage the source with `resources` and copy it from
 `$CODEX_LINUX_FEATURES_DIR/<feature-id>/...` in `runtimeHooks.prelaunch`.

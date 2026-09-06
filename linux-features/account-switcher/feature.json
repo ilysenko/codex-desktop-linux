@@ -1,0 +1,48 @@
+{
+  "id": "account-switcher",
+  "title": "Rapid Account Switcher",
+  "description": "Opt-in per-account Codex profiles with isolated credentials and an experimental shared local thread catalog.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "resources": [
+    {
+      "source": "./shared-state.sh",
+      "target": ".codex-linux/features/account-switcher/shared-state.sh",
+      "mode": "0755"
+    },
+    {
+      "source": "./shared-state-json.js",
+      "target": ".codex-linux/features/account-switcher/shared-state-json.js",
+      "mode": "0755"
+    },
+    {
+      "source": "./shared-state-sqlite.js",
+      "target": ".codex-linux/features/account-switcher/shared-state-sqlite.js",
+      "mode": "0755"
+    }
+  ],
+  "runtimeHooks": {
+    "launcher": {
+      "source": "launcher-hook.sh",
+      "name": "account-switcher-launcher.sh",
+      "mode": "0755"
+    },
+    "prelaunch": {
+      "source": "prelaunch-hook.sh",
+      "name": "account-switcher-prelaunch.sh",
+      "mode": "0755"
+    },
+    "exitClaim": {
+      "source": "exit-claim-hook.sh",
+      "name": "account-switcher-exit-claim.sh",
+      "mode": "0755"
+    },
+    "finalExit": {
+      "source": "after-exit-hook.sh",
+      "name": "account-switcher-final-exit.sh",
+      "mode": "0755"
+    }
+  }
+}

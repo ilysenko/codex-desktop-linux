@@ -215,6 +215,7 @@ requirements, known limitations, configuration, and tests.
 | Feature ID | Purpose | Documentation |
 |---|---|---|
 | `agent-workspace` | Agent-workspace settings and bridge for hidden desktop environments | [Docs](linux-features/agent-workspace/README.md) |
+| `account-switcher` | Rapid per-account profiles with isolated credentials and optional shared local catalog | [Docs](linux-features/account-switcher/README.md) |
 | `api-key-model-visibility` | Show models reported by API-key authenticated compatible providers | [Docs](linux-features/api-key-model-visibility/README.md) |
 | `api-key-service-tier` | Fast/service-tier UI for API-key authenticated compatible providers | [Docs](linux-features/api-key-service-tier/README.md) |
 | `appshots` | Capture and crop the focused Linux window from the composer | [Docs](linux-features/appshots/README.md) |

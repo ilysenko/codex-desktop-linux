@@ -24,7 +24,9 @@ const RUNTIME_HOOK_DIRS = {
   electronArgs: { dir: "electron-args.d", executable: false },
   launcher: { dir: "launcher.d", executable: true },
   coldStart: { dir: "cold-start.d", executable: true },
+  exitClaim: { dir: "exit-claim.d", executable: true },
   afterExit: { dir: "after-exit.d", executable: true },
+  finalExit: { dir: "final-exit.d", executable: true },
 };
 const STAGED_FEATURE_MANIFEST_RELATIVE_PATH = ".codex-linux/linux-features-staged.json";
 const BUILD_INFO_RELATIVE_PATH = ".codex-linux/build-info.json";

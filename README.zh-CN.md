@@ -198,6 +198,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | 扩展 ID | 用途 | 文档 |
 |---|---|---|
 | `agent-workspace` | 隐藏桌面环境中的 agent-workspace 设置和 bridge | [文档](linux-features/agent-workspace/README.md) |
+| `account-switcher` | 快速切换独立账户配置，并可选择共享本地目录 | [文档](linux-features/account-switcher/README.md) |
 | `api-key-model-visibility` | 显示 API-key compatible provider 返回的模型 | [文档](linux-features/api-key-model-visibility/README.md) |
 | `api-key-service-tier` | API-key compatible provider 的 Fast/service-tier UI | [文档](linux-features/api-key-service-tier/README.md) |
 | `appshots` | 从 composer 捕获并裁剪当前 Linux 窗口 | [文档](linux-features/appshots/README.md) |

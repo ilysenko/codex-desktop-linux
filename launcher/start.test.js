@@ -12,6 +12,16 @@ const templatePath = path.join(__dirname, "start.sh.template");
 const bashPath = childProcess.execFileSync("bash", ["-c", "command -v bash"], { encoding: "utf8" }).trim();
 const dirnamePath = childProcess.execFileSync("bash", ["-c", "command -v dirname"], { encoding: "utf8" }).trim();
 
+// Keep launcher tests independent of the environment of the app or agent
+// running the suite. Individual tests set any account-switcher state they need.
+for (const name of Object.keys(process.env)) {
+  if (name.startsWith("CODEX_LINUX_ACCOUNT_SWITCHER_") ||
+      name === "CODEX_ELECTRON_USER_DATA_PATH" ||
+      name === "CODEX_HOME") {
+    delete process.env[name];
+  }
+}
+
 // Launcher tests must never contact the production usage counter. Individual
 // reporting tests opt back in with an isolated fake curl executable.
 process.env.CODEX_LINUX_DISABLE_USAGE_REPORTING = "1";
@@ -43,7 +53,12 @@ function createApp(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
   const launcher = fs.readFileSync(templatePath, "utf8")
     .replaceAll("__CODEX_LINUX_APP_ID__", "codex-desktop")
-    .replaceAll("__CODEX_LINUX_APP_DISPLAY_NAME__", "ChatGPT Community");
+    .replaceAll("__CODEX_LINUX_APP_DISPLAY_NAME__", "ChatGPT Community")
+    .replace(
+      "report_daily_usage() {\n    (\n",
+      "report_daily_usage() {\n    (\n        trap '[ -z \"${CODEX_LINUX_TEST_USAGE_REPORT_DONE:-}\" ] || printf done > \"$CODEX_LINUX_TEST_USAGE_REPORT_DONE\"' EXIT\n",
+    );
+  assert.match(launcher, /CODEX_LINUX_TEST_USAGE_REPORT_DONE/);
   writeExecutable(path.join(root, "start.sh"), launcher);
   for (const relative of ["resources/app.asar", "resources/codex", "resources/rg", "resources/codex-code-mode-host"]) {
     const target = path.join(root, relative);
@@ -89,13 +104,14 @@ printf '<%s>\\n' "$@" >> "$TEST_ROOT/curl-arguments"
   };
 
   for (let launch = 0; launch < 2; launch += 1) {
+    const reportDonePath = path.join(root, `usage-report-done-${launch}`);
     const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
-      env,
+      env: { ...env, CODEX_LINUX_TEST_USAGE_REPORT_DONE: reportDonePath },
       encoding: "utf8",
     });
     assert.equal(result.status, 7);
     assert.equal(result.stderr, "");
-    if (launch === 0) waitForFile(callsPath);
+    waitForFile(reportDonePath);
   }
 
   assert.equal(fs.readFileSync(callsPath, "utf8"), "call\n");
@@ -113,6 +129,7 @@ printf '<%s>\\n' "$@" >> "$TEST_ROOT/curl-arguments"
 test("launcher usage reporting has one opt-out and suppresses curl failures", (t) => {
   const disabledRoot = createApp(t);
   const disabledBin = path.join(disabledRoot, "bin");
+  const disabledReportDone = path.join(disabledRoot, "usage-report-done");
   writeExecutable(
     path.join(disabledBin, "curl"),
     `#!/bin/bash
@@ -124,12 +141,14 @@ printf 'unexpected\\n' >> "$TEST_ROOT/curl-calls"
       ...process.env,
       CODEX_HOME: path.join(disabledRoot, "codex-home"),
       CODEX_LINUX_DISABLE_USAGE_REPORTING: "1",
+      CODEX_LINUX_TEST_USAGE_REPORT_DONE: disabledReportDone,
       PATH: `${disabledBin}:${process.env.PATH}`,
       TEST_ROOT: disabledRoot,
       XDG_STATE_HOME: path.join(disabledRoot, "state"),
     },
     encoding: "utf8",
   });
+  waitForFile(disabledReportDone);
   assert.equal(disabled.status, 7);
   assert.equal(disabled.stderr, "");
   assert.equal(fs.existsSync(path.join(disabledRoot, "curl-calls")), false);
@@ -141,6 +160,7 @@ printf 'unexpected\\n' >> "$TEST_ROOT/curl-calls"
 
   const missingRoot = createApp(t);
   const missingBin = path.join(missingRoot, "bin");
+  const missingReportDone = path.join(missingRoot, "usage-report-done");
   fs.mkdirSync(missingBin, { recursive: true });
   fs.symlinkSync(dirnamePath, path.join(missingBin, "dirname"));
   const missing = childProcess.spawnSync(path.join(missingRoot, "start.sh"), [], {
@@ -148,12 +168,14 @@ printf 'unexpected\\n' >> "$TEST_ROOT/curl-calls"
       ...process.env,
       CODEX_HOME: path.join(missingRoot, "codex-home"),
       CODEX_LINUX_DISABLE_USAGE_REPORTING: "0",
+      CODEX_LINUX_TEST_USAGE_REPORT_DONE: missingReportDone,
       PATH: missingBin,
       TEST_ROOT: missingRoot,
       XDG_STATE_HOME: path.join(missingRoot, "state"),
     },
     encoding: "utf8",
   });
+  waitForFile(missingReportDone);
   assert.equal(missing.status, 7);
   assert.equal(missing.stdout, "");
   assert.equal(missing.stderr, "");
@@ -161,6 +183,7 @@ printf 'unexpected\\n' >> "$TEST_ROOT/curl-calls"
 
   const failingRoot = createApp(t);
   const failingBin = path.join(failingRoot, "bin");
+  const failingReportDone = path.join(failingRoot, "usage-report-done");
   writeExecutable(
     path.join(failingBin, "curl"),
     `#!/bin/bash
@@ -173,12 +196,14 @@ exit 22
       ...process.env,
       CODEX_HOME: path.join(failingRoot, "codex-home"),
       CODEX_LINUX_DISABLE_USAGE_REPORTING: "0",
+      CODEX_LINUX_TEST_USAGE_REPORT_DONE: failingReportDone,
       PATH: `${failingBin}:${process.env.PATH}`,
       TEST_ROOT: failingRoot,
       XDG_STATE_HOME: path.join(failingRoot, "state"),
     },
     encoding: "utf8",
   });
+  waitForFile(failingReportDone);
   assert.equal(failing.status, 7);
   assert.equal(failing.stdout, "");
   assert.equal(failing.stderr, "");
@@ -191,9 +216,11 @@ test("launcher composes declarative hooks and forwards arguments", (t) => {
   fs.writeFileSync(path.join(hooks, "env.d", "fixture.env"), "HOOK_ENV=from-env\n");
   fs.mkdirSync(path.join(hooks, "electron-args.d"), { recursive: true });
   fs.writeFileSync(path.join(hooks, "electron-args.d", "fixture.args"), "# comment\n--feature-arg=one two\n");
-  writeExecutable(path.join(hooks, "prelaunch.d", "fixture.sh"), "#!/bin/bash\nprintf prelaunch > \"$TEST_ROOT/prelaunch\"\n");
-  writeExecutable(path.join(hooks, "launcher.d", "fixture.sh"), "#!/bin/bash\nprintf '%s\\n' 'env LAUNCHER_ENV=from-launcher' 'electron-arg --launcher-arg=value'\n");
-  writeExecutable(path.join(hooks, "after-exit.d", "fixture.sh"), "#!/bin/bash\nprintf after-exit > \"$TEST_ROOT/after-exit\"\n");
+  writeExecutable(path.join(hooks, "prelaunch.d", "fixture.sh"), "#!/bin/bash\nprintf '%s\\n%s\\n' \"$LAUNCHER_ENV\" \"$CODEX_HOME\" > \"$TEST_ROOT/prelaunch\"\n");
+  writeExecutable(path.join(hooks, "launcher.d", "fixture.sh"), "#!/bin/bash\nprintf '%s\\n' 'env LAUNCHER_ENV=from-launcher' \"env CODEX_HOME=$TEST_ROOT/routed-codex-home\" 'electron-arg --launcher-arg=value'\n");
+  writeExecutable(path.join(hooks, "exit-claim.d", "fixture.sh"), "#!/bin/bash\nprintf 'exit-claim\\n' >> \"$TEST_ROOT/lifecycle\"\n");
+  writeExecutable(path.join(hooks, "after-exit.d", "fixture.sh"), "#!/bin/bash\nprintf after-exit > \"$TEST_ROOT/after-exit\"\nprintf 'after-exit\\n' >> \"$TEST_ROOT/lifecycle\"\n");
+  writeExecutable(path.join(hooks, "final-exit.d", "fixture.sh"), "#!/bin/bash\nprintf final-exit > \"$TEST_ROOT/final-exit\"\nprintf 'final-exit\\n' >> \"$TEST_ROOT/lifecycle\"\n");
 
   const env = {
     ...process.env,
@@ -221,8 +248,123 @@ test("launcher composes declarative hooks and forwards arguments", (t) => {
     "codex://thread/123",
     "--new-window",
   ]);
-  assert.equal(fs.readFileSync(path.join(root, "prelaunch"), "utf8"), "prelaunch");
+  assert.equal(fs.readFileSync(path.join(root, "prelaunch"), "utf8"), `from-launcher\n${path.join(root, "routed-codex-home")}\n`);
   assert.equal(fs.readFileSync(path.join(root, "after-exit"), "utf8"), "after-exit");
+  assert.equal(fs.readFileSync(path.join(root, "final-exit"), "utf8"), "final-exit");
+  assert.equal(fs.readFileSync(path.join(root, "lifecycle"), "utf8"), "exit-claim\nafter-exit\nfinal-exit\n");
+});
+
+test("account switcher rejects default user-data overrides loaded from Electron flags", (t) => {
+  const root = createApp(t);
+  const home = path.join(root, "home");
+  const configHome = path.join(home, ".config");
+  const accountRoot = path.join(__dirname, "..", "linux-features", "account-switcher");
+  const featureTarget = path.join(root, ".codex-linux", "features", "account-switcher");
+  fs.mkdirSync(featureTarget, { recursive: true });
+  for (const name of ["shared-state.sh", "shared-state-json.js", "shared-state-sqlite.js"]) {
+    fs.copyFileSync(path.join(accountRoot, name), path.join(featureTarget, name));
+  }
+  fs.mkdirSync(path.join(root, ".codex-linux", "launcher.d"), { recursive: true });
+  fs.copyFileSync(path.join(accountRoot, "launcher-hook.sh"), path.join(root, ".codex-linux", "launcher.d", "account-switcher.sh"));
+  fs.chmodSync(path.join(root, ".codex-linux", "launcher.d", "account-switcher.sh"), 0o755);
+  fs.mkdirSync(path.join(configHome, "codex-desktop"), { recursive: true });
+  fs.writeFileSync(path.join(configHome, "codex-desktop", "account-switcher.active"), "default\nisolated\ndefault\n", { mode: 0o600 });
+  fs.writeFileSync(path.join(configHome, "electron-flags.conf"), "--user-data-dir=/tmp/redirected-default\n");
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    env: { ...process.env, HOME: home, XDG_CONFIG_HOME: configHome, TEST_ROOT: root },
+    encoding: "utf8",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /refusing caller-supplied --user-data-dir for profile default/);
+  assert.equal(fs.existsSync(path.join(root, "environment")), false);
+});
+
+test("account switcher clears an inherited default user-data override", (t) => {
+  const root = createApp(t);
+  const home = path.join(root, "home");
+  const configHome = path.join(home, ".config");
+  const accountRoot = path.join(__dirname, "..", "linux-features", "account-switcher");
+  const featureTarget = path.join(root, ".codex-linux", "features", "account-switcher");
+  fs.mkdirSync(featureTarget, { recursive: true });
+  for (const name of ["shared-state.sh", "shared-state-json.js", "shared-state-sqlite.js"]) {
+    fs.copyFileSync(path.join(accountRoot, name), path.join(featureTarget, name));
+  }
+  fs.mkdirSync(path.join(root, ".codex-linux", "launcher.d"), { recursive: true });
+  fs.copyFileSync(path.join(accountRoot, "launcher-hook.sh"), path.join(root, ".codex-linux", "launcher.d", "account-switcher.sh"));
+  fs.chmodSync(path.join(root, ".codex-linux", "launcher.d", "account-switcher.sh"), 0o755);
+  fs.mkdirSync(path.join(configHome, "codex-desktop"), { recursive: true });
+  fs.writeFileSync(path.join(configHome, "codex-desktop", "account-switcher.active"), "default\nisolated\ndefault\n", { mode: 0o600 });
+  writeExecutable(path.join(root, "ChatGPT"), "#!/bin/bash\nprintf '%s' \"${CODEX_ELECTRON_USER_DATA_PATH-unset}\" > \"$TEST_ROOT/user-data-path\"\nexit 7\n");
+
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    env: {
+      ...process.env,
+      HOME: home,
+      XDG_CONFIG_HOME: configHome,
+      XDG_DATA_HOME: path.join(home, ".local", "share"),
+      CODEX_ELECTRON_USER_DATA_PATH: "/tmp/redirected-default",
+      TEST_ROOT: root,
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 7, result.stderr);
+  assert.equal(fs.readFileSync(path.join(root, "user-data-path"), "utf8"), "unset");
+});
+
+test("account switcher closes the requested handoff before ordinary cleanup", async (t) => {
+  const root = createApp(t);
+  const home = path.join(root, "home");
+  const configHome = path.join(home, ".config");
+  const configDir = path.join(configHome, "codex-desktop");
+  const accountRoot = path.join(__dirname, "..", "linux-features", "account-switcher");
+  const featureTarget = path.join(root, ".codex-linux", "features", "account-switcher");
+  fs.mkdirSync(featureTarget, { recursive: true });
+  fs.copyFileSync(path.join(accountRoot, "shared-state.sh"), path.join(featureTarget, "shared-state.sh"));
+  for (const [directory, source] of [["launcher.d", "launcher-hook.sh"], ["exit-claim.d", "exit-claim-hook.sh"]]) {
+    const target = path.join(root, ".codex-linux", directory, `account-switcher-${source}`);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(accountRoot, source), target);
+    fs.chmodSync(target, 0o755);
+  }
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, "account-switcher.active"), "default\nisolated\ndefault\n", { mode: 0o600 });
+  writeExecutable(path.join(root, ".codex-linux", "after-exit.d", "slow-cleanup"), "#!/bin/bash\nprintf entered > \"$TEST_ROOT/cleanup-entered\"\nsleep 1\n");
+  writeExecutable(path.join(root, "ChatGPT"), `#!/bin/bash
+set -eu
+rest="$(sed 's/^.*) //' "/proc/$PPID/stat")"
+set -- $rest
+owner_start="\${20}"
+owner_boot="$(cat /proc/sys/kernel/random/boot_id)"
+mkdir -p "$XDG_CONFIG_HOME/codex-desktop"
+printf '%s\\n' version=1 phase=requested "owner_pid=$PPID" "owner_start=$owner_start" "owner_boot=$owner_boot" from_id=default from_mode=isolated from_context=default target_id=work target_mode=isolated target_context=default target_previous_mode=isolated target_previous_context=default nonce=test > "$XDG_CONFIG_HOME/codex-desktop/account-switcher.handoff"
+printf launched >> "$TEST_ROOT/chatgpt-launches"
+exit 0
+`);
+  const env = {
+    ...process.env,
+    HOME: home,
+    XDG_CONFIG_HOME: configHome,
+    XDG_DATA_HOME: path.join(home, ".local", "share"),
+    TEST_ROOT: root,
+    // The handoff record, not a stale inherited internal environment, owns
+    // concurrent-launch routing while the original launcher is cleaning up.
+    CODEX_LINUX_ACCOUNT_SWITCHER_PROFILE: "work",
+    CODEX_LINUX_ACCOUNT_SWITCHER_CONTEXT: "shared-local",
+    CODEX_LINUX_ACCOUNT_SWITCHER_CONTEXT_ID: "stale-context",
+  };
+  const first = childProcess.spawn(path.join(root, "start.sh"), [], { env });
+  waitForFile(path.join(root, "cleanup-entered"));
+  const second = childProcess.spawnSync(path.join(root, "start.sh"), [], { env, encoding: "utf8" });
+  assert.notEqual(second.status, 0);
+  assert.match(second.stderr, /account handoff is still active/);
+  assert.equal(fs.readFileSync(path.join(root, "chatgpt-launches"), "utf8"), "launched");
+  const firstStatus = await new Promise((resolve, reject) => {
+    first.once("error", reject);
+    first.once("close", resolve);
+  });
+  assert.equal(firstStatus, 0);
+  assert.match(fs.readFileSync(path.join(configDir, "account-switcher.handoff"), "utf8"), /^phase=cleanup$/m);
 });
 
 test("launcher preserves desktop arguments and exposes the after-exit status", (t) => {

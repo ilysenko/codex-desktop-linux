@@ -344,6 +344,14 @@ run_launcher_hooks() {
                     }
                     export "$payload"
                     ;;
+                unset-env)
+                    name="$payload"
+                    [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+                        printf 'Invalid environment name from %s: %s\n' "$hook" "$payload" >&2
+                        return 1
+                    }
+                    unset "$name"
+                    ;;
                 electron-arg) ELECTRON_ARGS+=("$payload") ;;
                 *) printf 'Unknown launcher hook directive from %s: %s\n' "$hook" "$kind" >&2; return 1 ;;
             esac
@@ -365,8 +373,8 @@ canonicalize_codex_home
 refresh_legacy_bundled_plugin_caches
 load_user_electron_args
 load_electron_args
-run_hook_directory "$HOOK_ROOT/prelaunch.d" prelaunch
 run_launcher_hooks "${ELECTRON_ARGS[@]}" "${ORIGINAL_ARGS[@]}"
+run_hook_directory "$HOOK_ROOT/prelaunch.d" prelaunch
 append_ozone_platform
 
 if [ -f "$HOOK_ROOT/codex-packaged-runtime.sh" ]; then
@@ -379,15 +387,21 @@ fi
 report_daily_usage
 run_hook_directory "$HOOK_ROOT/cold-start.d" cold-start &
 
-if [ ! -d "$HOOK_ROOT/after-exit.d" ] ||
-   ! find "$HOOK_ROOT/after-exit.d" -maxdepth 1 -type f -perm -u+x -print -quit | grep -q .; then
+if { [ ! -d "$HOOK_ROOT/after-exit.d" ] ||
+     ! find "$HOOK_ROOT/after-exit.d" -maxdepth 1 -type f -perm -u+x -print -quit | grep -q .; } &&
+   { [ ! -d "$HOOK_ROOT/exit-claim.d" ] ||
+     ! find "$HOOK_ROOT/exit-claim.d" -maxdepth 1 -type f -perm -u+x -print -quit | grep -q .; } &&
+   { [ ! -d "$HOOK_ROOT/final-exit.d" ] ||
+     ! find "$HOOK_ROOT/final-exit.d" -maxdepth 1 -type f -perm -u+x -print -quit | grep -q .; }; then
     exec "$CHATGPT_BINARY" "${ELECTRON_ARGS[@]}" "${ORIGINAL_ARGS[@]}"
 fi
 
 set +e
 "$CHATGPT_BINARY" "${ELECTRON_ARGS[@]}" "${ORIGINAL_ARGS[@]}"
 status=$?
+run_hook_directory "$HOOK_ROOT/exit-claim.d" exit-claim
 CODEX_LINUX_ELECTRON_EXIT_STATUS="$status" run_hook_directory \
     "$HOOK_ROOT/after-exit.d" after-exit
+run_hook_directory "$HOOK_ROOT/final-exit.d" final-exit
 set -e
 exit "$status"

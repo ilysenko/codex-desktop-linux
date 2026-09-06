@@ -83,8 +83,11 @@ cleanup, supported sessions/architectures, and tests there.
 3. Declarative app resources and launcher hooks are staged.
 4. Remaining legacy stage hooks run.
 5. Native package resources/dependencies/hooks are applied to package staging.
-6. The launcher loads env, prelaunch, Electron-argument, launcher, cold-start,
-   and after-exit hooks.
+6. The launcher loads environment and Electron-argument files, applies
+   launcher-hook environment/argument routing, refreshes narrow legacy plugin
+   caches under the routed `CODEX_HOME`, and then runs prelaunch, packaged
+   runtime, cold-start, exit-claim, after-exit cleanup, and final-exit transition hooks in
+   production order.
 
 The enabled feature snapshot is recorded in build metadata and must match at
 package time. The update-builder includes only enabled descriptors/resources
@@ -147,7 +150,9 @@ a feature removes framework-owned files on the next rebuild.
     "electronArgs": "electron-args",
     "launcher": "launcher.sh",
     "coldStart": "cold-start.sh",
-    "afterExit": "after-exit.sh"
+    "exitClaim": "exit-claim.sh",
+    "afterExit": "after-exit.sh",
+    "finalExit": "final-exit.sh"
   }
 }
 ```
@@ -155,9 +160,12 @@ a feature removes framework-owned files on the next rebuild.
 - `env`: sourced as environment assignments.
 - `prelaunch`: synchronous executable before runtime start.
 - `electronArgs`: one argument per non-comment line.
-- `launcher`: may emit `env KEY=VALUE` or `electron-arg VALUE`.
+- `launcher`: may emit `env KEY=VALUE`, `unset-env KEY`, or `electron-arg VALUE`.
 - `coldStart`: background hook at launch.
+- `exitClaim`: runs immediately after Electron exits and before cleanup hooks.
 - `afterExit`: requires the wrapper to wait, then runs after process exit.
+- `finalExit`: runs after every `afterExit` cleanup hook and owns any
+  ready-checked replacement lifecycle transition.
 
 Launcher hooks receive the Electron arguments already loaded from user and
 feature configuration followed by the original launcher arguments. Other
