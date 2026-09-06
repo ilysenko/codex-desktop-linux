@@ -145,3 +145,38 @@ test("malformed patched host-platform variable relationship is rejected byte-ide
   assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
   assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
 });
+
+const vm = require("node:vm");
+const { applyLinuxComputerUsePluginGatePatch: patchPluginGate } = require("./plugin-gate.js");
+const currentPluginRegistry = 'var defs={computerUse:{name:`computer-use`,installWhenMissing:!0,installWhenMissingRequiresOptIn:!0}},optOut=e=>e,migrate=()=>{};var plugins=[{...defs.computerUse,autoInstallOptOutKey:optOut(defs.computerUse.name),isAvailable:({features:f,platform:p})=>p===`darwin`&&f.computerUse,migrate:migrate},{...defs.computerUse,autoInstallOptOutKey:optOut(defs.computerUse.name),isAvailable:({features:f,platform:p})=>p===`win32`&&f.computerUse}];';
+
+test("current spread registry exposes exactly one Linux plugin without inherited install opt-in", () => {
+  const patched = patchPluginGate(currentPluginRegistry);
+  const registry = vm.runInNewContext(patched + ';plugins');
+  for (const enabled of [false, true]) {
+    const linux = registry.filter(p => p.isAvailable({platform: "linux", features: {computerUse: enabled}}));
+    assert.equal(linux.length, 1);
+    assert.equal(linux[0].name, "computer-use");
+    assert.equal(linux[0].installWhenMissing, true);
+    assert.equal(linux[0].installWhenMissingRequiresOptIn, false);
+  }
+  for (const platform of ["darwin", "win32"]) {
+    assert.equal(registry.filter(p => p.isAvailable({platform, features: {computerUse: true}})).length, 1);
+    assert.equal(registry.filter(p => p.isAvailable({platform, features: {computerUse: false}})).length, 0);
+  }
+  assert.equal(registry[1].installWhenMissingRequiresOptIn, true);
+  assert.equal(patchPluginGate(patched), patched);
+});
+
+test("plugin gate fails closed for missing, ambiguous, or changed availability contracts", () => {
+  const selector = 'function choose(e){if(!((e.platform!==`darwin`&&e.platform!==`linux`)||!e.marketplacePluginNames.includes(`computer-use`)))return e.platform===`darwin`&&e.desktopFeatureAvailability.computerUseNodeRepl?`node-repl`:`legacy-mcp`}';
+  assert.throws(() => patchPluginGate(selector), /found 0/);
+  assert.throws(() => patchPluginGate(currentPluginRegistry + currentPluginRegistry), /found 2/);
+  assert.throws(() => patchPluginGate(currentPluginRegistry.replace('p===`darwin`&&f.computerUse', 'p===`darwin`&&f.computerUse&&f.newGate')), /expression changed/);
+});
+
+test("Linux keeps the legacy MCP skill selector with the current registry", () => {
+  const selector = 'function choose(e){if(!(e.platform!==`darwin`||!e.marketplacePluginNames.includes(`computer-use`)))return e.desktopFeatureAvailability.computerUseNodeRepl?`node-repl`:`legacy-mcp`}';
+  const choose = vm.runInNewContext(patchPluginGate(currentPluginRegistry + selector) + ';choose');
+  assert.equal(choose({platform:"linux", marketplacePluginNames:["computer-use"], desktopFeatureAvailability:{computerUseNodeRepl:true}}), "legacy-mcp");
+});

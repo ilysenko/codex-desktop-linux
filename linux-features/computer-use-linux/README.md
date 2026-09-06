@@ -23,3 +23,10 @@ Validate descriptor ownership and artifact-only staging with:
 ```bash
 node --test linux-features/computer-use-linux/test.js
 ```
+
+The plugin gate supports the current shared-descriptor spread registry. It
+registers the Linux backend through the legacy MCP path and overrides the
+inherited install opt-in requirement on that descriptor. The patch requires
+exactly one recognized availability gate; a patched skill selector alone cannot
+make a missing or changed registry gate count as successful. This does not enable
+native applications in the separate unified CUA JavaScript runtime.
