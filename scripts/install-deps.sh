@@ -4,6 +4,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/linux-target-detect.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/install-deps-rust.sh"
 
 run_privileged() {
     if [ "$(id -u)" -eq 0 ]; then
@@ -15,6 +17,22 @@ run_privileged() {
 
 info() { printf '[deps] %s\n' "$*"; }
 fail() { printf '[deps][ERROR] %s\n' "$*" >&2; exit 1; }
+
+build_path() {
+    printf '%s:%s\n' "$HOME/.cargo/bin" "$PATH"
+}
+
+cargo_works_for_build() {
+    PATH="$(build_path)" cargo --version >/dev/null 2>&1
+}
+
+rustc_works_for_build() {
+    PATH="$(build_path)" rustc --version >/dev/null 2>&1
+}
+
+rustup_available_for_build() {
+    PATH="$(build_path)" command -v rustup >/dev/null 2>&1
+}
 
 install_nodesource_apt() {
     local nodejs_major="${NODEJS_MAJOR:-24}"
@@ -70,19 +88,41 @@ install_zypper() {
 }
 
 install_pacman() {
-    run_privileged pacman -Syu --noconfirm --needed base-devel ca-certificates \
-        curl dpkg git gnupg nodejs npm python rustup tar unzip util-linux xz zstd
+    local -a packages=(
+        base-devel ca-certificates curl dpkg git gnupg nodejs npm python
+        tar unzip util-linux xz zstd
+    )
+    local rust_package
+
+    # Match bootstrap-native's Rust resolution order. A user-local rustup
+    # proxy can shadow a working distro Cargo once $HOME/.cargo/bin is
+    # prepended for the native build.
+    rust_package="$(PATH="$(build_path)" pacman_rust_bootstrap_package)"
+    if [ -n "$rust_package" ]; then
+        packages+=("$rust_package")
+    fi
+
+    if pacman_dependencies_installed "${packages[@]}"; then
+        info 'pacman dependencies already installed; skipping system upgrade.'
+        return 0
+    fi
+
+    run_privileged pacman -Syu --noconfirm --needed "${packages[@]}"
 }
 
 install_rust() {
-    command -v cargo >/dev/null 2>&1 && return 0
-    command -v rustup >/dev/null 2>&1 || {
+    cargo_works_for_build && rustc_works_for_build && return 0
+
+    rustup_available_for_build || {
         info 'Rust is only required for the updater and retained native feature helpers.'
-        info 'Install rustup for your distribution, then rerun this script.'
+        info 'Install Rust or rustup for your distribution, then rerun this script.'
         return 0
     }
-    rustup toolchain install stable --profile minimal
-    rustup default stable
+
+    PATH="$(build_path)" rustup toolchain install stable --profile minimal
+    PATH="$(build_path)" rustup default stable
+    cargo_works_for_build || fail 'Cargo is unavailable after Rust toolchain setup.'
+    rustc_works_for_build || fail 'rustc is unavailable after Rust toolchain setup.'
 }
 
 manager="$(detect_package_manager)"

@@ -37,7 +37,7 @@ function applyPatchTwice(patchFn, source) {
 }
 
 function currentModelFixture() {
-  return "function iti({additionalAvailableModels:e,authMethod:t,availableModels:n,defaultModel:r,enabledReasoningEfforts:i,includeUltraReasoningEffort:a,isCustomModelProvider:o=!1,models:s,useHiddenModels:c}){let l=[],u=null,d=s.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`max`)),f=a&&s.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`ultra`));return s.forEach(r=>{if(ati({additionalAvailableModels:e,authMethod:t,availableModels:n,isCustomModelProvider:o,model:r,useHiddenModels:c})){let e=a?r.supportedReasoningEfforts:r.supportedReasoningEfforts.filter(({reasoningEffort:e})=>e!==`ultra`),n=(t===`copilot`?[e.find(e=>e.reasoningEffort===`medium`)??{reasoningEffort:`medium`,description:`medium effort`}]:e).filter(({reasoningEffort:e})=>cI(e)&&i.has(e)),o={...r,supportedReasoningEfforts:n};l.push(o),r.isDefault&&(u=o)}}),u??=l.find(e=>e.model===r)??null,{models:l,defaultModel:u,hasModelSupportingMaxReasoningEffort:d,hasModelSupportingUltraReasoningEffort:f}}";
+  return "function iti({additionalAvailableModels:e,authMethod:t,availableModels:n,defaultModel:r,enabledReasoningEfforts:i,hasConfiguredModelCatalog:h,includeUltraReasoningEffort:a,isCustomModelProvider:o=!1,models:s,useHiddenModels:c}){let l=[],u=null,d=s.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`max`)),f=a&&s.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`ultra`));return s.forEach(r=>{if(ati({additionalAvailableModels:e,authMethod:t,availableModels:n,hasConfiguredModelCatalog:h,isCustomModelProvider:o,model:r,useHiddenModels:c})){let e=a?r.supportedReasoningEfforts:r.supportedReasoningEfforts.filter(({reasoningEffort:e})=>e!==`ultra`),n=(t===`copilot`?[e.find(e=>e.reasoningEffort===`medium`)??{reasoningEffort:`medium`,description:`medium effort`}]:e).filter(({reasoningEffort:e})=>cI(e)&&i.has(e)),o={...r,supportedReasoningEfforts:n};l.push(o),r.isDefault&&(u=o)}}),u??=l.find(e=>e.model===r)??null,{models:l,defaultModel:u,hasModelSupportingMaxReasoningEffort:d,hasModelSupportingUltraReasoningEffort:f}}";
 }
 
 function captureWarnings(callback) {
@@ -145,7 +145,7 @@ test("partial current drift is reported when the other exact target still applie
         [
           "let defaultServiceTier=null;",
           "function pQ(e,t){return t==null?null:t===`fast`?mQ(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
-          "function tEe(e){return[{description:yQ.standardDescription,iconKind:null,label:yQ.standardLabel,tier:null,value:null},...(e?.serviceTiers??[]).map(e=>({description:eEe(e),iconKind:fQ(e.id,e.name),label:$Te(e),tier:e,value:e.id}))]}",
+          "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>{let n=fQ(t.id,t.name),r=n===`fast`?nQ(e?.model):null;return{description:eEe(t,r),iconKind:n,label:$Te(t),speedMultiplier:r,tier:t,value:t.id}})]}",
           "function mQ(e){return e?.serviceTiers?.find(e=>fQ(e.id,e.name)===`fast`||e.name.trim().toLowerCase()===`priority`)??null}",
         ].join(""),
       );
@@ -271,20 +271,20 @@ test("model list marker warning ignores unrelated app-main chunks", () => {
   }), []);
 });
 
-test("model list marker warning still reports a recognizable unpatchable mapping", () => {
+test("model list marker rejects the superseded pre-catalog signature byte-identically", () => {
   const source =
     "function broken({additionalAvailableModels:e,authMethod:t,availableModels:n,defaultModel:r,enabledReasoningEfforts:i,includeUltraReasoningEffort:a,isCustomModelProvider:o=!1,models:s,useHiddenModels:c}){return s.map(e=>({supportedReasoningEfforts:e.supportedReasoningEfforts,hasModelSupportingUltraReasoningEffort:e.isDefault}))}";
 
-  assert.equal(hasApiKeyModelListMappingShape(source), true);
+  assert.equal(hasApiKeyModelListMappingShape(source), false);
   assert.deepEqual(captureWarnings(() => {
     assert.equal(applyApiKeyModelMarkerPatch(source), source);
-  }), ["WARN: Could not find model list mapping - skipping API key model service tier marker patch"]);
+  }), []);
 });
 
 test("fallback fast tier is synthesized only for API-key model catalog entries", () => {
   const source = [
     "function pQ(e,t){return t==null?null:t===`fast`?mQ(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
-    "function tEe(e){return[{description:yQ.standardDescription,iconKind:null,label:yQ.standardLabel,tier:null,value:null},...(e?.serviceTiers??[]).map(e=>({description:eEe(e),iconKind:fQ(e.id,e.name),label:$Te(e),tier:e,value:e.id}))]}",
+    "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>{let n=fQ(t.id,t.name),r=n===`fast`?nQ(e?.model):null;return{description:eEe(t,r),iconKind:n,label:$Te(t),speedMultiplier:r,tier:t,value:t.id}})]}",
     "function nEe(e,t,n){return e?.find(e=>e.model===t&&hQ(e,n))??null}",
     "function mQ(e){return e?.serviceTiers?.find(e=>fQ(e.id,e.name)===`fast`||e.name.trim().toLowerCase()===`priority`)??null}",
   ].join("");
@@ -295,6 +295,7 @@ test("fallback fast tier is synthesized only for API-key model catalog entries",
   assert.match(patched, /e\?\.codexLinuxApiKeyServiceTierModel!==!0\?null/);
   assert.match(patched, /codexLinuxApiKeyFastTier\(e\)/);
   assert.match(patched, /\?e\.serviceTiers:\[codexLinuxApiKeyFastTier\(e\)\]\)\.filter\(Boolean\)\)\.map/);
+  assert.match(patched, /speedMultiplier:r,tier:t,value:t\.id/);
   assert.doesNotMatch(patched, /\(e\?\.serviceTiers\?\?\[\]\)\.map/);
   assert.doesNotMatch(patched, /\)\?\?null\}function nEe/);
 });
@@ -350,7 +351,7 @@ test("combined patch updates both service tier gate and fallback options", () =>
     "function sxe(e){let t=(0,cxe.c)(6),n=X(os),r=e?.hostId??n,i=Cf(r),a=i?.authMethod===`chatgpt`,o=i?.authMethod??null,s;t[0]!==r||t[1]!==o?(s={authMethod:o,hostId:r},t[0]=r,t[1]=o,t[2]=s):s=t[2];let{data:c,isPending:l}=ye(is,s),u=!!i?.isLoading||a&&l,d=a&&!u&&c!=null&&c?.requirements?.featureRequirements?.fast_mode!==!1,f;return t[3]!==u||t[4]!==d?(f={isServiceTierAllowed:d,isLoading:u},t[3]=u,t[4]=d,t[5]=f):f=t[5],f}",
     currentModelFixture(),
     "function pQ(e,t){return t==null?null:t===`fast`?mQ(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
-    "function tEe(e){return[{description:yQ.standardDescription,iconKind:null,label:yQ.standardLabel,tier:null,value:null},...(e?.serviceTiers??[]).map(e=>({description:eEe(e),iconKind:fQ(e.id,e.name),label:$Te(e),tier:e,value:e.id}))]}",
+    "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>{let n=fQ(t.id,t.name),r=n===`fast`?nQ(e?.model):null;return{description:eEe(t,r),iconKind:n,label:$Te(t),speedMultiplier:r,tier:t,value:t.id}})]}",
     "function mQ(e){return e?.serviceTiers?.find(e=>fQ(e.id,e.name)===`fast`||e.name.trim().toLowerCase()===`priority`)??null}",
   ].join("");
 

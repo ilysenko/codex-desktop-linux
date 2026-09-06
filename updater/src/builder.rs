@@ -170,9 +170,18 @@ async fn read_stream<R: tokio::io::AsyncRead + Unpin>(stream: R) -> Result<Strin
 fn find_package(dist: &Path) -> Result<PathBuf> {
     let mut matches = Vec::new();
     for entry in fs::read_dir(dist).with_context(|| format!("Failed to read {}", dist.display()))? {
-        let path = entry?.path();
+        let entry = entry?;
+        // Package builders may also emit a `latest` symlink. Count only the
+        // actual package files, without following aliases or accepting directories.
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name.ends_with(".deb") || name.ends_with(".rpm") || name.contains(".pkg.tar.") {
+        if name.ends_with(".deb")
+            || name.ends_with(".rpm")
+            || crate::install::is_pacman_package_file_name(name)
+        {
             matches.push(path);
         }
     }
@@ -183,10 +192,132 @@ fn find_package(dist: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::symlink;
+    use tempfile::tempdir;
+
+    #[test]
+    fn find_package_accepts_each_supported_native_format() -> Result<()> {
+        for suffix in [
+            ".deb",
+            ".rpm",
+            ".pkg.tar.zst",
+            ".pkg.tar.xz",
+            ".pkg.tar.gz",
+            ".pkg.tar.bz2",
+            ".pkg.tar.lz",
+            ".pkg.tar.lz4",
+            ".pkg.tar.lz5",
+        ] {
+            let dist = tempdir()?;
+            let package = dist.path().join(format!("codex-desktop-1{suffix}"));
+            fs::write(&package, b"package fixture")?;
+            assert_eq!(find_package(dist.path())?, package);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn find_package_ignores_package_named_directories() -> Result<()> {
+        let dist = tempdir()?;
+        let package = dist.path().join("codex-desktop-1.deb");
+        fs::write(&package, b"package fixture")?;
+        for name in ["staging.deb", "staging.rpm", "staging.pkg.tar.zst"] {
+            fs::create_dir(dist.path().join(name))?;
+        }
+        assert_eq!(find_package(dist.path())?, package);
+        Ok(())
+    }
+
+    #[test]
+    fn find_package_ignores_sidecars_and_unrelated_files() -> Result<()> {
+        let dist = tempdir()?;
+        let package = dist.path().join("codex-desktop-1.pkg.tar.zst");
+        fs::write(&package, b"package fixture")?;
+        for name in [
+            "codex-desktop-1.pkg.tar.zst.sig",
+            "codex-desktop-1.pkg.tar.zst.sha256",
+            "codex-desktop-1.pkg.tar.zst.part",
+            "report.pkg.tar.json",
+            "codex-desktop-1.deb.sig",
+            "codex-desktop-1.rpm.sig",
+            "build.log",
+        ] {
+            fs::write(dist.path().join(name), b"not a package")?;
+        }
+        assert_eq!(find_package(dist.path())?, package);
+        Ok(())
+    }
+
+    #[test]
+    fn find_package_rejects_missing_or_symlink_only_packages() -> Result<()> {
+        let root = tempdir()?;
+        let dist = root.path().join("dist");
+        fs::create_dir(&dist)?;
+        assert_eq!(
+            find_package(&dist).unwrap_err().to_string(),
+            "expected one rebuilt package, found 0"
+        );
+
+        let outside = root.path().join("outside.pkg.tar.zst");
+        fs::write(&outside, b"outside fixture")?;
+        symlink(&outside, dist.join("codex-desktop-latest.pkg.tar.zst"))?;
+        assert_eq!(
+            find_package(&dist).unwrap_err().to_string(),
+            "expected one rebuilt package, found 0"
+        );
+        Ok(())
+    }
 
     #[test]
     fn workspace_component_never_contains_separators() {
         assert_eq!(safe_component("26.1/../../x"), "26.1_.._.._x");
+    }
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "codex-find-package-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos(),
+        ));
+        fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn find_package_ignores_latest_alias_symlink() {
+        // build-pacman.sh writes codex-desktop-latest.pkg.tar.zst as a symlink
+        // next to the real artifact; it must not count as a second package.
+        let dist = scratch_dir("latest-alias");
+        let real = dist.join("codex-desktop-2026.09.03.120000-1-x86_64.pkg.tar.zst");
+        fs::write(&real, b"package").expect("real package");
+        std::os::unix::fs::symlink(
+            real.file_name().expect("file name"),
+            dist.join("codex-desktop-latest.pkg.tar.zst"),
+        )
+        .expect("latest symlink");
+
+        let found = find_package(&dist).expect("exactly one real package");
+        assert_eq!(found, real);
+
+        fs::remove_dir_all(&dist).expect("cleanup");
+    }
+
+    #[test]
+    fn find_package_still_rejects_two_real_packages() {
+        let dist = scratch_dir("two-real");
+        fs::write(dist.join("codex-desktop-2026.09.03.120000-1-x86_64.pkg.tar.zst"), b"a")
+            .expect("first package");
+        fs::write(dist.join("codex-desktop-2026.09.03.130000-1-x86_64.pkg.tar.zst"), b"b")
+            .expect("second package");
+
+        let error = find_package(&dist).expect_err("ambiguous dist must fail");
+        assert!(error.to_string().contains("found 2"), "unexpected error: {error}");
+
+        fs::remove_dir_all(&dist).expect("cleanup");
     }
 
     #[test]

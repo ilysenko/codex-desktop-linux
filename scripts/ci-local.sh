@@ -26,10 +26,19 @@ Targets:
   deb                        Build and inspect the Debian package
   rpm                        Build and inspect the RPM package
   pacman                     Build and inspect the pacman package
-  install-deps               Test install-deps on Ubuntu 22.04, Ubuntu 24.04, and Debian 12
+  install-deps               Test install-deps on apt images and the Arch Rust matrix
   install-deps:ubuntu-22.04  Test install-deps on one apt image
   install-deps:ubuntu-24.04  Test install-deps on one apt image
   install-deps:debian-12     Test install-deps on one apt image
+  install-deps:arch-rust     Test the full pacman Rust state matrix
+  install-deps:arch-working-distro-cargo
+                             Test pacman with working distro Cargo
+  install-deps:arch-rustup-without-toolchain
+                             Test pacman with rustup but no toolchain
+  install-deps:arch-neither-rust-nor-rustup
+                             Test pacman with no Rust or rustup
+  install-deps:arch-shadowed-user-local-proxy
+                             Test pacman with system Cargo shadowed by user rustup
   nix                        Run the heavy Nix flake build checks
   upstream                   Build the app from the signed official Linux package
 
@@ -106,6 +115,7 @@ mount_github_summary_args() {
 run_container_job() {
     local job="$1"
     local image_key="$2"
+    local install_deps_case="${3:-${CI_INSTALL_DEPS_CASE:-}}"
     local engine
     local image
     engine="$(container_engine)"
@@ -132,6 +142,10 @@ run_container_job() {
         -v "$CI_CACHE_DIR:/ci-cache"
         -w /work
     )
+
+    if [ -n "$install_deps_case" ]; then
+        args+=(-e "CI_INSTALL_DEPS_CASE=$install_deps_case")
+    fi
 
     # Linked worktrees keep only a pointer in /work/.git. Mount the shared Git
     # metadata at its original absolute path so git ls-files/diff work inside
@@ -182,6 +196,7 @@ run_target() {
             run_target install-deps:ubuntu-22.04
             run_target install-deps:ubuntu-24.04
             run_target install-deps:debian-12
+            run_target install-deps:arch-rust
             ;;
         install-deps:ubuntu-22.04)
             run_container_job install-deps ubuntu-22.04
@@ -191,6 +206,21 @@ run_target() {
             ;;
         install-deps:debian-12)
             run_container_job install-deps debian-12
+            ;;
+        install-deps:arch-rust)
+            run_container_job install-deps archlinux-base-devel
+            ;;
+        install-deps:arch-working-distro-cargo)
+            run_container_job install-deps archlinux-base-devel working-distro-cargo
+            ;;
+        install-deps:arch-rustup-without-toolchain)
+            run_container_job install-deps archlinux-base-devel rustup-without-toolchain
+            ;;
+        install-deps:arch-neither-rust-nor-rustup)
+            run_container_job install-deps archlinux-base-devel neither-rust-nor-rustup
+            ;;
+        install-deps:arch-shadowed-user-local-proxy)
+            run_container_job install-deps archlinux-base-devel shadowed-user-local-proxy
             ;;
         *)
             usage >&2

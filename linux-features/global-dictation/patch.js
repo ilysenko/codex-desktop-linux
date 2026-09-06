@@ -291,10 +291,17 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
       source,
       registerPattern,
       (original, _functionName, _bareTest, _bareSupport, _bareRegister, callbacksVar) => {
+        const ownershipCallbacksPattern = new RegExp(
+          `let (${IDENT})=n\\?\\.ownership,(${IDENT})=t\\.onReleased,(${IDENT})=t\\.onCancelled,(${IDENT})=\\1==null\\?t:\\{` +
+            `onPressed:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&t\\.onPressed\\(\\)\\},` +
+            `onReleased:\\2==null\\?void 0:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&\\2\\(\\)\\},` +
+            `onCancelled:\\3==null\\?void 0:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&\\3\\(\\)\\}\\}`,
+          "u",
+        );
         const withUnavailable = replaceUnique(
           original,
-          /onReleased:i==null\?void 0:\(\)=>\{r\.isOwner\(\)&&i\(\)\}\}/u,
-          "onReleased:i==null?void 0:()=>{r.isOwner()&&i()},onUnavailable:t.onUnavailable}",
+          ownershipCallbacksPattern,
+          (match) => `${match.slice(0, -1)},onUnavailable:t.onUnavailable}`,
           "ownership callback propagation",
         );
         return withUnavailable.replace(
@@ -354,13 +361,14 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
     );
 
     const holdRegistration = new RegExp(
-      `${registerFunctionPattern}\\(e,\\{onPressed:\\(\\)=>\\{this\\.handleHoldHotkeyPressed\\(\\)\\},onReleased:\\(\\)=>\\{this\\.handleHoldHotkeyReleased\\(\\)\\}\\},\\{ownership:(${IDENT})\\}\\)`,
+      `${registerFunctionPattern}\\(e,\\{(onPressed:\\(\\)=>\\{this\\.handleHoldHotkeyPressed\\(\\)\\},onReleased:\\(\\)=>\\{this\\.handleHoldHotkeyReleased\\(\\)\\},onCancelled:\\(\\)=>\\{[\\s\\S]{0,800}?\\})\\},\\{ownership:(${IDENT})(,bareModifierTrigger:\`cancellablePress\`)\\}\\)`,
       "u",
     );
     patched = replaceUnique(
       patched,
       holdRegistration,
-      (_original, ownershipVar) => `${registerFunction}(e,{onPressed:()=>{this.handleHoldHotkeyPressed()},onReleased:()=>{this.handleHoldHotkeyReleased()},onUnavailable:n=>{this.handleLinuxHotkeyUnavailable(\`hold\`,n)}},{ownership:${ownershipVar}})`,
+      (_original, callbacks, ownershipVar, extraOptions) =>
+        `${registerFunction}(e,{${callbacks},onUnavailable:n=>{this.handleLinuxHotkeyUnavailable(\`hold\`,n)}},{ownership:${ownershipVar}${extraOptions}})`,
       "hold hotkey registration",
     );
 

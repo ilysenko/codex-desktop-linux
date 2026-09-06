@@ -48,11 +48,28 @@ with `#` are ignored. App-specific flags are followed by enabled feature flags
 and explicit command-line arguments, so a later explicit argument can override
 an earlier setting.
 
-To force native Wayland rendering without editing a generated desktop entry:
+The official Electron runtime defaults to the X11 Ozone backend, so without a
+flag a Wayland session runs the app through XWayland, and a compositor whose
+XWayland does not scale clients draws the window at 1x on a HiDPI output. The
+launcher therefore appends `--ozone-platform=wayland` when `WAYLAND_DISPLAY`
+names a compositor socket with a listener (checked through `ss` where iproute2
+is available) and the session is not X11. That switch has no
+fallback, which is why the socket is confirmed first, and sessions known to
+misbehave on the Wayland backend keep the X11 default: ChromeOS Crostini
+(Sommelier, read from the environment or the systemd user manager), GNOME
+Wayland with more than one connected monitor, and WSLg. Any explicit selection
+wins: a command-line argument, either flag file, a feature argument, or a
+launcher hook. This runtime does not accept `--ozone-platform-hint` or
+`ELECTRON_OZONE_PLATFORM_HINT`.
+
+`CODEX_OZONE_PLATFORM=x11` or `CODEX_OZONE_PLATFORM=wayland` pins a backend
+ahead of that detection while still yielding to an explicit flag; the Nix
+wrapper sets `x11` so its `NIXOS_OZONE_WL` opt-in stays authoritative. To pin a
+backend for every launch without editing a generated desktop entry:
 
 ```bash
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/codex-desktop"
-printf '%s\n' '--ozone-platform=wayland' > \
+printf '%s\n' '--ozone-platform=x11' > \
   "${XDG_CONFIG_HOME:-$HOME/.config}/codex-desktop/electron-flags.conf"
 ```
 
@@ -95,6 +112,58 @@ parallel sessions.
 
 In the desktop menu, the custom build is **ChatGPT Community** with a blue `C`;
 the unqualified **ChatGPT** entry is OpenAI's package.
+
+## AppImage opens from Flatpak Chrome but the extension cannot connect
+
+The optional `flatpak-chrome-native-messaging` feature supports the
+**AppImage + Flatpak Google Chrome (`com.google.Chrome`)** combination. Enable
+it before building the AppImage:
+
+```json
+{
+  "enabled": ["flatpak-chrome-native-messaging"]
+}
+```
+
+Fully exit ChatGPT Community and Chrome after installing the rebuilt AppImage.
+Start ChatGPT Community first, then reopen Chrome.
+
+In [issue #1434](https://github.com/ilysenko/codex-desktop-linux/issues/1434),
+**Open the app** launches Community, while the extension reports **Native
+transport disconnected** and Settings > Computer use > Google Chrome shows
+**Not installed**. Opening a URI only verifies the desktop link handler; it
+does not verify the extension's native-messaging handshake.
+
+Flatpak isolates the browser's configuration and host access. Its ability to
+open a URI through a portal does not establish access to a native host; see the
+[Flatpak sandbox documentation](https://docs.flatpak.org/en/latest/sandbox-permissions.html).
+The feature installs a private native-host manifest and Bash wrapper under
+`~/.var/app/com.google.Chrome/config/google-chrome/NativeMessagingHosts/`.
+The wrapper forwards the binary native-messaging stream to an authenticated
+`127.0.0.1` relay. The relay runs the exact official host selected by the
+upstream runtime registry outside the sandbox. It does not add a Flatpak
+override or copy the official host into the sandbox.
+
+To identify this case, open `chrome://version` in the browser that has the
+extension and inspect **Executable Path** and **Profile Path**. Check the
+Flatpak installation with:
+
+```bash
+flatpak info com.google.Chrome
+```
+
+An installed Flatpak does not prove that the current browser is using it; check
+the browser paths as well, especially when native Chrome is also installed.
+
+The launcher also points the upstream Chrome diagnostics at the Flatpak profile
+and manifest. If Settings still shows **Not installed**, verify that the
+extension is installed in the same Flatpak profile shown by `chrome://version`,
+then restart both applications in that order. If the problem persists, include
+both application and browser versions, the enabled feature list, and the
+extension error in the issue. Redact personal directory names from paths before
+sharing them.
+
+The legacy plugin-cache repair below addresses a different migration problem.
 
 ## Browser or Chrome plugin is visible but cannot connect
 

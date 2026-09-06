@@ -17,6 +17,7 @@ const PATCHED_MODEL_MARKER = new RegExp(`${MODEL_MARKER}:${JS_IDENT}===\\\`apike
 const MODEL_LIST_MAPPING_SHAPE = new RegExp(
   `function ${JS_IDENT}\\(\\{additionalAvailableModels:${JS_IDENT},authMethod:${JS_IDENT},availableModels:${JS_IDENT},` +
     `defaultModel:${JS_IDENT},enabledReasoningEfforts:${JS_IDENT},` +
+    `hasConfiguredModelCatalog:${JS_IDENT},` +
     `includeUltraReasoningEffort:${JS_IDENT},isCustomModelProvider:${JS_IDENT}=!1,` +
     `models:${JS_IDENT},useHiddenModels:${JS_IDENT}\\}\\)` +
     `\\{[\\s\\S]{0,3000}?supportedReasoningEfforts[\\s\\S]{0,1200}?hasModelSupportingUltraReasoningEffort`,
@@ -64,6 +65,7 @@ function applyApiKeyModelMarkerPatch(source) {
   const modelListPattern = new RegExp(
     `(function ${JS_IDENT}\\(\\{additionalAvailableModels:${JS_IDENT},authMethod:(${JS_IDENT}),availableModels:${JS_IDENT},` +
       `defaultModel:${JS_IDENT},enabledReasoningEfforts:${JS_IDENT},` +
+      `hasConfiguredModelCatalog:${JS_IDENT},` +
       `includeUltraReasoningEffort:${JS_IDENT},isCustomModelProvider:${JS_IDENT}=!1,` +
       `models:${JS_IDENT},useHiddenModels:${JS_IDENT}\\}\\)` +
       `\\{[\\s\\S]{0,1800}?[,;]${JS_IDENT}=\\{\\.\\.\\.${JS_IDENT},supportedReasoningEfforts:${JS_IDENT})(\\})`,
@@ -97,6 +99,17 @@ function matchesApiKeyServiceTierModelContract(source) {
   return PATCHED_MODEL_MARKER.test(source) || hasApiKeyModelListMappingShape(source);
 }
 
+function currentFallbackOptionsPattern(flags = "") {
+  return new RegExp(
+    `\\.\\.\\.\\((${JS_IDENT})\\?\\.serviceTiers\\?\\?\\[\\]\\)\\.map\\((${JS_IDENT})=>\\{` +
+      `let (${JS_IDENT})=${JS_IDENT}\\(\\2\\.id,\\2\\.name\\),` +
+      `(${JS_IDENT})=\\3===\\\`fast\\\`\\?${JS_IDENT}\\(\\1\\?\\.model\\):null;` +
+      `return\\{description:${JS_IDENT}\\(\\2,\\4\\),iconKind:\\3,label:${JS_IDENT}\\(\\2\\),` +
+      `speedMultiplier:\\4,tier:\\2,value:\\2\\.id\\}\\}\\)`,
+    flags,
+  );
+}
+
 function matchesFallbackFastTierContract(source) {
   if (hasCompleteFallbackFastTierPatch(source)) {
     return true;
@@ -106,12 +119,7 @@ function matchesFallbackFastTierContract(source) {
     `function ${JS_IDENT}\\(e\\)\\{return e\\?\\.serviceTiers\\?\\.find\\(e=>` +
       `${JS_IDENT}\\(e\\.id,e\\.name\\)===\\\`fast\\\`\\|\\|e\\.name\\.trim\\(\\)\\.toLowerCase\\(\\)===\\\`priority\\\`\\)\\?\\?null\\}`,
   );
-  const optionsShape = new RegExp(
-    `\\.\\.\\.\\(${JS_IDENT}\\?\\.serviceTiers\\?\\?\\[\\]\\)\\.map\\(${JS_IDENT}=>\\(\\{` +
-      `description:${JS_IDENT}\\(${JS_IDENT}\\),iconKind:${JS_IDENT}\\(${JS_IDENT}\\.id,${JS_IDENT}\\.name\\),` +
-      `label:${JS_IDENT}\\(${JS_IDENT}\\),tier:${JS_IDENT},value:${JS_IDENT}\\.id\\}\\)\\)`,
-  );
-  return fastResolverShape.test(source) && optionsShape.test(source);
+  return fastResolverShape.test(source) && currentFallbackOptionsPattern().test(source);
 }
 
 function hasCompleteFallbackFastTierPatch(source) {
@@ -153,15 +161,13 @@ function applyFallbackFastTierPatch(source) {
     `function $1(e){return e?.serviceTiers?.find(e=>$2(e.id,e.name)===\`fast\`||e.name.trim().toLowerCase()===\`priority\`)??${PATCH_MARKER}(e)}`,
   );
 
-  const optionsPatch = new RegExp(
-    `\\.\\.\\.\\((${JS_IDENT})\\?\\.serviceTiers\\?\\?\\[\\]\\)\\.map\\((${JS_IDENT})=>\\(\\{` +
-      `description:(${JS_IDENT})\\(\\2\\),iconKind:(${JS_IDENT})\\(\\2\\.id,\\2\\.name\\),` +
-      `label:(${JS_IDENT})\\(\\2\\),tier:\\2,value:\\2\\.id\\}\\)\\)`,
-    "g",
-  );
+  const optionsPatch = currentFallbackOptionsPattern("g");
   patched = patched.replace(
     optionsPatch,
-    `...(($1?.serviceTiers?.length?$1.serviceTiers:[${PATCH_MARKER}($1)]).filter(Boolean)).map($2=>({description:$3($2),iconKind:$4($2.id,$2.name),label:$5($2),tier:$2,value:$2.id}))`,
+    (match, modelVar) => match.replace(
+      `...(${modelVar}?.serviceTiers??[])`,
+      `...((${modelVar}?.serviceTiers?.length?${modelVar}.serviceTiers:[${PATCH_MARKER}(${modelVar})]).filter(Boolean))`,
+    ),
   );
 
   if (hasCompleteFallbackFastTierPatch(patched)) {

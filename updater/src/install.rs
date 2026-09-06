@@ -787,7 +787,7 @@ fn strip_pacman_package_suffix(file_name: &str) -> Option<&str> {
     })
 }
 
-fn is_pacman_package_file_name(file_name: &str) -> bool {
+pub(crate) fn is_pacman_package_file_name(file_name: &str) -> bool {
     strip_pacman_package_suffix(file_name).is_some()
 }
 

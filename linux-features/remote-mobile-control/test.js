@@ -66,10 +66,14 @@ const OLD_REMOTE_LOAD_GATE_ASSET =
   "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~hm0a50up-test.js";
 const OLD_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
-const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
+const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET = "app-primary-a0bff570446b.js";
 
 function syntheticReasoningSummaryTurnStartBundle() {
   return "async function yY(e,t,n){let s=n,D=n.latestThreadSettings,ee=n.initialParams,me=!fm(e.getHostId());let Ee=e.getDefaultFeatureOverride(vJ)===!0,De=ee?.summary??`none`;D?.summary!==void 0&&(De=D.summary),Ee&&(De=`detailed`),s.summary!==void 0&&(De=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{concurrentReasoningSummariesFeatureOverrideEnabled:Ee,summary:De}});return{featureOverride:Ee,summary:De}}";
+}
+
+function syntheticCurrentReasoningSummaryTurnStartBundle() {
+  return "async function HWt(e,t,n,r,i,a,o){let s=n.request,N=a.latestThreadSettings,S=a.initialParams,ye=N?.summary??`none`;S?.summary!==void 0&&(ye=S.summary),o.reasoningSummaryOverride!=null&&(ye=o.reasoningSummaryOverride),s.summary!==void 0&&(ye=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{summary:ye}});return{summary:ye}}async function QWt(e,t,n,r,i,a){return await HWt(e,t,n,r,i,a,{canUseProjectlessWorkspace:!gh(e.getHostId())||a.mode===`durable`||!1,canMaterializeCodexHomeRoots:!gh(e.getHostId())&&!0,reasoningSummaryOverride:e.getDefaultFeatureOverride(`concurrent_reasoning_summaries`)===!0?`detailed`:null})}";
 }
 
 test("remote mobile README assigns every descriptor to one control topology", () => {
@@ -271,7 +275,7 @@ function syntheticLegacyWslAppServerLaunchBundle() {
 function syntheticCurrentLocalAppServerLaunchBundle() {
   return [
     "var Fz=`Codex Desktop`,Iz=[`-c`,`features.code_mode_host=true`],Lz=[{configKey:`chatgpt_base_url`,envVar:`CODEX_APP_SERVER_CHATGPT_BASE_URL`},{configKey:`openai_base_url`,envVar:`CODEX_APP_SERVER_OPENAI_BASE_URL`}];",
-    "function uB(){return[...Iz,...Lz.flatMap(({configKey:e,envVar:t})=>{let n=process.env[t]?.trim();return n==null||n===``?[]:[`-c`,`${e}=${JSON.stringify(n)}`]}),`app-server`,`--analytics-default-enabled`]}",
+    "function uB(){let e=Lz.flatMap(({configKey:e,envVar:t})=>{let n=process.env[t]?.trim();return n==null||n===``?[]:[`-c`,`${e}=${JSON.stringify(n)}`]});return e.length===0?[...Iz,`app-server`,`--analytics-default-enabled`]:[`app-server`,...Iz,...e,`--analytics-default-enabled`]}",
   ].join("");
 }
 
@@ -335,10 +339,16 @@ function syntheticCurrentRemoteNotificationLifecycleBundle() {
     "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
     "function xm(e,t,n,r){let i=e.items.find(e=>e.id===t);return i?i.type===n?i:(r.error(`Item has unexpected type`,{safe:{itemId:t,type:i.type,expectedType:n},sensitive:{}}),null):(r.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}}),null)}",
     "function Sm(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
-    "function $dt(e,t){let{manager:n,notificationContext:r,productPolicy:i,createId:a}=e;switch(t.method){case`turn/started`:{let{threadId:o,turn:s}=t.params,c=Ul(o),l=r.threadStore.conversations.get(c);if(l==null){n.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:c},sensitive:{}});break}n.updateConversationState(c,e=>{let t=e.turns.find(e=>e.turnId===s.id);t==null&&(t={turnId:s.id,status:s.status,items:[]},e.turns.push(t)),t.status=s.status});break}case`turn/completed`:{let{threadId:a,turn:o}=t.params,s=Ul(a);if(!r.threadStore.conversations.has(s)){i.dropTurnAutomationPolicy(n.getHostId(),a,o.id),r.unread.discardTurn(s,o.id),n.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}n.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===o.id);t&&(t.status=o.status)});break}}}",
-    "function Sdt(e,t){let{manager:n,notificationContext:r,productPolicy:i}=e;switch(t.method){case`item/started`:{let{item:a,threadId:o,turnId:s,startedAtMs:c}=t.params,l=Ul(o);if(!r.threadStore.conversations.has(l)){n.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,e=>{let t=e.turns.find(e=>e.turnId===s);t&&Sm(t,{...a,completed:!1,startedAtMs:c})});break}case`item/completed`:{let{item:a,threadId:o,turnId:s,completedAtMs:c}=t.params;a.type===`commandExecution`&&r.itemStreamState.clearItemTerminalInputBuffer(Ul(o),a.id);let l=Ul(o),u=r.threadStore.conversations.get(l);if(u==null){n.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,t=>{let o=t.turns.find(e=>e.turnId===s);if(!o)return;let d={...a,completed:!0,completedAtMs:c};!(a.type!==`subAgentActivity`&&(a.type!==`sleep`||t.mode!==`durable`)&&!xm(o,a.id,a.type,n.logger))&&Sm(o,d)});break}}}",
-    "function tLn(e,t){let{manager:n,notificationContext:r,productPolicy:i}=e;if(!(r.streamState.shouldIgnoreThreadMutationAsFollower(t.method,t.params)||r.resumeNotificationBuffer.buffer(t)||r.threadStartedNotificationDeferral.bufferNotification(t)||i.shouldIgnoreNotification(n,t))){switch(t.method){case`turn/started`:case`turn/completed`:if($dt(e,t)===`deferred`)return;break;case`item/started`:case`item/completed`:if(Sdt(e,t)===`deferred`)return;break}r.events.emitNotification(t)}}",
+    "function $dt(e,t,n){let{manager:r,notificationContext:i,automationTurns:a,createId:o}=e;switch(t.method){case`turn/started`:{let{threadId:n,turn:a}=t.params,s=Ul(n),c=i.threadStore.conversations.get(s);if(c==null){r.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}r.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===a.id);t==null&&(t={turnId:a.id,status:a.status,items:[]},e.turns.push(t)),t.status=a.status});break}case`turn/completed`:{let{threadId:o,turn:s}=t.params,c=Ul(o);if(!i.threadStore.conversations.has(c)){a.delete(r.getHostId(),o,s.id),i.unread.discardTurn(c,s.id),r.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:c},sensitive:{}});break}r.updateConversationState(c,e=>{let t=e.turns.find(e=>e.turnId===s.id);t&&(t.status=s.status)});break}}}",
+    "function Sdt(e,t){let{manager:n,notificationContext:r,createId:i}=e;switch(t.method){case`item/started`:{let{item:a,threadId:o,turnId:s,startedAtMs:c}=t.params,l=Ul(o);if(!r.threadStore.conversations.has(l)){n.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,e=>{let t=e.turns.find(e=>e.turnId===s);t&&Sm(t,{...a,completed:!1,startedAtMs:c})});break}case`item/completed`:{let{item:a,threadId:o,turnId:s,completedAtMs:c}=t.params;let l=Ul(o);if(a.type===`commandExecution`&&r.itemStreamState.clearItemTerminalInputBuffer(l,a.id),r.threadStore.conversations.get(l)==null){n.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,t=>{let o=t.turns.find(e=>e.turnId===s);if(!o)return;let d={...a,completed:!0,completedAtMs:c};Sm(o,d)});break}}}",
+    "function tLn(e,t,o){let{manager:n,notificationContext:r}=e;if(!(r.streamState.shouldIgnoreThreadMutationAsFollower(t.method,t.params,`notification`)||r.resumeNotificationBuffer.buffer(t,o)||r.threadStartedNotificationDeferral.bufferNotification(t,o)||o?.())){switch(t.method){case`turn/started`:case`turn/completed`:if($dt(e,t,o)===`deferred`)return;break;case`item/started`:case`item/completed`:if(Sdt(e,t)===`deferred`)return;break}r.events.emitNotification(t)}}",
   ].join("");
+}
+
+function syntheticCurrentRemoteNotificationReductionBundle() {
+  const source = syntheticCurrentRemoteNotificationLifecycleBundle();
+  return source.slice(0, source.indexOf("function Of(")) +
+    source.slice(source.indexOf("function xm("));
 }
 
 function syntheticRemoteTerminalStatusBundle() {
@@ -1205,6 +1215,32 @@ test("Linux remote mobile app-server launch proxies Desktop RPCs to the declarat
   ]);
 });
 
+test("Linux remote mobile app-server launch preserves current configured-base argument order", () => {
+  const patched = applyLinuxRemoteMobileAppServerRemoteControlPatch(
+    syntheticCurrentLocalAppServerLaunchBundle(),
+  );
+  const context = {
+    JSON,
+    module: { exports: {} },
+    process: {
+      env: { CODEX_APP_SERVER_CHATGPT_BASE_URL: "https://example.test" },
+      platform: "linux",
+    },
+  };
+
+  vm.runInNewContext(`${patched};module.exports=uB;`, context);
+
+  assert.deepEqual(Array.from(context.module.exports()), [
+    "app-server",
+    "-c",
+    "features.code_mode_host=true",
+    "-c",
+    'chatgpt_base_url="https://example.test"',
+    "--remote-control",
+    "--analytics-default-enabled",
+  ]);
+});
+
 test("Linux remote mobile app-server launch rejects an incomplete local patch marker", () => {
   const source = "globalThis.codexLinuxRemoteMobileLocalAppServerArgs=true;";
 
@@ -1273,65 +1309,56 @@ test("Linux remote mobile app-server launch keeps a leading use strict directive
   assert.equal(applyLinuxRemoteMobileAppServerRemoteControlPatch(patched), patched);
 });
 
-test("Linux remote mobile turns suppress inherited reasoning summaries on the local host", async () => {
+test("retired reasoning-summary resolver is rejected byte-identically", () => {
   const source = syntheticReasoningSummaryTurnStartBundle();
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("turn-start resolver")));
+});
+
+test("current reasoning-summary owner distinguishes durable mobile hosts and preserves explicit summaries", async () => {
+  const source = syntheticCurrentReasoningSummaryTurnStartBundle();
   const patched = applyLinuxRemoteMobileReasoningSummaryPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, /codexLinuxRemoteMobileReasoningSummaryNone/);
+  assert.match(patched, /codexLinuxRemoteMobileHost:gh\(e\.getHostId\(\)\)&&a\.mode===`durable`/);
+  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)&&o\.codexLinuxRemoteMobileHost/);
   assert.equal(applyLinuxRemoteMobileReasoningSummaryPatch(patched), patched);
 
   const context = {
+    gh: (hostId) => hostId === "local",
     logger: { info() {} },
     module: { exports: {} },
     navigator: { userAgent: "X11; Linux x86_64" },
-    fm: (hostId) => hostId !== "local",
-    vJ: "concurrent_reasoning_summaries",
   };
-  vm.runInNewContext(`${patched};module.exports=yY;`, context);
+  vm.runInNewContext(`${patched};module.exports=QWt;`, context);
   const startTurn = context.module.exports;
-  const manager = {
-    getDefaultFeatureOverride: () => true,
-    getHostId: () => "local",
-  };
-
-  const localResult = await startTurn(manager, "thread", {
+  const args = (request, mode) => [null, { request }, null, null, {
     initialParams: { summary: "auto" },
-    latestThreadSettings: { summary: "detailed" },
+    latestThreadSettings: { summary: "auto" },
+    mode,
+  }];
+  const manager = (hostId) => ({
+    getDefaultFeatureOverride: () => true,
+    getHostId: () => hostId,
   });
-  assert.equal(localResult.featureOverride, false);
-  assert.equal(localResult.summary, "none");
-});
 
-test("Linux remote mobile reasoning-summary patch preserves explicit and non-local settings", async () => {
-  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(
-    syntheticReasoningSummaryTurnStartBundle(),
+  const durable = await startTurn(manager("local"), ...args({}, "durable"));
+  const nonDurable = await startTurn(manager("local"), ...args({}, "default"));
+  const remoteDurable = await startTurn(manager("remote-ssh:dev"), ...args({}, "durable"));
+  const explicit = await startTurn(
+    manager("local"),
+    ...args({ summary: "concise" }, "durable"),
   );
-  const context = {
-    logger: { info() {} },
-    module: { exports: {} },
-    navigator: { userAgent: "X11; Linux x86_64" },
-    fm: (hostId) => hostId !== "local",
-    vJ: "concurrent_reasoning_summaries",
-  };
-  vm.runInNewContext(`${patched};module.exports=yY;`, context);
-  const startTurn = context.module.exports;
 
-  const explicitResult = await startTurn(
-    { getDefaultFeatureOverride: () => true, getHostId: () => "local" },
-    "thread",
-    { summary: "auto", latestThreadSettings: { summary: "detailed" } },
-  );
-  assert.equal(explicitResult.featureOverride, true);
-  assert.equal(explicitResult.summary, "auto");
-
-  const remoteResult = await startTurn(
-    { getDefaultFeatureOverride: () => true, getHostId: () => "remote-ssh:dev" },
-    "thread",
-    { latestThreadSettings: { summary: "auto" } },
-  );
-  assert.equal(remoteResult.featureOverride, true);
-  assert.equal(remoteResult.summary, "detailed");
+  assert.equal(durable.summary, "none");
+  assert.equal(nonDurable.summary, "detailed");
+  assert.equal(remoteDurable.summary, "detailed");
+  assert.equal(explicit.summary, "concise");
 });
 
 test("Linux remote mobile reasoning-summary patch reports upstream drift", () => {
@@ -1817,7 +1844,6 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
   assert.match(patched, /h\?\.type===`active`\|\|h\?\.type===`idle`/);
   assert.match(patched, /codexLinuxRemoteMobilePendingNotifications/);
   assert.match(patched, /codexLinuxRemoteMobileHydrateUnknownConversation/);
-  assert.match(patched, /codexLinuxCompletedItemExists/);
   assert.doesNotMatch(patched, /Received (?:turn|item)\/(?:started|completed) for unknown conversation/);
   assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(patched), patched);
 
@@ -1912,37 +1938,56 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
     },
   };
   const reductionContext = {
+    automationTurns: {
+      delete() {},
+    },
+    createId() {},
     manager,
     notificationContext,
-    productPolicy: {
-      dropTurnAutomationPolicy() {},
-      shouldIgnoreNotification() {
-        return false;
-      },
-    },
   };
-  manager.onNotification = (method, params) => onNotification(reductionContext, { method, params });
+  manager.onNotification = (method, params, callback) =>
+    onNotification(reductionContext, { method, params }, callback);
+  const callbackCalls = new Map();
+  const callback = (name, result = false) => () => {
+    callbackCalls.set(name, (callbackCalls.get(name) ?? 0) + 1);
+    return result;
+  };
   const notifications = [
-    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }],
-    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }],
-    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }],
+    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }, callback("initiating")],
+    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }, callback("buffered-started")],
+    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-suppressed", type: "agentMessage" }, startedAtMs: 11 }, callback("buffered-suppressed", true)],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }, callback("buffered-completed")],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }, callback("buffered-completed-without-start")],
+    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }, callback("buffered-turn-completed")],
   ];
 
-  for (const [method, params] of notifications) {
-    manager.onNotification(method, params);
+  for (const [method, params, notificationCallback] of notifications) {
+    manager.onNotification(method, params, notificationCallback);
   }
 
   assert.equal(hydrationCalls, 1);
   assert.equal(conversations.has("thread-late"), false);
   assert.deepEqual(emitted, []);
+  assert.deepEqual([...callbackCalls], [["initiating", 1]]);
 
   releaseHydration();
   await hydrationReady;
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(emitted, notifications.map(([method]) => method));
+  assert.deepEqual(
+    emitted,
+    notifications
+      .filter(([, params]) => params.item?.id !== "item-suppressed")
+      .map(([method]) => method),
+  );
+  assert.deepEqual([...callbackCalls], [
+    ["initiating", 1],
+    ["buffered-started", 1],
+    ["buffered-suppressed", 1],
+    ["buffered-completed", 1],
+    ["buffered-completed-without-start", 1],
+    ["buffered-turn-completed", 1],
+  ]);
   assert.deepEqual(errors, []);
   const hydratedConversation = conversations.get("thread-late");
   assert.equal(hydratedConversation.turns.length, 1);
@@ -1970,7 +2015,17 @@ test("Linux remote mobile hydration recovery rejects partial lifecycle drift", (
 
   assert.doesNotMatch(result, /codexLinuxRemoteMobilePendingNotifications/);
   assert.doesNotMatch(result, /codexLinuxRemoteMobileHydrateUnknownConversation/);
-  assert.doesNotMatch(result, /codexLinuxCompletedItemExists/);
+  assert.ok(warnings.some((warning) => warning.includes("complete current remote notification recovery lifecycle")));
+});
+
+test("Linux remote mobile hydration rejects the retired two-argument dispatcher byte-identically", () => {
+  const source = syntheticCurrentRemoteNotificationReductionBundle()
+    .replace("function tLn(e,t,o)", "function tLn(e,t)")
+    .replace("||o?.()", "");
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileConversationHydrationPatch(source));
+
+  assert.equal(result, source);
   assert.ok(warnings.some((warning) => warning.includes("complete current remote notification recovery lifecycle")));
 });
 
@@ -2161,7 +2216,7 @@ test("Linux remote terminal status recovery escapes current minified function al
   );
 });
 
-test("Linux remote-control status wait supports the current 26.810.41047 app bundle", () => {
+test("Linux remote-control status wait supports the current 26.901.20858 app bundle", () => {
   const source = syntheticCurrentStatusWaitBundle();
   const patched = applyLinuxRemoteControlStatusWaitPatch(source);
 

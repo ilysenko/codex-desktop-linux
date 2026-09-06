@@ -5,18 +5,24 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  APP_INITIAL_ASSET_PATTERN,
   APP_PAGE_ASSET_PATTERN,
   APP_PAGE_ELIGIBILITY_MARKER,
+  FEATURE_SYNC_MARKER,
   GENERAL_SETTINGS_ASSET_PATTERN,
   HOME_CONTENT_ASSET_PATTERN,
   HOME_CONTENT_SOURCE_MARKER,
   MAIN_ELIGIBILITY_MARKER,
   RUNTIME_MARKER,
   SETTINGS_ELIGIBILITY_MARKER,
+  WORK_PAGE_ASSET_PATTERN,
+  WORK_PAGE_ELIGIBILITY_MARKER,
+  applySuggestedPromptsFeatureSyncPatch,
   applySuggestedPromptsAppPagePatch,
   applySuggestedPromptsHomeContentPatch,
   applySuggestedPromptsMainPatch,
   applySuggestedPromptsSettingsPatch,
+  applySuggestedPromptsWorkPagePatch,
   descriptors,
   suggestedPromptsEnabled,
 } = require("./patches/suggested-prompts.js");
@@ -44,11 +50,24 @@ function settingsFixture() {
 
 function appPageFixture() {
   return [
-    "function home(){let we=es(`2425897452`),Te=es(`1857002365`),",
-    "ke=ln({authMethod:_,email:j?.email??v,plan:be}),Ae=we&&ke,je=N?null:B;",
-    "return jsx(bF,{generatedSuggestionsEnabled:Ae,projectRoot:je})}",
-    "function sync(){let n=es(`2425897452`),r=es(`1304276663`);",
-    "dispatchMessage(`electron-desktop-features-changed`,{ambientSuggestions:n,appshotsEnabled:r})}",
+    "function home(){let Ne=xS(`2425897452`),Pe=xS(`1857002365`),Fe=xS(`3765605143`),",
+    "Ie=Bh(HO),Le=Bh(EWe),He=I?.email??v,Ue=gze({authMethod:_,email:He,plan:je}),",
+    "We=Ne&&Ue,return jsx(i$r,{generatedSuggestionsEnabled:We,projectRoot:qe})}",
+  ].join("");
+}
+
+function featureSyncFixture() {
+  return [
+    "function sync(){let u=RE(`2425897452`),m=RE(`2716206584`);",
+    "dispatchMessage(`electron-desktop-features-changed`,{ambientSuggestions:u&&m.status===`enabled`,appshotsEnabled:m})}",
+  ].join("");
+}
+
+function workPageFixture() {
+  return [
+    "function workHome(){let Pe=Ee(`2425897452`),{authMethod:Fe,email:Le,planAtLogin:Re}=ne(),",
+    "{data:b}=Ke(),{data:Ue}=ue(),We=Ue?.plan_type??b?.plan??Re;",
+    "return jsx(At,{generatedSuggestionsEnabled:Pe&&Ye({authMethod:Fe,email:b?.email??Le,plan:We}),mode:`work`})}",
   ].join("");
 }
 
@@ -88,6 +107,12 @@ function featureContext({ defaultEnabled = false, override } = {}) {
   };
 }
 
+function descriptorById(id) {
+  const descriptor = descriptors.find((candidate) => candidate.id === id);
+  assert.ok(descriptor, `missing descriptor ${id}`);
+  return descriptor;
+}
+
 test("Suggested Prompts stays disabled unless its nested UI tweak is enabled", () => {
   assert.equal(suggestedPromptsEnabled(featureContext()), false);
   assert.equal(suggestedPromptsEnabled(featureContext({ override: true })), true);
@@ -114,20 +139,52 @@ test("settings patch exposes the upstream row while preserving eligibility diagn
   assert.equal(applySuggestedPromptsSettingsPatch(patched), patched);
 });
 
+test("feature sync patch enables the renderer gate while preserving the status check", () => {
+  const source = featureSyncFixture();
+  const patched = applySuggestedPromptsFeatureSyncPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.equal((patched.match(new RegExp(FEATURE_SYNC_MARKER, "g")) || []).length, 1);
+  assert.match(
+    patched,
+    /u=\(RE\(`2425897452`\),function codexLinuxUiTweaksSuggestedPromptsFeatureSync\(\)\{return!0\}\(\)\)/,
+  );
+  assert.match(patched, /ambientSuggestions:u&&m\.status===`enabled`/);
+  assert.equal(applySuggestedPromptsFeatureSyncPatch(patched), patched);
+});
+
 test("app page patch enables Home generation and desktop availability gates atomically", () => {
   const source = appPageFixture();
   const patched = applySuggestedPromptsAppPagePatch(source);
 
   assert.notEqual(patched, source);
-  assert.equal((patched.match(new RegExp(RUNTIME_MARKER, "g")) || []).length, 2);
+  assert.equal((patched.match(new RegExp(RUNTIME_MARKER, "g")) || []).length, 1);
   assert.equal((patched.match(new RegExp(APP_PAGE_ELIGIBILITY_MARKER, "g")) || []).length, 1);
-  assert.equal((patched.match(/es\(`2425897452`\)/g) || []).length, 2);
+  assert.equal((patched.match(/xS\(`2425897452`\)/g) || []).length, 1);
   assert.match(
     patched,
-    /Ae=we&&\(ke\|\|function codexLinuxUiTweaksSuggestedPromptsAppPageEligible\(\)\{return!0\}\(\)\)/,
+    /We=Ne&&\(Ue\|\|function codexLinuxUiTweaksSuggestedPromptsAppPageEligible\(\)\{return!0\}\(\)\)/,
   );
-  assert.match(patched, /ambientSuggestions:n/);
+  assert.match(patched, /generatedSuggestionsEnabled:We/);
   assert.equal(applySuggestedPromptsAppPagePatch(patched), patched);
+});
+
+test("Work Home patch enables generated suggestions while preserving account eligibility", () => {
+  const source = workPageFixture();
+  const patched = applySuggestedPromptsWorkPagePatch(source);
+
+  assert.notEqual(patched, source);
+  assert.equal((patched.match(new RegExp(RUNTIME_MARKER, "g")) || []).length, 1);
+  assert.equal((patched.match(new RegExp(WORK_PAGE_ELIGIBILITY_MARKER, "g")) || []).length, 1);
+  assert.match(
+    patched,
+    /Pe=\(Ee\(`2425897452`\),function codexLinuxUiTweaksSuggestedPromptsEnabled\(\)\{return!0\}\(\)\)/,
+  );
+  assert.match(
+    patched,
+    /generatedSuggestionsEnabled:Pe&&\(Ye\(\{authMethod:Fe,email:b\?\.email\?\?Le,plan:We\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsWorkPageEligible\(\)\{return!0\}\(\)\)/,
+  );
+  assert.equal(applySuggestedPromptsWorkPagePatch(patched), patched);
 });
 
 test("main patch enables refresh while preserving the upstream account call", () => {
@@ -273,6 +330,46 @@ test("multi-point patches reject mixed and drifted contracts byte-identically", 
   assert.match(homeResult.warnings.join("\n"), /current Suggested Prompts Home generated-source contract/);
 });
 
+test("feature sync patch rejects incomplete, duplicate, and mixed contracts byte-identically", () => {
+  const current = featureSyncFixture();
+  const patched = applySuggestedPromptsFeatureSyncPatch(current);
+  const sources = [
+    current.replace("m.status", "m.state"),
+    patched.replace("return!0", "return!1"),
+    current + current,
+    patched + patched,
+    current + patched,
+    `${current}function ${FEATURE_SYNC_MARKER}(){return!0}()`,
+  ];
+
+  for (const source of sources) {
+    const result = captureWarnings(() => applySuggestedPromptsFeatureSyncPatch(source));
+    assert.equal(result.value, source);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /current Suggested Prompts feature sync contract/);
+  }
+});
+
+test("Work Home patch rejects incomplete, duplicate, and mixed contracts byte-identically", () => {
+  const current = workPageFixture();
+  const patched = applySuggestedPromptsWorkPagePatch(current);
+  const sources = [
+    current.replace("b?.email", "b.email"),
+    patched.replace("return!0", "return!1"),
+    current + current,
+    patched + patched,
+    current + patched,
+    `${current}function ${WORK_PAGE_ELIGIBILITY_MARKER}(){return!0}()`,
+  ];
+
+  for (const source of sources) {
+    const result = captureWarnings(() => applySuggestedPromptsWorkPagePatch(source));
+    assert.equal(result.value, source);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /current Suggested Prompts Work Home page contract/);
+  }
+});
+
 test("unrecognized contracts warn instead of reporting false already-applied", () => {
   const cases = [
     [applySuggestedPromptsMainPatch, "main process"],
@@ -290,21 +387,41 @@ test("unrecognized contracts warn instead of reporting false already-applied", (
 });
 
 test("Suggested Prompts descriptors select current contracts across renderer hash changes", () => {
-  assert.match("general-settings-HashNext1.js", GENERAL_SETTINGS_ASSET_PATTERN);
-  assert.equal(descriptors[2].assetMatch(settingsFixture()), true);
-  assert.equal(descriptors[2].assetMatch(applySuggestedPromptsSettingsPatch(settingsFixture())), true);
-  assert.equal(descriptors[2].assetMatch("export{settings}"), false);
-
-  assert.match(
-    "app-initial-HashNext2.js",
-    APP_PAGE_ASSET_PATTERN,
+  const featureSyncDescriptor = descriptorById("home-suggested-prompts-feature-sync");
+  assert.match("app-initial-HashNext1.js", APP_INITIAL_ASSET_PATTERN);
+  assert.doesNotMatch("app-primary-HashNext1.js", APP_INITIAL_ASSET_PATTERN);
+  assert.equal(featureSyncDescriptor.assetMatch(featureSyncFixture()), true);
+  assert.equal(
+    featureSyncDescriptor.assetMatch(applySuggestedPromptsFeatureSyncPatch(featureSyncFixture())),
+    true,
   );
-  assert.equal(descriptors[1].assetMatch(appPageFixture()), true);
-  assert.equal(descriptors[1].assetMatch(applySuggestedPromptsAppPagePatch(appPageFixture())), true);
-  assert.equal(descriptors[1].assetMatch("export{app}"), false);
+  assert.equal(featureSyncDescriptor.assetMatch("export{app}"), false);
 
-  assert.match("home-ambient-suggestions-content-HashNext3.js", HOME_CONTENT_ASSET_PATTERN);
-  assert.equal(descriptors[3].assetMatch(homeContentFixture()), true);
-  assert.equal(descriptors[3].assetMatch(applySuggestedPromptsHomeContentPatch(homeContentFixture())), true);
-  assert.equal(descriptors[3].assetMatch("export{suggestions}"), false);
+  const appPageDescriptor = descriptorById("home-suggested-prompts-app-page");
+  assert.match("app-primary-HashNext2.js", APP_PAGE_ASSET_PATTERN);
+  assert.doesNotMatch("app-initial-HashNext2.js", APP_PAGE_ASSET_PATTERN);
+  assert.equal(appPageDescriptor.assetMatch(appPageFixture()), true);
+  assert.equal(appPageDescriptor.assetMatch(applySuggestedPromptsAppPagePatch(appPageFixture())), true);
+  assert.equal(appPageDescriptor.assetMatch("export{app}"), false);
+
+  const workPageDescriptor = descriptorById("home-suggested-prompts-work-page");
+  assert.match("page-HashNext3.js", WORK_PAGE_ASSET_PATTERN);
+  assert.equal(workPageDescriptor.assetMatch(workPageFixture()), true);
+  assert.equal(workPageDescriptor.assetMatch(applySuggestedPromptsWorkPagePatch(workPageFixture())), true);
+  assert.equal(workPageDescriptor.assetMatch("export{page}"), false);
+
+  const settingsDescriptor = descriptorById("home-suggested-prompts-settings-row");
+  assert.match("general-settings-HashNext4.js", GENERAL_SETTINGS_ASSET_PATTERN);
+  assert.equal(settingsDescriptor.assetMatch(settingsFixture()), true);
+  assert.equal(settingsDescriptor.assetMatch(applySuggestedPromptsSettingsPatch(settingsFixture())), true);
+  assert.equal(settingsDescriptor.assetMatch("export{settings}"), false);
+
+  const contentDescriptor = descriptorById("home-suggested-prompts-content");
+  assert.match("home-ambient-suggestions-content-HashNext5.js", HOME_CONTENT_ASSET_PATTERN);
+  assert.equal(contentDescriptor.assetMatch(homeContentFixture()), true);
+  assert.equal(
+    contentDescriptor.assetMatch(applySuggestedPromptsHomeContentPatch(homeContentFixture())),
+    true,
+  );
+  assert.equal(contentDescriptor.assetMatch("export{suggestions}"), false);
 });

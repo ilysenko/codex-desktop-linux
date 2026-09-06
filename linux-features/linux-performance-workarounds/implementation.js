@@ -93,23 +93,34 @@ function mountAnimations(source) {
     const animate = controller[1];
     const exit = controller[2];
     const initial = controller[3];
-    const prefixStart = Math.max(0, controller.index - 4000);
+    const prefixStart = Math.max(0, controller.index - 8000);
     const prefix = source.slice(prefixStart, controller.index);
     const vicinity = prefix + source.slice(controller.index, controller.index + 6000);
     const initialPrefix = `,${initial}=`;
     const exitPrefix = `,${exit}=`;
-    const unpatched = new RegExp(`${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}\\1\\?\\2:!1,`, "gu");
-    const patched = new RegExp(`${escapeRegExp(exitPrefix)}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}!1,`, "gu");
+    const exitDeclaration = `let ${escapeRegExp(exitPrefix.slice(1))}`;
+    const unpatched = new RegExp(`${exitDeclaration}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}(\\1&&![A-Za-z_$][\\w$]*\\?\\2:!1),`, "gu");
+    const patched = new RegExp(`${exitDeclaration}([A-Za-z_$][\\w$]*)\\?([A-Za-z_$][\\w$]*):void 0,[\\s\\S]{0,100}?${escapeRegExp(initialPrefix)}!1,`, "gu");
     const unpatchedMatches = [...prefix.matchAll(unpatched)];
     const patchedMatches = [...prefix.matchAll(patched)];
     const pair = unpatchedMatches.at(-1) ?? patchedMatches.at(-1);
     if (pair == null) continue;
     const isPatched = patchedMatches.at(-1) === pair;
-    if (!vicinity.includes("@container/app-shell-tab") || !vicinity.includes(`${pair[2]}={maxWidth:\`0px\`,minWidth:\`0px\`}`) || !vicinity.includes(`${animate}=`)) continue;
+    const selectedAnimation = vicinity.match(
+      new RegExp(`${escapeRegExp(pair[2])}=[A-Za-z_$][\\w$]*\\?([A-Za-z_$][\\w$]*):([A-Za-z_$][\\w$]*)`, "u"),
+    );
+    const selectedCollapsedAnimation = selectedAnimation != null &&
+      selectedAnimation.slice(1).every((name) =>
+        source.includes(`${name}={maxWidth:\`0px\``));
+    if (
+      !vicinity.includes("@container/app-shell-tab") ||
+      !selectedCollapsedAnimation ||
+      !vicinity.includes(`${animate}=`)
+    ) continue;
     const declarationStart = prefixStart + pair.index;
     const relativeInitialStart = pair[0].indexOf(initialPrefix) + initialPrefix.length;
     const expressionStart = declarationStart + relativeInitialStart;
-    const expression = isPatched ? "!1" : `${pair[1]}?${pair[2]}:!1`;
+    const expression = isPatched ? "!1" : pair[3];
     candidates.push({ expressionStart, expressionEnd: expressionStart + expression.length, patched: isPatched });
   }
   return candidates;
@@ -118,9 +129,9 @@ function mountAnimations(source) {
 function matchesLinuxAppShellTabLayoutPerformanceContract(source) {
   const mounts = mountAnimations(source);
   const measurements = overflowMeasurements(source);
-  if (mounts.length !== 1 || measurements.length !== 1) return false;
-  const patched = mounts[0].patched && measurements[0].patched;
-  const unpatched = !mounts[0].patched && !measurements[0].patched;
+  if (mounts.length !== 1 || measurements.length < 1) return false;
+  const patched = mounts[0].patched && measurements.every(({ patched }) => patched);
+  const unpatched = !mounts[0].patched && measurements.every(({ patched }) => !patched);
   const helper = source.includes(TAB_OVERFLOW_HELPER);
   return (patched && helper) || (unpatched && !helper);
 }
@@ -129,16 +140,18 @@ function applyLinuxAppShellTabLayoutPerformancePatch(source) {
   const mounts = mountAnimations(source);
   const measurements = overflowMeasurements(source);
   const helper = source.includes(TAB_OVERFLOW_HELPER);
-  if (mounts.length === 1 && measurements.length === 1) {
+  if (mounts.length === 1 && measurements.length >= 1) {
     const mount = mounts[0];
-    const measurement = measurements[0];
-    if (mount.patched && measurement.patched && helper) return source;
-    if (!mount.patched && !measurement.patched && !helper) {
-      const callback = `${measurement.callbackName}=(e,t)=>{codexLinuxScheduleAppShellTabOverflow(t,${measurement.setterName})}`;
+    if (mount.patched && measurements.every(({ patched }) => patched) && helper) return source;
+    if (!mount.patched && measurements.every(({ patched }) => !patched) && !helper) {
       const edits = [
         { start: mount.expressionStart, end: mount.expressionEnd, text: "!1" },
-        { start: measurement.callbackStart, end: measurement.callbackEnd, text: callback },
-        { start: measurement.functionStart, end: measurement.functionStart, text: TAB_OVERFLOW_HELPER },
+        ...measurements.map((measurement) => ({
+          start: measurement.callbackStart,
+          end: measurement.callbackEnd,
+          text: `${measurement.callbackName}=(e,t)=>{codexLinuxScheduleAppShellTabOverflow(t,${measurement.setterName})}`,
+        })),
+        { start: measurements[0].functionStart, end: measurements[0].functionStart, text: TAB_OVERFLOW_HELPER },
       ].sort((a, b) => b.start - a.start);
       let result = source;
       for (const edit of edits) result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);

@@ -574,42 +574,50 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
 }
 
 function applyCurrentComputerUseHostPlatformContract(currentSource) {
-  let changed = false;
-  const patchedSource = currentSource.replace(
-    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{areRequiredFeaturesEnabled:([A-Za-z_$][\w$]*),enabled:([A-Za-z_$][\w$]*),isAnyFeatureLoading:([A-Za-z_$][\w$]*),isComputerUseGateEnabled:([A-Za-z_$][\w$]*),isHostCompatiblePlatform:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),isPlatformLoading:([A-Za-z_$][\w$]*),windowType:`electron`\}\)/g,
-    (
-      match,
-      resultVar,
-      helperVar,
-      requiredFeaturesVar,
-      enabledVar,
-      featureLoadingVar,
-      rolloutVar,
-      platformPredicateVar,
-      platformVar,
-      platformLoadingVar,
-      offset,
-    ) => {
-      const context = currentSource.slice(Math.max(0, offset - 1200), offset + match.length);
-      if (!context.includes("featureName:`computer_use`")) {
-        return match;
-      }
-      changed = true;
-      return `${resultVar}=${helperVar}({areRequiredFeaturesEnabled:${requiredFeaturesVar},enabled:${enabledVar},isAnyFeatureLoading:${featureLoadingVar},isComputerUseGateEnabled:${rolloutVar},isHostCompatiblePlatform:${platformVar}===\`linux\`||${platformPredicateVar}(${platformVar}),isPlatformLoading:${platformLoadingVar},windowType:\`electron\`})`;
-    },
-  );
+  const contractPattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{areRequirementsPending:([A-Za-z_$][\w$]*),areRequiredFeaturesEnabled:([A-Za-z_$][\w$]*),enabled:([A-Za-z_$][\w$]*),isBrowserAndComputerUseAllowed:([A-Za-z_$][\w$]*),isAnyFeatureLoading:([A-Za-z_$][\w$]*),isComputerUseGateEnabled:([A-Za-z_$][\w$]*),isHostCompatiblePlatform:([^,{}]+),isPlatformLoading:([A-Za-z_$][\w$]*),windowType:`electron`\}\)/g;
+  const candidates = [];
+  let match;
+  while ((match = contractPattern.exec(currentSource)) != null) {
+    const context = currentSource.slice(Math.max(0, match.index - 1200), match.index + match[0].length);
+    if (!context.includes("featureName:`computer_use`")) {
+      continue;
+    }
 
-  if (changed) {
-    return patchedSource;
+    const hostExpression = match[9];
+    const pristine = hostExpression.match(
+      /^([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)$/,
+    );
+    const patched = hostExpression.match(
+      /^([A-Za-z_$][\w$]*)===`linux`\|\|([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)$/,
+    );
+    let kind = "malformed";
+    let platformVar = null;
+    if (pristine != null) {
+      kind = "pristine";
+      platformVar = pristine[2];
+    } else if (patched != null && patched[1] === patched[3]) {
+      kind = "patched";
+      platformVar = patched[1];
+    }
+    candidates.push({ hostExpression, kind, match, platformVar });
   }
 
-  if (
-    /featureName:`computer_use`[\s\S]{0,2200}?areRequiredFeaturesEnabled:[A-Za-z_$][\w$]*,enabled:[A-Za-z_$][\w$]*,isAnyFeatureLoading:[A-Za-z_$][\w$]*,isComputerUseGateEnabled:[A-Za-z_$][\w$]*,isHostCompatiblePlatform:([A-Za-z_$][\w$]*)===`linux`\|\|[A-Za-z_$][\w$]*\(\1\),isPlatformLoading:/.test(currentSource)
-  ) {
+  if (candidates.length !== 1 || candidates[0].kind === "malformed") {
+    return null;
+  }
+
+  const candidate = candidates[0];
+  if (candidate.kind === "patched") {
     return currentSource;
   }
 
-  return null;
+  const hostExpressionStart = candidate.match.index +
+    candidate.match[0].indexOf(candidate.hostExpression);
+  const hostExpressionEnd = hostExpressionStart + candidate.hostExpression.length;
+  return currentSource.slice(0, hostExpressionStart) +
+    `${candidate.platformVar}===\`linux\`||${candidate.hostExpression}` +
+    currentSource.slice(hostExpressionEnd);
 }
 
 function matchesLinuxComputerUseHostPlatformContract(currentSource) {

@@ -1,12 +1,15 @@
 "use strict";
 
-const APP_PAGE_ASSET_PATTERN =
-  /^app-initial-[A-Za-z0-9_-]+\.js$/;
+const APP_INITIAL_ASSET_PATTERN = /^app-initial-[A-Za-z0-9_-]+\.js$/;
+const APP_PAGE_ASSET_PATTERN = /^app-primary-[A-Za-z0-9_-]+\.js$/;
+const WORK_PAGE_ASSET_PATTERN = /^page-[A-Za-z0-9_-]+\.js$/;
 const GENERAL_SETTINGS_ASSET_PATTERN = /^general-settings-[A-Za-z0-9_-]+\.js$/;
 const HOME_CONTENT_ASSET_PATTERN = /^home-ambient-suggestions-content-[A-Za-z0-9_-]+\.js$/;
 const FEATURE_GATE_ID = "2425897452";
 const RUNTIME_MARKER = "codexLinuxUiTweaksSuggestedPromptsEnabled";
+const FEATURE_SYNC_MARKER = "codexLinuxUiTweaksSuggestedPromptsFeatureSync";
 const APP_PAGE_ELIGIBILITY_MARKER = "codexLinuxUiTweaksSuggestedPromptsAppPageEligible";
+const WORK_PAGE_ELIGIBILITY_MARKER = "codexLinuxUiTweaksSuggestedPromptsWorkPageEligible";
 const HOME_CONTENT_SOURCE_MARKER = "codexLinuxSuggestedPromptsGeneratedSource";
 const MAIN_ELIGIBILITY_MARKER = "codexLinuxUiTweaksSuggestedPromptsMainEnabled";
 const SETTINGS_ELIGIBILITY_MARKER = "codexLinuxUiTweaksSuggestedPromptsSettingsEligible";
@@ -28,8 +31,24 @@ function gateAssignmentPattern() {
   return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`2425897452`\)/gu;
 }
 
+function featureSyncPattern() {
+  return /ambientSuggestions:([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\.status===`enabled`/gu;
+}
+
 function appPageEligibilityPattern() {
   return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)(?=,[\s\S]{0,500}?generatedSuggestionsEnabled:\1)/gu;
+}
+
+function patchedAppPageEligibilityPattern() {
+  return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\|\|function codexLinuxUiTweaksSuggestedPromptsAppPageEligible\(\)\{return!0\}\(\)\)(?=,[\s\S]{0,500}?generatedSuggestionsEnabled:\1)/gu;
+}
+
+function workPageEligibilityPattern() {
+  return /generatedSuggestionsEnabled:([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\}\)/gu;
+}
+
+function patchedWorkPageEligibilityPattern() {
+  return /generatedSuggestionsEnabled:([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsWorkPageEligible\(\)\{return!0\}\(\)\)/gu;
 }
 
 function mainEligibilityPattern() {
@@ -44,6 +63,10 @@ function settingsEligibilityPattern() {
   return /if\(!([A-Za-z_$][\w$]*)\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:\3\?\.plan\?\?([A-Za-z_$][\w$]*)\}\)\)return null;/gu;
 }
 
+function patchedSettingsEligibilityPattern() {
+  return /if\(!\(([A-Za-z_$][\w$]*)\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\?\.plan\?\?([A-Za-z_$][\w$]*)\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsSettingsEligible\(\)\{return!0\}\(\)\)\)return null;/gu;
+}
+
 function homeContentSourcePattern() {
   return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`curated`(?=,[\s\S]{0,400}?canUsePersonalizedSuggestions:[A-Za-z_$][\w$]*,generatedSuggestionsEnabled:[A-Za-z_$][\w$]*,hasGeneratedSuggestionsReadSettled:[A-Za-z_$][\w$]*,shouldUseCuratedNewChatPageSuggestions:\1\})/gu;
 }
@@ -56,26 +79,132 @@ function matchCount(source, pattern) {
   return [...source.matchAll(pattern)].length;
 }
 
+function markerOccurrenceCount(source, marker) {
+  return source.split(marker).length - 1;
+}
+
+function markerFunctionPattern(marker) {
+  return new RegExp(`function ${marker}\\(\\)\\{return!0\\}\\(\\)`, "gu");
+}
+
+function completeMarkerCount(source, marker) {
+  return matchCount(source, markerFunctionPattern(marker));
+}
+
+function patchedGateAssignmentPattern(marker) {
+  return new RegExp(
+    "([A-Za-z_$][\\w$]*)=\\(([A-Za-z_$][\\w$]*)\\(`" +
+      FEATURE_GATE_ID +
+      "`\\),function " +
+      marker +
+      "\\(\\)\\{return!0\\}\\(\\)\\)",
+    "gu",
+  );
+}
+
 function warn(target) {
   console.warn(`WARN: Could not find current Suggested Prompts ${target} contract - skipping ui-tweaks patch`);
 }
 
-function rolloutMarkerCount(source) {
-  return source.split(RUNTIME_MARKER).length - 1;
+function completePatchedGateCount(source, marker) {
+  return matchCount(source, patchedGateAssignmentPattern(marker));
+}
+
+function suggestedPromptsFeatureSyncContract(source) {
+  if (typeof source !== "string") {
+    return "drifted";
+  }
+  const cleanRollouts = [...source.matchAll(gateAssignmentPattern())];
+  const featureSync = [...source.matchAll(featureSyncPattern())];
+  const patchedRollouts = [...source.matchAll(patchedGateAssignmentPattern(FEATURE_SYNC_MARKER))];
+  const markerCount = markerOccurrenceCount(source, FEATURE_SYNC_MARKER);
+  const completeMarkers = completeMarkerCount(source, FEATURE_SYNC_MARKER);
+  if (
+    markerCount === 0 &&
+    completeMarkers === 0 &&
+    cleanRollouts.length === 1 &&
+    featureSync.length === 1 &&
+    featureSync[0][1] === cleanRollouts[0][1]
+  ) {
+    return "current";
+  }
+  if (
+    markerCount === 1 &&
+    completeMarkers === 1 &&
+    cleanRollouts.length === 0 &&
+    patchedRollouts.length === 1 &&
+    featureSync.length === 1 &&
+    featureSync[0][1] === patchedRollouts[0][1] &&
+    completePatchedGateCount(source, FEATURE_SYNC_MARKER) === 1
+  ) {
+    return "patched";
+  }
+  return "drifted";
 }
 
 function suggestedPromptsAppPageContract(source) {
   if (typeof source !== "string") {
     return "drifted";
   }
-  const rolloutMarkers = rolloutMarkerCount(source);
-  const eligibilityMarkers = source.split(APP_PAGE_ELIGIBILITY_MARKER).length - 1;
-  const cleanRollouts = matchCount(source, gateAssignmentPattern());
-  const cleanEligibility = matchCount(source, appPageEligibilityPattern());
-  if (rolloutMarkers === 0 && eligibilityMarkers === 0 && cleanRollouts === 2 && cleanEligibility === 1) {
+  const cleanRollouts = [...source.matchAll(gateAssignmentPattern())];
+  const cleanEligibility = [...source.matchAll(appPageEligibilityPattern())];
+  const patchedRollouts = [...source.matchAll(patchedGateAssignmentPattern(RUNTIME_MARKER))];
+  const patchedEligibility = [...source.matchAll(patchedAppPageEligibilityPattern())];
+  if (
+    markerOccurrenceCount(source, RUNTIME_MARKER) === 0 &&
+    markerOccurrenceCount(source, APP_PAGE_ELIGIBILITY_MARKER) === 0 &&
+    cleanRollouts.length === 1 &&
+    cleanEligibility.length === 1 &&
+    cleanEligibility[0][2] === cleanRollouts[0][1]
+  ) {
     return "current";
   }
-  if (rolloutMarkers === 2 && eligibilityMarkers === 1 && cleanRollouts === 0 && cleanEligibility === 0) {
+  if (
+    markerOccurrenceCount(source, RUNTIME_MARKER) === 1 &&
+    completeMarkerCount(source, RUNTIME_MARKER) === 1 &&
+    markerOccurrenceCount(source, APP_PAGE_ELIGIBILITY_MARKER) === 1 &&
+    completeMarkerCount(source, APP_PAGE_ELIGIBILITY_MARKER) === 1 &&
+    cleanRollouts.length === 0 &&
+    cleanEligibility.length === 0 &&
+    patchedRollouts.length === 1 &&
+    patchedEligibility.length === 1 &&
+    patchedEligibility[0][2] === patchedRollouts[0][1] &&
+    completePatchedGateCount(source, RUNTIME_MARKER) === 1
+  ) {
+    return "patched";
+  }
+  return "drifted";
+}
+
+function suggestedPromptsWorkPageContract(source) {
+  if (typeof source !== "string") {
+    return "drifted";
+  }
+  const cleanRollouts = [...source.matchAll(gateAssignmentPattern())];
+  const cleanEligibility = [...source.matchAll(workPageEligibilityPattern())];
+  const patchedRollouts = [...source.matchAll(patchedGateAssignmentPattern(RUNTIME_MARKER))];
+  const patchedEligibility = [...source.matchAll(patchedWorkPageEligibilityPattern())];
+  if (
+    markerOccurrenceCount(source, RUNTIME_MARKER) === 0 &&
+    markerOccurrenceCount(source, WORK_PAGE_ELIGIBILITY_MARKER) === 0 &&
+    cleanRollouts.length === 1 &&
+    cleanEligibility.length === 1 &&
+    cleanEligibility[0][1] === cleanRollouts[0][1]
+  ) {
+    return "current";
+  }
+  if (
+    markerOccurrenceCount(source, RUNTIME_MARKER) === 1 &&
+    completeMarkerCount(source, RUNTIME_MARKER) === 1 &&
+    markerOccurrenceCount(source, WORK_PAGE_ELIGIBILITY_MARKER) === 1 &&
+    completeMarkerCount(source, WORK_PAGE_ELIGIBILITY_MARKER) === 1 &&
+    cleanRollouts.length === 0 &&
+    cleanEligibility.length === 0 &&
+    patchedRollouts.length === 1 &&
+    patchedEligibility.length === 1 &&
+    patchedEligibility[0][1] === patchedRollouts[0][1] &&
+    completePatchedGateCount(source, RUNTIME_MARKER) === 1
+  ) {
     return "patched";
   }
   return "drifted";
@@ -85,14 +214,29 @@ function suggestedPromptsSettingsContract(source) {
   if (typeof source !== "string") {
     return "drifted";
   }
-  const rolloutMarkers = rolloutMarkerCount(source);
-  const eligibilityMarkers = source.split(SETTINGS_ELIGIBILITY_MARKER).length - 1;
-  const cleanRollouts = matchCount(source, gateAssignmentPattern());
-  const cleanEligibility = matchCount(source, settingsEligibilityPattern());
-  if (rolloutMarkers === 0 && eligibilityMarkers === 0 && cleanRollouts === 1 && cleanEligibility === 1) {
+  const cleanRollouts = [...source.matchAll(gateAssignmentPattern())];
+  const cleanEligibility = [...source.matchAll(settingsEligibilityPattern())];
+  const patchedRollouts = [...source.matchAll(patchedGateAssignmentPattern(RUNTIME_MARKER))];
+  const patchedEligibility = [...source.matchAll(patchedSettingsEligibilityPattern())];
+  if (
+    markerOccurrenceCount(source, RUNTIME_MARKER) === 0 &&
+    markerOccurrenceCount(source, SETTINGS_ELIGIBILITY_MARKER) === 0 &&
+    cleanRollouts.length === 1 &&
+    cleanEligibility.length === 1
+  ) {
     return "current";
   }
-  if (rolloutMarkers === 1 && eligibilityMarkers === 1 && cleanRollouts === 0 && cleanEligibility === 0) {
+  if (
+    markerOccurrenceCount(source, RUNTIME_MARKER) === 1 &&
+    completeMarkerCount(source, RUNTIME_MARKER) === 1 &&
+    markerOccurrenceCount(source, SETTINGS_ELIGIBILITY_MARKER) === 1 &&
+    completeMarkerCount(source, SETTINGS_ELIGIBILITY_MARKER) === 1 &&
+    cleanRollouts.length === 0 &&
+    cleanEligibility.length === 0 &&
+    patchedRollouts.length === 1 &&
+    patchedEligibility.length === 1 &&
+    completePatchedGateCount(source, RUNTIME_MARKER) === 1
+  ) {
     return "patched";
   }
   return "drifted";
@@ -130,12 +274,32 @@ function suggestedPromptsMainContract(source) {
   return "drifted";
 }
 
-function replaceRolloutGates(source) {
+function replaceRolloutGate(source, marker) {
   return source.replace(
     gateAssignmentPattern(),
     (_match, targetName, gateName) =>
-      `${targetName}=(${gateName}(\`${FEATURE_GATE_ID}\`),function ${RUNTIME_MARKER}(){return!0}())`,
+      `${targetName}=(${gateName}(\`${FEATURE_GATE_ID}\`),function ${marker}(){return!0}())`,
   );
+}
+
+function applySuggestedPromptsFeatureSyncPatch(source) {
+  try {
+    const contract = suggestedPromptsFeatureSyncContract(source);
+    if (contract === "patched") {
+      return source;
+    }
+    if (contract !== "current") {
+      warn("feature sync");
+      return source;
+    }
+
+    return replaceRolloutGate(source, FEATURE_SYNC_MARKER);
+  } catch (error) {
+    console.warn(
+      `WARN: Unexpected Suggested Prompts feature sync patch error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return source;
+  }
 }
 
 function applySuggestedPromptsAppPagePatch(source) {
@@ -149,7 +313,7 @@ function applySuggestedPromptsAppPagePatch(source) {
       return source;
     }
 
-    return replaceRolloutGates(source).replace(
+    return replaceRolloutGate(source, RUNTIME_MARKER).replace(
       appPageEligibilityPattern(),
       (_match, enabledName, rolloutName, eligibilityName) =>
         `${enabledName}=${rolloutName}&&(${eligibilityName}||function ${APP_PAGE_ELIGIBILITY_MARKER}(){return!0}())`,
@@ -157,6 +321,38 @@ function applySuggestedPromptsAppPagePatch(source) {
   } catch (error) {
     console.warn(
       `WARN: Unexpected Suggested Prompts app page patch error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return source;
+  }
+}
+
+function applySuggestedPromptsWorkPagePatch(source) {
+  try {
+    const contract = suggestedPromptsWorkPageContract(source);
+    if (contract === "patched") {
+      return source;
+    }
+    if (contract !== "current") {
+      warn("Work Home page");
+      return source;
+    }
+
+    return replaceRolloutGate(source, RUNTIME_MARKER).replace(
+      workPageEligibilityPattern(),
+      (
+        _match,
+        rolloutName,
+        eligibilityName,
+        authMethodName,
+        accountInfoName,
+        emailName,
+        planName,
+      ) =>
+        `generatedSuggestionsEnabled:${rolloutName}&&(${eligibilityName}({authMethod:${authMethodName},email:${accountInfoName}?.email??${emailName},plan:${planName}})||function ${WORK_PAGE_ELIGIBILITY_MARKER}(){return!0}())`,
+    );
+  } catch (error) {
+    console.warn(
+      `WARN: Unexpected Suggested Prompts Work Home page patch error: ${error instanceof Error ? error.message : String(error)}`,
     );
     return source;
   }
@@ -232,7 +428,7 @@ function applySuggestedPromptsSettingsPatch(source) {
       return source;
     }
 
-    return replaceRolloutGates(source).replace(
+    return replaceRolloutGate(source, RUNTIME_MARKER).replace(
       settingsEligibilityPattern(),
       (_match, eligibilityName, authMethod, accountInfo, email, plan) =>
         `if(!(${eligibilityName}({authMethod:${authMethod},email:${accountInfo}?.email??${email},plan:${accountInfo}?.plan??${plan}})||function ${SETTINGS_ELIGIBILITY_MARKER}(){return!0}()))return null;`,
@@ -255,6 +451,18 @@ const descriptors = [
     apply: applySuggestedPromptsMainPatch,
   },
   {
+    id: "home-suggested-prompts-feature-sync",
+    phase: "webview-asset",
+    order: 20_975,
+    ciPolicy: "optional",
+    enabled: suggestedPromptsEnabled,
+    pattern: APP_INITIAL_ASSET_PATTERN,
+    assetMatch: (source) => suggestedPromptsFeatureSyncContract(source) !== "drifted",
+    missingDescription: "current Suggested Prompts feature-sync bundle",
+    skipDescription: "ui-tweaks Suggested Prompts feature-sync patch",
+    apply: applySuggestedPromptsFeatureSyncPatch,
+  },
+  {
     id: "home-suggested-prompts-app-page",
     phase: "webview-asset",
     order: 20_980,
@@ -265,6 +473,18 @@ const descriptors = [
     missingDescription: "current Suggested Prompts app page bundle",
     skipDescription: "ui-tweaks Suggested Prompts app page patch",
     apply: applySuggestedPromptsAppPagePatch,
+  },
+  {
+    id: "home-suggested-prompts-work-page",
+    phase: "webview-asset",
+    order: 20_985,
+    ciPolicy: "optional",
+    enabled: suggestedPromptsEnabled,
+    pattern: WORK_PAGE_ASSET_PATTERN,
+    assetMatch: (source) => suggestedPromptsWorkPageContract(source) !== "drifted",
+    missingDescription: "current Suggested Prompts Work Home bundle",
+    skipDescription: "ui-tweaks Suggested Prompts Work Home patch",
+    apply: applySuggestedPromptsWorkPagePatch,
   },
   {
     id: "home-suggested-prompts-settings-row",
@@ -293,18 +513,24 @@ const descriptors = [
 ];
 
 module.exports = {
+  APP_INITIAL_ASSET_PATTERN,
   APP_PAGE_ASSET_PATTERN,
   APP_PAGE_ELIGIBILITY_MARKER,
+  FEATURE_SYNC_MARKER,
   GENERAL_SETTINGS_ASSET_PATTERN,
   HOME_CONTENT_ASSET_PATTERN,
   HOME_CONTENT_SOURCE_MARKER,
   MAIN_ELIGIBILITY_MARKER,
   RUNTIME_MARKER,
   SETTINGS_ELIGIBILITY_MARKER,
+  WORK_PAGE_ASSET_PATTERN,
+  WORK_PAGE_ELIGIBILITY_MARKER,
+  applySuggestedPromptsFeatureSyncPatch,
   applySuggestedPromptsAppPagePatch,
   applySuggestedPromptsHomeContentPatch,
   applySuggestedPromptsMainPatch,
   applySuggestedPromptsSettingsPatch,
+  applySuggestedPromptsWorkPagePatch,
   descriptors,
   suggestedPromptsConfig,
   suggestedPromptsEnabled,
