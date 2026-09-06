@@ -182,6 +182,36 @@ fn installed_deb_version() -> String {
     )
 }
 
+pub(crate) fn installed_package_version_for_recovery(path: &Path) -> Option<String> {
+    match PackageKind::from_path(path) {
+        PackageKind::Deb => installed_deb_version_if_configured(),
+        // rpm/pacman expose the installed version, but that alone is not proof
+        // that an abandoned package transaction completed successfully. Fail
+        // closed until an equally strong completion predicate exists there.
+        PackageKind::Rpm | PackageKind::Pacman => None,
+    }
+}
+
+fn installed_deb_version_if_configured() -> Option<String> {
+    let output = Command::new(program_path(DPKG_QUERY_CANDIDATES, "dpkg-query"))
+        .args(["-W", "-f=${Status}\t${Version}", PACKAGE_NAME])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_configured_deb_version(&output.stdout)
+}
+
+fn parse_configured_deb_version(stdout: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(stdout);
+    let (status, version) = text.trim().rsplit_once('\t')?;
+    if status != "install ok installed" || version.is_empty() {
+        return None;
+    }
+    Some(version.to_string())
+}
+
 fn installed_rpm_version() -> String {
     installed_version_from_command(
         &program_path(RPM_CANDIDATES, "rpm"),
@@ -583,6 +613,14 @@ fn deb_package_name(path: &Path) -> Result<String> {
         .context("Failed to inspect Debian package metadata")?;
 
     package_metadata_field(output, "dpkg-deb", "package name", path)
+}
+
+pub(crate) fn package_version(path: &Path) -> Result<String> {
+    match PackageKind::from_path(path) {
+        PackageKind::Deb => deb_package_version(path),
+        PackageKind::Rpm => rpm_package_version(path),
+        PackageKind::Pacman => pacman_package_version(path),
+    }
 }
 
 fn deb_package_version(path: &Path) -> Result<String> {
@@ -1264,5 +1302,20 @@ mod tests {
         .expect_err("foreign pacman packages must be rejected");
 
         assert!(error.to_string().contains("codex-desktop-"));
+    }
+    #[test]
+    fn recovery_accepts_only_fully_configured_debian_package_state() {
+        assert_eq!(
+            parse_configured_deb_version(b"install ok installed\t2026.09.06\n").as_deref(),
+            Some("2026.09.06")
+        );
+        assert_eq!(
+            parse_configured_deb_version(b"install ok unpacked\t2026.09.06\n"),
+            None
+        );
+        assert_eq!(
+            parse_configured_deb_version(b"install ok half-configured\t2026.09.06\n"),
+            None
+        );
     }
 }

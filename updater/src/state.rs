@@ -3,7 +3,34 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{fs, os::unix::fs::PermissionsExt, path::{Path, PathBuf}};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub start_time_ticks: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallOperation {
+    Update,
+    Rollback,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstallTransaction {
+    pub package_path: PathBuf,
+    #[serde(default)]
+    pub package_sha256: Option<String>,
+    pub package_command: Option<ProcessIdentity>,
+    pub started_at: DateTime<Utc>,
+    pub operation: InstallOperation,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +72,7 @@ pub struct PersistedState {
     pub candidate_repository_path: Option<String>,
     pub upstream_package_sha256: Option<String>,
     pub status: UpdateStatus,
+    pub install_transaction: Option<InstallTransaction>,
     pub last_check_at: Option<DateTime<Utc>>,
     pub last_successful_check_at: Option<DateTime<Utc>>,
     pub artifact_paths: ArtifactPaths,
@@ -76,6 +104,7 @@ impl PersistedState {
             candidate_repository_path: None,
             upstream_package_sha256: None,
             status: UpdateStatus::Idle,
+            install_transaction: None,
             last_check_at: None,
             last_successful_check_at: None,
             artifact_paths: ArtifactPaths::default(),
@@ -102,7 +131,12 @@ impl PersistedState {
         // A schema-v1 candidate cannot be resumed safely. Preserve only the
         // installed/rollback facts and drop the pending candidate atomically on
         // the next save.
-        if raw.get("schema_version").and_then(|v| v.as_u64()).unwrap_or(1) < 2 {
+        if raw
+            .get("schema_version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1)
+            < 2
+        {
             let mut migrated = Self::new(auto_install);
             migrated.installed_version = raw
                 .get("installed_version")
@@ -138,10 +172,10 @@ impl PersistedState {
 
     pub fn mark_failed(&mut self, message: impl Into<String>) {
         self.status = UpdateStatus::Failed;
+        self.install_transaction = None;
         self.error_message = Some(message.into());
         self.waiting_for_app_exit_auto_install = false;
     }
-
 }
 
 #[cfg(test)]
@@ -152,18 +186,24 @@ mod tests {
     fn legacy_v1_candidate_is_reset_but_rollback_is_preserved() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let state_path = dir.path().join("state.json");
-        fs::write(&state_path, r#"{
+        fs::write(
+            &state_path,
+            r#"{
           "installed_version":"1.2.3",
           "candidate_version":"legacy",
           "status":"ready_to_install",
           "artifact_paths":{"legacy_source_path":"/tmp/legacy-upstream","rollback_package_path":"/tmp/good.deb"},
           "last_known_good_version":"1.2.2"
-        }"#)?;
+        }"#,
+        )?;
         let state = PersistedState::load_or_default(&state_path, true)?;
         assert_eq!(state.schema_version, 2);
         assert_eq!(state.candidate_version, None);
         assert_eq!(state.installed_version, "1.2.3");
-        assert_eq!(state.artifact_paths.rollback_package_path, Some(PathBuf::from("/tmp/good.deb")));
+        assert_eq!(
+            state.artifact_paths.rollback_package_path,
+            Some(PathBuf::from("/tmp/good.deb"))
+        );
         Ok(())
     }
 }

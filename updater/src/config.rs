@@ -113,10 +113,14 @@ impl RuntimeConfig {
 
     fn validate(&self) -> Result<()> {
         anyhow::ensure!(
-            self.repository_url.starts_with("https://") || self.repository_url.starts_with("http://127.0.0.1"),
+            self.repository_url.starts_with("https://")
+                || self.repository_url.starts_with("http://127.0.0.1"),
             "repository_url must use HTTPS"
         );
-        anyhow::ensure!(self.check_interval_hours > 0, "check_interval_hours must be positive");
+        anyhow::ensure!(
+            self.check_interval_hours > 0,
+            "check_interval_hours must be positive"
+        );
         Ok(())
     }
 
@@ -146,7 +150,10 @@ mod tests {
         let paths = RuntimePaths::detect()?;
         let config = RuntimeConfig::default_with_paths(&paths);
         assert!(config.repository_url.ends_with("/linux/deb"));
-        assert_eq!(config.app_executable_path, PathBuf::from("/opt/codex-desktop/ChatGPT"));
+        assert_eq!(
+            config.app_executable_path,
+            PathBuf::from("/opt/codex-desktop/ChatGPT")
+        );
         Ok(())
     }
 }

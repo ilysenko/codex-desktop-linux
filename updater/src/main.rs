@@ -7,6 +7,7 @@ mod cli;
 mod config;
 mod install;
 mod install_rollback;
+mod install_transaction;
 mod liveness;
 mod logging;
 mod notify;

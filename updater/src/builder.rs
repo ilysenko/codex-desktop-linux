@@ -7,10 +7,17 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use chrono::Utc;
-use std::{fs, path::{Path, PathBuf}};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use tokio::{fs as async_fs, io::{AsyncBufReadExt, BufReader}, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+use tokio::{
+    fs as async_fs,
+    io::{AsyncBufReadExt, BufReader},
+    process::Command,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildArtifacts {
@@ -32,11 +39,7 @@ const REQUIRED_BUNDLE_ENTRIES: &[&str] = &[
     "linux-features",
 ];
 
-const OPTIONAL_BUNDLE_ENTRIES: &[&str] = &[
-    "target",
-    "global-dictation-linux",
-    "plugins",
-];
+const OPTIONAL_BUNDLE_ENTRIES: &[&str] = &["target", "global-dictation-linux", "plugins"];
 
 pub async fn build_update(
     config: &RuntimeConfig,
@@ -45,7 +48,10 @@ pub async fn build_update(
     candidate_version: &str,
     upstream_package: &Path,
 ) -> Result<BuildArtifacts> {
-    let workspace = config.workspace_root.join("workspaces").join(safe_component(candidate_version));
+    let workspace = config
+        .workspace_root
+        .join("workspaces")
+        .join(safe_component(candidate_version));
     if workspace.exists() {
         fs::remove_dir_all(&workspace)?;
     }
@@ -67,7 +73,10 @@ pub async fn build_update(
         .arg(upstream_package)
         .env("CODEX_INSTALL_TRANSACTION_ACTIVE", "1")
         .env("CODEX_INSTALL_DIR", &app)
-        .env("CODEX_PATCH_REPORT_JSON", workspace.join("reports/patch-report.json"))
+        .env(
+            "CODEX_PATCH_REPORT_JSON",
+            workspace.join("reports/patch-report.json"),
+        )
         .current_dir(&bundle);
     if let Some(config_path) = effective_feature_config_path(config) {
         install.env("CODEX_LINUX_FEATURES_CONFIG", config_path);
@@ -86,8 +95,14 @@ pub async fn build_update(
         .env("PACKAGE_VERSION", package_version())
         .env("APP_DIR_OVERRIDE", &app)
         .env("DIST_DIR_OVERRIDE", &dist)
-        .env("UPDATER_BINARY_SOURCE", updater_binary_source(&std::env::current_exe()?))
-        .env("UPDATER_SERVICE_SOURCE", bundle.join("packaging/linux/codex-update-manager.service"))
+        .env(
+            "UPDATER_BINARY_SOURCE",
+            updater_binary_source(&std::env::current_exe()?),
+        )
+        .env(
+            "UPDATER_SERVICE_SOURCE",
+            bundle.join("packaging/linux/codex-update-manager.service"),
+        )
         .current_dir(&bundle);
     if let Some(config_path) = effective_feature_config_path(config) {
         package.env("CODEX_LINUX_FEATURES_CONFIG", config_path);
@@ -103,7 +118,10 @@ pub async fn build_update(
         rollback_package_path: state.artifact_paths.rollback_package_path.clone(),
     };
     state.save_updater(&paths.state_file)?;
-    Ok(BuildArtifacts { workspace_dir: workspace, package_path })
+    Ok(BuildArtifacts {
+        workspace_dir: workspace,
+        package_path,
+    })
 }
 
 fn package_version() -> String {
@@ -111,7 +129,16 @@ fn package_version() -> String {
 }
 
 fn safe_component(value: &str) -> String {
-    value.chars().map(|c| if c.is_ascii_alphanumeric() || ".+-_".contains(c) { c } else { '_' }).collect()
+    value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || ".+-_".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn updater_binary_source(current_exe: &Path) -> PathBuf {
@@ -123,7 +150,11 @@ pub(crate) fn updater_binary_source_at(current_exe: &Path, installed: &Path) -> 
         return current_exe.to_path_buf();
     }
     #[cfg(unix)]
-    if let Some(stripped) = current_exe.as_os_str().as_bytes().strip_suffix(b" (deleted)") {
+    if let Some(stripped) = current_exe
+        .as_os_str()
+        .as_bytes()
+        .strip_suffix(b" (deleted)")
+    {
         let stripped = PathBuf::from(std::ffi::OsStr::from_bytes(stripped));
         if stripped.is_file() {
             return stripped;
@@ -153,7 +184,11 @@ fn copy_builder_bundle(source: &Path, destination: &Path) -> Result<()> {
 
 fn copy_path(source: &Path, destination: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(source)?;
-    anyhow::ensure!(!metadata.file_type().is_symlink(), "update-builder entry cannot be a symlink: {}", source.display());
+    anyhow::ensure!(
+        !metadata.file_type().is_symlink(),
+        "update-builder entry cannot be a symlink: {}",
+        source.display()
+    );
     if metadata.is_dir() {
         fs::create_dir_all(destination)?;
         for entry in fs::read_dir(source)? {
@@ -161,7 +196,9 @@ fn copy_path(source: &Path, destination: &Path) -> Result<()> {
             copy_path(&entry.path(), &destination.join(entry.file_name()))?;
         }
     } else {
-        if let Some(parent) = destination.parent() { fs::create_dir_all(parent)?; }
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
         fs::copy(source, destination)?;
         fs::set_permissions(destination, metadata.permissions())?;
     }
@@ -169,9 +206,15 @@ fn copy_path(source: &Path, destination: &Path) -> Result<()> {
 }
 
 async fn run_logged(command: &mut Command, log_path: &Path) -> Result<()> {
-    if let Some(parent) = log_path.parent() { async_fs::create_dir_all(parent).await?; }
-    command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-    let mut child = command.spawn().context("Failed to start update build command")?;
+    if let Some(parent) = log_path.parent() {
+        async_fs::create_dir_all(parent).await?;
+    }
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command
+        .spawn()
+        .context("Failed to start update build command")?;
     let stdout = child.stdout.take().context("missing stdout")?;
     let stderr = child.stderr.take().context("missing stderr")?;
     let (out, err) = tokio::join!(read_stream(stdout), read_stream(stderr));
@@ -179,7 +222,11 @@ async fn run_logged(command: &mut Command, log_path: &Path) -> Result<()> {
     text.push_str(&err?);
     async_fs::write(log_path, &text).await?;
     let status = child.wait().await?;
-    anyhow::ensure!(status.success(), "update build command failed; see {}", log_path.display());
+    anyhow::ensure!(
+        status.success(),
+        "update build command failed; see {}",
+        log_path.display()
+    );
     Ok(())
 }
 
@@ -208,7 +255,11 @@ fn find_package(dist: &Path) -> Result<PathBuf> {
             matches.push(path);
         }
     }
-    anyhow::ensure!(matches.len() == 1, "expected one rebuilt package, found {}", matches.len());
+    anyhow::ensure!(
+        matches.len() == 1,
+        "expected one rebuilt package, found {}",
+        matches.len()
+    );
     Ok(matches.remove(0))
 }
 
@@ -332,13 +383,22 @@ mod tests {
     #[test]
     fn find_package_still_rejects_two_real_packages() {
         let dist = scratch_dir("two-real");
-        fs::write(dist.join("codex-desktop-2026.09.03.120000-1-x86_64.pkg.tar.zst"), b"a")
-            .expect("first package");
-        fs::write(dist.join("codex-desktop-2026.09.03.130000-1-x86_64.pkg.tar.zst"), b"b")
-            .expect("second package");
+        fs::write(
+            dist.join("codex-desktop-2026.09.03.120000-1-x86_64.pkg.tar.zst"),
+            b"a",
+        )
+        .expect("first package");
+        fs::write(
+            dist.join("codex-desktop-2026.09.03.130000-1-x86_64.pkg.tar.zst"),
+            b"b",
+        )
+        .expect("second package");
 
         let error = find_package(&dist).expect_err("ambiguous dist must fail");
-        assert!(error.to_string().contains("found 2"), "unexpected error: {error}");
+        assert!(
+            error.to_string().contains("found 2"),
+            "unexpected error: {error}"
+        );
 
         fs::remove_dir_all(&dist).expect("cleanup");
     }
@@ -396,7 +456,11 @@ mod tests {
         fs::write(&helper, "binary").expect("helper");
         let enabled_destination = root.join("enabled");
         copy_builder_bundle(&source, &enabled_destination).expect("feature bundle copy");
-        assert_eq!(fs::read_to_string(enabled_destination.join("target/release/helper")).expect("copied helper"), "binary");
+        assert_eq!(
+            fs::read_to_string(enabled_destination.join("target/release/helper"))
+                .expect("copied helper"),
+            "binary"
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

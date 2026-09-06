@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
@@ -89,14 +90,11 @@ async function usableRuntimeBus(t) {
     return ownBus;
   }
 
-  const fixtureUid = 40000 + (process.pid % 20000);
-  const runtimeDir = path.join("/run/user", String(fixtureUid));
-  const bus = path.join(runtimeDir, "bus");
+  let runtimeDir = null;
+  let fixtureIdentity = null;
   let cleanupWithSudo = false;
 
-  if (uid === 0) {
-    fs.mkdirSync(runtimeDir, { recursive: true });
-  } else {
+  if (uid !== 0) {
     const sudo = childProcess.spawnSync("sudo", ["-n", "true"], {
       stdio: "ignore",
     });
@@ -106,34 +104,85 @@ async function usableRuntimeBus(t) {
       );
       return null;
     }
-    childProcess.execFileSync("sudo", ["-n", "mkdir", "-p", runtimeDir]);
-    childProcess.execFileSync("sudo", ["-n", "chmod", "0777", runtimeDir]);
     cleanupWithSudo = true;
   }
 
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const fixtureUid = crypto.randomInt(60000, 1_000_000_000);
+    const candidate = path.join("/run/user", String(fixtureUid));
+    if (cleanupWithSudo) {
+      const created = childProcess.spawnSync(
+        "sudo",
+        ["-n", "mkdir", "--mode=0700", candidate],
+        { stdio: "ignore" },
+      );
+      if (created.status !== 0) continue;
+      try {
+        childProcess.execFileSync("sudo", [
+          "-n",
+          "chown",
+          `${uid}:${typeof process.getgid === "function" ? process.getgid() : uid}`,
+          candidate,
+        ]);
+      } catch (error) {
+        childProcess.spawnSync("sudo", ["-n", "rmdir", "--", candidate], {
+          stdio: "ignore",
+        });
+        throw error;
+      }
+    } else {
+      try {
+        fs.mkdirSync(candidate, { mode: 0o700 });
+      } catch (error) {
+        if (error && error.code === "EEXIST") continue;
+        throw error;
+      }
+    }
+    runtimeDir = candidate;
+    const stat = fs.statSync(runtimeDir);
+    fixtureIdentity = { dev: stat.dev, ino: stat.ino };
+    break;
+  }
+  assert.ok(runtimeDir, "could not reserve a unique /run/user fixture directory");
+
+  const ownershipMarker = path.join(runtimeDir, ".codex-prerm-test-owner");
+  const ownershipToken = crypto.randomBytes(24).toString("hex");
+  fs.writeFileSync(ownershipMarker, ownershipToken, { mode: 0o600 });
+  const bus = path.join(runtimeDir, "bus");
   const server = net.createServer();
+  t.after(async () => {
+    if (server.listening) {
+      await new Promise((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+
+    const stat = fs.statSync(runtimeDir, { throwIfNoEntry: false });
+    const marker =
+      stat && fs.existsSync(ownershipMarker)
+        ? fs.readFileSync(ownershipMarker, "utf8")
+        : null;
+    assert.equal(
+      Boolean(
+        stat &&
+          stat.dev === fixtureIdentity.dev &&
+          stat.ino === fixtureIdentity.ino &&
+          marker === ownershipToken,
+      ),
+      true,
+      "refusing to clean a /run/user directory not owned by this fixture",
+    );
+    if (cleanupWithSudo) {
+      childProcess.execFileSync("sudo", ["-n", "rm", "-rf", runtimeDir]);
+    } else {
+      fs.rmSync(runtimeDir, { recursive: true, force: true });
+    }
+  });
+
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(bus, resolve);
   });
-  t.after(
-    () =>
-      new Promise((resolve) => {
-        server.close(() => {
-          if (cleanupWithSudo) {
-            childProcess.execFileSync("sudo", [
-              "-n",
-              "rm",
-              "-rf",
-              runtimeDir,
-            ]);
-          } else {
-            fs.rmSync(runtimeDir, { recursive: true, force: true });
-          }
-          resolve();
-        });
-      }),
-  );
   return bus;
 }
 

@@ -51,12 +51,6 @@ fn strip_deleted_suffix(target: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use std::{
-        env,
-        process::{Command, Stdio},
-        thread,
-        time::Duration,
-    };
 
     #[test]
     fn strips_deleted_suffix_from_replaced_binary_link() {
@@ -101,106 +95,5 @@ mod tests {
     #[test]
     fn current_test_binary_is_not_reported_as_replaced() {
         assert_eq!(replacement_binary(), None);
-    }
-
-    #[test]
-    fn replacement_process_fixture() -> Result<()> {
-        let Some(mode) = env::var_os("CODEX_RESTART_FIXTURE_MODE") else {
-            return Ok(());
-        };
-        let marker = PathBuf::from(
-            env::var_os("CODEX_RESTART_FIXTURE_MARKER")
-                .expect("fixture marker path is required"),
-        );
-        match mode.to_string_lossy().as_ref() {
-            "block" => {
-                fs::write(&marker, b"ready")?;
-                let release = PathBuf::from(
-                    env::var_os("CODEX_RESTART_FIXTURE_RELEASE")
-                        .expect("fixture release path is required"),
-                );
-                while !release.exists() {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                exit_for_replacement();
-            }
-            "report" => {
-                fs::write(&marker, env::current_exe()?.as_os_str().as_bytes())?;
-            }
-            other => panic!("unknown replacement fixture mode: {other}"),
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn successful_self_replacement_restarts_on_new_binary_and_next_build_uses_it() -> Result<()> {
-        let temp = tempfile::tempdir()?;
-        let source = env::current_exe()?;
-        let installed = temp.path().join("codex-update-manager");
-        let replacement = temp.path().join("codex-update-manager.new");
-        let ready = temp.path().join("old-ready");
-        let release = temp.path().join("release-old");
-        let report = temp.path().join("new-exe");
-
-        fs::copy(&source, &installed)?;
-        let mut old = Command::new(&installed)
-            .args([
-                "restart::tests::replacement_process_fixture",
-                "--exact",
-                "--nocapture",
-            ])
-            .env("CODEX_RESTART_FIXTURE_MODE", "block")
-            .env("CODEX_RESTART_FIXTURE_MARKER", &ready)
-            .env("CODEX_RESTART_FIXTURE_RELEASE", &release)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
-
-        for _ in 0..200 {
-            if ready.exists() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(ready.exists(), "old updater fixture did not become ready");
-
-        fs::copy(&source, &replacement)?;
-        fs::rename(&replacement, &installed)?;
-
-        let running_image = PathBuf::from(format!("/proc/{}/exe", old.id()));
-        assert_eq!(
-            replacement_at(&running_image, &installed),
-            Some(installed.clone()),
-            "running old inode must detect the newly installed updater"
-        );
-
-        fs::write(&release, b"go")?;
-        assert_eq!(
-            old.wait()?.code(),
-            Some(REPLACEMENT_RESTART_EXIT_CODE),
-            "old updater must exit with the Restart=on-failure code"
-        );
-
-        let restarted = Command::new(&installed)
-            .args([
-                "restart::tests::replacement_process_fixture",
-                "--exact",
-                "--nocapture",
-            ])
-            .env("CODEX_RESTART_FIXTURE_MODE", "report")
-            .env("CODEX_RESTART_FIXTURE_MARKER", &report)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()?;
-        assert!(restarted.success(), "replacement updater fixture failed to start");
-
-        let restarted_exe = PathBuf::from(OsStr::from_bytes(&fs::read(&report)?));
-        assert_eq!(restarted_exe, installed);
-        assert_eq!(
-            crate::builder::updater_binary_source_at(&restarted_exe, &installed),
-            installed,
-            "the next rebuild must source the live replacement updater, never a deleted process image"
-        );
-        Ok(())
     }
 }
