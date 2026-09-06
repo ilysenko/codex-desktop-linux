@@ -51,12 +51,28 @@ test("staging extends the hidden unified plugin and invalidates the browser-only
   fs.mkdirSync(path.join(target, "scripts"), { recursive: true });
   fs.mkdirSync(path.join(target, ".codex-plugin"));
   fs.writeFileSync(path.join(target, ".codex-plugin/plugin.json"), JSON.stringify({ name: "unified-computer-use", version: "26.901.41600" }));
-  fs.writeFileSync(path.join(target, "scripts/launch.mjs"), 'const env = {NODE_REPL_TRUSTED_SERVICES: JSON.stringify({sky:"@oai/sky/service"}),NODE_REPL_JS_BANNER: banner,};');
+  fs.writeFileSync(path.join(target, "scripts/launch.mjs"), 'const surfaces = new Set(["browser", "computer"]); const setupOptions = {browser: surfaces.has("browser"), computer: surfaces.has("computer")}; const env = {NODE_REPL_TRUSTED_SERVICES: JSON.stringify({sky:"@oai/sky/service"}),NODE_REPL_JS_BANNER: banner,};');
   const backend = path.join(workspace, "backend");
   fs.writeFileSync(backend, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const env = { ...process.env, SCRIPT_DIR: path.resolve(__dirname, "../.."), INSTALL_DIR: installDir,
     CODEX_COMPUTER_USE_BINARY_SOURCE: backend, CODEX_COMPUTER_USE_COSMIC_BINARY_SOURCE: backend };
   const stage = () => execFileSync("bash", [path.join(__dirname, "stage.sh")], { env, stdio: "pipe" });
+  const launcherPath = path.join(target, "scripts/launch.mjs");
+  const originalLauncher = fs.readFileSync(launcherPath, "utf8");
+  const originalManifest = fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"), "utf8");
+  for (const invalid of [
+    originalLauncher.replaceAll("setupOptions", "selectedSurfaces"),
+    originalLauncher.replace(/const setupOptions = \{[^}]+\}; /, ""),
+    originalLauncher.replace('computer: surfaces.has("computer")', 'computer: surfaces.has("browser")'),
+  ]) {
+    fs.writeFileSync(launcherPath, invalid);
+    assert.throws(stage, /unified.*contract/i);
+    assert.equal(fs.readFileSync(launcherPath, "utf8"), invalid);
+    assert.equal(fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"), "utf8"), originalManifest);
+    assert.equal(fs.readFileSync(marketplacePath, "utf8"), marketplace);
+    assert.equal(fs.existsSync(path.join(target, "scripts/native-service.mjs")), false);
+  }
+  fs.writeFileSync(launcherPath, originalLauncher);
   stage();
   const version = JSON.parse(fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"))).version;
   assert.notEqual(version, "26.901.41600");
@@ -210,5 +226,25 @@ test("native plugin patch rejects partial or duplicate Linux registrations", () 
     patched.replace(linux, linux.replace("&&e.computerUse}", "&&e.computerUse,migrate:one}")),
   ]) {
     assert.throws(() => applyLinuxComputerUsePluginGatePatch(bad), /Required Linux Computer Use plugin gate patch failed/);
+  }
+});
+
+// Reject changed complete selectors, including a changed owner beside a valid one.
+test("marketplace selector rejects changed expressions and companion owners", () => {
+  const patched = applyLinuxComputerUsePluginGatePatch(registrationFixture);
+  const patchedSelector = patched.slice(patched.indexOf("function Nd"));
+  const registry = registrationFixture.replace(nativeSelector, "");
+  for (const selector of [nativeSelector, patchedSelector]) {
+    for (const changed of [
+      selector.replace("computerUseNodeRepl", "newGate"),
+      selector.replace("`legacy-mcp`", "`other-backend`"),
+      selector.replace("e.desktopFeatureAvailability", "other.desktopFeatureAvailability"),
+      selector.replace("e.platform", "other.platform"),
+      selector.replace("return ", "return extra&&"),
+      selector.replace("`legacy-mcp`", "`legacy-mcp`&&e.newGate"),
+    ]) {
+      assert.throws(() => applyLinuxComputerUsePluginGatePatch(registry + changed), /marketplace selector/);
+      assert.throws(() => applyLinuxComputerUsePluginGatePatch(registry + selector + changed), /marketplace selector/);
+    }
   }
 });

@@ -62,6 +62,62 @@ function currentAppshotHotkeyMainBundleFixture() {
   ].join("");
 }
 
+for (const location of ["installed", "cache", "retired only"]) {
+  test(`AppShots backend commands use the staged unified plugin: ${location}`, async (t) => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-backend-"));
+    t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+    const installDir = path.join(workspace, "app");
+    const resources = path.join(installDir, "resources");
+    const codexHome = path.join(workspace, "codex-home");
+    const plugin = path.join(resources, "plugins/openai-bundled/plugins/unified-computer-use");
+    const marketplace = path.join(plugin, "../../.agents/plugins/marketplace.json");
+    fs.mkdirSync(path.dirname(marketplace), { recursive: true });
+    fs.writeFileSync(marketplace, JSON.stringify({ plugins: [{ name: "unified-computer-use" }] }));
+    fs.mkdirSync(path.join(plugin, ".codex-plugin"), { recursive: true });
+    fs.mkdirSync(path.join(plugin, "scripts"));
+    fs.writeFileSync(path.join(plugin, ".codex-plugin/plugin.json"), JSON.stringify({
+      name: "unified-computer-use", version: "26.901.41600",
+    }));
+    fs.writeFileSync(path.join(plugin, "scripts/launch.mjs"),
+      'const surfaces = new Set(["browser", "computer"]); const setupOptions = {browser: surfaces.has("browser"), computer: surfaces.has("computer")}; const env = {NODE_REPL_TRUSTED_SERVICES: JSON.stringify({sky:"@oai/sky/service"}),NODE_REPL_JS_BANNER: banner,};');
+    const backend = path.join(workspace, "backend");
+    fs.writeFileSync(backend, '#!/bin/sh\n[ "$1" = windows ] || exit 1\nprintf \'%s\\n\' \'{"backend":"staged-unified","windows":[]}\'\n', { mode: 0o755 });
+    execFileSync("bash", [path.join(__dirname, "../computer-use-linux/stage.sh")], {
+      env: { ...process.env, SCRIPT_DIR: path.resolve(__dirname, "../.."), INSTALL_DIR: installDir,
+        CODEX_COMPUTER_USE_BINARY_SOURCE: backend, CODEX_COMPUTER_USE_COSMIC_BINARY_SOURCE: backend },
+      stdio: "pipe",
+    });
+    if (location === "cache") {
+      const cached = path.join(codexHome, "plugins/cache/openai-bundled/unified-computer-use/latest");
+      fs.cpSync(plugin, cached, { recursive: true });
+    }
+    if (location !== "installed") {
+      fs.rmSync(plugin, { recursive: true });
+      // A leftover legacy helper must neither shadow the unified cache nor act as a fallback.
+      for (const retired of [
+        path.join(resources, "plugins/openai-bundled/plugins/computer-use/bin"),
+        path.join(codexHome, "plugins/cache/openai-bundled/computer-use/latest/bin"),
+      ]) {
+        fs.mkdirSync(retired, { recursive: true });
+        fs.writeFileSync(path.join(retired, "codex-computer-use-linux"),
+          '#!/bin/sh\nprintf \'%s\\n\' \'{"backend":"retired"}\'\n', { mode: 0o755 });
+      }
+    }
+    const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+    const context = vm.createContext({
+      require, process: { env: { CODEX_HOME: codexHome }, platform: "linux", resourcesPath: resources },
+    });
+    vm.runInContext(patched.slice(patched.lastIndexOf(";function codexLinuxAppshotRequire")), context);
+    if (location === "retired only") {
+      await assert.rejects(context.codexLinuxAppshotBackendJson(["windows"]), /backend is not installed/);
+    } else {
+      const report = await context.codexLinuxAppshotBackendJson(["windows"]);
+      assert.equal(report.backend, "staged-unified");
+      assert.equal(report.windows.length, 0);
+    }
+  });
+}
+
 test("appshots stays disabled until listed in features.json", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-feature-"));
   const configPath = path.join(tempDir, "features.json");

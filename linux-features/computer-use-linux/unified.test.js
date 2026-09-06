@@ -40,3 +40,11 @@ test("disabled native access does not leave a second native Node REPL service en
   assert.equal(select(true, { platform: "linux" }, { computerUse: true, computerUseNodeRepl: true },
     { enabled: false, paths: {} }).computerUse, false);
 });
+
+test("unified mode rejects appended gates and changed companion selectors", () => {
+  for (const source of [selector, patch(selector)]) {
+    const changed = source.replace(",h=[]", "&&t.newRequiredGate,h=[]");
+    assert.throws(() => patch(changed), /unified.*contract/i);
+    assert.throws(() => patch(selector + changed), /unified.*contract/i);
+  }
+});

@@ -23,6 +23,10 @@ try {
   manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   if (manifest.name !== "unified-computer-use" || typeof manifest.version !== "string" ||
       !launcher.includes('"@oai/sky/service"')) throw new Error("unexpected unified plugin");
+  const setupOptionsPattern = /const setupOptions\s*=\s*\{\s*browser:\s*([\w$]+)\.has\("browser"\),\s*computer:\s*\1\.has\("computer"\)\s*\};/g;
+  if ([...launcher.matchAll(setupOptionsPattern)].length !== 1) {
+    throw new Error("missing or changed unified surface options");
+  }
   const pristine = launcher.split(anchor).length - 1;
   const patched = launcher.split(replacement).length - 1;
   if (pristine === 1 && patched === 0 && !launcher.includes(importLine)) {
