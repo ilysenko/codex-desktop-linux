@@ -2,7 +2,7 @@
 
 use crate::{
     config::{effective_feature_config_path, RuntimeConfig, RuntimePaths},
-    install::PackageKind,
+    install::{self, PackageKind},
     state::{ArtifactPaths, PersistedState, UpdateStatus},
 };
 use anyhow::{Context, Result};
@@ -79,12 +79,14 @@ pub async fn build_update(
         PackageKind::Rpm => "scripts/build-rpm.sh",
         PackageKind::Pacman => "scripts/build-pacman.sh",
     };
+    let current_exe = std::env::current_exe()?;
+    let updater_binary = install::resolve_updater_binary_for_build(&current_exe);
     let mut package = Command::new(bundle.join(script));
     package
         .env("PACKAGE_VERSION", package_version())
         .env("APP_DIR_OVERRIDE", &app)
         .env("DIST_DIR_OVERRIDE", &dist)
-        .env("UPDATER_BINARY_SOURCE", std::env::current_exe()?)
+        .env("UPDATER_BINARY_SOURCE", updater_binary)
         .env("UPDATER_SERVICE_SOURCE", bundle.join("packaging/linux/codex-update-manager.service"))
         .current_dir(&bundle);
     if let Some(config_path) = effective_feature_config_path(config) {

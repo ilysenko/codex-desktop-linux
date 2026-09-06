@@ -1,11 +1,12 @@
 "use strict";
 
+const { applyLinuxComputerUsePluginGatePatch } = require("./plugin-gate.js");
+
 const { mainBundlePatch, webviewAssetPatch } = require("../../scripts/patches/descriptor.js");
 const {
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseHostPlatformPatch,
-  applyLinuxComputerUsePluginGatePatch,
   applyLinuxNativeDesktopAppsHandlerPatch,
   matchesLinuxComputerUseHostPlatformContract,
 } = require("../../scripts/patches/impl/computer-use.js");

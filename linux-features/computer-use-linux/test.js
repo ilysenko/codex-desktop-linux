@@ -1,5 +1,7 @@
 "use strict";
 
+const { applyLinuxComputerUsePluginGatePatch } = require("./plugin-gate.js");
+
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -10,7 +12,6 @@ const test = require("node:test");
 const manifest = require("./feature.json");
 const descriptors = require("./patch.js");
 const {
-  applyLinuxComputerUsePluginGatePatch,
   applyLinuxComputerUseHostPlatformPatch,
   matchesLinuxComputerUseHostPlatformContract,
 } = require("../../scripts/patches/impl/computer-use.js");
