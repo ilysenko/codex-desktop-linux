@@ -300,6 +300,9 @@ const TERMINAL_DETECTION_HINTS: &[&str] = &[
     "alacritty",
     "ghostty",
     "gnome terminal",
+    "gnome-terminal",
+    "org.gnome.terminal",
+    "kgx",
     "konsole",
     "kitty",
     "ptyxis",
@@ -489,6 +492,22 @@ mod tests {
         window.wm_class = Some("kitty-helper".to_string());
 
         assert_eq!(terminal_paste_shortcut(&window), None);
+    }
+
+    #[test]
+    fn terminal_detection_preserves_legacy_identity_substrings() {
+        for identity in [
+            "custom-ghostty-profile",
+            "gnome-terminal-preview",
+            "org.gnome.Terminal.Devel",
+            "kgx-helper",
+            "KOI8RXTerm",
+        ] {
+            assert!(
+                terminal_detection_hint_matches(identity),
+                "did not recognize legacy terminal hint in {identity}"
+            );
+        }
     }
 
     #[test]
