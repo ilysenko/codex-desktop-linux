@@ -23,11 +23,11 @@ const patchedZoomOverlayPattern = new RegExp(
   "g",
 );
 const currentOverlaySyncPattern = new RegExp(
-  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`&&process\\.platform!==\\\`linux\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`quickChat\\\`\\)return;`,
+  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`&&process\\.platform!==\\\`linux\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`quickChat\\\`&&\\2!==\\\`detached\\\`\\)return;`,
   "g",
 );
 const patchedOverlaySyncPattern = new RegExp(
-  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`quickChat\\\`\\)return;`,
+  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`quickChat\\\`&&\\2!==\\\`detached\\\`\\)return;`,
   "g",
 );
 
@@ -101,7 +101,7 @@ function applyFramelessTitlebarMainPatch(source) {
     .replace(
       currentOverlaySyncPattern,
       (_match, windowAlias, windowTypeAlias) =>
-        `installApplicationMenuTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if(process.platform!==\`win32\`||${windowTypeAlias}!==\`primary\`&&${windowTypeAlias}!==\`quickChat\`)return;`,
+        `installApplicationMenuTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if(process.platform!==\`win32\`||${windowTypeAlias}!==\`primary\`&&${windowTypeAlias}!==\`quickChat\`&&${windowTypeAlias}!==\`detached\`)return;`,
     );
 
   if (framelessTitlebarMainContract(patched) !== "patched") {

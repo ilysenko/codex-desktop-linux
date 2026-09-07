@@ -652,9 +652,22 @@ updater_build_output_binary() {
 ensure_updater_binary() {
     local cargo_cmd=""
     local built_binary=""
+    local deleted_suffix=" (deleted)"
+    local recovered_binary=""
 
     if ! package_with_updater_enabled; then
         return
+    fi
+
+    if [ ! -x "$UPDATER_BINARY_SOURCE" ]; then
+        case "$UPDATER_BINARY_SOURCE" in
+            *"$deleted_suffix")
+                recovered_binary="${UPDATER_BINARY_SOURCE%"$deleted_suffix"}"
+                if [ -x "$recovered_binary" ]; then
+                    UPDATER_BINARY_SOURCE="$recovered_binary"
+                fi
+                ;;
+        esac
     fi
 
     if [ -x "$UPDATER_BINARY_SOURCE" ] && ! updater_binary_is_stale "$UPDATER_BINARY_SOURCE"; then

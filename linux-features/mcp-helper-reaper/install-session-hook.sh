@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app_dir="${1:?usage: install-session-hook <app-dir> <state-dir> <log-dir>}"
-state_dir="${2:-}"
-log_dir="${3:-}"
+app_dir="${CODEX_LINUX_APP_DIR:?install-session-hook requires CODEX_LINUX_APP_DIR}"
 reaper="$app_dir/.codex-linux/mcp-helper-reaper/codex-mcp-helper-reaper"
 
 [ "${CODEX_MCP_HELPER_REAPER_DISABLE_HOOK:-}" = "1" ] && exit 0

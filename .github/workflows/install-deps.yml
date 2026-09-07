@@ -5,6 +5,8 @@ on:
     paths:
       - install.sh
       - scripts/install-deps.sh
+      - scripts/lib/install-deps-rust.sh
+      - tests/install_deps_pacman_rust_matrix.sh
       - packaging/linux/control
       - .github/workflows/install-deps.yml
   push:
@@ -13,6 +15,8 @@ on:
     paths:
       - install.sh
       - scripts/install-deps.sh
+      - scripts/lib/install-deps-rust.sh
+      - tests/install_deps_pacman_rust_matrix.sh
       - packaging/linux/control
       - .github/workflows/install-deps.yml
 
@@ -63,3 +67,29 @@ jobs:
           test "$status" -ne 0
           printf '%s\n' "$output" | grep -q "macOS DMG inputs are no longer supported"
           ! printf '%s\n' "$output" | grep -q "Node.js 20+ required"
+
+  pacman-rust-bootstrap:
+    name: pacman ${{ matrix.rust-state }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: docker.io/library/archlinux:latest
+      options: --user root
+    strategy:
+      fail-fast: false
+      matrix:
+        rust-state:
+          - working-distro-cargo
+          - rustup-without-toolchain
+          - neither-rust-nor-rustup
+          - shadowed-user-local-proxy
+    steps:
+      - name: Bootstrap checkout tools
+        run: pacman -Syu --noconfirm --needed ca-certificates git
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Verify pacman Rust bootstrap state
+        env:
+          CODEX_RUN_ARCH_INSTALL_DEPS_MATRIX: "1"
+        run: bash tests/install_deps_pacman_rust_matrix.sh "${{ matrix.rust-state }}"

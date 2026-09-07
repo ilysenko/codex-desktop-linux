@@ -114,6 +114,34 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(dockFeatureAlone, /test -x "\$hook"/);
 });
 
+test("install-deps workflow covers apt and pacman Rust bootstrap", () => {
+  const workflow = read(".github/workflows/install-deps.yml");
+  assert.match(workflow, /^      - scripts\/lib\/install-deps-rust\.sh$/m);
+  assert.match(workflow, /^      - tests\/install_deps_pacman_rust_matrix\.sh$/m);
+
+  const apt = job(workflow, "apt-node-bootstrap");
+  for (const image of [
+    "docker.io/library/ubuntu:22.04",
+    "docker.io/library/ubuntu:24.04",
+    "docker.io/library/debian:12",
+  ]) {
+    assert.match(apt, new RegExp(image.replaceAll(".", "\\.")));
+  }
+
+  const pacman = job(workflow, "pacman-rust-bootstrap");
+  assert.match(pacman, /docker\.io\/library\/archlinux:latest/);
+  assert.match(pacman, /CODEX_RUN_ARCH_INSTALL_DEPS_MATRIX: "1"/);
+  assert.match(pacman, /bash tests\/install_deps_pacman_rust_matrix\.sh/);
+  for (const rustState of [
+    "working-distro-cargo",
+    "rustup-without-toolchain",
+    "neither-rust-nor-rustup",
+    "shadowed-user-local-proxy",
+  ]) {
+    assert.match(pacman, new RegExp(`^          - ${rustState}$`, "m"));
+  }
+});
+
 test("official Linux metadata expires after seven days", () => {
   const workflow = read(".github/workflows/upstream-build-app.yml");
   const signedBaseline = job(workflow, "signed-baseline");

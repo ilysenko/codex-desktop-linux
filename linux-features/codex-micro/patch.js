@@ -5,7 +5,6 @@ const path = require("node:path");
 
 const {
   extractedAppPatch,
-  webviewAssetPatch,
 } = require("../../scripts/patches/descriptor.js");
 
 const CODEX_MICRO_GATE_ID = "3207467860";
@@ -15,82 +14,206 @@ const CODEX_MICRO_HOTPLUG_MARKER = "codexLinuxCodexMicroHotplug";
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const CODEX_MICRO_SERVICE_PATTERN =
   /^service-[A-Za-z0-9_-]+\.js$/;
+const CODEX_MICRO_GATE_CONTRACTS = [
+  {
+    description: "Codex Micro app-shell gates",
+    gateCount: 5,
+    routeCount: 2,
+    anchor: (source) =>
+      source.includes("codex-micro-onboarding-host-")
+      && source.includes("codex-micro-bridge-"),
+  },
+  {
+    description: "Codex Micro settings-visibility gate",
+    gateCount: 1,
+    routeCount: 0,
+    anchor: (source) =>
+      source.includes("case`codex-micro`:return")
+      && source.includes('"codex-micro":'),
+  },
+  {
+    description: "Codex Micro debug-panel gate",
+    gateCount: 1,
+    routeCount: 0,
+    anchor: (source) =>
+      source.includes("codexMicro.onboarding.debugStatus"),
+  },
+];
 const WATCH_TOPOLOGY_FUNCTION = new RegExp(
   `function (${JS_IDENT})\\((${JS_IDENT})\\)\\{return ` +
     `(${JS_IDENT})\\(\\)\\.watch\\(\\2\\)\\}`,
   "g",
 );
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function occurrenceCount(source, value) {
+  return source.split(value).length - 1;
 }
 
-function exportedFeatureGateHook(source) {
-  const currentGate = new RegExp(
-    `(function (${JS_IDENT})\\((${JS_IDENT})\\)\\{let (${JS_IDENT})=\\(0,(${JS_IDENT})\\.c\\)\\(2\\);` +
-      `(${JS_IDENT})\\(typeof \\3==\\\`string\\\`\\);let (${JS_IDENT});return ` +
-      `\\4\\[0\\]===\\3\\?\\7=\\4\\[1\\]:\\(\\7=typeof \\3==\\\`boolean\\\`\\?\\3:` +
-      `\\{cache:\\\`signal\\\`,resolve\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return ` +
-      `(${JS_IDENT})\\.resolve\\(\\8,\\9,\\3\\)\\.atom\\},scope:\\10\\.scope\\},` +
-      `\\4\\[0\\]=\\3,\\4\\[1\\]=\\7\\),)(${JS_IDENT})\\(\\7\\)(\\})`,
-  );
-  const match = source.match(currentGate);
-  if (match == null) return null;
-  return {
-    source: match[0],
-    prefix: match[1],
-    hookName: match[2],
-    argumentName: match[3],
-    atomReadName: match[11],
-    suffix: match[12],
-  };
-}
-
-function hasCodexMicroCallsite(source, hookName) {
-  if (typeof source !== "string" || typeof hookName !== "string") {
-    return false;
-  }
-  const gateCall = new RegExp(
-    `(?:^|[^A-Za-z0-9_$.])${escapeRegExp(hookName)}\\(\`${CODEX_MICRO_GATE_ID}\`\\)`,
-  );
-  return gateCall.test(source)
-    && source.includes(`\`${CODEX_MICRO_ROUTE}\``);
-}
-
-function matchesCodexMicroFeatureGateContract(source) {
+function codexMicroFeatureGateContract(source, expected) {
   if (typeof source !== "string") {
-    return false;
+    return null;
   }
-  if (source.includes(CODEX_MICRO_GATE_MARKER)) {
-    return true;
+
+  const routeLiteral = `\`${CODEX_MICRO_ROUTE}\``;
+  if (occurrenceCount(source, routeLiteral) !== expected.routeCount) {
+    return null;
   }
-  const hook = exportedFeatureGateHook(source);
-  return hook != null
-    && hasCodexMicroCallsite(source, hook.hookName);
+
+  const directGate = new RegExp(
+    `(^|[^A-Za-z0-9_$.])(${JS_IDENT})\\(\`${CODEX_MICRO_GATE_ID}\`\\)`,
+    "g",
+  );
+  const patchedGate = new RegExp(
+    `!0/\\*${CODEX_MICRO_GATE_MARKER}\\*/`,
+    "g",
+  );
+  const directMatches = [...source.matchAll(directGate)];
+  const patchedMatches = [...source.matchAll(patchedGate)];
+  const gateIdCount = occurrenceCount(source, CODEX_MICRO_GATE_ID);
+  const markerCount = occurrenceCount(source, CODEX_MICRO_GATE_MARKER);
+
+  if (
+    gateIdCount === expected.gateCount
+    && directMatches.length === expected.gateCount
+    && markerCount === 0
+    && patchedMatches.length === 0
+  ) {
+    return { state: "unpatched", directGate };
+  }
+  if (
+    gateIdCount === 0
+    && directMatches.length === 0
+    && markerCount === expected.gateCount
+    && patchedMatches.length === expected.gateCount
+  ) {
+    return { state: "patched", directGate };
+  }
+  return null;
 }
 
-function applyCodexMicroFeatureGatePatch(source) {
-  if (typeof source !== "string" || source.includes(CODEX_MICRO_GATE_MARKER)) {
+function matchesCodexMicroFeatureGateContract(source, expected) {
+  return codexMicroFeatureGateContract(source, expected) != null;
+}
+
+function applyCodexMicroFeatureGatePatch(source, expected) {
+  const contract = codexMicroFeatureGateContract(source, expected);
+  if (contract?.state === "patched") {
     return source;
   }
+  if (contract?.state === "unpatched") {
+    return source.replace(
+      contract.directGate,
+      (_match, boundary) =>
+        `${boundary}!0/*${CODEX_MICRO_GATE_MARKER}*/`,
+    );
+  }
+  if (
+    typeof source === "string"
+    && source.includes(`\`${CODEX_MICRO_ROUTE}\``)
+  ) {
+    console.warn(
+      "WARN: Current Codex Micro feature-gate contract is incomplete or drifted - " +
+        "skipping Codex Micro gate override",
+    );
+  }
+  return source;
+}
 
-  const hook = exportedFeatureGateHook(source);
-  if (hook == null) {
-    if (source.includes(`\`${CODEX_MICRO_ROUTE}\``)) {
-      console.warn(
-        "WARN: Could not find the current signal-backed feature-gate hook - " +
-          "skipping Codex Micro gate override",
-      );
+function findCodexMicroFeatureGateAssets(extractedDir) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  if (!fs.existsSync(assetsDir)) {
+    return {
+      matches: null,
+      reason: "webview/assets directory not found",
+    };
+  }
+
+  const candidates = fs.readdirSync(assetsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .map((entry) => {
+      const assetPath = path.join(assetsDir, entry.name);
+      return {
+        assetName: entry.name,
+        assetPath,
+        source: fs.readFileSync(assetPath, "utf8"),
+      };
+    })
+    .filter(({ source }) =>
+      source.includes(CODEX_MICRO_GATE_ID)
+      || source.includes(CODEX_MICRO_GATE_MARKER),
+    );
+
+  const matches = [];
+  for (const expected of CODEX_MICRO_GATE_CONTRACTS) {
+    const contractMatches = candidates
+      .filter(({ source }) => expected.anchor(source))
+      .map((candidate) => ({
+        ...candidate,
+        contract: codexMicroFeatureGateContract(candidate.source, expected),
+        expected,
+      }))
+      .filter(({ contract }) => contract != null);
+    if (contractMatches.length !== 1) {
+      return {
+        matches: null,
+        reason:
+          `Found ${contractMatches.length} current ${expected.description} bundles`,
+      };
     }
-    return source;
-  }
-  if (!hasCodexMicroCallsite(source, hook.hookName)) {
-    return source;
+    matches.push(contractMatches[0]);
   }
 
-  const replacement = `${hook.prefix}${hook.atomReadName}(${hook.source.match(/;let ([A-Za-z_$][\w$]*);return/u)[1]})||` +
-    `${hook.argumentName}===\`${CODEX_MICRO_GATE_ID}\`/*${CODEX_MICRO_GATE_MARKER}*/${hook.suffix}`;
-  return source.replace(hook.source, replacement);
+  if (new Set(matches.map(({ assetName }) => assetName)).size !== matches.length) {
+    return {
+      matches: null,
+      reason: "Current Codex Micro feature-gate contracts overlap",
+    };
+  }
+  if (candidates.length !== matches.length) {
+    return {
+      matches: null,
+      reason:
+        `Found ${candidates.length} Codex Micro feature-gate bundles; expected ${matches.length}`,
+    };
+  }
+
+  const states = new Set(matches.map(({ contract }) => contract.state));
+  if (states.size !== 1) {
+    return {
+      matches: null,
+      reason: "Current Codex Micro feature-gate bundles have mixed patch state",
+    };
+  }
+  return { matches, reason: null };
+}
+
+function patchCodexMicroFeatureGateAssets(extractedDir) {
+  const discovery = findCodexMicroFeatureGateAssets(extractedDir);
+  if (discovery.matches == null) {
+    console.warn(
+      `WARN: ${discovery.reason} - skipping Codex Micro feature-gate override`,
+    );
+    return { matched: 0, changed: 0, reason: discovery.reason };
+  }
+
+  const pendingWrites = discovery.matches
+    .map((match) => ({
+      ...match,
+      patchedSource: applyCodexMicroFeatureGatePatch(
+        match.source,
+        match.expected,
+      ),
+    }))
+    .filter(({ source, patchedSource }) => source !== patchedSource);
+  for (const { assetPath, patchedSource } of pendingWrites) {
+    fs.writeFileSync(assetPath, patchedSource, "utf8");
+  }
+  return {
+    matched: 1,
+    changed: pendingWrites.length,
+    reason: null,
+    targets: discovery.matches.map(({ assetName }) => assetName),
+  };
 }
 
 function hasCodexMicroServiceContract(source) {
@@ -250,18 +373,19 @@ function patchCodexMicroService(extractedDir) {
 
 module.exports = {
   CODEX_MICRO_GATE_ID,
+  CODEX_MICRO_GATE_CONTRACTS,
   CODEX_MICRO_GATE_MARKER,
   CODEX_MICRO_HOTPLUG_MARKER,
   CODEX_MICRO_ROUTE,
   applyCodexMicroFeatureGatePatch,
   applyCodexMicroHotplugPatch,
   codexMicroTopologyWatcher,
-  exportedFeatureGateHook,
+  findCodexMicroFeatureGateAssets,
   findCodexMicroServiceBundle,
-  hasCodexMicroCallsite,
   hasCodexMicroServiceContract,
   matchesCodexMicroFeatureGateContract,
   patchCodexMicroHotplugSource,
+  patchCodexMicroFeatureGateAssets,
   patchCodexMicroService,
   descriptors: [
     extractedAppPatch({
@@ -281,15 +405,22 @@ module.exports = {
         return result.changed === 1 ? "applied" : "already-applied";
       },
     }),
-    webviewAssetPatch({
+    extractedAppPatch({
       id: "webview-feature-gate",
+      phase: "extracted-app:pre-webview",
       order: 28_990,
       ciPolicy: "opt-in",
-      pattern: /^app-initial-[A-Za-z0-9_-]+\.js$/,
-      assetMatch: matchesCodexMicroFeatureGateContract,
-      missingDescription: "current Codex Micro feature-gate webview bundle",
-      skipDescription: "Codex Micro feature-gate override",
-      apply: applyCodexMicroFeatureGatePatch,
+      targetSummary: "current Codex Micro feature-gate webview bundles",
+      apply: patchCodexMicroFeatureGateAssets,
+      status: (result, warnings) => {
+        if (result?.matched !== 1) {
+          return {
+            status: "skipped-optional",
+            reason: result?.reason ?? warnings[0] ?? null,
+          };
+        }
+        return result.changed > 0 ? "applied" : "already-applied";
+      },
     }),
   ],
 };

@@ -56,7 +56,9 @@ const {
 
 function projectBundleFixture() {
   return [
-    `var actions={sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\`};`,
+    `var actionAttributes={sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\`};`,
+    "var selectors={sidebarProjectRow:`[${actionAttributes.sidebarProjectRow}]`};",
+    "var actions={sidebarProjectRow:({collapsed:e,label:t,projectId:n})=>({collapsed:e,label:t,projectId:n})};",
     "function marquee(e){return(0,Iy.jsx)(`span`,{...e,\"data-marquee-text\":!0})}",
     "function projectRow(){let p=actions.sidebarProjectRow({collapsed:r,label:c,projectId:l});",
     "let E=(0,Iy.jsx)(Marquee,{className:`select-none`,animateOnGroupHover:!0,children:c});",
@@ -260,7 +262,9 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:appearance-dock-icon-main-process", "main-bundle", "optional"],
         ["feature:ui-tweaks:appearance-dock-icon-settings-row", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-main-process", "main-bundle", "optional"],
+        ["feature:ui-tweaks:home-suggested-prompts-feature-sync", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-app-page", "webview-asset", "optional"],
+        ["feature:ui-tweaks:home-suggested-prompts-work-page", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-settings-row", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
       ],
@@ -937,7 +941,7 @@ test("patch skips unrelated assets", () => {
 
 test("drift warning returns source unchanged", () => {
   const source = [
-    "function Hd(){return {id:`sidebarElectron.projectsNavLink`,defaultMessage:`Projects`}}",
+    `var actionAttributes={sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\`};`,
     "function row(){return actions.sidebarProjectRow({collapsed:r,label:c,projectId:l})}",
   ].join("");
 

@@ -112,7 +112,9 @@ The NixOS module uses the same option namespace:
 
 The Nix package follows the standard `NIXOS_OZONE_WL` convention. When both
 `NIXOS_OZONE_WL` and `WAYLAND_DISPLAY` are set, its wrapper starts Electron with
-native Wayland rendering and text-input-v3 IME support.
+native Wayland rendering and text-input-v3 IME support. Otherwise the wrapper
+sets `CODEX_OZONE_PLATFORM=x11` so the generic launcher's Wayland-session
+detection does not select the backend behind that opt-in.
 
 On NixOS the launcher includes a package-local Bubblewrap adapter on `PATH` for
 the Codex Linux command sandbox. The adapter preserves the sandbox policy and

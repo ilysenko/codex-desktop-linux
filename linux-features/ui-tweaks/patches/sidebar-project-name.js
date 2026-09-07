@@ -10,9 +10,8 @@ const UNSAFE_PROJECT_NAME_STYLE_PATTERN = /[{}@<>]|\r|\n|\/\*|\*\/|\burl\s*\(/i;
 
 const SIDEBAR_PROJECT_NAME_MARKERS = [
   `sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\``,
-  "sidebarProjectRow({collapsed:",
-  "className:`select-none`,animateOnGroupHover:!0",
-  '"data-marquee-text":!0',
+  "sidebarProjectRow:`[${",
+  "sidebarProjectRow:({collapsed:",
 ];
 
 function warn(message) {

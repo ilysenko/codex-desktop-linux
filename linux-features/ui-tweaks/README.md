@@ -152,6 +152,11 @@ functions for diagnostics, then honors the explicit Linux opt-in. It also keeps
 the upstream setting as the user's runtime on/off control after the feature is
 built into the app.
 
+The current official package keeps the renderer feature-sync bridge in
+`app-initial`, normal Home in `app-primary`, and Work Home in its `page` bundle.
+Each bundle has its own semantic contract so a future filename hash change does
+not silently select an unrelated asset.
+
 This tweak is independently disabled by default:
 
 ```json
@@ -173,7 +178,7 @@ This tweak is independently disabled by default:
 
 Config keys:
 
-- `enabled`: `true` applies the four current-package Suggested Prompts descriptors.
+- `enabled`: `true` applies the six current-package Suggested Prompts descriptors.
   `false` leaves the upstream Settings and Home behavior unchanged while other
   UI tweaks remain independently configurable.
 

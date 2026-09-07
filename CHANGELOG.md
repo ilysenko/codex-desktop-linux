@@ -50,6 +50,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Wayland sessions again start the app on a native Wayland surface. The
+  launcher appends `--ozone-platform=wayland` when `WAYLAND_DISPLAY` names a
+  live compositor socket, the session is not X11, and no command-line argument,
+  flag file, feature argument, or launcher hook already selects a backend.
+  ChromeOS Crostini, GNOME Wayland with several monitors, and WSLg keep the X11
+  default, and `CODEX_OZONE_PLATFORM=x11|wayland` pins a backend ahead of the
+  detection; the Nix wrapper sets `x11` so `NIXOS_OZONE_WL` remains its opt-in.
+  The runtime otherwise defaults to X11, so compositors that do not scale
+  XWayland clients drew the window at 1x on a HiDPI output.
+- Lifecycle hooks now use exported application paths without interpreting
+  desktop arguments or deep-link URIs as launcher context. After-exit hooks
+  receive the Electron status and cannot replace it when cleanup fails; the
+  MCP and Node REPL reapers now run on normal and deep-link launches.
 - The opt-in `frameless-titlebar` feature again hides official Linux overlay
   buttons. It retargets the current `titleBarOverlay` window options, zoom
   update, and theme-sync contracts, remaps Linux webview chrome to `native`,

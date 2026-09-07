@@ -209,6 +209,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `computer-use-linux` | Linux desktop-control UI 与原生 MCP backend | [文档](linux-features/computer-use-linux/README.md) |
 | `copilot-reasoning-effort` | Copilot auth 的 reasoning-effort 默认值 | [文档](linux-features/copilot-reasoning-effort/README.md) |
 | `directory-only-working-tree-watch` | 有界 Watchbound 工作树监听 | [文档](linux-features/directory-only-working-tree-watch/README.md) |
+| `flatpak-chrome-native-messaging` | 将官方 Chrome 扩展连接到 Flatpak Google Chrome | [文档](linux-features/flatpak-chrome-native-messaging/README.md) |
 | `frameless-titlebar` | 隐藏官方 Linux overlay 按钮，改由 compositor 管理窗口装饰 | [文档](linux-features/frameless-titlebar/README.md) |
 | `global-dictation` | X11 / XDG portal 全局听写快捷键 | [文档](linux-features/global-dictation/README.md) |
 | `linux-performance-workarounds` | 针对受影响系统的 renderer workaround | [文档](linux-features/linux-performance-workarounds/README.md) |
@@ -324,10 +325,11 @@ make appimage
 | 问题 | 首先检查 |
 |---|---|
 | 官方与 Community 启动互相影响 | 完全退出所有 `ChatGPT` 进程；两者共享上游 profile |
+| Flatpak Chrome 能打开 AppImage，但扩展显示 `Native transport disconnected` | 启用 `flatpak-chrome-native-messaging`；参阅 [Flatpak Chrome 设置](docs/troubleshooting.md#appimage-opens-from-flatpak-chrome-but-the-extension-cannot-connect) |
 | 迁移后 Browser/Chrome extension 无法连接 | 完全退出 ChatGPT 与 Chrome，再按[故障排除](docs/troubleshooting.md#browser-or-chrome-plugin-is-visible-but-cannot-connect)执行窄范围 cache repair |
 | 签名或软件包验证失败 | 不要绕过；检查系统时间、网络、`gpgv`、architecture 和磁盘空间 |
 | 应用无法启动 | 运行 `/opt/codex-desktop/start.sh --diagnose` |
-| 应用使用 XWayland，或需要持久化 Electron 参数 | 在 `~/.config/codex-desktop/electron-flags.conf` 中每行写一个参数，例如 `--ozone-platform=wayland` |
+| 应用使用 XWayland，或需要持久化 Electron 参数 | 确认为 Wayland 会话时会自动选择原生后端；可用 `CODEX_OZONE_PLATFORM=x11\|wayland` 固定后端，或在 `~/.config/codex-desktop/electron-flags.conf` 中每行写一个参数，例如 `--ozone-platform=x11` |
 | AppImage 报 sandbox 错误 | 启用 user namespaces 或安装原生包；不会自动添加 `--no-sandbox` |
 | 上游更新后启用扩展发生 drift | 禁用该扩展确认 clean baseline，并在 issue 中附上 patch report |
 | updater 等待应用退出 | 关闭官方与 Community 进程，检查 `codex-update-manager status --json` |

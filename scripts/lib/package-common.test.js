@@ -9,15 +9,32 @@ const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "../..");
 
-function runPackageCommon(script, appDir) {
+function runPackageCommon(script, appDir, sourceRoot = repoRoot) {
   return childProcess.execFileSync("bash", ["-c", [
     "set -euo pipefail",
-    `REPO_DIR=${JSON.stringify(repoRoot)}`,
+    `REPO_DIR=${JSON.stringify(sourceRoot)}`,
     `APP_DIR=${JSON.stringify(appDir)}`,
     `. ${JSON.stringify(path.join(repoRoot, "scripts/lib/package-common.sh"))}`,
     script,
   ].join("\n")], { encoding: "utf8" });
 }
+
+test("updater binary source recovers the Linux deleted-path marker", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-updater-deleted-path-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sourceRoot = path.join(root, "minimal-update-builder");
+  const updater = path.join(root, "codex-update-manager");
+  fs.mkdirSync(sourceRoot, { recursive: true });
+  fs.writeFileSync(updater, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+  const output = runPackageCommon([
+    `UPDATER_BINARY_SOURCE=${JSON.stringify(`${updater} (deleted)`)}`,
+    "ensure_updater_binary",
+    'printf "%s\\n" "$UPDATER_BINARY_SOURCE"',
+  ].join("\n"), root, sourceRoot);
+
+  assert.equal(output, `${updater}\n`);
+});
 
 test("package metadata is read from the staged official Linux control file", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-package-common-"));

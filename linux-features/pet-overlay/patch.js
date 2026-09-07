@@ -510,7 +510,7 @@ function patchAvatarSelectionRefresh(source) {
     return source;
   }
 
-  const handlerRegex = /"set-setting":async\(\{key:([A-Za-z_$][\w$]*),value:([A-Za-z_$][\w$]*)\}\)=>\(this\.setSettingValue\(\1,\2\),\{success:!0\}\)/;
+  const handlerRegex = /"set-setting":async\(\{key:([A-Za-z_$][\w$]*),value:([A-Za-z_$][\w$]*)\}\)=>\(await this\.setSettingValue\(\1,\2\),\{success:!0\}\)/;
   const match = source.match(handlerRegex);
   if (match == null) {
     console.warn("WARN: Could not find desktop set-setting handler - skipping pet selection refresh");
@@ -519,7 +519,7 @@ function patchAvatarSelectionRefresh(source) {
 
   const [handler, keyVar, valueVar] = match;
   const helper = `function ${AVATAR_SELECTION_REFRESH_MARKER}(){try{setTimeout(()=>{for(let e of require(\`electron\`).BrowserWindow.getAllWindows()){if(e?.isDestroyed?.()||String(e?.getTitle?.()??\`\`)!==\`Codex Pet Overlay\`)continue;let t=e.webContents;t==null||t.isDestroyed?.()||t.reload?.()}},0)}catch{}}`;
-  const replacement = `"set-setting":async({key:${keyVar},value:${valueVar}})=>(this.setSettingValue(${keyVar},${valueVar}),${keyVar}===\`selected-avatar-id\`&&${AVATAR_SELECTION_REFRESH_MARKER}(),{success:!0})`;
+  const replacement = `"set-setting":async({key:${keyVar},value:${valueVar}})=>(await this.setSettingValue(${keyVar},${valueVar}),${keyVar}===\`selected-avatar-id\`&&${AVATAR_SELECTION_REFRESH_MARKER}(),{success:!0})`;
   return helper + source.replace(handler, replacement);
 }
 

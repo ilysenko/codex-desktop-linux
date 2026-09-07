@@ -5,12 +5,13 @@
 # recorded pid is dead or no longer the reaper.
 set -euo pipefail
 
-app_dir="${1:?usage: cold-start hook <app-dir> <state-dir> <log-dir>}"
-state_dir="${2:?usage: cold-start hook <app-dir> <state-dir> <log-dir>}"
+app_dir="${CODEX_LINUX_APP_DIR:?cold-start hook requires CODEX_LINUX_APP_DIR}"
+state_dir="${CODEX_LINUX_APP_STATE_DIR:?cold-start hook requires CODEX_LINUX_APP_STATE_DIR}"
 pid_file="$state_dir/node-repl-reaper.pid"
 reaper="$app_dir/.codex-linux/node-repl-reaper.sh"
 
 [ -x "$reaper" ] || exit 0
+mkdir -p "$state_dir"
 
 if [ -f "$pid_file" ]; then
     existing="$(cat "$pid_file" 2>/dev/null || true)"

@@ -161,9 +161,16 @@ a feature removes framework-owned files on the next rebuild.
 
 Launcher hooks receive the Electron arguments already loaded from user and
 feature configuration followed by the original launcher arguments. Other
-executable hooks receive the original arguments. All hooks receive the
-feature/app directory environment. Keep them bounded; the compact launcher
-does not supervise helper processes or provide a second application lifecycle.
+executable hooks receive the original arguments and use
+`CODEX_LINUX_APP_DIR`, `CODEX_LINUX_APP_STATE_DIR`, and
+`CODEX_LINUX_APP_CACHE_DIR` for lifecycle paths. Feature-owned runtime resources
+are available under `CODEX_LINUX_FEATURES_DIR`, and
+`CODEX_LINUX_LAUNCHER_LOG` names the canonical launcher log path. After-exit
+hooks receive the process status in `CODEX_LINUX_ELECTRON_EXIT_STATUS`. Keep
+hooks bounded; the compact launcher does not supervise helper processes or
+provide a second application lifecycle. The launcher exports lifecycle paths
+but does not create their directories; hooks must create a directory before
+writing into it.
 
 ## Native package extensions
 

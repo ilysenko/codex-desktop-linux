@@ -48,7 +48,7 @@ function captureWarnings(callback) {
 function currentAvatarOverlayBundleFixture() {
   return [
     "let a=require(`electron`),f=require(`node:child_process`),hm=50;function sl(){return!1}function cl(){return!0}function ll(e){return e.getBounds?.()??e.getContentBounds?.()??null}function Cp(e){return e.workArea??e.bounds}function Dm(e,t){return{x:Number(e?.x??0)+Number(t?.x??0),y:Number(e?.y??0)+Number(t?.y??0)}}function sp(){return{shouldDock:!0}}function Vp(e){return e}",
-    "var settingsHandlers={\"set-setting\":async({key:e,value:t})=>(this.setSettingValue(e,t),{success:!0})};",
+    "var settingsHandlers={\"set-setting\":async({key:e,value:t})=>(await this.setSettingValue(e,t),{success:!0})};",
     "var rV=`/avatar-overlay`,zB={width:356,height:320},oV={width:112,height:121},k2={width:0,height:0},O2={width:276,height:131};",
     "var h2=class{constructor(e,t,n,r){this.cursorSource=e;this.pointerAnchorX=t;this.pointerAnchorY=n;this.displayBounds=r;this.hasMovementIntent=!1;this.hasMoved=!1}getCursorPointForSource({native:e,renderer:t}){return this.cursorSource===`native`?e:t}recordMove(e){this.hasMovementIntent=!0,this.hasMoved=!0,this.displayBounds=e}recordMovementIntent(){this.hasMovementIntent=!0}shouldSuppressRendererThrow(){return!1}};",
     "var fV=class{window=null;rendererReady=!1;layout=null;mascotSize=oV;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;windowStagedForNativePresentation=!1;layoutMode=`native`;nativeWindowDragStart=null;nativeWindowDragActive=!1;nativeWindowDragCompletionTimer=null;nativeWindowDragTargetRegistered=!1;hasDeferredLayout=!1;isQuickChatPresentation=!1;presentationOffset={x:0,y:0};anchor={x:0,y:0,width:112,height:121};compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},updateMascotRect(){}};nativePositionController={clear(){}};",
@@ -361,7 +361,7 @@ test("refreshes only the avatar overlay after the selected pet changes", async (
 
 test("discards the feature patch when the current settings handler drifts", () => {
   const source = currentAvatarOverlayBundleFixture().replace(
-    '"set-setting":async({key:e,value:t})=>(this.setSettingValue(e,t),{success:!0})',
+    '"set-setting":async({key:e,value:t})=>(await this.setSettingValue(e,t),{success:!0})',
     '"set-setting":async({key:e,value:t})=>this.setSettingValue(e,t)',
   );
   const { result, warnings } = captureWarnings(() => applyPetOverlayPatch(source));

@@ -12,6 +12,7 @@ const {
 } = require("../../scripts/lib/linux-features.js");
 const {
   PATCH_MARKER,
+  PARCEL_METADATA_WATCH_MARKER,
   PARCEL_WATCH_MARKER,
   descriptors,
   findLocalFileWatchBundles,
@@ -32,9 +33,12 @@ function localWorkerSource() {
 
 function parcelWorkingTreeSource() {
   return [
-    "function create(t,n){return t.isLocal?process.platform===`linux`?",
-    "Jve(n,{ignoredPaths:[E.posix.join(n.path,`.git`)]}):",
-    "e.startFileWatch(n):t.startFileWatch(n)}",
+    "function create(t,n,r){return{",
+    "metadata:t.isLocal?process.platform===`linux`&&n.recursive!==!1?",
+    "Jve(n,{ignoredPaths:[]}):e.startFileWatch(n):t.startFileWatch(n),",
+    "workingTree:t.isLocal?process.platform===`linux`?",
+    "Jve(n,{ignoredPaths:[E.posix.join(n.path,`.git`),...r]}):",
+    "e.startFileWatch(n):t.startFileWatch(n)}}",
   ].join("");
 }
 
@@ -143,13 +147,15 @@ test("patch preserves non-recursive Linux watches and recursive watches on other
 test("routes the current Linux Parcel working-tree branch through the shallow host", () => {
   const first = patchWorkerSource(`${localWorkerSource()}${parcelWorkingTreeSource()}`);
   assert.equal(first.matched, 1);
-  assert.equal(first.changed, 1);
+  assert.equal(first.changed, 3);
   assert.equal(first.source.split(PARCEL_WATCH_MARKER).length - 1, 1);
+  assert.equal(first.source.split(PARCEL_METADATA_WATCH_MARKER).length - 1, 1);
   assert.doesNotMatch(first.source, /process\.platform===`linux`\?Jve/);
   assert.match(
     first.source,
     /codexLinuxShallowParcelWorkingTreeWatch\*\/e\.startFileWatch\(n\)/,
   );
+  assert.match(first.source, /codexLinuxShallowParcelMetadataWatch\*\/e\.startFileWatch\(n\)/);
   assert.deepEqual(
     patchWorkerSource(first.source),
     { source: first.source, matched: 1, changed: 0, reason: null },
@@ -176,7 +182,7 @@ test("feature atomically patches both current build bundles", () => {
     const first = patchWorker(root);
     assert.deepEqual(first, {
       matched: 2,
-      changed: 2,
+      changed: 4,
       reason: null,
       targets: [
         path.join(".vite", "build", "src-current.js"),
@@ -228,7 +234,7 @@ test("an extra Parcel working-tree branch leaves current bundles byte-identical"
     const result = patchWorker(root);
     assert.equal(result.matched, 0);
     assert.equal(result.changed, 0);
-    assert.match(result.reason, /2 Parcel working-tree branches across 3 candidate bundles/);
+    assert.match(result.reason, /4 Parcel working-tree branches across 3 candidate bundles/);
     for (const [name, source] of sources) {
       assert.equal(fs.readFileSync(path.join(buildDir, name), "utf8"), source);
     }

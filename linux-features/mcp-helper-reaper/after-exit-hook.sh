@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app_dir="${1:?usage: after-exit hook <app-dir> <state-dir> <log-dir> <status>}"
+app_dir="${CODEX_LINUX_APP_DIR:?after-exit hook requires CODEX_LINUX_APP_DIR}"
 reaper="$app_dir/.codex-linux/mcp-helper-reaper/codex-mcp-helper-reaper"
 
 [ "${CODEX_MCP_HELPER_REAPER_DISABLE:-}" = "1" ] && exit 0

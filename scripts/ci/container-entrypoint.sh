@@ -98,6 +98,16 @@ run_upstream() {
 }
 
 run_install_deps() {
+    if [ "${CI_IMAGE_KEY:-}" = archlinux-base-devel ]; then
+        local -a matrix_args=()
+        if [ -n "${CI_INSTALL_DEPS_CASE:-}" ]; then
+            matrix_args+=("$CI_INSTALL_DEPS_CASE")
+        fi
+        CODEX_RUN_ARCH_INSTALL_DEPS_MATRIX=1 \
+            bash tests/install_deps_pacman_rust_matrix.sh "${matrix_args[@]}"
+        return
+    fi
+
     bash scripts/install-deps.sh
     output="$(./install.sh /tmp/retired-source.dmg 2>&1)" && status=0 || status=$?
     test "$status" -ne 0

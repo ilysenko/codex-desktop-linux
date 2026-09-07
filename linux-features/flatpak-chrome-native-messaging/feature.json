@@ -1,0 +1,33 @@
+{
+  "id": "flatpak-chrome-native-messaging",
+  "title": "Flatpak Chrome Native Messaging",
+  "description": "Bridges the official Chrome extension host into the Flatpak Google Chrome sandbox without adding sandbox overrides.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "resources": [
+    {
+      "source": "bridge.mjs",
+      "target": ".codex-linux/features/flatpak-chrome-native-messaging/bridge.mjs",
+      "mode": "0644"
+    }
+  ],
+  "runtimeHooks": {
+    "prelaunch": {
+      "source": "runtime.sh",
+      "name": "start.sh",
+      "mode": "0755"
+    },
+    "launcher": {
+      "source": "runtime.sh",
+      "name": "environment.sh",
+      "mode": "0755"
+    },
+    "afterExit": {
+      "source": "runtime.sh",
+      "name": "stop.sh",
+      "mode": "0755"
+    }
+  }
+}

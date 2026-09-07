@@ -33,7 +33,7 @@ function officialMainFixture() {
     "setWindowZoom(e,t){let n=l.BrowserWindow.fromWebContents(e),r=n&&this.windowAppearances.get(n.id);",
     "n==null||r!==`primary`&&r!==`quickChat`||(process.platform===`darwin`?n.setWindowButtonPosition(k9(t)):",
     "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(A9(t))))}",
-    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`quickChat`)return;",
+    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`quickChat`&&t!==`detached`)return;",
     "let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(A9(this.windowZooms.get(e.id)))};return l.nativeTheme.on(`updated`,n),n(),()=>{l.nativeTheme.off(`updated`,n)}}",
     "case`quickChat`:case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`}:",
     "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r),...e===`quickChat`?{resizable:!0}:{}}:{titleBarStyle:`default`}",
@@ -45,7 +45,7 @@ function aliasedMainFixture() {
     "setWindowZoom(contents,zoom){let window=l.BrowserWindow.fromWebContents(contents),appearance=window&&this.windowAppearances.get(window.id);",
     "window==null||appearance!==`primary`&&appearance!==`quickChat`||(process.platform===`darwin`?window.setWindowButtonPosition(k9(zoom)):",
     "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(window.id,zoom),window.setTitleBarOverlay(overlay(zoom))))}",
-    "installApplicationMenuTitleBarOverlaySync(window,windowType){if(process.platform!==`win32`&&process.platform!==`linux`||windowType!==`primary`&&windowType!==`quickChat`)return;}",
+    "installApplicationMenuTitleBarOverlaySync(window,windowType){if(process.platform!==`win32`&&process.platform!==`linux`||windowType!==`primary`&&windowType!==`quickChat`&&windowType!==`detached`)return;}",
     "platform===`win32`||platform===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:overlay(zoom),...windowType===`quickChat`?{resizable:!0}:{}}:{titleBarStyle:`default`}",
   ].join("");
 }
@@ -96,7 +96,7 @@ test("main-process patch removes Linux titleBarOverlay and is idempotent", () =>
   assert.doesNotMatch(patched, /process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set/);
   assert.match(
     patched,
-    /installApplicationMenuTitleBarOverlaySync\(e,t\)\{if\(process\.platform!==`win32`\|\|t!==`primary`&&t!==`quickChat`\)return;/,
+    /installApplicationMenuTitleBarOverlaySync\(e,t\)\{if\(process\.platform!==`win32`\|\|t!==`primary`&&t!==`quickChat`&&t!==`detached`\)return;/,
   );
   assert.match(patched, /titleBarStyle:`hiddenInset`/);
 });
@@ -110,7 +110,7 @@ test("main-process patch preserves current minified aliases", () => {
   assert.match(patched, /this\.windowZooms\.set\(window\.id,zoom\),window\.setTitleBarOverlay\(overlay\(zoom\)\)/);
   assert.match(
     patched,
-    /installApplicationMenuTitleBarOverlaySync\(window,windowType\)\{if\(process\.platform!==`win32`\|\|windowType!==`primary`&&windowType!==`quickChat`\)return;/,
+    /installApplicationMenuTitleBarOverlaySync\(window,windowType\)\{if\(process\.platform!==`win32`\|\|windowType!==`primary`&&windowType!==`quickChat`&&windowType!==`detached`\)return;/,
   );
   assert.equal(applyFramelessTitlebarMainPatch(patched), patched);
 });

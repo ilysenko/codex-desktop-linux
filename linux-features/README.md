@@ -125,7 +125,8 @@ Declarative resources and runtime hooks are tracked in
 the owning feature is disabled. Legacy `stage.sh` hooks own their own cleanup.
 
 Runtime hooks receive `CODEX_HOME`, `CODEX_LINUX_APP_DIR`,
-`CODEX_LINUX_APP_STATE_DIR`, `CODEX_LINUX_FEATURES_DIR`, and
+`CODEX_LINUX_APP_STATE_DIR`, `CODEX_LINUX_APP_CACHE_DIR`,
+`CODEX_LINUX_FEATURES_DIR`, and
 `CODEX_LINUX_LAUNCHER_LOG`. Executable hooks also receive
 `CODEX_LINUX_FEATURE_HOOK_PHASE`; after-exit hooks receive
 `CODEX_LINUX_ELECTRON_EXIT_STATUS`. If a feature needs to install a Codex skill
