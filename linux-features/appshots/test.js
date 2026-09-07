@@ -843,6 +843,116 @@ test("AppShots activates a selected Hyprland window and waits for stable bounds"
   assert.equal(prepared.focusedWindow.bounds.width, 1200);
 });
 
+function x11AppshotCaptureFixture({ backend = "x11", initiallyFocused = false, failure } = {}) {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const desktop = {
+    app_id: "codex-desktop", wm_class: "codex-desktop", pid: 101,
+    window_id: 0x100, focused: !initiallyFocused,
+    bounds: { x: 0, y: 0, width: 1200, height: 800 },
+  };
+  const external = {
+    app_id: "chromium", wm_class: "chromium", pid: 202,
+    window_id: 0x200, focused: initiallyFocused, title: "Example - Chromium",
+    bounds: { ...desktop.bounds },
+  };
+  const updates = [];
+  const activations = [];
+  let screenshots = 0;
+  const context = vm.createContext({
+    Buffer, console: { warn() {} }, setTimeout,
+    process: { env: { DISPLAY: ":fixture", XDG_SESSION_TYPE: "x11" }, pid: 101, platform: "linux" },
+    require(name) {
+      assert.equal(name, "node:child_process");
+      return { execFile(program, args, _options, callback) {
+        const id = backend === "i3" ? Number(args[0].match(/0x[0-9a-f]+/)[0]) : Number(args[2]);
+        assert.equal(program, backend === "i3" ? "i3-msg" : "wmctrl");
+        assert.deepEqual(Array.from(args), backend === "i3"
+          ? [`[id="0x${id.toString(16)}"] focus`] : ["-i", "-a", `0x${id.toString(16)}`]);
+        activations.push(id);
+        if (failure === "activation-command" && id === external.window_id) {
+          callback(new Error("activation failed"), "", "");
+          return;
+        }
+        if (!(failure === "activation-ignored" && id === external.window_id)
+            && !(failure === "restore-ignored" && id === desktop.window_id)) {
+          desktop.focused = id === desktop.window_id;
+          external.focused = id === external.window_id;
+        }
+        callback(null, backend === "i3" ? '[{"success":true}]' : "", "");
+      } };
+    },
+  });
+  vm.runInContext(patched.slice(patched.lastIndexOf(";function codexLinuxAppshotRequire")), context);
+  context.codexLinuxAppshotBackendJson = async () => ({
+    backend, windows: [structuredClone(desktop), structuredClone(external)],
+  });
+  context.codexLinuxAppshotX11Stacking = async () => [{ window_id: "0x100" }, { window_id: "0x200" }];
+  context.codexLinuxAppshotDelay = async () => {};
+  context.codexLinuxAppshotAccessibilityNodes = async () => ({ nodes: [], error: null });
+  context.codexLinuxAppshotScreenshot = async (target) => {
+    screenshots++;
+    assert.equal(target.window_id, external.window_id);
+    // Model the actual root screenshot: the covering Desktop supplies the pixels until activation.
+    const dataURL = `data:image/png;base64,${desktop.focused ? "DESKTOP" : "CHROMIUM"}`;
+    if (failure === "target-changed") external.pid = 999;
+    if (failure === "focus-changed") { external.focused = false; desktop.focused = true; }
+    if (failure === "bounds-changed") external.bounds.x = 20;
+    return { dataURL };
+  };
+  context.codexLinuxAppshotSend = (_manager, _origin, _request, update) => {
+    if (!initiallyFocused) assert.equal(desktop.focused, true, "restore before delivering any content");
+    updates.push(update);
+  };
+  return {
+    context, desktop, external, updates, activations,
+    screenshots: () => screenshots,
+    capture: () => context.codexLinuxAppshotCapture({ origin: "fixture", requestId: "fixture", windowManager: {} }),
+  };
+}
+
+for (const backend of ["x11", "i3"]) {
+  test(`AppShots activates the covered ${backend} target and restores Desktop before delivery`, async () => {
+    const fixture = x11AppshotCaptureFixture({ backend });
+    await fixture.capture();
+    assert.equal(fixture.updates.find((update) => update.type === "metadata").app.name, "chromium");
+    assert.equal(fixture.updates.find((update) => update.type === "screenshot").screenshotDataURL,
+      "data:image/png;base64,CHROMIUM");
+    assert.deepEqual(fixture.activations, [0x200, 0x100]);
+    assert.equal(fixture.updates.at(-1).type, "completed");
+  });
+}
+
+for (const failure of ["activation-command", "activation-ignored", "target-changed", "focus-changed", "bounds-changed", "restore-ignored"]) {
+  test(`AppShots delivers no X11 attachment on ${failure}`, async () => {
+    const fixture = x11AppshotCaptureFixture({ failure });
+    await assert.rejects(fixture.capture(), /activate|capture-ready|changed during capture|focus restoration/);
+    assert.deepEqual(fixture.updates, []);
+    assert.equal(fixture.activations.at(-1), 0x100);
+    if (failure.startsWith("activation")) assert.equal(fixture.screenshots(), 0);
+  });
+}
+
+test("AppShots rejects an unfocused X11 fallback from an unsupported compositor backend", async () => {
+  const fixture = x11AppshotCaptureFixture({ backend: "unsupported" });
+  await assert.rejects(fixture.capture(), /Unsupported.*capture/);
+  assert.deepEqual(fixture.updates, []);
+  assert.deepEqual(fixture.activations, []);
+  assert.equal(fixture.screenshots(), 0);
+});
+
+test("AppShots verifies an already focused X11 target without a focus handoff", async () => {
+  const fixture = x11AppshotCaptureFixture({ initiallyFocused: true });
+  await fixture.capture();
+  assert.equal(fixture.updates.find((update) => update.type === "screenshot").screenshotDataURL,
+    "data:image/png;base64,CHROMIUM");
+  assert.deepEqual(fixture.activations, []);
+  assert.equal(fixture.external.focused, true);
+
+  const changed = x11AppshotCaptureFixture({ initiallyFocused: true, failure: "target-changed" });
+  await assert.rejects(changed.capture(), /changed during capture/);
+  assert.deepEqual(changed.updates, []);
+});
+
 test("AppShots restores ChatGPT after successful and failed Hyprland capture", async () => {
   const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
   const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");

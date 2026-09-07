@@ -51,7 +51,12 @@ Privacy and correctness constraints:
   feature resolves the active Hyprland instance from the runtime directory when
   the Electron environment does not inherit `HYPRLAND_INSTANCE_SIGNATURE`. On
   EWMH-compatible X11 window managers, the feature selects the topmost external
-  window in stacking order. Both paths skip ChatGPT and desktop portal windows.
+  window in stacking order. X11 and i3 captures use the same activation, stable
+  bounds, identity, and restoration checks, using the backend's existing
+  `wmctrl` or `i3-msg` command. An already focused X11/i3 target is verified
+  without changing focus. Missing commands, failed activation, target changes,
+  and failed restoration prevent attachment delivery. Both paths skip ChatGPT
+  and desktop portal windows.
   Other backends fail closed when they cannot provide a safe target.
 - Capture fails closed when no selected window or usable bounds are available.
 - Capture fails closed when no screenshot tool is available or the crop does not
