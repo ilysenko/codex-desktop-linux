@@ -15,7 +15,7 @@ use crate::screenshot::{
     capture_screenshot_raw, prepare_screenshot_payload, RawScreenshotCapture, ScreenshotCapture,
     ScreenshotOutputFormat, ScreenshotPayloadOptions,
 };
-use crate::terminal::uses_terminal_paste_shortcut;
+use crate::terminal::{terminal_paste_shortcut, TerminalPasteShortcut};
 use crate::windowing::registry;
 use crate::windows::{
     focus_window_target, focused_window, list_windows, resolve_window_target,
@@ -1717,8 +1717,7 @@ impl ComputerUseLinux {
                     } else {
                         focus.clone()
                     };
-                    let use_terminal_paste =
-                        kde_clipboard_uses_terminal_paste(&window_target, kde_focus.as_ref()).await;
+                    let paste_shortcut = kde_clipboard_paste_shortcut(kde_focus.as_ref()).await;
                     let clipboard_guard = Arc::clone(&self.kde_clipboard_lock).lock_owned().await;
                     let session_for_input = session.clone();
                     let text = params.text.clone();
@@ -1728,7 +1727,7 @@ impl ComputerUseLinux {
                             run_kde_clipboard_paste_text(
                                 &session_for_input,
                                 &text,
-                                use_terminal_paste,
+                                paste_shortcut,
                                 portal_operation_guard,
                             )
                             .await
@@ -4730,6 +4729,7 @@ fn ydotool_type_timeout(text: &str) -> Duration {
 const EVDEV_KEY_LEFTCTRL: i32 = 29;
 const EVDEV_KEY_LEFTSHIFT: i32 = 42;
 const EVDEV_KEY_V: i32 = 47;
+const EVDEV_KEY_INSERT: i32 = 110;
 const KDE_CLIPBOARD_RESTORE_MIN_DELAY_MS: u64 = 1_500;
 const KDE_CLIPBOARD_RESTORE_MAX_DELAY_MS: u64 = 5_000;
 const KDE_CLIPBOARD_RESTORE_CHARS_PER_SECOND: u64 = 250;
@@ -4780,7 +4780,7 @@ impl KdeClipboardPasteError {
 async fn run_kde_clipboard_paste_text(
     session: &PortalKeyboardSession,
     text: &str,
-    use_terminal_paste: bool,
+    paste_shortcut: KdeClipboardPasteShortcut,
     operation_guard: InputOperationGuard,
 ) -> std::result::Result<String, KdeClipboardPasteError> {
     let previous = kde_clipboard_contents()
@@ -4799,14 +4799,10 @@ async fn run_kde_clipboard_paste_text(
         return Err(KdeClipboardPasteError::ambiguous_clipboard_set(message));
     }
 
-    let paste_result = press_keycode_chord(
-        session,
-        kde_clipboard_paste_modifiers(use_terminal_paste),
-        EVDEV_KEY_V,
-        Some(operation_guard),
-    )
-    .await
-    .map_err(|error| format!("{error:#}"));
+    let (modifiers, keycode) = kde_clipboard_paste_chord(paste_shortcut);
+    let paste_result = press_keycode_chord(session, modifiers, keycode, Some(operation_guard))
+        .await
+        .map_err(|error| format!("{error:#}"));
 
     sleep(kde_clipboard_restore_delay(text)).await;
     let restore_result = kde_set_clipboard_contents(&previous).await;
@@ -4823,10 +4819,16 @@ async fn run_kde_clipboard_paste_text(
     }
 }
 
-async fn kde_clipboard_uses_terminal_paste(
-    target: &WindowTarget,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KdeClipboardPasteShortcut {
+    Standard,
+    CtrlShiftV,
+    ShiftInsert,
+}
+
+async fn kde_clipboard_paste_shortcut(
     focus: Option<&WindowFocusResult>,
-) -> bool {
+) -> KdeClipboardPasteShortcut {
     let current = if focus.is_none() {
         focused_window().await.ok().flatten()
     } else {
@@ -4841,8 +4843,9 @@ async fn kde_clipboard_uses_terminal_paste(
         })
         .or(current.as_ref());
 
-    if !kde_clipboard_target_is_terminal(target, window) {
-        return false;
+    let terminal_shortcut = window.and_then(terminal_paste_shortcut);
+    if terminal_shortcut.is_none() {
+        return KdeClipboardPasteShortcut::Standard;
     }
 
     let pid = window.and_then(|window| window.pid);
@@ -4851,34 +4854,37 @@ async fn kde_clipboard_uses_terminal_paste(
         .ok()
         .and_then(Result::ok)
         .flatten();
-    kde_clipboard_target_uses_terminal_paste(target, window, focused_element.as_ref())
+    kde_clipboard_paste_shortcut_for_focus(terminal_shortcut, focused_element.as_ref())
 }
 
-fn kde_clipboard_target_is_terminal(target: &WindowTarget, window: Option<&WindowInfo>) -> bool {
-    match window {
-        Some(window) => uses_terminal_paste_shortcut(window),
-        None => target.has_terminal_target(),
+fn kde_clipboard_paste_shortcut_for_focus(
+    terminal_shortcut: Option<TerminalPasteShortcut>,
+    focused_element: Option<&FocusedElementSummary>,
+) -> KdeClipboardPasteShortcut {
+    if !kde_clipboard_terminal_has_input_focus(focused_element) {
+        return KdeClipboardPasteShortcut::Standard;
+    }
+    match terminal_shortcut {
+        Some(TerminalPasteShortcut::CtrlShiftV) => KdeClipboardPasteShortcut::CtrlShiftV,
+        Some(TerminalPasteShortcut::ShiftInsert) => KdeClipboardPasteShortcut::ShiftInsert,
+        None => KdeClipboardPasteShortcut::Standard,
     }
 }
 
-fn kde_clipboard_target_uses_terminal_paste(
-    target: &WindowTarget,
-    window: Option<&WindowInfo>,
-    focused_element: Option<&FocusedElementSummary>,
-) -> bool {
-    kde_clipboard_target_is_terminal(target, window)
-        && kde_clipboard_terminal_has_input_focus(focused_element)
-}
-
 fn kde_clipboard_terminal_has_input_focus(focused_element: Option<&FocusedElementSummary>) -> bool {
+    // Preserve the known terminal shortcut when AT-SPI is unavailable. A
+    // concrete focused GUI element is authoritative and switches back to the
+    // ordinary Ctrl+V path.
     focused_element.is_none_or(|element| element.role.trim().eq_ignore_ascii_case("terminal"))
 }
 
-fn kde_clipboard_paste_modifiers(use_terminal_paste: bool) -> &'static [i32] {
-    if use_terminal_paste {
-        &[EVDEV_KEY_LEFTCTRL, EVDEV_KEY_LEFTSHIFT]
-    } else {
-        &[EVDEV_KEY_LEFTCTRL]
+fn kde_clipboard_paste_chord(shortcut: KdeClipboardPasteShortcut) -> (&'static [i32], i32) {
+    match shortcut {
+        KdeClipboardPasteShortcut::Standard => (&[EVDEV_KEY_LEFTCTRL], EVDEV_KEY_V),
+        KdeClipboardPasteShortcut::CtrlShiftV => {
+            (&[EVDEV_KEY_LEFTCTRL, EVDEV_KEY_LEFTSHIFT], EVDEV_KEY_V)
+        }
+        KdeClipboardPasteShortcut::ShiftInsert => (&[EVDEV_KEY_LEFTSHIFT], EVDEV_KEY_INSERT),
     }
 }
 
@@ -6191,34 +6197,23 @@ mod tests {
     }
 
     #[test]
-    fn kde_clipboard_uses_terminal_paste_shortcut_for_terminals() {
+    fn kde_clipboard_maps_terminal_paste_chords() {
         assert_eq!(
-            kde_clipboard_paste_modifiers(true),
-            &[EVDEV_KEY_LEFTCTRL, EVDEV_KEY_LEFTSHIFT]
+            kde_clipboard_paste_chord(KdeClipboardPasteShortcut::CtrlShiftV),
+            (&[EVDEV_KEY_LEFTCTRL, EVDEV_KEY_LEFTSHIFT][..], EVDEV_KEY_V)
+        );
+        assert_eq!(
+            kde_clipboard_paste_chord(KdeClipboardPasteShortcut::ShiftInsert),
+            (&[EVDEV_KEY_LEFTSHIFT][..], EVDEV_KEY_INSERT)
+        );
+        assert_eq!(
+            kde_clipboard_paste_chord(KdeClipboardPasteShortcut::Standard),
+            (&[EVDEV_KEY_LEFTCTRL][..], EVDEV_KEY_V)
         );
     }
 
     #[test]
-    fn kde_clipboard_keeps_standard_paste_shortcut_for_other_apps() {
-        assert_eq!(kde_clipboard_paste_modifiers(false), &[EVDEV_KEY_LEFTCTRL]);
-    }
-
-    #[test]
-    fn kde_clipboard_routes_explicit_tty_targets_to_terminal_paste() {
-        let target = WindowTarget {
-            tty: Some("/dev/pts/11".to_string()),
-            ..Default::default()
-        };
-
-        assert!(kde_clipboard_target_is_terminal(&target, None));
-    }
-
-    #[test]
-    fn kde_clipboard_prefers_resolved_window_over_stale_terminal_selector() {
-        let target = WindowTarget {
-            tty: Some("/dev/pts/11".to_string()),
-            ..Default::default()
-        };
+    fn kde_clipboard_keeps_standard_paste_for_resolved_nonterminal_window() {
         let window = window_info(
             1,
             Some("Browser"),
@@ -6227,15 +6222,11 @@ mod tests {
             Some(100),
         );
 
-        assert!(!kde_clipboard_target_is_terminal(&target, Some(&window)));
+        assert_eq!(terminal_paste_shortcut(&window), None);
     }
 
     #[tokio::test]
-    async fn kde_clipboard_async_routing_prefers_focus_over_stale_terminal_selector() {
-        let target = WindowTarget {
-            tty: Some("/dev/pts/11".to_string()),
-            ..Default::default()
-        };
+    async fn kde_clipboard_async_routing_uses_resolved_nonterminal_focus() {
         let window = window_info(
             1,
             Some("Browser"),
@@ -6252,7 +6243,10 @@ mod tests {
             note: "test".to_string(),
         };
 
-        assert!(!kde_clipboard_uses_terminal_paste(&target, Some(&focus)).await);
+        assert_eq!(
+            kde_clipboard_paste_shortcut(Some(&focus)).await,
+            KdeClipboardPasteShortcut::Standard
+        );
     }
 
     #[test]
@@ -6265,10 +6259,10 @@ mod tests {
             Some(100),
         );
 
-        assert!(kde_clipboard_target_is_terminal(
-            &WindowTarget::default(),
-            Some(&window)
-        ));
+        assert_eq!(
+            terminal_paste_shortcut(&window),
+            Some(TerminalPasteShortcut::CtrlShiftV)
+        );
     }
 
     #[test]
@@ -6293,16 +6287,23 @@ mod tests {
             states: vec!["editable".to_string(), "focused".to_string()],
         };
 
-        assert!(kde_clipboard_target_uses_terminal_paste(
-            &WindowTarget::default(),
-            Some(&window),
-            Some(&terminal_view)
-        ));
-        assert!(!kde_clipboard_target_uses_terminal_paste(
-            &WindowTarget::default(),
-            Some(&window),
-            Some(&find_field)
-        ));
+        let terminal_shortcut = terminal_paste_shortcut(&window);
+        assert_eq!(
+            kde_clipboard_paste_shortcut_for_focus(terminal_shortcut, Some(&terminal_view)),
+            KdeClipboardPasteShortcut::CtrlShiftV
+        );
+        assert_eq!(
+            kde_clipboard_paste_shortcut_for_focus(terminal_shortcut, Some(&find_field)),
+            KdeClipboardPasteShortcut::Standard
+        );
+    }
+
+    #[test]
+    fn kde_clipboard_preserves_known_terminal_shortcut_without_atspi_focus() {
+        assert_eq!(
+            kde_clipboard_paste_shortcut_for_focus(Some(TerminalPasteShortcut::CtrlShiftV), None),
+            KdeClipboardPasteShortcut::CtrlShiftV
+        );
     }
 
     #[test]
@@ -6315,10 +6316,7 @@ mod tests {
             Some(100),
         );
 
-        assert!(!kde_clipboard_target_is_terminal(
-            &WindowTarget::default(),
-            Some(&window)
-        ));
+        assert_eq!(terminal_paste_shortcut(&window), None);
     }
 
     #[test]
