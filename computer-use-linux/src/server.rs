@@ -4827,17 +4827,31 @@ async fn kde_clipboard_uses_terminal_paste(
     target: &WindowTarget,
     focus: Option<&WindowFocusResult>,
 ) -> bool {
-    if let Some(focus) = focus {
-        let window = focus
-            .focused_window
-            .as_ref()
-            .unwrap_or(&focus.requested_window);
-        return kde_clipboard_target_is_terminal(target, Some(window));
+    let current = if focus.is_none() {
+        focused_window().await.ok().flatten()
+    } else {
+        None
+    };
+    let window = focus
+        .map(|focus| {
+            focus
+                .focused_window
+                .as_ref()
+                .unwrap_or(&focus.requested_window)
+        })
+        .or(current.as_ref());
+
+    if !kde_clipboard_target_is_terminal(target, window) {
+        return false;
     }
-    if let Ok(Some(current)) = focused_window().await {
-        return kde_clipboard_target_is_terminal(target, Some(&current));
-    }
-    kde_clipboard_target_is_terminal(target, None)
+
+    let pid = window.and_then(|window| window.pid);
+    let focused_element = timeout(Duration::from_millis(1_500), focused_element_summary(pid))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten();
+    kde_clipboard_target_uses_terminal_paste(target, window, focused_element.as_ref())
 }
 
 fn kde_clipboard_target_is_terminal(target: &WindowTarget, window: Option<&WindowInfo>) -> bool {
@@ -4845,6 +4859,19 @@ fn kde_clipboard_target_is_terminal(target: &WindowTarget, window: Option<&Windo
         Some(window) => uses_terminal_paste_shortcut(window),
         None => target.has_terminal_target(),
     }
+}
+
+fn kde_clipboard_target_uses_terminal_paste(
+    target: &WindowTarget,
+    window: Option<&WindowInfo>,
+    focused_element: Option<&FocusedElementSummary>,
+) -> bool {
+    kde_clipboard_target_is_terminal(target, window)
+        && kde_clipboard_terminal_has_input_focus(focused_element)
+}
+
+fn kde_clipboard_terminal_has_input_focus(focused_element: Option<&FocusedElementSummary>) -> bool {
+    focused_element.is_none_or(|element| element.role.trim().eq_ignore_ascii_case("terminal"))
 }
 
 fn kde_clipboard_paste_modifiers(use_terminal_paste: bool) -> &'static [i32] {
@@ -6241,6 +6268,40 @@ mod tests {
         assert!(kde_clipboard_target_is_terminal(
             &WindowTarget::default(),
             Some(&window)
+        ));
+    }
+
+    #[test]
+    fn kde_clipboard_uses_actual_focus_inside_konsole_window() {
+        let window = window_info(
+            1,
+            Some("unflappable-donkey"),
+            Some("org.kde.konsole"),
+            Some("konsole"),
+            Some(100),
+        );
+        let terminal_view = FocusedElementSummary {
+            role: "terminal".to_string(),
+            name: None,
+            editable: false,
+            states: vec!["focused".to_string()],
+        };
+        let find_field = FocusedElementSummary {
+            role: "text".to_string(),
+            name: Some("Find:".to_string()),
+            editable: true,
+            states: vec!["editable".to_string(), "focused".to_string()],
+        };
+
+        assert!(kde_clipboard_target_uses_terminal_paste(
+            &WindowTarget::default(),
+            Some(&window),
+            Some(&terminal_view)
+        ));
+        assert!(!kde_clipboard_target_uses_terminal_paste(
+            &WindowTarget::default(),
+            Some(&window),
+            Some(&find_field)
         ));
     }
 

@@ -245,6 +245,7 @@ const TERMINAL_IDENTITIES: &[&str] = &[
     "com.mitchellh.ghostty",
     "com.system76.cosmicterm",
     "foot",
+    "ghostty",
     "gnome-terminal",
     "gnome-terminal-server",
     "io.elementary.terminal",
@@ -515,6 +516,29 @@ mod tests {
             match_reason: "test".to_string(),
         });
         assert!(uses_terminal_paste_shortcut(&window));
+    }
+
+    #[test]
+    fn enriches_x11_ghostty_with_custom_class_and_plain_title() {
+        let mut window = terminal_window(11, 100);
+        window.title = Some("igor@host: ~".to_string());
+        window.app_id = Some("ghostty".to_string());
+        window.wm_class = Some("my-custom-terminal".to_string());
+        window.client_type = Some("x11".to_string());
+        let mut windows = vec![window];
+        let processes = vec![
+            process(100, 1, 1, "ghostty", None),
+            process(200, 100, 10, "bash", Some("/dev/pts/0")),
+        ];
+
+        enrich_terminal_windows_with_processes(&mut windows, &processes);
+
+        let terminal = windows[0]
+            .terminal
+            .as_ref()
+            .expect("Ghostty's default X11 instance should preserve PTY enrichment");
+        assert_eq!(terminal.tty, "/dev/pts/0");
+        assert_eq!(terminal.confidence, "high");
     }
 
     #[test]
