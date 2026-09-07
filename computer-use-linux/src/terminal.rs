@@ -293,8 +293,14 @@ const CTRL_SHIFT_V_TERMINAL_IDENTITIES: &[&str] = &[
     "yakuake",
 ];
 
-const SHIFT_INSERT_TERMINAL_IDENTITIES: &[&str] =
-    &["rxvt", "rxvt-unicode", "urxvt", "uxterm", "xterm"];
+const SHIFT_INSERT_TERMINAL_IDENTITIES: &[&str] = &[
+    "koi8rxterm",
+    "rxvt",
+    "rxvt-unicode",
+    "urxvt",
+    "uxterm",
+    "xterm",
+];
 
 const TERMINAL_DETECTION_HINTS: &[&str] = &[
     "alacritty",
@@ -578,6 +584,10 @@ mod tests {
         enrich_terminal_windows_with_processes(&mut windows, &processes);
 
         assert_eq!(windows[0].terminal.as_ref().unwrap().tty, "/dev/pts/0");
+        assert_eq!(
+            terminal_paste_shortcut(&windows[0]),
+            Some(TerminalPasteShortcut::ShiftInsert)
+        );
     }
 
     #[test]
