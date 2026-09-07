@@ -550,13 +550,13 @@ async fn install_ready_with_launcher(
         }
     };
     if !output.status.success() {
-        return fail(
-            state,
-            paths,
-            anyhow::anyhow!(
-                "privileged install failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
+        // The launch gate has already been released, so a nonzero exit cannot
+        // prove that the package manager made no changes. Keep the durable
+        // Installing transaction intact and let ownership-aware reconciliation
+        // determine whether the package completed, partially applied, or failed.
+        anyhow::bail!(
+            "privileged install exited unsuccessfully after package mutation may have started: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
         );
     }
 
@@ -799,6 +799,55 @@ mod replacement_tests {
             "a still-running daemon must not remain blocked after a pre-launch failure"
         );
         assert_ne!(daemon_state.status, UpdateStatus::Installing);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn nonzero_exit_after_gate_release_preserves_install_recovery_evidence() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let paths = fixture_paths(dir.path());
+        paths.ensure_dirs()?;
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.app_executable_path = dir.path().join("app-not-running");
+
+        let package = dir.path().join("candidate.deb");
+        fs::write(&package, b"fixture package")?;
+
+        let launcher = dir.path().join("released-then-fails");
+        fs::write(
+            &launcher,
+            "#!/bin/sh\nIFS= read -r state || exit 125\n[ \"$state\" = go ] || exit 125\nexit 42\n",
+        )?;
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::ReadyToInstall;
+        state.candidate_version = Some("fixture".into());
+        state.artifact_paths.package_path = Some(package);
+        state.save_updater(&paths.state_file)?;
+
+        let result = install_ready_with_launcher(
+            &config,
+            &mut state,
+            &paths,
+            true,
+            false,
+            &launcher,
+        )
+        .await;
+
+        assert!(result.is_err(), "forced post-release command failure must surface");
+        let persisted =
+            PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+        assert_eq!(
+            persisted.status,
+            UpdateStatus::Installing,
+            "once the gate is released, a nonzero package-command exit cannot prove that mutation did not occur"
+        );
+        assert!(
+            persisted.install_transaction.is_some(),
+            "post-release failure must preserve durable recovery evidence"
+        );
         Ok(())
     }
 

@@ -6,6 +6,7 @@ use crate::{
     state::{InstallOperation, PersistedState, UpdateStatus},
 };
 use anyhow::Result;
+use std::path::Path;
 
 pub fn record_current_package_as_known_good(state: &mut PersistedState) {
     if state.installed_version == "unknown" || state.candidate_version.is_some() {
@@ -28,6 +29,15 @@ pub async fn run(
     config: &RuntimeConfig,
     state: &mut PersistedState,
     paths: &RuntimePaths,
+) -> Result<()> {
+    run_with_launcher(config, state, paths, Path::new("/bin/sh")).await
+}
+
+async fn run_with_launcher(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    launcher_program: &Path,
 ) -> Result<()> {
     if liveness::is_app_running(config)? {
         println!("ChatGPT Community is running. Close it before rollback.");
@@ -52,10 +62,11 @@ pub async fn run(
         InstallOperation::Rollback,
     )?;
     let mut command = install_rollback::pkexec_command(&std::env::current_exe()?, &package);
-    let output = match install_transaction::run_owned_command(
+    let output = match install_transaction::run_owned_command_with_launcher(
         &mut command,
         state,
         &paths.state_file,
+        launcher_program,
     ) {
         Ok(output) => output,
         Err(failure) if !failure.mutation_may_have_started => {
@@ -71,13 +82,13 @@ pub async fn run(
         }
     };
     if !output.status.success() {
-        let message = format!(
-            "rollback failed: {}",
+        // Once the gated command has been released, a nonzero package-manager
+        // exit is not evidence that rollback made no changes. Preserve the
+        // durable transaction so the same recovery path can reconcile it.
+        anyhow::bail!(
+            "privileged rollback exited unsuccessfully after package mutation may have started: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
-        state.mark_failed(&message);
-        state.save_updater(&paths.state_file)?;
-        anyhow::bail!(message);
     }
     state.status = UpdateStatus::Installed;
     state.install_transaction = None;
@@ -99,6 +110,7 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt};
 
     #[test]
     fn current_package_becomes_the_single_rollback_artifact() -> Result<()> {
@@ -110,6 +122,49 @@ mod tests {
         state.artifact_paths.package_path = Some(package.clone());
         record_current_package_as_known_good(&mut state);
         assert_eq!(state.artifact_paths.rollback_package_path, Some(package));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn nonzero_exit_after_gate_release_preserves_rollback_recovery_evidence() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let paths = RuntimePaths {
+            config_file: dir.path().join("config/config.toml"),
+            state_file: dir.path().join("state/state.json"),
+            log_file: dir.path().join("state/service.log"),
+            cache_dir: dir.path().join("cache"),
+            state_dir: dir.path().join("state"),
+            config_dir: dir.path().join("config"),
+        };
+        paths.ensure_dirs()?;
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.app_executable_path = dir.path().join("app-not-running");
+
+        let package = dir.path().join("known-good.deb");
+        fs::write(&package, b"fixture package")?;
+        let launcher = dir.path().join("released-then-fails");
+        fs::write(
+            &launcher,
+            "#!/bin/sh\nIFS= read -r state || exit 125\n[ \"$state\" = go ] || exit 125\nexit 42\n",
+        )?;
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::Installed;
+        state.installed_version = "bad-local".into();
+        state.artifact_paths.rollback_package_path = Some(package);
+        state.save_updater(&paths.state_file)?;
+
+        let result = run_with_launcher(&config, &mut state, &paths, &launcher).await;
+        assert!(result.is_err(), "forced post-release rollback failure must surface");
+
+        let persisted =
+            PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+        assert_eq!(persisted.status, UpdateStatus::Installing);
+        assert!(
+            persisted.install_transaction.is_some(),
+            "post-release rollback failure must preserve durable recovery evidence"
+        );
         Ok(())
     }
 }

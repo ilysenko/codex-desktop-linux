@@ -69,14 +69,6 @@ pub(crate) fn begin(
     state.save_updater(state_file)
 }
 
-pub(crate) fn run_owned_command(
-    command: &mut Command,
-    state: &mut PersistedState,
-    state_file: &Path,
-) -> std::result::Result<Output, OwnedCommandFailure> {
-    run_owned_command_with_launcher(command, state, state_file, Path::new("/bin/sh"))
-}
-
 pub(crate) fn run_owned_command_with_launcher(
     command: &mut Command,
     state: &mut PersistedState,

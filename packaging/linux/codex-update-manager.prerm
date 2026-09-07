@@ -11,7 +11,7 @@ SERVICE_NAME="codex-update-manager.service"
 # persists Installed state and only then exits on replacement so systemd can
 # restart the new binary.
 case "${1:-}" in
-    upgrade)
+    upgrade|failed-upgrade)
         exit 0
         ;;
 esac

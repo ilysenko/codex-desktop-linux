@@ -202,6 +202,32 @@ test("staged Debian prerm upgrade has no user-service side effects", async (t) =
   }
 });
 
+test("staged Debian prerm failed-upgrade has no user-service side effects", async (t) => {
+  const bus = await usableRuntimeBus(t);
+  if (!bus) return;
+
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "codex-prerm-failed-upgrade-"),
+  );
+  try {
+    const staged = stagePrerm(root);
+    const logPath = path.join(root, "runuser.log");
+    const result = runPrerm(
+      staged,
+      "failed-upgrade",
+      writeFakeCommands(root, logPath),
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      fs.existsSync(logPath),
+      false,
+      "upgrade error recovery must not stop the updater service that owns the package transaction",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 for (const action of ["remove", "deconfigure"]) {
   test(
     `staged Debian prerm ${action} retains stop, disable, and reload cleanup`,
