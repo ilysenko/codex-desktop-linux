@@ -472,6 +472,25 @@ async fn install_ready(
     explicit_retry: bool,
     restart_on_replacement: bool,
 ) -> Result<()> {
+    install_ready_with_launcher(
+        config,
+        state,
+        paths,
+        explicit_retry,
+        restart_on_replacement,
+        Path::new("/bin/sh"),
+    )
+    .await
+}
+
+async fn install_ready_with_launcher(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    explicit_retry: bool,
+    restart_on_replacement: bool,
+    launcher_program: &Path,
+) -> Result<()> {
     if !matches!(
         state.status,
         UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit | UpdateStatus::Failed
@@ -508,8 +527,28 @@ async fn install_ready(
     let current_exe = std::env::current_exe()?;
     install_transaction::begin(state, &paths.state_file, &package, InstallOperation::Update)?;
     let mut command = install::pkexec_command(&current_exe, &package);
-    let output = install_transaction::run_owned_command(&mut command, state, &paths.state_file)
-        .context("Failed to launch privileged package install")?;
+    let output = match install_transaction::run_owned_command_with_launcher(
+        &mut command,
+        state,
+        &paths.state_file,
+        launcher_program,
+    ) {
+        Ok(output) => output,
+        Err(failure) if !failure.mutation_may_have_started => {
+            return fail(
+                state,
+                paths,
+                failure
+                    .error
+                    .context("Failed to launch privileged package install"),
+            );
+        }
+        Err(failure) => {
+            return Err(failure
+                .error
+                .context("Privileged package install outcome is unknown"));
+        }
+    };
     if !output.status.success() {
         return fail(
             state,
@@ -713,6 +752,53 @@ mod replacement_tests {
         assert!(prepare_mutation_state(&config, &mut state, &paths)?);
         assert_eq!(state.status, UpdateStatus::Failed);
         assert!(state.install_transaction.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_prelaunch_install_does_not_leave_daemon_blocked_in_installing() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let paths = fixture_paths(dir.path());
+        paths.ensure_dirs()?;
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.app_executable_path = dir.path().join("app-not-running");
+
+        let package = dir.path().join("candidate.deb");
+        fs::write(&package, b"fixture package")?;
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::ReadyToInstall;
+        state.candidate_version = Some("fixture".into());
+        state.artifact_paths.package_path = Some(package);
+        state.save_updater(&paths.state_file)?;
+
+        let missing_launcher = dir.path().join("missing-gated-launcher");
+        let result = install_ready_with_launcher(
+            &config,
+            &mut state,
+            &paths,
+            true,
+            false,
+            &missing_launcher,
+        )
+        .await;
+
+        assert!(result.is_err(), "forced gated-launcher spawn must fail");
+
+        let persisted =
+            PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+        assert_eq!(persisted.status, UpdateStatus::Failed);
+        assert!(
+            persisted.install_transaction.is_none(),
+            "pre-launch failure must clear durable install ownership"
+        );
+
+        let mut daemon_state = persisted;
+        assert!(
+            prepare_mutation_state(&config, &mut daemon_state, &paths)?,
+            "a still-running daemon must not remain blocked after a pre-launch failure"
+        );
+        assert_ne!(daemon_state.status, UpdateStatus::Installing);
         Ok(())
     }
 

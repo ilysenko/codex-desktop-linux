@@ -23,14 +23,34 @@ IFS= read -r state || exit 125
 exec "$@"
 "#;
 
+#[derive(Debug)]
+pub(crate) struct OwnedCommandFailure {
+    pub error: anyhow::Error,
+    pub mutation_may_have_started: bool,
+}
+
+impl OwnedCommandFailure {
+    fn before_mutation(error: anyhow::Error) -> Self {
+        Self {
+            error,
+            mutation_may_have_started: false,
+        }
+    }
+
+    fn outcome_unknown(error: anyhow::Error) -> Self {
+        Self {
+            error,
+            mutation_may_have_started: true,
+        }
+    }
+}
+
 pub(crate) fn begin(
     state: &mut PersistedState,
     state_file: &Path,
     package_path: &Path,
     operation: InstallOperation,
 ) -> Result<()> {
-    let owner = process_identity(std::process::id())
-        .context("Failed to record updater transaction ownership")?;
     let package_sha256 = package_sha256(package_path)
         .with_context(|| format!("Failed to hash install package {}", package_path.display()))?;
     state.status = UpdateStatus::Installing;
@@ -38,7 +58,11 @@ pub(crate) fn begin(
     state.install_transaction = Some(InstallTransaction {
         package_path: package_path.to_path_buf(),
         package_sha256: Some(package_sha256),
-        package_command: Some(owner),
+        // No package mutation is active yet. The exact gated child identity is
+        // published durably below before that child is allowed to exec pkexec.
+        // Recording the updater itself here would make a failed launch look
+        // live forever while the daemon remains running.
+        package_command: None,
         started_at: Utc::now(),
         operation,
     });
@@ -49,7 +73,16 @@ pub(crate) fn run_owned_command(
     command: &mut Command,
     state: &mut PersistedState,
     state_file: &Path,
-) -> Result<Output> {
+) -> std::result::Result<Output, OwnedCommandFailure> {
+    run_owned_command_with_launcher(command, state, state_file, Path::new("/bin/sh"))
+}
+
+pub(crate) fn run_owned_command_with_launcher(
+    command: &mut Command,
+    state: &mut PersistedState,
+    state_file: &Path,
+    launcher_program: &Path,
+) -> std::result::Result<Output, OwnedCommandFailure> {
     // Spawn only a non-mutating launcher first. Its PID is the PID that will
     // become pkexec via exec(2), so we can durably publish that exact process
     // identity before permitting package mutation.
@@ -58,7 +91,7 @@ pub(crate) fn run_owned_command(
     // durable owner save and token write, the pipe closes and the launcher
     // exits without ever exec'ing pkexec. This removes the spawn-before-owner
     // crash window without a polling timeout or persistent gate file.
-    let mut launcher = gated_command(command);
+    let mut launcher = gated_command(command, launcher_program);
     launcher
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -66,20 +99,25 @@ pub(crate) fn run_owned_command(
 
     let mut child = launcher
         .spawn()
-        .context("Failed to launch gated privileged package command")?;
+        .context("Failed to launch gated privileged package command")
+        .map_err(OwnedCommandFailure::before_mutation)?;
 
     let identity = match process_identity(child.id()) {
         Ok(identity) => identity,
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(error.context("Failed to identify privileged package-command owner"));
+            return Err(OwnedCommandFailure::before_mutation(
+                error.context("Failed to identify privileged package-command owner"),
+            ));
         }
     };
     let Some(transaction) = state.install_transaction.as_mut() else {
         let _ = child.kill();
         let _ = child.wait();
-        anyhow::bail!("Package command started without a durable install transaction");
+        return Err(OwnedCommandFailure::before_mutation(anyhow::anyhow!(
+            "Package command started without a durable install transaction"
+        )));
     };
     transaction.package_command = Some(identity);
     if let Err(error) = state
@@ -88,7 +126,7 @@ pub(crate) fn run_owned_command(
     {
         let _ = child.kill();
         let _ = child.wait();
-        return Err(error);
+        return Err(OwnedCommandFailure::before_mutation(error));
     }
 
     let release_result = child
@@ -101,24 +139,29 @@ pub(crate) fn run_owned_command(
                 .context("Failed to release privileged package-command launch gate")
         });
     if let Err(error) = release_result {
-        let _ = child.kill();
+        // Once writing the release token has been attempted, a partial write
+        // can no longer prove that the launcher did not consume "go" and exec
+        // the privileged command. Preserve the durable child ownership and let
+        // normal liveness/grace reconciliation decide the outcome.
+        drop(child.stdin.take());
         let _ = child.wait();
-        return Err(error);
+        return Err(OwnedCommandFailure::outcome_unknown(error));
     }
 
     child
         .wait_with_output()
         .context("Failed while waiting for privileged package command")
+        .map_err(OwnedCommandFailure::outcome_unknown)
 }
 
-fn gated_command(command: &Command) -> Command {
+fn gated_command(command: &Command, launcher_program: &Path) -> Command {
     let program = command.get_program().to_os_string();
     let args = command
         .get_args()
         .map(OsString::from)
         .collect::<Vec<OsString>>();
 
-    let mut launcher = Command::new("/bin/sh");
+    let mut launcher = Command::new(launcher_program);
     launcher
         .arg("-c")
         .arg(GATED_EXEC_SCRIPT)
@@ -151,10 +194,10 @@ pub(crate) fn is_active(transaction: &InstallTransaction) -> bool {
 }
 
 pub(crate) fn grace_expired(transaction: &InstallTransaction) -> bool {
-    (Utc::now() - transaction.started_at)
-        .to_std()
-        .map(|elapsed| elapsed >= ABANDONED_INSTALL_GRACE)
-        .unwrap_or(false)
+    match (Utc::now() - transaction.started_at).to_std() {
+        Ok(elapsed) => elapsed >= ABANDONED_INSTALL_GRACE,
+        Err(_) => true,
+    }
 }
 
 pub(crate) fn package_sha256(path: &Path) -> Result<String> {
@@ -234,6 +277,23 @@ mod tests {
         assert!(grace_expired(&tx));
         Ok(())
     }
+
+    #[test]
+    fn future_started_at_does_not_extend_abandoned_install_grace() {
+        let tx = InstallTransaction {
+            package_path: PathBuf::from("/tmp/codex.deb"),
+            package_sha256: Some("fixture".into()),
+            package_command: None,
+            started_at: Utc::now() + chrono::Duration::hours(1),
+            operation: InstallOperation::Update,
+        };
+
+        assert!(
+            grace_expired(&tx),
+            "a future wall-clock timestamp must not defer abandoned-install recovery"
+        );
+    }
+
     #[test]
     fn gated_launcher_requires_explicit_release_before_exec() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -246,7 +306,7 @@ mod tests {
             .arg("fixture")
             .arg(&marker);
 
-        let mut launcher = gated_command(&command);
+        let mut launcher = gated_command(&command, Path::new("/bin/sh"));
         launcher
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -282,7 +342,7 @@ mod tests {
             .arg("fixture")
             .arg(&marker);
 
-        let mut launcher = gated_command(&command);
+        let mut launcher = gated_command(&command, Path::new("/bin/sh"));
         launcher
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -295,6 +355,51 @@ mod tests {
         assert!(
             !marker.exists(),
             "EOF before durable owner publication must not execute package command"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_gated_spawn_is_classified_before_mutation_and_does_not_publish_daemon_owner(
+    ) -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let state_file = dir.path().join("state.json");
+        let package = dir.path().join("candidate.deb");
+        fs::write(&package, b"fixture")?;
+
+        let mut state = PersistedState::new(true);
+        begin(
+            &mut state,
+            &state_file,
+            &package,
+            InstallOperation::Update,
+        )?;
+        assert_eq!(state.status, UpdateStatus::Installing);
+        assert_eq!(
+            state
+                .install_transaction
+                .as_ref()
+                .and_then(|transaction| transaction.package_command.as_ref()),
+            None,
+            "pre-launch Installing state must not claim that the daemon is the package owner"
+        );
+
+        let mut command = Command::new("/bin/true");
+        let failure = run_owned_command_with_launcher(
+            &mut command,
+            &mut state,
+            &state_file,
+            &dir.path().join("missing-launcher"),
+        )
+        .expect_err("missing gated launcher must fail");
+
+        assert!(!failure.mutation_may_have_started);
+        assert_eq!(
+            state
+                .install_transaction
+                .as_ref()
+                .and_then(|transaction| transaction.package_command.as_ref()),
+            None
         );
         Ok(())
     }

@@ -5,7 +5,7 @@ use crate::{
     install, install_rollback, install_transaction, liveness,
     state::{InstallOperation, PersistedState, UpdateStatus},
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 pub fn record_current_package_as_known_good(state: &mut PersistedState) {
     if state.installed_version == "unknown" || state.candidate_version.is_some() {
@@ -52,8 +52,24 @@ pub async fn run(
         InstallOperation::Rollback,
     )?;
     let mut command = install_rollback::pkexec_command(&std::env::current_exe()?, &package);
-    let output = install_transaction::run_owned_command(&mut command, state, &paths.state_file)
-        .context("Failed to launch privileged rollback")?;
+    let output = match install_transaction::run_owned_command(
+        &mut command,
+        state,
+        &paths.state_file,
+    ) {
+        Ok(output) => output,
+        Err(failure) if !failure.mutation_may_have_started => {
+            let message = format!("Failed to launch privileged rollback: {:#}", failure.error);
+            state.mark_failed(&message);
+            state.save_updater(&paths.state_file)?;
+            anyhow::bail!(message);
+        }
+        Err(failure) => {
+            return Err(failure
+                .error
+                .context("Privileged rollback outcome is unknown"));
+        }
+    };
     if !output.status.success() {
         let message = format!(
             "rollback failed: {}",
