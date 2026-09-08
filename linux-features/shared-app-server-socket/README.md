@@ -59,6 +59,33 @@ listeners, live Desktop owners, changed identities, and pathnames with multiple
 live listener inodes remain untouched. The same cleanup runs after Electron exits
 and before a later cold start.
 
+## Attached CLI
+
+Enable `shared-app-server-socket` with `make setup-native`, preserving the other
+feature IDs in `linux-features/features.json`, then run `make install-native`.
+Start Desktop and keep it running while using:
+
+```bash
+codex-desktop --cli [Codex CLI arguments]
+```
+
+Only an exact leading `--cli` selects attached mode. The launcher removes that
+selector and passes the remaining arguments through. Before the first literal
+`--`, caller endpoint, socket, authentication, authority, and discovery overrides
+are not accepted; arguments after `--` pass through literally. The socket is
+discovered from Desktop's verified authority record.
+
+With the feature enabled, exact `--cli -h`, `--cli --help`, `--cli -V`,
+`--cli --version` (without additional arguments), and `--cli help [args]` use the
+stock CLI without requiring Desktop; the same argument restrictions still apply.
+Other accepted commands fail closed if Desktop's authority is absent or unsafe.
+Attached mode does not start Desktop or recover an authority. If the feature is
+disabled, every leading `--cli` invocation fails before Desktop launches.
+
+To remove attached mode, remove only `shared-app-server-socket` from the existing
+`enabled` array in `linux-features/features.json` and run `make install-native`
+again. The SSH setup below uses the underlying socket and stock proxy separately.
+
 ## SSH setup
 
 Use a stable socket path when the Desktop instance will be reached over SSH:

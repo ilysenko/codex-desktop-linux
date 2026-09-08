@@ -22,6 +22,7 @@ for (const name of [
   "CODEX_DRM_CLASS_ROOT",
   "CODEX_OZONE_PLATFORM",
   "DESKTOP_SESSION",
+  "NIXOS_OZONE_WL",
   "SOMMELIER_VERSION",
   "SOMMELIER_VM_IDENTIFIER",
   "WAYLAND_DISPLAY",
@@ -66,6 +67,187 @@ function waitForFile(filePath, timeoutMs = 2000) {
   }
   assert.equal(fs.existsSync(filePath), true, `timed out waiting for ${filePath}`);
 }
+
+test("leading --cli dispatches only to the attached CLI resource", (t) => {
+  const root = createApp(t);
+  const attachedCli = path.join(
+    root,
+    ".codex-linux/features/shared-app-server-socket/attached-cli.sh",
+  );
+  writeExecutable(
+    attachedCli,
+    `#!/bin/bash
+printf '%s\\0' "$@" > "$TEST_ROOT/cli-arguments"
+exit 23
+`,
+  );
+  fs.rmSync(path.join(root, "ChatGPT"));
+  writeExecutable(
+    path.join(root, ".codex-linux/prelaunch.d/unexpected.sh"),
+    "#!/bin/bash\nprintf unexpected > \"$TEST_ROOT/prelaunch\"\n",
+  );
+
+  const result = childProcess.spawnSync(
+    path.join(root, "start.sh"),
+    ["--cli", "--model", "gpt 5", "", "--cli"],
+    {
+      env: {
+        ...process.env,
+        NIXOS_OZONE_WL: "1",
+        TEST_ROOT: root,
+        WAYLAND_DISPLAY: "wayland-1",
+        XDG_CONFIG_HOME: path.join(root, "config"),
+      },
+      encoding: "utf8",
+    },
+  );
+
+  assert.equal(result.status, 23);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+  assert.deepEqual(
+    fs.readFileSync(path.join(root, "cli-arguments")).toString("utf8").split("\0").slice(0, -1),
+    ["--model", "gpt 5", "", "--cli"],
+  );
+  assert.equal(fs.existsSync(path.join(root, "prelaunch")), false);
+  assert.equal(fs.existsSync(path.join(root, "arguments")), false);
+});
+
+test("unavailable attached CLI fails before Desktop work", (t) => {
+  for (const availability of ["absent", "non-executable"]) {
+    const root = createApp(t);
+    const attachedCli = path.join(
+      root,
+      ".codex-linux/features/shared-app-server-socket/attached-cli.sh",
+    );
+    if (availability === "non-executable") {
+      fs.mkdirSync(path.dirname(attachedCli), { recursive: true });
+      fs.writeFileSync(attachedCli, "#!/bin/bash\nexit 99\n", { mode: 0o644 });
+    }
+    fs.rmSync(path.join(root, "ChatGPT"));
+    writeExecutable(
+      path.join(root, ".codex-linux/prelaunch.d/unexpected.sh"),
+      "#!/bin/bash\nprintf unexpected > \"$TEST_ROOT/prelaunch\"\n",
+    );
+    const pluginAppserver = path.join(root, "codex-home/plugins/.plugin-appserver");
+    fs.mkdirSync(pluginAppserver, { recursive: true });
+    fs.chmodSync(pluginAppserver, 0o777);
+
+    const result = childProcess.spawnSync(path.join(root, "start.sh"), ["--cli", "resume"], {
+      env: {
+        ...process.env,
+        CODEX_HOME: path.join(root, "codex-home"),
+        TEST_ROOT: root,
+        XDG_CONFIG_HOME: path.join(root, "config"),
+      },
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 2, availability);
+    assert.equal(result.stdout, "", availability);
+    assert.equal(
+      result.stderr,
+      "codex-desktop: --cli requires the shared-app-server-socket feature\n",
+      availability,
+    );
+    assert.equal(fs.existsSync(path.join(root, "prelaunch")), false, availability);
+    assert.equal(fs.statSync(pluginAppserver).mode & 0o022, 0o022, availability);
+    assert.equal(fs.existsSync(path.join(root, "arguments")), false, availability);
+  }
+});
+
+test("help advertises --cli only when its feature resource is executable", (t) => {
+  const root = createApp(t);
+  const attachedCli = path.join(
+    root,
+    ".codex-linux/features/shared-app-server-socket/attached-cli.sh",
+  );
+  const help = () =>
+    childProcess.spawnSync(path.join(root, "start.sh"), ["--help"], {
+      env: {
+        ...process.env,
+        TEST_ROOT: root,
+        XDG_CONFIG_HOME: path.join(root, "config"),
+      },
+      encoding: "utf8",
+    });
+
+  const absent = help();
+  assert.equal(absent.status, 0);
+  assert.doesNotMatch(absent.stdout, /--cli/);
+
+  fs.mkdirSync(path.dirname(attachedCli), { recursive: true });
+  fs.writeFileSync(attachedCli, "#!/bin/bash\nexit 0\n", { mode: 0o644 });
+  const nonExecutable = help();
+  assert.equal(nonExecutable.status, 0);
+  assert.doesNotMatch(nonExecutable.stdout, /--cli/);
+
+  fs.chmodSync(attachedCli, 0o755);
+  const executable = help();
+  assert.equal(executable.status, 0);
+  assert.match(executable.stdout, /^\s+\S+ --cli \[Codex arguments\]$/m);
+});
+
+test("embedded and later --cli arguments remain ordinary Desktop arguments", (t) => {
+  const root = createApp(t);
+  const result = childProcess.spawnSync(
+    path.join(root, "start.sh"),
+    ["codex://thread/--cli", "--cli", "value"],
+    {
+      env: {
+        ...process.env,
+        TEST_ROOT: root,
+        XDG_CONFIG_HOME: path.join(root, "config"),
+      },
+      encoding: "utf8",
+    },
+  );
+
+  assert.equal(result.status, 7);
+  assert.deepEqual(fs.readFileSync(path.join(root, "arguments"), "utf8").trim().split("\n"), [
+    "--class=codex-desktop",
+    "codex://thread/--cli",
+    "--cli",
+    "value",
+  ]);
+});
+
+test("legacy Nix Wayland flags require both opt-in and display", (t) => {
+  const root = createApp(t);
+  const launch = (environment) =>
+    childProcess.spawnSync(path.join(root, "start.sh"), ["codex://thread/123"], {
+      env: {
+        ...process.env,
+        ...environment,
+        TEST_ROOT: root,
+        XDG_CONFIG_HOME: path.join(root, "config"),
+      },
+      encoding: "utf8",
+    });
+
+  for (const environment of [
+    { NIXOS_OZONE_WL: "1" },
+    { WAYLAND_DISPLAY: "wayland-1" },
+  ]) {
+    const result = launch(environment);
+    assert.equal(result.status, 7);
+    assert.equal(
+      fs.readFileSync(path.join(root, "arguments"), "utf8"),
+      "--class=codex-desktop\ncodex://thread/123\n",
+    );
+  }
+
+  const result = launch({ NIXOS_OZONE_WL: "1", WAYLAND_DISPLAY: "wayland-1" });
+
+  assert.equal(result.status, 7);
+  assert.deepEqual(fs.readFileSync(path.join(root, "arguments"), "utf8").trim().split("\n"), [
+    "--class=codex-desktop",
+    "--ozone-platform=wayland",
+    "--enable-wayland-ime=true",
+    "--wayland-text-input-version=3",
+    "codex://thread/123",
+  ]);
+});
 
 test("launcher reports only one anonymous usage event per UTC day", (t) => {
   const root = createApp(t);

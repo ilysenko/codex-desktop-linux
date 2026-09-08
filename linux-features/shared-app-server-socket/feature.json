@@ -11,6 +11,11 @@
       "source": "orphan-reaper.js",
       "target": ".codex-linux/features/shared-app-server-socket/orphan-reaper.js",
       "mode": "0644"
+    },
+    {
+      "source": "attached-cli.sh",
+      "target": ".codex-linux/features/shared-app-server-socket/attached-cli.sh",
+      "mode": "0755"
     }
   ],
   "runtimeHooks": {

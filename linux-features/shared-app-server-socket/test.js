@@ -24,7 +24,22 @@ const {
 
 const socketEnvHook = path.join(__dirname, "socket-env.sh");
 const orphanReaper = path.join(__dirname, "orphan-reaper.js");
+const attachedCli = path.join(__dirname, "attached-cli.sh");
 const unixSocketPathMaxBytes = 107;
+const testRuntimeRoot = fs.mkdtempSync(
+  path.join(os.tmpdir(), "shared-app-server-socket-test-runtime-"),
+);
+const originalRuntimeDir = process.env.XDG_RUNTIME_DIR;
+const originalStateDir = process.env.CODEX_LINUX_APP_STATE_DIR;
+process.env.XDG_RUNTIME_DIR = testRuntimeRoot;
+process.env.CODEX_LINUX_APP_STATE_DIR = testRuntimeRoot;
+test.after(() => {
+  if (originalRuntimeDir == null) delete process.env.XDG_RUNTIME_DIR;
+  else process.env.XDG_RUNTIME_DIR = originalRuntimeDir;
+  if (originalStateDir == null) delete process.env.CODEX_LINUX_APP_STATE_DIR;
+  else process.env.CODEX_LINUX_APP_STATE_DIR = originalStateDir;
+  fs.rmSync(testRuntimeRoot, { recursive: true, force: true });
+});
 
 function makeSocketTempDir(prefix, socketRelativePath = "app-server.sock") {
   for (const root of [...new Set([os.tmpdir(), "/tmp"])]) {
@@ -257,6 +272,325 @@ function withFeatureConfig(enabled, callback) {
   }
 }
 
+function procStat(pid, { state = "S", ppid, startTime, utime = "0" }) {
+  const fields = Array(17).fill("0");
+  fields[9] = utime;
+  return `${pid} (codex) ${state} ${ppid} ${fields.join(" ")} ${startTime}\n`;
+}
+
+function writeAttachedCliFixtureFile(filePath, contents, mode) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, contents);
+  fs.chmodSync(filePath, mode);
+}
+
+function createAttachedCliFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-attached-cli-"));
+  const appId = "codex-desktop";
+  const ownerPid = 41001;
+  const authorityPid = 41002;
+  const ownerStartTime = "7001";
+  const authorityStartTime = "7002";
+  const listenerInode = "9001";
+  const recordDir = path.join(root, "runtime", appId, "app-server-bridge");
+  const socketDir = path.join(root, "runtime", appId, "socket-private");
+  const socketPath = path.join(socketDir, "app-server.sock");
+  const lockPath = `${socketPath}.lock`;
+  const recordPath = path.join(recordDir, "attached-cli-v1");
+  const procRoot = path.join(root, "proc");
+  const appDir = path.join(root, "app");
+  const desktopPath = path.join(root, "bin", "ChatGPT");
+  const codexPath = path.join(appDir, "resources", "codex");
+
+  fs.mkdirSync(recordDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(recordDir, 0o700);
+  fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(socketDir, 0o700);
+  writeAttachedCliFixtureFile(desktopPath, "desktop fixture\n", 0o755);
+  writeAttachedCliFixtureFile(
+    codexPath,
+    "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" >\"${ATTACHED_TEST_ARGV_FILE:?}\"\nif [[ -n ${ATTACHED_TEST_READY_FILE:-} ]]; then\n  : >\"$ATTACHED_TEST_READY_FILE\"\n  exec sleep 60\nfi\nexit \"${ATTACHED_TEST_EXIT_STATUS:-0}\"\n",
+    0o755,
+  );
+  writeAttachedCliFixtureFile(socketPath, "socket fixture\n", 0o600);
+  writeAttachedCliFixtureFile(
+    lockPath,
+    `${ownerPid} ${ownerStartTime} ${authorityPid} ${authorityStartTime}\n`,
+    0o600,
+  );
+  writeAttachedCliFixtureFile(
+    recordPath,
+    [
+      "version=1",
+      `app_id=${appId}`,
+      `socket=${socketPath}`,
+      `desktop=${desktopPath}`,
+      `codex=${codexPath}`,
+      "",
+    ].join("\n"),
+    0o600,
+  );
+
+  for (const [pid, processInfo] of [
+    [ownerPid, { ppid: 1, startTime: ownerStartTime, executable: desktopPath }],
+    [authorityPid, { ppid: ownerPid, startTime: authorityStartTime, executable: codexPath }],
+  ]) {
+    const processDir = path.join(procRoot, String(pid));
+    fs.mkdirSync(processDir, { recursive: true, mode: 0o755 });
+    fs.mkdirSync(path.join(processDir, "fd"), { mode: 0o700 });
+    writeAttachedCliFixtureFile(
+      path.join(processDir, "stat"),
+      procStat(pid, processInfo),
+      0o444,
+    );
+    const commandLine =
+      pid === ownerPid
+        ? [desktopPath]
+        : [
+            codexPath,
+            "-c",
+            "model=fixture",
+            "app-server",
+            "--listen",
+            `unix://${socketPath}`,
+          ];
+    writeAttachedCliFixtureFile(
+      path.join(processDir, "cmdline"),
+      Buffer.from(`${commandLine.join("\0")}\0`),
+      0o444,
+    );
+    fs.symlinkSync(processInfo.executable, path.join(processDir, "exe"));
+    if (pid === authorityPid) {
+      fs.symlinkSync(`socket:[${listenerInode}]`, path.join(processDir, "fd", "5"));
+    }
+    fs.chmodSync(path.join(processDir, "fd"), 0o500);
+    fs.chmodSync(processDir, 0o555);
+  }
+  writeAttachedCliFixtureFile(
+    path.join(procRoot, "net", "unix"),
+    `0000000000000000: 00000002 00000000 00010000 0001 01 ${listenerInode} ${socketPath}\n`,
+    0o444,
+  );
+
+  return {
+    appDir,
+    appId,
+    authorityPid,
+    authorityStartTime,
+    codexPath,
+    desktopPath,
+    listenerInode,
+    lockPath,
+    ownerPid,
+    ownerStartTime,
+    procRoot,
+    recordDir,
+    recordPath,
+    root,
+    socketDir,
+    socketPath,
+  };
+}
+
+function attachedCliMetadata(filePath, fixture, changes = {}) {
+  const metadata = fs.lstatSync(filePath);
+  let kind;
+  if (filePath === fixture.socketPath) kind = "socket";
+  else if (metadata.isSymbolicLink()) kind = "symbolic link";
+  else if (metadata.isDirectory()) kind = "directory";
+  else if (metadata.isFile()) kind = "regular file";
+  else kind = "unknown";
+  return [
+    changes.kind ?? kind,
+    changes.mode ?? (metadata.mode & 0o777).toString(8),
+    String(changes.uid ?? metadata.uid),
+    String(changes.dev ?? metadata.dev),
+    String(changes.ino ?? metadata.ino),
+    changes.linkTarget ?? (metadata.isSymbolicLink() ? fs.readlinkSync(filePath) : ""),
+  ].join("\t");
+}
+
+function removeAttachedCliFixture(fixture) {
+  for (const pid of [fixture.ownerPid, fixture.authorityPid]) {
+    const processDir = path.join(fixture.procRoot, String(pid));
+    try {
+      fs.chmodSync(processDir, 0o700);
+      fs.chmodSync(path.join(processDir, "fd"), 0o700);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  fs.rmSync(fixture.root, { recursive: true, force: true });
+}
+
+function writeAttachedCliProcessFile(fixture, pid, name, contents) {
+  const filePath = path.join(fixture.procRoot, String(pid), name);
+  fs.chmodSync(filePath, 0o644);
+  fs.writeFileSync(filePath, contents);
+  fs.chmodSync(filePath, 0o444);
+}
+
+function replaceAttachedCliProcessExe(fixture, pid, executable) {
+  const processDir = path.join(fixture.procRoot, String(pid));
+  const exePath = path.join(processDir, "exe");
+  fs.chmodSync(processDir, 0o755);
+  fs.unlinkSync(exePath);
+  fs.symlinkSync(executable, exePath);
+  fs.chmodSync(processDir, 0o555);
+}
+
+function selectAttachedCliSymlink(fixture) {
+  const selected = path.join(fixture.root, "selected-codex");
+  fs.symlinkSync(fixture.codexPath, selected);
+  fs.writeFileSync(fixture.recordPath,
+    fs.readFileSync(fixture.recordPath, "utf8").replace(`codex=${fixture.codexPath}`, `codex=${selected}`));
+  const cmdline = path.join(fixture.procRoot, String(fixture.authorityPid), "cmdline");
+  writeAttachedCliProcessFile(fixture, fixture.authorityPid, "cmdline",
+    fs.readFileSync(cmdline).toString("utf8").replace(fixture.codexPath, selected));
+  return selected;
+}
+
+const attachedCliSourcedTestPrelude = [
+  'source "$1"',
+  "attached_cli_effective_uid() {",
+  "  printf '%s\\n' \"$ATTACHED_TEST_UID\"",
+  "}",
+  "attached_cli_filesystem_metadata() {",
+  "  local target=$1 metadata kind link= _mode _uid _dev _ino",
+  '  if [[ -n ${ATTACHED_TEST_MISSING_PATH:-} && $target == "$ATTACHED_TEST_MISSING_PATH" ]]; then',
+  "    return 1",
+  "  fi",
+  '  if [[ -n ${ATTACHED_TEST_OVERRIDE_PATH:-} && $target == "$ATTACHED_TEST_OVERRIDE_PATH" ]]; then',
+  "    printf '%s\\n' \"$ATTACHED_TEST_OVERRIDE_METADATA\"",
+  "    return 0",
+  "  fi",
+  "  metadata=$(stat -c $'%F\\t%a\\t%u\\t%d\\t%i' -- \"$target\" 2>/dev/null) || return 1",
+  "  kind=${metadata%%$'\\t'*}",
+  '  if [[ $target == "$ATTACHED_TEST_SOCKET" ]]; then',
+  "    metadata=\"socket\"$'\\t'\"${metadata#*$'\\t'}\"",
+  "    kind=socket",
+  "  fi",
+  // Regular fixture symlinks have mode 777; real read/write proc FD links have mode 700.
+  '  if [[ $target == "$ATTACHED_TEST_PROC"/*/fd/* && $kind == "symbolic link" ]]; then',
+  "    IFS=$'\\t' read -r kind _mode _uid _dev _ino <<<\"$metadata\"",
+  "    metadata=\"$kind\"$'\\t'700$'\\t'\"$_uid\"$'\\t'\"$_dev\"$'\\t'\"$_ino\"",
+  "  fi",
+  '  if [[ $kind == "symbolic link" ]]; then',
+  '    link=$(readlink -- "$target" 2>/dev/null) || return 1',
+  "  fi",
+  "  printf '%s\\t%s\\n' \"$metadata\" \"$link\"",
+  "}",
+].join("\n");
+
+function runAttachedCliSnapshot(fixture, options = {}) {
+  const script = [
+    attachedCliSourcedTestPrelude,
+    'attached_cli_snapshot "$2" "$3"',
+  ].join("\n");
+  return spawnSync(
+    "bash",
+    ["-c", script, "attached-cli-test", attachedCli, fixture.recordDir, fixture.procRoot],
+    {
+      encoding: "utf8",
+      env: attachedCliTestEnvironment(fixture, options),
+    },
+  );
+}
+
+function attachedCliTestEnvironment(fixture, options = {}) {
+  return {
+    ...process.env,
+    ...options.environment,
+    ATTACHED_TEST_ARGV_FILE: path.join(fixture.root, "codex.argv"),
+    ATTACHED_TEST_MISSING_PATH: options.missingPath ?? "",
+    ATTACHED_TEST_OVERRIDE_METADATA: options.overrideMetadata ?? "",
+    ATTACHED_TEST_OVERRIDE_PATH: options.overridePath ?? "",
+    ATTACHED_TEST_PROC: fixture.procRoot,
+    ATTACHED_TEST_SOCKET: fixture.socketPath,
+    ATTACHED_TEST_UID: String(process.getuid()),
+    CODEX_LINUX_APP_DIR: fixture.appDir,
+  };
+}
+
+async function waitForAttachedCliFile(filePath, child) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (fs.existsSync(filePath)) return;
+    if (child.exitCode != null) {
+      throw new Error(`attached CLI exited before creating ${path.basename(filePath)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${path.basename(filePath)}`);
+}
+
+function attachedCliMainCommand() {
+  return [
+    attachedCliSourcedTestPrelude,
+    "record_dir=$2",
+    "proc_root=$3",
+    "shift 3",
+    'attached_cli_main "$record_dir" "$proc_root" "$@"',
+  ].join("\n");
+}
+
+function runAttachedCliMain(fixture, arguments_ = [], options = {}) {
+  return spawnSync(
+    "bash",
+    [
+      "-c",
+      attachedCliMainCommand(),
+      "attached-cli-test",
+      attachedCli,
+      fixture.recordDir,
+      fixture.procRoot,
+      ...arguments_,
+    ],
+    {
+      encoding: "utf8",
+      env: attachedCliTestEnvironment(fixture, options),
+    },
+  );
+}
+
+function spawnAttachedCliMain(fixture, arguments_ = [], options = {}) {
+  return spawn(
+    "bash",
+    [
+      "-c",
+      attachedCliMainCommand(),
+      "attached-cli-test",
+      attachedCli,
+      fixture.recordDir,
+      fixture.procRoot,
+      ...arguments_,
+    ],
+    {
+      env: attachedCliTestEnvironment(fixture, options),
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+}
+
+async function attachedCliChildResult(child) {
+  const stdout = [];
+  const stderr = [];
+  child.stdout.on("data", (chunk) => stdout.push(chunk));
+  child.stderr.on("data", (chunk) => stderr.push(chunk));
+  const [code, signal] = await once(child, "exit");
+  return {
+    code,
+    signal,
+    stdout: Buffer.concat(stdout).toString("utf8"),
+    stderr: Buffer.concat(stderr).toString("utf8"),
+  };
+}
+
+function readNulArguments(filePath) {
+  const parts = fs.readFileSync(filePath).toString("utf8").split("\0");
+  assert.equal(parts.pop(), "");
+  return parts;
+}
+
 async function waitForSocket(socketPath, child) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (child.exitCode != null) {
@@ -397,6 +731,29 @@ async function closeServer(server) {
   await new Promise((resolve) => server.close(resolve));
 }
 
+async function withAttachedCliEnvironment(values, callback) {
+  const keys = [
+    "CODEX_CLI_PATH",
+    "CODEX_LINUX_APP_ID",
+    "CODEX_LINUX_APP_STATE_DIR",
+    "XDG_RUNTIME_DIR",
+  ];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  try {
+    for (const key of keys) {
+      if (values[key] == null) delete process.env[key];
+      else process.env[key] = values[key];
+    }
+    return await callback();
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 function processStartTime(pid) {
   try {
     const rawStat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -516,7 +873,7 @@ test("shared-app-server-socket stays disabled until explicitly enabled", () => {
   });
 });
 
-test("feature stages its socket hooks and orphan reaper", () => {
+test("feature stages its socket hooks, orphan reaper, and attached CLI", () => {
   withFeatureConfig(["shared-app-server-socket"], (featuresRoot) => {
     const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-socket-app-"));
     try {
@@ -533,15 +890,819 @@ test("feature stages its socket hooks and orphan reaper", () => {
           resource.target,
           resource.mode.toString(8),
         ]),
-        [[
-          ".codex-linux/features/shared-app-server-socket/orphan-reaper.js",
-          "644",
-        ]],
+        [
+          [
+            ".codex-linux/features/shared-app-server-socket/orphan-reaper.js",
+            "644",
+          ],
+          [
+            ".codex-linux/features/shared-app-server-socket/attached-cli.sh",
+            "755",
+          ],
+        ],
       );
+      const target = ".codex-linux/features/shared-app-server-socket/attached-cli.sh";
+      const staged = path.join(appDir, target);
+      assert.equal(fs.lstatSync(staged).isFile(), true);
+      assert.equal(fs.statSync(staged).mode & 0o777, 0o755);
     } finally {
       fs.rmSync(appDir, { recursive: true, force: true });
     }
   });
+});
+
+test("attached CLI metadata is locale stable in sourced and direct modes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-attached-cli-locale-"));
+  try {
+    const runtimeRoot = path.join(root, "runtime");
+    const recordDir = path.join(runtimeRoot, "codex-desktop", "app-server-bridge");
+    const binDir = path.join(root, "bin");
+    const statWrapper = path.join(binDir, "stat");
+    const realStat = spawnSync("bash", ["-c", "command -v stat"], { encoding: "utf8" });
+    assert.equal(realStat.status, 0, realStat.stderr);
+    fs.mkdirSync(recordDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(recordDir, 0o700);
+    writeAttachedCliFixtureFile(
+      statWrapper,
+      [
+        "#!/usr/bin/env bash",
+        'metadata=$("$ATTACHED_TEST_REAL_STAT" "$@") || exit $?',
+        "if [[ ${LANGUAGE-} == de && ${LC_ALL-} != C ]]; then",
+        "  metadata=${metadata/#directory/Verzeichnis}",
+        "fi",
+        "printf '%s\\n' \"$metadata\"",
+        "",
+      ].join("\n"),
+      0o755,
+    );
+    const environment = {
+      ...process.env,
+      ATTACHED_TEST_REAL_STAT: realStat.stdout.trim(),
+      CODEX_LINUX_APP_ID: "codex-desktop",
+      LANG: "C",
+      LANGUAGE: "de",
+      PATH: `${binDir}:${process.env.PATH}`,
+      XDG_RUNTIME_DIR: runtimeRoot,
+    };
+    delete environment.LC_ALL;
+    const sourced = spawnSync(
+      "bash",
+      [
+        "-c",
+        'source "$1"; attached_cli_main "$2" /proc exec',
+        "attached-cli-locale-test",
+        attachedCli,
+        recordDir,
+      ],
+      { encoding: "utf8", env: environment },
+    );
+    assert.equal(sourced.status, 1, sourced.stderr);
+    assert.equal(sourced.stdout, "");
+    assert.equal(sourced.stderr, "codex-desktop: Desktop shared app server is not available\n");
+
+    const direct = spawnSync("bash", [attachedCli, "exec"], {
+      encoding: "utf8",
+      env: environment,
+    });
+    assert.equal(direct.status, 1, direct.stderr);
+    assert.equal(direct.stdout, "");
+    assert.equal(
+      direct.stderr,
+      "codex-desktop: Desktop shared app server is not available\n",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("attached CLI verifier accepts real Linux listeners and accepted connections", async (t) => {
+  const root = makeSocketTempDir("attached-cli-kernel-");
+  const recordDir = path.join(root, "codex-desktop", "app-server-bridge");
+  const socketPath = path.join(root, "app-server.sock");
+  const readyPath = path.join(root, "ready");
+  const acceptedPath = path.join(root, "accepted");
+  const executable = fs.readlinkSync(`/proc/${process.pid}/exe`);
+  const selectedExecutable = path.join(root, "selected-codex");
+  let authority;
+  let client;
+  try {
+    fs.mkdirSync(recordDir, { recursive: true, mode: 0o700 });
+    fs.symlinkSync(executable, selectedExecutable);
+    writeAttachedCliFixtureFile(path.join(root, "app-server"), [
+      'const fs = require("node:fs");',
+      'const net = require("node:net");',
+      'const socketPath = process.argv.at(-1).replace("unix://", "");',
+      // Keep a real write-only descriptor open alongside the read/write listener.
+      'fs.openSync("output", "w");',
+      'const server = net.createServer(() => fs.writeFileSync("accepted", ""));',
+      'server.listen(socketPath, () => {',
+      '  fs.chmodSync(socketPath, 0o600);',
+      '  fs.writeFileSync("ready", "");',
+      '});',
+    ].join("\n"), 0o600);
+    authority = spawn(selectedExecutable, ["app-server", "--listen", `unix://${socketPath}`], {
+      cwd: root,
+      stdio: "ignore",
+    });
+    await waitForAttachedCliFile(readyPath, authority);
+    const ownerStart = processStartTime(process.pid);
+    const authorityStart = processStartTime(authority.pid);
+    assert.notEqual(ownerStart, null);
+    assert.notEqual(authorityStart, null);
+    writeAttachedCliFixtureFile(`${socketPath}.lock`,
+      `${process.pid} ${ownerStart} ${authority.pid} ${authorityStart}\n`, 0o600);
+    writeAttachedCliFixtureFile(path.join(recordDir, "attached-cli-v1"), [
+      "version=1", "app_id=codex-desktop", `socket=${socketPath}`,
+      `desktop=${executable}`, `codex=${selectedExecutable}`, "",
+    ].join("\n"), 0o600);
+
+    for (const connected of [false, true]) {
+      await t.test(connected ? "with an accepted stream" : "with a write-only FD", async () => {
+        if (connected) {
+          client = net.createConnection(socketPath);
+          await once(client, "connect");
+          await waitForAttachedCliFile(acceptedPath, authority);
+          const rows = fs.readFileSync("/proc/net/unix", "utf8").split("\n")
+            .filter((line) => line.endsWith(` ${socketPath}`));
+          assert.ok(rows.some((line) => / 00010000 0001 01 /.test(line)), "listener row");
+          assert.ok(rows.some((line) => / 00000000 0001 03 /.test(line)), "accepted stream row");
+        }
+        const fdDir = `/proc/${authority.pid}/fd`;
+        const modes = fs.readdirSync(fdDir)
+          .map((fd) => fs.lstatSync(path.join(fdDir, fd)).mode & 0o777);
+        assert.ok(modes.includes(0o300));
+        assert.ok(modes.includes(0o700));
+        const result = spawnSync("bash", ["-c",
+          'source "$1"; attached_cli_snapshot "$2" /proc',
+          "attached-cli-kernel-test", attachedCli, recordDir,
+        ], { encoding: "utf8" });
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout, "");
+      });
+    }
+  } finally {
+    client?.destroy();
+    if (authority != null && authority.exitCode == null) {
+      authority.kill("SIGKILL");
+      await once(authority, "exit");
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("attached CLI executes the verified target of a selected symlink and rejects retargeting", () => {
+  const fixture = createAttachedCliFixture();
+  try {
+    const selected = selectAttachedCliSymlink(fixture);
+    const argvPath = path.join(fixture.root, "codex.argv");
+    const executedPath = path.join(fixture.root, "executed");
+    fs.writeFileSync(fixture.codexPath,
+      fs.readFileSync(fixture.codexPath, "utf8").replace(
+        "#!/usr/bin/env bash\n", '#!/usr/bin/env bash\nprintf "%s" "$0" >"$ATTACHED_TEST_EXECUTED"\n'));
+    const result = runAttachedCliMain(fixture, ["exec", "prompt"], {
+      environment: { ATTACHED_TEST_EXECUTED: executedPath },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(executedPath, "utf8"), fixture.codexPath);
+    assert.deepEqual(readNulArguments(argvPath), ["--remote", `unix://${fixture.socketPath}`, "exec", "prompt"]);
+
+    fs.unlinkSync(selected);
+    fs.symlinkSync(fixture.desktopPath, selected);
+    fs.unlinkSync(argvPath);
+    const rejected = runAttachedCliMain(fixture, ["exec", "prompt"]);
+    assert.equal(rejected.status, 1);
+    assert.equal(rejected.stderr, "codex-desktop: shared app-server authority does not match Desktop\n");
+    assert.equal(fs.existsSync(argvPath), false);
+  } finally {
+    removeAttachedCliFixture(fixture);
+  }
+});
+
+test("attached CLI verifier rejects record metadata", () => {
+  const fixtureFiles = (fixture) => [
+    fixture.recordPath,
+    fixture.lockPath,
+    path.join(fixture.procRoot, String(fixture.ownerPid), "stat"),
+    path.join(fixture.procRoot, String(fixture.ownerPid), "cmdline"),
+    path.join(fixture.procRoot, String(fixture.authorityPid), "stat"),
+    path.join(fixture.procRoot, String(fixture.authorityPid), "cmdline"),
+    path.join(fixture.procRoot, "net", "unix"),
+  ];
+  const runCase = ({ expected, mutate, missingPath, metadataPath, metadataChanges }) => {
+    const fixture = createAttachedCliFixture();
+    try {
+      mutate?.(fixture);
+      const before = fixtureFiles(fixture).map((filePath) => fs.readFileSync(filePath));
+      const overrideMetadata = metadataPath
+        ? attachedCliMetadata(metadataPath(fixture), fixture, metadataChanges)
+        : undefined;
+      const result = runAttachedCliSnapshot(fixture, {
+        missingPath: missingPath?.(fixture),
+        overrideMetadata,
+        overridePath: metadataPath?.(fixture),
+      });
+      assert.equal(result.status, expected, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "");
+      assert.deepEqual(
+        fixtureFiles(fixture).map((filePath) => fs.readFileSync(filePath)),
+        before,
+      );
+    } finally {
+      removeAttachedCliFixture(fixture);
+    }
+  };
+
+  runCase({ expected: 0 });
+
+  const validRecord = (fixture) => fs.readFileSync(fixture.recordPath, "utf8").trimEnd().split("\n");
+  for (const mutate of [
+    (fixture) => {
+      const fields = validRecord(fixture);
+      [fields[1], fields[2]] = [fields[2], fields[1]];
+      fs.writeFileSync(fixture.recordPath, `${fields.join("\n")}\n`);
+    },
+    (fixture) => {
+      const fields = validRecord(fixture);
+      fields[1] = "app_id=";
+      fs.writeFileSync(fixture.recordPath, `${fields.join("\n")}\n`);
+    },
+    (fixture) => {
+      const fields = validRecord(fixture);
+      fields.splice(3, 0, fields[2]);
+      fs.writeFileSync(fixture.recordPath, `${fields.join("\n")}\n`);
+    },
+    (fixture) => {
+      const fields = validRecord(fixture);
+      fields.splice(3, 0, "injected=value");
+      fs.writeFileSync(fixture.recordPath, `${fields.join("\n")}\n`);
+    },
+    (fixture) => {
+      fs.writeFileSync(fixture.recordPath, validRecord(fixture).join("\n"));
+    },
+    (fixture) => {
+      const contents = fs.readFileSync(fixture.recordPath);
+      fs.writeFileSync(fixture.recordPath, Buffer.concat([contents, Buffer.from([0])]));
+    },
+    (fixture) => {
+      const contents = fs.readFileSync(fixture.recordPath);
+      fs.writeFileSync(fixture.recordPath, Buffer.concat([contents, Buffer.from("trailing")]));
+    },
+  ]) {
+    runCase({ expected: 11, mutate });
+  }
+
+  for (const [metadataPath, metadataChanges] of [
+    [(fixture) => fixture.recordPath, { kind: "symbolic link", linkTarget: "/unsafe" }],
+    [(fixture) => fixture.recordPath, { kind: "directory" }],
+    [(fixture) => fixture.recordPath, { mode: "644" }],
+    [(fixture) => fixture.recordPath, { uid: process.getuid() + 1 }],
+    [(fixture) => fixture.recordDir, { kind: "symbolic link", linkTarget: "/unsafe" }],
+    [(fixture) => fixture.recordDir, { kind: "regular file" }],
+    [(fixture) => fixture.recordDir, { mode: "755" }],
+    [(fixture) => fixture.recordDir, { uid: process.getuid() + 1 }],
+    [(fixture) => fixture.socketDir, { kind: "symbolic link", linkTarget: "/unsafe" }],
+    [(fixture) => fixture.socketDir, { kind: "regular file" }],
+    [(fixture) => fixture.socketDir, { mode: "755" }],
+    [(fixture) => fixture.socketDir, { uid: process.getuid() + 1 }],
+    [(fixture) => fixture.socketPath, { kind: "symbolic link", linkTarget: "/unsafe" }],
+    [(fixture) => fixture.socketPath, { kind: "regular file" }],
+    [(fixture) => fixture.socketPath, { mode: "660" }],
+    [(fixture) => fixture.socketPath, { uid: process.getuid() + 1 }],
+    [(fixture) => path.join(fixture.procRoot, String(fixture.authorityPid), "fd", "5"), { uid: process.getuid() + 1 }],
+    [(fixture) => path.join(fixture.procRoot, String(fixture.authorityPid), "fd", "5"), { mode: "777" }],
+    [(fixture) => path.join(fixture.procRoot, String(fixture.authorityPid), "fd", "5"), { kind: "regular file" }],
+    [(fixture) => fixture.lockPath, { kind: "symbolic link", linkTarget: "/unsafe" }],
+    [(fixture) => fixture.lockPath, { kind: "directory" }],
+    [(fixture) => fixture.lockPath, { mode: "644" }],
+    [(fixture) => fixture.lockPath, { uid: process.getuid() + 1 }],
+    [
+      (fixture) => path.join(fixture.procRoot, String(fixture.ownerPid)),
+      { kind: "symbolic link", linkTarget: "/unsafe" },
+    ],
+    [
+      (fixture) => path.join(fixture.procRoot, String(fixture.ownerPid)),
+      { kind: "regular file" },
+    ],
+    [(fixture) => path.join(fixture.procRoot, String(fixture.ownerPid)), { mode: "500" }],
+    [
+      (fixture) => path.join(fixture.procRoot, String(fixture.ownerPid)),
+      { uid: process.getuid() + 1 },
+    ],
+  ]) {
+    runCase({ expected: 11, metadataPath, metadataChanges });
+  }
+
+  for (const lockContents of [
+    "",
+    "41001 7001 41002\n",
+    "41001 7001 41002 7002 trailing\n",
+    "41001 07001 41002 7002\n",
+    "41001 7001 41002 7002\n41003 7003 41004 7004\n",
+    "41001 7001 41002 7002\ntrailing",
+  ]) {
+    runCase({
+      expected: 11,
+      mutate(fixture) {
+        fs.writeFileSync(fixture.lockPath, lockContents);
+      },
+    });
+  }
+
+  for (const missingPath of [
+    (fixture) => fixture.recordPath,
+    (fixture) => fixture.lockPath,
+    (fixture) => fixture.socketPath,
+    (fixture) => path.join(fixture.procRoot, String(fixture.ownerPid)),
+    (fixture) => path.join(fixture.procRoot, String(fixture.authorityPid)),
+  ]) {
+    runCase({ expected: 10, missingPath });
+  }
+});
+
+test("attached CLI verifier rejects stale authority identity", () => {
+  const runCase = ({ expected, mutate }) => {
+    const fixture = createAttachedCliFixture();
+    try {
+      mutate?.(fixture);
+      const recordBefore = fs.readFileSync(fixture.recordPath);
+      const lockBefore = fs.readFileSync(fixture.lockPath);
+      const result = runAttachedCliSnapshot(fixture);
+      assert.equal(result.status, expected, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "");
+      assert.deepEqual(fs.readFileSync(fixture.recordPath), recordBefore);
+      assert.deepEqual(fs.readFileSync(fixture.lockPath), lockBefore);
+    } finally {
+      removeAttachedCliFixture(fixture);
+    }
+  };
+  const writeAuthorityArguments = (fixture, arguments_) => {
+    writeAttachedCliProcessFile(
+      fixture,
+      fixture.authorityPid,
+      "cmdline",
+      Buffer.from(`${arguments_.join("\0")}\0`),
+    );
+  };
+  const writeListenerTable = (fixture, contents) => {
+    writeAttachedCliProcessFile(fixture, "net", "unix", contents);
+  };
+
+  runCase({
+    expected: 0,
+    mutate(fixture) {
+      writeAuthorityArguments(fixture, [
+        fixture.codexPath,
+        "app-server",
+        "--listen",
+        `unix://${fixture.socketPath}`,
+      ]);
+    },
+  });
+  runCase({
+    expected: 0,
+    mutate(fixture) {
+      writeAuthorityArguments(fixture, [
+        fixture.codexPath,
+        "-c",
+        "model=fixture",
+        "-c",
+        "approval_policy=never",
+        "app-server",
+        "--listen",
+        `unix://${fixture.socketPath}`,
+      ]);
+    },
+  });
+
+  for (const mutate of [
+    (fixture) =>
+      writeAttachedCliProcessFile(
+        fixture,
+        fixture.ownerPid,
+        "stat",
+        procStat(fixture.ownerPid, {
+          state: "Z",
+          ppid: 1,
+          startTime: fixture.ownerStartTime,
+        }),
+      ),
+    (fixture) =>
+      writeAttachedCliProcessFile(
+        fixture,
+        fixture.authorityPid,
+        "stat",
+        procStat(fixture.authorityPid, {
+          state: "Z",
+          ppid: fixture.ownerPid,
+          startTime: fixture.authorityStartTime,
+        }),
+      ),
+  ]) {
+    runCase({ expected: 10, mutate });
+  }
+
+  for (const mutate of [
+    (fixture) =>
+      writeAttachedCliProcessFile(
+        fixture,
+        fixture.ownerPid,
+        "stat",
+        procStat(fixture.ownerPid, { ppid: 1, startTime: "8001" }),
+      ),
+    (fixture) =>
+      writeAttachedCliProcessFile(
+        fixture,
+        fixture.authorityPid,
+        "stat",
+        procStat(fixture.authorityPid, { ppid: fixture.ownerPid, startTime: "8002" }),
+      ),
+    (fixture) => replaceAttachedCliProcessExe(fixture, fixture.ownerPid, fixture.codexPath),
+    (fixture) =>
+      writeAttachedCliProcessFile(
+        fixture,
+        fixture.authorityPid,
+        "stat",
+        procStat(fixture.authorityPid, { ppid: 1, startTime: fixture.authorityStartTime }),
+      ),
+    (fixture) => replaceAttachedCliProcessExe(fixture, fixture.authorityPid, fixture.desktopPath),
+  ]) {
+    runCase({ expected: 12, mutate });
+  }
+
+  for (const argumentsForAuthority of [
+    (f) => ["wrong-codex", "app-server", "--listen", `unix://${f.socketPath}`],
+    (f) => [f.codexPath, "-c", "model=fixture", "app-server", "--listen"],
+    (f) => [f.codexPath, "app-server", "--listen", "unix:///wrong.sock"],
+    (f) => [f.codexPath, "app-server", `--listen=unix://${f.socketPath}`],
+    (f) => [f.codexPath, "-c", "model=fixture", "-c", "app-server", "--listen", `unix://${f.socketPath}`],
+    (f) => [f.codexPath, "app-server", "--listen", `unix://${f.socketPath}`, "trailing"],
+    (f) => [f.codexPath, "mcp-server", "--listen", `unix://${f.socketPath}`],
+  ]) {
+    runCase({
+      expected: 12,
+      mutate(fixture) {
+        writeAuthorityArguments(fixture, argumentsForAuthority(fixture));
+      },
+    });
+  }
+
+  runCase({
+    expected: 10,
+    mutate(fixture) {
+      writeListenerTable(fixture, "");
+    },
+  });
+  runCase({
+    expected: 10,
+    mutate(fixture) {
+      writeListenerTable(
+        fixture,
+        `0000000000000000: 00000003 00000000 00000000 0001 03 ${fixture.listenerInode} ${fixture.socketPath}\n`,
+      );
+    },
+  });
+  runCase({
+    expected: 12,
+    mutate(fixture) {
+      writeListenerTable(
+        fixture,
+        `0000000000000000: 00000002 00000000 00000000 0001 01 ${fixture.listenerInode} ${fixture.socketPath}\n`,
+      );
+    },
+  });
+  runCase({
+    expected: 0,
+    mutate(fixture) {
+      const line = `0000000000000000: 00000002 00000000 00010000 0001 01 ${fixture.listenerInode} ${fixture.socketPath}\n`;
+      writeListenerTable(fixture, `${line}${line}`);
+    },
+  });
+  runCase({
+    expected: 12,
+    mutate(fixture) {
+      const line = `0000000000000000: 00000002 00000000 00010000 0001 01 ${fixture.listenerInode} ${fixture.socketPath}\n`;
+      writeListenerTable(
+        fixture,
+        `${line}0000000000000001: 00000002 00000000 00010000 0001 01 9002 ${fixture.socketPath}\n`,
+      );
+    },
+  });
+  runCase({
+    expected: 12,
+    mutate(fixture) {
+      const fdDir = path.join(fixture.procRoot, String(fixture.authorityPid), "fd");
+      fs.chmodSync(fdDir, 0o700);
+      fs.unlinkSync(path.join(fdDir, "5"));
+      fs.symlinkSync("socket:[9999]", path.join(fdDir, "5"));
+      fs.chmodSync(fdDir, 0o500);
+    },
+  });
+});
+
+test("attached CLI verifier reports redacted failure categories", () => {
+  const cases = [
+    {
+      expected: "codex-desktop: Desktop shared app server is not available\n",
+      mutate(fixture) {
+        writeAttachedCliProcessFile(
+          fixture,
+          fixture.ownerPid,
+          "stat",
+          procStat(fixture.ownerPid, {
+            state: "Z",
+            ppid: 1,
+            startTime: fixture.ownerStartTime,
+          }),
+        );
+      },
+    },
+    {
+      expected: "codex-desktop: Desktop shared app-server state is unsafe\n",
+      options(fixture) {
+        return {
+          overrideMetadata: attachedCliMetadata(fixture.recordPath, fixture, { mode: "644" }),
+          overridePath: fixture.recordPath,
+        };
+      },
+    },
+    {
+      expected: "codex-desktop: shared app-server authority does not match Desktop\n",
+      mutate(fixture) {
+        replaceAttachedCliProcessExe(fixture, fixture.authorityPid, fixture.desktopPath);
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const fixture = createAttachedCliFixture();
+    try {
+      testCase.mutate?.(fixture);
+      const secretArgument = "caller-secret-argument";
+      const result = runAttachedCliMain(
+        fixture,
+        ["exec", secretArgument],
+        testCase.options?.(fixture),
+      );
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, testCase.expected);
+      assert.equal(fs.existsSync(path.join(fixture.root, "codex.argv")), false);
+    } finally {
+      removeAttachedCliFixture(fixture);
+    }
+  }
+});
+
+for (const { name, owner = false, changes, accepted = false, retarget = false } of [
+  { name: "accepts owner CPU accounting changes", owner: true, changes: { utime: "1" }, accepted: true },
+  { name: "accepts authority scheduling changes", changes: { state: "R" }, accepted: true },
+  { name: "rejects final snapshot identity change", changes: { startTime: "9999" } },
+  { name: "rejects authority death between snapshots", changes: { state: "Z" } },
+  { name: "rejects selected symlink replacement during verification", changes: {}, retarget: true },
+]) {
+  test(`attached CLI verifier ${name}`, async () => {
+    const fixture = createAttachedCliFixture();
+    let writer;
+    try {
+      const selected = retarget ? selectAttachedCliSymlink(fixture) : "";
+      const pid = owner ? fixture.ownerPid : fixture.authorityPid;
+      const ppid = owner ? 1 : fixture.ownerPid;
+      const startTime = owner ? fixture.ownerStartTime : fixture.authorityStartTime;
+      const statPath = path.join(fixture.procRoot, String(pid), "stat");
+      const processDir = path.dirname(statPath);
+      const initial = procStat(pid, { ppid, startTime });
+      const changed = procStat(pid, { ppid, startTime, ...changes });
+      fs.chmodSync(processDir, 0o755);
+      fs.unlinkSync(statPath);
+      const fifo = spawnSync("mkfifo", [statPath], { encoding: "utf8" });
+      assert.equal(fifo.status, 0, fifo.stderr);
+      fs.chmodSync(statPath, 0o644);
+      fs.chmodSync(processDir, 0o555);
+
+      writer = spawn(
+        "bash",
+        [
+          "-c",
+          'printf "%s" "$2" >"$1"; sleep 0.1; if [[ -n $5 ]]; then ln -sfn -- "$4" "$5"; fi; printf "%s" "$3" >"$1"',
+          "attached-cli-fifo-writer",
+          statPath,
+          initial,
+          changed,
+          fixture.desktopPath,
+          selected,
+        ],
+        { stdio: "ignore" },
+      );
+      const fifoMetadata = attachedCliMetadata(statPath, fixture, {
+        kind: "regular empty file",
+        mode: "444",
+      });
+      const result = await attachedCliChildResult(
+        spawnAttachedCliMain(fixture, ["exec", "final-snapshot-secret"], {
+          overrideMetadata: fifoMetadata,
+          overridePath: statPath,
+        }),
+      );
+      if (writer.exitCode == null) {
+        writer.kill("SIGKILL");
+        await once(writer, "exit");
+      }
+      writer = null;
+      assert.equal(result.code, accepted ? 0 : 1);
+      assert.equal(result.signal, null);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, accepted ? "" : "codex-desktop: Desktop shared app-server state is unsafe\n");
+      const argvPath = path.join(fixture.root, "codex.argv");
+      assert.equal(fs.existsSync(argvPath), accepted);
+      if (accepted) {
+        assert.deepEqual(readNulArguments(argvPath), [
+          "--remote", `unix://${fixture.socketPath}`, "exec", "final-snapshot-secret",
+        ]);
+      }
+    } finally {
+      if (writer != null && writer.exitCode == null) writer.kill("SIGKILL");
+      removeAttachedCliFixture(fixture);
+    }
+  });
+}
+
+test("attached CLI verifier rejects caller authority grammar", () => {
+  const forbiddenArguments = [
+    ["--remote"],
+    ["--remote=unix:///caller.sock"],
+    ["--remote-auth-token-env"],
+    ["--remote-auth-token-env=CALLER_TOKEN"],
+    ["--sock"],
+    ["--sock=/caller.sock"],
+    ["--listen"],
+    ["--listen=unix:///caller.sock"],
+    ["unix:///caller.sock"],
+    ["ws://caller.invalid"],
+    ["wss://caller.invalid"],
+    ["app-server"],
+    ["remote-control"],
+    ["mcp-server"],
+    ["exec-server"],
+    ["help", "--remote=unix:///caller.sock"],
+  ];
+  for (const arguments_ of forbiddenArguments) {
+    const fixture = createAttachedCliFixture();
+    try {
+      const result = runAttachedCliMain(fixture, arguments_, {
+        missingPath: fixture.recordPath,
+      });
+      assert.equal(result.status, 2, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.equal(
+        result.stderr,
+        "codex-desktop: --cli does not accept caller endpoint or authority options\n",
+      );
+      assert.equal(fs.existsSync(path.join(fixture.root, "codex.argv")), false);
+    } finally {
+      removeAttachedCliFixture(fixture);
+    }
+  }
+
+  const fixture = createAttachedCliFixture();
+  try {
+    const literalArguments = [
+      "exec",
+      "--",
+      "--remote",
+      "unix:///literal.sock",
+      "app-server",
+      "caller-literal",
+    ];
+    const result = runAttachedCliMain(fixture, literalArguments);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+    assert.deepEqual(readNulArguments(path.join(fixture.root, "codex.argv")), [
+      "--remote", `unix://${fixture.socketPath}`, ...literalArguments,
+    ]);
+  } finally {
+    removeAttachedCliFixture(fixture);
+  }
+});
+
+test("attached CLI verifier bypasses only stock introspection", () => {
+  for (const arguments_ of [
+    ["-h"],
+    ["--help"],
+    ["-V"],
+    ["--version"],
+    ["help"],
+    ["help", "exec"],
+    ["help", "--", "--remote=literal"],
+  ]) {
+    const fixture = createAttachedCliFixture();
+    try {
+      const argvFile = path.join(fixture.root, "codex.argv");
+      const result = runAttachedCliMain(fixture, arguments_, {
+        missingPath: fixture.recordPath,
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "");
+      assert.deepEqual(readNulArguments(argvFile), arguments_);
+    } finally {
+      removeAttachedCliFixture(fixture);
+    }
+  }
+
+  for (const arguments_ of [[], ["helpish"], ["--help=all"], ["-h", "extra"], ["--version", "extra"]]) {
+    const fixture = createAttachedCliFixture();
+    try {
+      const result = runAttachedCliMain(fixture, arguments_, {
+        missingPath: fixture.recordPath,
+      });
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.equal(
+        result.stderr,
+        "codex-desktop: Desktop shared app server is not available\n",
+      );
+      assert.equal(fs.existsSync(path.join(fixture.root, "codex.argv")), false);
+    } finally {
+      removeAttachedCliFixture(fixture);
+    }
+  }
+
+  const fixture = createAttachedCliFixture();
+  try {
+    const argvFile = path.join(fixture.root, "codex.argv");
+    const result = spawnSync(attachedCli, ["--help"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ATTACHED_TEST_ARGV_FILE: argvFile,
+        CODEX_LINUX_APP_DIR: fixture.appDir,
+        CODEX_LINUX_APP_ID: fixture.appId,
+        XDG_RUNTIME_DIR: path.join(fixture.root, "runtime"),
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+    assert.deepEqual(readNulArguments(argvFile), ["--help"]);
+  } finally {
+    removeAttachedCliFixture(fixture);
+  }
+});
+
+test("attached CLI verifier preserves stock exec and signals", async () => {
+  const exitFixture = createAttachedCliFixture();
+  try {
+    const originalArguments = [
+      "exec",
+      "--ephemeral",
+      "prompt with spaces",
+      "--",
+      "--remote=literal-after-delimiter",
+    ];
+    const result = runAttachedCliMain(exitFixture, originalArguments, {
+      environment: { ATTACHED_TEST_EXIT_STATUS: "37" },
+    });
+    assert.equal(result.status, 37, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+    assert.deepEqual(readNulArguments(path.join(exitFixture.root, "codex.argv")), [
+      "--remote",
+      `unix://${exitFixture.socketPath}`,
+      ...originalArguments,
+    ]);
+  } finally {
+    removeAttachedCliFixture(exitFixture);
+  }
+
+  const signalFixture = createAttachedCliFixture();
+  let child;
+  try {
+    const readyFile = path.join(signalFixture.root, "codex.ready");
+    child = spawnAttachedCliMain(signalFixture, ["exec", "signal fixture"], {
+      environment: { ATTACHED_TEST_READY_FILE: readyFile },
+    });
+    const resultPromise = attachedCliChildResult(child);
+    await waitForAttachedCliFile(readyFile, child);
+    assert.equal(child.kill("SIGTERM"), true);
+    const result = await resultPromise;
+    child = null;
+    assert.equal(result.code, null);
+    assert.equal(result.signal, "SIGTERM");
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+    assert.deepEqual(readNulArguments(path.join(signalFixture.root, "codex.argv")), [
+      "--remote",
+      `unix://${signalFixture.socketPath}`,
+      "exec",
+      "signal fixture",
+    ]);
+  } finally {
+    if (child != null && child.exitCode == null) child.kill("SIGKILL");
+    removeAttachedCliFixture(signalFixture);
+  }
 });
 
 test("patch selects the bridge only for the local host and is idempotent", () => {
@@ -642,6 +1803,208 @@ test("descriptor is optional and targets the main bundle", () => {
     descriptors.map(({ id, phase, ciPolicy }) => [id, phase, ciPolicy]),
     [["main-process-shared-app-server-socket", "main-bundle", "optional"]],
   );
+});
+
+test("attached CLI record publishes atomically for default and override sockets", async () => {
+  const root = makeSocketTempDir("shared-app-server-attached-cli-record-", "runtime/bridge/app-server.sock");
+  try {
+    for (const [name, appId, runtimeRoot, socketPath] of [
+      [
+        "default",
+        "codex-desktop",
+        path.join(root, "state"),
+        path.join(root, "state", "codex-desktop", "app-server-bridge", "app-server.sock"),
+      ],
+      [
+        "override",
+        "codex-bridge-test",
+        path.join(root, "runtime"),
+        path.join(root, "override", "app-server.sock"),
+      ],
+    ]) {
+      const bridgeDir = path.join(runtimeRoot, appId, "app-server-bridge");
+      const recordPath = path.join(bridgeDir, "attached-cli-v1");
+      const priorRecord = "version=1\napp_id=prior\nsocket=/prior\ndesktop=/prior\ncodex=/prior\n";
+      fs.mkdirSync(bridgeDir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(bridgeDir, 0o700);
+      fs.writeFileSync(recordPath, priorRecord, { mode: 0o600 });
+      const renameCalls = [];
+      const fsImpl = Object.create(fs);
+      fsImpl.renameSync = (from, to) => {
+        renameCalls.push({ from, to, lock: fs.readFileSync(`${socketPath}.lock`, "utf8") });
+        return fs.renameSync(from, to);
+      };
+      let server;
+      let child;
+      const { Transport } = loadInjectedTransport({
+        fsImpl,
+        spawnImpl(_command, args) {
+          child = fakeChild();
+          // Publication must retain the executable selected before asynchronous startup.
+          process.env.CODEX_CLI_PATH = "/fake/replacement-codex";
+          const target = args.at(-1).replace("unix://", "");
+          queueMicrotask(async () => {
+            fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+            server = await listenUnix(target);
+          });
+          return child;
+        },
+      });
+      await withAttachedCliEnvironment({
+        CODEX_CLI_PATH: "/fake/codex",
+        CODEX_LINUX_APP_ID: name === "default" ? null : appId,
+        CODEX_LINUX_APP_STATE_DIR: runtimeRoot,
+        XDG_RUNTIME_DIR: name === "default" ? null : runtimeRoot,
+      }, async () => {
+        const transport = new Transport(socketPath);
+        try {
+          await transport.ensureAuthority();
+
+          assert.equal(fs.lstatSync(bridgeDir).isDirectory(), true);
+          assert.equal(fs.statSync(bridgeDir).mode & 0o777, 0o700);
+          assert.equal(fs.lstatSync(recordPath).isFile(), true);
+          assert.equal(fs.statSync(recordPath).mode & 0o777, 0o600);
+          assert.equal(
+            fs.readFileSync(recordPath, "utf8"),
+            [
+              "version=1",
+              `app_id=${appId}`,
+              `socket=${socketPath}`,
+              `desktop=${process.execPath}`,
+              "codex=/fake/codex",
+              "",
+            ].join("\n"),
+          );
+          assert.equal(renameCalls.length, 1);
+          assert.equal(path.dirname(renameCalls[0].from), bridgeDir);
+          assert.equal(renameCalls[0].to, recordPath);
+          assert.match(renameCalls[0].lock, new RegExp(`^${process.pid} \\d+ ${process.pid} \\d+\\n$`));
+        } finally {
+          await closeServer(server);
+          server = null;
+          if (child != null) {
+            child.exitCode = 0;
+            child.emit("exit", 0, null);
+          }
+        }
+      });
+      await closeServer(server);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("attached CLI publication failure is nonfatal", async () => {
+  const root = makeSocketTempDir("shared-app-server-attached-cli-failure-", "runtime/bridge/app-server.sock");
+  const runtimeRoot = path.join(root, "runtime");
+  const appId = "codex-bridge-test";
+  const bridgeDir = path.join(runtimeRoot, appId, "app-server-bridge");
+  const recordPath = path.join(bridgeDir, "attached-cli-v1");
+  const socketPath = path.join(root, "socket", "app-server.sock");
+  const priorRecord = "version=1\napp_id=prior\nsocket=/prior\ndesktop=/prior\ncodex=/prior\n";
+  fs.mkdirSync(bridgeDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(bridgeDir, 0o700);
+  fs.writeFileSync(recordPath, priorRecord, { mode: 0o600 });
+  const fsImpl = Object.create(fs);
+  let failTemporaryFstat = false;
+  let failedTemporaryDescriptor = null;
+  fsImpl.openSync = (target, ...args) => {
+    const descriptor = fs.openSync(target, ...args);
+    if (failTemporaryFstat && path.basename(target).startsWith(".attached-cli-v1.")) {
+      failedTemporaryDescriptor = descriptor;
+    }
+    return descriptor;
+  };
+  fsImpl.fstatSync = (descriptor, ...args) => {
+    if (failTemporaryFstat && descriptor === failedTemporaryDescriptor) {
+      throw new Error("fstat failed");
+    }
+    return fs.fstatSync(descriptor, ...args);
+  };
+  fsImpl.renameSync = () => {
+    throw new Error("rename failed");
+  };
+  let server;
+  let child;
+  const { Transport } = loadInjectedTransport({
+    fsImpl,
+    spawnImpl(_command, args) {
+      child = fakeChild();
+      const target = args.at(-1).replace("unix://", "");
+      queueMicrotask(async () => {
+        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+        server = await listenUnix(target);
+      });
+      return child;
+    },
+  });
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  const environment = {
+    CODEX_CLI_PATH: "/fake/codex",
+    CODEX_LINUX_APP_ID: appId,
+    CODEX_LINUX_APP_STATE_DIR: runtimeRoot,
+    XDG_RUNTIME_DIR: runtimeRoot,
+  };
+  try {
+    for (const failure of ["rename", "fstat"]) {
+      warnings.length = 0;
+      failTemporaryFstat = failure === "fstat";
+      await withAttachedCliEnvironment(environment, async () => {
+        const transport = new Transport(socketPath);
+        try {
+          await transport.ensureAuthority();
+          assert.equal(fs.lstatSync(socketPath).isSocket(), true, failure);
+          assert.match(
+            fs.readFileSync(`${socketPath}.lock`, "utf8"),
+            new RegExp(`^${process.pid} \\d+ ${process.pid} \\d+\\n$`),
+            failure,
+          );
+          assert.equal(fs.readFileSync(recordPath, "utf8"), priorRecord, failure);
+          assert.deepEqual(fs.readdirSync(bridgeDir), ["attached-cli-v1"], failure);
+          if (failTemporaryFstat) {
+            assert.throws(() => fs.fstatSync(failedTemporaryDescriptor), { code: "EBADF" });
+          }
+          assert.deepEqual(warnings, ["WARN: attached CLI discovery record was not published"], failure);
+        } finally {
+          await closeServer(server);
+          server = null;
+          if (child != null) {
+            child.exitCode = 0;
+            child.emit("exit", 0, null);
+          }
+        }
+      });
+    }
+
+    warnings.length = 0;
+    failTemporaryFstat = false;
+    await withAttachedCliEnvironment({
+      ...environment,
+      CODEX_LINUX_APP_ID: "unsafe\nid",
+    }, async () => {
+      const transport = new Transport(path.join(root, "unsafe", "app-server.sock"));
+      try {
+        await transport.ensureAuthority();
+        assert.equal(fs.lstatSync(path.join(root, "unsafe", "app-server.sock")).isSocket(), true);
+        assert.deepEqual(warnings, ["WARN: attached CLI discovery record was not published"]);
+        assert.equal(fs.existsSync(path.join(runtimeRoot, "unsafe\nid")), false);
+      } finally {
+        await closeServer(server);
+        server = null;
+        if (child != null) {
+          child.exitCode = 0;
+          child.emit("exit", 0, null);
+        }
+      }
+    });
+  } finally {
+    console.warn = originalWarn;
+    await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("socket hook exports an instance-scoped path without starting a process", () => {
@@ -1646,7 +3009,7 @@ test("orphan reaper JavaScript syntax is valid", () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("documented wrapper attaches to a real Codex authority through the stock proxy", { timeout: 15000 }, async (t) => {
+test("stock Codex proxy connects to a real authority", { timeout: 15000 }, async (t) => {
   const codexCli = process.env.CODEX_CLI_PATH;
   if (codexCli == null) {
     t.skip("set CODEX_CLI_PATH to run the real Codex app-server integration test");
@@ -1659,30 +3022,11 @@ test("documented wrapper attaches to a real Codex authority through the stock pr
   );
   const codexHome = path.join(tempDir, "codex-home");
   const socketPath = path.join(tempDir, "authority", "app-server.sock");
-  const binDir = path.join(tempDir, "bin");
-  const wrapperPath = path.join(binDir, "codex");
   fs.mkdirSync(codexHome, { mode: 0o700 });
   fs.mkdirSync(path.dirname(socketPath), { mode: 0o700 });
-  fs.mkdirSync(binDir, { mode: 0o700 });
-  fs.writeFileSync(
-    wrapperPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -eu",
-      'if [ "$#" -eq 2 ] && [ "$1" = "app-server" ] && [ "$2" = "proxy" ]; then',
-      '  exec "$REAL_CODEX" app-server proxy --sock "$DESKTOP_SOCKET"',
-      "fi",
-      'exec "$REAL_CODEX" "$@"',
-      "",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
   const env = {
     ...process.env,
     CODEX_HOME: codexHome,
-    DESKTOP_SOCKET: socketPath,
-    PATH: `${binDir}:${process.env.PATH}`,
-    REAL_CODEX: codexCli,
   };
   const authority = spawn(codexCli, ["app-server", "--listen", `unix://${socketPath}`], {
     env,
@@ -1698,7 +3042,7 @@ test("documented wrapper attaches to a real Codex authority through the stock pr
       "app-server socket must not grant group/other access",
     );
 
-    proxy = spawn("bash", ["-c", "codex app-server proxy"], {
+    proxy = spawn(codexCli, ["app-server", "proxy", "--sock", socketPath], {
       env,
       stdio: ["pipe", "pipe", "ignore"],
     });

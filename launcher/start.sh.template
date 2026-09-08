@@ -16,10 +16,14 @@ CHATGPT_BINARY="$CODEX_LINUX_APP_DIR/ChatGPT"
 CODEX_LINUX_FEATURES_DIR="$HOOK_ROOT/features"
 CODEX_LINUX_LAUNCHER_LOG="$CODEX_LINUX_APP_CACHE_DIR/launcher.log"
 export CODEX_LINUX_FEATURES_DIR CODEX_LINUX_LAUNCHER_LOG
+ATTACHED_CLI="$CODEX_LINUX_FEATURES_DIR/shared-app-server-socket/attached-cli.sh"
 
 usage() {
+    printf 'Usage: %s [--diagnose] [ChatGPT arguments or URI]\n' "$0"
+    if [ -x "$ATTACHED_CLI" ]; then
+        printf '       %s --cli [Codex arguments]\n' "$0"
+    fi
     cat <<EOF
-Usage: $0 [--diagnose] [ChatGPT arguments or URI]
 
 Runs OpenAI's official Linux ChatGPT executable from the custom
 $CODEX_LINUX_APP_ID distribution. Arguments and deep-link URIs are forwarded
@@ -351,6 +355,15 @@ run_launcher_hooks() {
     done < <(find "$HOOK_ROOT/launcher.d" -maxdepth 1 -type f -perm -u+x -print0 | sort -z)
 }
 
+if [ "${1:-}" = "--cli" ]; then
+    if [ ! -x "$ATTACHED_CLI" ]; then
+        printf '%s\n' 'codex-desktop: --cli requires the shared-app-server-socket feature' >&2
+        exit 2
+    fi
+    shift
+    exec "$ATTACHED_CLI" "$@"
+fi
+
 ORIGINAL_ARGS=("$@")
 unset CODEX_LINUX_ELECTRON_EXIT_STATUS
 case "${1:-}" in
@@ -360,6 +373,13 @@ esac
 [ -x "$CHATGPT_BINARY" ] || { printf 'ChatGPT executable is missing: %s\n' "$CHATGPT_BINARY" >&2; exit 1; }
 
 ELECTRON_ARGS=("--class=$CODEX_LINUX_APP_ID")
+if [ -n "${NIXOS_OZONE_WL:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    ELECTRON_ARGS+=(
+        --ozone-platform=wayland
+        --enable-wayland-ime=true
+        --wayland-text-input-version=3
+    )
+fi
 load_environment_hooks
 canonicalize_codex_home
 refresh_legacy_bundled_plugin_caches
