@@ -248,6 +248,10 @@ requirements, known limitations, configuration, and tests.
 | `tray-usage` | Show usage remaining in the Linux system-tray menu | [Docs](linux-features/tray-usage/README.md) |
 | `ui-tweaks` | Optional visual and interaction customizations | [Docs](linux-features/ui-tweaks/README.md) |
 
+With `shared-app-server-socket` enabled and Desktop running, use
+`codex-desktop --cli` to attach Codex CLI to Desktop's app-server. See
+[Attached CLI](linux-features/shared-app-server-socket/README.md#attached-cli).
+
 Account rollouts and server-side ChatGPT features remain controlled by OpenAI.
 Rebuilding this project does not unlock an account rollout.
 
