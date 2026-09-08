@@ -1,7 +1,7 @@
 #!/bin/bash
 # Reap Browser Use node_repl helper processes leaked by Codex owners. A helper
-# counts as leaked when its parent is no longer a live Codex process — its
-# owner exited without cleaning it up. Helpers whose Codex parent is alive are
+# counts as leaked when no ancestor is a live Codex process — its
+# owner exited without cleaning it up. Helpers whose Codex ancestor is alive are
 # never touched, so active Browser Use sessions in Desktop and CLI Codex
 # sessions are unaffected. Matching is scoped to this install's node_repl
 # binary path, so side-by-side installs reap independently.
@@ -55,11 +55,13 @@ proc_ppid() {
 
 parent_is_live_codex_owner() {
     local ppid="$1"
-    [ -n "$ppid" ] && [ -d "/proc/$ppid" ] || return 1
+    [ -n "$ppid" ] && [ -d "/proc/$ppid" ] || return 2
     local args argv0 argv1 name script_name
-    args="$(tr '\0' ' ' < "/proc/$ppid/cmdline" 2>/dev/null)" || return 1
-    argv0="$(tr '\0' '\n' < "/proc/$ppid/cmdline" 2>/dev/null | sed -n '1p')" || argv0=""
-    argv1="$(tr '\0' '\n' < "/proc/$ppid/cmdline" 2>/dev/null | sed -n '2p')" || argv1=""
+    local -a argv=()
+    mapfile -d '' -t argv 2>/dev/null < "/proc/$ppid/cmdline" || return 2
+    args="${argv[*]}"
+    argv0="${argv[0]:-}"
+    argv1="${argv[1]:-}"
     name="${argv0##*/}"
     script_name="${argv1##*/}"
     case "$name" in
@@ -80,15 +82,36 @@ parent_is_live_codex_owner() {
     return 1
 }
 
+node_repl_is_leaked() {
+    local pid="$1" ancestor next status depth=0 seen=" "
+    proc_is_install_node_repl "$pid" || return 1
+    ancestor="$(proc_ppid "$pid")" || return 1
+    while [ "$ancestor" != 0 ]; do
+        case "$ancestor" in ''|*[!0-9]*) return 1 ;; esac
+        case "$seen" in *" $ancestor "*) return 1 ;; esac
+        [ "$depth" -lt 64 ] || return 1
+        seen="$seen$ancestor "
+        depth=$((depth + 1))
+        status=0
+        parent_is_live_codex_owner "$ancestor" || status=$?
+        case "$status" in
+            0) return 1 ;;
+            1) ;;
+            *) return 1 ;;
+        esac
+        next="$(proc_ppid "$ancestor")" || return 1
+        ancestor="$next"
+    done
+    return 0
+}
+
 leaked_node_repl_pids() {
-    local proc pid ppid
+    local proc pid
     for proc in /proc/[0-9]*/cmdline; do
         [ -e "$proc" ] || continue
         pid="${proc#/proc/}"
         pid="${pid%/cmdline}"
-        proc_is_install_node_repl "$pid" || continue
-        ppid="$(proc_ppid "$pid")" || continue
-        parent_is_live_codex_owner "$ppid" && continue
+        node_repl_is_leaked "$pid" || continue
         printf '%s\n' "$pid"
     done
 }
@@ -97,6 +120,7 @@ reap_leaked_node_repls() {
     local pid termed=""
     while IFS= read -r pid; do
         [ -n "$pid" ] || continue
+        node_repl_is_leaked "$pid" || continue
         echo "node-repl-reaper: reaping leaked node_repl pid=$pid"
         kill "$pid" 2>/dev/null || continue
         termed="$termed $pid"
@@ -105,8 +129,7 @@ reap_leaked_node_repls() {
     [ -n "$termed" ] || return 0
     sleep "$KILL_GRACE_SECONDS"
     for pid in $termed; do
-        # Re-check identity before SIGKILL in case the pid was recycled.
-        proc_is_install_node_repl "$pid" || continue
+        node_repl_is_leaked "$pid" || continue
         echo "node-repl-reaper: escalating to SIGKILL for node_repl pid=$pid"
         kill -9 "$pid" 2>/dev/null || true
     done

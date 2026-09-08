@@ -83,6 +83,132 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function spawnOrphan(nodeReplBin) {
+  const launcher = spawn(BASH, ["-c", '"$1" -e "setInterval(() => {}, 1000)" </dev/null >/dev/null 2>&1 & printf "%s" "$!"', "test", nodeReplBin], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  launcher.stdout.on("data", (chunk) => { output += chunk; });
+  await new Promise((resolve, reject) => {
+    launcher.once("error", reject);
+    launcher.once("close", (code) => code === 0 ? resolve() : reject(new Error(`orphan launcher exited ${code}`)));
+  });
+  assert.match(output, /^\d+$/);
+  const pid = Number(output);
+  try {
+    await waitForFileContent(`/proc/${pid}/cmdline`, (content) => content.split("\0")[0] === nodeReplBin);
+    return pid;
+  } catch (error) {
+    if (pidAlive(pid)) process.kill(pid, "SIGKILL");
+    throw error;
+  }
+}
+
+function runReaperFunctions(fixture) {
+  const source = fs.readFileSync(REAPER, "utf8");
+  const main = source.lastIndexOf('\nif [ "$MODE" = "watch" ]; then');
+  assert.ok(main > 0);
+  return spawnSync(BASH, ["-c", `${source.slice(0, main)}\n${fixture}`, "test", "/tmp/test-reaper-app"], { encoding: "utf8" });
+}
+
+test("ancestry checks preserve helpers on cycles, unreadable processes, and bounded traversal", () => {
+  const cases = [
+    ["proc_ppid() { echo 0; }", 0],
+    ["proc_ppid() { echo 17; }", 1],
+    ["proc_ppid() { return 1; }", 1],
+    ["proc_ppid() { echo invalid; }", 1],
+    ["proc_ppid() { echo $(($1 + 1)); }", 1],
+    ["proc_ppid() { echo 17; }; parent_is_live_codex_owner() { return 2; }", 1],
+    ["proc_ppid() { echo 17; }; parent_is_live_codex_owner() { return 0; }", 1],
+  ];
+  for (const [fixture, expected] of cases) {
+    const result = runReaperFunctions(`proc_is_install_node_repl() { return 0; }\nparent_is_live_codex_owner() { return 1; }\n${fixture}\nnode_repl_is_leaked 10`);
+    assert.equal(result.status, expected, `${fixture}\n${result.stderr}`);
+  }
+});
+
+test("rechecks ownership before SIGTERM and before escalation", () => {
+  const beforeTerm = runReaperFunctions(`
+    leaked_node_repl_pids() { echo 10; }
+    node_repl_is_leaked() { return 1; }
+    kill() { echo unexpected-signal; }
+    reap_leaked_node_repls
+  `);
+  assert.equal(beforeTerm.status, 0, beforeTerm.stderr);
+  assert.equal(beforeTerm.stdout, "");
+  const beforeKill = runReaperFunctions(`
+    changed=0
+    leaked_node_repl_pids() { echo 10; }
+    node_repl_is_leaked() { [ "$changed" = 0 ]; }
+    kill() { echo "signal:$*"; }
+    sleep() { changed=1; }
+    reap_leaked_node_repls
+  `);
+  assert.equal(beforeKill.status, 0, beforeKill.stderr);
+  assert.match(beforeKill.stdout, /signal:10/);
+  assert.doesNotMatch(beforeKill.stdout, /SIGKILL|signal:-9/);
+});
+
+for (const { wrapped, executableOwner, launcherName } of [
+  { wrapped: false, executableOwner: false, launcherName: "node" },
+  { wrapped: true, executableOwner: false, launcherName: "node" },
+  { wrapped: false, executableOwner: true, launcherName: "node" },
+  { wrapped: false, executableOwner: true, launcherName: "codex-linux-sandbox" },
+  { wrapped: false, executableOwner: true, launcherName: "codex-mcp-helper-reaper" },
+]) {
+  test(`preserves a ${wrapped ? "wrapped " : ""}helper through ${launcherName} until its ${executableOwner ? "executable" : "script"} Codex owner exits`, async () => {
+    const { appDir, nodeReplBin } = makeFakeApp();
+    const helperBin = wrapped ? `${nodeReplBin}.codex-linux-original` : nodeReplBin;
+    if (wrapped) fs.symlinkSync(process.execPath, helperBin);
+    const launcher = path.join(appDir, "launch.mjs");
+    fs.writeFileSync(launcher, `
+      import { spawn } from "node:child_process";
+      const child = spawn(${JSON.stringify(helperBin)}, ${JSON.stringify(LONG_RUNNING_NODE_ARGS)}, { stdio: "ignore" });
+      child.once("spawn", () => console.log("launcher=" + process.pid + " child=" + child.pid));
+      setInterval(() => {}, 1000);
+    `);
+    const fakeCodex = path.join(appDir, "codex");
+    let ownerArgs;
+    if (executableOwner) {
+      fs.symlinkSync(process.execPath, fakeCodex);
+      const launcherBin = path.join(appDir, launcherName);
+      fs.symlinkSync(process.execPath, launcherBin);
+      ownerArgs = ["-e", `require("node:child_process").spawn(${JSON.stringify(launcherBin)}, [${JSON.stringify(launcher)}], { stdio: "inherit" });`, "app-server"];
+    } else {
+      fs.writeFileSync(fakeCodex, `#!${BASH}\n"${process.execPath}" "${launcher}" &\nwait\n`);
+      fs.chmodSync(fakeCodex, 0o755);
+      ownerArgs = ["app-server"];
+    }
+    const owner = spawn(fakeCodex, ownerArgs, { stdio: ["ignore", "pipe", "ignore"] });
+    let launcherPid;
+    let childPid;
+    try {
+      ({ launcherPid, childPid } = await new Promise((resolve, reject) => {
+        let buffer = "";
+        owner.stdout.on("data", (chunk) => {
+          buffer += chunk;
+          const match = buffer.match(/launcher=(\d+) child=(\d+)/);
+          if (match) resolve({ launcherPid: Number(match[1]), childPid: Number(match[2]) });
+        });
+        owner.once("exit", () => reject(new Error("fake Codex exited before launcher startup")));
+      }));
+      const output = runReaperOnce(appDir);
+      assert.doesNotMatch(output, new RegExp(`pid=${childPid}\\b`));
+      assert.ok(pidAlive(childPid), "live launcher's helper was killed");
+      owner.kill("SIGKILL");
+      await waitForExit(owner.pid);
+      assert.ok(pidAlive(launcherPid), "launcher must remain alive to test ancestor ownership");
+      assert.match(runReaperOnce(appDir), new RegExp(`reaping leaked node_repl pid=${childPid}\\b`));
+      await waitForExit(childPid);
+    } finally {
+      for (const pid of [childPid, launcherPid, owner.pid]) {
+        if (pid && pidAlive(pid)) process.kill(pid, "SIGKILL");
+      }
+      fs.rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+}
+
 async function waitForFileContent(file, predicate, timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -137,16 +263,15 @@ printf '%s %s\\n' "$1" "$2" >> "${callLog}"
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("reaps a node_repl whose parent is not a live codex app-server", async () => {
+test("reaps an orphaned node_repl after its launching process exits", async () => {
   const { appDir, nodeReplBin } = makeFakeApp();
-  const leaked = spawn(nodeReplBin, LONG_RUNNING_NODE_ARGS, { stdio: "ignore" });
+  const leakedPid = await spawnOrphan(nodeReplBin);
   try {
-    await new Promise((resolve) => leaked.once("spawn", resolve));
     const output = runReaperOnce(appDir);
-    assert.match(output, new RegExp(`reaping leaked node_repl pid=${leaked.pid}\\b`));
-    await waitForExit(leaked.pid);
+    assert.match(output, new RegExp(`reaping leaked node_repl pid=${leakedPid}\\b`));
+    await waitForExit(leakedPid);
   } finally {
-    try { leaked.kill("SIGKILL"); } catch {}
+    if (pidAlive(leakedPid)) process.kill(leakedPid, "SIGKILL");
     fs.rmSync(appDir, { recursive: true, force: true });
   }
 });
@@ -155,14 +280,13 @@ test("reaps a wrapped node_repl running from the original backup path", async ()
   const { appDir } = makeFakeApp();
   const originalNodeReplBin = path.join(appDir, "resources", "cua_node", "bin", "node_repl.codex-linux-original");
   fs.symlinkSync(process.execPath, originalNodeReplBin);
-  const leaked = spawn(originalNodeReplBin, LONG_RUNNING_NODE_ARGS, { stdio: "ignore" });
+  const leakedPid = await spawnOrphan(originalNodeReplBin);
   try {
-    await new Promise((resolve) => leaked.once("spawn", resolve));
     const output = runReaperOnce(appDir);
-    assert.match(output, new RegExp(`reaping leaked node_repl pid=${leaked.pid}\\b`));
-    await waitForExit(leaked.pid);
+    assert.match(output, new RegExp(`reaping leaked node_repl pid=${leakedPid}\\b`));
+    await waitForExit(leakedPid);
   } finally {
-    try { leaked.kill("SIGKILL"); } catch {}
+    if (pidAlive(leakedPid)) process.kill(leakedPid, "SIGKILL");
     fs.rmSync(appDir, { recursive: true, force: true });
   }
 });
