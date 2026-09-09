@@ -828,7 +828,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       return matches.length === 1 ? matches[0] : null;
     };
     const handlerNeedle =
-      /function (?<handler>[A-Za-z_$][\w$]*)\((?<owner>[A-Za-z_$][\w$]*),(?<notification>[A-Za-z_$][\w$]*),(?<callback>[A-Za-z_$][\w$]*)\)\{let\{manager:(?<manager>[A-Za-z_$][\w$]*),notificationContext:(?<context>[A-Za-z_$][\w$]*)\}=\k<owner>;(?=if\(!\(\k<context>\.streamState\.shouldIgnoreThreadMutationAsFollower\(\k<notification>\.method,\k<notification>\.params,`notification`\)\|\|\k<context>\.resumeNotificationBuffer\.buffer\(\k<notification>,\k<callback>\)\|\|\k<context>\.threadStartedNotificationDeferral\.bufferNotification\(\k<notification>,\k<callback>\)\|\|\k<callback>\?\.\(\)\)\))/u;
+      /function (?<handler>[A-Za-z_$][\w$]*)\((?<owner>[A-Za-z_$][\w$]*),(?<method>[A-Za-z_$][\w$]*),(?<params>[A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*,(?<callback>[A-Za-z_$][\w$]*)\)\{let (?<notification>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(\k<method>,\k<params>\),[\s\S]{0,300}?\{manager:(?<manager>[A-Za-z_$][\w$]*),notificationContext:(?<context>[A-Za-z_$][\w$]*)\}=\k<owner>;(?=[\s\S]{0,300}?\k<context>\.streamState\.shouldIgnoreThreadMutationAsFollower\(\k<notification>\.method,\k<notification>\.params,`notification`\))/u;
     const handlerMatch = singleMatch(patched, handlerNeedle);
     const normalizerNeedle =
       /case`turn\/started`:\{let\{threadId:([A-Za-z_$][\w$]*),turn:[A-Za-z_$][\w$]*\}=([A-Za-z_$][\w$]*)\.params,[A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\.threadStore\.conversations\.get\([A-Za-z_$][\w$]*\);/u;
@@ -839,16 +839,14 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
       /(?<condition>if\(!(?<context>[A-Za-z_$][\w$]*)\.threadStore\.conversations\.has\((?<conversation>[A-Za-z_$][\w$]*)\)\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/started for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
       /(?<condition>if\((?<item>[A-Za-z_$][\w$]*)\.type===`commandExecution`&&(?<context>[A-Za-z_$][\w$]*)\.itemStreamState\.clearItemTerminalInputBuffer\((?<conversation>[A-Za-z_$][\w$]*),\k<item>\.id\),\k<context>\.threadStore\.conversations\.get\(\k<conversation>\)==null\))\{(?<manager>[A-Za-z_$][\w$]*)\.logger\.error\(`Received item\/completed for unknown conversation`,\{safe:\{conversationId:\k<conversation>\},sensitive:\{\}\}\);break\}/u,
     ];
-    const ownerPatterns = [
-      /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*),[^)]+\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*),automationTurns:[A-Za-z_$][\w$]*,createId:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*;/u,
-      /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*)\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*),createId:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*;/u,
-    ];
+    const ownerPattern =
+      /function [A-Za-z_$][\w$]*\([^,]+,([A-Za-z_$][\w$]*)(?:,[^)]*)?\)\{let\{manager:([A-Za-z_$][\w$]*),notificationContext:([A-Za-z_$][\w$]*),createId:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*;/u;
     const unknownContracts = unknownNeedles.map((needle, index) => {
       const match = singleMatch(patched, needle);
       if (match == null) return null;
       const functionStart = patched.lastIndexOf("function ", match.index);
       const prefix = functionStart === -1 ? "" : patched.slice(functionStart, match.index);
-      const owner = prefix.match(ownerPatterns[index < 2 ? 0 : 1]);
+      const owner = prefix.match(ownerPattern);
       if (
         owner == null ||
         (match.groups.manager != null && match.groups.manager !== owner[2]) ||
@@ -1258,9 +1256,10 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
     return source;
   }
   const currentCallerPattern = new RegExp(
-    `(?<prefix>${escapeRegExp(helperName)}\\((?<manager>[A-Za-z_$][\\w$]*),[\\s\\S]{0,100}?\\{)` +
-      `(?=canUseProjectlessWorkspace:!(?<classifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\)\\|\\|` +
-      `(?<conversation>[A-Za-z_$][\\w$]*)\\.mode===\`durable\`\\|\\|!1,[\\s\\S]{0,1000}?` +
+    `(?<prefix>${escapeRegExp(helperName)}\\((?<manager>[A-Za-z_$][\\w$]*),` +
+      `[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,` +
+      `(?<conversation>[A-Za-z_$][\\w$]*),\\{)` +
+      `(?=canUseProjectlessWorkspace:!(?<classifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\),[\\s\\S]{0,1000}?` +
       `reasoningSummaryOverride:\\k<manager>\\.getDefaultFeatureOverride\\(\`concurrent_reasoning_summaries\`\\)===!0\\?\`detailed\`:null)`,
     "u",
   );

@@ -6,7 +6,7 @@ const COMPILED_UI_MARKER = "codexLinuxCopilotReasoningEffortUi";
 
 function currentCopilotWriterRegex() {
   return new RegExp(
-    `(${JS_IDENT}=async\\((${JS_IDENT}),(${JS_IDENT}),${JS_IDENT}\\)=>\\{[\\s\\S]{0,1000}?` +
+    `(${JS_IDENT}=async\\((${JS_IDENT}),(${JS_IDENT}),${JS_IDENT},${JS_IDENT}\\)=>\\{[\\s\\S]{0,1000}?` +
       `if\\((${JS_IDENT})\\)return await (${JS_IDENT})\\((${JS_IDENT}),${BT}copilot-default-model${BT},\\2,` +
       `\\{throwOnFailure:!0\\}\\)),!0`,
   );

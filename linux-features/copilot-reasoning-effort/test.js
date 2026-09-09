@@ -47,7 +47,7 @@ function retiredCopilotReasoningEffortSettingsFixture() {
 function currentCopilotReasoningEffortSettingsFixture() {
   return [
     "function Va(){let e=(0,Ya.c)(3),t=ua(),{data:n,isLoading:r}=hn(`copilot-default-model`),i=n??t.defaultModel,a;return e[0]!==r||e[1]!==i?(a={model:i,reasoningEffort:`medium`,profile:null,isLoading:r},e[0]=r,e[1]=i,e[2]=a):a=e[2],a}",
-    "function currentWriter(){let v=!0,a={},V=async()=>!1,Ix=async()=>{};let q=async(e,t,n)=>{let r=n===void 0?`current`:n;if(r===`current`&&await V(e,t))return!0;if(v)return await Ix(a,`copilot-default-model`,e,{throwOnFailure:!0}),!0;return!1};return q}",
+    "function currentWriter(){let v=!0,a={},V=async()=>!1,Ix=async()=>{};let q=async(e,t,n,r)=>{let o=n===void 0?`current`:n;if(o===`current`&&await V(e,t,r===void 0?void 0:{threadSettings:{serviceTier:r}}))return!0;if(r!==void 0)return!1;if(v)return await Ix(a,`copilot-default-model`,e,{throwOnFailure:!0}),!0;return!1};return q}",
   ].join("");
 }
 
