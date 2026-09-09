@@ -1,0 +1,9 @@
+{
+  "id": "filesystem-root-follow-ups",
+  "title": "Filesystem Root Follow-ups",
+  "description": "Allow follow-up messages in existing local tasks whose working directory is /.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
