@@ -339,9 +339,9 @@ function syntheticCurrentRemoteNotificationLifecycleBundle() {
     "function Of({conversationId:e,conversations:t,getWorkspaceBrowserRoot:n,getWorkspaceKind:r,hostId:i,setConversation:a,thread:o,threadsById:s,updateConversationState:c}){let h=o.status??null;if(t.has(e)){c(e,e=>{e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)});return}}",
     "function xm(e,t,n,r){let i=e.items.find(e=>e.id===t);return i?i.type===n?i:(r.error(`Item has unexpected type`,{safe:{itemId:t,type:i.type,expectedType:n},sensitive:{}}),null):(r.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}}),null)}",
     "function Sm(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
-    "function $dt(e,t,n,r){let{manager:i,notificationContext:a,createId:o}=e;switch(t.method){case`turn/started`:{let{threadId:n,turn:r}=t.params,s=Ul(n),c=a.threadStore.conversations.get(s);if(c==null){i.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}i.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===r.id);t==null&&(t={turnId:r.id,status:r.status,items:[]},e.turns.push(t)),t.status=r.status});break}case`turn/completed`:{let{threadId:o,turn:s}=t.params,c=Ul(o);if(!a.threadStore.conversations.has(c)){a.unread.discardTurn(c,s.id),i.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:c},sensitive:{}});break}i.updateConversationState(c,e=>{let t=e.turns.find(e=>e.turnId===s.id);t&&(t.status=s.status)});break}}}",
-    "function Sdt(e,t){let{manager:n,notificationContext:r,createId:i}=e;switch(t.method){case`item/started`:{let{item:a,threadId:o,turnId:s,startedAtMs:c}=t.params,l=Ul(o);if(!r.threadStore.conversations.has(l)){n.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,e=>{let t=e.turns.find(e=>e.turnId===s);t&&Sm(t,{...a,completed:!1,startedAtMs:c})});break}case`item/completed`:{let{item:a,threadId:o,turnId:s,completedAtMs:c}=t.params;let l=Ul(o);if(a.type===`commandExecution`&&r.itemStreamState.clearItemTerminalInputBuffer(l,a.id),r.threadStore.conversations.get(l)==null){n.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:l},sensitive:{}});break}n.updateConversationState(l,t=>{let o=t.turns.find(e=>e.turnId===s);if(!o)return;let d={...a,completed:!0,completedAtMs:c};Sm(o,d)});break}}}",
-    "function bn(e,t){return{method:e,params:t}}function tLn(e,t,n,r,o){let a=bn(t,n),s={notification:a,automationCapability:r},{manager:c,notificationContext:l}=e;if(!(l.streamState.shouldIgnoreThreadMutationAsFollower(a.method,a.params,`notification`)||l.resumeNotificationBuffer.buffer(s,o)||l.threadStartedNotificationDeferral.bufferNotification(s,o)||o?.())){switch(a.method){case`turn/started`:case`turn/completed`:if($dt(e,a,s,o)===`deferred`)return;break;case`item/started`:case`item/completed`:if(Sdt(e,a,s)===`deferred`)return;break}l.events.emitNotification(a)}}",
+    "function $dt(e,t,n,r){let{manager:i,notificationContext:a,createId:o}=e;switch(t.method){case`turn/started`:{let{threadId:n,turn:r}=t.params,s=Ul(n),c=a.threadStore.conversations.get(s);if(c==null){i.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}i.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===r.id);t==null&&(t={turnId:r.id,status:r.status,items:[]},e.turns.push(t)),t.status=r.status});break}case`turn/completed`:{let{threadId:o,turn:s}=t.params,c=Ul(o);if(!a.threadStore.conversations.has(c)){a.unread.discardTurn(c,s.id),i.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:c},sensitive:{}});break}i.updateConversationState(c,e=>{let t=e.turns.find(e=>e.turnId===s.id);t&&(t.status=s.status,e.automationCapability=n)});break}}}",
+    "function Sdt(e,t,n){let{manager:r,notificationContext:i,createId:a}=e;switch(t.method){case`item/started`:{let{item:o,threadId:s,turnId:c,startedAtMs:l}=t.params,u=Ul(s);if(!i.threadStore.conversations.has(u)){r.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:u},sensitive:{}});break}r.updateConversationState(u,e=>{let t=e.turns.find(e=>e.turnId===c);t&&Sm(t,{...o,completed:!1,startedAtMs:l})});break}case`item/completed`:{let{item:o,threadId:s,turnId:c,completedAtMs:l}=t.params;let u=Ul(s);if(o.type===`commandExecution`&&i.itemStreamState.clearItemTerminalInputBuffer(u,o.id),i.threadStore.conversations.get(u)==null){r.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:u},sensitive:{}});break}r.updateConversationState(u,t=>{let s=t.turns.find(e=>e.turnId===c);if(!s)return;let d={...o,completed:!0,completedAtMs:l};Sm(s,d)});break}}}",
+    "function bn(e,t){return{method:e,params:t}}function tLn(e,t,n,r,o){let a=bn(t,n),u=a.method===`turn/completed`&&r?.threadId===a.params.threadId&&r.turnId===a.params.turn.id?r:null,s={notification:a,automationCapability:u},{manager:c,notificationContext:l}=e;if(!(l.streamState.shouldIgnoreThreadMutationAsFollower(a.method,a.params,`notification`)||l.resumeNotificationBuffer.buffer(s,o)||l.threadStartedNotificationDeferral.bufferNotification(s,o)||o?.())){switch(a.method){case`turn/started`:case`turn/completed`:if($dt(e,a,u,o)===`deferred`)return;break;case`item/started`:case`item/completed`:if(Sdt(e,a,u)===`deferred`)return;break}l.events.emitNotification(a)}}",
   ].join("");
 }
 
@@ -1945,24 +1945,29 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
     manager,
     notificationContext,
   };
-  manager.onNotification = (method, params, callback) =>
-    onNotification(reductionContext, method, params, null, callback);
+  manager.onNotification = (method, params, automationCapability = null, notificationCallback) =>
+    onNotification(reductionContext, method, params, automationCapability, notificationCallback);
   const callbackCalls = new Map();
   const callback = (name, result = false) => () => {
     callbackCalls.set(name, (callbackCalls.get(name) ?? 0) + 1);
     return result;
   };
+  const completionCapability = {
+    automationKind: "scheduled",
+    threadId: "thread-late",
+    turnId: "turn-1",
+  };
   const notifications = [
-    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }, callback("initiating")],
-    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }, callback("buffered-started")],
-    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-suppressed", type: "agentMessage" }, startedAtMs: 11 }, callback("buffered-suppressed", true)],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }, callback("buffered-completed")],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }, callback("buffered-completed-without-start")],
-    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }, callback("buffered-turn-completed")],
+    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }, null, callback("initiating")],
+    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }, null, callback("buffered-started")],
+    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-suppressed", type: "agentMessage" }, startedAtMs: 11 }, null, callback("buffered-suppressed", true)],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }, null, callback("buffered-completed")],
+    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }, null, callback("buffered-completed-without-start")],
+    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }, completionCapability, callback("buffered-turn-completed")],
   ];
 
-  for (const [method, params, notificationCallback] of notifications) {
-    manager.onNotification(method, params, notificationCallback);
+  for (const [method, params, automationCapability, notificationCallback] of notifications) {
+    manager.onNotification(method, params, automationCapability, notificationCallback);
   }
 
   assert.equal(hydrationCalls, 1);
@@ -1992,6 +1997,7 @@ test("Linux remote mobile hydration buffers and replays late notifications", asy
   const hydratedConversation = conversations.get("thread-late");
   assert.equal(hydratedConversation.turns.length, 1);
   assert.equal(hydratedConversation.turns[0].status, "completed");
+  assert.equal(hydratedConversation.automationCapability, completionCapability);
   assert.deepEqual(
     Array.from(hydratedConversation.turns[0].items, (item) => ({
       completed: item.completed,
