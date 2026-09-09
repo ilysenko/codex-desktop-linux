@@ -62,6 +62,8 @@ cd codex-desktop-linux
 For an experimental **Alpine Linux x86_64 host build**, see
 [Alpine packaging](packaging/alpine/README.md). It supplies private glibc
 libraries while repository commands run directly on Alpine; it uses no container.
+The Alpine guide includes offline regression checks and desktop-install failure
+recovery limits; this remains an experimental, manually updated build.
 
 The recommended native installation is:
 

@@ -59,6 +59,8 @@ cd codex-desktop-linux
 实验性的 **Alpine Linux x86_64 宿主机构建**参见
 [Alpine 打包说明](packaging/alpine/README.md)。此方案为桌面应用提供私有 glibc
 库，仓库命令仍直接在 Alpine 上执行，不使用容器。
+Alpine 指南还包含离线回归测试和桌面安装失败后的恢复限制；此构建仍属于实验性方案，
+需要手动更新。
 
 推荐的原生安装命令：
 

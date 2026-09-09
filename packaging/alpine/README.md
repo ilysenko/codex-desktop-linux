@@ -56,6 +56,20 @@ and forwards user arguments and deep-link URIs. It does not set
 `LD_LIBRARY_PATH`, replace the host shell, or disable Chromium's sandbox.
 On KDE, run `kbuildsycoca6 --noincremental` if the menu has not refreshed.
 
+The desktop installer checks existing destinations (including dangling
+symlinks) before writing helpers. It publishes complete launcher/menu files
+without overwriting a concurrently created destination. On a caught error it
+removes only files and empty directories created by that attempt, so an ordinary
+failure can be retried after resolving its cause. Existing user files and
+replacements made by another writer are preserved; incomplete cleanup is
+reported with the affected paths. This is not a crash-recovery journal:
+power loss or an uncaught signal, including SIGKILL, can leave partial state.
+Inspect any reported existing `host-bin`, `launch.sh`, menu entry, or
+`.alpine-install-*` staging directory before moving it aside; do not blindly
+delete conflicts or user data. Installation filesystems must support hard links.
+Spaces and shell metacharacters are quoted; control characters and `=` in the
+desktop executable path are rejected.
+
 Because the desktop refreshes PATH from the login shell, the installer also
 exposes native Alpine procps as `~/.local/bin/ps`. An existing command at that
 path is validated and never overwritten. This user-level helper becomes the
@@ -81,27 +95,48 @@ compatibility, not a security isolation boundary.
 
 ```sh
 python3 -m unittest discover -s packaging/alpine -p 'test_*.py'
+node --test packaging/alpine/*.test.cjs
 node --test scripts/ci/elf-runtime.test.js scripts/ci/relocate-elf-interpreter.test.js
 
 "$alpine_app/opt/codex-desktop/resources/cua_node/bin/node" \
   packaging/alpine/verify-host.cjs "$alpine_app/opt/codex-desktop" /absolute/repository
 
-# Optionally execute a repository check through the bundled app-server:
+# Optionally execute a read-only repository check through the app-server:
 "$alpine_app/opt/codex-desktop/resources/cua_node/bin/node" \
   packaging/alpine/verify-host.cjs "$alpine_app/opt/codex-desktop" "$PWD" \
-  python3 -m unittest discover -s packaging/alpine -p 'test_*.py'
+  git diff --check
 ```
+
+The Alpine Node tests require an x86_64 host with `cc`, `readelf`, and
+`patchelf` in PATH, in addition to Node. They run offline in disposable
+directories and never install into the real user profile. The build tests
+compile tiny ELF fixtures and exercise actual copying, symlink preservation,
+patchelf changes, per-DSO RUNPATH and NODEFLIB, and unchanged ASAR/static/musl
+payloads. Only the official inventory contract and dependency-loader execution
+are substituted for these fixtures; they are not a GUI launch or an audit of
+the real Debian library closure. Installer tests inject write/publish failures,
+exercise retries and concurrent conflicts, and execute a fixture launcher to
+check argument forwarding and the host environment. CI runs these tests on its
+x86_64 Linux runner; direct Alpine host validation remains a separate check.
 
 The host probe launches the packaged glibc Node, then the bundled Codex
 app-server, and issues `command/exec` without creating an agent thread or
 contacting a model. It compares OS, repository, command paths, and musl loader
 output with the direct host result. The optional check uses the repository's
-real host toolchain and has a 90-second timeout.
+real host toolchain and has a 90-second timeout. It does not request additional
+sandbox permissions: the standalone app-server defaults to read-only execution.
+Tests that create temporary files can fail with EROFS, and Node child-process
+creation can fail with EPERM in that sandbox. Run the fixture suites directly
+on the host as shown above; their success must not be reported as a successful
+writable app-server test run.
 
 Validated locally on Alpine 3.24.1 x86_64, KDE Plasma 6.6.6 Wayland/XWayland,
 with official upstream 26.903.61454: rendered desktop UI, existing account
 session, local app-server, Git access, Cargo workspace metadata in a host
-repository, and the Alpine packaging tests executed through `command/exec`.
+repository, and direct-host packaging tests. A follow-up attempt to run the
+Node fixture suites through standalone `command/exec` was blocked by the
+read-only sandbox described above. Connections also worked in user testing;
+this is observational evidence, not an automated connection-recovery test.
 
 ## Current limits
 
