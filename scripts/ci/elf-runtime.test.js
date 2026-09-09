@@ -390,7 +390,7 @@ test("post-fix audit enforces the Nix interpreter and runtime search path", () =
     );
     writeFixture(
       root,
-      "resources/cua_node/lib/node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.3",
+      "resources/cua_node/lib/node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.6",
       dynamicElf({ interpreter: null, runpath: "$ORIGIN/" }),
     );
     assert.doesNotThrow(() =>

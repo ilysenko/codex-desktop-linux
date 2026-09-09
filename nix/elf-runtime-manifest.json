@@ -3,8 +3,8 @@
   "architectures": {
     "amd64": {
       "machine": 62,
-      "targetInventoryCount": 38,
-      "targetInventorySha256": "2c9f71ec707e0126a169c327cd91a8c8aeb0d43ee9c8b71ce327c2d9f5aa09bf",
+      "targetInventoryCount": 37,
+      "targetInventorySha256": "e271731ff74d73e2a30ce8e7af445da67a645bfd741650b38493abbd76df4585",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
@@ -17,13 +17,13 @@
       "interpreterStrategies": {
         "ChatGPT": "relocate-within-detect-libc-range",
         "resources/cua_node/bin/node": "patchelf-rpath-first",
-        "resources/cua_node/lib/node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.3": "preserve-upstream"
+        "resources/cua_node/lib/node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.6": "preserve-upstream"
       }
     },
     "arm64": {
       "machine": 183,
-      "targetInventoryCount": 36,
-      "targetInventorySha256": "0ef2b2c667fb5ee1a08b5238c10434f94fe00a3090925f99651a06b2c6d2e7ed",
+      "targetInventoryCount": 35,
+      "targetInventorySha256": "b3c37a292a8cc245974a1404369766e5d1347ef60d1ce828dd63ed98792fd5c8",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
