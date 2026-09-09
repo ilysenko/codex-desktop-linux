@@ -59,6 +59,10 @@ cd codex-desktop-linux
 | NixOS or another Nix system | `nix run github:ilysenko/codex-desktop-linux` | Builds and runs the flake output; see [Nix](docs/nix.md) |
 | Atomic desktops or another distribution | `make build-app && make appimage` | Produces a local AppImage without the native updater |
 
+For an experimental **Alpine Linux x86_64 host build**, see
+[Alpine packaging](packaging/alpine/README.md). It supplies private glibc
+libraries while repository commands run directly on Alpine; it uses no container.
+
 The recommended native installation is:
 
 ```bash

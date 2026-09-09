@@ -56,6 +56,10 @@ cd codex-desktop-linux
 | NixOS 或其他 Nix 系统 | `nix run github:ilysenko/codex-desktop-linux` | 构建并运行 flake；参阅 [Nix](docs/nix.md) |
 | Atomic 桌面或其他发行版 | `make build-app && make appimage` | 生成不含原生更新器的本地 AppImage |
 
+实验性的 **Alpine Linux x86_64 宿主机构建**参见
+[Alpine 打包说明](packaging/alpine/README.md)。此方案为桌面应用提供私有 glibc
+库，仓库命令仍直接在 Alpine 上执行，不使用容器。
+
 推荐的原生安装命令：
 
 ```bash
