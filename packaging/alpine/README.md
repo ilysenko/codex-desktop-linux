@@ -118,6 +118,10 @@ repository, and the Alpine packaging tests executed through `command/exec`.
   build and must be investigated rather than bypassed.
 - Optional Qt shims cannot load Alpine Qt. The app uses the supplied GTK
   libraries, so native KDE theming may differ.
+- The upstream process sampler may still select BusyBox `ps` despite the
+  native procps helper and log unsupported-option warnings. This did not block
+  the desktop, Git, or command execution checks; sampler integration needs
+  further investigation.
 - As with other Community builds, do not run a separate official ChatGPT app
   against the same `Codex` profile simultaneously.
 
