@@ -1,6 +1,7 @@
 "use strict";
 
 const CATALOG_PATCH_MARKER = "codexLinuxModelPickerDefaultPresets";
+const CATALOG_PRESET_OPTIONS_KEY = "codexLinuxDefaultPresetOptions";
 const SLIDER_PATCH_MARKER = "codex-linux-model-picker-default-presets-slider-minimum";
 const JS_ASSET_PATTERN = /\.js$/;
 const EFFORT_TO_THINKING_EFFORT = Object.freeze({
@@ -109,24 +110,23 @@ function codexLinuxModelPickerDefaultPresets(catalog, configured) {
     ...(catalog?.internalOptions ?? []),
     ...(catalog?.versionOptions?.flatMap((version) => version?.options ?? []) ?? []),
   ];
-  const supported = configured.filter((preset) =>
-    options.some(
-      (option) =>
-        option?.slug === preset.modelSlug &&
-        (option.thinkingEffort ??
-          catalog?.defaultThinkingEffortByModelSlug?.[option.slug] ??
-          null) === preset.thinkingEffort,
-    ),
-  );
+  const supported = configured.flatMap((preset) => {
+    const option = options.find((candidate) => candidate?.slug === preset.modelSlug);
+    return option == null
+      ? []
+      : [{ preset, option: { ...option, thinkingEffort: preset.thinkingEffort } }];
+  });
   if (supported.length === 0) {
     return catalog;
   }
-  const selectedDefault = supported.find((preset) => preset.isDefault) ?? supported[0];
+  const selectedDefault =
+    supported.find(({ preset }) => preset.isDefault)?.preset ?? supported[0].preset;
   return {
     ...catalog,
-    sliderSettings: supported.map(({ modelSlug, thinkingEffort }) => ({
-      modelSlug,
-      thinkingEffort,
+    codexLinuxDefaultPresetOptions: supported.map(({ option }) => option),
+    sliderSettings: supported.map(({ preset }) => ({
+      modelSlug: preset.modelSlug,
+      thinkingEffort: preset.thinkingEffort,
     })),
     defaultModelSlug: selectedDefault.modelSlug,
     defaultThinkingEffortByModelSlug: {
@@ -166,16 +166,42 @@ function catalogNormalizerSection(source) {
   ]);
 }
 
+function catalogSelectionResolverSection(source) {
+  return uniqueFunctionWithMarkers(source, [
+    "internalOptions??[]",
+    "versionOptions?.flatMap(",
+    "defaultThinkingEffortByModelSlug",
+    "thinkingEffort!=null",
+  ]);
+}
+
+function matchingSquareBracket(source, openingIndex) {
+  let depth = 0;
+  for (let index = openingIndex; index < source.length; index += 1) {
+    if (source[index] === "[") depth += 1;
+    if (source[index] === "]") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
 function catalogPatchContract(source) {
   const markerCount = source.split(CATALOG_PATCH_MARKER).length - 1;
-  const section = catalogNormalizerSection(source);
-  if (markerCount === 0) {
-    return section == null ? "drifted" : "current";
+  const presetOptionsCount = source.split(CATALOG_PRESET_OPTIONS_KEY).length - 1;
+  const normalizer = catalogNormalizerSection(source);
+  const resolver = catalogSelectionResolverSection(source);
+  if (markerCount === 0 && presetOptionsCount === 0) {
+    return normalizer == null || resolver == null ? "drifted" : "current";
   }
   if (
     markerCount === 2 &&
-    section != null &&
-    section.source.includes(`return ${CATALOG_PATCH_MARKER}({`)
+    presetOptionsCount === 2 &&
+    normalizer != null &&
+    resolver != null &&
+    normalizer.source.includes(`return ${CATALOG_PATCH_MARKER}({`) &&
+    resolver.source.includes(`?.${CATALOG_PRESET_OPTIONS_KEY}??[]`)
   ) {
     return "applied";
   }
@@ -205,10 +231,11 @@ function applyCatalogPatch(source, context = {}) {
     return source;
   }
 
-  const section = catalogNormalizerSection(source);
+  const normalizer = catalogNormalizerSection(source);
+  const resolver = catalogSelectionResolverSection(source);
   const returnMarker = ";return{";
-  const returnIndex = section.source.indexOf(returnMarker);
-  const closingIndex = section.source.lastIndexOf("}");
+  const returnIndex = normalizer.source.indexOf(returnMarker);
+  const closingIndex = normalizer.source.lastIndexOf("}");
   if (returnIndex < 0 || closingIndex <= returnIndex) {
     warn(
       "Could not locate the ChatGPT model catalog return object",
@@ -217,17 +244,46 @@ function applyCatalogPatch(source, context = {}) {
     return source;
   }
 
-  const patchedSection =
-    section.source.slice(0, returnIndex) +
+  const resolverSignature = /^function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)[,)]/u.exec(
+    resolver.source,
+  );
+  const resolverOptionsStart = resolver.source.indexOf("=[", resolverSignature?.[0].length ?? 0) + 1;
+  const resolverOptionsEnd = matchingSquareBracket(resolver.source, resolverOptionsStart);
+  if (resolverSignature == null || resolverOptionsStart <= 0 || resolverOptionsEnd < 0) {
+    warn(
+      "Could not locate the ChatGPT model selection option array",
+      "model picker Default catalog patch",
+    );
+    return source;
+  }
+
+  const patchedNormalizer =
+    normalizer.source.slice(0, returnIndex) +
     `;return ${CATALOG_PATCH_MARKER}({` +
-    section.source.slice(returnIndex + returnMarker.length, closingIndex) +
+    normalizer.source.slice(returnIndex + returnMarker.length, closingIndex) +
     ",codexLinuxDefaultPresetsConfigured)" +
-    section.source.slice(closingIndex);
+    normalizer.source.slice(closingIndex);
+  const catalogParameter = resolverSignature[1];
+  const patchedResolver =
+    resolver.source.slice(0, resolverOptionsEnd) +
+    `,...${catalogParameter}?.${CATALOG_PRESET_OPTIONS_KEY}??[]` +
+    resolver.source.slice(resolverOptionsEnd);
+  const replacements = [
+    { ...normalizer, source: patchedNormalizer },
+    { ...resolver, source: patchedResolver },
+  ].sort((left, right) => right.start - left.start);
+  let patchedSource = source;
+  for (const replacement of replacements) {
+    patchedSource =
+      patchedSource.slice(0, replacement.start) +
+      replacement.source +
+      patchedSource.slice(replacement.end);
+  }
+  const helperIndex = Math.min(normalizer.start, resolver.start);
   return (
-    source.slice(0, section.start) +
+    patchedSource.slice(0, helperIndex) +
     catalogRuntimeHelper(presets) +
-    patchedSection +
-    source.slice(section.end)
+    patchedSource.slice(helperIndex)
   );
 }
 
@@ -341,6 +397,7 @@ const descriptors = [
 
 module.exports = {
   CATALOG_PATCH_MARKER,
+  CATALOG_PRESET_OPTIONS_KEY,
   EFFORT_TO_THINKING_EFFORT,
   THINKING_EFFORT_TO_EFFORT,
   JS_ASSET_PATTERN,

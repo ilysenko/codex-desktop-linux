@@ -12,6 +12,7 @@ const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-fe
 const { patchExtractedApp } = require("../../scripts/patches/runner.js");
 const {
   CATALOG_PATCH_MARKER,
+  CATALOG_PRESET_OPTIONS_KEY,
   EFFORT_TO_THINKING_EFFORT,
   SLIDER_PATCH_MARKER,
   applyCatalogPatch,
@@ -42,6 +43,11 @@ function catalogFixture(name = "FOr") {
     "defaultThinkingEffortByModelSlug:f,defaultModelSlug:p,",
     "internalOptions:e.internalOptions,options:e.options,sliderSettings:d,",
     "versionOptions:e.versionOptions,workspaceModelPolicy:e.workspaceModelPolicy}}",
+    "function ZL(e,t){let n=[...e?.options??[],...e?.internalOptions??[],",
+    "...e?.versionOptions?.flatMap(e=>e.options)??[]],",
+    "r=t.thinkingEffort??e?.defaultThinkingEffortByModelSlug?.[t.slug]??null,",
+    "i=n.find(e=>e.slug===t.slug&&(e.thinkingEffort??null)===r);",
+    "return i!=null||t.thinkingEffort!=null?i:n.find(e=>e.slug===t.slug)}",
     "function Next(){}",
   ].join("");
 }
@@ -91,7 +97,6 @@ function catalog(overrides = {}) {
       { slug: "upstream-default", thinkingEffort: "standard" },
       { slug: "gpt-6-astra", thinkingEffort: "standard" },
       { slug: "gpt-5.6-sol", thinkingEffort: "min" },
-      { slug: "gpt-5.6-sol", thinkingEffort: "extended" },
     ],
     sliderSettings: [{ modelSlug: "upstream-default", thinkingEffort: "standard" }],
     versionOptions: [
@@ -164,7 +169,7 @@ test("rejects malformed preset settings", () => {
   }
 });
 
-test("runtime preserves order and the rest of the upstream catalog", () => {
+test("runtime preserves order and resolves configured efforts from available models", () => {
   const upstream = catalog();
   const configured = normalizePresets(
     context([
@@ -183,6 +188,18 @@ test("runtime preserves order and the rest of the upstream catalog", () => {
   ]);
   assert.equal(result.defaultModelSlug, "gpt-6-astra");
   assert.equal(result.defaultThinkingEffortByModelSlug["gpt-6-astra"], "standard");
+  assert.deepEqual(
+    result.codexLinuxDefaultPresetOptions.map(({ slug, thinkingEffort }) => ({
+      slug,
+      thinkingEffort,
+    })),
+    [
+      { slug: "gpt-5.6-sol", thinkingEffort: "extended" },
+      { slug: "version-model", thinkingEffort: "xhigh" },
+      { slug: "gpt-6-astra", thinkingEffort: "standard" },
+      { slug: "internal-model", thinkingEffort: "extended" },
+    ],
+  );
   assert.strictEqual(result.options, upstream.options);
   assert.strictEqual(result.internalOptions, upstream.internalOptions);
   assert.strictEqual(result.versionOptions, upstream.versionOptions);
@@ -190,7 +207,7 @@ test("runtime preserves order and the rest of the upstream catalog", () => {
   assert.strictEqual(result.categories, upstream.categories);
 });
 
-test("runtime filters unavailable pairs and falls back from an unavailable default", () => {
+test("runtime filters unavailable models and falls back from an unavailable default", () => {
   const configured = normalizePresets(
     context([
       { model: "missing", effort: "medium", default: true },
@@ -201,6 +218,7 @@ test("runtime filters unavailable pairs and falls back from an unavailable defau
   const result = codexLinuxModelPickerDefaultPresets(catalog(), configured);
   assert.deepEqual(result.sliderSettings, [
     { modelSlug: "gpt-5.6-sol", thinkingEffort: "extended" },
+    { modelSlug: "gpt-5.6-sol", thinkingEffort: "ultra" },
   ]);
   assert.equal(result.defaultModelSlug, "gpt-5.6-sol");
   assert.equal(result.defaultThinkingEffortByModelSlug["gpt-5.6-sol"], "extended");
@@ -225,6 +243,7 @@ test("catalog patch has one semantic target, is executable, and is idempotent", 
   const patched = applyCatalogPatch(source, presets);
   assert.equal(catalogPatchContract(patched), "applied");
   assert.equal((patched.match(new RegExp(CATALOG_PATCH_MARKER, "g")) ?? []).length, 2);
+  assert.equal((patched.match(new RegExp(CATALOG_PRESET_OPTIONS_KEY, "g")) ?? []).length, 2);
   assert.equal(applyCatalogPatch(patched, presets), patched);
   const result = plain(evaluate(patched, "FOr(input)", { input: catalog({ slider_settings: [] }) }));
   assert.deepEqual(result.sliderSettings, [
@@ -232,6 +251,12 @@ test("catalog patch has one semantic target, is executable, and is idempotent", 
     { modelSlug: "gpt-5.6-sol", thinkingEffort: "extended" },
   ]);
   assert.equal(result.defaultModelSlug, "gpt-6-astra");
+  assert.equal(
+    plain(evaluate(patched, "ZL(result,{slug:'gpt-5.6-sol',thinkingEffort:'extended'})", {
+      result,
+    })).thinkingEffort,
+    "extended",
+  );
 });
 
 test("catalog patch fails closed on drift, duplicate, and partial states", () => {
@@ -240,6 +265,7 @@ test("catalog patch fails closed on drift, duplicate, and partial states", () =>
     "function unrelated(){}",
     catalogFixture("One") + catalogFixture("Two"),
     `${CATALOG_PATCH_MARKER};${catalogFixture()}`,
+    `${CATALOG_PRESET_OPTIONS_KEY};${catalogFixture()}`,
   ]) {
     const { result, warnings } = withCapturedWarnings(() => applyCatalogPatch(source, presets));
     assert.equal(result, source);

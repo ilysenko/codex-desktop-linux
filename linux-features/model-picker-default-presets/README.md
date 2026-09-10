@@ -60,9 +60,10 @@ pairs display the slider. The feature never truncates the configured list.
 
 ## Runtime fallback
 
-At runtime, the feature keeps only exact model/effort pairs present in the
-current account catalog. This preserves account access, workspace policy, and
-server-side effort gates:
+At runtime, the feature keeps only presets whose model is present in the
+current account catalog. It supplies the configured effort variants to the
+existing upstream selection resolver; the picker still applies workspace
+policy and its Ultra/XHigh visibility gates:
 
 - if the configured default is unavailable, the first available configured
   pair becomes the default;
