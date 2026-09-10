@@ -57,6 +57,9 @@ make install-native
 
 One available pair makes **Default** a fixed selection. Two or more available
 pairs display the slider. The feature never truncates the configured list.
+The configured list replaces the upstream **Default** slider in both local
+repository tasks and cloud/TPP chats; selecting a model explicitly still uses
+the normal upstream effort choices for that model.
 
 ## Runtime fallback
 

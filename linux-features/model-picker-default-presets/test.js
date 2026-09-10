@@ -14,6 +14,7 @@ const {
   CATALOG_PATCH_MARKER,
   CATALOG_PRESET_OPTIONS_KEY,
   EFFORT_TO_THINKING_EFFORT,
+  LOCAL_DEFAULT_PATCH_MARKER,
   SLIDER_PATCH_MARKER,
   applyCatalogPatch,
   applySliderMinimumPatch,
@@ -54,6 +55,11 @@ function catalogFixture(name = "FOr") {
 
 function sliderFixture(name = "Wkr") {
   return [
+    "function Power(e,t,n,{includeUltraInSlider:r=false,isTppConversation:i=false,selectionMode:a=`default`}={}){",
+    "let l=e?.options??t??[],u=l.flatMap(({slug:e,thinkingEffort:t})=>[{modelSlug:e,thinkingEffort:t??null}]),",
+    "d=e?.sliderSettings?.filter(({modelSlug:e})=>i&&a===`default`||l.some(({slug:t})=>t===e))??[],",
+    "f=(i&&a===`default`&&d.length>0?d:[...u,...d]);",
+    "return{powerSettings:f,selectionMode:a}}",
     `function ${name}(e){`,
     "let powerSelectionsWithXHigh=e,fallbackPowerSelection=e,",
     "show_xhigh_in_simple_picker=true,canInitializePowerPicker=true;",
@@ -287,7 +293,32 @@ test("slider minimum makes two entries a slider while one stays fixed", () => {
   const patched = applySliderMinimumPatch(source, presets);
   assert.equal(sliderPatchContract(patched), "applied");
   assert.equal((patched.match(new RegExp(SLIDER_PATCH_MARKER, "g")) ?? []).length, 1);
+  assert.equal((patched.match(new RegExp(LOCAL_DEFAULT_PATCH_MARKER, "g")) ?? []).length, 1);
   assert.equal(applySliderMinimumPatch(patched, presets), patched);
+  const catalogWithCustomDefault = {
+    codexLinuxDefaultPresetOptions: [{}],
+    options: [{ slug: "server", thinkingEffort: "min" }],
+    sliderSettings: [
+      { modelSlug: "gpt-6-astra", thinkingEffort: "standard" },
+      { modelSlug: "gpt-5.6-sol", thinkingEffort: "extended" },
+    ],
+  };
+  assert.deepEqual(
+    plain(evaluate(patched, "Power(input,null,null,{isTppConversation:false,selectionMode:'default'}).powerSettings", {
+      input: catalogWithCustomDefault,
+    })),
+    catalogWithCustomDefault.sliderSettings,
+  );
+  assert.equal(
+    plain(
+      evaluate(
+        patched,
+        "Power(input,null,null,{isTppConversation:false,selectionMode:'model'}).powerSettings.length",
+        { input: catalogWithCustomDefault },
+      ),
+    ),
+    1,
+  );
   const configured = [
     { id: "gpt-6-astra:medium" },
     { id: "gpt-5.6-sol:high" },
@@ -320,6 +351,7 @@ test("slider patch fails closed on drift, duplicate, and partial states", () => 
     "function unrelated(){}",
     sliderFixture("One") + sliderFixture("Two"),
     sliderFixture().replace("{", `{/*${SLIDER_PATCH_MARKER}*/`),
+    sliderFixture().replace("f=(", `f=(/*${LOCAL_DEFAULT_PATCH_MARKER}*/`),
   ]) {
     const { result, warnings } = withCapturedWarnings(() =>
       applySliderMinimumPatch(source, presets),
