@@ -98,6 +98,7 @@ function localComposerFixture(name = "LocalComposer") {
     "let selected=manualSelection?choose(`gpt-5.6-sol`,`high`):null;",
     "picker({resetContextKey:JSON.stringify([conversationId,host.hostId,host.cwd])});",
     "composer.mode.local.model.custom;let reset=zae(Ue,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
+    "render({onSelectDefault:reset});",
     "return{powerSelections:Ue,fallback:Ke,reset,selected}}",
     "function Next(){}",
   ].join("");
@@ -463,18 +464,22 @@ test("local composer uses configured pairs and lowers only its config threshold"
   const runComposer = ({
     available,
     conversationId = null,
+    hookState = { refs: [] },
     serverConfig = {},
     manualSelection = false,
   }) => {
     const effects = [];
     const selections = [];
+    let refIndex = 0;
     const globals = {
       React: {
         useEffect(effect) {
           effects.push(effect);
         },
         useRef(value) {
-          return { current: value };
+          const index = refIndex++;
+          hookState.refs[index] ??= { current: value };
+          return hookState.refs[index];
         },
       },
       available,
@@ -484,6 +489,7 @@ test("local composer uses configured pairs and lowers only its config threshold"
       manualSelection,
       modelsForPicker() {},
       picker() {},
+      render() {},
       selection: { setDefaultModelAndReasoningEffort() {} },
       serverConfig,
       Wqr: ({ isDefault }) => isDefault === true,
@@ -596,6 +602,21 @@ test("local composer uses configured pairs and lowers only its config threshold"
   });
   assert.deepEqual(existingConversation.selections, []);
 
+  const lifecycleHooks = { refs: [] };
+  const lifecycleAvailable = [
+    { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
+  ];
+  const firstDraft = runComposer({ available: lifecycleAvailable, hookState: lifecycleHooks });
+  const createdConversation = runComposer({
+    available: lifecycleAvailable,
+    conversationId: "created",
+    hookState: lifecycleHooks,
+  });
+  const nextDraft = runComposer({ available: lifecycleAvailable, hookState: lifecycleHooks });
+  assert.equal(firstDraft.selections.length, 1);
+  assert.equal(createdConversation.selections.length, 0);
+  assert.equal(nextDraft.selections.length, 1);
+
   const manuallySelected = runComposer({
     available: [
       { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
@@ -629,6 +650,19 @@ test("local composer patches fail closed on drift, duplicate, and partial states
       assert.equal(warnings.length, 1);
     }
   }
+
+  const driftedComposer = localComposerFixture().replace(
+    /let reset=zae\([^;]+;/u,
+    "let reset=null;",
+  );
+  const decoy =
+    "function Decoy(y,z){let x=zae(y,z==null?void 0:`${z.model}:${z.defaultReasoningEffort}`);return x}";
+  const driftedWithDecoy = driftedComposer + decoy;
+  const { result, warnings } = withCapturedWarnings(() =>
+    applyLocalComposerConfigPatch(driftedWithDecoy, presets),
+  );
+  assert.equal(result, driftedWithDecoy);
+  assert.equal(warnings.length, 1);
 });
 
 test("empty manifest is a runtime passthrough used for compatibility auditing", () => {
