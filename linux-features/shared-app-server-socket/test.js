@@ -1830,23 +1830,27 @@ test("attached CLI record publishes atomically for default and override sockets"
       fs.writeFileSync(recordPath, priorRecord, { mode: 0o600 });
       const renameCalls = [];
       const fsImpl = Object.create(fs);
+      const socketStat = {
+        dev: 1,
+        ino: name === "default" ? 1 : 2,
+        uid: typeof process.getuid === "function" ? process.getuid() : undefined,
+        isSocket: () => true,
+      };
+      let authoritySpawned = false;
+      fsImpl.lstatSync = (target, ...args) =>
+        target === socketPath && authoritySpawned ? socketStat : fs.lstatSync(target, ...args);
       fsImpl.renameSync = (from, to) => {
         renameCalls.push({ from, to, lock: fs.readFileSync(`${socketPath}.lock`, "utf8") });
         return fs.renameSync(from, to);
       };
-      let server;
       let child;
       const { Transport } = loadInjectedTransport({
         fsImpl,
-        spawnImpl(_command, args) {
+        spawnImpl() {
           child = fakeChild();
+          authoritySpawned = true;
           // Publication must retain the executable selected before asynchronous startup.
           process.env.CODEX_CLI_PATH = "/fake/replacement-codex";
-          const target = args.at(-1).replace("unix://", "");
-          queueMicrotask(async () => {
-            fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-            server = await listenUnix(target);
-          });
           return child;
         },
       });
@@ -1880,15 +1884,12 @@ test("attached CLI record publishes atomically for default and override sockets"
           assert.equal(renameCalls[0].to, recordPath);
           assert.match(renameCalls[0].lock, new RegExp(`^${process.pid} \\d+ ${process.pid} \\d+\\n$`));
         } finally {
-          await closeServer(server);
-          server = null;
           if (child != null) {
             child.exitCode = 0;
             child.emit("exit", 0, null);
           }
         }
       });
-      await closeServer(server);
     }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
