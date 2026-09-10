@@ -215,6 +215,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `global-dictation` | X11 / XDG portal 全局听写快捷键 | [文档](linux-features/global-dictation/README.md) |
 | `linux-performance-workarounds` | 针对受影响系统的 renderer workaround | [文档](linux-features/linux-performance-workarounds/README.md) |
 | `mcp-helper-reaper` | 安全清理孤立 MCP helper | [文档](linux-features/mcp-helper-reaper/README.md) |
+| `model-picker-default-presets` | 配置 ChatGPT Default 的有序 model/effort 组合 | [文档](linux-features/model-picker-default-presets/README.md) |
 | `node-repl-reaper` | 清理 owner 退出后泄漏的 Browser Use `node_repl` | [文档](linux-features/node-repl-reaper/README.md) |
 | `omarchy-theme` | 加载当前 Omarchy 主题生成的 CSS | [文档](linux-features/omarchy-theme/README.md) |
 | `persistent-status-panel` | 在线程切换和重启后保留 `/status` panel | [文档](linux-features/persistent-status-panel/README.md) |

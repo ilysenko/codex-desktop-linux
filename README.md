@@ -232,6 +232,7 @@ requirements, known limitations, configuration, and tests.
 | `global-dictation` | X11 and XDG portal global dictation hotkeys | [Docs](linux-features/global-dictation/README.md) |
 | `linux-performance-workarounds` | Measured renderer workarounds for affected systems | [Docs](linux-features/linux-performance-workarounds/README.md) |
 | `mcp-helper-reaper` | Reap orphaned MCP helpers without touching live sessions | [Docs](linux-features/mcp-helper-reaper/README.md) |
+| `model-picker-default-presets` | Configure ordered model/effort pairs behind ChatGPT Default | [Docs](linux-features/model-picker-default-presets/README.md) |
 | `node-repl-reaper` | Reap Browser Use `node_repl` helpers leaked after owner exit | [Docs](linux-features/node-repl-reaper/README.md) |
 | `omarchy-theme` | Load CSS generated from the current Omarchy theme | [Docs](linux-features/omarchy-theme/README.md) |
 | `persistent-status-panel` | Keep the `/status` panel across thread switches and restarts | [Docs](linux-features/persistent-status-panel/README.md) |

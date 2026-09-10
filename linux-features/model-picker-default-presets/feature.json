@@ -1,0 +1,10 @@
+{
+  "id": "model-picker-default-presets",
+  "title": "Model Picker Default Presets",
+  "description": "Opt-in ChatGPT Default model-picker presets configured as ordered model and effort pairs.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "presets": []
+}
