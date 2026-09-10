@@ -42,7 +42,10 @@ immediately previous managed package remains the rollback target.
 
 Automated user-local operations cannot override the running-app guard or
 silently accept unverified input. A failed privileged installation remains
-failed until an explicit retry or a newer candidate.
+failed until an explicit retry or a newer candidate. If `pkexec` authentication
+is cancelled before package mutation, the candidate instead remains ready; the
+updater suppresses repeat prompts until an explicit retry or another app-exit
+cycle.
 
 Legacy schema state is treated as an incompatible pending candidate and reset;
 the installed package and recorded rollback artifact are preserved.
