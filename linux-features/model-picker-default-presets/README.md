@@ -2,9 +2,9 @@
 
 This opt-in feature replaces the server-provided **Default** model-picker slider
 for ChatGPT-authenticated chats with an ordered list of model and reasoning
-effort pairs. It does not change the manual model list, API-key or Copilot
-sessions, account entitlements, workspace policy, or upstream Ultra/XHigh
-gates.
+effort pairs. It does not change the manual model list, API-key, Copilot, or
+Aeon-managed sessions, account entitlements, workspace policy, or upstream
+Ultra/XHigh gates.
 
 The stock Settings page controls which reasoning efforts are visible and
 whether Ultra may appear in the picker. It does not currently configure the

@@ -89,11 +89,14 @@ function localComposerResolverFixture(name = "LocalPower") {
 
 function localComposerFixture(name = "LocalComposer") {
   return [
-    `function ${name}(available,serverConfig,upstreamDefault){`,
+    `function ${name}(available,serverConfig,conversationId,manualSelection){`,
+    "let host={hostId:`local`,cwd:`/repo`};",
     "modelsForPicker(available);let{setDefaultModelAndReasoningEffort:setDefault}=selection;",
     "let He=available.find(Wqr),Ue=Power(available,{includeUltraInSlider:true,sliderModelsConfig:serverConfig,stripGptPrefix:true}),",
     "Ge=Ue,Ke=zae(Ge,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
-    "let choose=draft?.selectModelAndReasoningEffort??select,selected=choose(`gpt-5.6-sol`,`high`,()=>{});",
+    "let scratch=(0,React.useRef)(null),choose=function(e,t){return(draft?.selectModelAndReasoningEffort??select)(e,t,()=>{})};",
+    "let selected=manualSelection?choose(`gpt-5.6-sol`,`high`):null;",
+    "picker({resetContextKey:JSON.stringify([conversationId,host.hostId,host.cwd])});",
     "composer.mode.local.model.custom;let reset=zae(Ue,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "return{powerSelections:Ue,fallback:Ke,reset,selected}}",
     "function Next(){}",
@@ -453,43 +456,161 @@ test("local composer uses configured pairs and lowers only its config threshold"
     1,
   );
   assert.match(patchedComposer, /gpt-5\.6-sol:medium/);
-  assert.match(patchedComposer, /sliderModelsConfig:codexLinuxLocalDefaultPresetConfig/);
-  const globals = {
-    composer: { mode: { local: { model: { custom: null } } } },
-    draft: null,
-    modelsForPicker() {},
-    selection: { setDefaultModelAndReasoningEffort() {} },
-    Wqr: ({ isDefault }) => isDefault === true,
-    zae: (selections, id) => selections.find((selection) => selection.id === id) ?? selections[0],
-    Power: (available, { sliderModelsConfig }) => {
-      const availableIds = new Set(available.map(({ id }) => id));
-      const configured = sliderModelsConfig.presets[0].flatMap(({ model, reasoning_effort }) => {
-        const id = `${model}:${reasoning_effort}`;
-        return availableIds.has(id) ? [{ id, model, reasoningEffort: reasoning_effort }] : [];
-      });
-      return configured.length > 0 ? configured : available;
-    },
-    select: (_model, _effort, _callback, options) => options ?? null,
+  assert.match(
+    patchedComposer,
+    /sliderModelsConfig:serverConfig==null\?serverConfig:codexLinuxLocalDefaultPresetConfig/,
+  );
+  const runComposer = ({
+    available,
+    conversationId = null,
+    serverConfig = {},
+    manualSelection = false,
+  }) => {
+    const effects = [];
+    const selections = [];
+    const globals = {
+      React: {
+        useEffect(effect) {
+          effects.push(effect);
+        },
+        useRef(value) {
+          return { current: value };
+        },
+      },
+      available,
+      composer: { mode: { local: { model: { custom: null } } } },
+      conversationId,
+      draft: null,
+      manualSelection,
+      modelsForPicker() {},
+      picker() {},
+      selection: { setDefaultModelAndReasoningEffort() {} },
+      serverConfig,
+      Wqr: ({ isDefault }) => isDefault === true,
+      zae: (selections, id) =>
+        selections.find((selection) => selection.id === id) ?? selections[0],
+      Power: (models, { sliderModelsConfig }) => {
+        if (sliderModelsConfig == null) return models;
+        const availableIds = new Set(models.map(({ id }) => id));
+        const configured = sliderModelsConfig.presets[0].flatMap(
+          ({ model, reasoning_effort: effort }) => {
+            const id = `${model}:${effort}`;
+            return availableIds.has(id) ? [{ id, model, reasoningEffort: effort }] : [];
+          },
+        );
+        return configured.length > 0 ? configured : models;
+      },
+      select: (model, effort, _callback, options) => {
+        selections.push({ effort, model, options });
+        return options ?? null;
+      },
+    };
+    const result = plain(
+      evaluate(
+        patchedComposer,
+        "LocalComposer(available,serverConfig,conversationId,manualSelection)",
+        globals,
+      ),
+    );
+    for (const effect of effects) effect();
+    return { result, selections: plain(selections) };
   };
-  const unavailableDefault = plain(
-    evaluate(
-      patchedComposer,
-      "LocalComposer([{id:'gpt-5.6-sol:high',model:'gpt-5.6-sol',reasoningEffort:'high'},{id:'upstream:medium',model:'upstream',defaultReasoningEffort:'medium',isDefault:true}],null,null)",
-      { ...globals },
-    ),
-  );
-  assert.equal(unavailableDefault.fallback.id, "gpt-5.6-sol:high");
-  assert.equal(unavailableDefault.reset.id, "gpt-5.6-sol:high");
-  assert.equal(unavailableDefault.selected.persistAsDefault, false);
-  const completeFallback = plain(
-    evaluate(
-      patchedComposer,
-      "LocalComposer([{id:'upstream:medium',model:'upstream',reasoningEffort:'medium',defaultReasoningEffort:'medium',isDefault:true}],null,null)",
-      { ...globals },
-    ),
-  );
-  assert.equal(completeFallback.fallback.id, "upstream:medium");
-  assert.equal(completeFallback.reset.id, "upstream:medium");
+  const unavailableDefault = runComposer({
+    available: [
+      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
+      {
+        id: "upstream:medium",
+        model: "upstream",
+        defaultReasoningEffort: "medium",
+        isDefault: true,
+      },
+    ],
+  });
+  assert.equal(unavailableDefault.result.fallback.id, "gpt-5.6-sol:high");
+  assert.equal(unavailableDefault.result.reset.id, "gpt-5.6-sol:high");
+  assert.deepEqual(unavailableDefault.selections, [
+    {
+      effort: "high",
+      model: "gpt-5.6-sol",
+      options: { persistAsDefault: false },
+    },
+  ]);
+
+  const configuredDefault = runComposer({
+    available: [
+      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
+      { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
+    ],
+  });
+  assert.deepEqual(configuredDefault.selections[0], {
+    effort: "medium",
+    model: "gpt-5.6-sol",
+    options: { persistAsDefault: false },
+  });
+
+  const gatedOut = runComposer({
+    available: [
+      {
+        id: "upstream:medium",
+        model: "upstream",
+        defaultReasoningEffort: "medium",
+        isDefault: true,
+      },
+    ],
+    serverConfig: null,
+  });
+  assert.equal(gatedOut.result.fallback.id, "upstream:medium");
+  assert.equal(gatedOut.result.reset.id, "upstream:medium");
+  assert.deepEqual(gatedOut.selections, []);
+
+  const gatedManualSelection = runComposer({
+    available: [
+      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
+    ],
+    manualSelection: true,
+    serverConfig: null,
+  });
+  assert.deepEqual(gatedManualSelection.selections, [
+    { effort: "high", model: "gpt-5.6-sol" },
+  ]);
+
+  const completeFallback = runComposer({
+    available: [
+      {
+        id: "upstream:medium",
+        model: "upstream",
+        defaultReasoningEffort: "medium",
+        isDefault: true,
+      },
+    ],
+  });
+  assert.equal(completeFallback.result.fallback.id, "upstream:medium");
+  assert.equal(completeFallback.result.reset.id, "upstream:medium");
+  assert.deepEqual(completeFallback.selections, []);
+
+  const existingConversation = runComposer({
+    available: [
+      { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
+    ],
+    conversationId: "existing",
+  });
+  assert.deepEqual(existingConversation.selections, []);
+
+  const manuallySelected = runComposer({
+    available: [
+      { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
+      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
+    ],
+    manualSelection: true,
+  });
+  assert.equal(manuallySelected.result.selected.persistAsDefault, false);
+  assert.deepEqual(manuallySelected.selections, [
+    {
+      effort: "high",
+      model: "gpt-5.6-sol",
+      options: { persistAsDefault: false },
+    },
+  ]);
 });
 
 test("local composer patches fail closed on drift, duplicate, and partial states", () => {
