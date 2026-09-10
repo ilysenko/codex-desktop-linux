@@ -531,7 +531,16 @@ function applyLocalComposerResolverPatch(source, context = {}) {
     /if\(([A-Za-z_$][\w$]*)\.length>=3\)return \1/u,
     "if($1.length>=(codexLinuxIsConfiguredDefaultPresets?1:3))return $1",
   );
-  return source.slice(0, section.start) + patchedSection + source.slice(section.end);
+  const patchedSource =
+    source.slice(0, section.start) + patchedSection + source.slice(section.end);
+  if (localComposerResolverContract(patchedSource) !== "applied") {
+    warn(
+      "Could not apply the complete local composer slider config resolver contract",
+      "model picker Default local composer resolver patch",
+    );
+    return source;
+  }
+  return patchedSource;
 }
 
 function localComposerConfig(presets) {
@@ -628,6 +637,13 @@ function applyLocalComposerConfigPatch(source, context = {}) {
     LOCAL_COMPOSER_FALLBACK_PATTERN,
     "$1=$2($3,codexLinuxLocalDefaultPresetFallback($3,$4==null?void 0:`${$4.model}:${$4.defaultReasoningEffort}`))",
   );
+  if (localComposerConfigContract(patchedSource) !== "applied") {
+    warn(
+      "Could not apply the complete local composer model picker contract",
+      "model picker Default local composer config patch",
+    );
+    return source;
+  }
   return patchedSource;
 }
 

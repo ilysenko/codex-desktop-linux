@@ -407,6 +407,37 @@ test("local composer uses configured pairs and lowers only its config threshold"
     (patchedResolver.match(new RegExp(LOCAL_COMPOSER_RESOLVER_MARKER, "g")) ?? []).length,
     1,
   );
+  const resolverGlobals = {
+    fallbackA: () => [],
+    fallbackB: () => [],
+    MapModels: (models) => models,
+    resolve: (entries) => entries.map(({ model, reasoning_effort: reasoningEffort }) => ({
+      id: `${model}:${reasoningEffort}`,
+      model,
+      reasoningEffort,
+    })),
+    unique: (entries) => entries,
+  };
+  const onePairConfig = {
+    codexLinuxDefaultPresets: true,
+    presets: [[{ model: "gpt-5.6-sol", reasoning_effort: "high" }]],
+  };
+  assert.equal(
+    evaluate(
+      patchedResolver,
+      "LocalPower([],{sliderModelsConfig:config}).length",
+      { ...resolverGlobals, config: onePairConfig },
+    ),
+    1,
+  );
+  assert.equal(
+    evaluate(
+      patchedResolver,
+      "LocalPower([],{sliderModelsConfig:config}).length",
+      { ...resolverGlobals, config: { presets: onePairConfig.presets } },
+    ),
+    0,
+  );
 
   const composerSource = localComposerFixture();
   assert.equal(localComposerConfigContract(composerSource), "current");
