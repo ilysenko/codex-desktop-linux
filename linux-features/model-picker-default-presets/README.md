@@ -58,8 +58,9 @@ make install-native
 One available pair makes **Default** a fixed selection. Two or more available
 pairs display the slider. The feature never truncates the configured list.
 The configured list replaces the upstream **Default** slider in both local
-repository tasks and cloud/TPP chats; selecting a model explicitly still uses
-the normal upstream effort choices for that model.
+repository tasks and cloud/TPP chats. Those surfaces use separate upstream
+catalog and slider-config paths, and the feature patches both; selecting a
+model explicitly still uses the normal upstream effort choices for that model.
 
 ## Runtime fallback
 
@@ -75,6 +76,11 @@ policy and its Ultra/XHigh visibility gates:
 
 Selecting **Default** again and creating a new chat both use the resolved
 default pair. Manual model selection remains upstream-owned.
+
+For an unsent local draft, selecting a configured pair is kept in draft state
+instead of being persisted as the account's upstream default. This lets the
+new conversation start with configured combinations that the server accepts
+for a conversation but does not expose as persistable default presets.
 
 ## Updates
 

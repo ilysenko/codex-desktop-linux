@@ -4,6 +4,12 @@ const CATALOG_PATCH_MARKER = "codexLinuxModelPickerDefaultPresets";
 const CATALOG_PRESET_OPTIONS_KEY = "codexLinuxDefaultPresetOptions";
 const SLIDER_PATCH_MARKER = "codex-linux-model-picker-default-presets-slider-minimum";
 const LOCAL_DEFAULT_PATCH_MARKER = "codex-linux-model-picker-default-presets-local-default";
+const LOCAL_COMPOSER_CONFIG_MARKER =
+  "codex-linux-model-picker-default-presets-local-composer-config";
+const LOCAL_COMPOSER_RESOLVER_MARKER =
+  "codex-linux-model-picker-default-presets-local-composer-resolver";
+const LOCAL_DRAFT_SELECTION_MARKER =
+  "codex-linux-model-picker-default-presets-local-draft-selection";
 const JS_ASSET_PATTERN = /\.js$/;
 const EFFORT_TO_THINKING_EFFORT = Object.freeze({
   none: "zero",
@@ -458,6 +464,173 @@ function applySliderMinimumPatch(source, context = {}) {
   return patchedSource;
 }
 
+function localComposerResolverSection(source) {
+  return uniqueFunctionWithMarkers(source, [
+    "sliderModelsConfig:",
+    "includeUltraInSlider:",
+    "stripGptPrefix:",
+    ".presets){",
+  ]);
+}
+
+function localComposerSection(source) {
+  return uniqueFunctionWithMarkers(source, [
+    "sliderModelsConfig:",
+    "modelsForPicker(",
+    "setDefaultModelAndReasoningEffort:",
+    "composer.mode.local.model.custom",
+  ]);
+}
+
+function localComposerResolverContract(source) {
+  const markerCount = source.split(LOCAL_COMPOSER_RESOLVER_MARKER).length - 1;
+  const section = localComposerResolverSection(source);
+  if (markerCount === 0) {
+    if (section == null) return "drifted";
+    const matches = [
+      ...section.source.matchAll(
+        /if\(([A-Za-z_$][\w$]*)\.length>=3\)return \1/gu,
+      ),
+    ];
+    return matches.length === 2 ? "current" : "drifted";
+  }
+  if (
+    markerCount === 1 &&
+    section != null &&
+    section.source.includes(`/*${LOCAL_COMPOSER_RESOLVER_MARKER}*/`) &&
+    section.source.includes("codexLinuxIsConfiguredDefaultPresets?1:3")
+  ) {
+    return "applied";
+  }
+  return "mixed";
+}
+
+function applyLocalComposerResolverPatch(source, context = {}) {
+  const presets = normalizePresets(context);
+  if (presets.length === 0) return source;
+  const contract = localComposerResolverContract(source);
+  if (contract === "applied") return source;
+  if (contract !== "current") {
+    warn(
+      "Could not find one coherent local composer slider config resolver contract",
+      "model picker Default local composer resolver patch",
+    );
+    return source;
+  }
+  const section = localComposerResolverSection(source);
+  const configParameter = /sliderModelsConfig:([A-Za-z_$][\w$]*)/.exec(section.source)?.[1];
+  if (configParameter == null) return source;
+  let patchedSection = section.source.replace(
+    new RegExp(
+      `(for\\(let [A-Za-z_$][\\w$]* of ${configParameter}\\.presets\\)\\{)`,
+      "u",
+    ),
+    `let codexLinuxIsConfiguredDefaultPresets=${configParameter}?.codexLinuxDefaultPresets===!0/*${LOCAL_COMPOSER_RESOLVER_MARKER}*/;$1`,
+  );
+  patchedSection = patchedSection.replace(
+    /if\(([A-Za-z_$][\w$]*)\.length>=3\)return \1/u,
+    "if($1.length>=(codexLinuxIsConfiguredDefaultPresets?1:3))return $1",
+  );
+  return source.slice(0, section.start) + patchedSection + source.slice(section.end);
+}
+
+function localComposerConfig(presets) {
+  const configured = presets.map(({ modelSlug, thinkingEffort }) => ({
+    model: modelSlug,
+    reasoning_effort: THINKING_EFFORT_TO_EFFORT[thinkingEffort],
+  }));
+  const selectedDefault = presets.find(({ isDefault }) => isDefault);
+  return {
+    codexLinuxDefaultPresets: true,
+    codexLinuxDefaultPresetIds: configured.map(
+      ({ model, reasoning_effort: effort }) => `${model}:${effort}`,
+    ),
+    codexLinuxDefaultPresetId: `${selectedDefault.modelSlug}:${THINKING_EFFORT_TO_EFFORT[selectedDefault.thinkingEffort]}`,
+    presets: [configured],
+  };
+}
+
+function localComposerRuntime(config) {
+  return (
+    `/*${LOCAL_COMPOSER_CONFIG_MARKER}*/` +
+    `const codexLinuxLocalDefaultPresetConfig=${JSON.stringify(config)},` +
+    "codexLinuxLocalDefaultPresetIds=new Set(codexLinuxLocalDefaultPresetConfig.codexLinuxDefaultPresetIds);" +
+    "function codexLinuxLocalDefaultPresetFallback(codexLinuxSelections,codexLinuxUpstreamDefault){" +
+    "let codexLinuxAvailable=codexLinuxSelections.filter(({id:codexLinuxId})=>codexLinuxLocalDefaultPresetIds.has(codexLinuxId));" +
+    "if(codexLinuxAvailable.length===0)return codexLinuxUpstreamDefault;" +
+    "return codexLinuxAvailable.find(({id:codexLinuxId})=>codexLinuxId===codexLinuxLocalDefaultPresetConfig.codexLinuxDefaultPresetId)?.id??codexLinuxAvailable[0].id}"
+  );
+}
+
+const LOCAL_COMPOSER_FALLBACK_PATTERN =
+  /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)==null\?void 0:`\$\{\4\.model\}:\$\{\4\.defaultReasoningEffort\}`\)/gu;
+
+function localComposerConfigContract(source) {
+  const markerCount = source.split(LOCAL_COMPOSER_CONFIG_MARKER).length - 1;
+  const draftMarkerCount = source.split(LOCAL_DRAFT_SELECTION_MARKER).length - 1;
+  const section = localComposerSection(source);
+  if (markerCount === 0 && draftMarkerCount === 0) {
+    if (section == null) return "drifted";
+    const configMatches = section.source.match(/sliderModelsConfig:[A-Za-z_$][\w$]*/g) ?? [];
+    const fallbackMatches = source.match(LOCAL_COMPOSER_FALLBACK_PATTERN) ?? [];
+    const selectionMatches =
+      section.source.match(
+        /[A-Za-z_$][\w$]*\?\.selectModelAndReasoningEffort\?\?[A-Za-z_$][\w$]*/g,
+      ) ?? [];
+    return configMatches.length === 1 &&
+      fallbackMatches.length === 2 &&
+      selectionMatches.length === 1
+      ? "current"
+      : "drifted";
+  }
+  if (
+    markerCount === 1 &&
+    draftMarkerCount === 1 &&
+    section != null &&
+    section.source.includes("sliderModelsConfig:codexLinuxLocalDefaultPresetConfig") &&
+    (source.match(/codexLinuxLocalDefaultPresetFallback\(/g) ?? []).length === 3 &&
+    section.source.includes(`/*${LOCAL_DRAFT_SELECTION_MARKER}*/`)
+  ) {
+    return "applied";
+  }
+  return "mixed";
+}
+
+function applyLocalComposerConfigPatch(source, context = {}) {
+  const presets = normalizePresets(context);
+  if (presets.length === 0) return source;
+  const contract = localComposerConfigContract(source);
+  if (contract === "applied") return source;
+  if (contract !== "current") {
+    warn(
+      "Could not find one coherent local composer model picker contract",
+      "model picker Default local composer config patch",
+    );
+    return source;
+  }
+  const section = localComposerSection(source);
+  let patchedSection = section.source.replace(
+    /sliderModelsConfig:[A-Za-z_$][\w$]*/u,
+    "sliderModelsConfig:codexLinuxLocalDefaultPresetConfig",
+  );
+  patchedSection = patchedSection.replace(
+    /([A-Za-z_$][\w$]*)\?\.selectModelAndReasoningEffort\?\?([A-Za-z_$][\w$]*)/u,
+    "($1?.selectModelAndReasoningEffort??((codexLinuxModel,codexLinuxEffort,codexLinuxCallback)=>$2(codexLinuxModel,codexLinuxEffort,codexLinuxCallback,codexLinuxLocalDefaultPresetIds.has(`${codexLinuxModel}:${codexLinuxEffort}`)?{persistAsDefault:!1}:void 0)))/*" +
+      LOCAL_DRAFT_SELECTION_MARKER +
+      "*/",
+  );
+  let patchedSource =
+    source.slice(0, section.start) +
+    localComposerRuntime(localComposerConfig(presets)) +
+    patchedSection +
+    source.slice(section.end);
+  patchedSource = patchedSource.replace(
+    LOCAL_COMPOSER_FALLBACK_PATTERN,
+    "$1=$2($3,codexLinuxLocalDefaultPresetFallback($3,$4==null?void 0:`${$4.model}:${$4.defaultReasoningEffort}`))",
+  );
+  return patchedSource;
+}
+
 function catalogAssetMatch(source) {
   return catalogPatchContract(source) !== "drifted";
 }
@@ -495,23 +668,55 @@ const descriptors = [
     skipDescription: "model picker Default slider minimum patch",
     apply: applySliderMinimumPatch,
   },
+  {
+    id: "model-picker-default-presets-local-composer-resolver",
+    phase: "webview-asset",
+    order: 20_800,
+    ciPolicy: "optional",
+    pattern: JS_ASSET_PATTERN,
+    enabled: (context = {}) => normalizePresets(context).length > 0,
+    assetMatch: (source) => localComposerResolverContract(source) !== "drifted",
+    missingDescription: "local composer slider config resolver bundle",
+    skipDescription: "model picker Default local composer resolver patch",
+    apply: applyLocalComposerResolverPatch,
+  },
+  {
+    id: "model-picker-default-presets-local-composer-config",
+    phase: "webview-asset",
+    order: 20_801,
+    ciPolicy: "optional",
+    pattern: JS_ASSET_PATTERN,
+    enabled: (context = {}) => normalizePresets(context).length > 0,
+    assetMatch: (source) => localComposerConfigContract(source) !== "drifted",
+    missingDescription: "local composer model picker bundle",
+    skipDescription: "model picker Default local composer config patch",
+    apply: applyLocalComposerConfigPatch,
+  },
 ];
 
 module.exports = {
   CATALOG_PATCH_MARKER,
   CATALOG_PRESET_OPTIONS_KEY,
   EFFORT_TO_THINKING_EFFORT,
+  LOCAL_COMPOSER_CONFIG_MARKER,
+  LOCAL_COMPOSER_RESOLVER_MARKER,
+  LOCAL_DRAFT_SELECTION_MARKER,
   LOCAL_DEFAULT_PATCH_MARKER,
   THINKING_EFFORT_TO_EFFORT,
   JS_ASSET_PATTERN,
   SLIDER_PATCH_MARKER,
   applyCatalogPatch,
+  applyLocalComposerConfigPatch,
+  applyLocalComposerResolverPatch,
   applySliderMinimumPatch,
   catalogAssetMatch,
   catalogPatchContract,
   codexLinuxModelPickerDefaultPresets,
   descriptors,
   normalizePresets,
+  localComposerConfig,
+  localComposerConfigContract,
+  localComposerResolverContract,
   sliderAssetMatch,
   sliderPatchContract,
 };

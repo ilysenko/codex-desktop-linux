@@ -15,13 +15,20 @@ const {
   CATALOG_PRESET_OPTIONS_KEY,
   EFFORT_TO_THINKING_EFFORT,
   LOCAL_DEFAULT_PATCH_MARKER,
+  LOCAL_COMPOSER_CONFIG_MARKER,
+  LOCAL_COMPOSER_RESOLVER_MARKER,
+  LOCAL_DRAFT_SELECTION_MARKER,
   SLIDER_PATCH_MARKER,
   applyCatalogPatch,
+  applyLocalComposerConfigPatch,
+  applyLocalComposerResolverPatch,
   applySliderMinimumPatch,
   catalogAssetMatch,
   catalogPatchContract,
   codexLinuxModelPickerDefaultPresets,
   normalizePresets,
+  localComposerConfigContract,
+  localComposerResolverContract,
   sliderAssetMatch,
   sliderPatchContract,
 } = require("./patch.js");
@@ -65,6 +72,30 @@ function sliderFixture(name = "Wkr") {
     "show_xhigh_in_simple_picker=true,canInitializePowerPicker=true;",
     "if(powerSelectionsWithXHigh.length>=3)return powerSelectionsWithXHigh;",
     "return fallbackPowerSelection.length>=3?fallbackPowerSelection:[]}",
+    "function Next(){}",
+  ].join("");
+}
+
+function localComposerResolverFixture(name = "LocalPower") {
+  return [
+    `function ${name}(e,{includeUltraInSlider:t=false,removeXHigh:n=false,sliderModelsConfig:r,stripGptPrefix:i=true}={}){`,
+    "if(r!=null){let a=MapModels(e,{stripGptPrefix:i});for(let o of r.presets){",
+    "let r=unique(resolve(o.filter(({reasoning_effort:e})=>(t||e!==`ultra`)&&(!n||e!==`xhigh`)),e,i),({id:e})=>e);",
+    "if(r.length>=3)return r}}let a=fallbackA(e);if(a.length>=3)return a;",
+    "let o=fallbackB(e);return o.length>=3?o:[]}",
+    "function Next(){}",
+  ].join("");
+}
+
+function localComposerFixture(name = "LocalComposer") {
+  return [
+    `function ${name}(available,serverConfig,upstreamDefault){`,
+    "modelsForPicker(available);let{setDefaultModelAndReasoningEffort:setDefault}=selection;",
+    "let He=available.find(Wqr),Ue=Power(available,{includeUltraInSlider:true,sliderModelsConfig:serverConfig,stripGptPrefix:true}),",
+    "Ge=Ue,Ke=zae(Ge,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
+    "let choose=draft?.selectModelAndReasoningEffort??select,selected=choose(`gpt-5.6-sol`,`high`,()=>{});",
+    "composer.mode.local.model.custom;let reset=zae(Ue,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
+    "return{powerSelections:Ue,fallback:Ke,reset,selected}}",
     "function Next(){}",
   ].join("");
 }
@@ -361,6 +392,93 @@ test("slider patch fails closed on drift, duplicate, and partial states", () => 
   }
 });
 
+test("local composer uses configured pairs and lowers only its config threshold", () => {
+  const presets = context([
+    { model: "gpt-5.6-sol", effort: "medium", default: true },
+    { model: "gpt-5.6-sol", effort: "high" },
+    { model: "gpt-6-astra", effort: "high" },
+  ]);
+  const resolverSource = localComposerResolverFixture();
+  assert.equal(localComposerResolverContract(resolverSource), "current");
+  const patchedResolver = applyLocalComposerResolverPatch(resolverSource, presets);
+  assert.equal(localComposerResolverContract(patchedResolver), "applied");
+  assert.equal(applyLocalComposerResolverPatch(patchedResolver, presets), patchedResolver);
+  assert.equal(
+    (patchedResolver.match(new RegExp(LOCAL_COMPOSER_RESOLVER_MARKER, "g")) ?? []).length,
+    1,
+  );
+
+  const composerSource = localComposerFixture();
+  assert.equal(localComposerConfigContract(composerSource), "current");
+  const patchedComposer = applyLocalComposerConfigPatch(composerSource, presets);
+  assert.equal(localComposerConfigContract(patchedComposer), "applied");
+  assert.equal(applyLocalComposerConfigPatch(patchedComposer, presets), patchedComposer);
+  assert.equal(
+    (patchedComposer.match(new RegExp(LOCAL_COMPOSER_CONFIG_MARKER, "g")) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (patchedComposer.match(new RegExp(LOCAL_DRAFT_SELECTION_MARKER, "g")) ?? []).length,
+    1,
+  );
+  assert.match(patchedComposer, /gpt-5\.6-sol:medium/);
+  assert.match(patchedComposer, /sliderModelsConfig:codexLinuxLocalDefaultPresetConfig/);
+  const globals = {
+    composer: { mode: { local: { model: { custom: null } } } },
+    draft: null,
+    modelsForPicker() {},
+    selection: { setDefaultModelAndReasoningEffort() {} },
+    Wqr: ({ isDefault }) => isDefault === true,
+    zae: (selections, id) => selections.find((selection) => selection.id === id) ?? selections[0],
+    Power: (available, { sliderModelsConfig }) => {
+      const availableIds = new Set(available.map(({ id }) => id));
+      const configured = sliderModelsConfig.presets[0].flatMap(({ model, reasoning_effort }) => {
+        const id = `${model}:${reasoning_effort}`;
+        return availableIds.has(id) ? [{ id, model, reasoningEffort: reasoning_effort }] : [];
+      });
+      return configured.length > 0 ? configured : available;
+    },
+    select: (_model, _effort, _callback, options) => options ?? null,
+  };
+  const unavailableDefault = plain(
+    evaluate(
+      patchedComposer,
+      "LocalComposer([{id:'gpt-5.6-sol:high',model:'gpt-5.6-sol',reasoningEffort:'high'},{id:'upstream:medium',model:'upstream',defaultReasoningEffort:'medium',isDefault:true}],null,null)",
+      { ...globals },
+    ),
+  );
+  assert.equal(unavailableDefault.fallback.id, "gpt-5.6-sol:high");
+  assert.equal(unavailableDefault.reset.id, "gpt-5.6-sol:high");
+  assert.equal(unavailableDefault.selected.persistAsDefault, false);
+  const completeFallback = plain(
+    evaluate(
+      patchedComposer,
+      "LocalComposer([{id:'upstream:medium',model:'upstream',reasoningEffort:'medium',defaultReasoningEffort:'medium',isDefault:true}],null,null)",
+      { ...globals },
+    ),
+  );
+  assert.equal(completeFallback.fallback.id, "upstream:medium");
+  assert.equal(completeFallback.reset.id, "upstream:medium");
+});
+
+test("local composer patches fail closed on drift, duplicate, and partial states", () => {
+  const presets = context([{ model: "gpt-5.6-sol", effort: "medium", default: true }]);
+  for (const [apply, fixture, marker] of [
+    [applyLocalComposerResolverPatch, localComposerResolverFixture, LOCAL_COMPOSER_RESOLVER_MARKER],
+    [applyLocalComposerConfigPatch, localComposerFixture, LOCAL_COMPOSER_CONFIG_MARKER],
+  ]) {
+    for (const source of [
+      "function unrelated(){}",
+      fixture("One") + fixture("Two"),
+      `${marker};${fixture()}`,
+    ]) {
+      const { result, warnings } = withCapturedWarnings(() => apply(source, presets));
+      assert.equal(result, source);
+      assert.equal(warnings.length, 1);
+    }
+  }
+});
+
 test("empty manifest is a runtime passthrough used for compatibility auditing", () => {
   const passthrough = { feature: { manifest: { presets: [] }, settings: {} } };
   const patchedCatalog = applyCatalogPatch(catalogFixture(), passthrough);
@@ -407,7 +525,7 @@ test("feature descriptors load alone and alongside ui-tweaks", () => {
       featuresRoot: root,
       featuresConfigPath: configPath,
     });
-    assert.equal(alone.length, 2);
+    assert.equal(alone.length, 4);
     assert.ok(alone.every(({ featureId }) => featureId === "model-picker-default-presets"));
     writeConfig(["model-picker-default-presets", "ui-tweaks"]);
     const together = loadLinuxFeaturePatchDescriptors({

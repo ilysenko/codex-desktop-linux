@@ -21,6 +21,7 @@ linux-features/local/
 .idea/
 .claude/
 .codex/
+.agents/skills/
 
 # graphify
 graphify-out/
