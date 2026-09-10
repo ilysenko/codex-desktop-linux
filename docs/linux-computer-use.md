@@ -26,6 +26,13 @@ It supports:
 - pointer-direction feedback for the built-in V2 pet after successful click,
   scroll, and drag actions
 
+The in-app adapter returns a compact accessibility projection and suppresses an
+unchanged compact projection on repeated reads. Use `disableDiffing: true` for a
+fresh compact tree, or `compact: false` for complete backend metadata.
+`maxNodes`/`maxDepth` bound accessibility traversal; screenshot calls accept
+`maxWidth`, `maxHeight`, `maxBytes`, `scale`, `format`, and `quality`. Screenshot
+methods already emit the image and should not be emitted a second time.
+
 ## Runtime Dependencies
 
 Install `ydotool` 1.0.3 or newer when you need the fallback input path. The

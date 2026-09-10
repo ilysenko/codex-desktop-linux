@@ -29,6 +29,14 @@ test('trusted service validates requests before backend launch', async () => {
   const { handleRpc } = await import('./native-service.mjs');
   await assert.rejects(handleRpc({ method: 'drag', app: 'editor', params: {} }), /not supported/);
   await assert.rejects(handleRpc({ method: 'click', app: 'editor', params: { window_id: 22 } }), /parameter/);
+  for (const params of [
+    {max_nodes:0}, {max_nodes:2001}, {max_depth:-1}, {max_depth:65},
+    {max_width:0}, {max_height:4097}, {max_bytes:1023}, {max_bytes:4194305},
+    {scale:0}, {scale:1.1}, {format:'webp'}, {quality:0}, {quality:96},
+  ]) {
+    const method = Object.keys(params)[0].startsWith('max_n') || Object.hasOwn(params, 'max_depth') ? 'get_app_state' : 'screenshot';
+    await assert.rejects(handleRpc({method, app:'editor', params}), /Invalid native/);
+  }
 });
 
 const { mkdtemp, writeFile, readFile, rm } = require('node:fs/promises');
@@ -94,6 +102,108 @@ test('MCP initialization, exact window IDs, targeted inputs and desktop inputs',
   assert.deepEqual(desktop.arguments, {key:'ESC'});
 });
 
+test('trusted service forwards bounded observation options exactly', async t => {
+  const stateService = await fixture(t);
+  const state = await stateService.handleRpc({method:'get_app_state',app:'editor',params:{include_screenshot:true,max_nodes:20,max_depth:5,max_width:800,max_height:600,max_bytes:65536,scale:0.5,format:'jpeg',quality:70}});
+  assert.deepEqual(state.arguments, {include_screenshot:true,max_nodes:20,max_depth:5,max_width:800,max_height:600,max_bytes:65536,scale:0.5,format:'jpeg',quality:70,app_id:'editor'});
+
+  const captureService = await fixture(t, {capture:true});
+  await captureService.handleRpc({method:'screenshot',app:'editor',params:{max_width:800,max_height:600,max_bytes:65536,scale:0.5,format:'jpeg',quality:70}});
+  const calls = await captureService.readCalls();
+  assert.deepEqual(calls.at(-1).arguments, {max_width:800,max_height:600,max_bytes:65536,scale:0.5,format:'jpeg',quality:70,app_id:'editor'});
+});
+
+test('native client compacts and suppresses repeated large accessibility observations', async () => {
+  const { installLinuxComputerUse } = await import('./native-client.mjs');
+  const original = globalThis.nodeRepl;
+  const calls = [], writes = [];
+  const tree = Array.from({length:237}, (_, index) => ({
+    index,
+    parent_index:index ? index - 1 : null,
+    depth:index,
+    object_ref:`:1.234/org/a11y/atspi/accessible/${'metadata'.repeat(8)}/${index}`,
+    role:index === 236 ? 'button' : 'section',
+    name:index === 236 ? 'Save' : null,
+    description:null,
+    child_count:index === 236 ? 0 : 1,
+    bounds:index === 236 ? {x:40,y:50,width:80,height:30} : null,
+    states:['enabled','sensitive','showing','visible','focusable',...(index === 236 ? ['focused','selected'] : [])],
+    actions:[{index:0,name:index === 236 ? 'click' : '',description:'',keybinding:''}],
+    value:null,
+    text:{character_count:1,caret_offset:0,content:' \uFFFC ',truncated:false,selections:[]},
+    supports_editable_text:true,
+  }));
+  let response = {accessibility_tree:tree,window_context:{focused:true}};
+  globalThis.nodeRepl = {
+    write:value=>writes.push(value),
+    rpc:async (_, request)=>{calls.push(request); return response;},
+  };
+  try {
+    const app = await installLinuxComputerUse({}).getApp('editor');
+    const initial = writes.find(value => typeof value === 'string' && value.startsWith('{'));
+    const compact = JSON.parse(initial);
+    const button = compact.accessibility_tree.at(-1);
+    assert.ok(initial.length < JSON.stringify(response).length / 2);
+    assert.equal(button.index,236);
+    assert.equal(button.parent_index,235);
+    assert.deepEqual(button.bounds,{x:40,y:50,width:80,height:30});
+    assert.equal(button.states,'enabled sensitive showing visible focusable focused selected');
+    assert.deepEqual(button.actions,['click']);
+    assert.equal(button.actionable,true);
+    assert.equal(button.editable,true);
+    assert.equal(button.object_ref,undefined);
+    assert.equal(button.text.content,undefined);
+
+    const repeated = JSON.parse(await app.getAXState({emit:false,maxNodes:20,maxDepth:5}));
+    assert.deepEqual(repeated,{accessibility_tree_unchanged:true});
+    assert.deepEqual(calls.at(-1).params,{include_screenshot:false,max_nodes:20,max_depth:5});
+
+    const refreshed = JSON.parse(await app.getAXState({emit:false,disableDiffing:true,max_nodes:21,max_depth:6}));
+    assert.equal(refreshed.accessibility_tree.length,237);
+    assert.deepEqual(calls.at(-1).params,{include_screenshot:false,max_nodes:21,max_depth:6});
+
+    const full = JSON.parse(await app.getAXState({emit:false,compact:false}));
+    assert.match(full.accessibility_tree[0].object_ref,/org\/a11y/);
+
+    response = {...response,accessibility_tree:tree.map((node,index) => index === 236
+      ? {...node,states:node.states.filter(state => state !== 'enabled' && state !== 'showing')}
+      : node)};
+    const disabled = JSON.parse(await app.getAXState({emit:false}));
+    assert.doesNotMatch(disabled.accessibility_tree.at(-1).states,/enabled|showing/);
+
+    response = {...response,window_context:{focused:false}};
+    const changed = JSON.parse(await app.getAXState({emit:false}));
+    assert.equal(changed.window_context.focused,false);
+    await assert.rejects(app.getAXState({maxNodes:20,max_nodes:21}),/Conflicting maxNodes/);
+  } finally { globalThis.nodeRepl=original; }
+});
+
+test('native client routes screenshot limits separately from accessibility limits', async () => {
+  const { installLinuxComputerUse } = await import('./native-client.mjs');
+  const original = globalThis.nodeRepl;
+  const calls = [];
+  globalThis.nodeRepl = {
+    write(){},
+    emitImage:async()=>{},
+    rpc:async (_, request) => {
+      calls.push(request);
+      return request.method === 'screenshot'
+        ? {screenshot:{data_url:'data:image/png;base64,AQID',width:100,height:50,coordinate_width:100,coordinate_height:50}}
+        : {accessibility_tree:[]};
+    },
+  };
+  try {
+    const app = await installLinuxComputerUse({}).getApp('editor');
+    await app.getAXStateAndScreenshot({
+      emit:false, disableDiffing:true, maxNodes:40, maxDepth:7,
+      maxWidth:800, maxHeight:600, maxBytes:65536, scale:0.5, format:'jpeg', quality:70,
+    });
+    const [capture, state] = calls.slice(-2);
+    assert.deepEqual(capture.params,{max_width:800,max_height:600,max_bytes:65536,scale:0.5,format:'jpeg',quality:70});
+    assert.deepEqual(state.params,{include_screenshot:false,max_nodes:40,max_depth:7});
+  } finally { globalThis.nodeRepl=original; }
+});
+
 for (const structured of [false, true]) {
   for (const windowId of ['1017417960236020624', '18446744073709551615']) {
     test(`u64 window IDs round trip exactly through ${structured ? 'structuredContent' : 'text JSON'}: ${windowId}`, async t => {
@@ -153,7 +263,7 @@ test('native observations return image bytes and expose screenshot errors and co
   globalThis.nodeRepl = {write(){},emitImage:async value=>images.push(value),rpc:async()=>response};
   try {
     const app=await installLinuxComputerUse({}).getApp('linux-window:22');
-    const observed=await app.getAXStateAndScreenshot({emit:false});
+    const observed=await app.getAXStateAndScreenshot({emit:false,disableDiffing:true});
     assert.deepEqual([...observed.screenshot],[1,2,3]);
     const state = JSON.parse(observed.state);
     assert.deepEqual(state.accessibility_tree, tree);
@@ -180,8 +290,8 @@ for (const api of ['getScreenshot', 'getAXStateAndScreenshot']) {
     globalThis.nodeRepl = { write: value => writes.push(value), emitImage: async value => images.push(value), rpc: (_, request) => service.handleRpc(request) };
     try {
       const app = await installLinuxComputerUse({}).getApp('linux-window:18446744073709551615');
-      assert.equal(JSON.parse(await app.getAXState({emit:false})).window_context.focused, false);
-      const result = await app[api]();
+      assert.equal(JSON.parse(await app.getAXState({emit:false,disableDiffing:true})).window_context.focused, false);
+      const result = await app[api](api === 'getAXStateAndScreenshot' ? {disableDiffing:true} : {});
       assert.deepEqual([...(api === 'getScreenshot' ? result : result.screenshot)], [1,2,3]);
       assert.deepEqual(images, ['data:image/png;base64,AQID']);
       assert.deepEqual(writes.find(value => value?.screenshot)?.screenshot, {width:100,height:50,coordinate_width:200,coordinate_height:100});

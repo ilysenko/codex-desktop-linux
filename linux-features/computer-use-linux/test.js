@@ -75,7 +75,7 @@ test("staging extends the hidden unified plugin and invalidates the browser-only
   fs.writeFileSync(launcherPath, originalLauncher);
   stage();
   const version = JSON.parse(fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"))).version;
-  assert.equal(version, "26.901.41600-linux-native.2");
+  assert.equal(version, "26.901.41600-linux-native.3");
   assert.deepEqual(JSON.parse(fs.readFileSync(marketplacePath)).plugins.map(p => p.name), ["unified-computer-use", "browser", "computer-use"]);
   const settingsManifest = JSON.parse(fs.readFileSync(path.join(target, "../computer-use/.codex-plugin/plugin.json")));
   assert.equal(settingsManifest.mcpServers, undefined);

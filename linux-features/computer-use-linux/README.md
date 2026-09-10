@@ -32,6 +32,18 @@ Accessibility observations retain `window_context` for geometry inspection.
 Element-index actions, drag, rich-text paste, selection editing, and secondary
 accessibility actions are not exposed by the in-app API.
 
+`getApp()` emits one compact accessibility observation. Later `getAXState()`
+calls omit an unchanged compact projection; pass `disableDiffing: true` for a fresh
+compact tree or `compact: false` for the complete backend node metadata. Bound
+tree traversal with `maxNodes` (1–2000) and `maxDepth` (0–64). The equivalent
+`max_nodes` and `max_depth` spellings are accepted for direct backend parity.
+
+Screenshot methods emit their image, so do not emit the returned bytes again.
+They accept `maxWidth`, `maxHeight`, `maxBytes`, `scale`, `format`, and `quality`;
+`getAXStateAndScreenshot()` accepts both the accessibility and screenshot option
+sets. Use these limits to request more detail deliberately instead of repeatedly
+loading a large default observation.
+
 Native control retains OS permission requirements and target-window focus
 checks. Consequential-action approval remains the host/model's responsibility;
 Linux does not provide saved per-app approvals through this integration.
