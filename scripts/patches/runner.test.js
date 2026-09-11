@@ -19,18 +19,12 @@ const {
 
 const emptyConfig = path.join(__dirname, "..", "..", "linux-features", "features.example.json");
 
-test("official baseline requires the renderer-cycle core patch", () => {
-  assert.deepEqual(
-    corePatchDescriptors().map(({ id, ciPolicy }) => ({ id, ciPolicy })),
-    [{ id: "upstream-renderer-cycle", ciPolicy: "required-upstream" }],
-  );
-  assert.deepEqual(
-    allPatchPolicies({ featuresConfigPath: emptyConfig }).map(({ name, ciPolicy }) => ({ name, ciPolicy })),
-    [{ name: "upstream-renderer-cycle", ciPolicy: "required-upstream" }],
-  );
+test("official baseline has no core patches", () => {
+  assert.deepEqual(corePatchDescriptors(), []);
+  assert.deepEqual(allPatchPolicies({ featuresConfigPath: emptyConfig }), []);
   assert.deepEqual(
     requiredPatchNamesForProfile("upstream-build", { featuresConfigPath: emptyConfig }),
-    ["upstream-renderer-cycle"],
+    [],
   );
 });
 
@@ -46,7 +40,7 @@ test("runner context exposes enabled feature IDs", () => {
   }
 });
 
-test("empty feature set leaves official extracted files byte-identical", () => {
+test("default empty registry leaves official extracted files byte-identical", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-baseline-"));
   try {
     const mainDir = path.join(root, ".vite", "build");
@@ -60,7 +54,6 @@ test("empty feature set leaves official extracted files byte-identical", () => {
     const report = createPatchReport();
     patchExtractedApp(root, {
       report,
-      corePatchRoot: path.join(root, "empty-core"),
       featuresConfigPath: emptyConfig,
     });
     assert.equal(fs.readFileSync(main, "utf8"), "official-main\n");

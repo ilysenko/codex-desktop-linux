@@ -10,8 +10,4 @@ the current signed official package cannot pass a mandatory launch/work smoke
 test without it; the descriptor must include the reproduction evidence and a
 required regression test in the migration tracking record.
 
-Current required patch:
-
-- `upstream-renderer-cycle` defers the cyclic `authed-route` initializer in
-  signed stable `26.908.31748`; remove it when the next signed stable no longer
-  has that cycle.
+There are no required core patches for the current signed stable package.
