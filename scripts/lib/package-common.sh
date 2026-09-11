@@ -540,6 +540,23 @@ exit 0
 SCRIPT
 }
 
+stage_deb_maintainer_scripts() {
+    local root="$1"
+    local package_name="$2"
+    local postinst_template="$3"
+    local prerm_template="$4"
+    local postrm_template="$5"
+
+    mkdir -p "$root/DEBIAN"
+    sed \
+        -e "s|/opt/codex-desktop|/opt/$package_name|g" \
+        -e "s|codex_desktop_repair_system_package_shadow_entries codex-desktop|codex_desktop_repair_system_package_shadow_entries $package_name|g" \
+        "$postinst_template" > "$root/DEBIAN/postinst"
+    cp "$prerm_template" "$root/DEBIAN/prerm"
+    cp "$postrm_template" "$root/DEBIAN/postrm"
+    chmod 0755 "$root/DEBIAN/postinst" "$root/DEBIAN/prerm" "$root/DEBIAN/postrm"
+}
+
 write_no_updater_deb_prerm() {
     local target="$1"
     local package_name

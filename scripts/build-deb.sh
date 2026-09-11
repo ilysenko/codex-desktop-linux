@@ -134,13 +134,12 @@ CONTROL
     fi
     chmod 0644 "$PKG_ROOT/DEBIAN/control"
     if package_with_updater_enabled; then
-        sed \
-            -e "s|/opt/codex-desktop|/opt/$PACKAGE_NAME|g" \
-            -e "s|codex_desktop_repair_system_package_shadow_entries codex-desktop|codex_desktop_repair_system_package_shadow_entries $PACKAGE_NAME|g" \
-            "$POSTINST_TEMPLATE" > "$PKG_ROOT/DEBIAN/postinst"
-        cp "$PRERM_TEMPLATE" "$PKG_ROOT/DEBIAN/prerm"
-        cp "$POSTRM_TEMPLATE" "$PKG_ROOT/DEBIAN/postrm"
-        chmod 0755 "$PKG_ROOT/DEBIAN/postinst" "$PKG_ROOT/DEBIAN/prerm" "$PKG_ROOT/DEBIAN/postrm"
+        stage_deb_maintainer_scripts \
+            "$PKG_ROOT" \
+            "$PACKAGE_NAME" \
+            "$POSTINST_TEMPLATE" \
+            "$PRERM_TEMPLATE" \
+            "$POSTRM_TEMPLATE"
     else
         write_no_updater_deb_postinst "$PKG_ROOT/DEBIAN/postinst"
         write_no_updater_deb_prerm "$PKG_ROOT/DEBIAN/prerm"

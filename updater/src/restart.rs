@@ -8,6 +8,7 @@ use std::{
 };
 
 const PROC_SELF_EXE: &str = "/proc/self/exe";
+pub const REPLACEMENT_RESTART_EXIT_CODE: i32 = 12;
 
 /// Returns the replacement path when the running image and its path on disk
 /// no longer refer to the same inode.
@@ -15,6 +16,10 @@ pub fn replacement_binary() -> Option<PathBuf> {
     let link_target = fs::read_link(PROC_SELF_EXE).ok()?;
     let installed_path = install::strip_deleted_path_suffix(&link_target).unwrap_or(link_target);
     replacement_at(Path::new(PROC_SELF_EXE), &installed_path)
+}
+
+pub fn exit_for_replacement() -> ! {
+    std::process::exit(REPLACEMENT_RESTART_EXIT_CODE);
 }
 
 fn replacement_at(running_image: &Path, installed_path: &Path) -> Option<PathBuf> {
