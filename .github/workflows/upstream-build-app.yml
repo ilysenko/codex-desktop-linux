@@ -133,11 +133,10 @@ jobs:
           test -x "$CODEX_INSTALL_DIR/ChatGPT"
           test -x "$CODEX_INSTALL_DIR/resources/codex"
       - name: Require signed renderer dependency regression
-        if: matrix.architecture == 'amd64'
         env:
           EXPECTED_SIGNED_VERSION: 26.908.40834
-          EXPECTED_SIGNED_REPOSITORY_PATH: pool/main/c/chatgpt/chatgpt_26.908.40834_amd64.deb
-          EXPECTED_SIGNED_SHA256: da37b8e7bcefaaea019c478cacbe6c73ee1ddd15e0e1ebb3c7ef0a42dd818ac2
+          EXPECTED_SIGNED_REPOSITORY_PATH: ${{ matrix.architecture == 'amd64' && 'pool/main/c/chatgpt/chatgpt_26.908.40834_amd64.deb' || 'pool/main/c/chatgpt/chatgpt_26.908.40834_arm64.deb' }}
+          EXPECTED_SIGNED_SHA256: ${{ matrix.architecture == 'amd64' && 'da37b8e7bcefaaea019c478cacbe6c73ee1ddd15e0e1ebb3c7ef0a42dd818ac2' || 'bae5c5ca585625a116a8877dedc455e4c27ca02063ea93dbd6a0506ed6a12d31' }}
         run: |
           set -euo pipefail
           node - "upstream/${{ matrix.architecture }}.json" <<'NODE'

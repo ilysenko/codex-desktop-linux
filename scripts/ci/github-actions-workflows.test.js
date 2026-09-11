@@ -64,15 +64,18 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(signedBaseline, /report\.patches\.length !== 0/);
   assert.match(signedBaseline, /report\.upstreamAppAsar\?\.preservedByteForByte !== true/);
   assert.match(signedBaseline, /name: Require signed renderer dependency regression/);
-  assert.match(signedBaseline, /if: matrix\.architecture == 'amd64'/);
+  assert.doesNotMatch(
+    signedBaseline,
+    /name: Require signed renderer dependency regression\n\s+if:/,
+  );
   assert.match(signedBaseline, /EXPECTED_SIGNED_VERSION: 26\.908\.40834/);
   assert.match(
     signedBaseline,
-    /EXPECTED_SIGNED_REPOSITORY_PATH: pool\/main\/c\/chatgpt\/chatgpt_26\.908\.40834_amd64\.deb/,
+    /EXPECTED_SIGNED_REPOSITORY_PATH: \$\{\{ matrix\.architecture == 'amd64' && 'pool\/main\/c\/chatgpt\/chatgpt_26\.908\.40834_amd64\.deb' \|\| 'pool\/main\/c\/chatgpt\/chatgpt_26\.908\.40834_arm64\.deb' \}\}/,
   );
   assert.match(
     signedBaseline,
-    /EXPECTED_SIGNED_SHA256: da37b8e7bcefaaea019c478cacbe6c73ee1ddd15e0e1ebb3c7ef0a42dd818ac2/,
+    /EXPECTED_SIGNED_SHA256: \$\{\{ matrix\.architecture == 'amd64' && 'da37b8e7bcefaaea019c478cacbe6c73ee1ddd15e0e1ebb3c7ef0a42dd818ac2' \|\| 'bae5c5ca585625a116a8877dedc455e4c27ca02063ea93dbd6a0506ed6a12d31' \}\}/,
   );
   assert.match(signedBaseline, /signed renderer regression is not bound to the expected campaign/);
   assert.match(
