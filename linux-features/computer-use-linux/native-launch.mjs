@@ -1,16 +1,11 @@
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
+import { installLinuxComputerUse } from "./native-client.mjs";
 
-export function linuxNativeEnvironment({ browser, computer }, banner) {
-  if (!computer) return { NODE_REPL_JS_BANNER: banner };
-  const client = new URL("./native-client.mjs", import.meta.url).href;
-  return {
-    NODE_REPL_TRUSTED_RPC_ENABLED: "1",
-    NODE_REPL_TRUSTED_SERVICES: JSON.stringify({
-      ...(browser ? { browser: "@oai/browser-desktop/service" } : {}),
-      sky: fileURLToPath(new URL("./native-service.mjs", import.meta.url)),
-    }),
-    NODE_REPL_JS_BANNER:
-      `await (await import("@oai/cua/tinyskyAlt")).setupCUA(${JSON.stringify({ browser, computer: false })});\n` +
-      `await (await import(${JSON.stringify(client)})).installLinuxComputerUse(cua);`,
-  };
+// Use the upstream browser factory without starting its macOS native client.
+export async function setupLinuxComputerUse({ browser, factoryPath }) {
+  const { create_tinysky_alt } = await import(pathToFileURL(factoryPath).href);
+  const cua = await create_tinysky_alt({ browser, computer: false });
+  globalThis.cua = cua;
+  installLinuxComputerUse(cua);
+  cua.initialize = cua.getState;
 }

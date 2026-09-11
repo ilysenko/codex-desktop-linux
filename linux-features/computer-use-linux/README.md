@@ -29,6 +29,13 @@ Click and scroll coordinates are window-relative; use the coordinate dimensions
 reported with screenshots. Accessibility bounds are screen coordinates and must
 not be passed directly to input methods because display scaling can differ.
 Accessibility observations retain `window_context` for geometry inspection.
+On COSMIC, snapshots wait for the toplevel protocol completion event because
+properties may arrive after the initial Wayland roundtrips. Output-relative
+toplevel geometry is translated through XDG logical output positions; screenshots
+and relative input use the logical monitor layout to account for scaling and nonzero desktop origins. Missing or inconsistent
+geometry is rejected rather than returning a full-desktop screenshot. The
+ydotool scroll fallback positions the cursor with the same absolute pointer as
+clicks when available, so wheel events reach the requested window.
 Element-index actions, drag, rich-text paste, selection editing, and secondary
 accessibility actions are not exposed by the in-app API.
 
@@ -53,7 +60,10 @@ Linux does not provide saved per-app approvals through this integration.
 The adapter and native helpers are packaged together inside the upstream
 `unified-computer-use` plugin. The separate `computer-use` component stores the
 Any App setting and exposes no MCP tools. Upstream owns browser control.
-Missing or ambiguous bundle contracts abort an enabled build.
+The app-managed CUA configuration supplies a native bootstrap and trusted
+service only when the Linux native surface is selected. The shared upstream
+CUA launcher and browser factory stay unchanged. Missing or ambiguous bundle
+contracts abort an enabled build.
 
 `make install-native` builds `codex-computer-use-linux` and
 `codex-computer-use-cosmic` once before staging the package. Direct
