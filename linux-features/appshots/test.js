@@ -77,10 +77,11 @@ for (const location of ["installed", "cache", "retired only"]) {
     fs.mkdirSync(path.join(plugin, ".codex-plugin"), { recursive: true });
     fs.mkdirSync(path.join(plugin, "scripts"));
     fs.writeFileSync(path.join(plugin, ".codex-plugin/plugin.json"), JSON.stringify({
-      name: "unified-computer-use", version: "26.901.41600",
+      name: "unified-computer-use", version: "26.908.31748", mcpServers: "./.mcp.json",
     }));
-    fs.writeFileSync(path.join(plugin, "scripts/launch.mjs"),
-      'const surfaces = new Set(["browser", "computer"]); const setupOptions = {browser: surfaces.has("browser"), computer: surfaces.has("computer")}; const env = {NODE_REPL_TRUSTED_SERVICES: JSON.stringify({sky:"@oai/sky/service"}),NODE_REPL_JS_BANNER: banner,};');
+    fs.writeFileSync(path.join(plugin, ".mcp.json"), JSON.stringify({
+      mcpServers: { cua_repl: { command: "node", args: [], enabled: false } },
+    }));
     const backend = path.join(workspace, "backend");
     fs.writeFileSync(backend, '#!/bin/sh\n[ "$1" = windows ] || exit 1\nprintf \'%s\\n\' \'{"backend":"staged-unified","windows":[]}\'\n', { mode: 0o755 });
     execFileSync("bash", [path.join(__dirname, "../computer-use-linux/stage.sh")], {

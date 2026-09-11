@@ -23,24 +23,24 @@ const {
 } = require("./patches/dock-icon.js");
 
 const currentAppInfoSource = [
-  "function US(e){return`icon-chatgpt`}",
-  "function WS(e){return{dark:`icon-codex-dark-color.png`,light:`icon-codex-light.png`}}",
-  "function Jce(e){if(process.platform!==`darwin`)return null;let t=WS(e),n=JS(`${US(e)}.png`),r=JS(t.dark),i=JS(t.light);return n==null||r==null||i==null?null:{appDefault:n,codexDark:r,codexLight:i}}",
-  "function JS(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null;return YS(t!=null&&(0,_.existsSync)(t)?t:(0,p.join)(l.app.getAppPath(),`src`,`icons`,e))}",
+  "function Ty(e){return`icon-chatgpt`}",
+  "function Ey(e){return{dark:`icon-codex-dark-color.png`,light:`icon-codex-light.png`}}",
+  "function Hpe(e){if(process.platform!==`darwin`)return null;let t=Ey(e),n=Ay(`${Ty(e)}.png`),r=Ay(t.dark),i=Ay(t.light);return n==null||r==null||i==null?null:{appDefault:n,codexDark:r,codexLight:i}}",
+  "function Ay(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null;return jy(t!=null&&(0,_.existsSync)(t)?t:(0,p.join)(l.app.getAppPath(),`src`,`icons`,e))}",
 ].join("");
 
 const currentRuntimeSource = [
-  "function NRe({buildFlavor:t,settingsStore:d,repoRoot:h,isMacOS:g,isWindows:v,onWindowRegistered:C,disposables:w}){",
-  "let E=(0,p.join)(h,`electron`,`src`,`icons`),D=e=>{if(!l.app.isPackaged)return null;let t=(0,p.join)(process.resourcesPath,e);return(0,_.existsSync)(t)?t:null},",
-  "O=e=>{let t=(0,p.join)(E,e);return(0,_.existsSync)(t)?t:null},k=e=>D(e)??O(e),A=()=>{switch(t){case a.i.Dev:case a.i.Nightly:case a.i.InternalAlpha:case a.i.PublicBeta:case a.i.Prod:return d.get(n.kc.DOCK_ICON_PREFERENCE)??`app-default`;case a.i.Agent:return`app-default`}},j=()=>{switch(t){case a.i.Dev:return O(`icon-dev-outline.png`);case a.i.Agent:return k(`icon-agent.png`);case a.i.Nightly:case a.i.InternalAlpha:case a.i.PublicBeta:case a.i.Prod:return k(`${US(t)}.png`)}},M=()=>v?KS(t):null,N=process.platform===`linux`?GS(t,E):M(),P=WS(t),F=()=>l.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?P.dark:P.light,",
-  "I=e=>{if(e===`app-default`&&t!==a.i.Dev){let e=l.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let n=e===`codex-system`?F():null,r=(n==null?null:k(n))??j(),i=r==null?l.nativeImage.createEmpty():l.nativeImage.createFromPath(r);if(!i.isEmpty()){if(e===`codex-system`){let{width:e,height:t}=i.getSize(),n=Math.round(e/128);i=i.crop({x:n,y:n,width:e-n*2,height:t-n*2})}l.app.dock?.setIcon(i)}},",
-  "L=()=>{if(!g)return;let e=A();I(e),Hpe({preference:e,resourceName:e===`codex-system`?P.light:null}).then(e=>{e&&I(A())})};",
-  "if(g){L();let e=()=>{let e=A();e===`codex-system`&&I(e)};l.nativeTheme.on(`updated`,e),w.add(()=>{l.nativeTheme.off(`updated`,e)})}",
-  "let ee=null,R=new IRe({onWindowRegistered:e=>{ee?.registerWindow(e),C?.(e)}});return{updateDockIcon:L,windowManager:R}}",
+  "function M6e({buildFlavor:i,settingsStore:f,repoRoot:g,isMacOS:v,isWindows:y,isDevMode:b,onWindowRegistered:w,disposables:T}){",
+  "let D=(0,p.join)(g,`electron`,`src`,`icons`),O=e=>{if(!l.app.isPackaged)return null;let t=(0,p.join)(process.resourcesPath,e);return(0,_.existsSync)(t)?t:null},",
+  "k=e=>{let t=(0,p.join)(D,e);return(0,_.existsSync)(t)?t:null},A=e=>O(e)??k(e),j=()=>{switch(i){case a.i.Dev:case a.i.Nightly:case a.i.InternalAlpha:case a.i.PublicBeta:case a.i.Prod:return f.get(n.Vl.DOCK_ICON_PREFERENCE)??`app-default`;case a.i.Agent:return`app-default`}},M=()=>{switch(i){case a.i.Dev:return k(`icon-dev-outline.png`);case a.i.Agent:return A(`icon-agent.png`);case a.i.Nightly:case a.i.InternalAlpha:case a.i.PublicBeta:case a.i.Prod:return A(`${Ty(i)}.png`)}},N=()=>y?Oy(i,{localIconsDirectory:(0,p.join)(g,`electron`,`.generated`,`windows-app-icons`)}):null,P=process.platform===`linux`?Dy(i,D):N(),F=Ey(i),I=b?process.env.CODEX_ELECTRON_DEV_DOCK_ICONS_PATH:void 0,L=()=>l.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?F.dark:F.light,",
+  "R=e=>{if(I){let t=`app-default`;e===`codex-system`&&(t=l.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?`codex-dark`:`codex-light`);let n=l.nativeImage.createFromPath((0,p.join)(I,`${t}.png`));if(!n.isEmpty()){l.app.dock?.setIcon(n);return}}if(e===`app-default`&&i!==a.i.Dev){let e=l.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let t=e===`codex-system`?L():null,n=(t==null?null:A(t))??M(),r=n==null?l.nativeImage.createEmpty():l.nativeImage.createFromPath(n);if(!r.isEmpty()){if(e===`codex-system`){let{width:e,height:t}=r.getSize(),n=Math.round(e/128);r=r.crop({x:n,y:n,width:e-n*2,height:t-n*2})}l.app.dock?.setIcon(r)}},",
+  "z=()=>{if(!v)return;let e=j();R(e),bF({preference:e,resourceName:e===`codex-system`?F.light:null}).then(e=>{e&&R(j())})};",
+  "if(v){z();let e=()=>{let e=j();e===`codex-system`&&R(e)};l.nativeTheme.on(`updated`,e),T.add(()=>{l.nativeTheme.off(`updated`,e)})}",
+  "let B=null,V=new b6e({onWindowRegistered:e=>{B?.registerWindow(e),w?.(e)}});return{updateDockIcon:z,windowManager:V}}",
 ].join("");
 
 const currentTraySource =
-  "let U9=null,K9=!1;async function q9(e){let t=e.buildFlavor,n=await _ze(t,e.repoRoot),i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?lze(t):void 0);if(!K9)return i.destroy(),null;return U9=new lFe(i)}";
+  "let U9=null,K9=!1;async function q9(e){let t=e.buildFlavor,n=await r8e(t,e.repoRoot),i=new l.Tray(n.defaultIcon,process.platform===`win32`&&l.app.isPackaged?Y6e(t):void 0);if(!K9)return i.destroy(),null;return U9=new z0e(i)}";
 
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
 const currentSettingsSource =
@@ -186,17 +186,17 @@ test("main patch restores official previews and synchronizes Linux windows and t
   assert.match(patched, /function codexLinuxApplyDockIcon/);
   assert.match(
     patched,
-    /D=e=>\{if\(!l\.app\.isPackaged&&process\.platform!==`linux`\)return null;let t=codexLinuxDockIconResourcePath\(e\);return\(0,_\.existsSync\)\(t\)\?t:null\}/,
+    /O=e=>\{if\(!l\.app\.isPackaged&&process\.platform!==`linux`\)return null;let t=codexLinuxDockIconResourcePath\(e\);return\(0,_\.existsSync\)\(t\)\?t:null\}/,
   );
   assert.match(patched, /BrowserWindow\.getAllWindows\(\)/);
-  assert.match(patched, /U9\.tray\.setImage\(i\)/);
+  assert.match(patched, /U9\.tray\.setImage\(r\)/);
   assert.match(patched, /globalThis\.codexLinuxDockIconImage/);
   assert.match(patched, /spawn\(codexLinuxSyncScript/);
   assert.equal(applyDockIconMainPatch(patched), patched);
 });
 
 test("main patch matches the current tray contract semantically across minified aliases", () => {
-  const aliased = currentMainSource.replace("lze(t)", "windowsIconHelper(t)");
+  const aliased = currentMainSource.replace("Y6e(t)", "windowsIconHelper(t)");
   const patched = applyDockIconMainPatch(aliased);
   assert.notEqual(patched, aliased);
   assert.match(patched, /windowsIconHelper\(t\)/);
@@ -207,23 +207,23 @@ test("main patch matches the current tray contract semantically across minified 
 test("main patch rejects drift at every official-package insertion point byte-identically", () => {
   const patched = applyDockIconMainPatch(currentMainSource);
   const currentPoints = [
-    "function Jce(e){if(process.platform!==`darwin`)return null",
-    "function JS(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null",
-    "D=e=>{if(!l.app.isPackaged)return null;let t=(0,p.join)(process.resourcesPath,e);return(0,_.existsSync)(t)?t:null}",
-    "I=e=>{if(e===`app-default`",
-    "L=()=>{if(!g)return;",
-    "if(g){L();let e=()=>",
-    "onWindowRegistered:e=>{ee?.registerWindow(e),C?.(e)}",
+    "function Hpe(e){if(process.platform!==`darwin`)return null",
+    "function Ay(e){if(e==null)return null;let t=l.app.isPackaged?(0,p.join)(process.resourcesPath,e):null",
+    "O=e=>{if(!l.app.isPackaged)return null;let t=(0,p.join)(process.resourcesPath,e);return(0,_.existsSync)(t)?t:null}",
+    "R=e=>{if(I){",
+    "z=()=>{if(!v)return;",
+    "if(v){z();let e=()=>",
+    "onWindowRegistered:e=>{B?.registerWindow(e),w?.(e)}",
     "i=new l.Tray(n.defaultIcon",
   ];
   const patchedPoints = [
-    "function Jce(e){if(process.platform!==`darwin`&&process.platform!==`linux`)return null",
+    "function Hpe(e){if(process.platform!==`darwin`&&process.platform!==`linux`)return null",
     "function codexLinuxDockIconResourcePath",
-    "D=e=>{if(!l.app.isPackaged&&process.platform!==`linux`)return null",
-    "I=function codexLinuxApplyDockIcon",
-    "L=()=>{if(!g&&process.platform!==`linux`)return;",
-    "if(g||process.platform===`linux`){L();let e=()=>",
-    "onWindowRegistered:e=>{ee?.registerWindow(e),C?.(e),process.platform===`linux`&&setImmediate(L)}",
+    "O=e=>{if(!l.app.isPackaged&&process.platform!==`linux`)return null",
+    "R=function codexLinuxApplyDockIcon",
+    "z=()=>{if(!v&&process.platform!==`linux`)return;",
+    "if(v||process.platform===`linux`){z();let e=()=>",
+    "onWindowRegistered:e=>{B?.registerWindow(e),w?.(e),process.platform===`linux`&&setImmediate(z)}",
     "i=new l.Tray(process.platform===`linux`&&globalThis.codexLinuxDockIconImage",
   ];
 
