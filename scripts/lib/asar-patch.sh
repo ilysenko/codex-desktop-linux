@@ -1,6 +1,6 @@
 #!/bin/bash
 # Apply enabled feature descriptors to the official Linux app.asar.
-# A clean build deliberately never extracts or repacks app.asar.
+# A build with no active descriptor never extracts or repacks app.asar.
 # Sourced by install.sh. Do not run directly.
 # shellcheck shell=bash
 
@@ -25,6 +25,18 @@ const [reportPath, helperPath] = process.argv.slice(2);
 const { reportHasPatchChanges } = require(helperPath);
 const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
 process.exit(reportHasPatchChanges(report) ? 0 : 1);
+NODE
+}
+
+patch_report_has_only_required_core_changes() {
+    local patch_report="$1"
+    node - "$patch_report" <<'NODE'
+const fs = require("node:fs");
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const changed = (report.patches ?? []).filter((patch) => patch.status === "applied");
+const valid = changed.length > 0 && changed.every((patch) =>
+  patch.sourceKind === "core" && patch.ciPolicy === "required-upstream");
+process.exit(valid ? 0 : 1);
 NODE
 }
 
@@ -67,11 +79,18 @@ patch_asar() {
     local app_asar="$resources_dir/app.asar"
     local patch_report_json="${CODEX_PATCH_REPORT_JSON:-$WORK_DIR/patch-report.json}"
     local descriptor_count
+    local core_descriptor_count
     local upstream_sha
     local patched_sha
 
     [ -f "$app_asar" ] || error "app.asar not found in $resources_dir"
+    core_descriptor_count="$(node - "$SCRIPT_DIR/scripts/patches/runner.js" <<'NODE'
+const { corePatchDescriptors } = require(process.argv[2]);
+process.stdout.write(String(corePatchDescriptors().length));
+NODE
+)"
     descriptor_count="$(node "$SCRIPT_DIR/scripts/lib/linux-features.js" --patch-descriptor-count)"
+    descriptor_count="$((descriptor_count + core_descriptor_count))"
     if [ "$descriptor_count" -eq 0 ]; then
         info "No ASAR feature descriptors enabled; preserving official app.asar byte-for-byte"
         write_empty_feature_patch_report "$patch_report_json" "$app_asar"
@@ -80,7 +99,7 @@ patch_asar() {
     fi
 
     upstream_sha="$(sha256sum "$app_asar" | awk '{print $1}')"
-    info "Extracting a temporary app.asar copy for $descriptor_count enabled feature descriptor(s)"
+    info "Extracting a temporary app.asar copy for $descriptor_count active descriptor(s)"
     npx --yes @electron/asar extract "$app_asar" "$WORK_DIR/app-extracted"
     if [ -d "$resources_dir/app.asar.unpacked" ]; then
         cp -a "$resources_dir/app.asar.unpacked/." "$WORK_DIR/app-extracted/"

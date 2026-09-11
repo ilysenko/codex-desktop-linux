@@ -87,9 +87,16 @@ if (report.upstreamAppAsar.sha256 !== "upstream-sha") throw new Error("bad upstr
 if (report.outputAppAsar.sha256 !== "output-sha") throw new Error("bad output hash");
 NODE
 
-if find scripts/patches/core -name patch.js -print -quit | grep -q .; then
-    fail "official baseline core registry must remain empty"
-fi
+assert_file scripts/patches/core/all-linux/extracted-app/upstream-renderer-cycle/patch.js
+node - <<'NODE'
+const { corePatchDescriptors } = require("./scripts/patches/runner.js");
+const descriptors = corePatchDescriptors();
+if (descriptors.length !== 1 ||
+    descriptors[0].id !== "upstream-renderer-cycle" ||
+    descriptors[0].ciPolicy !== "required-upstream") {
+  throw new Error("official baseline must require exactly the current renderer-cycle repair");
+}
+NODE
 
 node - <<'NODE'
 const fs = require("node:fs");

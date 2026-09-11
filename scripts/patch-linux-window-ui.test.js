@@ -48,14 +48,17 @@ test("best-effort feature drift stays non-fatal without hiding changed outputs",
   assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
 });
 
-test("official Linux baseline has an empty core patch registry", () => {
-  assert.deepEqual(corePatchDescriptors(), []);
+test("official Linux baseline has one required renderer-cycle core patch", () => {
+  assert.deepEqual(
+    corePatchDescriptors().map(({ id, ciPolicy }) => ({ id, ciPolicy })),
+    [{ id: "upstream-renderer-cycle", ciPolicy: "required-upstream" }],
+  );
   assert.equal(featurePatchDescriptors({
     featuresConfigPath: path.join(__dirname, "..", "linux-features", "features.example.json"),
   }).length, 0);
 });
 
-test("empty registry leaves an extracted official-style app unchanged", (t) => {
+test("an explicitly empty registry leaves an extracted official-style app unchanged", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-empty-patch-registry-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const buildDir = path.join(root, ".vite", "build");
@@ -73,6 +76,7 @@ test("empty registry leaves an extracted official-style app unchanged", (t) => {
   const report = createPatchReport();
   patchExtractedApp(root, {
     report,
+    corePatchRoot: path.join(root, "empty-core"),
     featuresConfigPath: path.join(__dirname, "..", "linux-features", "features.example.json"),
   });
   assert.deepEqual(report.patches, []);

@@ -50,6 +50,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Default builds now repair the renderer module cycle in signed stable Linux
+  `26.908.31748` that can leave the main window empty with
+  `Initial route prefetch failed: n is not a function`. The required core
+  patch is acceptance-gated and must be retired when upstream removes the
+  cycle.
 - Wayland sessions again start the app on a native Wayland surface. The
   launcher appends `--ozone-platform=wayland` when `WAYLAND_DISPLAY` names a
   live compositor socket, the session is not X11, and no command-line argument,

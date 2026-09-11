@@ -102,10 +102,13 @@ stage_community_branding() {
 verify_clean_asar_preserved() {
     local upstream_asar="$1"
     local output_asar="$2"
-    local descriptor_count
-    descriptor_count="$(node "$SCRIPT_DIR/scripts/lib/linux-features.js" --patch-descriptor-count)"
-    [ "$descriptor_count" -ne 0 ] || cmp -s "$upstream_asar" "$output_asar" || \
-        error "Clean build changed resources/app.asar; refusing candidate"
+    local feature_descriptor_count
+    feature_descriptor_count="$(node "$SCRIPT_DIR/scripts/lib/linux-features.js" --patch-descriptor-count)"
+    [ "$feature_descriptor_count" -eq 0 ] || return 0
+    cmp -s "$upstream_asar" "$output_asar" && return 0
+    [ -n "${CODEX_PATCH_REPORT_RESOLVED:-}" ] &&
+        patch_report_has_only_required_core_changes "$CODEX_PATCH_REPORT_RESOLVED" && return 0
+    error "Default build changed resources/app.asar outside a required core patch; refusing candidate"
 }
 
 build_from_upstream_package() {

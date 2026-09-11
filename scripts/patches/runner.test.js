@@ -19,10 +19,19 @@ const {
 
 const emptyConfig = path.join(__dirname, "..", "..", "linux-features", "features.example.json");
 
-test("official baseline has no core descriptors or required patch policies", () => {
-  assert.deepEqual(corePatchDescriptors(), []);
-  assert.deepEqual(allPatchPolicies({ featuresConfigPath: emptyConfig }), []);
-  assert.deepEqual(requiredPatchNamesForProfile("upstream-build", { featuresConfigPath: emptyConfig }), []);
+test("official baseline requires the renderer-cycle core patch", () => {
+  assert.deepEqual(
+    corePatchDescriptors().map(({ id, ciPolicy }) => ({ id, ciPolicy })),
+    [{ id: "upstream-renderer-cycle", ciPolicy: "required-upstream" }],
+  );
+  assert.deepEqual(
+    allPatchPolicies({ featuresConfigPath: emptyConfig }).map(({ name, ciPolicy }) => ({ name, ciPolicy })),
+    [{ name: "upstream-renderer-cycle", ciPolicy: "required-upstream" }],
+  );
+  assert.deepEqual(
+    requiredPatchNamesForProfile("upstream-build", { featuresConfigPath: emptyConfig }),
+    ["upstream-renderer-cycle"],
+  );
 });
 
 test("runner context exposes enabled feature IDs", () => {
@@ -49,7 +58,11 @@ test("empty feature set leaves official extracted files byte-identical", () => {
     fs.writeFileSync(main, "official-main\n");
     fs.writeFileSync(webview, "official-webview\n");
     const report = createPatchReport();
-    patchExtractedApp(root, { report, featuresConfigPath: emptyConfig });
+    patchExtractedApp(root, {
+      report,
+      corePatchRoot: path.join(root, "empty-core"),
+      featuresConfigPath: emptyConfig,
+    });
     assert.equal(fs.readFileSync(main, "utf8"), "official-main\n");
     assert.equal(fs.readFileSync(webview, "utf8"), "official-webview\n");
     assert.deepEqual(report.patches, []);

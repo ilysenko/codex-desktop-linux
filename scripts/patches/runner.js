@@ -20,6 +20,7 @@ const {
   applyExtractedAppPatchDescriptors,
   applyMainBundlePatchDescriptors,
   applyWebviewAssetPatchDescriptors,
+  discoverCorePatchDescriptors,
   normalizePatchDescriptors,
   recordUnavailablePhasePatchDescriptors,
 } = require("./engine.js");
@@ -37,8 +38,8 @@ const CORE_PATCH_ROOT = path.join(__dirname, "core");
 const CUSTOM_PATCH_POLICIES = [];
 
 function normalizeDiscoveredCorePatchDescriptors(options = {}) {
-  void options;
-  return [];
+  const root = options.corePatchRoot ?? CORE_PATCH_ROOT;
+  return normalizePatchDescriptors(discoverCorePatchDescriptors({ root }));
 }
 
 function corePatchDescriptors(options = {}) {
@@ -182,7 +183,7 @@ function patchExtractedApp(extractedDir, options = {}) {
     PHASE_EXTRACTED_APP_POST_WEBVIEW,
   );
 
-  console.log("Applied enabled Linux feature descriptors:", {
+  console.log("Applied Linux patch descriptors:", {
     target: main == null ? null : path.join(main.buildDir, main.mainBundle),
     mainBundle: main?.mainBundle ?? null,
     iconAsset,
