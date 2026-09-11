@@ -6,16 +6,17 @@ use cosmic_protocols::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use wayland_client::{
     event_created_child,
     globals::{registry_queue_init, GlobalListContents},
-    protocol::{wl_registry, wl_seat},
+    protocol::{wl_output, wl_registry, wl_seat},
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
 };
 use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
     ext_foreign_toplevel_handle_v1, ext_foreign_toplevel_list_v1,
 };
+use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1, zxdg_output_v1};
 use wayland_protocols_wlr::output_management::v1::client::{
     zwlr_output_head_v1, zwlr_output_manager_v1, zwlr_output_mode_v1,
 };
@@ -39,7 +40,7 @@ struct WindowInfo {
     backend: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct WindowBounds {
     x: Option<i32>,
     y: Option<i32>,
@@ -92,6 +93,14 @@ struct OutputModeState {
     size: Option<(i32, i32)>,
 }
 
+#[derive(Debug, Default)]
+struct LogicalOutput {
+    position: Option<(i32, i32)>,
+    done: bool,
+}
+
+type RelativeGeometry = (i32, i32, i32, i32);
+
 #[derive(Debug, Clone, Default)]
 struct ToplevelRecord {
     foreign: Option<ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1>,
@@ -101,10 +110,13 @@ struct ToplevelRecord {
     app_id: Option<String>,
     focused: bool,
     hidden: bool,
+    geometries: HashMap<u32, RelativeGeometry>,
+    received_state: bool,
 }
 
 impl ToplevelRecord {
-    fn to_window(&self) -> Option<WindowInfo> {
+    fn to_window(&self, outputs: &HashMap<u32, LogicalOutput>) -> Option<WindowInfo> {
+        self.foreign.as_ref()?;
         let identifier = self.identifier.as_deref()?;
         Some(WindowInfo {
             window_id: stable_window_id(identifier),
@@ -112,7 +124,7 @@ impl ToplevelRecord {
             app_id: self.app_id.clone().filter(|value| !value.trim().is_empty()),
             wm_class: None,
             pid: None,
-            bounds: None,
+            bounds: global_window_bounds(&self.geometries, outputs),
             workspace: None,
             focused: self.focused,
             hidden: self.hidden,
@@ -132,6 +144,10 @@ struct AppData {
     records: Vec<ToplevelRecord>,
     by_foreign_id: HashMap<u32, usize>,
     by_cosmic_id: HashMap<u32, usize>,
+    logical_output_manager: Option<zxdg_output_manager_v1::ZxdgOutputManagerV1>,
+    output_proxies: HashMap<u32, wl_output::WlOutput>,
+    logical_outputs: HashMap<u32, LogicalOutput>,
+    toplevel_info_done: bool,
     output_manager: Option<zwlr_output_manager_v1::ZwlrOutputManagerV1>,
     output_layout_ready: bool,
     output_manager_finished: bool,
@@ -279,8 +295,19 @@ impl Snapshot {
         snapshot.app_data.output_manager = globals
             .bind::<zwlr_output_manager_v1::ZwlrOutputManagerV1, _, _>(&qh, 1..=4, ())
             .ok();
+        snapshot.app_data.logical_output_manager = globals
+            .bind::<zxdg_output_manager_v1::ZxdgOutputManagerV1, _, _>(&qh, 1..=3, ())
+            .ok();
         globals.contents().with_list(|entries| {
             for global in entries {
+                if global.interface == "wl_output" {
+                    snapshot.app_data.bind_output(
+                        globals.registry(),
+                        global.name,
+                        global.version,
+                        &qh,
+                    );
+                }
                 if global.interface == "wl_seat" {
                     snapshot
                         .app_data
@@ -313,6 +340,20 @@ impl Snapshot {
                 .roundtrip(&mut self.app_data)
                 .context("Wayland roundtrip failed")?;
         }
+        // COSMIC publishes extension properties from its refresh cycle, not
+        // necessarily before wl_display.sync. Four fast roundtrips can finish
+        // before any state/geometry arrives. Wait for the protocol's snapshot
+        // boundary, bounded below the parent's helper timeout.
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while !self.app_data.toplevel_snapshot_ready() {
+            if Instant::now() >= deadline {
+                bail!("COSMIC toplevel properties did not complete a snapshot");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            self.event_queue
+                .roundtrip(&mut self.app_data)
+                .context("Wayland roundtrip waiting for toplevel properties failed")?;
+        }
         Ok(())
     }
 
@@ -320,7 +361,7 @@ impl Snapshot {
         self.app_data
             .records
             .iter()
-            .filter_map(ToplevelRecord::to_window)
+            .filter_map(|record| record.to_window(&self.app_data.logical_outputs))
             .collect()
     }
 
@@ -384,6 +425,121 @@ impl Snapshot {
             .roundtrip(&mut self.app_data)
             .context("Wayland roundtrip after activation failed")?;
         Ok(())
+    }
+}
+
+// COSMIC geometry is output-relative in logical pixels. Never guess an origin
+// from wl_output's physical geometry or select an arbitrary spanning output.
+fn global_window_bounds(
+    geometries: &HashMap<u32, RelativeGeometry>,
+    outputs: &HashMap<u32, LogicalOutput>,
+) -> Option<WindowBounds> {
+    let mut result = None;
+    for (output_id, &(x, y, width, height)) in geometries {
+        let output = outputs.get(output_id)?;
+        if !output.done || width <= 0 || height <= 0 {
+            return None;
+        }
+        let (output_x, output_y) = output.position?;
+        let bounds = WindowBounds {
+            x: Some(output_x.checked_add(x)?),
+            y: Some(output_y.checked_add(y)?),
+            width: u32::try_from(width).ok()?,
+            height: u32::try_from(height).ok()?,
+        };
+        if result.as_ref().is_some_and(|previous| previous != &bounds) {
+            return None;
+        }
+        result = Some(bounds);
+    }
+    result
+}
+
+fn toplevel_properties_ready(info_done: bool, states: impl IntoIterator<Item = bool>) -> bool {
+    let mut states = states.into_iter().peekable();
+    states.peek().is_none() || (info_done && states.all(|received| received))
+}
+
+impl AppData {
+    fn toplevel_snapshot_ready(&self) -> bool {
+        toplevel_properties_ready(
+            self.toplevel_info_done,
+            self.records
+                .iter()
+                .filter(|record| record.foreign.is_some())
+                .map(|record| record.received_state),
+        )
+    }
+
+    fn bind_output(
+        &mut self,
+        registry: &wl_registry::WlRegistry,
+        name: u32,
+        version: u32,
+        qh: &QueueHandle<Self>,
+    ) {
+        if self.output_proxies.contains_key(&name) {
+            return;
+        }
+        let output = registry.bind::<wl_output::WlOutput, _, _>(name, version.min(4), qh, ());
+        let id = output.id().protocol_id();
+        self.logical_outputs.insert(id, LogicalOutput::default());
+        if let Some(manager) = &self.logical_output_manager {
+            manager.get_xdg_output(&output, qh, id);
+        }
+        self.output_proxies.insert(name, output);
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        output: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Done = event {
+            if let Some(logical) = state.logical_outputs.get_mut(&output.id().protocol_id()) {
+                logical.done = true;
+            }
+        }
+    }
+}
+
+impl Dispatch<zxdg_output_manager_v1::ZxdgOutputManagerV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &zxdg_output_manager_v1::ZxdgOutputManagerV1,
+        _: zxdg_output_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<zxdg_output_v1::ZxdgOutputV1, u32> for AppData {
+    fn event(
+        state: &mut Self,
+        _: &zxdg_output_v1::ZxdgOutputV1,
+        event: zxdg_output_v1::Event,
+        id: &u32,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(output) = state.logical_outputs.get_mut(id) else {
+            return;
+        };
+        match event {
+            zxdg_output_v1::Event::LogicalPosition { x, y } => {
+                output.position = Some((x, y));
+                output.done = false;
+            }
+            zxdg_output_v1::Event::Done => output.done = true,
+            _ => {}
+        }
     }
 }
 
@@ -538,7 +694,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for AppData {
         if let wl_registry::Event::Global {
             name,
             interface,
-            version: _,
+            version,
         } = event
         {
             match interface.as_str() {
@@ -571,12 +727,17 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for AppData {
                             ),
                     );
                 }
+                "wl_output" => app_data.bind_output(registry, name, version, qh),
                 "wl_seat" => {
                     app_data
                         .seats
                         .push(registry.bind::<wl_seat::WlSeat, _, _>(name, 9, qh, ()));
                 }
                 _ => {}
+            }
+        } else if let wl_registry::Event::GlobalRemove { name } = event {
+            if let Some(output) = app_data.output_proxies.remove(&name) {
+                app_data.logical_outputs.remove(&output.id().protocol_id());
             }
         }
     }
@@ -599,6 +760,7 @@ impl Dispatch<ext_foreign_toplevel_list_v1::ExtForeignToplevelListV1, ()> for Ap
                     ..Default::default()
                 };
                 if let Some(info) = app_data.toplevel_info.as_ref() {
+                    app_data.toplevel_info_done = false;
                     let cosmic = info.get_cosmic_toplevel(&toplevel, qh, ());
                     app_data
                         .by_cosmic_id
@@ -663,13 +825,16 @@ impl Dispatch<ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1, ()> fo
 
 impl Dispatch<zcosmic_toplevel_info_v1::ZcosmicToplevelInfoV1, ()> for AppData {
     fn event(
-        _app_data: &mut Self,
+        app_data: &mut Self,
         _info: &zcosmic_toplevel_info_v1::ZcosmicToplevelInfoV1,
-        _event: zcosmic_toplevel_info_v1::Event,
+        event: zcosmic_toplevel_info_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let zcosmic_toplevel_info_v1::Event::Done = event {
+            app_data.toplevel_info_done = true;
+        }
     }
 
     event_created_child!(
@@ -700,12 +865,13 @@ impl Dispatch<zcosmic_toplevel_handle_v1::ZcosmicToplevelHandleV1, ()> for AppDa
         let record = &mut app_data.records[index];
         match event {
             zcosmic_toplevel_handle_v1::Event::State { state } => {
+                record.received_state = true;
                 record.focused = false;
                 record.hidden = false;
-                for value in state.chunks_exact(4) {
-                    if let Ok(parsed) = zcosmic_toplevel_handle_v1::State::try_from(
-                        u32::from_ne_bytes(value.try_into().unwrap()),
-                    ) {
+                for value in state.as_chunks::<4>().0 {
+                    if let Ok(parsed) =
+                        zcosmic_toplevel_handle_v1::State::try_from(u32::from_ne_bytes(*value))
+                    {
                         if parsed == zcosmic_toplevel_handle_v1::State::Activated {
                             record.focused = true;
                         }
@@ -715,9 +881,21 @@ impl Dispatch<zcosmic_toplevel_handle_v1::ZcosmicToplevelHandleV1, ()> for AppDa
                     }
                 }
             }
-            zcosmic_toplevel_handle_v1::Event::Geometry { .. }
-            | zcosmic_toplevel_handle_v1::Event::OutputEnter { .. }
-            | zcosmic_toplevel_handle_v1::Event::OutputLeave { .. }
+            zcosmic_toplevel_handle_v1::Event::Geometry {
+                output,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                record
+                    .geometries
+                    .insert(output.id().protocol_id(), (x, y, width, height));
+            }
+            zcosmic_toplevel_handle_v1::Event::OutputLeave { output } => {
+                record.geometries.remove(&output.id().protocol_id());
+            }
+            zcosmic_toplevel_handle_v1::Event::OutputEnter { .. }
             | zcosmic_toplevel_handle_v1::Event::WorkspaceEnter { .. }
             | zcosmic_toplevel_handle_v1::Event::WorkspaceLeave { .. }
             | zcosmic_toplevel_handle_v1::Event::ExtWorkspaceEnter { .. }
@@ -948,6 +1126,75 @@ mod tests {
         )]);
 
         assert!(monitor_layout_from_state(&heads, &modes).is_none());
+    }
+
+    fn logical_output(x: i32, y: i32) -> LogicalOutput {
+        LogicalOutput {
+            position: Some((x, y)),
+            done: true,
+        }
+    }
+
+    #[test]
+    fn window_geometry_is_translated_from_output_to_desktop() {
+        let outputs = HashMap::from([(1, logical_output(-1920, 120))]);
+        let geometry = HashMap::from([(1, (100, 30, 800, 600))]);
+        assert_eq!(
+            global_window_bounds(&geometry, &outputs),
+            Some(WindowBounds {
+                x: Some(-1820),
+                y: Some(150),
+                width: 800,
+                height: 600,
+            })
+        );
+    }
+
+    #[test]
+    fn spanning_window_requires_consistent_global_geometry() {
+        let outputs = HashMap::from([(1, logical_output(-1920, 0)), (2, logical_output(0, 0))]);
+        let mut geometry = HashMap::from([(1, (1800, 50, 800, 600)), (2, (-120, 50, 800, 600))]);
+        assert_eq!(
+            global_window_bounds(&geometry, &outputs).unwrap().x,
+            Some(-120)
+        );
+        geometry.insert(2, (-100, 50, 800, 600));
+        assert!(global_window_bounds(&geometry, &outputs).is_none());
+    }
+
+    #[test]
+    fn window_geometry_rejects_missing_unfinished_invalid_and_overflowing_outputs() {
+        let geometry = HashMap::from([(1, (100, 30, 800, 600))]);
+        assert!(global_window_bounds(&geometry, &HashMap::new()).is_none());
+        let mut outputs = HashMap::from([(1, LogicalOutput::default())]);
+        assert!(global_window_bounds(&geometry, &outputs).is_none());
+        outputs.insert(
+            1,
+            LogicalOutput {
+                position: Some((0, 0)),
+                done: false,
+            },
+        );
+        assert!(global_window_bounds(&geometry, &outputs).is_none());
+        outputs.insert(1, logical_output(i32::MAX, 0));
+        assert!(global_window_bounds(&geometry, &outputs).is_none());
+        outputs.insert(1, logical_output(0, 0));
+        for size in [(0, 600), (-1, 600), (800, 0), (800, -1)] {
+            assert!(
+                global_window_bounds(&HashMap::from([(1, (0, 0, size.0, size.1))]), &outputs)
+                    .is_none()
+            );
+        }
+        assert!(global_window_bounds(&HashMap::new(), &outputs).is_none());
+    }
+
+    #[test]
+    fn snapshot_waits_for_refresh_properties_and_protocol_done() {
+        assert!(!toplevel_properties_ready(false, [false, false]));
+        assert!(!toplevel_properties_ready(true, [true, false]));
+        assert!(!toplevel_properties_ready(false, [true, true]));
+        assert!(toplevel_properties_ready(true, [true, true]));
+        assert!(toplevel_properties_ready(false, []));
     }
 
     #[test]

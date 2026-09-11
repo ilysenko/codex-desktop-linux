@@ -1,4 +1,4 @@
-// Installed after upstream setupCUA; browser ownership remains upstream.
+// Installed after the upstream CUA factory; browser ownership remains upstream.
 export function installLinuxComputerUse(cua) {
   const runtime = globalThis.nodeRepl;
   if (typeof runtime?.rpc !== 'function') throw new Error('Linux Computer Use requires trusted nodeRepl RPC');

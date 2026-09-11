@@ -42,7 +42,7 @@ sha2 = "0.11.0"
 tokio = { version = "1.51.1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["handshake"] }
 wayland-client = "0.31.11"
-wayland-protocols = { version = "0.32.9", features = ["client", "staging"] }
+wayland-protocols = { version = "0.32.9", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 xkeysym = "0.2.1"
 zbus = "5.14.0"

@@ -14,7 +14,10 @@ const {
 const { applyNativeSettingsAvailabilityPatch, applyNativeSettingsVisibilityPatch } = require("./settings.js");
 const { applyUnifiedComputerUsePatch } = require("./unified.js");
 
+const { applyNativeRuntimeEnvironmentPatch } = require("./runtime-env.js");
+
 module.exports = [
+  mainBundlePatch({ id: "native-runtime-environment", order: 20_116, apply: applyNativeRuntimeEnvironmentPatch }),
   mainBundlePatch({
     id: "unified-runtime",
     order: 20_115,

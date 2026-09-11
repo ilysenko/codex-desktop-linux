@@ -19,7 +19,7 @@ use crate::terminal::{terminal_paste_shortcut, TerminalPasteShortcut};
 use crate::windowing::registry;
 use crate::windows::{
     focus_window_target, focused_window, list_windows, resolve_window_target,
-    window_permission_hint, WindowFocusResult, WindowInfo, WindowTarget,
+    window_permission_hint, WindowFocusResult, WindowInfo, WindowTarget, COSMIC_WAYLAND_BACKEND,
     GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND, KWIN_BACKEND,
 };
 use crate::ydotool;
@@ -1320,12 +1320,31 @@ impl ComputerUseLinux {
                 });
             }
         };
+        // Use the same absolute pointer as clicks to position the wheel.
+        // ydotool emulates absolute movement with accelerated relative motion,
+        // which can leave the cursor outside the requested COSMIC window.
+        let absolute_position = target_point.is_some() && self.ensure_abs_pointer().await;
+        let abs_pointer = Arc::clone(&self.abs_pointer);
         let mut sequence = Vec::new();
-        if let Some((x, y)) = target_point {
+        if let Some((x, y)) = target_point.filter(|_| !absolute_position) {
             sequence.push(absolute_mousemove_args(x, y));
         }
         sequence.push(wheel_mousemove_args(dx, dy));
         let (input_guard, result) = run_cancellation_safe_input(input_guard, async move {
+            if let Some((x, y)) = target_point.filter(|_| absolute_position) {
+                {
+                    let mut guard = abs_pointer
+                        .lock()
+                        .map_err(|_| "Absolute pointer lock failed".to_string())?;
+                    let pointer = guard
+                        .as_mut()
+                        .ok_or_else(|| "Absolute pointer unavailable".to_string())?;
+                    pointer
+                        .move_to(x, y)
+                        .map_err(|error| format!("Scroll positioning failed: {error:#}"))?;
+                }
+                sleep(Duration::from_millis(35)).await;
+            }
             run_ydotool_sequence(&sequence).await
         })
         .await;
@@ -2871,6 +2890,14 @@ impl ComputerUseLinux {
                         .map(|monitor| (monitor.x, monitor.y, monitor.width, monitor.height))
                         .collect()
                 })
+        } else if window.backend == COSMIC_WAYLAND_BACKEND {
+            Some(
+                crate::cosmic_helper::monitor_layout()
+                    .await?
+                    .into_iter()
+                    .map(|monitor| (monitor.x, monitor.y, monitor.width, monitor.height))
+                    .collect(),
+            )
         } else if window.backend == KWIN_BACKEND {
             Some(vec![
                 crate::windowing::backends::kwin::logical_desktop_rect()
@@ -2908,7 +2935,10 @@ impl ComputerUseLinux {
             .unwrap_or(&focus.requested_window);
         if !matches!(
             window.backend.as_str(),
-            GNOME_SHELL_EXTENSION_BACKEND | GNOME_SHELL_INTROSPECT_BACKEND | KWIN_BACKEND
+            GNOME_SHELL_EXTENSION_BACKEND
+                | GNOME_SHELL_INTROSPECT_BACKEND
+                | KWIN_BACKEND
+                | COSMIC_WAYLAND_BACKEND
         ) {
             let full_capture_rect = window
                 .bounds
@@ -5754,6 +5784,27 @@ mod tests {
 
         assert_eq!(mapping.capture_rect, (2000, 200, 1600, 1200));
         assert_eq!(mapping.portal_point(2400, 500), Some((1300, 200)));
+    }
+
+    #[test]
+    fn cosmic_logical_geometry_maps_scaled_nonzero_origin_to_capture_and_input() {
+        let bounds = WindowBounds {
+            x: Some(-1820),
+            y: Some(150),
+            width: 800,
+            height: 600,
+        };
+        let logical = window_crop_rect(&bounds).unwrap();
+        let capture =
+            logical_window_crop_rect(&bounds, &[(-1920, 120, 1920, 1080)], 3840, 2160).unwrap();
+        assert_eq!(capture, (200, 60, 1600, 1200));
+        let map = WindowCoordinateMap {
+            capture_rect: capture,
+            full_capture_rect: capture,
+            portal_rect: Some(logical),
+        };
+        assert_eq!(map.capture_rect, (200, 60, 1600, 1200));
+        assert_eq!(map.portal_point(600, 360), Some((-1620, 300)));
     }
 
     #[test]
