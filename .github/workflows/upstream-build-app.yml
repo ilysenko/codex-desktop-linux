@@ -112,31 +112,66 @@ jobs:
           ./install.sh "${{ steps.upstream.outputs.package }}"
           upstream_root="$(mktemp -d)"
           dpkg-deb -x "${{ steps.upstream.outputs.package }}" "$upstream_root"
-          if cmp -s "$upstream_root/usr/lib/chatgpt/resources/app.asar" "$CODEX_INSTALL_DIR/resources/app.asar"; then
-            echo "required renderer-cycle patch did not change app.asar" >&2
+          if ! cmp -s "$upstream_root/usr/lib/chatgpt/resources/app.asar" "$CODEX_INSTALL_DIR/resources/app.asar"; then
+            echo "default build did not preserve the signed app.asar byte-for-byte" >&2
             exit 1
           fi
-          node - "$CODEX_INSTALL_DIR/.codex-linux/patch-report.json" <<'NODE'
+          node - "$CODEX_INSTALL_DIR/.codex-linux/patch-report.json" "$CODEX_INSTALL_DIR/resources/app.asar" <<'NODE'
+          const crypto = require("node:crypto");
           const fs = require("node:fs");
           const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const expected = [{
-            name: "upstream-renderer-cycle",
-            status: "applied",
-            ciPolicy: "required-upstream",
-            sourceKind: "core",
-          }];
-          const actual = report.patches.map(({ name, status, ciPolicy, sourceKind }) => ({
-            name,
-            status,
-            ciPolicy,
-            sourceKind,
-          }));
-          if (report.enabledFeatures.length !== 0 || JSON.stringify(actual) !== JSON.stringify(expected)) {
+          const asarSha256 = crypto.createHash("sha256")
+            .update(fs.readFileSync(process.argv[3]))
+            .digest("hex");
+          if (report.enabledFeatures.length !== 0
+              || report.patches.length !== 0
+              || report.upstreamAppAsar?.preservedByteForByte !== true
+              || report.upstreamAppAsar?.sha256 !== asarSha256) {
             throw new Error(`unexpected default patch report: ${JSON.stringify(report)}`);
           }
           NODE
           test -x "$CODEX_INSTALL_DIR/ChatGPT"
           test -x "$CODEX_INSTALL_DIR/resources/codex"
+      - name: Require signed renderer dependency regression
+        if: matrix.architecture == 'amd64'
+        env:
+          EXPECTED_SIGNED_VERSION: 26.908.40834
+          EXPECTED_SIGNED_REPOSITORY_PATH: pool/main/c/chatgpt/chatgpt_26.908.40834_amd64.deb
+          EXPECTED_SIGNED_SHA256: da37b8e7bcefaaea019c478cacbe6c73ee1ddd15e0e1ebb3c7ef0a42dd818ac2
+        run: |
+          set -euo pipefail
+          node - "upstream/${{ matrix.architecture }}.json" <<'NODE'
+          const fs = require("node:fs");
+          const metadata = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (metadata.version !== process.env.EXPECTED_SIGNED_VERSION
+              || metadata.repositoryPath !== process.env.EXPECTED_SIGNED_REPOSITORY_PATH
+              || metadata.sha256 !== process.env.EXPECTED_SIGNED_SHA256) {
+            throw new Error("signed renderer regression is not bound to the expected campaign");
+          }
+          NODE
+          upstream_root="$(mktemp -d)"
+          extracted_asar="$(mktemp -d)"
+          dpkg-deb -x "${{ steps.upstream.outputs.package }}" "$upstream_root"
+          npx --yes @electron/asar extract \
+            "$upstream_root/usr/lib/chatgpt/resources/app.asar" \
+            "$extracted_asar"
+          node - "$extracted_asar/webview/assets" <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const assets = process.argv[2];
+          const authedName = "authed-route-b13b8511676d.js";
+          const primaryName = "app-primary-235a5815607d.js";
+          const authed = fs.readFileSync(path.join(assets, authedName), "utf8");
+          const primary = fs.readFileSync(path.join(assets, primaryName), "utf8");
+          if (!authed.includes(`./${primaryName}`)) {
+            throw new Error(`${authedName} no longer imports ${primaryName}`);
+          }
+          for (const reverseMarker of [authedName, "authed-route", "b13b8511676d"]) {
+            if (primary.includes(reverseMarker)) {
+              throw new Error(`${primaryName} restored the retired reverse dependency via ${reverseMarker}`);
+            }
+          }
+          NODE
       - name: Validate the Nix ELF contract against the official payload
         env:
           CODEX_INSTALL_DIR: ${{ github.workspace }}/codex-app-${{ matrix.architecture }}

@@ -56,9 +56,33 @@ test("official Linux validation runs fully on every pull request but not hourly"
   const signedBaseline = job(workflow, "signed-baseline");
   assert.match(signedBaseline, /architecture: \[amd64, arm64\]/);
   assert.match(signedBaseline, /name: Build required default baseline/);
-  assert.match(signedBaseline, /name: "upstream-renderer-cycle"/);
-  assert.match(signedBaseline, /ciPolicy: "required-upstream"/);
-  assert.match(signedBaseline, /sourceKind: "core"/);
+  assert.match(
+    signedBaseline,
+    /if ! cmp -s "\$upstream_root\/usr\/lib\/chatgpt\/resources\/app\.asar" "\$CODEX_INSTALL_DIR\/resources\/app\.asar"/,
+  );
+  assert.match(signedBaseline, /report\.enabledFeatures\.length !== 0/);
+  assert.match(signedBaseline, /report\.patches\.length !== 0/);
+  assert.match(signedBaseline, /report\.upstreamAppAsar\?\.preservedByteForByte !== true/);
+  assert.match(signedBaseline, /name: Require signed renderer dependency regression/);
+  assert.match(signedBaseline, /if: matrix\.architecture == 'amd64'/);
+  assert.match(signedBaseline, /EXPECTED_SIGNED_VERSION: 26\.908\.40834/);
+  assert.match(
+    signedBaseline,
+    /EXPECTED_SIGNED_REPOSITORY_PATH: pool\/main\/c\/chatgpt\/chatgpt_26\.908\.40834_amd64\.deb/,
+  );
+  assert.match(
+    signedBaseline,
+    /EXPECTED_SIGNED_SHA256: da37b8e7bcefaaea019c478cacbe6c73ee1ddd15e0e1ebb3c7ef0a42dd818ac2/,
+  );
+  assert.match(signedBaseline, /signed renderer regression is not bound to the expected campaign/);
+  assert.match(
+    signedBaseline,
+    /"\$upstream_root\/usr\/lib\/chatgpt\/resources\/app\.asar"/,
+  );
+  assert.match(signedBaseline, /authed-route-b13b8511676d\.js/);
+  assert.match(signedBaseline, /app-primary-235a5815607d\.js/);
+  assert.match(signedBaseline, /!authed\.includes\(`\.\/\$\{primaryName\}`\)/);
+  assert.match(signedBaseline, /primary\.includes\(reverseMarker\)/);
   assert.match(
     signedBaseline,
     /name: Validate the Nix ELF contract against the official payload[\s\S]*?env:\n          CODEX_INSTALL_DIR:.*matrix\.architecture[\s\S]*?nix\/elf-runtime\.cjs fix[\s\S]*?nix\/elf-runtime\.cjs audit/,
