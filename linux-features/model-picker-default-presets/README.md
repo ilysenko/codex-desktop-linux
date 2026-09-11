@@ -6,6 +6,12 @@ effort pairs. It does not change the manual model list, API-key, Copilot, or
 Aeon-managed sessions, account entitlements, workspace policy, or upstream
 Ultra/XHigh gates.
 
+For an existing chat, configured pairs are kept as the composer's optimistic
+selection after the upstream next-turn settings RPC completes. This avoids a
+race where a long conversation can briefly expose stale thread metadata and
+reset the picker. Selecting a model/effort pair outside this feature's list
+removes that local override and restores the normal upstream behavior.
+
 The stock Settings page controls which reasoning efforts are visible and
 whether Ultra may appear in the picker. It does not currently configure the
 model/effort pairs behind **Default**.

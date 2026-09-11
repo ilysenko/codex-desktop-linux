@@ -122,7 +122,7 @@ function fontSizeBundlePaths(extractedDir) {
   if (fs.existsSync(webviewAssetsDir)) {
     paths.push(
       ...fs.readdirSync(webviewAssetsDir, { withFileTypes: true })
-        .filter((entry) => entry.isFile() && /^app-initial-[^.]+\.js$/.test(entry.name))
+        .filter((entry) => entry.isFile() && /^src-[^.]+\.js$/.test(entry.name))
         .map((entry) => path.join(webviewAssetsDir, entry.name)),
     );
   }

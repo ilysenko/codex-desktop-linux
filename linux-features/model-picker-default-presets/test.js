@@ -14,18 +14,21 @@ const {
   CATALOG_PATCH_MARKER,
   CATALOG_PRESET_OPTIONS_KEY,
   EFFORT_TO_THINKING_EFFORT,
+  EXISTING_CHAT_OPTIMISTIC_MARKER,
   LOCAL_DEFAULT_PATCH_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
   LOCAL_COMPOSER_RESOLVER_MARKER,
   LOCAL_DRAFT_SELECTION_MARKER,
   SLIDER_PATCH_MARKER,
   applyCatalogPatch,
+  applyExistingChatOptimisticPatch,
   applyLocalComposerConfigPatch,
   applyLocalComposerResolverPatch,
   applySliderMinimumPatch,
   catalogAssetMatch,
   catalogPatchContract,
   codexLinuxModelPickerDefaultPresets,
+  existingChatOptimisticContract,
   normalizePresets,
   localComposerConfigContract,
   localComposerResolverContract,
@@ -100,6 +103,24 @@ function localComposerFixture(name = "LocalComposer") {
     "composer.mode.local.model.custom;let reset=zae(Ue,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "render({onSelectDefault:reset});",
     "return{powerSelections:Ue,fallback:Ke,reset,selected}}",
+    "function Next(){}",
+  ].join("");
+}
+
+function existingChatStateFixture(cleanupName = "p6a", stateName = "q8a") {
+  return [
+    `function ${cleanupName}(e,t){e.get($1,t.target)===t.selection&&(e.set($1,t.target,null),e.get(Q1,t.target)===t.selection&&e.set(Q1,t.target,null),t.target[0]===\"default\"&&e.get(m6a)===t.selection&&e.set(m6a,null))}`,
+    `function ${stateName}(e,t,n){`,
+    "let i=e,host={authMethod:t??`chatgpt`},isChatGptAuth=host?.authMethod===`chatgpt`,",
+    "a=n??[`conversation`,`thread`],hasManagedNewThreadSettings=false,",
+    "setModelAndReasoningEffortForNextTurn=()=>true,",
+    "error=Error(`No conversation available for next-turn model update`),",
+    "G=()=>true,",
+    "de=(t,n,r)=>{let o=r?.serviceTier===void 0?void 0:r.serviceTier;",
+    "return d6a(i,a,{model:t,reasoningEffort:n,serviceTier:o},()=>G(t,n,`current`,o))};",
+    "return{hasManagedNewThreadSettings:hasManagedNewThreadSettings,",
+    "setModelAndReasoningEffortForNextTurn:setModelAndReasoningEffortForNextTurn,",
+    "setModelAndReasoningEffort:de,error}}",
     "function Next(){}",
   ].join("");
 }
@@ -602,6 +623,20 @@ test("local composer uses configured pairs and lowers only its config threshold"
   });
   assert.deepEqual(existingConversation.selections, []);
 
+  const existingConfiguredSelection = runComposer({
+    available: [
+      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
+    ],
+    conversationId: "existing",
+    manualSelection: true,
+  });
+  assert.deepEqual(existingConfiguredSelection.selections, [
+    {
+      effort: "high",
+      model: "gpt-5.6-sol",
+    },
+  ]);
+
   const lifecycleHooks = { refs: [] };
   const lifecycleAvailable = [
     { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
@@ -632,6 +667,103 @@ test("local composer uses configured pairs and lowers only its config threshold"
       options: { persistAsDefault: false },
     },
   ]);
+});
+
+test("existing chats retain configured optimistic selections until another selection replaces them", () => {
+  const presets = context([
+    { model: "gpt-5.6-sol", effort: "medium", default: true },
+    { model: "gpt-5.6-sol", effort: "xhigh" },
+  ]);
+  const source = existingChatStateFixture();
+  assert.equal(existingChatOptimisticContract(source), "current");
+  const patched = applyExistingChatOptimisticPatch(source, presets);
+  assert.equal(existingChatOptimisticContract(patched), "applied");
+  assert.equal(applyExistingChatOptimisticPatch(patched, presets), patched);
+  assert.equal(
+    (patched.match(new RegExp(EXISTING_CHAT_OPTIMISTIC_MARKER, "g")) ?? []).length,
+    2,
+  );
+
+  const state = new Map();
+  const key = (_atom, target) => JSON.stringify(target);
+  const store = {
+    get(atom, target) {
+      return state.get(`${atom}:${key(atom, target)}`);
+    },
+    set(atom, target, value) {
+      state.set(`${atom}:${key(atom, target)}`, value);
+    },
+  };
+  const globals = {
+    $1: "pending",
+    Q1: "optimistic",
+    m6a: "default",
+    d6a: (_store, _target, selection) => selection,
+    store,
+  };
+  const configured = evaluate(
+    patched,
+    "q8a(store).setModelAndReasoningEffort('gpt-5.6-sol','xhigh')",
+    { ...globals },
+  );
+  const target = ["conversation", "thread"];
+  store.set("pending", target, configured);
+  store.set("optimistic", target, configured);
+  evaluate(patched, "p6a(store,{selection,target:['conversation','thread']})", {
+    ...globals,
+    selection: configured,
+  });
+  assert.equal(store.get("pending", target), null);
+  assert.strictEqual(store.get("optimistic", target), configured);
+
+  const translatedConfigured = evaluate(
+    patched,
+    "q8a(store).setModelAndReasoningEffort('gpt-5.6-sol','standard')",
+    { ...globals },
+  );
+  assert.equal(translatedConfigured.codexLinuxKeepOptimisticSelection, true);
+
+  const nonChatGptConfigured = evaluate(
+    patched,
+    "q8a(store,'api-key').setModelAndReasoningEffort('gpt-5.6-sol','xhigh')",
+    { ...globals },
+  );
+  assert.equal(nonChatGptConfigured.codexLinuxKeepOptimisticSelection, false);
+
+  const newThreadConfigured = evaluate(
+    patched,
+    "q8a(store,undefined,['default','local','/repo']).setModelAndReasoningEffort('gpt-5.6-sol','xhigh')",
+    { ...globals },
+  );
+  assert.equal(newThreadConfigured.codexLinuxKeepOptimisticSelection, false);
+
+  const manual = evaluate(
+    patched,
+    "q8a(store).setModelAndReasoningEffort('gpt-6-astra','standard')",
+    { ...globals },
+  );
+  store.set("pending", target, manual);
+  store.set("optimistic", target, manual);
+  evaluate(patched, "p6a(store,{selection,target:['conversation','thread']})", {
+    ...globals,
+    selection: manual,
+  });
+  assert.equal(store.get("optimistic", target), null);
+});
+
+test("existing-chat patch fails closed on drift, duplicate, and partial states", () => {
+  const presets = context([{ model: "gpt-5.6-sol", effort: "medium", default: true }]);
+  for (const source of [
+    "function unrelated(){}",
+    existingChatStateFixture("pOne", "qOne") + existingChatStateFixture("pTwo", "qTwo"),
+    `${EXISTING_CHAT_OPTIMISTIC_MARKER};${existingChatStateFixture()}`,
+  ]) {
+    const { result, warnings } = withCapturedWarnings(() =>
+      applyExistingChatOptimisticPatch(source, presets),
+    );
+    assert.equal(result, source);
+    assert.equal(warnings.length, 1);
+  }
 });
 
 test("local composer patches fail closed on drift, duplicate, and partial states", () => {
@@ -711,7 +843,7 @@ test("feature descriptors load alone and alongside ui-tweaks", () => {
       featuresRoot: root,
       featuresConfigPath: configPath,
     });
-    assert.equal(alone.length, 4);
+    assert.equal(alone.length, 5);
     assert.ok(alone.every(({ featureId }) => featureId === "model-picker-default-presets"));
     writeConfig(["model-picker-default-presets", "ui-tweaks"]);
     const together = loadLinuxFeaturePatchDescriptors({

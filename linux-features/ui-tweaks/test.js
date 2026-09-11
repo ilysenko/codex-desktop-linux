@@ -191,12 +191,16 @@ function createUiFontSizeExtractedApp() {
   const targets = [
     path.join(buildDir, "src-fixture.js"),
     path.join(buildDir, "worker.js"),
-    path.join(webviewDir, "app-initial-fixture.js"),
+    path.join(webviewDir, "src-fixture.js"),
   ];
   for (const target of targets) {
     fs.writeFileSync(target, uiFontSizeBundleFixture());
   }
   fs.writeFileSync(path.join(buildDir, "unrelated.js"), "console.log('unrelated');");
+  fs.writeFileSync(
+    path.join(webviewDir, "app-initial-retired.js"),
+    uiFontSizeBundleFixture(),
+  );
   return { extractedDir, targets };
 }
 

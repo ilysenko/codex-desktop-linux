@@ -10,6 +10,9 @@ const LOCAL_COMPOSER_RESOLVER_MARKER =
   "codex-linux-model-picker-default-presets-local-composer-resolver";
 const LOCAL_DRAFT_SELECTION_MARKER =
   "codex-linux-model-picker-default-presets-local-draft-selection";
+const EXISTING_CHAT_OPTIMISTIC_MARKER =
+  "codex-linux-model-picker-default-presets-existing-chat-optimistic-selection";
+const EXISTING_CHAT_PRESET_IDS_KEY = "codexLinuxExistingChatDefaultPresetIds";
 const JS_ASSET_PATTERN = /\.js$/;
 const EFFORT_TO_THINKING_EFFORT = Object.freeze({
   none: "zero",
@@ -640,6 +643,168 @@ function localComposerConfigContract(source) {
   return "mixed";
 }
 
+function optimisticSelectionCleanupSection(source) {
+  const candidates = functionSections(source).filter(
+    (section) =>
+      section.source.includes('.target[0]==="default"') &&
+      section.source.includes(".selection") &&
+      optimisticSelectionCleanupTarget(section) != null,
+  );
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function optimisticSelectionCleanupTarget(section) {
+  const signature =
+    /^function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)/u.exec(
+      section?.source ?? "",
+    );
+  if (signature == null) return null;
+  const [, store, entry] = signature;
+  const pattern = new RegExp(
+    `${store}\\.get\\(([A-Za-z_$][\\w$]*),${entry}\\.target\\)===${entry}\\.selection&&${store}\\.set\\(\\1,${entry}\\.target,null\\)`,
+    "gu",
+  );
+  const matches = [...section.source.matchAll(pattern)];
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function modelSettingsStateSection(source) {
+  return uniqueFunctionWithMarkers(source, [
+    "hasManagedNewThreadSettings:",
+    "setModelAndReasoningEffortForNextTurn:",
+    "No conversation available for next-turn model update",
+    "reasoningEffort:",
+    "serviceTier:",
+  ]);
+}
+
+function modelSettingsSelectionTarget(section) {
+  const source = section?.source ?? "";
+  const pattern =
+    /return [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,([A-Za-z_$][\w$]*),\{model:([A-Za-z_$][\w$]*),reasoningEffort:([A-Za-z_$][\w$]*),serviceTier:([A-Za-z_$][\w$]*)\},\(\)=>[A-Za-z_$][\w$]*\(/gu;
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) return null;
+  const [match, target, model, effort] = matches[0];
+  return {
+    effort,
+    match,
+    model,
+    serviceTier: matches[0][4],
+    target,
+  };
+}
+
+function chatGptAuthVariable(section) {
+  const matches = [
+    ...(section?.source ?? "").matchAll(
+      /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.authMethod===`chatgpt`/gu,
+    ),
+  ];
+  return matches.length === 1 ? matches[0][1] : null;
+}
+
+function existingChatPresetRuntime(presets) {
+  const ids = new Set();
+  for (const { modelSlug, thinkingEffort } of presets) {
+    ids.add(`${modelSlug}:${THINKING_EFFORT_TO_EFFORT[thinkingEffort]}`);
+    ids.add(`${modelSlug}:${thinkingEffort}`);
+  }
+  return `const ${EXISTING_CHAT_PRESET_IDS_KEY}=new Set(${JSON.stringify([...ids])});`;
+}
+
+function existingChatOptimisticContract(source) {
+  const markerCount = source.split(EXISTING_CHAT_OPTIMISTIC_MARKER).length - 1;
+  const presetIdsCount = source.split(EXISTING_CHAT_PRESET_IDS_KEY).length - 1;
+  const cleanup = optimisticSelectionCleanupSection(source);
+  const modelState = modelSettingsStateSection(source);
+  if (markerCount === 0 && presetIdsCount === 0) {
+    if (cleanup == null || modelState == null) return "drifted";
+    return modelSettingsSelectionTarget(modelState) != null &&
+      chatGptAuthVariable(modelState) != null
+      ? "current"
+      : "drifted";
+  }
+  if (
+    markerCount === 2 &&
+    presetIdsCount === 2 &&
+    cleanup != null &&
+    modelState != null &&
+    cleanup.source.includes(".selection?.codexLinuxKeepOptimisticSelection!==!0") &&
+    modelState.source.includes(`&&${EXISTING_CHAT_PRESET_IDS_KEY}.has(`)
+  ) {
+    return "applied";
+  }
+  return "mixed";
+}
+
+function applyExistingChatOptimisticPatch(source, context = {}) {
+  const presets = normalizePresets(context);
+  if (presets.length === 0) return source;
+  const contract = existingChatOptimisticContract(source);
+  if (contract === "applied") return source;
+  if (contract !== "current") {
+    warn(
+      "Could not find one coherent existing-chat optimistic model-selection contract",
+      "model picker Default existing-chat selection patch",
+    );
+    return source;
+  }
+
+  const cleanup = optimisticSelectionCleanupSection(source);
+  const modelState = modelSettingsStateSection(source);
+  const cleanupTarget = optimisticSelectionCleanupTarget(cleanup);
+  const selectionTarget = modelSettingsSelectionTarget(modelState);
+  const chatGptAuth = chatGptAuthVariable(modelState);
+  const entry =
+    /^function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,([A-Za-z_$][\w$]*)\)/u.exec(
+      cleanup.source,
+    )?.[1];
+  if (
+    cleanupTarget == null ||
+    selectionTarget == null ||
+    chatGptAuth == null ||
+    entry == null
+  ) {
+    return source;
+  }
+
+  const patchedCleanup = cleanup.source.replace(
+    cleanupTarget[0],
+    `${entry}.selection?.codexLinuxKeepOptimisticSelection!==!0&&${cleanupTarget[0]}/*${EXISTING_CHAT_OPTIMISTIC_MARKER}*/`,
+  );
+  const patchedModelState = modelState.source.replace(
+    selectionTarget.match,
+    selectionTarget.match.replace(
+      `serviceTier:${selectionTarget.serviceTier}`,
+      `serviceTier:${selectionTarget.serviceTier},codexLinuxKeepOptimisticSelection:${chatGptAuth}&&${selectionTarget.target}[0]===\`conversation\`&&${EXISTING_CHAT_PRESET_IDS_KEY}.has(${selectionTarget.model}+\`:\`+${selectionTarget.effort})/*${EXISTING_CHAT_OPTIMISTIC_MARKER}*/`,
+    ),
+  );
+  const replacements = [
+    { ...cleanup, source: patchedCleanup },
+    { ...modelState, source: patchedModelState },
+  ].sort((left, right) => right.start - left.start);
+  let patchedSource = source;
+  for (const replacement of replacements) {
+    patchedSource =
+      patchedSource.slice(0, replacement.start) +
+      replacement.source +
+      patchedSource.slice(replacement.end);
+  }
+  const helperIndex = Math.min(cleanup.start, modelState.start);
+  patchedSource =
+    patchedSource.slice(0, helperIndex) +
+    existingChatPresetRuntime(presets) +
+    patchedSource.slice(helperIndex);
+  if (existingChatOptimisticContract(patchedSource) !== "applied") {
+    warn(
+      "Could not apply the complete existing-chat optimistic model-selection contract",
+      "model picker Default existing-chat selection patch",
+    );
+    return source;
+  }
+  return patchedSource;
+}
+
 function applyLocalComposerConfigPatch(source, context = {}) {
   const presets = normalizePresets(context);
   if (presets.length === 0) return source;
@@ -693,7 +858,7 @@ function applyLocalComposerConfigPatch(source, context = {}) {
     `;let codexLinuxLocalDraftDefaultRef=(0,${reactAlias}.useRef)(null),` +
     `codexLinuxLocalDraftDefaultScope=${conversationVariable}==null?JSON.stringify([${hostVariable}.hostId,${hostVariable}.cwd]):null,` +
     `codexLinuxLocalDraftDefaultSelection=${configVariable}==null?null:codexLinuxLocalDefaultPresetSelection(${defaultSelectionsVariable}),` +
-    `codexLinuxLocalDraftSelect=(codexLinuxModel,codexLinuxEffort,codexLinuxCallback)=>(${draftSelectionVariable}?.selectModelAndReasoningEffort??((codexLinuxFallbackModel,codexLinuxFallbackEffort,codexLinuxFallbackCallback)=>${baseSelectionVariable}(codexLinuxFallbackModel,codexLinuxFallbackEffort,codexLinuxFallbackCallback,${configVariable}!=null&&codexLinuxLocalDefaultPresetIds.has(\`${"${codexLinuxFallbackModel}:${codexLinuxFallbackEffort}"}\`)?{persistAsDefault:!1}:void 0)))(codexLinuxModel,codexLinuxEffort,codexLinuxCallback);` +
+    `codexLinuxLocalDraftSelect=(codexLinuxModel,codexLinuxEffort,codexLinuxCallback)=>(${draftSelectionVariable}?.selectModelAndReasoningEffort??${baseSelectionVariable})(codexLinuxModel,codexLinuxEffort,codexLinuxCallback,${configVariable}!=null&&${conversationVariable}==null&&codexLinuxLocalDefaultPresetIds.has(\`${"${codexLinuxModel}:${codexLinuxEffort}"}\`)?{persistAsDefault:!1}:void 0);` +
     `(0,${reactAlias}.useEffect)(()=>{if(codexLinuxLocalDraftDefaultScope==null){codexLinuxLocalDraftDefaultRef.current=null;return}codexLinuxLocalDraftDefaultSelection==null||codexLinuxLocalDraftDefaultRef.current===codexLinuxLocalDraftDefaultScope||(codexLinuxLocalDraftDefaultRef.current=codexLinuxLocalDraftDefaultScope,codexLinuxLocalDraftSelect(codexLinuxLocalDraftDefaultSelection.model,codexLinuxLocalDraftDefaultSelection.reasoningEffort,()=>{}))},[codexLinuxLocalDraftDefaultScope,codexLinuxLocalDraftDefaultSelection?.id]);` +
     `let ${selectHandlerVariable}=function`;
   patchedSection = patchedSection.replace(
@@ -773,9 +938,21 @@ const descriptors = [
     apply: applyLocalComposerResolverPatch,
   },
   {
-    id: "model-picker-default-presets-local-composer-config",
+    id: "model-picker-default-presets-existing-chat-optimistic-selection",
     phase: "webview-asset",
     order: 20_801,
+    ciPolicy: "optional",
+    pattern: JS_ASSET_PATTERN,
+    enabled: (context = {}) => normalizePresets(context).length > 0,
+    assetMatch: (source) => existingChatOptimisticContract(source) !== "drifted",
+    missingDescription: "existing-chat model settings state bundle",
+    skipDescription: "model picker Default existing-chat selection patch",
+    apply: applyExistingChatOptimisticPatch,
+  },
+  {
+    id: "model-picker-default-presets-local-composer-config",
+    phase: "webview-asset",
+    order: 20_802,
     ciPolicy: "optional",
     pattern: JS_ASSET_PATTERN,
     enabled: (context = {}) => normalizePresets(context).length > 0,
@@ -790,6 +967,7 @@ module.exports = {
   CATALOG_PATCH_MARKER,
   CATALOG_PRESET_OPTIONS_KEY,
   EFFORT_TO_THINKING_EFFORT,
+  EXISTING_CHAT_OPTIMISTIC_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
   LOCAL_COMPOSER_RESOLVER_MARKER,
   LOCAL_DRAFT_SELECTION_MARKER,
@@ -798,6 +976,7 @@ module.exports = {
   JS_ASSET_PATTERN,
   SLIDER_PATCH_MARKER,
   applyCatalogPatch,
+  applyExistingChatOptimisticPatch,
   applyLocalComposerConfigPatch,
   applyLocalComposerResolverPatch,
   applySliderMinimumPatch,
@@ -806,6 +985,7 @@ module.exports = {
   codexLinuxModelPickerDefaultPresets,
   descriptors,
   normalizePresets,
+  existingChatOptimisticContract,
   localComposerConfig,
   localComposerConfigContract,
   localComposerResolverContract,
