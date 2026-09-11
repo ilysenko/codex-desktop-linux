@@ -493,6 +493,21 @@ test("routes current authenticated proxy desktop fetch shape through ClientReque
   assert.deepEqual(credentials, { username: "user", password: "p@ss" });
 });
 
+test("routes the current applicationNetwork abstraction through its request path", () => {
+  const source = [
+    "let l=require(`electron`);async function boot(){await l.app.whenReady()}",
+    "class Fetcher{async fetch(){let a=`GET`,p={},v=()=>null,s=`follow`,o=null,c=`https://example.test`,u=!1,h;if(o==null){let e={method:a,headers:p,body:v(),redirect:s,signal:null,credentials:u?`include`:`same-origin`};h=await this.options.applicationNetwork.fetch(c,e)}else h=await this.performProgressRequest({body:v(),headers:p,method:a,onUploadProgress:o,resolvedUrl:c,signal:null,useSessionCookies:u});return h}",
+    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,signal:a,useSessionCookies:o}){let l=this.options.applicationNetwork.request({method:n,url:i,headers:t,useSessionCookies:o}),u=-1,d=()=>{let e=l.getUploadProgress();!e.started||e.current===u||(u=e.current,r({loaded:e.current,total:e.total}))};return l}}",
+  ].join("");
+
+  const patched = applyPatchTwiceWithoutWarnings(applyAuthenticatedProxyPatch, source);
+  assert.match(patched, /if\(o==null&&!codexLinuxProxyAuthEntry\(\)\)/);
+  assert.match(
+    patched,
+    /applicationNetwork\.request\([^;]+;codexLinuxAttachProxyAuthToRequest\(l\);let u=-1,d=\(\)=>\{if\(r==null\)return;/,
+  );
+});
+
 test("authenticated-proxy tests fail when current desktop fetch shape drifts", () => {
   const source = [
     "let a=require(`electron`);",

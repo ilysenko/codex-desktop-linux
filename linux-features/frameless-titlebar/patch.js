@@ -1,7 +1,7 @@
 "use strict";
 
 const IDENT = "[A-Za-z_$][\\w$]*";
-const APP_INITIAL_ASSET_PATTERN = /^app-initial-[A-Za-z0-9_-]+\.js$/;
+const CHROME_MAPPING_ASSET_PATTERN = /^connect-app-host-[A-Za-z0-9_-]+\.js$/;
 const CURRENT_CHROME_MAPPING = "case`win32`:case`linux`:return`application-menu`";
 const PATCHED_CHROME_MAPPING = "case`win32`:return`application-menu`;case`linux`:return`native`";
 
@@ -128,7 +128,7 @@ function applyFramelessTitlebarWebviewPatch(source) {
 }
 
 module.exports = {
-  APP_INITIAL_ASSET_PATTERN,
+  CHROME_MAPPING_ASSET_PATTERN,
   descriptors: [
     {
       id: "main-process",
@@ -142,7 +142,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20_730,
       ciPolicy: "optional",
-      pattern: APP_INITIAL_ASSET_PATTERN,
+      pattern: CHROME_MAPPING_ASSET_PATTERN,
       assetMatch: (source) => framelessTitlebarWebviewContract(source) !== "drifted",
       missingDescription: "official Linux chrome-mapping bundle",
       skipDescription: "frameless titlebar webview chrome patch",

@@ -1,23 +1,33 @@
 "use strict";
 
 const APPSHOT_HELPER_MARKER = "codexLinuxAppshotStartCapture";
+const APPSHOT_AVAILABILITY_MARKER = "codexLinuxAppshotsPlatformAvailable";
+const IDENT = "[A-Za-z_$][\\w$]*";
+const CURRENT_APPSHOT_AVAILABILITY = new RegExp(
+  `(requirements\\?\\.allowAppshots!==!1\\}function (${IDENT})\\((${IDENT})\\)\\{return )` +
+    `\\3===\\\`macOS\\\`\\|\\|\\3===\\\`windows\\\`\\}`,
+  "g",
+);
+const PATCHED_APPSHOT_AVAILABILITY = new RegExp(
+  `requirements\\?\\.allowAppshots!==!1\\}function ${IDENT}\\((${IDENT})\\)\\{return ` +
+    `\\1===\\\`linux\\\`\\/\\*${APPSHOT_AVAILABILITY_MARKER}\\*\\/\\|\\|` +
+    `\\1===\\\`macOS\\\`\\|\\|\\1===\\\`windows\\\`\\}`,
+);
 
 function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
 }
 
 function applyLinuxAppshotAvailabilityPatch(currentSource) {
-  const marker = "codexLinuxAppshotsPlatformAvailable";
-  if (currentSource.includes(marker)) {
+  if (currentSource.includes(APPSHOT_AVAILABILITY_MARKER)) {
     return currentSource;
   }
-  const platformGate = /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{return \2===`macOS`\|\|\2===`windows`&&\3!=null&&([A-Za-z_$][\w$]*)\.isInternal\(\3\)\}/g;
-  const matches = [...currentSource.matchAll(platformGate)];
+  const matches = [...currentSource.matchAll(CURRENT_APPSHOT_AVAILABILITY)];
   if (matches.length === 1) {
     return currentSource.replace(
-      platformGate,
-      (_match, functionName, platformVar, buildFlavorVar, buildFlavorType) =>
-        `function ${functionName}(${platformVar},${buildFlavorVar}){return ${platformVar}===\`linux\`/*${marker}*/||${platformVar}===\`macOS\`||${platformVar}===\`windows\`&&${buildFlavorVar}!=null&&${buildFlavorType}.isInternal(${buildFlavorVar})}`,
+      CURRENT_APPSHOT_AVAILABILITY,
+      (_match, prefix, _functionName, platformVar) =>
+        `${prefix}${platformVar}===\`linux\`/*${APPSHOT_AVAILABILITY_MARKER}*/||${platformVar}===\`macOS\`||${platformVar}===\`windows\`}`,
     );
   }
 
@@ -25,6 +35,12 @@ function applyLinuxAppshotAvailabilityPatch(currentSource) {
     warn("Could not find AppShots availability gate", "Linux AppShots availability patch");
   }
   return currentSource;
+}
+
+function matchesLinuxAppshotAvailabilityContract(source) {
+  CURRENT_APPSHOT_AVAILABILITY.lastIndex = 0;
+  return [...source.matchAll(CURRENT_APPSHOT_AVAILABILITY)].length === 1 ||
+    PATCHED_APPSHOT_AVAILABILITY.test(source);
 }
 
 function applyLinuxAppshotMainProcessPatch(currentSource) {
@@ -195,6 +211,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 1090,
     pattern: /^app-initial-[^.]+\.js$/,
+    assetMatch: matchesLinuxAppshotAvailabilityContract,
     missingDescription: "AppShots availability bundle",
     skipDescription: "Linux AppShots availability patch",
     apply: applyLinuxAppshotAvailabilityPatch,
@@ -211,5 +228,6 @@ module.exports = {
   applyLinuxAppshotAvailabilityPatch,
   applyLinuxAppshotHotkeyPatch,
   applyLinuxAppshotMainProcessPatch,
+  matchesLinuxAppshotAvailabilityContract,
   descriptors,
 };

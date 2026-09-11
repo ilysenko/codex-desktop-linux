@@ -307,18 +307,22 @@ function patchCompositorDragLifecycle(source) {
   if (!moveMethod.text.includes("codexPetOverlayMoveCompositorDrag(")) {
     const windowMatch = moveMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/);
     const eventArg = firstMethodArgument(moveMethod.match[0], "moveDrag", 1);
-    const movementMatch = moveMethod.text.match(
-      /if\(([A-Za-z_$][\w$]*)\.recordMovementIntent\(\),this\.nativeWindowDragActive\)return;/,
+    const movementIntentMatch = moveMethod.text.match(
+      /([A-Za-z_$][\w$]*)\.recordMovementIntent\(\)/,
     );
-    if (windowMatch == null || eventArg == null || movementMatch == null) {
+    const nativeDragBoundary = ",this.nativeWindowDragActive)return;";
+    if (
+      windowMatch == null || eventArg == null || movementIntentMatch == null ||
+      moveMethod.text.split(nativeDragBoundary).length !== 2
+    ) {
       console.warn("WARN: Could not identify current avatar overlay drag move shape - skipping compositor transport hook");
       return patched;
     }
-    const replacement = `if(${movementMatch[1]}.recordMovementIntent(),this.codexPetOverlayMoveCompositorDrag(${windowMatch[1]},${eventArg})||this.nativeWindowDragActive)return;`;
+    const replacement = `,this.codexPetOverlayMoveCompositorDrag(${windowMatch[1]},${eventArg})||this.nativeWindowDragActive)return;`;
     patched = replaceMethodText(
       patched,
       moveMethod,
-      moveMethod.text.replace(movementMatch[0], replacement),
+      moveMethod.text.replace(nativeDragBoundary, replacement),
     );
   }
 

@@ -63,7 +63,10 @@ function currentAvatarOverlayBundleFixture() {
     "showWindow(e){if(e.isDestroyed())return;let t=this.isOpen();this.windowStagedForNativePresentation&&=(e.setOpacity(1),!1),e.moveTop(),e.showInactive(),!t&&this.isOpen()&&(this.finishPendingPresentation(),this.broadcastOpenState())}showWindowIfReady(e){!this.rendererReady||this.initialPresentationState!==`ready`||(this.showWindow(e),this.applyPointerInteractivityPolicy())}stageWindowForNativePresentation(e){e.isDestroyed()||this.applyPointerInteractivityPolicy()}broadcastOpenState(){this.windowManager.sendMessageToAllRegisteredWindows({type:`avatar-overlay-open-state-changed`,isOpen:this.isOpen()})}",
     "applyPointerInteractivityPolicy(){return null}cancelMomentum(){}clearMovedWindowPersist(){}clearDetachedDisplayRestore(){}clearNativeWindowDragCompletionTimer(){}finishPendingPresentation(){}handleNativeWindowDragMove(){}logger(){return{info(){}}}moveDragToPointer(){}persistWindowBounds(){}reclampWindowToVisibleDisplay(){}rememberMovedWindow(e,t){this.rememberedWindowBounds=t}sendLayoutToRenderer(){}setQuickChatStashed(){}setWindowBounds(){}snapQuickChatToPosition(){}getCurrentDisplay(){return{id:1,bounds:{x:0,y:0,width:1920,height:1080},workArea:{x:0,y:0,width:1920,height:1080}}}};",
     "function L9({platform:e,appearance:t,opaqueWindowSurfaceEnabled:n,prefersDarkColors:r}){return n?{backgroundColor:r?_ne:vne,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`?{backgroundColor:k9,backgroundMaterial:`mica`}:{backgroundColor:k9,backgroundMaterial:null}}",
-  ].join("");
+  ].join("").replace(
+    "if(r.recordMovementIntent(),this.nativeWindowDragActive)return;",
+    "if(r.recordMovementIntent(),this.quickChatStashedEdge!=null&&(this.quickChatStashedEdge=null,this.quickChatPosition=null,this.isFreelyPositioned=!0),this.nativeWindowDragActive)return;",
+  );
 }
 
 function retiredCompactDragCompletionBundleFixture() {

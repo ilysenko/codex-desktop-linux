@@ -366,7 +366,7 @@ function syntheticAppServerManagerStatusBundle() {
     "function wO(e,t){return e.bump(t)}",
     "function TO(e,t,n){return e.current(t)===n}",
     "function PO(e,t,n){return e.set(bO,t,n)}",
-    "function SO(e,t){let n=t.getHostId(),r=wO(e,n),i=e.get(bO,n);t.addNotificationCallback(`remoteControl/status/changed`,({params:t})=>{TO(e,n,r)&&PO(e,n,t)}),t.sendRequest(`remoteControl/status/read`,void 0).then(t=>{e.get(bO,n)===i&&TO(e,n,r)&&PO(e,n,t)}).catch(t=>{TO(e,n,r)&&z.error(`Failed to read remote-control status`,{safe:{},sensitive:{error:t}})})}",
+    "function SO(e,t){let n=t.getHostId();if(NO(n))return;let r=wO(e,n),i=e.get(bO,n);t.addNotificationCallback(`remoteControl/status/changed`,({params:t})=>{TO(e,n,r)&&PO(e,n,t)}),t.sendRequest(`remoteControl/status/read`,void 0).then(t=>{e.get(bO,n)===i&&TO(e,n,r)&&PO(e,n,t)}).catch(t=>{TO(e,n,r)&&z.error(`Failed to read remote-control status`,{safe:{},sensitive:{error:t}})})}",
   ].join("");
 }
 
@@ -2046,6 +2046,7 @@ test("Linux remote-control status guard skips slow remote SSH status reads", asy
   const context = {
     module: { exports: {} },
     navigator: { userAgent: "X11; Linux x86_64" },
+    NO: () => false,
     Promise,
     z: { error() {} },
   };

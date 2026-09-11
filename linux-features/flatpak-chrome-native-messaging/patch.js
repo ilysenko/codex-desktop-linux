@@ -3,7 +3,7 @@
 const IDENTIFIER = "([A-Za-z_$][\\w$]*)";
 const LINUX_PROFILE_ROOTS = new RegExp(
   `if\\(${IDENTIFIER}===\\\`linux\\\`\\)\\{` +
-  `let ${IDENTIFIER}=${IDENTIFIER}\\.F\\(\\{` +
+  `let ${IDENTIFIER}=${IDENTIFIER}\\.${IDENTIFIER}\\(\\{` +
   `chromeConfigHome:${IDENTIFIER}===\\\`chrome\\\`\\?${IDENTIFIER}:void 0,` +
   `homeDir:${IDENTIFIER},xdgConfigHome:${IDENTIFIER}\\}\\);` +
   `return ${IDENTIFIER}\\.linux\\.installations\\.map\\(${IDENTIFIER}=>` +
@@ -26,6 +26,7 @@ function applyFlatpakChromeProfileRoot(source) {
       platform,
       configRoot,
       diagnosticsNamespace,
+      configRootHelper,
       browserFamily,
       chromeConfigHome,
       homeDir,
@@ -43,7 +44,7 @@ function applyFlatpakChromeProfileRoot(source) {
         `${installation}=>(0,${pathNamespace}.join)(` +
         `${configRoot},${installation}.userDataDirName))`;
       return `if(${platform}===\`linux\`){let ${configRoot}=` +
-        `${diagnosticsNamespace}.F({chromeConfigHome:${browserFamily}===\`chrome\`?` +
+        `${diagnosticsNamespace}.${configRootHelper}({chromeConfigHome:${browserFamily}===\`chrome\`?` +
         `${chromeConfigHome}:void 0,homeDir:${homeDir},xdgConfigHome:${xdgConfigHome}}),` +
         `codexLinuxChromeProfileRoots=${originalRoots},` +
         `codexLinuxFlatpakChromeProfile=process.env.CODEX_CHROME_USER_DATA_DIR;` +

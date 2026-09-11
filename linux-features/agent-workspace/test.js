@@ -178,8 +178,11 @@ function syntheticCurrentSettingsNavigation() {
 function syntheticCurrentSettingsVisibility() {
   return [
     "var H=e=>e,F=e=>e;",
-    'var it={"linux-desktop":H,"general-settings":H,"local-environments":H,worktrees:F,environments:H,"mcp-settings":H,connections:H};',
+    'var it={"linux-desktop":{component:H},"general-settings":{component:H},"local-environments":{component:H,commandAsset:F,navigation:{assets:{16:F,20:H},ariaHidden:!1}},worktrees:{component:F,commandAsset:H,navigation:{assets:{16:H,20:F},ariaHidden:!1}},environments:{component:H},"mcp-settings":{component:H},connections:{component:H}};',
     "function visible(S){switch(S.slug){case`computer-use`:return!0;case`browser-use`:return!0;case`appearance`:return!0;case`pets`:case`git-settings`:case`worktrees`:case`local-environments`:case`environments`:return!0;case`data-controls`:return!0;case`linux-desktop`:case`general-settings`:case`agent`:case`personalization`:return!0;}}",
+    "function loading(r){switch(r){case`browser-use`:return!1;case`local-environments`:case`worktrees`:case`environments`:case`mcp-settings`:return!1}}",
+    "var preload=[`hooks-settings`,`local-environments`,`worktrees`,`data-controls`];",
+    'var policy={"local-environments":`codexLocal`,"mcp-settings":`codexOrWorkLocal`,worktrees:`codexLocal`};',
   ].join("");
 }
 
@@ -1642,12 +1645,15 @@ test("settings asset patches add navigation, route, visibility, and title", () =
   );
   assert.match(
     settingsVisibility,
-    new RegExp(`"local-environments":H,"${SETTINGS_SLUG}":H,worktrees:F`),
+    new RegExp(`"${SETTINGS_SLUG}":\\{component:H,commandAsset:F,navigation:`),
   );
   assert.match(
     settingsVisibility,
     /case`worktrees`:case`local-environments`:case`agent-workspaces`:case`environments`:return!0/,
   );
+  assert.match(settingsVisibility, /case`local-environments`:case`agent-workspaces`:case`worktrees`/);
+  assert.match(settingsVisibility, /`local-environments`,`agent-workspaces`,`worktrees`,`data-controls`/);
+  assert.match(settingsVisibility, /"local-environments":`codexLocal`,"agent-workspaces":`codexLocal`,"mcp-settings":/);
   assert.equal(applyAgentWorkspaceSettingsPagePatch(settingsVisibility), settingsVisibility);
 });
 
@@ -1780,7 +1786,10 @@ test("agent-workspace settings patch supports consolidated current settings bund
       path.join(assetsDir, "use-visible-settings-sections-test.js"),
       "utf8",
     );
-    assert.match(visibilitySource, /"local-environments":H,"agent-workspaces":H,worktrees:F/);
+    assert.match(
+      visibilitySource,
+      /"agent-workspaces":\{component:H,commandAsset:F,navigation:/,
+    );
     assert.match(
       visibilitySource,
       /case`worktrees`:case`local-environments`:case`agent-workspaces`:case`environments`:return!0/,

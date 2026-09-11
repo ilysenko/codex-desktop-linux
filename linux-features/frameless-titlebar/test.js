@@ -8,7 +8,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const {
-  APP_INITIAL_ASSET_PATTERN,
+  CHROME_MAPPING_ASSET_PATTERN,
   applyFramelessTitlebarMainPatch,
   applyFramelessTitlebarWebviewPatch,
   descriptors,
@@ -201,10 +201,10 @@ test("unrecognized webview contracts warn instead of reporting false already-app
   assert.match(result.warnings.join("\n"), /current frameless-titlebar webview contract/);
 });
 
-test("webview descriptor selects current contracts across renderer hash changes", () => {
+test("webview descriptor selects the current shared chrome mapping across hash changes", () => {
   const descriptor = descriptors.find(({ id }) => id === "webview-chrome-mapping");
-  assert.match("app-initial-HashNext1.js", APP_INITIAL_ASSET_PATTERN);
-  assert.doesNotMatch("app-initial~app-main~page-CMpPiY3-.js", APP_INITIAL_ASSET_PATTERN);
+  assert.match("connect-app-host-HashNext1.js", CHROME_MAPPING_ASSET_PATTERN);
+  assert.doesNotMatch("app-initial-HashNext1.js", CHROME_MAPPING_ASSET_PATTERN);
   assert.equal(descriptor.assetMatch(officialWebviewFixture()), true);
   assert.equal(descriptor.assetMatch(applyFramelessTitlebarWebviewPatch(officialWebviewFixture())), true);
   assert.equal(descriptor.assetMatch("export{chrome}"), false);

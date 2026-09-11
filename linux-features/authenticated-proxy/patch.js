@@ -64,7 +64,8 @@ function applyAuthenticatedProxyPatch(currentSource) {
   const currentFetchGate = new RegExp(
     `if\\((${JS_IDENT})==null\\)(?=\\{let ${JS_IDENT}=\\{method:${JS_IDENT},headers:${JS_IDENT},` +
       `body:${JS_IDENT}\\(\\),redirect:${JS_IDENT},signal:${JS_IDENT},credentials:${JS_IDENT}\\?` +
-      `${BT}include${BT}:${BT}same-origin${BT}\\};${JS_IDENT}=await ${electronVar}\\.net\\.fetch\\()`,
+      `${BT}include${BT}:${BT}same-origin${BT}\\};${JS_IDENT}=await ` +
+      `(?:${electronVar}\\.net|this\\.options\\.applicationNetwork)\\.fetch\\()`,
   );
   const patchedCurrentFetchGate = new RegExp(
     `if\\(${JS_IDENT}==null&&!codexLinuxProxyAuthEntry\\(\\)\\)(?=\\{let ${JS_IDENT}=\\{method:${JS_IDENT},` +
@@ -78,7 +79,7 @@ function applyAuthenticatedProxyPatch(currentSource) {
       (_match, progressVar) => `if(${progressVar}==null&&!codexLinuxProxyAuthEntry())`,
     );
   } else if (
-    patchedSource.includes(".net.fetch(") &&
+    (patchedSource.includes(".net.fetch(") || patchedSource.includes(".applicationNetwork.fetch(")) &&
     patchedSource.includes("performProgressRequest") &&
     !patchedSource.includes("!codexLinuxProxyAuthEntry()?await") &&
     !patchedCurrentFetchGate.test(patchedSource)
@@ -88,12 +89,22 @@ function applyAuthenticatedProxyPatch(currentSource) {
     );
   }
 
-  const requestNeedle =
-    `let u=${electronVar}.net.request({method:n,url:i,headers:t,useSessionCookies:o}),d=-1,f=()=>{let e=u.getUploadProgress();!e.started||e.current===d||(d=e.current,r({loaded:e.current,total:e.total}))}`;
-  const requestReplacement =
-    `let u=${electronVar}.net.request({method:n,url:i,headers:t,useSessionCookies:o});codexLinuxAttachProxyAuthToRequest(u);let d=-1,f=()=>{if(r==null)return;let e=u.getUploadProgress();!e.started||e.current===d||(d=e.current,r({loaded:e.current,total:e.total}))}`;
-  if (patchedSource.includes(requestNeedle)) {
-    patchedSource = patchedSource.replace(requestNeedle, requestReplacement);
+  const requestPattern = new RegExp(
+    `let (?<request>${JS_IDENT})=(?<owner>(?:${electronVar}\\.net|this\\.options\\.applicationNetwork))` +
+      `\\.request\\(\\{method:(?<method>${JS_IDENT}),url:(?<url>${JS_IDENT}),headers:(?<headers>${JS_IDENT}),` +
+      `useSessionCookies:(?<cookies>${JS_IDENT})\\}\\),(?<last>${JS_IDENT})=-1,(?<poll>${JS_IDENT})=\\(\\)=>` +
+      `\\{let (?<progress>${JS_IDENT})=\\k<request>\\.getUploadProgress\\(\\);!\\k<progress>\\.started\\|\\|` +
+      `\\k<progress>\\.current===\\k<last>\\|\\|\\(\\k<last>=\\k<progress>\\.current,` +
+      `(?<callback>${JS_IDENT})\\(\\{loaded:\\k<progress>\\.current,total:\\k<progress>\\.total\\}\\)\\)\\}`,
+  );
+  if (requestPattern.test(patchedSource)) {
+    patchedSource = patchedSource.replace(requestPattern, (...args) => {
+      const groups = args.at(-1);
+      return `let ${groups.request}=${groups.owner}.request({method:${groups.method},url:${groups.url},headers:${groups.headers},useSessionCookies:${groups.cookies}});` +
+        `codexLinuxAttachProxyAuthToRequest(${groups.request});let ${groups.last}=-1,${groups.poll}=()=>{if(${groups.callback}==null)return;` +
+        `let ${groups.progress}=${groups.request}.getUploadProgress();!${groups.progress}.started||${groups.progress}.current===${groups.last}||` +
+        `(${groups.last}=${groups.progress}.current,${groups.callback}({loaded:${groups.progress}.current,total:${groups.progress}.total}))}`;
+    });
   } else if (
     patchedSource.includes("performProgressRequest") &&
     !new RegExp(`codexLinuxAttachProxyAuthToRequest\\(${JS_IDENT}\\);`).test(patchedSource)

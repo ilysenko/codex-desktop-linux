@@ -173,7 +173,7 @@ test("Settings detector adds only the explicit Flatpak Chrome profile", () => {
   const source = "function Va({browserFamily:e,chromeConfigHome:t,homeDir:r," +
     "localAppDataDir:i,roamingAppDataDir:a,platform:o,xdgConfigHome:s}){" +
     "let c=n.as[e];if(o===`darwin`)return[(0,p.join)(r,...c.macos.userDataDirectorySegments)];" +
-    "if(o===`win32`)return[i,a];if(o===`linux`){let i=n.F({chromeConfigHome:" +
+    "if(o===`win32`)return[i,a];if(o===`linux`){let i=n.R({chromeConfigHome:" +
     "e===`chrome`?t:void 0,homeDir:r,xdgConfigHome:s});return c.linux.installations.map(" +
     "e=>(0,p.join)(i,e.userDataDirName))}return[]}";
   const patched = applyFlatpakChromeProfileRoot(source);
@@ -189,7 +189,7 @@ test("Settings detector adds only the explicit Flatpak Chrome profile", () => {
           macos: { userDataDirectorySegments: ["Library", "Edge"] },
         },
       },
-      F: ({ homeDir }) => `${homeDir}/.config`,
+      R: ({ homeDir }) => `${homeDir}/.config`,
     },
     p: { join: path.join },
     process: { env: { CODEX_CHROME_USER_DATA_DIR: "/flatpak/google-chrome" } },

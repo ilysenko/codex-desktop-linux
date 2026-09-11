@@ -1925,10 +1925,27 @@ const CURRENT_SETTINGS_VISIBILITY_CASES =
   "case`worktrees`:case`local-environments`:case`environments`:return";
 const PATCHED_SETTINGS_VISIBILITY_CASES =
   "case`worktrees`:case`local-environments`:case`agent-workspaces`:case`environments`:return";
-const CURRENT_SETTINGS_ICON_PATTERN =
-  /"local-environments":([A-Za-z_$][\w$]*),worktrees:([A-Za-z_$][\w$]*)/;
-const PATCHED_SETTINGS_ICON_PATTERN =
-  /"local-environments":([A-Za-z_$][\w$]*),"agent-workspaces":([A-Za-z_$][\w$]*),worktrees:([A-Za-z_$][\w$]*)/;
+const CURRENT_SETTINGS_ICON_PATTERN = new RegExp(
+  `"local-environments":(\\{component:[A-Za-z_$][\\w$]*,commandAsset:[A-Za-z_$][\\w$]*,` +
+    `navigation:\\{assets:\\{16:[A-Za-z_$][\\w$]*,20:[A-Za-z_$][\\w$]*\\},ariaHidden:!1\\}\\}),worktrees:`,
+);
+const PATCHED_SETTINGS_ICON_PATTERN = new RegExp(
+  `"local-environments":(\\{component:[A-Za-z_$][\\w$]*,commandAsset:[A-Za-z_$][\\w$]*,` +
+    `navigation:\\{assets:\\{16:[A-Za-z_$][\\w$]*,20:[A-Za-z_$][\\w$]*\\},ariaHidden:!1\\}\\}),` +
+    `"agent-workspaces":\\1,worktrees:`,
+);
+const CURRENT_SETTINGS_LOADING_CASES =
+  "case`local-environments`:case`worktrees`:case`environments`:case`mcp-settings`";
+const PATCHED_SETTINGS_LOADING_CASES =
+  "case`local-environments`:case`agent-workspaces`:case`worktrees`:case`environments`:case`mcp-settings`";
+const CURRENT_SETTINGS_PRELOAD_SLUGS =
+  "`hooks-settings`,`local-environments`,`worktrees`,`data-controls`";
+const PATCHED_SETTINGS_PRELOAD_SLUGS =
+  "`hooks-settings`,`local-environments`,`agent-workspaces`,`worktrees`,`data-controls`";
+const CURRENT_SETTINGS_POLICY_PATTERN =
+  /"local-environments":([A-Za-z_$][\w$]*|`codexLocal`),"mcp-settings":/;
+const PATCHED_SETTINGS_POLICY_PATTERN =
+  /"local-environments":([A-Za-z_$][\w$]*|`codexLocal`),"agent-workspaces":\1,"mcp-settings":/;
 
 function isAgentWorkspaceSettingsNavigationBundleSource(currentSource) {
   return (
@@ -2049,22 +2066,40 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
   if (isAgentWorkspaceSettingsVisibilityBundleSource(patchedSource)) {
     matched = true;
     const iconMatch = patchedSource.match(PATCHED_SETTINGS_ICON_PATTERN);
-    if (iconMatch != null && iconMatch[1] !== iconMatch[2]) {
-      throw new Error("agent workspace settings visibility has an unexpected icon");
-    }
-    const iconPatched = iconMatch != null && iconMatch[1] === iconMatch[2];
+    const iconPatched = iconMatch != null;
     const casesPatched = patchedSource.includes(PATCHED_SETTINGS_VISIBILITY_CASES);
-    if (iconPatched !== casesPatched) {
+    const loadingPatched = patchedSource.includes(PATCHED_SETTINGS_LOADING_CASES);
+    const preloadPatched = patchedSource.includes(PATCHED_SETTINGS_PRELOAD_SLUGS);
+    const policyPatched = PATCHED_SETTINGS_POLICY_PATTERN.test(patchedSource);
+    const patchedContracts = [iconPatched, casesPatched, loadingPatched, preloadPatched, policyPatched];
+    if (patchedContracts.some(Boolean) && !patchedContracts.every(Boolean)) {
       throw new Error("agent workspace settings visibility is partially patched");
     }
     if (!iconPatched) {
+      const currentContracts = [
+        CURRENT_SETTINGS_ICON_PATTERN.test(patchedSource),
+        patchedSource.includes(CURRENT_SETTINGS_VISIBILITY_CASES),
+        patchedSource.includes(CURRENT_SETTINGS_LOADING_CASES),
+        patchedSource.includes(CURRENT_SETTINGS_PRELOAD_SLUGS),
+        CURRENT_SETTINGS_POLICY_PATTERN.test(patchedSource),
+      ];
+      if (!currentContracts.every(Boolean)) {
+        throw new Error("could not add agent workspace to current settings visibility contracts");
+      }
       patchedSource = patchedSource
         .replace(
           CURRENT_SETTINGS_ICON_PATTERN,
-          (_match, localEnvironmentsIcon, worktreesIcon) =>
-            `"local-environments":${localEnvironmentsIcon},"${SETTINGS_SLUG}":${localEnvironmentsIcon},worktrees:${worktreesIcon}`,
+          (_match, localEnvironmentsDescriptor) =>
+            `"local-environments":${localEnvironmentsDescriptor},"${SETTINGS_SLUG}":${localEnvironmentsDescriptor},worktrees:`,
         )
-        .replace(CURRENT_SETTINGS_VISIBILITY_CASES, PATCHED_SETTINGS_VISIBILITY_CASES);
+        .replace(CURRENT_SETTINGS_VISIBILITY_CASES, PATCHED_SETTINGS_VISIBILITY_CASES)
+        .replace(CURRENT_SETTINGS_LOADING_CASES, PATCHED_SETTINGS_LOADING_CASES)
+        .replace(CURRENT_SETTINGS_PRELOAD_SLUGS, PATCHED_SETTINGS_PRELOAD_SLUGS)
+        .replace(
+          CURRENT_SETTINGS_POLICY_PATTERN,
+          (_match, policy) =>
+            `"local-environments":${policy},"${SETTINGS_SLUG}":${policy},"mcp-settings":`,
+        );
     }
   }
 
