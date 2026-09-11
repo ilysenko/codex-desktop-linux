@@ -100,7 +100,11 @@ function withApp(fn) {
   fs.mkdirSync(assets, { recursive: true });
   const config = path.join(dir, "features.json");
   fs.writeFileSync(config, JSON.stringify({ enabled: ["filesystem-root-follow-ups"] }));
-  const options = { featuresRoot: path.resolve(__dirname, ".."), featuresConfigPath: config };
+  const options = {
+    featuresRoot: path.resolve(__dirname, ".."),
+    featuresConfigPath: config,
+    corePatchRoot: path.join(dir, "empty-core"),
+  };
   try {
     fn({ dir, assets, config, options });
   } finally {

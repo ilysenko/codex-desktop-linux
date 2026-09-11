@@ -3273,7 +3273,8 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           syntheticAppMainActiveStatusBundle(),
         );
         const report = createPatchReport();
-        patchExtractedApp(tempApp, { report });
+        const patchOptions = { corePatchRoot: path.join(tempApp, "empty-core") };
+        patchExtractedApp(tempApp, { ...patchOptions, report });
 
         const patchedFile = fs.readFileSync(path.join(buildDir, "main.js"), "utf8");
         const patchedAppServerLaunchFile = fs.readFileSync(
@@ -3432,7 +3433,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         );
 
         const secondReport = createPatchReport();
-        patchExtractedApp(tempApp, { report: secondReport });
+        patchExtractedApp(tempApp, { ...patchOptions, report: secondReport });
         assert.ok(
           secondReport.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-terminal-status-recovery" &&

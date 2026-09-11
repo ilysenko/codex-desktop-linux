@@ -103,7 +103,7 @@ jobs:
             throw new Error("invalid dispatched release identity");
           }
           NODE
-      - name: Build byte-identical clean baseline
+      - name: Build required default baseline
         env:
           CODEX_TARGET_ARCH: ${{ matrix.architecture }}
           CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/linux-features/features.example.json
@@ -112,7 +112,29 @@ jobs:
           ./install.sh "${{ steps.upstream.outputs.package }}"
           upstream_root="$(mktemp -d)"
           dpkg-deb -x "${{ steps.upstream.outputs.package }}" "$upstream_root"
-          cmp "$upstream_root/usr/lib/chatgpt/resources/app.asar" "$CODEX_INSTALL_DIR/resources/app.asar"
+          if cmp -s "$upstream_root/usr/lib/chatgpt/resources/app.asar" "$CODEX_INSTALL_DIR/resources/app.asar"; then
+            echo "required renderer-cycle patch did not change app.asar" >&2
+            exit 1
+          fi
+          node - "$CODEX_INSTALL_DIR/.codex-linux/patch-report.json" <<'NODE'
+          const fs = require("node:fs");
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const expected = [{
+            name: "upstream-renderer-cycle",
+            status: "applied",
+            ciPolicy: "required-upstream",
+            sourceKind: "core",
+          }];
+          const actual = report.patches.map(({ name, status, ciPolicy, sourceKind }) => ({
+            name,
+            status,
+            ciPolicy,
+            sourceKind,
+          }));
+          if (report.enabledFeatures.length !== 0 || JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new Error(`unexpected default patch report: ${JSON.stringify(report)}`);
+          }
+          NODE
           test -x "$CODEX_INSTALL_DIR/ChatGPT"
           test -x "$CODEX_INSTALL_DIR/resources/codex"
       - name: Validate the Nix ELF contract against the official payload

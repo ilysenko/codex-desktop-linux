@@ -55,6 +55,10 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(workflow, /^      - \.github\/workflows\/upstream-build-app\.yml$/m);
   const signedBaseline = job(workflow, "signed-baseline");
   assert.match(signedBaseline, /architecture: \[amd64, arm64\]/);
+  assert.match(signedBaseline, /name: Build required default baseline/);
+  assert.match(signedBaseline, /name: "upstream-renderer-cycle"/);
+  assert.match(signedBaseline, /ciPolicy: "required-upstream"/);
+  assert.match(signedBaseline, /sourceKind: "core"/);
   assert.match(
     signedBaseline,
     /name: Validate the Nix ELF contract against the official payload[\s\S]*?env:\n          CODEX_INSTALL_DIR:.*matrix\.architecture[\s\S]*?nix\/elf-runtime\.cjs fix[\s\S]*?nix\/elf-runtime\.cjs audit/,
