@@ -1,0 +1,9 @@
+{
+  "id": "authored-message-visibility",
+  "title": "Keep Authored Messages Visible",
+  "description": "Keep assistant and user messages visible when completed tool activity collapses.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

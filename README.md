@@ -218,6 +218,7 @@ requirements, known limitations, configuration, and tests.
 | `api-key-model-visibility` | Show models reported by API-key authenticated compatible providers | [Docs](linux-features/api-key-model-visibility/README.md) |
 | `api-key-service-tier` | Fast/service-tier UI for API-key authenticated compatible providers | [Docs](linux-features/api-key-service-tier/README.md) |
 | `appshots` | Capture and crop the focused Linux window from the composer | [Docs](linux-features/appshots/README.md) |
+| `authored-message-visibility` | Keep assistant and user messages visible after tool activity collapses | [Docs](linux-features/authored-message-visibility/README.md) |
 | `authenticated-proxy` | Username/password support for HTTP proxies | [Docs](linux-features/authenticated-proxy/README.md) |
 | `automation-extensions` | Multi-time schedules and eager `automation_update` exposure | [Docs](linux-features/automation-extensions/README.md) |
 | `browser-proxy` | Pass explicit proxy settings to Browser Use network helpers | [Docs](linux-features/browser-proxy/README.md) |
