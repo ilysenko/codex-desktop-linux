@@ -1871,8 +1871,12 @@ exit 90
     #[test]
     fn schema_three_install_recovery_does_not_invent_upstream_identity() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let state_path = dir.path().join("state.json");
-        let package = dir.path().join("legacy-candidate.deb");
+        let paths = fixture_paths(dir.path());
+        paths.ensure_dirs()?;
+        let state_path = paths.state_file.clone();
+        let workspace = dir.path().join("workspaces/new-upstream");
+        let package = workspace.join("dist/legacy-candidate.deb");
+        fs::create_dir_all(package.parent().expect("package parent"))?;
         fs::write(&package, b"legacy candidate")?;
 
         let mut legacy = PersistedState::new(true);
@@ -1883,7 +1887,7 @@ exit 90
         legacy.upstream_package_sha256 = Some("unproven-candidate-sha".into());
         legacy.artifact_paths.package_path = Some(package.clone());
         legacy.install_transaction = Some(InstallTransaction {
-            package_path: package,
+            package_path: package.clone(),
             package_sha256: Some("verified-package-sha".into()),
             package_command: Some(stale_identity()),
             started_at: Utc::now(),
@@ -1913,6 +1917,22 @@ exit 90
             loaded.upstream_package_sha256.as_deref(),
             Some("unproven-candidate-sha")
         );
+
+        rollback::record_current_package_as_known_good(&mut loaded);
+        assert_eq!(
+            loaded.artifact_paths.rollback_package_path,
+            Some(package.clone())
+        );
+        rollback::preserve_before_workspace_cleanup(&mut loaded, &paths, &workspace)?;
+        let retained = loaded
+            .artifact_paths
+            .rollback_package_path
+            .clone()
+            .expect("retained rollback package");
+        fs::remove_dir_all(&workspace)?;
+        assert!(!package.exists());
+        assert!(retained.is_file());
+        assert_eq!(fs::read(&retained)?, b"legacy candidate");
         Ok(())
     }
 
