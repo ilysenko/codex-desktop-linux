@@ -40,10 +40,19 @@ meaning.
 - Disable the feature and rebuild to restore upstream click behavior. Native
   update-builder packaging preserves enabled feature resources.
 
-Do not enable the private `zed-file-links` patch alongside this feature: it
-intercepts the same click and explicitly selects Zed.
-
 ## Validation
+
+The frontend patch is shared by the official `amd64` and `arm64` packages and
+is included through the existing feature pipeline for deb, RPM, pacman,
+AppImage and Nix builds. It does not change any package-format implementation.
+There are no session-specific hooks; the editor is launched by upstream.
+
+Verified against signed official Linux `26.908.61612` on `amd64`: feature and
+framework tests, a build with only this feature enabled, and execution of the
+official click/dispatch code through its native mutation boundary. The latter
+checks preference resolution and location arguments, not editor-process launch.
+`arm64`, individual distributable formats, and desktop clicks on Wayland/X11
+have not been validated for this feature.
 
 ```sh
 node --test linux-features/preferred-editor-file-links/test.js

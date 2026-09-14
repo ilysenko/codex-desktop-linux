@@ -48,9 +48,10 @@ test("source links bypass the panel and preserve the full location without forci
   }
 });
 
-test("upstream resolution can follow workspace/global preference changes between clicks", () => {
-  // Verbatim preference functions from official Linux 26.908.61612. Their
-  // contract is also checked against the current signed bundle during build.
+test("the 26.908.61612 resolver fixture follows preference changes between clicks", () => {
+  // Verbatim preference functions from official Linux 26.908.61612 with the
+  // preference-store read stubbed below. This fixture does not validate the
+  // resolver in future bundles; official-code VM acceptance is a separate check.
   const resolve = vm.runInNewContext("function I0(e,t,n){let r=L0(e,t);return r&&n.has(r)?r:n.values().next().value??null}function L0(e,t){let n=P0(e);return(t?n.perPath?.[t]:void 0)??n.global??null}I0", { P0: value => value });
   const { calls, context } = harness();
   const preferences = { global: "zed", perPath: {} };

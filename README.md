@@ -237,8 +237,8 @@ requirements, known limitations, configuration, and tests.
 | `node-repl-reaper` | Reap Browser Use `node_repl` helpers leaked after owner exit | [Docs](linux-features/node-repl-reaper/README.md) |
 | `omarchy-theme` | Load CSS generated from the current Omarchy theme | [Docs](linux-features/omarchy-theme/README.md) |
 | `persistent-status-panel` | Keep the `/status` panel across thread switches and restarts | [Docs](linux-features/persistent-status-panel/README.md) |
-| `preferred-editor-file-links` | Open source links in the selected editor with a plain click | [Docs](linux-features/preferred-editor-file-links/README.md) |
 | `pet-overlay` | Linux avatar-overlay placement and compositor hints | [Docs](linux-features/pet-overlay/README.md) |
+| `preferred-editor-file-links` | Open source links in the selected editor with a plain click | [Docs](linux-features/preferred-editor-file-links/README.md) |
 | `project-group-last-updated-sort` | Apply Last updated ordering to project groups and tasks | [Docs](linux-features/project-group-last-updated-sort/README.md) |
 | `project-task-sort` | Restore Created ordering for alternate Projects tasks | [Docs](linux-features/project-task-sort/README.md) |
 | `read-aloud` | Add Linux read-aloud controls to assistant responses | [Docs](linux-features/read-aloud/README.md) |
