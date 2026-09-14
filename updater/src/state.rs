@@ -64,6 +64,9 @@ pub struct ArtifactPaths {
     pub workspace_dir: Option<PathBuf>,
     #[serde(alias = "deb_path")]
     pub package_path: Option<PathBuf>,
+    /// SHA-256 of the signed upstream candidate used to build `package_path`.
+    /// An absent value is intentionally treated as an unbound legacy artifact.
+    pub package_candidate_sha256: Option<String>,
     pub rollback_package_path: Option<PathBuf>,
 }
 
@@ -108,7 +111,7 @@ impl Default for PersistedState {
 impl PersistedState {
     pub fn new(auto_install_on_app_exit: bool) -> Self {
         Self {
-            schema_version: 3,
+            schema_version: 4,
             installed_version: "unknown".into(),
             installed_upstream_version: None,
             installed_upstream_sha256: None,
@@ -181,7 +184,7 @@ impl PersistedState {
                         .as_ref()
                         .is_some_and(|owner| owner.boot_id.is_none())
                 });
-        state.schema_version = 3;
+        state.schema_version = 4;
         state.auto_install_on_app_exit = auto_install;
         if needs_manual_install_recovery {
             // Schema 2 persisted only PID/start-time. That pair cannot prove
@@ -270,7 +273,7 @@ mod tests {
         }"#,
         )?;
         let state = PersistedState::load_or_default(&state_path, true)?;
-        assert_eq!(state.schema_version, 3);
+        assert_eq!(state.schema_version, 4);
         assert_eq!(state.candidate_version, None);
         assert_eq!(state.installed_version, "1.2.3");
         assert_eq!(
@@ -338,7 +341,7 @@ mod tests {
         )?;
 
         let state = PersistedState::load_or_default(&state_path, true)?;
-        assert_eq!(state.schema_version, 3);
+        assert_eq!(state.schema_version, 4);
         assert_eq!(state.status, UpdateStatus::Failed);
         assert!(state.manual_recovery_required);
         assert!(state.install_transaction.is_none());
@@ -357,7 +360,7 @@ mod tests {
             on_disk
                 .get("schema_version")
                 .and_then(|value| value.as_u64()),
-            Some(3)
+            Some(4)
         );
         assert_eq!(
             on_disk

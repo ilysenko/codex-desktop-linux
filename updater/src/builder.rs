@@ -116,6 +116,7 @@ pub async fn build_update(
         upstream_package_path: Some(upstream_package.to_path_buf()),
         workspace_dir: Some(workspace.clone()),
         package_path: Some(package_path.clone()),
+        package_candidate_sha256: state.upstream_package_sha256.clone(),
         rollback_package_path: state.artifact_paths.rollback_package_path.clone(),
     };
     state.save_updater(&paths.state_file)?;

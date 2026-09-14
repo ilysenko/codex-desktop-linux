@@ -364,6 +364,8 @@ fn apply_reconciled_install(
             state.candidate_version = None;
             state.candidate_architecture = None;
             state.candidate_repository_path = None;
+            state.artifact_paths.package_path = Some(transaction.package_path.clone());
+            state.artifact_paths.package_candidate_sha256 = state.upstream_package_sha256.clone();
             state.waiting_for_app_exit_auto_install = false;
         }
         InstallOperation::Rollback => {
@@ -380,6 +382,7 @@ fn apply_reconciled_install(
             state.rollback_blocked_candidate_version = blocked_version;
             state.rollback_blocked_package_sha256 = blocked_sha;
             state.artifact_paths.package_path = Some(transaction.package_path.clone());
+            state.artifact_paths.package_candidate_sha256 = None;
             state.artifact_paths.rollback_package_path = Some(transaction.package_path);
             state.last_known_good_version = Some(state.installed_version.clone());
         }
@@ -477,7 +480,7 @@ async fn check(
         .artifact_paths
         .package_path
         .as_ref()
-        .is_some_and(|path| path.is_file());
+        .is_some_and(|path| path.is_file() && package_matches_candidate(&previous_state));
     let already_installed = state.installed_upstream_version.as_deref()
         == Some(metadata.version.as_str())
         && state.installed_upstream_sha256.as_deref() == Some(metadata.sha256.as_str())
@@ -517,6 +520,8 @@ async fn check(
     state.candidate_architecture = Some(metadata.architecture.clone());
     state.candidate_repository_path = Some(metadata.repository_path.clone());
     state.upstream_package_sha256 = Some(metadata.sha256.clone());
+    state.artifact_paths.package_path = None;
+    state.artifact_paths.package_candidate_sha256 = None;
     state.clear_install_auth_retry_block();
     state.install_after_app_exit_requested = false;
     state.status = UpdateStatus::DownloadingPackage;
@@ -558,6 +563,15 @@ fn preserves_failed_candidate(
     failed_candidate_has_package: bool,
 ) -> bool {
     same_failed_candidate && (!retry_failed_candidate || failed_candidate_has_package)
+}
+
+fn package_matches_candidate(state: &PersistedState) -> bool {
+    state
+        .upstream_package_sha256
+        .as_deref()
+        .is_some_and(|candidate_sha256| {
+            state.artifact_paths.package_candidate_sha256.as_deref() == Some(candidate_sha256)
+        })
 }
 
 fn mark_check_started(state: &mut PersistedState) {
@@ -624,6 +638,17 @@ async fn install_ready_with_launcher(
         .package_path
         .clone()
         .context("ready state has no package")?;
+    if !package_matches_candidate(state) {
+        let message = format!(
+            "rebuilt package is not bound to candidate {}; run check-now to rebuild",
+            state.candidate_version.as_deref().unwrap_or("unknown")
+        );
+        state.mark_failed(&message);
+        state.artifact_paths.package_path = None;
+        state.artifact_paths.package_candidate_sha256 = None;
+        state.save_updater(&paths.state_file)?;
+        anyhow::bail!(message);
+    }
     anyhow::ensure!(
         package.is_file(),
         "rebuilt package is missing: {}",
@@ -893,6 +918,82 @@ mod replacement_tests {
         assert!(!preserves_failed_candidate(false, false, false));
     }
 
+    #[test]
+    fn explicit_check_retries_when_package_belongs_to_an_older_candidate() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let package = dir.path().join("older-candidate.deb");
+        fs::write(&package, b"older candidate")?;
+
+        let mut state = ready_state(package);
+        state.status = UpdateStatus::Failed;
+        state.upstream_package_sha256 = Some("new-candidate-sha256".into());
+        state.artifact_paths.package_candidate_sha256 = Some("older-candidate-sha256".into());
+
+        let failed_candidate_has_package = state
+            .artifact_paths
+            .package_path
+            .as_ref()
+            .is_some_and(|path| path.is_file() && package_matches_candidate(&state));
+        assert!(!failed_candidate_has_package);
+        assert!(!preserves_failed_candidate(
+            true,
+            true,
+            failed_candidate_has_package
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn install_ready_rejects_package_bound_to_an_older_candidate() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH",
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_COUNT",
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_EXIT",
+        ]);
+        let temp = tempfile::tempdir()?;
+        let paths = fixture_paths(temp.path());
+        paths.ensure_dirs()?;
+        let package = temp.path().join("older-candidate.deb");
+        fs::write(&package, b"older candidate")?;
+        let fake_pkexec = write_fake_pkexec(temp.path())?;
+        let invocation_count = temp.path().join("pkexec-count");
+        env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", fake_pkexec);
+        env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_COUNT", &invocation_count);
+        env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_EXIT", "0");
+
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.auto_install_on_app_exit = false;
+        config.notifications = false;
+        config.app_executable_path = temp.path().join("not-running");
+        let mut state = ready_state(package);
+        state.status = UpdateStatus::Failed;
+        state.upstream_package_sha256 = Some("new-candidate-sha256".into());
+        state.artifact_paths.package_candidate_sha256 = Some("older-candidate-sha256".into());
+
+        let runtime = tokio::runtime::Runtime::new()?;
+        let error = runtime
+            .block_on(install_ready_with_launcher(
+                &config,
+                &mut state,
+                &paths,
+                true,
+                false,
+                Path::new("/bin/sh"),
+            ))
+            .expect_err("an artifact from another candidate must be rejected");
+
+        assert!(error.to_string().contains("not bound to candidate"));
+        assert_eq!(state.status, UpdateStatus::Failed);
+        assert!(state.artifact_paths.package_path.is_none());
+        assert!(state.artifact_paths.package_candidate_sha256.is_none());
+        assert!(
+            !invocation_count.exists(),
+            "stale artifact must not launch pkexec"
+        );
+        Ok(())
+    }
+
     fn stale_identity() -> ProcessIdentity {
         ProcessIdentity {
             pid: std::process::id(),
@@ -917,6 +1018,7 @@ mod replacement_tests {
         state.candidate_version = Some("2026.09.10.120000".into());
         state.upstream_package_sha256 = Some("candidate-sha256".into());
         state.artifact_paths.package_path = Some(package);
+        state.artifact_paths.package_candidate_sha256 = state.upstream_package_sha256.clone();
         state.status = UpdateStatus::ReadyToInstall;
         state
     }
@@ -1294,7 +1396,7 @@ exit 90
         state.save_updater(&paths.state_file)?;
 
         assert!(!prepare_mutation_state(&config, &mut state, &paths)?);
-        assert_eq!(state.schema_version, 3);
+        assert_eq!(state.schema_version, 4);
         assert_eq!(state.status, UpdateStatus::Failed);
         assert!(state.manual_recovery_required);
         assert!(state.install_transaction.is_none());
@@ -1467,7 +1569,9 @@ exit 90
         let mut state = PersistedState::new(true);
         state.status = UpdateStatus::ReadyToInstall;
         state.candidate_version = Some("fixture".into());
+        state.upstream_package_sha256 = Some("fixture-sha256".into());
         state.artifact_paths.package_path = Some(package);
+        state.artifact_paths.package_candidate_sha256 = state.upstream_package_sha256.clone();
         state.save_updater(&paths.state_file)?;
 
         let missing_launcher = dir.path().join("missing-gated-launcher");
@@ -1521,7 +1625,9 @@ exit 90
         let mut state = PersistedState::new(true);
         state.status = UpdateStatus::ReadyToInstall;
         state.candidate_version = Some("fixture".into());
+        state.upstream_package_sha256 = Some("fixture-sha256".into());
         state.artifact_paths.package_path = Some(package);
+        state.artifact_paths.package_candidate_sha256 = state.upstream_package_sha256.clone();
         state.save_updater(&paths.state_file)?;
 
         let result =
@@ -1736,6 +1842,8 @@ exit 90
                 state.candidate_version = Some("fixture-upstream".into());
                 state.upstream_package_sha256 = Some("fixture-sha256".into());
                 state.artifact_paths.package_path = Some(package);
+                state.artifact_paths.package_candidate_sha256 =
+                    state.upstream_package_sha256.clone();
                 state.save_updater(&paths.state_file)?;
 
                 install_ready(&config, &mut state, &paths, true, true).await?;

@@ -118,6 +118,7 @@ async fn run_with_launcher(
     state.rollback_blocked_candidate_version = blocked_version;
     state.rollback_blocked_package_sha256 = blocked_sha;
     state.artifact_paths.package_path = Some(package.clone());
+    state.artifact_paths.package_candidate_sha256 = None;
     state.artifact_paths.rollback_package_path = Some(package);
     state.last_known_good_version = Some(state.installed_version.clone());
     state.error_message = None;
