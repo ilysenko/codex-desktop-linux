@@ -97,6 +97,7 @@ export function createNativeService({
     await ready;
   }
   async function handleRpc(input) {
+    if (input?.type === 'setup') return { target: 'linux', methods: [] };
     const { method, app, params = {} } = input ?? {};
     if (!Object.hasOwn(parameters, method)) throw new Error('This native Linux Computer Use operation is not supported');
     if (!params || typeof params !== 'object' || Array.isArray(params) || Object.keys(params).some(key => !parameters[method].includes(key))) throw new Error('Unsupported native operation parameter');

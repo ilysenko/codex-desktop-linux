@@ -28,7 +28,7 @@ try {
 }
 
 // The app materializes bundled plugin caches by version, not resource contents.
-manifest.version = manifest.version.replace(/-linux-native\.\d+$/, "") + "-linux-native.4";
+manifest.version = manifest.version.replace(/-linux-native\.\d+$/, "") + "-linux-native.5";
 fs.mkdirSync(path.join(target, "scripts"), { recursive: true });
 for (const name of ["native-client.mjs", "native-service.mjs"]) {
   fs.copyFileSync(path.join(__dirname, name), path.join(target, "scripts", name));

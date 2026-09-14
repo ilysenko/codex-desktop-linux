@@ -50,10 +50,12 @@ export function installLinuxComputerUse(cua) {
   };
   const browserState = cua.getState?.bind(cua);
   cua.listApps = async (options = {}) => emit(await call('list_apps'), options);
-  cua.getState = async (options = {}) => {
+  const linuxState = async (options = {}) => {
     const state = browserState ? await browserState({ emit: false }) : { browsers: [] };
     return emit({ ...state, apps: await cua.listApps({ emit: false }) }, options);
   };
+  cua.getState = linuxState;
+  cua.initialize = linuxState;
   cua.getApp = async (app) => {
     if (typeof app !== 'string' || !app.trim()) throw new Error('getApp requires a non-empty app id');
     const unsupported = async () => { throw new Error('This native Linux Computer Use operation is not supported'); };

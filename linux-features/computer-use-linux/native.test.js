@@ -12,9 +12,12 @@ test('native client preserves browser inventory and binds native actions to sele
     return { ok: true };
   }};
   try {
-    const cua = { getState: async () => ({ apps: [], browsers: [{ id: 'iab' }] }) };
+    const inheritedState = async () => ({ apps: [], browsers: [{ id: 'iab' }] });
+    const cua = { getState: inheritedState, initialize: inheritedState };
     installLinuxComputerUse(cua);
-    assert.deepEqual(await cua.getState({ emit: false }), { apps: [{ id: 'org.example.Editor', isRunning: true }], browsers: [{ id: 'iab' }] });
+    const expected = { apps: [{ id: 'org.example.Editor', isRunning: true }], browsers: [{ id: 'iab' }] };
+    assert.deepEqual(await cua.getState({ emit: false }), expected);
+    assert.deepEqual(await cua.initialize({ emit: false }), expected);
     const app = await cua.getApp('org.example.Editor');
     await app.click([2, 3]);
     assert.deepEqual(calls.at(-1), ['sky', { method: 'click', app: 'org.example.Editor', params: { x: 2, y: 3, button: 'left', click_count: 1, relative: true } }]);
@@ -37,6 +40,15 @@ test('trusted service validates requests before backend launch', async () => {
     const method = Object.keys(params)[0].startsWith('max_n') || Object.hasOwn(params, 'max_depth') ? 'get_app_state' : 'screenshot';
     await assert.rejects(handleRpc({method, app:'editor', params}), /Invalid native/);
   }
+});
+
+test('trusted service answers the official Linux Sky setup handshake without launching the backend', async () => {
+  const { createNativeService } = await import('./native-service.mjs');
+  const service = createNativeService({ command: '/definitely-missing-computer-use-backend' });
+  assert.deepEqual(await service.handleRpc({ type: 'setup' }), {
+    target: 'linux',
+    methods: [],
+  });
 });
 
 const { mkdtemp, writeFile, readFile, rm } = require('node:fs/promises');
