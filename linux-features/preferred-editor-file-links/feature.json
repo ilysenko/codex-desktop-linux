@@ -1,0 +1,9 @@
+{
+  "id": "preferred-editor-file-links",
+  "title": "Open source links in the preferred editor",
+  "description": "Open source and text file references in the selected editor with a plain click.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
