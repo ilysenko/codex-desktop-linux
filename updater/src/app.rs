@@ -591,6 +591,7 @@ fn recover_interrupted_check(state: &mut PersistedState) {
 fn same_pending_candidate(state: &PersistedState, version: &str, sha256: &str) -> bool {
     state.candidate_version.as_deref() == Some(version)
         && state.upstream_package_sha256.as_deref() == Some(sha256)
+        && package_matches_candidate(state)
         && matches!(
             state.status,
             UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit
@@ -991,6 +992,44 @@ mod replacement_tests {
             !invocation_count.exists(),
             "stale artifact must not launch pkexec"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn schema_three_pending_candidates_without_binding_are_rebuilt() -> Result<()> {
+        for status in [
+            UpdateStatus::ReadyToInstall,
+            UpdateStatus::WaitingForAppExit,
+        ] {
+            let temp = tempfile::tempdir()?;
+            let paths = fixture_paths(temp.path());
+            paths.ensure_dirs()?;
+            let package = temp.path().join("legacy-candidate.deb");
+            fs::write(&package, b"legacy candidate")?;
+
+            let mut legacy = PersistedState::new(true);
+            legacy.schema_version = 3;
+            legacy.status = status;
+            legacy.candidate_version = Some("2026.09.10.120000".into());
+            legacy.upstream_package_sha256 = Some("legacy-candidate-sha256".into());
+            legacy.artifact_paths.package_path = Some(package);
+
+            let mut raw = serde_json::to_value(legacy)?;
+            raw.get_mut("artifact_paths")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("artifact paths object")
+                .remove("package_candidate_sha256");
+            fs::write(&paths.state_file, serde_json::to_vec_pretty(&raw)?)?;
+
+            let loaded = PersistedState::load_or_default(&paths.state_file, true)?;
+            assert_eq!(loaded.schema_version, 4);
+            assert!(loaded.artifact_paths.package_candidate_sha256.is_none());
+            assert!(!same_pending_candidate(
+                &loaded,
+                "2026.09.10.120000",
+                "legacy-candidate-sha256"
+            ));
+        }
         Ok(())
     }
 
