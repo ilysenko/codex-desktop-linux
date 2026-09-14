@@ -355,9 +355,19 @@ fn apply_reconciled_install(
 ) {
     match transaction.operation {
         InstallOperation::Update => {
+            let upstream_identity_proven = state
+                .artifact_paths
+                .package_candidate_sha256
+                .as_deref()
+                .zip(state.upstream_package_sha256.as_deref())
+                .is_some_and(|(package_candidate, candidate)| package_candidate == candidate);
             state.installed_version = installed_version;
-            state.installed_upstream_version = state.candidate_version.clone();
-            state.installed_upstream_sha256 = state.upstream_package_sha256.clone();
+            state.installed_upstream_version = upstream_identity_proven
+                .then(|| state.candidate_version.clone())
+                .flatten();
+            state.installed_upstream_sha256 = upstream_identity_proven
+                .then(|| state.upstream_package_sha256.clone())
+                .flatten();
             state
                 .last_known_good_version
                 .get_or_insert_with(|| state.installed_version.clone());
@@ -365,7 +375,9 @@ fn apply_reconciled_install(
             state.candidate_architecture = None;
             state.candidate_repository_path = None;
             state.artifact_paths.package_path = Some(transaction.package_path.clone());
-            state.artifact_paths.package_candidate_sha256 = state.upstream_package_sha256.clone();
+            if !upstream_identity_proven {
+                state.artifact_paths.package_candidate_sha256 = None;
+            }
             state.waiting_for_app_exit_auto_install = false;
         }
         InstallOperation::Rollback => {
@@ -1827,6 +1839,7 @@ exit 90
         state.candidate_architecture = Some("amd64".into());
         state.candidate_repository_path = Some("pool/codex.deb".into());
         state.upstream_package_sha256 = Some("new-sha".into());
+        state.artifact_paths.package_candidate_sha256 = Some("new-sha".into());
         state.waiting_for_app_exit_auto_install = true;
         let transaction = InstallTransaction {
             package_path: package,
@@ -1853,6 +1866,54 @@ exit 90
         assert_eq!(state.candidate_repository_path, None);
         assert!(!state.waiting_for_app_exit_auto_install);
         assert_eq!(state.error_message, None);
+    }
+
+    #[test]
+    fn schema_three_install_recovery_does_not_invent_upstream_identity() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let state_path = dir.path().join("state.json");
+        let package = dir.path().join("legacy-candidate.deb");
+        fs::write(&package, b"legacy candidate")?;
+
+        let mut legacy = PersistedState::new(true);
+        legacy.schema_version = 3;
+        legacy.status = UpdateStatus::Installing;
+        legacy.installed_version = "old-local".into();
+        legacy.candidate_version = Some("new-upstream".into());
+        legacy.upstream_package_sha256 = Some("unproven-candidate-sha".into());
+        legacy.artifact_paths.package_path = Some(package.clone());
+        legacy.install_transaction = Some(InstallTransaction {
+            package_path: package,
+            package_sha256: Some("verified-package-sha".into()),
+            package_command: Some(stale_identity()),
+            started_at: Utc::now(),
+            operation: InstallOperation::Update,
+        });
+        let mut raw = serde_json::to_value(legacy)?;
+        raw.get_mut("artifact_paths")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("artifact paths object")
+            .remove("package_candidate_sha256");
+        fs::write(&state_path, serde_json::to_vec_pretty(&raw)?)?;
+
+        let mut loaded = PersistedState::load_or_default(&state_path, true)?;
+        let transaction = loaded
+            .install_transaction
+            .clone()
+            .expect("legacy installing transaction");
+        apply_reconciled_install(&mut loaded, transaction, "installed-local".into());
+
+        assert_eq!(loaded.status, UpdateStatus::Installed);
+        assert_eq!(loaded.installed_version, "installed-local");
+        assert_eq!(loaded.installed_upstream_version, None);
+        assert_eq!(loaded.installed_upstream_sha256, None);
+        assert_eq!(loaded.artifact_paths.package_candidate_sha256, None);
+        assert_eq!(loaded.candidate_version, None);
+        assert_eq!(
+            loaded.upstream_package_sha256.as_deref(),
+            Some("unproven-candidate-sha")
+        );
+        Ok(())
     }
 
     #[test]
