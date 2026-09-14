@@ -53,7 +53,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 );
                 return Ok(());
             }
-            check(&config, &mut state, &paths, false).await
+            check(&config, &mut state, &paths, false, true).await
         }
         Commands::Status { json } => {
             let state = PersistedState::load_or_default(
@@ -132,7 +132,7 @@ async fn daemon(
     time::sleep(config.initial_check_delay_duration()).await;
     if let Some(_lock) = MutationLock::try_acquire(&paths.state_dir.join("check.lock"))? {
         if daemon_replacement_gate(config, state, paths)? {
-            if let Err(error) = check(config, state, paths, true).await {
+            if let Err(error) = check(config, state, paths, true, false).await {
                 error!(?error, "initial update check failed");
             }
         }
@@ -148,7 +148,7 @@ async fn daemon(
             _ = checks.tick() => {
                 if let Some(_lock) = MutationLock::try_acquire(&paths.state_dir.join("check.lock"))? {
                     if daemon_replacement_gate(config, state, paths)? {
-                        if let Err(error) = check(config, state, paths, true).await {
+                        if let Err(error) = check(config, state, paths, true, false).await {
                             error!(?error, "periodic update check failed");
                         }
                     }
@@ -445,6 +445,7 @@ async fn check(
     state: &mut PersistedState,
     paths: &RuntimePaths,
     restart_on_replacement: bool,
+    retry_failed_candidate: bool,
 ) -> Result<()> {
     recover_interrupted_check(state);
     let previous_state = state.clone();
@@ -472,11 +473,22 @@ async fn check(
 
     let same_failed_candidate = previous_status == UpdateStatus::Failed
         && previous_sha256.as_deref() == Some(metadata.sha256.as_str());
+    let failed_candidate_has_package = previous_state
+        .artifact_paths
+        .package_path
+        .as_ref()
+        .is_some_and(|path| path.is_file());
     let already_installed = state.installed_upstream_version.as_deref()
         == Some(metadata.version.as_str())
         && state.installed_upstream_sha256.as_deref() == Some(metadata.sha256.as_str())
         && state.candidate_version.is_none();
-    if already_installed || same_failed_candidate {
+    if already_installed
+        || preserves_failed_candidate(
+            same_failed_candidate,
+            retry_failed_candidate,
+            failed_candidate_has_package,
+        )
+    {
         state.status = if same_failed_candidate {
             UpdateStatus::Failed
         } else {
@@ -538,6 +550,14 @@ async fn check(
         );
     }
     install_ready(config, state, paths, false, restart_on_replacement).await
+}
+
+fn preserves_failed_candidate(
+    same_failed_candidate: bool,
+    retry_failed_candidate: bool,
+    failed_candidate_has_package: bool,
+) -> bool {
+    same_failed_candidate && (!retry_failed_candidate || failed_candidate_has_package)
 }
 
 fn mark_check_started(state: &mut PersistedState) {
@@ -864,6 +884,14 @@ mod replacement_tests {
         thread,
         time::Duration,
     };
+
+    #[test]
+    fn explicit_check_retries_the_same_failed_candidate() {
+        assert!(preserves_failed_candidate(true, false, false));
+        assert!(!preserves_failed_candidate(true, true, false));
+        assert!(preserves_failed_candidate(true, true, true));
+        assert!(!preserves_failed_candidate(false, false, false));
+    }
 
     fn stale_identity() -> ProcessIdentity {
         ProcessIdentity {
