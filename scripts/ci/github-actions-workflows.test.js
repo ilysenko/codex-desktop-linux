@@ -68,23 +68,43 @@ test("official Linux validation runs fully on every pull request but not hourly"
     signedBaseline,
     /name: Require signed renderer dependency regression\n\s+if:/,
   );
-  assert.match(signedBaseline, /EXPECTED_SIGNED_VERSION: 26\.908\.61612/);
+  assert.match(signedBaseline, /EXPECTED_SIGNED_VERSION: \$\{\{ inputs\.version \}\}/);
   assert.match(
     signedBaseline,
-    /EXPECTED_SIGNED_REPOSITORY_PATH: \$\{\{ matrix\.architecture == 'amd64' && 'pool\/main\/c\/chatgpt\/chatgpt_26\.908\.61612_amd64\.deb' \|\| 'pool\/main\/c\/chatgpt\/chatgpt_26\.908\.61612_arm64\.deb' \}\}/,
+    /EXPECTED_SIGNED_REPOSITORY_PATH: \$\{\{ matrix\.architecture == 'amd64' && inputs\.amd64_repository_path \|\| inputs\.arm64_repository_path \}\}/,
   );
   assert.match(
     signedBaseline,
-    /EXPECTED_SIGNED_SHA256: \$\{\{ matrix\.architecture == 'amd64' && '1e4b1896cd5694db667022ada8580455833223027a2944409cb4b535e7b5485e' \|\| 'f70ada5699828fdf68f007ef922e1a639f7e4413724525c7459698bc4819d6d9' \}\}/,
+    /EXPECTED_SIGNED_SHA256: \$\{\{ matrix\.architecture == 'amd64' && inputs\.amd64_sha256 \|\| inputs\.arm64_sha256 \}\}/,
   );
+  assert.match(signedBaseline, /process\.env\.GITHUB_EVENT_NAME === "workflow_dispatch"/);
   assert.match(signedBaseline, /signed renderer regression is not bound to the expected campaign/);
   assert.match(
     signedBaseline,
     /"\$upstream_root\/usr\/lib\/chatgpt\/resources\/app\.asar"/,
   );
-  assert.match(signedBaseline, /authed-route-ba9ecaadebe0\.js/);
-  assert.match(signedBaseline, /app-primary-14a882080299\.js/);
+  assert.match(signedBaseline, /function requireUniqueAsset\(pattern, description\)/);
+  assert.match(signedBaseline, /matches\.length !== 1/);
+  assert.match(
+    signedBaseline,
+    /requireUniqueAsset\(\/\^authed-route-\[A-Za-z0-9_-\]\+\\\.js\$\/, "authenticated route"\)/,
+  );
+  assert.match(
+    signedBaseline,
+    /requireUniqueAsset\(\/\^app-primary-\[A-Za-z0-9_-\]\+\\\.js\$\/, "primary application"\)/,
+  );
+  assert.doesNotMatch(
+    signedBaseline,
+    /["'](?:authed-route|app-primary)-[A-Za-z0-9_-]+\.js["']/,
+  );
+  assert.doesNotMatch(signedBaseline, /\b\d{2}\.\d{3}\.\d{5}\b/);
+  assert.doesNotMatch(
+    signedBaseline,
+    /pool\/main\/c\/chatgpt\/chatgpt_[^\s"']+\.deb/,
+  );
+  assert.doesNotMatch(signedBaseline, /\b[0-9a-f]{64}\b/);
   assert.match(signedBaseline, /!authed\.includes\(`\.\/\$\{primaryName\}`\)/);
+  assert.match(signedBaseline, /const authedFingerprint = authedName\.slice/);
   assert.match(signedBaseline, /primary\.includes\(reverseMarker\)/);
   assert.match(
     signedBaseline,
