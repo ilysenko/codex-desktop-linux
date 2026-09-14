@@ -134,6 +134,8 @@ or other user-home artifact, stage the source with `resources` and copy it from
 `$CODEX_LINUX_FEATURES_DIR/<feature-id>/...` in `runtimeHooks.prelaunch`.
 Avoid writing user-home files from `stage.sh`, because install/package/update
 rebuilds may run outside the real user's session.
+Launcher hooks also receive `CODEX_LINUX_LAUNCHER_PID`, the identity of the
+wrapper process that remains alive through the matching after-exit hooks.
 
 `packageResources` stage feature-owned regular files outside the app directory
 for native packages. Their targets cannot overlap the packaged app directory,

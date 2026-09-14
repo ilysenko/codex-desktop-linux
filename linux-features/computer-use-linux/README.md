@@ -51,9 +51,12 @@ Linux does not provide saved per-app approvals through this integration.
 ## Implementation and validation
 
 The adapter and native helpers are packaged together inside the upstream
-`unified-computer-use` plugin. The separate `computer-use` component stores the
-Any App setting and exposes no MCP tools. Upstream owns browser control.
-Missing or ambiguous bundle contracts abort an enabled build.
+`unified-computer-use` plugin. A feature-owned host service starts the native
+backend outside the code-mode sandbox and the trusted adapter reaches it through
+NodeREPL's native-pipe bridge; the agent JavaScript kernel remains sandboxed.
+The separate `computer-use` component stores the Any App setting and exposes no
+MCP tools. Upstream owns browser control. Missing or ambiguous bundle contracts
+abort an enabled build.
 
 `make install-native` builds `codex-computer-use-linux` and
 `codex-computer-use-cosmic` once before staging the package. Direct

@@ -19,7 +19,7 @@ function applyUnifiedComputerUsePatch(source) {
   const currentServices = [...source.matchAll(currentServicePattern)];
   const patchedServices = [...source.matchAll(patchedServicePattern)];
   const currentBannerPattern = /CUA_REPL_ENABLED_SURFACES:(?<surfaces>[\w$]+)\.surfaces\.join\(`,`\),\[(?<constants>[\w$]+)\.Il\]:JSON\.stringify\((?<services>[\w$]+)\)/g;
-  const patchedBannerPattern = /CUA_REPL_ENABLED_SURFACES:(?<surfaces>[\w$]+)\.surfaces\.join\(`,`\),NODE_REPL_JS_BANNER:`await import\("@oai\/cua\/tinyskyAlt"\);await\(await import\(\$\{JSON\.stringify\((?<path>[\w$]+)\.default\.join\((?<pluginRoot>[\w$]+),`scripts`,`native-client\.mjs`\)\)\}\)\)\.installLinuxComputerUse\(cua\);`,\[(?<constants>[\w$]+)\.Il\]:JSON\.stringify\((?<services>[\w$]+)\)/g;
+  const patchedBannerPattern = /CUA_REPL_ENABLED_SURFACES:(?<surfaces>[\w$]+)\.surfaces\.join\(`,`\),CODEX_LINUX_CUA_HOST_SOCKET:process\.env\.CODEX_LINUX_CUA_HOST_SOCKET,NODE_REPL_JS_BANNER:`await import\("@oai\/cua\/tinyskyAlt"\);await\(await import\(\$\{JSON\.stringify\((?<path>[\w$]+)\.default\.join\((?<pluginRoot>[\w$]+),`scripts`,`native-client\.mjs`\)\)\}\)\)\.installLinuxComputerUse\(cua\);`,\[(?<constants>[\w$]+)\.Il\]:JSON\.stringify\((?<services>[\w$]+)\)/g;
   const currentBanners = [...source.matchAll(currentBannerPattern)];
   const patchedBanners = [...source.matchAll(patchedBannerPattern)];
   const pluginRootPattern = /[\w$]+=(?<path>[\w$]+)\.default\.join\((?<pluginRoot>[\w$]+),`\.mcp\.json`\)/g;
@@ -58,6 +58,7 @@ function applyUnifiedComputerUsePatch(source) {
   patchedSource = patchedSource.replace(
     currentBannerPattern,
     `CUA_REPL_ENABLED_SURFACES:${banner.groups.surfaces}.surfaces.join(\`,\`),` +
+      `CODEX_LINUX_CUA_HOST_SOCKET:process.env.CODEX_LINUX_CUA_HOST_SOCKET,` +
       `NODE_REPL_JS_BANNER:\`await import("@oai/cua/tinyskyAlt");await(await import(\${JSON.stringify(${pathAlias}.default.join(${pluginRoot},\`scripts\`,\`native-client.mjs\`))})).installLinuxComputerUse(cua);\`,` +
       `[${banner.groups.constants}.Il]:JSON.stringify(${banner.groups.services})`,
   );

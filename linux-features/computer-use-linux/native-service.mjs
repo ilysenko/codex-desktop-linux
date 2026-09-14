@@ -1,50 +1,23 @@
-import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { maxBridgeMessageBytes, validateNativeRequest } from './native-protocol.mjs';
 
-const parameters = {
-  list_apps: [],
-  get_app_state: ['include_screenshot', 'max_nodes', 'max_depth', 'max_width', 'max_height', 'max_bytes', 'scale', 'format', 'quality'],
-  screenshot: ['max_width', 'max_height', 'max_bytes', 'scale', 'format', 'quality'],
-  click: ['x', 'y', 'button', 'click_count', 'relative'],
-  scroll: ['x', 'y', 'direction', 'pages', 'relative'],
-  press_key: ['key'],
-  type_text: ['text'],
-};
-
-function validateParameters(params) {
-  const integer = (name, minimum, maximum) => {
-    if (params[name] !== undefined && (!Number.isInteger(params[name]) || params[name] < minimum || params[name] > maximum)) {
-      throw new Error(`Invalid native ${name} parameter`);
-    }
-  };
-  if (params.include_screenshot !== undefined && typeof params.include_screenshot !== 'boolean') throw new Error('Invalid native include_screenshot parameter');
-  integer('max_nodes', 1, 2000);
-  integer('max_depth', 0, 64);
-  integer('max_width', 1, 4096);
-  integer('max_height', 1, 4096);
-  integer('max_bytes', 1024, 4 * 1024 * 1024);
-  integer('quality', 1, 95);
-  if (params.scale !== undefined && (typeof params.scale !== 'number' || !Number.isFinite(params.scale) || params.scale <= 0 || params.scale > 1)) throw new Error('Invalid native scale parameter');
-  if (params.format !== undefined && !['png', 'jpeg'].includes(params.format)) throw new Error('Invalid native format parameter');
+function defaultConnection() {
+  const runtime = globalThis.nodeRepl;
+  const socketPath = runtime?.env?.CODEX_LINUX_CUA_HOST_SOCKET;
+  if (typeof socketPath !== 'string' || !path.isAbsolute(socketPath)) {
+    throw new Error('Linux Computer Use host socket is unavailable');
+  }
+  if (typeof runtime?.nativePipe?.createConnection !== 'function') {
+    throw new Error('Linux Computer Use requires the trusted native pipe bridge');
+  }
+  return runtime.nativePipe.createConnection(socketPath);
 }
 
-// This service runs in the official Node 24 code-mode host, which provides
-// JSON source access and rawJSON. Keep u64 window IDs beyond JS's safe range as
-// strings on the RPC side; only the Rust transport receives raw numeric tokens.
-function parseBackendJson(text) {
-  return JSON.parse(text, (key, value, context) =>
-    key === 'window_id' && typeof value === 'number' && !Number.isSafeInteger(value)
-      ? context.source : value);
-}
-
-// The process owns the Rust backend's state. Failed or interrupted requests are
-// never retried: input may already have reached the desktop.
-export function createNativeService({
-  command = fileURLToPath(new URL('../bin/codex-computer-use-linux', import.meta.url)),
-  args = ['mcp'], timeoutMs = 120_000,
-} = {}) {
-  let child, ready, failure, sequence = 0;
+// The trusted worker keeps the agent kernel sandboxed and reaches the host-side
+// validator through NodeREPL's privileged native-pipe bridge. A failed or timed
+// out action poisons this connection and is never replayed.
+export function createNativeService({ connect = defaultConnection, timeoutMs = 120_000 } = {}) {
+  let connection, ready, failure, sequence = 0, buffered = Buffer.alloc(0);
   const pending = new Map();
   function stop(error) {
     failure ??= error;
@@ -53,91 +26,62 @@ export function createNativeService({
       reject(failure);
     }
     pending.clear();
-    child?.kill();
+    connection?.end();
   }
-  const shutdown = () => stop(new Error('Linux Computer Use backend shut down'));
-  function send(message) {
-    child.stdin.write(`${JSON.stringify(message)}\n`, error => { if (error) stop(error); });
-  }
-  function request(method, params) {
-    if (failure) return Promise.reject(failure);
-    return new Promise((resolve, reject) => {
-      const id = ++sequence;
-      const timer = setTimeout(() => stop(new Error(`Linux Computer Use ${method} timed out; not replayed`)), timeoutMs);
-      pending.set(id, { resolve, reject, timer });
-      send({ jsonrpc: '2.0', id, method, params });
-    });
+  const shutdown = () => stop(new Error('Linux Computer Use host bridge shut down'));
+  function handleData(chunk) {
+    buffered = Buffer.concat([buffered, Buffer.from(chunk)]);
+    for (;;) {
+      const newline = buffered.indexOf(10);
+      if (newline < 0) {
+        if (buffered.length > maxBridgeMessageBytes) stop(new Error('Linux Computer Use host bridge response is too large'));
+        return;
+      }
+      if (newline > maxBridgeMessageBytes) {
+        stop(new Error('Linux Computer Use host bridge response is too large'));
+        return;
+      }
+      const line = buffered.subarray(0, newline).toString('utf8');
+      buffered = buffered.subarray(newline + 1);
+      let message;
+      try { message = JSON.parse(line); }
+      catch { stop(new Error('Linux Computer Use host bridge returned invalid JSON')); return; }
+      const call = pending.get(message.id);
+      if (!call) continue;
+      pending.delete(message.id);
+      clearTimeout(call.timer);
+      if (typeof message.error === 'string') call.reject(new Error(message.error));
+      else call.resolve(message.result);
+    }
   }
   async function start() {
     if (failure) throw failure;
     if (!ready) ready = (async () => {
-      child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-      child.on('error', error => stop(new Error(`Linux Computer Use backend: ${error.message}`)));
-      child.on('exit', (code, signal) => stop(new Error(`Linux Computer Use backend exited (${signal ?? code}); not replayed`)));
-      child.stdin.on('error', error => stop(error));
-      // Drain diagnostics without leaking application text into the RPC channel.
-      child.stderr.resume();
-      createInterface({ input: child.stdout }).on('line', line => {
-        let message;
-        try { message = parseBackendJson(line); }
-        catch { stop(new Error('Linux Computer Use backend returned invalid JSON')); return; }
-        const call = pending.get(message.id);
-        if (!call) {
-          if (message.method && message.id !== undefined) send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Client requests are unsupported' } });
-          return;
-        }
-        pending.delete(message.id);
-        clearTimeout(call.timer);
-        if (message.error) call.reject(new Error(message.error.message || 'Linux Computer Use RPC error'));
-        else call.resolve(message.result);
-      });
-      await request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'linux-unified-computer-use', version: '1' } });
-      send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+      connection = await connect();
+      connection.on('data', handleData);
+      connection.on('error', error => stop(new Error(`Linux Computer Use host bridge: ${error.message}`)));
+      connection.on('close', () => stop(new Error('Linux Computer Use host bridge closed; not replayed')));
     })();
     await ready;
   }
   async function handleRpc(input) {
     if (input?.type === 'setup') return { target: 'linux', methods: [] };
-    const { method, app, params = {} } = input ?? {};
-    if (!Object.hasOwn(parameters, method)) throw new Error('This native Linux Computer Use operation is not supported');
-    if (!params || typeof params !== 'object' || Array.isArray(params) || Object.keys(params).some(key => !parameters[method].includes(key))) throw new Error('Unsupported native operation parameter');
-    validateParameters(params);
-    if (method === 'screenshot' && app === undefined) throw new Error('A non-empty native app id is required');
-    let target = {};
-    if (app !== undefined) {
-      if (typeof app !== 'string' || !app.trim()) throw new Error('A non-empty native app id is required');
-      if (app.startsWith('linux-window:')) {
-        const id = app.slice('linux-window:'.length);
-        if (!/^\d+$/.test(id) || BigInt(id) > 18446744073709551615n) throw new Error('Invalid native window id');
-        target = { window_id: JSON.rawJSON(BigInt(id).toString()) };
-      } else target = { app_id: app };
-    }
+    validateNativeRequest(input);
     await start();
-    const result = await request('tools/call', { name: method === 'list_apps' ? 'list_windows' : method, arguments: { ...params, ...target } });
-    const message = result?.content?.filter(item => item.type === 'text').map(item => item.text).join('\n');
-    if (result?.isError) throw new Error(message || 'Linux Computer Use tool failed');
-    let data = result?.structuredContent;
-    if (data === undefined) {
-      try { data = parseBackendJson(message); }
-      catch { throw new Error('Linux Computer Use backend returned no structured result'); }
-    }
-    if (method === 'get_app_state' && data.window_error) throw new Error(data.window_error);
-    if (data.ok === false) throw new Error(data.message || 'Linux Computer Use action failed');
-    if (method === 'screenshot') {
-      const images = result?.content?.filter(item => item.type === 'image') ?? [];
-      if (data.cropped_to_window !== true || images.length !== 1 || !images[0].data || !/^image\//.test(images[0].mimeType)) {
-        throw new Error('Linux Computer Use backend returned no valid targeted screenshot');
-      }
-      return { screenshot: { ...data, data_url: `data:${images[0].mimeType};base64,${images[0].data}` } };
-    }
-    if (method === 'list_apps') {
-      if (data.error) throw new Error(data.error);
-      return data.windows.map(window => ({ id: `linux-window:${window.window_id}`, displayName: window.app_id || window.wm_class || window.title || 'Linux app', title: window.title, isRunning: true, focused: window.focused }));
-    }
-    return data;
+    if (failure) throw failure;
+    return await new Promise((resolve, reject) => {
+      const id = ++sequence;
+      const message = Buffer.from(`${JSON.stringify({ id, input })}\n`);
+      if (message.length > maxBridgeMessageBytes) throw new Error('Linux Computer Use host bridge request is too large');
+      const timer = setTimeout(() => stop(new Error(`Linux Computer Use ${input.method} timed out; not replayed`)), timeoutMs);
+      pending.set(id, { resolve, reject, timer });
+      try { connection.write(message); }
+      catch (error) { stop(error); }
+    });
   }
   return { handleRpc, shutdown };
 }
+
 const service = createNativeService();
 export const handleRpc = service.handleRpc;
 export const shutdown = service.shutdown;

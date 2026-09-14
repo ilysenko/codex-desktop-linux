@@ -336,7 +336,7 @@ run_launcher_hooks() {
     local name
     [ -d "$HOOK_ROOT/launcher.d" ] || return 0
     while IFS= read -r -d '' hook; do
-        output="$(CODEX_LINUX_FEATURE_HOOK_PHASE=launcher "$hook" "$@")"
+        output="$(CODEX_LINUX_FEATURE_HOOK_PHASE=launcher CODEX_LINUX_LAUNCHER_PID=$$ "$hook" "$@")"
         while IFS=' ' read -r kind payload; do
             [ -n "${kind:-}" ] || continue
             case "$kind" in

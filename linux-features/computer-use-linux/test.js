@@ -18,6 +18,12 @@ const {
 
 test("computer-use-linux is opt-in and owns the current Linux descriptors", () => {
   assert.equal(manifest.defaultEnabled, false);
+  assert.deepEqual(manifest.resources, [{
+    source: "host-service.mjs",
+    target: ".codex-linux/features/computer-use-linux/host-service.mjs",
+    mode: "0644",
+  }]);
+  assert.deepEqual(Object.keys(manifest.runtimeHooks), ["launcher", "afterExit"]);
   assert.deepEqual(
     descriptors.map(({ id }) => id),
     [
@@ -76,7 +82,7 @@ test("staging extends the hidden unified plugin and invalidates the browser-only
   fs.writeFileSync(mcpPath, originalMcp);
   stage();
   const version = JSON.parse(fs.readFileSync(path.join(target, ".codex-plugin/plugin.json"))).version;
-  assert.equal(version, "26.908.31748-linux-native.5");
+  assert.equal(version, "26.908.31748-linux-native.6");
   assert.deepEqual(JSON.parse(fs.readFileSync(marketplacePath)).plugins.map(p => p.name), ["unified-computer-use", "browser", "computer-use"]);
   const settingsManifest = JSON.parse(fs.readFileSync(path.join(target, "../computer-use/.codex-plugin/plugin.json")));
   assert.equal(settingsManifest.mcpServers, undefined);
@@ -84,6 +90,8 @@ test("staging extends the hidden unified plugin and invalidates the browser-only
   assert.equal(fs.existsSync(path.join(target, "../computer-use/bin/codex-computer-use-linux")), false);
   assert.equal(fs.existsSync(path.join(target, "scripts/native-client.mjs")), true);
   assert.equal(fs.existsSync(path.join(target, "scripts/native-service.mjs")), true);
+  assert.equal(fs.existsSync(path.join(target, "scripts/native-backend-service.mjs")), true);
+  assert.equal(fs.existsSync(path.join(target, "scripts/native-protocol.mjs")), true);
   assert.equal(fs.readFileSync(path.join(target, "bin/codex-computer-use-linux"), "utf8"), fs.readFileSync(backend, "utf8"));
   const legacyMcp = path.join(target, "../computer-use/.mcp.json");
   fs.writeFileSync(legacyMcp, JSON.stringify({ mcpServers: { "computer-use": { command: "./bin/codex-computer-use-linux", args: ["mcp"] } } }));
@@ -95,9 +103,9 @@ test("staging extends the hidden unified plugin and invalidates the browser-only
   previousManifest.version = "26.901.41600-linux-native.1";
   fs.writeFileSync(manifestPath, JSON.stringify(previousManifest));
   stage();
-  assert.equal(JSON.parse(fs.readFileSync(manifestPath)).version, "26.901.41600-linux-native.5");
+  assert.equal(JSON.parse(fs.readFileSync(manifestPath)).version, "26.901.41600-linux-native.6");
   stage();
-  assert.equal(JSON.parse(fs.readFileSync(manifestPath)).version, "26.901.41600-linux-native.5");
+  assert.equal(JSON.parse(fs.readFileSync(manifestPath)).version, "26.901.41600-linux-native.6");
   fs.writeFileSync(mcpPath, "upstream drift");
   assert.throws(stage, /unified.*contract/i);
 });

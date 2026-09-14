@@ -374,7 +374,7 @@ test("launcher composes declarative hooks and forwards arguments", (t) => {
   fs.mkdirSync(path.join(hooks, "electron-args.d"), { recursive: true });
   fs.writeFileSync(path.join(hooks, "electron-args.d", "fixture.args"), "# comment\n--feature-arg=one two\n");
   writeExecutable(path.join(hooks, "prelaunch.d", "fixture.sh"), "#!/bin/bash\nprintf prelaunch > \"$TEST_ROOT/prelaunch\"\n");
-  writeExecutable(path.join(hooks, "launcher.d", "fixture.sh"), "#!/bin/bash\nprintf '%s\\n' 'env LAUNCHER_ENV=from-launcher' 'electron-arg --launcher-arg=value'\n");
+  writeExecutable(path.join(hooks, "launcher.d", "fixture.sh"), "#!/bin/bash\nprintf '%s' \"$CODEX_LINUX_LAUNCHER_PID\" > \"$TEST_ROOT/launcher-pid\"\nprintf '%s\\n' 'env LAUNCHER_ENV=from-launcher' 'electron-arg --launcher-arg=value'\n");
   writeExecutable(path.join(hooks, "after-exit.d", "fixture.sh"), "#!/bin/bash\nprintf after-exit > \"$TEST_ROOT/after-exit\"\n");
 
   const env = {
@@ -405,6 +405,7 @@ test("launcher composes declarative hooks and forwards arguments", (t) => {
   ]);
   assert.equal(fs.readFileSync(path.join(root, "prelaunch"), "utf8"), "prelaunch");
   assert.equal(fs.readFileSync(path.join(root, "after-exit"), "utf8"), "after-exit");
+  assert.match(fs.readFileSync(path.join(root, "launcher-pid"), "utf8"), /^[1-9][0-9]*$/);
 });
 
 test("launcher preserves desktop arguments and exposes the after-exit status", (t) => {

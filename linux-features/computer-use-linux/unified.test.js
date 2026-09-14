@@ -21,6 +21,7 @@ test("unified Linux native selection uses the native setting and retains browser
   assert.deepEqual(surfaces(patch(selector), "linux"), ["browser", "computer"]);
   assert.match(patch(selector), /\.sky=path\.default\.join\(i,`scripts`,`native-service\.mjs`\)/);
   assert.match(patch(selector), /NODE_REPL_JS_BANNER:.*native-client\.mjs/);
+  assert.match(patch(selector), /CODEX_LINUX_CUA_HOST_SOCKET:process\.env\.CODEX_LINUX_CUA_HOST_SOCKET/);
 });
 test("unified prerequisites, native feature flag, and other platforms retain their gates", () => {
   const result = patch(selector);

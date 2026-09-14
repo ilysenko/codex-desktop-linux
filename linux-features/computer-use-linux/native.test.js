@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 
 test('native client preserves browser inventory and binds native actions to selected app', async () => {
   const { installLinuxComputerUse } = await import('./native-client.mjs');
@@ -44,11 +45,56 @@ test('trusted service validates requests before backend launch', async () => {
 
 test('trusted service answers the official Linux Sky setup handshake without launching the backend', async () => {
   const { createNativeService } = await import('./native-service.mjs');
-  const service = createNativeService({ command: '/definitely-missing-computer-use-backend' });
+  const service = createNativeService({ connect: () => assert.fail('setup must not connect to the host bridge') });
   assert.deepEqual(await service.handleRpc({ type: 'setup' }), {
     target: 'linux',
     methods: [],
   });
+});
+
+test('trusted service uses the native-pipe host bridge and accepts fragmented responses', async () => {
+  const { createNativeService } = await import('./native-service.mjs');
+  class FakeConnection extends EventEmitter {
+    writes = [];
+    ended = false;
+    write(data) {
+      this.writes.push(Buffer.from(data));
+      const request = JSON.parse(Buffer.from(data).toString('utf8'));
+      const response = Buffer.from(`${JSON.stringify({ id: request.id, result: [{ id: 'linux-window:22', isRunning: true }] })}\n`);
+      queueMicrotask(() => {
+        this.emit('data', response.subarray(0, 7));
+        this.emit('data', response.subarray(7));
+      });
+    }
+    end() { this.ended = true; }
+  }
+  const connection = new FakeConnection();
+  const service = createNativeService({ connect: async () => connection, timeoutMs: 1000 });
+  const apps = await service.handleRpc({ method: 'list_apps' });
+  assert.deepEqual(apps, [{ id: 'linux-window:22', isRunning: true }]);
+  assert.deepEqual(JSON.parse(Buffer.concat(connection.writes).toString('utf8')).input, { method: 'list_apps' });
+  service.shutdown();
+  assert.equal(connection.ended, true);
+});
+
+test('default trusted service reads only the privileged NodeREPL socket context', async () => {
+  const { createNativeService } = await import('./native-service.mjs');
+  const original = globalThis.nodeRepl;
+  const connection = new EventEmitter();
+  connection.end = () => {};
+  connection.write = data => {
+    const { id } = JSON.parse(Buffer.from(data).toString('utf8'));
+    queueMicrotask(() => connection.emit('data', Buffer.from(`${JSON.stringify({ id, result: [] })}\n`)));
+  };
+  let requestedPath;
+  globalThis.nodeRepl = {
+    env: { CODEX_LINUX_CUA_HOST_SOCKET: '/run/user/1000/codex-desktop/computer-use-native.sock' },
+    nativePipe: { createConnection: async value => { requestedPath = value; return connection; } },
+  };
+  try {
+    assert.deepEqual(await createNativeService().handleRpc({ method: 'list_apps' }), []);
+    assert.equal(requestedPath, globalThis.nodeRepl.env.CODEX_LINUX_CUA_HOST_SOCKET);
+  } finally { globalThis.nodeRepl = original; }
 });
 
 const { mkdtemp, writeFile, readFile, rm } = require('node:fs/promises');
@@ -97,8 +143,8 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   reply({content:[{type:'text',text:JSON.stringify(data)}]});
 });
 `);
-  const { createNativeService } = await import('./native-service.mjs');
-  const service = createNativeService({ command: process.execPath, args: [script], timeoutMs: 1000 });
+  const { createNativeBackendService } = await import('./native-backend-service.mjs');
+  const service = createNativeBackendService({ command: process.execPath, args: [script], timeoutMs: 1000 });
   t.after(async () => { service.shutdown(); await rm(dir, {recursive:true,force:true}); });
   return { ...service, readCalls: async () => (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line, (key, value, context) => key === 'window_id' ? context.source : value).params) };
 }
@@ -233,8 +279,8 @@ for (const structured of [false, true]) {
 }
 
 test('invalid and out-of-range window IDs are rejected before backend dispatch', async t => {
-  const { createNativeService } = await import('./native-service.mjs');
-  const service = createNativeService({ command: '/nonexistent/native-backend' });
+  const { createNativeBackendService } = await import('./native-backend-service.mjs');
+  const service = createNativeBackendService({ command: '/nonexistent/native-backend' });
   t.after(() => service.shutdown());
   for (const id of ['', '-1', '1.5', '1e3', ' 22', '+22', '18446744073709551616']) {
     await assert.rejects(service.handleRpc({ method: 'click', app: `linux-window:${id}`, params: { x: 2, y: 3 } }), /Invalid native window id/);
@@ -342,8 +388,8 @@ for (const api of ['getScreenshot', 'getAXStateAndScreenshot']) {
 }
 
 test('screenshot service requires a target and rejects desktop or focus overrides before launch', async t => {
-  const { createNativeService } = await import('./native-service.mjs');
-  const service = createNativeService({command:'/nonexistent/native-backend'});
+  const { createNativeBackendService } = await import('./native-backend-service.mjs');
+  const service = createNativeBackendService({command:'/nonexistent/native-backend'});
   t.after(() => service.shutdown());
   await assert.rejects(service.handleRpc({method:'screenshot'}), /app id is required/);
   for (const params of [{full_screen:true}, {raise_window:false}, {window_id:22}]) {
