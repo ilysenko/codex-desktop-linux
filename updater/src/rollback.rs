@@ -5,8 +5,81 @@ use crate::{
     install, install_rollback, install_transaction, liveness,
     state::{InstallOperation, PersistedState, UpdateStatus},
 };
-use anyhow::Result;
-use std::path::Path;
+use anyhow::{Context, Result};
+use std::{
+    fs,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+/// Keep a rollback package alive when a rebuild is about to remove its old
+/// candidate workspace. This is primarily needed for recovered legacy
+/// transactions, whose package path can still be inside that workspace.
+pub fn preserve_before_workspace_cleanup(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    workspace: &Path,
+) -> Result<()> {
+    let Some(source) = state.artifact_paths.rollback_package_path.clone() else {
+        return Ok(());
+    };
+    if !source.starts_with(workspace) || !source.is_file() {
+        return Ok(());
+    }
+
+    let package_dir = paths.cache_dir.join("packages");
+    fs::create_dir_all(&package_dir).with_context(|| {
+        format!(
+            "Failed to create rollback package cache {}",
+            package_dir.display()
+        )
+    })?;
+    let file_name = source
+        .file_name()
+        .context("rollback package path has no file name")?;
+    let destination = package_dir.join(file_name);
+    anyhow::ensure!(
+        destination != source,
+        "rollback package destination is still inside the candidate workspace"
+    );
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let staging = package_dir.join(format!(
+        ".rollback-{}-{nonce}-{}.tmp",
+        std::process::id(),
+        file_name.to_string_lossy()
+    ));
+    fs::copy(&source, &staging).with_context(|| {
+        format!(
+            "Failed to copy rollback package {} before workspace cleanup",
+            source.display()
+        )
+    })?;
+    if let Err(error) = fs::rename(&staging, &destination) {
+        let _ = fs::remove_file(&staging);
+        return Err(error).with_context(|| {
+            format!(
+                "Failed to publish rollback package {}",
+                destination.display()
+            )
+        });
+    }
+
+    state.artifact_paths.rollback_package_path = Some(destination.clone());
+    // The state journal must point at the durable copy before the old
+    // workspace is allowed to disappear.
+    state.save_updater(&paths.state_file)?;
+    fs::remove_file(&source).with_context(|| {
+        format!(
+            "Failed to remove the old rollback package {} after preservation",
+            source.display()
+        )
+    })?;
+    Ok(())
+}
 
 pub fn record_current_package_as_known_good(state: &mut PersistedState) {
     if state.installed_version == "unknown" || state.candidate_version.is_some() {
@@ -142,6 +215,52 @@ mod tests {
         state.artifact_paths.package_path = Some(package.clone());
         record_current_package_as_known_good(&mut state);
         assert_eq!(state.artifact_paths.rollback_package_path, Some(package));
+        Ok(())
+    }
+
+    #[test]
+    fn recovered_workspace_package_survives_candidate_workspace_cleanup() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let paths = RuntimePaths {
+            config_file: dir.path().join("config/config.toml"),
+            state_file: dir.path().join("state/state.json"),
+            log_file: dir.path().join("state/service.log"),
+            cache_dir: dir.path().join("cache"),
+            state_dir: dir.path().join("state"),
+            config_dir: dir.path().join("config"),
+        };
+        paths.ensure_dirs()?;
+
+        let workspace = dir.path().join("workspaces/2026.09.10.120000");
+        let source = workspace.join("dist/codex-desktop-2026.09.10.120000.deb");
+        fs::create_dir_all(source.parent().expect("package parent"))?;
+        fs::write(&source, b"recovered legacy package")?;
+
+        let mut state = PersistedState::new(true);
+        state.schema_version = 3;
+        state.installed_version = "26.1".into();
+        state.artifact_paths.rollback_package_path = Some(source.clone());
+        state.save_updater(&paths.state_file)?;
+
+        preserve_before_workspace_cleanup(&mut state, &paths, &workspace)?;
+        let retained = state
+            .artifact_paths
+            .rollback_package_path
+            .clone()
+            .expect("preserved rollback package");
+        assert!(!retained.starts_with(&workspace));
+        assert!(retained.starts_with(paths.cache_dir.join("packages")));
+        assert!(!source.exists());
+        assert_eq!(fs::read(&retained)?, b"recovered legacy package");
+
+        // This is the cleanup performed by the next same-candidate rebuild.
+        fs::remove_dir_all(&workspace)?;
+        assert!(retained.is_file());
+        let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
+        assert_eq!(
+            persisted.artifact_paths.rollback_package_path,
+            Some(retained)
+        );
         Ok(())
     }
 

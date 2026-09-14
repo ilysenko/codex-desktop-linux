@@ -3,6 +3,7 @@
 use crate::{
     config::{effective_feature_config_path, RuntimeConfig, RuntimePaths},
     install::{self, PackageKind},
+    rollback,
     state::{ArtifactPaths, PersistedState, UpdateStatus},
 };
 use anyhow::{Context, Result};
@@ -52,6 +53,7 @@ pub async fn build_update(
         .join("workspaces")
         .join(safe_component(candidate_version));
     if workspace.exists() {
+        rollback::preserve_before_workspace_cleanup(state, paths, &workspace)?;
         fs::remove_dir_all(&workspace)?;
     }
     let bundle = workspace.join("builder");
