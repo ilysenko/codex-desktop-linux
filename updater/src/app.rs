@@ -640,11 +640,23 @@ async fn install_ready_with_launcher(
         .clone()
         .context("ready state has no package")?;
     if !package_matches_candidate(state) {
+        let retry_unbound_candidate = state.artifact_paths.package_candidate_sha256.is_none();
+        let recovery = if retry_unbound_candidate {
+            "it will be rebuilt on the next check"
+        } else {
+            "run check-now to rebuild"
+        };
         let message = format!(
-            "rebuilt package is not bound to candidate {}; run check-now to rebuild",
-            state.candidate_version.as_deref().unwrap_or("unknown")
+            "rebuilt package is not bound to candidate {}; {recovery}",
+            state.candidate_version.as_deref().unwrap_or("unknown"),
         );
         state.mark_failed(&message);
+        if retry_unbound_candidate {
+            state.candidate_version = None;
+            state.candidate_architecture = None;
+            state.candidate_repository_path = None;
+            state.upstream_package_sha256 = None;
+        }
         state.artifact_paths.package_path = None;
         state.artifact_paths.package_candidate_sha256 = None;
         state.save_updater(&paths.state_file)?;
@@ -986,6 +998,14 @@ mod replacement_tests {
 
         assert!(error.to_string().contains("not bound to candidate"));
         assert_eq!(state.status, UpdateStatus::Failed);
+        assert_eq!(
+            state.candidate_version.as_deref(),
+            Some("2026.09.10.120000")
+        );
+        assert_eq!(
+            state.upstream_package_sha256.as_deref(),
+            Some("new-candidate-sha256")
+        );
         assert!(state.artifact_paths.package_path.is_none());
         assert!(state.artifact_paths.package_candidate_sha256.is_none());
         assert!(
@@ -1026,6 +1046,87 @@ mod replacement_tests {
             assert!(loaded.artifact_paths.package_candidate_sha256.is_none());
             assert!(!same_pending_candidate(
                 &loaded,
+                "2026.09.10.120000",
+                "legacy-candidate-sha256"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn schema_three_pending_candidates_retry_after_metadata_failure_and_reconcile() -> Result<()> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        for pending_status in [
+            UpdateStatus::ReadyToInstall,
+            UpdateStatus::WaitingForAppExit,
+        ] {
+            let temp = tempfile::tempdir()?;
+            let paths = fixture_paths(temp.path());
+            paths.ensure_dirs()?;
+            let package = temp.path().join("legacy-candidate.deb");
+            fs::write(&package, b"legacy candidate")?;
+
+            let mut legacy = PersistedState::new(true);
+            legacy.schema_version = 3;
+            legacy.status = pending_status.clone();
+            legacy.candidate_version = Some("2026.09.10.120000".into());
+            legacy.candidate_architecture = Some("amd64".into());
+            legacy.candidate_repository_path = Some("pool/chatgpt.deb".into());
+            legacy.upstream_package_sha256 = Some("legacy-candidate-sha256".into());
+            legacy.artifact_paths.package_path = Some(package);
+            legacy.waiting_for_app_exit_auto_install =
+                pending_status == UpdateStatus::WaitingForAppExit;
+
+            let mut raw = serde_json::to_value(legacy)?;
+            raw.get_mut("artifact_paths")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("artifact paths object")
+                .remove("package_candidate_sha256");
+            fs::write(&paths.state_file, serde_json::to_vec_pretty(&raw)?)?;
+
+            let mut state = PersistedState::load_or_default(&paths.state_file, true)?;
+            let previous = state.clone();
+            mark_check_started(&mut state);
+            fail_check::<()>(
+                &mut state,
+                &paths,
+                previous,
+                anyhow::anyhow!("transient metadata failure"),
+            )
+            .expect_err("metadata failure should be reported");
+            assert_eq!(state.status, pending_status);
+
+            let mut config = RuntimeConfig::default_with_paths(&paths);
+            config.app_executable_path = temp.path().join("not-running");
+            let reconcile =
+                runtime.block_on(reconcile_pending_install(&config, &mut state, &paths));
+            if pending_status == UpdateStatus::WaitingForAppExit {
+                let error = reconcile.expect_err("unbound waiting artifact must be rejected");
+                assert!(error.to_string().contains("not bound to candidate"));
+                assert_eq!(state.status, UpdateStatus::Failed);
+                assert!(state.candidate_version.is_none());
+                assert!(state.candidate_architecture.is_none());
+                assert!(state.candidate_repository_path.is_none());
+                assert!(state.upstream_package_sha256.is_none());
+            } else {
+                reconcile?;
+            }
+
+            let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
+            let same_failed_candidate = persisted.status == UpdateStatus::Failed
+                && persisted.upstream_package_sha256.as_deref() == Some("legacy-candidate-sha256");
+            let failed_candidate_has_package = persisted
+                .artifact_paths
+                .package_path
+                .as_ref()
+                .is_some_and(|path| path.is_file() && package_matches_candidate(&persisted));
+            assert!(!preserves_failed_candidate(
+                same_failed_candidate,
+                false,
+                failed_candidate_has_package
+            ));
+            assert!(!same_pending_candidate(
+                &persisted,
                 "2026.09.10.120000",
                 "legacy-candidate-sha256"
             ));
