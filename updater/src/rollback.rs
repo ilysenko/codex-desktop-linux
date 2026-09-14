@@ -58,6 +58,14 @@ pub fn preserve_before_workspace_cleanup(
             source.display()
         )
     })?;
+    fs::File::open(&staging)
+        .and_then(|file| file.sync_all())
+        .with_context(|| {
+            format!(
+                "Failed to sync rollback package staging {}",
+                staging.display()
+            )
+        })?;
     if let Err(error) = fs::rename(&staging, &destination) {
         let _ = fs::remove_file(&staging);
         return Err(error).with_context(|| {
@@ -67,6 +75,14 @@ pub fn preserve_before_workspace_cleanup(
             )
         });
     }
+    fs::File::open(&package_dir)
+        .and_then(|directory| directory.sync_all())
+        .with_context(|| {
+            format!(
+                "Failed to sync rollback package cache directory {}",
+                package_dir.display()
+            )
+        })?;
 
     state.artifact_paths.rollback_package_path = Some(destination.clone());
     // The state journal must point at the durable copy before the old
