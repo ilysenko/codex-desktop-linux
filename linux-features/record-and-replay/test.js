@@ -650,6 +650,31 @@ test("record-and-replay matches the current compiled composer transcript", () =>
   assert.match(patched, /:a\.onTranscriptCancel\?\.\(\)/);
 });
 
+test("record-and-replay transcript repair rejects duplicate, mixed, and partial owners", () => {
+  const current =
+    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()";
+  const patched = applyRecordReplayDictationTranscriptPatch(current);
+  const partial = patched.replace(
+    "globalThis.codexLinuxRecordReplayCaptureTranscript?.(l,t.action)",
+    "globalThis.codexLinuxRecordReplayCaptureTranscript?.(l)",
+  );
+  const variants = {
+    "duplicate current": current + current,
+    "duplicate patched": patched + patched,
+    mixed: current + patched,
+    partial,
+  };
+  const descriptor = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
+
+  assert.ok(descriptor);
+  assert.equal(descriptor.assetMatch(current), true);
+  assert.equal(descriptor.assetMatch(patched), true);
+  for (const [name, source] of Object.entries(variants)) {
+    assert.equal(descriptor.assetMatch(source), false, name);
+    assert.equal(applyRecordReplayDictationTranscriptPatch(source), source, name);
+  }
+});
+
 test("record-and-replay rejects the retired pre-analytics global dictation contract", () => {
   const source =
     "async function L(e,t,n=null){let r=await f({transcript:n==null?await y(e.audio):await R(n,e.audio),cleanupEnabled:t});U===e&&(U=null),a.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:r})}";

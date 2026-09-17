@@ -3,6 +3,7 @@
 
 const assert = require("node:assert/strict");
 const { spawn, spawnSync } = require("node:child_process");
+const crypto = require("node:crypto");
 const { EventEmitter, once } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -1109,6 +1110,37 @@ test("Linux remote-control device-key patch rejects incomplete current state", (
 
   assert.equal(warnings.value, source);
   assert.match(warnings.warnings.join("\n"), /incomplete Linux remote-control device-key patch/u);
+});
+
+test("Linux remote-control device-key patch rejects ambiguous and unrelated anchors byte-identically", () => {
+  const source = syntheticMainBundle();
+  const requireAnchor =
+    "var bV=(0,b.createRequire)(__filename),xV=`remote-control-device-key.node`";
+  const providerStart = source.indexOf(",wV=class");
+  const providerEnd = source.indexOf(";function Owner") + 1;
+  const providerAnchor = source.slice(providerStart, providerEnd);
+  const construction =
+    "this.remoteControlDeviceKeyClient=new wV(null),this.executionHostRegistry";
+  const patched = applyLinuxRemoteControlDeviceKeyPatch(source);
+  const injectedProviderStart = patched.indexOf("function codexLinuxRemoteControlDeviceKeyClient");
+  const injectedProviderEnd = patched.indexOf(requireAnchor);
+  const partialPatched = patched.slice(0, injectedProviderStart) +
+    patched.slice(injectedProviderEnd);
+  const variants = {
+    "duplicate require anchor": source.replace(requireAnchor, `${requireAnchor};${requireAnchor}`),
+    "duplicate provider anchor": source.slice(0, providerEnd) + providerAnchor +
+      source.slice(providerEnd),
+    "duplicate construction anchor": `${source}function Other(){${construction}={}}`,
+    "provider linked to another require": source.replace("this.addon??=bV(", "this.addon??=otherRequire("),
+    "mixed current and patched construction": `${patched}function Other(){${construction}={}}`,
+    "partial patched state": partialPatched,
+  };
+
+  for (const [name, drifted] of Object.entries(variants)) {
+    const result = captureWarns(() => applyLinuxRemoteControlDeviceKeyPatch(drifted));
+    assert.equal(result.value, drifted, name);
+    assert.equal(result.warnings.length, 1, name);
+  }
 });
 
 test("Linux remote-control device-key provider does not capture a function-local child-process alias", () => {
@@ -2681,6 +2713,28 @@ test("patched Linux device-key provider can create, sign with, and delete a key"
     assert.equal(signature.algorithm, "ecdsa_p256_sha256");
     assert.match(signature.signatureDerBase64, /^[A-Za-z0-9+/]+=*$/);
     assert.match(signature.signedPayloadBase64, /^[A-Za-z0-9+/]+=*$/);
+    const signedPayload = Buffer.from(signature.signedPayloadBase64, "base64");
+    assert.deepEqual(JSON.parse(signedPayload.toString("utf8")), {
+      domain: "codex-device-key-sign-payload/v1",
+      payload: {
+        type: "remoteControlClientEnrollment",
+        nonce: "test",
+      },
+    });
+    const publicKey = crypto.createPublicKey({
+      format: "der",
+      key: Buffer.from(created.publicKeySpkiDerBase64, "base64"),
+      type: "spki",
+    });
+    assert.equal(
+      crypto.verify(
+        "sha256",
+        signedPayload,
+        publicKey,
+        Buffer.from(signature.signatureDerBase64, "base64"),
+      ),
+      true,
+    );
 
     const storeDirectory = path.join(sharedConfigDirectory, "remote-control-device-keys");
     const storePath = path.join(storeDirectory, "remote-control-device-keys-v1.json");

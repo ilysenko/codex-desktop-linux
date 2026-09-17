@@ -373,6 +373,32 @@ test("split service tier assets round-trip synthetic fast only for marked API-ke
   });
 });
 
+test("service tier resolver rejects duplicate, mixed, and partial owners byte-identically", () => {
+  const current =
+    "function my(e,t){return t==null?null:t===`fast`?hy(e):e?.serviceTiers?.find(n=>n.id===t)??null}";
+  const duplicateCurrent = current +
+    "function other(n,r){return r==null?null:r===`fast`?findFast(n):n?.serviceTiers?.find(t=>t.id===r)??null}";
+  const patched = applyApiKeyServiceTierResolverPatch(current);
+  const partial = patched.slice(patched.indexOf("function my"));
+  const mixed = current + patched;
+  const duplicatePatched = patched + patched;
+  const descriptor = descriptors.find(({ id }) => id === "api-key-service-tier-resolver");
+
+  assert.ok(descriptor);
+  assert.equal(descriptor.assetMatch(current), true);
+  assert.equal(descriptor.assetMatch(patched), true);
+  for (const [name, source] of Object.entries({
+    duplicateCurrent,
+    duplicatePatched,
+    mixed,
+    partial,
+  })) {
+    assert.equal(descriptor.assetMatch(source), false, name);
+    assert.equal(applyApiKeyServiceTierResolverPatch(source), source, name);
+    assert.equal(applyCurrentResolverPatch(source), source, name);
+  }
+});
+
 test("fallback fast tier leaves the asset byte-identical when one insertion point drifts", () => {
   const source = [
     "function Tdt(e){return e?.serviceTiers??[]}",

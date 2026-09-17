@@ -4,10 +4,26 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
-const DEVICE_KEY_REQUIRE_NEEDLE =
-  /(?:var|let|const)\s+[A-Za-z_$][\w$]*=\(0,[A-Za-z_$][\w$]*\.createRequire\)\(__filename\),[A-Za-z_$][\w$]*=`remote-control-device-key\.node`/u;
-const DEVICE_KEY_PROVIDER_CLASS =
-  /,([A-Za-z_$][\w$]*)=class\{resourcesPath;addon=null;constructor\([A-Za-z_$][\w$]*\)\{this\.resourcesPath=[A-Za-z_$][\w$]*\}[\s\S]{0,1200}?getAddon\(\)\{if\(this\.resourcesPath==null\)throw Error\(`Remote control device keys require resourcesPath`\);/u;
+const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
+
+function deviceKeyRequirePattern(flags = "u") {
+  return new RegExp(
+    `(?:var|let|const)\\s+(?<requireVar>${DEVICE_KEY_IDENT})=\\(0,${DEVICE_KEY_IDENT}\\.createRequire\\)` +
+      `\\(__filename\\),(?<nativeVar>${DEVICE_KEY_IDENT})=\`remote-control-device-key\\.node\``,
+    flags,
+  );
+}
+
+function deviceKeyProviderPattern(flags = "u") {
+  return new RegExp(
+    `,(?<providerClass>${DEVICE_KEY_IDENT})=class\\{resourcesPath;addon=null;` +
+      `constructor\\((?<constructorArg>${DEVICE_KEY_IDENT})\\)\\{this\\.resourcesPath=\\k<constructorArg>\\}` +
+      `[\\s\\S]{0,1200}?getAddon\\(\\)\\{if\\(this\\.resourcesPath==null\\)throw Error` +
+      `\\(\`Remote control device keys require resourcesPath\`\\);return this\\.addon\\?\\?=` +
+      `(?<requireVar>${DEVICE_KEY_IDENT})\\([\\s\\S]{0,300}?(?<nativeVar>${DEVICE_KEY_IDENT})\\)\\),this\\.addon\\}\\}`,
+    flags,
+  );
+}
 const REMOTE_CONTROL_SETTINGS_VISIBILITY_NEEDLE =
   /function ([A-Za-z_$][\w$]*)\(\{remoteControlConnectionsState:([A-Za-z_$][\w$]*),slingshotEnabled:([A-Za-z_$][\w$]*)\}\)\{return \3&&\(\2\?\.available\?\?!0\)(?:&&\2\?\.accessRequired!==!0)?\}/u;
 const REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER = "codexLinuxRemoteControlOutboundTabGate";
@@ -148,42 +164,86 @@ function linuxDeviceKeyProviderSource({ childProcessVar, cryptoVar, fsVar, pathV
   ].join("");
 }
 
-function applyLinuxRemoteControlDeviceKeyPatch(source) {
-  if (source.includes(DEVICE_KEY_CLIENT_MARKER)) {
-    if (/this\.remoteControlDeviceKeyClient=process\.platform===`linux`\?codexLinuxRemoteControlDeviceKeyClient\(\):new [A-Za-z_$][\w$]*\(/u.test(source)) {
-      return source;
-    }
-    console.warn("WARN: Found incomplete Linux remote-control device-key patch - refusing partial state");
-    return source;
-  }
-
+function deviceKeyPatchState(source) {
   const cryptoVar = "codexLinuxRemoteControlCrypto";
   const fsVar = "codexLinuxRemoteControlFs";
   const pathVar = "codexLinuxRemoteControlPath";
   const childProcessVar = "codexLinuxRemoteControlChildProcess";
+  const providerSource = linuxDeviceKeyProviderSource({ childProcessVar, cryptoVar, fsVar, pathVar });
+  const requireMatches = [...source.matchAll(deviceKeyRequirePattern("gu"))];
+  const providerMatches = [...source.matchAll(deviceKeyProviderPattern("gu"))];
+  const providerSourceCount = source.split(providerSource).length - 1;
 
-  const insertionNeedle = source.match(DEVICE_KEY_REQUIRE_NEEDLE)?.[0] ?? null;
-  const providerClass = source.match(DEVICE_KEY_PROVIDER_CLASS)?.[1] ?? null;
-  const constructionPattern = providerClass == null
-    ? null
-    : new RegExp(
-      `this\\.remoteControlDeviceKeyClient=new ${providerClass}\\((?<args>[\\s\\S]{1,300}?)\\),this\\.executionHostRegistry`,
-      "u",
-    );
-  const constructionMatches = constructionPattern == null ? [] : [...source.matchAll(new RegExp(constructionPattern, "gu"))];
-  if (insertionNeedle == null || providerClass == null || constructionMatches.length !== 1) {
-    console.warn("WARN: Could not find remote-control device-key bundle needles - skipping Linux remote-control device-key patch");
+  if (requireMatches.length !== 1 || providerMatches.length !== 1) {
+    return { kind: requireMatches.length > 1 || providerMatches.length > 1 ? "ambiguous" : "partial" };
+  }
+  const requireMatch = requireMatches[0];
+  const providerMatch = providerMatches[0];
+  if (
+    requireMatch.groups.requireVar !== providerMatch.groups.requireVar ||
+    requireMatch.groups.nativeVar !== providerMatch.groups.nativeVar
+  ) {
+    return { kind: "mixed" };
+  }
+
+  const providerClass = providerMatch.groups.providerClass;
+  const currentConstructionPattern = new RegExp(
+    `this\\.remoteControlDeviceKeyClient=new ${providerClass}\\((?<args>[\\s\\S]{1,300}?)\\),this\\.executionHostRegistry`,
+    "gu",
+  );
+  const patchedConstructionPattern = new RegExp(
+    `this\\.remoteControlDeviceKeyClient=process\\.platform===\`linux\`\\?` +
+      `codexLinuxRemoteControlDeviceKeyClient\\(\\):new ${providerClass}\\((?<args>[\\s\\S]{1,300}?)\\),` +
+      `this\\.executionHostRegistry`,
+    "gu",
+  );
+  const currentConstructions = [...source.matchAll(currentConstructionPattern)];
+  const patchedConstructions = [...source.matchAll(patchedConstructionPattern)];
+
+  if (currentConstructions.length === 1 && patchedConstructions.length === 0 &&
+      providerSourceCount === 0 && !source.includes(DEVICE_KEY_CLIENT_MARKER)) {
+    return {
+      kind: "current",
+      insertionNeedle: requireMatch[0],
+      providerClass,
+      construction: currentConstructions[0],
+      providerSource,
+    };
+  }
+  if (currentConstructions.length === 0 && patchedConstructions.length === 1 &&
+      providerSourceCount === 1) {
+    return { kind: "patched" };
+  }
+  if (currentConstructions.length > 0 && patchedConstructions.length > 0) {
+    return { kind: "mixed" };
+  }
+  if (currentConstructions.length > 1 || patchedConstructions.length > 1 || providerSourceCount > 1) {
+    return { kind: "ambiguous" };
+  }
+  return { kind: "partial" };
+}
+
+function applyLinuxRemoteControlDeviceKeyPatch(source) {
+  const state = deviceKeyPatchState(source);
+  if (state.kind === "patched") {
+    return source;
+  }
+  if (state.kind !== "current") {
+    if (source.includes(DEVICE_KEY_CLIENT_MARKER)) {
+      console.warn("WARN: Found incomplete Linux remote-control device-key patch - refusing partial state");
+    } else {
+      console.warn("WARN: Could not find remote-control device-key bundle needles - skipping Linux remote-control device-key patch");
+    }
     return source;
   }
 
-  const provider = linuxDeviceKeyProviderSource({ childProcessVar, cryptoVar, fsVar, pathVar });
-  const construction = constructionMatches[0];
-  return source
-    .replace(insertionNeedle, `${provider}${insertionNeedle}`)
+  const patched = source
+    .replace(state.insertionNeedle, `${state.providerSource}${state.insertionNeedle}`)
     .replace(
-      construction[0],
-      `this.remoteControlDeviceKeyClient=process.platform===\`linux\`?codexLinuxRemoteControlDeviceKeyClient():new ${providerClass}(${construction.groups.args}),this.executionHostRegistry`,
+      state.construction[0],
+      `this.remoteControlDeviceKeyClient=process.platform===\`linux\`?codexLinuxRemoteControlDeviceKeyClient():new ${state.providerClass}(${state.construction.groups.args}),this.executionHostRegistry`,
     );
+  return deviceKeyPatchState(patched).kind === "patched" ? patched : source;
 }
 
 function applyLinuxRemoteControlClientRevocationRecoveryPatch(source) {
