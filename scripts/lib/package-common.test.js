@@ -87,14 +87,23 @@ test("non-Debian package formats map the official runtime libraries", () => {
   const pacman = fs.readFileSync(path.join(repoRoot, "packaging/linux/PKGBUILD.template"), "utf8");
   const flake = fs.readFileSync(path.join(repoRoot, "flake.nix"), "utf8");
 
-  for (const soname of ["libatspi.so.0", "libnotify.so.4", "libssl.so.3", "libusb-1.0.so.0", "libX11-xcb.so.1"]) {
+  for (const soname of [
+    "libatspi.so.0",
+    "libnotify.so.4",
+    "libssl.so.3",
+    "libtss2-esys.so.0",
+    "libtss2-mu.so.0",
+    "libtss2-tcti-device.so.0",
+    "libusb-1.0.so.0",
+    "libX11-xcb.so.1",
+  ]) {
     assert.match(rpm, new RegExp(soname.replaceAll(".", "\\.")));
   }
-  for (const packageName of ["libnotify", "libusb", "openssl", "systemd-libs", "xz"]) {
+  for (const packageName of ["libnotify", "libusb", "openssl", "systemd-libs", "tpm2-tss", "xz"]) {
     assert.match(pacman, new RegExp(`'${packageName}'`));
   }
   assert.match(rpm, /Requires:.*\bxz\b/);
-  for (const packageName of ["graphite2", "libglvnd", "openssl", "xz"]) {
+  for (const packageName of ["graphite2", "libglvnd", "openssl", "tpm2-tss", "xz"]) {
     assert.match(flake, new RegExp(`\\b${packageName}\\b`));
   }
 });

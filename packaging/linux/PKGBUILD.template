@@ -43,6 +43,7 @@ depends=(
     'openssl'
     'pango'
     'systemd-libs'
+    'tpm2-tss'
     'xz'
 __LINUX_FEATURE_DEPENDENCIES__
 )

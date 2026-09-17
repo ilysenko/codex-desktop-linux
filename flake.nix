@@ -75,7 +75,7 @@
           alsa-lib atk at-spi2-atk at-spi2-core cairo cups dbus expat
           gdk-pixbuf glib graphite2 gtk3 libdrm libgbm libglvnd libnotify libusb1
           libxkbcommon mesa nspr nss openssl pango pipewire systemd stdenv.cc.cc.lib
-          wayland xz zstd libX11 libXcomposite libXcursor libXdamage libXext
+          tpm2-tss wayland xz zstd libX11 libXcomposite libXcursor libXdamage libXext
           libXfixes libXi libXrandr libXScrnSaver libXtst libxcb libxcrypt-legacy zlib
         ];
         runtimeLibraryPath = lib.concatStringsSep ":" [

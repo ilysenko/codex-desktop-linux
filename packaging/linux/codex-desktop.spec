@@ -27,6 +27,7 @@ Requires:       libdbus-1.so.3%{codex_elf_suffix}, libexpat.so.1%{codex_elf_suff
 Requires:       libglib-2.0.so.0%{codex_elf_suffix}, libgtk-3.so.0%{codex_elf_suffix}, libnotify.so.4%{codex_elf_suffix}
 Requires:       libdrm.so.2%{codex_elf_suffix}, libnspr4.so%{codex_elf_suffix}, libnss3.so%{codex_elf_suffix}
 Requires:       libpango-1.0.so.0%{codex_elf_suffix}, libssl.so.3%{codex_elf_suffix}, libstdc++.so.6%{codex_elf_suffix}
+Requires:       libtss2-esys.so.0%{codex_elf_suffix}, libtss2-mu.so.0%{codex_elf_suffix}, libtss2-tcti-device.so.0%{codex_elf_suffix}
 Requires:       libudev.so.1%{codex_elf_suffix}, libusb-1.0.so.0%{codex_elf_suffix}, libX11.so.6%{codex_elf_suffix}
 Requires:       libX11-xcb.so.1%{codex_elf_suffix}, libxcb.so.1%{codex_elf_suffix}, libxcb-dri3.so.0%{codex_elf_suffix}
 Requires:       libXcomposite.so.1%{codex_elf_suffix}, libXdamage.so.1%{codex_elf_suffix}
