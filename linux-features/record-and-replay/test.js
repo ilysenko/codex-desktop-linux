@@ -173,7 +173,7 @@ test("record-and-replay dictation descriptor tracks moved upstream composer bund
   assert.ok(descriptor);
   assert.equal(descriptor.pattern.test("app-initial-C-fROkKo.js"), true);
   assert.equal(descriptor.assetMatch(
-    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):await a.onTranscriptInsert(l)):a.onTranscriptCancel?.()",
+    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()",
   ), true);
   assert.equal(descriptor.pattern.test("app-initial~app-main~onboarding-page-BUwCKIcU.js"), false);
   assert.equal(descriptor.pattern.test("use-dictation-BUwCKIcU.js"), false);
@@ -636,9 +636,9 @@ test("record-and-replay rejects the retired non-persistent composer contract", (
   assert.equal(patched, source);
 });
 
-test("record-and-replay matches the official 26.831.20005 compiled composer transcript", () => {
+test("record-and-replay matches the current compiled composer transcript", () => {
   const source =
-    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):await a.onTranscriptInsert(l)):a.onTranscriptCancel?.()";
+    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()";
   const patched = applyRecordReplayDictationTranscriptPatch(source);
 
   assert.notEqual(patched, source);
@@ -646,7 +646,7 @@ test("record-and-replay matches the official 26.831.20005 compiled composer tran
   assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(l,t\.action\)/);
   assert.match(patched, /o==null\?_m\.getInstance\(\)\.dispatchMessage/);
   assert.match(patched, /o\.setTranscript\(l\)/);
-  assert.match(patched, /t\.action===`send`\?await a\.onTranscriptSend\(l\):await a\.onTranscriptInsert\(l\)/);
+  assert.match(patched, /t\.action===`send`\?await a\.onTranscriptSend\(l\):\(await a\.onTranscriptInsert\(l\),U\.current===t/);
   assert.match(patched, /:a\.onTranscriptCancel\?\.\(\)/);
 });
 
@@ -681,7 +681,7 @@ test("record-and-replay current transcript drift remains byte-identical", () => 
 
 test("record-and-replay generated transcript runtimes are syntactically valid", () => {
   const source =
-    "async function current(){let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):await a.onTranscriptInsert(l)):a.onTranscriptCancel?.()}";
+    "async function current(){let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()}";
   const globalDictationSource =
     "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(`transcript_dispatched`)}";
 

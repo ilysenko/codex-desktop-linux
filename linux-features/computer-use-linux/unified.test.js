@@ -54,3 +54,15 @@ test("unified mode rejects appended gates and changed companion selectors", () =
     assert.throws(() => patch(selector + changed), /unified.*contract/i);
   }
 });
+
+test("unified service patch scopes the plugin root and current env-key alias to its owner", () => {
+  const current =
+    "function unrelated(){let other=path.default.join(otherRoot,`.mcp.json`);return other}" +
+    selector.replace("[constants.Il]", "[constants.Gl]");
+  const patched = patch(current);
+
+  assert.match(patched, /path\.default\.join\(i,`scripts`,`native-service\.mjs`\)/u);
+  assert.match(patched, /\[constants\.Gl\]:JSON\.stringify\(l\)/u);
+  assert.doesNotMatch(patched, /path\.default\.join\(otherRoot,`scripts`,`native-service\.mjs`\)/u);
+  assert.equal(patch(patched), patched);
+});

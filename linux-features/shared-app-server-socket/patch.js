@@ -86,7 +86,7 @@ function applySharedAppServerSocketPatch(source) {
     return source;
   }
   const configOverridesPattern = new RegExp(
-    `return new ${symbols.namespace}\\.(${IDENT})\\(\\{hostConfig:e\\.hostConfig,repoRoot:e\\.repoRoot,resourcesPath:e\\.resourcesPath,defaultOriginator:e\\.defaultOriginator,getConfigOverrides:((?:async)?\\(\\)=>${IDENT}\\(e\\))\\}\\)`,
+    `return new ${symbols.namespace}\\.(${IDENT})\\(\\{hostConfig:e\\.hostConfig,repoRoot:e\\.repoRoot,resourcesPath:e\\.resourcesPath,defaultOriginator:e\\.defaultOriginator,getConfigOverrides:(async\\(\\)=>\\[\\.\\.\\.await ${IDENT}\\(e\\)\\])\\}\\)`,
     "g",
   );
   const configOverridesMatches = [...factorySource.matchAll(configOverridesPattern)];

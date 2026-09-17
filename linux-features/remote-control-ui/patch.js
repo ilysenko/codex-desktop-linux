@@ -50,6 +50,11 @@ function applyRemoteControlConnectionsVisibilityPatch(source) {
   return source;
 }
 
+function matchesRemoteControlConnectionsVisibilityContract(source) {
+  return source.includes(REMOTE_CONTROL_UI_VISIBILITY_MARKER) ||
+    /function\s+[A-Za-z_$][\w$]*\(\{remoteControlConnectionsState:([A-Za-z_$][\w$]*),slingshotEnabled:([A-Za-z_$][\w$]*)\}\)\{return (?:\2|\(\2\|\|navigator\.userAgent\.includes\(`Linux`\)\))&&\(\1\?\.available\?\?!0\)&&\1\?\.accessRequired!==!0\}/u.test(source);
+}
+
 function applyExperimentalFeaturesPatch(source) {
   const needle = "&&e.name!==`remote_control`";
   if (source.includes(needle)) {
@@ -84,7 +89,8 @@ module.exports = {
       phase: "webview-asset",
       order: 20510,
       ciPolicy: "optional",
-      pattern: /^app-initial-[^.]+\.js$/,
+      pattern: /^app-primary-[^.]+\.js$/,
+      assetMatch: matchesRemoteControlConnectionsVisibilityContract,
       missingDescription: "remote control connections visibility bundle",
       skipDescription: "remote control UI remote control connections visibility patch",
       apply: applyRemoteControlConnectionsVisibilityPatch,

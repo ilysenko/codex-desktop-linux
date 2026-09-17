@@ -7,7 +7,9 @@ const manifest = require("./feature.json");
 const descriptors = require("./patch.js");
 const {
   applyLinuxAppShellTabLayoutPerformancePatch,
+  applyLinuxMarkdownAnimationPerformancePatch,
   matchesLinuxAppShellTabLayoutPerformanceContract,
+  matchesLinuxMarkdownAnimationPerformanceContract,
 } = require("./implementation.js");
 
 function currentAppShellTabLayoutFixture() {
@@ -59,4 +61,16 @@ test("app-shell tab workaround rejects the retired direct collapsed animation co
 
   assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(source), false);
   assert.equal(applyLinuxAppShellTabLayoutPerformancePatch(source), source);
+});
+
+test("current Markdown animation workaround disables streaming fades", () => {
+  const source = "._MarkdownRoot_wt3tt_184[data-markdown-animated] :is(._FadeIn_wt3tt_659,._HorizontalRule_wt3tt_327,._ListItem_wt3tt_124,._TableRow_wt3tt_543,._Blockquote_wt3tt_285){opacity:0;animation:_fade-in_wt3tt_1 var(--duration,var(--transition-duration-basic)) var(--fade-easing,cubic-bezier(.37, .55, .86, .88)) forwards;animation-delay:var(--fade-delay,0s)}._MarkdownRoot_wt3tt_184[data-markdown-animated] ._FadeListDecoration_wt3tt_666::marker{animation:_fade-in-marker_wt3tt_1 var(--duration,var(--transition-duration-basic)) var(--fade-easing,cubic-bezier(.37, .55, .86, .88)) forwards;animation-delay:var(--fade-delay,0s)}._MarkdownRoot_wt3tt_184[data-markdown-animated] ._ImageEnter_wt3tt_672{transform-origin:50%;animation:.18s ease-out both _image-enter_wt3tt_1}";
+
+  assert.equal(matchesLinuxMarkdownAnimationPerformanceContract(source), true);
+  const patched = applyLinuxMarkdownAnimationPerformancePatch(source);
+  assert.notEqual(patched, source);
+  assert.match(patched, /FadeIn_wt3tt_659[^{}]*\{opacity:1;animation:none\}/u);
+  assert.match(patched, /FadeListDecoration_wt3tt_666::marker\{animation:none\}/u);
+  assert.equal(matchesLinuxMarkdownAnimationPerformanceContract(patched), true);
+  assert.equal(applyLinuxMarkdownAnimationPerformancePatch(patched), patched);
 });

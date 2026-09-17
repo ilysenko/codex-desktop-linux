@@ -148,9 +148,9 @@ function applyApiKeyServiceTierResolverPatch(source) {
 
 function currentFallbackOptionsPattern(flags = "") {
   return new RegExp(
-    `\\.\\.\\.\\((${JS_IDENT})\\?\\.serviceTiers\\?\\?\\[\\]\\)\\.map\\((${JS_IDENT})=>\\(\\{` +
-      `description:${JS_IDENT}\\(\\2\\),iconKind:${JS_IDENT}\\(\\2\\.id,\\2\\.name\\),` +
-      `label:${JS_IDENT}\\(\\2\\),tier:\\2,value:\\2\\.id\\}\\)\\)`,
+    `\\.\\.\\.\\((${JS_IDENT})\\?\\.serviceTiers\\?\\?\\[\\]\\)\\.map\\((${JS_IDENT})=>` +
+      `(?:\\(\\{[^{}]{0,500}?tier:\\2,value:\\2\\.id\\}\\)|` +
+      `\\{[^{}]{0,800}?return\\{[^{}]{0,500}?tier:\\2,value:\\2\\.id\\}\\})\\)`,
     flags,
   );
 }
@@ -291,7 +291,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20608,
     ciPolicy: "optional",
-    pattern: /^src-[^.]+\.js$/,
+    pattern: /^app-initial-[^.]+\.js$/,
     assetMatch: matchesApiKeyServiceTierResolverContract,
     missingDescription: "current API key service tier resolver bundle",
     skipDescription: "API key service tier resolver patch",

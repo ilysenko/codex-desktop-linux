@@ -857,7 +857,7 @@ function syntheticBundle() {
     "if(e.transportKind===`remote-control`)return new Remote(e);",
     "if(n.no(e.hostConfig))return new hoe({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator});",
     "let r=x5(e.hostConfig);if(r){e.desktopAuthAppServerClient;let t=vbe(e.hostConfig,r);return new n.Tn({hostConfig:e.hostConfig,websocketUrl:r,getWebsocketProtocols:void 0,...t==null?{}:{socksProxyUrl:t}})}",
-    "return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:()=>Ope(e)})}function afterFactory(){}",
+    "return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:async()=>[...await Ope(e)]})}function afterFactory(){}",
   ].join("");
 }
 
@@ -1714,7 +1714,7 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   assert.match(patched, /hostConfig\.kind===`local`/);
   assert.match(
     patched,
-    /CodexLinuxSharedAppServerSocketTransport\(process\.env\.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,\(\)=>Ope\(e\)\)/,
+    /CodexLinuxSharedAppServerSocketTransport\(process\.env\.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async\(\)=>\[\.\.\.await Ope\(e\)\]\)/,
   );
   assert.match(patched, /app-server`,\s*`proxy`,\s*`--sock`/);
   assert.match(patched, /flatMap\(e=>\[`-c`,e\]\).*app-server`,\s*`--listen`,\s*`unix:\/\//);
@@ -1761,7 +1761,7 @@ test("patch rejects a current transport whose semantic SSH anchor is missing", (
 
 test("patch leaves a current transport with no config override callback byte-identical", () => {
   const source = syntheticBundle().replace(
-    ",getConfigOverrides:()=>Ope(e)",
+    ",getConfigOverrides:async()=>[...await Ope(e)]",
     "",
   );
   const warnings = [];
@@ -1777,7 +1777,7 @@ test("patch leaves a current transport with no config override callback byte-ide
 
 test("patch leaves an ambiguous config override callback byte-identical", () => {
   const callbackTransport =
-    "return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:()=>Ope(e)})";
+    "return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:async()=>[...await Ope(e)]})";
   const source = syntheticBundle().replace(callbackTransport, `${callbackTransport};${callbackTransport}`);
   const warnings = [];
   const originalWarn = console.warn;

@@ -102,10 +102,7 @@ test("current package descriptors use the semantic app-initial owner", () => {
       "api-key-service-tier-fallback",
     ],
   );
-  assert.ok(descriptors.filter(({ id }) => id !== "api-key-service-tier-resolver")
-    .every((descriptor) => descriptor.pattern.test("app-initial-Bd3Z1bES.js")));
-  assert.ok(descriptors.find(({ id }) => id === "api-key-service-tier-resolver")
-    ?.pattern.test("src-25d8c35b9f39.js"));
+  assert.ok(descriptors.every((descriptor) => descriptor.pattern.test("app-initial-Bd3Z1bES.js")));
   assert.ok(descriptors.every((descriptor) => !descriptor.pattern.test("projects-index-page-DjNy92Xe.js")));
 });
 
@@ -301,7 +298,7 @@ test("model list marker rejects the superseded pre-catalog signature byte-identi
 
 test("fallback fast tier is synthesized only for API-key model catalog entries", () => {
   const source = [
-    "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>({description:eEe(t),iconKind:fQ(t.id,t.name),label:$Te(t),tier:t,value:t.id}))]}",
+    "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>{let n=fQ(t.id,t.name),r=n===`fast`?1.5:null;return{description:eEe(t,r),iconKind:n,label:$Te(t),speedMultiplier:r,tier:t,value:t.id}})]}",
     "function nEe(e,t,n){return e?.find(e=>e.model===t&&hQ(e,n))??null}",
   ].join("");
 
@@ -332,7 +329,7 @@ test("split service tier assets round-trip synthetic fast only for marked API-ke
     try {
       const assetsDir = path.join(tempApp, "webview", "assets");
       const optionsPath = path.join(assetsDir, "app-initial-97cc141651bb.js");
-      const resolverPath = path.join(assetsDir, "src-25d8c35b9f39.js");
+      const resolverPath = path.join(assetsDir, "app-initial-resolver.js");
       fs.mkdirSync(assetsDir, { recursive: true });
       fs.writeFileSync(optionsPath, optionsSource);
       fs.writeFileSync(resolverPath, resolverSource);
