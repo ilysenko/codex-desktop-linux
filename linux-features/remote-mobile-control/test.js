@@ -1434,6 +1434,67 @@ test("prior reasoning-summary resolver without model configuration is rejected b
   assert.ok(warnings.some((warning) => warning.includes("turn-start resolver")));
 });
 
+test("duplicate reasoning-summary owner pairs are rejected byte-identically", () => {
+  const owner = syntheticCurrentReasoningSummaryTurnStartBundle();
+  const source = owner + owner.replaceAll("HWt", "AWt").replaceAll("QWt", "BWt");
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("ambiguous reasoning-summary")));
+});
+
+test("mixed pristine and patched reasoning-summary owner pairs are rejected byte-identically", () => {
+  const owner = syntheticCurrentReasoningSummaryTurnStartBundle();
+  const patchedOwner = applyLinuxRemoteMobileReasoningSummaryPatch(owner);
+  const pristineOwner = owner.replaceAll("HWt", "AWt").replaceAll("QWt", "BWt");
+  const source = patchedOwner + pristineOwner;
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("ambiguous reasoning-summary")));
+});
+
+test("partial reasoning-summary owner pairs are rejected byte-identically", () => {
+  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(
+    syntheticCurrentReasoningSummaryTurnStartBundle(),
+  );
+  const partialSources = [
+    patched.replace(
+      "codexLinuxRemoteMobileHost:gh(e.getHostId())&&a.mode===`durable`,",
+      "",
+    ),
+    patched.replace(
+      "/*codexLinuxRemoteMobileReasoningSummaryNone*/navigator.userAgent.includes(`Linux`)&&o.codexLinuxRemoteMobileHost&&s.summary===void 0&&(ye=`none`);",
+      "",
+    ),
+  ];
+
+  for (const source of partialSources) {
+    const { result, warnings } = captureWarnings(() =>
+      applyLinuxRemoteMobileReasoningSummaryPatch(source),
+    );
+    assert.equal(result, source);
+    assert.ok(warnings.some((warning) => warning.includes("incomplete reasoning-summary")));
+  }
+});
+
+test("a reasoning-summary resolver with ambiguous callers is rejected byte-identically", () => {
+  const owner = syntheticCurrentReasoningSummaryTurnStartBundle();
+  const callerStart = owner.indexOf("async function QWt");
+  const duplicateCaller = owner.slice(callerStart).replace("QWt", "RWt");
+  const source = owner + duplicateCaller;
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("ambiguous or incomplete")));
+});
+
 test("current reasoning-summary owner distinguishes durable mobile hosts and preserves explicit summaries", async () => {
   const source = syntheticCurrentReasoningSummaryTurnStartBundle();
   const patched = applyLinuxRemoteMobileReasoningSummaryPatch(source);
@@ -1442,7 +1503,11 @@ test("current reasoning-summary owner distinguishes durable mobile hosts and pre
   assert.match(patched, /codexLinuxRemoteMobileReasoningSummaryNone/);
   assert.match(patched, /codexLinuxRemoteMobileHost:gh\(e\.getHostId\(\)\)&&a\.mode===`durable`/);
   assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)&&o\.codexLinuxRemoteMobileHost/);
-  assert.equal(applyLinuxRemoteMobileReasoningSummaryPatch(patched), patched);
+  const { result: repatched, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(patched),
+  );
+  assert.equal(repatched, patched);
+  assert.deepEqual(warnings, []);
 
   const context = {
     gh: (hostId) => hostId === "local",
