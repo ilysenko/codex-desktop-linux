@@ -66,3 +66,22 @@ test("unified service patch scopes the plugin root and current env-key alias to 
   assert.doesNotMatch(patched, /path\.default\.join\(otherRoot,`scripts`,`native-service\.mjs`\)/u);
   assert.equal(patch(patched), patched);
 });
+
+test("unified banner patch edits only the validated service owner", () => {
+  const unrelatedBanner =
+    "function unrelated(e){let constants={},l={};return{env:{CUA_REPL_ENABLED_SURFACES:e.surfaces.join(`,`),[constants.Il]:JSON.stringify(l)}}}";
+  const current = unrelatedBanner + selector;
+  const patched = patch(current);
+
+  assert.equal(patched.slice(0, unrelatedBanner.length), unrelatedBanner);
+  assert.equal((patched.match(/NODE_REPL_JS_BANNER:/gu) ?? []).length, 1);
+});
+
+test("unified banner patch rejects duplicate banners inside the service owner", () => {
+  const duplicate = selector.replace(
+    ";return c}",
+    ";let d={env:{CUA_REPL_ENABLED_SURFACES:e.surfaces.join(`,`),[constants.Il]:JSON.stringify(l)}};return c}",
+  );
+
+  assert.throws(() => patch(duplicate), /unified.*contract/i);
+});

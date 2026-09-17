@@ -25,23 +25,23 @@ function applyRemoteConnectionsVisibilityPatch(source) {
 }
 
 function applyRemoteControlConnectionsVisibilityPatch(source) {
-  if (source.includes(REMOTE_CONTROL_UI_VISIBILITY_MARKER)) {
+  const contract = remoteControlConnectionsVisibilityContract(source);
+  if (contract?.state === "patched" || contract?.state === "mobile-patched") {
     return source;
   }
-  if (source.includes(REMOTE_MOBILE_VISIBILITY_MARKER)) {
-    return source.replace(
+  if (contract?.state === "mobile") {
+    const patchedBody = contract.body.replace(
       REMOTE_MOBILE_VISIBILITY_MARKER,
       `${REMOTE_MOBILE_VISIBILITY_MARKER}*//*${REMOTE_CONTROL_UI_VISIBILITY_MARKER}`,
     );
+    return source.slice(0, contract.bodyIndex) + patchedBody +
+      source.slice(contract.bodyIndex + contract.body.length);
   }
-  const patched = source.replace(
-    /return\s+([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\?\.available\?\?!0\)&&\2\?\.accessRequired!==!0(?!&&navigator\.userAgent\.includes\(`Linux`\))/g,
-    `return ($1||${LINUX_GATE})&&($2?.available??!0)&&$2?.accessRequired!==!0`,
-  );
-  const alreadyPatched =
-    /return \([A-Za-z_$][\w$]*\|\|navigator\.userAgent\.includes\(`Linux`\)\)&&\([A-Za-z_$][\w$]*\?\.available\?\?!0\)&&[A-Za-z_$][\w$]*\?\.accessRequired!==!0/.test(source);
-  if (patched !== source || alreadyPatched) {
-    return patched;
+  if (contract?.state === "current") {
+    const replacement = `return (${contract.flag}||${LINUX_GATE})&&` +
+      `(${contract.connections}?.available??!0)&&${contract.connections}?.accessRequired!==!0`;
+    return source.slice(0, contract.bodyIndex) + replacement +
+      source.slice(contract.bodyIndex + contract.body.length);
   }
   warn(
     "Could not find remote control connections visibility gate",
@@ -50,9 +50,41 @@ function applyRemoteControlConnectionsVisibilityPatch(source) {
   return source;
 }
 
+function remoteControlConnectionsVisibilityContract(source) {
+  const ownerPattern = /function\s+[A-Za-z_$][\w$]*\(\{remoteControlConnectionsState:([A-Za-z_$][\w$]*),slingshotEnabled:([A-Za-z_$][\w$]*)\}\)\{([^{}]*)\}/gu;
+  const owners = [...source.matchAll(ownerPattern)];
+  if (owners.length !== 1) return null;
+
+  const [owner] = owners;
+  const connections = owner[1];
+  const flag = owner[2];
+  const body = owner[3];
+  const current = `return ${flag}&&(${connections}?.available??!0)&&${connections}?.accessRequired!==!0`;
+  const patched = `return (${flag}||${LINUX_GATE})&&(${connections}?.available??!0)&&${connections}?.accessRequired!==!0`;
+  const mobilePattern = new RegExp(
+    `^let ([A-Za-z_$][\\w$]*)=typeof navigator!=\`undefined\`&&navigator\\.userAgent\\.includes\\(\`Linux\`\\);` +
+      `/\\*${REMOTE_MOBILE_VISIBILITY_MARKER}(\\*/\\*${REMOTE_CONTROL_UI_VISIBILITY_MARKER})?\\*/` +
+      `return\\(\\1\\|\\|${flag}\\)&&\\(\\1\\|\\|\\(${connections}\\?\\.available\\?\\?!0\\)\\)&&` +
+      `${connections}\\?\\.accessRequired!==!0$`,
+    "u",
+  );
+  const mobile = body.match(mobilePattern);
+  const state = body === current ? "current" :
+    body === patched ? "patched" :
+    mobile != null && mobile[2] == null ? "mobile" :
+    mobile != null ? "mobile-patched" : null;
+  if (state == null) return null;
+  return {
+    body,
+    bodyIndex: owner.index + owner[0].indexOf(body),
+    connections,
+    flag,
+    state,
+  };
+}
+
 function matchesRemoteControlConnectionsVisibilityContract(source) {
-  return source.includes(REMOTE_CONTROL_UI_VISIBILITY_MARKER) ||
-    /function\s+[A-Za-z_$][\w$]*\(\{remoteControlConnectionsState:([A-Za-z_$][\w$]*),slingshotEnabled:([A-Za-z_$][\w$]*)\}\)\{return (?:\2|\(\2\|\|navigator\.userAgent\.includes\(`Linux`\)\))&&\(\1\?\.available\?\?!0\)&&\1\?\.accessRequired!==!0\}/u.test(source);
+  return remoteControlConnectionsVisibilityContract(source) != null;
 }
 
 function applyExperimentalFeaturesPatch(source) {

@@ -385,6 +385,33 @@ test("fallback fast tier leaves the asset byte-identical when one insertion poin
   ]);
 });
 
+test("fallback fast tier rejects ambiguous, mixed, and semantic near-miss options", () => {
+  const descriptor = descriptors.find(({ id }) => id === "api-key-service-tier-fallback");
+  const current =
+    "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>({description:eEe(t),iconKind:fQ(t.id,t.name),label:$Te(t),tier:t,value:t.id}))]}";
+  const patched = applyFallbackFastTierPatch(current);
+  const nearMiss =
+    "function telemetry(e){return[...(e?.serviceTiers??[]).map(t=>{audit(t);return{tier:t,value:t.id}})]}";
+  const partial = current.replace("label:$Te(t),", "");
+
+  for (const source of [current + current, patched + current, nearMiss, partial]) {
+    assert.equal(applyFallbackFastTierPatch(source), source);
+    assert.equal(descriptor.assetMatch(source), false);
+  }
+});
+
+test("fallback fast tier accepts the current official callback-body contract", () => {
+  const source =
+    "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>{let n=fQ(t.id,t.name),r=n===`fast`?1.5:null;return{description:eEe(t,r),iconKind:n,label:$Te(t),speedMultiplier:r,tier:t,value:t.id}})]}";
+  const patched = applyFallbackFastTierPatch(source);
+
+  const descriptor = descriptors.find(({ id }) => id === "api-key-service-tier-fallback");
+  assert.equal(descriptor.assetMatch(source), true);
+  assert.notEqual(patched, source);
+  assert.equal(descriptor.assetMatch(patched), true);
+  assert.equal(applyFallbackFastTierPatch(patched), patched);
+});
+
 test("fallback descriptor reports skipped when one insertion point drifts", () => {
   withFeatureConfig(["api-key-service-tier"], () => {
     const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "api-key-service-tier-fallback-drift-"));

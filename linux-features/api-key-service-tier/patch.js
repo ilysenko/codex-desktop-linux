@@ -146,56 +146,80 @@ function applyApiKeyServiceTierResolverPatch(source) {
   return PATCHED_SERVICE_TIER_RESOLVER.test(patched) ? patched : source;
 }
 
+function fallbackOptionCallbackPattern() {
+  const concise =
+    `\\(\\{(?=[^{}]{0,800}description:)(?=[^{}]{0,800}iconKind:)` +
+    `(?=[^{}]{0,800}label:)(?=[^{}]{0,800}tier:\\2,value:\\2\\.id)[^{}]{1,800}\\}\\)`;
+  const block =
+    `\\{[^{}]{0,800}?return\\{(?=[^{}]{0,800}description:)(?=[^{}]{0,800}iconKind:)` +
+    `(?=[^{}]{0,800}label:)(?=[^{}]{0,800}tier:\\2,value:\\2\\.id)[^{}]{1,800}\\}\\}`;
+  return `(${JS_IDENT})=>(?:${concise}|${block})`;
+}
+
 function currentFallbackOptionsPattern(flags = "") {
   return new RegExp(
     `\\.\\.\\.\\((${JS_IDENT})\\?\\.serviceTiers\\?\\?\\[\\]\\)\\.map\\((${JS_IDENT})=>` +
-      `(?:\\(\\{[^{}]{0,500}?tier:\\2,value:\\2\\.id\\}\\)|` +
-      `\\{[^{}]{0,800}?return\\{[^{}]{0,500}?tier:\\2,value:\\2\\.id\\}\\})\\)`,
+      fallbackOptionCallbackPattern().replace(`(${JS_IDENT})=>`, "") + `\\)`,
     flags,
   );
 }
 
-function matchesFallbackFastTierContract(source) {
-  if (hasCompleteFallbackFastTierPatch(source)) {
-    return true;
-  }
-
-  return currentFallbackOptionsPattern().test(source);
-}
-
-function hasCompleteFallbackFastTierPatch(source) {
-  return (
-    source.includes(`function ${PATCH_MARKER}(`) &&
-    source.includes(`[${PATCH_MARKER}(`) &&
-    source.includes(".filter(Boolean)).map")
+function patchedFallbackOptionsPattern(flags = "") {
+  return new RegExp(
+    `\\.\\.\\.\\(\\((${JS_IDENT})\\?\\.serviceTiers\\?\\.length\\?\\1\\.serviceTiers:` +
+      `\\[${PATCH_MARKER}\\(\\1\\)\\]\\)\\.filter\\(Boolean\\)\\)\\.map\\(` +
+      fallbackOptionCallbackPattern() + `\\)`,
+    flags,
   );
 }
 
+function fallbackOptionMatches(source, pattern) {
+  return [...source.matchAll(pattern)];
+}
+
+function fallbackFastTierState(source) {
+  const current = fallbackOptionMatches(source, currentFallbackOptionsPattern("g"));
+  const patched = fallbackOptionMatches(source, patchedFallbackOptionsPattern("g"));
+  const helper = fallbackFastTierHelper();
+  const helperCount = source.split(helper).length - 1;
+
+  if (current.length === 1 && patched.length === 0 && helperCount <= 1 &&
+      (!source.includes(`function ${PATCH_MARKER}(`) || helperCount === 1)) {
+    return { kind: "current", match: current[0], helperCount };
+  }
+  if (current.length === 0 && patched.length === 1 && helperCount === 1) {
+    return { kind: "patched", match: patched[0], helperCount };
+  }
+  return null;
+}
+
+function matchesFallbackFastTierContract(source) {
+  return fallbackFastTierState(source) != null;
+}
+
+function hasCompleteFallbackFastTierPatch(source) {
+  return fallbackFastTierState(source)?.kind === "patched";
+}
+
 function applyFallbackFastTierPatch(source) {
-  if (hasCompleteFallbackFastTierPatch(source)) {
+  const state = fallbackFastTierState(source);
+  if (state?.kind === "patched") {
     return source;
   }
-
-  let patched = source;
-  const optionsPatch = currentFallbackOptionsPattern("g");
-  if (!optionsPatch.test(patched)) {
+  if (state?.kind !== "current") {
     if (source.includes("serviceTiers")) {
       warn("Could not find service tier option helpers", "API key fallback fast tier patch");
     }
     return source;
   }
-  optionsPatch.lastIndex = 0;
-  if (!source.includes(`function ${PATCH_MARKER}(`)) {
-    patched = fallbackFastTierHelper() + patched;
-  }
-
-  patched = patched.replace(
-    optionsPatch,
-    (match, modelVar) => match.replace(
-      `...(${modelVar}?.serviceTiers??[])`,
-      `...((${modelVar}?.serviceTiers?.length?${modelVar}.serviceTiers:[${PATCH_MARKER}(${modelVar})]).filter(Boolean))`,
-    ),
+  const modelVar = state.match[1];
+  const replacement = state.match[0].replace(
+    `...(${modelVar}?.serviceTiers??[])`,
+    `...((${modelVar}?.serviceTiers?.length?${modelVar}.serviceTiers:[${PATCH_MARKER}(${modelVar})]).filter(Boolean))`,
   );
+  let patched = source.slice(0, state.match.index) + replacement +
+    source.slice(state.match.index + state.match[0].length);
+  if (state.helperCount === 0) patched = fallbackFastTierHelper() + patched;
 
   if (hasCompleteFallbackFastTierPatch(patched)) {
     return patched;

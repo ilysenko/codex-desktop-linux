@@ -60,24 +60,37 @@ function applyUnifiedComputerUsePatch(source) {
     throw new Error("Linux unified Computer Use contract drift: changed native service path relationship");
   }
   if (patched) return source;
-  let patchedSource = source.slice(0, match.index) +
-    `${native}=${ready}&&${runtime}.platform===\`darwin\`&&${features}.computerUse&&${legacy}.enabled&&${legacy}.paths.serviceAppPath!=null` +
-    `||${ready}&&${runtime}.platform===\`linux\`&&${features}.computerUse&&${legacy}.enabled,` +
-    `${mode}=${runtime}.platform===\`linux\`?${native}:${modeValue}` +
-    source.slice(match.index + match[0].length);
   const pluginRoot = root.groups.pluginRoot;
   const pathAlias = root.groups.path;
-  patchedSource = patchedSource.replace(
-    currentServicePattern,
-    `${service.groups.surfaces}.surfaces.includes(\`computer\`)&&(${service.groups.services}.sky=${pathAlias}.default.join(${pluginRoot},\`scripts\`,\`native-service.mjs\`))`,
-  );
-  patchedSource = patchedSource.replace(
-    currentBannerPattern,
-    `CUA_REPL_ENABLED_SURFACES:${banner.groups.surfaces}.surfaces.join(\`,\`),` +
-      `CODEX_LINUX_CUA_HOST_SOCKET:process.env.CODEX_LINUX_CUA_HOST_SOCKET,` +
-      `NODE_REPL_JS_BANNER:\`await import("@oai/cua/tinyskyAlt");await(await import(\${JSON.stringify(${pathAlias}.default.join(${pluginRoot},\`scripts\`,\`native-client.mjs\`))})).installLinuxComputerUse(cua);\`,` +
-      `[${banner.groups.constants}.${banner.groups.constant}]:JSON.stringify(${banner.groups.services})`,
-  );
+  const edits = [
+    {
+      index: match.index,
+      length: match[0].length,
+      replacement:
+        `${native}=${ready}&&${runtime}.platform===\`darwin\`&&${features}.computerUse&&${legacy}.enabled&&${legacy}.paths.serviceAppPath!=null` +
+        `||${ready}&&${runtime}.platform===\`linux\`&&${features}.computerUse&&${legacy}.enabled,` +
+        `${mode}=${runtime}.platform===\`linux\`?${native}:${modeValue}`,
+    },
+    {
+      index: service.index,
+      length: service[0].length,
+      replacement: `${service.groups.surfaces}.surfaces.includes(\`computer\`)&&(${service.groups.services}.sky=${pathAlias}.default.join(${pluginRoot},\`scripts\`,\`native-service.mjs\`))`,
+    },
+    {
+      index: serviceOwner.start + banner.index,
+      length: banner[0].length,
+      replacement:
+        `CUA_REPL_ENABLED_SURFACES:${banner.groups.surfaces}.surfaces.join(\`,\`),` +
+        `CODEX_LINUX_CUA_HOST_SOCKET:process.env.CODEX_LINUX_CUA_HOST_SOCKET,` +
+        `NODE_REPL_JS_BANNER:\`await import("@oai/cua/tinyskyAlt");await(await import(\${JSON.stringify(${pathAlias}.default.join(${pluginRoot},\`scripts\`,\`native-client.mjs\`))})).installLinuxComputerUse(cua);\`,` +
+        `[${banner.groups.constants}.${banner.groups.constant}]:JSON.stringify(${banner.groups.services})`,
+    },
+  ];
+  let patchedSource = source;
+  for (const edit of edits.sort((left, right) => right.index - left.index)) {
+    patchedSource = patchedSource.slice(0, edit.index) + edit.replacement +
+      patchedSource.slice(edit.index + edit.length);
+  }
   return patchedSource;
 }
 
