@@ -34,8 +34,12 @@ test("computer-use-linux is opt-in and owns the current Linux descriptors", () =
       "native-desktop-apps",
       "ui-availability",
       "host-platform",
+      "native-settings-visibility",
     ],
   );
+  const visibility = descriptors.find(({ id }) => id === "native-settings-visibility");
+  assert.equal(visibility.pattern.test("app-initial-3e128f859aa3.js"), true);
+  assert.equal(visibility.pattern.test("app-primary-72206882651c.js"), false);
 });
 
 test("computer-use-linux staging consumes release artifacts without invoking Cargo", () => {

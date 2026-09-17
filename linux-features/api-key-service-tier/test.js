@@ -20,8 +20,10 @@ const {
   applyApiKeyModelMarkerPatch,
   applyApiKeyServiceTierPatch,
   applyApiKeyServiceTierGatePatch,
+  applyApiKeyServiceTierResolverPatch,
   applyCurrentGatePatch,
   applyCurrentModelPatch,
+  applyCurrentResolverPatch,
   applyCurrentFallbackFastTierPatch,
   applyFallbackFastTierPatch,
   descriptors,
@@ -83,22 +85,28 @@ test("api-key-service-tier stays disabled until listed in features.json", () => 
       [
         ["feature:api-key-service-tier:api-key-service-tier-gate", "webview-asset", "optional"],
         ["feature:api-key-service-tier:api-key-service-tier-model", "webview-asset", "optional"],
+        ["feature:api-key-service-tier:api-key-service-tier-resolver", "webview-asset", "optional"],
         ["feature:api-key-service-tier:api-key-service-tier-fallback", "webview-asset", "optional"],
       ],
     );
   });
 });
 
-test("current package descriptors use the semantic app-initial owner", () => {
+test("current package descriptors use semantic app-initial and app-shared owners", () => {
   assert.deepEqual(
     descriptors.map((descriptor) => descriptor.id),
     [
       "api-key-service-tier-gate",
       "api-key-service-tier-model",
+      "api-key-service-tier-resolver",
       "api-key-service-tier-fallback",
     ],
   );
-  assert.ok(descriptors.every((descriptor) => descriptor.pattern.test("app-initial-Bd3Z1bES.js")));
+  const resolver = descriptors.find(({ id }) => id === "api-key-service-tier-resolver");
+  assert.ok(descriptors.filter((descriptor) => descriptor !== resolver)
+    .every((descriptor) => descriptor.pattern.test("app-initial-Bd3Z1bES.js")));
+  assert.equal(resolver.pattern.test("app-shared-d9439dc9e73f.js"), true);
+  assert.equal(resolver.pattern.test("app-initial-Bd3Z1bES.js"), false);
   assert.ok(descriptors.every((descriptor) => !descriptor.pattern.test("projects-index-page-DjNy92Xe.js")));
 });
 
@@ -112,6 +120,11 @@ test("current target wrappers warn when an exact contract disappears", () => {
     assert.equal(applyCurrentModelPatch("function driftedModel(){}"), "function driftedModel(){}");
   }), [
     "WARN: Could not identify current model list mapping - skipping API key model service tier marker patch",
+  ]);
+  assert.deepEqual(captureWarnings(() => {
+    assert.equal(applyCurrentResolverPatch("function driftedResolver(){}"), "function driftedResolver(){}");
+  }), [
+    "WARN: Could not identify current service tier resolver - skipping API key service tier resolver patch",
   ]);
   assert.deepEqual(captureWarnings(() => {
     assert.equal(applyCurrentFallbackFastTierPatch("function driftedFallback(){}"), "function driftedFallback(){}");
@@ -155,6 +168,9 @@ test("partial current drift is reported when the other exact target still applie
       const model = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-model",
       );
+      const resolver = report.patches.find(
+        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-resolver",
+      );
       const fallback = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-fallback",
       );
@@ -162,6 +178,7 @@ test("partial current drift is reported when the other exact target still applie
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier gate bundle")));
       assert.equal(gate?.status, "skipped-optional");
       assert.equal(model?.status, "applied");
+      assert.equal(resolver?.status, "skipped-optional");
       assert.equal(fallback?.status, "applied");
     } finally {
       fs.rmSync(tempApp, { recursive: true, force: true });
@@ -182,15 +199,20 @@ test("a missing exact current target gets its own skipped report entry", () => {
       const model = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-model",
       );
+      const resolver = report.patches.find(
+        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-resolver",
+      );
       const fallback = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-fallback",
       );
 
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier gate bundle")));
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier model bundle")));
+      assert.ok(warnings.some((warning) => warning.includes("current API key service tier resolver bundle")));
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier fallback bundle")));
       assert.equal(gate?.status, "skipped-optional");
       assert.equal(model?.status, "skipped-optional");
+      assert.equal(resolver?.status, "skipped-optional");
       assert.equal(fallback?.status, "skipped-optional");
     } finally {
       fs.rmSync(tempApp, { recursive: true, force: true });
@@ -295,26 +317,50 @@ test("fallback fast tier is synthesized only for API-key model catalog entries",
   assert.doesNotMatch(patched, /\)\?\?null\}function nEe/);
 });
 
-test("remaining descriptors preserve native fast-tier behavior and add only the API-key fallback", () => {
-  const source = [
-    "const gQ={value:null};function eEe(e,r){return r==null?e.description:`${r}x speed`}function fQ(e){return e}function $Te(e){return e.name}",
-    "function nativeFastOption(e){let t=1.5;return{description:eEe({description:`Fast`},t),iconKind:`fast`,label:`Fast`,speedMultiplier:t,tier:null,value:`fast`}}",
-    "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>{let n=fQ(t.id,t.name),r=n===`fast`?1.5:null;return{description:eEe(t,r),iconKind:n,label:$Te(t),speedMultiplier:r,tier:t,value:t.id}})]}",
+test("split semantic owners round-trip synthetic fast for an API-key model without service tiers", () => {
+  const optionsSource = [
+    "const gQ={value:null};function eEe(e){return e.description}function fQ(e){return e}function $Te(e){return e.name}",
+    "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>({description:eEe(t),iconKind:fQ(t.id,t.name),label:$Te(t),tier:t,value:t.id}))]}",
   ].join("");
-  const patched = applyFallbackFastTierPatch(source);
-  const optionsFor = Function(`${patched};return tEe`)();
-  const nativeFastOption = Function(`${patched};return nativeFastOption`)();
+  const resolverSource = [
+    "function py(e,t){let n=t?.trim().toLowerCase();return e===`priority`||e===`fast`||n===`fast`?`fast`:null}",
+    "function kH(e,t){return t==null?null:t===`fast`?AH(e):e?.serviceTiers?.find(e=>e.id===t)??null}",
+    "function AH(e){return e?.serviceTiers?.find(e=>py(e.id,e.name)===`fast`||e.name.trim().toLowerCase()===`priority`)??null}",
+  ].join("");
 
-  assert.equal(descriptors.some(({ id }) => id.includes("resolver")), false);
-  assert.equal(nativeFastOption({}).speedMultiplier, 1.5);
-  assert.equal(nativeFastOption({}).tier, null);
-  assert.equal(applyFallbackFastTierPatch(patched), patched);
+  const patchedOptions = applyPatchTwice(applyFallbackFastTierPatch, optionsSource);
+  const patchedResolver = applyPatchTwice(applyApiKeyServiceTierResolverPatch, resolverSource);
+  const optionsFor = Function(`${patchedOptions};return tEe`)();
+  const resolveTier = Function(`${patchedResolver};return kH`)();
+  const apiKeyModel = { codexLinuxApiKeyServiceTierModel: true };
+  const syntheticOption = optionsFor(apiKeyModel).find(({ value }) => value === "fast");
 
-  const apiKeyOptions = optionsFor({ codexLinuxApiKeyServiceTierModel: true });
-  assert.equal(apiKeyOptions.find(({ value }) => value === "fast")?.tier?.name, "Fast");
-  const nativeTier = { id: "fast", name: "Fast", description: "Native fast" };
-  assert.equal(optionsFor({ serviceTiers: [nativeTier] }).find(({ value }) => value === "fast")?.tier, nativeTier);
-  assert.equal(optionsFor({}).some(({ value }) => value === "fast"), false);
+  assert.equal(syntheticOption?.tier?.id, "fast");
+  assert.equal(resolveTier(apiKeyModel, syntheticOption.value)?.id, "fast");
+  assert.equal(resolveTier(apiKeyModel, syntheticOption.value)?.name, "Fast");
+
+  const upstreamFast = { id: "priority", name: "Priority", description: "Upstream fast" };
+  const chatGptModel = { codexLinuxApiKeyServiceTierModel: false, serviceTiers: [upstreamFast] };
+  assert.equal(resolveTier(chatGptModel, "fast"), upstreamFast);
+  assert.equal(resolveTier({}, "fast"), null);
+});
+
+test("service tier resolver classifies exactly one pristine or fully patched app-shared owner", () => {
+  const current =
+    "function kH(e,t){return t==null?null:t===`fast`?AH(e):e?.serviceTiers?.find(e=>e.id===t)??null}";
+  const other =
+    "function other(n,r){return r==null?null:r===`fast`?findFast(n):n?.serviceTiers?.find(t=>t.id===r)??null}";
+  const patched = applyApiKeyServiceTierResolverPatch(current);
+  const partial = patched.slice(patched.indexOf("function kH"));
+  const descriptor = descriptors.find(({ id }) => id === "api-key-service-tier-resolver");
+
+  assert.equal(descriptor.assetMatch(current), true);
+  assert.equal(descriptor.assetMatch(patched), true);
+  for (const source of [current + other, current + patched, patched + patched, partial]) {
+    assert.equal(descriptor.assetMatch(source), false);
+    assert.equal(applyApiKeyServiceTierResolverPatch(source), source);
+    assert.equal(applyCurrentResolverPatch(source), source);
+  }
 });
 
 test("fallback fast tier leaves the asset byte-identical when one insertion point drifts", () => {

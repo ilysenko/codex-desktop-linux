@@ -14,9 +14,11 @@ const {
 } = require("../../scripts/lib/linux-features.js");
 const {
   applyLinuxAppshotAvailabilityPatch,
+  applyLinuxAppshotHotkeyPatch,
   applyLinuxAppshotMainProcessPatch,
   descriptors,
   matchesLinuxAppshotAvailabilityContract,
+  matchesLinuxAppshotHotkeyContract,
 } = require("./patch.js");
 
 function applyPatchTwice(patchFn, source) {
@@ -55,10 +57,14 @@ function currentAppshotHotkeyMainBundleFixture() {
   return [
     "var R8=`DoubleCommand`,T8=`DoubleAlt`;",
     "var Yk=new Set([`cmdorctrl`,`command`,`cmd`,`control`,`ctrl`,`alt`,`option`]),Jk=new Set([...Yk,`shift`]);",
+    "function zk(e){return e}",
+    "function Nk(e,t,n){globalThis.registered={hotkey:e,handlers:t,trigger:n};return{unregister(){}}}",
     "function Lk(e,t=process.platform){return t===`darwin`&&zk(e)!=null}",
     "function Mk(e,t,n=`press`){if(process.platform!==`darwin`)return null;let r=zk(e);return r==null?null:Nk(r,t,n)}",
-    "var B8=class{configuredHotkey;registration=null;windowsCaptureNativeBridgeFailed=!1;constructor(e){this.enabled=!0,this.windowsCaptureNativeBridge=null;let a=e.getStored(`appshotHotkey`);a===void 0?this.configuredHotkey=process.platform===`win32`?T8:R8:this.configuredHotkey=a}getState(){return{supported:this.enabled&&(process.platform===`darwin`||process.platform===`win32`&&this.windowsCaptureNativeBridge!=null&&!this.windowsCaptureNativeBridgeFailed),configuredHotkey:this.configuredHotkey,isActive:this.registration!=null}}};",
+    "var B8=class{configuredHotkey;registration=null;windowsCaptureNativeBridgeFailed=!1;constructor(e){this.enabled=!0,this.windowsCaptureNativeBridge=null;let a=e.getStored(`appshotHotkey`);this.configuredHotkey=a===void 0?process.platform===`win32`?T8:R8:a;this.sync()}getState(){return{supported:this.enabled&&(process.platform===`darwin`||process.platform===`win32`&&this.windowsCaptureNativeBridge!=null&&!this.windowsCaptureNativeBridgeFailed),configuredHotkey:this.configuredHotkey,isActive:this.registration!=null}}sync(){if(!this.getState().supported||this.configuredHotkey==null)return;this.registration=Mk(this.configuredHotkey,{onPressed(){}})}};",
+    "globalThis.hotkeyEligible=Lk;globalThis.modifiers=Jk;",
     "globalThis.AppshotHotkeys=B8;",
+    "globalThis.appshotHotkeyState=`appshot-hotkey-state`;",
   ].join("");
 }
 
@@ -133,11 +139,12 @@ test("appshots stays disabled until listed in features.json", () => {
     fs.writeFileSync(configPath, '{"enabled":["appshots"]}\n');
     const loaded = loadLinuxFeaturePatchDescriptors({ featuresRoot });
 
-    assert.equal(loaded.length, 2);
+    assert.equal(loaded.length, 3);
     assert.deepEqual(
       loaded.map((descriptor) => descriptor.id).sort(),
       [
         "feature:appshots:linux-appshots-availability",
+        "feature:appshots:linux-appshots-hotkey",
         "feature:appshots:linux-appshots-main-process",
       ].sort(),
     );
@@ -153,7 +160,7 @@ test("appshots stays disabled until listed in features.json", () => {
 });
 
 test("appshots feature descriptors are optional", () => {
-  assert.equal(descriptors.length, 2);
+  assert.equal(descriptors.length, 3);
   assert.ok(descriptors.every((descriptor) => descriptor.ciPolicy == null));
 });
 
@@ -1281,5 +1288,68 @@ test("AppShots capture uses and removes its private temporary directory", async 
     assert.ok(captureDirs.every((captureDir) => !fs.existsSync(captureDir)));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("current AppShots hotkey owner supports Linux and registers a saved bare-modifier shortcut", () => {
+  const pristine = currentAppshotHotkeyMainBundleFixture();
+  const patched = applyPatchTwice(applyLinuxAppshotHotkeyPatch, pristine);
+
+  assert.equal(matchesLinuxAppshotHotkeyContract(pristine), true);
+  assert.equal(matchesLinuxAppshotHotkeyContract(patched), true);
+  assert.match(patched, /process\.platform===`linux`\|\|process\.platform===`darwin`/);
+  assert.match(patched, /process\.platform!==`darwin`&&process\.platform!==`linux`/);
+  assert.match(patched, /`shift`,`super`,`meta`,`win`/);
+  assert.match(patched, /process\.platform===`linux`\?null:R8/);
+
+  const context = vm.createContext({
+    process: { env: { XDG_SESSION_TYPE: "x11" }, platform: "linux" },
+  });
+  vm.runInContext(patched, context);
+  const noSavedShortcut = new context.AppshotHotkeys({ getStored() {} });
+  assert.equal(noSavedShortcut.getState().supported, true);
+  assert.equal(noSavedShortcut.getState().configuredHotkey, null);
+  assert.equal(noSavedShortcut.getState().linuxWayland, false);
+  assert.equal(noSavedShortcut.getState().isActive, false);
+
+  const savedShortcut = new context.AppshotHotkeys({ getStored: () => "DoubleAlt" });
+  assert.equal(savedShortcut.getState().supported, true);
+  assert.equal(savedShortcut.getState().isActive, true);
+  assert.equal(context.registered.hotkey, "DoubleAlt");
+  assert.equal(context.hotkeyEligible("DoubleAlt"), true);
+  assert.deepEqual(Array.from(context.modifiers).slice(-4), ["shift", "super", "meta", "win"]);
+});
+
+test("AppShots hotkey Linux eligibility remains disabled for Wayland bare modifiers", () => {
+  const patched = applyLinuxAppshotHotkeyPatch(currentAppshotHotkeyMainBundleFixture());
+  const context = vm.createContext({
+    process: { env: { WAYLAND_DISPLAY: "wayland-0" }, platform: "linux" },
+  });
+  vm.runInContext(patched, context);
+  assert.equal(context.hotkeyEligible("DoubleAlt"), false);
+  assert.equal(new context.AppshotHotkeys({ getStored() {} }).getState().linuxWayland, true);
+});
+
+test("AppShots hotkey patch fails closed for missing, partial, duplicate, and ambiguous owners", () => {
+  const pristine = currentAppshotHotkeyMainBundleFixture();
+  const patched = applyLinuxAppshotHotkeyPatch(pristine);
+  const partial = patched.replace(
+    "process.platform===`linux`||process.platform===`darwin`",
+    "process.platform===`darwin`",
+  );
+  const missing = "globalThis.appshotHotkeyState=`appshot-hotkey-state`";
+  for (const source of [
+    missing,
+    partial,
+    pristine + pristine,
+    patched + patched,
+    pristine + patched,
+  ]) {
+    assert.equal(matchesLinuxAppshotHotkeyContract(source), false);
+    assert.deepEqual(captureWarnings(() => {
+      assert.equal(applyLinuxAppshotHotkeyPatch(source), source);
+    }), [
+      "WARN: Could not find one complete current AppShots hotkey owner - skipping Linux AppShots hotkey patch",
+    ]);
   }
 });
