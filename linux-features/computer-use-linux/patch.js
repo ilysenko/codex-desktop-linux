@@ -11,7 +11,7 @@ const {
   matchesLinuxComputerUseHostPlatformContract,
 } = require("../../scripts/patches/impl/computer-use.js");
 
-const { applyNativeSettingsAvailabilityPatch, applyNativeSettingsVisibilityPatch } = require("./settings.js");
+const { applyNativeSettingsAvailabilityPatch } = require("./settings.js");
 const { applyUnifiedComputerUsePatch } = require("./unified.js");
 
 module.exports = [
@@ -68,12 +68,5 @@ module.exports = [
     missingDescription: "current Computer Use host-platform app-initial contract",
     skipDescription: "Linux Computer Use host-platform patch",
     apply: applyLinuxComputerUseHostPlatformPatch,
-  }),
-  webviewAssetPatch({
-    id: "native-settings-visibility",
-    order: 20_160,
-    pattern: /^app-primary-[^.]+\.js$/,
-    missingDescription: "Plugins presentation filter",
-    apply: applyNativeSettingsVisibilityPatch,
   }),
 ];

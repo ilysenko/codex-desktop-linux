@@ -1344,7 +1344,7 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
   const functionStart = source.lastIndexOf("async function ", logIndex);
   const turnStartPrefix = functionStart === -1 ? "" : source.slice(functionStart, logIndex);
   const currentSummaryPattern =
-    /(?<prefix>let |,)(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),(?<runtime>[A-Za-z_$][\w$]*)\.reasoningSummaryOverride!=null&&\(\k<summary>=\k<runtime>\.reasoningSummaryOverride\),(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
+    /(?<prefix>let |,)(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),(?<runtime>[A-Za-z_$][\w$]*)\.reasoningSummaryOverride!=null&&\(\k<summary>=\k<runtime>\.reasoningSummaryOverride\),(?:\k<summary>=[A-Za-z_$][\w$]*==null\?null:[A-Za-z_$][\w$]*\.model_reasoning_summary\?\?\k<summary>,)?(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
   const summaryMatch = turnStartPrefix.match(currentSummaryPattern);
   if (summaryMatch == null) {
     console.warn(
@@ -1437,7 +1437,7 @@ module.exports = [
   {
     id: "linux-remote-control-visibility",
     phase: "webview-asset",
-    pattern: REMOTE_CONTROL_APP_PRIMARY_ASSET_PATTERN,
+    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
     assetMatch: matchesRemoteControlVisibilityContract,
     order: 20_120,
     ciPolicy: "optional",

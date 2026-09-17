@@ -61,7 +61,7 @@ const CURRENT_REMOTE_RUNTIME_DECOY_ASSET =
 const CURRENT_REMOTE_TERMINAL_STATUS_ASSET =
   CURRENT_REMOTE_RUNTIME_ASSET;
 const CURRENT_APP_MAIN_PAGE_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
-const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET = "app-primary-visibility-test.js";
+const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
 const CURRENT_REMOTE_LOAD_GATE_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
 const OLD_REMOTE_LOAD_GATE_ASSET =
   "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~hm0a50up-test.js";
@@ -995,7 +995,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     );
     assert.ok(visibilityDescriptor);
     assert.equal(visibilityDescriptor.pattern.test("remote-connections-settings-fixture.js"), false);
-    assert.equal(visibilityDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
+    assert.equal(visibilityDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), true);
     assert.equal(visibilityDescriptor.pattern.test(CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET), true);
     assert.equal(visibilityDescriptor.pattern.test("use-plugin-install-flow-fixture.js"), false);
     assert.equal(visibilityDescriptor.pattern.test("app-main-fixture.js"), false);

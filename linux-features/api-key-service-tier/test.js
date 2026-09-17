@@ -29,6 +29,7 @@ const {
   descriptors,
   hasApiKeyServiceTierGateShape,
   hasApiKeyModelListMappingShape,
+  matchesApiKeyServiceTierResolverContract,
 } = require("./patch.js");
 
 function applyPatchTwice(patchFn, source) {
@@ -85,7 +86,6 @@ test("api-key-service-tier stays disabled until listed in features.json", () => 
       [
         ["feature:api-key-service-tier:api-key-service-tier-gate", "webview-asset", "optional"],
         ["feature:api-key-service-tier:api-key-service-tier-model", "webview-asset", "optional"],
-        ["feature:api-key-service-tier:api-key-service-tier-resolver", "webview-asset", "optional"],
         ["feature:api-key-service-tier:api-key-service-tier-fallback", "webview-asset", "optional"],
       ],
     );
@@ -98,7 +98,6 @@ test("current package descriptors use the semantic app-initial owner", () => {
     [
       "api-key-service-tier-gate",
       "api-key-service-tier-model",
-      "api-key-service-tier-resolver",
       "api-key-service-tier-fallback",
     ],
   );
@@ -164,9 +163,6 @@ test("partial current drift is reported when the other exact target still applie
       const model = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-model",
       );
-      const resolver = report.patches.find(
-        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-resolver",
-      );
       const fallback = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-fallback",
       );
@@ -174,7 +170,6 @@ test("partial current drift is reported when the other exact target still applie
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier gate bundle")));
       assert.equal(gate?.status, "skipped-optional");
       assert.equal(model?.status, "applied");
-      assert.equal(resolver?.status, "skipped-optional");
       assert.equal(fallback?.status, "applied");
     } finally {
       fs.rmSync(tempApp, { recursive: true, force: true });
@@ -195,20 +190,15 @@ test("a missing exact current target gets its own skipped report entry", () => {
       const model = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-model",
       );
-      const resolver = report.patches.find(
-        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-resolver",
-      );
       const fallback = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-fallback",
       );
 
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier gate bundle")));
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier model bundle")));
-      assert.ok(warnings.some((warning) => warning.includes("current API key service tier resolver bundle")));
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier fallback bundle")));
       assert.equal(gate?.status, "skipped-optional");
       assert.equal(model?.status, "skipped-optional");
-      assert.equal(resolver?.status, "skipped-optional");
       assert.equal(fallback?.status, "skipped-optional");
     } finally {
       fs.rmSync(tempApp, { recursive: true, force: true });
@@ -343,10 +333,12 @@ test("split service tier assets round-trip synthetic fast only for marked API-ke
         ({ name }) => name === "feature:api-key-service-tier:api-key-service-tier-resolver",
       );
       assert.equal(optionsEntry?.status, "applied");
-      assert.equal(resolverEntry?.status, "applied");
+      assert.equal(resolverEntry, undefined);
 
       const patchedOptions = fs.readFileSync(optionsPath, "utf8");
-      const patchedResolver = fs.readFileSync(resolverPath, "utf8");
+      const patchedResolver = applyApiKeyServiceTierResolverPatch(
+        fs.readFileSync(resolverPath, "utf8"),
+      );
       assert.equal(applyFallbackFastTierPatch(patchedOptions), patchedOptions);
       assert.equal(applyApiKeyServiceTierResolverPatch(patchedResolver), patchedResolver);
       const optionsFor = Function(`${patchedOptions};return tEe`)();
@@ -382,9 +374,8 @@ test("service tier resolver rejects duplicate, mixed, and partial owners byte-id
   const partial = patched.slice(patched.indexOf("function my"));
   const mixed = current + patched;
   const duplicatePatched = patched + patched;
-  const descriptor = descriptors.find(({ id }) => id === "api-key-service-tier-resolver");
+  const descriptor = { assetMatch: matchesApiKeyServiceTierResolverContract };
 
-  assert.ok(descriptor);
   assert.equal(descriptor.assetMatch(current), true);
   assert.equal(descriptor.assetMatch(patched), true);
   for (const [name, source] of Object.entries({

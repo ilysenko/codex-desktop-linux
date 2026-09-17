@@ -63,7 +63,7 @@ function applyAuthenticatedProxyPatch(currentSource) {
     `let f=i==null&&!codexLinuxProxyAuthEntry()?await ${electronVar}.net.fetch(a,{method:r,headers:n,body:m(),signal:o,credentials:s?\`include\`:\`same-origin\`}):await this.performProgressRequest({body:m(),headers:n,method:r,onUploadProgress:i,resolvedUrl:a,signal:o,useSessionCookies:s});`;
   const currentFetchGate = new RegExp(
     `if\\((${JS_IDENT})==null\\)(?=\\{let ${JS_IDENT}=\\{method:${JS_IDENT},headers:${JS_IDENT},` +
-      `body:${JS_IDENT}\\(\\),redirect:${JS_IDENT},signal:${JS_IDENT},credentials:${JS_IDENT}\\?` +
+      `body:${JS_IDENT}\\(\\),redirect:[^,{}]{1,120},signal:${JS_IDENT},credentials:${JS_IDENT}\\?` +
       `${BT}include${BT}:${BT}same-origin${BT}\\};${JS_IDENT}=await ` +
       `(?:${electronVar}\\.net|this\\.options\\.applicationNetwork)\\.fetch\\()`,
   );
@@ -91,16 +91,30 @@ function applyAuthenticatedProxyPatch(currentSource) {
 
   const requestPattern = new RegExp(
     `let (?<request>${JS_IDENT})=(?<owner>(?:${electronVar}\\.net|this\\.options\\.applicationNetwork))` +
-      `\\.request\\(\\{method:(?<method>${JS_IDENT}),url:(?<url>${JS_IDENT}),headers:(?<headers>${JS_IDENT}),` +
-      `useSessionCookies:(?<cookies>${JS_IDENT})\\}\\),(?<last>${JS_IDENT})=-1,(?<poll>${JS_IDENT})=\\(\\)=>` +
+      `\\.request\\(\\{method:(?<method>${JS_IDENT}),url:(?<url>${JS_IDENT}),` +
+      `(?:redirect:(?<redirect>${JS_IDENT}),)?headers:(?<headers>${JS_IDENT}),useSessionCookies:(?<cookies>${JS_IDENT})\\}\\)[,;]` +
+      `(?:let )?(?<last>${JS_IDENT})=-1,(?<poll>${JS_IDENT})=\\(\\)=>` +
       `\\{let (?<progress>${JS_IDENT})=\\k<request>\\.getUploadProgress\\(\\);!\\k<progress>\\.started\\|\\|` +
       `\\k<progress>\\.current===\\k<last>\\|\\|\\(\\k<last>=\\k<progress>\\.current,` +
       `(?<callback>${JS_IDENT})\\(\\{loaded:\\k<progress>\\.current,total:\\k<progress>\\.total\\}\\)\\)\\}`,
   );
-  if (requestPattern.test(patchedSource)) {
-    patchedSource = patchedSource.replace(requestPattern, (...args) => {
+  const currentRequestPattern = new RegExp(
+    `let (?<request>${JS_IDENT})=(?<owner>this\\.options\\.applicationNetwork)\\.request\\(` +
+      `\\{method:(?<method>${JS_IDENT}),url:(?<url>${JS_IDENT}),redirect:(?<redirect>${JS_IDENT}),` +
+      `headers:(?<headers>${JS_IDENT}),useSessionCookies:(?<cookies>${JS_IDENT})\\}\\),` +
+      `(?<last>${JS_IDENT})=-1,(?<poll>${JS_IDENT})=\\(\\)=>\\{let (?<progress>${JS_IDENT})=` +
+      `\\k<request>\\.getUploadProgress\\(\\);\\k<progress>\\.started&&` +
+      `\\k<progress>\\.current!==\\k<last>&&\\(\\k<last>=\\k<progress>\\.current,` +
+      `(?<callback>${JS_IDENT})\\(\\{loaded:\\k<progress>\\.current,total:\\k<progress>\\.total\\}\\)\\)\\}`,
+  );
+  const activeRequestPattern = requestPattern.test(patchedSource)
+    ? requestPattern
+    : currentRequestPattern.test(patchedSource) ? currentRequestPattern : null;
+  if (activeRequestPattern != null) {
+    patchedSource = patchedSource.replace(activeRequestPattern, (...args) => {
       const groups = args.at(-1);
-      return `let ${groups.request}=${groups.owner}.request({method:${groups.method},url:${groups.url},headers:${groups.headers},useSessionCookies:${groups.cookies}});` +
+      const redirect = groups.redirect == null ? "" : `redirect:${groups.redirect},`;
+      return `let ${groups.request}=${groups.owner}.request({method:${groups.method},url:${groups.url},${redirect}headers:${groups.headers},useSessionCookies:${groups.cookies}});` +
         `codexLinuxAttachProxyAuthToRequest(${groups.request});let ${groups.last}=-1,${groups.poll}=()=>{if(${groups.callback}==null)return;` +
         `let ${groups.progress}=${groups.request}.getUploadProgress();!${groups.progress}.started||${groups.progress}.current===${groups.last}||` +
         `(${groups.last}=${groups.progress}.current,${groups.callback}({loaded:${groups.progress}.current,total:${groups.progress}.total}))}`;

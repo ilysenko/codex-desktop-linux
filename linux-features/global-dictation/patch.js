@@ -373,13 +373,17 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
     );
 
     const toggleRegistration = new RegExp(
-      registerFunctionPattern + `\\(e,\\{onPressed:\\(\\)=>\\{this\\.handleToggleHotkeyPressed\\(\\)\\}\\},\\{bareModifierTrigger:\`release\`,ownership:(${IDENT})\\}\\)`,
+      registerFunctionPattern +
+        `\\(e,\\{((?:onPressed:\\(\\)=>\\{this\\.handleToggleHotkeyPressed\\(\\)\\}|` +
+        `onPressed:\\(\\)=>\\{this\\.handleTogglePress\\(\\)\\},onReleased:\\(\\)=>this\\.handleToggleRelease\\(\\),` +
+        `onCancelled:\\(\\)=>\\{this\\.toggleHotkeyPressedAtMs=void 0,this\\.lastToggleTapAtMs=void 0\\}))\\},` +
+        `\\{bareModifierTrigger:\`(?:release|cancellablePress)\`,ownership:(${IDENT})\\}\\)`,
       "u",
     );
     patched = replaceUnique(
       patched,
       toggleRegistration,
-      (_original, ownershipVar) => registerFunction + `(e,{onPressed:()=>{this.handleToggleHotkeyPressed()},onUnavailable:n=>{this.handleLinuxHotkeyUnavailable(\`toggle\`,n)}},{bareModifierTrigger:\`release\`,ownership:${ownershipVar}})`,
+      (_original, callbacks, ownershipVar) => registerFunction + `(e,{${callbacks},onUnavailable:n=>{this.handleLinuxHotkeyUnavailable(\`toggle\`,n)}},{bareModifierTrigger:\`cancellablePress\`,ownership:${ownershipVar}})`,
       "toggle hotkey registration",
     );
 

@@ -331,17 +331,6 @@ const descriptors = [
     apply: applyCurrentModelPatch,
   },
   {
-    id: "api-key-service-tier-resolver",
-    phase: "webview-asset",
-    order: 20608,
-    ciPolicy: "optional",
-    pattern: /^app-initial-[^.]+\.js$/,
-    assetMatch: matchesApiKeyServiceTierResolverContract,
-    missingDescription: "current API key service tier resolver bundle",
-    skipDescription: "API key service tier resolver patch",
-    apply: applyCurrentResolverPatch,
-  },
-  {
     id: "api-key-service-tier-fallback",
     phase: "webview-asset",
     order: 20610,

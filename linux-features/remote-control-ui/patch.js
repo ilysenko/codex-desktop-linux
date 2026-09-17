@@ -121,7 +121,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20510,
       ciPolicy: "optional",
-      pattern: /^app-primary-[^.]+\.js$/,
+      pattern: /^app-initial-[^.]+\.js$/,
       assetMatch: matchesRemoteControlConnectionsVisibilityContract,
       missingDescription: "remote control connections visibility bundle",
       skipDescription: "remote control UI remote control connections visibility patch",

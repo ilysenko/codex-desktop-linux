@@ -1,7 +1,7 @@
 "use strict";
 
 const IDENT = "[A-Za-z_$][\\w$]*";
-const CHROME_MAPPING_ASSET_PATTERN = /^connect-app-host-[A-Za-z0-9_-]+\.js$/;
+const CHROME_MAPPING_ASSET_PATTERN = /^app-shared-[A-Za-z0-9_-]+\.js$/;
 const CURRENT_CHROME_MAPPING = "case`win32`:case`linux`:return`application-menu`";
 const PATCHED_CHROME_MAPPING = "case`win32`:return`application-menu`;case`linux`:return`native`";
 

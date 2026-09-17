@@ -30,8 +30,8 @@ test("linux-performance-workarounds remains an opt-in renderer-only feature", ()
       ["markdown-animation", "webview-asset"],
     ],
   );
-  assert.equal(descriptors[0].pattern.test("app-primary-a0bff570446b.js"), true);
-  assert.equal(descriptors[0].pattern.test("app-initial-cccb87527a41.js"), false);
+  assert.equal(descriptors[0].pattern.test("app-primary-a0bff570446b.js"), false);
+  assert.equal(descriptors[0].pattern.test("app-initial-cccb87527a41.js"), true);
   assert.equal(descriptors[1].pattern.test("app-initial-cccb87527a41.js"), true);
 });
 

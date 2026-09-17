@@ -6,12 +6,13 @@ function rewriteComputerUseMarketplaceSelector(currentSource) {
   let matchedSelectorCount = 0;
   const patched = currentSource.replace(selectorRegex, (_match, condition, expression) => {
     const ref = condition.match(/([A-Za-z_$][\w$]*)\.marketplacePluginNames/)?.[1];
-    const pristineCondition = `!(${ref}.platform!==\`darwin\`||!${ref}.marketplacePluginNames.includes(\`computer-use\`))`;
+    const retiredCondition = `!(${ref}.platform!==\`darwin\`||!${ref}.marketplacePluginNames.includes(\`computer-use\`))`;
+    const pristineCondition = `${ref}.platform===\`darwin\`&&${ref}.marketplacePluginNames.includes(\`computer-use\`)`;
     const patchedCondition = `!((${ref}.platform!==\`darwin\`&&${ref}.platform!==\`linux\`)||!${ref}.marketplacePluginNames.includes(\`computer-use\`))`;
     const pristineExpression = `${ref}.desktopFeatureAvailability.computerUseNodeRepl?\`node-repl\`:\`legacy-mcp\``;
     const patchedExpression = `${ref}.platform===\`darwin\`&&${pristineExpression}`;
     if (
-      !(condition === pristineCondition && expression === pristineExpression) &&
+      !([retiredCondition, pristineCondition].includes(condition) && expression === pristineExpression) &&
       !(condition === patchedCondition && expression === patchedExpression)
     ) {
       throw new Error("Required Linux Computer Use plugin gate patch failed: marketplace selector changed");

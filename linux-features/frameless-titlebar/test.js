@@ -203,8 +203,8 @@ test("unrecognized webview contracts warn instead of reporting false already-app
 
 test("webview descriptor selects the current shared chrome mapping across hash changes", () => {
   const descriptor = descriptors.find(({ id }) => id === "webview-chrome-mapping");
-  assert.match("connect-app-host-HashNext1.js", CHROME_MAPPING_ASSET_PATTERN);
-  assert.doesNotMatch("app-initial-HashNext1.js", CHROME_MAPPING_ASSET_PATTERN);
+  assert.match("app-shared-HashNext1.js", CHROME_MAPPING_ASSET_PATTERN);
+  assert.doesNotMatch("connect-app-host-HashNext1.js", CHROME_MAPPING_ASSET_PATTERN);
   assert.equal(descriptor.assetMatch(officialWebviewFixture()), true);
   assert.equal(descriptor.assetMatch(applyFramelessTitlebarWebviewPatch(officialWebviewFixture())), true);
   assert.equal(descriptor.assetMatch("export{chrome}"), false);

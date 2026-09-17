@@ -1759,6 +1759,29 @@ test("agent-workspace settings infer runtime dependencies from bundled settings 
   }
 });
 
+test("agent-workspace settings infer the current direct React factory export", () => {
+  const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-agent-workspace-direct-runtime-"));
+  try {
+    const { assetsDir } = writeSyntheticExtractedApp(tempApp);
+    const current = syntheticCurrentSettingsNavigation()
+      .replace('import{o as __toESM}from"./chunk-test.js";', "")
+      .replace('import{r as ReactFactory,j as jsxFactory}from"./runtime-test.js";', 'import{r,j as jsxFactory}from"./runtime-test.js";')
+      .replace("var React=__toESM(ReactFactory(),1),$=jsxFactory();", "var React=r(),$=jsxFactory();");
+    fs.writeFileSync(path.join(assetsDir, "settings-page-test.js"), current);
+
+    const { value: result, warnings } = captureWarns(() => patchAgentWorkspaceSettingsAssets(tempApp));
+
+    assert.equal(result.matched, true);
+    assert.ok(warnings.every((warning) => !warning.includes("Agent Workspaces")), warnings.join("\n"));
+    const settingsSource = fs.readFileSync(path.join(assetsDir, SETTINGS_ASSET), "utf8");
+    assert.match(settingsSource, /import\{r as __reactFactory\}from"\.\/runtime-test\.js"/);
+    assert.match(settingsSource, /var React=__reactFactory\(\)/);
+    assert.doesNotMatch(settingsSource, /__toESM/);
+  } finally {
+    fs.rmSync(tempApp, { recursive: true, force: true });
+  }
+});
+
 test("agent-workspace settings patch supports consolidated current settings bundles", () => {
   const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-agent-workspace-current-settings-"));
   try {

@@ -17,11 +17,19 @@ const CODEX_MICRO_SERVICE_PATTERN =
 const CODEX_MICRO_GATE_CONTRACTS = [
   {
     description: "Codex Micro app-shell gates",
-    gateCount: 5,
-    routeCount: 2,
+    gateCount: 4,
+    routeCount: 0,
     anchor: (source) =>
       source.includes("codex-micro-onboarding-host-")
-      && source.includes("codex-micro-bridge-"),
+      && source.includes("codexMicro"),
+  },
+  {
+    description: "Codex Micro settings-page gates",
+    gateCount: 1,
+    routeCount: 3,
+    anchor: (source) =>
+      source.includes("codex-micro-bridge-")
+      && source.includes('"codex-micro":'),
   },
   {
     description: "Codex Micro settings-visibility gate",

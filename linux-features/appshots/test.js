@@ -14,7 +14,6 @@ const {
 } = require("../../scripts/lib/linux-features.js");
 const {
   applyLinuxAppshotAvailabilityPatch,
-  applyLinuxAppshotHotkeyPatch,
   applyLinuxAppshotMainProcessPatch,
   descriptors,
   matchesLinuxAppshotAvailabilityContract,
@@ -134,12 +133,11 @@ test("appshots stays disabled until listed in features.json", () => {
     fs.writeFileSync(configPath, '{"enabled":["appshots"]}\n');
     const loaded = loadLinuxFeaturePatchDescriptors({ featuresRoot });
 
-    assert.equal(loaded.length, 3);
+    assert.equal(loaded.length, 2);
     assert.deepEqual(
       loaded.map((descriptor) => descriptor.id).sort(),
       [
         "feature:appshots:linux-appshots-availability",
-        "feature:appshots:linux-appshots-hotkey",
         "feature:appshots:linux-appshots-main-process",
       ].sort(),
     );
@@ -155,7 +153,7 @@ test("appshots stays disabled until listed in features.json", () => {
 });
 
 test("appshots feature descriptors are optional", () => {
-  assert.equal(descriptors.length, 3);
+  assert.equal(descriptors.length, 2);
   assert.ok(descriptors.every((descriptor) => descriptor.ciPolicy == null));
 });
 
@@ -1284,80 +1282,4 @@ test("AppShots capture uses and removes its private temporary directory", async 
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
-});
-
-test("enables the current AppShots hotkey class and bare modifiers on Linux", () => {
-  const patched = applyPatchTwice(
-    applyLinuxAppshotHotkeyPatch,
-    currentAppshotHotkeyMainBundleFixture(),
-  );
-
-  assert.match(
-    patched,
-    /function codexLinuxAppshotIsWayland\(\)\{return process\.platform===`linux`&&\(\(process\.env\.XDG_SESSION_TYPE\|\|``\)\.toLowerCase\(\)===`wayland`\|\|!!process\.env\.WAYLAND_DISPLAY\)\}/,
-  );
-  assert.match(
-    patched,
-    /function Lk\(e,t=process\.platform\)\{return \(t===`darwin`\|\|t===`linux`&&!codexLinuxAppshotIsWayland\(\)\)&&zk\(e\)!=null\}/,
-  );
-  assert.match(
-    patched,
-    /function Mk\(e,t,n=`press`\)\{if\(process\.platform!==`darwin`&&process\.platform!==`linux`\)return null;/,
-  );
-  assert.match(patched, /new Set\(\[\.\.\.Yk,`shift`,`super`,`meta`,`win`\]\)/);
-  assert.match(
-    patched,
-    /a===void 0\?this\.configuredHotkey=process\.platform===`win32`\?T8:process\.platform===`linux`\?null:R8:this\.configuredHotkey=a/,
-  );
-  assert.match(
-    patched,
-    /supported:this\.enabled&&\(process\.platform===`linux`\|\|process\.platform===`darwin`\|\|process\.platform===`win32`&&this\.windowsCaptureNativeBridge!=null&&!this\.windowsCaptureNativeBridgeFailed\),configuredHotkey:this\.configuredHotkey,isActive:this\.registration!=null,linuxWayland:codexLinuxAppshotIsWayland\(\)/,
-  );
-
-  const context = {
-    globalThis: {},
-    process: { env: { XDG_SESSION_TYPE: "x11" }, platform: "linux" },
-  };
-  vm.runInNewContext(patched, context);
-  const state = new context.globalThis.AppshotHotkeys({ getStored() {} }).getState();
-  assert.equal(state.supported, true);
-  assert.equal(state.configuredHotkey, null);
-  assert.equal(state.linuxWayland, false);
-});
-
-test("AppShots hotkey patch fails closed when one current class shape drifts", () => {
-  const source = currentAppshotHotkeyMainBundleFixture().replace(
-    "new Set([...Yk,`shift`])",
-    "new Set([...Yk,`shift`,`alt`])",
-  );
-
-  assert.deepEqual(captureWarnings(() => {
-    assert.equal(applyLinuxAppshotHotkeyPatch(source), source);
-  }), [
-    "WARN: Could not find current AppShots hotkey class - skipping Linux AppShots hotkey patch",
-  ]);
-});
-
-test("AppShots hotkey patch rejects a partially patched setter", () => {
-  const partial = currentAppshotHotkeyMainBundleFixture().replace(
-    "this.windowsCaptureNativeBridge!=null&&!this.windowsCaptureNativeBridgeFailed",
-    "this.windowsCaptureNativeBridge!=null",
-  );
-
-  assert.deepEqual(captureWarnings(() => {
-    assert.equal(applyLinuxAppshotHotkeyPatch(partial), partial);
-  }), [
-    "WARN: Could not find current AppShots hotkey class - skipping Linux AppShots hotkey patch",
-  ]);
-});
-
-test("AppShots hotkey patch rejects duplicate current class contracts", () => {
-  const source = currentAppshotHotkeyMainBundleFixture();
-  const duplicate = `${source}${source}`;
-
-  assert.deepEqual(captureWarnings(() => {
-    assert.equal(applyLinuxAppshotHotkeyPatch(duplicate), duplicate);
-  }), [
-    "WARN: Could not find current AppShots hotkey class - skipping Linux AppShots hotkey patch",
-  ]);
 });

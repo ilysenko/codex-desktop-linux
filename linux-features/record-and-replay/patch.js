@@ -283,9 +283,27 @@ function recordReplayPatchedTranscriptPattern(flags = "") {
   );
 }
 
+function recordReplayCurrentBlockTranscriptPattern(flags = "") {
+  const id = String.raw`[A-Za-z_$][\w$]*`;
+  return new RegExp(
+    String.raw`if\((?<transcript>${id})\.length>0\)\{(?<persistence>${id})==null\?${id}\.getInstance\(\)\.dispatchMessage\(\`global-dictation-record-history-item\`,\{text:\k<transcript>\}\):\k<persistence>\.setTranscript\(\k<transcript>\),${id}\.performance\.mark\(\`transcript_dispatched\`\);[\s\S]{0,500}?(?<actionContext>${id})\.action===\`send\`\?await ${id}\.onTranscriptSend\(\k<transcript>(?:,${id})?\)`,
+    flags,
+  );
+}
+
 function recordReplayDictationTranscriptState(source) {
   const current = [...source.matchAll(recordReplayCompiledTranscriptPattern("g"))];
   const patched = [...source.matchAll(recordReplayPatchedTranscriptPattern("g"))];
+  const currentBlock = [...source.matchAll(recordReplayCurrentBlockTranscriptPattern("g"))];
+  const captureMarkerCount = source.split("codexLinuxRecordReplayCaptureTranscript").length - 1;
+
+  if (currentBlock.length === 1 && current.length === 0 && patched.length === 0) {
+    return captureMarkerCount === 0
+      ? { kind: "current-block", match: currentBlock[0] }
+      : captureMarkerCount === 1
+        ? { kind: "patched-block", match: currentBlock[0] }
+        : { kind: "ambiguous" };
+  }
 
   if (current.length === 1 && patched.length === 0 &&
       !source.includes("codexLinuxRecordReplayCaptureTranscript")) {
@@ -314,7 +332,7 @@ function applyRecordReplayHudPatch(currentSource) {
 function applyRecordReplayDictationTranscriptPatch(currentSource) {
   const patchName = "Record & Replay dictation transcript patch";
   const state = recordReplayDictationTranscriptState(currentSource);
-  if (state.kind === "patched") {
+  if (state.kind === "patched" || state.kind === "patched-block") {
     return currentSource;
   }
   if (state.kind === "partial" &&
@@ -331,6 +349,13 @@ function applyRecordReplayDictationTranscriptPatch(currentSource) {
       ? patched
       : currentSource;
   }
+  if (state.kind === "current-block") {
+    const { transcript, actionContext } = state.match.groups;
+    const insertionIndex = state.match.index + state.match[0].indexOf("{") + 1;
+    return currentSource.slice(0, insertionIndex) +
+      `${recordReplayTranscriptCaptureExpression(transcript, `${actionContext}.action`)};` +
+      currentSource.slice(insertionIndex);
+  }
 
   warn("Could not find dictation transcript send point", patchName);
   return currentSource;
@@ -341,7 +366,7 @@ function hasRecordReplayDictationTranscriptContract(source) {
     return false;
   }
   const state = recordReplayDictationTranscriptState(source);
-  return state.kind === "current" || state.kind === "patched";
+  return ["current", "patched", "current-block", "patched-block"].includes(state.kind);
 }
 
 function recordReplayCompiledGlobalDictationPattern() {

@@ -187,17 +187,28 @@ function buildAgentWorkspaceSettingsSource({
   chunkExportName = "s",
   reactAsset,
   reactExportName = "t",
+  reactDirect = false,
+  reactFactoryDirect = false,
   codexRequestAsset,
   codexRequestExportName = "n",
   vscodeApiAsset,
 }) {
   const requestAsset = codexRequestAsset ?? vscodeApiAsset;
-  return `import{${chunkExportName} as __toESM}from"./${chunkAsset}";
-import{${reactExportName} as __reactFactory}from"./${reactAsset}";
+  const reactImports = reactDirect
+    ? `import{${reactExportName} as React}from"./${reactAsset}";`
+    : reactFactoryDirect
+      ? `import{${reactExportName} as __reactFactory}from"./${reactAsset}";`
+    : `import{${chunkExportName} as __toESM}from"./${chunkAsset}";\n` +
+      `import{${reactExportName} as __reactFactory}from"./${reactAsset}";`;
+  const reactInitialization = reactDirect
+    ? ""
+    : reactFactoryDirect
+      ? "var React=__reactFactory();\n"
+      : "var React=__toESM(__reactFactory(),1);\n";
+  return `${reactImports}
 import{${codexRequestExportName} as __post}from"./${requestAsset}";
 
-var React=__toESM(__reactFactory(),1);
-var h=React.createElement;
+${reactInitialization}var h=React.createElement;
 function SettingsPage({title,subtitle,children}){
   return h("div",{className:"h-full min-h-0 w-full overflow-y-auto"},
     h("div",{className:"mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6"},
@@ -1816,11 +1827,44 @@ function importBindings(source) {
 
 function inferRuntimeDependenciesFromSettingsSource(source) {
   const jsxLocal = source.match(/\(0,([A-Za-z_$][\w$]*)\.jsx\)/)?.[1] ?? null;
-  const reactLocal = source.match(/\(0,([A-Za-z_$][\w$]*)\.useState\)/)?.[1] ?? null;
-  if (jsxLocal == null || reactLocal == null) {
+  const reactLocals = [...source.matchAll(/\(0,([A-Za-z_$][\w$]*)\.useState\)/g)]
+    .map((match) => match[1]);
+  if (jsxLocal == null || reactLocals.length === 0) {
     return null;
   }
 
+  const bindings = importBindings(source);
+  const directReactLocal = reactLocals.find((local) => bindings.has(local));
+  if (directReactLocal != null) {
+    const reactBinding = bindings.get(directReactLocal);
+    return {
+      chunkAsset: null,
+      chunkExportName: null,
+      reactAsset: reactBinding.assetName,
+      reactExportName: reactBinding.exportName,
+      reactDirect: true,
+      reactFactoryDirect: false,
+    };
+  }
+
+  for (const reactLocal of reactLocals) {
+    const factoryLocal = source.match(
+      new RegExp(`${escapeRegExp(reactLocal)}=([A-Za-z_$][\\w$]*)\\(\\)`),
+    )?.[1] ?? null;
+    const reactBinding = factoryLocal == null ? null : bindings.get(factoryLocal);
+    if (reactBinding != null) {
+      return {
+        chunkAsset: null,
+        chunkExportName: null,
+        reactAsset: reactBinding.assetName,
+        reactExportName: reactBinding.exportName,
+        reactDirect: false,
+        reactFactoryDirect: true,
+      };
+    }
+  }
+
+  const reactLocal = reactLocals[0];
   const jsxFactoryLocal = source.match(
     new RegExp(`${escapeRegExp(jsxLocal)}=([A-Za-z_$][\\w$]*)\\(\\)`),
   )?.[1] ?? null;
@@ -1833,7 +1877,6 @@ function inferRuntimeDependenciesFromSettingsSource(source) {
     return null;
   }
 
-  const bindings = importBindings(source);
   const chunkBinding = bindings.get(chunkHelperLocal);
   const reactBinding = bindings.get(reactFactoryLocal);
   if (bindings.get(jsxFactoryLocal) == null || chunkBinding == null || reactBinding == null) {
@@ -1845,6 +1888,8 @@ function inferRuntimeDependenciesFromSettingsSource(source) {
     chunkExportName: chunkBinding.exportName,
     reactAsset: reactBinding.assetName,
     reactExportName: reactBinding.exportName,
+    reactDirect: false,
+    reactFactoryDirect: false,
   };
 }
 
@@ -1879,6 +1924,8 @@ function resolveAgentWorkspaceSettingsAsset(extractedDir) {
     chunkExportName,
     reactAsset,
     reactExportName,
+    reactDirect,
+    reactFactoryDirect,
   } = runtimeDependencies;
   const codexRequestAsset = findCodexRequestWebviewAsset(assetsDir);
 
@@ -1889,6 +1936,8 @@ function resolveAgentWorkspaceSettingsAsset(extractedDir) {
       chunkExportName,
       reactAsset,
       reactExportName,
+      reactDirect,
+      reactFactoryDirect,
       codexRequestAsset: codexRequestAsset.assetName,
       codexRequestExportName: codexRequestAsset.exportName,
     }),
