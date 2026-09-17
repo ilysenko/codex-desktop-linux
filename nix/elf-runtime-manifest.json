@@ -3,8 +3,8 @@
   "architectures": {
     "amd64": {
       "machine": 62,
-      "targetInventoryCount": 37,
-      "targetInventorySha256": "e271731ff74d73e2a30ce8e7af445da67a645bfd741650b38493abbd76df4585",
+      "targetInventoryCount": 38,
+      "targetInventorySha256": "6bd80f08aef5ceb20292fc07e5a11ddcc3101a7c15f866ada257571ea9fc5c32",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
@@ -22,8 +22,8 @@
     },
     "arm64": {
       "machine": 183,
-      "targetInventoryCount": 35,
-      "targetInventorySha256": "b3c37a292a8cc245974a1404369766e5d1347ef60d1ce828dd63ed98792fd5c8",
+      "targetInventoryCount": 36,
+      "targetInventorySha256": "1821bd798e8939d05bf4593f819f88457c2f7213e98216b3bece3d073e8df59e",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
