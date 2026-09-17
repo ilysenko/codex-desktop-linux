@@ -347,8 +347,8 @@ test("leaves an incomplete existing proxy helper set untouched", () => {
     "function codexLinuxInstallProxyAuthHandler(e){return e}",
     "async function boot(){await c.app.whenReady()}",
     "class Fetcher{",
-    "async performDesktopFetch(){let t={},r=`GET`,i=null,a=`https://example.test`,o={},s=false,m=()=>null;let n=this.cloneHeaders(t);let f=i==null?await c.net.fetch(a,{method:r,headers:n,body:m(),signal:o,credentials:s?`include`:`same-origin`}):await this.performProgressRequest({body:m(),headers:n,method:r,onUploadProgress:i,resolvedUrl:a,signal:o,useSessionCookies:s});return f}",
-    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,signal:a,useSessionCookies:o}){let u=c.net.request({method:n,url:i,headers:t,useSessionCookies:o}),d=-1,f=()=>{let e=u.getUploadProgress();!e.started||e.current===d||(d=e.current,r({loaded:e.current,total:e.total}))}}",
+    "async performDesktopFetch(){let t={},r=`GET`,i=null,a=`https://example.test`,o={},s=false,m=()=>null;let n=this.cloneHeaders(t),q=null,f;if(i==null){let e={method:r,headers:n,body:m(),redirect:q==null?`follow`:`error`,signal:o,credentials:s?`include`:`same-origin`};f=await this.options.applicationNetwork.fetch(a,e)}else f=await this.performProgressRequest({body:m(),headers:n,method:r,onUploadProgress:i,resolvedUrl:a,redirect:q==null?void 0:`error`,signal:o,useSessionCookies:s});return f}",
+    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,redirect:a,signal:o,useSessionCookies:s}){let u=this.options.applicationNetwork.request({method:n,url:i,redirect:a,headers:t,useSessionCookies:s}),d=-1,f=()=>{let e=u.getUploadProgress();e.started&&e.current!==d&&(d=e.current,r({loaded:e.current,total:e.total}))}}",
     "cloneHeaders(e){return e}",
     "}",
   ].join("");
@@ -371,8 +371,9 @@ test("routes current authenticated proxy desktop fetch shape through ClientReque
     "let c=require(`electron`);",
     "async function boot(){await c.app.whenReady()}",
     "class Fetcher{",
-    "async performDesktopFetch(){let t={},r=`GET`,i=null,a=`https://chatgpt.com/wham/usage`,o={aborted:false,addEventListener(){},removeEventListener(){}},s=true,q=`follow`,m=()=>null,h=async e=>{let n=this.cloneHeaders(t);let f;if(i==null){let e={method:r,headers:n,body:m(),redirect:q,signal:o,credentials:s?`include`:`same-origin`};f=await c.net.fetch(a,e)}else f=await this.performProgressRequest({body:m(),headers:n,method:r,onUploadProgress:i,resolvedUrl:a,signal:o,useSessionCookies:s});return f};return h({})}",
-    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,signal:a,useSessionCookies:o}){return new Promise((s,l)=>{let u=c.net.request({method:n,url:i,headers:t,useSessionCookies:o}),d=-1,f=()=>{let e=u.getUploadProgress();!e.started||e.current===d||(d=e.current,r({loaded:e.current,total:e.total}))},p=setInterval(f,50),m=()=>{clearInterval(p)},h=()=>{m(),a.removeEventListener(`abort`,g)},g=()=>{h(),u.abort(),l(new DOMException(`The operation was aborted`,`AbortError`))};if(a.addEventListener(`abort`,g,{once:!0}),a.aborted){g();return}u.on(`error`,e=>{h(),l(e)}),u.on(`response`,e=>{f(),m();let t=[];e.on(`data`,e=>{t.push(e)}),e.on(`error`,e=>{h(),l(e)}),e.on(`end`,()=>{h();let n=Buffer.concat(t),r=new Headers;for(let[t,n]of Object.entries(e.headers))for(let e of Array.isArray(n)?n:[n])r.append(t,e);s(new Response(n.length===0?null:n,{status:e.statusCode,statusText:e.statusMessage,headers:r}))})});let _=e instanceof ArrayBuffer?Buffer.from(e):e;u.end(_)})}",
+    "constructor(){this.options={applicationNetwork:c.net}}",
+    "async performDesktopFetch(){let t={},r=`GET`,i=null,a=`https://chatgpt.com/wham/usage`,o={aborted:false,addEventListener(){},removeEventListener(){}},s=true,q=null,m=()=>null,h=async e=>{let n=this.cloneHeaders(t);let f;if(i==null){let e={method:r,headers:n,body:m(),redirect:q==null?`follow`:`error`,signal:o,credentials:s?`include`:`same-origin`};f=await this.options.applicationNetwork.fetch(a,e)}else f=await this.performProgressRequest({body:m(),headers:n,method:r,onUploadProgress:i,resolvedUrl:a,redirect:q==null?void 0:`error`,signal:o,useSessionCookies:s});return f};return h({})}",
+    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,redirect:a,signal:o,useSessionCookies:s}){return new Promise((c,l)=>{let u=this.options.applicationNetwork.request({method:n,url:i,redirect:a,headers:t,useSessionCookies:s}),d=-1,f=()=>{let e=u.getUploadProgress();e.started&&e.current!==d&&(d=e.current,r({loaded:e.current,total:e.total}))},p=setInterval(f,50),m=()=>{clearInterval(p)},h=()=>{m(),o.removeEventListener(`abort`,g)},g=()=>{h(),u.abort(),l(new DOMException(`The operation was aborted`,`AbortError`))};if(o.addEventListener(`abort`,g,{once:!0}),o.aborted){g();return}u.on(`error`,e=>{h(),l(e)}),u.on(`response`,e=>{f(),m();let t=[];e.on(`data`,e=>{t.push(e)}),e.on(`error`,e=>{h(),l(e)}),e.on(`end`,()=>{h();let n=Buffer.concat(t),r=new Headers;for(let[t,n]of Object.entries(e.headers))for(let e of Array.isArray(n)?n:[n])r.append(t,e);c(new Response(n.length===0?null:n,{status:e.statusCode,statusText:e.statusMessage,headers:r}))})});let _=e instanceof ArrayBuffer?Buffer.from(e):e;u.end(_)})}",
     "cloneHeaders(e){return e}",
     "}",
     "globalThis.Fetcher=Fetcher;",
@@ -496,8 +497,8 @@ test("routes current authenticated proxy desktop fetch shape through ClientReque
 test("routes the current applicationNetwork abstraction through its request path", () => {
   const source = [
     "let l=require(`electron`);async function boot(){await l.app.whenReady()}",
-    "class Fetcher{async fetch(){let a=`GET`,p={},v=()=>null,s=`follow`,o=null,c=`https://example.test`,u=!1,h;if(o==null){let e={method:a,headers:p,body:v(),redirect:s,signal:null,credentials:u?`include`:`same-origin`};h=await this.options.applicationNetwork.fetch(c,e)}else h=await this.performProgressRequest({body:v(),headers:p,method:a,onUploadProgress:o,resolvedUrl:c,signal:null,useSessionCookies:u});return h}",
-    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,signal:a,useSessionCookies:o}){let l=this.options.applicationNetwork.request({method:n,url:i,headers:t,useSessionCookies:o}),u=-1,d=()=>{let e=l.getUploadProgress();!e.started||e.current===u||(u=e.current,r({loaded:e.current,total:e.total}))};return l}}",
+    "class Fetcher{async fetch(){let a=`GET`,p={},v=()=>null,s=null,o=null,c=`https://example.test`,u=!1,h;if(o==null){let e={method:a,headers:p,body:v(),redirect:s==null?`follow`:`error`,signal:null,credentials:u?`include`:`same-origin`};h=await this.options.applicationNetwork.fetch(c,e)}else h=await this.performProgressRequest({body:v(),headers:p,method:a,onUploadProgress:o,resolvedUrl:c,redirect:s==null?void 0:`error`,signal:null,useSessionCookies:u});return h}",
+    "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,redirect:a,signal:o,useSessionCookies:s}){let l=this.options.applicationNetwork.request({method:n,url:i,redirect:a,headers:t,useSessionCookies:s}),u=-1,d=()=>{let e=l.getUploadProgress();e.started&&e.current!==u&&(u=e.current,r({loaded:e.current,total:e.total}))};return l}}",
   ].join("");
 
   const patched = applyPatchTwiceWithoutWarnings(applyAuthenticatedProxyPatch, source);
@@ -508,7 +509,32 @@ test("routes the current applicationNetwork abstraction through its request path
   );
 });
 
-test("authenticated-proxy tests fail when current desktop fetch shape drifts", () => {
+test("authenticated-proxy current contracts fail closed when missing, duplicate, or ambiguous", () => {
+  const fetch = "class Fetcher{async fetch(){let a=`GET`,p={},v=()=>null,s=null,o=null,c=`https://example.test`,u=!1,h;if(o==null){let e={method:a,headers:p,body:v(),redirect:s==null?`follow`:`error`,signal:null,credentials:u?`include`:`same-origin`};h=await this.options.applicationNetwork.fetch(c,e)}else h=await this.performProgressRequest({body:v(),headers:p,method:a,onUploadProgress:o,resolvedUrl:c,redirect:s==null?void 0:`error`,signal:null,useSessionCookies:u});return h}";
+  const request = "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,redirect:a,signal:o,useSessionCookies:s}){let l=this.options.applicationNetwork.request({method:n,url:i,redirect:a,headers:t,useSessionCookies:s}),u=-1,d=()=>{let e=l.getUploadProgress();e.started&&e.current!==u&&(u=e.current,r({loaded:e.current,total:e.total}))};return l}}";
+  const prefix = "let l=require(`electron`);async function boot(){await l.app.whenReady()}";
+  const current = prefix + fetch + request;
+  const patched = applyAuthenticatedProxyPatch(current);
+  const variants = {
+    missing: prefix + fetch + "}",
+    duplicate: prefix + fetch + request + fetch + request,
+    ambiguous: patched + fetch + request,
+  };
+
+  for (const [name, source] of Object.entries(variants)) {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      assert.equal(applyAuthenticatedProxyPatch(source), source, name);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.ok(warnings.some((warning) => warning.includes("unique current applicationNetwork")), name);
+  }
+});
+
+test("authenticated-proxy does not route the retired Electron net fetch contract", () => {
   const source = [
     "let a=require(`electron`);",
     "async function boot(){await a.app.whenReady()}",
@@ -518,8 +544,17 @@ test("authenticated-proxy tests fail when current desktop fetch shape drifts", (
     "}",
   ].join("");
 
-  assert.throws(
-    () => applyPatchTwiceWithoutWarnings(applyAuthenticatedProxyPatch, source),
-    /Could not route Linux proxy-auth desktop fetches through ClientRequest|Expected values to be strictly deep-equal/,
-  );
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  let patched;
+  try {
+    patched = applyAuthenticatedProxyPatch(source);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.notEqual(patched, source);
+  assert.doesNotMatch(patched, /codexLinuxAttachProxyAuthToRequest\(u\)/);
+  assert.match(patched, /a\.net\.fetch/);
+  assert.deepEqual(warnings, []);
 });

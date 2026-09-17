@@ -34,6 +34,10 @@ const {
 
 const featureDir = __dirname;
 
+function currentComposerTranscriptFixture() {
+  return "async function send(){let p=`Create an image of a neon cabin`,c={setTranscript(){}},a={dictationSessionId:`session-1`,performance:{mark(){}}},i={action:`send`,recovery:null},s={onRecoveryChange:null,onTranscriptRetry:async()=>{},onTranscriptSend:async(t,e)=>globalThis.events.push([`send`,t,e]),onTranscriptInsert:async(t,e)=>globalThis.events.push([`insert`,t,e]),onTranscriptCancel:()=>globalThis.events.push([`cancel`])},te={current:i};if(p.length>0){c==null?une.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:p}):c.setTranscript(p),a.performance.mark(`transcript_dispatched`);let e=c==null?void 0:a.dictationSessionId;i.recovery!=null&&s.onRecoveryChange!=null?await s.onTranscriptRetry?.(p,e):i.action===`send`?await s.onTranscriptSend(p,e):(await s.onTranscriptInsert(p,e),te.current===i&&te.current.action===`send`&&await s.onTranscriptSend(``,e))}else s.onTranscriptCancel?.()}";
+}
+
 function captureWarns(fn) {
   const warnings = [];
   const originalWarn = console.warn;
@@ -172,9 +176,7 @@ test("record-and-replay dictation descriptor tracks moved upstream composer bund
   const descriptor = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
   assert.ok(descriptor);
   assert.equal(descriptor.pattern.test("app-initial-C-fROkKo.js"), true);
-  assert.equal(descriptor.assetMatch(
-    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()",
-  ), true);
+  assert.equal(descriptor.assetMatch(currentComposerTranscriptFixture()), true);
   assert.equal(descriptor.pattern.test("app-initial~app-main~onboarding-page-BUwCKIcU.js"), false);
   assert.equal(descriptor.pattern.test("use-dictation-BUwCKIcU.js"), false);
   assert.equal(descriptor.pattern.test("use-dictation-hotkey-BUwCKIcU.js"), false);
@@ -628,41 +630,59 @@ test("record-and-replay HUD patch is idempotent and appends runtime UI", () => {
   assert.doesNotMatch(patched, /finalizeVoiceCapture/);
 });
 
-test("record-and-replay rejects the retired non-persistent composer contract", () => {
-  const source =
-    "function send(e,n){let i=`Create an image of a neon cabin`;i.length>0&&(j.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))}";
-  const patched = applyRecordReplayDictationTranscriptPatch(source);
-
-  assert.equal(patched, source);
+test("record-and-replay rejects retired composer transcript contracts", () => {
+  const sources = [
+    "function send(e,n){let i=`Create an image of a neon cabin`;i.length>0&&(j.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))}",
+    "async function send(){let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()}",
+  ];
+  for (const source of sources) {
+    assert.equal(applyRecordReplayDictationTranscriptPatch(source), source);
+  }
 });
 
-test("record-and-replay matches the current compiled composer transcript", () => {
-  const source =
-    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()";
+test("record-and-replay matches and executes the current composer transcript block", async () => {
+  const source = currentComposerTranscriptFixture();
   const patched = applyRecordReplayDictationTranscriptPatch(source);
 
   assert.notEqual(patched, source);
   assert.equal(applyRecordReplayDictationTranscriptPatch(patched), patched);
-  assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(l,t\.action\)/);
-  assert.match(patched, /o==null\?_m\.getInstance\(\)\.dispatchMessage/);
-  assert.match(patched, /o\.setTranscript\(l\)/);
-  assert.match(patched, /t\.action===`send`\?await a\.onTranscriptSend\(l\):\(await a\.onTranscriptInsert\(l\),U\.current===t/);
-  assert.match(patched, /:a\.onTranscriptCancel\?\.\(\)/);
+  assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(p,i\.action\)/);
+  assert.match(patched, /let e=c==null\?void 0:a\.dictationSessionId/);
+  assert.match(patched, /onTranscriptSend\(p,e\)/);
+  assert.match(patched, /onTranscriptInsert\(p,e\)/);
+
+  const context = {
+    Date,
+    globalThis: {
+      events: [],
+      codexLinuxRecordReplayCaptureTranscript: (transcript, action) => {
+        context.globalThis.events.push(["capture", transcript, action]);
+        return true;
+      },
+    },
+    une: { getInstance: () => ({ dispatchMessage() {} }) },
+  };
+  vm.runInNewContext(`${patched};globalThis.run=send`, context);
+  await context.globalThis.run();
+  assert.deepEqual(JSON.parse(JSON.stringify(context.globalThis.events)), [
+    ["capture", "Create an image of a neon cabin", "send"],
+    ["send", "Create an image of a neon cabin", "session-1"],
+  ]);
 });
 
-test("record-and-replay transcript repair rejects duplicate, mixed, and partial owners", () => {
-  const current =
-    "let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()";
+test("record-and-replay transcript repair rejects duplicate, partial, mixed, and ambiguous owners", () => {
+  const current = currentComposerTranscriptFixture();
   const patched = applyRecordReplayDictationTranscriptPatch(current);
   const partial = patched.replace(
-    "globalThis.codexLinuxRecordReplayCaptureTranscript?.(l,t.action)",
-    "globalThis.codexLinuxRecordReplayCaptureTranscript?.(l)",
+    "onTranscriptInsert(p,e)",
+    "onTranscriptInsert(p)",
   );
   const variants = {
     "duplicate current": current + current,
     "duplicate patched": patched + patched,
     mixed: current + patched,
     partial,
+    ambiguous: current.replace("let e=c==null?void 0:a.dictationSessionId", "let e=c==null?void 0:other.dictationSessionId"),
   };
   const descriptor = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
 
@@ -705,8 +725,7 @@ test("record-and-replay current transcript drift remains byte-identical", () => 
 });
 
 test("record-and-replay generated transcript runtimes are syntactically valid", () => {
-  const source =
-    "async function current(){let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()}";
+  const source = currentComposerTranscriptFixture();
   const globalDictationSource =
     "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(`transcript_dispatched`)}";
 

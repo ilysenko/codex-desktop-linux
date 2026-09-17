@@ -183,32 +183,18 @@ function applyAgentWorkspaceMainBridgePatch(currentSource) {
 }
 
 function buildAgentWorkspaceSettingsSource({
-  chunkAsset,
-  chunkExportName = "s",
   reactAsset,
   reactExportName = "t",
-  reactDirect = false,
-  reactFactoryDirect = false,
   codexRequestAsset,
   codexRequestExportName = "n",
   vscodeApiAsset,
 }) {
   const requestAsset = codexRequestAsset ?? vscodeApiAsset;
-  const reactImports = reactDirect
-    ? `import{${reactExportName} as React}from"./${reactAsset}";`
-    : reactFactoryDirect
-      ? `import{${reactExportName} as __reactFactory}from"./${reactAsset}";`
-    : `import{${chunkExportName} as __toESM}from"./${chunkAsset}";\n` +
-      `import{${reactExportName} as __reactFactory}from"./${reactAsset}";`;
-  const reactInitialization = reactDirect
-    ? ""
-    : reactFactoryDirect
-      ? "var React=__reactFactory();\n"
-      : "var React=__toESM(__reactFactory(),1);\n";
-  return `${reactImports}
+  return `import{${reactExportName} as __reactFactory}from"./${reactAsset}";
 import{${codexRequestExportName} as __post}from"./${requestAsset}";
 
-${reactInitialization}var h=React.createElement;
+var React=__reactFactory();
+var h=React.createElement;
 function SettingsPage({title,subtitle,children}){
   return h("div",{className:"h-full min-h-0 w-full overflow-y-auto"},
     h("div",{className:"mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6"},
@@ -1834,62 +1820,31 @@ function inferRuntimeDependenciesFromSettingsSource(source) {
   }
 
   const bindings = importBindings(source);
-  const directReactLocal = reactLocals.find((local) => bindings.has(local));
-  if (directReactLocal != null) {
-    const reactBinding = bindings.get(directReactLocal);
-    return {
-      chunkAsset: null,
-      chunkExportName: null,
-      reactAsset: reactBinding.assetName,
-      reactExportName: reactBinding.exportName,
-      reactDirect: true,
-      reactFactoryDirect: false,
-    };
+  const jsxFactoryLocal = source.match(
+    new RegExp(`${escapeRegExp(jsxLocal)}=([A-Za-z_$][\\w$]*)\\(\\)`),
+  )?.[1] ?? null;
+  if (jsxFactoryLocal == null || bindings.get(jsxFactoryLocal) == null) {
+    return null;
   }
 
+  const candidates = new Map();
   for (const reactLocal of reactLocals) {
     const factoryLocal = source.match(
       new RegExp(`${escapeRegExp(reactLocal)}=([A-Za-z_$][\\w$]*)\\(\\)`),
     )?.[1] ?? null;
     const reactBinding = factoryLocal == null ? null : bindings.get(factoryLocal);
     if (reactBinding != null) {
-      return {
-        chunkAsset: null,
-        chunkExportName: null,
-        reactAsset: reactBinding.assetName,
-        reactExportName: reactBinding.exportName,
-        reactDirect: false,
-        reactFactoryDirect: true,
-      };
+      candidates.set(`${reactBinding.assetName}\0${reactBinding.exportName}`, reactBinding);
     }
   }
-
-  const reactLocal = reactLocals[0];
-  const jsxFactoryLocal = source.match(
-    new RegExp(`${escapeRegExp(jsxLocal)}=([A-Za-z_$][\\w$]*)\\(\\)`),
-  )?.[1] ?? null;
-  const reactInitialization = source.match(
-    new RegExp(`${escapeRegExp(reactLocal)}=([A-Za-z_$][\\w$]*)\\(([A-Za-z_$][\\w$]*)\\(\\),1\\)`),
-  );
-  const chunkHelperLocal = reactInitialization?.[1] ?? null;
-  const reactFactoryLocal = reactInitialization?.[2] ?? null;
-  if (jsxFactoryLocal == null || chunkHelperLocal == null || reactFactoryLocal == null) {
+  if (candidates.size !== 1) {
     return null;
   }
-
-  const chunkBinding = bindings.get(chunkHelperLocal);
-  const reactBinding = bindings.get(reactFactoryLocal);
-  if (bindings.get(jsxFactoryLocal) == null || chunkBinding == null || reactBinding == null) {
-    return null;
-  }
+  const reactBinding = candidates.values().next().value;
 
   return {
-    chunkAsset: chunkBinding.assetName,
-    chunkExportName: chunkBinding.exportName,
     reactAsset: reactBinding.assetName,
     reactExportName: reactBinding.exportName,
-    reactDirect: false,
-    reactFactoryDirect: false,
   };
 }
 
@@ -1898,15 +1853,16 @@ function inferRuntimeDependenciesFromSettingsAssets(assetsDir) {
     .readdirSync(assetsDir)
     .filter((name) => /^settings-page-[^.]+\.js$/.test(name))
     .sort();
+  const matches = [];
   for (const candidate of candidates) {
     const dependencies = inferRuntimeDependenciesFromSettingsSource(
       fs.readFileSync(path.join(assetsDir, candidate), "utf8"),
     );
     if (dependencies != null) {
-      return dependencies;
+      matches.push(dependencies);
     }
   }
-  return null;
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function resolveAgentWorkspaceSettingsAsset(extractedDir) {
@@ -1919,25 +1875,14 @@ function resolveAgentWorkspaceSettingsAsset(extractedDir) {
   if (runtimeDependencies == null) {
     throw new Error("could not resolve current settings runtime dependencies");
   }
-  const {
-    chunkAsset,
-    chunkExportName,
-    reactAsset,
-    reactExportName,
-    reactDirect,
-    reactFactoryDirect,
-  } = runtimeDependencies;
+  const { reactAsset, reactExportName } = runtimeDependencies;
   const codexRequestAsset = findCodexRequestWebviewAsset(assetsDir);
 
   return {
     filePath: path.join(assetsDir, SETTINGS_ASSET),
     source: buildAgentWorkspaceSettingsSource({
-      chunkAsset,
-      chunkExportName,
       reactAsset,
       reactExportName,
-      reactDirect,
-      reactFactoryDirect,
       codexRequestAsset: codexRequestAsset.assetName,
       codexRequestExportName: codexRequestAsset.exportName,
     }),

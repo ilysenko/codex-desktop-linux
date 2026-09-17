@@ -166,9 +166,8 @@ function syntheticCurrentAppInitialBundle() {
 
 function syntheticCurrentSettingsNavigation() {
   return [
-    'import{o as __toESM}from"./chunk-test.js";',
-    'import{r as ReactFactory,j as jsxFactory}from"./runtime-test.js";',
-    'var React=__toESM(ReactFactory(),1),$=jsxFactory();',
+    'import{r,j as jsxFactory}from"./runtime-test.js";',
+    'var React=r(),$=jsxFactory();',
     'function RuntimeProbe(){let [value]=(0,React.useState)(0);return (0,$.jsx)("span",{children:value})}',
     "var nn=`general-settings.linux-desktop.import.profile.appearance.voice.chronicle.appshots.agent.personalization.pets.usage.debug.keyboard-shortcuts.codex-micro.mcp-settings.hooks-settings.connections.cloud-settings.cloud-environments.code-review.git-settings.local-environments.worktrees.browser-use.computer-use.data-controls`.split(`.`);",
     "var rn=[{key:`personal`,slugs:[`general-settings`,`linux-desktop`]},{key:`coding`,slugs:[`hooks-settings`,`connections`,`cloud-settings`,`cloud-environments`,`code-review`,`git-settings`,`local-environments`,`environments`,`worktrees`]}];",
@@ -1732,7 +1731,7 @@ test("agent-workspace settings resolve latest upstream request API asset", () =>
   }
 });
 
-test("agent-workspace settings infer runtime dependencies from bundled settings page", () => {
+test("agent-workspace settings infer runtime dependencies from the current settings page", () => {
   const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-agent-workspace-bundled-runtime-"));
   try {
     const { assetsDir } = writeSyntheticExtractedApp(tempApp);
@@ -1748,8 +1747,9 @@ test("agent-workspace settings infer runtime dependencies from bundled settings 
       warnings.join("\n"),
     );
     const settingsSource = fs.readFileSync(path.join(assetsDir, SETTINGS_ASSET), "utf8");
-    assert.match(settingsSource, /import\{o as __toESM\}from"\.\/chunk-test\.js"/);
     assert.match(settingsSource, /import\{r as __reactFactory\}from"\.\/runtime-test\.js"/);
+    assert.match(settingsSource, /var React=__reactFactory\(\)/);
+    assert.doesNotMatch(settingsSource, /__toESM/);
     assert.match(settingsSource, /function SettingsPage/);
     assert.match(settingsSource, /AgentWorkspacesSettings/);
     assert.match(fs.readFileSync(path.join(assetsDir, "settings-page-test.js"), "utf8"), /agent-workspaces/);
@@ -1764,9 +1764,7 @@ test("agent-workspace settings infer the current direct React factory export", (
   try {
     const { assetsDir } = writeSyntheticExtractedApp(tempApp);
     const current = syntheticCurrentSettingsNavigation()
-      .replace('import{o as __toESM}from"./chunk-test.js";', "")
-      .replace('import{r as ReactFactory,j as jsxFactory}from"./runtime-test.js";', 'import{r,j as jsxFactory}from"./runtime-test.js";')
-      .replace("var React=__toESM(ReactFactory(),1),$=jsxFactory();", "var React=r(),$=jsxFactory();");
+      .replace("RuntimeProbe", "RenamedRuntimeProbe");
     fs.writeFileSync(path.join(assetsDir, "settings-page-test.js"), current);
 
     const { value: result, warnings } = captureWarns(() => patchAgentWorkspaceSettingsAssets(tempApp));
@@ -1779,6 +1777,40 @@ test("agent-workspace settings infer the current direct React factory export", (
     assert.doesNotMatch(settingsSource, /__toESM/);
   } finally {
     fs.rmSync(tempApp, { recursive: true, force: true });
+  }
+});
+
+test("agent-workspace settings reject retired, missing, and ambiguous runtime relationships", () => {
+  const variants = {
+    retired: (source) => source
+      .replace('import{r,j as jsxFactory}from"./runtime-test.js";', 'import{o as __toESM}from"./chunk-test.js";import{r as ReactFactory,j as jsxFactory}from"./runtime-test.js";')
+      .replace("var React=r(),$=jsxFactory();", "var React=__toESM(ReactFactory(),1),$=jsxFactory();"),
+    missing: (source) => source.replace("var React=r(),$=jsxFactory();", "var $=jsxFactory();"),
+    ambiguous: (source) => source
+      .replace('import{r,j as jsxFactory}from"./runtime-test.js";', 'import{r,q,j as jsxFactory}from"./runtime-test.js";')
+      .replace(
+        'function RuntimeProbe(){let [value]=(0,React.useState)(0);',
+        'var Other=q();function RuntimeProbe(){let [other]=(0,Other.useState)(0),[value]=(0,React.useState)(0);',
+      ),
+  };
+
+  for (const [name, mutate] of Object.entries(variants)) {
+    const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), `codex-agent-workspace-${name}-runtime-`));
+    try {
+      const { assetsDir } = writeSyntheticExtractedApp(tempApp);
+      const settingsPath = path.join(assetsDir, "settings-page-test.js");
+      fs.writeFileSync(settingsPath, mutate(syntheticCurrentSettingsNavigation()));
+      const before = fs.readFileSync(settingsPath, "utf8");
+
+      const { value: result } = captureWarns(() => patchAgentWorkspaceSettingsAssets(tempApp));
+
+      assert.equal(result.matched, false, name);
+      assert.match(result.reason, /current settings runtime dependencies/, name);
+      assert.equal(fs.readFileSync(settingsPath, "utf8"), before, name);
+      assert.equal(fs.existsSync(path.join(assetsDir, SETTINGS_ASSET)), false, name);
+    } finally {
+      fs.rmSync(tempApp, { recursive: true, force: true });
+    }
   }
 });
 

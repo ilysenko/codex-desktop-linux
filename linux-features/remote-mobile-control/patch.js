@@ -1344,7 +1344,7 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
   const functionStart = source.lastIndexOf("async function ", logIndex);
   const turnStartPrefix = functionStart === -1 ? "" : source.slice(functionStart, logIndex);
   const currentSummaryPattern =
-    /(?<prefix>let |,)(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),(?<runtime>[A-Za-z_$][\w$]*)\.reasoningSummaryOverride!=null&&\(\k<summary>=\k<runtime>\.reasoningSummaryOverride\),(?:\k<summary>=[A-Za-z_$][\w$]*==null\?null:[A-Za-z_$][\w$]*\.model_reasoning_summary\?\?\k<summary>,)?(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
+    /(?<prefix>let |,)(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),(?<runtime>[A-Za-z_$][\w$]*)\.reasoningSummaryOverride!=null&&\(\k<summary>=\k<runtime>\.reasoningSummaryOverride\),\k<summary>=(?<modelConfig>[A-Za-z_$][\w$]*)==null\?null:\k<modelConfig>\.model_reasoning_summary\?\?\k<summary>,(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
   const summaryMatch = turnStartPrefix.match(currentSummaryPattern);
   if (summaryMatch == null) {
     console.warn(

@@ -65,7 +65,7 @@ function mainBundleFixture() {
     "function BA(e,t){let n=!1,i=e=>{n||(n=!0,e!=null&&r.r().warning(`Global dictation hotkey release watching failed`,{safe:{},sensitive:{error:e}}),t())};return e.once(`error`,i),e.once(`exit`,()=>i()),{dispose:()=>{n=!0,e.kill()}}}",
     "function bA(e,t){return t===`darwin`?mA(e).length>0:gA(e,t)!=null}",
     "function k7(e,t,n){return{x:e.centerX-n.x-t.width/2,y:e.centerY-n.y-t.height/2,...t}}var V7=async(...e)=>globalThis.__upstreamExecFile(...e);async function P7(){switch(process.platform){case`darwin`:await V7(`/usr/bin/osascript`,[]);return;case`win32`:return;case`aix`:case`android`:case`cygwin`:case`freebsd`:case`haiku`:case`linux`:case`netbsd`:case`openbsd`:case`sunos`:throw Error(`Global dictation paste is not supported on this OS.`)}}",
-    "var H7=class{registeredHotkey=null;registeredHotkeyRegistration=null;registeredToggleHotkey=null;registeredToggleHotkeyRegistration=null;registerHotkeyOrThrow(e,t){if(this.registeredHotkey===e)return;let n=this.registeredHotkey,r=eA(e,{onPressed:()=>{this.handleHoldHotkeyPressed()},onReleased:()=>{this.handleHoldHotkeyReleased()},onCancelled:()=>{this.handleHoldHotkeyReleased()}},{ownership:t,bareModifierTrigger:`cancellablePress`});if(r==null)throw Error(`Unable to register global dictation hotkey: ${e}`);n!=null&&this.registeredHotkeyRegistration?.unregister(),this.registeredHotkey=e,this.registeredHotkeyRegistration=r}unregisterHotkey(){this.registeredHotkey!=null&&(this.registeredHotkeyRegistration?.unregister(),this.registeredHotkey=null,this.registeredHotkeyRegistration=null)}registerToggleHotkeyOrThrow(e,t){if(this.registeredToggleHotkey===e)return;let n=this.registeredToggleHotkey,r=eA(e,{onPressed:()=>{this.handleToggleHotkeyPressed()}},{bareModifierTrigger:`release`,ownership:t});if(r==null)throw Error(`Unable to register global dictation toggle hotkey: ${e}`);n!=null&&this.registeredToggleHotkeyRegistration?.unregister(),this.registeredToggleHotkey=e,this.registeredToggleHotkeyRegistration=r}unregisterToggleHotkey(){this.registeredToggleHotkey!=null&&(this.registeredToggleHotkeyRegistration?.unregister(),this.registeredToggleHotkey=null,this.registeredToggleHotkeyRegistration=null)}deactivateLifecycle(){this.unregisterHotkey(),this.unregisterToggleHotkey()}handleHoldHotkeyPressed(){}handleHoldHotkeyReleased(){}handleToggleHotkeyPressed(){}};",
+    "var H7=class{registeredHotkey=null;registeredHotkeyRegistration=null;registeredToggleHotkey=null;registeredToggleHotkeyRegistration=null;registerHotkeyOrThrow(e,t){if(this.registeredHotkey===e)return;let n=this.registeredHotkey,r=eA(e,{onPressed:()=>{this.handleHoldHotkeyPressed()},onReleased:()=>{this.handleHoldHotkeyReleased()},onCancelled:()=>{this.handleHoldHotkeyReleased()}},{ownership:t,bareModifierTrigger:`cancellablePress`});if(r==null)throw Error(`Unable to register global dictation hotkey: ${e}`);n!=null&&this.registeredHotkeyRegistration?.unregister(),this.registeredHotkey=e,this.registeredHotkeyRegistration=r}unregisterHotkey(){this.registeredHotkey!=null&&(this.registeredHotkeyRegistration?.unregister(),this.registeredHotkey=null,this.registeredHotkeyRegistration=null)}registerToggleHotkeyOrThrow(e,t){if(this.registeredToggleHotkey===e)return;let n=this.registeredToggleHotkey,r=eA(e,{onPressed:()=>{this.handleTogglePress()},onReleased:()=>this.handleToggleRelease(),onCancelled:()=>{this.toggleHotkeyPressedAtMs=void 0,this.lastToggleTapAtMs=void 0}},{bareModifierTrigger:`cancellablePress`,ownership:t});if(r==null)throw Error(`Unable to register global dictation toggle hotkey: ${e}`);n!=null&&this.registeredToggleHotkeyRegistration?.unregister(),this.registeredToggleHotkey=e,this.registeredToggleHotkeyRegistration=r}unregisterToggleHotkey(){this.registeredToggleHotkey!=null&&(this.registeredToggleHotkeyRegistration?.unregister(),this.registeredToggleHotkey=null,this.registeredToggleHotkeyRegistration=null)}deactivateLifecycle(){this.unregisterHotkey(),this.unregisterToggleHotkey()}handleHoldHotkeyPressed(){}handleHoldHotkeyReleased(){}handleTogglePress(){}handleToggleRelease(){}};",
     "function W7(){return process.platform===`darwin`||process.platform===`win32`}",
   ].join("");
 }
@@ -206,6 +206,23 @@ test("main patch enables Linux and preserves the other platform gates", () => {
   );
   assert.doesNotMatch(patched, /return _A\(n,t\)/);
   assert.doesNotMatch(patched, /await k7\(`xdotool`/);
+});
+
+test("main patch rejects retired, partial, duplicate, and ambiguous toggle registrations", () => {
+  const current = "eA(e,{onPressed:()=>{this.handleTogglePress()},onReleased:()=>this.handleToggleRelease(),onCancelled:()=>{this.toggleHotkeyPressedAtMs=void 0,this.lastToggleTapAtMs=void 0}},{bareModifierTrigger:`cancellablePress`,ownership:t})";
+  const retired = "eA(e,{onPressed:()=>{this.handleToggleHotkeyPressed()}},{bareModifierTrigger:`release`,ownership:t})";
+  const fixture = mainBundleFixture();
+  const variants = {
+    retired: fixture.replace(current, retired),
+    partial: fixture.replace(",onCancelled:()=>{this.toggleHotkeyPressedAtMs=void 0,this.lastToggleTapAtMs=void 0}", ""),
+    duplicate: fixture.replace(current, `${current},${current}`),
+    ambiguous: fixture + `function duplicate(e,t){return ${current}}`,
+  };
+
+  for (const [name, source] of Object.entries(variants)) {
+    assert.notEqual(source, fixture, name);
+    assert.equal(applyLinuxGlobalDictationMainProcessPatch(source), source, name);
+  }
 });
 
 test("main patch handles dollar signs in minified identifiers", () => {

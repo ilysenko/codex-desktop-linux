@@ -74,7 +74,7 @@ function syntheticReasoningSummaryTurnStartBundle() {
 }
 
 function syntheticCurrentReasoningSummaryTurnStartBundle() {
-  return "async function HWt(e,t,n,r,i,a,o){let s=n.request,N=a.latestThreadSettings,S=a.initialParams,ye=N?.summary??`none`;S?.summary!==void 0&&(ye=S.summary),o.reasoningSummaryOverride!=null&&(ye=o.reasoningSummaryOverride),s.summary!==void 0&&(ye=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{summary:ye}});return{summary:ye}}async function QWt(e,t,n,r,i,a){return await HWt(e,t,n,r,i,a,{canUseProjectlessWorkspace:!gh(e.getHostId()),canMaterializeCodexHomeRoots:!gh(e.getHostId())&&!0,preserveWorkspaceSandboxPolicyWithDefault:gh(e.getHostId()),carryProjectlessRuntimeRoots:!gh(e.getHostId()),latestUseAppServerPermissionDefault:!0,reasoningSummaryOverride:e.getDefaultFeatureOverride(`concurrent_reasoning_summaries`)===!0?`detailed`:null})}";
+  return "async function HWt(e,t,n,r,i,a,o){let s=n.request,N=a.latestThreadSettings,S=a.initialParams,C=a.configRequirements,ye=N?.summary??`none`;S?.summary!==void 0&&(ye=S.summary),o.reasoningSummaryOverride!=null&&(ye=o.reasoningSummaryOverride),ye=C==null?null:C.model_reasoning_summary??ye,s.summary!==void 0&&(ye=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{summary:ye}});return{summary:ye}}async function QWt(e,t,n,r,i,a){return await HWt(e,t,n,r,i,a,{canUseProjectlessWorkspace:!gh(e.getHostId()),canMaterializeCodexHomeRoots:!gh(e.getHostId())&&!0,preserveWorkspaceSandboxPolicyWithDefault:gh(e.getHostId()),carryProjectlessRuntimeRoots:!gh(e.getHostId()),latestUseAppServerPermissionDefault:!0,reasoningSummaryOverride:e.getDefaultFeatureOverride(`concurrent_reasoning_summaries`)===!0?`detailed`:null})}";
 }
 
 test("remote mobile README assigns every descriptor to one control topology", () => {
@@ -1421,6 +1421,19 @@ test("retired reasoning-summary resolver is rejected byte-identically", () => {
   assert.ok(warnings.some((warning) => warning.includes("turn-start resolver")));
 });
 
+test("prior reasoning-summary resolver without model configuration is rejected byte-identically", () => {
+  const source = syntheticCurrentReasoningSummaryTurnStartBundle().replace(
+    "ye=C==null?null:C.model_reasoning_summary??ye,",
+    "",
+  );
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("turn-start resolver")));
+});
+
 test("current reasoning-summary owner distinguishes durable mobile hosts and preserves explicit summaries", async () => {
   const source = syntheticCurrentReasoningSummaryTurnStartBundle();
   const patched = applyLinuxRemoteMobileReasoningSummaryPatch(source);
@@ -1440,6 +1453,7 @@ test("current reasoning-summary owner distinguishes durable mobile hosts and pre
   vm.runInNewContext(`${patched};module.exports=QWt;`, context);
   const startTurn = context.module.exports;
   const args = (request, mode) => [null, { request }, null, null, {
+    configRequirements: { model_reasoning_summary: "model" },
     initialParams: { summary: "auto" },
     latestThreadSettings: { summary: "auto" },
     mode,
@@ -1458,8 +1472,8 @@ test("current reasoning-summary owner distinguishes durable mobile hosts and pre
   );
 
   assert.equal(durable.summary, "none");
-  assert.equal(nonDurable.summary, "detailed");
-  assert.equal(remoteDurable.summary, "detailed");
+  assert.equal(nonDurable.summary, "model");
+  assert.equal(remoteDurable.summary, "model");
   assert.equal(explicit.summary, "concise");
 });
 

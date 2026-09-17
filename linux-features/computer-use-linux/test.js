@@ -163,7 +163,8 @@ test("malformed patched host-platform variable relationship is rejected byte-ide
 // Windows entry adjacent: both entries inherit the same native plugin metadata.
 const nativeRegistration = "{...n.nc.computerUse,autoInstallOptOutKey:n.sc(n.nc.computerUse.name),isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:one}";
 const windowsRegistration = "{...n.nc.computerUse,autoInstallOptOutKey:n.sc(n.nc.computerUse.name),isAvailable:({features:e,platform:t})=>t===`win32`&&e.computerUse}";
-const nativeSelector = "function Nd(e){if(!(e.platform!==`darwin`||!e.marketplacePluginNames.includes(`computer-use`)))return e.desktopFeatureAvailability.computerUseNodeRepl?`node-repl`:`legacy-mcp`}";
+const nativeSelector = "function Nd(e){if(e.platform===`darwin`&&e.marketplacePluginNames.includes(`computer-use`))return e.desktopFeatureAvailability.computerUseNodeRepl?`node-repl`:`legacy-mcp`}";
+const retiredNativeSelector = "function Nd(e){if(!(e.platform!==`darwin`||!e.marketplacePluginNames.includes(`computer-use`)))return e.desktopFeatureAvailability.computerUseNodeRepl?`node-repl`:`legacy-mcp`}";
 const registrationFixture = `var kd=[${nativeRegistration},${windowsRegistration}];${nativeSelector}`;
 
 function evaluateNativeRegistration(source) {
@@ -226,6 +227,7 @@ for (const [name, fixture] of [
   ["unsupported gate", registrationFixture.replace("t===`darwin`&&e.computerUse", "t===`darwin`||e.computerUse")],
   ["missing selector", registrationFixture.replace(nativeSelector, "")],
   ["duplicate selectors", registrationFixture + nativeSelector],
+  ["retired selector", registrationFixture.replace(nativeSelector, retiredNativeSelector)],
 ]) {
   test(`native plugin patch rejects ${name}`, () => {
     assert.throws(() => applyLinuxComputerUsePluginGatePatch(fixture), /Required Linux Computer Use plugin gate patch failed/);

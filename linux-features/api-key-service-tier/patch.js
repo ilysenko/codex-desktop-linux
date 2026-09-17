@@ -14,11 +14,6 @@ const PATCHED_SERVICE_TIER_GATE = new RegExp(
     `${JS_IDENT}===\`apikey\`\\)`,
 );
 const PATCHED_MODEL_MARKER = new RegExp(`${MODEL_MARKER}:${JS_IDENT}===\\\`apikey\\\``);
-const PATCHED_SERVICE_TIER_RESOLVER = new RegExp(
-  `function ${JS_IDENT}\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return \\2==null\\?null:` +
-    `\\2===\\\`fast\\\`\\?${JS_IDENT}\\(\\1\\)\\?\\?${PATCH_MARKER}\\(\\1\\):` +
-    `\\1\\?\\.serviceTiers\\?\\.find\\((${JS_IDENT})=>\\3\\.id===\\2\\)\\?\\?null\\}`,
-);
 const MODEL_LIST_MAPPING_SHAPE = new RegExp(
   `function ${JS_IDENT}\\(\\{additionalAvailableModels:${JS_IDENT},authMethod:${JS_IDENT},availableModels:${JS_IDENT},` +
     `defaultModel:${JS_IDENT},enabledReasoningEfforts:${JS_IDENT},` +
@@ -104,64 +99,8 @@ function matchesApiKeyServiceTierModelContract(source) {
   return PATCHED_MODEL_MARKER.test(source) || hasApiKeyModelListMappingShape(source);
 }
 
-function currentServiceTierResolverPattern(flags = "") {
-  return new RegExp(
-    `function (${JS_IDENT})\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return \\3==null\\?null:` +
-      `\\3===\\\`fast\\\`\\?(${JS_IDENT})\\(\\2\\):` +
-      `\\2\\?\\.serviceTiers\\?\\.find\\((${JS_IDENT})=>\\5\\.id===\\3\\)\\?\\?null\\}`,
-    flags,
-  );
-}
-
 function fallbackFastTierHelper() {
   return `function ${PATCH_MARKER}(e){return e==null||e?.serviceTiers?.length||e?.${MODEL_MARKER}!==!0?null:{id:\`fast\`,name:\`Fast\`,description:\`1.5x speed, increased usage\`}}`;
-}
-
-function serviceTierResolverState(source) {
-  const current = [...source.matchAll(currentServiceTierResolverPattern("g"))];
-  const patched = [...source.matchAll(new RegExp(PATCHED_SERVICE_TIER_RESOLVER.source, "g"))];
-  const helper = fallbackFastTierHelper();
-  const helperCount = source.split(helper).length - 1;
-
-  if (current.length === 1 && patched.length === 0 && helperCount === 0 &&
-      !source.includes(PATCH_MARKER)) {
-    return { kind: "current", match: current[0] };
-  }
-  if (current.length === 0 && patched.length === 1 && helperCount === 1) {
-    return { kind: "patched", match: patched[0] };
-  }
-  if (current.length > 0 && patched.length > 0) {
-    return { kind: "mixed" };
-  }
-  if (current.length > 1 || patched.length > 1 || helperCount > 1) {
-    return { kind: "ambiguous" };
-  }
-  return { kind: "partial" };
-}
-
-function matchesApiKeyServiceTierResolverContract(source) {
-  const state = serviceTierResolverState(source);
-  return state.kind === "current" || state.kind === "patched";
-}
-
-function applyApiKeyServiceTierResolverPatch(source) {
-  const state = serviceTierResolverState(source);
-  if (state.kind === "patched") {
-    return source;
-  }
-  if (state.kind !== "current") {
-    return source;
-  }
-  const [, _resolverVar, modelVar, tierVar, findFastVar] = state.match;
-  const replacement = state.match[0].replace(
-    `${tierVar}===\`fast\`?${findFastVar}(${modelVar})`,
-    `${tierVar}===\`fast\`?${findFastVar}(${modelVar})??${PATCH_MARKER}(${modelVar})`,
-  );
-  const patchedResolver = source.slice(0, state.match.index) + replacement +
-    source.slice(state.match.index + state.match[0].length);
-  const patched = fallbackFastTierHelper() + patchedResolver;
-
-  return serviceTierResolverState(patched).kind === "patched" ? patched : source;
 }
 
 function fallbackOptionCallbackPattern() {
@@ -256,9 +195,7 @@ function applyFallbackFastTierPatch(source) {
 
 function applyApiKeyServiceTierPatch(source) {
   return applyFallbackFastTierPatch(
-    applyApiKeyServiceTierResolverPatch(
-      applyApiKeyModelMarkerPatch(applyApiKeyServiceTierGatePatch(source)),
-    ),
+    applyApiKeyModelMarkerPatch(applyApiKeyServiceTierGatePatch(source)),
   );
 }
 
@@ -282,19 +219,6 @@ function applyCurrentModelPatch(source) {
     warn("Could not identify current model list mapping", "API key model service tier marker patch");
   }
   return modelCandidate;
-}
-
-function applyCurrentResolverPatch(source) {
-  const resolverState = serviceTierResolverState(source);
-  const resolverCandidate = resolverState.kind === "patched"
-    ? source
-    : applyApiKeyServiceTierResolverPatch(source);
-  const resolverReady = resolverState.kind === "patched" || resolverCandidate !== source;
-
-  if (!resolverReady) {
-    warn("Could not identify current service tier resolver", "API key service tier resolver patch");
-  }
-  return resolverCandidate;
 }
 
 function applyCurrentFallbackFastTierPatch(source) {
@@ -346,18 +270,15 @@ const descriptors = [
 module.exports = {
   applyApiKeyModelMarkerPatch,
   applyApiKeyServiceTierGatePatch,
-  applyApiKeyServiceTierResolverPatch,
   applyFallbackFastTierPatch,
   applyApiKeyServiceTierPatch,
   applyCurrentGatePatch,
   applyCurrentModelPatch,
-  applyCurrentResolverPatch,
   applyCurrentFallbackFastTierPatch,
   hasApiKeyServiceTierGateShape,
   hasApiKeyModelListMappingShape,
   matchesApiKeyServiceTierGateContract,
   matchesApiKeyServiceTierModelContract,
-  matchesApiKeyServiceTierResolverContract,
   matchesFallbackFastTierContract,
   descriptors,
 };

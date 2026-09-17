@@ -374,10 +374,10 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
 
     const toggleRegistration = new RegExp(
       registerFunctionPattern +
-        `\\(e,\\{((?:onPressed:\\(\\)=>\\{this\\.handleToggleHotkeyPressed\\(\\)\\}|` +
-        `onPressed:\\(\\)=>\\{this\\.handleTogglePress\\(\\)\\},onReleased:\\(\\)=>this\\.handleToggleRelease\\(\\),` +
-        `onCancelled:\\(\\)=>\\{this\\.toggleHotkeyPressedAtMs=void 0,this\\.lastToggleTapAtMs=void 0\\}))\\},` +
-        `\\{bareModifierTrigger:\`(?:release|cancellablePress)\`,ownership:(${IDENT})\\}\\)`,
+        `\\(e,\\{(onPressed:\\(\\)=>\\{this\\.handleTogglePress\\(\\)\\},` +
+        `onReleased:\\(\\)=>this\\.handleToggleRelease\\(\\),onCancelled:\\(\\)=>\\{` +
+        `this\\.toggleHotkeyPressedAtMs=void 0,this\\.lastToggleTapAtMs=void 0\\})\\},` +
+        `\\{bareModifierTrigger:\`cancellablePress\`,ownership:(${IDENT})\\}\\)`,
       "u",
     );
     patched = replaceUnique(
