@@ -61,7 +61,7 @@ const CURRENT_REMOTE_RUNTIME_DECOY_ASSET =
 const CURRENT_REMOTE_TERMINAL_STATUS_ASSET =
   CURRENT_REMOTE_RUNTIME_ASSET;
 const CURRENT_APP_MAIN_PAGE_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
-const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
+const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET = "app-primary-visibility-test.js";
 const CURRENT_REMOTE_LOAD_GATE_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
 const OLD_REMOTE_LOAD_GATE_ASSET =
   "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~hm0a50up-test.js";
@@ -995,9 +995,60 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     );
     assert.ok(visibilityDescriptor);
     assert.equal(visibilityDescriptor.pattern.test("remote-connections-settings-fixture.js"), false);
+    assert.equal(visibilityDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
     assert.equal(visibilityDescriptor.pattern.test(CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET), true);
     assert.equal(visibilityDescriptor.pattern.test("use-plugin-install-flow-fixture.js"), false);
     assert.equal(visibilityDescriptor.pattern.test("app-main-fixture.js"), false);
+    const currentVisibilityOwner = syntheticCurrentUsePluginVisibilityBundle();
+    const patchedVisibilityOwner = applyLinuxRemoteControlVisibilityPatch(currentVisibilityOwner);
+    assert.equal(
+      visibilityDescriptor.assetMatch(
+        currentVisibilityOwner,
+        CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET,
+        {},
+      ),
+      true,
+    );
+    assert.equal(
+      visibilityDescriptor.assetMatch(
+        patchedVisibilityOwner,
+        CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET,
+        {},
+      ),
+      true,
+    );
+    assert.equal(
+      visibilityDescriptor.assetMatch(
+        "function unrelated(){return!0}",
+        CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET,
+        {},
+      ),
+      false,
+    );
+    assert.equal(
+      visibilityDescriptor.assetMatch(
+        currentVisibilityOwner + currentVisibilityOwner,
+        CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET,
+        {},
+      ),
+      false,
+    );
+    assert.equal(
+      visibilityDescriptor.assetMatch(
+        currentVisibilityOwner + patchedVisibilityOwner,
+        CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET,
+        {},
+      ),
+      false,
+    );
+    assert.equal(
+      visibilityDescriptor.assetMatch(
+        patchedVisibilityOwner.replace("accessRequired!==!0", "accessRequired===!0"),
+        CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET,
+        {},
+      ),
+      false,
+    );
 
     const copyDescriptor = descriptors.find((descriptor) =>
       descriptor.id === "feature:remote-mobile-control:linux-remote-control-copy"
@@ -1594,14 +1645,14 @@ test("Linux remote-control feature sync does not advertise SSH hosts to mobile",
   assert.equal(hostCalls[1].params.enablement.remote_control, undefined);
 });
 
-test("Linux remote-control visibility patch handles current settings bundle shape", () => {
+test("Linux remote-control visibility patch rejects an owner without the current access gate", () => {
   const source = syntheticCurrentVisibilityBundle();
-  const patched = applyLinuxRemoteControlVisibilityPatch(source);
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteControlVisibilityPatch(source)
+  );
 
-  assert.notEqual(patched, source);
-  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
-  assert.match(patched, /return\(n\|\|t\)&&\(n\|\|\(e\?\.available\?\?!0\)\)&&e\?\.accessRequired!==!0/);
-  assert.equal(applyLinuxRemoteControlVisibilityPatch(patched), patched);
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("unique remote-control visibility gate")));
 });
 
 test("Linux remote-control visibility patch handles current use-plugin gate shape", () => {
