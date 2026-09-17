@@ -83,8 +83,10 @@ function applyAuthenticatedProxyPatch(currentSource) {
     `let (?<request>${JS_IDENT})=this\\.options\\.applicationNetwork\\.request\\(` +
       `\\{method:${JS_IDENT},url:${JS_IDENT},redirect:[^,{}]{1,120},headers:${JS_IDENT},useSessionCookies:${JS_IDENT}\\}\\);` +
       `codexLinuxAttachProxyAuthToRequest\\(\\k<request>\\);let (?<last>${JS_IDENT})=-1,(?<poll>${JS_IDENT})=\\(\\)=>` +
-      `\\{if\\((${JS_IDENT})==null\\)return;let (?<progress>${JS_IDENT})=\\k<request>\\.getUploadProgress\\(\\);` +
-      `!\\k<progress>\\.started\\|\\|\\k<progress>\\.current===\\k<last>\\|\\|`,
+      `\\{if\\((?<callback>${JS_IDENT})==null\\)return;let (?<progress>${JS_IDENT})=\\k<request>\\.getUploadProgress\\(\\);` +
+      `!\\k<progress>\\.started\\|\\|\\k<progress>\\.current===\\k<last>\\|\\|` +
+      `\\(\\k<last>=\\k<progress>\\.current,\\k<callback>\\(\\{loaded:\\k<progress>\\.current,` +
+      `total:\\k<progress>\\.total\\}\\)\\)\\}`,
     "g",
   );
   const hasFetchSurface = patchedSource.includes(".applicationNetwork.fetch(") &&

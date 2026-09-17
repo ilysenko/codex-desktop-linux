@@ -534,6 +534,41 @@ test("authenticated-proxy current contracts fail closed when missing, duplicate,
   }
 });
 
+test("authenticated-proxy patched request contracts fail closed when damaged or duplicated", () => {
+  const fetch = "class Fetcher{async fetch(){let a=`GET`,p={},v=()=>null,s=null,o=null,c=`https://example.test`,u=!1,h;if(o==null){let e={method:a,headers:p,body:v(),redirect:s==null?`follow`:`error`,signal:null,credentials:u?`include`:`same-origin`};h=await this.options.applicationNetwork.fetch(c,e)}else h=await this.performProgressRequest({body:v(),headers:p,method:a,onUploadProgress:o,resolvedUrl:c,redirect:s==null?void 0:`error`,signal:null,useSessionCookies:u});return h}";
+  const request = "performProgressRequest({body:e,headers:t,method:n,onUploadProgress:r,resolvedUrl:i,redirect:a,signal:o,useSessionCookies:s}){let l=this.options.applicationNetwork.request({method:n,url:i,redirect:a,headers:t,useSessionCookies:s}),u=-1,d=()=>{let e=l.getUploadProgress();e.started&&e.current!==u&&(u=e.current,r({loaded:e.current,total:e.total}))};return l}}";
+  const prefix = "let l=require(`electron`);async function boot(){await l.app.whenReady()}";
+  const patched = applyAuthenticatedProxyPatch(prefix + fetch + request);
+  const patchedOwner = "let l=this.options.applicationNetwork.request({method:n,url:i,redirect:a,headers:t,useSessionCookies:s});codexLinuxAttachProxyAuthToRequest(l);let u=-1,d=()=>{if(r==null)return;let e=l.getUploadProgress();!e.started||e.current===u||(u=e.current,r({loaded:e.current,total:e.total}))}";
+  assert.ok(patched.includes(patchedOwner));
+
+  const variants = {
+    mismatched: patched.replace(
+      "r({loaded:e.current,total:e.total})",
+      "wrong({loaded:e.current,total:e.total})",
+    ),
+    truncated: patched.replace(
+      "(u=e.current,r({loaded:e.current,total:e.total}))}",
+      "(u=e.current",
+    ),
+    partial: patched.replace("if(r==null)return;", ""),
+    duplicate: patched.replace(patchedOwner, patchedOwner + patchedOwner),
+  };
+
+  for (const [name, source] of Object.entries(variants)) {
+    assert.notEqual(source, patched, name);
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      assert.equal(applyAuthenticatedProxyPatch(source), source, name);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.ok(warnings.some((warning) => warning.includes("unique current applicationNetwork")), name);
+  }
+});
+
 test("authenticated-proxy does not route the retired Electron net fetch contract", () => {
   const source = [
     "let a=require(`electron`);",
