@@ -40,11 +40,28 @@ const currentRuntimeSource = [
 ].join("");
 
 const currentTraySource =
-  "let U9=null,K9=!1;async function q9(e){let t=e.buildFlavor,n=await r8e(t,e.repoRoot),i=new d.Tray(n.defaultIcon,process.platform===`win32`&&d.app.isPackaged?Y6e(t):void 0);if(!K9)return i.destroy(),null;return U9=new z0e(i)}";
+  "let U9=null,K9=!1;async function q9(e){let t=e.buildFlavor,n=await r8e(t,e.repoRoot),i=new d.Tray(n.defaultIcon,process.platform===`win32`&&d.app.isPackaged?Y6e(t):void 0);if(!K9)return i.destroy(),null;let a=new z0e(i);return U9=a,!await a.waitForReady()||U9!==a?(U9===a&&(U9=null,a.destroy()),null):a}";
 
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
 const currentSettingsSource =
   "import{n as e}from\"./rolldown-runtime-DAXXjFlN.js\";import{$Jt as t,VWt as n}from\"./app-initial-F3TGi7uJ.js\";function r({platform:e,dockIconPreviews:n,buildFlavor:r=`prod`}){return e!==`macOS`||r===t.Agent?null:n}var i=e((()=>{n()}));export{i as n,r as t};";
+
+function renameMinifiedAliases(source) {
+  const aliases = [
+    "d_", "f_", "Gme", "g_", "t5e", "H8e", "U9", "K9", "q9", "r8e", "Y6e", "z0e",
+    "aF", "Xl", "D", "O", "A", "M", "N", "P", "F", "I", "L", "R", "T", "V",
+    "__", "ee", "d", "g", "y", "e", "t", "n", "r", "i", "f", "h", "_", "v", "b",
+    "w", "k", "j", "o", "m_", "p_", "z", "a",
+  ];
+  const renamed = aliases.reduce(
+    (renamed, alias, index) => renamed.replace(
+      new RegExp(`(?<![A-Za-z0-9_$])${alias.replace(/[$]/g, "\\$")}(?![A-Za-z0-9_$])`, "g"),
+      `alias${index}`,
+    ),
+    source,
+  );
+  return renamed.replace(/alias30:/g, "y:");
+}
 
 function withFeatureConfig(config, fn) {
   const originalConfig = process.env.CODEX_LINUX_FEATURES_CONFIG;
@@ -195,13 +212,24 @@ test("main patch restores official previews and synchronizes Linux windows and t
   assert.equal(applyDockIconMainPatch(patched), patched);
 });
 
-test("main patch matches the current tray contract semantically across minified aliases", () => {
-  const aliased = currentMainSource.replace("Y6e(t)", "windowsIconHelper(t)");
+test("main patch captures every minified alias and preserves their contract relationships", () => {
+  const aliased = renameMinifiedAliases(currentMainSource);
   const patched = applyDockIconMainPatch(aliased);
   assert.notEqual(patched, aliased);
-  assert.match(patched, /windowsIconHelper\(t\)/);
-  assert.match(patched, /globalThis\.codexLinuxDockIconImage:n\.defaultIcon/);
+  assert.match(patched, /alias10\(alias(?:\d+)\)/);
+  assert.match(patched, /globalThis\.codexLinuxDockIconImage:alias(?:\d+)\.defaultIcon/);
+  assert.match(patched, /function alias2\(alias(?:\d+)\)\{if\(process\.platform!==`darwin`&&process\.platform!==`linux`\)/);
   assert.equal(applyDockIconMainPatch(patched), patched);
+});
+
+test("main patch rejects inconsistent cross-contract aliases byte-identically", () => {
+  const inconsistent = currentMainSource.replace(
+    "O=e=>{if(!d.app.isPackaged",
+    "O=e=>{if(!otherElectron.app.isPackaged",
+  );
+  const result = captureWarns(() => applyDockIconMainPatch(inconsistent));
+  assert.equal(result.value, inconsistent);
+  assert.match(result.warnings.join("\n"), /complete current Dock icon main-process contract/);
 });
 
 test("main patch rejects drift at every official-package insertion point byte-identically", () => {
