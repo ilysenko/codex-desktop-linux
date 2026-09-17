@@ -94,8 +94,16 @@
                 'CURL_GNUTLS_3'
           '';
         });
+        # The primary runtime's headless LibreOffice links libcurl.so.4 with
+        # CURL_OPENSSL_4 symbol versions, while its Git links
+        # libcurl-gnutls.so.4. The stock curl must precede the GnuTLS-compat
+        # build so libcurl.so.4 resolves to OpenSSL versions and only the
+        # distinct libcurl-gnutls.so.4 name reaches the compat build.
         workspaceRuntimeLibraries = runtimeLibraries ++ [
           pkgs.fontconfig
+          pkgs.freetype
+          pkgs.lcms2.out
+          pkgs.curl.out
           curlWithGnuTlsCompat.out
         ];
         workspaceRuntimeLibraryPath = lib.concatStringsSep ":" [
@@ -243,6 +251,41 @@
             | grep -F CURL_GNUTLS_3
           readelf --version-info ${curlWithGnuTlsCompat.out}/lib/libcurl.so.4 \
             | grep -F 'Name: CURL_GNUTLS_3'
+        '';
+        documentRuntimeProbe = pkgs.runCommandCC "codex-document-runtime-probe" {
+          nativeBuildInputs = [ pkgs.binutils pkgs.gnugrep pkgs.patchelf pkgs.pkg-config ];
+          buildInputs = [ pkgs.curl pkgs.freetype pkgs.lcms2 ];
+        } ''
+          mkdir -p "$out/bin"
+          printf '%s\n' \
+            '#include <stdio.h>' \
+            '#include <curl/curl.h>' \
+            '#include <ft2build.h>' \
+            '#include FT_FREETYPE_H' \
+            '#include <lcms2.h>' \
+            'int main(void) {' \
+            '  FT_Library library;' \
+            '  if (curl_version() == NULL) return 1;' \
+            '  if (FT_Init_FreeType(&library) != 0) return 2;' \
+            '  FT_Done_FreeType(library);' \
+            '  if (cmsGetEncodedCMMversion() == 0) return 3;' \
+            '  puts("document-runtime-ok");' \
+            '  return 0;' \
+            '}' \
+            > probe.c
+          "$CC" -o "$out/bin/document-runtime-probe" probe.c \
+            $(pkg-config --cflags --libs libcurl freetype2 lcms2)
+          patchelf --remove-rpath "$out/bin/document-runtime-probe"
+          patchelf --set-interpreter "${genericRuntimeInterpreter}" \
+            "$out/bin/document-runtime-probe"
+          patchelf --print-needed "$out/bin/document-runtime-probe" \
+            | grep -Fx libcurl.so.4
+          patchelf --print-needed "$out/bin/document-runtime-probe" \
+            | grep -Fx libfreetype.so.6
+          patchelf --print-needed "$out/bin/document-runtime-probe" \
+            | grep -Fx liblcms2.so.2
+          readelf --version-info "$out/bin/document-runtime-probe" \
+            | grep -F CURL_OPENSSL_4
         '';
         gsettingsSchemaPackages = with pkgs; [ gsettings-desktop-schemas gtk3 ];
         gsettingsSchemaRoot = package:
@@ -973,6 +1016,12 @@
                 ${pkgs.nix-ld}/libexec/nix-ld \
                   ${genericRuntimeProbe}/bin/generic-runtime-probe
             )" = workspace-runtime-ok
+            test "$(
+              NIX_LD=${lib.escapeShellArg dynamicLinker} \
+              NIX_LD_LIBRARY_PATH=${lib.escapeShellArg workspaceRuntimeLibraryPath} \
+                ${pkgs.nix-ld}/libexec/nix-ld \
+                  ${documentRuntimeProbe}/bin/document-runtime-probe
+            )" = document-runtime-ok
             "$app/start.sh" --diagnose
             timeout 10 "$app/browser_crashpad_handler" --version
             "$app/resources/cua_node/bin/node" --version
@@ -1038,6 +1087,9 @@
           test "$(${nixosBwrap}/bin/bwrap \
             --unshare-user --unshare-net --ro-bind / / --dev /dev --proc /proc \
             -- ${genericRuntimeProbe}/bin/generic-runtime-probe)" = workspace-runtime-ok
+          test "$(${nixosBwrap}/bin/bwrap \
+            --unshare-user --unshare-net --ro-bind / / --dev /dev --proc /proc \
+            -- ${documentRuntimeProbe}/bin/document-runtime-probe)" = document-runtime-ok
           ${pkgs.xvfb}/bin/Xvfb "$DISPLAY" -screen 0 1280x800x24 >"$HOME/xvfb.log" 2>&1 &
           xvfb_pid=$!
           trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT

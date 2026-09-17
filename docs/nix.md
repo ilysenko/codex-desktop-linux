@@ -120,8 +120,9 @@ On NixOS the launcher includes a package-local Bubblewrap adapter on `PATH` for
 the Codex Linux command sandbox. The adapter preserves the sandbox policy and
 adds the packaged `nix-ld` interpreter and runtime libraries inside that mount
 namespace. Generic Linux Git, Node.js, Python, and pnpm runtimes downloaded into
-the user cache therefore work in sandboxed workspace commands without enabling
-the system-wide `programs.nix-ld` module. Other Nix systems keep the normal
+the user cache, and the primary runtime's bundled headless LibreOffice, therefore
+work in sandboxed workspace commands without enabling the system-wide
+`programs.nix-ld` module. Other Nix systems keep the normal
 launcher path and use their system Bubblewrap integration.
 
 The adapter uses the generic loader symlink that NixOS provides through

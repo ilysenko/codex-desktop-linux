@@ -50,6 +50,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The Nix workspace runtime now lets the primary runtime's bundled headless
+  LibreOffice start on NixOS. Document conversions previously failed with
+  `liblcms2.so.2: cannot open shared object file` and, once that library was
+  present, `libcurl.so.4: version CURL_OPENSSL_4 not found`, because the
+  sandbox library path carried only the GnuTLS-compat curl needed by the
+  bundled Git. The path now includes `freetype` and `lcms2` and places the
+  stock curl ahead of the GnuTLS-compat build, so `libcurl.so.4` resolves with
+  OpenSSL symbol versions while `libcurl-gnutls.so.4` still reaches Git. The
+  `nix-runtime` checks and the VM smoke test run a document-runtime probe that
+  links all three libraries.
 - Default builds now repair the renderer module cycle in signed stable Linux
   `26.908.31748` that can leave the main window empty with
   `Initial route prefetch failed: n is not a function`. The required core
