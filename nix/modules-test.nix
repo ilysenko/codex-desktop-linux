@@ -29,7 +29,7 @@ let
     ];
   };
 
-  evalNixOS = moduleConfig: lib.evalModules {
+  evalNixOSWith = systemConfig: moduleConfig: lib.evalModules {
     specialArgs = { inherit pkgs; };
     modules = [
       nixosModule
@@ -38,13 +38,16 @@ let
           assertions = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
           environment.systemPackages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
           environment.sessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+          programs.nix-ld.enable = lib.mkOption { type = lib.types.bool; default = false; };
+          programs.nix-ld.libraries = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
           services.udev.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
           systemd.user.services = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
         };
-        config.programs.codexDesktopLinux = moduleConfig;
+        config = lib.mkMerge [ { programs.codexDesktopLinux = moduleConfig; } systemConfig ];
       })
     ];
   };
+  evalNixOS = evalNixOSWith { };
 
   fakeDesktop = pkgs.runCommand "codex-desktop-module-test" { } ''
     mkdir -p "$out/bin" "$out/share/applications" "$out/opt/codex-desktop/resources"
@@ -59,6 +62,10 @@ let
     desktopPackage = fakeDesktop;
   };
   fakeCli = pkgs.writeShellScriptBin "codex" "exit 0";
+  fakeRuntimeLibrary = pkgs.runCommand "codex-desktop-module-test-library" { } "mkdir -p $out/lib";
+  fakeDesktopWithRuntime = fakeDesktop.overrideAttrs (_previous: {
+    passthru = { workspaceRuntimeLibraries = [ fakeRuntimeLibrary ]; };
+  });
   baseConfig = { enable = true; package = fakeDesktop; };
   bundledRemoteConfig = baseConfig // { remoteControl.enable = true; };
   remoteConfig = baseConfig // {
@@ -132,6 +139,17 @@ assert lib.assertMsg
 assert lib.assertMsg
   (homeCliPackage.drvPath != fakeDesktop.drvPath && nixosCliPackage.drvPath != fakeDesktop.drvPath)
   "cliPackage did not wrap the Desktop launcher";
+assert lib.assertMsg
+  ((evalNixOSWith { programs.nix-ld.enable = true; } (baseConfig // { package = fakeDesktopWithRuntime; })).config.programs.nix-ld.libraries
+    == [ fakeRuntimeLibrary ])
+  "NixOS did not publish the workspace runtime libraries through nix-ld";
+assert lib.assertMsg
+  ((evalNixOS (baseConfig // { package = fakeDesktopWithRuntime; })).config.programs.nix-ld.libraries == [ ])
+  "NixOS set nix-ld libraries while nix-ld is disabled";
+assert lib.assertMsg
+  (lib.elem pkgs.lcms2.out packages.codex-desktop.passthru.workspaceRuntimeLibraries
+    && lib.elem pkgs.freetype packages.codex-desktop.passthru.workspaceRuntimeLibraries)
+  "the Desktop package does not expose its workspace runtime libraries";
 assert lib.assertMsg
   ((builtins.head (evalHome remoteConfig).config.home.packages).drvPath != fakeDesktop.drvPath)
   "Home Manager did not use the remote-control CLI fallback";

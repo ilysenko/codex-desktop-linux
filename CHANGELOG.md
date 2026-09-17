@@ -50,6 +50,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The NixOS module publishes the package's workspace runtime libraries through
+  `programs.nix-ld.libraries` when `programs.nix-ld` is enabled. Codex sources
+  a login-shell snapshot before every sandboxed command, and on such systems
+  that snapshot restores the host `NIX_LD_LIBRARY_PATH` over the value set by
+  the packaged Bubblewrap adapter, so the adapter's libraries never reached the
+  primary runtime's headless LibreOffice. The package exposes the list as
+  `passthru.workspaceRuntimeLibraries`; the module test and the NixOS VM test
+  cover the nix-ld path.
 - The Nix workspace runtime now lets the primary runtime's bundled headless
   LibreOffice start on NixOS. Document conversions previously failed with
   `liblcms2.so.2: cannot open shared object file` and, once that library was

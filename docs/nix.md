@@ -130,6 +130,16 @@ The adapter uses the generic loader symlink that NixOS provides through
 stub and `programs.nix-ld` keeps the packaged Bubblewrap integration, but its
 generic cached runtimes remain unavailable.
 
+With `programs.nix-ld` enabled, the login shell exports `NIX_LD` and
+`NIX_LD_LIBRARY_PATH`. Codex snapshots that shell and sources the snapshot
+before every sandboxed command, which restores the host values over the ones
+the adapter set. Cached generic runtimes then resolve libraries through the
+system nix-ld path. The NixOS module therefore adds the package's workspace
+runtime libraries to `programs.nix-ld.libraries` whenever nix-ld is enabled.
+Home Manager cannot set that system option; add
+`programs.codexDesktopLinux`'s package `passthru.workspaceRuntimeLibraries`
+to `programs.nix-ld.libraries` in the NixOS configuration instead.
+
 The wrapper uses the NixOS OpenGL driver path when it is present and retains
 Mesa as a fallback. Proprietary drivers on non-NixOS distributions may still
 need that distribution's usual Nix/OpenGL integration; the flake deliberately

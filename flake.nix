@@ -615,7 +615,7 @@
             passthru = {
               linuxFeatureIds = userFeatureIds;
               effectiveLinuxFeatureIds = effectiveFeatureIds;
-              inherit upstreamDeb;
+              inherit upstreamDeb workspaceRuntimeLibraries;
               upstreamVersion = codexVersion;
               upstreamArchitecture = officialPackage.architecture;
             };
@@ -1257,6 +1257,8 @@
                   environment = { CODEX_NIX_VM = true; NULL_VALUE = null; };
                 };
               };
+              # Mirrors a host whose login shell exports NIX_LD_LIBRARY_PATH.
+              programs.nix-ld.enable = true;
               users.manageLingering = true;
               users.users.tester = {
                 isNormalUser = true;
@@ -1273,6 +1275,15 @@
               machine.succeed("test -f /etc/systemd/user/codex-remote-control.service")
               machine.succeed("grep -q 'CODEX_NIX_VM=true' /etc/systemd/user/codex-remote-control.service")
               machine.succeed("grep -q 'After=network.target' /etc/systemd/user/codex-remote-control.service")
+              # The system nix-ld path must load what the primary runtime's
+              # LibreOffice needs, because Codex's shell snapshot restores the
+              # host NIX_LD_LIBRARY_PATH inside the sandbox.
+              machine.succeed(
+                  "test \"$(NIX_LD_LIBRARY_PATH=/run/current-system/sw/share/nix-ld/lib"
+                  " NIX_LD=/run/current-system/sw/share/nix-ld/lib/ld.so"
+                  " ${pkgs.nix-ld}/libexec/nix-ld ${documentRuntimeProbe}/bin/document-runtime-probe)\""
+                  " = document-runtime-ok"
+              )
               machine.succeed("grep -q 'CODEX_REMOTE_CONTROL_DAEMON_AUTOSTART_DISABLED' /etc/set-environment")
               machine.succeed("grep -Fq 'CODEX_REMOTE_CONTROL_APP_SERVER_PROXY_SOCKET=\"$HOME/.codex/app-server-control/app-server-control.sock\"' /etc/set-environment")
               machine.wait_for_unit("user@1000.service")

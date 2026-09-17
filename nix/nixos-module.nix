@@ -53,6 +53,12 @@ let
       meta = base.meta or { };
     };
   desktopPackage = if codexCliPath == null then basePackage else withCodexCliPath basePackage;
+  # Codex sources a snapshot of the login shell before every sandboxed
+  # command. With programs.nix-ld enabled that snapshot re-exports the host
+  # NIX_LD_LIBRARY_PATH and overrides the value set by the packaged Bubblewrap
+  # adapter, so cached generic runtimes resolve libraries through the system
+  # nix-ld path instead. Publish the workspace runtime libraries there too.
+  workspaceRuntimeLibraries = basePackage.passthru.workspaceRuntimeLibraries or [ ];
   serviceCodexHome = if remote.codexHome == null then "%h/.codex" else remote.codexHome;
   sessionCodexHome = if remote.codexHome == null then "$HOME/.codex" else remote.codexHome;
   prepareCodexHome = lib.escapeShellArgs [ "${pkgs.coreutils}/bin/mkdir" "-p" serviceCodexHome ];
@@ -155,6 +161,7 @@ in {
     ];
     environment.systemPackages = [ desktopPackage ];
     services.udev.packages = lib.optionals codexMicroEnabled [ basePackage ];
+    programs.nix-ld.libraries = lib.mkIf config.programs.nix-ld.enable workspaceRuntimeLibraries;
     environment.sessionVariables = lib.mkIf remote.enable ({
       CODEX_REMOTE_CONTROL_APP_SERVER_MODE = "proxy";
       CODEX_REMOTE_CONTROL_APP_SERVER_PROXY_SOCKET = sessionSocket;
