@@ -14,6 +14,20 @@
       "mode": "0755"
     }
   },
+  "officialBundleAuditScenarios": [
+    {
+      "name": "extended-ui-font-size",
+      "settings": {
+        "tweaks": {
+          "appearance": {
+            "uiFontSize": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    }
+  ],
   "tweaks": {
     "appearance": {
       "dockIcon": {

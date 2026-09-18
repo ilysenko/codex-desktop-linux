@@ -35,31 +35,63 @@ try {
       enabled.push(id);
     };
     addWithRequirements(feature.id);
-    const internalFeatureIds = enabled.filter((id) => featureMap.get(id)?.manifest.internal === true);
-    const config = path.join(work, `${feature.id}.json`);
-    fs.writeFileSync(config, `${JSON.stringify({ enabled })}\n`);
-    const descriptors = loadLinuxFeaturePatchDescriptors({
-      featuresRoot,
-      featuresConfigPath: config,
-      internalFeatureIds,
-    });
-    if (!descriptors.some((descriptor) => descriptor.featureId === feature.id)) continue;
-
-    const app = path.join(work, feature.id);
-    fs.cpSync(source, app, { recursive: true, verbatimSymlinks: true });
-    const report = createPatchReport();
-    patchExtractedApp(app, {
-      report,
-      featuresRoot,
-      featuresConfigPath: config,
-      internalFeatureIds,
-    });
-    const featureFailures = enabledFeatureFailuresFromReport(report);
-    audited += 1;
-    if (featureFailures.length > 0) {
-      failures.push({ featureId: feature.id, failures: featureFailures });
+    const configuredScenarios = feature.manifest.officialBundleAuditScenarios ?? [];
+    if (!Array.isArray(configuredScenarios)) {
+      throw new Error(`Linux feature '${feature.id}' officialBundleAuditScenarios must be an array`);
     }
-    fs.rmSync(app, { recursive: true, force: true });
+    const scenarios = [{ name: "default", settings: null }, ...configuredScenarios];
+    const scenarioNames = new Set();
+    for (const scenario of scenarios) {
+      if (
+        scenario == null ||
+        typeof scenario !== "object" ||
+        Array.isArray(scenario) ||
+        typeof scenario.name !== "string" ||
+        !/^[a-z0-9][a-z0-9-]*$/.test(scenario.name) ||
+        (scenario.settings != null &&
+          (typeof scenario.settings !== "object" || Array.isArray(scenario.settings)))
+      ) {
+        throw new Error(`Linux feature '${feature.id}' has an invalid official bundle audit scenario`);
+      }
+      if (scenarioNames.has(scenario.name)) {
+        throw new Error(
+          `Linux feature '${feature.id}' has duplicate official bundle audit scenario '${scenario.name}'`,
+        );
+      }
+      scenarioNames.add(scenario.name);
+      const internalFeatureIds = enabled.filter(
+        (id) => featureMap.get(id)?.manifest.internal === true,
+      );
+      const scenarioId = `${feature.id}-${scenario.name}`;
+      const config = path.join(work, `${scenarioId}.json`);
+      const featureConfig = { enabled };
+      if (scenario.settings != null) {
+        featureConfig.settings = { [feature.id]: scenario.settings };
+      }
+      fs.writeFileSync(config, `${JSON.stringify(featureConfig)}\n`);
+      const descriptors = loadLinuxFeaturePatchDescriptors({
+        featuresRoot,
+        featuresConfigPath: config,
+        internalFeatureIds,
+      });
+      if (!descriptors.some((descriptor) => descriptor.featureId === feature.id)) continue;
+
+      const app = path.join(work, scenarioId);
+      fs.cpSync(source, app, { recursive: true, verbatimSymlinks: true });
+      const report = createPatchReport();
+      patchExtractedApp(app, {
+        report,
+        featuresRoot,
+        featuresConfigPath: config,
+        internalFeatureIds,
+      });
+      const featureFailures = enabledFeatureFailuresFromReport(report);
+      audited += 1;
+      if (featureFailures.length > 0) {
+        failures.push({ featureId: scenarioId, failures: featureFailures });
+      }
+      fs.rmSync(app, { recursive: true, force: true });
+    }
   }
 } finally {
   fs.rmSync(work, { recursive: true, force: true });
@@ -75,4 +107,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`Official Linux feature audit passed: ${audited} ASAR feature(s)`);
+console.log(`Official Linux feature audit passed: ${audited} ASAR feature scenario(s)`);
