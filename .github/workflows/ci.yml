@@ -21,7 +21,7 @@ jobs:
       - name: Install smoke-test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ripgrep
+          sudo apt-get install -y --no-install-recommends ripgrep gcc binutils patchelf python3
       - name: Shell syntax
         run: |
           bash -n install.sh launcher/start.sh.template scripts/lib/*.sh
@@ -37,6 +37,10 @@ jobs:
             scripts/lib/linux-features.test.js linux-features/*/test.js
       - name: Smoke tests
         run: bash tests/scripts_smoke.sh
+      - name: Alpine packaging regression tests (offline fixtures)
+        run: |
+          node --test packaging/alpine/*.test.cjs
+          python3 -B -m unittest discover -s packaging/alpine -p 'test_*.py'
 
   rust:
     runs-on: ubuntu-latest
