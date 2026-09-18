@@ -36,14 +36,14 @@ function currentChronicleMainFixture() {
   return [
     "var Base={Tf:class{}};",
     "var Empty={state:`stopped`,currentSegmentEventsPath:null,currentSegmentMetadataPath:null};",
-    "var Hse=class{dependencies;cachedStatus=Empty;desiredState=`stopped`;pendingOperation=Promise.resolve();pendingStatus=null;constructor(e){this.dependencies=e}getCachedStatus(){return this.cachedStatus}status(){return this.pendingStatus??=this.request(`skysightStatus`).finally(()=>{this.pendingStatus=null}),this.pendingStatus}enable(){return this.desiredState=`running`,this.runSerialized(async()=>(await this.dependencies.archiveLegacyChronicleSkill(),this.dependencies.reconcileComputerHistoryPluginInstallation(!0),this.request(`skysightStart`)))}reconcileEnabled(){return this.enable()}disable(){return this.desiredState=`stopped`,this.runSerialized(()=>this.cachedStatus.state===`stopped`?this.cachedStatus:this.stopRecorder())}stop(){return this.desiredState=`stopped`,this.runSerialized(()=>this.stopRecorder())}pause(e){return this.desiredState=e==null?`paused`:`running`,this.runSerialized(()=>this.requestPauseResume(`skysightPause`,e))}resume(){return this.desiredState=`running`,this.runSerialized(async()=>{let e=await this.status();return e.state===`stopped`?this.request(`skysightStart`):e.state===`running`?e:this.requestPauseResume(`skysightResume`)})}requestPauseResume(e,t){return this.dependencies.request({method:e,params:t==null?{}:{duration:t}}).then(e=>(this.cachedStatus=e,e))}request(e){return this.dependencies.request({method:e,params:{}}).then(e=>(this.cachedStatus=e,e))}async stopRecorder(){let e=await this.request(`skysightStop`);if(e.state!==`stopped`||e.currentSegmentEventsPath!=null||e.currentSegmentMetadataPath!=null)throw Error(`invalid stop`);return e}runSerialized(e){let t=this.pendingOperation.then(e,e);return this.pendingOperation=t.then(()=>{},()=>{}),t}};",
-    "var $O=class extends Base.Tf{constructor(e,t,n){super(),this.appServerConnection=e,this.getController=t,this.isEligible=n}async getState(){this.isEligible();return this.getController().status()}async setEnabled(e){return e?this.appServerConnection.enableSkysightChronicle():this.getController().disable()}async pause(){return this.getController().pause()}async resume(){return this.appServerConnection.resumeChronicle()}};",
+    "var Hse=class{dependencies;cachedStatus=Empty;desiredState=`stopped`;pendingOperation=Promise.resolve();pendingStatus=null;constructor(e){this.dependencies=e}getCachedStatus(){return this.cachedStatus}status(){return this.pendingStatus??=this.request(`skysightStatus`).finally(()=>{this.pendingStatus=null}),this.pendingStatus}enable(){return this.desiredState=`running`,this.runSerialized(async()=>(await this.dependencies.archiveLegacyChronicleSkill(),this.dependencies.reconcileComputerHistoryPluginInstallation(!0),this.request(`skysightStart`)))}reconcileEnabled(){return this.enable()}disable(){return this.desiredState=`stopped`,this.runSerialized(()=>this.cachedStatus.state===`stopped`?this.cachedStatus:this.stopRecorder())}stop(){return this.desiredState=`stopped`,this.runSerialized(()=>this.stopRecorder())}pause(e){return this.desiredState=e==null?`paused`:`running`,this.runSerialized(()=>this.requestPauseResume(`skysightPause`,e))}resume(){return this.desiredState=`running`,this.runSerialized(async()=>{let e=await this.status();return e.state===`stopped`?this.request(`skysightStart`):e.state===`running`?e:this.requestPauseResume(`skysightResume`)})}getSettings(){return this.dependencies.request({method:`skysightGetSettings`,params:{}})}updateSettings(e){return this.dependencies.request({method:`skysightUpdateSettings`,params:{settings:e}})}clearHistory(e,t){return this.dependencies.request({method:`skysightClearHistory`,params:{interval:t,scope:e}}).then(e=>(this.cachedStatus=e,e))}requestPauseResume(e,t){return this.dependencies.request({method:e,params:t==null?{}:{duration:t}}).then(e=>(this.cachedStatus=e,e))}request(e){return this.dependencies.request({method:e,params:{}}).then(e=>(this.cachedStatus=e,e))}async stopRecorder(){let e=await this.request(`skysightStop`);if(e.state!==`stopped`||e.currentSegmentEventsPath!=null||e.currentSegmentMetadataPath!=null)throw Error(`invalid stop`);return e}runSerialized(e){let t=this.pendingOperation.then(e,e);return this.pendingOperation=t.then(()=>{},()=>{}),t}};",
+    "var $O=class extends Base.Tf{constructor(e,t,n,r,i,a){super(),this.appServerConnection=e,this.getController=t,this.isEligible=n,this.loadApplications=r,this.loadApplicationsByBundleIdentifier=i,this.history=a}async getState(){this.isEligible();return this.getController().status()}async setEnabled(e){return e?this.appServerConnection.enableSkysightChronicle():this.getController().disable()}async pause(){return this.getController().pause()}async resume(){return this.appServerConnection.resumeChronicle()}async getSettings(){return this.getController().getSettings()}async updateSettings(e){return this.getController().updateSettings(e)}async listApplications(){return this.isEligible(),this.loadApplications()}async resolveApplications(e){return this.isEligible(),this.loadApplicationsByBundleIdentifier(e)}async listHistory(){return this.isEligible(),this.history.list()}async listHistorySuggestions(){return this.isEligible(),this.history.listSuggestions()}async listHistorySummaryIntervals({sinceMs:e}){return this.isEligible(),this.history.listSummaryIntervals(e)}async clearHistory(e,t){await this.getController().clearHistory(e,t)}};",
     "function Cr(){return{skysight:false}}let N=process.platform===`darwin`,xe;",
-    "var Ce={requestComputerUseWorker(){throw Error(`mac worker unavailable`)}},Xe={reconcileComputerHistoryPluginInstallation(){}},U={broadcastQueryCacheInvalidation(){}},V={codexHome:`/tmp`};async function archive(e){return e}",
+    "var Ce={requestComputerUseWorker(e){return globalThis.worker(e)}},Xe={reconcileComputerHistoryPluginInstallation(){}},U={broadcastQueryCacheInvalidation(){}},V={codexHome:`/tmp`};async function archive(e){return e}",
     "N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{await archive({codexHome:V.codexHome,reason:`skysight_gate_enabled`})&&U.broadcastQueryCacheInvalidation([`skills`])}}));",
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
     "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicle:()=>xe.resume()};",
-    "var Host=class{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>[],()=>[],{}):void 0}}};var host=new Host;",
+    "var Host=class{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}};var host=new Host;",
     "var bridge={\"get-global-state\":async({key:e})=>null};",
   ].join("");
 }
@@ -167,23 +167,36 @@ test("chronicle-skysight owns the activity-memory bridge", () => {
   assert.match(patched, /"chronicle-permissions":async/);
   assert.match(patched, /"linux-record-replay-skysight-start":async/);
   assert.match(patched, /request:process\.platform===`linux`\?codexLinuxChronicleRequest:/);
-  assert.match(patched, /chronicle:\(process\.platform===`darwin`\|\|process\.platform===`linux`\)/);
+  assert.match(patched, /chronicle:process\.platform===`darwin`/);
+  assert.doesNotMatch(patched, /chronicle:\(process\.platform===`darwin`\|\|process\.platform===`linux`\)/);
   assert.match(patched, /getSkysightRecorderController:\(\)=>process\.platform===`linux`\|\|Cr\(\)\.skysight\?xe:null/);
   assert.doesNotMatch(patched, /"linux-record-replay-start":async/);
   assert.doesNotMatch(patched, /"linux-record-replay-draft-skill":async/);
 });
 
-test("chronicle-skysight fails closed for missing duplicate mixed and partial controller contracts", () => {
+test("chronicle-skysight fails closed for missing duplicate ambiguous mixed and partial contracts", () => {
   const current = currentChronicleMainFixture();
   const patched = applyChronicleSkysightMainBridgePatch(current);
+  const serviceStart = current.indexOf("var $O=class");
+  const serviceEnd = current.indexOf(";function Cr", serviceStart) + 1;
+  const duplicateService = current
+    .slice(serviceStart, serviceEnd)
+    .replace("var $O=class", "var $P=class");
   const variants = {
-    missing: current.replace("this.request(`skysightStatus`)", "this.request(`statusChanged`)") ,
+    missing: current.replace("this.request(`skysightStatus`)", "this.request(`statusChanged`)"),
     duplicate: current + current,
+    ambiguous: current.slice(0, serviceEnd) + duplicateService + current.slice(serviceEnd),
     mixed: current + patched,
     partial: patched.replace(
-      "chronicle:(process.platform===`darwin`||process.platform===`linux`)",
-      "chronicle:process.platform===`darwin`",
+      "getSkysightRecorderController:()=>process.platform===`linux`||Cr().skysight?xe:null",
+      "getSkysightRecorderController:()=>Cr().skysight?xe:null",
     ),
+    missingSettings: current.replace("async getSettings()", "async readSettings()"),
+    missingApplicationResolution: current.replace("async resolveApplications(e)", "async resolvePrograms(e)"),
+    missingHistory: current.replace("async listHistory()", "async readHistory()"),
+    missingHistorySuggestions: current.replace("async listHistorySuggestions()", "async readHistorySuggestions()"),
+    missingHistoryIntervals: current.replace("async listHistorySummaryIntervals({sinceMs:e})", "async readHistorySummaryIntervals({sinceMs:e})"),
+    missingClear: current.replace("async clearHistory(e,t)", "async eraseHistory(e,t)"),
   };
 
   for (const [name, source] of Object.entries(variants)) {
@@ -195,7 +208,7 @@ test("chronicle-skysight fails closed for missing duplicate mixed and partial co
   }
 });
 
-test("chronicle-skysight drives the current controller status enable pause resume and stop contract", async () => {
+test("chronicle-skysight drives recorder controls without exposing the unsupported Linux service", async () => {
   const source = currentChronicleMainFixture();
   const patched = applyChronicleSkysightMainBridgePatch(source);
   const calls = [];
@@ -206,6 +219,8 @@ test("chronicle-skysight drives the current controller status enable pause resum
     { state: "paused", is_running: true, paused: true },
     { state: "running", is_running: true },
     { state: "stopped", is_running: false, currentSegmentEventsPath: "/last/events.jsonl", currentSegmentMetadataPath: "/last/metadata.json" },
+    { ok: true, exclusions: [{ kind: "app", value: "secret-app" }] },
+    { ok: true, exclusions: [] },
   ];
   const childProcess = {
     execFile(_bin, args, _options, callback) {
@@ -215,7 +230,7 @@ test("chronicle-skysight drives the current controller status enable pause resum
   };
   const context = {
     console,
-    globalThis: {},
+    globalThis: { worker() { throw new Error("mac worker unavailable"); } },
     JSON,
     Promise,
     String,
@@ -233,16 +248,28 @@ test("chronicle-skysight drives the current controller status enable pause resum
   };
 
   require("node:vm").runInNewContext(
-    `${patched};globalThis.chronicle=host.services.chronicle;globalThis.controller=xe;`,
+    `${patched};globalThis.chronicle=host.services.chronicle;globalThis.controller=xe;globalThis.bridge=bridge;`,
     context,
   );
-  assert.ok(context.globalThis.chronicle);
+  assert.equal(context.globalThis.chronicle, undefined);
+  for (const method of [
+    "getSettings",
+    "updateSettings",
+    "listApplications",
+    "resolveApplications",
+    "listHistory",
+    "listHistorySuggestions",
+    "listHistorySummaryIntervals",
+    "clearHistory",
+  ]) {
+    assert.equal(context.globalThis.chronicle?.[method], undefined, method);
+  }
   assert.ok(context.globalThis.controller);
-  assert.equal((await context.globalThis.chronicle.getState()).state, "stopped");
-  assert.equal((await context.globalThis.chronicle.setEnabled(true)).state, "running");
-  assert.equal((await context.globalThis.chronicle.pause()).state, "paused");
-  assert.equal((await context.globalThis.chronicle.resume()).state, "running");
-  assert.equal((await context.globalThis.chronicle.setEnabled(false)).state, "stopped");
+  assert.equal((await context.globalThis.controller.status()).state, "stopped");
+  assert.equal((await context.globalThis.controller.enable()).state, "running");
+  assert.equal((await context.globalThis.controller.pause()).state, "paused");
+  assert.equal((await context.globalThis.controller.resume()).state, "running");
+  assert.equal((await context.globalThis.controller.stop()).state, "stopped");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
     ["skysight", "status"],
     ["skysight", "start", "--source", "chronicle-desktop", "--owner", "manual-continuous", "--summary-agent", "enabled"],
@@ -250,6 +277,28 @@ test("chronicle-skysight drives the current controller status enable pause resum
     ["skysight", "status"],
     ["skysight", "resume"],
     ["skysight", "stop"],
+  ]);
+  for (const invoke of [
+    () => context.globalThis.controller.getSettings(),
+    () => context.globalThis.controller.updateSettings({ excludedApplications: [] }),
+    () => context.globalThis.controller.clearHistory("all", "all"),
+  ]) {
+    await assert.rejects(invoke(), /Unsupported Linux Chronicle method/);
+  }
+  const exclusions = await context.globalThis.bridge["linux-record-replay-skysight-list-exclusions"]();
+  assert.deepEqual(JSON.parse(JSON.stringify(exclusions.json.exclusions)), [
+    { kind: "app", value: "secret-app" },
+  ]);
+  const updated = await context.globalThis.bridge["linux-record-replay-skysight-update-exclusion"]({
+    kind: "app",
+    value: "secret-app",
+    reason: "private",
+    remove: true,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(updated.json.exclusions)), []);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.slice(-2))), [
+    ["skysight", "list-exclusions"],
+    ["skysight", "update-exclusion", "--kind", "app", "--value", "secret-app", "--reason", "private", "--remove"],
   ]);
 });
 

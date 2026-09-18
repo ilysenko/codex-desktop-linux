@@ -40,8 +40,8 @@ function currentComposerTranscriptFixture() {
 function currentChronicleControllerFixture() {
   return [
     "var Base={Tf:class{}};",
-    "var Hse=class{dependencies;pendingStatus=null;constructor(e){this.dependencies=e}status(){return this.pendingStatus??=this.request(`skysightStatus`).finally(()=>{this.pendingStatus=null}),this.pendingStatus}enable(){return this.request(`skysightStart`)}pause(e){return this.requestPauseResume(`skysightPause`,e)}resume(){return this.requestPauseResume(`skysightResume`)}requestPauseResume(e,t){return this.dependencies.request({method:e,params:t==null?{}:{duration:t}})}request(e){return this.dependencies.request({method:e,params:{}})}async stopRecorder(){let e=await this.request(`skysightStop`);return e}};",
-    "var $O=class extends Base.Tf{constructor(e,t,n){super(),this.appServerConnection=e,this.getController=t,this.isEligible=n}async getState(){return this.getController().status()}async setEnabled(e){return e?this.appServerConnection.enableSkysightChronicle():this.getController().stopRecorder()}async pause(){return this.getController().pause()}async resume(){return this.appServerConnection.resumeChronicle()}};",
+    "var Hse=class{dependencies;pendingStatus=null;constructor(e){this.dependencies=e}status(){return this.pendingStatus??=this.request(`skysightStatus`).finally(()=>{this.pendingStatus=null}),this.pendingStatus}enable(){return this.request(`skysightStart`)}pause(e){return this.requestPauseResume(`skysightPause`,e)}resume(){return this.requestPauseResume(`skysightResume`)}getSettings(){return this.dependencies.request({method:`skysightGetSettings`,params:{}})}updateSettings(e){return this.dependencies.request({method:`skysightUpdateSettings`,params:{settings:e}})}clearHistory(e,t){return this.dependencies.request({method:`skysightClearHistory`,params:{interval:t,scope:e}})}requestPauseResume(e,t){return this.dependencies.request({method:e,params:t==null?{}:{duration:t}})}request(e){return this.dependencies.request({method:e,params:{}})}async stopRecorder(){let e=await this.request(`skysightStop`);return e}};",
+    "var $O=class extends Base.Tf{constructor(e,t,n,r,i,a){super(),this.appServerConnection=e,this.getController=t,this.isEligible=n,this.loadApplications=r,this.loadApplicationsByBundleIdentifier=i,this.history=a}async getState(){return this.getController().status()}async setEnabled(e){return e?this.appServerConnection.enableSkysightChronicle():this.getController().stopRecorder()}async pause(){return this.getController().pause()}async resume(){return this.appServerConnection.resumeChronicle()}async getSettings(){return this.getController().getSettings()}async updateSettings(e){return this.getController().updateSettings(e)}async listApplications(){return this.isEligible(),this.loadApplications()}async resolveApplications(e){return this.isEligible(),this.loadApplicationsByBundleIdentifier(e)}async listHistory(){return this.isEligible(),this.history.list()}async listHistorySuggestions(){return this.isEligible(),this.history.listSuggestions()}async listHistorySummaryIntervals({sinceMs:e}){return this.isEligible(),this.history.listSummaryIntervals(e)}async clearHistory(e,t){await this.getController().clearHistory(e,t)}};",
     "function Cr(){return{skysight:false}}let N=process.platform===`darwin`,xe;var Ce={requestComputerUseWorker(){}},Xe={reconcileComputerHistoryPluginInstallation(){}},U={broadcastQueryCacheInvalidation(){}},V={codexHome:`/tmp`};async function archive(e){return e}",
     "N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{await archive({codexHome:V.codexHome,reason:`skysight_gate_enabled`})&&U.broadcastQueryCacheInvalidation([`skills`])}}));",
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
@@ -219,7 +219,8 @@ test("record-and-replay bridge patch is idempotent and uses execFile", () => {
   assert.match(patched, /chronicleOcrBackend/);
   assert.match(patched, /codexLinuxChronicleRequest/);
   assert.match(patched, /request:process\.platform===`linux`\?codexLinuxChronicleRequest:/);
-  assert.match(patched, /chronicle:\(process\.platform===`darwin`\|\|process\.platform===`linux`\)/);
+  assert.match(patched, /chronicle:process\.platform===`darwin`/);
+  assert.doesNotMatch(patched, /chronicle:\(process\.platform===`darwin`\|\|process\.platform===`linux`\)/);
   assert.match(patched, /codexLinuxChronicleControlStateFromSkysight/);
   assert.match(patched, /codexLinuxChronicleEnsureSidecarRunning/);
   assert.match(patched, /"chronicle-permissions":async\(\)=>\{let e=await codexLinuxChronicleSidecarControlStateAsync\(\)/);
@@ -534,7 +535,8 @@ test("record-and-replay patch connects to the current Chronicle controller surfa
   assert.equal(applyChronicleSkysightMainBridgePatch(patched), patched);
   assert.match(patched, /\(N\|\|process\.platform===`linux`\)&&\(xe=new Hse/);
   assert.match(patched, /getSkysightRecorderController:\(\)=>process\.platform===`linux`\|\|Cr\(\)\.skysight\?xe:null/);
-  assert.match(patched, /\(\)=>process\.platform===`linux`\|\|Cr\(\)\.skysight/);
+  assert.match(patched, /chronicle:process\.platform===`darwin`/);
+  assert.doesNotMatch(patched, /chronicle:\(process\.platform===`darwin`\|\|process\.platform===`linux`\)/);
 });
 
 test("record-and-replay rejects ambiguous Chronicle controller contracts byte-identically", () => {

@@ -57,7 +57,7 @@ function chronicleControllerClassMatches(source) {
   return matchAll(
     source,
     new RegExp(
-      `(?:var |,)(${IDENTIFIER})=class\\{(?=[\\s\\S]{0,2500}?status\\(\\)\\{return this\\.pendingStatus\\?\\?=this\\.request\\(\`skysightStatus\`\\))(?=[\\s\\S]{0,3500}?enable\\(\\)[\\s\\S]{0,800}?this\\.request\\(\`skysightStart\`\\))(?=[\\s\\S]{0,4500}?pause\\([^)]*\\)[\\s\\S]{0,500}?\`skysightPause\`)(?=[\\s\\S]{0,5000}?resume\\(\\)[\\s\\S]{0,700}?\`skysightResume\`)(?=[\\s\\S]{0,7000}?stopRecorder\\(\\)[\\s\\S]{0,300}?this\\.request\\(\`skysightStop\`\\))`,
+      `(?:var |,)(${IDENTIFIER})=class\\{(?=[\\s\\S]{0,2500}?status\\(\\)\\{return this\\.pendingStatus\\?\\?=this\\.request\\(\`skysightStatus\`\\))(?=[\\s\\S]{0,3500}?enable\\(\\)[\\s\\S]{0,800}?this\\.request\\(\`skysightStart\`\\))(?=[\\s\\S]{0,4500}?pause\\([^)]*\\)[\\s\\S]{0,500}?\`skysightPause\`)(?=[\\s\\S]{0,5000}?resume\\(\\)[\\s\\S]{0,700}?\`skysightResume\`)(?=[\\s\\S]{0,6000}?getSettings\\(\\)\\{return this\\.dependencies\\.request\\(\\{method:\`skysightGetSettings\`,params:\\{\\}\\}\\)\\})(?=[\\s\\S]{0,6500}?updateSettings\\([^)]*\\)\\{return this\\.dependencies\\.request\\(\\{method:\`skysightUpdateSettings\`,params:\\{settings:)(?=[\\s\\S]{0,7000}?clearHistory\\([^)]*\\)\\{return this\\.dependencies\\.request\\(\\{method:\`skysightClearHistory\`,params:\\{interval:[^,}]+,scope:)(?=[\\s\\S]{0,8500}?stopRecorder\\(\\)[\\s\\S]{0,300}?this\\.request\\(\`skysightStop\`\\))`,
       "g",
     ),
   );
@@ -67,7 +67,7 @@ function chronicleServiceClassMatches(source) {
   return matchAll(
     source,
     new RegExp(
-      `(?:var |,)(${IDENTIFIER})=class extends ${IDENTIFIER}\\.${IDENTIFIER}\\{(?=[\\s\\S]{0,1500}?async getState\\(\\)[\\s\\S]{0,500}?\\.status\\(\\))(?=[\\s\\S]{0,2500}?async setEnabled\\([^)]*\\)[\\s\\S]{0,800}?enableSkysightChronicle\\(\\))(?=[\\s\\S]{0,3000}?async pause\\(\\)[\\s\\S]{0,300}?\\.pause\\(\\))(?=[\\s\\S]{0,3500}?async resume\\(\\)[\\s\\S]{0,300}?resumeChronicle\\(\\))`,
+      `(?:var |,)(${IDENTIFIER})=class extends ${IDENTIFIER}\\.${IDENTIFIER}\\{(?=[\\s\\S]{0,1500}?async getState\\(\\)[\\s\\S]{0,500}?\\.status\\(\\))(?=[\\s\\S]{0,2500}?async setEnabled\\([^)]*\\)[\\s\\S]{0,800}?enableSkysightChronicle\\(\\))(?=[\\s\\S]{0,3000}?async pause\\(\\)[\\s\\S]{0,300}?\\.pause\\(\\))(?=[\\s\\S]{0,3500}?async resume\\(\\)[\\s\\S]{0,300}?resumeChronicle\\(\\))(?=[\\s\\S]{0,4000}?async getSettings\\(\\)[\\s\\S]{0,200}?\\.getSettings\\(\\))(?=[\\s\\S]{0,4500}?async updateSettings\\([^)]*\\)[\\s\\S]{0,200}?\\.updateSettings\\()(?=[\\s\\S]{0,5000}?async listApplications\\(\\)[\\s\\S]{0,200}?this\\.loadApplications\\(\\))(?=[\\s\\S]{0,5500}?async resolveApplications\\([^)]*\\)[\\s\\S]{0,200}?this\\.loadApplicationsByBundleIdentifier\\()(?=[\\s\\S]{0,6000}?async listHistory\\(\\)[\\s\\S]{0,200}?this\\.history\\.list\\(\\))(?=[\\s\\S]{0,6500}?async listHistorySuggestions\\(\\)[\\s\\S]{0,200}?this\\.history\\.listSuggestions\\(\\))(?=[\\s\\S]{0,7000}?async listHistorySummaryIntervals\\([^)]*\\)[\\s\\S]{0,200}?this\\.history\\.listSummaryIntervals\\()(?=[\\s\\S]{0,7500}?async clearHistory\\([^)]*\\)[\\s\\S]{0,200}?\\.clearHistory\\()`,
       "g",
     ),
   );
@@ -87,23 +87,17 @@ function chronicleControllerGetterMatches(source, patched) {
   return matchAll(source, new RegExp(pattern, "g"));
 }
 
-function chronicleServiceGateMatches(source, patched) {
-  const platformGate = patched
-    ? `\\(process\\.platform===\`darwin\`\\|\\|process\\.platform===\`linux\`\\)`
-    : `process\\.platform===\`darwin\``;
-  const eligibility = patched
-    ? `process\\.platform===\`linux\`\\|\\|(${IDENTIFIER})\\(\\)\\.skysight`
-    : `(${IDENTIFIER})\\(\\)\\.skysight`;
+function chronicleServiceGateMatches(source) {
   return matchAll(
     source,
     new RegExp(
-      `chronicle:${platformGate}&&this\\.options\\.getSkysightRecorderController!=null\\?new (${IDENTIFIER})\\((${IDENTIFIER}),this\\.options\\.getSkysightRecorderController,\\(\\)=>${eligibility},`,
+      `chronicle:process\\.platform===\`darwin\`&&this\\.options\\.getSkysightRecorderController!=null\\?new (${IDENTIFIER})\\((${IDENTIFIER}),this\\.options\\.getSkysightRecorderController,\\(\\)=>(${IDENTIFIER})\\(\\)\\.skysight,`,
       "g",
     ),
   );
 }
 
-function coherentContract(matches, patched) {
+function coherentContract(matches) {
   const { controllerClasses, controllerInits, controllerGetters, serviceClasses, serviceGates } = matches;
   if (
     controllerClasses.length !== 1
@@ -139,20 +133,20 @@ function chronicleControllerContract(source) {
     ...shared,
     controllerInits: chronicleControllerInitMatches(source, false),
     controllerGetters: chronicleControllerGetterMatches(source, false),
-    serviceGates: chronicleServiceGateMatches(source, false),
+    serviceGates: chronicleServiceGateMatches(source),
   };
   const patched = {
     ...shared,
     controllerInits: chronicleControllerInitMatches(source, true),
     controllerGetters: chronicleControllerGetterMatches(source, true),
-    serviceGates: chronicleServiceGateMatches(source, true),
+    serviceGates: chronicleServiceGateMatches(source),
   };
   const helper = recordReplayRuntimeHelperSource(CHRONICLE_MODULE_EXPRESSIONS);
   const bridge = chronicleSkysightBridgeSource();
   const bridgeInsertion = `${bridge},"get-global-state":async({key:`;
   const handlerCount = countOccurrences(source, `"get-global-state":async({key:`);
-  const currentCoherent = coherentContract(current, false);
-  const patchedCoherent = coherentContract(patched, true);
+  const currentCoherent = coherentContract(current);
+  const patchedCoherent = coherentContract(patched);
   const helperCount = countOccurrences(source, helper);
   const helperMarkerCount = countOccurrences(source, "function codexLinuxChronicleRequest(");
   const bridgeCount = countOccurrences(source, bridge);
@@ -163,7 +157,6 @@ function chronicleControllerContract(source) {
     && !patchedCoherent
     && patched.controllerInits.length === 0
     && patched.controllerGetters.length === 0
-    && patched.serviceGates.length === 0
     && helperCount === 0
     && helperMarkerCount === 0
     && bridgeCount === 0
@@ -175,7 +168,6 @@ function chronicleControllerContract(source) {
     && !currentCoherent
     && current.controllerInits.length === 0
     && current.controllerGetters.length === 0
-    && current.serviceGates.length === 0
     && helperCount === 1
     && helperMarkerCount === 1
     && bridgeCount === 1
@@ -199,14 +191,11 @@ function applyChronicleSkysightMainBridgePatch(currentSource) {
   const bridge = chronicleSkysightBridgeSource();
   const init = chronicleControllerInitMatches(currentSource, false)[0];
   const getter = chronicleControllerGetterMatches(currentSource, false)[0];
-  const gate = chronicleServiceGateMatches(currentSource, false)[0];
   const initReplacement = `(${init[1]}||process.platform===\`linux\`)&&(${init[2]}=new ${init[3]}({request:process.platform===\`linux\`?codexLinuxChronicleRequest:${init[4]}.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:`;
   const getterReplacement = `getSkysightRecorderController:()=>process.platform===\`linux\`||${getter[1]}().skysight?${getter[2]}:null,artifactSessionHostLifecycle:`;
-  const gateReplacement = `chronicle:(process.platform===\`darwin\`||process.platform===\`linux\`)&&this.options.getSkysightRecorderController!=null?new ${gate[1]}(${gate[2]},this.options.getSkysightRecorderController,()=>process.platform===\`linux\`||${gate[3]}().skysight,`;
   let patched = currentSource
     .replace(init[0], initReplacement)
     .replace(getter[0], getterReplacement)
-    .replace(gate[0], gateReplacement)
     .replace(handlerNeedle, `${bridge},${handlerNeedle}`);
   patched = `${helper}\n${patched}`;
   if (chronicleControllerContract(patched) !== "patched") {
