@@ -5,6 +5,7 @@ const CHRONICLE_MODULE_EXPRESSIONS = Object.freeze({
   fsVar: 'require("node:fs")',
   pathVar: 'require("node:path")',
 });
+const IDENTIFIER = "[A-Za-z_$][\\w$]*";
 
 function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
@@ -39,38 +40,180 @@ ${chronicleSkysightHelperSource()}`;
 }
 
 function chronicleSkysightHelperSource() {
-  return `function codexLinuxChronicleControlStateFromSkysight(e){let t=e?.json&&typeof e.json==="object"?e.json:null;if(!e?.ok&&t==null)return{enabled:!1,running:!1,state:"disabled"};let n=String(t?.state||""),r=t?.is_running===!0||t?.isRunning===!0,a=t?.paused===!0||t?.is_paused===!0||t?.isPaused===!0||n==="paused",o=n==="running"&&r&&!a;return{enabled:!0,running:o,state:o?"running":"stopped",skysight:t,chronicleOcrAvailable:t?.ocr_available===!0||t?.ocrAvailable===!0,chronicleOcrStatus:t?.ocr_status??t?.ocrStatus??"unknown",chronicleOcrBackend:t?.ocr_backend??t?.ocrBackend??null,chronicleOcrLanguage:t?.ocr_language??t?.ocrLanguage??null}}
+  return `function codexLinuxChronicleUpstreamStatus(e){let t=e?.json&&typeof e.json==="object"?e.json:null;if(!e?.ok||t==null)throw Error(e?.message||e?.stderr||"Linux Skysight command failed");let n=String(t.state||""),r=t.paused===!0||t.is_paused===!0||t.isPaused===!0||n==="paused",a=t.is_running===!0||t.isRunning===!0||n==="running",o=r?"paused":a?"running":"stopped";return{...t,state:o,eventStreamRootPath:t.eventStreamRootPath??t.runtime_dir??null,currentSegmentEventsPath:o==="stopped"?null:t.currentSegmentEventsPath??null,currentSegmentMetadataPath:o==="stopped"?null:t.currentSegmentMetadataPath??null,suppressedEventsPath:t.suppressedEventsPath??null,startedAtMs:t.startedAtMs??null,endedAtMs:t.endedAtMs??null}}
+async function codexLinuxChronicleRequest({method:e,params:t}={}){let n,r=5000;if(e==="skysightStatus")n=["skysight","status"];else if(e==="skysightStart")n=["skysight","start","--source","chronicle-desktop","--owner","manual-continuous","--summary-agent","enabled"],r=15000;else if(e==="skysightPause")n=["skysight","pause","--reason",t?.duration==null?"chronicle-desktop":"chronicle-desktop:"+String(t.duration)],r=10000;else if(e==="skysightResume")n=["skysight","resume"],r=10000;else if(e==="skysightStop")n=["skysight","stop"],r=10000;else throw Error("Unsupported Linux Chronicle method: "+String(e));return codexLinuxChronicleUpstreamStatus(await codexLinuxRecordReplayRun(n,r))}
+function codexLinuxChronicleControlStateFromSkysight(e){let t=e?.json&&typeof e.json==="object"?e.json:null;if(!e?.ok&&t==null)return{enabled:!1,running:!1,state:"disabled"};let n=String(t?.state||""),r=t?.is_running===!0||t?.isRunning===!0,a=t?.paused===!0||t?.is_paused===!0||t?.isPaused===!0||n==="paused",o=n==="running"&&r&&!a;return{enabled:!0,running:o,state:o?"running":"stopped",skysight:t,chronicleOcrAvailable:t?.ocr_available===!0||t?.ocrAvailable===!0,chronicleOcrStatus:t?.ocr_status??t?.ocrStatus??"unknown",chronicleOcrBackend:t?.ocr_backend??t?.ocrBackend??null,chronicleOcrLanguage:t?.ocr_language??t?.ocrLanguage??null}}
 async function codexLinuxChronicleSidecarControlStateAsync(){return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","status"],5000))}
 function codexLinuxChronicleSummaryAgentArgs(e){return e===!0?["--summary-agent","enabled"]:e===!1?["--summary-agent","disabled"]:[]}
 async function codexLinuxChronicleEnsureSidecarRunning(e,u,l){let t=await codexLinuxRecordReplayRun(["skysight","status"],5000),n=t?.json&&typeof t.json==="object"?t.json:null,r=String(n?.state||""),a=n?.is_running===!0||n?.isRunning===!0,o=n?.paused===!0||n?.is_paused===!0||n?.isPaused===!0||r==="paused",s=codexLinuxChronicleSummaryAgentArgs(e),i=e===!0&&(n?.summary_agent_enabled!==!0&&n?.summaryAgentEnabled!==!0),c=u||l||i;u&&s.push("--source",String(u));l&&s.push("--owner",String(l));if(r==="running"&&a&&!o)return c?codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","start",...s],15000)):codexLinuxChronicleControlStateFromSkysight(t);if(a&&o){c&&await codexLinuxRecordReplayRun(["skysight","start",...s],15000);return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","resume"],10000))}return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","start",...s],15000))}
 async function codexLinuxChronicleToggleSidecar(){let e=await codexLinuxRecordReplayRun(["skysight","status"],5000),t=e?.json&&typeof e.json==="object"?e.json:null,n=String(t?.state||""),r=t?.is_running===!0||t?.isRunning===!0,a=t?.paused===!0||t?.is_paused===!0||t?.isPaused===!0||n==="paused";if(n==="running"&&r&&!a)return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","pause"],10000));if(r&&a)return codexLinuxChronicleEnsureSidecarRunning(!0,"chronicle-tray","manual-continuous");return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","start","--source","chronicle-tray","--owner","manual-continuous","--summary-agent","enabled"],15000))}`;
 }
 
-function hasCompleteChroniclePatch(source) {
+function matchAll(source, pattern) {
+  return [...source.matchAll(pattern)];
+}
+
+function chronicleControllerClassMatches(source) {
+  return matchAll(
+    source,
+    new RegExp(
+      `(?:var |,)(${IDENTIFIER})=class\\{(?=[\\s\\S]{0,2500}?status\\(\\)\\{return this\\.pendingStatus\\?\\?=this\\.request\\(\`skysightStatus\`\\))(?=[\\s\\S]{0,3500}?enable\\(\\)[\\s\\S]{0,800}?this\\.request\\(\`skysightStart\`\\))(?=[\\s\\S]{0,4500}?pause\\([^)]*\\)[\\s\\S]{0,500}?\`skysightPause\`)(?=[\\s\\S]{0,5000}?resume\\(\\)[\\s\\S]{0,700}?\`skysightResume\`)(?=[\\s\\S]{0,7000}?stopRecorder\\(\\)[\\s\\S]{0,300}?this\\.request\\(\`skysightStop\`\\))`,
+      "g",
+    ),
+  );
+}
+
+function chronicleServiceClassMatches(source) {
+  return matchAll(
+    source,
+    new RegExp(
+      `(?:var |,)(${IDENTIFIER})=class extends ${IDENTIFIER}\\.${IDENTIFIER}\\{(?=[\\s\\S]{0,1500}?async getState\\(\\)[\\s\\S]{0,500}?\\.status\\(\\))(?=[\\s\\S]{0,2500}?async setEnabled\\([^)]*\\)[\\s\\S]{0,800}?enableSkysightChronicle\\(\\))(?=[\\s\\S]{0,3000}?async pause\\(\\)[\\s\\S]{0,300}?\\.pause\\(\\))(?=[\\s\\S]{0,3500}?async resume\\(\\)[\\s\\S]{0,300}?resumeChronicle\\(\\))`,
+      "g",
+    ),
+  );
+}
+
+function chronicleControllerInitMatches(source, patched) {
+  const pattern = patched
+    ? `\\((${IDENTIFIER})\\|\\|process\\.platform===\`linux\`\\)&&\\((${IDENTIFIER})=new (${IDENTIFIER})\\(\\{request:process\\.platform===\`linux\`\\?codexLinuxChronicleRequest:(${IDENTIFIER})\\.requestComputerUseWorker,(?=reconcileComputerHistoryPluginInstallation:[\\s\\S]{0,500}?reason:\`skysight_gate_enabled\`)reconcileComputerHistoryPluginInstallation:`
+    : `(${IDENTIFIER})&&\\((${IDENTIFIER})=new (${IDENTIFIER})\\(\\{request:(${IDENTIFIER})\\.requestComputerUseWorker,(?=reconcileComputerHistoryPluginInstallation:[\\s\\S]{0,500}?reason:\`skysight_gate_enabled\`)reconcileComputerHistoryPluginInstallation:`;
+  return matchAll(source, new RegExp(pattern, "g"));
+}
+
+function chronicleControllerGetterMatches(source, patched) {
+  const pattern = patched
+    ? `getSkysightRecorderController:\\(\\)=>process\\.platform===\`linux\`\\|\\|(${IDENTIFIER})\\(\\)\\.skysight\\?(${IDENTIFIER}):null,artifactSessionHostLifecycle:`
+    : `getSkysightRecorderController:\\(\\)=>(${IDENTIFIER})\\(\\)\\.skysight\\?(${IDENTIFIER}):null,artifactSessionHostLifecycle:`;
+  return matchAll(source, new RegExp(pattern, "g"));
+}
+
+function chronicleServiceGateMatches(source, patched) {
+  const platformGate = patched
+    ? `\\(process\\.platform===\`darwin\`\\|\\|process\\.platform===\`linux\`\\)`
+    : `process\\.platform===\`darwin\``;
+  const eligibility = patched
+    ? `process\\.platform===\`linux\`\\|\\|(${IDENTIFIER})\\(\\)\\.skysight`
+    : `(${IDENTIFIER})\\(\\)\\.skysight`;
+  return matchAll(
+    source,
+    new RegExp(
+      `chronicle:${platformGate}&&this\\.options\\.getSkysightRecorderController!=null\\?new (${IDENTIFIER})\\((${IDENTIFIER}),this\\.options\\.getSkysightRecorderController,\\(\\)=>${eligibility},`,
+      "g",
+    ),
+  );
+}
+
+function coherentContract(matches, patched) {
+  const { controllerClasses, controllerInits, controllerGetters, serviceClasses, serviceGates } = matches;
+  if (
+    controllerClasses.length !== 1
+    || controllerInits.length !== 1
+    || controllerGetters.length !== 1
+    || serviceClasses.length !== 1
+    || serviceGates.length !== 1
+  ) return false;
+
+  const controllerClass = controllerClasses[0][1];
+  const init = controllerInits[0];
+  const getter = controllerGetters[0];
+  const serviceClass = serviceClasses[0][1];
+  const gate = serviceGates[0];
+  const initInstance = init[2];
+  const initClass = init[3];
+  const getterFeature = getter[1];
+  const getterInstance = getter[2];
+  const gateServiceClass = gate[1];
+  const gateFeature = gate[3];
+  return initClass === controllerClass
+    && initInstance === getterInstance
+    && gateServiceClass === serviceClass
+    && gateFeature === getterFeature;
+}
+
+function chronicleControllerContract(source) {
+  const shared = {
+    controllerClasses: chronicleControllerClassMatches(source),
+    serviceClasses: chronicleServiceClassMatches(source),
+  };
+  const current = {
+    ...shared,
+    controllerInits: chronicleControllerInitMatches(source, false),
+    controllerGetters: chronicleControllerGetterMatches(source, false),
+    serviceGates: chronicleServiceGateMatches(source, false),
+  };
+  const patched = {
+    ...shared,
+    controllerInits: chronicleControllerInitMatches(source, true),
+    controllerGetters: chronicleControllerGetterMatches(source, true),
+    serviceGates: chronicleServiceGateMatches(source, true),
+  };
   const helper = recordReplayRuntimeHelperSource(CHRONICLE_MODULE_EXPRESSIONS);
   const bridge = chronicleSkysightBridgeSource();
   const bridgeInsertion = `${bridge},"get-global-state":async({key:`;
-  return countOccurrences(source, helper) === 1
-    && countOccurrences(source, bridge) === 1
-    && countOccurrences(source, bridgeInsertion) === 1;
+  const handlerCount = countOccurrences(source, `"get-global-state":async({key:`);
+  const currentCoherent = coherentContract(current, false);
+  const patchedCoherent = coherentContract(patched, true);
+  const helperCount = countOccurrences(source, helper);
+  const helperMarkerCount = countOccurrences(source, "function codexLinuxChronicleRequest(");
+  const bridgeCount = countOccurrences(source, bridge);
+  const bridgeInsertionCount = countOccurrences(source, bridgeInsertion);
+
+  if (
+    currentCoherent
+    && !patchedCoherent
+    && patched.controllerInits.length === 0
+    && patched.controllerGetters.length === 0
+    && patched.serviceGates.length === 0
+    && helperCount === 0
+    && helperMarkerCount === 0
+    && bridgeCount === 0
+    && bridgeInsertionCount === 0
+    && handlerCount === 1
+  ) return "current";
+  if (
+    patchedCoherent
+    && !currentCoherent
+    && current.controllerInits.length === 0
+    && current.controllerGetters.length === 0
+    && current.serviceGates.length === 0
+    && helperCount === 1
+    && helperMarkerCount === 1
+    && bridgeCount === 1
+    && bridgeInsertionCount === 1
+    && handlerCount === 1
+  ) return "patched";
+  return "drifted";
 }
 
 function applyChronicleSkysightMainBridgePatch(currentSource) {
   const patchName = "Chronicle / Skysight main bridge patch";
-  if (currentSource.includes("codexLinuxChronicleControlStateFromSkysight")) {
-    if (!hasCompleteChroniclePatch(currentSource)) {
-      warn("Found incomplete Chronicle / Skysight bridge patch", patchName);
-    }
+  const contract = chronicleControllerContract(currentSource);
+  if (contract === "patched") return currentSource;
+  if (contract !== "current") {
+    warn("Could not find one coherent current Chronicle controller contract", patchName);
     return currentSource;
   }
+
   const handlerNeedle = `"get-global-state":async({key:`;
-  if (countOccurrences(currentSource, handlerNeedle) !== 1) {
-    warn("Could not find a unique global-state bridge insertion point", patchName);
-    return currentSource;
-  }
   const helper = recordReplayRuntimeHelperSource(CHRONICLE_MODULE_EXPRESSIONS);
   const bridge = chronicleSkysightBridgeSource();
-  return `${helper}\n${currentSource.replace(handlerNeedle, `${bridge},${handlerNeedle}`)}`;
+  const init = chronicleControllerInitMatches(currentSource, false)[0];
+  const getter = chronicleControllerGetterMatches(currentSource, false)[0];
+  const gate = chronicleServiceGateMatches(currentSource, false)[0];
+  const initReplacement = `(${init[1]}||process.platform===\`linux\`)&&(${init[2]}=new ${init[3]}({request:process.platform===\`linux\`?codexLinuxChronicleRequest:${init[4]}.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:`;
+  const getterReplacement = `getSkysightRecorderController:()=>process.platform===\`linux\`||${getter[1]}().skysight?${getter[2]}:null,artifactSessionHostLifecycle:`;
+  const gateReplacement = `chronicle:(process.platform===\`darwin\`||process.platform===\`linux\`)&&this.options.getSkysightRecorderController!=null?new ${gate[1]}(${gate[2]},this.options.getSkysightRecorderController,()=>process.platform===\`linux\`||${gate[3]}().skysight,`;
+  let patched = currentSource
+    .replace(init[0], initReplacement)
+    .replace(getter[0], getterReplacement)
+    .replace(gate[0], gateReplacement)
+    .replace(handlerNeedle, `${bridge},${handlerNeedle}`);
+  patched = `${helper}\n${patched}`;
+  if (chronicleControllerContract(patched) !== "patched") {
+    warn("Chronicle controller contract changed while patching", patchName);
+    return currentSource;
+  }
+  return patched;
 }
 
 const descriptors = [
@@ -84,6 +227,7 @@ const descriptors = [
 
 module.exports = {
   applyChronicleSkysightMainBridgePatch,
+  chronicleControllerContract,
   chronicleSkysightBridgeSource,
   chronicleSkysightHelperSource,
   descriptors,
