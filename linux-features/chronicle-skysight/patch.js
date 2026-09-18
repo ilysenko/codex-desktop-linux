@@ -41,7 +41,7 @@ ${chronicleSkysightHelperSource()}`;
 
 function chronicleSkysightHelperSource() {
   return `function codexLinuxChronicleUpstreamStatus(e){let t=e?.json&&typeof e.json==="object"?e.json:null;if(!e?.ok||t==null)throw Error(e?.message||e?.stderr||"Linux Skysight command failed");let n=String(t.state||""),r=t.paused===!0||t.is_paused===!0||t.isPaused===!0||n==="paused",a=t.is_running===!0||t.isRunning===!0||n==="running",o=r?"paused":a?"running":"stopped";return{...t,state:o,eventStreamRootPath:t.eventStreamRootPath??t.runtime_dir??null,currentSegmentEventsPath:o==="stopped"?null:t.currentSegmentEventsPath??null,currentSegmentMetadataPath:o==="stopped"?null:t.currentSegmentMetadataPath??null,suppressedEventsPath:t.suppressedEventsPath??null,startedAtMs:t.startedAtMs??null,endedAtMs:t.endedAtMs??null}}
-async function codexLinuxChronicleRequest({method:e,params:t}={}){let n,r=5000;if(e==="skysightStatus")n=["skysight","status"];else if(e==="skysightStart")n=["skysight","start","--source","chronicle-desktop","--owner","manual-continuous","--summary-agent","enabled"],r=15000;else if(e==="skysightPause")n=["skysight","pause","--reason",t?.duration==null?"chronicle-desktop":"chronicle-desktop:"+String(t.duration)],r=10000;else if(e==="skysightResume")n=["skysight","resume"],r=10000;else if(e==="skysightStop")n=["skysight","stop"],r=10000;else throw Error("Unsupported Linux Chronicle method: "+String(e));return codexLinuxChronicleUpstreamStatus(await codexLinuxRecordReplayRun(n,r))}
+async function codexLinuxChronicleRequest({method:e,params:t}={}){let n,r=5000;if(e==="skysightStatus")n=["skysight","status"];else if(e==="skysightStart")n=["skysight","start","--source","chronicle-desktop","--owner","manual-continuous","--summary-agent","enabled"],r=15000;else if(e==="skysightPause"){if(t?.duration!=null)throw Error("Timed Linux Chronicle pause is unsupported");n=["skysight","pause","--reason","chronicle-desktop"],r=10000}else if(e==="skysightResume")n=["skysight","resume"],r=10000;else if(e==="skysightStop")n=["skysight","stop"],r=10000;else throw Error("Unsupported Linux Chronicle method: "+String(e));return codexLinuxChronicleUpstreamStatus(await codexLinuxRecordReplayRun(n,r))}
 function codexLinuxChronicleControlStateFromSkysight(e){let t=e?.json&&typeof e.json==="object"?e.json:null;if(!e?.ok&&t==null)return{enabled:!1,running:!1,state:"disabled"};let n=String(t?.state||""),r=t?.is_running===!0||t?.isRunning===!0,a=t?.paused===!0||t?.is_paused===!0||t?.isPaused===!0||n==="paused",o=n==="running"&&r&&!a;return{enabled:!0,running:o,state:o?"running":"stopped",skysight:t,chronicleOcrAvailable:t?.ocr_available===!0||t?.ocrAvailable===!0,chronicleOcrStatus:t?.ocr_status??t?.ocrStatus??"unknown",chronicleOcrBackend:t?.ocr_backend??t?.ocrBackend??null,chronicleOcrLanguage:t?.ocr_language??t?.ocrLanguage??null}}
 async function codexLinuxChronicleSidecarControlStateAsync(){return codexLinuxChronicleControlStateFromSkysight(await codexLinuxRecordReplayRun(["skysight","status"],5000))}
 function codexLinuxChronicleSummaryAgentArgs(e){return e===!0?["--summary-agent","enabled"]:e===!1?["--summary-agent","disabled"]:[]}
@@ -75,9 +75,19 @@ function chronicleServiceClassMatches(source) {
 
 function chronicleControllerInitMatches(source, patched) {
   const pattern = patched
-    ? `\\((${IDENTIFIER})\\|\\|process\\.platform===\`linux\`\\)&&\\((${IDENTIFIER})=new (${IDENTIFIER})\\(\\{request:process\\.platform===\`linux\`\\?codexLinuxChronicleRequest:(${IDENTIFIER})\\.requestComputerUseWorker,(?=reconcileComputerHistoryPluginInstallation:[\\s\\S]{0,500}?reason:\`skysight_gate_enabled\`)reconcileComputerHistoryPluginInstallation:`
+    ? `\\((${IDENTIFIER})\\|\\|process\\.platform===\`linux\`\\)&&\\((${IDENTIFIER})=new (${IDENTIFIER})\\(\\{request:process\\.platform===\`linux\`\\?codexLinuxChronicleRequest:(${IDENTIFIER})\\.requestComputerUseWorker,(?=reconcileComputerHistoryPluginInstallation:[\\s\\S]{0,500}?reason:\`skysight_gate_enabled\`)reconcileComputerHistoryPluginInstallation:process\\.platform===\`linux\`\\?\\(\\)=>\\{\\}:`
     : `(${IDENTIFIER})&&\\((${IDENTIFIER})=new (${IDENTIFIER})\\(\\{request:(${IDENTIFIER})\\.requestComputerUseWorker,(?=reconcileComputerHistoryPluginInstallation:[\\s\\S]{0,500}?reason:\`skysight_gate_enabled\`)reconcileComputerHistoryPluginInstallation:`;
   return matchAll(source, new RegExp(pattern, "g"));
+}
+
+function chronicleArchiveDependencyMatches(source, patched) {
+  const prefix = patched
+    ? `archiveLegacyChronicleSkill:process\\.platform===\`linux\`\\?async\\(\\)=>\\{\\}:`
+    : "archiveLegacyChronicleSkill:";
+  return matchAll(
+    source,
+    new RegExp(`${prefix}(?=async\\(\\)=>\\{[\\s\\S]{0,300}?reason:\`skysight_gate_enabled\`)`, "g"),
+  );
 }
 
 function chronicleControllerGetterMatches(source, patched) {
@@ -98,9 +108,17 @@ function chronicleServiceGateMatches(source) {
 }
 
 function coherentContract(matches) {
-  const { controllerClasses, controllerInits, controllerGetters, serviceClasses, serviceGates } = matches;
+  const {
+    archiveDependencies,
+    controllerClasses,
+    controllerInits,
+    controllerGetters,
+    serviceClasses,
+    serviceGates,
+  } = matches;
   if (
-    controllerClasses.length !== 1
+    archiveDependencies.length !== 1
+    || controllerClasses.length !== 1
     || controllerInits.length !== 1
     || controllerGetters.length !== 1
     || serviceClasses.length !== 1
@@ -131,12 +149,14 @@ function chronicleControllerContract(source) {
   };
   const current = {
     ...shared,
+    archiveDependencies: chronicleArchiveDependencyMatches(source, false),
     controllerInits: chronicleControllerInitMatches(source, false),
     controllerGetters: chronicleControllerGetterMatches(source, false),
     serviceGates: chronicleServiceGateMatches(source),
   };
   const patched = {
     ...shared,
+    archiveDependencies: chronicleArchiveDependencyMatches(source, true),
     controllerInits: chronicleControllerInitMatches(source, true),
     controllerGetters: chronicleControllerGetterMatches(source, true),
     serviceGates: chronicleServiceGateMatches(source),
@@ -155,6 +175,7 @@ function chronicleControllerContract(source) {
   if (
     currentCoherent
     && !patchedCoherent
+    && patched.archiveDependencies.length === 0
     && patched.controllerInits.length === 0
     && patched.controllerGetters.length === 0
     && helperCount === 0
@@ -166,6 +187,7 @@ function chronicleControllerContract(source) {
   if (
     patchedCoherent
     && !currentCoherent
+    && current.archiveDependencies.length === 0
     && current.controllerInits.length === 0
     && current.controllerGetters.length === 0
     && helperCount === 1
@@ -190,11 +212,14 @@ function applyChronicleSkysightMainBridgePatch(currentSource) {
   const helper = recordReplayRuntimeHelperSource(CHRONICLE_MODULE_EXPRESSIONS);
   const bridge = chronicleSkysightBridgeSource();
   const init = chronicleControllerInitMatches(currentSource, false)[0];
+  const archiveDependency = chronicleArchiveDependencyMatches(currentSource, false)[0];
   const getter = chronicleControllerGetterMatches(currentSource, false)[0];
-  const initReplacement = `(${init[1]}||process.platform===\`linux\`)&&(${init[2]}=new ${init[3]}({request:process.platform===\`linux\`?codexLinuxChronicleRequest:${init[4]}.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:`;
+  const initReplacement = `(${init[1]}||process.platform===\`linux\`)&&(${init[2]}=new ${init[3]}({request:process.platform===\`linux\`?codexLinuxChronicleRequest:${init[4]}.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:process.platform===\`linux\`?()=>{}:`;
+  const archiveDependencyReplacement = "archiveLegacyChronicleSkill:process.platform===`linux`?async()=>{}:";
   const getterReplacement = `getSkysightRecorderController:()=>process.platform===\`linux\`||${getter[1]}().skysight?${getter[2]}:null,artifactSessionHostLifecycle:`;
   let patched = currentSource
     .replace(init[0], initReplacement)
+    .replace(archiveDependency[0], archiveDependencyReplacement)
     .replace(getter[0], getterReplacement)
     .replace(handlerNeedle, `${bridge},${handlerNeedle}`);
   patched = `${helper}\n${patched}`;
