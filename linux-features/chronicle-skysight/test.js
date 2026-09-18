@@ -124,10 +124,9 @@ test("chronicle-skysight reuses the updater-staged backend without Cargo", () =>
   }
 });
 
-test("chronicle-skysight owns activity-memory bridge and tray integration", () => {
+test("chronicle-skysight owns the activity-memory bridge", () => {
   const source = [
     'const cp=require("node:child_process"),fs=require("node:fs"),path=require("node:path");',
-    "var tray={getChronicleSidecarControlState:()=>tt().skysight?$9:Se.appServerConnectionRegistry.getMaybeConnection(`local`)?.getChronicleSidecarControlState()??$9,toggleChronicleSidecar:async()=>{if(tt().skysight)return $9;let e=Se.appServerConnectionRegistry.getMaybeConnection(V);return e==null?$9:e.getChronicleSidecarControlState().running?e.pauseChronicleSidecar():e.resumeChronicleSidecar()}};",
     'var bridge={"get-global-state":async({key:e})=>null};',
   ].join("");
 
@@ -142,4 +141,16 @@ test("chronicle-skysight owns activity-memory bridge and tray integration", () =
   assert.match(patched, /codexLinuxChronicleToggleSidecar/);
   assert.doesNotMatch(patched, /"linux-record-replay-start":async/);
   assert.doesNotMatch(patched, /"linux-record-replay-draft-skill":async/);
+});
+
+test("chronicle-skysight requires one semantic bridge insertion point", () => {
+  const current = 'var bridge={"get-global-state":async({key:e})=>null};';
+  const sources = [
+    "var bridge={};",
+    current + current,
+  ];
+
+  for (const source of sources) {
+    assert.equal(applyChronicleSkysightMainBridgePatch(source), source);
+  }
 });

@@ -1,13 +1,13 @@
 {
-  "version": "26.915.31029",
+  "version": "26.915.31945",
   "amd64": {
-    "repositoryPath": "pool/main/c/chatgpt/chatgpt_26.915.31029_amd64.deb",
-    "sha256": "932825b76a41e80643204a9aa9ccfd1cb2471ffbfcbe1d314994360fcaaffb35",
-    "sri": "sha256-kyglt2pB6AZDIEqaqcz9HLJHH/v8vh0xSZQ2D8qv+zU="
+    "repositoryPath": "pool/main/c/chatgpt/chatgpt_26.915.31945_amd64.deb",
+    "sha256": "d27a9c02919cfe484dcc5f34584b9ea9fd0d7a65c69dcc872b5bdcfa0efb5983",
+    "sri": "sha256-0nqcApGc/khNzF80WEueqf0NemXGncyHK1vc+g77WYM="
   },
   "arm64": {
-    "repositoryPath": "pool/main/c/chatgpt/chatgpt_26.915.31029_arm64.deb",
-    "sha256": "5c01ce35eccea9e95d16de052c74f16deed381408931e82b106d7dbeeed8de4a",
-    "sri": "sha256-XAHONezOqeldFt4FLHTxbe7TgUCJMegrEG19vu7Y3ko="
+    "repositoryPath": "pool/main/c/chatgpt/chatgpt_26.915.31945_arm64.deb",
+    "sha256": "b94c494b5f0fd7c720fa6fccd5ef609879affc62332ca930ed29b907d537bc6d",
+    "sri": "sha256-uUxJS18P18cg+m/M1e9gmHmv/GIzLKkw7Sm5B9U3vG0="
   }
 }

@@ -13,12 +13,12 @@ const {
   trayUsageMainContract,
 } = require("./patch.js");
 
-function officialMainFixture(alias = "i", menuAlias = "f") {
+function officialMainFixture(alias = "i") {
   return [
     "getNativeTrayMenuItems(){let{pinnedThreads:e,recentThreads:t,runningThreads:n,unreadThreads:r,usageLimits:",
-    `${alias}}=this.trayMenuThreads,a=[];`,
-    `let ${menuAlias}=process.platform!==\`darwin\`||${alias}.length===0?[]:[{label:\`Usage\`,enabled:!1},...${alias}.map(({label:e})=>({label:e,enabled:!1}))];`,
-    `return[${menuAlias}]}`,
+    `${alias}}=this.trayMenuThreads,a=[{label:\`Threads\`}],s=[...a,`,
+    `process.platform!==\`darwin\`||${alias}.length===0?[]:[{label:\`Usage\`,enabled:!1},...${alias}.map(({label:e})=>({label:e,enabled:!1}))]`,
+    "].filter(e=>e.length>0).flatMap((e,t)=>t===0?e:[{type:`separator`},...e]);return[...s]}",
   ].join("");
 }
 
@@ -78,9 +78,9 @@ test("main-process patch enables usage labels on Linux and is idempotent", () =>
 });
 
 test("main-process patch preserves minified aliases", () => {
-  const patched = applyTrayUsageMainPatch(officialMainFixture("usage", "items"));
+  const patched = applyTrayUsageMainPatch(officialMainFixture("usage"));
   assert.equal(trayUsageMainContract(patched), "patched");
-  assert.match(patched, /items=process\.platform!==`darwin`&&process\.platform!==`linux`\|\|usage\.length===0/);
+  assert.match(patched, /process\.platform!==`darwin`&&process\.platform!==`linux`\|\|usage\.length===0/);
   assert.equal(applyTrayUsageMainPatch(patched), patched);
 });
 
@@ -90,8 +90,13 @@ test("drifted, duplicate, and mixed contracts remain byte-identical", () => {
   const drifted = current.replace("process.platform!==`darwin`", "process.platform===`darwin`");
   const unrelatedLookalike =
     "function unrelated(){let x=process.platform!==`darwin`||i.length===0?[]:[...i.map(({label:e})=>({label:e,enabled:!1}))];return[x]}";
+  const retiredAssignedShape = current.replace(
+    "s=[...a,process.platform",
+    "s=[...a,f=process.platform",
+  );
   const sources = [
     drifted,
+    retiredAssignedShape,
     current + current,
     patched + patched,
     current + patched,
