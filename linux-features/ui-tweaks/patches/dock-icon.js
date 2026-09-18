@@ -28,8 +28,8 @@ function mainPatterns(state) {
     ? "!(?<electron>[A-Za-z_$][\\w$]*)\\.app\\.isPackaged&&process\\.platform!==`linux`"
     : "!(?<electron>[A-Za-z_$][\\w$]*)\\.app\\.isPackaged";
   const applyPrefix = state === "patched"
-    ? `(?<apply>${identifier})=function ${dockIconApplyHelper}\\((?<arg>${identifier})\\)\\{if\\((?<devIcons>${identifier})&&process\\.platform!==\`linux\`\\)\\{`
-    : `(?<apply>${identifier})=(?<arg>${identifier})=>\\{if\\((?<devIcons>${identifier})\\)\\{`;
+    ? `(?<apply>${identifier})=function ${dockIconApplyHelper}\\((?<arg>${identifier})\\)\\{if\\((?<devIcons>${identifier})&&process\\.platform!==\`linux\`\\)\\{(?=[\\s\\S]{0,512}\\.app\\.dock)(?=[\\s\\S]{0,512}if\\(\\k<arg>===\`app-default\`)`
+    : `(?<apply>${identifier})=(?<arg>${identifier})=>\\{if\\((?<devIcons>${identifier})\\)\\{(?=[\\s\\S]{0,512}\\.app\\.dock)(?=[\\s\\S]{0,512}if\\(\\k<arg>===\`app-default\`)`;
   const applyDefaultGate = state === "patched"
     ? `if\\((?<arg>${identifier})===\`app-default\`&&process\\.platform!==\`linux\`&&(?<build>${identifier})!==(?:${identifier})\\.(?:${identifier})\\.Dev\\)`
     : `if\\((?<arg>${identifier})===\`app-default\`&&(?<build>${identifier})!==(?:${identifier})\\.(?:${identifier})\\.Dev\\)`;

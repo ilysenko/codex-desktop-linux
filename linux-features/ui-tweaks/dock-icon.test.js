@@ -222,6 +222,16 @@ test("main patch captures every minified alias and preserves their contract rela
   assert.equal(applyDockIconMainPatch(patched), patched);
 });
 
+test("main patch ignores unrelated minified callback prefixes", () => {
+  const decoy = "a=n=>{if(n){r.close(),t();return}};";
+  const source = decoy + currentMainSource;
+  const patched = applyDockIconMainPatch(source);
+  assert.notEqual(patched, source);
+  assert.equal(patched.startsWith(decoy), true);
+  assert.match(patched, /function codexLinuxApplyDockIcon/);
+  assert.equal(applyDockIconMainPatch(patched), patched);
+});
+
 test("main patch rejects inconsistent cross-contract aliases byte-identically", () => {
   const inconsistent = currentMainSource.replace(
     "O=e=>{if(!d.app.isPackaged",
