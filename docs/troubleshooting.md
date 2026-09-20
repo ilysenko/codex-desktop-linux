@@ -222,22 +222,24 @@ a failed privileged install, run `codex-update-manager install-ready` after
 fixing the reported package-manager issue. Roll back with
 `codex-update-manager rollback`.
 
-A check that transitions to `Failed` sends one desktop notification; repeated
-failures for the same candidate stay silent, so a stalled updater should be
-diagnosed rather than waited out.
+A release check that fails during metadata retrieval, download, or build sends
+one desktop notification. Repeated failures for the same candidate stay silent,
+so a stalled updater should be diagnosed rather than waited out.
 
-If the failure log ends in `npx: command not found` (exit 127) at
-`asar-patch.sh`, the build host has `node` without npm/npx — typically the
-Debian/Ubuntu `nodejs` package alone, or a version-manager (nvm/fnm) Node that
-is not visible to the systemd user service. Install npm
-(`sudo apt install npm`) or add the version-manager bin directory to the
-service PATH:
+If the failure log reports `npx is required to patch app.asar` (or the older
+`npx: command not found`), the build host has `node` without npm/npx — typically
+the Debian/Ubuntu `nodejs` package alone, or a version-manager (nvm/fnm) Node
+that is not visible to the systemd user service. Install npm
+(`sudo apt install npm`) or run `systemctl --user edit codex-update-manager` and
+add the following lines in the editor, replacing the example Node path with
+your own:
 
-```bash
-systemctl --user edit codex-update-manager
-# [Service]
-# Environment=PATH=/home/<user>/.local/share/fnm/node-versions/<ver>/installation/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+```ini
+[Service]
+Environment=PATH=/home/<user>/.local/share/fnm/node-versions/<ver>/installation/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ```
+
+Restart the service with `systemctl --user restart codex-update-manager.service`.
 
 Collect a useful updater report with:
 
