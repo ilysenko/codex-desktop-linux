@@ -105,7 +105,9 @@ parse_args() {
                 error "Unknown option: $1 (see --help)"
                 ;;
             *)
-                [ -z "$PROVIDED_UPSTREAM_DEB_PATH" ] || error "Only one upstream .deb path may be provided"
+                if [ -n "$PROVIDED_UPSTREAM_DEB_PATH" ] && [ "$1" != "$PROVIDED_UPSTREAM_DEB_PATH" ]; then
+                    error "Conflicting upstream .deb paths: $PROVIDED_UPSTREAM_DEB_PATH and $1"
+                fi
                 case "$1" in
                     *.dmg|*.DMG) error "macOS DMG inputs are no longer supported; provide the official Linux chatgpt_*.deb" ;;
                     *.deb) ;;

@@ -50,6 +50,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The documented `UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app`
+  invocation (also `make rebuild`, `rebuild-install`, `inspect-upstream`, and
+  `rebuild-next`) no longer fails with "Only one upstream .deb path may be
+  provided". The Makefile forwards `UPSTREAM_DEB` to `install.sh` both through
+  the recipe environment and as the positional argument, and duplicate-input
+  detection treated that single documented input as two conflicting paths. A
+  positional argument is now rejected only when it differs from the
+  environment-provided path.
 - The NixOS module publishes the package's workspace runtime libraries through
   `programs.nix-ld.libraries` when `programs.nix-ld` is enabled. Codex sources
   a login-shell snapshot before every sandboxed command, and on such systems
