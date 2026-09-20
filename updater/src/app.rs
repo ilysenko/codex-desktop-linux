@@ -481,7 +481,7 @@ async fn check(
     .await
     {
         Ok(value) => value,
-        Err(error) => return fail_check(state, paths, previous_state.clone(), error),
+        Err(error) => return fail_check(config, state, paths, previous_state.clone(), error),
     };
     state.last_successful_check_at = Some(Utc::now());
     let _ = cache_cleanup::prune(&paths.cache_dir, state);
@@ -808,6 +808,7 @@ fn pkexec_authentication_was_not_obtained(status: &std::process::ExitStatus) -> 
 }
 
 fn fail_check<T>(
+    config: &RuntimeConfig,
     state: &mut PersistedState,
     paths: &RuntimePaths,
     mut previous_state: PersistedState,
@@ -822,6 +823,7 @@ fn fail_check<T>(
         state.save_updater(&paths.state_file)?;
         return Err(error);
     }
+    notify_failure_transition(config, state, &previous_state, &error);
     fail(state, paths, error)
 }
 
@@ -829,6 +831,38 @@ fn fail<T>(state: &mut PersistedState, paths: &RuntimePaths, error: anyhow::Erro
     state.mark_failed(format!("{error:#}"));
     state.save_updater(&paths.state_file)?;
     Err(error)
+}
+
+/// Desktop-notify a transition into `Failed`. Repeat failures for the same
+/// candidate stay silent so a stalled unattended check does not re-notify on
+/// every periodic run; a new candidate failing, or a previously healthy
+/// updater failing, still notifies once. `previous` is the persisted state
+/// before this check began.
+fn notify_failure_transition(
+    config: &RuntimeConfig,
+    state: &PersistedState,
+    previous: &PersistedState,
+    error: &anyhow::Error,
+) {
+    if !should_notify_failure(config, previous) {
+        return;
+    }
+    let _ = notify::send(
+        "codex-desktop update failed",
+        &format!(
+            "Update check failed{}: {}. Run codex-update-manager diagnose.",
+            state
+                .candidate_version
+                .as_deref()
+                .map(|version| format!(" for {version}"))
+                .unwrap_or_default(),
+            error
+        ),
+    );
+}
+
+fn should_notify_failure(config: &RuntimeConfig, previous: &PersistedState) -> bool {
+    config.notifications && previous.status != UpdateStatus::Failed
 }
 
 fn status(state: &PersistedState, json: bool) -> Result<()> {
@@ -1099,7 +1133,9 @@ mod replacement_tests {
             let mut state = PersistedState::load_or_default(&paths.state_file, true)?;
             let previous = state.clone();
             mark_check_started(&mut state);
+            let config = RuntimeConfig::default_with_paths(&paths);
             fail_check::<()>(
+                &config,
                 &mut state,
                 &paths,
                 previous,
@@ -1452,6 +1488,7 @@ exit 90
         checking.last_check_at = Some(Utc::now());
 
         fail_check::<()>(
+            &RuntimeConfig::default_with_paths(&paths),
             &mut checking,
             &paths,
             previous,
@@ -1469,6 +1506,29 @@ exit 90
         let loaded = PersistedState::load_or_default(&paths.state_file, true)?;
         assert!(loaded.install_auth_retry_is_blocked());
         Ok(())
+    }
+
+    #[test]
+    fn failure_transition_notifies_once_per_stall() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = fixture_paths(temp.path());
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.notifications = true;
+
+        // Healthy updater (mid-check) failing: notify.
+        let mut checking = PersistedState::new(true);
+        checking.status = UpdateStatus::CheckingUpstream;
+        checking.candidate_version = Some("2026.09.18.2691531945".into());
+        assert!(should_notify_failure(&config, &checking));
+
+        // Same candidate already failed: stay silent on periodic rechecks.
+        let mut failed = checking.clone();
+        failed.status = UpdateStatus::Failed;
+        assert!(!should_notify_failure(&config, &failed));
+
+        // Notifications disabled (tests, explicit opt-out): never notify.
+        config.notifications = false;
+        assert!(!should_notify_failure(&config, &checking));
     }
 
     #[test]

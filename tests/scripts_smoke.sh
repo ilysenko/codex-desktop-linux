@@ -48,6 +48,12 @@ assert_contains packaging/linux/codex-desktop.spec 'official runtime'
 assert_contains flake.nix 'systemd util-linux xdg-utils'
 assert_contains packaging/linux/codex-packaged-runtime.sh 'codex-update-manager check-now'
 assert_absent packaging/linux/codex-packaged-runtime.sh '--if-stale'
+assert_contains scripts/lib/install-helpers.sh 'sudo apt install nodejs npm curl dpkg-dev gnupg'
+# Anchored guards: assert executable code lines, not comment prose, so a
+# removed guard actually fails the smoke run even when the explanatory
+# comment keeps the words. (rg patterns: avoid unescaped regex metachars.)
+assert_contains scripts/lib/asar-patch.sh '^        "npx is required to patch app\.asar with enabled feature descriptors'
+assert_contains scripts/lib/install-helpers.sh '^    if ! command -v npx &>/dev/null; then$'
 
 selector_fixture="$(mktemp -d)"
 trap 'rm -rf -- "$selector_fixture"' EXIT

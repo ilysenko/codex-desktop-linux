@@ -98,6 +98,15 @@ NODE
         return 0
     fi
 
+    # Reached only with active descriptors: the extract/pack steps below shell
+    # out to npx. The Ubuntu/Debian nodejs package ships node without npm/npx,
+    # and check_deps() can only warn, so fail with actionable guidance here
+    # instead of dying at "npx: command not found" (exit 127).
+    command -v npx >/dev/null 2>&1 || error \
+        "npx is required to patch app.asar with enabled feature descriptors, but was not found on PATH." \
+        "Install npm (Debian/Ubuntu: sudo apt install npm) or make the version-manager Node bin directory" \
+        "visible to this shell, then retry."
+
     upstream_sha="$(sha256sum "$app_asar" | awk '{print $1}')"
     info "Extracting a temporary app.asar copy for $descriptor_count active descriptor(s)"
     npx --yes @electron/asar extract "$app_asar" "$WORK_DIR/app-extracted"

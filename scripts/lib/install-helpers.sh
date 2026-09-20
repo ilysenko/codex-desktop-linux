@@ -19,10 +19,10 @@ Run the helper to install them automatically:
   bash scripts/install-deps.sh
 
 Or install manually:
-  sudo apt install nodejs curl dpkg-dev gnupg                                      # Debian/Ubuntu
-  sudo dnf install nodejs curl dpkg-dev gnupg2                                     # Fedora
-  sudo pacman -S nodejs curl dpkg gnupg                                            # Arch
-  sudo zypper install nodejs curl dpkg gpg2                                        # openSUSE
+  sudo apt install nodejs npm curl dpkg-dev gnupg                                    # Debian/Ubuntu
+  sudo dnf install nodejs npm curl dpkg-dev gnupg2                                   # Fedora
+  sudo pacman -S nodejs curl dpkg gnupg                                              # Arch
+  sudo zypper install nodejs npm curl dpkg gpg2                                      # openSUSE
 EOF
 }
 
@@ -152,6 +152,17 @@ check_deps() {
     if [ ${#missing[@]} -ne 0 ]; then
         error "Missing dependencies: ${missing[*]}
 $(dependency_help)"
+    fi
+
+    # Not a hard gate here: feature-free builds never invoke npx. asar-patch.sh
+    # fails closed when descriptors are active. The Debian/Ubuntu nodejs
+    # package ships node without npm/npx, so a passing check can still be
+    # unable to patch app.asar — warn early so interactive installs and the
+    # unattended updater surface the cause before a 400MB download.
+    if ! command -v npx &>/dev/null; then
+        warn "npx not found on PATH: builds with enabled ASAR feature descriptors will fail." \
+            "Install npm (Debian/Ubuntu: sudo apt install npm) or ensure the version-manager" \
+            "Node bin directory is on PATH for this shell/service."
     fi
 
     info "All system dependencies found"
