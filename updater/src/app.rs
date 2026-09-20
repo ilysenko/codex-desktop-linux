@@ -548,13 +548,13 @@ async fn check(
     .await
     {
         Ok(path) => path,
-        Err(error) => return fail(state, paths, error),
+        Err(error) => return fail_update(config, state, paths, &previous_state, error),
     };
     state.artifact_paths.upstream_package_path = Some(upstream_package.clone());
     if let Err(error) =
         builder::build_update(config, state, paths, &metadata.version, &upstream_package).await
     {
-        return fail(state, paths, error);
+        return fail_update(config, state, paths, &previous_state, error);
     }
 
     if config.notifications {
@@ -823,8 +823,7 @@ fn fail_check<T>(
         state.save_updater(&paths.state_file)?;
         return Err(error);
     }
-    notify_failure_transition(config, state, &previous_state, &error);
-    fail(state, paths, error)
+    fail_update(config, state, paths, &previous_state, error)
 }
 
 fn fail<T>(state: &mut PersistedState, paths: &RuntimePaths, error: anyhow::Error) -> Result<T> {
@@ -833,23 +832,30 @@ fn fail<T>(state: &mut PersistedState, paths: &RuntimePaths, error: anyhow::Erro
     Err(error)
 }
 
-/// Desktop-notify a transition into `Failed`. Repeat failures for the same
-/// candidate stay silent so a stalled unattended check does not re-notify on
-/// every periodic run; a new candidate failing, or a previously healthy
-/// updater failing, still notifies once. `previous` is the persisted state
-/// before this check began.
-fn notify_failure_transition(
+fn fail_update<T>(
     config: &RuntimeConfig,
-    state: &PersistedState,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
     previous: &PersistedState,
-    error: &anyhow::Error,
-) {
-    if !should_notify_failure(config, previous) {
-        return;
-    }
-    let _ = notify::send(
-        "codex-desktop update failed",
-        &format!(
+    error: anyhow::Error,
+) -> Result<T> {
+    fail_update_with(config, state, paths, previous, error, |summary, body| {
+        let _ = notify::send(summary, body);
+    })
+}
+
+/// Persist a failed check before notifying. Repeat failures for the same
+/// candidate stay silent; a new candidate or a recovered updater notifies.
+fn fail_update_with<T>(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    previous: &PersistedState,
+    error: anyhow::Error,
+    send: impl FnOnce(&str, &str),
+) -> Result<T> {
+    let notification = should_notify_failure(config, state, previous).then(|| {
+        format!(
             "Update check failed{}: {}. Run codex-update-manager diagnose.",
             state
                 .candidate_version
@@ -857,12 +863,23 @@ fn notify_failure_transition(
                 .map(|version| format!(" for {version}"))
                 .unwrap_or_default(),
             error
-        ),
-    );
+        )
+    });
+    let result = fail(state, paths, error);
+    if let Some(body) = notification {
+        send("codex-desktop update failed", &body);
+    }
+    result
 }
 
-fn should_notify_failure(config: &RuntimeConfig, previous: &PersistedState) -> bool {
-    config.notifications && previous.status != UpdateStatus::Failed
+fn should_notify_failure(
+    config: &RuntimeConfig,
+    current: &PersistedState,
+    previous: &PersistedState,
+) -> bool {
+    config.notifications
+        && (previous.status != UpdateStatus::Failed
+            || previous.upstream_package_sha256 != current.upstream_package_sha256)
 }
 
 fn status(state: &PersistedState, json: bool) -> Result<()> {
@@ -1509,26 +1526,89 @@ exit 90
     }
 
     #[test]
-    fn failure_transition_notifies_once_per_stall() {
-        let temp = tempfile::tempdir().expect("tempdir");
+    fn failure_transition_notifies_once_per_candidate() -> Result<()> {
+        let temp = tempfile::tempdir()?;
         let paths = fixture_paths(temp.path());
+        paths.ensure_dirs()?;
         let mut config = RuntimeConfig::default_with_paths(&paths);
         config.notifications = true;
+        let mut notifications = Vec::new();
 
-        // Healthy updater (mid-check) failing: notify.
-        let mut checking = PersistedState::new(true);
-        checking.status = UpdateStatus::CheckingUpstream;
+        let previous = PersistedState::new(true);
+        let mut checking = previous.clone();
+        checking.status = UpdateStatus::DownloadingPackage;
         checking.candidate_version = Some("2026.09.18.2691531945".into());
-        assert!(should_notify_failure(&config, &checking));
+        checking.upstream_package_sha256 = Some("first-sha".into());
+        fail_update_with::<()>(
+            &config,
+            &mut checking,
+            &paths,
+            &previous,
+            anyhow::anyhow!("build failed"),
+            |_, body| notifications.push(body.to_owned()),
+        )
+        .expect_err("build failure should be reported");
+        assert_eq!(checking.status, UpdateStatus::Failed);
+        assert_eq!(
+            PersistedState::load_or_default(&paths.state_file, true)?.status,
+            UpdateStatus::Failed
+        );
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].contains("build failed"));
 
-        // Same candidate already failed: stay silent on periodic rechecks.
-        let mut failed = checking.clone();
-        failed.status = UpdateStatus::Failed;
-        assert!(!should_notify_failure(&config, &failed));
+        let failed = checking.clone();
+        fail_update_with::<()>(
+            &config,
+            &mut checking,
+            &paths,
+            &failed,
+            anyhow::anyhow!("build failed again"),
+            |_, body| notifications.push(body.to_owned()),
+        )
+        .expect_err("repeat failure should be reported");
+        assert_eq!(notifications.len(), 1, "same candidate stays silent");
 
-        // Notifications disabled (tests, explicit opt-out): never notify.
+        let previous = checking.clone();
+        checking.status = UpdateStatus::DownloadingPackage;
+        checking.candidate_version = Some("2026.09.20.100000".into());
+        checking.upstream_package_sha256 = Some("second-sha".into());
+        fail_update_with::<()>(
+            &config,
+            &mut checking,
+            &paths,
+            &previous,
+            anyhow::anyhow!("new candidate failed"),
+            |_, body| notifications.push(body.to_owned()),
+        )
+        .expect_err("new candidate failure should be reported");
+        assert_eq!(notifications.len(), 2);
+        assert!(notifications[1].contains("2026.09.20.100000"));
+
+        let mut recovered = checking.clone();
+        recovered.status = UpdateStatus::Idle;
+        fail_update_with::<()>(
+            &config,
+            &mut checking,
+            &paths,
+            &recovered,
+            anyhow::anyhow!("failure after recovery"),
+            |_, body| notifications.push(body.to_owned()),
+        )
+        .expect_err("failure after recovery should be reported");
+        assert_eq!(notifications.len(), 3);
+
         config.notifications = false;
-        assert!(!should_notify_failure(&config, &checking));
+        fail_update_with::<()>(
+            &config,
+            &mut checking,
+            &paths,
+            &recovered,
+            anyhow::anyhow!("notifications disabled"),
+            |_, body| notifications.push(body.to_owned()),
+        )
+        .expect_err("failure should be reported even with notifications disabled");
+        assert_eq!(notifications.len(), 3);
+        Ok(())
     }
 
     #[test]
