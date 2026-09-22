@@ -160,22 +160,31 @@ stage_update_builder_linux_features_tree() {
     cp "$source_root/features.example.json" "$target/features.example.json"
     cp "$source_root/compatibility.json" "$target/compatibility.json"
 
-    local feature_id
-    while IFS= read -r feature_id; do
-        [ -n "$feature_id" ] || continue
-        [ -d "$source_root/$feature_id" ] || error "Missing enabled Linux feature: $feature_id"
-        cp -a "$source_root/$feature_id" "$target/$feature_id"
-        find "$target/$feature_id" -type d -name target -prune -exec rm -rf {} +
+    local feature_id relative_dir source destination feature_dirs_file
+    feature_dirs_file="$(mktemp "$target/.enabled-feature-dirs.XXXXXX")"
+    if ! "$(package_node_binary)" "$REPO_DIR/scripts/lib/linux-features.js" \
+        --enabled-feature-dirs0 > "$feature_dirs_file"; then
+        rm -f "$feature_dirs_file"
+        error "Failed to discover enabled Linux features for the update-builder"
+    fi
+    while IFS= read -r -d '' feature_id && IFS= read -r -d '' relative_dir; do
+        source="$source_root/$relative_dir"
+        destination="$target/$relative_dir"
+        [ -d "$source" ] || error "Missing enabled Linux feature: $feature_id ($source)"
+        mkdir -p "$(dirname "$destination")"
+        cp -a "$source" "$destination"
+        find "$destination" -type d -name target -prune -exec rm -rf {} +
         if [ "$feature_id" = "directory-only-working-tree-watch" ]; then
-            rm -rf "$target/$feature_id/acceptance"
+            rm -rf "$destination/acceptance"
         fi
         if [ "$feature_id" = "mcp-helper-reaper" ]; then
             rm -rf \
-                "$target/$feature_id/reaper/src" \
-                "$target/$feature_id/reaper/Cargo.toml" \
-                "$target/$feature_id/reaper/Cargo.lock"
+                "$destination/reaper/src" \
+                "$destination/reaper/Cargo.toml" \
+                "$destination/reaper/Cargo.lock"
         fi
-    done < <("$(package_node_binary)" "$REPO_DIR/scripts/lib/linux-features.js" --enabled)
+    done < "$feature_dirs_file"
+    rm -f "$feature_dirs_file"
 }
 
 stage_update_builder_enabled_plugin_templates() {

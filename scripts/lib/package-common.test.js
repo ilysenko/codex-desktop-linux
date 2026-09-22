@@ -231,6 +231,67 @@ test("update-builder carries the shared feature compatibility registry", (t) => 
   );
 });
 
+test("update-builder preserves enabled local features for future rebuilds", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-builder-local-feature-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sourceRoot = path.join(root, "source");
+  const featuresRoot = path.join(sourceRoot, "linux-features");
+  const builder = path.join(root, "builder");
+  fs.mkdirSync(path.join(sourceRoot, "scripts/lib"), { recursive: true });
+  fs.copyFileSync(
+    path.join(repoRoot, "scripts/lib/linux-features.js"),
+    path.join(sourceRoot, "scripts/lib/linux-features.js"),
+  );
+  fs.mkdirSync(path.join(featuresRoot, "local/selected-feature"), { recursive: true });
+  fs.mkdirSync(path.join(featuresRoot, "local/disabled-feature"), { recursive: true });
+  fs.mkdirSync(path.join(featuresRoot, "selected-feature"));
+  for (const name of ["features.example.json", "compatibility.json"]) {
+    fs.copyFileSync(path.join(repoRoot, "linux-features", name), path.join(featuresRoot, name));
+  }
+  for (const id of ["selected-feature", "disabled-feature"]) {
+    const featureDir = path.join(featuresRoot, "local", id);
+    fs.writeFileSync(path.join(featureDir, "feature.json"), `${JSON.stringify({ id, defaultEnabled: false })}\n`);
+    fs.writeFileSync(path.join(featureDir, "README.md"), `${id}\n`);
+  }
+  fs.writeFileSync(path.join(featuresRoot, "local/selected-feature/patch.js"), "module.exports = [];\n");
+  fs.writeFileSync(path.join(featuresRoot, "features.json"), '{"enabled":["selected-feature"]}\n');
+
+  runPackageCommon(
+    `stage_update_builder_linux_features_tree ${JSON.stringify(builder)}\n` +
+      `stage_update_builder_linux_features_config ${JSON.stringify(builder)}`,
+    root,
+    sourceRoot,
+  );
+
+  assert.equal(fs.existsSync(path.join(builder, "linux-features/local/selected-feature/feature.json")), true);
+  assert.equal(fs.existsSync(path.join(builder, "linux-features/local/selected-feature/patch.js")), true);
+  assert.equal(fs.existsSync(path.join(builder, "linux-features/selected-feature")), false);
+  assert.equal(fs.existsSync(path.join(builder, "linux-features/local/disabled-feature")), false);
+  fs.mkdirSync(path.join(builder, "scripts/lib"), { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceRoot, "scripts/lib/linux-features.js"),
+    path.join(builder, "scripts/lib/linux-features.js"),
+  );
+  assert.equal(
+    childProcess.execFileSync(
+      process.execPath,
+      [path.join(builder, "scripts/lib/linux-features.js"), "--enabled"],
+      { encoding: "utf8" },
+    ),
+    "selected-feature\n",
+  );
+
+  fs.writeFileSync(path.join(featuresRoot, "features.json"), '{"enabled":["missing-feature"]}\n');
+  assert.throws(
+    () => runPackageCommon(
+      `stage_update_builder_linux_features_tree ${JSON.stringify(path.join(root, "invalid-builder"))}`,
+      root,
+      sourceRoot,
+    ),
+    /Failed to discover enabled Linux features for the update-builder/,
+  );
+});
+
 test("update-builder stages the attached CLI resource", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-builder-attached-cli-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
