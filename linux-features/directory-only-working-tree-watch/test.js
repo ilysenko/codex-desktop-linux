@@ -1172,7 +1172,7 @@ const QUALIFIED_ELECTRON_VERSION = "42.3.0";
 function writeExtractedAppRuntime(extractedDir, electron = QUALIFIED_ELECTRON_VERSION) {
   writeJson(path.join(extractedDir, "package.json"), {
     name: "openai-codex-electron",
-    version: "26.917.51856",
+    version: "0.0.0-test",
     devDependencies: { electron },
   });
 }
