@@ -180,11 +180,9 @@ function applyLinuxComputerUseFeaturePatch(currentSource) {
       currentSource.slice(match.index + match[0].length);
   }
 
-  if (currentSource.includes("CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE")) {
-    console.warn(
-      "WARN: Could not find Computer Use desktop feature gate — skipping Linux Computer Use feature patch",
-    );
-  }
+  console.warn(
+    "WARN: Could not find Computer Use desktop feature gate — skipping Linux Computer Use feature patch",
+  );
 
   return currentSource;
 }

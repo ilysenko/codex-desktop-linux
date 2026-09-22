@@ -12,6 +12,13 @@ const test = require("node:test");
 const manifest = require("./feature.json");
 const descriptors = require("./patch.js");
 const {
+  createPatchReport,
+  enabledFeatureFailuresFromReport,
+} = require("../../scripts/lib/patch-report.js");
+const {
+  applyMainBundlePatchDescriptors,
+} = require("../../scripts/patches/engine.js");
+const {
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseHostPlatformPatch,
   matchesLinuxComputerUseHostPlatformContract,
@@ -246,4 +253,24 @@ test("desktop feature gate rejects missing, duplicate, and partial current contr
   ]) {
     assert.equal(applyLinuxComputerUseFeaturePatch(source), source);
   }
+});
+
+test("anchor-free desktop feature gate reports enabled-feature drift", () => {
+  const source = "function unrelated(){return!0}";
+  const descriptor = {
+    ...descriptors.find(({ id }) => id === "ui-feature"),
+    featureId: "computer-use-linux",
+    sourceKind: "feature",
+  };
+  const report = createPatchReport();
+  report.enabledFeatures = ["computer-use-linux"];
+
+  const result = applyMainBundlePatchDescriptors(source, [descriptor], {}, report);
+
+  assert.equal(result.patchedSource, source);
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /Could not find Computer Use desktop feature gate/);
+  assert.equal(report.patches[0].status, "skipped-optional");
+  assert.notEqual(report.patches[0].status, "already-applied");
+  assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
 });
