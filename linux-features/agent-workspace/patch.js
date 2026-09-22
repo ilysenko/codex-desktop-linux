@@ -1928,10 +1928,6 @@ const PATCHED_SETTINGS_ICON_PATTERN = new RegExp(
     `navigation:\\{assets:\\{16:[A-Za-z_$][\\w$]*,20:[A-Za-z_$][\\w$]*\\},ariaHidden:!1\\}\\}),` +
     `"agent-workspaces":\\1,worktrees:`,
 );
-const CURRENT_SETTINGS_LOADING_CASES =
-  "case`local-environments`:case`worktrees`:case`environments`:case`mcp-settings`";
-const PATCHED_SETTINGS_LOADING_CASES =
-  "case`local-environments`:case`agent-workspaces`:case`worktrees`:case`environments`:case`mcp-settings`";
 const CURRENT_SETTINGS_PRELOAD_SLUGS =
   "`hooks-settings`,`local-environments`,`worktrees`,`data-controls`";
 const PATCHED_SETTINGS_PRELOAD_SLUGS =
@@ -2062,10 +2058,9 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
     const iconMatch = patchedSource.match(PATCHED_SETTINGS_ICON_PATTERN);
     const iconPatched = iconMatch != null;
     const casesPatched = patchedSource.includes(PATCHED_SETTINGS_VISIBILITY_CASES);
-    const loadingPatched = patchedSource.includes(PATCHED_SETTINGS_LOADING_CASES);
     const preloadPatched = patchedSource.includes(PATCHED_SETTINGS_PRELOAD_SLUGS);
     const policyPatched = PATCHED_SETTINGS_POLICY_PATTERN.test(patchedSource);
-    const patchedContracts = [iconPatched, casesPatched, loadingPatched, preloadPatched, policyPatched];
+    const patchedContracts = [iconPatched, casesPatched, preloadPatched, policyPatched];
     if (patchedContracts.some(Boolean) && !patchedContracts.every(Boolean)) {
       throw new Error("agent workspace settings visibility is partially patched");
     }
@@ -2073,7 +2068,6 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
       const currentContracts = [
         CURRENT_SETTINGS_ICON_PATTERN.test(patchedSource),
         patchedSource.includes(CURRENT_SETTINGS_VISIBILITY_CASES),
-        patchedSource.includes(CURRENT_SETTINGS_LOADING_CASES),
         patchedSource.includes(CURRENT_SETTINGS_PRELOAD_SLUGS),
         CURRENT_SETTINGS_POLICY_PATTERN.test(patchedSource),
       ];
@@ -2087,7 +2081,6 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
             `"local-environments":${localEnvironmentsDescriptor},"${SETTINGS_SLUG}":${localEnvironmentsDescriptor},worktrees:`,
         )
         .replace(CURRENT_SETTINGS_VISIBILITY_CASES, PATCHED_SETTINGS_VISIBILITY_CASES)
-        .replace(CURRENT_SETTINGS_LOADING_CASES, PATCHED_SETTINGS_LOADING_CASES)
         .replace(CURRENT_SETTINGS_PRELOAD_SLUGS, PATCHED_SETTINGS_PRELOAD_SLUGS)
         .replace(
           CURRENT_SETTINGS_POLICY_PATTERN,

@@ -12,6 +12,7 @@ const test = require("node:test");
 const manifest = require("./feature.json");
 const descriptors = require("./patch.js");
 const {
+  applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseHostPlatformPatch,
   matchesLinuxComputerUseHostPlatformContract,
 } = require("../../scripts/patches/impl/computer-use.js");
@@ -163,53 +164,33 @@ test("malformed patched host-platform variable relationship is rejected byte-ide
   assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
 });
 
-// Current signed Linux main-bundle descriptor and selector contracts. Keep the
-// Windows entry adjacent: both entries inherit the same native plugin metadata.
-const nativeRegistration = "{...n.nc.computerUse,autoInstallOptOutKey:n.sc(n.nc.computerUse.name),isAvailable:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:one}";
-const windowsRegistration = "{...n.nc.computerUse,autoInstallOptOutKey:n.sc(n.nc.computerUse.name),isAvailable:({features:e,platform:t})=>t===`win32`&&e.computerUse}";
-const nativeSelector = "function Nd(e){if(e.platform===`darwin`&&e.marketplacePluginNames.includes(`computer-use`))return e.desktopFeatureAvailability.computerUseNodeRepl?`node-repl`:`legacy-mcp`}";
-const retiredNativeSelector = "function Nd(e){if(!(e.platform!==`darwin`||!e.marketplacePluginNames.includes(`computer-use`)))return e.desktopFeatureAvailability.computerUseNodeRepl?`node-repl`:`legacy-mcp`}";
-const registrationFixture = `var kd=[${nativeRegistration},${windowsRegistration}];${nativeSelector}`;
+const nativeRegistration = "{...n.nc.computerUse,autoInstallOptOutKey:n.sc(n.nc.computerUse.name),isAvailable:({features:e,platform:t})=>(t===`darwin`||t===`win32`)&&e.computerUse}";
+const registrationFixture = `var kd=[${nativeRegistration}];`;
 
 function evaluateNativeRegistration(source) {
   const n = {
     nc: { computerUse: { name: "computer-use", installWhenMissing: true, installWhenMissingRequiresOptIn: true } },
     sc: name => `auto-install-opt-out:${name}`,
   };
-  const one = () => "migration";
-  return new Function("n", "one", `${source};return {descriptors:kd,select:Nd}`)(n, one);
+  return new Function("n", `${source};return kd`)(n);
 }
 
-test("current spread registration enables Linux while preserving native consent and other platforms", () => {
+test("current native registration enables Linux while preserving shared consent metadata", () => {
   const source = applyLinuxComputerUsePluginGatePatch(registrationFixture);
-  const { descriptors, select } = evaluateNativeRegistration(source);
-  const upstream = evaluateNativeRegistration(registrationFixture).descriptors;
-  assert.equal(descriptors.length, 3);
-  const native = descriptors.find(d => d.isAvailable({ platform: "linux", features: { computerUse: true } }));
-  const mac = descriptors.find(d => d.migrate);
-  const windows = descriptors.find(d => d.isAvailable({ platform: "win32", features: { computerUse: true } }));
+  const [native] = evaluateNativeRegistration(source);
+  assert.equal(evaluateNativeRegistration(source).length, 1);
   for (const platform of ["linux", "darwin", "win32", "freebsd"]) {
     for (const computerUse of [false, true]) {
       const context = { platform, features: { computerUse } };
-      assert.equal(native.isAvailable(context), computerUse && platform === "linux");
-      assert.equal(windows.isAvailable(context), upstream[1].isAvailable(context));
-      assert.equal(mac.isAvailable(context), upstream[0].isAvailable(context));
+      assert.equal(
+        native.isAvailable(context),
+        computerUse && ["linux", "darwin", "win32"].includes(platform),
+      );
     }
   }
   assert.equal(native.installWhenMissingRequiresOptIn, true);
   assert.equal(native.installWhenMissing, true);
-  assert.equal(native.autoInstallOptOutKey, upstream[0].autoInstallOptOutKey);
-  assert.equal(native.migrate, undefined);
-  assert.equal(mac.migrate(), "migration");
-  assert.ok(source.includes(nativeRegistration));
-  assert.ok(source.includes(windowsRegistration));
-  for (const platform of ["linux", "darwin", "win32"]) {
-    for (const computerUseNodeRepl of [false, true]) {
-      const args = { platform, marketplacePluginNames: ["computer-use"], desktopFeatureAvailability: { computerUseNodeRepl } };
-      assert.equal(select(args), platform === "linux" ? "legacy-mcp" : platform === "darwin" ? computerUseNodeRepl ? "node-repl" : "legacy-mcp" : undefined);
-      assert.equal(select({ ...args, marketplacePluginNames: [] }), undefined);
-    }
-  }
+  assert.equal(native.autoInstallOptOutKey, "auto-install-opt-out:computer-use");
   assert.equal(applyLinuxComputerUsePluginGatePatch(source), source);
 });
 
@@ -217,21 +198,16 @@ test("native registration matching follows renamed aliases and preserves unrelat
   const browser = "{...n.nc.browser,isAvailable:({features:e})=>e.computerUse||e.externalBrowserUse}";
   const fixture = registrationFixture.replace("var kd=[", `var kd=[${browser},`).replaceAll("n.nc", "q.registry").replaceAll("n.sc", "q.optOut").replaceAll("features:e,platform:t", "features:flags,platform:os").replaceAll("t===", "os===").replaceAll("e.computerUse", "flags.computerUse");
   const result = applyLinuxComputerUsePluginGatePatch(fixture);
-  assert.ok(result.includes("os===`linux`&&flags.computerUse"));
+  assert.ok(result.includes("os===`linux`)&&flags.computerUse"));
   assert.ok(result.includes(browser.replaceAll("n.nc", "q.registry").replaceAll("e.computerUse", "flags.computerUse")));
 });
 
 for (const [name, fixture] of [
-  ["missing registration with usable selector", nativeSelector],
+  ["missing registration", "var kd=[];"],
   ["duplicate native registration", registrationFixture.replace(nativeRegistration, `${nativeRegistration},${nativeRegistration}`)],
-  ["mixed patched and original registration", registrationFixture.replace(nativeRegistration, `${nativeRegistration},${nativeRegistration.replace("t===`darwin`", "(t===`darwin`||t===`linux`)")}`)],
+  ["mixed patched and original registration", registrationFixture + applyLinuxComputerUsePluginGatePatch(registrationFixture)],
   ["wrong opt-out reference", registrationFixture.replace("n.sc(n.nc.computerUse.name)", "n.sc(n.nc.browser.name)")],
-  ["partial descriptor", registrationFixture.replace(",migrate:one", "")],
-  ["missing Windows descriptor", registrationFixture.replace(`,${windowsRegistration}`, "")],
-  ["unsupported gate", registrationFixture.replace("t===`darwin`&&e.computerUse", "t===`darwin`||e.computerUse")],
-  ["missing selector", registrationFixture.replace(nativeSelector, "")],
-  ["duplicate selectors", registrationFixture + nativeSelector],
-  ["retired selector", registrationFixture.replace(nativeSelector, retiredNativeSelector)],
+  ["unsupported gate", registrationFixture.replace("(t===`darwin`||t===`win32`)&&e.computerUse", "t===`darwin`||e.computerUse")],
 ]) {
   test(`native plugin patch rejects ${name}`, () => {
     assert.throws(() => applyLinuxComputerUsePluginGatePatch(fixture), /Required Linux Computer Use plugin gate patch failed/);
@@ -239,35 +215,35 @@ for (const [name, fixture] of [
 }
 
 
-test("native plugin patch rejects partial or duplicate Linux registrations", () => {
+test("native plugin patch rejects partial Linux registrations", () => {
   const patched = applyLinuxComputerUsePluginGatePatch(registrationFixture);
-  const linux = "{...n.nc.computerUse,autoInstallOptOutKey:n.sc(n.nc.computerUse.name),isAvailable:({features:e,platform:t})=>t===`linux`&&e.computerUse}";
   for (const bad of [
-    patched.replace(linux, `${linux},${linux}`),
-    patched.replace(linux, linux.replace("&&e.computerUse", "||e.computerUse")),
-    patched.replace(linux, linux.replace(".name)", ".name),installWhenMissing:!0")),
-    patched.replace(linux, linux.replace("&&e.computerUse}", "&&e.computerUse,migrate:one}")),
+    patched.replace("||t===`linux`", "||t===`freebsd`"),
+    patched.replace(")&&e.computerUse", ")||e.computerUse"),
+    patched.replace(".name),isAvailable", ".name),installWhenMissing:!0,isAvailable"),
   ]) {
     assert.throws(() => applyLinuxComputerUsePluginGatePatch(bad), /Required Linux Computer Use plugin gate patch failed/);
   }
 });
 
-// Reject changed complete selectors, including a changed owner beside a valid one.
-test("marketplace selector rejects changed expressions and companion owners", () => {
-  const patched = applyLinuxComputerUsePluginGatePatch(registrationFixture);
-  const patchedSelector = patched.slice(patched.indexOf("function Nd"));
-  const registry = registrationFixture.replace(nativeSelector, "");
-  for (const selector of [nativeSelector, patchedSelector]) {
-    for (const changed of [
-      selector.replace("computerUseNodeRepl", "newGate"),
-      selector.replace("`legacy-mcp`", "`other-backend`"),
-      selector.replace("e.desktopFeatureAvailability", "other.desktopFeatureAvailability"),
-      selector.replace("e.platform", "other.platform"),
-      selector.replace("return ", "return extra&&"),
-      selector.replace("`legacy-mcp`", "`legacy-mcp`&&e.newGate"),
-    ]) {
-      assert.throws(() => applyLinuxComputerUsePluginGatePatch(registry + changed), /marketplace selector/);
-      assert.throws(() => applyLinuxComputerUsePluginGatePatch(registry + selector + changed), /marketplace selector/);
-    }
+test("desktop feature gate enables Linux in the unique current Windows override", () => {
+  const current = "function features(e,n,r){let i=r===`win32`&&n.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{...e,computerUse:!0}:e,o=i;return o}";
+  const patched = applyLinuxComputerUseFeaturePatch(current);
+  assert.match(patched, /r===`linux`\?\{\.\.\.e,computerUse:!0\}:r===`win32`/);
+  assert.equal(applyLinuxComputerUseFeaturePatch(patched), patched);
+  assert.equal(new Function("e", "n", "r", `${patched};return features(e,n,r).computerUse`)(
+    { computerUse: false }, {}, "linux",
+  ), true);
+});
+
+test("desktop feature gate rejects missing, duplicate, and partial current contracts byte-identically", () => {
+  const current = "function features(e,n,r){let i=r===`win32`&&n.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{...e,computerUse:!0}:e;return i}";
+  const patched = applyLinuxComputerUseFeaturePatch(current);
+  for (const source of [
+    current + current,
+    patched + current,
+    current.replace("computerUse:!0", "computerUse:!1"),
+  ]) {
+    assert.equal(applyLinuxComputerUseFeaturePatch(source), source);
   }
 });

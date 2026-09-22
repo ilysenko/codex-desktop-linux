@@ -1,5 +1,6 @@
 "use strict";
 
+const TRAY_USAGE_IDENTIFIER = "[A-Za-z_$][\\w$]*";
 const TRAY_USAGE_ANCHOR =
   /getNativeTrayMenuItems\(\)\{let\{pinnedThreads:[A-Za-z_$][\w$]*,recentThreads:[A-Za-z_$][\w$]*,runningThreads:[A-Za-z_$][\w$]*,unreadThreads:[A-Za-z_$][\w$]*,usageLimits:([A-Za-z_$][\w$]*)\}=this\.trayMenuThreads,/g;
 const TRAY_USAGE_WINDOW_LENGTH = 6_000;
@@ -21,7 +22,7 @@ function trayUsageGates(source, patched) {
       ? "process\\.platform!==`darwin`&&process\\.platform!==`linux`"
       : "process\\.platform!==`darwin`";
     const gatePattern = new RegExp(
-      `([,\\[])${platformGate}\\|\\|${escapedUsageLimitsAlias}\\.length===0\\?\\[\\]:`,
+      `([,\\[])(${TRAY_USAGE_IDENTIFIER})=${platformGate}\\|\\|${escapedUsageLimitsAlias}\\.length===0\\?\\[\\]:`,
     );
     const labelMapPattern = new RegExp(
       `${escapedUsageLimitsAlias}\\.map\\(\\(\\{label:([A-Za-z_$][\\w$]*)\\}\\)=>\\(\\{label:\\1,enabled:!1\\}\\)\\)`,
@@ -40,6 +41,7 @@ function trayUsageGates(source, patched) {
       index: windowStart + gate.index,
       match: gate[0],
       prefix: gate[1],
+      resultAlias: gate[2],
       usageLimitsAlias,
     });
   }
@@ -65,8 +67,8 @@ function applyTrayUsageMainPatch(source) {
     return source;
   }
 
-  const [{ index, match, prefix, usageLimitsAlias }] = trayUsageGates(source, false);
-  const replacement = `${prefix}process.platform!==\`darwin\`&&process.platform!==\`linux\`||${usageLimitsAlias}.length===0?[]:`;
+  const [{ index, match, prefix, resultAlias, usageLimitsAlias }] = trayUsageGates(source, false);
+  const replacement = `${prefix}${resultAlias}=process.platform!==\`darwin\`&&process.platform!==\`linux\`||${usageLimitsAlias}.length===0?[]:`;
   const patched = `${source.slice(0, index)}${replacement}${source.slice(index + match.length)}`;
   if (trayUsageMainContract(patched) !== "patched") {
     console.warn(

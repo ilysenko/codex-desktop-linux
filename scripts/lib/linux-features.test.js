@@ -34,6 +34,7 @@ test("known retired feature ids are ignored while arbitrary unknown ids fail", (
       "deferred-update-build",
       "example-feature",
       "open-target-discovery",
+      "project-task-sort",
       "ssh-command-wrapper",
       "x11-ewmh-computer-use",
       "zed-opener",

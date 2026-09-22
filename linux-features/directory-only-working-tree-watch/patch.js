@@ -121,7 +121,8 @@ const LOCAL_FILE_WATCH_METHOD =
   new RegExp(`${LOCAL_FILE_WATCH_METHOD_PREFIX}${LOCAL_FILE_WATCH_CURRENT_BODY}`, "gu");
 const CURRENT_LOCAL_HOST_CLASS = new RegExp(
   `var (?<localHostClass>${IDENTIFIER_PATTERN})=class\\{` +
-    "runsInsideWsl;hostConfig=\\{id:`local`,display_name:`Local`,kind:`local`\\};" +
+    `runsInsideWsl;workspaceRoot=new ${IDENTIFIER_PATTERN}\\(this\\);` +
+    "hostConfig=\\{id:`local`,display_name:`Local`,kind:`local`\\};" +
     "id=`local`;isLocal=!0;",
   "gu",
 );
@@ -1714,7 +1715,7 @@ function currentContractReason(records, bundleCount) {
   );
   const branches = relevant.reduce((count, record) => count + record.branchCallCount, 0);
   return (
-    "Current 26.901.20858 working-tree contract rejected: " +
+    "Current working-tree contract rejected: " +
     `Found ${relevant.length} current local startFileWatch bundles ` +
     `(${targetNames.join(", ") || "none"}), ${parcelContractCount} Parcel route contracts, ` +
     `and ${workerParcelContractCount} in worker.js across ${bundleCount} build bundles; ` +

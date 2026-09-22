@@ -153,52 +153,31 @@ const linuxSettingsKeys = {
 };
 
 function applyLinuxComputerUseFeaturePatch(currentSource) {
-  const patchedFeaturePattern =
-    /function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{env:[A-Za-z_$][\w$]*=process\.env,platform:[A-Za-z_$][\w$]*=process\.platform\}=\{\}\)\{return [A-Za-z_$][\w$]*===`linux`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:/;
-  const currentPatchedFeaturePattern =
-    /let [A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*===`linux`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*===`win32`&&[A-Za-z_$][\w$]*\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*,/;
-  const currentChainedPatchedFeaturePattern =
-    /,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*===`linux`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*===`win32`&&[A-Za-z_$][\w$]*\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*,/;
-  const windowsOnlyFeaturePattern =
-    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\{env:([A-Za-z_$][\w$]*)=process\.env,platform:([A-Za-z_$][\w$]*)=process\.platform\}=\{\}\)\{return \4!==`win32`\|\|\3\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==`1`\?\2:\{\.\.\.\2,computerUse:!0,computerUseNodeRepl:!0\}\}/g;
-  const currentWindowsOnlyFeaturePattern =
-    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`win32`&&([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0,computerUseNodeRepl:!0\}:\4,/g;
-  const chainedWindowsOnlyFeaturePattern =
-    /,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`win32`&&([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0,computerUseNodeRepl:!0\}:\4,/g;
-
-  let changed = false;
-  let patchedSource = currentSource.replace(
-    windowsOnlyFeaturePattern,
-    (_, fnName, featuresVar, envVar, platformVar) => {
-      changed = true;
-      return `function ${fnName}(${featuresVar},{env:${envVar}=process.env,platform:${platformVar}=process.platform}={}){return ${platformVar}===\`linux\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${platformVar}!==\`win32\`||${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==\`1\`?${featuresVar}:{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}}`;
-    },
+  const identifier = "[A-Za-z_$][\\w$]*";
+  const currentPattern = new RegExp(
+    `let (${identifier})=(${identifier})===\`win32\`&&(${identifier})\\.` +
+      `CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===\`1\`\\?\\{\\.\\.\\.(${identifier}),` +
+      `computerUse:!0\\}:\\4,`,
+    "g",
   );
-  patchedSource = patchedSource.replace(
-    currentWindowsOnlyFeaturePattern,
-    (_, gateVar, platformVar, envVar, featuresVar) => {
-      changed = true;
-      return `let ${gateVar}=${platformVar}===\`linux\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${platformVar}===\`win32\`&&${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===\`1\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${featuresVar},`;
-    },
+  const patchedPattern = new RegExp(
+    `let (${identifier})=(${identifier})===\`linux\`\\?\\{\\.\\.\\.(${identifier}),computerUse:!0\\}:` +
+      `\\2===\`win32\`&&(${identifier})\\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===\`1\`\\?` +
+      `\\{\\.\\.\\.\\3,computerUse:!0\\}:\\3,`,
+    "g",
   );
-  patchedSource = patchedSource.replace(
-    chainedWindowsOnlyFeaturePattern,
-    (_, gateVar, platformVar, envVar, featuresVar) => {
-      changed = true;
-      return `,${gateVar}=${platformVar}===\`linux\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${platformVar}===\`win32\`&&${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===\`1\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${featuresVar},`;
-    },
-  );
-
-  if (changed) {
-    return patchedSource;
-  }
-
-  if (
-    patchedFeaturePattern.test(currentSource) ||
-    currentPatchedFeaturePattern.test(currentSource) ||
-    currentChainedPatchedFeaturePattern.test(currentSource)
-  ) {
-    return currentSource;
+  const current = [...currentSource.matchAll(currentPattern)];
+  const patched = [...currentSource.matchAll(patchedPattern)];
+  if (patched.length === 1 && current.length === 0) return currentSource;
+  if (current.length === 1 && patched.length === 0) {
+    const match = current[0];
+    const [, gateVar, platformVar, envVar, featuresVar] = match;
+    const replacement =
+      `let ${gateVar}=${platformVar}===\`linux\`?{...${featuresVar},computerUse:!0}:` +
+      `${platformVar}===\`win32\`&&${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===\`1\`?` +
+      `{...${featuresVar},computerUse:!0}:${featuresVar},`;
+    return currentSource.slice(0, match.index) + replacement +
+      currentSource.slice(match.index + match[0].length);
   }
 
   if (currentSource.includes("CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE")) {

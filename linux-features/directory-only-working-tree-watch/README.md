@@ -17,8 +17,8 @@ coverage.
 
 ## Current OpenAI working-tree route
 
-OpenAI Desktop `26.901.20858` has a Linux-specific Parcel working-tree path in
-the official Linux package. That path calls `@parcel/watcher` directly instead of
+The current signed OpenAI Desktop package has a Linux-specific Parcel
+working-tree path. That path calls `@parcel/watcher` directly instead of
 the local `startFileWatch()` method this feature intercepts. The current route
 also forwards the caller's Git-ignore paths. When this feature
 is selected, its current-package patch reroutes that one local recursive

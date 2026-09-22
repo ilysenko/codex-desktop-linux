@@ -6,7 +6,7 @@ const descriptors = require("./patch.js");
 
 // The current selector boundary: unified prerequisites, platform, feature flag,
 // and the legacy macOS service, followed by independent browser selection.
-const selector = 'function select(f,l,t,u){let p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null,m=t.computerUse&&(t.computerUseNodeRepl||p)&&(!t.browserUseTinysky||l.platform!==`darwin`||u.enabled),h=[];return f&&t.browser&&h.push(`browser`),p&&h.push(`computer`),{computerUse:m,cuaReplSurfaces:h}}function configure(e){let i=pluginRoot(),a=path.default.join(i,`.mcp.json`),l={};e.surfaces.includes(`computer`)&&(l.sky=`@oai/sky/service`);let c={env:{CUA_REPL_ENABLED_SURFACES:e.surfaces.join(`,`),[constants.Il]:JSON.stringify(l)}};return c}';
+const selector = 'function select(f,l,t,u){let p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null,m=t.computerUse&&(!t.browserUseTinysky||l.platform!==`darwin`||u.enabled),h=[];return f&&t.browser&&h.push(`browser`),p&&h.push(`computer`),{computerUse:m,cuaReplSurfaces:h}}function configure(e){let i=pluginRoot(),a=path.default.join(i,`.mcp.json`),l={};e.surfaces.includes(`computer`)&&(l.sky=`@oai/sky/service`);let c={env:{CUA_REPL_ENABLED_SURFACES:e.surfaces.join(`,`),[constants.Il]:JSON.stringify(l)}};return c}';
 function patch(source) {
   return descriptors.filter(d => ["ui-feature", "unified-runtime"].includes(d.id))
     .reduce((s, d) => d.apply(s), source);
@@ -43,7 +43,7 @@ test("unified selector drift and ambiguous owners fail the build", () => {
 test("disabled native access does not leave a second native Node REPL service enabled", () => {
   const patched = patch(selector);
   const select = vm.runInNewContext(`(${patched.slice(0, patched.indexOf("function configure"))})`);
-  assert.equal(select(true, { platform: "linux" }, { computerUse: true, computerUseNodeRepl: true },
+  assert.equal(select(true, { platform: "linux" }, { computerUse: true },
     { enabled: false, paths: {} }).computerUse, false);
 });
 

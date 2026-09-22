@@ -17,7 +17,7 @@ function officialMainFixture(alias = "i") {
   return [
     "getNativeTrayMenuItems(){let{pinnedThreads:e,recentThreads:t,runningThreads:n,unreadThreads:r,usageLimits:",
     `${alias}}=this.trayMenuThreads,a=[{label:\`Threads\`}],s=[...a,`,
-    `process.platform!==\`darwin\`||${alias}.length===0?[]:[{label:\`Usage\`,enabled:!1},...${alias}.map(({label:e})=>({label:e,enabled:!1}))]`,
+    `f=process.platform!==\`darwin\`||${alias}.length===0?[]:[{label:\`Usage\`,enabled:!1},...${alias}.map(({label:e})=>({label:e,enabled:!1}))]`,
     "].filter(e=>e.length>0).flatMap((e,t)=>t===0?e:[{type:`separator`},...e]);return[...s]}",
   ].join("");
 }
@@ -73,7 +73,7 @@ test("main-process patch enables usage labels on Linux and is idempotent", () =>
   const patched = applyTrayUsageMainPatch(source);
   assert.notEqual(patched, source);
   assert.equal(trayUsageMainContract(patched), "patched");
-  assert.match(patched, /process\.platform!==`darwin`&&process\.platform!==`linux`\|\|i\.length===0/);
+  assert.match(patched, /f=process\.platform!==`darwin`&&process\.platform!==`linux`\|\|i\.length===0/);
   assert.equal(applyTrayUsageMainPatch(patched), patched);
 });
 
@@ -90,13 +90,10 @@ test("drifted, duplicate, and mixed contracts remain byte-identical", () => {
   const drifted = current.replace("process.platform!==`darwin`", "process.platform===`darwin`");
   const unrelatedLookalike =
     "function unrelated(){let x=process.platform!==`darwin`||i.length===0?[]:[...i.map(({label:e})=>({label:e,enabled:!1}))];return[x]}";
-  const retiredAssignedShape = current.replace(
-    "s=[...a,process.platform",
-    "s=[...a,f=process.platform",
-  );
+  const retiredUnassignedShape = current.replace("f=process.platform", "process.platform");
   const sources = [
     drifted,
-    retiredAssignedShape,
+    retiredUnassignedShape,
     current + current,
     patched + patched,
     current + patched,
