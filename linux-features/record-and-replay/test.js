@@ -37,7 +37,7 @@ function currentComposerTranscriptFixture() {
   return "async function send(){let p=`Create an image of a neon cabin`,c={setTranscript(){}},a={dictationSessionId:`session-1`,performance:{mark(){}}},i={action:`send`,recovery:null},s={onRecoveryChange:null,onTranscriptRetry:async()=>{},onTranscriptSend:async(t,e)=>globalThis.events.push([`send`,t,e]),onTranscriptInsert:async(t,e)=>globalThis.events.push([`insert`,t,e]),onTranscriptCancel:()=>globalThis.events.push([`cancel`])},te={current:i};if(p.length>0){c==null?une.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:p}):c.setTranscript(p),a.performance.mark(`transcript_dispatched`);let e=c==null?void 0:a.dictationSessionId;i.recovery!=null&&s.onRecoveryChange!=null?await s.onTranscriptRetry?.(p,e):i.action===`send`?await s.onTranscriptSend(p,e):(await s.onTranscriptInsert(p,e),te.current===i&&te.current.action===`send`&&await s.onTranscriptSend(``,e))}else s.onTranscriptCancel?.()}";
 }
 
-function currentChronicleControllerFixture() {
+function retiredChronicleControllerFixture() {
   return [
     "var Base={Tf:class{}};",
     "var Hse=class{dependencies;pendingStatus=null;constructor(e){this.dependencies=e}status(){return this.pendingStatus??=this.request(`skysightStatus`).finally(()=>{this.pendingStatus=null}),this.pendingStatus}enable(){return this.request(`skysightStart`)}pause(e){return this.requestPauseResume(`skysightPause`,e)}resume(){return this.requestPauseResume(`skysightResume`)}getSettings(){return this.dependencies.request({method:`skysightGetSettings`,params:{}})}updateSettings(e){return this.dependencies.request({method:`skysightUpdateSettings`,params:{settings:e}})}clearHistory(e,t){return this.dependencies.request({method:`skysightClearHistory`,params:{interval:t,scope:e}})}requestPauseResume(e,t){return this.dependencies.request({method:e,params:t==null?{}:{duration:t}})}request(e){return this.dependencies.request({method:e,params:{}})}async stopRecorder(){let e=await this.request(`skysightStop`);return e}};",
@@ -47,6 +47,19 @@ function currentChronicleControllerFixture() {
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
     "var Host=class{constructor(){this.options=appOptions;let i={};this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>[],()=>[],{}):void 0}}};",
     'var bridge={"get-global-state":async({key:e})=>null};',
+  ].join("");
+}
+
+function currentChronicleControllerFixture() {
+  return [
+    "var Base={Tf:class{}};",
+    "var Hse=class{dependencies;cachedStatus={state:`stopped`};desiredState=`stopped`;pendingOperation=Promise.resolve();finishPendingPauseResume=null;pendingStatus=null;constructor(e){this.dependencies=e}shouldReconcileAfterServiceRespawn(){return this.desiredState===`running`}status(){return this.pendingStatus??=this.request(`skysightStatus`).then(e=>(e.state===`stopped`&&this.finishPendingPauseResume?.(e),e)).finally(()=>{this.pendingStatus=null}),this.pendingStatus}enable(){return this.desiredState=`running`,this.runSerialized(()=>this.withFailedEnableRollback(async()=>this.request(`skysightStart`)))}pause(e){return this.requestPauseResume(`skysightPause`,e)}resume(){return this.requestPauseResume(`skysightResume`)}getSettings(){return this.dependencies.request({method:`skysightGetSettings`,params:{}})}updateSettings(e){return this.dependencies.request({method:`skysightUpdateSettings`,params:{settings:e}})}clearHistory(e,t){return this.dependencies.request({method:`skysightClearHistory`,params:{interval:t,scope:e}})}requestPauseResume(e,t){return new Promise((n,r)=>{this.finishPendingPauseResume=n,this.dependencies.request({method:e,params:t==null?{}:{duration:t}}).then(n,r)}).finally(()=>{this.finishPendingPauseResume=null})}request(e){return this.dependencies.request({method:e,params:{}})}async withFailedEnableRollback(e){try{return await e()}catch(e){try{await this.stopRecorder()}catch(t){throw AggregateError([e,t],`Failed to enable Chronicle and stop the recorder during rollback`)}throw e}}async stopRecorder(){let e=await this.request(`skysightStop`);return e}runSerialized(e){let t=this.pendingOperation.then(e,e);return this.pendingOperation=t.then(()=>{},()=>{}),t}};",
+    "var $O=class extends Base.Tf{constructor(e,t,n,r,i,a){super(),this.appServerConnection=e,this.getController=t,this.isEligible=n,this.loadApplications=r,this.loadApplicationsByBundleIdentifier=i,this.history=a}async getState(){let e=this.#i(),[t,n]=await Promise.all([this.appServerConnection.isChronicleFeatureConfigured(),e.status()]);return this.#t(t,n.state)}async retryActivation(){this.#r();try{await this.appServerConnection.reconcileSkysightChronicle()}catch{}return this.getState()}async setEnabled(e){if(!e)return this.#e();try{let e=await this.appServerConnection.enableSkysightChronicle();return await this.#n(!0),this.#t(!0,e.state)}catch(e){if(e===`pending`)return{enabled:!0,recorderState:`stopped`,activationState:`waiting_for_permissions`};throw e}}async pause(){return this.#i().pause()}async resume(){return this.appServerConnection.resumeChronicle()}async getSettings(){return this.#i().getSettings()}async updateSettings(e){return this.#i().updateSettings(e)}async listApplications(){return this.#r(),this.loadApplications()}async resolveApplications(e){return this.#r(),this.loadApplicationsByBundleIdentifier(e)}async listHistory(){return this.#r(),this.history.list()}async listHistorySuggestions(){return this.#r(),this.history.listSuggestions()}async listHistorySummaryIntervals({sinceMs:e}){return this.#r(),this.history.listSummaryIntervals(e)}async clearHistory(e,t){await this.#i().clearHistory(e,t)}async#e(){return this.#i().stopRecorder()}#t(e,t){return{enabled:e,recorderState:t}}async#n(e){await this.appServerConnection.sendAppServerRequest(`config/value/write`,{keyPath:`chronicle`,value:e})}#r(){if(!this.isEligible())throw Error(`Chronicle is not available`)}#i(){this.#r();let e=this.getController();if(e==null)throw Error(`Chronicle is unavailable`);return e}};",
+    "function Cr(){return{skysight:false}}let N=process.platform===`darwin`,xe;var Ce={requestComputerUseWorker(){}},Xe={reconcileComputerHistoryPluginInstallation(){}},U={broadcastQueryCacheInvalidation(){}},V={codexHome:`/tmp`};async function archive(e){return e}",
+    "N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{await archive({codexHome:V.codexHome,reason:`skysight_gate_enabled`})&&U.broadcastQueryCacheInvalidation([`skills`])}}));",
+    "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
+    "var Host=class{constructor(){this.options=appOptions;let i={};this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>[],()=>[],{}):void 0}}};",
+    "var bridge={\"get-global-state\":async({key:e})=>null};",
   ].join("");
 }
 
@@ -543,6 +556,14 @@ test("record-and-replay rejects ambiguous Chronicle controller contracts byte-id
   const current = currentChronicleControllerFixture();
   const source = current + current;
   assert.equal(applyChronicleSkysightMainBridgePatch(source), source);
+});
+
+test("record-and-replay rejects the retired Chronicle controller contract byte-identically", () => {
+  const source = retiredChronicleControllerFixture();
+  const result = captureWarns(() => applyChronicleSkysightMainBridgePatch(source));
+  assert.equal(result.value, source);
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /coherent current Chronicle controller contract/);
 });
 
 test("record-and-replay docs mention pause resume and Chronicle-compatible resources", () => {
