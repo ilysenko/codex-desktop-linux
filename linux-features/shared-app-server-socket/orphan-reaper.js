@@ -3,6 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { readSocketPath } = require("./socket-path.js");
 
 const socketPath = process.argv[2];
 if (!socketPath) {
@@ -56,7 +57,7 @@ function ownerIsDead(ownerPid, ownerStartTime) {
   return owner == null || owner.state === "Z" || owner.startTime !== ownerStartTime;
 }
 
-function listenerInodes() {
+function listenerInodes(targetPath = socketPath) {
   const inodes = new Set();
   const lines = fs.readFileSync("/proc/net/unix", "utf8").split("\n");
   for (const line of lines) {
@@ -67,7 +68,7 @@ function listenerInodes() {
       match != null &&
       match[1] === "0001" &&
       match[2] === "01" &&
-      match[4] === socketPath
+      match[4] === targetPath
     ) {
       inodes.add(match[3]);
     }
@@ -205,9 +206,15 @@ function unchangedLock(snapshot) {
   }
 }
 
-function socketPathState(snapshot) {
+function socketPathState(snapshot, allowMissingTarget = false) {
   try {
-    return sameIdentity(snapshot, fs.lstatSync(socketPath)) ? "same" : "changed";
+    const current = readSocketPath(socketPath, fs, expectedUid);
+    return sameIdentity(snapshot.identity, current.identity) &&
+      current.targetPath === snapshot.targetPath &&
+      ((current.target == null && (snapshot.target == null || allowMissingTarget)) ||
+       (current.target != null && sameIdentity(snapshot.target, current.target))) &&
+      (snapshot.parent == null || sameIdentity(snapshot.parent, current.parent))
+      ? "same" : "changed";
   } catch (error) {
     if (error?.code === "ENOENT") return "missing";
     throw error;
@@ -224,17 +231,14 @@ async function reapOrphan() {
 
   let socket;
   try {
-    socket = fs.lstatSync(socketPath);
+    socket = readSocketPath(socketPath, fs, expectedUid);
   } catch (error) {
     if (error?.code === "ENOENT") return;
     throw error;
   }
-  if (!socket.isSocket()) throw new Error("shared app-server path is not a socket");
-  if (expectedUid != null && socket.uid !== expectedUid) {
-    throw new Error("shared app-server socket has unexpected owner");
-  }
+  if (socket.target == null) return;
 
-  const inodes = listenerInodes();
+  const inodes = listenerInodes(socket.targetPath);
   if (inodes.length === 0) return;
   if (lock.authorityPid == null || lock.authorityStartTime == null) {
     throw new Error("live shared app-server lock lacks an authority identity");
@@ -249,7 +253,7 @@ async function reapOrphan() {
   }
   const targets = verifiedOrphanTargets(lock, listeners);
 
-  const verifiedInodes = listenerInodes();
+  const verifiedInodes = listenerInodes(socket.targetPath);
   const currentAuthority = readProcess(lock.authorityPid);
   if (
     !unchangedLock(lock) ||
@@ -274,16 +278,16 @@ async function reapOrphan() {
   const deadline = Date.now() + 3000;
   while (
     Date.now() < deadline &&
-    (listenerInodes().includes(inode) || targets.some((target) => isRunning(target)))
+    (listenerInodes(socket.targetPath).includes(inode) || targets.some((target) => isRunning(target)))
   ) {
     await delay(50);
   }
-  if (listenerInodes().includes(inode) || targets.some((target) => isRunning(target))) {
+  if (listenerInodes(socket.targetPath).includes(inode) || targets.some((target) => isRunning(target))) {
     throw new Error("orphaned shared app-server authority did not stop");
   }
 
-  const remainingInodes = listenerInodes();
-  const finalSocketState = socketPathState(socket);
+  const remainingInodes = listenerInodes(socket.targetPath);
+  const finalSocketState = socketPathState(socket, true);
   if (
     !unchangedLock(lock) ||
     !ownerIsDead(lock.ownerPid, lock.ownerStartTime) ||

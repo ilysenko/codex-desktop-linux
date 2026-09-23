@@ -233,6 +233,7 @@ attached_cli_snapshot() {
     local record_dir=$1 proc_root=$2 record_path uid expected_app socket desktop codex
     local lock_path socket_parent record_metadata lock_metadata owner_pid owner_start
     local authority_pid authority_start canonical_codex codex_metadata canonical_metadata
+    local listener_socket socket_alias_metadata
 
     unset ATTACHED_CLI_SNAPSHOT
     unset ATTACHED_CLI_VERIFIED_CODEX ATTACHED_CLI_VERIFIED_SOCKET
@@ -283,7 +284,21 @@ attached_cli_snapshot() {
     [[ -n $socket_parent && $socket_parent != "$socket" ]] || return "$ATTACHED_CLI_UNSAFE"
     attached_cli_require_metadata "$socket_parent" directory 700 "$uid" || return
     attached_cli_snapshot_append "$ATTACHED_CLI_META_RAW"
-    attached_cli_require_metadata "$socket" socket 600 "$uid" || return
+    listener_socket=$socket
+    attached_cli_read_metadata "$socket" || return
+    if [[ $ATTACHED_CLI_META_KIND == "symbolic link" ]]; then
+        [[ $ATTACHED_CLI_META_UID == "$uid" ]] || return "$ATTACHED_CLI_UNSAFE"
+        socket_alias_metadata=$ATTACHED_CLI_META_RAW
+        listener_socket=$ATTACHED_CLI_META_LINK
+        [[ $listener_socket == /* &&
+            $(command readlink -e -- "$listener_socket") == "$listener_socket" ]] || return "$ATTACHED_CLI_UNSAFE"
+        attached_cli_snapshot_append "$socket_alias_metadata"
+        attached_cli_require_metadata "${listener_socket%/*}" directory 700 "$uid" || return
+        attached_cli_snapshot_append "$ATTACHED_CLI_META_RAW"
+        attached_cli_read_metadata "$socket" || return
+        [[ $ATTACHED_CLI_META_RAW == "$socket_alias_metadata" ]] || return "$ATTACHED_CLI_UNSAFE"
+    fi
+    attached_cli_require_metadata "$listener_socket" socket 600 "$uid" || return
     attached_cli_snapshot_append "$ATTACHED_CLI_META_RAW"
 
     lock_path=$socket.lock
@@ -306,7 +321,7 @@ attached_cli_snapshot() {
     attached_cli_read_process \
         "$proc_root" "$authority_pid" "$authority_start" "$owner_pid" "$canonical_codex" "$uid" || return
     attached_cli_read_authority_command "$proc_root" "$authority_pid" "$codex" "$socket" "$uid" || return
-    attached_cli_read_listener "$proc_root" "$authority_pid" "$socket" "$uid" || return
+    attached_cli_read_listener "$proc_root" "$authority_pid" "$listener_socket" "$uid" || return
     attached_cli_read_metadata "$codex" || return
     [[ $ATTACHED_CLI_META_RAW == "$codex_metadata" &&
         $(attached_cli_canonical_executable "$codex") == "$canonical_codex" ]] || return "$ATTACHED_CLI_UNSAFE"
