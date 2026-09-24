@@ -38,6 +38,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Retired the default Quit-confirmation ASAR rewrite. The current signed Linux
+  package is the clean compatibility baseline again, so builds with no enabled
+  feature preserve `resources/app.asar` byte-for-byte and the core patch
+  registry is empty.
 - Remote mobile control now relies on the current upstream account-enrollment
   compatibility and Connections tab resolver instead of patching duplicate
   Linux-specific fallbacks into those paths.
@@ -49,12 +53,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   set.
 
 ### Fixed
-
-- Restored the required Linux Quit-confirmation core patch because the current
-  signed package still opens an unparented synchronous dialog that can remain
-  hidden and block the main process. The patch now requires one unique semantic
-  handler anchor, and release validation derives required patches and their
-  regression tests directly from the registry.
 
 - The documented `UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app`
   invocation (also `make rebuild`, `rebuild-install`, `inspect-upstream`, and

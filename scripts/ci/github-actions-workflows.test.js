@@ -77,6 +77,8 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(signedBaseline, /corePatchDescriptors\(\)/);
   assert.match(signedBaseline, /ciPolicy \}\) => ciPolicy === "required-upstream"/);
   assert.match(signedBaseline, /path\.join\(path\.dirname\(sourcePath\), "test\.js"\)/);
+  assert.match(signedBaseline, /if \(tests\.length > 0\)/);
+  assert.doesNotMatch(signedBaseline, /tests\.length === 0 \|\|/);
   assert.doesNotMatch(
     signedBaseline,
     /scripts\/patches\/core\/[^\s"']+\/test\.js/,

@@ -164,15 +164,17 @@ jobs:
           const tests = corePatchDescriptors()
             .filter(({ ciPolicy }) => ciPolicy === "required-upstream")
             .map(({ sourcePath }) => path.join(path.dirname(sourcePath), "test.js"));
-          if (tests.length === 0 || tests.some((testPath) => !fs.existsSync(testPath))) {
+          if (tests.some((testPath) => !fs.existsSync(testPath))) {
             throw new Error(`required core patch regression test missing: ${tests.join(", ")}`);
           }
-          const result = childProcess.spawnSync(process.execPath, ["--test", ...tests], {
-            env: process.env,
-            stdio: "inherit",
-          });
-          if (result.error) throw result.error;
-          if (result.status !== 0) process.exit(result.status ?? 1);
+          if (tests.length > 0) {
+            const result = childProcess.spawnSync(process.execPath, ["--test", ...tests], {
+              env: process.env,
+              stdio: "inherit",
+            });
+            if (result.error) throw result.error;
+            if (result.status !== 0) process.exit(result.status ?? 1);
+          }
           NODE
       - name: Require signed renderer dependency regression
         env:
