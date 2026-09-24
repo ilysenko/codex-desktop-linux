@@ -19,12 +19,15 @@ const {
 
 const emptyConfig = path.join(__dirname, "..", "..", "linux-features", "features.example.json");
 
-test("the default core patch registry is empty", () => {
-  assert.deepEqual(corePatchDescriptors(), []);
-  assert.deepEqual(allPatchPolicies({ featuresConfigPath: emptyConfig }), []);
+test("the Quit confirmation fix is the only required core patch", () => {
+  const [patch] = corePatchDescriptors();
+  assert.equal(corePatchDescriptors().length, 1);
+  assert.equal(patch.id, "quit-confirmation-focus");
+  assert.equal(patch.ciPolicy, "required-upstream");
+  assert.equal(allPatchPolicies({ featuresConfigPath: emptyConfig }).length, 1);
   assert.deepEqual(
     requiredPatchNamesForProfile("upstream-build", { featuresConfigPath: emptyConfig }),
-    [],
+    ["quit-confirmation-focus"],
   );
 });
 
@@ -40,7 +43,7 @@ test("runner context exposes enabled feature IDs", () => {
   }
 });
 
-test("the default empty core registry leaves official extracted files byte-identical", () => {
+test("an explicitly empty core registry leaves official extracted files byte-identical", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-baseline-"));
   try {
     const mainDir = path.join(root, ".vite", "build");
@@ -55,6 +58,7 @@ test("the default empty core registry leaves official extracted files byte-ident
     patchExtractedApp(root, {
       report,
       featuresConfigPath: emptyConfig,
+      corePatchRoot: path.join(root, "empty-core-registry"),
     });
     assert.equal(fs.readFileSync(main, "utf8"), "official-main\n");
     assert.equal(fs.readFileSync(webview, "utf8"), "official-webview\n");
@@ -76,7 +80,8 @@ test("missing main bundle records enabled feature drift", (t) => {
   const entry = report.patches.find((patch) =>
     patch.name === "feature:frameless-titlebar:main-process");
   assert.ok(entry);
-  assert.equal(report.patches.some((patch) => patch.sourceKind === "core"), false);
+  assert.equal(report.patches.find((patch) => patch.name === "quit-confirmation-focus").ciPolicy,
+    "required-upstream");
   assert.equal(entry.status, "skipped-optional");
   assert.equal(entry.enforceWhenEnabled, true);
   assert.equal(entry.unavailable, true);

@@ -11,5 +11,18 @@ test without it. Every descriptor needs reproduction evidence and a required
 regression test. Remove the patch, its tests, and this record when upstream
 resolves the blocker.
 
-The registry is intentionally empty for the current signed stable package, so
-a build with no enabled feature preserves `resources/app.asar` byte-for-byte.
+## Quit confirmation focus
+
+The current signed stable package still handles **File > Quit ChatGPT** with an
+unparented, synchronous dialog. The main process waits for that response, so a
+dialog that opens behind the app can make the File menu and new requests appear
+stalled until the hidden prompt is answered.
+
+`quit-confirmation-focus/patch.js` finds that handler through its unique
+semantic contract, parents the prompt to a visible app window, and waits for it
+asynchronously. Approval resumes the official Quit path; cancellation leaves
+the app running. The patch does not alter cleanup or MCP shutdown.
+`quit-confirmation-focus/test.js` covers the official confirmation shape,
+approval, cancellation, duplicate Quit requests, window selection, and
+fail-closed drift handling. The default build applies this required patch even
+when no optional Linux features are enabled.

@@ -79,9 +79,9 @@ the official browser registry.
 
 ## Patches and features
 
-`scripts/patches/runner.js` composes any required core compatibility patch with
-descriptors from enabled features. The current core registry is empty. Patch
-reports remain the candidate-acceptance contract.
+`scripts/patches/runner.js` composes the required Linux Quit-confirmation
+compatibility patch with descriptors from enabled features. Patch reports
+remain the candidate-acceptance contract.
 An enabled feature's missing or drifted required surface rejects promotion;
 disabled features do not participate.
 

@@ -55,14 +55,18 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(workflow, /^      - \.github\/workflows\/upstream-build-app\.yml$/m);
   const signedBaseline = job(workflow, "signed-baseline");
   assert.match(signedBaseline, /architecture: \[amd64, arm64\]/);
-  assert.match(signedBaseline, /name: Build clean default baseline/);
+  assert.match(signedBaseline, /name: Build required default baseline/);
   assert.match(signedBaseline, /report\.enabledFeatures\.length !== 0/);
-  assert.match(signedBaseline, /report\.patches\.length !== 0/);
-  assert.match(signedBaseline, /report\.upstreamAppAsar\?\.preservedByteForByte !== true/);
+  assert.match(signedBaseline, /report\.patches\.length !== 1/);
+  assert.match(signedBaseline, /patch\.name !== "quit-confirmation-focus"/);
+  assert.match(signedBaseline, /patch\.ciPolicy !== "required-upstream"/);
+  assert.match(signedBaseline, /patch\.sourceKind !== "core"/);
+  assert.match(signedBaseline, /patch\.status !== "applied"/);
+  assert.match(signedBaseline, /report\.upstreamAppAsar\?\.preservedByteForByte !== false/);
   assert.match(signedBaseline, /report\.upstreamAppAsar\?\.sha256 !== upstreamSha256/);
-  assert.match(signedBaseline, /outputSha256 !== upstreamSha256/);
-  assert.match(signedBaseline, /default build modified official app\.asar/);
-  assert.doesNotMatch(signedBaseline, /quit-confirmation-focus/);
+  assert.match(signedBaseline, /report\.outputAppAsar\?\.sha256 !== outputSha256/);
+  assert.match(signedBaseline, /upstreamSha256 === outputSha256/);
+  assert.match(signedBaseline, /unexpected required default patch report/);
   assert.match(signedBaseline, /name: Require signed renderer dependency regression/);
   assert.doesNotMatch(
     signedBaseline,

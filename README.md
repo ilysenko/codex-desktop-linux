@@ -22,9 +22,9 @@ distinguish from OpenAI's separate **ChatGPT** package.
 
 OpenAI's signed Linux `.deb` is the only upstream source. The official
 Electron runtime, native modules, bundled `codex` and `rg`, code-mode host,
-plugins, libraries, locales, and Owl metadata are reused directly. With no
-optional feature enabled, `resources/app.asar` is preserved byte-for-byte. The
-official ELF runtime and bundled tools remain unchanged.
+plugins, libraries, locales, and Owl metadata are reused directly. A required
+Linux Quit-confirmation compatibility patch changes `resources/app.asar` in
+the default build. The official ELF runtime and bundled tools remain unchanged.
 
 <p align="center">
   <a href="#install">Install</a> ·
@@ -198,7 +198,7 @@ used by both official and Community applications.
 |---|---|---|
 | Official ChatGPT Linux runtime | Always | Copied from the verified official `.deb` data payload |
 | Signed source verification | Always | Pinned repository key → `InRelease` → `Packages` SHA-256 → package SHA-256 |
-| Byte-identical baseline ASAR | Always | Never unpacked when no enabled feature needs an ASAR patch |
+| Focused Quit confirmation | Always | Required core ASAR patch attaches the confirmation to a visible app window |
 | Native deb, RPM, and pacman packages | Manual build | `make deb`, `make rpm`, or `make pacman` |
 | AppImage | Manual build | `make appimage`; no automatic sandbox bypass or bundled updater |
 | Nix flake | Manual build | `nix run github:ilysenko/codex-desktop-linux` |

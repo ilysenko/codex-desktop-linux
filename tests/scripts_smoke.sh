@@ -138,8 +138,9 @@ NODE
 node - <<'NODE'
 const { corePatchDescriptors } = require("./scripts/patches/runner.js");
 const descriptors = corePatchDescriptors();
-if (descriptors.length !== 0) {
-  throw new Error("The default core patch registry must remain empty");
+if (descriptors.length !== 1 || descriptors[0].id !== "quit-confirmation-focus" ||
+    descriptors[0].ciPolicy !== "required-upstream") {
+  throw new Error("Quit confirmation must be the only required core patch");
 }
 NODE
 
