@@ -103,7 +103,7 @@ jobs:
             throw new Error("invalid dispatched release identity");
           }
           NODE
-      - name: Build clean default baseline
+      - name: Build required default baseline
         env:
           CODEX_TARGET_ARCH: ${{ matrix.architecture }}
           CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/linux-features/features.example.json
@@ -117,22 +117,63 @@ jobs:
             "$CODEX_INSTALL_DIR/.codex-linux/patch-report.json" <<'NODE'
           const crypto = require("node:crypto");
           const fs = require("node:fs");
+          const { requiredPatchNamesForProfile } = require("./scripts/patches/runner.js");
           const sha256 = (file) => crypto.createHash("sha256")
             .update(fs.readFileSync(file)).digest("hex");
           const upstreamSha256 = sha256(process.argv[2]);
           const outputSha256 = sha256(process.argv[3]);
           const report = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+          const requiredNames = requiredPatchNamesForProfile("upstream-build");
+          const required = new Set(requiredNames);
+          const reportedNames = new Set(report.patches.map(({ name }) => name));
           if (report.enabledFeatures.length !== 0
-              || report.patches.length !== 0
-              || report.upstreamAppAsar?.preservedByteForByte !== true
+              || report.patches.length !== required.size
+              || reportedNames.size !== report.patches.length
+              || report.patches.some((patch) => !required.has(patch.name)
+                || patch.ciPolicy !== "required-upstream"
+                || patch.sourceKind !== "core"
+                || patch.status !== "applied")
+              || report.upstreamAppAsar?.preservedByteForByte !== (required.size === 0)
               || report.upstreamAppAsar?.sha256 !== upstreamSha256
               || report.outputAppAsar?.sha256 !== outputSha256
-              || upstreamSha256 !== outputSha256) {
-            throw new Error(`unexpected clean default patch report: ${JSON.stringify(report)}`);
+              || (required.size === 0
+                ? upstreamSha256 !== outputSha256
+                : upstreamSha256 === outputSha256)) {
+            throw new Error(`unexpected required default patch report: ${JSON.stringify(report)}`);
           }
           NODE
+          node scripts/ci/validate-patch-report.js \
+            "$CODEX_INSTALL_DIR/.codex-linux/patch-report.json" \
+            --profile upstream-build
           test -x "$CODEX_INSTALL_DIR/ChatGPT"
           test -x "$CODEX_INSTALL_DIR/resources/codex"
+      - name: Test required core patches against the signed bundle
+        run: |
+          set -euo pipefail
+          upstream_root="$(mktemp -d)"
+          extracted_asar="$(mktemp -d)"
+          dpkg-deb -x "${{ steps.upstream.outputs.package }}" "$upstream_root"
+          npx --yes @electron/asar extract \
+            "$upstream_root/usr/lib/chatgpt/resources/app.asar" \
+            "$extracted_asar"
+          CODEX_SIGNED_EXTRACTED_APP="$extracted_asar" node - <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const childProcess = require("node:child_process");
+          const { corePatchDescriptors } = require("./scripts/patches/runner.js");
+          const tests = corePatchDescriptors()
+            .filter(({ ciPolicy }) => ciPolicy === "required-upstream")
+            .map(({ sourcePath }) => path.join(path.dirname(sourcePath), "test.js"));
+          if (tests.length === 0 || tests.some((testPath) => !fs.existsSync(testPath))) {
+            throw new Error(`required core patch regression test missing: ${tests.join(", ")}`);
+          }
+          const result = childProcess.spawnSync(process.execPath, ["--test", ...tests], {
+            env: process.env,
+            stdio: "inherit",
+          });
+          if (result.error) throw result.error;
+          if (result.status !== 0) process.exit(result.status ?? 1);
+          NODE
       - name: Require signed renderer dependency regression
         env:
           EXPECTED_SIGNED_VERSION: ${{ inputs.version }}

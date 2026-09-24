@@ -55,15 +55,32 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(workflow, /^      - \.github\/workflows\/upstream-build-app\.yml$/m);
   const signedBaseline = job(workflow, "signed-baseline");
   assert.match(signedBaseline, /architecture: \[amd64, arm64\]/);
-  assert.match(signedBaseline, /name: Build clean default baseline/);
+  assert.match(signedBaseline, /name: Build required default baseline/);
   assert.match(signedBaseline, /report\.enabledFeatures\.length !== 0/);
-  assert.match(signedBaseline, /report\.patches\.length !== 0/);
-  assert.match(signedBaseline, /report\.upstreamAppAsar\?\.preservedByteForByte !== true/);
+  assert.match(signedBaseline, /requiredPatchNamesForProfile\("upstream-build"\)/);
+  assert.match(signedBaseline, /report\.patches\.length !== required\.size/);
+  assert.match(signedBaseline, /!required\.has\(patch\.name\)/);
+  assert.match(signedBaseline, /patch\.ciPolicy !== "required-upstream"/);
+  assert.match(signedBaseline, /patch\.sourceKind !== "core"/);
+  assert.match(signedBaseline, /patch\.status !== "applied"/);
+  assert.match(signedBaseline, /preservedByteForByte !== \(required\.size === 0\)/);
   assert.match(signedBaseline, /report\.upstreamAppAsar\?\.sha256 !== upstreamSha256/);
   assert.match(signedBaseline, /report\.outputAppAsar\?\.sha256 !== outputSha256/);
-  assert.match(signedBaseline, /upstreamSha256 !== outputSha256/);
-  assert.match(signedBaseline, /unexpected clean default patch report/);
+  assert.match(signedBaseline, /required\.size === 0/);
+  assert.match(signedBaseline, /unexpected required default patch report/);
   assert.doesNotMatch(signedBaseline, /quit-confirmation-focus/);
+  assert.match(signedBaseline, /validate-patch-report\.js/);
+  assert.match(signedBaseline, /--profile upstream-build/);
+  assert.match(signedBaseline, /name: Test required core patches against the signed bundle/);
+  assert.match(signedBaseline, /dpkg-deb -x "\$\{\{ steps\.upstream\.outputs\.package \}\}"/);
+  assert.match(signedBaseline, /CODEX_SIGNED_EXTRACTED_APP="\$extracted_asar"/);
+  assert.match(signedBaseline, /corePatchDescriptors\(\)/);
+  assert.match(signedBaseline, /ciPolicy \}\) => ciPolicy === "required-upstream"/);
+  assert.match(signedBaseline, /path\.join\(path\.dirname\(sourcePath\), "test\.js"\)/);
+  assert.doesNotMatch(
+    signedBaseline,
+    /scripts\/patches\/core\/[^\s"']+\/test\.js/,
+  );
   assert.match(signedBaseline, /name: Require signed renderer dependency regression/);
   assert.doesNotMatch(
     signedBaseline,

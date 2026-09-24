@@ -20,8 +20,8 @@
 
 唯一的上游来源是 OpenAI 已签名的 Linux `.deb`。官方 Electron runtime、
 原生模块、内置 `codex` 和 `rg`、code-mode host、插件、库、locale 与 Owl
-metadata 均被直接复用。未启用可选扩展的干净构建会逐字节保留
-`resources/app.asar`、官方 ELF runtime 和内置工具。
+metadata 均被直接复用。默认构建会对 `resources/app.asar` 应用必需的 Linux
+退出确认兼容性补丁；官方 ELF runtime 和内置工具保持不变。
 
 <p align="center">
   <a href="#安装">安装</a> ·
@@ -182,6 +182,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 |---|---|---|
 | 官方 ChatGPT Linux runtime | 始终启用 | 来自已验证官方 `.deb` 的 data payload |
 | 签名来源验证 | 始终启用 | 固定 repository key → `InRelease` → `Packages` SHA-256 → package SHA-256 |
+| 聚焦的退出确认框 | 始终启用 | 必需的核心 ASAR 补丁会把确认框附加到可见的应用窗口 |
 | deb、RPM、pacman 原生包 | 手动构建 | `make deb`、`make rpm`、`make pacman` |
 | AppImage | 手动构建 | `make appimage`；不绕过 sandbox，不含原生 updater |
 | Nix flake | 手动构建 | `nix run github:ilysenko/codex-desktop-linux` |
