@@ -11,5 +11,16 @@ test without it. Every descriptor needs reproduction evidence and a required
 regression test. Remove the patch, its tests, and this record when upstream
 resolves the blocker.
 
-The registry is currently empty. With no optional feature enabled, the build
-preserves the signed stable package's `resources/app.asar` byte-for-byte.
+## `quit-confirmation-focus`
+
+The current signed stable package opens its synchronous Quit confirmation
+without a parent window. On affected Linux desktops the modal can appear
+behind the application and leave Quit blocked with no focusable prompt. The
+required patch selects the focused visible window, then the visible primary
+window, then another visible live window; it opens a parented asynchronous
+dialog and guards duplicate `before-quit` events until the user responds.
+
+The adjacent regression test covers approval, cancellation, reentrancy,
+window selection, fail-closed semantic matching, and application to the signed
+campaign bundle. Retire this descriptor only after the signed stable bundle
+provides an equivalent focusable confirmation or removes the blocker.
