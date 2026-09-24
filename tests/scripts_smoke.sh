@@ -135,13 +135,25 @@ if (report.upstreamAppAsar.sha256 !== "upstream-sha") throw new Error("bad upstr
 if (report.outputAppAsar.sha256 !== "output-sha") throw new Error("bad output hash");
 NODE
 
+clean_asar="$selector_fixture/official.app.asar"
+printf 'official-asar-fixture\n' > "$clean_asar"
+write_empty_feature_patch_report "$asar_report" "$clean_asar"
+node - "$asar_report" "$clean_asar" <<'NODE'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const [reportPath, asarPath] = process.argv.slice(2);
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+const expected = crypto.createHash("sha256").update(fs.readFileSync(asarPath)).digest("hex");
+if (report.patches.length !== 0) throw new Error("clean report contains patches");
+if (!report.upstreamAppAsar.preservedByteForByte) throw new Error("clean report is not byte-preserved");
+if (report.upstreamAppAsar.sha256 !== expected) throw new Error("bad clean upstream hash");
+if (report.outputAppAsar.sha256 !== expected) throw new Error("bad clean output hash");
+NODE
+
 node - <<'NODE'
 const { corePatchDescriptors } = require("./scripts/patches/runner.js");
 const descriptors = corePatchDescriptors();
-if (descriptors.length !== 1 || descriptors[0].id !== "quit-confirmation-focus" ||
-    descriptors[0].ciPolicy !== "required-upstream") {
-  throw new Error("Quit confirmation must be the only required core patch");
-}
+if (descriptors.length !== 0) throw new Error("default core patch registry must be empty");
 NODE
 
 node - <<'NODE'

@@ -13,9 +13,9 @@ alone. Electron needs one additional fix: `patchelf` normally moves its
 interpreter metadata beyond the first 2 KiB, where the bundled libc detector
 can no longer see it. The derivation relocates that metadata into verified
 `patchelf` padding so the detector selects glibc without using Electron's
-unsafe report fallback. These checks run against both official architectures
-and apply the required Linux Quit-confirmation compatibility patch to
-`resources/app.asar`. The official ELF and native-module payload stays intact.
+unsafe report fallback. These checks run against both official architectures.
+Clean builds preserve `resources/app.asar` byte-for-byte, and the official ELF
+and native-module payload stays intact.
 
 ```bash
 nix run github:ilysenko/codex-desktop-linux

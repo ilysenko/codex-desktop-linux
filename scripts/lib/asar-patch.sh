@@ -64,11 +64,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const [reportPath, asarPath, helperPath] = process.argv.slice(2);
 const { createPatchReport } = require(helperPath);
+const sha256 = crypto.createHash("sha256").update(fs.readFileSync(asarPath)).digest("hex");
 const report = createPatchReport();
 report.upstreamAppAsar = {
-  sha256: crypto.createHash("sha256").update(fs.readFileSync(asarPath)).digest("hex"),
+  sha256,
   preservedByteForByte: true,
 };
+report.outputAppAsar = { sha256 };
 fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 NODE
 }

@@ -38,10 +38,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- The Quit-confirmation compatibility fix remains a required core patch because
-  the signed stable bundle still opens that prompt synchronously without a
-  parent window. Default-build validation now requires the patch report and
-  verifies that the output ASAR differs from the verified upstream archive.
+- The former Quit-confirmation compatibility rewrite has been retired from the
+  core patch registry. Default-build validation now requires an empty patch
+  report and verifies that the output ASAR is byte-identical to the verified
+  upstream archive.
 - Remote mobile control now relies on the current upstream account-enrollment
   compatibility and Connections tab resolver instead of patching duplicate
   Linux-specific fallbacks into those paths.
