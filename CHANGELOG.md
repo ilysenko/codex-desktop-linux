@@ -38,6 +38,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Restored and adapted the required Quit-confirmation focus patch because the
+  current signed Linux package still opens its synchronous confirmation without
+  a parent window. The patch discovers the handler through its unique semantic
+  contract, uses a visible parent with reentrancy protection, and fails closed
+  when that contract drifts.
 - Remote mobile control now relies on the current upstream account-enrollment
   compatibility and Connections tab resolver instead of patching duplicate
   Linux-specific fallbacks into those paths.

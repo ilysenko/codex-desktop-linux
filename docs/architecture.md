@@ -12,10 +12,11 @@ resolve it through signed stable APT metadata rather than trusting the moving
 2. `upstream-linux-package.sh` extracts the package data archive without running
    maintainer scripts and validates `/usr/lib/chatgpt`.
 3. `install.sh` stages that directory as `codex-app/`, adds the compact launcher
-   and metadata schema v2, and applies only explicitly enabled features.
-4. If no enabled feature has ASAR descriptors, `resources/app.asar` is never
-   unpacked and its SHA-256 must equal upstream. Otherwise a temporary copy is
-   patched, deterministically repacked, and reported.
+   and metadata schema v2, then applies required core patches and explicitly
+   enabled features.
+4. If no core or feature ASAR descriptor is active, `resources/app.asar` is
+   never unpacked and its SHA-256 must equal upstream. Otherwise a temporary
+   copy is patched, deterministically repacked, and reported.
 5. Package builders transform the same staged tree into deb, RPM, pacman, or
    AppImage output. Nix extracts the architecture-specific official package
    directly and wraps its ELF runtime.
@@ -25,9 +26,9 @@ flowchart LR
   A["Signed InRelease"] --> B["Verified Packages index"]
   B --> C["Verified chatgpt package"]
   C --> D["Official /usr/lib/chatgpt payload"]
-  D --> E{"ASAR features enabled?"}
-  E -- "no" --> F["Byte-identical app.asar"]
-  E -- "yes" --> G["Temporary deterministic patch"]
+  D --> E{"Core or feature ASAR descriptors active?"}
+  E -- "none" --> F["Byte-identical app.asar"]
+  E -- "active" --> G["Temporary deterministic patch"]
   F --> H["codex-desktop outputs"]
   G --> H
 ```
@@ -78,8 +79,11 @@ the official browser registry.
 
 ## Patches and features
 
-`scripts/patches/runner.js` composes an empty core registry with descriptors
-from enabled features. Patch reports remain the candidate-acceptance contract.
+`scripts/patches/runner.js` composes required core compatibility patches with
+descriptors from enabled features. The current registry contains the required
+Quit-confirmation focus patch because the signed stable bundle still opens an
+unparented synchronous dialog on Linux. Patch reports remain the
+candidate-acceptance contract.
 An enabled feature's missing or drifted required surface rejects promotion;
 disabled features do not participate.
 
@@ -130,7 +134,9 @@ committed. See [Generated and runtime notes](agents/generated-and-runtime-notes.
 ## Architecture invariants
 
 - The latest signed stable upstream package is the only supported baseline.
-- The clean ASAR hash equals the official package hash.
+- Without a required core patch or enabled ASAR feature, the clean ASAR hash
+  equals the official package hash. Required core changes are reported and
+  verified separately.
 - Upstream package scripts and APT source configuration never enter the custom
   output.
 - `codex-desktop` package identity and **ChatGPT Community** display identity

@@ -156,13 +156,10 @@ check_deps() {
 $(dependency_help)"
     fi
 
-    # Not a hard gate here: feature-free builds never invoke npx. asar-patch.sh
-    # fails closed when descriptors are active. The Debian/Ubuntu nodejs
-    # package ships node without npm/npx, so a passing check can still be
-    # unable to patch app.asar — warn early so interactive installs and the
-    # unattended updater surface the cause before a 400MB download.
-    if ! command -v npx &>/dev/null; then
-        warn "npx not found on PATH: builds with enabled ASAR feature descriptors will fail." \
+    # ASAR patching needs npx unless a packaged ASAR executable was supplied.
+    # Warn before downloading upstream; patch_asar() validates the tool again.
+    if [ -z "${CODEX_ASAR_BIN:-}" ] && ! command -v npx &>/dev/null; then
+        warn "npx not found on PATH: the required ASAR patch will fail." \
             "Install npm (Debian/Ubuntu: sudo apt install npm) or ensure the version-manager" \
             "Node bin directory is on PATH for this shell/service."
     fi

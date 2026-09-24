@@ -527,8 +527,7 @@
               node "$source_dir/nix/elf-runtime.cjs" validate-upstream \
                 --root "$upstream_contract_root/usr/lib/chatgpt" \
                 --arch ${officialPackage.architecture}
-              substituteInPlace "$source_dir/scripts/lib/asar-patch.sh" \
-                --replace-fail "npx --yes @electron/asar" "${pkgs.asar}/bin/asar"
+              export CODEX_ASAR_BIN="${pkgs.asar}/bin/asar"
               export CODEX_INSTALL_TRANSACTION_ACTIVE=1
               export CODEX_INSTALL_DIR="$out/opt/codex-desktop"
               export CODEX_LINUX_FEATURES_CONFIG="${featuresConfig}"
@@ -663,7 +662,7 @@
           lib.concatMapStringsSep "\n" toString (
             [
               sourceRoot upstreamDeb installedLauncher installerWorkspaceHelpers
-              globalDictationHelper mcpReaperHelper watchboundPackage
+              globalDictationHelper mcpReaperHelper watchboundPackage pkgs.asar
               pkgs.stdenv pkgs.stdenv.cc pkgs.bash pkgs.nodejs pkgs.patchelf
             ]
             ++ runtimeLibraries
@@ -707,7 +706,7 @@
         installer = pkgs.writeShellApplication {
           name = "codex-desktop-installer";
           runtimeInputs = baseRuntimePackages ++ [
-            pkgs.dpkg pkgs.gnupg pkgs.makeWrapper pkgs.nix pkgs.patchelf
+            pkgs.asar pkgs.dpkg pkgs.gnupg pkgs.makeWrapper pkgs.nix pkgs.patchelf
           ] ++ featureRuntimePackages nixLinuxFeatures.supportedFeatureIds;
           text = ''
             set -euo pipefail
@@ -799,6 +798,7 @@
               --root "$upstream_contract_root/usr/lib/chatgpt" \
               --arch ${officialPackage.architecture}
             rm -rf -- "$upstream_contract_root"
+            export CODEX_ASAR_BIN="${pkgs.asar}/bin/asar"
             ${pkgs.bash}/bin/bash ${sourceRoot}/install.sh ${upstreamDeb} "$@"
 
             dynamic_linker="$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)"

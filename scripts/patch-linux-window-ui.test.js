@@ -48,14 +48,21 @@ test("best-effort feature drift stays non-fatal without hiding changed outputs",
   assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
 });
 
-test("official Linux baseline has no core patches", () => {
-  assert.deepEqual(corePatchDescriptors(), []);
+test("official Linux baseline has the required Quit focus descriptor", () => {
+  assert.deepEqual(
+    corePatchDescriptors().map(({ id, ciPolicy, phase }) => ({ id, ciPolicy, phase })),
+    [{
+      id: "quit-confirmation-focus",
+      ciPolicy: "required-upstream",
+      phase: "main-bundle",
+    }],
+  );
   assert.equal(featurePatchDescriptors({
     featuresConfigPath: path.join(__dirname, "..", "linux-features", "features.example.json"),
   }).length, 0);
 });
 
-test("the default empty registry leaves an extracted official-style app unchanged", (t) => {
+test("an explicitly empty core registry leaves an extracted official-style app unchanged", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-empty-patch-registry-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const buildDir = path.join(root, ".vite", "build");
@@ -73,6 +80,7 @@ test("the default empty registry leaves an extracted official-style app unchange
   const report = createPatchReport();
   patchExtractedApp(root, {
     report,
+    corePatchRoot: path.join(root, "empty-core-registry"),
     featuresConfigPath: path.join(__dirname, "..", "linux-features", "features.example.json"),
   });
   assert.deepEqual(report.patches, []);

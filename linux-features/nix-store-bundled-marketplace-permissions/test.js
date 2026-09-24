@@ -141,6 +141,7 @@ test("upstream drift is reported but does not fail enabled-feature acceptance", 
   const report = createPatchReport();
   patchExtractedApp(root, {
     report,
+    corePatchRoot: path.join(root, "empty-core-registry"),
     featuresConfigPath: configPath,
     featuresRoot: path.resolve(__dirname, ".."),
     internalFeatureIds: [FEATURE_ID],
@@ -165,6 +166,7 @@ test("missing main bundle is reported as best-effort drift", (t) => {
 
   patchExtractedApp(root, {
     report,
+    corePatchRoot: path.join(root, "empty-core-registry"),
     featuresConfigPath: configPath,
     featuresRoot: path.resolve(__dirname, ".."),
     internalFeatureIds: [FEATURE_ID],

@@ -22,9 +22,10 @@ distinguish from OpenAI's separate **ChatGPT** package.
 
 OpenAI's signed Linux `.deb` is the only upstream source. The official
 Electron runtime, native modules, bundled `codex` and `rg`, code-mode host,
-plugins, libraries, locales, and Owl metadata are reused directly. With no
-ASAR-changing feature enabled, `resources/app.asar` remains byte-for-byte
-identical to the official package.
+plugins, libraries, locales, and Owl metadata are reused directly. A clean
+build applies only required compatibility patches to `resources/app.asar` and
+preserves the official ELF runtime and bundled tools byte-for-byte. Optional
+Linux features remain disabled unless explicitly selected.
 
 <p align="center">
   <a href="#install">Install</a> ·
@@ -198,12 +199,12 @@ used by both official and Community applications.
 |---|---|---|
 | Official ChatGPT Linux runtime | Always | Copied from the verified official `.deb` data payload |
 | Signed source verification | Always | Pinned repository key → `InRelease` → `Packages` SHA-256 → package SHA-256 |
-| Byte-identical baseline ASAR | Always | The ASAR is not unpacked when no enabled feature needs it |
 | Native deb, RPM, and pacman packages | Manual build | `make deb`, `make rpm`, or `make pacman` |
 | AppImage | Manual build | `make appimage`; no automatic sandbox bypass or bundled updater |
 | Nix flake | Manual build | `nix run github:ilysenko/codex-desktop-linux` |
 | Transactional update manager | Native packages | Included unless built with `PACKAGE_WITH_UPDATER=0` |
 | Official Browser and Chrome integrations | Upstream | Reused from the official Linux package; no legacy port layer |
+| Focusable Quit confirmation | Always | Required compatibility patch parents the upstream confirmation on Linux |
 | Optional Linux feature framework | Disabled | Configure with `make setup-native` |
 | Distinct desktop identity | Always | **ChatGPT Community**, blue `C` icon, `codex-desktop` package identity |
 

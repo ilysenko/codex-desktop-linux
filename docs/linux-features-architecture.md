@@ -117,8 +117,8 @@ as `feature:<feature-id>:<descriptor-id>`. Supported phases are
 `extracted-app:post-webview`. Descriptors must be idempotent and fail softly
 unless the feature deliberately declares a required acceptance surface.
 
-The baseline core registry is empty, so features must be self-contained and
-must not compose with deleted core IDs. A generic core extension point may be
+The core registry contains only required compatibility patches. Features must
+be self-contained and must not compose with deleted core IDs. A generic core extension point may be
 added only when unavoidable and must remain feature-agnostic.
 
 ## Declarative app resources

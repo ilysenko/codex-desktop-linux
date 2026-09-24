@@ -64,11 +64,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const [reportPath, asarPath, helperPath] = process.argv.slice(2);
 const { createPatchReport } = require(helperPath);
+const sha256 = crypto.createHash("sha256").update(fs.readFileSync(asarPath)).digest("hex");
 const report = createPatchReport();
 report.upstreamAppAsar = {
-  sha256: crypto.createHash("sha256").update(fs.readFileSync(asarPath)).digest("hex"),
+  sha256,
   preservedByteForByte: true,
 };
+report.outputAppAsar = { sha256 };
 fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 NODE
 }
@@ -82,6 +84,7 @@ patch_asar() {
     local core_descriptor_count
     local upstream_sha
     local patched_sha
+    local -a asar_command
 
     [ -f "$app_asar" ] || error "app.asar not found in $resources_dir"
     core_descriptor_count="$(node - "$SCRIPT_DIR/scripts/patches/runner.js" <<'NODE'
@@ -98,18 +101,22 @@ NODE
         return 0
     fi
 
-    # Reached only with active descriptors: the extract/pack steps below shell
-    # out to npx. The Ubuntu/Debian nodejs package ships node without npm/npx,
-    # and check_deps() can only warn, so fail with actionable guidance here
-    # instead of dying at "npx: command not found" (exit 127).
-    command -v npx >/dev/null 2>&1 || error \
-        "npx is required to patch app.asar with enabled feature descriptors, but was not found on PATH." \
-        "Install npm (Debian/Ubuntu: sudo apt install npm) or make the version-manager Node bin directory" \
-        "visible to this shell, then retry."
+    if [ -n "${CODEX_ASAR_BIN:-}" ]; then
+        [ -x "$CODEX_ASAR_BIN" ] || error "Configured ASAR tool is not executable: $CODEX_ASAR_BIN"
+        asar_command=("$CODEX_ASAR_BIN")
+    else
+        # The Ubuntu/Debian nodejs package ships node without npm/npx, and
+        # check_deps() can only warn. Fail with actionable guidance here.
+        command -v npx >/dev/null 2>&1 || error \
+            "npx is required to patch app.asar with enabled feature descriptors, but was not found on PATH." \
+            "Install npm (Debian/Ubuntu: sudo apt install npm) or make the version-manager Node bin directory" \
+            "visible to this shell, then retry."
+        asar_command=(npx --yes @electron/asar)
+    fi
 
     upstream_sha="$(sha256sum "$app_asar" | awk '{print $1}')"
     info "Extracting a temporary app.asar copy for $descriptor_count active descriptor(s)"
-    npx --yes @electron/asar extract "$app_asar" "$WORK_DIR/app-extracted"
+    "${asar_command[@]}" extract "$app_asar" "$WORK_DIR/app-extracted"
     if [ -d "$resources_dir/app.asar.unpacked" ]; then
         cp -a "$resources_dir/app.asar.unpacked/." "$WORK_DIR/app-extracted/"
     fi
@@ -129,7 +136,7 @@ NODE
     fi
 
     (cd "$WORK_DIR/app-extracted" && find . -type f -printf '%P\n' | LC_ALL=C sort) > "$WORK_DIR/app.asar.ordering"
-    npx --yes @electron/asar pack \
+    "${asar_command[@]}" pack \
         "$WORK_DIR/app-extracted" \
         "$WORK_DIR/app.asar" \
         --ordering "$WORK_DIR/app.asar.ordering" \

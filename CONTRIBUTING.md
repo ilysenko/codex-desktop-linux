@@ -33,7 +33,8 @@ failures are not repository bugs.
 - Read `AGENTS.md` and the relevant architecture document.
 - Edit source owners, never generated `codex-app/`, candidates, `dist/`, or
   `target/`.
-- Preserve clean-build `resources/app.asar` byte identity.
+- Preserve clean-build `resources/app.asar` byte identity unless a reproduced
+  mandatory blocker requires a tested core patch.
 - Treat launcher, updater, shared package, and feature-framework changes as
   cross-format.
 - Keep optional, distro/editor/browser/workflow-specific behavior in a

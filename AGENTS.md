@@ -15,14 +15,14 @@ manager that rebuilds from the signed stable APT repository.
 - Trust `InRelease` through the pinned repository key, then verify `Packages`
   and package SHA-256 values. `latest` URLs are never a trust root.
 - Never execute upstream maintainer scripts. Extract the data payload only.
-- A clean build with no enabled ASAR feature must preserve `resources/app.asar`
-  byte-for-byte.
+- A clean build with no enabled ASAR feature and no required core patch must
+  preserve `resources/app.asar` byte-for-byte.
 - Keep the output identity `codex-desktop` under `/opt/codex-desktop`; do not
   install the upstream APT source, key, package identity, or maintainer scripts.
 - Keep the user-facing desktop name **ChatGPT Community** and its distinct
   community icon; `ChatGPT` without the qualifier identifies the upstream app.
-- The default core patch registry is empty. A core patch requires a reproduced
-  launch/work blocker and a required regression test.
+- The core patch registry contains only reproduced launch/work blockers with
+  required regression tests; otherwise it stays empty.
 - Experimental or workflow-specific behavior belongs in `linux-features/` and
   remains disabled in committed configuration.
 - Known retired feature IDs are ignored; arbitrary unknown IDs remain errors.

@@ -8,6 +8,11 @@
   },
   "resources": [
     {
+      "source": "socket-path.js",
+      "target": ".codex-linux/features/shared-app-server-socket/socket-path.js",
+      "mode": "0644"
+    },
+    {
       "source": "orphan-reaper.js",
       "target": ".codex-linux/features/shared-app-server-socket/orphan-reaper.js",
       "mode": "0644"

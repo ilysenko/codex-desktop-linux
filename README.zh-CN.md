@@ -20,8 +20,8 @@
 
 唯一的上游来源是 OpenAI 已签名的 Linux `.deb`。官方 Electron runtime、
 原生模块、内置 `codex` 和 `rg`、code-mode host、插件、库、locale 与 Owl
-metadata 均被直接复用。未启用修改 ASAR 的扩展时，`resources/app.asar`
-与官方软件包保持逐字节一致。
+metadata 均被直接复用。默认构建仅对 `resources/app.asar` 应用必要的兼容性补丁，
+并逐字节保留官方 ELF runtime 和内置工具。可选 Linux 扩展只有在明确选择后才会启用。
 
 <p align="center">
   <a href="#安装">安装</a> ·
@@ -182,12 +182,12 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 |---|---|---|
 | 官方 ChatGPT Linux runtime | 始终启用 | 来自已验证官方 `.deb` 的 data payload |
 | 签名来源验证 | 始终启用 | 固定 repository key → `InRelease` → `Packages` SHA-256 → package SHA-256 |
-| 逐字节一致的 baseline ASAR | 始终启用 | 无扩展需要 ASAR 时不进行解包 |
 | deb、RPM、pacman 原生包 | 手动构建 | `make deb`、`make rpm`、`make pacman` |
 | AppImage | 手动构建 | `make appimage`；不绕过 sandbox，不含原生 updater |
 | Nix flake | 手动构建 | `nix run github:ilysenko/codex-desktop-linux` |
 | 事务式更新管理器 | 原生包 | 除非设置 `PACKAGE_WITH_UPDATER=0` |
 | 官方 Browser 和 Chrome 集成 | 上游提供 | 直接复用官方 Linux 实现，不保留旧移植层 |
+| 可聚焦的退出确认框 | 始终启用 | 必要兼容性补丁在 Linux 上为上游确认框设置父窗口 |
 | Linux 可选扩展框架 | 默认关闭 | 使用 `make setup-native` 配置 |
 | 独立桌面标识 | 始终启用 | **ChatGPT Community**、蓝色 `C` 图标、`codex-desktop` package identity |
 

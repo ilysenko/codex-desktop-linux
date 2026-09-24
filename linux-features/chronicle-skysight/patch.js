@@ -53,24 +53,44 @@ function matchAll(source, pattern) {
   return [...source.matchAll(pattern)];
 }
 
+function matchesSemanticWindow(source, match, anchors, length = 10_000) {
+  const window = source.slice(match.index, match.index + length);
+  return anchors.every((anchor) => window.includes(anchor));
+}
+
 function chronicleControllerClassMatches(source) {
-  return matchAll(
+  const matches = matchAll(
     source,
     new RegExp(
       `(?:var |,)(${IDENTIFIER})=class\\{(?=[\\s\\S]{0,2500}?status\\(\\)\\{return this\\.pendingStatus\\?\\?=this\\.request\\(\`skysightStatus\`\\))(?=[\\s\\S]{0,3500}?enable\\(\\)[\\s\\S]{0,800}?this\\.request\\(\`skysightStart\`\\))(?=[\\s\\S]{0,4500}?pause\\([^)]*\\)[\\s\\S]{0,500}?\`skysightPause\`)(?=[\\s\\S]{0,5000}?resume\\(\\)[\\s\\S]{0,700}?\`skysightResume\`)(?=[\\s\\S]{0,6000}?getSettings\\(\\)\\{return this\\.dependencies\\.request\\(\\{method:\`skysightGetSettings\`,params:\\{\\}\\}\\)\\})(?=[\\s\\S]{0,6500}?updateSettings\\([^)]*\\)\\{return this\\.dependencies\\.request\\(\\{method:\`skysightUpdateSettings\`,params:\\{settings:)(?=[\\s\\S]{0,7000}?clearHistory\\([^)]*\\)\\{return this\\.dependencies\\.request\\(\\{method:\`skysightClearHistory\`,params:\\{interval:[^,}]+,scope:)(?=[\\s\\S]{0,8500}?stopRecorder\\(\\)[\\s\\S]{0,300}?this\\.request\\(\`skysightStop\`\\))`,
       "g",
     ),
   );
+  return matches.filter((match) => matchesSemanticWindow(source, match, [
+    "shouldReconcileAfterServiceRespawn(){return this.desiredState===`running`}",
+    "this.request(`skysightStatus`).then(",
+    "this.withFailedEnableRollback(",
+    "return new Promise(",
+    "Failed to enable Chronicle and stop the recorder during rollback",
+  ]));
 }
 
 function chronicleServiceClassMatches(source) {
   return matchAll(
     source,
     new RegExp(
-      `(?:var |,)(${IDENTIFIER})=class extends ${IDENTIFIER}\\.${IDENTIFIER}\\{(?=[\\s\\S]{0,1500}?async getState\\(\\)[\\s\\S]{0,500}?\\.status\\(\\))(?=[\\s\\S]{0,2500}?async setEnabled\\([^)]*\\)[\\s\\S]{0,800}?enableSkysightChronicle\\(\\))(?=[\\s\\S]{0,3000}?async pause\\(\\)[\\s\\S]{0,300}?\\.pause\\(\\))(?=[\\s\\S]{0,3500}?async resume\\(\\)[\\s\\S]{0,300}?resumeChronicleSidecar\\(\\))(?=[\\s\\S]{0,4000}?async getSettings\\(\\)[\\s\\S]{0,200}?\\.getSettings\\(\\))(?=[\\s\\S]{0,4500}?async updateSettings\\([^)]*\\)[\\s\\S]{0,200}?\\.updateSettings\\()(?=[\\s\\S]{0,5000}?async listApplications\\(\\)[\\s\\S]{0,200}?this\\.loadApplications\\(\\))(?=[\\s\\S]{0,5500}?async resolveApplications\\([^)]*\\)[\\s\\S]{0,200}?this\\.loadApplicationsByBundleIdentifier\\()(?=[\\s\\S]{0,6000}?async listHistory\\(\\)[\\s\\S]{0,200}?this\\.history\\.list\\(\\))(?=[\\s\\S]{0,6500}?async listHistorySuggestions\\(\\)[\\s\\S]{0,200}?this\\.history\\.listSuggestions\\(\\))(?=[\\s\\S]{0,7000}?async listHistorySummaryIntervals\\([^)]*\\)[\\s\\S]{0,200}?this\\.history\\.listSummaryIntervals\\()(?=[\\s\\S]{0,7500}?async clearHistory\\([^)]*\\)[\\s\\S]{0,200}?\\.clearHistory\\()`,
+      `(?:var |,)(${IDENTIFIER})=class extends ${IDENTIFIER}\\.${IDENTIFIER}\\{(?=[\\s\\S]{0,1500}?async getState\\(\\)[\\s\\S]{0,500}?\\.status\\(\\))(?=[\\s\\S]{0,2500}?async setEnabled\\([^)]*\\)[\\s\\S]{0,800}?enableSkysightChronicle\\(\\))(?=[\\s\\S]{0,3000}?async pause\\(\\)[\\s\\S]{0,300}?\\.pause\\(\\))(?=[\\s\\S]{0,3500}?async resume\\(\\)[\\s\\S]{0,300}?resumeChronicle\\(\\))(?=[\\s\\S]{0,4000}?async getSettings\\(\\)[\\s\\S]{0,200}?\\.getSettings\\(\\))(?=[\\s\\S]{0,4500}?async updateSettings\\([^)]*\\)[\\s\\S]{0,200}?\\.updateSettings\\()(?=[\\s\\S]{0,5000}?async listApplications\\(\\)[\\s\\S]{0,200}?this\\.loadApplications\\(\\))(?=[\\s\\S]{0,5500}?async resolveApplications\\([^)]*\\)[\\s\\S]{0,200}?this\\.loadApplicationsByBundleIdentifier\\()(?=[\\s\\S]{0,6000}?async listHistory\\(\\)[\\s\\S]{0,200}?this\\.history\\.list\\(\\))(?=[\\s\\S]{0,6500}?async listHistorySuggestions\\(\\)[\\s\\S]{0,200}?this\\.history\\.listSuggestions\\(\\))(?=[\\s\\S]{0,7000}?async listHistorySummaryIntervals\\([^)]*\\)[\\s\\S]{0,200}?this\\.history\\.listSummaryIntervals\\()(?=[\\s\\S]{0,7500}?async clearHistory\\([^)]*\\)[\\s\\S]{0,200}?\\.clearHistory\\()`,
       "g",
     ),
-  );
+  ).filter((match) => matchesSemanticWindow(source, match, [
+    "Promise.all([this.appServerConnection.isChronicleFeatureConfigured(),",
+    "async retryActivation()",
+    "this.appServerConnection.reconcileSkysightChronicle()",
+    "waiting_for_permissions",
+    "this.appServerConnection.resumeChronicle()",
+    "sendAppServerRequest(`config/value/write`",
+    "Error(`Chronicle is unavailable`)",
+  ]));
 }
 
 function chronicleControllerInitMatches(source, patched) {

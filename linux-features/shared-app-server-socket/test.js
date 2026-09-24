@@ -108,6 +108,7 @@ function loadOrphanReaperVerifier(processesByPid) {
     require(id) {
       if (id === "node:fs") return mockFs;
       if (id === "node:path") return path;
+      if (id === "./socket-path.js") return require("./socket-path.js");
       throw new Error(`unexpected orphan reaper dependency: ${id}`);
     },
   };
@@ -132,6 +133,7 @@ function loadOrphanReaperAdoptionPredicate() {
     require(id) {
       if (id === "node:fs") return fs;
       if (id === "node:path") return path;
+      if (id === "./socket-path.js") return require("./socket-path.js");
       throw new Error(`unexpected orphan reaper dependency: ${id}`);
     },
   };
@@ -231,6 +233,7 @@ function startOrphanReaperWithChangedAdopter() {
     require(id) {
       if (id === "node:fs") return mockFs;
       if (id === "node:path") return path;
+      if (id === "./socket-path.js") return require("./socket-path.js");
       throw new Error(`unexpected orphan reaper dependency: ${id}`);
     },
   };
@@ -798,12 +801,13 @@ async function waitForCondition(predicate, description) {
   throw new Error(`timed out waiting for ${description}`);
 }
 
-async function spawnOrphanAuthority(socketPath) {
+async function spawnOrphanAuthority(socketPath, alias = false) {
   const listenerScript = [
     'const net=require("node:net");',
     'const socketPath=process.argv.at(-1).replace("unix://","");',
     "const server=net.createServer();",
-    "server.listen(socketPath);",
+    'const target=process.env.SOCKET_ALIAS==="1"?`${socketPath}.target`:socketPath;',
+    'server.listen(target,()=>{if(target!==socketPath){const fs=require("node:fs");fs.chmodSync(target,0o600);fs.symlinkSync(target,socketPath)}});',
     'process.on("SIGTERM",()=>server.close(()=>process.exit(0)));',
   ].join("");
   const wrapperScript = [
@@ -830,6 +834,7 @@ async function spawnOrphanAuthority(socketPath) {
     encoding: "utf8",
     env: {
       ...process.env,
+      SOCKET_ALIAS: alias ? "1" : "0",
       LISTENER_SCRIPT: listenerScript,
       LISTEN_URL: `unix://${socketPath}`,
       WRAPPER_SCRIPT: wrapperScript,
@@ -891,6 +896,7 @@ test("feature stages its socket hooks, orphan reaper, and attached CLI", () => {
           resource.mode.toString(8),
         ]),
         [
+          [".codex-linux/features/shared-app-server-socket/socket-path.js", "644"],
           [
             ".codex-linux/features/shared-app-server-socket/orphan-reaper.js",
             "644",
@@ -2259,35 +2265,38 @@ test("orphan reaper rejects an authority adopted by an unrelated live parent", (
   );
 });
 
-test("orphan reaper stops an exact reparented authority and removes stale ownership", async () => {
-  const tempDir = makeSocketTempDir("shared-app-server-orphan-reaper-");
-  const socketPath = path.join(tempDir, "app-server.sock");
-  const lockPath = `${socketPath}.lock`;
-  const orphan = await spawnOrphanAuthority(socketPath);
-  fs.writeFileSync(lockPath, `99999999 1 ${orphan.pid} ${orphan.startTime}\n`, { mode: 0o600 });
-  try {
-    const result = spawnSync(process.execPath, [orphanReaper, socketPath], {
-      encoding: "utf8",
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stderr, /Stopped orphaned shared app-server authority/);
-    await waitForCondition(
-      () => processStartTime(orphan.pid) !== orphan.startTime,
-      "orphaned authority to exit",
-    );
-    assert.equal(fs.existsSync(socketPath), false);
-    assert.equal(fs.existsSync(lockPath), false);
-  } finally {
-    if (processStartTime(orphan.pid) === orphan.startTime) {
-      try {
-        process.kill(orphan.pid, "SIGTERM");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
+for (const alias of [false, true]) {
+  test(`orphan reaper stops an exact reparented authority with ${alias ? "a socket alias" : "a direct socket"}`, async () => {
+    const tempDir = makeSocketTempDir("shared-app-server-orphan-reaper-");
+    const socketPath = path.join(tempDir, "app-server.sock");
+    const lockPath = `${socketPath}.lock`;
+    const orphan = await spawnOrphanAuthority(socketPath, alias);
+    fs.writeFileSync(lockPath, `99999999 1 ${orphan.pid} ${orphan.startTime}\n`, { mode: 0o600 });
+    try {
+      const result = spawnSync(process.execPath, [orphanReaper, socketPath], {
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stderr, /Stopped orphaned shared app-server authority/);
+      await waitForCondition(
+        () => processStartTime(orphan.pid) !== orphan.startTime,
+        "orphaned authority to exit",
+      );
+      assert.equal(fs.existsSync(socketPath), false);
+      assert.equal(fs.existsSync(lockPath), false);
+    } finally {
+      if (processStartTime(orphan.pid) === orphan.startTime) {
+        try {
+          process.kill(orphan.pid, "SIGTERM");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
       }
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-});
+  });
+
+}
 
 test("orphan reaper refuses two live listener inodes for the same pathname", async () => {
   const tempDir = makeSocketTempDir("shared-app-server-rebind-reaper-");
@@ -3010,7 +3019,74 @@ test("orphan reaper JavaScript syntax is valid", () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("stock Codex proxy connects to a real authority", { timeout: 15000 }, async (t) => {
+test("socket aliases validate private targets and reject unsafe or changing paths", async () => {
+  const { readSocketPath } = require("./socket-path.js");
+  const root = makeSocketTempDir("shared-alias-");
+  const alias = path.join(root, "alias");
+  const target = path.join(root, "socket");
+  const server = await listenUnix(target);
+  fs.chmodSync(target, 0o600);
+  fs.symlinkSync(target, alias);
+  try {
+    assert.equal(readSocketPath(alias).targetPath, target);
+    fs.chmodSync(root, 0o755);
+    assert.throws(() => readSocketPath(alias), /directory is unsafe/);
+    fs.chmodSync(root, 0o700);
+    fs.chmodSync(target, 0o666);
+    assert.throws(() => readSocketPath(alias), /target is unsafe/);
+    fs.chmodSync(target, 0o600);
+    assert.throws(() => readSocketPath(alias, fs, process.getuid() + 1), /unexpected owner/);
+    let reads = 0;
+    const changingFs = Object.create(fs);
+    changingFs.readlinkSync = (p) => p === alias && reads++ > 0 ? `${target}.changed` : fs.readlinkSync(p);
+    assert.throws(() => readSocketPath(alias, changingFs), /changed during verification/);
+    await closeServer(server);
+    assert.equal(readSocketPath(alias).target, null);
+    fs.writeFileSync(target, "not a socket", { mode: 0o600 });
+    assert.throws(() => readSocketPath(alias), /target is unsafe/);
+    fs.unlinkSync(target);
+    fs.symlinkSync(alias, target);
+    assert.throws(() => readSocketPath(alias), /target is unsafe/);
+  } finally {
+    await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("dead socket aliases are reclaimed without unlinking their target", async () => {
+  const root = makeSocketTempDir("shared-stale-alias-");
+  const alias = path.join(root, "alias");
+  const target = path.join(root, "socket");
+  const server = await listenUnix(target);
+  fs.chmodSync(target, 0o600);
+  fs.symlinkSync(target, alias);
+  fs.writeFileSync(`${alias}.lock`, "99999999 1\n", { mode: 0o600 });
+  const { Transport } = loadInjectedTransport();
+  const transport = new Transport(alias);
+  try {
+    await assert.rejects(transport.acquireOwnership(), /already owned/);
+    assert.equal(fs.lstatSync(alias).isSymbolicLink(), true);
+    const saved = `${target}.saved`;
+    fs.renameSync(target, saved);
+    await closeServer(server);
+    fs.renameSync(saved, target);
+    await transport.acquireOwnership();
+    assert.equal(fs.existsSync(alias), false);
+    assert.equal(fs.lstatSync(target).isSocket(), true);
+    transport.releaseOwnedPaths();
+    fs.unlinkSync(target);
+    fs.symlinkSync(target, alias);
+    fs.writeFileSync(`${alias}.lock`, "99999999 1\n", { mode: 0o600 });
+    await transport.acquireOwnership();
+    assert.equal(fs.existsSync(alias), false);
+    transport.releaseOwnedPaths();
+  } finally {
+    await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("stock Codex authority starts through the injected transport and supports verified attachment", { timeout: 15000 }, async (t) => {
   const codexCli = process.env.CODEX_CLI_PATH;
   if (codexCli == null) {
     t.skip("set CODEX_CLI_PATH to run the real Codex app-server integration test");
@@ -3029,14 +3105,23 @@ test("stock Codex proxy connects to a real authority", { timeout: 15000 }, async
     ...process.env,
     CODEX_HOME: codexHome,
   };
-  const authority = spawn(codexCli, ["app-server", "--listen", `unix://${socketPath}`], {
-    env,
-    stdio: ["ignore", "ignore", "ignore"],
+  const { Transport } = loadInjectedTransport({
+    spawnImpl(command, args, options) {
+      return spawn(command, args, { ...options, env });
+    },
   });
+  const transport = new Transport(socketPath);
+  let authority;
   let proxy;
 
   try {
-    await waitForSocket(socketPath, authority);
+    await transport.ensureAuthority();
+    authority = transport.authority;
+    const recordDir = path.join(testRuntimeRoot, process.env.CODEX_LINUX_APP_ID || "codex-desktop", "app-server-bridge");
+    const verification = spawnSync("bash", ["-c",
+      'source "$1"; attached_cli_snapshot "$2" /proc', "bash", attachedCli, recordDir,
+    ], { encoding: "utf8" });
+    assert.equal(verification.status, 0, verification.stderr);
     assert.equal(
       fs.statSync(socketPath).mode & 0o077,
       0,
@@ -3064,7 +3149,11 @@ test("stock Codex proxy connects to a real authority", { timeout: 15000 }, async
     assert.match(response, /^HTTP\/1\.1 101 /);
     assert.match(response.toLowerCase(), /upgrade: websocket/);
   } finally {
-    await Promise.all([stopChild(proxy), stopChild(authority)]);
+    await stopChild(proxy);
+    transport.dispose();
+    await stopChild(authority);
+    assert.equal(fs.existsSync(`${socketPath}.lock`), false);
+    assert.equal(fs.existsSync(socketPath), false);
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
