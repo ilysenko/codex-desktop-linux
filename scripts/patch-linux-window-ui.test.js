@@ -48,8 +48,8 @@ test("best-effort feature drift stays non-fatal without hiding changed outputs",
   assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
 });
 
-test("official Linux baseline has the required Quit confirmation patch", () => {
-  assert.deepEqual(corePatchDescriptors().map((patch) => patch.id), ["quit-confirmation-focus"]);
+test("official Linux baseline has no core or enabled feature patches", () => {
+  assert.deepEqual(corePatchDescriptors(), []);
   assert.equal(featurePatchDescriptors({
     featuresConfigPath: path.join(__dirname, "..", "linux-features", "features.example.json"),
   }).length, 0);

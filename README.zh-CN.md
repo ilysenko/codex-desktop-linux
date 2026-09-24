@@ -20,8 +20,8 @@
 
 唯一的上游来源是 OpenAI 已签名的 Linux `.deb`。官方 Electron runtime、
 原生模块、内置 `codex` 和 `rg`、code-mode host、插件、库、locale 与 Owl
-metadata 均被直接复用。默认构建会对 `resources/app.asar` 应用必需的 Linux
-退出确认兼容性补丁；官方 ELF runtime 和内置工具保持不变。
+metadata 均被直接复用。未启用可选功能时，`resources/app.asar` 会按字节原样
+保留；官方 ELF runtime 和内置工具保持不变。
 
 <p align="center">
   <a href="#安装">安装</a> ·

@@ -38,6 +38,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- The retired Quit-confirmation workaround is no longer a required core patch.
+  Clean default builds once again preserve the signed stable
+  `resources/app.asar` byte-for-byte, and release validation fails if the
+  default patch report is non-empty or the hashes differ.
 - Remote mobile control now relies on the current upstream account-enrollment
   compatibility and Connections tab resolver instead of patching duplicate
   Linux-specific fallbacks into those paths.

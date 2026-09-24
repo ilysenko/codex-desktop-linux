@@ -103,7 +103,7 @@ jobs:
             throw new Error("invalid dispatched release identity");
           }
           NODE
-      - name: Build required default baseline
+      - name: Build clean default baseline
         env:
           CODEX_TARGET_ARCH: ${{ matrix.architecture }}
           CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/linux-features/features.example.json
@@ -122,18 +122,12 @@ jobs:
           const upstreamSha256 = sha256(process.argv[2]);
           const outputSha256 = sha256(process.argv[3]);
           const report = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
-          const [patch] = report.patches;
           if (report.enabledFeatures.length !== 0
-              || report.patches.length !== 1
-              || patch.name !== "quit-confirmation-focus"
-              || patch.ciPolicy !== "required-upstream"
-              || patch.sourceKind !== "core"
-              || patch.status !== "applied"
-              || report.upstreamAppAsar?.preservedByteForByte !== false
+              || report.patches.length !== 0
+              || report.upstreamAppAsar?.preservedByteForByte !== true
               || report.upstreamAppAsar?.sha256 !== upstreamSha256
-              || report.outputAppAsar?.sha256 !== outputSha256
-              || upstreamSha256 === outputSha256) {
-            throw new Error(`unexpected required default patch report: ${JSON.stringify(report)}`);
+              || outputSha256 !== upstreamSha256) {
+            throw new Error(`default build modified official app.asar: ${JSON.stringify(report)}`);
           }
           NODE
           test -x "$CODEX_INSTALL_DIR/ChatGPT"

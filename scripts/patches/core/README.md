@@ -11,21 +11,5 @@ test without it. Every descriptor needs reproduction evidence and a required
 regression test. Remove the patch, its tests, and this record when upstream
 resolves the blocker.
 
-## Quit confirmation focus
-
-On signed stable `chatgpt/amd64` 26.917.62051, **File > Quit ChatGPT** can open
-an unparented, synchronous **Quit ChatGPT?** dialog without focusing it. During
-the reproduction on GNOME Wayland/XWayland, X11 inspection found that dialog
-open for more than ten seconds while the main process waited for its response.
-The File menu emptied and new requests stalled. Answering the hidden dialog
-allowed shutdown to complete. The previous signed Linux package available
-locally, 26.917.61114, used the same unparented call; the exact onset is
-unknown.
-
-`quit-confirmation-focus/patch.js` parents the prompt to a visible app window
-and waits for it asynchronously. Approval resumes the official Quit path;
-cancellation leaves the app running. The patch does not alter cleanup or MCP
-shutdown. `quit-confirmation-focus/test.js` covers the official confirmation
-shape, approval, cancellation, duplicate Quit requests, window selection, and
-fail-closed drift handling. The default build applies this required patch even
-when no optional Linux features are enabled.
+The registry is intentionally empty for the current signed stable package, so
+a build with no enabled feature preserves `resources/app.asar` byte-for-byte.
