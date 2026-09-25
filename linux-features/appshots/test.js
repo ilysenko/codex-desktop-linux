@@ -58,9 +58,10 @@ function currentAppshotHotkeyMainBundleFixture() {
     "var R8=`DoubleCommand`,T8=`DoubleAlt`;",
     "var Yk=new Set([`cmdorctrl`,`command`,`cmd`,`control`,`ctrl`,`alt`,`option`]),Jk=new Set([...Yk,`shift`]);",
     "function zk(e){return e}",
+    "function Qk(){return null}",
     "function Nk(e,t,n){globalThis.registered={hotkey:e,handlers:t,trigger:n};return{unregister(){}}}",
     "function Lk(e,t=process.platform){return t===`darwin`&&zk(e)!=null}",
-    "function Mk(e,t,n=`press`){if(process.platform!==`darwin`)return null;let r=zk(e);return r==null?null:Nk(r,t,n)}",
+    "function Mk(e,t,n=`press`){if(process.platform!==`darwin`)return null;let r=zk(e)??Qk(e);return r==null?null:Nk(r,t,n)}",
     "var B8=class{configuredHotkey;registration=null;windowsCaptureNativeBridgeFailed=!1;constructor(e){this.enabled=!0,this.windowsCaptureNativeBridge=null;let a=e.getStored(`appshotHotkey`);this.configuredHotkey=a===void 0?process.platform===`win32`?T8:R8:a;this.sync()}getState(){return{supported:this.enabled&&(process.platform===`darwin`||process.platform===`win32`&&this.windowsCaptureNativeBridge!=null&&!this.windowsCaptureNativeBridgeFailed),configuredHotkey:this.configuredHotkey,isActive:this.registration!=null}}sync(){if(!this.getState().supported||this.configuredHotkey==null)return;this.registration=Mk(this.configuredHotkey,{onPressed(){}})}};",
     "globalThis.hotkeyEligible=Lk;globalThis.modifiers=Jk;",
     "globalThis.AppshotHotkeys=B8;",
@@ -1338,8 +1339,12 @@ test("AppShots hotkey patch fails closed for missing, partial, duplicate, and am
     "process.platform===`darwin`",
   );
   const missing = "globalThis.appshotHotkeyState=`appshot-hotkey-state`";
+  const retired = pristine.replace("let r=zk(e)??Qk(e)", "let r=zk(e)");
+  const mixedContracts = `${pristine}function retired(e,t,n=\`press\`){if(process.platform!==\`darwin\`)return null;let r=zk(e);}`;
   for (const source of [
     missing,
+    retired,
+    mixedContracts,
     partial,
     pristine + pristine,
     patched + patched,

@@ -168,14 +168,6 @@ function fallbackOptionCallbackPattern() {
   return `(${JS_IDENT})=>(?:${concise}|${block})`;
 }
 
-function currentFallbackOptionsPattern(flags = "") {
-  return new RegExp(
-    `\\.\\.\\.\\((${JS_IDENT})\\?\\.serviceTiers\\?\\?\\[\\]\\)\\.map\\((${JS_IDENT})=>` +
-      fallbackOptionCallbackPattern().replace(`(${JS_IDENT})=>`, "") + `\\)`,
-    flags,
-  );
-}
-
 function currentSharedFallbackOptionsPattern(flags = "") {
   return new RegExp(
     `function ${JS_IDENT}\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return\\[[^\\]]{0,800}?` +
@@ -194,30 +186,15 @@ function patchedSharedFallbackOptionsPattern(flags = "") {
   );
 }
 
-function patchedFallbackOptionsPattern(flags = "") {
-  return new RegExp(
-    `\\.\\.\\.\\(\\((${JS_IDENT})\\?\\.serviceTiers\\?\\.length\\?\\1\\.serviceTiers:` +
-      `\\[${PATCH_MARKER}\\(\\1\\)\\]\\)\\.filter\\(Boolean\\)\\)\\.map\\(` +
-      fallbackOptionCallbackPattern() + `\\)`,
-    flags,
-  );
-}
-
 function fallbackOptionMatches(source, pattern) {
   return [...source.matchAll(pattern)];
 }
 
 function fallbackFastTierState(source) {
-  const legacyCurrent = fallbackOptionMatches(source, currentFallbackOptionsPattern("g"))
-    .map((match) => ({ match, modelVar: match[1], layout: "legacy" }));
-  const sharedCurrent = fallbackOptionMatches(source, currentSharedFallbackOptionsPattern("g"))
-    .map((match) => ({ match, modelVar: match[1], tiersVar: match[2], layout: "shared" }));
-  const legacyPatched = fallbackOptionMatches(source, patchedFallbackOptionsPattern("g"))
-    .map((match) => ({ match, layout: "legacy" }));
-  const sharedPatched = fallbackOptionMatches(source, patchedSharedFallbackOptionsPattern("g"))
-    .map((match) => ({ match, layout: "shared" }));
-  const current = [...legacyCurrent, ...sharedCurrent];
-  const patched = [...legacyPatched, ...sharedPatched];
+  const current = fallbackOptionMatches(source, currentSharedFallbackOptionsPattern("g"))
+    .map((match) => ({ match, modelVar: match[1], tiersVar: match[2] }));
+  const patched = fallbackOptionMatches(source, patchedSharedFallbackOptionsPattern("g"))
+    .map((match) => ({ match }));
   const helper = fallbackFastTierHelper();
   const helperCount = source.split(helper).length - 1;
 
@@ -251,15 +228,10 @@ function applyFallbackFastTierPatch(source) {
     return source;
   }
   const modelVar = state.modelVar;
-  const replacement = state.layout === "shared"
-    ? state.match[0].replace(
-      `...(${state.tiersVar}??[])`,
-      `...((${state.tiersVar}?.length?${state.tiersVar}:[${PATCH_MARKER}(${modelVar})]).filter(Boolean))`,
-    )
-    : state.match[0].replace(
-      `...(${modelVar}?.serviceTiers??[])`,
-      `...((${modelVar}?.serviceTiers?.length?${modelVar}.serviceTiers:[${PATCH_MARKER}(${modelVar})]).filter(Boolean))`,
-    );
+  const replacement = state.match[0].replace(
+    `...(${state.tiersVar}??[])`,
+    `...((${state.tiersVar}?.length?${state.tiersVar}:[${PATCH_MARKER}(${modelVar})]).filter(Boolean))`,
+  );
   let patched = source.slice(0, state.match.index) + replacement +
     source.slice(state.match.index + state.match[0].length);
   if (state.helperCount === 0) patched = fallbackFastTierHelper() + patched;

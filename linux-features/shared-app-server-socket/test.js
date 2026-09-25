@@ -857,7 +857,7 @@ function syntheticBundle() {
     "var gC=class{options;kind=`websocket`;logger=i.i(`AppServerTransportSshWebsocket`);proxyStreams=new Set;hasConnected=!1;supportsReconnect(){return!0}",
     "async connect(){let t={current:null},r=new n.kn(qae,{perMessageDeflate:!1,createConnection:()=>",
     "(t.current=this.createSshProxyStream(),t.current)});r.once(`close`,()=>{t.current?.destroy()});try{await Xae(r)}catch(e){throw r.once(`error`,()=>void 0),t.current?.destroy(),r.terminate(),e}",
-    "return n.Dn(r,{onPongTimeout:()=>{r.terminate()}}),this.hasConnected=!0,new n.On(r)}};",
+    "let i=new n.On(r,void 0,8);return n.Dn(r,{onPongTimeout:()=>{i.reason=`timeout`,r.terminate()}}),this.hasConnected=!0,i}};",
     "function b5(e){let t=_C(e.hostConfig);if(t)return v5.info(`[ssh-websocket-v0] selected app-server transport`),new gC(t);",
     "if(e.transportKind===`remote-control`)return new Remote(e);",
     "if(n.no(e.hostConfig))return new hoe({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator});",
@@ -1737,22 +1737,25 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   assert.match(patched, /supportsReconnect\(\)\{return!0\}/);
 });
 
-test("patch accepts the current adapter-before-keepalive and split namespace layout", () => {
-  const source = syntheticBundle()
-    .replace(
-      "return n.Dn(r,{onPongTimeout:()=>{r.terminate()}}),this.hasConnected=!0,new n.On(r)",
-      "let i=new n.On(r,void 0,8);return n.Dn(r,{onPongTimeout:()=>{i.reason=`timeout`,r.terminate()}}),this.hasConnected=!0,i",
-    )
-    .replace("if(n.no(e.hostConfig))", "if(r.no(e.hostConfig))")
-    .replace(
-      "getConfigOverrides:async()=>[...await Ope(e)]",
-      "getConfigOverrides:async()=>[...d.k(e.globalState,e.hostConfig),...await e.secretAuthStorageConfigOverrides,...await Ope(e)]",
-    );
-  const patched = applySharedAppServerSocketPatch(source);
-  assert.notEqual(patched, source);
-  assert.match(patched, /new CodexLinuxSharedAppServerSocketTransport/u);
-  assert.match(patched, /new n\.On\(t\)/u);
-  assert.match(patched, /n\.Dn\(t,\{onPongTimeout/u);
+test("patch rejects retired, duplicate, and mixed transport layouts", () => {
+  const current = syntheticBundle();
+  const patched = applySharedAppServerSocketPatch(current);
+  const retired = current.replace(
+    "let i=new n.On(r,void 0,8);return n.Dn(r,{onPongTimeout:()=>{i.reason=`timeout`,r.terminate()}}),this.hasConnected=!0,i",
+    "return n.Dn(r,{onPongTimeout:()=>{r.terminate()}}),this.hasConnected=!0,new n.On(r)",
+  );
+
+  for (const source of [retired, current + current, current + patched, patched + patched]) {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      assert.equal(applySharedAppServerSocketPatch(source), source);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.match(warnings.join("\n"), /shared app-server socket|SSH WebSocket transport/i);
+  }
 });
 
 test("patch leaves unsupported bundle shapes unchanged with a warning", () => {

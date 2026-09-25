@@ -48,9 +48,15 @@ function linuxAppshotWaylandHelperSource() {
 }
 
 function appshotHotkeyPatterns(source) {
-  const registration = source.match(
-    /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*=`press`\)\{if\(process\.platform!==`darwin`(?:&&process\.platform!==`linux`)?\)return null;let [A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\)(?:\?\?[A-Za-z_$][\w$]*\(\1\))?;/u,
-  );
+  const currentRegistrations = [...source.matchAll(
+    /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*=`press`\)\{if\(process\.platform!==`darwin`(?:&&process\.platform!==`linux`)?\)return null;let [A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\)\?\?[A-Za-z_$][\w$]*\(\1\);/gu,
+  )];
+  const registrationOwners = [...source.matchAll(
+    /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*=`press`\)\{if\(process\.platform!==`darwin`(?:&&process\.platform!==`linux`)?\)return null;let [A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\)(?:\?\?[A-Za-z_$][\w$]*\(\1\))?;/gu,
+  )];
+  const registration = currentRegistrations.length === 1 && registrationOwners.length === 1
+    ? currentRegistrations[0]
+    : null;
   const normalize = registration?.[2];
   const normalizeCall = normalize == null ? "(?!)" : normalize.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return [

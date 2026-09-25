@@ -34,7 +34,7 @@ const {
 const featureDir = __dirname;
 
 function currentComposerTranscriptFixture() {
-  return "async function send(){let p=`Create an image of a neon cabin`,c={setTranscript(){}},a={dictationSessionId:`session-1`,performance:{mark(){}}},i={action:`send`,recovery:null},s={onRecoveryChange:null,onTranscriptRetry:async()=>{},onTranscriptSend:async(t,e)=>globalThis.events.push([`send`,t,e]),onTranscriptInsert:async(t,e)=>globalThis.events.push([`insert`,t,e]),onTranscriptCancel:()=>globalThis.events.push([`cancel`])},te={current:i};if(p.length>0){c==null?une.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:p}):c.setTranscript(p),a.performance.mark(`transcript_dispatched`);let e=c==null?void 0:a.dictationSessionId;i.recovery!=null&&s.onRecoveryChange!=null?await s.onTranscriptRetry?.(p,e):i.action===`send`?await s.onTranscriptSend(p,e):(await s.onTranscriptInsert(p,e),te.current===i&&te.current.action===`send`&&await s.onTranscriptSend(``,e))}else s.onTranscriptCancel?.()}";
+  return "async function send(){let p=`Create an image of a neon cabin`,c={setTranscript(){}},a={dictationSessionId:`session-1`,performance:{mark(){}}},i={action:`send`,recovery:null},s={chatgpt:null,onRecoveryChange:null,onTranscriptRetry:async()=>{},onTranscriptSend:async(t,e)=>globalThis.events.push([`send`,t,e]),onTranscriptInsert:async(t,e)=>globalThis.events.push([`insert`,t,e]),onTranscriptCancel:()=>globalThis.events.push([`cancel`])},x=null,te={current:i};if(p.length>0||s.chatgpt!=null){c==null&&s.chatgpt==null?une.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:p}):c?.setTranscript(p),a.performance.mark(`transcript_dispatched`);let e=c==null?void 0:a.dictationSessionId;if(i.recovery!=null&&s.onRecoveryChange!=null){await s.onTranscriptRetry?.(p,e,x)}else if(i.action===`send`){let t=x==null?s.onTranscriptSend(p,e):s.onTranscriptSend(p,e,x);await t}else{let t=x==null?s.onTranscriptInsert(p,e):s.onTranscriptInsert(p,e,x);await t,te.current===i&&te.current.action===`send`&&await s.onTranscriptSend(``,e,x)}}else s.onTranscriptCancel?.()}";
 }
 
 function retiredChronicleControllerFixture() {
@@ -681,27 +681,21 @@ test("record-and-replay matches and executes the current composer transcript blo
   ]);
 });
 
-test("record-and-replay matches the current ChatGPT-aware composer branch", () => {
-  const source = "async function send(){let y=`hello`,c={chatgpt:{},onTranscriptSend(){},onTranscriptInsert(){}},l=null,o={dictationSessionId:`s`,performance:{mark(){}}},i={action:`send`,recovery:null},v=!1,x=`extra`,oe={current:i};if(y.length>0||c.chatgpt!=null){l==null&&c.chatgpt==null?XRe.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:y}):l?.setTranscript(y),o.performance.mark(`transcript_dispatched`);let e=l==null?void 0:o.dictationSessionId;if(v=!0,i.recovery!=null&&c.onRecoveryChange!=null){await c.onTranscriptRetry?.(y,e,x)}else if(i.action===`send`){let t=x==null?c.onTranscriptSend(y,e):c.onTranscriptSend(y,e,x);await t}else{let t=x==null?c.onTranscriptInsert(y,e):c.onTranscriptInsert(y,e,x);await t,oe.current===i&&oe.current.action===`send`&&await c.onTranscriptSend(``,e,x)}}}";
-  const patched = applyRecordReplayDictationTranscriptPatch(source);
-  assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(y,i\.action\)/u);
-  assert.equal(applyRecordReplayDictationTranscriptPatch(patched), patched);
-});
+
 
 test("record-and-replay transcript repair rejects duplicate, partial, mixed, and ambiguous owners", () => {
   const current = currentComposerTranscriptFixture();
   const patched = applyRecordReplayDictationTranscriptPatch(current);
   const partial = patched.replace(
-    "onTranscriptInsert(p,e)",
-    "onTranscriptInsert(p)",
+    "transcript_dispatched",
+    "transcript_saved",
   );
   const variants = {
     "duplicate current": current + current,
     "duplicate patched": patched + patched,
     mixed: current + patched,
     partial,
-    ambiguous: current.replace("let e=c==null?void 0:a.dictationSessionId", "let e=c==null?void 0:other.dictationSessionId"),
+    ambiguous: current.replace("else if(i.action===`send`){", "else if(i.action===`send`){if(false){}else if(i.action===`send`){}"),
   };
   const descriptor = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
 

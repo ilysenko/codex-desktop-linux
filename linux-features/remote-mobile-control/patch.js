@@ -33,7 +33,6 @@ const REMOTE_CONTROL_LOAD_GATE_MARKER = "codexLinuxRemoteControlLoadGateEnabled"
 const REMOTE_CONTROL_FEATURE_SYNC_MARKER = "codexLinuxRemoteControlFeatureSyncEnabled";
 const REMOTE_CONTROL_LOAD_GATE_NEEDLE =
   /function ([A-Za-z_$][\w$]*)\(\)\{return ([A-Za-z_$][\w$]*)\(`1042620455`\)\}/u;
-const REMOTE_MOBILE_THREAD_RUNTIME_MARKER = "codexLinuxRemoteMobileThreadRuntimeStatus";
 const REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER = "codexLinuxRemoteMobilePendingNotifications";
 const REMOTE_MOBILE_HYDRATION_MARKER = "codexLinuxRemoteMobileHydrateUnknownConversation";
 const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
@@ -1001,31 +1000,16 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
     console.warn("WARN: Found an incomplete remote mobile hydration recovery patch - refusing to accept partial state");
   }
 
-  if (!patched.includes(REMOTE_MOBILE_THREAD_RUNTIME_MARKER)) {
-    const runtimeReplacement =
-      (_needle, conversationVar, runtimeVar) =>
-        `/*${REMOTE_MOBILE_THREAD_RUNTIME_MARKER}*/(${conversationVar}.resumeState===\`needs_resume\`||${runtimeVar}?.type===\`active\`||${runtimeVar}?.type===\`idle\`)&&(${conversationVar}.threadRuntimeStatus=${runtimeVar})`;
-    const runtimeNeedle =
-      /([A-Za-z_$][\w$]*)\.resumeState===`needs_resume`&&\(\1\.threadRuntimeStatus=([A-Za-z_$][\w$]*)\)/u;
-    if (runtimeNeedle.test(patched)) {
-      patched = patched.replace(runtimeNeedle, runtimeReplacement);
-    } else if (
-      patched.includes("threadRuntimeStatus:e.threadRuntimeStatus") &&
-      patched.includes("t===`needs_resume`?n?.type===`active`")
-    ) {
-      // Current upstream preserves threadRuntimeStatus on thread summaries and
-      // already treats active needs-resume threads as live in the sidebar model.
-    } else if (new RegExp(
-      "threadRuntimeStatus:[A-Za-z_$][\\w$]*===`needs_resume`\\|\\|[A-Za-z_$][\\w$]*\\?\\.type===`notLoaded`\\?" +
-        "[A-Za-z_$][\\w$]*\\?\\.threadRuntimeStatus\\?\\?[A-Za-z_$][\\w$]*\\?\\?null:" +
-        "[A-Za-z_$][\\w$]*\\?\\?[A-Za-z_$][\\w$]*\\?\\.threadRuntimeStatus\\?\\?null",
-      "u",
-    ).test(patched)) {
-      // Current upstream preserves a loaded runtime status and falls back to
-      // the stored summary while a needs-resume thread is not loaded.
-    } else if (patched.includes("threadRuntimeStatus") && patched.includes("resumeState")) {
-      console.warn("WARN: Could not find thread/list runtime-status needle - skipping remote mobile runtime-status patch");
-    }
+  const runtimeFallbackPattern = new RegExp(
+    "threadRuntimeStatus:[A-Za-z_$][\\w$]*===`needs_resume`\\|\\|[A-Za-z_$][\\w$]*\\?\\.type===`notLoaded`\\?" +
+      "[A-Za-z_$][\\w$]*\\?\\.threadRuntimeStatus\\?\\?[A-Za-z_$][\\w$]*\\?\\?null:" +
+      "[A-Za-z_$][\\w$]*\\?\\?[A-Za-z_$][\\w$]*\\?\\.threadRuntimeStatus\\?\\?null",
+    "gu",
+  );
+  const runtimeFallbackMatches = [...patched.matchAll(runtimeFallbackPattern)];
+  if (runtimeFallbackMatches.length !== 1 &&
+      patched.includes("threadRuntimeStatus") && patched.includes("resumeState")) {
+    console.warn("WARN: Could not find one current thread/list runtime-status fallback - skipping remote mobile runtime-status patch");
   }
 
   return patched;
@@ -1268,28 +1252,19 @@ function applyLinuxRemoteControlEnablementBridgePatch(source) {
     return prefix + region + suffix;
   }
 
-  const selfAutoConnectReplacement = (desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar, literalPrefix = false) => {
-    const logPrefix = literalPrefix ? "[remote-connections/gate-bridge]" : `\${${logPrefixVar}}`;
+  const selfAutoConnectReplacement = (desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar) => {
+    const logPrefix = "[remote-connections/gate-bridge]";
     return `${desktopHostRequestFn}(\`set-remote-control-connections-enabled\`,{params:{enabled:${enabledVar}${extraParams}}}).then(async e=>{if(${enabledVar}&&typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)){let t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null;if(t.length===0)try{let e=await ${desktopHostRequestFn}(\`refresh-remote-control-connections\`,{params:{}});t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=n??e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null}catch(e){${loggerVar}.warning(\`${logPrefix} self_auto_connect_refresh_failed\`,{safe:{},sensitive:{error:e}})}if(n==null)try{let e=await ${desktopHostRequestFn}(\`get-global-state\`,{params:{key:\`electron-local-remote-control-installation-id\`}});n=e?.value??e?.state?.value??e?.globalState?.[\`electron-local-remote-control-installation-id\`]??null}catch(e){${loggerVar}.warning(\`${logPrefix} self_auto_connect_identity_failed\`,{safe:{},sensitive:{error:e}})}let r=t.filter(e=>typeof e?.hostId==\`string\`&&e.hostId.startsWith(\`remote-control:\`)),i=new Set(r.filter(e=>n!=null&&(e.installationId??e.installation_id)===n).map(e=>e.hostId));await Promise.all(r.filter(e=>i.has(e.hostId)).map(e=>${desktopHostRequestFn}(\`set-remote-connection-auto-connect\`,{params:{hostId:e.hostId,autoConnect:!0}}).catch(t=>{${loggerVar}.warning(\`${logPrefix} self_auto_connect_failed\`,{safe:{autoConnect:!0},sensitive:{hostId:e.hostId,error:t}})})))}}/*${REMOTE_CONTROL_SELF_AUTO_CONNECT_MARKER}*/).catch(${errorVar}=>{${loggerVar}.warning(\`${logPrefix} sync_failed\`,{safe:{enabled:${enabledVar}},sensitive:{error:${errorVar}}})})`;
   };
 
-  const selfAutoConnectPattern =
-    /([A-Za-z_$][\w$]*)\(`set-remote-control-connections-enabled`,\{params:\{enabled:([A-Za-z_$][\w$]*)(,oneToOnePairingInAppEnabled:[A-Za-z_$][\w$]*)\}\}\)\.catch\(([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.warning\(`\$\{([A-Za-z_$][\w$]*)\} sync_failed`,\{safe:\{remoteControlConnectionsEnabled:\2\},sensitive:\{error:\4\}\}\)\}\)/u;
-  let selfAutoConnectRegion = region.replace(
-    selfAutoConnectPattern,
-    (_needle, desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar) =>
-      selfAutoConnectReplacement(desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar),
-  );
+  const literalPattern =
+    /([A-Za-z_$][\w$]*)\(`set-remote-control-connections-enabled`,\{params:\{enabled:([A-Za-z_$][\w$]*)(,oneToOnePairingInAppEnabled:[A-Za-z_$][\w$]*)\}\}\)\.catch\(([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.warning\(`\[remote-connections\/gate-bridge\] sync_failed`,\{safe:\{remoteControlConnectionsEnabled:\2\},sensitive:\{error:\4\}\}\)\}\)/u;
 
-  if (selfAutoConnectRegion === region) {
-    const literalPattern =
-      /([A-Za-z_$][\w$]*)\(`set-remote-control-connections-enabled`,\{params:\{enabled:([A-Za-z_$][\w$]*)(,oneToOnePairingInAppEnabled:[A-Za-z_$][\w$]*)\}\}\)\.catch\(([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.warning\(`\[remote-connections\/gate-bridge\] sync_failed`,\{safe:\{remoteControlConnectionsEnabled:\2\},sensitive:\{error:\4\}\}\)\}\)/u;
-    selfAutoConnectRegion = region.replace(
-      literalPattern,
-      (_needle, desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar) =>
-        selfAutoConnectReplacement(desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, "", true),
-    );
-  }
+  let selfAutoConnectRegion = region.replace(
+    literalPattern,
+    (_needle, desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar) =>
+      selfAutoConnectReplacement(desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar),
+  );
 
   if (selfAutoConnectRegion === region) {
     console.warn("WARN: Could not find remote-control self auto-connect needle - skipping Linux remote-control auto-connect patch");
