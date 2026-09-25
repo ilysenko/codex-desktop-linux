@@ -1737,6 +1737,24 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   assert.match(patched, /supportsReconnect\(\)\{return!0\}/);
 });
 
+test("patch accepts the current adapter-before-keepalive and split namespace layout", () => {
+  const source = syntheticBundle()
+    .replace(
+      "return n.Dn(r,{onPongTimeout:()=>{r.terminate()}}),this.hasConnected=!0,new n.On(r)",
+      "let i=new n.On(r,void 0,8);return n.Dn(r,{onPongTimeout:()=>{i.reason=`timeout`,r.terminate()}}),this.hasConnected=!0,i",
+    )
+    .replace("if(n.no(e.hostConfig))", "if(r.no(e.hostConfig))")
+    .replace(
+      "getConfigOverrides:async()=>[...await Ope(e)]",
+      "getConfigOverrides:async()=>[...d.k(e.globalState,e.hostConfig),...await e.secretAuthStorageConfigOverrides,...await Ope(e)]",
+    );
+  const patched = applySharedAppServerSocketPatch(source);
+  assert.notEqual(patched, source);
+  assert.match(patched, /new CodexLinuxSharedAppServerSocketTransport/u);
+  assert.match(patched, /new n\.On\(t\)/u);
+  assert.match(patched, /n\.Dn\(t,\{onPongTimeout/u);
+});
+
 test("patch leaves unsupported bundle shapes unchanged with a warning", () => {
   const warnings = [];
   const originalWarn = console.warn;

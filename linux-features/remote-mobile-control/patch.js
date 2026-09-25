@@ -36,7 +36,6 @@ const REMOTE_CONTROL_LOAD_GATE_NEEDLE =
 const REMOTE_MOBILE_THREAD_RUNTIME_MARKER = "codexLinuxRemoteMobileThreadRuntimeStatus";
 const REMOTE_MOBILE_PENDING_NOTIFICATIONS_MARKER = "codexLinuxRemoteMobilePendingNotifications";
 const REMOTE_MOBILE_HYDRATION_MARKER = "codexLinuxRemoteMobileHydrateUnknownConversation";
-const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
 const REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER = "codexLinuxRemoteControlEnablementBridge";
 const REMOTE_CONTROL_ENABLE_FOR_HOST_PARAMS_MARKER = "codexLinuxRemoteControlEnableForHostParams";
 const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoConnectCleanup";
@@ -1015,6 +1014,14 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
     ) {
       // Current upstream preserves threadRuntimeStatus on thread summaries and
       // already treats active needs-resume threads as live in the sidebar model.
+    } else if (new RegExp(
+      "threadRuntimeStatus:[A-Za-z_$][\\w$]*===`needs_resume`\\|\\|[A-Za-z_$][\\w$]*\\?\\.type===`notLoaded`\\?" +
+        "[A-Za-z_$][\\w$]*\\?\\.threadRuntimeStatus\\?\\?[A-Za-z_$][\\w$]*\\?\\?null:" +
+        "[A-Za-z_$][\\w$]*\\?\\?[A-Za-z_$][\\w$]*\\?\\.threadRuntimeStatus\\?\\?null",
+      "u",
+    ).test(patched)) {
+      // Current upstream preserves a loaded runtime status and falls back to
+      // the stored summary while a needs-resume thread is not loaded.
     } else if (patched.includes("threadRuntimeStatus") && patched.includes("resumeState")) {
       console.warn("WARN: Could not find thread/list runtime-status needle - skipping remote mobile runtime-status patch");
     }
@@ -1260,16 +1267,28 @@ function applyLinuxRemoteControlEnablementBridgePatch(source) {
     return prefix + region + suffix;
   }
 
-  const selfAutoConnectReplacement = (desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar) =>
-    `${desktopHostRequestFn}(\`set-remote-control-connections-enabled\`,{params:{enabled:${enabledVar}${extraParams}}}).then(async e=>{if(${enabledVar}&&typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)){let t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null;if(t.length===0)try{let e=await ${desktopHostRequestFn}(\`refresh-remote-control-connections\`,{params:{}});t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=n??e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null}catch(e){${loggerVar}.warning(\`\${${logPrefixVar}} self_auto_connect_refresh_failed\`,{safe:{},sensitive:{error:e}})}if(n==null)try{let e=await ${desktopHostRequestFn}(\`get-global-state\`,{params:{key:\`electron-local-remote-control-installation-id\`}});n=e?.value??e?.state?.value??e?.globalState?.[\`electron-local-remote-control-installation-id\`]??null}catch(e){${loggerVar}.warning(\`\${${logPrefixVar}} self_auto_connect_identity_failed\`,{safe:{},sensitive:{error:e}})}let r=t.filter(e=>typeof e?.hostId==\`string\`&&e.hostId.startsWith(\`remote-control:\`)),i=new Set(r.filter(e=>n!=null&&(e.installationId??e.installation_id)===n).map(e=>e.hostId));await Promise.all(r.filter(e=>i.has(e.hostId)).map(e=>${desktopHostRequestFn}(\`set-remote-connection-auto-connect\`,{params:{hostId:e.hostId,autoConnect:!0}}).catch(t=>{${loggerVar}.warning(\`\${${logPrefixVar}} self_auto_connect_failed\`,{safe:{autoConnect:!0},sensitive:{hostId:e.hostId,error:t}})})))}}/*${REMOTE_CONTROL_SELF_AUTO_CONNECT_MARKER}*/).catch(${errorVar}=>{${loggerVar}.warning(\`\${${logPrefixVar}} sync_failed\`,{safe:{enabled:${enabledVar}},sensitive:{error:${errorVar}}})})`;
+  const selfAutoConnectReplacement = (desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar, literalPrefix = false) => {
+    const logPrefix = literalPrefix ? "[remote-connections/gate-bridge]" : `\${${logPrefixVar}}`;
+    return `${desktopHostRequestFn}(\`set-remote-control-connections-enabled\`,{params:{enabled:${enabledVar}${extraParams}}}).then(async e=>{if(${enabledVar}&&typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)){let t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null;if(t.length===0)try{let e=await ${desktopHostRequestFn}(\`refresh-remote-control-connections\`,{params:{}});t=e?.remoteControlConnections??e?.sharedObjects?.remote_control_connections??e?.connections??[],n=n??e?.sharedObjects?.local_remote_control_installation_id??e?.local_remote_control_installation_id??e?.localRemoteControlInstallationId??e?.installationId??e?.installation_id??null}catch(e){${loggerVar}.warning(\`${logPrefix} self_auto_connect_refresh_failed\`,{safe:{},sensitive:{error:e}})}if(n==null)try{let e=await ${desktopHostRequestFn}(\`get-global-state\`,{params:{key:\`electron-local-remote-control-installation-id\`}});n=e?.value??e?.state?.value??e?.globalState?.[\`electron-local-remote-control-installation-id\`]??null}catch(e){${loggerVar}.warning(\`${logPrefix} self_auto_connect_identity_failed\`,{safe:{},sensitive:{error:e}})}let r=t.filter(e=>typeof e?.hostId==\`string\`&&e.hostId.startsWith(\`remote-control:\`)),i=new Set(r.filter(e=>n!=null&&(e.installationId??e.installation_id)===n).map(e=>e.hostId));await Promise.all(r.filter(e=>i.has(e.hostId)).map(e=>${desktopHostRequestFn}(\`set-remote-connection-auto-connect\`,{params:{hostId:e.hostId,autoConnect:!0}}).catch(t=>{${loggerVar}.warning(\`${logPrefix} self_auto_connect_failed\`,{safe:{autoConnect:!0},sensitive:{hostId:e.hostId,error:t}})})))}}/*${REMOTE_CONTROL_SELF_AUTO_CONNECT_MARKER}*/).catch(${errorVar}=>{${loggerVar}.warning(\`${logPrefix} sync_failed\`,{safe:{enabled:${enabledVar}},sensitive:{error:${errorVar}}})})`;
+  };
 
   const selfAutoConnectPattern =
     /([A-Za-z_$][\w$]*)\(`set-remote-control-connections-enabled`,\{params:\{enabled:([A-Za-z_$][\w$]*)(,oneToOnePairingInAppEnabled:[A-Za-z_$][\w$]*)\}\}\)\.catch\(([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.warning\(`\$\{([A-Za-z_$][\w$]*)\} sync_failed`,\{safe:\{remoteControlConnectionsEnabled:\2\},sensitive:\{error:\4\}\}\)\}\)/u;
-  const selfAutoConnectRegion = region.replace(
+  let selfAutoConnectRegion = region.replace(
     selfAutoConnectPattern,
     (_needle, desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar) =>
       selfAutoConnectReplacement(desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, logPrefixVar),
   );
+
+  if (selfAutoConnectRegion === region) {
+    const literalPattern =
+      /([A-Za-z_$][\w$]*)\(`set-remote-control-connections-enabled`,\{params:\{enabled:([A-Za-z_$][\w$]*)(,oneToOnePairingInAppEnabled:[A-Za-z_$][\w$]*)\}\}\)\.catch\(([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.warning\(`\[remote-connections\/gate-bridge\] sync_failed`,\{safe:\{remoteControlConnectionsEnabled:\2\},sensitive:\{error:\4\}\}\)\}\)/u;
+    selfAutoConnectRegion = region.replace(
+      literalPattern,
+      (_needle, desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar) =>
+        selfAutoConnectReplacement(desktopHostRequestFn, enabledVar, extraParams, errorVar, loggerVar, "", true),
+    );
+  }
 
   if (selfAutoConnectRegion === region) {
     console.warn("WARN: Could not find remote-control self auto-connect needle - skipping Linux remote-control auto-connect patch");
@@ -1324,120 +1343,6 @@ function applyLinuxRemoteMobileActiveStatusPatch(source) {
   return source.replace(
     statusPattern,
     `function $1({latestTurnStatus:$2,resumeState:$3,streamRole:$4,threadRuntimeStatus:$5}){/*${REMOTE_MOBILE_ACTIVE_STATUS_MARKER}*/return $4?.role===\`follower\`?\`follower\`:$5?.type===\`active\`||$2===\`inProgress\`?\`active\`:$4==null?$3===\`needs_resume\`?\`needs-resume\`:\`read-only\`:\`inactive\`}`,
-  );
-}
-
-function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
-  const logMarker = "Reasoning summary turn-start config resolved";
-  const logIndexes = [...source.matchAll(new RegExp(escapeRegExp(logMarker), "gu"))].map(
-    (match) => match.index,
-  );
-  if (logIndexes.length === 0) {
-    console.warn(
-      "WARN: Could not find reasoning-summary turn-start log marker - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-  if (logIndexes.length !== 1) {
-    console.warn(
-      "WARN: Found ambiguous reasoning-summary resolver/caller contracts - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-
-  const [logIndex] = logIndexes;
-  const functionStart = source.lastIndexOf("async function ", logIndex);
-  const turnStartPrefix = functionStart === -1 ? "" : source.slice(functionStart, logIndex);
-  const currentSummaryPattern =
-    /(?<prefix>let |,)(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?`none`;(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),(?<runtime>[A-Za-z_$][\w$]*)\.reasoningSummaryOverride!=null&&\(\k<summary>=\k<runtime>\.reasoningSummaryOverride\),\k<summary>=(?<modelConfig>[A-Za-z_$][\w$]*)==null\?null:\k<modelConfig>\.model_reasoning_summary\?\?\k<summary>,(?<request>[A-Za-z_$][\w$]*)\.summary!==void 0&&\(\k<summary>=\k<request>\.summary\);/u;
-  const summaryMatches = [
-    ...turnStartPrefix.matchAll(new RegExp(currentSummaryPattern.source, "gu")),
-  ];
-  if (summaryMatches.length === 0) {
-    console.warn(
-      "WARN: Could not find reasoning-summary turn-start resolver - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-  if (summaryMatches.length !== 1) {
-    console.warn(
-      "WARN: Found ambiguous reasoning-summary resolver/caller contracts - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-
-  const [summaryMatch] = summaryMatches;
-  const { request: requestVar, summary: summaryVar } = summaryMatch.groups;
-  const functionHeader = turnStartPrefix.match(/async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)[,)]/u);
-  const helperName = functionHeader?.[1];
-  if (helperName == null) {
-    console.warn(
-      "WARN: Could not find reasoning-summary turn-start helper - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-  const callerPrefix =
-    `(?<prefix>${escapeRegExp(helperName)}\\((?<manager>[A-Za-z_$][\\w$]*),` +
-      `[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,` +
-      `(?<conversation>[A-Za-z_$][\\w$]*),\\{)`;
-  const callerContract =
-    `(?=canUseProjectlessWorkspace:!(?<classifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\),[\\s\\S]{0,1000}?` +
-    `reasoningSummaryOverride:\\k<manager>\\.getDefaultFeatureOverride\\(\`concurrent_reasoning_summaries\`\\)===!0\\?\`detailed\`:null)`;
-  const pristineCallerMatches = [...source.matchAll(new RegExp(callerPrefix + callerContract, "gu"))];
-  const patchedCallerPattern = new RegExp(
-    callerPrefix +
-      `codexLinuxRemoteMobileHost:(?<patchedClassifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\)&&` +
-      `\\k<conversation>\\.mode===\`durable\`,` +
-      `(?=canUseProjectlessWorkspace:!\\k<patchedClassifier>\\(\\k<manager>\\.getHostId\\(\\)\\),[\\s\\S]{0,1000}?` +
-      `reasoningSummaryOverride:\\k<manager>\\.getDefaultFeatureOverride\\(\`concurrent_reasoning_summaries\`\\)===!0\\?\`detailed\`:null)`,
-    "gu",
-  );
-  const patchedCallerMatches = [...source.matchAll(patchedCallerPattern)];
-
-  const patchedResolverSuffix =
-    `/*${REMOTE_MOBILE_REASONING_SUMMARY_MARKER}*/` +
-    `navigator.userAgent.includes(\`Linux\`)&&${summaryMatch.groups.runtime}.codexLinuxRemoteMobileHost&&${requestVar}.summary===void 0&&(${summaryVar}=\`none\`);`;
-  const absoluteMatchStart = functionStart + summaryMatch.index;
-  const absoluteMatchEnd = absoluteMatchStart + summaryMatch[0].length;
-  const resolverIsPatched = source.startsWith(patchedResolverSuffix, absoluteMatchEnd);
-  const markerCount = source.split(REMOTE_MOBILE_REASONING_SUMMARY_MARKER).length - 1;
-  const completePristinePair =
-    !resolverIsPatched &&
-    markerCount === 0 &&
-    pristineCallerMatches.length === 1 &&
-    patchedCallerMatches.length === 0;
-  const completePatchedPair =
-    resolverIsPatched &&
-    markerCount === 1 &&
-    pristineCallerMatches.length === 0 &&
-    patchedCallerMatches.length === 1;
-
-  if (completePatchedPair) {
-    return source;
-  }
-  if (!completePristinePair) {
-    console.warn(
-      "WARN: Found ambiguous or incomplete reasoning-summary resolver/caller contract - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-
-  const replacement =
-    `${summaryMatch[0]}/*${REMOTE_MOBILE_REASONING_SUMMARY_MARKER}*/` +
-    `navigator.userAgent.includes(\`Linux\`)&&${summaryMatch.groups.runtime}.codexLinuxRemoteMobileHost&&${requestVar}.summary===void 0&&(${summaryVar}=\`none\`);`;
-  const [currentCallerMatch] = pristineCallerMatches;
-  const callerReplacement =
-    `${currentCallerMatch.groups.prefix}codexLinuxRemoteMobileHost:` +
-    `${currentCallerMatch.groups.classifier}(${currentCallerMatch.groups.manager}.getHostId())&&` +
-    `${currentCallerMatch.groups.conversation}.mode===\`durable\`,`;
-  const edits = [
-    { index: absoluteMatchStart, length: summaryMatch[0].length, replacement },
-    { index: currentCallerMatch.index, length: currentCallerMatch[0].length, replacement: callerReplacement },
-  ].sort((left, right) => right.index - left.index);
-  return edits.reduce(
-    (patched, edit) =>
-      `${patched.slice(0, edit.index)}${edit.replacement}${patched.slice(edit.index + edit.length)}`,
-    source,
   );
 }
 
@@ -1535,16 +1440,6 @@ module.exports = [
     apply: applyLinuxRemoteConnectionsRefreshPatch,
   },
   {
-    id: "linux-remote-mobile-reasoning-summary-none",
-    phase: "webview-asset",
-    pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
-    order: 20_149,
-    ciPolicy: "optional",
-    missingDescription: "turn-start reasoning summary resolver",
-    skipDescription: "Linux remote-mobile reasoning summary patch",
-    apply: applyLinuxRemoteMobileReasoningSummaryPatch,
-  },
-  {
     id: "linux-remote-mobile-conversation-hydration",
     phase: "webview-asset",
     pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
@@ -1623,7 +1518,6 @@ module.exports.hasLinuxRemoteMobileLocalAppServerRemoteControlPatch =
   hasLinuxRemoteMobileLocalAppServerRemoteControlPatch;
 module.exports.applyLinuxRemoteMobileChromeBridgePatch = applyLinuxRemoteMobileChromeBridgePatch;
 module.exports.applyLinuxRemoteMobileConversationHydrationPatch = applyLinuxRemoteMobileConversationHydrationPatch;
-module.exports.applyLinuxRemoteMobileReasoningSummaryPatch = applyLinuxRemoteMobileReasoningSummaryPatch;
 module.exports.applyLinuxRemoteTerminalStatusRecoveryPatch = applyLinuxRemoteTerminalStatusRecoveryPatch;
 module.exports.applyLinuxRemoteControlStatusReadGuardPatch = applyLinuxRemoteControlStatusReadGuardPatch;
 module.exports.applyLinuxRemoteControlStatusWaitPatch = applyLinuxRemoteControlStatusWaitPatch;

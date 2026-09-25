@@ -102,11 +102,11 @@ test("current package descriptors use semantic app-initial and app-shared owners
       "api-key-service-tier-fallback",
     ],
   );
-  const resolver = descriptors.find(({ id }) => id === "api-key-service-tier-resolver");
-  assert.ok(descriptors.filter((descriptor) => descriptor !== resolver)
+  const sharedIds = new Set(["api-key-service-tier-resolver", "api-key-service-tier-fallback"]);
+  assert.ok(descriptors.filter((descriptor) => !sharedIds.has(descriptor.id))
     .every((descriptor) => descriptor.pattern.test("app-initial-Bd3Z1bES.js")));
-  assert.equal(resolver.pattern.test("app-shared-d9439dc9e73f.js"), true);
-  assert.equal(resolver.pattern.test("app-initial-Bd3Z1bES.js"), false);
+  assert.ok(descriptors.filter((descriptor) => sharedIds.has(descriptor.id))
+    .every((descriptor) => descriptor.pattern.test("app-shared-d9439dc9e73f.js")));
   assert.ok(descriptors.every((descriptor) => !descriptor.pattern.test("projects-index-page-DjNy92Xe.js")));
 });
 
@@ -153,7 +153,7 @@ test("partial current drift is reported when the other exact target still applie
       fs.writeFileSync(
         path.join(
           assetsDir,
-          "app-initial-fallback-current.js",
+          "app-shared-fallback-current.js",
         ),
         [
           "function tEe(e){return[gQ,...(e?.serviceTiers??[]).map(t=>({description:eEe(t),iconKind:fQ(t.id,t.name),label:$Te(t),tier:t,value:t.id}))]}",
@@ -230,6 +230,20 @@ test("service tier auth gate allows API-key hosts while preserving ChatGPT requi
 
   assert.match(patched, /d=!u&&\(a\?c!=null&&c\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1:o===`apikey`\)/);
   assert.doesNotMatch(patched, /d=a&&!u&&c!=null/);
+});
+
+test("current auth gate keeps personal-access-token hosts on the requirements path", () => {
+  const source = "function YLn(e){let i=Gc(e),a=i?.authMethod===`chatgpt`||i?.authMethod===`personalAccessToken`,o=i?.authMethod??null,s={authMethod:o}, {data:c,isPending:l}=Kf(s),u=!!i?.isLoading||a&&l,d=a&&!u&&c!=null&&c?.requirements?.featureRequirements?.fast_mode!==!1;return{isServiceTierAllowed:d,isLoading:u}}";
+  const patched = applyPatchTwice(applyApiKeyServiceTierGatePatch, source);
+  assert.match(patched, /a=i\?\.authMethod===`chatgpt`\|\|i\?\.authMethod===`personalAccessToken`/u);
+  assert.match(patched, /d=!u&&\(a\?c!=null/u);
+  assert.match(patched, /:o===`apikey`\)/u);
+});
+
+test("current shared option owner synthesizes a fallback from its model argument", () => {
+  const source = "function pNr(e,t){return[xNr,...(t??[]).map(t=>{let n=gN(t.id,t.name),r=n===`fast`?mNr(e):null;return{description:dNr(t,r),iconKind:n,label:uNr(t),speedMultiplier:r,tier:t,value:t.id}})]}";
+  const patched = applyPatchTwice(applyFallbackFastTierPatch, source);
+  assert.match(patched, /t\?\.length\?t:\[codexLinuxApiKeyFastTier\(e\)\]/u);
 });
 
 test("service tier auth gate warning ignores unrelated fast-mode config guards", () => {

@@ -39,7 +39,7 @@ function findWorkspaceRootDropHandlerBundles(extractedDir) {
           ) ||
           (
             source.includes("hasMultipleTimeValues") &&
-            new RegExp(`rruleText:e,time:${MINIFIED_IDENTIFIER}\\(r\\.byhour,r\\.byminute,r\\)`).test(source)
+            new RegExp(`rruleText:${MINIFIED_IDENTIFIER},time:${MINIFIED_IDENTIFIER}\\((${MINIFIED_IDENTIFIER})\\.byhour,\\1\\.byminute,\\1\\)`).test(source)
           );
       } catch {
         return false;
@@ -139,13 +139,20 @@ function applyGenericAutomationScheduleMultiTimePatch(source) {
   }
 
   const parserRe = new RegExp(
-    `hasMultipleTimeValues:Array\\.isArray\\(r\\.byhour\\)&&r\\.byhour\\.length>1\\|\\|Array\\.isArray\\(r\\.byminute\\)&&r\\.byminute\\.length>1,interval:Math\\.max\\(1,Math\\.round\\(r\\.interval\\?\\?1\\)\\),minute:a,origOptions:n\\.origOptions,rruleText:e,time:(${MINIFIED_IDENTIFIER})\\(r\\.byhour,r\\.byminute,r\\),weekdays:i`,
+    `hasMultipleTimeValues:Array\\.isArray\\((${MINIFIED_IDENTIFIER})\\.byhour\\)&&\\1\\.byhour\\.length>1\\|\\|Array\\.isArray\\(\\1\\.byminute\\)&&\\1\\.byminute\\.length>1,` +
+      `interval:Math\\.max\\(1,Math\\.round\\(\\1\\.interval\\?\\?1\\)\\),(minute:(${MINIFIED_IDENTIFIER}),)?` +
+      `origOptions:(${MINIFIED_IDENTIFIER})\\.origOptions,rruleText:(${MINIFIED_IDENTIFIER}),time:(${MINIFIED_IDENTIFIER})\\(\\1\\.byhour,\\1\\.byminute,\\1\\),weekdays:(${MINIFIED_IDENTIFIER})`,
   );
   const parserMatch = parserRe.exec(source);
   if (!parserMatch) {
     return source;
   }
-  const timeFn = parserMatch[1];
+  const optionsVar = parserMatch[1];
+  const minuteProperty = parserMatch[2] == null ? "" : `minute:${parserMatch[3]},`;
+  const originalOptionsVar = parserMatch[4];
+  const rruleTextVar = parserMatch[5];
+  const timeFn = parserMatch[6];
+  const weekdaysVar = parserMatch[7];
 
   const helperRe = new RegExp(
     "function " +
@@ -160,14 +167,15 @@ function applyGenericAutomationScheduleMultiTimePatch(source) {
   const combineFn = helperMatch[2];
 
   const summaryRe = new RegExp(
-    `function (${MINIFIED_IDENTIFIER})\\(e,t\\)\\{if\\(!e\\|\\|e\\.hasMultipleTimeValues\\)return null;[\\s\\S]*?let i=(${MINIFIED_IDENTIFIER})\\(e\\.time,t\\);return i\\?(${MINIFIED_IDENTIFIER})\\(\\{intl:t,isEveryDay:r,timeLabel:i,weekdays:n\\}\\):null\\}`,
+    `function (${MINIFIED_IDENTIFIER})\\(e,t(?:,${MINIFIED_IDENTIFIER}=!0)?\\)\\{if\\(!e\\|\\|e\\.hasMultipleTimeValues\\)return null;[\\s\\S]*?let (${MINIFIED_IDENTIFIER})=(${MINIFIED_IDENTIFIER})\\(e\\.time,t\\);return \\2\\?(${MINIFIED_IDENTIFIER})\\(\\{intl:t,isEveryDay:${MINIFIED_IDENTIFIER},timeLabel:\\2,weekdays:${MINIFIED_IDENTIFIER}\\}\\):null\\}`,
   );
   const summaryMatch = summaryRe.exec(source);
   if (!summaryMatch) {
     return source;
   }
   const summaryBlock = summaryMatch[0];
-  const labelFn = summaryMatch[2];
+  const summaryLabelVar = summaryMatch[2];
+  const labelFn = summaryMatch[3];
 
   const helperPatch =
     helperBlock +
@@ -180,15 +188,15 @@ function applyGenericAutomationScheduleMultiTimePatch(source) {
     "(e,t)).filter(Boolean);return r.length===0?null:typeof t.formatList==`function`?t.formatList(r,{type:`conjunction`}):r.join(`, `)}";
 
   const parserPatch =
-    "hasMultipleTimeValues:codexLinuxRruleTimes(r.byhour,r.byminute,r).length>1,interval:Math.max(1,Math.round(r.interval??1)),minute:a,origOptions:n.origOptions,rruleText:e,time:" +
+    `hasMultipleTimeValues:codexLinuxRruleTimes(${optionsVar}.byhour,${optionsVar}.byminute,${optionsVar}).length>1,interval:Math.max(1,Math.round(${optionsVar}.interval??1)),` + minuteProperty + `origOptions:${originalOptionsVar}.origOptions,rruleText:${rruleTextVar},time:` +
     timeFn +
-    "(r.byhour,r.byminute,r),timeValues:codexLinuxRruleTimes(r.byhour,r.byminute,r),weekdays:i";
+    `(${optionsVar}.byhour,${optionsVar}.byminute,${optionsVar}),timeValues:codexLinuxRruleTimes(${optionsVar}.byhour,${optionsVar}.byminute,${optionsVar}),weekdays:${weekdaysVar}`;
 
   const summaryPatch = summaryBlock
     .replace("if(!e||e.hasMultipleTimeValues)return null;", "if(!e)return null;")
     .replace(
-      "let i=" + labelFn + "(e.time,t);",
-      "let i=codexLinuxAutomationTimeLabel(e,t);",
+      "let " + summaryLabelVar + "=" + labelFn + "(e.time,t);",
+      "let " + summaryLabelVar + "=codexLinuxAutomationTimeLabel(e,t);",
     );
 
   let patched = source.replace(helperBlock, () => helperPatch);

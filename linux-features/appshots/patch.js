@@ -47,11 +47,16 @@ function linuxAppshotWaylandHelperSource() {
   return "function codexLinuxAppshotIsWayland(){return process.platform===`linux`&&((process.env.XDG_SESSION_TYPE||``).toLowerCase()===`wayland`||!!process.env.WAYLAND_DISPLAY)}";
 }
 
-function appshotHotkeyPatterns() {
+function appshotHotkeyPatterns(source) {
+  const registration = source.match(
+    /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*=`press`\)\{if\(process\.platform!==`darwin`(?:&&process\.platform!==`linux`)?\)return null;let [A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\1\)(?:\?\?[A-Za-z_$][\w$]*\(\1\))?;/u,
+  );
+  const normalize = registration?.[2];
+  const normalizeCall = normalize == null ? "(?!)" : normalize.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return [
     {
-      current: /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=process\.platform\)\{return \3===`darwin`&&([A-Za-z_$][\w$]*)\(\2\)!=null\}/g,
-      patched: /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=process\.platform\)\{return \(\3===`darwin`\|\|\3===`linux`&&!codexLinuxAppshotIsWayland\(\)\)&&([A-Za-z_$][\w$]*)\(\2\)!=null\}/g,
+      current: new RegExp(`function ([A-Za-z_$][\\w$]*)\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)=process\\.platform\\)\\{return \\3===\`darwin\`&&(${normalizeCall})\\(\\2\\)!=null\\}`, "g"),
+      patched: new RegExp(`function ([A-Za-z_$][\\w$]*)\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)=process\\.platform\\)\\{return \\(\\3===\`darwin\`\\|\\|\\3===\`linux\`&&!codexLinuxAppshotIsWayland\\(\\)\\)&&(${normalizeCall})\\(\\2\\)!=null\\}`, "g"),
       replace: (_match, fn, hotkey, platform, normalize) =>
         `function ${fn}(${hotkey},${platform}=process.platform){return (${platform}===\`darwin\`||${platform}===\`linux\`&&!codexLinuxAppshotIsWayland())&&${normalize}(${hotkey})!=null}`,
     },
@@ -81,7 +86,7 @@ function appshotHotkeyPatterns() {
 }
 
 function appshotHotkeyState(source) {
-  const patterns = appshotHotkeyPatterns();
+  const patterns = appshotHotkeyPatterns(source);
   const currentCounts = patterns.map(({ current }) => [...source.matchAll(current)].length);
   const patchedCounts = patterns.map(({ patched }) => [...source.matchAll(patched)].length);
   const helper = linuxAppshotWaylandHelperSource();

@@ -1046,7 +1046,7 @@ test("assistant runtime descriptor targets current shared assistant bundles", ()
   assert.ok(descriptor);
   assert.equal(
     descriptor.pattern.test(
-      "local-conversation-turn-BSHPwQLO.js",
+      "conversation-blocks-BSHPwQLO.js",
     ),
     true,
   );
@@ -1075,7 +1075,7 @@ test("assistant runtime descriptor fails soft and atomically when the current re
     fs.mkdirSync(assetsDir, { recursive: true });
     const assetPath = path.join(
       assetsDir,
-      "local-conversation-turn-BSHPwQLO.js",
+      "conversation-blocks-BSHPwQLO.js",
     );
     const source = "console.log(`assistant render contract moved`);";
     fs.writeFileSync(assetPath, source);
@@ -1103,7 +1103,7 @@ test("assistant runtime descriptor reports applied then already-applied for the 
     fs.mkdirSync(assetsDir, { recursive: true });
     const assetPath = path.join(
       assetsDir,
-      "local-conversation-turn-BSHPwQLO.js",
+      "conversation-blocks-BSHPwQLO.js",
     );
     fs.writeFileSync(
       assetPath,

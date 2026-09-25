@@ -276,7 +276,9 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
 
   try {
     const registerPattern = new RegExp(
-      `function (${IDENT})\\(e,t,n\\)\\{[\\s\\S]{0,500}?;if\\((${IDENT})\\(e\\)\\)return (${IDENT})\\(e\\)\\?(${IDENT})\\(e,(${IDENT}),n\\?\\.bareModifierTrigger\\):null;`,
+      `function (${IDENT})\\(e,t,n\\)\\{[\\s\\S]{0,500}?;` +
+        `(?:if\\(process\\.platform===\`win32\`&&${IDENT}\\(e\\)\\)return ${IDENT}\\(e,${IDENT}\\);)?` +
+        `if\\((${IDENT})\\(e\\)\\)return (${IDENT})\\(e\\)(?:\\|\\|${IDENT}\\(e\\))?\\?(${IDENT})\\(e,(${IDENT}),n\\?\\.bareModifierTrigger\\):null;`,
       "u",
     );
     const registerMatch = source.match(registerPattern);
@@ -284,6 +286,7 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
       throw new Error("global shortcut registration function was not found");
     }
     const registerFunction = registerMatch[1];
+    const bareModifierTestFunction = registerMatch[2];
     const bareModifierSupportFunction = registerMatch[3];
     const registerFunctionPattern = escapeRegexLiteral(registerFunction);
     const bareModifierSupportPattern = escapeRegexLiteral(bareModifierSupportFunction);
@@ -313,16 +316,31 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
     );
     patched = `${helperSource()}${patched}`;
 
-    patched = replaceUnique(
-      patched,
-      new RegExp(
-        `function (${IDENT})\\(e\\)\\{return (${IDENT})\\(e\\)\\?\\?\\(${bareModifierSupportPattern}\\(e\\)\\|\\|(${IDENT})\\(e,process\\.platform\\)\\?null:\u0060Shortcut key is not supported for global dictation\\.\u0060\\)\\}`,
-        "u",
-      ),
-      (_original, functionName, baseValidationFunction, releaseValidationFunction) =>
-        `function ${functionName}(e){return process.platform===\`linux\`&&${bareModifierSupportFunction}(e)?\`Modifier-only shortcuts are not supported for global dictation on Linux.\`:${baseValidationFunction}(e)??(${bareModifierSupportFunction}(e)||${releaseValidationFunction}(e,process.platform)?null:\`Shortcut key is not supported for global dictation.\`)}`,
-      "Linux modifier-only validation",
+    const legacyValidation = new RegExp(
+      `function (${IDENT})\\(e\\)\\{return (${IDENT})\\(e\\)\\?\\?\\(${bareModifierSupportPattern}\\(e\\)\\|\\|(${IDENT})\\(e,process\\.platform\\)\\?null:\u0060Shortcut key is not supported for global dictation\\.\u0060\\)\\}`,
+      "u",
     );
+    if (legacyValidation.test(patched)) {
+      patched = replaceUnique(
+        patched,
+        legacyValidation,
+        (_original, functionName, baseValidationFunction, releaseValidationFunction) =>
+          `function ${functionName}(e){return process.platform===\`linux\`&&${bareModifierSupportFunction}(e)?\`Modifier-only shortcuts are not supported for global dictation on Linux.\`:${baseValidationFunction}(e)??(${bareModifierSupportFunction}(e)||${releaseValidationFunction}(e,process.platform)?null:\`Shortcut key is not supported for global dictation.\`)}`,
+        "Linux modifier-only validation",
+      );
+    } else {
+      const currentValidation = new RegExp(
+        `function (${IDENT})\\(e\\)\\{(?=if\\(process\\.platform===\`win32\`&&${IDENT}\\(e\\)\\)return[\\s\\S]{0,220}?;let ${IDENT}=${IDENT}\\(e,process\\.platform,\\{allowUnmodified:!0\\}\\))`,
+        "u",
+      );
+      patched = replaceUnique(
+        patched,
+        currentValidation,
+        (_original, functionName) =>
+          `function ${functionName}(e){if(process.platform===\`linux\`&&${bareModifierTestFunction}(e))return\`Modifier-only shortcuts are not supported for global dictation on Linux.\`;`,
+        "Linux modifier-only validation",
+      );
+    }
 
     patched = replaceUnique(
       patched,
@@ -331,16 +349,21 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
       "Linux release watcher platform branch",
     );
 
-    patched = replaceUnique(
-      patched,
-      new RegExp(
-        "function (" + IDENT + ")\\(e,t\\)\\{return t===`darwin`\\?(" + IDENT + ")\\(e\\)\\.length>0:(" + IDENT + ")\\(e,t\\)!=null\\}",
-        "u",
-      ),
-      (_original, functionName, modifierFunction, keyFunction) =>
-        "function " + functionName + "(e,t){return t===`darwin`||t===`linux`?" + modifierFunction + "(e).length>0:" + keyFunction + "(e,t)!=null}",
-      "global dictation release validation",
+    const legacyReleaseValidation = new RegExp(
+      "function (" + IDENT + ")\\(e,t\\)\\{return t===`darwin`\\?(" + IDENT + ")\\(e\\)\\.length>0:(" + IDENT + ")\\(e,t\\)!=null\\}",
+      "u",
     );
+    if (legacyReleaseValidation.test(patched)) {
+      patched = replaceUnique(
+        patched,
+        legacyReleaseValidation,
+        (_original, functionName, modifierFunction, keyFunction) =>
+          "function " + functionName + "(e,t){return t===`darwin`||t===`linux`?" + modifierFunction + "(e).length>0:" + keyFunction + "(e,t)!=null}",
+        "global dictation release validation",
+      );
+    } else if (!patched.includes("case`linux`:{let n=codexLinuxGlobalDictationReleaseWatcher(e,t)")) {
+      throw new Error("global dictation release validation was not found");
+    }
 
     patched = replaceUnique(
       patched,
@@ -376,7 +399,7 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
       registerFunctionPattern +
         `\\(e,\\{(onPressed:\\(\\)=>\\{this\\.handleTogglePress\\(\\)\\},` +
         `onReleased:\\(\\)=>this\\.handleToggleRelease\\(\\),onCancelled:\\(\\)=>\\{` +
-        `this\\.toggleHotkeyPressedAtMs=void 0,this\\.lastToggleTapAtMs=void 0\\})\\},` +
+        `[\\s\\S]{0,500}?this\\.toggleHotkeyPressedAtMs=void 0,this\\.lastToggleTapAtMs=void 0\\})\\},` +
         `\\{bareModifierTrigger:\`cancellablePress\`,ownership:(${IDENT})\\}\\)`,
       "u",
     );

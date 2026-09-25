@@ -4,7 +4,7 @@ const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const PATCH_MARKER = "codexLinuxApiKeyFastTier";
 const MODEL_MARKER = "codexLinuxApiKeyServiceTierModel";
 const SERVICE_TIER_GATE_SHAPE = new RegExp(
-  `authMethod===\`chatgpt\`[\\s\\S]{0,200}?authMethod\\?\\?null` +
+  `authMethod===\`chatgpt\`(?:\\|\\|${JS_IDENT}\\?\\.authMethod===\`personalAccessToken\`)?[\\s\\S]{0,200}?authMethod\\?\\?null` +
     `[\\s\\S]{0,1200}?featureRequirements\\?\\.fast_mode` +
     `[\\s\\S]{0,500}?\\{isServiceTierAllowed:${JS_IDENT},isLoading:${JS_IDENT}\\}`,
 );
@@ -34,18 +34,18 @@ function warn(message, patchName) {
 
 function applyApiKeyServiceTierGatePatch(source) {
   const gateNeedle = new RegExp(
-    `(${JS_IDENT})=(${JS_IDENT})\\?\\.authMethod===\\\`chatgpt\\\`,` +
+    `(${JS_IDENT})=(${JS_IDENT})\\?\\.authMethod===\\\`chatgpt\\\`(?:\\|\\|\\2\\?\\.authMethod===\\\`personalAccessToken\\\`)?[,]` +
       `(${JS_IDENT})=\\2\\?\\.authMethod\\?\\?null([\\s\\S]{0,500}?),` +
-      `d=\\1&&!(${JS_IDENT})&&(${JS_IDENT})!=null&&\\6\\?\\.requirements\\?\\.featureRequirements\\?\\.fast_mode!==!1`,
+      `(${JS_IDENT})=\\1&&!(${JS_IDENT})&&(${JS_IDENT})!=null&&\\7\\?\\.requirements\\?\\.featureRequirements\\?\\.fast_mode!==!1`,
     "g",
   );
 
   const patched = source.replace(
     gateNeedle,
-    (_match, isChatGptVar, hostVar, authMethodVar, middle, loadingVar, requirementsVar) =>
-      `${isChatGptVar}=${hostVar}?.authMethod===\`chatgpt\`,` +
+    (_match, isChatGptVar, hostVar, authMethodVar, middle, allowedVar, loadingVar, requirementsVar) =>
+      `${isChatGptVar}=${hostVar}?.authMethod===\`chatgpt\`||${hostVar}?.authMethod===\`personalAccessToken\`,` +
       `${authMethodVar}=${hostVar}?.authMethod??null${middle},` +
-      `d=!${loadingVar}&&(${isChatGptVar}?${requirementsVar}!=null&&${requirementsVar}?.requirements?.featureRequirements?.fast_mode!==!1:${authMethodVar}===\`apikey\`)`,
+      `${allowedVar}=!${loadingVar}&&(${isChatGptVar}?${requirementsVar}!=null&&${requirementsVar}?.requirements?.featureRequirements?.fast_mode!==!1:${authMethodVar}===\`apikey\`)`,
   );
 
   if (patched !== source || PATCHED_SERVICE_TIER_GATE.test(source)) {
@@ -176,6 +176,24 @@ function currentFallbackOptionsPattern(flags = "") {
   );
 }
 
+function currentSharedFallbackOptionsPattern(flags = "") {
+  return new RegExp(
+    `function ${JS_IDENT}\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return\\[[^\\]]{0,800}?` +
+      `\\.\\.\\.\\(\\2\\?\\?\\[\\]\\)\\.map\\((${JS_IDENT})=>` +
+      fallbackOptionCallbackPattern().replace(`(${JS_IDENT})=>`, "") + `\\)\\]\\}`,
+    flags,
+  );
+}
+
+function patchedSharedFallbackOptionsPattern(flags = "") {
+  return new RegExp(
+    `function ${JS_IDENT}\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return\\[[^\\]]{0,800}?` +
+      `\\.\\.\\.\\(\\(\\2\\?\\.length\\?\\2:\\[${PATCH_MARKER}\\(\\1\\)\\]\\)\\.filter\\(Boolean\\)\\)\\.map\\(` +
+      fallbackOptionCallbackPattern() + `\\)\\]\\}`,
+    flags,
+  );
+}
+
 function patchedFallbackOptionsPattern(flags = "") {
   return new RegExp(
     `\\.\\.\\.\\(\\((${JS_IDENT})\\?\\.serviceTiers\\?\\.length\\?\\1\\.serviceTiers:` +
@@ -190,17 +208,25 @@ function fallbackOptionMatches(source, pattern) {
 }
 
 function fallbackFastTierState(source) {
-  const current = fallbackOptionMatches(source, currentFallbackOptionsPattern("g"));
-  const patched = fallbackOptionMatches(source, patchedFallbackOptionsPattern("g"));
+  const legacyCurrent = fallbackOptionMatches(source, currentFallbackOptionsPattern("g"))
+    .map((match) => ({ match, modelVar: match[1], layout: "legacy" }));
+  const sharedCurrent = fallbackOptionMatches(source, currentSharedFallbackOptionsPattern("g"))
+    .map((match) => ({ match, modelVar: match[1], tiersVar: match[2], layout: "shared" }));
+  const legacyPatched = fallbackOptionMatches(source, patchedFallbackOptionsPattern("g"))
+    .map((match) => ({ match, layout: "legacy" }));
+  const sharedPatched = fallbackOptionMatches(source, patchedSharedFallbackOptionsPattern("g"))
+    .map((match) => ({ match, layout: "shared" }));
+  const current = [...legacyCurrent, ...sharedCurrent];
+  const patched = [...legacyPatched, ...sharedPatched];
   const helper = fallbackFastTierHelper();
   const helperCount = source.split(helper).length - 1;
 
   if (current.length === 1 && patched.length === 0 && helperCount <= 1 &&
       (!source.includes(`function ${PATCH_MARKER}(`) || helperCount === 1)) {
-    return { kind: "current", match: current[0], helperCount };
+    return { kind: "current", ...current[0], helperCount };
   }
   if (current.length === 0 && patched.length === 1 && helperCount === 1) {
-    return { kind: "patched", match: patched[0], helperCount };
+    return { kind: "patched", ...patched[0], helperCount };
   }
   return null;
 }
@@ -224,11 +250,16 @@ function applyFallbackFastTierPatch(source) {
     }
     return source;
   }
-  const modelVar = state.match[1];
-  const replacement = state.match[0].replace(
-    `...(${modelVar}?.serviceTiers??[])`,
-    `...((${modelVar}?.serviceTiers?.length?${modelVar}.serviceTiers:[${PATCH_MARKER}(${modelVar})]).filter(Boolean))`,
-  );
+  const modelVar = state.modelVar;
+  const replacement = state.layout === "shared"
+    ? state.match[0].replace(
+      `...(${state.tiersVar}??[])`,
+      `...((${state.tiersVar}?.length?${state.tiersVar}:[${PATCH_MARKER}(${modelVar})]).filter(Boolean))`,
+    )
+    : state.match[0].replace(
+      `...(${modelVar}?.serviceTiers??[])`,
+      `...((${modelVar}?.serviceTiers?.length?${modelVar}.serviceTiers:[${PATCH_MARKER}(${modelVar})]).filter(Boolean))`,
+    );
   let patched = source.slice(0, state.match.index) + replacement +
     source.slice(state.match.index + state.match[0].length);
   if (state.helperCount === 0) patched = fallbackFastTierHelper() + patched;
@@ -340,7 +371,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20610,
     ciPolicy: "optional",
-    pattern: /^app-initial-[^.]+\.js$/,
+    pattern: /^app-shared-[^.]+\.js$/,
     assetMatch: matchesFallbackFastTierContract,
     missingDescription: "current API key service tier fallback bundle",
     skipDescription: "API key fallback fast tier patch",

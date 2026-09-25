@@ -19,11 +19,21 @@ function findTransportSymbols(source) {
   );
   if (webSocketMatch == null) return null;
   const [, namespace, webSocketClass, webSocketUrl] = webSocketMatch;
-  const lifecycleMatch = sshClassSource.match(
+  let lifecycleMatch = sshClassSource.match(
     new RegExp(
       `${namespace}\\.(${IDENT})\\((${IDENT}),\\{onPongTimeout:[\\s\\S]{0,220}?new ${namespace}\\.(${IDENT})\\(\\2\\)`,
     ),
   );
+  if (lifecycleMatch == null) {
+    const currentLifecycle = sshClassSource.match(
+      new RegExp(
+        `let ${IDENT}=new ${namespace}\\.(${IDENT})\\((${IDENT}),[^;]{0,120}\\);return ${namespace}\\.(${IDENT})\\(\\2,\\{onPongTimeout:`,
+      ),
+    );
+    if (currentLifecycle != null) {
+      lifecycleMatch = [currentLifecycle[0], currentLifecycle[3], currentLifecycle[2], currentLifecycle[1]];
+    }
+  }
   if (lifecycleMatch == null) return null;
 
   return {
@@ -78,7 +88,8 @@ function applySharedAppServerSocketPatch(source) {
   }
   const factorySource = source.slice(factoryStart, factoryEnd);
   const insertionPattern = new RegExp(
-    `(if\\(${symbols.namespace}\\.(${IDENT})\\(e\\.hostConfig\\)\\)return new (${IDENT})\\(\\{hostConfig:e\\.hostConfig,repoRoot:e\\.repoRoot,resourcesPath:e\\.resourcesPath,defaultOriginator:e\\.defaultOriginator\\}\\);)(?=let (${IDENT})=(${IDENT})\\(e\\.hostConfig\\);if\\(\\4\\)\\{)`,
+    `(if\\(${IDENT}\\.${IDENT}\\(e\\.hostConfig\\)\\)return new ${IDENT}\\(\\{hostConfig:e\\.hostConfig,repoRoot:e\\.repoRoot,resourcesPath:e\\.resourcesPath,defaultOriginator:e\\.defaultOriginator\\}\\);)` +
+      `(?=let (${IDENT})=${IDENT}\\(e\\.hostConfig\\);if\\(\\2\\)\\{)`,
     "g",
   );
   const insertionMatches = [...factorySource.matchAll(insertionPattern)];
@@ -89,7 +100,7 @@ function applySharedAppServerSocketPatch(source) {
     return source;
   }
   const configOverridesPattern = new RegExp(
-    `return new ${symbols.namespace}\\.(${IDENT})\\(\\{hostConfig:e\\.hostConfig,repoRoot:e\\.repoRoot,resourcesPath:e\\.resourcesPath,defaultOriginator:e\\.defaultOriginator,getConfigOverrides:(async\\(\\)=>\\[\\.\\.\\.await ${IDENT}\\(e\\)\\])\\}\\)`,
+    `return new ${symbols.namespace}\\.(${IDENT})\\(\\{hostConfig:e\\.hostConfig,repoRoot:e\\.repoRoot,resourcesPath:e\\.resourcesPath,defaultOriginator:e\\.defaultOriginator,getConfigOverrides:(async\\(\\)=>\\[[^\\]]{1,1000}\\])\\}\\)`,
     "g",
   );
   const configOverridesMatches = [...factorySource.matchAll(configOverridesPattern)];

@@ -208,6 +208,26 @@ test("main patch enables Linux and preserves the other platform gates", () => {
   assert.doesNotMatch(patched, /await k7\(`xdotool`/);
 });
 
+test("main patch accepts the current Windows-first registration and validation layout", () => {
+  const source = mainBundleFixture()
+    .replace(
+      ";if(Rk(e))return Lk(e)?Mk(e,o,n?.bareModifierTrigger):null;",
+      ";if(process.platform===`win32`&&uV(e))return eBe(e,o);if(Rk(e))return Lk(e)||Qk(e)?Mk(e,o,n?.bareModifierTrigger):null;",
+    )
+    .replace(
+      "function fA(e){return nA(e)??(Lk(e)||bA(e,process.platform)?null:`Shortcut key is not supported for global dictation.`)}",
+      "function fA(e){if(process.platform===`win32`&&uV(e))return null;let t=xV(e,process.platform,{allowUnmodified:!0});if(t!=null)return t;if(Lk(e))return null;return null}",
+    )
+    .replace("function bA(e,t){return t===`darwin`?mA(e).length>0:gA(e,t)!=null}", "")
+    .replace(
+      "onCancelled:()=>{this.toggleHotkeyPressedAtMs=void 0",
+      "onCancelled:()=>{this.toggleHotkeyStartsSession&&(this.toggleHotkeyStartsSession=!1,this.cancelDictation()),this.toggleHotkeyPressedAtMs=void 0",
+    );
+  const patched = applyPatchTwice(source);
+  assert.match(patched, /process\.platform===`linux`&&Rk\(e\).*Modifier-only shortcuts/u);
+  assert.match(patched, /codexLinuxGlobalDictationPortalRegistration/u);
+});
+
 test("main patch rejects retired, partial, duplicate, and ambiguous toggle registrations", () => {
   const current = "eA(e,{onPressed:()=>{this.handleTogglePress()},onReleased:()=>this.handleToggleRelease(),onCancelled:()=>{this.toggleHotkeyPressedAtMs=void 0,this.lastToggleTapAtMs=void 0}},{bareModifierTrigger:`cancellablePress`,ownership:t})";
   const retired = "eA(e,{onPressed:()=>{this.handleToggleHotkeyPressed()}},{bareModifierTrigger:`release`,ownership:t})";

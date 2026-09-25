@@ -126,7 +126,6 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-settings-ux` | `shared-boundary` | Composes outbound remote-control and Remote SSH actions in the shared settings bundle. |
 | `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state only after the last external controller is removed. |
 | `linux-remote-connections-refresh` | `shared-boundary` | Refreshes the shared Connections list without starting or enabling any host runtime. |
-| `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Prevents inherited or rollout-forced reasoning summaries from polluting this host's mobile transcript. |
 | `linux-remote-mobile-conversation-hydration` | `mobile-host` | Normalizes active thread runtime state, hydrates and replays late unknown-conversation notifications in order, and restores completed items missing local started state. |
 | `linux-remote-terminal-status-recovery` | `mobile-host` | Reconciles stale mobile terminal state with actual pending requests. |
 | `linux-remote-control-status-read-guard` | `shared-boundary` | Sends `remoteControl/status/read` only to the local host, never Remote SSH or remote-control environment hosts. |

@@ -1,5 +1,7 @@
 "use strict";
 
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+
 const RECORD_REPLAY_PLUGIN_NAME = "record-and-replay";
 const HUD_RUNTIME_VERSION = 5;
 const RECORD_REPLAY_MODULE_EXPRESSIONS = Object.freeze({
@@ -270,8 +272,41 @@ function recordReplayCurrentBlockTranscriptPattern(flags = "") {
   );
 }
 
+function recordReplayCurrentChatGptBlocks(source) {
+  const id = String.raw`[A-Za-z_$][\w$]*`;
+  const starts = source.matchAll(new RegExp(String.raw`if\((?<transcript>${id})\.length>0\|\|(?<handlers>${id})\.chatgpt!=null\)\{`, "g"));
+  const blocks = [];
+  for (const start of starts) {
+    const openBrace = start.index + start[0].length - 1;
+    const closeBrace = findMatchingBrace(source, openBrace);
+    if (closeBrace === -1) continue;
+    const text = source.slice(start.index, closeBrace + 1);
+    if (countOccurrences(text, "global-dictation-record-history-item") !== 1 ||
+        countOccurrences(text, "transcript_dispatched") !== 1) continue;
+    const actionMatches = [...text.matchAll(new RegExp(String.raw`else if\((?<actionContext>${id})\.action===\`send\`\)`, "g"))];
+    if (actionMatches.length !== 1) continue;
+    const capture = text.match(
+      new RegExp(String.raw`^if\([^{}]+\)\{(?<capture>\(globalThis\.codexLinuxRecordReplayCaptureTranscript\?\.\(\k<transcript>,(?<captureAction>${id})\.action\)[^;]+\);)?`.replace("\\k<transcript>", start.groups.transcript)),
+    );
+    blocks.push({
+      0: text,
+      index: start.index,
+      groups: {
+        transcript: start.groups.transcript,
+        actionContext: actionMatches[0].groups.actionContext,
+        capture: capture?.groups?.capture,
+        captureAction: capture?.groups?.captureAction,
+      },
+    });
+  }
+  return blocks;
+}
+
 function recordReplayDictationTranscriptState(source) {
-  const blocks = [...source.matchAll(recordReplayCurrentBlockTranscriptPattern("g"))];
+  const blocks = [
+    ...source.matchAll(recordReplayCurrentBlockTranscriptPattern("g")),
+    ...recordReplayCurrentChatGptBlocks(source),
+  ];
   const current = blocks.filter((match) => match.groups.capture == null);
   const patched = blocks.filter((match) =>
     match.groups.capture != null && match.groups.captureAction === match.groups.actionContext

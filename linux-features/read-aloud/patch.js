@@ -851,7 +851,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20620,
       ciPolicy: "optional",
-      pattern: /^local-conversation-turn-[A-Za-z0-9_-]+\.js$/,
+      pattern: /^conversation-blocks-[A-Za-z0-9_-]+\.js$/,
       missingDescription: "current primary thread assistant bundle",
       skipDescription: "read aloud assistant runtime patch",
       apply: applyAssistantAssetPatch,

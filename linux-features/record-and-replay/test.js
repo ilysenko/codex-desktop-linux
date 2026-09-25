@@ -681,6 +681,14 @@ test("record-and-replay matches and executes the current composer transcript blo
   ]);
 });
 
+test("record-and-replay matches the current ChatGPT-aware composer branch", () => {
+  const source = "async function send(){let y=`hello`,c={chatgpt:{},onTranscriptSend(){},onTranscriptInsert(){}},l=null,o={dictationSessionId:`s`,performance:{mark(){}}},i={action:`send`,recovery:null},v=!1,x=`extra`,oe={current:i};if(y.length>0||c.chatgpt!=null){l==null&&c.chatgpt==null?XRe.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:y}):l?.setTranscript(y),o.performance.mark(`transcript_dispatched`);let e=l==null?void 0:o.dictationSessionId;if(v=!0,i.recovery!=null&&c.onRecoveryChange!=null){await c.onTranscriptRetry?.(y,e,x)}else if(i.action===`send`){let t=x==null?c.onTranscriptSend(y,e):c.onTranscriptSend(y,e,x);await t}else{let t=x==null?c.onTranscriptInsert(y,e):c.onTranscriptInsert(y,e,x);await t,oe.current===i&&oe.current.action===`send`&&await c.onTranscriptSend(``,e,x)}}}";
+  const patched = applyRecordReplayDictationTranscriptPatch(source);
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(y,i\.action\)/u);
+  assert.equal(applyRecordReplayDictationTranscriptPatch(patched), patched);
+});
+
 test("record-and-replay transcript repair rejects duplicate, partial, mixed, and ambiguous owners", () => {
   const current = currentComposerTranscriptFixture();
   const patched = applyRecordReplayDictationTranscriptPatch(current);

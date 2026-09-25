@@ -754,7 +754,8 @@ test("English reasoning effort labels can be disabled", () => {
 });
 
 test("sidebar project descriptor targets only the current project sidebar asset", () => {
-  assert.match("app-initial-BTphDPeq.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
+  assert.match("app-shared-BTphDPeq.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
+  assert.doesNotMatch("app-initial-BTphDPeq.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
   assert.doesNotMatch(
     "app-initial~app-main~page-kMhXWEru.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
