@@ -4,7 +4,7 @@
     "amd64": {
       "machine": 62,
       "targetInventoryCount": 36,
-      "targetInventorySha256": "48658dc62e61b635a96acd7fbc3a001abcec1af7e95bee9989f9052476527e7a",
+      "targetInventorySha256": "41eb7b3b1c2853ffc606adf58a708207ea2834bf859dfbad6082e2d948e04a79",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
@@ -23,7 +23,7 @@
     "arm64": {
       "machine": 183,
       "targetInventoryCount": 34,
-      "targetInventorySha256": "f3b3f2ad24dddaafaf24f3e82eaa1d86e6f537762b54ae6616d0ed0d96f55efb",
+      "targetInventorySha256": "4f742ee097e279c0d8baf915bc6f9c74ae4355a1e1ab9c61939570881be01698",
       "requiredDynamicExecutables": [
         "ChatGPT",
         "browser_crashpad_handler",
@@ -40,6 +40,7 @@
     }
   },
   "forbiddenPaths": [
-    "chrome_crashpad_handler"
+    "chrome_crashpad_handler",
+    "resources/plugins/openai-bundled/plugins/latex/bin/tectonic"
   ]
 }

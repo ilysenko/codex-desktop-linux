@@ -281,7 +281,7 @@ for (const architecture of ["amd64", "arm64"]) {
       if (architecture === "amd64") {
         writeFixture(
           root,
-          "resources/plugins/openai-bundled/plugins/latex/bin/tectonic",
+          "resources/tectonic/tectonic",
           staticElf(contract.machine),
         );
       }
@@ -345,7 +345,29 @@ test("rejects missing, unexpected, and obsolete upstream executables", () => {
       () => validateUpstreamInventory(root, "amd64", manifest),
       /obsolete upstream path/,
     );
+    fs.unlinkSync(path.join(root, "chrome_crashpad_handler"));
+    writeFixture(
+      root,
+      "resources/plugins/openai-bundled/plugins/latex/bin/tectonic",
+      staticElf(),
+    );
+    assert.throws(
+      () => validateUpstreamInventory(root, "amd64", manifest),
+      /obsolete upstream path.*plugins\/openai-bundled\/plugins\/latex\/bin\/tectonic/,
+    );
   });
+});
+
+test("Nix runtime probes use the current upstream Tectonic location", () => {
+  const flake = fs.readFileSync(path.resolve(__dirname, "../../flake.nix"), "utf8");
+  assert.equal(
+    (flake.match(/resources\/tectonic\/tectonic/g) || []).length,
+    2,
+  );
+  assert.doesNotMatch(
+    flake,
+    /resources\/plugins\/openai-bundled\/plugins\/latex\/bin\/tectonic/,
+  );
 });
 
 test("the amd64 CUA Node fixup adds RUNPATH before changing PT_INTERP", () => {

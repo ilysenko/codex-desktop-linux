@@ -1033,7 +1033,7 @@
             timeout 10 "$app/${officialRuntimePaths.extensionHost}" --help >/dev/null
             "$app/resources/rg" --version
             ${lib.optionalString (system == "x86_64-linux") ''
-            test "$("$app/resources/plugins/openai-bundled/plugins/latex/bin/tectonic" --version)" = \
+            test "$("$app/resources/tectonic/tectonic" --version)" = \
               'Tectonic 0.17.0'
             ''}
             ${lib.optionalString verifyWatchbound ''
@@ -1199,7 +1199,7 @@
             --patchelf ${pkgs.patchelf}/bin/patchelf
           "$CODEX_INSTALL_DIR/start.sh" --diagnose
           if [ ${officialPackage.architecture} = amd64 ]; then
-            test "$("$CODEX_INSTALL_DIR/resources/plugins/openai-bundled/plugins/latex/bin/tectonic" --version)" = \
+            test "$("$CODEX_INSTALL_DIR/resources/tectonic/tectonic" --version)" = \
               'Tectonic 0.17.0'
           fi
           first_chatgpt="$(stat -c %i "$CODEX_INSTALL_DIR/ChatGPT")"
