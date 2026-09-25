@@ -36,6 +36,7 @@ const {
   hasLinuxRemoteMobileLocalAppServerRemoteControlPatch,
   applyLinuxRemoteMobileChromeBridgePatch,
   applyLinuxRemoteMobileConversationHydrationPatch,
+  applyLinuxRemoteMobileReasoningSummaryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxRemoteControlStatusReadGuardPatch,
   applyLinuxRemoteControlStatusWaitPatch,
@@ -67,6 +68,15 @@ const OLD_REMOTE_LOAD_GATE_ASSET =
 const OLD_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
 const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET = "app-primary-a0bff570446b.js";
+const CURRENT_REMOTE_REASONING_SUMMARY_ASSET = "app-shared-5c3eff50f08d.js";
+
+function syntheticReasoningSummaryTurnStartBundle() {
+  return "async function yY(e,t,n){let s=n,D=n.latestThreadSettings,ee=n.initialParams,me=!fm(e.getHostId());let Ee=e.getDefaultFeatureOverride(vJ)===!0,De=ee?.summary??`none`;D?.summary!==void 0&&(De=D.summary),Ee&&(De=`detailed`),s.summary!==void 0&&(De=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{concurrentReasoningSummariesFeatureOverrideEnabled:Ee,summary:De}});return{featureOverride:Ee,summary:De}}";
+}
+
+function syntheticCurrentReasoningSummaryTurnStartBundle() {
+  return "async function HWt(e,t,n,r,i,a,o){let s=n.request,N=a.latestThreadSettings,S=a.initialParams,C=a.configRequirements,ye=N?.summary??`none`;S?.summary!==void 0&&(ye=S.summary),o.reasoningSummaryOverride!=null&&(ye=o.reasoningSummaryOverride),ye=C==null?null:C.model_reasoning_summary??ye,s.summary!==void 0&&(ye=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{summary:ye}});return{summary:ye}}async function QWt(e,t,n,r,i,a){return await HWt(e,t,n,r,i,a,{canUseProjectlessWorkspace:!gh(e.getHostId()),canMaterializeCodexHomeRoots:!gh(e.getHostId())&&!0,preserveWorkspaceSandboxPolicyWithDefault:gh(e.getHostId()),carryProjectlessRuntimeRoots:!gh(e.getHostId()),latestUseAppServerPermissionDefault:!0,reasoningSummaryOverride:e.getDefaultFeatureOverride(`concurrent_reasoning_summaries`)===!0?`detailed`:null})}";
+}
 
 
 test("remote mobile README assigns every descriptor to one control topology", () => {
@@ -87,6 +97,7 @@ test("remote mobile README assigns every descriptor to one control topology", ()
     ["linux-remote-control-settings-ux", "shared-boundary"],
     ["linux-remote-control-client-revoke-setup-reset", "mobile-host"],
     ["linux-remote-connections-refresh", "shared-boundary"],
+    ["linux-remote-mobile-reasoning-summary-none", "mobile-host"],
     ["linux-remote-mobile-conversation-hydration", "mobile-host"],
     ["linux-remote-terminal-status-recovery", "mobile-host"],
     ["linux-remote-control-status-read-guard", "shared-boundary"],
@@ -960,6 +971,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-control-settings-ux",
       "feature:remote-mobile-control:linux-remote-control-client-revoke-setup-reset",
       "feature:remote-mobile-control:linux-remote-connections-refresh",
+      "feature:remote-mobile-control:linux-remote-mobile-reasoning-summary-none",
       "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration",
       "feature:remote-mobile-control:linux-remote-terminal-status-recovery",
       "feature:remote-mobile-control:linux-remote-control-status-read-guard",
@@ -986,7 +998,15 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "webview-asset",
       "webview-asset",
       "webview-asset",
+      "webview-asset",
     ]);
+
+    const reasoningSummaryDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-mobile-reasoning-summary-none"
+    );
+    assert.ok(reasoningSummaryDescriptor);
+    assert.equal(reasoningSummaryDescriptor.pattern.test(CURRENT_REMOTE_REASONING_SUMMARY_ASSET), true);
+    assert.equal(reasoningSummaryDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
 
     const visibilityDescriptor = descriptors.find((descriptor) =>
       descriptor.id === "feature:remote-mobile-control:linux-remote-control-visibility"
@@ -1407,6 +1427,130 @@ test("Linux remote mobile app-server launch keeps a leading use strict directive
   assert.notEqual(patched, source);
   assert.match(patched, /^"use strict";function codexLinuxRemoteMobileLocalAppServerArgs/);
   assert.equal(applyLinuxRemoteMobileAppServerRemoteControlPatch(patched), patched);
+});
+
+test("retired reasoning-summary resolver is rejected byte-identically", () => {
+  const source = syntheticReasoningSummaryTurnStartBundle();
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("turn-start resolver")));
+});
+
+test("reasoning-summary resolver without model configuration is rejected byte-identically", () => {
+  const source = syntheticCurrentReasoningSummaryTurnStartBundle().replace(
+    "ye=C==null?null:C.model_reasoning_summary??ye,",
+    "",
+  );
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("turn-start resolver")));
+});
+
+test("duplicate reasoning-summary owner pairs are rejected byte-identically", () => {
+  const owner = syntheticCurrentReasoningSummaryTurnStartBundle();
+  const source = owner + owner.replaceAll("HWt", "AWt").replaceAll("QWt", "BWt");
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("ambiguous reasoning-summary")));
+});
+
+test("mixed pristine and patched reasoning-summary owner pairs are rejected byte-identically", () => {
+  const owner = syntheticCurrentReasoningSummaryTurnStartBundle();
+  const patchedOwner = applyLinuxRemoteMobileReasoningSummaryPatch(owner);
+  const pristineOwner = owner.replaceAll("HWt", "AWt").replaceAll("QWt", "BWt");
+  const source = patchedOwner + pristineOwner;
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("ambiguous reasoning-summary")));
+});
+
+test("partial reasoning-summary owner pairs are rejected byte-identically", () => {
+  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(
+    syntheticCurrentReasoningSummaryTurnStartBundle(),
+  );
+  const partialSources = [
+    patched.replace(
+      "codexLinuxRemoteMobileHost:gh(e.getHostId())&&a.mode===`durable`,",
+      "",
+    ),
+    patched.replace(
+      "/*codexLinuxRemoteMobileReasoningSummaryNone*/navigator.userAgent.includes(`Linux`)&&o.codexLinuxRemoteMobileHost&&s.summary===void 0&&(ye=`none`);",
+      "",
+    ),
+  ];
+  for (const source of partialSources) {
+    const { result, warnings } = captureWarnings(() =>
+      applyLinuxRemoteMobileReasoningSummaryPatch(source),
+    );
+    assert.equal(result, source);
+    assert.ok(warnings.some((warning) => warning.includes("incomplete reasoning-summary")));
+  }
+});
+
+test("a reasoning-summary resolver with ambiguous callers is rejected byte-identically", () => {
+  const owner = syntheticCurrentReasoningSummaryTurnStartBundle();
+  const callerStart = owner.indexOf("async function QWt");
+  const duplicateCaller = owner.slice(callerStart).replace("QWt", "RWt");
+  const source = owner + duplicateCaller;
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+  assert.equal(result, source);
+  assert.ok(warnings.some((warning) => warning.includes("ambiguous or incomplete")));
+});
+
+test("current reasoning-summary owner keeps durable mobile summaries off and preserves explicit summaries", async () => {
+  const source = syntheticCurrentReasoningSummaryTurnStartBundle();
+  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(source);
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteMobileReasoningSummaryNone/);
+  assert.match(patched, /codexLinuxRemoteMobileHost:gh\(e\.getHostId\(\)\)&&a\.mode===`durable`/);
+  assert.equal(applyLinuxRemoteMobileReasoningSummaryPatch(patched), patched);
+
+  const context = {
+    gh: (hostId) => hostId === "local",
+    logger: { info() {} },
+    module: { exports: {} },
+    navigator: { userAgent: "X11; Linux x86_64" },
+  };
+  vm.runInNewContext(`${patched};module.exports=QWt;`, context);
+  const startTurn = context.module.exports;
+  const args = (request, mode) => [null, { request }, null, null, {
+    configRequirements: { model_reasoning_summary: "model" },
+    initialParams: { summary: "auto" },
+    latestThreadSettings: { summary: "auto" },
+    mode,
+  }];
+  const manager = (hostId) => ({
+    getDefaultFeatureOverride: () => true,
+    getHostId: () => hostId,
+  });
+  assert.equal((await startTurn(manager("local"), ...args({}, "durable"))).summary, "none");
+  assert.equal((await startTurn(manager("local"), ...args({}, "default"))).summary, "model");
+  assert.equal((await startTurn(manager("remote-ssh:dev"), ...args({}, "durable"))).summary, "model");
+  assert.equal(
+    (await startTurn(manager("local"), ...args({ summary: "concise" }, "durable"))).summary,
+    "concise",
+  );
+});
+
+test("Linux remote mobile reasoning-summary patch reports upstream drift", () => {
+  const source = "async function yY(){return 1}";
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteMobileReasoningSummaryPatch(source),
+  );
+  assert.equal(result, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find reasoning-summary turn-start log marker - skipping Linux remote mobile summary patch",
+  ]);
 });
 
 test("Linux remote-control client revoke resets current setup state after the last client is removed", () => {

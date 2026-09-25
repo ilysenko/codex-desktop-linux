@@ -143,10 +143,11 @@ function applyGenericAutomationScheduleMultiTimePatch(source) {
       `interval:Math\\.max\\(1,Math\\.round\\(\\1\\.interval\\?\\?1\\)\\),(minute:(${MINIFIED_IDENTIFIER}),)?` +
       `origOptions:(${MINIFIED_IDENTIFIER})\\.origOptions,rruleText:(${MINIFIED_IDENTIFIER}),time:(${MINIFIED_IDENTIFIER})\\(\\1\\.byhour,\\1\\.byminute,\\1\\),weekdays:(${MINIFIED_IDENTIFIER})`,
   );
-  const parserMatch = parserRe.exec(source);
-  if (!parserMatch) {
+  const parserMatches = [...source.matchAll(new RegExp(parserRe.source, "gu"))];
+  if (parserMatches.length !== 1) {
     return source;
   }
+  const [parserMatch] = parserMatches;
   const optionsVar = parserMatch[1];
   const minuteProperty = parserMatch[2] == null ? "" : `minute:${parserMatch[3]},`;
   const originalOptionsVar = parserMatch[4];
@@ -159,18 +160,23 @@ function applyGenericAutomationScheduleMultiTimePatch(source) {
       timeFn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
       `\\(e,t,n\\)\\{let r=(${MINIFIED_IDENTIFIER})\\(e\\),i=\\1\\(t\\);return r!=null&&i!=null\\?(${MINIFIED_IDENTIFIER})\\(r,i\\):n\\.dtstart\\?\\2\\(n\\.dtstart\\.getHours\\(\\),n\\.dtstart\\.getMinutes\\(\\)\\):(${MINIFIED_IDENTIFIER})\\}function \\1\\(e\\)\\{return Array\\.isArray\\(e\\)\\?typeof e\\[0\\]==\`number\`\\?e\\[0\\]:null:typeof e==\`number\`\\?e:null\\}`,
   );
-  const helperMatch = helperRe.exec(source);
-  if (!helperMatch) {
+  const helperMatches = [...source.matchAll(new RegExp(helperRe.source, "gu"))];
+  if (helperMatches.length !== 1) {
     return source;
   }
+  const [helperMatch] = helperMatches;
   const helperBlock = helperMatch[0];
   const combineFn = helperMatch[2];
 
   const summaryRe = new RegExp(
     `function (${MINIFIED_IDENTIFIER})\\(e,t(?:,${MINIFIED_IDENTIFIER}=!0)?\\)\\{if\\(!e\\|\\|e\\.hasMultipleTimeValues\\)return null;[\\s\\S]*?let (${MINIFIED_IDENTIFIER})=(${MINIFIED_IDENTIFIER})\\(e\\.time,t\\);return \\2\\?(${MINIFIED_IDENTIFIER})\\(\\{intl:t,isEveryDay:${MINIFIED_IDENTIFIER},timeLabel:\\2,weekdays:${MINIFIED_IDENTIFIER}\\}\\):null\\}`,
   );
-  const summaryMatch = summaryRe.exec(source);
-  if (!summaryMatch) {
+  const summaryMatches = [...source.matchAll(new RegExp(summaryRe.source, "gu"))];
+  if (summaryMatches.length !== 1) {
+    return source;
+  }
+  const [summaryMatch] = summaryMatches;
+  if (!(helperMatch.index < parserMatch.index && parserMatch.index < summaryMatch.index)) {
     return source;
   }
   const summaryBlock = summaryMatch[0];
