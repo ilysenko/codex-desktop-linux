@@ -1,0 +1,25 @@
+{
+  "id": "community-profile-isolation",
+  "title": "Community Profile Isolation",
+  "description": "Pins ChatGPT Community to its own Codex state, Electron profile, CLI, and child-command environment for every launch path, including absolute updater relaunches.",
+  "defaultEnabled": false,
+  "runtimeHooks": {
+    "env": {
+      "source": "env.sh",
+      "name": "community-profile-isolation.env",
+      "mode": "0644"
+    },
+    "launcher": {
+      "source": "launcher-hook.sh",
+      "name": "community-profile-isolation.sh",
+      "mode": "0755"
+    }
+  },
+  "resources": [
+    {
+      "source": "codex-cli-wrapper.sh",
+      "target": ".codex-linux/features/community-profile-isolation/codex-cli-wrapper.sh",
+      "mode": "0755"
+    }
+  ]
+}
