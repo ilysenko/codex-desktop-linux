@@ -142,9 +142,10 @@ codex-desktop --diagnose
 systemctl --user status codex-update-manager.service --no-pager
 ```
 
-The official `chatgpt` and Community `codex-desktop` packages can coexist, but
-both retain the upstream `Codex` user profile. Fully exit one application
-before starting the other.
+The official `chatgpt` and Community `codex-desktop` packages can coexist. By
+default both retain the upstream `Codex` user profile, so fully exit one before
+starting the other. Enable `community-profile-isolation` when Community needs a
+separate Codex state directory, Electron profile, and bundled-CLI child path.
 
 ## Uninstall
 
