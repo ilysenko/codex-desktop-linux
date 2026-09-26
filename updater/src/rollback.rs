@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{Context, Result};
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -114,6 +114,59 @@ pub fn record_current_package_as_known_good(state: &mut PersistedState) {
     }
 }
 
+fn rejected_upstream_identity(state: &PersistedState) -> (Option<String>, Option<String>) {
+    if let (Some(version), Some(sha256)) = (
+        state.candidate_version.clone(),
+        state.upstream_package_sha256.clone(),
+    ) {
+        return (Some(version), Some(sha256));
+    }
+
+    let installed = state
+        .installed_upstream_version
+        .clone()
+        .zip(state.installed_upstream_sha256.clone());
+    let installed_is_known_good = installed.as_ref().is_some_and(|(version, sha256)| {
+        state.last_known_good_upstream_version.as_deref() == Some(version.as_str())
+            && state.last_known_good_upstream_sha256.as_deref() == Some(sha256.as_str())
+    });
+    if !installed_is_known_good {
+        if let Some((version, sha256)) = installed {
+            return (Some(version), Some(sha256));
+        }
+    }
+
+    if let (Some(version), Some(sha256)) = (
+        state.rollback_blocked_candidate_version.clone(),
+        state.rollback_blocked_package_sha256.clone(),
+    ) {
+        return (Some(version), Some(sha256));
+    }
+
+    match installed {
+        Some((version, sha256)) => (Some(version), Some(sha256)),
+        None => (None, None),
+    }
+}
+
+pub(crate) fn apply_successful_rollback(
+    state: &mut PersistedState,
+    package: PathBuf,
+    installed_version: String,
+) {
+    let (blocked_version, blocked_sha) = rejected_upstream_identity(state);
+    state.installed_version = installed_version;
+    state.installed_upstream_version = state.last_known_good_upstream_version.clone();
+    state.installed_upstream_sha256 = state.last_known_good_upstream_sha256.clone();
+    state.candidate_version = None;
+    state.rollback_blocked_candidate_version = blocked_version;
+    state.rollback_blocked_package_sha256 = blocked_sha;
+    state.artifact_paths.package_path = Some(package.clone());
+    state.artifact_paths.package_candidate_sha256 = None;
+    state.artifact_paths.rollback_package_path = Some(package);
+    state.last_known_good_version = Some(state.installed_version.clone());
+}
+
 pub async fn run(
     config: &RuntimeConfig,
     state: &mut PersistedState,
@@ -139,11 +192,6 @@ async fn run_with_launcher(
             return Ok(());
         }
     };
-    let blocked_version = state
-        .candidate_version
-        .clone()
-        .or_else(|| Some(state.installed_version.clone()));
-    let blocked_sha = state.upstream_package_sha256.clone();
     // The explicit rollback command confirms that the user has checked for an
     // orphaned package manager after any ambiguous interrupted transaction.
     state.manual_recovery_required = false;
@@ -200,16 +248,7 @@ async fn run_with_launcher(
     }
     state.status = UpdateStatus::Installed;
     state.install_transaction = None;
-    state.installed_version = install::installed_package_version();
-    state.installed_upstream_version = state.last_known_good_upstream_version.clone();
-    state.installed_upstream_sha256 = state.last_known_good_upstream_sha256.clone();
-    state.candidate_version = None;
-    state.rollback_blocked_candidate_version = blocked_version;
-    state.rollback_blocked_package_sha256 = blocked_sha;
-    state.artifact_paths.package_path = Some(package.clone());
-    state.artifact_paths.package_candidate_sha256 = None;
-    state.artifact_paths.rollback_package_path = Some(package);
-    state.last_known_good_version = Some(state.installed_version.clone());
+    apply_successful_rollback(state, package, install::installed_package_version());
     state.error_message = None;
     state.save_updater(&paths.state_file)?;
     println!("Rolled back codex-desktop to {}.", state.installed_version);

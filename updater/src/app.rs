@@ -381,22 +381,7 @@ fn apply_reconciled_install(
             state.waiting_for_app_exit_auto_install = false;
         }
         InstallOperation::Rollback => {
-            let blocked_version = state
-                .candidate_version
-                .clone()
-                .or_else(|| Some(state.installed_version.clone()));
-            let blocked_sha = state.upstream_package_sha256.clone();
-
-            state.installed_version = installed_version;
-            state.installed_upstream_version = state.last_known_good_upstream_version.clone();
-            state.installed_upstream_sha256 = state.last_known_good_upstream_sha256.clone();
-            state.candidate_version = None;
-            state.rollback_blocked_candidate_version = blocked_version;
-            state.rollback_blocked_package_sha256 = blocked_sha;
-            state.artifact_paths.package_path = Some(transaction.package_path.clone());
-            state.artifact_paths.package_candidate_sha256 = None;
-            state.artifact_paths.rollback_package_path = Some(transaction.package_path);
-            state.last_known_good_version = Some(state.installed_version.clone());
+            rollback::apply_successful_rollback(state, transaction.package_path, installed_version);
         }
     }
 
@@ -587,9 +572,15 @@ fn package_matches_candidate(state: &PersistedState) -> bool {
 }
 
 fn rollback_blocks_candidate(state: &PersistedState) -> bool {
-    state.rollback_blocked_candidate_version.as_deref() == state.candidate_version.as_deref()
-        && state.rollback_blocked_package_sha256.as_deref()
-            == state.upstream_package_sha256.as_deref()
+    // The signed package digest is the canonical payload identity. Older
+    // persisted rollback state recorded the locally generated package version
+    // rather than the upstream version, so version equality cannot safely be
+    // required when deciding whether to reinstall those rejected bytes.
+    state
+        .rollback_blocked_package_sha256
+        .as_deref()
+        .zip(state.upstream_package_sha256.as_deref())
+        .is_some_and(|(blocked, candidate)| blocked == candidate)
 }
 
 fn mark_check_started(state: &mut PersistedState) {
@@ -680,7 +671,9 @@ async fn install_ready_with_launcher(
         state.save_updater(&paths.state_file)?;
         anyhow::bail!(message);
     }
-    if !explicit_retry && rollback_blocks_candidate(state) {
+    let install_after_app_exit_requested = state.install_after_app_exit_requested;
+    let explicit_install = explicit_retry || install_after_app_exit_requested;
+    if !explicit_install && rollback_blocks_candidate(state) {
         state.status = UpdateStatus::ReadyToInstall;
         state.waiting_for_app_exit_auto_install = false;
         state.save_updater(&paths.state_file)?;
@@ -698,7 +691,6 @@ async fn install_ready_with_launcher(
         state.manual_recovery_required = false;
     }
     let auth_retry_blocked = state.install_auth_retry_is_blocked();
-    let install_after_app_exit_requested = state.install_after_app_exit_requested;
     if liveness::is_app_running(config)? {
         if !explicit_retry && !install_after_app_exit_requested && !config.auto_install_on_app_exit
         {
@@ -728,7 +720,6 @@ async fn install_ready_with_launcher(
         return Ok(());
     }
 
-    let explicit_install = explicit_retry || install_after_app_exit_requested;
     state.clear_install_auth_retry_block();
     state.install_after_app_exit_requested = false;
     let current_exe = std::env::current_exe()?;
@@ -1008,16 +999,190 @@ mod replacement_tests {
     }
 
     #[test]
-    fn rollback_block_only_matches_same_candidate_identity() {
+    fn rollback_block_matches_signed_package_across_legacy_version_bookkeeping() {
         let mut state = PersistedState::new(true);
-        state.candidate_version = Some("2026.09.10.120000".into());
+        state.candidate_version = Some("26.924.20706".into());
         state.upstream_package_sha256 = Some("candidate-sha".into());
-        state.rollback_blocked_candidate_version = Some("2026.09.10.120000".into());
+        state.rollback_blocked_candidate_version = Some("2026.09.25.190353-1".into());
         state.rollback_blocked_package_sha256 = Some("candidate-sha".into());
         assert!(rollback_blocks_candidate(&state));
 
         state.upstream_package_sha256 = Some("new-sha".into());
         assert!(!rollback_blocks_candidate(&state));
+    }
+
+    #[test]
+    fn repeated_rollback_then_rebuilt_same_upstream_is_blocked_after_reload() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH",
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_COUNT",
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_EXIT",
+        ]);
+        let runtime = tokio::runtime::Runtime::new()?;
+        let temp = tempfile::tempdir()?;
+        let paths = fixture_paths(temp.path());
+        paths.ensure_dirs()?;
+        let known_good = temp.path().join("known-good.deb");
+        let first_candidate = temp.path().join("first-candidate.deb");
+        let rebuilt_candidate = temp.path().join("rebuilt-candidate.deb");
+        fs::write(&known_good, b"known good")?;
+        fs::write(&first_candidate, b"first candidate")?;
+        fs::write(&rebuilt_candidate, b"rebuilt candidate")?;
+
+        let fake_pkexec = write_fake_pkexec(temp.path())?;
+        let invocation_count = temp.path().join("pkexec-count");
+        env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", &fake_pkexec);
+        env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_COUNT", &invocation_count);
+        env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_EXIT", "0");
+
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.auto_install_on_app_exit = true;
+        config.notifications = false;
+        config.app_executable_path = temp.path().join("not-running");
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::Installed;
+        state.installed_version = "known-good-local".into();
+        state.installed_upstream_version = Some("26.917.71314".into());
+        state.installed_upstream_sha256 = Some("known-good-sha".into());
+        state.artifact_paths.package_path = Some(known_good.clone());
+        crate::rollback::record_current_package_as_known_good(&mut state);
+
+        state.status = UpdateStatus::ReadyToInstall;
+        state.candidate_version = Some("26.924.20706".into());
+        state.upstream_package_sha256 = Some("rejected-upstream-sha".into());
+        state.artifact_paths.package_path = Some(first_candidate);
+        state.artifact_paths.package_candidate_sha256 = state.upstream_package_sha256.clone();
+        state.save_updater(&paths.state_file)?;
+
+        runtime.block_on(install_ready_with_launcher(
+            &config,
+            &mut state,
+            &paths,
+            true,
+            false,
+            Path::new("/bin/sh"),
+        ))?;
+        assert_eq!(state.status, UpdateStatus::Installed);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(
+            state.installed_upstream_version.as_deref(),
+            Some("26.924.20706")
+        );
+
+        runtime.block_on(crate::rollback::run(&config, &mut state, &paths))?;
+        assert_eq!(
+            state.rollback_blocked_candidate_version.as_deref(),
+            Some("26.924.20706")
+        );
+        assert_eq!(
+            state.rollback_blocked_package_sha256.as_deref(),
+            Some("rejected-upstream-sha")
+        );
+
+        runtime.block_on(crate::rollback::run(&config, &mut state, &paths))?;
+        assert_eq!(
+            state.rollback_blocked_candidate_version.as_deref(),
+            Some("26.924.20706")
+        );
+        assert_eq!(
+            state.rollback_blocked_package_sha256.as_deref(),
+            Some("rejected-upstream-sha")
+        );
+
+        let mut persisted =
+            PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+        persisted.status = UpdateStatus::ReadyToInstall;
+        persisted.candidate_version = Some("26.924.20706".into());
+        persisted.upstream_package_sha256 = Some("rejected-upstream-sha".into());
+        persisted.artifact_paths.package_path = Some(rebuilt_candidate);
+        persisted.artifact_paths.package_candidate_sha256 =
+            persisted.upstream_package_sha256.clone();
+        persisted.save_updater(&paths.state_file)?;
+
+        let mut daemon_state =
+            PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+        runtime.block_on(install_ready_with_launcher(
+            &config,
+            &mut daemon_state,
+            &paths,
+            false,
+            false,
+            Path::new("/bin/sh"),
+        ))?;
+
+        assert_eq!(daemon_state.status, UpdateStatus::ReadyToInstall);
+        assert_eq!(fs::read_to_string(&invocation_count)?, "xxx");
+        let reloaded =
+            PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+        assert_eq!(reloaded.status, UpdateStatus::ReadyToInstall);
+        assert_eq!(
+            reloaded.rollback_blocked_candidate_version.as_deref(),
+            Some("26.924.20706")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_rollback_override_survives_app_exit_and_state_reload() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH",
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_COUNT",
+            "CODEX_UPDATE_MANAGER_TEST_PKEXEC_EXIT",
+        ]);
+        let runtime = tokio::runtime::Runtime::new()?;
+        let temp = tempfile::tempdir()?;
+        let paths = fixture_paths(temp.path());
+        paths.ensure_dirs()?;
+        let package = temp.path().join("rolled-back-candidate.deb");
+        fs::write(&package, b"candidate")?;
+        let fake_pkexec = write_fake_pkexec(temp.path())?;
+        let invocation_count = temp.path().join("pkexec-count");
+        env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_PATH", fake_pkexec);
+        env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_COUNT", &invocation_count);
+        env::set_var("CODEX_UPDATE_MANAGER_TEST_PKEXEC_EXIT", "0");
+
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.auto_install_on_app_exit = false;
+        config.notifications = false;
+        config.app_executable_path = env::current_exe()?;
+
+        let mut state = ready_state(package);
+        state.rollback_blocked_candidate_version = Some("legacy-local-version".into());
+        state.rollback_blocked_package_sha256 = state.upstream_package_sha256.clone();
+        state.save_updater(&paths.state_file)?;
+
+        runtime.block_on(install_ready_with_launcher(
+            &config,
+            &mut state,
+            &paths,
+            true,
+            false,
+            Path::new("/bin/sh"),
+        ))?;
+        assert_eq!(state.status, UpdateStatus::WaitingForAppExit);
+        assert!(state.install_after_app_exit_requested);
+        assert!(!invocation_count.exists());
+
+        let mut daemon_state =
+            PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+        config.app_executable_path = temp.path().join("not-running");
+        runtime.block_on(reconcile_pending_install(
+            &config,
+            &mut daemon_state,
+            &paths,
+        ))?;
+
+        assert_eq!(daemon_state.status, UpdateStatus::Installed);
+        assert!(!daemon_state.install_after_app_exit_requested);
+        assert_eq!(fs::read_to_string(&invocation_count)?, "x");
+        let reloaded =
+            PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+        assert_eq!(reloaded.status, UpdateStatus::Installed);
+        assert!(!reloaded.install_after_app_exit_requested);
+        Ok(())
     }
 
     #[test]
@@ -2109,9 +2274,9 @@ exit 90
         state.status = UpdateStatus::Installing;
         state.installed_version = "bad-local".into();
         state.installed_upstream_version = Some("bad-upstream".into());
-        state.installed_upstream_sha256 = Some("bad-installed-sha".into());
-        state.candidate_version = Some("bad-candidate".into());
-        state.upstream_package_sha256 = Some("bad-candidate-sha".into());
+        state.installed_upstream_sha256 = Some("bad-upstream-sha".into());
+        state.candidate_version = None;
+        state.upstream_package_sha256 = Some("bad-upstream-sha".into());
         state.last_known_good_upstream_version = Some("good-upstream".into());
         state.last_known_good_upstream_sha256 = Some("good-sha".into());
         let transaction = InstallTransaction {
@@ -2135,11 +2300,11 @@ exit 90
         assert_eq!(state.installed_upstream_sha256.as_deref(), Some("good-sha"));
         assert_eq!(
             state.rollback_blocked_candidate_version.as_deref(),
-            Some("bad-candidate")
+            Some("bad-upstream")
         );
         assert_eq!(
             state.rollback_blocked_package_sha256.as_deref(),
-            Some("bad-candidate-sha")
+            Some("bad-upstream-sha")
         );
         assert_eq!(state.artifact_paths.package_path.as_ref(), Some(&package));
         assert_eq!(
