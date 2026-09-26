@@ -48,15 +48,44 @@ export function installLinuxComputerUse(cua) {
       ...(node.supports_editable_text ? { editable: true } : {}),
     };
   };
-  const browserState = cua.getState?.bind(cua);
+  const listBrowsers = cua.listBrowsers?.bind(cua);
+  const listTabs = cua.listTabs?.bind(cua);
   cua.listApps = async (options = {}) => emit(await call('list_apps'), options);
+  cua.listWindows = async (options = {}) => {
+    const apps = await cua.listApps({ emit: false });
+    return emit(apps.map(app => {
+      const id = app.id.slice('linux-window:'.length);
+      return { id: Number.isSafeInteger(Number(id)) ? Number(id) : id, title: app.title, appId: app.displayName, focused: app.focused };
+    }), options);
+  };
+  // Upstream getState closes over the unsupported Sky proxy. Use its public
+  // browser APIs instead; replacing methods on that proxy cannot change reads.
+  const browserState = async () => !listBrowsers ? [] : Promise.all(
+    (await listBrowsers({ emit: false })).map(async browser => ({
+      ...browser, tabs: await listTabs({ browser: browser.id, emit: false }),
+    })),
+  );
   const linuxState = async (options = {}) => {
-    const state = browserState ? await browserState({ emit: false }) : { browsers: [] };
-    return emit({ ...state, apps: await cua.listApps({ emit: false }) }, options);
+    const [apps, browsers] = await Promise.allSettled([cua.listApps({ emit: false }), browserState()]);
+    const errors = Object.entries({ 'Native apps': apps, Browsers: browsers })
+      .filter(([, result]) => result.status === 'rejected')
+      .map(([name, result]) => `${name}: ${String(result.reason)}`);
+    return emit({ apps: apps.status === 'fulfilled' ? apps.value : [],
+      browsers: browsers.status === 'fulfilled' ? browsers.value : [],
+      ...(errors.length ? { errors } : {}),
+    }, options);
   };
   cua.getState = linuxState;
   cua.initialize = linuxState;
   cua.getApp = async (app) => {
+    if (app && typeof app === 'object') {
+      const id = app.windowId;
+      if (!(typeof id === 'number' && Number.isSafeInteger(id) && id >= 0)
+        && !(typeof id === 'string' && /^\d+$/.test(id) && BigInt(id) <= 18446744073709551615n)) {
+        throw new Error('getApp requires an exact windowId from listWindows()');
+      }
+      app = `linux-window:${id}`;
+    }
     if (typeof app !== 'string' || !app.trim()) throw new Error('getApp requires a non-empty app id');
     const unsupported = async () => { throw new Error('This native Linux Computer Use operation is not supported'); };
     const state = options => call('get_app_state', app, { include_screenshot: false, ...axBackendOptions(options) });
