@@ -1,8 +1,5 @@
 "use strict";
 
-const fs = require("node:fs");
-const path = require("node:path");
-
 const MARKER = "/* codex-linux-shell-env-startup */";
 // A microtask still runs during early browser initialization. Yield one loop
 // turn before uv_spawn installs SIGCHLD, which browser startup otherwise resets.
@@ -38,29 +35,8 @@ function applyShellEnvironmentStartup(source) {
   return patched;
 }
 
-function patchExtractedShellEnvironment(extractedDir) {
-  const dir = path.join(extractedDir, ".vite", "build");
-  const candidates = fs.readdirSync(dir)
-    .filter((name) => name.endsWith(".js"))
-    .map((name) => ({ file: path.join(dir, name), source: fs.readFileSync(path.join(dir, name), "utf8") }))
-    .filter(({ source }) => matchesShellEnvironment(source));
-  if (candidates.length !== 1) {
-    throw new Error("Expected exactly one official shell environment module");
-  }
-  const { file, source } = candidates[0];
-  const patched = applyShellEnvironmentStartup(source);
-  if (patched !== source) fs.writeFileSync(file, patched);
-  return { changed: patched !== source };
-}
-
 module.exports = {
   DEFER,
   applyShellEnvironmentStartup,
-  patchExtractedShellEnvironment,
-  descriptors: [{
-    id: "shell-env-startup",
-    phase: "extracted-app:pre-webview",
-    ciPolicy: "required-upstream",
-    apply: patchExtractedShellEnvironment,
-  }],
+  matchesShellEnvironment,
 };

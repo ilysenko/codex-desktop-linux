@@ -11,17 +11,24 @@ test without it. Every descriptor needs reproduction evidence and a required
 regression test. Remove the patch, its tests, and this record when upstream
 resolves the blocker.
 
-## `shell-env-startup`
+## `quit-confirmation-focus`
 
-On Fedora 44 / KDE, signed stable 26.924.20706 starts its shell environment
-subprocess before Chromium's POSIX startup replaces SIGCHLD with a no-op
-handler. A startup syscall trace shows libuv registering its handler first,
-then Chromium overwriting it. Subsequent shell, Git, tar, and CLI preflight
-children exit but remain zombies, and new chats hang at “Starting your task”.
-This reproduces in the unmodified official package, including empty Codex
-state and a fresh browser profile. Restoring the captured libuv handler in
-the running test process immediately reaped the children; a new chat then
-started and replied.
+The current signed stable package has two reproduced mandatory Linux blockers.
+One required descriptor validates both contracts before writing either module,
+so the clean-build policy has one auditable compound core mutation rather than
+independent partial repairs.
+
+### Shell environment startup
+
+On Fedora 44 with KDE, the current signed stable package starts its shell
+environment subprocess before Chromium's POSIX startup replaces SIGCHLD with a
+no-op handler. A startup syscall trace shows libuv registering its handler
+first, then Chromium overwriting it. Subsequent shell, Git, tar, and CLI
+preflight children exit but remain zombies, and new chats hang at “Starting
+your task”. This reproduces in the unmodified official package, including
+empty Codex state and a fresh browser profile. Restoring the captured libuv
+handler in the running test process immediately reaped the children; a new
+chat then started and replied.
 
 Defer the Linux shell environment loader by one `setImmediate` turn so its
 first spawn occurs after synchronous browser initialization. Preserve the
@@ -29,9 +36,13 @@ upstream timeout, environment loading, policy validation, and error handling.
 The isolated repaired official build starts without accumulating zombies.
 Tests cover actual deferral, other-platform behavior, failure propagation,
 unique semantic matching, idempotence, and the signed official module.
-Retire this patch when upstream orders these startup operations correctly.
+Because deb, RPM, pacman, AppImage, and Nix payloads can be built on a different
+distribution from the machine that runs them, the required descriptor is
+applied to every portable payload. The injected deferral is guarded by the
+runtime platform and is safe on other targets. Retire this patch when upstream
+orders these startup operations correctly.
 
-## `quit-confirmation-focus`
+### Quit confirmation focus
 
 The current signed stable package opens its synchronous Quit confirmation
 without a parent window. On affected Linux desktops the modal can appear
@@ -40,7 +51,8 @@ required patch selects the focused visible window, then the visible primary
 window, then another visible live window; it opens a parented asynchronous
 dialog and guards duplicate `before-quit` events until the user responds.
 
-The adjacent regression test covers approval, cancellation, reentrancy,
-window selection, fail-closed semantic matching, and application to the signed
-campaign bundle. Retire this descriptor only after the signed stable bundle
-provides an equivalent focusable confirmation or removes the blocker.
+The adjacent regression tests cover approval, cancellation, reentrancy,
+window selection, shell deferral, compound fail-closed semantic matching, and
+application to the signed campaign bundle. Retire the relevant repair when the
+signed stable bundle resolves its blocker; split the descriptor only if the
+clean-build policy explicitly approves multiple required core mutations.

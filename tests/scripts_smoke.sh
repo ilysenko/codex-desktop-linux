@@ -96,6 +96,11 @@ assert_contains scripts/lib/install-helpers.sh 'sudo apt install nodejs npm curl
 # comment keeps the words. (rg patterns: avoid unescaped regex metachars.)
 assert_contains scripts/lib/asar-patch.sh '^        command -v npx >/dev/null 2>&1 \|\| error'
 assert_contains scripts/lib/install-helpers.sh '^    if \[ -z "\$\{CODEX_ASAR_BIN:-\}" \] && ! command -v npx &>/dev/null; then$'
+assert_contains scripts/lib/asar-patch.sh 'list --is-pack "\$app_asar" > "\$WORK_DIR/app.asar.upstream-layout"'
+assert_contains scripts/lib/asar-patch.sh 'scripts/patches/lib/asar-layout.js'
+assert_contains scripts/lib/asar-patch.sh 'scripts/patches/lib/asar-layout.js" verify'
+assert_absent scripts/lib/asar-patch.sh 'cmp -s "\$WORK_DIR/app.asar.upstream-layout" "\$WORK_DIR/app.asar.output-layout"'
+assert_absent scripts/lib/asar-patch.sh "find . -type f -printf '%P\\n' | LC_ALL=C sort"
 
 selector_fixture="$(mktemp -d)"
 trap 'rm -rf -- "$selector_fixture"' EXIT
@@ -138,13 +143,10 @@ NODE
 node - <<'NODE'
 const { corePatchDescriptors } = require("./scripts/patches/runner.js");
 const descriptors = corePatchDescriptors();
-if (descriptors.length !== 2 ||
+if (descriptors.length !== 1 ||
     descriptors[0].id !== "quit-confirmation-focus" ||
     descriptors[0].ciPolicy !== "required-upstream" ||
-    descriptors[0].phase !== "main-bundle" ||
-    descriptors[1].id !== "shell-env-startup" ||
-    descriptors[1].ciPolicy !== "required-upstream" ||
-    descriptors[1].phase !== "extracted-app:pre-webview") {
+    descriptors[0].phase !== "extracted-app:pre-webview") {
   throw new Error(`Unexpected default core patch registry: ${descriptors.map(({ id }) => id).join(", ")}`);
 }
 NODE
@@ -173,6 +175,7 @@ NODE
 node --test launcher/start.test.js tests/deb-prerm.test.js scripts/lib/upstream-linux-package.test.js \
   scripts/automation/upstream-linux-package-watchdog/test.js \
   scripts/patch-linux-window-ui.test.js scripts/patches/runner.test.js \
+  scripts/patches/lib/asar-layout.test.js \
   scripts/patches/core/*/test.js \
   scripts/lib/linux-features.test.js
 

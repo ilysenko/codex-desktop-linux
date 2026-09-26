@@ -193,17 +193,15 @@ function patchExtractedApp(extractedDir, options = {}) {
 
 function allPatchPolicies(options = {}) {
   return [
-    ...corePatchDescriptors(options).map(({ id, name, ciPolicy, phase, appliesTo }) => ({
+    ...corePatchDescriptors(options).map(({ id, name, ciPolicy, phase }) => ({
       name: name ?? id,
       ciPolicy,
       phase,
-      appliesTo,
     })),
-    ...featurePatchDescriptors(featurePatchOptions(options)).map(({ id, name, ciPolicy, phase, appliesTo }) => ({
+    ...featurePatchDescriptors(featurePatchOptions(options)).map(({ id, name, ciPolicy, phase }) => ({
       name: name ?? id,
       ciPolicy,
       phase,
-      appliesTo,
     })),
     ...CUSTOM_PATCH_POLICIES,
   ];
@@ -213,11 +211,8 @@ function requiredPatchNamesForProfile(profile, options = {}) {
   if (profile !== "upstream-build") {
     return [];
   }
-  const linux = options.linuxTarget ?? detectLinuxTargetContext(options.linuxTargetOptions);
-  const context = { linux, linuxTarget: linux, enableComputerUseUi: false };
   return allPatchPolicies(options)
     .filter((patch) => patch.ciPolicy === REQUIRED_UPSTREAM)
-    .filter((patch) => patch.appliesTo == null || patch.appliesTo(context) !== false)
     .map((patch) => patch.name);
 }
 

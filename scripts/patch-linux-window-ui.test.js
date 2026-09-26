@@ -54,10 +54,6 @@ test("official Linux baseline has required compatibility descriptors", () => {
     [{
       id: "quit-confirmation-focus",
       ciPolicy: "required-upstream",
-      phase: "main-bundle",
-    }, {
-      id: "shell-env-startup",
-      ciPolicy: "required-upstream",
       phase: "extracted-app:pre-webview",
     }],
   );

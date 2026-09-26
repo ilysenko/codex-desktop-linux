@@ -1,5 +1,13 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
+const {
+  applyShellEnvironmentStartup,
+  matchesShellEnvironment,
+} = require("../shell-env-startup/shell-env.js");
+
 const HELPER_NAME = "codexLinuxQuitDialogParent";
 const HELPER_SOURCE =
   "let codexLinuxQuitPromptPending=!1;" +
@@ -95,15 +103,46 @@ function applyQuitConfirmationFocus(source) {
   return source.slice(0, start) + HELPER_SOURCE + patchedBody + source.slice(end);
 }
 
+function patchRequiredCoreBlockers(extractedDir) {
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  const modules = fs.readdirSync(buildDir)
+    .filter((name) => name.endsWith(".js"))
+    .sort()
+    .map((name) => ({
+      file: path.join(buildDir, name),
+      source: fs.readFileSync(path.join(buildDir, name), "utf8"),
+    }));
+  const mainCandidates = modules.filter(({ source }) =>
+    source.includes("messageId:`desktop.quitConfirmation.quit`"));
+  if (mainCandidates.length !== 1) {
+    throw new Error("Expected exactly one official main-process Quit module");
+  }
+  const [{ file: mainPath, source: mainSource }] = mainCandidates;
+  const patchedMain = applyQuitConfirmationFocus(mainSource);
+  const shellCandidates = modules.filter(({ source }) => matchesShellEnvironment(source));
+  if (shellCandidates.length !== 1) {
+    throw new Error("Expected exactly one official shell environment module");
+  }
+  const [{ file: shellPath, source: shellSource }] = shellCandidates;
+  const patchedShell = applyShellEnvironmentStartup(shellSource);
+
+  // Resolve both semantic contracts before writing either file. The required
+  // core repair is one fail-closed transaction and one patch-report entry.
+  if (patchedMain !== mainSource) fs.writeFileSync(mainPath, patchedMain, "utf8");
+  if (patchedShell !== shellSource) fs.writeFileSync(shellPath, patchedShell, "utf8");
+  return { changed: patchedMain !== mainSource || patchedShell !== shellSource };
+}
+
 const descriptors = [{
   id: "quit-confirmation-focus",
-  phase: "main-bundle",
+  phase: "extracted-app:pre-webview",
   ciPolicy: "required-upstream",
-  apply: applyQuitConfirmationFocus,
+  apply: patchRequiredCoreBlockers,
 }];
 
 module.exports = {
   HELPER_SOURCE,
   applyQuitConfirmationFocus,
+  patchRequiredCoreBlockers,
   descriptors,
 };

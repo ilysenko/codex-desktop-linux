@@ -82,9 +82,11 @@ patch_asar() {
     local patch_report_json="${CODEX_PATCH_REPORT_JSON:-$WORK_DIR/patch-report.json}"
     local descriptor_count
     local core_descriptor_count
+    local unpack_dir_pattern
     local upstream_sha
     local patched_sha
     local -a asar_command
+    local -a asar_pack_command
 
     [ -f "$app_asar" ] || error "app.asar not found in $resources_dir"
     core_descriptor_count="$(node - "$SCRIPT_DIR/scripts/patches/runner.js" <<'NODE'
@@ -116,6 +118,7 @@ NODE
 
     upstream_sha="$(sha256sum "$app_asar" | awk '{print $1}')"
     info "Extracting a temporary app.asar copy for $descriptor_count active descriptor(s)"
+    "${asar_command[@]}" list --is-pack "$app_asar" > "$WORK_DIR/app.asar.upstream-layout"
     "${asar_command[@]}" extract "$app_asar" "$WORK_DIR/app-extracted"
     if [ -d "$resources_dir/app.asar.unpacked" ]; then
         cp -a "$resources_dir/app.asar.unpacked/." "$WORK_DIR/app-extracted/"
@@ -135,12 +138,25 @@ NODE
         return 0
     fi
 
-    (cd "$WORK_DIR/app-extracted" && find . -type f -printf '%P\n' | LC_ALL=C sort) > "$WORK_DIR/app.asar.ordering"
-    "${asar_command[@]}" pack \
+    node "$SCRIPT_DIR/scripts/patches/lib/asar-layout.js" \
+        "$WORK_DIR/app.asar.upstream-layout" \
+        "$WORK_DIR/app-extracted" \
+        "$WORK_DIR/app.asar.ordering" \
+        "$WORK_DIR/app.asar.unpack-dir-pattern"
+    unpack_dir_pattern="$(<"$WORK_DIR/app.asar.unpack-dir-pattern")"
+    asar_pack_command=("${asar_command[@]}" pack \
         "$WORK_DIR/app-extracted" \
         "$WORK_DIR/app.asar" \
         --ordering "$WORK_DIR/app.asar.ordering" \
-        --unpack "{*.node,*.so,*.dylib}"
+        --unpack "{*.node,*.so,*.dylib}")
+    if [ -n "$unpack_dir_pattern" ]; then
+        asar_pack_command+=(--unpack-dir "$unpack_dir_pattern")
+    fi
+    "${asar_pack_command[@]}"
+    "${asar_command[@]}" list --is-pack "$WORK_DIR/app.asar" > "$WORK_DIR/app.asar.output-layout"
+    node "$SCRIPT_DIR/scripts/patches/lib/asar-layout.js" verify \
+        "$WORK_DIR/app.asar.upstream-layout" \
+        "$WORK_DIR/app.asar.output-layout"
     mv "$WORK_DIR/app.asar" "$app_asar"
     if [ -d "$WORK_DIR/app.asar.unpacked" ]; then
         remove_tree_safely "$resources_dir/app.asar.unpacked"
