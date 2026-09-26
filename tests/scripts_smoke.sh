@@ -96,6 +96,10 @@ assert_contains scripts/lib/install-helpers.sh 'sudo apt install nodejs npm curl
 # comment keeps the words. (rg patterns: avoid unescaped regex metachars.)
 assert_contains scripts/lib/asar-patch.sh '^        command -v npx >/dev/null 2>&1 \|\| error'
 assert_contains scripts/lib/install-helpers.sh '^    if \[ -z "\$\{CODEX_ASAR_BIN:-\}" \] && ! command -v npx &>/dev/null; then$'
+assert_contains scripts/lib/asar-patch.sh 'list --is-pack "\$app_asar" > "\$WORK_DIR/app.asar.upstream-layout"'
+assert_contains scripts/lib/asar-patch.sh 'scripts/patches/lib/asar-layout.js'
+assert_contains scripts/lib/asar-patch.sh 'cmp -s "\$WORK_DIR/app.asar.upstream-layout" "\$WORK_DIR/app.asar.output-layout"'
+assert_absent scripts/lib/asar-patch.sh "find . -type f -printf '%P\\n' | LC_ALL=C sort"
 
 selector_fixture="$(mktemp -d)"
 trap 'rm -rf -- "$selector_fixture"' EXIT
@@ -173,6 +177,7 @@ NODE
 node --test launcher/start.test.js tests/deb-prerm.test.js scripts/lib/upstream-linux-package.test.js \
   scripts/automation/upstream-linux-package-watchdog/test.js \
   scripts/patch-linux-window-ui.test.js scripts/patches/runner.test.js \
+  scripts/patches/lib/asar-layout.test.js \
   scripts/patches/core/*/test.js \
   scripts/lib/linux-features.test.js
 
