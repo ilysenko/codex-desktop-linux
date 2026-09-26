@@ -6,7 +6,11 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { deriveUpstreamLayout, parsePackState } = require("./asar-layout.js");
+const {
+  deriveUpstreamLayout,
+  parsePackState,
+  verifyRepackedLayout,
+} = require("./asar-layout.js");
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "asar-layout-"));
@@ -85,5 +89,49 @@ test("rejects malformed, traversal, empty, and incomplete layouts", (t) => {
   assert.throws(
     () => deriveUpstreamLayout("pack   : /missing.js\n", root),
     /missing after extraction: missing\.js/,
+  );
+});
+
+test("allows feature entries while preserving the official layout as an exact subsequence", () => {
+  const output = PACK_STATE.replace(
+    "pack   : /native\n",
+    [
+      "pack   : /feature-package",
+      "unpack : /feature-package/addon.node",
+      "pack   : /native",
+      "",
+    ].join("\n"),
+  );
+  assert.doesNotThrow(() => verifyRepackedLayout(PACK_STATE, output));
+});
+
+test("repacked layout verification fails closed for official layout drift", () => {
+  assert.throws(
+    () => verifyRepackedLayout(
+      PACK_STATE,
+      PACK_STATE.replace("unpack : /native/addon.node", "pack   : /native/addon.node"),
+    ),
+    /changed official unpack metadata: native\/addon\.node/,
+  );
+  assert.throws(
+    () => verifyRepackedLayout(
+      PACK_STATE,
+      PACK_STATE.replace(
+        "pack   : /app\npack   : /app/main.js",
+        "pack   : /app/main.js\npack   : /app",
+      ),
+    ),
+    /changed official entry ordering: app\/main\.js/,
+  );
+  assert.throws(
+    () => verifyRepackedLayout(
+      PACK_STATE,
+      PACK_STATE.replace("unpack : /vendor/runtime/runtime.node\n", ""),
+    ),
+    /missing official layout entry: vendor\/runtime\/runtime\.node/,
+  );
+  assert.throws(
+    () => verifyRepackedLayout(PACK_STATE, PACK_STATE + "pack   : /app\n"),
+    /Repacked app\.asar layout contains a duplicate entry: app/,
   );
 });

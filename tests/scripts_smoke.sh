@@ -98,7 +98,8 @@ assert_contains scripts/lib/asar-patch.sh '^        command -v npx >/dev/null 2>
 assert_contains scripts/lib/install-helpers.sh '^    if \[ -z "\$\{CODEX_ASAR_BIN:-\}" \] && ! command -v npx &>/dev/null; then$'
 assert_contains scripts/lib/asar-patch.sh 'list --is-pack "\$app_asar" > "\$WORK_DIR/app.asar.upstream-layout"'
 assert_contains scripts/lib/asar-patch.sh 'scripts/patches/lib/asar-layout.js'
-assert_contains scripts/lib/asar-patch.sh 'cmp -s "\$WORK_DIR/app.asar.upstream-layout" "\$WORK_DIR/app.asar.output-layout"'
+assert_contains scripts/lib/asar-patch.sh 'scripts/patches/lib/asar-layout.js" verify'
+assert_absent scripts/lib/asar-patch.sh 'cmp -s "\$WORK_DIR/app.asar.upstream-layout" "\$WORK_DIR/app.asar.output-layout"'
 assert_absent scripts/lib/asar-patch.sh "find . -type f -printf '%P\\n' | LC_ALL=C sort"
 
 selector_fixture="$(mktemp -d)"

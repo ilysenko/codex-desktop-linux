@@ -154,8 +154,9 @@ NODE
     fi
     "${asar_pack_command[@]}"
     "${asar_command[@]}" list --is-pack "$WORK_DIR/app.asar" > "$WORK_DIR/app.asar.output-layout"
-    cmp -s "$WORK_DIR/app.asar.upstream-layout" "$WORK_DIR/app.asar.output-layout" || error \
-        "Repacked app.asar changed official entry ordering or unpack metadata; refusing candidate"
+    node "$SCRIPT_DIR/scripts/patches/lib/asar-layout.js" verify \
+        "$WORK_DIR/app.asar.upstream-layout" \
+        "$WORK_DIR/app.asar.output-layout"
     mv "$WORK_DIR/app.asar" "$app_asar"
     if [ -d "$WORK_DIR/app.asar.unpacked" ]; then
         remove_tree_safely "$resources_dir/app.asar.unpacked"
