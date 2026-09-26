@@ -60,6 +60,21 @@ test("required core descriptor validates every contract before writing", (t) => 
   assert.deepEqual(fs.readFileSync(shell), shellBefore);
 });
 
+test("required core descriptor composes both repairs when contracts share a module", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "required-core-combined-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const buildDir = path.join(root, ".vite", "build");
+  fs.mkdirSync(buildDir, { recursive: true });
+  const combined = path.join(buildDir, "renamed-module.js");
+  fs.writeFileSync(combined, `${OFFICIAL_BUNDLE}${OFFICIAL_SHELL}`);
+
+  assert.deepEqual(patchRequiredCoreBlockers(root), { changed: true });
+  const patched = fs.readFileSync(combined, "utf8");
+  assert.match(patched, /function codexLinuxQuitDialogParent\(/);
+  assert.match(patched, /await new Promise\(setImmediate\)/);
+  assert.deepEqual(patchRequiredCoreBlockers(root), { changed: false });
+});
+
 function window(id, { destroyed = false, visible = true } = {}) {
   return {
     id,

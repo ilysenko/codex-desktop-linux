@@ -117,20 +117,28 @@ function patchRequiredCoreBlockers(extractedDir) {
   if (mainCandidates.length !== 1) {
     throw new Error("Expected exactly one official main-process Quit module");
   }
-  const [{ file: mainPath, source: mainSource }] = mainCandidates;
-  const patchedMain = applyQuitConfirmationFocus(mainSource);
+  const [{ file: mainPath }] = mainCandidates;
   const shellCandidates = modules.filter(({ source }) => matchesShellEnvironment(source));
   if (shellCandidates.length !== 1) {
     throw new Error("Expected exactly one official shell environment module");
   }
-  const [{ file: shellPath, source: shellSource }] = shellCandidates;
-  const patchedShell = applyShellEnvironmentStartup(shellSource);
+  const [{ file: shellPath }] = shellCandidates;
+
+  const patchedByFile = new Map(modules.map(({ file, source }) => [file, source]));
+  patchedByFile.set(mainPath, applyQuitConfirmationFocus(patchedByFile.get(mainPath)));
+  patchedByFile.set(shellPath, applyShellEnvironmentStartup(patchedByFile.get(shellPath)));
 
   // Resolve both semantic contracts before writing either file. The required
   // core repair is one fail-closed transaction and one patch-report entry.
-  if (patchedMain !== mainSource) fs.writeFileSync(mainPath, patchedMain, "utf8");
-  if (patchedShell !== shellSource) fs.writeFileSync(shellPath, patchedShell, "utf8");
-  return { changed: patchedMain !== mainSource || patchedShell !== shellSource };
+  let changed = false;
+  for (const { file, source } of modules) {
+    const patched = patchedByFile.get(file);
+    if (patched !== source) {
+      fs.writeFileSync(file, patched, "utf8");
+      changed = true;
+    }
+  }
+  return { changed };
 }
 
 const descriptors = [{

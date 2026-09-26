@@ -193,15 +193,17 @@ function patchExtractedApp(extractedDir, options = {}) {
 
 function allPatchPolicies(options = {}) {
   return [
-    ...corePatchDescriptors(options).map(({ id, name, ciPolicy, phase }) => ({
+    ...corePatchDescriptors(options).map(({ id, name, ciPolicy, phase, appliesTo }) => ({
       name: name ?? id,
       ciPolicy,
       phase,
+      appliesTo,
     })),
-    ...featurePatchDescriptors(featurePatchOptions(options)).map(({ id, name, ciPolicy, phase }) => ({
+    ...featurePatchDescriptors(featurePatchOptions(options)).map(({ id, name, ciPolicy, phase, appliesTo }) => ({
       name: name ?? id,
       ciPolicy,
       phase,
+      appliesTo,
     })),
     ...CUSTOM_PATCH_POLICIES,
   ];
@@ -211,8 +213,10 @@ function requiredPatchNamesForProfile(profile, options = {}) {
   if (profile !== "upstream-build") {
     return [];
   }
+  const context = createMainBundleContext(null, options);
   return allPatchPolicies(options)
     .filter((patch) => patch.ciPolicy === REQUIRED_UPSTREAM)
+    .filter((patch) => patch.appliesTo == null || patch.appliesTo(context) !== false)
     .map((patch) => patch.name);
 }
 

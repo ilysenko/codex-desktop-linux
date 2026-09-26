@@ -57,6 +57,7 @@ test("the official Linux baseline registers required compatibility patches", () 
       name: "quit-confirmation-focus",
       ciPolicy: "required-upstream",
       phase: "extracted-app:pre-webview",
+      appliesTo: undefined,
     }],
   );
   assert.deepEqual(
@@ -72,6 +73,37 @@ test("the official Linux baseline registers required compatibility patches", () 
       linuxTarget: ubuntuGnome,
     }),
     ["quit-confirmation-focus"],
+  );
+});
+
+test("required patch policy remains target-aware", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-target-policy-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "patch.js"), `
+    module.exports = { descriptors: [{
+      id: "fedora-only",
+      phase: "main-bundle",
+      ciPolicy: "required-upstream",
+      appliesTo: ({ linux }) => linux.matchesId("fedora"),
+      apply: (source) => source,
+    }] };
+  `);
+
+  assert.deepEqual(
+    requiredPatchNamesForProfile("upstream-build", {
+      corePatchRoot: root,
+      featuresConfigPath: emptyConfig,
+      linuxTarget: fedoraKde,
+    }),
+    ["fedora-only"],
+  );
+  assert.deepEqual(
+    requiredPatchNamesForProfile("upstream-build", {
+      corePatchRoot: root,
+      featuresConfigPath: emptyConfig,
+      linuxTarget: ubuntuGnome,
+    }),
+    [],
   );
 });
 
