@@ -48,13 +48,17 @@ test("best-effort feature drift stays non-fatal without hiding changed outputs",
   assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
 });
 
-test("official Linux baseline has the required Quit focus descriptor", () => {
+test("official Linux baseline has required compatibility descriptors", () => {
   assert.deepEqual(
     corePatchDescriptors().map(({ id, ciPolicy, phase }) => ({ id, ciPolicy, phase })),
     [{
       id: "quit-confirmation-focus",
       ciPolicy: "required-upstream",
       phase: "main-bundle",
+    }, {
+      id: "shell-env-startup",
+      ciPolicy: "required-upstream",
+      phase: "extracted-app:pre-webview",
     }],
   );
   assert.equal(featurePatchDescriptors({

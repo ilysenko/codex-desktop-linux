@@ -48,7 +48,7 @@ run_core() {
     node_test_log="$(mktemp)"
     bash tests/scripts_smoke.sh
     if ! node --test scripts/patch-linux-window-ui.test.js scripts/patches/runner.test.js \
-        scripts/patches/core/quit-confirmation-focus/test.js \
+        scripts/patches/core/*/test.js \
         scripts/lib/linux-features.test.js linux-features/*/test.js >"$node_test_log" 2>&1; then
         rg -n -C 30 '^not ok' "$node_test_log" || tail -n 120 "$node_test_log"
         return 1

@@ -80,10 +80,11 @@ the official browser registry.
 ## Patches and features
 
 `scripts/patches/runner.js` composes required core compatibility patches with
-descriptors from enabled features. The current registry contains the required
-Quit-confirmation focus patch because the signed stable bundle still opens an
-unparented synchronous dialog on Linux. Patch reports remain the
-candidate-acceptance contract.
+descriptors from enabled features. The current registry repairs the unparented
+Quit-confirmation dialog and defers early shell-environment startup so browser
+initialization does not overwrite libuv's child-process signal handler. See the
+[core patch registry](../scripts/patches/core/README.md) for reproduction evidence
+and retirement criteria. Patch reports remain the candidate-acceptance contract.
 An enabled feature's missing or drifted required surface rejects promotion;
 disabled features do not participate.
 

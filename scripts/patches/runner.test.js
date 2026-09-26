@@ -24,13 +24,17 @@ const officialQuitBundle =
   "if(l.dialog.showMessageBoxSync({message:`Quit?`,buttons:[{messageId:`desktop.quitConfirmation.quit`},`Cancel`]})!==0){o.preventDefault();return}" +
   "r.markQuitApproved(),S=!0,i.markAppQuitting()})}function next(){}";
 
-test("the official Linux baseline registers the required Quit focus patch", () => {
+test("the official Linux baseline registers required compatibility patches", () => {
   assert.deepEqual(
     corePatchDescriptors().map(({ id, ciPolicy, phase }) => ({ id, ciPolicy, phase })),
     [{
       id: "quit-confirmation-focus",
       ciPolicy: "required-upstream",
       phase: "main-bundle",
+    }, {
+      id: "shell-env-startup",
+      ciPolicy: "required-upstream",
+      phase: "extracted-app:pre-webview",
     }],
   );
   assert.deepEqual(
@@ -40,11 +44,16 @@ test("the official Linux baseline registers the required Quit focus patch", () =
       ciPolicy: "required-upstream",
       phase: "main-bundle",
       appliesTo: undefined,
+    }, {
+      name: "shell-env-startup",
+      ciPolicy: "required-upstream",
+      phase: "extracted-app:pre-webview",
+      appliesTo: undefined,
     }],
   );
   assert.deepEqual(
     requiredPatchNamesForProfile("upstream-build", { featuresConfigPath: emptyConfig }),
-    ["quit-confirmation-focus"],
+    ["quit-confirmation-focus", "shell-env-startup"],
   );
 });
 
@@ -60,7 +69,7 @@ test("runner context exposes enabled feature IDs", () => {
   }
 });
 
-test("the default core registry patches the official Quit handler only", () => {
+test("the default core registry repairs Quit and shell startup without changing webview assets", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-baseline-"));
   try {
     const mainDir = path.join(root, ".vite", "build");
@@ -70,6 +79,9 @@ test("the default core registry patches the official Quit handler only", () => {
     const main = path.join(mainDir, "main.js");
     const webview = path.join(webviewDir, "app-initial-A.js");
     fs.writeFileSync(main, officialQuitBundle);
+    const shell = path.join(mainDir, "shell-env-fixture.js");
+    fs.writeFileSync(shell, "async function load(a,b){let start=Date.now();e.app.isPackaged||clean();" +
+      "let abort=new AbortController;log(`Failed to load shell env`,{resultSource:`load`})}");
     fs.writeFileSync(webview, "official-webview\n");
     const report = createPatchReport();
     patchExtractedApp(root, {
@@ -78,7 +90,9 @@ test("the default core registry patches the official Quit handler only", () => {
     });
     assert.match(fs.readFileSync(main, "utf8"), /function codexLinuxQuitDialogParent\(/);
     assert.equal(fs.readFileSync(webview, "utf8"), "official-webview\n");
-    assert.equal(report.patches.length, 1);
+    assert.match(fs.readFileSync(shell, "utf8"), /await new Promise\(setImmediate\)/);
+    assert.equal(report.patches.length, 2);
+    assert.equal(report.patches.find((patch) => patch.name === "shell-env-startup").status, "applied");
     assert.equal(report.patches[0].name, "quit-confirmation-focus");
     assert.equal(report.patches[0].status, "applied");
     assert.equal(report.patches[0].ciPolicy, "required-upstream");

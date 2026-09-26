@@ -34,7 +34,7 @@ jobs:
           node --check scripts/ci/verify-official-linux-features.js
           node --test scripts/automation/upstream-linux-package-watchdog/test.js
           node --test scripts/patch-linux-window-ui.test.js scripts/patches/descriptor.test.js \
-            scripts/patches/core/quit-confirmation-focus/test.js \
+            scripts/patches/core/*/test.js \
             scripts/lib/linux-features.test.js linux-features/*/test.js
       - name: Smoke tests
         run: bash tests/scripts_smoke.sh

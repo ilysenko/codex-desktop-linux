@@ -138,10 +138,13 @@ NODE
 node - <<'NODE'
 const { corePatchDescriptors } = require("./scripts/patches/runner.js");
 const descriptors = corePatchDescriptors();
-if (descriptors.length !== 1 ||
+if (descriptors.length !== 2 ||
     descriptors[0].id !== "quit-confirmation-focus" ||
     descriptors[0].ciPolicy !== "required-upstream" ||
-    descriptors[0].phase !== "main-bundle") {
+    descriptors[0].phase !== "main-bundle" ||
+    descriptors[1].id !== "shell-env-startup" ||
+    descriptors[1].ciPolicy !== "required-upstream" ||
+    descriptors[1].phase !== "extracted-app:pre-webview") {
   throw new Error(`Unexpected default core patch registry: ${descriptors.map(({ id }) => id).join(", ")}`);
 }
 NODE
@@ -170,7 +173,7 @@ NODE
 node --test launcher/start.test.js tests/deb-prerm.test.js scripts/lib/upstream-linux-package.test.js \
   scripts/automation/upstream-linux-package-watchdog/test.js \
   scripts/patch-linux-window-ui.test.js scripts/patches/runner.test.js \
-  scripts/patches/core/quit-confirmation-focus/test.js \
+  scripts/patches/core/*/test.js \
   scripts/lib/linux-features.test.js
 
 echo "[smoke] official Linux-package source, launcher, feature registry, packages, and pins are coherent"
