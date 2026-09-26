@@ -254,8 +254,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   kill and held the pipe open until the sleep expired, so even a CLI that
   answers `--version` in ~50 ms blocked the launch path for ~1 s. The
   watchdog now runs detached from the caller's stdout/stderr, cutting that
-  launch phase from ~1010 ms to ~74 ms and making the window (and GNOME's
-  startup feedback) appear about a second sooner on every cold start.
+- ASAR repacking no longer drops unpack rules for official packages that mark
+  whole directories as unpacked. The build invoked asar through
+  `npx --yes @electron/asar`, and npx re-parses its arguments through a shell
+  on POSIX; that shell expanded the `{*.node,*.so,*.dylib}` unpack glob and
+  multi-directory `--unpack-dir "{a,b}"` patterns into separate words, so asar
+  silently honored only the first alternative. The signed stable package
+  `26.924.22138` marks `node-hid/hidapi`, `node-hid/node_modules`,
+  `better-sqlite3/lib`, `node-pty/build`, and other directories as unpacked,
+  so repacking it failed the fail-closed layout verification and the candidate
+  was never promoted. The asar CLI is now resolved once and invoked directly,
+  which keeps glob arguments intact; the repacked archive preserves the
+  official pack/unpack layout and the `.unpacked` payload byte-for-byte.
 
 ### Changed
 

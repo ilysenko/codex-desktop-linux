@@ -94,7 +94,10 @@ assert_contains scripts/lib/install-helpers.sh 'sudo apt install nodejs npm curl
 # Anchored guards: assert executable code lines, not comment prose, so a
 # removed guard actually fails the smoke run even when the explanatory
 # comment keeps the words. (rg patterns: avoid unescaped regex metachars.)
-assert_contains scripts/lib/asar-patch.sh '^        command -v npx >/dev/null 2>&1 \|\| error'
+assert_contains scripts/lib/asar-patch.sh '^    command -v npx >/dev/null 2>&1 \|\| error'
+assert_contains scripts/lib/asar-patch.sh '^    asar_command=\("\$\(resolve_asar_command\)"\)$'
+assert_absent scripts/lib/asar-patch.sh 'asar_command=\(npx'
+assert_contains scripts/lib/asar-patch.sh '^        --unpack "\{\*\.node,\*\.so,\*\.dylib\}"'
 assert_contains scripts/lib/install-helpers.sh '^    if \[ -z "\$\{CODEX_ASAR_BIN:-\}" \] && ! command -v npx &>/dev/null; then$'
 assert_contains scripts/lib/asar-patch.sh 'list --is-pack "\$app_asar" > "\$WORK_DIR/app.asar.upstream-layout"'
 assert_contains scripts/lib/asar-patch.sh 'scripts/patches/lib/asar-layout.js'
@@ -131,6 +134,35 @@ report.patches[0].status = "applied";
 fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 NODE
 patch_report_has_changes "$asar_report" || fail "applied ASAR descriptors must be packed"
+
+# ASAR glob arguments must not pass through npx's shell: a brace glob such as
+# `{*.node,*.so,*.dylib}` is split into separate words there, so asar would
+# honor only the first alternative and silently drop the remaining unpack
+# rules. The resolved CLI is executed directly instead.
+asar_stub_dir="$selector_fixture/asar-stub"
+mkdir -p "$asar_stub_dir"
+cat > "$asar_stub_dir/asar" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$0"
+STUB
+cat > "$asar_stub_dir/npx" <<'STUB'
+#!/bin/sh
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --yes|--package=@electron/asar) shift ;;
+        --) shift; break ;;
+        *) break ;;
+    esac
+done
+PATH="$(cd "$(dirname "$0")" && pwd):$PATH" exec "$@"
+STUB
+chmod +x "$asar_stub_dir/asar" "$asar_stub_dir/npx"
+resolved_asar="$(export PATH="$asar_stub_dir:$PATH"; resolve_asar_command)"
+[ "$resolved_asar" = "$asar_stub_dir/asar" ] ||
+    fail "asar CLI resolution must return a directly executable path: $resolved_asar"
+configured_asar="$(export CODEX_ASAR_BIN="$asar_stub_dir/asar"; resolve_asar_command)"
+[ "$configured_asar" = "$asar_stub_dir/asar" ] ||
+    fail "CODEX_ASAR_BIN must be honored without npx resolution"
 record_patch_report_asar_hashes "$asar_report" upstream-sha output-sha true
 node - "$asar_report" <<'NODE'
 const fs = require("node:fs");
