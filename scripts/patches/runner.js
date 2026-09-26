@@ -20,6 +20,7 @@ const {
   applyExtractedAppPatchDescriptors,
   applyMainBundlePatchDescriptors,
   applyWebviewAssetPatchDescriptors,
+  descriptorAppliesTo,
   discoverCorePatchDescriptors,
   normalizePatchDescriptors,
   recordUnavailablePhasePatchDescriptors,
@@ -95,6 +96,7 @@ function setReportLinuxTarget(report, linux) {
 function mainBundlePatchDescriptors(context) {
   return normalizePatchDescriptors([
     ...corePatchDescriptors({ corePatchRoot: context.corePatchRoot })
+      .filter((patch) => descriptorAppliesTo(patch, context))
       .filter((patch) => patch.phase === PHASE_MAIN_BUNDLE),
     ...featurePatchDescriptors(context.featurePatchOptions).filter((patch) => patch.phase === PHASE_MAIN_BUNDLE),
   ]);
@@ -114,7 +116,8 @@ function patchExtractedApp(extractedDir, options = {}) {
   const baseContext = createMainBundleContext(null, options);
   const featuresOptions = featurePatchOptions(options);
   const patchDescriptors = normalizePatchDescriptors([
-    ...corePatchDescriptors({ corePatchRoot: options.corePatchRoot }),
+    ...corePatchDescriptors({ corePatchRoot: options.corePatchRoot })
+      .filter((patch) => descriptorAppliesTo(patch, baseContext)),
     ...featurePatchDescriptors(featuresOptions),
   ]);
 

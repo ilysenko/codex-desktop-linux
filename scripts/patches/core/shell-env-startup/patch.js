@@ -53,14 +53,23 @@ function patchExtractedShellEnvironment(extractedDir) {
   return { changed: patched !== source };
 }
 
+function appliesToShellEnvironmentStartup(context) {
+  const linux = context?.linuxTarget ?? context?.linux;
+  return linux?.distro?.versionMajor === 44 &&
+    linux.matchesId?.("fedora") === true &&
+    linux.desktopMatches?.("kde", "plasma") === true;
+}
+
 module.exports = {
   DEFER,
   applyShellEnvironmentStartup,
+  appliesToShellEnvironmentStartup,
   patchExtractedShellEnvironment,
   descriptors: [{
     id: "shell-env-startup",
     phase: "extracted-app:pre-webview",
     ciPolicy: "required-upstream",
+    appliesTo: appliesToShellEnvironmentStartup,
     apply: patchExtractedShellEnvironment,
   }],
 };

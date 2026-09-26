@@ -13,9 +13,9 @@ resolves the blocker.
 
 ## `shell-env-startup`
 
-The current signed stable package starts its shell environment subprocess
-before Chromium's POSIX startup replaces SIGCHLD with a no-op handler. On
-Fedora 44 / KDE, a startup syscall trace shows libuv registering its handler
+On Fedora 44 with KDE, the current signed stable package starts its shell
+environment subprocess before Chromium's POSIX startup replaces SIGCHLD with a
+no-op handler. A startup syscall trace shows libuv registering its handler
 first, then Chromium overwriting it. Subsequent shell, Git, tar, and CLI
 preflight children exit but remain zombies, and new chats hang at “Starting
 your task”. This reproduces in the unmodified official package, including
@@ -29,7 +29,9 @@ upstream timeout, environment loading, policy validation, and error handling.
 The isolated repaired official build starts without accumulating zombies.
 Tests cover actual deferral, other-platform behavior, failure propagation,
 unique semantic matching, idempotence, and the signed official module.
-Retire this patch when upstream orders these startup operations correctly.
+The descriptor is required only on the reproduced Fedora 44 KDE target; other
+Linux targets retain the signed shell module unchanged. Retire this patch when
+upstream orders these startup operations correctly.
 
 ## `quit-confirmation-focus`
 
