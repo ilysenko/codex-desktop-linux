@@ -586,6 +586,12 @@ fn package_matches_candidate(state: &PersistedState) -> bool {
         })
 }
 
+fn rollback_blocks_candidate(state: &PersistedState) -> bool {
+    state.rollback_blocked_candidate_version.as_deref() == state.candidate_version.as_deref()
+        && state.rollback_blocked_package_sha256.as_deref()
+            == state.upstream_package_sha256.as_deref()
+}
+
 fn mark_check_started(state: &mut PersistedState) {
     if !state.install_auth_retry_is_blocked() {
         state.status = UpdateStatus::CheckingUpstream;
@@ -673,6 +679,13 @@ async fn install_ready_with_launcher(
         state.artifact_paths.package_candidate_sha256 = None;
         state.save_updater(&paths.state_file)?;
         anyhow::bail!(message);
+    }
+    if !explicit_retry && rollback_blocks_candidate(state) {
+        state.status = UpdateStatus::ReadyToInstall;
+        state.waiting_for_app_exit_auto_install = false;
+        state.save_updater(&paths.state_file)?;
+        println!("Automatic install is blocked for rolled-back candidate; run install-ready to override.");
+        return Ok(());
     }
     anyhow::ensure!(
         package.is_file(),
@@ -992,6 +1005,19 @@ mod replacement_tests {
         assert!(!preserves_failed_candidate(true, true, false));
         assert!(preserves_failed_candidate(true, true, true));
         assert!(!preserves_failed_candidate(false, false, false));
+    }
+
+    #[test]
+    fn rollback_block_only_matches_same_candidate_identity() {
+        let mut state = PersistedState::new(true);
+        state.candidate_version = Some("2026.09.10.120000".into());
+        state.upstream_package_sha256 = Some("candidate-sha".into());
+        state.rollback_blocked_candidate_version = Some("2026.09.10.120000".into());
+        state.rollback_blocked_package_sha256 = Some("candidate-sha".into());
+        assert!(rollback_blocks_candidate(&state));
+
+        state.upstream_package_sha256 = Some("new-sha".into());
+        assert!(!rollback_blocks_candidate(&state));
     }
 
     #[test]
