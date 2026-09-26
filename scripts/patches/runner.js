@@ -20,7 +20,6 @@ const {
   applyExtractedAppPatchDescriptors,
   applyMainBundlePatchDescriptors,
   applyWebviewAssetPatchDescriptors,
-  descriptorAppliesTo,
   discoverCorePatchDescriptors,
   normalizePatchDescriptors,
   recordUnavailablePhasePatchDescriptors,
@@ -96,7 +95,6 @@ function setReportLinuxTarget(report, linux) {
 function mainBundlePatchDescriptors(context) {
   return normalizePatchDescriptors([
     ...corePatchDescriptors({ corePatchRoot: context.corePatchRoot })
-      .filter((patch) => descriptorAppliesTo(patch, context))
       .filter((patch) => patch.phase === PHASE_MAIN_BUNDLE),
     ...featurePatchDescriptors(context.featurePatchOptions).filter((patch) => patch.phase === PHASE_MAIN_BUNDLE),
   ]);
@@ -116,8 +114,7 @@ function patchExtractedApp(extractedDir, options = {}) {
   const baseContext = createMainBundleContext(null, options);
   const featuresOptions = featurePatchOptions(options);
   const patchDescriptors = normalizePatchDescriptors([
-    ...corePatchDescriptors({ corePatchRoot: options.corePatchRoot })
-      .filter((patch) => descriptorAppliesTo(patch, baseContext)),
+    ...corePatchDescriptors({ corePatchRoot: options.corePatchRoot }),
     ...featurePatchDescriptors(featuresOptions),
   ]);
 
@@ -196,17 +193,15 @@ function patchExtractedApp(extractedDir, options = {}) {
 
 function allPatchPolicies(options = {}) {
   return [
-    ...corePatchDescriptors(options).map(({ id, name, ciPolicy, phase, appliesTo }) => ({
+    ...corePatchDescriptors(options).map(({ id, name, ciPolicy, phase }) => ({
       name: name ?? id,
       ciPolicy,
       phase,
-      appliesTo,
     })),
-    ...featurePatchDescriptors(featurePatchOptions(options)).map(({ id, name, ciPolicy, phase, appliesTo }) => ({
+    ...featurePatchDescriptors(featurePatchOptions(options)).map(({ id, name, ciPolicy, phase }) => ({
       name: name ?? id,
       ciPolicy,
       phase,
-      appliesTo,
     })),
     ...CUSTOM_PATCH_POLICIES,
   ];
@@ -216,11 +211,8 @@ function requiredPatchNamesForProfile(profile, options = {}) {
   if (profile !== "upstream-build") {
     return [];
   }
-  const linux = options.linuxTarget ?? detectLinuxTargetContext(options.linuxTargetOptions);
-  const context = { linux, linuxTarget: linux, enableComputerUseUi: false };
   return allPatchPolicies(options)
     .filter((patch) => patch.ciPolicy === REQUIRED_UPSTREAM)
-    .filter((patch) => patch.appliesTo == null || patch.appliesTo(context) !== false)
     .map((patch) => patch.name);
 }
 

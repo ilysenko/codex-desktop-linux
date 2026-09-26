@@ -6,11 +6,10 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
-const { detectLinuxTargetContext } = require("../../../lib/linux-target-context.js");
 const {
   DEFER,
   applyShellEnvironmentStartup,
-  appliesToShellEnvironmentStartup,
+  descriptors,
   patchExtractedShellEnvironment,
 } = require("./patch.js");
 
@@ -19,36 +18,10 @@ const FIXTURE = "async function load(caller,timeout){let started=Date.now();elec
   "let abort=new AbortController;let result=await spawnShell(abort.signal);" +
   "logger(`Failed to load shell env`,{resultSource:`load`});return result}";
 
-function linuxTarget(id, versionId, desktop) {
-  return detectLinuxTargetContext({
-    env: {
-      CODEX_LINUX_TARGET_ID: id,
-      CODEX_LINUX_TARGET_VERSION_ID: versionId,
-      CODEX_LINUX_TARGET_DESKTOP: desktop,
-      CODEX_LINUX_TARGET_PACKAGE_FORMAT: id === "fedora" ? "rpm" : "deb",
-      PATH: "",
-    },
-    osReleaseFields: {},
-    atomic: false,
-  });
-}
-
-test("required patch is limited to the reproduced Fedora 44 KDE target", () => {
-  assert.equal(appliesToShellEnvironmentStartup({
-    linuxTarget: linuxTarget("fedora", "44", "KDE"),
-  }), true);
-  assert.equal(appliesToShellEnvironmentStartup({
-    linuxTarget: linuxTarget("fedora", "44", "KDE:Plasma"),
-  }), true);
-  assert.equal(appliesToShellEnvironmentStartup({
-    linuxTarget: linuxTarget("fedora", "44", "GNOME"),
-  }), false);
-  assert.equal(appliesToShellEnvironmentStartup({
-    linuxTarget: linuxTarget("fedora", "45", "KDE"),
-  }), false);
-  assert.equal(appliesToShellEnvironmentStartup({
-    linuxTarget: linuxTarget("ubuntu", "26.04", "KDE"),
-  }), false);
+test("required descriptor is included in every portable payload", () => {
+  assert.equal(descriptors.length, 1);
+  assert.equal(descriptors[0].id, "shell-env-startup");
+  assert.equal(Object.hasOwn(descriptors[0], "appliesTo"), false);
 });
 
 test("deferral prevents browser initialization from losing child completion", async () => {

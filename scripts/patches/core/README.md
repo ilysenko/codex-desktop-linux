@@ -29,9 +29,11 @@ upstream timeout, environment loading, policy validation, and error handling.
 The isolated repaired official build starts without accumulating zombies.
 Tests cover actual deferral, other-platform behavior, failure propagation,
 unique semantic matching, idempotence, and the signed official module.
-The descriptor is required only on the reproduced Fedora 44 KDE target; other
-Linux targets retain the signed shell module unchanged. Retire this patch when
-upstream orders these startup operations correctly.
+Because deb, RPM, pacman, AppImage, and Nix payloads can be built on a different
+distribution from the machine that runs them, the required descriptor is
+applied to every portable payload. The injected deferral is guarded by the
+runtime platform and is safe on other targets. Retire this patch when upstream
+orders these startup operations correctly.
 
 ## `quit-confirmation-focus`
 

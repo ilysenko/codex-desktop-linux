@@ -61,12 +61,10 @@ test("the official Linux baseline registers required compatibility patches", () 
       name: "quit-confirmation-focus",
       ciPolicy: "required-upstream",
       phase: "main-bundle",
-      appliesTo: undefined,
     }, {
       name: "shell-env-startup",
       ciPolicy: "required-upstream",
       phase: "extracted-app:pre-webview",
-      appliesTo: corePatchDescriptors()[1].appliesTo,
     }],
   );
   assert.deepEqual(
@@ -81,7 +79,7 @@ test("the official Linux baseline registers required compatibility patches", () 
       featuresConfigPath: emptyConfig,
       linuxTarget: ubuntuGnome,
     }),
-    ["quit-confirmation-focus"],
+    ["quit-confirmation-focus", "shell-env-startup"],
   );
 });
 
@@ -131,8 +129,8 @@ test("the default core registry repairs Quit and shell startup without changing 
   }
 });
 
-test("non-target baselines apply only the global required core patch", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-non-shell-target-"));
+test("portable artifacts include the shell repair when built on Ubuntu GNOME", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-portable-shell-repair-"));
   try {
     const mainDir = path.join(root, ".vite", "build");
     fs.mkdirSync(mainDir, { recursive: true });
@@ -151,10 +149,13 @@ test("non-target baselines apply only the global required core patch", () => {
     });
 
     assert.match(fs.readFileSync(main, "utf8"), /function codexLinuxQuitDialogParent\(/);
-    assert.equal(fs.readFileSync(shell, "utf8"), shellSource);
+    assert.match(fs.readFileSync(shell, "utf8"), /await new Promise\(setImmediate\)/);
     assert.deepEqual(
       report.patches.map(({ name, status }) => ({ name, status })),
-      [{ name: "quit-confirmation-focus", status: "applied" }],
+      [
+        { name: "quit-confirmation-focus", status: "applied" },
+        { name: "shell-env-startup", status: "applied" },
+      ],
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
