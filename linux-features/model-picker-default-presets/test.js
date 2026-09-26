@@ -92,16 +92,19 @@ function localComposerResolverFixture(name = "LocalPower") {
   ].join("");
 }
 
-function localComposerFixture(name = "LocalComposer") {
+function localComposerFixture(name = "LocalComposer", { splitHostContext = true } = {}) {
+  const resetContext = splitHostContext
+    ? "[conversationId,hostId,host.cwd]"
+    : "[conversationId,host.hostId,host.cwd]";
   return [
     `function ${name}(available,serverConfig,conversationId,manualSelection){`,
-    "let host={hostId:`local`,cwd:`/repo`};",
+    "let host={hostId:`local`,cwd:`/repo`},hostId=host.hostId;",
     "modelsForPicker(available);let{setDefaultModelAndReasoningEffort:setDefault}=selection;",
     "let He=available.find(Wqr),Ue=Power(available,{includeUltraInSlider:true,sliderModelsConfig:serverConfig,stripGptPrefix:true}),",
     "Ge=Ue,Ke=zae(Ge,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "let scratch=(0,React.useRef)(null),choose=function(e,t){return(draft?.selectModelAndReasoningEffort??select)(e,t,()=>{})};",
     "let selected=manualSelection?choose(`gpt-5.6-sol`,`high`):null;",
-    "picker({resetContextKey:JSON.stringify([conversationId,host.hostId,host.cwd])});",
+    `picker({resetContextKey:JSON.stringify(${resetContext})});`,
     "composer.mode.local.model.custom;let reset=zae(Ue,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "render({onSelectDefault:reset});",
     "return{powerSelections:Ue,fallback:Ke,reset,selected}}",
@@ -468,6 +471,21 @@ test("local composer uses configured pairs and lowers only its config threshold"
 
   const composerSource = localComposerFixture();
   assert.equal(localComposerConfigContract(composerSource), "current");
+  assert.equal(
+    localComposerConfigContract(
+      localComposerFixture("LegacyLocalComposer", { splitHostContext: false }),
+    ),
+    "current",
+  );
+  const patchedLegacyComposer = applyLocalComposerConfigPatch(
+    localComposerFixture("LegacyLocalComposer", { splitHostContext: false }),
+    presets,
+  );
+  assert.equal(localComposerConfigContract(patchedLegacyComposer), "applied");
+  assert.match(
+    patchedLegacyComposer,
+    /codexLinuxLocalDraftDefaultScope=conversationId==null\?JSON\.stringify\(\[host\.hostId,host\.cwd\]\):null/,
+  );
   const patchedComposer = applyLocalComposerConfigPatch(composerSource, presets);
   assert.equal(localComposerConfigContract(patchedComposer), "applied");
   assert.equal(applyLocalComposerConfigPatch(patchedComposer, presets), patchedComposer);
@@ -483,6 +501,10 @@ test("local composer uses configured pairs and lowers only its config threshold"
   assert.match(
     patchedComposer,
     /sliderModelsConfig:serverConfig==null\?serverConfig:codexLinuxLocalDefaultPresetConfig/,
+  );
+  assert.match(
+    patchedComposer,
+    /codexLinuxLocalDraftDefaultScope=conversationId==null\?JSON\.stringify\(\[hostId,host\.cwd\]\):null/,
   );
   const runComposer = ({
     available,

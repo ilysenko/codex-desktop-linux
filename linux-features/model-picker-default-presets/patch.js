@@ -687,6 +687,17 @@ function localComposerRuntime(config) {
 const LOCAL_COMPOSER_FALLBACK_PATTERN =
   /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)==null\?void 0:`\$\{\4\.model\}:\$\{\4\.defaultReasoningEffort\}`\)/gu;
 
+function localComposerResetContext(section) {
+  const matches = [
+    ...(section?.source ?? "").matchAll(
+      /resetContextKey:JSON\.stringify\(\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*(?:\.hostId)?),([A-Za-z_$][\w$]*)\.cwd\]\)/gu,
+    ),
+  ];
+  if (matches.length !== 1) return null;
+  const [, conversation, hostId, cwdOwner] = matches[0];
+  return { conversation, cwdOwner, hostId };
+}
+
 function localComposerConfigContract(source) {
   const markerCount = source.split(LOCAL_COMPOSER_CONFIG_MARKER).length - 1;
   const draftMarkerCount = source.split(LOCAL_DRAFT_SELECTION_MARKER).length - 1;
@@ -699,14 +710,10 @@ function localComposerConfigContract(source) {
       section.source.match(
         /[A-Za-z_$][\w$]*\?\.selectModelAndReasoningEffort\?\?[A-Za-z_$][\w$]*/g,
       ) ?? [];
-    const resetContextMatches =
-      section.source.match(
-        /resetContextKey:JSON\.stringify\(\[[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\.hostId,[A-Za-z_$][\w$]*\.cwd\]\)/g,
-      ) ?? [];
     return configMatches.length === 1 &&
       fallbackMatches.length === 2 &&
       selectionMatches.length === 1 &&
-      resetContextMatches.length === 1
+      localComposerResetContext(section) != null
       ? "current"
       : "drifted";
   }
@@ -905,16 +912,13 @@ function applyLocalComposerConfigPatch(source, context = {}) {
     /([A-Za-z_$][\w$]*)\?\.selectModelAndReasoningEffort\?\?([A-Za-z_$][\w$]*)/u.exec(
       section.source,
     );
-  const resetContextMatch =
-    /resetContextKey:JSON\.stringify\(\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\.hostId,\2\.cwd\]\)/u.exec(
-      section.source,
-    );
+  const resetContext = localComposerResetContext(section);
   const reactAlias = /\(0,([A-Za-z_$][\w$]*)\.useRef\)\(/u.exec(section.source)?.[1];
   if (
     configMatch == null ||
     fallbackMatches.length !== 2 ||
     selectionMatch == null ||
-    resetContextMatch == null ||
+    resetContext == null ||
     reactAlias == null
   ) {
     return source;
@@ -922,7 +926,11 @@ function applyLocalComposerConfigPatch(source, context = {}) {
   const configVariable = configMatch[1];
   const defaultSelectionsVariable = fallbackMatches[1][3];
   const [selectionExpression, draftSelectionVariable, baseSelectionVariable] = selectionMatch;
-  const [, conversationVariable, hostVariable] = resetContextMatch;
+  const {
+    conversation: conversationVariable,
+    cwdOwner: cwdOwnerExpression,
+    hostId: hostIdExpression,
+  } = resetContext;
   let patchedSection = section.source.replace(
     configMatch[0],
     `sliderModelsConfig:${configVariable}==null?${configVariable}:codexLinuxLocalDefaultPresetConfig`,
@@ -937,7 +945,7 @@ function applyLocalComposerConfigPatch(source, context = {}) {
   const [, selectHandlerVariable] = selectionDeclarationMatch;
   const draftRuntime =
     `;let codexLinuxLocalDraftDefaultRef=(0,${reactAlias}.useRef)(null),` +
-    `codexLinuxLocalDraftDefaultScope=${conversationVariable}==null?JSON.stringify([${hostVariable}.hostId,${hostVariable}.cwd]):null,` +
+    `codexLinuxLocalDraftDefaultScope=${conversationVariable}==null?JSON.stringify([${hostIdExpression},${cwdOwnerExpression}.cwd]):null,` +
     `codexLinuxLocalDraftDefaultSelection=${configVariable}==null?null:codexLinuxLocalDefaultPresetSelection(${defaultSelectionsVariable}),` +
     `codexLinuxLocalDraftSelect=(codexLinuxModel,codexLinuxEffort,codexLinuxCallback)=>(${draftSelectionVariable}?.selectModelAndReasoningEffort??${baseSelectionVariable})(codexLinuxModel,codexLinuxEffort,codexLinuxCallback,${configVariable}!=null&&${conversationVariable}==null&&codexLinuxLocalDefaultPresetIds.has(\`${"${codexLinuxModel}:${codexLinuxEffort}"}\`)?{persistAsDefault:!1}:void 0);` +
     `(0,${reactAlias}.useEffect)(()=>{if(codexLinuxLocalDraftDefaultScope==null){codexLinuxLocalDraftDefaultRef.current=null;return}codexLinuxLocalDraftDefaultSelection==null||codexLinuxLocalDraftDefaultRef.current===codexLinuxLocalDraftDefaultScope||(codexLinuxLocalDraftDefaultRef.current=codexLinuxLocalDraftDefaultScope,codexLinuxLocalDraftSelect(codexLinuxLocalDraftDefaultSelection.model,codexLinuxLocalDraftDefaultSelection.reasoningEffort,()=>{}))},[codexLinuxLocalDraftDefaultScope,codexLinuxLocalDraftDefaultSelection?.id]);` +
