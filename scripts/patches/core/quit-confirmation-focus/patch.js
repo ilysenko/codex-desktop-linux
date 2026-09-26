@@ -124,13 +124,24 @@ function patchRequiredCoreBlockers(extractedDir) {
     throw new Error("Expected exactly one official shell environment module");
   }
   const [{ file: shellPath, source: shellSource }] = shellCandidates;
-  const patchedShell = applyShellEnvironmentStartup(shellSource);
+  const sameModule = mainPath === shellPath;
+  const patchedShell = applyShellEnvironmentStartup(
+    sameModule ? patchedMain : shellSource,
+  );
 
   // Resolve both semantic contracts before writing either file. The required
   // core repair is one fail-closed transaction and one patch-report entry.
-  if (patchedMain !== mainSource) fs.writeFileSync(mainPath, patchedMain, "utf8");
-  if (patchedShell !== shellSource) fs.writeFileSync(shellPath, patchedShell, "utf8");
-  return { changed: patchedMain !== mainSource || patchedShell !== shellSource };
+  if (sameModule) {
+    if (patchedShell !== mainSource) fs.writeFileSync(mainPath, patchedShell, "utf8");
+  } else {
+    if (patchedMain !== mainSource) fs.writeFileSync(mainPath, patchedMain, "utf8");
+    if (patchedShell !== shellSource) fs.writeFileSync(shellPath, patchedShell, "utf8");
+  }
+  return {
+    changed: sameModule
+      ? patchedShell !== mainSource
+      : patchedMain !== mainSource || patchedShell !== shellSource,
+  };
 }
 
 const descriptors = [{
