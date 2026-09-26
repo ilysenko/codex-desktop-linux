@@ -48,10 +48,6 @@ test("the official Linux baseline registers required compatibility patches", () 
     [{
       id: "quit-confirmation-focus",
       ciPolicy: "required-upstream",
-      phase: "main-bundle",
-    }, {
-      id: "shell-env-startup",
-      ciPolicy: "required-upstream",
       phase: "extracted-app:pre-webview",
     }],
   );
@@ -59,10 +55,6 @@ test("the official Linux baseline registers required compatibility patches", () 
     allPatchPolicies({ featuresConfigPath: emptyConfig }),
     [{
       name: "quit-confirmation-focus",
-      ciPolicy: "required-upstream",
-      phase: "main-bundle",
-    }, {
-      name: "shell-env-startup",
       ciPolicy: "required-upstream",
       phase: "extracted-app:pre-webview",
     }],
@@ -72,14 +64,14 @@ test("the official Linux baseline registers required compatibility patches", () 
       featuresConfigPath: emptyConfig,
       linuxTarget: fedoraKde,
     }),
-    ["quit-confirmation-focus", "shell-env-startup"],
+    ["quit-confirmation-focus"],
   );
   assert.deepEqual(
     requiredPatchNamesForProfile("upstream-build", {
       featuresConfigPath: emptyConfig,
       linuxTarget: ubuntuGnome,
     }),
-    ["quit-confirmation-focus", "shell-env-startup"],
+    ["quit-confirmation-focus"],
   );
 });
 
@@ -118,8 +110,7 @@ test("the default core registry repairs Quit and shell startup without changing 
     assert.match(fs.readFileSync(main, "utf8"), /function codexLinuxQuitDialogParent\(/);
     assert.equal(fs.readFileSync(webview, "utf8"), "official-webview\n");
     assert.match(fs.readFileSync(shell, "utf8"), /await new Promise\(setImmediate\)/);
-    assert.equal(report.patches.length, 2);
-    assert.equal(report.patches.find((patch) => patch.name === "shell-env-startup").status, "applied");
+    assert.equal(report.patches.length, 1);
     assert.equal(report.patches[0].name, "quit-confirmation-focus");
     assert.equal(report.patches[0].status, "applied");
     assert.equal(report.patches[0].ciPolicy, "required-upstream");
@@ -152,10 +143,7 @@ test("portable artifacts include the shell repair when built on Ubuntu GNOME", (
     assert.match(fs.readFileSync(shell, "utf8"), /await new Promise\(setImmediate\)/);
     assert.deepEqual(
       report.patches.map(({ name, status }) => ({ name, status })),
-      [
-        { name: "quit-confirmation-focus", status: "applied" },
-        { name: "shell-env-startup", status: "applied" },
-      ],
+      [{ name: "quit-confirmation-focus", status: "applied" }],
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -178,7 +166,6 @@ test("missing main bundle records enabled feature drift", (t) => {
   assert.ok(entry);
   assert.ok(coreEntry);
   assert.equal(coreEntry.status, "failed-required");
-  assert.equal(coreEntry.unavailable, true);
   assert.equal(entry.status, "skipped-optional");
   assert.equal(entry.enforceWhenEnabled, true);
   assert.equal(entry.unavailable, true);

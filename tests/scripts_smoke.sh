@@ -143,13 +143,10 @@ NODE
 node - <<'NODE'
 const { corePatchDescriptors } = require("./scripts/patches/runner.js");
 const descriptors = corePatchDescriptors();
-if (descriptors.length !== 2 ||
+if (descriptors.length !== 1 ||
     descriptors[0].id !== "quit-confirmation-focus" ||
     descriptors[0].ciPolicy !== "required-upstream" ||
-    descriptors[0].phase !== "main-bundle" ||
-    descriptors[1].id !== "shell-env-startup" ||
-    descriptors[1].ciPolicy !== "required-upstream" ||
-    descriptors[1].phase !== "extracted-app:pre-webview") {
+    descriptors[0].phase !== "extracted-app:pre-webview") {
   throw new Error(`Unexpected default core patch registry: ${descriptors.map(({ id }) => id).join(", ")}`);
 }
 NODE

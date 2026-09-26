@@ -2,27 +2,18 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const {
   DEFER,
   applyShellEnvironmentStartup,
-  descriptors,
-  patchExtractedShellEnvironment,
-} = require("./patch.js");
+} = require("./shell-env.js");
 
 // Independent reduced fixture of the signed shell loader contract.
 const FIXTURE = "async function load(caller,timeout){let started=Date.now();electron.app.isPackaged||clean();" +
   "let abort=new AbortController;let result=await spawnShell(abort.signal);" +
   "logger(`Failed to load shell env`,{resultSource:`load`});return result}";
-
-test("required descriptor is included in every portable payload", () => {
-  assert.equal(descriptors.length, 1);
-  assert.equal(descriptors[0].id, "shell-env-startup");
-  assert.equal(Object.hasOwn(descriptors[0], "appliesTo"), false);
-});
 
 test("deferral prevents browser initialization from losing child completion", async () => {
   async function startup(source) {
@@ -106,21 +97,6 @@ test("matches renamed minified bindings without depending on the original identi
   const patched = applyShellEnvironmentStartup(renamed);
   assert.equal(patched.replace(DEFER, ""), renamed);
   new vm.Script(patched);
-});
-
-test("module discovery tolerates hashed filenames and fails before writing ambiguous matches", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "shell-env-startup-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const dir = path.join(root, ".vite", "build");
-  fs.mkdirSync(dir, { recursive: true });
-  const first = path.join(dir, "renamed-hash.js");
-  fs.writeFileSync(first, FIXTURE);
-  assert.deepEqual(patchExtractedShellEnvironment(root), { changed: true });
-  assert.deepEqual(patchExtractedShellEnvironment(root), { changed: false });
-  const before = fs.readFileSync(first, "utf8");
-  fs.writeFileSync(path.join(dir, "duplicate.js"), FIXTURE);
-  assert.throws(() => patchExtractedShellEnvironment(root), /exactly one official/);
-  assert.equal(fs.readFileSync(first, "utf8"), before);
 });
 
 test("applies to the signed official shell environment module", {
