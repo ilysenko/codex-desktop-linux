@@ -2,6 +2,55 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 
+test('Linux public inventory and window selectors use the trusted adapter', async () => {
+  const { installLinuxComputerUse } = await import('./native-client.mjs');
+  const original = globalThis.nodeRepl;
+  const calls = [], writes = [];
+  const apps = ['22', '18446744073709551615'].map(id => ({
+    id: `linux-window:${id}`, displayName: 'editor', title: 'Document', focused: true, isRunning: true,
+  }));
+  globalThis.nodeRepl = { write: value => writes.push(value), rpc: async (_, request) => {
+    calls.push(request);
+    return request.method === 'list_apps' ? apps : { accessibility_tree: [] };
+  }};
+  try {
+    const cua = installLinuxComputerUse({
+      listWindows: () => assert.fail('upstream missing method must be replaced'),
+      getState: () => assert.fail('upstream state still uses the unsupported Sky proxy'),
+      listBrowsers: async options => {
+        assert.equal(options.emit, false);
+        return [{ id: 'iab' }];
+      },
+      listTabs: async options => {
+        assert.deepEqual(options, { browser: 'iab', emit: false });
+        return [{ id: 'tab-1' }];
+      },
+    });
+    const windows = await cua.listWindows({ emit: false });
+    assert.deepEqual(windows.map(window => window.id), [22, '18446744073709551615']);
+    assert.equal(writes.length, 0);
+    assert.deepEqual(await cua.getState({ emit: false }), {
+      apps, browsers: [{ id: 'iab', tabs: [{ id: 'tab-1' }] }],
+    });
+    for (const window of windows) {
+      const app = await cua.getApp({ windowId: window.id });
+      await app.pressKey('ESC');
+      assert.equal(calls.at(-1).app, `linux-window:${window.id}`);
+    }
+    const before = calls.length;
+    for (const windowId of [null, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '', '1e3', '18446744073709551616']) {
+      await assert.rejects(cua.getApp({ windowId }), /exact windowId/);
+    }
+    assert.equal(calls.length, before);
+    const failedBrowser = installLinuxComputerUse({
+      listBrowsers: async () => { throw new Error('extension disconnected'); },
+    });
+    assert.deepEqual(await failedBrowser.getState({ emit: false }), {
+      apps, browsers: [], errors: ['Browsers: Error: extension disconnected'],
+    });
+  } finally { globalThis.nodeRepl = original; }
+});
+
 test('native client preserves browser inventory and binds native actions to selected app', async () => {
   const { installLinuxComputerUse } = await import('./native-client.mjs');
   const calls = [];
@@ -13,10 +62,9 @@ test('native client preserves browser inventory and binds native actions to sele
     return { ok: true };
   }};
   try {
-    const inheritedState = async () => ({ apps: [], browsers: [{ id: 'iab' }] });
-    const cua = { getState: inheritedState, initialize: inheritedState };
+    const cua = { listBrowsers: async () => [{ id: 'iab' }], listTabs: async () => [] };
     installLinuxComputerUse(cua);
-    const expected = { apps: [{ id: 'org.example.Editor', isRunning: true }], browsers: [{ id: 'iab' }] };
+    const expected = { apps: [{ id: 'org.example.Editor', isRunning: true }], browsers: [{ id: 'iab', tabs: [] }] };
     assert.deepEqual(await cua.getState({ emit: false }), expected);
     assert.deepEqual(await cua.initialize({ emit: false }), expected);
     const app = await cua.getApp('org.example.Editor');
